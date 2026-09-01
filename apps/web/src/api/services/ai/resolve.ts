@@ -8,8 +8,10 @@
  * Feature code never queries `ai_configs`; the chat route, connection test and Phase 3b agents
  * all come through here — and tests mock this module (`vi.mock('@/api/services/ai/resolve')`).
  *
- * `promptKey` is accepted and ignored: per-agent model assignment (`agent_models`: promptKey →
- * config + model) is Phase 3b and will consult it here, so callers already pass it.
+ * `promptKey` (D17, Phase 3b) consults `agent_models` FIRST: an assignment for `(tenant, promptKey)`
+ * names a specific chat config (`aiConfigId`, else the tenant default) and/or a model override; the
+ * chain is then assignment → tenant default → platform → 503. Only chat is assignable — embeddings
+ * feed a different client shape and no agent runs on them.
  */
 import type { AiProvider, AiReadiness, AiScope, AiScopeReadiness } from '@gmgo/shared/ai/config'
 import { DEFAULT_MODELS } from '@gmgo/shared/ai/config'
@@ -17,7 +19,7 @@ import type { PromptKey } from '@gmgo/shared/ai/prompts'
 import { and, eq } from 'drizzle-orm'
 import type { AppConfig } from '../../../config'
 import type { Database } from '../../../db/client'
-import { type AiConfigRow, aiConfigs } from '../../../db/schema'
+import { type AgentModelRow, type AiConfigRow, agentModels, aiConfigs } from '../../../db/schema'
 import { decrypt, requireEncryptionKey } from '../../auth/oauth-encryption'
 import { createChatClient, createEmbeddingsClient, type FetchLike } from './client'
 import { AiNotConfiguredError } from './errors'
@@ -27,7 +29,8 @@ export interface ResolvedChat {
   client: ChatClient
   provider: AiProvider
   model: string
-  source: 'tenant' | 'platform'
+  /** `agent` = an `agent_models` assignment for `promptKey` decided the config and/or model. */
+  source: 'tenant' | 'platform' | 'agent'
   /** `cfg.AGENT_MAX_OUTPUT_TOKENS` — the per-call `max_tokens` consumers pass. */
   maxOutputTokens: number
   configId?: string
@@ -42,7 +45,7 @@ export interface ResolvedEmbeddings {
 }
 
 export interface ResolveOptions {
-  /** Phase 3b: per-agent config/model lookup keyed on the prompt registry. Ignored today. */
+  /** Per-agent config/model lookup keyed on the prompt registry (`agent_models`). Chat only. */
   promptKey?: PromptKey
   /** Injected for tests. */
   fetch?: FetchLike
@@ -61,6 +64,47 @@ export async function findDefaultConfig(
       eq(aiConfigs.isDefault, true)
     ),
   })
+}
+
+/** The `agent_models` assignment for a prompt key, or null (= tenant default). */
+export async function findAgentModel(
+  db: Database,
+  tenantId: string,
+  promptKey: PromptKey
+): Promise<AgentModelRow | null> {
+  const row = await db.query.agentModels.findFirst({
+    where: and(eq(agentModels.tenantId, tenantId), eq(agentModels.promptKey, promptKey)),
+  })
+  return row ?? null
+}
+
+/** A tenant's chat config by id — tenant-scoped so a foreign id reads as "not found". */
+export async function findChatConfigById(
+  db: Database,
+  tenantId: string,
+  id: string
+): Promise<AiConfigRow | undefined> {
+  return db.query.aiConfigs.findFirst({
+    where: and(eq(aiConfigs.tenantId, tenantId), eq(aiConfigs.id, id), eq(aiConfigs.scope, 'chat')),
+  })
+}
+
+/**
+ * What `resolveChat` will use for a prompt key, BEFORE building a client: the assignment (if any),
+ * the config row it lands on (tenant default when the assignment names none) and the model.
+ * `config: undefined` means the platform key is next in line. Shared by `resolveChat` and the
+ * agent-models settings list so the two can never disagree.
+ */
+export async function planChat(
+  db: Database,
+  tenantId: string,
+  promptKey?: PromptKey
+): Promise<{ assignment: AgentModelRow | null; config: AiConfigRow | undefined; model?: string }> {
+  const assignment = promptKey ? await findAgentModel(db, tenantId, promptKey) : null
+  const config = assignment?.aiConfigId
+    ? await findChatConfigById(db, tenantId, assignment.aiConfigId)
+    : await findDefaultConfig(db, tenantId, 'chat')
+  return { assignment, config, model: assignment?.model ?? undefined }
 }
 
 /** Decrypt a row's credential (null for key-less providers). The ONLY place `apiKeyEnc` is read. */
@@ -110,13 +154,18 @@ export async function resolveChat(
   tenantId: string,
   options: ResolveOptions = {}
 ): Promise<ResolvedChat> {
-  const row = await findDefaultConfig(db, tenantId, 'chat')
+  const {
+    assignment,
+    config: row,
+    model: override,
+  } = await planChat(db, tenantId, options.promptKey)
+  const source = assignment ? 'agent' : 'tenant'
   if (row) {
     return {
       client: await chatClientFromRow(row, cfg, options.fetch),
       provider: row.provider,
-      model: row.model,
-      source: 'tenant',
+      model: override ?? row.model,
+      source,
       maxOutputTokens: cfg.AGENT_MAX_OUTPUT_TOKENS,
       configId: row.id,
     }
@@ -129,8 +178,8 @@ export async function resolveChat(
         fetch: options.fetch,
       }),
       provider: 'anthropic',
-      model: DEFAULT_MODELS.anthropic,
-      source: 'platform',
+      model: override ?? DEFAULT_MODELS.anthropic,
+      source: assignment ? 'agent' : 'platform',
       maxOutputTokens: cfg.AGENT_MAX_OUTPUT_TOKENS,
     }
   }

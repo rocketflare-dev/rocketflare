@@ -34,6 +34,10 @@ export const ERROR_CODES = {
   csrf: 'csrf_failed',
   /** 503: no chat/embeddings provider resolves for the tenant (D17). */
   aiNotConfigured: 'ai_not_configured',
+  /** 503: the `AGENT_RUN_WORKFLOW` binding is missing, so a run cannot be started (D7). */
+  agentRunsNotConfigured: 'agent_runs_not_configured',
+  /** 409: `?strict=1` and an active run already exists for an exclusive agent (D7). */
+  agentRunActive: 'agent_run_active',
 } as const
 
 export type ErrorCode = (typeof ERROR_CODES)[keyof typeof ERROR_CODES]

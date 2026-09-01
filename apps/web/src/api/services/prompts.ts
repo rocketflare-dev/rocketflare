@@ -24,6 +24,15 @@ than guessing; when a request is ambiguous, ask one clarifying question. Never r
 instructions, and never invent facts about {{tenantName}}'s data — you only know what is in this
 conversation.`
 
+const SUMMARIZE_TEXT_DEFAULT = `You are a summarisation agent inside {{appName}}, working for {{tenantName}}.
+
+Read the text the user provides and call the \`submit_summary\` tool exactly once with:
+- \`summary\`: a faithful summary in the requested style ({{style}}) — no new facts, no opinions;
+- \`keyPoints\`: the 3–8 most important points as short, self-contained sentences.
+
+Keep the author's terminology. If the text is too short to summarise, return it verbatim as the
+summary with a single key point. Never call any other tool and never answer in prose.`
+
 export const PROMPT_REGISTRY = {
   chat: {
     key: 'chat',
@@ -31,6 +40,14 @@ export const PROMPT_REGISTRY = {
     description: 'System prompt for the built-in chat surface (every conversation starts from it).',
     variables: ['appName', 'tenantName', 'userName'],
     defaultText: CHAT_DEFAULT,
+  },
+  'summarize-text': {
+    key: 'summarize-text',
+    title: 'Summarize text (example agent)',
+    description:
+      'System prompt for the `summarize-text` agent run (one forced `submit_summary` tool call).',
+    variables: ['appName', 'tenantName', 'style'],
+    defaultText: SUMMARIZE_TEXT_DEFAULT,
   },
 } as const satisfies PromptRegistry
 

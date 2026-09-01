@@ -1,4 +1,5 @@
 import {
+  ChatBubbleLeftRightIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
   ClockIcon,
@@ -36,7 +37,16 @@ export type NavConfig = (NavItem | NavGroup)[]
  */
 export const navigationConfig: NavConfig = [
   {
-    items: [{ to: '/', label: 'Home', icon: HomeIcon }],
+    items: [
+      { to: '/', label: 'Home', icon: HomeIcon },
+      // D17: every role may chat (ownership is the route's userId filter)
+      {
+        to: '/chat',
+        label: 'Chat',
+        icon: ChatBubbleLeftRightIcon,
+        guard: { action: 'read', subject: 'Conversation' },
+      },
+    ],
   },
   {
     label: 'Organisation',

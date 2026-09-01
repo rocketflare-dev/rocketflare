@@ -35,6 +35,8 @@ const MATRIX: Record<string, Record<Role, Level>> = {
   AiConfig: { owner: 'manage', admin: 'manage', support: 'manage', member: 'read' },
   Prompt: { owner: 'manage', admin: 'manage', support: 'manage', member: 'read' },
   Conversation: { owner: 'manage', admin: 'manage', support: 'manage', member: 'manage' },
+  AgentRun: { owner: 'manage', admin: 'manage', support: 'manage', member: 'manage' },
+  Document: { owner: 'manage', admin: 'manage', support: 'manage', member: 'create' },
   AccessRequest: { owner: 'none', admin: 'none', support: 'none', member: 'none' },
   User: { owner: 'none', admin: 'none', support: 'none', member: 'none' },
 }

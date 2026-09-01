@@ -12,6 +12,7 @@ import { createDatabase, type DatabaseHandle, resolveDatabaseUrl } from '../../d
 import type { AppBindings } from '../types'
 import type { Logger } from '../utils/core/logger'
 import { handleActivityRecord } from './handlers/activity-record'
+import { handleDocumentIndex } from './handlers/document-index'
 import { handleEmailSend } from './handlers/email-send'
 import { handleExamplePing } from './handlers/example-ping'
 
@@ -41,6 +42,7 @@ const handlers: { [T in JobType]: JobHandler<T> } = {
   'email.send': handleEmailSend,
   'activity.record': handleActivityRecord,
   'example.ping': handleExamplePing,
+  'document.index': handleDocumentIndex,
 }
 
 /** First retry after 30 s, doubling, capped at 15 min. The toml's `retry_delay` is the floor. */
@@ -114,5 +116,7 @@ function runHandler(job: JobEnvelope, ctx: JobContext): Promise<void> {
       return handlers['activity.record'](job, ctx)
     case 'example.ping':
       return handlers['example.ping'](job, ctx)
+    case 'document.index':
+      return handlers['document.index'](job, ctx)
   }
 }

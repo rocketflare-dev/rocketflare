@@ -1,8 +1,8 @@
 /**
  * `Cloudflare.Env`-shaped test bindings (D15): in-memory KV, a 404 ASSETS fetcher, HYPERDRIVE
  * pointing at the test Postgres, a recording Queue, an in-memory R2 bucket, a recording DO namespace,
- * a recording Workers AI stub, and vars from `process.env` (loaded from
- * .env.test by dotenv-cli). Tests may read `process.env`; `src/` may not.
+ * a recording Workers AI stub, a recording Workflow namespace, and vars from `process.env` (loaded
+ * from .env.test by dotenv-cli). Tests may read `process.env`; `src/` may not.
  *
  * Also `createExecutionContext()` — `waitUntil` collects promises so `waitOnExecutionContext`
  * can drain them; this is how the per-request DB close (middleware/database.ts) is awaited.
@@ -285,6 +285,82 @@ export class RecordingAi {
   }
 }
 
+// ---- Workflow --------------------------------------------------------------------------------
+
+export interface RecordedWorkflowInstance {
+  id: string
+  params: unknown
+}
+
+/** What `instance.status()` answers — the shape of the platform's `InstanceStatus`. */
+export interface FakeInstanceStatus {
+  status:
+    | 'queued'
+    | 'running'
+    | 'paused'
+    | 'errored'
+    | 'terminated'
+    | 'complete'
+    | 'waiting'
+    | 'waitingForPause'
+    | 'unknown'
+  error?: { name: string; message: string }
+  output?: unknown
+}
+
+/**
+ * Stub `AGENT_RUN_WORKFLOW` binding (Phase 3b, D7): `create()` records `{ id, params }` and
+ * answers an instance whose `status()` is whatever `setStatus(id, …)` said (default `running`);
+ * a second `create` with the same id throws like the platform; `get()` throws `instance.not_found`
+ * for an id never created unless a status was pre-seeded for it. Nothing runs — tests drive the
+ * `AgentRunWorkflow` class directly with a fake step.
+ */
+export class RecordingWorkflow {
+  readonly created: RecordedWorkflowInstance[] = []
+  readonly statuses = new Map<string, FakeInstanceStatus>()
+  defaultStatus: FakeInstanceStatus = { status: 'running' }
+
+  async create(options: { id?: string; params?: unknown } = {}) {
+    const id = options.id ?? crypto.randomUUID()
+    if (this.created.some(c => c.id === id)) {
+      throw new Error(`instance.already_exists: an instance with id ${id} already exists`)
+    }
+    this.created.push({ id, params: options.params })
+    return this.instance(id)
+  }
+
+  async get(id: string) {
+    if (!this.created.some(c => c.id === id) && !this.statuses.has(id)) {
+      throw new Error(`instance.not_found: no instance with id ${id}`)
+    }
+    return this.instance(id)
+  }
+
+  /** Make `status()` for `id` answer this (also makes `get(id)` resolve). */
+  setStatus(id: string, status: FakeInstanceStatus): void {
+    this.statuses.set(id, status)
+  }
+
+  private instance(id: string) {
+    return {
+      id,
+      status: async (): Promise<FakeInstanceStatus> => this.statuses.get(id) ?? this.defaultStatus,
+      pause: async () => {},
+      resume: async () => {},
+      terminate: async () => {
+        this.statuses.set(id, { status: 'terminated' })
+      },
+      restart: async () => {},
+      sendEvent: async () => {},
+    }
+  }
+
+  clear(): void {
+    this.created.length = 0
+    this.statuses.clear()
+  }
+}
+
 // ---- Env -----------------------------------------------------------------------------------
 
 /**
@@ -356,6 +432,7 @@ export function createTestEnv(overrides: Partial<TestEnv> = {}): TestEnv {
     FILES: new MemoryR2Bucket() as unknown as R2Bucket,
     NOTIFICATIONS_HUB: new RecordingDurableObjectNamespace() as unknown as DurableObjectNamespace,
     AI: new RecordingAi() as unknown as Ai,
+    AGENT_RUN_WORKFLOW: new RecordingWorkflow() as unknown as Workflow,
     APP_ENV: process.env.APP_ENV ?? 'development',
     APP_URL: process.env.APP_URL ?? 'http://localhost:3001',
     APP_NAME: process.env.APP_NAME ?? 'GMGO Test',
@@ -382,6 +459,7 @@ export function stubs(env: TestEnv) {
     files: env.FILES as unknown as MemoryR2Bucket,
     hub: env.NOTIFICATIONS_HUB as unknown as RecordingDurableObjectNamespace,
     ai: env.AI as unknown as RecordingAi | undefined,
+    workflow: env.AGENT_RUN_WORKFLOW as unknown as RecordingWorkflow | undefined,
   }
 }
 

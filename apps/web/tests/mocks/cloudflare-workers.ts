@@ -36,7 +36,40 @@ export interface WorkflowStep {
   do<T>(name: string, fn: () => Promise<T>): Promise<T>
   do<T>(name: string, config: Record<string, unknown>, fn: () => Promise<T>): Promise<T>
   sleep(name: string, duration: string | number): Promise<void>
+  sleepUntil(name: string, timestamp: Date | number): Promise<void>
+  waitForEvent<T>(name: string, options: { type: string; timeout?: string | number }): Promise<T>
 }
 
 /** `env` from cloudflare:workers — tests pass env explicitly instead. */
 export const env = {} as Record<string, unknown>
+
+export interface RecordedStep {
+  name: string
+  config?: Record<string, unknown>
+}
+
+/**
+ * A `WorkflowStep` that just runs the callback inline and records `do(name, config?)` calls — no
+ * retries, no timeouts, no checkpoints — for unit-testing a `WorkflowEntrypoint` subclass under Node.
+ * A callback that throws propagates to the caller exactly as the platform would after its retries.
+ */
+export function createFakeWorkflowStep() {
+  const calls: RecordedStep[] = []
+  const step: WorkflowStep = {
+    async do<T>(
+      name: string,
+      configOrFn: Record<string, unknown> | (() => Promise<T>),
+      maybeFn?: () => Promise<T>
+    ): Promise<T> {
+      const fn = typeof configOrFn === 'function' ? configOrFn : (maybeFn as () => Promise<T>)
+      calls.push(typeof configOrFn === 'function' ? { name } : { name, config: configOrFn })
+      return fn()
+    },
+    async sleep() {},
+    async sleepUntil() {},
+    async waitForEvent() {
+      throw new Error('waitForEvent is not supported by the fake step')
+    },
+  }
+  return { step, calls }
+}

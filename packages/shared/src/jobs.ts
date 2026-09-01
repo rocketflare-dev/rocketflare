@@ -11,7 +11,12 @@
 import { z } from 'zod'
 import { activityMetadataSchema } from './activity'
 
-export const JOB_TYPES = ['email.send', 'activity.record', 'example.ping'] as const
+export const JOB_TYPES = [
+  'email.send',
+  'activity.record',
+  'example.ping',
+  'document.index',
+] as const
 export type JobType = (typeof JOB_TYPES)[number]
 
 // ---- Payloads ------------------------------------------------------------------------------
@@ -47,6 +52,13 @@ export const examplePingPayloadSchema = z.object({
 })
 export type ExamplePingPayload = z.infer<typeof examplePingPayloadSchema>
 
+/** Index (chunk + embed) a `documents` row too large to do inline at ingest (D18). */
+export const documentIndexPayloadSchema = z.object({
+  tenantId: z.string().uuid(),
+  documentId: z.string().uuid(),
+})
+export type DocumentIndexPayload = z.infer<typeof documentIndexPayloadSchema>
+
 // ---- Envelope ------------------------------------------------------------------------------
 
 /** What a caller hands to `enqueueJob` — the envelope fields are stamped by the producer. */
@@ -54,6 +66,7 @@ export const jobInputSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('email.send'), payload: emailSendPayloadSchema }),
   z.object({ type: z.literal('activity.record'), payload: activityRecordPayloadSchema }),
   z.object({ type: z.literal('example.ping'), payload: examplePingPayloadSchema }),
+  z.object({ type: z.literal('document.index'), payload: documentIndexPayloadSchema }),
 ])
 export type JobInput = z.infer<typeof jobInputSchema>
 
@@ -77,6 +90,11 @@ export const jobEnvelopeSchema = z.discriminatedUnion('type', [
     ...envelopeFields,
     type: z.literal('example.ping'),
     payload: examplePingPayloadSchema,
+  }),
+  z.object({
+    ...envelopeFields,
+    type: z.literal('document.index'),
+    payload: documentIndexPayloadSchema,
   }),
 ])
 export type JobEnvelope = z.infer<typeof jobEnvelopeSchema>

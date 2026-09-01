@@ -7,10 +7,15 @@
 import { relations } from 'drizzle-orm'
 import { accessRequests } from './access-requests'
 import { activityEvents } from './activity-events'
+import { agentModels } from './agent-models'
+import { agentRunEvents } from './agent-run-events'
+import { agentRuns } from './agent-runs'
 import { aiConfigs } from './ai-configs'
 import { aiUsage } from './ai-usage'
 import { apiKeys } from './api-keys'
+import { chunks } from './chunks'
 import { conversations } from './conversations'
+import { documents } from './documents'
 import { files } from './files'
 import { notifications } from './notifications'
 import { oauthProviders } from './oauth-providers'
@@ -33,6 +38,8 @@ export const usersRelations = relations(users, ({ many }) => ({
   tenantUserSettings: many(tenantUserSettings),
   files: many(files),
   conversations: many(conversations),
+  agentRuns: many(agentRuns),
+  documents: many(documents),
 }))
 
 export const tenantsRelations = relations(tenants, ({ one, many }) => ({
@@ -50,4 +57,9 @@ export const tenantsRelations = relations(tenants, ({ one, many }) => ({
   aiUsage: many(aiUsage),
   promptOverrides: many(promptOverrides),
   conversations: many(conversations),
+  agentModels: many(agentModels),
+  agentRuns: many(agentRuns),
+  agentRunEvents: many(agentRunEvents),
+  documents: many(documents),
+  chunks: many(chunks),
 }))

@@ -19,7 +19,10 @@ import { tracerMiddleware } from './middleware/tracing'
 import { accessRequestsRouter } from './routes/access-requests'
 import { activityRouter } from './routes/activity'
 import { adminRouter } from './routes/admin'
+import { agentsRouter } from './routes/agents'
+import { aiAgentModelsRouter } from './routes/ai-agent-models'
 import { aiConfigRouter } from './routes/ai-config'
+import { aiDocumentsRouter } from './routes/ai-documents'
 import { aiPromptsRouter } from './routes/ai-prompts'
 import { aiUsageRouter } from './routes/ai-usage'
 import { authRouter } from './routes/auth/index'
@@ -100,7 +103,10 @@ for (const [prefix, router] of [
   ['/api/ai/config', aiConfigRouter],
   ['/api/ai/prompts', aiPromptsRouter],
   ['/api/ai/usage', aiUsageRouter],
+  ['/api/ai/agent-models', aiAgentModelsRouter],
+  ['/api/ai/documents', aiDocumentsRouter],
   ['/api/chat', chatRouter],
+  ['/api/agents', agentsRouter],
 ] as const) {
   app.use(prefix, authMiddleware)
   app.use(`${prefix}/*`, authMiddleware)

@@ -106,9 +106,10 @@ export interface ApiRequestOptions<T = unknown> extends Omit<RequestInit, 'body'
 /**
  * Turn any non-2xx response into an `ApiErrorBody`. Envelope-shaped bodies pass through
  * verbatim; anything else (HTML from a proxy, empty body) is normalised so callers can always
- * rely on `status` + `error`.
+ * rely on `status` + `error`. Exported for the one fetch that bypasses `request()`: the chat
+ * SSE stream (`lib/chatStream.ts`), whose pre-stream failures use the same envelope.
  */
-async function parseErrorBody(response: Response): Promise<ApiErrorBody> {
+export async function parseErrorBody(response: Response): Promise<ApiErrorBody> {
   const fallback: ApiErrorBody = {
     error: response.statusText || `Request failed with status ${response.status}`,
     statusCode: response.status,

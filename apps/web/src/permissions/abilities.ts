@@ -41,6 +41,7 @@ export const ADMIN_MANAGED: readonly Subjects[] = [
   'File',
   'AiConfig',
   'Prompt',
+  'Document',
 ]
 
 /** What every member may at least read. */
@@ -51,6 +52,7 @@ const grantAdmin: RoleGrant = can => {
   can('manage', [...ADMIN_MANAGED])
   can('manage', 'Notification')
   can('manage', 'Conversation')
+  can('manage', 'AgentRun')
 }
 
 /**
@@ -69,6 +71,8 @@ const grantAdmin: RoleGrant = can => {
  * | AiConfig       | manage      | manage | manage | manage  | read   |
  * | Prompt         | manage      | manage | manage | manage  | read   |
  * | Conversation   | manage      | manage | manage | manage  | manage (own only — the route filters by userId, D17) |
+ * | AgentRun       | manage      | manage | manage | manage  | manage (own only — admin+ see every run, D7) |
+ * | Document       | manage      | manage | manage | manage  | create+read (own-document delete is the route's owner check, D18) |
  * | Feature:<f>    | access all  | by ctx | by ctx | access all | by ctx |
  */
 export const rolePermissions: Record<EffectiveRole, RoleGrant> = {
@@ -94,6 +98,12 @@ export const rolePermissions: Record<EffectiveRole, RoleGrant> = {
     can('create', 'File')
     // D17: chat is for everyone; ownership is the route's `userId` filter (others' chats are 404).
     can('manage', 'Conversation')
+    // D7: anyone may start the example agent; members list/cancel their OWN runs (route filter),
+    // admin+ (`isAdminLevel`) see and cancel every run in the tenant.
+    can('manage', 'AgentRun')
+    // D18: anyone may ingest text and search; deleting someone else's document needs `delete
+    // Document` (admin+). The own-document delete is an explicit `ownerUserId` check in the route.
+    can('create', 'Document')
   },
 }
 

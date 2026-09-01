@@ -46,6 +46,8 @@ const Profile = lazy(() => import('@/ui/pages/Profile'))
 const Notifications = lazy(() => import('@/ui/pages/Notifications'))
 const Activity = lazy(() => import('@/ui/pages/Activity'))
 const SettingsLayout = lazy(() => import('@/ui/pages/settings/SettingsLayout'))
+// D17: its own chunk — the markdown renderer must not ride in the main bundle.
+const ChatPage = lazy(() => import('@/ui/pages/chat/ChatPage'))
 const AdminLayout = lazy(() => import('@/ui/pages/admin/AdminLayout'))
 const AccessRequests = lazy(() => import('@/ui/pages/admin/AccessRequests'))
 const TenantList = lazy(() => import('@/ui/pages/admin/TenantList'))
@@ -99,6 +101,14 @@ function ShellRoutes() {
           <Route path="/" element={<Home />} />
           <Route path="/profile" element={<Profile />} />
           <Route path="/notifications" element={<Notifications />} />
+          <Route
+            path="/chat/:conversationId?"
+            element={
+              <RequireGuard guard={{ action: 'read', subject: 'Conversation' }}>
+                <ChatPage />
+              </RequireGuard>
+            }
+          />
           <Route
             path="/activity"
             element={

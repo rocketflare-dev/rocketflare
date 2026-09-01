@@ -104,7 +104,13 @@ bucket_name = "gmgo-starter-files-staging"
 [ai]
 binding = "AI"
 
-# ---- Added in later phases (keep this list in sync with wrangler.staging.toml) ----------
-# Phase 3b: [[workflows]] AGENT_RUN_WORKFLOW (name is ACCOUNT-scoped: staging MUST use a
-#          different name)
+# Agent runs (D7): the ONE Workflow class — the agent runtime IS the example workflow. `name` is
+# ACCOUNT-scoped (staging uses `-staging`); binding and class_name are identical in both tomls.
+# Nothing to create: `wrangler deploy` registers the Workflow. Instance id = agent_runs.id.
+[[workflows]]
+name = "gmgo-starter-agent-run-staging"
+binding = "AGENT_RUN_WORKFLOW"
+class_name = "AgentRunWorkflow"
+
+# ---- Added in later phases (keep this list in sync with wrangler.toml) ----------
 # Phase 4: "15 * * * *" cron for fact-table refresh, optional [[analytics_engine_datasets]]

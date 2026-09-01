@@ -63,6 +63,27 @@ export const queryKeys = {
     all: ['activity'] as const,
     list: (filters: object = {}) => ['activity', 'list', filters] as const,
   },
+  /** `/api/ai/*` — providers, readiness, prompt registry and usage (D17, D18) */
+  ai: {
+    all: ['ai'] as const,
+    configs: ['ai', 'configs'] as const,
+    providers: ['ai', 'providers'] as const,
+    readiness: ['ai', 'readiness'] as const,
+    prompts: ['ai', 'prompts'] as const,
+    usage: {
+      all: ['ai', 'usage'] as const,
+      summary: (filters: object = {}) => ['ai', 'usage', 'summary', filters] as const,
+    },
+  },
+  /** `/api/chat/*` — MY conversations (the route filters by user) and their messages (D17) */
+  chat: {
+    all: ['chat'] as const,
+    conversations: {
+      all: ['chat', 'conversations'] as const,
+      list: (filters: object = {}) => ['chat', 'conversations', 'list', filters] as const,
+      detail: (id: string) => ['chat', 'conversations', 'detail', id] as const,
+    },
+  },
   /** `/api/admin/*` — cross-tenant; one `admin.all` invalidation after any admin mutation */
   admin: {
     all: ['admin'] as const,

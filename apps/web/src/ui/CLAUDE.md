@@ -23,7 +23,9 @@ React 18 + Vite + React Router 6 + TanStack Query 5 + zustand; DaisyUI 5 on Tail
   `invalidateQueries` per root from `invalidationsFor(event)`, toasts `notification.created`),
   `WebSocketStatus` (header dot), `ConnectionBanner` (after 5 s away from `open`).
   `components/shared/` — generic primitives only (Toast, Modal, SectionPanel, PaginationControls,
-  FieldError…).
+  FieldError…). `components/ai/` (D17) — `Markdown` (react-markdown + GFM, `skipHtml`, links
+  `noopener`) and `ChatBubble`; deliberately NOT in the shared barrel so the markdown dependency
+  ships only in the lazy chat chunk.
 - `hooks/` — `useAuth` (session, `status`, `selectTenant`, `logout`, `applySession`,
   `useTenancyMode`), `usePermissions` (`can/cannot/isOwnerLevel/isAdminLevel/isGlobalAdmin`),
   `useNavGuard` (the ONE place nav and route guards are decided), one file per resource
@@ -31,7 +33,12 @@ React 18 + Vite + React Router 6 + TanStack Query 5 + zustand; DaisyUI 5 on Tail
   `useActivity`, `useAccessRequests`, `useAdminAccessRequests`, `useAdminTenants`, `useAdminUsers`,
   `useAuthMethods`) exporting `xQueryOptions()` + `useX()` + mutation hooks; `useProfile` also
   holds the avatar upload (`useUploadAvatar`, `validateAvatarFile`, `AVATAR_ACCEPT` — D23);
-  `useAppInfo`, `useDebounce`, `useModalState`, `useLocalStoragePreference`.
+  `useAppInfo`, `useDebounce`, `useModalState`, `useLocalStoragePreference`. AI (D17/D18):
+  `useAiConfig` (`useAiConfigs/useAiProviders/useAiReadiness`, `useUpsertAiConfig`,
+  `useDeleteAiConfig`, `useTestAiConfig`; `providersForScope`, `configsForScope`), `usePrompts`
+  (`usePrompts`, `useUpdatePrompt`, `useClearPrompt`), `useAiUsage` (`useAiUsageSummary(days)`,
+  keyed on the PRESET, window derived in `queryFn`), `useChat` (`useConversations` paginated,
+  `useConversation(id)`, `useCreateConversation`, `useDeleteConversation`, `useSendMessage`).
 - `lib/` — `api-client` (fetch wrapper, `ApiError`, `setUnauthorizedHandler`, `api.upload` for
   multipart — no JSON content-type), `queryClient` (module-level, 401 → handler), `query-keys`
   (factory + `cleanFilters`/`toSearchParams`; the family roots — `['invitations']`,
@@ -39,12 +46,18 @@ React 18 + Vite + React Router 6 + TanStack Query 5 + zustand; DaisyUI 5 on Tail
   `@gmgo/shared/realtime` names), `websocketClient` (singleton: `/ws?tenantId=`, jittered backoff
   1 s → 30 s, 100 ms fast path on close 1001/1012 or an "upgraded" reason, 30 s ping;
   `setFactory()` is the test seam), `navigation` (`NavigationBridge`, `navigateTo`, `hardNavigate`,
-  `loginUrl`, `safeReturnUrl`), `format` (date-fns helpers), `environment`.
+  `loginUrl`, `safeReturnUrl`), `format` (date-fns helpers), `environment`, `sse` (D17:
+  `readSse(response, onEvent, { signal })` — `event:`/`data:` frame splitter that survives split
+  chunks and validates each `data` with `chatStreamEventSchema`; `SseFrameBuffer`, `parseSseFrame`),
+  `chatStream` (`sendChatMessage({ conversationId, content, onEvent, signal })` POSTs and streams;
+  a pre-stream 503 `ai_not_configured` throws `AiNotConfiguredError`; `isAiNotConfigured()`).
 - `stores/websocketStore.ts` — the one zustand store: `status | connectedAt | disconnectedAt |
   attempt | lastEvent`; written only by `websocketClient`, read by the status dot and the banner.
 - `pages/` — route-level components, lazy in `App.tsx` except Home/Login/NotFound. `settings/`
-  is one page with `URLTabs` (`?tab=general|people|api-keys`); `admin/` is nested routes under
-  `AdminLayout`. `public/` — static assets copied as-is.
+  is one page with `URLTabs` (`?tab=general|people|api-keys|ai|prompts|usage`; `usage` only for
+  `manage AiConfig`); `admin/` is nested routes under `AdminLayout`; `chat/ChatPage.tsx` is
+  `/chat/:conversationId?` (D17, guard `read Conversation`, lazy — its chunk carries the markdown
+  renderer). `public/` — static assets copied as-is.
 
 ## Conventions
 
@@ -88,3 +101,34 @@ React 18 + Vite + React Router 6 + TanStack Query 5 + zustand; DaisyUI 5 on Tail
   fine gates are abilities (`{ action, subject }`, `<IfCan>`). Owner-ONLY actions (delete org,
   assign/strip owner) check `tenant.role === 'owner'` explicitly — `manage Tenant` is also held
   by support and global admins.
+
+## AI surface (Phase 3a, D17/D18)
+
+- **Streaming is the one exception to "server data lives only in the cache".** `useSendMessage`
+  appends the user bubble optimistically (`setQueryData` on `chat.conversations.detail(id)` with a
+  real `Date`), accumulates the assistant reply in LOCAL state from `text.delta` frames (it is not
+  truth until `message.end`), captures `usage`, and on `message.end` writes the finished message
+  into the cache (the server persisted it BEFORE that frame) then invalidates the whole
+  `chat.conversations` family (list re-sorts, auto-title arrives). Stop = `AbortController.abort()`:
+  an abort is a normal end (no toast, no error bubble); a pre-stream failure takes the optimistic
+  bubble back. An `error` frame leaves the turn in `error` status until the next send.
+- SSE never goes through `api-client`'s `request()` (JSON only); `lib/chatStream.ts` does its own
+  `fetch` with `credentials: 'include'` + `X-Requested-With` and reuses the exported
+  `parseErrorBody` for the envelope. `EventSource` is not used (GET-only).
+- `ai_not_configured` (503) — from `POST /api/chat/conversations` (`ApiError`, toast suppressed in
+  the hook) or from the send (`AiNotConfiguredError`) — or readiness `chat.ready === false` →
+  `ChatPage` renders the `EmptyState` with a "Configure AI" link to `/settings?tab=ai` for
+  `manage AiConfig`, "ask an administrator" otherwise.
+- Settings → AI: the providers catalog (`GET /api/ai/config/providers`) has NO shared schema (it
+  is `services/ai/providers.ts` data), so `useAiConfig.ts` carries a permissive `passthrough`
+  one. `PROVIDER_PRESETS`/`presetsFor`, `DEFAULT_MODELS`, `THINKING_*` come from
+  `@gmgo/shared/ai/config`. The label is the upsert key `(tenant, scope, label)` — read-only on
+  edit (renaming would create a second row). `apiKey` is write-only: blank on edit keeps the stored
+  key (`hasCredential`); switching provider on edit requires a new key. `serviceTier: ''` clears.
+  "Set default" re-posts the row with `isDefault: true` and no `apiKey`.
+- `/settings` is behind `RequireGuard guard="admin"`, so the member (`read AiConfig` /
+  `read Prompt`) read-only rendering of the AI and Prompts tabs is exercised component-level in
+  tests only; a member has no nav path to it.
+- Tests: `tests/ui/helpers/sse.ts` builds fake `text/event-stream` `Response`s (`sseResponse`,
+  `streamResponse` for arbitrary chunking, `hangingSseResponse` for Stop). Bubbles remount when an
+  optimistic id becomes the persisted one, so assert with `waitFor(() => getByText…)`, not `findBy`.

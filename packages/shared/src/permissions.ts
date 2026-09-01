@@ -27,6 +27,8 @@ export const CORE_SUBJECTS = [
   'AiConfig',
   'Prompt',
   'Conversation',
+  'AgentRun',
+  'Document',
 ] as const
 export type CoreSubject = (typeof CORE_SUBJECTS)[number]
 
