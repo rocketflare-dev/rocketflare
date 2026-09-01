@@ -5,8 +5,9 @@
  * replaces the form with the explanatory empty state (the Workflow binding is a deployment fact,
  * not something the reader can fix here); a 400 with zod issues maps back onto the fields.
  */
-import type { AgentInfo, CreateAgentRunResponse } from '@gmgo/shared/ai/agents'
+
 import { CpuChipIcon, PlayIcon } from '@heroicons/react/24/outline'
+import type { AgentInfo, CreateAgentRunResponse } from '@rocketflare/shared/ai/agents'
 import { type FormEvent, useState } from 'react'
 import { EmptyState, Modal } from '@/ui/components/shared'
 import { isAgentRunsNotConfigured, useCreateAgentRun } from '@/ui/hooks/useAgents'

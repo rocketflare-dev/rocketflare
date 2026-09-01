@@ -7,13 +7,13 @@
  * Invitation "copy link" appears only when the server includes a `token` on the row.
  */
 
-import { type Member, type TenantRole, tenantRoleSchema } from '@gmgo/shared/tenants'
 import {
   ClipboardIcon,
   EnvelopeIcon,
   UserGroupIcon,
   UserPlusIcon,
 } from '@heroicons/react/24/outline'
+import { type Member, type TenantRole, tenantRoleSchema } from '@rocketflare/shared/tenants'
 import { useState } from 'react'
 import { RoleBadge } from '@/ui/components/RoleBadge'
 import {

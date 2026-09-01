@@ -1,7 +1,7 @@
 /**
  * Queue consumer dispatcher (D7): one `queue` export routing on `batch.queue`. The jobs queue is
  * matched by PREFIX (`isJobsQueue`) because the NAME differs per environment
- * (`gmgo-starter-jobs` / `gmgo-starter-jobs-staging` — queue names are account-scoped) while the
+ * (`rocketflare-jobs` / `rocketflare-jobs-staging` — queue names are account-scoped) while the
  * binding and the code are identical. Any other queue is logged and acked so an accidentally bound
  * queue cannot retry forever. Config is validated like `fetch` (D3).
  */

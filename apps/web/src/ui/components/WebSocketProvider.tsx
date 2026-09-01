@@ -1,11 +1,11 @@
 /**
  * Realtime bridge (D8, 06 §b): connects the singleton `websocketClient` once `useAuth()` is
  * authenticated AND has a tenant, reconnects when the tenant changes, disconnects on sign-out.
- * Every event becomes query invalidations through `invalidationsFor` (`@gmgo/shared/realtime`) —
+ * Every event becomes query invalidations through `invalidationsFor` (`@rocketflare/shared/realtime`) —
  * the client re-queries, it never applies a payload as state — and a `notification.created` shows
  * a toast. Components subscribe to query state, never to the socket.
  */
-import { invalidationsFor, type RealtimeEvent } from '@gmgo/shared/realtime'
+import { invalidationsFor, type RealtimeEvent } from '@rocketflare/shared/realtime'
 import { useQueryClient } from '@tanstack/react-query'
 import { type ReactNode, useEffect } from 'react'
 import { useAuth } from '@/ui/hooks/useAuth'

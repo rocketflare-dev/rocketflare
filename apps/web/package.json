@@ -1,11 +1,11 @@
 {
-  "name": "@gmgo/web",
+  "name": "@rocketflare/web",
   "version": "0.1.0",
   "private": true,
-  "description": "GMGO kit web app: Hono API + React UI on Cloudflare Workers, Postgres (Neon via Hyperdrive) + Drizzle",
+  "description": "Rocketflare kit web app: Hono API + React UI on Cloudflare Workers, Postgres (Neon via Hyperdrive) + Drizzle",
   "type": "module",
   "cfld": {
-    "name": "gmgo-starter",
+    "name": "rocketflare",
     "port": 3000
   },
   "scripts": {
@@ -51,7 +51,7 @@
     "@anthropic-ai/sdk": "^0.122.0",
     "@casl/ability": "^6.8.1",
     "@casl/react": "^5.0.1",
-    "@gmgo/shared": "workspace:*",
+    "@rocketflare/shared": "workspace:*",
     "@heroicons/react": "^2.2.0",
     "@hono/zod-validator": "^0.7.6",
     "@tanstack/react-query": "^5.102.8",

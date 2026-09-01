@@ -4,7 +4,7 @@
  * agent runs, connection tests). Append-only, no `updated_at`. `costMicrocents` stays null until an
  * app supplies a pricing table — cheap to record now, impossible to backfill later.
  */
-import type { AiProvider } from '@gmgo/shared/ai/config'
+import type { AiProvider } from '@rocketflare/shared/ai/config'
 import { relations } from 'drizzle-orm'
 import { bigint, index, integer, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core'
 import { tenantRef } from './_helpers'

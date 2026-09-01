@@ -1,6 +1,6 @@
-# GMGO Starter Kit
+# Rocketflare
 
-Multi-tenant SaaS starter for internal GM apps, a **pnpm workspace**: Hono API + React UI in one
+Multi-tenant SaaS starter for internal apps, a **pnpm workspace**: Hono API + React UI in one
 Cloudflare Worker (`apps/web`), a CLI (`apps/cli`), private zod contracts
 (`packages/shared`). `AGENTS.md` symlinks here.
 
@@ -14,7 +14,7 @@ Cloudflare Worker (`apps/web`), a CLI (`apps/cli`), private zod contracts
 
 - **Runtime**: Cloudflare Workers (`nodejs_compat`); one Worker exports `fetch`+`queue`+`scheduled`
   + DO/Workflow classes (`src/worker.ts`). Node 24, pnpm 10
-- **API**: Hono 4, zod contracts from `@gmgo/shared`, CASL. **DB**: Postgres 17 + pgvector —
+- **API**: Hono 4, zod contracts from `@rocketflare/shared`, CASL. **DB**: Postgres 17 + pgvector —
   Neon via Hyperdrive deployed, Docker locally; Drizzle over `postgres.js` (only driver), 1 client/request
 - **Auth**: arctic (Google, Microsoft) + magic link + dev-login; `__Host-session`; API keys; KV rate limit
 - **Async / realtime**: Queues (`JOBS_QUEUE`), `NotificationsHub` DO `/ws`, R2 (`FILES`), cron, Workflows
@@ -23,7 +23,7 @@ Cloudflare Worker (`apps/web`), a CLI (`apps/cli`), private zod contracts
 - **Analytics**: drizzle-cube at `/cubejs-api`+`/mcp`, every cube tenant-scoped in `sql()`; fact tables
   on the `:15` cron; TS dashboard templates → `analytics_pages`
 - **UI**: React 18 + Vite, DaisyUI 5 / Tailwind v4, React Router 6, TanStack Query 5; served as `ASSETS`
-- **CLI**: commander + chalk + open; `tsx` in dev, `tsc` → `dist/cli.js` (bin `gmgo`)
+- **CLI**: commander + chalk + open; `tsx` in dev, `tsc` → `dist/cli.js` (bin `rocketflare`)
 - **Tests**: vitest projects `api` · `api-isolated` · `ui` · `config` (Postgres :5433); cli
 - **Lint**: Biome 2 at the root (single quotes, `asNeeded` semicolons, 100 cols)
 
@@ -32,20 +32,20 @@ Cloudflare Worker (`apps/web`), a CLI (`apps/cli`), private zod contracts
 ```bash
 pnpm dev:db:up && pnpm db:migrate  # Postgres :5432; role → migrations → grants
 pnpm seed && pnpm dev  # demo tenant/users/key; wrangler :3001 + vite :3000
-pnpm cli login --server http://localhost:3001  # browser → ~/.gmgo/config.json, then whoami
+pnpm cli login --server http://localhost:3001  # browser → ~/.rocketflare/config.json, then whoami
 pnpm test:db:up && pnpm test  # every package; web loads .env.test
 pnpm lint · pnpm typecheck · pnpm build  # workspace-wide
 pnpm web <script>  # any apps/web script (test:api, db:check, db:*-facts…)
 pnpm db:generate · pnpm db:studio · pnpm deploy[:staging] · pnpm provision
 ```
 
-`wrangler` lives in `apps/web`: `pnpm --filter @gmgo/web exec wrangler …`, never at the root. No
+`wrangler` lives in `apps/web`: `pnpm --filter @rocketflare/web exec wrangler …`, never at the root. No
 `RESEND_API_KEY` → magic-link URLs are logged; no AI key → chat/agents 503; zero creds locally.
 
 ## Architecture
 
 ```
-apps/web/          @gmgo/web — wrangler*.toml, worker-configuration.d.ts, .dev.vars(.example), .env.test,
+apps/web/          @rocketflare/web — wrangler*.toml, worker-configuration.d.ts, .dev.vars(.example), .env.test,
 │                  drizzle.config.ts, migrations/, scripts/, tests/
 │  src/worker.ts   export default { fetch, queue, scheduled }; export { NotificationsHub, AgentRunWorkflow }
 │  src/config.ts   loadConfig(env): zod over Cloudflare.Env; routes read c.get('config')
@@ -55,16 +55,16 @@ apps/web/          @gmgo/web — wrangler*.toml, worker-configuration.d.ts, .dev
 │                  agents/, fact-tables/, prompts.ts) · workflows/ · observability/ · utils/ · queues/ · durable-objects/
 │  src/dashboards/ TS dashboard templates → analytics_pages    src/ui/  React app
 │                  (per-dir CLAUDE.md: permissions, db/schema, dashboards, api/*, ui)
-apps/cli/          @gmgo/cli — src/cli.ts, commands/*, api.ts (only fetch site), config.ts, login.ts
-packages/shared/   @gmgo/shared — src/*.ts zod contracts, errors, pagination, permissions (CLAUDE.md)
+apps/cli/          @rocketflare/cli — src/cli.ts, commands/*, api.ts (only fetch site), config.ts, login.ts
+packages/shared/   @rocketflare/shared — src/*.ts zod contracts, errors, pagination, permissions (CLAUDE.md)
 ```
 
-**`packages/shared`.** Private, no build: `@gmgo/shared/<module>` → `./src/<module>.ts` (incl. `ai/*`,
+**`packages/shared`.** Private, no build: `@rocketflare/shared/<module>` → `./src/<module>.ts` (incl. `ai/*`,
 `analytics`). Imports only `zod`, siblings, type-only `@casl/ability`.
 
 **`apps/cli`.** `login` opens `GET /auth/cli?redirect_uri=http://127.0.0.1:<port>/callback`; the server
 mints a tenant API key `cli:<host>` → `?key=&tenant_id=&tenant_name=`; stored `0600` in
-`~/.gmgo/config.json` (`GMGO_API_KEY`/`GMGO_URL` for CI). Also `logout|whoami|status|config`,
+`~/.rocketflare/config.json` (`ROCKETFLARE_API_KEY`/`ROCKETFLARE_URL` for CI). Also `logout|whoami|status|config`,
 `members|keys|activity list --json` (@.claude/rules/cli.md)
 
 ## Config model

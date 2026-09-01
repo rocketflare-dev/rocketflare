@@ -36,7 +36,7 @@ describe('loadConfig', () => {
 
   it('applies defaults for optional vars', () => {
     const cfg = loadConfig(base)
-    expect(cfg.APP_NAME).toBe('GMGO Starter')
+    expect(cfg.APP_NAME).toBe('Rocketflare')
     expect(cfg.RELEASE_VERSION).toBe('dev')
     expect(cfg.LOG_LEVEL).toBe('info')
     expect(cfg.BOOTSTRAP_ADMIN_EMAILS).toEqual([])

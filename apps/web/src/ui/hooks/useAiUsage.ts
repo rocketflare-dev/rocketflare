@@ -4,7 +4,7 @@
  * (`{ days }`), not on the timestamps: computing `new Date()` into the key would change it on
  * every render and refetch forever. The window is derived inside `queryFn`.
  */
-import { aiUsageSummarySchema } from '@gmgo/shared/ai/usage'
+import { aiUsageSummarySchema } from '@rocketflare/shared/ai/usage'
 import { queryOptions, useQuery } from '@tanstack/react-query'
 import { api } from '@/ui/lib/api-client'
 import { queryKeys, toSearchParams } from '@/ui/lib/query-keys'

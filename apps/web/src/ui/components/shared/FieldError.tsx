@@ -1,5 +1,5 @@
 /**
- * Inline field error. Forms are plain React + the `@gmgo/shared` zod schema the server uses
+ * Inline field error. Forms are plain React + the `@rocketflare/shared` zod schema the server uses
  * (`schema.safeParse(values)` before submit); this renders one issue's message.
  */
 export function FieldError({ message, id }: { message?: string | null; id?: string }) {

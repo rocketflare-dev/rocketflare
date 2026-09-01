@@ -3,8 +3,8 @@
  * Invitation`), plus the tenant-free `GET /pending` — invitations addressed to MY email across
  * tenants (the login-prologue banner). The public token routes live in `invite.ts`.
  */
-import { paginationQuerySchema } from '@gmgo/shared/pagination'
-import { bulkInviteRequestSchema, inviteMemberRequestSchema } from '@gmgo/shared/tenants'
+import { paginationQuerySchema } from '@rocketflare/shared/pagination'
+import { bulkInviteRequestSchema, inviteMemberRequestSchema } from '@rocketflare/shared/tenants'
 import { guardPermission } from '../middleware/permissions'
 import { recordActivity } from '../services/activity'
 import {

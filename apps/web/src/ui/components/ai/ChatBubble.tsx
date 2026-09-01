@@ -4,7 +4,7 @@
  * indicator, `aria-busy`), optional tool one-liners, and the `usage` footnote appears once the
  * `usage` frame (or the persisted message) carries it. Memoised for the same reason `Markdown` is.
  */
-import type { TokenUsage } from '@gmgo/shared/ai/chat'
+import type { TokenUsage } from '@rocketflare/shared/ai/chat'
 import { memo } from 'react'
 import { Markdown } from './Markdown'
 

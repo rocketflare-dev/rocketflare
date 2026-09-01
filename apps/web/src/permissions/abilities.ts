@@ -18,7 +18,7 @@ import {
   type PackedRules,
   type Role,
   type Subjects,
-} from '@gmgo/shared/permissions'
+} from '@rocketflare/shared/permissions'
 
 type Can = AbilityBuilder<AppAbility>['can']
 type Cannot = AbilityBuilder<AppAbility>['cannot']

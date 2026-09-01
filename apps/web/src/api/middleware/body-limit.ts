@@ -4,7 +4,7 @@
  * one exception: it gets `MAX_UPLOAD_BYTES` plus multipart overhead, and the handler enforces the
  * exact per-file limit. Over-limit → 413 in the shared envelope.
  */
-import { MAX_UPLOAD_BYTES } from '@gmgo/shared/files'
+import { MAX_UPLOAD_BYTES } from '@rocketflare/shared/files'
 import type { Context } from 'hono'
 import { bodyLimit } from 'hono/body-limit'
 

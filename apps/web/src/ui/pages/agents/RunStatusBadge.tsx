@@ -3,7 +3,7 @@
  * (`queued`/`running` info, `succeeded` success, `failed`/`cancelled` error) and an ACTIVE run
  * pulses its dot so a live row reads as live at a glance. Tokens only — never a palette class.
  */
-import { type AgentRunStatus, isRunActive } from '@gmgo/shared/ai/agents'
+import { type AgentRunStatus, isRunActive } from '@rocketflare/shared/ai/agents'
 
 const LABELS: Record<AgentRunStatus, string> = {
   queued: 'Queued',

@@ -4,14 +4,15 @@
  * and for `manage AiConfig` holders: set default, test, edit, delete. Members (`read`) see the
  * readiness and a read-only list. Credentials never reach the browser (`hasCredential` only).
  */
+
+import { PlusIcon, SparklesIcon } from '@heroicons/react/24/outline'
 import {
   type AiConfig,
   type AiScope,
   type AiScopeReadiness,
   shortModelName,
   type TestAiConfigResponse,
-} from '@gmgo/shared/ai/config'
-import { PlusIcon, SparklesIcon } from '@heroicons/react/24/outline'
+} from '@rocketflare/shared/ai/config'
 import { useState } from 'react'
 import {
   ConfirmModal,

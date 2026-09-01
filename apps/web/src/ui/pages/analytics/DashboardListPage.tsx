@@ -7,7 +7,7 @@
  * admin-only, so the query is gated on the same ability). No drizzle-cube code here — the
  * library only loads with the view / explore pages.
  */
-import type { AnalyticsPage, FactTableStatus } from '@gmgo/shared/analytics'
+
 import {
   ArrowPathIcon,
   BeakerIcon,
@@ -15,6 +15,7 @@ import {
   PlusIcon,
   Squares2X2Icon,
 } from '@heroicons/react/24/outline'
+import type { AnalyticsPage, FactTableStatus } from '@rocketflare/shared/analytics'
 import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { getTemplate } from '@/dashboards'

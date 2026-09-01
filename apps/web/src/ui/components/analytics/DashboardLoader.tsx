@@ -9,7 +9,7 @@
  * mode flushes it, and while anything is unsaved a `beforeunload` guard warns the reader.
  * Must render inside `CubeClientProvider`.
  */
-import type { AnalyticsPage, DashboardConfigJson } from '@gmgo/shared/analytics'
+import type { AnalyticsPage, DashboardConfigJson } from '@rocketflare/shared/analytics'
 import { AnalyticsDashboard, type DashboardConfig } from 'drizzle-cube/client'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { LoadingIndicator } from '@/ui/components/LoadingIndicator'

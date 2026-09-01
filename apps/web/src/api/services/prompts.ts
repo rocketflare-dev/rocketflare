@@ -11,7 +11,7 @@ import {
   type PromptKey,
   type PromptRegistry,
   type PromptWithResolved,
-} from '@gmgo/shared/ai/prompts'
+} from '@rocketflare/shared/ai/prompts'
 import { and, eq } from 'drizzle-orm'
 import type { Database } from '../../db/client'
 import { type PromptOverrideRow, promptOverrides } from '../../db/schema'

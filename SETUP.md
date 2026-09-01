@@ -13,7 +13,7 @@ code conventions are in `.claude/rules/`. If this is a freshly copied kit, do
 `package.json` delegates to the packages (`pnpm dev` → web, `pnpm cli …` → the CLI via `tsx`,
 `pnpm web <script>` → any `apps/web` script). `wrangler` and `cfld` are devDependencies of
 `apps/web`, so they are run as `pnpm web exec wrangler …` (shorthand for
-`pnpm --filter @gmgo/web exec wrangler …`) — `pnpm exec wrangler` at the root does not exist.
+`pnpm --filter @rocketflare/web exec wrangler …`) — `pnpm exec wrangler` at the root does not exist.
 
 Legend: `[ready]` works out of the box · `[config]` needs your configuration
 
@@ -62,7 +62,7 @@ pnpm web db:check     # apps/web/scripts/test-db-connection.ts
 pnpm db:migrate       # db-roles --phase=role → migrations → db-roles --phase=grants
 ```
 Verify: `db:check` prints the server version; `db:migrate` ends with the applied migration count and
-no `role "gmgo_app" does not exist` error. Why three steps: a policy's `TO gmgo_app` needs the role
+no `role "rocketflare_app" does not exist` error. Why three steps: a policy's `TO rocketflare_app` needs the role
 before migrations; the `REVOKE`s need the tables after. With `APP_DATABASE_URL` unset the role is
 created `NOLOGIN` and RLS stays inert ([`docs/RLS.md`](docs/RLS.md)).
 
@@ -118,16 +118,16 @@ pnpm cli whoami
 
 > **Headless / no browser** (CI, agents): skip `pnpm cli login`. Sign in with the dev-login cookie
 > (or any session) and hit `GET /auth/cli?redirect_uri=http://127.0.0.1:8765/callback` — the
-> `Location` header carries `key=`; export it as `GMGO_API_KEY` with `GMGO_URL=http://localhost:3001`,
+> `Location` header carries `key=`; export it as `ROCKETFLARE_API_KEY` with `ROCKETFLARE_URL=http://localhost:3001`,
 > then `pnpm cli whoami`. In real environments create a tenant API key in Settings → API keys instead.
 
 `login` starts a loopback listener on the first free port in `127.0.0.1:8765–8770` and opens
 `/auth/cli?redirect_uri=http://127.0.0.1:<port>/callback`; after login + tenant select the server
 mints a tenant API key named `cli:<your hostname>` and redirects back. The key is stored in
-`~/.gmgo/config.json` (mode `0600`) and is never printed in full.
+`~/.rocketflare/config.json` (mode `0600`) and is never printed in full.
 Verify: `whoami` prints your email, the tenant name and a key prefix; `pnpm cli members list --json |
-head` prints JSON; `ls -l ~/.gmgo/config.json` shows `-rw-------`; a wrong key exits `2`. For CI or
-scripts, `GMGO_API_KEY` + `GMGO_URL` in the environment replace the config file (no browser).
+head` prints JSON; `ls -l ~/.rocketflare/config.json` shows `-rw-------`; a wrong key exits `2`. For CI or
+scripts, `ROCKETFLARE_API_KEY` + `ROCKETFLARE_URL` in the environment replace the config file (no browser).
 
 ### 1.8 Tests
 ```bash
@@ -269,7 +269,7 @@ Verify: the drizzle-cube CLI's `meta` lists `ActivityEvents`, `TenantActivityDai
 `Users`.
 
 ### 2.8 Rebrand checklist
-See [`docs/ADAPTING.md`](docs/ADAPTING.md) §1 — package names (`@gmgo/*`), worker names, DB names,
+See [`docs/ADAPTING.md`](docs/ADAPTING.md) §1 — package names (`@rocketflare/*`), worker names, DB names,
 CLI bin / config dir / env prefix, themes, logo, `EMAIL_FROM`.
 
 ---
@@ -358,7 +358,7 @@ Verify: the host serves the app over HTTPS; the parity test still passes (`route
    informational; one tag ships web and cli together.)
 2. `git tag X.Y.Z && git push origin X.Y.Z` → **staging** deploys (`deploy.yml`: CI gate → parity
    with `REQUIRE_PROVISIONED=1` → `pnpm db:migrate:ci` on the staging branch →
-   `pnpm --filter @gmgo/web build:ui` → `pnpm --filter @gmgo/web exec wrangler deploy -c
+   `pnpm --filter @rocketflare/web build:ui` → `pnpm --filter @rocketflare/web exec wrangler deploy -c
    wrangler.staging.toml --var RELEASE_VERSION:X.Y.Z`). The job fails if tag ≠ root version.
 3. Check staging: `/api/health`, the version in the nav footer, the flow you changed.
 4. `gh release create X.Y.Z --title X.Y.Z --generate-notes` → **production** deploys the release's

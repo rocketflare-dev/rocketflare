@@ -3,8 +3,8 @@
  * worker-configuration.d.ts), variables are declared once here, and every `Hono` instance is
  * `Hono<AppEnv>` via `utils/routes/router.ts`. No `declare module 'hono'` augmentation.
  */
-import type { AppAbility } from '@gmgo/shared/permissions'
-import type { MembershipRole } from '@gmgo/shared/tenants'
+import type { AppAbility } from '@rocketflare/shared/permissions'
+import type { MembershipRole } from '@rocketflare/shared/tenants'
 import type { Context } from 'hono'
 import type { PinoLogger } from 'hono-pino'
 import type { AppConfig } from '../config'

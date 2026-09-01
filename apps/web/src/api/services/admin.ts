@@ -8,7 +8,7 @@ import type {
   AccessRequest,
   AccessRequestListQuery,
   DecideAccessRequest,
-} from '@gmgo/shared/access-requests'
+} from '@rocketflare/shared/access-requests'
 import type {
   AdminTenantDetail,
   AdminTenantListItem,
@@ -16,8 +16,8 @@ import type {
   AdminUserDetail,
   AdminUserListItem,
   AdminUserListQuery,
-} from '@gmgo/shared/admin'
-import { NON_MEMBER_ROLES } from '@gmgo/shared/tenants'
+} from '@rocketflare/shared/admin'
+import { NON_MEMBER_ROLES } from '@rocketflare/shared/tenants'
 import { and, asc, desc, eq, ilike, inArray, isNotNull, or, sql } from 'drizzle-orm'
 import type { AppConfig } from '../../config'
 import type { Database } from '../../db/client'

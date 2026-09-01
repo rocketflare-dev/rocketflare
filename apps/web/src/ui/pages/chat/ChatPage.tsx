@@ -6,8 +6,7 @@
  * `EmptyState` whose action is "Configure AI" for `manage AiConfig` holders and "ask an admin"
  * for everyone else. Lazy in App.tsx so the markdown renderer is its own chunk.
  */
-import type { Conversation } from '@gmgo/shared/ai/chat'
-import { shortModelName } from '@gmgo/shared/ai/config'
+
 import {
   ChatBubbleLeftRightIcon,
   PaperAirplaneIcon,
@@ -16,6 +15,8 @@ import {
   StopIcon,
   TrashIcon,
 } from '@heroicons/react/24/outline'
+import type { Conversation } from '@rocketflare/shared/ai/chat'
+import { shortModelName } from '@rocketflare/shared/ai/config'
 import { type FormEvent, type KeyboardEvent, useEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { ChatBubble } from '@/ui/components/ai/ChatBubble'

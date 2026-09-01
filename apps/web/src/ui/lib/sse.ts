@@ -5,7 +5,7 @@
  * line; `data` is validated with `chatStreamEventSchema` and anything that fails is dropped (a
  * newer server may emit a frame this build does not know — never a crash mid-reply).
  */
-import { type ChatStreamEvent, chatStreamEventSchema } from '@gmgo/shared/ai/chat'
+import { type ChatStreamEvent, chatStreamEventSchema } from '@rocketflare/shared/ai/chat'
 
 /** One raw SSE frame before JSON parsing. `event` defaults to `message` per the spec. */
 export interface SseFrame {

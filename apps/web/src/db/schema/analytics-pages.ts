@@ -4,7 +4,7 @@
  * table. `templateKey` non-null means the page was seeded from `src/dashboards/` and can be reset
  * to its template (`POST /api/analytics/pages/:id/reset`); NULL = user-created. `slug` is unique
  * per tenant — template pages use the template key as their slug, which is what makes
- * `ensureDefaultDashboards` idempotent. The shared contract is `@gmgo/shared/analytics`
+ * `ensureDefaultDashboards` idempotent. The shared contract is `@rocketflare/shared/analytics`
  * (`config` typed loosely there; the drizzle-cube type lives only on this side).
  */
 import type { DashboardConfig } from 'drizzle-cube/client'

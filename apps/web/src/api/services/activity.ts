@@ -3,7 +3,7 @@
  * recordActivity(...))` — fire-and-forget via `waitUntil`, so a failed audit write is logged, never
  * surfaced. Also called inside transactions (tenant create) where the caller passes the `tx`.
  */
-import type { ActivityMetadata } from '@gmgo/shared/activity'
+import type { ActivityMetadata } from '@rocketflare/shared/activity'
 import type { Database } from '../../db/client'
 import { activityEvents } from '../../db/schema'
 

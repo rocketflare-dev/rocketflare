@@ -14,8 +14,8 @@ import {
   conversationWithMessagesSchema,
   type Message,
   type TokenUsage,
-} from '@gmgo/shared/ai/chat'
-import { paginatedResponse } from '@gmgo/shared/pagination'
+} from '@rocketflare/shared/ai/chat'
+import { paginatedResponse } from '@rocketflare/shared/pagination'
 import {
   keepPreviousData,
   queryOptions,

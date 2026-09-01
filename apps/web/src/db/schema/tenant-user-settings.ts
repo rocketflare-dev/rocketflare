@@ -4,7 +4,7 @@
  * to `preferences` jsonb (typed by `userPreferencesSchema` in src/shared). Composite PK, tenant
  * first. Profile fields that belong to the person (name, avatar) stay on `users`.
  */
-import type { UserPreferences } from '@gmgo/shared/user-settings'
+import type { UserPreferences } from '@rocketflare/shared/user-settings'
 import { relations } from 'drizzle-orm'
 import { index, jsonb, pgTable, primaryKey, uuid } from 'drizzle-orm/pg-core'
 import { tenantRef, timestamps } from './_helpers'

@@ -9,7 +9,7 @@
  * State is pushed into `stores/websocketStore.ts`; events go to `onEvent` subscribers
  * (`WebSocketProvider` turns them into query invalidations). Components never touch this module.
  */
-import { type RealtimeEvent, realtimeEventSchema } from '@gmgo/shared/realtime'
+import { type RealtimeEvent, realtimeEventSchema } from '@rocketflare/shared/realtime'
 import { useWebSocketStore } from '../stores/websocketStore'
 
 export const BASE_BACKOFF_MS = 1000

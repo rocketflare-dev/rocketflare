@@ -3,20 +3,20 @@
 services:
   postgres-dev:
     image: pgvector/pgvector:pg17
-    container_name: gmgo-dev-postgres
+    container_name: rocketflare-dev-postgres
     environment:
-      POSTGRES_DB: gmgo_dev
-      POSTGRES_USER: gmgo
-      POSTGRES_PASSWORD: gmgo_pass
+      POSTGRES_DB: rocketflare_dev
+      POSTGRES_USER: rocketflare
+      POSTGRES_PASSWORD: rocketflare_pass
     ports:
       - "5432:5432"
     volumes:
-      - gmgo-dev-data:/var/lib/postgresql/data
+      - rocketflare-dev-data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U gmgo -d gmgo_dev"]
+      test: ["CMD-SHELL", "pg_isready -U rocketflare -d rocketflare_dev"]
       interval: 5s
       timeout: 5s
       retries: 5
 
 volumes:
-  gmgo-dev-data:
+  rocketflare-dev-data:

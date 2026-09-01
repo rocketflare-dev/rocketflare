@@ -2,7 +2,7 @@
  * Invitations end to end (D9, D12): create / bulk / resend / revoke, public details, transactional
  * accept (email must match; never demotes), pending list across tenants, prune.
  */
-import type { SessionResponse } from '@gmgo/shared/auth'
+import type { SessionResponse } from '@rocketflare/shared/auth'
 import { and, eq } from 'drizzle-orm'
 import { describe, expect, it, vi } from 'vitest'
 import { requestMagicLink } from '@/api/routes/auth/magic-link'

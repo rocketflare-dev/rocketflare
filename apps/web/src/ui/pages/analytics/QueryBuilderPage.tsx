@@ -7,8 +7,9 @@
  * new full-width row (`rows` mode: a `RowLayout` entry plus mirrored x/y/w/h on the portlet),
  * saving the whole config with `PATCH /pages/:id`.
  */
-import type { AnalyticsPage } from '@gmgo/shared/analytics'
+
 import { BookmarkSquareIcon } from '@heroicons/react/24/outline'
+import type { AnalyticsPage } from '@rocketflare/shared/analytics'
 import {
   AnalysisBuilder,
   type AnalysisBuilderRef,
@@ -68,7 +69,7 @@ export default function QueryBuilderPage() {
         <div className="surface-panel !p-0 overflow-hidden" style={{ minHeight: '70vh' }}>
           <AnalysisBuilder
             ref={builder}
-            storageKey="gmgo-analysis-builder"
+            storageKey="rocketflare-analysis-builder"
             maxHeight="calc(100vh - 220px)"
           />
         </div>

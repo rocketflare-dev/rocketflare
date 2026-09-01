@@ -3,7 +3,7 @@
  * Tenant-free; the email is always the session user's (the body's is ignored when signed in).
  * Creates or updates the ONE pending request for that address.
  */
-import { createAccessRequestSchema } from '@gmgo/shared/access-requests'
+import { createAccessRequestSchema } from '@rocketflare/shared/access-requests'
 import { ensureAccessRequest } from '../services/auth'
 import { withAuth } from '../utils/routes/route-helpers'
 import { createRouter } from '../utils/routes/router'

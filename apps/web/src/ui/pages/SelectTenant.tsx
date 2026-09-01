@@ -3,8 +3,12 @@
  * (`createTenantRequestSchema`; slug derived with the shared `slugify`). Disabled in single mode.
  */
 
-import { type CreateTenantRequest, createTenantRequestSchema, slugify } from '@gmgo/shared/tenants'
 import { BuildingOffice2Icon, ChevronRightIcon, PlusIcon } from '@heroicons/react/24/outline'
+import {
+  type CreateTenantRequest,
+  createTenantRequestSchema,
+  slugify,
+} from '@rocketflare/shared/tenants'
 import { useState } from 'react'
 import { Navigate, useNavigate, useSearchParams } from 'react-router-dom'
 import { AuthCard, SignedInAs } from '@/ui/components/AuthCard'

@@ -4,13 +4,13 @@
  * "resend" mints a new token (the old link dies). Accept never demotes an existing higher role.
  */
 
-import type { PaginationQuery } from '@gmgo/shared/pagination'
+import type { PaginationQuery } from '@rocketflare/shared/pagination'
 import type {
   Invitation,
   InvitationDetails,
   InvitationStatus,
   TenantRole,
-} from '@gmgo/shared/tenants'
+} from '@rocketflare/shared/tenants'
 import { and, desc, eq, isNull, sql } from 'drizzle-orm'
 import type { AppConfig } from '../../config'
 import type { Database } from '../../db/client'

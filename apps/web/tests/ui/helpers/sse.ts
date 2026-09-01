@@ -3,7 +3,7 @@
  * Hono's `streamSSE` writes them (`event: <type>\ndata: <json>\n\n`) and enqueued through a
  * `ReadableStream`, optionally split at arbitrary byte offsets to exercise reassembly.
  */
-import type { ChatStreamEvent } from '@gmgo/shared/ai/chat'
+import type { ChatStreamEvent } from '@rocketflare/shared/ai/chat'
 
 export function encodeSseFrame(event: ChatStreamEvent): string {
   return `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`

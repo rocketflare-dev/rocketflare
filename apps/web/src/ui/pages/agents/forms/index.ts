@@ -4,7 +4,7 @@
  * `inputSchema` and answers 400 with field issues, which the modal surfaces. Adding an agent to the
  * kit = one shared input schema + one entry here.
  */
-import type { AgentKey } from '@gmgo/shared/ai/agents'
+import type { AgentKey } from '@rocketflare/shared/ai/agents'
 import { z } from 'zod'
 import { JsonForm } from './JsonForm'
 import { summarizeTextForm } from './summarize-text'

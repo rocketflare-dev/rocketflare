@@ -2,7 +2,7 @@
  * Development seed (D9, D25) — idempotent, run as `pnpm seed` (loads .dev.vars). Multi-tenant:
  * tenant `Acme` (`acme`) with owner/admin/member `*@example.test` (verified), a pending invitation
  * for `invited@example.test`, one API key printed ONCE (only its hash is stored) and a global
- * admin `admin@gmgo.local`. `TENANCY_MODE=single`: the single tenant is named after `APP_NAME`
+ * admin `admin@rocketflare.local`. `TENANCY_MODE=single`: the single tenant is named after `APP_NAME`
  * with slug `default` instead. Node-only script; the Worker never imports it.
  */
 import { and, eq, isNull, sql } from 'drizzle-orm'
@@ -15,7 +15,7 @@ import { apiKeys, teamInvitations, tenants, tenantUsers, users } from '../src/db
 
 const DATABASE_URL = process.env.DATABASE_URL
 const TENANCY_MODE = process.env.TENANCY_MODE === 'single' ? 'single' : 'multi'
-const APP_NAME = process.env.APP_NAME || 'GMGO Starter'
+const APP_NAME = process.env.APP_NAME || 'Rocketflare'
 const APP_URL = process.env.APP_URL || 'http://localhost:3000'
 
 const SEED_USERS = [
@@ -23,7 +23,7 @@ const SEED_USERS = [
   { email: 'admin@example.test', name: 'Adam Admin', role: 'admin' },
   { email: 'member@example.test', name: 'Mia Member', role: 'member' },
 ] as const
-const GLOBAL_ADMIN = { email: 'admin@gmgo.local', name: 'Platform Admin' }
+const GLOBAL_ADMIN = { email: 'admin@rocketflare.local', name: 'Platform Admin' }
 const INVITED_EMAIL = 'invited@example.test'
 const SEED_KEY_NAME = 'Seed key'
 

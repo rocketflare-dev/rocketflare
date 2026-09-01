@@ -23,7 +23,7 @@ import {
   THINKING_MIN_BUDGET,
   type UpsertAiConfigRequest,
   upsertAiConfigRequestSchema,
-} from '@gmgo/shared/ai/config'
+} from '@rocketflare/shared/ai/config'
 import { type FormEvent, useState } from 'react'
 import { FieldError, fieldErrorFor, Modal } from '@/ui/components/shared'
 import {

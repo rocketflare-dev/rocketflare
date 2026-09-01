@@ -5,7 +5,7 @@
  * gets: the single tenant, a personal workspace, or nothing (→ /pending or /select-tenant).
  * `buildSessionResponse` is `/auth/session`'s body, also returned by select-tenant and accept.
  */
-import type { SessionResponse, TenantSummary } from '@gmgo/shared/auth'
+import type { SessionResponse, TenantSummary } from '@rocketflare/shared/auth'
 import { and, desc, eq, isNull, sql } from 'drizzle-orm'
 import type { AppConfig } from '../../config'
 import type { Database } from '../../db/client'

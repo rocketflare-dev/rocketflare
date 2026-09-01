@@ -6,13 +6,14 @@
  * is a `DELETE` — absence is the default, never a sentinel. Members (`read AiConfig`) see the
  * table read-only; the tab itself is shown to `manage AiConfig` holders.
  */
+
+import { CpuChipIcon } from '@heroicons/react/24/outline'
 import {
   type AgentModelEntry,
   type AgentModelSource,
   upsertAgentModelRequestSchema,
-} from '@gmgo/shared/ai/agent-models'
-import { type AiConfig, shortModelName } from '@gmgo/shared/ai/config'
-import { CpuChipIcon } from '@heroicons/react/24/outline'
+} from '@rocketflare/shared/ai/agent-models'
+import { type AiConfig, shortModelName } from '@rocketflare/shared/ai/config'
 import { type FormEvent, useState } from 'react'
 import { Link } from 'react-router-dom'
 import {

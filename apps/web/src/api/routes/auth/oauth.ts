@@ -7,7 +7,7 @@
  * Tokens are AES-GCM encrypted at rest — `OAUTH_ENCRYPTION_KEY` is checked before the redirect.
  * Unknown or unconfigured provider → 404 envelope.
  */
-import { ERROR_CODES } from '@gmgo/shared/errors'
+import { ERROR_CODES } from '@rocketflare/shared/errors'
 import { generateCodeVerifier, generateState } from 'arctic'
 import { oauthRedirectUri } from '../../../config'
 import {

@@ -3,7 +3,7 @@
  * a wrong type or an oversized file is refused client-side (no request); "Remove" clears the
  * avatar via `PATCH /api/me`.
  */
-import { MAX_UPLOAD_BYTES } from '@gmgo/shared/files'
+import { MAX_UPLOAD_BYTES } from '@rocketflare/shared/files'
 import { fireEvent, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import Profile from '@/ui/pages/Profile'

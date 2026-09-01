@@ -4,9 +4,9 @@
  * route records; agents will too), and `summarizeUsage` answers `GET /api/ai/usage/summary`.
  * Cost stays null — the kit counts tokens, an app supplies prices.
  */
-import type { TokenUsage } from '@gmgo/shared/ai/chat'
-import type { AiProvider } from '@gmgo/shared/ai/config'
-import type { AiUsageRowSummary, AiUsageSummary } from '@gmgo/shared/ai/usage'
+import type { TokenUsage } from '@rocketflare/shared/ai/chat'
+import type { AiProvider } from '@rocketflare/shared/ai/config'
+import type { AiUsageRowSummary, AiUsageSummary } from '@rocketflare/shared/ai/usage'
 import { and, eq, gte, lt, sql } from 'drizzle-orm'
 import type { Database } from '../../../db/client'
 import { aiUsage } from '../../../db/schema'

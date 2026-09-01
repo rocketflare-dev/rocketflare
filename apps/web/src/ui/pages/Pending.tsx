@@ -4,8 +4,8 @@
  * `POST /api/access-requests` with the shared `createAccessRequestSchema`.
  */
 
-import { createAccessRequestSchema } from '@gmgo/shared/access-requests'
 import { ClockIcon, NoSymbolIcon, PaperAirplaneIcon } from '@heroicons/react/24/outline'
+import { createAccessRequestSchema } from '@rocketflare/shared/access-requests'
 import { useState } from 'react'
 import { Navigate } from 'react-router-dom'
 import { AuthCard, SignedInAs } from '@/ui/components/AuthCard'

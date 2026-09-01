@@ -4,7 +4,7 @@
  * fetch-based Langfuse batcher (`langfuse-fetch.ts`), selected by `tracing.ts` when both keys are
  * present. No OpenTelemetry dependency — `@opentelemetry/sdk-node` cannot run in Workers.
  */
-import type { TokenUsage } from '@gmgo/shared/ai/chat'
+import type { TokenUsage } from '@rocketflare/shared/ai/chat'
 
 export interface TraceParams {
   /** Stable per agent/surface, e.g. `chat`, `summarize-text`. */

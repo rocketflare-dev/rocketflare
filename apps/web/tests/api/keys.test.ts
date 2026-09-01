@@ -3,6 +3,7 @@
  */
 import { eq } from 'drizzle-orm'
 import { describe, expect, it } from 'vitest'
+import { API_KEY_PREFIX_LENGTH } from '@/api/utils/core/hash'
 import { apiKeys } from '@/db/schema'
 import {
   bearerHeader,
@@ -38,8 +39,8 @@ describe('/api/keys', () => {
     const created = await json<{ id: string; key: string; keyPrefix: string; scopes: string[] }>(
       res
     )
-    expect(created.key).toMatch(/^gmgo_/)
-    expect(created.keyPrefix).toBe(created.key.slice(0, 12))
+    expect(created.key).toMatch(/^rocketflare_/)
+    expect(created.keyPrefix).toBe(created.key.slice(0, API_KEY_PREFIX_LENGTH))
     expect(created.scopes).toEqual(['read'])
     const list = await json<{ items: Array<Record<string, unknown>> }>(
       await request('/api/keys', { headers: a.cookie })

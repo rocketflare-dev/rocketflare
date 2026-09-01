@@ -11,8 +11,8 @@ import {
   type AgentRunWithEvents,
   agentRunListQuerySchema,
   createAgentRunRequestSchema,
-} from '@gmgo/shared/ai/agents'
-import { ERROR_CODES } from '@gmgo/shared/errors'
+} from '@rocketflare/shared/ai/agents'
+import { ERROR_CODES } from '@rocketflare/shared/errors'
 import { and, count, desc, eq } from 'drizzle-orm'
 import { type AgentRunRow, agentRuns } from '../../db/schema'
 import { guardPermission, isAdminLevel } from '../middleware/permissions'

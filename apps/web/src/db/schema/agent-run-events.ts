@@ -6,7 +6,7 @@
  * `seq` is assigned per run by the writer and continues across attempts; `(run_id, seq)` is unique
  * so a re-driven step can never duplicate a position.
  */
-import type { AgentRunEventType } from '@gmgo/shared/ai/agents'
+import type { AgentRunEventType } from '@rocketflare/shared/ai/agents'
 import { relations } from 'drizzle-orm'
 import {
   index,

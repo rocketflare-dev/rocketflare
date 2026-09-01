@@ -6,8 +6,8 @@
  *   → typed 500/503 · anything else → 500 with the message hidden outside development.
  * Registered first so even config-validation failures get the envelope and a log line.
  */
-import type { ApiErrorBody } from '@gmgo/shared/errors'
-import { ERROR_CODES } from '@gmgo/shared/errors'
+import type { ApiErrorBody } from '@rocketflare/shared/errors'
+import { ERROR_CODES } from '@rocketflare/shared/errors'
 import type { ErrorHandler, NotFoundHandler } from 'hono'
 import { HTTPException } from 'hono/http-exception'
 import type { ContentfulStatusCode } from 'hono/utils/http-status'

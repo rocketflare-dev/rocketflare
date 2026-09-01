@@ -14,7 +14,7 @@ import {
   testAiConfigRequestSchema,
   type UpsertAiConfigRequest,
   upsertAiConfigRequestSchema,
-} from '@gmgo/shared/ai/config'
+} from '@rocketflare/shared/ai/config'
 import { and, eq, ne } from 'drizzle-orm'
 import type { Database } from '../../db/client'
 import { type AiConfigRow, aiConfigs } from '../../db/schema'

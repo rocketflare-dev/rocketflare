@@ -8,7 +8,7 @@
  * from the row, never from a message. Missing `JOBS_QUEUE` for a large document throws
  * `JobsQueueNotConfiguredError` — never a silent inline fallback (D7).
  */
-import type { Document } from '@gmgo/shared/ai/embeddings'
+import type { Document } from '@rocketflare/shared/ai/embeddings'
 import { and, eq } from 'drizzle-orm'
 import type { AppConfig } from '../../../config'
 import type { Database } from '../../../db/client'

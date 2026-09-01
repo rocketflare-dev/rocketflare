@@ -3,7 +3,7 @@
  * and stores the object; MIME allowlist (415) and size cap (413); download streams the bytes with
  * Content-Type / Cache-Control / ETag; tenant isolation (404); delete = owner or admin+.
  */
-import { uploadResponseSchema } from '@gmgo/shared/files'
+import { uploadResponseSchema } from '@rocketflare/shared/files'
 import { and, eq } from 'drizzle-orm'
 import { describe, expect, it } from 'vitest'
 import { activityEvents, files, users } from '@/db/schema'

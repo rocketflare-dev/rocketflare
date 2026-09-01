@@ -2,7 +2,7 @@
  * OAuth provider marks (D11), drawn in `currentColor` so they follow the theme like every other
  * icon — no brand hex in the UI (ui.md "tokens, not raw colours").
  */
-import type { OAuthProviderName } from '@gmgo/shared/auth'
+import type { OAuthProviderName } from '@rocketflare/shared/auth'
 import type { ComponentType } from 'react'
 
 interface IconProps {

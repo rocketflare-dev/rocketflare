@@ -6,7 +6,7 @@
  * Postgres. Sliding 30-day expiry: `touchSession` extends at most hourly (SQL-throttled) and is
  * called through `waitUntil`, never awaited on the response path.
  */
-import type { MembershipRole, TenantStatus } from '@gmgo/shared/tenants'
+import type { MembershipRole, TenantStatus } from '@rocketflare/shared/tenants'
 import { and, eq, isNull, lt, or, sql } from 'drizzle-orm'
 import type { Database } from '../../db/client'
 import { tenants, type User, userSessions, users } from '../../db/schema'

@@ -3,13 +3,13 @@
  * plaintext is shown ONCE in the modal with a copy button and never again — and revoke.
  */
 
+import { ClipboardIcon, KeyIcon, PlusIcon } from '@heroicons/react/24/outline'
 import {
   type ApiKey,
   type ApiKeyScope,
   apiKeyScopeSchema,
   createApiKeyRequestSchema,
-} from '@gmgo/shared/api-keys'
-import { ClipboardIcon, KeyIcon, PlusIcon } from '@heroicons/react/24/outline'
+} from '@rocketflare/shared/api-keys'
 import { useState } from 'react'
 import {
   ConfirmModal,

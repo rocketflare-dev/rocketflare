@@ -14,7 +14,7 @@ const now = '2025-06-01T00:00:00Z'
 const key = (id: string, name: string, revokedAt: string | null) => ({
   id,
   name,
-  keyPrefix: `gm_${name.toLowerCase()}`,
+  keyPrefix: `rocketflare_${name.toLowerCase()}`,
   scopes: ['read', 'write'],
   createdByUserId: IDS.user,
   lastUsedAt: null,
@@ -34,7 +34,7 @@ describe('Settings → API keys', () => {
       ]),
     })
     renderWithProviders(<ApiKeys />, { session: makeSession() })
-    expect(await screen.findByText('gm_deploy…')).toBeInTheDocument()
+    expect(await screen.findByText('rocketflare_deploy…')).toBeInTheDocument()
     expect(screen.getByText('active')).toBeInTheDocument()
     expect(screen.getByText('revoked')).toBeInTheDocument()
     // Only the active key can be revoked
@@ -46,7 +46,7 @@ describe('Settings → API keys', () => {
       '/api/keys': paged([]),
       'POST /api/keys': {
         ...key('99999999-9999-4999-8999-999999999999', 'CI', null),
-        key: 'gm_live_SECRET_ONCE',
+        key: 'rocketflare_live_SECRET_ONCE',
       },
     })
     renderWithProviders(<ApiKeys />, { session: makeSession() })
@@ -62,7 +62,7 @@ describe('Settings → API keys', () => {
     fireEvent.submit(form)
 
     const shown = await screen.findByLabelText('API key')
-    expect(shown).toHaveValue('gm_live_SECRET_ONCE')
+    expect(shown).toHaveValue('rocketflare_live_SECRET_ONCE')
     expect(requestBody(fetchMock, 'POST /api/keys')).toEqual({
       name: 'CI',
       scopes: ['read'],
@@ -84,7 +84,7 @@ describe('Settings → API keys', () => {
         tenant: { id: IDS.tenant, name: 'Acme', slug: 'acme', role: 'member' },
       }),
     })
-    expect(await screen.findByText('gm_deploy…')).toBeInTheDocument()
+    expect(await screen.findByText('rocketflare_deploy…')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /Create key/ })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Revoke' })).not.toBeInTheDocument()
   })

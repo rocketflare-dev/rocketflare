@@ -28,11 +28,11 @@ jobs:
         env:
           POSTGRES_USER: test
           POSTGRES_PASSWORD: test
-          POSTGRES_DB: gmgo_test
+          POSTGRES_DB: rocketflare_test
         ports:
           - 5433:5432
         options: >-
-          --health-cmd "pg_isready -U test -d gmgo_test"
+          --health-cmd "pg_isready -U test -d rocketflare_test"
           --health-interval 5s --health-timeout 5s --health-retries 10
     steps:
       - uses: actions/checkout@v4
@@ -55,13 +55,13 @@ jobs:
       - name: Raise the test database connection limit
         run: |
           cid=$(docker ps --filter "ancestor=pgvector/pgvector:pg17" --format '{{.ID}}' | head -1)
-          docker exec "$cid" psql -U test -d gmgo_test -c "ALTER SYSTEM SET max_connections = 300;"
+          docker exec "$cid" psql -U test -d rocketflare_test -c "ALTER SYSTEM SET max_connections = 300;"
           docker restart "$cid"
           for _ in $(seq 1 30); do
-            docker exec "$cid" pg_isready -U test -d gmgo_test >/dev/null 2>&1 && break
+            docker exec "$cid" pg_isready -U test -d rocketflare_test >/dev/null 2>&1 && break
             sleep 2
           done
-          docker exec "$cid" psql -U test -d gmgo_test -c "show max_connections;"
+          docker exec "$cid" psql -U test -d rocketflare_test -c "show max_connections;"
 
       # Secrets scan first: cheapest step, and the one whose failure must not be buried under a
       # test log. Runs the binary directly (the marketplace action needs a licence for org repos).

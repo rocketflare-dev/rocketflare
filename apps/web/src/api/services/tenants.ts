@@ -6,12 +6,12 @@
 import type {
   TenantSettings as TenantSettingsDto,
   UpdateTenantSettingsRequest,
-} from '@gmgo/shared/tenant-settings'
-import type { Tenant as TenantDto, UpdateTenantRequest } from '@gmgo/shared/tenants'
+} from '@rocketflare/shared/tenant-settings'
+import type { Tenant as TenantDto, UpdateTenantRequest } from '@rocketflare/shared/tenants'
 import type {
   TenantUserSettings as TenantUserSettingsDto,
   UserPreferences,
-} from '@gmgo/shared/user-settings'
+} from '@rocketflare/shared/user-settings'
 import { and, eq } from 'drizzle-orm'
 import type { Database } from '../../db/client'
 import { tenantSettings, tenants, tenantUserSettings } from '../../db/schema'

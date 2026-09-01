@@ -4,7 +4,7 @@
  * them); `PUT /:key` sets an override and `DELETE /:key` reverts to the default (`manage Prompt`,
  * admin+). Unknown keys are 404: the registry is code, not a table.
  */
-import { updatePromptRequestSchema } from '@gmgo/shared/ai/prompts'
+import { updatePromptRequestSchema } from '@rocketflare/shared/ai/prompts'
 import { guardPermission } from '../middleware/permissions'
 import { recordActivity } from '../services/activity'
 import {

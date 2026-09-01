@@ -1,4 +1,4 @@
-/** `gmgo config get [key] | set <key> <value> | path` — the API key is only ever printed redacted (D26). */
+/** `rocketflare config get [key] | set <key> <value> | path` — the API key is only ever printed redacted (D26). */
 import { CONFIG_KEYS, type ConfigKey, redactConfig, redactKey } from '../config'
 import type { CommandContext } from '../context'
 import { CliError } from '../errors'

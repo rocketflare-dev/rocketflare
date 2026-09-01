@@ -1,5 +1,5 @@
 /** Membership role chip (D10). Classes come from a finite prop → safelisted in index.css. */
-import type { MembershipRole } from '@gmgo/shared/tenants'
+import type { MembershipRole } from '@rocketflare/shared/tenants'
 
 const ROLE_CLASS: Record<MembershipRole, string> = {
   owner: 'badge-primary',

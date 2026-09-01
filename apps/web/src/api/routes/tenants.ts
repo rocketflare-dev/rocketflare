@@ -3,7 +3,7 @@
  * create an organisation with the caller as owner and select it — 404 `tenancy_mode_single` in
  * single mode. Tenant-free: a user with no membership must be able to create their first org.
  */
-import { createTenantRequestSchema } from '@gmgo/shared/tenants'
+import { createTenantRequestSchema } from '@rocketflare/shared/tenants'
 import { updateSelectedTenant } from '../auth/sessions'
 import { isApiKeySession } from '../middleware/auth'
 import { operationLock } from '../middleware/rate-limit'

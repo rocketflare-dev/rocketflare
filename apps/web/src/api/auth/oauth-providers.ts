@@ -3,7 +3,7 @@
  * Tokens are encrypted before every write. `(provider, provider_user_id)` is UNIQUE, so one
  * external account can never attach to two users; `linkProvider` surfaces that as a conflict.
  */
-import type { OAuthProviderName } from '@gmgo/shared/auth'
+import type { OAuthProviderName } from '@rocketflare/shared/auth'
 import { and, eq } from 'drizzle-orm'
 import type { AppConfig } from '../../config'
 import type { Database } from '../../db/client'

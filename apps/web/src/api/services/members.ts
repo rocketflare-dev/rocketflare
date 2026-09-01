@@ -3,8 +3,8 @@
  * the matrix leaves to routes: assigning or taking away `owner` is owner-only, the last owner can
  * never be demoted or removed, and `support` rows are managed only from /admin.
  */
-import type { PaginationQuery } from '@gmgo/shared/pagination'
-import type { Member, TenantRole } from '@gmgo/shared/tenants'
+import type { PaginationQuery } from '@rocketflare/shared/pagination'
+import type { Member, TenantRole } from '@rocketflare/shared/tenants'
 import { and, asc, eq, sql } from 'drizzle-orm'
 import type { Database } from '../../db/client'
 import { tenantUserSettings, tenantUsers, userSessions, users } from '../../db/schema'

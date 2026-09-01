@@ -1,7 +1,7 @@
 /**
  * Fact-table freshness from a shell (D19) — wraps `services/fact-tables/freshness.ts` (the same
  * check `GET /api/analytics/facts/status` serves). Node-only; `DATABASE_URL` from `.dev.vars` via
- * `pnpm --filter @gmgo/web db:check-facts`. Exit 1 when any table is stale (lag > 2× its interval).
+ * `pnpm --filter @rocketflare/web db:check-facts`. Exit 1 when any table is stale (lag > 2× its interval).
  */
 
 import { checkFactTableFreshness } from '../src/api/services/fact-tables'

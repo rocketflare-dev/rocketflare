@@ -3,8 +3,8 @@
  * `authMiddleware`: `/auth/session` must answer 200 for a valid cookie with NO tenant so the UI can
  * route to /select-tenant or /pending. Cookie only — Bearer keys are an `/api/*` credential.
  */
-import type { AuthMethods } from '@gmgo/shared/auth'
-import { selectTenantRequestSchema } from '@gmgo/shared/auth'
+import type { AuthMethods } from '@rocketflare/shared/auth'
+import { selectTenantRequestSchema } from '@rocketflare/shared/auth'
 import { and, eq } from 'drizzle-orm'
 import { tenantUsers } from '../../../db/schema'
 import { clearSessionCookie } from '../../auth/cookies'

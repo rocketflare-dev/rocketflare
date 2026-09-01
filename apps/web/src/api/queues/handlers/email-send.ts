@@ -3,7 +3,7 @@
  * failure is thrown so the consumer retries with backoff; the "no RESEND_API_KEY" dev fallback is
  * a successful outcome (logged, `delivered: false`, no error) and is acked.
  */
-import type { JobOf } from '@gmgo/shared/jobs'
+import type { JobOf } from '@rocketflare/shared/jobs'
 import { sendEmail } from '../../services/email'
 import type { JobContext } from '../jobs'
 

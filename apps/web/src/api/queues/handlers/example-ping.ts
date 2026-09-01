@@ -4,7 +4,7 @@
  * payload: { tenantId } })` from any route, then watch `wrangler dev`). Copy this file to start a
  * real handler.
  */
-import type { JobOf } from '@gmgo/shared/jobs'
+import type { JobOf } from '@rocketflare/shared/jobs'
 import type { JobContext } from '../jobs'
 
 export async function handleExamplePing(

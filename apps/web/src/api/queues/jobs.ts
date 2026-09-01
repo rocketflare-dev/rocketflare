@@ -6,7 +6,7 @@
  * `max_retries`). Each message gets its own DB client, closed in `finally` — there is no
  * `waitUntil` in a queue consumer, everything is awaited.
  */
-import { type JobEnvelope, type JobType, jobEnvelopeSchema } from '@gmgo/shared/jobs'
+import { type JobEnvelope, type JobType, jobEnvelopeSchema } from '@rocketflare/shared/jobs'
 import type { AppConfig } from '../../config'
 import { createDatabase, type DatabaseHandle, resolveDatabaseUrl } from '../../db/client'
 import type { AppBindings } from '../types'

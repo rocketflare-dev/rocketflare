@@ -4,7 +4,7 @@
  * `status`/`disconnectedAt`; feature hooks may watch `lastEvent` for a specific `type`. Written only
  * by `lib/websocketClient.ts`.
  */
-import type { RealtimeEvent } from '@gmgo/shared/realtime'
+import type { RealtimeEvent } from '@rocketflare/shared/realtime'
 import { create } from 'zustand'
 
 export type WebSocketStatus = 'connecting' | 'open' | 'closed'

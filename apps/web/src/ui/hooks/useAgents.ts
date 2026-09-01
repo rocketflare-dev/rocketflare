@@ -15,9 +15,9 @@ import {
   type CreateAgentRunRequest,
   createAgentRunResponseSchema,
   isRunActive,
-} from '@gmgo/shared/ai/agents'
-import { ERROR_CODES } from '@gmgo/shared/errors'
-import { paginatedResponse } from '@gmgo/shared/pagination'
+} from '@rocketflare/shared/ai/agents'
+import { ERROR_CODES } from '@rocketflare/shared/errors'
+import { paginatedResponse } from '@rocketflare/shared/pagination'
 import {
   keepPreviousData,
   queryOptions,

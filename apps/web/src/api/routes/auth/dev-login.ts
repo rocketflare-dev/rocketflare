@@ -4,7 +4,7 @@
  * block), runs `onNoTenant` for a member-less user so single-tenant / open modes behave as a real
  * login would, and answers with the session response + cookie.
  */
-import { devLoginRequestSchema } from '@gmgo/shared/auth'
+import { devLoginRequestSchema } from '@rocketflare/shared/auth'
 import { eq } from 'drizzle-orm'
 import { users } from '../../../db/schema'
 import { resolveCookieAuth } from '../../middleware/auth'

@@ -36,7 +36,7 @@ Drizzle table definitions, one file per table, re-exported from `index.ts` (whic
 | `chunks` | `chunks.ts` | `tenant_id` | ✓ | retrieval units (D17/D18): `documentId` cascade, `seq` (unique per document), `text`, `tokenCount` (char estimate), `embedding vector(1024)` (`EMBEDDING_DIM`; a new dimension is a new table); **HNSW `vector_cosine_ops`** index; lexical half is `to_tsvector('english', text)` at query time (generated tsvector + GIN is the scaling path) |
 
 22 policies (`tenants`, `users` + 20 tenant tables); 4 revoked tables = `RLS_REVOKED_TABLES` =
-`RLS_EXCLUDED_TABLES`. jsonb columns are `$type<>()`d from `@gmgo/shared` (type-only imports).
+`RLS_EXCLUDED_TABLES`. jsonb columns are `$type<>()`d from `@rocketflare/shared` (type-only imports).
 
 ## Conventions
 
@@ -50,7 +50,7 @@ Drizzle table definitions, one file per table, re-exported from `index.ts` (whic
 
 ## Row-level security — read before adding a table (D1)
 
-RLS scaffolding ships inert (`TENANT_SCOPE_MODE=off`; the `gmgo_app` role is NOLOGIN). Policies still
+RLS scaffolding ships inert (`TENANT_SCOPE_MODE=off`; the `rocketflare_app` role is NOLOGIN). Policies still
 exist in every environment so enabling enforcement later is a config change, not a migration.
 `tests/api/rls-coverage.test.ts` reads the live catalog, so every table must do ONE of:
 
@@ -71,4 +71,4 @@ connection (HYPERDRIVE) bypasses policies, which is what keeps auth paths and ro
 2. Export from `index.ts`; add the row to the table registry here.
 3. `pnpm db:generate` → review the SQL in `migrations/` (policies included) → `pnpm db:migrate`
    (role → migrate → grants). Tests run migrations automatically.
-4. `packages/shared/src/<name>.ts` zod contract if the API exposes it (`@gmgo/shared/<name>`).
+4. `packages/shared/src/<name>.ts` zod contract if the API exposes it (`@rocketflare/shared/<name>`).

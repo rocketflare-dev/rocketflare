@@ -7,7 +7,7 @@
  * EVERY query; `documentId` narrows further. No rerank in v1 (a `RerankFn` seam is the documented
  * extension).
  */
-import type { SearchHit, SearchRequest } from '@gmgo/shared/ai/embeddings'
+import type { SearchHit, SearchRequest } from '@rocketflare/shared/ai/embeddings'
 import { and, eq, sql } from 'drizzle-orm'
 import type { AppConfig } from '../../../config'
 import type { Database } from '../../../db/client'

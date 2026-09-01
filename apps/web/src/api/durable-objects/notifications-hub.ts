@@ -12,7 +12,7 @@
  */
 
 import { DurableObject } from 'cloudflare:workers'
-import type { RealtimeEvent } from '@gmgo/shared/realtime'
+import type { RealtimeEvent } from '@rocketflare/shared/realtime'
 import type { AppBindings } from '../types'
 
 /** Survives hibernation via `serializeAttachment`; the tags carry tenant and user. */

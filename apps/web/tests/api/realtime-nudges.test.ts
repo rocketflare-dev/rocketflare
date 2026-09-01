@@ -4,7 +4,7 @@
  * way queue producers are asserted on `RecordingQueue`. The event names WHAT changed; the client
  * re-queries. Nudges are a no-op without the binding and never fail the request.
  */
-import type { RealtimeEvent } from '@gmgo/shared/realtime'
+import type { RealtimeEvent } from '@rocketflare/shared/realtime'
 import { describe, expect, it, vi } from 'vitest'
 import { createInvitation } from '@/api/services/invitations'
 import type { JobsQueue } from '@/api/services/jobs'

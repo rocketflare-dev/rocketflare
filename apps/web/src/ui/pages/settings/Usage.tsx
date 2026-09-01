@@ -4,8 +4,9 @@
  * feature). Cost shows only when the app has supplied pricing (`costMicrocents` non-null).
  * Admin+ (`manage AiConfig`); the tab is hidden otherwise.
  */
-import { shortModelName } from '@gmgo/shared/ai/config'
+
 import { ChartBarIcon } from '@heroicons/react/24/outline'
+import { shortModelName } from '@rocketflare/shared/ai/config'
 import { useState } from 'react'
 import { EmptyState, SectionPanel, SkeletonRows } from '@/ui/components/shared'
 import {

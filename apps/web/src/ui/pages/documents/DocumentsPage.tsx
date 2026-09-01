@@ -8,6 +8,8 @@
  * document title, optionally restricted to one document (`?documentId=` preselects it — the run
  * drawer links here). Hits are the search mutation's data, never cached as server state.
  */
+
+import { BookOpenIcon, MagnifyingGlassIcon, TrashIcon } from '@heroicons/react/24/outline'
 import {
   type Document,
   type DocumentStatus,
@@ -15,8 +17,7 @@ import {
   ingestTextRequestSchema,
   type SearchHit,
   searchRequestSchema,
-} from '@gmgo/shared/ai/embeddings'
-import { BookOpenIcon, MagnifyingGlassIcon, TrashIcon } from '@heroicons/react/24/outline'
+} from '@rocketflare/shared/ai/embeddings'
 import { type FormEvent, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import {

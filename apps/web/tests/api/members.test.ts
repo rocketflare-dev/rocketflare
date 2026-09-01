@@ -2,7 +2,7 @@
  * `/api/members` permission matrix (D10): owner / admin / member / support × list, role change,
  * remove; ownership invariants (owner-only owner changes, the last owner stays).
  */
-import type { MembershipRole } from '@gmgo/shared/tenants'
+import type { MembershipRole } from '@rocketflare/shared/tenants'
 import { and, eq } from 'drizzle-orm'
 import { beforeAll, describe, expect, it } from 'vitest'
 import { tenantUsers } from '@/db/schema'

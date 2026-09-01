@@ -27,7 +27,7 @@ describe('CubeClientProvider', () => {
       addEventListener: () => {},
       removeEventListener: () => {},
     }))
-    document.documentElement.setAttribute('data-theme', 'gm-light')
+    document.documentElement.setAttribute('data-theme', 'rocketflare-light')
   })
   afterEach(() => {
     setUnauthorizedHandler(null)
@@ -101,15 +101,15 @@ describe('CubeClientProvider', () => {
     expect(isCubeUnauthorized(new Error('x'))).toBe(false)
   })
 
-  it('mirrors gm-dark into the `dark` class drizzle-cube reads, and cleans up', async () => {
+  it('mirrors rocketflare-dark into the `dark` class drizzle-cube reads, and cleans up', async () => {
     const root = document.documentElement
     const stop = syncDarkClass(root)
     expect(root.classList.contains('dark')).toBe(false)
-    root.setAttribute('data-theme', 'gm-dark')
+    root.setAttribute('data-theme', 'rocketflare-dark')
     await waitFor(() => expect(root.classList.contains('dark')).toBe(true))
-    root.setAttribute('data-theme', 'gm-light')
+    root.setAttribute('data-theme', 'rocketflare-light')
     await waitFor(() => expect(root.classList.contains('dark')).toBe(false))
-    root.setAttribute('data-theme', 'gm-dark')
+    root.setAttribute('data-theme', 'rocketflare-dark')
     await waitFor(() => expect(root.classList.contains('dark')).toBe(true))
     stop()
     expect(root.classList.contains('dark')).toBe(false)

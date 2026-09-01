@@ -1,7 +1,7 @@
 /**
  * Rebuild fact tables from a shell (D19) — a thin wrapper over `services/fact-tables/refresh.ts`,
  * the same code the `:15` cron runs. Node-only; `DATABASE_URL` from `.dev.vars` via
- * `pnpm --filter @gmgo/web db:refresh-facts [table] [--tenant=<uuid>]`.
+ * `pnpm --filter @rocketflare/web db:refresh-facts [table] [--tenant=<uuid>]`.
  * Exit 1 when any tenant/table failed.
  */
 

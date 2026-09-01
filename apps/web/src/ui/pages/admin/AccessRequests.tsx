@@ -4,8 +4,8 @@
  * rejecting takes an optional reason. One endpoint: `POST …/:id/decide` (`decideAccessRequestSchema`).
  */
 
-import type { AccessRequest, AccessRequestStatus } from '@gmgo/shared/access-requests'
 import { InboxArrowDownIcon } from '@heroicons/react/24/outline'
+import type { AccessRequest, AccessRequestStatus } from '@rocketflare/shared/access-requests'
 import { useState } from 'react'
 import {
   EmptyState,

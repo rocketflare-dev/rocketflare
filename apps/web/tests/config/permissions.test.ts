@@ -3,8 +3,13 @@
  * table changes, this file changes with it.
  */
 
-import { type Actions, CORE_SUBJECTS, packedRulesSchema, type Role } from '@gmgo/shared/permissions'
-import { membershipRoleSchema } from '@gmgo/shared/tenants'
+import {
+  type Actions,
+  CORE_SUBJECTS,
+  packedRulesSchema,
+  type Role,
+} from '@rocketflare/shared/permissions'
+import { membershipRoleSchema } from '@rocketflare/shared/tenants'
 import { describe, expect, it } from 'vitest'
 import {
   abilityFromPackedRules,

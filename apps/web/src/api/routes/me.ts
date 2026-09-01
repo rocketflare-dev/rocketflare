@@ -5,7 +5,7 @@
 import {
   updateProfileRequestSchema,
   updateTenantUserSettingsRequestSchema,
-} from '@gmgo/shared/user-settings'
+} from '@rocketflare/shared/user-settings'
 import { eq } from 'drizzle-orm'
 import { users } from '../../db/schema'
 import { toPublicUser } from '../services/auth'

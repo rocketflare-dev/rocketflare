@@ -17,7 +17,7 @@ import {
   MAX_UPLOAD_BYTES,
   type StoredFile,
   uploadQuerySchema,
-} from '@gmgo/shared/files'
+} from '@rocketflare/shared/files'
 import { and, eq } from 'drizzle-orm'
 import { type FileRow, files, users } from '../../db/schema'
 import { uploadBodyLimit } from '../middleware/body-limit'

@@ -6,7 +6,7 @@
  * default before setting the new one inside a transaction. `services/ai/resolve.ts` is the ONLY
  * runtime reader; feature code never queries this table.
  */
-import type { AiProvider, AiScope, ThinkingSetting } from '@gmgo/shared/ai/config'
+import type { AiProvider, AiScope, ThinkingSetting } from '@rocketflare/shared/ai/config'
 import { relations, sql } from 'drizzle-orm'
 import {
   boolean,
@@ -22,7 +22,7 @@ import { tenantRef, timestamps } from './_helpers'
 import { tenantIsolation } from './rls'
 import { tenants } from './tenants'
 
-/** Mirrors `AI_PROVIDERS` / `AI_SCOPES` in `@gmgo/shared/ai/config`; text enums so a new value is no migration. */
+/** Mirrors `AI_PROVIDERS` / `AI_SCOPES` in `@rocketflare/shared/ai/config`; text enums so a new value is no migration. */
 export const AI_PROVIDER_VALUES = [
   'anthropic',
   'anthropic_compatible',

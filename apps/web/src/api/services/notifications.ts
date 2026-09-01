@@ -3,7 +3,7 @@
  * its `Realtime`, a `notification.created` nudge goes to that user's sockets through `waitUntil`
  * and the bell re-queries. Producers: invitation accepted, member joined, access request decided.
  */
-import type { NotificationData } from '@gmgo/shared/notifications'
+import type { NotificationData } from '@rocketflare/shared/notifications'
 import type { Database } from '../../db/client'
 import { notifications } from '../../db/schema'
 import { nudgeUser, nudgeUsers, type Realtime, realtimeEvent } from './realtime'

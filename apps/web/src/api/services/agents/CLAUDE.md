@@ -19,4 +19,4 @@ Rules:
 - **DB is the truth, WS is a nudge**: events go to `agent_run_events` first, then `entity.changed { entity: 'agent-run', id }`; viewers re-query `GET /api/agents/runs/:id`.
 - **Per-agent model**: `resolveChat(..., { promptKey: meta.promptKey })` consults `agent_models`.
 - The tool loop runs INSIDE one `execute` step (v1). Scaling path: one `step.do` per model turn with the transcript persisted between turns (`runToolLoop` already returns `messages`).
-- Adding an agent: key in `@gmgo/shared/ai/agents` (`AGENT_KEYS` + schemas) → prompt in `services/prompts.ts` → `examples/<key>.ts` → entry in `AGENTS`. No migration.
+- Adding an agent: key in `@rocketflare/shared/ai/agents` (`AGENT_KEYS` + schemas) → prompt in `services/prompts.ts` → `examples/<key>.ts` → entry in `AGENTS`. No migration.

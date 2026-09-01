@@ -5,8 +5,8 @@
  * admin `new_org` approval and the seed script. `getSingleTenant` is the `TENANCY_MODE=single`
  * anchor: the first tenant row.
  */
-import type { MembershipRole } from '@gmgo/shared/tenants'
-import { slugify } from '@gmgo/shared/tenants'
+import type { MembershipRole } from '@rocketflare/shared/tenants'
+import { slugify } from '@rocketflare/shared/tenants'
 import { asc, eq, like } from 'drizzle-orm'
 import type { Database } from '../../../db/client'
 import { type Tenant, tenantSettings, tenants, tenantUsers } from '../../../db/schema'

@@ -1,5 +1,5 @@
-import type { PaginationMeta } from '@gmgo/shared/pagination'
 import { ChevronLeftIcon, ChevronRightIcon } from '@heroicons/react/24/outline'
+import type { PaginationMeta } from '@rocketflare/shared/pagination'
 
 interface PaginationControlsProps {
   /** `pagination` from a `paginatedResponse()` body */

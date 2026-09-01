@@ -7,8 +7,8 @@ import {
   type MarkNotificationsReadRequest,
   notificationSchema,
   unreadCountSchema,
-} from '@gmgo/shared/notifications'
-import { paginatedResponse } from '@gmgo/shared/pagination'
+} from '@rocketflare/shared/notifications'
+import { paginatedResponse } from '@rocketflare/shared/pagination'
 import {
   keepPreviousData,
   queryOptions,

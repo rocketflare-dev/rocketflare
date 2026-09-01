@@ -30,7 +30,7 @@ file. CI fails on a dirty diff of it — a binding or var changed without the ty
 - Strict, ES2022, bundler resolution, `noEmit` in `tsconfig.base.json`; each package extends it
   (`apps/web/tsconfig.json` covers its `src`, `tests`, `scripts`; `apps/cli`, `packages/shared` theirs).
   `pnpm typecheck` runs all three
-- Alias `@/*` → `apps/web/src/*` (web only). Shared contracts are imported as `@gmgo/shared/<module>`
+- Alias `@/*` → `apps/web/src/*` (web only). Shared contracts are imported as `@rocketflare/shared/<module>`
   (workspace link, resolved to `packages/shared/src/<module>.ts` — TS source, no build). `packages/shared`
   imports nothing from `apps/web` or `apps/cli` — it must bundle for the browser; `apps/cli` never
   imports `apps/web`
@@ -39,7 +39,7 @@ file. CI fails on a dirty diff of it — a binding or var changed without the ty
 
 ## Contracts first
 
-New or changed API surface starts as a zod schema in `packages/shared/src/` (`@gmgo/shared`), then
+New or changed API surface starts as a zod schema in `packages/shared/src/` (`@rocketflare/shared`), then
 server validation, then the UI and the CLI parse the response with the same schema. The error envelope is `{ error, statusCode, code?,
 details? }` (`packages/shared/src/errors.ts`) everywhere, including validation failures.
 
@@ -62,7 +62,7 @@ A superseded doc moves to `docs/archive/` with a row in its README — never del
 
 - Secrets exist in `apps/web/.dev.vars` (git-ignored) locally and `wrangler secret put` in deployed envs.
   `[vars]` and `apps/web/.env.test` hold non-secrets and dummy values only. The CLI keeps its API key
-  in `~/.gmgo/config.json` (0600) — never in the repo, never printed in full
+  in `~/.rocketflare/config.json` (0600) — never in the repo, never printed in full
 - **`.dev.vars` comments are not a safe place for alternate credentials.** A commented-out
   connection string is still a credential on disk read by every tool that opens the file. Keep
   other environments' strings in your password manager, not in the file

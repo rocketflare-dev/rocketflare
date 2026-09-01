@@ -7,8 +7,8 @@
  * repair paths: `config` is a copy, so template changes do not propagate on their own.
  * Every function takes `tenantId` from the caller's auth context.
  */
-import type { AnalyticsPage as AnalyticsPageDto } from '@gmgo/shared/analytics'
-import { slugify } from '@gmgo/shared/tenants'
+import type { AnalyticsPage as AnalyticsPageDto } from '@rocketflare/shared/analytics'
+import { slugify } from '@rocketflare/shared/tenants'
 import { and, eq } from 'drizzle-orm'
 import { getTemplate, listTemplates } from '../../dashboards'
 import type { Database } from '../../db/client'

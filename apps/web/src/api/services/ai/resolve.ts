@@ -13,9 +13,14 @@
  * chain is then assignment → tenant default → platform → 503. Only chat is assignable — embeddings
  * feed a different client shape and no agent runs on them.
  */
-import type { AiProvider, AiReadiness, AiScope, AiScopeReadiness } from '@gmgo/shared/ai/config'
-import { DEFAULT_MODELS } from '@gmgo/shared/ai/config'
-import type { PromptKey } from '@gmgo/shared/ai/prompts'
+import type {
+  AiProvider,
+  AiReadiness,
+  AiScope,
+  AiScopeReadiness,
+} from '@rocketflare/shared/ai/config'
+import { DEFAULT_MODELS } from '@rocketflare/shared/ai/config'
+import type { PromptKey } from '@rocketflare/shared/ai/prompts'
 import { and, eq } from 'drizzle-orm'
 import type { AppConfig } from '../../../config'
 import type { Database } from '../../../db/client'

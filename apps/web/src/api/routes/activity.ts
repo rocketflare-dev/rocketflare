@@ -2,7 +2,7 @@
  * `GET /api/activity` (D19): the tenant's activity feed, admin+, filterable by type / subject /
  * time range, with the actor resolved.
  */
-import { activityListQuerySchema } from '@gmgo/shared/activity'
+import { activityListQuerySchema } from '@rocketflare/shared/activity'
 import { and, desc, eq, gte, lte, sql } from 'drizzle-orm'
 import { activityEvents, users } from '../../db/schema'
 import { isAdminLevel } from '../middleware/permissions'

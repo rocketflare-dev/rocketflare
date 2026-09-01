@@ -1,11 +1,11 @@
 <!DOCTYPE html>
-<html lang="en" data-theme="gm-light">
+<html lang="en" data-theme="rocketflare-light">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
-    <title>GMGO Starter</title>
-    <meta name="description" content="GMGO Starter" />
+    <title>Rocketflare</title>
+    <meta name="description" content="Rocketflare" />
 
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="theme-color" content="#2563eb" />
@@ -16,11 +16,11 @@
     <script>
       ;(function () {
         var saved = localStorage.getItem('theme')
-        if (saved !== 'gm-light' && saved !== 'gm-dark') {
+        if (saved !== 'rocketflare-light' && saved !== 'rocketflare-dark') {
           saved =
             window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches
-              ? 'gm-dark'
-              : 'gm-light'
+              ? 'rocketflare-dark'
+              : 'rocketflare-light'
         }
         document.documentElement.setAttribute('data-theme', saved)
       })()

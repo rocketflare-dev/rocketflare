@@ -4,7 +4,7 @@
  * badges with the failure reason and only offers delete on own rows (any row for admin+); search
  * POSTs `{ query, limit, documentId? }` and renders hits ranked with dense/lexical badges.
  */
-import { INGEST_TEXT_MAX_CHARS } from '@gmgo/shared/ai/embeddings'
+import { INGEST_TEXT_MAX_CHARS } from '@rocketflare/shared/ai/embeddings'
 import { fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { useToastStore } from '@/ui/components/shared/Toast'

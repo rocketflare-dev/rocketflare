@@ -14,7 +14,7 @@
  *                 failed; then one last nudge. Returns the terminal `{ runId, status }`.
  * Progress events are awaited (a Workflow step has no `waitUntil`) and never fail the run.
  */
-import type { AgentRunStatus } from '@gmgo/shared/ai/agents'
+import type { AgentRunStatus } from '@rocketflare/shared/ai/agents'
 import { eq } from 'drizzle-orm'
 import type { AppConfig } from '../../../config'
 import type { Database } from '../../../db/client'

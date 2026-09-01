@@ -13,7 +13,7 @@ import {
   type FileScope,
   isAvatarMimeType,
   MAX_UPLOAD_BYTES,
-} from '@gmgo/shared/files'
+} from '@rocketflare/shared/files'
 import { newId } from '../utils/core/ids'
 
 export { AVATAR_MIME_TYPES, isAvatarMimeType, MAX_UPLOAD_BYTES }

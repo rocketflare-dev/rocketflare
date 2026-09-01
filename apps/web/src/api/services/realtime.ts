@@ -7,7 +7,7 @@
  * `Broadcaster` is the seam a test or another transport could replace; `createHubBroadcaster` is
  * the one implementation: `idFromName(tenantId)` → per-tenant DO → typed RPC stub.
  */
-import type { RealtimeEvent, RealtimeEventType } from '@gmgo/shared/realtime'
+import type { RealtimeEvent, RealtimeEventType } from '@rocketflare/shared/realtime'
 import type { BroadcastResult, NotificationsHub } from '../durable-objects/notifications-hub'
 import type { AppBindings } from '../types'
 import type { Defer } from '../utils/routes/route-helpers'

@@ -5,14 +5,14 @@
 import chalk from 'chalk'
 import { BIN_NAME } from '../package-info'
 
-/** `gmgo` in bold cyan — prepended to every human status line. */
+/** `rocketflare` in bold cyan — prepended to every human status line. */
 export const PREFIX = chalk.bold.cyan(BIN_NAME)
 
 export function brandTitle(text: string): string {
   return `${PREFIX} ${text}`
 }
 
-/** Render a command the user should run, e.g. ``run `gmgo login` ``. */
+/** Render a command the user should run, e.g. ``run `rocketflare login` ``. */
 export function cmd(args: string): string {
   return chalk.bold(`${BIN_NAME} ${args}`)
 }

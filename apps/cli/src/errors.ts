@@ -10,7 +10,7 @@ export const EXIT_FORBIDDEN = 3
 
 export class CliError extends Error {
   readonly exitCode: number
-  /** Extra dimmed line printed under the error (e.g. "run `gmgo login`"). */
+  /** Extra dimmed line printed under the error (e.g. "run `rocketflare login`"). */
   readonly hint?: string
 
   constructor(

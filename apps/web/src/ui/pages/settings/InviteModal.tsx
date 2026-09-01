@@ -8,7 +8,7 @@ import {
   inviteMemberRequestSchema,
   type TenantRole,
   tenantRoleSchema,
-} from '@gmgo/shared/tenants'
+} from '@rocketflare/shared/tenants'
 import { useState } from 'react'
 import { FieldError, fieldErrorFor, Modal } from '@/ui/components/shared'
 import { useAuth } from '@/ui/hooks/useAuth'

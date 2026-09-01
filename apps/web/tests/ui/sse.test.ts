@@ -3,7 +3,7 @@
  * reassembly of frames split across chunks, schema rejection of unknown frames, abort handling,
  * and the pre-stream 503 → `AiNotConfiguredError` mapping.
  */
-import type { ChatStreamEvent } from '@gmgo/shared/ai/chat'
+import type { ChatStreamEvent } from '@rocketflare/shared/ai/chat'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { AiNotConfiguredError, isAiNotConfigured, sendChatMessage } from '@/ui/lib/chatStream'
 import { parseSseFrame, readSse, SseFrameBuffer } from '@/ui/lib/sse'

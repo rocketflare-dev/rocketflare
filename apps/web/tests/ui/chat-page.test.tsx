@@ -3,7 +3,7 @@
  * shows the usage footnote; Shift+Enter does not send; Stop aborts the stream; a 503
  * `ai_not_configured` renders the configure call to action (admins) or the "ask an admin" copy.
  */
-import type { ChatStreamEvent, Message } from '@gmgo/shared/ai/chat'
+import type { ChatStreamEvent, Message } from '@rocketflare/shared/ai/chat'
 import { fireEvent, screen, waitFor } from '@testing-library/react'
 import { Route, Routes } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'

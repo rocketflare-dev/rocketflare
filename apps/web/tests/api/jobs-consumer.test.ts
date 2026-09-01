@@ -47,7 +47,7 @@ function fakeMessage(body: unknown, attempts = 1) {
   }
 }
 
-function fakeBatch(messages: ReturnType<typeof fakeMessage>[], queue = 'gmgo-starter-jobs') {
+function fakeBatch(messages: ReturnType<typeof fakeMessage>[], queue = 'rocketflare-jobs') {
   return { queue, messages, ackAll: vi.fn(), retryAll: vi.fn() } as unknown as MessageBatch<unknown>
 }
 

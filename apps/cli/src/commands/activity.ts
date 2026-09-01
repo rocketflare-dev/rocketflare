@@ -1,6 +1,6 @@
-/** `gmgo activity list [--page] [--page-size] [--type]` — `GET /api/activity` (admin+) (D26). */
-import { activityEventSchema } from '@gmgo/shared/activity'
-import { paginatedResponse } from '@gmgo/shared/pagination'
+/** `rocketflare activity list [--page] [--page-size] [--type]` — `GET /api/activity` (admin+) (D26). */
+import { activityEventSchema } from '@rocketflare/shared/activity'
+import { paginatedResponse } from '@rocketflare/shared/pagination'
 import { type CommandContext, requireClient } from '../context'
 import { formatDate, formatPagination, renderTable } from '../utils/output'
 

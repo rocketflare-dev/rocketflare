@@ -11,7 +11,7 @@ import {
   agentListResponseSchema,
   agentRunWithEventsSchema,
   createAgentRunResponseSchema,
-} from '@gmgo/shared/ai/agents'
+} from '@rocketflare/shared/ai/agents'
 import { eq } from 'drizzle-orm'
 import { describe, expect, it } from 'vitest'
 import { agentRuns } from '@/db/schema'

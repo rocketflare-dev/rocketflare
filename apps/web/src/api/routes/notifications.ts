@@ -5,7 +5,7 @@
 import {
   markNotificationsReadRequestSchema,
   notificationListQuerySchema,
-} from '@gmgo/shared/notifications'
+} from '@rocketflare/shared/notifications'
 import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm'
 import { notifications } from '../../db/schema'
 import { asCount, pageWindow, paginated } from '../utils/routes/pagination'

@@ -5,8 +5,8 @@
  * (`openai`, `openai_compatible`). Content is block-shaped — text, tool_use, tool_result — because
  * that is what a tool loop needs to round-trip; a plain string is accepted as shorthand.
  */
-import type { TokenUsage } from '@gmgo/shared/ai/chat'
-import type { AiProvider, ThinkingSetting } from '@gmgo/shared/ai/config'
+import type { TokenUsage } from '@rocketflare/shared/ai/chat'
+import type { AiProvider, ThinkingSetting } from '@rocketflare/shared/ai/config'
 
 export type ContentBlock =
   | { type: 'text'; text: string }

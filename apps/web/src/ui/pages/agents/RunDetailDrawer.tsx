@@ -6,12 +6,13 @@
  * set), the raw output JSON behind a toggle, and the error when the run failed. Closing the
  * drawer never touches the run — it is a durable row; Cancel is the explicit button.
  */
+
+import { DocumentMagnifyingGlassIcon } from '@heroicons/react/24/outline'
 import {
   type AgentRunWithEvents,
   isRunActive,
   summarizeTextOutputSchema,
-} from '@gmgo/shared/ai/agents'
-import { DocumentMagnifyingGlassIcon } from '@heroicons/react/24/outline'
+} from '@rocketflare/shared/ai/agents'
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Markdown } from '@/ui/components/ai/Markdown'

@@ -9,7 +9,7 @@
  *
  * A non-upgrade GET gets a JSON 426 envelope; CSRF needs no exemption (GET is a safe method).
  */
-import { ERROR_CODES } from '@gmgo/shared/errors'
+import { ERROR_CODES } from '@rocketflare/shared/errors'
 import { and, eq } from 'drizzle-orm'
 import { tenants, tenantUsers } from '../../db/schema'
 import { HUB_HEADERS } from '../durable-objects/notifications-hub'

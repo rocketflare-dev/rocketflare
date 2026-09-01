@@ -7,16 +7,16 @@
  * create is parsed tolerantly (a session response switches into the new org; a bare tenant is
  * selected explicitly), delete simply refreshes the session and lets `ProtectedRoute` route.
  */
-import { sessionResponseSchema } from '@gmgo/shared/auth'
+import { sessionResponseSchema } from '@rocketflare/shared/auth'
 import {
   tenantSettingsSchema,
   type UpdateTenantSettingsRequest,
-} from '@gmgo/shared/tenant-settings'
+} from '@rocketflare/shared/tenant-settings'
 import {
   type CreateTenantRequest,
   tenantSchema,
   type UpdateTenantRequest,
-} from '@gmgo/shared/tenants'
+} from '@rocketflare/shared/tenants'
 import { queryOptions, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useAuth } from '@/ui/hooks/useAuth'
 import { api } from '@/ui/lib/api-client'

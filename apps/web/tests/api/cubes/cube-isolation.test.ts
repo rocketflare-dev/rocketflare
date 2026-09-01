@@ -4,7 +4,7 @@
  * lists every cube, unauthenticated → 401 envelope, `/mcp` is reachable only behind auth, and
  * every dashboard-template portlet query actually executes against Postgres.
  */
-import { ERROR_CODES } from '@gmgo/shared/errors'
+import { ERROR_CODES } from '@rocketflare/shared/errors'
 import { describe, expect, it } from 'vitest'
 import { allCubes } from '@/api/cubes'
 import { refreshFactTable } from '@/api/services/fact-tables'

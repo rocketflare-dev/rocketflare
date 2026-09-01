@@ -6,7 +6,9 @@ export default defineConfig({
   out: './migrations',
   dialect: 'postgresql',
   dbCredentials: {
-    url: process.env.DATABASE_URL || 'postgresql://gmgo:gmgo_pass@localhost:5432/gmgo_dev',
+    url:
+      process.env.DATABASE_URL ||
+      'postgresql://rocketflare:rocketflare_pass@localhost:5432/rocketflare_dev',
   },
   verbose: true,
   strict: true,

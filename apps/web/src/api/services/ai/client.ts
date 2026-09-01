@@ -12,8 +12,12 @@
  */
 
 import Anthropic from '@anthropic-ai/sdk'
-import type { TokenUsage } from '@gmgo/shared/ai/chat'
-import { type AiProvider, EMBEDDING_DIM, THINKING_ANSWER_HEADROOM } from '@gmgo/shared/ai/config'
+import type { TokenUsage } from '@rocketflare/shared/ai/chat'
+import {
+  type AiProvider,
+  EMBEDDING_DIM,
+  THINKING_ANSWER_HEADROOM,
+} from '@rocketflare/shared/ai/config'
 import { AiError, normalizeAiError } from './errors'
 import { cachedSystem, withRollingCacheBreakpoints } from './kit'
 import { DEFAULT_BASE_URLS } from './providers'

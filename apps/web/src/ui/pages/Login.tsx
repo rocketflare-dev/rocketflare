@@ -5,8 +5,8 @@
  * seeded quick-login accounts. Server-side failures arrive as `?error=<code>`.
  */
 
-import { type MagicLinkRequest, magicLinkRequestSchema } from '@gmgo/shared/auth'
 import { EnvelopeIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline'
+import { type MagicLinkRequest, magicLinkRequestSchema } from '@rocketflare/shared/auth'
 import { useState } from 'react'
 import { Navigate, useSearchParams } from 'react-router-dom'
 import { AuthCard } from '@/ui/components/AuthCard'
@@ -33,7 +33,7 @@ export const DEV_ACCOUNTS = [
   { email: 'owner@example.test', label: 'Owner' },
   { email: 'admin@example.test', label: 'Admin' },
   { email: 'member@example.test', label: 'Member' },
-  { email: 'admin@gmgo.local', label: 'Global admin' },
+  { email: 'admin@rocketflare.local', label: 'Global admin' },
 ] as const
 
 export default function Login() {

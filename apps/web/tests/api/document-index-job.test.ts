@@ -34,7 +34,7 @@ function message(body: unknown, attempts = 1) {
 
 function batch(messages: ReturnType<typeof message>[]) {
   return {
-    queue: 'gmgo-starter-jobs',
+    queue: 'rocketflare-jobs',
     messages,
     ackAll: vi.fn(),
     retryAll: vi.fn(),

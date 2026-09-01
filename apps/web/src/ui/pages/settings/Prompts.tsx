@@ -5,13 +5,14 @@
  * Reset to default (`DELETE`, confirmed) and a preview through `interpolatePrompt` with sample
  * values. Members (`read Prompt`) open the editor read-only.
  */
+
+import { DocumentTextIcon } from '@heroicons/react/24/outline'
 import {
   interpolatePrompt,
   PROMPT_MAX_LENGTH,
   type PromptWithResolved,
   updatePromptRequestSchema,
-} from '@gmgo/shared/ai/prompts'
-import { DocumentTextIcon } from '@heroicons/react/24/outline'
+} from '@rocketflare/shared/ai/prompts'
 import { type FormEvent, useRef, useState } from 'react'
 import {
   ConfirmModal,

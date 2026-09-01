@@ -5,11 +5,11 @@
  *
  * The owner (DATABASE_URL's user) owns every table and bypasses RLS — on Neon it is a
  * `neon_superuser` member (BYPASSRLS), locally a real superuser — so policies are inert on that
- * connection by design. `gmgo_app` is the role the policies name: NOSUPERUSER, NOBYPASSRLS,
+ * connection by design. `rocketflare_app` is the role the policies name: NOSUPERUSER, NOBYPASSRLS,
  * DML only on `public`, and LOGIN only once `APP_DATABASE_URL` supplies a credential.
  *
  * Runs TWICE around migrations because its halves want opposite sides of them:
- *   --phase=role   BEFORE migrate.ts  (`CREATE POLICY ... TO gmgo_app` needs the role to exist)
+ *   --phase=role   BEFORE migrate.ts  (`CREATE POLICY ... TO rocketflare_app` needs the role to exist)
  *   --phase=grants AFTER  migrate.ts  (REVOKE can only name tables that exist)
  * `all` (default) does both — correct once the tables exist (every environment from its second
  * run onward). Idempotent; one transaction; safe to re-run on every deploy.

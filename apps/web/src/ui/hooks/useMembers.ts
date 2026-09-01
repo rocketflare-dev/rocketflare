@@ -1,6 +1,10 @@
 /** Tenant members (D10, D13): `GET /api/members`, role change, removal. Admin-level surface. */
-import { paginatedResponse } from '@gmgo/shared/pagination'
-import { memberSchema, type TenantRole, type UpdateMemberRoleRequest } from '@gmgo/shared/tenants'
+import { paginatedResponse } from '@rocketflare/shared/pagination'
+import {
+  memberSchema,
+  type TenantRole,
+  type UpdateMemberRoleRequest,
+} from '@rocketflare/shared/tenants'
 import {
   keepPreviousData,
   queryOptions,

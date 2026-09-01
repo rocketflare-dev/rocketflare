@@ -8,7 +8,7 @@
  * never in memory. `cancelRequestedAt` is the cooperative cancel flag the run polls between turns.
  * `input`/`output` are jsonb so a retry re-reads the payload from the row, not a message.
  */
-import type { AgentKey, AgentRunStatus } from '@gmgo/shared/ai/agents'
+import type { AgentKey, AgentRunStatus } from '@rocketflare/shared/ai/agents'
 import { relations, sql } from 'drizzle-orm'
 import {
   index,
@@ -25,7 +25,7 @@ import { tenantIsolation } from './rls'
 import { tenants } from './tenants'
 import { users } from './users'
 
-/** Mirrors `agentRunStatusSchema` in `@gmgo/shared/ai/agents`; text so a new state is no migration. */
+/** Mirrors `agentRunStatusSchema` in `@rocketflare/shared/ai/agents`; text so a new state is no migration. */
 export const AGENT_RUN_STATUS_VALUES = [
   'queued',
   'running',

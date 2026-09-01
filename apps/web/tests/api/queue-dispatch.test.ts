@@ -1,6 +1,6 @@
 /**
  * The Worker's `queue()` export (D7): routes every environment's jobs queue by prefix
- * (`gmgo-starter-jobs`, `gmgo-starter-jobs-staging`) to the jobs consumer, and acks a batch from
+ * (`rocketflare-jobs`, `rocketflare-jobs-staging`) to the jobs consumer, and acks a batch from
  * any queue it does not know so a stray binding cannot retry forever.
  */
 import { describe, expect, it, vi } from 'vitest'
@@ -32,7 +32,7 @@ function batchFor(queueName: string, messages = [pingMessage()]) {
 }
 
 describe('queue() dispatcher', () => {
-  for (const name of ['gmgo-starter-jobs', 'gmgo-starter-jobs-staging']) {
+  for (const name of ['rocketflare-jobs', 'rocketflare-jobs-staging']) {
     it(`routes '${name}' to the jobs consumer (per-message ack)`, async () => {
       const { batch, spies } = batchFor(name)
       await queue(batch, createTestEnv(), createExecutionContext())
@@ -51,7 +51,7 @@ describe('queue() dispatcher', () => {
   })
 
   it('validates config like fetch does', async () => {
-    const { batch } = batchFor('gmgo-starter-jobs')
+    const { batch } = batchFor('rocketflare-jobs')
     await expect(
       queue(batch, createTestEnv({ APP_URL: 'not a url' }), createExecutionContext())
     ).rejects.toThrow(/Invalid environment configuration/)

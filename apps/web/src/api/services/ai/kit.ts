@@ -9,7 +9,7 @@
  */
 
 import type Anthropic from '@anthropic-ai/sdk'
-import type { TokenUsage } from '@gmgo/shared/ai/chat'
+import type { TokenUsage } from '@rocketflare/shared/ai/chat'
 import type { ZodType } from 'zod'
 import { zodToJsonSchema } from 'zod-to-json-schema'
 import { AiError } from './errors'

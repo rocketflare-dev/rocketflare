@@ -8,7 +8,7 @@ import {
   SUMMARIZE_TEXT_MAX_CHARS,
   type SummarizeTextInput,
   summarizeTextInputSchema,
-} from '@gmgo/shared/ai/agents'
+} from '@rocketflare/shared/ai/agents'
 import { FieldError, fieldErrorFor } from '@/ui/components/shared'
 import type { AgentForm, AgentFormProps } from './types'
 

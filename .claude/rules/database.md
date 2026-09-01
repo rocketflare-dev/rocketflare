@@ -31,8 +31,8 @@ Drizzle ORM over PostgreSQL (Neon in deployed envs, Docker locally). **One drive
 Every table with a `tenantId` MUST include `tenantIsolation('<table>')` in its `extraConfig`; a table
 without one goes in `RLS_EXCLUDED_TABLES` (`apps/web/src/db/schema/rls.ts`) with the reason.
 `apps/web/tests/api/rls-coverage.test.ts` fails CI either way until you do. The policies are `FOR ALL TO
-gmgo_app` with `USING` and `WITH CHECK` on `tenant_id = nullif(current_setting('app.tenant_id',
-true), '')::uuid`. `apps/web/scripts/db-roles.ts` creates `gmgo_app` `NOLOGIN` via SQL (never a
+rocketflare_app` with `USING` and `WITH CHECK` on `tenant_id = nullif(current_setting('app.tenant_id',
+true), '')::uuid`. `apps/web/scripts/db-roles.ts` creates `rocketflare_app` `NOLOGIN` via SQL (never a
 `neon_superuser`), so policies resolve while nothing can connect as the role.
 
 `TENANT_SCOPE_MODE`: `off` (default — `withTenantScope(db, tenantId, fn)` is `fn(db)`) · `enforce`
@@ -46,7 +46,7 @@ predicate**, not SQL injection — the app role can `set_config` itself.
 - `id: uuid('id').primaryKey().defaultRandom()`; `...timestamps()` gives `createdAt`/`updatedAt` as
   `timestamptz` — never bare `timestamp`
 - `pgEnum` for closed sets; append values last (a migration cannot USE an enum value it adds)
-- `jsonb` for flexible metadata, typed with `$type<>()` from a `@gmgo/shared` zod schema. The one
+- `jsonb` for flexible metadata, typed with `$type<>()` from a `@rocketflare/shared` zod schema. The one
   exception is `analytics_pages.config`, typed `$type<DashboardConfig>()` from `drizzle-cube/client`
   (type-only import) — shared may import only zod, so its `dashboardConfigSchema` is loose and the
   drizzle-cube type lives on this side (D19)
@@ -54,7 +54,7 @@ predicate**, not SQL injection — the app role can `set_config` itself.
 - Encrypted-at-rest columns (`oauth_providers.access_token`, `ai_configs.credentials`) are `text`
   written only through `token-crypto.ts`
 - pgvector (D18): `chunks.embedding` is `vector('embedding', { dimensions: EMBEDDING_DIM })` with
-  `EMBEDDING_DIM` imported from `@gmgo/shared/ai/config` (1024 — the native width of the default
+  `EMBEDDING_DIM` imported from `@rocketflare/shared/ai/config` (1024 — the native width of the default
   embeddings model `@cf/baai/bge-m3`; the `openai*` adapters request `dimensions: 1024` so every
   provider fits the column). **The constant must match the model the default resolver picks**; a
   different width is a NEW table (or a fresh migration on an empty table), never an `ALTER`, and every
@@ -106,7 +106,7 @@ predicate**, not SQL injection — the app role can `set_config` itself.
 1. Edit `apps/web/src/db/schema/*` → 2. `pnpm db:generate` → 3. **read the SQL** → 4. `pnpm db:migrate`.
 
 `db:migrate` = `db-roles --phase=role` → `migrate.ts` → `db-roles --phase=grants`. Role first
-because a policy's `TO gmgo_app` needs the role to exist; grants after because `REVOKE` can only name
+because a policy's `TO rocketflare_app` needs the role to exist; grants after because `REVOKE` can only name
 tables that exist. Both halves are idempotent. `db:migrate:ci` is the same without dotenv (env from
 the GitHub Environment). `apps/web/scripts/migrate.ts` rewrites a Neon `-pooler` host to the direct host so
 DDL never hits a pooled backend.

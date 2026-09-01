@@ -1,4 +1,4 @@
-# Shared Contracts (`packages/shared` — `@gmgo/shared`, private)
+# Shared Contracts (`packages/shared` — `@rocketflare/shared`, private)
 
 Zod schemas + inferred types used by BOTH the API and the UI (D13). Contracts first: a new or
 changed API surface starts here, then the route `validate()`s with it, then the UI parses the
@@ -25,7 +25,7 @@ response with the same schema. `pnpm test:config` covers the pure parts.
 `files.ts` — `FILE_SCOPES`/`fileScopeSchema`, `MAX_UPLOAD_BYTES`, `AVATAR_MIME_TYPES`/`isAvatarMimeType`,
 `filePath(id)`, `fileSchema`/`uploadResponseSchema`, `uploadQuerySchema` (D23) ·
 `jobs.ts` also carries `document.index` (`{ tenantId, documentId }` — re-index a `documents` row, D18) ·
-**`ai/`** (Phase 3, D16/D17/D18; barrel `ai/index.ts`, deep imports `@gmgo/shared/ai/<file>` equally valid):
+**`ai/`** (Phase 3, D16/D17/D18; barrel `ai/index.ts`, deep imports `@rocketflare/shared/ai/<file>` equally valid):
 `config.ts` — `AI_PROVIDERS`/`aiProviderSchema` (append LAST: the DB column is a text enum), `AI_SCOPES`
 (`chat | embeddings`), `thinkingSchema` + `THINKING_*` bounds, `aiConfigSchema` (sanitised row:
 `hasCredential`, never a key), `upsertAiConfigRequestSchema` (`apiKey` write-only), `testAiConfigRequest/ResponseSchema`,
@@ -78,4 +78,4 @@ is a `queryKeys` family). Adding a file scope: `FILE_SCOPES` here AND the mirror
 - Imports: `zod`, sibling files, and TYPE-only imports from `@casl/ability`. NEVER import from
   `apps/web/src/api`, `apps/web/src/db`, `apps/web/src/ui` or `apps/cli` — this package bundles into the browser and the CLI
 - `tenantRoleSchema` (assignable) on every input; `membershipRoleSchema` (+`support`) on outputs only
-- Server code imports via `@gmgo/shared/*`; UI too. Re-export every file from `index.ts`
+- Server code imports via `@rocketflare/shared/*`; UI too. Re-export every file from `index.ts`

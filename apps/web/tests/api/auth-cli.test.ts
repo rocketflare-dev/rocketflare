@@ -5,6 +5,7 @@
 import { eq } from 'drizzle-orm'
 import { describe, expect, inject, it } from 'vitest'
 import { validateCliRedirectUri } from '@/api/routes/auth/cli'
+import { API_KEY_PREFIX_LENGTH } from '@/api/utils/core/hash'
 import { apiKeys } from '@/db/schema'
 import {
   bearerHeader,
@@ -29,7 +30,7 @@ describe('validateCliRedirectUri', () => {
     ['http://127.0.0.1:1/callback?x=1', false],
     ['http://evil.example/callback', false],
     ['http://127.0.0.1.evil.example/callback', false],
-    ['gmgo://callback', false],
+    ['rocketflare://callback', false],
     ['not a url', false],
     ['', false],
   ])('%s → %s', (uri, ok) => {
@@ -83,14 +84,14 @@ describe('GET /auth/cli', () => {
     const target = new URL(res.headers.get('location') as string)
     expect(`${target.origin}${target.pathname}`).toBe(GOOD)
     const key = target.searchParams.get('key') as string
-    expect(key).toMatch(/^gmgo_/)
+    expect(key).toMatch(/^rocketflare_/)
     expect(target.searchParams.get('tenant_id')).toBe(seed.tenant.id)
     expect(target.searchParams.get('tenant_name')).toBe(seed.tenant.name)
 
     const [row] = await db
       .select()
       .from(apiKeys)
-      .where(eq(apiKeys.keyPrefix, key.slice(0, 12)))
+      .where(eq(apiKeys.keyPrefix, key.slice(0, API_KEY_PREFIX_LENGTH)))
     expect(row).toMatchObject({
       name: 'cli:my-laptop.local',
       scopes: ['*'],
@@ -115,7 +116,7 @@ describe('GET /auth/cli', () => {
     const [row] = await db
       .select()
       .from(apiKeys)
-      .where(eq(apiKeys.keyPrefix, key.slice(0, 12)))
+      .where(eq(apiKeys.keyPrefix, key.slice(0, API_KEY_PREFIX_LENGTH)))
     expect(row?.name).toBe('cli:cli')
   })
 })

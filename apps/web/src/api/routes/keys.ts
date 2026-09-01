@@ -2,9 +2,9 @@
  * `/api/keys` (D12): tenant API keys. Admin+ throughout; the plaintext appears exactly once, in the
  * `POST` response. Revoke is soft (`revokedAt`), never a delete.
  */
-import type { ApiKey as ApiKeyDto } from '@gmgo/shared/api-keys'
-import { createApiKeyRequestSchema } from '@gmgo/shared/api-keys'
-import { paginationMeta, paginationQuerySchema } from '@gmgo/shared/pagination'
+import type { ApiKey as ApiKeyDto } from '@rocketflare/shared/api-keys'
+import { createApiKeyRequestSchema } from '@rocketflare/shared/api-keys'
+import { paginationMeta, paginationQuerySchema } from '@rocketflare/shared/pagination'
 import { and, count, desc, eq } from 'drizzle-orm'
 import { type ApiKey, apiKeys } from '../../db/schema'
 import { mintApiKey } from '../auth/api-keys'

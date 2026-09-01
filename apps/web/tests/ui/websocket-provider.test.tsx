@@ -4,7 +4,7 @@
  * + a toast) and the invalidation table only names real query-key families. Reconnect/backoff
  * mechanics are covered in websocket-client.test.ts.
  */
-import { REALTIME_INVALIDATIONS } from '@gmgo/shared/realtime'
+import { REALTIME_INVALIDATIONS } from '@rocketflare/shared/realtime'
 import { act, cleanup, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useToastStore } from '@/ui/components/shared/Toast'

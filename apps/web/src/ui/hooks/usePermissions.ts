@@ -3,7 +3,7 @@
  * checks the kit's chrome needs. Level checks read the ability, not the role string, so a global
  * admin visiting as `support` and a real owner answer the same way the server would.
  */
-import type { Actions, Subjects } from '@gmgo/shared/permissions'
+import type { Actions, Subjects } from '@rocketflare/shared/permissions'
 import { useMemo } from 'react'
 import { useAbility } from '@/ui/components/permissions/AbilityContext'
 

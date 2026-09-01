@@ -10,7 +10,7 @@ import {
   DEFAULT_MODELS,
   type ProviderPreset,
   presetsFor,
-} from '@gmgo/shared/ai/config'
+} from '@rocketflare/shared/ai/config'
 
 export interface ProviderInfo {
   id: AiProvider

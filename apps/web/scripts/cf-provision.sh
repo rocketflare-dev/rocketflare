@@ -7,7 +7,7 @@
 #   NEON_DATABASE_URL='postgresql://…' bash apps/web/scripts/cf-provision.sh <staging|production>
 #
 #   <staging|production>  which toml the ids belong to (wrangler.staging.toml / wrangler.toml)
-#   [app-name]            worker base name; defaults to `name` in wrangler.toml (gmgo-starter)
+#   [app-name]            worker base name; defaults to `name` in wrangler.toml (rocketflare)
 #
 # Working directory: this file lives in apps/web/scripts inside the pnpm workspace. The root
 # `pnpm provision` script runs it with apps/web as cwd, and the script ALSO `cd`s to apps/web itself
@@ -15,7 +15,7 @@
 # `wrangler.staging.toml`, `pnpm exec wrangler` (the apps/web devDependency) — works whether it is
 # invoked from the root, from apps/web, or by absolute path.
 #
-# Requires: pnpm, an authenticated wrangler session (`pnpm --filter @gmgo/web exec wrangler login`
+# Requires: pnpm, an authenticated wrangler session (`pnpm --filter @rocketflare/web exec wrangler login`
 # from the root), and NEON_DATABASE_URL — the DIRECT (non `-pooler`) host of that environment's
 # Neon branch. Hyperdrive pools itself; see docs/DEPLOY.md → Neon.
 #
@@ -61,7 +61,7 @@ wr() { pnpm exec wrangler "$@"; }
 # ---- preflight ------------------------------------------------------------------------------
 if ! command -v pnpm >/dev/null 2>&1; then echo "pnpm not found (corepack enable)" >&2; exit 1; fi
 if ! wr whoami >/dev/null 2>&1; then
-  echo "wrangler is not authenticated. Run: pnpm --filter @gmgo/web exec wrangler login   (or export CLOUDFLARE_API_TOKEN)" >&2
+  echo "wrangler is not authenticated. Run: pnpm --filter @rocketflare/web exec wrangler login   (or export CLOUDFLARE_API_TOKEN)" >&2
   exit 1
 fi
 if [ -z "${NEON_DATABASE_URL:-}" ]; then
@@ -124,7 +124,7 @@ cat <<EOF
   sed -i.bak 's|<HYPERDRIVE${ID_TAG}_ID>|${HD_ID}|; s|<KV_RATE_LIMIT${ID_TAG}_ID>|${KV_ID}|' ${TOML} && rm ${TOML}.bak
 
 Then (from the repo root):
-  REQUIRE_PROVISIONED=1 pnpm --filter @gmgo/web test:config   # parity test must pass with no <PLACEHOLDER> left
+  REQUIRE_PROVISIONED=1 pnpm --filter @rocketflare/web test:config   # parity test must pass with no <PLACEHOLDER> left
   git diff apps/web/${TOML}                                    # review; ids are not secrets and are committed
 Later-phase names for this environment (declare them in ${TOML} when the phase lands):
   queue      = "${QUEUE_NAME}"

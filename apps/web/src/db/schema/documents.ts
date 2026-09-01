@@ -5,7 +5,7 @@
  * (with `chunkCount` and the `embeddingModel` that produced the vectors) or `→ failed` with a
  * redacted `error`. Chunks cascade from here.
  */
-import type { DocumentStatus } from '@gmgo/shared/ai/embeddings'
+import type { DocumentStatus } from '@rocketflare/shared/ai/embeddings'
 import { relations } from 'drizzle-orm'
 import { index, integer, pgTable, text, uuid } from 'drizzle-orm/pg-core'
 import { tenantRef, timestamps } from './_helpers'

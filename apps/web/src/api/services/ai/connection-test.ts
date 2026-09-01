@@ -6,7 +6,7 @@
  * candidate the admin has not saved yet. Nothing credential-shaped leaves this module: the verdict
  * is built from the normalised `AiError`, never the upstream body.
  */
-import type { TestAiConfigRequest, TestAiConfigResponse } from '@gmgo/shared/ai/config'
+import type { TestAiConfigRequest, TestAiConfigResponse } from '@rocketflare/shared/ai/config'
 import { and, eq } from 'drizzle-orm'
 import type { AppConfig } from '../../../config'
 import type { Database } from '../../../db/client'

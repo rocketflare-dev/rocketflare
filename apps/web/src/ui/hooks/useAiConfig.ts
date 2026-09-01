@@ -4,7 +4,7 @@
  * chat/embeddings WOULD resolve to), `POST /` upsert on (scope, label), `POST /test` (saved row
  * or inline candidate) and `DELETE /:id`. Members hold `read AiConfig`, admins `manage`.
  *
- * Contract gap: the providers catalog has no schema in `@gmgo/shared/ai/config` (it is server
+ * Contract gap: the providers catalog has no schema in `@rocketflare/shared/ai/config` (it is server
  * data, `services/ai/providers.ts`), so a permissive one lives here — only the fields the form
  * reads, `passthrough` for anything newer.
  */
@@ -19,7 +19,7 @@ import {
   type TestAiConfigRequest,
   testAiConfigResponseSchema,
   type UpsertAiConfigRequest,
-} from '@gmgo/shared/ai/config'
+} from '@rocketflare/shared/ai/config'
 import { queryOptions, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { z } from 'zod'
 import { api } from '@/ui/lib/api-client'

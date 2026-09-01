@@ -4,7 +4,7 @@
  * `(tenant_id, user_id)` from the auth context. Realtime is a nudge over the DO hub; this table is
  * the truth. `data` jsonb carries the type-specific payload (`notificationDataSchema`).
  */
-import type { NotificationData } from '@gmgo/shared/notifications'
+import type { NotificationData } from '@rocketflare/shared/notifications'
 import { relations } from 'drizzle-orm'
 import { index, jsonb, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core'
 import { tenantRef } from './_helpers'

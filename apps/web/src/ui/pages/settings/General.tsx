@@ -4,9 +4,9 @@
  * entirely in single mode. Forms validate with the shared request schemas before submitting.
  */
 
-import { updateTenantSettingsRequestSchema } from '@gmgo/shared/tenant-settings'
-import { updateTenantRequestSchema } from '@gmgo/shared/tenants'
 import { ExclamationTriangleIcon } from '@heroicons/react/24/outline'
+import { updateTenantSettingsRequestSchema } from '@rocketflare/shared/tenant-settings'
+import { updateTenantRequestSchema } from '@rocketflare/shared/tenants'
 import { useEffect, useState } from 'react'
 import {
   FieldError,

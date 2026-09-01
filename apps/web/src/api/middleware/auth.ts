@@ -11,7 +11,7 @@
  * `globalAdminMiddleware` (`/api/admin/*`): cookie session with `users.isGlobalAdmin`, tenant-free
  * by design — the only cross-tenant auth path.
  */
-import { ERROR_CODES } from '@gmgo/shared/errors'
+import { ERROR_CODES } from '@rocketflare/shared/errors'
 import { createMiddleware } from 'hono/factory'
 import { buildAbility } from '../../permissions'
 import { touchApiKeyUsage, validateApiKey } from '../auth/api-keys'

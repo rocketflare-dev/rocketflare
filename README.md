@@ -1,6 +1,6 @@
-# GMGO Starter Kit
+# Rocketflare
 
-A multi-tenant SaaS starter for GM-internal applications, packaged as one repository you copy and
+A multi-tenant SaaS starter for internal applications, packaged as one repository you copy and
 rename. It is a **pnpm workspace** of three packages: `apps/web` (Hono API + React UI in a single
 Cloudflare Worker), `apps/cli` (a commander CLI that logs in through the browser and talks to the API
 with a tenant key) and `packages/shared` (private zod contracts consumed by all three). Postgres on
@@ -8,7 +8,7 @@ Neon through Hyperdrive with Drizzle; arctic OAuth + magic-link auth; CASL permi
 analytics; an AI layer (chat, agents on Workflows, tracing, pgvector retrieval). Zero external
 credentials are needed for the first local run.
 
-**Who it is for.** GM engineers starting an internal product who want tenancy, auth, permissions,
+**Who it is for.** Engineers starting an internal product who want tenancy, auth, permissions,
 background work, realtime, analytics, AI plumbing and a CLI solved on day one — and an agent-readable
 codebase (`CLAUDE.md`, `.claude/rules/`, per-directory guides) so the next feature is a
 contract-schema-route-page(-command) loop, not a platform project. Not a public framework.
@@ -16,17 +16,17 @@ contract-schema-route-page(-command) loop, not a platform project. Not a public 
 ## Layout
 
 ```
-gmgo/                 workspace root: package.json (scripts delegate via pnpm -r / --filter),
+rocketflare/                 workspace root: package.json (scripts delegate via pnpm -r / --filter),
 │                     pnpm-workspace.yaml, biome.json, tsconfig.base.json, CLAUDE.md, docs/, .github/
-├── apps/web/         @gmgo/web — Worker (Hono API) + React UI; wrangler*.toml, migrations/, scripts/, tests/
-├── apps/cli/         @gmgo/cli — `gmgo` CLI: login, logout, whoami, status, members/keys/activity list, config
-└── packages/shared/  @gmgo/shared — PRIVATE zod contracts, error envelope, pagination, permission types;
+├── apps/web/         @rocketflare/web — Worker (Hono API) + React UI; wrangler*.toml, migrations/, scripts/, tests/
+├── apps/cli/         @rocketflare/cli — `rocketflare` CLI: login, logout, whoami, status, members/keys/activity list, config
+└── packages/shared/  @rocketflare/shared — PRIVATE zod contracts, error envelope, pagination, permission types;
                       consumed as TypeScript source through the workspace link (no build step)
 ```
 
 Everything runs from the root: `pnpm dev`, `pnpm test`, `pnpm cli …`, `pnpm web <script>` (any
 `apps/web` script), `pnpm db:*`, `pnpm deploy[:staging]`, `pnpm provision`. `wrangler` is a
-devDependency of `apps/web`, so it is `pnpm --filter @gmgo/web exec wrangler …`, never `pnpm exec
+devDependency of `apps/web`, so it is `pnpm --filter @rocketflare/web exec wrangler …`, never `pnpm exec
 wrangler` at the root.
 
 ## Getting started
@@ -53,9 +53,9 @@ email provider is configured. Just copied the kit for a new app? Read `docs/ADAP
 | Workspace tooling, tomls, CI gate, docs system, parity test | **Phase 0 — done** | `ci.yml`, two `apps/web/wrangler*.toml`, `apps/web/tests/config/wrangler-parity.test.ts`, this doc set |
 | Config, DB client, schema helpers, RLS scaffolding, migrations | **Phase 0 — done** | `loadConfig(env)`, postgres.js per request, `tenantIsolation()` inert |
 | API shell: middleware chain, error envelope, `/api/health`, UI shell | **Phase 0 — done** | Hono app + React renders |
-| Shared contracts package (`@gmgo/shared`) | **Phase 0 — done** | zod schemas imported by API, UI and CLI; private, no build |
+| Shared contracts package (`@rocketflare/shared`) | **Phase 0 — done** | zod schemas imported by API, UI and CLI; private, no build |
 | Identity: users, tenants, roles, invitations, access requests, magic link, Google/Microsoft OAuth, API keys, admin area | Phase 1 — done | `TENANCY_MODE` multi/single, `SIGNUP_MODE`; `GET /auth/cli` handoff for the CLI |
-| CLI: `login` (browser → loopback → API key in `~/.gmgo`), `whoami`, `status`, tenant-scoped list commands, `--json` | Phase 1 — done | `GMGO_API_KEY` / `GMGO_URL` env overrides for CI |
+| CLI: `login` (browser → loopback → API key in `~/.rocketflare`), `whoami`, `status`, tenant-scoped list commands, `--json` | Phase 1 — done | `ROCKETFLARE_API_KEY` / `ROCKETFLARE_URL` env overrides for CI |
 | Realtime: `NotificationsHub` Durable Object (one per tenant, hibernation, RPC) + `GET /ws`, `services/realtime.ts` nudges, shared event contract, reconnecting client + status dot/banner | **Phase 2 — done** | "DB is the truth, WebSocket is a nudge": events invalidate TanStack queries, never carry state |
 | Background jobs: `JOBS_QUEUE` producer/consumer with typed envelopes (`email.send`, `activity.record`, `example.ping`), poison → ack, error → backoff retry; invitation + access-request emails queued; daily cron | **Phase 2 — done** | prefix-matched queue dispatch so staging's `-staging` name needs no code change; magic link stays inline |
 | File storage: R2 `FILES` behind `StorageService`, `files` table index (RLS), `POST/GET/DELETE /api/files`, 5 MB per file, avatar upload UI | **Phase 2 — done** | tenant-prefixed keys, streamed through the Worker, no presigned URLs; `avatarUrl` is global but the object is tenant-scoped (known gap) |
@@ -93,10 +93,10 @@ disabled; under the Workers limit, fix is upstream (`docs/DEPLOY.md` "Bundle siz
 
 ## Provenance
 
-Extracted from two internal GM applications: one contributed the structure, docs system, auth,
+Extracted from two internal applications: one contributed the structure, docs system, auth,
 tenancy and AI layer; the other the Cloudflare substrate (Hyperdrive, Queues, Workflows, Durable
 Objects, two-toml deploys) and the analytics layer. Decisions are recorded in `docs/analysis/00-SYNTHESIS.md`.
 
 ## Licence
 
-Internal — GM. Licence to be confirmed before any external distribution.
+Internal. Licence to be confirmed before any external distribution.

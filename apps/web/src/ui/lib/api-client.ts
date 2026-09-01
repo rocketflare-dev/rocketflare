@@ -5,14 +5,14 @@
  * - `X-Requested-With: fetch` marks browser-initiated calls. The server's CSRF middleware
  *   decides on `Origin` / `Sec-Fetch-Site` (see src/api/middleware/csrf.ts); the header is
  *   defence in depth and lets a server-side rule single out the SPA if it ever needs to.
- * - Non-2xx → `ApiError`, parsed from the shared error envelope (`@gmgo/shared/errors`)
+ * - Non-2xx → `ApiError`, parsed from the shared error envelope (`@rocketflare/shared/errors`)
  * - Optional zod `schema` validates the response body
  * - `api.upload(url, formData)` posts multipart (no JSON content-type; the browser sets the boundary)
  * - 401 → the registered unauthorized handler (D20). Phase 1 wires it to
  *   `queryClient.clear()` + redirect to `/login?returnUrl=…`.
  */
 
-import { type ApiErrorBody, apiErrorSchema } from '@gmgo/shared/errors'
+import { type ApiErrorBody, apiErrorSchema } from '@rocketflare/shared/errors'
 import type { z } from 'zod'
 import { showToast } from '../components/shared/Toast'
 
@@ -25,7 +25,7 @@ export class ApiError extends Error {
   readonly code?: string
   /**
    * Structured detail from the envelope (zod issues, counts, offending ids…). `unknown` on
-   * purpose: parse it with the matching `@gmgo/shared` schema rather than reading fields blind.
+   * purpose: parse it with the matching `@rocketflare/shared` schema rather than reading fields blind.
    */
   readonly details?: unknown
   readonly body: ApiErrorBody

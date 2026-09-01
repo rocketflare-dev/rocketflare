@@ -6,17 +6,18 @@
  * through `Markdown` (model output), `status` and `error` are quiet status lines. Payloads beyond
  * `step` are `unknown` on the wire, so each is parsed leniently here rather than read blind.
  */
-import {
-  type AgentRunEvent,
-  type AgentStepEventData,
-  agentStepEventDataSchema,
-} from '@gmgo/shared/ai/agents'
+
 import {
   ArrowPathIcon,
   CheckCircleIcon,
   ExclamationCircleIcon,
   WrenchScrewdriverIcon,
 } from '@heroicons/react/24/outline'
+import {
+  type AgentRunEvent,
+  type AgentStepEventData,
+  agentStepEventDataSchema,
+} from '@rocketflare/shared/ai/agents'
 import { useMemo } from 'react'
 import { z } from 'zod'
 import { Markdown } from '@/ui/components/ai/Markdown'

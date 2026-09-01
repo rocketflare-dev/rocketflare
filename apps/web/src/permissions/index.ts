@@ -6,7 +6,7 @@ export type {
   PackedRules,
   Role,
   Subjects,
-} from '@gmgo/shared/permissions'
+} from '@rocketflare/shared/permissions'
 export {
   type AbilityContext,
   ADMIN_MANAGED,

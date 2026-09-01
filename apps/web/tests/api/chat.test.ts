@@ -7,7 +7,7 @@
  * 503 `ai_not_configured` BEFORE the stream; a provider failure → an `error` frame; another user's
  * conversation → 404 (admins too); list is mine only + paginated; delete cascades; 401 anon.
  */
-import { conversationSchema, conversationWithMessagesSchema } from '@gmgo/shared/ai/chat'
+import { conversationSchema, conversationWithMessagesSchema } from '@rocketflare/shared/ai/chat'
 import { and, eq } from 'drizzle-orm'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { AiError, AiNotConfiguredError } from '@/api/services/ai/errors'

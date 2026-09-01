@@ -10,7 +10,7 @@ React 18 + Vite + React Router 6 + TanStack Query 5 + zustand; DaisyUI 5 on Tail
   table in three tiers: public (`/login`, `/magic-link/sent`, `/invite/:token`), signed-in-without-
   tenant (`/select-tenant`, `/pending`, `/no-access` — `ProtectedRoute requireTenant={false}`), and
   the shell (`/*` — `ProtectedRoute`, `Layout` mounted ONCE, nested `<Routes>` beneath it).
-- `index.css` — the design system: themes `gm-light`/`gm-dark`, semantic tokens (`--surface-*`,
+- `index.css` — the design system: themes `rocketflare-light`/`rocketflare-dark`, semantic tokens (`--surface-*`,
   `--border-*`, `--text-*`, `--tone-*`), primitives (`.surface-panel`, `.data-table`,
   `.status-badge`, `.nav-item`). Rebrand instructions are in its header comment.
 - `components/` — shell: `Layout` (slots `headerStart`=`OrgSwitcher`, `headerEnd`=`NotificationsBell`
@@ -57,7 +57,7 @@ React 18 + Vite + React Router 6 + TanStack Query 5 + zustand; DaisyUI 5 on Tail
   multipart — no JSON content-type), `queryClient` (module-level, 401 → handler), `query-keys`
   (factory + `cleanFilters`/`toSearchParams`; the family roots — `['invitations']`,
   `['pending-invitations']`, `['members']`, `['tenant']`… — are what `REALTIME_INVALIDATIONS` in
-  `@gmgo/shared/realtime` names; `agentRuns.all` is `['agent-run']` because that is the `entity`
+  `@rocketflare/shared/realtime` names; `agentRuns.all` is `['agent-run']` because that is the `entity`
   the server's `entity.changed` nudge carries — see "Agents" below), `websocketClient`
   (singleton: `/ws?tenantId=`, jittered backoff 1 s → 30 s, 100 ms fast path on close 1001/1012
   or an "upgraded" reason, 30 s ping;
@@ -88,23 +88,23 @@ React 18 + Vite + React Router 6 + TanStack Query 5 + zustand; DaisyUI 5 on Tail
 
 ## Conventions
 
-- Imports: `@/ui/...` and `@gmgo/shared/...`; never import from `src/api`, `src/db` or
+- Imports: `@/ui/...` and `@rocketflare/shared/...`; never import from `src/api`, `src/db` or
   `src/permissions` (the ability MATRIX is server code; the UI only unpacks rules).
 - Server data lives ONLY in the query cache: `useQuery` + a key from `query-keys.ts` + a
-  `@gmgo/shared` zod `schema` on `api.get`. Mutations live in the resource hook, `invalidateQueries`
+  `@rocketflare/shared` zod `schema` on `api.get`. Mutations live in the resource hook, `invalidateQueries`
   through `queryKeys`, and toast via `showSuccessToast`/`successMessage`.
 - zustand is for UI state only (toasts, connection state, tab-lifetime flags). Realtime events
   never become state: the provider invalidates query roots and the hooks re-fetch ("DB is the
   truth, WebSocket is a nudge"). A new server event type gets its roots in
   `packages/shared/src/realtime.ts`, not in a component.
 - Uploads: `api.upload('/api/files?scope=…', formData, { schema: uploadResponseSchema })`; check
-  type/size with `@gmgo/shared/files` before sending; `<img>` avatars need an `onError` fallback
+  type/size with `@rocketflare/shared/files` before sending; `<img>` avatars need an `onError` fallback
   (the object is tenant-scoped, `avatarUrl` is not).
 - Tokens, not raw colours: `text-muted`, `surface-panel`, `badge-warning` — never `bg-blue-50`.
   Classes built from props are safelisted with `@source inline(...)` in `index.css`; classes
   built from data are forbidden. Heroicons only (provider marks in `components/icons` are
   `currentColor`); `<details>/<summary>` dropdowns; `<dialog>` `Modal`.
-- Forms: controlled inputs + the same `@gmgo/shared` schema the server validates with; `FieldError`.
+- Forms: controlled inputs + the same `@rocketflare/shared` schema the server validates with; `FieldError`.
   Every list renders `PaginationControls` (it hides itself at one page).
 - Tests in `tests/ui/` (jsdom + Testing Library, `fetch` via `stubFetch()` route tables, no MSW);
   wrap with `renderWithProviders(ui, { session })` — `makeSession()` builds a post-parse session
@@ -149,7 +149,7 @@ React 18 + Vite + React Router 6 + TanStack Query 5 + zustand; DaisyUI 5 on Tail
 - Settings → AI: the providers catalog (`GET /api/ai/config/providers`) has NO shared schema (it
   is `services/ai/providers.ts` data), so `useAiConfig.ts` carries a permissive `passthrough`
   one. `PROVIDER_PRESETS`/`presetsFor`, `DEFAULT_MODELS`, `THINKING_*` come from
-  `@gmgo/shared/ai/config`. The label is the upsert key `(tenant, scope, label)` — read-only on
+  `@rocketflare/shared/ai/config`. The label is the upsert key `(tenant, scope, label)` — read-only on
   edit (renaming would create a second row). `apiKey` is write-only: blank on edit keeps the stored
   key (`hasCredential`); switching provider on edit requires a new key. `serviceTier: ''` clears.
   "Set default" re-posts the row with `isDefault: true` and no `apiKey`.
@@ -214,7 +214,7 @@ React 18 + Vite + React Router 6 + TanStack Query 5 + zustand; DaisyUI 5 on Tail
 - **GM wrote no chart code.** drizzle-cube renders everything: `AnalyticsDashboard` (react-grid-layout
   editor, portlet editor with its own query builder, drill-down, charts) and `AnalysisBuilder`
   (`/analytics/explore`). The kit owns the glue only: pages, hooks over `/api/analytics/*`
-  (`@gmgo/shared/analytics`), the provider wiring and the theme mapping. drizzle-cube 0.8.3 client
+  (`@rocketflare/shared/analytics`), the provider wiring and the theme mapping. drizzle-cube 0.8.3 client
   API actually used: `CubeProvider` from `drizzle-cube/client/providers` (`apiOptions`,
   `queryClient`, `features`), `AnalyticsDashboard` (`config`, `editable`, `dashboardFilters`,
   `onConfigChange`, `onSave`, `loadingComponent`), `AnalysisBuilder` + `AnalysisBuilderRef`
@@ -238,10 +238,10 @@ React 18 + Vite + React Router 6 + TanStack Query 5 + zustand; DaisyUI 5 on Tail
   Rollup fails without it) to `lib/stubs/nivo-heatmap.tsx`, which renders a notice; install the
   package and drop the alias to enable heat maps.
 - **Theme**: drizzle-cube styles itself from `--dc-*` variables; `index.css` re-points every one at
-  a kit token under `:root[data-theme="gm-light"], :root[data-theme="gm-dark"]` (specificity
+  a kit token under `:root[data-theme="rocketflare-light"], :root[data-theme="rocketflare-dark"]` (specificity
   (0,2,0) beats the library's `:root` and `html.dark` regardless of stylesheet order; the values are
   `var()`s that flip with the theme, so one block covers both). Its chart palettes decide dark from
-  `data-theme="dark"` or a `dark` class on `<html>`, so `CubeClientProvider` mirrors `gm-dark` into
+  `data-theme="dark"` or a `dark` class on `<html>`, so `CubeClientProvider` mirrors `rocketflare-dark` into
   that class while mounted (`syncDarkClass`) — the kit's own CSS never reads `.dark`. `index.css`
   also `@source`s `node_modules/drizzle-cube/dist/client/**/*.js` (the rule for JSX-shipping
   dependencies); measured effect: the library's utilities are `dc:`-prefixed and precompiled into

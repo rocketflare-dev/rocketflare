@@ -10,7 +10,7 @@ APP_URL=http://localhost:3000
 # Owner connection string for local Postgres (docker-compose.dev.yml). In deployed
 # environments the Worker uses the HYPERDRIVE binding instead; this is the dev fallback
 # and what scripts/migrate.ts, db-roles.ts, seed.ts and drizzle-kit use.
-DATABASE_URL=postgresql://gmgo:gmgo_pass@localhost:5432/gmgo_dev
+DATABASE_URL=postgresql://rocketflare:rocketflare_pass@localhost:5432/rocketflare_dev
 # AES-GCM key for OAuth tokens stored at rest. Generate: openssl rand -hex 32
 OAUTH_ENCRYPTION_KEY=
 # HMAC key for magic-link / invitation tokens. Generate: openssl rand -hex 32

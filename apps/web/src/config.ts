@@ -47,11 +47,11 @@ const configSchema = z.object({
   APP_ENV: z.enum(['development', 'staging', 'production']).default('development'),
   /** Public origin; derives OAuth redirect URIs, magic-link URLs, CSRF/CORS allow-lists. */
   APP_URL: z.string().url(),
-  APP_NAME: z.string().min(1).default('GMGO Starter'),
+  APP_NAME: z.string().min(1).default('Rocketflare'),
   /** Overridden at deploy time by CI (`wrangler deploy --var RELEASE_VERSION:<tag>`). */
   RELEASE_VERSION: z.string().min(1).default('dev'),
   LOG_LEVEL: z.enum(LOG_LEVELS).default('info'),
-  EMAIL_FROM: z.string().min(1).default('GMGO Starter <noreply@example.com>'),
+  EMAIL_FROM: z.string().min(1).default('Rocketflare <noreply@example.com>'),
   /** D25: schema is identical in both modes; `single` disables the multi-org surface. */
   TENANCY_MODE: z.enum(['multi', 'single']).default('multi'),
   /** D9: who may create an account. */

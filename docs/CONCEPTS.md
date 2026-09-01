@@ -23,12 +23,12 @@ section ends with **Known gaps**; sections for phases not yet built say so.
 | 12 | [Shared package](#12-shared-package) | Phase 0 |
 | 13 | [Definition of done](#13-definition-of-done-for-the-kit) | |
 
-Provenance: extracted from two internal GM applications — one supplied the structure, docs system,
+Provenance: extracted from two internal applications — one supplied the structure, docs system,
 auth/tenancy/AI layer; the other the Cloudflare substrate and analytics. Nine subsystem analyses
 (`docs/analysis/01–09`) and the synthesis are the decision record.
 
-**Layout (D26).** The repo is a pnpm workspace: `apps/web` (`@gmgo/web` — the Worker: Hono API +
-React UI, everything in §§1–10), `apps/cli` (`@gmgo/cli`, §11) and `packages/shared` (`@gmgo/shared`,
+**Layout (D26).** The repo is a pnpm workspace: `apps/web` (`@rocketflare/web` — the Worker: Hono API +
+React UI, everything in §§1–10), `apps/cli` (`@rocketflare/cli`, §11) and `packages/shared` (`@rocketflare/shared`,
 §12 — the zod contracts all three consume). Root `package.json` scripts delegate with `pnpm -r` /
 `--filter`; paths below are workspace-relative.
 
@@ -99,7 +99,7 @@ inserts a real `support` membership; `authMiddleware` keeps its single "must be 
 context; every tenant table also carries an RLS policy that is not enforced until `TENANT_SCOPE_MODE
 = enforce` — see §4 and `docs/RLS.md`.
 
-**The CLI is a tenant API key.** `gmgo login` ends with a tenant-scoped key (§11), so every CLI call
+**The CLI is a tenant API key.** `rocketflare login` ends with a tenant-scoped key (§11), so every CLI call
 is already inside one tenant and goes through the same `authMiddleware` Bearer path and CASL
 abilities as the UI; in `single` mode the tenant-select step of the login handoff is skipped.
 
@@ -171,7 +171,7 @@ cost) → optional tracing flush → mounts. Auth is per-mount because the publi
 OAuth callbacks, invite accept) is small and enumerable. The ASSETS catch-all serves the SPA and
 404s `/api|/auth|/cubejs-api|/mcp` so a missing route never returns `index.html`.
 
-**Contracts (D13, D26).** zod schemas in `packages/shared/src/` (`@gmgo/shared`, §12) are the API
+**Contracts (D13, D26).** zod schemas in `packages/shared/src/` (`@rocketflare/shared`, §12) are the API
 contract; the server validates with them, the UI and the CLI parse responses with them. No
 `hono/client` RPC (it drags the server type graph into the browser). Error envelope `{ error, statusCode, code?, details? }` everywhere including validation
 failures (the `validate()` wrapper throws `ValidationError` instead of zValidator's raw body); success bodies are bare. Pagination is `{ page, pageSize, total, totalPages }`.
@@ -211,12 +211,12 @@ the migrations (D17/D18), so `chunks.embedding vector(1024)` applies on Neon and
 table, not an `ALTER`.
 
 **Migrations flow.** `pnpm db:generate` → read the SQL → `pnpm db:migrate` = `db-roles --phase=role`
-→ `migrate.ts` → `db-roles --phase=grants`. Role first because a policy's `TO gmgo_app` needs it;
+→ `migrate.ts` → `db-roles --phase=grants`. Role first because a policy's `TO rocketflare_app` needs it;
 grants after because `REVOKE` needs the tables. `migrate.ts` rewrites a Neon `-pooler` host to the
 direct host so DDL never lands on a pooled backend with a stale GUC. In CI (`deploy.yml`) the same
 runs as `db:migrate:ci` before `wrangler deploy`.
 
-**RLS upgrade path.** Policies via `tenantIsolation()` on every tenant table, `gmgo_app` created
+**RLS upgrade path.** Policies via `tenantIsolation()` on every tenant table, `rocketflare_app` created
 `NOLOGIN` via SQL, `withTenantScope` that becomes `db.transaction + set_config(..., true)` under
 `enforce`, and a catalog-driven coverage test — all inert by default. The spike, go/no-go and the
 switch-on procedure are in `docs/RLS.md`.
@@ -238,7 +238,7 @@ app is dropped (it soaked Node connection pinning, which no longer exists); no r
 | periodic | `[triggers] crons` | `scheduled.ts` dispatch table on `event.cron`; each task try/caught; `0 4 * * *` prune, `15 * * * *` fact-table refresh (§8) |
 
 **Jobs (D7) — one queue, typed envelopes, poison never loops.** The contract is
-`@gmgo/shared/jobs`: a discriminated union on `type` (`email.send`, `activity.record`,
+`@rocketflare/shared/jobs`: a discriminated union on `type` (`email.send`, `activity.record`,
 `example.ping`) wrapped in an envelope `{ id, type, payload, enqueuedAt, attempt? }`. The `type`
 string is the versioning seam — a breaking payload change ships as a new type (`email.send.v2`)
 with its own handler while the old one drains; there is no schema-version field. The producer
@@ -250,7 +250,7 @@ error `retry({ delaySeconds })` with 30 s doubling to a 15 min cap; the toml's `
 ends it (`retry_delay = 60` only applies to a retry with no explicit delay). Each message opens and
 closes its own DB client and **everything is awaited — there is no `waitUntil` in a consumer**.
 `queue.ts` matches the jobs queue by **prefix** (`isJobsQueue`, `JOBS_QUEUE_NAME_PREFIX =
-'gmgo-starter-jobs'`) because queue names are account-scoped and staging's carries `-staging`; an
+'rocketflare-jobs'`) because queue names are account-scoped and staging's carries `-staging`; an
 unknown queue is `ackAll()`ed so a stray binding can never retry forever.
 
 What is queued today: the invitation email (create, bulk, resend) and the access-request decision
@@ -281,7 +281,7 @@ upgrades and `securityHeaders` returns a 101 untouched (its headers are immutabl
 drops the socket).
 
 **"DB is the truth, WebSocket is a nudge."** Events are `realtimeEventSchema` in
-`@gmgo/shared/realtime`: `{ type, tenantId, at, payload? }` with `type` ∈ `notification.created |
+`@rocketflare/shared/realtime`: `{ type, tenantId, at, payload? }` with `type` ∈ `notification.created |
 notification.read | member.changed | invitation.changed | tenant.changed | entity.changed | ping`.
 `REALTIME_INVALIDATIONS` in the same file maps each type to the TanStack query-key roots the UI
 invalidates (`invitation.changed` → `['invitations']` and `['pending-invitations']`;
@@ -351,9 +351,9 @@ file. Bytes **stream through the Worker** — the binding cannot mint presigned 
 table (`db/schema/files.ts`, migration `0001`, RLS policy like every tenant table) is the index and
 the only thing the browser can name: rows are immutable (`id, tenantId, ownerUserId, scope, key,
 filename, contentType, sizeBytes, createdAt`; no `updated_at`). Scopes are `FILE_SCOPES =
-['avatars', 'uploads']`, declared in `@gmgo/shared/files` and mirrored in the DB enum.
+['avatars', 'uploads']`, declared in `@rocketflare/shared/files` and mirrored in the DB enum.
 
-`/api/files` (`routes/files.ts`, behind `authMiddleware`, contract in `@gmgo/shared/files`):
+`/api/files` (`routes/files.ts`, behind `authMiddleware`, contract in `@rocketflare/shared/files`):
 
 - `POST /api/files?scope=` — multipart with one `file` field; `create File`. The route mounts its
   own transport cap (`MAX_UPLOAD_BYTES + 64 KB` for multipart overhead) and the JSON `bodyLimit`
@@ -386,8 +386,8 @@ templates are neutral and need branding.
 
 **Status: shell Phase 0; pages Phase 1.**
 
-**Design tokens, not raw colours.** `apps/web/src/ui/index.css` holds two DaisyUI themes (`gm-light`,
-`gm-dark`) whose brand hexes live in one header block, plus semantic surface/border/text tokens,
+**Design tokens, not raw colours.** `apps/web/src/ui/index.css` holds two DaisyUI themes (`rocketflare-light`,
+`rocketflare-dark`) whose brand hexes live in one header block, plus semantic surface/border/text tokens,
 shape/motion tokens, a base layer (focus ring, reduced motion, tabular numerals) and component
 primitives (`.surface-panel`, `.data-table`, `.status-badge`). `apps/web/tests/ui/contrast.test.ts` gates the
 emitted tokens; the palette *pipeline* is documented, not shipped (D20). Tailwind v4 scanning is
@@ -420,7 +420,7 @@ theme option or cross-tab sync; dev quick-login account list should come from a 
 `apps/web/src/api/cubes/*` (+ `CLAUDE.md`), `routes/{cube-api,analytics-pages}.ts`,
 `services/dashboard-templates.ts`, `services/fact-tables/**` (+ `CLAUDE.md`), `src/dashboards/**`
 (`CLAUDE.md`, `DASHBOARD_PATTERNS.md`), `db/schema/{analytics-pages.ts,facts/*}`, migration `0004`.
-Contracts: `@gmgo/shared/analytics`. Decision record: `docs/analysis/08-analytics-dashboards.md`.
+Contracts: `@rocketflare/shared/analytics`. Decision record: `docs/analysis/08-analytics-dashboards.md`.
 
 **drizzle-cube is the semantic layer; tenant scoping is inside every cube's `sql()` (D19).**
 `routes/cube-api.ts` is ONE router mounted at both `/cubejs-api` and `/mcp` behind
@@ -495,7 +495,7 @@ in two places: `onTenantCreated` (`utils/db/tenant-helpers.ts`) after the create
 commits — best-effort, a failure is swallowed — AND lazily on every `GET /api/analytics/pages`,
 idempotent through `(tenant_id, slug)` `onConflictDoNothing`. The lazy path is the guarantee and
 is how a template added later reaches existing tenants. Routes (`/api/analytics`, contracts in
-`@gmgo/shared/analytics`): every member — `GET /pages` (`{ items }`, ordered by `sortOrder`),
+`@rocketflare/shared/analytics`): every member — `GET /pages` (`{ items }`, ordered by `sortOrder`),
 `GET /pages/:id`, `GET /templates`; `manage Dashboard` (admin+) — `POST /pages` (an empty rows
 dashboard unless `config` is given; unique slug from the name), `PATCH /pages/:id` (name,
 description, config, order, isDefault), `DELETE /pages/:id` (a template page → 403
@@ -529,7 +529,7 @@ when `mcp.enabled` is false — not the kit's imports (the sourcemap has no `nod
 higher on Paid, which the kit needs anyway). The fix is upstream — a lazy `import()` of the MCP path
 in the adapter — or a thin adapter of our own over `drizzle-cube/server`.
 
-**Known gaps / not built yet:** UI — no router-level unsaved-changes blocker (`beforeunload` + flush on leaving edit mode), heat-map charts stubbed (`@nivo/heatmap` aliased to a notice; install it and drop the alias), drizzle-cube runs its own TanStack Query context so `CubeClientProvider` gives it a dedicated `QueryClient` whose 401 handler calls `notifyUnauthorized`, and mirrors `data-theme="gm-dark"` into a `dark` class while mounted; isolation is convention
+**Known gaps / not built yet:** UI — no router-level unsaved-changes blocker (`beforeunload` + flush on leaving edit mode), heat-map charts stubbed (`@nivo/heatmap` aliased to a notice; install it and drop the alias), drizzle-cube runs its own TanStack Query context so `CubeClientProvider` gives it a dedicated `QueryClient` whose 401 handler calls `notifyUnauthorized`, and mirrors `data-theme="rocketflare-dark"` into a `dark` class while mounted; isolation is convention
 enforced by one test — no per-cube CASL gate, no second line of defence in the cube layer; the
 compiler is rebuilt per request (4 cubes — cheap; `SemanticLayerCompiler` + cube sets is the
 scaling path) and drizzle-cube's `MemoryCacheProvider` is per-isolate (a KV provider would be an
@@ -567,7 +567,7 @@ completion / one embedding, 20 s timeout, 10 per minute per IP). Vars: `AGENT_MA
 `LANGFUSE_BASE_URL` (Langfuse cloud) and `LANGFUSE_TRACING_ENVIRONMENT` (= `APP_ENV`) default in
 `config.ts` and are not declared in the tomls.
 
-**Providers v1** (`AI_PROVIDERS` in `@gmgo/shared/ai/config`, append-only; `services/ai/providers.ts`
+**Providers v1** (`AI_PROVIDERS` in `@rocketflare/shared/ai/config`, append-only; `services/ai/providers.ts`
 is the data catalog and its `scopes` is the "an adapter exists" gate): `anthropic` (chat,
 `@anthropic-ai/sdk`), `anthropic_compatible` (chat; Anthropic wire format behind `Authorization:
 Bearer` = the SDK's `authToken`, base URL required; Fireworks and Moonshot are `PROVIDER_PRESETS`
@@ -612,7 +612,7 @@ written to the query cache on `message.end`; `react-markdown` + `remark-gfm` liv
 `components/ai/` outside the shared barrel so they ship only in the lazy chat chunk.
 
 **Agents (D7).** `AGENTS` (`services/agents/registry.ts`) maps each `AgentKey` to the shared
-`AgentMeta` (`@gmgo/shared/ai/agents`: key, `inputSchema`/`outputSchema`, `promptKey`, `exclusive`)
+`AgentMeta` (`@rocketflare/shared/ai/agents`: key, `inputSchema`/`outputSchema`, `promptKey`, `exclusive`)
 plus a server-side `run(ctx)`. `POST /api/agents/runs` is the handoff — routes enqueue, never run:
 `enqueueRun` validates against the agent's `inputSchema`, inserts `agent_runs` `queued`, creates the
 Workflow instance with **id = run id**, and answers 202 with the row. The partial unique index
@@ -643,7 +643,7 @@ one terminal tool `submit_summary` through `callStructuredTool`, usage under
 `agent:summarize-text`, and with `index: true` the summary is stored through `ingestText`.
 
 **Embeddings and retrieval (D18).** `documents` (raw `content` kept for re-index, never returned by
-the API) and `chunks` (`embedding vector(1024)` — `EMBEDDING_DIM` in `@gmgo/shared/ai/config`; HNSW
+the API) and `chunks` (`embedding vector(1024)` — `EMBEDDING_DIM` in `@rocketflare/shared/ai/config`; HNSW
 `vector_cosine_ops`). `ingestText` (`services/ai/ingest.ts`) is the one way in
 (`POST /api/ai/documents/ingest`, ≤ 500 000 chars): resolve embeddings first (no provider → 503, no
 orphan row), insert `pending`, chunk paragraph-aware (~800 tokens, 100 overlap, 4 chars per token
@@ -694,7 +694,7 @@ the connection test spends tokens but writes no `ai_usage` row; `GET /api/ai/con
 no shared schema (the UI keeps a permissive `passthrough` one in `hooks/useAiConfig.ts`);
 `ai_configs.label` is the upsert key, so a rename is delete + re-add; `/settings` is admin-guarded,
 so members hold `read AiConfig` / `read Prompt` with no nav path to the read-only views;
-`agent_run_events.data` is `z.unknown()` in `@gmgo/shared/ai/agents` for every type except `step`
+`agent_run_events.data` is `z.unknown()` in `@rocketflare/shared/ai/agents` for every type except `step`
 (`agentStepEventDataSchema`) — the UI's `AgentSteps` parses `tool.*` / `text` / `status` / `error`
 leniently with local schemas, a candidate for promotion into the shared contract; no document
 nudge (`ingestText` / `indexDocument` emit nothing; the Knowledge page polls); runs show a user id,
@@ -719,7 +719,7 @@ web and cli together; `apps/*` versions are informational. `ci.yml` is the singl
 workspace root (`pnpm lint`, `pnpm typecheck` + typegen diff of `apps/web/worker-configuration.d.ts`,
 `pnpm test` on real Postgres for web plus the cli suite, `pnpm build`, gitleaks) and is *called* by
 `deploy.yml`, not copied. Only `apps/web` deploys; `wrangler` runs inside that package
-(`pnpm --filter @gmgo/web exec wrangler …`). The CLI is built as a compile check and distributed via
+(`pnpm --filter @rocketflare/web exec wrangler …`). The CLI is built as a compile check and distributed via
 the repo — publishing it is an app decision; the package is private by default. Full reference:
 `docs/DEPLOY.md`.
 
@@ -729,18 +729,18 @@ shipped; no per-PR previews; a CI check that every `apps/web/src/**/CLAUDE.md` e
 
 ## 11. CLI
 
-**Status: built (Phase 1).** Package `apps/cli` (`@gmgo/cli`), bin `gmgo`. Dev: `pnpm cli
+**Status: built (Phase 1).** Package `apps/cli` (`@rocketflare/cli`), bin `rocketflare`. Dev: `pnpm cli
 <command>` from the root (`tsx`); build: `tsc` → `apps/cli/dist/cli.js`. Stack: `commander` +
 `chalk` + `open` (D26). Conventions: `.claude/rules/cli.md`.
 
-**Every GM app wants a CLI, and it must never own a second copy of the contract.** The CLI is a
+**Every internal app wants a CLI, and it must never own a second copy of the contract.** The CLI is a
 thin client over the same `/api/*` routes the UI uses, authenticated with a tenant API key, parsing
-every response with the same `@gmgo/shared` zod schema the server validated with. Adding a command
+every response with the same `@rocketflare/shared` zod schema the server validated with. Adding a command
 is: schema in `packages/shared` (if new) → route → `apps/cli/src/commands/<name>.ts` calling
 `apps/cli/src/api.ts` (the only `fetch` site: adds `Authorization: Bearer`, parses the envelope,
 maps status → exit code).
 
-**Login handoff.** `gmgo login [--server <url>]` starts a loopback HTTP listener on the first free
+**Login handoff.** `rocketflare login [--server <url>]` starts a loopback HTTP listener on the first free
 port in `127.0.0.1:8765–8770`, opens the browser at
 `<server>/auth/cli?redirect_uri=http://127.0.0.1:<port>/callback&hostname=<machine>`, and waits
 (5 min timeout). The server side (§2) authenticates the user, asks for a tenant (skipped in `single`
@@ -748,10 +748,10 @@ mode), mints a tenant API key `cli:<hostname>` and redirects with `?key=&tenant_
 The listener answers a self-closing page, verifies the key with `GET /api/me`, stores it, shuts down.
 `logout` deletes the local key; revoke it server-side in Settings → API keys (or `keys list` to find it).
 
-**Config.** `~/.gmgo/config.json` — directory `0700`, file `0600`, re-tightened on every write —
-holding the server URL, API key, active tenant and signed-in user. `GMGO_CONFIG_DIR` relocates the
-directory (tests use a temp dir). **Env overrides win**: `GMGO_API_KEY` and `GMGO_URL` make the CLI
-usable in CI with no browser and no file; `GMGO_DEBUG` turns on debug lines. `gmgo config` prints the
+**Config.** `~/.rocketflare/config.json` — directory `0700`, file `0600`, re-tightened on every write —
+holding the server URL, API key, active tenant and signed-in user. `ROCKETFLARE_CONFIG_DIR` relocates the
+directory (tests use a temp dir). **Env overrides win**: `ROCKETFLARE_API_KEY` and `ROCKETFLARE_URL` make the CLI
+usable in CI with no browser and no file; `ROCKETFLARE_DEBUG` turns on debug lines. `rocketflare config` prints the
 effective config with the key masked (prefix only) — no command ever prints a full key.
 
 **Commands (Phase 1).** `login`, `logout`, `whoami` (`GET /api/me` + `GET /api/tenant` → user,
@@ -762,28 +762,28 @@ are global: with `--json` a command prints only the parsed response, so output p
 Human output is `chalk` tables on stdout; diagnostics go to stderr.
 
 **Exit codes (D26).** `0` ok · `1` error (API non-2xx other than 401/403, network, bad options,
-unexpected) · `2` not logged in (no key, or 401 — hint: run `gmgo login`) · `3` forbidden (403).
+unexpected) · `2` not logged in (no key, or 401 — hint: run `rocketflare login`) · `3` forbidden (403).
 Commands throw `CliError`; `cli.ts` catches once, prints once and sets `process.exitCode`, so tests
 run commands in-process with an injected `fetch`.
 
-**Known gaps / not built yet:** no device-code flow for headless machines (use `GMGO_API_KEY`); no
+**Known gaps / not built yet:** no device-code flow for headless machines (use `ROCKETFLARE_API_KEY`); no
 multi-profile config (one server + tenant at a time; `login` again to switch); `logout` does not
 revoke the key server-side; no shell completion; no publishing pipeline — the package is private and
 runs from the repo.
 
 ## 12. Shared package
 
-**Status: built (Phase 0).** `packages/shared` (`@gmgo/shared`), **private** (`"private": true`, no
+**Status: built (Phase 0).** `packages/shared` (`@rocketflare/shared`), **private** (`"private": true`, no
 `publishConfig` — never publish it).
 
 **One contract, three consumers, zero build.** The zod schemas, inferred types, error envelope
 (`errors.ts`), pagination (`pagination.ts`), permission vocabulary (`permissions.ts`: actions,
 subjects, `AppAbility`, packed rules) and the AI contracts (`ai/*.ts` — config, prompts, chat + the
 SSE frame union, agents, agent-models, embeddings, usage; barrel `ai/index.ts`, deep imports
-`@gmgo/shared/ai/<file>`) live in `packages/shared/src/` and are consumed as
-TypeScript source through the workspace link: `package.json` `exports` map `@gmgo/shared` →
-`./src/index.ts` and `@gmgo/shared/*` → `./src/*.ts`, so `apps/web` (API and UI), `apps/cli` and
-their tests import `@gmgo/shared/<module>` and Vite / wrangler / tsx / vitest all resolve the `.ts`
+`@rocketflare/shared/ai/<file>`) live in `packages/shared/src/` and are consumed as
+TypeScript source through the workspace link: `package.json` `exports` map `@rocketflare/shared` →
+`./src/index.ts` and `@rocketflare/shared/*` → `./src/*.ts`, so `apps/web` (API and UI), `apps/cli` and
+their tests import `@rocketflare/shared/<module>` and Vite / wrangler / tsx / vitest all resolve the `.ts`
 directly. There is no `dist`, nothing to rebuild after an edit, and typecheck is one `tsc` per
 package extending `tsconfig.base.json`.
 

@@ -4,10 +4,10 @@
  * (`runtime.ts`, driven by `workflows/agent-run.ts`) owns the lifecycle — claim, trace, client,
  * cancellation, persistence, events — so an agent is a declarative meta and one async function that
  * reads `ctx.input`, calls the model through `ctx.chat`, emits progress and returns its output.
- * Adding an agent = a key in `@gmgo/shared/ai/agents`, a prompt in `services/prompts.ts`, a file in
+ * Adding an agent = a key in `@rocketflare/shared/ai/agents`, a prompt in `services/prompts.ts`, a file in
  * `examples/` and one entry here. No migration.
  */
-import type { AgentKey, AgentMeta, AgentRunEventType } from '@gmgo/shared/ai/agents'
+import type { AgentKey, AgentMeta, AgentRunEventType } from '@rocketflare/shared/ai/agents'
 import type { AppConfig } from '../../../config'
 import type { Database } from '../../../db/client'
 import type { Tracer } from '../../observability/tracer'

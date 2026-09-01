@@ -8,7 +8,7 @@ import {
   promptListResponseSchema,
   promptWithResolvedSchema,
   type UpdatePromptRequest,
-} from '@gmgo/shared/ai/prompts'
+} from '@rocketflare/shared/ai/prompts'
 import { queryOptions, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/ui/lib/api-client'
 import { queryKeys } from '@/ui/lib/query-keys'

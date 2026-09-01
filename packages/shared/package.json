@@ -1,8 +1,8 @@
 {
-  "name": "@gmgo/shared",
+  "name": "@rocketflare/shared",
   "version": "0.1.0",
   "private": true,
-  "description": "Private shared contracts for the GMGO kit: zod schemas, error envelope, pagination, permission types. Consumed as TypeScript source by apps/web (API + UI) and apps/cli via the workspace link — no build step.",
+  "description": "Private shared contracts for the Rocketflare kit: zod schemas, error envelope, pagination, permission types. Consumed as TypeScript source by apps/web (API + UI) and apps/cli via the workspace link — no build step.",
   "type": "module",
   "exports": {
     ".": {

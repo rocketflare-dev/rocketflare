@@ -38,7 +38,7 @@ describe('sendEmail', () => {
     expect(fetchSpy).not.toHaveBeenCalled()
     const lines = log.info.mock.calls.map(args => args.map(String).join(' ')).join('\n')
     expect(lines).toContain(
-      '[email:dev] To: a@example.test Subject: Sign in to GMGO Test Link: http://localhost:3001/auth/magic-link/verify?token=abc'
+      '[email:dev] To: a@example.test Subject: Sign in to Rocketflare Test Link: http://localhost:3001/auth/magic-link/verify?token=abc'
     )
     expect(log.warn).not.toHaveBeenCalled()
   })

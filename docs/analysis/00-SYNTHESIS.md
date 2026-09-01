@@ -1,4 +1,4 @@
-# GMGO Starter Kit — Synthesis & Decision Matrix
+# Rocketflare — Synthesis & Decision Matrix
 
 Consolidates the nine subsystem analyses (`01`–`09`) into one set of decisions, one kit tree, and a
 phased build plan. Where two analyses disagreed, the resolution is recorded here and wins.
@@ -26,7 +26,7 @@ GM's Cloudflare equivalents. Nine analyses independently reached the same base/g
 ### 1.1 Locked before analysis (user + advisor)
 
 - CF-Workers-first, single deploy target; no Node/Docker adapter (Mirevue's Dockerfile/entrypoint named in `ADAPTING.md` as the recipe if ever needed).
-- ~~Single package~~ **REVISED 2026-09-01 (user): pnpm workspace monorepo** — `apps/web` (Worker + UI, Mirevue-shaped `src/`), `apps/cli` (default CLI: `login` via browser → loopback callback → API key in `~/.<app>/config.json`, `whoami`, `logout`, plus an example tenant-scoped command; `<APP>_API_KEY`/`<APP>_URL` env overrides for CI), `packages/shared` (`@gmgo/shared`, **private**, `"private": true`, no publishConfig: zod contracts/errors/pagination/permission types consumed by web API, web UI and CLI). Root `package.json` delegates via `pnpm -r` / `--filter`. Per-package tsconfig; shared is consumed as TS source via workspace link (`exports` → `./src/index.ts`) so no build step is needed in dev.
+- ~~Single package~~ **REVISED 2026-09-01 (user): pnpm workspace monorepo** — `apps/web` (Worker + UI, Mirevue-shaped `src/`), `apps/cli` (default CLI: `login` via browser → loopback callback → API key in `~/.<app>/config.json`, `whoami`, `logout`, plus an example tenant-scoped command; `<APP>_API_KEY`/`<APP>_URL` env overrides for CI), `packages/shared` (`@rocketflare/shared`, **private**, `"private": true`, no publishConfig: zod contracts/errors/pagination/permission types consumed by web API, web UI and CLI). Root `package.json` delegates via `pnpm -r` / `--filter`. Per-package tsconfig; shared is consumed as TS source via workspace link (`exports` → `./src/index.ts`) so no build step is needed in dev.
 - One worker; `NotificationsHub` Durable Object in-script. (05 confirmed GM split it only to keep preview URLs, since dropped; the split-out is a documented, reversible recipe.)
 - **In v1**: analytics/dashboards via drizzle-cube; AI enablement layer (settings, chat, agents, tracing seam).
 - Out of v1: Paddle/billing, Vectorize, voice, documents pipeline, reporting/export, benchmarks, evals harness, every app domain.
@@ -78,14 +78,14 @@ factory, shared error envelope override for zValidator, `tests/config/wrangler-p
 2. **`support` role visible in the customer's member list** — chosen yes (Mirevue transparency default).
 3. **Separate `AUTH_SIGNING_KEY` vs reuse `OAUTH_ENCRYPTION_KEY`** — chosen separate (one more secret, independent rotation).
 4. **Personal API keys in addition to tenant keys** — chosen tenant-only for v1 (GM's `?userOnly=` documented).
-5. **Kit package/app name token** — using `<APP>` / `gmgo-starter` until told otherwise.
+5. **Kit package/app name token** — using `<APP>` / `rocketflare` until told otherwise.
 
 ---
 
 ## 2. Proposed kit tree
 
 ```
-gmgo/
+rocketflare/
 ├── CLAUDE.md  AGENTS.md→CLAUDE.md  README.md  SETUP.md
 ├── docs/  CONCEPTS.md  DEPLOY.md  ADAPTING.md  RLS.md  ai.md  DASHBOARD_PATTERNS.md  analysis/ (this folder)
 ├── .claude/rules/  api.md  database.md  ui.md  testing.md  code-quality.md  cloudflare.md

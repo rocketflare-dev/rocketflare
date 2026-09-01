@@ -5,8 +5,8 @@
  * here as `AiNotConfiguredError` so the page can render a "configure AI" call to action instead
  * of a generic toast. Same cookie + `X-Requested-With` discipline as `lib/api-client.ts`.
  */
-import type { ChatStreamEvent, TokenUsage } from '@gmgo/shared/ai/chat'
-import type { ApiErrorBody } from '@gmgo/shared/errors'
+import type { ChatStreamEvent, TokenUsage } from '@rocketflare/shared/ai/chat'
+import type { ApiErrorBody } from '@rocketflare/shared/errors'
 import { ApiError, notifyUnauthorized, parseErrorBody } from './api-client'
 import { isAbortError, readSse } from './sse'
 

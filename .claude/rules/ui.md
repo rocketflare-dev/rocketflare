@@ -13,8 +13,8 @@ Dev: Vite on :3000 proxies `/api`, `/auth`, `/ws`, `/cubejs-api`, `/mcp` to `wra
 
 ## Design tokens, not raw colours
 
-- Themes are two `@plugin "daisyui/theme"` blocks in `apps/web/src/ui/index.css` (`gm-light` default,
-  `gm-dark` prefersdark). The brand variables at the top of that file are the ONLY place a hex
+- Themes are two `@plugin "daisyui/theme"` blocks in `apps/web/src/ui/index.css` (`rocketflare-light` default,
+  `rocketflare-dark` prefersdark). The brand variables at the top of that file are the ONLY place a hex
   appears. Components use DaisyUI semantic classes (`bg-base-200`, `text-primary`) or the kit's
   surface/border/text tokens (`--surface-panel`, `--border-subtle`, `.text-muted`); **never
   `bg-blue-50`-style palette utilities**
@@ -44,11 +44,11 @@ Dev: Vite on :3000 proxies `/api`, `/auth`, `/ws`, `/cubejs-api`, `/mcp` to `wra
 
 - All HTTP via `lib/api-client.ts` (`api.get/post/patch/delete/upload`): `credentials: 'include'`, typed
   `ApiError` from the shared envelope, `schema` option zod-parses the response with the same
-  `@gmgo/shared/<module>` schema the server validates with (import from `@gmgo/shared/...`, never a
+  `@rocketflare/shared/<module>` schema the server validates with (import from `@rocketflare/shared/...`, never a
   relative path into `packages/`). No `hono/client` RPC (D13)
 - Files (D23): `api.upload(url, formData, { schema })` posts multipart **without** a JSON
   `Content-Type` (the browser sets the boundary). Check `isAvatarMimeType` / `MAX_UPLOAD_BYTES` from
-  `@gmgo/shared/files` client-side first (`validateAvatarFile` in `hooks/useProfile.ts`) so the
+  `@rocketflare/shared/files` client-side first (`validateAvatarFile` in `hooks/useProfile.ts`) so the
   server's 413/415 are a backstop, not the UX; `useUploadAvatar()` → `POST /api/files?scope=avatars`
   then invalidates `me` + `auth` and refreshes the session. Render `<img src={user.avatarUrl}>` with
   an `onError` fallback to initials — the object is tenant-scoped, the URL is not
@@ -81,7 +81,7 @@ Vite proxy forwards it in dev); reconnects with exponential backoff (base `min(1
 30 s)`, jittered in `[base/2, base]`), and a close with code 1001/1012 or reason "upgraded"/"new
 version" (Worker redeployed) reconnects in 100 ms without counting as a failure; sends
 `{"type":"ping"}` every 30 s. Events are parsed with `realtimeEventSchema`; the event type → query-key
-root map is **`REALTIME_INVALIDATIONS` / `invalidationsFor()` in `@gmgo/shared/realtime`**, not in
+root map is **`REALTIME_INVALIDATIONS` / `invalidationsFor()` in `@rocketflare/shared/realtime`**, not in
 the UI — a new server event type adds its roots there, and `tests/ui` asserts every root is a real
 `queryKeys` family (`['invitations']`, `['pending-invitations']`, `['members']`, `['tenant']`…).
 **Convention: the `entity` string of an `entity.changed { entity, id }` nudge IS the query-key family
@@ -113,11 +113,11 @@ Components subscribe to query state, never to the socket; `WebSocketStatus` (hea
   optimistic bubble back; an `error` frame leaves the turn in `error` status until the next send
 - Frame order the UI relies on: `message.start` (swap the optimistic user id for `userMessageId`) →
   `text.delta*` → `usage` → `message.end`; `tool.start`/`tool.end` render as one-liners. A new frame
-  type is a `chatStreamEventSchema` variant in `@gmgo/shared/ai/chat` first
+  type is a `chatStreamEventSchema` variant in `@rocketflare/shared/ai/chat` first
 - Guards: `/chat/:conversationId?` is `read Conversation` (every role; ownership is server-side);
   `/settings` (`?tab=ai|prompts|agent-models|usage`) is `guard="admin"`, the last two additionally
   `manage AiConfig`. Agent runs (`/agents`, `AgentRun`), documents (`/documents`, `Document`) and the
-  agent-models tab follow the same contracts (`@gmgo/shared/ai/{agents,embeddings,agent-models}`) and
+  agent-models tab follow the same contracts (`@rocketflare/shared/ai/{agents,embeddings,agent-models}`) and
   poll/nudge, never stream: `entity.changed { entity: 'agent-run' }` invalidates the run query.
   Page specifics: `apps/web/src/ui/CLAUDE.md`
 
@@ -146,7 +146,7 @@ Components subscribe to query state, never to the socket; `WebSocketStatus` (hea
   `react-is` ship ONLY in the lazy analytics chunk — import them from `pages/analytics/**` /
   `components/analytics/**` by path, never from the `components/shared` barrel, `App.tsx`, `SideNav` or
   a hook the shell loads eagerly; the main chunk must stay ≈ 114 KiB gzip. Check `pnpm web build:ui`
-  output when you touch an import. The server contract the pages consume is `@gmgo/shared/analytics`
+  output when you touch an import. The server contract the pages consume is `@rocketflare/shared/analytics`
   + `/cubejs-api/v1/*` (drizzle-cube's own client); page specifics: `apps/web/src/ui/CLAUDE.md`
 - **Third-party providers with their own TanStack Query** (drizzle-cube does this): the app's global
   `QueryCache.onError` never sees their failures. Wrap them (`components/analytics/CubeClientProvider.tsx`)
@@ -156,10 +156,10 @@ Components subscribe to query state, never to the socket; `WebSocketStatus` (hea
 - **Dashboards**: edit mode autosaves the whole config (debounced 1.5 s PATCH); there is no router-level
   unsaved-changes blocker — `beforeunload` while dirty plus a flush when leaving edit mode/unmount.
   `useFactTableStatus({ enabled })` MUST be gated on `manage Dashboard` (admin-only endpoint).
-  `syncDarkClass` mirrors `data-theme="gm-dark"` into a `dark` class only while an analytics surface is
+  `syncDarkClass` mirrors `data-theme="rocketflare-dark"` into a `dark` class only while an analytics surface is
   mounted (drizzle-cube detects `.dark`); kit CSS never reads `.dark`. `@nivo/heatmap` is aliased to a stub
   in `vite.config.ts` — see `docs/ADAPTING.md` §3b to enable heat maps.
-- Forms validate with the `@gmgo/shared` schema the server uses; show `FieldError` per field
+- Forms validate with the `@rocketflare/shared` schema the server uses; show `FieldError` per field
 - Icons: `@heroicons/react`. No new UI library without a stated reason in the PR
 - `EnvironmentBadge` + `useEnvironmentTitle` read `APP_ENV`/`RELEASE_VERSION` from `/auth/session`;
   staging must look different from production

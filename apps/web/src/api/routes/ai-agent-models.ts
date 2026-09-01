@@ -9,8 +9,8 @@ import {
   type AgentModelAssignment,
   type AgentModelEntry,
   upsertAgentModelRequestSchema,
-} from '@gmgo/shared/ai/agent-models'
-import { DEFAULT_MODELS } from '@gmgo/shared/ai/config'
+} from '@rocketflare/shared/ai/agent-models'
+import { DEFAULT_MODELS } from '@rocketflare/shared/ai/config'
 import { and, eq } from 'drizzle-orm'
 import { type AgentModelRow, agentModels } from '../../db/schema'
 import { guardPermission } from '../middleware/permissions'

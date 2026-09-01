@@ -4,7 +4,7 @@
  * not — is a 404. `provider`/`model` are frozen at creation so the transcript records what
  * answered. `lastMessageAt` orders the list; `title` is set from the first user message.
  */
-import type { AiProvider } from '@gmgo/shared/ai/config'
+import type { AiProvider } from '@rocketflare/shared/ai/config'
 import { relations } from 'drizzle-orm'
 import { index, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core'
 import { tenantRef, timestamps } from './_helpers'

@@ -3,8 +3,8 @@
  * CRUD is admin+, reset restores a template page, template pages cannot be deleted, cross-tenant
  * reads are 404, and fact-table status is admin+.
  */
-import { analyticsPageListResponseSchema, analyticsPageSchema } from '@gmgo/shared/analytics'
-import { ERROR_CODES } from '@gmgo/shared/errors'
+import { analyticsPageListResponseSchema, analyticsPageSchema } from '@rocketflare/shared/analytics'
+import { ERROR_CODES } from '@rocketflare/shared/errors'
 import { eq } from 'drizzle-orm'
 import { describe, expect, it } from 'vitest'
 import { analyticsPages } from '@/db/schema'

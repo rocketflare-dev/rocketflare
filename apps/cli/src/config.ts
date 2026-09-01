@@ -1,7 +1,7 @@
 /**
- * CLI config (D26): `~/.gmgo/config.json` (dir 0700, file 0600) holding the server URL, API key,
- * active tenant and the signed-in user. Env overrides for CI: `GMGO_API_KEY`, `GMGO_URL`, and
- * `GMGO_CONFIG_DIR` to relocate the directory. ADAPTING renames the `GMGO_` prefix and `.gmgo` dir
+ * CLI config (D26): `~/.rocketflare/config.json` (dir 0700, file 0600) holding the server URL, API key,
+ * active tenant and the signed-in user. Env overrides for CI: `ROCKETFLARE_API_KEY`, `ROCKETFLARE_URL`, and
+ * `ROCKETFLARE_CONFIG_DIR` to relocate the directory. ADAPTING renames the `ROCKETFLARE_` prefix and `.rocketflare` dir
  * here — these constants are the only place they live.
  */
 import { chmod, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
@@ -9,8 +9,8 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { z } from 'zod'
 
-export const ENV_PREFIX = 'GMGO'
-export const CONFIG_DIR_NAME = '.gmgo'
+export const ENV_PREFIX = 'ROCKETFLARE'
+export const CONFIG_DIR_NAME = '.rocketflare'
 export const CONFIG_FILE_NAME = 'config.json'
 /** The kit's local `wrangler dev` port; a real app sets its production URL here. */
 export const DEFAULT_SERVER_URL = 'http://localhost:3001'
@@ -153,10 +153,13 @@ export async function fileMode(path: string): Promise<number | null> {
   }
 }
 
-/** Show only the key prefix — never the full secret. `gmgo_ab12cd34…` */
+/** Characters shown of a key: `rocketflare_` (12) + 4 — never the full secret. `rocketflare_ab12…` */
+export const REDACTED_KEY_CHARS = 16
+
+/** Show only the key prefix — never the full secret. `rocketflare_ab12…` */
 export function redactKey(key: string | undefined): string {
   if (!key) return '-'
-  return key.length <= 8 ? '****' : `${key.slice(0, 8)}…`
+  return key.length <= REDACTED_KEY_CHARS ? '****' : `${key.slice(0, REDACTED_KEY_CHARS)}…`
 }
 
 /** A copy of the config safe to print: the key is redacted. */

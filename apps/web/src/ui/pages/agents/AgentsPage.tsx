@@ -6,14 +6,15 @@
  * refreshes on the `agent-run` nudge and polls while any row is active. Members see their own
  * runs, admin+ every run — the route decides. Lazy in App.tsx: this chunk carries `Markdown`.
  */
+
+import { CpuChipIcon, PlayIcon } from '@heroicons/react/24/outline'
 import {
   AGENT_KEYS,
   type AgentInfo,
   type AgentRun,
   type AgentRunStatus,
   agentRunStatusSchema,
-} from '@gmgo/shared/ai/agents'
-import { CpuChipIcon, PlayIcon } from '@heroicons/react/24/outline'
+} from '@rocketflare/shared/ai/agents'
 import { useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import {

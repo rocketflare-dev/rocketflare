@@ -5,8 +5,8 @@
  * `?returnUrl=/profile`; disconnecting is refused when it would leave no way to sign in.
  */
 
-import { updateProfileRequestSchema } from '@gmgo/shared/user-settings'
 import { LinkIcon } from '@heroicons/react/24/outline'
+import { updateProfileRequestSchema } from '@rocketflare/shared/user-settings'
 import { useEffect, useRef, useState } from 'react'
 import { PROVIDER_ICONS, PROVIDER_LABELS } from '@/ui/components/icons/ProviderIcons'
 import {

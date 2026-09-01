@@ -3,7 +3,7 @@
  * registry, so adding GitHub or Slack is one file here, not a copied route. `emailVerified` is
  * part of the profile on purpose — the router refuses to link when it is explicitly `false`.
  */
-import type { OAuthProviderName } from '@gmgo/shared/auth'
+import type { OAuthProviderName } from '@rocketflare/shared/auth'
 import type { AppConfig } from '../../../config'
 
 export interface OAuthProfile {

@@ -1,6 +1,6 @@
 /**
  * Create / rename a dashboard page (D19, D20). Name + description are validated with the same
- * `@gmgo/shared/analytics` schema the route applies (`FieldError` per field). When `templates`
+ * `@rocketflare/shared/analytics` schema the route applies (`FieldError` per field). When `templates`
  * is supplied (create only) a "Start from" select offers each dashboard template as a starting
  * point — the caller resolves the key to its `DashboardConfig` (`getTemplate` from the pure
  * `src/dashboards` registry); renaming never touches `config`.
@@ -10,7 +10,7 @@ import {
   ANALYTICS_PAGE_NAME_MAX,
   createAnalyticsPageRequestSchema,
   type DashboardTemplateSummary,
-} from '@gmgo/shared/analytics'
+} from '@rocketflare/shared/analytics'
 import { type FormEvent, useEffect, useState } from 'react'
 import { FieldError, fieldErrorFor, Modal } from '@/ui/components/shared'
 

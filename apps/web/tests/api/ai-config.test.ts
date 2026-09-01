@@ -4,7 +4,7 @@
  * it inside the scope; delete; list never leaks a key; member 403 on writes / 200 on reads; 401
  * unauthenticated; tenant isolation; readiness tenant / platform / none; provider validation 400s.
  */
-import { aiConfigSchema, aiReadinessSchema } from '@gmgo/shared/ai/config'
+import { aiConfigSchema, aiReadinessSchema } from '@rocketflare/shared/ai/config'
 import { and, eq } from 'drizzle-orm'
 import { describe, expect, it } from 'vitest'
 import { decrypt } from '@/api/auth/oauth-encryption'

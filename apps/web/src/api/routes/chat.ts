@@ -18,7 +18,7 @@ import {
   createConversationRequestSchema,
   type Message,
   sendMessageRequestSchema,
-} from '@gmgo/shared/ai/chat'
+} from '@rocketflare/shared/ai/chat'
 import { and, asc, count, desc, eq, sql } from 'drizzle-orm'
 import { streamSSE } from 'hono/streaming'
 import type { Database } from '../../db/client'

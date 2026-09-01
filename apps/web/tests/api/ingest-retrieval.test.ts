@@ -7,7 +7,7 @@
  * without the binding); no embeddings provider → 503 `ai_not_configured` and NO row; list /
  * get / delete (cascade, owner-or-admin); 401 anon; member 403 deleting another's.
  */
-import { documentSchema, searchResponseSchema } from '@gmgo/shared/ai/embeddings'
+import { documentSchema, searchResponseSchema } from '@rocketflare/shared/ai/embeddings'
 import { and, eq } from 'drizzle-orm'
 import { describe, expect, it } from 'vitest'
 import { INLINE_CHUNK_LIMIT, ingestText } from '@/api/services/ai/ingest'

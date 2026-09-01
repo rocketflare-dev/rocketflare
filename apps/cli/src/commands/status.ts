@@ -1,4 +1,4 @@
-/** `gmgo status` — `GET /api/health` on the configured server plus the local login state (D26). */
+/** `rocketflare status` — `GET /api/health` on the configured server plus the local login state (D26). */
 import chalk from 'chalk'
 import { z } from 'zod'
 import { redactKey } from '../config'

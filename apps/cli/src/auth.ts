@@ -7,8 +7,8 @@
  * writes the config. Five-minute timeout. The key is never printed in full — prefix only.
  */
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
-import { tenantSchema } from '@gmgo/shared/tenants'
-import { meResponseSchema as sharedMeResponseSchema } from '@gmgo/shared/user-settings'
+import { tenantSchema } from '@rocketflare/shared/tenants'
+import { meResponseSchema as sharedMeResponseSchema } from '@rocketflare/shared/user-settings'
 import type { z } from 'zod'
 import { type ApiClient, CliApiError, createApiClient, type FetchLike } from './api'
 import { type CliConfig, type ConfigStore, redactKey } from './config'
@@ -25,7 +25,7 @@ export const LOGIN_TIMEOUT_MS = 5 * 60 * 1000
 export const AUTH_CLI_PATH = '/auth/cli'
 
 /** Tolerant: the CLI only needs email/name, and the server may add fields. */
-/** `/api/me` is the flat `meResponseSchema` from `@gmgo/shared/user-settings` (D13). */
+/** `/api/me` is the flat `meResponseSchema` from `@rocketflare/shared/user-settings` (D13). */
 export const meResponseSchema = sharedMeResponseSchema.partial()
 export type MeResponse = z.infer<typeof meResponseSchema>
 export const tenantResponseSchema = tenantSchema.partial()

@@ -11,18 +11,18 @@ import {
   type JobInput,
   jobEnvelopeSchema,
   jobInputSchema,
-} from '@gmgo/shared/jobs'
+} from '@rocketflare/shared/jobs'
 import { newId } from '../utils/core/ids'
 
 /**
- * The queue NAME prefix both tomls use (`gmgo-starter-jobs` in production, `-staging` on staging).
+ * The queue NAME prefix both tomls use (`rocketflare-jobs` in production, `-staging` on staging).
  * Queue names are account-scoped, so each environment needs its own; the consumer therefore matches
  * `batch.queue` by PREFIX rather than exact name and no application code is environment-aware.
  * ADAPTING: rename the queue in BOTH tomls and change this one constant.
  */
-export const JOBS_QUEUE_NAME_PREFIX = 'gmgo-starter-jobs'
+export const JOBS_QUEUE_NAME_PREFIX = 'rocketflare-jobs'
 
-/** `true` for every environment's jobs queue (`gmgo-starter-jobs`, `gmgo-starter-jobs-staging`, …). */
+/** `true` for every environment's jobs queue (`rocketflare-jobs`, `rocketflare-jobs-staging`, …). */
 export function isJobsQueue(queueName: string): boolean {
   return queueName.startsWith(JOBS_QUEUE_NAME_PREFIX)
 }

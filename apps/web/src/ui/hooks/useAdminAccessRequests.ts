@@ -3,8 +3,8 @@ import {
   type AccessRequestStatus,
   accessRequestSchema,
   type DecideAccessRequest,
-} from '@gmgo/shared/access-requests'
-import { paginatedResponse } from '@gmgo/shared/pagination'
+} from '@rocketflare/shared/access-requests'
+import { paginatedResponse } from '@rocketflare/shared/pagination'
 import {
   keepPreviousData,
   queryOptions,

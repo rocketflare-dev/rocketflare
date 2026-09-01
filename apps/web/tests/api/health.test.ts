@@ -1,4 +1,4 @@
-import { ERROR_CODES } from '@gmgo/shared/errors'
+import { ERROR_CODES } from '@rocketflare/shared/errors'
 import { describe, expect, it } from 'vitest'
 import { SESSION_COOKIE_NAME } from '@/api/middleware/csrf'
 import { json, request } from '../helpers/request'

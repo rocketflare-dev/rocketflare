@@ -67,12 +67,13 @@ export function createCubeQueryClient(): QueryClient {
 
 /**
  * drizzle-cube decides light/dark for its chart palettes from `data-theme="dark"` or a `dark`
- * class on `<html>` — it does not know `gm-dark`. While a cube surface is mounted, mirror the
+ * class on `<html>` — it does not know `rocketflare-dark`. While a cube surface is mounted, mirror the
  * kit's theme attribute (the state, set by ThemeToggle) into that class; the kit's own CSS never
  * reads it. The `--dc-*` variables themselves are mapped in index.css per `data-theme`.
  */
 export function syncDarkClass(root: HTMLElement = document.documentElement): () => void {
-  const apply = () => root.classList.toggle('dark', root.getAttribute('data-theme') === 'gm-dark')
+  const apply = () =>
+    root.classList.toggle('dark', root.getAttribute('data-theme') === 'rocketflare-dark')
   apply()
   const observer = new MutationObserver(apply)
   observer.observe(root, { attributes: true, attributeFilter: ['data-theme'] })

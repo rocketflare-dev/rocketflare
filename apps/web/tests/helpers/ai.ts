@@ -3,8 +3,12 @@
  * tool calls, usage — records every call, and streams text in word-sized deltas so SSE assertions
  * see more than one frame. `sseFrames()` parses a `streamSSE` body back into `ChatStreamEvent`s.
  */
-import { type ChatStreamEvent, chatStreamEventSchema, type TokenUsage } from '@gmgo/shared/ai/chat'
-import type { AiProvider } from '@gmgo/shared/ai/config'
+import {
+  type ChatStreamEvent,
+  chatStreamEventSchema,
+  type TokenUsage,
+} from '@rocketflare/shared/ai/chat'
+import type { AiProvider } from '@rocketflare/shared/ai/config'
 import type {
   ChatClient,
   ChatDelta,

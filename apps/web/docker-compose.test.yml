@@ -4,16 +4,16 @@
 services:
   postgres-test:
     image: pgvector/pgvector:pg17
-    container_name: gmgo-test-postgres
+    container_name: rocketflare-test-postgres
     command: -c max_connections=300
     environment:
-      POSTGRES_DB: gmgo_test
+      POSTGRES_DB: rocketflare_test
       POSTGRES_USER: test
       POSTGRES_PASSWORD: test
     ports:
       - "5433:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U test -d gmgo_test"]
+      test: ["CMD-SHELL", "pg_isready -U test -d rocketflare_test"]
       interval: 5s
       timeout: 5s
       retries: 5

@@ -1,5 +1,5 @@
 {
-  "//": "Kept for editor tooling only. The build is `esbuild` (see package.json + README) because @gmgo/shared is consumed as .ts source with extensionless imports, which Node cannot load from tsc output.",
+  "//": "Kept for editor tooling only. The build is `esbuild` (see package.json + README) because @rocketflare/shared is consumed as .ts source with extensionless imports, which Node cannot load from tsc output.",
   "extends": "./tsconfig.json",
   "compilerOptions": {
     "noEmit": false,

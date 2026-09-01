@@ -3,7 +3,7 @@
  * columns both reference apps shared (`timezone`, `notificationsEnabled`) are real columns; anything
  * app-specific goes in `settings` jsonb, typed by `tenantSettingsJsonSchema` in src/shared.
  */
-import type { TenantSettingsJson } from '@gmgo/shared/tenant-settings'
+import type { TenantSettingsJson } from '@rocketflare/shared/tenant-settings'
 import { relations } from 'drizzle-orm'
 import { boolean, jsonb, pgTable, text } from 'drizzle-orm/pg-core'
 import { tenantRef, timestamps } from './_helpers'

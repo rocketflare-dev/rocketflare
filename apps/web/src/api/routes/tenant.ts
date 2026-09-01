@@ -2,8 +2,8 @@
  * The CURRENT tenant: `/api/tenant` (read admin+/owner writes, owner-only delete with slug
  * confirmation — 404 `tenancy_mode_single` in single mode) and `/api/tenant/settings` (D10, D25).
  */
-import { updateTenantSettingsRequestSchema } from '@gmgo/shared/tenant-settings'
-import { deleteTenantRequestSchema, updateTenantRequestSchema } from '@gmgo/shared/tenants'
+import { updateTenantSettingsRequestSchema } from '@rocketflare/shared/tenant-settings'
+import { deleteTenantRequestSchema, updateTenantRequestSchema } from '@rocketflare/shared/tenants'
 import { guardOwner, guardPermission, isAdminLevel } from '../middleware/permissions'
 import { operationLock } from '../middleware/rate-limit'
 import { recordActivity } from '../services/activity'

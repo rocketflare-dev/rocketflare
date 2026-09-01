@@ -3,7 +3,7 @@
  * `RequireGuard` share the type and the hook, so a link never points at a page its reader may
  * not open. Cosmetic — the server enforces on every request.
  */
-import type { Actions, Subjects } from '@gmgo/shared/permissions'
+import type { Actions, Subjects } from '@rocketflare/shared/permissions'
 import { useCallback } from 'react'
 import { useAbility } from '@/ui/components/permissions/AbilityContext'
 import { useAuth } from './useAuth'

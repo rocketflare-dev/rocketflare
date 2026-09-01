@@ -9,8 +9,8 @@ import { createMemoryLogger } from '../src/utils/logger'
 import { createMemoryOutput } from '../src/utils/output'
 
 export async function tempStore(env: Record<string, string | undefined> = {}) {
-  const dir = await mkdtemp(join(tmpdir(), 'gmgo-cli-test-'))
-  const store = createConfigStore({ dir: join(dir, '.gmgo'), env })
+  const dir = await mkdtemp(join(tmpdir(), 'rocketflare-cli-test-'))
+  const store = createConfigStore({ dir: join(dir, '.rocketflare'), env })
   return { dir, store, cleanup: () => rm(dir, { recursive: true, force: true }) }
 }
 
@@ -56,12 +56,12 @@ export async function testContext(options: TestContextOptions) {
     out,
     fetch: options.fetch ?? (() => Promise.reject(new Error('fetch not mocked'))),
     open: options.open ?? (async () => {}),
-    binName: 'gmgo',
+    binName: 'rocketflare',
   }
   return { ctx, log, out }
 }
 
-export const TEST_KEY = 'gmgo_test_0123456789abcdefghijklmnopqrstuvwxyz'
+export const TEST_KEY = 'rocketflare_test_0123456789abcdefghijklmnopqrstuvwxyz'
 export const TENANT_ID = '11111111-2222-4333-8444-555555555555'
 export const USER_ID = '99999999-8888-4777-8666-555555555555'
 

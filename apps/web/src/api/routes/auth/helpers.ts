@@ -3,7 +3,7 @@
  * user's default tenant, set the cookie, and validate redirect targets (same-origin paths only —
  * the open-redirect guard). Error redirects land on `/login?error=<code>`.
  */
-import { redirectToSchema } from '@gmgo/shared/auth'
+import { redirectToSchema } from '@rocketflare/shared/auth'
 import type { AppConfig } from '../../../config'
 import type { Database } from '../../../db/client'
 import type { User } from '../../../db/schema'

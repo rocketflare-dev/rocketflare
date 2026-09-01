@@ -1,10 +1,10 @@
 /**
  * HTTP client for the kit's API (D13, D26). Sends `Authorization: Bearer <key>`, turns the error
  * envelope `{ error, statusCode, code?, details? }` into `CliApiError` (401 → exit 2, 403 → exit 3)
- * and validates success bodies with the zod contract from `@gmgo/shared`. Network failures are a
+ * and validates success bodies with the zod contract from `@rocketflare/shared`. Network failures are a
  * `CliApiError` with `status: 0` so callers only ever handle one error type.
  */
-import { apiErrorSchema } from '@gmgo/shared/errors'
+import { apiErrorSchema } from '@rocketflare/shared/errors'
 import type { z } from 'zod'
 import { CliError, EXIT_ERROR, EXIT_FORBIDDEN, EXIT_NOT_LOGGED_IN } from './errors'
 import { BIN_NAME, VERSION } from './package-info'
@@ -122,7 +122,7 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
         status: 0,
         code: 'network_error',
         message: `Could not reach ${serverUrl} (${describeCause(cause)})`,
-        hint: 'Is the server running? Check the URL with `--server` or `GMGO_URL`.',
+        hint: 'Is the server running? Check the URL with `--server` or `ROCKETFLARE_URL`.',
         cause,
       })
     }

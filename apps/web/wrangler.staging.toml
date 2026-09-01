@@ -3,27 +3,27 @@
 # URLs/APP_ENV, and resource ids. tests/config/wrangler-parity.test.ts enforces this and
 # fails while any <PLACEHOLDER> remains. See docs/DEPLOY.md and scripts/cf-provision.sh.
 #
-# ADAPTING: rename `gmgo-starter` → your app (worker name, queue/workflow names, buckets).
+# ADAPTING: rename `rocketflare` → your app (worker name, queue/workflow names, buckets).
 
-name = "gmgo-starter-staging"
+name = "rocketflare-staging"
 main = "src/worker.ts"
 compatibility_date = "2026-06-01"
 compatibility_flags = ["nodejs_compat"]
 
-# Fallback host gmgo-starter-staging.<subdomain>.workers.dev while the custom domain is set up.
+# Fallback host rocketflare-staging.<subdomain>.workers.dev while the custom domain is set up.
 workers_dev = true
 
 # Custom domain (wrangler creates the DNS record on deploy). Uncomment once the zone exists.
-# routes = [{ pattern = "staging.example.com", custom_domain = true }]
+# routes = [{ pattern = "staging.rocketflare.dev", custom_domain = true }]
 
 [vars]
 APP_ENV = "staging"                    # development | staging | production
-APP_URL = "https://staging.example.com"# public origin; derives OAuth redirect URIs, magic links, CSRF
-APP_NAME = "GMGO Starter"
+APP_URL = "https://staging.rocketflare.dev"  # public origin; derives OAuth redirect URIs, magic links, CSRF
+APP_NAME = "Rocketflare"
 # Overridden at deploy time by CI: `wrangler deploy --var RELEASE_VERSION:<tag>`
 RELEASE_VERSION = "dev"
 LOG_LEVEL = "info"
-EMAIL_FROM = "GMGO Starter <noreply@example.com>"
+EMAIL_FROM = "Rocketflare <noreply@rocketflare.dev>"
 TENANCY_MODE = "multi"                 # multi | single   (docs/CONCEPTS.md → Tenancy)
 SIGNUP_MODE = "invite_only"            # open | invite_only | approval
 TENANT_SCOPE_MODE = "off"              # off | enforce    (docs/RLS.md — enforce needs HYPERDRIVE_APP)
@@ -51,13 +51,13 @@ directory = "./dist/ui"
 binding = "ASSETS"
 not_found_handling = "single-page-application"
 
-# Postgres via Hyperdrive → Neon. Create: wrangler hyperdrive create gmgo-starter-staging \
+# Postgres via Hyperdrive → Neon. Create: wrangler hyperdrive create rocketflare-staging \
 #   --connection-string="<neon direct url>"   (then paste the id below)
 # `wrangler dev` ignores `id` and uses localConnectionString (docker-compose.dev.yml).
 [[hyperdrive]]
 binding = "HYPERDRIVE"
 id = "<HYPERDRIVE_STAGING_ID>"
-localConnectionString = "postgresql://gmgo:gmgo_pass@localhost:5432/gmgo_dev"
+localConnectionString = "postgresql://rocketflare:rocketflare_pass@localhost:5432/rocketflare_dev"
 
 # KV for auth rate limiting + per-tenant operation locks. Create: wrangler kv namespace create RATE_LIMIT_STAGING
 [[kv_namespaces]]
@@ -72,18 +72,18 @@ crons = [
 ]
 
 # Background jobs (D7): one queue, one consumer; `src/api/queue.ts` dispatches on `batch.queue`.
-# Create: wrangler queues create gmgo-starter-jobs-staging
+# Create: wrangler queues create rocketflare-jobs-staging
 [[queues.producers]]
 binding = "JOBS_QUEUE"
-queue = "gmgo-starter-jobs-staging"
+queue = "rocketflare-jobs-staging"
 
 [[queues.consumers]]
-queue = "gmgo-starter-jobs-staging"
+queue = "rocketflare-jobs-staging"
 max_batch_size = 10
 max_batch_timeout = 5
 max_retries = 3
 retry_delay = 60
-# dead_letter_queue = "gmgo-starter-jobs-staging-dlq"
+# dead_letter_queue = "rocketflare-jobs-staging-dlq"
 
 # Realtime (D8): stateless WebSocket hub Durable Object, one instance per tenant
 # (`idFromName(tenantId)`), hibernation API. Implementing a DO in-script disables preview URLs.
@@ -95,10 +95,10 @@ class_name = "NotificationsHub"
 tag = "v1"
 new_classes = ["NotificationsHub"]
 
-# File storage (D23): R2 behind `services/storage.ts`. Create: wrangler r2 bucket create gmgo-starter-files-staging
+# File storage (D23): R2 behind `services/storage.ts`. Create: wrangler r2 bucket create rocketflare-files-staging
 [[r2_buckets]]
 binding = "FILES"
-bucket_name = "gmgo-starter-files-staging"
+bucket_name = "rocketflare-files-staging"
 
 # Workers AI (D17): zero-key embeddings (`@cf/baai/bge-m3`, 1024-dim) via services/ai/client.ts.
 # Optional in code: the resolver falls through to an OpenAI-shaped key when the binding is absent.
@@ -112,7 +112,7 @@ remote = true
 # ACCOUNT-scoped (staging uses `-staging`); binding and class_name are identical in both tomls.
 # Nothing to create: `wrangler deploy` registers the Workflow. Instance id = agent_runs.id.
 [[workflows]]
-name = "gmgo-starter-agent-run-staging"
+name = "rocketflare-agent-run-staging"
 binding = "AGENT_RUN_WORKFLOW"
 class_name = "AgentRunWorkflow"
 

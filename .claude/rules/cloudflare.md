@@ -14,7 +14,7 @@ globs:
 
 One Worker, one deploy target. The Hono app, the `NotificationsHub` Durable Object, the
 `AgentRunWorkflow` and the queue/cron handlers all ship in `apps/web/src/worker.ts`. Reference: docs/DEPLOY.md. Everything here lives in `apps/web/`; wrangler is a devDependency of
-that package, so run it as `pnpm --filter @gmgo/web exec wrangler …` (never `pnpm exec wrangler` at the
+that package, so run it as `pnpm --filter @rocketflare/web exec wrangler …` (never `pnpm exec wrangler` at the
 workspace root) or through the root scripts (`pnpm deploy[:staging]`, `pnpm provision`, `pnpm types`).
 
 ## Bindings
@@ -58,17 +58,17 @@ Cloudflare account, not per Worker. **Whichever script last deployed a Workflow 
 every instance created under that name — including by the other environment's binding — runs with
 the owner's bindings, against the owner's database. Staging therefore suffixes all of them with
 `-staging`; `binding` and `class_name` stay identical so no application code is environment-aware.
-`pnpm --filter @gmgo/web exec wrangler workflows list` shows Name → Script name if you suspect a hijack.
-The kit's Workflow is `gmgo-starter-agent-run` (production) / `gmgo-starter-agent-run-staging`;
+`pnpm --filter @rocketflare/web exec wrangler workflows list` shows Name → Script name if you suspect a hijack.
+The kit's Workflow is `rocketflare-agent-run` (production) / `rocketflare-agent-run-staging`;
 `binding = "AGENT_RUN_WORKFLOW"` and `class_name = "AgentRunWorkflow"` are identical in both files.
 Nothing is created by hand — `wrangler deploy` registers the Workflow, `[ai]` needs no resource.
 
 The one place a name leaks into code is the queue consumer: `batch.queue` is the NAME
-(`gmgo-starter-jobs` / `gmgo-starter-jobs-staging`), so `apps/web/src/api/queue.ts` matches it by
+(`rocketflare-jobs` / `rocketflare-jobs-staging`), so `apps/web/src/api/queue.ts` matches it by
 **prefix** — `isJobsQueue()` / `JOBS_QUEUE_NAME_PREFIX` in `apps/web/src/api/services/jobs.ts` —
 and `ackAll()`s any queue it does not know. Renaming the queue = both tomls (`[[queues.producers]]`
 + `[[queues.consumers]]`) + that one constant (`tests/api/queue-dispatch.test.ts` pins both names).
-Prefix matching also means a `gmgo-starter-jobs-dlq` would be dispatched to the SAME consumer if you
+Prefix matching also means a `rocketflare-jobs-dlq` would be dispatched to the SAME consumer if you
 ever bound a consumer to it — a dead-letter queue you want to inspect rather than reprocess needs a
 name outside the prefix or its own branch in `queue.ts`.
 
@@ -165,9 +165,9 @@ curl "http://localhost:3001/cdn-cgi/local/scheduled?cron=15+*+*+*+*"    # fact-t
 # Workflows: `wrangler dev` runs AgentRunWorkflow instances locally — POST /api/agents/runs from the
 # running worker (or the UI) and watch the same terminal log `agent-run: …`; the row moves
 # queued → running → succeeded and `GET /api/agents/runs/<id>` lists its events. Inspect deployed ones with
-pnpm --filter @gmgo/web exec wrangler workflows instances describe gmgo-starter-agent-run <runId>
+pnpm --filter @rocketflare/web exec wrangler workflows instances describe rocketflare-agent-run <runId>
 # Workers AI: `wrangler dev` proxies the `AI` binding to Cloudflare (a logged-in account; the calls are
 # real). Tests never touch it — `RecordingAi` answers deterministic vectors (.claude/rules/testing.md).
 ```
 
-`pnpm --filter @gmgo/web exec wrangler tail [-c wrangler.staging.toml]` streams deployed logs; `[observability.logs]` is on.
+`pnpm --filter @rocketflare/web exec wrangler tail [-c wrangler.staging.toml]` streams deployed logs; `[observability.logs]` is on.

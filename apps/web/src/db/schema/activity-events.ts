@@ -5,7 +5,7 @@
  * (`activityMetadataSchema`). The `(tenant_id, created_at DESC)` index serves both the activity
  * feed and time-bucketed analytics.
  */
-import type { ActivityMetadata } from '@gmgo/shared/activity'
+import type { ActivityMetadata } from '@rocketflare/shared/activity'
 import { relations } from 'drizzle-orm'
 import { index, jsonb, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core'
 import { tenantRef } from './_helpers'

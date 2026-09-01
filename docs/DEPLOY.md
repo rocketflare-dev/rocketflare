@@ -7,11 +7,11 @@ reference it points at.
 **Workspace shape.** Everything Cloudflare lives in `apps/web`: `wrangler.toml`,
 `wrangler.staging.toml`, `worker-configuration.d.ts`, `scripts/cf-provision.sh`, the parity test.
 `wrangler` is a devDependency of that package, so every wrangler command runs **in `apps/web`** —
-either `pnpm --filter @gmgo/web exec wrangler …` from the root (shorthand `pnpm web exec wrangler …`)
+either `pnpm --filter @rocketflare/web exec wrangler …` from the root (shorthand `pnpm web exec wrangler …`)
 or the root scripts that delegate there (`pnpm deploy`, `pnpm deploy:staging`, `pnpm provision`,
 `pnpm types`). `pnpm exec wrangler` at the workspace root does not resolve. Only `apps/web` is
 deployed. **The CLI (`apps/cli`) is not deployed**: CI builds it (`pnpm build` → `apps/cli/dist`) as
-a compile check, and it is distributed through the repo (`pnpm cli …`, or `pnpm --filter @gmgo/cli
+a compile check, and it is distributed through the repo (`pnpm cli …`, or `pnpm --filter @rocketflare/cli
 build` and run `dist/cli.js`) or an internal registry — publishing the CLI is an app decision; the
 package is private by default (`"private": true`, like `packages/shared`, which must stay private).
 
@@ -68,10 +68,10 @@ hidden gap. `apps/web/tests/config/wrangler-parity.test.ts` enforces the table b
 
 | Resource | Binding | Name (prod / staging) | Create |
 |---|---|---|---|
-| Hyperdrive | `HYPERDRIVE` | `<app>-production` / `<app>-staging` | `pnpm --filter @gmgo/web exec wrangler hyperdrive create <name> --connection-string="<direct neon url>"` → `id` |
-| KV | `RATE_LIMIT_KV` | `<APP>_RATE_LIMIT` / `<APP>_RATE_LIMIT_STAGING` | `pnpm --filter @gmgo/web exec wrangler kv namespace create <name>` → `id` |
-| Queue (Phase 2) | `JOBS_QUEUE` | `<app>-jobs` / `<app>-jobs-staging` | `pnpm --filter @gmgo/web exec wrangler queues create <name>` (name-referenced) |
-| R2 (Phase 2) | `FILES` | `<app>-files` / `<app>-files-staging` | `pnpm --filter @gmgo/web exec wrangler r2 bucket create <name>` |
+| Hyperdrive | `HYPERDRIVE` | `<app>-production` / `<app>-staging` | `pnpm --filter @rocketflare/web exec wrangler hyperdrive create <name> --connection-string="<direct neon url>"` → `id` |
+| KV | `RATE_LIMIT_KV` | `<APP>_RATE_LIMIT` / `<APP>_RATE_LIMIT_STAGING` | `pnpm --filter @rocketflare/web exec wrangler kv namespace create <name>` → `id` |
+| Queue (Phase 2) | `JOBS_QUEUE` | `<app>-jobs` / `<app>-jobs-staging` | `pnpm --filter @rocketflare/web exec wrangler queues create <name>` (name-referenced) |
+| R2 (Phase 2) | `FILES` | `<app>-files` / `<app>-files-staging` | `pnpm --filter @rocketflare/web exec wrangler r2 bucket create <name>` |
 | Durable Object (Phase 2) | `NOTIFICATIONS_HUB` | class `NotificationsHub` | declared in toml + `[[migrations]] tag = "v1", new_classes` — no create step |
 | Workflow (Phase 3, built) | `AGENT_RUN_WORKFLOW` | `<app>-agent-run` / `<app>-agent-run-staging` | `[[workflows]] name / binding / class_name = "AgentRunWorkflow"` — `wrangler deploy` registers it, no create step; **account-scoped name** |
 | Workers AI (Phase 3, built) | `AI` | — | `[ai] binding = "AI"` — no resource; embeddings default (`@cf/baai/bge-m3`); billed per call, `wrangler dev` proxies to the account |
@@ -115,7 +115,7 @@ the staging worker against the staging database, and production was left with a 
 UI stuck on its last progress event. Nothing errored. Queue, R2 and Analytics Engine names are
 account-scoped too. Hence: every such name in `wrangler.staging.toml` ends in `-staging`, `binding`
 and `class_name` stay identical, and the parity test refuses a collision.
-`pnpm --filter @gmgo/web exec wrangler workflows list` shows Name → Script name if you suspect one.
+`pnpm --filter @rocketflare/web exec wrangler workflows list` shows Name → Script name if you suspect one.
 
 ## `[limits] cpu_ms` — per step, both files or neither
 
@@ -132,7 +132,7 @@ in **both** files, and split a heavy phase into its own step to draw a fresh bud
 | Kind | Where | Examples |
 |---|---|---|
 | Non-secret config | `[vars]` in each toml (committed) | `APP_ENV`, `APP_URL`, `APP_NAME`, `RELEASE_VERSION`, `LOG_LEVEL`, `EMAIL_FROM`, `TENANCY_MODE`, `SIGNUP_MODE`, `TENANT_SCOPE_MODE`, `AGENT_MAX_OUTPUT_TOKENS` (16384), `AGENT_MAX_TURNS` (30). Defaulted in `config.ts` and **not** declared in the tomls: `LANGFUSE_BASE_URL` (`https://cloud.langfuse.com`), `LANGFUSE_TRACING_ENVIRONMENT` (= `APP_ENV`) — to override, add the key to BOTH files (the parity test compares `[vars]` keys) |
-| Worker secrets | `pnpm --filter @gmgo/web exec wrangler secret put <NAME> [-c wrangler.staging.toml]`, once per worker; locally `apps/web/.dev.vars` | `OAUTH_ENCRYPTION_KEY` (also encrypts tenant AI keys — rotating it invalidates every `ai_configs` credential), `AUTH_SIGNING_KEY`, `BOOTSTRAP_ADMIN_EMAILS`, `RESEND_API_KEY`, `GOOGLE_*`, `MICROSOFT_*`; AI, all optional: `ANTHROPIC_API_KEY` (platform chat), `EMBEDDINGS_API_KEY` (platform OpenAI embeddings when no `AI` binding), `LANGFUSE_PUBLIC_KEY` + `LANGFUSE_SECRET_KEY` (both or tracing is off); `DATABASE_URL` only as a no-Hyperdrive fallback |
+| Worker secrets | `pnpm --filter @rocketflare/web exec wrangler secret put <NAME> [-c wrangler.staging.toml]`, once per worker; locally `apps/web/.dev.vars` | `OAUTH_ENCRYPTION_KEY` (also encrypts tenant AI keys — rotating it invalidates every `ai_configs` credential), `AUTH_SIGNING_KEY`, `BOOTSTRAP_ADMIN_EMAILS`, `RESEND_API_KEY`, `GOOGLE_*`, `MICROSOFT_*`; AI, all optional: `ANTHROPIC_API_KEY` (platform chat), `EMBEDDINGS_API_KEY` (platform OpenAI embeddings when no `AI` binding), `LANGFUSE_PUBLIC_KEY` + `LANGFUSE_SECRET_KEY` (both or tracing is off); `DATABASE_URL` only as a no-Hyperdrive fallback |
 | CI secrets | GitHub Environments `staging` / `production` | `DATABASE_URL` (that branch), `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` |
 | Scripts only | migration environment | `APP_DATABASE_URL` (db-roles, RLS enforce only) |
 | Developer-local only | `apps/web/.drizzle-cube.json` (git-ignored; copy `.drizzle-cube.json.example`) | a **tenant API key** for the drizzle-cube CLI / Claude Code plugin against `/cubejs-api` — it is an ordinary key from Settings → API keys, scopes every query to that tenant, and is revoked there; never deployed, never committed |
@@ -171,15 +171,15 @@ All steps run at the repository root; the root scripts fan out with `pnpm -r` / 
                                                                                                             │
  push tag X.Y.Z ──► deploy.yml ─► ci (workflow_call, same file) ─► staging job (environment: staging)
                                      tag == ROOT package.json version?
-                                     → REQUIRE_PROVISIONED=1 pnpm --filter @gmgo/web test:config
-                                     → pnpm db:migrate:ci (staging DATABASE_URL) → pnpm --filter @gmgo/web build:ui
-                                     → pnpm --filter @gmgo/web exec wrangler deploy -c wrangler.staging.toml --var RELEASE_VERSION:X.Y.Z
+                                     → REQUIRE_PROVISIONED=1 pnpm --filter @rocketflare/web test:config
+                                     → pnpm db:migrate:ci (staging DATABASE_URL) → pnpm --filter @rocketflare/web build:ui
+                                     → pnpm --filter @rocketflare/web exec wrangler deploy -c wrangler.staging.toml --var RELEASE_VERSION:X.Y.Z
                                                                                     │
                                                               verify on staging: /api/health, nav version
                                                                                     │
  gh release create X.Y.Z ──► deploy.yml ─► production job (environment: production, checkout the release tag)
                                      tag == ROOT version? → REQUIRE_PROVISIONED=1 test:config → db:migrate:ci (production)
-                                     → build:ui → pnpm --filter @gmgo/web exec wrangler deploy --var RELEASE_VERSION:X.Y.Z
+                                     → build:ui → pnpm --filter @rocketflare/web exec wrangler deploy --var RELEASE_VERSION:X.Y.Z
 
  workflow_dispatch(environment) ──► either job from the dispatched ref (first deploy; emergencies)
 ```
@@ -202,7 +202,7 @@ are informational and are not checked. Bump the root version, commit, tag.
 Publishing the Release is the promotion gate (required reviewers are unavailable on private repos
 on the free plan; add them to the `production` environment if the plan allows). Production does not
 re-run the CI gate: it ships the tag staging validated. `RELEASE_VERSION` is a `[vars]` override at
-deploy time, surfaced by `/auth/session`, the nav footer and `gmgo status`. Local
+deploy time, surfaced by `/auth/session`, the nav footer and `rocketflare status`. Local
 `pnpm deploy[:staging]` (root → `apps/web`: `build:ui` + `wrangler deploy`) exist as escape hatches;
 CI is the path. `wrangler deploy` always runs with `apps/web` as cwd so `[assets] directory =
 "./dist/ui"` resolves — never call it from the root.
@@ -218,9 +218,9 @@ holding the custom domains. One token may serve both environments.
 - `[observability.logs] enabled = true, head_sampling_rate = 1, invocation_logs = false` in both
   files: structured `console`/pino output is retained in the Workers Logs dashboard; invocation
   logs are off to keep the volume to what the app emits.
-- `pnpm --filter @gmgo/web exec wrangler tail [-c wrangler.staging.toml] [--format pretty]` streams live logs;
+- `pnpm --filter @rocketflare/web exec wrangler tail [-c wrangler.staging.toml] [--format pretty]` streams live logs;
   `--status error` filters.
-- `pnpm --filter @gmgo/web exec wrangler deployments list`, `… wrangler workflows instances list <name>`,
+- `pnpm --filter @rocketflare/web exec wrangler deployments list`, `… wrangler workflows instances list <name>`,
   `… wrangler queues info <name>` for the async parts.
 - Langfuse traces (when both keys are set) for every LLM call — one trace per chat turn (`chat`,
   session = conversation id) or agent run (`summarize-text`, session = run id), one `generation` per
@@ -228,7 +228,7 @@ holding the custom domains. One token may serve both environments.
   and shipped from `waitUntil`, never on the response path. `ai_usage` in Postgres is the durable
   token ledger regardless of tracing. `ANALYTICS_ENGINE` request metrics are optional and
   fire-and-forget.
-- Agent runs: `… wrangler workflows instances list gmgo-starter-agent-run[-staging]` / `describe <name>
+- Agent runs: `… wrangler workflows instances list rocketflare-agent-run[-staging]` / `describe <name>
   <runId>` (instance id = `agent_runs.id`). A row stuck `queued`/`running` whose instance is gone is
   settled on the next `GET /api/agents/runs/:id` (reconcile-on-read); there is no sweeper cron.
 
@@ -236,7 +236,7 @@ holding the custom domains. One token may serve both environments.
 
 | Situation | Action |
 |---|---|
-| Bad Worker version, schema unchanged | `pnpm --filter @gmgo/web exec wrangler rollback [-c wrangler.staging.toml]` — previous version, seconds. Or `wrangler rollback <version-id>` from `deployments list` |
+| Bad Worker version, schema unchanged | `pnpm --filter @rocketflare/web exec wrangler rollback [-c wrangler.staging.toml]` — previous version, seconds. Or `wrangler rollback <version-id>` from `deployments list` |
 | Need a specific earlier tag | Actions → Deploy → `production` from that tag, or publish a Release on the earlier tag |
 | Schema migration must be undone | migrations are forward-only: write a compensating migration, tag, and run the dance. `wrangler rollback` does not touch the database |
 | RLS enforce misbehaving | `TENANT_SCOPE_MODE = "off"` in `[vars]` and redeploy — no migration (docs/RLS.md) |
@@ -245,4 +245,4 @@ holding the custom domains. One token may serve both environments.
 | A dashboard renders empty / errors after a cube change | a cube member referenced by stored `analytics_pages.config` was renamed or removed — restore the member (names are frozen) or, per tenant, `POST /api/analytics/templates/recreate` (admin+) to re-copy the templates; user-created pages need a manual edit |
 | Tenant AI keys unreadable after rotating `OAUTH_ENCRYPTION_KEY` | there is no re-encrypt path: admins re-enter the key in Settings → AI (the row keeps its label/model, `hasCredential` flips back); the platform `ANTHROPIC_API_KEY` is unaffected |
 
-Verify any rollback with `/auth/session` (`releaseVersion`), `gmgo status` and `wrangler tail`.
+Verify any rollback with `/auth/session` (`releaseVersion`), `rocketflare status` and `wrangler tail`.

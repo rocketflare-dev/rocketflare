@@ -7,7 +7,7 @@
 import { createMongoAbility } from '@casl/ability'
 import { unpackRules } from '@casl/ability/extra'
 import { createContextualCan } from '@casl/react'
-import type { AppAbility, PackedRule, PackedRules } from '@gmgo/shared/permissions'
+import type { AppAbility, PackedRule, PackedRules } from '@rocketflare/shared/permissions'
 import { createContext, type ReactNode, useContext, useMemo } from 'react'
 import { useAuth } from '@/ui/hooks/useAuth'
 

@@ -1,6 +1,6 @@
-/** `gmgo keys list` — `GET /api/keys`; accepts a bare array or a paginated envelope of `apiKeySchema` (D26). */
-import { apiKeySchema } from '@gmgo/shared/api-keys'
-import { paginatedResponse } from '@gmgo/shared/pagination'
+/** `rocketflare keys list` — `GET /api/keys`; accepts a bare array or a paginated envelope of `apiKeySchema` (D26). */
+import { apiKeySchema } from '@rocketflare/shared/api-keys'
+import { paginatedResponse } from '@rocketflare/shared/pagination'
 import { z } from 'zod'
 import { type CommandContext, requireClient } from '../context'
 import { formatDate, formatPagination, renderTable } from '../utils/output'

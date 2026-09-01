@@ -12,7 +12,7 @@ read by the `TenantActivityDaily` cube.
   incremental; `fact_refreshed_at` is a stamp.
 - `freshness.ts` — `checkFactTableFreshness(db)`: `lagSeconds` = newest source row minus last
   build (0 if the build is newer); `stale` = lag > 2× interval.
-- Runs from: cron `"15 * * * *"` (`api/scheduled.ts`, both tomls), `pnpm --filter @gmgo/web
+- Runs from: cron `"15 * * * *"` (`api/scheduled.ts`, both tomls), `pnpm --filter @rocketflare/web
   db:refresh-facts [table] [--tenant=<uuid>]`, `db:check-facts`; status at
   `GET /api/analytics/facts/status` (admin+).
 - Constraints: DELETE+INSERT works through Hyperdrive; `REFRESH MATERIALIZED VIEW` / `ANALYZE` do

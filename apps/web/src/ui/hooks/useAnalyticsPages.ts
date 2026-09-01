@@ -7,7 +7,7 @@
  * a template page (`POST /pages/:id/reset`) and `POST /templates/recreate`. Dashboard edits
  * autosave the whole `config` through `useAutosaveDashboardConfig` (debounced PATCH; `flush()`
  * before leaving). Fact-table freshness (`GET /facts/status`) is admin-only, so the hook takes
- * `enabled` and callers gate it on the ability. Contracts: `@gmgo/shared/analytics`; the cube data
+ * `enabled` and callers gate it on the ability. Contracts: `@rocketflare/shared/analytics`; the cube data
  * behind a page is fetched by drizzle-cube's own client (see components/analytics).
  */
 import {
@@ -19,7 +19,7 @@ import {
   dashboardTemplateListResponseSchema,
   factTableStatusListResponseSchema,
   type UpdateAnalyticsPageRequest,
-} from '@gmgo/shared/analytics'
+} from '@rocketflare/shared/analytics'
 import { queryOptions, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { z } from 'zod'

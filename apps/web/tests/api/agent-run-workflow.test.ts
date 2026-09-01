@@ -87,7 +87,7 @@ async function drive(env: TestEnv, runId: string, tenantId: string) {
       payload: { runId, tenantId },
       timestamp: new Date(),
       instanceId: runId,
-      workflowName: 'gmgo-starter-agent-run',
+      workflowName: 'rocketflare-agent-run',
     },
     step as unknown as Parameters<AgentRunWorkflow['run']>[1]
   )

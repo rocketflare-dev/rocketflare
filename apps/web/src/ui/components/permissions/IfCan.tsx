@@ -2,7 +2,7 @@
  * Declarative ability gates (D10). Cosmetic — the server enforces; these only keep controls a
  * reader cannot use out of the way.
  */
-import type { Actions, Subjects } from '@gmgo/shared/permissions'
+import type { Actions, Subjects } from '@rocketflare/shared/permissions'
 import type { ReactNode } from 'react'
 import { usePermissions } from '@/ui/hooks/usePermissions'
 

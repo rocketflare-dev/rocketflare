@@ -6,4 +6,4 @@ import pkg from '../package.json'
 
 export const PACKAGE_NAME: string = pkg.name
 export const VERSION: string = pkg.version
-export const BIN_NAME: string = Object.keys(pkg.bin)[0] ?? 'gmgo'
+export const BIN_NAME: string = Object.keys(pkg.bin)[0] ?? 'rocketflare'

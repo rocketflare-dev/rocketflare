@@ -12,8 +12,13 @@
  *   appendEvent — durable progress row + `entity.changed { entity: 'agent-run' }` nudge (D8).
  * Every query carries the tenant predicate; `runId` alone is never trusted.
  */
-import type { AgentKey, AgentRun, AgentRunEvent, AgentRunEventType } from '@gmgo/shared/ai/agents'
-import { ERROR_CODES } from '@gmgo/shared/errors'
+import type {
+  AgentKey,
+  AgentRun,
+  AgentRunEvent,
+  AgentRunEventType,
+} from '@rocketflare/shared/ai/agents'
+import { ERROR_CODES } from '@rocketflare/shared/errors'
 import { and, asc, eq, inArray, sql } from 'drizzle-orm'
 import type { Database } from '../../../db/client'
 import {

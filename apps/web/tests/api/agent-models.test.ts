@@ -9,8 +9,8 @@
 import {
   agentModelAssignmentSchema,
   agentModelsListResponseSchema,
-} from '@gmgo/shared/ai/agent-models'
-import { aiConfigSchema } from '@gmgo/shared/ai/config'
+} from '@rocketflare/shared/ai/agent-models'
+import { aiConfigSchema } from '@rocketflare/shared/ai/config'
 import { describe, expect, it } from 'vitest'
 import { resolveChat } from '@/api/services/ai/resolve'
 import { loadConfig } from '@/config'

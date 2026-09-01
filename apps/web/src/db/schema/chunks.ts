@@ -6,7 +6,7 @@
  * is `to_tsvector('english', text)` computed at query time (a generated tsvector + GIN index is the
  * documented scaling path). Every query carries the tenant predicate first.
  */
-import { EMBEDDING_DIM } from '@gmgo/shared/ai/config'
+import { EMBEDDING_DIM } from '@rocketflare/shared/ai/config'
 import { relations } from 'drizzle-orm'
 import { index, integer, pgTable, text, uniqueIndex, uuid, vector } from 'drizzle-orm/pg-core'
 import { tenantRef, timestamps } from './_helpers'

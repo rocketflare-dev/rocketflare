@@ -11,29 +11,30 @@ packages themselves — do it first and run `pnpm install` before anything else,
 
 | Token | Where | Replace with |
 |---|---|---|
-| `@gmgo/web`, `@gmgo/cli`, `@gmgo/shared` | the `name` field of `apps/web/package.json`, `apps/cli/package.json`, `packages/shared/package.json`; every `"@gmgo/shared": "workspace:*"` dependency; **every import specifier** `@gmgo/shared/<module>` in `apps/web/src`, `apps/web/tests`, `apps/cli/src` (`grep -rn "@gmgo/" apps packages --include=*.ts --include=*.tsx --include=*.json -l`); the root `package.json` scripts (`--filter @gmgo/web`, `--filter @gmgo/cli`); `.github/workflows/deploy.yml` (`--filter @gmgo/web`); `CLAUDE.md`, `docs/*.md`, `.claude/rules/*.md` | `@myapp/web`, `@myapp/cli`, `@myapp/shared` — then `pnpm install` (relinks the workspace) |
-| `gmgo` (root package name) | root `package.json` `name` | `myapp` |
-| `gmgo` (CLI bin) | `apps/cli/package.json` `bin` key; `program.name('gmgo')` in `apps/cli/src/cli.ts`; the `pnpm cli` examples in `SETUP.md`, `README.md`, `docs/CONCEPTS.md` | `myapp` — users type `myapp login` |
-| `~/.gmgo` (CLI config dir) | `apps/cli/src/config.ts` (`GMGO_CONFIG_DIR` default); `.claude/rules/cli.md`; `SETUP.md` 1.7 | `~/.myapp` |
-| `GMGO_` (CLI env prefix: `GMGO_API_KEY`, `GMGO_URL`, `GMGO_CONFIG_DIR`, `GMGO_DEBUG`) | `apps/cli/src/config.ts`; `apps/cli/tests`; `docs/CONCEPTS.md` → CLI; `.claude/rules/cli.md` | `MYAPP_` |
-| `gmgo-starter` | `apps/web/package.json` `cfld.name`; `apps/web/wrangler.toml` / `wrangler.staging.toml` `name` (staging keeps `-staging`); `apps/web/scripts/cf-provision.sh`; `.claude/rules/cloudflare.md` examples | `myapp` |
-| `gmgo-starter-agent-run` (Workflow — name is account-scoped) | `name = ` in `[[workflows]]` of both tomls (staging `-staging`); no code references — the binding is always `AGENT_RUN_WORKFLOW`, the class `AgentRunWorkflow`; `docs/DEPLOY.md`, `.claude/rules/cloudflare.md`, `apps/web/src/api/workflows/CLAUDE.md` examples | `myapp-agent-run` — nothing to create; `wrangler deploy` registers it |
-| `gmgo-starter-jobs` (queue — name is account-scoped) | `queue = ` in `[[queues.producers]]` AND `[[queues.consumers]]` of both tomls (staging `-staging`; the commented `dead_letter_queue` too); **`JOBS_QUEUE_NAME_PREFIX` in `apps/web/src/api/services/jobs.ts`** — the consumer matches `batch.queue` by this prefix, so the toml and the constant must agree or every batch is `ackAll()`ed as "unknown queue"; the literals in `apps/web/tests/api/{queue-dispatch,jobs-producer,jobs-consumer}.test.ts` | `myapp-jobs` — then `wrangler queues create myapp-jobs[-staging]` per environment |
-| `gmgo-starter-files` (R2 bucket — account-scoped) | `bucket_name` in `[[r2_buckets]]` of both tomls (staging `-staging`); no code references — the binding is always `FILES` | `myapp-files` — then `wrangler r2 bucket create myapp-files[-staging]` |
-| `gmgo_dev`, `gmgo_test`, `gmgo` / `gmgo_pass`, `test` / `test` | `apps/web/docker-compose.dev.yml`, `apps/web/docker-compose.test.yml`, `apps/web/.dev.vars.example`, `apps/web/.env.test`, `apps/web/drizzle.config.ts`, `localConnectionString` in both tomls, `.github/workflows/ci.yml` (Postgres service) | `myapp_dev`, `myapp_test`, `myapp` / a local-only password |
-| `gmgo_app` | `apps/web/src/db/schema/rls.ts` `APP_ROLE`, `apps/web/.env.test` `APP_DATABASE_URL`, `docs/RLS.md` | `myapp_app` (policies name the role; do this before the first migration) |
-| `GMGO Starter` / `GMGO Test` | `[vars] APP_NAME` in both tomls, `apps/web/.env.test`, `apps/web/src/ui/index.html` `<title>`, `README.md` | display name |
-| `noreply@example.com`, `app.example.com`, `staging.example.com` | `[vars] EMAIL_FROM`, `APP_URL`, commented `routes` in both tomls | your domains |
-| `gm-light` / `gm-dark` | `apps/web/src/ui/index.css` theme blocks, `index.html` pre-hydration script, `ThemeToggle.tsx`, `apps/web/tests/ui/theme-toggle.test.tsx` | `myapp-light` / `myapp-dark` (or keep) |
-| `gmgo-dev-postgres` / `gmgo-test-postgres` | `container_name` in `apps/web/docker-compose.dev.yml` / `docker-compose.test.yml` | `myapp-dev-postgres` / `myapp-test-postgres` — pinned names mean a SECOND checkout of the same kit on one machine fails `pnpm dev:db:up` with "container name already in use" until renamed (the running DB is still reachable) |
-| `admin@gmgo.local` | `apps/web/scripts/seed.ts` (the seeded global admin), the dev quick-login list in `apps/web/src/ui/pages/Login.tsx`, `SETUP.md` | `admin@myapp.local` |
+| `@rocketflare/web`, `@rocketflare/cli`, `@rocketflare/shared` | the `name` field of `apps/web/package.json`, `apps/cli/package.json`, `packages/shared/package.json`; every `"@rocketflare/shared": "workspace:*"` dependency; **every import specifier** `@rocketflare/shared/<module>` in `apps/web/src`, `apps/web/tests`, `apps/cli/src` (`grep -rn "@rocketflare/" apps packages --include=*.ts --include=*.tsx --include=*.json -l`); the root `package.json` scripts (`--filter @rocketflare/web`, `--filter @rocketflare/cli`); `.github/workflows/deploy.yml` (`--filter @rocketflare/web`); `CLAUDE.md`, `docs/*.md`, `.claude/rules/*.md` | `@myapp/web`, `@myapp/cli`, `@myapp/shared` — then `pnpm install` (relinks the workspace) |
+| `rocketflare` (root package name) | root `package.json` `name` | `myapp` |
+| `rocketflare` (API key prefix — keys are `rocketflare_<43 chars>`) | `API_KEY_PREFIX` in `apps/web/src/api/utils/core/hash.ts`; keep `API_KEY_PREFIX_LENGTH` (the stored handle, 20) and `REDACTED_KEY_CHARS` in `apps/cli/src/config.ts` (the CLI's masked form, 16) LONGER than `<prefix>_`, or every key in a list shows zero characters of its token; the `rocketflare_…` literals in `apps/web/tests/{api/keys,api/auth-cli,ui/api-keys}.test.*` and `apps/cli/tests/*` | `myapp` — existing keys keep working (only the display handle changes) |
+| `rocketflare` (CLI bin) | `apps/cli/package.json` `bin` key; `program.name('rocketflare')` in `apps/cli/src/cli.ts`; the `pnpm cli` examples in `SETUP.md`, `README.md`, `docs/CONCEPTS.md` | `myapp` — users type `myapp login` |
+| `~/.rocketflare` (CLI config dir) | `apps/cli/src/config.ts` (`ROCKETFLARE_CONFIG_DIR` default); `.claude/rules/cli.md`; `SETUP.md` 1.7 | `~/.myapp` |
+| `ROCKETFLARE_` (CLI env prefix: `ROCKETFLARE_API_KEY`, `ROCKETFLARE_URL`, `ROCKETFLARE_CONFIG_DIR`, `ROCKETFLARE_DEBUG`) | `apps/cli/src/config.ts`; `apps/cli/tests`; `docs/CONCEPTS.md` → CLI; `.claude/rules/cli.md` | `MYAPP_` |
+| `rocketflare` | `apps/web/package.json` `cfld.name`; `apps/web/wrangler.toml` / `wrangler.staging.toml` `name` (staging keeps `-staging`); `apps/web/scripts/cf-provision.sh`; `.claude/rules/cloudflare.md` examples | `myapp` |
+| `rocketflare-agent-run` (Workflow — name is account-scoped) | `name = ` in `[[workflows]]` of both tomls (staging `-staging`); no code references — the binding is always `AGENT_RUN_WORKFLOW`, the class `AgentRunWorkflow`; `docs/DEPLOY.md`, `.claude/rules/cloudflare.md`, `apps/web/src/api/workflows/CLAUDE.md` examples | `myapp-agent-run` — nothing to create; `wrangler deploy` registers it |
+| `rocketflare-jobs` (queue — name is account-scoped) | `queue = ` in `[[queues.producers]]` AND `[[queues.consumers]]` of both tomls (staging `-staging`; the commented `dead_letter_queue` too); **`JOBS_QUEUE_NAME_PREFIX` in `apps/web/src/api/services/jobs.ts`** — the consumer matches `batch.queue` by this prefix, so the toml and the constant must agree or every batch is `ackAll()`ed as "unknown queue"; the literals in `apps/web/tests/api/{queue-dispatch,jobs-producer,jobs-consumer}.test.ts` | `myapp-jobs` — then `wrangler queues create myapp-jobs[-staging]` per environment |
+| `rocketflare-files` (R2 bucket — account-scoped) | `bucket_name` in `[[r2_buckets]]` of both tomls (staging `-staging`); no code references — the binding is always `FILES` | `myapp-files` — then `wrangler r2 bucket create myapp-files[-staging]` |
+| `rocketflare_dev`, `rocketflare_test`, `rocketflare` / `rocketflare_pass`, `test` / `test` | `apps/web/docker-compose.dev.yml`, `apps/web/docker-compose.test.yml`, `apps/web/.dev.vars.example`, `apps/web/.env.test`, `apps/web/drizzle.config.ts`, `localConnectionString` in both tomls, `.github/workflows/ci.yml` (Postgres service) | `myapp_dev`, `myapp_test`, `myapp` / a local-only password |
+| `rocketflare_app` | `apps/web/src/db/schema/rls.ts` `APP_ROLE`, `apps/web/.env.test` `APP_DATABASE_URL`, `docs/RLS.md` | `myapp_app` (policies name the role; do this before the first migration) |
+| `Rocketflare` / `Rocketflare Test` | `[vars] APP_NAME` in both tomls, `apps/web/.env.test`, `apps/web/src/ui/index.html` `<title>`, `README.md` | display name |
+| `noreply@rocketflare.dev`, `app.rocketflare.dev`, `staging.rocketflare.dev` | `[vars] EMAIL_FROM`, `APP_URL`, commented `routes` in both tomls | your domains |
+| `rocketflare-light` / `rocketflare-dark` | `apps/web/src/ui/index.css` theme blocks, `index.html` pre-hydration script, `ThemeToggle.tsx`, `apps/web/tests/ui/theme-toggle.test.tsx` | `myapp-light` / `myapp-dark` (or keep) |
+| `rocketflare-dev-postgres` / `rocketflare-test-postgres` | `container_name` in `apps/web/docker-compose.dev.yml` / `docker-compose.test.yml` | `myapp-dev-postgres` / `myapp-test-postgres` — pinned names mean a SECOND checkout of the same kit on one machine fails `pnpm dev:db:up` with "container name already in use" until renamed (the running DB is still reachable) |
+| `admin@rocketflare.local` | `apps/web/scripts/seed.ts` (the seeded global admin), the dev quick-login list in `apps/web/src/ui/pages/Login.tsx`, `SETUP.md` | `admin@myapp.local` |
 | brand colour variables | the header block of `apps/web/src/ui/index.css` (the only place hex values live) | your palette — then `pnpm web test:ui` (contrast gate) |
 | `LogoMark` | `apps/web/src/ui/components/shared/LogoMark.tsx`, `apps/web/src/ui/public/logo.svg` + favicons | your mark |
 | `EMBEDDING_DIM` (1024) | `packages/shared/src/ai/config.ts` (imported by `apps/web/src/db/schema/chunks.ts` and the `openai*` embeddings adapter) — only if you will NOT use the default `@cf/baai/bge-m3`; see §3 "Changing the embedding model or dimension" | before the first migration, never after |
 
 Then, from the root: `pnpm install && pnpm types && pnpm lint && pnpm typecheck && pnpm test`. The
 parity test will tell you if the two tomls drifted during the rename; `typecheck` will tell you if
-an `@gmgo/shared` import was missed. Keep `packages/shared` **private** (`"private": true`, no
+an `@rocketflare/shared` import was missed. Keep `packages/shared` **private** (`"private": true`, no
 `publishConfig`) whatever you call it.
 
 ## 2. Delete once you have real ones
@@ -77,7 +78,7 @@ contract comes first and lives in the shared package so the API, the UI and the 
 
 1. **Contract** — `packages/shared/src/<feature>.ts`: zod schemas for the resource, its
    create/update bodies, and list query (`paginationQuerySchema`). Export types with `z.infer`;
-   re-export from `packages/shared/src/index.ts`. Consumers import `@gmgo/shared/<feature>`.
+   re-export from `packages/shared/src/index.ts`. Consumers import `@rocketflare/shared/<feature>`.
 2. **Schema** — `apps/web/src/db/schema/<feature>.ts`: `id`, `...tenantRef()`, columns,
    `...timestamps()`, `tenantIsolation('<table>')` in `extraConfig`; export from `schema/index.ts`;
    `pnpm db:generate`; read the SQL; `pnpm db:migrate`.
@@ -93,7 +94,7 @@ contract comes first and lives in the shared package so the API, the UI and the 
 5. **Page** — `apps/web/src/ui/pages/<Feature>/…` using `components/shared/` primitives; add to
    `App.tsx` (lazy) and `SideNav` with the same guard the page uses.
 6. **Command** (optional) — `apps/cli/src/commands/<feature>.ts`: a thin commander command over
-   `apps/cli/src/api.ts`, parsing the response with the same `@gmgo/shared/<feature>` schema;
+   `apps/cli/src/api.ts`, parsing the response with the same `@rocketflare/shared/<feature>` schema;
    `--json` on every list; exit codes per `.claude/rules/cli.md`. Register it in `cli.ts`.
 
 Long-running work inside a feature: enqueue on `JOBS_QUEUE` (< 30 s) or create a Workflow
@@ -231,7 +232,7 @@ limits are an app change (`MAX_UPLOAD_BYTES` is one constant today).
 
 - **Heat-map charts**: `@nivo/heatmap` is an optional drizzle-cube peer whose named import breaks the
   Rollup build, so `apps/web/vite.config.ts` aliases it to `apps/web/src/ui/lib/stubs/nivo-heatmap.tsx`
-  (renders a notice). To enable: `pnpm --filter @gmgo/web add @nivo/heatmap`, delete the alias and the
+  (renders a notice). To enable: `pnpm --filter @rocketflare/web add @nivo/heatmap`, delete the alias and the
   stub, run `pnpm build:ui`.
 - **Dashboard theming**: drizzle-cube reads `--dc-*` CSS variables; the kit maps them to its tokens under
   `:root[data-theme=…]` in `apps/web/src/ui/index.css`. Change the tokens, not the `--dc-*` lines.
@@ -241,8 +242,8 @@ limits are an app change (`MAX_UPLOAD_BYTES` is one constant today).
   `analytics_pages` / `facts` schema files (+ a migration), the `:15` cron in both tomls, and the
   `drizzle-cube`/`recharts`/`d3`/`react-grid-layout`/`react-is` deps — the Worker bundle drops by ≈ 1 MB gzip.
 - **Headless CLI login** (CI, agents, no browser): skip `pnpm cli login`; create a tenant API key in
-  Settings → API keys (or `POST /api/keys` with a session cookie) and export `GMGO_API_KEY` +
-  `GMGO_URL`. `pnpm cli whoami` confirms.
+  Settings → API keys (or `POST /api/keys` with a session cookie) and export `ROCKETFLARE_API_KEY` +
+  `ROCKETFLARE_URL`. `pnpm cli whoami` confirms.
 
 ## 4. Keep the docs true
 

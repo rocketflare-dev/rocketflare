@@ -3,7 +3,7 @@
  * the tenant, default last 30 days. Admin+ (`manage AiConfig`: usage is a cost/configuration
  * concern, not a member one).
  */
-import { aiUsageSummaryQuerySchema, aiUsageSummarySchema } from '@gmgo/shared/ai/usage'
+import { aiUsageSummaryQuerySchema, aiUsageSummarySchema } from '@rocketflare/shared/ai/usage'
 import { guardPermission } from '../middleware/permissions'
 import { summarizeUsage } from '../services/ai/usage'
 import { BadRequestError } from '../utils/core/errors'

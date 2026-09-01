@@ -2,8 +2,8 @@
  * `/api/members` (D10): list (every member may read; `support` rows included), role change and
  * removal (`manage TenantMember`, with the ownership invariants enforced in services/members.ts).
  */
-import { paginationQuerySchema } from '@gmgo/shared/pagination'
-import { updateMemberRoleRequestSchema } from '@gmgo/shared/tenants'
+import { paginationQuerySchema } from '@rocketflare/shared/pagination'
+import { updateMemberRoleRequestSchema } from '@rocketflare/shared/tenants'
 import { guardPermission } from '../middleware/permissions'
 import { changeMemberRole, listMembers, removeMember } from '../services/members'
 import { paginated } from '../utils/routes/pagination'

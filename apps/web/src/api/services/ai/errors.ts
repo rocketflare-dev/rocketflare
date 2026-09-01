@@ -5,8 +5,8 @@
  * `AiNotConfiguredError` is the 503 `ai_not_configured` envelope the resolver throws BEFORE any
  * stream opens.
  */
-import type { AiProvider } from '@gmgo/shared/ai/config'
-import { ERROR_CODES } from '@gmgo/shared/errors'
+import type { AiProvider } from '@rocketflare/shared/ai/config'
+import { ERROR_CODES } from '@rocketflare/shared/errors'
 import { ServiceUnavailableError } from '../../utils/core/errors'
 
 export type AiErrorCode = 'auth' | 'rate_limit' | 'invalid_request' | 'unavailable' | 'unknown'

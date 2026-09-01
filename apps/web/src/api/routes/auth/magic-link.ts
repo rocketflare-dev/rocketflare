@@ -5,7 +5,7 @@
  * (sign-up gating), sets the cookie and 302s to the validated `redirectTo` or `/`; failures 302 to
  * `/login?error=invalid_token|expired|not_invited|blocked`.
  */
-import { magicLinkRequestSchema } from '@gmgo/shared/auth'
+import { magicLinkRequestSchema } from '@rocketflare/shared/auth'
 import type { AppConfig } from '../../../config'
 import type { Database } from '../../../db/client'
 import { consumeMagicLinkToken, issueMagicLinkToken } from '../../auth/magic-link'

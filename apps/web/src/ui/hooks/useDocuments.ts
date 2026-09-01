@@ -14,8 +14,8 @@ import {
   type SearchRequest,
   type SearchResponse,
   searchResponseSchema,
-} from '@gmgo/shared/ai/embeddings'
-import { paginatedResponse } from '@gmgo/shared/pagination'
+} from '@rocketflare/shared/ai/embeddings'
+import { paginatedResponse } from '@rocketflare/shared/pagination'
 import {
   keepPreviousData,
   queryOptions,

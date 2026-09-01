@@ -4,7 +4,7 @@
  * (neither reference app checked expiry), creator blocked, membership gone, tenant suspended.
  * `lastUsedAt` is stamped at most every 5 minutes, through `waitUntil`.
  */
-import type { MembershipRole, TenantStatus } from '@gmgo/shared/tenants'
+import type { MembershipRole, TenantStatus } from '@rocketflare/shared/tenants'
 import { and, eq, isNull, lt, or, sql } from 'drizzle-orm'
 import type { Database } from '../../db/client'
 import { type ApiKey, apiKeys, tenants, tenantUsers, type User, users } from '../../db/schema'

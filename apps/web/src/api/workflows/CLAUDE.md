@@ -1,7 +1,7 @@
 # Workflows (D5, D7)
 
 `agent-run.ts` — `AgentRunWorkflow extends WorkflowEntrypoint<AppBindings, { runId, tenantId }>`,
-bound as `AGENT_RUN_WORKFLOW` in BOTH tomls (`name` is account-scoped: `gmgo-starter-agent-run` /
+bound as `AGENT_RUN_WORKFLOW` in BOTH tomls (`name` is account-scoped: `rocketflare-agent-run` /
 `-staging`; `binding` + `class_name` identical — the parity test enforces). Exported from
 `src/worker.ts` only.
 
@@ -14,7 +14,7 @@ wires steps and opens/closes ONE DB client per step (`withStepDatabase`, awaited
 Rules: idempotent steps (the `agent_runs` row is the claim); cooperative cancel (poll the row between
 turns); CPU is bounded PER STEP by `[limits] cpu_ms`; no `waitUntil` — await everything, including
 nudges (`createStepRealtime().settle()`). `wrangler dev` runs instances locally; inspect deployed ones
-with `wrangler workflows instances describe gmgo-starter-agent-run <runId>`.
+with `wrangler workflows instances describe rocketflare-agent-run <runId>`.
 
 Testing: `tests/api/agent-run-workflow.test.ts` instantiates the class with `createTestEnv()` and
 `createFakeWorkflowStep()` (`tests/mocks/cloudflare-workers.ts`) and asserts on the rows.

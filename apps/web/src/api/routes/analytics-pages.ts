@@ -11,12 +11,12 @@
  *   POST   /templates/recreate  manage Dashboard — create missing + reset existing template pages
  *   GET    /facts/status     admin+ — fact-table freshness
  * Reads are tenant membership only; the cube data behind a page is served by `/cubejs-api` with
- * its own `read Analytics` guard. Contracts: `@gmgo/shared/analytics`.
+ * its own `read Analytics` guard. Contracts: `@rocketflare/shared/analytics`.
  */
 import {
   createAnalyticsPageRequestSchema,
   updateAnalyticsPageRequestSchema,
-} from '@gmgo/shared/analytics'
+} from '@rocketflare/shared/analytics'
 import type { DashboardConfig } from 'drizzle-cube/client'
 import { and, asc, eq } from 'drizzle-orm'
 import { listTemplates } from '../../dashboards'

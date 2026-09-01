@@ -20,7 +20,7 @@ export const apiKeys = pgTable(
       .notNull()
       .references(() => users.id, { onDelete: 'cascade' }),
     name: text('name').notNull(),
-    /** First characters of the plaintext (e.g. `gmgo_ab12cd34`) for identification in lists. */
+    /** First characters of the plaintext (e.g. `rocketflare_ab12cd34`) for identification in lists. */
     keyPrefix: text('key_prefix').notNull(),
     keyHash: text('key_hash').notNull().unique(),
     /** `apiKeyScopeSchema` values; CASL on the creator's role is the real authorisation. */

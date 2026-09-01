@@ -6,7 +6,7 @@
  * The read index is `(conversation_id, created_at)` — a deliberate exception to the tenant-first
  * rule: a thread is always fetched by its id after an ownership check on `conversations`.
  */
-import type { ChatRole, TokenUsage, ToolCallRecord } from '@gmgo/shared/ai/chat'
+import type { ChatRole, TokenUsage, ToolCallRecord } from '@rocketflare/shared/ai/chat'
 import { relations } from 'drizzle-orm'
 import { index, jsonb, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core'
 import { tenantRef } from './_helpers'

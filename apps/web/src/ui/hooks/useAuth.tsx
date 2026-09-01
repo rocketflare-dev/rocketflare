@@ -17,7 +17,7 @@ import {
   type TenancyMode,
   type TenantSummary,
   type User,
-} from '@gmgo/shared/auth'
+} from '@rocketflare/shared/auth'
 import { type QueryClient, queryOptions, useQuery, useQueryClient } from '@tanstack/react-query'
 import { createContext, type ReactNode, useCallback, useContext, useEffect, useMemo } from 'react'
 import { ApiError, api, setUnauthorizedHandler } from '@/ui/lib/api-client'

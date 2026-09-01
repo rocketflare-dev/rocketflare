@@ -423,7 +423,8 @@ function hyperdriveStub(connectionString: string): Hyperdrive {
  * process.env with .env.test-compatible defaults; pass `overrides` to change any of them.
  */
 export function createTestEnv(overrides: Partial<TestEnv> = {}): TestEnv {
-  const databaseUrl = process.env.DATABASE_URL ?? 'postgresql://test:test@localhost:5433/gmgo_test'
+  const databaseUrl =
+    process.env.DATABASE_URL ?? 'postgresql://test:test@localhost:5433/rocketflare_test'
   const env: Record<string, unknown> = {
     RATE_LIMIT_KV: new MemoryKV() as unknown as KVNamespace,
     HYPERDRIVE: hyperdriveStub(databaseUrl),
@@ -435,10 +436,10 @@ export function createTestEnv(overrides: Partial<TestEnv> = {}): TestEnv {
     AGENT_RUN_WORKFLOW: new RecordingWorkflow() as unknown as Workflow,
     APP_ENV: process.env.APP_ENV ?? 'development',
     APP_URL: process.env.APP_URL ?? 'http://localhost:3001',
-    APP_NAME: process.env.APP_NAME ?? 'GMGO Test',
+    APP_NAME: process.env.APP_NAME ?? 'Rocketflare Test',
     RELEASE_VERSION: process.env.RELEASE_VERSION ?? 'test',
     LOG_LEVEL: process.env.LOG_LEVEL ?? 'silent',
-    EMAIL_FROM: process.env.EMAIL_FROM ?? 'GMGO Test <noreply@example.com>',
+    EMAIL_FROM: process.env.EMAIL_FROM ?? 'Rocketflare Test <noreply@example.com>',
     TENANCY_MODE: process.env.TENANCY_MODE ?? 'multi',
     SIGNUP_MODE: process.env.SIGNUP_MODE ?? 'invite_only',
     TENANT_SCOPE_MODE: process.env.TENANT_SCOPE_MODE ?? 'off',

@@ -11,7 +11,7 @@ import { tenantIsolation } from './rls'
 import { tenants } from './tenants'
 import { users } from './users'
 
-/** Mirrors `FILE_SCOPES` in `@gmgo/shared/files` — the DB enum and the contract must agree. */
+/** Mirrors `FILE_SCOPES` in `@rocketflare/shared/files` — the DB enum and the contract must agree. */
 export const FILE_SCOPES = ['avatars', 'uploads'] as const
 export type FileScope = (typeof FILE_SCOPES)[number]
 

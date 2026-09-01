@@ -1,6 +1,6 @@
-/** `gmgo members list [--page] [--page-size]` — `GET /api/members` → `paginatedResponse(memberSchema)` (D26). */
-import { paginatedResponse } from '@gmgo/shared/pagination'
-import { memberSchema } from '@gmgo/shared/tenants'
+/** `rocketflare members list [--page] [--page-size]` — `GET /api/members` → `paginatedResponse(memberSchema)` (D26). */
+import { paginatedResponse } from '@rocketflare/shared/pagination'
+import { memberSchema } from '@rocketflare/shared/tenants'
 import { type CommandContext, requireClient } from '../context'
 import { formatDate, formatPagination, renderTable } from '../utils/output'
 

@@ -4,8 +4,8 @@
  * for `/auth/session` (composing with whatever the test already stubbed) so a test never builds
  * the auth stack by hand. Fixtures are post-parse shapes (real `Date`s), built by `makeSession`.
  */
-import type { SessionResponse, TenantSummary, User } from '@gmgo/shared/auth'
-import type { MembershipRole } from '@gmgo/shared/tenants'
+import type { SessionResponse, TenantSummary, User } from '@rocketflare/shared/auth'
+import type { MembershipRole } from '@rocketflare/shared/tenants'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { type RenderOptions, render } from '@testing-library/react'
 import type { ReactElement, ReactNode } from 'react'

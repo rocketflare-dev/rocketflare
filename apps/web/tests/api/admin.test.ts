@@ -2,7 +2,7 @@
  * `/api/admin/*` (D9, D10, D25): tenant-free global admin; access-request decisions; tenant
  * list/detail/suspend; support enter/leave; users; the last global admin guard; block kills sessions.
  */
-import type { SessionResponse } from '@gmgo/shared/auth'
+import type { SessionResponse } from '@rocketflare/shared/auth'
 import { and, eq, ne } from 'drizzle-orm'
 import { describe, expect, it } from 'vitest'
 import { setGlobalAdmin } from '@/api/services/admin'

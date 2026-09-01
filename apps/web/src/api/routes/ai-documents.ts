@@ -11,7 +11,7 @@ import {
   ingestTextRequestSchema,
   type SearchResponse,
   searchRequestSchema,
-} from '@gmgo/shared/ai/embeddings'
+} from '@rocketflare/shared/ai/embeddings'
 import { and, count, desc, eq } from 'drizzle-orm'
 import { documents } from '../../db/schema'
 import { can, guardPermission } from '../middleware/permissions'

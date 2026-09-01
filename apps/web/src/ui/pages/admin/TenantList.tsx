@@ -3,8 +3,8 @@
  * there is exactly one, so the list collapses straight into its detail.
  */
 
-import type { TenantStatus } from '@gmgo/shared/tenants'
 import { BuildingOffice2Icon, ChevronRightIcon } from '@heroicons/react/24/outline'
+import type { TenantStatus } from '@rocketflare/shared/tenants'
 import { useState } from 'react'
 import { Link, Navigate } from 'react-router-dom'
 import {

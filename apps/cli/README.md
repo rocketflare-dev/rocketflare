@@ -1,7 +1,7 @@
-# @gmgo/cli
+# @rocketflare/cli
 
-Command-line interface for the GMGO kit server. Signs in through the browser (D26 handoff), stores
-an API key under `~/.gmgo/`, and exposes a few tenant-scoped commands as the pattern to copy.
+Command-line interface for the Rocketflare kit server. Signs in through the browser (D26 handoff), stores
+an API key under `~/.rocketflare/`, and exposes a few tenant-scoped commands as the pattern to copy.
 
 ```bash
 pnpm cli --help                 # from the repo root (runs src/cli.ts with tsx)
@@ -22,12 +22,12 @@ Exit codes: `0` ok · `1` error (network, 4xx/5xx, bad usage) · `2` not logged 
 
 ## Config file
 
-`~/.gmgo/config.json` — directory `0700`, file `0600`, written by `login`:
+`~/.rocketflare/config.json` — directory `0700`, file `0600`, written by `login`:
 
 ```json
 {
   "serverUrl": "http://localhost:3001",
-  "apiKey": "gmgo_…",
+  "apiKey": "rocketflare_…",
   "tenantId": "uuid",
   "tenantName": "Acme",
   "user": { "email": "alice@example.com", "name": "Alice" }
@@ -41,21 +41,21 @@ full. `logout` removes `apiKey`, `tenantId`, `tenantName`, `user` and keeps `ser
 
 | Variable          | Effect                                                                 |
 | ----------------- | ---------------------------------------------------------------------- |
-| `GMGO_API_KEY`    | Use this key instead of the config file's                              |
-| `GMGO_URL`        | Server URL (below `--server`, above the config file)                   |
-| `GMGO_CONFIG_DIR` | Directory of `config.json` (default `$HOME/.gmgo`) — tests use this    |
-| `GMGO_DEBUG`      | Print debug lines and stack traces to stderr                           |
+| `ROCKETFLARE_API_KEY`    | Use this key instead of the config file's                              |
+| `ROCKETFLARE_URL`        | Server URL (below `--server`, above the config file)                   |
+| `ROCKETFLARE_CONFIG_DIR` | Directory of `config.json` (default `$HOME/.rocketflare`) — tests use this    |
+| `ROCKETFLARE_DEBUG`      | Print debug lines and stack traces to stderr                           |
 
-Precedence: `--server` flag > `GMGO_URL` > config `serverUrl` > `DEFAULT_SERVER_URL`
+Precedence: `--server` flag > `ROCKETFLARE_URL` > config `serverUrl` > `DEFAULT_SERVER_URL`
 (`http://localhost:3001`, the kit's `wrangler dev` port — a real app sets its production URL in
-`src/config.ts`). Key: `GMGO_API_KEY` > config `apiKey`.
+`src/config.ts`). Key: `ROCKETFLARE_API_KEY` > config `apiKey`.
 
 **ADAPTING** renames the bin (`package.json` → `bin`), the env prefix and directory (`ENV_PREFIX`,
 `CONFIG_DIR_NAME` in `src/config.ts`). The prompt prefix and `User-Agent` follow the bin name.
 
 ## How the login handoff works
 
-1. `gmgo login` starts a loopback HTTP server on `127.0.0.1`, first free port in **8765–8770**, and
+1. `rocketflare login` starts a loopback HTTP server on `127.0.0.1`, first free port in **8765–8770**, and
    listens on `/callback`.
 2. It opens the browser at `${serverUrl}/auth/cli?redirect_uri=http%3A%2F%2F127.0.0.1%3A<port>%2Fcallback`.
 3. The server has the user sign in and pick a tenant, mints a tenant API key (named `cli:<hostname>`
@@ -68,7 +68,7 @@ Precedence: `--server` flag > `GMGO_URL` > config `serverUrl` > `DEFAULT_SERVER_
 6. Nothing arrives within **5 minutes** → the command fails with exit `1`.
 
 `whoami` uses `GET /api/me` → the flat `meResponseSchema` user (with `preferences`) and `GET /api/tenant` → tenant (both parsed tolerantly with
-the `@gmgo/shared` schemas' `.partial()`); a forbidden/missing `/api/tenant` falls back to the stored
+the `@rocketflare/shared` schemas' `.partial()`); a forbidden/missing `/api/tenant` falls back to the stored
 tenant name.
 
 ## Adding a command
@@ -76,7 +76,7 @@ tenant name.
 1. Create `src/commands/<thing>.ts` exporting `run<Thing>(ctx: CommandContext, options)`. Get a client
    with `requireClient(ctx)` (throws `NotLoggedInError` → exit 2) or `publicClient(ctx)`.
 2. Call `client.request('GET', '/api/<thing>', { schema, query })` with the zod contract imported from
-   `@gmgo/shared/<module>` — always the subpath, never the barrel. `request` returns `{ raw, data }`.
+   `@rocketflare/shared/<module>` — always the subpath, never the barrel. `request` returns `{ raw, data }`.
 3. Print with `ctx.out.data(raw, () => renderTable(data.items, columns))`; footers/status via
    `ctx.out.text()` / `ctx.log.*` (stderr).
 4. Register it in `src/cli.ts` with `action(...)` — that wrapper builds the context from the global
@@ -85,15 +85,15 @@ tenant name.
 
 ## Build
 
-`pnpm --filter @gmgo/cli build` bundles `src/cli.ts` into `dist/cli.js` with **esbuild** (shebang
-kept; `chalk`, `commander`, `open`, `zod` stay external). Why not plain `tsc`: `@gmgo/shared` is
+`pnpm --filter @rocketflare/cli build` bundles `src/cli.ts` into `dist/cli.js` with **esbuild** (shebang
+kept; `chalk`, `commander`, `open`, `zod` stay external). Why not plain `tsc`: `@rocketflare/shared` is
 consumed as TypeScript source (`exports` → `./src/*.ts`, extensionless relative imports), which Node
 cannot load from `tsc` output at runtime — bundling inlines the contracts. `tsx src/cli.ts` (`pnpm
 cli …`) needs no build. Run `node apps/cli/dist/cli.js --help` to check the bundle.
 
 ## Tests
 
-`pnpm --filter @gmgo/cli test` — vitest, Node environment, no server needed: `config.test.ts`
+`pnpm --filter @rocketflare/cli test` — vitest, Node environment, no server needed: `config.test.ts`
 (temp dir, permissions, precedence), `api.test.ts` (mocked `fetch`: envelope → `CliApiError`, schema
 validation), `login.test.ts` (real loopback server + simulated browser redirect, key redaction),
 `commands.test.ts` (tables and `--json`).

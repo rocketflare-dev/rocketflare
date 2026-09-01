@@ -1,7 +1,7 @@
 /** Admin → Users (D10): search + filter over `/api/admin/users` (`adminUserListQuerySchema`). */
 
-import type { AdminUserListQuery } from '@gmgo/shared/admin'
 import { ChevronRightIcon, UsersIcon } from '@heroicons/react/24/outline'
+import type { AdminUserListQuery } from '@rocketflare/shared/admin'
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import {

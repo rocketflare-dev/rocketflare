@@ -14,7 +14,7 @@ name: Deploy
 # Workspace note: this is a pnpm workspace. The tag must equal the version in the ROOT package.json
 # (one tag ships apps/web and apps/cli together; the apps/* versions are informational). Only
 # apps/web is deployed — the CLI is private and not published from here. Steps run at the repo
-# root and reach the web package with the root scripts or `pnpm --filter @gmgo/web …`; `wrangler
+# root and reach the web package with the root scripts or `pnpm --filter @rocketflare/web …`; `wrangler
 # deploy` is executed INSIDE apps/web (via `--filter … exec`) so `wrangler.toml` and its
 # `[assets] directory = "./dist/ui"` resolve.
 #
@@ -29,7 +29,7 @@ name: Deploy
 #   CLOUDFLARE_API_TOKEN   scoped token (docs/DEPLOY.md → Token scopes); may be shared
 #   CLOUDFLARE_ACCOUNT_ID
 # Runtime Worker secrets (OAUTH_ENCRYPTION_KEY, AUTH_SIGNING_KEY, RESEND_API_KEY, …) are NOT
-# managed here: `pnpm --filter @gmgo/web exec wrangler secret put <NAME> [-c wrangler.staging.toml]`
+# managed here: `pnpm --filter @rocketflare/web exec wrangler secret put <NAME> [-c wrangler.staging.toml]`
 # once per worker.
 
 on:
@@ -102,7 +102,7 @@ jobs:
       # Runs in apps/web (its `test:config` script loads .env.test itself); reads both tomls
       # relative to the package, so no working-directory is needed.
       - name: Wrangler parity (provisioned)
-        run: pnpm --filter @gmgo/web test:config
+        run: pnpm --filter @rocketflare/web test:config
         env:
           REQUIRE_PROVISIONED: "1"
 
@@ -113,12 +113,12 @@ jobs:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
 
       - name: Build UI
-        run: pnpm --filter @gmgo/web build:ui
+        run: pnpm --filter @rocketflare/web build:ui
 
       # `--filter … exec` runs wrangler with apps/web as cwd, where wrangler.staging.toml and
       # `[assets] directory = "./dist/ui"` live.
       - name: Deploy (apps/web/wrangler.staging.toml)
-        run: pnpm --filter @gmgo/web exec wrangler deploy -c wrangler.staging.toml --var "RELEASE_VERSION:${{ steps.version.outputs.version }}"
+        run: pnpm --filter @rocketflare/web exec wrangler deploy -c wrangler.staging.toml --var "RELEASE_VERSION:${{ steps.version.outputs.version }}"
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -166,7 +166,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
 
       - name: Wrangler parity (provisioned)
-        run: pnpm --filter @gmgo/web test:config
+        run: pnpm --filter @rocketflare/web test:config
         env:
           REQUIRE_PROVISIONED: "1"
 
@@ -176,10 +176,10 @@ jobs:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
 
       - name: Build UI
-        run: pnpm --filter @gmgo/web build:ui
+        run: pnpm --filter @rocketflare/web build:ui
 
       - name: Deploy (apps/web/wrangler.toml)
-        run: pnpm --filter @gmgo/web exec wrangler deploy --var "RELEASE_VERSION:${{ steps.version.outputs.version }}"
+        run: pnpm --filter @rocketflare/web exec wrangler deploy --var "RELEASE_VERSION:${{ steps.version.outputs.version }}"
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

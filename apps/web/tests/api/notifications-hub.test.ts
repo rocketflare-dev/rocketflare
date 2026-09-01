@@ -6,7 +6,7 @@
  * `broadcastToUsers`, `connectionCount` — plus `fetch`'s 400 guards and the keepalive fallback. The
  * 101 upgrade itself cannot run under Node (undici rejects status 101); `wrangler dev` proves it.
  */
-import type { RealtimeEvent } from '@gmgo/shared/realtime'
+import type { RealtimeEvent } from '@rocketflare/shared/realtime'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { HUB_HEADERS, NotificationsHub } from '@/api/durable-objects/notifications-hub'
 import { createTestEnv } from '../mocks/bindings'

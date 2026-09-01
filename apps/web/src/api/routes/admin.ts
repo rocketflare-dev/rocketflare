@@ -6,14 +6,14 @@
 import {
   accessRequestListQuerySchema,
   decideAccessRequestSchema,
-} from '@gmgo/shared/access-requests'
+} from '@rocketflare/shared/access-requests'
 import {
   adminTenantListQuerySchema,
   adminUserListQuerySchema,
   blockUserRequestSchema,
   setGlobalAdminRequestSchema,
   suspendTenantRequestSchema,
-} from '@gmgo/shared/admin'
+} from '@rocketflare/shared/admin'
 import { resolveCookieAuth } from '../middleware/auth'
 import {
   decideAccessRequest,

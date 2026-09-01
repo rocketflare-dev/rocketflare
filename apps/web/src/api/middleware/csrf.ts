@@ -11,7 +11,7 @@
  *   (else `Referer`) must be an allowed origin; a missing Origin+Referer is allowed (non-browser)
  * Failures throw `ForbiddenError` with `code: 'csrf_failed'`.
  */
-import { ERROR_CODES } from '@gmgo/shared/errors'
+import { ERROR_CODES } from '@rocketflare/shared/errors'
 import { getCookie } from 'hono/cookie'
 import { createMiddleware } from 'hono/factory'
 import { SESSION_COOKIE_NAME } from '../auth/cookies'

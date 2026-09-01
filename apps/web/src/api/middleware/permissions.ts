@@ -4,8 +4,8 @@
  * the shared envelope; nothing here builds a Response. Owner-only decisions use `isOwnerLevel`
  * (explicit role), never `can('manage', 'Tenant')`, which `support` and global admins also hold.
  */
-import type { Actions, Subjects } from '@gmgo/shared/permissions'
-import type { MembershipRole } from '@gmgo/shared/tenants'
+import type { Actions, Subjects } from '@rocketflare/shared/permissions'
+import type { MembershipRole } from '@rocketflare/shared/tenants'
 import type { AppContext, AuthContext } from '../types'
 import { ForbiddenError, UnauthorizedError } from '../utils/core/errors'
 

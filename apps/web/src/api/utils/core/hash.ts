@@ -25,9 +25,9 @@ export function safeEqual(a: string, b: string): boolean {
 }
 
 /** Default API-key prefix; parameterised, never from env (01 §6). */
-export const API_KEY_PREFIX = 'gmgo'
-/** Characters of the plaintext kept as the human-readable handle in lists. */
-export const API_KEY_PREFIX_LENGTH = 12
+export const API_KEY_PREFIX = 'rocketflare'
+/** Characters of the plaintext kept as the human-readable handle in lists (`rocketflare_ab12cd34`). */
+export const API_KEY_PREFIX_LENGTH = 20 // `rocketflare_` (12) + 8 chars — must exceed the prefix + `_`
 
 export interface GeneratedApiKey {
   /** Plaintext — shown to the user ONCE, never stored. */
@@ -36,7 +36,7 @@ export interface GeneratedApiKey {
   keyPrefix: string
 }
 
-/** `gmgo_<43 base64url chars>`; stored as `{ keyHash, keyPrefix }`, returned as `key` once. */
+/** `rocketflare_<43 base64url chars>`; stored as `{ keyHash, keyPrefix }`, returned as `key` once. */
 export async function generateApiKey(prefix = API_KEY_PREFIX): Promise<GeneratedApiKey> {
   const key = `${prefix}_${randomToken(32)}`
   return { key, keyHash: await hashToken(key), keyPrefix: key.slice(0, API_KEY_PREFIX_LENGTH) }

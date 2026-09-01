@@ -3,7 +3,7 @@
  * reverts; `resolvePrompt` interpolates `{{vars}}` from override or default; unknown key → 404;
  * member 403 on writes; tenant isolation (an override in A is invisible in B).
  */
-import { promptListResponseSchema, promptWithResolvedSchema } from '@gmgo/shared/ai/prompts'
+import { promptListResponseSchema, promptWithResolvedSchema } from '@rocketflare/shared/ai/prompts'
 import { describe, expect, it } from 'vitest'
 import { PROMPT_REGISTRY, resolvePrompt } from '@/api/services/prompts'
 import {

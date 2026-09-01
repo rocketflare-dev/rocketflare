@@ -6,7 +6,7 @@
  * two is not). A table never built while the source has rows is measured against `now`.
  * Read by `GET /api/analytics/facts/status` (admin+) and `scripts/check-fact-table-freshness.ts`.
  */
-import type { FactTableStatus } from '@gmgo/shared/analytics'
+import type { FactTableStatus } from '@rocketflare/shared/analytics'
 import { sql } from 'drizzle-orm'
 import type { Database } from '../../../db/client'
 import { FACT_TABLES, type FactTableDefinition } from './registry'

@@ -11,7 +11,7 @@
  * it to services, never touch `NOTIFICATIONS_HUB` themselves. `tracer` (D16) is the request's
  * Langfuse batcher (or the no-op) for `withAgentTrace` / `traceChatClient`.
  */
-import { ERROR_CODES } from '@gmgo/shared/errors'
+import { ERROR_CODES } from '@rocketflare/shared/errors'
 import type { PinoLogger } from 'hono-pino'
 import type { AppConfig } from '../../../config'
 import {

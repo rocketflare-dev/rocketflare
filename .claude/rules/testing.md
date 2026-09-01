@@ -82,7 +82,7 @@ a fake `WebSocket` factory left set) is on you.
 
   ```ts
   const message = { id: crypto.randomUUID(), timestamp: new Date(), body, attempts: 1, ack: vi.fn(), retry: vi.fn() }
-  const batch = { queue: 'gmgo-starter-jobs', messages: [message], ackAll: vi.fn(), retryAll: vi.fn() } as unknown as MessageBatch<unknown>
+  const batch = { queue: 'rocketflare-jobs', messages: [message], ackAll: vi.fn(), retryAll: vi.fn() } as unknown as MessageBatch<unknown>
   await processJobsBatch(batch, { env, config: loadConfig(env), logger: fakeLogger(), createDb: () => ({ db, close }) })
   ```
 
@@ -179,12 +179,12 @@ Changing a template or a cube member without running it is how a stored dashboar
 `pnpm test:db:up` once, then `pnpm test` (root: every package, `pnpm -r test`; web tests load
 `apps/web/.env.test` via their own `dotenv` script, so no cwd juggling). Single projects run through
 the web package: `pnpm web test:api` · `pnpm web test:ui` · `pnpm web test:config` ·
-`pnpm test:coverage`. `REQUIRE_PROVISIONED=1 pnpm --filter @gmgo/web test:config` is what CI runs
+`pnpm test:coverage`. `REQUIRE_PROVISIONED=1 pnpm --filter @rocketflare/web test:config` is what CI runs
 before a deploy.
 
 ## CLI tests (`apps/cli/tests`)
 
 Plain vitest, Node, no database. Test commands in-process through their exported functions with a
-`CommandContext` carrying a fake `fetch`, a no-op `open`, a memory output and a temp `GMGO_CONFIG_DIR`;
-never touch the real `~/.gmgo`. Assert `CliError.exitCode` and `--json` output shape (parsed with the
-`@gmgo/shared` schema), never chalk-coloured text (`.claude/rules/cli.md`).
+`CommandContext` carrying a fake `fetch`, a no-op `open`, a memory output and a temp `ROCKETFLARE_CONFIG_DIR`;
+never touch the real `~/.rocketflare`. Assert `CliError.exitCode` and `--json` output shape (parsed with the
+`@rocketflare/shared` schema), never chalk-coloured text (`.claude/rules/cli.md`).

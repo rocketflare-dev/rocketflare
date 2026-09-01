@@ -12,7 +12,7 @@ import {
   type SummarizeTextOutput,
   summarizeTextInputSchema,
   summarizeTextOutputSchema,
-} from '@gmgo/shared/ai/agents'
+} from '@rocketflare/shared/ai/agents'
 import { z } from 'zod'
 import { ingestText } from '../../ai/ingest'
 import { callStructuredTool } from '../../ai/kit'
