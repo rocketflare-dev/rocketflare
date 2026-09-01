@@ -1,8 +1,8 @@
 name: CI
 
-# The quality gate, in ONE place. It runs on every pull request, and deploy.yml calls this same
+# The quality gate, in ONE place. It runs on every push to main, and deploy.yml calls this same
 # file (`workflow_call`) before deploying a tag to staging, rather than keeping a second copy of
-# the job — a gate that drifts between PR and deploy is worse than no PR gate at all.
+# the job — a gate that drifts between main and deploy is worse than no gate at all.
 #
 # Workspace note: the repo is a pnpm workspace (apps/web, apps/cli, packages/shared). Every step
 # runs at the repository ROOT; the root scripts fan out with `pnpm -r` / `--filter`, and pnpm runs
@@ -10,7 +10,7 @@ name: CI
 # the web tests load `apps/web/.env.test` through their own `dotenv -e .env.test` script, wrangler
 # resolves `wrangler.toml` / `[assets] directory` inside apps/web, and the CLI builds in apps/cli.
 on:
-  pull_request:
+  push:
     branches: [main]
   workflow_call:
 

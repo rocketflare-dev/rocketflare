@@ -42,7 +42,7 @@ near Neon rather than near the user, which is what makes sequential queries chea
 `[env.*]` does not inherit bindings, so the kit ships two standalone files rather than one with a
 hidden gap. `apps/web/tests/config/wrangler-parity.test.ts` enforces the table below; it runs in every
 `pnpm test` and in `deploy.yml` with `REQUIRE_PROVISIONED=1`, which additionally forbids any
-`<PLACEHOLDER>` value (PR CI stays green on an unprovisioned copy; a deploy cannot proceed with one).
+`<PLACEHOLDER>` value (CI on main stays green on an unprovisioned copy; a deploy cannot proceed with one).
 
 | Must **differ** | Production | Staging |
 |---|---|---|
@@ -165,7 +165,7 @@ All steps run at the repository root; the root scripts fan out with `pnpm -r` / 
 `working-directory` is set anywhere.
 
 ```
- pull_request ──► ci.yml (root): pnpm install --frozen-lockfile → gitleaks → pnpm lint → pnpm typecheck
+ push to main ─► ci.yml (root): pnpm install --frozen-lockfile → gitleaks → pnpm lint → pnpm typecheck
                         → git diff --exit-code apps/web/worker-configuration.d.ts → pnpm test (pg 5433; web + cli)
                         → pnpm build (web: vite + dry-run wrangler deploy; cli: tsc → dist/cli.js)
                                                                                                             │
