@@ -79,12 +79,12 @@ export default defineConfig({
         resolve: { alias },
       },
       {
-        // No database: config schema, wrangler parity, pure helpers.
+        // No database: config schema, wrangler parity, pure helpers, dashboard templates (D19).
         extends: true,
         test: {
           name: 'config',
           environment: 'node',
-          include: ['tests/config/**/*.{test,spec}.ts'],
+          include: ['tests/config/**/*.{test,spec}.ts', 'tests/dashboards/**/*.{test,spec}.ts'],
         },
         resolve: { alias },
       },

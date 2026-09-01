@@ -29,6 +29,13 @@
       "when": 1788258614143,
       "tag": "0003_lowly_red_hulk",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1788260748656,
+      "tag": "0004_petite_mysterio",
+      "breakpoints": true
     }
   ]
 }

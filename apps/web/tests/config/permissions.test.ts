@@ -37,6 +37,8 @@ const MATRIX: Record<string, Record<Role, Level>> = {
   Conversation: { owner: 'manage', admin: 'manage', support: 'manage', member: 'manage' },
   AgentRun: { owner: 'manage', admin: 'manage', support: 'manage', member: 'manage' },
   Document: { owner: 'manage', admin: 'manage', support: 'manage', member: 'create' },
+  Dashboard: { owner: 'manage', admin: 'manage', support: 'manage', member: 'read' },
+  Analytics: { owner: 'read', admin: 'read', support: 'read', member: 'read' },
   AccessRequest: { owner: 'none', admin: 'none', support: 'none', member: 'none' },
   User: { owner: 'none', admin: 'none', support: 'none', member: 'none' },
 }

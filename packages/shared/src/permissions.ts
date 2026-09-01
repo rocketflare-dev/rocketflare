@@ -29,6 +29,9 @@ export const CORE_SUBJECTS = [
   'Conversation',
   'AgentRun',
   'Document',
+  /** Analytics (D19): `Dashboard` = analytics_pages rows; `Analytics` = the cube API itself. */
+  'Dashboard',
+  'Analytics',
 ] as const
 export type CoreSubject = (typeof CORE_SUBJECTS)[number]
 

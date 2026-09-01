@@ -11,6 +11,7 @@ import { asc, eq, like } from 'drizzle-orm'
 import type { Database } from '../../../db/client'
 import { type Tenant, tenantSettings, tenants, tenantUsers } from '../../../db/schema'
 import { recordActivity } from '../../services/activity'
+import { ensureDefaultDashboards } from '../../services/dashboard-templates'
 import { ConflictError } from '../core/errors'
 import { randomToken } from '../core/ids'
 
@@ -54,7 +55,7 @@ export async function createTenantForUser(
     if (clash) throw new ConflictError('That slug is already taken', 'slug_taken')
   }
   const role = input.role ?? 'owner'
-  return db.transaction(async tx => {
+  const tenant = await db.transaction(async tx => {
     const [tenant] = await tx.insert(tenants).values({ name: input.name, slug }).returning()
     if (!tenant) throw new Error('createTenantForUser: insert returned no row')
     await tx.insert(tenantUsers).values({
@@ -74,6 +75,21 @@ export async function createTenantForUser(
     })
     return tenant
   })
+  await onTenantCreated(db, tenant, input.userId)
+  return tenant
+}
+
+/**
+ * Post-commit hooks for a new organisation (D19): seed its template dashboards. Best-effort and
+ * OUTSIDE the transaction — a template bug must not break sign-up or invite accept, and
+ * `GET /api/analytics/pages` lazily repairs a tenant with no pages on first view anyway.
+ */
+async function onTenantCreated(db: Database, tenant: Tenant, userId: string): Promise<void> {
+  try {
+    await ensureDefaultDashboards(db, tenant.id, userId)
+  } catch {
+    // Repaired lazily by the first `GET /api/analytics/pages`; see services/dashboard-templates.ts.
+  }
 }
 
 /** `TENANCY_MODE=single`: the one tenant everybody joins — the oldest row. */

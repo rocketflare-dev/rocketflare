@@ -1,0 +1,6 @@
+{
+  "_comment": "Copy to .drizzle-cube.json (git-ignored) for the drizzle-cube CLI / Claude Code plugin. apiToken is a tenant API key from Settings → API keys (Bearer auth); it scopes every query to that tenant.",
+  "serverUrl": "http://localhost:3001",
+  "apiToken": "<TENANT_API_KEY>",
+  "mode": "rest"
+}

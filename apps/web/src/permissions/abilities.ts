@@ -42,6 +42,7 @@ export const ADMIN_MANAGED: readonly Subjects[] = [
   'AiConfig',
   'Prompt',
   'Document',
+  'Dashboard',
 ]
 
 /** What every member may at least read. */
@@ -53,6 +54,8 @@ const grantAdmin: RoleGrant = can => {
   can('manage', 'Notification')
   can('manage', 'Conversation')
   can('manage', 'AgentRun')
+  // D19: the cube API is read-only by nature; every member may query it (tenant-scoped by cubes).
+  can('read', 'Analytics')
 }
 
 /**
@@ -73,6 +76,8 @@ const grantAdmin: RoleGrant = can => {
  * | Conversation   | manage      | manage | manage | manage  | manage (own only — the route filters by userId, D17) |
  * | AgentRun       | manage      | manage | manage | manage  | manage (own only — admin+ see every run, D7) |
  * | Document       | manage      | manage | manage | manage  | create+read (own-document delete is the route's owner check, D18) |
+ * | Dashboard      | manage      | manage | manage | manage  | read (D19: analytics_pages CRUD is admin+) |
+ * | Analytics      | manage      | read   | read   | read    | read (D19: the cube API — tenant-scoped by every cube) |
  * | Feature:<f>    | access all  | by ctx | by ctx | access all | by ctx |
  */
 export const rolePermissions: Record<EffectiveRole, RoleGrant> = {
@@ -104,6 +109,8 @@ export const rolePermissions: Record<EffectiveRole, RoleGrant> = {
     // D18: anyone may ingest text and search; deleting someone else's document needs `delete
     // Document` (admin+). The own-document delete is an explicit `ownerUserId` check in the route.
     can('create', 'Document')
+    // D19: dashboards are `read` via MEMBER_READABLE; the cube API is open to every member.
+    can('read', 'Analytics')
   },
 }
 

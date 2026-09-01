@@ -25,8 +25,10 @@ import { aiConfigRouter } from './routes/ai-config'
 import { aiDocumentsRouter } from './routes/ai-documents'
 import { aiPromptsRouter } from './routes/ai-prompts'
 import { aiUsageRouter } from './routes/ai-usage'
+import { analyticsPagesRouter } from './routes/analytics-pages'
 import { authRouter } from './routes/auth/index'
 import { chatRouter } from './routes/chat'
+import { cubeApiRouter } from './routes/cube-api'
 import { filesRouter } from './routes/files'
 import { healthRouter } from './routes/health'
 import { invitationsRouter } from './routes/invitations'
@@ -42,8 +44,8 @@ import { createRouter } from './utils/routes/router'
 
 /**
  * Prefixes the Worker owns. An unmatched path under one of these is a JSON 404, never the SPA
- * `index.html`. `/cubejs-api` and `/mcp` (Phase 4) and `/ws` (Phase 2) are reserved now so the
- * catch-all does not have to change when they mount (D19).
+ * `index.html`. `/cubejs-api` and `/mcp` are the drizzle-cube API (D19, mounted below behind
+ * `authMiddleware`), `/ws` the realtime upgrade (Phase 2).
  */
 const API_PREFIXES = ['/api', '/auth', '/cubejs-api', '/mcp', '/ws'] as const
 
@@ -107,6 +109,10 @@ for (const [prefix, router] of [
   ['/api/ai/documents', aiDocumentsRouter],
   ['/api/chat', chatRouter],
   ['/api/agents', agentsRouter],
+  ['/api/analytics', analyticsPagesRouter],
+  // drizzle-cube (D19): one router, two prefixes; the adapter registers absolute paths.
+  ['/cubejs-api', cubeApiRouter],
+  ['/mcp', cubeApiRouter],
 ] as const) {
   app.use(prefix, authMiddleware)
   app.use(`${prefix}/*`, authMiddleware)

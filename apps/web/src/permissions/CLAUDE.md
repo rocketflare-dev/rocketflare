@@ -17,6 +17,8 @@ vocabulary in `packages/shared/src/permissions.ts`). Built once per request by t
 | `Conversation` (D17) | manage | manage | manage | manage | manage (own only — `routes/chat.ts` filters every query by `userId`; another member's thread is 404, admins included) |
 | `AgentRun` (D7) | manage | manage | manage | manage | manage (own runs — `routes/agents.ts` filters by `requestedByUserId` unless `isAdminLevel(auth)`, which sees and cancels every run) |
 | `Document` (D18) | manage | manage | manage | manage | create + read (anyone ingests and searches; own-document delete is `routes/ai-documents.ts`'s `ownerUserId` check, others' need `delete Document`) |
+| `Dashboard` (D19, `analytics_pages`) | manage | manage | manage | manage | read |
+| `Analytics` (D19, the cube API `/cubejs-api`, `/mcp`) | manage | read | read | read | read |
 | `AccessRequest`, `User` (platform) | manage | – | – | – | – |
 | `Feature:<name>` via `access` | all | by `features` | by `features` | all | by `features` |
 

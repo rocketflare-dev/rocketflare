@@ -12,10 +12,12 @@ import { agentRunEvents } from './agent-run-events'
 import { agentRuns } from './agent-runs'
 import { aiConfigs } from './ai-configs'
 import { aiUsage } from './ai-usage'
+import { analyticsPages } from './analytics-pages'
 import { apiKeys } from './api-keys'
 import { chunks } from './chunks'
 import { conversations } from './conversations'
 import { documents } from './documents'
+import { tenantActivityDailyFacts } from './facts'
 import { files } from './files'
 import { notifications } from './notifications'
 import { oauthProviders } from './oauth-providers'
@@ -40,6 +42,7 @@ export const usersRelations = relations(users, ({ many }) => ({
   conversations: many(conversations),
   agentRuns: many(agentRuns),
   documents: many(documents),
+  analyticsPages: many(analyticsPages),
 }))
 
 export const tenantsRelations = relations(tenants, ({ one, many }) => ({
@@ -62,4 +65,6 @@ export const tenantsRelations = relations(tenants, ({ one, many }) => ({
   agentRunEvents: many(agentRunEvents),
   documents: many(documents),
   chunks: many(chunks),
+  analyticsPages: many(analyticsPages),
+  activityDailyFacts: many(tenantActivityDailyFacts),
 }))

@@ -31,9 +31,11 @@ Drizzle table definitions, one file per table, re-exported from `index.ts` (whic
 | `agent_runs` | `agent-runs.ts` | `tenant_id` | ✓ | one row per agent run (D7): `agentKey` text, `status` text enum `queued\|running\|succeeded\|failed\|cancelled`, `input`/`output` jsonb, `error`, `requestedByUserId`, `instanceId` unique (= Workflow instance id = run id), `attempt`, `startedAt`/`finishedAt`, `cancelRequestedAt` (cooperative cancel flag). **Partial unique `agent_runs_active_exclusive_idx` on `(tenant_id, agent_key) WHERE status IN ('queued','running')` = the exclusive guarantee.** Claim = `UPDATE … WHERE status IN (queued,running) RETURNING` |
 | `agent_run_events` | `agent-run-events.ts` | `tenant_id` | ✓ | append-only progress log (D7/D8): `runId` cascade, per-run `seq` (unique `(run_id, seq)`), `type` `step\|tool.start\|tool.end\|text\|status\|error`, `data` jsonb, `at`. DB is the truth; the hub carries an `entity.changed {entity:'agent-run'}` nudge |
 | `documents` | `documents.ts` | `tenant_id` | ✓ | text a tenant indexed for retrieval (D18): `ownerUserId`, `title`, `source`, `contentType`, `sizeBytes`, `content` (raw text, API-invisible — the `document.index` job re-reads it), `chunkCount`, `embeddingModel`, `status` `pending\|indexed\|failed`, `error` |
+| `analytics_pages` | `analytics-pages.ts` | `tenant_id` | ✓ | dashboards (D19): `slug` unique per tenant (= `templateKey` for seeded pages), `config` jsonb `$type<DashboardConfig>` (drizzle-cube/client, type-only), `templateKey` nullable (null = user-created; non-null = resettable), `isDefault`, `sortOrder`, `createdByUserId` set-null. Seeded per tenant by `services/dashboard-templates.ts` |
+| `tenant_activity_daily_facts` | `facts/tenant-activity-daily-facts.ts` | `tenant_id` | ✓ | the example FACT table (D19): grain `(tenant_id, day date, user_id nullable)` with `UNIQUE NULLS NOT DISTINCT` (PG15+) so NULL actors collapse to one row; `event_count`, `distinct_event_types`, `first/last_event_at`, `fact_refreshed_at` watermark; no `id`, no FK to users. Rebuilt per tenant by `services/fact-tables` (DELETE+INSERT, cron `15 * * * *`); read by the `TenantActivityDaily` cube |
 | `chunks` | `chunks.ts` | `tenant_id` | ✓ | retrieval units (D17/D18): `documentId` cascade, `seq` (unique per document), `text`, `tokenCount` (char estimate), `embedding vector(1024)` (`EMBEDDING_DIM`; a new dimension is a new table); **HNSW `vector_cosine_ops`** index; lexical half is `to_tsvector('english', text)` at query time (generated tsvector + GIN is the scaling path) |
 
-20 policies (`tenants`, `users` + 18 tenant tables); 4 revoked tables = `RLS_REVOKED_TABLES` =
+22 policies (`tenants`, `users` + 20 tenant tables); 4 revoked tables = `RLS_REVOKED_TABLES` =
 `RLS_EXCLUDED_TABLES`. jsonb columns are `$type<>()`d from `@gmgo/shared` (type-only imports).
 
 ## Conventions
@@ -42,6 +44,7 @@ Drizzle table definitions, one file per table, re-exported from `index.ts` (whic
 - Tenant FK: `tenantId: tenantRef(tenants)` from `_helpers.ts` → `tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE`. First column of every index on a tenant table is `tenant_id`.
 - Timestamps: `...timestamps()` from `_helpers.ts` — `created_at`/`updated_at` as **`timestamptz`**. Never a naive `timestamp`.
 - extraConfig is the **array** form: `table => [index(...), tenantIsolation('x')]` (required for `pgPolicy`).
+- Fact tables live in `facts/` (barrel `facts/index.ts`): plain tables, grain-unique, `fact_refreshed_at`, no surrogate id; they are registered in `api/services/fact-tables/registry.ts` too.
 - Enums via `pgEnum`, exported; `relations()` next to the table; `export type X = typeof x.$inferSelect` / `NewX = $inferInsert`.
 - D25: the schema is identical in `TENANCY_MODE=multi` and `single` — every table keeps `tenant_id`.
 

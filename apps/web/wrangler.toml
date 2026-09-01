@@ -65,6 +65,7 @@ id = "<KV_RATE_LIMIT_ID>"
 [triggers]
 crons = [
   "0 4 * * *",     # Daily 04:00 UTC — prune expired sessions, magic links, rate-limit state
+  "15 * * * *",    # Hourly at :15 — rebuild fact tables per tenant (D19, services/fact-tables)
 ]
 
 # Background jobs (D7): one queue, one consumer; `src/api/queue.ts` dispatches on `batch.queue`.
@@ -110,4 +111,4 @@ binding = "AGENT_RUN_WORKFLOW"
 class_name = "AgentRunWorkflow"
 
 # ---- Added in later phases (keep this list in sync with wrangler.staging.toml) ----------
-# Phase 4: "15 * * * *" cron for fact-table refresh, optional [[analytics_engine_datasets]]
+# Phase 4 (D19): optional [[analytics_engine_datasets]] for product telemetry — not wired yet

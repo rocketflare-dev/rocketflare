@@ -28,10 +28,20 @@ describe('not found', () => {
     expect(await json(res)).toMatchObject({ statusCode: 404, code: ERROR_CODES.notFound })
   })
 
-  it.each(['/auth/x', '/cubejs-api/v1/load', '/mcp', '/ws/x'])('%s → JSON 404', async path => {
+  // Reserved prefixes never fall through to the SPA: unknown → 404, the cube API (behind
+  // authMiddleware, D19) → 401 — always the JSON envelope, never index.html.
+  it.each([
+    ['/auth/x', 404],
+    ['/ws/x', 404],
+    ['/cubejs-api/v1/load', 401],
+    ['/cubejs-api/nope', 401],
+    ['/mcp', 401],
+    ['/mcp/x', 401],
+  ])('%s → JSON %i', async (path, status) => {
     const res = await request(path)
-    expect(res.status).toBe(404)
+    expect(res.status).toBe(status)
     expect(res.headers.get('content-type')).toContain('application/json')
+    expect(await json(res)).toMatchObject({ statusCode: status })
   })
 
   it('non-API path falls through to the ASSETS binding', async () => {
