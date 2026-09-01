@@ -77,6 +77,13 @@ the rows.
 ```bash
 pnpm dev              # apps/web: wrangler dev :3001 + vite :3000
 ```
+
+> **Cloudflare login and the AI binding.** `wrangler dev` runs everything locally EXCEPT the Workers AI
+> binding (`[ai]` in `apps/web/wrangler.toml`), which always calls Cloudflare — so the first `pnpm dev`
+> on a machine that has never run `pnpm web exec wrangler login` will ask you to log in (a free account
+> is enough). To stay fully offline, comment out the `[ai]` block in BOTH tomls (the parity test keeps
+> them in sync); embeddings then resolve to `EMBEDDINGS_API_KEY` or report "not configured".
+
 Verify: both processes report ready; `curl -s localhost:3001/api/health` returns `{"status":"ok",…}`;
 http://localhost:3000 renders the shell. Sign in: enter the seeded owner email, copy the magic-link
 URL from the **wrangler dev console** (no `RESEND_API_KEY` → links are logged, not sent), open it,
