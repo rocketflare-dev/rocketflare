@@ -3,6 +3,21 @@
 Read this once, do the checklist, then run `SETUP.md` Part 1. Everything below is a rename or a
 delete; no design decisions are needed to get to a running app.
 
+## 0. Copy — decouple from the kit
+
+The kit is a template, not an upstream. Clone it, delete its history, and start your own:
+
+```bash
+git clone git@github.com:rocketflare-dev/rocketflare.git myapp && cd myapp
+rm -rf .git && git init && git add -A && git commit -m "Start from Rocketflare"
+git remote add origin git@github.com:<you>/myapp.git
+```
+
+Why: you are about to rename packages, delete examples and rewrite docs; a fork or a shared history
+only invites merge conflicts with a kit that will keep evolving independently. If you want to pull a
+later kit improvement, cherry-pick or re-apply it by hand from a fresh clone. Record the commit you
+started from somewhere (the first commit message is a good place) so you can diff against it later.
+
 ## 1. Rename (exact find/replace targets)
 
 Pick an app slug (`myapp`, lowercase, hyphens), a package scope (`@myapp`) and a display name. The

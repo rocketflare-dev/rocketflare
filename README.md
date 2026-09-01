@@ -17,8 +17,20 @@ contract → schema → route → page (→ command) loop, not a platform projec
 
 ## Getting started
 
+The kit is a starting point, not a dependency: take a copy, cut it loose from this repository's
+history, and make it your own — you will rename, delete and rewrite freely, and there is nothing to
+merge back.
+
 ```bash
-corepack enable && pnpm install                          # Node 24 (.nvmrc), pnpm 10, Docker running
+git clone git@github.com:rocketflare-dev/rocketflare.git myapp && cd myapp
+rm -rf .git && git init && git add -A && git commit -m "Start from Rocketflare"   # your history starts here
+git remote add origin git@github.com:<you>/myapp.git                              # your own repo, when ready
+```
+
+Then, from the root (Node 24 via `.nvmrc`, pnpm 10 via `corepack`, Docker running):
+
+```bash
+corepack enable && pnpm install
 cp apps/web/.dev.vars.example apps/web/.dev.vars         # set OAUTH_ENCRYPTION_KEY + AUTH_SIGNING_KEY (openssl rand -hex 32)
 pnpm dev:db:up && pnpm db:migrate && pnpm seed           # Postgres :5432 → migrations → demo tenant + users
 pnpm dev                                                 # http://localhost:3000 (API :3001)
@@ -30,7 +42,7 @@ Sign in with the seeded owner's email; the magic-link URL is printed by `wrangle
 provider configured). Nothing external is required: no `RESEND_API_KEY` → links are logged; no AI key
 → chat and agents answer 503 `ai_not_configured`; no Cloudflare login → comment out the `[ai]` binding.
 Or ask your coding agent **"Help me set up this project"** — `CLAUDE.md` makes it run `SETUP.md`
-Part 1 step by step. Copied the kit for a new app? `docs/ADAPTING.md` first.
+Part 1 step by step. Before building your app, do the rename checklist in `docs/ADAPTING.md`.
 
 ## Stack
 
