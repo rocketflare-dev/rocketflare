@@ -104,6 +104,9 @@ bucket_name = "gmgo-starter-files-staging"
 # Optional in code: the resolver falls through to an OpenAI-shaped key when the binding is absent.
 [ai]
 binding = "AI"
+# Workers AI has no local emulation: wrangler dev calls Cloudflare even in dev (needs `wrangler login`).
+# Comment this block out to run fully offline — embeddings then fall back to EMBEDDINGS_API_KEY or "none".
+remote = true
 
 # Agent runs (D7): the ONE Workflow class — the agent runtime IS the example workflow. `name` is
 # ACCOUNT-scoped (staging uses `-staging`); binding and class_name are identical in both tomls.
