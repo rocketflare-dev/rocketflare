@@ -16,7 +16,7 @@ section ends with **Known gaps**; sections for phases not yet built say so.
 | 5 | [Background work and realtime](#5-background-work-and-realtime) | Phase 2–3 — built |
 | 6 | [Email and storage](#6-email-and-storage) | Phase 1–2 — built |
 | 7 | [UI shell](#7-ui-shell) | Phase 0–1 |
-| 8 | [Analytics](#8-analytics) | Phase 4 — server built; UI in progress |
+| 8 | [Analytics](#8-analytics) | Phase 4 — built (server + UI) |
 | 9 | [AI layer](#9-ai-layer) | Phase 3 — built |
 | 10 | [Deployment](#10-deployment) | Phase 0 / 5 |
 | 11 | [CLI](#11-cli) | Phase 1 |
@@ -416,7 +416,7 @@ theme option or cross-tab sync; dev quick-login account list should come from a 
 
 ## 8. Analytics
 
-**Status: server built (Phase 4); UI in progress — see `apps/web/src/ui/CLAUDE.md`.** Server:
+**Status: built (Phase 4) — server and UI; UI specifics in `apps/web/src/ui/CLAUDE.md`.** Server:
 `apps/web/src/api/cubes/*` (+ `CLAUDE.md`), `routes/{cube-api,analytics-pages}.ts`,
 `services/dashboard-templates.ts`, `services/fact-tables/**` (+ `CLAUDE.md`), `src/dashboards/**`
 (`CLAUDE.md`, `DASHBOARD_PATTERNS.md`), `db/schema/{analytics-pages.ts,facts/*}`, migration `0004`.
@@ -529,7 +529,7 @@ when `mcp.enabled` is false — not the kit's imports (the sourcemap has no `nod
 higher on Paid, which the kit needs anyway). The fix is upstream — a lazy `import()` of the MCP path
 in the adapter — or a thin adapter of our own over `drizzle-cube/server`.
 
-**Known gaps / not built yet:** the analytics UI (in progress, own doc); isolation is convention
+**Known gaps / not built yet:** UI — no router-level unsaved-changes blocker (`beforeunload` + flush on leaving edit mode), heat-map charts stubbed (`@nivo/heatmap` aliased to a notice; install it and drop the alias), drizzle-cube runs its own TanStack Query context so `CubeClientProvider` gives it a dedicated `QueryClient` whose 401 handler calls `notifyUnauthorized`, and mirrors `data-theme="gm-dark"` into a `dark` class while mounted; isolation is convention
 enforced by one test — no per-cube CASL gate, no second line of defence in the cube layer; the
 compiler is rebuilt per request (4 cubes — cheap; `SemanticLayerCompiler` + cube sets is the
 scaling path) and drizzle-cube's `MemoryCacheProvider` is per-isolate (a KV provider would be an

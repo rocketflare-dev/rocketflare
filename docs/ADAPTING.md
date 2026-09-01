@@ -24,7 +24,9 @@ packages themselves — do it first and run `pnpm install` before anything else,
 | `gmgo_app` | `apps/web/src/db/schema/rls.ts` `APP_ROLE`, `apps/web/.env.test` `APP_DATABASE_URL`, `docs/RLS.md` | `myapp_app` (policies name the role; do this before the first migration) |
 | `GMGO Starter` / `GMGO Test` | `[vars] APP_NAME` in both tomls, `apps/web/.env.test`, `apps/web/src/ui/index.html` `<title>`, `README.md` | display name |
 | `noreply@example.com`, `app.example.com`, `staging.example.com` | `[vars] EMAIL_FROM`, `APP_URL`, commented `routes` in both tomls | your domains |
-| `gm-light` / `gm-dark` | `apps/web/src/ui/index.css` theme blocks, `index.html` pre-hydration script, `ThemeToggle.tsx`, `apps/web/tests/ui/contrast.test.ts` | `myapp-light` / `myapp-dark` (or keep) |
+| `gm-light` / `gm-dark` | `apps/web/src/ui/index.css` theme blocks, `index.html` pre-hydration script, `ThemeToggle.tsx`, `apps/web/tests/ui/theme-toggle.test.tsx` | `myapp-light` / `myapp-dark` (or keep) |
+| `gmgo-dev-postgres` / `gmgo-test-postgres` | `container_name` in `apps/web/docker-compose.dev.yml` / `docker-compose.test.yml` | `myapp-dev-postgres` / `myapp-test-postgres` — pinned names mean a SECOND checkout of the same kit on one machine fails `pnpm dev:db:up` with "container name already in use" until renamed (the running DB is still reachable) |
+| `admin@gmgo.local` | `apps/web/scripts/seed.ts` (the seeded global admin), the dev quick-login list in `apps/web/src/ui/pages/Login.tsx`, `SETUP.md` | `admin@myapp.local` |
 | brand colour variables | the header block of `apps/web/src/ui/index.css` (the only place hex values live) | your palette — then `pnpm web test:ui` (contrast gate) |
 | `LogoMark` | `apps/web/src/ui/components/shared/LogoMark.tsx`, `apps/web/src/ui/public/logo.svg` + favicons | your mark |
 | `EMBEDDING_DIM` (1024) | `packages/shared/src/ai/config.ts` (imported by `apps/web/src/db/schema/chunks.ts` and the `openai*` embeddings adapter) — only if you will NOT use the default `@cf/baai/bge-m3`; see §3 "Changing the embedding model or dimension" | before the first migration, never after |
@@ -224,6 +226,23 @@ mirrored `FILE_SCOPES` in `apps/web/src/db/schema/files.ts` (a `text` enum — n
 value, but `pnpm db:generate` should produce nothing), then give it a rule in `checkContentType`
 in `apps/web/src/api/routes/files.ts` if it needs a MIME allowlist like `avatars`. Per-scope size
 limits are an app change (`MAX_UPLOAD_BYTES` is one constant today).
+
+## 3b. Optional add-ons and knobs
+
+- **Heat-map charts**: `@nivo/heatmap` is an optional drizzle-cube peer whose named import breaks the
+  Rollup build, so `apps/web/vite.config.ts` aliases it to `apps/web/src/ui/lib/stubs/nivo-heatmap.tsx`
+  (renders a notice). To enable: `pnpm --filter @gmgo/web add @nivo/heatmap`, delete the alias and the
+  stub, run `pnpm build:ui`.
+- **Dashboard theming**: drizzle-cube reads `--dc-*` CSS variables; the kit maps them to its tokens under
+  `:root[data-theme=…]` in `apps/web/src/ui/index.css`. Change the tokens, not the `--dc-*` lines.
+- **Removing analytics entirely**: delete `apps/web/src/ui/{pages,components}/analytics`, the three
+  analytics hooks, the `/analytics*` routes in `App.tsx`, the nav item, `src/api/cubes`, `src/dashboards`,
+  `services/{dashboard-templates.ts,fact-tables}`, `routes/{cube-api,analytics-pages}.ts`, the
+  `analytics_pages` / `facts` schema files (+ a migration), the `:15` cron in both tomls, and the
+  `drizzle-cube`/`recharts`/`d3`/`react-grid-layout`/`react-is` deps — the Worker bundle drops by ≈ 1 MB gzip.
+- **Headless CLI login** (CI, agents, no browser): skip `pnpm cli login`; create a tenant API key in
+  Settings → API keys (or `POST /api/keys` with a session cookie) and export `GMGO_API_KEY` +
+  `GMGO_URL`. `pnpm cli whoami` confirms.
 
 ## 4. Keep the docs true
 

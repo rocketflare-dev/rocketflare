@@ -103,15 +103,15 @@ else
   echo "kv          ${KV_NAME}  created id=${KV_ID}"
 fi
 
-# ---- Later phases (Phase 2: Queue + R2). Uncomment together with the toml bindings. ----------
-# if ! wr queues list 2>/dev/null | grep -q "\b${QUEUE_NAME}\b"; then
-#   wr queues create "$QUEUE_NAME"
-# fi
-# echo "queue       ${QUEUE_NAME}  (name-referenced; no id to paste)"
-# if ! wr r2 bucket list 2>/dev/null | grep -q "name: *${BUCKET_NAME}\$"; then
-#   wr r2 bucket create "$BUCKET_NAME"
-# fi
-# echo "r2          ${BUCKET_NAME}  (name-referenced; no id to paste)"
+# ---- Queue + R2 (Phase 2 bindings JOBS_QUEUE / FILES; name-referenced, no ids to paste) ----------
+if ! wr queues list 2>/dev/null | grep -q "\b${QUEUE_NAME}\b"; then
+  wr queues create "$QUEUE_NAME"
+fi
+echo "queue       ${QUEUE_NAME}  (name-referenced; no id to paste)"
+if ! wr r2 bucket list 2>/dev/null | grep -q "name: *${BUCKET_NAME}\$"; then
+  wr r2 bucket create "$BUCKET_NAME"
+fi
+echo "r2          ${BUCKET_NAME}  (name-referenced; no id to paste)"
 
 # ---- output ---------------------------------------------------------------------------------
 cat <<EOF

@@ -26,10 +26,11 @@ Dev: Vite on :3000 proxies `/api`, `/auth`, `/ws`, `/cubejs-api`, `/mcp` to `wra
   **Lesson**: without `source(none)` v4 auto-detects sources from the package root and scans the whole
   repo — docs, API code, tests, migrations — and DaisyUI emits a component for every stray word that
   looks like a class (`card`, `table`, `menu` in a comment). Keep the scan scoped. A dependency that
-  ships pre-built JSX is an explicit **`@source`** line pointing at its dist — for drizzle-cube that is
-  `drizzle-cube/dist/client/**` (D19), added as one `@source` in `index.css` so Tailwind sees the
-  classes its components render — **never** a safelist of the classes it happens to use (a safelist
-  rots the moment the dependency updates). Safelist (`@source inline(...)`) only classes built from
+  ships pre-built JSX **and uncompiled Tailwind classes** is an explicit `@source` line pointing at
+  its dist. drizzle-cube is NOT such a dependency: its styles are precompiled and `dc:`-prefixed in
+  `drizzle-cube/client/styles.css` (loaded by the lazy analytics chunk), so scanning its dist generated
+  zero of its classes and +6.5 KB gzip of stray DaisyUI components — measured, then removed. Never
+  `@source` node_modules without measuring the output first. Safelist (`@source inline(...)`) only classes built from
   props (`alert-*`, `btn-*`), never from data or from a dependency
 - Fonts self-hosted via `@fontsource` imports in `main.tsx`
 
@@ -147,6 +148,17 @@ Components subscribe to query state, never to the socket; `WebSocketStatus` (hea
   a hook the shell loads eagerly; the main chunk must stay ≈ 114 KiB gzip. Check `pnpm web build:ui`
   output when you touch an import. The server contract the pages consume is `@gmgo/shared/analytics`
   + `/cubejs-api/v1/*` (drizzle-cube's own client); page specifics: `apps/web/src/ui/CLAUDE.md`
+- **Third-party providers with their own TanStack Query** (drizzle-cube does this): the app's global
+  `QueryCache.onError` never sees their failures. Wrap them (`components/analytics/CubeClientProvider.tsx`)
+  with a dedicated `QueryClient` whose `onError` maps 401 → `notifyUnauthorized`, and pass cookie auth
+  explicitly (`credentials: 'include'`, `X-Requested-With`). Kit hooks rendered inside still resolve the
+  app's client.
+- **Dashboards**: edit mode autosaves the whole config (debounced 1.5 s PATCH); there is no router-level
+  unsaved-changes blocker — `beforeunload` while dirty plus a flush when leaving edit mode/unmount.
+  `useFactTableStatus({ enabled })` MUST be gated on `manage Dashboard` (admin-only endpoint).
+  `syncDarkClass` mirrors `data-theme="gm-dark"` into a `dark` class only while an analytics surface is
+  mounted (drizzle-cube detects `.dark`); kit CSS never reads `.dark`. `@nivo/heatmap` is aliased to a stub
+  in `vite.config.ts` — see `docs/ADAPTING.md` §3b to enable heat maps.
 - Forms validate with the `@gmgo/shared` schema the server uses; show `FieldError` per field
 - Icons: `@heroicons/react`. No new UI library without a stated reason in the PR
 - `EnvironmentBadge` + `useEnvironmentTitle` read `APP_ENV`/`RELEASE_VERSION` from `/auth/session`;

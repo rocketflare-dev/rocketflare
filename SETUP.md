@@ -108,6 +108,12 @@ With `pnpm dev` still running, in a second terminal:
 pnpm cli login --server http://localhost:3001   # opens the browser; sign in, pick the tenant
 pnpm cli whoami
 ```
+
+> **Headless / no browser** (CI, agents): skip `pnpm cli login`. Sign in with the dev-login cookie
+> (or any session) and hit `GET /auth/cli?redirect_uri=http://127.0.0.1:8765/callback` — the
+> `Location` header carries `key=`; export it as `GMGO_API_KEY` with `GMGO_URL=http://localhost:3001`,
+> then `pnpm cli whoami`. In real environments create a tenant API key in Settings → API keys instead.
+
 `login` starts a loopback listener on the first free port in `127.0.0.1:8765–8770` and opens
 `/auth/cli?redirect_uri=http://127.0.0.1:<port>/callback`; after login + tenant select the server
 mints a tenant API key named `cli:<your hostname>` and redirects back. The key is stored in

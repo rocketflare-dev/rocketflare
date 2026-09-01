@@ -10,7 +10,7 @@
   },
   "scripts": {
     "dev": "concurrently --restart-tries 50 --restart-after 2000 --names api,ui -c blue,green \"pnpm dev:api\" \"pnpm dev:ui\"",
-    "dev:api": "wrangler dev --port 3001",
+    "dev:api": "mkdir -p dist/ui && wrangler dev --port 3001",
     "dev:ui": "vite",
     "dev:tunnel": "cfld -- node scripts/tunnel-dev.mjs",
     "dev:db:up": "docker compose -f docker-compose.dev.yml up -d",
