@@ -1,0 +1,30 @@
+{
+  "name": "@gmgo/shared",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Private shared contracts for the GMGO kit: zod schemas, error envelope, pagination, permission types. Consumed as TypeScript source by apps/web (API + UI) and apps/cli via the workspace link — no build step.",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./*": {
+      "types": "./src/*.ts",
+      "default": "./src/*.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "echo 'shared: contracts are exercised by apps/web and apps/cli tests'",
+    "build": "echo 'shared: consumed as source, nothing to build'",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@casl/ability": "^6.8.1",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3"
+  }
+}

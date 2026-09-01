@@ -3,13 +3,13 @@ node_modules/
 .pnpm-store/
 
 # Build outputs
-dist/
-.wrangler/
+**/dist/
+**/.wrangler/
 
 # Secrets — never commit. `.dev.vars.example` and `.env.test` (dummy values) ARE committed.
-.dev.vars
-.dev.vars.*
-!.dev.vars.example
+**/.dev.vars
+**/.dev.vars.*
+!**/.dev.vars.example
 .env
 .env.local
 *.local

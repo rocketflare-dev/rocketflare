@@ -1,0 +1,33 @@
+{
+  "name": "@gmgo/cli",
+  "version": "0.1.0",
+  "private": true,
+  "description": "GMGO kit command-line interface (login via browser → API key, whoami, tenant-scoped commands)",
+  "type": "module",
+  "bin": {
+    "gmgo": "./dist/cli.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "dev": "tsx src/cli.ts",
+    "build": "rm -rf dist && tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "clean": "rm -rf dist *.tsbuildinfo"
+  },
+  "dependencies": {
+    "@gmgo/shared": "workspace:*",
+    "chalk": "^5.6.2",
+    "commander": "^15.0.0",
+    "open": "^11.0.0",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "tsx": "^4.23.13",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.7"
+  }
+}
