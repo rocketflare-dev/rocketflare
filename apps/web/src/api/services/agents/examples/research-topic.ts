@@ -222,6 +222,9 @@ export const researchTopicAgent: AgentDefinition<ResearchTopicInput, ResearchTop
           description: submitAnswerTool.description,
           schema: submitAnswerSchema,
         },
+        // The loop just sent this transcript with rolling breakpoints, so on a caching provider
+        // (Anthropic) the recovery reads the prefix instead of paying for it twice.
+        cache: true,
         // Fires before `callStructuredTool` throws, so a failed recovery is still ledgered.
         onUsage: extra => void ledger(extra),
       })

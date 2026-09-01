@@ -6,6 +6,7 @@
 import { aiUsageSummarySchema } from '@rocketflare/shared/ai/usage'
 import { describe, expect, it } from 'vitest'
 import { recordUsage, summarizeUsage, tapUsage } from '@/api/services/ai/usage'
+import { aiUsage } from '@/db/schema'
 import { FakeChatClient } from '../helpers/ai'
 import {
   createTestSession,
@@ -93,6 +94,7 @@ describe('usage ledger', () => {
         cacheReadTokens: 2,
         cacheWriteTokens: 0,
         costMicrocents: null,
+        unpricedCalls: 2,
       },
       {
         provider: 'openai',
@@ -104,6 +106,7 @@ describe('usage ledger', () => {
         cacheReadTokens: 0,
         cacheWriteTokens: 0,
         costMicrocents: null,
+        unpricedCalls: 1,
       },
     ])
     expect(summary.totals).toEqual({
@@ -113,6 +116,7 @@ describe('usage ledger', () => {
       cacheReadTokens: 2,
       cacheWriteTokens: 0,
       costMicrocents: null,
+      unpricedCalls: 3,
     })
 
     // A range that excludes everything.
@@ -122,6 +126,35 @@ describe('usage ledger', () => {
     })
     expect(old.rows).toEqual([])
     expect(old.totals.calls).toBe(0)
+  })
+
+  it('prices a known model at write time, and prices an older unpriced row at read time', async () => {
+    const a = await actor()
+    // Written the normal way: the cost is frozen from the price table.
+    await recordUsage(db, {
+      tenantId: a.tenant.id,
+      feature: 'chat',
+      provider: 'anthropic',
+      model: 'claude-sonnet-4-5-20250929',
+      usage: { inputTokens: 1_000_000, outputTokens: 0 },
+    })
+    // A row from before the table existed (or from a caller that passed no cost).
+    await db.insert(aiUsage).values({
+      tenantId: a.tenant.id,
+      feature: 'chat',
+      provider: 'anthropic',
+      model: 'claude-sonnet-4-5-20250929',
+      inputTokens: 1_000_000,
+      outputTokens: 0,
+      costMicrocents: null,
+    })
+
+    const summary = await summarizeUsage(db, a.tenant.id)
+    const row = summary.rows.find(r => r.model === 'claude-sonnet-4-5-20250929')
+    // $3/M input × 2M = $6, whichever way the row was written.
+    expect(row?.costMicrocents).toBe(600_000_000)
+    expect(row?.unpricedCalls).toBe(0)
+    expect(summary.totals.costMicrocents).toBe(600_000_000)
   })
 
   it('GET /api/ai/usage/summary: admin+ only, validates the range, parses with the contract', async () => {

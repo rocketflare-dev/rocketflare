@@ -1,5 +1,6 @@
 /**
- * Settings → Usage (D18): the 30-day default requests `from`/`to`, renders totals and the
+ * Settings → Usage (D18): the 30-day default requests `from`/`to`, renders totals (cost labelled
+ * an estimate, unpriced calls named, an unpriced row dashed) and the
  * per-(provider, model, feature) rows; switching the preset re-queries a shorter window; an empty
  * period shows the empty state.
  */
@@ -20,7 +21,9 @@ const summary = (from: string, to: string, rows: unknown[]) => ({
         outputTokens: 4_500,
         cacheReadTokens: 800,
         cacheWriteTokens: 0,
-        costMicrocents: null,
+        // Priced from the table: the page shows an estimate and says so.
+        costMicrocents: 4_200_000_000,
+        unpricedCalls: 2,
       }
     : {
         calls: 0,
@@ -29,6 +32,7 @@ const summary = (from: string, to: string, rows: unknown[]) => ({
         cacheReadTokens: 0,
         cacheWriteTokens: 0,
         costMicrocents: null,
+        unpricedCalls: 0,
       },
 })
 
@@ -41,7 +45,8 @@ const chatRow = {
   outputTokens: 4_400,
   cacheReadTokens: 800,
   cacheWriteTokens: 0,
-  costMicrocents: null,
+  costMicrocents: 4_200_000_000,
+  unpricedCalls: 0,
 }
 const testRow = {
   provider: 'anthropic_compatible',
@@ -52,7 +57,9 @@ const testRow = {
   outputTokens: 100,
   cacheReadTokens: 0,
   cacheWriteTokens: 0,
+  // A self-hosted model the price table does not know: shown as "—", counted as unpriced.
   costMicrocents: null,
+  unpricedCalls: 2,
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000
@@ -76,9 +83,15 @@ describe('Settings → Usage', () => {
     expect(await screen.findByText('12,300')).toBeInTheDocument()
     expect(screen.getByText('4,500')).toBeInTheDocument()
     expect(screen.getByText('14')).toBeInTheDocument()
-    // No pricing supplied → the fourth card is the cache figures, not a cost
-    expect(screen.getByText('Cache read / write')).toBeInTheDocument()
-    expect(screen.queryByText('Cost')).not.toBeInTheDocument()
+    // Priced rows → the fourth card is the cost, labelled an estimate, with the unpriced calls
+    // named rather than silently dropped from the total.
+    expect(screen.getByText('Cost (estimated)')).toBeInTheDocument()
+    expect(screen.getAllByText('$42.0000').length).toBeGreaterThan(0) // total card + the chat row
+    expect(screen.getByText(/2 call\(s\) use a model with no price/)).toBeInTheDocument()
+    // The unknown model's own row shows a dash, not a made-up number.
+    const rows = screen.getAllByRole('row')
+    const unpriced = rows.find(r => r.textContent?.includes('kimi-k2-instruct'))
+    expect(unpriced?.textContent).toContain('—')
 
     expect(screen.getByText('chat')).toBeInTheDocument()
     expect(screen.getByText('connection-test')).toBeInTheDocument()

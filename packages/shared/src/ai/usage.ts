@@ -1,7 +1,9 @@
 /**
  * AI usage contracts (D18): one `ai_usage` row per generation, written from the provider's usage
  * tap (`services/ai/usage.ts`), and the per-model summary `GET /api/ai/usage/summary` returns.
- * `costMicrocents` is nullable — the kit records tokens; pricing is an app-level table.
+ * `costMicrocents` is nullable — the kit records tokens and prices them from
+ * `@rocketflare/shared/ai/pricing`, which an app corrects; a model the table does not know stays
+ * null and is counted in `unpricedCalls`, so a partial total says so instead of pretending.
  */
 import { z } from 'zod'
 import { aiProviderSchema } from './config'
@@ -33,7 +35,10 @@ export const aiUsageRowSummarySchema = z.object({
   outputTokens: z.number().int().nonnegative(),
   cacheReadTokens: z.number().int().nonnegative(),
   cacheWriteTokens: z.number().int().nonnegative(),
+  /** Estimated from the price table (or frozen at write time); null when the model has no price. */
   costMicrocents: z.number().int().nullable(),
+  /** Calls in this group with no price — the model is not in the table. */
+  unpricedCalls: z.number().int().nonnegative(),
 })
 export type AiUsageRowSummary = z.infer<typeof aiUsageRowSummarySchema>
 
@@ -49,6 +54,7 @@ export const aiUsageSummarySchema = z.object({
     cacheReadTokens: z.number().int().nonnegative(),
     cacheWriteTokens: z.number().int().nonnegative(),
     costMicrocents: z.number().int().nullable(),
+    unpricedCalls: z.number().int().nonnegative(),
   }),
 })
 export type AiUsageSummary = z.infer<typeof aiUsageSummarySchema>

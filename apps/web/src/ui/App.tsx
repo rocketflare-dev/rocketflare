@@ -66,12 +66,15 @@ const UserList = lazy(() => import('@/ui/pages/admin/UserList'))
 const UserDetail = lazy(() => import('@/ui/pages/admin/UserDetail'))
 
 // Dev-only TanStack Query devtools. `import.meta.env.DEV` is replaced at build time, so the
-// dynamic import (and its chunk) is dropped from production bundles.
-const ReactQueryDevtools = import.meta.env.DEV
-  ? lazy(() =>
-      import('@tanstack/react-query-devtools').then(m => ({ default: m.ReactQueryDevtools }))
-    )
-  : null
+// dynamic import (and its chunk) is dropped from production bundles. Set
+// `VITE_QUERY_DEVTOOLS=off` in `apps/web/.env.local` to drop the toggle from dev too — it sits
+// over the bottom of the page, which is where drawers and modals put their content.
+const ReactQueryDevtools =
+  import.meta.env.DEV && import.meta.env.VITE_QUERY_DEVTOOLS !== 'off'
+    ? lazy(() =>
+        import('@tanstack/react-query-devtools').then(m => ({ default: m.ReactQueryDevtools }))
+      )
+    : null
 
 /** Sidebar footer: which org (and as what) the reader is acting in. */
 function TenantFooter() {
@@ -293,7 +296,11 @@ export default function App() {
         </AuthProvider>
         {ReactQueryDevtools && (
           <Suspense fallback={null}>
-            <ReactQueryDevtools initialIsOpen={false} buttonPosition="bottom-left" />
+            <ReactQueryDevtools
+              initialIsOpen={false}
+              buttonPosition="bottom-right"
+              position="right"
+            />
           </Suspense>
         )}
       </QueryClientProvider>

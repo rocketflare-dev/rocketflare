@@ -13,7 +13,7 @@ through `kit.ts`.
 | `resolve.ts` | `resolveChat` / `resolveEmbeddings` / `readiness` — tenant default row → `platformChat(cfg, env)` (`ANTHROPIC_API_KEY` → `workers_ai` + `WORKERS_AI_CHAT_MODEL` when `env.AI`) → `AiNotConfiguredError` (503 `ai_not_configured`). The ONLY reader of `ai_configs` and the ONLY decrypt. Tests `vi.mock` this module |
 | `kit.ts` | `cachedSystem`, `withRollingCacheBreakpoints`, `Tool` (zod schema + optional handler; no handler = terminal), `callStructuredTool` (forced tool, 1 retry; `StructuredOutputError.issues` = the zod issues or `{ reason, stopReason, text }` when there was no call), `runToolLoop` (Phase 3b engine), `runStreamingChat` (chat engine) |
 | `errors.ts` | `AiError { code: auth \| rate_limit \| invalid_request \| unavailable \| unknown }`, `normalizeAiError`, `describeAiError`, `redactSecrets`, `AiNotConfiguredError` |
-| `usage.ts` | `recordUsage` → `ai_usage`, `tapUsage(client, cb)`, `summarizeUsage` |
+| `usage.ts` | `recordUsage` → `ai_usage` (cost frozen from `@rocketflare/shared/ai/pricing` unless the caller passes one), `tapUsage(client, cb)`, `summarizeUsage` (prices rows with no stored cost from the same table; `unpricedCalls` counts what has no price at all) |
 | `connection-test.ts` | `testConfig` — 10-token completion / one embedding, same builders as the resolver, never throws a provider error |
 
 Rules:

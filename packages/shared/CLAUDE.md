@@ -45,7 +45,9 @@ response with the same schema. `pnpm test:config` covers the pure parts.
 `embeddings.ts` — `documentSchema` (never the text or vectors), `INGEST_TEXT_MAX_CHARS`, `ingestTextRequestSchema`,
 `documentListQuerySchema`, `searchRequestSchema` (`SEARCH_MAX_LIMIT`), `searchHitSchema` (RRF `score`, `rank`,
 `denseRank`/`lexicalRank`), `searchResponseSchema` · `usage.ts` — `aiUsageSchema`, `aiUsageSummarySchema`,
-`aiUsageSummaryQuerySchema` (`costMicrocents` nullable). `errors.ts` codes added: `ai_not_configured`,
+`aiUsageSummaryQuerySchema` (`costMicrocents` nullable, `unpricedCalls`) · `pricing.ts` — `MODEL_PRICES`
+(USD per million tokens, per provider, longest-prefix model match), `PRICES_UPDATED`, `priceFor`,
+`estimateCostMicrocents`; the ONE place to correct rates, unknown model → null, never a guess. `errors.ts` codes added: `ai_not_configured`,
 `agent_runs_not_configured`, `agent_run_active`; `permissions.ts` subjects added: `AiConfig`, `Prompt`,
 `Conversation`, `AgentRun`, `Document`, and (D19) `Dashboard` (`analytics_pages` rows) + `Analytics`
 (the cube API) · **`analytics.ts`** (Phase 4, D19): `dashboardConfigSchema` — a drizzle-cube

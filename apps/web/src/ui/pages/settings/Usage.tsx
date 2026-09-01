@@ -1,12 +1,15 @@
 /**
  * Settings → Usage (D18): AI token totals for the last 7 / 30 / 90 days from
  * `GET /api/ai/usage/summary` — grand totals as cards, then one row per (provider, model,
- * feature). Cost shows only when the app has supplied pricing (`costMicrocents` non-null).
+ * feature). Cost comes from the kit's price table (`@rocketflare/shared/ai/pricing`) and is
+ * labelled an ESTIMATE, with the count of calls whose model has no price — a total that quietly
+ * omits half the calls is worse than one that says so.
  * Admin+ (`manage AiConfig`); the tab is hidden otherwise.
  */
 
 import { ChartBarIcon } from '@heroicons/react/24/outline'
 import { shortModelName } from '@rocketflare/shared/ai/config'
+import { PRICES_UPDATED } from '@rocketflare/shared/ai/pricing'
 import { useState } from 'react'
 import { EmptyState, SectionPanel, SkeletonRows } from '@/ui/components/shared'
 import {
@@ -63,7 +66,7 @@ export default function UsageSettings() {
             <Stat label="Input tokens" value={data.totals.inputTokens} />
             <Stat label="Output tokens" value={data.totals.outputTokens} />
             {cost ? (
-              <Stat label="Cost" value={cost} />
+              <Stat label="Cost (estimated)" value={cost} />
             ) : (
               <Stat
                 label="Cache read / write"
@@ -125,6 +128,14 @@ export default function UsageSettings() {
                 </tbody>
               </table>
             </div>
+          )}
+          {cost && (
+            <p className="px-5 pb-5 pt-3 text-xs text-muted">
+              Estimated from the built-in price list (checked {PRICES_UPDATED}) — not a bill.
+              {data.totals.unpricedCalls > 0 &&
+                ` ${data.totals.unpricedCalls.toLocaleString()} call(s) use a model with no price and are not included.`}{' '}
+              Prices live in <code>packages/shared/src/ai/pricing.ts</code>.
+            </p>
           )}
         </div>
       )}

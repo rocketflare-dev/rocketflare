@@ -117,6 +117,11 @@ contract comes first and lives in the shared package so the API, the UI and the 
 Long-running work inside a feature: enqueue on `JOBS_QUEUE` (< 30 s) or create a Workflow
 instance; never run it in the route.
 
+**Correcting model prices** (D18). `packages/shared/src/ai/pricing.ts` is the only place rates
+live: edit `MODEL_PRICES` (USD per million tokens; keys are model-id prefixes, longest match wins),
+bump `PRICES_UPDATED`, done — new rows price from it at write time, older rows are priced on read.
+A model you leave out shows "—" on Settings → Usage rather than a wrong number.
+
 **Adding an agent** (D7, D17 — `apps/web/src/api/services/agents/CLAUDE.md`). No migration:
 
 1. Contract — `packages/shared/src/ai/agents.ts`: append the key to `AGENT_KEYS`, add

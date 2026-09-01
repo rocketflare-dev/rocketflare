@@ -733,10 +733,17 @@ Vectorize; `apps/web/scripts/migrate.ts` runs `CREATE EXTENSION IF NOT EXISTS ve
 migrations.
 
 **Usage (D18).** `recordUsage` writes one `ai_usage` row per model call (`feature`, `provider`,
-`model`, four token counters, `costMicrocents` **null** — the kit counts tokens, an app prices them):
+`model`, four token counters, `costMicrocents` from the price table below):
 the chat route after the stream (`feature: 'chat'`), agents from `callStructuredTool`'s `onUsage`
 (`agent:<key>`). `GET /api/ai/usage/summary?from&to` (default last 30 days, `manage AiConfig`) groups
-by (provider, model, feature) with grand totals.
+by (provider, model, feature) with grand totals. **Prices are ONE table**,
+`@rocketflare/shared/ai/pricing` (`MODEL_PRICES`, USD per million tokens, longest-prefix match so a
+dated id like `claude-sonnet-4-5-20250929` resolves, `PRICES_UPDATED` records when they were last
+checked): `recordUsage` freezes a row's cost from it at write time — a later price edit cannot
+rewrite history — and the summary prices rows that have no stored cost with the same helper, so
+existing data is not half blank. A model the table does not know is `null`, never a guess, and its
+calls are counted in `unpricedCalls` so a partial total says so. The Usage page labels the figure an
+estimate and names the file; correcting the rates for your own account is editing that one file.
 
 **Tracing (D16).** `Tracer` seam (`observability/tracer.ts`) with `noopTracer`; the only
 implementation is `createLangfuseTracer` (`langfuse-fetch.ts`) — `trace-create` / `generation-create`
