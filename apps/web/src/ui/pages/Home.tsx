@@ -4,6 +4,7 @@
  */
 import {
   BellIcon,
+  ChartBarIcon,
   ClockIcon,
   Cog6ToothIcon,
   ShieldCheckIcon,
@@ -15,7 +16,7 @@ import { RoleBadge } from '@/ui/components/RoleBadge'
 import { EmptyState, PageHeader, SectionPanel, SkeletonRows } from '@/ui/components/shared'
 import { useActivity } from '@/ui/hooks/useActivity'
 import { useAuth } from '@/ui/hooks/useAuth'
-import { useNavGuard } from '@/ui/hooks/useNavGuard'
+import { type NavGuard, useNavGuard } from '@/ui/hooks/useNavGuard'
 import { timeAgo } from '@/ui/lib/format'
 
 interface QuickLink {
@@ -23,10 +24,18 @@ interface QuickLink {
   label: string
   description: string
   icon: ComponentType<{ className?: string }>
-  guard?: 'admin' | 'globalAdmin'
+  guard?: NavGuard
 }
 
 const QUICK_LINKS: QuickLink[] = [
+  {
+    // D19: the dashboards every member can read (admins edit)
+    to: '/analytics',
+    label: 'Analytics',
+    description: 'Dashboards over this organisation',
+    icon: ChartBarIcon,
+    guard: { action: 'read', subject: 'Analytics' },
+  },
   {
     to: '/profile',
     label: 'Your account',

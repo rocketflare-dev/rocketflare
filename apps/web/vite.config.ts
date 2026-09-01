@@ -74,7 +74,11 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
+      // D19: drizzle-cube's heat-map chunk names an export of this OPTIONAL peer; without the
+      // package Rollup fails the build. The stub renders a notice (src/ui/lib/stubs).
+      '@nivo/heatmap': path.resolve(__dirname, './src/ui/lib/stubs/nivo-heatmap.tsx'),
     },
-    dedupe: ['react', 'react-dom'],
+    // D19: drizzle-cube's chart chunks import recharts; one copy, shared with any kit chart.
+    dedupe: ['react', 'react-dom', 'recharts'],
   },
 })

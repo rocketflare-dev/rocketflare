@@ -10,9 +10,15 @@
 @source "./index.html";
 @source "./**/*.{ts,tsx}";
 
+/* drizzle-cube ships its own precompiled, `dc:`-prefixed stylesheet (imported by the lazy analytics
+   chunk), so scanning its dist with `@source` generates ZERO drizzle-cube classes and only stray
+   DaisyUI components (+6.5 KB gzip, measured). Do not `@source` node_modules; if a dependency ever
+   needs it, it must ship un-compiled Tailwind classes — verify before adding. */
+
 /* Classes assembled from PROPS (Toast/AlertModal `alert-*`, role/status `badge-*`, ConfirmModal
    `btn-*`) are invisible to the scanner, so they are declared as inline sources here. This is the
-   ONLY safelist. Never safelist classes built from DATA; never `@source` node_modules. */
+   ONLY safelist. Never safelist classes built from DATA; `@source` a dependency's dist (as above)
+   rather than growing this list. */
 @source inline("alert-{success,error,warning,info}");
 @source inline("badge-{primary,secondary,neutral,ghost,info,success,warning,error,sm}");
 @source inline("btn-{primary,error,warning}");
@@ -208,6 +214,100 @@
   --tone-warning-border: #b45309; /* amber-700 */
   --tone-error-surface: #450a0a; /* red-950 */
   --tone-error-border: #b91c1c; /* red-700 */
+}
+
+/* ------------------------------------------- drizzle-cube theme mapping (D19)
+   drizzle-cube styles itself from `--dc-*` custom properties (dist/client/styles.css declares
+   defaults on `:root` and a dark set on `[data-theme=dark], .dark`). Every one it reads is
+   re-pointed at a kit token here so charts, portlets and the query builder follow gm-light /
+   gm-dark automatically — the values are `var()`s that already flip with the theme, so one block
+   serves both. Specificity is deliberate: `:root[data-theme]` (0,2,0) beats both the library's
+   `:root` and its `html.dark` (0,1,1), whichever stylesheet loads last. Field-type chips
+   (dimension / time / measure / filter) reuse the status tone triples: distinct hues, no new
+   palette. Shadows are flat like the rest of the kit; popover-grade ones use the popover token. */
+:root[data-theme="gm-light"],
+:root[data-theme="gm-dark"] {
+  --dc-surface: var(--surface-panel);
+  --dc-surface-secondary: var(--surface-app);
+  --dc-surface-tertiary: var(--surface-inset);
+  --dc-surface-hover: var(--surface-hover);
+  --dc-bg: var(--surface-panel);
+  --dc-bg-secondary: var(--surface-inset);
+
+  --dc-text: var(--text-primary);
+  --dc-text-secondary: var(--text-secondary);
+  --dc-text-muted: var(--text-muted);
+  --dc-text-disabled: var(--border-strong);
+
+  --dc-border: var(--border-subtle);
+  --dc-border-secondary: var(--border-default);
+  --dc-border-hover: var(--border-strong);
+
+  --dc-primary: var(--color-primary);
+  --dc-primary-hover: color-mix(in srgb, var(--color-primary) 85%, var(--text-primary));
+  --dc-primary-content: var(--color-primary-content);
+  --dc-primary-rgb: 37, 99, 235; /* only read for rgba() tints; matches --color-primary */
+
+  --dc-accent: var(--color-accent);
+  --dc-accent-hover: color-mix(in srgb, var(--color-accent) 85%, var(--text-primary));
+  --dc-accent-bg: color-mix(in srgb, var(--color-accent) 12%, var(--surface-panel));
+  --dc-accent-border: color-mix(in srgb, var(--color-accent) 40%, var(--surface-panel));
+  --dc-accent-text: var(--color-accent-content);
+
+  --dc-success: var(--color-success);
+  --dc-success-bg: var(--tone-success-surface);
+  --dc-success-border: var(--tone-success-border);
+  --dc-warning: var(--color-warning);
+  --dc-warning-bg: var(--tone-warning-surface);
+  --dc-warning-border: var(--tone-warning-border);
+  --dc-error: var(--color-error);
+  --dc-error-bg: var(--tone-error-surface);
+  --dc-error-border: var(--tone-error-border);
+  --dc-info: var(--color-info);
+  --dc-info-bg: var(--tone-info-surface);
+  --dc-info-border: var(--tone-info-border);
+  --dc-danger: var(--color-error);
+  --dc-danger-hover: color-mix(in srgb, var(--color-error) 85%, var(--text-primary));
+  --dc-danger-bg: var(--tone-error-surface);
+
+  --dc-card-bg: var(--surface-panel);
+  --dc-card-bg-hover: var(--surface-hover);
+  --dc-card-border: var(--border-default);
+  --dc-card-border-hover: var(--border-strong);
+
+  --dc-muted: var(--text-muted);
+  --dc-muted-bg: var(--surface-inset);
+  --dc-muted-border: var(--border-subtle);
+
+  /* Query-builder field chips: one tone triple each */
+  --dc-dimension-bg: var(--tone-success-surface);
+  --dc-dimension-text: var(--color-success);
+  --dc-dimension-border: var(--tone-success-border);
+  --dc-time-dimension-bg: var(--tone-info-surface);
+  --dc-time-dimension-text: var(--color-info);
+  --dc-time-dimension-border: var(--tone-info-border);
+  --dc-measure-bg: var(--tone-warning-surface);
+  --dc-measure-text: var(--color-warning);
+  --dc-measure-border: var(--tone-warning-border);
+  --dc-filter-bg: var(--tone-primary-surface);
+  --dc-filter-text: var(--color-primary);
+  --dc-filter-border: var(--tone-primary-border);
+
+  --dc-overlay: var(--overlay);
+  --dc-overlay-light: color-mix(in srgb, var(--overlay) 60%, transparent);
+  --dc-shadow-sm: none;
+  --dc-shadow: none;
+  --dc-shadow-md: var(--shadow-popover);
+  --dc-shadow-lg: var(--shadow-popover);
+  --dc-shadow-xl: var(--shadow-popover);
+  --dc-shadow-2xl: var(--shadow-popover);
+
+  --dc-ai-gradient-start: var(--surface-inset);
+  --dc-ai-gradient-end: var(--surface-panel);
+
+  --dc-radius-sm: 4px;
+  --dc-radius-md: var(--radius-control);
+  --dc-radius-lg: var(--radius-panel);
 }
 
 /* ------------------------------------------------ Shape / spacing / motion */

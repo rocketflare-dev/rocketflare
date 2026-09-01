@@ -45,6 +45,14 @@ React 18 + Vite + React Router 6 + TanStack Query 5 + zustand; DaisyUI 5 on Tail
   (`useAgentModels`, `useUpsertAgentModel`, `useDeleteAgentModel`), `useDocuments` (`useDocuments`
   polling while any row is `pending`, `useDocument`, `useIngestText`, `useDeleteDocument`,
   `useSearch` — mutation-style, hits are its `data`).
+  Analytics (Phase 4, D19): `useAnalyticsPages` (`useAnalyticsPages` default-first via
+  `orderPages`, `useAnalyticsPage(id)`, `useCreateAnalyticsPage`, `useUpdateAnalyticsPage`,
+  `useAutosaveDashboardConfig(pageId)` — debounced whole-config PATCH, `DASHBOARD_AUTOSAVE_MS`,
+  `useDeleteAnalyticsPage`, `useResetAnalyticsPage`, `useAnalyticsTemplates`,
+  `useRecreateTemplates`, `useFactTableStatus({ enabled })`), `useCubeMeta` (`GET
+  /cubejs-api/v1/meta` via `api.get`, cached an hour; `memberTitle`, `timeDimensionsOf`),
+  `useDashboardDateFilter` (URL-synced `?range=7d|30d|90d|custom&from&to`; pure
+  `parseDateFilterParams`, `dateRangeValue`, `dashboardDateFilters(config, range)`).
 - `lib/` — `api-client` (fetch wrapper, `ApiError`, `setUnauthorizedHandler`, `api.upload` for
   multipart — no JSON content-type), `queryClient` (module-level, 401 → handler), `query-keys`
   (factory + `cleanFilters`/`toSearchParams`; the family roots — `['invitations']`,
@@ -58,7 +66,9 @@ React 18 + Vite + React Router 6 + TanStack Query 5 + zustand; DaisyUI 5 on Tail
   `readSse(response, onEvent, { signal })` — `event:`/`data:` frame splitter that survives split
   chunks and validates each `data` with `chatStreamEventSchema`; `SseFrameBuffer`, `parseSseFrame`),
   `chatStream` (`sendChatMessage({ conversationId, content, onEvent, signal })` POSTs and streams;
-  a pre-stream 503 `ai_not_configured` throws `AiNotConfiguredError`; `isAiNotConfigured()`).
+  a pre-stream 503 `ai_not_configured` throws `AiNotConfiguredError`; `isAiNotConfigured()`),
+  `stubs/nivo-heatmap.tsx` (D19: the build-time stand-in `vite.config.ts` aliases `@nivo/heatmap`
+  to — see "Analytics dashboards").
 - `stores/websocketStore.ts` — the one zustand store: `status | connectedAt | disconnectedAt |
   attempt | lastEvent`; written only by `websocketClient`, read by the status dot and the banner.
 - `pages/` — route-level components, lazy in `App.tsx` except Home/Login/NotFound. `settings/`
@@ -67,7 +77,14 @@ React 18 + Vite + React Router 6 + TanStack Query 5 + zustand; DaisyUI 5 on Tail
   `/chat/:conversationId?` (D17, guard `read Conversation`, lazy — its chunk carries the markdown
   renderer). `agents/` — `/agents` + `/agents/runs/:runId` (D7, guard `read AgentRun`; the same
   `AgentsPage` for both, the param opens `RunDetailDrawer`); `documents/DocumentsPage.tsx` —
-  `/documents` (D18, guard `read Document`, nav label "Knowledge"). `public/` — static assets copied as-is.
+  `/documents` (D18, guard `read Document`, nav label "Knowledge"). `analytics/` — `/analytics`
+  (`DashboardListPage`), `/analytics/explore` (`QueryBuilderPage`), `/analytics/:pageId`
+  (`DashboardViewPage`), all `read Analytics` (D19, below). `public/` — static assets copied as-is.
+- `components/analytics/` (D19) — `CubeClientProvider` (drizzle-cube `CubeProvider` + cookie auth
+  + 401 routing + the library stylesheet), `DashboardLoader` (`AnalyticsDashboard` glue: local
+  config, date-filter overrides, autosave, unsaved guard), `DashboardFormModal` (create/rename,
+  optional "start from template"), `DateRangeControl`. Like `components/ai/`, NOT in the shared
+  barrel: importing any of them pulls the drizzle-cube runtime into the chunk.
 
 ## Conventions
 
@@ -191,3 +208,66 @@ React 18 + Vite + React Router 6 + TanStack Query 5 + zustand; DaisyUI 5 on Tail
   with the `FakeSocket` from `websocket-provider.test.tsx` to prove the nudge refetches),
   `agent-models-settings`, `documents-page`. Mount `AgentsPage` inside the same `<Routes>` pair
   App.tsx uses so `navigate('/agents/runs/:id')` really opens the drawer.
+
+## Analytics dashboards (Phase 4, D19/D20)
+
+- **GM wrote no chart code.** drizzle-cube renders everything: `AnalyticsDashboard` (react-grid-layout
+  editor, portlet editor with its own query builder, drill-down, charts) and `AnalysisBuilder`
+  (`/analytics/explore`). The kit owns the glue only: pages, hooks over `/api/analytics/*`
+  (`@gmgo/shared/analytics`), the provider wiring and the theme mapping. drizzle-cube 0.8.3 client
+  API actually used: `CubeProvider` from `drizzle-cube/client/providers` (`apiOptions`,
+  `queryClient`, `features`), `AnalyticsDashboard` (`config`, `editable`, `dashboardFilters`,
+  `onConfigChange`, `onSave`, `loadingComponent`), `AnalysisBuilder` + `AnalysisBuilderRef`
+  (`getAnalysisConfig()`), types `DashboardConfig`/`PortletConfig`/`CubeApiOptions`/
+  `FeaturesConfig` from `drizzle-cube/client`, and `drizzle-cube/client/styles.css`.
+- **Same-origin cookie auth**: `CubeClientProvider` passes `apiOptions = { apiUrl:
+  '/cubejs-api/v1', credentials: 'include', headers: { 'X-Requested-With': 'fetch' } }` — the
+  library's `CubeClient` forwards both to every `fetch` (it defaults to `include` anyway; the
+  header is the kit's marker). No token. drizzle-cube runs its queries on a BUNDLED TanStack Query
+  (separate React context), so the app's `QueryCache.onError` never sees a cube failure: the
+  provider hands it `createCubeQueryClient()`, whose `onError` maps a `status === 401`
+  (`CubeQueryError`) to `notifyUnauthorized(new ApiError(...))` → the global D20 handler. Our hooks
+  rendered inside `CubeProvider` still resolve the APP client (different context) — that is why
+  `DashboardLoader` can call `useAutosaveDashboardConfig` from inside it.
+- **Bundle discipline**: nothing under `pages/analytics/**` or `components/analytics/**` may be
+  imported from the main bundle; `App.tsx` lazy-loads the three pages and `DashboardListPage`
+  deliberately imports no drizzle-cube runtime (it lists rows; the library loads with the view /
+  explore chunks — Vite emits `DashboardLoader-*.js` ≈ 377 KiB gzip shared by both, plus per-chart
+  chunks). `grep recharts dist/ui/assets/index-*.js` must stay at 0. `vite.config.ts` dedupes
+  `recharts` and aliases `@nivo/heatmap` (an OPTIONAL peer the heat-map chunk names an export of —
+  Rollup fails without it) to `lib/stubs/nivo-heatmap.tsx`, which renders a notice; install the
+  package and drop the alias to enable heat maps.
+- **Theme**: drizzle-cube styles itself from `--dc-*` variables; `index.css` re-points every one at
+  a kit token under `:root[data-theme="gm-light"], :root[data-theme="gm-dark"]` (specificity
+  (0,2,0) beats the library's `:root` and `html.dark` regardless of stylesheet order; the values are
+  `var()`s that flip with the theme, so one block covers both). Its chart palettes decide dark from
+  `data-theme="dark"` or a `dark` class on `<html>`, so `CubeClientProvider` mirrors `gm-dark` into
+  that class while mounted (`syncDarkClass`) — the kit's own CSS never reads `.dark`. `index.css`
+  also `@source`s `node_modules/drizzle-cube/dist/client/**/*.js` (the rule for JSX-shipping
+  dependencies); measured effect: the library's utilities are `dc:`-prefixed and precompiled into
+  its own stylesheet, so the scan generates no drizzle-cube class — only stray-word DaisyUI
+  components (`stat`, `steps`, `tooltip`, `vc`…), +6.5 KiB gzip on `index-*.css`.
+- **Editing & autosave**: `DashboardLoader` keeps the config as local state (seeded from the row,
+  re-seeded when the server row changes and nothing is dirty — a reset arrives that way). In edit
+  mode each `onConfigChange` schedules ONE debounced whole-config `PATCH` (`DASHBOARD_AUTOSAVE_MS`
+  = 1.5 s); the editor's `onSave`, leaving edit mode and unmount flush it; while dirty a
+  `beforeunload` guard warns (no data router, so no `useBlocker`). Edit / rename / reset / delete /
+  create / recreate are `manage Dashboard` (admin+); the route and nav are `read Analytics`.
+  Template pages (`templateKey !== null`) offer "Reset to template", never delete (server: 403
+  `template_page`); user pages the reverse. "Start from template" copies the config from the
+  pure `src/dashboards` registry client-side (`getTemplate(key).config` → `POST /pages`).
+- **Date range** is URL state (`useDashboardDateFilter`), never a store: presets emit exactly
+  `'last 7|30|90 days'` or an ISO pair — an unknown relative string makes drizzle-cube DROP the
+  condition and silently query all time, so anything unparseable falls back to 90 days.
+  `dashboardDateFilters(config, range)` returns override copies of the `isUniversalTime` filters;
+  `AnalyticsDashboard dashboardFilters` merges them by id, so a KPI with its own window is untouched.
+- **Explore → Save to dashboard** (admin+): `ref.getAnalysisConfig()` becomes a portlet
+  (`analysisConfig`, the canonical format) appended as a full-width `rows` entry with mirrored
+  x/y/w/h (`appendPortlet`, pure) and saved with `PATCH /pages/:id`.
+- Tests: `analytics-pages` (no library needed), `dashboard-view` (mocks `drizzle-cube/client`,
+  `drizzle-cube/client/providers` and the stylesheet with stand-ins that fire the same callbacks;
+  the debounce is asserted with real timers, `waitFor` timeout 4 s), `date-filter` (pure + hook
+  URL sync via `renderHook` in a `MemoryRouter`), `cube-client-provider` (mounts the REAL
+  `CubeProvider` against `stubFetch` — asserts the library's own request carries the credentials
+  and header, and that a 401 reaches `setUnauthorizedHandler`; stub `window.matchMedia` first).
+  Fixtures: `tests/ui/helpers/analytics.ts`.

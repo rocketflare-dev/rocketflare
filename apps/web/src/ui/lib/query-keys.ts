@@ -109,6 +109,22 @@ export const queryKeys = {
       detail: (id: string) => ['chat', 'conversations', 'detail', id] as const,
     },
   },
+  /**
+   * `/api/analytics/*` + `/cubejs-api/v1/meta` (D19). Pages are one family so a create/reset/
+   * recreate invalidates the list and every open detail together; templates and the fact-table
+   * status are effectively immutable for a tab; cube meta changes only with a deploy.
+   */
+  analytics: {
+    all: ['analytics'] as const,
+    pages: {
+      all: ['analytics', 'pages'] as const,
+      list: ['analytics', 'pages', 'list'] as const,
+      detail: (id: string) => ['analytics', 'pages', 'detail', id] as const,
+    },
+    templates: ['analytics', 'templates'] as const,
+    factsStatus: ['analytics', 'facts-status'] as const,
+    cubeMeta: ['analytics', 'cube-meta'] as const,
+  },
   /** `/api/admin/*` — cross-tenant; one `admin.all` invalidation after any admin mutation */
   admin: {
     all: ['admin'] as const,

@@ -66,10 +66,17 @@ describe('pruneExpired', () => {
       },
     ])
 
+    // Return counts are NOT asserted: `scheduled.test.ts` dispatches the same cron against the
+    // shared test database in another fork, so a concurrent prune may have already deleted these
+    // fixtures and this call legitimately reports 0. Row presence/absence below is what matters.
     const counts = await runPruneExpired(db)
-    expect(counts.sessions).toBeGreaterThanOrEqual(1)
-    expect(counts.magicLinks).toBeGreaterThanOrEqual(2)
-    expect(counts.invitations).toBeGreaterThanOrEqual(1)
+    expect(counts).toEqual(
+      expect.objectContaining({
+        sessions: expect.any(Number),
+        magicLinks: expect.any(Number),
+        invitations: expect.any(Number),
+      })
+    )
 
     expect(
       await db

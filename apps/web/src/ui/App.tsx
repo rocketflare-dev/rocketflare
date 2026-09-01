@@ -52,6 +52,11 @@ const ChatPage = lazy(() => import('@/ui/pages/chat/ChatPage'))
 const AgentsPage = lazy(() => import('@/ui/pages/agents/AgentsPage'))
 // D18: the knowledge base — ingest, list, hybrid search.
 const DocumentsPage = lazy(() => import('@/ui/pages/documents/DocumentsPage'))
+// D19: analytics. The list page is plain kit UI; the view and explore pages carry drizzle-cube
+// (charts, grid editor, recharts) and must stay out of the main bundle.
+const DashboardListPage = lazy(() => import('@/ui/pages/analytics/DashboardListPage'))
+const DashboardViewPage = lazy(() => import('@/ui/pages/analytics/DashboardViewPage'))
+const QueryBuilderPage = lazy(() => import('@/ui/pages/analytics/QueryBuilderPage'))
 const AdminLayout = lazy(() => import('@/ui/pages/admin/AdminLayout'))
 const AccessRequests = lazy(() => import('@/ui/pages/admin/AccessRequests'))
 const TenantList = lazy(() => import('@/ui/pages/admin/TenantList'))
@@ -130,6 +135,31 @@ function ShellRoutes() {
             element={
               <RequireGuard guard={{ action: 'read', subject: 'Document' }}>
                 <DocumentsPage />
+              </RequireGuard>
+            }
+          />
+          {/* D19: every member may read dashboards; editing is gated per control */}
+          <Route
+            path="/analytics"
+            element={
+              <RequireGuard guard={{ action: 'read', subject: 'Analytics' }}>
+                <DashboardListPage />
+              </RequireGuard>
+            }
+          />
+          <Route
+            path="/analytics/explore"
+            element={
+              <RequireGuard guard={{ action: 'read', subject: 'Analytics' }}>
+                <QueryBuilderPage />
+              </RequireGuard>
+            }
+          />
+          <Route
+            path="/analytics/:pageId"
+            element={
+              <RequireGuard guard={{ action: 'read', subject: 'Analytics' }}>
+                <DashboardViewPage />
               </RequireGuard>
             }
           />
