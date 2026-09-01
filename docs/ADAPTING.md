@@ -46,10 +46,22 @@ an `@gmgo/shared` import was missed. Keep `packages/shared` **private** (`"priva
   `apps/web/src/ui/pages/agents/` (see `apps/web/src/ui/CLAUDE.md`). `AGENT_KEYS` must not be empty:
   `agentKeySchema` is a `z.enum`. Rows in `agent_runs` / `agent_run_events` / `prompt_overrides` /
   `agent_models` for the old key are inert data — delete them or leave them
-- The example cubes `ActivityEvents` / `TenantActivityDaily` and the `tenant_activity_daily_facts`
-  table + `tenant-overview` template (keep `Users` / `TenantUsers` — they document both scoping
-  patterns). Update `apps/web/src/api/services/fact-tables/registry.ts` and
-  `apps/web/tests/dashboards/all-templates.test.ts`
+- The example cubes `ActivityEvents` / `TenantActivityDaily`, the fact table
+  `tenant_activity_daily_facts` and the `tenant-overview` template (keep `Users` / `TenantUsers` — they
+  document both scoping patterns, and keep `cubes/security.ts`, `routes/cube-api.ts`,
+  `services/fact-tables/{refresh,freshness,registry}.ts`, `services/dashboard-templates.ts` — that is
+  the runtime). Removing them touches: the two cube files + `allCubes` in `apps/web/src/api/cubes/index.ts`;
+  `apps/web/src/db/schema/facts/tenant-activity-daily-facts.ts` (+ `facts/index.ts`, `relations.ts`) with
+  a `DROP TABLE` migration; `FACT_TABLES` in `services/fact-tables/registry.ts` and
+  `queries/tenant-activity-daily.ts` (an empty registry is fine — the `:15` cron then does nothing; or
+  drop the cron from BOTH tomls + `SCHEDULED_TASKS` + `tests/api/scheduled-facts.test.ts`);
+  `apps/web/src/dashboards/general-templates/tenant-overview.ts` (+ its `GENERAL_TEMPLATES` entry —
+  `DASHBOARD_TEMPLATES` may be empty: `ensureDefaultDashboards` returns 0); and the tests
+  `tests/api/cubes/cube-isolation.test.ts` (rewrite the `cases` around your cubes — its coverage
+  assertion requires one per cube), `tests/api/services/fact-table-refresh.test.ts`,
+  `tests/api/analytics-pages.test.ts` (template expectations), `tests/dashboards/all-templates.test.ts`.
+  Existing tenants keep their `tenant-overview` rows as inert `analytics_pages` data (`reset` on them →
+  404 `template_not_found`); delete the rows or leave them
 - CLI commands you do not want (`apps/cli/src/commands/*` — `members list`, `keys list`,
   `activity list` are examples of the pattern; keep `login`, `logout`, `whoami`, `status`, `config`)
 - `docs/analysis/` — the kit's decision record. Keep it until your first release, then move it under
@@ -108,6 +120,70 @@ instance; never run it in the route.
 6. Tests — `tests/api/agent-runs.test.ts` (enqueue → row + `stubs(env).workflow.created`) and a
    `// @vitest-isolate` runtime test mocking `@/api/services/ai/resolve` with a `FakeChatClient` script
    that answers the terminal tool (`.claude/rules/testing.md`).
+
+**Adding a cube** (D19 — `apps/web/src/api/cubes/CLAUDE.md`). No migration when the table exists:
+
+1. `apps/web/src/api/cubes/<name>.ts`: `defineCube('Name', { sql: ctx => ({ from: table, where:
+   eq(table.tenantId, tenantIdOf(ctx)) }), dimensions, measures, joins? })`. **The `where` is the tenant
+   predicate and is not optional**; a table without `tenant_id` scopes through membership like
+   `users.ts` (`inArray(...)` over a bound `tenant_users` subquery). One `primaryKey: true` dimension;
+   joins on the `belongsTo` side only (`targetCube: () => otherCube`); an event table adds
+   `meta.eventStream`. Member names are a frozen contract — choose them once.
+2. Register it in `allCubes` (`cubes/index.ts`).
+3. **Add a case to `apps/web/tests/api/cubes/cube-isolation.test.ts`**: seed rows for its table in
+   `seedTenant`, a query and an `expect` per side. The suite fails until every cube in `allCubes` has
+   one — that test is the only enforcement of tenant scoping in the cube layer.
+4. Optional: portlets in a template (below); the template test then also checks your member names.
+
+**Adding a fact table** (D19 — `apps/web/src/api/services/fact-tables/CLAUDE.md`):
+
+1. Schema — `apps/web/src/db/schema/facts/<name>.ts` (copy `tenant-activity-daily-facts.ts`):
+   `tenantRef()`, the grain columns, the measures, `fact_refreshed_at` (`timestamptz`, `defaultNow()`),
+   `unique('<name>_grain').on(...)` (`.nullsNotDistinct()` when a grain column is nullable), a
+   `(tenant_id, …)` index, `tenantIsolation('<name>')`; no `id`, no `timestamps()`, no FK to `users`.
+   Export from `facts/index.ts`; `pnpm db:generate`, read the SQL, `pnpm db:migrate`.
+2. Query — `services/fact-tables/queries/<name>.ts`: `export function <name>Select(tenantId: string):
+   SQL` — a `sql` tag SELECT with `where tenant_id = ${tenantId}` (bound), columns in the schema file's
+   declaration ORDER, ending with `now() as fact_refreshed_at`. The INSERT names its targets from
+   `getTableColumns`, so a wrong order fails loudly rather than shifting values.
+3. Registry — one entry in `FACT_TABLES` (`registry.ts`): `{ name, table, refreshIntervalMinutes,
+   source: { name, table, timestampColumn }, selectForTenant }`. The `:15` cron, `db:refresh-facts`,
+   `db:check-facts` and `GET /api/analytics/facts/status` pick it up with no other change. A table
+   that needs a different cadence is a second cron entry (both tomls + `SCHEDULED_TASKS`) calling
+   `refreshFactTable(db, name)`.
+4. Cube — `apps/web/src/api/cubes/<name>.ts` over the table (direct `tenant_id` scoping), + the
+   isolation case; `refreshFactTable(db, '<name>', { tenantId })` in `seedTenant` so it has rows.
+5. Tests — extend `tests/api/services/fact-table-refresh.test.ts` (one row per grain, idempotent,
+   only the refreshed tenant replaced). `pnpm web db:refresh-facts <name> --tenant=<uuid>` for a
+   manual run.
+
+**Adding or changing a dashboard template** (D19 — `apps/web/src/dashboards/CLAUDE.md`, read
+`DASHBOARD_PATTERNS.md` first; the layout mistakes it lists are silent at runtime):
+
+1. A file under a category folder (`general-templates/`, or a new sibling folder spread into
+   `DASHBOARD_TEMPLATES` in `dashboards/index.ts`): a `DashboardConfig` with `layoutMode: 'rows'`,
+   explicit `rows` (widths sum to 12), `groups` for KPI strips, one `isUniversalTime` filter,
+   portlets whose `query` is `JSON.stringify(<cube query>)` and whose x/y/w/h mirror the rows.
+   Templates are pure data — no drizzle or schema imports.
+2. The registry entry: `{ key, name, description, order (unique), isDefault? (at most one), config }`.
+   `key` is also the page slug.
+3. `pnpm web test:config` — `tests/dashboards/all-templates.test.ts` checks the structure and that
+   **every `Cube.member` you reference exists in `allCubes`**; the cube isolation test then executes
+   every portlet query against Postgres (rows > 0 for a tenant with members and activity — seed
+   accordingly).
+4. Rollout: a NEW template reaches every tenant on its next `GET /api/analytics/pages` (and new
+   tenants at creation). A CHANGED template does **not** — `analytics_pages.config` is a copy. Repair
+   per page with `POST /api/analytics/pages/:id/reset` or per tenant with `POST
+   /api/analytics/templates/recreate` (`{ created, reset }`; admin+). **Frozen names**: never rename a
+   cube member a stored dashboard may reference — add a new one; a rename breaks every saved page in
+   every tenant silently, and `reset`/`recreate` is the only way back.
+
+**Renaming or retiming the fact cron.** The expression `15 * * * *` appears in `[triggers] crons` of
+BOTH tomls (the parity test compares them), as the key of `SCHEDULED_TASKS` in
+`apps/web/src/api/scheduled.ts`, and in `tests/api/scheduled-facts.test.ts`; change all four together.
+If you retime it, change `refreshIntervalMinutes` in the registry too — freshness flags `stale` at
+2× that interval, so a slower cron with the old interval reports stale between runs. The local trigger
+is `curl "http://localhost:3001/cdn-cgi/local/scheduled?cron=<expression, + for spaces>"`.
 
 **Adding a chat/embeddings provider** (D17). Append the value to `AI_PROVIDERS` in
 `packages/shared/src/ai/config.ts` (LAST — the DB column is a text enum, so no migration; mirror it in

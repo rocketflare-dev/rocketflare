@@ -60,8 +60,10 @@ email provider is configured. Just copied the kit for a new app? Read `docs/ADAP
 | Background jobs: `JOBS_QUEUE` producer/consumer with typed envelopes (`email.send`, `activity.record`, `example.ping`), poison → ack, error → backoff retry; invitation + access-request emails queued; daily cron | **Phase 2 — done** | prefix-matched queue dispatch so staging's `-staging` name needs no code change; magic link stays inline |
 | File storage: R2 `FILES` behind `StorageService`, `files` table index (RLS), `POST/GET/DELETE /api/files`, 5 MB per file, avatar upload UI | **Phase 2 — done** | tenant-prefixed keys, streamed through the Worker, no presigned URLs; `avatarUrl` is global but the object is tenant-scoped (known gap) |
 | AI: three-tier provider config (per-agent `agent_models` → tenant `ai_configs`, encrypted keys → platform `ANTHROPIC_API_KEY`), Settings → AI / Prompts / Usage, streamed chat (SSE), prompt registry + overrides, `ai_usage` ledger | **Phase 3a — done** | providers `anthropic`, `anthropic_compatible` (Fireworks/Moonshot presets), `openai`, `openai_compatible`; thinking off by default; 503 `ai_not_configured` when nothing resolves; Langfuse tracing when both keys are set (fetch batcher, no OpenTelemetry) |
-| Agents on Workflows: `AgentRunWorkflow` (`claim → execute → finish`), `agent_runs` claim row + partial unique index (exclusive), `agent_run_events` + realtime nudge, cooperative cancel, reconcile-on-read, example `summarize-text`; per-agent model assignment; pgvector ingest (`documents`/`chunks`, inline or `document.index` job) + hybrid dense/lexical RRF search | **Phase 3b — done** | `[[workflows]]` `AGENT_RUN_WORKFLOW` (account-scoped name, `-staging`), `[ai]` Workers AI embeddings (`@cf/baai/bge-m3`, 1024-dim) with `EMBEDDINGS_API_KEY` fallback; agent/document/agent-model pages: see `apps/web/src/ui/CLAUDE.md` |
-| Analytics: drizzle-cube cubes, fact-table refresh, dashboard templates, query builder | Phase 4 — planned | two-tenant isolation test mandatory |
+| Agents on Workflows: `AgentRunWorkflow` (`claim → execute → finish`), `agent_runs` claim row + partial unique index (exclusive), `agent_run_events` + realtime nudge, cooperative cancel, reconcile-on-read, example `summarize-text`; per-agent model assignment; pgvector ingest (`documents`/`chunks`, inline or `document.index` job) + hybrid dense/lexical RRF search | **Phase 3b — done** | `[[workflows]]` `AGENT_RUN_WORKFLOW` (account-scoped name, `-staging`), `[ai]` Workers AI embeddings (`@cf/baai/bge-m3`, 1024-dim) with `EMBEDDINGS_API_KEY` fallback |
+| Agents / Knowledge / Agent-models UI: `/agents` (+ `/agents/runs/:id` drawer with the live timeline, cancel), `/documents` (ingest, hybrid search), Settings → Agent models | **Phase 3b-UI — done** | poll while active + `entity.changed { entity: 'agent-run' }` nudge (entity string = query-key root); documents poll while `pending`; specifics in `apps/web/src/ui/CLAUDE.md` |
+| Analytics server: drizzle-cube semantic layer at `/cubejs-api` + `/mcp` (per-request `createCubeApp`, every cube tenant-scoped in `sql()`), cubes `Users`/`TenantUsers`/`ActivityEvents`/`TenantActivityDaily`, fact table `tenant_activity_daily_facts` rebuilt per tenant by the `15 * * * *` cron + freshness check, dashboard templates copied into `analytics_pages` per tenant with reset/recreate, `/api/analytics/*` | **Phase 4 — server done** | `tests/api/cubes/cube-isolation.test.ts` is the isolation guarantee (convention, not enforcement); member names are frozen (stored dashboards reference them); `pnpm web db:refresh-facts` / `db:check-facts` |
+| Analytics UI: dashboard pages over drizzle-cube's React components (recharts), query builder | Phase 4 — UI in progress | see `apps/web/src/ui/CLAUDE.md`; the server contract above is final |
 | Ship-ready: `deploy.yml` release dance, `cf-provision.sh`, `SETUP.md` Part 3, `DEPLOY.md` | Phase 5 — **docs and scripts done**, exercised once code exists | one tag (= root `package.json` version) ships web; the CLI is not deployed |
 
 Out of scope for v1: billing, Vectorize (vectors live in pgvector), voice, file-parsing document pipelines
@@ -69,8 +71,12 @@ Out of scope for v1: billing, Vectorize (vectors live in pgvector), voice, file-
 
 Dependencies the AI layer adds to `apps/web`: `@anthropic-ai/sdk` (fetch-based; its `node:fs`
 credential-chain imports are dynamic and inert under `nodejs_compat`), `zod-to-json-schema` (tool
-schemas), `react-markdown` + `remark-gfm` (UI, isolated to the lazy chat chunk). Measured bundle:
-`dist/api/worker.js` ≈ 308 KiB gzip; UI main chunk ≈ 114 KiB gzip, chat chunk ≈ 54 KiB gzip.
+schemas), `react-markdown` + `remark-gfm` (UI, isolated to the lazy chat chunk). Analytics adds
+`drizzle-cube@0.8.3` (pinned exactly; one expected `@duckdb/node-api` peer warning) plus `recharts`,
+`d3`, `react-grid-layout`, `react-is` for its UI. Measured bundle: UI main chunk ≈ 114 KiB gzip, chat
+chunk ≈ 54 KiB gzip; **`dist/api/worker.js` ≈ 1265 KiB gzip (≈ 5.6 MB raw), up from ≈ 308 KiB** —
+`drizzle-cube/adapters/hono` statically imports its MCP transport (≈ 2.1 MB raw) even with MCP
+disabled; under the Workers limit, fix is upstream (`docs/DEPLOY.md` "Bundle size").
 
 ## Documentation
 

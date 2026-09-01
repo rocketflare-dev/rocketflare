@@ -13,7 +13,7 @@ globs:
 Vitest in `apps/web` (all commands below are root scripts that delegate there, or run inside
 `apps/web`), four projects (`apps/web/vitest.config.ts`): `api` + `api-isolated` (Node, **real Postgres** on 5433),
 `ui` (jsdom + Testing Library), `config` (Node, no database: wrangler parity, env schema, pure
-helpers). `pnpm test` is two `vitest run` invocations (`test:shared`, `test:isolated`) because
+helpers, and `tests/dashboards/**` — the dashboard-template structure test, D19). `pnpm test` is two `vitest run` invocations (`test:shared`, `test:isolated`) because
 vitest 3 resolves `isolate` per run, not per project.
 
 ## Tests run under Node, against the real Hono app
@@ -121,7 +121,26 @@ a fake `WebSocket` factory left set) is on you.
   is the embedder (override `respond` for keyword-keyed vectors), assert `documents.status`,
   `chunks` count, `stubs(env).queue.messages` for the `document.index` handoff over 50 chunks, and that
   tenant B's search never returns tenant A's chunks
-- Cron: call `scheduled({ cron: '0 4 * * *' }, env, ctx)` and assert the task ran; unknown cron → no-op
+- Cron: call `scheduled({ cron: '0 4 * * *' }, env, ctx)` and assert the task ran; unknown cron → no-op.
+  `scheduled-facts.test.ts` does the same for `'15 * * * *'` (asserts `SCHEDULED_TASKS` registers
+  `refreshFactTables`, then dispatches it and reads the fact rows for seeded activity)
+- **Cube isolation (D19, MANDATORY — `tests/api/cubes/cube-isolation.test.ts`)**: seed two tenants with
+  different members and `activity_events` (`refreshFactTable(db, name, { tenantId })` after seeding so
+  the fact cube has rows), then for EVERY cube in `allCubes` run the same `POST /cubejs-api/v1/load`
+  as tenant A and as tenant B with a session cookie + `Origin` and assert each sees exactly its own
+  rows — and that B's user/tenant ids never appear anywhere in A's payload. The `cases` table is keyed
+  by cube name and compared to `allCubes` — **adding a cube without a case fails the suite**. The file
+  also covers a join (`ActivityEvents → Users`), `/meta`, 401 / 403 `no_tenant` envelopes, `/mcp`
+  JSON-RPC `initialize`, and executes every template portlet query for a tenant (rows > 0).
+  `cubes/security.test.ts` unit-tests `extractSecurityContext` / `tenantIdOf`
+- Fact tables (`tests/api/services/fact-table-refresh.test.ts`): call `refreshFactTable` directly
+  against Postgres — one row per grain (NULL actor included), idempotent, only the refreshed tenant's
+  rows replaced, `factTableColumnNames` in declaration order, unknown table throws; `computeFreshness`
+  is pure (fresh / stale / never-built cases) and `checkFactTableFreshness` reads the live tables
+- Analytics pages (`analytics-pages.test.ts`): first `GET /pages` creates the template pages once;
+  `POST /api/tenants` seeds them; CRUD as owner, 403 for a member on every write, 404 across tenants,
+  reset restores the template, template delete → 403 `template_page`, `recreate` repairs,
+  `/facts/status` is admin+
 - Producers: assert on `stubs(env).queue.messages` (RecordingQueue) — `body.type`, `body.payload` —
   and that the route did NOT do the work itself (no `[email:dev]` line, no provider fetch)
 - Uploads: `new FormData()` + `form.append('file', new File([bytes], 'a.png', { type: 'image/png' }))`
@@ -130,7 +149,8 @@ a fake `WebSocket` factory left set) is on you.
 
 ## What every API test file includes
 
-- A tenant-isolation assertion for list/read endpoints (tenant B cannot see tenant A's row)
+- A tenant-isolation assertion for list/read endpoints (tenant B cannot see tenant A's row); for a
+  cube that assertion is a case in `tests/api/cubes/cube-isolation.test.ts`
 - An unauthenticated 401 and a wrong-role 403 for a protected route
 - The error envelope shape `{ error, statusCode, code? }` on at least one failure path
 
@@ -138,12 +158,21 @@ a fake `WebSocket` factory left set) is on you.
 
 `apps/web/tests/ui/setup.ts` (jest-dom). `renderWithProviders()` gives QueryClient + Auth + Ability + Router.
 Shallow component tests; mock `fetch` where needed, no MSW. `contrast.test.ts` gates the design tokens.
-Streaming (`chat-page.test.tsx`, `sse.test.ts`): `tests/ui/helpers/sse.ts` builds fake
+Polling hooks (`agents-page`, `agent-run-detail`, `documents-page`): test the pure decision
+(`runPollInterval(status)`), not `refetchInterval` with fake timers; `agent-run-detail` mounts inside
+`WebSocketProvider` with the `FakeSocket` to prove an `entity.changed { entity: 'agent-run' }` nudge
+refetches. Streaming (`chat-page.test.tsx`, `sse.test.ts`): `tests/ui/helpers/sse.ts` builds fake
 `text/event-stream` `Response`s (`sseResponse(frames)`, `streamResponse` for arbitrary chunk
 boundaries, `hangingSseResponse` for the Stop button); assert with `waitFor`, not `findBy` — bubbles
 remount when the optimistic id becomes the persisted one. Pure parsers (`chunking.test.ts`,
-`permissions.test.ts` — the matrix incl. `AiConfig`/`Prompt`/`Conversation`/`AgentRun`/`Document`) live
-in the `config` project.
+`permissions.test.ts` — the matrix incl. `AiConfig`/`Prompt`/`Conversation`/`AgentRun`/`Document`/
+`Dashboard`/`Analytics`) live in the `config` project, as does **`tests/dashboards/all-templates.test.ts`**
+(D19, no database): every `DASHBOARD_TEMPLATES` entry is checked structurally — `layoutMode: 'rows'`,
+row widths sum to 12, unique row/group/portlet ids, every column resolves to a portlet or group, every
+portlet placed exactly once with x/y/w/h matching its row, filters mapped only to declared filters,
+**every `Cube.member` in a portlet query exists in `allCubes`** (the frozen-names guard), `recordsTable`
+is `ungrouped`, the chart rules from `DASHBOARD_PATTERNS.md`, registry keys/orders/one default.
+Changing a template or a cube member without running it is how a stored dashboard breaks silently.
 
 ## Commands
 

@@ -82,6 +82,21 @@ http://localhost:3000 renders the shell. Sign in: enter the seeded owner email, 
 URL from the **wrangler dev console** (no `RESEND_API_KEY` → links are logged, not sent), open it,
 land on Home.
 
+**Analytics check** (D19, still in 1.6 — same terminal pair):
+```bash
+pnpm web db:refresh-facts && pnpm web db:check-facts   # rebuild the fact table, then read its freshness
+```
+Verify: `db:refresh-facts` prints `tenant_activity_daily_facts  tenants=1 rows=…` with no `FAILED`
+line and `db:check-facts` prints that table as `fresh` and exits 0 (it exits 1 when a table is
+`STALE` — lag > 2× its hourly interval; `wrangler dev` never fires the `15 * * * *` cron by itself,
+so a laptop database goes stale two hours after its last rebuild until you run this or
+`curl "http://localhost:3001/cdn-cgi/local/scheduled?cron=15+*+*+*+*"`). Then, signed in, open
+**Analytics** in the nav: the seeded **Organisation Overview** page renders with live member and
+activity numbers (the analytics UI is landing — see `apps/web/src/ui/CLAUDE.md`; by hand,
+`curl -b <cookie> localhost:3001/api/analytics/pages` lists one page with `templateKey:
+"tenant-overview"`, and an unauthenticated `curl -i localhost:3001/cubejs-api/v1/meta` is a JSON 401,
+never HTML). `GET /api/analytics/facts/status` (owner/admin) shows the same freshness as the script.
+
 > **Cookie note.** The session cookie is `__Host-session`, and the `__Host-` prefix *requires* the
 > `Secure` flag even in development. Chrome and Firefox treat `http://localhost` as a secure context so
 > this just works; Safari has historically been flaky about it. If Safari won't stay signed in locally,
@@ -106,7 +121,9 @@ scripts, `GMGO_API_KEY` + `GMGO_URL` in the environment replace the config file 
 pnpm test:db:up       # ephemeral Postgres on :5433 (max_connections=300; apps/web/docker-compose.test.yml)
 pnpm test             # every package: web api + api-isolated (real DB), ui (jsdom), config (no DB); cli
 ```
-Verify: all projects green. `apps/web/tests/config/wrangler-parity.test.ts` passes with the
+Verify: all projects green — including `tests/api/cubes/cube-isolation.test.ts` (two tenants, every
+cube, disjoint rows) and `tests/dashboards/all-templates.test.ts` (`config` project).
+`apps/web/tests/config/wrangler-parity.test.ts` passes with the
 placeholder ids still in the tomls — the placeholder check only runs with `REQUIRE_PROVISIONED=1`
 (Part 3). Single web projects: `pnpm web test:api`, `pnpm web test:ui`, `pnpm web test:config`.
 
@@ -116,7 +133,9 @@ pnpm lint && pnpm typecheck && pnpm test && pnpm build
 ```
 Verify: exits 0. This is the pre-commit gate for the whole workspace; `typecheck` regenerates
 `apps/web/worker-configuration.d.ts` (commit it if it changed) and `build` produces
-`apps/web/dist/{ui,api}` and `apps/cli/dist/cli.js`.
+`apps/web/dist/{ui,api}` and `apps/cli/dist/cli.js`. Expect `dist/api/worker.js` at ≈ 1265 KiB gzip
+(≈ 5.6 MB raw) — drizzle-cube's adapter carries its MCP transport; `docs/DEPLOY.md` "Bundle size" —
+and one `@duckdb/node-api` peer warning from `pnpm install`; neither is a problem.
 
 ### 1.10 Public URL via tunnel `[ready]` (optional)
 For OAuth callbacks, emailed magic links or webhooks against your laptop:
@@ -227,7 +246,16 @@ no-op and nothing changes in behaviour. Traces are batched per request and shipp
 agent; a trace named `chat` / `summarize-text` with one `generation` carrying token usage appears in
 Langfuse within a minute, tagged with the environment.
 
-### 2.7 Rebrand checklist
+### 2.7 Analytics tooling — drizzle-cube CLI / Claude Code plugin (optional)
+`cp apps/web/.drizzle-cube.json.example apps/web/.drizzle-cube.json` (git-ignored) and set `apiToken`
+to a tenant API key from Settings → API keys (`serverUrl` is your `wrangler dev` origin or a deployed
+host). The key is an ordinary Bearer key: every query it makes is scoped to that tenant by the cubes
+and it is revoked in the same place. Nothing to deploy; MCP for browser clients additionally needs
+`mcp.allowedOrigins` in `routes/cube-api.ts`, which the kit leaves unset.
+Verify: the drizzle-cube CLI's `meta` lists `ActivityEvents`, `TenantActivityDaily`, `TenantUsers`,
+`Users`.
+
+### 2.8 Rebrand checklist
 See [`docs/ADAPTING.md`](docs/ADAPTING.md) §1 — package names (`@gmgo/*`), worker names, DB names,
 CLI bin / config dir / env prefix, themes, logo, `EMAIL_FROM`.
 

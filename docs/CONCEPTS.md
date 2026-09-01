@@ -16,7 +16,7 @@ section ends with **Known gaps**; sections for phases not yet built say so.
 | 5 | [Background work and realtime](#5-background-work-and-realtime) | Phase 2–3 — built |
 | 6 | [Email and storage](#6-email-and-storage) | Phase 1–2 — built |
 | 7 | [UI shell](#7-ui-shell) | Phase 0–1 |
-| 8 | [Analytics](#8-analytics) | Phase 4 |
+| 8 | [Analytics](#8-analytics) | Phase 4 — server built; UI in progress |
 | 9 | [AI layer](#9-ai-layer) | Phase 3 — built |
 | 10 | [Deployment](#10-deployment) | Phase 0 / 5 |
 | 11 | [CLI](#11-cli) | Phase 1 |
@@ -67,7 +67,8 @@ strands a user who lost their last organisation.
 or `support` (minted only from `/admin`, excluded from member counts, visible to the customer by
 design). `users.isGlobalAdmin` is a platform flag, not a tenant role. CASL subjects: `all`, `Tenant`,
 `TenantMember`, `Invitation`, `ApiKey`, `ActivityEvent`, `Notification`, `File`, `AiConfig`, `Prompt`,
-`Conversation`, `AgentRun`, `Document`, plus an `access` hook over an injected `features: string[]`.
+`Conversation`, `AgentRun`, `Document`, `Dashboard`, `Analytics`, plus an `access` hook over an
+injected `features: string[]`.
 
 | Subject \ Role | globalAdmin | owner | admin | support | member |
 |---|---|---|---|---|---|
@@ -83,6 +84,8 @@ design). `users.isGlobalAdmin` is a platform flag, not a tenant role. CASL subje
 | `Conversation` (D17) | manage | manage | manage | manage | manage (own only: routes filter by `userId`, others' threads are 404) |
 | `AgentRun` (D7) | manage | manage | manage | manage | manage (own runs; admin+ see and cancel every run) |
 | `Document` (D18) | manage | manage | manage | manage | create + read (delete own: route's `ownerUserId` check) |
+| `Dashboard` (D19, `analytics_pages`) | manage | manage | manage | manage | read |
+| `Analytics` (D19, the cube API `/cubejs-api`, `/mcp`) | manage | read | read | read | read (rows are tenant-scoped by every cube, §8) |
 
 `*` Deleting a tenant and assigning/changing `owner` additionally require an explicit
 `role === 'owner'` check — CASL conditions are not used anywhere, so don't pretend they are. A new
@@ -232,7 +235,7 @@ app is dropped (it soaked Node connection pinning, which no longer exists); no r
 |---|---|---|
 | plain job | `JOBS_QUEUE` (one queue) — **built** | `enqueueJob(queue, input)` (`services/jobs.ts`) → `processJobsBatch(batch, { env, config, logger })` (`queues/jobs.ts`) dispatched on `type` to `queues/handlers/*`; `queue.ts` routes `batch.queue` by prefix |
 | durable multi-step | `AGENT_RUN_WORKFLOW` (one class) — **built** | `AgentRunWorkflow` (`api/workflows/agent-run.ts`): `claim → execute → finish`, bodies in `services/agents/runtime.ts`; the agent runtime *is* the example workflow — no throwaway second one (§9) |
-| periodic | `[triggers] crons` | `scheduled.ts` dispatch table on `event.cron`; each task try/caught; `0 4 * * *` prune, `15 * * * *` fact refresh (Phase 4) |
+| periodic | `[triggers] crons` | `scheduled.ts` dispatch table on `event.cron`; each task try/caught; `0 4 * * *` prune, `15 * * * *` fact-table refresh (§8) |
 
 **Jobs (D7) — one queue, typed envelopes, poison never loops.** The contract is
 `@gmgo/shared/jobs`: a discriminated union on `type` (`email.send`, `activity.record`,
@@ -391,6 +394,8 @@ emitted tokens; the palette *pipeline* is documented, not shipped (D20). Tailwin
 opted out globally (`@import "tailwindcss" source(none)`) and re-enabled with explicit `@source`
 lines scoped to `apps/web/src/ui` — auto-detection scanned the whole repo (docs, API code) and
 DaisyUI emitted components for stray words; the safelist exists only for classes built from props.
+A dependency that ships JSX (drizzle-cube's `dist/client`, §8) gets its own explicit `@source`
+line, never safelist entries.
 
 **Providers, in order** (06 §b): `ErrorBoundary` → `QueryClientProvider` → `AuthProvider`
 (`GET /auth/session`, zod-parsed, tenant selection) → `AbilityProvider` (CASL from
@@ -411,30 +416,128 @@ theme option or cross-tab sync; dev quick-login account list should come from a 
 
 ## 8. Analytics
 
-**Status: planned (Phase 4).**
+**Status: server built (Phase 4); UI in progress — see `apps/web/src/ui/CLAUDE.md`.** Server:
+`apps/web/src/api/cubes/*` (+ `CLAUDE.md`), `routes/{cube-api,analytics-pages}.ts`,
+`services/dashboard-templates.ts`, `services/fact-tables/**` (+ `CLAUDE.md`), `src/dashboards/**`
+(`CLAUDE.md`, `DASHBOARD_PATTERNS.md`), `db/schema/{analytics-pages.ts,facts/*}`, migration `0004`.
+Contracts: `@gmgo/shared/analytics`. Decision record: `docs/analysis/08-analytics-dashboards.md`.
 
-**drizzle-cube is the semantic layer; tenant scoping is inside every cube's `sql()`.** The Hono
-adapter is created per request at `/cubejs-api` and `/mcp`, both mounted behind `authMiddleware` and
-added to the ASSETS 404 guard (D19). `extractSecurityContext` (one copy) reads `c.get('auth')` and
-every cube filters on `ctx.securityContext.tenantId` — directly (`TenantUsers`, fact tables) or
-via a junction subquery for global tables (`Users`). **This is convention, not enforcement**, so
-`apps/web/tests/api/cubes/cube-isolation.test.ts` (two tenants, same query, disjoint rows) is mandatory.
+**drizzle-cube is the semantic layer; tenant scoping is inside every cube's `sql()` (D19).**
+`routes/cube-api.ts` is ONE router mounted at both `/cubejs-api` and `/mcp` behind
+`authMiddleware`. Per request it does `withAuthAndDb(c)` → `guardPermission(c, 'read',
+'Analytics')` → `extractSecurityContext(c)` (`cubes/security.ts`: `{ tenantId, userId, role }`
+from `c.get('auth')`, throws without a tenant) → `createCubeApp({ cubes: allCubes, drizzle: db,
+schema, engineType: 'postgres', mcp: { enabled: true } })` from `drizzle-cube/adapters/hono`, then
+forwards `c.req.raw` — the adapter registers absolute paths `/cubejs-api/v1/{load,meta,sql,batch,
+dry-run}` and `/mcp`. The compiler is rebuilt per request because the Hyperdrive-backed `db` exists
+only inside one. Both prefixes are in the SPA catch-all's JSON-404 guard, so an unauthenticated hit
+is a 401 envelope, never `index.html` (`tests/api/health.test.ts`). MCP uses drizzle-cube's default
+origin policy (loopback and clients that send no `Origin`, e.g. a desktop connector); a browser MCP
+client needs `mcp.allowedOrigins`, which the kit does not set. `apps/web/.drizzle-cube.json.example`
+→ a git-ignored `.drizzle-cube.json` holding a tenant API key for the drizzle-cube CLI / Claude Code
+plugin — the Bearer key scopes it to one tenant like any other request.
 
-**Ship set.** Cubes `Users` + `TenantUsers` (both scoping patterns), `ActivityEvents` (event stream
-over the generic `activity_events` table) and `TenantActivityDaily` over one fact table
-`tenant_activity_daily_facts` — grain `(tenant_id, day, user_id)`, refreshed per tenant by
-DELETE+INSERT from a registry at `:15`, with a freshness check (lag vs `MAX(created_at)` on the
-source). One dashboard template, `tenant-overview`; `analytics_pages` are created lazily per tenant
-from templates with "reset to template". drizzle-cube React components; **recharts only**.
+**Every cube filters on `tenantIdOf(ctx)`** — directly (`TenantUsers`, `ActivityEvents`,
+`TenantActivityDaily`: `where: eq(table.tenantId, tenantIdOf(ctx))`) or, for a global table,
+through a membership subquery (`Users`: `inArray(users.id, select user_id from tenant_users where
+tenant_id = $1)` — the pattern for any table without `tenant_id`). `tenantIdOf` throws on an empty
+tenant rather than compiling `tenant_id = NULL`. **This is convention, not enforcement** — drizzle-
+cube joins whatever a query asks for and there is no second line of defence in the cube layer — so
+`apps/web/tests/api/cubes/cube-isolation.test.ts` is mandatory: two seeded tenants, every cube in
+`allCubes` through the real `POST /cubejs-api/v1/load` as each tenant, only that tenant's rows back
+(and none of the other's ids anywhere in the payload), a join case (`ActivityEvents → Users`),
+`/meta` lists every cube, 401 and 403 `no_tenant` envelopes, `/mcp` answers a JSON-RPC
+`initialize`, and every template portlet query executes with rows. A new cube must add a case —
+the coverage assertion compares `allCubes` to the case keys. No cube reads `role`; access is
+membership + `read Analytics`, filtering is by tenant.
 
-**Frozen measure names.** Stored dashboards reference `Cube.measure` strings in JSONB. Renaming a
-measure silently breaks every saved dashboard — `apps/web/tests/dashboards/all-templates.test.ts` checks
-templates structurally, and reset-to-template is the user-facing repair.
+**Ship set** (`cubes/index.ts`, sorted by title). `ActivityEvents` — event stream over
+`activity_events` with `meta.eventStream { bindingKey, timeDimension, eventDimension }` (funnel /
+flow / retention modes); measures `count`, `activeUsers`. `TenantActivityDaily` — over the fact
+table; `eventCount` (sum), `activeUsers`, `activeDays`; dimensions `day`, `userId`,
+`factRefreshedAt`. `TenantUsers` — `count` plus filtered `ownerCount` / `adminCount` /
+`memberCount` over a synthetic `tenant:user` key (the junction has no `id`); `role`, `joinedAt`.
+`Users` — `count`; `name`, `email`, `createdAt`, `lastLoginAt`. Joins are declared on the
+`belongsTo` side only (the three tenant cubes → `Users`); `Users` declares none, because drizzle-cube
+0.8.3 resolves join paths in both directions and a declared `hasMany` makes every ungrouped
+(`recordsTable`) query that mixes the two cubes a 400.
 
-**Known gaps / not built yet:** cube access is authentication + tenant scope only (no per-cube CASL
-gate); per-request compiler cost is fine for a kit (cube sets are the scaling path); drizzle-cube's
-cache is per-isolate (a KV provider would be an extension); `rlsSetup` unused; reporting/export,
-AI dashboard generation, benchmarks deferred.
+**Fact tables.** `tenant_activity_daily_facts` (`db/schema/facts/`, migration `0004`): grain
+`(tenant_id, day, user_id)` declared `UNIQUE NULLS NOT DISTINCT` (Postgres 15+ — NULL actors collapse
+to one row), `event_count`, `distinct_event_types`, `first_event_at` / `last_event_at`,
+`fact_refreshed_at` watermark; no surrogate `id`, no FK to `users` (a refresh must never fail
+because a person left), RLS policy like every tenant table. It is a plain table, not a materialised
+view: `REFRESH MATERIALIZED VIEW` cannot run through Hyperdrive and cannot be scoped to one tenant.
+`services/fact-tables/registry.ts` `FACT_TABLES` is the one list — `{ name, table,
+refreshIntervalMinutes: 60, source: { table, timestampColumn }, selectForTenant(tenantId) }` — that
+`refresh.ts`, `freshness.ts`, the cron and both scripts iterate. `refreshFactTableForTenant` runs
+one transaction per tenant: `DELETE … WHERE tenant_id = $1`, then `INSERT INTO t (<columns from
+getTableColumns>) <selectForTenant>` — the target list comes from the drizzle mirror, so a column
+drift between `queries/<name>.ts` and the schema fails loudly instead of shifting values. Tenants
+run sequentially; errors are isolated per tenant (`errors[]`; the cron logs a warning). Cron
+`"15 * * * *"` → `refreshFactTables` (`scheduled.ts`, both tomls). Freshness: `lagSeconds` = newest
+`source.timestampColumn` minus newest `fact_refreshed_at` (0 when the build is newer; a never-built
+table with source rows is measured to now); `stale` = lag > 2× the interval (one missed cron is
+fine, two is not). `GET /api/analytics/facts/status` (admin+, `isAdminLevel`) and `pnpm web
+db:check-facts` (exit 1 when any table is stale) read it; `pnpm web db:refresh-facts [table]
+[--tenant=<uuid>]` runs the same service the cron does. `wrangler dev` never fires crons — trigger
+`:15` by hand (`.claude/rules/cloudflare.md`).
+
+**Dashboards.** Templates are TypeScript `DashboardConfig`s (type from `drizzle-cube/client`) in
+`src/dashboards/`: `layoutMode: 'rows'` with explicit `rows` (widths sum to 12), `groups` for KPI
+strips, one `isUniversalTime` filter, portlets whose `query` is a cube query as a JSON string;
+registered in `DASHBOARD_TEMPLATES` (`index.ts`; categories are folders such as
+`general-templates/`; `key` doubles as the page slug; `order` unique; at most one `isDefault`).
+One ships: `tenant-overview` ("Organisation Overview", default) — it exercises every ship-set cube.
+`analytics_pages` (`slug` unique per tenant, `config` jsonb, `templateKey` — null = user page,
+`isDefault`, `sortOrder`, `createdByUserId`) are copied from templates by `ensureDefaultDashboards`
+in two places: `onTenantCreated` (`utils/db/tenant-helpers.ts`) after the create transaction
+commits — best-effort, a failure is swallowed — AND lazily on every `GET /api/analytics/pages`,
+idempotent through `(tenant_id, slug)` `onConflictDoNothing`. The lazy path is the guarantee and
+is how a template added later reaches existing tenants. Routes (`/api/analytics`, contracts in
+`@gmgo/shared/analytics`): every member — `GET /pages` (`{ items }`, ordered by `sortOrder`),
+`GET /pages/:id`, `GET /templates`; `manage Dashboard` (admin+) — `POST /pages` (an empty rows
+dashboard unless `config` is given; unique slug from the name), `PATCH /pages/:id` (name,
+description, config, order, isDefault), `DELETE /pages/:id` (a template page → 403
+`template_page`), `POST /pages/:id/reset` (a user page → 400 `not_a_template_page`; a template
+that no longer exists → 404 `template_not_found`), `POST /templates/recreate` → `{ created, reset }`.
+Activity: `dashboard.created | updated | deleted | reset`. `config` is a copy: **a template change
+reaches existing tenants only through reset or recreate.**
+
+**Frozen member names.** Stored dashboards reference `Cube.measure` / `Cube.dimension` strings in
+JSONB, so renaming a member silently breaks every saved page in every tenant. Add members, never
+rename them. `apps/web/tests/dashboards/all-templates.test.ts` (the `config` project, no database)
+checks every template structurally — rows sum to 12, ids unique, every portlet placed exactly once
+with x/y/w/h matching its row, every referenced member exists in `allCubes`, `recordsTable` is
+`ungrouped`, the chart-type rules from `DASHBOARD_PATTERNS.md`, registry keys/orders/one default —
+and reset/recreate is the user-facing repair.
+
+**Permissions.** `Dashboard` (pages): admin+ `manage`, member `read`. `Analytics` (the cube API):
+`read` for every role (§1 matrix). The cube API is read-only by nature.
+
+**UI.** In progress; specifics in `apps/web/src/ui/CLAUDE.md`. It renders `analytics_pages` with
+drizzle-cube's React components (`drizzle-cube/client`; the dependencies added for it are
+`recharts`, `d3`, `react-grid-layout`, `react-is`) in its own lazy chunk. Nothing in this section
+depends on it — the contract is the routes above.
+
+**Dependencies and bundle.** `drizzle-cube@0.8.3`, pinned exactly (one transitive peer warning,
+`@duckdb/node-api`, is expected). **Worker bundle: ≈ 1265 KiB gzip (≈ 5.6 MB raw), up from
+≈ 308 KiB.** The cause is `drizzle-cube/adapters/hono`, which statically imports
+`dist/adapters/mcp-transport-*.js` (≈ 2.1 MB raw: the MCP SDK plus inlined chart rendering) even
+when `mcp.enabled` is false — not the kit's imports (the sourcemap has no `node_modules/react` or
+`recharts` entries reached from our code). Under the Workers size cap (3 MiB gzip on the free plan,
+higher on Paid, which the kit needs anyway). The fix is upstream — a lazy `import()` of the MCP path
+in the adapter — or a thin adapter of our own over `drizzle-cube/server`.
+
+**Known gaps / not built yet:** the analytics UI (in progress, own doc); isolation is convention
+enforced by one test — no per-cube CASL gate, no second line of defence in the cube layer; the
+compiler is rebuilt per request (4 cubes — cheap; `SemanticLayerCompiler` + cube sets is the
+scaling path) and drizzle-cube's `MemoryCacheProvider` is per-isolate (a KV provider would be an
+extension); fact refresh is a sequential full rebuild — fan tenants out through `JOBS_QUEUE` past a
+few hundred; no realtime nudge for facts or pages (a dashboard refreshes on the next fetch);
+`mcp.allowedOrigins` unset; the bundle growth above; the `ANALYTICS_ENGINE` binding is deliberately
+not wired; drizzle-cube's `rlsSetup` unused; reporting/export, AI dashboard generation, benchmarks
+deferred.
 
 ## 9. AI layer
 
@@ -573,15 +676,29 @@ Document`; own-document delete is the route's `ownerUserId` check). `Conversatio
 role `manage`, ownership enforced route-side (§1 matrix). `/api/ai/usage` and `/api/ai/agent-models`
 writes require `manage AiConfig`.
 
+**UI (Phase 3b-UI; specifics in `apps/web/src/ui/CLAUDE.md`).** Routes `/agents` and
+`/agents/runs/:runId` (guard `read AgentRun`; nav "Agents"), `/documents` (guard `read Document`;
+nav "Knowledge"), Settings `?tab=agent-models` (`manage AiConfig`). Nothing streams — runs are rows.
+An open run re-reads `GET /runs/:id` every 3 s while `isRunActive` (the list too while any listed
+row is active) AND is refreshed by the server's `entity.changed { entity: 'agent-run', id }` nudge,
+because the runs query-key root is `['agent-run']`. **Convention: the `entity` string of an
+`entity.changed` nudge IS a `queryKeys` family root**, so `invalidationsFor()` covers a new resource
+with no UI socket code. Documents poll every 5 s while a row is `pending` — nothing emits a document
+nudge yet. Requested-by renders "You", a short id or "system" (no name resolution). An agent
+without a registered form gets a JSON textarea validated by the route's 400 `details`; the UI never
+sends `?strict=1`.
+
 **Known gaps / not built yet:** `enqueueRun` does NOT pre-resolve the chat client — a tenant with no
 provider gets a 202 and a `failed` row at `execute` (chat's `POST /conversations` does pre-resolve);
 the connection test spends tokens but writes no `ai_usage` row; `GET /api/ai/config/providers` has
 no shared schema (the UI keeps a permissive `passthrough` one in `hooks/useAiConfig.ts`);
 `ai_configs.label` is the upsert key, so a rename is delete + re-add; `/settings` is admin-guarded,
-so members hold `read AiConfig` / `read Prompt` with no nav path to the read-only views; the agents
-(`/agents`), documents (`/documents`) and Settings → Agent models pages are documented in
-`apps/web/src/ui/CLAUDE.md` (they consume the contracts above; nothing in this section depends on
-them); no rerank (a `RerankFn` seam is the documented extension) and no
+so members hold `read AiConfig` / `read Prompt` with no nav path to the read-only views;
+`agent_run_events.data` is `z.unknown()` in `@gmgo/shared/ai/agents` for every type except `step`
+(`agentStepEventDataSchema`) — the UI's `AgentSteps` parses `tool.*` / `text` / `status` / `error`
+leniently with local schemas, a candidate for promotion into the shared contract; no document
+nudge (`ingestText` / `indexDocument` emit nothing; the Knowledge page polls); runs show a user id,
+not a name; no rerank (a `RerankFn` seam is the documented extension) and no
 generated `tsvector` + GIN — the lexical half computes `to_tsvector` at query time; no non-exclusive
 agents (relax the partial unique index); the tool loop is one step, not one per turn; no budgets or
 quotas over `ai_usage` and no price table; prompt versioning, an evals harness, Bedrock/Azure/Gemini
@@ -697,8 +814,12 @@ delivered (or logged) by the consumer under `wrangler dev`; upload an avatar and
 `/api/files/:id`; add an AI provider in Settings → AI (or set `ANTHROPIC_API_KEY`), pass the connection
 test, hold a streamed chat whose turns and usage rows persist; start the `summarize-text` agent from
 `POST /api/agents/runs`, watch its `agent_run_events` arrive through the nudge, cancel one, and see its
-trace when Langfuse keys are set; ingest a text and get it back from the hybrid search; render the
-`tenant-overview` dashboard with live numbers (planned, Phase 4); and,
+trace when Langfuse keys are set; ingest a text and get it back from the hybrid search; open the
+Agents page and watch a run's timeline fill through the nudge, and the Knowledge page list the
+ingested document; query every cube as two tenants and see disjoint rows
+(`tests/api/cubes/cube-isolation.test.ts`), run `pnpm web db:refresh-facts && pnpm web
+db:check-facts` to a `fresh` fact table, `GET /api/analytics/pages` and find the seeded
+`tenant-overview` page (and render it with live numbers once the analytics UI lands); and,
 following `SETUP.md` Part 3, deploy to a new Cloudflare account changing only placeholders and
 secrets — with root `pnpm lint && pnpm typecheck && pnpm test && pnpm build` green at every step and
 every behaviour described here still true.

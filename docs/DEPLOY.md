@@ -27,6 +27,7 @@ package is private by default (`"private": true`, like `packages/shared`, which 
               │ .toml            │  │                  │   + NotificationsHub DO
               └───────┬──────────┘  └────────┬─────────┘   + AgentRunWorkflow
    bindings:  HYPERDRIVE  RATE_LIMIT_KV  [JOBS_QUEUE  FILES  AGENT_RUN_WORKFLOW  AI]  ASSETS
+   crons:     0 4 * * * (prune)   15 * * * * (fact tables)         routes: /api /auth /ws /cubejs-api /mcp
                       │                      │
               Hyperdrive <app>-staging   Hyperdrive <app>-production      (direct Neon host)
                       │                      │
@@ -74,7 +75,8 @@ hidden gap. `apps/web/tests/config/wrangler-parity.test.ts` enforces the table b
 | Durable Object (Phase 2) | `NOTIFICATIONS_HUB` | class `NotificationsHub` | declared in toml + `[[migrations]] tag = "v1", new_classes` — no create step |
 | Workflow (Phase 3, built) | `AGENT_RUN_WORKFLOW` | `<app>-agent-run` / `<app>-agent-run-staging` | `[[workflows]] name / binding / class_name = "AgentRunWorkflow"` — `wrangler deploy` registers it, no create step; **account-scoped name** |
 | Workers AI (Phase 3, built) | `AI` | — | `[ai] binding = "AI"` — no resource; embeddings default (`@cf/baai/bge-m3`); billed per call, `wrangler dev` proxies to the account |
-| Analytics Engine (optional) | `ANALYTICS_ENGINE` | `<app>_analytics[_staging]` | declared in toml |
+| Analytics (Phase 4, built) | — | — | **no resource and no binding**: cubes read through `HYPERDRIVE`, fact tables rebuild on the `15 * * * *` cron (below); `/cubejs-api` + `/mcp` are routes of this Worker |
+| Analytics Engine (optional) | `ANALYTICS_ENGINE` | `<app>_analytics[_staging]` | declared in toml — deliberately NOT wired by the kit (only a comment in both tomls) |
 | Static Assets | `ASSETS` | — | `[assets] directory = "./dist/ui"` uploaded atomically with each deploy |
 | RLS app role (optional, docs/RLS.md) | `HYPERDRIVE_APP` | `<app>-<env>-app` | `… hyperdrive create … --caching-disabled` |
 
@@ -85,6 +87,22 @@ tomls now declare `JOBS_QUEUE` and `FILES` — uncomment them, or run the two `c
 the table above by hand, before the first Phase 2 deploy), reuses existing resources by name,
 and prints the ids with a `sed` line per toml. It needs `NEON_DATABASE_URL` (direct host) and an
 authenticated wrangler; it never writes files.
+
+## Crons
+
+`[triggers] crons` must be identical in both tomls (parity test); `apps/web/src/api/scheduled.ts`
+`SCHEDULED_TASKS` is the dispatcher, keyed on the exact expression.
+
+| Expression | Task | What it does | Local trigger (`wrangler dev` never fires crons itself) |
+|---|---|---|---|
+| `0 4 * * *` | `pruneExpired` | deletes expired sessions, consumed/expired magic links, invitations older than 30 days | `curl "http://localhost:3001/cdn-cgi/local/scheduled?cron=0+4+*+*+*"` |
+| `15 * * * *` | `refreshFactTables` (D19) | every `FACT_TABLES` entry, per tenant, DELETE+INSERT in one transaction; per-tenant failures collected, logged as a warning, never abort the run | `curl "http://localhost:3001/cdn-cgi/local/scheduled?cron=15+*+*+*+*"` — or the same code without the Worker: `pnpm web db:refresh-facts [table] [--tenant=<uuid>]` |
+
+Health of the fact tables: `GET /api/analytics/facts/status` (admin+; `stale` = newest source row
+has waited > 2× the table's interval) or `pnpm web db:check-facts` (exit 1 when stale; needs
+`DATABASE_URL` — in a deployed environment run it with that branch's connection string, never by
+pointing `.dev.vars` at Neon). Cron runs share the Worker's CPU budget: past a few hundred tenants,
+fan the per-tenant rebuilds out through `JOBS_QUEUE`.
 
 ## Account-scoped names — the incident this guards against
 
@@ -117,6 +135,7 @@ in **both** files, and split a heavy phase into its own step to draw a fresh bud
 | Worker secrets | `pnpm --filter @gmgo/web exec wrangler secret put <NAME> [-c wrangler.staging.toml]`, once per worker; locally `apps/web/.dev.vars` | `OAUTH_ENCRYPTION_KEY` (also encrypts tenant AI keys — rotating it invalidates every `ai_configs` credential), `AUTH_SIGNING_KEY`, `BOOTSTRAP_ADMIN_EMAILS`, `RESEND_API_KEY`, `GOOGLE_*`, `MICROSOFT_*`; AI, all optional: `ANTHROPIC_API_KEY` (platform chat), `EMBEDDINGS_API_KEY` (platform OpenAI embeddings when no `AI` binding), `LANGFUSE_PUBLIC_KEY` + `LANGFUSE_SECRET_KEY` (both or tracing is off); `DATABASE_URL` only as a no-Hyperdrive fallback |
 | CI secrets | GitHub Environments `staging` / `production` | `DATABASE_URL` (that branch), `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` |
 | Scripts only | migration environment | `APP_DATABASE_URL` (db-roles, RLS enforce only) |
+| Developer-local only | `apps/web/.drizzle-cube.json` (git-ignored; copy `.drizzle-cube.json.example`) | a **tenant API key** for the drizzle-cube CLI / Claude Code plugin against `/cubejs-api` — it is an ordinary key from Settings → API keys, scopes every query to that tenant, and is revoked there; never deployed, never committed |
 | Resource ids | tomls (committed) | Hyperdrive / KV ids — not secrets |
 
 `wrangler secret put` (run in `apps/web`) requires the worker to exist: the first deploy of a fresh environment runs via
@@ -165,6 +184,17 @@ All steps run at the repository root; the root scripts fan out with `pnpm -r` / 
  workflow_dispatch(environment) ──► either job from the dispatched ref (first deploy; emergencies)
 ```
 
+**Bundle size expectations.** `pnpm build` (`build:api` = `wrangler deploy --dry-run --outdir dist/api`)
+produces `dist/api/worker.js` at **≈ 1265 KiB gzip / ≈ 5.6 MB raw** since Phase 4 (≈ 308 KiB before).
+The growth is drizzle-cube's Hono adapter statically importing its MCP transport (≈ 2.1 MB raw: MCP
+SDK + inlined chart rendering) even with MCP disabled — not the kit shipping React to the Worker.
+Under the Workers script limit (3 MiB gzip free / higher on Paid, which Hyperdrive needs anyway). If a
+deploy is refused for size, look at new `src/api` dependencies first (`gzip -c
+apps/web/dist/api/worker.js | wc -c`); the structural fix is upstream or a thin adapter over
+`drizzle-cube/server` (`.claude/rules/cloudflare.md`). UI: main chunk ≈ 114 KiB gzip; chat ≈ 54 KiB;
+the analytics chunk (drizzle-cube client + recharts + d3) is the largest and lazy — it must never
+merge into the main chunk.
+
 **Version rule.** The git tag must equal `version` in the **root** `package.json`; the job fails
 otherwise. One tag ships `apps/web` and `apps/cli` together — the `apps/*` and `packages/*` versions
 are informational and are not checked. Bump the root version, commit, tag.
@@ -211,6 +241,8 @@ holding the custom domains. One token may serve both environments.
 | Schema migration must be undone | migrations are forward-only: write a compensating migration, tag, and run the dance. `wrangler rollback` does not touch the database |
 | RLS enforce misbehaving | `TENANT_SCOPE_MODE = "off"` in `[vars]` and redeploy — no migration (docs/RLS.md) |
 | A Workflow hijacked by a name collision | fix the staging name, redeploy **both** workers (last deployer owns the name); stuck `agent_runs` rows settle on read (`GET /api/agents/runs/:id` → `reconcileRun` → `instance.status()`; `not_found` marks them `failed`) |
+| Fact tables stale or wrong after a deploy | `GET /api/analytics/facts/status` says which; fire the `15 * * * *` cron or run `refresh-fact-tables.ts` with that environment's `DATABASE_URL`. Rows are derived data — a rebuild is always safe; a schema change to a fact table is a normal forward migration followed by one rebuild |
+| A dashboard renders empty / errors after a cube change | a cube member referenced by stored `analytics_pages.config` was renamed or removed — restore the member (names are frozen) or, per tenant, `POST /api/analytics/templates/recreate` (admin+) to re-copy the templates; user-created pages need a manual edit |
 | Tenant AI keys unreadable after rotating `OAUTH_ENCRYPTION_KEY` | there is no re-encrypt path: admins re-enter the key in Settings → AI (the row keeps its label/model, `hasCredential` flips back); the platform `ANTHROPIC_API_KEY` is unaffected |
 
 Verify any rollback with `/auth/session` (`releaseVersion`), `gmgo status` and `wrangler tail`.

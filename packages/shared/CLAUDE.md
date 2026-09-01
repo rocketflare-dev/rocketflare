@@ -47,7 +47,18 @@ response with the same schema. `pnpm test:config` covers the pure parts.
 `denseRank`/`lexicalRank`), `searchResponseSchema` · `usage.ts` — `aiUsageSchema`, `aiUsageSummarySchema`,
 `aiUsageSummaryQuerySchema` (`costMicrocents` nullable). `errors.ts` codes added: `ai_not_configured`,
 `agent_runs_not_configured`, `agent_run_active`; `permissions.ts` subjects added: `AiConfig`, `Prompt`,
-`Conversation`, `AgentRun`, `Document`. Known gap: `GET /api/ai/config/providers` has no schema here
+`Conversation`, `AgentRun`, `Document`, and (D19) `Dashboard` (`analytics_pages` rows) + `Analytics`
+(the cube API) · **`analytics.ts`** (Phase 4, D19): `dashboardConfigSchema` — a drizzle-cube
+`DashboardConfig` typed LOOSELY (`{ portlets: [...] }` + catchall; this package may import only zod, so
+the real type lives on the API's db column and in the UI via `drizzle-cube/client`; the documented shape
+is in the file header) · `analyticsPageSchema` (`slug`, `templateKey` null = user page, `config`,
+`isDefault`, `order`, `createdBy`) + `analyticsPageListResponseSchema` (`{ items }`, not paginated) ·
+`createAnalyticsPageRequestSchema` / `updateAnalyticsPageRequestSchema` (partial, ≥ 1 field;
+`ANALYTICS_PAGE_NAME_MAX` 120, `…_DESCRIPTION_MAX` 500) · `dashboardTemplateSummarySchema` +
+`dashboardTemplateListResponseSchema` (`GET /api/analytics/templates`) · `factTableStatusSchema`
+(`table`, `refreshedAt` nullable, `lagSeconds`, `stale`) + `factTableStatusListResponseSchema`
+(`GET /api/analytics/facts/status`). The cube API (`/cubejs-api/v1/*`) is drizzle-cube's Cube.js-shaped
+contract, consumed through `drizzle-cube/client` — no schema here. Known gap: `GET /api/ai/config/providers` has no schema here
 (the catalog is server data in `apps/web/src/api/services/ai/providers.ts`; the UI keeps a permissive one).
 
 Adding a job type: a payload schema + a variant in BOTH `jobInputSchema` and `jobEnvelopeSchema` +

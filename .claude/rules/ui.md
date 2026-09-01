@@ -25,10 +25,12 @@ Dev: Vite on :3000 proxies `/api`, `/auth`, `/ws`, `/cubejs-api`, `/mcp` to `wra
   explicit `@source "./index.html"` / `@source "./**/*.{ts,tsx}"` — scoped to `apps/web/src/ui`.
   **Lesson**: without `source(none)` v4 auto-detects sources from the package root and scans the whole
   repo — docs, API code, tests, migrations — and DaisyUI emits a component for every stray word that
-  looks like a class (`card`, `table`, `menu` in a comment). Keep the scan scoped; if a dependency
-  ships JSX (drizzle-cube does), `@source` its dist explicitly — never grow a safelist from a
-  stylesheet's needs. Safelist (`@source inline(...)`) only classes built from props (`alert-*`,
-  `btn-*`), never from data
+  looks like a class (`card`, `table`, `menu` in a comment). Keep the scan scoped. A dependency that
+  ships pre-built JSX is an explicit **`@source`** line pointing at its dist — for drizzle-cube that is
+  `drizzle-cube/dist/client/**` (D19), added as one `@source` in `index.css` so Tailwind sees the
+  classes its components render — **never** a safelist of the classes it happens to use (a safelist
+  rots the moment the dependency updates). Safelist (`@source inline(...)`) only classes built from
+  props (`alert-*`, `btn-*`), never from data or from a dependency
 - Fonts self-hosted via `@fontsource` imports in `main.tsx`
 
 ## Providers (06 §b)
@@ -54,6 +56,12 @@ Dev: Vite on :3000 proxies `/api`, `/auth`, `/ws`, `/cubejs-api`, `/mcp` to `wra
   and its global `QueryCache.onError`
 - `queryOptions()` factories in `lib/query-options.ts` for anything used by more than one component
 - Mutations invalidate via `queryKeys`; error toast on by default (`showToast`)
+- **Polling rules** (Phase 3b): poll only while the server still owes an answer, with the decision as a
+  pure function on the cached row — `refetchInterval: q => runPollInterval(q.state.data?.status)`
+  (`RUN_POLL_MS` 3 s while `isRunActive`; lists poll while any listed row is active); documents 5 s
+  (`DOCUMENT_POLL_MS`) while a row is `pending`. Polling is the belt to the nudge's braces — a resource
+  that has a server nudge still polls (the socket may be down); a resource without one (documents) polls
+  only. Never poll a settled row, never poll unconditionally, never fight `refetchInterval` with timers in tests
 - Global 401: `QueryCache.onError` clears the client and redirects to `/login?returnUrl=` (D20)
 - Pagination meta is `{ page, pageSize, total, totalPages }`; `PaginationControls` consumes it
 
@@ -75,6 +83,11 @@ version" (Worker redeployed) reconnects in 100 ms without counting as a failure;
 root map is **`REALTIME_INVALIDATIONS` / `invalidationsFor()` in `@gmgo/shared/realtime`**, not in
 the UI — a new server event type adds its roots there, and `tests/ui` asserts every root is a real
 `queryKeys` family (`['invitations']`, `['pending-invitations']`, `['members']`, `['tenant']`…).
+**Convention: the `entity` string of an `entity.changed { entity, id }` nudge IS the query-key family
+root** — `invalidationsFor()` returns `[[entity]]`, so a resource whose server nudges
+`entity: 'agent-run'` names its family `['agent-run']` (`queryKeys.agentRuns.all`) and gets live
+refresh with zero hook-side socket code. When you add a resource: pick the root first, use the same
+string in the service's nudge and in `query-keys.ts`, and never subscribe to the socket from a hook.
 `components/WebSocketProvider.tsx` (after `AbilityProvider`) connects once `useAuth()` is
 authenticated with a tenant, reconnects on tenant switch, disconnects on sign-out, and uses
 `useQueryClient()` to `invalidateQueries({ queryKey })` per root, toasting `notification.created`.
@@ -126,7 +139,14 @@ Components subscribe to query state, never to the socket; `WebSocketStatus` (hea
   `components/shared` barrel that `App.tsx` imports eagerly: `react-markdown` + `remark-gfm` must ship
   only in the lazy chat chunk (`ChatPage` ≈ 54 KiB gzip vs ≈ 114 KiB for the main bundle). Import them
   by path from lazy pages only; render model output through `Markdown` (`skipHtml`, links `noopener`),
-  never `dangerouslySetInnerHTML`; user text renders verbatim (`whitespace-pre-wrap`)
+  never `dangerouslySetInnerHTML`; user text renders verbatim (`whitespace-pre-wrap`). `pages/agents/**`
+  imports `Markdown` too and is lazy for the same reason (Vite emits one shared `Markdown-*.js`)
+- **Analytics chunk isolation (D19)**: `drizzle-cube/client`, `recharts`, `d3`, `react-grid-layout` and
+  `react-is` ship ONLY in the lazy analytics chunk — import them from `pages/analytics/**` /
+  `components/analytics/**` by path, never from the `components/shared` barrel, `App.tsx`, `SideNav` or
+  a hook the shell loads eagerly; the main chunk must stay ≈ 114 KiB gzip. Check `pnpm web build:ui`
+  output when you touch an import. The server contract the pages consume is `@gmgo/shared/analytics`
+  + `/cubejs-api/v1/*` (drizzle-cube's own client); page specifics: `apps/web/src/ui/CLAUDE.md`
 - Forms validate with the `@gmgo/shared` schema the server uses; show `FieldError` per field
 - Icons: `@heroicons/react`. No new UI library without a stated reason in the PR
 - `EnvironmentBadge` + `useEnvironmentTitle` read `APP_ENV`/`RELEASE_VERSION` from `/auth/session`;

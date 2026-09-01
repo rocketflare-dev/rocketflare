@@ -23,7 +23,10 @@ workspace root) or through the root scripts (`pnpm deploy[:staging]`, `pnpm prov
   toml, run `pnpm types` and commit the result
 - Baseline: `ASSETS`, `HYPERDRIVE`, `RATE_LIMIT_KV`. Phase 2: `JOBS_QUEUE`, `NOTIFICATIONS_HUB`,
   `FILES`. Phase 3 (built): `AGENT_RUN_WORKFLOW` (`[[workflows]]`, class `AgentRunWorkflow`) and `AI`
-  (`[ai] binding = "AI"`, Workers AI embeddings). Optional: `ANALYTICS_ENGINE`, `HYPERDRIVE_APP`
+  (`[ai] binding = "AI"`, Workers AI embeddings). Phase 4 (analytics, D19, built) adds **no binding**:
+  cubes read through `HYPERDRIVE`, fact tables rebuild on a cron, and the optional `ANALYTICS_ENGINE`
+  dataset is deliberately NOT wired (the toml comment is the only trace). Optional: `ANALYTICS_ENGINE`,
+  `HYPERDRIVE_APP`
 - Optional bindings are optional in code too: the rate limiter no-ops without `RATE_LIMIT_KV`,
   tracing without Langfuse keys, email without `RESEND_API_KEY`, realtime nudges without
   `NOTIFICATIONS_HUB`. Check presence, don't crash — **except where silence would lose data**: a
@@ -89,8 +92,13 @@ per model turn with the transcript persisted between turns (`runToolLoop` alread
   delaySeconds })` (30 s doubling, 15 min cap; toml `max_retries = 3`, `retry_delay = 60` only for a
   retry without an explicit delay); own DB client per message, closed in `finally`; **no `waitUntil`
   in a consumer**. Plain function so tests call it (`.claude/rules/testing.md`)
-- `scheduled(event, env, ctx)`: dispatch table keyed on `event.cron`; each task try/caught; a new
-  cron string must be added to BOTH tomls and the table
+- `scheduled(event, env, ctx)`: `SCHEDULED_TASKS` keyed on `event.cron` (`'0 4 * * *'` →
+  `pruneExpired`; `'15 * * * *'` → `refreshFactTables`, D19 — every `FACT_TABLES` entry, per tenant,
+  DELETE+INSERT, per-tenant failures collected and logged as a warning); one DB client per run, closed
+  in `waitUntil`; each task try/caught; a new cron string must be added to BOTH tomls and the table
+  (the parity test compares `[triggers].crons`). `wrangler dev` never fires crons on its own — trigger
+  them by hand (below). Renaming the fact cron = both tomls + the `SCHEDULED_TASKS` key +
+  `tests/api/scheduled-facts.test.ts`
 - `AgentRunWorkflow` (`apps/web/src/api/workflows/agent-run.ts`): `run(event, step)` → `step.do('claim')` →
   `step.do('execute', { retries, timeout })` → `step.do('finish')`; each step wraps its body in
   `withStepDatabase(env, cfg, db => …)` — ONE DB client per step, `close()` awaited in `finally`
@@ -111,6 +119,19 @@ per model turn with the transcript persisted between turns (`runToolLoop` alread
   exported from `src/worker.ts`, never from `api/index.ts`
 - Never run long work in `fetch`. Enqueue or create a workflow instance (`.claude/rules/api.md`)
 
+## Bundle size (D19 caveat)
+
+`pnpm build:api` (`wrangler deploy --dry-run --outdir dist/api`) is where the Worker's size shows.
+Before Phase 4 `dist/api/worker.js` was ≈ 308 KiB gzip; with drizzle-cube it is **≈ 1265 KiB gzip
+(≈ 5.6 MB raw)**. The growth is one import: `drizzle-cube/adapters/hono` statically imports
+`dist/adapters/mcp-transport-*.js` (≈ 2.1 MB raw — the MCP SDK plus inlined chart rendering) even
+when `mcp.enabled` is false; it is not the kit pulling React or recharts into the Worker (the
+sourcemap has no `node_modules/react|recharts` entries reached from `src/api`). Still under the
+Workers script cap (3 MiB gzip on the free plan, higher on Paid), so accepted for now. Do not "fix"
+it by adding chunking or externals to the Worker build; the real fix is upstream (a lazy `import()`
+of the MCP path in the adapter) or a thin adapter of our own over `drizzle-cube/server`. When you add
+a dependency to `src/api`, compare `gzip -c dist/api/worker.js | wc -c` before and after.
+
 ## `nodejs_compat`: what is allowed
 
 Allowed and used: `Buffer`, `AsyncLocalStorage`, `node:crypto` hashing, `process.env` **inside
@@ -126,8 +147,11 @@ the check `tsc` cannot do — run it before pushing a new dependency.
 
 ```bash
 # Fire a cron (wrangler 4.x; the older /cdn-cgi/handler/scheduled path is rewritten to this):
-curl "http://localhost:3001/cdn-cgi/local/scheduled?cron=0+4+*+*+*"
+curl "http://localhost:3001/cdn-cgi/local/scheduled?cron=0+4+*+*+*"     # nightly prune
+curl "http://localhost:3001/cdn-cgi/local/scheduled?cron=15+*+*+*+*"    # fact-table rebuild (D19)
 # Alternative: `wrangler dev --test-scheduled` exposes /__scheduled?cron=…
+# Same code without the Worker: `pnpm web db:refresh-facts [table] [--tenant=<uuid>]`, then
+# `pnpm web db:check-facts` (exit 1 when a table is stale) or GET /api/analytics/facts/status (admin+).
 # Queues: there is no local HTTP trigger. wrangler dev runs the consumer IN-PROCESS, so any producer
 # call from the running worker is delivered locally: invite someone (POST /api/invitations from the
 # People page) and watch the same terminal print `queue: processing jobs batch` → `[email:dev] …

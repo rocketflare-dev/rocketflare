@@ -46,7 +46,10 @@ predicate**, not SQL injection — the app role can `set_config` itself.
 - `id: uuid('id').primaryKey().defaultRandom()`; `...timestamps()` gives `createdAt`/`updatedAt` as
   `timestamptz` — never bare `timestamp`
 - `pgEnum` for closed sets; append values last (a migration cannot USE an enum value it adds)
-- `jsonb` for flexible metadata, typed with `$type<>()` from a `@gmgo/shared` zod schema
+- `jsonb` for flexible metadata, typed with `$type<>()` from a `@gmgo/shared` zod schema. The one
+  exception is `analytics_pages.config`, typed `$type<DashboardConfig>()` from `drizzle-cube/client`
+  (type-only import) — shared may import only zod, so its `dashboardConfigSchema` is loose and the
+  drizzle-cube type lives on this side (D19)
 - `relations()` for type-safe joins; no polymorphic FKs
 - Encrypted-at-rest columns (`oauth_providers.access_token`, `ai_configs.credentials`) are `text`
   written only through `token-crypto.ts`
@@ -65,6 +68,21 @@ predicate**, not SQL injection — the app role can `set_config` itself.
 - Query vectors are parameters: `vectorLiteral(v)` (`[0.1,0.2,…]`) interpolated through the drizzle
   `sql` tag and cast `::vector` — never string-concatenate a query; `embedding` values are inserted as
   `number[]` through drizzle
+- **Fact tables (D19)** live in `apps/web/src/db/schema/facts/` (barrel `facts/index.ts`, re-exported from
+  `schema/index.ts`): plain tables rebuilt per tenant by `api/services/fact-tables` — NOT materialised
+  views (`REFRESH MATERIALIZED VIEW` cannot run through Hyperdrive or be scoped to one tenant). Shape:
+  `tenantRef()` first, the grain columns, the measures, then
+  `factRefreshedAt: timestamp('fact_refreshed_at', { withTimezone: true }).notNull().defaultNow()` —
+  every fact table carries that column, spelled exactly so; the freshness check reads
+  `MAX(fact_refreshed_at)` — and `tenantIsolation('<table>')`. **No surrogate `id`, no `timestamps()`**
+  (the grain IS the key), and no FK to a table whose rows may vanish (`users`): a refresh must never
+  fail because an actor was deleted. The grain is a `unique('<table>_grain').on(...)` constraint; when a
+  grain column is nullable add `.nullsNotDistinct()` (`UNIQUE NULLS NOT DISTINCT`, Postgres 15+ — Neon
+  and the `pg17` compose image qualify), or every NULL actor becomes its own row. First index column is
+  `tenant_id`, as everywhere. A fact table is also an entry in `api/services/fact-tables/registry.ts`
+  (with a `queries/<name>.ts` SELECT in the schema's column ORDER) and usually a cube —
+  `.claude/rules/api.md`. Rows are derived data: rebuilt with `pnpm web db:refresh-facts`, checked with
+  `pnpm web db:check-facts`, never hand-migrated
 - Per-call rows: `ai_usage` (append-only, `(tenant_id, at DESC)`), `agent_run_events` (`(run_id, seq)`
   unique, numbering continues across attempts). Concurrency is a claim row, never a lock:
   `agent_runs` `UPDATE … WHERE status IN ('queued','running') RETURNING` plus the partial unique index

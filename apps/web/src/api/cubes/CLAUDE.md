@@ -36,6 +36,10 @@ each tenant and asserts only that tenant's rows come back. A new cube must be ad
 - The compiler is rebuilt per request (4 cubes — cheap; the Hyperdrive-backed `db` only exists
   inside a request). The scaling path is `SemanticLayerCompiler` + cube sets, and
   `cache: MemoryCacheProvider` is per-isolate on Workers — a KV provider would be an extension.
+- Bundle caveat: `drizzle-cube/adapters/hono` statically imports its MCP transport (≈ 2.1 MB raw)
+  even with `mcp.enabled: false`, which is why the Worker grew from ≈ 308 KiB to ≈ 1265 KiB gzip.
+  Not caused by the cubes; fix is upstream or a thin adapter over `drizzle-cube/server`
+  (`.claude/rules/cloudflare.md`). `mcp.allowedOrigins` is unset — browser MCP clients need it.
 
 ## Ship set
 
