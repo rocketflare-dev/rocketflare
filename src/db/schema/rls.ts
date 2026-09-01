@@ -81,13 +81,19 @@ export function membershipIsolation() {
  * by the auth paths through the owner connection, so a tenant-scoped connection cannot read
  * another tenant's sessions or OAuth tokens even if a policy were ever missed.
  *
- * Listed now, created in Phase 1. `db-roles.ts` only REVOKEs the ones that exist.
+ * `db-roles.ts` only REVOKEs the ones that exist (grants phase runs after migrations).
  */
-export const RLS_REVOKED_TABLES = ['user_sessions', 'oauth_providers', 'access_requests'] as const
+export const RLS_REVOKED_TABLES = [
+  'user_sessions',
+  'magic_link_tokens',
+  'oauth_providers',
+  'access_requests',
+] as const
 
 /**
  * Deliberately NOT policied — every exclusion is a decision recorded here rather than hidden
- * by omission. `tests/api/rls-coverage.test.ts` (Phase 1) asserts the unpolicied set in the
- * live catalog equals exactly this list. Add a table here only with a reason.
+ * by omission. `tests/api/rls-coverage.test.ts` asserts the unpolicied set in the live catalog
+ * equals exactly this list. Today it is exactly the revoked set (revoke is stronger than a
+ * policy); add a table here only with a reason.
  */
 export const RLS_EXCLUDED_TABLES = [...RLS_REVOKED_TABLES] as const

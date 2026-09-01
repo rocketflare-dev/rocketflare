@@ -1,7 +1,29 @@
 # Database Schema
 
 Drizzle table definitions, one file per table, re-exported from `index.ts` (which `drizzle.config.ts`,
-`src/db/client.ts` and the RLS coverage test all read). Phase 0 ships helpers only.
+`src/db/client.ts` and the RLS coverage test all read). `many()` relations live in `relations.ts`
+(the hub tables `users`/`tenants` must not import their dependents — `tenantRef(tenants)` is eager).
+
+## Table registry
+
+| Table | File | Tenant key | RLS | Notes |
+|---|---|---|---|---|
+| `users` | `users.ts` | — (membership) | `membershipIsolation()` | global person; unique `lower(email)`; `isGlobalAdmin`, `blockedAt`, `emailVerifiedAt` |
+| `user_sessions` | `user-sessions.ts` | — | **revoked** | `tokenHash` (SHA-256 of cookie), `selectedTenantId` = current tenant |
+| `oauth_providers` | `oauth-providers.ts` | — | **revoked** | UNIQUE `(provider, provider_user_id)` (D12); `*Enc` tokens |
+| `magic_link_tokens` | `magic-link-tokens.ts` | — | **revoked** | keyed by email; `consumedAt` single-use |
+| `access_requests` | `access-requests.ts` | — | **revoked** | gated sign-up queue (D9); `status` enum |
+| `tenants` | `tenants.ts` | `id` | `tenantIsolation('tenants', sql\`id\`)` | `status` enum, `seedDataCreated`, `lastAccessedAt` |
+| `tenant_users` | `tenant-users.ts` | `tenant_id` | ✓ | PK `(tenant_id, user_id)`; `role` text enum `MEMBERSHIP_ROLES` |
+| `team_invitations` | `team-invitations.ts` | `tenant_id` | ✓ | `tokenHash`; partial unique pending `(tenant_id, lower(email))` |
+| `api_keys` | `api-keys.ts` | `tenant_id` | ✓ | `keyHash` unique, `keyPrefix`, `scopes[]`, soft `revokedAt` |
+| `tenant_settings` | `tenant-settings.ts` | `tenant_id` (PK) | ✓ | `timezone`, `notificationsEnabled`, `settings` jsonb |
+| `tenant_user_settings` | `tenant-user-settings.ts` | `tenant_id` | ✓ | PK `(tenant_id, user_id)`; `preferences` jsonb |
+| `notifications` | `notifications.ts` | `tenant_id` | ✓ | per user; `readAt`; `data` jsonb |
+| `activity_events` | `activity-events.ts` | `tenant_id` | ✓ | audit log + analytics source; `(tenant_id, created_at DESC)` |
+
+9 policies (`tenants`, `users` + 7 tenant tables); 4 revoked tables = `RLS_REVOKED_TABLES` =
+`RLS_EXCLUDED_TABLES`. jsonb columns are `$type<>()`d from `src/shared` (type-only imports).
 
 ## Conventions
 
@@ -16,7 +38,7 @@ Drizzle table definitions, one file per table, re-exported from `index.ts` (whic
 
 RLS scaffolding ships inert (`TENANT_SCOPE_MODE=off`; the `gmgo_app` role is NOLOGIN). Policies still
 exist in every environment so enabling enforcement later is a config change, not a migration.
-`tests/api/rls-coverage.test.ts` (Phase 1) reads the live catalog, so every table must do ONE of:
+`tests/api/rls-coverage.test.ts` reads the live catalog, so every table must do ONE of:
 
 1. **Has `tenant_id`** → add `tenantIsolation('<table_name>')` to its extraConfig array.
    `tenants` itself uses `tenantIsolation('tenants', sql\`id\`)`; `users` uses `membershipIsolation()`.

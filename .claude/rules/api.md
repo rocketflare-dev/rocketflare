@@ -31,7 +31,7 @@ Auth is per-mount, not global: the public surface is enumerable and small.
 - `createRouter()` (`src/api/utils/routes/router.ts`) — never `new Hono()` bare; no `declare module 'hono'` augmentation
 - Validate with `validate('json'|'query'|'param', schema)` (`src/api/utils/routes/validate.ts`, a zValidator wrapper) using schemas from `src/shared/`; its hook throws `ValidationError` so a 400 uses the shared envelope `{ error, statusCode, code?, details? }` — never call `zValidator` directly
 - `withAuthAndDb(c, ({ tenantId, user, db, scoped }) => …)` is the **only** way to read auth in a route. Never `c.get('auth'|'session'|'db')` by hand. Handlers may return a plain object; it is wrapped in `c.json`
-- Authorise with `guardPermission(c, action, subject)` (CASL, `src/permissions/`) — returns a Response to bubble up, or null. Owner-only actions (delete tenant, transfer ownership) additionally check `role === 'owner'` explicitly
+- Authorise with `guardPermission(c, action, subject)` (CASL, `src/api/middleware/permissions.ts`) — throws `UnauthorizedError`/`ForbiddenError` and returns the `AuthContext`; `can(c, …)` for branching. Owner-only actions (delete tenant, transfer ownership) use `guardOwner(c)` / `isOwnerLevel(auth)` — an explicit `role === 'owner'` check, never `manage Tenant`
 - Every query filters by `tenantId` from the auth context — see `.claude/rules/database.md`
 - Throw typed errors from `src/api/utils/core/errors.ts` (`NotFoundError`, `ForbiddenError`, `ValidationError`, `ConflictError`, …); never `c.json({ error }, 4xx)` by hand
 - Pagination: `paginationQuerySchema` → `{ items, pagination: { page, pageSize, total, totalPages } }` (`src/shared/pagination.ts`)

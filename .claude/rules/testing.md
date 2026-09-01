@@ -23,9 +23,10 @@ vitest 3 resolves `isolate` per run, not per project.
 - `cloudflare:workers` is aliased to `tests/mocks/cloudflare-workers.ts` (stub `DurableObject`,
   `WorkflowEntrypoint`) so worker modules import under Node
 - `tests/helpers/request.ts` `request()` / `json()` drive the app through every middleware with a
-  per-file random client IP (rate-limit isolation); `tests/helpers/auth.ts` factories (Phase 1:
-  `createTestUser`, `createTestTenantWithUser`, `createTestSession`, `createTestApiKey`) use
-  `uniqueId()` suffixes
+  per-file random client IP (rate-limit isolation); `tests/helpers/auth.ts` factories
+  (`createTestUser`, `createTestTenant`, `linkUserToTenant`, `createTestTenantWithUser`,
+  `createTestSession` → cookie value, `createTestApiKey` → plaintext) use `uniqueId()` suffixes;
+  `inject('seed')` gives the run's seeded owner/tenant/API key/session (`TestSeed`)
 - No `@cloudflare/vitest-pool-workers` in the default suite (D15). It cannot reach a real Postgres
   through Hyperdrive locally; the value here is integration tests against real Postgres
 

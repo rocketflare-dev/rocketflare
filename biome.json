@@ -63,13 +63,13 @@
       "**/*.mjs",
       "**/*.jsx",
       "**/*.json",
-      "!**/node_modules/**",
-      "!**/dist/**",
-      "!**/coverage/**",
-      "!**/.wrangler/**",
-      "!**/migrations/**",
+      "!**/node_modules",
+      "!**/dist",
+      "!**/coverage",
+      "!**/.wrangler",
+      "!**/migrations",
       "!worker-configuration.d.ts",
-      "!**/.claude/**"
+      "!**/.claude"
     ]
   },
   "overrides": [
