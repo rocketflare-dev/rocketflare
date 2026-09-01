@@ -69,7 +69,7 @@ an `@rocketflare/shared` import was missed. Keep `packages/shared` **private** (
   `activity list` are examples of the pattern; keep `login`, `logout`, `whoami`, `status`, `config`)
 - `docs/analysis/` — the kit's decision record. Keep it until your first release, then move it under
   `docs/archive/` per its README, or delete it. It is not maintained
-- Rows in `README.md` "What's included" that describe the kit rather than your app
+- Lines in `README.md` "Features" that describe the kit rather than your app
 
 ## 3. Your first three features — where each goes
 
