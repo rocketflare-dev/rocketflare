@@ -733,7 +733,7 @@ shipped; no per-PR previews; a CI check that every `apps/web/src/**/CLAUDE.md` e
 <command>` from the root (`tsx`); build: `tsc` → `apps/cli/dist/cli.js`. Stack: `commander` +
 `chalk` + `open` (D26). Conventions: `.claude/rules/cli.md`.
 
-**Every internal app wants a CLI, and it must never own a second copy of the contract.** The CLI is a
+**Every app — internal tool or B2B product — wants a CLI, and it must never own a second copy of the contract.** The CLI is a
 thin client over the same `/api/*` routes the UI uses, authenticated with a tenant API key, parsing
 every response with the same `@rocketflare/shared` zod schema the server validated with. Adding a command
 is: schema in `packages/shared` (if new) → route → `apps/cli/src/commands/<name>.ts` calling

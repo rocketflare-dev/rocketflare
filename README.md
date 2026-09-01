@@ -4,7 +4,7 @@
 
 <h1 align="center">Rocketflare</h1>
 
-<p align="center"><strong>A multi-tenant SaaS starter kit for Cloudflare Workers — copy it, rename it, ship an app.</strong></p>
+<p align="center"><strong>A multi-tenant SaaS starter kit for Cloudflare Workers — copy it, rename it, ship an internal tool or a B2B product.</strong></p>
 
 Rocketflare is one repository that already solves the platform work every internal or B2B product
 needs before its first real feature: tenancy, sign-in, roles and permissions, background jobs,
@@ -148,4 +148,4 @@ Objects, two-toml deploys) and the analytics layer. Decisions are recorded in `d
 
 ## Licence
 
-Internal. Licence to be confirmed before any external distribution.
+Private for now — licence to be confirmed before any external distribution.

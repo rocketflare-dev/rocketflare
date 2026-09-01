@@ -257,7 +257,7 @@ Drift is the one failure mode this kit's source apps suffered most; the rule exi
 
 ## 5. Single-tenant recipe (`TENANCY_MODE=single`)
 
-Most internal tools start as one organisation. Set `TENANCY_MODE = "single"` in both tomls (and
+Many apps — internal tools especially — start as one organisation. Set `TENANCY_MODE = "single"` in both tomls (and
 `apps/web/.env.test` if you want the suite to run in that mode). Nothing in the schema changes — every table
 keeps `tenant_id` — so flipping back to `multi` later needs no migration. Effects:
 

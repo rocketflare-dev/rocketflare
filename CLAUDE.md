@@ -1,6 +1,6 @@
 # Rocketflare
 
-Multi-tenant SaaS starter for internal apps, a **pnpm workspace**: Hono API + React UI in one
+Multi-tenant SaaS starter for internal tools and B2B products, a **pnpm workspace**: Hono API + React UI in one
 Cloudflare Worker (`apps/web`), a CLI (`apps/cli`), private zod contracts
 (`packages/shared`). `AGENTS.md` symlinks here.
 
