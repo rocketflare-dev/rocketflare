@@ -2,6 +2,7 @@
   "name": "rocketflare",
   "version": "0.1.0",
   "private": true,
+  "license": "MIT",
   "description": "Rocketflare — multi-tenant SaaS starter kit — pnpm workspace: apps/web (Hono API + React UI on Cloudflare Workers), apps/cli, packages/shared",
   "type": "module",
   "packageManager": "pnpm@10.18.0",

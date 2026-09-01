@@ -2,6 +2,7 @@
   "name": "@rocketflare/web",
   "version": "0.1.0",
   "private": true,
+  "license": "MIT",
   "description": "Rocketflare kit web app: Hono API + React UI on Cloudflare Workers, Postgres (Neon via Hyperdrive) + Drizzle",
   "type": "module",
   "cfld": {

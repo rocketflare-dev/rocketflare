@@ -154,6 +154,12 @@ Extracted from two internal applications: one contributed the structure, docs sy
 tenancy and AI layer; the other the Cloudflare substrate (Hyperdrive, Queues, Workflows, Durable
 Objects, two-toml deploys) and the analytics layer. Decisions are recorded in `docs/analysis/00-SYNTHESIS.md`.
 
+## Contributing
+
+Bug reports, feature requests and pull requests are welcome — see [`CONTRIBUTING.md`](CONTRIBUTING.md)
+(setup, the pre-commit gate, test shapes, PR guidelines), [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md)
+and [`SECURITY.md`](SECURITY.md) for reporting vulnerabilities privately.
+
 ## Licence
 
-No licence has been chosen yet, so all rights are reserved until one is added — open an issue if you need clarity before then.
+[MIT](LICENSE).
