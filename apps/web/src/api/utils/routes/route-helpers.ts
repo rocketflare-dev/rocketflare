@@ -8,15 +8,22 @@
  * `waitUntil` (awaited inline when there is no ExecutionContext — tests, Node tooling) and logs
  * instead of throwing, so an email or activity write can never fail the response. `realtime`
  * bundles that `defer` with the hub binding for `services/realtime.ts` nudges (D8) — routes pass
- * it to services, never touch `NOTIFICATIONS_HUB` themselves.
+ * it to services, never touch `NOTIFICATIONS_HUB` themselves. `tracer` (D16) is the request's
+ * Langfuse batcher (or the no-op) for `withAgentTrace` / `traceChatClient`.
  */
 import { ERROR_CODES } from '@gmgo/shared/errors'
 import type { PinoLogger } from 'hono-pino'
 import type { AppConfig } from '../../../config'
-import type { Database } from '../../../db/client'
+import {
+  createDatabase,
+  type Database,
+  type DatabaseHandle,
+  resolveDatabaseUrl,
+} from '../../../db/client'
 import type { User } from '../../../db/schema'
 import { deferOrAwait } from '../../middleware/database'
 import { requireAuth } from '../../middleware/permissions'
+import { noopTracer, type Tracer } from '../../observability/tracer'
 import type { Realtime } from '../../services/realtime'
 import type { AppContext, AuthContext } from '../../types'
 import { ForbiddenError, NotFoundError } from '../../utils/core/errors'
@@ -33,6 +40,8 @@ export interface TenantFreeRouteContext {
   logger: PinoLogger
   defer: Defer
   realtime: Realtime
+  /** D16: per-request tracer; flushed by `tracerMiddleware` after the handler (streams flush themselves). */
+  tracer: Tracer
 }
 
 export interface RouteContext extends TenantFreeRouteContext {
@@ -61,6 +70,16 @@ export function withAuth(c: AppContext): TenantFreeRouteContext {
     logger: c.get('logger'),
     defer,
     realtime: { defer, env: c.env },
+    tracer: safeTracer(c),
+  }
+}
+
+/** A router mounted without `tracerMiddleware` (tests of a bare router) still gets a tracer. */
+function safeTracer(c: AppContext): Tracer {
+  try {
+    return c.get('tracer') ?? noopTracer
+  } catch {
+    return noopTracer
   }
 }
 
@@ -92,4 +111,21 @@ export function uuidParam(c: AppContext, name: string): string {
   const value = c.req.param(name)
   if (!value || !UUID_RE.test(value)) throw new NotFoundError(`Not found: ${name}`)
   return value
+}
+
+/**
+ * A SECOND database client for a streaming response (SSE). `databaseMiddleware` ends the request's
+ * client in `waitUntil` as soon as the handler returns the Response — which for `streamSSE` is
+ * before the stream body runs — so writes made while streaming need their own handle, closed in the
+ * stream's `finally`. Same URL resolution as the middleware (D2).
+ */
+export function streamDatabase(c: AppContext): DatabaseHandle {
+  const cfg = c.get('config')
+  return createDatabase(
+    resolveDatabaseUrl({
+      HYPERDRIVE: c.env.HYPERDRIVE,
+      PREVIEW_DATABASE_URL: cfg.PREVIEW_DATABASE_URL,
+      DATABASE_URL: cfg.DATABASE_URL,
+    })
+  )
 }

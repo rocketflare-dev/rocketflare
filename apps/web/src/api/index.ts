@@ -15,10 +15,15 @@ import { errorHandler, notFoundBody, notFoundHandler } from './middleware/error-
 import { authRateLimit } from './middleware/rate-limit'
 import { requestIdMiddleware, requestLogger } from './middleware/request-logger'
 import { securityHeaders } from './middleware/security-headers'
+import { tracerMiddleware } from './middleware/tracing'
 import { accessRequestsRouter } from './routes/access-requests'
 import { activityRouter } from './routes/activity'
 import { adminRouter } from './routes/admin'
+import { aiConfigRouter } from './routes/ai-config'
+import { aiPromptsRouter } from './routes/ai-prompts'
+import { aiUsageRouter } from './routes/ai-usage'
 import { authRouter } from './routes/auth/index'
+import { chatRouter } from './routes/chat'
 import { filesRouter } from './routes/files'
 import { healthRouter } from './routes/health'
 import { invitationsRouter } from './routes/invitations'
@@ -66,7 +71,11 @@ app.use('*', csrfProtection)
 // 8. Per-request DB client — last of the globals because it is the first thing with real cost.
 app.use('*', databaseMiddleware)
 
-// 9. Mounts — auth is applied PER MOUNT so the public surface is enumerable: health, /auth/*,
+// 9. Per-request tracer (D16): Langfuse batcher when both keys are set, no-op otherwise; flushed in
+//    `waitUntil` after the handler. Streaming routes flush again before their stream closes.
+app.use('/api/*', tracerMiddleware)
+
+// 10. Mounts — auth is applied PER MOUNT so the public surface is enumerable: health, /auth/*,
 //    /api/invite/:token (details; accept resolves the cookie itself). `/api/admin/*` is the only
 //    tenant-free cross-tenant path (globalAdminMiddleware); everything else is `authMiddleware`.
 app.route('/api', healthRouter)
@@ -88,13 +97,17 @@ for (const [prefix, router] of [
   ['/api/activity', activityRouter],
   ['/api/access-requests', accessRequestsRouter],
   ['/api/files', filesRouter],
+  ['/api/ai/config', aiConfigRouter],
+  ['/api/ai/prompts', aiPromptsRouter],
+  ['/api/ai/usage', aiUsageRouter],
+  ['/api/chat', chatRouter],
 ] as const) {
   app.use(prefix, authMiddleware)
   app.use(`${prefix}/*`, authMiddleware)
   app.route(prefix, router)
 }
 
-// 10. SPA via Workers Static Assets. Hashed files are served by the assets layer before the
+// 11. SPA via Workers Static Assets. Hashed files are served by the assets layer before the
 //     Worker runs; only navigations reach here. `not_found_handling = "single-page-application"`
 //     makes ASSETS return index.html for client routes. API-shaped paths must 404 as JSON.
 app.all('*', c => {

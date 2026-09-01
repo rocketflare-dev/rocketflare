@@ -22,8 +22,13 @@ Drizzle table definitions, one file per table, re-exported from `index.ts` (whic
 | `notifications` | `notifications.ts` | `tenant_id` | ✓ | per user; `readAt`; `data` jsonb |
 | `activity_events` | `activity-events.ts` | `tenant_id` | ✓ | audit log + analytics source; `(tenant_id, created_at DESC)` |
 | `files` | `files.ts` | `tenant_id` | ✓ | R2 object index (D23): `key` unique (`tenants/<tenant>/<scope>/<uuid>-<name>`), `scope` enum, `ownerUserId`, immutable (no `updated_at`) |
+| `ai_configs` | `ai-configs.ts` | `tenant_id` | ✓ | tenant AI providers (D17): `scope` chat\|embeddings, `provider` text enum, `label` (unique per tenant+scope, the upsert key), `apiKeyEnc` (AES-GCM, never returned), `thinking` jsonb, partial unique **one default per (tenant, scope)**; only `services/ai/resolve.ts` reads it |
+| `prompt_overrides` | `prompt-overrides.ts` | `tenant_id` | ✓ | PK `(tenant_id, key)`; row exists only when a registry prompt is overridden (revert = delete); `updatedByUserId` |
+| `conversations` | `conversations.ts` | `tenant_id` | ✓ | chat threads (D17): `userId` is ownership (routes filter tenant AND user — others' threads are 404), `provider`/`model` frozen at creation, `lastMessageAt`; index `(tenant_id, user_id, last_message_at DESC)` |
+| `messages` | `messages.ts` | `tenant_id` | ✓ | chat turns: `role` text enum, `content`, `toolCalls` jsonb, `usage` jsonb; immutable. Index `(conversation_id, created_at)` — deliberate exception to tenant-first (fetched by thread id after the ownership check) |
+| `ai_usage` | `ai-usage.ts` | `tenant_id` | ✓ | one row per generation (D18): `feature`, `provider`, `model`, four token counters, `costMicrocents` nullable bigint, `at`; append-only; index `(tenant_id, at DESC)` |
 
-10 policies (`tenants`, `users` + 8 tenant tables); 4 revoked tables = `RLS_REVOKED_TABLES` =
+15 policies (`tenants`, `users` + 13 tenant tables); 4 revoked tables = `RLS_REVOKED_TABLES` =
 `RLS_EXCLUDED_TABLES`. jsonb columns are `$type<>()`d from `@gmgo/shared` (type-only imports).
 
 ## Conventions

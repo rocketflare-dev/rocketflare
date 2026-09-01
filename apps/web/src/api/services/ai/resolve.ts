@@ -1,0 +1,213 @@
+/**
+ * The single read seam for "which AI client does this tenant get" (D17). Resolution order:
+ *   chat:       tenant default `ai_configs(scope='chat')` → platform `ANTHROPIC_API_KEY` → 503
+ *   embeddings: tenant default `ai_configs(scope='embeddings')` → `workers_ai` if `env.AI` →
+ *               `EMBEDDINGS_API_KEY` (OpenAI) → 503
+ * Credentials are decrypted here and nowhere else. `readiness()` mirrors both orders WITHOUT
+ * building a client or throwing (the Home checklist must not turn a page load into a 503).
+ * Feature code never queries `ai_configs`; the chat route, connection test and Phase 3b agents
+ * all come through here — and tests mock this module (`vi.mock('@/api/services/ai/resolve')`).
+ *
+ * `promptKey` is accepted and ignored: per-agent model assignment (`agent_models`: promptKey →
+ * config + model) is Phase 3b and will consult it here, so callers already pass it.
+ */
+import type { AiProvider, AiReadiness, AiScope, AiScopeReadiness } from '@gmgo/shared/ai/config'
+import { DEFAULT_MODELS } from '@gmgo/shared/ai/config'
+import type { PromptKey } from '@gmgo/shared/ai/prompts'
+import { and, eq } from 'drizzle-orm'
+import type { AppConfig } from '../../../config'
+import type { Database } from '../../../db/client'
+import { type AiConfigRow, aiConfigs } from '../../../db/schema'
+import { decrypt, requireEncryptionKey } from '../../auth/oauth-encryption'
+import { createChatClient, createEmbeddingsClient, type FetchLike } from './client'
+import { AiNotConfiguredError } from './errors'
+import type { AiEnv, ChatClient, EmbeddingsClient } from './types'
+
+export interface ResolvedChat {
+  client: ChatClient
+  provider: AiProvider
+  model: string
+  source: 'tenant' | 'platform'
+  /** `cfg.AGENT_MAX_OUTPUT_TOKENS` — the per-call `max_tokens` consumers pass. */
+  maxOutputTokens: number
+  configId?: string
+}
+
+export interface ResolvedEmbeddings {
+  client: EmbeddingsClient
+  provider: AiProvider
+  model: string
+  source: 'tenant' | 'platform'
+  configId?: string
+}
+
+export interface ResolveOptions {
+  /** Phase 3b: per-agent config/model lookup keyed on the prompt registry. Ignored today. */
+  promptKey?: PromptKey
+  /** Injected for tests. */
+  fetch?: FetchLike
+}
+
+/** The tenant's default row for a scope (the partial unique index guarantees at most one). */
+export async function findDefaultConfig(
+  db: Database,
+  tenantId: string,
+  scope: AiScope
+): Promise<AiConfigRow | undefined> {
+  return db.query.aiConfigs.findFirst({
+    where: and(
+      eq(aiConfigs.tenantId, tenantId),
+      eq(aiConfigs.scope, scope),
+      eq(aiConfigs.isDefault, true)
+    ),
+  })
+}
+
+/** Decrypt a row's credential (null for key-less providers). The ONLY place `apiKeyEnc` is read. */
+export async function credentialOf(
+  row: Pick<AiConfigRow, 'apiKeyEnc'>,
+  cfg: AppConfig
+): Promise<string | null> {
+  if (!row.apiKeyEnc) return null
+  return decrypt(row.apiKeyEnc, requireEncryptionKey(cfg))
+}
+
+/** Build a chat client from ONE config row — exported for the connection test, which probes a named row. */
+export async function chatClientFromRow(
+  row: AiConfigRow,
+  cfg: AppConfig,
+  fetchImpl?: FetchLike
+): Promise<ChatClient> {
+  return createChatClient({
+    provider: row.provider,
+    apiKey: await credentialOf(row, cfg),
+    baseUrl: row.baseUrl,
+    defaults: { serviceTier: row.serviceTier, thinking: row.thinking },
+    fetch: fetchImpl,
+  })
+}
+
+export async function embeddingsClientFromRow(
+  row: AiConfigRow,
+  cfg: AppConfig,
+  env: AiEnv,
+  fetchImpl?: FetchLike
+): Promise<EmbeddingsClient> {
+  return createEmbeddingsClient({
+    provider: row.provider,
+    model: row.model,
+    apiKey: await credentialOf(row, cfg),
+    baseUrl: row.baseUrl,
+    ai: env.AI,
+    fetch: fetchImpl,
+  })
+}
+
+export async function resolveChat(
+  db: Database,
+  cfg: AppConfig,
+  _env: AiEnv,
+  tenantId: string,
+  options: ResolveOptions = {}
+): Promise<ResolvedChat> {
+  const row = await findDefaultConfig(db, tenantId, 'chat')
+  if (row) {
+    return {
+      client: await chatClientFromRow(row, cfg, options.fetch),
+      provider: row.provider,
+      model: row.model,
+      source: 'tenant',
+      maxOutputTokens: cfg.AGENT_MAX_OUTPUT_TOKENS,
+      configId: row.id,
+    }
+  }
+  if (cfg.ANTHROPIC_API_KEY) {
+    return {
+      client: createChatClient({
+        provider: 'anthropic',
+        apiKey: cfg.ANTHROPIC_API_KEY,
+        fetch: options.fetch,
+      }),
+      provider: 'anthropic',
+      model: DEFAULT_MODELS.anthropic,
+      source: 'platform',
+      maxOutputTokens: cfg.AGENT_MAX_OUTPUT_TOKENS,
+    }
+  }
+  throw new AiNotConfiguredError('chat')
+}
+
+export async function resolveEmbeddings(
+  db: Database,
+  cfg: AppConfig,
+  env: AiEnv,
+  tenantId: string,
+  options: ResolveOptions = {}
+): Promise<ResolvedEmbeddings> {
+  const row = await findDefaultConfig(db, tenantId, 'embeddings')
+  if (row) {
+    return {
+      client: await embeddingsClientFromRow(row, cfg, env, options.fetch),
+      provider: row.provider,
+      model: row.model,
+      source: 'tenant',
+      configId: row.id,
+    }
+  }
+  if (env.AI) {
+    const model = DEFAULT_MODELS.workers_ai
+    return {
+      client: createEmbeddingsClient({ provider: 'workers_ai', model, ai: env.AI }),
+      provider: 'workers_ai',
+      model,
+      source: 'platform',
+    }
+  }
+  if (cfg.EMBEDDINGS_API_KEY) {
+    const model = DEFAULT_MODELS.openai
+    return {
+      client: createEmbeddingsClient({
+        provider: 'openai',
+        model,
+        apiKey: cfg.EMBEDDINGS_API_KEY,
+        fetch: options.fetch,
+      }),
+      provider: 'openai',
+      model,
+      source: 'platform',
+    }
+  }
+  throw new AiNotConfiguredError('embeddings')
+}
+
+/** What the two resolvers WOULD pick — no client is built, no credential decrypted, nothing thrown. */
+export async function readiness(
+  db: Database,
+  cfg: AppConfig,
+  env: AiEnv,
+  tenantId: string
+): Promise<AiReadiness> {
+  const [chatRow, embRow] = await Promise.all([
+    findDefaultConfig(db, tenantId, 'chat'),
+    findDefaultConfig(db, tenantId, 'embeddings'),
+  ])
+  const none: AiScopeReadiness = { ready: false, source: 'none' }
+  const chat: AiScopeReadiness = chatRow
+    ? { ready: true, source: 'tenant', provider: chatRow.provider, model: chatRow.model }
+    : cfg.ANTHROPIC_API_KEY
+      ? { ready: true, source: 'platform', provider: 'anthropic', model: DEFAULT_MODELS.anthropic }
+      : none
+  const embeddings: AiScopeReadiness = embRow
+    ? { ready: true, source: 'tenant', provider: embRow.provider, model: embRow.model }
+    : env.AI
+      ? {
+          ready: true,
+          source: 'platform',
+          provider: 'workers_ai',
+          model: DEFAULT_MODELS.workers_ai,
+        }
+      : cfg.EMBEDDINGS_API_KEY
+        ? { ready: true, source: 'platform', provider: 'openai', model: DEFAULT_MODELS.openai }
+        : none
+  return { chat, embeddings }
+}

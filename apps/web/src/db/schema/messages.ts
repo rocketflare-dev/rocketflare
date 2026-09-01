@@ -14,7 +14,12 @@ import { conversations } from './conversations'
 import { tenantIsolation } from './rls'
 import { tenants } from './tenants'
 
-export const CHAT_ROLES = ['user', 'assistant', 'system', 'tool'] as const satisfies readonly ChatRole[]
+export const CHAT_ROLES = [
+  'user',
+  'assistant',
+  'system',
+  'tool',
+] as const satisfies readonly ChatRole[]
 
 export const messages = pgTable(
   'messages',

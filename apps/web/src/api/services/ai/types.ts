@@ -126,5 +126,7 @@ export function textOf(content: ContentBlock[]): string {
 }
 
 export function toolUsesOf(content: ContentBlock[]) {
-  return content.filter((b): b is Extract<ContentBlock, { type: 'tool_use' }> => b.type === 'tool_use')
+  return content.filter(
+    (b): b is Extract<ContentBlock, { type: 'tool_use' }> => b.type === 'tool_use'
+  )
 }

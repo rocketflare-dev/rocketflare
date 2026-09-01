@@ -8,7 +8,16 @@
  */
 import type { AiProvider, AiScope, ThinkingSetting } from '@gmgo/shared/ai/config'
 import { relations, sql } from 'drizzle-orm'
-import { boolean, index, jsonb, pgTable, text, unique, uniqueIndex, uuid } from 'drizzle-orm/pg-core'
+import {
+  boolean,
+  index,
+  jsonb,
+  pgTable,
+  text,
+  unique,
+  uniqueIndex,
+  uuid,
+} from 'drizzle-orm/pg-core'
 import { tenantRef, timestamps } from './_helpers'
 import { tenantIsolation } from './rls'
 import { tenants } from './tenants'

@@ -10,6 +10,7 @@ import type { PinoLogger } from 'hono-pino'
 import type { AppConfig } from '../config'
 import type { Database } from '../db/client'
 import type { User } from '../db/schema'
+import type { Tracer } from './observability/tracer'
 
 /**
  * What `authMiddleware` sets (D10, D25). Read ONLY through `withAuthAndDb` in routes and the
@@ -48,6 +49,8 @@ export interface AppVariables {
   dbClose?: () => Promise<void>
   logger: PinoLogger
   requestId: string
+  /** Per-request tracer (D16): Langfuse batcher when keys are set, else no-op. Set by `tracerMiddleware`. */
+  tracer: Tracer
   /** Set by `authMiddleware`; absent on public routes. */
   auth?: AuthContext
 }

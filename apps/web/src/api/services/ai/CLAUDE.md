@@ -1,0 +1,32 @@
+# AI services (D16, D17, D18)
+
+The provider seam and everything that calls a model. Feature code (routes, agents) never imports an
+SDK, never reads `ai_configs`, never decrypts a key — it asks `resolve.ts` for a client and calls it
+through `kit.ts`.
+
+| File | Role |
+|---|---|
+| `types.ts` | `ChatClient { stream, complete, countTokens? }`, `EmbeddingsClient { embed, dimension }`, block-shaped `ChatMessage`/`ContentBlock`, `SystemPrompt` (`string \| { stable, volatile }`), `ChatDelta`, `RequestDefaults`, `AiEnv` (`{ AI? }`) |
+| `providers.ts` | `PROVIDERS` catalog — DATA only: `scopes` (an adapter exists), `needsApiKey/BaseUrl`, `supportsThinking/ServiceTier`, presets, suggested models |
+| `client.ts` | Adapters: `createChatClient` (`anthropic` / `anthropic_compatible` via `@anthropic-ai/sdk`; `openai` / `openai_compatible` via fetch SSE), `createEmbeddingsClient` (`openai*` `/embeddings`, `workers_ai` binding). Injects `service_tier` + `thinking` (explicitly `disabled` by default), `reconcileThinking`. `fetch` is injectable |
+| `resolve.ts` | `resolveChat` / `resolveEmbeddings` / `readiness` — tenant default row → platform key → `AiNotConfiguredError` (503 `ai_not_configured`). The ONLY reader of `ai_configs` and the ONLY decrypt. Tests `vi.mock` this module |
+| `kit.ts` | `cachedSystem`, `withRollingCacheBreakpoints`, `Tool` (zod schema + optional handler; no handler = terminal), `callStructuredTool` (forced tool, 1 retry), `runToolLoop` (Phase 3b engine), `runStreamingChat` (chat engine) |
+| `errors.ts` | `AiError { code: auth \| rate_limit \| invalid_request \| unavailable \| unknown }`, `normalizeAiError`, `describeAiError`, `redactSecrets`, `AiNotConfiguredError` |
+| `usage.ts` | `recordUsage` → `ai_usage`, `tapUsage(client, cb)`, `summarizeUsage` |
+| `connection-test.ts` | `testConfig` — 10-token completion / one embedding, same builders as the resolver, never throws a provider error |
+
+Rules:
+
+- **Resolve before you stream.** A route calls `resolveChat` (and anything else that can 4xx/5xx)
+  BEFORE `streamSSE`, so a missing provider is a JSON 503, not a broken stream.
+- **Per-tenant request defaults live in the adapter**, never at call sites. Thinking is OFF unless
+  a config turns it on; `reconcileThinking` drops it on forced tool choice and lifts `max_tokens`.
+- **Wrap, don't fork.** Tracing (`observability/tracing.ts` `traceChatClient`) and usage
+  (`tapUsage`) are client wrappers; a new cross-cutting concern is another wrapper.
+- **Credentials never leave the server.** Routes answer `hasCredential`; errors pass `redactSecrets`.
+- **A streaming route needs its own DB client** (`streamDatabase(c)` in `utils/routes/route-helpers.ts`):
+  the request's client is closed in `waitUntil` the moment the Response is returned.
+- Adding a provider: enum value in `@gmgo/shared/ai/config` (append last) → `PROVIDERS` entry →
+  adapter branch in `client.ts` → `ai-client.test.ts` case. Adding a prompt: `PROMPT_REGISTRY` in
+  `../prompts.ts` (no migration). Per-agent model assignment (`agent_models`) is Phase 3b and
+  lands in `resolveChat`'s `promptKey` branch.

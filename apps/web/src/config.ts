@@ -24,7 +24,8 @@ const optionalSecret = (min: number) =>
 /** `[vars]` arrive as strings; blank means "use the default", never 0. */
 const optionalPositiveInt = (fallback: number) =>
   z.preprocess(
-    value => (value === undefined || value === null || String(value).trim() === '' ? fallback : value),
+    value =>
+      value === undefined || value === null || String(value).trim() === '' ? fallback : value,
     z.coerce.number().int().positive()
   )
 
