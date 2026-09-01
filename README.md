@@ -15,6 +15,23 @@ credentials**, and the codebase is written to be driven by a coding agent: `CLAU
 `.claude/rules/`, per-directory guides and a "how it works" reference mean the next feature is a
 contract → schema → route → page (→ command) loop, not a platform project.
 
+## Getting started
+
+```bash
+corepack enable && pnpm install                          # Node 24 (.nvmrc), pnpm 10, Docker running
+cp apps/web/.dev.vars.example apps/web/.dev.vars         # set OAUTH_ENCRYPTION_KEY + AUTH_SIGNING_KEY (openssl rand -hex 32)
+pnpm dev:db:up && pnpm db:migrate && pnpm seed           # Postgres :5432 → migrations → demo tenant + users
+pnpm dev                                                 # http://localhost:3000 (API :3001)
+pnpm cli login --server http://localhost:3001            # browser sign-in → tenant API key; then: pnpm cli whoami
+pnpm test:db:up && pnpm test                             # full suite against a throwaway Postgres :5433
+```
+
+Sign in with the seeded owner's email; the magic-link URL is printed by `wrangler dev` (no email
+provider configured). Nothing external is required: no `RESEND_API_KEY` → links are logged; no AI key
+→ chat and agents answer 503 `ai_not_configured`; no Cloudflare login → comment out the `[ai]` binding.
+Or ask your coding agent **"Help me set up this project"** — `CLAUDE.md` makes it run `SETUP.md`
+Part 1 step by step. Copied the kit for a new app? `docs/ADAPTING.md` first.
+
 ## Stack
 
 | Layer | Choice |
@@ -98,27 +115,6 @@ Everything runs from the root: `pnpm dev`, `pnpm test`, `pnpm cli …`, `pnpm we
 `apps/web` script), `pnpm db:*`, `pnpm deploy[:staging]`, `pnpm provision`. `wrangler` is a
 devDependency of `apps/web`, so it is `pnpm --filter @rocketflare/web exec wrangler …`, never `pnpm exec
 wrangler` at the root.
-
-## Getting started
-
-Ask your coding agent: **"Help me set up this project"** — `CLAUDE.md` instructs it to run
-`SETUP.md` Part 1 step by step and fix missing prerequisites. Or by hand, from the root:
-
-```bash
-corepack enable && pnpm install                          # Node 24 (.nvmrc), pnpm 10
-cp apps/web/.dev.vars.example apps/web/.dev.vars         # then fill the two keys: openssl rand -hex 32
-pnpm dev:db:up && pnpm db:migrate && pnpm seed
-pnpm dev                                                 # http://localhost:3000 (API on :3001)
-pnpm test:db:up && pnpm test
-pnpm cli login --server http://localhost:3001 && pnpm cli whoami   # CLI first run (browser opens)
-```
-
-Sign in with the seeded owner's email; the magic-link URL is printed by `wrangler dev` because no
-email provider is configured. Just copied the kit for a new app? Read `docs/ADAPTING.md` first.
-
-**Graceful degradation is the default.** No `RESEND_API_KEY` → links are logged. No AI key → chat and
-agents return 503 `ai_not_configured` and the UI says so. No Cloudflare login → comment out the `[ai]`
-binding and embeddings fall back or report "not configured". Nothing else is required until you deploy.
 
 ## Not included (by design)
 
