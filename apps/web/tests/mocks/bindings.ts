@@ -2,7 +2,8 @@
  * `Cloudflare.Env`-shaped test bindings (D15): in-memory KV, a 404 ASSETS fetcher, HYPERDRIVE
  * pointing at the test Postgres, a recording Queue, an in-memory R2 bucket, a recording DO namespace,
  * a recording Workers AI stub, a recording Workflow namespace, and vars from `process.env` (loaded
- * from .env.test by dotenv-cli). Tests may read `process.env`; `src/` may not.
+ * from .env.test by dotenv-cli). The AI stub also answers `toMarkdown` (D18 uploads). Tests may
+ * read `process.env`; `src/` may not.
  *
  * Also `createExecutionContext()` — `waitUntil` collects promises so `waitOnExecutionContext`
  * can drain them; this is how the per-request DB close (middleware/database.ts) is awaited.
@@ -259,14 +260,56 @@ export interface RecordedAiRun {
   inputs: Record<string, unknown>
 }
 
+export interface RecordedConversion {
+  name: string
+  type: string
+  size: number
+}
+
+/** The platform's `ConversionResponse` shape (see `services/ai/types.ts` `MarkdownConversion`). */
+export type FakeConversion =
+  | {
+      id: string
+      name: string
+      mimeType: string
+      format: 'markdown' | 'text'
+      tokens: number
+      data: string
+    }
+  | { id: string; name: string; mimeType: string; format: 'error'; error: string }
+
 /**
  * Stub `AI` binding (Phase 3, D17): `run()` records the call and answers an embeddings-shaped
  * `{ shape, data }` of deterministic 1024-dim vectors (one per input text) so `resolveEmbeddings`'s
  * `workers_ai` branch is testable without the platform. Override `respond` to shape other models.
+ * `toMarkdown()` (D18 uploads) records `{ name, type, size }` in `conversions` and answers markdown
+ * made of the blob's bytes decoded as text — so a fixture "PDF" is just text typed
+ * `application/pdf`; override `convert` for `format: 'error'` or a thrown outage.
  */
 export class RecordingAi {
   readonly runs: RecordedAiRun[] = []
+  readonly conversions: RecordedConversion[] = []
+  convert: (doc: { name: string; blob: Blob }) => Promise<FakeConversion> = async doc => ({
+    id: crypto.randomUUID(),
+    name: doc.name,
+    mimeType: doc.blob.type,
+    format: 'markdown',
+    tokens: Math.ceil(doc.blob.size / 4),
+    data: `# ${doc.name}\n\n${await doc.blob.text()}`,
+  })
+  async toMarkdown(doc: { name: string; blob: Blob }): Promise<FakeConversion> {
+    this.conversions.push({ name: doc.name, type: doc.blob.type, size: doc.blob.size })
+    return this.convert(doc)
+  }
+  /**
+   * Default answers: a chat call (`inputs.messages`) gets `{ response: 'ok', usage }` in the
+   * non-streamed shape — override `respond` with an SSE `ReadableStream` to exercise streaming —
+   * and an embeddings call (`inputs.text`) gets deterministic 1024-dim vectors.
+   */
   respond: (model: string, inputs: Record<string, unknown>) => unknown = (_model, inputs) => {
+    if (Array.isArray(inputs.messages)) {
+      return { response: 'ok', usage: { prompt_tokens: 3, completion_tokens: 1, total_tokens: 4 } }
+    }
     const text = inputs.text
     const texts = Array.isArray(text) ? text : [String(text ?? '')]
     return {
@@ -282,6 +325,7 @@ export class RecordingAi {
   }
   clear(): void {
     this.runs.length = 0
+    this.conversions.length = 0
   }
 }
 

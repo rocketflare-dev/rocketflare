@@ -3,14 +3,20 @@
  * SSE parsing incl. tool-call deltas and usage; error normalisation 401→auth, 429→rate_limit,
  * 404→invalid_request; the Anthropic path through the real SDK against a fake SSE body (bearer
  * `authToken` for compatible vendors, explicit `thinking: disabled`, `reconcileThinking`);
- * embeddings over OpenAI-shaped `/embeddings` and the Workers AI binding.
+ * embeddings over OpenAI-shaped `/embeddings` and the Workers AI binding; Workers AI CHAT over the
+ * binding (non-streamed `{ response, tool_calls, usage }`, an SSE `ReadableStream`, the forced-tool
+ * instruction that stands in for `tool_choice`, and the non-streamed replay when tools are present).
  */
 import { describe, expect, it } from 'vitest'
 import {
   createChatClient,
   createEmbeddingsClient,
+  extractJsonObject,
   type FetchLike,
+  forcedToolInstruction,
   reconcileThinking,
+  recoverForcedToolCall,
+  workersAiChatInputs,
 } from '@/api/services/ai/client'
 import { AiError, describeAiError, normalizeAiError, redactSecrets } from '@/api/services/ai/errors'
 import type { ChatDelta } from '@/api/services/ai/types'
@@ -199,7 +205,7 @@ describe('OpenAI-compatible chat client', () => {
     expect(() => createChatClient({ provider: 'openai_compatible', apiKey: 'k' })).toThrow(AiError)
     expect(() => createChatClient({ provider: 'openai', apiKey: '' })).toThrow(AiError)
     expect(() => createChatClient({ provider: 'workers_ai', apiKey: 'k' })).toThrow(
-      /no chat adapter/
+      /AI binding is not configured/
     )
   })
 })
@@ -423,5 +429,261 @@ describe('error helpers', () => {
       ).code
     ).toBe('auth')
     expect(normalizeAiError(new Error('weird'), 'openai').code).toBe('unknown')
+  })
+})
+
+describe('Workers AI chat client', () => {
+  const tool = {
+    name: 'submit_summary',
+    description: 'Submit the summary',
+    inputSchema: { type: 'object', properties: { summary: { type: 'string' } } },
+  }
+  const messages = [{ role: 'user' as const, content: 'Summarise: hello world' }]
+
+  it('completes over env.AI.run with OpenAI-shaped messages/tools and no tool_choice; a forced tool is a system instruction', async () => {
+    const ai = new RecordingAi()
+    ai.respond = () => ({
+      response: '',
+      tool_calls: [{ name: 'submit_summary', arguments: { summary: 'hi' } }], // legacy shape
+      usage: { prompt_tokens: 12, completion_tokens: 5, total_tokens: 17 },
+    })
+    const client = createChatClient({ provider: 'workers_ai', ai })
+    const result = await client.complete({
+      model: '@cf/mistralai/mistral-small-3.1-24b-instruct',
+      system: 'You summarise.',
+      messages,
+      maxTokens: 64,
+      tools: [tool],
+      toolChoice: { type: 'tool', name: 'submit_summary' },
+    })
+    expect(result.stopReason).toBe('tool_use')
+    expect(result.content).toEqual([
+      {
+        type: 'tool_use',
+        id: expect.any(String),
+        name: 'submit_summary',
+        input: { summary: 'hi' },
+      },
+    ])
+    expect(result.usage).toEqual({ inputTokens: 12, outputTokens: 5 })
+
+    const [run] = ai.runs
+    expect(run?.model).toBe('@cf/mistralai/mistral-small-3.1-24b-instruct')
+    const inputs = run?.inputs as {
+      messages: Array<{ role: string; content: string }>
+      tools: unknown[]
+      stream: boolean
+      max_tokens: number
+      tool_choice?: unknown
+    }
+    expect(inputs.stream).toBe(false)
+    expect(inputs.max_tokens).toBe(64)
+    expect(inputs.tool_choice).toBeUndefined()
+    expect(inputs.tools).toEqual([
+      {
+        type: 'function',
+        function: {
+          name: 'submit_summary',
+          description: 'Submit the summary',
+          parameters: tool.inputSchema,
+        },
+      },
+    ])
+    expect(inputs.messages[0]?.role).toBe('system')
+    expect(inputs.messages[0]?.content).toContain('You summarise.')
+    expect(inputs.messages[0]?.content).toContain('calling the "submit_summary" tool')
+    expect(inputs.messages[1]).toEqual({ role: 'user', content: 'Summarise: hello world' })
+  })
+
+  it('accepts OpenAI-shaped tool_calls (string arguments) and a plain-text answer', async () => {
+    const ai = new RecordingAi()
+    ai.respond = () => ({
+      response: 'Sure.',
+      tool_calls: [
+        {
+          id: 'call_1',
+          type: 'function',
+          function: { name: 'submit_summary', arguments: '{"summary":"x"}' },
+        },
+      ],
+    })
+    const client = createChatClient({ provider: 'workers_ai', ai })
+    const result = await client.complete({ model: 'm', messages, maxTokens: 8, tools: [tool] })
+    expect(result.content).toEqual([
+      { type: 'text', text: 'Sure.' },
+      { type: 'tool_use', id: 'call_1', name: 'submit_summary', input: { summary: 'x' } },
+    ])
+    expect(result.usage).toEqual({ inputTokens: 0, outputTokens: 0 })
+
+    ai.respond = () => ({
+      response: 'Just text',
+      usage: { prompt_tokens: 2, completion_tokens: 2, total_tokens: 4 },
+    })
+    const plain = await client.complete({ model: 'm', messages, maxTokens: 8 })
+    expect(plain).toMatchObject({
+      stopReason: 'end_turn',
+      content: [{ type: 'text', text: 'Just text' }],
+    })
+  })
+
+  it('streams SSE frames from the binding as text deltas, then usage and end', async () => {
+    const ai = new RecordingAi()
+    ai.respond = () =>
+      sseResponse([
+        'data: {"response":"Hel"}\n\n',
+        'data: {"response":"lo"}\n\n',
+        'data: {"response":"","usage":{"prompt_tokens":4,"completion_tokens":2,"total_tokens":6}}\n\n',
+        'data: [DONE]\n\n',
+      ]).body
+    const client = createChatClient({ provider: 'workers_ai', ai })
+    const deltas = await collect(client.stream({ model: 'm', messages, maxTokens: 8 }))
+    expect(ai.runs[0]?.inputs).toMatchObject({ stream: true })
+    expect(deltas).toEqual([
+      { type: 'text', text: 'Hel' },
+      { type: 'text', text: 'lo' },
+      { type: 'usage', usage: { inputTokens: 4, outputTokens: 2 } },
+      {
+        type: 'end',
+        result: {
+          content: [{ type: 'text', text: 'Hello' }],
+          stopReason: 'end_turn',
+          usage: { inputTokens: 4, outputTokens: 2 },
+          model: 'm',
+        },
+      },
+    ])
+  })
+
+  it('with tools, stream() runs ONE non-streamed call and replays it (tool calls in a stream are undocumented)', async () => {
+    const ai = new RecordingAi()
+    ai.respond = () => ({
+      response: 'Calling.',
+      tool_calls: [{ name: 'submit_summary', arguments: { summary: 's' } }],
+      usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+    })
+    const client = createChatClient({ provider: 'workers_ai', ai })
+    const deltas = await collect(
+      client.stream({
+        model: 'm',
+        messages,
+        maxTokens: 8,
+        tools: [tool],
+        toolChoice: { type: 'any' },
+      })
+    )
+    expect(ai.runs[0]?.inputs).toMatchObject({ stream: false })
+    expect(deltas.map(d => d.type)).toEqual(['text', 'tool_use', 'usage', 'end'])
+    expect(deltas[1]).toMatchObject({
+      type: 'tool_use',
+      name: 'submit_summary',
+      input: { summary: 's' },
+    })
+    expect((deltas[3] as { result: { stopReason: string } }).result.stopReason).toBe('tool_use')
+  })
+
+  it('a forced tool answered as a JSON object in prose is recovered as that tool call (Mistral on short inputs)', async () => {
+    const ai = new RecordingAi()
+    ai.respond = () => ({
+      response:
+        'Here you go:\n```json\n{\n  "summary": "Short.",\n  "keyPoints": ["Short."]\n}\n```',
+      usage: { prompt_tokens: 9, completion_tokens: 9, total_tokens: 18 },
+    })
+    const client = createChatClient({ provider: 'workers_ai', ai })
+    const forced = await client.complete({
+      model: 'm',
+      messages,
+      maxTokens: 64,
+      tools: [tool],
+      toolChoice: { type: 'tool', name: 'submit_summary' },
+    })
+    expect(forced.stopReason).toBe('tool_use')
+    expect(forced.content).toEqual([
+      {
+        type: 'tool_use',
+        id: expect.any(String),
+        name: 'submit_summary',
+        input: { summary: 'Short.', keyPoints: ['Short.'] },
+      },
+    ])
+    // `any` with exactly one tool is the same; with tool_choice auto the prose stays prose.
+    const any = await client.complete({
+      model: 'm',
+      messages,
+      maxTokens: 64,
+      tools: [tool],
+      toolChoice: { type: 'any' },
+    })
+    expect(any.content[0]?.type).toBe('tool_use')
+    const auto = await client.complete({
+      model: 'm',
+      messages,
+      maxTokens: 64,
+      tools: [tool],
+      toolChoice: { type: 'auto' },
+    })
+    expect(auto.content).toEqual([{ type: 'text', text: expect.stringContaining('```json') }])
+  })
+
+  it('recoverForcedToolCall unwraps { name, arguments }, ignores non-JSON prose and a real tool call', () => {
+    const base = {
+      model: 'm',
+      messages,
+      maxTokens: 8,
+      tools: [tool],
+      toolChoice: { type: 'tool' as const, name: 'submit_summary' },
+    }
+    const prose = (text: string) => ({
+      content: [{ type: 'text' as const, text }],
+      stopReason: 'end_turn' as const,
+      usage: { inputTokens: 0, outputTokens: 0 },
+      model: 'm',
+    })
+    expect(
+      recoverForcedToolCall(
+        base,
+        prose('{"name":"submit_summary","arguments":{"summary":"s","keyPoints":[]}}')
+      ).content[0]
+    ).toMatchObject({ type: 'tool_use', input: { summary: 's', keyPoints: [] } })
+    expect(recoverForcedToolCall(base, prose('I cannot summarise that.')).content[0]?.type).toBe(
+      'text'
+    )
+    const real = {
+      ...prose(''),
+      content: [{ type: 'tool_use' as const, id: 'c1', name: 'submit_summary', input: { a: 1 } }],
+    }
+    expect(recoverForcedToolCall(base, real)).toBe(real)
+    expect(extractJsonObject('[1,2]')).toBeUndefined()
+    expect(extractJsonObject('x {"a": {"b": 1}} y')).toEqual({ a: { b: 1 } })
+  })
+
+  it('forced-tool instruction only for tool/any; tools omitted under toolChoice none', () => {
+    const base = { model: 'm', messages, maxTokens: 8, tools: [tool] }
+    expect(forcedToolInstruction({ ...base, toolChoice: { type: 'tool', name: 'x' } })).toContain(
+      '"x"'
+    )
+    expect(forcedToolInstruction({ ...base, toolChoice: { type: 'any' } })).toContain(
+      'one of the available tools'
+    )
+    expect(forcedToolInstruction({ ...base, toolChoice: { type: 'auto' } })).toBeUndefined()
+    expect(
+      forcedToolInstruction({ ...base, tools: [], toolChoice: { type: 'any' } })
+    ).toBeUndefined()
+    expect(
+      workersAiChatInputs({ ...base, toolChoice: { type: 'none' } }, false).tools
+    ).toBeUndefined()
+  })
+
+  it('no binding → AiError; a thrown binding error is normalised (unknown, no status) and never leaks a key-shaped string', async () => {
+    expect(() => createChatClient({ provider: 'workers_ai' })).toThrow(AiError)
+    const ai = new RecordingAi()
+    ai.respond = () => {
+      throw new Error('AiError: 3040 inference failed sk-ant-0123456789abcdef')
+    }
+    const client = createChatClient({ provider: 'workers_ai', ai })
+    const err = await client.complete({ model: 'm', messages, maxTokens: 8 }).catch(e => e)
+    expect(err).toBeInstanceOf(AiError)
+    expect((err as AiError).provider).toBe('workers_ai')
+    expect((err as AiError).code).toBe('unknown')
+    expect((err as AiError).message).not.toContain('sk-ant-0123456789abcdef')
   })
 })

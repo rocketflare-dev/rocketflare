@@ -10,6 +10,7 @@ import {
   DEFAULT_MODELS,
   type ProviderPreset,
   presetsFor,
+  WORKERS_AI_CHAT_MODEL,
 } from '@rocketflare/shared/ai/config'
 
 export interface ProviderInfo {
@@ -87,14 +88,21 @@ export const PROVIDERS: readonly ProviderInfo[] = [
   {
     id: 'workers_ai',
     name: 'Cloudflare Workers AI',
-    scopes: ['embeddings'],
+    scopes: ['chat', 'embeddings'],
     needsApiKey: false,
     needsBaseUrl: false,
     supportsThinking: false,
     supportsServiceTier: false,
     defaultModel: DEFAULT_MODELS.workers_ai,
     presets: [],
-    suggestedModels: ['@cf/baai/bge-m3', '@cf/baai/bge-large-en-v1.5'],
+    // Chat models listed ONLY if the catalog page shows the "Function calling" property — the
+    // picker feeds agents, which force a tool call by instruction (no `tool_choice` on Workers AI).
+    suggestedModels: [
+      WORKERS_AI_CHAT_MODEL,
+      '@cf/meta/llama-3.3-70b-instruct-fp8-fast',
+      '@cf/baai/bge-m3',
+      '@cf/baai/bge-large-en-v1.5',
+    ],
   },
 ]
 

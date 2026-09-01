@@ -8,9 +8,9 @@ through `kit.ts`.
 |---|---|
 | `types.ts` | `ChatClient { stream, complete, countTokens? }`, `EmbeddingsClient { embed, dimension }`, block-shaped `ChatMessage`/`ContentBlock`, `SystemPrompt` (`string \| { stable, volatile }`), `ChatDelta`, `RequestDefaults`, `AiEnv` (`{ AI? }`) |
 | `providers.ts` | `PROVIDERS` catalog — DATA only: `scopes` (an adapter exists), `needsApiKey/BaseUrl`, `supportsThinking/ServiceTier`, presets, suggested models |
-| `client.ts` | Adapters: `createChatClient` (`anthropic` / `anthropic_compatible` via `@anthropic-ai/sdk`; `openai` / `openai_compatible` via fetch SSE), `createEmbeddingsClient` (`openai*` `/embeddings`, `workers_ai` binding). Injects `service_tier` + `thinking` (explicitly `disabled` by default), `reconcileThinking`. `fetch` is injectable |
-| `resolve.ts` | `resolveChat` / `resolveEmbeddings` / `readiness` — tenant default row → platform key → `AiNotConfiguredError` (503 `ai_not_configured`). The ONLY reader of `ai_configs` and the ONLY decrypt. Tests `vi.mock` this module |
-| `kit.ts` | `cachedSystem`, `withRollingCacheBreakpoints`, `Tool` (zod schema + optional handler; no handler = terminal), `callStructuredTool` (forced tool, 1 retry), `runToolLoop` (Phase 3b engine), `runStreamingChat` (chat engine) |
+| `client.ts` | Adapters: `createChatClient` (`anthropic` / `anthropic_compatible` via `@anthropic-ai/sdk`; `openai` / `openai_compatible` via fetch SSE; `workers_ai` via `env.AI.run` — OpenAI-shaped inputs, no `tool_choice` so a forced tool is `forcedToolInstruction` in the system prompt + `recoverForcedToolCall` when the model writes the arguments as a JSON object in prose, and `stream()` with tools is one non-streamed call replayed as deltas), `createEmbeddingsClient` (`openai*` `/embeddings`, `workers_ai` binding). Injects `service_tier` + `thinking` (explicitly `disabled` by default), `reconcileThinking`. `fetch` is injectable |
+| `resolve.ts` | `resolveChat` / `resolveEmbeddings` / `readiness` — tenant default row → `platformChat(cfg, env)` (`ANTHROPIC_API_KEY` → `workers_ai` + `WORKERS_AI_CHAT_MODEL` when `env.AI`) → `AiNotConfiguredError` (503 `ai_not_configured`). The ONLY reader of `ai_configs` and the ONLY decrypt. Tests `vi.mock` this module |
+| `kit.ts` | `cachedSystem`, `withRollingCacheBreakpoints`, `Tool` (zod schema + optional handler; no handler = terminal), `callStructuredTool` (forced tool, 1 retry; `StructuredOutputError.issues` = the zod issues or `{ reason, stopReason, text }` when there was no call), `runToolLoop` (Phase 3b engine), `runStreamingChat` (chat engine) |
 | `errors.ts` | `AiError { code: auth \| rate_limit \| invalid_request \| unavailable \| unknown }`, `normalizeAiError`, `describeAiError`, `redactSecrets`, `AiNotConfiguredError` |
 | `usage.ts` | `recordUsage` → `ai_usage`, `tapUsage(client, cb)`, `summarizeUsage` |
 | `connection-test.ts` | `testConfig` — 10-token completion / one embedding, same builders as the resolver, never throws a provider error |
@@ -31,6 +31,9 @@ Rules:
   `../prompts.ts` (no migration). Per-agent model assignment (`agent_models`, Phase 3b — built) is
   `resolveChat`'s `promptKey` branch (`planChat` — shared with `routes/ai-agent-models.ts`).
 - `chunking.ts` (pure paragraph-aware chunker, ~800 tokens / 100 overlap, 4 chars per token),
-  `ingest.ts` (`ingestText` — inline ≤ 50 chunks else the `document.index` job; `indexDocument` is
-  shared with `queues/handlers/document-index.ts`), `retrieval.ts` (`searchChunks` — dense `<=>` +
+  `ingest.ts` (`ingestText` and `ingestFile` — inline ≤ 50 chunks else the `document.index` job, or
+  `document.convert` for a binary upload; `indexDocument` is shared with
+  `queues/handlers/document-index.ts`, `convertAndIndexDocument` with `document-convert.ts`),
+  `convert.ts` (`needsConversion` / `canConvert` / `decodeText` / `convertToText` over
+  `env.AI.toMarkdown`; `ConversionFailedError` is the permanent case), `retrieval.ts` (`searchChunks` — dense `<=>` +
   lexical `ts_rank_cd`, RRF `k = 60`; `RerankFn` is the documented, unbuilt seam) complete the D18 half.

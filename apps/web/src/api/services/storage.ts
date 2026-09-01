@@ -14,6 +14,9 @@ import {
   isAvatarMimeType,
   MAX_UPLOAD_BYTES,
 } from '@rocketflare/shared/files'
+import { eq } from 'drizzle-orm'
+import type { Database } from '../../db/client'
+import { type FileRow, files } from '../../db/schema'
 import { newId } from '../utils/core/ids'
 
 export { AVATAR_MIME_TYPES, isAvatarMimeType, MAX_UPLOAD_BYTES }
@@ -140,4 +143,64 @@ export function buildStorageKey({ tenantId, scope, name, id }: StorageKeyInput):
 /** The prefix that scopes every object of a tenant (or one scope of it). */
 export function tenantStoragePrefix(tenantId: string, scope?: FileScope): string {
   return scope ? `tenants/${tenantId}/${scope}/` : `tenants/${tenantId}/`
+}
+
+// ---- Upload = object + row ---------------------------------------------------------------------
+
+export interface StoreUploadInput {
+  tenantId: string
+  ownerUserId: string
+  scope: FileScope
+  /** The multipart part — a Blob carries its length, which R2 needs. */
+  file: Blob
+  /** The client's filename (sanitised here). */
+  filename: string
+  contentType: string
+}
+
+/**
+ * Put the bytes under a tenant-scoped key, then insert the `files` row that is the ONLY thing the
+ * browser can name. No orphaned objects: if the row cannot be written the object is deleted again.
+ * Shared by `/api/files` (avatars, generic uploads) and `/api/ai/documents/upload` (originals).
+ */
+export async function storeUploadedFile(
+  db: Database,
+  storage: StorageService,
+  input: StoreUploadInput
+): Promise<FileRow> {
+  const filename = sanitizeFilename(input.filename || 'file')
+  const key = buildStorageKey({ tenantId: input.tenantId, scope: input.scope, name: filename })
+  await storage.put(key, input.file, {
+    contentType: input.contentType,
+    metadata: { tenantId: input.tenantId, ownerUserId: input.ownerUserId, scope: input.scope },
+  })
+  try {
+    const [row] = await db
+      .insert(files)
+      .values({
+        tenantId: input.tenantId,
+        ownerUserId: input.ownerUserId,
+        scope: input.scope,
+        key,
+        filename,
+        contentType: input.contentType,
+        sizeBytes: input.file.size,
+      })
+      .returning()
+    if (!row) throw new Error('files: insert returned no row')
+    return row
+  } catch (err) {
+    await storage.delete(key).catch(() => {})
+    throw err
+  }
+}
+
+/** Delete an object and its row together (idempotent on both sides). Tenant predicate on the row. */
+export async function deleteStoredFile(
+  db: Database,
+  storage: StorageService | null,
+  row: Pick<FileRow, 'id' | 'key'>
+): Promise<void> {
+  if (storage) await storage.delete(row.key)
+  await db.delete(files).where(eq(files.id, row.id))
 }

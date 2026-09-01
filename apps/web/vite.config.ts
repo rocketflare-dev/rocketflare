@@ -39,6 +39,10 @@ export default defineConfig({
   },
   server: {
     port: 3000,
+    // Never silently move to another port: 3001 is `wrangler dev`, and a Vite that lands there
+    // serves the UI from the API's port while the proxy talks to itself. Fail loudly instead —
+    // `pnpm dev` runs scripts/dev-server.mjs --preflight to clear or name the squatter first.
+    strictPort: true,
     host: true,
     ...(tunnelHost
       ? {

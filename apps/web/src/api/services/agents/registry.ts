@@ -3,7 +3,8 @@
  * `AgentMeta` (key, title, schemas, promptKey, exclusive) + a server-side `run(ctx)`. The runtime
  * (`runtime.ts`, driven by `workflows/agent-run.ts`) owns the lifecycle — claim, trace, client,
  * cancellation, persistence, events — so an agent is a declarative meta and one async function that
- * reads `ctx.input`, calls the model through `ctx.chat`, emits progress and returns its output.
+ * reads `ctx.input`, calls the model through `ctx.chat` (with `ctx.tools` — the knowledge base is
+ * available to every agent through `search_knowledge`), emits progress and returns its output.
  * Adding an agent = a key in `@rocketflare/shared/ai/agents`, a prompt in `services/prompts.ts`, a file in
  * `examples/` and one entry here. No migration.
  */
@@ -13,6 +14,7 @@ import type { Database } from '../../../db/client'
 import type { Tracer } from '../../observability/tracer'
 import type { AppBindings } from '../../types'
 import type { Logger } from '../../utils/core/logger'
+import type { Tool } from '../ai/kit'
 import type { ChatClient } from '../ai/types'
 import type { JobsQueue } from '../jobs'
 import { summarizeTextAgent } from './examples/summarize-text'
@@ -48,6 +50,13 @@ export interface AgentContext<Input = unknown> {
   checkCancelled(): Promise<void>
   /** The resolved (traced) client for `meta.promptKey` and the model/max_tokens to pass it. */
   chat: { client: ChatClient; model: string; maxOutputTokens: number }
+  /**
+   * The kit's built-in tools, tenant-scoped to this run (`tools/`: `search_knowledge` over
+   * everything indexed in the knowledge base, `get_document` to read one in full or by window).
+   * Hand them to `runToolLoop` alongside the agent's own tools; a forced single-tool agent may
+   * ignore them.
+   */
+  tools: Tool[]
   /** `resolvePrompt(meta.promptKey, vars)` with `appName`/`tenantName` pre-filled. */
   prompt(vars?: Record<string, string | undefined>): Promise<string>
   /** Shortcut for a `step` event: `step('summarize', 'Summarising', 'running')`. */

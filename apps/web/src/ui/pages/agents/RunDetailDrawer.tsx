@@ -167,7 +167,7 @@ function OutputPanel({ agentKey, output }: { agentKey: string; output: unknown }
           )}
           {summary.data.documentId && (
             <Link
-              to={`/documents?documentId=${encodeURIComponent(summary.data.documentId)}`}
+              to={`/search?documentId=${encodeURIComponent(summary.data.documentId)}`}
               className="link link-primary text-sm inline-flex items-center gap-1.5"
             >
               <DocumentMagnifyingGlassIcon className="w-4 h-4" />

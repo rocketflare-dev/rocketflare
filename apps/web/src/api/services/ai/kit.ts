@@ -171,7 +171,15 @@ export async function callStructuredTool<T>(
       opts.onUsage?.(usage)
       return parsed.data
     }
-    lastIssues = parsed ? parsed.error.issues : 'no tool call in the response'
+    // No call: keep what the model said instead — the one clue a person has when a provider
+    // without `tool_choice` (Workers AI) answers in prose.
+    lastIssues = parsed
+      ? parsed.error.issues
+      : {
+          reason: 'no tool call in the response',
+          stopReason: result.stopReason,
+          text: textOf(result.content).slice(0, 500),
+        }
     // Feed the failure back once: assistant turn as sent, then a user turn naming the problem.
     messages.push({ role: 'assistant', content: result.content })
     messages.push({

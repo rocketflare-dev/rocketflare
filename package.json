@@ -3,14 +3,16 @@
   "version": "0.1.0",
   "private": true,
   "license": "MIT",
-  "description": "Rocketflare — multi-tenant SaaS starter kit — pnpm workspace: apps/web (Hono API + React UI on Cloudflare Workers), apps/cli, packages/shared",
+  "description": "Rocketflare \u2014 multi-tenant SaaS starter kit \u2014 pnpm workspace: apps/web (Hono API + React UI on Cloudflare Workers), apps/cli, packages/shared",
   "type": "module",
   "packageManager": "pnpm@10.18.0",
   "engines": {
     "node": ">=24"
   },
   "scripts": {
-    "dev": "pnpm --filter @rocketflare/web dev",
+    "dev": "pnpm --silent --filter @rocketflare/web dev",
+    "dev:stop": "pnpm --filter @rocketflare/web dev:stop",
+    "dev:status": "pnpm --filter @rocketflare/web dev:status",
     "dev:tunnel": "pnpm --filter @rocketflare/web dev:tunnel",
     "dev:db:up": "pnpm --filter @rocketflare/web dev:db:up",
     "dev:db:down": "pnpm --filter @rocketflare/web dev:db:down",

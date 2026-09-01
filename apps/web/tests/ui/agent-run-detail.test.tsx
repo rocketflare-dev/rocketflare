@@ -226,7 +226,7 @@ describe('RunDetailDrawer', () => {
     expect(screen.getByText('One')).toBeInTheDocument()
     expect(screen.getByRole('link', { name: /Indexed as a searchable document/ })).toHaveAttribute(
       'href',
-      '/documents?documentId=55555555-5555-4555-8555-555555555555'
+      '/search?documentId=55555555-5555-4555-8555-555555555555'
     )
     expect(screen.getByText('Model hiccup')).toBeInTheDocument()
     expect(screen.getByText('· retrying')).toBeInTheDocument()

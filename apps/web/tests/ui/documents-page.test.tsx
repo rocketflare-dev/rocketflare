@@ -1,10 +1,13 @@
 /**
  * `/documents` (D18): the ingest form counts characters against `INGEST_TEXT_MAX_CHARS`, validates
- * with the shared schema and POSTs the exact body (then toasts and clears); the table shows status
- * badges with the failure reason and only offers delete on own rows (any row for admin+); search
- * POSTs `{ query, limit, documentId? }` and renders hits ranked with dense/lexical badges.
+ * with the shared schema and POSTs the exact body (then toasts and clears); the upload tab refuses
+ * a wrong type or an oversized file before any request and POSTs the chosen file as multipart to
+ * `/api/ai/documents/upload` with the optional title; the table shows status badges with the
+ * failure reason, a download link only for uploaded originals, and only offers delete on own rows
+ * (any row for admin+). Search lives on `/search` (`search-page.test.tsx`).
  */
-import { INGEST_TEXT_MAX_CHARS } from '@rocketflare/shared/ai/embeddings'
+import { DOCUMENT_UPLOAD_ACCEPT, INGEST_TEXT_MAX_CHARS } from '@rocketflare/shared/ai/embeddings'
+import { MAX_UPLOAD_BYTES } from '@rocketflare/shared/files'
 import { fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { useToastStore } from '@/ui/components/shared/Toast'
@@ -33,6 +36,7 @@ const doc = (overrides: Record<string, unknown> = {}) => ({
   source: 'upload',
   contentType: 'text/plain',
   sizeBytes: 1200,
+  fileId: null,
   chunkCount: 3,
   status: 'indexed',
   error: null,
@@ -40,6 +44,9 @@ const doc = (overrides: Record<string, unknown> = {}) => ({
   updatedAt: now,
   ...overrides,
 })
+
+const FILE_ID = '77777777-7777-4777-8777-777777777777'
+const DOC_C = '88888888-8888-4888-8888-888888888888'
 
 const DOCS = paged([
   doc(),
@@ -52,19 +59,16 @@ const DOCS = paged([
     error: 'Embeddings provider timed out',
     chunkCount: 0,
   }),
+  doc({
+    id: DOC_C,
+    title: 'Quarterly report',
+    source: 'report.pdf',
+    contentType: 'application/pdf',
+    fileId: FILE_ID,
+    status: 'pending',
+    chunkCount: 0,
+  }),
 ])
-
-const hit = (rank: number, overrides: Record<string, unknown> = {}) => ({
-  chunkId: `${String(rank).padStart(8, '0')}-0000-4000-8000-000000000000`,
-  documentId: DOC_A,
-  title: 'Onboarding guide',
-  text: `Snippet ${rank}`,
-  score: 0.5 / rank,
-  rank,
-  denseRank: rank,
-  lexicalRank: null,
-  ...overrides,
-})
 
 function mount(routes: RouteTable = {}, session = makeSession(), route = '/documents') {
   const fetchMock = stubFetch({ '/api/ai/documents': DOCS, ...routes })
@@ -112,10 +116,93 @@ describe('Documents page', () => {
     expect(screen.getByLabelText('Text')).toHaveValue('')
   })
 
-  it('shows status badges with the failure reason and delete only on own rows', async () => {
+  it('uploads the chosen file as multipart with the optional title, then toasts and clears', async () => {
+    const fetchMock = mount({
+      'POST /api/ai/documents/upload': (init: RequestInit | undefined) => {
+        const form = init?.body as FormData
+        const file = form.get('file') as File
+        return jsonResponse(
+          doc({
+            id: DOC_C,
+            title: String(form.get('title') ?? file.name),
+            source: file.name,
+            contentType: 'application/pdf',
+            fileId: FILE_ID,
+            status: 'pending',
+            chunkCount: 0,
+          }),
+          201
+        )
+      },
+    })
+    fireEvent.click(await screen.findByRole('tab', { name: 'Upload file' }))
+    const input = screen.getByLabelText('Upload document') as HTMLInputElement
+    expect(input.accept).toBe(DOCUMENT_UPLOAD_ACCEPT)
+    expect(screen.getByRole('button', { name: 'Upload document' })).toBeDisabled()
+
+    const pdf = new File([new Uint8Array([1, 2, 3])], 'report.pdf', { type: 'application/pdf' })
+    fireEvent.change(input, { target: { files: [pdf] } })
+    expect(screen.getByText('report.pdf')).toBeInTheDocument()
+    fireEvent.change(screen.getByLabelText(/^Title/), { target: { value: 'Q3 report' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Upload document' }))
+
+    await waitFor(() =>
+      expect(
+        fetchMock.mock.calls.some(
+          ([url, init]) => String(url) === '/api/ai/documents/upload' && init?.method === 'POST'
+        )
+      ).toBe(true)
+    )
+    const call = fetchMock.mock.calls.find(([url]) => String(url) === '/api/ai/documents/upload')
+    const body = call?.[1]?.body as FormData
+    expect(body).toBeInstanceOf(FormData)
+    expect((body.get('file') as File).name).toBe('report.pdf')
+    expect(body.get('title')).toBe('Q3 report')
+    expect(body.get('source')).toBeNull()
+    // Multipart: the browser sets the boundary — no JSON content type.
+    expect(new Headers(call?.[1]?.headers).get('Content-Type')).toBeNull()
+    await waitFor(() =>
+      expect(useToastStore.getState().toasts.map(t => t.message)).toContain(
+        '"Q3 report" queued for conversion and indexing'
+      )
+    )
+    expect(screen.getByText('No file chosen')).toBeInTheDocument()
+  })
+
+  it('refuses a wrong type or an oversized file before any request', async () => {
+    const fetchMock = mount({ 'POST /api/ai/documents/upload': doc() })
+    fireEvent.click(await screen.findByRole('tab', { name: 'Upload file' }))
+    const input = screen.getByLabelText('Upload document') as HTMLInputElement
+
+    fireEvent.change(input, {
+      target: { files: [new File(['x'], 'photo.png', { type: 'image/png' })] },
+    })
+    expect(await screen.findByRole('alert')).toHaveTextContent(/Choose a PDF/)
+
+    const big = new File([new Uint8Array(MAX_UPLOAD_BYTES + 1)], 'big.txt', {
+      type: 'text/plain',
+    })
+    fireEvent.change(input, { target: { files: [big] } })
+    expect(await screen.findByRole('alert')).toHaveTextContent(/MB or smaller/)
+    expect(screen.getByRole('button', { name: 'Upload document' })).toBeDisabled()
+    expect(fetchMock.mock.calls.some(([url]) => String(url) === '/api/ai/documents/upload')).toBe(
+      false
+    )
+  })
+
+  it('shows status badges with the failure reason, a download link for originals, delete only on own rows', async () => {
     mount()
     const table = await screen.findByRole('table', { name: 'Documents' })
     expect(within(table).getByText('Indexed')).toBeInTheDocument()
+    expect(within(table).getByText('Indexing')).toBeInTheDocument()
+    expect(within(table).getByText('PDF')).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Download Quarterly report' })).toHaveAttribute(
+      'href',
+      `/api/files/${FILE_ID}`
+    )
+    expect(
+      screen.queryByRole('link', { name: 'Download Onboarding guide' })
+    ).not.toBeInTheDocument()
     expect(within(table).getByText('Failed')).toHaveAttribute(
       'title',
       'Embeddings provider timed out'
@@ -144,61 +231,5 @@ describe('Documents page', () => {
         )
       ).toBe(true)
     )
-  })
-
-  it('searches and renders ranked hits with dense/lexical badges', async () => {
-    const fetchMock = mount({
-      'POST /api/ai/documents/search': (init: RequestInit | undefined) => {
-        const { query } = JSON.parse(String(init?.body)) as { query: string }
-        return {
-          query,
-          hits: [
-            hit(1, { lexicalRank: 2 }),
-            hit(2, { denseRank: null, lexicalRank: 1, documentId: DOC_B, title: 'Release notes' }),
-          ],
-        }
-      },
-    })
-    fireEvent.change(await screen.findByLabelText('Search query'), {
-      target: { value: 'how do I onboard' },
-    })
-    fireEvent.click(screen.getByRole('button', { name: 'Search' }))
-
-    await waitFor(() =>
-      expect(requestBody(fetchMock, 'POST /api/ai/documents/search')).toEqual({
-        query: 'how do I onboard',
-        limit: 10,
-      })
-    )
-    const results = await screen.findByRole('list', { name: 'Search results' })
-    const rows = within(results).getAllByRole('listitem')
-    expect(rows.map(r => r.getAttribute('data-rank'))).toEqual(['1', '2'])
-    expect(rows[0]).toHaveTextContent('#1')
-    expect(rows[0]).toHaveTextContent('dense #1')
-    expect(rows[0]).toHaveTextContent('lexical #2')
-    expect(rows[0]).toHaveTextContent('Snippet 1')
-    expect(rows[1]).toHaveTextContent('lexical #1')
-    expect(rows[1]).not.toHaveTextContent('dense #')
-    expect(rows[1]).toHaveTextContent('Release notes')
-  })
-
-  it('preselects the document filter from ?documentId and sends it', async () => {
-    const fetchMock = mount(
-      { 'POST /api/ai/documents/search': { query: 'x', hits: [] } },
-      makeSession(),
-      `/documents?documentId=${DOC_B}`
-    )
-    await screen.findByRole('table', { name: 'Documents' })
-    expect(screen.getByLabelText('Restrict to document')).toHaveValue(DOC_B)
-    fireEvent.change(screen.getByLabelText('Search query'), { target: { value: 'x' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Search' }))
-    await waitFor(() =>
-      expect(requestBody(fetchMock, 'POST /api/ai/documents/search')).toEqual({
-        query: 'x',
-        limit: 10,
-        documentId: DOC_B,
-      })
-    )
-    expect(await screen.findByText(/No matches for/)).toBeInTheDocument()
   })
 })

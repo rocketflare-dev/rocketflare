@@ -7,7 +7,8 @@
  *
  * `avatars` scope: image MIME allowlist, and the caller's `users.avatarUrl` is set to the new URL.
  * Anything not on the image allowlist is served as an attachment so a stored `text/html` can
- * never execute on this origin.
+ * never execute on this origin. `documents` scope rows are created by `/api/ai/documents/upload`
+ * and only deleted with their document (409 `owned_by_document` here).
  */
 import {
   AVATAR_MIME_TYPES,
@@ -24,15 +25,16 @@ import { uploadBodyLimit } from '../middleware/body-limit'
 import { can, guardPermission } from '../middleware/permissions'
 import { recordActivity } from '../services/activity'
 import {
-  buildStorageKey,
   createR2Storage,
+  deleteStoredFile,
   type StorageService,
-  sanitizeFilename,
+  storeUploadedFile,
 } from '../services/storage'
 import type { AppContext } from '../types'
 import {
   ApiError,
   BadRequestError,
+  ConflictError,
   ForbiddenError,
   NotFoundError,
   ServiceUnavailableError,
@@ -107,53 +109,38 @@ filesRouter.post('/', uploadBodyLimit, validate('query', uploadQuerySchema), asy
   const contentType = file.type || 'application/octet-stream'
   checkContentType(scope, contentType)
 
-  const filename = sanitizeFilename(file.name || 'file')
-  const key = buildStorageKey({ tenantId, scope, name: filename })
-  // A Blob carries its length; R2 needs one (a bare stream does not).
-  await storage.put(key, file, {
+  const row = await storeUploadedFile(db, storage, {
+    tenantId,
+    ownerUserId: user.id,
+    scope,
+    file,
+    filename: file.name || 'file',
     contentType,
-    metadata: { tenantId, ownerUserId: user.id, scope },
   })
-
-  let row: FileRow | undefined
-  try {
-    ;[row] = await db
-      .insert(files)
-      .values({
-        tenantId,
-        ownerUserId: user.id,
-        scope,
-        key,
-        filename,
-        contentType,
-        sizeBytes: file.size,
-      })
-      .returning()
-    if (!row) throw new Error('files: insert returned no row')
-    if (scope === 'avatars') {
+  if (scope === 'avatars') {
+    try {
       await db
         .update(users)
         .set({ avatarUrl: filePath(row.id) })
         .where(eq(users.id, user.id))
+    } catch (err) {
+      // Still no orphans: an avatar whose pointer could not be written is rolled back whole.
+      await deleteStoredFile(db, storage, row).catch(() => {})
+      throw err
     }
-  } catch (err) {
-    // No orphaned objects: the row is the index, so without it the bytes must go too.
-    await storage.delete(key).catch(() => {})
-    throw err
   }
 
-  const stored = row
   defer(() =>
     recordActivity(db, {
       tenantId,
       userId: user.id,
       type: 'file.uploaded',
       subjectType: 'File',
-      subjectId: stored.id,
-      metadata: { scope, contentType, sizeBytes: stored.sizeBytes, filename },
+      subjectId: row.id,
+      metadata: { scope, contentType, sizeBytes: row.sizeBytes, filename: row.filename },
     })
   )
-  return c.json(toStoredFile(stored), 201)
+  return c.json(toStoredFile(row), 201)
 })
 
 // ---- GET /api/files/:id ----------------------------------------------------------------
@@ -200,6 +187,13 @@ filesRouter.delete('/:id', async c => {
     where: and(eq(files.id, id), eq(files.tenantId, tenantId)),
   })
   if (!row) throw new NotFoundError('File not found')
+  // A knowledge-base original belongs to its `documents` row (D18): delete the document instead.
+  if (row.scope === 'documents') {
+    throw new ConflictError(
+      'This file is the original of a knowledge document; delete the document instead',
+      'owned_by_document'
+    )
+  }
   // "Owner or admin+": the uploader may always delete their own file; others need `delete File`.
   if (row.ownerUserId !== user.id && !can(c, 'delete', 'File')) {
     throw new ForbiddenError('You can only delete your own files')

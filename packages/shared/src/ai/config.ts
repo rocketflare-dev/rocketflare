@@ -10,7 +10,8 @@ import { z } from 'zod'
 /**
  * v1 provider set. `anthropic_compatible` = Anthropic wire format behind a bearer token
  * (Fireworks, Moonshot presets); `openai_compatible` = `/v1/chat/completions` + `/v1/embeddings`
- * behind a bearer token (any vLLM/Ollama/proxy). `workers_ai` is the zero-key embeddings binding.
+ * behind a bearer token (any vLLM/Ollama/proxy). `workers_ai` is the zero-key binding — embeddings
+ * AND chat, the floor every workspace can fall back to.
  * Append values LAST — a Postgres enum cannot use a value in the migration that adds it.
  */
 export const AI_PROVIDERS = [
@@ -150,6 +151,23 @@ export const DEFAULT_MODELS: Record<AiProvider, string> = {
   openai_compatible: '',
   workers_ai: '@cf/baai/bge-m3',
 }
+
+/**
+ * The zero-key chat floor: Workers AI's Mistral Small 3.1 — function calling, `messages` input,
+ * 128k context, Apache-2.0, mid-priced. `resolveChat` lands here when no tenant row and no
+ * platform key exist, so a fresh workspace can chat with nothing configured.
+ */
+export const WORKERS_AI_CHAT_MODEL = '@cf/mistralai/mistral-small-3.1-24b-instruct'
+
+/** Chat defaults for providers whose `DEFAULT_MODELS` entry is an embeddings model. */
+export const DEFAULT_CHAT_MODELS: Partial<Record<AiProvider, string>> = {
+  openai: 'gpt-4.1-mini',
+  workers_ai: WORKERS_AI_CHAT_MODEL,
+}
+
+/** What a new config for `(provider, scope)` lands on — `DEFAULT_MODELS` is per provider, not per scope. */
+export const defaultModelFor = (provider: AiProvider, scope: AiScope): string =>
+  (scope === 'chat' ? DEFAULT_CHAT_MODELS[provider] : undefined) ?? DEFAULT_MODELS[provider]
 
 /** Embedding dimension every provider is reduced to (D18); `bge-m3` is natively 1024. */
 export const EMBEDDING_DIM = 1024

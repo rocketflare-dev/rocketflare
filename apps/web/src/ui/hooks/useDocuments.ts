@@ -1,8 +1,10 @@
 /**
  * Knowledge base (D18, D20): documents paginated (`GET /api/ai/documents`), one row (`GET /:id`),
  * text ingest (`POST /ingest` → 201, `indexed` inline for small texts or `pending` until the
- * `document.index` job lands), delete (`DELETE /:id` — own rows for everyone, any row for `delete
- * Document`), and hybrid search (`POST /search`). Search is mutation-style: a query is an action
+ * `document.index` job lands), file upload (`POST /upload`, multipart — text types index like
+ * pasted text, PDF/Office/HTML return `pending` until the `document.convert` job lands), delete
+ * (`DELETE /:id` — own rows for everyone, any row for `delete Document`; the uploaded original goes
+ * too), and hybrid search (`POST /search`). Search is mutation-style: a query is an action
  * the reader takes, its hits are shown once and never cached as server state. The raw text and
  * the vectors never reach the browser; only the sanitised `documents` row does.
  */
@@ -14,7 +16,10 @@ import {
   type SearchRequest,
   type SearchResponse,
   searchResponseSchema,
+  type UploadDocumentFields,
+  validateDocumentFile,
 } from '@rocketflare/shared/ai/embeddings'
+import { MAX_UPLOAD_BYTES } from '@rocketflare/shared/files'
 import { paginatedResponse } from '@rocketflare/shared/pagination'
 import {
   keepPreviousData,
@@ -71,6 +76,30 @@ export function useIngestText() {
   return useMutation({
     mutationFn: (body: IngestTextRequest) =>
       api.post<Document>('/api/ai/documents/ingest', body, { schema: documentSchema }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.documents.all }),
+  })
+}
+
+/** Client-side mirror of the upload route's 415/413/400 — a message, or null when acceptable. */
+export function validateDocumentUpload(file: File): string | null {
+  return validateDocumentFile(file, MAX_UPLOAD_BYTES)
+}
+
+export interface UploadDocumentInput extends UploadDocumentFields {
+  file: File
+}
+
+/** `POST /api/ai/documents/upload` — multipart `file` + optional `title` / `source`. */
+export function useUploadDocument() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ file, title, source }: UploadDocumentInput) => {
+      const form = new FormData()
+      form.append('file', file, file.name)
+      if (title) form.append('title', title)
+      if (source) form.append('source', source)
+      return api.upload<Document>('/api/ai/documents/upload', form, { schema: documentSchema })
+    },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.documents.all }),
   })
 }

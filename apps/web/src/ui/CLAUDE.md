@@ -197,16 +197,22 @@ React 18 + Vite + React Router 6 + TanStack Query 5 + zustand; DaisyUI 5 on Tail
   least one) and `PUT` sends ONLY the set fields (the PUT replaces the row, so a blank model
   clears it). "Use default" is `DELETE` — absence is the default. Source badges: `agent`
   (assignment), `tenant`, `platform`, `none` (→ EmptyState linking `/settings?tab=ai`).
-- **Knowledge (`/documents`)**: ingest posts `ingestTextRequestSchema` output (blank source
-  omitted; the server defaults it to `upload`), toasts `indexed (n chunks)` or `queued for indexing`
-  and invalidates `documents`; the list polls every 5 s while a row is `pending` (there is no
-  document nudge yet). Delete shows only for own rows unless `delete Document` (admin+) — the route
+- **Knowledge (`/documents`)**: the paginated documents table first, then `URLTabs` (`?tab=text|file`, like Settings) to add. Paste text posts
+  `ingestTextRequestSchema` output (blank source omitted; the server defaults it to `upload`);
+  Upload file checks the pick with `validateDocumentUpload` (the shared allowlist
+  `DOCUMENT_UPLOAD_ACCEPT` + `MAX_UPLOAD_BYTES`) before any request, then `useUploadDocument()`
+  posts multipart `file` (+ optional `title`/`source`) to `/api/ai/documents/upload`. Both toast
+  `indexed (n chunks)` / `queued for …` and invalidate `documents`; the list polls every 5 s while a
+  row is `pending` (there is no document nudge yet). Rows show `documentTypeLabel(contentType)`
+  under the title and a download link (`filePath(fileId)`) when there is an uploaded original.
+- **Search (`/search`, nav "Search", guard `read Document`)**: its own page (`pages/documents/SearchPage.tsx`). The Knowledge header states that everything indexed is also available to agents (`search_knowledge` / `get_document`, `services/agents/tools/`). Delete shows only for own rows unless `delete Document` (admin+) — the route
   enforces. Search is `useSearch()` (mutation): `{ query, limit: 10, documentId? }` → hits with
   `rank`, RRF `score`, `dense #n` / `lexical #n` badges and the snippet; `?documentId=` preselects
-  the per-document filter (the run drawer's "Indexed as a searchable document" link lands here).
+  the per-document filter (the run drawer's "Indexed as a searchable document" link lands on
+  `/search?documentId=`); an empty knowledge base shows an EmptyState linking to `/documents`.
 - Tests: `agents-page`, `agent-run-detail` (renders `RunDetailDrawer` inside `WebSocketProvider`
   with the `FakeSocket` from `websocket-provider.test.tsx` to prove the nudge refetches),
-  `agent-models-settings`, `documents-page`. Mount `AgentsPage` inside the same `<Routes>` pair
+  `agent-models-settings`, `documents-page`, `search-page`. Mount `AgentsPage` inside the same `<Routes>` pair
   App.tsx uses so `navigate('/agents/runs/:id')` really opens the drawer.
 
 ## Analytics dashboards (Phase 4, D19/D20)

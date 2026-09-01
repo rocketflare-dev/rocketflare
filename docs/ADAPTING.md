@@ -129,7 +129,8 @@ instance; never run it in the route.
    exclusive; a non-exclusive one needs `agent_runs_active_exclusive_idx` relaxed) and `run(ctx)`:
    `ctx.step(...)` for coarse stages, `ctx.checkCancelled()` between model turns, `ctx.chat.client`
    with `ctx.chat.model` / `maxOutputTokens` through `callStructuredTool` (one forced tool) or
-   `runToolLoop` (read tools + one terminal tool), `recordUsage(ctx.db, { feature: 'agent:<key>', … })`
+   `runToolLoop` (read tools + one terminal tool — include `ctx.tools` so the agent can
+   `search_knowledge` / `get_document` the tenant's knowledge base), `recordUsage(ctx.db, { feature: 'agent:<key>', … })`
    from `onUsage`, return the output. Never import an SDK or read `ai_configs`.
 4. Registry — one entry in `AGENTS` (`services/agents/registry.ts`); `GET /api/agents` lists it.
 5. Form/run page — `apps/web/src/ui/pages/agents/…` posting `{ agentKey, input }` to

@@ -5,8 +5,12 @@
  */
 import { z } from 'zod'
 
-/** Where an upload goes and what may be uploaded there. Extend per app. */
-export const FILE_SCOPES = ['avatars', 'uploads'] as const
+/**
+ * Where an upload goes and what may be uploaded there. Extend per app. `documents` holds the
+ * originals behind the knowledge base (D18): created and deleted through `/api/ai/documents`,
+ * downloadable at `/api/files/:id`, never deleted directly (409 `owned_by_document`).
+ */
+export const FILE_SCOPES = ['avatars', 'uploads', 'documents'] as const
 export const fileScopeSchema = z.enum(FILE_SCOPES)
 export type FileScope = z.infer<typeof fileScopeSchema>
 

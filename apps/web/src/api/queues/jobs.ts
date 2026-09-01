@@ -12,6 +12,7 @@ import { createDatabase, type DatabaseHandle, resolveDatabaseUrl } from '../../d
 import type { AppBindings } from '../types'
 import type { Logger } from '../utils/core/logger'
 import { handleActivityRecord } from './handlers/activity-record'
+import { handleDocumentConvert } from './handlers/document-convert'
 import { handleDocumentIndex } from './handlers/document-index'
 import { handleEmailSend } from './handlers/email-send'
 import { handleExamplePing } from './handlers/example-ping'
@@ -37,12 +38,13 @@ export interface JobsConsumerDeps {
   createDb?: () => DatabaseHandle
 }
 
-/** The type → handler table. Adding a job type = a schema variant in shared + one entry here. */
+/** The type → handler table. Adding a job type = the shared schema variants + an entry here + a `runHandler` case. */
 const handlers: { [T in JobType]: JobHandler<T> } = {
   'email.send': handleEmailSend,
   'activity.record': handleActivityRecord,
   'example.ping': handleExamplePing,
   'document.index': handleDocumentIndex,
+  'document.convert': handleDocumentConvert,
 }
 
 /** First retry after 30 s, doubling, capped at 15 min. The toml's `retry_delay` is the floor. */
@@ -118,5 +120,7 @@ function runHandler(job: JobEnvelope, ctx: JobContext): Promise<void> {
       return handlers['example.ping'](job, ctx)
     case 'document.index':
       return handlers['document.index'](job, ctx)
+    case 'document.convert':
+      return handlers['document.convert'](job, ctx)
   }
 }

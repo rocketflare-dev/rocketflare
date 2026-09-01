@@ -16,6 +16,7 @@ export const JOB_TYPES = [
   'activity.record',
   'example.ping',
   'document.index',
+  'document.convert',
 ] as const
 export type JobType = (typeof JOB_TYPES)[number]
 
@@ -59,6 +60,13 @@ export const documentIndexPayloadSchema = z.object({
 })
 export type DocumentIndexPayload = z.infer<typeof documentIndexPayloadSchema>
 
+/** Convert an uploaded file (R2 original → text via Workers AI `toMarkdown`) then index it (D18). */
+export const documentConvertPayloadSchema = z.object({
+  tenantId: z.string().uuid(),
+  documentId: z.string().uuid(),
+})
+export type DocumentConvertPayload = z.infer<typeof documentConvertPayloadSchema>
+
 // ---- Envelope ------------------------------------------------------------------------------
 
 /** What a caller hands to `enqueueJob` — the envelope fields are stamped by the producer. */
@@ -67,6 +75,7 @@ export const jobInputSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('activity.record'), payload: activityRecordPayloadSchema }),
   z.object({ type: z.literal('example.ping'), payload: examplePingPayloadSchema }),
   z.object({ type: z.literal('document.index'), payload: documentIndexPayloadSchema }),
+  z.object({ type: z.literal('document.convert'), payload: documentConvertPayloadSchema }),
 ])
 export type JobInput = z.infer<typeof jobInputSchema>
 
@@ -95,6 +104,11 @@ export const jobEnvelopeSchema = z.discriminatedUnion('type', [
     ...envelopeFields,
     type: z.literal('document.index'),
     payload: documentIndexPayloadSchema,
+  }),
+  z.object({
+    ...envelopeFields,
+    type: z.literal('document.convert'),
+    payload: documentConvertPayloadSchema,
   }),
 ])
 export type JobEnvelope = z.infer<typeof jobEnvelopeSchema>

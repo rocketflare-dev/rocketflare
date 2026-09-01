@@ -2,7 +2,8 @@
  * `files` — the index of objects stored in the `FILES` R2 bucket (D23). R2 holds the bytes under
  * `key`; this row holds who owns them, in which tenant, and what to serve them as. Rows are
  * immutable (upload = insert, replace = new row), so there is no `updated_at`. `scope` groups
- * uploads by purpose (`avatars` is the kit's example); `key` is unique because it embeds a UUID.
+ * uploads by purpose (`avatars` is the kit's example; `documents` holds knowledge-base originals
+ * owned by a `documents` row); `key` is unique because it embeds a UUID.
  */
 import { relations } from 'drizzle-orm'
 import { index, integer, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core'
@@ -12,7 +13,7 @@ import { tenants } from './tenants'
 import { users } from './users'
 
 /** Mirrors `FILE_SCOPES` in `@rocketflare/shared/files` — the DB enum and the contract must agree. */
-export const FILE_SCOPES = ['avatars', 'uploads'] as const
+export const FILE_SCOPES = ['avatars', 'uploads', 'documents'] as const
 export type FileScope = (typeof FILE_SCOPES)[number]
 
 export const files = pgTable(

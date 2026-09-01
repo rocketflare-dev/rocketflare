@@ -27,7 +27,8 @@ GOOGLE_CLIENT_ID=
 GOOGLE_CLIENT_SECRET=
 MICROSOFT_CLIENT_ID=
 MICROSOFT_CLIENT_SECRET=
-# AI layer (Phase 3): platform default key; tenants may override in Settings → AI.
+# AI layer (Phase 3): platform default key; tenants may override in Settings → AI. Optional — without
+# it chat falls back to Workers AI through the [ai] binding (zero key, billed to the Cloudflare account).
 ANTHROPIC_API_KEY=
 EMBEDDINGS_API_KEY=
 # Langfuse tracing (Phase 3): presence of both keys enables it.

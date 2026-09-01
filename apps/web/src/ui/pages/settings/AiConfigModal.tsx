@@ -13,7 +13,7 @@ import {
   type AiConfig,
   type AiProvider,
   type AiScope,
-  DEFAULT_MODELS,
+  defaultModelFor,
   type ProviderPreset,
   presetsFor,
   type TestAiConfigRequest,
@@ -95,9 +95,7 @@ function AiConfigForm({
   )
   const [label, setLabel] = useState(editing?.label ?? '')
   const [baseUrl, setBaseUrl] = useState(editing?.baseUrl ?? '')
-  const [model, setModel] = useState(
-    editing?.model ?? infoFor(offered, provider)?.defaultModel ?? ''
-  )
+  const [model, setModel] = useState(editing?.model ?? defaultModelFor(provider, scope))
   const [apiKey, setApiKey] = useState('')
   const [isDefault, setIsDefault] = useState(editing?.isDefault ?? !scopeHasDefault)
   const [thinkingEnabled, setThinkingEnabled] = useState(editing?.thinking.enabled ?? false)
@@ -115,13 +113,13 @@ function AiConfigForm({
   const providerSwitched = editing !== null && editing.provider !== provider
   const keepsKey = Boolean(editing?.hasCredential) && !providerSwitched
   const suggestions = info?.suggestedModels ?? []
-  const defaultModel = DEFAULT_MODELS[provider]
+  const defaultModel = defaultModelFor(provider, scope)
 
   const changeProvider = (next: AiProvider) => {
     setProvider(next)
     setPreset(null)
     setBaseUrl('')
-    setModel(infoFor(offered, next)?.defaultModel ?? DEFAULT_MODELS[next] ?? '')
+    setModel(defaultModelFor(next, scope))
     // Tiers and budgets are not portable between vendors: back to the safe defaults.
     setServiceTier('')
     setThinkingEnabled(false)

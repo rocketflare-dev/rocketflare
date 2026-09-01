@@ -33,7 +33,13 @@ workspace root) or through the root scripts (`pnpm deploy[:staging]`, `pnpm prov
   missing `JOBS_QUEUE` throws `JobsQueueNotConfiguredError` (no inline fallback) and a missing
   `FILES` is a 503 `storage_not_configured`, a missing `AGENT_RUN_WORKFLOW` is a 503
   `agent_runs_not_configured` (before any row is written), and a missing `AI` binding is merely the next
-  step in the embeddings chain (`services/ai/resolve.ts` → `EMBEDDINGS_API_KEY` → 503 `ai_not_configured`).
+  step in both AI chains (`services/ai/resolve.ts`: chat → 503 `ai_not_configured` unless a key or tenant
+  row exists; embeddings → `EMBEDDINGS_API_KEY` → 503). With the binding present, Workers AI is the
+  zero-key floor for BOTH — and every call bills the account, so removing `[ai]` from both tomls is the
+  deliberate zero-spend switch. The same binding also converts knowledge uploads
+  (`env.AI.toMarkdown`, `services/ai/convert.ts`): without it a PDF/Office/HTML upload is a 503
+  `conversion_not_configured` at the route (nothing stored), text-type uploads keep working; document
+  conversion is free on Workers AI (image conversion bills, which is why images are not accepted)
   Decide which of the three a new binding is and say so in its service header
 - `[vars]` = non-secret config, visible in the toml. Secrets = `.dev.vars` locally,
   `wrangler secret put` deployed. Never a secret in a toml. AI vars in both tomls:
@@ -143,7 +149,24 @@ the check `tsc` cannot do — run it before pushing a new dependency.
 ## Local testing of the non-HTTP entry points
 
 `wrangler dev` (`pnpm dev:api`, :3001) emulates KV, Queues, DO, R2 and Workflows locally and uses
-`localConnectionString` for Hyperdrive:
+`localConnectionString` for Hyperdrive. **Start and stop the stack through the scripts, never by
+killing a pid**: `pnpm dev` runs `scripts/dev-server.mjs --preflight` first (clears this repo's
+leftovers, then refuses to start — exit 1, naming the pid — if anything else holds :3000/:3001),
+then supervises `wrangler dev` and Vite ITSELF (no `concurrently`: two children of one node
+process is a tree that can be killed, and it lets the script own the output) — a spinner while
+they boot, then ONE ready line with the Vite URL, then only app logs, warnings and errors
+(wrangler's twice-printed bindings table, its Local-Explorer banner and its copies of requests the
+app already logged are filtered; `DEV_VERBOSE=1` or `--verbose` prints every raw line, and
+`pnpm dev:api` / `pnpm dev:ui` run either server unfiltered). Ctrl-C, SIGTERM and a child that
+dies during boot all go through one `shutdown` — children signalled, then the repo swept, so no
+`workerd` is orphaned; a child that dies AFTER ready restarts in 2 s. `pnpm dev:stop` kills the
+tree supervisor-FIRST and loops (SIGTERM pass, then SIGKILL passes) until the repo is quiet — a
+supervisor can respawn a child between passes and `workerd` often needs the SIGKILL —
+and `pnpm dev:status` prints the tree with the port holders. Vite is `strictPort`: a Vite that
+quietly moved to :3001 would serve the UI from the API's port and proxy to itself. Ownership is by
+command line or cwd inside this repo, and only a `--start` supervisor counts (so a second
+terminal's `--stop` is never a target), which is why another checkout on :3001 is reported, never
+killed:
 
 ```bash
 # Fire a cron (wrangler 4.x; the older /cdn-cgi/handler/scheduled path is rewritten to this):

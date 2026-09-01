@@ -44,6 +44,7 @@ import {
   lastEventSeq,
   nudgeRun,
 } from './runs'
+import { buildAgentTools } from './tools'
 
 /** `step.do('execute', { retries: { limit } })` — the runtime counts attempts against the same number. */
 export const EXECUTE_RETRIES = 2
@@ -183,6 +184,7 @@ export async function executeRun(
           emit,
           checkCancelled,
           chat: { client, model: resolved.model, maxOutputTokens: resolved.maxOutputTokens },
+          tools: buildAgentTools({ db, cfg, env, tenantId }),
           prompt: vars =>
             resolvePrompt(db, tenantId, agent.meta.promptKey as 'summarize-text', {
               appName: cfg.APP_NAME,
@@ -207,15 +209,20 @@ export async function executeRun(
       return { runId, status: 'cancelled' }
     }
     const message = describeRunError(err)
+    // A structured-output failure carries the zod issues: the one thing a person needs to see.
+    const details = err instanceof StructuredOutputError ? err.issues : undefined
     if (isRetryableRunError(err) && run.attempt <= EXECUTE_RETRIES) {
       logger.warn({ err, attempt: run.attempt }, 'agent-run: retryable failure, step will retry')
       await emit({ type: 'error', data: { message, attempt: run.attempt, willRetry: true } })
       await settle()
       throw err
     }
-    logger.warn({ err, attempt: run.attempt }, 'agent-run: failed')
+    logger.warn({ err, details, attempt: run.attempt }, 'agent-run: failed')
     await failRun(db, tenantId, runId, message)
-    await emit({ type: 'error', data: { message, attempt: run.attempt, willRetry: false } })
+    await emit({
+      type: 'error',
+      data: { message, attempt: run.attempt, willRetry: false, ...(details ? { details } : {}) },
+    })
     await emit({ type: 'status', data: { status: 'failed' } })
     return { runId, status: 'failed', error: message }
   } finally {

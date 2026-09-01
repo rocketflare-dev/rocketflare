@@ -75,14 +75,18 @@ the rows.
 
 ### 1.6 Run it
 ```bash
-pnpm dev              # apps/web: wrangler dev :3001 + vite :3000
+pnpm dev              # apps/web: wrangler dev :3001 + vite :3000 (strict ports; a preflight
+                      # clears this repo's leftovers and names any other port holder)
+# pnpm dev:stop       # kill this repo's dev tree (parent first, loops until quiet)
+# pnpm dev:status     # what is running here + who holds :3000/:3001
 ```
 
 > **Cloudflare login and the AI binding.** `wrangler dev` runs everything locally EXCEPT the Workers AI
 > binding (`[ai]` in `apps/web/wrangler.toml`), which always calls Cloudflare — so the first `pnpm dev`
 > on a machine that has never run `pnpm web exec wrangler login` will ask you to log in (a free account
 > is enough). To stay fully offline, comment out the `[ai]` block in BOTH tomls (the parity test keeps
-> them in sync); embeddings then resolve to `EMBEDDINGS_API_KEY` or report "not configured".
+> them in sync); chat then needs a key or a tenant provider (§2.5) and embeddings resolve to `EMBEDDINGS_API_KEY` or
+> report "not configured".
 
 Verify: both processes report ready; `curl -s localhost:3001/api/health` returns `{"status":"ok",…}`;
 http://localhost:3000 renders the shell. Sign in: enter the seeded owner email, copy the magic-link
@@ -207,13 +211,27 @@ is no `*_REDIRECT_URI` variable to set.
 with nobody to approve it (`SIGNUP_MODE=invite_only` default). Verify: `/admin` is reachable.
 
 ### 2.5 AI — chat, agents, embeddings
-Resolution is three tiers (`docs/CONCEPTS.md` §9): a per-agent assignment → the tenant's default
-provider in Settings → AI → the platform key. Nothing is required; pick any one of these:
+Resolution (`docs/CONCEPTS.md` §9): a per-agent assignment → the tenant's default provider in
+Settings → AI → the platform `ANTHROPIC_API_KEY` → **Workers AI through the `AI` binding**. That last
+tier means **chat and agents work on a fresh workspace with nothing configured**: Settings → AI shows
+chat readiness `Cloudflare Workers AI · mistral-small-3.1-24b-instruct · platform default`. Read the
+cost line before relying on it, then pick any of these:
 
+0. **Zero-key default — Workers AI.** Nothing to do; `wrangler dev` proxies the binding to your
+   logged-in Cloudflare account and a deployed Worker uses its own. **Every call is billed to that
+   account** (10 000 free neurons a day on any plan, then metered — Mistral Small 3.1 is about
+   $0.35 / $0.56 per million input / output tokens); the `ai_usage` ledger counts the tokens. To make
+   the kit zero-spend instead, comment the `[ai]` block out of BOTH tomls (the parity test keeps them
+   in sync) — chat then answers 503 until a key or tenant provider exists. Any tenant can still add
+   Workers AI explicitly as a chat provider (no key) to pick another model such as
+   `@cf/meta/llama-3.3-70b-instruct-fp8-fast`. Verify: `curl -b <cookie>
+   localhost:3001/api/ai/config/readiness` → `"chat":{"ready":true,"source":"platform","provider":"workers_ai"…}`
+   and `/chat` streams a reply.
 1. **Platform key (optional).** `ANTHROPIC_API_KEY=` in `apps/web/.dev.vars` (deployed:
    `wrangler secret put`, Part 3). Every tenant without its own chat provider then uses it with
-   `claude-sonnet-4-5`. Verify: Settings → AI (as owner/admin) shows chat readiness `platform`;
-   `curl -b <cookie> localhost:3001/api/ai/config/readiness` → `"chat":{"ready":true,"source":"platform"…}`.
+   `claude-sonnet-4-5` — it ranks above Workers AI. Verify: Settings → AI (as owner/admin) shows chat
+   readiness `Anthropic · claude-sonnet-4-5 · platform default`; `curl -b <cookie>
+   localhost:3001/api/ai/config/readiness` → `"chat":{…,"source":"platform","provider":"anthropic"…}`.
 2. **Tenant provider (no platform key).** Settings → AI → *Add provider*: scope `chat`, a label (it is
    the upsert key — renaming later means delete + re-add), provider `anthropic` / `anthropic_compatible`
    (Fireworks, Moonshot presets; base URL required) / `openai` / `openai_compatible`, model, API key
@@ -227,9 +245,10 @@ provider in Settings → AI → the platform key. Nothing is required; pick any 
    the API key** (the adapter refuses an empty key; a local server ignores the bearer). Chat, the
    `summarize-text` agent and the usage table all work against it. Verify: `/chat` streams a reply.
 
-Absent everywhere: `/chat` shows "configure AI"; `POST /api/chat/conversations` and the agent's
-`execute` step answer 503 `ai_not_configured` (the agent enqueue itself still returns 202 and the run
-settles `failed`). Thinking is OFF unless a config enables it with a budget (cost decision).
+Absent everywhere (no `[ai]` binding, no key, no tenant provider): `/chat` shows "configure AI";
+`POST /api/chat/conversations` and the agent's `execute` step answer 503 `ai_not_configured` (the
+agent enqueue itself still returns 202 and the run settles `failed`). Thinking is OFF unless a config
+enables it with a budget (cost decision).
 
 **Embeddings** (documents / hybrid search, `index: true` on the example agent): the `AI` Workers AI
 binding (both tomls, and `wrangler dev` emulates it) is the zero-key default — `@cf/baai/bge-m3`,
@@ -238,6 +257,14 @@ binding (both tomls, and `wrangler dev` emulates it) is the zero-key default —
 dims). Verify: `POST /api/ai/documents/ingest` `{ "title": "t", "text": "hello world" }` → `status:
 "indexed"`; `pnpm web db:check` reports the pgvector extension installed. Changing the dimension is a
 new table (`docs/ADAPTING.md` §3).
+
+**Document uploads** (Knowledge → Upload file): Markdown/text/CSV/JSON index straight away; PDF,
+Word, Excel, OpenDocument, HTML and XML are converted by Workers AI Markdown Conversion on the same
+`AI` binding (`wrangler dev` proxies it to Cloudflare, so `wrangler login` is needed; conversion of
+documents is free) in the `document.convert` queue job. Verify: upload a small PDF on `/documents`,
+watch the row go `Indexing → Indexed` within the 5 s poll (the wrangler terminal logs
+`document.convert: indexed`), search a phrase from it, and click the download icon to get the
+original back from R2. Without `[ai]` a binary upload answers 503 `conversion_not_configured`.
 
 Agent runs need the `AGENT_RUN_WORKFLOW` binding (declared in both tomls; `wrangler dev` runs
 instances locally). Without it `POST /api/agents/runs` is 503 `agent_runs_not_configured`. Verify

@@ -367,7 +367,9 @@ filename, contentType, sizeBytes, createdAt`; no `updated_at`). Scopes are `FILE
   MIME allowlist renders `inline`; **everything else — SVG included — is `Content-Disposition:
   attachment`** so stored HTML/SVG never executes on this origin.
 - `DELETE /api/files/:id` — the uploader may always delete their own file; anyone else needs
-  `delete File` (admin+). Deleting the file behind your own `avatarUrl` nulls it. 204.
+  `delete File` (admin+). Deleting the file behind your own `avatarUrl` nulls it. 204. A
+  `documents`-scope file (the original behind a knowledge document, §9) is 409 `owned_by_document` —
+  delete the document instead; it takes the object and the row with it.
 
 Missing `FILES` binding → 503 `storage_not_configured` (loud, unlike the hub's silent no-op).
 `wrangler dev` emulates R2 locally, so there is no filesystem adapter; tests use `MemoryR2Bucket`.
@@ -552,7 +554,14 @@ deferred.
 `agent_models` and the only place a credential is decrypted. Chat order: an `agent_models(tenantId,
 promptKey)` assignment (a chat config id and/or a model override → `source: 'agent'`) → the tenant's
 default `ai_configs(scope='chat')` row (`'tenant'`) → platform `ANTHROPIC_API_KEY` with
-`DEFAULT_MODELS.anthropic` (`'platform'`) → 503 `ai_not_configured` (`AiNotConfiguredError`).
+`DEFAULT_MODELS.anthropic` (`'platform'`) → **`workers_ai` with `WORKERS_AI_CHAT_MODEL`
+(`@cf/mistralai/mistral-small-3.1-24b-instruct`, zero key) when the `AI` binding exists**
+(`'platform'`) → 503 `ai_not_configured` (`AiNotConfiguredError`). The two platform tiers are ONE
+function, `platformChat(cfg, env)`, read by `resolveChat`, `readiness()` and the agent-models list,
+so they cannot disagree. Because both tomls declare `[ai]`, chat is ready on a fresh workspace with
+nothing configured — and every such call is billed to the Cloudflare account that owns the Worker
+(10 000 free neurons a day, then metered); an operator who wants zero-spend comments the `[ai]`
+block out of BOTH tomls, and one who prefers Claude sets `ANTHROPIC_API_KEY`, which ranks above it.
 Embeddings order: tenant default `ai_configs(scope='embeddings')` → `workers_ai` (`@cf/baai/bge-m3`,
 1024-dim, zero key) when the `AI` binding exists → `EMBEDDINGS_API_KEY` as `openai`
 `text-embedding-3-small` → 503. `readiness()` mirrors both orders without building a client
@@ -573,7 +582,17 @@ is the data catalog and its `scopes` is the "an adapter exists" gate): `anthropi
 Bearer` = the SDK's `authToken`, base URL required; Fireworks and Moonshot are `PROVIDER_PRESETS`
 data, not enum values), `openai` and `openai_compatible` (chat **and** embeddings; a small fetch
 client for `/chat/completions` SSE and `/embeddings`, base URLs include `/v1`), `workers_ai`
-(embeddings only, `env.AI.run`). Per-tenant request defaults are injected where the client is built,
+(chat **and** embeddings over `env.AI.run`, zero key: `{ messages, tools, max_tokens, stream }` in the
+OpenAI shape, `{ response, tool_calls, usage }` or an SSE `ReadableStream` back; the catalog suggests
+only chat models whose Cloudflare page lists function calling — Mistral Small 3.1, Llama 3.3 70B).
+Workers AI has **no `tool_choice`**: `forcedToolInstruction` turns `{ type: 'tool' | 'any' }` into a
+system instruction the model is told to honour, and when the model still answers with the arguments
+as a JSON object in prose (Mistral Small does, for short inputs — a fenced ```` ```json ```` block),
+`recoverForcedToolCall` treats that object as the forced tool's call, so `callStructuredTool` sees a
+real `tool_use` (both paths verified live with `summarize-text`). Because tool calls inside a Workers
+AI event stream are undocumented, `stream()` with tools runs one non-streamed call and replays it as
+deltas — a chat with tools does not stream token by token on this provider.
+Per-tenant request defaults are injected where the client is built,
 never at call sites: `service_tier` verbatim, and extended `thinking` **off by default and sent
 explicitly** (`{ type: 'disabled' }`) — a reasoning model otherwise bills for thinking the chat surface
 discards; `reconcileThinking` drops it under a forced tool choice and lifts `max_tokens` above the
@@ -641,14 +660,37 @@ v1; one `step.do` per model turn with the transcript persisted between them (`ru
 returns `messages`) is the scaling path. The example, `summarize-text`: precheck (≤ 20 000 chars),
 one terminal tool `submit_summary` through `callStructuredTool`, usage under
 `agent:summarize-text`, and with `index: true` the summary is stored through `ingestText`.
+**Every agent can read the knowledge base**: `ctx.tools` carries two built-in tools
+(`services/agents/tools/`): `search_knowledge` — the same hybrid `searchChunks` as `/search`, bound
+to the run's tenant, returning `{ rank, documentId, title, score, excerpt }` hits as JSON (a tenant
+with no embeddings provider gets a prose "not available" answer, not a failure) — and
+`get_document` — one document's stored text in full or as an `{ offset, maxChars }` window (≤ 50 000
+chars per call, with `totalChars` / `hasMore` / `nextOffset` for paging; unknown, other-tenant or
+not-yet-converted ids get a prose answer). An agent built on
+`runToolLoop` passes `[...ctx.tools, …own tools, terminal tool]`; the forced single-tool example does
+not use it. Everything indexed — pasted, uploaded, or written by an agent — is therefore available
+to agents as well as to people.
 
-**Embeddings and retrieval (D18).** `documents` (raw `content` kept for re-index, never returned by
-the API) and `chunks` (`embedding vector(1024)` — `EMBEDDING_DIM` in `@rocketflare/shared/ai/config`; HNSW
-`vector_cosine_ops`). `ingestText` (`services/ai/ingest.ts`) is the one way in
-(`POST /api/ai/documents/ingest`, ≤ 500 000 chars): resolve embeddings first (no provider → 503, no
-orphan row), insert `pending`, chunk paragraph-aware (~800 tokens, 100 overlap, 4 chars per token
-estimate), then index inline when ≤ 50 chunks, else enqueue `document.index`, which runs the same
-`indexDocument` from the stored text (a missing `JOBS_QUEUE` throws, never a silent inline fallback).
+**Embeddings and retrieval (D18).** `documents` (`content` kept for re-index, never returned by
+the API; `fileId` → the uploaded original) and `chunks` (`embedding vector(1024)` — `EMBEDDING_DIM`
+in `@rocketflare/shared/ai/config`; HNSW `vector_cosine_ops`). Two ways in, one path
+(`services/ai/ingest.ts`): `ingestText` (`POST /api/ai/documents/ingest`, JSON, ≤ 500 000 chars)
+and `ingestFile` (`POST /upload`, multipart `file` + optional `title`/`source`, ≤ `MAX_UPLOAD_BYTES`,
+allowlist `DOCUMENT_UPLOAD_TYPES` in `@rocketflare/shared/ai/embeddings` — PDF, Word, Excel,
+OpenDocument, HTML, XML, CSV, JSON, Markdown, text; extension decides when the browser declares no
+type). Both resolve embeddings first (no provider → 503, no orphan row); an upload also checks the
+converter (a binary type on a Worker without `[ai]` → 503 `conversion_not_configured`, nothing
+written), stores the original in R2 as a `files` row (scope `documents`, downloadable at
+`/api/files/:id`, deleted with the document), and inserts `pending` with the ORIGINAL media type.
+Text-like uploads are decoded (UTF-8, CRLF normalised) and, like pasted text, chunked
+paragraph-aware (~800 tokens, 100 overlap, 4 chars per token estimate) then indexed inline when ≤ 50
+chunks, else through `document.index`; every other type stays `content: null` and a
+`document.convert` job reads the object back, runs **Workers AI Markdown Conversion**
+(`env.AI.toMarkdown({ name, blob })` — free for documents, the same binding as embeddings; no new
+resource), stores the text and runs the same `indexDocument`. A `format: 'error'` answer, a missing
+object or text over the cap is permanent → `failed` with the reason, acked; a thrown binding or
+provider error → `failed` + retry with backoff (a missing `JOBS_QUEUE` throws, never a silent inline
+fallback).
 `searchChunks` (`POST /search`) is hybrid: dense `<=>` over the HNSW index plus lexical
 `websearch_to_tsquery` / `ts_rank_cd` over `to_tsvector('english', text)`, each contributing a pool
 of `min(max(limit·4, 50), 200)`, fused by Reciprocal Rank Fusion (`k = 60`); every hit carries
@@ -678,7 +720,8 @@ writes require `manage AiConfig`.
 
 **UI (Phase 3b-UI; specifics in `apps/web/src/ui/CLAUDE.md`).** Routes `/agents` and
 `/agents/runs/:runId` (guard `read AgentRun`; nav "Agents"), `/documents` (guard `read Document`;
-nav "Knowledge"), Settings `?tab=agent-models` (`manage AiConfig`). Nothing streams — runs are rows.
+nav "Knowledge" — the paginated documents table, then `?tab=text|file` add tabs below it) and `/search` (same guard;
+nav "Search" — hybrid search, `?documentId=` narrows), Settings `?tab=agent-models` (`manage AiConfig`). Nothing streams — runs are rows.
 An open run re-reads `GET /runs/:id` every 3 s while `isRunActive` (the list too while any listed
 row is active) AND is refreshed by the server's `entity.changed { entity: 'agent-run', id }` nudge,
 because the runs query-key root is `['agent-run']`. **Convention: the `entity` string of an
@@ -689,7 +732,13 @@ without a registered form gets a JSON textarea validated by the route's 400 `det
 sends `?strict=1`.
 
 **Known gaps / not built yet:** `enqueueRun` does NOT pre-resolve the chat client — a tenant with no
-provider gets a 202 and a `failed` row at `execute` (chat's `POST /conversations` does pre-resolve);
+provider gets a 202 and a `failed` row at `execute` (chat's `POST /conversations` does pre-resolve;
+moot while the `[ai]` binding exists, since Workers AI is the floor); Workers AI forced tools are an
+instruction plus prose-JSON recovery, not a guarantee — a model that answers in plain prose fails
+`callStructuredTool` after its one retry, and the run's `error` event then carries `details` (the zod
+issues, or `{ reason, stopReason, text }` with what the model said) which the Agents drawer does not
+yet render; `stream()` with tools on `workers_ai` is non-streamed; a Workers AI binding error carries no
+HTTP status and classifies as `unknown` (agents do not retry it);
 the connection test spends tokens but writes no `ai_usage` row; `GET /api/ai/config/providers` has
 no shared schema (the UI keeps a permissive `passthrough` one in `hooks/useAiConfig.ts`);
 `ai_configs.label` is the upsert key, so a rename is delete + re-add; `/settings` is admin-guarded,
@@ -697,8 +746,11 @@ so members hold `read AiConfig` / `read Prompt` with no nav path to the read-onl
 `agent_run_events.data` is `z.unknown()` in `@rocketflare/shared/ai/agents` for every type except `step`
 (`agentStepEventDataSchema`) — the UI's `AgentSteps` parses `tool.*` / `text` / `status` / `error`
 leniently with local schemas, a candidate for promotion into the shared contract; no document
-nudge (`ingestText` / `indexDocument` emit nothing; the Knowledge page polls); runs show a user id,
-not a name; no rerank (a `RerankFn` seam is the documented extension) and no
+nudge (`ingestText` / `ingestFile` / `indexDocument` emit nothing; the Knowledge page polls); runs
+show a user id, not a name; uploads: images are not accepted (their conversion runs two AI models
+and bills — no OCR), converted text is capped at `INGEST_TEXT_MAX_CHARS`, there is no re-convert /
+re-index action (`content` is kept for one), a converted document stores both the original and the
+text, and `content` is the converted markdown — the UI never shows it; no rerank (a `RerankFn` seam is the documented extension) and no
 generated `tsvector` + GIN — the lexical half computes `to_tsvector` at query time; no non-exclusive
 agents (relax the partial unique index); the tool loop is one step, not one per turn; no budgets or
 quotas over `ai_usage` and no price table; prompt versioning, an evals harness, Bedrock/Azure/Gemini
@@ -814,9 +866,10 @@ delivered (or logged) by the consumer under `wrangler dev`; upload an avatar and
 `/api/files/:id`; add an AI provider in Settings → AI (or set `ANTHROPIC_API_KEY`), pass the connection
 test, hold a streamed chat whose turns and usage rows persist; start the `summarize-text` agent from
 `POST /api/agents/runs`, watch its `agent_run_events` arrive through the nudge, cancel one, and see its
-trace when Langfuse keys are set; ingest a text and get it back from the hybrid search; open the
-Agents page and watch a run's timeline fill through the nudge, and the Knowledge page list the
-ingested document; query every cube as two tenants and see disjoint rows
+trace when Langfuse keys are set; ingest a text and get it back from the hybrid search; upload a PDF
+on the Knowledge page, watch it go `Indexing → Indexed` and find a phrase from it in search, then
+download the original; open the Agents page and watch a run's timeline fill through the nudge, and
+the Knowledge page list the ingested document; query every cube as two tenants and see disjoint rows
 (`tests/api/cubes/cube-isolation.test.ts`), run `pnpm web db:refresh-facts && pnpm web
 db:check-facts` to a `fresh` fact table, `GET /api/analytics/pages` and find the seeded
 `tenant-overview` page (and render it with live numbers once the analytics UI lands); and,

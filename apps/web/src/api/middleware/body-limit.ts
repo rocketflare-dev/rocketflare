@@ -1,8 +1,8 @@
 /**
  * Request body caps (04 §4). Cloudflare already caps bodies at 100–500 MB; 1 MB of JSON is plenty
- * for every kit route and protects the DB/LLM paths. The upload route (`/api/files`, D23) is the
- * one exception: it gets `MAX_UPLOAD_BYTES` plus multipart overhead, and the handler enforces the
- * exact per-file limit. Over-limit → 413 in the shared envelope.
+ * for every kit route and protects the DB/LLM paths. The upload routes (`/api/files`, D23, and
+ * `/api/ai/documents/upload`, D18) are the exceptions: they get `MAX_UPLOAD_BYTES` plus multipart
+ * overhead, and each handler enforces the exact per-file limit. Over-limit → 413 in the shared envelope.
  */
 import { MAX_UPLOAD_BYTES } from '@rocketflare/shared/files'
 import type { Context } from 'hono'
@@ -24,7 +24,7 @@ export const uploadBodyLimit = bodyLimit({
 })
 
 /** Paths that mount `uploadBodyLimit` themselves and must be skipped by the JSON cap. */
-export const UPLOAD_PATHS = ['/api/files'] as const
+export const UPLOAD_PATHS = ['/api/files', '/api/ai/documents/upload'] as const
 
 export function isUploadPath(pathname: string): boolean {
   return UPLOAD_PATHS.some(p => pathname === p || pathname.startsWith(`${p}/`))

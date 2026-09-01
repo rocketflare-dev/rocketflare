@@ -121,6 +121,11 @@ a fake `WebSocket` factory left set) is on you.
   is the embedder (override `respond` for keyword-keyed vectors), assert `documents.status`,
   `chunks` count, `stubs(env).queue.messages` for the `document.index` handoff over 50 chunks, and that
   tenant B's search never returns tenant A's chunks
+- Uploads into knowledge (`document-upload.test.ts`, `document-convert-job.test.ts`): the same stub's
+  `toMarkdown` records `stubs(env).ai.conversions` and answers markdown made of the blob's bytes, so a
+  fixture PDF is text typed `application/pdf`; override `convert` for `format: 'error'` (→ `failed` +
+  ack) or a throw (→ `failed` + retry); `createTestEnv({ AI: undefined, EMBEDDINGS_API_KEY })` is the
+  Worker that embeds but cannot convert (503 `conversion_not_configured`, nothing stored)
 - Cron: call `scheduled({ cron: '0 4 * * *' }, env, ctx)` and assert the task ran; unknown cron → no-op.
   `scheduled-facts.test.ts` does the same for `'15 * * * *'` (asserts `SCHEDULED_TASKS` registers
   `refreshFactTables`, then dispatches it and reads the fact rows for seeded activity)
@@ -145,7 +150,8 @@ a fake `WebSocket` factory left set) is on you.
   and that the route did NOT do the work itself (no `[email:dev]` line, no provider fetch)
 - Uploads: `new FormData()` + `form.append('file', new File([bytes], 'a.png', { type: 'image/png' }))`
   as the request body (no `Content-Type` header — the runtime sets the boundary); assert the row, the
-  object in `stubs(env).files.objects`, and the 413/415 envelopes (`files.test.ts`)
+  object in `stubs(env).files.objects`, and the 413/415 envelopes (`files.test.ts`,
+  `document-upload.test.ts`)
 
 ## What every API test file includes
 

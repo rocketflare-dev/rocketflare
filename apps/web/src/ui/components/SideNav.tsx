@@ -8,6 +8,7 @@ import {
   Cog6ToothIcon,
   CpuChipIcon,
   HomeIcon,
+  MagnifyingGlassIcon,
   ShieldCheckIcon,
 } from '@heroicons/react/24/outline'
 import type { ComponentType, ReactNode } from 'react'
@@ -68,6 +69,12 @@ export const navigationConfig: NavConfig = [
         to: '/documents',
         label: 'Knowledge',
         icon: BookOpenIcon,
+        guard: { action: 'read', subject: 'Document' },
+      },
+      {
+        to: '/search',
+        label: 'Search',
+        icon: MagnifyingGlassIcon,
         guard: { action: 'read', subject: 'Document' },
       },
     ],

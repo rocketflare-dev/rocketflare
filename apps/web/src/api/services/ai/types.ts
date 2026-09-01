@@ -90,14 +90,39 @@ export interface RequestDefaults {
   thinking?: ThinkingSetting
 }
 
-/** The narrow slice of the `AI` binding the embeddings adapter needs (`Ai` in production, `RecordingAi` in tests). */
+/** One file handed to Workers AI Markdown Conversion. */
+export interface MarkdownDocumentInput {
+  name: string
+  blob: Blob
+}
+
+/** What `AI.toMarkdown` answers for one file — the platform's `ConversionResponse`, declared here so shared code never sees the global. */
+export type MarkdownConversion =
+  | { name: string; mimeType: string; format: 'markdown' | 'text'; tokens: number; data: string }
+  | { name: string; mimeType: string; format: 'error'; error: string }
+
+/**
+ * The narrow slice of the `AI` binding the kit needs (`Ai` in production, `RecordingAi` in tests):
+ * `run` for the embeddings/chat adapters, `toMarkdown` for document conversion (D18 uploads).
+ */
 export interface WorkersAiBinding {
   run(model: string, inputs: Record<string, unknown>): Promise<unknown>
+  toMarkdown?(document: MarkdownDocumentInput): Promise<MarkdownConversion>
 }
 
 /** The bindings the resolver may read. Optional: a Worker without `[ai]` still chats. */
 export interface AiEnv {
   AI?: WorkersAiBinding | Ai
+}
+
+/** The conversion slice of the binding, or null when the Worker has no `[ai]` (or a stub without it). */
+export function markdownConverterOf(
+  env: AiEnv
+): ((document: MarkdownDocumentInput) => Promise<MarkdownConversion>) | null {
+  const ai = env.AI as WorkersAiBinding | undefined
+  if (!ai || typeof ai.toMarkdown !== 'function') return null
+  return document =>
+    (ai.toMarkdown as NonNullable<WorkersAiBinding['toMarkdown']>).call(ai, document)
 }
 
 /** Sum two usage reports (multi-turn loops report the total). */

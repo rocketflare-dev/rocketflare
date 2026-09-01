@@ -4,7 +4,11 @@
  * it inside the scope; delete; list never leaks a key; member 403 on writes / 200 on reads; 401
  * unauthenticated; tenant isolation; readiness tenant / platform / none; provider validation 400s.
  */
-import { aiConfigSchema, aiReadinessSchema } from '@rocketflare/shared/ai/config'
+import {
+  aiConfigSchema,
+  aiReadinessSchema,
+  WORKERS_AI_CHAT_MODEL,
+} from '@rocketflare/shared/ai/config'
 import { and, eq } from 'drizzle-orm'
 import { describe, expect, it } from 'vitest'
 import { decrypt } from '@/api/auth/oauth-encryption'
@@ -169,7 +173,10 @@ describe('POST /api/ai/config', () => {
         { label: 'x', provider: 'anthropic_compatible', model: 'm', apiKey: 'k' },
         'base_url_required',
       ],
-      [{ label: 'x', provider: 'workers_ai', model: 'm' }, 'provider_scope_unsupported'],
+      [
+        { label: 'x', scope: 'embeddings', provider: 'anthropic', model: 'm', apiKey: 'k' },
+        'provider_scope_unsupported',
+      ],
       [
         {
           label: 'x',
@@ -288,7 +295,7 @@ describe('GET /api/ai/config + DELETE', () => {
       defaultMaxOutputTokens: number
     }>(await request('/api/ai/config/providers', { headers: a.cookie }))
     expect(body.defaultMaxOutputTokens).toBe(16384)
-    expect(body.items.find(p => p.id === 'workers_ai')?.scopes).toEqual(['embeddings'])
+    expect(body.items.find(p => p.id === 'workers_ai')?.scopes).toEqual(['chat', 'embeddings'])
     expect(body.items.find(p => p.id === 'anthropic_compatible')?.presets.length).toBeGreaterThan(0)
   })
 })
@@ -323,7 +330,7 @@ describe('GET /api/ai/config/readiness', () => {
     })
     expect(r.embeddings.source).toBe('none')
 
-    // The AI binding makes embeddings ready with no key at all.
+    // The AI binding makes BOTH scopes ready with no key at all (chat = the Workers AI floor).
     r = aiReadinessSchema.parse(
       await json(
         await request(
@@ -338,6 +345,12 @@ describe('GET /api/ai/config/readiness', () => {
       source: 'platform',
       provider: 'workers_ai',
       model: '@cf/baai/bge-m3',
+    })
+    expect(r.chat).toEqual({
+      ready: true,
+      source: 'platform',
+      provider: 'workers_ai',
+      model: WORKERS_AI_CHAT_MODEL,
     })
 
     await request(

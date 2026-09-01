@@ -40,7 +40,8 @@ pnpm test:db:up && pnpm test                             # full suite against a 
 
 Sign in with the seeded owner's email; the magic-link URL is printed by `wrangler dev` (no email
 provider configured). Nothing external is required: no `RESEND_API_KEY` → links are logged; no AI key
-→ chat and agents answer 503 `ai_not_configured`; no Cloudflare login → comment out the `[ai]` binding.
+→ chat, agents and embeddings run on Workers AI through the `[ai]` binding (billed to your Cloudflare
+account, 10k free neurons/day); no Cloudflare login, or zero-spend wanted → comment out `[ai]` in both tomls.
 Or ask your coding agent **"Help me set up this project"** — `CLAUDE.md` makes it run `SETUP.md`
 Part 1 step by step. Before building your app, do the rename checklist in `docs/ADAPTING.md`.
 
@@ -54,7 +55,7 @@ Part 1 step by step. Before building your app, do the rename checklist in `docs/
 | UI | React 18 + Vite, DaisyUI 5 on Tailwind v4, React Router 6, TanStack Query 5; served as Workers Static Assets |
 | CLI | commander + chalk; browser login → tenant API key; `--json` on every list command |
 | Async / realtime | Queues, Workflows, a per-tenant Durable Object over WebSockets, cron triggers, R2 |
-| AI | Anthropic / OpenAI-compatible chat over SSE, agents on Workflows, Workers AI embeddings → pgvector, Langfuse tracing |
+| AI | Anthropic / OpenAI-compatible / Workers AI chat over SSE, agents on Workflows, Workers AI embeddings → pgvector, Langfuse tracing |
 | Analytics | drizzle-cube semantic layer (`/cubejs-api`, `/mcp`), fact tables on a cron, TypeScript dashboard templates |
 | Quality | Biome 2, strict TypeScript, vitest against real Postgres, gitleaks, one CI gate |
 
@@ -86,7 +87,7 @@ Part 1 step by step. Before building your app, do the rename checklist in `docs/
 - **File storage** on R2 behind a `StorageService` seam: tenant-prefixed keys, bytes streamed through the Worker, an indexed `files` table, per-scope MIME and size limits, avatars wired end-to-end (upload UI → `/api/files/:id` with ETag/304).
 
 ### AI layer
-- **Three-tier provider resolution** — per-agent model assignment → the tenant's own provider (keys encrypted at rest, tested from Settings → AI) → a platform key → a clean 503. Providers: Anthropic, Anthropic-compatible (Fireworks, Moonshot presets), OpenAI, OpenAI-compatible (any local server such as Ollama works with no key), Workers AI for embeddings.
+- **Tiered provider resolution with a zero-key floor** — per-agent model assignment → the tenant's own provider (keys encrypted at rest, tested from Settings → AI) → a platform key → **Workers AI through the binding** (Mistral Small 3.1 by default, no key, billed to the Cloudflare account) → a clean 503. Providers: Anthropic, Anthropic-compatible (Fireworks, Moonshot presets), OpenAI, OpenAI-compatible (any local server such as Ollama), Workers AI for chat and embeddings.
 - **Streamed chat** — conversations and messages persisted per user, SSE frames with a shared event contract, auto-titles, prompt caching breakpoints, extended thinking off unless a tenant turns it on.
 - **Prompt registry** — prompts are code with `{{variables}}`; tenants override them in Settings → Prompts and revert with one click.
 - **Agents on Workflows** — `POST /api/agents/runs` enqueues and answers 202; runs are exclusive per tenant and agent via a partial unique index, emit a durable event timeline, cancel cooperatively, and reconcile against the Workflow engine on read. The `summarize-text` example shows structured output through a forced tool call; an Agents page shows live timelines.

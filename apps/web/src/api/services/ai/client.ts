@@ -5,7 +5,11 @@
  *     `x-api-key` — passing the key as `apiKey` sends the wrong header and reads as a bad key.
  *   - `openai` / `openai_compatible` → a small fetch client for `/v1/chat/completions` (SSE) and
  *     `/v1/embeddings`. Base URLs include `/v1`.
- *   - `workers_ai` → `env.AI.run(model, { text })` (embeddings only, zero key).
+ *   - `workers_ai` → `env.AI.run(model, …)`: `{ text }` for embeddings, `{ messages, tools, stream }`
+ *     for chat (zero key; the binding proxies to the account, so every call is billed to it).
+ *     Workers AI has no `tool_choice` — a forced tool becomes a system instruction — and tool calls
+ *     inside a stream are undocumented, so `stream()` with tools runs one non-streamed call and
+ *     replays it as deltas.
  * Per-tenant request defaults (`service_tier`, `thinking`) are injected HERE, where the client is
  * built, so no call site can forget them; `reconcileThinking` keeps a thinking budget legal against
  * the request it lands in. `fetch` is injectable so tests drive the adapters without a network.
@@ -24,6 +28,7 @@ import { DEFAULT_BASE_URLS } from './providers'
 import type {
   AiEnv,
   ChatClient,
+  ChatDelta,
   ChatMessage,
   ChatParams,
   ChatResult,
@@ -33,6 +38,7 @@ import type {
   StopReason,
   WorkersAiBinding,
 } from './types'
+import { textOf } from './types'
 
 export type FetchLike = typeof fetch
 
@@ -41,6 +47,8 @@ export interface ChatClientOptions {
   apiKey?: string | null
   baseUrl?: string | null
   defaults?: RequestDefaults
+  /** The `AI` binding, for `workers_ai`. */
+  ai?: AiEnv['AI']
   /** Injected for tests; defaults to the global `fetch`. */
   fetch?: FetchLike
 }
@@ -97,6 +105,8 @@ export function createChatClient(opts: ChatClientOptions): ChatClient {
     case 'openai':
     case 'openai_compatible':
       return createOpenAiChatClient(opts)
+    case 'workers_ai':
+      return createWorkersAiChatClient(opts)
     default:
       throw new AiError('invalid_request', opts.provider, `${opts.provider} has no chat adapter`)
   }
@@ -623,6 +633,229 @@ function createOpenAiChatClient(opts: ChatClientOptions): ChatClient {
       } catch (err) {
         throw normalizeAiError(err, provider)
       }
+    },
+  }
+}
+
+// ---- Workers AI chat -----------------------------------------------------------------------------
+
+/** A tool call as Workers AI models emit it — legacy `{ name, arguments }` or OpenAI-shaped. */
+interface WorkersAiToolCall {
+  id?: string
+  name?: string
+  arguments?: unknown
+  type?: string
+  function?: { name?: string; arguments?: unknown }
+}
+
+interface WorkersAiTextOutput {
+  response?: string
+  tool_calls?: WorkersAiToolCall[]
+  usage?: OpenAiUsage
+}
+
+/** Workers AI has no `tool_choice`: a forced tool is an instruction the model is told to honour. */
+export function forcedToolInstruction(params: ChatParams): string | undefined {
+  const choice = params.toolChoice
+  if (!choice || !params.tools?.length) return undefined
+  if (choice.type === 'tool')
+    return `You must answer by calling the "${choice.name}" tool with its required arguments. Do not reply in plain text.`
+  if (choice.type === 'any')
+    return 'You must answer by calling one of the available tools. Do not reply in plain text.'
+  return undefined
+}
+
+function appendSystem(system: ChatParams['system'], extra: string): ChatParams['system'] {
+  if (system === undefined) return extra
+  if (typeof system === 'string') return `${system}\n\n${extra}`
+  return {
+    stable: system.stable,
+    volatile: system.volatile?.trim() ? `${system.volatile}\n\n${extra}` : extra,
+  }
+}
+
+/** The `env.AI.run` inputs for a chat call — OpenAI-shaped messages and tools, no `tool_choice`. */
+export function workersAiChatInputs(params: ChatParams, stream: boolean): Record<string, unknown> {
+  const instruction = forcedToolInstruction(params)
+  const system = instruction ? appendSystem(params.system, instruction) : params.system
+  const inputs: Record<string, unknown> = {
+    messages: toOpenAiMessages({ ...params, system }),
+    max_tokens: params.maxTokens,
+    stream,
+  }
+  if (params.temperature !== undefined) inputs.temperature = params.temperature
+  if (params.tools?.length && params.toolChoice?.type !== 'none') {
+    inputs.tools = params.tools.map(t => ({
+      type: 'function',
+      function: { name: t.name, description: t.description, parameters: t.inputSchema },
+    }))
+  }
+  return inputs
+}
+
+type ToolUseBlock = Extract<ContentBlock, { type: 'tool_use' }>
+
+function fromWorkersAiToolCalls(calls: WorkersAiToolCall[] | undefined): ToolUseBlock[] {
+  const out: ToolUseBlock[] = []
+  for (const call of calls ?? []) {
+    const name = call.function?.name ?? call.name
+    if (!name) continue
+    const args = call.function?.arguments ?? call.arguments
+    out.push({
+      type: 'tool_use',
+      id: call.id || crypto.randomUUID(),
+      name,
+      input: typeof args === 'string' ? parseArguments(args) : (args ?? {}),
+    })
+  }
+  return out
+}
+
+function fromWorkersAiOutput(out: unknown, model: string): ChatResult {
+  if (typeof out === 'string') {
+    return { content: [{ type: 'text', text: out }], stopReason: 'end_turn', usage: ZERO, model }
+  }
+  const json = (out ?? {}) as WorkersAiTextOutput
+  const content: ContentBlock[] = []
+  if (typeof json.response === 'string' && json.response) {
+    content.push({ type: 'text', text: json.response })
+  }
+  const tools = fromWorkersAiToolCalls(json.tool_calls)
+  content.push(...tools)
+  return {
+    content,
+    stopReason: tools.length ? 'tool_use' : 'end_turn',
+    usage: fromOpenAiUsage(json.usage),
+    model,
+  }
+}
+
+const ZERO: TokenUsage = { inputTokens: 0, outputTokens: 0 }
+
+/** The tool a forced choice names — `any` counts only when there is exactly one tool to pick. */
+function forcedToolName(params: ChatParams): string | undefined {
+  const choice = params.toolChoice
+  if (!choice || !params.tools?.length) return undefined
+  if (choice.type === 'tool') return choice.name
+  if (choice.type === 'any' && params.tools.length === 1) return params.tools[0]?.name
+  return undefined
+}
+
+/** The first JSON object in a text (a ```json fence or bare), or undefined. */
+export function extractJsonObject(text: string): Record<string, unknown> | undefined {
+  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i)
+  const candidate = fenced?.[1] ?? text
+  const start = candidate.indexOf('{')
+  const end = candidate.lastIndexOf('}')
+  if (start === -1 || end <= start) return undefined
+  try {
+    const value: unknown = JSON.parse(candidate.slice(start, end + 1))
+    return value && typeof value === 'object' && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * Without `tool_choice`, a Workers AI model asked to call a tool sometimes writes the arguments as a
+ * JSON object in prose instead (Mistral Small does this for short inputs). When ONE tool was forced
+ * and the reply has no call but does carry a JSON object, treat it as that call — a `{ name,
+ * arguments }` object naming the tool is unwrapped, anything else is the input itself.
+ */
+export function recoverForcedToolCall(params: ChatParams, result: ChatResult): ChatResult {
+  const name = forcedToolName(params)
+  if (!name || result.content.some(b => b.type === 'tool_use')) return result
+  const text = textOf(result.content)
+  const object = extractJsonObject(text)
+  if (!object) return result
+  const wrapped =
+    object.name === name && object.arguments && typeof object.arguments === 'object'
+      ? (object.arguments as Record<string, unknown>)
+      : object
+  return {
+    ...result,
+    content: [{ type: 'tool_use', id: crypto.randomUUID(), name, input: wrapped }],
+    stopReason: 'tool_use',
+  }
+}
+
+function createWorkersAiChatClient(opts: ChatClientOptions): ChatClient {
+  const ai = opts.ai as WorkersAiBinding | undefined
+  if (!ai) throw new AiError('unavailable', 'workers_ai', 'The AI binding is not configured')
+
+  const complete = async (params: ChatParams): Promise<ChatResult> => {
+    try {
+      const out = await ai.run(params.model, workersAiChatInputs(params, false))
+      return recoverForcedToolCall(params, fromWorkersAiOutput(out, params.model))
+    } catch (err) {
+      throw normalizeAiError(err, 'workers_ai')
+    }
+  }
+
+  /** Emit a finished result as the deltas a consumer would have seen from a real stream. */
+  async function* replay(result: ChatResult): AsyncGenerator<ChatDelta> {
+    for (const block of result.content) {
+      if (block.type === 'text') yield { type: 'text', text: block.text }
+      else if (block.type === 'tool_use') yield block
+    }
+    yield { type: 'usage', usage: result.usage }
+    yield { type: 'end', result }
+  }
+
+  return {
+    provider: 'workers_ai',
+    complete,
+    async *stream(params) {
+      // Tool calls inside a Workers AI event stream are undocumented: one call, replayed.
+      if (params.tools?.length && params.toolChoice?.type !== 'none') {
+        yield* replay(await complete(params))
+        return
+      }
+      let body: unknown
+      try {
+        body = await ai.run(params.model, workersAiChatInputs(params, true))
+      } catch (err) {
+        throw normalizeAiError(err, 'workers_ai')
+      }
+      if (!(body instanceof ReadableStream)) {
+        yield* replay(fromWorkersAiOutput(body, params.model))
+        return
+      }
+      let text = ''
+      let usage: TokenUsage = ZERO
+      const calls: WorkersAiToolCall[] = []
+      try {
+        for await (const data of sseData(body)) {
+          if (params.signal?.aborted) break
+          const chunk = safeJson(data) as WorkersAiTextOutput
+          if (typeof chunk.response === 'string' && chunk.response) {
+            text += chunk.response
+            yield { type: 'text', text: chunk.response }
+          }
+          if (chunk.usage) usage = fromOpenAiUsage(chunk.usage)
+          if (chunk.tool_calls?.length) calls.push(...chunk.tool_calls)
+        }
+      } catch (err) {
+        throw normalizeAiError(err, 'workers_ai')
+      }
+      if (params.signal?.aborted) await body.cancel().catch(() => undefined)
+      const content: ContentBlock[] = []
+      if (text) content.push({ type: 'text', text })
+      const tools = fromWorkersAiToolCalls(calls)
+      for (const block of tools) {
+        content.push(block)
+        yield block
+      }
+      const result: ChatResult = {
+        content,
+        stopReason: tools.length ? 'tool_use' : 'end_turn',
+        usage,
+        model: params.model,
+      }
+      yield { type: 'usage', usage }
+      yield { type: 'end', result }
     },
   }
 }

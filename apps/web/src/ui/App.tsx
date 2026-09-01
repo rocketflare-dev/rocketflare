@@ -50,8 +50,9 @@ const SettingsLayout = lazy(() => import('@/ui/pages/settings/SettingsLayout'))
 const ChatPage = lazy(() => import('@/ui/pages/chat/ChatPage'))
 // D7: also carries the markdown renderer (run transcripts) — lazy for the same reason.
 const AgentsPage = lazy(() => import('@/ui/pages/agents/AgentsPage'))
-// D18: the knowledge base — ingest, list, hybrid search.
+// D18: the knowledge base — ingest/upload + list on /documents, hybrid search on /search.
 const DocumentsPage = lazy(() => import('@/ui/pages/documents/DocumentsPage'))
+const SearchPage = lazy(() => import('@/ui/pages/documents/SearchPage'))
 // D19: analytics. The list page is plain kit UI; the view and explore pages carry drizzle-cube
 // (charts, grid editor, recharts) and must stay out of the main bundle.
 const DashboardListPage = lazy(() => import('@/ui/pages/analytics/DashboardListPage'))
@@ -135,6 +136,14 @@ function ShellRoutes() {
             element={
               <RequireGuard guard={{ action: 'read', subject: 'Document' }}>
                 <DocumentsPage />
+              </RequireGuard>
+            }
+          />
+          <Route
+            path="/search"
+            element={
+              <RequireGuard guard={{ action: 'read', subject: 'Document' }}>
+                <SearchPage />
               </RequireGuard>
             }
           />

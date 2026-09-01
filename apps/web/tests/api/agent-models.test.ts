@@ -10,7 +10,7 @@ import {
   agentModelAssignmentSchema,
   agentModelsListResponseSchema,
 } from '@rocketflare/shared/ai/agent-models'
-import { aiConfigSchema } from '@rocketflare/shared/ai/config'
+import { aiConfigSchema, WORKERS_AI_CHAT_MODEL } from '@rocketflare/shared/ai/config'
 import { describe, expect, it } from 'vitest'
 import { resolveChat } from '@/api/services/ai/resolve'
 import { loadConfig } from '@/config'
@@ -178,7 +178,12 @@ describe('/api/ai/agent-models', () => {
       })
     ).toMatchObject({ source: 'agent', provider: 'anthropic', model: 'claude-opus-4-1' })
     items = (await list(a.cookie)).items
-    expect(items.find(i => i.promptKey === 'chat')?.effective).toEqual({ source: 'none' })
+    // No key and no row, but the test env carries the AI binding: the Workers AI floor answers.
+    expect(items.find(i => i.promptKey === 'chat')?.effective).toEqual({
+      source: 'platform',
+      provider: 'workers_ai',
+      model: WORKERS_AI_CHAT_MODEL,
+    })
   })
 
   it('404 foreign config / unknown key, 400 empty body, 403 member writes, 401 anon; other tenant sees nothing', async () => {

@@ -1,6 +1,7 @@
 /**
  * The single read seam for "which AI client does this tenant get" (D17). Resolution order:
- *   chat:       tenant default `ai_configs(scope='chat')` → platform `ANTHROPIC_API_KEY` → 503
+ *   chat:       tenant default `ai_configs(scope='chat')` → platform `ANTHROPIC_API_KEY` →
+ *               `workers_ai` (`WORKERS_AI_CHAT_MODEL`) if `env.AI` → 503
  *   embeddings: tenant default `ai_configs(scope='embeddings')` → `workers_ai` if `env.AI` →
  *               `EMBEDDINGS_API_KEY` (OpenAI) → 503
  * Credentials are decrypted here and nowhere else. `readiness()` mirrors both orders WITHOUT
@@ -19,7 +20,7 @@ import type {
   AiScope,
   AiScopeReadiness,
 } from '@rocketflare/shared/ai/config'
-import { DEFAULT_MODELS } from '@rocketflare/shared/ai/config'
+import { DEFAULT_MODELS, WORKERS_AI_CHAT_MODEL } from '@rocketflare/shared/ai/config'
 import type { PromptKey } from '@rocketflare/shared/ai/prompts'
 import { and, eq } from 'drizzle-orm'
 import type { AppConfig } from '../../../config'
@@ -125,6 +126,7 @@ export async function credentialOf(
 export async function chatClientFromRow(
   row: AiConfigRow,
   cfg: AppConfig,
+  env: AiEnv,
   fetchImpl?: FetchLike
 ): Promise<ChatClient> {
   return createChatClient({
@@ -132,8 +134,41 @@ export async function chatClientFromRow(
     apiKey: await credentialOf(row, cfg),
     baseUrl: row.baseUrl,
     defaults: { serviceTier: row.serviceTier, thinking: row.thinking },
+    ai: env.AI,
     fetch: fetchImpl,
   })
+}
+
+/** The platform chat tier that answers when a tenant has no chat row, or null when none exists. */
+export interface PlatformChat {
+  provider: AiProvider
+  model: string
+  build: (fetchImpl?: FetchLike) => ChatClient
+}
+
+/**
+ * Platform order: the operator's `ANTHROPIC_API_KEY` (a deliberate choice) → the `AI` binding
+ * (zero key, billed to the Cloudflare account) → nothing. The ONE definition `resolveChat`,
+ * `readiness` and the agent-models list all read, so the three can never disagree.
+ */
+export function platformChat(cfg: AppConfig, env: AiEnv): PlatformChat | null {
+  if (cfg.ANTHROPIC_API_KEY) {
+    const apiKey = cfg.ANTHROPIC_API_KEY
+    return {
+      provider: 'anthropic',
+      model: DEFAULT_MODELS.anthropic,
+      build: fetchImpl => createChatClient({ provider: 'anthropic', apiKey, fetch: fetchImpl }),
+    }
+  }
+  if (env.AI) {
+    const ai = env.AI
+    return {
+      provider: 'workers_ai',
+      model: WORKERS_AI_CHAT_MODEL,
+      build: () => createChatClient({ provider: 'workers_ai', ai }),
+    }
+  }
+  return null
 }
 
 export async function embeddingsClientFromRow(
@@ -155,7 +190,7 @@ export async function embeddingsClientFromRow(
 export async function resolveChat(
   db: Database,
   cfg: AppConfig,
-  _env: AiEnv,
+  env: AiEnv,
   tenantId: string,
   options: ResolveOptions = {}
 ): Promise<ResolvedChat> {
@@ -167,7 +202,7 @@ export async function resolveChat(
   const source = assignment ? 'agent' : 'tenant'
   if (row) {
     return {
-      client: await chatClientFromRow(row, cfg, options.fetch),
+      client: await chatClientFromRow(row, cfg, env, options.fetch),
       provider: row.provider,
       model: override ?? row.model,
       source,
@@ -175,15 +210,12 @@ export async function resolveChat(
       configId: row.id,
     }
   }
-  if (cfg.ANTHROPIC_API_KEY) {
+  const platform = platformChat(cfg, env)
+  if (platform) {
     return {
-      client: createChatClient({
-        provider: 'anthropic',
-        apiKey: cfg.ANTHROPIC_API_KEY,
-        fetch: options.fetch,
-      }),
-      provider: 'anthropic',
-      model: override ?? DEFAULT_MODELS.anthropic,
+      client: platform.build(options.fetch),
+      provider: platform.provider,
+      model: override ?? platform.model,
       source: assignment ? 'agent' : 'platform',
       maxOutputTokens: cfg.AGENT_MAX_OUTPUT_TOKENS,
     }
@@ -246,10 +278,11 @@ export async function readiness(
     findDefaultConfig(db, tenantId, 'embeddings'),
   ])
   const none: AiScopeReadiness = { ready: false, source: 'none' }
+  const platform = platformChat(cfg, env)
   const chat: AiScopeReadiness = chatRow
     ? { ready: true, source: 'tenant', provider: chatRow.provider, model: chatRow.model }
-    : cfg.ANTHROPIC_API_KEY
-      ? { ready: true, source: 'platform', provider: 'anthropic', model: DEFAULT_MODELS.anthropic }
+    : platform
+      ? { ready: true, source: 'platform', provider: platform.provider, model: platform.model }
       : none
   const embeddings: AiScopeReadiness = embRow
     ? { ready: true, source: 'tenant', provider: embRow.provider, model: embRow.model }

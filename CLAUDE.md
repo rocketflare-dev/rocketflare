@@ -18,8 +18,8 @@ Cloudflare Worker (`apps/web`), a CLI (`apps/cli`), private zod contracts
   Neon via Hyperdrive deployed, Docker locally; Drizzle over `postgres.js` (only driver), 1 client/request
 - **Auth**: arctic (Google, Microsoft) + magic link + dev-login; `__Host-session`; API keys; KV rate limit
 - **Async / realtime**: Queues (`JOBS_QUEUE`), `NotificationsHub` DO `/ws`, R2 (`FILES`), cron, Workflows
-- **AI**: `services/ai/resolve` (`agent_models` → tenant `ai_configs` → platform key → 503); Anthropic /
-  OpenAI-compatible chat over SSE, agents on `AGENT_RUN_WORKFLOW`, Workers AI → pgvector, Langfuse
+- **AI**: `services/ai/resolve` (`agent_models` → tenant `ai_configs` → platform key → Workers AI via
+  `[ai]`, zero key → 503); Anthropic / OpenAI-compatible / Workers AI chat over SSE, agents on `AGENT_RUN_WORKFLOW`, Workers AI → pgvector (uploads: R2 → `AI.toMarkdown` → pgvector), Langfuse
 - **Analytics**: drizzle-cube at `/cubejs-api`+`/mcp`, every cube tenant-scoped in `sql()`; fact tables
   on the `:15` cron; TS dashboard templates → `analytics_pages`
 - **UI**: React 18 + Vite, DaisyUI 5 / Tailwind v4, React Router 6, TanStack Query 5; served as `ASSETS`
@@ -31,7 +31,8 @@ Cloudflare Worker (`apps/web`), a CLI (`apps/cli`), private zod contracts
 
 ```bash
 pnpm dev:db:up && pnpm db:migrate  # Postgres :5432; role → migrations → grants
-pnpm seed && pnpm dev  # demo tenant/users/key; wrangler :3001 + vite :3000
+pnpm seed && pnpm dev  # demo tenant/users/key; wrangler :3001 + vite :3000 (strict ports)
+pnpm dev:stop · pnpm dev:status  # kill this repo's dev tree / show it and the port holders
 pnpm cli login --server http://localhost:3001  # browser → ~/.rocketflare/config.json, then whoami
 pnpm test:db:up && pnpm test  # every package; web loads .env.test
 pnpm lint · pnpm typecheck · pnpm build  # workspace-wide

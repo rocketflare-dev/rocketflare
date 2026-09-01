@@ -10,12 +10,11 @@ import {
   type AgentModelEntry,
   upsertAgentModelRequestSchema,
 } from '@rocketflare/shared/ai/agent-models'
-import { DEFAULT_MODELS } from '@rocketflare/shared/ai/config'
 import { and, eq } from 'drizzle-orm'
 import { type AgentModelRow, agentModels } from '../../db/schema'
 import { guardPermission } from '../middleware/permissions'
 import { recordActivity } from '../services/activity'
-import { findChatConfigById, planChat } from '../services/ai/resolve'
+import { findChatConfigById, planChat, platformChat } from '../services/ai/resolve'
 import {
   isPromptKey,
   PROMPT_KEYS,
@@ -48,6 +47,7 @@ export function toAssignment(row: AgentModelRow): AgentModelAssignment {
 aiAgentModelsRouter.get('/', async c => {
   const { db, tenantId, cfg } = withAuthAndDb(c)
   guardPermission(c, 'read', 'AiConfig')
+  const platform = platformChat(cfg, c.env)
   const items: AgentModelEntry[] = []
   for (const key of PROMPT_KEYS) {
     const { assignment, config, model } = await planChat(db, tenantId, key)
@@ -62,11 +62,11 @@ aiAgentModelsRouter.get('/', async c => {
             model: model ?? config.model,
             configId: config.id,
           }
-        : cfg.ANTHROPIC_API_KEY
+        : platform
           ? {
               source: assignment ? 'assignment' : 'platform',
-              provider: 'anthropic',
-              model: model ?? DEFAULT_MODELS.anthropic,
+              provider: platform.provider,
+              model: model ?? platform.model,
             }
           : { source: 'none' },
     })

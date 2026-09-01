@@ -48,7 +48,7 @@ async function candidateFor(
           scope: 'chat',
           provider: row.provider,
           model: row.model,
-          chat: await chatClientFromRow(row, cfg, fetchImpl),
+          chat: await chatClientFromRow(row, cfg, env, fetchImpl),
         }
       : {
           scope: 'embeddings',
@@ -74,7 +74,7 @@ async function candidateFor(
         scope: 'chat',
         provider: input.provider,
         model: input.model,
-        chat: createChatClient(common),
+        chat: createChatClient({ ...common, ai: env.AI }),
       }
     : {
         scope: 'embeddings',
