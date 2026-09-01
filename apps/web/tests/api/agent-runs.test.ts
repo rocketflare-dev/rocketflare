@@ -68,6 +68,12 @@ describe('GET /api/agents', () => {
         exclusive: true,
         title: expect.any(String),
       }),
+      expect.objectContaining({
+        key: 'research-topic',
+        promptKey: 'research-topic',
+        exclusive: true,
+        title: expect.any(String),
+      }),
     ])
     expect((await request('/api/agents')).status).toBe(401)
   })
@@ -254,6 +260,45 @@ describe('POST /api/agents/runs/:id/cancel', () => {
     expect(flagged.status).toBe('running')
     expect(flagged.cancelRequestedAt).toBeInstanceOf(Date)
     expect(flagged.finishedAt).toBeNull()
+
+    // Asked AGAIN, the same running run is FORCED: the instance is terminated and the row settled,
+    // so a run whose loop stopped polling can never stay stuck on "Cancelling…".
+    const forced = createAgentRunResponseSchema.parse(
+      await json(
+        await request(
+          `/api/agents/runs/${next.id}/cancel`,
+          { method: 'POST', headers: a.cookie },
+          { env }
+        )
+      )
+    )
+    expect(forced.status).toBe('cancelled')
+    expect(forced.finishedAt).toBeInstanceOf(Date)
+    expect(stubs(env).workflow?.terminated).toContain(next.id)
+  })
+
+  it('forces a cancel even when the Workflow instance is gone (an orphaned local run)', async () => {
+    const a = await actor()
+    const env = createTestEnv()
+    const run = createAgentRunResponseSchema.parse(await json(await start(a.cookie, env)))
+    await db
+      .update(agentRuns)
+      .set({ status: 'running', startedAt: new Date(), cancelRequestedAt: new Date() })
+      .where(eq(agentRuns.id, run.id))
+    // The instance no longer exists — `terminate()` throws and is swallowed; the ROW is the truth.
+    stubs(env).workflow?.clear()
+
+    const forced = createAgentRunResponseSchema.parse(
+      await json(
+        await request(
+          `/api/agents/runs/${run.id}/cancel`,
+          { method: 'POST', headers: a.cookie },
+          { env }
+        )
+      )
+    )
+    expect(forced.status).toBe('cancelled')
+    expect(forced.finishedAt).toBeInstanceOf(Date)
   })
 
   it('another member cannot cancel my run (404)', async () => {
@@ -320,6 +365,14 @@ describe('reconcile on read', () => {
       )
     )
     expect(detail).toMatchObject({ status: 'failed', error: 'Workflow instance not found' })
+
+    // terminated (what a forced cancel leaves behind) → cancelled, NOT failed.
+    const terminated = createAgentRunResponseSchema.parse(await json(await start(a.cookie, env)))
+    stubs(env).workflow?.setStatus(terminated.id, { status: 'terminated' })
+    detail = agentRunWithEventsSchema.parse(
+      await json(await request(`/api/agents/runs/${terminated.id}`, { headers: a.cookie }, { env }))
+    )
+    expect(detail).toMatchObject({ status: 'cancelled', error: null })
 
     // complete while the row is still active → succeeded.
     const run3 = createAgentRunResponseSchema.parse(await json(await start(a.cookie, env)))

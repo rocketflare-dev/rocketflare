@@ -362,6 +362,8 @@ export interface FakeInstanceStatus {
 export class RecordingWorkflow {
   readonly created: RecordedWorkflowInstance[] = []
   readonly statuses = new Map<string, FakeInstanceStatus>()
+  /** Instance ids a forced cancel terminated, in order. */
+  readonly terminated: string[] = []
   defaultStatus: FakeInstanceStatus = { status: 'running' }
 
   async create(options: { id?: string; params?: unknown } = {}) {
@@ -392,6 +394,7 @@ export class RecordingWorkflow {
       pause: async () => {},
       resume: async () => {},
       terminate: async () => {
+        this.terminated.push(id)
         this.statuses.set(id, { status: 'terminated' })
       },
       restart: async () => {},
@@ -401,6 +404,7 @@ export class RecordingWorkflow {
 
   clear(): void {
     this.created.length = 0
+    this.terminated.length = 0
     this.statuses.clear()
   }
 }

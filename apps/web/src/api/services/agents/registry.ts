@@ -17,6 +17,7 @@ import type { Logger } from '../../utils/core/logger'
 import type { Tool } from '../ai/kit'
 import type { ChatClient } from '../ai/types'
 import type { JobsQueue } from '../jobs'
+import { researchTopicAgent } from './examples/research-topic'
 import { summarizeTextAgent } from './examples/summarize-text'
 
 /** Emitted by the run into `agent_run_events` (and nudged to viewers). */
@@ -78,6 +79,7 @@ export type AnyAgentDefinition = AgentDefinition<any, any>
 
 export const AGENTS: Record<AgentKey, AnyAgentDefinition> = {
   'summarize-text': summarizeTextAgent,
+  'research-topic': researchTopicAgent,
 }
 
 export function getAgent(key: AgentKey): AnyAgentDefinition {

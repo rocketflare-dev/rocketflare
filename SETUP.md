@@ -214,17 +214,19 @@ with nobody to approve it (`SIGNUP_MODE=invite_only` default). Verify: `/admin` 
 Resolution (`docs/CONCEPTS.md` §9): a per-agent assignment → the tenant's default provider in
 Settings → AI → the platform `ANTHROPIC_API_KEY` → **Workers AI through the `AI` binding**. That last
 tier means **chat and agents work on a fresh workspace with nothing configured**: Settings → AI shows
-chat readiness `Cloudflare Workers AI · mistral-small-3.1-24b-instruct · platform default`. Read the
+chat readiness `Cloudflare Workers AI · llama-3.3-70b-instruct-fp8-fast · platform default`. Read the
 cost line before relying on it, then pick any of these:
 
 0. **Zero-key default — Workers AI.** Nothing to do; `wrangler dev` proxies the binding to your
    logged-in Cloudflare account and a deployed Worker uses its own. **Every call is billed to that
-   account** (10 000 free neurons a day on any plan, then metered — Mistral Small 3.1 is about
-   $0.35 / $0.56 per million input / output tokens); the `ai_usage` ledger counts the tokens. To make
+   account** (10 000 free neurons a day on any plan, then metered — Llama 3.3 70B fp8-fast is about
+   $0.29 / $2.25 per million input / output tokens); the `ai_usage` ledger counts the tokens. The
+   floor is the 70B because the AGENTS run on it too and a smaller model handles a multi-turn tool
+   loop badly; its context window is 24k, which is what the knowledge tools budget against. To make
    the kit zero-spend instead, comment the `[ai]` block out of BOTH tomls (the parity test keeps them
    in sync) — chat then answers 503 until a key or tenant provider exists. Any tenant can still add
-   Workers AI explicitly as a chat provider (no key) to pick another model such as
-   `@cf/meta/llama-3.3-70b-instruct-fp8-fast`. Verify: `curl -b <cookie>
+   Workers AI explicitly as a chat provider (no key) to pick another model — cheaper and weaker,
+   `@cf/mistralai/mistral-small-3.1-24b-instruct`, or anything else with function calling. Verify: `curl -b <cookie>
    localhost:3001/api/ai/config/readiness` → `"chat":{"ready":true,"source":"platform","provider":"workers_ai"…}`
    and `/chat` streams a reply.
 1. **Platform key (optional).** `ANTHROPIC_API_KEY=` in `apps/web/.dev.vars` (deployed:

@@ -46,6 +46,9 @@ const hit = (rank: number, overrides: Record<string, unknown> = {}) => ({
   text: `Snippet ${rank}`,
   score: 0.5 / rank,
   rank,
+  seq: rank - 1,
+  documentPassages: 4,
+  charOffset: (rank - 1) * 1000,
   denseRank: rank,
   lexicalRank: null,
   ...overrides,
@@ -88,6 +91,7 @@ describe('Search page', () => {
     const rows = within(results).getAllByRole('listitem')
     expect(rows.map(r => r.getAttribute('data-rank'))).toEqual(['1', '2'])
     expect(rows[0]).toHaveTextContent('#1')
+    expect(rows[0]).toHaveTextContent('passage 1 of 4')
     expect(rows[0]).toHaveTextContent('dense #1')
     expect(rows[0]).toHaveTextContent('lexical #2')
     expect(rows[0]).toHaveTextContent('Snippet 1')

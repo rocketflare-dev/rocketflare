@@ -61,6 +61,15 @@ export const searchHitSchema = z.object({
   documentId: z.string().uuid(),
   title: z.string(),
   text: z.string(),
+  /** The passage's position in its document, from 0 ("passage seq+1 of documentPassages"). */
+  seq: z.number().int().nonnegative(),
+  /** How many passages the document has in total. */
+  documentPassages: z.number().int().nonnegative(),
+  /**
+   * Character offset of the passage in the document's text — read around it with
+   * `GET`/`get_document` at this offset. Null when it cannot be located (re-chunked since).
+   */
+  charOffset: z.number().int().nonnegative().nullable(),
   /** Reciprocal-rank-fusion score — higher is better; NOT a cosine similarity. */
   score: z.number(),
   /** 1-based position in the fused order. */

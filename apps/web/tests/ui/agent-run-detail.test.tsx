@@ -41,8 +41,8 @@ const EVENTS = [
     detail: '12 characters',
   }),
   event(3, 'step', { key: 'summarize', label: 'Summarising', status: 'running' }),
-  event(4, 'tool.start', { name: 'submit_summary', style: 'bullets' }),
-  event(5, 'tool.end', { name: 'submit_summary', keyPoints: 2 }),
+  event(4, 'tool.start', { name: 'submit_summary', input: { style: 'bullets' } }),
+  event(5, 'tool.end', { name: 'submit_summary', result: { keyPoints: 2 } }),
   event(6, 'text', { text: '**Bold** summary' }),
   event(7, 'step', {
     key: 'summarize',
@@ -129,10 +129,15 @@ describe('buildTimeline', () => {
     const rows = buildTimeline(
       [...EVENTS].reverse().map(e => ({ ...e, at: new Date(e.at) })) as never
     )
-    expect(rows.map(r => r.kind)).toEqual(['status', 'step', 'step', 'tool', 'tool', 'text'])
+    // One row per tool CALL: the `tool.end` merges into the `tool.start` it answers.
+    expect(rows.map(r => r.kind)).toEqual(['status', 'step', 'step', 'tool', 'text'])
     const summarise = rows[2]
     expect(summarise.kind === 'step' && summarise.step.status).toBe('done')
     expect(summarise.kind === 'step' && summarise.step.detail).toBe('2 key points')
+    const call = rows[3]
+    expect(call.kind === 'tool' && call.done).toBe(true)
+    expect(call.kind === 'tool' && call.input).toEqual({ style: 'bullets' })
+    expect(call.kind === 'tool' && call.result).toEqual({ keyPoints: 2 })
   })
 })
 
@@ -174,17 +179,16 @@ describe('RunDetailDrawer', () => {
       'step',
       'step',
       'tool',
-      'tool',
       'text',
     ])
     // The merged step shows its final detail once, not twice
     expect(screen.getAllByText('Summarising')).toHaveLength(1)
     expect(screen.getByText('· 2 key points')).toBeInTheDocument()
-    // Tool payload behind a details toggle
-    expect(screen.getAllByText('Submit summary')).toHaveLength(2)
-    expect(screen.getAllByText('Details')[0].closest('details')).toHaveTextContent(
-      '"style": "bullets"'
-    )
+    // One row for the call and its answer, with both payloads behind the one details toggle
+    expect(screen.getAllByText('Submit summary')).toHaveLength(1)
+    const details = screen.getAllByText('Details')[0].closest('details')
+    expect(details).toHaveTextContent('"style": "bullets"')
+    expect(details).toHaveTextContent('"keyPoints": 2')
     // Markdown rendered
     expect(screen.getByText('Bold').tagName).toBe('STRONG')
     expect(screen.getByText('Running')).toBeInTheDocument()
@@ -234,6 +238,38 @@ describe('RunDetailDrawer', () => {
     // Raw toggle
     fireEvent.click(screen.getByRole('button', { name: 'Raw JSON' }))
     expect(screen.getByText(/"keyPoints"/)).toBeInTheDocument()
+  })
+
+  it('keeps the cancel button usable as Force cancel once a cancel was requested', async () => {
+    mount({
+      [`/api/agents/runs/${RUN_ID}`]: run({ cancelRequestedAt: t(2) }),
+    })
+    const button = await screen.findByRole('button', { name: 'Force cancel' })
+    expect(button).toBeEnabled()
+  })
+
+  it("renders a research run's answer with its citations as search links", async () => {
+    mount({
+      [`/api/agents/runs/${RUN_ID}`]: run({
+        agentKey: 'research-topic',
+        status: 'succeeded',
+        input: { topic: 'Who reviews access requests?' },
+        finishedAt: t(4),
+        output: {
+          answer: 'A global admin reviews them.',
+          citations: [
+            { documentId: '66666666-6666-4666-8666-666666666666', title: 'Onboarding handbook' },
+          ],
+          turns: 2,
+        },
+        events: [],
+      }),
+    })
+    expect(await screen.findByText('A global admin reviews them.')).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Onboarding handbook' })).toHaveAttribute(
+      'href',
+      '/search?documentId=66666666-6666-4666-8666-666666666666'
+    )
   })
 
   it('refetches the run on an entity.changed agent-run nudge', async () => {

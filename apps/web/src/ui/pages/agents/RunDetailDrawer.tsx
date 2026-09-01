@@ -3,7 +3,7 @@
  * timings, Cancel while active), the `AgentSteps` timeline from `GET /runs/:id` (reconciled by the
  * server; re-read on the `agent-run` nudge and every 3 s while active), the typed output panel
  * (`summarize-text` → summary, key points, a link to the indexed document when `documentId` is
- * set), the raw output JSON behind a toggle, and the error when the run failed. Closing the
+ * set; `research-topic` → the answer with its cited documents), the raw output JSON behind a toggle, and the error when the run failed. Closing the
  * drawer never touches the run — it is a durable row; Cancel is the explicit button.
  */
 
@@ -11,6 +11,7 @@ import { DocumentMagnifyingGlassIcon } from '@heroicons/react/24/outline'
 import {
   type AgentRunWithEvents,
   isRunActive,
+  researchTopicOutputSchema,
   summarizeTextOutputSchema,
 } from '@rocketflare/shared/ai/agents'
 import { useState } from 'react'
@@ -102,13 +103,21 @@ function RunBody({ run }: { run: AgentRunWithEvents }) {
           </dd>
         </dl>
         {active && (
+          // A cancel already asked for stays CLICKABLE: the second press forces it (the server
+          // terminates the Workflow instance and settles the row), so a run whose loop stopped
+          // polling can never strand the user on "Cancelling…".
           <button
             type="button"
             className="btn btn-sm btn-outline btn-error shrink-0"
             onClick={() => cancel.mutate(run.id)}
-            disabled={cancel.isPending || run.cancelRequestedAt !== null}
+            disabled={cancel.isPending}
+            title={
+              run.cancelRequestedAt
+                ? 'Cancellation was requested but the run has not stopped — force it to stop now'
+                : undefined
+            }
           >
-            {run.cancelRequestedAt ? 'Cancelling…' : 'Cancel run'}
+            {run.cancelRequestedAt ? 'Force cancel' : 'Cancel run'}
           </button>
         )}
       </section>
@@ -134,6 +143,9 @@ function RunBody({ run }: { run: AgentRunWithEvents }) {
 function OutputPanel({ agentKey, output }: { agentKey: string; output: unknown }) {
   const [raw, setRaw] = useState(false)
   const summary = agentKey === 'summarize-text' ? summarizeTextOutputSchema.safeParse(output) : null
+  const research =
+    agentKey === 'research-topic' ? researchTopicOutputSchema.safeParse(output) : null
+  const typed = summary?.success || research?.success
 
   return (
     <section aria-label="Output" className="surface-inset rounded-lg p-4 space-y-3">
@@ -148,11 +160,39 @@ function OutputPanel({ agentKey, output }: { agentKey: string; output: unknown }
           {raw ? 'Formatted' : 'Raw JSON'}
         </button>
       </div>
-      {raw || !summary?.success ? (
+      {raw || !typed ? (
         <pre className="text-xs whitespace-pre-wrap break-words max-h-80 overflow-auto">
           {JSON.stringify(output, null, 2)}
         </pre>
-      ) : (
+      ) : research?.success ? (
+        <div className="space-y-3">
+          <Markdown content={research.data.answer} className="text-sm" />
+          <div>
+            <h5 className="text-sm font-medium mb-1">
+              {research.data.citations.length > 0 ? 'Sources' : 'No sources'}
+            </h5>
+            {research.data.citations.length > 0 ? (
+              <ul className="text-sm space-y-0.5">
+                {research.data.citations.map(citation => (
+                  <li key={citation.documentId}>
+                    <Link
+                      to={`/search?documentId=${encodeURIComponent(citation.documentId)}`}
+                      className="link link-primary inline-flex items-center gap-1.5"
+                    >
+                      <DocumentMagnifyingGlassIcon className="w-4 h-4" />
+                      {citation.title}
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="text-sm text-muted">
+                The agent found nothing in the knowledge base for this question.
+              </p>
+            )}
+          </div>
+        </div>
+      ) : summary?.success ? (
         <div className="space-y-3">
           <Markdown content={summary.data.summary} className="text-sm" />
           {summary.data.keyPoints.length > 0 && (
@@ -175,7 +215,7 @@ function OutputPanel({ agentKey, output }: { agentKey: string; output: unknown }
             </Link>
           )}
         </div>
-      )}
+      ) : null}
     </section>
   )
 }

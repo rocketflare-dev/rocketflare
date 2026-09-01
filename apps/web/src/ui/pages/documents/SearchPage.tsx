@@ -1,6 +1,7 @@
 /**
  * `/search` (D18, D20): hybrid search over the tenant knowledge base — `POST /api/ai/documents/search`
- * with `{ query, limit, documentId? }`, rendering hits with rank, fused score, dense/lexical rank
+ * with `{ query, limit, documentId? }`, rendering hits with rank, where the passage sits in its
+ * document (`seq`/`documentPassages`), fused score, dense/lexical rank
  * badges, snippet and the document title, optionally restricted to one document (`?documentId=`
  * preselects it — the run drawer and the Knowledge table link here). Hits are the search
  * mutation's data, never cached as server state. Adding documents lives on `/documents`.
@@ -139,6 +140,9 @@ function SearchHitRow({
         >
           {hit.title}
         </button>
+        <span className="text-muted tabular-nums" title="Where this passage sits in the document">
+          passage {hit.seq + 1} of {hit.documentPassages}
+        </span>
         <span className="text-muted tabular-nums" title="Reciprocal-rank-fusion score">
           score {hit.score.toFixed(3)}
         </span>

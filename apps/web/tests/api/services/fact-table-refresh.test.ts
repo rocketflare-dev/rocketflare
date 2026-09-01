@@ -107,8 +107,11 @@ describe('refreshFactTable', () => {
     await db.insert(activityEvents).values({ tenantId: tenant.id, userId: user.id, type: 'q' })
     const summary = await refreshAllFactTables(db)
     expect(summary.results.map(r => r.table)).toEqual(FACT_TABLES.map(t => t.name))
-    expect(summary.failed).toBe(0)
     expect(summary.results[0]?.tenants).toBeGreaterThanOrEqual(1)
+    // NOT `summary.failed === 0`: this walks EVERY tenant in a database other test files write to
+    // and delete from concurrently, so a per-tenant failure elsewhere is expected — isolating it
+    // per tenant is the service's design (and it flaked here). What this test owns is its tenant.
+    expect(summary.results[0]?.errors.map(e => e.tenantId)).not.toContain(tenant.id)
     const rows = await db
       .select()
       .from(tenantActivityDailyFacts)

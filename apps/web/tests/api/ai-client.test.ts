@@ -19,7 +19,7 @@ import {
   workersAiChatInputs,
 } from '@/api/services/ai/client'
 import { AiError, describeAiError, normalizeAiError, redactSecrets } from '@/api/services/ai/errors'
-import type { ChatDelta } from '@/api/services/ai/types'
+import { type ChatDelta, textOf } from '@/api/services/ai/types'
 import { sseResponse } from '../helpers/ai'
 import { RecordingAi } from '../mocks/bindings'
 
@@ -439,6 +439,83 @@ describe('Workers AI chat client', () => {
     inputSchema: { type: 'object', properties: { summary: { type: 'string' } } },
   }
   const messages = [{ role: 'user' as const, content: 'Summarise: hello world' }]
+
+  it('retries on the flattened schema when the model rejects the tool transcript (5006)', async () => {
+    const ai = new RecordingAi()
+    // The real rejection from `@cf/meta/llama-3.3-70b-instruct-fp8-fast` when a transcript carries
+    // OpenAI tool extras: the model's schema declares `content` as a plain string.
+    let attempt = 0
+    const inner = ai.run.bind(ai)
+    ai.run = async (model: string, inputs: Record<string, unknown>) => {
+      attempt += 1
+      if (attempt === 1) {
+        throw new Error(
+          "5006: Error: oneOf at '/' not met, 0 matches: required properties at '/' are 'prompt', Type mismatch of '/messages/1/content', 'array' not in 'string'"
+        )
+      }
+      return inner(model, inputs)
+    }
+    ai.respond = () => ({ response: 'Answered from the flattened transcript.' })
+
+    const client = createChatClient({ provider: 'workers_ai', ai })
+    const result = await client.complete({
+      model: 'm',
+      system: 'You research.',
+      maxTokens: 64,
+      messages: [
+        { role: 'user', content: 'Research this' },
+        { role: 'assistant', content: [{ type: 'tool_use', id: 't1', name: 'search', input: {} }] },
+        {
+          role: 'user',
+          content: [{ type: 'tool_result', toolUseId: 't1', content: 'hits', isError: false }],
+        },
+      ],
+      tools: [tool],
+    })
+    expect(textOf(result.content)).toBe('Answered from the flattened transcript.')
+
+    // The retry carries only string content in system/user/assistant roles — no tool extras.
+    expect(ai.runs).toHaveLength(1) // only the flattened call reached the recorder
+    const inputs = ai.runs[0]?.inputs as { messages: Array<Record<string, unknown>> }
+    for (const message of inputs.messages) {
+      expect(typeof message.content).toBe('string')
+      expect(message.tool_calls).toBeUndefined()
+      expect(message.role).not.toBe('tool')
+    }
+    expect(JSON.stringify(inputs.messages)).toMatch(/Called: search/)
+    expect(JSON.stringify(inputs.messages)).toMatch(/Tool result/)
+  })
+
+  it('stops waiting on a call that never answers (env.AI.run cannot be aborted)', async () => {
+    const ai = new RecordingAi()
+    // A binding call that never settles is the shape that used to hold a Workflow step for its
+    // full 10-minute timeout and read to a person as "the agent is stuck".
+    ai.run = () => new Promise(() => {})
+    const client = createChatClient({ provider: 'workers_ai', ai, timeoutMs: 20 })
+    const err = await client
+      .complete({ model: 'm', system: 's', messages, maxTokens: 16 })
+      .catch(e => e)
+    expect(err).toBeInstanceOf(AiError)
+    expect((err as AiError).code).toBe('unavailable') // retryable: the run's step retries, then fails
+    expect((err as AiError).message).toMatch(/did not answer/)
+  })
+
+  it('gives up immediately when the caller has already aborted', async () => {
+    const ai = new RecordingAi()
+    ai.run = () => new Promise(() => {})
+    const client = createChatClient({ provider: 'workers_ai', ai, timeoutMs: 60_000 })
+    const err = await client
+      .complete({
+        model: 'm',
+        system: 's',
+        messages,
+        maxTokens: 16,
+        signal: AbortSignal.abort(),
+      })
+      .catch(e => e)
+    expect((err as AiError).code).toBe('unavailable')
+    expect((err as AiError).message).toMatch(/cancelled/)
+  })
 
   it('completes over env.AI.run with OpenAI-shaped messages/tools and no tool_choice; a forced tool is a system instruction', async () => {
     const ai = new RecordingAi()

@@ -132,12 +132,12 @@ agentsRouter.post('/runs/:id/cancel', async c => {
   const id = uuidParam(c, 'id')
   const row = await getRun(db, tenantId, id)
   if (!row || !visible(auth, row)) throw new NotFoundError('Agent run not found')
-  const run = (await requestCancel(db, tenantId, id, realtime)) ?? row
+  const run = (await requestCancel(db, tenantId, id, realtime, c.env)) ?? row
   defer(() =>
     recordActivity(db, {
       tenantId,
       userId: user.id,
-      type: 'agent_run.cancel_requested',
+      type: run.status === 'cancelled' ? 'agent_run.cancelled' : 'agent_run.cancel_requested',
       subjectType: 'AgentRun',
       subjectId: run.id,
       metadata: { agentKey: run.agentKey, status: run.status },

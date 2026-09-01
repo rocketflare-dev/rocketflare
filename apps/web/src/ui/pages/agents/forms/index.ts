@@ -7,6 +7,7 @@
 import type { AgentKey } from '@rocketflare/shared/ai/agents'
 import { z } from 'zod'
 import { JsonForm } from './JsonForm'
+import { researchTopicForm } from './research-topic'
 import { summarizeTextForm } from './summarize-text'
 import type { AgentForm } from './types'
 
@@ -26,6 +27,7 @@ export const jsonForm: AgentForm<string> = {
 
 const AGENT_FORMS: Partial<Record<AgentKey, AgentForm>> = {
   'summarize-text': summarizeTextForm as AgentForm,
+  'research-topic': researchTopicForm as AgentForm,
 }
 
 export function formFor(agentKey: AgentKey): AgentForm {

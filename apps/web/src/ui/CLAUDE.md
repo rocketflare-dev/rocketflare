@@ -103,7 +103,8 @@ React 18 + Vite + React Router 6 + TanStack Query 5 + zustand; DaisyUI 5 on Tail
 - Tokens, not raw colours: `text-muted`, `surface-panel`, `badge-warning` — never `bg-blue-50`.
   Classes built from props are safelisted with `@source inline(...)` in `index.css`; classes
   built from data are forbidden. Heroicons only (provider marks in `components/icons` are
-  `currentColor`); `<details>/<summary>` dropdowns; `<dialog>` `Modal`.
+  `currentColor`); `<details>/<summary>` dropdowns; `<dialog>` `Modal` (column layout, `max-h-[85vh]`: the BODY
+  scrolls, title and actions stay — never let a modal grow past the viewport).
 - Forms: controlled inputs + the same `@rocketflare/shared` schema the server validates with; `FieldError`.
   Every list renders `PaginationControls` (it hides itself at one page).
 - Tests in `tests/ui/` (jsdom + Testing Library, `fetch` via `stubFetch()` route tables, no MSW);
@@ -175,7 +176,10 @@ React 18 + Vite + React Router 6 + TanStack Query 5 + zustand; DaisyUI 5 on Tail
   `useAgentRuns` while any listed row is active. `runPollInterval(status)` is the pure decision
   (unit-tested); don't fight `refetchInterval` with fake timers.
 - **Event payloads beyond `step` are `unknown` on the wire.** `AgentSteps.buildTimeline` parses each
-  leniently (`tool.*` → `{ name, …rest }`, `text` → `{ text }`, `status` → `{ status, attempt? }`,
+  leniently and merges what belongs together: `step` rows by `key`, and a `tool.start`/`tool.end`
+  PAIR into ONE row (FIFO per tool name; input and result share the `<details>`, the row spins until
+  it returns). An agent should not emit tool frames for its TERMINAL tool — that "call" is the
+  answer, which the output panel already renders. Parsers: (`tool.*` → `{ name, …rest }`, `text` → `{ text }`, `status` → `{ status, attempt? }`,
   `error` → `{ message, willRetry? }`), merges `step` rows by `key` (a `done` replaces the row its
   `running` announced) and falls back to a raw `<details>` for anything it does not know. `text`
   renders via `components/ai/Markdown`, which is why `pages/agents/**` is a lazy chunk like
@@ -184,10 +188,14 @@ React 18 + Vite + React Router 6 + TanStack Query 5 + zustand; DaisyUI 5 on Tail
 - **Forms come from `pages/agents/forms/`**: `formFor(agentKey)` → `{ initial, schema, Component }`.
   `summarize-text` ships its own (textarea counted against `SUMMARIZE_TEXT_MAX_CHARS`, style,
   "index the result" toggle), parsed with the SAME `summarizeTextInputSchema` the route applies
-  (trimmed, defaults filled). Unknown agents get `jsonForm` (a JSON textarea; the server's 400
+  (trimmed, defaults filled); `research-topic` ships a single question textarea counted against
+  `RESEARCH_TOPIC_MAX_CHARS`, and its output panel renders the Markdown answer plus its citations as
+  links to `/search?documentId=`. Unknown agents get `jsonForm` (a JSON textarea; the server's 400
   `details` issues map back onto the fields). A new agent = a shared input schema + one registry entry.
 - **Closing the drawer never touches the run**; Cancel is the explicit button (`POST …/cancel`, shown
-  while active, disabled once `cancelRequestedAt` is set). Requested-by is "You" / short id /
+  while active). Once `cancelRequestedAt` is set it stays ENABLED as "Force cancel" — the second
+  press makes the server terminate the Workflow instance and settle the row, so a run that stopped
+  polling never strands the user (and never blocks an exclusive agent). Requested-by is "You" / short id /
   "system" — the row carries only a user id (resolving names is on the to-document list).
 - **Settings → Agent models** (`pages/settings/AgentModels.tsx`, tab `agent-models`, `manage
   AiConfig`): `GET /api/ai/agent-models` is the whole truth (every prompt key, its assignment, and
@@ -207,7 +215,8 @@ React 18 + Vite + React Router 6 + TanStack Query 5 + zustand; DaisyUI 5 on Tail
   under the title and a download link (`filePath(fileId)`) when there is an uploaded original.
 - **Search (`/search`, nav "Search", guard `read Document`)**: its own page (`pages/documents/SearchPage.tsx`). The Knowledge header states that everything indexed is also available to agents (`search_knowledge` / `get_document`, `services/agents/tools/`). Delete shows only for own rows unless `delete Document` (admin+) — the route
   enforces. Search is `useSearch()` (mutation): `{ query, limit: 10, documentId? }` → hits with
-  `rank`, RRF `score`, `dense #n` / `lexical #n` badges and the snippet; `?documentId=` preselects
+  `rank`, `passage n of m` (where the passage sits in its document), RRF `score`, `dense #n` /
+  `lexical #n` badges and the snippet; `?documentId=` preselects
   the per-document filter (the run drawer's "Indexed as a searchable document" link lands on
   `/search?documentId=`); an empty knowledge base shows an EmptyState linking to `/documents`.
 - Tests: `agents-page`, `agent-run-detail` (renders `RunDetailDrawer` inside `WebSocketProvider`

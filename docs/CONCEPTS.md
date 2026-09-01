@@ -555,7 +555,7 @@ deferred.
 promptKey)` assignment (a chat config id and/or a model override → `source: 'agent'`) → the tenant's
 default `ai_configs(scope='chat')` row (`'tenant'`) → platform `ANTHROPIC_API_KEY` with
 `DEFAULT_MODELS.anthropic` (`'platform'`) → **`workers_ai` with `WORKERS_AI_CHAT_MODEL`
-(`@cf/mistralai/mistral-small-3.1-24b-instruct`, zero key) when the `AI` binding exists**
+(`@cf/meta/llama-3.3-70b-instruct-fp8-fast`, zero key) when the `AI` binding exists**
 (`'platform'`) → 503 `ai_not_configured` (`AiNotConfiguredError`). The two platform tiers are ONE
 function, `platformChat(cfg, env)`, read by `resolveChat`, `readiness()` and the agent-models list,
 so they cannot disagree. Because both tomls declare `[ai]`, chat is ready on a fresh workspace with
@@ -584,7 +584,19 @@ data, not enum values), `openai` and `openai_compatible` (chat **and** embedding
 client for `/chat/completions` SSE and `/embeddings`, base URLs include `/v1`), `workers_ai`
 (chat **and** embeddings over `env.AI.run`, zero key: `{ messages, tools, max_tokens, stream }` in the
 OpenAI shape, `{ response, tool_calls, usage }` or an SSE `ReadableStream` back; the catalog suggests
-only chat models whose Cloudflare page lists function calling — Mistral Small 3.1, Llama 3.3 70B).
+only chat models whose Cloudflare page lists function calling — Llama 3.3 70B, Mistral Small 3.1).
+The floor is the 70B rather than the 24B because it has to run the AGENTS, not just the chat box: a
+24B model handles a multi-turn tool loop over real documents badly (it stalls, or answers in prose
+where a tool call was required). Its context window is 24k, which is why the knowledge tools budget
+what they return. `env.AI.run` takes no `AbortSignal`, so the adapter races it against
+`WORKERS_AI_TIMEOUT_MS` (120 s) and turns an unanswered call into a retryable `unavailable` error —
+without that a stalled call holds a Workflow step until its 10-minute timeout and the run reads as
+stuck. **Model schemas differ per model**: some accept the OpenAI tool extras in a transcript,
+others declare `messages[].content` as a plain string and reject the request outright
+(`5006 … oneOf at '/' not met`), which would kill a run mid-loop. The adapter therefore never sends
+null content, and on a schema rejection retries ONCE with `flattenWorkersAiMessages` — the lowest
+common shape, `{ role: system|user|assistant, content: <string> }`, with the tool call and its
+result carried as text.
 Workers AI has **no `tool_choice`**: `forcedToolInstruction` turns `{ type: 'tool' | 'any' }` into a
 system instruction the model is told to honour, and when the model still answers with the arguments
 as a JSON object in prose (Mistral Small does, for short inputs — a fenced ```` ```json ```` block),
@@ -609,7 +621,7 @@ terminal — its input is the answer**), `callStructuredTool` (one forced tool c
 retry with the issues fed back, then `StructuredOutputError`), `runToolLoop` (the agent engine;
 returns the transcript), `runStreamingChat` (the chat engine; read tools only).
 
-**Prompts.** `PROMPT_REGISTRY` in `services/prompts.ts` (`chat`, `summarize-text`) is code; a tenant
+**Prompts.** `PROMPT_REGISTRY` in `services/prompts.ts` (`chat`, `summarize-text`, `research-topic`) is code; a tenant
 override is a `prompt_overrides(tenant_id, key)` row — revert = delete, `PROMPT_MAX_LENGTH` = 20 000;
 `{{var}}` placeholders are filled by `interpolatePrompt` (an unknown one stays visible so a typo
 shows). `GET /api/ai/prompts` (member read), `PUT | DELETE /:key` (`manage Prompt`). A new prompt is
@@ -657,16 +669,35 @@ errored | terminated | complete` — **`not_found` is an answer**, not an error.
 `entity.changed { entity: 'agent-run', id }` nudge — DB is the truth, WS is a nudge. Members list and
 cancel their own runs; admin+ every run in the tenant. The tool loop runs inside ONE `execute` step in
 v1; one `step.do` per model turn with the transcript persisted between them (`runToolLoop` already
-returns `messages`) is the scaling path. The example, `summarize-text`: precheck (≤ 20 000 chars),
-one terminal tool `submit_summary` through `callStructuredTool`, usage under
-`agent:summarize-text`, and with `index: true` the summary is stored through `ingestText`.
-**Every agent can read the knowledge base**: `ctx.tools` carries two built-in tools
-(`services/agents/tools/`): `search_knowledge` — the same hybrid `searchChunks` as `/search`, bound
-to the run's tenant, returning `{ rank, documentId, title, score, excerpt }` hits as JSON (a tenant
-with no embeddings provider gets a prose "not available" answer, not a failure) — and
-`get_document` — one document's stored text in full or as an `{ offset, maxChars }` window (≤ 50 000
-chars per call, with `totalChars` / `hasMore` / `nextOffset` for paging; unknown, other-tenant or
-not-yet-converted ids get a prose answer). An agent built on
+returns `messages`) is the scaling path. Two examples ship, one per shape. `summarize-text` (the
+single-call shape): precheck (≤ 20 000 chars), one terminal tool `submit_summary` through
+`callStructuredTool`, usage under `agent:summarize-text`, and with `index: true` the summary is
+stored through `ingestText`. `research-topic` (the agentic shape, D18): one question (≤ 2 000
+chars) → `runToolLoop` over `[...ctx.tools, submit_answer]` capped by `AGENT_MAX_TURNS`, the model
+choosing how often to `search_knowledge` / `get_document`, then the terminal `submit_answer
+{ answer (Markdown), citations }`; `ctx.checkCancelled()` runs in the loop's `onStep` (the loop
+takes no `AbortSignal`) and each turn's text / tool call / truncated tool result becomes an
+`agent_run_events` row. Two deliberate behaviours: a loop that ends **without** the terminal call
+(`no_tool_call` / `max_turns` — the live failure mode on Workers AI, which has no `tool_choice`) is
+**salvaged** by ONE `callStructuredTool` over the transcript rather than failed, and **citations are
+filtered to the document ids the tools actually returned** (titles come from the search hit), so a
+hallucinated citation is dropped instead of persisted. Usage is the summed loop under
+`agent:research-topic`.
+**Every agent can read the knowledge base**: `ctx.tools` carries three built-in tools
+(`services/agents/tools/`), all bound to the run's tenant and all answering JSON that says what to
+do next. `search_knowledge` — the same hybrid `searchChunks` as `/search`, returning WHOLE passages
+(≤ 4 000 chars each, ≤ 16 000 per answer; anything dropped is reported as `omitted`) grouped by
+document and located inside it: `passage` n of `totalPassages` and `charOffset`, the exact offset to
+hand `get_document`. Because dense retrieval has no relevance threshold — it always returns the
+closest passages — every non-empty answer carries a `note` telling the model to judge relevance
+itself; a tenant with nothing indexed gets `knowledgeBase` (what exists) and a `hint` instead, and
+one with no embeddings provider gets `{ error: 'knowledge_search_unavailable', hint }` rather than a
+failure. `get_document` — one document in full or as an `{ offset, maxChars }` window (≤ 50 000 per
+call, with `totalChars` / `returnedChars` / `hasMore` / `nextOffset`); unknown, other-tenant,
+unconverted or failed ids answer `{ error, hint }`, an unknown id with the documents that do exist.
+`list_documents` — the indexed documents, newest first, paged, with titles, sizes and passage
+counts: what a model needs to choose search wording or to say honestly that a topic is not covered.
+An agent built on
 `runToolLoop` passes `[...ctx.tools, …own tools, terminal tool]`; the forced single-tool example does
 not use it. Everything indexed — pasted, uploaded, or written by an agent — is therefore available
 to agents as well as to people.
@@ -694,7 +725,10 @@ fallback).
 `searchChunks` (`POST /search`) is hybrid: dense `<=>` over the HNSW index plus lexical
 `websearch_to_tsquery` / `ts_rank_cd` over `to_tsvector('english', text)`, each contributing a pool
 of `min(max(limit·4, 50), 200)`, fused by Reciprocal Rank Fusion (`k = 60`); every hit carries
-`denseRank` / `lexicalRank`. Vectors are pgvector rows under the tenant predicate and RLS, not
+`denseRank` / `lexicalRank` and its place in the document — `seq` of `documentPassages`, plus
+`charOffset`, the character position of the passage in the document's text (resolved with one
+`position()` query over the returned hits, so nothing is stored), which is what lets a reader or an
+agent jump straight to it with `get_document`. Vectors are pgvector rows under the tenant predicate and RLS, not
 Vectorize; `apps/web/scripts/migrate.ts` runs `CREATE EXTENSION IF NOT EXISTS vector` before the
 migrations.
 
@@ -866,7 +900,8 @@ delivered (or logged) by the consumer under `wrangler dev`; upload an avatar and
 `/api/files/:id`; add an AI provider in Settings → AI (or set `ANTHROPIC_API_KEY`), pass the connection
 test, hold a streamed chat whose turns and usage rows persist; start the `summarize-text` agent from
 `POST /api/agents/runs`, watch its `agent_run_events` arrive through the nudge, cancel one, and see its
-trace when Langfuse keys are set; ingest a text and get it back from the hybrid search; upload a PDF
+trace when Langfuse keys are set; ingest a text and get it back from the hybrid search, then ask
+`research-topic` a question about it and read the answer with its citation; upload a PDF
 on the Knowledge page, watch it go `Indexing → Indexed` and find a phrase from it in search, then
 download the original; open the Agents page and watch a run's timeline fill through the nudge, and
 the Knowledge page list the ingested document; query every cube as two tenants and see disjoint rows

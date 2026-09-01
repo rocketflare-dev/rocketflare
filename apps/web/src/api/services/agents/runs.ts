@@ -42,6 +42,8 @@ export interface AgentRunWorkflowBinding {
   create(options: { id: string; params: AgentRunParams }): Promise<{ id: string }>
   get(id: string): Promise<{
     status(): Promise<{ status: string; error?: { name: string; message: string } }>
+    /** Kills the instance mid-step — the escape hatch behind a forced cancel. */
+    terminate(): Promise<void>
   }>
 }
 
@@ -268,11 +270,25 @@ export function cancelRun(db: Database, tenantId: string, runId: string) {
  * the flag; the run's `checkCancelled()` sees it between turns (a step in flight finishes).
  * Terminal → unchanged. Returns the row as it now is, or null if unknown in this tenant.
  */
+/**
+ * Cancel a run, escalating on the second ask.
+ *
+ * - `queued` → `cancelled` outright (nothing is executing yet).
+ * - `running`, first ask → set `cancelRequestedAt`; the run polls it between turns and settles
+ *   itself, which is the graceful path (the transcript and events stay coherent).
+ * - `running`, asked AGAIN → **force**: terminate the Workflow instance and settle the row here.
+ *   Cooperative cancellation only works while something is still polling, and a run whose model
+ *   call hangs, whose instance was orphaned (a `wrangler dev` restart) or whose step died between
+ *   polls would otherwise sit in `running` with "Cancelling…" forever, with no way out short of
+ *   SQL. The second click is the way out; a terminate failure (already gone, no binding) does not
+ *   stop the row being settled — the row is the truth.
+ */
 export async function requestCancel(
   db: Database,
   tenantId: string,
   runId: string,
-  realtime?: Realtime
+  realtime?: Realtime,
+  env?: AgentRunsEnv
 ): Promise<AgentRunRow | null> {
   const row = await getRun(db, tenantId, runId)
   if (!row) return null
@@ -291,7 +307,9 @@ export async function requestCancel(
     nudgeRun(realtime, tenantId, runId)
     return updated ?? getRun(db, tenantId, runId)
   }
-  if (row.status === 'running' && !row.cancelRequestedAt) {
+  if (row.status !== 'running') return row
+
+  if (!row.cancelRequestedAt) {
     const [updated] = await db
       .update(agentRuns)
       .set({ cancelRequestedAt: sql`now()` })
@@ -300,7 +318,21 @@ export async function requestCancel(
     nudgeRun(realtime, tenantId, runId)
     return updated ?? row
   }
-  return row
+
+  await terminateInstance(env, row)
+  const settled = (await cancelRun(db, tenantId, runId)) ?? row
+  nudgeRun(realtime, tenantId, runId)
+  return settled
+}
+
+/** Best-effort kill of the run's Workflow instance. Every failure is ignored on purpose. */
+async function terminateInstance(env: AgentRunsEnv | undefined, run: AgentRunRow): Promise<void> {
+  if (!env?.AGENT_RUN_WORKFLOW || !run.instanceId) return
+  try {
+    await (await env.AGENT_RUN_WORKFLOW.get(run.instanceId)).terminate()
+  } catch {
+    // Already terminated, already finished, or gone with the local dev server: settle anyway.
+  }
 }
 
 /** `true` when a cancel was requested for the run — the poll a run makes between turns. */
@@ -343,9 +375,11 @@ export async function reconcileRun(
     return (await failRun(db, run.tenantId, run.id, 'Workflow instance not found')) ?? run
   }
   switch (status.status) {
-    case 'errored':
-    case 'terminated': {
-      const reason = status.error?.message ?? `Workflow instance ${status.status}`
+    // `terminated` is what a forced cancel leaves behind — settle it as cancelled, not failed.
+    case 'terminated':
+      return (await cancelRun(db, run.tenantId, run.id)) ?? run
+    case 'errored': {
+      const reason = status.error?.message ?? 'Workflow instance errored'
       return (await failRun(db, run.tenantId, run.id, reason)) ?? run
     }
     case 'complete':

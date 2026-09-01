@@ -10,7 +10,7 @@ import { paginationQuerySchema } from '../pagination'
 import { promptKeySchema } from './prompts'
 
 /** Stable identifier for each agent the runtime knows. Append LAST; an app extends this list. */
-export const AGENT_KEYS = ['summarize-text'] as const
+export const AGENT_KEYS = ['summarize-text', 'research-topic'] as const
 export const agentKeySchema = z.enum(AGENT_KEYS)
 export type AgentKey = z.infer<typeof agentKeySchema>
 
@@ -162,3 +162,31 @@ export const summarizeTextOutputSchema = z.object({
   documentId: z.string().uuid().optional(),
 })
 export type SummarizeTextOutput = z.infer<typeof summarizeTextOutputSchema>
+
+// ---- The research agent -------------------------------------------------------------------------
+
+/** Longest research question the agent accepts (characters). */
+export const RESEARCH_TOPIC_MAX_CHARS = 2_000
+/** Most citations an answer may carry — one per document consulted, not per passage. */
+export const RESEARCH_TOPIC_MAX_CITATIONS = 20
+
+export const researchTopicInputSchema = z.object({
+  topic: z.string().trim().min(1).max(RESEARCH_TOPIC_MAX_CHARS),
+})
+export type ResearchTopicInput = z.infer<typeof researchTopicInputSchema>
+
+/** A document the answer actually drew on — the id is checked against what search returned. */
+export const researchCitationSchema = z.object({
+  documentId: z.string().uuid(),
+  title: z.string(),
+})
+export type ResearchCitation = z.infer<typeof researchCitationSchema>
+
+export const researchTopicOutputSchema = z.object({
+  /** The answer in Markdown; cites documents by title. */
+  answer: z.string().min(1),
+  citations: z.array(researchCitationSchema).max(RESEARCH_TOPIC_MAX_CITATIONS),
+  /** Model turns the run spent (a run that found nothing still answers, saying so). */
+  turns: z.number().int().nonnegative(),
+})
+export type ResearchTopicOutput = z.infer<typeof researchTopicOutputSchema>

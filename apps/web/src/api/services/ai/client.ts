@@ -51,6 +51,8 @@ export interface ChatClientOptions {
   ai?: AiEnv['AI']
   /** Injected for tests; defaults to the global `fetch`. */
   fetch?: FetchLike
+  /** `workers_ai` only: how long to wait for `env.AI.run` (it cannot be aborted). */
+  timeoutMs?: number
 }
 
 export interface EmbeddingsClientOptions {
@@ -412,6 +414,7 @@ function toOpenAiMessages(params: ChatParams): OpenAiMessage[] {
         }))
       out.push({
         role: 'assistant',
+        // Null is correct OpenAI for a pure tool-call turn; the Workers AI adapter coerces it.
         content: text || null,
         ...(calls.length ? { tool_calls: calls } : {}),
       })
@@ -674,12 +677,54 @@ function appendSystem(system: ChatParams['system'], extra: string): ChatParams['
   }
 }
 
-/** The `env.AI.run` inputs for a chat call — OpenAI-shaped messages and tools, no `tool_choice`. */
-export function workersAiChatInputs(params: ChatParams, stream: boolean): Record<string, unknown> {
+/**
+ * Flatten an OpenAI-shaped transcript to the LOWEST common Workers AI schema: every message is
+ * `{ role: 'system' | 'user' | 'assistant', content: <non-empty string> }` — no `tool_calls`, no
+ * `role: 'tool'`, no null content. Model schemas differ per model on Workers AI (some accept the
+ * OpenAI tool extras, some declare `content` as a plain string and reject the request with
+ * `5006 … oneOf at '/' not met`), and a rejected transcript kills a run mid-loop. The tool call and
+ * its result survive as text, which the model can still read and act on.
+ */
+export function flattenWorkersAiMessages(messages: OpenAiMessage[]): OpenAiMessage[] {
+  const out: OpenAiMessage[] = []
+  for (const message of messages) {
+    const text = typeof message.content === 'string' ? message.content : ''
+    if (message.role === 'tool') {
+      out.push({ role: 'user', content: `Tool result:\n${text || '(empty)'}` })
+      continue
+    }
+    const calls = (message.tool_calls ?? [])
+      .map(c => `${c.function.name}(${c.function.arguments})`)
+      .join('\n')
+    const content = [text, calls && `Called: ${calls}`].filter(Boolean).join('\n\n')
+    out.push({ role: message.role, content: content || '(no content)' })
+  }
+  return out
+}
+
+/** A payload the model's schema refused — retrying the same shape cannot help, flattening can. */
+export function isWorkersAiSchemaError(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err)
+  return /5006|oneOf at |Type mismatch of /.test(message)
+}
+
+/**
+ * The `env.AI.run` inputs for a chat call — OpenAI-shaped messages and tools, no `tool_choice`.
+ * `flatten` drops to the lowest common schema (see `flattenWorkersAiMessages`).
+ */
+export function workersAiChatInputs(
+  params: ChatParams,
+  stream: boolean,
+  flatten = false
+): Record<string, unknown> {
   const instruction = forcedToolInstruction(params)
   const system = instruction ? appendSystem(params.system, instruction) : params.system
+  const messages = toOpenAiMessages({ ...params, system })
   const inputs: Record<string, unknown> = {
-    messages: toOpenAiMessages({ ...params, system }),
+    messages: flatten
+      ? flattenWorkersAiMessages(messages)
+      : // Null content is legal OpenAI but not in every Workers AI model schema.
+        messages.map(m => (m.content === null ? { ...m, content: '' } : m)),
     max_tokens: params.maxTokens,
     stream,
   }
@@ -781,13 +826,74 @@ export function recoverForcedToolCall(params: ChatParams, result: ChatResult): C
   }
 }
 
+/**
+ * How long a single `env.AI.run` chat call may take. `AiOptions` carries no `signal`, so a Workers
+ * AI call cannot be aborted — an unanswered one would otherwise hold a Workflow step until its
+ * 10-minute timeout with nothing to show, which reads to a person as "the agent is stuck". Waiting
+ * stops here instead: the call becomes an `unavailable` `AiError`, which the agent runtime already
+ * treats as retryable, so the step retries and then fails with a message.
+ */
+export const WORKERS_AI_TIMEOUT_MS = 120_000
+
+/** Resolve `promise`, or reject once `timeoutMs` passes / `signal` aborts. The call itself runs on. */
+export async function withDeadline<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  signal?: AbortSignal
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  let onAbort: (() => void) | undefined
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(
+          () =>
+            reject(
+              new AiError(
+                'unavailable',
+                'workers_ai',
+                `Workers AI did not answer within ${Math.round(timeoutMs / 1000)}s`
+              )
+            ),
+          timeoutMs
+        )
+        if (signal) {
+          onAbort = () =>
+            reject(new AiError('unavailable', 'workers_ai', 'The request was cancelled'))
+          if (signal.aborted) onAbort()
+          else signal.addEventListener('abort', onAbort, { once: true })
+        }
+      }),
+    ])
+  } finally {
+    if (timer) clearTimeout(timer)
+    if (onAbort) signal?.removeEventListener('abort', onAbort)
+  }
+}
+
 function createWorkersAiChatClient(opts: ChatClientOptions): ChatClient {
   const ai = opts.ai as WorkersAiBinding | undefined
   if (!ai) throw new AiError('unavailable', 'workers_ai', 'The AI binding is not configured')
+  const timeoutMs = opts.timeoutMs ?? WORKERS_AI_TIMEOUT_MS
 
   const complete = async (params: ChatParams): Promise<ChatResult> => {
+    const call = async (flatten: boolean) =>
+      withDeadline(
+        ai.run(params.model, workersAiChatInputs(params, false, flatten)),
+        timeoutMs,
+        params.signal
+      )
     try {
-      const out = await ai.run(params.model, workersAiChatInputs(params, false))
+      let out: unknown
+      try {
+        out = await call(false)
+      } catch (err) {
+        // The model's schema refused the transcript (tool extras, null content). Every model on
+        // Workers AI takes the flattened shape, so retry once there rather than failing the run.
+        if (!isWorkersAiSchemaError(err)) throw err
+        out = await call(true)
+      }
       return recoverForcedToolCall(params, fromWorkersAiOutput(out, params.model))
     } catch (err) {
       throw normalizeAiError(err, 'workers_ai')
@@ -815,7 +921,13 @@ function createWorkersAiChatClient(opts: ChatClientOptions): ChatClient {
       }
       let body: unknown
       try {
-        body = await ai.run(params.model, workersAiChatInputs(params, true))
+        try {
+          body = await ai.run(params.model, workersAiChatInputs(params, true))
+        } catch (err) {
+          // Same schema fallback as `complete` — a chat transcript can carry tool turns too.
+          if (!isWorkersAiSchemaError(err)) throw err
+          body = await ai.run(params.model, workersAiChatInputs(params, true, true))
+        }
       } catch (err) {
         throw normalizeAiError(err, 'workers_ai')
       }

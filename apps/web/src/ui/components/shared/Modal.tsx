@@ -53,9 +53,11 @@ export function Modal({
       }}
       onClose={onClose}
     >
-      <div className={`modal-box popover-surface p-0 ${className}`}>
+      {/* Column layout with a bounded height: the BODY scrolls, the title and actions stay put —
+          a long run timeline or a big output used to grow the box past the viewport. */}
+      <div className={`modal-box popover-surface p-0 flex flex-col max-h-[85vh] ${className}`}>
         {(title || closeButton) && (
-          <div className="flex items-start justify-between gap-4 px-5 pt-5">
+          <div className="flex items-start justify-between gap-4 px-5 pt-5 shrink-0">
             {title && <h3 className="text-base font-semibold leading-6">{title}</h3>}
             {closeButton && (
               <button
@@ -69,8 +71,10 @@ export function Modal({
             )}
           </div>
         )}
-        <div className="px-5 py-4 text-sm text-secondary">{children}</div>
-        {actions && <div className="modal-action mt-0 px-5 pb-5 gap-2">{actions}</div>}
+        <div className="px-5 py-4 text-sm text-secondary overflow-y-auto min-h-0 flex-1">
+          {children}
+        </div>
+        {actions && <div className="modal-action mt-0 px-5 pb-5 gap-2 shrink-0">{actions}</div>}
       </div>
       {/* Backdrop click closes: a native <form method="dialog"> submit fires `close` */}
       <form method="dialog" className="modal-backdrop">

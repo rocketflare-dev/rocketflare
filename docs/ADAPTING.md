@@ -54,12 +54,14 @@ an `@rocketflare/shared` import was missed. Keep `packages/shared` **private** (
 
 ## 2. Delete once you have real ones
 
-- The example agent `apps/web/src/api/services/agents/examples/summarize-text.ts` (keep
+- The example agents `apps/web/src/api/services/agents/examples/{summarize-text,research-topic}.ts` —
+  `summarize-text` is the one-forced-call shape, `research-topic` the tool-loop-over-the-knowledge-base
+  shape; delete whichever you are not copying (keep
   `services/agents/{registry,runs,runtime}.ts` and `api/workflows/agent-run.ts` — that is the runtime,
   not the example). Removing it touches: `AGENT_KEYS` + `summarizeText*Schema` +
   `SUMMARIZE_TEXT_MAX_CHARS` in `packages/shared/src/ai/agents.ts`, the `summarize-text` entry in
   `PROMPT_REGISTRY` (`apps/web/src/api/services/prompts.ts`), the `AGENTS` entry in
-  `services/agents/registry.ts`, `apps/web/tests/api/{agent-runs,agent-run-workflow}.test.ts` (rewrite
+  `services/agents/registry.ts`, `apps/web/tests/api/{agent-runs,agent-run-workflow,agent-research}.test.ts` (rewrite
   them around your first agent — the runtime needs at least one), and the agent's form/run page under
   `apps/web/src/ui/pages/agents/` (see `apps/web/src/ui/CLAUDE.md`). `AGENT_KEYS` must not be empty:
   `agentKeySchema` is a `z.enum`. Rows in `agent_runs` / `agent_run_events` / `prompt_overrides` /

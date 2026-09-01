@@ -153,11 +153,18 @@ export const DEFAULT_MODELS: Record<AiProvider, string> = {
 }
 
 /**
- * The zero-key chat floor: Workers AI's Mistral Small 3.1 — function calling, `messages` input,
- * 128k context, Apache-2.0, mid-priced. `resolveChat` lands here when no tenant row and no
- * platform key exist, so a fresh workspace can chat with nothing configured.
+ * The zero-key chat floor: Workers AI's Llama 3.3 70B (fp8, fast) — function calling, `messages`
+ * input, 24k context. `resolveChat` lands here when no tenant row and no platform key exist, so a
+ * fresh workspace can chat with nothing configured.
+ *
+ * Why not the smaller Mistral Small 3.1 (the previous default, still in the picker): the floor
+ * has to run the AGENTS, not just the chat box, and a 24B model handles a multi-turn tool loop
+ * over real documents poorly — it stalls or answers in prose where a tool call was required.
+ * The 70B is meaningfully better at that for roughly 4× the output price (still cents), and
+ * output is the small half of an agent's token bill. An operator who wants the cheaper floor sets
+ * Mistral Small as a tenant chat provider (no key needed) or comments `[ai]` out of both tomls.
  */
-export const WORKERS_AI_CHAT_MODEL = '@cf/mistralai/mistral-small-3.1-24b-instruct'
+export const WORKERS_AI_CHAT_MODEL = '@cf/meta/llama-3.3-70b-instruct-fp8-fast'
 
 /** Chat defaults for providers whose `DEFAULT_MODELS` entry is an embeddings model. */
 export const DEFAULT_CHAT_MODELS: Partial<Record<AiProvider, string>> = {

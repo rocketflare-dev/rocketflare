@@ -99,7 +99,7 @@ export const PROVIDERS: readonly ProviderInfo[] = [
     // picker feeds agents, which force a tool call by instruction (no `tool_choice` on Workers AI).
     suggestedModels: [
       WORKERS_AI_CHAT_MODEL,
-      '@cf/meta/llama-3.3-70b-instruct-fp8-fast',
+      '@cf/mistralai/mistral-small-3.1-24b-instruct',
       '@cf/baai/bge-m3',
       '@cf/baai/bge-large-en-v1.5',
     ],

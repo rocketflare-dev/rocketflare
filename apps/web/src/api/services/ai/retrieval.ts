@@ -3,12 +3,19 @@
  * Postgres full-text (`websearch_to_tsquery` / `ts_rank_cd` over `to_tsvector('english', text)`),
  * fused by Reciprocal Rank Fusion (`RRF_K = 60`). Each signal retrieves a wide candidate pool, the
  * fusion decides the order, the top `limit` come back with `denseRank`/`lexicalRank` so "did the
- * vector search find this or only the keyword one?" is answerable. The tenant predicate is on
+ * vector search find this or only the keyword one?" is answerable. Each hit also says WHERE in its
+ * document it sits — `seq` (passage n of `documentPassages`) and `charOffset`, the character
+ * position of the passage in `documents.content`, so a reader can jump straight there with
+ * `get_document`. The offset is resolved with one `position()` query over the returned hits only
+ * (never the whole candidate pool), so nothing is stored and no migration is needed. It is
+ * approximate by construction — first occurrence, counted in Postgres characters against JS's
+ * UTF-16 slicing — so with chunk overlap or non-BMP text a window can start slightly early; a
+ * reader gets a shifted read, never an error. The tenant predicate is on
  * EVERY query; `documentId` narrows further. No rerank in v1 (a `RerankFn` seam is the documented
  * extension).
  */
 import type { SearchHit, SearchRequest } from '@rocketflare/shared/ai/embeddings'
-import { and, eq, sql } from 'drizzle-orm'
+import { and, eq, inArray, sql } from 'drizzle-orm'
 import type { AppConfig } from '../../../config'
 import type { Database } from '../../../db/client'
 import { chunks, documents } from '../../../db/schema'
@@ -74,6 +81,7 @@ interface Candidate {
   documentId: string
   title: string
   text: string
+  seq: number
 }
 
 export async function searchChunks(
@@ -99,6 +107,7 @@ export async function searchChunks(
     documentId: chunks.documentId,
     title: documents.title,
     text: chunks.text,
+    seq: chunks.seq,
   }
   const [dense, lexical] = await Promise.all([
     db
@@ -124,16 +133,56 @@ export async function searchChunks(
       .limit(pool),
   ])
 
-  return fuseByRank<Candidate>(dense, lexical, c => c.id)
-    .slice(0, limit)
-    .map(f => ({
-      chunkId: f.item.id,
-      documentId: f.item.documentId,
-      title: f.item.title,
-      text: f.item.text,
-      score: f.score,
-      rank: f.rank,
-      denseRank: f.denseRank,
-      lexicalRank: f.lexicalRank,
-    }))
+  const fused = fuseByRank<Candidate>(dense, lexical, c => c.id).slice(0, limit)
+  const located = await locateChunks(
+    db,
+    tenantId,
+    fused.map(f => f.item.id)
+  )
+  return fused.map(f => ({
+    chunkId: f.item.id,
+    documentId: f.item.documentId,
+    title: f.item.title,
+    text: f.item.text,
+    seq: f.item.seq,
+    documentPassages: located.get(f.item.id)?.documentPassages ?? 0,
+    charOffset: located.get(f.item.id)?.charOffset ?? null,
+    score: f.score,
+    rank: f.rank,
+    denseRank: f.denseRank,
+    lexicalRank: f.lexicalRank,
+  }))
+}
+
+/**
+ * Where each returned passage sits in its document: its character offset in `documents.content`
+ * (0-based; null when the text cannot be located — a re-chunked or converted document) and how
+ * many passages the document has. Only the hits being returned are looked up, so `position()`
+ * runs over a handful of rows, never the candidate pool.
+ */
+async function locateChunks(
+  db: Database,
+  tenantId: string,
+  chunkIds: string[]
+): Promise<Map<string, { charOffset: number | null; documentPassages: number }>> {
+  if (chunkIds.length === 0) return new Map()
+  const rows = await db
+    .select({
+      id: chunks.id,
+      // `position()` is 1-based and 0 when absent; both are mapped below.
+      position: sql<number>`position(${chunks.text} in coalesce(${documents.content}, ''))`,
+      documentPassages: documents.chunkCount,
+    })
+    .from(chunks)
+    .innerJoin(documents, eq(documents.id, chunks.documentId))
+    .where(and(eq(chunks.tenantId, tenantId), inArray(chunks.id, chunkIds)))
+  return new Map(
+    rows.map(row => [
+      row.id,
+      {
+        charOffset: Number(row.position) > 0 ? Number(row.position) - 1 : null,
+        documentPassages: row.documentPassages,
+      },
+    ])
+  )
 }

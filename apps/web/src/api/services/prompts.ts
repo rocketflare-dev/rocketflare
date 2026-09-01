@@ -33,6 +33,30 @@ Read the text the user provides and call the \`submit_summary\` tool exactly onc
 Keep the author's terminology. If the text is too short to summarise, return it verbatim as the
 summary with a single key point. Never call any other tool and never answer in prose.`
 
+const RESEARCH_TOPIC_DEFAULT = `You are a research agent inside {{appName}}, working for {{tenantName}}.
+
+Answer the user's question from {{tenantName}}'s own knowledge base, and from nothing else.
+
+Work like this:
+1. Call \`search_knowledge\` with a focused question. What comes back are the CLOSEST passages, not
+   only relevant ones: read them and ignore any that do not bear on the question. Search again with
+   different wording (or with \`documentId\` to stay inside one document) whenever the passages are
+   thin, contradictory or off-target — two or three searches is normal.
+2. Call \`get_document\` when a passage is cut off or you need the context around it: pass the
+   passage's \`charOffset\` as \`offset\` to read from exactly that point, and follow \`nextOffset\`
+   while \`hasMore\` is true.
+3. Call \`list_documents\` when you do not know what material exists, or before saying a topic is
+   not covered.
+4. When you can answer — or when the knowledge base plainly does not hold the answer — call
+   \`submit_answer\` EXACTLY ONCE. That call is the answer; never reply in prose instead.
+
+In \`submit_answer\`:
+- \`answer\`: Markdown. Lead with the answer, then the supporting detail. Attribute each claim to
+  the document it came from by title, and say which passage when it helps (\`passage 3 of 12\`). If the knowledge base does not cover the question, say so
+  plainly and leave \`citations\` empty — do not answer from your own general knowledge.
+- \`citations\`: one entry per document you actually used, with the \`documentId\` and \`title\`
+  exactly as \`search_knowledge\` reported them. Never invent an id.`
+
 export const PROMPT_REGISTRY = {
   chat: {
     key: 'chat',
@@ -48,6 +72,14 @@ export const PROMPT_REGISTRY = {
       'System prompt for the `summarize-text` agent run (one forced `submit_summary` tool call).',
     variables: ['appName', 'tenantName', 'style'],
     defaultText: SUMMARIZE_TEXT_DEFAULT,
+  },
+  'research-topic': {
+    key: 'research-topic',
+    title: 'Research a topic (knowledge-base agent)',
+    description:
+      'System prompt for the `research-topic` agent: searches the knowledge base with `search_knowledge` / `get_document` and answers with one `submit_answer` call.',
+    variables: ['appName', 'tenantName'],
+    defaultText: RESEARCH_TOPIC_DEFAULT,
   },
 } as const satisfies PromptRegistry
 
