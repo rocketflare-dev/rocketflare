@@ -28,7 +28,7 @@ describe('not found', () => {
     expect(await json(res)).toMatchObject({ statusCode: 404, code: ERROR_CODES.notFound })
   })
 
-  it.each(['/auth/x', '/cubejs-api/v1/load', '/mcp', '/ws'])('%s → JSON 404', async path => {
+  it.each(['/auth/x', '/cubejs-api/v1/load', '/mcp', '/ws/x'])('%s → JSON 404', async path => {
     const res = await request(path)
     expect(res.status).toBe(404)
     expect(res.headers.get('content-type')).toContain('application/json')

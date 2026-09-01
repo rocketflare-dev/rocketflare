@@ -1,6 +1,7 @@
 /**
  * `Cloudflare.Env`-shaped test bindings (D15): in-memory KV, a 404 ASSETS fetcher, HYPERDRIVE
- * pointing at the test Postgres, a recording Queue, and vars from `process.env` (loaded from
+ * pointing at the test Postgres, a recording Queue, an in-memory R2 bucket, a recording DO namespace,
+ * and vars from `process.env` (loaded from
  * .env.test by dotenv-cli). Tests may read `process.env`; `src/` may not.
  *
  * Also `createExecutionContext()` — `waitUntil` collects promises so `waitOnExecutionContext`
@@ -109,11 +110,156 @@ export class RecordingQueue<T = unknown> {
   }
 }
 
+// ---- R2 -----------------------------------------------------------------------------------
+
+interface R2Entry {
+  body: Uint8Array
+  httpMetadata?: R2HTTPMetadata
+  customMetadata?: Record<string, string>
+  uploaded: Date
+}
+
+/** Enough of R2Bucket for `services/storage.ts` (Phase 2): put/get/head/delete/list. */
+export class MemoryR2Bucket {
+  readonly objects = new Map<string, R2Entry>()
+
+  private toObject(key: string, e: R2Entry): R2Object {
+    return {
+      key,
+      size: e.body.byteLength,
+      etag: `"${e.body.byteLength}-${e.uploaded.getTime()}"`,
+      httpEtag: `"${e.body.byteLength}-${e.uploaded.getTime()}"`,
+      uploaded: e.uploaded,
+      httpMetadata: e.httpMetadata ?? {},
+      customMetadata: e.customMetadata ?? {},
+      version: '1',
+      checksums: {} as R2Checksums,
+      storageClass: 'Standard',
+      writeHttpMetadata: (headers: Headers) => {
+        if (e.httpMetadata?.contentType) headers.set('content-type', e.httpMetadata.contentType)
+      },
+    } as unknown as R2Object
+  }
+
+  async put(
+    key: string,
+    value: ReadableStream | ArrayBuffer | ArrayBufferView | string | null | Blob,
+    options?: { httpMetadata?: R2HTTPMetadata | Headers; customMetadata?: Record<string, string> }
+  ): Promise<R2Object> {
+    const body =
+      value === null
+        ? new Uint8Array()
+        : typeof value === 'string'
+          ? new TextEncoder().encode(value)
+          : value instanceof ArrayBuffer
+            ? new Uint8Array(value)
+            : ArrayBuffer.isView(value)
+              ? new Uint8Array(value.buffer, value.byteOffset, value.byteLength)
+              : new Uint8Array(await new Response(value as ReadableStream | Blob).arrayBuffer())
+    const httpMetadata =
+      options?.httpMetadata instanceof Headers
+        ? { contentType: options.httpMetadata.get('content-type') ?? undefined }
+        : options?.httpMetadata
+    const entry: R2Entry = {
+      body,
+      httpMetadata,
+      customMetadata: options?.customMetadata,
+      uploaded: new Date(),
+    }
+    this.objects.set(key, entry)
+    return this.toObject(key, entry)
+  }
+
+  async get(key: string): Promise<R2ObjectBody | null> {
+    const e = this.objects.get(key)
+    if (!e) return null
+    const obj = this.toObject(key, e) as unknown as Record<string, unknown>
+    const bytes = e.body
+    return {
+      ...obj,
+      body: new Response(bytes as unknown as BodyInit).body,
+      bodyUsed: false,
+      arrayBuffer: async () =>
+        bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength),
+      text: async () => new TextDecoder().decode(bytes),
+      json: async () => JSON.parse(new TextDecoder().decode(bytes)),
+      blob: async () => new Blob([bytes as unknown as BlobPart]),
+      bytes: async () => bytes,
+    } as unknown as R2ObjectBody
+  }
+
+  async head(key: string): Promise<R2Object | null> {
+    const e = this.objects.get(key)
+    return e ? this.toObject(key, e) : null
+  }
+
+  async delete(keys: string | string[]): Promise<void> {
+    for (const k of Array.isArray(keys) ? keys : [keys]) this.objects.delete(k)
+  }
+
+  async list(options?: { prefix?: string; limit?: number }): Promise<R2Objects> {
+    const prefix = options?.prefix ?? ''
+    const objects = [...this.objects.entries()]
+      .filter(([k]) => k.startsWith(prefix))
+      .sort(([a], [b]) => a.localeCompare(b))
+      .slice(0, options?.limit ?? 1000)
+      .map(([k, e]) => this.toObject(k, e))
+    return { objects, truncated: false, delimitedPrefixes: [] } as unknown as R2Objects
+  }
+}
+
+// ---- Durable Object namespace ---------------------------------------------------------------
+
+export interface RecordedBroadcast {
+  tenantId: string
+  args: unknown[]
+}
+
+/**
+ * Stub `NOTIFICATIONS_HUB` namespace (Phase 2, D8). `idFromName(tenantId).get()` returns a stub whose
+ * RPC methods (`broadcast`, `broadcastToUser`, …) record their calls in `broadcasts` so route tests
+ * can assert "a nudge was sent to tenant X" without a real Durable Object. `fetch` answers 501.
+ */
+export class RecordingDurableObjectNamespace {
+  readonly broadcasts: RecordedBroadcast[] = []
+  idFromName(name: string) {
+    return { toString: () => name, name, equals: (o: { name?: string }) => o.name === name }
+  }
+  newUniqueId() {
+    return this.idFromName(crypto.randomUUID())
+  }
+  idFromString(id: string) {
+    return this.idFromName(id)
+  }
+  get(id: { name: string }) {
+    const record =
+      (method: string) =>
+      async (...args: unknown[]) => {
+        this.broadcasts.push({ tenantId: id.name, args: [method, ...args] })
+        return { delivered: 0 }
+      }
+    return new Proxy(
+      {
+        id,
+        name: id.name,
+        fetch: async () => new Response('DO stub', { status: 501 }),
+      } as Record<string, unknown>,
+      { get: (t, prop: string) => (prop in t ? t[prop] : record(prop)) }
+    )
+  }
+  clear(): void {
+    this.broadcasts.length = 0
+  }
+}
+
 // ---- Env -----------------------------------------------------------------------------------
 
+/**
+ * Structurally `Cloudflare.Env` so it can be passed straight to `app.request`, `queue()` and
+ * `scheduled()`. The bindings are in-memory stubs cast to the platform types; reach the stubs'
+ * inspection surface (recorded messages, stored objects, KV store) through `stubs(env)`.
+ */
 export type TestEnv = AppBindings & {
-  /** Present now so Phase 2 code can bind it; not in Cloudflare.Env until wrangler.toml adds it. */
-  JOBS_QUEUE: RecordingQueue
   DATABASE_URL: string
   [secret: string]: unknown
 }
@@ -170,7 +316,9 @@ export function createTestEnv(overrides: Partial<TestEnv> = {}): TestEnv {
     RATE_LIMIT_KV: new MemoryKV() as unknown as KVNamespace,
     HYPERDRIVE: hyperdriveStub(databaseUrl),
     ASSETS: assetsStub(),
-    JOBS_QUEUE: new RecordingQueue(),
+    JOBS_QUEUE: new RecordingQueue() as unknown as Queue,
+    FILES: new MemoryR2Bucket() as unknown as R2Bucket,
+    NOTIFICATIONS_HUB: new RecordingDurableObjectNamespace() as unknown as DurableObjectNamespace,
     APP_ENV: process.env.APP_ENV ?? 'development',
     APP_URL: process.env.APP_URL ?? 'http://localhost:3001',
     APP_NAME: process.env.APP_NAME ?? 'GMGO Test',
@@ -187,6 +335,16 @@ export function createTestEnv(overrides: Partial<TestEnv> = {}): TestEnv {
   }
   env.DATABASE_URL = databaseUrl
   return { ...env, ...overrides } as TestEnv
+}
+
+/** Typed access to the in-memory stubs behind a `createTestEnv()` env. */
+export function stubs(env: TestEnv) {
+  return {
+    kv: env.RATE_LIMIT_KV as unknown as MemoryKV,
+    queue: env.JOBS_QUEUE as unknown as RecordingQueue,
+    files: env.FILES as unknown as MemoryR2Bucket,
+    hub: env.NOTIFICATIONS_HUB as unknown as RecordingDurableObjectNamespace,
+  }
 }
 
 // ---- ExecutionContext ----------------------------------------------------------------------

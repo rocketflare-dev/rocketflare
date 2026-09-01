@@ -20,11 +20,12 @@ import {
 } from '../helpers/auth'
 import { setupTestDatabase } from '../helpers/db'
 import { json, request } from '../helpers/request'
-import { createTestEnv } from '../mocks/bindings'
+import { createTestEnv, RecordingQueue } from '../mocks/bindings'
 
 const db = setupTestDatabase()
 const cfg = loadConfig(createTestEnv())
 const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() }
+const jobs = new RecordingQueue()
 
 async function tenantWithOwner() {
   const { user, tenant } = await createTestTenantWithUser(db, 'owner')
@@ -149,7 +150,7 @@ describe('bulk / resend / revoke', () => {
 
   it('resend rotates the token (old link dies) and revoke removes it from the list', async () => {
     const { tenant, cookie, owner } = await tenantWithOwner()
-    const { invitation, token } = await createInvitation(db, cfg, logger, {
+    const { invitation, token } = await createInvitation(db, cfg, logger, jobs, {
       tenantId: tenant.id,
       email: newEmail(),
       role: 'member',
@@ -196,7 +197,7 @@ describe('public GET /api/invite/:token', () => {
   it('returns invitationDetailsSchema fields and nothing sensitive', async () => {
     const { tenant, owner } = await tenantWithOwner()
     const email = newEmail()
-    const { token } = await createInvitation(db, cfg, logger, {
+    const { token } = await createInvitation(db, cfg, logger, jobs, {
       tenantId: tenant.id,
       email,
       role: 'admin',
@@ -219,7 +220,7 @@ describe('public GET /api/invite/:token', () => {
   it('404 for an unknown token; expired shows status expired', async () => {
     expect((await request('/api/invite/nope')).status).toBe(404)
     const { tenant, owner } = await tenantWithOwner()
-    const { invitation, token } = await createInvitation(db, cfg, logger, {
+    const { invitation, token } = await createInvitation(db, cfg, logger, jobs, {
       tenantId: tenant.id,
       email: newEmail(),
       role: 'member',
@@ -238,7 +239,7 @@ describe('public GET /api/invite/:token', () => {
 describe('POST /api/invite/:token/accept', () => {
   it('401 without a cookie', async () => {
     const { tenant, owner } = await tenantWithOwner()
-    const { token } = await createInvitation(db, cfg, logger, {
+    const { token } = await createInvitation(db, cfg, logger, jobs, {
       tenantId: tenant.id,
       email: newEmail(),
       role: 'member',
@@ -250,7 +251,7 @@ describe('POST /api/invite/:token/accept', () => {
   it('accepts transactionally: membership, acceptedAt, session selects the tenant, inviter notified', async () => {
     const { tenant, owner } = await tenantWithOwner()
     const email = newEmail()
-    const { invitation, token } = await createInvitation(db, cfg, logger, {
+    const { invitation, token } = await createInvitation(db, cfg, logger, jobs, {
       tenantId: tenant.id,
       email,
       role: 'admin',
@@ -280,7 +281,7 @@ describe('POST /api/invite/:token/accept', () => {
 
   it('403 invitation_email_mismatch when the session email differs', async () => {
     const { tenant, owner } = await tenantWithOwner()
-    const { token } = await createInvitation(db, cfg, logger, {
+    const { token } = await createInvitation(db, cfg, logger, jobs, {
       tenantId: tenant.id,
       email: newEmail(),
       role: 'member',
@@ -327,7 +328,7 @@ describe('POST /api/invite/:token/accept', () => {
   it('a NEW user under invite_only: magic link admits them, then accept joins them', async () => {
     const { tenant, owner } = await tenantWithOwner()
     const email = newEmail()
-    const { token } = await createInvitation(db, cfg, logger, {
+    const { token } = await createInvitation(db, cfg, logger, jobs, {
       tenantId: tenant.id,
       email,
       role: 'member',
@@ -366,13 +367,13 @@ describe('GET /api/invitations/pending', () => {
     const a = await tenantWithOwner()
     const b = await tenantWithOwner()
     const email = newEmail()
-    await createInvitation(db, cfg, logger, {
+    await createInvitation(db, cfg, logger, jobs, {
       tenantId: a.tenant.id,
       email,
       role: 'member',
       inviter: a.owner,
     })
-    await createInvitation(db, cfg, logger, {
+    await createInvitation(db, cfg, logger, jobs, {
       tenantId: b.tenant.id,
       email,
       role: 'admin',

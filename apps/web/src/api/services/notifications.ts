@@ -1,11 +1,12 @@
 /**
- * In-app notifications (D8): `notify()` inserts the row that IS the truth; realtime is a nudge
- * added in Phase 2 (`// Phase 2: broadcast`). Producers: invitation accepted, member joined,
- * access request decided.
+ * In-app notifications (D8): `notify()` inserts the row that IS the truth; when the caller passes
+ * its `Realtime`, a `notification.created` nudge goes to that user's sockets through `waitUntil`
+ * and the bell re-queries. Producers: invitation accepted, member joined, access request decided.
  */
 import type { NotificationData } from '@gmgo/shared/notifications'
 import type { Database } from '../../db/client'
 import { notifications } from '../../db/schema'
+import { nudgeUser, nudgeUsers, type Realtime, realtimeEvent } from './realtime'
 
 export interface NotifyInput {
   tenantId: string
@@ -16,23 +17,35 @@ export interface NotifyInput {
   data?: NotificationData
 }
 
-export async function notify(db: Database, input: NotifyInput): Promise<void> {
-  await db.insert(notifications).values({
-    tenantId: input.tenantId,
-    userId: input.userId,
-    type: input.type,
-    title: input.title,
-    body: input.body ?? null,
-    data: input.data ?? {},
-  })
-  // Phase 2: broadcast — nudge NOTIFICATIONS_HUB for (tenantId, userId); the client re-queries.
+export async function notify(db: Database, input: NotifyInput, realtime?: Realtime): Promise<void> {
+  const [row] = await db
+    .insert(notifications)
+    .values({
+      tenantId: input.tenantId,
+      userId: input.userId,
+      type: input.type,
+      title: input.title,
+      body: input.body ?? null,
+      data: input.data ?? {},
+    })
+    .returning({ id: notifications.id })
+  nudgeUser(
+    realtime,
+    input.userId,
+    realtimeEvent('notification.created', input.tenantId, {
+      id: row?.id,
+      type: input.type,
+      title: input.title,
+    })
+  )
 }
 
 /** Same notification to several users (e.g. every owner/admin of a tenant). */
 export async function notifyMany(
   db: Database,
   userIds: string[],
-  input: Omit<NotifyInput, 'userId'>
+  input: Omit<NotifyInput, 'userId'>,
+  realtime?: Realtime
 ) {
   const unique = [...new Set(userIds)]
   if (unique.length === 0) return
@@ -46,5 +59,9 @@ export async function notifyMany(
       data: input.data ?? {},
     }))
   )
-  // Phase 2: broadcast
+  nudgeUsers(
+    realtime,
+    unique,
+    realtimeEvent('notification.created', input.tenantId, { type: input.type, title: input.title })
+  )
 }

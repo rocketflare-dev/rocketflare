@@ -37,7 +37,8 @@ import { createTenantForUser } from '../utils/db/tenant-helpers'
 import { asCount, pageWindow } from '../utils/routes/pagination'
 import { recordActivity } from './activity'
 import { nameFromEmail } from './auth'
-import { accessRequestDecidedEmail, sendEmail } from './email'
+import { accessRequestDecidedEmail } from './email'
+import { enqueueJob, type JobsQueue } from './jobs'
 import { notify } from './notifications'
 
 type AdminLogger = Pick<Logger, 'info' | 'warn' | 'error'>
@@ -89,6 +90,7 @@ export async function decideAccessRequest(
   db: Database,
   cfg: AppConfig,
   logger: AdminLogger,
+  jobs: JobsQueue,
   input: { id: string; decision: DecideAccessRequest; admin: User }
 ): Promise<AccessRequest> {
   const request = await db.query.accessRequests.findFirst({
@@ -176,15 +178,25 @@ export async function decideAccessRequest(
       data: { accessRequestId: request.id },
     })
   }
-  await sendEmail(
-    cfg,
-    logger,
-    accessRequestDecidedEmail(cfg, request.email, {
-      approved: input.decision.decision === 'approve',
-      tenantName,
-      reason: input.decision.decision === 'reject' ? input.decision.reason : undefined,
-    })
-  )
+  // The decision email is queued (D7): the row is already decided, delivery can lag and retry.
+  const message = accessRequestDecidedEmail(cfg, request.email, {
+    approved: input.decision.decision === 'approve',
+    tenantName,
+    reason: input.decision.decision === 'reject' ? input.decision.reason : undefined,
+  })
+  await enqueueJob(jobs, {
+    type: 'email.send',
+    payload: {
+      to: message.to,
+      subject: message.subject,
+      html: message.html,
+      text: message.text,
+      link: message.link,
+      tenantId,
+      reason: 'access_request_decided',
+    },
+  })
+  logger.info({ accessRequestId: request.id, to: request.email }, 'access request decided')
   return toAccessRequest(decided, tenantName ?? null)
 }
 

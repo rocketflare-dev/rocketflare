@@ -8,6 +8,7 @@ import { relations } from 'drizzle-orm'
 import { accessRequests } from './access-requests'
 import { activityEvents } from './activity-events'
 import { apiKeys } from './api-keys'
+import { files } from './files'
 import { notifications } from './notifications'
 import { oauthProviders } from './oauth-providers'
 import { teamInvitations } from './team-invitations'
@@ -26,6 +27,7 @@ export const usersRelations = relations(users, ({ many }) => ({
   notifications: many(notifications),
   accessRequests: many(accessRequests, { relationName: 'requester' }),
   tenantUserSettings: many(tenantUserSettings),
+  files: many(files),
 }))
 
 export const tenantsRelations = relations(tenants, ({ one, many }) => ({
@@ -38,4 +40,5 @@ export const tenantsRelations = relations(tenants, ({ one, many }) => ({
   }),
   notifications: many(notifications),
   activityEvents: many(activityEvents),
+  files: many(files),
 }))

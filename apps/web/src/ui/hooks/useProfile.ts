@@ -1,12 +1,19 @@
 /**
  * The signed-in person (D13): `GET/PATCH /api/me`, per-tenant preferences, linked sign-in
- * providers. Profile edits also refresh the session (name/avatar live there too).
+ * providers, and the avatar upload (`POST /api/files?scope=avatars`, D23). Profile edits also
+ * refresh the session (name/avatar live there too).
  *
  * Contract note: `/api/me` is assumed to return `userSchema` and `/api/me/preferences`
  * `tenantUserSettingsSchema`. `GET /auth/providers` has no shared schema; it is read tolerantly as
  * `{ providers: [{ provider, createdAt? }] }` (the linked ones, mirroring `adminUserDetailSchema`).
  */
 import { userSchema } from '@gmgo/shared/auth'
+import {
+  AVATAR_MIME_TYPES,
+  isAvatarMimeType,
+  MAX_UPLOAD_BYTES,
+  uploadResponseSchema,
+} from '@gmgo/shared/files'
 import {
   tenantUserSettingsSchema,
   type UpdateProfileRequest,
@@ -41,6 +48,42 @@ export function useUpdateProfile() {
       }),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: queryKeys.me.all })
+      await refresh()
+    },
+  })
+}
+
+// ---- Avatar upload (D23) ------------------------------------------------------------------
+
+export const AVATAR_ACCEPT = AVATAR_MIME_TYPES.join(',')
+
+/** Client-side check mirroring the server's 415/413 — returns a message, or null when acceptable. */
+export function validateAvatarFile(file: File): string | null {
+  if (!isAvatarMimeType(file.type)) return 'Choose a PNG, JPEG, GIF or WebP image'
+  if (file.size === 0) return 'That file is empty'
+  if (file.size > MAX_UPLOAD_BYTES) {
+    return `Images must be ${Math.round(MAX_UPLOAD_BYTES / (1024 * 1024))} MB or smaller`
+  }
+  return null
+}
+
+/** Uploads to `/api/files?scope=avatars`; the server sets `users.avatarUrl`, so refresh both caches. */
+export function useUploadAvatar() {
+  const queryClient = useQueryClient()
+  const { refresh } = useAuth()
+  return useMutation({
+    mutationFn: (file: File) => {
+      const form = new FormData()
+      form.append('file', file, file.name)
+      return api.upload('/api/files?scope=avatars', form, {
+        schema: uploadResponseSchema,
+        showSuccessToast: true,
+        successMessage: 'Photo updated',
+      })
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: queryKeys.me.all })
+      await queryClient.invalidateQueries({ queryKey: queryKeys.auth.all })
       await refresh()
     },
   })

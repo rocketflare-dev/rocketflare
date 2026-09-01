@@ -29,8 +29,10 @@ import { randomToken } from '../utils/core/ids'
 import type { Logger } from '../utils/core/logger'
 import { asCount, pageWindow } from '../utils/routes/pagination'
 import { recordActivity } from './activity'
-import { invitationEmail, sendEmail } from './email'
+import { invitationEmail } from './email'
+import { enqueueJob, type JobsQueue } from './jobs'
 import { notify, notifyMany } from './notifications'
+import { nudge, type Realtime, realtimeEvent } from './realtime'
 
 export const INVITATION_TTL_MS = 7 * 24 * 60 * 60 * 1000
 
@@ -102,9 +104,48 @@ export interface InviteInput {
   email: string
   role: TenantRole
   inviter: User
+  realtime?: Realtime
 }
 
 type InviteLogger = Pick<Logger, 'info' | 'warn' | 'error'>
+
+/**
+ * Invitation emails go through `JOBS_QUEUE` (D7): the route answers as soon as the row exists and
+ * the consumer retries delivery. The magic-link email deliberately stays INLINE
+ * (routes/auth/magic-link.ts) — a person is waiting on that one, so its latency matters more than
+ * offloading it. A missing binding throws `JobsQueueNotConfiguredError`, never silently drops mail.
+ */
+async function queueInvitationEmail(
+  jobs: JobsQueue,
+  cfg: AppConfig,
+  input: {
+    to: string
+    tenantId: string
+    tenantName: string
+    inviterName: string
+    role: string
+    token: string
+  }
+): Promise<void> {
+  const message = invitationEmail(cfg, input.to, {
+    tenantName: input.tenantName,
+    inviterName: input.inviterName,
+    role: input.role,
+    acceptUrl: acceptUrl(cfg, input.token),
+  })
+  await enqueueJob(jobs, {
+    type: 'email.send',
+    payload: {
+      to: message.to,
+      subject: message.subject,
+      html: message.html,
+      text: message.text,
+      link: message.link,
+      tenantId: input.tenantId,
+      reason: 'invitation',
+    },
+  })
+}
 
 async function tenantName(db: Database, tenantId: string): Promise<string> {
   const row = await db.query.tenants.findFirst({
@@ -114,11 +155,12 @@ async function tenantName(db: Database, tenantId: string): Promise<string> {
   return row?.name ?? 'your organisation'
 }
 
-/** Insert the row and send the email. Throws 409 when the address is a member or already invited. */
+/** Insert the row and queue the email. Throws 409 when the address is a member or already invited. */
 export async function createInvitation(
   db: Database,
   cfg: AppConfig,
   logger: InviteLogger,
+  jobs: JobsQueue,
   input: InviteInput
 ): Promise<{ invitation: Invitation; token: string }> {
   const email = input.email.toLowerCase()
@@ -164,16 +206,15 @@ export async function createInvitation(
     .returning()
   if (!row) throw new Error('createInvitation: insert returned no row')
 
-  await sendEmail(
-    cfg,
-    logger,
-    invitationEmail(cfg, email, {
-      tenantName: await tenantName(db, input.tenantId),
-      inviterName: input.inviter.name,
-      role: input.role,
-      acceptUrl: acceptUrl(cfg, token),
-    })
-  )
+  await queueInvitationEmail(jobs, cfg, {
+    to: email,
+    tenantId: input.tenantId,
+    tenantName: await tenantName(db, input.tenantId),
+    inviterName: input.inviter.name,
+    role: input.role,
+    token,
+  })
+  nudge(input.realtime, realtimeEvent('invitation.changed', input.tenantId, { id: row.id }))
   return { invitation: toInvitation(row, input.inviter.name), token }
 }
 
@@ -188,6 +229,7 @@ export async function bulkInvite(
   db: Database,
   cfg: AppConfig,
   logger: InviteLogger,
+  jobs: JobsQueue,
   input: { tenantId: string; emails: string[]; role: TenantRole; inviter: User }
 ): Promise<BulkInviteOutcome[]> {
   const results: BulkInviteOutcome[] = []
@@ -200,7 +242,7 @@ export async function bulkInvite(
     }
     seen.add(email)
     try {
-      const { invitation } = await createInvitation(db, cfg, logger, { ...input, email })
+      const { invitation } = await createInvitation(db, cfg, logger, jobs, { ...input, email })
       results.push({ email, status: 'invited', invitationId: invitation.id })
     } catch (err) {
       if (err instanceof ConflictError) {
@@ -214,11 +256,12 @@ export async function bulkInvite(
   return results
 }
 
-/** New token + fresh 7-day expiry, email re-sent. Only pending invitations can be resent. */
+/** New token + fresh 7-day expiry, email re-queued. Only pending invitations can be resent. */
 export async function resendInvitation(
   db: Database,
   cfg: AppConfig,
   logger: InviteLogger,
+  jobs: JobsQueue,
   input: { tenantId: string; id: string; inviter: User }
 ): Promise<Invitation> {
   const existing = await db.query.teamInvitations.findFirst({
@@ -235,24 +278,29 @@ export async function resendInvitation(
     .where(eq(teamInvitations.id, existing.id))
     .returning()
   if (!row) throw new NotFoundError('Invitation not found')
-  await sendEmail(
-    cfg,
-    logger,
-    invitationEmail(cfg, row.email, {
-      tenantName: await tenantName(db, input.tenantId),
-      inviterName: input.inviter.name,
-      role: row.role,
-      acceptUrl: acceptUrl(cfg, token),
-    })
-  )
+  await queueInvitationEmail(jobs, cfg, {
+    to: row.email,
+    tenantId: input.tenantId,
+    tenantName: await tenantName(db, input.tenantId),
+    inviterName: input.inviter.name,
+    role: row.role,
+    token,
+  })
   return toInvitation(row, input.inviter.name)
 }
 
 export async function revokeInvitation(
   db: Database,
   tenantId: string,
-  id: string
+  id: string,
+  realtime?: Realtime
 ): Promise<Invitation> {
+  const row = await revokeRow(db, tenantId, id)
+  nudge(realtime, realtimeEvent('invitation.changed', tenantId, { id }))
+  return row
+}
+
+async function revokeRow(db: Database, tenantId: string, id: string): Promise<Invitation> {
   const [row] = await db
     .update(teamInvitations)
     .set({ revokedAt: new Date() })
@@ -309,7 +357,7 @@ export async function getInvitationDetails(
  */
 export async function acceptInvitation(
   db: Database,
-  input: { token: string; user: User; sessionId: string | null }
+  input: { token: string; user: User; sessionId: string | null; realtime?: Realtime }
 ): Promise<{
   tenantId: string
   tenantName: string
@@ -331,7 +379,7 @@ export async function acceptInvitation(
     )
   }
 
-  return db.transaction(async tx => {
+  const result = await db.transaction(async tx => {
     const existing = await tx.query.tenantUsers.findFirst({
       where: and(eq(tenantUsers.tenantId, inv.tenantId), eq(tenantUsers.userId, input.user.id)),
     })
@@ -370,14 +418,18 @@ export async function acceptInvitation(
       metadata: { via: 'invitation', invitationId: inv.id, role: inv.role },
     })
     if (joined) {
-      await notify(txDb, {
-        tenantId: inv.tenantId,
-        userId: inv.invitedByUserId,
-        type: 'invitation_accepted',
-        title: `${input.user.name} accepted your invitation`,
-        body: `${input.user.email} joined ${row.tenant.name} as ${inv.role}.`,
-        data: { userId: input.user.id, invitationId: inv.id },
-      })
+      await notify(
+        txDb,
+        {
+          tenantId: inv.tenantId,
+          userId: inv.invitedByUserId,
+          type: 'invitation_accepted',
+          title: `${input.user.name} accepted your invitation`,
+          body: `${input.user.email} joined ${row.tenant.name} as ${inv.role}.`,
+          data: { userId: input.user.id, invitationId: inv.id },
+        },
+        input.realtime
+      )
       const admins = await tx
         .select({ userId: tenantUsers.userId })
         .from(tenantUsers)
@@ -398,7 +450,8 @@ export async function acceptInvitation(
           title: `${input.user.name} joined ${row.tenant.name}`,
           body: `${input.user.email} joined as ${inv.role}.`,
           data: { userId: input.user.id },
-        }
+        },
+        input.realtime
       )
     }
     return {
@@ -409,6 +462,13 @@ export async function acceptInvitation(
       joined,
     }
   })
+  // Two nudges, deliberately: the People page lists members AND pending invitations, and accept
+  // changes both. Deferred, so they fire after the transaction has committed.
+  nudge(input.realtime, realtimeEvent('invitation.changed', inv.tenantId, { id: inv.id }))
+  if (result.joined) {
+    nudge(input.realtime, realtimeEvent('member.changed', inv.tenantId, { id: input.user.id }))
+  }
+  return result
 }
 
 /** Pending invitations addressed to `email` across every tenant (cross-tenant by nature). */

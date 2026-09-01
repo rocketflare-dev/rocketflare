@@ -23,6 +23,7 @@ export const CORE_SUBJECTS = [
   'AccessRequest',
   'ActivityEvent',
   'User',
+  'File',
 ] as const
 export type CoreSubject = (typeof CORE_SUBJECTS)[number]
 

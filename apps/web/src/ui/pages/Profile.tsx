@@ -1,12 +1,13 @@
 /**
- * Your account (D13): name/avatar (`updateProfileRequestSchema` → `PATCH /api/me`) and the
+ * Your account (D13): name/avatar (`updateProfileRequestSchema` → `PATCH /api/me`), an avatar
+ * upload (`POST /api/files?scope=avatars`, D23 — type/size checked client-side first) and the
  * sign-in methods linked to it. Connecting a provider is a full-page OAuth round trip with
  * `?returnUrl=/profile`; disconnecting is refused when it would leave no way to sign in.
  */
 
 import { updateProfileRequestSchema } from '@gmgo/shared/user-settings'
 import { LinkIcon } from '@heroicons/react/24/outline'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { PROVIDER_ICONS, PROVIDER_LABELS } from '@/ui/components/icons/ProviderIcons'
 import {
   FieldError,
@@ -18,10 +19,13 @@ import {
 import { useAuth } from '@/ui/hooks/useAuth'
 import { useAuthMethods } from '@/ui/hooks/useAuthMethods'
 import {
+  AVATAR_ACCEPT,
   useLinkedProviders,
   useMe,
   useUnlinkProvider,
   useUpdateProfile,
+  useUploadAvatar,
+  validateAvatarFile,
 } from '@/ui/hooks/useProfile'
 import { formatDate, initials } from '@/ui/lib/format'
 import { hardNavigate } from '@/ui/lib/navigation'
@@ -82,13 +86,13 @@ function ProfileForm() {
     <SectionPanel title="Profile">
       <form onSubmit={submit} className="space-y-4" noValidate>
         <div className="flex items-center gap-4">
-          {user.avatarUrl ? (
-            <img src={user.avatarUrl} alt="" className="w-14 h-14 rounded-full" />
-          ) : (
-            <span className="w-14 h-14 rounded-full grid place-items-center text-lg font-semibold tone-primary">
-              {initials(user.name, user.email)}
-            </span>
-          )}
+          {/* keyed on the URL so a failed load resets when a new photo arrives */}
+          <Avatar
+            key={user.avatarUrl ?? ''}
+            name={user.name}
+            email={user.email}
+            avatarUrl={user.avatarUrl}
+          />
           <div className="text-sm">
             <div className="font-medium">{user.email}</div>
             <div className="text-muted">
@@ -98,6 +102,7 @@ function ProfileForm() {
             </div>
           </div>
         </div>
+        <AvatarUpload hasAvatar={Boolean(user.avatarUrl)} />
         <div>
           <label htmlFor="profile-name" className="label text-sm">
             Name
@@ -137,6 +142,97 @@ function ProfileForm() {
         </button>
       </form>
     </SectionPanel>
+  )
+}
+
+/** The picture, or initials when there is none or it fails to load (e.g. uploaded in another org). */
+function Avatar({
+  name,
+  email,
+  avatarUrl,
+}: {
+  name: string
+  email: string
+  avatarUrl: string | null
+}) {
+  const [broken, setBroken] = useState(false)
+  if (avatarUrl && !broken) {
+    return (
+      <img
+        src={avatarUrl}
+        alt=""
+        className="w-14 h-14 rounded-full object-cover"
+        onError={() => setBroken(true)}
+      />
+    )
+  }
+  return (
+    <span className="w-14 h-14 rounded-full grid place-items-center text-lg font-semibold tone-primary">
+      {initials(name, email)}
+    </span>
+  )
+}
+
+/**
+ * Upload a photo (D23). The file is checked against the shared allowlist/limit before any
+ * request; the server's 415/413 remain the backstop. "Remove" clears `avatarUrl` via PATCH — the
+ * stored object stays until its file is deleted (see CONCEPTS: storage).
+ */
+function AvatarUpload({ hasAvatar }: { hasAvatar: boolean }) {
+  const upload = useUploadAvatar()
+  const update = useUpdateProfile()
+  const inputRef = useRef<HTMLInputElement>(null)
+  const [problem, setProblem] = useState<string | null>(null)
+  const busy = upload.isPending || update.isPending
+
+  const onChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file) return
+    const message = validateAvatarFile(file)
+    setProblem(message)
+    if (!message) upload.mutate(file)
+  }
+
+  return (
+    <div>
+      <div className="flex flex-wrap items-center gap-2">
+        <input
+          ref={inputRef}
+          id="profile-avatar-file"
+          type="file"
+          accept={AVATAR_ACCEPT}
+          className="hidden"
+          aria-label="Upload photo"
+          onChange={onChange}
+          disabled={busy}
+        />
+        <button
+          type="button"
+          className="btn btn-outline btn-xs"
+          disabled={busy}
+          onClick={() => inputRef.current?.click()}
+        >
+          {upload.isPending ? (
+            <span className="loading loading-spinner loading-xs" />
+          ) : (
+            'Upload photo'
+          )}
+        </button>
+        {hasAvatar && (
+          <button
+            type="button"
+            className="btn btn-ghost btn-xs"
+            disabled={busy}
+            onClick={() => update.mutate({ avatarUrl: null })}
+          >
+            Remove
+          </button>
+        )}
+        <span className="text-xs text-muted">PNG, JPEG, GIF or WebP, up to 5 MB.</span>
+      </div>
+      <FieldError message={problem ?? undefined} />
+    </div>
   )
 }
 

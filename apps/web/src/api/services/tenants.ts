@@ -16,6 +16,7 @@ import { and, eq } from 'drizzle-orm'
 import type { Database } from '../../db/client'
 import { tenantSettings, tenants, tenantUserSettings } from '../../db/schema'
 import { ConflictError, NotFoundError } from '../utils/core/errors'
+import { nudge, type Realtime, realtimeEvent } from './realtime'
 
 export function toTenantDto(row: typeof tenants.$inferSelect): TenantDto {
   return {
@@ -34,7 +35,12 @@ export async function getTenant(db: Database, tenantId: string): Promise<TenantD
   return toTenantDto(row)
 }
 
-export async function updateTenant(db: Database, tenantId: string, patch: UpdateTenantRequest) {
+export async function updateTenant(
+  db: Database,
+  tenantId: string,
+  patch: UpdateTenantRequest,
+  realtime?: Realtime
+) {
   if (patch.slug) {
     const clash = await db.query.tenants.findFirst({
       columns: { id: true },
@@ -52,16 +58,23 @@ export async function updateTenant(db: Database, tenantId: string, patch: Update
     .where(eq(tenants.id, tenantId))
     .returning()
   if (!row) throw new NotFoundError('Organisation not found')
+  nudge(realtime, realtimeEvent('tenant.changed', tenantId, { id: tenantId }))
   return toTenantDto(row)
 }
 
 /** Cascades through every `tenantRef` FK — one statement removes the organisation's world. */
-export async function deleteTenant(db: Database, tenantId: string): Promise<void> {
+export async function deleteTenant(
+  db: Database,
+  tenantId: string,
+  realtime?: Realtime
+): Promise<void> {
   const rows = await db
     .delete(tenants)
     .where(eq(tenants.id, tenantId))
     .returning({ id: tenants.id })
   if (rows.length === 0) throw new NotFoundError('Organisation not found')
+  // Members still connected refetch the session and land on /select-tenant.
+  nudge(realtime, realtimeEvent('tenant.changed', tenantId, { id: tenantId }))
 }
 
 function toSettingsDto(row: typeof tenantSettings.$inferSelect): TenantSettingsDto {

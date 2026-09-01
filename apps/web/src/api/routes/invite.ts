@@ -8,6 +8,7 @@ import { resolveCookieAuth } from '../middleware/auth'
 import { buildSessionResponse } from '../services/auth'
 import { acceptInvitation, getInvitationDetails } from '../services/invitations'
 import { NotFoundError, UnauthorizedError } from '../utils/core/errors'
+import { makeDefer } from '../utils/routes/route-helpers'
 import { createRouter } from '../utils/routes/router'
 
 export const inviteRouter = createRouter()
@@ -27,6 +28,7 @@ inviteRouter.post('/:token/accept', async c => {
     token: c.req.param('token'),
     user: auth.user,
     sessionId: auth.session.id,
+    realtime: { defer: makeDefer(c), env: c.env },
   })
   const refreshed = await resolveCookieAuth(c)
   if (!refreshed) throw new UnauthorizedError()

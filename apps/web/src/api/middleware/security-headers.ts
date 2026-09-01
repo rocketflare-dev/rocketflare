@@ -1,7 +1,9 @@
 /**
  * Security headers on every response (04 §4: the Workers app's minimal set, the Node app's post-`next()`
  * placement). Placed early so it also covers 4xx/5xx produced by later middleware. CSP is a
- * constant list — append `connect-src` entries here when the UI talks to a third party.
+ * constant list — append `connect-src` entries here when the UI talks to a third party. A 101
+ * (WebSocket upgrade from the `NotificationsHub` DO, D8) is returned untouched: its headers are
+ * immutable and re-wrapping a 101 `Response` drops the socket.
  */
 import { createMiddleware } from 'hono/factory'
 import type { AppEnv } from '../types'
@@ -20,6 +22,7 @@ export const CONTENT_SECURITY_POLICY = [
 
 export const securityHeaders = createMiddleware<AppEnv>(async (c, next) => {
   await next()
+  if (c.res.status === 101) return
   // HSTS is meaningless on http://localhost and would pin the browser if it ever saw https there.
   if (c.get('config')?.APP_ENV !== 'development') {
     c.header('Strict-Transport-Security', 'max-age=31536000; includeSubDomains')

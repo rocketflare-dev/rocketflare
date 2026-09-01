@@ -37,14 +37,15 @@ invitationsRouter.get('/', validate('query', paginationQuerySchema), async c => 
 })
 
 invitationsRouter.post('/', validate('json', inviteMemberRequestSchema), async c => {
-  const { db, cfg, logger, tenantId, user, defer } = withAuthAndDb(c)
+  const { db, cfg, logger, tenantId, user, defer, realtime } = withAuthAndDb(c)
   guardPermission(c, 'manage', 'Invitation')
   const { email, role } = c.req.valid('json')
-  const { invitation } = await createInvitation(db, cfg, logger, {
+  const { invitation } = await createInvitation(db, cfg, logger, c.env.JOBS_QUEUE, {
     tenantId,
     email,
     role,
     inviter: user,
+    realtime,
   })
   defer(() =>
     recordActivity(db, {
@@ -63,7 +64,12 @@ invitationsRouter.post('/bulk', validate('json', bulkInviteRequestSchema), async
   const { db, cfg, logger, tenantId, user, defer } = withAuthAndDb(c)
   guardPermission(c, 'manage', 'Invitation')
   const { emails, role } = c.req.valid('json')
-  const results = await bulkInvite(db, cfg, logger, { tenantId, emails, role, inviter: user })
+  const results = await bulkInvite(db, cfg, logger, c.env.JOBS_QUEUE, {
+    tenantId,
+    emails,
+    role,
+    inviter: user,
+  })
   defer(() =>
     recordActivity(db, {
       tenantId,
@@ -84,7 +90,11 @@ invitationsRouter.post('/:id/resend', async c => {
   const { db, cfg, logger, tenantId, user, defer } = withAuthAndDb(c)
   guardPermission(c, 'manage', 'Invitation')
   const id = uuidParam(c, 'id')
-  const invitation = await resendInvitation(db, cfg, logger, { tenantId, id, inviter: user })
+  const invitation = await resendInvitation(db, cfg, logger, c.env.JOBS_QUEUE, {
+    tenantId,
+    id,
+    inviter: user,
+  })
   defer(() =>
     recordActivity(db, {
       tenantId,
@@ -98,10 +108,10 @@ invitationsRouter.post('/:id/resend', async c => {
 })
 
 invitationsRouter.delete('/:id', async c => {
-  const { db, tenantId, user, defer } = withAuthAndDb(c)
+  const { db, tenantId, user, defer, realtime } = withAuthAndDb(c)
   guardPermission(c, 'manage', 'Invitation')
   const id = uuidParam(c, 'id')
-  await revokeInvitation(db, tenantId, id)
+  await revokeInvitation(db, tenantId, id, realtime)
   defer(() =>
     recordActivity(db, {
       tenantId,

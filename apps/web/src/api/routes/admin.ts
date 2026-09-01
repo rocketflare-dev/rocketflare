@@ -54,7 +54,7 @@ adminRouter.post(
     const decision = c.req.valid('json')
     if (decision.decision === 'approve' && decision.approve.mode === 'new_org')
       requireMultiTenant(cfg)
-    const result = await decideAccessRequest(db, cfg, logger, {
+    const result = await decideAccessRequest(db, cfg, logger, c.env.JOBS_QUEUE, {
       id: uuidParam(c, 'id'),
       decision,
       admin: user,

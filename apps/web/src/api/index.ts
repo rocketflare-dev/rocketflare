@@ -6,7 +6,7 @@
  */
 
 import { authMiddleware, globalAdminMiddleware } from './middleware/auth'
-import { jsonBodyLimit } from './middleware/body-limit'
+import { isUploadPath, jsonBodyLimit } from './middleware/body-limit'
 import { configMiddleware } from './middleware/config'
 import { corsMiddleware } from './middleware/cors'
 import { csrfProtection } from './middleware/csrf'
@@ -19,6 +19,7 @@ import { accessRequestsRouter } from './routes/access-requests'
 import { activityRouter } from './routes/activity'
 import { adminRouter } from './routes/admin'
 import { authRouter } from './routes/auth/index'
+import { filesRouter } from './routes/files'
 import { healthRouter } from './routes/health'
 import { invitationsRouter } from './routes/invitations'
 import { inviteRouter } from './routes/invite'
@@ -28,6 +29,7 @@ import { membersRouter } from './routes/members'
 import { notificationsRouter } from './routes/notifications'
 import { tenantRouter } from './routes/tenant'
 import { tenantsRouter } from './routes/tenants'
+import { wsRouter } from './routes/ws'
 import { createRouter } from './utils/routes/router'
 
 /**
@@ -52,8 +54,9 @@ app.use('*', requestIdMiddleware, requestLogger)
 app.use('*', configMiddleware)
 app.use('*', securityHeaders)
 
-// 5. Reject oversized bodies before any parsing or DB work.
-app.use('/api/*', jsonBodyLimit)
+// 5. Reject oversized bodies before any parsing or DB work. The upload route mounts its own
+//    (larger) limit — see middleware/body-limit.ts.
+app.use('/api/*', (c, next) => (isUploadPath(c.req.path) ? next() : jsonBodyLimit(c, next)))
 app.use('/auth/*', jsonBodyLimit)
 
 // 6–7. CORS answers preflights before CSRF can reject them; CSRF is cookie-only, no DB.
@@ -72,6 +75,8 @@ app.use('/api/invite/:token/accept', authRateLimit)
 app.route('/api/invite', inviteRouter)
 app.use('/api/admin/*', globalAdminMiddleware)
 app.route('/api/admin', adminRouter)
+// WebSocket upgrade resolves the cookie itself (no authMiddleware: browsers can't set headers here).
+app.route('/ws', wsRouter)
 for (const [prefix, router] of [
   ['/api/me', meRouter],
   ['/api/tenant', tenantRouter],
@@ -82,6 +87,7 @@ for (const [prefix, router] of [
   ['/api/notifications', notificationsRouter],
   ['/api/activity', activityRouter],
   ['/api/access-requests', accessRequestsRouter],
+  ['/api/files', filesRouter],
 ] as const) {
   app.use(prefix, authMiddleware)
   app.use(`${prefix}/*`, authMiddleware)

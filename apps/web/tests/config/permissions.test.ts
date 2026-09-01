@@ -20,7 +20,8 @@ import {
 const ROLES = membershipRoleSchema.options
 const CRUD: Actions[] = ['create', 'read', 'update', 'delete']
 
-type Level = 'manage' | 'read' | 'none'
+/** `create` = create + read, nothing else (member on `File`). */
+type Level = 'manage' | 'read' | 'create' | 'none'
 
 /** Subject → per-role level, transcribed from the matrix. */
 const MATRIX: Record<string, Record<Role, Level>> = {
@@ -30,6 +31,7 @@ const MATRIX: Record<string, Record<Role, Level>> = {
   ApiKey: { owner: 'manage', admin: 'manage', support: 'manage', member: 'read' },
   ActivityEvent: { owner: 'manage', admin: 'manage', support: 'manage', member: 'read' },
   Notification: { owner: 'manage', admin: 'manage', support: 'manage', member: 'manage' },
+  File: { owner: 'manage', admin: 'manage', support: 'manage', member: 'create' },
   AccessRequest: { owner: 'none', admin: 'none', support: 'none', member: 'none' },
   User: { owner: 'none', admin: 'none', support: 'none', member: 'none' },
 }
@@ -58,6 +60,11 @@ describe('ability matrix (D10)', () => {
             for (const a of ['create', 'update', 'delete'] as Actions[]) {
               expect(ability.can(a, s)).toBe(false)
             }
+          } else if (level === 'create') {
+            expect(ability.can('create', s)).toBe(true)
+            expect(ability.can('read', s)).toBe(true)
+            expect(ability.can('manage', s)).toBe(false)
+            for (const a of ['update', 'delete'] as Actions[]) expect(ability.can(a, s)).toBe(false)
           } else {
             for (const a of ['manage', ...CRUD] as Actions[]) expect(ability.can(a, s)).toBe(false)
           }

@@ -2,8 +2,8 @@
  * Providers + route table (06 §b, D20, D25).
  *
  * Provider order: ErrorBoundary → QueryClientProvider → AuthProvider → AbilityProvider →
- * BrowserRouter (NavigationBridge, ScrollToTop, routes, ToastContainer). Phase 2 slots
- * `WebSocketProvider` between AbilityProvider and the router.
+ * WebSocketProvider (D8: connects once authenticated with a tenant, invalidates queries on events)
+ * → BrowserRouter (NavigationBridge, ScrollToTop, routes, ToastContainer).
  *
  * Route tiers: public (`/login`, `/magic-link/sent`, `/invite/:token`); signed-in-without-tenant
  * (`/select-tenant`, `/pending`, `/no-access` — `ProtectedRoute requireTenant={false}`); and the
@@ -12,6 +12,7 @@
 import { QueryClientProvider } from '@tanstack/react-query'
 import { lazy, Suspense } from 'react'
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
+import { ConnectionBanner } from '@/ui/components/ConnectionBanner'
 import { ErrorBoundary } from '@/ui/components/ErrorBoundary'
 import Layout from '@/ui/components/Layout'
 import { LoadingIndicator } from '@/ui/components/LoadingIndicator'
@@ -25,6 +26,8 @@ import { RoleBadge } from '@/ui/components/RoleBadge'
 import ScrollToTop from '@/ui/components/ScrollToTop'
 import { ToastContainer } from '@/ui/components/shared'
 import { UserMenu } from '@/ui/components/UserMenu'
+import { WebSocketProvider } from '@/ui/components/WebSocketProvider'
+import { WebSocketStatus } from '@/ui/components/WebSocketStatus'
 import { AuthProvider, useAuth } from '@/ui/hooks/useAuth'
 import { NavigationBridge } from '@/ui/lib/navigation'
 import { queryClient } from '@/ui/lib/queryClient'
@@ -82,12 +85,14 @@ function ShellRoutes() {
       headerStart={<OrgSwitcher />}
       headerEnd={
         <>
+          <WebSocketStatus />
           <NotificationsBell />
           <UserMenu />
         </>
       }
       sidebarFooter={<TenantFooter />}
     >
+      <ConnectionBanner className="mb-4" />
       <PendingInvitationsBanner className="mb-6" />
       <Suspense fallback={<LoadingIndicator fullPage />}>
         <Routes>
@@ -203,13 +208,14 @@ export default function App() {
       <QueryClientProvider client={queryClient}>
         <AuthProvider>
           <AbilityProvider>
-            {/* Phase 2: <WebSocketProvider> */}
-            <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
-              <NavigationBridge />
-              <ScrollToTop />
-              <AppRoutes />
-              <ToastContainer />
-            </BrowserRouter>
+            <WebSocketProvider>
+              <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+                <NavigationBridge />
+                <ScrollToTop />
+                <AppRoutes />
+                <ToastContainer />
+              </BrowserRouter>
+            </WebSocketProvider>
           </AbilityProvider>
         </AuthProvider>
         {ReactQueryDevtools && (

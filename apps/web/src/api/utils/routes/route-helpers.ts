@@ -6,7 +6,9 @@
  *                                                        invitations, access requests, /admin)
  * Never `c.get('auth' | 'db')` by hand in a route. `defer(fn)` runs a side effect through
  * `waitUntil` (awaited inline when there is no ExecutionContext — tests, Node tooling) and logs
- * instead of throwing, so an email or activity write can never fail the response.
+ * instead of throwing, so an email or activity write can never fail the response. `realtime`
+ * bundles that `defer` with the hub binding for `services/realtime.ts` nudges (D8) — routes pass
+ * it to services, never touch `NOTIFICATIONS_HUB` themselves.
  */
 import { ERROR_CODES } from '@gmgo/shared/errors'
 import type { PinoLogger } from 'hono-pino'
@@ -15,6 +17,7 @@ import type { Database } from '../../../db/client'
 import type { User } from '../../../db/schema'
 import { deferOrAwait } from '../../middleware/database'
 import { requireAuth } from '../../middleware/permissions'
+import type { Realtime } from '../../services/realtime'
 import type { AppContext, AuthContext } from '../../types'
 import { ForbiddenError, NotFoundError } from '../../utils/core/errors'
 
@@ -29,6 +32,7 @@ export interface TenantFreeRouteContext {
   cfg: AppConfig
   logger: PinoLogger
   defer: Defer
+  realtime: Realtime
 }
 
 export interface RouteContext extends TenantFreeRouteContext {
@@ -47,6 +51,7 @@ export function makeDefer(c: AppContext): Defer {
 
 export function withAuth(c: AppContext): TenantFreeRouteContext {
   const auth = requireAuth(c)
+  const defer = makeDefer(c)
   return {
     auth,
     user: auth.user,
@@ -54,7 +59,8 @@ export function withAuth(c: AppContext): TenantFreeRouteContext {
     db: c.get('db'),
     cfg: c.get('config'),
     logger: c.get('logger'),
-    defer: makeDefer(c),
+    defer,
+    realtime: { defer, env: c.env },
   }
 }
 

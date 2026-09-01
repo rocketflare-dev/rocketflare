@@ -68,9 +68,36 @@ crons = [
   "0 4 * * *",     # Daily 04:00 UTC — prune expired sessions, magic links, rate-limit state
 ]
 
+# Background jobs (D7): one queue, one consumer; `src/api/queue.ts` dispatches on `batch.queue`.
+# Create: wrangler queues create gmgo-starter-jobs-staging
+[[queues.producers]]
+binding = "JOBS_QUEUE"
+queue = "gmgo-starter-jobs-staging"
+
+[[queues.consumers]]
+queue = "gmgo-starter-jobs-staging"
+max_batch_size = 10
+max_batch_timeout = 5
+max_retries = 3
+retry_delay = 60
+# dead_letter_queue = "gmgo-starter-jobs-staging-dlq"
+
+# Realtime (D8): stateless WebSocket hub Durable Object, one instance per tenant
+# (`idFromName(tenantId)`), hibernation API. Implementing a DO in-script disables preview URLs.
+[[durable_objects.bindings]]
+name = "NOTIFICATIONS_HUB"
+class_name = "NotificationsHub"
+
+[[migrations]]
+tag = "v1"
+new_classes = ["NotificationsHub"]
+
+# File storage (D23): R2 behind `services/storage.ts`. Create: wrangler r2 bucket create gmgo-starter-files-staging
+[[r2_buckets]]
+binding = "FILES"
+bucket_name = "gmgo-starter-files-staging"
+
 # ---- Added in later phases (keep this list in sync with wrangler.staging.toml) ----------
-# Phase 2: [[queues.producers]] JOBS_QUEUE, [[queues.consumers]], [[durable_objects.bindings]]
-#          NOTIFICATIONS_HUB + [[migrations]], [[r2_buckets]] FILES
 # Phase 3: [[workflows]] AGENT_RUN_WORKFLOW (name is ACCOUNT-scoped: staging MUST use a
 #          different name), [ai] binding AI
 # Phase 4: "15 * * * *" cron for fact-table refresh, optional [[analytics_engine_datasets]]

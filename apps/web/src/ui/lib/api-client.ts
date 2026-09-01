@@ -7,6 +7,7 @@
  *   defence in depth and lets a server-side rule single out the SPA if it ever needs to.
  * - Non-2xx → `ApiError`, parsed from the shared error envelope (`@gmgo/shared/errors`)
  * - Optional zod `schema` validates the response body
+ * - `api.upload(url, formData)` posts multipart (no JSON content-type; the browser sets the boundary)
  * - 401 → the registered unauthorized handler (D20). Phase 1 wires it to
  *   `queryClient.clear()` + redirect to `/login?returnUrl=…`.
  */
@@ -133,9 +134,11 @@ async function parseErrorBody(response: Response): Promise<ApiErrorBody> {
   }
 }
 
+type RequestBody = string | FormData
+
 async function request<T>(
   url: string,
-  options: ApiRequestOptions<T> & { body?: string } = {}
+  options: ApiRequestOptions<T> & { body?: RequestBody } = {}
 ): Promise<T> {
   const {
     showErrorToast = false,
@@ -146,11 +149,13 @@ async function request<T>(
     ...fetchOptions
   } = options
 
+  // multipart: let the browser set `Content-Type` with its boundary.
+  const isMultipart = typeof FormData !== 'undefined' && fetchOptions.body instanceof FormData
   const response = await fetch(url, {
     credentials: 'include',
     ...fetchOptions,
     headers: {
-      'Content-Type': 'application/json',
+      ...(isMultipart ? {} : { 'Content-Type': 'application/json' }),
       'X-Requested-With': 'fetch',
       ...fetchOptions.headers,
     },
@@ -222,5 +227,9 @@ export const api = {
       showErrorToast: true,
       ...options,
     })
+  },
+  /** `POST` a `FormData` body (file uploads, D23). Same envelope/schema handling as the rest. */
+  upload<T>(url: string, form: FormData, options?: ApiRequestOptions<T>): Promise<T> {
+    return request<T>(url, { method: 'POST', body: form, showErrorToast: true, ...options })
   },
 }

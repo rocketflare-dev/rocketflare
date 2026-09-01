@@ -22,20 +22,26 @@ membersRouter.get('/', validate('query', paginationQuerySchema), async c => {
 })
 
 membersRouter.patch('/:userId', validate('json', updateMemberRoleRequestSchema), async c => {
-  const { db, tenantId, auth } = withAuthAndDb(c)
+  const { db, tenantId, auth, realtime } = withAuthAndDb(c)
   guardPermission(c, 'manage', 'TenantMember')
   const membership = await changeMemberRole(db, {
     tenantId,
     targetUserId: uuidParam(c, 'userId'),
     role: c.req.valid('json').role,
     actor: auth,
+    realtime,
   })
   return c.json({ userId: membership.userId, role: membership.role })
 })
 
 membersRouter.delete('/:userId', async c => {
-  const { db, tenantId, auth } = withAuthAndDb(c)
+  const { db, tenantId, auth, realtime } = withAuthAndDb(c)
   guardPermission(c, 'manage', 'TenantMember')
-  await removeMember(db, { tenantId, targetUserId: uuidParam(c, 'userId'), actor: auth })
+  await removeMember(db, {
+    tenantId,
+    targetUserId: uuidParam(c, 'userId'),
+    actor: auth,
+    realtime,
+  })
   return c.body(null, 204)
 })

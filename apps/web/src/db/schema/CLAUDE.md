@@ -21,8 +21,9 @@ Drizzle table definitions, one file per table, re-exported from `index.ts` (whic
 | `tenant_user_settings` | `tenant-user-settings.ts` | `tenant_id` | ✓ | PK `(tenant_id, user_id)`; `preferences` jsonb |
 | `notifications` | `notifications.ts` | `tenant_id` | ✓ | per user; `readAt`; `data` jsonb |
 | `activity_events` | `activity-events.ts` | `tenant_id` | ✓ | audit log + analytics source; `(tenant_id, created_at DESC)` |
+| `files` | `files.ts` | `tenant_id` | ✓ | R2 object index (D23): `key` unique (`tenants/<tenant>/<scope>/<uuid>-<name>`), `scope` enum, `ownerUserId`, immutable (no `updated_at`) |
 
-9 policies (`tenants`, `users` + 7 tenant tables); 4 revoked tables = `RLS_REVOKED_TABLES` =
+10 policies (`tenants`, `users` + 8 tenant tables); 4 revoked tables = `RLS_REVOKED_TABLES` =
 `RLS_EXCLUDED_TABLES`. jsonb columns are `$type<>()`d from `src/shared` (type-only imports).
 
 ## Conventions

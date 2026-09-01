@@ -2,6 +2,8 @@
  * CORS (04 §4): function origin because config is per-isolate, not import-time. In production
  * the SPA is same-origin (ASSETS) so only `APP_URL` is allowed; in development the Vite dev
  * server (3000) and tunnel origins are added. Runs BEFORE csrf so preflights are answered.
+ * WebSocket upgrades (`/ws`, D8) bypass it: CORS does not govern the handshake (the route checks
+ * membership), and the DO's 101 response has immutable headers that `cors()` would try to set.
  */
 import { cors } from 'hono/cors'
 import { createMiddleware } from 'hono/factory'
@@ -36,4 +38,10 @@ const corsHandler = cors({
   maxAge: 600,
 })
 
-export const corsMiddleware = createMiddleware<AppEnv>((c, next) => corsHandler(c, next))
+export function isWebSocketUpgrade(c: { req: { header(name: string): string | undefined } }) {
+  return c.req.header('Upgrade')?.toLowerCase() === 'websocket'
+}
+
+export const corsMiddleware = createMiddleware<AppEnv>((c, next) =>
+  isWebSocketUpgrade(c) ? next() : corsHandler(c, next)
+)

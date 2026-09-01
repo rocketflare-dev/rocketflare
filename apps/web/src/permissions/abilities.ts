@@ -38,6 +38,7 @@ export const ADMIN_MANAGED: readonly Subjects[] = [
   'Invitation',
   'ApiKey',
   'ActivityEvent',
+  'File',
 ]
 
 /** What every member may at least read. */
@@ -61,6 +62,7 @@ const grantAdmin: RoleGrant = can => {
  * | ApiKey         | manage      | manage | manage | manage  | read   |
  * | ActivityEvent  | manage      | manage | manage | manage  | read   |
  * | Notification   | manage      | manage | manage | manage  | manage |
+ * | File           | manage      | manage | manage | manage  | create+read (own; delete is the route's owner check) |
  * | Feature:<f>    | access all  | by ctx | by ctx | access all | by ctx |
  */
 export const rolePermissions: Record<EffectiveRole, RoleGrant> = {
@@ -81,6 +83,9 @@ export const rolePermissions: Record<EffectiveRole, RoleGrant> = {
   member: can => {
     can('read', [...MEMBER_READABLE])
     can('manage', 'Notification')
+    // D23: anyone may upload; deleting someone else's file needs `delete File` (admin+). The
+    // "own file" delete is an explicit `ownerUserId === user.id` check in routes/files.ts.
+    can('create', 'File')
   },
 }
 

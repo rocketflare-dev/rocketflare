@@ -13,6 +13,7 @@ import type { AuthContext } from '../types'
 import { ConflictError, ForbiddenError, NotFoundError } from '../utils/core/errors'
 import { asCount, pageWindow } from '../utils/routes/pagination'
 import { recordActivity } from './activity'
+import { nudge, type Realtime, realtimeEvent } from './realtime'
 
 export async function listMembers(db: Database, tenantId: string, query: PaginationQuery) {
   const { limit, offset } = pageWindow(query)
@@ -57,7 +58,13 @@ async function getMembership(db: Database, tenantId: string, userId: string) {
 
 export async function changeMemberRole(
   db: Database,
-  input: { tenantId: string; targetUserId: string; role: TenantRole; actor: AuthContext }
+  input: {
+    tenantId: string
+    targetUserId: string
+    role: TenantRole
+    actor: AuthContext
+    realtime?: Realtime
+  }
 ) {
   const target = await getMembership(db, input.tenantId, input.targetUserId)
   if (target.role === 'support') {
@@ -91,12 +98,13 @@ export async function changeMemberRole(
     subjectId: input.targetUserId,
     metadata: { from: target.role, to: input.role },
   })
+  nudge(input.realtime, realtimeEvent('member.changed', input.tenantId, { id: input.targetUserId }))
   return updated ?? target
 }
 
 export async function removeMember(
   db: Database,
-  input: { tenantId: string; targetUserId: string; actor: AuthContext }
+  input: { tenantId: string; targetUserId: string; actor: AuthContext; realtime?: Realtime }
 ) {
   const target = await getMembership(db, input.tenantId, input.targetUserId)
   if (target.role === 'support') {
@@ -144,4 +152,5 @@ export async function removeMember(
     subjectId: input.targetUserId,
     metadata: { role: target.role, self: input.actor.user.id === input.targetUserId },
   })
+  nudge(input.realtime, realtimeEvent('member.changed', input.tenantId, { id: input.targetUserId }))
 }

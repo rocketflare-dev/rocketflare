@@ -28,11 +28,11 @@ tenantRouter.get('/', async c => {
 })
 
 tenantRouter.patch('/', validate('json', updateTenantRequestSchema), async c => {
-  const { db, tenantId, auth, user, defer } = withAuthAndDb(c)
+  const { db, tenantId, auth, user, defer, realtime } = withAuthAndDb(c)
   const patch = c.req.valid('json')
   if (!isAdminLevel(auth)) throw new ForbiddenError('Only admins can update the organisation')
   if (patch.slug !== undefined) guardOwner(c)
-  const tenant = await updateTenant(db, tenantId, patch)
+  const tenant = await updateTenant(db, tenantId, patch, realtime)
   defer(() =>
     recordActivity(db, {
       tenantId,
@@ -47,7 +47,7 @@ tenantRouter.patch('/', validate('json', updateTenantRequestSchema), async c => 
 })
 
 tenantRouter.delete('/', validate('json', deleteTenantRequestSchema), async c => {
-  const { db, tenantId, cfg } = withAuthAndDb(c)
+  const { db, tenantId, cfg, realtime } = withAuthAndDb(c)
   requireMultiTenant(cfg)
   guardOwner(c)
   const tenant = await getTenant(db, tenantId)
@@ -58,7 +58,7 @@ tenantRouter.delete('/', validate('json', deleteTenantRequestSchema), async c =>
     )
   }
   await operationLock(c.env.RATE_LIMIT_KV, `tenant:delete:${tenantId}`, () =>
-    deleteTenant(db, tenantId)
+    deleteTenant(db, tenantId, realtime)
   )
   return c.body(null, 204)
 })
