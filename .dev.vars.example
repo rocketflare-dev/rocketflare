@@ -1,0 +1,39 @@
+# Copy to `.dev.vars` (git-ignored). `wrangler dev` reads it as Worker secrets/vars; the
+# db:*/seed scripts load it with dotenv-cli. Never put alternate credentials in comments.
+
+# --- Required ---------------------------------------------------------------------------
+# Local overrides of wrangler.toml [vars] (which are the PRODUCTION values). Without these
+# wrangler dev would run as APP_ENV=production with the prod APP_URL, and cookie-authed POSTs
+# from the Vite origin (:3000) would fail CSRF.
+APP_ENV=development
+APP_URL=http://localhost:3000
+# Owner connection string for local Postgres (docker-compose.dev.yml). In deployed
+# environments the Worker uses the HYPERDRIVE binding instead; this is the dev fallback
+# and what scripts/migrate.ts, db-roles.ts, seed.ts and drizzle-kit use.
+DATABASE_URL=postgresql://gmgo:gmgo_pass@localhost:5432/gmgo_dev
+# AES-GCM key for OAuth tokens stored at rest. Generate: openssl rand -hex 32
+OAUTH_ENCRYPTION_KEY=
+# HMAC key for magic-link / invitation tokens. Generate: openssl rand -hex 32
+AUTH_SIGNING_KEY=
+
+# --- Optional (feature-gated when absent) -----------------------------------------------
+# Email via Resend. Absent → magic-link URLs are logged to the wrangler dev console.
+RESEND_API_KEY=
+# Comma-separated emails promoted to global admin on their first *verified* login.
+BOOTSTRAP_ADMIN_EMAILS=
+# OAuth providers: leave blank to hide the button. Redirect URI is derived from APP_URL:
+#   {APP_URL}/auth/{provider}/callback
+GOOGLE_CLIENT_ID=
+GOOGLE_CLIENT_SECRET=
+MICROSOFT_CLIENT_ID=
+MICROSOFT_CLIENT_SECRET=
+# AI layer (Phase 3): platform default key; tenants may override in Settings → AI.
+ANTHROPIC_API_KEY=
+EMBEDDINGS_API_KEY=
+# Langfuse tracing (Phase 3): presence of both keys enables it.
+LANGFUSE_PUBLIC_KEY=
+LANGFUSE_SECRET_KEY=
+
+# --- RLS (see docs/RLS.md) — leave as-is unless running the enforce spike ---------------
+# App-role credential for scripts/db-roles.ts; username must equal APP_ROLE in src/db/schema/rls.ts
+APP_DATABASE_URL=

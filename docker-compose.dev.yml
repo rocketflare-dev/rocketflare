@@ -1,0 +1,22 @@
+# Local development Postgres. pgvector image because the AI layer stores embeddings in
+# Postgres (`vector` extension); otherwise a plain postgres:17. Port 5432; tests use 5433.
+services:
+  postgres-dev:
+    image: pgvector/pgvector:pg17
+    container_name: gmgo-dev-postgres
+    environment:
+      POSTGRES_DB: gmgo_dev
+      POSTGRES_USER: gmgo
+      POSTGRES_PASSWORD: gmgo_pass
+    ports:
+      - "5432:5432"
+    volumes:
+      - gmgo-dev-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gmgo -d gmgo_dev"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  gmgo-dev-data:

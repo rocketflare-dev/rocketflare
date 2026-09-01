@@ -1,0 +1,85 @@
+name: CI
+
+# The quality gate, in ONE place. It runs on every pull request, and deploy.yml calls this same
+# file (`workflow_call`) before deploying a tag to staging, rather than keeping a second copy of
+# the job — a gate that drifts between PR and deploy is worse than no PR gate at all.
+on:
+  pull_request:
+    branches: [main]
+  workflow_call:
+
+concurrency:
+  # Cancel superseded runs on a PR branch, never when called from the deploy path.
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17 # migration 0000 runs CREATE EXTENSION vector (D17)
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: gmgo_test
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U test -d gmgo_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history for the gitleaks scan below
+      # pnpm version comes from `packageManager` in package.json (pnpm 10). Must precede
+      # setup-node so `cache: pnpm` can find the store.
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+
+      # Match docker-compose.test.yml's `-c max_connections=300`. A `services:` container takes
+      # no command arg, so the setting is applied and the container restarted instead. At the
+      # 100 default the suite flaked ~1 in 8 with `53300 sorry, too many clients already`:
+      # vitest runs up to 6 forks and each holds its own postgres.js pool.
+      - name: Raise the test database connection limit
+        run: |
+          cid=$(docker ps --filter "ancestor=pgvector/pgvector:pg17" --format '{{.ID}}' | head -1)
+          docker exec "$cid" psql -U test -d gmgo_test -c "ALTER SYSTEM SET max_connections = 300;"
+          docker restart "$cid"
+          for _ in $(seq 1 30); do
+            docker exec "$cid" pg_isready -U test -d gmgo_test >/dev/null 2>&1 && break
+            sleep 2
+          done
+          docker exec "$cid" psql -U test -d gmgo_test -c "show max_connections;"
+
+      # Secrets scan first: cheapest step, and the one whose failure must not be buried under a
+      # test log. Runs the binary directly (the marketplace action needs a licence for org repos).
+      # Scans the full history so a secret committed-then-removed is still caught.
+      - name: gitleaks
+        run: |
+          curl -sSL "https://github.com/gitleaks/gitleaks/releases/download/v8.24.3/gitleaks_8.24.3_linux_x64.tar.gz" \
+            | tar -xz -C "$RUNNER_TEMP" gitleaks
+          "$RUNNER_TEMP/gitleaks" git --redact --exit-code 1 --verbose .
+
+      - run: pnpm lint
+      # `pnpm typecheck` = `wrangler types` + `tsc`. The typegen file is committed (D22) so a
+      # fresh clone typechecks without wrangler auth; if regenerating it changes anything, a
+      # binding or var was edited without committing the regenerated file.
+      - run: pnpm typecheck
+      - name: worker-configuration.d.ts is up to date
+        run: git diff --exit-code -- worker-configuration.d.ts
+
+      # .env.test points at localhost:5433 with dummy secrets (committed). tests/setup.ts runs
+      # db-roles --phase=role → migrate → --phase=grants, truncates, seeds. TENANT_SCOPE_MODE=off:
+      # predicates-only; policies exist and rls-coverage.test.ts checks every tenant table has one.
+      - run: pnpm test
+
+      # `build:ui` then `build:api` (not `build`, which re-runs the typecheck above). The dry-run
+      # `wrangler deploy` needs dist/ui for `[assets]`, and it is what catches a Node-only import
+      # that tsc cannot see.
+      - run: pnpm build:ui
+      - run: pnpm build:api

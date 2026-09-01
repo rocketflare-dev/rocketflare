@@ -1,0 +1,168 @@
+name: Deploy
+
+# "The release dance" (docs/DEPLOY.md):
+#
+#   1. Push a version tag  X.Y.Z          →  job `staging`     wrangler.staging.toml
+#      (git tag 0.1.1 && git push origin 0.1.1)
+#   2. Publish a GitHub Release on that   →  job `production`  wrangler.toml — checks out the
+#      same tag                              release's tag, so production ships exactly what
+#                                            staging validated.
+#
+# `workflow_dispatch` with an `environment` input is the manual escape hatch (uses the ref you
+# dispatch from; first deploy of a fresh account goes through here — see SETUP.md Part 3).
+#
+# Each job: verify tag == package.json version → CI gate (staging only; production re-ships a
+# validated tag) → parity test with REQUIRE_PROVISIONED=1 (no <PLACEHOLDER> may remain) →
+# `pnpm db:migrate:ci` against that environment's Neon branch → build UI → `wrangler deploy`
+# with RELEASE_VERSION set to the tag.
+#
+# GitHub Environments `staging` and `production`, each with secrets:
+#   DATABASE_URL           that environment's Neon connection string (owner role; migrate.ts
+#                          strips a `-pooler` host itself so either form works)
+#   CLOUDFLARE_API_TOKEN   scoped token (docs/DEPLOY.md → Token scopes); may be shared
+#   CLOUDFLARE_ACCOUNT_ID
+# Runtime Worker secrets (OAUTH_ENCRYPTION_KEY, AUTH_SIGNING_KEY, RESEND_API_KEY, …) are NOT
+# managed here: `wrangler secret put <NAME> [-c wrangler.staging.toml]` once per worker.
+
+on:
+  push:
+    tags:
+      - "[0-9]+.[0-9]+.[0-9]+"
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Environment to deploy (uses the ref you dispatch from)"
+        type: choice
+        options: [staging, production]
+        default: staging
+
+concurrency:
+  group: deploy-${{ github.event_name == 'release' && github.event.release.tag_name || github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  # Step 1 of the dance: a tag has not necessarily been through a PR, so the gate runs here.
+  ci:
+    if: |
+      (github.event_name == 'push' && github.ref_type == 'tag') ||
+      (github.event_name == 'workflow_dispatch' && inputs.environment == 'staging')
+    uses: ./.github/workflows/ci.yml
+
+  staging:
+    name: Deploy to staging
+    needs: ci
+    if: |
+      (github.event_name == 'push' && github.ref_type == 'tag') ||
+      (github.event_name == 'workflow_dispatch' && inputs.environment == 'staging')
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Resolve release version
+        id: version
+        shell: bash
+        run: |
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then VERSION="$GITHUB_REF_NAME"
+          else VERSION="${GITHUB_REF_NAME}-${GITHUB_SHA::7}"; fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Deploying version: $VERSION"
+
+      - name: Verify tag matches package.json version
+        if: github.ref_type == 'tag'
+        shell: bash
+        run: |
+          PKG="$(node -p "require('./package.json').version")"
+          if [ "${{ steps.version.outputs.version }}" != "$PKG" ]; then
+            echo "::error::Tag ${GITHUB_REF_NAME} does not match package.json version ${PKG}. Bump package.json before tagging."
+            exit 1
+          fi
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Wrangler parity (provisioned)
+        run: pnpm test:config
+        env:
+          REQUIRE_PROVISIONED: "1"
+
+      - name: Run database migrations (staging)
+        run: pnpm db:migrate:ci
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+
+      - run: pnpm build:ui
+
+      - name: Deploy (wrangler.staging.toml)
+        run: pnpm exec wrangler deploy -c wrangler.staging.toml --var "RELEASE_VERSION:${{ steps.version.outputs.version }}"
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+  # Step 2: publishing the GitHub Release is the promotion gate ("required reviewers" is not
+  # available on private repos on the free plan). Ships the release's tag, already validated
+  # on staging, so the CI gate is not re-run here.
+  production:
+    name: Deploy to production
+    if: |
+      github.event_name == 'release' ||
+      (github.event_name == 'workflow_dispatch' && inputs.environment == 'production')
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'release' && github.event.release.tag_name || github.ref }}
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Resolve release version
+        id: version
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "release" ]; then VERSION="${{ github.event.release.tag_name }}"
+          else VERSION="${GITHUB_REF_NAME}-${GITHUB_SHA::7}"; fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Deploying version: $VERSION"
+
+      - name: Verify release tag matches package.json version
+        if: github.event_name == 'release'
+        shell: bash
+        run: |
+          PKG="$(node -p "require('./package.json').version")"
+          if [ "${{ steps.version.outputs.version }}" != "$PKG" ]; then
+            echo "::error::Release tag ${{ github.event.release.tag_name }} does not match package.json version ${PKG}."
+            exit 1
+          fi
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Wrangler parity (provisioned)
+        run: pnpm test:config
+        env:
+          REQUIRE_PROVISIONED: "1"
+
+      - name: Run database migrations (production)
+        run: pnpm db:migrate:ci
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+
+      - run: pnpm build:ui
+
+      - name: Deploy (wrangler.toml)
+        run: pnpm exec wrangler deploy --var "RELEASE_VERSION:${{ steps.version.outputs.version }}"
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

@@ -1,0 +1,586 @@
+/* All @import statements must come first in PostCSS */
+/* `source(none)` turns OFF Tailwind v4's automatic source detection, which would otherwise scan
+   the whole repo (docs, src/api, tests) and make DaisyUI emit every component a comment happens
+   to mention. Only the UI tree is scanned; `src/shared` carries no class names. */
+@import "tailwindcss" source(none);
+
+@plugin "daisyui";
+@plugin "@tailwindcss/typography";
+
+@source "./index.html";
+@source "./**/*.{ts,tsx}";
+
+/* Classes assembled from PROPS (Toast/AlertModal `alert-*`, role/status `badge-*`, ConfirmModal
+   `btn-*`) are invisible to the scanner, so they are declared as inline sources here. This is the
+   ONLY safelist. Never safelist classes built from DATA; never `@source` node_modules. */
+@source inline("alert-{success,error,warning,info}");
+@source inline("badge-{primary,secondary,neutral,ghost,info,success,warning,error,sm}");
+@source inline("btn-{primary,error,warning}");
+
+/* ============================================================================
+   Design system — token-first. Components consume these variables (or the DaisyUI semantic
+   classes derived from them), never hard-coded colours.
+
+   REBRANDING — change these and nothing else:
+     1. `--color-primary` / `--color-primary-content` in BOTH theme blocks (the one accent).
+        Keep `--focus-ring`, `--surface-active`, `--tone-primary-*` in step with it.
+     2. `--color-accent` (secondary accent, e.g. automation/AI affordances).
+     3. The neutral ramp: `--surface-*`, `--border-*`, `--text-*` per theme. The kit ships a
+        cool grey (zinc) ramp; swap for a warm or tinted ramp of the same LIGHTNESS steps.
+     4. `--color-secondary` MUST equal `--text-secondary` — see the note in the light theme.
+     5. `--font-sans` / `--font-mono` in `@theme` (system stack by default; add @fontsource
+        imports in main.tsx if self-hosting).
+     6. `<meta name="theme-color">` in index.html and the `<path>` in shared/LogoMark.tsx +
+        public/favicon.svg.
+   Theme NAMES (`gm-light` / `gm-dark`) appear in index.html, ThemeToggle.tsx and tests — a
+   single find/replace if you rename them.
+
+   Contrast floors (WCAG AA): text ≥ 4.5:1 on its surface, `--border-control` ≥ 3:1 on the
+   panel, `--focus-ring` ≥ 3:1. Every semantic colour is a tone dark (light theme) or light
+   (dark theme) enough to be BOTH readable text on the panel AND a fill carrying its
+   `-content` colour — one token, two jobs, which is how DaisyUI's `badge-*`/`alert-*` use it.
+   ========================================================================== */
+
+@theme {
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue",
+    Arial, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+}
+
+/* ------------------------------------------------------------------ Light */
+@plugin "daisyui/theme" {
+  name: "gm-light";
+  default: true;
+  color-scheme: light;
+
+  --color-primary: #2563eb; /* blue-600 — the one accent */
+  --color-primary-content: #ffffff;
+  /* Same tone as --text-secondary. DaisyUI generates a `text-secondary` UTILITY from this,
+     which sorts after `@layer components` and therefore wins over the `.text-secondary` class
+     below — so the two are made to agree rather than left to fight. */
+  --color-secondary: #3f3f46; /* zinc-700 */
+  --color-secondary-content: #ffffff;
+  --color-accent: #0f766e; /* teal-700 — automation / AI affordances */
+  --color-accent-content: #ffffff;
+  --color-neutral: #18181b; /* zinc-900 */
+  --color-neutral-content: #fafafa;
+
+  --color-base-100: #ffffff; /* card / panel surface */
+  --color-base-200: #ffffff; /* cards (bg-base-200) render white too */
+  --color-base-300: #d4d4d8; /* zinc-300 — borders / hover / lines */
+  --color-base-content: #18181b; /* zinc-900 */
+
+  --color-info: #0369a1; /* sky-700 */
+  --color-info-content: #ffffff;
+  --color-success: #15803d; /* green-700 */
+  --color-success-content: #ffffff;
+  --color-warning: #b45309; /* amber-700 */
+  --color-warning-content: #ffffff;
+  --color-error: #b91c1c; /* red-700 */
+  --color-error-content: #ffffff;
+
+  --radius-selector: 0.5rem;
+  --radius-field: 0.3125rem; /* controls: 5px */
+  --radius-box: 0.375rem; /* cards: 6px */
+  --border: 1px;
+  --depth: 0; /* flat — no faux-3D button/card depth */
+  --noise: 0;
+}
+
+/* ------------------------------------------------------------------- Dark */
+@plugin "daisyui/theme" {
+  name: "gm-dark";
+  prefersdark: true;
+  color-scheme: dark;
+
+  --color-primary: #60a5fa; /* blue-400 */
+  --color-primary-content: #172554; /* blue-950 */
+  --color-secondary: #d4d4d8; /* zinc-300 — matches --text-secondary, see the light block */
+  --color-secondary-content: #18181b;
+  --color-accent: #5eead4; /* teal-300 */
+  --color-accent-content: #042f2e; /* teal-950 */
+  --color-neutral: #d4d4d8;
+  --color-neutral-content: #18181b;
+
+  --color-base-100: #27272a; /* zinc-800 — card / panel surface, lifted off the canvas */
+  --color-base-200: #27272a;
+  --color-base-300: #52525b; /* zinc-600 — borders / hover / lines */
+  --color-base-content: #fafafa;
+
+  /* Tone 300 of the SAME hue rows the light theme reads tone 700 from; `-content` is tone 950. */
+  --color-info: #7dd3fc; /* sky-300 */
+  --color-info-content: #082f49;
+  --color-success: #86efac; /* green-300 */
+  --color-success-content: #052e16;
+  --color-warning: #fcd34d; /* amber-300 */
+  --color-warning-content: #451a03;
+  --color-error: #fca5a5; /* red-300 */
+  --color-error-content: #450a0a;
+
+  --radius-selector: 0.5rem;
+  --radius-field: 0.3125rem;
+  --radius-box: 0.375rem;
+  --border: 1px;
+  --depth: 0;
+  --noise: 0;
+}
+
+/* ------------------------------------------------ Semantic surface tokens */
+[data-theme="gm-light"] {
+  /* White chrome (nav + header) framing a light grey canvas, white content cards.
+     Structure comes from hairline borders, not shadow. */
+  --surface-app: #f4f4f5; /* zinc-100 — canvas */
+  --surface-nav: #ffffff;
+  --surface-header: #ffffff;
+  --surface-panel: #ffffff; /* content cards */
+  --surface-raised: #ffffff; /* popovers / modals */
+  --surface-inset: #e4e4e7; /* zinc-200 — inset boxes, table heads, neutral tags */
+  --surface-hover: #f4f4f5; /* row / card hover on white */
+  --surface-nav-hover: #f4f4f5;
+  --surface-active: color-mix(in srgb, #2563eb 10%, #ffffff); /* soft accent tint */
+
+  --border-subtle: #e4e4e7; /* zinc-200 — separators */
+  --border-default: #d4d4d8; /* zinc-300 — cards */
+  --border-strong: #a1a1aa; /* zinc-400 — active / selected */
+  /* WCAG 1.4.11 wants ≥3:1 for the boundary that IDENTIFIES a control. Cards and separators
+     stay quiet; inputs, selects and checkboxes use this. */
+  --border-control: #71717a; /* zinc-500 */
+
+  --text-primary: #18181b; /* zinc-900 */
+  --text-secondary: #3f3f46; /* zinc-700 */
+  --text-muted: #52525b; /* zinc-600 — 7:1 on white, still ≥4.5:1 on the inset */
+
+  --focus-ring: #2563eb; /* solid, never a diluted mix — a 45% wash cannot reach 3:1 */
+  --overlay: color-mix(in srgb, #18181b 40%, transparent);
+  --shadow-panel: none; /* flat: borders on the canvas define surfaces */
+  --shadow-popover: 0 6px 20px -6px rgb(24 24 27 / 0.14), 0 1px 2px rgb(24 24 27 / 0.06);
+
+  /* Status tints: explicit tones (100 surface / 300 border), not `color-mix(<semantic> 12%)`,
+     which tints towards the surface and pushes the label under the floor in dark mode. */
+  --tone-primary-surface: #dbeafe; /* blue-100 */
+  --tone-primary-border: #93c5fd; /* blue-300 */
+  --tone-info-surface: #e0f2fe; /* sky-100 */
+  --tone-info-border: #7dd3fc; /* sky-300 */
+  --tone-success-surface: #dcfce7; /* green-100 */
+  --tone-success-border: #86efac; /* green-300 */
+  --tone-warning-surface: #fef3c7; /* amber-100 */
+  --tone-warning-border: #fcd34d; /* amber-300 */
+  --tone-error-surface: #fee2e2; /* red-100 */
+  --tone-error-border: #fca5a5; /* red-300 */
+}
+
+[data-theme="gm-dark"] {
+  /* Same STRUCTURE as light: the canvas is the darkest plane, chrome and cards lift above it,
+     nothing approaches #000 (a near-black canvas makes cards indistinguishable from it). */
+  --surface-app: #131316; /* canvas */
+  --surface-nav: #1c1c20; /* left rail + top bar, lifted like the light theme's white chrome */
+  --surface-header: #1c1c20;
+  --surface-panel: #27272a; /* zinc-800 — content cards */
+  --surface-raised: #3f3f46; /* zinc-700 — popovers / modals */
+  --surface-inset: #1c1c20; /* table heads, inset boxes: just below panel */
+  --surface-hover: #3f3f46;
+  --surface-nav-hover: #27272a;
+  --surface-active: color-mix(in srgb, #60a5fa 18%, #1c1c20);
+
+  --border-subtle: #3f3f46; /* zinc-700 — separators */
+  --border-default: #52525b; /* zinc-600 — cards */
+  --border-strong: #71717a; /* zinc-500 — active / selected */
+  --border-control: #71717a; /* strong/control merge: control-grade 3:1 is right for both */
+
+  --text-primary: #fafafa; /* zinc-50 */
+  --text-secondary: #d4d4d8; /* zinc-300 */
+  --text-muted: #a1a1aa; /* zinc-400 — ≥5:1 on the panel */
+
+  --focus-ring: #60a5fa;
+  --overlay: color-mix(in srgb, #09090b 65%, transparent);
+  --shadow-panel: none;
+  --shadow-popover: 0 8px 24px -8px rgb(9 9 11 / 0.72), 0 1px 2px rgb(9 9 11 / 0.5);
+
+  /* Tone 950 sits BELOW the panel so a badge reads as an inset well, keeping its tone-300
+     label at the same contrast its light-theme twin gets. */
+  --tone-primary-surface: #172554; /* blue-950 */
+  --tone-primary-border: #1e40af; /* blue-800 */
+  --tone-info-surface: #082f49; /* sky-950 */
+  --tone-info-border: #0369a1; /* sky-700 */
+  --tone-success-surface: #052e16; /* green-950 */
+  --tone-success-border: #15803d; /* green-700 */
+  --tone-warning-surface: #451a03; /* amber-950 */
+  --tone-warning-border: #b45309; /* amber-700 */
+  --tone-error-surface: #450a0a; /* red-950 */
+  --tone-error-border: #b91c1c; /* red-700 */
+}
+
+/* ------------------------------------------------ Shape / spacing / motion */
+:root {
+  --radius-control: 5px;
+  --radius-panel: 6px;
+  --radius-popover: 8px;
+
+  --control-height-sm: 30px;
+  --control-height-md: 36px;
+  --control-height-lg: 42px;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+
+  --dur-fast: 120ms;
+  --dur-panel: 180ms;
+  --dur-drawer: 240ms;
+
+  /* density-driven (see [data-density]) */
+  --row-height: 46px;
+  --panel-pad: 20px;
+}
+
+/* ================================================================== Base */
+@layer base {
+  html {
+    font-family: var(--font-sans);
+  }
+
+  body {
+    background: var(--surface-app);
+    color: var(--text-primary);
+    font-size: 15px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  /* Tabular, aligned numerals for data-heavy surfaces */
+  code, kbd, samp, pre, .font-mono {
+    font-family: var(--font-mono);
+  }
+
+  th, td, .tabular-nums {
+    font-variant-numeric: tabular-nums;
+  }
+
+  h1, h2, h3, h4 {
+    color: var(--text-primary);
+    letter-spacing: -0.014em;
+  }
+
+  /* One consistent, visible focus ring everywhere */
+  :focus-visible {
+    outline: 2px solid var(--focus-ring);
+    outline-offset: 2px;
+    border-radius: var(--radius-control);
+  }
+
+  /* Quiet, precise scrollbars */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--border-strong) transparent;
+  }
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--border-strong);
+    border-radius: 999px;
+    border: 3px solid transparent;
+    background-clip: content-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--text-muted);
+    background-clip: content-box;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}
+
+/* =========================================================== Density modes */
+[data-density="compact"] {
+  --row-height: 38px;
+  --panel-pad: 14px;
+}
+
+/* ============================================================= Primitives
+   Only cross-cutting primitives live here. Page-specific styling stays in the component. */
+@layer components {
+  /* Flat by default — a hairline border on the canvas defines every surface. */
+  .btn {
+    box-shadow: none;
+  }
+
+  /* Cards (DaisyUI .card): defined by border, not shadow */
+  .card {
+    border: 1px solid var(--border-default);
+    box-shadow: none;
+    border-radius: var(--radius-panel);
+  }
+
+  /* Panel: the default container — surface + thin border, flat */
+  .surface-panel {
+    background: var(--surface-panel);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-panel);
+    padding: var(--panel-pad);
+  }
+  .surface-inset {
+    background: var(--surface-inset);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-panel);
+  }
+
+  /* Control boundaries at ≥3:1 (WCAG 1.4.11). DaisyUI's stock border is base-content at ~20%,
+     which is 1.5:1 on white — a field you cannot see the edge of. */
+  .input,
+  .select,
+  .textarea,
+  .file-input,
+  .checkbox,
+  .radio {
+    border-color: var(--border-control);
+  }
+
+  /* Data table: a primary surface, not a boxed card */
+  .data-table {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
+    font-size: 14px;
+  }
+  .data-table thead th {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: var(--surface-panel);
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+    font-weight: 500;
+    font-size: 11px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    text-align: left;
+    padding: 8px 14px 10px;
+    border-bottom: 1px solid var(--border-strong);
+    white-space: nowrap;
+  }
+  .data-table tbody td {
+    height: var(--row-height);
+    padding: 0 14px;
+    border-bottom: 1px solid var(--border-subtle);
+    color: var(--text-primary);
+  }
+  /* Row headers (`th[scope="row"]`) — a pivoted table's label column */
+  .data-table tbody th {
+    height: var(--row-height);
+    padding: 0 14px;
+    border-bottom: 1px solid var(--border-subtle);
+    color: var(--text-primary);
+    font-weight: 500;
+    text-align: left;
+  }
+  .data-table tbody tr {
+    transition: background var(--dur-fast) ease;
+  }
+  .data-table tbody tr:hover {
+    background: var(--surface-hover);
+  }
+  .data-table tbody tr:last-child td,
+  .data-table tbody tr:last-child th {
+    border-bottom: none;
+  }
+  .data-table tbody tr[data-selected="true"] {
+    background: color-mix(in srgb, var(--color-primary) 8%, transparent);
+  }
+  /* Tables whose cells hold PROSE rather than one-line values — opt in per table. */
+  .data-table.data-table-prose thead th {
+    white-space: normal;
+  }
+  .data-table.data-table-prose tbody td {
+    height: auto;
+    padding: 12px 14px;
+    vertical-align: top;
+    line-height: 1.5;
+  }
+
+  /* Status tag: small, sharp, semantic (tint + colour, never a bright fill).
+     Each state is one tone triple: the semantic colour as the LABEL, its -surface tone behind,
+     its -border tone around. Extend the vocabulary per app with more `data-status` selectors. */
+  .status-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 12px;
+    font-weight: 500;
+    line-height: 1.5;
+    white-space: nowrap;
+    border: 1px solid transparent;
+  }
+  .status-badge::before {
+    content: "";
+    width: 6px;
+    height: 6px;
+    border-radius: 999px;
+    background: currentColor;
+    flex: none;
+  }
+  .status-badge.no-dot::before {
+    display: none;
+  }
+  .status-badge[data-status="active"],
+  .status-badge[data-status="completed"],
+  .status-badge[data-status="approved"],
+  .status-badge[data-status="accepted"] {
+    color: var(--color-success);
+    background: var(--tone-success-surface);
+    border-color: var(--tone-success-border);
+  }
+  .status-badge[data-status="pending"],
+  .status-badge[data-status="in-progress"],
+  .status-badge[data-status="running"],
+  .status-badge[data-status="queued"] {
+    color: var(--color-info);
+    background: var(--tone-info-surface);
+    border-color: var(--tone-info-border);
+  }
+  .status-badge[data-status="awaiting-review"],
+  .status-badge[data-status="blocked"],
+  .status-badge[data-status="suspended"],
+  .status-badge[data-status="expired"] {
+    color: var(--color-warning);
+    background: var(--tone-warning-surface);
+    border-color: var(--tone-warning-border);
+  }
+  .status-badge[data-status="failed"],
+  .status-badge[data-status="cancelled"],
+  .status-badge[data-status="rejected"],
+  .status-badge[data-status="revoked"] {
+    color: var(--color-error);
+    background: var(--tone-error-surface);
+    border-color: var(--tone-error-border);
+  }
+  .status-badge[data-status="draft"],
+  .status-badge[data-status="inactive"] {
+    color: var(--text-secondary);
+    background: var(--surface-inset);
+    border-color: var(--border-default);
+  }
+  /* "Nothing here yet, and that's fine" — quieter than draft, never a warning. */
+  .status-badge[data-status="archived"],
+  .status-badge[data-status="idle"] {
+    color: var(--text-secondary);
+    background: var(--surface-inset);
+    border-color: var(--border-subtle);
+  }
+  /* The tone triples as REUSABLE marks for things that are not a status. */
+  .tone-primary {
+    color: var(--color-primary);
+    background: var(--tone-primary-surface);
+    border-color: var(--tone-primary-border);
+  }
+  .tone-warning {
+    color: var(--color-warning);
+    background: var(--tone-warning-surface);
+    border-color: var(--tone-warning-border);
+  }
+
+  /* Text ramp helpers. `.text-secondary` collides with the utility DaisyUI generates from
+     `--color-secondary`; the two tokens are kept equal so the collision cannot bite. */
+  .text-secondary {
+    color: var(--text-secondary);
+  }
+  .text-muted {
+    color: var(--text-muted);
+  }
+
+  /* Application shell — quiet, but each layer visually distinct */
+  .app-canvas {
+    background: var(--surface-app);
+  }
+  .app-nav {
+    background: var(--surface-nav);
+    border-color: var(--border-default);
+  }
+  .app-header {
+    background: var(--surface-header);
+    border-color: var(--border-default);
+  }
+
+  /* Left-nav item: subtle filled active state, accent icon, no bar */
+  .nav-item {
+    color: var(--text-secondary);
+    border-radius: var(--radius-control);
+    font-size: 15px;
+    transition: background var(--dur-fast) ease, color var(--dur-fast) ease;
+  }
+  .nav-item svg {
+    color: var(--text-muted);
+    transition: color var(--dur-fast) ease;
+  }
+  .nav-item:hover {
+    background: var(--surface-nav-hover);
+    color: var(--text-primary);
+  }
+  .nav-item:hover svg {
+    color: var(--text-secondary);
+  }
+  .nav-item[data-active="true"] {
+    color: var(--text-primary);
+    background: var(--surface-active);
+    font-weight: 600;
+  }
+  .nav-item[data-active="true"] svg {
+    color: var(--color-primary);
+  }
+
+  /* Mono uppercase section labels */
+  .nav-group-label {
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    font-weight: 500;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+  }
+
+  /* Popover surface (dropdown menus, user menu) — raised, bordered, one shadow token */
+  .popover-surface {
+    background: var(--surface-raised);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-popover);
+    box-shadow: var(--shadow-popover);
+  }
+}
+
+/* Subtle page background used by auth / error pages */
+.main-gradient {
+  background: radial-gradient(
+      120% 80% at 50% -10%,
+      color-mix(in srgb, var(--color-primary) 8%, transparent) 0%,
+      transparent 60%
+    ),
+    var(--surface-app);
+}
+
+/* Toast entrance (no animation plugin — one keyframe is enough) */
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateX(1rem);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+.toast-in {
+  animation: toast-in var(--dur-panel) ease-out;
+}

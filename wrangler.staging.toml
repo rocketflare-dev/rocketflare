@@ -1,0 +1,76 @@
+# STAGING Worker config — standalone copy of wrangler.toml (the production file) — keep the
+# two files in sync: same bindings/classes/limits, differing ONLY in name, routes, [vars]
+# URLs/APP_ENV, and resource ids. tests/config/wrangler-parity.test.ts enforces this and
+# fails while any <PLACEHOLDER> remains. See docs/DEPLOY.md and scripts/cf-provision.sh.
+#
+# ADAPTING: rename `gmgo-starter` → your app (worker name, queue/workflow names, buckets).
+
+name = "gmgo-starter-staging"
+main = "src/worker.ts"
+compatibility_date = "2026-06-01"
+compatibility_flags = ["nodejs_compat"]
+
+# Fallback host gmgo-starter-staging.<subdomain>.workers.dev while the custom domain is set up.
+workers_dev = true
+
+# Custom domain (wrangler creates the DNS record on deploy). Uncomment once the zone exists.
+# routes = [{ pattern = "staging.example.com", custom_domain = true }]
+
+[vars]
+APP_ENV = "staging"                    # development | staging | production
+APP_URL = "https://staging.example.com"# public origin; derives OAuth redirect URIs, magic links, CSRF
+APP_NAME = "GMGO Starter"
+# Overridden at deploy time by CI: `wrangler deploy --var RELEASE_VERSION:<tag>`
+RELEASE_VERSION = "dev"
+LOG_LEVEL = "info"
+EMAIL_FROM = "GMGO Starter <noreply@example.com>"
+TENANCY_MODE = "multi"                 # multi | single   (docs/CONCEPTS.md → Tenancy)
+SIGNUP_MODE = "invite_only"            # open | invite_only | approval
+TENANT_SCOPE_MODE = "off"              # off | enforce    (docs/RLS.md — enforce needs HYPERDRIVE_APP)
+# Secrets are NOT here: `wrangler secret put <NAME>` for every non-var in .dev.vars.example
+
+[placement]
+mode = "smart"                          # run near the database (Neon region), not the user
+
+# [limits]
+# cpu_ms = 30000   # Default. NOTE: Workflows bound CPU *per step* by this value too; if you
+#                  # raise it, raise it identically in wrangler.staging.toml (parity test).
+
+[observability]
+[observability.logs]
+enabled = true
+head_sampling_rate = 1
+invocation_logs = false
+
+# React SPA served from Workers Static Assets, deployed atomically with the Worker. API
+# routes are matched by Hono first; the catch-all serves assets with SPA fallback.
+[assets]
+directory = "./dist/ui"
+binding = "ASSETS"
+not_found_handling = "single-page-application"
+
+# Postgres via Hyperdrive → Neon. Create: wrangler hyperdrive create gmgo-starter-staging \
+#   --connection-string="<neon direct url>"   (then paste the id below)
+# `wrangler dev` ignores `id` and uses localConnectionString (docker-compose.dev.yml).
+[[hyperdrive]]
+binding = "HYPERDRIVE"
+id = "<HYPERDRIVE_STAGING_ID>"
+localConnectionString = "postgresql://gmgo:gmgo_pass@localhost:5432/gmgo_dev"
+
+# KV for auth rate limiting + per-tenant operation locks. Create: wrangler kv namespace create RATE_LIMIT_STAGING
+[[kv_namespaces]]
+binding = "RATE_LIMIT_KV"
+id = "<KV_RATE_LIMIT_STAGING_ID>"
+
+# Cron triggers — dispatched by src/api/scheduled.ts keyed on event.cron.
+[triggers]
+crons = [
+  "0 4 * * *",     # Daily 04:00 UTC — prune expired sessions, magic links, rate-limit state
+]
+
+# ---- Added in later phases (keep this list in sync with wrangler.staging.toml) ----------
+# Phase 2: [[queues.producers]] JOBS_QUEUE, [[queues.consumers]], [[durable_objects.bindings]]
+#          NOTIFICATIONS_HUB + [[migrations]], [[r2_buckets]] FILES
+# Phase 3: [[workflows]] AGENT_RUN_WORKFLOW (name is ACCOUNT-scoped: staging MUST use a
+#          different name), [ai] binding AI
+# Phase 4: "15 * * * *" cron for fact-table refresh, optional [[analytics_engine_datasets]]

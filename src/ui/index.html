@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="gm-light">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+    <title>GMGO Starter</title>
+    <meta name="description" content="GMGO Starter" />
+
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="theme-color" content="#2563eb" />
+
+    <!-- Apply the saved theme before React mounts so there is no flash. Only the two known
+         theme names are accepted; anything else falls back to the OS preference so a stale
+         value can never desync the toggle (ThemeToggle.tsx normalises the same way). -->
+    <script>
+      ;(function () {
+        var saved = localStorage.getItem('theme')
+        if (saved !== 'gm-light' && saved !== 'gm-dark') {
+          saved =
+            window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches
+              ? 'gm-dark'
+              : 'gm-light'
+        }
+        document.documentElement.setAttribute('data-theme', saved)
+      })()
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/main.tsx"></script>
+  </body>
+</html>

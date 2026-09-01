@@ -1,0 +1,36 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build outputs
+dist/
+.wrangler/
+
+# Secrets — never commit. `.dev.vars.example` and `.env.test` (dummy values) ARE committed.
+.dev.vars
+.dev.vars.*
+!.dev.vars.example
+.env
+.env.local
+*.local
+.secrets.*.json
+.drizzle-cube.json
+.cfld.json
+
+# Logs / coverage
+logs/
+*.log
+coverage/
+*.lcov
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+
+# Drizzle studio
+.drizzle/
+
+# Agent worktrees (transient, each is its own git repo)
+.claude/worktrees/
+.claude/settings.local.json
