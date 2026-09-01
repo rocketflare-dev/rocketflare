@@ -3,6 +3,7 @@
  * (`users`), preferences to the person-in-this-tenant (`tenant_user_settings.preferences`).
  */
 import { z } from 'zod'
+import { userSchema } from './auth'
 
 export const updateProfileRequestSchema = z
   .object({
@@ -32,3 +33,7 @@ export const updateTenantUserSettingsRequestSchema = z.object({
   preferences: userPreferencesSchema,
 })
 export type UpdateTenantUserSettingsRequest = z.infer<typeof updateTenantUserSettingsRequestSchema>
+
+/** `GET /api/me` — the signed-in user plus their preferences for the selected tenant (flat, not wrapped). */
+export const meResponseSchema = userSchema.extend({ preferences: userPreferencesSchema })
+export type MeResponse = z.infer<typeof meResponseSchema>

@@ -21,9 +21,11 @@ import { describe, expect, it } from 'vitest'
 type Toml = Record<string, unknown>
 type Row = Record<string, unknown>
 
-const ROOT = path.resolve(__dirname, '../..')
+// apps/web — resolved from this file's location, NOT process.cwd(), so the test reads the same
+// tomls whether vitest is started from the workspace root (`pnpm test`) or from apps/web.
+const WEB_DIR = path.resolve(__dirname, '../..')
 const read = (file: string): Toml =>
-  TOML.parse(fs.readFileSync(path.join(ROOT, file), 'utf8')) as Toml
+  TOML.parse(fs.readFileSync(path.join(WEB_DIR, file), 'utf8')) as Toml
 
 const prod = read('wrangler.toml')
 const staging = read('wrangler.staging.toml')
@@ -189,7 +191,10 @@ describe.runIf(process.env.REQUIRE_PROVISIONED === '1')(
       ['wrangler.staging.toml', staging],
     ])('%s contains no <PLACEHOLDER> values', (_file, doc) => {
       const left = strings(doc).filter(s => PLACEHOLDER.test(s))
-      expect(left, 'run scripts/cf-provision.sh and paste the ids').toEqual([])
+      expect(
+        left,
+        'run `pnpm provision <env>` (apps/web/scripts/cf-provision.sh) and paste the ids'
+      ).toEqual([])
     })
 
     it('hyperdrive and KV ids differ between environments', () => {

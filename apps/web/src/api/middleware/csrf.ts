@@ -14,12 +14,13 @@
 import { ERROR_CODES } from '@gmgo/shared/errors'
 import { getCookie } from 'hono/cookie'
 import { createMiddleware } from 'hono/factory'
+import { SESSION_COOKIE_NAME } from '../auth/cookies'
 import type { AppEnv } from '../types'
 import { ForbiddenError } from '../utils/core/errors'
 import { allowedOrigins } from './cors'
 
-/** D12: `__Host-` prefix = Secure, Path=/, no Domain — Phase 1's auth/cookies.ts must reuse this. */
-export const SESSION_COOKIE_NAME = '__Host-session'
+/** D12: `__Host-` prefix = Secure, Path=/, no Domain — defined once in auth/cookies.ts. */
+export { SESSION_COOKIE_NAME }
 
 const SAME_SITE_FETCH_VALUES = new Set(['same-origin', 'same-site', 'none'])
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS'])

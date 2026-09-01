@@ -1,97 +1,97 @@
 # GMGO Starter Kit
 
-Multi-tenant SaaS starter for internal GM apps: Hono API + React UI in one Cloudflare Worker,
-Postgres (Neon via Hyperdrive) + Drizzle, arctic auth, CASL, drizzle-cube analytics, an AI layer.
-`AGENTS.md` is a symlink to this file.
+Multi-tenant SaaS starter for internal GM apps, a **pnpm workspace**: Hono API + React UI in one
+Cloudflare Worker (`apps/web`), a commander CLI (`apps/cli`), private zod contracts
+(`packages/shared`). `AGENTS.md` symlinks here.
 
-> **How it works**: @docs/CONCEPTS.md — what is built and why, one section per subsystem, each with
-> its known gaps. **Check it before assuming a capability exists or building one; update the section
-> when you change how one works.**
->
-> **Setup**: @SETUP.md — instructions only. When asked for setup help, don't summarise it: **run Part 1
-> step by step** — execute each command, show the output, confirm the verification line before the
-> next step; stop and surface a failure. Fix missing prerequisites proactively (Node via `.nvmrc`,
-> `corepack enable` for pnpm, Colima on macOS if Docker is absent) and carry on.
->
-> **Fresh copy?** @docs/ADAPTING.md — if this repo was just copied to start a new app, start there.
+> **How it works**: @docs/CONCEPTS.md — one section per subsystem with its known gaps. **Check it
+> before assuming a capability exists; update it when you change one.**
+> **Setup**: @SETUP.md — when asked for setup help, don't summarise: **run Part 1 step by step**,
+> show each output, confirm the verification line, stop on failure. Fix missing prerequisites
+> (Node via `.nvmrc`, `corepack enable`, Colima if Docker is absent) and carry on.
+> **Fresh copy?** @docs/ADAPTING.md first.
 
 ## Stack
 
-- **Runtime**: Cloudflare Workers (`nodejs_compat`); one Worker exports `fetch` + `queue` +
-  `scheduled` and the in-script Durable Object / Workflow classes (`src/worker.ts`). Node 24, pnpm 10
-- **API**: Hono 4, zod contracts in `src/shared/`, CASL, pino (hono-pino)
-- **DB**: Postgres 17 + pgvector — Neon through **Hyperdrive** when deployed, Docker locally;
-  Drizzle over `postgres.js` (only driver), one client per request
-- **Auth**: arctic (Google, Microsoft) + magic link + dev-login; `__Host-session` cookie; API keys;
-  **KV** rate limit
-- **Async / realtime**: **Queues** (`JOBS_QUEUE`), **Workflows** (`AGENT_RUN_WORKFLOW`), cron;
-  `NotificationsHub` **Durable Object** at `/ws`
-- **Storage / AI**: **R2** (`FILES`); **Workers AI** embeddings → pgvector; Anthropic-compatible chat;
-  Langfuse over fetch
-- **UI**: React 18 + Vite, DaisyUI 5 / Tailwind v4 (`gm-light`/`gm-dark`), React Router 6, TanStack
-  Query 5; served as **Static Assets** (`ASSETS`)
-- **Tests**: vitest projects `api` · `api-isolated` · `ui` · `config`, real Postgres on 5433
-- **Lint**: Biome 2 (single quotes, `asNeeded` semicolons, 100 cols)
+- **Runtime**: Cloudflare Workers (`nodejs_compat`); one Worker exports `fetch`+`queue`+`scheduled`
+  and in-script DO/Workflow classes (`apps/web/src/worker.ts`). Node 24, pnpm 10
+- **API**: Hono 4, zod contracts from `@gmgo/shared`, CASL. **DB**: Postgres 17 + pgvector —
+  Neon via Hyperdrive deployed, Docker locally; Drizzle over `postgres.js` (only driver), 1 client/request
+- **Auth**: arctic (Google, Microsoft) + magic link + dev-login; `__Host-session`; API keys; KV rate limit
+- **Async / realtime / AI**: Queues (`JOBS_QUEUE`), Workflows (`AGENT_RUN_WORKFLOW`), cron,
+  `NotificationsHub` DO `/ws`; R2 (`FILES`); Workers AI embeddings → pgvector; Anthropic chat; Langfuse
+- **UI**: React 18 + Vite, DaisyUI 5 / Tailwind v4, React Router 6, TanStack Query 5; served as `ASSETS`
+- **CLI**: commander + chalk + open; `tsx` in dev, `tsc` → `dist/cli.js` (bin `gmgo`)
+- **Tests**: vitest projects `api` · `api-isolated` · `ui` · `config` (web, real Postgres :5433); cli
+- **Lint**: Biome 2 at the root (single quotes, `asNeeded` semicolons, 100 cols)
 
-## Commands
+## Commands (all from the workspace root)
 
 ```bash
 pnpm dev:db:up && pnpm db:migrate   # Postgres :5432; db-roles(role) → migrations → db-roles(grants)
-pnpm seed                            # demo tenant/users/API key (Phase 1)
-pnpm dev                             # wrangler dev :3001 + vite :3000 (proxies /api /auth /ws /cubejs-api)
-pnpm dev:tunnel                      # same behind a cfld tunnel; public APP_URL passed to wrangler
-pnpm test:db:up && pnpm test         # test Postgres :5433; test:api / test:ui / test:config
-pnpm lint  ·  pnpm typecheck  ·  pnpm build        # biome · wrangler types + tsc · vite + dry-run deploy
-pnpm db:generate  ·  pnpm db:studio  ·  pnpm provision <staging|production>
+pnpm seed && pnpm dev               # demo tenant/users/key; wrangler dev :3001 + vite :3000
+pnpm cli login --server http://localhost:3001   # browser → ~/.gmgo/config.json; then pnpm cli whoami
+pnpm test:db:up && pnpm test        # every package; web loads apps/web/.env.test itself
+pnpm lint · pnpm typecheck · pnpm build         # whole workspace (biome · wrangler types+tsc · vite+dry-run)
+pnpm web <script>                   # any apps/web script: test:api, test:config, db:check…
+pnpm db:generate · pnpm db:studio · pnpm deploy[:staging] · pnpm provision <staging|production>
 ```
 
-No `RESEND_API_KEY` → magic-link URLs are logged by `wrangler dev`; zero credentials needed locally.
+`wrangler` lives in `apps/web`: `pnpm --filter @gmgo/web exec wrangler …`, never `pnpm exec wrangler`
+at the root. No `RESEND_API_KEY` → magic-link URLs are logged; zero credentials locally.
 
 ## Architecture
 
 ```
-src/
-├── worker.ts          # export default { fetch, queue, scheduled }; export { NotificationsHub, AgentRunWorkflow }
-├── config.ts          # loadConfig(env): zod over Cloudflare.Env, memoised per isolate; routes read c.get('config')
-├── shared/            # zod contracts shared by API and UI (src/shared/CLAUDE.md)
-├── permissions/       # CASL: owner/admin/member/support + isGlobalAdmin (src/permissions/CLAUDE.md)
-├── db/                # client.ts, tenant-scope.ts, schema/ one file per table (src/db/schema/CLAUDE.md)
-├── dashboards/        # drizzle-cube templates
-├── api/
-│   ├── index.ts       # Hono app + middleware order; ASSETS catch-all with /api|/auth 404 guard
-│   ├── queue.ts  scheduled.ts          # JOBS_QUEUE consumer; cron dispatcher on event.cron
-│   ├── middleware/    # config, logger, security, body-limit, cors, csrf, database, auth… (CLAUDE.md)
-│   ├── auth/  routes/  services/       # provider registry; thin controllers (routes/CLAUDE.md); (db, cfg, logger) services
-│   ├── cubes/  workflows/  durable-objects/  observability/
-│   └── utils/         # core/{errors,logger,ids}  routes/{router,validate,route-helpers,pagination}
-└── ui/                # React app (src/ui/CLAUDE.md)
+apps/web/          @gmgo/web — wrangler*.toml, worker-configuration.d.ts, .dev.vars(.example), .env.test,
+│                  docker-compose.*.yml, drizzle.config.ts, migrations/, scripts/, tests/{api,config,ui}
+│  src/worker.ts   export default { fetch, queue, scheduled }; export { NotificationsHub, AgentRunWorkflow }
+│  src/config.ts   loadConfig(env): zod over Cloudflare.Env; routes read c.get('config')
+│  src/permissions/  CASL owner/admin/member/support + isGlobalAdmin   src/db/  client, tenant-scope, schema/
+│  src/api/        index.ts (Hono app, middleware order, ASSETS catch-all) · queue.ts · scheduled.ts ·
+│                  middleware/ · auth/ · routes/ (thin) · services/ (db, cfg, logger) · utils/
+│  src/ui/         React app     (per-directory CLAUDE.md in permissions, db/schema, api, ui)
+apps/cli/          @gmgo/cli — src/cli.ts, commands/*, api.ts (only fetch site), config.ts, login.ts
+packages/shared/   @gmgo/shared — src/*.ts zod contracts, errors, pagination, permissions (CLAUDE.md)
 ```
+
+**`packages/shared` (contracts first).** Private, no build: `exports` map `@gmgo/shared/<module>` →
+`./src/<module>.ts`. A new or changed API surface **starts** with a zod schema there; the route
+`validate()`s with it, the UI and the CLI parse responses with it. Imports only `zod`, siblings,
+type-only `@casl/ability`.
+
+**`apps/cli`.** `login` opens `GET /auth/cli?redirect_uri=http://127.0.0.1:<port>/callback` (loopback
+only); the server mints a tenant API key `cli:<host>` and redirects with `?key=&tenant_id=&tenant_name=`;
+stored `0600` in `~/.gmgo/config.json` (`GMGO_API_KEY` / `GMGO_URL` override for CI). `logout`,
+`whoami`, `status`, `members|keys|activity list` (`--json`), `config`. Thin `commands/*` over `api.ts`;
+exit codes 0/1/2/3 (@.claude/rules/cli.md)
 
 ## Config model
 
 `[vars]` in both tomls, read via `loadConfig(env)`: `APP_ENV` (`development|staging|production`) ·
-`TENANCY_MODE` (`multi|single` — single hides org switching and auto-joins the one tenant; same
-schema) · `SIGNUP_MODE` (`open|invite_only|approval`, default `invite_only`;
-`BOOTSTRAP_ADMIN_EMAILS` seeds the first admin) · `TENANT_SCOPE_MODE` (`off|enforce`, RLS —
-@docs/RLS.md). Secrets: `.dev.vars` locally, `wrangler secret put` deployed, never in a toml.
+`TENANCY_MODE` (`multi|single` — single hides org switching, auto-joins the one tenant; same schema) ·
+`SIGNUP_MODE` (`open|invite_only|approval`, default `invite_only`; `BOOTSTRAP_ADMIN_EMAILS` seeds the
+first admin) · `TENANT_SCOPE_MODE` (`off|enforce`, @docs/RLS.md). Secrets: `apps/web/.dev.vars` /
+`wrangler secret put`, never in a toml.
 
-Rules (auto-loaded by path): @.claude/rules/api.md · database.md · ui.md · testing.md ·
-code-quality.md · cloudflare.md. Runbooks: @docs/DEPLOY.md (topology, release dance, rollback) ·
-@docs/RLS.md.
+Rules (auto-loaded by path): @.claude/rules/api.md · database.md · ui.md · cli.md · testing.md ·
+code-quality.md · cloudflare.md. Runbooks: @docs/DEPLOY.md · @docs/RLS.md
 
 ## Non-Negotiables
 
 - **Gate**: `pnpm lint && pnpm typecheck && pnpm test && pnpm build` pass before every commit
-- **Tenant isolation**: every domain query filters by `tenantId` from the auth context, and every
-  tenant table calls `tenantIsolation()` (RLS inert by default; `rls-coverage.test.ts` enforces)
-- **Contracts first**: zod schema in `src/shared/` → route `validate()` → UI parse, same schema; errors
-  are `{ error, statusCode, code?, details? }`
+- **Tenant isolation**: every domain query filters by `tenantId` from the auth context; every tenant
+  table calls `tenantIsolation()` (RLS inert; `rls-coverage.test.ts` enforces)
+- **Contracts first**: zod schema in `packages/shared/src/` → route `validate()` → UI/CLI parse, same
+  schema; errors are `{ error, statusCode, code?, details? }`
+- **shared is private** — never add `publishConfig` or publish it; never import `apps/web` from
+  `packages/shared` or `apps/cli`
 - **Routes enqueue, never run**: long work → `JOBS_QUEUE` or a Workflow; side effects in `waitUntil`;
   concurrency is a DB claim row, never an in-memory `Map`
 - **Two tomls, one shape**: bindings, class names, `compatibility_*`, `[limits]`, crons identical in
-  `wrangler.toml` and `wrangler.staging.toml`; account-scoped names differ (`wrangler-parity.test.ts`)
-- **Secrets** never in a toml or git; `.dev.vars` comments are not a place for other credentials;
-  `gitleaks` runs in CI
-- **No `process.env` and no Node-only APIs in `src/`** (`pg`, `ws`, `node:fs`, `pg-boss`…);
-  `pnpm build:api` catches them
-- **Docs in sync**: a behaviour change updates CONCEPTS / SETUP / DEPLOY / rules in the same change
+  `apps/web/wrangler{,.staging}.toml`; account-scoped names differ (`wrangler-parity.test.ts`)
+- **Secrets** never in a toml or git; `.dev.vars` comments hold no other credentials; the CLI never
+  prints a full key; `gitleaks` runs in CI
+- **No `process.env` / Node-only APIs in `apps/web/src/`** (`pg`, `ws`, `node:fs`…); `build:api` catches it
+- **Release = root version**: git tag == root `package.json` `version` (one tag ships web + cli)
+- **Docs in sync**: a behaviour change updates CONCEPTS / SETUP / DEPLOY / rules in the same PR

@@ -1,8 +1,8 @@
 ---
 globs:
-  - src/ui/**
-  - vite.config.ts
-  - postcss.config.js
+  - apps/web/src/ui/**
+  - apps/web/vite.config.ts
+  - apps/web/postcss.config.js
 ---
 
 # UI Patterns
@@ -13,17 +13,22 @@ Dev: Vite on :3000 proxies `/api`, `/auth`, `/ws`, `/cubejs-api`, `/mcp` to `wra
 
 ## Design tokens, not raw colours
 
-- Themes are two `@plugin "daisyui/theme"` blocks in `src/ui/index.css` (`gm-light` default,
+- Themes are two `@plugin "daisyui/theme"` blocks in `apps/web/src/ui/index.css` (`gm-light` default,
   `gm-dark` prefersdark). The brand variables at the top of that file are the ONLY place a hex
   appears. Components use DaisyUI semantic classes (`bg-base-200`, `text-primary`) or the kit's
   surface/border/text tokens (`--surface-panel`, `--border-subtle`, `.text-muted`); **never
   `bg-blue-50`-style palette utilities**
-- `tests/ui/contrast.test.ts` gates the emitted tokens (WCAG); if you change a colour, run it
+- `apps/web/tests/ui/contrast.test.ts` gates the emitted tokens (WCAG); if you change a colour, run it
 - `ThemeToggle` sets `data-theme` on `<html>`; the DOM attribute is the state, mirrored to
   `localStorage['theme']` and validated on read (`index.html` pre-hydration script)
-- Tailwind v4 content scanning is `@source` in `index.css`. If a dependency ships JSX (drizzle-cube
-  does), `@source` its dist — never grow a safelist from a stylesheet's needs. Safelist only classes
-  built from props (`alert-*`, `btn-*`), never from data
+- Tailwind v4 content scanning: `index.css` starts with `@import "tailwindcss" source(none)` and then
+  explicit `@source "./index.html"` / `@source "./**/*.{ts,tsx}"` — scoped to `apps/web/src/ui`.
+  **Lesson**: without `source(none)` v4 auto-detects sources from the package root and scans the whole
+  repo — docs, API code, tests, migrations — and DaisyUI emits a component for every stray word that
+  looks like a class (`card`, `table`, `menu` in a comment). Keep the scan scoped; if a dependency
+  ships JSX (drizzle-cube does), `@source` its dist explicitly — never grow a safelist from a
+  stylesheet's needs. Safelist (`@source inline(...)`) only classes built from props (`alert-*`,
+  `btn-*`), never from data
 - Fonts self-hosted via `@fontsource` imports in `main.tsx`
 
 ## Providers (06 §b)
@@ -36,7 +41,8 @@ Dev: Vite on :3000 proxies `/api`, `/auth`, `/ws`, `/cubejs-api`, `/mcp` to `wra
 
 - All HTTP via `lib/api-client.ts` (`api.get/post/patch/delete`): `credentials: 'include'`, typed
   `ApiError` from the shared envelope, `schema` option zod-parses the response with the same
-  `@shared` schema the server validates with. No `hono/client` RPC (D13)
+  `@gmgo/shared/<module>` schema the server validates with (import from `@gmgo/shared/...`, never a
+  relative path into `packages/`). No `hono/client` RPC (D13)
 - One hook file per resource in `hooks/use<Resource>.ts`; query keys from the central `queryKeys`
   factory in `lib/query-keys.ts` — never inline key arrays. `lib/queryClient.ts` holds the client
   and its global `QueryCache.onError`
@@ -72,7 +78,7 @@ Components subscribe to query state, never to the socket. Show `ConnectionBanner
 
 - Pages in `pages/` (lazy in `App.tsx`), reusable primitives in `components/shared/` — check there
   before writing a modal, empty state, toast, pagination control or section panel
-- Forms validate with the `@shared` schema the server uses; show `FieldError` per field
+- Forms validate with the `@gmgo/shared` schema the server uses; show `FieldError` per field
 - Icons: `@heroicons/react`. No new UI library without a stated reason in the PR
 - `EnvironmentBadge` + `useEnvironmentTitle` read `APP_ENV`/`RELEASE_VERSION` from `/auth/session`;
   staging must look different from production

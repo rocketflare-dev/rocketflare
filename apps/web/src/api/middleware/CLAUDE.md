@@ -13,7 +13,11 @@ ones set; reordering silently breaks something.
 | 6 | `cors.ts` | Function origin from `config.APP_URL` (+ dev origins outside production) | Must answer preflights BEFORE csrf can reject them |
 | 7 | `csrf.ts` | Origin/Referer/Sec-Fetch-Site check for cookie-authed unsafe methods → 403 `csrf_failed` | Cookie-only, no DB: cheap rejection before we open a client |
 | 8 | `database.ts` | `db` per request (D2), closed in `waitUntil` | Last global: first thing with real cost |
-| — | Phase 1: `auth.ts`, `permissions.ts`, `rate-limit.ts` | Applied PER MOUNT in `index.ts`, never inside route files | Public surface (health, OAuth callbacks, invite accept) is enumerable and small |
+| — | `auth.ts` | `authMiddleware` (cookie `__Host-session` OR `Authorization: Bearer <api key>` → `auth: AuthContext`; ONE LATERAL query; sliding expiry via `waitUntil`) and `globalAdminMiddleware` (cookie + `isGlobalAdmin`, tenant-free) | Applied PER MOUNT in `index.ts`, never inside route files: the public surface (health, `/auth/*`, `/api/invite/:token`) is enumerable and small |
+| — | `permissions.ts` | `guardPermission` / `can` / `guardOwner` / `isAdminLevel` over `auth.ability` | Called inside handlers after `withAuthAndDb(c)` |
+| — | `rate-limit.ts` | `authRateLimit` (KV sliding window, 10/min/IP, no-op without `RATE_LIMIT_KV`), `operationLock(kv, key, fn)` per-tenant mutex | Mounted on login-shaped routes in `routes/auth/index.ts` and on invite accept in `index.ts` |
+
+Auth codes (envelopes): 401 `unauthorized` · 403 `blocked` · 403 `tenant_suspended` (middleware) · 403 `no_tenant` / `pending_approval` (thrown by `withAuthAndDb` when a valid session has no membership, so tenant-free routes using `withAuth` keep working) · 404 `tenancy_mode_single` (`requireMultiTenant`).
 
 Constraints:
 - Nothing in `src/` reads `process.env` or imports `node:*`. Bindings live on `c.env`; config on `c.get('config')`.

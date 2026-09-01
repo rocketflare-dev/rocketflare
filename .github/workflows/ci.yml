@@ -3,6 +3,12 @@ name: CI
 # The quality gate, in ONE place. It runs on every pull request, and deploy.yml calls this same
 # file (`workflow_call`) before deploying a tag to staging, rather than keeping a second copy of
 # the job — a gate that drifts between PR and deploy is worse than no PR gate at all.
+#
+# Workspace note: the repo is a pnpm workspace (apps/web, apps/cli, packages/shared). Every step
+# runs at the repository ROOT; the root scripts fan out with `pnpm -r` / `--filter`, and pnpm runs
+# each package's script with that package as its cwd. No `working-directory` is needed anywhere:
+# the web tests load `apps/web/.env.test` through their own `dotenv -e .env.test` script, wrangler
+# resolves `wrangler.toml` / `[assets] directory` inside apps/web, and the CLI builds in apps/cli.
 on:
   pull_request:
     branches: [main]
@@ -32,17 +38,18 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0 # full history for the gitleaks scan below
-      # pnpm version comes from `packageManager` in package.json (pnpm 10). Must precede
+      # pnpm version comes from `packageManager` in the root package.json (pnpm 10). Must precede
       # setup-node so `cache: pnpm` can find the store.
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
           node-version-file: .nvmrc
           cache: pnpm
+      # One install for the whole workspace; packages/shared is linked as TypeScript source.
       - run: pnpm install --frozen-lockfile
 
-      # Match docker-compose.test.yml's `-c max_connections=300`. A `services:` container takes
-      # no command arg, so the setting is applied and the container restarted instead. At the
+      # Match apps/web/docker-compose.test.yml's `-c max_connections=300`. A `services:` container
+      # takes no command arg, so the setting is applied and the container restarted instead. At the
       # 100 default the suite flaked ~1 in 8 with `53300 sorry, too many clients already`:
       # vitest runs up to 6 forks and each holds its own postgres.js pool.
       - name: Raise the test database connection limit
@@ -65,21 +72,23 @@ jobs:
             | tar -xz -C "$RUNNER_TEMP" gitleaks
           "$RUNNER_TEMP/gitleaks" git --redact --exit-code 1 --verbose .
 
+      # Biome runs once over the whole workspace from the root biome.json.
       - run: pnpm lint
-      # `pnpm typecheck` = `wrangler types` + `tsc`. The typegen file is committed (D22) so a
-      # fresh clone typechecks without wrangler auth; if regenerating it changes anything, a
-      # binding or var was edited without committing the regenerated file.
+      # `pnpm typecheck` = `pnpm -r typecheck`: web runs `wrangler types` + `tsc`, cli and shared run
+      # `tsc`. The web typegen file is committed (D22) so a fresh clone typechecks without wrangler
+      # auth; if regenerating it changes anything, a binding or var was edited without committing
+      # the regenerated file.
       - run: pnpm typecheck
-      - name: worker-configuration.d.ts is up to date
-        run: git diff --exit-code -- worker-configuration.d.ts
+      - name: apps/web/worker-configuration.d.ts is up to date
+        run: git diff --exit-code -- apps/web/worker-configuration.d.ts
 
-      # .env.test points at localhost:5433 with dummy secrets (committed). tests/setup.ts runs
-      # db-roles --phase=role → migrate → --phase=grants, truncates, seeds. TENANT_SCOPE_MODE=off:
-      # predicates-only; policies exist and rls-coverage.test.ts checks every tenant table has one.
+      # `pnpm -r test`. Web: apps/web/.env.test points at localhost:5433 with dummy secrets
+      # (committed); apps/web/tests/setup.ts runs db-roles --phase=role → migrate → --phase=grants,
+      # truncates, seeds. TENANT_SCOPE_MODE=off: predicates-only; policies exist and
+      # rls-coverage.test.ts checks every tenant table has one. CLI: plain vitest, no database.
       - run: pnpm test
 
-      # `build:ui` then `build:api` (not `build`, which re-runs the typecheck above). The dry-run
-      # `wrangler deploy` needs dist/ui for `[assets]`, and it is what catches a Node-only import
-      # that tsc cannot see.
-      - run: pnpm build:ui
-      - run: pnpm build:api
+      # `pnpm -r build`: web = typecheck (repeated, cheap) + `vite build` + dry-run `wrangler deploy`
+      # (needs dist/ui for `[assets]`; it is what catches a Node-only import that tsc cannot see);
+      # cli = `tsc -p tsconfig.build.json` → apps/cli/dist/cli.js; shared has nothing to build.
+      - run: pnpm build

@@ -5,15 +5,29 @@
  * without dragging Worker-only classes into Node.
  */
 
+import { authMiddleware, globalAdminMiddleware } from './middleware/auth'
 import { jsonBodyLimit } from './middleware/body-limit'
 import { configMiddleware } from './middleware/config'
 import { corsMiddleware } from './middleware/cors'
 import { csrfProtection } from './middleware/csrf'
 import { databaseMiddleware } from './middleware/database'
 import { errorHandler, notFoundBody, notFoundHandler } from './middleware/error-handler'
+import { authRateLimit } from './middleware/rate-limit'
 import { requestIdMiddleware, requestLogger } from './middleware/request-logger'
 import { securityHeaders } from './middleware/security-headers'
+import { accessRequestsRouter } from './routes/access-requests'
+import { activityRouter } from './routes/activity'
+import { adminRouter } from './routes/admin'
+import { authRouter } from './routes/auth/index'
 import { healthRouter } from './routes/health'
+import { invitationsRouter } from './routes/invitations'
+import { inviteRouter } from './routes/invite'
+import { keysRouter } from './routes/keys'
+import { meRouter } from './routes/me'
+import { membersRouter } from './routes/members'
+import { notificationsRouter } from './routes/notifications'
+import { tenantRouter } from './routes/tenant'
+import { tenantsRouter } from './routes/tenants'
 import { createRouter } from './utils/routes/router'
 
 /**
@@ -49,9 +63,30 @@ app.use('*', csrfProtection)
 // 8. Per-request DB client — last of the globals because it is the first thing with real cost.
 app.use('*', databaseMiddleware)
 
-// 9. Mounts. Public probes first; Phase 1 adds `/auth`, `/api/invite`, `/api/admin/*`
-//    (globalAdminMiddleware) and every other `/api/<prefix>/*` with `authMiddleware` AT THE MOUNT.
+// 9. Mounts — auth is applied PER MOUNT so the public surface is enumerable: health, /auth/*,
+//    /api/invite/:token (details; accept resolves the cookie itself). `/api/admin/*` is the only
+//    tenant-free cross-tenant path (globalAdminMiddleware); everything else is `authMiddleware`.
 app.route('/api', healthRouter)
+app.route('/auth', authRouter)
+app.use('/api/invite/:token/accept', authRateLimit)
+app.route('/api/invite', inviteRouter)
+app.use('/api/admin/*', globalAdminMiddleware)
+app.route('/api/admin', adminRouter)
+for (const [prefix, router] of [
+  ['/api/me', meRouter],
+  ['/api/tenant', tenantRouter],
+  ['/api/tenants', tenantsRouter],
+  ['/api/members', membersRouter],
+  ['/api/invitations', invitationsRouter],
+  ['/api/keys', keysRouter],
+  ['/api/notifications', notificationsRouter],
+  ['/api/activity', activityRouter],
+  ['/api/access-requests', accessRequestsRouter],
+] as const) {
+  app.use(prefix, authMiddleware)
+  app.use(`${prefix}/*`, authMiddleware)
+  app.route(prefix, router)
+}
 
 // 10. SPA via Workers Static Assets. Hashed files are served by the assets layer before the
 //     Worker runs; only navigations reach here. `not_found_handling = "single-page-application"`

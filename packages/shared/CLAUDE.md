@@ -1,4 +1,4 @@
-# Shared Contracts (`src/shared/`)
+# Shared Contracts (`packages/shared` — `@gmgo/shared`, private)
 
 Zod schemas + inferred types used by BOTH the API and the UI (D13). Contracts first: a new or
 changed API surface starts here, then the route `validate()`s with it, then the UI parses the
@@ -22,6 +22,6 @@ response with the same schema. `pnpm test:config` covers the pure parts.
 ## Rules
 
 - Imports: `zod`, sibling files, and TYPE-only imports from `@casl/ability`. NEVER import from
-  `src/api`, `src/db` or `src/ui` — this directory bundles into the browser
+  `apps/web/src/api`, `apps/web/src/db`, `apps/web/src/ui` or `apps/cli` — this package bundles into the browser and the CLI
 - `tenantRoleSchema` (assignable) on every input; `membershipRoleSchema` (+`support`) on outputs only
 - Server code imports via `@gmgo/shared/*`; UI too. Re-export every file from `index.ts`

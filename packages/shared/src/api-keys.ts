@@ -3,8 +3,10 @@
  * every list/read uses `apiKeySchema`, which carries only the prefix.
  */
 import { z } from 'zod'
+import { paginatedResponse } from './pagination'
 
-export const apiKeyScopeSchema = z.enum(['read', 'write'])
+/** `*` = every scope — minted only by the CLI handoff (`GET /auth/cli`, D26). */
+export const apiKeyScopeSchema = z.enum(['read', 'write', '*'])
 export type ApiKeyScope = z.infer<typeof apiKeyScopeSchema>
 
 export const apiKeySchema = z.object({
@@ -33,3 +35,7 @@ export const createApiKeyResponseSchema = apiKeySchema.extend({
   key: z.string(),
 })
 export type CreateApiKeyResponse = z.infer<typeof createApiKeyResponseSchema>
+
+/** `GET /api/keys` — paginated like every list (D13). */
+export const apiKeysListResponseSchema = paginatedResponse(apiKeySchema)
+export type ApiKeysListResponse = z.infer<typeof apiKeysListResponseSchema>

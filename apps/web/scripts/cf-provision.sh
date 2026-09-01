@@ -3,14 +3,21 @@
 # into the matching wrangler toml. Idempotent-ish: existing resources are detected by name and
 # reused rather than duplicated.
 #
-#   NEON_DATABASE_URL='postgresql://…' bash scripts/cf-provision.sh <staging|production> [app-name]
+#   NEON_DATABASE_URL='postgresql://…' pnpm provision <staging|production> [app-name]      # from the repo root
+#   NEON_DATABASE_URL='postgresql://…' bash apps/web/scripts/cf-provision.sh <staging|production>
 #
 #   <staging|production>  which toml the ids belong to (wrangler.staging.toml / wrangler.toml)
 #   [app-name]            worker base name; defaults to `name` in wrangler.toml (gmgo-starter)
 #
-# Requires: pnpm (wrangler is a devDependency, run via `pnpm exec`), an authenticated wrangler
-# session (`pnpm exec wrangler login`), and NEON_DATABASE_URL — the DIRECT (non `-pooler`) host of
-# that environment's Neon branch. Hyperdrive pools itself; see docs/DEPLOY.md → Neon.
+# Working directory: this file lives in apps/web/scripts inside the pnpm workspace. The root
+# `pnpm provision` script runs it with apps/web as cwd, and the script ALSO `cd`s to apps/web itself
+# (resolved from its own location), so every relative path below — `wrangler.toml`,
+# `wrangler.staging.toml`, `pnpm exec wrangler` (the apps/web devDependency) — works whether it is
+# invoked from the root, from apps/web, or by absolute path.
+#
+# Requires: pnpm, an authenticated wrangler session (`pnpm --filter @gmgo/web exec wrangler login`
+# from the root), and NEON_DATABASE_URL — the DIRECT (non `-pooler`) host of that environment's
+# Neon branch. Hyperdrive pools itself; see docs/DEPLOY.md → Neon.
 #
 # Creates (Phase 0):   Hyperdrive config   <app>-<env>            → [[hyperdrive]] id
 #                      KV namespace        <APP>_RATE_LIMIT[_STAGING] → [[kv_namespaces]] id
@@ -30,8 +37,9 @@ case "$ENV_NAME" in
   *) echo "usage: NEON_DATABASE_URL=… bash $0 <staging|production> [app-name]" >&2; exit 2 ;;
 esac
 
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-cd "$ROOT"
+# apps/web — the package that owns the tomls and the wrangler devDependency (NOT the workspace root).
+WEB_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$WEB_DIR"
 
 APP="${2:-$(sed -n 's/^name *= *"\([^"]*\)".*/\1/p' wrangler.toml | head -1)}"
 if [ -z "$APP" ]; then echo "could not read \`name\` from wrangler.toml; pass [app-name]" >&2; exit 2; fi
@@ -53,7 +61,7 @@ wr() { pnpm exec wrangler "$@"; }
 # ---- preflight ------------------------------------------------------------------------------
 if ! command -v pnpm >/dev/null 2>&1; then echo "pnpm not found (corepack enable)" >&2; exit 1; fi
 if ! wr whoami >/dev/null 2>&1; then
-  echo "wrangler is not authenticated. Run: pnpm exec wrangler login   (or export CLOUDFLARE_API_TOKEN)" >&2
+  echo "wrangler is not authenticated. Run: pnpm --filter @gmgo/web exec wrangler login   (or export CLOUDFLARE_API_TOKEN)" >&2
   exit 1
 fi
 if [ -z "${NEON_DATABASE_URL:-}" ]; then
@@ -108,16 +116,16 @@ fi
 # ---- output ---------------------------------------------------------------------------------
 cat <<EOF
 
-== Paste into ${TOML} (or run the sed lines) ==
+== Paste into apps/web/${TOML} (or run the sed line from apps/web) ==
 
 [[hyperdrive]]  binding = "HYPERDRIVE"      id = "${HD_ID}"
 [[kv_namespaces]] binding = "RATE_LIMIT_KV" id = "${KV_ID}"
 
   sed -i.bak 's|<HYPERDRIVE${ID_TAG}_ID>|${HD_ID}|; s|<KV_RATE_LIMIT${ID_TAG}_ID>|${KV_ID}|' ${TOML} && rm ${TOML}.bak
 
-Then:
-  REQUIRE_PROVISIONED=1 pnpm test:config     # parity test must pass with no <PLACEHOLDER> left
-  git diff ${TOML}                            # review; ids are not secrets and are committed
+Then (from the repo root):
+  REQUIRE_PROVISIONED=1 pnpm --filter @gmgo/web test:config   # parity test must pass with no <PLACEHOLDER> left
+  git diff apps/web/${TOML}                                    # review; ids are not secrets and are committed
 Later-phase names for this environment (declare them in ${TOML} when the phase lands):
   queue      = "${QUEUE_NAME}"
   bucket     = "${BUCKET_NAME}"

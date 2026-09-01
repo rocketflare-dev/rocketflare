@@ -1,10 +1,10 @@
 import {
   ChevronLeftIcon,
   ChevronRightIcon,
+  ClockIcon,
   Cog6ToothIcon,
   HomeIcon,
   ShieldCheckIcon,
-  UserCircleIcon,
 } from '@heroicons/react/24/outline'
 import type { ComponentType, ReactNode } from 'react'
 import { Link, NavLink, useLocation } from 'react-router-dom'
@@ -31,8 +31,8 @@ export interface NavGroup {
 export type NavConfig = (NavItem | NavGroup)[]
 
 /**
- * The kit's navigation. Phase 1 uncomments Settings / Profile / Admin as the pages land;
- * apps add their own groups above "Organisation".
+ * The kit's navigation (D10: each `guard` is the SAME flag the route uses). Profile and
+ * Notifications live in the header `UserMenu`; apps add their own groups above "Organisation".
  */
 export const navigationConfig: NavConfig = [
   {
@@ -40,11 +40,10 @@ export const navigationConfig: NavConfig = [
   },
   {
     label: 'Organisation',
-    items: [{ to: '/settings', label: 'Settings', icon: Cog6ToothIcon, guard: 'admin' }],
-  },
-  {
-    label: 'Account',
-    items: [{ to: '/profile', label: 'Profile', icon: UserCircleIcon }],
+    items: [
+      { to: '/settings', label: 'Settings', icon: Cog6ToothIcon, guard: 'admin' },
+      { to: '/activity', label: 'Activity', icon: ClockIcon, guard: 'admin' },
+    ],
   },
   {
     label: 'Platform',

@@ -4,6 +4,7 @@
  * request. Every factory suffixes `uniqueId()` so parallel files never collide, and rows are left
  * behind on purpose (see .claude/rules/testing.md — no per-file truncation).
  */
+import { SESSION_COOKIE_NAME } from '@/api/auth/cookies'
 import { generateApiKey, hashToken } from '@/api/utils/core/hash'
 import { randomToken } from '@/api/utils/core/ids'
 import type { Database } from '@/db/client'
@@ -19,11 +20,8 @@ import {
   users,
 } from '@/db/schema'
 
-/**
- * The session cookie's name (CLAUDE.md: `__Host-session`). The auth agent should export this
- * from the auth module and point this constant at it; until then it is pinned here.
- */
-export const SESSION_COOKIE_NAME = '__Host-session'
+/** The session cookie's name — the auth module's export, re-exported for test convenience. */
+export { SESSION_COOKIE_NAME }
 
 /** Unique suffix for parallel-safe fixtures. */
 export function uniqueId(): string {

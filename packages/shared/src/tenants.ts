@@ -91,6 +91,12 @@ export const updateTenantRequestSchema = z
   })
 export type UpdateTenantRequest = z.infer<typeof updateTenantRequestSchema>
 
+/** `DELETE /api/tenant` — the caller retypes the slug; owner only (D10, D25). */
+export const deleteTenantRequestSchema = z.object({
+  confirm: z.string().trim().min(1),
+})
+export type DeleteTenantRequest = z.infer<typeof deleteTenantRequestSchema>
+
 // ---- Members ------------------------------------------------------------------------------
 
 export const memberSchema = z.object({
@@ -143,8 +149,22 @@ export const invitationSchema = z.object({
   acceptedAt: z.coerce.date().nullable(),
   revokedAt: z.coerce.date().nullable(),
   createdAt: z.coerce.date(),
+  /** Resolved tenant name — present on the cross-tenant `GET /api/invitations/pending` list. */
+  tenantName: z.string().optional(),
 })
 export type Invitation = z.infer<typeof invitationSchema>
+
+/** One row of `POST /api/invitations/bulk`'s answer. */
+export const bulkInviteResultSchema = z.object({
+  email: z.string().email(),
+  status: z.enum(['invited', 'skipped', 'failed']),
+  reason: z.string().optional(),
+  invitationId: z.string().uuid().optional(),
+})
+export type BulkInviteResult = z.infer<typeof bulkInviteResultSchema>
+
+export const bulkInviteResponseSchema = z.object({ results: z.array(bulkInviteResultSchema) })
+export type BulkInviteResponse = z.infer<typeof bulkInviteResponseSchema>
 
 /** What the PUBLIC accept page may see for a token — no ids, no other members. */
 export const invitationDetailsSchema = z.object({

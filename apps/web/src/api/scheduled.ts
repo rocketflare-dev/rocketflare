@@ -8,8 +8,12 @@
  *   curl "http://localhost:3001/cdn-cgi/local/scheduled?cron=0+4+*+*+*"
  * (`wrangler dev --test-scheduled` additionally exposes the same thing at `/__scheduled`).
  */
+import { sql } from 'drizzle-orm'
 import { type AppConfig, loadConfig } from '../config'
 import { createDatabase, type Database, resolveDatabaseUrl } from '../db/client'
+import { userSessions } from '../db/schema'
+import { pruneMagicLinkTokens } from './auth/magic-link'
+import { pruneInvitations } from './services/invitations'
 import type { AppBindings } from './types'
 import { type Logger, loggerFor } from './utils/core/logger'
 
@@ -35,14 +39,25 @@ export interface TaskReport {
   error?: unknown
 }
 
-/**
- * Nightly prune of expired rows (sessions, magic links, invitations). Phase 0: no tables yet,
- * so it only logs. Phase 1 adds `DELETE ... WHERE expires_at < now()` per table here.
- */
+/** Expired sessions, expired/consumed magic links, expired invitations older than 30 days. */
+export async function runPruneExpired(db: Database) {
+  const sessions = (
+    await db
+      .delete(userSessions)
+      .where(sql`${userSessions.expiresAt} < now()`)
+      .returning({ id: userSessions.id })
+  ).length
+  const magicLinks = await pruneMagicLinkTokens(db)
+  const invitations = await pruneInvitations(db)
+  return { sessions, magicLinks, invitations }
+}
+
+/** Nightly prune of expired rows (D12): counts are logged so the run is auditable. */
 export const pruneExpired: ScheduledTask = {
   name: 'pruneExpired',
-  async run({ logger }) {
-    logger.info('pruneExpired: nothing to prune yet (Phase 1 adds session/magic-link tables)')
+  async run({ db, logger }) {
+    const counts = await runPruneExpired(db)
+    logger.info(counts, 'pruneExpired: removed expired sessions, magic links and invitations')
   },
 }
 

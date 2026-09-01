@@ -4,7 +4,7 @@ The reference for someone about to change something: what each subsystem does, t
 protects, and the decision behind it (recorded as D-numbers in `docs/analysis/00-SYNTHESIS.md`).
 
 This file is deliberately **not**: setup (`SETUP.md`), Cloudflare topology (`docs/DEPLOY.md`), code
-conventions (`.claude/rules/*.md`, `src/**/CLAUDE.md`), or the RLS runbook (`docs/RLS.md`). Every
+conventions (`.claude/rules/*.md`, `apps/web/src/**/CLAUDE.md`, `packages/shared/CLAUDE.md`), or the RLS runbook (`docs/RLS.md`). Every
 section ends with **Known gaps**; sections for phases not yet built say so.
 
 | § | Section | Status |
@@ -19,11 +19,18 @@ section ends with **Known gaps**; sections for phases not yet built say so.
 | 8 | [Analytics](#8-analytics) | Phase 4 |
 | 9 | [AI layer](#9-ai-layer) | Phase 3 |
 | 10 | [Deployment](#10-deployment) | Phase 0 / 5 |
-| 11 | [Definition of done](#11-definition-of-done-for-the-kit) | |
+| 11 | [CLI](#11-cli) | Phase 1 |
+| 12 | [Shared package](#12-shared-package) | Phase 0 |
+| 13 | [Definition of done](#13-definition-of-done-for-the-kit) | |
 
 Provenance: extracted from two internal GM applications — one supplied the structure, docs system,
 auth/tenancy/AI layer; the other the Cloudflare substrate and analytics. Nine subsystem analyses
 (`docs/analysis/01–09`) and the synthesis are the decision record.
+
+**Layout (D26).** The repo is a pnpm workspace: `apps/web` (`@gmgo/web` — the Worker: Hono API +
+React UI, everything in §§1–10), `apps/cli` (`@gmgo/cli`, §11) and `packages/shared` (`@gmgo/shared`,
+§12 — the zod contracts all three consume). Root `package.json` scripts delegate with `pnpm -r` /
+`--filter`; paths below are workspace-relative.
 
 ---
 
@@ -83,6 +90,10 @@ inserts a real `support` membership; `authMiddleware` keeps its single "must be 
 context; every tenant table also carries an RLS policy that is not enforced until `TENANT_SCOPE_MODE
 = enforce` — see §4 and `docs/RLS.md`.
 
+**The CLI is a tenant API key.** `gmgo login` ends with a tenant-scoped key (§11), so every CLI call
+is already inside one tenant and goes through the same `authMiddleware` Bearer path and CASL
+abilities as the UI; in `single` mode the tenant-select step of the login handoff is skipped.
+
 **Known gaps / not built yet:** no audit log of admin actions beyond `activity_events`; the domain
 allow-list is new code with no production history; feature-flag source for `access` is undecided
 (inject `features`, keep it open); personal API keys are not in v1 (tenant keys only).
@@ -103,7 +114,7 @@ fresh clone can log in with nothing configured. Dev-login (`/auth/dev-login`) ex
 production.
 
 **OAuth is a registry, not a copy-paste.** One generic `/auth/:provider` + `/auth/:provider/callback`
-router over `ProviderDefinition`s (`src/api/auth/providers/`), v1 = Google + Microsoft via arctic
+router over `ProviderDefinition`s (`apps/web/src/api/auth/providers/`), v1 = Google + Microsoft via arctic
 (D11). Redirect URIs derive from `APP_URL` — no `*_REDIRECT_URI` variables. A single `oauth_state`
 cookie carries the provider and PKCE state. Account linking is by verified email, and
 `emailVerified !== false` is enforced for every provider. Tokens are AES-GCM encrypted at rest with
@@ -117,20 +128,32 @@ ports) with Bearer requests exempt; KV sliding-window rate limit on login routes
 approximate by design, no-op when the binding is absent); the same KV backs `operationLock` for
 per-tenant single-flight operations.
 
-**Known gaps / not built yet:** provider token refresh cron is optional and not in v1; CLI/device
-auth flow is documented, not shipped; rate limiting is approximate (Workers Rate Limiting binding
-is the exact alternative); session revocation UI beyond "log out everywhere" is absent.
+**CLI login handoff (D26).** `GET /auth/cli?redirect_uri=http://127.0.0.1:<port>/callback&hostname=`
+(`apps/web/src/api/routes/auth/cli.ts`) is the one browser-to-terminal bridge. `redirect_uri` must
+be exactly `http://127.0.0.1:<port>/callback` or `http://localhost:<port>/callback` — any port, no
+query or fragment; anything else is a 400 `invalid_redirect_uri` — so the key never leaves the
+machine. Without a session the route bounces to `/login?returnUrl=`, without a tenant to
+`/select-tenant?returnUrl=` (skipped in `TENANCY_MODE=single`), then mints a tenant API key named
+`cli:<sanitised hostname>` with scopes `['*']` through the same helper as `POST /api/keys` (so it is
+visible and revocable in Settings → API keys like any other, and logged as `api_key.created` via
+`cli`) and 302s to `redirect_uri?key=&tenant_id=&tenant_name=`. The key is shown exactly once; there
+is no device-code flow and no refresh — revoke and log in again.
+
+**Known gaps / not built yet:** provider token refresh cron is optional and not in v1; rate limiting
+is approximate (Workers Rate Limiting binding is the exact alternative); session revocation UI
+beyond "log out everywhere" is absent; the CLI key is not distinguished from other tenant keys
+beyond its `cli:` name prefix (no separate scope).
 
 ## 3. API shell
 
 **Status: built (Phase 0).**
 
-**One Worker, one app, one env.** `src/worker.ts` exports `{ fetch, queue, scheduled }` and the DO
-and Workflow classes; `src/api/index.ts` exports the Hono `app` only so tests drive it with
+**One Worker, one app, one env.** `apps/web/src/worker.ts` exports `{ fetch, queue, scheduled }` and the DO
+and Workflow classes; `apps/web/src/api/index.ts` exports the Hono `app` only so tests drive it with
 `app.request(req, env, ctx)` (D5). `loadConfig(env)` (D3) validates `Cloudflare.Env` with zod once
 per isolate (memoised by env identity, so a `.dev.vars` edit under `wrangler dev` re-validates) and
 is called at the top of all three entry points. Routes read `c.get('config')`, never `c.env`, and
-`process.env` is forbidden in `src/`. `APP_ENV` replaces `NODE_ENV` (D4).
+`process.env` is forbidden in `apps/web/src/`. `APP_ENV` replaces `NODE_ENV` (D4).
 
 **Middleware order and why** (04 §10): `onError` first so config failures get the envelope →
 request logger (request id for everything) → config → security headers → body limit → CORS (before
@@ -139,9 +162,9 @@ cost) → optional tracing flush → mounts. Auth is per-mount because the publi
 OAuth callbacks, invite accept) is small and enumerable. The ASSETS catch-all serves the SPA and
 404s `/api|/auth|/cubejs-api|/mcp` so a missing route never returns `index.html`.
 
-**Contracts (D13).** zod schemas in `src/shared/` are the API contract; the server validates with
-them, the UI parses responses with them. No `hono/client` RPC (it drags the server type graph into
-the browser). Error envelope `{ error, statusCode, code?, details? }` everywhere including validation
+**Contracts (D13, D26).** zod schemas in `packages/shared/src/` (`@gmgo/shared`, §12) are the API
+contract; the server validates with them, the UI and the CLI parse responses with them. No
+`hono/client` RPC (it drags the server type graph into the browser). Error envelope `{ error, statusCode, code?, details? }` everywhere including validation
 failures (the `validate()` wrapper throws `ValidationError` instead of zValidator's raw body); success bodies are bare. Pagination is `{ page, pageSize, total, totalPages }`.
 `createRouter()` replaces bare `new Hono()` and there is no `declare module 'hono'` augmentation.
 
@@ -242,12 +265,14 @@ locally, so there is no filesystem adapter.
 
 **Status: shell Phase 0; pages Phase 1.**
 
-**Design tokens, not raw colours.** `src/ui/index.css` holds two DaisyUI themes (`gm-light`,
+**Design tokens, not raw colours.** `apps/web/src/ui/index.css` holds two DaisyUI themes (`gm-light`,
 `gm-dark`) whose brand hexes live in one header block, plus semantic surface/border/text tokens,
 shape/motion tokens, a base layer (focus ring, reduced motion, tabular numerals) and component
-primitives (`.surface-panel`, `.data-table`, `.status-badge`). `tests/ui/contrast.test.ts` gates the
-emitted tokens; the palette *pipeline* is documented, not shipped (D20). Tailwind v4 scans via
-`@source`; the safelist exists only for classes built from props.
+primitives (`.surface-panel`, `.data-table`, `.status-badge`). `apps/web/tests/ui/contrast.test.ts` gates the
+emitted tokens; the palette *pipeline* is documented, not shipped (D20). Tailwind v4 scanning is
+opted out globally (`@import "tailwindcss" source(none)`) and re-enabled with explicit `@source`
+lines scoped to `apps/web/src/ui` — auto-detection scanned the whole repo (docs, API code) and
+DaisyUI emitted components for stray words; the safelist exists only for classes built from props.
 
 **Providers, in order** (06 §b): `ErrorBoundary` → `QueryClientProvider` → `AuthProvider`
 (`GET /auth/session`, zod-parsed, tenant selection) → `AbilityProvider` (CASL from
@@ -275,7 +300,7 @@ adapter is created per request at `/cubejs-api` and `/mcp`, both mounted behind 
 added to the ASSETS 404 guard (D19). `extractSecurityContext` (one copy) reads `c.get('auth')` and
 every cube filters on `ctx.securityContext.tenantId` — directly (`TenantUsers`, fact tables) or
 via a junction subquery for global tables (`Users`). **This is convention, not enforcement**, so
-`tests/api/cubes/cube-isolation.test.ts` (two tenants, same query, disjoint rows) is mandatory.
+`apps/web/tests/api/cubes/cube-isolation.test.ts` (two tenants, same query, disjoint rows) is mandatory.
 
 **Ship set.** Cubes `Users` + `TenantUsers` (both scoping patterns), `ActivityEvents` (event stream
 over the generic `activity_events` table) and `TenantActivityDaily` over one fact table
@@ -285,7 +310,7 @@ source). One dashboard template, `tenant-overview`; `analytics_pages` are create
 from templates with "reset to template". drizzle-cube React components; **recharts only**.
 
 **Frozen measure names.** Stored dashboards reference `Cube.measure` strings in JSONB. Renaming a
-measure silently breaks every saved dashboard — `tests/dashboards/all-templates.test.ts` checks
+measure silently breaks every saved dashboard — `apps/web/tests/dashboards/all-templates.test.ts` checks
 templates structurally, and reset-to-template is the user-facing repair.
 
 **Known gaps / not built yet:** cube access is authentication + tenant scope only (no per-cube CASL
@@ -336,24 +361,105 @@ reconnect for run progress.
 
 **Status: tomls, CI, deploy workflow and scripts built (Phase 0); first real deploy in Phase 5.**
 
-Two standalone tomls (D6) — `wrangler.toml` production, `wrangler.staging.toml` — kept identical in
-everything code can observe by `tests/config/wrangler-parity.test.ts`, with account-scoped names
-suffixed `-staging`. Neon: one project, a branch and a role per environment, Hyperdrive per
-environment on the **direct** host. The release dance: tag `X.Y.Z` → staging; publish the GitHub
-Release → production, shipping the exact validated tag with `RELEASE_VERSION` injected. `ci.yml`
-is the single gate (lint, typecheck + typegen diff, tests on real Postgres, `build:ui`,
-`build:api`, gitleaks) and is *called* by `deploy.yml`, not copied. Full reference: `docs/DEPLOY.md`.
+Two standalone tomls (D6) in `apps/web` — `wrangler.toml` production, `wrangler.staging.toml` —
+kept identical in everything code can observe by `apps/web/tests/config/wrangler-parity.test.ts`,
+with account-scoped names suffixed `-staging`. Neon: one project, a branch and a role per
+environment, Hyperdrive per environment on the **direct** host. The release dance: tag `X.Y.Z` →
+staging; publish the GitHub Release → production, shipping the exact validated tag with
+`RELEASE_VERSION` injected. **The tag must equal the root `package.json` version** — one tag ships
+web and cli together; `apps/*` versions are informational. `ci.yml` is the single gate, run at the
+workspace root (`pnpm lint`, `pnpm typecheck` + typegen diff of `apps/web/worker-configuration.d.ts`,
+`pnpm test` on real Postgres for web plus the cli suite, `pnpm build`, gitleaks) and is *called* by
+`deploy.yml`, not copied. Only `apps/web` deploys; `wrangler` runs inside that package
+(`pnpm --filter @gmgo/web exec wrangler …`). The CLI is built as a compile check and distributed via
+the repo — publishing it is an app decision; the package is private by default. Full reference:
+`docs/DEPLOY.md`.
 
-**Known gaps / not built yet:** `scripts/release.sh` (bump-commit-tag helper) is optional and not
-shipped; no per-PR previews; a CI check that every `src/**/CLAUDE.md` exists and every `docs/*.md`
-is linked is proposed, not implemented.
+**Known gaps / not built yet:** a root `release` script (bump-commit-tag helper) is optional and not
+shipped; no per-PR previews; a CI check that every `apps/web/src/**/CLAUDE.md` exists and every
+`docs/*.md` is linked is proposed, not implemented; no CLI publishing pipeline.
 
-## 11. Definition of done for the kit
+## 11. CLI
+
+**Status: in progress (Phase 1).** Package `apps/cli` (`@gmgo/cli`), bin `gmgo`. Dev: `pnpm cli
+<command>` from the root (`tsx`); build: `tsc` → `apps/cli/dist/cli.js`. Stack: `commander` +
+`chalk` + `open` (D26). Conventions: `.claude/rules/cli.md`.
+
+**Every GM app wants a CLI, and it must never own a second copy of the contract.** The CLI is a
+thin client over the same `/api/*` routes the UI uses, authenticated with a tenant API key, parsing
+every response with the same `@gmgo/shared` zod schema the server validated with. Adding a command
+is: schema in `packages/shared` (if new) → route → `apps/cli/src/commands/<name>.ts` calling
+`apps/cli/src/api.ts` (the only `fetch` site: adds `Authorization: Bearer`, parses the envelope,
+maps status → exit code).
+
+**Login handoff.** `gmgo login [--server <url>]` starts a loopback HTTP listener on the first free
+port in `127.0.0.1:8765–8770`, opens the browser at
+`<server>/auth/cli?redirect_uri=http://127.0.0.1:<port>/callback&hostname=<machine>`, and waits
+(5 min timeout). The server side (§2) authenticates the user, asks for a tenant (skipped in `single`
+mode), mints a tenant API key `cli:<hostname>` and redirects with `?key=&tenant_id=&tenant_name=`.
+The listener answers a self-closing page, verifies the key with `GET /api/me`, stores it, shuts down.
+`logout` deletes the local key; revoke it server-side in Settings → API keys (or `keys list` to find it).
+
+**Config.** `~/.gmgo/config.json` — directory `0700`, file `0600`, re-tightened on every write —
+holding the server URL, API key, active tenant and signed-in user. `GMGO_CONFIG_DIR` relocates the
+directory (tests use a temp dir). **Env overrides win**: `GMGO_API_KEY` and `GMGO_URL` make the CLI
+usable in CI with no browser and no file; `GMGO_DEBUG` turns on debug lines. `gmgo config` prints the
+effective config with the key masked (prefix only) — no command ever prints a full key.
+
+**Commands (Phase 1).** `login`, `logout`, `whoami` (`GET /api/me` + `GET /api/tenant` → user,
+tenant, key prefix), `status` (`GET /api/health`, unauthenticated → reachability, environment,
+release version), `members list`, `keys list`, `activity list` (`--page`, `--page-size`;
+`paginationQuerySchema` in, `{ items, pagination }` out), `config`. `--server <url>` and `--json`
+are global: with `--json` a command prints only the parsed response, so output pipes into `jq`.
+Human output is `chalk` tables on stdout; diagnostics go to stderr.
+
+**Exit codes (D26).** `0` ok · `1` error (API non-2xx other than 401/403, network, bad options,
+unexpected) · `2` not logged in (no key, or 401 — hint: run `gmgo login`) · `3` forbidden (403).
+Commands throw `CliError`; `cli.ts` catches once, prints once and sets `process.exitCode`, so tests
+run commands in-process with an injected `fetch`.
+
+**Known gaps / not built yet:** no device-code flow for headless machines (use `GMGO_API_KEY`); no
+multi-profile config (one server + tenant at a time; `login` again to switch); `logout` does not
+revoke the key server-side; no shell completion; no publishing pipeline — the package is private and
+runs from the repo.
+
+## 12. Shared package
+
+**Status: built (Phase 0).** `packages/shared` (`@gmgo/shared`), **private** (`"private": true`, no
+`publishConfig` — never publish it).
+
+**One contract, three consumers, zero build.** The zod schemas, inferred types, error envelope
+(`errors.ts`), pagination (`pagination.ts`) and permission vocabulary (`permissions.ts`: actions,
+subjects, `AppAbility`, packed rules) live in `packages/shared/src/*.ts` and are consumed as
+TypeScript source through the workspace link: `package.json` `exports` map `@gmgo/shared` →
+`./src/index.ts` and `@gmgo/shared/*` → `./src/*.ts`, so `apps/web` (API and UI), `apps/cli` and
+their tests import `@gmgo/shared/<module>` and Vite / wrangler / tsx / vitest all resolve the `.ts`
+directly. There is no `dist`, nothing to rebuild after an edit, and typecheck is one `tsc` per
+package extending `tsconfig.base.json`.
+
+**Contracts first (D13).** A new or changed API surface *starts* here: `<thing>Schema` for a
+response/entity, `<thing>RequestSchema` for a body, `<thing>QuerySchema` for query params, `type
+<Thing> = z.infer<…>` next to each; re-exported from `index.ts`. Then the route `validate()`s with
+it, the UI parses with it (`api.get(..., { schema })`), the CLI parses with it (`api.ts`). jsonb
+column types in the DB schema also come from here (`$type<>()`).
+
+**Dependency rule.** `packages/shared` imports `zod`, its own siblings and type-only `@casl/ability`
+— **never** `apps/web` (it must bundle for the browser and load in the CLI) and never `apps/cli`.
+`apps/cli` in turn never imports `apps/web`. Biome and each package's `tsconfig` `include` keep the
+direction honest; a violation shows up as a browser bundle pulling in `postgres` or `hono`.
+
+**Known gaps / not built yet:** shared has no test suite of its own (its `test` script is a no-op) —
+its contracts are exercised by the `apps/web` and `apps/cli` tests; no OpenAPI emitted from the
+schemas; no runtime-versioning of contracts between a deployed web and an older CLI (both ship from
+one tag).
+
+## 13. Definition of done for the kit
 
 A fresh agent can copy the repository, follow `docs/ADAPTING.md` → `SETUP.md` Part 1 with zero
-external credentials and log in via a logged magic link; invite a member, switch tenant, approve an
-access request; run the same flow with `TENANCY_MODE=single`; receive a realtime toast; run the
-example agent and see its trace when Langfuse keys are set; render the `tenant-overview` dashboard
-with live numbers; and, following `SETUP.md` Part 3, deploy to a new Cloudflare account changing
-only placeholders and secrets — with `lint && typecheck && test && build` green at every step and
+external credentials and log in via a logged magic link; `pnpm cli login` against the local server
+and `pnpm cli whoami` with the minted key; invite a member, switch tenant, approve an access request;
+run the same flow with `TENANCY_MODE=single`; receive a realtime toast; run the example agent and see
+its trace when Langfuse keys are set; render the `tenant-overview` dashboard with live numbers; and,
+following `SETUP.md` Part 3, deploy to a new Cloudflare account changing only placeholders and
+secrets — with root `pnpm lint && pnpm typecheck && pnpm test && pnpm build` green at every step and
 every behaviour described here still true.

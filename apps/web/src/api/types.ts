@@ -21,8 +21,15 @@ export interface AuthContext {
   /** The active tenant — the ONLY tenant id a query may filter by. */
   tenantId: string | null
   tenantUser: { role: MembershipRole } | null
-  /** The DB session row behind the cookie (API-key auth: the auth agent decides the shape). */
+  /** Resolved tenant summary for `tenantId`; null when there is no membership. */
+  tenant: { id: string; name: string; slug: string } | null
+  /**
+   * The DB session row behind the cookie. Bearer (API-key) auth has no session row, so `id` is
+   * `api-key:<keyId>` — `isApiKeySession(auth)` tells the two apart (select-tenant is cookie-only).
+   */
   session: { id: string }
+  /** Latest access request for the user's email — drives 403 `pending_approval` vs `no_tenant`. */
+  accessRequestStatus: 'pending' | 'approved' | 'rejected' | null
   /** `buildAbility({ role, isGlobalAdmin, features })` for this request. */
   ability: AppAbility
   isGlobalAdmin: boolean

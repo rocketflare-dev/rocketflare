@@ -29,6 +29,7 @@ export const ERROR_CODES = {
   pendingApproval: 'pending_approval',
   noTenant: 'no_tenant',
   tenantSuspended: 'tenant_suspended',
+  blocked: 'blocked',
   tenancyModeSingle: 'tenancy_mode_single',
   csrf: 'csrf_failed',
 } as const

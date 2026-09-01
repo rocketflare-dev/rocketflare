@@ -1,23 +1,25 @@
 ---
 globs:
-  - wrangler*.toml
-  - src/worker.ts
-  - src/api/queue.ts
-  - src/api/scheduled.ts
-  - src/api/workflows/**
-  - src/api/durable-objects/**
-  - scripts/cf-provision.sh
-  - .dev.vars.example
+  - apps/web/wrangler*.toml
+  - apps/web/src/worker.ts
+  - apps/web/src/api/queue.ts
+  - apps/web/src/api/scheduled.ts
+  - apps/web/src/api/workflows/**
+  - apps/web/src/api/durable-objects/**
+  - apps/web/scripts/cf-provision.sh
+  - apps/web/.dev.vars.example
 ---
 
 # Cloudflare Workers
 
 One Worker, one deploy target. The Hono app, the `NotificationsHub` Durable Object, the
-`AgentRunWorkflow` and the queue/cron handlers all ship in `src/worker.ts`. Reference: docs/DEPLOY.md.
+`AgentRunWorkflow` and the queue/cron handlers all ship in `apps/web/src/worker.ts`. Reference: docs/DEPLOY.md. Everything here lives in `apps/web/`; wrangler is a devDependency of
+that package, so run it as `pnpm --filter @gmgo/web exec wrangler …` (never `pnpm exec wrangler` at the
+workspace root) or through the root scripts (`pnpm deploy[:staging]`, `pnpm provision`, `pnpm types`).
 
 ## Bindings
 
-- Typed by `pnpm types` → `worker-configuration.d.ts` (`Cloudflare.Env`), committed. After editing a
+- Typed by `pnpm types` → `apps/web/worker-configuration.d.ts` (`Cloudflare.Env`), committed. After editing a
   toml, run `pnpm types` and commit the result
 - Baseline: `ASSETS`, `HYPERDRIVE`, `RATE_LIMIT_KV`. Phase 2: `JOBS_QUEUE`, `NOTIFICATIONS_HUB`,
   `FILES`. Phase 3: `AGENT_RUN_WORKFLOW`, `AI`. Optional: `ANALYTICS_ENGINE`, `HYPERDRIVE_APP`
@@ -28,11 +30,11 @@ One Worker, one deploy target. The Hono app, the `NotificationsHub` Durable Obje
 
 ## Two tomls, one shape (D6)
 
-`wrangler.toml` (production) and `wrangler.staging.toml` are standalone copies. `[env.*]` does not
+`apps/web/wrangler.toml` (production) and `apps/web/wrangler.staging.toml` are standalone copies. `[env.*]` does not
 inherit bindings, so two files are more honest than one with a hidden gap. They may differ in:
 `name`, `routes`, `workers_dev`, `[vars]` values, resource `id`s, and account-scoped names. They
 must NOT differ in: binding names, `class_name`s, `compatibility_date`/`flags`, `[limits]`,
-`[triggers].crons`, `[assets]`, `[[migrations]]`. `tests/config/wrangler-parity.test.ts` enforces
+`[triggers].crons`, `[assets]`, `[[migrations]]`. `apps/web/tests/config/wrangler-parity.test.ts` enforces
 this; `REQUIRE_PROVISIONED=1` additionally forbids `<PLACEHOLDER>` values (CI sets it before deploy).
 
 ## Account-scoped names
@@ -42,7 +44,7 @@ Cloudflare account, not per Worker. **Whichever script last deployed a Workflow 
 every instance created under that name — including by the other environment's binding — runs with
 the owner's bindings, against the owner's database. Staging therefore suffixes all of them with
 `-staging`; `binding` and `class_name` stay identical so no application code is environment-aware.
-`pnpm exec wrangler workflows list` shows Name → Script name if you suspect a hijack.
+`pnpm --filter @gmgo/web exec wrangler workflows list` shows Name → Script name if you suspect a hijack.
 
 ## `[limits] cpu_ms` is per step
 
@@ -67,7 +69,7 @@ preload them into a `Map`.
 ## `nodejs_compat`: what is allowed
 
 Allowed and used: `Buffer`, `AsyncLocalStorage`, `node:crypto` hashing, `process.env` **inside
-dependencies only**. Banned in `src/`: `pg`, `pg-boss`, `ws`, `node:fs`, `node:child_process`,
+dependencies only**. Banned in `apps/web/src/`: `pg`, `pg-boss`, `ws`, `node:fs`, `node:child_process`,
 `node:http`, `@hono/node-server`, `@opentelemetry/sdk-node`, any `setInterval` at module scope,
 `process.env` (read config via `loadConfig(env)`). `pnpm build:api` (dry-run `wrangler deploy`) is
 the check `tsc` cannot do — run it before pushing a new dependency.
@@ -85,7 +87,7 @@ curl "http://localhost:3001/cdn-cgi/local/scheduled?cron=0+4+*+*+*"
 # hit through the UI) is delivered to the local consumer inside wrangler dev; for deterministic
 # runs call the consumer function from a test with a hand-built MessageBatch.
 # Workflows: instances created locally run locally; inspect deployed ones with
-pnpm exec wrangler workflows instances describe gmgo-starter-agent-run <id>
+pnpm --filter @gmgo/web exec wrangler workflows instances describe gmgo-starter-agent-run <id>
 ```
 
-`wrangler tail [-c wrangler.staging.toml]` streams deployed logs; `[observability.logs]` is on.
+`pnpm --filter @gmgo/web exec wrangler tail [-c wrangler.staging.toml]` streams deployed logs; `[observability.logs]` is on.

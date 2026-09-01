@@ -12,8 +12,8 @@
   ],
   "scripts": {
     "dev": "tsx src/cli.ts",
-    "build": "rm -rf dist && tsc -p tsconfig.build.json",
-    "typecheck": "tsc --noEmit",
+    "build": "rm -rf dist && esbuild src/cli.ts --bundle --platform=node --format=esm --target=node22 --outfile=dist/cli.js --sourcemap --external:chalk --external:commander --external:open --external:zod --log-level=warning",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run",
     "clean": "rm -rf dist *.tsbuildinfo"
   },
@@ -26,6 +26,7 @@
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
+    "esbuild": "^0.25.12",
     "tsx": "^4.23.13",
     "typescript": "^5.9.3",
     "vitest": "^3.2.7"

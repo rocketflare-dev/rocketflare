@@ -2,10 +2,14 @@
 
 Hono routers mounted in `src/api/index.ts`. Thin controllers: validate → authorise → query → respond.
 
-## Layout (Phase 0)
+## Layout
 
-- `health.ts` — `/api/health` (liveness: version + env), `/api/ready` (SELECT 1 via `c.get('db')`, 503 envelope). Public.
-- Phase 1 adds `auth/`, `members.ts`, `invitations.ts`, `tenants.ts`, `admin.ts`, `keys.ts`, `notifications.ts`, `user-settings.ts`, `tenant-settings.ts` (00-SYNTHESIS §2).
+- `health.ts` — `/api/health`, `/api/ready`. Public.
+- `auth/` — public (rate-limited where login-shaped): `session.ts` (`/auth/methods|session|select-tenant|logout`), `magic-link.ts` (`/auth/magic-link/request|verify`), `oauth.ts` (ONE generic `/auth/:provider` + `/callback` over `auth/providers`), `dev-login.ts` (development only), `providers.ts` (linked identities), `cli.ts` (`/auth/cli?redirect_uri=` loopback key hand-off, D26), `helpers.ts` (`completeLogin`, `safeRedirectPath`). Static routes mount BEFORE the generic `/:provider` router.
+- `invite.ts` — public `GET /api/invite/:token`, cookie-required `POST /api/invite/:token/accept` (transactional).
+- Behind `authMiddleware` (cookie or Bearer): `me.ts`, `tenant.ts` (current tenant + `/settings`), `tenants.ts` (mine; create — multi only), `members.ts`, `invitations.ts` (+ tenant-free `GET /pending`), `keys.ts`, `notifications.ts`, `activity.ts`, `access-requests.ts` (tenant-free).
+- Behind `globalAdminMiddleware`: `admin.ts` — the only cross-tenant surface; logic in `services/admin.ts`.
+- Logic lives in `services/{auth,tenants,members,invitations,admin,notifications,activity,email}.ts`; routes validate → authorise → call a service → respond.
 
 ## Rules
 
@@ -18,17 +22,20 @@ Hono routers mounted in `src/api/index.ts`. Thin controllers: validate → autho
 - Side effects that may outlive the response (emails, broadcasts, usage writes) go through `c.executionCtx.waitUntil(...)`; a detached promise is killed when the response ends.
 - Routes enqueue, never run: anything longer than a request is a queue message or a Workflow (D7).
 
-## Route anatomy (Phase 1 shape)
+## Route anatomy
 
 ```ts
-router.post('/', validate('json', createThingSchema), async c =>
-  withAuthAndDb(c, async ({ db, tenantId, ability }) => {
-    guard(ability, 'create', 'Thing')
-    const [row] = await db.insert(things).values({ ...c.req.valid('json'), tenantId }).returning()
-    return row
-  })
-)
+router.post('/', validate('json', createThingSchema), async c => {
+  const { db, tenantId, user, defer } = withAuthAndDb(c) // throws 401 / 403 no_tenant|pending_approval
+  guardPermission(c, 'create', 'Thing')
+  const [row] = await db.insert(things).values({ ...c.req.valid('json'), tenantId }).returning()
+  defer(() => recordActivity(db, { tenantId, userId: user.id, type: 'thing.created', subjectType: 'Thing', subjectId: row.id }))
+  return c.json(row, 201)
+})
 ```
+
+`withAuth(c)` is the tenant-free variant (`tenantId: string | null`) for invite accept, pending
+invitations, access requests and `/api/admin/*`. `requireMultiTenant(cfg)` → 404 `tenancy_mode_single`.
 
 New endpoint checklist: schema in `src/shared/` → `validate(...)` → auth seam + permission guard →
 tenant-scoped query → tests in `tests/api/` → update this file if a new router appears.

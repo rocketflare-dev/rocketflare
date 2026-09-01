@@ -1,75 +1,140 @@
-import { BookOpenIcon, RocketLaunchIcon, ServerStackIcon } from '@heroicons/react/24/outline'
-import { PageHeader, SectionPanel } from '@/ui/components/shared'
-import { useAppInfo } from '@/ui/hooks/useAppInfo'
+/**
+ * Home (D25): where you are (organisation, your role), where to go next, and — for admins — what
+ * just happened. Deliberately generic; apps replace the quick links with their own dashboard.
+ */
+import {
+  BellIcon,
+  ClockIcon,
+  Cog6ToothIcon,
+  ShieldCheckIcon,
+  UserCircleIcon,
+} from '@heroicons/react/24/outline'
+import type { ComponentType } from 'react'
+import { Link } from 'react-router-dom'
+import { RoleBadge } from '@/ui/components/RoleBadge'
+import { EmptyState, PageHeader, SectionPanel, SkeletonRows } from '@/ui/components/shared'
+import { useActivity } from '@/ui/hooks/useActivity'
+import { useAuth } from '@/ui/hooks/useAuth'
+import { useNavGuard } from '@/ui/hooks/useNavGuard'
+import { timeAgo } from '@/ui/lib/format'
 
-const NEXT_STEPS = [
-  { step: 'Follow SETUP.md', detail: 'Postgres, .dev.vars, first migration, seed.' },
-  { step: 'Read docs/CONCEPTS.md', detail: 'Tenancy, sessions, abilities, queues, workflows.' },
+interface QuickLink {
+  to: string
+  label: string
+  description: string
+  icon: ComponentType<{ className?: string }>
+  guard?: 'admin' | 'globalAdmin'
+}
+
+const QUICK_LINKS: QuickLink[] = [
   {
-    step: 'Read docs/ADAPTING.md',
-    detail: 'Rename the app, rebrand index.css, add your first domain.',
+    to: '/profile',
+    label: 'Your account',
+    description: 'Name, avatar, sign-in methods',
+    icon: UserCircleIcon,
   },
   {
-    step: 'Phase 1',
-    detail: 'Login, invitations, settings and admin replace this page with the dashboard.',
+    to: '/notifications',
+    label: 'Notifications',
+    description: 'Everything addressed to you',
+    icon: BellIcon,
+  },
+  {
+    to: '/settings',
+    label: 'Settings',
+    description: 'People, API keys, organisation',
+    icon: Cog6ToothIcon,
+    guard: 'admin',
+  },
+  {
+    to: '/activity',
+    label: 'Activity',
+    description: 'The audit log',
+    icon: ClockIcon,
+    guard: 'admin',
+  },
+  {
+    to: '/admin',
+    label: 'Admin',
+    description: 'Every organisation and user',
+    icon: ShieldCheckIcon,
+    guard: 'globalAdmin',
   },
 ]
 
-/**
- * Phase 0 welcome. Phase 1 replaces this with the real dashboard (pending invitations banner,
- * setup checklist, tenant overview).
- */
 export default function Home() {
-  const { name, version, env, isLoading } = useAppInfo()
+  const { user, tenant, tenancyMode } = useAuth()
+  const canAccess = useNavGuard()
+  const isAdmin = canAccess('admin')
+  const links = QUICK_LINKS.filter(l => canAccess(l.guard))
 
   return (
-    <div className="max-w-3xl">
+    <div className="max-w-4xl">
       <PageHeader
-        title={`Welcome to ${name}`}
-        description="The shell is running. The API, database and UI are wired; everything else is yours."
+        title={tenant ? tenant.name : 'Welcome'}
+        badge={tenant && <RoleBadge role={tenant.role} />}
+        description={
+          user
+            ? `Signed in as ${user.name}${tenant ? ` · your role here is ${tenant.role}` : ''}${tenancyMode === 'single' ? '' : ' · switch organisations from the header'}`
+            : undefined
+        }
       />
 
-      <div className="grid gap-4 md:grid-cols-2">
-        <SectionPanel title="Deployment" description="From GET /api/health">
-          <dl className="grid grid-cols-[auto_1fr] gap-x-6 gap-y-2 text-sm">
-            <dt className="text-muted">Environment</dt>
-            <dd className="font-mono">{isLoading ? '…' : (env ?? 'unknown')}</dd>
-            <dt className="text-muted">Version</dt>
-            <dd className="font-mono">{isLoading ? '…' : (version ?? 'unknown')}</dd>
-          </dl>
-        </SectionPanel>
-
-        <SectionPanel title="Stack">
-          <ul className="space-y-2 text-sm text-secondary">
-            <li className="flex items-center gap-2">
-              <ServerStackIcon className="w-4 h-4 text-muted" />
-              Hono API on Cloudflare Workers, Postgres via Hyperdrive
-            </li>
-            <li className="flex items-center gap-2">
-              <RocketLaunchIcon className="w-4 h-4 text-muted" />
-              React 18 SPA served from Workers Static Assets
-            </li>
-            <li className="flex items-center gap-2">
-              <BookOpenIcon className="w-4 h-4 text-muted" />
-              Contracts shared through src/shared (zod)
-            </li>
-          </ul>
-        </SectionPanel>
-      </div>
-
-      <SectionPanel title="Next steps" className="mt-4">
-        <ol className="space-y-3 text-sm">
-          {NEXT_STEPS.map((item, i) => (
-            <li key={item.step} className="flex gap-3">
-              <span className="font-mono text-muted tabular-nums w-5 shrink-0">{i + 1}.</span>
-              <div>
-                <div className="font-medium">{item.step}</div>
-                <div className="text-secondary">{item.detail}</div>
-              </div>
+      <SectionPanel title="Quick links" className="mb-4">
+        <ul className="grid gap-2 sm:grid-cols-2">
+          {links.map(link => (
+            <li key={link.to}>
+              <Link
+                to={link.to}
+                className="flex items-start gap-3 surface-inset px-4 py-3 hover:border-[color:var(--border-strong)]"
+              >
+                <link.icon className="w-5 h-5 mt-0.5 text-muted shrink-0" />
+                <span>
+                  <span className="block text-sm font-medium">{link.label}</span>
+                  <span className="block text-xs text-secondary">{link.description}</span>
+                </span>
+              </Link>
             </li>
           ))}
-        </ol>
+        </ul>
       </SectionPanel>
+
+      {isAdmin && <RecentActivity />}
     </div>
+  )
+}
+
+function RecentActivity() {
+  const { data, isLoading } = useActivity({ pageSize: 5 })
+  const items = data?.items ?? []
+  return (
+    <SectionPanel
+      title="Recent activity"
+      actions={
+        <Link to="/activity" className="btn btn-ghost btn-xs">
+          View all
+        </Link>
+      }
+    >
+      {isLoading ? (
+        <SkeletonRows rows={3} />
+      ) : items.length === 0 ? (
+        <EmptyState icon={ClockIcon} message="Nothing yet" size="sm" />
+      ) : (
+        <ul className="divide-y divide-[color:var(--border-subtle)] text-sm">
+          {items.map(event => (
+            <li key={event.id} className="flex items-center gap-3 py-2">
+              <code className="text-xs">{event.type}</code>
+              <span className="flex-1 truncate text-secondary">
+                {event.actor?.name ?? 'system'}
+              </span>
+              <span className="text-xs text-muted whitespace-nowrap">
+                {timeAgo(event.createdAt)}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </SectionPanel>
   )
 }
