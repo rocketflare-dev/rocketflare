@@ -67,7 +67,8 @@ A superseded doc moves to `docs/archive/` with a row in its README — never del
   connection string is still a credential on disk read by every tool that opens the file. Keep
   other environments' strings in your password manager, not in the file
 - `gitleaks` runs in CI over the full history. If it fires, rotate the credential first, then fix
-  the history
+  the history. `.gitleaks.toml` allowlists deterministic test fixtures only (path + regex,
+  never a rule) — a real credential is never allowlisted
 - Never log a connection string, token or key; `apps/web/scripts/cf-provision.sh` redacts them for that
   reason; the CLI prints key prefixes only
 - Resource ids (Hyperdrive, KV) are not secrets and are committed in the tomls

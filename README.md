@@ -22,7 +22,7 @@ history, and make it your own — you will rename, delete and rewrite freely, an
 merge back.
 
 ```bash
-git clone git@github.com:rocketflare-dev/rocketflare.git myapp && cd myapp
+git clone https://github.com/rocketflare-dev/rocketflare.git myapp && cd myapp
 rm -rf .git && git init && git add -A && git commit -m "Start from Rocketflare"   # your history starts here
 git remote add origin git@github.com:<you>/myapp.git                              # your own repo, when ready
 ```
@@ -156,4 +156,4 @@ Objects, two-toml deploys) and the analytics layer. Decisions are recorded in `d
 
 ## Licence
 
-Private for now — licence to be confirmed before any external distribution.
+No licence has been chosen yet, so all rights are reserved until one is added — open an issue if you need clarity before then.

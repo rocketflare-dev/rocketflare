@@ -1,0 +1,10 @@
+# gitleaks configuration — extends the default ruleset; CI runs `gitleaks git` over the full history.
+# Allowlist ONLY deterministic test fixtures. Never add a real credential path here: rotate it and
+# rewrite history instead (.claude/rules/code-quality.md).
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Test fixtures that look like API keys"
+paths = ['''apps/cli/tests/helpers\.ts''']
+regexes = ['''_test_0123456789abcdefghijklmnopqrstuvwxyz''']

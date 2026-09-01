@@ -8,7 +8,7 @@ delete; no design decisions are needed to get to a running app.
 The kit is a template, not an upstream. Clone it, delete its history, and start your own:
 
 ```bash
-git clone git@github.com:rocketflare-dev/rocketflare.git myapp && cd myapp
+git clone https://github.com/rocketflare-dev/rocketflare.git myapp && cd myapp
 rm -rf .git && git init && git add -A && git commit -m "Start from Rocketflare"
 git remote add origin git@github.com:<you>/myapp.git
 ```
