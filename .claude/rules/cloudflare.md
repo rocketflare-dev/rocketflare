@@ -22,15 +22,22 @@ workspace root) or through the root scripts (`pnpm deploy[:staging]`, `pnpm prov
 - Typed by `pnpm types` → `apps/web/worker-configuration.d.ts` (`Cloudflare.Env`), committed. After editing a
   toml, run `pnpm types` and commit the result
 - Baseline: `ASSETS`, `HYPERDRIVE`, `RATE_LIMIT_KV`. Phase 2: `JOBS_QUEUE`, `NOTIFICATIONS_HUB`,
-  `FILES`. Phase 3: `AGENT_RUN_WORKFLOW`, `AI`. Optional: `ANALYTICS_ENGINE`, `HYPERDRIVE_APP`
+  `FILES`. Phase 3 (built): `AGENT_RUN_WORKFLOW` (`[[workflows]]`, class `AgentRunWorkflow`) and `AI`
+  (`[ai] binding = "AI"`, Workers AI embeddings). Optional: `ANALYTICS_ENGINE`, `HYPERDRIVE_APP`
 - Optional bindings are optional in code too: the rate limiter no-ops without `RATE_LIMIT_KV`,
   tracing without Langfuse keys, email without `RESEND_API_KEY`, realtime nudges without
   `NOTIFICATIONS_HUB`. Check presence, don't crash — **except where silence would lose data**: a
   missing `JOBS_QUEUE` throws `JobsQueueNotConfiguredError` (no inline fallback) and a missing
-  `FILES` is a 503 `storage_not_configured`. Decide which of the three a new binding is and say so
-  in its service header
+  `FILES` is a 503 `storage_not_configured`, a missing `AGENT_RUN_WORKFLOW` is a 503
+  `agent_runs_not_configured` (before any row is written), and a missing `AI` binding is merely the next
+  step in the embeddings chain (`services/ai/resolve.ts` → `EMBEDDINGS_API_KEY` → 503 `ai_not_configured`).
+  Decide which of the three a new binding is and say so in its service header
 - `[vars]` = non-secret config, visible in the toml. Secrets = `.dev.vars` locally,
-  `wrangler secret put` deployed. Never a secret in a toml
+  `wrangler secret put` deployed. Never a secret in a toml. AI vars in both tomls:
+  `AGENT_MAX_OUTPUT_TOKENS = "16384"`, `AGENT_MAX_TURNS = "30"`; `LANGFUSE_BASE_URL` /
+  `LANGFUSE_TRACING_ENVIRONMENT` default in `config.ts` and are added to BOTH files only when
+  overridden (the parity test compares `[vars]` keys). AI secrets: `ANTHROPIC_API_KEY`,
+  `EMBEDDINGS_API_KEY`, `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY` — all optional
 
 ## Two tomls, one shape (D6)
 
@@ -49,6 +56,9 @@ every instance created under that name — including by the other environment's 
 the owner's bindings, against the owner's database. Staging therefore suffixes all of them with
 `-staging`; `binding` and `class_name` stay identical so no application code is environment-aware.
 `pnpm --filter @gmgo/web exec wrangler workflows list` shows Name → Script name if you suspect a hijack.
+The kit's Workflow is `gmgo-starter-agent-run` (production) / `gmgo-starter-agent-run-staging`;
+`binding = "AGENT_RUN_WORKFLOW"` and `class_name = "AgentRunWorkflow"` are identical in both files.
+Nothing is created by hand — `wrangler deploy` registers the Workflow, `[ai]` needs no resource.
 
 The one place a name leaks into code is the queue consumer: `batch.queue` is the NAME
 (`gmgo-starter-jobs` / `gmgo-starter-jobs-staging`), so `apps/web/src/api/queue.ts` matches it by
@@ -65,7 +75,11 @@ Workflows bound CPU **per `step.do`** by the script's `cpu_ms` (30 s default, 30
 CPU is not wall clock: a step that is 95 % I/O still dies if it *processes* enough items. Declare
 `[limits]` in BOTH files or in neither (parity test). Split a heavy phase into its own step to draw a
 fresh budget. Isolate memory is 128 MiB and not configurable — page through large tables, never
-preload them into a `Map`.
+preload them into a `Map`. In the kit the whole tool loop of an agent runs inside the ONE `execute`
+step (`step.do('execute', { retries: { limit: 2, delay: '10 seconds', backoff: 'exponential' },
+timeout: '10 minutes' }, …)`): model calls are I/O, so CPU is rarely the limit, but an agent that
+chunks or parses a lot of text in-step draws against the same 30 s. The scaling path is one `step.do`
+per model turn with the transcript persisted between turns (`runToolLoop` already returns `messages`).
 
 ## Handler shapes
 
@@ -77,8 +91,15 @@ preload them into a `Map`.
   in a consumer**. Plain function so tests call it (`.claude/rules/testing.md`)
 - `scheduled(event, env, ctx)`: dispatch table keyed on `event.cron`; each task try/caught; a new
   cron string must be added to BOTH tomls and the table
-- Workflow steps are idempotent (upserts), return < 1 MiB (ids, not rows), open their own DB client
-  and close it in `finally`. Cancellation is cooperative: poll the run row between steps
+- `AgentRunWorkflow` (`apps/web/src/api/workflows/agent-run.ts`): `run(event, step)` → `step.do('claim')` →
+  `step.do('execute', { retries, timeout })` → `step.do('finish')`; each step wraps its body in
+  `withStepDatabase(env, cfg, db => …)` — ONE DB client per step, `close()` awaited in `finally`
+  (Hyperdrive is the pool). Bodies are plain functions in `services/agents/runtime.ts`; step return
+  values are small serialisable objects (`{ runId, status }`), never rows. Steps are idempotent because
+  the `agent_runs` row is the claim (`UPDATE … WHERE status IN (queued,running) RETURNING`; a retry
+  re-claims). Cancellation is cooperative: the run polls `cancelRequestedAt` between model turns. No
+  `waitUntil` in a step — nudges are collected and awaited by `createStepRealtime().settle()`, the
+  tracer is flushed at the end of `executeRun`
 - `NotificationsHub` DO (`apps/web/src/api/durable-objects/notifications-hub.ts`): one per tenant
   (`idFromName(tenantId)`), **stateless** (no `ctx.storage` → `[[migrations]]` stays `new_classes`
   only), hibernation API (`acceptWebSocket` with tags `tenant:<id>`/`user:<id>`, attachment `{
@@ -117,8 +138,12 @@ curl "http://localhost:3001/cdn-cgi/local/scheduled?cron=0+4+*+*+*"
 # guards with a fake DurableObjectState, and tests/api/ws.test.ts stops at the forwarded request
 # (the bindings stub answers 501). Open the UI against :3001 and look for the green header dot.
 # R2: `wrangler dev` emulates the FILES bucket locally (state under .wrangler/); nothing to create.
-# Workflows: instances created locally run locally; inspect deployed ones with
-pnpm --filter @gmgo/web exec wrangler workflows instances describe gmgo-starter-agent-run <id>
+# Workflows: `wrangler dev` runs AgentRunWorkflow instances locally — POST /api/agents/runs from the
+# running worker (or the UI) and watch the same terminal log `agent-run: …`; the row moves
+# queued → running → succeeded and `GET /api/agents/runs/<id>` lists its events. Inspect deployed ones with
+pnpm --filter @gmgo/web exec wrangler workflows instances describe gmgo-starter-agent-run <runId>
+# Workers AI: `wrangler dev` proxies the `AI` binding to Cloudflare (a logged-in account; the calls are
+# real). Tests never touch it — `RecordingAi` answers deterministic vectors (.claude/rules/testing.md).
 ```
 
 `pnpm --filter @gmgo/web exec wrangler tail [-c wrangler.staging.toml]` streams deployed logs; `[observability.logs]` is on.

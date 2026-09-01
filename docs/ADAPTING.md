@@ -16,7 +16,8 @@ packages themselves — do it first and run `pnpm install` before anything else,
 | `gmgo` (CLI bin) | `apps/cli/package.json` `bin` key; `program.name('gmgo')` in `apps/cli/src/cli.ts`; the `pnpm cli` examples in `SETUP.md`, `README.md`, `docs/CONCEPTS.md` | `myapp` — users type `myapp login` |
 | `~/.gmgo` (CLI config dir) | `apps/cli/src/config.ts` (`GMGO_CONFIG_DIR` default); `.claude/rules/cli.md`; `SETUP.md` 1.7 | `~/.myapp` |
 | `GMGO_` (CLI env prefix: `GMGO_API_KEY`, `GMGO_URL`, `GMGO_CONFIG_DIR`, `GMGO_DEBUG`) | `apps/cli/src/config.ts`; `apps/cli/tests`; `docs/CONCEPTS.md` → CLI; `.claude/rules/cli.md` | `MYAPP_` |
-| `gmgo-starter` | `apps/web/package.json` `cfld.name`; `apps/web/wrangler.toml` / `wrangler.staging.toml` `name` (staging keeps `-staging`); `apps/web/scripts/cf-provision.sh`; the Phase 3 Workflow name (`gmgo-starter-agent-run`); `.claude/rules/cloudflare.md` examples | `myapp` |
+| `gmgo-starter` | `apps/web/package.json` `cfld.name`; `apps/web/wrangler.toml` / `wrangler.staging.toml` `name` (staging keeps `-staging`); `apps/web/scripts/cf-provision.sh`; `.claude/rules/cloudflare.md` examples | `myapp` |
+| `gmgo-starter-agent-run` (Workflow — name is account-scoped) | `name = ` in `[[workflows]]` of both tomls (staging `-staging`); no code references — the binding is always `AGENT_RUN_WORKFLOW`, the class `AgentRunWorkflow`; `docs/DEPLOY.md`, `.claude/rules/cloudflare.md`, `apps/web/src/api/workflows/CLAUDE.md` examples | `myapp-agent-run` — nothing to create; `wrangler deploy` registers it |
 | `gmgo-starter-jobs` (queue — name is account-scoped) | `queue = ` in `[[queues.producers]]` AND `[[queues.consumers]]` of both tomls (staging `-staging`; the commented `dead_letter_queue` too); **`JOBS_QUEUE_NAME_PREFIX` in `apps/web/src/api/services/jobs.ts`** — the consumer matches `batch.queue` by this prefix, so the toml and the constant must agree or every batch is `ackAll()`ed as "unknown queue"; the literals in `apps/web/tests/api/{queue-dispatch,jobs-producer,jobs-consumer}.test.ts` | `myapp-jobs` — then `wrangler queues create myapp-jobs[-staging]` per environment |
 | `gmgo-starter-files` (R2 bucket — account-scoped) | `bucket_name` in `[[r2_buckets]]` of both tomls (staging `-staging`); no code references — the binding is always `FILES` | `myapp-files` — then `wrangler r2 bucket create myapp-files[-staging]` |
 | `gmgo_dev`, `gmgo_test`, `gmgo` / `gmgo_pass`, `test` / `test` | `apps/web/docker-compose.dev.yml`, `apps/web/docker-compose.test.yml`, `apps/web/.dev.vars.example`, `apps/web/.env.test`, `apps/web/drizzle.config.ts`, `localConnectionString` in both tomls, `.github/workflows/ci.yml` (Postgres service) | `myapp_dev`, `myapp_test`, `myapp` / a local-only password |
@@ -26,7 +27,7 @@ packages themselves — do it first and run `pnpm install` before anything else,
 | `gm-light` / `gm-dark` | `apps/web/src/ui/index.css` theme blocks, `index.html` pre-hydration script, `ThemeToggle.tsx`, `apps/web/tests/ui/contrast.test.ts` | `myapp-light` / `myapp-dark` (or keep) |
 | brand colour variables | the header block of `apps/web/src/ui/index.css` (the only place hex values live) | your palette — then `pnpm web test:ui` (contrast gate) |
 | `LogoMark` | `apps/web/src/ui/components/shared/LogoMark.tsx`, `apps/web/src/ui/public/logo.svg` + favicons | your mark |
-| `EMBEDDING_DIM` (1024) | `apps/web/src/db/schema/_helpers.ts` — only if you will NOT use the default `@cf/baai/bge-m3` | before the first migration, never after |
+| `EMBEDDING_DIM` (1024) | `packages/shared/src/ai/config.ts` (imported by `apps/web/src/db/schema/chunks.ts` and the `openai*` embeddings adapter) — only if you will NOT use the default `@cf/baai/bge-m3`; see §3 "Changing the embedding model or dimension" | before the first migration, never after |
 
 Then, from the root: `pnpm install && pnpm types && pnpm lint && pnpm typecheck && pnpm test`. The
 parity test will tell you if the two tomls drifted during the rename; `typecheck` will tell you if
@@ -35,8 +36,16 @@ an `@gmgo/shared` import was missed. Keep `packages/shared` **private** (`"priva
 
 ## 2. Delete once you have real ones
 
-- The example agent `apps/web/src/api/services/agents/examples/summarize-text.ts` + its tests and
-  runs page entry (keep `services/agents/runtime.ts` — that is the runtime, not the example)
+- The example agent `apps/web/src/api/services/agents/examples/summarize-text.ts` (keep
+  `services/agents/{registry,runs,runtime}.ts` and `api/workflows/agent-run.ts` — that is the runtime,
+  not the example). Removing it touches: `AGENT_KEYS` + `summarizeText*Schema` +
+  `SUMMARIZE_TEXT_MAX_CHARS` in `packages/shared/src/ai/agents.ts`, the `summarize-text` entry in
+  `PROMPT_REGISTRY` (`apps/web/src/api/services/prompts.ts`), the `AGENTS` entry in
+  `services/agents/registry.ts`, `apps/web/tests/api/{agent-runs,agent-run-workflow}.test.ts` (rewrite
+  them around your first agent — the runtime needs at least one), and the agent's form/run page under
+  `apps/web/src/ui/pages/agents/` (see `apps/web/src/ui/CLAUDE.md`). `AGENT_KEYS` must not be empty:
+  `agentKeySchema` is a `z.enum`. Rows in `agent_runs` / `agent_run_events` / `prompt_overrides` /
+  `agent_models` for the old key are inert data — delete them or leave them
 - The example cubes `ActivityEvents` / `TenantActivityDaily` and the `tenant_activity_daily_facts`
   table + `tenant-overview` template (keep `Users` / `TenantUsers` — they document both scoping
   patterns). Update `apps/web/src/api/services/fact-tables/registry.ts` and
@@ -76,9 +85,58 @@ contract comes first and lives in the shared package so the API, the UI and the 
 Long-running work inside a feature: enqueue on `JOBS_QUEUE` (< 30 s) or create a Workflow
 instance; never run it in the route.
 
+**Adding an agent** (D7, D17 — `apps/web/src/api/services/agents/CLAUDE.md`). No migration:
+
+1. Contract — `packages/shared/src/ai/agents.ts`: append the key to `AGENT_KEYS`, add
+   `<name>InputSchema` / `<name>OutputSchema` (the input is validated at the route AND again before
+   `run()`; the output when the run persists it).
+2. Prompt — `PROMPT_REGISTRY` in `apps/web/src/api/services/prompts.ts`: `{ key, title, description,
+   variables, defaultText }` with `{{var}}` placeholders (`appName`/`tenantName` are pre-filled by the
+   runtime; pass the rest through `ctx.prompt({ … })`). It becomes editable in Settings → Prompts and
+   assignable in `/api/ai/agent-models` automatically.
+3. Definition — `apps/web/src/api/services/agents/examples/<key>.ts` (copy `summarize-text.ts`): `meta`
+   (`key`, `title`, `description`, schemas, `promptKey`, `exclusive: true` — every v1 agent is
+   exclusive; a non-exclusive one needs `agent_runs_active_exclusive_idx` relaxed) and `run(ctx)`:
+   `ctx.step(...)` for coarse stages, `ctx.checkCancelled()` between model turns, `ctx.chat.client`
+   with `ctx.chat.model` / `maxOutputTokens` through `callStructuredTool` (one forced tool) or
+   `runToolLoop` (read tools + one terminal tool), `recordUsage(ctx.db, { feature: 'agent:<key>', … })`
+   from `onUsage`, return the output. Never import an SDK or read `ai_configs`.
+4. Registry — one entry in `AGENTS` (`services/agents/registry.ts`); `GET /api/agents` lists it.
+5. Form/run page — `apps/web/src/ui/pages/agents/…` posting `{ agentKey, input }` to
+   `POST /api/agents/runs` (202 → poll/nudge `GET /api/agents/runs/:id` for `events` and `output`);
+   guard `create AgentRun`. UI conventions: `apps/web/src/ui/CLAUDE.md`.
+6. Tests — `tests/api/agent-runs.test.ts` (enqueue → row + `stubs(env).workflow.created`) and a
+   `// @vitest-isolate` runtime test mocking `@/api/services/ai/resolve` with a `FakeChatClient` script
+   that answers the terminal tool (`.claude/rules/testing.md`).
+
+**Adding a chat/embeddings provider** (D17). Append the value to `AI_PROVIDERS` in
+`packages/shared/src/ai/config.ts` (LAST — the DB column is a text enum, so no migration; mirror it in
+`AI_PROVIDER_VALUES` in `apps/web/src/db/schema/ai-configs.ts`) and a `DEFAULT_MODELS` entry → a
+`PROVIDERS` row in `apps/web/src/api/services/ai/providers.ts` (`scopes` = the adapters you ship,
+`needsApiKey/BaseUrl`, `supportsThinking/ServiceTier`, presets, suggested models — the settings form
+is built from this) → an adapter branch in `services/ai/client.ts` behind `ChatClient` /
+`EmbeddingsClient` (`fetch` injectable; normalise every failure with `normalizeAiError`; embeddings
+must return `EMBEDDING_DIM`-wide vectors) → a case in `tests/api/ai-client.test.ts` with
+`sseResponse()`. A vendor that speaks an existing wire format is NOT a provider: add a
+`PROVIDER_PRESETS` entry (base URL + default model) instead. Bedrock recipe (not shipped): a
+`bedrock` provider whose adapter signs `POST /model/<id>/invoke` with `aws4fetch` SigV4 (access key +
+secret in `apiKeyEnc`, region in `baseUrl`), non-streaming `complete()` and a `stream()` that yields
+the finished text in one delta — the AWS event-stream decoder needs Node.
+
+**Changing the embedding model or dimension** (D18). Same width, different model (e.g. an
+`openai_compatible` endpoint): a tenant `embeddings` config, or `EMBEDDINGS_API_KEY`; the `openai*`
+adapters send `dimensions: EMBEDDING_DIM`, so any model that accepts that parameter fits. A different
+width needs a migration: change `EMBEDDING_DIM` in `packages/shared/src/ai/config.ts`, `pnpm
+db:generate` (drizzle emits an `ALTER COLUMN … TYPE vector(N)` — on a populated table write it as
+`TRUNCATE chunks` + the type change, or a new table, and rebuild the HNSW index), `pnpm db:migrate`,
+then re-index every document (`indexDocument` from `documents.content` — a one-off script or a
+`document.index` job per row); set the new default in `DEFAULT_MODELS` and the readiness/test
+expectations. Do it before the first production migration if you can.
+
 **Adding a job type** (D7): payload schema + a variant in BOTH `jobInputSchema` and
 `jobEnvelopeSchema` + the literal in `JOB_TYPES` (`packages/shared/src/jobs.ts`) → a handler
-`apps/web/src/api/queues/handlers/<name>.ts` (copy `example-ping.ts`; signature `(job: JobOf<'x'>,
+`apps/web/src/api/queues/handlers/<name>.ts` (copy `example-ping.ts`, or `document-index.ts` for one
+that re-reads a row by id; signature `(job: JobOf<'x'>,
 ctx: { env, config, logger, db })`, throw to retry, return to ack, await everything) → one entry in
 the `handlers` table of `apps/web/src/api/queues/jobs.ts` (the `switch` in `runHandler` too) →
 callers use `enqueueJob(c.env.JOBS_QUEUE, { type: 'x', payload })` → a case in

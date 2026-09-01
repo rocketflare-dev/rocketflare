@@ -13,11 +13,11 @@ section ends with **Known gaps**; sections for phases not yet built say so.
 | 2 | [Auth](#2-auth) | Phase 1 |
 | 3 | [API shell](#3-api-shell) | Phase 0 |
 | 4 | [Database](#4-database) | Phase 0 |
-| 5 | [Background work and realtime](#5-background-work-and-realtime) | Phase 2 — built (Workflows: Phase 3) |
+| 5 | [Background work and realtime](#5-background-work-and-realtime) | Phase 2–3 — built |
 | 6 | [Email and storage](#6-email-and-storage) | Phase 1–2 — built |
 | 7 | [UI shell](#7-ui-shell) | Phase 0–1 |
 | 8 | [Analytics](#8-analytics) | Phase 4 |
-| 9 | [AI layer](#9-ai-layer) | Phase 3 |
+| 9 | [AI layer](#9-ai-layer) | Phase 3 — built |
 | 10 | [Deployment](#10-deployment) | Phase 0 / 5 |
 | 11 | [CLI](#11-cli) | Phase 1 |
 | 12 | [Shared package](#12-shared-package) | Phase 0 |
@@ -66,8 +66,8 @@ strands a user who lost their last organisation.
 **Roles and abilities (D10, 02 §10b).** `tenant_users.role` is `owner | admin | member` (assignable)
 or `support` (minted only from `/admin`, excluded from member counts, visible to the customer by
 design). `users.isGlobalAdmin` is a platform flag, not a tenant role. CASL subjects: `all`, `Tenant`,
-`TenantMember`, `Invitation`, `ApiKey`, `ActivityEvent`, `Notification`, `File`, plus an `access`
-hook over an injected `features: string[]`.
+`TenantMember`, `Invitation`, `ApiKey`, `ActivityEvent`, `Notification`, `File`, `AiConfig`, `Prompt`,
+`Conversation`, `AgentRun`, `Document`, plus an `access` hook over an injected `features: string[]`.
 
 | Subject \ Role | globalAdmin | owner | admin | support | member |
 |---|---|---|---|---|---|
@@ -79,6 +79,10 @@ hook over an injected `features: string[]`.
 | `ActivityEvent` | manage | manage | manage | manage | read |
 | `Notification` (own) | manage | manage | manage | manage | manage |
 | `File` (D23) | manage | manage | manage | manage | create + read (delete own: route's `ownerUserId` check) |
+| `AiConfig`, `Prompt` (D17) | manage | manage | manage | manage | read |
+| `Conversation` (D17) | manage | manage | manage | manage | manage (own only: routes filter by `userId`, others' threads are 404) |
+| `AgentRun` (D7) | manage | manage | manage | manage | manage (own runs; admin+ see and cancel every run) |
+| `Document` (D18) | manage | manage | manage | manage | create + read (delete own: route's `ownerUserId` check) |
 
 `*` Deleting a tenant and assigning/changing `owner` additionally require an explicit
 `role === 'owner'` check — CASL conditions are not used anywhere, so don't pretend they are. A new
@@ -198,7 +202,10 @@ kept (invite accept, tenant create, future RLS) — keep them short.
 
 **Schema conventions.** One file per table; `tenantRef()` and `timestamps()` helpers standardise the
 tenant FK and `timestamptz` columns (both source apps mixed `timestamp` and `timestamptz`); `pgEnum`
-values append-only; migration `0000_init` is written fresh and creates the `vector` extension (D17).
+values append-only. `apps/web/scripts/migrate.ts` runs `CREATE EXTENSION IF NOT EXISTS vector` before
+the migrations (D17/D18), so `chunks.embedding vector(1024)` applies on Neon and on the local
+`pgvector/pgvector:pg17` image alike; `EMBEDDING_DIM` is a column type — a new dimension is a new
+table, not an `ALTER`.
 
 **Migrations flow.** `pnpm db:generate` → read the SQL → `pnpm db:migrate` = `db-roles --phase=role`
 → `migrate.ts` → `db-roles --phase=grants`. Role first because a policy's `TO gmgo_app` needs it;
@@ -216,7 +223,7 @@ app is dropped (it soaked Node connection pinning, which no longer exists); no r
 
 ## 5. Background work and realtime
 
-**Status: jobs and realtime built (Phase 2); Workflows land with the agent runtime (Phase 3).**
+**Status: built — jobs and realtime (Phase 2), the `AgentRunWorkflow` (Phase 3).**
 
 **A route never runs long work; it enqueues (fire-and-forget, < 30 s total) or creates a workflow
 (multi-step, retries, minutes+). Cron only dispatches.** (05 §1.4, D7)
@@ -224,7 +231,7 @@ app is dropped (it soaked Node connection pinning, which no longer exists); no r
 | Need | Primitive | Kit shape |
 |---|---|---|
 | plain job | `JOBS_QUEUE` (one queue) — **built** | `enqueueJob(queue, input)` (`services/jobs.ts`) → `processJobsBatch(batch, { env, config, logger })` (`queues/jobs.ts`) dispatched on `type` to `queues/handlers/*`; `queue.ts` routes `batch.queue` by prefix |
-| durable multi-step | `AGENT_RUN_WORKFLOW` (one class) — Phase 3 | the agent runtime *is* the example workflow — no throwaway second one |
+| durable multi-step | `AGENT_RUN_WORKFLOW` (one class) — **built** | `AgentRunWorkflow` (`api/workflows/agent-run.ts`): `claim → execute → finish`, bodies in `services/agents/runtime.ts`; the agent runtime *is* the example workflow — no throwaway second one (§9) |
 | periodic | `[triggers] crons` | `scheduled.ts` dispatch table on `event.cron`; each task try/caught; `0 4 * * *` prune, `15 * * * *` fact refresh (Phase 4) |
 
 **Jobs (D7) — one queue, typed envelopes, poison never loops.** The contract is
@@ -298,13 +305,16 @@ on tenant switch, turns events into `queryClient.invalidateQueries` via `invalid
 toasts `notification.created`. `WebSocketStatus` is the header dot; `ConnectionBanner` appears
 after 5 s away from `open`.
 
-**What replaced the Node queue semantics.** `exclusive` (singleton per key) → a deterministic
-Workflow instance id `<kind>:<tenant>:<subject>` with a `get()` probe. **Coalesce has no Cloudflare
-primitive** — it becomes a DB claim row: `UPDATE agent_runs … WHERE status IN ('queued','running')
-RETURNING`, with a running row setting `rerun_requested`. A redelivered message that finds the row
-settled is a no-op. Never fake either in an in-memory `Map` — isolates are many and short-lived.
-Cancellation is cooperative: flip the row, the loop polls status between turns. Orphan sweep is a
-cron task. Progress is durable in `agent_run_events`; the DO only wakes viewers.
+**What replaced the Node queue semantics (built in §9).** `exclusive` (one active run per tenant and
+agent) is the partial unique index `agent_runs_active_exclusive_idx (tenant_id, agent_key) WHERE
+status IN ('queued','running')` — a second enqueue returns the existing run (`deduplicated: true`).
+**Concurrency has no Cloudflare primitive** — it is a DB claim row: `UPDATE agent_runs … SET running,
+attempt + 1 WHERE status IN ('queued','running') RETURNING`; a retried step re-claims, a settled row
+is never rewritten. The Workflow instance id is the run id (`AGENT_RUN_WORKFLOW.create({ id: runId })`
+after the row exists). Never fake either in an in-memory `Map` — isolates are many and short-lived.
+Cancellation is cooperative: flip `cancelRequestedAt`, the run polls between turns. There is no orphan
+sweep cron: an active row is reconciled against `instance.status()` on read. Progress is durable in
+`agent_run_events`; the DO only wakes viewers.
 
 **Known gaps / not built yet:** `/api/admin` paths do not nudge — `decideAccessRequest` writes the
 `access_request_decided` notification without a `Realtime`, so the approved user's bell and the
@@ -314,7 +324,7 @@ producer (routes still `defer(recordActivity)` inline — enqueue it when an aud
 path); the DO's 101 branch cannot run under Node (undici rejects status 101) and is proven by
 `wrangler dev`, not the suite; `dead_letter_queue` is commented out in both tomls; SSE
 `Last-Event-ID` replay for run progress is deferred; `@cloudflare/vitest-pool-workers` smoke project
-for DO/Workflow is not in v1; Workflows arrive with Phase 3.
+for DO/Workflow is not in v1 (the Workflow class is driven by `createFakeWorkflowStep()` under Node).
 
 ## 6. Email and storage
 
@@ -428,42 +438,155 @@ AI dashboard generation, benchmarks deferred.
 
 ## 9. AI layer
 
-**Status: planned (Phase 3).**
+**Status: built (Phase 3).** Server: `apps/web/src/api/services/{ai/*,agents/**,prompts.ts}`,
+`api/workflows/agent-run.ts`, `api/observability/*`, `api/middleware/tracing.ts`, seven routers under
+`/api/ai/*`, `/api/chat`, `/api/agents`. Contracts: `packages/shared/src/ai/*`. UI: `pages/chat`,
+`pages/settings/{AI,Prompts,Usage}`, `components/ai/`, `lib/{sse,chatStream}.ts` — specifics in
+`apps/web/src/ui/CLAUDE.md`.
 
-**Three-tier configuration, one resolver** (D17): platform env defaults (`ANTHROPIC_API_KEY`,
-`EMBEDDINGS_API_KEY`, `AGENT_MAX_OUTPUT_TOKENS`, `AGENT_MAX_TURNS`) → tenant `ai_configs` (scope ×
-provider, encrypted credentials, one default per scope, `serviceTier`, `thinking`, last health
-check) → `agent_models` (promptKey → config + model). `resolveClient(db, tenantId, env, promptKey?)`
-is the only read path. Zero keys → Settings → AI says "not configured" and AI routes 503.
+**Three tiers, one resolver (D17).** `resolveChat(db, cfg, env, tenantId, { promptKey? })` and
+`resolveEmbeddings(...)` in `services/ai/resolve.ts` are the ONLY readers of `ai_configs` /
+`agent_models` and the only place a credential is decrypted. Chat order: an `agent_models(tenantId,
+promptKey)` assignment (a chat config id and/or a model override → `source: 'agent'`) → the tenant's
+default `ai_configs(scope='chat')` row (`'tenant'`) → platform `ANTHROPIC_API_KEY` with
+`DEFAULT_MODELS.anthropic` (`'platform'`) → 503 `ai_not_configured` (`AiNotConfiguredError`).
+Embeddings order: tenant default `ai_configs(scope='embeddings')` → `workers_ai` (`@cf/baai/bge-m3`,
+1024-dim, zero key) when the `AI` binding exists → `EMBEDDINGS_API_KEY` as `openai`
+`text-embedding-3-small` → 503. `readiness()` mirrors both orders without building a client
+(`GET /api/ai/config/readiness`; Settings → AI renders it). `ai_configs`: one row per (tenant, scope,
+label) — **the label is the upsert key**; a partial unique index makes "two defaults" per (tenant,
+scope) unrepresentable (the route clears the old default before setting the new one in one
+transaction; the first row in a scope is always default); `apiKeyEnc` is AES-GCM under
+`OAUTH_ENCRYPTION_KEY` and the API returns `hasCredential` only. `POST /api/ai/config/test` probes a
+saved row or an unsaved candidate with the same client builders the runtime uses (10-token
+completion / one embedding, 20 s timeout, 10 per minute per IP). Vars: `AGENT_MAX_OUTPUT_TOKENS`
+(16384 — the per-call `max_tokens`) and `AGENT_MAX_TURNS` (30 — the tool-loop cap) in both tomls;
+`LANGFUSE_BASE_URL` (Langfuse cloud) and `LANGFUSE_TRACING_ENVIRONMENT` (= `APP_ENV`) default in
+`config.ts` and are not declared in the tomls.
 
-**Providers v1.** Chat: `anthropic`, `anthropic_compatible` (Fireworks/Moonshot as presets, not enum
-values). Embeddings: `workers_ai` via the `AI` binding (default `@cf/baai/bge-m3`, 1024-dim, no key),
-`openai`, `openai_compatible`. Vectors go to **pgvector on Neon**, not Vectorize; `EMBEDDING_DIM =
-1024` is a column type and must be chosen before the first migration (D18). No Vercel AI SDK; Bedrock
-deferred (Node-only event stream; `aws4fetch` recipe documented).
+**Providers v1** (`AI_PROVIDERS` in `@gmgo/shared/ai/config`, append-only; `services/ai/providers.ts`
+is the data catalog and its `scopes` is the "an adapter exists" gate): `anthropic` (chat,
+`@anthropic-ai/sdk`), `anthropic_compatible` (chat; Anthropic wire format behind `Authorization:
+Bearer` = the SDK's `authToken`, base URL required; Fireworks and Moonshot are `PROVIDER_PRESETS`
+data, not enum values), `openai` and `openai_compatible` (chat **and** embeddings; a small fetch
+client for `/chat/completions` SSE and `/embeddings`, base URLs include `/v1`), `workers_ai`
+(embeddings only, `env.AI.run`). Per-tenant request defaults are injected where the client is built,
+never at call sites: `service_tier` verbatim, and extended `thinking` **off by default and sent
+explicitly** (`{ type: 'disabled' }`) — a reasoning model otherwise bills for thinking the chat surface
+discards; `reconcileThinking` drops it under a forced tool choice and lifts `max_tokens` above the
+budget. Every failure becomes `AiError { code: auth | rate_limit | invalid_request | unavailable |
+unknown }` (`normalizeAiError`); messages pass `redactSecrets` (a vendor body can echo the rejected
+key) and `describeAiError` is the sentence a person sees. No Vercel AI SDK. Bedrock is not shipped
+(its Node event stream does not run in Workers); the extension is a non-streaming `aws4fetch` SigV4
+adapter behind the same `ChatClient` seam (`docs/ADAPTING.md` §3).
 
-**Chat.** `conversations` / `messages`, one SSE route (`streamSSE` works on Workers), frames `meta |
-delta | progress | done | error`, `ChatPanel` with markdown bubbles and a tool-step strip, zero
-default tools, prompt key `chat` editable in Settings → Prompts. Post-stream persistence in `waitUntil`.
+**Kit (`services/ai/kit.ts`)** — how to call the client, written against `ChatClient` so tests drive it
+with `FakeChatClient`: `cachedSystem` / `withRollingCacheBreakpoints` (three of Anthropic's four
+cache breakpoints: system + the last two turns), `Tool` (zod schema + optional handler; **no handler =
+terminal — its input is the answer**), `callStructuredTool` (one forced tool call, zod-validated, one
+retry with the issues fed back, then `StructuredOutputError`), `runToolLoop` (the agent engine;
+returns the transcript), `runStreamingChat` (the chat engine; read tools only).
 
-**Agents run on the Workflow.** `AgentRunWorkflow` executes the tool loop as `step.do` turns (state
-between turns must be serialisable — Phase 3 spike). `enqueueRun` resolves the client first (a tenant
-with no provider gets a 503 before anything is written), honours a `precheck`, applies `exclusive` or
-`coalesce` via the claim row (§5), writes `agent_runs`, appends `agent_run_events`, nudges the DO.
-The example agent is `summarize-text`: one terminal tool, persists a result, broadcasts. Its tests
-also exercise the minimal ingest path (`ingest.ts`: text → chunk → embed → `documents`/`chunks`) so
-`retrieval.ts` is never dead code.
+**Prompts.** `PROMPT_REGISTRY` in `services/prompts.ts` (`chat`, `summarize-text`) is code; a tenant
+override is a `prompt_overrides(tenant_id, key)` row — revert = delete, `PROMPT_MAX_LENGTH` = 20 000;
+`{{var}}` placeholders are filled by `interpolatePrompt` (an unknown one stays visible so a typo
+shows). `GET /api/ai/prompts` (member read), `PUT | DELETE /:key` (`manage Prompt`). A new prompt is
+one registry entry, no migration; `agent_models` keys on the same registry.
 
-**Tracing (D16).** `withAgentTrace` / `traceClient` seams with no-op defaults; the only backend is a
-fetch-based Langfuse batcher flushed in `waitUntil` (or at step end). Presence of both keys is the
-switch; no OpenTelemetry dependency. **Every LLM call goes through the traced client.**
+**Chat.** `conversations` / `messages`; ownership is the `userId` filter on every query, so another
+member's thread — an admin's too — is a 404. `POST /api/chat/conversations` resolves the client first
+(the 503 arrives before any row exists) and freezes `provider`/`model` on the row.
+`POST /conversations/:id/messages` does everything that can fail as JSON **before** `streamSSE`
+(resolve, prompt, the last 40 turns, the user-message insert), then streams `event: <type>` +
+`data: <ChatStreamEvent JSON>` frames: `message.start → text.delta* → usage → message.end`
+(`tool.start` / `tool.end` between when an app adds tools), or a terminal `error { message, code }`.
+Inside the stream, all awaited and on a **second DB client** (`streamDatabase(c)` — the request's
+client is closed in `waitUntil` the moment the Response is returned, before the stream body runs):
+persist the assistant message, bump `lastMessageAt`, auto-title from the first user turn (60 chars),
+`recordUsage(feature: 'chat')`, flush the tracer. Zero default tools. UI: `fetch`, not `EventSource`
+(`lib/sse.ts`, `lib/chatStream.ts`); Stop = abort, no toast; the streaming text is local state
+written to the query cache on `message.end`; `react-markdown` + `remark-gfm` live in
+`components/ai/` outside the shared barrel so they ship only in the lazy chat chunk.
 
-**Usage.** `ai_usage` (tenantId, promptKey, model, input/output/cacheRead/cacheWrite tokens, at) is
-written from the same usage tap — cheap now, impossible to backfill.
+**Agents (D7).** `AGENTS` (`services/agents/registry.ts`) maps each `AgentKey` to the shared
+`AgentMeta` (`@gmgo/shared/ai/agents`: key, `inputSchema`/`outputSchema`, `promptKey`, `exclusive`)
+plus a server-side `run(ctx)`. `POST /api/agents/runs` is the handoff — routes enqueue, never run:
+`enqueueRun` validates against the agent's `inputSchema`, inserts `agent_runs` `queued`, creates the
+Workflow instance with **id = run id**, and answers 202 with the row. The partial unique index
+`agent_runs_active_exclusive_idx (tenant_id, agent_key) WHERE status IN ('queued','running')` IS
+the exclusive guarantee (every v1 agent is exclusive): a second request gets the existing run back
+with `deduplicated: true` (409 `agent_run_active` only with `?strict=1`). No binding → 503
+`agent_runs_not_configured` before any write. `AgentRunWorkflow` (`api/workflows/agent-run.ts`) is
+three steps — `claim` → `execute` (`retries: 2`, exponential from 10 s, `timeout: '10 minutes'`) →
+`finish` — whose bodies are plain functions (`claimStep`, `executeRun`, `finishStep` in
+`services/agents/runtime.ts`), each step opening and closing its own DB client. **The claim is the
+row**: `UPDATE … SET running, attempt + 1 WHERE status IN (queued, running) RETURNING`; every terminal
+write carries the same predicate, so a settled row is never rewritten and a retried step re-claims.
+`executeRun` resolves the client for `meta.promptKey` (the per-agent model applies), wraps it in
+`withAgentTrace` + `traceChatClient`, builds the `AgentContext` (`emit`, `checkCancelled`, `chat`,
+`prompt(vars)`, `step(...)`), runs the agent, validates `outputSchema`, `finishRun`. Errors are
+classified: `AgentCancelledError` → `cancelled`; `AiError` `unavailable`/`rate_limit` or a DB outage
+rethrow for a step retry while `attempt <= 2`; anything else → `failed` at once. Cancellation is
+cooperative: `POST /runs/:id/cancel` settles a queued row outright, sets `cancelRequestedAt` on a
+running one, and `ctx.checkCancelled()` polls it between turns. Reads reconcile: `GET /runs/:id`
+calls `instance.status()` for an active row and settles it when the runtime says `not_found |
+errored | terminated | complete` — **`not_found` is an answer**, not an error. Progress is
+`agent_run_events (run_id, seq)` (`step | tool.start | tool.end | text | status | error`) plus an
+`entity.changed { entity: 'agent-run', id }` nudge — DB is the truth, WS is a nudge. Members list and
+cancel their own runs; admin+ every run in the tenant. The tool loop runs inside ONE `execute` step in
+v1; one `step.do` per model turn with the transcript persisted between them (`runToolLoop` already
+returns `messages`) is the scaling path. The example, `summarize-text`: precheck (≤ 20 000 chars),
+one terminal tool `submit_summary` through `callStructuredTool`, usage under
+`agent:summarize-text`, and with `index: true` the summary is stored through `ingestText`.
 
-**Known gaps / not built yet:** budgets/quotas over `ai_usage`; rerank and context layers; prompt
-versioning; evals harness; Bedrock/Azure/Gemini adapters; SSE duration cap + `Last-Event-ID`
-reconnect for run progress.
+**Embeddings and retrieval (D18).** `documents` (raw `content` kept for re-index, never returned by
+the API) and `chunks` (`embedding vector(1024)` — `EMBEDDING_DIM` in `@gmgo/shared/ai/config`; HNSW
+`vector_cosine_ops`). `ingestText` (`services/ai/ingest.ts`) is the one way in
+(`POST /api/ai/documents/ingest`, ≤ 500 000 chars): resolve embeddings first (no provider → 503, no
+orphan row), insert `pending`, chunk paragraph-aware (~800 tokens, 100 overlap, 4 chars per token
+estimate), then index inline when ≤ 50 chunks, else enqueue `document.index`, which runs the same
+`indexDocument` from the stored text (a missing `JOBS_QUEUE` throws, never a silent inline fallback).
+`searchChunks` (`POST /search`) is hybrid: dense `<=>` over the HNSW index plus lexical
+`websearch_to_tsquery` / `ts_rank_cd` over `to_tsvector('english', text)`, each contributing a pool
+of `min(max(limit·4, 50), 200)`, fused by Reciprocal Rank Fusion (`k = 60`); every hit carries
+`denseRank` / `lexicalRank`. Vectors are pgvector rows under the tenant predicate and RLS, not
+Vectorize; `apps/web/scripts/migrate.ts` runs `CREATE EXTENSION IF NOT EXISTS vector` before the
+migrations.
+
+**Usage (D18).** `recordUsage` writes one `ai_usage` row per model call (`feature`, `provider`,
+`model`, four token counters, `costMicrocents` **null** — the kit counts tokens, an app prices them):
+the chat route after the stream (`feature: 'chat'`), agents from `callStructuredTool`'s `onUsage`
+(`agent:<key>`). `GET /api/ai/usage/summary?from&to` (default last 30 days, `manage AiConfig`) groups
+by (provider, model, feature) with grand totals.
+
+**Tracing (D16).** `Tracer` seam (`observability/tracer.ts`) with `noopTracer`; the only
+implementation is `createLangfuseTracer` (`langfuse-fetch.ts`) — `trace-create` / `generation-create`
+/ `span-create` events batched in memory and POSTed once to `/api/public/ingestion` with basic auth
+`publicKey:secretKey`; errors are swallowed and logged. `tracerFor(cfg)` returns it only when BOTH
+`LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` are set; `tracerMiddleware` (mounted on `/api/*`) sets
+`c.get('tracer')` and flushes in `waitUntil`; the chat stream and `executeRun` flush themselves.
+`withAgentTrace(name, ctx, fn)` brackets a run or a turn; `traceChatClient(client, trace, meta)` wraps
+the client so every `complete`/`stream` is one `generation` with usage. No OpenTelemetry dependency.
+
+**Permissions.** `AiConfig`, `Prompt`, `Document`: admin+ `manage`, member `read` (plus `create
+Document`; own-document delete is the route's `ownerUserId` check). `Conversation`, `AgentRun`: every
+role `manage`, ownership enforced route-side (§1 matrix). `/api/ai/usage` and `/api/ai/agent-models`
+writes require `manage AiConfig`.
+
+**Known gaps / not built yet:** `enqueueRun` does NOT pre-resolve the chat client — a tenant with no
+provider gets a 202 and a `failed` row at `execute` (chat's `POST /conversations` does pre-resolve);
+the connection test spends tokens but writes no `ai_usage` row; `GET /api/ai/config/providers` has
+no shared schema (the UI keeps a permissive `passthrough` one in `hooks/useAiConfig.ts`);
+`ai_configs.label` is the upsert key, so a rename is delete + re-add; `/settings` is admin-guarded,
+so members hold `read AiConfig` / `read Prompt` with no nav path to the read-only views; the agents
+(`/agents`), documents (`/documents`) and Settings → Agent models pages are documented in
+`apps/web/src/ui/CLAUDE.md` (they consume the contracts above; nothing in this section depends on
+them); no rerank (a `RerankFn` seam is the documented extension) and no
+generated `tsvector` + GIN — the lexical half computes `to_tsvector` at query time; no non-exclusive
+agents (relax the partial unique index); the tool loop is one step, not one per turn; no budgets or
+quotas over `ai_usage` and no price table; prompt versioning, an evals harness, Bedrock/Azure/Gemini
+adapters, SSE `Last-Event-ID` replay for run progress and an orphan-run cron (reconcile-on-read
+replaced it) are deferred.
 
 ## 10. Deployment
 
@@ -537,8 +660,10 @@ runs from the repo.
 `publishConfig` — never publish it).
 
 **One contract, three consumers, zero build.** The zod schemas, inferred types, error envelope
-(`errors.ts`), pagination (`pagination.ts`) and permission vocabulary (`permissions.ts`: actions,
-subjects, `AppAbility`, packed rules) live in `packages/shared/src/*.ts` and are consumed as
+(`errors.ts`), pagination (`pagination.ts`), permission vocabulary (`permissions.ts`: actions,
+subjects, `AppAbility`, packed rules) and the AI contracts (`ai/*.ts` — config, prompts, chat + the
+SSE frame union, agents, agent-models, embeddings, usage; barrel `ai/index.ts`, deep imports
+`@gmgo/shared/ai/<file>`) live in `packages/shared/src/` and are consumed as
 TypeScript source through the workspace link: `package.json` `exports` map `@gmgo/shared` →
 `./src/index.ts` and `@gmgo/shared/*` → `./src/*.ts`, so `apps/web` (API and UI), `apps/cli` and
 their tests import `@gmgo/shared/<module>` and Vite / wrangler / tsx / vitest all resolve the `.ts`
@@ -569,8 +694,11 @@ and `pnpm cli whoami` with the minted key; invite a member, switch tenant, appro
 run the same flow with `TENANCY_MODE=single`; watch the People page refresh live from a second
 browser when an invitation is accepted and see the invitation email queued through `JOBS_QUEUE` and
 delivered (or logged) by the consumer under `wrangler dev`; upload an avatar and fetch it back at
-`/api/files/:id`; run the example agent and see its trace when Langfuse keys are set; render the
-`tenant-overview` dashboard with live numbers; and,
+`/api/files/:id`; add an AI provider in Settings → AI (or set `ANTHROPIC_API_KEY`), pass the connection
+test, hold a streamed chat whose turns and usage rows persist; start the `summarize-text` agent from
+`POST /api/agents/runs`, watch its `agent_run_events` arrive through the nudge, cancel one, and see its
+trace when Langfuse keys are set; ingest a text and get it back from the hybrid search; render the
+`tenant-overview` dashboard with live numbers (planned, Phase 4); and,
 following `SETUP.md` Part 3, deploy to a new Cloudflare account changing only placeholders and
 secrets — with root `pnpm lint && pnpm typecheck && pnpm test && pnpm build` green at every step and
 every behaviour described here still true.

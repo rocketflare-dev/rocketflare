@@ -82,6 +82,31 @@ Components subscribe to query state, never to the socket; `WebSocketStatus` (hea
 `ConnectionBanner` (after 5 s degraded) read the store only. Tests inject a fake socket with
 `websocketClient.setFactory()` — reset it in `afterEach`.
 
+## Streaming (SSE, D17)
+
+- SSE is consumed with **`fetch`, never `EventSource`** (GET-only, cannot carry the CSRF header): `lib/chatStream.ts`
+  POSTs with `credentials: 'include'` + `X-Requested-With` and reads the body through `lib/sse.ts`
+  (`readSse(response, onEvent, { signal })`, `SseFrameBuffer` survives frames split across chunks,
+  each `data` is `chatStreamEventSchema.safeParse`d and unknown frames are dropped, never thrown).
+  It does not go through `api-client`'s `request()` (JSON only) but reuses `parseErrorBody`: a pre-stream
+  non-2xx is the shared envelope — 503 `ai_not_configured` becomes `AiNotConfiguredError` so the page
+  renders a "configure AI" call to action instead of a toast
+- **Streaming text is the one exception to "server data lives only in the cache"**: `useSendMessage`
+  appends the user bubble optimistically, accumulates the assistant reply in LOCAL state from
+  `text.delta` frames (not truth until `message.end`), then writes the finished message into the cache
+  (the server persisted it BEFORE that frame) and invalidates the `chat.conversations` family. Stop =
+  `AbortController.abort()` — a normal end, no toast, no error bubble; a pre-stream failure takes the
+  optimistic bubble back; an `error` frame leaves the turn in `error` status until the next send
+- Frame order the UI relies on: `message.start` (swap the optimistic user id for `userMessageId`) →
+  `text.delta*` → `usage` → `message.end`; `tool.start`/`tool.end` render as one-liners. A new frame
+  type is a `chatStreamEventSchema` variant in `@gmgo/shared/ai/chat` first
+- Guards: `/chat/:conversationId?` is `read Conversation` (every role; ownership is server-side);
+  `/settings` (`?tab=ai|prompts|agent-models|usage`) is `guard="admin"`, the last two additionally
+  `manage AiConfig`. Agent runs (`/agents`, `AgentRun`), documents (`/documents`, `Document`) and the
+  agent-models tab follow the same contracts (`@gmgo/shared/ai/{agents,embeddings,agent-models}`) and
+  poll/nudge, never stream: `entity.changed { entity: 'agent-run' }` invalidates the run query.
+  Page specifics: `apps/web/src/ui/CLAUDE.md`
+
 ## Auth and guards
 
 - `hooks/useAuth.tsx` wraps `GET /auth/session` (zod-parsed) and exposes `useTenancyMode()` so
@@ -97,6 +122,11 @@ Components subscribe to query state, never to the socket; `WebSocketStatus` (hea
 
 - Pages in `pages/` (lazy in `App.tsx`), reusable primitives in `components/shared/` — check there
   before writing a modal, empty state, toast, pagination control or section panel
+- `components/ai/` (`Markdown`, `ChatBubble`) is deliberately NOT exported from the
+  `components/shared` barrel that `App.tsx` imports eagerly: `react-markdown` + `remark-gfm` must ship
+  only in the lazy chat chunk (`ChatPage` ≈ 54 KiB gzip vs ≈ 114 KiB for the main bundle). Import them
+  by path from lazy pages only; render model output through `Markdown` (`skipHtml`, links `noopener`),
+  never `dangerouslySetInnerHTML`; user text renders verbatim (`whitespace-pre-wrap`)
 - Forms validate with the `@gmgo/shared` schema the server uses; show `FieldError` per field
 - Icons: `@heroicons/react`. No new UI library without a stated reason in the PR
 - `EnvironmentBadge` + `useEnvironmentTitle` read `APP_ENV`/`RELEASE_VERSION` from `/auth/session`;

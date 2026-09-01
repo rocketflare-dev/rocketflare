@@ -50,8 +50,25 @@ predicate**, not SQL injection — the app role can `set_config` itself.
 - `relations()` for type-safe joins; no polymorphic FKs
 - Encrypted-at-rest columns (`oauth_providers.access_token`, `ai_configs.credentials`) are `text`
   written only through `token-crypto.ts`
-- Vector columns: `vector(1024)` via the `EMBEDDING_DIM` constant; changing the dimension is a new
-  table, not an `ALTER` (D18)
+- pgvector (D18): `chunks.embedding` is `vector('embedding', { dimensions: EMBEDDING_DIM })` with
+  `EMBEDDING_DIM` imported from `@gmgo/shared/ai/config` (1024 — the native width of the default
+  embeddings model `@cf/baai/bge-m3`; the `openai*` adapters request `dimensions: 1024` so every
+  provider fits the column). **The constant must match the model the default resolver picks**; a
+  different width is a NEW table (or a fresh migration on an empty table), never an `ALTER`, and every
+  existing chunk must be re-embedded (`documents.content` is kept for exactly that). ANN index:
+  `index('chunks_embedding_idx').using('hnsw', table.embedding.op('vector_cosine_ops'))` — cosine,
+  matching the `<=>` operator `services/ai/retrieval.ts` orders by; the tenant predicate still comes
+  first in every query and in every btree index. The `vector` extension is created by
+  `apps/web/scripts/migrate.ts` (`CREATE EXTENSION IF NOT EXISTS vector`) before the migrations run,
+  not by a migration file. Lexical search is `to_tsvector('english', text)` at query time; a generated
+  `tsvector` column + GIN index is the scaling path (a migration, no code change in the query shape)
+- Query vectors are parameters: `vectorLiteral(v)` (`[0.1,0.2,…]`) interpolated through the drizzle
+  `sql` tag and cast `::vector` — never string-concatenate a query; `embedding` values are inserted as
+  `number[]` through drizzle
+- Per-call rows: `ai_usage` (append-only, `(tenant_id, at DESC)`), `agent_run_events` (`(run_id, seq)`
+  unique, numbering continues across attempts). Concurrency is a claim row, never a lock:
+  `agent_runs` `UPDATE … WHERE status IN ('queued','running') RETURNING` plus the partial unique index
+  `agent_runs_active_exclusive_idx` — the pattern for any "one active job per key" need
 
 ## Connection
 

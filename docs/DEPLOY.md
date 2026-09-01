@@ -72,8 +72,8 @@ hidden gap. `apps/web/tests/config/wrangler-parity.test.ts` enforces the table b
 | Queue (Phase 2) | `JOBS_QUEUE` | `<app>-jobs` / `<app>-jobs-staging` | `pnpm --filter @gmgo/web exec wrangler queues create <name>` (name-referenced) |
 | R2 (Phase 2) | `FILES` | `<app>-files` / `<app>-files-staging` | `pnpm --filter @gmgo/web exec wrangler r2 bucket create <name>` |
 | Durable Object (Phase 2) | `NOTIFICATIONS_HUB` | class `NotificationsHub` | declared in toml + `[[migrations]] tag = "v1", new_classes` — no create step |
-| Workflow (Phase 3) | `AGENT_RUN_WORKFLOW` | `<app>-agent-run` / `<app>-agent-run-staging` | declared in toml — no create step; **account-scoped** |
-| Workers AI (Phase 3) | `AI` | — | `[ai] binding = "AI"` |
+| Workflow (Phase 3, built) | `AGENT_RUN_WORKFLOW` | `<app>-agent-run` / `<app>-agent-run-staging` | `[[workflows]] name / binding / class_name = "AgentRunWorkflow"` — `wrangler deploy` registers it, no create step; **account-scoped name** |
+| Workers AI (Phase 3, built) | `AI` | — | `[ai] binding = "AI"` — no resource; embeddings default (`@cf/baai/bge-m3`); billed per call, `wrangler dev` proxies to the account |
 | Analytics Engine (optional) | `ANALYTICS_ENGINE` | `<app>_analytics[_staging]` | declared in toml |
 | Static Assets | `ASSETS` | — | `[assets] directory = "./dist/ui"` uploaded atomically with each deploy |
 | RLS app role (optional, docs/RLS.md) | `HYPERDRIVE_APP` | `<app>-<env>-app` | `… hyperdrive create … --caching-disabled` |
@@ -113,8 +113,8 @@ in **both** files, and split a heavy phase into its own step to draw a fresh bud
 
 | Kind | Where | Examples |
 |---|---|---|
-| Non-secret config | `[vars]` in each toml (committed) | `APP_ENV`, `APP_URL`, `APP_NAME`, `RELEASE_VERSION`, `LOG_LEVEL`, `EMAIL_FROM`, `TENANCY_MODE`, `SIGNUP_MODE`, `TENANT_SCOPE_MODE`, `LANGFUSE_BASE_URL`, `AGENT_MAX_*` |
-| Worker secrets | `pnpm --filter @gmgo/web exec wrangler secret put <NAME> [-c wrangler.staging.toml]`, once per worker; locally `apps/web/.dev.vars` | `OAUTH_ENCRYPTION_KEY`, `AUTH_SIGNING_KEY`, `BOOTSTRAP_ADMIN_EMAILS`, `RESEND_API_KEY`, `GOOGLE_*`, `MICROSOFT_*`, `ANTHROPIC_API_KEY`, `EMBEDDINGS_API_KEY`, `LANGFUSE_PUBLIC_KEY/SECRET_KEY`, `DATABASE_URL` only as a no-Hyperdrive fallback |
+| Non-secret config | `[vars]` in each toml (committed) | `APP_ENV`, `APP_URL`, `APP_NAME`, `RELEASE_VERSION`, `LOG_LEVEL`, `EMAIL_FROM`, `TENANCY_MODE`, `SIGNUP_MODE`, `TENANT_SCOPE_MODE`, `AGENT_MAX_OUTPUT_TOKENS` (16384), `AGENT_MAX_TURNS` (30). Defaulted in `config.ts` and **not** declared in the tomls: `LANGFUSE_BASE_URL` (`https://cloud.langfuse.com`), `LANGFUSE_TRACING_ENVIRONMENT` (= `APP_ENV`) — to override, add the key to BOTH files (the parity test compares `[vars]` keys) |
+| Worker secrets | `pnpm --filter @gmgo/web exec wrangler secret put <NAME> [-c wrangler.staging.toml]`, once per worker; locally `apps/web/.dev.vars` | `OAUTH_ENCRYPTION_KEY` (also encrypts tenant AI keys — rotating it invalidates every `ai_configs` credential), `AUTH_SIGNING_KEY`, `BOOTSTRAP_ADMIN_EMAILS`, `RESEND_API_KEY`, `GOOGLE_*`, `MICROSOFT_*`; AI, all optional: `ANTHROPIC_API_KEY` (platform chat), `EMBEDDINGS_API_KEY` (platform OpenAI embeddings when no `AI` binding), `LANGFUSE_PUBLIC_KEY` + `LANGFUSE_SECRET_KEY` (both or tracing is off); `DATABASE_URL` only as a no-Hyperdrive fallback |
 | CI secrets | GitHub Environments `staging` / `production` | `DATABASE_URL` (that branch), `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` |
 | Scripts only | migration environment | `APP_DATABASE_URL` (db-roles, RLS enforce only) |
 | Resource ids | tomls (committed) | Hyperdrive / KV ids — not secrets |
@@ -192,8 +192,15 @@ holding the custom domains. One token may serve both environments.
   `--status error` filters.
 - `pnpm --filter @gmgo/web exec wrangler deployments list`, `… wrangler workflows instances list <name>`,
   `… wrangler queues info <name>` for the async parts.
-- Langfuse traces (when keys are set) for every LLM call; `ANALYTICS_ENGINE` request metrics are
-  optional and fire-and-forget.
+- Langfuse traces (when both keys are set) for every LLM call — one trace per chat turn (`chat`,
+  session = conversation id) or agent run (`summarize-text`, session = run id), one `generation` per
+  model call with token usage, tagged `environment = LANGFUSE_TRACING_ENVIRONMENT ?? APP_ENV`; batched
+  and shipped from `waitUntil`, never on the response path. `ai_usage` in Postgres is the durable
+  token ledger regardless of tracing. `ANALYTICS_ENGINE` request metrics are optional and
+  fire-and-forget.
+- Agent runs: `… wrangler workflows instances list gmgo-starter-agent-run[-staging]` / `describe <name>
+  <runId>` (instance id = `agent_runs.id`). A row stuck `queued`/`running` whose instance is gone is
+  settled on the next `GET /api/agents/runs/:id` (reconcile-on-read); there is no sweeper cron.
 
 ## Rollback
 
@@ -203,6 +210,7 @@ holding the custom domains. One token may serve both environments.
 | Need a specific earlier tag | Actions → Deploy → `production` from that tag, or publish a Release on the earlier tag |
 | Schema migration must be undone | migrations are forward-only: write a compensating migration, tag, and run the dance. `wrangler rollback` does not touch the database |
 | RLS enforce misbehaving | `TENANT_SCOPE_MODE = "off"` in `[vars]` and redeploy — no migration (docs/RLS.md) |
-| A Workflow hijacked by a name collision | fix the staging name, redeploy **both** workers (last deployer owns the name), reconcile stuck rows via the status route's `instance.status()` check |
+| A Workflow hijacked by a name collision | fix the staging name, redeploy **both** workers (last deployer owns the name); stuck `agent_runs` rows settle on read (`GET /api/agents/runs/:id` → `reconcileRun` → `instance.status()`; `not_found` marks them `failed`) |
+| Tenant AI keys unreadable after rotating `OAUTH_ENCRYPTION_KEY` | there is no re-encrypt path: admins re-enter the key in Settings → AI (the row keeps its label/model, `hasCredential` flips back); the platform `ANTHROPIC_API_KEY` is unaffected |
 
 Verify any rollback with `/auth/session` (`releaseVersion`), `gmgo status` and `wrangler tail`.

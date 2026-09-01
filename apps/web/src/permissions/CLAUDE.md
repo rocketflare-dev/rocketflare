@@ -13,6 +13,10 @@ vocabulary in `packages/shared/src/permissions.ts`). Built once per request by t
 | `TenantMember`, `Invitation`, `ApiKey`, `ActivityEvent` | manage | manage | manage | manage | read |
 | `Notification` (own, route-scoped) | manage | manage | manage | manage | manage |
 | `File` (D23) | manage | manage | manage | manage | create + read (own-file delete is `routes/files.ts`'s `ownerUserId` check, not CASL) |
+| `AiConfig`, `Prompt` (D17) | manage | manage | manage | manage | read (Settings → AI / Prompts are read-only for members; `/api/ai/usage` and `/api/ai/agent-models` writes need `manage AiConfig`) |
+| `Conversation` (D17) | manage | manage | manage | manage | manage (own only — `routes/chat.ts` filters every query by `userId`; another member's thread is 404, admins included) |
+| `AgentRun` (D7) | manage | manage | manage | manage | manage (own runs — `routes/agents.ts` filters by `requestedByUserId` unless `isAdminLevel(auth)`, which sees and cancels every run) |
+| `Document` (D18) | manage | manage | manage | manage | create + read (anyone ingests and searches; own-document delete is `routes/ai-documents.ts`'s `ownerUserId` check, others' need `delete Document`) |
 | `AccessRequest`, `User` (platform) | manage | – | – | – | – |
 | `Feature:<name>` via `access` | all | by `features` | by `features` | all | by `features` |
 
@@ -33,5 +37,7 @@ Tests: `tests/config/permissions.test.ts` asserts every cell above — change th
 
 Add it to `CORE_SUBJECTS` in `packages/shared/src/permissions.ts`, grant it per role here (default
 posture: owner/admin/support `manage` via `ADMIN_MANAGED`, member `read` via `MEMBER_READABLE`; add
-an explicit `can('create', …)` for the member only when anyone may write, as `File` does), add the
-row above and to the matrix test.
+an explicit `can('create', …)` for the member only when anyone may write, as `File` and `Document`
+do; `can('manage', …)` for the member only when ownership is enforced by the route's `userId`
+filter, as `Conversation` and `AgentRun` are), add the row above and to the matrix test
+(`tests/config/permissions.test.ts`). CASL conditions are never used — "own" is always a route predicate.

@@ -174,16 +174,58 @@ is no `*_REDIRECT_URI` variable to set.
 `UPDATE users SET is_global_admin = true WHERE email = '…'` — or every sign-up parks on `/pending`
 with nobody to approve it (`SIGNUP_MODE=invite_only` default). Verify: `/admin` is reachable.
 
-### 2.5 AI — Anthropic (Phase 3)
-`ANTHROPIC_API_KEY` is the platform default; tenants may override in Settings → AI with their own
-encrypted key. Absent: Settings → AI shows "not configured", chat and agents return 503
-`ai_not_configured`. Verify: the connection test in Settings → AI passes. Embeddings default to the
-`AI` Workers AI binding (no key); `EMBEDDINGS_API_KEY` only for OpenAI-compatible embeddings.
+### 2.5 AI — chat, agents, embeddings
+Resolution is three tiers (`docs/CONCEPTS.md` §9): a per-agent assignment → the tenant's default
+provider in Settings → AI → the platform key. Nothing is required; pick any one of these:
 
-### 2.6 Tracing — Langfuse (Phase 3)
-`LANGFUSE_PUBLIC_KEY` + `LANGFUSE_SECRET_KEY` (+ `LANGFUSE_BASE_URL` in `[vars]` for self-hosted).
-Presence of both keys is the switch. Absent: the tracer is a no-op. Verify: run the example agent, a
-trace appears within a minute.
+1. **Platform key (optional).** `ANTHROPIC_API_KEY=` in `apps/web/.dev.vars` (deployed:
+   `wrangler secret put`, Part 3). Every tenant without its own chat provider then uses it with
+   `claude-sonnet-4-5`. Verify: Settings → AI (as owner/admin) shows chat readiness `platform`;
+   `curl -b <cookie> localhost:3001/api/ai/config/readiness` → `"chat":{"ready":true,"source":"platform"…}`.
+2. **Tenant provider (no platform key).** Settings → AI → *Add provider*: scope `chat`, a label (it is
+   the upsert key — renaming later means delete + re-add), provider `anthropic` / `anthropic_compatible`
+   (Fireworks, Moonshot presets; base URL required) / `openai` / `openai_compatible`, model, API key
+   (encrypted with `OAUTH_ENCRYPTION_KEY`, never shown again — the row reports `hasCredential`). The
+   first row in a scope becomes the default. Press **Test connection** before saving (a 10-token
+   completion; 10 per minute per IP). Verify: the test reports `ok` and a latency; readiness reads
+   `tenant`.
+3. **Local mock — develop with no key at all.** Run any OpenAI-compatible server (Ollama, vLLM, a
+   proxy) and add an `openai_compatible` chat config with its base URL **including `/v1`**
+   (e.g. `http://localhost:11434/v1`), the model name it serves, and **any non-empty placeholder as
+   the API key** (the adapter refuses an empty key; a local server ignores the bearer). Chat, the
+   `summarize-text` agent and the usage table all work against it. Verify: `/chat` streams a reply.
+
+Absent everywhere: `/chat` shows "configure AI"; `POST /api/chat/conversations` and the agent's
+`execute` step answer 503 `ai_not_configured` (the agent enqueue itself still returns 202 and the run
+settles `failed`). Thinking is OFF unless a config enables it with a budget (cost decision).
+
+**Embeddings** (documents / hybrid search, `index: true` on the example agent): the `AI` Workers AI
+binding (both tomls, and `wrangler dev` emulates it) is the zero-key default — `@cf/baai/bge-m3`,
+1024-dim. Alternatives: an `embeddings`-scope tenant config (`openai`, `openai_compatible`,
+`workers_ai`) or `EMBEDDINGS_API_KEY` for platform OpenAI `text-embedding-3-small` (reduced to 1024
+dims). Verify: `POST /api/ai/documents/ingest` `{ "title": "t", "text": "hello world" }` → `status:
+"indexed"`; `pnpm web db:check` reports the pgvector extension installed. Changing the dimension is a
+new table (`docs/ADAPTING.md` §3).
+
+Agent runs need the `AGENT_RUN_WORKFLOW` binding (declared in both tomls; `wrangler dev` runs
+instances locally). Without it `POST /api/agents/runs` is 503 `agent_runs_not_configured`. Verify
+(from the Agents page in the nav, or by hand):
+`POST /api/agents/runs` `{ "agentKey": "summarize-text", "input": { "text": "<a paragraph>" } }` →
+202; `GET /api/agents/runs/<id>` reaches `succeeded` with `output.summary`.
+
+### 2.6 Tracing — Langfuse
+1. Langfuse (cloud or self-hosted) → project → API keys → `LANGFUSE_PUBLIC_KEY` + `LANGFUSE_SECRET_KEY`
+   in `apps/web/.dev.vars` (deployed: `wrangler secret put`)
+2. Self-hosted only: `LANGFUSE_BASE_URL` — defaults to `https://cloud.langfuse.com` in
+   `apps/web/src/config.ts`; to override, add it to `[vars]` in **both** tomls (the parity test requires
+   identical `[vars]` keys) or to `.dev.vars`. `LANGFUSE_TRACING_ENVIRONMENT` (defaults to `APP_ENV`)
+   tags the traces the same way
+
+Presence of **both** keys is the switch (`tracerFor(cfg)`); with either missing the tracer is the
+no-op and nothing changes in behaviour. Traces are batched per request and shipped from `waitUntil`
+(fetch, basic auth) — never on the response path. Verify: send a chat message or run the example
+agent; a trace named `chat` / `summarize-text` with one `generation` carrying token usage appears in
+Langfuse within a minute, tagged with the environment.
 
 ### 2.7 Rebrand checklist
 See [`docs/ADAPTING.md`](docs/ADAPTING.md) §1 — package names (`@gmgo/*`), worker names, DB names,
@@ -222,8 +264,10 @@ root works too). It creates (or finds) the Hyperdrive config `<app>-<env>` and K
 declare the Phase 2 Queue (`<app>-jobs[-staging]`) and R2 bucket (`<app>-files[-staging]`), but their
 `create` blocks in the script are still commented — uncomment them, or run `wrangler queues create
 <name>` and `wrangler r2 bucket create <name>` by hand for each environment before the first deploy
-(both are name-referenced; nothing to paste into a toml). Workflows and the DO need no create step,
-but the Workflow `name` is account-scoped: staging MUST be `<app>-agent-run-staging`.
+(both are name-referenced; nothing to paste into a toml). The Workflow (`[[workflows]]`
+`AGENT_RUN_WORKFLOW`), the Workers AI binding (`[ai]`) and the DO need no create step — `wrangler
+deploy` registers them — but the Workflow `name` is account-scoped: staging MUST be
+`<app>-agent-run-staging` (`docs/DEPLOY.md`, "Account-scoped names").
 Verify: `REQUIRE_PROVISIONED=1 pnpm web test:config` passes — no `<PLACEHOLDER>` left, every
 account-scoped staging name ends in `-staging`, ids differ. Commit the tomls (ids are not secrets).
 
@@ -251,11 +295,13 @@ Hyperdrive — and `APP_DATABASE_URL` unless enabling RLS):
 ```bash
 for k in OAUTH_ENCRYPTION_KEY AUTH_SIGNING_KEY RESEND_API_KEY BOOTSTRAP_ADMIN_EMAILS \
          GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET MICROSOFT_CLIENT_ID MICROSOFT_CLIENT_SECRET \
-         ANTHROPIC_API_KEY LANGFUSE_PUBLIC_KEY LANGFUSE_SECRET_KEY; do
+         ANTHROPIC_API_KEY EMBEDDINGS_API_KEY LANGFUSE_PUBLIC_KEY LANGFUSE_SECRET_KEY; do
   pnpm web exec wrangler secret put "$k" -c wrangler.staging.toml   # prompts; use fresh values per env
 done
 ```
 Repeat without `-c` for production after its first deploy. Use different keys per environment.
+`ANTHROPIC_API_KEY`, `EMBEDDINGS_API_KEY` and the two `LANGFUSE_*` keys are optional (Part 2.5/2.6):
+skip them and the features degrade as described there.
 Verify: `pnpm web exec wrangler secret list -c wrangler.staging.toml` shows the names;
 `curl https://<staging-host>/api/health` returns ok and `/auth/methods` lists your providers.
 Point the CLI at it: `pnpm cli login --server https://<staging-host>`.

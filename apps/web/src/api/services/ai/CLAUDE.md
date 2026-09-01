@@ -28,5 +28,9 @@ Rules:
   the request's client is closed in `waitUntil` the moment the Response is returned.
 - Adding a provider: enum value in `@gmgo/shared/ai/config` (append last) → `PROVIDERS` entry →
   adapter branch in `client.ts` → `ai-client.test.ts` case. Adding a prompt: `PROMPT_REGISTRY` in
-  `../prompts.ts` (no migration). Per-agent model assignment (`agent_models`) is Phase 3b and
-  lands in `resolveChat`'s `promptKey` branch.
+  `../prompts.ts` (no migration). Per-agent model assignment (`agent_models`, Phase 3b — built) is
+  `resolveChat`'s `promptKey` branch (`planChat` — shared with `routes/ai-agent-models.ts`).
+- `chunking.ts` (pure paragraph-aware chunker, ~800 tokens / 100 overlap, 4 chars per token),
+  `ingest.ts` (`ingestText` — inline ≤ 50 chunks else the `document.index` job; `indexDocument` is
+  shared with `queues/handlers/document-index.ts`), `retrieval.ts` (`searchChunks` — dense `<=>` +
+  lexical `ts_rank_cd`, RRF `k = 60`; `RerankFn` is the documented, unbuilt seam) complete the D18 half.

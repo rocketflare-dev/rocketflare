@@ -59,18 +59,25 @@ email provider is configured. Just copied the kit for a new app? Read `docs/ADAP
 | Realtime: `NotificationsHub` Durable Object (one per tenant, hibernation, RPC) + `GET /ws`, `services/realtime.ts` nudges, shared event contract, reconnecting client + status dot/banner | **Phase 2 — done** | "DB is the truth, WebSocket is a nudge": events invalidate TanStack queries, never carry state |
 | Background jobs: `JOBS_QUEUE` producer/consumer with typed envelopes (`email.send`, `activity.record`, `example.ping`), poison → ack, error → backoff retry; invitation + access-request emails queued; daily cron | **Phase 2 — done** | prefix-matched queue dispatch so staging's `-staging` name needs no code change; magic link stays inline |
 | File storage: R2 `FILES` behind `StorageService`, `files` table index (RLS), `POST/GET/DELETE /api/files`, 5 MB per file, avatar upload UI | **Phase 2 — done** | tenant-prefixed keys, streamed through the Worker, no presigned URLs; `avatarUrl` is global but the object is tenant-scoped (known gap) |
-| AI: provider config (env → tenant → per-agent), chat, agent runtime on Workflows, Langfuse tracing, pgvector retrieval, usage table | Phase 3 — planned | Anthropic + compatible; Workers AI embeddings |
+| AI: three-tier provider config (per-agent `agent_models` → tenant `ai_configs`, encrypted keys → platform `ANTHROPIC_API_KEY`), Settings → AI / Prompts / Usage, streamed chat (SSE), prompt registry + overrides, `ai_usage` ledger | **Phase 3a — done** | providers `anthropic`, `anthropic_compatible` (Fireworks/Moonshot presets), `openai`, `openai_compatible`; thinking off by default; 503 `ai_not_configured` when nothing resolves; Langfuse tracing when both keys are set (fetch batcher, no OpenTelemetry) |
+| Agents on Workflows: `AgentRunWorkflow` (`claim → execute → finish`), `agent_runs` claim row + partial unique index (exclusive), `agent_run_events` + realtime nudge, cooperative cancel, reconcile-on-read, example `summarize-text`; per-agent model assignment; pgvector ingest (`documents`/`chunks`, inline or `document.index` job) + hybrid dense/lexical RRF search | **Phase 3b — done** | `[[workflows]]` `AGENT_RUN_WORKFLOW` (account-scoped name, `-staging`), `[ai]` Workers AI embeddings (`@cf/baai/bge-m3`, 1024-dim) with `EMBEDDINGS_API_KEY` fallback; agent/document/agent-model pages: see `apps/web/src/ui/CLAUDE.md` |
 | Analytics: drizzle-cube cubes, fact-table refresh, dashboard templates, query builder | Phase 4 — planned | two-tenant isolation test mandatory |
 | Ship-ready: `deploy.yml` release dance, `cf-provision.sh`, `SETUP.md` Part 3, `DEPLOY.md` | Phase 5 — **docs and scripts done**, exercised once code exists | one tag (= root `package.json` version) ships web; the CLI is not deployed |
 
-Out of scope for v1: billing, Vectorize, voice, document pipelines, export/reporting, evals.
+Out of scope for v1: billing, Vectorize (vectors live in pgvector), voice, file-parsing document pipelines
+(ingest takes text), rerank, prompt versioning, export/reporting, evals.
+
+Dependencies the AI layer adds to `apps/web`: `@anthropic-ai/sdk` (fetch-based; its `node:fs`
+credential-chain imports are dynamic and inert under `nodejs_compat`), `zod-to-json-schema` (tool
+schemas), `react-markdown` + `remark-gfm` (UI, isolated to the lazy chat chunk). Measured bundle:
+`dist/api/worker.js` ≈ 308 KiB gzip; UI main chunk ≈ 114 KiB gzip, chat chunk ≈ 54 KiB gzip.
 
 ## Documentation
 
 | File | Read it when |
 |---|---|
 | [`CLAUDE.md`](CLAUDE.md) (`AGENTS.md`) | always — the canonical agent context: stack, commands, map, non-negotiables |
-| [`SETUP.md`](SETUP.md) | getting a clone running, the CLI's first login, configuring OAuth/email/AI, deploying to Cloudflare |
+| [`SETUP.md`](SETUP.md) | getting a clone running, the CLI's first login, configuring OAuth/email/AI providers (or a local OpenAI-compatible mock)/Langfuse, deploying to Cloudflare |
 | [`docs/CONCEPTS.md`](docs/CONCEPTS.md) | before assuming a capability exists or building a new one (includes the CLI and shared package) |
 | [`docs/ADAPTING.md`](docs/ADAPTING.md) | you just copied the kit to start an app (package names, CLI bin, config dir, env prefix) |
 | [`docs/DEPLOY.md`](docs/DEPLOY.md) | Cloudflare topology, the two tomls, release dance, rollback |

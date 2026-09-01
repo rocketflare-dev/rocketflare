@@ -21,17 +21,22 @@ vitest 3 resolves `isolate` per run, not per project.
 - `app.request(req, env, ctx)` with `env = createTestEnv(overrides)` from `apps/web/tests/mocks/bindings.ts`:
   `DATABASE_URL` from `apps/web/.env.test`, `MemoryKV` as `RATE_LIMIT_KV`, a `RecordingQueue` as
   `JOBS_QUEUE`, a `MemoryR2Bucket` as `FILES`, a `RecordingDurableObjectNamespace` as
-  `NOTIFICATIONS_HUB`, a `HYPERDRIVE` whose `connectionString` is the test URL; `ctx =
-  createExecutionContext()` collects `waitUntil` promises so a test can
-  `await waitOnExecutionContext(ctx)` before asserting side effects
-- Reach the stubs through **`stubs(env)`** → `{ kv, queue, files, hub }`: `queue.messages` (what a
-  route enqueued — `[{ body, options }]`), `files.objects` (key → stored bytes/metadata),
+  `NOTIFICATIONS_HUB`, a `RecordingAi` as `AI` (deterministic 1024-dim vectors; `respond` overridable),
+  a `RecordingWorkflow` as `AGENT_RUN_WORKFLOW` (records `create({ id, params })`, `setStatus(id, …)`
+  drives `instance.status()`, `get()` of an unknown id throws `instance.not_found`), a `HYPERDRIVE`
+  whose `connectionString` is the test URL; `ctx = createExecutionContext()` collects `waitUntil`
+  promises so a test can `await waitOnExecutionContext(ctx)` before asserting side effects
+- Reach the stubs through **`stubs(env)`** → `{ kv, queue, files, hub, ai, workflow }`: `queue.messages`
+  (what a route enqueued — `[{ body, options }]`), `files.objects` (key → stored bytes/metadata),
   `hub.broadcasts` (`[{ tenantId, args: [method, ...args] }]` — every RPC call on any stub, e.g.
-  `['broadcast', event]`; the stub's `fetch` answers 501), `kv.store`. `createTestEnv({ JOBS_QUEUE:
-  undefined })` / `{ FILES: undefined }` / `{ NOTIFICATIONS_HUB: undefined }` exercise the
-  missing-binding branches (throws / 503 / no-op)
+  `['broadcast', event]`; the stub's `fetch` answers 501), `kv.store`, `ai.runs` (`[{ model, inputs }]`),
+  `workflow.created` (`[{ id, params }]`) + `workflow.setStatus(id, { status })`. `createTestEnv({
+  JOBS_QUEUE: undefined })` / `{ FILES: undefined }` / `{ NOTIFICATIONS_HUB: undefined }` /
+  `{ AGENT_RUN_WORKFLOW: undefined }` / `{ AI: undefined }` exercise the missing-binding branches
+  (throws / 503 / no-op / 503 `agent_runs_not_configured` / next embeddings tier)
 - `cloudflare:workers` is aliased to `apps/web/tests/mocks/cloudflare-workers.ts` (stub `DurableObject`,
-  `WorkflowEntrypoint`) so worker modules import under Node
+  `WorkflowEntrypoint`, plus `createFakeWorkflowStep()` → `{ step, calls }` — runs each `step.do`
+  callback inline and records `{ name, config? }`) so worker modules import under Node
 - `apps/web/tests/helpers/request.ts` `request()` / `json()` drive the app through every middleware with a
   per-file random client IP (rate-limit isolation); `apps/web/tests/helpers/auth.ts` factories
   (`createTestUser`, `createTestTenant`, `linkUserToTenant`, `createTestTenantWithUser`,
@@ -91,9 +96,31 @@ a fake `WebSocket` factory left set) is on you.
   stubs `WebSocketRequestResponsePair`). Route tests for `/ws` stop at the forwarded request
 - Nudges: `stubs(env).hub.broadcasts` after `waitOnExecutionContext(ctx)` — assert the tenant id,
   the method and the event `type`; `realtime-nudges.test.ts` covers the kit's emitters
-- Workflow: `AgentRunWorkflow` logic lives in exported step functions (`runTurn`, `finalize`);
-  test them directly with `{ db, env }`. A `StepStub` records `step.do(name)` calls and runs the
-  callback inline. Test the claim-row gate: a second call with the row already `running` is a no-op
+- Workflow (`agent-run-workflow.test.ts`, `// @vitest-isolate` because it mocks the resolve seam):
+  the step bodies are plain exported functions in `services/agents/runtime.ts` — `claimStep(db, env,
+  logger, params)`, `executeRun(db, cfg, env, logger, params)`, `finishStep(db, env, logger, params,
+  outcome?)` — call them directly against Postgres, or instantiate `new AgentRunWorkflow(ctx, env)`
+  with `createTestEnv()` and drive `run({ payload: { runId, tenantId } }, createFakeWorkflowStep().step)`;
+  assert on `calls` (`claim`, `execute` with its `retries`/`timeout` config, `finish`) and on the
+  `agent_runs` / `agent_run_events` rows. Test the claim-row gate: `claimRun` on a settled row returns
+  `null` and `claimStep` returns `false`; a cancel while `queued` never reaches `execute`
+- AI seam: `vi.mock('@/api/services/ai/resolve', async importOriginal => ({ ...(await importOriginal()),
+  resolveChat: vi.fn(async () => ({ client: new FakeChatClient(script), provider, model, source,
+  maxOutputTokens })) }))` in a `// @vitest-isolate` file (`chat.test.ts`, `agent-run-workflow.test.ts`).
+  `FakeChatClient(script)` (`tests/helpers/ai.ts`) answers turns of `{ text, toolUses, usage, error }`,
+  streams text in word-sized deltas and records every `calls[i]` (`ChatParams`) so a test can assert the
+  system prompt, tools and `toolChoice` the route sent; `sseFrames(res)` parses a `streamSSE` body back
+  into `ChatStreamEvent`s. Adapters (`ai-client.test.ts`) take an injected `fetch` — `sseResponse(chunks)`
+  builds a fake `text/event-stream` `Response` — so no test reaches a provider. Connection-test and
+  resolver branches use `createTestEnv({ ANTHROPIC_API_KEY, EMBEDDINGS_API_KEY })` overrides
+- Agent runs (`agent-runs.test.ts`): `POST /api/agents/runs` → 202 + a `queued` row + one entry in
+  `stubs(env).workflow.created` with `id === run.id`; the exclusive dedupe (same run back with
+  `deduplicated: true`; 409 with `?strict=1`); `createTestEnv({ AGENT_RUN_WORKFLOW: undefined })` →
+  503; reconcile-on-read by `workflow.setStatus(id, { status: 'errored' })` then `GET /runs/:id`
+- Ingest/retrieval (`ingest-retrieval.test.ts`, `document-index-job.test.ts`): the `RecordingAi` stub
+  is the embedder (override `respond` for keyword-keyed vectors), assert `documents.status`,
+  `chunks` count, `stubs(env).queue.messages` for the `document.index` handoff over 50 chunks, and that
+  tenant B's search never returns tenant A's chunks
 - Cron: call `scheduled({ cron: '0 4 * * *' }, env, ctx)` and assert the task ran; unknown cron → no-op
 - Producers: assert on `stubs(env).queue.messages` (RecordingQueue) — `body.type`, `body.payload` —
   and that the route did NOT do the work itself (no `[email:dev]` line, no provider fetch)
@@ -111,6 +138,12 @@ a fake `WebSocket` factory left set) is on you.
 
 `apps/web/tests/ui/setup.ts` (jest-dom). `renderWithProviders()` gives QueryClient + Auth + Ability + Router.
 Shallow component tests; mock `fetch` where needed, no MSW. `contrast.test.ts` gates the design tokens.
+Streaming (`chat-page.test.tsx`, `sse.test.ts`): `tests/ui/helpers/sse.ts` builds fake
+`text/event-stream` `Response`s (`sseResponse(frames)`, `streamResponse` for arbitrary chunk
+boundaries, `hangingSseResponse` for the Stop button); assert with `waitFor`, not `findBy` — bubbles
+remount when the optimistic id becomes the persisted one. Pure parsers (`chunking.test.ts`,
+`permissions.test.ts` — the matrix incl. `AiConfig`/`Prompt`/`Conversation`/`AgentRun`/`Document`) live
+in the `config` project.
 
 ## Commands
 
