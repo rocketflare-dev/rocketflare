@@ -1,9 +1,11 @@
 import {
+  BookOpenIcon,
   ChatBubbleLeftRightIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
   ClockIcon,
   Cog6ToothIcon,
+  CpuChipIcon,
   HomeIcon,
   ShieldCheckIcon,
 } from '@heroicons/react/24/outline'
@@ -45,6 +47,20 @@ export const navigationConfig: NavConfig = [
         label: 'Chat',
         icon: ChatBubbleLeftRightIcon,
         guard: { action: 'read', subject: 'Conversation' },
+      },
+      // D7: every role may start the example agent; members see their own runs
+      {
+        to: '/agents',
+        label: 'Agents',
+        icon: CpuChipIcon,
+        guard: { action: 'read', subject: 'AgentRun' },
+      },
+      // D18: the knowledge base is tenant-shared; every member may read and search
+      {
+        to: '/documents',
+        label: 'Knowledge',
+        icon: BookOpenIcon,
+        guard: { action: 'read', subject: 'Document' },
       },
     ],
   },

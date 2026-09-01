@@ -2,11 +2,12 @@
  * `/settings` (D10, D25): one page, tabs in `?tab=` (URLTabs) so links deep-link. The route is
  * behind `RequireGuard guard="admin"`; tabs whose content needs more (owner-only slug/delete)
  * gate inside. In single mode the heading reads "Workspace settings". AI tabs (D17, D18): `ai`
- * and `prompts` degrade to read-only inside; `usage` is `manage AiConfig` only and hidden otherwise.
+ * and `prompts` degrade to read-only inside; `agent-models` and `usage` are `manage AiConfig` only and hidden otherwise.
  */
 import {
   ChartBarIcon,
   Cog6ToothIcon,
+  CpuChipIcon,
   DocumentTextIcon,
   KeyIcon,
   SparklesIcon,
@@ -15,6 +16,7 @@ import {
 import { PageHeader, type TabConfig, URLTabs } from '@/ui/components/shared'
 import { useAuth } from '@/ui/hooks/useAuth'
 import { usePermissions } from '@/ui/hooks/usePermissions'
+import AgentModelsSettings from './AgentModels'
 import AiSettings from './AI'
 import ApiKeys from './ApiKeys'
 import General from './General'
@@ -41,6 +43,12 @@ export default function SettingsLayout() {
     },
     ...(can('manage', 'AiConfig')
       ? [
+          {
+            id: 'agent-models',
+            label: 'Agent models',
+            icon: <CpuChipIcon className="w-4 h-4" />,
+            content: <AgentModelsSettings />,
+          },
           {
             id: 'usage',
             label: 'Usage',

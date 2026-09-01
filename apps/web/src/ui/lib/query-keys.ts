@@ -74,6 +74,31 @@ export const queryKeys = {
       all: ['ai', 'usage'] as const,
       summary: (filters: object = {}) => ['ai', 'usage', 'summary', filters] as const,
     },
+    /** `/api/ai/agent-models` — every prompt key with its assignment + effective model (D17) */
+    agentModels: ['ai', 'agent-models'] as const,
+  },
+  /** `/api/agents` — the registered agent roster (code: changes with a deploy) (D7) */
+  agents: {
+    all: ['agents'] as const,
+    list: ['agents', 'list'] as const,
+  },
+  /**
+   * `/api/agents/runs` (D7, D8). The root is `agent-run` ON PURPOSE: the server's progress nudge is
+   * `entity.changed { entity: 'agent-run', id }` and `invalidationsFor()` resolves that payload's
+   * `entity` to a query-key root, so `WebSocketProvider` refreshes the runs list and the open run
+   * with zero hook-side socket code. Its own family (not under `agents`) so a run event never
+   * refetches the registry.
+   */
+  agentRuns: {
+    all: ['agent-run'] as const,
+    list: (filters: object = {}) => ['agent-run', 'list', filters] as const,
+    detail: (id: string) => ['agent-run', 'detail', id] as const,
+  },
+  /** `/api/ai/documents` — the tenant knowledge base and its search (D18) */
+  documents: {
+    all: ['documents'] as const,
+    list: (filters: object = {}) => ['documents', 'list', filters] as const,
+    detail: (id: string) => ['documents', 'detail', id] as const,
   },
   /** `/api/chat/*` — MY conversations (the route filters by user) and their messages (D17) */
   chat: {

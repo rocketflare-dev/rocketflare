@@ -48,6 +48,10 @@ const Activity = lazy(() => import('@/ui/pages/Activity'))
 const SettingsLayout = lazy(() => import('@/ui/pages/settings/SettingsLayout'))
 // D17: its own chunk — the markdown renderer must not ride in the main bundle.
 const ChatPage = lazy(() => import('@/ui/pages/chat/ChatPage'))
+// D7: also carries the markdown renderer (run transcripts) — lazy for the same reason.
+const AgentsPage = lazy(() => import('@/ui/pages/agents/AgentsPage'))
+// D18: the knowledge base — ingest, list, hybrid search.
+const DocumentsPage = lazy(() => import('@/ui/pages/documents/DocumentsPage'))
 const AdminLayout = lazy(() => import('@/ui/pages/admin/AdminLayout'))
 const AccessRequests = lazy(() => import('@/ui/pages/admin/AccessRequests'))
 const TenantList = lazy(() => import('@/ui/pages/admin/TenantList'))
@@ -106,6 +110,26 @@ function ShellRoutes() {
             element={
               <RequireGuard guard={{ action: 'read', subject: 'Conversation' }}>
                 <ChatPage />
+              </RequireGuard>
+            }
+          />
+          {/* D7: one page; `/agents/runs/:runId` opens the run drawer over the list */}
+          {['/agents', '/agents/runs/:runId'].map(path => (
+            <Route
+              key={path}
+              path={path}
+              element={
+                <RequireGuard guard={{ action: 'read', subject: 'AgentRun' }}>
+                  <AgentsPage />
+                </RequireGuard>
+              }
+            />
+          ))}
+          <Route
+            path="/documents"
+            element={
+              <RequireGuard guard={{ action: 'read', subject: 'Document' }}>
+                <DocumentsPage />
               </RequireGuard>
             }
           />
