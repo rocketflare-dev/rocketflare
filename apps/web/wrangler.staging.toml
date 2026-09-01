@@ -27,6 +27,8 @@ EMAIL_FROM = "GMGO Starter <noreply@example.com>"
 TENANCY_MODE = "multi"                 # multi | single   (docs/CONCEPTS.md → Tenancy)
 SIGNUP_MODE = "invite_only"            # open | invite_only | approval
 TENANT_SCOPE_MODE = "off"              # off | enforce    (docs/RLS.md — enforce needs HYPERDRIVE_APP)
+AGENT_MAX_OUTPUT_TOKENS = "16384"      # AI (D17): per-call max_tokens when a tenant config sets none
+AGENT_MAX_TURNS = "30"                 # AI (D17): turn cap for every tool loop
 # Secrets are NOT here: `wrangler secret put <NAME>` for every non-var in .dev.vars.example
 
 [placement]
@@ -97,7 +99,12 @@ new_classes = ["NotificationsHub"]
 binding = "FILES"
 bucket_name = "gmgo-starter-files-staging"
 
+# Workers AI (D17): zero-key embeddings (`@cf/baai/bge-m3`, 1024-dim) via services/ai/client.ts.
+# Optional in code: the resolver falls through to an OpenAI-shaped key when the binding is absent.
+[ai]
+binding = "AI"
+
 # ---- Added in later phases (keep this list in sync with wrangler.staging.toml) ----------
-# Phase 3: [[workflows]] AGENT_RUN_WORKFLOW (name is ACCOUNT-scoped: staging MUST use a
-#          different name), [ai] binding AI
+# Phase 3b: [[workflows]] AGENT_RUN_WORKFLOW (name is ACCOUNT-scoped: staging MUST use a
+#          different name)
 # Phase 4: "15 * * * *" cron for fact-table refresh, optional [[analytics_engine_datasets]]

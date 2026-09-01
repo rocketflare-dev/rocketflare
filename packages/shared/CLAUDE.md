@@ -15,9 +15,22 @@ response with the same schema. `pnpm test:config` covers the pure parts.
 ## Files
 
 `auth.ts` session/login · `tenants.ts` roles, slugs, members, invitations · `access-requests.ts` ·
-`permissions.ts` actions/subjects/`AppAbility`/packed rules (matrix lives in `src/permissions/`) ·
+`permissions.ts` actions/subjects/`AppAbility`/packed rules (matrix lives in `apps/web/src/permissions/`) ·
 `api-keys.ts` · `tenant-settings.ts` · `user-settings.ts` · `notifications.ts` · `admin.ts` ·
-`activity.ts` · `errors.ts` envelope + codes · `pagination.ts`
+`activity.ts` · `errors.ts` envelope + codes · `pagination.ts` · Phase 2 (server ⇄ UI, no HTTP):
+`realtime.ts` — `realtimeEventSchema` `{ type, tenantId, at, payload? }`, `realtimeEventTypeSchema`,
+`REALTIME_INVALIDATIONS` (event type → TanStack query-key roots) + `invalidationsFor()` (D8) ·
+`jobs.ts` — `JOB_TYPES`, per-type payload schemas, `jobInputSchema` (what `enqueueJob` takes),
+`jobEnvelopeSchema` (`+ id, enqueuedAt, attempt?`, what the consumer parses), `JobOf<T>` (D7) ·
+`files.ts` — `FILE_SCOPES`/`fileScopeSchema`, `MAX_UPLOAD_BYTES`, `AVATAR_MIME_TYPES`/`isAvatarMimeType`,
+`filePath(id)`, `fileSchema`/`uploadResponseSchema`, `uploadQuerySchema` (D23)
+
+Adding a job type: a payload schema + a variant in BOTH `jobInputSchema` and `jobEnvelopeSchema` +
+the literal in `JOB_TYPES` (then the handler table in `apps/web/src/api/queues/jobs.ts`). A breaking
+payload change is a NEW type (`email.send.v2`) — the `type` string is the version seam. Adding a
+realtime event type: the enum + its roots in `REALTIME_INVALIDATIONS` (a ui test checks every root
+is a `queryKeys` family). Adding a file scope: `FILE_SCOPES` here AND the mirrored enum in
+`apps/web/src/db/schema/files.ts`.
 
 ## Rules
 

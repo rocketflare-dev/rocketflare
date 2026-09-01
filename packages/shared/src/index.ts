@@ -1,6 +1,7 @@
 export * from './access-requests'
 export * from './activity'
 export * from './admin'
+export * from './ai'
 export * from './api-keys'
 export * from './auth'
 export * from './errors'

@@ -39,10 +39,16 @@ Dev: Vite on :3000 proxies `/api`, `/auth`, `/ws`, `/cubejs-api`, `/mcp` to `wra
 
 ## Data layer
 
-- All HTTP via `lib/api-client.ts` (`api.get/post/patch/delete`): `credentials: 'include'`, typed
+- All HTTP via `lib/api-client.ts` (`api.get/post/patch/delete/upload`): `credentials: 'include'`, typed
   `ApiError` from the shared envelope, `schema` option zod-parses the response with the same
   `@gmgo/shared/<module>` schema the server validates with (import from `@gmgo/shared/...`, never a
   relative path into `packages/`). No `hono/client` RPC (D13)
+- Files (D23): `api.upload(url, formData, { schema })` posts multipart **without** a JSON
+  `Content-Type` (the browser sets the boundary). Check `isAvatarMimeType` / `MAX_UPLOAD_BYTES` from
+  `@gmgo/shared/files` client-side first (`validateAvatarFile` in `hooks/useProfile.ts`) so the
+  server's 413/415 are a backstop, not the UX; `useUploadAvatar()` → `POST /api/files?scope=avatars`
+  then invalidates `me` + `auth` and refreshes the session. Render `<img src={user.avatarUrl}>` with
+  an `onError` fallback to initials — the object is tenant-scoped, the URL is not
 - One hook file per resource in `hooks/use<Resource>.ts`; query keys from the central `queryKeys`
   factory in `lib/query-keys.ts` — never inline key arrays. `lib/queryClient.ts` holds the client
   and its global `QueryCache.onError`
@@ -54,14 +60,27 @@ Dev: Vite on :3000 proxies `/api`, `/auth`, `/ws`, `/cubejs-api`, `/mcp` to `wra
 ## State
 
 TanStack Query owns server state. zustand owns exactly one thing: the websocket connection state
-and its entity → query-key invalidation map (`stores/websocketStore.ts`). Component-local UI state is
-`useState`; theme and density are DOM attributes. Do not add a store for server data.
+(`stores/websocketStore.ts`: `status: 'connecting' | 'open' | 'closed'`, `connectedAt`,
+`disconnectedAt` — kept at the FIRST drop so the banner measures the whole outage — `attempt`,
+`lastEvent`; written only by `lib/websocketClient.ts`). Component-local UI state is `useState`;
+theme and density are DOM attributes. Do not add a store for server data.
 
-## Realtime
+## Realtime (D8)
 
-`lib/websocketClient.ts` singleton connects to `/ws?tenantId=` (same origin), jittered exponential
-backoff, GM upgrade fast-path. Events flow store → `entityInvalidations` → `queryClient.invalidate`.
-Components subscribe to query state, never to the socket. Show `ConnectionBanner` when degraded.
+`lib/websocketClient.ts` singleton (outside React) connects to `/ws?tenantId=` (same origin — the
+Vite proxy forwards it in dev); reconnects with exponential backoff (base `min(1 s · 2^attempt,
+30 s)`, jittered in `[base/2, base]`), and a close with code 1001/1012 or reason "upgraded"/"new
+version" (Worker redeployed) reconnects in 100 ms without counting as a failure; sends
+`{"type":"ping"}` every 30 s. Events are parsed with `realtimeEventSchema`; the event type → query-key
+root map is **`REALTIME_INVALIDATIONS` / `invalidationsFor()` in `@gmgo/shared/realtime`**, not in
+the UI — a new server event type adds its roots there, and `tests/ui` asserts every root is a real
+`queryKeys` family (`['invitations']`, `['pending-invitations']`, `['members']`, `['tenant']`…).
+`components/WebSocketProvider.tsx` (after `AbilityProvider`) connects once `useAuth()` is
+authenticated with a tenant, reconnects on tenant switch, disconnects on sign-out, and uses
+`useQueryClient()` to `invalidateQueries({ queryKey })` per root, toasting `notification.created`.
+Components subscribe to query state, never to the socket; `WebSocketStatus` (header dot) and
+`ConnectionBanner` (after 5 s degraded) read the store only. Tests inject a fake socket with
+`websocketClient.setFactory()` — reset it in `afterEach`.
 
 ## Auth and guards
 

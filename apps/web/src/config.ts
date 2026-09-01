@@ -21,6 +21,13 @@ const optionalSecret = (min: number) =>
     z.string().min(min).optional()
   )
 
+/** `[vars]` arrive as strings; blank means "use the default", never 0. */
+const optionalPositiveInt = (fallback: number) =>
+  z.preprocess(
+    value => (value === undefined || value === null || String(value).trim() === '' ? fallback : value),
+    z.coerce.number().int().positive()
+  )
+
 const csvList = z.preprocess(
   value =>
     typeof value === 'string'
@@ -51,6 +58,11 @@ const configSchema = z.object({
   /** D1: `enforce` wraps tenant-scoped work in a transaction with `set_config(..., true)`. */
   TENANT_SCOPE_MODE: z.enum(['off', 'enforce']).default('off'),
   LANGFUSE_BASE_URL: z.string().url().default('https://cloud.langfuse.com'),
+  /** Langfuse `environment` tag; defaults to `APP_ENV` at the tracer (D16). */
+  LANGFUSE_TRACING_ENVIRONMENT: optionalString,
+  /** D17: per-call `max_tokens` when a tenant config sets none; and the tool-loop turn cap. */
+  AGENT_MAX_OUTPUT_TOKENS: optionalPositiveInt(16384),
+  AGENT_MAX_TURNS: optionalPositiveInt(30),
 
   // ---- Secrets (.dev.vars locally, `wrangler secret put` deployed) — all optional here;
   //      features gate on presence (zero-creds first run) or demand them at use time. -------

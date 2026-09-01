@@ -7,20 +7,23 @@ Hono routers mounted in `src/api/index.ts`. Thin controllers: validate → autho
 - `health.ts` — `/api/health`, `/api/ready`. Public.
 - `auth/` — public (rate-limited where login-shaped): `session.ts` (`/auth/methods|session|select-tenant|logout`), `magic-link.ts` (`/auth/magic-link/request|verify`), `oauth.ts` (ONE generic `/auth/:provider` + `/callback` over `auth/providers`), `dev-login.ts` (development only), `providers.ts` (linked identities), `cli.ts` (`/auth/cli?redirect_uri=` loopback key hand-off, D26), `helpers.ts` (`completeLogin`, `safeRedirectPath`). Static routes mount BEFORE the generic `/:provider` router.
 - `invite.ts` — public `GET /api/invite/:token`, cookie-required `POST /api/invite/:token/accept` (transactional).
-- Behind `authMiddleware` (cookie or Bearer): `me.ts`, `tenant.ts` (current tenant + `/settings`), `tenants.ts` (mine; create — multi only), `members.ts`, `invitations.ts` (+ tenant-free `GET /pending`), `keys.ts`, `notifications.ts`, `activity.ts`, `access-requests.ts` (tenant-free).
+- Behind `authMiddleware` (cookie or Bearer): `me.ts`, `tenant.ts` (current tenant + `/settings`), `tenants.ts` (mine; create — multi only), `members.ts`, `invitations.ts` (+ tenant-free `GET /pending`), `keys.ts`, `notifications.ts`, `activity.ts`, `access-requests.ts` (tenant-free), `files.ts` (D23: `POST /api/files?scope=` multipart `file` → 201 `fileSchema`; `GET /:id` streams from R2 with `Cache-Control: private`, `ETag`/304, `inline` only for the avatar MIME allowlist else `attachment`; `DELETE /:id` uploader-or-`delete File`; `avatars` scope writes `users.avatarUrl`; 503 `storage_not_configured` without `FILES`).
+- `ws.ts` — `GET /ws?tenantId=`, mounted WITHOUT `authMiddleware` (a browser cannot set headers on an upgrade): resolves the cookie via `resolveCookieAuth`, checks membership in the requested tenant, forwards to `NOTIFICATIONS_HUB.idFromName(tenantId)` with `X-Tenant-Id/X-User-Id/X-Session-Id`. Not an upgrade → 426 `upgrade_required`; no cookie → 401; no membership → 403; suspended → 403 `tenant_suspended`.
 - Behind `globalAdminMiddleware`: `admin.ts` — the only cross-tenant surface; logic in `services/admin.ts`.
-- Logic lives in `services/{auth,tenants,members,invitations,admin,notifications,activity,email}.ts`; routes validate → authorise → call a service → respond.
+- Logic lives in `services/{auth,tenants,members,invitations,admin,notifications,activity,email,jobs,realtime,storage}.ts`; routes validate → authorise → call a service → respond. `services/jobs.ts` (`enqueueJob`) and `services/realtime.ts` (`nudge*`) are the only paths to `JOBS_QUEUE` and `NOTIFICATIONS_HUB`; the consumers are in `../queues/`, the DO in `../durable-objects/`.
 
 ## Rules
 
 - `createRouter()` from `utils/routes/router.ts` — never `new Hono()` (D13). It gives `c.get('config' | 'db' | 'logger' | 'requestId')` types.
-- Request contracts are zod schemas in `src/shared/` (UI imports them too). Validate with `validate('json' | 'query' | 'param', schema)` from `utils/routes/validate.ts`; a bad input becomes the shared 400 envelope with `code: 'validation_failed'`.
-- Read config via `c.get('config')`, never `c.env` (D3). Bindings (KV, R2, queues) are the middleware's business.
+- Request contracts are zod schemas in `packages/shared/src/` (`@gmgo/shared/<module>`; UI and CLI import them too). Validate with `validate('json' | 'query' | 'param', schema)` from `utils/routes/validate.ts`; a bad input becomes the shared 400 envelope with `code: 'validation_failed'`.
+- Read config via `c.get('config')`, never `c.env` (D3). Bindings are passed INTO services from the route, never read inside them: `c.env.JOBS_QUEUE` → `createInvitation(db, cfg, logger, jobs, …)`, `c.env.FILES` → `createR2Storage(...)`; `NOTIFICATIONS_HUB` only ever via the `realtime` that `withAuth` returns.
+- Body limits: the global `jsonBodyLimit` (1 MB) skips `/api/files` (`isUploadPath`); `files.ts` mounts `uploadBodyLimit` (`MAX_UPLOAD_BYTES + 64 KB`) on its `POST` and enforces the exact 5 MB per file (413 `payload_too_large`) and the avatar allowlist (415 `unsupported_media_type`) itself. A new upload route must do the same two things — the transport cap is not the per-file limit.
 - Throw typed errors from `utils/core/errors.ts` (`NotFoundError`, `ForbiddenError`, ...). Do not hand-roll `c.json({ error }, 4xx)`; `middleware/error-handler.ts` owns the envelope `{ error, statusCode, code?, details? }`.
-- Success bodies are bare domain objects (no envelope). Lists use `paginatedResponse(item)` from `src/shared/pagination.ts` → `{ items, pagination: { page, pageSize, total, totalPages } }`.
+- Success bodies are bare domain objects (no envelope). Lists use `paginatedResponse(item)` from `@gmgo/shared/pagination` → `{ items, pagination: { page, pageSize, total, totalPages } }`.
 - Auth is applied AT THE MOUNT in `index.ts` (`app.use('/api/x/*', authMiddleware); app.route('/api/x', xRouter)`), never inside a route file. Every tenant-scoped query carries `eq(table.tenantId, tenantId)` from the auth context — never from the body/query.
-- Side effects that may outlive the response (emails, broadcasts, usage writes) go through `c.executionCtx.waitUntil(...)`; a detached promise is killed when the response ends.
-- Routes enqueue, never run: anything longer than a request is a queue message or a Workflow (D7).
+- Side effects that may outlive the response (activity writes, realtime nudges, usage writes) go through `defer(...)` from `withAuth` (= `c.executionCtx.waitUntil`, awaited inline when there is no ExecutionContext); a detached promise is killed when the response ends.
+- Routes enqueue, never run: anything longer than a request is a queue message or a Workflow (D7). Transactional emails are `email.send` jobs (`enqueueJob(c.env.JOBS_QUEUE, …)` inside the service) — except the magic link, which stays inline because a person is waiting on it.
+- Realtime (D8): services `nudge(realtime, realtimeEvent('member.changed', tenantId, { id }))`; the route only passes `realtime` through. Emit after the transaction commits.
 
 ## Route anatomy
 
@@ -35,7 +38,9 @@ router.post('/', validate('json', createThingSchema), async c => {
 ```
 
 `withAuth(c)` is the tenant-free variant (`tenantId: string | null`) for invite accept, pending
-invitations, access requests and `/api/admin/*`. `requireMultiTenant(cfg)` → 404 `tenancy_mode_single`.
+invitations, access requests and `/api/admin/*`. Both also return `cfg`, `logger` and `realtime`
+(`{ defer, env }` — hand it to a service that nudges). `requireMultiTenant(cfg)` → 404
+`tenancy_mode_single`. `uuidParam(c, 'id')` → 404 for a non-UUID `:id` (never a DB error).
 
-New endpoint checklist: schema in `src/shared/` → `validate(...)` → auth seam + permission guard →
-tenant-scoped query → tests in `tests/api/` → update this file if a new router appears.
+New endpoint checklist: schema in `packages/shared/src/` → `validate(...)` → auth seam + permission
+guard → tenant-scoped query → tests in `tests/api/` → update this file if a new router appears.

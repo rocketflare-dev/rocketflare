@@ -32,6 +32,9 @@ const MATRIX: Record<string, Record<Role, Level>> = {
   ActivityEvent: { owner: 'manage', admin: 'manage', support: 'manage', member: 'read' },
   Notification: { owner: 'manage', admin: 'manage', support: 'manage', member: 'manage' },
   File: { owner: 'manage', admin: 'manage', support: 'manage', member: 'create' },
+  AiConfig: { owner: 'manage', admin: 'manage', support: 'manage', member: 'read' },
+  Prompt: { owner: 'manage', admin: 'manage', support: 'manage', member: 'read' },
+  Conversation: { owner: 'manage', admin: 'manage', support: 'manage', member: 'manage' },
   AccessRequest: { owner: 'none', admin: 'none', support: 'none', member: 'none' },
   User: { owner: 'none', admin: 'none', support: 'none', member: 'none' },
 }

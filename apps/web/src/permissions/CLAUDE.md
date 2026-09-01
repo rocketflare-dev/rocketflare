@@ -1,7 +1,7 @@
 # Permissions (CASL) — D10
 
 `buildAbility({ role, isGlobalAdmin, features })` → typed `AppAbility` (`MongoAbility<[Actions, Subjects]>`,
-vocabulary in `src/shared/permissions.ts`). Built once per request by the auth middleware into
+vocabulary in `packages/shared/src/permissions.ts`). Built once per request by the auth middleware into
 `c.get('auth').ability`; shipped to the UI as `packRules(ability)` on `/auth/session.permissions`.
 
 ## Matrix (02 §10b — `abilities.ts` implements exactly this)
@@ -12,6 +12,7 @@ vocabulary in `src/shared/permissions.ts`). Built once per request by the auth m
 | `Tenant` | manage | manage | read | manage | read |
 | `TenantMember`, `Invitation`, `ApiKey`, `ActivityEvent` | manage | manage | manage | manage | read |
 | `Notification` (own, route-scoped) | manage | manage | manage | manage | manage |
+| `File` (D23) | manage | manage | manage | manage | create + read (own-file delete is `routes/files.ts`'s `ownerUserId` check, not CASL) |
 | `AccessRequest`, `User` (platform) | manage | – | – | – | – |
 | `Feature:<name>` via `access` | all | by `features` | by `features` | all | by `features` |
 
@@ -30,5 +31,7 @@ Tests: `tests/config/permissions.test.ts` asserts every cell above — change th
 
 ## Adding a subject
 
-Add it to `CORE_SUBJECTS` in `src/shared/permissions.ts`, grant it per role here (default posture:
-owner/admin/support `manage`, member `read`), add the row above and to the matrix test.
+Add it to `CORE_SUBJECTS` in `packages/shared/src/permissions.ts`, grant it per role here (default
+posture: owner/admin/support `manage` via `ADMIN_MANAGED`, member `read` via `MEMBER_READABLE`; add
+an explicit `can('create', …)` for the member only when anyone may write, as `File` does), add the
+row above and to the matrix test.

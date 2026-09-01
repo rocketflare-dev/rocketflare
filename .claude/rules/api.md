@@ -17,13 +17,13 @@ out of `api/index.ts` is what lets tests drive `app.request(req, env, ctx)` unde
 1. `app.onError(errorHandler)` / `app.notFound` — every failure below, including config validation, gets the JSON envelope
 2. `requestLogger` (hono-pino) — request id exists for everything after
 3. `configMiddleware` — `loadConfig(c.env)`; everything below reads `c.get('config')`, **never `c.env` for config**
-4. `securityHeaders`
-5. `bodyLimit` on `/api/*` and `/auth/*`
-6. `cors` — before CSRF so preflights are answered
-7. `csrf` — cookie-only, no DB, cheap rejection
+4. `securityHeaders` — after `next()`; **returns a 101 untouched** (the DO's upgrade response has immutable headers; re-wrapping it drops the socket)
+5. `jsonBodyLimit` (1 MB) on `/api/*` and `/auth/*` — **skipped for `/api/files`** (`isUploadPath`); the upload route mounts `uploadBodyLimit` (`MAX_UPLOAD_BYTES + 64 KB` multipart overhead) on its own `POST` and enforces the exact per-file cap in the handler
+6. `cors` — before CSRF so preflights are answered; **bypassed for WebSocket upgrades** (`Upgrade: websocket` — CORS does not govern the handshake, the route checks membership)
+7. `csrf` — cookie-only, no DB, cheap rejection (GET `/ws` is a safe method, no exemption needed)
 8. `databaseMiddleware` — per-request postgres.js client, `c.executionCtx.waitUntil(close())`
 9. `langfuseFlush` (optional) — brackets exactly the handler's spans
-10. Mounts: `/api/health|ready` public → `/auth` (rate-limited login routes) → `/api/invite` public → `/api/admin/*` behind `globalAdminMiddleware` → every other `/api/*` with `authMiddleware` at the mount → `/cubejs-api`, `/mcp` behind `authMiddleware` → `app.all('*')` ASSETS catch-all with a 404 guard for `/api|/auth|/cubejs-api|/mcp`
+10. Mounts: `/api/health|ready` public → `/auth` (rate-limited login routes) → `/api/invite` public → `/api/admin/*` behind `globalAdminMiddleware` → `/ws` (no `authMiddleware`: a browser cannot set headers on an upgrade, so `routes/ws.ts` resolves the cookie itself) → every other `/api/*` (incl. `/api/files`) with `authMiddleware` at the mount → `/cubejs-api`, `/mcp` behind `authMiddleware` → `app.all('*')` ASSETS catch-all with a 404 guard for `/api|/auth|/cubejs-api|/mcp|/ws`
 
 Auth is per-mount, not global: the public surface is enumerable and small.
 
@@ -31,7 +31,7 @@ Auth is per-mount, not global: the public surface is enumerable and small.
 
 - `createRouter()` (`apps/web/src/api/utils/routes/router.ts`) — never `new Hono()` bare; no `declare module 'hono'` augmentation
 - Validate with `validate('json'|'query'|'param', schema)` (`apps/web/src/api/utils/routes/validate.ts`, a zValidator wrapper) using schemas from `@gmgo/shared/<module>` (`packages/shared/src/`); its hook throws `ValidationError` so a 400 uses the shared envelope `{ error, statusCode, code?, details? }` — never call `zValidator` directly
-- `withAuthAndDb(c, ({ tenantId, user, db, scoped }) => …)` is the **only** way to read auth in a route. Never `c.get('auth'|'session'|'db')` by hand. Handlers may return a plain object; it is wrapped in `c.json`
+- `const { db, tenantId, user, cfg, logger, defer, realtime } = withAuthAndDb(c)` is the **only** way to read auth in a route (`withAuth(c)` is the tenant-free variant, `tenantId: string | null`). Never `c.get('auth'|'session'|'db')` by hand. `defer(fn)` runs a side effect through `waitUntil` (awaited inline when there is no ExecutionContext) and logs instead of throwing; `realtime` (`{ defer, env }`) is what you hand to a service so it can `nudge` (D8) — routes never touch `NOTIFICATIONS_HUB`. Bindings a service needs (`c.env.JOBS_QUEUE`, `c.env.FILES`) are passed from the route as arguments
 - Authorise with `guardPermission(c, action, subject)` (CASL, `apps/web/src/api/middleware/permissions.ts`) — throws `UnauthorizedError`/`ForbiddenError` and returns the `AuthContext`; `can(c, …)` for branching. Owner-only actions (delete tenant, transfer ownership) use `guardOwner(c)` / `isOwnerLevel(auth)` — an explicit `role === 'owner'` check, never `manage Tenant`
 - Every query filters by `tenantId` from the auth context — see `.claude/rules/database.md`
 - Throw typed errors from `apps/web/src/api/utils/core/errors.ts` (`NotFoundError`, `ForbiddenError`, `ValidationError`, `ConflictError`, …); never `c.json({ error }, 4xx)` by hand
@@ -65,7 +65,14 @@ failures surface as the JSON envelope on this route.
 
 Plain modules, signature `(db, cfg, logger, …args)` — dependencies are passed, never imported as
 process globals. No service reads `c.env`, `process.env` or a module-level `config`. A service that
-needs a binding (KV, Queue, R2, AI) takes it as a parameter typed from `Cloudflare.Env`.
+needs a binding (KV, Queue, R2, AI) takes it as a parameter typed from `Cloudflare.Env`. The two
+Phase 2 shapes: services that **queue** take the binding after the logger —
+`createInvitation(db, cfg, logger, jobs, input)`, `decideAccessRequest(db, cfg, logger, jobs,
+input)` (`jobs: JobsQueue`, a structural slice so tests pass a `RecordingQueue`); services that
+**nudge** take `realtime?: Realtime` as a trailing optional parameter (`updateTenant(db, tenantId,
+patch, realtime?)`, `notify(db, input, realtime?)`) or inside their `input` (`changeMemberRole`,
+`removeMember`, `acceptInvitation`). Storage routes build the seam themselves:
+`createR2Storage(c.env.FILES)` → `StorageService`, 503 `storage_not_configured` without the binding.
 
 ## Config
 
@@ -81,18 +88,50 @@ A route never runs long work. Rule (05 §1.4):
 
 | Work | Use | How |
 |---|---|---|
-| fire-and-forget, < 30 s total | `JOBS_QUEUE` | typed producer helper in `apps/web/src/api/services/*/queue.ts`; consumer is a plain `(batch, env)` function switched on `batch.queue` in `apps/web/src/api/queue.ts` |
-| multi-step, retries, minutes+ (agent runs) | `AGENT_RUN_WORKFLOW` | deterministic instance id `<kind>:<tenant>:<subject>`; DB row is the claim (`UPDATE … WHERE status IN (queued,running) RETURNING`) |
+| fire-and-forget, < 30 s total | `JOBS_QUEUE` | producer `enqueueJob(queue, input)` / `enqueueJobs` in `apps/web/src/api/services/jobs.ts` (validates `jobInputSchema` from `@gmgo/shared/jobs`, stamps `{ id, enqueuedAt }`); consumer `processJobsBatch(batch, { env, config, logger })` in `apps/web/src/api/queues/jobs.ts` dispatching on `type` to `queues/handlers/*`; `apps/web/src/api/queue.ts` routes `batch.queue` by prefix (`isJobsQueue`) |
+| multi-step, retries, minutes+ (agent runs) | `AGENT_RUN_WORKFLOW` (Phase 3) | deterministic instance id `<kind>:<tenant>:<subject>`; DB row is the claim (`UPDATE … WHERE status IN (queued,running) RETURNING`) |
 | periodic | `[triggers] crons` | `apps/web/src/api/scheduled.ts` dispatches on `event.cron`; each task try/caught |
 
+Jobs rules (D7):
+
+- **Adding a job type** = a variant in `jobInputSchema` + `jobEnvelopeSchema` and `JOB_TYPES`
+  (`packages/shared/src/jobs.ts`) + one entry in the `handlers` table of `queues/jobs.ts` + a
+  `queues/handlers/<name>.ts` (copy `example-ping.ts`). The `type` string is the version seam: a
+  breaking payload change is a new type (`email.send.v2`), never an edited schema
+- Handler signature `(job: JobOf<'x'>, ctx: { env, config, logger, db })`; each message gets its
+  own DB client, closed in `finally`. **Never `waitUntil` in a consumer — await everything**; a
+  handler that throws is retried, one that returns is acked
+- Poison policy: an envelope that fails `jobEnvelopeSchema` is logged and **`ack()`ed** (retrying
+  cannot make it valid). Handler error → `retry({ delaySeconds: backoffSeconds(attempts) })`, 30 s
+  doubling to a 15 min cap; the toml's `max_retries = 3` ends it. Unknown queue → `ackAll()`
+- Missing `JOBS_QUEUE` → `JobsQueueNotConfiguredError`, never a silent inline fallback. Queued in
+  the kit: invitation (create/bulk/resend) and access-request-decided emails. The **magic-link email
+  stays inline** — a person is waiting on it
+- `example.ping` is the smoke job: `enqueueJob(c.env.JOBS_QUEUE, { type: 'example.ping', payload: { tenantId } })` from any route, then watch `wrangler dev`
+
 Side effects that can outlive the response (email, tracing flush, DO nudge, `sql.end()`) go in
-`c.executionCtx.waitUntil(...)`, never awaited inline and never dropped on the floor.
+`c.executionCtx.waitUntil(...)` — in routes via `defer()` from `withAuth` — never awaited inline and
+never dropped on the floor.
 
-## Realtime
+## Realtime (D8)
 
-Routes never touch `NOTIFICATIONS_HUB` directly. `services/notification.ts` (`broadcastDataEvent`,
-`broadcastInvitationEvent`) is the seam; the payload is a nudge (`{ entity, id }`) and the client
-re-queries. "DB is the truth, WebSocket is a nudge."
+Routes never touch `NOTIFICATIONS_HUB` directly. `apps/web/src/api/services/realtime.ts` is the
+**only** caller: `nudge(realtime, event)` (tenant-wide), `nudgeUser(realtime, userId, event)`,
+`nudgeUsers(realtime, userIds, event)`, over a `Broadcaster` seam whose one implementation is
+`createHubBroadcaster(env)` → `idFromName(tenantId)` → typed RPC stub (`broadcast`,
+`broadcastToUser`, `broadcastToUsers` → `{ delivered }`). `realtime` is the `Realtime` (`{ defer,
+env }`) returned by `withAuth()`; every nudge goes through `defer`/`waitUntil`, is never awaited on
+the response path and is a no-op without the binding. Build events with
+`realtimeEvent(type, tenantId, payload?)`; types and the query-key invalidation map
+(`REALTIME_INVALIDATIONS`) live in `@gmgo/shared/realtime` — add a type there, not in a route. The
+payload is a nudge (`{ id }` or `{ entity, id }` for `entity.changed`); the client re-queries. "DB is
+the truth, WebSocket is a nudge." Emit **after** the transaction commits (`acceptInvitation` defers
+its two nudges past the `db.transaction`).
+
+`GET /ws` (`routes/ws.ts`): not an upgrade → 426 `upgrade_required`; no cookie → 401; not a member
+of `?tenantId` (or the session tenant) → 403; suspended → 403 `tenant_suspended`; else forward to the
+tenant's DO stub with `X-Tenant-Id` / `X-User-Id` / `X-Session-Id`. The DO trusts those headers
+**only** because it is reachable solely through the binding — never expose it another way.
 
 ## Workers runtime
 

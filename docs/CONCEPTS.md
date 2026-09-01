@@ -13,8 +13,8 @@ section ends with **Known gaps**; sections for phases not yet built say so.
 | 2 | [Auth](#2-auth) | Phase 1 |
 | 3 | [API shell](#3-api-shell) | Phase 0 |
 | 4 | [Database](#4-database) | Phase 0 |
-| 5 | [Background work and realtime](#5-background-work-and-realtime) | Phase 2 |
-| 6 | [Email and storage](#6-email-and-storage) | Phase 1–2 |
+| 5 | [Background work and realtime](#5-background-work-and-realtime) | Phase 2 — built (Workflows: Phase 3) |
+| 6 | [Email and storage](#6-email-and-storage) | Phase 1–2 — built |
 | 7 | [UI shell](#7-ui-shell) | Phase 0–1 |
 | 8 | [Analytics](#8-analytics) | Phase 4 |
 | 9 | [AI layer](#9-ai-layer) | Phase 3 |
@@ -36,7 +36,7 @@ React UI, everything in §§1–10), `apps/cli` (`@gmgo/cli`, §11) and `package
 
 ## 1. Tenancy
 
-**Status: planned (Phase 1).**
+**Status: built (Phase 1).**
 
 **Every row of domain data belongs to a tenant, and the schema is identical whether the app runs
 as one tenant or many.** `TENANCY_MODE = multi | single` (D25) is configuration, not a fork:
@@ -66,8 +66,8 @@ strands a user who lost their last organisation.
 **Roles and abilities (D10, 02 §10b).** `tenant_users.role` is `owner | admin | member` (assignable)
 or `support` (minted only from `/admin`, excluded from member counts, visible to the customer by
 design). `users.isGlobalAdmin` is a platform flag, not a tenant role. CASL subjects: `all`, `Tenant`,
-`TenantMember`, `Invitation`, `ApiKey`, `Notification`, plus an `access` hook over an injected
-`features: string[]`.
+`TenantMember`, `Invitation`, `ApiKey`, `ActivityEvent`, `Notification`, `File`, plus an `access`
+hook over an injected `features: string[]`.
 
 | Subject \ Role | globalAdmin | owner | admin | support | member |
 |---|---|---|---|---|---|
@@ -76,7 +76,9 @@ design). `users.isGlobalAdmin` is a platform flag, not a tenant role. CASL subje
 | `TenantMember` | manage | manage | manage | manage | read |
 | `Invitation` | manage | manage | manage | manage | read |
 | `ApiKey` | manage | manage | manage | manage | read (own, route-scoped) |
+| `ActivityEvent` | manage | manage | manage | manage | read |
 | `Notification` (own) | manage | manage | manage | manage | manage |
+| `File` (D23) | manage | manage | manage | manage | create + read (delete own: route's `ownerUserId` check) |
 
 `*` Deleting a tenant and assigning/changing `owner` additionally require an explicit
 `role === 'owner'` check — CASL conditions are not used anywhere, so don't pretend they are. A new
@@ -100,7 +102,7 @@ allow-list is new code with no production history; feature-flag source for `acce
 
 ## 2. Auth
 
-**Status: planned (Phase 1).**
+**Status: built (Phase 1).**
 
 **Sessions are rows.** `user_sessions` is DB-backed with a 7-day sliding TTL; the cookie is
 `__Host-session` (no `Domain`, `Secure` when `APP_ENV !== development`, `SameSite=Lax`,
@@ -169,7 +171,9 @@ failures (the `validate()` wrapper throws `ValidationError` instead of zValidato
 `createRouter()` replaces bare `new Hono()` and there is no `declare module 'hono'` augmentation.
 
 **Routes are thin** (`withAuthAndDb` → `guardPermission` → tenant-filtered query → optional
-broadcast) and **never run long work** — they enqueue or create a workflow instance (§5).
+`nudge` through `services/realtime.ts`) and **never run long work** — they enqueue or create a
+workflow instance (§5). Two deliberate exceptions to the global middleware: `/ws` is mounted without
+`authMiddleware` (it resolves the cookie itself) and `/api/files` mounts its own larger body limit.
 
 **Config model.** Non-secrets live in `[vars]`: `APP_ENV`, `APP_URL`, `APP_NAME`, `RELEASE_VERSION`
 (injected by CI), `LOG_LEVEL`, `EMAIL_FROM`, `TENANCY_MODE`, `SIGNUP_MODE`, `TENANT_SCOPE_MODE`,
@@ -212,16 +216,87 @@ app is dropped (it soaked Node connection pinning, which no longer exists); no r
 
 ## 5. Background work and realtime
 
-**Status: planned (Phase 2).**
+**Status: jobs and realtime built (Phase 2); Workflows land with the agent runtime (Phase 3).**
 
 **A route never runs long work; it enqueues (fire-and-forget, < 30 s total) or creates a workflow
 (multi-step, retries, minutes+). Cron only dispatches.** (05 §1.4, D7)
 
 | Need | Primitive | Kit shape |
 |---|---|---|
-| plain job | `JOBS_QUEUE` (one queue) | typed producer helper; consumer `processJobsBatch(batch, env)` switched on `batch.queue`; retry policy in the toml + `message.retry({ delaySeconds })` |
-| durable multi-step | `AGENT_RUN_WORKFLOW` (one class) | the agent runtime *is* the example workflow — no throwaway second one |
+| plain job | `JOBS_QUEUE` (one queue) — **built** | `enqueueJob(queue, input)` (`services/jobs.ts`) → `processJobsBatch(batch, { env, config, logger })` (`queues/jobs.ts`) dispatched on `type` to `queues/handlers/*`; `queue.ts` routes `batch.queue` by prefix |
+| durable multi-step | `AGENT_RUN_WORKFLOW` (one class) — Phase 3 | the agent runtime *is* the example workflow — no throwaway second one |
 | periodic | `[triggers] crons` | `scheduled.ts` dispatch table on `event.cron`; each task try/caught; `0 4 * * *` prune, `15 * * * *` fact refresh (Phase 4) |
+
+**Jobs (D7) — one queue, typed envelopes, poison never loops.** The contract is
+`@gmgo/shared/jobs`: a discriminated union on `type` (`email.send`, `activity.record`,
+`example.ping`) wrapped in an envelope `{ id, type, payload, enqueuedAt, attempt? }`. The `type`
+string is the versioning seam — a breaking payload change ships as a new type (`email.send.v2`)
+with its own handler while the old one drains; there is no schema-version field. The producer
+(`enqueueJob` / `enqueueJobs`, batches of ≤ 100) validates the input and stamps the envelope; a
+missing `JOBS_QUEUE` binding throws `JobsQueueNotConfiguredError` rather than silently running
+inline. The consumer is a plain function: per message it parses `jobEnvelopeSchema` — **invalid →
+log + `ack()`** (retrying cannot make it valid) — then runs the handler, `ack()`s on success and on
+error `retry({ delaySeconds })` with 30 s doubling to a 15 min cap; the toml's `max_retries = 3`
+ends it (`retry_delay = 60` only applies to a retry with no explicit delay). Each message opens and
+closes its own DB client and **everything is awaited — there is no `waitUntil` in a consumer**.
+`queue.ts` matches the jobs queue by **prefix** (`isJobsQueue`, `JOBS_QUEUE_NAME_PREFIX =
+'gmgo-starter-jobs'`) because queue names are account-scoped and staging's carries `-staging`; an
+unknown queue is `ackAll()`ed so a stray binding can never retry forever.
+
+What is queued today: the invitation email (create, bulk, resend) and the access-request decision
+email, so those routes answer as soon as the row exists — the `email.send` payload carries the
+optional `link` so the `[email:dev]` console fallback still prints the accept URL. **The magic-link
+email stays inline** (a person is waiting on it; latency beats offloading). `example.ping` is the
+smoke job (logs and acks — enqueue it from any route to prove the pipeline under `wrangler dev`).
+Services that queue take the binding as a parameter: `createInvitation(db, cfg, logger, jobs,
+input)`, `decideAccessRequest(db, cfg, logger, jobs, input)`.
+
+**Realtime (D8).** The `NotificationsHub` Durable Object (`api/durable-objects/notifications-hub.ts`)
+is one instance per tenant (`idFromName(tenantId)`), **stateless** (no `ctx.storage`, so DO
+migrations are free), on the hibernation API: sockets are accepted with tags `tenant:<id>` and
+`user:<id>`, per-socket metadata `{ userId, sessionId, connectedAt }` lives in the attachment, and
+`setWebSocketAutoResponse` answers the client's `{"type":"ping"}` (every 30 s) with `pong` without
+waking the object. Publishing is RPC, never fetch dispatch: `broadcast(event)`,
+`broadcastToUser(userId, event)`, `broadcastToUsers(userIds, event)` → `{ delivered }`, and
+`connectionCount()` → `{ count }`. It lives in this Worker — the source app split it into a second
+worker only to keep preview URLs, which the kit does not have.
+
+`GET /ws?tenantId=` (`routes/ws.ts`) is mounted **without** `authMiddleware` (a browser cannot set
+headers on an upgrade) and resolves the cookie itself: not an upgrade → 426 `upgrade_required`; no
+session → 401; no membership in the requested tenant (or `?tenantId` absent with no session tenant)
+→ 403; suspended tenant → 403 `tenant_suspended`; else the upgrade is forwarded to the tenant's stub
+with `X-Tenant-Id` / `X-User-Id` / `X-Session-Id` headers. The DO trusts those headers **only**
+because it is reachable solely through the `NOTIFICATIONS_HUB` binding. `cors` skips WebSocket
+upgrades and `securityHeaders` returns a 101 untouched (its headers are immutable; re-wrapping
+drops the socket).
+
+**"DB is the truth, WebSocket is a nudge."** Events are `realtimeEventSchema` in
+`@gmgo/shared/realtime`: `{ type, tenantId, at, payload? }` with `type` ∈ `notification.created |
+notification.read | member.changed | invitation.changed | tenant.changed | entity.changed | ping`.
+`REALTIME_INVALIDATIONS` in the same file maps each type to the TanStack query-key roots the UI
+invalidates (`invitation.changed` → `['invitations']` and `['pending-invitations']`;
+`tenant.changed` → `['tenant']`, `['tenants']`, `['auth']`); `entity.changed` carries its own root in
+`{ entity, id }`. The UI re-queries; it never applies a payload as state.
+
+`services/realtime.ts` is the **only** module that touches the hub: `nudge(rt, event)`,
+`nudgeUser(rt, userId, event)`, `nudgeUsers(rt, userIds, event)` over a `Broadcaster` seam. `rt` is
+the `Realtime` (`{ defer, env }`) that `withAuth()` / `withAuthAndDb()` return as `realtime`; every
+send goes through `defer` → `waitUntil`, is never awaited on the response path and is a no-op
+without the binding. Nudges fire from `createInvitation`, `revokeInvitation`, `acceptInvitation`
+(two, deliberately: `invitation.changed` + `member.changed`, after the transaction commits),
+`changeMemberRole`, `removeMember`, `updateTenant`, `deleteTenant`, and `notify` / `notifyMany`
+(`notification.created` to the recipient's sockets). Services take `realtime?` as a trailing
+optional parameter or inside their `input` — it is never imported.
+
+**Client.** `ui/lib/websocketClient.ts` is a singleton outside React: same-origin `/ws?tenantId=`,
+reconnect with exponential backoff, base `min(1 s · 2^attempt, 30 s)`, jittered uniformly in
+`[base/2, base]`; a close with code 1001/1012 or a reason containing "upgraded"/"new version" means
+the Worker was redeployed and reconnects in 100 ms without counting as a failure. State goes to the
+one zustand store (`status | connectedAt | disconnectedAt | attempt | lastEvent`);
+`WebSocketProvider` (after `AbilityProvider`) connects once authenticated with a tenant, reconnects
+on tenant switch, turns events into `queryClient.invalidateQueries` via `invalidationsFor()` and
+toasts `notification.created`. `WebSocketStatus` is the header dot; `ConnectionBanner` appears
+after 5 s away from `open`.
 
 **What replaced the Node queue semantics.** `exclusive` (singleton per key) → a deterministic
 Workflow instance id `<kind>:<tenant>:<subject>` with a `get()` probe. **Coalesce has no Cloudflare
@@ -231,35 +306,68 @@ settled is a no-op. Never fake either in an in-memory `Map` — isolates are man
 Cancellation is cooperative: flip the row, the loop polls status between turns. Orphan sweep is a
 cron task. Progress is durable in `agent_run_events`; the DO only wakes viewers.
 
-**Realtime (D8).** The `NotificationsHub` Durable Object (hibernation API, tenant/user tags, RPC
-methods) lives in this Worker — the source app split it into a second worker only to keep preview
-URLs, which the kit does not have. `/ws` upgrade auth: session cookie → membership check → forward to
-the DO stub. **"DB is the truth, WebSocket is a nudge"**: payloads are `{ entity, id }`, the client
-maps entity → query keys and re-fetches; the UI never trusts socket payloads as state. Routes go
-through `services/notification.ts`, never the DO. Client: jittered backoff, upgrade fast-path,
-`ConnectionBanner` when degraded.
-
-**Known gaps / not built yet:** SSE `Last-Event-ID` replay for run progress is deferred (no NOTIFY
-wake); per-user targeting in the hub is optional; dead-letter queue is declared in comments only;
-`@cloudflare/vitest-pool-workers` smoke project for DO/Workflow is not in v1.
+**Known gaps / not built yet:** `/api/admin` paths do not nudge — `decideAccessRequest` writes the
+`access_request_decided` notification without a `Realtime`, so the approved user's bell and the
+tenant's member list refresh on the next fetch, not live; `notification.read` is in the event enum
+and the invalidation map but nothing emits it yet; the `activity.record` handler ships with no kit
+producer (routes still `defer(recordActivity)` inline — enqueue it when an audit write is on a hot
+path); the DO's 101 branch cannot run under Node (undici rejects status 101) and is proven by
+`wrangler dev`, not the suite; `dead_letter_queue` is commented out in both tomls; SSE
+`Last-Event-ID` replay for run progress is deferred; `@cloudflare/vitest-pool-workers` smoke project
+for DO/Workflow is not in v1; Workflows arrive with Phase 3.
 
 ## 6. Email and storage
 
-**Status: email Phase 1, storage Phase 2.**
+**Status: email Phase 1, storage built (Phase 2).**
 
-**Email** is Resend over plain `fetch` (no SDK), `sendEmail(env, to, subject, html)`, with shared
-`emailShell`/`ctaButton` helpers and three templates: magic link, tenant invitation, invitation
-accepted. From-address and branding come from `EMAIL_FROM`, `APP_NAME`, `APP_URL`. Absent
-`RESEND_API_KEY` → log and skip; the magic-link route logs the URL itself so login works with zero
-configuration. Sends are best-effort in `waitUntil` — a failure never breaks the requester's login.
+**Email** is Resend over plain `fetch` (no SDK), `sendEmail(cfg, logger, { to, subject, html, text,
+link })`, with shared `emailShell`/`ctaButton` helpers and templates for the magic link, tenant
+invitation, invitation accepted and access-request decision. From-address and branding come from
+`EMAIL_FROM`, `APP_NAME`, `APP_URL`. Absent `RESEND_API_KEY` → the message is logged (`[email:dev]`,
+with `link` printed loudly) and counted as delivered-false, never as an error, so login and invites
+work with zero configuration. The magic link is sent inline from its route; invitation and
+access-request emails are `email.send` jobs on `JOBS_QUEUE` (§5) — a provider failure there retries
+with backoff instead of failing the request.
 
-**Storage (D23)** is the `StorageService` interface (`upload`, `download`, `head`, `delete`,
-`exists`, `buildStorageKey`, `sanitizeFilename`) over the native `FILES` R2 binding. Keys are
-tenant-prefixed (`tenants/<tenantId>/…`); bytes stream through the Worker. `wrangler dev` emulates R2
-locally, so there is no filesystem adapter.
+**Storage (D23)** is the `StorageService` seam (`put`, `get`, `head`, `delete`, `list`) over the
+native `FILES` R2 binding (`createR2Storage(bucket)` in `services/storage.ts`), plus
+`buildStorageKey` / `sanitizeFilename` / `tenantStoragePrefix`. Keys are
+`tenants/<tenantId>/<scope>/<uuid>-<sanitisedName>`, so one prefix scopes a tenant (or one scope of
+it) for listing or bulk deletion and the UUID makes every key unique whatever the client called the
+file. Bytes **stream through the Worker** — the binding cannot mint presigned URLs. The `files`
+table (`db/schema/files.ts`, migration `0001`, RLS policy like every tenant table) is the index and
+the only thing the browser can name: rows are immutable (`id, tenantId, ownerUserId, scope, key,
+filename, contentType, sizeBytes, createdAt`; no `updated_at`). Scopes are `FILE_SCOPES =
+['avatars', 'uploads']`, declared in `@gmgo/shared/files` and mirrored in the DB enum.
 
-**Known gaps / not built yet:** presigned URLs (the binding cannot mint them — needs S3 credentials
-+ `aws4fetch`); no per-tenant storage configuration; email templates are neutral and need branding.
+`/api/files` (`routes/files.ts`, behind `authMiddleware`, contract in `@gmgo/shared/files`):
+
+- `POST /api/files?scope=` — multipart with one `file` field; `create File`. The route mounts its
+  own transport cap (`MAX_UPLOAD_BYTES + 64 KB` for multipart overhead) and the JSON `bodyLimit`
+  skips `/api/files`; the handler then enforces the exact per-file limit: empty → 400 `file_empty`,
+  > 5 MB → 413 `payload_too_large`, `avatars` with a type outside `AVATAR_MIME_TYPES` (png, jpeg,
+  gif, webp) → 415 `unsupported_media_type`. Object first, row second; if the insert fails the
+  object is deleted (no orphans). `scope=avatars` also sets `users.avatarUrl = /api/files/<id>`.
+  201 with the `fileSchema` row; `file.uploaded` activity in `defer`.
+- `GET /api/files/:id` — `read File`, tenant-scoped lookup (another tenant's file is a 404),
+  `Cache-Control: private, max-age=3600`, `ETag` from R2 and `If-None-Match` → 304. Only the avatar
+  MIME allowlist renders `inline`; **everything else — SVG included — is `Content-Disposition:
+  attachment`** so stored HTML/SVG never executes on this origin.
+- `DELETE /api/files/:id` — the uploader may always delete their own file; anyone else needs
+  `delete File` (admin+). Deleting the file behind your own `avatarUrl` nulls it. 204.
+
+Missing `FILES` binding → 503 `storage_not_configured` (loud, unlike the hub's silent no-op).
+`wrangler dev` emulates R2 locally, so there is no filesystem adapter; tests use `MemoryR2Bucket`.
+UI: `api.upload(url, FormData)` (no JSON content-type — the browser sets the boundary),
+`useUploadAvatar()` (client-side type/size check first, then `POST /api/files?scope=avatars`,
+then refreshes `me` and the session), and the Profile avatar block.
+
+**Known gaps / not built yet:** `users.avatarUrl` is global but the object is tenant-scoped, so
+the picture 404s in another organisation and the `<img onError>` fallback shows initials; a
+re-upload leaves the previous object and row in place (rows are immutable — a cleanup job is the
+app's call); no listing endpoint (`StorageService.list` exists, no route uses it); no per-tenant
+quota or storage configuration; presigned URLs would need S3 credentials + `aws4fetch`; email
+templates are neutral and need branding.
 
 ## 7. UI shell
 
@@ -381,7 +489,7 @@ shipped; no per-PR previews; a CI check that every `apps/web/src/**/CLAUDE.md` e
 
 ## 11. CLI
 
-**Status: in progress (Phase 1).** Package `apps/cli` (`@gmgo/cli`), bin `gmgo`. Dev: `pnpm cli
+**Status: built (Phase 1).** Package `apps/cli` (`@gmgo/cli`), bin `gmgo`. Dev: `pnpm cli
 <command>` from the root (`tsx`); build: `tsc` → `apps/cli/dist/cli.js`. Stack: `commander` +
 `chalk` + `open` (D26). Conventions: `.claude/rules/cli.md`.
 
@@ -458,8 +566,11 @@ one tag).
 A fresh agent can copy the repository, follow `docs/ADAPTING.md` → `SETUP.md` Part 1 with zero
 external credentials and log in via a logged magic link; `pnpm cli login` against the local server
 and `pnpm cli whoami` with the minted key; invite a member, switch tenant, approve an access request;
-run the same flow with `TENANCY_MODE=single`; receive a realtime toast; run the example agent and see
-its trace when Langfuse keys are set; render the `tenant-overview` dashboard with live numbers; and,
+run the same flow with `TENANCY_MODE=single`; watch the People page refresh live from a second
+browser when an invitation is accepted and see the invitation email queued through `JOBS_QUEUE` and
+delivered (or logged) by the consumer under `wrangler dev`; upload an avatar and fetch it back at
+`/api/files/:id`; run the example agent and see its trace when Langfuse keys are set; render the
+`tenant-overview` dashboard with live numbers; and,
 following `SETUP.md` Part 3, deploy to a new Cloudflare account changing only placeholders and
 secrets — with root `pnpm lint && pnpm typecheck && pnpm test && pnpm build` green at every step and
 every behaviour described here still true.

@@ -16,7 +16,9 @@ packages themselves — do it first and run `pnpm install` before anything else,
 | `gmgo` (CLI bin) | `apps/cli/package.json` `bin` key; `program.name('gmgo')` in `apps/cli/src/cli.ts`; the `pnpm cli` examples in `SETUP.md`, `README.md`, `docs/CONCEPTS.md` | `myapp` — users type `myapp login` |
 | `~/.gmgo` (CLI config dir) | `apps/cli/src/config.ts` (`GMGO_CONFIG_DIR` default); `.claude/rules/cli.md`; `SETUP.md` 1.7 | `~/.myapp` |
 | `GMGO_` (CLI env prefix: `GMGO_API_KEY`, `GMGO_URL`, `GMGO_CONFIG_DIR`, `GMGO_DEBUG`) | `apps/cli/src/config.ts`; `apps/cli/tests`; `docs/CONCEPTS.md` → CLI; `.claude/rules/cli.md` | `MYAPP_` |
-| `gmgo-starter` | `apps/web/package.json` `cfld.name`; `apps/web/wrangler.toml` / `wrangler.staging.toml` `name` (staging keeps `-staging`); later-phase queue / R2 / Workflow names (`gmgo-starter-jobs`, `gmgo-starter-files`, `gmgo-starter-agent-run`); `.claude/rules/cloudflare.md` examples | `myapp` |
+| `gmgo-starter` | `apps/web/package.json` `cfld.name`; `apps/web/wrangler.toml` / `wrangler.staging.toml` `name` (staging keeps `-staging`); `apps/web/scripts/cf-provision.sh`; the Phase 3 Workflow name (`gmgo-starter-agent-run`); `.claude/rules/cloudflare.md` examples | `myapp` |
+| `gmgo-starter-jobs` (queue — name is account-scoped) | `queue = ` in `[[queues.producers]]` AND `[[queues.consumers]]` of both tomls (staging `-staging`; the commented `dead_letter_queue` too); **`JOBS_QUEUE_NAME_PREFIX` in `apps/web/src/api/services/jobs.ts`** — the consumer matches `batch.queue` by this prefix, so the toml and the constant must agree or every batch is `ackAll()`ed as "unknown queue"; the literals in `apps/web/tests/api/{queue-dispatch,jobs-producer,jobs-consumer}.test.ts` | `myapp-jobs` — then `wrangler queues create myapp-jobs[-staging]` per environment |
+| `gmgo-starter-files` (R2 bucket — account-scoped) | `bucket_name` in `[[r2_buckets]]` of both tomls (staging `-staging`); no code references — the binding is always `FILES` | `myapp-files` — then `wrangler r2 bucket create myapp-files[-staging]` |
 | `gmgo_dev`, `gmgo_test`, `gmgo` / `gmgo_pass`, `test` / `test` | `apps/web/docker-compose.dev.yml`, `apps/web/docker-compose.test.yml`, `apps/web/.dev.vars.example`, `apps/web/.env.test`, `apps/web/drizzle.config.ts`, `localConnectionString` in both tomls, `.github/workflows/ci.yml` (Postgres service) | `myapp_dev`, `myapp_test`, `myapp` / a local-only password |
 | `gmgo_app` | `apps/web/src/db/schema/rls.ts` `APP_ROLE`, `apps/web/.env.test` `APP_DATABASE_URL`, `docs/RLS.md` | `myapp_app` (policies name the role; do this before the first migration) |
 | `GMGO Starter` / `GMGO Test` | `[vars] APP_NAME` in both tomls, `apps/web/.env.test`, `apps/web/src/ui/index.html` `<title>`, `README.md` | display name |
@@ -61,8 +63,10 @@ contract comes first and lives in the shared package so the API, the UI and the 
    `apps/web/src/permissions/abilities.ts`; mount in `api/index.ts` behind `authMiddleware`. Test in
    `apps/web/tests/api/<feature>.test.ts` with the tenant-isolation assertion.
 4. **Hook** — `apps/web/src/ui/hooks/use<Feature>.ts`: `queryOptions` + mutations keyed from
-   `queryKeys` (`lib/query-keys.ts`); add the entity to the websocket `entityInvalidations` map if
-   the server broadcasts it.
+   `queryKeys` (`lib/query-keys.ts`). If the server should push changes, have the service
+   `nudge(realtime, realtimeEvent('entity.changed', tenantId, { entity: '<root>', id }))` — the
+   payload names the `queryKeys` family root and needs no new event type — or add a named type to
+   `realtimeEventTypeSchema` + `REALTIME_INVALIDATIONS` in `packages/shared/src/realtime.ts`.
 5. **Page** — `apps/web/src/ui/pages/<Feature>/…` using `components/shared/` primitives; add to
    `App.tsx` (lazy) and `SideNav` with the same guard the page uses.
 6. **Command** (optional) — `apps/cli/src/commands/<feature>.ts`: a thin commander command over
@@ -71,6 +75,21 @@ contract comes first and lives in the shared package so the API, the UI and the 
 
 Long-running work inside a feature: enqueue on `JOBS_QUEUE` (< 30 s) or create a Workflow
 instance; never run it in the route.
+
+**Adding a job type** (D7): payload schema + a variant in BOTH `jobInputSchema` and
+`jobEnvelopeSchema` + the literal in `JOB_TYPES` (`packages/shared/src/jobs.ts`) → a handler
+`apps/web/src/api/queues/handlers/<name>.ts` (copy `example-ping.ts`; signature `(job: JobOf<'x'>,
+ctx: { env, config, logger, db })`, throw to retry, return to ack, await everything) → one entry in
+the `handlers` table of `apps/web/src/api/queues/jobs.ts` (the `switch` in `runHandler` too) →
+callers use `enqueueJob(c.env.JOBS_QUEUE, { type: 'x', payload })` → a case in
+`tests/api/jobs-consumer.test.ts`. A breaking payload change is a NEW type (`x.v2`), never an edited
+schema — in-flight messages of the old type must still parse.
+
+**Adding a file scope** (D23): add it to `FILE_SCOPES` in `packages/shared/src/files.ts` AND the
+mirrored `FILE_SCOPES` in `apps/web/src/db/schema/files.ts` (a `text` enum — no migration for a new
+value, but `pnpm db:generate` should produce nothing), then give it a rule in `checkContentType`
+in `apps/web/src/api/routes/files.ts` if it needs a MIME allowlist like `avatars`. Per-scope size
+limits are an app change (`MAX_UPLOAD_BYTES` is one constant today).
 
 ## 4. Keep the docs true
 
@@ -105,6 +124,8 @@ request access", or `invite_only` for a closed team.
 The kit is Cloudflare-first and ships no Node adapter (locked decision). The recipe if it is ever
 required: an `apps/web/src/server.ts` using `@hono/node-server` + `serve-static` for
 `apps/web/dist/ui`, a WebSocket
-server replacing the Durable Object behind the `NotificationService` seam, pg-boss or similar
-replacing Queues/Workflows behind the producer helpers, and a multi-stage Dockerfile running
-`db:migrate` then the server. Every seam named there already exists for that reason.
+server replacing the Durable Object behind the `Broadcaster` seam in
+`apps/web/src/api/services/realtime.ts`, pg-boss or similar behind the `JobsQueue` interface in
+`services/jobs.ts` (and a Workflow substitute), a filesystem or S3 `StorageService` in
+`services/storage.ts`, and a multi-stage Dockerfile running `db:migrate` then the server. Every seam
+named there already exists for that reason.

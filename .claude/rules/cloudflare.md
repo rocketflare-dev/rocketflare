@@ -24,7 +24,11 @@ workspace root) or through the root scripts (`pnpm deploy[:staging]`, `pnpm prov
 - Baseline: `ASSETS`, `HYPERDRIVE`, `RATE_LIMIT_KV`. Phase 2: `JOBS_QUEUE`, `NOTIFICATIONS_HUB`,
   `FILES`. Phase 3: `AGENT_RUN_WORKFLOW`, `AI`. Optional: `ANALYTICS_ENGINE`, `HYPERDRIVE_APP`
 - Optional bindings are optional in code too: the rate limiter no-ops without `RATE_LIMIT_KV`,
-  tracing without Langfuse keys, email without `RESEND_API_KEY`. Check presence, don't crash
+  tracing without Langfuse keys, email without `RESEND_API_KEY`, realtime nudges without
+  `NOTIFICATIONS_HUB`. Check presence, don't crash — **except where silence would lose data**: a
+  missing `JOBS_QUEUE` throws `JobsQueueNotConfiguredError` (no inline fallback) and a missing
+  `FILES` is a 503 `storage_not_configured`. Decide which of the three a new binding is and say so
+  in its service header
 - `[vars]` = non-secret config, visible in the toml. Secrets = `.dev.vars` locally,
   `wrangler secret put` deployed. Never a secret in a toml
 
@@ -46,6 +50,15 @@ the owner's bindings, against the owner's database. Staging therefore suffixes a
 `-staging`; `binding` and `class_name` stay identical so no application code is environment-aware.
 `pnpm --filter @gmgo/web exec wrangler workflows list` shows Name → Script name if you suspect a hijack.
 
+The one place a name leaks into code is the queue consumer: `batch.queue` is the NAME
+(`gmgo-starter-jobs` / `gmgo-starter-jobs-staging`), so `apps/web/src/api/queue.ts` matches it by
+**prefix** — `isJobsQueue()` / `JOBS_QUEUE_NAME_PREFIX` in `apps/web/src/api/services/jobs.ts` —
+and `ackAll()`s any queue it does not know. Renaming the queue = both tomls (`[[queues.producers]]`
++ `[[queues.consumers]]`) + that one constant (`tests/api/queue-dispatch.test.ts` pins both names).
+Prefix matching also means a `gmgo-starter-jobs-dlq` would be dispatched to the SAME consumer if you
+ever bound a consumer to it — a dead-letter queue you want to inspect rather than reprocess needs a
+name outside the prefix or its own branch in `queue.ts`.
+
 ## `[limits] cpu_ms` is per step
 
 Workflows bound CPU **per `step.do`** by the script's `cpu_ms` (30 s default, 300 s max on Paid).
@@ -56,14 +69,25 @@ preload them into a `Map`.
 
 ## Handler shapes
 
-- `queue(batch, env, ctx)`: switch on `batch.queue`; per message try/catch → `ack()` or `retry({
-  delaySeconds })`; the consumer is a plain function so tests can call it (`.claude/rules/testing.md`)
+- `queue(batch, env, ctx)` (`apps/web/src/api/queue.ts`): `loadConfig(env)` like `fetch`, prefix-match
+  `batch.queue` → `processJobsBatch(batch, { env, config, logger })` (`api/queues/jobs.ts`); per
+  message: invalid envelope → `ack()` (poison), handler ok → `ack()`, handler threw → `retry({
+  delaySeconds })` (30 s doubling, 15 min cap; toml `max_retries = 3`, `retry_delay = 60` only for a
+  retry without an explicit delay); own DB client per message, closed in `finally`; **no `waitUntil`
+  in a consumer**. Plain function so tests call it (`.claude/rules/testing.md`)
 - `scheduled(event, env, ctx)`: dispatch table keyed on `event.cron`; each task try/caught; a new
   cron string must be added to BOTH tomls and the table
 - Workflow steps are idempotent (upserts), return < 1 MiB (ids, not rows), open their own DB client
   and close it in `finally`. Cancellation is cooperative: poll the run row between steps
-- The DO uses the hibernation API and RPC methods (`broadcast`, `stats`), not `fetch` dispatch; no
-  global `setInterval` — use `setWebSocketAutoResponse`
+- `NotificationsHub` DO (`apps/web/src/api/durable-objects/notifications-hub.ts`): one per tenant
+  (`idFromName(tenantId)`), **stateless** (no `ctx.storage` → `[[migrations]]` stays `new_classes`
+  only), hibernation API (`acceptWebSocket` with tags `tenant:<id>`/`user:<id>`, attachment `{
+  userId, sessionId, connectedAt }`), `setWebSocketAutoResponse(ping → pong)` instead of any
+  `setInterval`. Publish via RPC — `broadcast(event)`, `broadcastToUser(userId, event)`,
+  `broadcastToUsers(userIds, event)` → `{ delivered }`, `connectionCount()` → `{ count }` — never
+  `fetch` dispatch; `fetch()` accepts ONLY the upgrade forwarded by `routes/ws.ts` (trusted `X-*`
+  identity headers, safe because the object is reachable solely via the binding). The class is
+  exported from `src/worker.ts`, never from `api/index.ts`
 - Never run long work in `fetch`. Enqueue or create a workflow instance (`.claude/rules/api.md`)
 
 ## `nodejs_compat`: what is allowed
@@ -83,9 +107,16 @@ the check `tsc` cannot do — run it before pushing a new dependency.
 # Fire a cron (wrangler 4.x; the older /cdn-cgi/handler/scheduled path is rewritten to this):
 curl "http://localhost:3001/cdn-cgi/local/scheduled?cron=0+4+*+*+*"
 # Alternative: `wrangler dev --test-scheduled` exposes /__scheduled?cron=…
-# Queues: there is no local HTTP trigger. A producer call from the running worker (e.g. a route
-# hit through the UI) is delivered to the local consumer inside wrangler dev; for deterministic
-# runs call the consumer function from a test with a hand-built MessageBatch.
+# Queues: there is no local HTTP trigger. wrangler dev runs the consumer IN-PROCESS, so any producer
+# call from the running worker is delivered locally: invite someone (POST /api/invitations from the
+# People page) and watch the same terminal print `queue: processing jobs batch` → `[email:dev] …
+# Link: <accept url>` → `jobs: done`. For deterministic runs call `processJobsBatch` from a test with
+# a hand-built MessageBatch (tests/api/jobs-consumer.test.ts).
+# Durable Object: the /ws upgrade (101) only works under wrangler dev / deployed — Node's fetch
+# rejects status 101, so tests/api/notifications-hub.test.ts covers the RPC methods and the 400
+# guards with a fake DurableObjectState, and tests/api/ws.test.ts stops at the forwarded request
+# (the bindings stub answers 501). Open the UI against :3001 and look for the green header dot.
+# R2: `wrangler dev` emulates the FILES bucket locally (state under .wrangler/); nothing to create.
 # Workflows: instances created locally run locally; inspect deployed ones with
 pnpm --filter @gmgo/web exec wrangler workflows instances describe gmgo-starter-agent-run <id>
 ```

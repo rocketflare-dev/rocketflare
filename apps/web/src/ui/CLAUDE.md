@@ -5,7 +5,8 @@ React 18 + Vite + React Router 6 + TanStack Query 5 + zustand; DaisyUI 5 on Tail
 
 ## Layout
 
-- `App.tsx` — providers (ErrorBoundary → QueryClient → Auth → Ability → Router) and the route
+- `App.tsx` — providers (ErrorBoundary → QueryClient → Auth → Ability → WebSocket → Router), the
+  header `<WebSocketStatus />` dot and `<ConnectionBanner />` above the routed page, and the route
   table in three tiers: public (`/login`, `/magic-link/sent`, `/invite/:token`), signed-in-without-
   tenant (`/select-tenant`, `/pending`, `/no-access` — `ProtectedRoute requireTenant={false}`), and
   the shell (`/*` — `ProtectedRoute`, `Layout` mounted ONCE, nested `<Routes>` beneath it).
@@ -17,19 +18,30 @@ React 18 + Vite + React Router 6 + TanStack Query 5 + zustand; DaisyUI 5 on Tail
   card), `PendingInvitationsBanner`, `RoleBadge`, `EnvironmentBadge`, `ThemeToggle`, `ErrorBoundary`.
   Guards: `ProtectedRoute` (session + tenant → `noTenantRoute`), `RequireGuard` (any `NavGuard`),
   `AdminRoute`/`GlobalAdminRoute` (sugar over it). `components/permissions/` — `AbilityProvider`
-  (unpacks `session.permissions`), `Can`, `IfCan`/`IfCannot`. `components/shared/` — generic
-  primitives only (Toast, Modal, SectionPanel, PaginationControls, FieldError…).
+  (unpacks `session.permissions`), `Can`, `IfCan`/`IfCannot`. Realtime (D8): `WebSocketProvider`
+  (connects the singleton once authenticated with a tenant, `useQueryClient()` →
+  `invalidateQueries` per root from `invalidationsFor(event)`, toasts `notification.created`),
+  `WebSocketStatus` (header dot), `ConnectionBanner` (after 5 s away from `open`).
+  `components/shared/` — generic primitives only (Toast, Modal, SectionPanel, PaginationControls,
+  FieldError…).
 - `hooks/` — `useAuth` (session, `status`, `selectTenant`, `logout`, `applySession`,
   `useTenancyMode`), `usePermissions` (`can/cannot/isOwnerLevel/isAdminLevel/isGlobalAdmin`),
   `useNavGuard` (the ONE place nav and route guards are decided), one file per resource
   (`useMembers`, `useInvitations`, `useApiKeys`, `useNotifications`, `useTenant`, `useProfile`,
   `useActivity`, `useAccessRequests`, `useAdminAccessRequests`, `useAdminTenants`, `useAdminUsers`,
-  `useAuthMethods`) exporting `xQueryOptions()` + `useX()` + mutation hooks; `useAppInfo`,
-  `useDebounce`, `useModalState`, `useLocalStoragePreference`.
-- `lib/` — `api-client` (fetch wrapper, `ApiError`, `setUnauthorizedHandler`), `queryClient`
-  (module-level, 401 → handler), `query-keys` (factory + `cleanFilters`/`toSearchParams`),
-  `navigation` (`NavigationBridge`, `navigateTo`, `hardNavigate`, `loginUrl`, `safeReturnUrl`),
-  `format` (date-fns helpers), `environment`.
+  `useAuthMethods`) exporting `xQueryOptions()` + `useX()` + mutation hooks; `useProfile` also
+  holds the avatar upload (`useUploadAvatar`, `validateAvatarFile`, `AVATAR_ACCEPT` — D23);
+  `useAppInfo`, `useDebounce`, `useModalState`, `useLocalStoragePreference`.
+- `lib/` — `api-client` (fetch wrapper, `ApiError`, `setUnauthorizedHandler`, `api.upload` for
+  multipart — no JSON content-type), `queryClient` (module-level, 401 → handler), `query-keys`
+  (factory + `cleanFilters`/`toSearchParams`; the family roots — `['invitations']`,
+  `['pending-invitations']`, `['members']`, `['tenant']`… — are what `REALTIME_INVALIDATIONS` in
+  `@gmgo/shared/realtime` names), `websocketClient` (singleton: `/ws?tenantId=`, jittered backoff
+  1 s → 30 s, 100 ms fast path on close 1001/1012 or an "upgraded" reason, 30 s ping;
+  `setFactory()` is the test seam), `navigation` (`NavigationBridge`, `navigateTo`, `hardNavigate`,
+  `loginUrl`, `safeReturnUrl`), `format` (date-fns helpers), `environment`.
+- `stores/websocketStore.ts` — the one zustand store: `status | connectedAt | disconnectedAt |
+  attempt | lastEvent`; written only by `websocketClient`, read by the status dot and the banner.
 - `pages/` — route-level components, lazy in `App.tsx` except Home/Login/NotFound. `settings/`
   is one page with `URLTabs` (`?tab=general|people|api-keys`); `admin/` is nested routes under
   `AdminLayout`. `public/` — static assets copied as-is.
@@ -41,7 +53,13 @@ React 18 + Vite + React Router 6 + TanStack Query 5 + zustand; DaisyUI 5 on Tail
 - Server data lives ONLY in the query cache: `useQuery` + a key from `query-keys.ts` + a
   `@gmgo/shared` zod `schema` on `api.get`. Mutations live in the resource hook, `invalidateQueries`
   through `queryKeys`, and toast via `showSuccessToast`/`successMessage`.
-- zustand is for UI state only (toasts, connection state, tab-lifetime flags).
+- zustand is for UI state only (toasts, connection state, tab-lifetime flags). Realtime events
+  never become state: the provider invalidates query roots and the hooks re-fetch ("DB is the
+  truth, WebSocket is a nudge"). A new server event type gets its roots in
+  `packages/shared/src/realtime.ts`, not in a component.
+- Uploads: `api.upload('/api/files?scope=…', formData, { schema: uploadResponseSchema })`; check
+  type/size with `@gmgo/shared/files` before sending; `<img>` avatars need an `onError` fallback
+  (the object is tenant-scoped, `avatarUrl` is not).
 - Tokens, not raw colours: `text-muted`, `surface-panel`, `badge-warning` — never `bg-blue-50`.
   Classes built from props are safelisted with `@source inline(...)` in `index.css`; classes
   built from data are forbidden. Heroicons only (provider marks in `components/icons` are

@@ -24,6 +24,9 @@ export const CORE_SUBJECTS = [
   'ActivityEvent',
   'User',
   'File',
+  'AiConfig',
+  'Prompt',
+  'Conversation',
 ] as const
 export type CoreSubject = (typeof CORE_SUBJECTS)[number]
 

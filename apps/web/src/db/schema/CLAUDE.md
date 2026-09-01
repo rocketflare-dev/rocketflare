@@ -24,7 +24,7 @@ Drizzle table definitions, one file per table, re-exported from `index.ts` (whic
 | `files` | `files.ts` | `tenant_id` | ✓ | R2 object index (D23): `key` unique (`tenants/<tenant>/<scope>/<uuid>-<name>`), `scope` enum, `ownerUserId`, immutable (no `updated_at`) |
 
 10 policies (`tenants`, `users` + 8 tenant tables); 4 revoked tables = `RLS_REVOKED_TABLES` =
-`RLS_EXCLUDED_TABLES`. jsonb columns are `$type<>()`d from `src/shared` (type-only imports).
+`RLS_EXCLUDED_TABLES`. jsonb columns are `$type<>()`d from `@gmgo/shared` (type-only imports).
 
 ## Conventions
 
@@ -58,4 +58,4 @@ connection (HYPERDRIVE) bypasses policies, which is what keeps auth paths and ro
 2. Export from `index.ts`; add the row to the table registry here.
 3. `pnpm db:generate` → review the SQL in `migrations/` (policies included) → `pnpm db:migrate`
    (role → migrate → grants). Tests run migrations automatically.
-4. `src/shared/<name>.ts` zod contract if the API exposes it.
+4. `packages/shared/src/<name>.ts` zod contract if the API exposes it (`@gmgo/shared/<name>`).

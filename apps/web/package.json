@@ -46,6 +46,7 @@
     "provision": "bash scripts/cf-provision.sh"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.122.0",
     "@casl/ability": "^6.8.1",
     "@casl/react": "^5.0.1",
     "@gmgo/shared": "workspace:*",
@@ -63,6 +64,7 @@
     "react-dom": "^18.3.1",
     "react-router-dom": "^6.30.4",
     "zod": "^3.25.76",
+    "zod-to-json-schema": "^3.25.2",
     "zustand": "^5.0.15"
   },
   "devDependencies": {

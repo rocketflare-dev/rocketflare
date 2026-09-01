@@ -218,10 +218,12 @@ NEON_DATABASE_URL='<production direct url>' pnpm provision production
 `pnpm provision` runs `apps/web/scripts/cf-provision.sh` with `apps/web` as its working directory
 (the script also `cd`s there itself, so `bash apps/web/scripts/cf-provision.sh staging` from the
 root works too). It creates (or finds) the Hyperdrive config `<app>-<env>` and KV namespace
-`<APP>_RATE_LIMIT[_STAGING]` and prints the ids plus a `sed` line per toml. Later phases add Queue
-(`<app>-jobs[-staging]`) and R2 (`<app>-files[-staging]`) — uncomment those blocks in the script and
-both tomls together. Workflows and the DO need no create step, but the Workflow `name` is
-account-scoped: staging MUST be `<app>-agent-run-staging`.
+`<APP>_RATE_LIMIT[_STAGING]` and prints the ids plus a `sed` line per toml. Both tomls already
+declare the Phase 2 Queue (`<app>-jobs[-staging]`) and R2 bucket (`<app>-files[-staging]`), but their
+`create` blocks in the script are still commented — uncomment them, or run `wrangler queues create
+<name>` and `wrangler r2 bucket create <name>` by hand for each environment before the first deploy
+(both are name-referenced; nothing to paste into a toml). Workflows and the DO need no create step,
+but the Workflow `name` is account-scoped: staging MUST be `<app>-agent-run-staging`.
 Verify: `REQUIRE_PROVISIONED=1 pnpm web test:config` passes — no `<PLACEHOLDER>` left, every
 account-scoped staging name ends in `-staging`, ids differ. Commit the tomls (ids are not secrets).
 

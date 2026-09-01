@@ -39,6 +39,8 @@ export const ADMIN_MANAGED: readonly Subjects[] = [
   'ApiKey',
   'ActivityEvent',
   'File',
+  'AiConfig',
+  'Prompt',
 ]
 
 /** What every member may at least read. */
@@ -48,6 +50,7 @@ const grantAdmin: RoleGrant = can => {
   can('read', 'Tenant')
   can('manage', [...ADMIN_MANAGED])
   can('manage', 'Notification')
+  can('manage', 'Conversation')
 }
 
 /**
@@ -63,6 +66,9 @@ const grantAdmin: RoleGrant = can => {
  * | ActivityEvent  | manage      | manage | manage | manage  | read   |
  * | Notification   | manage      | manage | manage | manage  | manage |
  * | File           | manage      | manage | manage | manage  | create+read (own; delete is the route's owner check) |
+ * | AiConfig       | manage      | manage | manage | manage  | read   |
+ * | Prompt         | manage      | manage | manage | manage  | read   |
+ * | Conversation   | manage      | manage | manage | manage  | manage (own only — the route filters by userId, D17) |
  * | Feature:<f>    | access all  | by ctx | by ctx | access all | by ctx |
  */
 export const rolePermissions: Record<EffectiveRole, RoleGrant> = {
@@ -86,6 +92,8 @@ export const rolePermissions: Record<EffectiveRole, RoleGrant> = {
     // D23: anyone may upload; deleting someone else's file needs `delete File` (admin+). The
     // "own file" delete is an explicit `ownerUserId === user.id` check in routes/files.ts.
     can('create', 'File')
+    // D17: chat is for everyone; ownership is the route's `userId` filter (others' chats are 404).
+    can('manage', 'Conversation')
   },
 }
 

@@ -20,9 +20,16 @@ vitest 3 resolves `isolate` per run, not per project.
 
 - `app.request(req, env, ctx)` with `env = createTestEnv(overrides)` from `apps/web/tests/mocks/bindings.ts`:
   `DATABASE_URL` from `apps/web/.env.test`, `MemoryKV` as `RATE_LIMIT_KV`, a `RecordingQueue` as
-  `JOBS_QUEUE` (`.messages`), stubs for later bindings, a `HYPERDRIVE` whose `connectionString` is
-  the test URL; `ctx = createExecutionContext()` collects `waitUntil` promises so a test can
+  `JOBS_QUEUE`, a `MemoryR2Bucket` as `FILES`, a `RecordingDurableObjectNamespace` as
+  `NOTIFICATIONS_HUB`, a `HYPERDRIVE` whose `connectionString` is the test URL; `ctx =
+  createExecutionContext()` collects `waitUntil` promises so a test can
   `await waitOnExecutionContext(ctx)` before asserting side effects
+- Reach the stubs through **`stubs(env)`** → `{ kv, queue, files, hub }`: `queue.messages` (what a
+  route enqueued — `[{ body, options }]`), `files.objects` (key → stored bytes/metadata),
+  `hub.broadcasts` (`[{ tenantId, args: [method, ...args] }]` — every RPC call on any stub, e.g.
+  `['broadcast', event]`; the stub's `fetch` answers 501), `kv.store`. `createTestEnv({ JOBS_QUEUE:
+  undefined })` / `{ FILES: undefined }` / `{ NOTIFICATIONS_HUB: undefined }` exercise the
+  missing-binding branches (throws / 503 / no-op)
 - `cloudflare:workers` is aliased to `apps/web/tests/mocks/cloudflare-workers.ts` (stub `DurableObject`,
   `WorkflowEntrypoint`) so worker modules import under Node
 - `apps/web/tests/helpers/request.ts` `request()` / `json()` drive the app through every middleware with a
@@ -47,24 +54,52 @@ vitest 3 resolves `isolate` per run, not per project.
 
 `api` shares one module registry per worker; `api-isolated` gives each file a fresh one. If a
 file uses `vi.mock`, `vi.stubGlobal`, `vi.spyOn(globalThis…)` or otherwise needs a clean process,
-its FIRST line must be:
+its FIRST line must be **exactly** the marker, with nothing after it; the reason goes on line 2:
 
 ```ts
-// @vitest-isolate — mocks a module, so this file needs its own module registry.
+// @vitest-isolate
+// Spies on the global fetch, so this file needs its own module registry.
 ```
 
-Forgetting it does not fail in your file; it hands the fake to whatever runs next in that worker.
-`apps/web/tests/api/isolation-contract.test.ts` scans for the constructs and fails with the line to paste.
+`isMarkedIsolated` (`apps/web/tests/helpers/isolation.ts`) compares the trimmed first line to
+`// @vitest-isolate` — `// @vitest-isolate — mocks a module` does NOT match, and `vitest.config.ts`
+then places the file in the shared `api` project. Forgetting it does not fail in your file; it hands
+the fake to whatever runs next in that worker. `apps/web/tests/api/isolation-contract.test.ts`
+catches a missing or malformed marker only when its heuristic (`vi.mock|doMock|stubGlobal|stubEnv|
+spyOn(globalThis`) matches the file; anything else that leaks (a module-level singleton you mutate,
+a fake `WebSocket` factory left set) is on you.
 
 ## Testing background work — plain functions, no platform
 
-- Queue consumer: call `processJobsBatch(batch, env)` with a hand-built `MessageBatch` (`messages:
-  [{ body, attempts, ack(), retry() }]`); assert on DB rows and `ack`/`retry` calls
+- Queue consumer (`apps/web/tests/api/jobs-consumer.test.ts` is the template): build messages with
+  `buildJobEnvelope(input)` from `services/jobs.ts` (or a deliberately invalid body for the poison
+  path) and call the plain function directly —
+
+  ```ts
+  const message = { id: crypto.randomUUID(), timestamp: new Date(), body, attempts: 1, ack: vi.fn(), retry: vi.fn() }
+  const batch = { queue: 'gmgo-starter-jobs', messages: [message], ackAll: vi.fn(), retryAll: vi.fn() } as unknown as MessageBatch<unknown>
+  await processJobsBatch(batch, { env, config: loadConfig(env), logger: fakeLogger(), createDb: () => ({ db, close }) })
+  ```
+
+  `createDb` lets the test hand in the shared pool with a `close` spy (assert it was called once per
+  message). Assert on DB rows and `ack`/`retry` — valid → `ack`, invalid envelope → `ack` and no
+  retry, handler threw → `retry({ delaySeconds: backoffSeconds(attempts) })`. The dispatcher
+  `queue(batch, env, ctx)` is tested the same way with the two queue names (`queue-dispatch.test.ts`)
+- Durable Object: instantiate `NotificationsHub` with a fake `DurableObjectState`
+  (`getWebSockets(tag)` over tagged fake sockets with `send` spies) and call the RPC methods; the
+  101 upgrade cannot run under Node (`notifications-hub.test.ts`, `// @vitest-isolate` because it
+  stubs `WebSocketRequestResponsePair`). Route tests for `/ws` stop at the forwarded request
+- Nudges: `stubs(env).hub.broadcasts` after `waitOnExecutionContext(ctx)` — assert the tenant id,
+  the method and the event `type`; `realtime-nudges.test.ts` covers the kit's emitters
 - Workflow: `AgentRunWorkflow` logic lives in exported step functions (`runTurn`, `finalize`);
   test them directly with `{ db, env }`. A `StepStub` records `step.do(name)` calls and runs the
   callback inline. Test the claim-row gate: a second call with the row already `running` is a no-op
 - Cron: call `scheduled({ cron: '0 4 * * *' }, env, ctx)` and assert the task ran; unknown cron → no-op
-- Producers: assert on `env.JOBS_QUEUE.messages` (RecordingQueue), and that the route did NOT do the work itself
+- Producers: assert on `stubs(env).queue.messages` (RecordingQueue) — `body.type`, `body.payload` —
+  and that the route did NOT do the work itself (no `[email:dev]` line, no provider fetch)
+- Uploads: `new FormData()` + `form.append('file', new File([bytes], 'a.png', { type: 'image/png' }))`
+  as the request body (no `Content-Type` header — the runtime sets the boundary); assert the row, the
+  object in `stubs(env).files.objects`, and the 413/415 envelopes (`files.test.ts`)
 
 ## What every API test file includes
 

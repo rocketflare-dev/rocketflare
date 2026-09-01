@@ -80,7 +80,9 @@ hidden gap. `apps/web/tests/config/wrangler-parity.test.ts` enforces the table b
 
 `pnpm provision <staging|production> [app]` (root script → `apps/web/scripts/cf-provision.sh`, which
 `cd`s to `apps/web` itself so it also works as `bash apps/web/scripts/cf-provision.sh …`) runs the
-Hyperdrive and KV steps (Queue/R2 are commented until Phase 2), reuses existing resources by name,
+Hyperdrive and KV steps (the Queue/R2 create blocks are still commented in the script although both
+tomls now declare `JOBS_QUEUE` and `FILES` — uncomment them, or run the two `create` commands from
+the table above by hand, before the first Phase 2 deploy), reuses existing resources by name,
 and prints the ids with a `sed` line per toml. It needs `NEON_DATABASE_URL` (direct host) and an
 authenticated wrangler; it never writes files.
 

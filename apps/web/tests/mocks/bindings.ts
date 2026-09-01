@@ -1,7 +1,7 @@
 /**
  * `Cloudflare.Env`-shaped test bindings (D15): in-memory KV, a 404 ASSETS fetcher, HYPERDRIVE
  * pointing at the test Postgres, a recording Queue, an in-memory R2 bucket, a recording DO namespace,
- * and vars from `process.env` (loaded from
+ * a recording Workers AI stub, and vars from `process.env` (loaded from
  * .env.test by dotenv-cli). Tests may read `process.env`; `src/` may not.
  *
  * Also `createExecutionContext()` — `waitUntil` collects promises so `waitOnExecutionContext`
@@ -252,6 +252,39 @@ export class RecordingDurableObjectNamespace {
   }
 }
 
+// ---- Workers AI ------------------------------------------------------------------------------
+
+export interface RecordedAiRun {
+  model: string
+  inputs: Record<string, unknown>
+}
+
+/**
+ * Stub `AI` binding (Phase 3, D17): `run()` records the call and answers an embeddings-shaped
+ * `{ shape, data }` of deterministic 1024-dim vectors (one per input text) so `resolveEmbeddings`'s
+ * `workers_ai` branch is testable without the platform. Override `respond` to shape other models.
+ */
+export class RecordingAi {
+  readonly runs: RecordedAiRun[] = []
+  respond: (model: string, inputs: Record<string, unknown>) => unknown = (_model, inputs) => {
+    const text = inputs.text
+    const texts = Array.isArray(text) ? text : [String(text ?? '')]
+    return {
+      shape: [texts.length, 1024],
+      data: texts.map((t, i) =>
+        Array.from({ length: 1024 }, (_, k) => ((String(t).length + i + k) % 97) / 97)
+      ),
+    }
+  }
+  async run(model: string, inputs: Record<string, unknown>): Promise<unknown> {
+    this.runs.push({ model, inputs })
+    return this.respond(model, inputs)
+  }
+  clear(): void {
+    this.runs.length = 0
+  }
+}
+
 // ---- Env -----------------------------------------------------------------------------------
 
 /**
@@ -280,6 +313,9 @@ const SECRET_KEYS = [
   'LANGFUSE_PUBLIC_KEY',
   'LANGFUSE_SECRET_KEY',
   'LANGFUSE_BASE_URL',
+  'LANGFUSE_TRACING_ENVIRONMENT',
+  'AGENT_MAX_OUTPUT_TOKENS',
+  'AGENT_MAX_TURNS',
 ] as const
 
 function assetsStub(): Fetcher {
@@ -319,6 +355,7 @@ export function createTestEnv(overrides: Partial<TestEnv> = {}): TestEnv {
     JOBS_QUEUE: new RecordingQueue() as unknown as Queue,
     FILES: new MemoryR2Bucket() as unknown as R2Bucket,
     NOTIFICATIONS_HUB: new RecordingDurableObjectNamespace() as unknown as DurableObjectNamespace,
+    AI: new RecordingAi() as unknown as Ai,
     APP_ENV: process.env.APP_ENV ?? 'development',
     APP_URL: process.env.APP_URL ?? 'http://localhost:3001',
     APP_NAME: process.env.APP_NAME ?? 'GMGO Test',
@@ -344,6 +381,7 @@ export function stubs(env: TestEnv) {
     queue: env.JOBS_QUEUE as unknown as RecordingQueue,
     files: env.FILES as unknown as MemoryR2Bucket,
     hub: env.NOTIFICATIONS_HUB as unknown as RecordingDurableObjectNamespace,
+    ai: env.AI as unknown as RecordingAi | undefined,
   }
 }
 

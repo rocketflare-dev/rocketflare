@@ -32,6 +32,8 @@ export const ERROR_CODES = {
   blocked: 'blocked',
   tenancyModeSingle: 'tenancy_mode_single',
   csrf: 'csrf_failed',
+  /** 503: no chat/embeddings provider resolves for the tenant (D17). */
+  aiNotConfigured: 'ai_not_configured',
 } as const
 
 export type ErrorCode = (typeof ERROR_CODES)[keyof typeof ERROR_CODES]
