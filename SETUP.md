@@ -82,6 +82,11 @@ http://localhost:3000 renders the shell. Sign in: enter the seeded owner email, 
 URL from the **wrangler dev console** (no `RESEND_API_KEY` → links are logged, not sent), open it,
 land on Home.
 
+> **Cookie note.** The session cookie is `__Host-session`, and the `__Host-` prefix *requires* the
+> `Secure` flag even in development. Chrome and Firefox treat `http://localhost` as a secure context so
+> this just works; Safari has historically been flaky about it. If Safari won't stay signed in locally,
+> use the HTTPS tunnel (`pnpm dev:tunnel`, §1.10) or another browser.
+
 ### 1.7 CLI first run
 With `pnpm dev` still running, in a second terminal:
 ```bash

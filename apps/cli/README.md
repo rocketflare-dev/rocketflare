@@ -67,7 +67,7 @@ Precedence: `--server` flag > `GMGO_URL` > config `serverUrl` > `DEFAULT_SERVER_
    (a 401 fails the login; a missing route only warns), writes the config, and prints the key prefix.
 6. Nothing arrives within **5 minutes** → the command fails with exit `1`.
 
-`whoami` uses `GET /api/me` → `{ user }` and `GET /api/tenant` → tenant (both parsed tolerantly with
+`whoami` uses `GET /api/me` → the flat `meResponseSchema` user (with `preferences`) and `GET /api/tenant` → tenant (both parsed tolerantly with
 the `@gmgo/shared` schemas' `.partial()`); a forbidden/missing `/api/tenant` falls back to the stored
 tenant name.
 
