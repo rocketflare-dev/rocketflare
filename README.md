@@ -147,13 +147,13 @@ there list every known gap.
 | [`docs/DEPLOY.md`](docs/DEPLOY.md) | Cloudflare topology, the two tomls, resources, release dance, rollback, bundle size |
 | [`docs/RLS.md`](docs/RLS.md) | tenant isolation posture and how to turn row-level security on |
 | `.claude/rules/*.md` | layer conventions (api, database, ui, cli, testing, code-quality, cloudflare) — auto-loaded by path |
-| `docs/analysis/` | the decision record the kit was built from (provenance; not maintained) |
 
 ## Provenance
 
 Extracted from two internal applications: one contributed the structure, docs system, auth,
 tenancy and AI layer; the other the Cloudflare substrate (Hyperdrive, Queues, Workflows, Durable
-Objects, two-toml deploys) and the analytics layer. Decisions are recorded in `docs/analysis/00-SYNTHESIS.md`.
+Objects, two-toml deploys) and the analytics layer. The decisions those two informed are recorded,
+subsystem by subsystem, in [`docs/CONCEPTS.md`](docs/CONCEPTS.md).
 
 ## Contributing
 

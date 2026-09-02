@@ -84,8 +84,6 @@ an `@rocketflare/shared` import was missed. Keep `packages/shared` **private** (
   404 `template_not_found`); delete the rows or leave them
 - CLI commands you do not want (`apps/cli/src/commands/*` — `members list`, `keys list`,
   `activity list` are examples of the pattern; keep `login`, `logout`, `whoami`, `status`, `config`)
-- `docs/analysis/` — the kit's decision record. Keep it until your first release, then move it under
-  `docs/archive/` per its README, or delete it. It is not maintained
 - Lines in `README.md` "Features" that describe the kit rather than your app
 
 ## 3. Your first three features — where each goes

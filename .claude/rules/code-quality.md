@@ -56,7 +56,8 @@ Changing behaviour changes the doc in the same PR:
 | a CLI command, flag or exit code | `docs/CONCEPTS.md` → CLI, `.claude/rules/cli.md` |
 | a rename target | `docs/ADAPTING.md` |
 
-A superseded doc moves to `docs/archive/` with a row in its README — never deleted, never left stale.
+A superseded doc is deleted in the same PR that supersedes it — git history is the archive. Never
+leave a stale document sitting beside a current one.
 
 ## Secrets hygiene
 

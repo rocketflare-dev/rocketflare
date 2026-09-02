@@ -1,7 +1,7 @@
 # CONCEPTS — what is built, and why
 
 The reference for someone about to change something: what each subsystem does, the invariant it
-protects, and the decision behind it (recorded as D-numbers in `docs/analysis/00-SYNTHESIS.md`).
+protects, and the decision behind it (D-numbers below are that decision record).
 
 This file is deliberately **not**: setup (`SETUP.md`), Cloudflare topology (`docs/DEPLOY.md`), code
 conventions (`.claude/rules/*.md`, `apps/web/src/**/CLAUDE.md`, `packages/shared/CLAUDE.md`), or the RLS runbook (`docs/RLS.md`). Every
@@ -24,8 +24,8 @@ section ends with **Known gaps**; sections for phases not yet built say so.
 | 13 | [Definition of done](#13-definition-of-done-for-the-kit) | |
 
 Provenance: extracted from two internal applications — one supplied the structure, docs system,
-auth/tenancy/AI layer; the other the Cloudflare substrate and analytics. Nine subsystem analyses
-(`docs/analysis/01–09`) and the synthesis are the decision record.
+auth/tenancy/AI layer; the other the Cloudflare substrate and analytics. This file is the decision
+record that came out of them.
 
 **Layout (D26).** The repo is a pnpm workspace: `apps/web` (`@rocketflare/web` — the Worker: Hono API +
 React UI, everything in §§1–10), `apps/cli` (`@rocketflare/cli`, §11) and `packages/shared` (`@rocketflare/shared`,
@@ -422,7 +422,7 @@ theme option or cross-tab sync; dev quick-login account list should come from a 
 `apps/web/src/api/cubes/*` (+ `CLAUDE.md`), `routes/{cube-api,analytics-pages}.ts`,
 `services/dashboard-templates.ts`, `services/fact-tables/**` (+ `CLAUDE.md`), `src/dashboards/**`
 (`CLAUDE.md`, `DASHBOARD_PATTERNS.md`), `db/schema/{analytics-pages.ts,facts/*}`, migration `0004`.
-Contracts: `@rocketflare/shared/analytics`. Decision record: `docs/analysis/08-analytics-dashboards.md`.
+Contracts: `@rocketflare/shared/analytics`.
 
 **drizzle-cube is the semantic layer; tenant scoping is inside every cube's `sql()` (D19).**
 `routes/cube-api.ts` is ONE router mounted at both `/cubejs-api` and `/mcp` behind
