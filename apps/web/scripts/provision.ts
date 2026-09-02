@@ -6,7 +6,8 @@
  * Phases (each idempotent find-or-create, each ending in ONE `Verify:` line):
  *   tokens [--skip-email]           TTY only: prompt (hidden) for the four vendor tokens, verify each
  *                                   against its vendor, write apps/web/.provision.env (0600)
- *   preflight                       tokens, tools, accounts, the four answers (cached)
+ *   preflight                       tokens, tools, accounts, the four answers (cached), and the Cloudflare
+ *                                   zone behind every custom host / the sending domain (DNS readable)
  *   email create|status|verify [env] Resend domain → DNS records in the Cloudflare zone → EMAIL_FROM;
  *                                   verify + mint the per-env sending key into RESEND_API_KEY
  *   neon                            project + `staging` branch, direct hosts, SELECT 1 per branch
@@ -36,7 +37,12 @@ import fs from 'node:fs'
 import path from 'node:path'
 import readline from 'node:readline/promises'
 import postgres from 'postgres'
-import { CloudflareClient } from './provision/cloudflare-dns'
+import {
+  CloudflareClient,
+  hostsNeedingZone,
+  missingZoneHint,
+  WORKERS_DEV,
+} from './provision/cloudflare-dns'
 import {
   apexOf,
   capture,
@@ -101,7 +107,7 @@ const USAGE = `usage: pnpm provision <phase> [env] [flags]
 
 phases
   tokens                             prompt for the four vendor tokens (hidden input, verified) → apps/web/.provision.env
-  preflight                          check tools, tokens and accounts; record the answers
+  preflight                          check tools, tokens, accounts and the Cloudflare zone; record the answers
   email create | status | verify [env]   Resend domain + DNS records; verify and mint the sending key
   neon                               Neon project + staging branch (direct hosts, SELECT 1)
   cloudflare <staging|production>    Hyperdrive, KV, Queue, R2 → ids patched into the toml
@@ -375,8 +381,27 @@ async function preflight(flags: Flags): Promise<void> {
   log(
     `answers: region=${answers.region} domain=${answers.domain ?? '-'} staging=${answers.hosts.staging} production=${answers.hosts.production} admin=${answers.adminEmails}`
   )
+
+  // Every custom host and the sending domain must be a zone in THIS account, and the token must be
+  // able to read its DNS — otherwise `email create` / `urls` / the first deploy fail much later.
+  const needed = hostsNeedingZone(answers, flags.skipEmail)
+  let zoneSummary = `none (${WORKERS_DEV} hosts, email skipped)`
+  if (needed.length) {
+    const cf = cfClient()
+    const zones = new Map<string, { zone: Zone; names: string[] }>()
+    for (const name of needed) {
+      const zone = await requireZone(cf, name)
+      const entry = zones.get(zone.id) ?? { zone, names: [] }
+      if (!entry.names.length) await cf.assertDnsRead(zone)
+      entry.names.push(name)
+      zones.set(zone.id, entry)
+    }
+    for (const { zone, names } of zones.values())
+      log(`zone: ${zone.name} (${zone.id}) — DNS readable; for ${names.join(', ')}`)
+    zoneSummary = [...zones.values()].map(({ zone }) => `${zone.name} (${zone.id})`).join(', ')
+  }
   verifyLine(
-    `preflight ok — app=${app} account=${accountName} neon=${me.email} resend=${resendSummary}`
+    `preflight ok — app=${app} account=${accountName} neon=${me.email} resend=${resendSummary} zone=${zoneSummary}`
   )
 }
 
@@ -387,6 +412,45 @@ function resendClient(): ResendClient {
 }
 function cfClient(): CloudflareClient {
   return new CloudflareClient(requireToken('CLOUDFLARE_API_TOKEN'))
+}
+
+interface Zone {
+  id: string
+  name: string
+}
+
+/**
+ * The zone a host or sending domain lives in: the cache first (an EXACT match on the
+ * `zoneCandidates` walk — `notexample.com` never matches `example.com`), then `GET /zones?name=`
+ * per candidate; a hit is cached under its real name so `email create` / `urls` never look again.
+ */
+async function lookupZone(cf: CloudflareClient, name: string): Promise<Zone | undefined> {
+  const cached = readCache().cloudflare
+  const known: Record<string, string> = { ...(cached?.zones ?? {}) }
+  if (cached?.zoneId && cached.zoneName) known[cached.zoneName] ??= cached.zoneId
+  const candidates = zoneCandidates(name)
+  for (const c of candidates) if (known[c]) return { id: known[c], name: c }
+  const zone = await cf.findZoneFor(candidates)
+  if (!zone) return undefined
+  writeCache({
+    cloudflare: {
+      zoneId: cached?.zoneId ?? zone.id,
+      zoneName: cached?.zoneName ?? zone.name,
+      zones: { [zone.name]: zone.id },
+    },
+  })
+  return { id: zone.id, name: zone.name }
+}
+
+/** `lookupZone`, failing with the one hint for a domain that is not on the account. */
+async function requireZone(cf: CloudflareClient, name: string): Promise<Zone> {
+  const zone = await lookupZone(cf, name)
+  if (zone) return zone
+  if (!(await cf.hasAnyZone()))
+    warn(
+      'the token sees no zones at all — if the domain IS on this account, CLOUDFLARE_API_TOKEN is missing its Zone scope (Zone: DNS — Edit)'
+    )
+  throw new ProvisionError(missingZoneHint(apexOf(name)))
 }
 
 async function findOrCreateDomain(flags: Flags) {
@@ -415,18 +479,7 @@ async function emailCreate(flags: Flags): Promise<void> {
   if (!records.length) throw new ProvisionError('Resend returned no DNS records for the domain')
 
   const cf = cfClient()
-  const cache = readCache()
-  const zone =
-    (cache.cloudflare?.zoneId &&
-    cache.cloudflare.zoneName &&
-    domain.name.endsWith(cache.cloudflare.zoneName)
-      ? { id: cache.cloudflare.zoneId, name: cache.cloudflare.zoneName }
-      : undefined) ?? (await cf.findZoneFor(zoneCandidates(domain.name)))
-  if (!zone)
-    throw new ProvisionError(
-      `no Cloudflare zone found for ${domain.name} (tried ${zoneCandidates(domain.name).join(', ')}) — add the apex domain to this Cloudflare account first`
-    )
-  writeCache({ cloudflare: { zoneId: zone.id, zoneName: zone.name } })
+  const zone = await requireZone(cf, domain.name)
   log(`cloudflare zone: ${zone.name} (${zone.id})`)
 
   const counts = { exists: 0, created: 0, updated: 0 }
@@ -454,7 +507,8 @@ async function emailStatus(flags: Flags): Promise<void> {
   heading('email status')
   const { domain } = await findOrCreateDomain(flags)
   const cf = cfClient()
-  const zone = await cf.findZoneFor(zoneCandidates(domain.name))
+  const zone = await lookupZone(cf, domain.name)
+  if (!zone) warn(missingZoneHint(apexOf(domain.name)))
   const records = resendRecordsToDns(domain.records ?? [], domain.name)
   let present = 0
   for (const [i, rec] of records.entries()) {
@@ -804,11 +858,12 @@ async function urlsPhase(flags: Flags): Promise<void> {
   heading('urls')
   const answers = await collectAnswers(flags)
   const urls: Record<EnvName, string> = { staging: '', production: '' }
+  const zoneNote: Partial<Record<EnvName, string>> = {}
   for (const env of ENV_NAMES) {
     const host = answers.hosts[env]
     const text = fs.readFileSync(tomlFor(env), 'utf8')
     const workerName = readTomlString(text, 'name') ?? readAppName()
-    if (host === 'workers.dev') {
+    if (host === WORKERS_DEV) {
       let sub = readCache().cloudflare?.workersSubdomain
       if (!sub) {
         sub = await cfClient().workersSubdomain(requireToken('CLOUDFLARE_ACCOUNT_ID'))
@@ -822,12 +877,13 @@ async function urlsPhase(flags: Flags): Promise<void> {
           `served at ${urls[env]} (note added by \`pnpm provision urls\`).`,
       })
     } else {
+      // The custom domain route is created by `wrangler deploy` in this zone — prove it exists now.
+      const zone = await requireZone(cfClient(), host)
       urls[env] = `https://${host}`
       patchTomlFile(tomlFor(env), { appUrl: urls[env], routeHost: host })
+      zoneNote[env] = ` routes=[${host}] zone=${zone.name}`
     }
-    log(
-      `${tomlBasename(env)}: APP_URL=${urls[env]}${host === 'workers.dev' ? '' : ` routes=[${host}]`}`
-    )
+    log(`${tomlBasename(env)}: APP_URL=${urls[env]}${zoneNote[env] ?? ''}`)
   }
   const provisioned = bothProvisioned()
   await parityTest(provisioned)

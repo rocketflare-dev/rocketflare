@@ -3,7 +3,10 @@
  * verified against https://developers.cloudflare.com/api/ on 2026-09-02:
  *   - `Authorization: Bearer <token>`; envelope `{ success, errors[], messages[], result }`
  *   - `GET /zones?name=<zone>&per_page=50` → `result: [{ id, name, status }]`
- *     (…/resources/zones/methods/list/)
+ *     (…/resources/zones/methods/list/); a token without a Zone scope gets `result: []`, not an
+ *     error, so "no zone" and "no zone permission" look alike — `hasAnyZone()` tells them apart
+ *   - `GET /zones/{zone}/dns_records?per_page=1` is the cheapest proof the token can READ DNS in
+ *     that zone (`assertDnsRead`); `Zone: DNS — Edit` is what the kit asks for, which implies it
  *   - `GET /zones/{zone}/dns_records?name=&type=&per_page=` and `POST /zones/{zone}/dns_records
  *     { type, name, content, ttl (1 = automatic), proxied, priority (MX), comment }` → `result.id`
  *     (…/resources/dns/subresources/records/methods/create/); `PUT …/dns_records/{id}` overwrites
@@ -66,6 +69,23 @@ export class CloudflareClient {
     return undefined
   }
 
+  /** Whether the token sees ANY zone in the account — false means the token lacks a Zone scope. */
+  async hasAnyZone(): Promise<boolean> {
+    const zones = await this.request<{ id: string }[]>('GET', '/zones?per_page=1')
+    return zones.length > 0
+  }
+
+  /** Throws with the fix when the token cannot read DNS records in the zone (its own message, not the hint for a missing zone). */
+  async assertDnsRead(zone: { id: string; name: string }): Promise<void> {
+    try {
+      await this.request('GET', `/zones/${zone.id}/dns_records?per_page=1`)
+    } catch (err) {
+      throw new ProvisionError(
+        `the token cannot read DNS records in zone ${zone.name} (${zone.id}) — give CLOUDFLARE_API_TOKEN \`Zone: DNS — Edit\` on that zone (${err instanceof Error ? err.message : String(err)})`
+      )
+    }
+  }
+
   listRecords(zoneId: string, name: string, type?: string) {
     const q = `name=${encodeURIComponent(name)}${type ? `&type=${type}` : ''}&per_page=100`
     return this.request<DnsRecord[]>('GET', `/zones/${zoneId}/dns_records?${q}`)
@@ -106,3 +126,30 @@ export class CloudflareClient {
 
 const withComment = (rec: DnsRecordInput) => ({ ...rec, comment: 'rocketflare provision: Resend' })
 const normalise = (v: string) => v.trim().replace(/^"|"$/g, '').replace(/\.$/, '').toLowerCase()
+
+// ---- pure helpers (tests/config/provision-zone.test.ts) ----------------------------------
+
+export const WORKERS_DEV = 'workers.dev'
+
+/**
+ * The names preflight must resolve to a zone in the account: every custom host (anything but the
+ * literal `workers.dev`) and the sending domain unless email is skipped. Lower-cased, deduplicated,
+ * hosts first.
+ */
+export function hostsNeedingZone(
+  answers: { hosts: Record<string, string>; domain?: string },
+  skipEmail: boolean
+): string[] {
+  const out: string[] = []
+  const add = (v: string | undefined) => {
+    const name = v?.trim().toLowerCase().replace(/\.$/, '')
+    if (name && name !== WORKERS_DEV && !out.includes(name)) out.push(name)
+  }
+  for (const host of Object.values(answers.hosts)) add(host)
+  if (!skipEmail) add(answers.domain)
+  return out
+}
+
+/** The one sentence a person sees when a host or sending domain is not a zone in the account. */
+export const missingZoneHint = (apex: string): string =>
+  `the domain ${apex} is not on this Cloudflare account. Add it first — register it at https://dash.cloudflare.com/?to=/:account/domains/register or add the site and move its nameservers (https://dash.cloudflare.com/?to=/:account/add-site) — or use workers.dev for the hosts and --skip-email.`

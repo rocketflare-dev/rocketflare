@@ -36,7 +36,10 @@ package is private by default (`"private": true`, like `packages/shared`, which 
 
 Workers Paid plan is required (Hyperdrive, Workflows, `[limits]`) — Hyperdrive's plan availability
 has changed over time; the create step (`cf-provision.sh`) reports if the plan refuses it, with the
-upgrade URL. Smart Placement runs the Worker
+upgrade URL. The account also holds your domain as a zone (registered there, or its nameservers
+moved): the custom-domain `routes` and the Resend DNS records are created in it and `pnpm provision
+preflight` proves it exists — without one, both hosts are `workers.dev` and email is skipped.
+Smart Placement runs the Worker
 near Neon rather than near the user, which is what makes sequential queries cheap.
 
 ## Wrangler anatomy — two files, one shape (D6)

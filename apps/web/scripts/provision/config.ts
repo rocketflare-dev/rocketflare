@@ -163,7 +163,14 @@ export interface ProvisionCache {
     role?: string
   }
   resend?: { domainId?: string; domainName?: string; region?: string }
-  cloudflare?: { zoneId?: string; zoneName?: string; workersSubdomain?: string }
+  cloudflare?: {
+    /** The first zone preflight resolved (kept for older caches); `zones` is the full map. */
+    zoneId?: string
+    zoneName?: string
+    /** zone name → zone id, one entry per zone a host or the sending domain resolved to. */
+    zones?: Record<string, string>
+    workersSubdomain?: string
+  }
 }
 
 const SECRET_SHAPE = /postgres(ql)?:\/\/|\bre_|\bnapi_|[0-9a-f]{40,}/i

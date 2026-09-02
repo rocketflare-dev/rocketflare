@@ -39,7 +39,7 @@ Optional Worker secrets copied by `pnpm provision secrets <env>` when exported o
 | Phase | Calls |
 |---|---|
 | tokens | per token, after it is typed: `wrangler whoami` with the candidate token in the child environment (exit 1 = rejected), the account id in that output or Cloudflare `GET /accounts/{id}`, Neon `GET /users/me`, Resend `GET /domains`; then `writeFileSync` + `chmod 600` on `apps/web/.provision.env` |
-| preflight | `wrangler whoami`, Neon `GET /users/me`, Resend `GET /domains`, `gh auth status`, `git remote get-url origin` |
+| preflight | `wrangler whoami`, Neon `GET /users/me`, Resend `GET /domains`, `gh auth status`, `git remote get-url origin`; per custom host / sending domain Cloudflare `GET /zones?name=` up the `zoneCandidates` walk (`GET /zones?per_page=1` to tell "no zone" from "no Zone scope") and `GET /zones/{id}/dns_records?per_page=1`; zone ids → `.provision.json` |
 | email create | Resend `GET/POST /domains`, `GET /domains/{id}`; Cloudflare `GET /zones?name=`, `GET/POST/PUT /zones/{zone}/dns_records`; `patch-toml` (`EMAIL_FROM`) |
 | email verify | Resend `POST /domains/{id}/verify`, `GET /domains/{id}` (poll ≤ 10 min), `POST /api-keys` (`sending_access`, `domain_id`); `wrangler secret put RESEND_API_KEY` (stdin) |
 | neon | `GET/POST /projects` (+ operations polling), `GET/POST /projects/{id}/branches`, `…/branches/{b}/{endpoints,databases,roles}`, `…/roles/{r}/reveal_password` or `reset_password`; `SELECT 1` with the `postgres` package |

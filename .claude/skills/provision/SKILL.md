@@ -17,7 +17,18 @@ app (the script reads the app name from `apps/web/wrangler.toml`, never a litera
 
 ## Step 0 — accounts and tokens (the user does this, not you)
 
-Three accounts, four tokens. **Tokens are never pasted into this chat and never echoed.** Ask the
+**Before anything: three accounts you create yourself** (no script can):
+
+1. **Cloudflare** — on the **Workers Paid** plan (Hyperdrive, Workflows), AND your domain on the
+   account: registered there (https://dash.cloudflare.com/?to=/:account/domains/register) or added
+   as a site with its nameservers moved (https://dash.cloudflare.com/?to=/:account/add-site). The
+   app's hostnames and the email DNS records are created in that zone. Without a domain the skill
+   uses a `workers.dev` address for both hosts and `--skip-email`.
+2. **Neon** — the free tier is fine for the two branches.
+3. **Resend** — the free tier is fine; it needs the domain from (1).
+
+Then **`! pnpm provision tokens`**. Three accounts, four tokens. **Tokens are never pasted into this
+chat and never echoed.** Ask the
 user to run **`! pnpm provision tokens`** in their own terminal (the `!` prefix runs it there; it
 shows where to mint each token with its scopes, prompts with hidden input, verifies each token
 against its vendor and writes `apps/web/.provision.env`, git-ignored, mode 0600) — or to copy
@@ -28,7 +39,7 @@ run from here (exit 2) — that is deliberate. If they are missing, tell the use
 1. Create the tokens (scope lists in `reference.md`; `pnpm provision tokens` prints the same):
    - Cloudflare: https://dash.cloudflare.com/profile/api-tokens → `CLOUDFLARE_API_TOKEN`; the
      account id (Workers & Pages overview, right-hand column) → `CLOUDFLARE_ACCOUNT_ID`.
-     The account needs a zone (domain) for email and custom hosts.
+     The token needs `Zone: DNS — Edit` on the zone from (1).
    - Neon: https://console.neon.tech/app/settings/api-keys → `NEON_API_KEY`.
    - Resend: https://resend.com/api-keys (Full access) → `RESEND_API_KEY` — or use `--skip-email`
      (`pnpm provision tokens --skip-email` skips that prompt).
@@ -47,9 +58,13 @@ pnpm provision preflight --domain <sending domain> --staging-host <host|workers.
 ```
 
 Exit code 2 = something is missing; the output names each missing token with the URL to mint it
-and says to run `pnpm provision tokens`. Fix (no restart of `claude` is needed when the file
-changed — it is read on every run), re-run. Success reads
-`Verify: preflight ok — app=… account=… neon=… resend=…`.
+and says to run `pnpm provision tokens`. Exit code 1 with "the domain <apex> is not on this
+Cloudflare account" = step 0 (1) is not done: the user registers the domain or moves its
+nameservers (the message carries both links), or answers `workers.dev` for both hosts and adds
+`--skip-email`. Fix (no restart of `claude` is needed when the file changed — it is read on every
+run), re-run. Success reads
+`Verify: preflight ok — app=… account=… neon=… resend=… zone=<zone> (<id>)` (`zone=none` when both
+hosts are `workers.dev` and email is skipped); the zone id is cached for `email create` and `urls`.
 
 ## Step 1 — collect the four answers, then run everything
 
@@ -83,7 +98,7 @@ re-running `all` afterwards is safe.
 | Phase | It did | If it fails |
 |---|---|---|
 | `tokens` | (user's terminal only) prompts, verifies and writes `apps/web/.provision.env` | "needs a terminal" → the user runs it with the `!` prefix, not you |
-| `preflight` | tokens, tools, accounts, answers | missing token → step 0; `gh` not logged in → the user runs `gh auth login` themselves |
+| `preflight` | tokens, tools, accounts, answers; every custom host and the sending domain resolved to a zone on the account, DNS readable | missing token → step 0; `gh` not logged in → the user runs `gh auth login` themselves; "not on this Cloudflare account" → step 0 (1), or `workers.dev` + `--skip-email`; "cannot read DNS records" → the token lacks `Zone: DNS — Edit` on that zone |
 | `email create` | Resend domain + DNS records in your Cloudflare zone, `EMAIL_FROM` in both tomls | "no Cloudflare zone" → the apex domain must be in this Cloudflare account (or `--skip-email`) |
 | `neon` | project + `staging` branch, `SELECT 1` on both | region name wrong → `--region`; 412 password storage → it resets the password itself |
 | `cloudflare staging/production` | Hyperdrive, KV, Queue, R2; ids patched into the toml | "Hyperdrive requires Workers Paid" → upgrade the plan at the printed URL; "already has id" → `--force` only if you know the old resource is gone |

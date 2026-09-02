@@ -357,6 +357,18 @@ one Neon project with a branch per environment, one GitHub Actions release flow.
 deployed; the CLI is built by CI but not published (publishing it is an app decision —
 [`docs/DEPLOY.md`](docs/DEPLOY.md)). Reference: [`docs/DEPLOY.md`](docs/DEPLOY.md).
 
+**Before anything — three accounts you create yourself:**
+
+1. **Cloudflare** on **Workers Paid** (Hyperdrive, Workflows, `[limits]`), **with your domain on the
+   account** — registered there (https://dash.cloudflare.com/?to=/:account/domains/register) or added
+   as a site with its nameservers moved (https://dash.cloudflare.com/?to=/:account/add-site). The
+   app hosts (`routes`) and the Resend DNS records are created in that zone; `pnpm provision
+   preflight` refuses a host or sending domain whose zone is not on the account. No domain yet →
+   `--staging-host workers.dev --production-host workers.dev --skip-email`.
+2. **Neon** — the free tier is fine for the two branches.
+3. **Resend** — the free tier is fine; it verifies the domain from (1). `--skip-email` skips it
+   (magic links are logged in `wrangler tail`).
+
 **Recommended: `/provision`** in Claude Code, or `pnpm provision all` by hand
 (`apps/web/scripts/provision.ts`; `pnpm provision --help` lists every phase and flag). It is REST
 over `fetch` plus `wrangler` and `gh` — no vendor CLIs — idempotent (find-or-create), and every
@@ -386,7 +398,7 @@ pnpm provision all [--deploy staging|both] [--skip-email] [--rotate]   # 10–20
 | Phase | Creates / does | Verify line |
 |---|---|---|
 | `tokens` | (a terminal, not an agent) prompts for the four tokens with hidden input, verifies each, writes `apps/web/.provision.env` (0600) | `tokens ok — set: CLOUDFLARE_API_TOKEN, … → apps/web/.provision.env (0600)` |
-| `preflight` | checks tools, tokens (environment, then the file) and accounts; caches the four answers in `apps/web/.provision.json` (git-ignored, non-secret) | `preflight ok — app=… account=… neon=… resend=…` |
+| `preflight` | checks tools, tokens (environment, then the file) and accounts; resolves every custom host and the sending domain to a zone on the Cloudflare account (DNS readable by the token) — a missing zone fails with the registrar / add-site links; caches the four answers and the zone ids in `apps/web/.provision.json` (git-ignored, non-secret) | `preflight ok — app=… account=… neon=… resend=… zone=<zone> (<id>)` |
 | `email create` | Resend domain, its DNS records in the Cloudflare zone, `EMAIL_FROM` in both tomls | `email create ok — domain=… zone=… records=… EMAIL_FROM="…"` |
 | `neon` | Neon project (pg 17) + `staging` branch from the default branch, direct hosts, a password per branch | `neon ok — production=<host> staging=<host> (SELECT 1 on both)` |
 | `cloudflare <env>` | `cf-provision.sh <env> --apply`: Hyperdrive, KV, Queue, R2; ids patched into the toml | `cloudflare <env> ok — <toml> patched; REQUIRE_PROVISIONED=1 parity test passed for both tomls` (once both are done) |
@@ -407,8 +419,12 @@ what each phase does.
 ### 3.1 Accounts and access
 1. Cloudflare account on **Workers Paid** (Hyperdrive, Workflows and `[limits]` need it — Hyperdrive's
    plan availability has changed over time; the Hyperdrive create step reports if the plan refuses
-   it) with a zone for your hosts. `pnpm web exec wrangler login`.
-   Verify: `pnpm web exec wrangler whoami` prints the account.
+   it) **with your domain as a zone on it** (registered there, or its nameservers moved — the two
+   links at the top of Part 3): the custom-domain `routes` and the email DNS records live in that
+   zone. Without one, both hosts are `workers.dev` and email is `--skip-email`. `pnpm web exec
+   wrangler login`.
+   Verify: `pnpm web exec wrangler whoami` prints the account, and the dashboard lists the domain
+   as an active zone.
 2. CI API token (account scope): Workers Scripts, KV, Queues, Workflows, Durable Objects,
    Hyperdrive, R2 — edit; Workers AI, Account Analytics — read; Zone → DNS — edit on your zone.
    Verify: `CLOUDFLARE_API_TOKEN=… pnpm web exec wrangler whoami` succeeds.

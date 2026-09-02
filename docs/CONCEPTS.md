@@ -816,7 +816,9 @@ Provisioning: `pnpm provision <phase>` (`apps/web/scripts/provision.ts` — REST
 vendor CLIs: Neon project + `staging` branch with a password per branch, Hyperdrive / KV / Queue /
 R2 through `cf-provision.sh --apply`, string-level toml patching, migrations per branch, GitHub
 Environments + secrets, first deploy with `/api/health` + `/api/ready`, Worker secrets over stdin,
-Resend domain + Cloudflare DNS records + verification; `all` runs every phase, idempotent, one
+Resend domain + Cloudflare DNS records + verification; preflight resolves every custom host and the
+sending domain to a zone the user has already put on the Cloudflare account — registered there or
+nameservers moved; none → `workers.dev` hosts and `--skip-email`; `all` runs every phase, idempotent, one
 `Verify:` line each; the vendor tokens come from the environment first, then the git-ignored
 `apps/web/.provision.env` that `pnpm provision tokens` writes from hidden, vendor-verified prompts —
 never `.dev.vars`) and the `/provision` skill that drives it.**
