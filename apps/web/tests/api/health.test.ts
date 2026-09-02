@@ -44,6 +44,22 @@ describe('not found', () => {
     expect(await json(res)).toMatchObject({ statusCode: status })
   })
 
+  // `wrangler dev` sends its reload control to the Worker on /cdn-cgi/ProxyWorker/pause|play
+  // whenever its internal auth header does not match. Answering those from the SPA catch-all gave
+  // them a 200 and index.html, and put a line in the app's log for every reload.
+  it.each(['/cdn-cgi/ProxyWorker/pause', '/cdn-cgi/ProxyWorker/play', '/cdn-cgi/anything'])(
+    '%s → an empty 404, never the SPA',
+    async path => {
+      const res = await request(path)
+      expect(res.status).toBe(404)
+      expect(await res.text()).toBe('')
+    }
+  )
+
+  it('/cdn-cgifoo is not a runtime path', async () => {
+    expect(await (await request('/cdn-cgifoo')).text()).toContain('ASSETS stub')
+  })
+
   it('non-API path falls through to the ASSETS binding', async () => {
     const res = await request('/some/spa/route')
     expect(res.status).toBe(404)

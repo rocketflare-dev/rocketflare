@@ -59,6 +59,17 @@ const app = createRouter()
 app.onError(errorHandler)
 app.notFound(notFoundHandler)
 
+/**
+ * The runtime's own namespace, answered BEFORE the logger so it never reaches the app at all.
+ * `wrangler dev` sends its reload control to the Worker on `/cdn-cgi/ProxyWorker/pause|play`
+ * whenever its internal auth header does not match the ProxyWorker's, and the SPA catch-all used to
+ * answer those with `index.html` and a 200 — wrong, and a stream of `GET /cdn-cgi/ProxyWorker/pause
+ * 200` lines burying the app's own in the dev log. Cloudflare answers `/cdn-cgi/*` at the edge in
+ * production, so nothing legitimate arrives here. Miniflare's own endpoints (`/cdn-cgi/local/…`,
+ * the local cron trigger) never reach the Worker — it handles them itself.
+ */
+app.all('/cdn-cgi/*', c => c.body(null, 404))
+
 // 2–4. Request id + logger → validated config → security headers (wraps everything below).
 app.use('*', requestIdMiddleware, requestLogger)
 app.use('*', configMiddleware)
