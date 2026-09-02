@@ -242,14 +242,16 @@ function main(argv) {
     const containers = runningContainers()
     const oldDev = `${KIT.slug}-dev-postgres`
     const oldTest = `${KIT.slug}-test-postgres`
-    const live = [oldDev, oldTest].filter(c => containers.includes(c))
+    // The dev container carries a per-checkout suffix (scripts/dev-db.mjs), the test one does not.
+    const live = containers.filter(c => c === oldTest || c === oldDev || c.startsWith(`${oldDev}-`))
     const hasDevVars = existsSync(path.join(REPO_ROOT, DEV_VARS))
     const lines = [
       `(b) ${migrationRows.length} files under ${MIGRATIONS_DIR} rename the RLS role \`${KIT.slug}_app\` → \`${names.snake}_app\` ` +
         '(SQL + meta snapshots). A database that already ran the OLD migrations keeps the old role and policies:',
       '    rename BEFORE the first migration. If a dev DB exists, drop it and migrate again —',
       `    \`pnpm dev:db:down\` BEFORE the rename (the compose file names the old container), or afterwards`,
-      `    \`docker rm -f ${oldDev}\` + \`docker volume rm ${KIT.slug}-dev-data\`; then \`pnpm dev:db:up && pnpm db:migrate\`.`,
+      `    \`pnpm dev:db:status\` names this checkout's container and volume (both carry a per-checkout`,
+      `    suffix); \`docker rm -f <container>\` + \`docker volume rm <project>_${KIT.slug}-dev-data\`, then \`pnpm dev:db:up && pnpm db:migrate\`.`,
       '    The renamed compose volume is a fresh, empty database, so the new migrations apply cleanly.',
     ]
     if (live.length > 0) {
@@ -271,8 +273,8 @@ function main(argv) {
   report.push(
     `(c) Docker names: container_name \`${names.slug}-dev-postgres\` / \`${names.slug}-test-postgres\`, volume ` +
       `\`${names.slug}-dev-data\`, database \`${names.snake}_dev\` / \`${names.snake}_test\`, owner \`${names.snake}\` ` +
-      `(kept a plain SQL identifier: db-roles.ts refuses a hyphenated owner, so a hyphenated slug uses its snake form here). Renamed automatically; ` +
-      'a second checkout of the kit on this machine no longer collides on container names.'
+      `(kept a plain SQL identifier: db-roles.ts refuses a hyphenated owner, so a hyphenated slug uses its snake form here). Renamed automatically. ` +
+      'Two checkouts never collide either way: scripts/dev-db.mjs gives each its own compose project, container suffix and port.'
   )
   // (d) staging suffix
   report.push(

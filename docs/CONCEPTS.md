@@ -212,6 +212,21 @@ the migrations (D17/D18), so `chunks.embedding vector(1024)` applies on Neon and
 `pgvector/pgvector:pg17` image alike; `EMBEDDING_DIM` is a column type — a new dimension is a new
 table, not an `ALTER`.
 
+**The local port is chosen, not fixed.** `pnpm dev:db:up` runs `apps/web/scripts/dev-db.mjs`, which
+gives each checkout its own compose project, container name and port. It keeps the port already in
+`DATABASE_URL` while that is still free or still this checkout's — so a re-run never moves a working
+database — and otherwise takes the next free one from 5432 (skipping the test database's 5433) and
+writes it back to `.dev.vars`. Before this, `docker-compose.dev.yml` pinned `5432:5432` and a
+`container_name`, and compose derives its project name from the directory (`apps/web` in every
+checkout): a second copy of the kit on one machine either failed to start Postgres or silently
+attached to the first copy's database, which is a data hazard, not just an inconvenience.
+`DATABASE_URL` is the single truth downstream — `db:migrate`, `seed` and `drizzle-kit` read it
+through dotenv, and `pnpm dev` passes it to `wrangler dev` as
+`CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_HYPERDRIVE`, the local override for the Hyperdrive
+binding (the toml's `localConnectionString` remains the single-checkout default). `pnpm dev:db:down`
+stops only this checkout's container; `pnpm dev:db:status` lists every dev database on the machine
+and marks the one that is ours.
+
 **Migrations flow.** `pnpm db:generate` → read the SQL → `pnpm db:migrate` = `db-roles --phase=role`
 → `migrate.ts` → `db-roles --phase=grants`. Role first because a policy's `TO rocketflare_app` needs it;
 grants after because `REVOKE` needs the tables. `migrate.ts` rewrites a Neon `-pooler` host to the
@@ -224,7 +239,12 @@ runs as `db:migrate:ci` before `wrangler deploy`.
 switch-on procedure are in `docs/RLS.md`.
 
 **Known gaps / not built yet:** the RLS spike has not been run (Track R); `pin` mode from the source
-app is dropped (it soaked Node connection pinning, which no longer exists); no read replica routing.
+app is dropped (it soaked Node connection pinning, which no longer exists); no read replica routing;
+the TEST database is still pinned to 5433 (`docker-compose.test.yml`, `.env.test` and the Postgres
+service in `ci.yml` all name it), so two checkouts cannot run `pnpm test` at the same time — the dev
+port is the one that moves; switching to a per-checkout project name for the dev database also
+orphans the old `web_rocketflare-dev-data` volume, which the bootstrap reports once rather than
+deleting.
 
 ## 5. Background work and realtime
 

@@ -34,10 +34,10 @@ Engine and add your user to the `docker` group. Confirm the tool works, then car
 > a half-done machine: it inspects before it acts and never overwrites a value you wrote. Flags:
 > `--offline` (no Cloudflare account: comments the `[ai]` block out of both tomls), `--online`
 > (restore it), `--no-demo` (plain `pnpm seed`), `--no-dev` (stop after step 7 and print what to run
-> next), `--share-db` (accept a Postgres container started from another checkout), `--no-open`,
+> next), `--no-open`,
 > `--as <email>`, `--yes`, `--verbose`; `--check` is `pnpm preflight`.
 > Exit codes: `0` ok · `1` a step failed · `2` usage · `3` prerequisite missing · `4` port/container
-> held by (or a database shared with) another checkout · `5` Cloudflare login required
+> held by another checkout · `5` Cloudflare login required
 > (`node scripts/bootstrap.mjs --help`).
 > The numbered steps below are what it runs — for doing it by hand, or for debugging one step.
 
@@ -75,15 +75,26 @@ credentials into it, not even as comments.
 
 ### 1.4 Database
 ```bash
-pnpm dev:db:up        # pgvector/pgvector:pg17 on :5432 (apps/web/docker-compose.dev.yml)
+pnpm dev:db:up        # pgvector/pgvector:pg17, first free port from :5432 (apps/web/scripts/dev-db.mjs)
+pnpm dev:db:status    # every dev database on this machine, and which one is this checkout's
 pnpm web db:check     # apps/web/scripts/test-db-connection.ts
 pnpm db:migrate       # db-roles --phase=role → migrations → db-roles --phase=grants
 ```
-Verify: `db:check` prints the server version; `db:migrate` ends with the applied migration count and
-no `role "rocketflare_app" does not exist` error. Docker Compose names the project after the directory
-(`web`), so a SECOND checkout of the kit does not collide on the pinned `container_name` — it quietly
-attaches to the first one's database; `pnpm bootstrap` reads the container's compose label and stops
-(exit 4, or asks on a terminal) unless you pass `--share-db`. Why three steps: a policy's `TO rocketflare_app` needs the role
+Verify: `db:up` prints the port it chose; `db:check` prints the server version; `db:migrate` ends
+with the applied migration count and no `role "rocketflare_app" does not exist` error.
+
+**The port is chosen, not fixed.** `dev:db:up` runs `apps/web/scripts/dev-db.mjs`, which gives this
+checkout its own compose project, container and port: it keeps the port already in `DATABASE_URL`
+whenever that is still free or still this checkout's, and otherwise takes the next free one from
+5432 (skipping 5433, the test database) and writes it back to `apps/web/.dev.vars`. So a SECOND
+checkout on the same machine starts its own database instead of failing on a taken port or quietly
+attaching to the first one's container — and a re-run never moves a database that is working.
+Everything downstream reads that one value: `db:migrate`, `seed` and `drizzle-kit` through dotenv,
+and `wrangler dev` through `CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_HYPERDRIVE`, which
+`pnpm dev` sets (the toml's `localConnectionString` is only the single-checkout default).
+`pnpm dev:db:down` stops this checkout's database and never another's.
+
+Why three steps: a policy's `TO rocketflare_app` needs the role
 before migrations; the `REVOKE`s need the tables after. With `APP_DATABASE_URL` unset the role is
 created `NOLOGIN` and RLS stays inert ([`docs/RLS.md`](docs/RLS.md)).
 

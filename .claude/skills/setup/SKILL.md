@@ -39,7 +39,7 @@ the Cloudflare login / Workers AI probe; `--no-demo` runs plain `pnpm seed` (ten
 | 1 | a step failed | show the tail of the output, fix the cause, re-run the same command (idempotent) |
 | 2 | usage error | check `$ARGUMENTS` against the hint above and re-run |
 | 3 | a prerequisite is missing | install it, then re-run: Node 24 via `nvm install` (reads `.nvmrc`) or `fnm use`; pnpm via `corepack enable`; Docker via Docker Desktop, or `brew install colima docker && colima start` on macOS, or Docker Engine + the `docker` group on Linux |
-| 4 | another checkout holds a port or container | run `pnpm dev:status`, show the user the other path/pid it reports, and let THEM decide — never kill another checkout's processes |
+| 4 | a dev port is held by another checkout | the DATABASE port is chosen automatically (`scripts/dev-db.mjs` takes the next free one), so this is :3000/:3001: run `pnpm dev:status` and `pnpm dev:db:status`, show the user the other path/pid, and let THEM decide — never kill another checkout's processes |
 | 5 | Cloudflare login required | see below |
 
 **Exit 5 — Cloudflare login.** Explain in one sentence: *the kit's zero-key chat and agents run on
@@ -88,7 +88,7 @@ prerequisite lines, then hands over to `scripts/bootstrap.mjs` for the nine step
 | 1 | `toolchain` | Node 24, pnpm 10, Docker daemon and `docker compose` reachable |
 | 2 | `install` | `pnpm install` done; `wrangler` resolves in `apps/web` |
 | 3 | `secrets` | `apps/web/.dev.vars` exists with `DATABASE_URL`, `OAUTH_ENCRYPTION_KEY` (generated, git-ignored) |
-| 4 | `database` | the dev Postgres container is up and healthy on :5432 |
+| 4 | `database` | this checkout's Postgres container is up and healthy on the port it chose (5432 unless taken; the step says so and writes it to `.dev.vars`) |
 | 5 | `migrate` | role → migrations → grants applied; the pgvector extension is installed |
 | 6 | `seed` | demo tenant, owner/admin/member users, one API key (printed once), plus the populated demo workspace unless `--no-demo` |
 | 7 | `cloudflare` | wrangler is logged in (Workers AI available) — or `--offline` was chosen |

@@ -1,15 +1,21 @@
 # Local development Postgres. pgvector image because the AI layer stores embeddings in
-# Postgres (`vector` extension); otherwise a plain postgres:17. Port 5432; tests use 5433.
+# Postgres (`vector` extension); otherwise a plain postgres:17. Tests use 5433.
+#
+# The port and the container name are variables so that a SECOND checkout on this machine gets
+# its own database instead of colliding on 5432: `pnpm dev:db:up` runs scripts/dev-db.mjs, which
+# derives both from `DATABASE_URL` in .dev.vars and sets COMPOSE_PROJECT_NAME per checkout. The
+# defaults below are what a bare `docker compose -f docker-compose.dev.yml up` gets — correct for
+# a single checkout, and the literals `pnpm adapt` rewrites.
 services:
   postgres-dev:
     image: pgvector/pgvector:pg17
-    container_name: rocketflare-dev-postgres
+    container_name: ${DEV_DB_CONTAINER:-rocketflare-dev-postgres}
     environment:
       POSTGRES_DB: rocketflare_dev
       POSTGRES_USER: rocketflare
       POSTGRES_PASSWORD: rocketflare_pass
     ports:
-      - "5432:5432"
+      - "${DEV_DB_PORT:-5432}:5432"
     volumes:
       - rocketflare-dev-data:/var/lib/postgresql/data
     healthcheck:

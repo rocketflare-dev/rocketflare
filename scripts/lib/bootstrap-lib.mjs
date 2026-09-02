@@ -173,3 +173,85 @@ export function parseWhoami(stdout) {
   if (data) result.account = data[0]
   return result
 }
+
+/* --------------------------------------------------------------- dev database --
+ * The local Postgres is addressed by ONE value, `DATABASE_URL` in `apps/web/.dev.vars`:
+ * every script reads it through dotenv, and `scripts/dev-db.mjs` derives the compose
+ * port and container name from it. A second checkout on the same machine therefore
+ * gets its own port and its own container instead of colliding on 5432. */
+
+/** Test Postgres (`docker-compose.test.yml`, `.env.test`, CI) — never hand it to a dev database. */
+export const TEST_DB_PORT = 5433
+
+/**
+ * The port to publish Postgres on: `preferred` when it is still available (a re-run must not
+ * move a working database), else the first available port from `start`. `isAvailable(port)` is
+ * injected — at runtime it means "free, or already published by THIS checkout's container".
+ * Returns null when the whole range is taken.
+ */
+export function chooseDevDbPort({
+  preferred,
+  isAvailable,
+  start = 5432,
+  count = 20,
+  skip = [TEST_DB_PORT],
+}) {
+  const blocked = new Set(skip)
+  if (preferred && !blocked.has(preferred) && isAvailable(preferred)) return preferred
+  for (let port = start; port < start + count; port += 1) {
+    if (blocked.has(port) || port === preferred) continue
+    if (isAvailable(port)) return port
+  }
+  return null
+}
+
+/** The port in a `postgresql://…` URL, or null when it has none or the URL is unparseable. */
+export function databaseUrlPort(url) {
+  try {
+    const port = new URL(url).port
+    return port === '' ? null : Number(port)
+  } catch {
+    return null
+  }
+}
+
+/** The same URL with `port` as its port. Returns the input unchanged when it cannot be parsed. */
+export function withDatabaseUrlPort(url, port) {
+  try {
+    const parsed = new URL(url)
+    parsed.port = String(port)
+    return parsed.toString()
+  } catch {
+    return url
+  }
+}
+
+/**
+ * `text` with `key=value` set: the existing assignment is rewritten in place (comments and
+ * every other line are preserved byte for byte), or appended when the key is absent.
+ */
+export function upsertDevVar(text, key, value) {
+  const lines = (text ?? '').split('\n')
+  let found = false
+  const out = lines.map(line => {
+    const match = KEY_LINE.exec(line)
+    if (!match || match[1] !== key) return line
+    found = true
+    return `${key}=${value}`
+  })
+  if (found) return out.join('\n')
+  let result = out.join('\n')
+  if (result !== '' && !result.endsWith('\n')) result += '\n'
+  return `${result}${key}=${value}\n`
+}
+
+/**
+ * A short stable tag for a checkout's absolute path — the suffix that makes this checkout's
+ * compose project (and, when the plain one is taken, its container) unique on the machine.
+ * djb2: the values only have to differ, not resist anything.
+ */
+export function checkoutTag(absolutePath) {
+  let hash = 5381
+  for (const char of String(absolutePath)) hash = ((hash * 33) ^ char.charCodeAt(0)) >>> 0
+  return hash.toString(36).padStart(7, '0').slice(0, 7)
+}

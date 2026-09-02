@@ -21,9 +21,10 @@
  * `ps`/`lsof` only — no pidfile to go stale, no dependency to install.
  */
 import { execFileSync, spawn } from 'node:child_process'
-import { mkdirSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { readDevVars } from '../../../scripts/lib/bootstrap-lib.mjs'
 
 const WEB_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const REPO_ROOT = path.resolve(WEB_DIR, '../..')
@@ -285,6 +286,19 @@ function createSpinner(enabled) {
   }
 }
 
+/**
+ * The Worker's local Hyperdrive binding, pointed at whichever port `pnpm dev:db:up` chose for
+ * THIS checkout (scripts/dev-db.mjs writes it to .dev.vars). The toml's `localConnectionString`
+ * is only the single-checkout default; without this a second checkout's Worker would talk to
+ * the first checkout's database.
+ */
+function databaseEnv() {
+  const file = path.join(WEB_DIR, '.dev.vars')
+  if (!existsSync(file)) return {}
+  const url = readDevVars(readFileSync(file, 'utf8')).DATABASE_URL
+  return url ? { CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_HYPERDRIVE: url } : {}
+}
+
 async function start({ verbose }) {
   await preflight()
   mkdirSync(path.join(WEB_DIR, 'dist/ui'), { recursive: true })
@@ -337,7 +351,7 @@ async function start({ verbose }) {
   const launch = (name, bin, args) => {
     const child = spawn(path.join(WEB_DIR, 'node_modules/.bin', bin), args, {
       cwd: WEB_DIR,
-      env: { ...process.env, FORCE_COLOR: '1' },
+      env: { ...process.env, FORCE_COLOR: '1', ...databaseEnv() },
       stdio: ['ignore', 'pipe', 'pipe'],
     })
     children.set(name, child)

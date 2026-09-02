@@ -33,9 +33,9 @@ Cloudflare Worker (`apps/web`), a CLI (`apps/cli`), private zod contracts
 
 ```bash
 pnpm bootstrap · pnpm preflight  # first run in one go (--offline/--online toggle [ai]) / read-only check
-pnpm dev:db:up && pnpm db:migrate  # Postgres :5432; role → migrations → grants
+pnpm dev:db:up && pnpm db:migrate  # Postgres on the first free port from :5432 → DATABASE_URL; role → migrations → grants
 pnpm seed [--demo] && pnpm dev  # tenant/users/key (+ populated workspace); wrangler :3001 + vite :3000 (strict ports)
-pnpm dev:stop · pnpm dev:status  # kill this repo's dev tree / show it and the port holders
+pnpm dev:stop · pnpm dev:status · pnpm dev:db:status  # kill this repo's dev tree / port holders / every dev database
 pnpm cli login --server http://localhost:3001  # browser → ~/.rocketflare/config.json, then whoami
 pnpm test:db:up && pnpm test  # every package; web loads .env.test
 pnpm lint · pnpm typecheck · pnpm build  # workspace-wide

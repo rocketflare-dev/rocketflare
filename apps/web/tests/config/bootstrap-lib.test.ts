@@ -11,13 +11,18 @@ import TOML from '@iarna/toml'
 import { describe, expect, it } from 'vitest'
 import {
   aiBlockState,
+  checkoutTag,
+  chooseDevDbPort,
+  databaseUrlPort,
   extractSeedKey,
   fillDevVars,
   parseNvmrc,
   parseWhoami,
   readDevVars,
   toggleAiBlock,
+  upsertDevVar,
   versionAtLeast,
+  withDatabaseUrlPort,
 } from '../../../../scripts/lib/bootstrap-lib.mjs'
 
 const WEB_DIR = path.resolve(__dirname, '../..')
@@ -249,5 +254,82 @@ describe('parseWhoami', () => {
     )
     expect(parseWhoami(token).loggedIn).toBe(true)
     expect(parseWhoami(token).email).toBe('ci@example.com')
+  })
+})
+
+/**
+ * The dev database's port is chosen, not fixed: a second checkout on one machine used to be
+ * unable to start Postgres at all (5432 taken, `container_name` pinned). `scripts/dev-db.mjs`
+ * composes these four helpers; the docker side is exercised by running the bootstrap.
+ */
+describe('chooseDevDbPort', () => {
+  const all = () => true
+
+  it('keeps the port already in use by this checkout — a re-run must not move a live database', () => {
+    expect(chooseDevDbPort({ preferred: 5437, isAvailable: all })).toBe(5437)
+  })
+
+  it('takes the next free port when the preferred one is held by another checkout', () => {
+    const taken = new Set([5432])
+    expect(chooseDevDbPort({ preferred: 5432, isAvailable: p => !taken.has(p) })).toBe(5434)
+  })
+
+  it('never hands out the test port, even when it is free and preferred', () => {
+    expect(chooseDevDbPort({ preferred: 5433, isAvailable: all })).toBe(5432)
+    expect(chooseDevDbPort({ preferred: null, isAvailable: p => p === 5433 })).toBeNull()
+  })
+
+  it('starts from 5432 when there is nothing to prefer', () => {
+    expect(chooseDevDbPort({ preferred: null, isAvailable: all })).toBe(5432)
+  })
+
+  it('returns null when the whole range is taken, rather than a colliding port', () => {
+    expect(chooseDevDbPort({ preferred: 5432, isAvailable: () => false })).toBeNull()
+  })
+})
+
+describe('database URL port', () => {
+  const URL_5432 = 'postgresql://rocketflare:rocketflare_pass@localhost:5432/rocketflare_dev'
+
+  it('reads and rewrites the port, leaving the rest of the URL alone', () => {
+    expect(databaseUrlPort(URL_5432)).toBe(5432)
+    expect(withDatabaseUrlPort(URL_5432, 5434)).toBe(
+      'postgresql://rocketflare:rocketflare_pass@localhost:5434/rocketflare_dev'
+    )
+  })
+
+  it('survives a URL it cannot parse or one with no port', () => {
+    expect(databaseUrlPort('not a url')).toBeNull()
+    expect(databaseUrlPort('postgresql://localhost/db')).toBeNull()
+    expect(withDatabaseUrlPort('not a url', 5434)).toBe('not a url')
+  })
+})
+
+describe('upsertDevVar', () => {
+  const FILE = ['# a comment', 'DATABASE_URL=postgresql://x:y@localhost:5432/z', 'OTHER=keep'].join(
+    '\n'
+  )
+
+  it('rewrites the assignment in place and leaves every other byte alone', () => {
+    const next = upsertDevVar(FILE, 'DATABASE_URL', 'postgresql://x:y@localhost:5434/z')
+    expect(next).toContain('# a comment')
+    expect(next).toContain('DATABASE_URL=postgresql://x:y@localhost:5434/z')
+    expect(next).toContain('OTHER=keep')
+    expect(next.split('\n')).toHaveLength(3)
+  })
+
+  it('appends a key the file does not have, and is idempotent', () => {
+    const once = upsertDevVar('A=1\n', 'DATABASE_URL', 'postgresql://h/db')
+    expect(once).toBe('A=1\nDATABASE_URL=postgresql://h/db\n')
+    expect(upsertDevVar(once, 'DATABASE_URL', 'postgresql://h/db')).toBe(once)
+  })
+})
+
+describe('checkoutTag', () => {
+  it('is stable per path and differs between checkouts', () => {
+    const a = checkoutTag('/Users/x/work/rocketflare/apps/web')
+    expect(checkoutTag('/Users/x/work/rocketflare/apps/web')).toBe(a)
+    expect(checkoutTag('/Users/x/work/other/apps/web')).not.toBe(a)
+    expect(a).toMatch(/^[a-z0-9]{7}$/)
   })
 })

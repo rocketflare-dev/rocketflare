@@ -22,12 +22,13 @@
  */
 import { spawn, spawnSync } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
-import { existsSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { createInterface } from 'node:readline'
 import {
   aiBlockState,
+  databaseUrlPort,
   extractSeedKey,
   fillDevVars,
   parseNvmrc,
@@ -41,7 +42,6 @@ const REPO_ROOT = path.resolve(import.meta.dirname, '..')
 const WEB_DIR = path.join(REPO_ROOT, 'apps/web')
 const DEV_VARS = path.join(WEB_DIR, '.dev.vars')
 const DEV_VARS_EXAMPLE = path.join(WEB_DIR, '.dev.vars.example')
-const COMPOSE_FILE = path.join(WEB_DIR, 'docker-compose.dev.yml')
 const TOMLS = ['wrangler.toml', 'wrangler.staging.toml'].map(f => path.join(WEB_DIR, f))
 /** Keys `config.ts` validates with `optionalSecret(32)` — blank is "unset", short is a ConfigError. */
 const REQUIRED_SECRETS = ['OAUTH_ENCRYPTION_KEY']
@@ -67,7 +67,7 @@ Take a fresh clone to a running, signed-in dev stack in one command. Re-runnable
   --online      keep/restore the [ai] block; exit 5 if wrangler is not logged in
   --no-dev      stop after step 7 and print the commands to run next
   --no-demo     seed without the demo data (plain \`pnpm seed\`)
-  --share-db    accept a Postgres container started from another checkout (one shared database)
+  --share-db    accepted and ignored: every checkout now gets its own database (pnpm dev:db:status)
   --no-open     do not open the browser once the server answers
   --as <email>  seeded account to sign in as (default owner@example.test)
   --check       read-only preflight (= pnpm preflight): toolchain, secrets, database, Cloudflare,
@@ -81,7 +81,7 @@ another checkout · 5 Cloudflare login required`
 function parseArgs(argv) {
   const opts = {
     yes: false,
-    shareDb: false,
+    shareDbIgnored: false,
     offline: false,
     online: false,
     dev: true,
@@ -110,8 +110,10 @@ function parseArgs(argv) {
       case '--no-demo':
         opts.demo = false
         break
+      // Kept so an older command line (or doc) still runs. Sharing was only ever a workaround
+      // for the fixed port; scripts/dev-db.mjs now gives each checkout its own database.
       case '--share-db':
-        opts.shareDb = true
+        opts.shareDbIgnored = true
         break
       case '--no-open':
         opts.open = false
@@ -352,12 +354,16 @@ const dbVerifyLine = output =>
     .filter(line => /^Connected to |^pgvector extension/.test(line))
     .join(' · ')
 
-/** `--check`: one `db:check`, no compose. */
+/** `--check`: one `db:check` against whatever DATABASE_URL says, no compose. */
 async function stepDatabaseCheck() {
   const result = await dbCheck()
   if (result.code !== 0) {
-    throw new StepError('Postgres on :5432 not reachable', {
-      hint: 'pnpm dev:db:up   (or pnpm bootstrap, which waits for it)',
+    const url = existsSync(DEV_VARS)
+      ? readDevVars(readFileSync(DEV_VARS, 'utf8')).DATABASE_URL
+      : undefined
+    const where = url ? `:${databaseUrlPort(url) ?? '?'}` : 'the configured port'
+    throw new StepError(`Postgres on ${where} not reachable`, {
+      hint: 'pnpm dev:db:up   (or pnpm bootstrap, which waits for it); pnpm dev:db:status lists them',
       output: result.output,
       exitCode: EXIT.prerequisite,
     })
@@ -366,62 +372,43 @@ async function stepDatabaseCheck() {
 }
 
 async function stepDatabase(opts) {
-  const up = await run('docker', ['compose', '-f', COMPOSE_FILE, 'up', '-d', '--wait'], {
+  // scripts/dev-db.mjs owns the port, the container name and the compose project: it keeps the
+  // port already in .dev.vars when that is still ours or still free, and otherwise picks the
+  // next free one and writes it back. A second checkout therefore starts its OWN database
+  // instead of colliding on 5432 or silently attaching to the first checkout's container.
+  const up = await run('node', [path.join(WEB_DIR, 'scripts/dev-db.mjs'), 'up', '--json'], {
     cwd: WEB_DIR,
   })
   if (up.code !== 0) {
-    const conflict = /container name "\/?([^"]+)" is already in use/i.exec(up.output)
-    if (conflict) {
-      const name = conflict[1]
-      const inspect = await run('docker', [
-        'inspect',
-        '--format',
-        '{{index .Config.Labels "com.docker.compose.project.working_dir"}}',
-        name,
-      ])
-      const other = inspect.output.trim() || 'an unknown directory'
-      throw new StepError(`container ${name} belongs to another checkout: ${other}`, {
-        hint: `stop it there: pnpm dev:db:down in ${other}  (the compose file pins container_name)`,
-        output: up.output,
-        exitCode: EXIT.held,
-      })
-    }
-    throw new StepError('docker compose up failed', {
-      hint: 'is another Postgres on :5432? `lsof -nP -iTCP:5432 -sTCP:LISTEN`',
+    throw new StepError('could not start the dev Postgres container', {
+      hint: 'pnpm dev:db:status shows every dev database on this machine and who owns it',
       output: up.output,
+      exitCode: EXIT.held,
     })
   }
-  // Compose derives the project name from the directory (`web`), so a second checkout does NOT
-  // collide on the pinned container_name — it silently attaches to the other checkout's database.
-  // Say so, and only continue when asked to.
   const notes = []
-  const other = await foreignComposeOwner()
-  if (other) {
-    const sharing =
-      `Postgres container was started from another checkout: ${other}\n` +
-      '  both checkouts would share ONE database (same container, same volume).'
-    if (opts.shareDb) {
-      notes.push(`${sharing}\n  continuing (--share-db)`)
-    } else if (!opts.yes && process.stdin.isTTY) {
-      say(`  ${sharing}`)
-      const answer = (
-        await ask('  [c]ontinue sharing it, or [a]bort and stop it there first? [c/a] ')
-      )
-        .trim()
-        .toLowerCase()
-      if (answer !== 'c') {
-        throw new StepError('database belongs to another checkout', {
-          hint: `pnpm dev:db:down in ${other}, then re-run — or pass --share-db`,
-          exitCode: EXIT.held,
-        })
-      }
-      notes.push('sharing the database with the other checkout')
-    } else {
-      throw new StepError('database belongs to another checkout', {
-        hint: `pnpm dev:db:down in ${other}, then re-run — or pass --share-db to use one database`,
-        exitCode: EXIT.held,
-      })
-    }
+  if (opts.shareDbIgnored) {
+    notes.push('--share-db is no longer needed: this checkout has its own database (ignored)')
+  }
+  let chosen = null
+  try {
+    chosen = JSON.parse(up.output.trim().split('\n').at(-1))
+  } catch {
+    /* older docker printing something unexpected: the db:check below is the real gate */
+  }
+  if (chosen?.moved) {
+    notes.push(
+      `port ${chosen.port}: the previous one was taken by another checkout or another program`
+    )
+  }
+  if (chosen?.wroteDevVars) notes.push('DATABASE_URL in apps/web/.dev.vars updated to match')
+  const orphan = await legacyVolume()
+  if (orphan) {
+    notes.push(
+      `an older single-checkout volume is still on this machine: ${orphan}\n` +
+        `  it holds the database this checkout used BEFORE per-checkout projects; nothing reads it now.\n` +
+        `  remove it when you are sure: docker volume rm ${orphan}`
+    )
   }
   // `--wait` honours the compose healthcheck, but first boot restarts postgres once after
   // pg_isready first succeeds — the poll is what migrate.ts's waitForDatabase would do.
@@ -433,7 +420,7 @@ async function stepDatabase(opts) {
   }
   if (last.code !== 0) {
     throw new StepError(`Postgres did not answer within ${DB_CHECK_ATTEMPTS} s`, {
-      hint: 'docker compose -f apps/web/docker-compose.dev.yml logs postgres-dev',
+      hint: 'pnpm dev:db:status, then docker compose logs for the container it names',
       output: last.output,
     })
   }
@@ -441,29 +428,13 @@ async function stepDatabase(opts) {
 }
 
 /**
- * The checkout that started the dev Postgres container, when it is not this one (compose's
- * `working_dir` label); null when it is ours or cannot be read.
+ * The volume from before per-checkout compose projects (`web_<slug>-dev-data`), when it still
+ * exists: this checkout no longer reads it, so say so once rather than leaving stray disk.
  */
-async function foreignComposeOwner() {
-  const ps = await run('docker', ['compose', '-f', COMPOSE_FILE, 'ps', '-q'], { cwd: WEB_DIR })
-  const id = ps.output.trim().split('\n')[0]
-  if (ps.code !== 0 || !id) return null
-  const inspect = await run('docker', [
-    'inspect',
-    '--format',
-    '{{index .Config.Labels "com.docker.compose.project.working_dir"}}',
-    id,
-  ])
-  const owner = inspect.output.trim()
-  if (inspect.code !== 0 || !owner) return null
-  const same = (a, b) => {
-    try {
-      return realpathSync(a) === realpathSync(b)
-    } catch {
-      return a === b
-    }
-  }
-  return same(owner, WEB_DIR) ? null : owner
+async function legacyVolume() {
+  const ls = await run('docker', ['volume', 'ls', '--format', '{{.Name}}'])
+  if (ls.code !== 0) return null
+  return ls.output.split('\n').find(name => name.trim() === 'web_rocketflare-dev-data') ?? null
 }
 
 async function stepMigrate() {

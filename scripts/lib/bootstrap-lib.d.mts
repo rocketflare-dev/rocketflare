@@ -30,3 +30,19 @@ export interface WhoamiResult {
   account?: string
 }
 export function parseWhoami(stdout: string | undefined): WhoamiResult
+
+export const TEST_DB_PORT: number
+export interface ChooseDevDbPortOptions {
+  /** The port already in use by this checkout (from `.dev.vars`), kept when still available. */
+  preferred?: number | null
+  /** "Free, or already published by this checkout's own container." */
+  isAvailable: (port: number) => boolean
+  start?: number
+  count?: number
+  skip?: number[]
+}
+export function chooseDevDbPort(options: ChooseDevDbPortOptions): number | null
+export function databaseUrlPort(url: string): number | null
+export function withDatabaseUrlPort(url: string, port: number): string
+export function upsertDevVar(text: string, key: string, value: string): string
+export function checkoutTag(absolutePath: string): string
