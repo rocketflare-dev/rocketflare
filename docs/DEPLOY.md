@@ -34,7 +34,9 @@ package is private by default (`"private": true`, like `packages/shared`, which 
               Neon branch `staging`      Neon branch `production` (main)  one project, role per branch
 ```
 
-Workers Paid plan is required (Hyperdrive, Workflows, `[limits]`). Smart Placement runs the Worker
+Workers Paid plan is required (Hyperdrive, Workflows, `[limits]`) — Hyperdrive's plan availability
+has changed over time; the create step (`cf-provision.sh`) reports if the plan refuses it, with the
+upgrade URL. Smart Placement runs the Worker
 near Neon rather than near the user, which is what makes sequential queries cheap.
 
 ## Wrangler anatomy — two files, one shape (D6)
@@ -80,13 +82,20 @@ hidden gap. `apps/web/tests/config/wrangler-parity.test.ts` enforces the table b
 | Static Assets | `ASSETS` | — | `[assets] directory = "./dist/ui"` uploaded atomically with each deploy |
 | RLS app role (optional, docs/RLS.md) | `HYPERDRIVE_APP` | `<app>-<env>-app` | `… hyperdrive create … --caching-disabled` |
 
-`pnpm provision <staging|production> [app]` (root script → `apps/web/scripts/cf-provision.sh`, which
-`cd`s to `apps/web` itself so it also works as `bash apps/web/scripts/cf-provision.sh …`) runs the
-Hyperdrive and KV steps (the Queue/R2 create blocks are still commented in the script although both
-tomls now declare `JOBS_QUEUE` and `FILES` — uncomment them, or run the two `create` commands from
-the table above by hand, before the first Phase 2 deploy), reuses existing resources by name,
-and prints the ids with a `sed` line per toml. It needs `NEON_DATABASE_URL` (direct host) and an
-authenticated wrangler; it never writes files.
+`pnpm web provision:cloudflare <staging|production> [app] [--apply] [--force]` (the `apps/web`
+script → `scripts/cf-provision.sh`, which `cd`s to `apps/web` itself so it also works as
+`bash apps/web/scripts/cf-provision.sh …`) creates all four resources idempotently — Hyperdrive, KV,
+Queue and R2, each found by name and reused when it exists — and either prints the Hyperdrive/KV ids
+with a `sed` line per toml, or with `--apply` writes them into that toml through
+`scripts/provision/patch-toml.ts` (a DIFFERENT existing id is refused unless `--force`). It needs
+`NEON_DATABASE_URL` (direct host) and an authenticated wrangler (`wrangler login`, or
+`CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID`); the connection string is an argument of the one
+`wrangler hyperdrive create` process and is redacted from every echoed line.
+`pnpm provision <phase> [env]` (`apps/web/scripts/provision.ts`, driven by the `/provision` skill) is
+the orchestrator around it — phases `preflight` · `email create|status|verify` · `neon` ·
+`cloudflare <env>` (this script with `--apply`) · `migrate <env>` · `github <env>` · `urls` ·
+`deploy <env>` · `secrets <env>` · `all` — each idempotent, each ending in one `Verify:` line;
+`SETUP.md` Part 3 has the table.
 
 ## Crons
 
@@ -137,6 +146,7 @@ in **both** files, and split a heavy phase into its own step to draw a fresh bud
 | Scripts only | migration environment | `APP_DATABASE_URL` (db-roles, RLS enforce only) |
 | Developer-local only | `apps/web/.drizzle-cube.json` (git-ignored; copy `.drizzle-cube.json.example`) | a **tenant API key** for the drizzle-cube CLI / Claude Code plugin against `/cubejs-api` — it is an ordinary key from Settings → API keys, scopes every query to that tenant, and is revoked there; never deployed, never committed |
 | Resource ids | tomls (committed) | Hyperdrive / KV ids — not secrets |
+| Provisioning transport | the shell that launches `pnpm provision` / `claude` | `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, `NEON_API_KEY`, `RESEND_API_KEY` (+ the optional Worker secrets) exist in that environment only; Neon connection strings are fetched from the API on demand (`reveal_password` / `reset_password`) and reach children by env or stdin (`wrangler secret put`, `gh secret set`); every printed line passes one `redact()`; `apps/web/.provision.json` (git-ignored) caches ids and answers only and refuses any secret-shaped value |
 
 `wrangler secret put` (run in `apps/web`) requires the worker to exist: the first deploy of a fresh environment runs via
 `workflow_dispatch` and 500s until the secrets are set. Use different key material per environment.
@@ -148,6 +158,11 @@ The worker never receives `DATABASE_URL` in deployed environments — it uses `H
   per branch. Branches are cheap and share compute quota; separate projects give separate quotas and
   credentials — choose projects if the environments must be blast-radius isolated. A shared role
   across branches means one leaked string is every environment's string; don't.
+- **Branch before you migrate.** Create `staging` before the first migration runs anywhere, so each
+  branch is migrated under its own role and password rather than inheriting a migrated main; the
+  `neon` phase of `pnpm provision` branches `staging` from the default branch before any `migrate`
+  phase, keeps the database's default owner role and sets (or reveals) a password per branch —
+  `--rotate` resets them and updates an existing Hyperdrive config to match.
 - **Hyperdrive points at the DIRECT host** (`ep-….<region>.aws.neon.tech`), not `-pooler`. Hyperdrive
   is itself a pooler; stacking it on Neon's PgBouncer adds a hop and a second transaction-mode
   layer with nothing to gain.
@@ -175,7 +190,7 @@ All steps run at the repository root; the root scripts fan out with `pnpm -r` / 
                                      → pnpm db:migrate:ci (staging DATABASE_URL) → pnpm --filter @rocketflare/web build:ui
                                      → pnpm --filter @rocketflare/web exec wrangler deploy -c wrangler.staging.toml --var RELEASE_VERSION:X.Y.Z
                                                                                     │
-                                                              verify on staging: /api/health, nav version
+                                                              verify on staging: /api/health, /api/ready (Hyperdrive → Neon), nav version
                                                                                     │
  gh release create X.Y.Z ──► deploy.yml ─► production job (environment: production, checkout the release tag)
                                      tag == ROOT version? → REQUIRE_PROVISIONED=1 test:config → db:migrate:ci (production)

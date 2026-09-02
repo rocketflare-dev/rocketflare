@@ -191,6 +191,23 @@ curl "http://localhost:3001/cdn-cgi/local/scheduled?cron=15+*+*+*+*"    # fact-t
 pnpm --filter @rocketflare/web exec wrangler workflows instances describe rocketflare-agent-run <runId>
 # Workers AI: `wrangler dev` proxies the `AI` binding to Cloudflare (a logged-in account; the calls are
 # real). Tests never touch it — `RecordingAi` answers deterministic vectors (.claude/rules/testing.md).
+# Offline switch: `pnpm bootstrap --offline` / `--online` (toggleAiBlock in scripts/lib/bootstrap-lib.mjs
+# comments the [ai] block out of BOTH tomls, or restores it, text-level — parity stays green because
+# the block is absent from both). `pnpm typecheck` then regenerates worker-configuration.d.ts without
+# `AI`: never commit that diff — run `--online` first.
 ```
 
 `pnpm --filter @rocketflare/web exec wrangler tail [-c wrangler.staging.toml]` streams deployed logs; `[observability.logs]` is on.
+
+## Provisioning (`apps/web/scripts/provision.ts`, `scripts/cf-provision.sh`)
+
+The tomls are patched at the **string level only**: `wrangler --update-config` refuses the
+commented TOML the kit ships and re-serialising through a TOML library drops every comment, so
+`scripts/provision/patch-toml.ts` (anchored regexes, every other byte preserved, idempotent, a
+different existing id refused unless `--force`) is the one writer of ids, `APP_URL`, `EMAIL_FROM`
+and the `routes` line — `cf-provision.sh --apply` calls it; nobody hand-types an id. (The only other
+programmatic toml writer is `toggleAiBlock` above, same byte-preserving rule.) Worker secrets go in
+over stdin (`wrangler secret put NAME` reads stdin when it is not a TTY — never `--body`, never
+`secret bulk`); tokens live in the launching shell's environment only; every printed line passes the
+ONE `redact()` in `scripts/provision/redact.ts` (connection strings, `re_*`, `napi_*`, bearer tokens,
+40+ hex — the 32-hex resource ids stay readable on purpose).

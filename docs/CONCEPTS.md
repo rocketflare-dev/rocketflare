@@ -407,6 +407,10 @@ under `/*`. Neither source app had an `ErrorBoundary` or global 401 handling; th
 **Guards.** One `RequireGuard` primitive composed into coarse role guards and fine ability guards
 (`RequireAbility`, `<Can>`); `SideNav` flags use the same guard as the page. `EnvironmentBadge`
 and the version footer read `APP_ENV`/`RELEASE_VERSION` so staging never looks like production.
+`/login?as=<email>` (what `pnpm bootstrap` opens) signs in through the dev-only `POST /auth/dev-login`
+once on mount — honoured ONLY when `GET /auth/methods` reports `devLogin` (the route 404s outside
+`APP_ENV=development`) AND the email is one of the allow-listed seeded `DEV_ACCOUNTS`; an arbitrary
+address in the URL does nothing.
 
 **Data layer.** `api-client.ts` (`credentials: 'include'`, `ApiError` from the envelope, `schema`
 option) → one hook file per resource → `queryKeys` factory → `queryOptions` for shared queries.
@@ -795,11 +799,21 @@ generated `tsvector` + GIN — the lexical half computes `to_tsvector` at query 
 agents (relax the partial unique index); the tool loop is one step, not one per turn; no budgets or
 quotas over `ai_usage` and no price table; prompt versioning, an evals harness, Bedrock/Azure/Gemini
 adapters, SSE `Last-Event-ID` replay for run progress and an orphan-run cron (reconcile-on-read
-replaced it) are deferred.
+replaced it) are deferred; the demo seed's chunk vectors are deterministic hash vectors
+(`services/ai/deterministic-embedding.ts`, `embeddingModel: 'seed:deterministic'` — a `tsx` script
+has no embeddings provider), so against a query embedded by the real provider dense retrieval over
+seeded documents is noise and the lexical rank is what carries the demo; never mix them with real
+embeddings.
 
 ## 10. Deployment
 
-**Status: tomls, CI, deploy workflow and scripts built (Phase 0); first real deploy in Phase 5.**
+**Status: tomls, CI, deploy workflow and scripts built (Phase 0); first real deploy in Phase 5.
+Provisioning: `pnpm provision <phase>` (`apps/web/scripts/provision.ts` — REST over `fetch`, no
+vendor CLIs: Neon project + `staging` branch with a password per branch, Hyperdrive / KV / Queue /
+R2 through `cf-provision.sh --apply`, string-level toml patching, migrations per branch, GitHub
+Environments + secrets, first deploy with `/api/health` + `/api/ready`, Worker secrets over stdin,
+Resend domain + Cloudflare DNS records + verification; `all` runs every phase, idempotent, one
+`Verify:` line each) and the `/provision` skill that drives it.**
 
 Two standalone tomls (D6) in `apps/web` — `wrangler.toml` production, `wrangler.staging.toml` —
 kept identical in everything code can observe by `apps/web/tests/config/wrangler-parity.test.ts`,
@@ -817,7 +831,15 @@ the repo — publishing it is an app decision; the package is private by default
 
 **Known gaps / not built yet:** a root `release` script (bump-commit-tag helper) is optional and not
 shipped; no per-PR previews; a CI check that every `apps/web/src/**/CLAUDE.md` exists and every
-`docs/*.md` is linked is proposed, not implemented; no CLI publishing pipeline.
+`docs/*.md` is linked is proposed, not implemented; no CLI publishing pipeline. Provisioning: no
+automated Workers-plan check — a refused `wrangler hyperdrive create` IS the check (the script maps
+it to the upgrade URL); the DKIM/MX records are created `proxied: false` and an existing proxied
+record at the same name is left alone and only reported; the Resend region is permanent per domain
+(delete and re-create to change it); the REST clients' pure helpers (`provision/{neon,resend,redact,patch-toml}.ts` — URL building,
+endpoint/role pickers, DNS-record mapping, redaction, toml patching) are unit-tested in the `config`
+project, but the HTTP calls themselves have not yet been run end to end against live accounts;
+provisioning only staging cannot pass `REQUIRE_PROVISIONED=1` — the parity test checks BOTH tomls,
+so it runs provisioned only once `cloudflare production` has patched the second file.
 
 ## 11. CLI
 
@@ -897,9 +919,11 @@ one tag).
 
 ## 13. Definition of done for the kit
 
-A fresh agent can copy the repository, follow `docs/ADAPTING.md` → `SETUP.md` Part 1 with zero
-external credentials and log in via a logged magic link; `pnpm cli login` against the local server
-and `pnpm cli whoami` with the minted key; invite a member, switch tenant, approve an access request;
+A fresh agent can copy the repository, run `bash scripts/bootstrap.sh` (or `/setup`) with zero
+external credentials and land in the browser signed in as the demo owner with the demo workspace
+populated (`pnpm seed --demo`); `/adapt <slug>` renames it (`docs/ADAPTING.md` §1 as one pass, the
+six careful rows reported); log in via a logged magic link; `pnpm cli login` against the local
+server and `pnpm cli whoami` with the minted key; invite a member, switch tenant, approve an access request;
 run the same flow with `TENANCY_MODE=single`; watch the People page refresh live from a second
 browser when an invitation is accepted and see the invitation email queued through `JOBS_QUEUE` and
 delivered (or logged) by the consumer under `wrangler dev`; upload an avatar and fetch it back at
@@ -914,6 +938,8 @@ the Knowledge page list the ingested document; query every cube as two tenants a
 (`tests/api/cubes/cube-isolation.test.ts`), run `pnpm web db:refresh-facts && pnpm web
 db:check-facts` to a `fresh` fact table, `GET /api/analytics/pages` and find the seeded
 `tenant-overview` page (and render it with live numbers once the analytics UI lands); and,
-following `SETUP.md` Part 3, deploy to a new Cloudflare account changing only placeholders and
-secrets — with root `pnpm lint && pnpm typecheck && pnpm test && pnpm build` green at every step and
-every behaviour described here still true.
+run `/provision` (or `pnpm provision all`) with three tokens (`CLOUDFLARE_API_TOKEN` +
+`CLOUDFLARE_ACCOUNT_ID`, `NEON_API_KEY`, `RESEND_API_KEY` — or `--skip-email`) to a staging URL
+whose `/api/ready` answers; and, following `SETUP.md` Part 3 by hand, deploy to a new Cloudflare
+account changing only placeholders and secrets — with root `pnpm lint && pnpm typecheck && pnpm
+test && pnpm build` green at every step and every behaviour described here still true.

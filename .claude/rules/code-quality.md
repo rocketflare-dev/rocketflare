@@ -50,7 +50,8 @@ Changing behaviour changes the doc in the same PR:
 | You changed | Update |
 |---|---|
 | a capability, a mode, a default | `docs/CONCEPTS.md` section + its "Known gaps" |
-| a command, an env name, a setup step | `SETUP.md`, `apps/web/.dev.vars.example`, `README.md` commands; root `package.json` scripts if a new package script should be reachable from the root |
+| a command, an env name, a setup step | `SETUP.md`, `apps/web/.dev.vars.example`, `README.md` commands; root `package.json` scripts if a new package script should be reachable from the root; `scripts/bootstrap.mjs` (the step that runs it and its verify line) and `.claude/skills/setup/SKILL.md` (the step table) |
+| a skill or its flags | the skill's `SKILL.md` (and its companion `checklist.md` / `reference.md`), `README.md` "Getting started", `docs/CONCEPTS.md` §13 |
 | a binding, a toml key, the release flow | `docs/DEPLOY.md`, both `wrangler*.toml` comments |
 | a convention in a layer | the matching `.claude/rules/*.md` and `apps/web/src/<dir>/CLAUDE.md` / `packages/shared/CLAUDE.md` |
 | a CLI command, flag or exit code | `docs/CONCEPTS.md` → CLI, `.claude/rules/cli.md` |

@@ -33,7 +33,7 @@ export const LOGIN_ERROR_COPY: Record<string, string> = {
 }
 const GENERIC_LOGIN_ERROR = 'Sign in failed. Please try again.'
 
-/** Seeded by `pnpm seed`; the server only honours these when `APP_ENV !== 'production'`. */
+/** Seeded by `pnpm seed`; the server only honours these when `APP_ENV === 'development'`. */
 export const DEV_ACCOUNTS = [
   { email: 'owner@example.test', label: 'Owner' },
   { email: 'admin@example.test', label: 'Admin' },

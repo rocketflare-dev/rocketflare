@@ -3,7 +3,7 @@
 # resources are detected by name and reused rather than duplicated. Prints the ids to paste into
 # the matching wrangler toml, or patches them in itself with `--apply`.
 #
-#   NEON_DATABASE_URL='postgresql://…' pnpm provision:cloudflare <staging|production> [app-name] [--apply]   # from the repo root
+#   NEON_DATABASE_URL='postgresql://…' pnpm web provision:cloudflare <staging|production> [app-name] [--apply]   # from the repo root
 #   NEON_DATABASE_URL='postgresql://…' bash apps/web/scripts/cf-provision.sh <staging|production> [--apply]
 #
 #   <staging|production>  which toml the ids belong to (wrangler.staging.toml / wrangler.toml)
@@ -166,7 +166,7 @@ Paste the ids above into apps/web/${TOML}, or run the sed line from apps/web (or
 EOT
 fi
 cat <<EOT
-Then (from the repo root):
+Then (from the workspace root):
   REQUIRE_PROVISIONED=1 pnpm --filter @rocketflare/web test:config   # parity test must pass with no <PLACEHOLDER> left
   git diff apps/web/${TOML}                                    # review; ids are not secrets and are committed
 Name-referenced resources for this environment (already declared in ${TOML}):

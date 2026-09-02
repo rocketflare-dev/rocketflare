@@ -27,23 +27,30 @@ rm -rf .git && git init && git add -A && git commit -m "Start from Rocketflare" 
 git remote add origin git@github.com:<you>/myapp.git                              # your own repo, when ready
 ```
 
-Then, from the root (Node 24 via `.nvmrc`, pnpm 10 via `corepack`, Docker running):
+Then one command (macOS or Linux; Windows through WSL2):
 
 ```bash
-corepack enable && pnpm install
-cp apps/web/.dev.vars.example apps/web/.dev.vars         # set OAUTH_ENCRYPTION_KEY (openssl rand -hex 32)
-pnpm dev:db:up && pnpm db:migrate && pnpm seed           # Postgres :5432 → migrations → demo tenant + users
-pnpm dev                                                 # http://localhost:3000 (API :3001)
-pnpm cli login --server http://localhost:3001            # browser sign-in → tenant API key; then: pnpm cli whoami
-pnpm test:db:up && pnpm test                             # full suite against a throwaway Postgres :5433
+bash scripts/bootstrap.sh          # checks Node 24 / pnpm 10 / Docker, generates the local secret, starts
+                                   # Postgres, migrates, seeds demo data, starts the app and opens the
+                                   # browser signed in as the demo owner. Re-runnable.
+                                   #   --offline  skip the Cloudflare login by disabling Workers AI ([ai] off in both tomls)
+                                   #   --no-demo  seed the bare tenant and users only (plain `pnpm seed`)
 ```
 
-Sign in with the seeded owner's email; the magic-link URL is printed by `wrangler dev` (no email
-provider configured). Nothing external is required: no `RESEND_API_KEY` → links are logged; no AI key
-→ chat, agents and embeddings run on Workers AI through the `[ai]` binding (billed to your Cloudflare
-account, 10k free neurons/day); no Cloudflare login, or zero-spend wanted → comment out `[ai]` in both tomls.
-Or ask your coding agent **"Help me set up this project"** — `CLAUDE.md` makes it run `SETUP.md`
-Part 1 step by step. Before building your app, do the rename checklist in `docs/ADAPTING.md`.
+Or skip the clone step too — read [`scripts/install.sh`](scripts/install.sh) first, then:
+
+```bash
+curl -fsSL https://rocketflare.dev/install.sh | bash -s -- myapp   # clone → detach → bash scripts/bootstrap.sh
+```
+
+Or ask your coding agent: **`/setup`** (drives the same script and starts the server), **`/adapt <slug>`**
+for the rename, **`/provision`** to deploy. By hand: `SETUP.md` Part 1, one verification line per step.
+
+Nothing external is required: no `RESEND_API_KEY` → magic-link URLs are logged by `wrangler dev`; no AI
+key → chat, agents and embeddings run on Workers AI through the `[ai]` binding (billed to your
+Cloudflare account, 10k free neurons/day); no Cloudflare login, or zero-spend wanted → `--offline`.
+Then `pnpm test:db:up && pnpm test` (the full suite against a throwaway Postgres on :5433). Before
+building your app, rename it: `/adapt` or `docs/ADAPTING.md`.
 
 ## Stack
 
@@ -87,11 +94,12 @@ Part 1 step by step. Before building your app, do the rename checklist in `docs/
 - **File storage** on R2 behind a `StorageService` seam: tenant-prefixed keys, bytes streamed through the Worker, an indexed `files` table, per-scope MIME and size limits, avatars wired end-to-end (upload UI → `/api/files/:id` with ETag/304).
 
 ### AI layer
-- **Tiered provider resolution with a zero-key floor** — per-agent model assignment → the tenant's own provider (keys encrypted at rest, tested from Settings → AI) → a platform key → **Workers AI through the binding** (Mistral Small 3.1 by default, no key, billed to the Cloudflare account) → a clean 503. Providers: Anthropic, Anthropic-compatible (Fireworks, Moonshot presets), OpenAI, OpenAI-compatible (any local server such as Ollama), Workers AI for chat and embeddings.
+- **Tiered provider resolution with a zero-key floor** — per-agent model assignment → the tenant's own provider (keys encrypted at rest, tested from Settings → AI) → a platform key → **Workers AI through the binding** (`@cf/meta/llama-3.3-70b-instruct-fp8-fast` by default, no key, billed to the Cloudflare account) → a clean 503. Providers: Anthropic, Anthropic-compatible (Fireworks, Moonshot presets), OpenAI, OpenAI-compatible (any local server such as Ollama), Workers AI for chat and embeddings.
 - **Streamed chat** — conversations and messages persisted per user, SSE frames with a shared event contract, auto-titles, prompt caching breakpoints, extended thinking off unless a tenant turns it on.
 - **Prompt registry** — prompts are code with `{{variables}}`; tenants override them in Settings → Prompts and revert with one click.
 - **Agents on Workflows** — `POST /api/agents/runs` enqueues and answers 202; runs are exclusive per tenant and agent via a partial unique index, emit a durable event timeline, cancel cooperatively, and reconcile against the Workflow engine on read. The `summarize-text` example shows structured output through a forced tool call; an Agents page shows live timelines.
 - **Retrieval** — ingest text into `documents`/`chunks` (paragraph-aware chunking, inline or queued indexing), `vector(1024)` embeddings with an HNSW index, and **hybrid search**: dense cosine + lexical `tsvector`, fused with Reciprocal Rank Fusion. Vectors are ordinary tenant-scoped rows.
+- **Document uploads** — PDF, Word, Excel, OpenDocument, HTML and XML are stored in R2 and converted to Markdown by Workers AI (`env.AI.toMarkdown`, free for documents) in a `document.convert` job, then indexed like pasted text; the original stays downloadable. Agents read the same knowledge base through built-in `search_knowledge` / `get_document` / `list_documents` tools.
 - **Usage ledger and tracing** — one `ai_usage` row per model call with token counts and a usage summary endpoint; Langfuse traces (trace → generation with usage) shipped from `waitUntil` when keys are present, no OpenTelemetry dependency.
 
 ### Analytics
@@ -124,16 +132,21 @@ rocketflare/          workspace root: package.json (scripts delegate via pnpm -r
                       consumed as TypeScript source through the workspace link (no build step)
 ```
 
-Everything runs from the root: `pnpm dev`, `pnpm test`, `pnpm cli …`, `pnpm web <script>` (any
-`apps/web` script), `pnpm db:*`, `pnpm deploy[:staging]`, `pnpm provision`. `wrangler` is a
+Everything runs from the root: `pnpm bootstrap` (= `bash scripts/bootstrap.sh` once Node and pnpm
+exist; `--offline` / `--online` toggle the `[ai]` block), `pnpm preflight` (the read-only check),
+`pnpm dev`, `pnpm seed` / `pnpm seed --demo`, `pnpm test`, `pnpm cli …`, `pnpm web <script>` (any
+`apps/web` script), `pnpm db:*`, `pnpm deploy[:staging]`, `pnpm provision all` (the deploy
+orchestrator: Neon, Cloudflare, GitHub, secrets, Resend — `pnpm provision --help` lists the phases;
+`pnpm web provision:cloudflare <env> --apply` is its Cloudflare-resources half). `wrangler` is a
 devDependency of `apps/web`, so it is `pnpm --filter @rocketflare/web exec wrangler …`, never `pnpm exec
-wrangler` at the root.
+wrangler` at the root. Root `scripts/` holds the first-run tooling: `bootstrap.sh` / `bootstrap.mjs`,
+`install.sh`, `rename.mjs` (`docs/ADAPTING.md` §1 as one command) and their `lib/`.
 
 ## Not included (by design)
 
-Billing and subscriptions, Vectorize (vectors live in pgvector under the tenant predicate), file
-parsing pipelines (ingest takes text), reranking, prompt versioning and evals, reporting/export, and
-any product domain. Each is a documented extension point in `docs/CONCEPTS.md`; the subsystem sections
+Billing and subscriptions, Vectorize (vectors live in pgvector under the tenant predicate), OCR of
+images (document conversion covers PDF/Office/HTML, not pictures), reranking, prompt versioning and
+evals, reporting/export, and any product domain. Each is a documented extension point in `docs/CONCEPTS.md`; the subsystem sections
 there list every known gap.
 
 ## Documentation
@@ -147,6 +160,7 @@ there list every known gap.
 | [`docs/DEPLOY.md`](docs/DEPLOY.md) | Cloudflare topology, the two tomls, resources, release dance, rollback, bundle size |
 | [`docs/RLS.md`](docs/RLS.md) | tenant isolation posture and how to turn row-level security on |
 | `.claude/rules/*.md` | layer conventions (api, database, ui, cli, testing, code-quality, cloudflare) — auto-loaded by path |
+| `.claude/skills/` | the four slash commands a coding agent drives: `/setup` (first run), `/preflight` (read-only diagnosis), `/adapt` (rename + checklist), `/provision` (deploy to Cloudflare + Neon + Resend) |
 
 ## Provenance
 

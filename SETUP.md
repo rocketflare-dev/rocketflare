@@ -27,13 +27,30 @@ Engine and add your user to the `docker` group. Confirm the tool works, then car
 
 ## Part 1 — First run (local) `[ready]`
 
+> **The short way.** `bash scripts/bootstrap.sh` (or `/setup` in Claude Code; `pnpm bootstrap` once
+> Node and pnpm exist) does 1.1–1.7 in one go — nine steps, one `✔ n/9 <name> <what it verified>`
+> line each, a `✖` line plus a `fix:` hint on the first failure — and ends with the browser open at
+> `http://localhost:3000/login?as=owner@example.test`. macOS or Linux (Windows: WSL2). Re-runnable on
+> a half-done machine: it inspects before it acts and never overwrites a value you wrote. Flags:
+> `--offline` (no Cloudflare account: comments the `[ai]` block out of both tomls), `--online`
+> (restore it), `--no-demo` (plain `pnpm seed`), `--no-dev` (stop after step 7 and print what to run
+> next), `--share-db` (accept a Postgres container started from another checkout), `--no-open`,
+> `--as <email>`, `--yes`, `--verbose`; `--check` is `pnpm preflight`.
+> Exit codes: `0` ok · `1` a step failed · `2` usage · `3` prerequisite missing · `4` port/container
+> held by (or a database shared with) another checkout · `5` Cloudflare login required
+> (`node scripts/bootstrap.mjs --help`).
+> The numbered steps below are what it runs — for doing it by hand, or for debugging one step.
+
 ### 1.1 Toolchain
 ```bash
 node -v            # v24.x — from .nvmrc
 corepack enable && pnpm -v   # 10.x — from package.json packageManager
 docker info >/dev/null && echo docker-ok
 ```
-Verify: three lines — `v24.*`, `10.*`, `docker-ok`.
+Verify: three lines — `v24.*`, `10.*`, `docker-ok`. `pnpm preflight` is the same check as one
+read-only command (toolchain, `.dev.vars`, Postgres, Cloudflare login, `pnpm dev:status`; exit 3
+when anything is missing) — `bash scripts/bootstrap.sh` installs Node through an fnm/nvm that is
+already present and pnpm through corepack, and never pipes a URL into a shell.
 
 ### 1.2 Dependencies
 ```bash
@@ -49,6 +66,8 @@ expected.)
 cp apps/web/.dev.vars.example apps/web/.dev.vars
 openssl rand -hex 32   # → OAUTH_ENCRYPTION_KEY in apps/web/.dev.vars
 ```
+The only secret `.dev.vars` needs is `OAUTH_ENCRYPTION_KEY` (≥ 32 characters); the bootstrap
+generates it (`3/9 secrets`), by hand it is the `openssl` line above.
 Verify: `grep -c '^[A-Z_]*=.\+' apps/web/.dev.vars` is at least 2 (`DATABASE_URL` and
 `OAUTH_ENCRYPTION_KEY` are set). Leave every optional key blank for now — each
 feature degrades gracefully (Part 2). `.dev.vars` is git-ignored; never paste other environments'
@@ -61,16 +80,31 @@ pnpm web db:check     # apps/web/scripts/test-db-connection.ts
 pnpm db:migrate       # db-roles --phase=role → migrations → db-roles --phase=grants
 ```
 Verify: `db:check` prints the server version; `db:migrate` ends with the applied migration count and
-no `role "rocketflare_app" does not exist` error. Why three steps: a policy's `TO rocketflare_app` needs the role
+no `role "rocketflare_app" does not exist` error. Docker Compose names the project after the directory
+(`web`), so a SECOND checkout of the kit does not collide on the pinned `container_name` — it quietly
+attaches to the first one's database; `pnpm bootstrap` reads the container's compose label and stops
+(exit 4, or asks on a terminal) unless you pass `--share-db`. Why three steps: a policy's `TO rocketflare_app` needs the role
 before migrations; the `REVOKE`s need the tables after. With `APP_DATABASE_URL` unset the role is
 created `NOLOGIN` and RLS stays inert ([`docs/RLS.md`](docs/RLS.md)).
 
 ### 1.5 Seed
 ```bash
 pnpm seed             # idempotent: demo tenant, owner/admin/member users, one API key
+pnpm seed --demo      # the same, plus a populated workspace (what the bootstrap runs; or SEED_DEMO=1)
 ```
-Verify: the output lists the seeded emails and prints the API key **once**. `pnpm db:studio` shows
-the rows.
+`pnpm seed` creates the tenant `Acme` (`acme`), `owner@` / `admin@` / `member@example.test`, a
+pending invitation for `invited@example.test`, the global admin `admin@rocketflare.local` and one API
+key. `--demo` additionally fills that workspace with a logistics company in use (the tenant is
+renamed `Acme Logistics` in `multi` mode) — more members, two
+sibling tenants, two weeks of activity, conversations, an indexed knowledge base, finished agent
+runs (`summarize-text`, `research-topic`), an AI usage ledger and rebuilt fact tables — so every
+page has something to show. Every demo row has a fixed id and is inserted `onConflictDoNothing`, so
+re-running adds nothing; the chunk vectors are deterministic stand-ins (`embeddingModel:
+'seed:deterministic'`), so a seeded passage is found by the lexical half of the hybrid search, not
+the dense half. Local database only — it is a `tsx` script over `DATABASE_URL`.
+Verify: the output lists the seeded emails and prints the API key **once** (on the first run only;
+later runs say it already exists); with `--demo` it ends with a "Workspace `acme` now holds" table.
+`pnpm db:studio` shows the rows.
 
 ### 1.6 Run it
 ```bash
@@ -84,13 +118,18 @@ pnpm dev              # apps/web: wrangler dev :3001 + vite :3000 (strict ports;
 > binding (`[ai]` in `apps/web/wrangler.toml`), which always calls Cloudflare — so the first `pnpm dev`
 > on a machine that has never run `pnpm web exec wrangler login` will ask you to log in (a free account
 > is enough). To stay fully offline, comment out the `[ai]` block in BOTH tomls (the parity test keeps
-> them in sync); chat then needs a key or a tenant provider (§2.5) and embeddings resolve to `EMBEDDINGS_API_KEY` or
-> report "not configured".
+> them in sync): `pnpm bootstrap --offline` does exactly that, and `pnpm bootstrap --online` restores
+> it. Chat then needs a key or a tenant provider (§2.5) and embeddings resolve to `EMBEDDINGS_API_KEY`
+> or report "not configured". After toggling, `pnpm typecheck` regenerates
+> `apps/web/worker-configuration.d.ts` without `AI` — restore the block (`--online`) before
+> committing so CI's typegen diff stays clean.
 
 Verify: both processes report ready; `curl -s localhost:3001/api/health` returns `{"status":"ok",…}`;
 http://localhost:3000 renders the shell. Sign in: enter the seeded owner email, copy the magic-link
 URL from the **wrangler dev console** (no `RESEND_API_KEY` → links are logged, not sent), open it,
-land on Home.
+land on Home. Shortcut (dev only): `http://localhost:3000/login?as=owner@example.test` signs in
+through `/auth/dev-login` on load — honoured only when the server reports `devLogin`
+(`APP_ENV=development`) and for the four seeded accounts, so an arbitrary address does nothing.
 
 **Analytics check** (D19, still in 1.6 — same terminal pair):
 ```bash
@@ -113,7 +152,10 @@ never HTML). `GET /api/analytics/facts/status` (owner/admin) shows the same fres
 > use the HTTPS tunnel (`pnpm dev:tunnel`, §1.10) or another browser.
 
 ### 1.7 CLI first run
-With `pnpm dev` still running, in a second terminal:
+The bootstrap already did this once: its `8/9 cli` step ran `pnpm cli whoami` with the seed's
+one-time key (first run only — a re-run finds the key exists and skips; not with `--no-dev`, which
+`/setup` uses — run `pnpm cli login` yourself then). To use the CLI yourself, with `pnpm dev` still
+running, in a second terminal:
 ```bash
 pnpm cli login --server http://localhost:3001   # opens the browser; sign in, pick the tenant
 pnpm cli whoami
@@ -177,6 +219,12 @@ None of these block local development. Each states what happens when it is absen
 2. Create an API key → `RESEND_API_KEY`
 3. `EMAIL_FROM` in `[vars]` (both tomls) and `apps/web/.dev.vars`: a verified sender,
    `App <noreply@mail.example.com>`
+
+Scripted (Part 3): with a full-access `RESEND_API_KEY`, `CLOUDFLARE_API_TOKEN` and
+`CLOUDFLARE_ACCOUNT_ID` exported, `pnpm provision email create --domain mail.example.com` creates the
+Resend domain, writes its DNS records into the Cloudflare zone and sets `EMAIL_FROM` in both tomls;
+`pnpm provision email verify <env>` polls verification and mints a per-environment sending key into
+the Worker's `RESEND_API_KEY`; `email status` shows which records are present.
 
 Absent: magic links, invitations and admin notifications are logged, never sent. Verify: request a
 magic link — it arrives by email.
@@ -309,33 +357,76 @@ one Neon project with a branch per environment, one GitHub Actions release flow.
 deployed; the CLI is built by CI but not published (publishing it is an app decision —
 [`docs/DEPLOY.md`](docs/DEPLOY.md)). Reference: [`docs/DEPLOY.md`](docs/DEPLOY.md).
 
+**Recommended: `/provision`** in Claude Code, or `pnpm provision all` by hand
+(`apps/web/scripts/provision.ts`; `pnpm provision --help` lists every phase and flag). It is REST
+over `fetch` plus `wrangler` and `gh` — no vendor CLIs — idempotent (find-or-create), and every
+phase ends in one `Verify:` line. Export the four tokens **before** launching Claude (a tool call
+cannot persist an `export`; never paste a token into the chat) — or keep them in a `direnv`
+`.envrc` outside the repository:
+
+| Variable | Mint at | Scope |
+|---|---|---|
+| `CLOUDFLARE_API_TOKEN` | https://dash.cloudflare.com/profile/api-tokens | Account: Workers Scripts, Workers KV Storage, Queues, Workflows, Durable Objects, Hyperdrive, R2 — Edit; Workers AI, Account Analytics — Read. Zone: DNS — Edit on the zone holding your hosts and the sending domain |
+| `CLOUDFLARE_ACCOUNT_ID` | Workers & Pages → Overview (right-hand column / the URL) | the 32-hex account id |
+| `NEON_API_KEY` | https://console.neon.tech/app/settings/api-keys | personal or organisation key; creates the project and branches |
+| `RESEND_API_KEY` | https://resend.com/api-keys | Full access (creates the domain, mints a `sending_access` key per environment); or `--skip-email` |
+
+Then `gh auth login` and `pnpm web exec wrangler login` in your own terminal (browser steps), and:
+
+```bash
+pnpm provision preflight --domain mail.example.com --staging-host workers.dev --production-host app.example.com --admin-email you@example.com
+pnpm provision all [--deploy staging|both] [--skip-email] [--rotate]   # 10–20 minutes; stops at the first failed Verify
+```
+
+| Phase | Creates / does | Verify line |
+|---|---|---|
+| `preflight` | checks tools, tokens and accounts; caches the four answers in `apps/web/.provision.json` (git-ignored, non-secret) | `preflight ok — app=… account=… neon=… resend=…` |
+| `email create` | Resend domain, its DNS records in the Cloudflare zone, `EMAIL_FROM` in both tomls | `email create ok — domain=… zone=… records=… EMAIL_FROM="…"` |
+| `neon` | Neon project (pg 17) + `staging` branch from the default branch, direct hosts, a password per branch | `neon ok — production=<host> staging=<host> (SELECT 1 on both)` |
+| `cloudflare <env>` | `cf-provision.sh <env> --apply`: Hyperdrive, KV, Queue, R2; ids patched into the toml | `cloudflare <env> ok — <toml> patched; REQUIRE_PROVISIONED=1 parity test passed for both tomls` (once both are done) |
+| `migrate <env>` | `pnpm db:migrate:ci` against that branch; applied count == journal entries | `migrate <env> ok — n/n migrations applied on <host>` |
+| `github <env>` | GitHub Environment + `DATABASE_URL`, `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` secrets (stdin) | `github <env> ok — environment <env> on <repo> has …` |
+| `urls` | `APP_URL` + `routes` (custom host) or the `workers.dev` host in both tomls; parity test | `urls ok — staging=… production=…; parity test passed` |
+| `deploy <env>` | `pnpm deploy[:staging]`, then `/api/health` and `/api/ready` | `deploy <env> ok — <url>/api/health ok (version …), /api/ready ok, deployments listed` |
+| `secrets <env>` | `OAUTH_ENCRYPTION_KEY` (generated) + every optional secret exported in the shell, over stdin | `secrets <env> ok — wrangler secret list shows n secret(s): …` |
+| `email verify <env>` | Resend verification (polls ≤ 10 min), a per-environment sending key into `RESEND_API_KEY` | `email verify <env> ok — domain=… verified, RESEND_API_KEY set, …/auth/methods reports magic link` |
+| `all` | every phase in order (`--deploy staging` by default), then a close-out checklist | `all ok — n phases passed; deployed …` |
+
+Close-out: sign in with the admin's magic link — with `SIGNUP_MODE=invite_only` the first login lands
+on `/pending`; as the global admin create the first organisation at `/admin` — add OAuth redirect
+URIs, commit the two tomls (ids and URLs are not secrets), push, `pnpm cli login --server <APP_URL>`.
+Known limits: `.claude/skills/provision/reference.md`. The manual sequence below is the reference for
+what each phase does.
+
 ### 3.1 Accounts and access
-1. Cloudflare account on **Workers Paid** (Hyperdrive, Workflows and `[limits]` need it) with a zone
-   for your hosts. `pnpm web exec wrangler login`.
+1. Cloudflare account on **Workers Paid** (Hyperdrive, Workflows and `[limits]` need it — Hyperdrive's
+   plan availability has changed over time; the Hyperdrive create step reports if the plan refuses
+   it) with a zone for your hosts. `pnpm web exec wrangler login`.
    Verify: `pnpm web exec wrangler whoami` prints the account.
 2. CI API token (account scope): Workers Scripts, KV, Queues, Workflows, Durable Objects,
    Hyperdrive, R2 — edit; Workers AI, Account Analytics — read; Zone → DNS — edit on your zone.
    Verify: `CLOUDFLARE_API_TOKEN=… pnpm web exec wrangler whoami` succeeds.
-3. Neon: one project; branches `production` (main) and `staging`; **one role per branch**. Record
-   the **direct** and `-pooler` connection strings for each. Hyperdrive gets the direct host;
-   `apps/web/scripts/migrate.ts` strips `-pooler` itself. Never put these strings in a file in this
-   repo. Verify: `psql "<direct url>" -c 'select 1'` on both branches.
+3. Neon: one project; branches `production` (main) and `staging` — create `staging` **before** the
+   first migration, so each branch is migrated with its own password rather than inheriting a
+   migrated main (the database's default owner role is kept on both). Record the **direct** and `-pooler` connection strings for each. Hyperdrive gets
+   the direct host; `apps/web/scripts/migrate.ts` strips `-pooler` itself. Never put these strings in
+   a file in this repo. Verify: `psql "<direct url>" -c 'select 1'` on both branches.
 
 ### 3.2 Provision Cloudflare resources
 ```bash
-NEON_DATABASE_URL='<staging direct url>'    pnpm provision staging
-NEON_DATABASE_URL='<production direct url>' pnpm provision production
+NEON_DATABASE_URL='<staging direct url>'    pnpm web provision:cloudflare staging --apply
+NEON_DATABASE_URL='<production direct url>' pnpm web provision:cloudflare production --apply
 ```
-`pnpm provision` runs `apps/web/scripts/cf-provision.sh` with `apps/web` as its working directory
-(the script also `cd`s there itself, so `bash apps/web/scripts/cf-provision.sh staging` from the
-root works too). It creates (or finds) the Hyperdrive config `<app>-<env>` and KV namespace
-`<APP>_RATE_LIMIT[_STAGING]` and prints the ids plus a `sed` line per toml. Both tomls already
-declare the Phase 2 Queue (`<app>-jobs[-staging]`) and R2 bucket (`<app>-files[-staging]`), but their
-`create` blocks in the script are still commented — uncomment them, or run `wrangler queues create
-<name>` and `wrangler r2 bucket create <name>` by hand for each environment before the first deploy
-(both are name-referenced; nothing to paste into a toml). The Workflow (`[[workflows]]`
-`AGENT_RUN_WORKFLOW`), the Workers AI binding (`[ai]`) and the DO need no create step — `wrangler
-deploy` registers them — but the Workflow `name` is account-scoped: staging MUST be
+`pnpm web provision:cloudflare` runs `apps/web/scripts/cf-provision.sh` with `apps/web` as its
+working directory (the script also `cd`s there itself, so `bash apps/web/scripts/cf-provision.sh
+staging --apply` from the root works too). It creates (or finds, by name) all four resources: the
+Hyperdrive config `<app>-<env>`, the KV namespace `<APP>_RATE_LIMIT[_STAGING]`, the Queue
+`<app>-jobs[-staging]` and the R2 bucket `<app>-files[-staging]` (the last two are name-referenced —
+nothing to paste). `--apply` writes the Hyperdrive and KV ids into the toml through
+`scripts/provision/patch-toml.ts` (byte-preserving; a DIFFERENT existing id is refused unless
+`--force`); without it the script prints the ids and a `sed` line to run yourself. The Workflow
+(`[[workflows]]` `AGENT_RUN_WORKFLOW`), the Workers AI binding (`[ai]`) and the DO need no create
+step — `wrangler deploy` registers them — but the Workflow `name` is account-scoped: staging MUST be
 `<app>-agent-run-staging` (`docs/DEPLOY.md`, "Account-scoped names").
 Verify: `REQUIRE_PROVISIONED=1 pnpm web test:config` passes — no `<PLACEHOLDER>` left, every
 account-scoped staging name ends in `-staging`, ids differ. Commit the tomls (ids are not secrets).
@@ -362,17 +453,21 @@ Verify: the run is green; `pnpm web exec wrangler deployments list -c wrangler.s
 For every non-`[vars]` name in `apps/web/.dev.vars.example` (skip `DATABASE_URL` — deployed envs use
 Hyperdrive — and `APP_DATABASE_URL` unless enabling RLS):
 ```bash
-for k in OAUTH_ENCRYPTION_KEY RESEND_API_KEY BOOTSTRAP_ADMIN_EMAILS \
-         GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET MICROSOFT_CLIENT_ID MICROSOFT_CLIENT_SECRET \
-         ANTHROPIC_API_KEY EMBEDDINGS_API_KEY LANGFUSE_PUBLIC_KEY LANGFUSE_SECRET_KEY; do
-  pnpm web exec wrangler secret put "$k" -c wrangler.staging.toml   # prompts; use fresh values per env
-done
+# one per name: OAUTH_ENCRYPTION_KEY RESEND_API_KEY BOOTSTRAP_ADMIN_EMAILS GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET
+#   MICROSOFT_CLIENT_ID MICROSOFT_CLIENT_SECRET ANTHROPIC_API_KEY EMBEDDINGS_API_KEY LANGFUSE_PUBLIC_KEY LANGFUSE_SECRET_KEY
+printf '%s' "$OAUTH_ENCRYPTION_KEY" | pnpm web exec wrangler secret put OAUTH_ENCRYPTION_KEY -c wrangler.staging.toml
 ```
-Repeat without `-c` for production after its first deploy. Use different keys per environment.
-`ANTHROPIC_API_KEY`, `EMBEDDINGS_API_KEY` and the two `LANGFUSE_*` keys are optional (Part 2.5/2.6):
-skip them and the features degrade as described there.
+`wrangler secret put NAME` reads the value from stdin when stdin is not a terminal — pipe it with
+`printf '%s' "$V"`, never `--body` or an argument, so the value stays out of argv and shell history
+(interactively it prompts). `pnpm provision secrets <env>` does exactly this for every name exported
+in the shell. Repeat without `-c` for production after its first deploy. Use different keys per
+environment. `ANTHROPIC_API_KEY`, `EMBEDDINGS_API_KEY` and the two `LANGFUSE_*` keys are optional
+(Part 2.5/2.6): skip them and the features degrade as described there.
 Verify: `pnpm web exec wrangler secret list -c wrangler.staging.toml` shows the names;
-`curl https://<staging-host>/api/health` returns ok and `/auth/methods` lists your providers.
+`curl https://<staging-host>/api/health` returns ok, `curl https://<staging-host>/api/ready` returns
+ok (it runs a query through Hyperdrive — a 503 there means Hyperdrive cannot reach Neon: wrong host
+or SSL), and `/auth/methods` lists your providers. With `SIGNUP_MODE=invite_only` (the default) the
+admin's first login lands on `/pending`; the first organisation is created at `/admin`.
 Point the CLI at it: `pnpm cli login --server https://<staging-host>`.
 
 ### 3.6 Custom domains

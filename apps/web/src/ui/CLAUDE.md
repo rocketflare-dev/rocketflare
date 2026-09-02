@@ -71,7 +71,10 @@ React 18 + Vite + React Router 6 + TanStack Query 5 + zustand; DaisyUI 5 on Tail
   to — see "Analytics dashboards").
 - `stores/websocketStore.ts` — the one zustand store: `status | connectedAt | disconnectedAt |
   attempt | lastEvent`; written only by `websocketClient`, read by the status dot and the banner.
-- `pages/` — route-level components, lazy in `App.tsx` except Home/Login/NotFound. `settings/`
+- `pages/` — route-level components, lazy in `App.tsx` except Home/Login/NotFound. `Login.tsx`:
+  `GET /auth/methods` drives the buttons; `?as=<email>` (what `pnpm bootstrap` opens) calls
+  `POST /auth/dev-login` once on mount, ONLY when `methods.devLogin` is true AND the email is in
+  `DEV_ACCOUNTS` (the allow-list; an arbitrary address does nothing). `settings/`
   is one page with `URLTabs` (`?tab=general|people|api-keys|ai|prompts|agent-models|usage`;
   `agent-models` and `usage` only for `manage AiConfig`); `admin/` is nested routes under `AdminLayout`; `chat/ChatPage.tsx` is
   `/chat/:conversationId?` (D17, guard `read Conversation`, lazy — its chunk carries the markdown

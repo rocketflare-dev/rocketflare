@@ -42,21 +42,20 @@ deliberate omissions with a reason).
 
 ### <a name="setup"></a> Setup
 
-Node 24 (`.nvmrc`), pnpm 10 (`corepack enable` reads `packageManager`), Docker. Then
-[`SETUP.md`](SETUP.md) Part 1 — every step ends with a verification line; do not move on until it
-passes. In short:
+Node 24 (`.nvmrc`), pnpm 10 (`corepack enable` reads `packageManager`), Docker; macOS or Linux
+(Windows: WSL2). Then:
 
 ```bash
 git clone https://github.com/rocketflare-dev/rocketflare.git && cd rocketflare
-corepack enable && pnpm install
-cp apps/web/.dev.vars.example apps/web/.dev.vars     # set OAUTH_ENCRYPTION_KEY (openssl rand -hex 32)
-pnpm dev:db:up && pnpm db:migrate && pnpm seed
-pnpm dev                                             # http://localhost:3000, API on :3001
-pnpm test:db:up && pnpm test
+bash scripts/bootstrap.sh        # toolchain → install → .dev.vars → Postgres → migrate → seed --demo → pnpm dev, signed in
+pnpm test:db:up && pnpm test     # the full suite against a throwaway Postgres on :5433
 ```
 
-No external credentials are needed: magic links are logged, AI features answer 503 until a key
-exists. If you are working somewhere Docker cannot run, `pnpm web test:config` and
+The bootstrap is [`SETUP.md`](SETUP.md) Part 1 as one re-runnable command — every step prints a
+`✔ n/9` verification line; the numbered steps there are what it runs, for doing it by hand or
+debugging one step (`pnpm preflight` is the read-only check). No external credentials are needed:
+magic links are logged; chat, agents and embeddings run on Workers AI through a logged-in Cloudflare
+account, or answer 503 with `bash scripts/bootstrap.sh --offline` until a key exists. If you are working somewhere Docker cannot run, `pnpm web test:config` and
 `pnpm --filter @rocketflare/cli test` need no database; the `api`, `api-isolated` and `ui` projects do.
 
 ### <a name="repository-structure"></a> Repository structure
@@ -68,10 +67,12 @@ A pnpm workspace; `CLAUDE.md` is the map and every significant directory has its
 - 📂 `apps/cli/` — `@rocketflare/cli`: the `rocketflare` command-line client
 - 📂 `packages/shared/` — `@rocketflare/shared`: the zod contracts the API validates with and the UI
   and CLI parse with (private, consumed as TypeScript source)
-- 📂 `docs/` — `CONCEPTS.md` (how each subsystem works and its known gaps), `ADAPTING.md`,
-  `DEPLOY.md`, `RLS.md`, and `analysis/` (the decision record; not maintained)
+- 📂 `docs/` — `CONCEPTS.md` (how each subsystem works, the decision record, and its known gaps),
+  `ADAPTING.md`, `DEPLOY.md`, `RLS.md`
+- 📂 `scripts/` — first-run tooling: `bootstrap.sh` / `bootstrap.mjs`, `install.sh`, `rename.mjs`, `lib/`
 - 📂 `.claude/rules/` — layer conventions (api, database, ui, cli, testing, code-quality,
-  cloudflare), loaded by path when you or a coding agent touch that layer
+  cloudflare), loaded by path when you or a coding agent touch that layer; `.claude/skills/` — the
+  `/setup`, `/preflight`, `/adapt` and `/provision` slash commands
 
 ### <a name="what-a-change-must-include"></a> What a change must include
 

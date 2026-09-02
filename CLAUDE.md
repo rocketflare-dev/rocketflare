@@ -6,9 +6,9 @@ Cloudflare Worker (`apps/web`), a CLI (`apps/cli`), private zod contracts
 
 > **How it works**: @docs/CONCEPTS.md — one section per subsystem with its known gaps. **Check it
 > before assuming a capability exists; update it when you change one.**
-> **Setup**: @SETUP.md — asked for setup help, don't summarise: **run Part 1 step by step**,
-> show each output, confirm the verification line, stop on failure; fix missing prerequisites yourself.
-> **Fresh copy?** @docs/ADAPTING.md.
+> **Setup**: asked for setup help → run `/setup` (it drives `scripts/bootstrap.sh --no-dev`, then
+> starts the server): show each `✔ n/9` line, stop on failure. By hand: @SETUP.md Part 1.
+> **Fresh copy?** `/adapt <slug>`, then @docs/ADAPTING.md. **Deploy?** `/provision`.
 
 ## Stack
 
@@ -30,14 +30,15 @@ Cloudflare Worker (`apps/web`), a CLI (`apps/cli`), private zod contracts
 ## Commands (from the workspace root)
 
 ```bash
+pnpm bootstrap · pnpm preflight  # first run in one go (--offline/--online toggle [ai]) / read-only check
 pnpm dev:db:up && pnpm db:migrate  # Postgres :5432; role → migrations → grants
-pnpm seed && pnpm dev  # demo tenant/users/key; wrangler :3001 + vite :3000 (strict ports)
+pnpm seed [--demo] && pnpm dev  # tenant/users/key (+ populated workspace); wrangler :3001 + vite :3000 (strict ports)
 pnpm dev:stop · pnpm dev:status  # kill this repo's dev tree / show it and the port holders
 pnpm cli login --server http://localhost:3001  # browser → ~/.rocketflare/config.json, then whoami
 pnpm test:db:up && pnpm test  # every package; web loads .env.test
 pnpm lint · pnpm typecheck · pnpm build  # workspace-wide
 pnpm web <script>  # any apps/web script (test:api, db:check, db:*-facts…)
-pnpm db:generate · pnpm db:studio · pnpm deploy[:staging] · pnpm provision
+pnpm db:generate · pnpm db:studio · pnpm deploy[:staging] · pnpm provision all  # (or one phase: --help)
 ```
 
 `wrangler` lives in `apps/web`: `pnpm --filter @rocketflare/web exec wrangler …`, never at the root. No
@@ -58,6 +59,8 @@ apps/web/          @rocketflare/web — wrangler*.toml, worker-configuration.d.t
 │                  (per-dir CLAUDE.md: permissions, db/schema, dashboards, api/*, ui)
 apps/cli/          @rocketflare/cli — src/cli.ts, commands/*, api.ts (only fetch site), config.ts, login.ts
 packages/shared/   @rocketflare/shared — src/*.ts zod contracts, errors, pagination, permissions (CLAUDE.md)
+scripts/           bootstrap.sh → bootstrap.mjs (9 steps), install.sh (curl one-liner), rename.mjs, lib/
+.claude/skills/    setup · preflight · adapt (+ checklist.md) · provision (+ reference.md)
 ```
 
 **`packages/shared`.** Private, no build: `@rocketflare/shared/<module>` → `./src/<module>.ts` (incl. `ai/*`,

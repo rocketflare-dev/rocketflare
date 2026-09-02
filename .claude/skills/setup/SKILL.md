@@ -26,7 +26,7 @@ bash scripts/bootstrap.sh --no-dev $ARGUMENTS
 ```
 
 `--no-dev` means the script does NOT start the servers (you will, in step 3). `--offline` skips
-the Cloudflare login / Workers AI probe; `--no-demo` skips seeding the demo tenant and users.
+the Cloudflare login / Workers AI probe; `--no-demo` runs plain `pnpm seed` (tenant, users and key, but no populated workspace).
 
 ## 2. Read the exit code
 
@@ -84,10 +84,10 @@ prerequisite lines, then hands over to `scripts/bootstrap.mjs` for the nine step
 |---|---|---|
 | 1 | `toolchain` | Node 24, pnpm 10, Docker daemon and `docker compose` reachable |
 | 2 | `install` | `pnpm install` done; `wrangler` resolves in `apps/web` |
-| 3 | `secrets` | `apps/web/.dev.vars` exists with `DATABASE_URL`, `OAUTH_ENCRYPTION_KEY`, `AUTH_SIGNING_KEY` (generated, git-ignored) |
+| 3 | `secrets` | `apps/web/.dev.vars` exists with `DATABASE_URL`, `OAUTH_ENCRYPTION_KEY` (generated, git-ignored) |
 | 4 | `database` | the dev Postgres container is up and healthy on :5432 |
 | 5 | `migrate` | role → migrations → grants applied; the pgvector extension is installed |
-| 6 | `seed` | demo tenant, owner/admin/member users, one API key (printed once) — skipped with `--no-demo` |
+| 6 | `seed` | demo tenant, owner/admin/member users, one API key (printed once), plus the populated demo workspace unless `--no-demo` |
 | 7 | `cloudflare` | wrangler is logged in (Workers AI available) — or `--offline` was chosen |
 | 8 | `cli` | `pnpm cli whoami` with the seeded key — deferred/skipped with `--no-dev` (needs the server) |
 | 9 | `run` | `pnpm dev` started and `/api/health` answered — skipped with `--no-dev` (you do it in step 3) |

@@ -100,8 +100,9 @@ new_classes = ["NotificationsHub"]
 binding = "FILES"
 bucket_name = "rocketflare-files-staging"
 
-# Workers AI (D17): zero-key embeddings (`@cf/baai/bge-m3`, 1024-dim) via services/ai/client.ts.
-# Optional in code: the resolver falls through to an OpenAI-shaped key when the binding is absent.
+# Workers AI (D17/D18): the zero-key floor for chat (`@cf/meta/llama-3.3-70b-instruct-fp8-fast`),
+# embeddings (`@cf/baai/bge-m3`, 1024-dim) and document conversion (`AI.toMarkdown`); billed to this
+# account. Optional in code: the resolver falls through to keys / tenant providers when absent.
 [ai]
 binding = "AI"
 # Workers AI has no local emulation: wrangler dev calls Cloudflare even in dev (needs `wrangler login`).
