@@ -21,8 +21,9 @@ Drizzle ORM over PostgreSQL (Neon in deployed envs, Docker locally). **One drive
   supplied id. This predicate is what keeps the `(tenant_id, …)` indexes selective; it never goes away
 - Cross-tenant SQL lives in exactly two places: `apps/web/src/api/routes/admin.ts` (behind
   `globalAdminMiddleware`) and the pre-tenant auth path (`middleware/auth.ts`, `routes/auth/*`,
-  invite accept). That list is convention, not a test — nothing pins it today; adding to it is a design
-  decision, not a refactor, so say so in the PR
+  invite accept). `apps/web/tests/config/unscoped-allowlist.test.ts` pins the exceptions — it fails when
+  any function queries a `tenant_id` table without naming a tenant — so adding one is a design
+  decision (an entry there, with a reason, and a line in the PR), not a refactor
 - `users` is global (a person belongs to many tenants); visibility is through `tenant_users`
 - `TENANCY_MODE=single` changes nothing here: the schema is identical in both modes (D25)
 

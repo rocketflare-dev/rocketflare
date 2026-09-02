@@ -68,7 +68,7 @@ the app role is the alternative, at connection-setup cost". Record the outcome a
 4. Flip `TENANT_SCOPE_MODE = "enforce"` in `[vars]` — staging first, soak, then production.
 5. Watch: error rate, `42501` count, p95 latency, Hyperdrive connection metrics. **A 404 for a row
    the user should see is the signature failure** — a genuinely cross-tenant read is missing its
-   escape hatch (the allowed ones are listed in `.claude/rules/database.md`; no test pins them yet).
+   escape hatch (`apps/web/tests/config/unscoped-allowlist.test.ts` pins the allowed ones).
 
 ## Rollback
 

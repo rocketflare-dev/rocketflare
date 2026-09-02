@@ -13,7 +13,7 @@ globs:
 Vitest in `apps/web` (all commands below are root scripts that delegate there, or run inside
 `apps/web`), four projects (`apps/web/vitest.config.ts`): `api` + `api-isolated` (Node, **real Postgres** on 5433),
 `ui` (jsdom + Testing Library), `config` (Node, no database: wrangler parity, env schema, pure
-helpers, and `tests/dashboards/**` — the dashboard-template structure test, D19). `pnpm test` is two `vitest run` invocations (`test:shared`, `test:isolated`) because
+helpers, the cross-tenant allow-list scan, and `tests/dashboards/**` — the dashboard-template structure test, D19). `pnpm test` is two `vitest run` invocations (`test:shared`, `test:isolated`) because
 vitest 3 resolves `isolate` per run, not per project.
 
 ## Tests run under Node, against the real Hono app

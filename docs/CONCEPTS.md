@@ -233,6 +233,16 @@ grants after because `REVOKE` needs the tables. `migrate.ts` rewrites a Neon `-p
 direct host so DDL never lands on a pooled backend with a stale GUC. In CI (`deploy.yml`) the same
 runs as `db:migrate:ci` before `wrangler deploy`.
 
+**The cross-tenant allow-list.** `apps/web/tests/config/unscoped-allowlist.test.ts` (the `config`
+project, no database) parses every `apps/web/src/**/*.ts` and fails when a query on a table that has
+a `tenant_id` column sits inside a function that never names a tenant. The four exceptions carry a
+written reason: the API-key `last_used_at` stamp, the pre-tenant login path, a file delete by
+primary key whose caller already scoped it, and the nightly invitation prune. What it does NOT
+prove: that `routes/admin.ts` is the only cross-tenant surface — admin queries DO name a tenant, the
+one from the URL, so they never trip the check, and `globalAdminMiddleware` is what makes them safe.
+The unit is the enclosing function, so a handler that scopes one query and forgets a second reads as
+scoped.
+
 **RLS upgrade path.** Policies via `tenantIsolation()` on every tenant table, `rocketflare_app` created
 `NOLOGIN` via SQL, `withTenantScope` that becomes `db.transaction + set_config(..., true)` under
 `enforce`, and a catalog-driven coverage test — all inert by default. The spike, go/no-go and the
@@ -240,9 +250,6 @@ switch-on procedure are in `docs/RLS.md`.
 
 **Known gaps / not built yet:** the RLS spike has not been run (Track R); `pin` mode from the source
 app is dropped (it soaked Node connection pinning, which no longer exists); no read replica routing;
-the cross-tenant allow-list (`routes/admin.ts` and the pre-tenant auth path) is convention with no
-test pinning it — `rls-coverage.test.ts` proves every tenant table has a policy, not that no other
-route reads across tenants;
 the TEST database is still pinned to 5433 (`docker-compose.test.yml`, `.env.test` and the Postgres
 service in `ci.yml` all name it), so two checkouts cannot run `pnpm test` at the same time — the dev
 port is the one that moves; switching to a per-checkout project name for the dev database also

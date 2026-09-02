@@ -22,6 +22,44 @@ SETUP.md Part 1 end to end and is **idempotent** — re-running after a fix is a
 - Show the user the script's output as you go. Every step prints a `✔` line; the last line is the
   verification line. Do not summarise a failure away — quote it.
 
+## 0. Is this a copy, or the kit itself?
+
+The kit is a template, not an upstream (`docs/ADAPTING.md` §0). A copy that still carries the kit's
+history will fight a repository that keeps evolving, so the first run is the moment to detach — but
+detaching is **destructive and cannot be undone**, so never do it unasked.
+
+```
+git log --oneline | head -3 && git log --oneline | wc -l && git remote -v
+```
+
+Offer the detach ONLY when all of these hold, and say which one you saw:
+
+- there is more than one commit, and the first commit is **not** `Start from Rocketflare`
+  (`git log --reverse --oneline | head -1`) — the one-liner installer already detaches, so a copy
+  made that way needs nothing;
+- `origin` points at the kit's own repository.
+
+Then **ask before running it** (`AskUserQuestion`), and say plainly what is lost: every commit,
+irreversibly, replaced by one of their own. Two cases you must name in the question, because the
+signature is identical for both:
+
+- **They copied the kit** → detaching is right, and is what `docs/ADAPTING.md` §0 tells them to do.
+- **This IS the kit** (they are working on Rocketflare itself, or a fork they intend to pull from)
+  → say no. Deleting the history of the kit's own checkout is the one truly unrecoverable thing in
+  this skill.
+
+On yes, record the commit first so the copy remembers where it came from — that id is the only way
+to diff against the kit later:
+
+```
+KIT_COMMIT=$(git rev-parse --short HEAD)
+rm -rf .git && git init -q && git add -A
+git commit -q -m "Start from Rocketflare" -m "Kit commit: $KIT_COMMIT"
+```
+
+Then tell them to add their own `origin`. On no, or on any doubt, carry on to step 1 unchanged —
+setup works either way, and they can detach later by hand.
+
 ## 1. Run it
 
 ```
