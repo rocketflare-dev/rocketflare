@@ -117,7 +117,7 @@ allow-list is new code with no production history; feature-flag source for `acce
 and does bookkeeping (`last_used`, cleanup) in `waitUntil`. Bearer `Authorization` is the second
 strategy: hashed tenant API keys in `keys`, `expires_at` checked, soft revoke.
 
-**Magic link** is the zero-credential path: an HMAC-signed, 15-minute, single-use token stored
+**Magic link** is the zero-credential path: a random 256-bit, 15-minute, single-use token stored
 hashed (SHA-256, not `btoa`). Without `RESEND_API_KEY` the URL is logged by `wrangler dev`, so a
 fresh clone can log in with nothing configured. Dev-login (`/auth/dev-login`) exists and 404s in
 production.
@@ -129,9 +129,8 @@ cookie carries the provider and PKCE state. Account linking is by verified email
 `emailVerified !== false` is enforced for every provider. Tokens are AES-GCM encrypted at rest with
 `OAUTH_ENCRYPTION_KEY`; `UNIQUE (provider, provider_user_id)`. GitHub/Slack are documented additions.
 
-**Security properties fixed during the port (D12):** SHA-256 token hashing; signing key from
-`AUTH_SIGNING_KEY` (never derived from `DATABASE_URL`; separate from the encryption key so they
-rotate independently); `OAUTH_ENCRYPTION_KEY` required (no plaintext pass-through);
+**Security properties fixed during the port (D12):** SHA-256 hashing of random 256-bit tokens
+(no key is ever derived from `DATABASE_URL`); `OAUTH_ENCRYPTION_KEY` required (no plaintext pass-through);
 `crypto.getRandomValues` for key material; CSRF by origin allow-list (`APP_URL` + localhost dev
 ports) with Bearer requests exempt; KV sliding-window rate limit on login routes (`RATE_LIMIT_KV`,
 approximate by design, no-op when the binding is absent); the same KV backs `operationLock` for

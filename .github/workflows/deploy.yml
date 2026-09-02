@@ -28,7 +28,7 @@ name: Deploy
 #                          strips a `-pooler` host itself so either form works)
 #   CLOUDFLARE_API_TOKEN   scoped token (docs/DEPLOY.md → Token scopes); may be shared
 #   CLOUDFLARE_ACCOUNT_ID
-# Runtime Worker secrets (OAUTH_ENCRYPTION_KEY, AUTH_SIGNING_KEY, RESEND_API_KEY, …) are NOT
+# Runtime Worker secrets (OAUTH_ENCRYPTION_KEY, RESEND_API_KEY, …) are NOT
 # managed here: `pnpm --filter @rocketflare/web exec wrangler secret put <NAME> [-c wrangler.staging.toml]`
 # once per worker.
 

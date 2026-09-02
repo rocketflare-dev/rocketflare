@@ -12,10 +12,9 @@ import type { AgentKey, AgentMeta, AgentRunEventType } from '@rocketflare/shared
 import type { AppConfig } from '../../../config'
 import type { Database } from '../../../db/client'
 import type { Tracer } from '../../observability/tracer'
-import type { AppBindings } from '../../types'
 import type { Logger } from '../../utils/core/logger'
 import type { Tool } from '../ai/kit'
-import type { ChatClient } from '../ai/types'
+import type { AiEnv, ChatClient } from '../ai/types'
 import type { JobsQueue } from '../jobs'
 import { researchTopicAgent } from './examples/research-topic'
 import { summarizeTextAgent } from './examples/summarize-text'
@@ -28,7 +27,7 @@ export interface AgentEvent {
 
 /** The bindings a run may touch — structural slices, so tests hand in stubs. */
 export interface AgentRunEnv {
-  AI?: AppBindings['AI']
+  AI?: AiEnv['AI']
   JOBS_QUEUE?: JobsQueue | null
 }
 

@@ -13,8 +13,6 @@ APP_URL=http://localhost:3000
 DATABASE_URL=postgresql://rocketflare:rocketflare_pass@localhost:5432/rocketflare_dev
 # AES-GCM key for OAuth tokens stored at rest. Generate: openssl rand -hex 32
 OAUTH_ENCRYPTION_KEY=
-# HMAC key for magic-link / invitation tokens. Generate: openssl rand -hex 32
-AUTH_SIGNING_KEY=
 
 # --- Optional (feature-gated when absent) -----------------------------------------------
 # Email via Resend. Absent → magic-link URLs are logged to the wrangler dev console.

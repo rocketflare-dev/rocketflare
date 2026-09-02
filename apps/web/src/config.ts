@@ -73,8 +73,6 @@ const configSchema = z.object({
   PREVIEW_DATABASE_URL: optionalString,
   /** AES-GCM key for OAuth tokens at rest (D12). */
   OAUTH_ENCRYPTION_KEY: optionalSecret(32),
-  /** HMAC key for magic-link / invitation tokens (D12) — separate from the encryption key. */
-  AUTH_SIGNING_KEY: optionalSecret(32),
   RESEND_API_KEY: optionalString,
   /** Comma-separated emails promoted to global admin on first VERIFIED login (D9). */
   BOOTSTRAP_ADMIN_EMAILS: csvList,

@@ -49,7 +49,7 @@ passes. In short:
 ```bash
 git clone https://github.com/rocketflare-dev/rocketflare.git && cd rocketflare
 corepack enable && pnpm install
-cp apps/web/.dev.vars.example apps/web/.dev.vars     # set OAUTH_ENCRYPTION_KEY + AUTH_SIGNING_KEY (openssl rand -hex 32)
+cp apps/web/.dev.vars.example apps/web/.dev.vars     # set OAUTH_ENCRYPTION_KEY (openssl rand -hex 32)
 pnpm dev:db:up && pnpm db:migrate && pnpm seed
 pnpm dev                                             # http://localhost:3000, API on :3001
 pnpm test:db:up && pnpm test

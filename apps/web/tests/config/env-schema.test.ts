@@ -57,8 +57,10 @@ describe('loadConfig', () => {
 
   it('treats empty-string secrets as unset and enforces minimum key lengths', () => {
     expect(loadConfig({ ...base, RESEND_API_KEY: '' }).RESEND_API_KEY).toBeUndefined()
-    expect(loadConfig({ ...base, AUTH_SIGNING_KEY: '' }).AUTH_SIGNING_KEY).toBeUndefined()
-    expect(() => loadConfig({ ...base, AUTH_SIGNING_KEY: 'short' })).toThrow(/AUTH_SIGNING_KEY/)
+    expect(loadConfig({ ...base, OAUTH_ENCRYPTION_KEY: '' }).OAUTH_ENCRYPTION_KEY).toBeUndefined()
+    expect(() => loadConfig({ ...base, OAUTH_ENCRYPTION_KEY: 'short' })).toThrow(
+      /OAUTH_ENCRYPTION_KEY/
+    )
   })
 
   it('memoises per env object identity', () => {

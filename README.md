@@ -31,7 +31,7 @@ Then, from the root (Node 24 via `.nvmrc`, pnpm 10 via `corepack`, Docker runnin
 
 ```bash
 corepack enable && pnpm install
-cp apps/web/.dev.vars.example apps/web/.dev.vars         # set OAUTH_ENCRYPTION_KEY + AUTH_SIGNING_KEY (openssl rand -hex 32)
+cp apps/web/.dev.vars.example apps/web/.dev.vars         # set OAUTH_ENCRYPTION_KEY (openssl rand -hex 32)
 pnpm dev:db:up && pnpm db:migrate && pnpm seed           # Postgres :5432 → migrations → demo tenant + users
 pnpm dev                                                 # http://localhost:3000 (API :3001)
 pnpm cli login --server http://localhost:3001            # browser sign-in → tenant API key; then: pnpm cli whoami
@@ -70,7 +70,7 @@ Part 1 step by step. Before building your app, do the rename checklist in `docs/
 - **Isolation by predicate, RLS in reserve** — every query filters by the session's tenant; every tenant table also ships a row-level-security policy, inert until `TENANT_SCOPE_MODE=enforce` (`docs/RLS.md`), with a catalog test that fails CI if a table is missed.
 
 ### Authentication
-- **Magic link** (HMAC-signed, single-use, hashed at rest) — works with no email provider: the URL is logged locally.
+- **Magic link** (random single-use token, hashed at rest) — works with no email provider: the URL is logged locally.
 - **OAuth registry** — Google and Microsoft via arctic; adding a provider is one definition file. Account linking by verified email, tokens AES-GCM encrypted, PKCE state in one cookie.
 - **Sessions as rows** — `__Host-session` cookie, 7-day sliding TTL, one LATERAL query per request.
 - **Tenant API keys** — hashed, scoped, expirable, revocable from Settings; the Bearer path shares the auth middleware and abilities with the UI.

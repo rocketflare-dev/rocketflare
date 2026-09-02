@@ -48,10 +48,9 @@ expected.)
 ```bash
 cp apps/web/.dev.vars.example apps/web/.dev.vars
 openssl rand -hex 32   # → OAUTH_ENCRYPTION_KEY in apps/web/.dev.vars
-openssl rand -hex 32   # → AUTH_SIGNING_KEY in apps/web/.dev.vars (a different value)
 ```
-Verify: `grep -c '^[A-Z_]*=.\+' apps/web/.dev.vars` is at least 3 (`DATABASE_URL`,
-`OAUTH_ENCRYPTION_KEY`, `AUTH_SIGNING_KEY` are set). Leave every optional key blank for now — each
+Verify: `grep -c '^[A-Z_]*=.\+' apps/web/.dev.vars` is at least 2 (`DATABASE_URL` and
+`OAUTH_ENCRYPTION_KEY` are set). Leave every optional key blank for now — each
 feature degrades gracefully (Part 2). `.dev.vars` is git-ignored; never paste other environments'
 credentials into it, not even as comments.
 
@@ -363,7 +362,7 @@ Verify: the run is green; `pnpm web exec wrangler deployments list -c wrangler.s
 For every non-`[vars]` name in `apps/web/.dev.vars.example` (skip `DATABASE_URL` — deployed envs use
 Hyperdrive — and `APP_DATABASE_URL` unless enabling RLS):
 ```bash
-for k in OAUTH_ENCRYPTION_KEY AUTH_SIGNING_KEY RESEND_API_KEY BOOTSTRAP_ADMIN_EMAILS \
+for k in OAUTH_ENCRYPTION_KEY RESEND_API_KEY BOOTSTRAP_ADMIN_EMAILS \
          GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET MICROSOFT_CLIENT_ID MICROSOFT_CLIENT_SECRET \
          ANTHROPIC_API_KEY EMBEDDINGS_API_KEY LANGFUSE_PUBLIC_KEY LANGFUSE_SECRET_KEY; do
   pnpm web exec wrangler secret put "$k" -c wrangler.staging.toml   # prompts; use fresh values per env
