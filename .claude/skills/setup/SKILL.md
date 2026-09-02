@@ -68,14 +68,28 @@ or stay offline?
    ```
    open "http://localhost:3000/login?as=owner@example.test"
    ```
-4. Tell the user: they are signed in as **owner@example.test** (the demo tenant's owner; also
-   `admin@` and `member@example.test`, and the global admin `admin@rocketflare.local`). Suggest
-   what to try — **Chat** (streams a reply; needs Workers AI login or a key), **Agents**
-   (run `summarize-text`, watch the timeline fill), **Knowledge** (paste or upload a document,
-   then **Search** it), **Analytics** (the seeded Organisation Overview dashboard).
-5. Offer the two follow-ups, do not run them unasked:
-   - the test suite: `pnpm test:db:up && pnpm test` (ephemeral Postgres on :5433)
-   - the SETUP.md 1.6 analytics check: `pnpm web db:refresh-facts && pnpm web db:check-facts`
+4. Report what is true now, in **at most six lines** — where the app is (the two URLs), who they
+   are signed in as (**owner@example.test**; also `admin@` and `member@example.test`, and the
+   global admin `admin@rocketflare.local`), the port Postgres landed on if it was not 5432, and
+   any note the script printed (an orphaned volume, `--offline`). Do not restate the nine ✔ lines
+   they just watched, and **do not echo the seeded API key** — it was printed once by the seed and
+   is in their scrollback; say that `pnpm cli login` mints another whenever they want one.
+
+## 4. Then ask what they want to do next — do not guess
+
+A first run ends with the person looking at a working app and no idea what the next move is, so
+**end the turn with `AskUserQuestion`**, not with a paragraph of suggestions and not with an
+open "want me to do anything else?". Offer these, in this order, with the first as the default:
+
+| Option | What you do when it is chosen |
+|---|---|
+| **Show me around** | Walk the seeded app: **Chat** (streams a reply — Workers AI needs the `wrangler login`, else a key), **Agents** (`summarize-text`, watch the timeline fill), **Knowledge → Search** (the demo documents are indexed), **Analytics** (the seeded Organisation Overview). Drive it with them; one screen at a time |
+| **Check it really works** | `pnpm test:db:up && pnpm test` (ephemeral Postgres on :5433), then the SETUP.md 1.6 analytics check `pnpm web db:refresh-facts && pnpm web db:check-facts` |
+| **Make it mine** | `/adapt <slug>` — the rename (package scope, Worker, database, CLI, theme). Ask for the slug if they have not said one |
+| **Deploy it** | `/provision` — **user-invoked only**: tell them to type it, and that it needs the three accounts (Cloudflare on Workers Paid, Neon, Resend) and `pnpm provision tokens` in their own terminal first |
+
+Leave the dev stack running unless they ask you to stop it (`pnpm dev:stop`). If they pick
+something not on the list, just do that — the list is a starting point, not a gate.
 
 ## What each ✔ line means
 

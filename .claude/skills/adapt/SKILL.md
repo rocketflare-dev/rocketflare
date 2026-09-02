@@ -84,4 +84,8 @@ Tell the user:
   say the rename is done (date, slug), or delete the table.
 - `docs/ADAPTING.md` §2 (delete the example agents, dashboard, prompts) is for **when they have
   real ones** — not now.
-- Next: `/setup` for the first run, or `SETUP.md` Part 1 by hand.
+
+Then **end the turn with `AskUserQuestion`** rather than a paragraph — the same as `/setup` does.
+The choices after a rename are: **run it** (`/setup`, or `SETUP.md` Part 1 by hand), **deploy it**
+(`/provision` — they type it themselves), **walk the six careful rows** (`checklist.md` beside this
+file), or **stop here**.
