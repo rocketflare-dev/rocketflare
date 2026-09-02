@@ -240,6 +240,9 @@ switch-on procedure are in `docs/RLS.md`.
 
 **Known gaps / not built yet:** the RLS spike has not been run (Track R); `pin` mode from the source
 app is dropped (it soaked Node connection pinning, which no longer exists); no read replica routing;
+the cross-tenant allow-list (`routes/admin.ts` and the pre-tenant auth path) is convention with no
+test pinning it — `rls-coverage.test.ts` proves every tenant table has a policy, not that no other
+route reads across tenants;
 the TEST database is still pinned to 5433 (`docker-compose.test.yml`, `.env.test` and the Postgres
 service in `ci.yml` all name it), so two checkouts cannot run `pnpm test` at the same time — the dev
 port is the one that moves; switching to a per-checkout project name for the dev database also

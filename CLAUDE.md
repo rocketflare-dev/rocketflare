@@ -62,7 +62,8 @@ apps/web/          @rocketflare/web — wrangler*.toml, worker-configuration.d.t
 apps/cli/          @rocketflare/cli — src/cli.ts, commands/*, api.ts (only fetch site), config.ts, login.ts
 packages/shared/   @rocketflare/shared — src/*.ts zod contracts, errors, pagination, permissions (CLAUDE.md)
 scripts/           bootstrap.sh → bootstrap.mjs (9 steps), install.sh (curl one-liner), rename.mjs, lib/
-.claude/skills/    setup · preflight · adapt (+ checklist.md) · provision (+ reference.md)
+.claude/skills/    setup · preflight · adapt (+ checklist.md) · provision (+ reference.md) ·
+                   how-do-i (+ example-orders.md — coaching for a new feature, plans only)
 ```
 
 **`packages/shared`.** Private, no build: `@rocketflare/shared/<module>` → `./src/<module>.ts` (incl. `ai/*`,

@@ -163,7 +163,7 @@ there list every known gap.
 | [`docs/DEPLOY.md`](docs/DEPLOY.md) | Cloudflare topology, the two tomls, resources, release dance, rollback, bundle size |
 | [`docs/RLS.md`](docs/RLS.md) | tenant isolation posture and how to turn row-level security on |
 | `.claude/rules/*.md` | layer conventions (api, database, ui, cli, testing, code-quality, cloudflare) — auto-loaded by path |
-| `.claude/skills/` | the four slash commands a coding agent drives: `/setup` (first run), `/preflight` (read-only diagnosis), `/adapt` (rename + checklist) — an agent may run those three when you ask in plain words — and `/provision` (deploy to Cloudflare + Neon + Resend), which only you can start: it creates paid resources and prompts for tokens |
+| `.claude/skills/` | the slash commands a coding agent drives: `/setup` (first run), `/preflight` (read-only diagnosis), `/adapt` (rename + checklist), `/how-do-i` (coaching for a new feature — asks, plans, writes `docs/features/<slug>.md`, never the code) — an agent may run those when you ask in plain words — and `/provision` (deploy to Cloudflare + Neon + Resend), which only you can start: it creates paid resources and prompts for tokens |
 
 ## Provenance
 
