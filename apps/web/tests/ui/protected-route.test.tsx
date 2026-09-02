@@ -155,6 +155,32 @@ describe('ProtectedRoute', () => {
     expect(page()).toBe('home')
   })
 
+  it('a global admin with NO membership reaches /admin/* — and only /admin/*', () => {
+    const session = makeSession({
+      user: makeUser({ isGlobalAdmin: true }),
+      tenant: null,
+      tenants: [],
+    })
+    const landsOn = (route: string) => {
+      const { unmount } = renderWithProviders(<App />, { session, route })
+      const label = page()
+      unmount()
+      return label
+    }
+    expect(landsOn('/admin/users')).toBe('admin')
+    expect(landsOn('/admin')).toBe('admin')
+    expect(landsOn('/')).toBe('no-access')
+    expect(landsOn('/settings')).toBe('no-access')
+  })
+
+  it('a non-admin with no membership is still redirected away from /admin', () => {
+    renderWithProviders(<App />, {
+      session: makeSession({ tenant: null, tenants: [] }),
+      route: '/admin/users',
+    })
+    expect(page()).toBe('no-access')
+  })
+
   it('RequireGuard: global admin opens /admin', () => {
     renderWithProviders(<App />, {
       session: makeSession({ user: makeUser({ isGlobalAdmin: true }) }),

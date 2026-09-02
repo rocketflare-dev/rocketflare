@@ -29,9 +29,11 @@ describe('OrgSwitcher', () => {
     expect(screen.queryByText('Acme')).not.toBeInTheDocument()
   })
 
-  it('is hidden when there is no active tenant', () => {
+  it('with no active tenant it says so instead of offering a switch', () => {
     renderWithProviders(<OrgSwitcher />, { session: makeSession({ tenant: null, tenants: [] }) })
     expect(screen.queryByText('Your organisations')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button')).not.toBeInTheDocument()
+    expect(screen.getByText('No organisation')).toBeInTheDocument()
   })
 
   it('multi mode with one org still shows, offering to create another', () => {

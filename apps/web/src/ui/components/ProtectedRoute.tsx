@@ -1,8 +1,10 @@
 /**
  * Session gate for the app shell (D9, D20). Unauthenticated → `/login?returnUrl=`; signed in but
  * in no organisation → the `noTenantRoute` rule (pending / select-tenant / no-access). Pages that
- * must render WITHOUT a tenant (those three) pass `requireTenant={false}`. Cosmetic — the server
- * enforces on every request.
+ * must render WITHOUT a tenant (those three) pass `requireTenant={false}`. One exemption: a global
+ * admin may open `/admin/*` with no membership at all (`isAdminPath`) — otherwise the bootstrap
+ * admin of an invite-only deployment could never approve anyone (SETUP.md 2.4). Cosmetic — the
+ * server enforces on every request (`/api/admin/*` is tenant-free by design).
  */
 import { ArrowPathIcon } from '@heroicons/react/24/outline'
 import type { ReactNode } from 'react'
@@ -17,6 +19,11 @@ interface ProtectedRouteProps {
   requireTenant?: boolean
 }
 
+/** `/admin` and everything beneath it — the cross-tenant area that needs no membership. */
+export function isAdminPath(pathname: string): boolean {
+  return pathname === '/admin' || pathname.startsWith('/admin/')
+}
+
 export function ProtectedRoute({ children, requireTenant = true }: ProtectedRouteProps) {
   const { status, session, error, refresh } = useAuth()
   const location = useLocation()
@@ -29,6 +36,7 @@ export function ProtectedRoute({ children, requireTenant = true }: ProtectedRout
   }
 
   if (requireTenant && session && !session.tenant) {
+    if (session.user.isGlobalAdmin && isAdminPath(location.pathname)) return <>{children}</>
     const target = noTenantRoute(session)
     if (location.pathname !== target) return <Navigate to={target} replace />
   }

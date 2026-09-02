@@ -3,12 +3,14 @@
  * with `{ query, limit, documentId? }`, rendering hits with rank, where the passage sits in its
  * document (`seq`/`documentPassages`), fused score, dense/lexical rank
  * badges, snippet and the document title, optionally restricted to one document (`?documentId=`
- * preselects it — the run drawer and the Knowledge table link here). Hits are the search
- * mutation's data, never cached as server state. Adding documents lives on `/documents`.
+ * preselects it — the run drawer and the Knowledge table link here). `?q=` prefills the box and
+ * runs the search on mount, and every submitted search is written back to the URL (replace, not
+ * push) so a result page can be shared or reloaded. Hits are the search mutation's data, never
+ * cached as server state. Adding documents lives on `/documents`.
  */
 import { MagnifyingGlassIcon } from '@heroicons/react/24/outline'
 import { type SearchHit, searchRequestSchema } from '@rocketflare/shared/ai/embeddings'
-import { type FormEvent, useState } from 'react'
+import { type FormEvent, useEffect, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { EmptyState, FieldError, PageHeader, SectionPanel } from '@/ui/components/shared'
 import { useDocuments, useSearch } from '@/ui/hooks/useDocuments'
@@ -16,10 +18,15 @@ import { useDocuments, useSearch } from '@/ui/hooks/useDocuments'
 export default function SearchPage() {
   const [params, setParams] = useSearchParams()
   const documentId = params.get('documentId') ?? ''
+  const urlQuery = params.get('q') ?? ''
   const search = useSearch()
+  const { mutate: runSearch } = search
   const documents = useDocuments({ pageSize: 100 })
-  const [query, setQuery] = useState('')
+  const [query, setQuery] = useState(urlQuery)
   const [issue, setIssue] = useState<string | undefined>()
+  // The last `?q=` this page ran, so a submit that writes the URL (or StrictMode's double effect)
+  // never fires the same search twice.
+  const lastRun = useRef<string | null>(null)
 
   const setDocumentId = (id: string) => {
     const next = new URLSearchParams(params)
@@ -27,6 +34,19 @@ export default function SearchPage() {
     else next.delete('documentId')
     setParams(next, { replace: true })
   }
+
+  // `?q=` on arrival (a shared link, a reload): fill the box and search straight away.
+  useEffect(() => {
+    if (!urlQuery.trim() || lastRun.current === urlQuery) return
+    const parsed = searchRequestSchema.safeParse({
+      query: urlQuery,
+      documentId: documentId || undefined,
+    })
+    if (!parsed.success) return
+    lastRun.current = urlQuery
+    setQuery(urlQuery)
+    runSearch(parsed.data)
+  }, [urlQuery, documentId, runSearch])
 
   const submit = (e: FormEvent) => {
     e.preventDefault()
@@ -36,7 +56,11 @@ export default function SearchPage() {
     })
     if (!parsed.success) return setIssue(parsed.error.issues[0]?.message)
     setIssue(undefined)
-    search.mutate(parsed.data)
+    lastRun.current = parsed.data.query
+    runSearch(parsed.data)
+    const next = new URLSearchParams(params)
+    next.set('q', parsed.data.query)
+    setParams(next, { replace: true })
   }
 
   const options = documents.data?.items ?? []

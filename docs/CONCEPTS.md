@@ -92,7 +92,10 @@ injected `features: string[]`.
 app subject defaults to owner/admin/support `manage`, member `read` with route-scoped writes.
 
 **Admin area.** `/admin` (UI) and `/api/admin/*` behind `globalAdminMiddleware` is the only place
-with cross-tenant queries by design, so the blast radius is one file. "Entering" a customer tenant
+with cross-tenant queries by design, so the blast radius is one file. It is reachable **without a
+membership**: a global admin with no tenant (the bootstrap admin of an `invite_only` deployment)
+opens `/admin/*` directly — `ProtectedRoute`'s one exemption, and `/pending` / `/no-access` link
+there — so there is always someone who can approve the first request. "Entering" a customer tenant
 inserts a real `support` membership; `authMiddleware` keeps its single "must be a member" invariant.
 
 **Isolation = predicates + inert RLS (D1).** Every query filters by `tenantId` from the auth
@@ -765,7 +768,8 @@ writes require `manage AiConfig`.
 **UI (Phase 3b-UI; specifics in `apps/web/src/ui/CLAUDE.md`).** Routes `/agents` and
 `/agents/runs/:runId` (guard `read AgentRun`; nav "Agents"), `/documents` (guard `read Document`;
 nav "Knowledge" — the paginated documents table, then `?tab=text|file` add tabs below it) and `/search` (same guard;
-nav "Search" — hybrid search, `?documentId=` narrows), Settings `?tab=agent-models` (`manage AiConfig`). Nothing streams — runs are rows.
+nav "Search" — hybrid search, `?documentId=` narrows, `?q=` prefills and runs the search on mount and
+every submitted search is written back to the URL), Settings `?tab=agent-models` (`manage AiConfig`). Nothing streams — runs are rows.
 An open run re-reads `GET /runs/:id` every 3 s while `isRunActive` (the list too while any listed
 row is active) AND is refreshed by the server's `entity.changed { entity: 'agent-run', id }` nudge,
 because the runs query-key root is `['agent-run']`. **Convention: the `entity` string of an

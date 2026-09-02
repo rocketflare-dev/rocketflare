@@ -21,7 +21,17 @@ export function OrgSwitcher() {
   const [switching, setSwitching] = useState<string | null>(null)
 
   const canCreate = tenancyMode === 'multi'
-  if (tenancyMode === 'single' || !tenant) return null
+  if (tenancyMode === 'single') return null
+  // A global admin on /admin with no membership: say so instead of rendering a switcher with nothing
+  // to switch (the header slot would otherwise be blank).
+  if (!tenant) {
+    return (
+      <span className="text-sm text-muted inline-flex items-center gap-1.5 px-2">
+        <BuildingOffice2Icon className="w-4 h-4 shrink-0" />
+        No organisation
+      </span>
+    )
+  }
   if (tenants.length < 2 && !canCreate) return null
 
   const close = () => ref.current?.removeAttribute('open')

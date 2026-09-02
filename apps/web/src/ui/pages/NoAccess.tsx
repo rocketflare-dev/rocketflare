@@ -4,12 +4,12 @@
  */
 import { LockClosedIcon } from '@heroicons/react/24/outline'
 import { Navigate } from 'react-router-dom'
-import { AuthCard, SignedInAs } from '@/ui/components/AuthCard'
+import { AdminAreaLink, AuthCard, SignedInAs } from '@/ui/components/AuthCard'
 import { PendingInvitationsBanner } from '@/ui/components/PendingInvitationsBanner'
 import { useAuth } from '@/ui/hooks/useAuth'
 
 export default function NoAccess() {
-  const { user, tenant, tenants, logout } = useAuth()
+  const { user, tenant, tenants, logout, isGlobalAdmin } = useAuth()
   if (tenant) return <Navigate to="/" replace />
   if (tenants.length > 0) return <Navigate to="/select-tenant" replace />
   if (!user) return null
@@ -30,6 +30,7 @@ export default function NoAccess() {
         </div>
       </div>
       <PendingInvitationsBanner className="mt-5" />
+      {isGlobalAdmin && <AdminAreaLink className="mt-5" />}
     </AuthCard>
   )
 }

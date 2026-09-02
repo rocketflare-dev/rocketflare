@@ -22,14 +22,19 @@ export function useNavGuard(): (guard: NavGuard | undefined) => boolean {
   const ability = useAbility()
   const role = tenant?.role ?? null
 
+  const hasTenant = tenant !== null
+
   return useCallback(
     (guard: NavGuard | undefined) => {
       if (guard === undefined) return true
+      if (guard === 'globalAdmin') return isGlobalAdmin
+      // Without an organisation only the cross-tenant admin area is openable — a global admin's
+      // `manage all` would otherwise light up every tenant page, each bouncing to `noTenantRoute`
+      if (!hasTenant) return false
       // `support` is a global admin visiting this org; global admins hold `manage all` server-side
       if (guard === 'admin') return isGlobalAdmin || (role !== null && ADMIN_ROLES.has(role))
-      if (guard === 'globalAdmin') return isGlobalAdmin
       return ability.can(guard.action as Actions, guard.subject as Subjects)
     },
-    [ability, isGlobalAdmin, role]
+    [ability, hasTenant, isGlobalAdmin, role]
   )
 }

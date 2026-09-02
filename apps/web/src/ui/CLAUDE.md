@@ -16,7 +16,8 @@ React 18 + Vite + React Router 6 + TanStack Query 5 + zustand; DaisyUI 5 on Tail
 - `components/` — shell: `Layout` (slots `headerStart`=`OrgSwitcher`, `headerEnd`=`NotificationsBell`
   + `UserMenu`, `sidebarFooter`), `SideNav` (config-driven, `guard` flags), `AuthCard` (public-page
   card), `PendingInvitationsBanner`, `RoleBadge`, `EnvironmentBadge`, `ThemeToggle`, `ErrorBoundary`.
-  Guards: `ProtectedRoute` (session + tenant → `noTenantRoute`), `RequireGuard` (any `NavGuard`),
+  Guards: `ProtectedRoute` (session + tenant → `noTenantRoute`; a global admin with NO tenant is
+  let through to `/admin/*` only — `isAdminPath`), `RequireGuard` (any `NavGuard`),
   `AdminRoute`/`GlobalAdminRoute` (sugar over it). `components/permissions/` — `AbilityProvider`
   (unpacks `session.permissions`), `Can`, `IfCan`/`IfCannot`. Realtime (D8): `WebSocketProvider`
   (connects the singleton once authenticated with a tenant, `useQueryClient()` →
@@ -124,7 +125,12 @@ React 18 + Vite + React Router 6 + TanStack Query 5 + zustand; DaisyUI 5 on Tail
   `/login?returnUrl=` unless already on a public path. OAuth/dev-login/logout are full-page
   (`hardNavigate`) so the cookie round-trips cleanly.
 - No active tenant → `noTenantRoute(session)`: access request → `/pending`; memberships →
-  `/select-tenant`; `signupMode === 'approval'` → `/pending`; else `/no-access`.
+  `/select-tenant`; `signupMode === 'approval'` → `/pending`; else `/no-access`. Exception: a
+  global admin opens `/admin/*` with no membership (the bootstrap admin must be able to approve
+  the first request), and `/pending` / `/no-access` show them an "Open the admin area" link. In
+  that state `useNavGuard` allows ONLY `'globalAdmin'` guards (every tenant page hides),
+  `OrgSwitcher` reads "No organisation", `NotificationsBell` and the Profile / Notifications
+  menu links render nothing, and `WebSocketProvider` never connects (it needs a tenant id).
 - Single-tenant mode (D25) hides: `OrgSwitcher`, `/select-tenant` (redirects home), org
   create/delete and the slug field, the `new_org` approve branch, and collapses `/admin/tenants`
   to the one detail. Read it via `useTenancyMode()`.
@@ -221,7 +227,9 @@ React 18 + Vite + React Router 6 + TanStack Query 5 + zustand; DaisyUI 5 on Tail
   `rank`, `passage n of m` (where the passage sits in its document), RRF `score`, `dense #n` /
   `lexical #n` badges and the snippet; `?documentId=` preselects
   the per-document filter (the run drawer's "Indexed as a searchable document" link lands on
-  `/search?documentId=`); an empty knowledge base shows an EmptyState linking to `/documents`.
+  `/search?documentId=`); `?q=` prefills the box and runs the search on mount (once — a `lastRun`
+  ref stops StrictMode and the URL write from repeating it), and every submitted search sets `?q=`
+  with `replace`; an empty knowledge base shows an EmptyState linking to `/documents`.
 - Tests: `agents-page`, `agent-run-detail` (renders `RunDetailDrawer` inside `WebSocketProvider`
   with the `FakeSocket` from `websocket-provider.test.tsx` to prove the nudge refetches),
   `agent-models-settings`, `documents-page`, `search-page`. Mount `AgentsPage` inside the same `<Routes>` pair

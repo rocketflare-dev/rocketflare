@@ -8,13 +8,13 @@ import { ClockIcon, NoSymbolIcon, PaperAirplaneIcon } from '@heroicons/react/24/
 import { createAccessRequestSchema } from '@rocketflare/shared/access-requests'
 import { useState } from 'react'
 import { Navigate } from 'react-router-dom'
-import { AuthCard, SignedInAs } from '@/ui/components/AuthCard'
+import { AdminAreaLink, AuthCard, SignedInAs } from '@/ui/components/AuthCard'
 import { FieldError, fieldErrorFor } from '@/ui/components/shared'
 import { useCreateAccessRequest } from '@/ui/hooks/useAccessRequests'
 import { useAuth } from '@/ui/hooks/useAuth'
 
 export default function Pending() {
-  const { user, tenant, tenants, session, logout } = useAuth()
+  const { user, tenant, tenants, session, logout, isGlobalAdmin } = useAuth()
   const request = useCreateAccessRequest()
   const [message, setMessage] = useState('')
   const [fieldError, setFieldError] = useState<string | undefined>()
@@ -138,6 +138,8 @@ export default function Pending() {
           Add a note to your request
         </button>
       )}
+
+      {isGlobalAdmin && <AdminAreaLink className="mt-5" />}
     </AuthCard>
   )
 }

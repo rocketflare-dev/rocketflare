@@ -4,6 +4,7 @@
  * knowledge base shows an empty state pointing at `/documents`.
  */
 import { fireEvent, screen, waitFor, within } from '@testing-library/react'
+import { useLocation } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import SearchPage from '@/ui/pages/documents/SearchPage'
 import {
@@ -54,11 +55,28 @@ const hit = (rank: number, overrides: Record<string, unknown> = {}) => ({
   ...overrides,
 })
 
+function LocationProbe() {
+  const location = useLocation()
+  return <span data-testid="location">{location.pathname + location.search}</span>
+}
+
 function mount(routes: RouteTable = {}, route = '/search') {
   const fetchMock = stubFetch({ '/api/ai/documents': DOCS, ...routes })
-  renderWithProviders(<SearchPage />, { session: makeSession(), route })
+  renderWithProviders(
+    <>
+      <SearchPage />
+      <LocationProbe />
+    </>,
+    { session: makeSession(), route }
+  )
   return fetchMock
 }
+
+const searchCalls = (fetchMock: ReturnType<typeof stubFetch>) =>
+  fetchMock.mock.calls.filter(
+    ([input, init]) =>
+      String(input).includes('/api/ai/documents/search') && init?.method?.toUpperCase() === 'POST'
+  ).length
 
 describe('Search page', () => {
   afterEach(() => vi.unstubAllGlobals())
@@ -98,6 +116,46 @@ describe('Search page', () => {
     expect(rows[1]).toHaveTextContent('lexical #1')
     expect(rows[1]).not.toHaveTextContent('dense #')
     expect(rows[1]).toHaveTextContent('Release notes')
+    // The submitted query is written to the URL (replace) so the result page can be shared
+    expect(screen.getByTestId('location')).toHaveTextContent('/search?q=how+do+I+onboard')
+  })
+
+  it('?q= prefills the box and runs the search on mount, once', async () => {
+    const fetchMock = mount(
+      { 'POST /api/ai/documents/search': { query: 'pallets', hits: [hit(1)] } },
+      '/search?q=pallets'
+    )
+    expect(screen.getByLabelText('Search query')).toHaveValue('pallets')
+    await waitFor(() =>
+      expect(requestBody(fetchMock, 'POST /api/ai/documents/search')).toEqual({
+        query: 'pallets',
+        limit: 10,
+      })
+    )
+    await screen.findByRole('list', { name: 'Search results' })
+    expect(searchCalls(fetchMock)).toBe(1)
+    expect(screen.getByTestId('location')).toHaveTextContent('/search?q=pallets')
+
+    // A new search replaces `q` and keeps the rest of the URL
+    fireEvent.change(screen.getByLabelText('Search query'), { target: { value: 'racking' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Search' }))
+    await waitFor(() => expect(searchCalls(fetchMock)).toBe(2))
+    expect(screen.getByTestId('location')).toHaveTextContent('/search?q=racking')
+    await waitFor(() => expect(searchCalls(fetchMock)).toBe(2))
+  })
+
+  it('?q= with ?documentId= searches inside that document', async () => {
+    const fetchMock = mount(
+      { 'POST /api/ai/documents/search': { query: 'x', hits: [] } },
+      `/search?documentId=${DOC_B}&q=x`
+    )
+    await waitFor(() =>
+      expect(requestBody(fetchMock, 'POST /api/ai/documents/search')).toEqual({
+        query: 'x',
+        limit: 10,
+        documentId: DOC_B,
+      })
+    )
   })
 
   it('preselects the document filter from ?documentId and sends it', async () => {

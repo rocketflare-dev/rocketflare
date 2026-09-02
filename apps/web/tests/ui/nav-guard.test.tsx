@@ -91,6 +91,20 @@ describe('useNavGuard with a real ability unpacked from the session rules', () =
     await expectGuards({ admin: true, globalAdmin: true, manageTenant: true, manageMembers: true })
   })
 
+  it('global admin with no organisation: only the admin area (and unguarded items)', async () => {
+    renderWithProviders(<Probe />, {
+      session: makeSession({ user: makeUser({ isGlobalAdmin: true }), tenant: null, tenants: [] }),
+    })
+    await expectGuards({
+      admin: false,
+      globalAdmin: true,
+      manageTenant: false,
+      manageMembers: false,
+      readKeys: false,
+      feature: false,
+    })
+  })
+
   it('logged out: only unguarded items', async () => {
     renderWithProviders(<Probe />, { session: null })
     await expectGuards({ admin: false, globalAdmin: false, manageTenant: false, readKeys: false })

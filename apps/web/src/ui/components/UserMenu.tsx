@@ -50,24 +50,29 @@ export function UserMenu() {
           </div>
         </li>
         <li className="border-t border-[color:var(--border-subtle)] my-1" />
-        <li>
-          <Link
-            to="/profile"
-            onClick={close}
-            className="nav-item flex items-center gap-2 px-2.5 py-1.5 text-sm"
-          >
-            <UserCircleIcon className="w-4 h-4" /> Profile
-          </Link>
-        </li>
-        <li>
-          <Link
-            to="/notifications"
-            onClick={close}
-            className="nav-item flex items-center gap-2 px-2.5 py-1.5 text-sm"
-          >
-            <BellIcon className="w-4 h-4" /> Notifications
-          </Link>
-        </li>
+        {/* Both pages live under the tenant shell — a global admin with no membership gets /admin only */}
+        {tenant && (
+          <>
+            <li>
+              <Link
+                to="/profile"
+                onClick={close}
+                className="nav-item flex items-center gap-2 px-2.5 py-1.5 text-sm"
+              >
+                <UserCircleIcon className="w-4 h-4" /> Profile
+              </Link>
+            </li>
+            <li>
+              <Link
+                to="/notifications"
+                onClick={close}
+                className="nav-item flex items-center gap-2 px-2.5 py-1.5 text-sm"
+              >
+                <BellIcon className="w-4 h-4" /> Notifications
+              </Link>
+            </li>
+          </>
+        )}
         {canAccess('admin') && (
           <li>
             <Link
