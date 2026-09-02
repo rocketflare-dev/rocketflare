@@ -1,7 +1,6 @@
 ---
 name: adapt
 description: Rename a fresh copy of the kit to your app (package scope, worker, database, CLI, themes, domain), then walk the rows that need a human
-disable-model-invocation: true
 argument-hint: "<slug> [\"Display Name\"] [--domain example.com] [--colour #hex]"
 ---
 

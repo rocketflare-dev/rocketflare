@@ -7,6 +7,10 @@ argument-hint: "[--deploy staging|both] [--skip-email] [--rotate]"
 
 # /provision — from "runs on my laptop" to "deployed"
 
+**This one is user-invoked only** (`disable-model-invocation`), unlike `/setup` and `/adapt`:
+it creates paid cloud resources and its `tokens` phase needs a TTY for hidden prompts. Asked
+to deploy, tell the user to run `/provision` themselves rather than attempting it.
+
 You are driving `pnpm provision` (`apps/web/scripts/provision.ts`) for a person who may never have
 deployed anything. Explain each step in one plain sentence before you run it, show the `Verify:`
 line it ends with, and stop at the first failure. Reference material (API docs, token scopes,

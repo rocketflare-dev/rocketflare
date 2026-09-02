@@ -1,7 +1,6 @@
 ---
 name: setup
 description: First run of this kit on this machine — checks the toolchain, starts Postgres, migrates, seeds demo data, and gets you signed in
-disable-model-invocation: true
 argument-hint: "[--offline] [--no-demo]"
 ---
 
@@ -12,6 +11,10 @@ SETUP.md Part 1 end to end and is **idempotent** — re-running after a fix is a
 
 ## Constraints on you (Claude)
 
+- You may reach this skill from a plain "help me set up this project" — the user need not
+  have typed `/setup`. Before the first command, say in one sentence what the script will do
+  to their machine (start a Postgres container, write `apps/web/.dev.vars`, seed a demo
+  database) and that it is idempotent. Then run it; don't wait for permission you already have.
 - Your Bash tool has **no TTY** and a **2-minute default timeout**. Always run the bootstrap with a
   10-minute timeout (`timeout: 600000`) — `pnpm install` alone can take minutes on a cold machine.
 - Never start or stop the user's dev stack with raw `kill`/`docker` commands; the script and

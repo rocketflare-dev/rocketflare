@@ -8,7 +8,9 @@ Cloudflare Worker (`apps/web`), a CLI (`apps/cli`), private zod contracts
 > before assuming a capability exists; update it when you change one.**
 > **Setup**: asked for setup help → run `/setup` (it drives `scripts/bootstrap.sh --no-dev`, then
 > starts the server): show each `✔ n/9` line, stop on failure. By hand: @SETUP.md Part 1.
-> **Fresh copy?** `/adapt <slug>`, then @docs/ADAPTING.md. **Deploy?** `/provision`.
+> **Fresh copy?** `/adapt <slug>`, then @docs/ADAPTING.md. `/setup`, `/adapt` and `/preflight` you
+> may run yourself; **`/provision` is user-invoked only** (it creates paid resources and prompts for
+> tokens on a TTY) — asked to deploy, tell the user to run `/provision`.
 
 ## Stack
 
