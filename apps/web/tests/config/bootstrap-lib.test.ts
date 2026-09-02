@@ -157,10 +157,14 @@ describe('toggleAiBlock / aiBlockState', () => {
   })
 
   it.each(['wrangler.toml', 'wrangler.staging.toml'])(
-    '%s: on today; off drops the `ai` table for the parser and round-trips',
+    '%s: off drops the `ai` table for the parser and round-trips',
     file => {
-      const original = readWeb(file)
-      expect(aiBlockState(original)).toBe('on')
+      // The checkout may be in either state (`pnpm bootstrap --offline`); normalise to on first,
+      // and require both tomls to agree so the parity test cannot be surprised.
+      const onDisk = readWeb(file)
+      expect(['on', 'off']).toContain(aiBlockState(onDisk))
+      expect(aiBlockState(onDisk)).toBe(aiBlockState(readWeb('wrangler.toml')))
+      const original = aiBlockState(onDisk) === 'on' ? onDisk : toggleAiBlock(onDisk, 'on')
       expect((TOML.parse(original) as Record<string, unknown>).ai).toBeDefined()
 
       const off = toggleAiBlock(original, 'off')

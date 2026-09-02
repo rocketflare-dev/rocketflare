@@ -22,7 +22,7 @@
  */
 import { spawn, spawnSync } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
-import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { createInterface } from 'node:readline'
@@ -67,6 +67,7 @@ Take a fresh clone to a running, signed-in dev stack in one command. Re-runnable
   --online      keep/restore the [ai] block; exit 5 if wrangler is not logged in
   --no-dev      stop after step 7 and print the commands to run next
   --no-demo     seed without the demo data (plain \`pnpm seed\`)
+  --share-db    accept a Postgres container started from another checkout (one shared database)
   --no-open     do not open the browser once the server answers
   --as <email>  seeded account to sign in as (default owner@example.test)
   --check       read-only preflight (= pnpm preflight): toolchain, secrets, database, Cloudflare,
@@ -80,6 +81,7 @@ another checkout · 5 Cloudflare login required`
 function parseArgs(argv) {
   const opts = {
     yes: false,
+    shareDb: false,
     offline: false,
     online: false,
     dev: true,
@@ -107,6 +109,9 @@ function parseArgs(argv) {
         break
       case '--no-demo':
         opts.demo = false
+        break
+      case '--share-db':
+        opts.shareDb = true
         break
       case '--no-open':
         opts.open = false
@@ -360,7 +365,7 @@ async function stepDatabaseCheck() {
   return { verify: dbVerifyLine(result.output) }
 }
 
-async function stepDatabase() {
+async function stepDatabase(opts) {
   const up = await run('docker', ['compose', '-f', COMPOSE_FILE, 'up', '-d', '--wait'], {
     cwd: WEB_DIR,
   })
@@ -386,6 +391,38 @@ async function stepDatabase() {
       output: up.output,
     })
   }
+  // Compose derives the project name from the directory (`web`), so a second checkout does NOT
+  // collide on the pinned container_name — it silently attaches to the other checkout's database.
+  // Say so, and only continue when asked to.
+  const notes = []
+  const other = await foreignComposeOwner()
+  if (other) {
+    const sharing =
+      `Postgres container was started from another checkout: ${other}\n` +
+      '  both checkouts would share ONE database (same container, same volume).'
+    if (opts.shareDb) {
+      notes.push(`${sharing}\n  continuing (--share-db)`)
+    } else if (!opts.yes && process.stdin.isTTY) {
+      say(`  ${sharing}`)
+      const answer = (
+        await ask('  [c]ontinue sharing it, or [a]bort and stop it there first? [c/a] ')
+      )
+        .trim()
+        .toLowerCase()
+      if (answer !== 'c') {
+        throw new StepError('database belongs to another checkout', {
+          hint: `pnpm dev:db:down in ${other}, then re-run — or pass --share-db`,
+          exitCode: EXIT.held,
+        })
+      }
+      notes.push('sharing the database with the other checkout')
+    } else {
+      throw new StepError('database belongs to another checkout', {
+        hint: `pnpm dev:db:down in ${other}, then re-run — or pass --share-db to use one database`,
+        exitCode: EXIT.held,
+      })
+    }
+  }
   // `--wait` honours the compose healthcheck, but first boot restarts postgres once after
   // pg_isready first succeeds — the poll is what migrate.ts's waitForDatabase would do.
   let last = { code: 1, output: '' }
@@ -400,7 +437,33 @@ async function stepDatabase() {
       output: last.output,
     })
   }
-  return { verify: dbVerifyLine(last.output) }
+  return { verify: dbVerifyLine(last.output), notes }
+}
+
+/**
+ * The checkout that started the dev Postgres container, when it is not this one (compose's
+ * `working_dir` label); null when it is ours or cannot be read.
+ */
+async function foreignComposeOwner() {
+  const ps = await run('docker', ['compose', '-f', COMPOSE_FILE, 'ps', '-q'], { cwd: WEB_DIR })
+  const id = ps.output.trim().split('\n')[0]
+  if (ps.code !== 0 || !id) return null
+  const inspect = await run('docker', [
+    'inspect',
+    '--format',
+    '{{index .Config.Labels "com.docker.compose.project.working_dir"}}',
+    id,
+  ])
+  const owner = inspect.output.trim()
+  if (inspect.code !== 0 || !owner) return null
+  const same = (a, b) => {
+    try {
+      return realpathSync(a) === realpathSync(b)
+    } catch {
+      return a === b
+    }
+  }
+  return same(owner, WEB_DIR) ? null : owner
 }
 
 async function stepMigrate() {
@@ -621,7 +684,7 @@ async function bootstrap(opts) {
   await step(1, 'toolchain', stepToolchain)
   await step(2, 'install', stepInstall)
   await step(3, 'secrets', () => stepSecrets({ write: true }))
-  await step(4, 'database', stepDatabase)
+  await step(4, 'database', () => stepDatabase(opts))
   await step(5, 'migrate', stepMigrate)
   const seeded = await step(6, 'seed', () => stepSeed({ demo: opts.demo }))
   await step(7, 'cloudflare', () => stepCloudflare(opts))

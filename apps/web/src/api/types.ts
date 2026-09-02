@@ -12,6 +12,22 @@ import type { Database } from '../db/client'
 import type { User } from '../db/schema'
 import type { Tracer } from './observability/tracer'
 
+declare global {
+  namespace Cloudflare {
+    /**
+     * `AI` is declared here as well as by `wrangler types` so that the type exists in BOTH toml
+     * states: `pnpm bootstrap --offline` comments the `[ai]` block out of both tomls (no Cloudflare
+     * login needed), the regenerated `worker-configuration.d.ts` then has no `AI`, and every
+     * `c.env` handed to an `AiEnv` slice would fail TypeScript's weak-type check (TS2559). With
+     * `[ai]` present the two declarations are identical and merge. The runtime value is still
+     * absent offline — read it only through `AiEnv` (`AI?`) and `services/ai/resolve.ts`.
+     */
+    interface Env {
+      AI: Ai
+    }
+  }
+}
+
 /**
  * What `authMiddleware` sets (D10, D25). Read ONLY through `withAuthAndDb` in routes and the
  * helpers in `middleware/permissions.ts`. `tenantId`/`tenantUser` are null for a user with no
