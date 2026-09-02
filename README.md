@@ -44,7 +44,9 @@ curl -fsSL https://rocketflare.dev/install.sh | bash -s -- myapp   # clone → d
 ```
 
 Or ask your coding agent: **`/setup`** (drives the same script and starts the server), **`/adapt <slug>`**
-for the rename, **`/provision`** to deploy. By hand: `SETUP.md` Part 1, one verification line per step.
+for the rename, and to deploy: `pnpm provision tokens` in your own terminal (hidden prompts for the
+Cloudflare, Neon and Resend tokens → git-ignored `apps/web/.provision.env`), then **`/provision`**. By hand:
+`SETUP.md` Part 1, one verification line per step.
 
 Nothing external is required: no `RESEND_API_KEY` → magic-link URLs are logged by `wrangler dev`; no AI
 key → chat, agents and embeddings run on Workers AI through the `[ai]` binding (billed to your
@@ -135,8 +137,9 @@ rocketflare/          workspace root: package.json (scripts delegate via pnpm -r
 Everything runs from the root: `pnpm bootstrap` (= `bash scripts/bootstrap.sh` once Node and pnpm
 exist; `--offline` / `--online` toggle the `[ai]` block), `pnpm preflight` (the read-only check),
 `pnpm dev`, `pnpm seed` / `pnpm seed --demo`, `pnpm test`, `pnpm cli …`, `pnpm web <script>` (any
-`apps/web` script), `pnpm db:*`, `pnpm deploy[:staging]`, `pnpm provision all` (the deploy
-orchestrator: Neon, Cloudflare, GitHub, secrets, Resend — `pnpm provision --help` lists the phases;
+`apps/web` script), `pnpm db:*`, `pnpm deploy[:staging]`, `pnpm provision tokens` (hidden prompts → `apps/web/.provision.env`)
+then `pnpm provision all` (the deploy orchestrator: Neon, Cloudflare, GitHub, secrets, Resend —
+`pnpm provision --help` lists the phases;
 `pnpm web provision:cloudflare <env> --apply` is its Cloudflare-resources half). `wrangler` is a
 devDependency of `apps/web`, so it is `pnpm --filter @rocketflare/web exec wrangler …`, never `pnpm exec
 wrangler` at the root. Root `scripts/` holds the first-run tooling: `bootstrap.sh` / `bootstrap.mjs`,

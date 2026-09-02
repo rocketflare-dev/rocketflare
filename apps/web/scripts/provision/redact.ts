@@ -8,9 +8,25 @@
  * `sanitizeNeon()` strips the credential-bearing fields Neon puts in its responses
  * (`connection_uris[]`, `roles[].password`, `role.password`, `password`) BEFORE a payload is
  * handed to a debug printer; the values are still returned to the caller that asked for them.
+ *
+ * `registerSecrets()` adds EXACT values to the mask list — the tokens `config.ts` resolves from
+ * the environment or `apps/web/.provision.env` — because a Cloudflare API token (40 chars of
+ * base62) matches none of the shape patterns below unless it follows the header we set ourselves.
  */
 
 const MASK = '<redacted>'
+
+const REGISTERED: Set<string> = new Set()
+
+/** Mask these exact values from now on (values shorter than 8 characters are ignored). */
+export function registerSecrets(values: Iterable<string | undefined>): void {
+  for (const v of values) if (v && v.length >= 8) REGISTERED.add(v)
+}
+
+/** Test seam. */
+export function clearRegisteredSecrets(): void {
+  REGISTERED.clear()
+}
 
 export const SECRET_PATTERNS: ReadonlyArray<{ name: string; pattern: RegExp }> = [
   // postgres://user:pass@host/db and postgresql://… — the whole URL goes, host included; the
@@ -29,6 +45,7 @@ export const SECRET_PATTERNS: ReadonlyArray<{ name: string; pattern: RegExp }> =
 /** Mask every secret-looking substring in `text`. Plain text is returned untouched. */
 export function redact(text: string): string {
   let out = text
+  for (const v of REGISTERED) out = out.split(v).join(MASK)
   for (const { name, pattern } of SECRET_PATTERNS) {
     if (name === 'bearer') out = out.replace(pattern, `Bearer ${MASK}`)
     else if (name === 'cf-token-header') out = out.replace(pattern, `$1=${MASK}`)

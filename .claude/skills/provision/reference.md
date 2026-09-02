@@ -4,6 +4,20 @@ Companion to `SKILL.md`. The implementation is `apps/web/scripts/provision.ts` w
 clients in `apps/web/scripts/provision/{neon,resend,cloudflare-dns,secrets,patch-toml,redact,config}.ts`;
 each client's header comment cites the API page every call was checked against (2026-09-02).
 
+## Where the tokens live
+
+`apps/web/.provision.env` — `KEY=VALUE` lines with `.dev.vars` conventions (`#` comments, blank
+lines, `export KEY=` and quotes tolerated), git-ignored, mode 0600 (the script warns when it is
+looser and carries on). `pnpm provision tokens` writes it (TTY only: hidden prompts, each token
+verified against its vendor before it is saved, other keys and comments preserved); by hand, copy
+`apps/web/.provision.env.example`. **Precedence: an exported variable of the same name wins over
+the file** — CI exports, people use the file — and every value the script resolves is registered
+with `redact()` so it cannot be echoed whatever its shape. `PROVISION_ENV_FILE=<path>` relocates
+the file (tests, a one-off run). It is not `.dev.vars` because `wrangler dev` loads that file into
+the Worker as secrets — account-level Cloudflare/Neon/Resend tokens must never reach a Worker —
+and because `RESEND_API_KEY` there is the app's *sending* key (minted by `email verify`, set on the
+Worker) while here it is the *full-access* account key.
+
 ## Token scopes
 
 | Variable | Where to mint | Scope |
@@ -13,7 +27,8 @@ each client's header comment cites the API page every call was checked against (
 | `NEON_API_KEY` | https://console.neon.tech/app/settings/api-keys | personal or organisation key; creates the project and branches |
 | `RESEND_API_KEY` | https://resend.com/api-keys | **Full access** (creates the domain, mints a `sending_access` key per environment; the full-access key itself never reaches a Worker) |
 
-Optional Worker secrets copied by `pnpm provision secrets <env>` when exported: `BOOTSTRAP_ADMIN_EMAILS`
+Optional Worker secrets copied by `pnpm provision secrets <env>` when exported or present in
+`apps/web/.provision.env`: `BOOTSTRAP_ADMIN_EMAILS`
 (defaults to `--admin-email`), `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `MICROSOFT_CLIENT_ID`,
 `MICROSOFT_CLIENT_SECRET`, `ANTHROPIC_API_KEY`, `EMBEDDINGS_API_KEY`, `LANGFUSE_PUBLIC_KEY`,
 `LANGFUSE_SECRET_KEY`. `DATABASE_URL` is never set on a Worker (it uses Hyperdrive);
@@ -23,6 +38,7 @@ Optional Worker secrets copied by `pnpm provision secrets <env>` when exported: 
 
 | Phase | Calls |
 |---|---|
+| tokens | per token, after it is typed: `wrangler whoami` with the candidate token in the child environment (exit 1 = rejected), the account id in that output or Cloudflare `GET /accounts/{id}`, Neon `GET /users/me`, Resend `GET /domains`; then `writeFileSync` + `chmod 600` on `apps/web/.provision.env` |
 | preflight | `wrangler whoami`, Neon `GET /users/me`, Resend `GET /domains`, `gh auth status`, `git remote get-url origin` |
 | email create | Resend `GET/POST /domains`, `GET /domains/{id}`; Cloudflare `GET /zones?name=`, `GET/POST/PUT /zones/{zone}/dns_records`; `patch-toml` (`EMAIL_FROM`) |
 | email verify | Resend `POST /domains/{id}/verify`, `GET /domains/{id}` (poll ≤ 10 min), `POST /api-keys` (`sending_access`, `domain_id`); `wrangler secret put RESEND_API_KEY` (stdin) |
@@ -85,3 +101,6 @@ is the topology reference (two tomls, account-scoped names, the release dance, r
   up and the key is set, not that a message was delivered. Send yourself a magic link to confirm.
 - `apps/web/.provision.json` (git-ignored) caches ids and answers only; the writer refuses any
   secret-shaped value. Delete it to start the questions over.
+- **`pnpm provision tokens` stores a token it could not verify** after three attempts (with a
+  warning) rather than losing it to a vendor outage — `preflight` is the real check. A token that
+  exists only in the environment is kept on Enter and not copied into the file.

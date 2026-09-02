@@ -221,7 +221,7 @@ None of these block local development. Each states what happens when it is absen
    `App <noreply@mail.example.com>`
 
 Scripted (Part 3): with a full-access `RESEND_API_KEY`, `CLOUDFLARE_API_TOKEN` and
-`CLOUDFLARE_ACCOUNT_ID` exported, `pnpm provision email create --domain mail.example.com` creates the
+`CLOUDFLARE_ACCOUNT_ID` in `apps/web/.provision.env` (or exported), `pnpm provision email create --domain mail.example.com` creates the
 Resend domain, writes its DNS records into the Cloudflare zone and sets `EMAIL_FROM` in both tomls;
 `pnpm provision email verify <env>` polls verification and mints a per-environment sending key into
 the Worker's `RESEND_API_KEY`; `email status` shows which records are present.
@@ -360,9 +360,13 @@ deployed; the CLI is built by CI but not published (publishing it is an app deci
 **Recommended: `/provision`** in Claude Code, or `pnpm provision all` by hand
 (`apps/web/scripts/provision.ts`; `pnpm provision --help` lists every phase and flag). It is REST
 over `fetch` plus `wrangler` and `gh` — no vendor CLIs — idempotent (find-or-create), and every
-phase ends in one `Verify:` line. Export the four tokens **before** launching Claude (a tool call
-cannot persist an `export`; never paste a token into the chat) — or keep them in a `direnv`
-`.envrc` outside the repository:
+phase ends in one `Verify:` line. The four tokens go in `apps/web/.provision.env` (git-ignored,
+mode 0600): run **`pnpm provision tokens`** in your own terminal — it shows where to mint each one,
+prompts with hidden input, verifies each against its vendor and writes the file — or copy
+`apps/web/.provision.env.example` and fill it in. An exported variable of the same name overrides
+the file (that is how CI runs it); never paste a token into a chat, and never put these in
+`.dev.vars` (`wrangler dev` would load them into the Worker, and its `RESEND_API_KEY` is the app's
+sending key, not this full-access one):
 
 | Variable | Mint at | Scope |
 |---|---|---|
@@ -374,13 +378,15 @@ cannot persist an `export`; never paste a token into the chat) — or keep them 
 Then `gh auth login` and `pnpm web exec wrangler login` in your own terminal (browser steps), and:
 
 ```bash
+pnpm provision tokens [--skip-email]   # once, in your terminal: hidden prompts → apps/web/.provision.env (0600)
 pnpm provision preflight --domain mail.example.com --staging-host workers.dev --production-host app.example.com --admin-email you@example.com
 pnpm provision all [--deploy staging|both] [--skip-email] [--rotate]   # 10–20 minutes; stops at the first failed Verify
 ```
 
 | Phase | Creates / does | Verify line |
 |---|---|---|
-| `preflight` | checks tools, tokens and accounts; caches the four answers in `apps/web/.provision.json` (git-ignored, non-secret) | `preflight ok — app=… account=… neon=… resend=…` |
+| `tokens` | (a terminal, not an agent) prompts for the four tokens with hidden input, verifies each, writes `apps/web/.provision.env` (0600) | `tokens ok — set: CLOUDFLARE_API_TOKEN, … → apps/web/.provision.env (0600)` |
+| `preflight` | checks tools, tokens (environment, then the file) and accounts; caches the four answers in `apps/web/.provision.json` (git-ignored, non-secret) | `preflight ok — app=… account=… neon=… resend=…` |
 | `email create` | Resend domain, its DNS records in the Cloudflare zone, `EMAIL_FROM` in both tomls | `email create ok — domain=… zone=… records=… EMAIL_FROM="…"` |
 | `neon` | Neon project (pg 17) + `staging` branch from the default branch, direct hosts, a password per branch | `neon ok — production=<host> staging=<host> (SELECT 1 on both)` |
 | `cloudflare <env>` | `cf-provision.sh <env> --apply`: Hyperdrive, KV, Queue, R2; ids patched into the toml | `cloudflare <env> ok — <toml> patched; REQUIRE_PROVISIONED=1 parity test passed for both tomls` (once both are done) |
@@ -388,7 +394,7 @@ pnpm provision all [--deploy staging|both] [--skip-email] [--rotate]   # 10–20
 | `github <env>` | GitHub Environment + `DATABASE_URL`, `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` secrets (stdin) | `github <env> ok — environment <env> on <repo> has …` |
 | `urls` | `APP_URL` + `routes` (custom host) or the `workers.dev` host in both tomls; parity test | `urls ok — staging=… production=…; parity test passed` |
 | `deploy <env>` | `pnpm deploy[:staging]`, then `/api/health` and `/api/ready` | `deploy <env> ok — <url>/api/health ok (version …), /api/ready ok, deployments listed` |
-| `secrets <env>` | `OAUTH_ENCRYPTION_KEY` (generated) + every optional secret exported in the shell, over stdin | `secrets <env> ok — wrangler secret list shows n secret(s): …` |
+| `secrets <env>` | `OAUTH_ENCRYPTION_KEY` (generated) + every optional secret exported or in `apps/web/.provision.env`, over stdin | `secrets <env> ok — wrangler secret list shows n secret(s): …` |
 | `email verify <env>` | Resend verification (polls ≤ 10 min), a per-environment sending key into `RESEND_API_KEY` | `email verify <env> ok — domain=… verified, RESEND_API_KEY set, …/auth/methods reports magic link` |
 | `all` | every phase in order (`--deploy staging` by default), then a close-out checklist | `all ok — n phases passed; deployed …` |
 

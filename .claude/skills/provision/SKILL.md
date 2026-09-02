@@ -17,27 +17,28 @@ app (the script reads the app name from `apps/web/wrangler.toml`, never a litera
 
 ## Step 0 — accounts and tokens (the user does this, not you)
 
-Three accounts, four environment variables. **Never ask the user to paste a token into the chat and
-never echo one.** The variables must be exported in the shell **before `claude` was launched** —
-your Bash tool cannot persist an `export` between calls. If they are missing, tell the user to:
+Three accounts, four tokens. **Tokens are never pasted into this chat and never echoed.** Ask the
+user to run **`! pnpm provision tokens`** in their own terminal (the `!` prefix runs it there; it
+shows where to mint each token with its scopes, prompts with hidden input, verifies each token
+against its vendor and writes `apps/web/.provision.env`, git-ignored, mode 0600) — or to copy
+`apps/web/.provision.env.example` to `apps/web/.provision.env` and fill it in by hand. Environment
+variables still override the file (CI exports them). Your Bash has no TTY, so `tokens` refuses to
+run from here (exit 2) — that is deliberate. If they are missing, tell the user to:
 
-1. Create the tokens (scope lists in `reference.md`):
+1. Create the tokens (scope lists in `reference.md`; `pnpm provision tokens` prints the same):
    - Cloudflare: https://dash.cloudflare.com/profile/api-tokens → `CLOUDFLARE_API_TOKEN`; the
      account id (Workers & Pages overview, right-hand column) → `CLOUDFLARE_ACCOUNT_ID`.
      The account needs a zone (domain) for email and custom hosts.
    - Neon: https://console.neon.tech/app/settings/api-keys → `NEON_API_KEY`.
-   - Resend: https://resend.com/api-keys (Full access) → `RESEND_API_KEY` — or use `--skip-email`.
-   - Optional, same mechanism: `GOOGLE_CLIENT_ID/SECRET`, `MICROSOFT_CLIENT_ID/SECRET`,
-     `ANTHROPIC_API_KEY`, `EMBEDDINGS_API_KEY`, `LANGFUSE_PUBLIC_KEY/SECRET_KEY`.
-2. Export them, then start Claude in the same shell — a one-off:
-   ```
-   export CLOUDFLARE_API_TOKEN=… CLOUDFLARE_ACCOUNT_ID=… NEON_API_KEY=… RESEND_API_KEY=…
-   claude
-   ```
-   or keep them in a `direnv` `.envrc` **outside the repository**, or a password-manager shell plugin.
+   - Resend: https://resend.com/api-keys (Full access) → `RESEND_API_KEY` — or use `--skip-email`
+     (`pnpm provision tokens --skip-email` skips that prompt).
+   - Optional, same file (the `secrets` phase copies them to the Worker): `GOOGLE_CLIENT_ID/SECRET`,
+     `MICROSOFT_CLIENT_ID/SECRET`, `ANTHROPIC_API_KEY`, `EMBEDDINGS_API_KEY`,
+     `LANGFUSE_PUBLIC_KEY/SECRET_KEY`.
+2. `! pnpm provision tokens` in their terminal (or fill the file). A CI job exports the variables
+   instead; an exported variable always wins over the file.
 3. Log in to the two CLIs themselves (these open a browser; you cannot do it for them):
-   type `! gh auth login` (the exclamation mark runs it in their own shell) and, if `wrangler whoami`
-   is not already happy, `! pnpm web exec wrangler login`.
+   type `! gh auth login` and, if `wrangler whoami` is not already happy, `! pnpm web exec wrangler login`.
 
 Then check everything at once:
 
@@ -45,8 +46,9 @@ Then check everything at once:
 pnpm provision preflight --domain <sending domain> --staging-host <host|workers.dev> --production-host <host|workers.dev> --admin-email <email>
 ```
 
-Exit code 2 = something is missing; the output names each missing variable with the URL to mint
-it. Fix, restart `claude` if a variable changed, re-run. Success reads
+Exit code 2 = something is missing; the output names each missing token with the URL to mint it
+and says to run `pnpm provision tokens`. Fix (no restart of `claude` is needed when the file
+changed — it is read on every run), re-run. Success reads
 `Verify: preflight ok — app=… account=… neon=… resend=…`.
 
 ## Step 1 — collect the four answers, then run everything
@@ -80,6 +82,7 @@ re-running `all` afterwards is safe.
 
 | Phase | It did | If it fails |
 |---|---|---|
+| `tokens` | (user's terminal only) prompts, verifies and writes `apps/web/.provision.env` | "needs a terminal" → the user runs it with the `!` prefix, not you |
 | `preflight` | tokens, tools, accounts, answers | missing token → step 0; `gh` not logged in → the user runs `gh auth login` themselves |
 | `email create` | Resend domain + DNS records in your Cloudflare zone, `EMAIL_FROM` in both tomls | "no Cloudflare zone" → the apex domain must be in this Cloudflare account (or `--skip-email`) |
 | `neon` | project + `staging` branch, `SELECT 1` on both | region name wrong → `--region`; 412 password storage → it resets the password itself |
@@ -88,7 +91,7 @@ re-running `all` afterwards is safe.
 | `github <env>` | GitHub Environment + `DATABASE_URL`, `CLOUDFLARE_*` secrets | `gh` needs `repo` scope; the remote must be GitHub |
 | `urls` | `APP_URL` + `routes` (custom host) or `workers.dev` in both tomls; parity test | "no workers.dev subdomain" → pick one in the Cloudflare dashboard once |
 | `deploy <env>` | `pnpm deploy[:staging]`, then `/api/health` and `/api/ready` | `/api/ready` 503 → Hyperdrive cannot reach Neon: wrong host / SSL; re-run `cloudflare <env> --force` after checking |
-| `secrets <env>` | `OAUTH_ENCRYPTION_KEY` (generated) + every optional secret exported in the shell | nothing to fix; unset ones are listed as skipped |
+| `secrets <env>` | `OAUTH_ENCRYPTION_KEY` (generated) + every optional secret in the environment or `apps/web/.provision.env` | nothing to fix; unset ones are listed as skipped |
 | `email verify <env>` | Resend verification (polls ≤ 10 min), mints a sending key into `RESEND_API_KEY` | "DNS still propagating" → wait and re-run `pnpm provision email verify <env>` later |
 
 `pnpm provision email status` shows each DNS record's presence when verification stalls.
@@ -107,6 +110,7 @@ Production, when not deployed by `--deploy both`, ships through the release danc
 
 - Never print, paste or store a token, key or connection string; the script redacts its own
   output and keeps secrets in memory or in child-process stdin/env only. Do not work around that.
+  You never read, `cat` or edit `apps/web/.provision.env` — the script reads it.
 - Do not edit `.dev.vars`, and do not hand-edit the tomls while a phase runs.
 - The user's local `pnpm dev` stack is untouched by every phase; no phase needs it running.
 - `gh auth login`, `wrangler login` and any browser step are the user's own commands (they type them

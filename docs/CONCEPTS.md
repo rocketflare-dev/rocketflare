@@ -817,7 +817,9 @@ vendor CLIs: Neon project + `staging` branch with a password per branch, Hyperdr
 R2 through `cf-provision.sh --apply`, string-level toml patching, migrations per branch, GitHub
 Environments + secrets, first deploy with `/api/health` + `/api/ready`, Worker secrets over stdin,
 Resend domain + Cloudflare DNS records + verification; `all` runs every phase, idempotent, one
-`Verify:` line each) and the `/provision` skill that drives it.**
+`Verify:` line each; the vendor tokens come from the environment first, then the git-ignored
+`apps/web/.provision.env` that `pnpm provision tokens` writes from hidden, vendor-verified prompts —
+never `.dev.vars`) and the `/provision` skill that drives it.**
 
 Two standalone tomls (D6) in `apps/web` — `wrangler.toml` production, `wrangler.staging.toml` —
 kept identical in everything code can observe by `apps/web/tests/config/wrangler-parity.test.ts`,
@@ -843,7 +845,10 @@ record at the same name is left alone and only reported; the Resend region is pe
 endpoint/role pickers, DNS-record mapping, redaction, toml patching) are unit-tested in the `config`
 project, but the HTTP calls themselves have not yet been run end to end against live accounts;
 provisioning only staging cannot pass `REQUIRE_PROVISIONED=1` — the parity test checks BOTH tomls,
-so it runs provisioned only once `cloudflare production` has patched the second file.
+so it runs provisioned only once `cloudflare production` has patched the second file; the `tokens`
+prompt path (hidden readline over a muted output, the per-vendor checks, the 0600 write) needs a TTY
+and is not exercised by the suite — only its pure helpers (`provision/env-file.ts`: parse, upsert,
+mask, resolution order, the redact registry) are.
 
 ## 11. CLI
 

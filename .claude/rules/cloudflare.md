@@ -208,6 +208,8 @@ different existing id refused unless `--force`) is the one writer of ids, `APP_U
 and the `routes` line — `cf-provision.sh --apply` calls it; nobody hand-types an id. (The only other
 programmatic toml writer is `toggleAiBlock` above, same byte-preserving rule.) Worker secrets go in
 over stdin (`wrangler secret put NAME` reads stdin when it is not a TTY — never `--body`, never
-`secret bulk`); tokens live in the launching shell's environment only; every printed line passes the
+`secret bulk`); the vendor tokens are read from the environment first, then `apps/web/.provision.env`
+(git-ignored, 0600, written by `pnpm provision tokens` — TTY only, hidden input, verified per vendor —
+never `.dev.vars`, which `wrangler dev` loads into the Worker); every printed line passes the
 ONE `redact()` in `scripts/provision/redact.ts` (connection strings, `re_*`, `napi_*`, bearer tokens,
 40+ hex — the 32-hex resource ids stay readable on purpose).

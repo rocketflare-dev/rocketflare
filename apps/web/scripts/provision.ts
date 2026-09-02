@@ -4,6 +4,8 @@
  * (.claude/skills/provision/SKILL.md); the manual equivalent is SETUP.md Part 3.
  *
  * Phases (each idempotent find-or-create, each ending in ONE `Verify:` line):
+ *   tokens [--skip-email]           TTY only: prompt (hidden) for the four vendor tokens, verify each
+ *                                   against its vendor, write apps/web/.provision.env (0600)
  *   preflight                       tokens, tools, accounts, the four answers (cached)
  *   email create|status|verify [env] Resend domain → DNS records in the Cloudflare zone → EMAIL_FROM;
  *                                   verify + mint the per-env sending key into RESEND_API_KEY
@@ -16,11 +18,14 @@
  *   secrets <env>                   OAUTH_ENCRYPTION_KEY (generated) + every optional secret in env
  *   all [--deploy staging|both] [--skip-email] [--rotate]   0 → 9 in order, stops at the first failure
  *
- * Tokens come from `process.env` ONLY (CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID, NEON_API_KEY,
- * RESEND_API_KEY; optional BOOTSTRAP_ADMIN_EMAILS, GOOGLE_*, MICROSOFT_*, ANTHROPIC_API_KEY,
- * EMBEDDINGS_API_KEY, LANGFUSE_*). Nothing secret is written to disk: `.provision.json` caches
- * ids and answers, `.dev.vars` is never touched, every printed line passes `redact()`, connection
- * strings reach child processes through their environment or stdin only. The one exception is
+ * Tokens (CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID, NEON_API_KEY, RESEND_API_KEY; optional
+ * BOOTSTRAP_ADMIN_EMAILS, GOOGLE_*, MICROSOFT_*, ANTHROPIC_API_KEY, EMBEDDINGS_API_KEY, LANGFUSE_*)
+ * come from `process.env` first (CI), then the git-ignored `apps/web/.provision.env` (mode 0600,
+ * written by `pnpm provision tokens` or copied from `.provision.env.example`) — never `.dev.vars`,
+ * which `wrangler dev` loads into the Worker. Nothing else secret is written to disk:
+ * `.provision.json` caches ids and answers, every printed line passes `redact()` (which also
+ * masks the exact token values), connection strings reach child processes through their
+ * environment or stdin only. The one exception is
  * inherited from cf-provision.sh: the Neon URL is briefly an argument to
  * `wrangler hyperdrive create --connection-string=…` (a process-local argv, redacted in output).
  *
@@ -48,8 +53,10 @@ import {
   requireToken,
   run,
   sleep,
+  TOKEN_FILE_LABEL,
   TOKEN_HELP,
   token,
+  tokenSource,
   tomlBasename,
   tomlFor,
   toUpperName,
@@ -71,6 +78,7 @@ import { patchTomlFile, readTomlString, tomlPlaceholders } from './provision/pat
 import { redact } from './provision/redact'
 import { emailFromFor, ResendClient, resendRecordsToDns, zoneCandidates } from './provision/resend'
 import { generateHexKey, listWorkerSecrets, putWorkerSecret } from './provision/secrets'
+import { tokensPhase } from './provision/tokens'
 
 // ---- arguments ----------------------------------------------------------------------------
 
@@ -92,6 +100,7 @@ interface Flags {
 const USAGE = `usage: pnpm provision <phase> [env] [flags]
 
 phases
+  tokens                             prompt for the four vendor tokens (hidden input, verified) → apps/web/.provision.env
   preflight                          check tools, tokens and accounts; record the answers
   email create | status | verify [env]   Resend domain + DNS records; verify and mint the sending key
   neon                               Neon project + staging branch (direct hosts, SELECT 1)
@@ -100,12 +109,12 @@ phases
   github <staging|production>        GitHub Environment + DATABASE_URL / CLOUDFLARE_* secrets
   urls                               APP_URL + routes (custom host) or workers.dev in both tomls
   deploy <staging|production>        pnpm deploy[:staging], then /api/health and /api/ready
-  secrets <staging|production>       OAUTH_ENCRYPTION_KEY + every optional secret present in env
+  secrets <staging|production>       OAUTH_ENCRYPTION_KEY + every optional secret in env or .provision.env
   all                                every phase in order; stops at the first failed Verify
 
 flags
   --deploy staging|both              which environments \`all\` deploys (default staging)
-  --skip-email                       no Resend: skip email create/verify (magic links are logged)
+  --skip-email                       no Resend: skip email create/verify (magic links are logged); tokens skips the Resend prompt
   --rotate                           regenerate OAUTH_ENCRYPTION_KEY / Neon passwords / RESEND key
   --region <neon region>             e.g. aws-us-east-1 (default)
   --domain <sending domain>          e.g. mail.example.com
@@ -117,8 +126,10 @@ flags
   --debug                            print sanitised vendor payloads to stderr
   --help
 
-tokens (environment only, never pasted into a chat): CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID,
-NEON_API_KEY, RESEND_API_KEY. Optional Worker secrets copied by \`secrets\`: ${OPTIONAL_WORKER_SECRETS.join(', ')}.
+tokens: CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID, NEON_API_KEY, RESEND_API_KEY — an exported variable
+wins (CI), else apps/web/.provision.env (git-ignored, 0600; \`pnpm provision tokens\` writes it, or copy
+.provision.env.example). Never pasted into a chat, never printed. Optional Worker secrets copied by
+\`secrets\` from the same two places: ${OPTIONAL_WORKER_SECRETS.join(', ')}.
 Answers and ids are cached in apps/web/.provision.json (git-ignored, non-secret).`
 
 function parseArgs(argv: string[]): { positional: string[]; flags: Flags } {
@@ -279,6 +290,28 @@ async function collectAnswers(flags: Flags): Promise<Answers> {
   return { region, domain, hosts, adminEmails, emailRegion }
 }
 
+// ---- tokens -------------------------------------------------------------------------------
+
+/**
+ * The four vendor tokens, from the environment or `apps/web/.provision.env`. A missing one is an
+ * exit 2 that says how to get it — `pnpm provision tokens` first (it needs the user's own
+ * terminal), the example file, or an export — so `all` never tells the user to "re-run preflight".
+ */
+function requireTokens(flags: Flags, phase: string): void {
+  const required = REQUIRED_TOKENS.filter(t => !(flags.skipEmail && t === 'RESEND_API_KEY'))
+  const missing = required.filter(t => !token(t))
+  if (!missing.length) return
+  console.error(
+    `\n${phase}: ${missing.length} token(s) missing. Run \`pnpm provision tokens\` in your own terminal (it prompts with hidden input and writes ${TOKEN_FILE_LABEL}), or copy apps/web/.provision.env.example to ${TOKEN_FILE_LABEL} and fill it in, or export the variables (CI):`
+  )
+  for (const m of missing)
+    console.error(`  ${m}\n    mint: ${TOKEN_HELP[m].url}\n    scope: ${TOKEN_HELP[m].scopes}`)
+  throw new ProvisionError(
+    `${phase}: ${missing.join(', ')} missing — run \`pnpm provision tokens\` first`,
+    2
+  )
+}
+
 // ---- 0. preflight -------------------------------------------------------------------------
 
 async function preflight(flags: Flags): Promise<void> {
@@ -305,16 +338,12 @@ async function preflight(flags: Flags): Promise<void> {
     )
   log('gh: authenticated')
 
-  const required = REQUIRED_TOKENS.filter(t => !(flags.skipEmail && t === 'RESEND_API_KEY'))
-  const missing = required.filter(t => !token(t))
-  if (missing.length) {
-    console.error(
-      '\nmissing environment variables (export them in the shell BEFORE launching claude / this script):'
-    )
-    for (const m of missing)
-      console.error(`  ${m}\n    mint: ${TOKEN_HELP[m].url}\n    scope: ${TOKEN_HELP[m].scopes}`)
-    throw new ProvisionError(`preflight: ${missing.length} token(s) missing`, 2)
-  }
+  requireTokens(flags, 'preflight')
+  log(
+    `tokens: ${REQUIRED_TOKENS.filter(t => tokenSource(t))
+      .map(t => `${t} (${tokenSource(t)?.source})`)
+      .join(', ')}`
+  )
 
   const who = await wrangler(['whoami'], { echo: false })
   const accountId = token('CLOUDFLARE_ACCOUNT_ID') as string
@@ -920,6 +949,7 @@ ${deployed.length === 1 ? `6. Production is provisioned and migrated but NOT dep
 }
 
 async function allPhase(flags: Flags): Promise<void> {
+  requireTokens(flags, 'all')
   const deployed: EnvName[] = flags.deploy === 'both' ? ['staging', 'production'] : ['staging']
   const steps: Array<[string, () => Promise<void>]> = [
     ['preflight', () => preflight(flags)],
@@ -977,6 +1007,8 @@ async function main(argv: string[]): Promise<void> {
     return
   }
   switch (phase) {
+    case 'tokens':
+      return tokensPhase(flags)
     case 'preflight':
       return preflight(flags)
     case 'email': {

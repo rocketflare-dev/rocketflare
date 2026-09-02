@@ -64,7 +64,10 @@ leave a stale document sitting beside a current one.
 
 - Secrets exist in `apps/web/.dev.vars` (git-ignored) locally and `wrangler secret put` in deployed envs.
   `[vars]` and `apps/web/.env.test` hold non-secrets and dummy values only. The CLI keeps its API key
-  in `~/.rocketflare/config.json` (0600) — never in the repo, never printed in full
+  in `~/.rocketflare/config.json` (0600) — never in the repo, never printed in full. The provisioning
+  tokens (Cloudflare, Neon, Resend full-access) live in `apps/web/.provision.env` (git-ignored, 0600,
+  written by `pnpm provision tokens`; an exported variable overrides it) — never in `.dev.vars`, never
+  printed: `redact()` masks the exact values
 - **`.dev.vars` comments are not a safe place for alternate credentials.** A commented-out
   connection string is still a credential on disk read by every tool that opens the file. Keep
   other environments' strings in your password manager, not in the file

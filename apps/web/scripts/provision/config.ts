@@ -1,19 +1,37 @@
 /**
  * Shared plumbing for `scripts/provision.ts`: paths, the git-ignored answer cache
- * (`apps/web/.provision.json` — NON-secret ids and answers only), token discovery from
- * `process.env`, the redacting logger and a child-process runner whose output is redacted before
- * it is echoed. Nothing here reads `.dev.vars`.
+ * (`apps/web/.provision.json` — NON-secret ids and answers only), token discovery
+ * (`process.env` first, then the git-ignored `apps/web/.provision.env`), the redacting logger and
+ * a child-process runner whose output is redacted before it is echoed. Nothing here reads
+ * `.dev.vars` — that file is loaded into the Worker by `wrangler dev`, so account-level tokens
+ * must never live there.
  */
 import { spawn, spawnSync } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { redact } from './redact'
+import {
+  missingTokenHint,
+  PROVISION_ENV_BASENAME,
+  parseEnvFile,
+  REDACT_EXEMPT_KEYS,
+  type ResolvedToken,
+  resolveToken,
+  secretValuesOf,
+} from './env-file'
+import { redact, registerSecrets } from './redact'
 
 /** apps/web — resolved from this file, never from `process.cwd()`. */
 export const WEB_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 export const ROOT_DIR = path.resolve(WEB_DIR, '../..')
 export const CACHE_FILE = path.join(WEB_DIR, '.provision.json')
+/** `PROVISION_ENV_FILE` relocates the token file (tests, a one-off run); default apps/web/.provision.env. */
+export const TOKEN_FILE =
+  process.env.PROVISION_ENV_FILE?.trim() || path.join(WEB_DIR, PROVISION_ENV_BASENAME)
+export const TOKEN_FILE_EXAMPLE = path.join(WEB_DIR, `${PROVISION_ENV_BASENAME}.example`)
+/** How the token file is shown in messages: the default path relative to the repo, else the override verbatim. */
+export const TOKEN_FILE_LABEL =
+  process.env.PROVISION_ENV_FILE?.trim() || `apps/web/${PROVISION_ENV_BASENAME}`
 
 export type EnvName = 'staging' | 'production'
 export const ENV_NAMES: EnvName[] = ['staging', 'production']
@@ -67,20 +85,53 @@ export const OPTIONAL_WORKER_SECRETS = [
   'LANGFUSE_SECRET_KEY',
 ] as const
 
+let tokenFileMemo: Record<string, string> | undefined
+
+/**
+ * The token file, parsed once per process (call `reloadTokenFile()` after writing it). A file
+ * that is readable by the group or the world gets ONE warning and is still used. Every value it
+ * yields is registered with `redact()` so it can never be echoed, whatever its shape — except the
+ * identifiers in `REDACT_EXEMPT_KEYS` (account id, admin email), which preflight prints.
+ */
+export function readTokenFile(): Record<string, string> {
+  if (tokenFileMemo) return tokenFileMemo
+  tokenFileMemo = {}
+  if (!fs.existsSync(TOKEN_FILE)) return tokenFileMemo
+  if (process.platform !== 'win32') {
+    const mode = fs.statSync(TOKEN_FILE).mode & 0o777
+    if (mode & 0o077)
+      warn(
+        `${TOKEN_FILE_LABEL} is mode ${mode.toString(8).padStart(4, '0')} — it holds tokens; run \`chmod 600 ${TOKEN_FILE_LABEL}\``
+      )
+  }
+  tokenFileMemo = parseEnvFile(fs.readFileSync(TOKEN_FILE, 'utf8'))
+  registerSecrets(secretValuesOf(tokenFileMemo))
+  return tokenFileMemo
+}
+
+export function reloadTokenFile(): void {
+  tokenFileMemo = undefined
+}
+
+/** Where a token comes from: the process environment (CI) beats the file; empty counts as unset. */
+export function tokenSource(name: string): ResolvedToken | undefined {
+  const resolved = resolveToken(name, process.env, readTokenFile())
+  if (resolved && !REDACT_EXEMPT_KEYS.has(name)) registerSecrets([resolved.value])
+  return resolved
+}
+
 export function token(name: string): string | undefined {
-  const v = process.env[name]?.trim()
-  return v ? v : undefined
+  return tokenSource(name)?.value
+}
+
+/** The standard "missing token" sentence: `pnpm provision tokens`, the file, or an export. */
+export function tokenHint(name: string): string {
+  return missingTokenHint(name, TOKEN_HELP[name])
 }
 
 export function requireToken(name: string): string {
   const v = token(name)
-  if (!v) {
-    const help = TOKEN_HELP[name]
-    throw new ProvisionError(
-      `${name} is not set in the environment${help ? ` — mint one at ${help.url} (${help.scopes})` : ''}`,
-      2
-    )
-  }
+  if (!v) throw new ProvisionError(tokenHint(name), 2)
   return v
 }
 
