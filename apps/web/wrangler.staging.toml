@@ -105,7 +105,8 @@ bucket_name = "rocketflare-files-staging"
 [ai]
 binding = "AI"
 # Workers AI has no local emulation: wrangler dev calls Cloudflare even in dev (needs `wrangler login`).
-# Comment this block out to run fully offline — embeddings then fall back to EMBEDDINGS_API_KEY or "none".
+# Comment this block out to run fully offline (toggle with `pnpm bootstrap --offline` / `--online`) —
+# embeddings then fall back to EMBEDDINGS_API_KEY or "none".
 remote = true
 
 # Agent runs (D7): the ONE Workflow class — the agent runtime IS the example workflow. `name` is

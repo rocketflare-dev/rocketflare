@@ -34,3 +34,6 @@ coverage/
 # Agent worktrees (transient, each is its own git repo)
 .claude/worktrees/
 .claude/settings.local.json
+
+# Provisioning answer cache (ids and hostnames only — no secrets; scripts/provision.ts)
+apps/web/.provision.json

@@ -16,6 +16,8 @@
     "dev:tunnel": "pnpm --filter @rocketflare/web dev:tunnel",
     "dev:db:up": "pnpm --filter @rocketflare/web dev:db:up",
     "dev:db:down": "pnpm --filter @rocketflare/web dev:db:down",
+    "bootstrap": "node scripts/bootstrap.mjs",
+    "preflight": "node scripts/bootstrap.mjs --check",
     "test:db:up": "pnpm --filter @rocketflare/web test:db:up",
     "test:db:down": "pnpm --filter @rocketflare/web test:db:down",
     "db:generate": "pnpm --filter @rocketflare/web db:generate",

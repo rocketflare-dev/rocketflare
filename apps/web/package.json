@@ -48,7 +48,8 @@
     "seed": "dotenv -e .dev.vars -- tsx scripts/seed.ts",
     "deploy": "pnpm build:ui && wrangler deploy",
     "deploy:staging": "pnpm build:ui && wrangler deploy -c wrangler.staging.toml",
-    "provision": "bash scripts/cf-provision.sh"
+    "provision": "tsx scripts/provision.ts",
+    "provision:cloudflare": "bash scripts/cf-provision.sh"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.122.0",

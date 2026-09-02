@@ -117,6 +117,35 @@ describe('Login', () => {
     })
   })
 
+  it('?as=<seeded email> signs in through dev-login once, on mount', async () => {
+    const { fetchMock } = render('/login?as=owner%40example.test', ALL_METHODS, {
+      'POST /auth/dev-login': makeSession(),
+    })
+    await waitFor(() => expect(hardNavigate).toHaveBeenCalledWith('/'))
+    expect(requestBody(fetchMock, 'POST /auth/dev-login')).toEqual({ email: 'owner@example.test' })
+    const devLoginCalls = fetchMock.mock.calls.filter(
+      ([, init]) => (init?.method ?? 'GET').toUpperCase() === 'POST'
+    )
+    expect(devLoginCalls).toHaveLength(1)
+  })
+
+  it('?as= is ignored when dev login is off or the email is not a seeded account', async () => {
+    const { fetchMock } = render('/login?as=owner%40example.test', {
+      ...ALL_METHODS,
+      devLogin: false,
+    })
+    await screen.findByRole('button', { name: /Continue with Google/ })
+    expect(requestBody(fetchMock, 'POST /auth/dev-login')).toBeUndefined()
+    expect(hardNavigate).not.toHaveBeenCalled()
+
+    const { fetchMock: stranger } = render('/login?as=attacker%40evil.example', ALL_METHODS, {
+      'POST /auth/dev-login': makeSession(),
+    })
+    await screen.findByText('Dev quick login')
+    expect(requestBody(stranger, 'POST /auth/dev-login')).toBeUndefined()
+    expect(hardNavigate).not.toHaveBeenCalled()
+  })
+
   it('an already signed-in reader is sent to returnUrl', async () => {
     stubFetch({ '/auth/methods': ALL_METHODS })
     renderWithProviders(

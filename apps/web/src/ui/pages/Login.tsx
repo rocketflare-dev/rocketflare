@@ -3,11 +3,16 @@
  * providers (full-page redirect to `/auth/:provider`), a magic-link form (validated with the SAME
  * `magicLinkRequestSchema` the server uses), and — only when the server says `devLogin` — the
  * seeded quick-login accounts. Server-side failures arrive as `?error=<code>`.
+ *
+ * `?as=<email>` (what `pnpm bootstrap` opens) signs in through the same dev-login call once on
+ * mount. Threat model: this is login-CSRF against a dev-only route that already 404s outside
+ * `APP_ENV=development`; the page honours it ONLY when the server reports `devLogin` AND the email
+ * is one of `DEV_ACCOUNTS` — an arbitrary address in the URL does nothing.
  */
 
 import { EnvelopeIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline'
 import { type MagicLinkRequest, magicLinkRequestSchema } from '@rocketflare/shared/auth'
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Navigate, useSearchParams } from 'react-router-dom'
 import { AuthCard } from '@/ui/components/AuthCard'
 import { PROVIDER_ICONS, PROVIDER_LABELS } from '@/ui/components/icons/ProviderIcons'
@@ -49,9 +54,33 @@ export default function Login() {
   const [busy, setBusy] = useState<string | null>(null)
   const [sentTo, setSentTo] = useState<string | null>(null)
 
+  const redirectTo = returnUrl === '/' ? undefined : returnUrl
+
+  const devLogin = async (devEmail: string) => {
+    setBusy(`dev:${devEmail}`)
+    try {
+      await api.post('/auth/dev-login', { email: devEmail, redirectTo })
+      hardNavigate(returnUrl)
+    } catch {
+      setBusy(null)
+    }
+  }
+
+  // `?as=` fires once (the ref survives StrictMode's double effect) and only for an allow-listed
+  // account on a server that offers dev login — see the header comment.
+  const asEmail = searchParams.get('as')
+  const autoLoginFired = useRef(false)
+  const autoLoginEmail =
+    methods?.devLogin && DEV_ACCOUNTS.some(account => account.email === asEmail) ? asEmail : null
+  // biome-ignore lint/correctness/useExhaustiveDependencies: devLogin is recreated every render; the effect keys on the email only
+  useEffect(() => {
+    if (!autoLoginEmail || status === 'authenticated' || autoLoginFired.current) return
+    autoLoginFired.current = true
+    void devLogin(autoLoginEmail)
+  }, [autoLoginEmail, status])
+
   if (status === 'authenticated') return <Navigate to={returnUrl} replace />
 
-  const redirectTo = returnUrl === '/' ? undefined : returnUrl
   const forInvitation = returnUrl.startsWith('/invite/')
 
   const signInWith = (provider: string) => {
@@ -77,16 +106,6 @@ export default function Login() {
     } catch (error) {
       setSubmitError(error instanceof ApiError ? error.message : 'Could not send the link')
     } finally {
-      setBusy(null)
-    }
-  }
-
-  const devLogin = async (devEmail: string) => {
-    setBusy(`dev:${devEmail}`)
-    try {
-      await api.post('/auth/dev-login', { email: devEmail, redirectTo })
-      hardNavigate(returnUrl)
-    } catch {
       setBusy(null)
     }
   }

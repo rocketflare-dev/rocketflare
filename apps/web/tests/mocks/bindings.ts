@@ -8,6 +8,7 @@
  * Also `createExecutionContext()` — `waitUntil` collects promises so `waitOnExecutionContext`
  * can drain them; this is how the per-request DB close (middleware/database.ts) is awaited.
  */
+import { deterministicEmbedding } from '@/api/services/ai/deterministic-embedding'
 import type { AppBindings } from '@/api/types'
 
 // ---- KV -----------------------------------------------------------------------------------
@@ -314,9 +315,7 @@ export class RecordingAi {
     const texts = Array.isArray(text) ? text : [String(text ?? '')]
     return {
       shape: [texts.length, 1024],
-      data: texts.map((t, i) =>
-        Array.from({ length: 1024 }, (_, k) => ((String(t).length + i + k) % 97) / 97)
-      ),
+      data: texts.map(t => deterministicEmbedding(String(t))),
     }
   }
   async run(model: string, inputs: Record<string, unknown>): Promise<unknown> {

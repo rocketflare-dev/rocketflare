@@ -131,6 +131,8 @@ Components subscribe to query state, never to the socket; `WebSocketStatus` (hea
   guard as the page they open
 - OAuth is a full-page redirect to `/auth/:provider`; magic link via `POST /auth/magic-link/request`;
   `GET /auth/methods` drives which buttons render
+- `/login?as=<email>` signs in through `POST /auth/dev-login` on mount, ONLY when `methods.devLogin`
+  is true and the email is in `DEV_ACCOUNTS` (the bootstrap opens it); never widen the allow-list
 
 ## Conventions
 
