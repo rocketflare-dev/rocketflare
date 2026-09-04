@@ -730,9 +730,9 @@ calls `instance.status()` for an active row and settles it when the runtime says
 errored | terminated | complete` — **`not_found` is an answer**, not an error. Progress is
 `agent_run_events (run_id, seq)` (`step | tool.start | tool.end | text | status | error`) plus an
 `entity.changed { entity: 'agent-run', id }` nudge — DB is the truth, WS is a nudge. Members list and
-cancel their own runs; admin+ every run in the tenant. The tool loop runs inside ONE `execute` step in
-v1; one `step.do` per model turn with the transcript persisted between them (`runToolLoop` already
-returns `messages`) is the scaling path. Two examples ship, one per shape. `summarize-text` (the
+cancel their own runs; admin+ every run in the tenant. The tool loop runs inside ONE `execute` step, and
+**that is now a decision, not a gap** — one `step.do` per model turn was investigated and rejected
+(see the Known gaps below for the evidence). Two examples ship, one per shape. `summarize-text` (the
 single-call shape): precheck (≤ 20 000 chars), one terminal tool `submit_summary` through
 `callStructuredTool`, usage under `agent:summarize-text`, and with `index: true` the summary is
 stored through `ingestText`. `research-topic` (the agentic shape, D18): one question (≤ 2 000
@@ -857,8 +857,24 @@ and bills — no OCR), converted text is capped at `INGEST_TEXT_MAX_CHARS`, ther
 re-index action (`content` is kept for one), a converted document stores both the original and the
 text, and `content` is the converted markdown — the UI never shows it; no rerank (a `RerankFn` seam is the documented extension) and no
 generated `tsvector` + GIN — the lexical half computes `to_tsvector` at query time; no non-exclusive
-agents (relax the partial unique index); the tool loop is one step, not one per turn (the durable transcript that
-makes the split possible is built; the split itself is not); no budgets or
+agents (relax the partial unique index); **the tool loop is one `execute` step and stays that way** —
+one `step.do` per model turn was investigated after the durable transcript landed and rejected,
+because all three things it was supposed to buy turn out to be already delivered or one config line
+away, while the cost is a rewrite of the agent contract. Cloudflare's own limits are the reason:
+*wall-clock duration per step is **unlimited*** (the `timeout: '10 minutes'` on `execute` is the
+kit's own policy, not a platform cap, so a slow run is fixed by raising it), *CPU per step is 30 s
+by default and configurable to 300 s* via `[limits] cpu_ms` **and excludes network I/O and database
+queries**, which is nearly all an agent run does, and *max steps per instance is 10 000 on Paid*, so
+step count was never the constraint. Retrying one turn instead of the whole run is what the
+checkpoint already achieves — a retry resumes at turn N rather than replaying 1…N-1. Against that,
+the split needs `run()` to move OUTSIDE `step.do` (steps cannot nest — Cloudflare documents no
+nesting, and `step` is only handed to `run()`), and Workflows replays everything outside a step:
+*"the step logic will be preserved, but logic outside of the steps may be duplicated"*. So every
+side effect in an agent — each `agent_run_events` emit, the cancel poll, `ctx.checkpoint.load`,
+`ctx.once`, `recordUsage`, every tool handler — would have to be individually step-wrapped or the
+timeline doubles on replay, and `runToolLoop`'s `max_turns` stop reason would misfire the
+`research-topic` salvage on every non-final turn. Revisit only if an agent ever does heavy CPU
+*between* model calls; no budgets or
 quotas over `ai_usage` and no price table; prompt versioning, an evals harness, Bedrock/Azure/Gemini
 adapters, SSE `Last-Event-ID` replay for run progress and an orphan-run cron (reconcile-on-read
 replaced it) are deferred; the demo seed's chunk vectors are deterministic hash vectors

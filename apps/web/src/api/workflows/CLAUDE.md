@@ -11,6 +11,11 @@ functions in `../services/agents/runtime.ts` (tests call them with `{ db, env }`
 wires steps and opens/closes ONE DB client per step (`withStepDatabase`, awaited `close()` in
 `finally`). Step return values are small serialisable objects (ids + status), never rows.
 
+**The whole tool loop lives in the ONE `execute` step by decision, not by omission** — one `step.do`
+per model turn was investigated and rejected (`docs/CONCEPTS.md` §9 Known gaps). Steps do not nest,
+so it needs `run()` outside a step, and Workflows replays everything outside a step. Wall clock per
+step is unlimited, so a long run is a bigger `timeout`, not more steps.
+
 Rules: idempotent steps (the `agent_runs` row is the claim); cooperative cancel (poll the row between
 turns); CPU is bounded PER STEP by `[limits] cpu_ms`; no `waitUntil` — await everything, including
 nudges (`createStepRealtime().settle()`). `wrangler dev` runs instances locally; inspect deployed ones

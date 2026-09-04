@@ -87,8 +87,11 @@ fresh budget. Isolate memory is 128 MiB and not configurable — page through la
 preload them into a `Map`. In the kit the whole tool loop of an agent runs inside the ONE `execute`
 step (`step.do('execute', { retries: { limit: 2, delay: '10 seconds', backoff: 'exponential' },
 timeout: '10 minutes' }, …)`): model calls are I/O, so CPU is rarely the limit, but an agent that
-chunks or parses a lot of text in-step draws against the same 30 s. The scaling path is one `step.do`
-per model turn with the transcript persisted between turns (`runToolLoop` already returns `messages`).
+chunks or parses a lot of text in-step draws against the same 30 s — raise `cpu_ms` (300 s max) before
+reaching for structure. **Wall clock per step is unlimited**, so that `timeout: '10 minutes'` is the
+kit's own policy and a long run is fixed by raising it, not by splitting. One `step.do` per model
+turn was investigated and rejected (`docs/CONCEPTS.md` §9 Known gaps): steps do not nest, so it needs
+`run()` outside a step, and everything outside a step is replayed.
 
 ## Handler shapes
 

@@ -6,10 +6,16 @@
  *   execute → the whole tool loop INSIDE one step (`retries: 2`, `timeout: 10 minutes`); the runtime
  *             rethrows only faults a retry can fix, and the retry re-claims through the same row
  *   finish  → backstop settle + final nudge
- * v1 keeps the loop body un-step-shaped on purpose; the scaling path (documented, not built) is one
- * `step.do` per model turn with the transcript persisted between them (09 (g) 1). Each step opens
- * its OWN DB client and closes it in `finally` — Hyperdrive is the pool. CPU is bounded PER STEP by
- * `[limits] cpu_ms`. Exported from `src/worker.ts`, never from `api/index.ts`.
+ * The loop body is un-step-shaped on purpose, and that is now a settled decision rather than a gap:
+ * one `step.do` per model turn was investigated and rejected (`docs/CONCEPTS.md` §9 Known gaps has
+ * the evidence). Short version — steps do not nest, so per-turn steps need `run()` to move outside
+ * `step.do`, and Workflows replays everything outside a step, which would double the
+ * `agent_run_events` timeline unless every emit and tool call got its own step. Meanwhile wall clock
+ * per step is UNLIMITED (the 10 minutes below is our policy, raise it if a run needs longer), CPU
+ * per step excludes I/O and goes to 300 s via `[limits] cpu_ms`, and resuming a retry at turn N is
+ * what `agent_runs.checkpoint` already does.
+ * Each step opens its OWN DB client and closes it in `finally` — Hyperdrive is the pool.
+ * Exported from `src/worker.ts`, never from `api/index.ts`.
  */
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from 'cloudflare:workers'
 import { type AppConfig, loadConfig } from '../../config'
