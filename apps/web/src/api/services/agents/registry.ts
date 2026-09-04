@@ -13,7 +13,7 @@ import type { AppConfig } from '../../../config'
 import type { Database } from '../../../db/client'
 import type { Tracer } from '../../observability/tracer'
 import type { Logger } from '../../utils/core/logger'
-import type { Tool } from '../ai/kit'
+import type { Tool, ToolLoopCheckpoint } from '../ai/kit'
 import type { AiEnv, ChatClient } from '../ai/types'
 import type { JobsQueue } from '../jobs'
 import { researchTopicAgent } from './examples/research-topic'
@@ -57,6 +57,24 @@ export interface AgentContext<Input = unknown> {
    * ignore them.
    */
   tools: Tool[]
+  /**
+   * The tool loop's resume point for THIS run. Pass `load()`'s result to `runToolLoop` as `resume`
+   * and `save` as `onCheckpoint`, and a retried `execute` step continues the conversation instead of
+   * replaying every turn from the seed. `load()` returns null when there is nothing to resume — a
+   * first attempt, or a stored value that no longer parses (which starts fresh, never fails).
+   */
+  checkpoint: {
+    load(): Promise<ToolLoopCheckpoint | null>
+    save(checkpoint: ToolLoopCheckpoint): Promise<void>
+  }
+  /**
+   * Run `fn` at most once per `key` across every attempt of this run, replaying its recorded result
+   * afterwards. **Anything with a side effect the run must not repeat goes through here** — an
+   * ingest, a ledger write, an outbound call — because an `execute` retry re-enters `run()` from the
+   * top. `key` is yours and must be stable across attempts. The result is stored as jsonb: return
+   * ids and scalars, not rows. At-least-once with a recorded result, not exactly-once.
+   */
+  once<T>(key: string, fn: () => Promise<T>): Promise<T>
   /** `resolvePrompt(meta.promptKey, vars)` with `appName`/`tenantName` pre-filled. */
   prompt(vars?: Record<string, string | undefined>): Promise<string>
   /** Shortcut for a `step` event: `step('summarize', 'Summarising', 'running')`. */

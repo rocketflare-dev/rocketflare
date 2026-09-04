@@ -105,6 +105,22 @@ function collectDocuments(resultText: string, into: Map<string, string>): void {
   }
 }
 
+/**
+ * Rebuild `seen` from a resumed transcript. A resumed loop does NOT replay its earlier turns, so
+ * without this the documents found before the retry would be absent from `seen` and every citation
+ * earned in the first attempt would be dropped by `verifyCitations` as if hallucinated. The
+ * transcript already holds every tool result verbatim, so the map is derived from it — the state is
+ * a fold of the log, which is the same reason the checkpoint is worth storing at all.
+ */
+function rehydrateSeen(messages: readonly ChatMessage[], into: Map<string, string>): void {
+  for (const message of messages) {
+    if (typeof message.content === 'string') continue
+    for (const block of message.content) {
+      if (block.type === 'tool_result' && !block.isError) collectDocuments(block.content, into)
+    }
+  }
+}
+
 /** Keep only citations naming a document the tools returned; take the title from the tool, not the model. */
 function verifyCitations(
   citations: SubmitAnswer['citations'],
@@ -152,6 +168,11 @@ export const researchTopicAgent: AgentDefinition<ResearchTopicInput, ResearchTop
         usage,
       }).catch(err => ctx.logger.warn({ err }, 'research-topic: usage write failed'))
 
+    // A retried `execute` step re-enters `run()` from the top; the checkpoint is what stops it
+    // paying for every turn again. Null on a first attempt (or an unreadable stored value).
+    const resume = await ctx.checkpoint.load()
+    if (resume) rehydrateSeen(resume.messages, seen)
+
     await ctx.step('research', 'Searching the knowledge base', 'running')
     const loop = await runToolLoop(ctx.chat.client, {
       model: ctx.chat.model,
@@ -160,6 +181,10 @@ export const researchTopicAgent: AgentDefinition<ResearchTopicInput, ResearchTop
       messages,
       tools: [...ctx.tools, submitAnswerTool as Tool],
       maxTurns: Math.min(ctx.cfg.AGENT_MAX_TURNS, RESEARCH_MAX_TURNS),
+      // `maxTurns` is a budget for the RUN, not the attempt: `resume.turns` carries forward, so
+      // three attempts can never spend three times the cap.
+      ...(resume ? { resume } : {}),
+      onCheckpoint: checkpoint => ctx.checkpoint.save(checkpoint),
       // The loop takes no AbortSignal, so these two callbacks ARE the cancellation poll: once per
       // model turn, and once per tool result — a run doing slow tool work still stops promptly.
       onStep: async step => {
@@ -197,7 +222,11 @@ export const researchTopicAgent: AgentDefinition<ResearchTopicInput, ResearchTop
         }
       },
     })
-    await ledger(loop.usage)
+    // Once per run, not once per attempt: `loop.usage` includes the resumed attempts' tokens.
+    await ctx.once('loop-usage', async () => {
+      await ledger(loop.usage)
+      return { inputTokens: loop.usage.inputTokens, outputTokens: loop.usage.outputTokens }
+    })
     await ctx.step(
       'research',
       'Searching the knowledge base',

@@ -285,7 +285,8 @@ limits are an app change (`MAX_UPLOAD_BYTES` is one constant today).
   analytics hooks, the `/analytics*` routes in `App.tsx`, the nav item, `src/api/cubes`, `src/dashboards`,
   `services/{dashboard-templates.ts,fact-tables}`, `routes/{cube-api,analytics-pages}.ts`, the
   `analytics_pages` / `facts` schema files (+ a migration), the `:15` cron in both tomls, and the
-  `drizzle-cube`/`recharts`/`d3`/`react-grid-layout`/`react-is` deps — the Worker bundle drops by ≈ 1 MB gzip.
+  `drizzle-cube`/`recharts`/`d3`/`react-grid-layout`/`react-is` deps — which takes the largest single
+  contributor out of the Worker bundle (`docs/DEPLOY.md`, "Bundle size", on why no figure is quoted).
 - **Headless CLI login** (CI, agents, no browser): skip `pnpm cli login`; create a tenant API key in
   Settings → API keys (or `POST /api/keys` with a session cookie) and export `ROCKETFLARE_API_KEY` +
   `ROCKETFLARE_URL`. `pnpm cli whoami` confirms.

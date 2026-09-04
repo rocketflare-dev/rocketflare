@@ -9,8 +9,8 @@
  */
 
 import type Anthropic from '@anthropic-ai/sdk'
-import type { TokenUsage } from '@rocketflare/shared/ai/chat'
-import type { ZodType } from 'zod'
+import { type TokenUsage, tokenUsageSchema } from '@rocketflare/shared/ai/chat'
+import { type ZodType, z } from 'zod'
 import { zodToJsonSchema } from 'zod-to-json-schema'
 import { AiError } from './errors'
 import {
@@ -223,10 +223,81 @@ export interface ToolLoopStep {
   terminal: boolean
 }
 
+/**
+ * Everything a later attempt needs to carry on where this one stopped. Deliberately symmetric:
+ * what {@link RunToolLoopOptions.onCheckpoint} hands you is exactly what
+ * {@link RunToolLoopOptions.resume} takes back.
+ */
+export interface ToolLoopCheckpoint {
+  /** The transcript as of the end of a turn — the seed plus every assistant/tool turn since. */
+  messages: ChatMessage[]
+  /** Turns spent across ALL attempts, so `maxTurns` is a run budget rather than a per-attempt one. */
+  turns: number
+  /** Tokens billed across all attempts (see `runtime.ts` on why this cannot double-count). */
+  usage: TokenUsage
+}
+
+const contentBlockSchema = z.discriminatedUnion('type', [
+  z.object({ type: z.literal('text'), text: z.string() }),
+  z.object({
+    type: z.literal('tool_use'),
+    id: z.string(),
+    name: z.string(),
+    input: z.unknown(),
+  }),
+  z.object({
+    type: z.literal('tool_result'),
+    toolUseId: z.string(),
+    content: z.string(),
+    isError: z.boolean().optional(),
+  }),
+])
+
+const checkpointSchema = z.object({
+  messages: z.array(
+    z.object({
+      role: z.enum(['user', 'assistant']),
+      content: z.union([z.string(), z.array(contentBlockSchema)]),
+    })
+  ),
+  turns: z.number().int().nonnegative(),
+  usage: tokenUsageSchema,
+})
+
+/**
+ * Read a checkpoint back out of storage, or **null when it does not parse**. Degrading is the whole
+ * point: a checkpoint written by an older build, or a corrupted row, must cost ONE replayed
+ * attempt — which is exactly the behaviour before checkpoints existed — rather than failing a run
+ * or feeding a provider a malformed transcript. Never widen this to a throw.
+ *
+ * The blocks are rebuilt field by field rather than returned straight from zod because
+ * `z.unknown()` infers `input?: unknown`, which does not satisfy `ContentBlock`'s required `input`.
+ */
+export function parseToolLoopCheckpoint(value: unknown): ToolLoopCheckpoint | null {
+  const parsed = checkpointSchema.safeParse(value)
+  if (!parsed.success) return null
+  return {
+    turns: parsed.data.turns,
+    usage: parsed.data.usage,
+    messages: parsed.data.messages.map(message => ({
+      role: message.role,
+      content:
+        typeof message.content === 'string'
+          ? message.content
+          : message.content.map(
+              (block): ContentBlock =>
+                block.type === 'tool_use'
+                  ? { type: 'tool_use', id: block.id, name: block.name, input: block.input }
+                  : block
+            ),
+    })),
+  }
+}
+
 export interface RunToolLoopOptions {
   model: string
   system: SystemPrompt
-  /** Seed conversation — usually one user message. */
+  /** Seed conversation — usually one user message. Ignored when `resume` is given. */
   messages: ChatMessage[]
   /** Read tools (with handlers) PLUS the terminal tool (no handler). */
   tools: Tool[]
@@ -237,6 +308,17 @@ export interface RunToolLoopOptions {
   onStep?: (step: ToolLoopStep) => void | Promise<void>
   /** Fine-grained transcript: text blocks, each tool call, each result (after the handler). */
   onEvent?: (event: ToolLoopEvent) => void | Promise<void>
+  /**
+   * Pick up a previous attempt instead of replaying it: its `messages` REPLACE the seed and its
+   * `turns`/`usage` seed the counters, so the model is never asked to redo work it already did.
+   */
+  resume?: ToolLoopCheckpoint
+  /**
+   * Awaited at the end of each turn, after that turn's messages are appended. Persist it and a
+   * retried step resumes here. A throw propagates — a checkpoint that cannot be written is a
+   * failure the caller should see, not a silent loss of the transcript.
+   */
+  onCheckpoint?: (checkpoint: ToolLoopCheckpoint) => void | Promise<void>
   signal?: AbortSignal
 }
 
@@ -247,7 +329,7 @@ export interface ToolLoopResult {
   turns: number
   stopReason: StopReason | 'max_turns' | 'no_tool_call'
   usage: TokenUsage
-  /** The full transcript (seed + assistant/tool turns) — Phase 3b persists it between steps. */
+  /** The full transcript (seed + assistant/tool turns); also what `onCheckpoint` persists. */
   messages: ChatMessage[]
 }
 
@@ -274,6 +356,10 @@ async function runHandler(tool: Tool | undefined, name: string, input: unknown) 
  * hits `maxTurns`. Each turn: run every requested read tool (unknown/erroring → `is_error` result
  * so the model can recover), append assistant + tool_result turns, continue. The terminal tool is
  * never executed — its input is the answer.
+ *
+ * The loop is RESUMABLE: `onCheckpoint` is awaited at the end of every turn, and handing that
+ * checkpoint back as `resume` continues the same conversation with the turn and token counters
+ * intact, so a retried Workflow step costs the turns it still owes rather than all of them again.
  */
 export async function runToolLoop(
   client: ChatClient,
@@ -282,9 +368,14 @@ export async function runToolLoop(
   const maxTurns = opts.maxTurns ?? 8
   const byName = new Map(opts.tools.map(t => [t.name, t]))
   const definitions = opts.tools.map(toToolDefinition)
-  const messages: ChatMessage[] = [...opts.messages]
-  let usage = ZERO_USAGE
-  let turns = 0
+  // A resumed loop starts from the stored transcript, NOT the seed: replaying it would re-ask the
+  // model everything the previous attempt already paid for.
+  const messages: ChatMessage[] = [...(opts.resume?.messages ?? opts.messages)]
+  let usage = opts.resume?.usage ?? ZERO_USAGE
+  let turns = opts.resume?.turns ?? 0
+  const checkpoint = async () => {
+    await opts.onCheckpoint?.({ messages: [...messages], turns, usage })
+  }
 
   while (turns < maxTurns) {
     if (opts.signal?.aborted)
@@ -361,6 +452,7 @@ export async function runToolLoop(
         isError: true,
       })
       messages.push({ role: 'user', content: results })
+      await checkpoint()
       continue
     }
 
@@ -389,6 +481,7 @@ export async function runToolLoop(
       })
     }
     messages.push({ role: 'user', content: results })
+    await checkpoint()
   }
 
   return {

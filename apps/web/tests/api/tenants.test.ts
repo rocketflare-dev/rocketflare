@@ -2,6 +2,7 @@
  * Tenant lifecycle (D9, D10, D25): create (owner + selected), read/patch (admin+ name, owner-only
  * slug), delete with slug confirmation (owner), settings, `GET /api/tenants`, single-mode 404s.
  */
+import { slugify } from '@rocketflare/shared/tenants'
 import { eq } from 'drizzle-orm'
 import { describe, expect, it } from 'vitest'
 import { activityEvents, tenantSettings, tenants, tenantUsers } from '@/db/schema'
@@ -19,9 +20,17 @@ import { createTestEnv } from '../mocks/bindings'
 
 const db = setupTestDatabase()
 
+/**
+ * A test slug must be SLUG-STABLE (`slugify(slug) === slug`), not merely valid: `uniqueId()` is
+ * base64url, so it can carry `_` from a `/` alongside its own `_` separator, and naively swapping
+ * both for `-` yields `--` — which `slugify` then collapses. A test that derives a slug from such a
+ * name gets a DIFFERENT root, so it is free and never de-duplicated. That was a 1-in-60 flake.
+ * Running the value through the real `slugify` is what makes it stable by construction.
+ */
+const testSlug = (prefix: string) => slugify(`${prefix}-${uniqueId()}`)
+
 async function actor(role: 'owner' | 'admin' | 'member') {
-  // Valid slugs only (the factory's default carries an underscore, which slugSchema rejects).
-  const slug = `t-${uniqueId().toLowerCase().replace(/_/g, '-')}`
+  const slug = testSlug('t')
   const { user, tenant } = await createTestTenantWithUser(db, role, {}, { slug })
   return {
     user,
@@ -129,7 +138,7 @@ describe('GET/PATCH/DELETE /api/tenant', () => {
     const slug = await request(
       '/api/tenant',
       { method: 'PATCH', headers: a.cookie },
-      { json: { slug: `s-${uniqueId().toLowerCase().replace(/_/g, '-')}` } }
+      { json: { slug: testSlug('s') } }
     )
     expect(slug.status).toBe(403)
     const m = await actor('member')
@@ -143,7 +152,7 @@ describe('GET/PATCH/DELETE /api/tenant', () => {
       ).status
     ).toBe(403)
     const o = await actor('owner')
-    const newSlug = `s-${uniqueId().toLowerCase().replace(/_/g, '-')}`
+    const newSlug = testSlug('s')
     const ok = await request(
       '/api/tenant',
       { method: 'PATCH', headers: o.cookie },

@@ -1,17 +1,19 @@
 /**
  * `services/ai/kit.ts` (D17), no database: cache breakpoints, `callStructuredTool` parse + one
- * retry, `runToolLoop` dispatch / terminal tool / turn cap / abort, `runStreamingChat` deltas and
- * tool rounds — all driven by `FakeChatClient`.
+ * retry, `runToolLoop` dispatch / terminal tool / turn cap / abort / checkpoint-and-resume,
+ * `runStreamingChat` deltas and tool rounds — all driven by `FakeChatClient`.
  */
 import { describe, expect, it } from 'vitest'
 import { z } from 'zod'
 import {
   cachedSystem,
   callStructuredTool,
+  parseToolLoopCheckpoint,
   runStreamingChat,
   runToolLoop,
   StructuredOutputError,
   type Tool,
+  type ToolLoopCheckpoint,
   toolInputSchema,
   withRollingCacheBreakpoints,
 } from '@/api/services/ai/kit'
@@ -107,6 +109,8 @@ describe('callStructuredTool', () => {
   })
 })
 
+const ZERO_TEST_USAGE = { inputTokens: 0, outputTokens: 0 }
+
 describe('runToolLoop', () => {
   const search: Tool<{ q: string }> = {
     name: 'search',
@@ -198,6 +202,105 @@ describe('runToolLoop', () => {
       })
     ).rejects.toThrow(/cancelled/)
     expect(untouched.calls).toHaveLength(0)
+  })
+
+  it('checkpoints every turn and resumes from one without replaying the conversation', async () => {
+    const checkpoints: ToolLoopCheckpoint[] = []
+    const first = new FakeChatClient([
+      { toolUses: [{ id: 't1', name: 'search', input: { q: 'x' } }] },
+      { error: new Error('provider fell over') },
+    ])
+    await expect(
+      runToolLoop(first, {
+        model: 'm',
+        system: 's',
+        messages: [{ role: 'user', content: 'go' }],
+        tools: [search, record],
+        onCheckpoint: cp => {
+          checkpoints.push(cp)
+        },
+      })
+    ).rejects.toThrow(/fell over/)
+
+    // One completed turn, one checkpoint: the seed, the assistant turn and the tool result.
+    expect(checkpoints).toHaveLength(1)
+    const resume = checkpoints[0] as ToolLoopCheckpoint
+    expect(resume.turns).toBe(1)
+    expect(resume.usage).toEqual({ inputTokens: 10, outputTokens: 5 })
+    expect(resume.messages).toHaveLength(3)
+
+    const second = new FakeChatClient([{ toolUses: [{ name: 'record', input: { answer: '42' } }] }])
+    const result = await runToolLoop(second, {
+      model: 'm',
+      system: 's',
+      // The seed is deliberately different: `resume` must win, or the model loses its context.
+      messages: [{ role: 'user', content: 'this seed must be ignored' }],
+      tools: [search, record],
+      resume,
+    })
+
+    expect(result.terminalInput).toEqual({ answer: '42' })
+    // Turn and token counters carry forward, so `maxTurns` is a budget for the RUN.
+    expect(result.turns).toBe(2)
+    expect(result.usage).toEqual({ inputTokens: 20, outputTokens: 10 })
+    // The resumed attempt did NOT re-ask turn 1: its very first request already carries it.
+    // (`FakeChatClient` records the live array, which the loop appends to, so compare the head.)
+    expect(second.calls[0]?.messages.slice(0, resume.messages.length)).toEqual(resume.messages)
+  })
+
+  it('an exhausted turn budget stops a resumed loop without calling the provider', async () => {
+    const client = new FakeChatClient([{ toolUses: [{ name: 'record', input: { answer: 'x' } }] }])
+    const result = await runToolLoop(client, {
+      model: 'm',
+      system: 's',
+      messages: [],
+      tools: [record],
+      maxTurns: 2,
+      resume: { messages: [{ role: 'user', content: 'go' }], turns: 2, usage: ZERO_TEST_USAGE },
+    })
+    expect(result.stopReason).toBe('max_turns')
+    expect(client.calls).toHaveLength(0)
+  })
+})
+
+describe('parseToolLoopCheckpoint', () => {
+  it('round-trips a real checkpoint, block content included', () => {
+    const checkpoint: ToolLoopCheckpoint = {
+      turns: 2,
+      usage: { inputTokens: 1, outputTokens: 2 },
+      messages: [
+        { role: 'user', content: 'go' },
+        {
+          role: 'assistant',
+          content: [{ type: 'tool_use', id: 't1', name: 'search', input: { q: 'x' } }],
+        },
+        {
+          role: 'user',
+          content: [{ type: 'tool_result', toolUseId: 't1', content: 'hits', isError: false }],
+        },
+      ],
+    }
+    expect(parseToolLoopCheckpoint(JSON.parse(JSON.stringify(checkpoint)))).toEqual(checkpoint)
+  })
+
+  it('returns null for anything it cannot trust, so a bad row replays instead of failing', () => {
+    // The whole point: an older build's shape or a corrupted value costs ONE replayed attempt.
+    expect(parseToolLoopCheckpoint(null)).toBeNull()
+    expect(parseToolLoopCheckpoint({ nonsense: true })).toBeNull()
+    expect(
+      parseToolLoopCheckpoint({
+        turns: -1,
+        usage: { inputTokens: 0, outputTokens: 0 },
+        messages: [],
+      })
+    ).toBeNull()
+    expect(
+      parseToolLoopCheckpoint({
+        turns: 1,
+        usage: { inputTokens: 0, outputTokens: 0 },
+        messages: [{ role: 'system', content: 'nope' }],
+      })
+    ).toBeNull()
   })
 })
 

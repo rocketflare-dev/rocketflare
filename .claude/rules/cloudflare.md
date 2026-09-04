@@ -127,16 +127,20 @@ per model turn with the transcript persisted between turns (`runToolLoop` alread
 
 ## Bundle size (D19 caveat)
 
-`pnpm build:api` (`wrangler deploy --dry-run --outdir dist/api`) is where the Worker's size shows.
-Before Phase 4 `dist/api/worker.js` was ≈ 308 KiB gzip; with drizzle-cube it is **≈ 1265 KiB gzip
-(≈ 5.6 MB raw)**. The growth is one import: `drizzle-cube/adapters/hono` statically imports
-`dist/adapters/mcp-transport-*.js` (≈ 2.1 MB raw — the MCP SDK plus inlined chart rendering) even
-when `mcp.enabled` is false; it is not the kit pulling React or recharts into the Worker (the
-sourcemap has no `node_modules/react|recharts` entries reached from `src/api`). Still under the
-Workers script cap (3 MiB gzip on the free plan, higher on Paid), so accepted for now. Do not "fix"
-it by adding chunking or externals to the Worker build; the real fix is upstream (a lazy `import()`
-of the MCP path in the adapter) or a thin adapter of our own over `drizzle-cube/server`. When you add
-a dependency to `src/api`, compare `gzip -c dist/api/worker.js | wc -c` before and after.
+`pnpm build:api` (`wrangler deploy --dry-run --outdir dist/api`) is where the Worker's size shows;
+`gzip -c dist/api/worker.js | wc -c` is the number. **No figure is written down here or in any other
+doc, deliberately** — it moves with every dependency bump, so a quoted one is wrong almost
+immediately and reads as a budget nobody is holding. Measure it when you need it.
+
+drizzle-cube dominates the bundle, and it is one import: `drizzle-cube/adapters/hono` statically
+imports `dist/adapters/mcp-transport-*.js` (the MCP SDK plus inlined chart rendering) even when
+`mcp.enabled` is false. It is not the kit pulling React or recharts into the Worker — the sourcemap
+has no `node_modules/react|recharts` entries reached from `src/api`. It is under the Workers script
+cap (3 MiB gzip on the free plan, higher on Paid), so it is accepted for now. Do not "fix" it by
+adding chunking or externals to the Worker build; the real fix is upstream (a lazy `import()` of the
+MCP path in the adapter) or a thin adapter of our own over `drizzle-cube/server`. When you add a
+dependency to `src/api`, compare `gzip -c dist/api/worker.js | wc -c` before and after — **the delta
+is the thing to look at, not the absolute.**
 
 ## `nodejs_compat`: what is allowed
 

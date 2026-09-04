@@ -559,20 +559,24 @@ drizzle-cube's React components (`drizzle-cube/client`; the dependencies added f
 depends on it — the contract is the routes above.
 
 **Dependencies and bundle.** `drizzle-cube@0.8.3`, pinned exactly (one transitive peer warning,
-`@duckdb/node-api`, is expected). **Worker bundle: ≈ 1265 KiB gzip (≈ 5.6 MB raw), up from
-≈ 308 KiB.** The cause is `drizzle-cube/adapters/hono`, which statically imports
-`dist/adapters/mcp-transport-*.js` (≈ 2.1 MB raw: the MCP SDK plus inlined chart rendering) even
-when `mcp.enabled` is false — not the kit's imports (the sourcemap has no `node_modules/react` or
-`recharts` entries reached from our code). Under the Workers size cap (3 MiB gzip on the free plan,
-higher on Paid, which the kit needs anyway). The fix is upstream — a lazy `import()` of the MCP path
-in the adapter — or a thin adapter of our own over `drizzle-cube/server`.
+`@duckdb/node-api`, is expected). It is **by far the largest thing in the Worker bundle**, and it is
+one import: `drizzle-cube/adapters/hono` statically imports `dist/adapters/mcp-transport-*.js` (the
+MCP SDK plus inlined chart rendering) even when `mcp.enabled` is false — not the kit's own imports
+(the sourcemap has no `node_modules/react` or `recharts` entries reached from our code). It stays
+under the Workers size cap (3 MiB gzip on the free plan, higher on Paid, which the kit needs
+anyway). No byte count is quoted anywhere in these docs on purpose: it moves with every dependency
+bump, so `gzip -c apps/web/dist/api/worker.js | wc -c` after `pnpm build` is the only figure worth
+trusting. The fix is upstream — a lazy `import()` of the MCP path in the adapter — or a thin adapter
+of our own over `drizzle-cube/server`.
 
 **Known gaps / not built yet:** UI — no router-level unsaved-changes blocker (`beforeunload` + flush on leaving edit mode), heat-map charts stubbed (`@nivo/heatmap` aliased to a notice; install it and drop the alias), drizzle-cube runs its own TanStack Query context so `CubeClientProvider` gives it a dedicated `QueryClient` whose 401 handler calls `notifyUnauthorized`, and mirrors `data-theme="rocketflare-dark"` into a `dark` class while mounted; isolation is convention
 enforced by one test — no per-cube CASL gate, no second line of defence in the cube layer; the
 compiler is rebuilt per request (4 cubes — cheap; `SemanticLayerCompiler` + cube sets is the
 scaling path) and drizzle-cube's `MemoryCacheProvider` is per-isolate (a KV provider would be an
 extension); fact refresh is a sequential full rebuild — fan tenants out through `JOBS_QUEUE` past a
-few hundred; no realtime nudge for facts or pages (a dashboard refreshes on the next fetch);
+few hundred — and two rebuilds of the SAME tenant must not overlap (the later DELETE misses the
+earlier INSERT and trips the grain unique index, so that tenant is reported in `errors[]` and keeps
+the older rows): don't run `db:refresh-facts` while the cron is due; no realtime nudge for facts or pages (a dashboard refreshes on the next fetch);
 `mcp.allowedOrigins` unset; the bundle growth above; the `ANALYTICS_ENGINE` binding is deliberately
 not wired; drizzle-cube's `rlsSetup` unused; reporting/export, AI dashboard generation, benchmarks
 deferred.
@@ -694,7 +698,30 @@ row**: `UPDATE … SET running, attempt + 1 WHERE status IN (queued, running) RE
 write carries the same predicate, so a settled row is never rewritten and a retried step re-claims.
 `executeRun` resolves the client for `meta.promptKey` (the per-agent model applies), wraps it in
 `withAgentTrace` + `traceChatClient`, builds the `AgentContext` (`emit`, `checkCancelled`, `chat`,
-`prompt(vars)`, `step(...)`), runs the agent, validates `outputSchema`, `finishRun`. Errors are
+`prompt(vars)`, `step(...)`, plus `checkpoint` and `once` below), runs the agent, validates
+`outputSchema`, `finishRun`.
+
+**A retry is resumed, not replayed.** `execute` re-enters `run()` from the top, so two pieces of
+`AgentContext` make that cheap and safe. `ctx.checkpoint` is the tool loop's resume point on
+`agent_runs.checkpoint` (a `ToolLoopCheckpoint` = transcript + turns + usage): `runToolLoop` writes
+one per turn through `onCheckpoint` and continues from it through `resume`, so a retried step pays
+for the turns it still owes rather than all of them, `AGENT_MAX_TURNS` is a budget for the RUN
+rather than per attempt, and the tokens a RETRIED loop used to lose are carried
+forward instead — nothing can be billed twice, because a retry only ever follows an `AiError`
+unavailable/rate_limit or a DB outage, both of which strike before an agent ledgers anything. (A
+mid-loop *cancel* still loses its tokens: it settles the run, which clears the checkpoint.) Every terminal settle clears the column (the transcript is scratch space, not a record),
+and a stored value that no longer parses reads as "no checkpoint", so a shape change costs one
+replayed run and never a failed one. `ctx.once(key, fn)` is the durable-effect key: `fn` runs at
+most once per `(run, key)` across attempts and later attempts replay the recorded jsonb result,
+guaranteed by the unique index on `agent_run_effects (run_id, key)` — a database constraint, not a
+memory map. It is what stops `summarize-text` with `index: true` leaving two copies of its summary
+in the knowledge base, and what makes `research-topic`'s usage row appear once for the whole run.
+The contract is at-least-once WITH a recorded result, not exactly-once: an isolate that dies
+between `fn()` returning and the insert committing repeats the work. An agent that derives state
+from tool results during the loop (`research-topic`'s document→title map) must rebuild it from the
+resumed transcript, or citations earned before the retry are dropped as hallucinations.
+
+Errors are
 classified: `AgentCancelledError` → `cancelled`; `AiError` `unavailable`/`rate_limit` or a DB outage
 rethrow for a step retry while `attempt <= 2`; anything else → `failed` at once. Cancellation is
 cooperative: `POST /runs/:id/cancel` settles a queued row outright, sets `cancelRequestedAt` on a
@@ -830,7 +857,8 @@ and bills — no OCR), converted text is capped at `INGEST_TEXT_MAX_CHARS`, ther
 re-index action (`content` is kept for one), a converted document stores both the original and the
 text, and `content` is the converted markdown — the UI never shows it; no rerank (a `RerankFn` seam is the documented extension) and no
 generated `tsvector` + GIN — the lexical half computes `to_tsvector` at query time; no non-exclusive
-agents (relax the partial unique index); the tool loop is one step, not one per turn; no budgets or
+agents (relax the partial unique index); the tool loop is one step, not one per turn (the durable transcript that
+makes the split possible is built; the split itself is not); no budgets or
 quotas over `ai_usage` and no price table; prompt versioning, an evals harness, Bedrock/Azure/Gemini
 adapters, SSE `Last-Event-ID` replay for run progress and an orphan-run cron (reconcile-on-read
 replaced it) are deferred; the demo seed's chunk vectors are deterministic hash vectors

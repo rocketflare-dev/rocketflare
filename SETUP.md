@@ -202,9 +202,9 @@ pnpm lint && pnpm typecheck && pnpm test && pnpm build
 ```
 Verify: exits 0. This is the pre-commit gate for the whole workspace; `typecheck` regenerates
 `apps/web/worker-configuration.d.ts` (commit it if it changed) and `build` produces
-`apps/web/dist/{ui,api}` and `apps/cli/dist/cli.js`. Expect `dist/api/worker.js` at ≈ 1265 KiB gzip
-(≈ 5.6 MB raw) — drizzle-cube's adapter carries its MCP transport; `docs/DEPLOY.md` "Bundle size" —
-and one `@duckdb/node-api` peer warning from `pnpm install`; neither is a problem.
+`apps/web/dist/{ui,api}` and `apps/cli/dist/cli.js`. The Worker bundle is large — drizzle-cube's
+adapter carries its MCP transport, `docs/DEPLOY.md` "Bundle size" — and `pnpm install` prints one
+`@duckdb/node-api` peer warning; neither is a problem.
 
 ### 1.10 Public URL via tunnel `[ready]` (optional)
 For OAuth callbacks, emailed magic links or webhooks against your laptop:

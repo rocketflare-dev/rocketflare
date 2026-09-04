@@ -29,7 +29,7 @@ Dev: Vite on :3000 proxies `/api`, `/auth`, `/ws`, `/cubejs-api`, `/mcp` to `wra
   ships pre-built JSX **and uncompiled Tailwind classes** is an explicit `@source` line pointing at
   its dist. drizzle-cube is NOT such a dependency: its styles are precompiled and `dc:`-prefixed in
   `drizzle-cube/client/styles.css` (loaded by the lazy analytics chunk), so scanning its dist generated
-  zero of its classes and +6.5 KB gzip of stray DaisyUI components — measured, then removed. Never
+  zero of its classes and a pile of stray DaisyUI components — pure cost, measured, then removed. Never
   `@source` node_modules without measuring the output first. Safelist (`@source inline(...)`) only classes built from
   props (`alert-*`, `btn-*`), never from data or from a dependency
 - Fonts self-hosted via `@fontsource` imports in `main.tsx`
@@ -142,16 +142,18 @@ Components subscribe to query state, never to the socket; `WebSocketStatus` (hea
   before writing a modal, empty state, toast, pagination control or section panel
 - `components/ai/` (`Markdown`, `ChatBubble`) is deliberately NOT exported from the
   `components/shared` barrel that `App.tsx` imports eagerly: `react-markdown` + `remark-gfm` must ship
-  only in the lazy chat chunk (`ChatPage` ≈ 54 KiB gzip vs ≈ 114 KiB for the main bundle). Import them
-  by path from lazy pages only; render model output through `Markdown` (`skipHtml`, links `noopener`),
-  never `dangerouslySetInnerHTML`; user text renders verbatim (`whitespace-pre-wrap`). `pages/agents/**`
+  only in the lazy chat chunk, never the main bundle. Import them by path from lazy pages only;
+  render model output through `Markdown` (`skipHtml`, links `noopener`), never
+  `dangerouslySetInnerHTML`; user text renders verbatim (`whitespace-pre-wrap`). `pages/agents/**`
   imports `Markdown` too and is lazy for the same reason (Vite emits one shared `Markdown-*.js`)
 - **Analytics chunk isolation (D19)**: `drizzle-cube/client`, `recharts`, `d3`, `react-grid-layout` and
   `react-is` ship ONLY in the lazy analytics chunk — import them from `pages/analytics/**` /
   `components/analytics/**` by path, never from the `components/shared` barrel, `App.tsx`, `SideNav` or
-  a hook the shell loads eagerly; the main chunk must stay ≈ 114 KiB gzip. Check `pnpm web build:ui`
-  output when you touch an import. The server contract the pages consume is `@rocketflare/shared/analytics`
-  + `/cubejs-api/v1/*` (drizzle-cube's own client); page specifics: `apps/web/src/ui/CLAUDE.md`
+  a hook the shell loads eagerly; **the main chunk must not gain them**. When you touch an import,
+  compare `pnpm web build:ui` output before and after — the delta is the check, not any figure a doc
+  could quote — and `grep recharts dist/ui/assets/index-*.js` must stay at 0. The server contract
+  the pages consume is `@rocketflare/shared/analytics` + `/cubejs-api/v1/*` (drizzle-cube's own
+  client); page specifics: `apps/web/src/ui/CLAUDE.md`
 - **Third-party providers with their own TanStack Query** (drizzle-cube does this): the app's global
   `QueryCache.onError` never sees their failures. Wrap them (`components/analytics/CubeClientProvider.tsx`)
   with a dedicated `QueryClient` whose `onError` maps 401 → `notifyUnauthorized`, and pass cookie auth

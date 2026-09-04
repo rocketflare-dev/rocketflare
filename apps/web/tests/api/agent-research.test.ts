@@ -8,6 +8,11 @@
  * and the tool events persisted. Also the two decisions in the agent's header: a citation naming a
  * document search never returned is DROPPED, and a loop that ends in prose is salvaged by one
  * forced `submit_answer` call instead of failing.
+ *
+ * Plus the resume contract: a retryable failure mid-loop leaves a checkpoint on `agent_runs`, and
+ * the next `execute` attempt continues that conversation instead of replaying (and re-billing) it —
+ * including the documents the first attempt's searches found, which are folded back out of the
+ * stored transcript so their citations are not dropped as hallucinations.
  */
 import { researchTopicOutputSchema } from '@rocketflare/shared/ai/agents'
 import { eq } from 'drizzle-orm'
@@ -16,10 +21,11 @@ import { enqueueRun, getRun, listEvents } from '@/api/services/agents/runs'
 import { claimStep, executeRun } from '@/api/services/agents/runtime'
 import { AiError } from '@/api/services/ai/errors'
 import { ingestText } from '@/api/services/ai/ingest'
+import { parseToolLoopCheckpoint } from '@/api/services/ai/kit'
 import type { ChatClient } from '@/api/services/ai/types'
 import type { Logger } from '@/api/utils/core/logger'
 import { loadConfig } from '@/config'
-import { aiUsage } from '@/db/schema'
+import { agentRunEffects, agentRuns, aiUsage } from '@/db/schema'
 import { FakeChatClient, type FakeScript } from '../helpers/ai'
 import { createTestTenantWithUser } from '../helpers/auth'
 import { setupTestDatabase } from '../helpers/db'
@@ -215,5 +221,119 @@ describe('research-topic agent', () => {
       .filter(e => e.type === 'step')
       .map(e => e.data as { key: string; status: string; detail?: string })
     expect(steps.some(s => s.key === 'answer' && s.detail?.includes('no_tool_call'))).toBe(true)
+  })
+
+  it('resumes a retried run from its checkpoint instead of replaying the conversation', async () => {
+    const env = createTestEnv()
+    const { tenant, user, document } = await tenantWithDocument(env)
+    const logger = fakeLogger()
+
+    // Attempt 1: one real search turn, then the provider falls over with a RETRYABLE fault, which
+    // is the only way `executeRun` rethrows for a Workflow step retry.
+    const first = script([
+      {
+        toolUses: [{ name: 'search_knowledge', input: { query: 'access requests' } }],
+        usage: { inputTokens: 40, outputTokens: 10 },
+      },
+      { error: new AiError('unavailable', 'anthropic_compatible', 'provider overloaded') },
+    ])
+    const { run } = await enqueueRun(db, env, {
+      tenantId: tenant.id,
+      agentKey: 'research-topic',
+      input: { topic: 'Who reviews access requests?' },
+      userId: user.id,
+    })
+    const params = { runId: run.id, tenantId: tenant.id }
+    expect(await claimStep(db, env, logger, params)).toBe(true)
+    await expect(executeRun(db, loadConfig(env), env, logger, params)).rejects.toThrow(/overloaded/)
+    expect(first.calls).toHaveLength(2)
+
+    // The row is still active and now carries the resume point for the one completed turn.
+    const afterFailure = await db.query.agentRuns.findFirst({ where: eq(agentRuns.id, run.id) })
+    expect(afterFailure?.status).toBe('running')
+    const checkpoint = parseToolLoopCheckpoint(afterFailure?.checkpoint)
+    expect(checkpoint?.turns).toBe(1)
+    expect(checkpoint?.messages).toHaveLength(3)
+
+    // Attempt 2: the model answers straight away, citing the document the FIRST attempt found.
+    const second = script([
+      {
+        toolUses: [
+          {
+            name: 'submit_answer',
+            input: {
+              answer: 'A global admin reviews them within two working days.',
+              citations: [{ documentId: document.id, title: 'the model’s own wording' }],
+            },
+          },
+        ],
+        usage: { inputTokens: 60, outputTokens: 20 },
+      },
+    ])
+    const outcome = await executeRun(db, loadConfig(env), env, logger, params)
+    expect(outcome.status).toBe('succeeded')
+
+    // It did NOT replay turn 1: the very first request already carries the stored transcript.
+    expect(second.calls[0]?.messages.slice(0, 3)).toEqual(checkpoint?.messages)
+    const output = researchTopicOutputSchema.parse((await getRun(db, tenant.id, run.id))?.output)
+    // Turns carry forward, so `maxTurns` stays a budget for the RUN, not for each attempt.
+    expect(output.turns).toBe(2)
+    // The citation survives: `seen` was rebuilt from the resumed transcript's tool results, so a
+    // document found before the retry is not mistaken for a hallucination.
+    expect(output.citations).toEqual([{ documentId: document.id, title: 'Onboarding handbook' }])
+
+    // Ledgered ONCE for the whole run, summing both attempts — `ctx.once` is what stops the
+    // resumed attempt writing the loop's tokens a second time.
+    const usage = await db.query.aiUsage.findMany({ where: eq(aiUsage.tenantId, tenant.id) })
+    expect(usage).toHaveLength(1)
+    expect(usage[0]).toMatchObject({ inputTokens: 100, outputTokens: 30 })
+    const effects = await db.query.agentRunEffects.findMany({
+      where: eq(agentRunEffects.runId, run.id),
+    })
+    expect(effects.map(e => e.key)).toEqual(['loop-usage'])
+
+    // Settling drops the checkpoint: nothing will resume, and the transcript is not a record.
+    const settled = await db.query.agentRuns.findFirst({ where: eq(agentRuns.id, run.id) })
+    expect(settled?.checkpoint).toBeNull()
+  })
+
+  it('starts fresh when the stored checkpoint cannot be parsed, rather than failing the run', async () => {
+    const env = createTestEnv()
+    const { tenant, user, document } = await tenantWithDocument(env)
+    const logger = fakeLogger()
+    const client = script([
+      {
+        toolUses: [
+          {
+            name: 'submit_answer',
+            input: { answer: 'Fresh start.', citations: [{ documentId: document.id, title: 't' }] },
+          },
+        ],
+      },
+    ])
+    const { run } = await enqueueRun(db, env, {
+      tenantId: tenant.id,
+      agentKey: 'research-topic',
+      input: { topic: 'Anything?' },
+      userId: user.id,
+    })
+    const params = { runId: run.id, tenantId: tenant.id }
+    expect(await claimStep(db, env, logger, params)).toBe(true)
+    // A shape an older build might have written, or a corrupted value.
+    await db
+      .update(agentRuns)
+      .set({ checkpoint: { nonsense: true } })
+      .where(eq(agentRuns.id, run.id))
+
+    const outcome = await executeRun(db, loadConfig(env), env, logger, params)
+    expect(outcome.status).toBe('succeeded')
+    // Fresh start = the seed only, not a resumed transcript.
+    expect(client.calls[0]?.messages.slice(0, 1)).toEqual([
+      { role: 'user', content: 'Research this: Anything?' },
+    ])
+    // A citation still needs a document the tools returned THIS attempt; none were called, so it
+    // is dropped. The run is correct — just as expensive as before checkpoints existed.
+    const output = researchTopicOutputSchema.parse((await getRun(db, tenant.id, run.id))?.output)
+    expect(output.citations).toEqual([])
   })
 })

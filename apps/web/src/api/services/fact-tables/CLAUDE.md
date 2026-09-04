@@ -26,3 +26,19 @@ read by the `TenantActivityDaily` cube.
    `facts/index.ts`; `pnpm db:generate`.
 2. `queries/<name>.ts`: a parameterised `sql` SELECT whose column ORDER matches the schema file.
 3. One entry in `FACT_TABLES`; a cube in `api/cubes/`; seed rows in the isolation test.
+
+## Two refreshes of one tenant must not overlap
+
+`refreshFactTableForTenant` is `DELETE … WHERE tenant_id = $1` then `INSERT … SELECT` in one
+transaction, and that is **not** safe against a concurrent rebuild of the SAME tenant: under READ
+COMMITTED the later transaction's DELETE runs on a snapshot taken before the earlier INSERT
+committed, so it leaves those rows in place and its own INSERT trips the grain unique index. The
+tenant is then reported in `errors[]` and keeps the first rebuild's rows — wrong-looking, but not
+corrupt, because the rows are derived data and both writers compute the same thing.
+
+In practice the overlap is the `15 * * * *` cron meeting a manual `pnpm web db:refresh-facts`, or
+two Workers firing the cron. It is currently **unguarded**: don't run a manual refresh while the
+cron is due. Advisory locks are not an option (Hyperdrive, `.claude/rules/database.md`); the fixes
+worth considering are `INSERT … ON CONFLICT (<grain>) DO UPDATE` (needs the grain constraint in the
+registry) or moving the per-tenant rebuild onto `JOBS_QUEUE`, which is the documented scaling path
+anyway and would serialise it.

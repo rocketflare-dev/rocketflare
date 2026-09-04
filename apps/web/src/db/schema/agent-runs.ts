@@ -6,7 +6,8 @@
  * `agent_runs_active_exclusive_idx` (partial unique on `(tenant_id, agent_key)` while active) is
  * the **exclusive** guarantee: a second enqueue while one is queued/running fails at the database,
  * never in memory. `cancelRequestedAt` is the cooperative cancel flag the run polls between turns.
- * `input`/`output` are jsonb so a retry re-reads the payload from the row, not a message.
+ * `input`/`output` are jsonb so a retry re-reads the payload from the row, not a message, and
+ * `checkpoint` is where a retried step picks the tool loop back up instead of replaying it.
  */
 import type { AgentKey, AgentRunStatus } from '@rocketflare/shared/ai/agents'
 import { relations, sql } from 'drizzle-orm'
@@ -57,6 +58,14 @@ export const agentRuns = pgTable(
     finishedAt: timestamp('finished_at', { withTimezone: true }),
     /** Cooperative cancel flag: set by the route, read by the run between turns. */
     cancelRequestedAt: timestamp('cancel_requested_at', { withTimezone: true }),
+    /**
+     * Resume point for a retried `execute` step: the tool loop's transcript, turns spent and tokens
+     * billed so far (`ToolLoopCheckpoint`). Scratch space, not a record — every terminal settle
+     * clears it, and a row that fails to parse on read starts the run fresh rather than failing it.
+     * Untyped on purpose: it is internal runtime state with no `@rocketflare/shared` contract, and
+     * `db/schema` must not import from `api/services`. Validated in `services/agents/runs.ts`.
+     */
+    checkpoint: jsonb('checkpoint'),
     ...timestamps(),
   },
   table => [

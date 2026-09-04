@@ -13,6 +13,14 @@
  *   finishStep  — backstop: an ACTIVE row after execute (the step threw past its retries) is marked
  *                 failed; then one last nudge. Returns the terminal `{ runId, status }`.
  * Progress events are awaited (a Workflow step has no `waitUntil`) and never fail the run.
+ *
+ * A retry re-enters `executeRun` from the top, so two pieces of `ctx` exist to make that cheap and
+ * safe: `ctx.checkpoint` (the tool loop resumes from `agent_runs.checkpoint` rather than replaying
+ * every turn) and `ctx.once` (work with a side effect runs once per run, not once per attempt).
+ * Carrying the checkpoint's `usage` forward cannot double-bill: the only retryable faults are an
+ * `AiError` unavailable/rate_limit or a DB outage, both of which strike INSIDE the loop, before an
+ * agent ledgers anything — so those tokens were never recorded, and resuming recovers spend the
+ * kit used to lose rather than counting it twice.
  */
 import type { AgentRunStatus } from '@rocketflare/shared/ai/agents'
 import { eq } from 'drizzle-orm'
@@ -42,7 +50,10 @@ import {
   getRun,
   isCancelRequested,
   lastEventSeq,
+  loadCheckpoint,
   nudgeRun,
+  runOnce,
+  saveCheckpoint,
 } from './runs'
 import { buildAgentTools } from './tools'
 
@@ -185,6 +196,11 @@ export async function executeRun(
           checkCancelled,
           chat: { client, model: resolved.model, maxOutputTokens: resolved.maxOutputTokens },
           tools: buildAgentTools({ db, cfg, env, tenantId }),
+          checkpoint: {
+            load: () => loadCheckpoint(db, tenantId, runId),
+            save: cp => saveCheckpoint(db, tenantId, runId, cp),
+          },
+          once: (key, fn) => runOnce(db, tenantId, runId, key, fn),
           prompt: vars =>
             resolvePrompt(db, tenantId, agent.meta.promptKey as 'summarize-text', {
               appName: cfg.APP_NAME,

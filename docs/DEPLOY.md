@@ -202,16 +202,17 @@ All steps run at the repository root; the root scripts fan out with `pnpm -r` / 
  workflow_dispatch(environment) ──► either job from the dispatched ref (first deploy; emergencies)
 ```
 
-**Bundle size expectations.** `pnpm build` (`build:api` = `wrangler deploy --dry-run --outdir dist/api`)
-produces `dist/api/worker.js` at **≈ 1265 KiB gzip / ≈ 5.6 MB raw** since Phase 4 (≈ 308 KiB before).
-The growth is drizzle-cube's Hono adapter statically importing its MCP transport (≈ 2.1 MB raw: MCP
-SDK + inlined chart rendering) even with MCP disabled — not the kit shipping React to the Worker.
-Under the Workers script limit (3 MiB gzip free / higher on Paid, which Hyperdrive needs anyway). If a
-deploy is refused for size, look at new `src/api` dependencies first (`gzip -c
-apps/web/dist/api/worker.js | wc -c`); the structural fix is upstream or a thin adapter over
-`drizzle-cube/server` (`.claude/rules/cloudflare.md`). UI: main chunk ≈ 114 KiB gzip; chat ≈ 54 KiB;
-the analytics chunk (drizzle-cube client + recharts + d3) is the largest and lazy — it must never
-merge into the main chunk.
+**Bundle size.** `pnpm build` (`build:api` = `wrangler deploy --dry-run --outdir dist/api`) produces
+`dist/api/worker.js`; **`gzip -c apps/web/dist/api/worker.js | wc -c` is the size that matters, and
+no figure is quoted here on purpose** — it moves with every dependency bump, and a stale number in a
+doc reads as a budget nobody is holding. What is stable: drizzle-cube's Hono adapter statically
+imports its MCP transport (MCP SDK + inlined chart rendering) even with MCP disabled, and that
+dominates the bundle — it is not the kit shipping React to the Worker. The ceiling is the Workers
+script limit (3 MiB gzip free / higher on Paid, which Hyperdrive needs anyway). If a deploy is
+refused for size, look at new `src/api` dependencies first; the structural fix is upstream or a thin
+adapter over `drizzle-cube/server` (`.claude/rules/cloudflare.md`). UI: the analytics chunk
+(drizzle-cube client + recharts + d3) is the largest and lazy — it must never merge into the main
+chunk.
 
 **Version rule.** The git tag must equal `version` in the **root** `package.json`; the job fails
 otherwise. One tag ships `apps/web` and `apps/cli` together — the `apps/*` and `packages/*` versions

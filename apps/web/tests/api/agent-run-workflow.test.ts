@@ -12,15 +12,17 @@
  */
 import { and, eq } from 'drizzle-orm'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { enqueueRun, getRun, listEvents } from '@/api/services/agents/runs'
+import { enqueueRun, getRun, listEvents, runOnce } from '@/api/services/agents/runs'
+import { executeRun } from '@/api/services/agents/runtime'
 import { AiError } from '@/api/services/ai/errors'
 import { searchChunks } from '@/api/services/ai/retrieval'
 import type { ChatClient, ChatParams } from '@/api/services/ai/types'
+import type { Logger } from '@/api/utils/core/logger'
 import * as workflowModule from '@/api/workflows/agent-run'
 import { AgentRunWorkflow } from '@/api/workflows/agent-run'
 import { loadConfig } from '@/config'
 import * as dbClient from '@/db/client'
-import { agentRuns, aiUsage, chunks, documents } from '@/db/schema'
+import { agentRunEffects, agentRuns, aiUsage, chunks, documents } from '@/db/schema'
 import { FakeChatClient, type FakeScript } from '../helpers/ai'
 import { createTestTenantWithUser } from '../helpers/auth'
 import { setupTestDatabase } from '../helpers/db'
@@ -56,6 +58,11 @@ const TOOL_TURN = {
     },
   ],
   usage: { inputTokens: 33, outputTokens: 12 },
+}
+
+function fakeLogger() {
+  const log = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(), child: () => log }
+  return log as unknown as Logger & typeof log
 }
 
 function script(s: FakeScript) {
@@ -284,6 +291,65 @@ describe('AgentRunWorkflow', () => {
     expect(
       await searchChunks(db, cfg, env, other.tenant.id, { query: 'volcanoes erupt', limit: 5 })
     ).toEqual([])
+  })
+
+  it('a retry after the ingest does not index the summary twice (ctx.once)', async () => {
+    const env = createTestEnv()
+    script([TOOL_TURN, TOOL_TURN])
+    const { run, tenant } = await queuedRun(env, { text: 'Volcanoes erupt.', index: true })
+    const { outcome } = await drive(env, run.id, tenant.id)
+    expect(outcome.status).toBe('succeeded')
+    const documentIdOf = async () =>
+      ((await getRun(db, tenant.id, run.id))?.output as { documentId?: string } | null)?.documentId
+    const firstDocumentId = await documentIdOf()
+    expect(firstDocumentId).toMatch(/^[0-9a-f-]{36}$/)
+
+    // Put the row back into the state a step retry re-enters with when the failure landed AFTER
+    // the ingest committed: still `running`, no output. Without `ctx.once` the second attempt
+    // would call `ingestText` again and leave the tenant with two copies of the same summary.
+    await db
+      .update(agentRuns)
+      .set({ status: 'running', output: null, finishedAt: null })
+      .where(eq(agentRuns.id, run.id))
+
+    const second = await executeRun(db, loadConfig(env), env, fakeLogger(), {
+      runId: run.id,
+      tenantId: tenant.id,
+    })
+    expect(second.status).toBe('succeeded')
+
+    // Same document id replayed from the ledger, and exactly one document in the tenant.
+    expect(await documentIdOf()).toBe(firstDocumentId)
+    expect(await db.select().from(documents).where(eq(documents.tenantId, tenant.id))).toHaveLength(
+      1
+    )
+    const effects = await db.query.agentRunEffects.findMany({
+      where: eq(agentRunEffects.runId, run.id),
+    })
+    expect(effects).toHaveLength(1)
+    expect(effects[0]).toMatchObject({ key: 'index-summary', tenantId: tenant.id })
+  })
+
+  it('runOnce records a result once per key and replays it, including null', async () => {
+    const env = createTestEnv()
+    const { run, tenant } = await queuedRun(env)
+    let calls = 0
+    const work = async () => {
+      calls += 1
+      return { id: calls }
+    }
+    expect(await runOnce(db, tenant.id, run.id, 'k', work)).toEqual({ id: 1 })
+    expect(await runOnce(db, tenant.id, run.id, 'k', work)).toEqual({ id: 1 })
+    expect(calls).toBe(1)
+    // A different key is different work.
+    expect(await runOnce(db, tenant.id, run.id, 'other', work)).toEqual({ id: 2 })
+    // `null` is a recorded RESULT, not "nothing recorded" — it must not re-run the work.
+    expect(await runOnce(db, tenant.id, run.id, 'n', async () => null)).toBeNull()
+    expect(
+      await runOnce(db, tenant.id, run.id, 'n', async () => {
+        throw new Error('must not run again')
+      })
+    ).toBeNull()
   })
 
   it('withStepDatabase closes the client even when the step body throws', async () => {

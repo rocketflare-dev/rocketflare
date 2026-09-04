@@ -10,6 +10,11 @@
  *   reconcileRun — on read: an active row whose instance is `not_found|errored|terminated|complete`
  *                 is stale → settle it. `not_found` is an ANSWER, not an error; no binding → no-op.
  *   appendEvent — durable progress row + `entity.changed { entity: 'agent-run' }` nudge (D8).
+ *   loadCheckpoint / saveCheckpoint — the tool loop's resume point on `agent_runs.checkpoint`, so a
+ *                 retried `execute` continues the conversation instead of replaying it. Cleared by
+ *                 `settle`; an unparseable value reads as "no checkpoint", never as a failure.
+ *   runOnce     — the durable-effect key (`agent_run_effects`): work that must not repeat across
+ *                 attempts (an ingest, a ledger write) runs once and replays its recorded result.
  * Every query carries the tenant predicate; `runId` alone is never trusted.
  */
 import type {
@@ -24,10 +29,12 @@ import type { Database } from '../../../db/client'
 import {
   type AgentRunEventRow,
   type AgentRunRow,
+  agentRunEffects,
   agentRunEvents,
   agentRuns,
 } from '../../../db/schema'
 import { ServiceUnavailableError, ValidationError } from '../../utils/core/errors'
+import { parseToolLoopCheckpoint, type ToolLoopCheckpoint } from '../ai/kit'
 import { nudge, type Realtime, realtimeEvent } from '../realtime'
 import { getAgent } from './registry'
 
@@ -241,7 +248,9 @@ async function settle(
 ): Promise<AgentRunRow | null> {
   const [row] = await db
     .update(agentRuns)
-    .set({ ...patch, finishedAt: sql`now()` })
+    // The checkpoint is scratch space for a retry, so a settled run drops it: nothing will resume,
+    // and a verbatim model transcript should not sit in the table for the life of the row.
+    .set({ ...patch, finishedAt: sql`now()`, checkpoint: null })
     .where(
       and(
         eq(agentRuns.id, runId),
@@ -441,6 +450,95 @@ export async function listEvents(
     .from(agentRunEvents)
     .where(and(eq(agentRunEvents.tenantId, tenantId), eq(agentRunEvents.runId, runId)))
     .orderBy(asc(agentRunEvents.seq))
+}
+
+// ---- Resume: the checkpoint and the effect ledger -------------------------------------------
+
+/**
+ * The tool loop's resume point for this run, or null when there is none — including when the stored
+ * value does not parse. **A bad checkpoint must never fail a run**: an older build's shape, or a
+ * corrupted row, costs one replayed attempt, which is exactly what happened before checkpoints
+ * existed. Never widen this to a throw.
+ */
+export async function loadCheckpoint(
+  db: Database,
+  tenantId: string,
+  runId: string
+): Promise<ToolLoopCheckpoint | null> {
+  const [row] = await db
+    .select({ checkpoint: agentRuns.checkpoint })
+    .from(agentRuns)
+    .where(and(eq(agentRuns.id, runId), eq(agentRuns.tenantId, tenantId)))
+  if (!row?.checkpoint) return null
+  return parseToolLoopCheckpoint(row.checkpoint)
+}
+
+/** Store the resume point. Only ever writes to an ACTIVE row — a settled run stays settled. */
+export async function saveCheckpoint(
+  db: Database,
+  tenantId: string,
+  runId: string,
+  checkpoint: ToolLoopCheckpoint
+): Promise<void> {
+  await db
+    .update(agentRuns)
+    .set({ checkpoint })
+    .where(
+      and(
+        eq(agentRuns.id, runId),
+        eq(agentRuns.tenantId, tenantId),
+        inArray(agentRuns.status, [...ACTIVE])
+      )
+    )
+}
+
+/**
+ * Run `fn` at most once per `(run, key)` across every attempt of this run, replaying the recorded
+ * result afterwards — the durable-effect key. `agent_run_effects_run_key_idx` IS the guarantee, so
+ * two isolates racing the same key cannot both record: the loser re-reads the winner's value.
+ *
+ * The contract is at-least-once WITH a recorded result, not exactly-once — an isolate that dies
+ * between `fn()` returning and the insert committing repeats the work. `result` is stored as jsonb,
+ * so return ids and scalars, never rows with dates in them.
+ */
+export async function runOnce<T>(
+  db: Database,
+  tenantId: string,
+  runId: string,
+  key: string,
+  fn: () => Promise<T>
+): Promise<T> {
+  const recorded = await readEffect<T>(db, tenantId, runId, key)
+  if (recorded) return recorded.result
+  const result = await fn()
+  const [inserted] = await db
+    .insert(agentRunEffects)
+    .values({ tenantId, runId, key, result: result ?? null })
+    .onConflictDoNothing({ target: [agentRunEffects.runId, agentRunEffects.key] })
+    .returning()
+  if (inserted) return result
+  // Lost the race: the other writer's value is the one every later attempt will read, so use it.
+  return (await readEffect<T>(db, tenantId, runId, key))?.result ?? result
+}
+
+/** Wrapped so `null`/`undefined` results are distinguishable from "not recorded". */
+async function readEffect<T>(
+  db: Database,
+  tenantId: string,
+  runId: string,
+  key: string
+): Promise<{ result: T } | null> {
+  const [row] = await db
+    .select({ result: agentRunEffects.result })
+    .from(agentRunEffects)
+    .where(
+      and(
+        eq(agentRunEffects.tenantId, tenantId),
+        eq(agentRunEffects.runId, runId),
+        eq(agentRunEffects.key, key)
+      )
+    )
+  return row ? { result: row.result as T } : null
 }
 
 export function errorMessage(err: unknown): string {

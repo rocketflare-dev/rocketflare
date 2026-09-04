@@ -5,7 +5,8 @@
  * `feature: 'agent:summarize-text'`. Emits `step` / `tool.start` / `tool.end` / `text` events and
  * polls for cancellation before and after the model call. With `input.index: true` it also stores
  * the summary as a searchable document through `ingestText` — the reason retrieval is never dead
- * code (00 §1.3). Copy this file to start a real agent.
+ * code (00 §1.3) — wrapped in `ctx.once` so a retried attempt replays the recorded document instead
+ * of indexing a second copy. Copy this file to start a real agent.
  */
 import {
   type SummarizeTextInput,
@@ -89,19 +90,30 @@ export const summarizeTextAgent: AgentDefinition<SummarizeTextInput, SummarizeTe
 
     if (input.index) {
       await ctx.step('index', 'Indexing the summary for search', 'running')
-      const { document } = await ingestText(
-        ctx.db,
-        ctx.cfg,
-        ctx.env,
-        {
-          tenantId: ctx.tenantId,
-          userId: ctx.userId,
-          title: `Summary ${new Date().toISOString().slice(0, 16).replace('T', ' ')}`,
-          text: [result.summary, ...result.keyPoints.map(p => `- ${p}`)].join('\n\n'),
-          source: 'agent:summarize-text',
-        },
-        { jobs: ctx.env.JOBS_QUEUE }
-      )
+      // `ctx.once` is why a retried run cannot leave two copies of this summary in the knowledge
+      // base: an `execute` retry re-enters `run()` from the top, and `ingestText` is a write. The
+      // recorded value is jsonb, so this returns the ids and scalars the step needs — never the row.
+      const document = await ctx.once('index-summary', async () => {
+        const { document: row } = await ingestText(
+          ctx.db,
+          ctx.cfg,
+          ctx.env,
+          {
+            tenantId: ctx.tenantId,
+            userId: ctx.userId,
+            title: `Summary ${new Date().toISOString().slice(0, 16).replace('T', ' ')}`,
+            text: [result.summary, ...result.keyPoints.map(p => `- ${p}`)].join('\n\n'),
+            source: 'agent:summarize-text',
+          },
+          { jobs: ctx.env.JOBS_QUEUE }
+        )
+        return {
+          id: row.id,
+          status: row.status,
+          chunkCount: row.chunkCount,
+          error: row.error ?? null,
+        }
+      })
       output.documentId = document.id
       await ctx.step(
         'index',

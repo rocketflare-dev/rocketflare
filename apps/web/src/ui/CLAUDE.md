@@ -258,9 +258,10 @@ React 18 + Vite + React Router 6 + TanStack Query 5 + zustand; DaisyUI 5 on Tail
 - **Bundle discipline**: nothing under `pages/analytics/**` or `components/analytics/**` may be
   imported from the main bundle; `App.tsx` lazy-loads the three pages and `DashboardListPage`
   deliberately imports no drizzle-cube runtime (it lists rows; the library loads with the view /
-  explore chunks — Vite emits `DashboardLoader-*.js` ≈ 377 KiB gzip shared by both, plus per-chart
-  chunks). `grep recharts dist/ui/assets/index-*.js` must stay at 0. `vite.config.ts` dedupes
-  `recharts` and aliases `@nivo/heatmap` (an OPTIONAL peer the heat-map chunk names an export of —
+  explore chunks — Vite emits a `DashboardLoader-*.js` shared by both, plus per-chart chunks; it is
+  the largest thing the UI ships, which is exactly why it is lazy). `grep recharts
+  dist/ui/assets/index-*.js` must stay at 0 — that check, not a byte count, is the guardrail.
+  `vite.config.ts` dedupes `recharts` and aliases `@nivo/heatmap` (an OPTIONAL peer the heat-map chunk names an export of —
   Rollup fails without it) to `lib/stubs/nivo-heatmap.tsx`, which renders a notice; install the
   package and drop the alias to enable heat maps.
 - **Theme**: drizzle-cube styles itself from `--dc-*` variables; `index.css` re-points every one at
@@ -272,7 +273,7 @@ React 18 + Vite + React Router 6 + TanStack Query 5 + zustand; DaisyUI 5 on Tail
   also `@source`s `node_modules/drizzle-cube/dist/client/**/*.js` (the rule for JSX-shipping
   dependencies); measured effect: the library's utilities are `dc:`-prefixed and precompiled into
   its own stylesheet, so the scan generates no drizzle-cube class — only stray-word DaisyUI
-  components (`stat`, `steps`, `tooltip`, `vc`…), +6.5 KiB gzip on `index-*.css`.
+  components (`stat`, `steps`, `tooltip`, `vc`…), i.e. pure cost on `index-*.css`.
 - **Editing & autosave**: `DashboardLoader` keeps the config as local state (seeded from the row,
   re-seeded when the server row changes and nothing is dirty — a reset arrives that way). In edit
   mode each `onConfigChange` schedules ONE debounced whole-config `PATCH` (`DASHBOARD_AUTOSAVE_MS`
