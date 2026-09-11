@@ -22,15 +22,25 @@ history, and make it your own — you will rename, delete and rewrite freely, an
 here. Cut loose is not cut off: your copy keeps a `.rocketflare.json` saying where it came from, and
 `/rf-upgrade` ports later kit releases into it without recreating anything you deleted.
 
+**Ask your coding agent.** Open the copy in Claude Code and type **`/rf-setup`** — it checks the
+toolchain, starts Postgres, migrates, seeds the demo workspace and leaves you signed in, showing one
+verification line per step. Then **`/rf-adapt <slug> "Your App"`** renames the kit to your app, and
+**`/rf-provision`** deploys it (you type that one yourself: it creates paid resources and prompts for
+vendor tokens). Later, when the kit has moved on, **`/rf-upgrade`**.
+
+**One command.** Read [`scripts/install.sh`](scripts/install.sh) first — it is short — then:
+
+```bash
+curl -fsSL https://rocketflare.dev/install.sh | bash -s -- myapp   # clone → detach → bash scripts/bootstrap.sh
+```
+
+**By hand**, if you would rather see each step (macOS or Linux; Windows through WSL2):
+
 ```bash
 git clone https://github.com/rocketflare-dev/rocketflare.git myapp && cd myapp
 rm -rf .git && git init && git add -A && git commit -m "Start from Rocketflare"   # your history starts here
 git remote add origin git@github.com:<you>/myapp.git                              # your own repo, when ready
-```
 
-Then one command (macOS or Linux; Windows through WSL2):
-
-```bash
 bash scripts/bootstrap.sh          # checks Node 24 / pnpm 10 / Docker, generates the local secret, starts
                                    # Postgres, migrates, seeds demo data, starts the app and opens the
                                    # browser signed in as the demo owner. Re-runnable.
@@ -38,24 +48,15 @@ bash scripts/bootstrap.sh          # checks Node 24 / pnpm 10 / Docker, generate
                                    #   --no-demo  seed the bare tenant and users only (plain `pnpm seed`)
 ```
 
-Or skip the clone step too — read [`scripts/install.sh`](scripts/install.sh) first, then:
-
-```bash
-curl -fsSL https://rocketflare.dev/install.sh | bash -s -- myapp   # clone → detach → bash scripts/bootstrap.sh
-```
-
-Or ask your coding agent: **`/rf-setup`** (drives the same script and starts the server), **`/rf-adapt <slug>`**
-for the rename, and to deploy: `pnpm provision tokens` in your own terminal (hidden prompts for the
-Cloudflare, Neon and Resend tokens → git-ignored `apps/web/.provision.env`), then **`/rf-provision`**. By hand:
-`SETUP.md` Part 1, one verification line per step.
+`SETUP.md` Part 1 is the same thing written out, one verification line per step.
 
 Nothing external is required: no `RESEND_API_KEY` → magic-link URLs are logged by `wrangler dev`; no AI
 key → chat, agents and embeddings run on Workers AI through the `[ai]` binding (billed to your
 Cloudflare account, 10k free neurons/day); no Cloudflare login, or zero-spend wanted → `--offline`.
 Then `pnpm test:db:up && pnpm test` (the full suite against a throwaway Postgres on :5433). Before
-building your app, rename it: `/rf-adapt` or `docs/ADAPTING.md`. Later, when the kit has moved on:
-**`/rf-upgrade`** (or `pnpm kit:upgrade`) — it reads `.rocketflare.json` and the release notes in
-[`docs/upgrades/`](docs/upgrades/), translates the kit's diff into your names and skips every part
+building your app, rename it: `/rf-adapt` or [`docs/ADAPTING.md`](docs/ADAPTING.md). Later,
+`/rf-upgrade` (or `pnpm kit:upgrade`) reads `.rocketflare.json` and the release notes in
+[`docs/upgrades/`](docs/upgrades/), translates the kit's diff into your names, and skips every part
 you removed. [`CHANGELOG.md`](CHANGELOG.md) is what you would be catching up on.
 
 ## Stack
