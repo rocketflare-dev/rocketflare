@@ -327,7 +327,8 @@ function main(argv) {
   out('Careful rows (docs/ADAPTING.md §1):', ...report.map(r => `  ${r}`), '')
   out(
     `Preserved as the kit's origin: ${KIT.preserved.join(', ')}. Not touched by design: ` +
-      'LICENSE, CONTRIBUTING.md, CODE_OF_CONDUCT.md, SECURITY.md, the two svgs, this tool, its test and the adapt skill.',
+      'LICENSE, CONTRIBUTING.md, CODE_OF_CONDUCT.md, SECURITY.md, the two svgs, this tool, its test, ' +
+      'the rf-adapt skill and .rocketflare.json (it names the kit, and gets an `app` block instead).',
     ''
   )
 
@@ -342,6 +343,7 @@ function main(argv) {
     writeFileSync(path.join(REPO_ROOT, rel), content)
     written += 1
   }
+  stampManifest(names)
   out(`wrote ${written} files.`, '')
 
   if (args.skipInstall) {
@@ -375,6 +377,26 @@ function main(argv) {
     'Then review the diff (`git diff --stat`), commit, and update docs/ADAPTING.md §1 for your app.'
   )
   return 0
+}
+
+/**
+ * Record the app's names in `.rocketflare.json`, which the pass itself skips (it names the KIT).
+ * That `app` block is what later tells `scripts/upgrade.mjs` how to translate a kit diff into
+ * this app's names — and a non-null `app` is also what tells the kit's own release checks that
+ * this is a copy, not the kit.
+ */
+function stampManifest(names) {
+  const file = path.join(REPO_ROOT, '.rocketflare.json')
+  if (!existsSync(file)) {
+    warn(
+      'note: .rocketflare.json is missing — `pnpm kit:upgrade` will not work until it is restored.'
+    )
+    return
+  }
+  const manifest = JSON.parse(readFileSync(file, 'utf8'))
+  manifest.app = { slug: names.slug, display: names.display, domain: names.domain }
+  writeFileSync(file, `${JSON.stringify(manifest, null, 2)}\n`)
+  out(`stamped .rocketflare.json — app ${names.slug}, kit ${manifest.kit.version}.`)
 }
 
 try {

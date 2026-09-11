@@ -3,6 +3,9 @@
  * hourly by `services/fact-tables`. Same direct `tenant_id` scoping as any tenant table; the point
  * is that a dashboard over a year of events reads a few hundred pre-aggregated rows. Joins `Users`
  * (belongsTo). Member names are frozen: dashboard JSON references them.
+ *
+ * EXAMPLE (surface `example-cube-tenant-activity-daily`): the cube, its fact table and its query
+ * are one deletable unit — `docs/ADAPTING.md` §2 lists what that touches.
  */
 import type { BaseQueryDefinition, Cube, QueryContext } from 'drizzle-cube/server'
 import { defineCube } from 'drizzle-cube/server'

@@ -94,7 +94,7 @@ with a `sed` line per toml, or with `--apply` writes them into that toml through
 `NEON_DATABASE_URL` (direct host) and an authenticated wrangler (`wrangler login`, or
 `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID`); the connection string is an argument of the one
 `wrangler hyperdrive create` process and is redacted from every echoed line.
-`pnpm provision <phase> [env]` (`apps/web/scripts/provision.ts`, driven by the `/provision` skill) is
+`pnpm provision <phase> [env]` (`apps/web/scripts/provision.ts`, driven by the `/rf-provision` skill) is
 the orchestrator around it — phases `tokens` (TTY only: hidden prompts → `apps/web/.provision.env`) · `preflight` · `email create|status|verify` · `neon` ·
 `cloudflare <env>` (this script with `--apply`) · `migrate <env>` · `github <env>` · `urls` ·
 `deploy <env>` · `secrets <env>` · `all` — each idempotent, each ending in one `Verify:` line;
@@ -215,7 +215,11 @@ adapter over `drizzle-cube/server` (`.claude/rules/cloudflare.md`). UI: the anal
 chunk.
 
 **Version rule.** The git tag must equal `version` in the **root** `package.json`; the job fails
-otherwise. One tag ships `apps/web` and `apps/cli` together — the `apps/*` and `packages/*` versions
+otherwise. It also fails without `docs/upgrades/<tag>.md`, its `CHANGELOG.md` section and a
+matching `.rocketflare.json` `kit.version` (`scripts/release-check.mjs --tag`): a release with no
+porting note is a permanent gap in the chain `/rf-upgrade` walks, and every copy of the kit has to
+step over it. `pnpm kit:release <version>` writes all of that, so the gate passes by construction.
+**Released history is never rewritten** — a copy pins a kit commit and a force-push orphans it. One tag ships `apps/web` and `apps/cli` together — the `apps/*` and `packages/*` versions
 are informational and are not checked. Bump the root version, commit, tag.
 
 Publishing the Release is the promotion gate (required reviewers are unavailable on private repos

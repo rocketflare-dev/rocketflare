@@ -6,11 +6,16 @@ Cloudflare Worker (`apps/web`), a CLI (`apps/cli`), private zod contracts
 
 > **How it works**: @docs/CONCEPTS.md — one section per subsystem with its known gaps. **Check it
 > before assuming a capability exists; update it when you change one.**
-> **Setup**: asked for setup help → run `/setup` (it drives `scripts/bootstrap.sh --no-dev`, then
+> **Setup**: asked for setup help → run `/rf-setup` (it drives `scripts/bootstrap.sh --no-dev`, then
 > starts the server): show each `✔ n/9` line, stop on failure. By hand: @SETUP.md Part 1.
-> **Fresh copy?** `/adapt <slug>`, then @docs/ADAPTING.md. `/setup`, `/adapt` and `/preflight` you
-> may run yourself; **`/provision` is user-invoked only** (it creates paid resources and prompts for
-> tokens on a TTY) — asked to deploy, tell the user to run `/provision`.
+> **Fresh copy?** `/rf-adapt <slug>`, then @docs/ADAPTING.md. `/rf-setup`, `/rf-adapt` and `/rf-preflight` you
+> may run yourself; **`/rf-provision` is user-invoked only** (it creates paid resources and prompts for
+> tokens on a TTY) — asked to deploy, tell the user to run `/rf-provision`.
+> **Copies of the kit upgrade.** `.rocketflare.json` records the kit version, the app's names and the
+> manifest of replaceable surfaces; `/rf-upgrade` ports later releases into a copy and never
+> recreates a surface whose anchor file is gone. **A behaviour change here needs an entry in
+> @docs/upgrades/unreleased.md in the same commit** — CI fails without one, and the tag gate refuses
+> a release with no note. `pnpm kit:release <version>` writes the release assets.
 
 ## Stack
 
@@ -41,6 +46,7 @@ pnpm test:db:up && pnpm test  # every package; web loads .env.test
 pnpm lint · pnpm typecheck · pnpm build  # workspace-wide
 pnpm web <script>  # any apps/web script (test:api, db:check, db:*-facts…)
 pnpm db:generate · pnpm db:studio · pnpm deploy[:staging] · pnpm provision all  # (or one phase: --help)
+pnpm kit:upgrade [--to X.Y.Z] [--apply] · pnpm kit:release X.Y.Z  # port a kit release into a copy / cut one
 ```
 
 `wrangler` lives in `apps/web`: `pnpm --filter @rocketflare/web exec wrangler …`, never at the root. No
@@ -61,9 +67,12 @@ apps/web/          @rocketflare/web — wrangler*.toml, worker-configuration.d.t
 │                  (per-dir CLAUDE.md: permissions, db/schema, dashboards, api/*, ui)
 apps/cli/          @rocketflare/cli — src/cli.ts, commands/*, api.ts (only fetch site), config.ts, login.ts
 packages/shared/   @rocketflare/shared — src/*.ts zod contracts, errors, pagination, permissions (CLAUDE.md)
-scripts/           bootstrap.sh → bootstrap.mjs (9 steps), install.sh (curl one-liner), rename.mjs, lib/
-.claude/skills/    setup · preflight · adapt (+ checklist.md) · provision (+ reference.md) ·
-                   how-do-i (+ example-orders.md — coaching for a new feature, plans only)
+scripts/           bootstrap.sh → bootstrap.mjs (9 steps), install.sh (curl one-liner), rename.mjs,
+                   upgrade.mjs (port a kit release into a copy), release{,-check}.mjs, changelog-nudge.mjs, lib/
+.rocketflare.json  kit version + commit, the app's names, the replaceable-surface manifest
+docs/upgrades/     one porting note per kit release (+ unreleased.md) — CHANGELOG.md is the index
+.claude/skills/    rf-setup · rf-preflight · rf-adapt (+ checklist.md) · rf-provision (+ reference.md) ·
+                   rf-how-do-i (+ example-orders.md) · rf-upgrade (+ porting.md — port later kit releases)
 ```
 
 **`packages/shared`.** Private, no build: `@rocketflare/shared/<module>` → `./src/<module>.ts` (incl. `ai/*`,
@@ -101,4 +110,8 @@ code-quality.md · cloudflare.md. Runbooks: @docs/DEPLOY.md · @docs/RLS.md
   credentials; the CLI never prints a full key; `gitleaks` in CI
 - **No `process.env` / Node-only APIs in `apps/web/src/`** (`pg`, `ws`, `node:fs`…); `build:api` catches it
 - **Release = root version**: git tag == root `package.json` `version` (ships web + cli)
-- **Docs in sync**: a behaviour change updates CONCEPTS / SETUP / DEPLOY / rules in the same PR
+- **Docs in sync**: a behaviour change updates CONCEPTS / SETUP / DEPLOY / rules in the same PR,
+  **and adds an entry to `docs/upgrades/unreleased.md`** — copies of the kit absorb changes by
+  reading those notes, so a change with no note never reaches them (CI and the tag gate enforce it)
+- **Released history is never rewritten**: an adopted copy pins a kit commit in `.rocketflare.json`;
+  a force-push to a released tag orphans every copy that came from it

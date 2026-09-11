@@ -72,6 +72,12 @@ export function deriveNames(slug, display, options = {}) {
     throw new Error(`colour '${colour}' must be a 6-digit hex like #2563eb`)
   }
   const trimmed = typeof display === 'string' ? display.trim() : ''
+  // A newline here would break more than the rename: `scripts/upgrade.mjs` translates kit diffs
+  // with these same replacements, and its hunk headers are only safe because every substitution
+  // changes columns and never line counts.
+  if (/[\r\n]/.test(trimmed)) {
+    throw new Error('display name must be a single line')
+  }
   return Object.freeze({
     slug,
     snake,
@@ -194,13 +200,36 @@ export const EXCLUDED_PATHS = Object.freeze([
   'scripts/lib/rename-lib.mjs',
   'scripts/lib/rename-lib.d.mts',
   'apps/web/tests/config/rename-lib.test.ts', // asserts on the kit's own token strings
-  '.claude/skills/adapt/SKILL.md', // the skill that drives this tool — written in the kit's terms
-  '.claude/skills/adapt/checklist.md',
+  '.claude/skills/rf-adapt/SKILL.md', // the skill that drives this tool — written in the kit's terms
+  '.claude/skills/rf-adapt/checklist.md',
+  // The provenance file names the KIT, not the app: its repo URL, version and surface manifest
+  // must survive verbatim or `pnpm kit:upgrade` loses the thing it descends from. `rename.mjs`
+  // writes its `app` block itself, at the end of the pass.
+  '.rocketflare.json',
+  // The upgrade toolchain, for the same reason `rename.mjs` is here: it must keep working after
+  // this has run, and it addresses `.rocketflare.json` by that literal name.
+  'scripts/upgrade.mjs',
+  'scripts/release.mjs',
+  'scripts/release-check.mjs',
+  'scripts/lib/upgrade-lib.mjs',
+  'scripts/lib/upgrade-lib.d.mts',
+  'apps/web/tests/config/upgrade-lib.test.ts',
+  'apps/web/tests/config/kit-manifest.test.ts',
+  'apps/web/tests/config/upgrade-notes.test.ts',
+  'CHANGELOG.md', // the kit's releases, described in the kit's own terms
 ])
+
+/**
+ * Excluded whole directories, matched by prefix. `docs/upgrades/` holds the kit's release notes —
+ * an app accumulates them verbatim as a record of what it has absorbed, so they keep talking about
+ * the kit's names. `.claude/skills/rf-upgrade/` drives the tool and names its files literally.
+ */
+export const EXCLUDED_PREFIXES = Object.freeze(['docs/upgrades/', '.claude/skills/rf-upgrade/'])
 
 export function isExcluded(relPath) {
   const p = relPath.replaceAll('\\', '/')
   if (EXCLUDED_PATHS.includes(p)) return true
+  if (EXCLUDED_PREFIXES.some(prefix => p.startsWith(prefix))) return true
   return p.split('/').some(seg => EXCLUDED_DIRS.includes(seg))
 }
 

@@ -52,6 +52,13 @@ describe('deriveNames', () => {
     expect(() => deriveNames('acme', undefined, { domain: 'nodots' })).toThrow(/apex host/)
     expect(() => deriveNames('acme', undefined, { colour: 'red' })).toThrow(/6-digit hex/)
   })
+
+  it('refuses a multi-line display name', () => {
+    // `scripts/upgrade.mjs` translates kit diffs with these replacements, and its hunk headers
+    // stay valid only because a substitution moves columns and never line counts.
+    expect(() => deriveNames('acme', 'Acme\nCorp')).toThrow(/single line/)
+    expect(() => deriveNames('acme', 'Acme\rCorp')).toThrow(/single line/)
+  })
 })
 
 describe('validateSlug', () => {
@@ -185,8 +192,9 @@ describe('exclusions', () => {
       'scripts/lib/rename-lib.mjs',
       'scripts/lib/rename-lib.d.mts',
       'apps/web/tests/config/rename-lib.test.ts',
-      '.claude/skills/adapt/SKILL.md',
-      '.claude/skills/adapt/checklist.md',
+      '.claude/skills/rf-adapt/SKILL.md',
+      '.claude/skills/rf-adapt/checklist.md',
+      '.rocketflare.json',
     ]) {
       expect(EXCLUDED_PATHS, p).toContain(p)
       expect(isExcluded(p), p).toBe(true)

@@ -21,7 +21,8 @@ section ends with **Known gaps**; sections for phases not yet built say so.
 | 10 | [Deployment](#10-deployment) | Phase 0 / 5 |
 | 11 | [CLI](#11-cli) | Phase 1 |
 | 12 | [Shared package](#12-shared-package) | Phase 0 |
-| 13 | [Definition of done](#13-definition-of-done-for-the-kit) | |
+| 13 | [Upgrading a copy](#13-upgrading-a-copy) | built |
+| 14 | [Definition of done](#14-definition-of-done-for-the-kit) | |
 
 Provenance: extracted from two internal applications — one supplied the structure, docs system,
 auth/tenancy/AI layer; the other the Cloudflare substrate and analytics. This file is the decision
@@ -895,7 +896,7 @@ sending domain to a zone the user has already put on the Cloudflare account — 
 nameservers moved; none → `workers.dev` hosts and `--skip-email`; `all` runs every phase, idempotent, one
 `Verify:` line each; the vendor tokens come from the environment first, then the git-ignored
 `apps/web/.provision.env` that `pnpm provision tokens` writes from hidden, vendor-verified prompts —
-never `.dev.vars`) and the `/provision` skill that drives it.**
+never `.dev.vars`) and the `/rf-provision` skill that drives it.**
 
 Two standalone tomls (D6) in `apps/web` — `wrangler.toml` production, `wrangler.staging.toml` —
 kept identical in everything code can observe by `apps/web/tests/config/wrangler-parity.test.ts`,
@@ -1002,11 +1003,95 @@ its contracts are exercised by the `apps/web` and `apps/cli` tests; no OpenAPI e
 schemas; no runtime-versioning of contracts between a deployed web and an older CLI (both ship from
 one tag).
 
-## 13. Definition of done for the kit
+## 13. Upgrading a copy
 
-A fresh agent can copy the repository, run `bash scripts/bootstrap.sh` (or `/setup`) with zero
+**Status: built.**
+
+**A copy of the kit is detached and renamed, and it still absorbs later kit releases.** That is the
+whole of this section, and it is the one part of the kit whose failure mode is other people's
+repositories.
+
+The shape of the problem: `docs/ADAPTING.md` §0 has adopters delete the kit's history (a shared one
+only invites conflicts with a template that keeps moving), `scripts/rename.mjs` rewrites nine token
+classes so nothing matches by name any more, and §2 tells them to delete the example agents, cubes
+and CLI commands. So a raw kit diff matches nothing and, applied anyway, **recreates exactly what
+they deliberately removed**. Three pieces fix that.
+
+**Provenance: `.rocketflare.json` (D27).** Tracked, at the root, and the one file that keeps the
+kit's name in a renamed app — because it describes the kit, and because a fixed path is what lets
+the tooling find it. `kit.{repo,version,commit}` says where the copy came from (`scripts/install.sh`
+stamps the commit, and `version` ships pre-set so a hand-clone knows it too); `app.{slug,display,
+domain}` is written by `rename.mjs` at the end of its pass and re-derives the full token map through
+`deriveNames()`; `history[]` records each upgrade. It is on `EXCLUDED_PATHS`, so the rename never
+substitutes inside it. **`app === null` is the "am I the kit?" predicate**, and every kit-only check
+early-exits on it — without that, a copy inherits the kit's release discipline and fails CI on its
+own first commit.
+
+**The surface manifest.** `surfaces[]` lists what the kit ships that is meant to be replaced:
+`kind: example` (the two example agents, `example.ping`, the two example cubes and their fact table,
+the `tenant-overview` template, the three read-list CLI commands, the demo seed) and
+`kind: optional-feature` (chat, agents, knowledge, analytics — whole features an app may remove).
+Each has an **anchor file, and presence is `existsSync` on it**: the adopter keeps no bookkeeping,
+there is nothing to drift, and deleting the anchor is the entire act of opting out, forever. Beside
+it, `neverPort` (the kit's identity — LICENSE, SECURITY.md, `install.sh`, the rename toolchain,
+`CHANGELOG.md`, the tomls, `apps/web/migrations/**`), `manual` (README, CI workflows, every
+`package.json`) and `core` path prefixes. `apps/web/tests/config/kit-manifest.test.ts` asserts every
+anchor exists and is a file, and — the check that stops the whole thing rotting — that surfaces ∪
+neverPort ∪ manual ∪ core cover **100%** of the repo's files, so a new top-level directory fails the
+suite until somebody says what it is.
+
+**Release notes written for an agent.** `docs/upgrades/X.Y.Z.md`, one per release, frontmatter
+(`version`, `previous`, `breaking`, `migrations`, `areas`, `touches_surfaces`, `requires_surfaces`)
+plus four fixed headings. `previous` makes an unbroken chain; `requires_surfaces` skips a whole
+release that does not apply; `migrations` carries *descriptions*, never file names.
+`docs/upgrades/unreleased.md` accumulates between releases and `CHANGELOG.md` is the human index.
+
+**The mechanism (`scripts/upgrade.mjs`).** A git-ignored blobless bare mirror at `.upgrade/kit.git`
+— never a remote on the app's repo, whose tags would collide with the kit's and whose objects the
+adopter would push. Then: classify every changed path, drop everything under an absent surface,
+translate the survivors through the **same** `applyReplacements()` the rename used, and write
+`apply.patch`, whole translated files for additions, `reference/` copies for the manual decisions and
+a `plan.json`. `--apply` writes the additions, `git apply`s the patch, and falls back to per-file
+`--reject` so one stale file cannot block the rest. Two invariants make the translation safe and
+`apps/web/tests/config/upgrade-lib.test.ts` asserts both: every substitution moves columns and never
+lines, so `@@` headers stay valid (which is why `deriveNames` now refuses a newline in a display
+name); and `index <sha>..<sha>` lines are **stripped**, because they name kit blobs that describe
+nothing once the content is translated — their absence makes `--3way` fail loudly instead of merging
+against the wrong preimage. A file the rename refuses to touch is never translated either, which is
+how an app accumulates `docs/upgrades/*.md` still written in the kit's terms.
+
+**What it will not do, and why each would be silent damage.** It never applies a kit migration:
+every `meta/NNNN_snapshot.json` carries the *whole cumulative schema*, so dropping the kit's in
+replaces drizzle's notion of current state with one that has never heard of the adopter's tables —
+their next `pnpm db:generate` then emits `DROP TABLE` for their own data. It never writes a resource
+id into a wrangler toml (a new binding arrives as a `<PLACEHOLDER>`, which is exactly what
+`pnpm provision cloudflare <env>` fills). It never applies the kit's deletions unasked. It never
+ports the root `package.json` version, which is the app's release version. And the version stamp is
+written **last, only on a clean apply**, so an interrupted or rejected run re-runs from an unchanged
+baseline (exit 4 means "work remains", not "failed").
+
+**The discipline that keeps it true.** A behaviour change adds an entry to `unreleased.md` in the
+same commit: a Claude Code `PreToolUse` hook nudges before `git commit` (advisory, and only inside a
+session), `ci.yml` fails a PR that touches `apps/**` or `packages/**` without one, and `deploy.yml`
+refuses a tag whose note, changelog section or version stamps are missing
+(`scripts/release-check.mjs --tag`). `pnpm kit:release <version>` writes all of it so the gate passes
+by construction. The constraint under all of it: **released history is never rewritten**, because
+every copy pins a kit commit.
+
+**Known gaps / not built yet:** the wrangler tomls and `.dev.vars.example` are reported with a
+rendered diff rather than semantically merged — the planned differ would emit typed ops through
+`scripts/provision/patch-toml.ts` and insert a new binding as a placeholder; the reject rate scales
+with how far an adopter has drifted from the kit's names and the report does not predict it; a copy
+made before `.rocketflare.json` existed needs a one-off `--adopt <ref>`; there is no way to upgrade
+only part of a release; `docs/upgrades/` has one entry per release, so a release that should never be
+ported at all can only say so in prose; and nothing verifies that an adopter actually ran the
+migration step — the report says it, the gate does not check it.
+
+## 14. Definition of done for the kit
+
+A fresh agent can copy the repository, run `bash scripts/bootstrap.sh` (or `/rf-setup`) with zero
 external credentials and land in the browser signed in as the demo owner with the demo workspace
-populated (`pnpm seed --demo`); `/adapt <slug>` renames it (`docs/ADAPTING.md` §1 as one pass, the
+populated (`pnpm seed --demo`); `/rf-adapt <slug>` renames it (`docs/ADAPTING.md` §1 as one pass, the
 six careful rows reported); log in via a logged magic link; `pnpm cli login` against the local
 server and `pnpm cli whoami` with the minted key; invite a member, switch tenant, approve an access request;
 run the same flow with `TENANCY_MODE=single`; watch the People page refresh live from a second
@@ -1023,7 +1108,9 @@ the Knowledge page list the ingested document; query every cube as two tenants a
 (`tests/api/cubes/cube-isolation.test.ts`), run `pnpm web db:refresh-facts && pnpm web
 db:check-facts` to a `fresh` fact table, `GET /api/analytics/pages` and find the seeded
 `tenant-overview` page (and render it with live numbers once the analytics UI lands); and,
-run `/provision` (or `pnpm provision all`) with three tokens (`CLOUDFLARE_API_TOKEN` +
+port a later kit release into a renamed copy with `pnpm kit:upgrade --apply` and watch it skip the
+examples that copy deleted rather than recreating them (§13); and,
+run `/rf-provision` (or `pnpm provision all`) with three tokens (`CLOUDFLARE_API_TOKEN` +
 `CLOUDFLARE_ACCOUNT_ID`, `NEON_API_KEY`, `RESEND_API_KEY` — or `--skip-email`) to a staging URL
 whose `/api/ready` answers; and, following `SETUP.md` Part 3 by hand, deploy to a new Cloudflare
 account changing only placeholders and secrets — with root `pnpm lint && pnpm typecheck && pnpm

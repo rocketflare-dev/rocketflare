@@ -40,3 +40,7 @@ apps/web/.provision.json
 # Provisioning tokens — the four vendor tokens (+ optional Worker secrets) read by scripts/provision.ts;
 # written 0600 by `pnpm provision tokens`. `.provision.env.example` (blank values) IS committed.
 apps/web/.provision.env
+
+# Kit upgrade cache — the bare mirror of the kit and the working artifacts of
+# `pnpm kit:upgrade` (scripts/upgrade.mjs). Safe to delete at any time.
+.upgrade/

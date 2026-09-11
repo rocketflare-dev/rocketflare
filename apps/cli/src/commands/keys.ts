@@ -1,4 +1,6 @@
 /** `rocketflare keys list` — `GET /api/keys`; accepts a bare array or a paginated envelope of `apiKeySchema` (D26). */
+// EXAMPLE (surface `example-cli-commands` in .rocketflare.json): one of the three read-list
+// commands that document the pattern. Delete the ones you do not want — `docs/ADAPTING.md` §2.
 import { apiKeySchema } from '@rocketflare/shared/api-keys'
 import { paginatedResponse } from '@rocketflare/shared/pagination'
 import { z } from 'zod'

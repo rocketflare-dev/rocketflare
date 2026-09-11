@@ -26,13 +26,18 @@ fi
 echo "Cloning Rocketflare into $DIR …"
 git clone --depth 1 "$REPO" "$DIR"
 cd "$DIR"
-KIT_COMMIT="$(git rev-parse --short HEAD)"
-# Your history starts here (README / docs/ADAPTING.md §0). The kit commit is recorded in the message.
+KIT_COMMIT="$(git rev-parse HEAD)"
+# Your history starts here (README / docs/ADAPTING.md §0). The kit commit is recorded twice: in the
+# first commit's message for a human, and in .rocketflare.json for `pnpm kit:upgrade`, which needs
+# it to know what to diff against. Node is not guaranteed yet, so this is sed on one known line.
+if [ -f .rocketflare.json ]; then
+  sed -i.bak "s|\"commit\": null|\"commit\": \"$KIT_COMMIT\"|" .rocketflare.json && rm -f .rocketflare.json.bak
+fi
 rm -rf .git && git init -q && git add -A
 git -c user.name="${GIT_AUTHOR_NAME:-$(git config user.name || echo Rocketflare)}" \
     -c user.email="${GIT_AUTHOR_EMAIL:-$(git config user.email || echo rocketflare@localhost)}" \
     commit -q -m "Start from Rocketflare" -m "Kit commit: $KIT_COMMIT"
-echo "✔ cloned and detached from the kit's history (kit commit $KIT_COMMIT)"
+echo "✔ cloned and detached from the kit's history (kit commit ${KIT_COMMIT:0:12})"
 
 if [ -r /dev/tty ]; then
   exec bash scripts/bootstrap.sh ${1+"$@"} </dev/tty

@@ -3,6 +3,9 @@
  * tells drizzle-cube which columns bind (actor), order (time) and name (event type) an event, which
  * unlocks funnel / flow / retention modes in the query builder. Direct `tenant_id` scoping; joins
  * `Users` (belongsTo, the actor). Member names are frozen: dashboard JSON references them.
+ *
+ * EXAMPLE (surface `example-cube-activity-events` in .rocketflare.json): here to document the
+ * pattern. Delete it once you have cubes of your own — `docs/ADAPTING.md` §2 lists what that touches.
  */
 import type { BaseQueryDefinition, Cube, QueryContext } from 'drizzle-cube/server'
 import { defineCube } from 'drizzle-cube/server'

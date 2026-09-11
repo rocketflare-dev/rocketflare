@@ -27,7 +27,7 @@ Engine and add your user to the `docker` group. Confirm the tool works, then car
 
 ## Part 1 — First run (local) `[ready]`
 
-> **The short way.** `bash scripts/bootstrap.sh` (or `/setup` in Claude Code; `pnpm bootstrap` once
+> **The short way.** `bash scripts/bootstrap.sh` (or `/rf-setup` in Claude Code; `pnpm bootstrap` once
 > Node and pnpm exist) does 1.1–1.7 in one go — nine steps, one `✔ n/9 <name> <what it verified>`
 > line each, a `✖` line plus a `fix:` hint on the first failure — and ends with the browser open at
 > `http://localhost:3000/login?as=owner@example.test`. macOS or Linux (Windows: WSL2). Re-runnable on
@@ -165,7 +165,7 @@ never HTML). `GET /api/analytics/facts/status` (owner/admin) shows the same fres
 ### 1.7 CLI first run
 The bootstrap already did this once: its `8/9 cli` step ran `pnpm cli whoami` with the seed's
 one-time key (first run only — a re-run finds the key exists and skips; not with `--no-dev`, which
-`/setup` uses — run `pnpm cli login` yourself then). To use the CLI yourself, with `pnpm dev` still
+`/rf-setup` uses — run `pnpm cli login` yourself then). To use the CLI yourself, with `pnpm dev` still
 running, in a second terminal:
 ```bash
 pnpm cli login --server http://localhost:3001   # opens the browser; sign in, pick the tenant
@@ -380,7 +380,7 @@ deployed; the CLI is built by CI but not published (publishing it is an app deci
 3. **Resend** — the free tier is fine; it verifies the domain from (1). `--skip-email` skips it
    (magic links are logged in `wrangler tail`).
 
-**Recommended: `/provision`** in Claude Code, or `pnpm provision all` by hand
+**Recommended: `/rf-provision`** in Claude Code, or `pnpm provision all` by hand
 (`apps/web/scripts/provision.ts`; `pnpm provision --help` lists every phase and flag). It is REST
 over `fetch` plus `wrangler` and `gh` — no vendor CLIs — idempotent (find-or-create), and every
 phase ends in one `Verify:` line. The four tokens go in `apps/web/.provision.env` (git-ignored,
@@ -424,7 +424,7 @@ pnpm provision all [--deploy staging|both] [--skip-email] [--rotate]   # 10–20
 Close-out: sign in with the admin's magic link — with `SIGNUP_MODE=invite_only` the first login lands
 on `/pending`; as the global admin create the first organisation at `/admin` — add OAuth redirect
 URIs, commit the two tomls (ids and URLs are not secrets), push, `pnpm cli login --server <APP_URL>`.
-Known limits: `.claude/skills/provision/reference.md`. The manual sequence below is the reference for
+Known limits: `.claude/skills/rf-provision/reference.md`. The manual sequence below is the reference for
 what each phase does.
 
 ### 3.1 Accounts and access
@@ -510,8 +510,11 @@ the staging file). Wrangler creates the DNS record on the next deploy. Set `[var
 Verify: the host serves the app over HTTPS; the parity test still passes (`routes` may differ).
 
 ### 3.7 The release dance (every subsequent deploy)
-1. Bump `version` in the **root** `package.json` to `X.Y.Z`, commit. (The `apps/*` versions are
-   informational; one tag ships web and cli together.)
+1. `pnpm kit:release X.Y.Z` — folds `docs/upgrades/unreleased.md` into `docs/upgrades/X.Y.Z.md`,
+   bumps the **root** `package.json` and `.rocketflare.json` `kit.version`, and prepends the
+   `CHANGELOG.md` section. Commit. (The `apps/*` versions are informational; one tag ships web and
+   cli together.) The deploy refuses a tag whose porting note is missing — that note is how every
+   copy of the kit absorbs this release.
 2. `git tag X.Y.Z && git push origin X.Y.Z` → **staging** deploys (`deploy.yml`: CI gate → parity
    with `REQUIRE_PROVISIONED=1` → `pnpm db:migrate:ci` on the staging branch →
    `pnpm --filter @rocketflare/web build:ui` → `pnpm --filter @rocketflare/web exec wrangler deploy -c

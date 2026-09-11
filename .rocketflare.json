@@ -1,0 +1,231 @@
+{
+  "$purpose": "Provenance for this copy of the Rocketflare starter kit: which kit version and commit it came from, the rename applied to it, and the manifest of replaceable surfaces. `pnpm kit:upgrade` and the /rf-upgrade skill read this file to port later kit improvements forward without recreating anything you deleted.",
+  "$doNotDelete": "Deleting or renaming this file breaks upgrades. Recovering it means working out by hand which kit commit you started from and running `node scripts/upgrade.mjs --adopt <ref>`. It holds no secrets and is safe to commit.",
+  "kit": {
+    "name": "rocketflare",
+    "repo": "https://github.com/rocketflare-dev/rocketflare.git",
+    "version": "0.1.0",
+    "commit": null
+  },
+  "app": null,
+  "history": [],
+  "surfaces": [
+    {
+      "id": "example-agent-summarize-text",
+      "kind": "example",
+      "label": "The single-call example agent (one forced tool call)",
+      "anchor": "apps/web/src/api/services/agents/examples/summarize-text.ts",
+      "paths": [
+        "apps/web/src/api/services/agents/examples/summarize-text.ts",
+        "apps/web/src/ui/pages/agents/forms/summarize-text.tsx",
+        "apps/web/tests/api/agent-runs.test.ts",
+        "apps/web/tests/api/agent-run-workflow.test.ts"
+      ],
+      "registries": [
+        "apps/web/src/api/services/agents/registry.ts#AGENTS",
+        "packages/shared/src/ai/agents.ts#AGENT_KEYS",
+        "apps/web/src/api/services/prompts.ts#PROMPT_REGISTRY",
+        "apps/web/src/ui/pages/agents/forms/index.ts#AGENT_FORMS"
+      ]
+    },
+    {
+      "id": "example-agent-research-topic",
+      "kind": "example",
+      "label": "The agentic example agent (tool loop over the knowledge base)",
+      "anchor": "apps/web/src/api/services/agents/examples/research-topic.ts",
+      "paths": [
+        "apps/web/src/api/services/agents/examples/research-topic.ts",
+        "apps/web/src/ui/pages/agents/forms/research-topic.tsx",
+        "apps/web/tests/api/agent-research.test.ts"
+      ],
+      "registries": [
+        "apps/web/src/api/services/agents/registry.ts#AGENTS",
+        "packages/shared/src/ai/agents.ts#AGENT_KEYS",
+        "apps/web/src/api/services/prompts.ts#PROMPT_REGISTRY",
+        "apps/web/src/ui/pages/agents/forms/index.ts#AGENT_FORMS"
+      ]
+    },
+    {
+      "id": "example-job-ping",
+      "kind": "example",
+      "label": "The example.ping smoke job",
+      "anchor": "apps/web/src/api/queues/handlers/example-ping.ts",
+      "paths": ["apps/web/src/api/queues/handlers/example-ping.ts"],
+      "registries": [
+        "apps/web/src/api/queues/jobs.ts#handlers",
+        "packages/shared/src/jobs.ts#JOB_TYPES"
+      ]
+    },
+    {
+      "id": "example-cube-activity-events",
+      "kind": "example",
+      "label": "The ActivityEvents example cube (event-stream pattern)",
+      "anchor": "apps/web/src/api/cubes/activity-events.ts",
+      "paths": ["apps/web/src/api/cubes/activity-events.ts"],
+      "registries": ["apps/web/src/api/cubes/index.ts#allCubes"]
+    },
+    {
+      "id": "example-cube-tenant-activity-daily",
+      "kind": "example",
+      "label": "The TenantActivityDaily example cube and its fact table",
+      "anchor": "apps/web/src/api/cubes/tenant-activity-daily.ts",
+      "paths": [
+        "apps/web/src/api/cubes/tenant-activity-daily.ts",
+        "apps/web/src/db/schema/facts/tenant-activity-daily-facts.ts",
+        "apps/web/src/api/services/fact-tables/queries/tenant-activity-daily.ts",
+        "apps/web/tests/api/services/fact-table-refresh.test.ts",
+        "apps/web/tests/api/scheduled-facts.test.ts"
+      ],
+      "registries": [
+        "apps/web/src/api/cubes/index.ts#allCubes",
+        "apps/web/src/api/services/fact-tables/registry.ts#FACT_TABLES",
+        "apps/web/src/db/schema/facts/index.ts"
+      ]
+    },
+    {
+      "id": "example-dashboard-tenant-overview",
+      "kind": "example",
+      "label": "The tenant-overview dashboard template",
+      "anchor": "apps/web/src/dashboards/general-templates/tenant-overview.ts",
+      "paths": ["apps/web/src/dashboards/general-templates/tenant-overview.ts"],
+      "registries": ["apps/web/src/dashboards/general-templates/index.ts#GENERAL_TEMPLATES"]
+    },
+    {
+      "id": "example-cli-commands",
+      "kind": "example",
+      "label": "The members / keys / activity CLI commands (the read-list pattern)",
+      "anchor": "apps/cli/src/commands/members.ts",
+      "paths": [
+        "apps/cli/src/commands/members.ts",
+        "apps/cli/src/commands/keys.ts",
+        "apps/cli/src/commands/activity.ts",
+        "apps/cli/tests/commands.test.ts"
+      ],
+      "registries": ["apps/cli/src/cli.ts"]
+    },
+    {
+      "id": "feature-chat",
+      "kind": "optional-feature",
+      "label": "Streamed chat (conversations, SSE, the chat page)",
+      "anchor": "apps/web/src/ui/pages/chat/ChatPage.tsx",
+      "paths": [
+        "apps/web/src/ui/pages/chat/**",
+        "apps/web/src/ui/components/ai/**",
+        "apps/web/src/api/routes/chat.ts",
+        "apps/web/tests/api/chat.test.ts",
+        "apps/web/tests/ui/chat-page.test.tsx"
+      ],
+      "registries": ["apps/web/src/api/index.ts", "apps/web/src/ui/App.tsx"]
+    },
+    {
+      "id": "feature-agents",
+      "kind": "optional-feature",
+      "label": "The agent runtime (workflow, runs, run pages)",
+      "anchor": "apps/web/src/api/workflows/agent-run.ts",
+      "paths": [
+        "apps/web/src/api/workflows/**",
+        "apps/web/src/api/services/agents/**",
+        "apps/web/src/api/routes/agents.ts",
+        "apps/web/src/ui/pages/agents/**",
+        "packages/shared/src/ai/agents.ts"
+      ],
+      "registries": [
+        "apps/web/src/worker.ts",
+        "apps/web/src/api/index.ts",
+        "apps/web/src/ui/App.tsx"
+      ]
+    },
+    {
+      "id": "feature-knowledge",
+      "kind": "optional-feature",
+      "label": "Documents, ingestion and hybrid search",
+      "anchor": "apps/web/src/api/services/ai/ingest.ts",
+      "paths": [
+        "apps/web/src/api/services/ai/ingest.ts",
+        "apps/web/src/api/services/ai/retrieval.ts",
+        "apps/web/src/api/services/ai/convert.ts",
+        "apps/web/src/api/routes/ai-documents.ts",
+        "apps/web/src/ui/pages/documents/**",
+        "apps/web/src/api/queues/handlers/document-index.ts",
+        "apps/web/src/api/queues/handlers/document-convert.ts"
+      ],
+      "registries": ["apps/web/src/api/index.ts", "apps/web/src/ui/App.tsx"]
+    },
+    {
+      "id": "feature-analytics",
+      "kind": "optional-feature",
+      "label": "The cube API, dashboards and fact tables",
+      "anchor": "apps/web/src/api/routes/cube-api.ts",
+      "paths": [
+        "apps/web/src/api/cubes/**",
+        "apps/web/src/api/routes/cube-api.ts",
+        "apps/web/src/api/routes/analytics-pages.ts",
+        "apps/web/src/api/services/fact-tables/**",
+        "apps/web/src/dashboards/**",
+        "apps/web/src/ui/pages/analytics/**",
+        "apps/web/src/ui/components/analytics/**",
+        "apps/web/tests/dashboards/**",
+        "apps/web/tests/api/cubes/**"
+      ],
+      "registries": ["apps/web/src/api/index.ts", "apps/web/src/ui/App.tsx"]
+    },
+    {
+      "id": "demo-seed",
+      "kind": "example",
+      "label": "The --demo block of the seed script",
+      "anchor": "apps/web/src/api/services/ai/deterministic-embedding.ts",
+      "paths": ["apps/web/src/api/services/ai/deterministic-embedding.ts"],
+      "registries": ["apps/web/scripts/seed.ts#seedDemo"]
+    }
+  ],
+  "neverPort": [
+    "LICENSE",
+    "CONTRIBUTING.md",
+    "SECURITY.md",
+    "CODE_OF_CONDUCT.md",
+    "pnpm-lock.yaml",
+    "CHANGELOG.md",
+    "docs/ADAPTING.md",
+    ".claude/skills/rf-adapt/**",
+    "scripts/install.sh",
+    "scripts/rename.mjs",
+    "scripts/lib/rename-lib.mjs",
+    "scripts/lib/rename-lib.d.mts",
+    "apps/web/tests/config/rename-lib.test.ts",
+    "apps/web/wrangler.toml",
+    "apps/web/wrangler.staging.toml",
+    "apps/web/.dev.vars.example",
+    "apps/web/.env.test",
+    "apps/web/migrations/**",
+    "apps/web/src/ui/public/**",
+    ".rocketflare.json"
+  ],
+  "manual": [
+    "README.md",
+    ".claude/settings.json",
+    "package.json",
+    "apps/*/package.json",
+    "packages/*/package.json",
+    ".github/workflows/**",
+    "apps/web/src/ui/components/shared/LogoMark.tsx"
+  ],
+  "core": [
+    "apps/web/src/**",
+    "apps/web/tests/**",
+    "apps/web/scripts/**",
+    "apps/web/*",
+    "apps/cli/src/**",
+    "apps/cli/tests/**",
+    "apps/cli/*",
+    "packages/shared/src/**",
+    "packages/shared/*",
+    "scripts/*",
+    "scripts/lib/*",
+    "docs/*",
+    "docs/upgrades/*",
+    ".claude/rules/*",
+    ".claude/skills/**",
+    ".github/**",
+    "*"
+  ]
+}

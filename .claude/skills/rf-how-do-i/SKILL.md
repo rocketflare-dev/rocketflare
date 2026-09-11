@@ -1,5 +1,5 @@
 ---
-name: how-do-i
+name: rf-how-do-i
 description: Coach someone through adding a feature to this kit — where each layer goes, the decisions the kit forces, and the traps it will fail them on. Use when the user asks how to add or build a feature, resource or screen ("how do I add orders", "I want approvals and a dashboard"), or wants a plan before writing code. Produces a plan, never an implementation.
 argument-hint: "[what you want to build]"
 ---

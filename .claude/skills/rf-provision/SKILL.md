@@ -1,22 +1,22 @@
 ---
-name: provision
-description: Take a locally-running copy to Cloudflare + Neon + Resend — provisions every resource, patches the tomls, migrates, deploys staging, sets secrets, verifies email. Runs after /setup and /adapt.
+name: rf-provision
+description: Take a locally-running copy to Cloudflare + Neon + Resend — provisions every resource, patches the tomls, migrates, deploys staging, sets secrets, verifies email. Runs after /rf-setup and /rf-adapt.
 disable-model-invocation: true
 argument-hint: "[--deploy staging|both] [--skip-email] [--rotate]"
 ---
 
-# /provision — from "runs on my laptop" to "deployed"
+# /rf-provision — from "runs on my laptop" to "deployed"
 
-**This one is user-invoked only** (`disable-model-invocation`), unlike `/setup` and `/adapt`:
+**This one is user-invoked only** (`disable-model-invocation`), unlike `/rf-setup` and `/rf-adapt`:
 it creates paid cloud resources and its `tokens` phase needs a TTY for hidden prompts. Asked
-to deploy, tell the user to run `/provision` themselves rather than attempting it.
+to deploy, tell the user to run `/rf-provision` themselves rather than attempting it.
 
 You are driving `pnpm provision` (`apps/web/scripts/provision.ts`) for a person who may never have
 deployed anything. Explain each step in one plain sentence before you run it, show the `Verify:`
 line it ends with, and stop at the first failure. Reference material (API docs, token scopes,
 known risks, the manual path) is in `reference.md` next to this file.
 
-Prerequisites: `/setup` Part 1 has passed locally and, on a fresh copy, `/adapt` has renamed the
+Prerequisites: `/rf-setup` Part 1 has passed locally and, on a fresh copy, `/rf-adapt` has renamed the
 app (the script reads the app name from `apps/web/wrangler.toml`, never a literal).
 
 ## Step 0 — accounts and tokens (the user does this, not you)

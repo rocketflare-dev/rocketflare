@@ -1,5 +1,5 @@
 ---
-name: setup
+name: rf-setup
 description: First run of this kit on this machine — checks the toolchain, starts Postgres, migrates, seeds demo data, and gets you signed in
 argument-hint: "[--offline] [--no-demo]"
 ---
@@ -12,7 +12,7 @@ SETUP.md Part 1 end to end and is **idempotent** — re-running after a fix is a
 ## Constraints on you (Claude)
 
 - You may reach this skill from a plain "help me set up this project" — the user need not
-  have typed `/setup`. Before the first command, say in one sentence what the script will do
+  have typed `/rf-setup`. Before the first command, say in one sentence what the script will do
   to their machine (start a Postgres container, write `apps/web/.dev.vars`, seed a demo
   database) and that it is idempotent. Then run it; don't wait for permission you already have.
 - Your Bash tool has **no TTY** and a **2-minute default timeout**. Always run the bootstrap with a
@@ -123,8 +123,8 @@ open "want me to do anything else?". Offer these, in this order, with the first 
 |---|---|
 | **Show me around** | Walk the seeded app: **Chat** (streams a reply — Workers AI needs the `wrangler login`, else a key), **Agents** (`summarize-text`, watch the timeline fill), **Knowledge → Search** (the demo documents are indexed), **Analytics** (the seeded Organisation Overview). Drive it with them; one screen at a time |
 | **Check it really works** | `pnpm test:db:up && pnpm test` (ephemeral Postgres on :5433), then the SETUP.md 1.6 analytics check `pnpm web db:refresh-facts && pnpm web db:check-facts` |
-| **Make it mine** | `/adapt <slug>` — the rename (package scope, Worker, database, CLI, theme). Ask for the slug if they have not said one |
-| **Deploy it** | `/provision` — **user-invoked only**: tell them to type it, and that it needs the three accounts (Cloudflare on Workers Paid, Neon, Resend) and `pnpm provision tokens` in their own terminal first |
+| **Make it mine** | `/rf-adapt <slug>` — the rename (package scope, Worker, database, CLI, theme). Ask for the slug if they have not said one |
+| **Deploy it** | `/rf-provision` — **user-invoked only**: tell them to type it, and that it needs the three accounts (Cloudflare on Workers Paid, Neon, Resend) and `pnpm provision tokens` in their own terminal first |
 
 Leave the dev stack running unless they ask you to stop it (`pnpm dev:stop`). If they pick
 something not on the list, just do that — the list is a starting point, not a gate.

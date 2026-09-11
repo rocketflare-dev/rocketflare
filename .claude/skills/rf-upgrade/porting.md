@@ -1,0 +1,94 @@
+# /rf-upgrade — porting reference
+
+The per-area detail behind step 3 of `SKILL.md`. Each section is a thing `pnpm kit:upgrade`
+deliberately refuses to do automatically, and why doing it the obvious way goes wrong quietly.
+
+## Reading the plan
+
+`.upgrade/work/<version>/plan.json` has one entry per changed file. The classes:
+
+| class | what it means | what you do |
+|---|---|---|
+| `added` | a new kit file, already written and translated | nothing; review it |
+| `added-collides` | the kit added a path you already have | compare with `reference/<path>`, merge by hand |
+| `modified` | in `apply.patch` | nothing, unless it rejected |
+| `deleted` | the kit removed it | decide. It stays unless they say otherwise |
+| `skipped-surface-absent` | belongs to a surface this app deleted | **nothing. Ever.** |
+| `skipped-locally-deleted` | the adopter deleted this file | nothing |
+| `skipped-kit-only` | the kit's own identity: LICENSE, SECURITY.md, install.sh, the rename tool | nothing |
+| `migration-derived` | `apps/web/migrations/**` | regenerate — see below |
+| `manual-toml` / `manual-env` | wrangler tomls, `.dev.vars.example`, `.env.test` | see below |
+| `manual` | README, CI workflows, `package.json` | read the diff in `reference/`, apply what they want |
+| `binary` | not text | copy by hand if wanted |
+
+A high skipped count is health, not damage. `docs/ADAPTING.md` §2 tells every adopter to delete the
+example agents, cubes and CLI commands; those deletions are what the skipped counts are made of.
+
+## Migrations — the sharpest trap
+
+**Never copy `apps/web/migrations/**`.** Port the schema (the patch already did) and run
+`pnpm db:generate`.
+
+Three reasons, worst last:
+
+1. The kit's file index (`0007_…`) collides with the adopter's own sequence.
+2. `meta/_journal.json` is one ordered array; a textual patch conflicts every time, and a merge that
+   "succeeds" leaves tags that do not match the files on disk.
+3. **Each `meta/NNNN_snapshot.json` carries the full cumulative schema.** Drop the kit's in and
+   drizzle's notion of current state becomes one that has never heard of the adopter's tables — so
+   their *next* `pnpm db:generate` emits `DROP TABLE` for their own data. Silent, delayed,
+   destructive.
+
+After `pnpm db:generate`, diff your file against `reference/apps/web/migrations/` and hand-paste
+anything drizzle cannot derive from schema: `INSERT`/`UPDATE`/`DELETE` backfills, `CREATE EXTENSION`,
+functions, triggers, `ALTER TABLE … USING`. A change to the embedding dimension is never a
+regenerate — that is a new table and a re-embed (`docs/ADAPTING.md` §3).
+
+## The wrangler tomls
+
+`apps/web/wrangler.toml` and `wrangler.staging.toml` carry the adopter's real Hyperdrive and KV ids,
+a live `routes` line, their `APP_URL`, and an `[ai]` block whose comment state
+`pnpm bootstrap --offline` toggles. Never apply a textual patch to them.
+
+Read `reference/apps/web/wrangler*.toml` and carry across **only** what code can observe:
+`compatibility_date`, `compatibility_flags`, `[limits]`, `[triggers].crons`, `[[migrations]]`,
+binding names and DO `class_name`s — and a **new binding**, which goes in with the kit's
+`<PLACEHOLDER>` value, never a real id. That is exactly the shape `pnpm provision cloudflare <env>`
+fills, and `wrangler-parity.test.ts` only fails on placeholders under `REQUIRE_PROVISIONED=1`, so
+CI stays green in between.
+
+Every edit goes into **both** files or the parity test fails — which is the point of it. Account-
+scoped names (`queue`, `bucket_name`, workflow `name`) keep the adopter's prefix and staging keeps
+its `-staging` suffix. Verify with `pnpm web test:config`.
+
+## `.dev.vars.example` and `.env.test`
+
+Key-level only: add the new keys with their comment block and a blank value, under the right
+heading. Do not apply the diff — those files carry the adopter's own database naming.
+`apps/web/src/config.ts` says whether a new key is required or feature-gated; say which in your
+summary, because `.dev.vars` itself is git-ignored and they have to add it by hand.
+
+## `package.json`
+
+`manual` on purpose. The root `version` is the **app's** release version — `docs/DEPLOY.md` gates
+deploys on `tag == root version` — so porting the kit's bump would break their release flow. Take
+the dependency changes, leave the version, then `pnpm install` so the lockfile follows.
+
+## Registries
+
+A kit release that adds an agent, a job type, a cube, a dashboard template or a CLI command also
+edits the registry that lists it. Those registry files are ordinary `modified` files, so the patch
+carries the entry — but if the adopter pruned that registry, expect a reject there and re-add only
+the new entry, not the kit's whole list. The registries each surface names are in
+`.rocketflare.json`; `docs/ADAPTING.md` §2 is the same map written for a human.
+
+## What the kit will not send
+
+`LICENSE`, `CONTRIBUTING.md`, `SECURITY.md`, `CODE_OF_CONDUCT.md`, `CHANGELOG.md`,
+`docs/ADAPTING.md`, `scripts/install.sh`, the rename toolchain, `pnpm-lock.yaml` and the kit's logo
+are the kit's identity, not the app's, and are never ported. Porting a `SECURITY.md` change would
+repoint the adopter's disclosure contact at the kit's inbox; porting `install.sh` would leave a
+script in their repo that clones the kit over a new directory.
+
+`docs/upgrades/*.md` **is** ported, untranslated, so the app accumulates the same release record —
+that is what makes the next upgrade legible to the next agent.

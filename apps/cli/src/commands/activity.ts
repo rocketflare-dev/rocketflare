@@ -1,4 +1,6 @@
 /** `rocketflare activity list [--page] [--page-size] [--type]` — `GET /api/activity` (admin+) (D26). */
+// EXAMPLE (surface `example-cli-commands` in .rocketflare.json): one of the three read-list
+// commands that document the pattern. Delete the ones you do not want — `docs/ADAPTING.md` §2.
 import { activityEventSchema } from '@rocketflare/shared/activity'
 import { paginatedResponse } from '@rocketflare/shared/pagination'
 import { type CommandContext, requireClient } from '../context'

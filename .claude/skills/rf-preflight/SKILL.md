@@ -1,5 +1,5 @@
 ---
-name: preflight
+name: rf-preflight
 description: Diagnose a broken local dev environment (node, pnpm, .dev.vars, Postgres, wrangler login, ports) without changing anything
 ---
 
@@ -34,7 +34,7 @@ hint are authoritative; the table below adds what each fix *does*.
 | node missing / not v24 | wrong Node | `nvm install` (reads `.nvmrc`) or `fnm use` — installs/activates Node 24 for this shell |
 | pnpm missing / not 10.x | corepack is off | `corepack enable` — makes the `pnpm` version in root `package.json` `packageManager` available |
 | docker daemon not reachable | Docker is not running | start Docker Desktop, or `colima start` (macOS), or `sudo systemctl start docker` (Linux) — starts the daemon; nothing in the repo changes |
-| `apps/web/.dev.vars` missing | first run never completed | `cp apps/web/.dev.vars.example apps/web/.dev.vars`, then fill `OAUTH_ENCRYPTION_KEY` with `openssl rand -hex 32` (SETUP.md 1.3); or `/setup` which does this for you |
+| `apps/web/.dev.vars` missing | first run never completed | `cp apps/web/.dev.vars.example apps/web/.dev.vars`, then fill `OAUTH_ENCRYPTION_KEY` with `openssl rand -hex 32` (SETUP.md 1.3); or `/rf-setup` which does this for you |
 | `OAUTH_ENCRYPTION_KEY` empty or shorter than 32 chars | the one required secret is blank | as above — generate a 64-hex value; **never** reuse a value from another environment |
 | dev Postgres not running / unhealthy | the container is stopped | `pnpm dev:db:up` — starts this checkout's container on the port in `DATABASE_URL`, or the next free one (data persists in the named volume); `pnpm dev:db:status` lists every dev database on the machine |
 | database unreachable with the container up | `DATABASE_URL` in `.dev.vars` disagrees with the compose file | compare `DATABASE_URL` to `POSTGRES_DB/USER/PASSWORD` in `apps/web/docker-compose.dev.yml`; fix `.dev.vars` (a renamed kit is the usual cause — `docs/ADAPTING.md` §1) |

@@ -1,7 +1,7 @@
 /**
  * `pnpm provision <phase> [env] [flags]` — take a copy that runs locally to "deployed on
  * Cloudflare with Neon Postgres and Resend email". Driven by the `/provision` skill
- * (.claude/skills/provision/SKILL.md); the manual equivalent is SETUP.md Part 3.
+ * (.claude/skills/rf-provision/SKILL.md); the manual equivalent is SETUP.md Part 3.
  *
  * Phases (each idempotent find-or-create, each ending in ONE `Verify:` line):
  *   tokens [--skip-email]           TTY only: prompt (hidden) for the four vendor tokens, verify each

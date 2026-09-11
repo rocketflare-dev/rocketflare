@@ -97,6 +97,12 @@ jobs:
             exit 1
           fi
 
+      # A release with no porting note is a gap every copy of the kit has to step over, permanently:
+      # `docs/upgrades/` is the chain `/rf-upgrade` walks. `pnpm kit:release <version>` writes all of
+      # it. Exits 0 immediately in an adopted copy, so it never gates somebody's own product.
+      - name: Release carries its porting note
+        run: node scripts/release-check.mjs --tag "${{ steps.version.outputs.version }}"
+
       - run: pnpm install --frozen-lockfile
 
       # Runs in apps/web (its `test:config` script loads .env.test itself); reads both tomls
@@ -162,6 +168,12 @@ jobs:
             echo "::error::Release tag ${{ github.event.release.tag_name }} does not match root package.json version ${PKG}."
             exit 1
           fi
+
+      # A release with no porting note is a gap every copy of the kit has to step over, permanently:
+      # `docs/upgrades/` is the chain `/rf-upgrade` walks. `pnpm kit:release <version>` writes all of
+      # it. Exits 0 immediately in an adopted copy, so it never gates somebody's own product.
+      - name: Release carries its porting note
+        run: node scripts/release-check.mjs --tag "${{ steps.version.outputs.version }}"
 
       - run: pnpm install --frozen-lockfile
 

@@ -1,5 +1,5 @@
 ---
-name: adapt
+name: rf-adapt
 description: Rename a fresh copy of the kit to your app (package scope, worker, database, CLI, themes, domain), then walk the rows that need a human
 argument-hint: "<slug> [\"Display Name\"] [--domain example.com] [--colour #hex]"
 ---
@@ -85,7 +85,7 @@ Tell the user:
 - `docs/ADAPTING.md` §2 (delete the example agents, dashboard, prompts) is for **when they have
   real ones** — not now.
 
-Then **end the turn with `AskUserQuestion`** rather than a paragraph — the same as `/setup` does.
-The choices after a rename are: **run it** (`/setup`, or `SETUP.md` Part 1 by hand), **deploy it**
-(`/provision` — they type it themselves), **walk the six careful rows** (`checklist.md` beside this
+Then **end the turn with `AskUserQuestion`** rather than a paragraph — the same as `/rf-setup` does.
+The choices after a rename are: **run it** (`/rf-setup`, or `SETUP.md` Part 1 by hand), **deploy it**
+(`/rf-provision` — they type it themselves), **walk the six careful rows** (`checklist.md` beside this
 file), or **stop here**.

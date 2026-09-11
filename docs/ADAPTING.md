@@ -16,22 +16,28 @@ git remote add origin git@github.com:<you>/myapp.git
 Or the one-liner — `curl -fsSL https://rocketflare.dev/install.sh | bash -s -- myapp` (read
 `scripts/install.sh` first: it clones, detaches exactly as above with the kit commit recorded in the
 first message, then execs `scripts/bootstrap.sh`). Either way, `bash scripts/bootstrap.sh` (or
-`/setup`) is the first run — `SETUP.md` Part 1 as one command.
+`/rf-setup`) is the first run — `SETUP.md` Part 1 as one command.
 
 Why: you are about to rename packages, delete examples and rewrite docs; a fork or a shared history
-only invites merge conflicts with a kit that will keep evolving independently. If you want to pull a
-later kit improvement, cherry-pick or re-apply it by hand from a fresh clone. Record the commit you
-started from somewhere (the first commit message is a good place) so you can diff against it later.
+only invites merge conflicts with a kit that will keep evolving independently.
+
+**Detached is not frozen.** `.rocketflare.json` at the root records which kit version and commit this
+copy came from, and `/rf-adapt` writes your names into it. Later, `/rf-upgrade` (or `pnpm
+kit:upgrade`) fetches the kit into a throwaway mirror, translates its diff into your names, drops
+everything belonging to a part you deleted, and hands you the rest to apply — guided by the release
+notes in `docs/upgrades/`. So delete freely in §2 below: an upgrade never recreates what you removed.
+
+Keep `.rocketflare.json`. Deleting it is the one thing that costs you the upgrade path.
 
 ## 1. Rename (exact find/replace targets)
 
 Pick an app slug (`myapp`, lowercase, digits, hyphens; starts with a letter), a package scope
 (`@myapp`) and a display name.
 
-**`/adapt <slug> ["Name"] [--domain <apex>] [--colour <#hex>]`** in Claude Code, or by hand
+**`/rf-adapt <slug> ["Name"] [--domain <apex>] [--colour <#hex>]`** in Claude Code, or by hand
 `node scripts/rename.mjs --dry-run <slug> ["Display Name"] [--domain …] [--colour …]` then the same
 without `--dry-run`, performs the mechanical rows below in one pass and reports the careful ones —
-`.claude/skills/adapt/checklist.md` walks those six, lettered (a)–(f) as in the **Script** column.
+`.claude/skills/rf-adapt/checklist.md` walks those six, lettered (a)–(f) as in the **Script** column.
 The script walks every text file git knows about (tracked and untracked, `.gitignore` honoured;
 `pnpm-lock.yaml`, `LICENSE`, `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `SECURITY.md`, the two svgs,
 the tool itself, its test and the adapt skill are skipped; `github.com/rocketflare-dev/rocketflare`
@@ -77,6 +83,10 @@ an `@rocketflare/shared` import was missed. Keep `packages/shared` **private** (
 `publishConfig`) whatever you call it.
 
 ## 2. Delete once you have real ones
+
+Each bullet below is a **surface** in `.rocketflare.json`, with an anchor file. Delete the anchor and
+`pnpm kit:upgrade` stops offering you that surface's changes forever — no bookkeeping, nothing to
+tell it. That is what makes deleting safe.
 
 - The example agents `apps/web/src/api/services/agents/examples/{summarize-text,research-topic}.ts` —
   `summarize-text` is the one-forced-call shape, `research-topic` the tool-loop-over-the-knowledge-base

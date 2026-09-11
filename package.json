@@ -18,6 +18,8 @@
     "dev:db:down": "pnpm --filter @rocketflare/web dev:db:down",
     "dev:db:status": "pnpm --filter @rocketflare/web dev:db:status",
     "bootstrap": "node scripts/bootstrap.mjs",
+    "kit:upgrade": "node scripts/upgrade.mjs",
+    "kit:release": "node scripts/release.mjs",
     "preflight": "node scripts/bootstrap.mjs --check",
     "test:db:up": "pnpm --filter @rocketflare/web test:db:up",
     "test:db:down": "pnpm --filter @rocketflare/web test:db:down",

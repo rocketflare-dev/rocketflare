@@ -6,6 +6,9 @@
  * for part-to-whole, and a `recordsTable` (record grain → `ungrouped: true`). Portlet x/y/w/h
  * mirror the rows — `tests/dashboards/all-templates.test.ts` asserts they agree. Member names
  * here are the frozen contract with `src/api/cubes/`.
+ *
+ * EXAMPLE (surface `example-dashboard-tenant-overview`): the one template the kit ships, to show
+ * the rules. Delete it once you have dashboards of your own — `DASHBOARD_TEMPLATES` may be empty.
  */
 import type { DashboardConfig } from 'drizzle-cube/client'
 

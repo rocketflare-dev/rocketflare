@@ -72,6 +72,13 @@ jobs:
             | tar -xz -C "$RUNNER_TEMP" gitleaks
           "$RUNNER_TEMP/gitleaks" git --redact --exit-code 1 --verbose .
 
+      # A behaviour change with no porting note is invisible to every copy of the kit that is
+      # already out there: `pnpm kit:upgrade` replays a translated diff guided by those notes, so
+      # the gap is permanent. The script exits 0 immediately in an adopted copy (`.rocketflare.json`
+      # with an `app` block), so this never fires in somebody's product.
+      - name: A behaviour change carries its porting note
+        run: node scripts/release-check.mjs --unreleased --base "${{ github.event.before || 'HEAD~1' }}"
+
       # Biome runs once over the whole workspace from the root biome.json.
       - run: pnpm lint
       # `pnpm typecheck` = `pnpm -r typecheck`: web runs `wrangler types` + `tsc`, cli and shared run

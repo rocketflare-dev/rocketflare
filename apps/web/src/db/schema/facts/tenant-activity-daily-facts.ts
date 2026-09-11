@@ -10,6 +10,9 @@
  * pg17 compose image both qualify). No surrogate `id` — the grain IS the key. No FK to `users`
  * (a refresh must never fail because a user row went away). `fact_refreshed_at` is the watermark
  * the freshness check reads.
+ *
+ * EXAMPLE (surface `example-cube-tenant-activity-daily`): the shape to copy for a real fact table,
+ * and safe to delete with its cube and query — `docs/ADAPTING.md` §2.
  */
 import { relations } from 'drizzle-orm'
 import { date, index, integer, pgTable, timestamp, unique, uuid } from 'drizzle-orm/pg-core'

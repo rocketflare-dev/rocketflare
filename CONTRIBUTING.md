@@ -68,11 +68,12 @@ A pnpm workspace; `CLAUDE.md` is the map and every significant directory has its
 - 📂 `packages/shared/` — `@rocketflare/shared`: the zod contracts the API validates with and the UI
   and CLI parse with (private, consumed as TypeScript source)
 - 📂 `docs/` — `CONCEPTS.md` (how each subsystem works, the decision record, and its known gaps),
-  `ADAPTING.md`, `DEPLOY.md`, `RLS.md`
-- 📂 `scripts/` — first-run tooling: `bootstrap.sh` / `bootstrap.mjs`, `install.sh`, `rename.mjs`, `lib/`
+  `ADAPTING.md`, `DEPLOY.md`, `RLS.md`, `upgrades/` (one porting note per release)
+- 📂 `scripts/` — first-run tooling: `bootstrap.sh` / `bootstrap.mjs`, `install.sh`, `rename.mjs`,
+  `lib/`; and the upgrade path: `upgrade.mjs`, `release.mjs`, `release-check.mjs`
 - 📂 `.claude/rules/` — layer conventions (api, database, ui, cli, testing, code-quality,
   cloudflare), loaded by path when you or a coding agent touch that layer; `.claude/skills/` — the
-  `/setup`, `/preflight`, `/adapt` and `/provision` slash commands
+  `/rf-setup`, `/rf-preflight`, `/rf-adapt`, `/rf-provision` and `/rf-upgrade` slash commands
 
 ### <a name="what-a-change-must-include"></a> What a change must include
 
@@ -80,6 +81,13 @@ The repo's **non-negotiables** are listed in `CLAUDE.md`; the ones contributors 
 
 - **The gate is green**: `pnpm lint && pnpm typecheck && pnpm test && pnpm build` before every
   commit. `typecheck` regenerates `apps/web/worker-configuration.d.ts` — commit it if it changed.
+- **A behaviour change adds an entry to `docs/upgrades/unreleased.md`.** People are running copies
+  of this kit that were detached and renamed; they absorb your change by running `/rf-upgrade`,
+  which is guided by those notes. A change with no note never reaches them. `docs/upgrades/README.md`
+  has the shape, and CI fails a pull request that touches `apps/**` or `packages/**` without one.
+- **Never rewrite released history.** Every copy pins a kit commit in its `.rocketflare.json`; a
+  force-push over a released tag orphans each one of them, permanently. Releases are cut with
+  `pnpm kit:release <version>` and the tag gate refuses one without its porting note.
 - **Contracts first**: a new or changed API surface starts as a zod schema in
   `packages/shared/src/`, then the route validates with it, then the UI/CLI parse with it.
 - **Tenant isolation**: every domain query filters by the tenant from the auth context; every tenant

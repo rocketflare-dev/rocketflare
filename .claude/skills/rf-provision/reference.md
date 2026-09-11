@@ -1,4 +1,4 @@
-# /provision — reference
+# /rf-provision — reference
 
 Companion to `SKILL.md`. The implementation is `apps/web/scripts/provision.ts` with the vendor
 clients in `apps/web/scripts/provision/{neon,resend,cloudflare-dns,secrets,patch-toml,redact,config}.ts`;
