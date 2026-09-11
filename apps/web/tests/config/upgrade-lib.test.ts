@@ -18,6 +18,7 @@ import {
   classifyPath,
   countLines,
   globToRegExp,
+  isDeployable,
   isKitManifest,
   matchesAny,
   parseNote,
@@ -163,6 +164,42 @@ index aaa..bbb 100644
 -Copyright Rocketflare
 +Copyright Rocketflare Ltd
 `
+
+describe('isDeployable', () => {
+  // This gates the deploy workflow, so the expensive mistake is a false "skip": somebody's
+  // production release quietly not happening. Every ambiguous case must deploy.
+  const KIT = { app: null } as unknown as Manifest
+  const APP = { app: { slug: 'acme', display: 'Acme', domain: 'acme.io' } } as unknown as Manifest
+  const placeholder = { 'apps/web/wrangler.toml': 'id = "<KV_NAMESPACE_ID>"' }
+  const provisioned = { 'apps/web/wrangler.toml': 'id = "0f1e2d3c4b5a69788796a5b4c3d2e1f0"' }
+
+  it('skips only the kit that has never been provisioned', () => {
+    const d = isDeployable(KIT, placeholder)
+    expect(d.deployable).toBe(false)
+    expect(d.reason).toContain('apps/web/wrangler.toml')
+  })
+
+  it('deploys an app even when its tomls still hold placeholders', () => {
+    // Their parity check fails loudly a step later; that is the gate, and it is meant to be seen.
+    expect(isDeployable(APP, placeholder).deployable).toBe(true)
+  })
+
+  it('deploys a kit-shaped repo that someone pointed at real resources', () => {
+    expect(isDeployable(KIT, provisioned).deployable).toBe(true)
+  })
+
+  it('deploys when there is no manifest at all', () => {
+    expect(isDeployable(null, placeholder).deployable).toBe(true)
+  })
+
+  it('names both tomls when both are unprovisioned', () => {
+    const d = isDeployable(KIT, {
+      'apps/web/wrangler.toml': '<A_ID>',
+      'apps/web/wrangler.staging.toml': '<B_ID>',
+    })
+    expect(d.reason).toContain('apps/web/wrangler.toml and apps/web/wrangler.staging.toml')
+  })
+})
 
 describe('splitDiff', () => {
   it('splits on the file header and keeps each block whole', () => {

@@ -54,6 +54,21 @@ permissions:
   contents: read
 
 jobs:
+  # Is there anything here to deploy? The kit's OWN repository has no Cloudflare or Neon resources —
+  # its tomls keep `<PLACEHOLDER>` ids on purpose, so a copy cannot deploy without provisioning
+  # first. Without this the kit goes red on every tag it cuts, and a deploy nobody reads is one that
+  # hides a real failure. A copy (`app` set in .rocketflare.json) always deploys, and still fails
+  # loudly at the parity check if it was never provisioned — that gate is the point of it.
+  guard:
+    name: Anything to deploy?
+    runs-on: ubuntu-latest
+    outputs:
+      deployable: ${{ steps.check.outputs.deployable }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: check
+        run: node scripts/release-check.mjs --deployable
+
   # Step 1 of the dance: a tag has not necessarily been through a PR, so the gate runs here.
   ci:
     if: |
@@ -63,10 +78,12 @@ jobs:
 
   staging:
     name: Deploy to staging
-    needs: ci
+    needs: [guard, ci]
     if: |
-      (github.event_name == 'push' && github.ref_type == 'tag') ||
-      (github.event_name == 'workflow_dispatch' && inputs.environment == 'staging')
+      needs.guard.outputs.deployable == 'true' && (
+        (github.event_name == 'push' && github.ref_type == 'tag') ||
+        (github.event_name == 'workflow_dispatch' && inputs.environment == 'staging')
+      )
     runs-on: ubuntu-latest
     environment: staging
     steps:
@@ -134,9 +151,12 @@ jobs:
   # on staging, so the CI gate is not re-run here.
   production:
     name: Deploy to production
+    needs: guard
     if: |
-      github.event_name == 'release' ||
-      (github.event_name == 'workflow_dispatch' && inputs.environment == 'production')
+      needs.guard.outputs.deployable == 'true' && (
+        github.event_name == 'release' ||
+        (github.event_name == 'workflow_dispatch' && inputs.environment == 'production')
+      )
     runs-on: ubuntu-latest
     environment: production
     steps:

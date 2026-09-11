@@ -214,6 +214,12 @@ adapter over `drizzle-cube/server` (`.claude/rules/cloudflare.md`). UI: the anal
 (drizzle-cube client + recharts + d3) is the largest and lazy — it must never merge into the main
 chunk.
 
+**Deploy guard.** A `guard` job runs first and the two deploy jobs are conditional on it. It skips
+only the kit's own repository, which keeps `<PLACEHOLDER>` ids in both tomls on purpose — an app
+(`app` set in `.rocketflare.json`) always deploys and still fails loudly at the parity check if it
+was never provisioned. `isDeployable` (`scripts/lib/upgrade-lib.mjs`, unit-tested) deploys in every
+ambiguous case, because a false skip is a release quietly not happening.
+
 **Version rule.** The git tag must equal `version` in the **root** `package.json`; the job fails
 otherwise. It also fails without `docs/upgrades/<tag>.md`, its `CHANGELOG.md` section and a
 matching `.rocketflare.json` `kit.version` (`scripts/release-check.mjs --tag`): a release with no

@@ -51,6 +51,17 @@ export interface Manifest {
 export function isKitManifest(manifest: Manifest | null): boolean
 export function absentSurfaces(manifest: Manifest, presentPaths: readonly string[]): string[]
 
+export interface Deployability {
+  deployable: boolean
+  reason: string
+}
+/** `tomls` is `{ path: text }`. See the implementation for why the default is "deploy". */
+export function isDeployable(
+  manifest: Manifest | null,
+  tomls: Record<string, string>
+): Deployability
+export const PLACEHOLDER_RE: RegExp
+
 export type FileClass =
   | 'added'
   | 'added-collides'

@@ -1074,7 +1074,10 @@ baseline (exit 4 means "work remains", not "failed").
 same commit: a Claude Code `PreToolUse` hook nudges before `git commit` (advisory, and only inside a
 session), `ci.yml` fails a PR that touches `apps/**` or `packages/**` without one, and `deploy.yml`
 refuses a tag whose note, changelog section or version stamps are missing
-(`scripts/release-check.mjs --tag`). `pnpm kit:release <version>` writes all of it so the gate passes
+(`scripts/release-check.mjs --tag`). `deploy.yml` also asks `--deployable` first and skips its two
+deploy jobs for the kit itself, whose tomls keep their placeholders on purpose — an app always
+deploys, and `isDeployable` defaults to deploying in every ambiguous case, because a false skip is
+somebody's release quietly not happening. `pnpm kit:release <version>` writes all of it so the gate passes
 by construction. The constraint under all of it: **released history is never rewritten**, because
 every copy pins a kit commit.
 

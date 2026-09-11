@@ -4,6 +4,7 @@
  *
  *   node scripts/release-check.mjs --tag <X.Y.Z>      the hard stop, run by deploy.yml at the tag
  *   node scripts/release-check.mjs --unreleased       the PR gate, run by ci.yml
+ *   node scripts/release-check.mjs --deployable       "is there anything here to deploy?" (deploy.yml)
  *
  * A copy of the kit can never merge from upstream; it replays translated diffs guided by these
  * notes. So a release with no note is a release no adopter can cross, and the gap is permanent —
@@ -15,11 +16,12 @@
  * Exit 0 ok · 1 a check failed · 2 usage.
  */
 import { execFileSync } from 'node:child_process'
-import { existsSync, readdirSync, readFileSync } from 'node:fs'
+import { appendFileSync, existsSync, readdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
   compareVersions,
+  isDeployable,
   isKitManifest,
   NOTE_HEADINGS,
   parseNote,
@@ -36,7 +38,7 @@ const warn = (...lines) => {
   for (const l of lines) process.stderr.write(`${l}\n`)
 }
 
-export const USAGE = `usage: node scripts/release-check.mjs --tag <X.Y.Z> | --unreleased [--base <ref>]`
+export const USAGE = `usage: node scripts/release-check.mjs --tag <X.Y.Z> | --unreleased [--base <ref>] | --deployable`
 
 /** Every `docs/upgrades/X.Y.Z.md`, oldest first. */
 export function releaseNotes() {
@@ -136,6 +138,18 @@ function checkTag(tag, problems) {
   }
 }
 
+/** The I/O half of `isDeployable`: read the manifest and both tomls, then ask the pure function. */
+export function deployable() {
+  const manifestPath = path.join(REPO_ROOT, '.rocketflare.json')
+  const manifest = existsSync(manifestPath) ? JSON.parse(readFileSync(manifestPath, 'utf8')) : null
+  const tomls = Object.fromEntries(
+    ['apps/web/wrangler.toml', 'apps/web/wrangler.staging.toml']
+      .filter(f => existsSync(path.join(REPO_ROOT, f)))
+      .map(f => [f, read(f)])
+  )
+  return isDeployable(manifest, tomls)
+}
+
 const WATCHED = /^(apps|packages)\//
 const EXEMPT = /(^|\/)(tests?|__tests__)\/|\.test\.(ts|tsx)$|\.md$/
 
@@ -177,6 +191,7 @@ function main(argv) {
       mode = 'tag'
       tag = argv[++i]
     } else if (argv[i] === '--unreleased') mode = 'unreleased'
+    else if (argv[i] === '--deployable') mode = 'deployable'
     else if (argv[i] === '--base') base = argv[++i]
     else if (argv[i] === '-h' || argv[i] === '--help') {
       out(USAGE)
@@ -189,6 +204,17 @@ function main(argv) {
   if (!mode) {
     warn(USAGE)
     return 2
+  }
+  if (mode === 'deployable') {
+    const { deployable: ok, reason } = deployable()
+    // The workflow reads this line; `::notice::` puts the reason in the run summary, so a skipped
+    // deploy explains itself instead of looking like something went wrong.
+    if (process.env.GITHUB_OUTPUT) {
+      appendFileSync(process.env.GITHUB_OUTPUT, `deployable=${ok}\n`)
+    }
+    out(ok ? `deployable=true — ${reason}` : `::notice::Deploy skipped: ${reason}.`)
+    if (!ok) out('deployable=false')
+    return 0
   }
   if (!existsSync(path.join(REPO_ROOT, '.rocketflare.json'))) {
     out('release-check: no .rocketflare.json — nothing to check')

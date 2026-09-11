@@ -69,6 +69,42 @@ export function absentSurfaces(manifest, presentPaths) {
   return manifest.surfaces.filter(s => !present.has(s.anchor)).map(s => s.id)
 }
 
+/**
+ * Is a checkout something that can be deployed at all?
+ *
+ * The kit's own repository has no Cloudflare or Neon resources — its tomls keep `<PLACEHOLDER>`
+ * ids on purpose, so that a COPY cannot deploy without provisioning first. Running the deploy jobs
+ * there fails every time the kit is tagged, which is noise; and a permanently red deploy is one
+ * nobody reads, so a genuine failure would hide in it.
+ *
+ * Not deployable only when BOTH hold: this is the kit (`app === null`) AND it is unprovisioned (a
+ * placeholder remains in a toml). Every other case deploys, because the cost of a false "skip" is
+ * somebody's production release quietly not happening:
+ *
+ *   - no manifest at all → deploy (an unknown state is not a licence to skip)
+ *   - an `app` block → somebody's product → deploy whatever the tomls say, and let the parity
+ *     check fail loudly if they never provisioned
+ *   - the kit with provisioned tomls → somebody pointed a kit-shaped repo at real resources → deploy
+ *
+ * `tomls` is `{ path: text }`, so this stays pure.
+ */
+export function isDeployable(manifest, tomls) {
+  if (manifest == null)
+    return { deployable: true, reason: 'no .rocketflare.json — treating this as an app' }
+  if (!isKitManifest(manifest)) return { deployable: true, reason: 'this is an app, not the kit' }
+  const unprovisioned = Object.entries(tomls)
+    .filter(([, text]) => PLACEHOLDER_RE.test(text))
+    .map(([file]) => file)
+  if (unprovisioned.length === 0) return { deployable: true, reason: 'the kit, but provisioned' }
+  return {
+    deployable: false,
+    reason: `the kit itself, with placeholders still in ${unprovisioned.join(' and ')} — there is nothing provisioned to deploy`,
+  }
+}
+
+/** The shape `scripts/provision/patch-toml.ts` fills in: `<KV_FOO_ID>`. */
+export const PLACEHOLDER_RE = /<[A-Z0-9_]+>/
+
 // ---------------------------------------------------------------- classification
 
 /** The closed set of classes a path can take. */
