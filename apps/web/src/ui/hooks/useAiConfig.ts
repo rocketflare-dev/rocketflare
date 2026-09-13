@@ -35,7 +35,7 @@ export const aiProviderInfoSchema = z
     supportsThinking: z.boolean(),
     supportsServiceTier: z.boolean(),
     defaultModel: z.string(),
-    suggestedModels: z.array(z.string()).default([]),
+    suggestedModels: z.record(z.string(), z.array(z.string())).default({}),
   })
   .passthrough()
 export type AiProviderInfo = z.infer<typeof aiProviderInfoSchema>

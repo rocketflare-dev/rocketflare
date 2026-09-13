@@ -191,3 +191,16 @@ export function mapInfrastructureError(error: unknown): ApiError | null {
       return null
   }
 }
+
+/**
+ * A Postgres unique / primary-key violation, wherever the driver hung the code. postgres.js puts
+ * it on the error; drizzle may wrap it, so the `cause` chain is walked too.
+ */
+export function isUniqueViolation(err: unknown): boolean {
+  let current = err
+  for (let depth = 0; current && depth < 5; depth++) {
+    if (typeof current === 'object' && (current as { code?: string }).code === '23505') return true
+    current = (current as { cause?: unknown }).cause
+  }
+  return false
+}

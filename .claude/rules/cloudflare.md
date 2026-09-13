@@ -43,7 +43,7 @@ workspace root) or through the root scripts (`pnpm deploy[:staging]`, `pnpm prov
   Decide which of the three a new binding is and say so in its service header
 - `[vars]` = non-secret config, visible in the toml. Secrets = `.dev.vars` locally,
   `wrangler secret put` deployed. Never a secret in a toml. AI vars in both tomls:
-  `AGENT_MAX_OUTPUT_TOKENS = "16384"`, `AGENT_MAX_TURNS = "30"`; `LANGFUSE_BASE_URL` /
+  `AGENT_MAX_OUTPUT_TOKENS = "16384"`, `AGENT_MAX_TURNS = "30"`, `CHAT_KNOWLEDGE_TOOLS = "true"`, `CHAT_HISTORY_MAX_CHARS = "24000"`; `LANGFUSE_BASE_URL` /
   `LANGFUSE_TRACING_ENVIRONMENT` default in `config.ts` and are added to BOTH files only when
   overridden (the parity test compares `[vars]` keys). AI secrets: `ANTHROPIC_API_KEY`,
   `EMBEDDINGS_API_KEY`, `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY` — all optional

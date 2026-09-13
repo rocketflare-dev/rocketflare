@@ -1,8 +1,13 @@
 name: CI
 
-# The quality gate, in ONE place. It runs on every push to main, and deploy.yml calls this same
-# file (`workflow_call`) before deploying a tag to staging, rather than keeping a second copy of
-# the job — a gate that drifts between main and deploy is worse than no gate at all.
+# The quality gate, in ONE place. It runs on every pull request and every push to main, and
+# deploy.yml calls this same file (`workflow_call`) before deploying a tag to staging, rather than
+# keeping a second copy of the job — a gate that drifts between main and deploy is worse than no
+# gate at all.
+#
+# `pull_request` is the trigger that matters: a gate that only runs AFTER merge reports problems to
+# someone who has already moved on, and the porting-note check below is written as a PR check and
+# can only do its job there. `push` stays on `main` alone, so a PR branch runs this once, not twice.
 #
 # Workspace note: the repo is a pnpm workspace (apps/web, apps/cli, packages/shared). Every step
 # runs at the repository ROOT; the root scripts fan out with `pnpm -r` / `--filter`, and pnpm runs
@@ -10,6 +15,7 @@ name: CI
 # the web tests load `apps/web/.env.test` through their own `dotenv -e .env.test` script, wrangler
 # resolves `wrangler.toml` / `[assets] directory` inside apps/web, and the CLI builds in apps/cli.
 on:
+  pull_request:
   push:
     branches: [main]
   workflow_call:
@@ -77,7 +83,14 @@ jobs:
       # the gap is permanent. The script exits 0 immediately in an adopted copy (`.rocketflare.json`
       # with an `app` block), so this never fires in somebody's product.
       - name: A behaviour change carries its porting note
-        run: node scripts/release-check.mjs --unreleased --base "${{ github.event.before || 'HEAD~1' }}"
+        env:
+          # The comparison point differs per trigger: a PR diffs against the branch it targets (so a
+          # branch of several commits may carry its note in any one of them), a push to main against
+          # the commit before it. The script diffs `base...HEAD`, and skips rather than fails when a
+          # range will not resolve — which is what keeps the tag path (`workflow_call`, where
+          # `event.before` is all zeros) quiet.
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before || 'HEAD~1' }}
+        run: node scripts/release-check.mjs --unreleased --base "$BASE"
 
       # Biome runs once over the whole workspace from the root biome.json.
       - run: pnpm lint

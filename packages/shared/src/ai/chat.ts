@@ -1,8 +1,8 @@
 /**
- * Chat contracts (D17): persisted `conversations` / `messages` rows, the request bodies, and the
- * SSE frame protocol `POST /api/chat/conversations/:id/messages` streams. Every frame's `data` is
- * one JSON `ChatStreamEvent` (discriminated on `type`); the SSE `event:` field repeats `type` for
- * `EventSource` consumers. The UI parses `data` with `chatStreamEventSchema.safeParse`.
+ * Chat contracts (D17): the persisted `conversations` / `messages` rows and the request bodies.
+ * The wire protocol the streaming route speaks is AG-UI and lives in `agui.ts`; this file is the
+ * DB-shaped half — `tokenUsageSchema` and `toolCallRecordSchema` are jsonb column types as well as
+ * response fields.
  */
 import { z } from 'zod'
 import { paginationQuerySchema } from '../pagination'
@@ -79,37 +79,32 @@ export type ConversationListQuery = z.infer<typeof conversationListQuerySchema>
 /** Auto-title = first user message, trimmed to this many characters. */
 export const CONVERSATION_TITLE_LENGTH = 60
 
-// ---- SSE protocol -------------------------------------------------------------------------
+/**
+ * Model turns a chat reply may spend calling tools. Deliberately far below `AGENT_MAX_TURNS` (30):
+ * that is a budget for a Workflow step with a ten-minute timeout, while a chat turn is interactive
+ * and shares the Worker's CPU and subrequest budget with the request that opened it.
+ */
+export const CHAT_MAX_TOOL_TURNS = 6
 
-export const chatStreamEventSchema = z.discriminatedUnion('type', [
-  /** First frame: the persisted user message id and the assistant message id being written. */
-  z.object({
-    type: z.literal('message.start'),
-    conversationId: z.string().uuid(),
-    messageId: z.string().uuid(),
-    userMessageId: z.string().uuid(),
-    model: z.string(),
-    provider: aiProviderSchema,
-  }),
-  z.object({ type: z.literal('text.delta'), delta: z.string() }),
-  z.object({
-    type: z.literal('tool.start'),
-    toolUseId: z.string(),
-    name: z.string(),
-    input: z.unknown().optional(),
-  }),
-  z.object({
-    type: z.literal('tool.end'),
-    toolUseId: z.string(),
-    name: z.string(),
-    isError: z.boolean(),
-    result: z.string().optional(),
-  }),
-  z.object({ type: z.literal('usage'), usage: tokenUsageSchema }),
-  /** Last frame on success — the assistant message is persisted when this arrives. */
-  z.object({ type: z.literal('message.end'), messageId: z.string().uuid() }),
-  /** Last frame on failure; nothing after it. `code` is an `AiErrorCode` or `internal`. */
-  z.object({ type: z.literal('error'), message: z.string(), code: z.string() }),
-])
-export type ChatStreamEvent = z.infer<typeof chatStreamEventSchema>
-export type ChatStreamEventType = ChatStreamEvent['type']
+/**
+ * Hard backstop on how many stored messages a turn may replay. The REAL budget is a character one
+ * (`CHAT_HISTORY_MAX_CHARS`, a `[vars]` knob, because the right value tracks the model's context
+ * window and the tenant chooses the model): 40 messages of pasted documents is 1.28M characters at
+ * the per-message cap, which no model accepts. This count only stops an absurd number of tiny
+ * messages; it is not what keeps a thread inside its window.
+ */
+export const CHAT_HISTORY_MAX_MESSAGES = 40
+
+/**
+ * The rolling summary of everything trimmed out of the window (`conversations.summary`). Bounded
+ * because it is prepended to EVERY subsequent turn: an unbounded summary is just a slower version
+ * of the problem it solves.
+ */
+export const CHAT_SUMMARY_MAX_CHARS = 2_000
+
+/**
+ * Don't spend a model call summarising less than this much dropped text. Compaction folds the
+ * previous summary in, so it runs repeatedly over a long thread; this is what stops it running on
+ * every single turn once the window is full.
+ */
+export const CHAT_COMPACTION_MIN_CHARS = 2_000

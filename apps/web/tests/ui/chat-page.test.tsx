@@ -1,9 +1,11 @@
 /**
- * `/chat/:conversationId` (D17): send → SSE frames → the assistant bubble accumulates deltas and
- * shows the usage footnote; Shift+Enter does not send; Stop aborts the stream; a 503
- * `ai_not_configured` renders the configure call to action (admins) or the "ask an admin" copy.
+ * `/chat/:conversationId` (D17): send → AG-UI frames → the assistant bubble accumulates deltas and
+ * shows the usage footnote; Shift+Enter does not send; Stop aborts the stream (a cancelled run
+ * emits NO terminal event, and that must not read as an error); a 503 `ai_not_configured` renders
+ * the configure call to action (admins) or the "ask an admin" copy.
  */
-import type { ChatStreamEvent, Message } from '@rocketflare/shared/ai/chat'
+import { AguiEventType, KIT_CUSTOM_EVENTS } from '@rocketflare/shared/ai/agui'
+import type { Message } from '@rocketflare/shared/ai/chat'
 import { fireEvent, screen, waitFor } from '@testing-library/react'
 import { Route, Routes } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -19,7 +21,7 @@ import {
   requestBody,
   stubFetch,
 } from './helpers/renderWithProviders'
-import { hangingSseResponse, sseResponse } from './helpers/sse'
+import { aguiRun, hangingSseResponse, sseResponse } from './helpers/sse'
 
 const CONV = '12121212-1212-4121-8121-121212121212'
 const ASSISTANT_ID = '34343434-3434-4343-8343-343434343434'
@@ -38,17 +40,13 @@ const conversation = {
   lastMessageAt: null,
 }
 
-const start: ChatStreamEvent = {
-  type: 'message.start',
-  conversationId: CONV,
-  messageId: ASSISTANT_ID,
-  userMessageId: USER_MSG_ID,
-  model: 'claude-sonnet-4-5',
-  provider: 'anthropic',
-}
-const delta = (text: string): ChatStreamEvent => ({ type: 'text.delta', delta: text })
-const usage: ChatStreamEvent = { type: 'usage', usage: { inputTokens: 12, outputTokens: 5 } }
-const end: ChatStreamEvent = { type: 'message.end', messageId: ASSISTANT_ID }
+const run = (over: Partial<Parameters<typeof aguiRun>[0]> = {}) =>
+  aguiRun({
+    conversationId: CONV,
+    userMessageId: USER_MSG_ID,
+    assistantMessageId: ASSISTANT_ID,
+    ...over,
+  })
 
 const READY = {
   chat: { ready: true, source: 'tenant', provider: 'anthropic', model: 'claude-sonnet-4-5' },
@@ -103,7 +101,7 @@ describe('Chat page', () => {
             createdAt: now,
           },
         ]
-        return sseResponse([start, delta('Hel'), delta('lo'), usage, end])
+        return sseResponse(run({ text: ['Hel', 'lo'] }))
       },
     })
 
@@ -122,6 +120,48 @@ describe('Chat page', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: /Send/ })).toBeDisabled())
   })
 
+  it('shows one row per tool call, completed in place rather than appended to', async () => {
+    // Mid-stream: the steps belong to the turn in flight and clear when it finishes.
+    const hanging = hangingSseResponse(
+      run({
+        unterminated: true,
+        tools: [
+          { id: 'c1', name: 'search_knowledge', result: '{}' },
+          { id: 'c2', name: 'get_document', result: '{}' },
+        ],
+      })
+    )
+    mount({
+      [`/api/chat/conversations/${CONV}`]: { ...conversation, messages: [] },
+      [`POST /api/chat/conversations/${CONV}/messages`]: () => hanging.response,
+    })
+    await typeAndSend('What is the maintenance schedule?')
+    await waitFor(() => expect(screen.getByText('Reading a document')).toBeInTheDocument())
+    expect(screen.getByText('Searching the knowledge base')).toBeInTheDocument()
+    // A call and its result are ONE row: no separate "Done" line per call.
+    expect(screen.queryByText('Done')).not.toBeInTheDocument()
+  })
+
+  it('renders a kit notice as a quiet line, not an error', async () => {
+    mount({
+      [`/api/chat/conversations/${CONV}`]: { ...conversation, messages: [] },
+      [`POST /api/chat/conversations/${CONV}/messages`]: () =>
+        sseResponse([
+          ...run({ text: ['Answer.'], unterminated: true }),
+          {
+            type: AguiEventType.CUSTOM,
+            name: KIT_CUSTOM_EVENTS.notice,
+            value: { code: 'workers_ai_no_token_streaming' },
+          },
+        ]),
+    })
+    await typeAndSend('Anything indexed?')
+    await waitFor(() =>
+      expect(screen.getByText(/cannot stream token by token/)).toBeInTheDocument()
+    )
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
   it('does not send on Shift+Enter', async () => {
     const fetchMock = mount({
       [`/api/chat/conversations/${CONV}`]: { ...conversation, messages: [] },
@@ -135,7 +175,7 @@ describe('Chat page', () => {
   })
 
   it('Stop aborts the stream and returns the composer to idle', async () => {
-    const hanging = hangingSseResponse([start, delta('Partial')])
+    const hanging = hangingSseResponse(run({ text: ['Partial'], unterminated: true }))
     mount({
       [`/api/chat/conversations/${CONV}`]: { ...conversation, messages: [] },
       [`POST /api/chat/conversations/${CONV}/messages`]: () => hanging.response,

@@ -34,12 +34,19 @@ response with the same schema. `pnpm test:config` covers the pure parts.
 `prompts.ts` — `promptKeySchema` (kebab-case), `PROMPT_MAX_LENGTH`, `promptDefinitionSchema`, `promptOverrideSchema`,
 `updatePromptRequestSchema`, `promptWithResolvedSchema`, `interpolatePrompt()` (`{{var}}`, unknown left visible) ·
 `chat.ts` — `conversationSchema`, `messageSchema`, `tokenUsageSchema`, `toolCallRecordSchema`, request bodies,
-`MAX_MESSAGE_LENGTH`, `CONVERSATION_TITLE_LENGTH`, **`chatStreamEventSchema`** (the SSE `data` union:
-`message.start | text.delta | tool.start | tool.end | usage | message.end | error`) ·
+`MAX_MESSAGE_LENGTH`, `CONVERSATION_TITLE_LENGTH`, `CHAT_MAX_TOOL_TURNS`, and the history budget
+(`CHAT_HISTORY_MAX_MESSAGES` backstop, `CHAT_SUMMARY_MAX_CHARS`, `CHAT_COMPACTION_MIN_CHARS`; the
+real budget is the `CHAT_HISTORY_MAX_CHARS` var) — the DB-shaped half; the wire protocol is `agui.ts` ·
 `agents.ts` — `AGENT_KEYS`/`agentKeySchema` (append; never empty — it is a `z.enum`), `AgentMeta<Input, Output>`
 (the server attaches `run()`), `agentInfoSchema`, `agentRunStatusSchema` + `isRunActive`, `agentRunSchema`,
 `createAgentRunRequest/ResponseSchema` (`deduplicated`), `agentRunListQuerySchema`, `AGENT_RUN_EVENT_TYPES`,
 `agentRunEventSchema`, `agentRunWithEventsSchema`, the example's `summarizeTextInput/OutputSchema` ·
+`agui.ts` — the AG-UI wire protocol (`@ag-ui/core` schemas, the ONE file allowed to import it):
+`kitAguiEventSchema` (a discriminated union over exactly the events the kit emits, never the full
+`@ag-ui/core` set), `KIT_AGUI_EVENT_TYPES`, `KIT_CUSTOM_EVENTS` + `kitCustomPayloadSchema` +
+`parseKitCustom` (the `kit.` CUSTOM namespace where every kit-specific semantic lives),
+`chatRunResultSchema` (`RUN_FINISHED.result` for a chat turn), `kitRunAgentInputSchema` +
+`readRunAgentTail` (`POST /api/agui/run`: the server is the transcript, the client supplies the tail) ·
 `agent-models.ts` — `agentModelAssignmentSchema`, `upsertAgentModelRequestSchema` (at least one of
 `aiConfigId`/`model`), `agentModelEntrySchema` (`effective.source: assignment | tenant | platform | none`) ·
 `embeddings.ts` — `documentSchema` (never the text or vectors), `INGEST_TEXT_MAX_CHARS`, `ingestTextRequestSchema`,
@@ -68,8 +75,9 @@ the literal in `JOB_TYPES` (then the handler table in `apps/web/src/api/queues/j
 agent: the key in `AGENT_KEYS` + its input/output schemas in `ai/agents.ts` (then the prompt, the
 definition and the `AGENTS` entry server-side — `docs/ADAPTING.md` §3). Adding an AI provider: the
 value in `AI_PROVIDERS` + `DEFAULT_MODELS` (mirrored in `apps/web/src/db/schema/ai-configs.ts`); a
-vendor on an existing wire format is a `PROVIDER_PRESETS` entry only. Adding an SSE frame type: a
-variant in `chatStreamEventSchema` — the UI drops frames it cannot parse, so the server may lead. A breaking
+vendor on an existing wire format is a `PROVIDER_PRESETS` entry only. Adding a streamed event: an AG-UI type in
+`kitAguiEventSchema` or a member of the kit CUSTOM namespace in `ai/agui.ts` — the UI drops frames it
+cannot parse, so the server may lead. A breaking
 payload change is a NEW type (`email.send.v2`) — the `type` string is the version seam. Adding a
 realtime event type: the enum + its roots in `REALTIME_INVALIDATIONS` (a ui test checks every root
 is a `queryKeys` family). Adding a file scope: `FILE_SCOPES` here AND the mirrored enum in
@@ -77,7 +85,13 @@ is a `queryKeys` family). Adding a file scope: `FILE_SCOPES` here AND the mirror
 
 ## Rules
 
-- Imports: `zod`, sibling files, and TYPE-only imports from `@casl/ability`. NEVER import from
-  `apps/web/src/api`, `apps/web/src/db`, `apps/web/src/ui` or `apps/cli` — this package bundles into the browser and the CLI
+- Imports: `zod`, sibling files, TYPE-only imports from `@casl/ability`, and **`@ag-ui/core`
+  (pinned, zod-only, no platform APIs) in `src/ai/agui.ts` alone**. NEVER import from
+  `apps/web/src/api`, `apps/web/src/db`, `apps/web/src/ui` or `apps/cli` — this package bundles into the browser and the CLI.
+  `@ag-ui/core` is on the list because it satisfies that reason AND because AG-UI is a wire format:
+  server and UI must parse the SAME runtime schema, so a loose mirror (the `analytics.ts` precedent,
+  where nothing needs to validate a `DashboardConfig`) would mean two sources of truth. A fifth
+  dependency needs the same written justification here and in the root `CLAUDE.md`;
+  `apps/web/tests/config/shared-imports.test.ts` is the check
 - `tenantRoleSchema` (assignable) on every input; `membershipRoleSchema` (+`support`) on outputs only
 - Server code imports via `@rocketflare/shared/*`; UI too. Re-export every file from `index.ts`

@@ -41,6 +41,13 @@ const errorDataSchema = z.object({
   message: z.string(),
   attempt: z.number().optional(),
   willRetry: z.boolean().optional(),
+  /**
+   * What the runtime knows and the message cannot hold: the zod issues, or — when a forced tool
+   * produced no call — `{ reason, stopReason, text }` with what the model actually said. It is the
+   * one thing a person needs to tell "the model refused" from "the model answered in the wrong
+   * shape", so it is rendered, collapsed.
+   */
+  details: z.unknown().optional(),
 })
 
 type Row =
@@ -59,7 +66,7 @@ type Row =
     }
   | { kind: 'text'; id: string; text: string; at: Date }
   | { kind: 'status'; id: string; status: string; attempt?: number; at: Date }
-  | { kind: 'error'; id: string; message: string; willRetry: boolean; at: Date }
+  | { kind: 'error'; id: string; message: string; willRetry: boolean; details?: unknown; at: Date }
   | { kind: 'unknown'; id: string; type: string; data: unknown; at: Date }
 
 /** Pure: events (any order) → timeline rows in `seq` order, `step` rows merged by key. */
@@ -160,6 +167,9 @@ export function buildTimeline(events: readonly AgentRunEvent[]): Row[] {
           id: event.id,
           message: parsed.success ? parsed.data.message : 'The run reported an error',
           willRetry: parsed.success ? Boolean(parsed.data.willRetry) : false,
+          ...(parsed.success && parsed.data.details !== undefined
+            ? { details: parsed.data.details }
+            : {}),
           at: event.at,
         })
         break
@@ -290,10 +300,22 @@ function TimelineBody({ row }: { row: Row }) {
       )
     case 'error':
       return (
-        <p className="text-error" role="alert">
-          {row.message}
-          {row.willRetry && <span className="text-muted"> · retrying</span>}
-        </p>
+        <div>
+          <p className="text-error" role="alert">
+            {row.message}
+            {row.willRetry && <span className="text-muted"> · retrying</span>}
+          </p>
+          {row.details !== undefined && (
+            <details className="mt-1">
+              <summary className="cursor-pointer text-xs text-muted select-none">
+                What the model returned
+              </summary>
+              <pre className="surface-inset rounded-md p-2 mt-1 text-xs whitespace-pre-wrap break-words">
+                {pretty(row.details)}
+              </pre>
+            </details>
+          )}
+        </div>
       )
     default:
       return (

@@ -26,8 +26,12 @@ export interface ProviderInfo {
   supportsServiceTier: boolean
   defaultModel: string
   presets: readonly ProviderPreset[]
-  /** Chat models worth suggesting in a picker (free text is always allowed). */
-  suggestedModels: readonly string[]
+  /**
+   * Models worth suggesting in a picker, BY SCOPE — free text is always allowed. Keyed by scope
+   * because a flat list offers an embeddings model on a chat config and vice versa, which reads as
+   * a bug the first time someone picks one.
+   */
+  suggestedModels: Readonly<Record<AiScope, readonly string[]>>
 }
 
 export const PROVIDERS: readonly ProviderInfo[] = [
@@ -41,7 +45,10 @@ export const PROVIDERS: readonly ProviderInfo[] = [
     supportsServiceTier: true,
     defaultModel: DEFAULT_MODELS.anthropic,
     presets: [],
-    suggestedModels: ['claude-sonnet-4-5', 'claude-opus-4-1', 'claude-haiku-4-5'],
+    suggestedModels: {
+      chat: ['claude-sonnet-4-5', 'claude-opus-4-1', 'claude-haiku-4-5'],
+      embeddings: [],
+    },
   },
   {
     id: 'anthropic_compatible',
@@ -54,7 +61,10 @@ export const PROVIDERS: readonly ProviderInfo[] = [
     supportsServiceTier: true,
     defaultModel: DEFAULT_MODELS.anthropic_compatible,
     presets: presetsFor('anthropic_compatible'),
-    suggestedModels: ['accounts/fireworks/models/kimi-k2-instruct', 'kimi-k2-0905-preview'],
+    suggestedModels: {
+      chat: ['accounts/fireworks/models/kimi-k2-instruct', 'kimi-k2-0905-preview'],
+      embeddings: [],
+    },
   },
   {
     id: 'openai',
@@ -66,12 +76,10 @@ export const PROVIDERS: readonly ProviderInfo[] = [
     supportsServiceTier: false,
     defaultModel: DEFAULT_MODELS.openai,
     presets: [],
-    suggestedModels: [
-      'gpt-4.1-mini',
-      'gpt-4.1',
-      'text-embedding-3-small',
-      'text-embedding-3-large',
-    ],
+    suggestedModels: {
+      chat: ['gpt-4.1-mini', 'gpt-4.1'],
+      embeddings: ['text-embedding-3-small', 'text-embedding-3-large'],
+    },
   },
   {
     id: 'openai_compatible',
@@ -83,7 +91,7 @@ export const PROVIDERS: readonly ProviderInfo[] = [
     supportsServiceTier: false,
     defaultModel: DEFAULT_MODELS.openai_compatible,
     presets: presetsFor('openai_compatible'),
-    suggestedModels: [],
+    suggestedModels: { chat: [], embeddings: [] },
   },
   {
     id: 'workers_ai',
@@ -95,14 +103,21 @@ export const PROVIDERS: readonly ProviderInfo[] = [
     supportsServiceTier: false,
     defaultModel: DEFAULT_MODELS.workers_ai,
     presets: [],
-    // Chat models listed ONLY if the catalog page shows the "Function calling" property — the
-    // picker feeds agents, which force a tool call by instruction (no `tool_choice` on Workers AI).
-    suggestedModels: [
-      WORKERS_AI_CHAT_MODEL,
-      '@cf/mistralai/mistral-small-3.1-24b-instruct',
-      '@cf/baai/bge-m3',
-      '@cf/baai/bge-large-en-v1.5',
-    ],
+    // Chat models listed ONLY if the catalog shows the "Function calling" property — the picker
+    // feeds agents, which need a tool call. This is a hand-kept list, not a live read of
+    // Cloudflare's catalog (`wrangler ai models list` is the live one); check it against
+    // `wrangler ai models schema <model>` when adding to it, and price it in
+    // `@rocketflare/shared/ai/pricing` so the Usage page does not report `unpricedCalls`.
+    suggestedModels: {
+      chat: [
+        WORKERS_AI_CHAT_MODEL,
+        '@cf/openai/gpt-oss-120b',
+        '@cf/nvidia/nemotron-3-120b-a12b',
+        '@cf/meta/llama-3.3-70b-instruct-fp8-fast',
+        '@cf/mistralai/mistral-small-3.1-24b-instruct',
+      ],
+      embeddings: ['@cf/baai/bge-m3', '@cf/baai/bge-large-en-v1.5'],
+    },
   },
 ]
 

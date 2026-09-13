@@ -109,8 +109,10 @@ a fake `WebSocket` factory left set) is on you.
   maxOutputTokens })) }))` in a `// @vitest-isolate` file (`chat.test.ts`, `agent-run-workflow.test.ts`).
   `FakeChatClient(script)` (`tests/helpers/ai.ts`) answers turns of `{ text, toolUses, usage, error }`,
   streams text in word-sized deltas and records every `calls[i]` (`ChatParams`) so a test can assert the
-  system prompt, tools and `toolChoice` the route sent; `sseFrames(res)` parses a `streamSSE` body back
-  into `ChatStreamEvent`s. Adapters (`ai-client.test.ts`) take an injected `fetch` — `sseResponse(chunks)`
+  system prompt, tools and `toolChoice` the route sent; `aguiFrames(res)` parses an AG-UI stream body
+  back into typed events, `splitSseFrames` exposes the raw frames (so a test can assert there is NO
+  `event:` line), and `aguiTypes` / `customEvents` / `customEvent` let a test assert the SEQUENCE
+  rather than a dozen literals. Adapters (`ai-client.test.ts`) take an injected `fetch` — `sseResponse(chunks)`
   builds a fake `text/event-stream` `Response` — so no test reaches a provider. Connection-test and
   resolver branches use `createTestEnv({ ANTHROPIC_API_KEY, EMBEDDINGS_API_KEY })` overrides
 - Agent runs (`agent-runs.test.ts`): `POST /api/agents/runs` → 202 + a `queued` row + one entry in
@@ -168,8 +170,9 @@ Polling hooks (`agents-page`, `agent-run-detail`, `documents-page`): test the pu
 (`runPollInterval(status)`), not `refetchInterval` with fake timers; `agent-run-detail` mounts inside
 `WebSocketProvider` with the `FakeSocket` to prove an `entity.changed { entity: 'agent-run' }` nudge
 refetches. Streaming (`chat-page.test.tsx`, `sse.test.ts`): `tests/ui/helpers/sse.ts` builds fake
-`text/event-stream` `Response`s (`sseResponse(frames)`, `streamResponse` for arbitrary chunk
-boundaries, `hangingSseResponse` for the Stop button); assert with `waitFor`, not `findBy` — bubbles
+`text/event-stream` `Response`s in the server's AG-UI framing — `data:` only, no `event:` line —
+(`aguiRun({ text, tools, unterminated })` for a whole turn, `sseResponse(frames)`,
+`streamResponse` for arbitrary chunk boundaries, `hangingSseResponse` for the Stop button); assert with `waitFor`, not `findBy` — bubbles
 remount when the optimistic id becomes the persisted one. Pure parsers (`chunking.test.ts`,
 `permissions.test.ts` — the matrix incl. `AiConfig`/`Prompt`/`Conversation`/`AgentRun`/`Document`/
 `Dashboard`/`Analytics`) live in the `config` project, as does **`tests/dashboards/all-templates.test.ts`**

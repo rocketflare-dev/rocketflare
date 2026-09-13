@@ -1,11 +1,14 @@
 /**
- * Server-sent events over `fetch` (D17). `EventSource` is GET-only and cannot carry the session
- * cookie's CSRF headers, so the chat route is POSTed and its `text/event-stream` body is read by
- * hand. Frames are `event: <type>` + `data: <one JSON ChatStreamEvent>` separated by a blank
- * line; `data` is validated with `chatStreamEventSchema` and anything that fails is dropped (a
- * newer server may emit a frame this build does not know — never a crash mid-reply).
+ * Server-sent events over `fetch`. `EventSource` is GET-only and cannot carry the session cookie's
+ * CSRF headers, so a streaming route is POSTed and its `text/event-stream` body is read by hand.
+ *
+ * This module is transport only and imports NO schema: the caller passes `parse`, so the shell
+ * never drags a protocol's schemas into the main bundle (AG-UI arrives through the lazy chat
+ * chunk). Spec-compliant AG-UI frames carry no `event:` line — the type is inside the JSON — so
+ * `SseFrame.event` is parsed for completeness and nothing keys on it. A frame that fails `parse`
+ * is dropped: a newer server may emit one this build does not know, and that is never a reason to
+ * crash mid-reply.
  */
-import { type ChatStreamEvent, chatStreamEventSchema } from '@rocketflare/shared/ai/chat'
 
 /** One raw SSE frame before JSON parsing. `event` defaults to `message` per the spec. */
 export interface SseFrame {
@@ -70,9 +73,14 @@ export class SseFrameBuffer {
 export interface ReadSseOptions {
   /** Aborting cancels the body reader; `readSse` then resolves normally (an abort is not an error). */
   signal?: AbortSignal
-  /** A frame whose `data` is not a `ChatStreamEvent` — logged by the caller, never thrown. */
+  /** A frame whose `data` did not parse — logged by the caller, never thrown. */
   onInvalid?: (frame: SseFrame, reason: string) => void
 }
+
+/** Turn one frame's JSON into an event, or explain why it is not one. */
+export type SseFrameParser<T> = (
+  json: unknown
+) => { ok: true; event: T } | { ok: false; reason: string }
 
 /** `true` for the DOMException `fetch`/`reader.read()` reject with when the signal fires. */
 export function isAbortError(error: unknown): boolean {
@@ -83,13 +91,14 @@ export function isAbortError(error: unknown): boolean {
 }
 
 /**
- * Read a `text/event-stream` response to the end, calling `onEvent` for every valid
- * `ChatStreamEvent`. Resolves when the server closes the stream or the signal aborts; rejects
- * only on a transport error. The caller decides what a missing `message.end` means.
+ * Read a `text/event-stream` response to the end, calling `onEvent` for every frame `parse`
+ * accepts. Resolves when the server closes the stream or the signal aborts; rejects only on a
+ * transport error. The caller decides what a missing terminal event means.
  */
-export async function readSse(
+export async function readSse<T>(
   response: Response,
-  onEvent: (event: ChatStreamEvent) => void,
+  parse: SseFrameParser<T>,
+  onEvent: (event: T) => void,
   { signal, onInvalid }: ReadSseOptions = {}
 ): Promise<void> {
   if (!response.body) throw new Error('SSE response has no body')
@@ -105,12 +114,12 @@ export async function readSse(
       onInvalid?.(frame, 'data is not JSON')
       return
     }
-    const parsed = chatStreamEventSchema.safeParse(json)
-    if (!parsed.success) {
-      onInvalid?.(frame, parsed.error.issues[0]?.message ?? 'unknown frame')
+    const parsed = parse(json)
+    if (!parsed.ok) {
+      onInvalid?.(frame, parsed.reason)
       return
     }
-    onEvent(parsed.data)
+    onEvent(parsed.event)
   }
 
   const onAbort = () => {

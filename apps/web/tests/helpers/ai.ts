@@ -1,13 +1,15 @@
 /**
  * AI test doubles (D17): `FakeChatClient` implements `ChatClient` from a script of turns — text,
  * tool calls, usage — records every call, and streams text in word-sized deltas so SSE assertions
- * see more than one frame. `sseFrames()` parses a `streamSSE` body back into `ChatStreamEvent`s.
+ * see more than one frame. `aguiFrames()` parses an AG-UI stream body back into typed events, and
+ * `aguiTypes` / `customEvents` let a test assert the SEQUENCE rather than a dozen literals.
  */
 import {
-  type ChatStreamEvent,
-  chatStreamEventSchema,
-  type TokenUsage,
-} from '@rocketflare/shared/ai/chat'
+  type KitAguiEvent,
+  type KitCustomEventName,
+  kitAguiEventSchema,
+} from '@rocketflare/shared/ai/agui'
+import type { TokenUsage } from '@rocketflare/shared/ai/chat'
 import type { AiProvider } from '@rocketflare/shared/ai/config'
 import type {
   ChatClient,
@@ -81,20 +83,53 @@ export class FakeChatClient implements ChatClient {
   }
 }
 
-/** Parse a `streamSSE` response body into the typed frames it carried. */
-export async function sseFrames(res: Response): Promise<ChatStreamEvent[]> {
-  const text = await res.text()
+/**
+ * Parse an AG-UI SSE body into the typed events it carried. Spec AG-UI frames are `data:` only —
+ * a test that finds an `event:` line here should fail, so `sseEventFields` exists to assert it.
+ */
+export async function aguiFrames(res: Response): Promise<KitAguiEvent[]> {
+  return splitSseFrames(await res.text())
+    .map(frame => frame.data)
+    .filter(Boolean)
+    .map(data => kitAguiEventSchema.parse(JSON.parse(data)))
+}
+
+/** Every frame of an SSE body, split into its `event:` (if any) and joined `data:` lines. */
+export function splitSseFrames(text: string): { event: string | null; data: string }[] {
   return text
     .split('\n\n')
-    .map(frame =>
-      frame
-        .split('\n')
-        .filter(line => line.startsWith('data:'))
-        .map(line => line.slice(5).trim())
-        .join('\n')
-    )
-    .filter(Boolean)
-    .map(data => chatStreamEventSchema.parse(JSON.parse(data)))
+    .filter(raw => raw.trim())
+    .map(raw => {
+      const lines = raw.split('\n')
+      return {
+        event:
+          lines
+            .find(l => l.startsWith('event:'))
+            ?.slice(6)
+            .trim() ?? null,
+        data: lines
+          .filter(l => l.startsWith('data:'))
+          .map(l => l.slice(5).trim())
+          .join('\n'),
+      }
+    })
+}
+
+/** The event types of a run, in order — what a sequence assertion actually cares about. */
+export function aguiTypes(events: KitAguiEvent[]): string[] {
+  return events.map(e => e.type)
+}
+
+/** The kit CUSTOM events of a run, `name` → `value`, in order. */
+export function customEvents(events: KitAguiEvent[]): { name: string; value: unknown }[] {
+  return events.flatMap(e => (e.type === 'CUSTOM' ? [{ name: e.name, value: e.value }] : []))
+}
+
+/** The value of the LAST kit CUSTOM event with this name, or undefined. */
+export function customEvent(events: KitAguiEvent[], name: KitCustomEventName): unknown {
+  return customEvents(events)
+    .filter(e => e.name === name)
+    .at(-1)?.value
 }
 
 /** Build a `Response` whose body is `chunks` joined as an SSE stream — for fetch-injected clients. */

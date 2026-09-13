@@ -1,6 +1,7 @@
 /** AI contracts barrel (D17, D18). Deep imports (`@rocketflare/shared/ai/config`) are equally valid. */
 export * from './agent-models'
 export * from './agents'
+export * from './agui'
 export * from './chat'
 export * from './config'
 export * from './embeddings'

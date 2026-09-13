@@ -112,7 +112,15 @@
         "apps/web/src/ui/pages/chat/**",
         "apps/web/src/ui/components/ai/**",
         "apps/web/src/api/routes/chat.ts",
+        "apps/web/src/api/services/ai/chat-turn.ts",
+        "apps/web/src/api/services/ai/chat-history.ts",
+        "apps/web/src/api/queues/handlers/chat-compact.ts",
+        "apps/web/tests/api/chat-compaction.test.ts",
+        "apps/web/tests/config/chat-history.test.ts",
+        "apps/web/src/api/routes/agui.ts",
+        "apps/web/tests/api/agui-run.test.ts",
         "apps/web/tests/api/chat.test.ts",
+        "apps/web/tests/api/chat-tools.test.ts",
         "apps/web/tests/ui/chat-page.test.tsx"
       ],
       "registries": ["apps/web/src/api/index.ts", "apps/web/src/ui/App.tsx"]
@@ -127,6 +135,7 @@
         "apps/web/src/api/services/agents/**",
         "apps/web/src/api/routes/agents.ts",
         "apps/web/src/ui/pages/agents/**",
+        "apps/web/tests/api/agui-projection.test.ts",
         "packages/shared/src/ai/agents.ts"
       ],
       "registries": [

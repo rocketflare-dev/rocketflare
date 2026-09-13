@@ -50,6 +50,13 @@
       "when": 1788498490585,
       "tag": "0006_robust_hellfire_club",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1789284342163,
+      "tag": "0007_medical_joseph",
+      "breakpoints": true
     }
   ]
 }

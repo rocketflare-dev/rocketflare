@@ -18,7 +18,7 @@ import type { TokenUsage } from './chat'
 import type { AiProvider } from './config'
 
 /** When the rates below were last checked, ISO date. Update it when you edit a price. */
-export const PRICES_UPDATED = '2026-09-01'
+export const PRICES_UPDATED = '2026-09-13'
 
 /** USD per MILLION tokens. `cacheRead`/`cacheWrite` default to the input rate when absent. */
 export interface ModelPrice {
@@ -48,7 +48,10 @@ export const MODEL_PRICES: Partial<Record<AiProvider, Record<string, ModelPrice>
     'text-embedding-3-large': { input: 0.13, output: 0 },
   },
   workers_ai: {
-    '@cf/meta/llama-3.3-70b-instruct-fp8-fast': { input: 0.29, output: 2.25 },
+    '@cf/zai-org/glm-4.7-flash': { input: 0.06, output: 0.4 },
+    '@cf/openai/gpt-oss-120b': { input: 0.35, output: 0.75 },
+    '@cf/nvidia/nemotron-3-120b-a12b': { input: 0.5, output: 1.5 },
+    '@cf/meta/llama-3.3-70b-instruct-fp8-fast': { input: 0.293, output: 2.253 },
     '@cf/mistralai/mistral-small-3.1-24b-instruct': { input: 0.35, output: 0.56 },
     '@cf/baai/bge-m3': { input: 0.012, output: 0 },
     '@cf/baai/bge-large-en-v1.5': { input: 0.204, output: 0 },

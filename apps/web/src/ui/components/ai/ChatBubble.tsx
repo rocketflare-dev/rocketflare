@@ -4,8 +4,10 @@
  * indicator, `aria-busy`), optional tool one-liners, and the `usage` footnote appears once the
  * `usage` frame (or the persisted message) carries it. Memoised for the same reason `Markdown` is.
  */
+import { CheckCircleIcon } from '@heroicons/react/24/outline'
 import type { TokenUsage } from '@rocketflare/shared/ai/chat'
 import { memo } from 'react'
+import type { ToolStep } from '@/ui/hooks/useChat'
 import { Markdown } from './Markdown'
 
 export interface ChatBubbleProps {
@@ -18,8 +20,10 @@ export interface ChatBubbleProps {
   /** Reply still arriving. */
   streaming?: boolean
   /** Tool-call one-liners for this turn (the kit's chat runs zero tools; kept for apps). */
-  toolSteps?: readonly string[]
-  /** The stream ended on an `error` frame. */
+  toolSteps?: readonly ToolStep[]
+  /** A `CUSTOM kit.notice` — something the reader should know that is NOT a failure. */
+  notice?: string
+  /** The stream ended on a `RUN_ERROR`. */
   error?: string
 }
 
@@ -42,6 +46,7 @@ function ChatBubbleImpl({
   model,
   streaming = false,
   toolSteps,
+  notice,
   error,
 }: ChatBubbleProps) {
   const mine = speaker === 'user'
@@ -63,12 +68,19 @@ function ChatBubbleImpl({
       <div className={`chat-bubble ${mine ? 'chat-bubble-primary' : ''} max-w-[80%]`}>
         {toolSteps && toolSteps.length > 0 && (
           <ul className="mb-1 space-y-0.5 text-xs text-muted">
-            {toolSteps.map((step, i) => (
-              // biome-ignore lint/suspicious/noArrayIndexKey: append-only step log
-              <li key={i}>{step}</li>
+            {toolSteps.map(step => (
+              <li key={step.id} className="flex items-center gap-1.5">
+                {step.done ? (
+                  <CheckCircleIcon className="h-3.5 w-3.5 shrink-0 text-success" />
+                ) : (
+                  <span className="loading loading-spinner loading-xs shrink-0" />
+                )}
+                <span>{step.label}</span>
+              </li>
             ))}
           </ul>
         )}
+        {notice && <p className="mb-1 text-xs text-muted italic">{notice}</p>}
         {mine ? (
           <span className="whitespace-pre-wrap break-words">{content}</span>
         ) : content ? (

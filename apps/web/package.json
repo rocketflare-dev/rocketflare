@@ -53,12 +53,15 @@
     "provision:cloudflare": "bash scripts/cf-provision.sh"
   },
   "dependencies": {
+    "@ag-ui/core": "0.0.59",
+    "@ag-ui/encoder": "0.0.59",
+    "@ag-ui/proto": "0.0.59",
     "@anthropic-ai/sdk": "^0.122.0",
     "@casl/ability": "^6.8.1",
     "@casl/react": "^5.0.1",
-    "@rocketflare/shared": "workspace:*",
     "@heroicons/react": "^2.2.0",
     "@hono/zod-validator": "^0.7.6",
+    "@rocketflare/shared": "workspace:*",
     "@tanstack/react-query": "^5.102.8",
     "arctic": "^3.7.0",
     "d3": "^7.9.0",

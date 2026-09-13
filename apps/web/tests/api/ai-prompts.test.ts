@@ -36,6 +36,7 @@ describe('/api/ai/prompts', () => {
     expect(list.items.map(i => i.definition.key)).toEqual([
       'chat',
       'summarize-text',
+      'chat-compaction',
       'research-topic',
     ])
     expect(list.items[0]).toMatchObject({

@@ -1,12 +1,18 @@
 /**
  * Chat (D17): MY conversations (`GET/POST /api/chat/conversations`, paginated), one thread with
- * its messages (`GET /:id`), delete, and the streaming turn. `useSendMessage` is the only hook in
- * the kit that writes to the cache mid-flight: the user bubble lands optimistically, the assistant
- * reply accumulates in LOCAL state from `text.delta` frames (it is not server truth until
- * `message.end`), `usage` is captured, and on `message.end` the finished message is written into
- * the cache and the whole `chat.conversations` family is invalidated so the list re-sorts and the
- * auto-title arrives. Stop = `AbortController.abort()` — an abort is a normal end, never an error.
+ * its messages (`GET /:id`), delete, and the streaming turn, which speaks **AG-UI**.
+ * `useSendMessage` is the only hook in the kit that writes to the cache mid-flight: the user bubble
+ * lands optimistically, `CUSTOM kit.chat.ids` swaps its id for the persisted one, the assistant
+ * reply accumulates in LOCAL state from `TEXT_MESSAGE_CONTENT` deltas (it is not server truth until
+ * `RUN_FINISHED`, and deltas are accumulated across every message id the run opens — one per model
+ * turn), and on `RUN_FINISHED` the finished message is written into the cache and the whole
+ * `chat.conversations` family is invalidated so the list re-sorts and the auto-title arrives.
+ * Stop = `AbortController.abort()` — a cancelled run emits NO terminal event, which is the
+ * protocol's way of saying "the client went away"; it is a normal end, never an error.
  */
+
+import type { KitNoticeCode } from '@rocketflare/shared/ai/agui'
+import { AguiEventType, KIT_CUSTOM_EVENTS, parseKitCustom } from '@rocketflare/shared/ai/agui'
 import {
   type ConversationWithMessages,
   type CreateConversationRequest,
@@ -24,8 +30,8 @@ import {
   useQueryClient,
 } from '@tanstack/react-query'
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { type ChatTurnResult, isAiNotConfigured, runChatTurn } from '@/ui/lib/aguiStream'
 import { ApiError, api, showToast } from '@/ui/lib/api-client'
-import { type ChatStreamResult, isAiNotConfigured, sendChatMessage } from '@/ui/lib/chatStream'
 import { cleanFilters, queryKeys, toSearchParams } from '@/ui/lib/query-keys'
 
 export const conversationsResponseSchema = paginatedResponse(conversationSchema)
@@ -108,9 +114,29 @@ export interface StreamingTurn {
   text: string
   model?: string
   usage?: TokenUsage
-  /** Human one-liners for `tool.start`/`tool.end` frames (the kit's chat runs zero tools). */
-  toolSteps: string[]
+  /** One entry per tool CALL — a call and its result are one thing that happened, not two lines. */
+  toolSteps: ToolStep[]
+  /** A `CUSTOM kit.notice` the reader should see — rendered as a quiet line, not an error. */
+  notice?: KitNoticeCode
   error?: { message: string; code: string }
+}
+
+/** A tool call in flight or finished: `TOOL_CALL_RESULT` completes the row `TOOL_CALL_START` opened. */
+export interface ToolStep {
+  id: string
+  label: string
+  done: boolean
+}
+
+/** What a tool call is called in the transcript. An unknown tool falls back to its wire name. */
+const TOOL_LABELS: Record<string, string> = {
+  search_knowledge: 'Searching the knowledge base',
+  get_document: 'Reading a document',
+  list_documents: 'Listing documents',
+}
+
+export function toolLabel(name: string): string {
+  return TOOL_LABELS[name] ?? name
 }
 
 const IDLE_TURN: StreamingTurn = { status: 'idle', text: '', toolSteps: [] }
@@ -144,7 +170,7 @@ export function useSendMessage(conversationId: string | undefined) {
   }, [conversationId])
 
   const mutation = useMutation({
-    mutationFn: async (content: string): Promise<ChatStreamResult> => {
+    mutationFn: async (content: string): Promise<ChatTurnResult> => {
       if (!conversationId) throw new Error('No conversation selected')
       const key = queryKeys.chat.conversations.detail(conversationId)
       const controller = new AbortController()
@@ -162,51 +188,62 @@ export function useSendMessage(conversationId: string | undefined) {
       )
       setTurn({ ...IDLE_TURN, status: 'streaming' })
 
-      let result: ChatStreamResult
+      let result: ChatTurnResult
       try {
-        result = await sendChatMessage({
+        result = await runChatTurn({
           conversationId,
           content,
           signal: controller.signal,
           onEvent: event => {
             switch (event.type) {
-              case 'message.start':
-                // The user message now has its real id; keep the bubble, swap the key.
-                queryClient.setQueryData<ConversationWithMessages>(key, old =>
-                  old
-                    ? {
-                        ...old,
-                        messages: old.messages.map(m =>
-                          m.id === optimisticId ? { ...m, id: event.userMessageId } : m
-                        ),
-                      }
-                    : old
-                )
-                setTurn(t => ({ ...t, model: event.model }))
+              case AguiEventType.CUSTOM: {
+                const ids = parseKitCustom(KIT_CUSTOM_EVENTS.chatIds, event)
+                if (ids) {
+                  // The user message now has its real id; keep the bubble, swap the key.
+                  queryClient.setQueryData<ConversationWithMessages>(key, old =>
+                    old
+                      ? {
+                          ...old,
+                          messages: old.messages.map(m =>
+                            m.id === optimisticId ? { ...m, id: ids.userMessageId } : m
+                          ),
+                        }
+                      : old
+                  )
+                  setTurn(t => ({ ...t, model: ids.model }))
+                }
+                const usage = parseKitCustom(KIT_CUSTOM_EVENTS.usage, event)
+                if (usage) setTurn(t => ({ ...t, usage: usage.usage }))
+                const notice = parseKitCustom(KIT_CUSTOM_EVENTS.notice, event)
+                if (notice) setTurn(t => ({ ...t, notice: notice.code }))
                 break
-              case 'text.delta':
+              }
+              case AguiEventType.TEXT_MESSAGE_CONTENT:
                 setTurn(t => ({ ...t, text: t.text + event.delta }))
                 break
-              case 'tool.start':
-                setTurn(t => ({ ...t, toolSteps: [...t.toolSteps, `Using ${event.name}…`] }))
-                break
-              case 'tool.end':
+              case AguiEventType.TOOL_CALL_START:
                 setTurn(t => ({
                   ...t,
                   toolSteps: [
                     ...t.toolSteps,
-                    event.isError ? `${event.name} failed` : `${event.name} done`,
+                    { id: event.toolCallId, label: toolLabel(event.toolCallName), done: false },
                   ],
                 }))
                 break
-              case 'usage':
-                setTurn(t => ({ ...t, usage: event.usage }))
+              case AguiEventType.TOOL_CALL_RESULT:
+                // Complete the row this result answers, by id — never append a second one.
+                setTurn(t => ({
+                  ...t,
+                  toolSteps: t.toolSteps.map(step =>
+                    step.id === event.toolCallId ? { ...step, done: true } : step
+                  ),
+                }))
                 break
-              case 'error':
+              case AguiEventType.RUN_ERROR:
                 setTurn(t => ({
                   ...t,
                   status: 'error',
-                  error: { message: event.message, code: event.code },
+                  error: { message: event.message, code: event.code ?? 'internal' },
                 }))
                 break
               default:
@@ -226,7 +263,7 @@ export function useSendMessage(conversationId: string | undefined) {
       }
 
       if (result.completed && result.messageId) {
-        // Persisted server-side before `message.end`: write it into the cache so the reply never
+        // Persisted server-side before `RUN_FINISHED`: write it into the cache so the reply never
         // blinks out between "stream closed" and "refetch landed".
         const assistant: Message = {
           id: result.messageId,
@@ -244,7 +281,7 @@ export function useSendMessage(conversationId: string | undefined) {
       } else if (result.aborted) {
         setTurn(IDLE_TURN)
       }
-      // `error` frame: the turn stays in `error` status (the page shows it) until the next send.
+      // `RUN_ERROR`: the turn stays in `error` status (the page shows it) until the next send.
 
       await queryClient.invalidateQueries({ queryKey: queryKeys.chat.conversations.all })
       return result

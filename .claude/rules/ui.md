@@ -96,24 +96,33 @@ Components subscribe to query state, never to the socket; `WebSocketStatus` (hea
 `ConnectionBanner` (after 5 s degraded) read the store only. Tests inject a fake socket with
 `websocketClient.setFactory()` — reset it in `afterEach`.
 
-## Streaming (SSE, D17)
+## Streaming (AG-UI over SSE, D17)
 
-- SSE is consumed with **`fetch`, never `EventSource`** (GET-only, cannot carry the CSRF header): `lib/chatStream.ts`
+- SSE is consumed with **`fetch`, never `EventSource`** (GET-only, cannot carry the CSRF header): `lib/aguiStream.ts`
   POSTs with `credentials: 'include'` + `X-Requested-With` and reads the body through `lib/sse.ts`
-  (`readSse(response, onEvent, { signal })`, `SseFrameBuffer` survives frames split across chunks,
-  each `data` is `chatStreamEventSchema.safeParse`d and unknown frames are dropped, never thrown).
+  (`readSse(response, parse, onEvent, { signal })`, `SseFrameBuffer` survives frames split across
+  chunks, each `data` goes through the parser the CALLER passes — `kitAguiEventSchema.safeParse` —
+  and unknown frames are dropped, never thrown). **Spec AG-UI frames carry no `event:` line**; the
+  type is inside the JSON, so nothing may key on the SSE event field. `lib/sse.ts` imports no
+  schema, which is what keeps `@ag-ui/core` out of the eager shell.
   It does not go through `api-client`'s `request()` (JSON only) but reuses `parseErrorBody`: a pre-stream
   non-2xx is the shared envelope — 503 `ai_not_configured` becomes `AiNotConfiguredError` so the page
   renders a "configure AI" call to action instead of a toast
 - **Streaming text is the one exception to "server data lives only in the cache"**: `useSendMessage`
   appends the user bubble optimistically, accumulates the assistant reply in LOCAL state from
-  `text.delta` frames (not truth until `message.end`), then writes the finished message into the cache
-  (the server persisted it BEFORE that frame) and invalidates the `chat.conversations` family. Stop =
-  `AbortController.abort()` — a normal end, no toast, no error bubble; a pre-stream failure takes the
-  optimistic bubble back; an `error` frame leaves the turn in `error` status until the next send
-- Frame order the UI relies on: `message.start` (swap the optimistic user id for `userMessageId`) →
-  `text.delta*` → `usage` → `message.end`; `tool.start`/`tool.end` render as one-liners. A new frame
-  type is a `chatStreamEventSchema` variant in `@rocketflare/shared/ai/chat` first
+  `TEXT_MESSAGE_CONTENT` deltas — across every message id the run opens, one per model turn (not
+  truth until `RUN_FINISHED`) — then writes the finished message into the cache (the server persisted
+  it BEFORE that frame) and invalidates the `chat.conversations` family. Stop =
+  `AbortController.abort()` — **a cancelled run emits NO terminal event**, which is the protocol's
+  way of saying the client went away: a normal end, no toast, no error bubble; a pre-stream failure
+  takes the optimistic bubble back; a `RUN_ERROR` leaves the turn in `error` status until the next send
+- Frame order the UI relies on: `RUN_STARTED` → `CUSTOM kit.chat.ids` (swap the optimistic user id
+  for `userMessageId`) → `STATE_SNAPSHOT` → per model turn `TEXT_MESSAGE_START → CONTENT* → END`
+  and `TOOL_CALL_START → ARGS → END → RESULT` → `CUSTOM kit.usage` → `RUN_FINISHED`. Tool calls
+  render as one-liners through `toolLabel(name)`. A new event is an AG-UI type added to
+  `kitAguiEventSchema`, or a member of the kit's CUSTOM namespace, in
+  `@rocketflare/shared/ai/agui` first — an APP adds its own CUSTOM events under its own prefix,
+  never `kit.`
 - Guards: `/chat/:conversationId?` is `read Conversation` (every role; ownership is server-side);
   `/settings` (`?tab=ai|prompts|agent-models|usage`) is `guard="admin"`, the last two additionally
   `manage AiConfig`. Agent runs (`/agents`, `AgentRun`), documents (`/documents`, `Document`) and the

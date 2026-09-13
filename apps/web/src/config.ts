@@ -29,6 +29,14 @@ const optionalPositiveInt = (fallback: number) =>
     z.coerce.number().int().positive()
   )
 
+/** `[vars]` arrive as strings: `"false"` / `"0"` / `"no"` are false, blank is the default. */
+const optionalBoolean = (fallback: boolean) =>
+  z.preprocess(value => {
+    if (value === undefined || value === null || String(value).trim() === '') return fallback
+    if (typeof value === 'boolean') return value
+    return !['false', '0', 'no', 'off'].includes(String(value).trim().toLowerCase())
+  }, z.boolean())
+
 const csvList = z.preprocess(
   value =>
     typeof value === 'string'
@@ -64,6 +72,21 @@ const configSchema = z.object({
   /** D17: per-call `max_tokens` when a tenant config sets none; and the tool-loop turn cap. */
   AGENT_MAX_OUTPUT_TOKENS: optionalPositiveInt(16384),
   AGENT_MAX_TURNS: optionalPositiveInt(30),
+  /**
+   * D18: give the chat box the knowledge tools (`search_knowledge`, `get_document`,
+   * `list_documents`), so it answers from the workspace's own material. It costs more tokens per
+   * turn and, on Workers AI — which has no tool-call event stream — the reply stops arriving token
+   * by token. `false` is the operator's way back to a tool-free chat.
+   */
+  CHAT_KNOWLEDGE_TOOLS: optionalBoolean(true),
+  /**
+   * D17: characters of stored history a chat turn may replay. The real constraint is the model's
+   * context window and the tenant picks the model, so this is the knob rather than a message count
+   * — 24 000 chars is roughly 6 000 tokens, which leaves room on the 24k-token Workers AI floor.
+   * Raise it for a long-context provider. Anything older is trimmed and folded into the thread's
+   * rolling summary by the `chat.compact` job.
+   */
+  CHAT_HISTORY_MAX_CHARS: optionalPositiveInt(24_000),
 
   // ---- Secrets (.dev.vars locally, `wrangler secret put` deployed) — all optional here;
   //      features gate on presence (zero-creds first run) or demand them at use time. -------

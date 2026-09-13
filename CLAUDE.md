@@ -26,7 +26,10 @@ Cloudflare Worker (`apps/web`), a CLI (`apps/cli`), private zod contracts
 - **Auth**: arctic (Google, Microsoft) + magic link + dev-login; `__Host-session`; API keys; KV rate limit
 - **Async / realtime**: Queues (`JOBS_QUEUE`), `NotificationsHub` DO `/ws`, R2 (`FILES`), cron, Workflows
 - **AI**: `services/ai/resolve` (`agent_models` → tenant `ai_configs` → platform key → Workers AI via
-  `[ai]`, zero key → 503); Anthropic / OpenAI-compatible / Workers AI chat over SSE, agents on `AGENT_RUN_WORKFLOW`, Workers AI → pgvector (uploads: R2 → `AI.toMarkdown` → pgvector), Langfuse
+  `[ai]`, zero key → 503); Anthropic / OpenAI-compatible / Workers AI chat streamed as **AG-UI**
+  (`@ag-ui/core` pinned; SSE or protobuf; `POST /api/agui/run` is the protocol endpoint), chat calls
+  the knowledge tools, agents on `AGENT_RUN_WORKFLOW` (projected to AG-UI on read), Workers AI →
+  pgvector (uploads: R2 → `AI.toMarkdown` → pgvector), Langfuse
 - **Analytics**: drizzle-cube at `/cubejs-api`+`/mcp`, every cube tenant-scoped in `sql()`; fact tables
   on the `:15` cron; TS dashboard templates → `analytics_pages`
 - **UI**: React 18 + Vite, DaisyUI 5 / Tailwind v4, React Router 6, TanStack Query 5; served as `ASSETS`
@@ -76,7 +79,10 @@ docs/upgrades/     one porting note per kit release (+ unreleased.md) — CHANGE
 ```
 
 **`packages/shared`.** Private, no build: `@rocketflare/shared/<module>` → `./src/<module>.ts` (incl. `ai/*`,
-`analytics`). Imports only `zod`, siblings, type-only `@casl/ability`.
+`analytics`). Imports only `zod`, siblings, type-only `@casl/ability`, and `@ag-ui/core` (pinned,
+zod-only, no platform APIs) in `src/ai/agui.ts` alone — the AG-UI wire format is validated by the
+protocol's own schemas on both sides, which a mirror cannot give. A fifth dependency needs the same
+written justification, and `apps/web/tests/config/shared-imports.test.ts` enforces the list.
 
 **`apps/cli`.** `login` opens `GET /auth/cli?redirect_uri=http://127.0.0.1:<port>/callback`; the server
 mints a tenant API key `cli:<host>` → `?key=&tenant_id=&tenant_name=`; stored `0600` in
@@ -88,7 +94,9 @@ mints a tenant API key `cli:<host>` → `?key=&tenant_id=&tenant_name=`; stored 
 `[vars]` in both tomls, read via `loadConfig(env)`: `APP_ENV` (`development|staging|production`) ·
 `TENANCY_MODE` (`multi|single` — same schema; single auto-joins the one tenant) ·
 `SIGNUP_MODE` (`open|invite_only|approval`; `BOOTSTRAP_ADMIN_EMAILS` seeds the first admin) ·
-`TENANT_SCOPE_MODE` (`off|enforce`, @docs/RLS.md) · `AGENT_MAX_OUTPUT_TOKENS` · `AGENT_MAX_TURNS`.
+`TENANT_SCOPE_MODE` (`off|enforce`, @docs/RLS.md) · `AGENT_MAX_OUTPUT_TOKENS` · `AGENT_MAX_TURNS` ·
+`CHAT_KNOWLEDGE_TOOLS` (`true|false` — chat may call the knowledge tools) ·
+`CHAT_HISTORY_MAX_CHARS` (history a turn replays; older turns are summarised by `chat.compact`).
 
 Rules (auto-loaded by path): @.claude/rules/api.md · database.md · ui.md · cli.md · testing.md ·
 code-quality.md · cloudflare.md. Runbooks: @docs/DEPLOY.md · @docs/RLS.md

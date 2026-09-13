@@ -20,6 +20,7 @@ import { accessRequestsRouter } from './routes/access-requests'
 import { activityRouter } from './routes/activity'
 import { adminRouter } from './routes/admin'
 import { agentsRouter } from './routes/agents'
+import { aguiRouter } from './routes/agui'
 import { aiAgentModelsRouter } from './routes/ai-agent-models'
 import { aiConfigRouter } from './routes/ai-config'
 import { aiDocumentsRouter } from './routes/ai-documents'
@@ -119,6 +120,9 @@ for (const [prefix, router] of [
   ['/api/ai/agent-models', aiAgentModelsRouter],
   ['/api/ai/documents', aiDocumentsRouter],
   ['/api/chat', chatRouter],
+  // A protocol surface with its own auth story, mounted beside chat rather than under it: this
+  // list is the enumerable auth surface (D13).
+  ['/api/agui', aguiRouter],
   ['/api/agents', agentsRouter],
   ['/api/analytics', analyticsPagesRouter],
   // drizzle-cube (D19): one router, two prefixes; the adapter registers absolute paths.
