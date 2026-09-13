@@ -1,17 +1,16 @@
 /**
- * `/api/chat` (D17): persisted conversations + one SSE route. Ownership is the `userId` filter on
- * EVERY query (with the tenant predicate): another member's thread is a 404, admins included.
+ * `/api/chat` (D17): persisted conversations + one streaming route. Ownership is the `userId`
+ * filter on EVERY query (with the tenant predicate): another member's thread is a 404, admins
+ * included.
  *
- * `POST /conversations/:id/messages` resolves the client BEFORE the stream opens (a config error
- * is a JSON 503 `ai_not_configured`, not a broken stream), persists the user message, builds the
- * system prompt from the `chat` registry entry, streams `chatStreamEventSchema` frames, then —
- * still inside the stream, all awaited — persists the assistant message + usage, bumps
- * `lastMessageAt`, titles the thread from the first user message, and flushes the tracer.
- * Zero default tools: `runStreamingChat` receives none.
+ * `POST /conversations/:id/messages` is a thin wrapper: `prepareChatTurn` does everything that can
+ * fail as a JSON envelope (resolve the client — a 503 `ai_not_configured` arrives before any row
+ * exists — build the prompt, read the history, persist the user turn), then `streamChatTurn`
+ * streams the answer in **AG-UI** (`services/ai/chat-turn.ts`, the one implementation the protocol
+ * endpoint `POST /api/agui/run` also calls). Frames are spec AG-UI: `data: <json>` with no
+ * `event:` line, or protobuf when the client negotiates it.
  */
 import {
-  type ChatStreamEvent,
-  CONVERSATION_TITLE_LENGTH,
   type Conversation,
   type ConversationWithMessages,
   conversationListQuerySchema,
@@ -20,28 +19,19 @@ import {
   sendMessageRequestSchema,
 } from '@rocketflare/shared/ai/chat'
 import { and, asc, count, desc, eq, sql } from 'drizzle-orm'
-import { streamSSE } from 'hono/streaming'
 import type { Database } from '../../db/client'
 import { type ConversationRow, conversations, type MessageRow, messages } from '../../db/schema'
 import { guardPermission } from '../middleware/permissions'
-import { traceChatClient, withAgentTrace } from '../observability/tracing'
 import { recordActivity } from '../services/activity'
-import { AiError, describeAiError, normalizeAiError } from '../services/ai/errors'
-import { runStreamingChat } from '../services/ai/kit'
+import { prepareChatTurn, streamChatTurn } from '../services/ai/chat-turn'
 import { resolveChat } from '../services/ai/resolve'
-import type { ChatMessage } from '../services/ai/types'
-import { recordUsage } from '../services/ai/usage'
-import { resolvePrompt } from '../services/prompts'
 import { NotFoundError } from '../utils/core/errors'
 import { pageWindow, paginated } from '../utils/routes/pagination'
-import { streamDatabase, uuidParam, withAuthAndDb } from '../utils/routes/route-helpers'
+import { uuidParam, withAuthAndDb } from '../utils/routes/route-helpers'
 import { createRouter } from '../utils/routes/router'
 import { validate } from '../utils/routes/validate'
 
 export const chatRouter = createRouter()
-
-/** Longest history sent to the model (turns); older turns are dropped, the DB keeps everything. */
-const HISTORY_LIMIT = 40
 
 export function toConversation(row: ConversationRow): Conversation {
   return {
@@ -166,149 +156,17 @@ chatRouter.delete('/conversations/:id', async c => {
   return c.body(null, 204)
 })
 
-// ---- POST /api/chat/conversations/:id/messages (SSE) -----------------------------------------------
+// ---- POST /api/chat/conversations/:id/messages (AG-UI stream) -------------------------------------
 
 chatRouter.post(
   '/conversations/:id/messages',
   validate('json', sendMessageRequestSchema),
   async c => {
-    const { db, tenantId, user, cfg, auth, tracer, logger } = withAuthAndDb(c)
+    const { db, tenantId, user } = withAuthAndDb(c)
     guardPermission(c, 'update', 'Conversation')
     const conversation = await ownConversation(db, tenantId, user.id, uuidParam(c, 'id'))
     const { content } = c.req.valid('json')
-
-    // Everything that can fail with a JSON error happens BEFORE the stream opens.
-    const resolved = await resolveChat(db, cfg, c.env, tenantId, { promptKey: 'chat' })
-    const system = await resolvePrompt(db, tenantId, 'chat', {
-      appName: cfg.APP_NAME,
-      tenantName: auth.tenant?.name ?? '',
-      userName: user.name,
-    })
-    const history = await db
-      .select()
-      .from(messages)
-      .where(and(eq(messages.conversationId, conversation.id), eq(messages.tenantId, tenantId)))
-      .orderBy(desc(messages.createdAt), desc(messages.id))
-      .limit(HISTORY_LIMIT)
-    const isFirstUserTurn = !history.some(m => m.role === 'user')
-
-    const [userMessage] = await db
-      .insert(messages)
-      .values({ conversationId: conversation.id, tenantId, role: 'user', content })
-      .returning()
-    if (!userMessage) throw new Error('messages: insert returned no row')
-
-    const chatMessages: ChatMessage[] = [
-      ...history
-        .reverse()
-        .filter(m => m.role === 'user' || m.role === 'assistant')
-        .map(m => ({ role: m.role as 'user' | 'assistant', content: m.content })),
-      { role: 'user', content },
-    ]
-    const assistantMessageId = crypto.randomUUID()
-
-    return streamSSE(c, async stream => {
-      const send = (event: ChatStreamEvent) =>
-        stream.writeSSE({ event: event.type, data: JSON.stringify(event) })
-      // The request's `db` is closed in `waitUntil` once this Response is returned — before this
-      // body runs — so the writes below use a stream-scoped client (see `streamDatabase`).
-      const handle = streamDatabase(c)
-      const sdb = handle.db
-      const abort = new AbortController()
-      stream.onAbort(() => abort.abort())
-      await send({
-        type: 'message.start',
-        conversationId: conversation.id,
-        messageId: assistantMessageId,
-        userMessageId: userMessage.id,
-        model: resolved.model,
-        provider: resolved.provider,
-      })
-      try {
-        const result = await withAgentTrace(
-          'chat',
-          {
-            tracer,
-            tenantId,
-            userId: user.id,
-            sessionId: conversation.id,
-            tags: ['chat'],
-            input: content,
-          },
-          trace => {
-            const client = traceChatClient(
-              resolved.client,
-              trace,
-              { provider: resolved.provider },
-              tracer
-            )
-            return runStreamingChat(client, {
-              model: resolved.model,
-              maxTokens: resolved.maxOutputTokens,
-              system,
-              messages: chatMessages,
-              maxTurns: cfg.AGENT_MAX_TURNS,
-              signal: abort.signal,
-              onDelta: text => send({ type: 'text.delta', delta: text }),
-              onToolStart: call =>
-                send({
-                  type: 'tool.start',
-                  toolUseId: call.toolUseId,
-                  name: call.name,
-                  input: call.input,
-                }),
-              onToolEnd: call =>
-                send({
-                  type: 'tool.end',
-                  toolUseId: call.toolUseId,
-                  name: call.name,
-                  isError: call.isError,
-                  result: call.result,
-                }),
-            })
-          }
-        )
-
-        // Persist BEFORE the closing frame — the client treats `message.end` as "it is saved".
-        await sdb.insert(messages).values({
-          id: assistantMessageId,
-          conversationId: conversation.id,
-          tenantId,
-          role: 'assistant',
-          content: result.text,
-          toolCalls: result.toolCalls.length ? result.toolCalls : null,
-          usage: result.usage,
-        })
-        const now = new Date()
-        await sdb
-          .update(conversations)
-          .set({
-            lastMessageAt: now,
-            ...(isFirstUserTurn && conversation.title === 'New conversation'
-              ? { title: content.slice(0, CONVERSATION_TITLE_LENGTH).trim() || conversation.title }
-              : {}),
-          })
-          .where(and(eq(conversations.id, conversation.id), eq(conversations.tenantId, tenantId)))
-        await recordUsage(sdb, {
-          tenantId,
-          userId: user.id,
-          feature: 'chat',
-          provider: resolved.provider,
-          model: resolved.model,
-          usage: result.usage,
-        })
-        await send({ type: 'usage', usage: result.usage })
-        await send({ type: 'message.end', messageId: assistantMessageId })
-      } catch (err) {
-        const aiError = err instanceof AiError ? err : normalizeAiError(err, resolved.provider)
-        logger.warn({ err: aiError, conversationId: conversation.id }, 'chat: stream failed')
-        await send({ type: 'error', message: describeAiError(aiError), code: aiError.code }).catch(
-          () => {}
-        )
-      } finally {
-        await handle.close()
-        await tracer.flush()
-      }
-    })
+    const params = await prepareChatTurn(c, conversation, content)
+    return streamChatTurn(c, params)
   }
 )

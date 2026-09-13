@@ -5,6 +5,7 @@
  * kit CUSTOM payload, parsed with the installed schemas. If a bump breaks one of these, the
  * protocol changed and the upgrade note has to say so.
  */
+import { decode as decodeProto, encode as encodeProto } from '@ag-ui/proto'
 import {
   chatRunResultSchema,
   KIT_AGUI_EVENT_TYPES,
@@ -16,6 +17,7 @@ import {
   readRunAgentTail,
 } from '@rocketflare/shared/ai/agui'
 import { describe, expect, it } from 'vitest'
+import { PROTO_UNSUPPORTED_EVENTS } from '@/api/services/ai/agui'
 
 const THREAD = '11111111-1111-4111-8111-111111111111'
 const RUN = '22222222-2222-4222-8222-222222222222'
@@ -125,6 +127,26 @@ describe('AG-UI contract', () => {
     const finished = kitAguiEventSchema.parse(SAMPLES.RUN_FINISHED)
     if (finished.type !== 'RUN_FINISHED') throw new Error('unreachable')
     expect(chatRunResultSchema.parse(finished.result)).toMatchObject({ messageId: MESSAGE })
+  })
+})
+
+describe('the protobuf transport', () => {
+  it('round-trips every emitted event except the ones declared unsupported', () => {
+    // A round trip, not "does `encode` throw": `@ag-ui/proto@0.0.59` has no message for
+    // TOOL_CALL_RESULT, and its encoder answers an EMPTY frame for it rather than failing — which
+    // no client can decode. That is why the encoder drops those events instead of writing them.
+    const unsupported = Object.entries(SAMPLES)
+      .filter(([, sample]) => {
+        try {
+          const decoded = decodeProto(encodeProto(sample as never)) as { type?: string }
+          return decoded.type !== (sample as { type: string }).type
+        } catch {
+          return true
+        }
+      })
+      .map(([type]) => type)
+    // When upstream gains the missing message, this fails and the list shrinks deliberately.
+    expect(unsupported.sort()).toEqual([...PROTO_UNSUPPORTED_EVENTS].sort())
   })
 })
 

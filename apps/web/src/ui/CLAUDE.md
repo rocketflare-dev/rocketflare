@@ -63,11 +63,13 @@ React 18 + Vite + React Router 6 + TanStack Query 5 + zustand; DaisyUI 5 on Tail
   (singleton: `/ws?tenantId=`, jittered backoff 1 s → 30 s, 100 ms fast path on close 1001/1012
   or an "upgraded" reason, 30 s ping;
   `setFactory()` is the test seam), `navigation` (`NavigationBridge`, `navigateTo`, `hardNavigate`,
-  `loginUrl`, `safeReturnUrl`), `format` (date-fns helpers), `environment`, `sse` (D17:
-  `readSse(response, onEvent, { signal })` — `event:`/`data:` frame splitter that survives split
-  chunks and validates each `data` with `chatStreamEventSchema`; `SseFrameBuffer`, `parseSseFrame`),
-  `chatStream` (`sendChatMessage({ conversationId, content, onEvent, signal })` POSTs and streams;
-  a pre-stream 503 `ai_not_configured` throws `AiNotConfiguredError`; `isAiNotConfigured()`),
+  `loginUrl`, `safeReturnUrl`), `format` (date-fns helpers), `environment`, `sse`
+  (`readSse(response, parse, onEvent, { signal })` — a frame splitter that survives split chunks
+  and validates each `data` with the parser the CALLER passes, so this module imports no schema and
+  the shell never carries one; `SseFrameBuffer`, `parseSseFrame`), `aguiStream`
+  (`runChatTurn({ conversationId, content, onEvent, signal })` POSTs and streams **AG-UI**, parsing
+  with `kitAguiEventSchema`; a pre-stream 503 `ai_not_configured` throws `AiNotConfiguredError`;
+  `isAiNotConfigured()`),
   `stubs/nivo-heatmap.tsx` (D19: the build-time stand-in `vite.config.ts` aliases `@nivo/heatmap`
   to — see "Analytics dashboards").
 - `stores/websocketStore.ts` — the one zustand store: `status | connectedAt | disconnectedAt |
@@ -143,13 +145,16 @@ React 18 + Vite + React Router 6 + TanStack Query 5 + zustand; DaisyUI 5 on Tail
 
 - **Streaming is the one exception to "server data lives only in the cache".** `useSendMessage`
   appends the user bubble optimistically (`setQueryData` on `chat.conversations.detail(id)` with a
-  real `Date`), accumulates the assistant reply in LOCAL state from `text.delta` frames (it is not
-  truth until `message.end`), captures `usage`, and on `message.end` writes the finished message
-  into the cache (the server persisted it BEFORE that frame) then invalidates the whole
-  `chat.conversations` family (list re-sorts, auto-title arrives). Stop = `AbortController.abort()`:
-  an abort is a normal end (no toast, no error bubble); a pre-stream failure takes the optimistic
-  bubble back. An `error` frame leaves the turn in `error` status until the next send.
-- SSE never goes through `api-client`'s `request()` (JSON only); `lib/chatStream.ts` does its own
+  real `Date`; `CUSTOM kit.chat.ids` then swaps its id for the persisted one), accumulates the
+  assistant reply in LOCAL state from `TEXT_MESSAGE_CONTENT` deltas — across EVERY message id the
+  run opens, since each model turn gets its own — (it is not truth until `RUN_FINISHED`), captures
+  `usage` from `CUSTOM kit.usage`, and on `RUN_FINISHED` writes the finished message into the cache
+  (the server persisted it BEFORE that frame) then invalidates the whole `chat.conversations`
+  family (list re-sorts, auto-title arrives). Stop = `AbortController.abort()`: a cancelled run
+  emits NO terminal event, which is the protocol's way of saying the client went away — a normal
+  end (no toast, no error bubble); a pre-stream failure takes the optimistic bubble back. A
+  `RUN_ERROR` leaves the turn in `error` status until the next send.
+- SSE never goes through `api-client`'s `request()` (JSON only); `lib/aguiStream.ts` does its own
   `fetch` with `credentials: 'include'` + `X-Requested-With` and reuses the exported
   `parseErrorBody` for the envelope. `EventSource` is not used (GET-only).
 - `ai_not_configured` (503) — from `POST /api/chat/conversations` (`ApiError`, toast suppressed in

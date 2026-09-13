@@ -1,8 +1,8 @@
 /**
- * Chat contracts (D17): persisted `conversations` / `messages` rows, the request bodies, and the
- * SSE frame protocol `POST /api/chat/conversations/:id/messages` streams. Every frame's `data` is
- * one JSON `ChatStreamEvent` (discriminated on `type`); the SSE `event:` field repeats `type` for
- * `EventSource` consumers. The UI parses `data` with `chatStreamEventSchema.safeParse`.
+ * Chat contracts (D17): the persisted `conversations` / `messages` rows and the request bodies.
+ * The wire protocol the streaming route speaks is AG-UI and lives in `agui.ts`; this file is the
+ * DB-shaped half — `tokenUsageSchema` and `toolCallRecordSchema` are jsonb column types as well as
+ * response fields.
  */
 import { z } from 'zod'
 import { paginationQuerySchema } from '../pagination'
@@ -78,38 +78,3 @@ export type ConversationListQuery = z.infer<typeof conversationListQuerySchema>
 
 /** Auto-title = first user message, trimmed to this many characters. */
 export const CONVERSATION_TITLE_LENGTH = 60
-
-// ---- SSE protocol -------------------------------------------------------------------------
-
-export const chatStreamEventSchema = z.discriminatedUnion('type', [
-  /** First frame: the persisted user message id and the assistant message id being written. */
-  z.object({
-    type: z.literal('message.start'),
-    conversationId: z.string().uuid(),
-    messageId: z.string().uuid(),
-    userMessageId: z.string().uuid(),
-    model: z.string(),
-    provider: aiProviderSchema,
-  }),
-  z.object({ type: z.literal('text.delta'), delta: z.string() }),
-  z.object({
-    type: z.literal('tool.start'),
-    toolUseId: z.string(),
-    name: z.string(),
-    input: z.unknown().optional(),
-  }),
-  z.object({
-    type: z.literal('tool.end'),
-    toolUseId: z.string(),
-    name: z.string(),
-    isError: z.boolean(),
-    result: z.string().optional(),
-  }),
-  z.object({ type: z.literal('usage'), usage: tokenUsageSchema }),
-  /** Last frame on success — the assistant message is persisted when this arrives. */
-  z.object({ type: z.literal('message.end'), messageId: z.string().uuid() }),
-  /** Last frame on failure; nothing after it. `code` is an `AiErrorCode` or `internal`. */
-  z.object({ type: z.literal('error'), message: z.string(), code: z.string() }),
-])
-export type ChatStreamEvent = z.infer<typeof chatStreamEventSchema>
-export type ChatStreamEventType = ChatStreamEvent['type']

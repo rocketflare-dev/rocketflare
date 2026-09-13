@@ -30,7 +30,7 @@ import {
   useSendMessage,
 } from '@/ui/hooks/useChat'
 import { usePermissions } from '@/ui/hooks/usePermissions'
-import { isAiNotConfigured } from '@/ui/lib/chatStream'
+import { isAiNotConfigured } from '@/ui/lib/aguiStream'
 import { timeAgo } from '@/ui/lib/format'
 
 export default function ChatPage() {

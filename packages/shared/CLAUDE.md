@@ -34,8 +34,7 @@ response with the same schema. `pnpm test:config` covers the pure parts.
 `prompts.ts` — `promptKeySchema` (kebab-case), `PROMPT_MAX_LENGTH`, `promptDefinitionSchema`, `promptOverrideSchema`,
 `updatePromptRequestSchema`, `promptWithResolvedSchema`, `interpolatePrompt()` (`{{var}}`, unknown left visible) ·
 `chat.ts` — `conversationSchema`, `messageSchema`, `tokenUsageSchema`, `toolCallRecordSchema`, request bodies,
-`MAX_MESSAGE_LENGTH`, `CONVERSATION_TITLE_LENGTH`, **`chatStreamEventSchema`** (the SSE `data` union:
-`message.start | text.delta | tool.start | tool.end | usage | message.end | error`) ·
+`MAX_MESSAGE_LENGTH`, `CONVERSATION_TITLE_LENGTH` (the DB-shaped half; the wire protocol is `agui.ts`) ·
 `agents.ts` — `AGENT_KEYS`/`agentKeySchema` (append; never empty — it is a `z.enum`), `AgentMeta<Input, Output>`
 (the server attaches `run()`), `agentInfoSchema`, `agentRunStatusSchema` + `isRunActive`, `agentRunSchema`,
 `createAgentRunRequest/ResponseSchema` (`deduplicated`), `agentRunListQuerySchema`, `AGENT_RUN_EVENT_TYPES`,
@@ -74,8 +73,9 @@ the literal in `JOB_TYPES` (then the handler table in `apps/web/src/api/queues/j
 agent: the key in `AGENT_KEYS` + its input/output schemas in `ai/agents.ts` (then the prompt, the
 definition and the `AGENTS` entry server-side — `docs/ADAPTING.md` §3). Adding an AI provider: the
 value in `AI_PROVIDERS` + `DEFAULT_MODELS` (mirrored in `apps/web/src/db/schema/ai-configs.ts`); a
-vendor on an existing wire format is a `PROVIDER_PRESETS` entry only. Adding an SSE frame type: a
-variant in `chatStreamEventSchema` — the UI drops frames it cannot parse, so the server may lead. A breaking
+vendor on an existing wire format is a `PROVIDER_PRESETS` entry only. Adding a streamed event: an AG-UI type in
+`kitAguiEventSchema` or a member of the kit CUSTOM namespace in `ai/agui.ts` — the UI drops frames it
+cannot parse, so the server may lead. A breaking
 payload change is a NEW type (`email.send.v2`) — the `type` string is the version seam. Adding a
 realtime event type: the enum + its roots in `REALTIME_INVALIDATIONS` (a ui test checks every root
 is a `queryKeys` family). Adding a file scope: `FILE_SCOPES` here AND the mirrored enum in
