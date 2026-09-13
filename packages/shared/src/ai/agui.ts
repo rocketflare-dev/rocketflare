@@ -180,6 +180,10 @@ export const chatRunResultSchema = z.object({
 })
 export type ChatRunResult = z.infer<typeof chatRunResultSchema>
 
+/** `GET /api/agents/runs/:id/agui` — the run's durable events, projected. */
+export const agentRunAguiResponseSchema = z.object({ events: z.array(kitAguiEventSchema) })
+export type AgentRunAguiResponse = z.infer<typeof agentRunAguiResponseSchema>
+
 // ---- `POST /api/agui/run` input ---------------------------------------------------------------
 
 /**

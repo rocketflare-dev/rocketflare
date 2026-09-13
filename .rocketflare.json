@@ -129,6 +129,7 @@
         "apps/web/src/api/services/agents/**",
         "apps/web/src/api/routes/agents.ts",
         "apps/web/src/ui/pages/agents/**",
+        "apps/web/tests/api/agui-projection.test.ts",
         "packages/shared/src/ai/agents.ts"
       ],
       "registries": [

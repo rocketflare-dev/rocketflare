@@ -21,6 +21,11 @@ the `kit.` CUSTOM namespace (`KIT_CUSTOM_EVENTS`, `kitCustomPayloadSchema`, `par
 every kit-specific semantic lives, `chatRunResultSchema`, and `kitRunAgentInputSchema` +
 `readRunAgentTail`.
 
+**An agent run reads back as AG-UI too.** `GET /api/agents/runs/:id/agui` projects
+`agent_run_events` at read time — plain JSON, same ownership rules as `GET /runs/:id`. The table
+and the runtime are untouched; nothing in a Workflow step knows AG-UI exists. There is no SSE
+endpoint for runs: a run executes in another isolate, so live streaming is a feature, not a mapping.
+
 **Chat now calls the knowledge tools by default.** `search_knowledge`, `get_document` and
 `list_documents` — the same three every agent gets — are on `POST /conversations/:id/messages`, so
 the chat box answers from the workspace's own material. It costs more tokens per turn, and on

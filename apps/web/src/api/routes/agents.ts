@@ -12,11 +12,13 @@ import {
   agentRunListQuerySchema,
   createAgentRunRequestSchema,
 } from '@rocketflare/shared/ai/agents'
+import type { AgentRunAguiResponse } from '@rocketflare/shared/ai/agui'
 import { ERROR_CODES } from '@rocketflare/shared/errors'
 import { and, count, desc, eq } from 'drizzle-orm'
 import { type AgentRunRow, agentRuns } from '../../db/schema'
 import { guardPermission, isAdminLevel } from '../middleware/permissions'
 import { recordActivity } from '../services/activity'
+import { projectRunToAgui } from '../services/agents/agui-projection'
 import { listAgentInfo } from '../services/agents/registry'
 import {
   enqueueRun,
@@ -121,6 +123,26 @@ agentsRouter.get('/runs/:id', async c => {
   const run = await reconcileRun(db, c.env, row)
   const events = await listEvents(db, tenantId, run.id)
   const body: AgentRunWithEvents = { ...toAgentRun(run), events: events.map(toAgentRunEvent) }
+  return c.json(body)
+})
+
+// ---- GET /api/agents/runs/:id/agui ----------------------------------------------------------------
+
+/**
+ * The same run as `GET /runs/:id`, projected into AG-UI (D7). Plain JSON, not a stream: a run
+ * executes in a Workflow, in a different isolate from any request, so live streaming is a feature
+ * rather than a mapping — the WS nudge plus the poll already gives sub-second updates.
+ */
+agentsRouter.get('/runs/:id/agui', async c => {
+  const { db, tenantId, auth } = withAuthAndDb(c)
+  guardPermission(c, 'read', 'AgentRun')
+  const row = await getRun(db, tenantId, uuidParam(c, 'id'))
+  if (!row || !visible(auth, row)) throw new NotFoundError('Agent run not found')
+  const run = await reconcileRun(db, c.env, row)
+  const events = await listEvents(db, tenantId, run.id)
+  const body: AgentRunAguiResponse = {
+    events: projectRunToAgui(toAgentRun(run), events.map(toAgentRunEvent)),
+  }
   return c.json(body)
 })
 
