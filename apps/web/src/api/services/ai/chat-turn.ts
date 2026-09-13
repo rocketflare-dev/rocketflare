@@ -224,11 +224,20 @@ export function streamChatTurn(c: AppContext, params: ChatTurnParams): Response 
         content: result.text,
         toolCalls: result.toolCalls.length ? result.toolCalls : null,
         usage: result.usage,
+        // What actually answered. The turn re-resolves, so this is the only durable record of it —
+        // without it a thread whose provider changed cannot be priced or explained after the fact.
+        provider: resolved.provider,
+        model: resolved.model,
       })
       await sdb
         .update(conversations)
         .set({
           lastMessageAt: new Date(),
+          // Kept in step with the turn rather than frozen at creation: the row is read as "what
+          // this thread is running on", and a value that silently stopped being true is worse than
+          // no value at all.
+          provider: resolved.provider,
+          model: resolved.model,
           ...(params.isFirstUserTurn && conversation.title === 'New conversation'
             ? { title: content.slice(0, CONVERSATION_TITLE_LENGTH).trim() || conversation.title }
             : {}),

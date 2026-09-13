@@ -11,7 +11,9 @@
  * `event:` line, or protobuf when the client negotiates it.
  */
 import {
+  type CompactConversationResponse,
   type Conversation,
+  type ConversationStats,
   type ConversationWithMessages,
   conversationListQuerySchema,
   createConversationRequestSchema,
@@ -23,9 +25,12 @@ import type { Database } from '../../db/client'
 import { type ConversationRow, conversations, type MessageRow, messages } from '../../db/schema'
 import { guardPermission } from '../middleware/permissions'
 import { recordActivity } from '../services/activity'
+import { pendingCompaction, selectHistoryWindow } from '../services/ai/chat-history'
+import { buildConversationStats } from '../services/ai/chat-stats'
 import { prepareChatTurn, streamChatTurn } from '../services/ai/chat-turn'
 import { resolveChat } from '../services/ai/resolve'
-import { NotFoundError } from '../utils/core/errors'
+import { enqueueJob } from '../services/jobs'
+import { ConflictError, NotFoundError } from '../utils/core/errors'
 import { pageWindow, paginated } from '../utils/routes/pagination'
 import { uuidParam, withAuthAndDb } from '../utils/routes/route-helpers'
 import { createRouter } from '../utils/routes/router'
@@ -55,6 +60,8 @@ export function toMessage(row: MessageRow): Message {
     content: row.content,
     toolCalls: row.toolCalls,
     usage: row.usage,
+    provider: row.provider,
+    model: row.model,
     createdAt: row.createdAt,
   }
 }
@@ -142,6 +149,74 @@ chatRouter.get('/conversations/:id', async c => {
     .orderBy(asc(messages.createdAt), asc(messages.id))
   const body: ConversationWithMessages = { ...toConversation(row), messages: turns.map(toMessage) }
   return c.json(body)
+})
+
+// ---- GET /api/chat/conversations/:id/stats ---------------------------------------------------
+//
+// The chat inspector. Admin+ ON TOP of the same ownership filter as the thread itself: a global
+// admin cannot read someone else's conversation here any more than they can read it anywhere else,
+// so this widens WHAT an owner sees about their own thread, never WHOSE threads are visible.
+// `manage AiConfig` is the gate because the panel is about cost and model configuration — the same
+// thing Settings → Usage is gated on.
+
+chatRouter.get('/conversations/:id/stats', async c => {
+  const { db, tenantId, user, cfg, auth } = withAuthAndDb(c)
+  guardPermission(c, 'read', 'Conversation')
+  guardPermission(c, 'manage', 'AiConfig')
+  const row = await ownConversation(db, tenantId, user.id, uuidParam(c, 'id'))
+  const turns = await db
+    .select()
+    .from(messages)
+    .where(and(eq(messages.conversationId, row.id), eq(messages.tenantId, tenantId)))
+    .orderBy(asc(messages.createdAt), asc(messages.id))
+  const body: ConversationStats = await buildConversationStats(db, cfg, c.env, tenantId, {
+    conversation: row,
+    rows: turns,
+    tenantName: auth.tenant?.name ?? '',
+    userName: user.name,
+  })
+  return c.json(body)
+})
+
+// ---- POST /api/chat/conversations/:id/compact ------------------------------------------------
+//
+// Summarise now rather than waiting for the automatic path's threshold. It ENQUEUES — a summary is
+// a model call, and a route never runs one. `force` skips the min-chars guard, because a person
+// asking has already decided it is worth the call.
+//
+// Nothing pending is a 409 rather than a cheerful 202: enqueuing a job that is guaranteed to no-op
+// looks identical to one that worked, and the panel would show "queued" forever.
+
+chatRouter.post('/conversations/:id/compact', async c => {
+  const { db, tenantId, user, cfg, logger } = withAuthAndDb(c)
+  guardPermission(c, 'read', 'Conversation')
+  guardPermission(c, 'manage', 'AiConfig')
+  const row = await ownConversation(db, tenantId, user.id, uuidParam(c, 'id'))
+  const turns = await db
+    .select()
+    .from(messages)
+    .where(and(eq(messages.conversationId, row.id), eq(messages.tenantId, tenantId)))
+    .orderBy(asc(messages.createdAt), asc(messages.id))
+
+  const { dropped } = selectHistoryWindow(turns, { maxChars: cfg.CHAT_HISTORY_MAX_CHARS })
+  const pending = pendingCompaction(dropped, row.summarisedThroughId)
+  if (pending.length === 0) {
+    throw new ConflictError(
+      "There is nothing outside this conversation's context window to summarise yet.",
+      'nothing_to_compact'
+    )
+  }
+  await enqueueJob(c.env.JOBS_QUEUE, {
+    type: 'chat.compact',
+    payload: { tenantId, conversationId: row.id, force: true },
+  })
+  logger.info({ conversationId: row.id, pending: pending.length }, 'chat: compaction requested')
+  const body: CompactConversationResponse = {
+    conversationId: row.id,
+    pendingMessages: pending.length,
+    pendingChars: pending.reduce((n, m) => n + m.content.length, 0),
+  }
+  return c.json(body, 202)
 })
 
 // ---- DELETE /api/chat/conversations/:id ------------------------------------------------------------

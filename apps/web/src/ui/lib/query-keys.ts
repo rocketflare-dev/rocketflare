@@ -107,6 +107,8 @@ export const queryKeys = {
       all: ['chat', 'conversations'] as const,
       list: (filters: object = {}) => ['chat', 'conversations', 'list', filters] as const,
       detail: (id: string) => ['chat', 'conversations', 'detail', id] as const,
+      /** The inspector's derived view of one thread (admin+); same family, so a turn refreshes it. */
+      stats: (id: string) => ['chat', 'conversations', 'stats', id] as const,
     },
   },
   /**

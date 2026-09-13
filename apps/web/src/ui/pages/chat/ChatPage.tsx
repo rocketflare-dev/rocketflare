@@ -8,6 +8,7 @@
  */
 
 import {
+  ChartBarIcon,
   ChatBubbleLeftRightIcon,
   PaperAirplaneIcon,
   PlusIcon,
@@ -33,6 +34,18 @@ import {
 import { usePermissions } from '@/ui/hooks/usePermissions'
 import { isAiNotConfigured } from '@/ui/lib/aguiStream'
 import { timeAgo } from '@/ui/lib/format'
+import { ChatStatsPanel } from './ChatStatsPanel'
+
+/** Whether the inspector was left open. Remembered, because it is a working posture, not a task. */
+const STATS_PREFERENCE_KEY = 'chat:stats'
+
+function readStatsPreference(): boolean {
+  try {
+    return localStorage.getItem(STATS_PREFERENCE_KEY) === 'open'
+  } catch {
+    return false
+  }
+}
 
 /** One quiet sentence per `kit.notice` code — not an error, but worth knowing. */
 const NOTICE_TEXT: Record<KitNoticeCode, string> = {
@@ -58,6 +71,18 @@ export default function ChatPage() {
   const thread = useConversation(conversationId)
   const { send, stop, turn, isStreaming, error: sendError } = useSendMessage(conversationId)
   const [deleting, setDeleting] = useState<Conversation | null>(null)
+  const [showStats, setShowStats] = useState(readStatsPreference)
+  const toggleStats = () => {
+    setShowStats(next => {
+      const value = !next
+      try {
+        localStorage.setItem(STATS_PREFERENCE_KEY, value ? 'open' : 'closed')
+      } catch {
+        // A browser with storage disabled still gets the toggle, just not the memory of it.
+      }
+      return value
+    })
+  }
 
   const notConfigured =
     readiness.data?.chat.ready === false ||
@@ -182,14 +207,27 @@ export default function ChatPage() {
               <h1 className="text-sm font-semibold truncate">
                 {thread.data?.title ?? 'Conversation'}
               </h1>
-              {thread.data && (
-                <span
-                  className="badge badge-ghost badge-sm font-mono shrink-0"
-                  title={`${thread.data.provider} · ${thread.data.model}`}
-                >
-                  {shortModelName(thread.data.model)}
-                </span>
-              )}
+              <div className="flex items-center gap-2 shrink-0">
+                {thread.data && (
+                  <span
+                    className="badge badge-ghost badge-sm font-mono"
+                    title={`${thread.data.provider} · ${thread.data.model}`}
+                  >
+                    {shortModelName(thread.data.model)}
+                  </span>
+                )}
+                {canConfigure && (
+                  <button
+                    type="button"
+                    className="btn btn-ghost btn-xs gap-1"
+                    onClick={toggleStats}
+                    aria-pressed={showStats}
+                  >
+                    <ChartBarIcon className="w-3.5 h-3.5" />
+                    Stats
+                  </button>
+                )}
+              </div>
             </header>
             <Transcript
               conversationId={conversationId}
@@ -207,6 +245,10 @@ export default function ChatPage() {
           </>
         )}
       </section>
+
+      {canConfigure && showStats && conversationId && (
+        <ChatStatsPanel conversationId={conversationId} onClose={toggleStats} />
+      )}
 
       <ConfirmModal
         isOpen={deleting !== null}

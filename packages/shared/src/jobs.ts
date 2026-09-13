@@ -76,6 +76,15 @@ export type DocumentConvertPayload = z.infer<typeof documentConvertPayloadSchema
 export const chatCompactPayloadSchema = z.object({
   tenantId: z.string().uuid(),
   conversationId: z.string().uuid(),
+  /**
+   * Summarise whatever is pending, however little. The automatic path waits for
+   * `CHAT_COMPACTION_MIN_CHARS` of uncovered material, because the window slides by a message or
+   * two per turn and a model call per sentence costs more than the problem it solves. A person who
+   * asked for a summary has already decided it is worth one call — and an optional field is used
+   * rather than a new job type because an old consumer reading it as absent behaves exactly as it
+   * does today.
+   */
+  force: z.boolean().optional(),
 })
 export type ChatCompactPayload = z.infer<typeof chatCompactPayloadSchema>
 

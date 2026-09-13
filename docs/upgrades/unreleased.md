@@ -188,7 +188,45 @@ defaulted `cache` to `true` since Phase 3a, so `runStreamingChat` has always sen
 `cachedSystem` + `withRollingCacheBreakpoints`. The remaining gap is different and is now recorded
 in `docs/CONCEPTS.md` §9 — a sliding history window moves the cached prefix every turn.)
 
+### A chat inspector, and the per-turn model it needs — **migration**
+
+**`conversations.provider/model` was display-only and quietly wrong.** The row froze them at
+creation, but every turn calls `resolveChat` again, so a thread showed the model it was created with
+long after the tenant had changed provider. Both are now refreshed each turn, and `messages` gains
+nullable `provider`/`model` columns recording what actually answered each turn — the only place a
+thread whose model changed mid-way can be priced or explained. **Port the schema and run
+`pnpm db:generate`; never copy the kit's migration.** Existing assistant rows keep NULL and are
+reported as "unknown" rather than attributed to whatever answers today.
+
+**New surface: `GET /api/chat/conversations/:id/stats`**, admin+ (`manage AiConfig`) ON TOP of the
+usual ownership filter — it widens what an owner sees about their OWN thread and never whose
+threads are visible. Everything in it is derived per request from the stored rows, the live config
+and the price table, so there is no state to keep in step with the transcript: which model answers
+next (from `readiness()`, so opening the panel costs no tokens), the history window the next turn
+will send against `CHAT_HISTORY_MAX_CHARS`, what fell out of it, the summary and how far the thread
+is from its next one, turns, tool calls, tokens, cache reads/writes and an estimated cost broken
+down by model. It also breaks the next prompt into its five disjoint parts — system prompt, tool
+schemas, summary, your messages, replies — because "my context is full" usually has a cause, and on
+a short thread it is the tool schemas and the system prompt, which are sent every turn whatever was
+asked. A model the price table does not know contributes `null` and is counted in
+`unpricedTurns`, the same honesty rule the Usage page already follows.
+
+**New surface: `POST /api/chat/conversations/:id/compact`** — summarise now instead of waiting for
+the automatic threshold. It enqueues (a summary is a model call, and a route never runs one) with a
+new optional `force` on the `chat.compact` payload, which skips the `CHAT_COMPACTION_MIN_CHARS`
+guard. **An optional field rather than a new job type**, because an old consumer reading it as
+absent behaves exactly as it does today. Nothing pending is a 409 `nothing_to_compact` rather than a
+cheerful 202 for a job guaranteed to no-op.
+
+UI: a collapsible right-hand panel on `/chat`, toggled from the header and remembered in
+`localStorage`, in the lazy `ChatPage` chunk — the main bundle is unchanged. It polls only while a
+summary is pending and stops the moment nothing is owed.
+
 ## How to apply
+
+**Run the migration first** if you take the chat inspector: `messages.provider` and
+`messages.model`, both nullable. Generate your own — a kit migration's snapshot describes the kit's
+schema, not yours.
 
 **Workers AI first.** If you kept the kit's provider catalog, take `services/ai/providers.ts`,
 `services/ai/client.ts` and `packages/shared/src/ai/pricing.ts` wholesale. If you have added your own models to the picker,

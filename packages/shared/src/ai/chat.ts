@@ -50,6 +50,9 @@ export const messageSchema = z.object({
   content: z.string(),
   toolCalls: z.array(toolCallRecordSchema).nullable().optional(),
   usage: tokenUsageSchema.nullable().optional(),
+  /** What answered this turn. Null on a user row, and on assistant rows written before 0.2. */
+  provider: aiProviderSchema.nullable().optional(),
+  model: z.string().nullable().optional(),
   createdAt: z.coerce.date(),
 })
 export type Message = z.infer<typeof messageSchema>
@@ -108,3 +111,116 @@ export const CHAT_SUMMARY_MAX_CHARS = 2_000
  * every single turn once the window is full.
  */
 export const CHAT_COMPACTION_MIN_CHARS = 2_000
+
+// ---- Conversation stats (the chat inspector) -------------------------------------------------
+//
+// `GET /api/chat/conversations/:id/stats`, admin+ (`manage AiConfig`) on top of the same ownership
+// filter as the thread itself. It answers "what is actually going on behind this chat": which model
+// will answer next and which have answered, how much of the history budget the next turn will
+// spend, what fell out of it, and what the thread has cost. Everything here is DERIVED — from the
+// stored rows, the config and the price table — so it is safe to recompute per request and there is
+// no state to keep in step.
+
+/** One model's share of a thread. A thread is not pinned to a model, so there may be several. */
+export const conversationModelUsageSchema = z.object({
+  provider: aiProviderSchema.nullable(),
+  model: z.string().nullable(),
+  turns: z.number().int().nonnegative(),
+  usage: tokenUsageSchema,
+  /** Null when the price table does not know the model — never a guess. */
+  costMicrocents: z.number().nullable(),
+})
+export type ConversationModelUsage = z.infer<typeof conversationModelUsageSchema>
+
+/**
+ * What the NEXT turn will send: the window that fits the character budget, and the older prefix
+ * that does not. `summarisedChars` is the part of that prefix already folded into the summary.
+ */
+export const conversationContextStatsSchema = z.object({
+  budgetChars: z.number().int().nonnegative(),
+  windowChars: z.number().int().nonnegative(),
+  windowMessages: z.number().int().nonnegative(),
+  droppedMessages: z.number().int().nonnegative(),
+  droppedChars: z.number().int().nonnegative(),
+  /**
+   * Characters that still fit before the OLDEST turns start falling out of the window. Zero means
+   * the thread is already trimming — this is the honest answer to "how close am I?", and it moves
+   * with what you type, not with a message count.
+   */
+  headroomChars: z.number().int().nonnegative(),
+  /**
+   * Where the next turn's prompt actually goes, in characters. These five are disjoint and sum to
+   * `totalChars` — the point of the panel is that "my context is full" usually has a cause, and it
+   * is often not the conversation: three tool schemas and a system prompt are sent on EVERY turn
+   * whether or not they are used.
+   */
+  composition: z.object({
+    /** The `chat` prompt — the cacheable, stable half. */
+    systemPrompt: z.number().int().nonnegative(),
+    /** The rolling summary, replayed as the system prompt's volatile half. 0 when there is none. */
+    summary: z.number().int().nonnegative(),
+    /** The JSON Schemas of the knowledge tools, re-sent every turn. 0 when tools are off. */
+    toolSchemas: z.number().int().nonnegative(),
+    userMessages: z.number().int().nonnegative(),
+    assistantMessages: z.number().int().nonnegative(),
+  }),
+  /** Everything the next turn sends, summary and tool schemas included — not just the transcript. */
+  totalChars: z.number().int().nonnegative(),
+  /** Characters per token the kit assumes everywhere — the estimate's denominator, stated. */
+  charsPerToken: z.number().int().positive(),
+})
+export type ConversationContextStats = z.infer<typeof conversationContextStatsSchema>
+
+/** The rolling summary and how far it reaches — the visible half of "has this compacted?". */
+export const conversationCompactionStatsSchema = z.object({
+  summary: z.string().nullable(),
+  summarisedThroughId: z.string().uuid().nullable(),
+  /** Messages outside the window that the summary does NOT yet cover (a job is owed, or running). */
+  pendingMessages: z.number().int().nonnegative(),
+  /**
+   * Characters of that uncovered material. The summariser is a model call, so it deliberately
+   * waits until there is at least `minChars` of it — `minChars - pendingChars` is how far the
+   * thread is from its NEXT summary, once it has started trimming at all.
+   */
+  pendingChars: z.number().int().nonnegative(),
+  minChars: z.number().int().nonnegative(),
+  maxSummaryChars: z.number().int().nonnegative(),
+  /** Messages the existing summary covers, or 0 when there is none. */
+  summarisedMessages: z.number().int().nonnegative(),
+})
+export type ConversationCompactionStats = z.infer<typeof conversationCompactionStatsSchema>
+
+export const conversationStatsSchema = z.object({
+  conversationId: z.string().uuid(),
+  /** What will answer the NEXT turn, re-resolved now — not what the row was created with. */
+  next: z.object({
+    ready: z.boolean(),
+    provider: aiProviderSchema.nullable(),
+    model: z.string().nullable(),
+    source: z.enum(['agent', 'tenant', 'platform', 'none']),
+    maxOutputTokens: z.number().int().positive().nullable(),
+    knowledgeTools: z.array(z.string()),
+    maxToolTurns: z.number().int().nonnegative(),
+  }),
+  context: conversationContextStatsSchema,
+  compaction: conversationCompactionStatsSchema,
+  turns: z.object({
+    user: z.number().int().nonnegative(),
+    assistant: z.number().int().nonnegative(),
+    toolCalls: z.number().int().nonnegative(),
+  }),
+  usage: tokenUsageSchema,
+  /** Summed from what IS priced; `unpricedTurns` says how much of the thread it leaves out. */
+  costMicrocents: z.number().nullable(),
+  unpricedTurns: z.number().int().nonnegative(),
+  byModel: z.array(conversationModelUsageSchema),
+})
+export type ConversationStats = z.infer<typeof conversationStatsSchema>
+
+/** `POST /api/chat/conversations/:id/compact` — what was queued, so the panel can say so. */
+export const compactConversationResponseSchema = z.object({
+  conversationId: z.string().uuid(),
+  pendingMessages: z.number().int().positive(),
+  pendingChars: z.number().int().nonnegative(),
+})
+export type CompactConversationResponse = z.infer<typeof compactConversationResponseSchema>

@@ -14,9 +14,12 @@
 import type { KitNoticeCode } from '@rocketflare/shared/ai/agui'
 import { AguiEventType, KIT_CUSTOM_EVENTS, parseKitCustom } from '@rocketflare/shared/ai/agui'
 import {
+  type ConversationStats,
   type ConversationWithMessages,
   type CreateConversationRequest,
+  compactConversationResponseSchema,
   conversationSchema,
+  conversationStatsSchema,
   conversationWithMessagesSchema,
   type Message,
   type TokenUsage,
@@ -303,4 +306,47 @@ export function useSendMessage(conversationId: string | undefined) {
     isStreaming: mutation.isPending,
     error: mutation.error,
   }
+}
+
+// ---- The inspector (admin+) -------------------------------------------------------------------
+
+/**
+ * `GET /api/chat/conversations/:id/stats` — everything the chat panel shows about a thread. Gated
+ * by `manage AiConfig` on the server, so the hook takes `enabled` rather than guessing: a member
+ * would get a 403 toast for a panel they cannot see.
+ *
+ * It polls only while the server still owes an answer — a queued summary — and stops the moment
+ * nothing is pending, which is the kit's polling rule (`.claude/rules/ui.md`).
+ */
+export const STATS_POLL_MS = 3_000
+
+export function statsPollInterval(stats: ConversationStats | undefined): number | false {
+  return stats && stats.compaction.pendingMessages > 0 ? STATS_POLL_MS : false
+}
+
+export function useConversationStats(id: string | undefined, options: { enabled: boolean }) {
+  return useQuery({
+    queryKey: queryKeys.chat.conversations.stats(id ?? 'none'),
+    queryFn: () =>
+      api.get(`/api/chat/conversations/${id}/stats`, {
+        schema: conversationStatsSchema,
+      }),
+    enabled: Boolean(id) && options.enabled,
+    refetchInterval: query => statsPollInterval(query.state.data),
+  })
+}
+
+/** Ask for a summary now instead of waiting for the automatic threshold. 202, then the poll. */
+export function useCompactConversation(id: string | undefined) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: () =>
+      api.post(`/api/chat/conversations/${id}/compact`, undefined, {
+        schema: compactConversationResponseSchema,
+      }),
+    onSuccess: () => {
+      // The job has not run yet; refetching starts the poll that will show it landing.
+      void queryClient.invalidateQueries({ queryKey: queryKeys.chat.conversations.stats(id ?? '') })
+    },
+  })
 }

@@ -736,7 +736,29 @@ fails the day upstream gains the message.
 
 **Chat.** `conversations` / `messages`; ownership is the `userId` filter on every query, so another
 member's thread — an admin's too — is a 404. `POST /api/chat/conversations` resolves the client first
-(the 503 arrives before any row exists) and freezes `provider`/`model` on the row.
+(the 503 arrives before any row exists) and records `provider`/`model` on the row. **Those are
+refreshed every turn, not frozen**: the turn re-resolves its client, so a value fixed at creation
+stops being true the moment a tenant changes provider — and `messages.provider`/`model` record what
+answered each individual turn, which is the only way a thread whose model changed mid-way can be
+priced or explained (both nullable: a turn written before those columns reads as unknown, never as
+today's model).
+
+**The chat inspector** is `GET /api/chat/conversations/:id/stats` (admin+ `manage AiConfig` ON TOP of
+the ownership filter, so it widens what an owner sees about their own thread and never whose threads
+are visible) plus a collapsible right-hand panel on `/chat`. Everything in it is DERIVED per request
+— from the stored rows, the live config and the price table — so there is no second source of truth
+to drift from the transcript, and a thread that predates a column reports less rather than wrong. It
+answers what will answer next (`readiness()`, so no model call), the window the next turn will send
+against `CHAT_HISTORY_MAX_CHARS`, what fell out of it, turns, tool calls, tokens, cache reads/writes,
+and an estimated cost per model where `unpricedTurns` says how much of the thread the figure leaves
+out. `context.composition` splits the next prompt into five disjoint parts summing to `totalChars` —
+system prompt, tool schemas, summary, user messages, replies — because the system prompt and the
+three tool schemas are sent on EVERY turn regardless of what was asked, and on a short thread they
+are most of it. Compaction has **two distances and they happen in order**: the window has to fill before
+anything is dropped (`context.headroomChars`), and enough has to be dropped before a summary is
+worth a model call (`compaction.pendingChars` against `CHAT_COMPACTION_MIN_CHARS`). The summary
+itself is shown, and `POST /:id/compact` enqueues one now with `force: true` on the `chat.compact`
+payload — a 409 `nothing_to_compact` rather than a 202 for a job that is guaranteed to no-op.
 `POST /conversations/:id/messages` is a wrapper around `services/ai/chat-turn.ts`, which is the ONE
 implementation of the sequence below — `POST /api/agui/run` calls the same function.
 `prepareChatTurn` does everything that can fail as JSON **before** the stream opens (resolve,

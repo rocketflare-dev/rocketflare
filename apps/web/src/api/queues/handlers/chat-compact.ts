@@ -66,9 +66,12 @@ export async function handleChatCompact(
   const { dropped } = selectHistoryWindow(rows, { maxChars: config.CHAT_HISTORY_MAX_CHARS })
   const pending = pendingCompaction(dropped, conversation.summarisedThroughId)
   const pendingChars = pending.reduce((total, row) => total + row.content.length, 0)
-  // The window slides by a message or two per turn, so this runs often. Spending a model call on
-  // a sentence is how compaction becomes more expensive than the problem.
-  if (pending.length === 0 || pendingChars < CHAT_COMPACTION_MIN_CHARS) return
+  // Nothing uncovered is always a no-op. Below the threshold is a no-op only for the AUTOMATIC
+  // path: the window slides by a message or two per turn, so it runs often, and spending a model
+  // call on a sentence is how compaction gets more expensive than the problem it solves. `force`
+  // is a person asking from the chat inspector, and they have already decided it is worth one.
+  if (pending.length === 0) return
+  if (!job.payload.force && pendingChars < CHAT_COMPACTION_MIN_CHARS) return
   const through = pending[pending.length - 1]
   if (!through) return
 
