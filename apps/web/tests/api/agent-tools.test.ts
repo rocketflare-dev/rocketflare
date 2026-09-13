@@ -207,6 +207,43 @@ describe('search_knowledge tool', () => {
 describe('get_document tool', () => {
   const parseDoc = (s: string) => JSON.parse(s) as GetDocumentResult
 
+  it('caps a window by the CALLER, not the tool, and clamps rather than refusing', async () => {
+    const { tenant, env, cfg, volcano } = await seeded()
+    // What the chat path passes: a tool result there shares one context window with the whole
+    // thread, so it may read far less than an agent run, whose job IS reading the document.
+    // Below the seeded document's length, so the clamp and the paging are both observable.
+    const cap = 20
+    const chat = getDocumentTool({ db, cfg, env, tenantId: tenant.id, maxDocumentChars: cap })
+    const read = handlerOf(chat)
+
+    // The bound is DECLARED, so the model is told rather than left to discover it.
+    expect(chat.description).toContain(String(cap))
+
+    // Asking for the agent-run ceiling is trimmed to the caller's, and the answer says so.
+    const over = parseDoc(await read({ documentId: volcano.id, maxChars: GET_DOCUMENT_MAX_CHARS }))
+    expect(over.returnedChars).toBe(cap)
+    expect(over).toMatchObject({ hasMore: true, nextOffset: cap })
+    expect(over.hint).toContain(String(cap))
+
+    // The default is the cap too, not the agent-run default.
+    expect(parseDoc(await read({ documentId: volcano.id })).returnedChars).toBe(cap)
+    // Under the cap is untouched.
+    expect(parseDoc(await read({ documentId: volcano.id, maxChars: 8 })).returnedChars).toBe(8)
+
+    // Paging still reaches the end, one capped window at a time.
+    const agent = handlerOf(getDocumentTool({ db, cfg, env, tenantId: tenant.id }))
+    const whole = parseDoc(await agent({ documentId: volcano.id }))
+    let offset = 0
+    let seen = ''
+    while (offset !== null && seen.length < whole.totalChars) {
+      const page = parseDoc(await read({ documentId: volcano.id, offset }))
+      seen += page.text
+      if (page.nextOffset === null) break
+      offset = page.nextOffset
+    }
+    expect(seen).toBe(whole.text)
+  })
+
   it('reads a document in full, or a window with paging hints', async () => {
     const { tenant, env, cfg, volcano } = await seeded()
     const tool = getDocumentTool({ db, cfg, env, tenantId: tenant.id })
@@ -223,10 +260,12 @@ describe('get_document tool', () => {
     const defaulted = parseDoc(await read({ documentId: volcano.id }))
     expect(defaulted).toMatchObject({ offset: 0, hasMore: false })
     expect(defaulted.text.length).toBeLessThanOrEqual(GET_DOCUMENT_DEFAULT_CHARS)
+    // An over-ask is CLAMPED, not refused: a validation error costs a turn the model usually
+    // cannot diagnose, while a short window plus `hasMore`/`nextOffset` is a call it knows to make.
     expect(
       tool.schema.safeParse({ documentId: volcano.id, maxChars: GET_DOCUMENT_MAX_CHARS + 1 })
         .success
-    ).toBe(false)
+    ).toBe(true)
 
     const full = parseDoc(await read({ documentId: volcano.id, offset: 0, maxChars: 20_000 }))
     expect(full).toMatchObject({

@@ -125,7 +125,75 @@ The decision is `isDeployable` in `scripts/lib/upgrade-lib.mjs`, unit-tested, be
 mistake here is a false skip: somebody's production release quietly not happening. Every ambiguous
 case deploys.
 
+### Workers AI: `tool_choice` where the model has it, and a picker that only offers those models
+
+A forced tool was always a sentence in the system prompt on Workers AI (`forcedToolInstruction`)
+plus `recoverForcedToolCall` unwrapping whatever prose JSON came back. The newer models do accept
+`tool_choice`, so for them it is now sent as a real constraint and the instruction is not — one
+rule, not a rule plus a plea. That removes the class of failure the recovery was patching.
+
+`WORKERS_AI_TOOL_CHOICE_MODELS` (`services/ai/providers.ts`) is every Workers AI text-generation
+model whose catalog entry declares `function_calling` AND whose input schema declares `tool_choice`
+— eleven, derived from `wrangler ai models list --json` and `wrangler ai models schema`. It is **one
+list doing three jobs**: the Workers AI chat picker in Settings → AI, the runtime's
+`workersAiSupportsToolChoice`, and its `workersAiStreamsTools` (below). Keeping them the same set is the point — a model somebody can choose
+is a model the agent runtime can constrain — so the picker no longer offers
+`@cf/openai/gpt-oss-120b`, `@cf/meta/llama-3.3-70b-instruct-fp8-fast` or
+`@cf/mistralai/mistral-small-3.1-24b-instruct`. **A stored config naming one of those keeps
+working, stays editable and stays priced**; the picker is an affordance, never a validation rule,
+and the prose fallback stays for exactly that case. `@rocketflare/shared/ai/pricing` gains the
+eleven models' published rates (with the cached-input tier where the catalog has one), so nothing
+newly selectable lands on the Usage page as an `unpricedCall`.
+
+**Streamed tool calls are reassembled from fragments, and the streaming allow-list is gone.**
+`WORKERS_AI_STREAMING_TOOL_MODELS` held one model; `workersAiStreamsTools` is now the same single
+list, because every model on it was driven through a real two-turn tool loop and each streams the
+tool call and then streams its answer as text. That exposed a bug the one-entry list had been
+hiding: ten of the eleven follow the OpenAI streaming contract and send tool-call **fragments**
+keyed by `index`, and the adapter treated every frame as a whole call — one broken `tool_use` per
+fragment, with unparseable arguments. `ToolCallAssembler` now concatenates per index; a call
+delivered whole in one frame (`glm-4.7-flash`, which is why this never showed) is the one-fragment
+case of the same path. **If you added models to the streaming list, take this patch** — without it
+they produce garbage tool calls. The `workers_ai_no_token_streaming` notice now fires only for an
+older model a stored config still names.
+
+**The model field is a select, not a `<datalist>`.** The old one was an `<input list=…>`, and a
+browser filters datalist options by what is already in the box — with the field prefilled to the
+provider's default, exactly one option showed, which read as "this provider has one model". It is
+now a real dropdown, with an "Other — enter a model id…" escape for providers whose ids are open
+(`modelsFixed` on the provider catalog says which). The free-text input is `autoComplete="off"`,
+because otherwise the browser offered ids typed against OTHER providers — a `@cf/…` suggestion
+under Anthropic.
+
+### `get_document`'s window is capped by the caller
+
+`GET_DOCUMENT_MAX_CHARS` (50 000) was sized for an agent run, where reading a document IS the job.
+On the chat path that is most of a small model's context window in one tool result, and it is how a
+thread poisons its own next turn. The cap now comes from the CALLER —
+`AgentToolContext.maxDocumentChars` — and `chat-turn.ts` passes `CHAT_GET_DOCUMENT_MAX_CHARS`
+(6 000); an agent run is unchanged. An over-ask is **clamped, not rejected**: a validation error
+costs a turn the model usually cannot diagnose, while a short window plus `hasMore`/`nextOffset` is
+a call it already knows how to make. If you build tools on `buildAgentTools`, nothing changes
+unless you pass the new field.
+
+### Cached input tokens were billed twice outside Anthropic
+
+`TokenUsage.inputTokens` means UNCACHED input, because that is what Anthropic reports and what
+`estimateCostMicrocents` prices at the input rate. OpenAI counts the other way round —
+`prompt_tokens` INCLUDES `prompt_tokens_details.cached_tokens` — so a cached read was charged at
+the full input rate and again at the cache rate. `fromOpenAiUsage` now subtracts it, which also
+covers `openai_compatible` and `workers_ai`. Existing `ai_usage` rows keep their frozen cost; only
+new ones are right. (Chat prompt caching itself needed no change: the Anthropic adapter has
+defaulted `cache` to `true` since Phase 3a, so `runStreamingChat` has always sent
+`cachedSystem` + `withRollingCacheBreakpoints`. The remaining gap is different and is now recorded
+in `docs/CONCEPTS.md` §9 — a sliding history window moves the cached prefix every turn.)
+
 ## How to apply
+
+**Workers AI first.** If you kept the kit's provider catalog, take `services/ai/providers.ts`,
+`services/ai/client.ts` and `packages/shared/src/ai/pricing.ts` wholesale. If you have added your own models to the picker,
+merge by hand and check each against `wrangler ai models schema` — the list is now load-bearing for
+the runtime, not just the form.
 
 **Decide about chat tools first.** `CHAT_KNOWLEDGE_TOOLS` must be added to BOTH wrangler tomls or
 the parity test fails; `"false"` keeps the old, cheaper, always-token-streaming behaviour.

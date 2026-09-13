@@ -122,6 +122,12 @@ export interface AgentToolContext {
   cfg: AppConfig
   env: AiEnv
   tenantId: string
+  /**
+   * Ceiling on one `get_document` window, in characters — the CALLER's budget, not the tool's.
+   * Absent means the agent-run ceiling (`GET_DOCUMENT_MAX_CHARS`); the chat path passes far less,
+   * because there a tool result shares one context window with the whole thread.
+   */
+  maxDocumentChars?: number
 }
 
 export function searchKnowledgeTool(ctx: AgentToolContext): Tool<SearchKnowledgeInput> {

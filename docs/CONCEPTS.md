@@ -650,7 +650,19 @@ others declare `messages[].content` as a plain string and reject the request out
 null content, and on a schema rejection retries ONCE with `flattenWorkersAiMessages` — the lowest
 common shape, `{ role: system|user|assistant, content: <string> }`, with the tool call and its
 result carried as text.
-Workers AI has **no `tool_choice`**: `forcedToolInstruction` turns `{ type: 'tool' | 'any' }` into a
+**`tool_choice` on Workers AI is per-model, and the picker only offers the models that have it.**
+`WORKERS_AI_TOOL_CHOICE_MODELS` (`services/ai/providers.ts`) is every text-generation model whose
+catalog entry declares `function_calling` AND whose input schema declares `tool_choice` — eleven of
+them, checked with `wrangler ai models schema`. It is ONE list doing two jobs: the settings form's
+Workers AI model list and the runtime's "can a forced tool really be forced here" predicate
+(`workersAiSupportsToolChoice`), so a model somebody can choose is always a model the agent runtime
+can constrain. `@cf/openai/gpt-oss-120b`, `@cf/meta/llama-3.3-70b-instruct-fp8-fast` and
+`@cf/mistralai/mistral-small-3.1-24b-instruct` were dropped from the picker for failing the second
+half; a stored config naming one keeps working, stays editable and stays priced, because the picker
+is an affordance, not a validation rule.
+For a model ON the list a forced tool is sent as `tool_choice` in the OpenAI shape the schema
+declares, and that is the end of it. For anything off it — an older stored config — the fallback
+stands: `forcedToolInstruction` turns `{ type: 'tool' | 'any' }` into a
 system instruction the model is told to honour, and when the model still answers with the arguments
 as a JSON object in prose (Mistral Small does, for short inputs — a fenced ```` ```json ```` block),
 `recoverForcedToolCall` treats that object as the forced tool's call, so `callStructuredTool` sees a
@@ -658,12 +670,18 @@ real `tool_use` (both paths verified live with `summarize-text`). It also strips
 a model wraps its arguments in — `{"type":"function","name":…,"parameters":{…}}` (observed from
 Llama 3.3 70B), `arguments` as a JSON string, or the whole thing nested under `function` — but only
 when the object names the tool or declares itself a function call, so a tool whose own schema has a
-`parameters` field is never unwrapped. **Streaming with tools is per-model, and no model documents it** — every Workers AI schema declares
-its SSE branch as opaque `format: binary`, so the only way to know is to run it.
-`WORKERS_AI_STREAMING_TOOL_MODELS` is an allow-list of models verified live to carry tool calls in
-the stream AND still produce text; anything not on it gets one non-streamed call replayed as deltas,
-and the chat surface says so once with `CUSTOM kit.notice { workers_ai_no_token_streaming }`. The
-default is on the list, so the out-of-box chat streams token by token with tools on.
+`parameters` field is never unwrapped. **Streaming with tools is per-model and nothing documents it** — every Workers AI schema declares
+its SSE branch as opaque `format: binary`, so the only way to know is to run it. Every model on the
+one list was: driven through a real two-turn tool loop, each streams the tool call and then streams
+its answer as text, so `workersAiStreamsTools` is that same list. A model off it — an older one a
+stored config names — gets one non-streamed call replayed as deltas, and the chat surface says so
+once with `CUSTOM kit.notice { workers_ai_no_token_streaming }`.
+**Streamed tool calls arrive in FRAGMENTS.** Ten of the eleven follow the OpenAI streaming contract:
+the first frame names the tool with empty arguments and later frames carry only argument fragments
+keyed by `index`, which is the call's identity rather than its arrival order. `ToolCallAssembler`
+concatenates per index; a call delivered whole in one frame (`glm-4.7-flash`) is the one-fragment
+case of the same path. Reading a frame as a whole call yields one `tool_use` per fragment, each with
+unparseable arguments.
 Per-tenant request defaults are injected where the client is built,
 never at call sites: `service_tier` verbatim, and extended `thinking` **off by default and sent
 explicitly** (`{ type: 'disabled' }`) — a reasoning model otherwise bills for thinking the chat surface
@@ -1022,13 +1040,17 @@ change the wire format for every adopted copy — the exact pin plus `agui-contr
 mitigation and the residual risk is real; the agent projection has no `kit.usage` and no error flag
 on a tool result; live run streaming with `Last-Event-ID` replay is still deferred. Chat tools —
 `CHAT_MAX_TOOL_TURNS` is a constant, not a var; a tool-calling chat costs more per turn and stops
-streaming token by token on `workers_ai`; `get_document` may return up to 50 000 characters, which
-is most of a small model's window in one call, and only the prompt discourages it. History — the
-budget is characters, not tokens (4 chars per token is the kit's estimate everywhere); nothing
-derives it from the model's actual context window, because `services/ai/providers.ts` carries no
-context-window field; `runStreamingChat` never passes `cache`, so the transcript is re-sent at full
-price every turn even though `withRollingCacheBreakpoints` exists in `kit.ts`; a conversation's
-summary is never shown to the user and there is no "forget this thread" control. `enqueueRun` does NOT pre-resolve the chat client — a tenant with no
+streaming token by token on `workers_ai`; `get_document`'s window is capped by the CALLER
+(`AgentToolContext.maxDocumentChars` — 50 000 for an agent run, `CHAT_GET_DOCUMENT_MAX_CHARS`
+6 000 for a chat turn) but the chat figure is a constant, not a var, and nothing derives it from the
+model. History — the budget is characters, not tokens (4 chars per token is the kit's estimate
+everywhere); nothing derives it from the model's actual context window, because
+`services/ai/providers.ts` carries no context-window field (Workers AI's catalog DOES publish one
+per model, so that list is where it would come from); the sliding window means a long thread's
+cached prefix moves every turn, so prompt caching stops paying exactly when the thread is long
+enough to need it — trimming in batches rather than one message at a time is the fix, and it is not
+built; a conversation's summary is never shown to the user and there is no "forget this thread"
+control. `enqueueRun` does NOT pre-resolve the chat client — a tenant with no
 provider gets a 202 and a `failed` row at `execute` (chat's `POST /conversations` does pre-resolve;
 moot while the `[ai]` binding exists, since Workers AI is the floor); Workers AI forced tools are an
 instruction plus prose-JSON recovery, not a guarantee — a model that answers in plain prose fails

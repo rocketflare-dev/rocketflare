@@ -47,13 +47,28 @@ export const MODEL_PRICES: Partial<Record<AiProvider, Record<string, ModelPrice>
     'text-embedding-3-small': { input: 0.02, output: 0 },
     'text-embedding-3-large': { input: 0.13, output: 0 },
   },
+  // Workers AI publishes its own rates, so these are transcribed from `wrangler ai models list`
+  // rather than a vendor page: each model's `price` property carries per-M input, output and (where
+  // the model has a cache tier) cached-input figures. Chat models are the ones the picker offers
+  // (`services/ai/providers.ts`), plus the three it used to offer — a config naming one of those
+  // still works, and dropping its price would make old `ai_usage` rows read as `unpricedCalls`.
   workers_ai: {
-    '@cf/zai-org/glm-4.7-flash': { input: 0.06, output: 0.4 },
-    '@cf/openai/gpt-oss-120b': { input: 0.35, output: 0.75 },
+    '@cf/zai-org/glm-4.7-flash': { input: 0.0605, output: 0.4 },
+    '@cf/zai-org/glm-5.3-flash': { input: 0.15, output: 0.5, cacheRead: 0.03 },
+    '@cf/zai-org/glm-5.2': { input: 1.4, output: 4.4, cacheRead: 0.26 },
+    '@cf/zai-org/glm-5.3': { input: 1.4, output: 4.4, cacheRead: 0.26 },
+    '@cf/google/gemma-4-26b-a4b-it': { input: 0.1, output: 0.3 },
+    '@cf/deepseek-ai/deepseek-v4-flash-0731': { input: 0.44, output: 1.32, cacheRead: 0.014 },
+    '@cf/deepseek-ai/deepseek-v4-pro-0813': { input: 1.32, output: 3.96, cacheRead: 0.044 },
+    '@cf/qwen/qwen3.8-27b': { input: 0.45, output: 3.2, cacheRead: 0.05 },
     '@cf/nvidia/nemotron-3-120b-a12b': { input: 0.5, output: 1.5 },
+    '@cf/moonshotai/kimi-k2.6': { input: 0.95, output: 4, cacheRead: 0.16 },
+    '@cf/moonshotai/kimi-k2.7-code': { input: 0.95, output: 4, cacheRead: 0.19 },
+    // No longer offered in the picker (no `tool_choice`), still priced for stored configs.
+    '@cf/openai/gpt-oss-120b': { input: 0.35, output: 0.75 },
     '@cf/meta/llama-3.3-70b-instruct-fp8-fast': { input: 0.293, output: 2.253 },
     '@cf/mistralai/mistral-small-3.1-24b-instruct': { input: 0.35, output: 0.56 },
-    '@cf/baai/bge-m3': { input: 0.012, output: 0 },
+    '@cf/baai/bge-m3': { input: 0.0118, output: 0 },
     '@cf/baai/bge-large-en-v1.5': { input: 0.204, output: 0 },
   },
 }
@@ -79,6 +94,10 @@ const PER_TOKEN = 1_000_000
 /**
  * What a call cost, in microcents, or null when the model has no price. Cache reads and writes
  * fall back to the input rate, which is what a provider without a cache tier effectively charges.
+ *
+ * The four counters are DISJOINT — `inputTokens` is uncached input only. Anthropic reports it that
+ * way; the OpenAI adapter normalises to it (`fromOpenAiUsage`), because `prompt_tokens` there
+ * includes the cached half and adding both rates would bill it twice.
  */
 export function estimateCostMicrocents(
   provider: AiProvider,

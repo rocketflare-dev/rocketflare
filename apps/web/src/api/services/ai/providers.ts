@@ -27,12 +27,55 @@ export interface ProviderInfo {
   defaultModel: string
   presets: readonly ProviderPreset[]
   /**
-   * Models worth suggesting in a picker, BY SCOPE — free text is always allowed. Keyed by scope
-   * because a flat list offers an embeddings model on a chat config and vice versa, which reads as
-   * a bug the first time someone picks one.
+   * Models offered in the picker, BY SCOPE. Keyed by scope because a flat list offers an embeddings
+   * model on a chat config and vice versa, which reads as a bug the first time someone picks one.
    */
   suggestedModels: Readonly<Record<AiScope, readonly string[]>>
+  /**
+   * `true` when the list above IS the catalog, so the form offers those ids and no free text
+   * (Workers AI). Everywhere else a model id is whatever the endpoint calls it, so the picker keeps
+   * an "other" escape. It is a form affordance, never a validation rule: a stored row naming a
+   * model that has since left the list is still shown and still saveable, because the alternative
+   * is a config silently rewritten to a model its owner did not choose.
+   */
+  modelsFixed?: boolean
 }
+
+/**
+ * Every Workers AI text-generation model that declares BOTH `function_calling` (catalog property)
+ * and `tool_choice` (input schema), cheapest first.
+ *
+ * **One list, three jobs**: the models the settings picker offers for a Workers AI chat config, the
+ * models `client.ts` may send a real `tool_choice` to (`workersAiSupportsToolChoice`), and the
+ * models it may stream tools to (`workersAiStreamsTools`). They are the same set deliberately — a
+ * model without `tool_choice` falls back to asking in the prompt and unwrapping prose JSON, which
+ * is a failure mode rather than a choice worth offering. Separate lists would be separate things to
+ * keep in step, and the day they disagreed the picker would recommend a model the runtime cannot
+ * constrain.
+ *
+ * A model absent from it is still usable: a stored config naming one works, stays editable and
+ * stays priced. The picker is an affordance, never a validation rule.
+ *
+ * Hand-kept, because nothing here may depend on a network call. To re-derive: take
+ * `wrangler ai models list --json` filtered on the `function_calling` property, keep those whose
+ * `wrangler ai models schema <model>` declares `tool_choice` under `input.oneOf[].properties`,
+ * drive each through a two-turn tool loop to confirm it streams (nothing documents the stream
+ * shape), and price it in `@rocketflare/shared/ai/pricing` from the catalog's own `price` property
+ * — an unpriced model shows on the Usage page as an `unpricedCall`.
+ */
+export const WORKERS_AI_TOOL_CHOICE_MODELS = [
+  WORKERS_AI_CHAT_MODEL,
+  '@cf/google/gemma-4-26b-a4b-it',
+  '@cf/zai-org/glm-5.3-flash',
+  '@cf/deepseek-ai/deepseek-v4-flash-0731',
+  '@cf/qwen/qwen3.8-27b',
+  '@cf/nvidia/nemotron-3-120b-a12b',
+  '@cf/moonshotai/kimi-k2.6',
+  '@cf/moonshotai/kimi-k2.7-code',
+  '@cf/deepseek-ai/deepseek-v4-pro-0813',
+  '@cf/zai-org/glm-5.2',
+  '@cf/zai-org/glm-5.3',
+] as const
 
 export const PROVIDERS: readonly ProviderInfo[] = [
   {
@@ -103,19 +146,12 @@ export const PROVIDERS: readonly ProviderInfo[] = [
     supportsServiceTier: false,
     defaultModel: DEFAULT_MODELS.workers_ai,
     presets: [],
-    // Chat models listed ONLY if the catalog shows the "Function calling" property — the picker
-    // feeds agents, which need a tool call. This is a hand-kept list, not a live read of
-    // Cloudflare's catalog (`wrangler ai models list` is the live one); check it against
-    // `wrangler ai models schema <model>` when adding to it, and price it in
-    // `@rocketflare/shared/ai/pricing` so the Usage page does not report `unpricedCalls`.
+    // Workers AI ids are a closed catalog, so the picker offers the list and nothing else — unlike
+    // a vendor endpoint, there is no "the id my account was given" case to leave room for.
+    modelsFixed: true,
     suggestedModels: {
-      chat: [
-        WORKERS_AI_CHAT_MODEL,
-        '@cf/openai/gpt-oss-120b',
-        '@cf/nvidia/nemotron-3-120b-a12b',
-        '@cf/meta/llama-3.3-70b-instruct-fp8-fast',
-        '@cf/mistralai/mistral-small-3.1-24b-instruct',
-      ],
+      // The capability list IS the picker list — see WORKERS_AI_TOOL_CHOICE_MODELS above.
+      chat: WORKERS_AI_TOOL_CHOICE_MODELS,
       embeddings: ['@cf/baai/bge-m3', '@cf/baai/bge-large-en-v1.5'],
     },
   },

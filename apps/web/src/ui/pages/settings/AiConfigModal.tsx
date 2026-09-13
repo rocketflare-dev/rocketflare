@@ -37,6 +37,9 @@ type Issue = { path: PropertyKey[]; message: string }
 
 const SCOPE_LABEL: Record<AiScope, string> = { chat: 'chat', embeddings: 'embeddings' }
 
+/** The select's escape hatch to free text. A sentinel, because '' is itself a legal model id. */
+const OTHER_MODEL = '\u0000other'
+
 /** Per-provider vocabulary hint for the free-text tier (the server sends it verbatim). */
 const TIER_HINT: Partial<Record<AiProvider, string>> = {
   anthropic: 'auto · standard_only',
@@ -96,6 +99,8 @@ function AiConfigForm({
   const [label, setLabel] = useState(editing?.label ?? '')
   const [baseUrl, setBaseUrl] = useState(editing?.baseUrl ?? '')
   const [model, setModel] = useState(editing?.model ?? defaultModelFor(provider, scope))
+  /** The model field is free text rather than a pick from the list. */
+  const [freeModel, setFreeModel] = useState(false)
   const [apiKey, setApiKey] = useState('')
   const [isDefault, setIsDefault] = useState(editing?.isDefault ?? !scopeHasDefault)
   const [thinkingEnabled, setThinkingEnabled] = useState(editing?.thinking.enabled ?? false)
@@ -115,11 +120,29 @@ function AiConfigForm({
   // By scope: a chat config must not offer an embeddings model, or the other way round.
   const suggestions = info?.suggestedModels?.[scope] ?? []
   const defaultModel = defaultModelFor(provider, scope)
+  // A stored model that has since left the list stays selectable: an edit must never quietly move a
+  // config to a model its owner did not pick. Appended, so the catalog order is what people read.
+  const options =
+    model && suggestions.length > 0 && !suggestions.includes(model)
+      ? [...suggestions, model]
+      : suggestions
+
+  /** Pick a listed model, or switch the field to free text (`modelsFixed` providers have neither). */
+  const chooseModel = (next: string) => {
+    if (next === OTHER_MODEL) {
+      setFreeModel(true)
+      setModel('')
+      return
+    }
+    setFreeModel(false)
+    setModel(next)
+  }
 
   const changeProvider = (next: AiProvider) => {
     setProvider(next)
     setPreset(null)
     setBaseUrl('')
+    setFreeModel(false)
     setModel(defaultModelFor(next, scope))
     // Tiers and budgets are not portable between vendors: back to the safe defaults.
     setServiceTier('')
@@ -131,6 +154,7 @@ function AiConfigForm({
   const applyPreset = (p: ProviderPreset) => {
     setPreset(p)
     setBaseUrl(p.baseUrl)
+    setFreeModel(false)
     setModel(p.defaultModel)
     if (!label) setLabel(p.name)
   }
@@ -349,21 +373,38 @@ function AiConfigForm({
           <label htmlFor="ai-model" className="label text-sm font-medium">
             Model
           </label>
-          <input
-            id="ai-model"
-            list={suggestions.length > 0 ? 'ai-model-suggestions' : undefined}
-            className={`input input-sm w-full font-mono ${err('model') ? 'input-error' : ''}`}
-            value={model}
-            onChange={e => setModel(e.target.value)}
-            placeholder={defaultModel || 'model id as the endpoint names it'}
-            aria-invalid={err('model') ? true : undefined}
-          />
-          {suggestions.length > 0 && (
-            <datalist id="ai-model-suggestions">
-              {suggestions.map(m => (
-                <option key={m} value={m} />
+          {options.length > 0 && (
+            <select
+              id="ai-model"
+              className={`select select-sm w-full font-mono ${err('model') ? 'select-error' : ''}`}
+              value={freeModel ? OTHER_MODEL : model}
+              onChange={e => chooseModel(e.target.value)}
+              aria-invalid={err('model') ? true : undefined}
+            >
+              {options.map(m => (
+                <option key={m} value={m}>
+                  {m}
+                </option>
               ))}
-            </datalist>
+              {!info?.modelsFixed && <option value={OTHER_MODEL}>Other — enter a model id…</option>}
+            </select>
+          )}
+          {(options.length === 0 || freeModel) && (
+            <input
+              id={options.length > 0 ? 'ai-model-other' : 'ai-model'}
+              aria-label={options.length > 0 ? 'Model id' : undefined}
+              // Off: the browser would otherwise offer ids typed against OTHER providers, and a
+              // `@cf/…` suggestion under Anthropic reads as a model this form can use.
+              autoComplete="off"
+              spellCheck={false}
+              className={`input input-sm w-full font-mono ${options.length > 0 ? 'mt-2' : ''} ${
+                err('model') ? 'input-error' : ''
+              }`}
+              value={model}
+              onChange={e => setModel(e.target.value)}
+              placeholder={defaultModel || 'model id as the endpoint names it'}
+              aria-invalid={err('model') ? true : undefined}
+            />
           )}
           {defaultModel && (
             <p className="text-xs text-muted mt-1">

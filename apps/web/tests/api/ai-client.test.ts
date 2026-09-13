@@ -7,6 +7,8 @@
  * binding (non-streamed `{ response, tool_calls, usage }`, an SSE `ReadableStream`, the forced-tool
  * instruction that stands in for `tool_choice`, and the non-streamed replay when tools are present).
  */
+
+import { priceFor } from '@rocketflare/shared/ai/pricing'
 import { describe, expect, it } from 'vitest'
 import {
   createChatClient,
@@ -16,11 +18,13 @@ import {
   forcedToolInstruction,
   reconcileThinking,
   recoverForcedToolCall,
-  WORKERS_AI_STREAMING_TOOL_MODELS,
+  ToolCallAssembler,
   workersAiChatInputs,
   workersAiStreamsTools,
+  workersAiSupportsToolChoice,
 } from '@/api/services/ai/client'
 import { AiError, describeAiError, normalizeAiError, redactSecrets } from '@/api/services/ai/errors'
+import { providerInfo, WORKERS_AI_TOOL_CHOICE_MODELS } from '@/api/services/ai/providers'
 import { type ChatDelta, textOf } from '@/api/services/ai/types'
 import { sseResponse } from '../helpers/ai'
 import { RecordingAi } from '../mocks/bindings'
@@ -108,7 +112,8 @@ describe('OpenAI-compatible chat client', () => {
     expect(end?.type === 'end' && end.result).toMatchObject({
       stopReason: 'tool_use',
       model: 'fake-1',
-      usage: { inputTokens: 11, outputTokens: 7, cacheReadTokens: 4 },
+      // `prompt_tokens` (11) INCLUDES the 4 cached, so uncached input is 7 — priced once, not twice.
+      usage: { inputTokens: 7, outputTokens: 7, cacheReadTokens: 4 },
       content: [
         { type: 'text', text: 'Hello' },
         { type: 'tool_use', name: 'search' },
@@ -666,12 +671,73 @@ describe('Workers AI chat client', () => {
     const streaming = new RecordingAi()
     streaming.respond = () => sseResponse(['data: {"response":"Hi"}\n\n', 'data: [DONE]\n\n']).body
     const b = createChatClient({ provider: 'workers_ai', ai: streaming })
-    await collect(
-      b.stream({ ...withTools, model: [...WORKERS_AI_STREAMING_TOOL_MODELS][0] ?? 'm' })
-    )
+    await collect(b.stream({ ...withTools, model: WORKERS_AI_TOOL_CHOICE_MODELS[0] as string }))
     expect(streaming.runs[0]?.inputs).toMatchObject({ stream: true })
 
+    // The offered models were each driven through a real two-turn tool loop; a legacy one a stored
+    // config might still name keeps the conservative replay.
+    for (const model of WORKERS_AI_TOOL_CHOICE_MODELS)
+      expect(workersAiStreamsTools(model)).toBe(true)
     expect(workersAiStreamsTools('@cf/meta/llama-3.3-70b-instruct-fp8-fast')).toBe(false)
+  })
+
+  it('assembles a tool call that arrives in fragments across frames', async () => {
+    // What ten of the eleven offered models send: the first frame names the tool with empty
+    // arguments, later frames carry only fragments keyed by `index`.
+    const params = {
+      model: WORKERS_AI_TOOL_CHOICE_MODELS[0] as string,
+      messages,
+      maxTokens: 8,
+      tools: [tool],
+    }
+    const ai = new RecordingAi()
+    ai.respond = () =>
+      sseResponse([
+        'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"search","arguments":""}}]}}]}\n\n',
+        'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":null,"function":{"name":null,"arguments":"{\\"q\\": "}}]}}]}\n\n',
+        'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":null,"function":{"name":null,"arguments":"\\"cats\\""}}]}}]}\n\n',
+        'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":null,"function":{"name":null,"arguments":"}"}}]}}]}\n\n',
+        'data: [DONE]\n\n',
+      ]).body
+    const client = createChatClient({ provider: 'workers_ai', ai })
+    const deltas = await collect(client.stream(params))
+    const toolUses = deltas.filter(d => d.type === 'tool_use')
+    expect(toolUses).toHaveLength(1)
+    expect(toolUses[0]).toEqual({
+      type: 'tool_use',
+      id: 'call_1',
+      name: 'search',
+      input: { q: 'cats' },
+    })
+  })
+
+  it('ToolCallAssembler keeps parallel calls apart and takes a whole call in one frame', () => {
+    const fragmented = new ToolCallAssembler()
+    fragmented.add([
+      { index: 0, id: 'a', function: { name: 'one', arguments: '{"x":' } },
+      { index: 1, id: 'b', function: { name: 'two', arguments: '{"y":' } },
+    ])
+    fragmented.add([
+      { index: 1, function: { name: null, arguments: '2}' } },
+      { index: 0, function: { name: null, arguments: '1}' } },
+    ])
+    // Index is the identity, not arrival order, and the result is index-ordered.
+    expect(fragmented.done()).toEqual([
+      { id: 'a', name: 'one', arguments: '{"x":1}' },
+      { id: 'b', name: 'two', arguments: '{"y":2}' },
+    ])
+
+    // A single-frame call (what `glm-4.7-flash` sends) is just the one-fragment case…
+    const whole = new ToolCallAssembler()
+    whole.add([
+      { index: 0, id: 'c', type: 'function', function: { name: 'one', arguments: '{"x":1}' } },
+    ])
+    expect(whole.done()).toEqual([{ id: 'c', name: 'one', arguments: '{"x":1}' }])
+
+    // …and pre-parsed object arguments REPLACE rather than concatenate, or they stringify to junk.
+    const parsed = new ToolCallAssembler()
+    parsed.add([{ index: 0, id: 'd', name: 'one', arguments: { x: 1 } }])
+    expect(parsed.done()).toEqual([{ id: 'd', name: 'one', arguments: '{"x":1}' }])
   })
 
   it('streams OpenAI-shaped deltas as well as the legacy `response` ones', async () => {
@@ -883,6 +949,49 @@ describe('Workers AI chat client', () => {
     expect(
       workersAiChatInputs({ ...base, toolChoice: { type: 'none' } }, false).tools
     ).toBeUndefined()
+  })
+
+  it('sends tool_choice to the models that declare it, and the instruction to the rest', () => {
+    const tools = [tool]
+    const forced = {
+      messages,
+      maxTokens: 8,
+      tools,
+      toolChoice: { type: 'tool' as const, name: 'x' },
+    }
+    // Verified against `wrangler ai models schema`: glm and nemotron declare `tool_choice`,
+    // llama-3.3 does not. A model on the list is CONSTRAINED…
+    for (const model of ['@cf/zai-org/glm-4.7-flash', '@cf/nvidia/nemotron-3-120b-a12b']) {
+      expect(workersAiSupportsToolChoice(model)).toBe(true)
+      const inputs = workersAiChatInputs({ ...forced, model }, false)
+      expect(inputs.tool_choice).toEqual({ type: 'function', function: { name: 'x' } })
+      // …and is never ALSO asked in the prompt: one constraint, not a rule plus a plea.
+      expect(forcedToolInstruction({ ...forced, model })).toBeUndefined()
+      expect(
+        workersAiChatInputs({ ...forced, model, toolChoice: { type: 'any' } }, false).tool_choice
+      ).toBe('required')
+      // `auto` is the model's own default — nothing is sent, so there is no extra field for a
+      // per-model schema to refuse mid-run.
+      expect(
+        workersAiChatInputs({ ...forced, model, toolChoice: { type: 'auto' } }, false).tool_choice
+      ).toBeUndefined()
+    }
+    // A model off the list keeps the prose path exactly as it was.
+    const legacy = '@cf/meta/llama-3.3-70b-instruct-fp8-fast'
+    expect(workersAiSupportsToolChoice(legacy)).toBe(false)
+    expect(workersAiChatInputs({ ...forced, model: legacy }, false).tool_choice).toBeUndefined()
+    expect(forcedToolInstruction({ ...forced, model: legacy })).toContain('"x"')
+  })
+
+  it('the picker offers exactly the models a forced tool can constrain', () => {
+    // One list, two jobs. If these ever diverge the settings page is recommending a model the
+    // runtime can only ASK to call a tool, which is the failure this pairing exists to prevent.
+    const offered = providerInfo('workers_ai').suggestedModels.chat
+    expect(offered.length).toBeGreaterThan(1)
+    for (const model of offered) expect(workersAiSupportsToolChoice(model)).toBe(true)
+    expect([...offered]).toEqual([...WORKERS_AI_TOOL_CHOICE_MODELS])
+    // Everything offered is priced, or the Usage page reports it as an unpriced call.
+    for (const model of offered) expect(priceFor('workers_ai', model)).not.toBeNull()
   })
 
   it('no binding → AiError; a thrown binding error is normalised (unknown, no status) and never leaks a key-shaped string', async () => {

@@ -7,9 +7,10 @@
  *     `/v1/embeddings`. Base URLs include `/v1`.
  *   - `workers_ai` → `env.AI.run(model, …)`: `{ text }` for embeddings, `{ messages, tools, stream }`
  *     for chat (zero key; the binding proxies to the account, so every call is billed to it).
- *     Workers AI has no `tool_choice` — a forced tool becomes a system instruction — and tool calls
- *     inside a stream are undocumented, so `stream()` with tools runs one non-streamed call and
- *     replays it as deltas.
+ *     Only the newer Workers AI models take `tool_choice` (`WORKERS_AI_TOOL_CHOICE_MODELS` in
+ *     `providers.ts`, which is also the picker's list); for the rest a forced tool becomes a system
+ *     instruction. Tool calls inside a stream are undocumented,
+ *     so `stream()` with tools runs one non-streamed call and replays it as deltas.
  * Per-tenant request defaults (`service_tier`, `thinking`) are injected HERE, where the client is
  * built, so no call site can forget them; `reconcileThinking` keeps a thinking budget legal against
  * the request it lands in. `fetch` is injectable so tests drive the adapters without a network.
@@ -24,7 +25,7 @@ import {
 } from '@rocketflare/shared/ai/config'
 import { AiError, normalizeAiError } from './errors'
 import { cachedSystem, withRollingCacheBreakpoints } from './kit'
-import { DEFAULT_BASE_URLS } from './providers'
+import { DEFAULT_BASE_URLS, WORKERS_AI_TOOL_CHOICE_MODELS } from './providers'
 import type {
   AiEnv,
   ChatClient,
@@ -455,12 +456,22 @@ function openAiBody(params: ChatParams, stream: boolean): Record<string, unknown
   return body
 }
 
+/**
+ * `TokenUsage.inputTokens` means UNCACHED input everywhere: that is what Anthropic reports
+ * (`input_tokens` excludes both cache counters) and what `estimateCostMicrocents` prices at the
+ * input rate. OpenAI counts the other way — `prompt_tokens` INCLUDES
+ * `prompt_tokens_details.cached_tokens` — so the cached half is subtracted here, or it is billed
+ * twice, at the full rate and again at the cache rate. Normalising in the adapter keeps the one
+ * meaning in one place, rather than a per-provider branch inside pricing where nobody reading a
+ * cost would think to look.
+ */
 function fromOpenAiUsage(usage: OpenAiUsage | undefined): TokenUsage {
+  const prompt = usage?.prompt_tokens ?? 0
+  const cached = usage?.prompt_tokens_details?.cached_tokens
   const out: TokenUsage = {
-    inputTokens: usage?.prompt_tokens ?? 0,
+    inputTokens: typeof cached === 'number' ? Math.max(prompt - cached, 0) : prompt,
     outputTokens: usage?.completion_tokens ?? 0,
   }
-  const cached = usage?.prompt_tokens_details?.cached_tokens
   if (typeof cached === 'number') out.cacheReadTokens = cached
   return out
 }
@@ -648,7 +659,9 @@ interface WorkersAiToolCall {
   name?: string
   arguments?: unknown
   type?: string
-  function?: { name?: string; arguments?: unknown }
+  function?: { name?: string | null; arguments?: unknown }
+  /** Present on STREAMED deltas: which call a fragment belongs to (`ToolCallAssembler`). */
+  index?: number
 }
 
 /**
@@ -694,29 +707,59 @@ function workersAiStopReason(hasTools: boolean, finishReason?: string | null): S
 }
 
 /**
- * Workers AI models whose event stream is known to carry tool calls AND still produce text.
+ * Whether `stream()` may send tools to this model instead of replaying a non-streamed call.
  *
- * This is an allow-list rather than a capability check because **no Workers AI model documents its
- * stream shape** — every schema declares the SSE branch as opaque `format: binary` — so the only
- * way to know is to run it. Verified live, and the two behaviours are genuinely different:
- * `glm-4.7-flash` streams tool calls and then streams its answer token by token, while
- * `llama-3.3-70b-instruct-fp8-fast` streams the tool calls, loops the same search until the turn
- * cap, and emits no text at all. Replaying one non-streamed call is what makes the second kind
- * usable, so the default stays conservative and a model joins this list only after someone has
- * watched it work.
+ * **No Workers AI model documents its stream shape** — every schema declares the SSE branch as
+ * opaque `format: binary` — so this cannot be read off the catalog. It is the same list again
+ * because every model on it was measured: driven through a real two-turn tool loop (call, tool
+ * result, answer), each streams the tool call and then streams its answer as text. Re-measure when
+ * adding one.
+ *
+ * A model OFF the list is an older one a stored config still names. Those replay a single
+ * non-streamed call, which is what keeps them usable: `llama-3.3-70b-instruct-fp8-fast` asked a
+ * knowledge question with tools streaming loops the same search to the turn cap and emits no text.
  */
-export const WORKERS_AI_STREAMING_TOOL_MODELS: ReadonlySet<string> = new Set([
-  '@cf/zai-org/glm-4.7-flash',
-])
+export const workersAiStreamsTools = (model: string): boolean => workersAiSupportsToolChoice(model)
 
-/** Whether `stream()` may send tools to this model instead of replaying a non-streamed call. */
-export const workersAiStreamsTools = (model: string): boolean =>
-  WORKERS_AI_STREAMING_TOOL_MODELS.has(model.trim().toLowerCase())
+/**
+ * Whether a forced tool can be SENT to this model as `tool_choice`, making it a real constraint
+ * rather than a sentence in the prompt the model may ignore.
+ *
+ * The catalog is `WORKERS_AI_TOOL_CHOICE_MODELS` in `providers.ts`, deliberately the SAME list the
+ * settings picker offers: a model somebody can choose is a model a forced tool can really
+ * constrain, and two lists would be two things to keep in step. Those schemas declare OpenAI's
+ * shape exactly (`'none' | 'auto' | 'required'`, or `{ type: 'function', function: { name } }`),
+ * which is what `workersAiChatInputs` sends.
+ *
+ * Anything off it — an older model a stored config names — falls back to `forcedToolInstruction`
+ * plus `recoverForcedToolCall`, which asks in the prompt and unwraps whatever prose JSON comes
+ * back. That path can fail on a model that answers in plain prose.
+ */
+const TOOL_CHOICE_MODELS: ReadonlySet<string> = new Set(
+  WORKERS_AI_TOOL_CHOICE_MODELS.map(model => model.toLowerCase())
+)
 
-/** Workers AI has no `tool_choice`: a forced tool is an instruction the model is told to honour. */
+export const workersAiSupportsToolChoice = (model: string): boolean =>
+  TOOL_CHOICE_MODELS.has(model.trim().toLowerCase())
+
+/** `tool_choice` in the OpenAI shape Workers AI declares, for a model that accepts it. */
+function workersAiToolChoice(params: ChatParams): unknown | undefined {
+  const choice = params.toolChoice
+  if (!choice || !workersAiSupportsToolChoice(params.model)) return undefined
+  if (choice.type === 'tool') return { type: 'function', function: { name: choice.name } }
+  if (choice.type === 'any') return 'required'
+  return undefined
+}
+
+/**
+ * A forced tool as an INSTRUCTION, for models without `tool_choice` (see
+ * {@link workersAiSupportsToolChoice}). Undefined when the model takes `tool_choice`, so the
+ * constraint is never sent twice — once as a rule and once as a plea.
+ */
 export function forcedToolInstruction(params: ChatParams): string | undefined {
   const choice = params.toolChoice
   if (!choice || !params.tools?.length) return undefined
+  if (workersAiSupportsToolChoice(params.model)) return undefined
   if (choice.type === 'tool')
     return `You must answer by calling the "${choice.name}" tool with its required arguments. Do not reply in plain text.`
   if (choice.type === 'any')
@@ -765,7 +808,8 @@ export function isWorkersAiSchemaError(err: unknown): boolean {
 }
 
 /**
- * The `env.AI.run` inputs for a chat call — OpenAI-shaped messages and tools, no `tool_choice`.
+ * The `env.AI.run` inputs for a chat call — OpenAI-shaped messages and tools, plus `tool_choice`
+ * for the models that declare it.
  * `flatten` drops to the lowest common schema (see `flattenWorkersAiMessages`).
  */
 export function workersAiChatInputs(
@@ -790,8 +834,51 @@ export function workersAiChatInputs(
       type: 'function',
       function: { name: t.name, description: t.description, parameters: t.inputSchema },
     }))
+    // Only a FORCING choice is sent: `auto` is the model's own default, and every extra field is
+    // one more thing a per-model schema could refuse mid-run.
+    const choice = workersAiToolChoice(params)
+    if (choice !== undefined) inputs.tool_choice = choice
   }
   return inputs
+}
+
+/**
+ * Reassemble tool calls that arrive in PIECES across stream frames — the OpenAI streaming contract,
+ * which most Workers AI models follow: the first frame carries
+ * `{ index, id, function: { name, arguments: '' } }`, later frames only
+ * `{ index, function: { arguments: '<fragment>' } }` with `id` and `name` null. **`index` is the
+ * identity**, not arrival order, so parallel calls interleave safely; concatenating each index's
+ * fragments rebuilds its JSON.
+ *
+ * Every streamed call goes through here, because a call delivered complete in one frame
+ * (`glm-4.7-flash`) is just the one-fragment case. Reading a frame as a whole call instead would
+ * emit one `tool_use` per fragment, each with unparseable arguments.
+ */
+export class ToolCallAssembler {
+  private readonly byIndex = new Map<number, { id: string; name: string; args: string }>()
+
+  add(deltas: readonly WorkersAiToolCall[]): void {
+    for (const delta of deltas) {
+      const key = typeof delta.index === 'number' ? delta.index : this.byIndex.size
+      const call = this.byIndex.get(key) ?? { id: '', name: '', args: '' }
+      if (delta.id) call.id = delta.id
+      const name = delta.function?.name ?? delta.name
+      if (name) call.name = name
+      const args = delta.function?.arguments ?? delta.arguments
+      // A string is a fragment and appends; an object is a whole value and replaces (some models
+      // send the arguments pre-parsed, and concatenating `[object Object]` would lose them).
+      if (typeof args === 'string') call.args += args
+      else if (args !== undefined && args !== null) call.args = JSON.stringify(args)
+      this.byIndex.set(key, call)
+    }
+  }
+
+  /** The assembled calls, in index order, in the shape `fromWorkersAiToolCalls` reads. */
+  done(): WorkersAiToolCall[] {
+    return [...this.byIndex.entries()]
+      .sort(([a], [b]) => a - b)
+      .map(([, call]) => ({ id: call.id, name: call.name, arguments: call.args }))
+  }
 }
 
 type ToolUseBlock = Extract<ContentBlock, { type: 'tool_use' }>
@@ -1005,8 +1092,8 @@ function createWorkersAiChatClient(opts: ChatClientOptions): ChatClient {
     provider: 'workers_ai',
     complete,
     async *stream(params) {
-      // Streaming WITH tools is per-model behaviour, and no model documents it — see
-      // `workersAiStreamsTools`. For anything not verified, one non-streamed call, replayed.
+      // Streaming WITH tools is per-model behaviour — see `workersAiStreamsTools`. For anything
+      // unverified, one non-streamed call, replayed as deltas.
       if (
         params.tools?.length &&
         params.toolChoice?.type !== 'none' &&
@@ -1033,7 +1120,7 @@ function createWorkersAiChatClient(opts: ChatClientOptions): ChatClient {
       }
       let text = ''
       let usage: TokenUsage = ZERO
-      const calls: WorkersAiToolCall[] = []
+      const calls = new ToolCallAssembler()
       try {
         for await (const data of sseData(body)) {
           if (params.signal?.aborted) break
@@ -1044,7 +1131,7 @@ function createWorkersAiChatClient(opts: ChatClientOptions): ChatClient {
             yield { type: 'text', text: part.text }
           }
           if (chunk.usage) usage = fromOpenAiUsage(chunk.usage)
-          if (part.calls.length) calls.push(...part.calls)
+          if (part.calls.length) calls.add(part.calls)
         }
       } catch (err) {
         throw normalizeAiError(err, 'workers_ai')
@@ -1052,7 +1139,7 @@ function createWorkersAiChatClient(opts: ChatClientOptions): ChatClient {
       if (params.signal?.aborted) await body.cancel().catch(() => undefined)
       const content: ContentBlock[] = []
       if (text) content.push({ type: 'text', text })
-      const tools = fromWorkersAiToolCalls(calls)
+      const tools = fromWorkersAiToolCalls(calls.done())
       for (const block of tools) {
         content.push(block)
         yield block

@@ -50,7 +50,7 @@ import { traceChatClient, withAgentTrace } from '../../observability/tracing'
 import type { AppContext } from '../../types'
 import { ConflictError, isUniqueViolation } from '../../utils/core/errors'
 import { streamDatabase, withAuthAndDb } from '../../utils/routes/route-helpers'
-import { buildAgentTools } from '../agents/tools'
+import { buildAgentTools, CHAT_GET_DOCUMENT_MAX_CHARS } from '../agents/tools'
 import { enqueueJob } from '../jobs'
 import { resolvePrompt } from '../prompts'
 import { aguiTextSegmenter, createAguiEncoder, kitCustom } from './agui'
@@ -403,7 +403,17 @@ export async function prepareChatTurn(
     // `AGENT_MAX_TURNS` (30) is a budget for a Workflow step with a ten-minute timeout; an
     // interactive reply shares the Worker's CPU and subrequest budget, so it gets the lower cap.
     buildTools: cfg.CHAT_KNOWLEDGE_TOOLS
-      ? sdb => buildAgentTools({ db: sdb, cfg, env: c.env, tenantId })
+      ? sdb =>
+          buildAgentTools({
+            db: sdb,
+            cfg,
+            env: c.env,
+            tenantId,
+            // An agent run may read 50 000 characters of a document because that is the job; a chat
+            // turn may not, because the result sits in the same window as the history and every
+            // turn after it. The prompt already discourages it — this is the limit.
+            maxDocumentChars: CHAT_GET_DOCUMENT_MAX_CHARS,
+          })
       : () => [],
     maxTurns: Math.min(cfg.AGENT_MAX_TURNS, CHAT_MAX_TOOL_TURNS),
     isFirstUserTurn,

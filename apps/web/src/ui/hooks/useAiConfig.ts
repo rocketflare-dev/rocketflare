@@ -36,6 +36,8 @@ export const aiProviderInfoSchema = z
     supportsServiceTier: z.boolean(),
     defaultModel: z.string(),
     suggestedModels: z.record(z.string(), z.array(z.string())).default({}),
+    /** The suggested list is the whole catalog — the form offers it and no free text. */
+    modelsFixed: z.boolean().default(false),
   })
   .passthrough()
 export type AiProviderInfo = z.infer<typeof aiProviderInfoSchema>

@@ -165,6 +165,76 @@ describe('Settings → AI', () => {
     expect(screen.getByText(/fully qualified/)).toBeInTheDocument()
   })
 
+  it("offers a provider's models as a dropdown, closed for Workers AI and open elsewhere", async () => {
+    // A `<datalist>` is filtered by whatever is already in the input, so a field prefilled with the
+    // provider's default model showed one option. The picker is a real select.
+    const workersAi = {
+      ...PROVIDERS[2],
+      scopes: ['chat', 'embeddings'],
+      defaultModel: '@cf/zai-org/glm-4.7-flash',
+      modelsFixed: true,
+      suggestedModels: {
+        chat: ['@cf/zai-org/glm-4.7-flash', '@cf/nvidia/nemotron-3-120b-a12b'],
+        embeddings: ['@cf/baai/bge-m3'],
+      },
+    }
+    mount({ '/api/ai/config/providers': { items: [PROVIDERS[0], workersAi] } })
+    fireEvent.click(await screen.findByRole('button', { name: 'Add chat provider' }))
+
+    // Anthropic: every suggestion offered, plus an escape, because a model id is whatever the
+    // endpoint calls it.
+    const model = screen.getByLabelText('Model')
+    expect(model.tagName).toBe('SELECT')
+    expect(
+      within(model)
+        .getAllByRole('option')
+        .map(o => (o as HTMLOptionElement).value)
+    ).toEqual(['claude-sonnet-4-5', 'claude-opus-4-1', expect.stringContaining('other')])
+
+    fireEvent.change(screen.getByLabelText('Provider'), { target: { value: 'workers_ai' } })
+    const cf = screen.getByLabelText('Model')
+    // Workers AI ids are a closed catalog: the list and nothing else.
+    expect(
+      within(cf)
+        .getAllByRole('option')
+        .map(o => (o as HTMLOptionElement).value)
+    ).toEqual(workersAi.suggestedModels.chat)
+    expect(cf).toHaveValue('@cf/zai-org/glm-4.7-flash')
+    fireEvent.change(cf, { target: { value: '@cf/nvidia/nemotron-3-120b-a12b' } })
+    expect(screen.getByLabelText('Model')).toHaveValue('@cf/nvidia/nemotron-3-120b-a12b')
+
+    // Back to an open provider, and "Other" reveals a free-text field starting empty.
+    fireEvent.change(screen.getByLabelText('Provider'), { target: { value: 'anthropic' } })
+    const back = screen.getByLabelText('Model')
+    const other = within(back)
+      .getAllByRole('option')
+      .map(o => (o as HTMLOptionElement).value)
+      .find(v => v.includes('other')) as string
+    fireEvent.change(back, { target: { value: other } })
+    const free = screen.getByLabelText('Model id')
+    expect(free).toHaveValue('')
+    // Off, or the browser offers ids typed against other providers.
+    expect(free).toHaveAttribute('autocomplete', 'off')
+    fireEvent.change(free, { target: { value: 'claude-future-1' } })
+    expect(screen.getByLabelText('Model id')).toHaveValue('claude-future-1')
+  })
+
+  it('keeps a stored model that is no longer suggested selectable', async () => {
+    // The picker is an affordance, never a validation rule: an edit must not quietly move a config
+    // to a model its owner did not pick.
+    const retired = 'claude-retired-1'
+    mount({ '/api/ai/config': { items: [{ ...prodConfig, model: retired }] } })
+    fireEvent.click(await screen.findByRole('button', { name: `Edit ${prodConfig.label}` }))
+    const model = await screen.findByLabelText('Model')
+    expect(model).toHaveValue(retired)
+    // Appended to the catalog, so the order people read is still the catalog's.
+    expect(
+      within(model)
+        .getAllByRole('option')
+        .map(o => (o as HTMLOptionElement).value)
+    ).toEqual(['claude-sonnet-4-5', 'claude-opus-4-1', retired, expect.stringContaining('other')])
+  })
+
   it('lists configs with default/credential badges and lets an admin test one', async () => {
     const fetchMock = mount({
       '/api/ai/config/readiness': { chat: READY_CHAT, embeddings: NONE },
