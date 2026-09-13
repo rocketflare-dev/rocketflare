@@ -9,6 +9,7 @@
  * The raw text and the vectors never leave the server. Every query carries the tenant predicate.
  */
 import {
+  documentContentQuerySchema,
   documentListQuerySchema,
   ingestTextRequestSchema,
   resolveDocumentUploadType,
@@ -17,11 +18,17 @@ import {
   uploadDocumentFieldsSchema,
 } from '@rocketflare/shared/ai/embeddings'
 import { MAX_UPLOAD_BYTES } from '@rocketflare/shared/files'
+import { paginationQuerySchema } from '@rocketflare/shared/pagination'
 import { and, count, desc, eq } from 'drizzle-orm'
 import { documents, files } from '../../db/schema'
 import { uploadBodyLimit } from '../middleware/body-limit'
 import { can, guardPermission } from '../middleware/permissions'
 import { recordActivity } from '../services/activity'
+import {
+  listDocumentPassages,
+  readDocumentCard,
+  readDocumentWindow,
+} from '../services/ai/document-content'
 import {
   ConversionNotConfiguredError,
   ingestFile,
@@ -34,6 +41,7 @@ import type { AppContext } from '../types'
 import {
   ApiError,
   BadRequestError,
+  ConflictError,
   ForbiddenError,
   NotFoundError,
   ServiceUnavailableError,
@@ -230,6 +238,61 @@ aiDocumentsRouter.get('/:id', async c => {
   })
   if (!row) throw new NotFoundError('Document not found')
   return c.json(toDocument(row))
+})
+
+// ---- GET /api/ai/documents/:id/content ------------------------------------------------------------
+
+/**
+ * A character window over the document's text (pasted text, or the converted markdown of an
+ * upload). The window is cut in Postgres, so a 500 000-character document is paged rather than
+ * loaded. A document with no text yet is a 409 rather than an empty window — "not converted" and
+ * "empty" are different answers, and the viewer renders a different thing for each.
+ */
+aiDocumentsRouter.get('/:id/content', validate('query', documentContentQuerySchema), async c => {
+  const { db, tenantId } = withAuthAndDb(c)
+  guardPermission(c, 'read', 'Document')
+  const { offset, maxChars } = c.req.valid('query')
+  const window = await readDocumentWindow(db, tenantId, {
+    documentId: uuidParam(c, 'id'),
+    offset,
+    maxChars,
+  })
+  if (window.ok) return c.json(window.content)
+  // Unknown and cross-tenant are the SAME body: the API is not an existence oracle.
+  if (window.reason === 'document_not_found') throw new NotFoundError('Document not found')
+  if (window.reason === 'conversion_failed') {
+    throw new ConflictError(
+      `This document could not be indexed (${window.error ?? 'unknown error'}), so it has no text`,
+      'document_conversion_failed'
+    )
+  }
+  throw new ConflictError(
+    'This document is still being converted and has no text yet',
+    'document_not_converted'
+  )
+})
+
+// ---- GET /api/ai/documents/:id/passages -----------------------------------------------------------
+
+/** The stored passages in `seq` order. The query names its columns, so `embedding` never leaks. */
+aiDocumentsRouter.get('/:id/passages', validate('query', paginationQuerySchema), async c => {
+  const { db, tenantId } = withAuthAndDb(c)
+  guardPermission(c, 'read', 'Document')
+  const query = c.req.valid('query')
+  const page = await listDocumentPassages(db, tenantId, uuidParam(c, 'id'), query)
+  if (!page) throw new NotFoundError('Document not found')
+  return c.json(paginated(page.items, page.total, query))
+})
+
+// ---- GET /api/ai/documents/:id/card ---------------------------------------------------------------
+
+/** The compact citation form: metadata plus an EXCERPT of the text — never a summary (D18). */
+aiDocumentsRouter.get('/:id/card', async c => {
+  const { db, tenantId } = withAuthAndDb(c)
+  guardPermission(c, 'read', 'Document')
+  const card = await readDocumentCard(db, tenantId, uuidParam(c, 'id'))
+  if (!card) throw new NotFoundError('Document not found')
+  return c.json(card)
 })
 
 // ---- DELETE /api/ai/documents/:id -----------------------------------------------------------------

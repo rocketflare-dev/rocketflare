@@ -27,6 +27,16 @@ export const RRF_K = 60
 /** Text-search configuration the lexical half indexes and queries with. */
 export const SEARCH_TEXT_CONFIG = 'english'
 
+/**
+ * Where a passage sits in its document: `position()` of the chunk's text in `documents.content`,
+ * 1-based and 0 when absent (a re-chunked or converted document), mapped to a 0-based offset or
+ * null by the caller. Exported so `locateChunks` here and `listDocumentPassages`
+ * (`document-content.ts`) share ONE expression — a search hit and the passage list disagreeing
+ * about where a passage starts is a deep link that lands in the wrong place. Both queries join
+ * `chunks` to `documents`.
+ */
+export const chunkCharOffsetSql = sql<number>`position(${chunks.text} in coalesce(${documents.content}, ''))`
+
 /** "Retrieve wide, fuse narrow": how many candidates each signal contributes before fusion. */
 export function candidatePoolSize(limit: number): number {
   return Math.min(Math.max(limit * 4, 50), 200)
@@ -169,8 +179,8 @@ async function locateChunks(
   const rows = await db
     .select({
       id: chunks.id,
-      // `position()` is 1-based and 0 when absent; both are mapped below.
-      position: sql<number>`position(${chunks.text} in coalesce(${documents.content}, ''))`,
+      // 1-based, 0 when absent; both are mapped below.
+      position: chunkCharOffsetSql,
       documentPassages: documents.chunkCount,
     })
     .from(chunks)

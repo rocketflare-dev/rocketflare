@@ -215,3 +215,135 @@ export function validateDocumentFile(
   }
   return null
 }
+
+// ---- Reading a document ------------------------------------------------------------------------
+
+/**
+ * `GET /api/ai/documents/:id/content?offset=&maxChars=` — a character window over the document's
+ * text (pasted text, or the converted markdown of an upload). The same shape the `get_document`
+ * agent tool returns, minus its `hint`: one service builds both (`services/ai/document-content.ts`).
+ * A document with no text yet is a 409 (`document_not_converted` / `document_conversion_failed`),
+ * never an empty window — "no text" and "an empty document" are different answers.
+ */
+export const documentContentSchema = z.object({
+  documentId: z.string().uuid(),
+  title: z.string(),
+  source: z.string().nullable(),
+  contentType: z.string(),
+  status: documentStatusSchema,
+  /** Characters in the WHOLE document, not this window. */
+  totalChars: z.number().int().nonnegative(),
+  /** How many passages the document was split into. */
+  passages: z.number().int().nonnegative(),
+  offset: z.number().int().nonnegative(),
+  returnedChars: z.number().int().nonnegative(),
+  text: z.string(),
+  hasMore: z.boolean(),
+  nextOffset: z.number().int().nonnegative().nullable(),
+})
+export type DocumentContent = z.infer<typeof documentContentSchema>
+
+/** Characters per window when the caller does not say (~5 000 tokens at 4 chars per token). */
+export const DOCUMENT_WINDOW_CHARS = 20_000
+/** The ceiling one `GET /:id/content` may return (~12 500 tokens; the same cap as an agent run). */
+export const DOCUMENT_WINDOW_MAX_CHARS = 50_000
+
+export const documentContentQuerySchema = z.object({
+  offset: z.coerce.number().int().min(0).default(0),
+  maxChars: z.coerce
+    .number()
+    .int()
+    .min(1)
+    .max(DOCUMENT_WINDOW_MAX_CHARS)
+    .default(DOCUMENT_WINDOW_CHARS),
+})
+export type DocumentContentQuery = z.infer<typeof documentContentQuerySchema>
+
+/**
+ * Where a window starts: an arbitrary offset snapped DOWN to a multiple of the window size, so a
+ * deep link (`?offset=41207`) and a reader paging with Previous/Next land on the same window and
+ * share one cache entry instead of fetching a near-duplicate. Pure.
+ */
+export function windowStart(offset: number, size = DOCUMENT_WINDOW_CHARS): number {
+  if (!Number.isFinite(offset) || offset <= 0) return 0
+  return Math.floor(offset / size) * size
+}
+
+/**
+ * `GET /api/ai/documents/:id/passages` — the stored chunks, ordered by `seq`. The embedding is
+ * never on the wire: the route names its columns so a later `select()` widening cannot leak it.
+ */
+export const documentPassageSchema = z.object({
+  id: z.string().uuid(),
+  documentId: z.string().uuid(),
+  seq: z.number().int().nonnegative(),
+  tokenCount: z.number().int().nonnegative(),
+  /** Where the passage sits in the document's text; null when it cannot be located (re-chunked). */
+  charOffset: z.number().int().nonnegative().nullable(),
+  text: z.string(),
+})
+export type DocumentPassage = z.infer<typeof documentPassageSchema>
+
+// ---- The document card -------------------------------------------------------------------------
+
+/** How much of a document's text the card shows. */
+export const DOCUMENT_EXCERPT_CHARS = 320
+
+/**
+ * The compact representation of a document — the Knowledge list, a Search result header, a chat
+ * or agent citation. **`excerpt` is the first `DOCUMENT_EXCERPT_CHARS` characters of the text,
+ * whitespace-collapsed — not a summary and not a thumbnail**: there is no `documents.summary`
+ * column and no server-side rasterisation on Workers, so a converted PDF's excerpt is usually its
+ * cover page, and it is `null` while a document is `pending` or `failed`.
+ */
+export const documentCardSchema = z.object({
+  id: z.string().uuid(),
+  title: z.string(),
+  /** `documentTypeLabel(contentType)` — "PDF", "Markdown", … */
+  typeLabel: z.string(),
+  contentType: z.string(),
+  status: documentStatusSchema,
+  excerpt: z.string().nullable(),
+  passages: z.number().int().nonnegative(),
+  sizeBytes: z.number().int().nonnegative(),
+  /** The uploaded original, downloadable at `filePath(fileId)`; null for pasted text. */
+  fileId: z.string().uuid().nullable(),
+  /** `documentPath(id)` — so a consumer never has to know the viewer's route. */
+  href: z.string(),
+})
+export type DocumentCard = z.infer<typeof documentCardSchema>
+
+/** The ONE place the viewer's route is written. Deep links carry the passage they came from. */
+export function documentPath(
+  id: string,
+  options: { offset?: number | null; chunk?: string | null; q?: string | null; tab?: string } = {}
+): string {
+  const params = new URLSearchParams()
+  if (options.tab) params.set('tab', options.tab)
+  if (typeof options.offset === 'number' && options.offset >= 0) {
+    params.set('offset', String(options.offset))
+  }
+  if (options.chunk) params.set('chunk', options.chunk)
+  if (options.q) params.set('q', options.q)
+  const query = params.toString()
+  return `/documents/${id}${query ? `?${query}` : ''}`
+}
+
+/** Build a card from a `documents` row the caller already has (no request). */
+export function documentCardFromDocument(
+  doc: Document,
+  excerpt: string | null = null
+): DocumentCard {
+  return {
+    id: doc.id,
+    title: doc.title,
+    typeLabel: documentTypeLabel(doc.contentType),
+    contentType: doc.contentType,
+    status: doc.status,
+    excerpt,
+    passages: doc.chunkCount,
+    sizeBytes: doc.sizeBytes,
+    fileId: doc.fileId,
+    href: documentPath(doc.id),
+  }
+}

@@ -327,6 +327,45 @@ describe('get_document tool', () => {
     expect(failed.error).toBe('conversion_failed')
     expect(failed.hint).toMatch(/Conversion failed: corrupt/)
   })
+
+  it('answers with the SAME keys in the SAME order after the service extraction', async () => {
+    // The windowing moved to `services/ai/document-content.ts` so the viewer and the tool share
+    // one implementation. The model sees this JSON, so its shape is a contract, not an internal:
+    // a reordered or renamed key is a prompt change nobody wrote.
+    const { tenant, env, cfg, volcano } = await seeded()
+    const read = handlerOf(getDocumentTool({ db, cfg, env, tenantId: tenant.id }))
+    const window = JSON.parse(await read({ documentId: volcano.id, maxChars: 20 })) as object
+    expect(Object.keys(window)).toEqual([
+      'documentId',
+      'title',
+      'source',
+      'contentType',
+      'status',
+      'totalChars',
+      'passages',
+      'offset',
+      'returnedChars',
+      'text',
+      'hasMore',
+      'nextOffset',
+      'hint',
+    ])
+    const whole = JSON.parse(await read({ documentId: volcano.id })) as object
+    // No `hint` once there is nothing left to read — the key is absent, not null.
+    expect(Object.keys(whole)).not.toContain('hint')
+
+    const missing = JSON.parse(await read({ documentId: crypto.randomUUID() })) as object
+    expect(Object.keys(missing)).toEqual(['documentId', 'error', 'hint', 'knowledgeBase'])
+    const [pending] = await db
+      .insert(documents)
+      .values({ tenantId: tenant.id, title: 'Deck', contentType: 'application/pdf' })
+      .returning()
+    const notConverted = JSON.parse(await read({ documentId: pending?.id ?? '' })) as object
+    expect(Object.keys(notConverted)).toEqual(['documentId', 'error', 'hint'])
+    expect(notConverted).toMatchObject({
+      hint: '"Deck" is still being converted and has no text yet. Use another document or answer without it.',
+    })
+  })
 })
 
 describe('summariseToolResult (the tool.end audit trail)', () => {

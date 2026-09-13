@@ -25,6 +25,33 @@ export function isAvatarMimeType(type: string): type is AvatarMimeType {
   return (AVATAR_MIME_TYPES as readonly string[]).includes(type)
 }
 
+/**
+ * Types `GET /api/files/:id` serves with `Content-Disposition: inline` — everything else
+ * downloads, so a stored `text/html` or SVG can never execute script on this origin. A PDF is
+ * safe here because the browser hands it to its own viewer, which does not run the file's script
+ * in this document's context.
+ */
+export const INLINE_MIME_TYPES = [...AVATAR_MIME_TYPES, 'application/pdf'] as const
+export type InlineMimeType = (typeof INLINE_MIME_TYPES)[number]
+
+export function isInlineMimeType(type: string): type is InlineMimeType {
+  return (INLINE_MIME_TYPES as readonly string[]).includes(type)
+}
+
+/**
+ * Types a response may additionally be FRAMED as (`X-Frame-Options: SAMEORIGIN` + CSP
+ * `frame-ancestors 'self'` — see `middleware/security-headers.ts`), which is what lets the
+ * document viewer embed a PDF in the page. **Deliberately a SECOND list**: inline and framable are
+ * not the same property, and an app adding an `INLINE_MIME_TYPES` entry must not silently make it
+ * framable too. The app shell itself stays `frame-ancestors 'none'`.
+ */
+export const EMBEDDABLE_MIME_TYPES = ['application/pdf'] as const
+export type EmbeddableMimeType = (typeof EMBEDDABLE_MIME_TYPES)[number]
+
+export function isEmbeddableMimeType(type: string): type is EmbeddableMimeType {
+  return (EMBEDDABLE_MIME_TYPES as readonly string[]).includes(type)
+}
+
 /** The download URL for a stored file — the same string the API writes into `users.avatarUrl`. */
 export const filePath = (id: string): string => `/api/files/${id}`
 

@@ -46,6 +46,10 @@ export const ERROR_CODES = {
   aguiClientToolsUnsupported: 'agui_client_tools_unsupported',
   /** 400: the user turn's content was not a usable string. */
   aguiUnsupportedContent: 'agui_unsupported_content',
+  /** 409: the document's text is not available yet — its conversion job has not landed (D18). */
+  documentNotConverted: 'document_not_converted',
+  /** 409: the document's conversion failed, so it has no text and never will without a re-upload. */
+  documentConversionFailed: 'document_conversion_failed',
 } as const
 
 export type ErrorCode = (typeof ERROR_CODES)[keyof typeof ERROR_CODES]

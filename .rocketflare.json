@@ -152,6 +152,7 @@
       "paths": [
         "apps/web/src/api/services/ai/ingest.ts",
         "apps/web/src/api/services/ai/retrieval.ts",
+        "apps/web/src/api/services/ai/document-content.ts",
         "apps/web/src/api/services/ai/convert.ts",
         "apps/web/src/api/routes/ai-documents.ts",
         "apps/web/src/ui/pages/documents/**",
