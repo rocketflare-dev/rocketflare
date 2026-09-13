@@ -4,6 +4,7 @@
  * emits NO terminal event, and that must not read as an error); a 503 `ai_not_configured` renders
  * the configure call to action (admins) or the "ask an admin" copy.
  */
+import { AguiEventType, KIT_CUSTOM_EVENTS } from '@rocketflare/shared/ai/agui'
 import type { Message } from '@rocketflare/shared/ai/chat'
 import { fireEvent, screen, waitFor } from '@testing-library/react'
 import { Route, Routes } from 'react-router-dom'
@@ -117,6 +118,26 @@ describe('Chat page', () => {
     // Composer cleared and ready again
     expect(screen.getByLabelText('Message')).toHaveValue('')
     await waitFor(() => expect(screen.getByRole('button', { name: /Send/ })).toBeDisabled())
+  })
+
+  it('renders a kit notice as a quiet line, not an error', async () => {
+    mount({
+      [`/api/chat/conversations/${CONV}`]: { ...conversation, messages: [] },
+      [`POST /api/chat/conversations/${CONV}/messages`]: () =>
+        sseResponse([
+          ...run({ text: ['Answer.'], unterminated: true }),
+          {
+            type: AguiEventType.CUSTOM,
+            name: KIT_CUSTOM_EVENTS.notice,
+            value: { code: 'workers_ai_no_token_streaming' },
+          },
+        ]),
+    })
+    await typeAndSend('Anything indexed?')
+    await waitFor(() =>
+      expect(screen.getByText(/cannot stream token by token/)).toBeInTheDocument()
+    )
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 
   it('does not send on Shift+Enter', async () => {

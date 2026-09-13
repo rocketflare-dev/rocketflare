@@ -19,7 +19,9 @@ export interface ChatBubbleProps {
   streaming?: boolean
   /** Tool-call one-liners for this turn (the kit's chat runs zero tools; kept for apps). */
   toolSteps?: readonly string[]
-  /** The stream ended on an `error` frame. */
+  /** A `CUSTOM kit.notice` — something the reader should know that is NOT a failure. */
+  notice?: string
+  /** The stream ended on a `RUN_ERROR`. */
   error?: string
 }
 
@@ -42,6 +44,7 @@ function ChatBubbleImpl({
   model,
   streaming = false,
   toolSteps,
+  notice,
   error,
 }: ChatBubbleProps) {
   const mine = speaker === 'user'
@@ -69,6 +72,7 @@ function ChatBubbleImpl({
             ))}
           </ul>
         )}
+        {notice && <p className="mb-1 text-xs text-muted italic">{notice}</p>}
         {mine ? (
           <span className="whitespace-pre-wrap break-words">{content}</span>
         ) : content ? (

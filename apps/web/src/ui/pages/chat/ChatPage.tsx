@@ -15,6 +15,7 @@ import {
   StopIcon,
   TrashIcon,
 } from '@heroicons/react/24/outline'
+import type { KitNoticeCode } from '@rocketflare/shared/ai/agui'
 import type { Conversation } from '@rocketflare/shared/ai/chat'
 import { shortModelName } from '@rocketflare/shared/ai/config'
 import { type FormEvent, type KeyboardEvent, useEffect, useRef, useState } from 'react'
@@ -32,6 +33,12 @@ import {
 import { usePermissions } from '@/ui/hooks/usePermissions'
 import { isAiNotConfigured } from '@/ui/lib/aguiStream'
 import { timeAgo } from '@/ui/lib/format'
+
+/** One quiet sentence per `kit.notice` code — not an error, but worth knowing. */
+const NOTICE_TEXT: Record<KitNoticeCode, string> = {
+  workers_ai_no_token_streaming:
+    'This provider cannot stream token by token while tools are in use, so the reply arrives in bursts.',
+}
 
 export default function ChatPage() {
   const { conversationId } = useParams<{ conversationId: string }>()
@@ -276,6 +283,7 @@ function Transcript({
           usage={turn.usage}
           model={turn.model}
           toolSteps={turn.toolSteps}
+          notice={turn.notice ? NOTICE_TEXT[turn.notice] : undefined}
           error={turn.error?.message}
         />
       )}
