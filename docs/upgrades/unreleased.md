@@ -326,6 +326,30 @@ are **nullable**, because a card built from a search hit knows the title and the
 nothing else — guessing "Text" for what might be a PDF is worse than an absent badge. `ChatBubble`
 gains an optional `documents` prop and `ChatTurnResult` / `StreamingTurn` gain `documents`.
 
+### `[assets] run_worker_first` — the asset router was eating API navigations — **breaking**
+
+Found while verifying the PDF embed above, and it is older and wider than that feature.
+Cloudflare's static-asset router runs **before** the Worker, and `not_found_handling =
+"single-page-application"` answers anything it considers a navigation with `index.html` without
+invoking `fetch` at all. `Sec-Fetch-Mode: navigate` is not just the address bar: an
+`<object>`/`<iframe>` embed and an `<a download>` click are navigations too. So
+`GET /api/files/:id` from the viewer's `<object>` came back as the app shell — `text/html`,
+`cf-cache-status: HIT` — and the embed rendered blank.
+
+**Nothing in the test suite could catch this**: every API test drives the Hono app directly through
+`app.request()` and never goes near the asset router, and `curl` doesn't send `Sec-Fetch-Mode`
+unless you ask it to.
+
+`[assets] run_worker_first` now lists every prefix the Worker owns, in **both** tomls (the parity
+test compares `[assets]`). The list is derived from `API_PREFIXES`, which moved out of
+`api/index.ts` into `api/utils/routes/api-prefixes.ts` so the config test can import it cheaply;
+`wrangler-parity.test.ts` asserts both tomls equal `WORKER_FIRST_PATTERNS` exactly, rather than a
+subset check, because a *missing* entry is the whole failure mode.
+
+**Take this patch even if you skip the document viewer.** Any app of yours that serves bytes from an
+API route to an embed, an `<img>` with a navigation fetch mode, or a download link has the same bug
+today. If you have added your own top-level prefix, add it to `API_PREFIXES` and the tomls follow.
+
 ## How to apply
 
 **The document viewer needs no migration.** Take `packages/shared/src/ai/embeddings.ts` and
@@ -338,6 +362,9 @@ that diff rather than overwriting a `security-headers.ts` you have edited. Add
 `.rocketflare.json` if you still have the knowledge feature, so a later upgrade never recreates them
 after you delete it. Verify with `curl -sI` on a stored PDF: `inline` + `SAMEORIGIN`, an uploaded
 `.html`: `attachment` + `DENY`, any JSON route: `DENY`.
+
+**Take `[assets] run_worker_first` first** — it is two toml edits and it is the difference between
+an API route serving bytes and serving your app shell.
 
 **Run the migration first** if you take the chat inspector: `messages.provider` and
 `messages.model`, both nullable. Generate your own — a kit migration's snapshot describes the kit's

@@ -64,7 +64,7 @@ hidden gap. `apps/web/tests/config/wrangler-parity.test.ts` enforces the table b
 | every `binding` name, every DO `class_name`, `[[migrations]]` | application code never branches on environment |
 | `[limits]` (present in both or neither) | Workflows bound CPU per step by it — see below |
 | `[triggers].crons` | the dispatcher table in `scheduled.ts` is one file |
-| `[assets]`, `[placement]`, `[observability]` | same SPA, same placement, same logging |
+| `[assets]` (incl. `run_worker_first`), `[placement]`, `[observability]` | same SPA, same placement, same logging. `run_worker_first` must list every prefix the Worker owns: the asset router runs BEFORE the Worker and `single-page-application` answers any NAVIGATION with `index.html` without invoking `fetch` — and an `<object>` embed or an `<a download>` click is a navigation, so a missing prefix silently serves the app shell for those (`wrangler-parity.test.ts` asserts it mirrors `API_PREFIXES`) |
 | `[vars]` **keys** (values may differ) | `loadConfig` validates one schema |
 
 `localConnectionString` is dev-only and is the same in both files (one local database).
@@ -82,7 +82,7 @@ hidden gap. `apps/web/tests/config/wrangler-parity.test.ts` enforces the table b
 | Workers AI (Phase 3, built) | `AI` | — | `[ai] binding = "AI"` — no resource; the zero-key floor for chat (`@cf/zai-org/glm-4.7-flash`) and embeddings (`@cf/baai/bge-m3`); **billed per call to this account** (10k free neurons/day), `wrangler dev` proxies to the logged-in account; remove from BOTH tomls for zero-spend |
 | Analytics (Phase 4, built) | — | — | **no resource and no binding**: cubes read through `HYPERDRIVE`, fact tables rebuild on the `15 * * * *` cron (below); `/cubejs-api` + `/mcp` are routes of this Worker |
 | Analytics Engine (optional) | `ANALYTICS_ENGINE` | `<app>_analytics[_staging]` | declared in toml — deliberately NOT wired by the kit (only a comment in both tomls) |
-| Static Assets | `ASSETS` | — | `[assets] directory = "./dist/ui"` uploaded atomically with each deploy |
+| Static Assets | `ASSETS` | — | `[assets] directory = "./dist/ui"` uploaded atomically with each deploy; `run_worker_first` keeps `/api`, `/auth`, `/cubejs-api`, `/mcp`, `/ws` off the asset router |
 | RLS app role (optional, docs/RLS.md) | `HYPERDRIVE_APP` | `<app>-<env>-app` | `… hyperdrive create … --caching-disabled` |
 
 `pnpm web provision:cloudflare <staging|production> [app] [--apply] [--force]` (the `apps/web`

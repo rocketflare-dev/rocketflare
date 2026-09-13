@@ -52,6 +52,24 @@ invocation_logs = false
 directory = "./dist/ui"
 binding = "ASSETS"
 not_found_handling = "single-page-application"
+# The asset router runs BEFORE the Worker, and `single-page-application` answers any request it
+# considers a navigation with index.html — without ever invoking `fetch`. `Sec-Fetch-Mode: navigate`
+# is not just the address bar: an `<object>`/`<iframe>` embed and an `<a download>` click are
+# navigations too, so `GET /api/files/:id` was served the SPA shell instead of the file (the
+# document viewer's PDF embed, D18). These prefixes are the app's server surface — the same list the
+# catch-all in `api/index.ts` JSON-404s — and they must reach the Worker whatever the request mode.
+run_worker_first = [
+  "/api",
+  "/api/*",
+  "/auth",
+  "/auth/*",
+  "/cubejs-api",
+  "/cubejs-api/*",
+  "/mcp",
+  "/mcp/*",
+  "/ws",
+  "/ws/*",
+]
 
 # Postgres via Hyperdrive → Neon. Create: wrangler hyperdrive create rocketflare-staging \
 #   --connection-string="<neon direct url>"   (then paste the id below)

@@ -54,7 +54,16 @@ workspace root) or through the root scripts (`pnpm deploy[:staging]`, `pnpm prov
 inherit bindings, so two files are more honest than one with a hidden gap. They may differ in:
 `name`, `routes`, `workers_dev`, `[vars]` values, resource `id`s, and account-scoped names. They
 must NOT differ in: binding names, `class_name`s, `compatibility_date`/`flags`, `[limits]`,
-`[triggers].crons`, `[assets]`, `[[migrations]]`. `apps/web/tests/config/wrangler-parity.test.ts` enforces
+`[triggers].crons`, `[assets]`, `[[migrations]]`.
+
+**`[assets] run_worker_first` is not optional.** Cloudflare's asset router runs BEFORE the Worker,
+and `not_found_handling = "single-page-application"` answers anything it treats as a NAVIGATION with
+`index.html` without ever invoking `fetch`. `Sec-Fetch-Mode: navigate` is not just the address bar —
+an `<object>`/`<iframe>` embed and an `<a download>` click are navigations too — so a server prefix
+missing from `run_worker_first` is silently served the app shell for exactly those requests. No test
+of the Hono app can see this (they never reach the asset router), so the list is derived from
+`API_PREFIXES` (`api/utils/routes/api-prefixes.ts`) and `wrangler-parity.test.ts` asserts both tomls
+equal it. Add a top-level route prefix → add it there. `apps/web/tests/config/wrangler-parity.test.ts` enforces
 this; `REQUIRE_PROVISIONED=1` additionally forbids `<PLACEHOLDER>` values (CI sets it before deploy).
 
 ## Account-scoped names

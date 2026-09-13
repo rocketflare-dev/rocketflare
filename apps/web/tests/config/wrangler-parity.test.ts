@@ -13,10 +13,12 @@
  * PR CI (`ci.yml`) stays green on a fresh copy. The deploy workflow sets `REQUIRE_PROVISIONED=1`
  * before its test step and the placeholder `describe` runs only then. See docs/DEPLOY.md.
  */
+
 import fs from 'node:fs'
 import path from 'node:path'
 import TOML from '@iarna/toml'
 import { describe, expect, it } from 'vitest'
+import { WORKER_FIRST_PATTERNS } from '@/api/utils/routes/api-prefixes'
 
 type Toml = Record<string, unknown>
 type Row = Record<string, unknown>
@@ -133,6 +135,22 @@ describe('wrangler parity: must match', () => {
         r.script_name,
         'DO hub lives in this worker; a cross-script binding is a different design'
       ).toBeUndefined()
+    }
+  })
+
+  it('[assets] routes every Worker-owned prefix to the Worker FIRST', () => {
+    // The asset router runs BEFORE the Worker, and `single-page-application` answers anything it
+    // considers a NAVIGATION with index.html without invoking `fetch`. An `<object>` embed and an
+    // `<a download>` click are navigations, so a prefix missing here is silently served the app
+    // shell for exactly those requests — while every API test still passes, because they drive the
+    // Hono app directly and never reach the asset router. This assertion is the only thing that
+    // catches it, so it is an equality against the one list `isApiPath` uses, not a subset check.
+    for (const [label, config] of [
+      ['production', prod],
+      ['staging', staging],
+    ] as const) {
+      expect(get(config, 'assets.not_found_handling'), label).toBe('single-page-application')
+      expect(get(config, 'assets.run_worker_first'), label).toEqual(WORKER_FIRST_PATTERNS)
     }
   })
 

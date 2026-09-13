@@ -41,18 +41,8 @@ import { notificationsRouter } from './routes/notifications'
 import { tenantRouter } from './routes/tenant'
 import { tenantsRouter } from './routes/tenants'
 import { wsRouter } from './routes/ws'
+import { isApiPath } from './utils/routes/api-prefixes'
 import { createRouter } from './utils/routes/router'
-
-/**
- * Prefixes the Worker owns. An unmatched path under one of these is a JSON 404, never the SPA
- * `index.html`. `/cubejs-api` and `/mcp` are the drizzle-cube API (D19, mounted below behind
- * `authMiddleware`), `/ws` the realtime upgrade (Phase 2).
- */
-const API_PREFIXES = ['/api', '/auth', '/cubejs-api', '/mcp', '/ws'] as const
-
-function isApiPath(pathname: string): boolean {
-  return API_PREFIXES.some(p => pathname === p || pathname.startsWith(`${p}/`))
-}
 
 const app = createRouter()
 
