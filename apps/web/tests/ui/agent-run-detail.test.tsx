@@ -254,9 +254,10 @@ describe('RunDetailDrawer', () => {
     expect(await screen.findByText('Short summary')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Cancel run' })).not.toBeInTheDocument()
     expect(screen.getByText('One')).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: /Indexed as a searchable document/ })).toHaveAttribute(
+    // The citation opens the document itself now, not a search narrowed to it.
+    expect(screen.getByRole('link', { name: /Open the indexed document/ })).toHaveAttribute(
       'href',
-      '/search?documentId=55555555-5555-4555-8555-555555555555'
+      '/documents/55555555-5555-4555-8555-555555555555'
     )
     expect(screen.getByText('Model hiccup')).toBeInTheDocument()
     expect(screen.getByText('· retrying')).toBeInTheDocument()
@@ -274,7 +275,7 @@ describe('RunDetailDrawer', () => {
     expect(button).toBeEnabled()
   })
 
-  it("renders a research run's answer with its citations as search links", async () => {
+  it("renders a research run's answer with its citations as links into the viewer", async () => {
     mount({
       [`/api/agents/runs/${RUN_ID}`]: run({
         agentKey: 'research-topic',
@@ -294,7 +295,7 @@ describe('RunDetailDrawer', () => {
     expect(await screen.findByText('A global admin reviews them.')).toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'Onboarding handbook' })).toHaveAttribute(
       'href',
-      '/search?documentId=66666666-6666-4666-8666-666666666666'
+      '/documents/66666666-6666-4666-8666-666666666666'
     )
   })
 

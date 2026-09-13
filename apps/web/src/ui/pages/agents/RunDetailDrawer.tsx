@@ -14,6 +14,7 @@ import {
   researchTopicOutputSchema,
   summarizeTextOutputSchema,
 } from '@rocketflare/shared/ai/agents'
+import { documentPath } from '@rocketflare/shared/ai/embeddings'
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Markdown } from '@/ui/components/ai/Markdown'
@@ -176,7 +177,7 @@ function OutputPanel({ agentKey, output }: { agentKey: string; output: unknown }
                 {research.data.citations.map(citation => (
                   <li key={citation.documentId}>
                     <Link
-                      to={`/search?documentId=${encodeURIComponent(citation.documentId)}`}
+                      to={documentPath(citation.documentId)}
                       className="link link-primary inline-flex items-center gap-1.5"
                     >
                       <DocumentMagnifyingGlassIcon className="w-4 h-4" />
@@ -207,11 +208,11 @@ function OutputPanel({ agentKey, output }: { agentKey: string; output: unknown }
           )}
           {summary.data.documentId && (
             <Link
-              to={`/search?documentId=${encodeURIComponent(summary.data.documentId)}`}
+              to={documentPath(summary.data.documentId)}
               className="link link-primary text-sm inline-flex items-center gap-1.5"
             >
               <DocumentMagnifyingGlassIcon className="w-4 h-4" />
-              Indexed as a searchable document
+              Open the indexed document
             </Link>
           )}
         </div>

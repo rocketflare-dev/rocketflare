@@ -6,7 +6,7 @@
  * `indexed` at once for small texts or `pending` until the queue lands (conversion + indexing for
  * PDF/Office/HTML) — the list polls while any row is pending. The paginated documents table comes
  * FIRST (title with its type, source, status with the failure reason on hover, chunks, created, a
- * download link for uploaded originals, delete after confirm — own rows for everyone, any row for
+ * link to the viewer at `/documents/:id`, download link for uploaded originals, delete after confirm — own rows for everyone, any row for
  * `delete Document`), the add tabs below it. Hybrid search is its own page, `/search`.
  */
 
@@ -21,6 +21,7 @@ import {
   DOCUMENT_UPLOAD_ACCEPT,
   type Document,
   type DocumentStatus,
+  documentPath,
   documentTypeLabel,
   INGEST_TEXT_MAX_CHARS,
   ingestTextRequestSchema,
@@ -28,6 +29,7 @@ import {
 } from '@rocketflare/shared/ai/embeddings'
 import { filePath, MAX_UPLOAD_BYTES } from '@rocketflare/shared/files'
 import { type FormEvent, useRef, useState } from 'react'
+import { Link } from 'react-router-dom'
 import {
   ConfirmModal,
   EmptyState,
@@ -410,7 +412,11 @@ function DocumentsTable() {
               {rows.map(doc => (
                 <tr key={doc.id}>
                   <td>
-                    <div className="font-medium">{doc.title}</div>
+                    {/* Pending and failed rows link too: the viewer is where their state is
+                        explained, and a PDF is readable before its text has converted. */}
+                    <Link to={documentPath(doc.id)} className="link link-primary font-medium">
+                      {doc.title}
+                    </Link>
                     <div className="text-xs text-muted">{documentTypeLabel(doc.contentType)}</div>
                   </td>
                   <td className="text-secondary">{doc.source ?? '—'}</td>

@@ -2,17 +2,34 @@
  * `/search` (D18, D20): hybrid search over the tenant knowledge base — `POST /api/ai/documents/search`
  * with `{ query, limit, documentId? }`, rendering hits with rank, where the passage sits in its
  * document (`seq`/`documentPassages`), fused score, dense/lexical rank
- * badges, snippet and the document title, optionally restricted to one document (`?documentId=`
+ * badges and snippet, GROUPED under a `DocumentCard` header built client-side from the documents
+ * list this page already fetches for its filter select (no request per hit). A hit's "passage n of
+ * m" is a deep link into the viewer at that passage; restricting the search to one document is now
+ * a separate funnel button on the card, so "read it" and "search only it" are no longer the same
+ * click. Optionally restricted to one document (`?documentId=`
  * preselects it — the run drawer and the Knowledge table link here). `?q=` prefills the box and
  * runs the search on mount, and every submitted search is written back to the URL (replace, not
  * push) so a result page can be shared or reloaded. Hits are the search mutation's data, never
  * cached as server state. Adding documents lives on `/documents`.
  */
-import { MagnifyingGlassIcon } from '@heroicons/react/24/outline'
-import { type SearchHit, searchRequestSchema } from '@rocketflare/shared/ai/embeddings'
+import { FunnelIcon, MagnifyingGlassIcon } from '@heroicons/react/24/outline'
+import {
+  type Document,
+  type DocumentCard as DocumentCardData,
+  documentCardFromDocument,
+  documentPath,
+  type SearchHit,
+  searchRequestSchema,
+} from '@rocketflare/shared/ai/embeddings'
 import { type FormEvent, useEffect, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
-import { EmptyState, FieldError, PageHeader, SectionPanel } from '@/ui/components/shared'
+import {
+  DocumentCard,
+  EmptyState,
+  FieldError,
+  PageHeader,
+  SectionPanel,
+} from '@/ui/components/shared'
 import { useDocuments, useSearch } from '@/ui/hooks/useDocuments'
 
 export default function SearchPage() {
@@ -65,6 +82,7 @@ export default function SearchPage() {
 
   const options = documents.data?.items ?? []
   const hits = search.data?.hits
+  const onPickDocument = setDocumentId
 
   return (
     <div className="max-w-4xl">
@@ -134,39 +152,104 @@ export default function SearchPage() {
         ) : hits.length === 0 ? (
           <p className="text-sm text-muted">No matches for “{search.data?.query}”.</p>
         ) : (
-          <ol className="space-y-2" aria-label="Search results">
-            {hits.map(hit => (
-              <SearchHitRow key={hit.chunkId} hit={hit} onPickDocument={setDocumentId} />
+          <section className="space-y-4" aria-label="Search results">
+            {groupHits(hits).map(group => (
+              <section key={group.documentId} className="space-y-2">
+                <DocumentCard
+                  dense
+                  card={cardFor(group, options)}
+                  to={documentPath(group.documentId, { q: search.data?.query })}
+                  footer={
+                    <button
+                      type="button"
+                      className="btn btn-ghost btn-xs gap-1.5"
+                      title="Restrict the search to this document"
+                      onClick={() => onPickDocument(group.documentId)}
+                    >
+                      <FunnelIcon className="w-4 h-4" />
+                      Only this document
+                    </button>
+                  }
+                />
+                <ol className="space-y-2 pl-3">
+                  {group.hits.map(hit => (
+                    <SearchHitRow key={hit.chunkId} hit={hit} query={search.data?.query} />
+                  ))}
+                </ol>
+              </section>
             ))}
-          </ol>
+          </section>
         )}
       </div>
     </div>
   )
 }
 
-function SearchHitRow({
-  hit,
-  onPickDocument,
-}: {
-  hit: SearchHit
-  onPickDocument: (documentId: string) => void
-}) {
+interface HitGroup {
+  documentId: string
+  title: string
+  documentPassages: number
+  hits: SearchHit[]
+}
+
+/** Hits in fused order, grouped under the document they came from (first appearance wins). */
+export function groupHits(hits: SearchHit[]): HitGroup[] {
+  const groups = new Map<string, HitGroup>()
+  for (const hit of hits) {
+    const group = groups.get(hit.documentId) ?? {
+      documentId: hit.documentId,
+      title: hit.title,
+      documentPassages: hit.documentPassages,
+      hits: [],
+    }
+    group.hits.push(hit)
+    groups.set(hit.documentId, group)
+  }
+  return [...groups.values()]
+}
+
+/**
+ * The card for a group, built CLIENT-SIDE from the documents list this page already fetches for
+ * its filter select — no request per hit. A document outside that page (the list is capped at 100)
+ * degrades to what the hit itself carries, which is enough to render and to link.
+ */
+function cardFor(group: HitGroup, documents: Document[]): DocumentCardData {
+  const doc = documents.find(d => d.id === group.documentId)
+  if (doc) return documentCardFromDocument(doc)
+  return {
+    id: group.documentId,
+    title: group.title,
+    typeLabel: 'Text',
+    contentType: 'text/plain',
+    status: 'indexed',
+    excerpt: null,
+    passages: group.documentPassages,
+    sizeBytes: 0,
+    fileId: null,
+    href: documentPath(group.documentId),
+  }
+}
+
+function SearchHitRow({ hit, query }: { hit: SearchHit; query?: string }) {
   return (
     <li className="surface-inset rounded-lg p-3 text-sm space-y-1" data-rank={hit.rank}>
       <div className="flex items-center gap-2 flex-wrap text-xs">
         <span className="font-semibold tabular-nums">#{hit.rank}</span>
-        <button
-          type="button"
-          className="link link-primary font-medium truncate max-w-xs"
-          title="Restrict the search to this document"
-          onClick={() => onPickDocument(hit.documentId)}
+        {/*
+          The passage deep link: `offset` is where it starts in the text, `chunk` the fallback when
+          that could not be resolved (a re-chunked document), `q` so the viewer highlights it.
+        */}
+        <Link
+          to={documentPath(hit.documentId, {
+            offset: hit.charOffset,
+            chunk: hit.chunkId,
+            q: query,
+          })}
+          className="link link-primary font-medium tabular-nums"
+          title="Open this passage in the document"
         >
-          {hit.title}
-        </button>
-        <span className="text-muted tabular-nums" title="Where this passage sits in the document">
           passage {hit.seq + 1} of {hit.documentPassages}
-        </span>
+        </Link>
         <span className="text-muted tabular-nums" title="Reciprocal-rank-fusion score">
           score {hit.score.toFixed(3)}
         </span>

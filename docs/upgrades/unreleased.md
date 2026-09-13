@@ -222,7 +222,92 @@ UI: a collapsible right-hand panel on `/chat`, toggled from the header and remem
 `localStorage`, in the lazy `ChatPage` chunk — the main bundle is unchanged. It polls only while a
 summary is pending and stops the moment nothing is owed.
 
+### A document viewer at `/documents/:id`, and the three read endpoints behind it
+
+A document was a row you only ever saw the edges of: Knowledge listed its title and chunk count,
+Search showed matching passages, and **no HTTP endpoint returned `documents.content` at all** — the
+text was reachable only through the `get_document` agent tool. So a person could find a passage and
+never read the document it came from, and never see the PDF they had uploaded.
+
+**New: `GET /api/ai/documents/:id/{content,passages,card}`** on the existing router, all
+`read Document`, all tenant-predicated, with an unknown id and another tenant's id answering the
+SAME 404 body so the API is not an existence oracle. `/content?offset=&maxChars=` is one character
+window (`documentContentSchema`; default 20 000, cap 50 000, with `totalChars`/`hasMore`/
+`nextOffset`); `/passages` is the stored chunks by `seq`, paginated; `/card` is the compact citation
+form. A document with no text is a **409** — `document_not_converted` while its job is pending,
+`document_conversion_failed` after — never an empty window.
+
+**The windowing was EXTRACTED, not duplicated.** `services/ai/document-content.ts` is now the one
+implementation and `get_document` delegates to it, which also fixes the isolate-memory behaviour on
+the agent path: the tool used to pull a 500 000-character column into the isolate to slice 20 000 out
+of it, and every window is now cut in Postgres. **The tool's JSON is unchanged down to key order and
+the exact sentences** (`agent-tools.test.ts` asserts it) — the model reads that JSON, so a reordered
+key would be a prompt change nobody wrote. If your copy has customised `get-document.ts`, take the
+service and re-point your handler at it rather than keeping a second slice.
+
+**Inline PDFs need TWO things, and the second one is the blocker.** `INLINE_MIME_TYPES` adds
+`application/pdf` to the avatar images, so a PDF is served `Content-Disposition: inline` (everything
+else still downloads, so a stored `text/html` or SVG can never execute on this origin). But
+`securityHeaders` stamps `X-Frame-Options: DENY` + `frame-ancestors 'none'` on every response after
+`next()`, and `DENY` forbids framing by ANY origin **including our own** — so the viewer's
+`<object>` renders empty whatever the disposition says.
+
+The fix is narrow and opt-in from the route: `AppVariables.embeddable`, set by `routes/files.ts`
+when `isEmbeddableMimeType(row.contentType)`, and `securityHeaders` answers `SAMEORIGIN` +
+`EMBEDDABLE_CONTENT_SECURITY_POLICY` for that one response. **Only a route that has proved the
+content type may set the flag** — not a path allowlist (`/api/files/` would relax framing for the
+`text/html` we download on purpose) and not a global policy change. Two things to port carefully:
+the flag is set **before** the `If-None-Match` 304 early return (miss that and the embed works once,
+then goes blank on the revalidation the `<object>` sends), and `EMBEDDABLE_MIME_TYPES` is a
+**second** list rather than a flag on the first, because inline and framable are different
+properties. Both policies are built from one `CSP_BASE`; a test asserts they differ in
+`frame-ancestors` and nothing else. If you have edited `security-headers.ts`, merge by hand.
+
+**The card is an excerpt, not a summary, and there is no thumbnail.** `documentCardSchema` carries
+the first 320 characters of the text, whitespace-collapsed, null while a document is pending. There
+is no `documents.summary` column and no server-side rasterisation on Workers (no canvas, no pdfium;
+`env.AI.toMarkdown` returns text, not an image). The documented extension — not built — is a
+`documents.summary` column filled by a `document.summarize` job reusing `summarize-text`.
+
+**UI.** `/documents/:documentId` (lazy, guard `read Document`, no SideNav entry), tabs
+`?tab=document|details`. A PDF embeds its original with `<object>` — **its children are the
+fallback and nothing tries to detect failure**, because there is no reliable success event, which is
+why the panel header always carries Download original and a Converted text toggle. Deep links:
+`?offset=` snapped by `windowStart()` so a link and the reader's paging share one cache entry,
+`?chunk=` when a passage's `charOffset` is null, `?q=` highlighted as `<mark>` NODES. Markdown
+renders AS markdown; highlighting and the passage anchor live in the Plain toggle, since `<mark>`
+cannot be threaded through react-markdown's AST.
+
+`DocumentCard` is **markdown-free by construction**, which is what lets it live in the eagerly
+imported `components/shared` barrel: it is used by Search (grouping hits under one header, built
+client-side from the list that page already fetches — no N+1), by `RunDetailDrawer`'s citations, and
+by `Markdown` itself, where an anchor matching `/documents/<uuid>` now renders as a card. The
+markdown-importer rule in `apps/web/src/ui/CLAUDE.md` widens to `pages/documents/` — **qualified**:
+`DocumentsPage` and `SearchPage` live there too and must NOT import it.
+
+Two link changes an app may have depended on: Search's hit title was a `<button>` that wrote
+`?documentId=` into the URL and is now a `<Link>` into the viewer (the filter survives as a separate
+funnel button on the card), and `RunDetailDrawer`'s two citation links move from
+`/search?documentId=` to `documentPath(...)`.
+
+**Worth being explicit about:** a tenant API key can now page a whole document's text, where before
+it could extract only search passages. The permission model already treated document text as
+readable by any member (`POST /search` returns whole passages; `get_document` hands full windows to
+any agent run in the tenant), so this widens the convenience rather than the audience — but if an
+app wants it closed, the lever is a separate ability, not narrowing this one.
+
 ## How to apply
+
+**The document viewer needs no migration.** Take `packages/shared/src/ai/embeddings.ts` and
+`src/files.ts`, then `services/ai/document-content.ts`, `routes/ai-documents.ts`,
+`services/agents/tools/get-document.ts` (delegate) and `services/ai/retrieval.ts` (it exports
+`chunkCharOffsetSql` now, so the passage list and a search hit cannot disagree about an offset).
+`middleware/security-headers.ts`, `routes/files.ts` and `api/types.ts` are the framing half — read
+that diff rather than overwriting a `security-headers.ts` you have edited. Add
+`services/ai/document-content.ts` and the viewer page to `feature-knowledge`'s paths in your
+`.rocketflare.json` if you still have the knowledge feature, so a later upgrade never recreates them
+after you delete it. Verify with `curl -sI` on a stored PDF: `inline` + `SAMEORIGIN`, an uploaded
+`.html`: `attachment` + `DENY`, any JSON route: `DENY`.
 
 **Run the migration first** if you take the chat inspector: `messages.provider` and
 `messages.model`, both nullable. Generate your own — a kit migration's snapshot describes the kit's
@@ -273,6 +358,12 @@ Anything of yours that touched the chat stream: a custom `chatStreamEventSchema`
 
 `.github/workflows/deploy.yml` if you have edited it, which most apps do.
 
+`middleware/security-headers.ts` if you have added a CSP directive — it is now built from a shared
+`CSP_BASE` with two `frame-ancestors` variants, so a directive of yours has to move into the base or
+it applies to only one of them. Any code of yours that linked to `/search?documentId=` as "open this
+document"; a custom `components/shared/index.ts` barrel; and a `get_document` handler you have
+customised, which is now a delegation.
+
 **Bundle.** Measured before and after on the kit: `gzip -c apps/web/dist/api/worker.js | wc -c`
 went from 1 311 621 to 1 336 048 — about 24 KB gzip, under 2%, for the schemas plus the protobuf
 encoder. Measure your own; a copy near the free plan's 3 MiB script limit is the one this could
@@ -281,10 +372,15 @@ matter to.
 ## Verify
 
 ```
-pnpm web test:config                           # agui-contract, shared-imports, ui-bundle
+pnpm web test:config                           # agui-contract, shared-imports, ui-bundle, document-helpers
 node scripts/release-check.mjs --deployable    # in an app: deployable=true
 pnpm lint && pnpm typecheck && pnpm test && pnpm build
 ```
+
+And, with `pnpm dev` running: upload a PDF on `/documents`, open it from the Knowledge list, and
+confirm it **renders in the page** — that assertion is what proves the framing fix, not just the
+disposition one. Search a phrase, click a hit, and land on the viewer at that passage with it
+highlighted; the funnel button still narrows the search.
 
 Then, with `pnpm dev` running: send a chat message and watch devtools show `data:`-only frames
 carrying `RUN_STARTED → CUSTOM → TEXT_MESSAGE_* → RUN_FINISHED`; press Stop mid-stream and confirm

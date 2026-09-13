@@ -9,8 +9,14 @@
  * the vectors never reach the browser; only the sanitised `documents` row does.
  */
 import {
+  DOCUMENT_WINDOW_CHARS,
   type Document,
+  type DocumentCard,
+  type DocumentContent,
   type DocumentStatus,
+  documentCardSchema,
+  documentContentSchema,
+  documentPassageSchema,
   documentSchema,
   type IngestTextRequest,
   type SearchRequest,
@@ -18,9 +24,10 @@ import {
   searchResponseSchema,
   type UploadDocumentFields,
   validateDocumentFile,
+  windowStart,
 } from '@rocketflare/shared/ai/embeddings'
 import { MAX_UPLOAD_BYTES } from '@rocketflare/shared/files'
-import { paginatedResponse } from '@rocketflare/shared/pagination'
+import { type PaginationQuery, paginatedResponse } from '@rocketflare/shared/pagination'
 import {
   keepPreviousData,
   queryOptions,
@@ -28,6 +35,7 @@ import {
   useQuery,
   useQueryClient,
 } from '@tanstack/react-query'
+import type { z } from 'zod'
 import { api } from '@/ui/lib/api-client'
 import { cleanFilters, queryKeys, toSearchParams } from '@/ui/lib/query-keys'
 
@@ -35,6 +43,15 @@ export const documentsResponseSchema = paginatedResponse(documentSchema)
 
 /** A `pending` document is still being indexed by the queue — re-read the list while any is. */
 export const DOCUMENT_POLL_MS = 5000
+
+/**
+ * The pure polling decision, so it can be tested without fake timers: a document is still owed an
+ * answer from the `document.convert` / `document.index` job while it is `pending`, and nothing
+ * emits a realtime nudge for documents yet, so this is belt with no braces.
+ */
+export function documentPollInterval(status: DocumentStatus | undefined): number | false {
+  return status === 'pending' ? DOCUMENT_POLL_MS : false
+}
 
 export interface DocumentsFilters {
   page?: number
@@ -68,7 +85,80 @@ export function useDocuments(filters: DocumentsFilters = {}) {
 }
 
 export function useDocument(id: string | undefined) {
-  return useQuery({ ...documentQueryOptions(id ?? ''), enabled: Boolean(id) })
+  return useQuery({
+    ...documentQueryOptions(id ?? ''),
+    enabled: Boolean(id),
+    refetchInterval: q => documentPollInterval(q.state.data?.status),
+  })
+}
+
+export const documentPassagesResponseSchema = paginatedResponse(documentPassageSchema)
+export type DocumentPassagesResponse = z.infer<typeof documentPassagesResponseSchema>
+
+/**
+ * One window of a document's text (`GET /:id/content`). The offset is SNAPPED to a multiple of the
+ * window size before it becomes a query key, so a deep link at character 41 207 and a reader
+ * paging forward land on the same cached window instead of fetching two near-identical slices.
+ */
+export function documentContentQueryOptions(id: string, offset = 0) {
+  const start = windowStart(offset)
+  return queryOptions({
+    queryKey: queryKeys.documents.content(id, start),
+    queryFn: () =>
+      api.get<DocumentContent>(
+        `/api/ai/documents/${encodeURIComponent(id)}/content?offset=${start}&maxChars=${DOCUMENT_WINDOW_CHARS}`,
+        { schema: documentContentSchema }
+      ),
+    placeholderData: keepPreviousData,
+    // A 409 means the text is not there yet (or never will be); retrying cannot change that, and
+    // the page renders a converting/failed state instead.
+    retry: false,
+  })
+}
+
+export function useDocumentContent(id: string | undefined, offset = 0, enabled = true) {
+  return useQuery({
+    ...documentContentQueryOptions(id ?? '', offset),
+    enabled: Boolean(id) && enabled,
+  })
+}
+
+export function documentPassagesQueryOptions(id: string, filters: Partial<PaginationQuery> = {}) {
+  return queryOptions({
+    queryKey: queryKeys.documents.passages(id, cleanFilters(filters)),
+    queryFn: () =>
+      api.get<DocumentPassagesResponse>(
+        `/api/ai/documents/${encodeURIComponent(id)}/passages${toSearchParams(filters)}`,
+        { schema: documentPassagesResponseSchema }
+      ),
+    placeholderData: keepPreviousData,
+  })
+}
+
+export function useDocumentPassages(
+  id: string | undefined,
+  filters: Partial<PaginationQuery> = {},
+  enabled = true
+) {
+  return useQuery({
+    ...documentPassagesQueryOptions(id ?? '', filters),
+    enabled: Boolean(id) && enabled,
+  })
+}
+
+/** The card one document renders as when it is cited — metadata plus an excerpt, never a summary. */
+export function documentCardQueryOptions(id: string) {
+  return queryOptions({
+    queryKey: queryKeys.documents.card(id),
+    queryFn: () =>
+      api.get<DocumentCard>(`/api/ai/documents/${encodeURIComponent(id)}/card`, {
+        schema: documentCardSchema,
+      }),
+  })
+}
+
+export function useDocumentCard(id: string | undefined) {
+  return useQuery({ ...documentCardQueryOptions(id ?? ''), enabled: Boolean(id) })
 }
 
 export function useIngestText() {

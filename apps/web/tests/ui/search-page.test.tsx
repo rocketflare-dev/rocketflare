@@ -105,7 +105,7 @@ describe('Search page', () => {
         limit: 10,
       })
     )
-    const results = await screen.findByRole('list', { name: 'Search results' })
+    const results = await screen.findByRole('region', { name: 'Search results' })
     const rows = within(results).getAllByRole('listitem')
     expect(rows.map(r => r.getAttribute('data-rank'))).toEqual(['1', '2'])
     expect(rows[0]).toHaveTextContent('#1')
@@ -115,7 +115,13 @@ describe('Search page', () => {
     expect(rows[0]).toHaveTextContent('Snippet 1')
     expect(rows[1]).toHaveTextContent('lexical #1')
     expect(rows[1]).not.toHaveTextContent('dense #')
-    expect(rows[1]).toHaveTextContent('Release notes')
+    // Hits group under a card per document, built from the list the page already fetched.
+    expect(within(results).getByRole('link', { name: 'Release notes' })).toBeInTheDocument()
+    // The hit's own link is the passage deep link, carrying the offset, the chunk and the query.
+    expect(within(rows[0] as HTMLElement).getByRole('link')).toHaveAttribute(
+      'href',
+      expect.stringContaining(`/documents/${DOC_A}?offset=`)
+    )
     // The submitted query is written to the URL (replace) so the result page can be shared
     expect(screen.getByTestId('location')).toHaveTextContent('/search?q=how+do+I+onboard')
   })
@@ -132,7 +138,7 @@ describe('Search page', () => {
         limit: 10,
       })
     )
-    await screen.findByRole('list', { name: 'Search results' })
+    await screen.findByRole('region', { name: 'Search results' })
     expect(searchCalls(fetchMock)).toBe(1)
     expect(screen.getByTestId('location')).toHaveTextContent('/search?q=pallets')
 

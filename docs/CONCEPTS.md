@@ -396,9 +396,26 @@ filename, contentType, sizeBytes, createdAt`; no `updated_at`). Scopes are `FILE
   object is deleted (no orphans). `scope=avatars` also sets `users.avatarUrl = /api/files/<id>`.
   201 with the `fileSchema` row; `file.uploaded` activity in `defer`.
 - `GET /api/files/:id` — `read File`, tenant-scoped lookup (another tenant's file is a 404),
-  `Cache-Control: private, max-age=3600`, `ETag` from R2 and `If-None-Match` → 304. Only the avatar
-  MIME allowlist renders `inline`; **everything else — SVG included — is `Content-Disposition:
-  attachment`** so stored HTML/SVG never executes on this origin.
+  `Cache-Control: private, max-age=3600`, `ETag` from R2 and `If-None-Match` → 304. Only
+  `INLINE_MIME_TYPES` (the avatar image allowlist **plus `application/pdf`**) renders `inline`;
+  **everything else — SVG included — is `Content-Disposition: attachment`** so stored HTML/SVG never
+  executes on this origin. A PDF is safe inline because the browser hands it to its own viewer,
+  which does not run the file's script in this document's context.
+
+**One framable response class, and it is opt-in per response.** `securityHeaders` stamps
+`X-Frame-Options: DENY` + CSP `frame-ancestors 'none'` on everything, and `DENY` forbids framing by
+ANY origin including our own — so the document viewer's `<object data="/api/files/:id">` would render
+empty however the disposition was set. A route that has PROVED the content type
+(`isEmbeddableMimeType`, `EMBEDDABLE_MIME_TYPES = ['application/pdf']`) sets `c.set('embeddable',
+true)` and that ONE response gets `SAMEORIGIN` + `frame-ancestors 'self'` instead; both policies are
+built from one `CSP_BASE` so they cannot drift, and `nosniff` is on both. The flag is set BEFORE the
+`If-None-Match` early return, or a revalidation from inside the `<object>` answers 304 with `DENY`
+and the embed works once then goes blank. Deliberately **not** a path allowlist (`/api/files/` would
+relax framing for the `text/html` we download on purpose) and **not** a global policy change. The two
+media-type lists are separate on purpose: inline and framable are different properties, and an app
+adding an inline type must not silently widen the framing hole. Exposure: a same-origin page could
+frame a PDF byte stream with no script context — materially smaller than framing the app shell,
+which stays forbidden.
 - `DELETE /api/files/:id` — the uploader may always delete their own file; anyone else needs
   `delete File` (admin+). Deleting the file behind your own `avatarUrl` nulls it. 204. A
   `documents`-scope file (the original behind a knowledge document, §9) is 409 `owned_by_document` —
@@ -981,8 +998,8 @@ An agent built on
 not use it. Everything indexed — pasted, uploaded, or written by an agent — is therefore available
 to agents as well as to people.
 
-**Embeddings and retrieval (D18).** `documents` (`content` kept for re-index, never returned by
-the API; `fileId` → the uploaded original) and `chunks` (`embedding vector(1024)` — `EMBEDDING_DIM`
+**Embeddings and retrieval (D18).** `documents` (`content` kept for re-index and read back one
+WINDOW at a time — never a whole column in one response; `fileId` → the uploaded original) and `chunks` (`embedding vector(1024)` — `EMBEDDING_DIM`
 in `@rocketflare/shared/ai/config`; HNSW `vector_cosine_ops`). Two ways in, one path
 (`services/ai/ingest.ts`): `ingestText` (`POST /api/ai/documents/ingest`, JSON, ≤ 500 000 chars)
 and `ingestFile` (`POST /upload`, multipart `file` + optional `title`/`source`, ≤ `MAX_UPLOAD_BYTES`,
@@ -1010,6 +1027,50 @@ of `min(max(limit·4, 50), 200)`, fused by Reciprocal Rank Fusion (`k = 60`); ev
 agent jump straight to it with `get_document`. Vectors are pgvector rows under the tenant predicate and RLS, not
 Vectorize; `apps/web/scripts/migrate.ts` runs `CREATE EXTENSION IF NOT EXISTS vector` before the
 migrations.
+
+**Reading a document (D18).** Three endpoints on `/api/ai/documents`, all `read Document`, all
+tenant-predicated, and an unknown id and another tenant's id answering the SAME 404 body so the API
+is not an existence oracle: `GET /:id/content?offset=&maxChars=` (one character window —
+`documentContentSchema`, default 20 000 and hard cap 50 000, with `totalChars` / `hasMore` /
+`nextOffset`), `GET /:id/passages` (the stored chunks by `seq`, paginated), `GET /:id/card`
+(`documentCardSchema`). A document whose text is not there is a **409** — `document_not_converted`
+while its job is pending, `document_conversion_failed` after — never an empty window, because "not
+converted" and "empty" are different answers and the viewer renders a different thing for each.
+
+`services/ai/document-content.ts` is the ONE implementation and `get_document` delegates to it, so
+the tool and the viewer cannot disagree about what a document says (`agent-tools.test.ts` pins the
+tool's JSON down to key order — the model reads it, so its shape is a contract). Every window is
+cut in Postgres (`substring(content from $1::int for $2::int)` + `char_length`); before the
+extraction the tool pulled the whole column into the isolate to slice 20 000 characters out of it.
+The passages query names its columns so `chunks.embedding` — 1024 floats a row — can never reach the
+wire through a later `select()` widening, and `chunkCharOffsetSql` is shared with `locateChunks` so a
+search hit and the passage list agree on where a passage starts.
+
+**The card is an EXCERPT, not a summary.** `documentCardSchema` carries the first 320 characters of
+the text, whitespace-collapsed. There is no `documents.summary` column and **no server-side
+rasterisation on Workers** (no canvas, no pdfium; `env.AI.toMarkdown` returns text, not an image), so
+there is no thumbnail and will not be one without an external service. It is `null` while a document
+is `pending` or `failed`, and for a converted PDF it is usually the cover page. The documented
+extension is a `documents.summary` column filled by a `document.summarize` job reusing
+`summarize-text`, preferred over the excerpt when present.
+
+**The viewer (`/documents/:documentId`, guard `read Document`, no nav entry).** Two tabs
+(`?tab=document|details`). The Document tab dispatches on `fileId`, the upload kind and the status:
+a PDF embeds its ORIGINAL with `<object>` — whose CHILDREN are the fallback, so nothing tries to
+detect failure (there is no reliable success event), and the panel header always carries **Download
+original** and a **Converted text** toggle so a browser with a poor in-page viewer has a one-click
+escape; an Office/HTML document renders its converted markdown; a pending one says so. Markdown
+renders AS markdown, with a Plain toggle — highlighting is what gives way, since `<mark>` cannot be
+threaded through react-markdown's AST. Deep links: `?offset=` is authoritative and is SNAPPED down to
+a window boundary, so a link into the middle of a window and the reader's own paging share one cache
+entry; `?chunk=` is the fallback when a passage's `charOffset` is null (re-chunked); `?q=` marks
+matches as `<mark>` NODES, never `dangerouslySetInnerHTML` over text somebody uploaded. Because
+`content` is capped at `INGEST_TEXT_MAX_CHARS` a document is at most 25 windows, so Previous/Next is
+one query per snapped offset with nothing accumulating in local state. The Details tab is metadata,
+chunking figures and the paginated passage list, each row linking back into the text at its offset.
+`DocumentCard` is markdown-free by construction, which is what lets it live in the eagerly imported
+`components/shared` barrel and be used by Search, by a citation, and by `Markdown` itself — a link
+whose href matches `/documents/<uuid>` renders as a card rather than an external `<a>`.
 
 **Usage (D18).** `recordUsage` writes one `ai_usage` row per model call (`feature`, `provider`,
 `model`, four token counters, `costMicrocents` from the price table below):
@@ -1052,7 +1113,16 @@ nudge yet. Requested-by renders "You", a short id or "system" (no name resolutio
 without a registered form gets a JSON textarea validated by the route's 400 `details`; the UI never
 sends `?strict=1`.
 
-**Known gaps / not built yet:** AG-UI — one text message PER MODEL TURN, so a client that expects
+**Known gaps / not built yet:** Reading a document — the card's `excerpt` is the head of the text,
+not a summary, and there is **no thumbnail** (no rasterisation on Workers); `charOffset` is an offset
+into the CONVERTED markdown and does not map to a PDF page, so a passage deep link into a PDF opens
+the converted text, and Chrome's `#page=` / `#search=` fragments are non-standard and used
+best-effort only; a `?q=` on a markdown document highlights only in the Plain rendering; **a tenant
+API key can now page a whole document's text**, where before it could extract only search passages —
+the permission model already treated document text as readable by any member (`POST /search` returns
+whole passages, `get_document` full windows), so this widens the convenience rather than the
+audience, and an app that wants it closed should add a separate ability rather than narrow this one.
+AG-UI — one text message PER MODEL TURN, so a client that expects
 one message per run must accumulate (the persisted row's id is in `kit.chat.ids` and
 `RUN_FINISHED.result`); no frontend tools (`POST /api/agui/run` refuses `tools[]`, see above) and
 no `STATE_DELTA`, only a read-only `STATE_SNAPSHOT`; the protobuf transport drops `TOOL_CALL_RESULT`

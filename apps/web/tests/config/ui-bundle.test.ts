@@ -24,6 +24,28 @@ const FORBIDDEN_ANYWHERE = ['@bufbuild/protobuf', '@ag-ui/proto', '@ag-ui/encode
 const chunks = () => (built ? readdirSync(ASSETS).filter(f => f.endsWith('.js')) : [])
 const read = (file: string) => readFileSync(path.join(ASSETS, file), 'utf8')
 
+/**
+ * The source-level half, which runs whether or not there is a build: `components/shared` is the
+ * barrel `App.tsx` imports EAGERLY, so one markdown import anywhere under it puts `react-markdown`
+ * in the main chunk. `DocumentCard` (D18) is the reason this is worth pinning — it is rendered
+ * from Search, from a citation and from inside `Markdown` itself, and the temptation to let it
+ * render its own excerpt as markdown is exactly the mistake.
+ */
+describe('components/shared', () => {
+  it('imports no markdown renderer, directly or through components/ai', () => {
+    const dir = path.resolve(__dirname, '../../src/ui/components/shared')
+    const offenders = readdirSync(dir)
+      .filter(f => f.endsWith('.ts') || f.endsWith('.tsx'))
+      .filter(file => {
+        const imports = (
+          readFileSync(path.join(dir, file), 'utf8').match(/^import .*$/gm) ?? []
+        ).join('\n')
+        return /react-markdown|remark-|components\/ai/.test(imports)
+      })
+    expect(offenders).toEqual([])
+  })
+})
+
 describe.skipIf(!built)('the UI bundle', () => {
   it('keeps the heavy dependencies out of the eager entry chunk', () => {
     const entry = chunks().filter(f => /^index-[^.]+\.js$/.test(f))

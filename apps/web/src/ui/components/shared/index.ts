@@ -1,5 +1,6 @@
 export { AlertModal } from './AlertModal'
 export { ConfirmModal } from './ConfirmModal'
+export { DocumentCard, type DocumentCardProps } from './DocumentCard'
 export { EmptyState, EmptyStateCard } from './EmptyState'
 export { FieldError, fieldErrorFor } from './FieldError'
 export { LogoMark } from './LogoMark'

@@ -231,18 +231,42 @@ A `CUSTOM kit.notice` renders
   posts multipart `file` (+ optional `title`/`source`) to `/api/ai/documents/upload`. Both toast
   `indexed (n chunks)` / `queued for …` and invalidate `documents`; the list polls every 5 s while a
   row is `pending` (there is no document nudge yet). Rows show `documentTypeLabel(contentType)`
-  under the title and a download link (`filePath(fileId)`) when there is an uploaded original.
+  under the title and a download link (`filePath(fileId)`) when there is an uploaded original; every
+  title is a `<Link to={documentPath(doc.id)}>`, pending and failed rows included.
+- **The viewer (`/documents/:documentId`, guard `read Document`, no SideNav entry)**:
+  `pages/documents/DocumentViewPage.tsx`, lazy, tabs `?tab=document|details`. It dispatches on
+  `fileId`, the upload kind and the status: a PDF embeds its original with `<object>` — **never try
+  to detect failure, the CHILDREN are the fallback** — while the header always carries Download
+  original and a Converted text toggle; everything else renders its text (markdown through
+  `components/ai/Markdown`, plain types in a `<pre>`). Deep links: `?offset=` is snapped by
+  `windowStart()` so a link and the reader's paging share one cache entry, `?chunk=` is the fallback
+  when `charOffset` is null, `?q=` highlights through `lib/highlight.ts` as `<mark>` NODES
+  (never `dangerouslySetInnerHTML` over uploaded text). Markdown still renders AS markdown; the
+  Plain toggle is where highlighting and the passage anchor live, because `<mark>` cannot be
+  threaded through react-markdown's AST. Hooks: `useDocumentContent(id, offset)`,
+  `useDocumentPassages(id, filters)`, `useDocumentCard(id)`, all under the `['documents']` root so
+  one invalidation still covers the family; `documentPollInterval(status)` is the pure decision.
+- **`DocumentCard`** (`components/shared/DocumentCard.tsx`) is the compact citation form and is
+  **markdown-free by construction** — that is what lets it sit in the eager barrel and be used from
+  Search, from `RunDetailDrawer` and from inside `Markdown` itself (an anchor whose href matches
+  `/documents/<uuid>` renders as a card). Its `excerpt` is the head of the text, not a summary, and
+  there is no thumbnail.
 - **Search (`/search`, nav "Search", guard `read Document`)**: its own page (`pages/documents/SearchPage.tsx`). The Knowledge header states that everything indexed is also available to agents (`search_knowledge` / `get_document`, `services/agents/tools/`). Delete shows only for own rows unless `delete Document` (admin+) — the route
   enforces. Search is `useSearch()` (mutation): `{ query, limit: 10, documentId? }` → hits with
   `rank`, `passage n of m` (where the passage sits in its document), RRF `score`, `dense #n` /
-  `lexical #n` badges and the snippet; `?documentId=` preselects
-  the per-document filter (the run drawer's "Indexed as a searchable document" link lands on
-  `/search?documentId=`); `?q=` prefills the box and runs the search on mount (once — a `lastRun`
+  `lexical #n` badges and the snippet, GROUPED under a `DocumentCard` header built client-side with
+  `documentCardFromDocument` from the `useDocuments({ pageSize: 100 })` list the page ALREADY fetches
+  for its filter select — no request per hit. A hit's "passage n of m" is a `<Link>` to
+  `documentPath(documentId, { offset: charOffset, chunk: chunkId, q })`; restricting the search to
+  one document survives as a separate funnel button on the card, so "read it" and "search only it"
+  are no longer the same click. `?documentId=` preselects the per-document filter; `?q=` prefills the box and runs the search on mount (once — a `lastRun`
   ref stops StrictMode and the URL write from repeating it), and every submitted search sets `?q=`
   with `replace`; an empty knowledge base shows an EmptyState linking to `/documents`.
 - Tests: `agents-page`, `agent-run-detail` (renders `RunDetailDrawer` inside `WebSocketProvider`
   with the `FakeSocket` from `websocket-provider.test.tsx` to prove the nudge refetches),
-  `agent-models-settings`, `documents-page`, `search-page`. Mount `AgentsPage` inside the same `<Routes>` pair
+  `agent-models-settings`, `documents-page`, `search-page`, `document-view`, `document-card`
+  (pure helpers — `documentPath`, `windowStart`, `highlightMatches` — in
+  `tests/config/document-helpers.test.ts`). Mount `AgentsPage` inside the same `<Routes>` pair
   App.tsx uses so `navigate('/agents/runs/:id')` really opens the drawer.
 
 ## Analytics dashboards (Phase 4, D19/D20)

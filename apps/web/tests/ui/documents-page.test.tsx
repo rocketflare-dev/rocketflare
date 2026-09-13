@@ -3,7 +3,8 @@
  * with the shared schema and POSTs the exact body (then toasts and clears); the upload tab refuses
  * a wrong type or an oversized file before any request and POSTs the chosen file as multipart to
  * `/api/ai/documents/upload` with the optional title; the table shows status badges with the
- * failure reason, a download link only for uploaded originals, and only offers delete on own rows
+ * failure reason, every title linking to the viewer, a download link only for uploaded originals,
+ * and only offers delete on own rows
  * (any row for admin+). Search lives on `/search` (`search-page.test.tsx`).
  */
 import { DOCUMENT_UPLOAD_ACCEPT, INGEST_TEXT_MAX_CHARS } from '@rocketflare/shared/ai/embeddings'
@@ -206,6 +207,16 @@ describe('Documents page', () => {
     expect(within(table).getByText('Failed')).toHaveAttribute(
       'title',
       'Embeddings provider timed out'
+    )
+    // Every title opens the viewer — including a pending row, whose state the viewer explains and
+    // whose uploaded original is already readable while the text converts.
+    expect(screen.getByRole('link', { name: 'Onboarding guide' })).toHaveAttribute(
+      'href',
+      `/documents/${DOC_A}`
+    )
+    expect(screen.getByRole('link', { name: 'Quarterly report' })).toHaveAttribute(
+      'href',
+      `/documents/${DOC_C}`
     )
     expect(screen.getByRole('button', { name: 'Delete Onboarding guide' })).toBeInTheDocument()
     // Owner holds `delete Document`: every row is deletable

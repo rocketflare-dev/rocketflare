@@ -53,6 +53,8 @@ const AgentsPage = lazy(() => import('@/ui/pages/agents/AgentsPage'))
 // D18: the knowledge base — ingest/upload + list on /documents, hybrid search on /search.
 const DocumentsPage = lazy(() => import('@/ui/pages/documents/DocumentsPage'))
 const SearchPage = lazy(() => import('@/ui/pages/documents/SearchPage'))
+// The detail page — no SideNav entry; it is reached from the list, from Search and from a citation.
+const DocumentViewPage = lazy(() => import('@/ui/pages/documents/DocumentViewPage'))
 // D19: analytics. The list page is plain kit UI; the view and explore pages carry drizzle-cube
 // (charts, grid editor, recharts) and must stay out of the main bundle.
 const DashboardListPage = lazy(() => import('@/ui/pages/analytics/DashboardListPage'))
@@ -139,6 +141,18 @@ function ShellRoutes() {
             element={
               <RequireGuard guard={{ action: 'read', subject: 'Document' }}>
                 <DocumentsPage />
+              </RequireGuard>
+            }
+          />
+          {/*
+            React Router ranks a static segment above a dynamic sibling, so `/documents` wins over
+            `/documents/:documentId` whatever the order here.
+          */}
+          <Route
+            path="/documents/:documentId"
+            element={
+              <RequireGuard guard={{ action: 'read', subject: 'Document' }}>
+                <DocumentViewPage />
               </RequireGuard>
             }
           />

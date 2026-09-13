@@ -21,3 +21,17 @@ export function initials(name: string | null | undefined, email?: string): strin
   const letters = parts.length >= 2 ? parts[0][0] + parts[parts.length - 1][0] : source.slice(0, 2)
   return letters.toUpperCase()
 }
+
+/** "1.4 MB" — binary units, one decimal past KB, for file sizes on cards and detail rows. */
+export function formatBytes(bytes: number | null | undefined, fallback = '—'): string {
+  if (bytes === null || bytes === undefined || !Number.isFinite(bytes)) return fallback
+  if (bytes < 1024) return `${bytes} B`
+  const units = ['KB', 'MB', 'GB', 'TB']
+  let value = bytes / 1024
+  let unit = 0
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024
+    unit += 1
+  }
+  return `${value < 10 ? value.toFixed(1) : Math.round(value)} ${units[unit]}`
+}

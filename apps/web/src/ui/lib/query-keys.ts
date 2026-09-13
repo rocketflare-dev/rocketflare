@@ -99,6 +99,10 @@ export const queryKeys = {
     all: ['documents'] as const,
     list: (filters: object = {}) => ['documents', 'list', filters] as const,
     detail: (id: string) => ['documents', 'detail', id] as const,
+    /** One window of the text — keyed by offset so paging keeps each window cached (D18). */
+    content: (id: string, offset: number) => ['documents', 'content', id, offset] as const,
+    passages: (id: string, filters: object = {}) => ['documents', 'passages', id, filters] as const,
+    card: (id: string) => ['documents', 'card', id] as const,
   },
   /** `/api/chat/*` — MY conversations (the route filters by user) and their messages (D17) */
   chat: {
