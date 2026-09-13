@@ -38,6 +38,10 @@ import { timeAgo } from '@/ui/lib/format'
 const NOTICE_TEXT: Record<KitNoticeCode, string> = {
   workers_ai_no_token_streaming:
     'This provider cannot stream token by token while tools are in use, so the reply arrives in bursts.',
+  history_summarised:
+    'This conversation is long, so the earlier part is included as a summary rather than in full.',
+  history_truncated:
+    'This conversation is long, so the earlier part was left out of this reply; it is being summarised for the next one.',
 }
 
 export default function ChatPage() {

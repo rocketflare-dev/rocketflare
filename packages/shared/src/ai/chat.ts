@@ -85,3 +85,26 @@ export const CONVERSATION_TITLE_LENGTH = 60
  * and shares the Worker's CPU and subrequest budget with the request that opened it.
  */
 export const CHAT_MAX_TOOL_TURNS = 6
+
+/**
+ * Hard backstop on how many stored messages a turn may replay. The REAL budget is a character one
+ * (`CHAT_HISTORY_MAX_CHARS`, a `[vars]` knob, because the right value tracks the model's context
+ * window and the tenant chooses the model): 40 messages of pasted documents is 1.28M characters at
+ * the per-message cap, which no model accepts. This count only stops an absurd number of tiny
+ * messages; it is not what keeps a thread inside its window.
+ */
+export const CHAT_HISTORY_MAX_MESSAGES = 40
+
+/**
+ * The rolling summary of everything trimmed out of the window (`conversations.summary`). Bounded
+ * because it is prepended to EVERY subsequent turn: an unbounded summary is just a slower version
+ * of the problem it solves.
+ */
+export const CHAT_SUMMARY_MAX_CHARS = 2_000
+
+/**
+ * Don't spend a model call summarising less than this much dropped text. Compaction folds the
+ * previous summary in, so it runs repeatedly over a long thread; this is what stops it running on
+ * every single turn once the window is full.
+ */
+export const CHAT_COMPACTION_MIN_CHARS = 2_000

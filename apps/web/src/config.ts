@@ -79,6 +79,14 @@ const configSchema = z.object({
    * by token. `false` is the operator's way back to a tool-free chat.
    */
   CHAT_KNOWLEDGE_TOOLS: optionalBoolean(true),
+  /**
+   * D17: characters of stored history a chat turn may replay. The real constraint is the model's
+   * context window and the tenant picks the model, so this is the knob rather than a message count
+   * — 24 000 chars is roughly 6 000 tokens, which leaves room on the 24k-token Workers AI floor.
+   * Raise it for a long-context provider. Anything older is trimmed and folded into the thread's
+   * rolling summary by the `chat.compact` job.
+   */
+  CHAT_HISTORY_MAX_CHARS: optionalPositiveInt(24_000),
 
   // ---- Secrets (.dev.vars locally, `wrangler secret put` deployed) — all optional here;
   //      features gate on presence (zero-creds first run) or demand them at use time. -------

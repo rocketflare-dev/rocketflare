@@ -34,8 +34,13 @@ import {
   type ChatRunResult,
   KIT_CUSTOM_EVENTS,
   type KitAguiEvent,
+  type KitNoticeCode,
 } from '@rocketflare/shared/ai/agui'
-import { CHAT_MAX_TOOL_TURNS, CONVERSATION_TITLE_LENGTH } from '@rocketflare/shared/ai/chat'
+import {
+  CHAT_HISTORY_MAX_MESSAGES,
+  CHAT_MAX_TOOL_TURNS,
+  CONVERSATION_TITLE_LENGTH,
+} from '@rocketflare/shared/ai/chat'
 import { and, desc, eq } from 'drizzle-orm'
 import { stream } from 'hono/streaming'
 import type { Database } from '../../../db/client'
@@ -46,8 +51,10 @@ import type { AppContext } from '../../types'
 import { ConflictError, isUniqueViolation } from '../../utils/core/errors'
 import { streamDatabase, withAuthAndDb } from '../../utils/routes/route-helpers'
 import { buildAgentTools } from '../agents/tools'
+import { enqueueJob } from '../jobs'
 import { resolvePrompt } from '../prompts'
 import { aguiTextSegmenter, createAguiEncoder, kitCustom } from './agui'
+import { pendingCompaction, selectHistoryWindow, withSummary } from './chat-history'
 import { AiError, describeAiError, normalizeAiError } from './errors'
 import { runStreamingChat, type Tool } from './kit'
 import { type ResolvedChat, resolveChat } from './resolve'
@@ -75,6 +82,8 @@ export interface ChatTurnParams {
   isFirstUserTurn: boolean
   /** Events emitted straight after `RUN_STARTED`, before the ids (`MESSAGES_SNAPSHOT`). */
   lead?: KitAguiEvent[]
+  /** Things the reader should know about this turn that are not failures (`CUSTOM kit.notice`). */
+  notices?: KitNoticeCode[]
   /** The client's run id where it supplied one; echoed, never stored. */
   runId?: string
 }
@@ -135,6 +144,9 @@ export function streamChatTurn(c: AppContext, params: ChatTurnParams): Response 
       // token. Say so once rather than letting it read as a stall.
       if (resolved.provider === 'workers_ai' && tools.length > 0) {
         await emit(kitCustom(KIT_CUSTOM_EVENTS.notice, { code: 'workers_ai_no_token_streaming' }))
+      }
+      for (const code of params.notices ?? []) {
+        await emit(kitCustom(KIT_CUSTOM_EVENTS.notice, { code }))
       }
 
       const result = await withAgentTrace(
@@ -272,8 +284,12 @@ export function streamChatTurn(c: AppContext, params: ChatTurnParams): Response 
   })
 }
 
-/** Longest history sent to the model (turns); older turns are dropped, the DB keeps everything. */
-export const HISTORY_LIMIT = 40
+/**
+ * Rows read per turn: one more than the count backstop, so "is there an older prefix?" is answered
+ * exactly rather than inferred from a full page. The real budget is characters — see
+ * `chat-history.ts` for why a count alone produces a thread that fails on every turn.
+ */
+export const HISTORY_FETCH_LIMIT = CHAT_HISTORY_MAX_MESSAGES + 1
 
 export interface PrepareChatTurnOptions {
   /** Already resolved by the caller (the AG-UI endpoint resolves before it adopts a thread). */
@@ -303,7 +319,7 @@ export async function prepareChatTurn(
   content: string,
   options: PrepareChatTurnOptions = {}
 ): Promise<ChatTurnParams> {
-  const { db, tenantId, user, cfg, auth } = withAuthAndDb(c)
+  const { db, tenantId, user, cfg, auth, defer } = withAuthAndDb(c)
   const resolved =
     options.resolved ?? (await resolveChat(db, cfg, c.env, tenantId, { promptKey: 'chat' }))
   const system = await resolvePrompt(db, tenantId, 'chat', {
@@ -311,16 +327,35 @@ export async function prepareChatTurn(
     tenantName: auth.tenant?.name ?? '',
     userName: user.name,
   })
-  const history = await db
+  const recent = await db
     .select()
     .from(messages)
     .where(and(eq(messages.conversationId, conversation.id), eq(messages.tenantId, tenantId)))
     .orderBy(desc(messages.createdAt), desc(messages.id))
-    .limit(HISTORY_LIMIT)
+    .limit(HISTORY_FETCH_LIMIT)
+  const history = recent.reverse()
   const earlier = options.userMessage
     ? history.filter(m => m.id !== options.userMessage?.id)
     : history
   const isFirstUserTurn = !earlier.some(m => m.role === 'user')
+
+  // Trim to the character budget, newest-first; whatever falls out belongs to the summary.
+  const { window, dropped } = selectHistoryWindow(earlier, { maxChars: cfg.CHAT_HISTORY_MAX_CHARS })
+  const notices: KitNoticeCode[] = []
+  if (dropped.length > 0) {
+    notices.push(conversation.summary ? 'history_summarised' : 'history_truncated')
+    // Compaction is a job, so the turn that FIRST crosses the budget answers without a summary —
+    // the notice says so. The job recomputes the window itself and decides whether the pending
+    // material is worth a model call, so enqueuing on every long turn is cheap and idempotent.
+    if (pendingCompaction(dropped, conversation.summarisedThroughId).length > 0) {
+      defer(() =>
+        enqueueJob(c.env.JOBS_QUEUE, {
+          type: 'chat.compact',
+          payload: { tenantId, conversationId: conversation.id },
+        })
+      )
+    }
+  }
 
   // A replayed row is the turn: its stored text is what the model saw the first time, so the
   // caller's copy of it never overrides the record.
@@ -349,10 +384,7 @@ export async function prepareChatTurn(
   }
 
   const chatMessages: ChatMessage[] = [
-    ...earlier
-      .reverse()
-      .filter(m => m.role === 'user' || m.role === 'assistant')
-      .map(m => ({ role: m.role as 'user' | 'assistant', content: m.content })),
+    ...window.map(m => ({ role: m.role as 'user' | 'assistant', content: m.content })),
     { role: 'user', content: turnText },
   ]
 
@@ -360,7 +392,8 @@ export async function prepareChatTurn(
     conversation,
     userMessage,
     chatMessages,
-    system,
+    // The trimmed prefix comes back as the system prompt's volatile half, not as messages.
+    system: withSummary(system, conversation.summary),
     resolved,
     // `AGENT_MAX_TURNS` (30) is a budget for a Workflow step with a ten-minute timeout; an
     // interactive reply shares the Worker's CPU and subrequest budget, so it gets the lower cap.
@@ -370,6 +403,7 @@ export async function prepareChatTurn(
     maxTurns: Math.min(cfg.AGENT_MAX_TURNS, CHAT_MAX_TOOL_TURNS),
     isFirstUserTurn,
     lead: options.lead,
+    notices,
     runId: options.runId,
   }
 }

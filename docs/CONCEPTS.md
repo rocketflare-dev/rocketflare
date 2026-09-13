@@ -736,6 +736,30 @@ client is closed in `waitUntil` the moment the Response is returned, before the 
 persist the assistant message, bump `lastMessageAt`, auto-title from the first user turn (60 chars),
 `recordUsage(feature: 'chat')`, flush the tracer.
 
+**A long thread forgets deliberately (D17).** What overflows a conversation is the model's CONTEXT
+WINDOW, which is characters — not a message count, which is why the budget is
+`CHAT_HISTORY_MAX_CHARS` (24 000, a `[vars]` knob, because the right value tracks the model the
+tenant chose) with `CHAT_HISTORY_MAX_MESSAGES` (40) kept only as a backstop. A count alone is not a
+limit at all: forty messages at the 32 000-char per-message cap is 1.28M characters, more than any
+supported model accepts, so such a thread fails on every turn with no way out but starting again.
+
+`selectHistoryWindow` (`services/ai/chat-history.ts`, pure — the route and the compaction job both
+call it, so their idea of "the window" cannot drift) keeps the newest messages that fit and reports
+the rest as `dropped`. The dropped prefix is **not silently forgotten**: a `chat.compact` job folds
+it into `conversations.summary`, and later turns replay that summary as the system prompt's
+`volatile` half — which is also where prompt caching wants it, since the cacheable prefix is
+`stable` and the summary changes underneath it. `summarisedThroughId` is the watermark AND the
+compare-and-set key, so two concurrent compaction runs produce one summary and one no-op rather
+than a lost update. `CHAT_COMPACTION_MIN_CHARS` (2 000) stops a model call per turn once the window
+is full; `CHAT_SUMMARY_MAX_CHARS` (2 000) stops the summary becoming a slower version of the
+problem it solves.
+
+Compaction is a JOB rather than part of the turn because a chat reply is the latency a person
+feels. The cost of that choice is bounded and stated in-band: the turn that FIRST crosses the
+budget answers without a summary and emits `CUSTOM kit.notice { history_truncated }`; every turn
+after it emits `history_summarised`. `messages` is never edited — the summary is derived data and
+rebuilding it is always safe.
+
 **Chat calls the knowledge tools.** `search_knowledge`, `get_document` and `list_documents` — the
 same three every agent gets — are on by default, so the chat box answers from the workspace's own
 material; `CHAT_KNOWLEDGE_TOOLS = "false"` in both tomls is the operator's way back to a tool-free
@@ -983,7 +1007,13 @@ change the wire format for every adopted copy — the exact pin plus `agui-contr
 mitigation and the residual risk is real; the agent projection has no `kit.usage` and no error flag
 on a tool result; live run streaming with `Last-Event-ID` replay is still deferred. Chat tools —
 `CHAT_MAX_TOOL_TURNS` is a constant, not a var; a tool-calling chat costs more per turn and stops
-streaming token by token on `workers_ai`. `enqueueRun` does NOT pre-resolve the chat client — a tenant with no
+streaming token by token on `workers_ai`; `get_document` may return up to 50 000 characters, which
+is most of a small model's window in one call, and only the prompt discourages it. History — the
+budget is characters, not tokens (4 chars per token is the kit's estimate everywhere); nothing
+derives it from the model's actual context window, because `services/ai/providers.ts` carries no
+context-window field; `runStreamingChat` never passes `cache`, so the transcript is re-sent at full
+price every turn even though `withRollingCacheBreakpoints` exists in `kit.ts`; a conversation's
+summary is never shown to the user and there is no "forget this thread" control. `enqueueRun` does NOT pre-resolve the chat client — a tenant with no
 provider gets a 202 and a `failed` row at `execute` (chat's `POST /conversations` does pre-resolve;
 moot while the `[ai]` binding exists, since Workers AI is the floor); Workers AI forced tools are an
 instruction plus prose-JSON recovery, not a guarantee — a model that answers in plain prose fails

@@ -133,7 +133,7 @@ Jobs rules (D7):
   the kit: invitation (create/bulk/resend) and access-request-decided emails. The **magic-link email
   stays inline** — a person is waiting on it
 - `example.ping` is the smoke job: `enqueueJob(c.env.JOBS_QUEUE, { type: 'example.ping', payload: { tenantId } })` from any route, then watch `wrangler dev`
-- `document.index` (D18) re-indexes a `documents` row from its stored `content` (`handlers/document-index.ts` → `indexDocument`); the message carries ids only. `ingestText` enqueues it for texts over 50 chunks
+- `chat.compact` (D17) folds the messages outside a conversation's `CHAT_HISTORY_MAX_CHARS` budget into `conversations.summary`; the window comes from the same pure `selectHistoryWindow` the route uses, and the write is a compare-and-set on `summarised_through_id` so two deliveries cannot lose an update. `document.index` (D18) re-indexes a `documents` row from its stored `content` (`handlers/document-index.ts` → `indexDocument`); the message carries ids only. `ingestText` enqueues it for texts over 50 chunks
 
 Side effects that can outlive the response (email, tracing flush, DO nudge, `sql.end()`) go in
 `c.executionCtx.waitUntil(...)` — in routes via `defer()` from `withAuth` — never awaited inline and

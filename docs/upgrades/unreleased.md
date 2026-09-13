@@ -3,7 +3,7 @@ version: unreleased
 previous: 0.1.0
 date: null
 breaking: true
-migrations: []
+migrations: ["conversations gains a nullable rolling summary and its watermark"]
 areas: [api, ui, shared, config, docs]
 touches_surfaces: [feature-chat, feature-agents]
 requires_surfaces: []
@@ -20,6 +20,22 @@ discriminated union over exactly the events the kit emits, never `@ag-ui/core`'s
 the `kit.` CUSTOM namespace (`KIT_CUSTOM_EVENTS`, `kitCustomPayloadSchema`, `parseKitCustom`) where
 every kit-specific semantic lives, `chatRunResultSchema`, and `kitRunAgentInputSchema` +
 `readRunAgentTail`.
+
+**A long chat now forgets deliberately instead of overflowing — new `[vars]` key and a migration.**
+`CHAT_HISTORY_MAX_CHARS` (24 000) replaces a bare 40-message limit as what bounds a turn's history,
+because a message count is not a limit: forty messages at the per-message cap is 1.28M characters,
+which no model accepts, so a thread that hit it failed on every turn. **Add the key to BOTH wrangler
+tomls or the parity test fails.** Two new nullable columns on `conversations` (`summary`,
+`summarised_through_id`) carry a rolling summary of the trimmed prefix, folded in by a new
+`chat.compact` job and replayed as the system prompt's volatile half. Port the schema and run
+`pnpm db:generate` — never copy the kit's migration. New prompt registry key `chat-compaction`
+(it appears in Settings → agent models, so you can point it at a cheap model). New notice codes
+`history_truncated` / `history_summarised`.
+
+**The chat prompt now says when NOT to use the knowledge tools.** With tools on, a small model
+answered "Hello" by listing the knowledge base, picking the first document and summarising it —
+13 500 input tokens, and the next turn overflowed. If you have overridden the `chat` prompt, port
+that guidance into yours or the same thing will happen.
 
 **New surface: `POST /api/agui/run`.** The AG-UI `RunAgentInput` endpoint, mounted beside
 `/api/chat` behind the same `authMiddleware` — a session cookie, or a tenant API key as Bearer

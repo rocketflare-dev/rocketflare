@@ -24,6 +24,13 @@ export const conversations = pgTable(
     provider: text('provider').$type<AiProvider>().notNull(),
     model: text('model').notNull(),
     lastMessageAt: timestamp('last_message_at', { withTimezone: true }),
+    /** Rolling summary of every message up to and including `summarisedThroughId`. */
+    summary: text('summary'),
+    /**
+     * The last message `summary` covers. No FK: a summary must survive a message being deleted,
+     * and the id is only ever compared, never joined.
+     */
+    summarisedThroughId: uuid('summarised_through_id'),
     ...timestamps(),
   },
   table => [

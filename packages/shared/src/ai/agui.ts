@@ -110,10 +110,21 @@ export const KIT_CUSTOM_EVENTS = {
 
 export type KitCustomEventName = (typeof KIT_CUSTOM_EVENTS)[keyof typeof KIT_CUSTOM_EVENTS]
 
-/** Notices the kit raises. `workers_ai_no_token_streaming`: tools are on and the provider is
- * `workers_ai`, which has no documented tool-call event stream — the reply arrives in bursts per
- * model turn rather than token by token. */
-export const KIT_NOTICE_CODES = ['workers_ai_no_token_streaming'] as const
+/**
+ * Notices the kit raises — things a reader should know that are NOT failures.
+ *
+ * - `workers_ai_no_token_streaming`: tools are on and the provider is `workers_ai`, which has no
+ *   documented tool-call event stream, so the reply arrives in bursts per model turn.
+ * - `history_summarised`: the thread outgrew its context budget; the trimmed prefix is present as a
+ *   summary.
+ * - `history_truncated`: the same, but no summary covers the trimmed prefix YET — compaction is a
+ *   background job, so the turn that first crosses the budget answers without it.
+ */
+export const KIT_NOTICE_CODES = [
+  'workers_ai_no_token_streaming',
+  'history_summarised',
+  'history_truncated',
+] as const
 export const kitNoticeCodeSchema = z.enum(KIT_NOTICE_CODES)
 export type KitNoticeCode = z.infer<typeof kitNoticeCodeSchema>
 

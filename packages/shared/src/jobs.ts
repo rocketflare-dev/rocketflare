@@ -17,6 +17,7 @@ export const JOB_TYPES = [
   'example.ping',
   'document.index',
   'document.convert',
+  'chat.compact',
 ] as const
 export type JobType = (typeof JOB_TYPES)[number]
 
@@ -67,6 +68,17 @@ export const documentConvertPayloadSchema = z.object({
 })
 export type DocumentConvertPayload = z.infer<typeof documentConvertPayloadSchema>
 
+/**
+ * Fold a conversation's trimmed-off prefix into its rolling summary (D17). The payload carries ids
+ * only: the handler recomputes the window from the database, so a message enqueued two turns ago
+ * still summarises the right thing.
+ */
+export const chatCompactPayloadSchema = z.object({
+  tenantId: z.string().uuid(),
+  conversationId: z.string().uuid(),
+})
+export type ChatCompactPayload = z.infer<typeof chatCompactPayloadSchema>
+
 // ---- Envelope ------------------------------------------------------------------------------
 
 /** What a caller hands to `enqueueJob` — the envelope fields are stamped by the producer. */
@@ -76,6 +88,7 @@ export const jobInputSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('example.ping'), payload: examplePingPayloadSchema }),
   z.object({ type: z.literal('document.index'), payload: documentIndexPayloadSchema }),
   z.object({ type: z.literal('document.convert'), payload: documentConvertPayloadSchema }),
+  z.object({ type: z.literal('chat.compact'), payload: chatCompactPayloadSchema }),
 ])
 export type JobInput = z.infer<typeof jobInputSchema>
 
@@ -109,6 +122,11 @@ export const jobEnvelopeSchema = z.discriminatedUnion('type', [
     ...envelopeFields,
     type: z.literal('document.convert'),
     payload: documentConvertPayloadSchema,
+  }),
+  z.object({
+    ...envelopeFields,
+    type: z.literal('chat.compact'),
+    payload: chatCompactPayloadSchema,
   }),
 ])
 export type JobEnvelope = z.infer<typeof jobEnvelopeSchema>

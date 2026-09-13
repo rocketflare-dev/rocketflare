@@ -34,7 +34,9 @@ response with the same schema. `pnpm test:config` covers the pure parts.
 `prompts.ts` — `promptKeySchema` (kebab-case), `PROMPT_MAX_LENGTH`, `promptDefinitionSchema`, `promptOverrideSchema`,
 `updatePromptRequestSchema`, `promptWithResolvedSchema`, `interpolatePrompt()` (`{{var}}`, unknown left visible) ·
 `chat.ts` — `conversationSchema`, `messageSchema`, `tokenUsageSchema`, `toolCallRecordSchema`, request bodies,
-`MAX_MESSAGE_LENGTH`, `CONVERSATION_TITLE_LENGTH` (the DB-shaped half; the wire protocol is `agui.ts`) ·
+`MAX_MESSAGE_LENGTH`, `CONVERSATION_TITLE_LENGTH`, `CHAT_MAX_TOOL_TURNS`, and the history budget
+(`CHAT_HISTORY_MAX_MESSAGES` backstop, `CHAT_SUMMARY_MAX_CHARS`, `CHAT_COMPACTION_MIN_CHARS`; the
+real budget is the `CHAT_HISTORY_MAX_CHARS` var) — the DB-shaped half; the wire protocol is `agui.ts` ·
 `agents.ts` — `AGENT_KEYS`/`agentKeySchema` (append; never empty — it is a `z.enum`), `AgentMeta<Input, Output>`
 (the server attaches `run()`), `agentInfoSchema`, `agentRunStatusSchema` + `isRunActive`, `agentRunSchema`,
 `createAgentRunRequest/ResponseSchema` (`deduplicated`), `agentRunListQuerySchema`, `AGENT_RUN_EVENT_TYPES`,

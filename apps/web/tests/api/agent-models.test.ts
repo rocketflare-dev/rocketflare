@@ -65,7 +65,12 @@ describe('/api/ai/agent-models', () => {
     expect(first.isDefault).toBe(true)
 
     let items = (await list(a.cookie)).items
-    expect(items.map(i => i.promptKey).sort()).toEqual(['chat', 'research-topic', 'summarize-text'])
+    expect(items.map(i => i.promptKey).sort()).toEqual([
+      'chat',
+      'chat-compaction',
+      'research-topic',
+      'summarize-text',
+    ])
     for (const item of items) {
       expect(item.assignment).toBeNull()
       expect(item.effective).toEqual({

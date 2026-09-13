@@ -47,7 +47,7 @@ import { and, desc, eq } from 'drizzle-orm'
 import type { Database } from '../../db/client'
 import { type ConversationRow, conversations, type MessageRow, messages } from '../../db/schema'
 import { guardPermission } from '../middleware/permissions'
-import { HISTORY_LIMIT, prepareChatTurn, streamChatTurn } from '../services/ai/chat-turn'
+import { HISTORY_FETCH_LIMIT, prepareChatTurn, streamChatTurn } from '../services/ai/chat-turn'
 import { resolveChat } from '../services/ai/resolve'
 import { BadRequestError, isUniqueViolation, NotFoundError } from '../utils/core/errors'
 import { withAuthAndDb } from '../utils/routes/route-helpers'
@@ -153,7 +153,7 @@ aguiRouter.post('/run', validate('json', kitRunAgentInputSchema), async c => {
     .from(messages)
     .where(and(eq(messages.conversationId, conversation.id), eq(messages.tenantId, tenantId)))
     .orderBy(desc(messages.createdAt), desc(messages.id))
-    .limit(HISTORY_LIMIT)
+    .limit(HISTORY_FETCH_LIMIT)
   return streamChatTurn(c, {
     ...params,
     lead: [messagesSnapshot(transcript.reverse())],
