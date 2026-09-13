@@ -296,6 +296,36 @@ readable by any member (`POST /search` returns whole passages; `get_document` ha
 any agent run in the tenant), so this widens the convenience rather than the audience — but if an
 app wants it closed, the lever is a separate ability, not narrowing this one.
 
+### Chat and agent runs cite documents as cards — `CUSTOM kit.document`
+
+`kit.document` joins the `kit.` CUSTOM namespace (payload `{ card: documentCardSchema }`). The chat
+stream emits one per document after the `TOOL_CALL_RESULT` it came from, and
+`services/agents/agui-projection.ts` maps a `tool.end` row through the **same** mapper, so a
+finished run reads back with the cards a live chat showed. Nothing in a Workflow step knows AG-UI
+exists, and the runtime is untouched.
+
+**Why a CUSTOM event and not the two obvious alternatives**, because this is the decision most
+likely to be re-litigated. Parsing `TOOL_CALL_RESULT` in the UI couples a React component to
+`search-knowledge.ts`'s internal JSON, which that file explicitly reserves the right to retune for
+context budgets — a prompt change would silently break the card. AG-UI's generative-UI path needs
+client-side tools, which `POST /api/agui/run` refuses today, and it makes the card a *render*
+contract rather than a *data* one. `kit.document` is kit-owned, versioned, zod-validated and ignored
+for free by a third-party client. An app adds its own events under its own prefix, never `kit.`.
+
+`documentCardsFromToolResult(toolName, result)` lives in `@rocketflare/shared/ai/embeddings` rather
+than in `services/` because FOUR callers need the same answer: the chat stream (the tool's JSON
+string), the projection (the summarised object on the event row), and the UI rendering a PERSISTED
+message from `messages.toolCalls` — which is why nothing about a card is stored and a reloaded
+thread shows the same strip. It is pure, it `safeParse`s (a retuned tool degrades to "no cards", not
+a crash), and it never queries, so it cannot widen tenant scope. `KNOWLEDGE_TOOLS` in the same file
+is now the one place the three tool names are written; the server's `SEARCH_KNOWLEDGE_TOOL` and its
+two siblings read from it.
+
+Two schema consequences to port: `documentCardSchema`'s `typeLabel`, `contentType` and `sizeBytes`
+are **nullable**, because a card built from a search hit knows the title and the passage count and
+nothing else — guessing "Text" for what might be a PDF is worse than an absent badge. `ChatBubble`
+gains an optional `documents` prop and `ChatTurnResult` / `StreamingTurn` gain `documents`.
+
 ## How to apply
 
 **The document viewer needs no migration.** Take `packages/shared/src/ai/embeddings.ts` and

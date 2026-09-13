@@ -51,7 +51,8 @@ export function DocumentCard({ card, to, dense = false, footer }: DocumentCardPr
             <Link to={to ?? card.href} className="link link-primary font-medium truncate">
               {card.title}
             </Link>
-            <span className="badge badge-ghost badge-sm">{card.typeLabel}</span>
+            {/* A tool-derived card may know no type; a guessed "Text" on a PDF is worse than none. */}
+            {card.typeLabel && <span className="badge badge-ghost badge-sm">{card.typeLabel}</span>}
             {card.status !== 'indexed' && (
               <span className="status-badge" data-status={STATUS_TONE[card.status]}>
                 {STATUS_LABELS[card.status]}
@@ -59,8 +60,9 @@ export function DocumentCard({ card, to, dense = false, footer }: DocumentCardPr
             )}
           </div>
           <p className="text-xs text-muted tabular-nums mt-0.5">
-            {card.passages} {card.passages === 1 ? 'passage' : 'passages'} ·{' '}
-            {formatBytes(card.sizeBytes)}
+            {card.passages} {card.passages === 1 ? 'passage' : 'passages'}
+            {/* A card built from a tool result knows no size; omit it rather than render "0 B". */}
+            {card.sizeBytes !== null && ` · ${formatBytes(card.sizeBytes)}`}
           </p>
           {!dense && card.excerpt && (
             <p className="text-sm text-secondary mt-2 line-clamp-3 break-words">{card.excerpt}</p>

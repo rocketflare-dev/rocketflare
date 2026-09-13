@@ -20,6 +20,7 @@
 import type { AgentRun, AgentRunEvent } from '@rocketflare/shared/ai/agents'
 import { isRunActive } from '@rocketflare/shared/ai/agents'
 import { AguiEventType, KIT_CUSTOM_EVENTS, type KitAguiEvent } from '@rocketflare/shared/ai/agui'
+import { documentCardsFromToolResult } from '@rocketflare/shared/ai/embeddings'
 import { kitCustom } from '../ai/agui'
 
 /** The `data` of a `step` row (validated loosely: an older row must project, not throw). */
@@ -122,6 +123,12 @@ export function projectRunToAgui(run: AgentRun, events: AgentRunEvent[]): KitAgu
           content: JSON.stringify(data),
           role: 'tool',
         })
+        // The same mapper the live chat uses, over the SUMMARISED result stored in the row — so a
+        // run reads back with the cards a chat would have shown, and the runtime still knows
+        // nothing about AG-UI (D18).
+        for (const card of documentCardsFromToolResult(name, data.result)) {
+          out.push(kitCustom(KIT_CUSTOM_EVENTS.document, { card }))
+        }
         break
       }
       case 'error': {

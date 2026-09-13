@@ -299,13 +299,18 @@ export const DOCUMENT_EXCERPT_CHARS = 320
 export const documentCardSchema = z.object({
   id: z.string().uuid(),
   title: z.string(),
-  /** `documentTypeLabel(contentType)` — "PDF", "Markdown", … */
-  typeLabel: z.string(),
-  contentType: z.string(),
+  /**
+   * `documentTypeLabel(contentType)` — "PDF", "Markdown", … **Null when the builder does not know**:
+   * a card derived from a `search_knowledge` result has the title and the passage count and nothing
+   * else, and guessing "Text" for a PDF is worse than saying nothing. Same for `contentType` and
+   * `sizeBytes`; the card omits what it is not told.
+   */
+  typeLabel: z.string().nullable(),
+  contentType: z.string().nullable(),
   status: documentStatusSchema,
   excerpt: z.string().nullable(),
   passages: z.number().int().nonnegative(),
-  sizeBytes: z.number().int().nonnegative(),
+  sizeBytes: z.number().int().nonnegative().nullable(),
   /** The uploaded original, downloadable at `filePath(fileId)`; null for pasted text. */
   fileId: z.string().uuid().nullable(),
   /** `documentPath(id)` — so a consumer never has to know the viewer's route. */
@@ -346,4 +351,165 @@ export function documentCardFromDocument(
     fileId: doc.fileId,
     href: documentPath(doc.id),
   }
+}
+
+// ---- Document cards from a knowledge tool's answer (D18) ---------------------------------------
+
+/**
+ * The three built-in knowledge tools, named ONCE. The server's tool modules and the chat UI's
+ * labels both read these, so a rename cannot leave one of them behind.
+ */
+export const KNOWLEDGE_TOOLS = {
+  search: 'search_knowledge',
+  get: 'get_document',
+  list: 'list_documents',
+} as const
+
+/** Whitespace-collapsed head of a text, ellipsised. Pure; `null` in, `null` out. */
+export function documentExcerpt(
+  text: string | null | undefined,
+  max = DOCUMENT_EXCERPT_CHARS
+): string | null {
+  if (!text) return null
+  const collapsed = text.replace(/\s+/g, ' ').trim()
+  if (!collapsed) return null
+  return collapsed.length <= max ? collapsed : `${collapsed.slice(0, max - 1).trimEnd()}…`
+}
+
+/**
+ * The three tools' answers, read loosely enough to survive a retune. Only the fields a card needs
+ * are named; everything else is ignored on purpose, because `search-knowledge.ts` reserves the
+ * right to change the rest for context budgets.
+ */
+const searchToolResultShape = z.object({
+  documents: z.array(
+    z.object({
+      documentId: z.string().uuid(),
+      title: z.string(),
+      totalPassages: z.number().int().nonnegative().optional(),
+    })
+  ),
+})
+
+const listToolResultShape = z.object({
+  documents: z.array(
+    z.object({
+      documentId: z.string().uuid(),
+      title: z.string(),
+      contentType: z.string().optional(),
+      passages: z.number().int().nonnegative().optional(),
+    })
+  ),
+})
+
+const getToolResultShape = z.object({
+  documentId: z.string().uuid(),
+  title: z.string(),
+  contentType: z.string().optional(),
+  status: documentStatusSchema.optional(),
+  passages: z.number().int().nonnegative().optional(),
+  text: z.string().optional(),
+})
+
+function cardFromTool(input: {
+  id: string
+  title: string
+  contentType?: string
+  status?: DocumentStatus
+  passages?: number
+  excerpt?: string | null
+}): DocumentCard {
+  return {
+    id: input.id,
+    title: input.title,
+    // Unknown rather than guessed: labelling a PDF "Text" is worse than labelling it nothing.
+    typeLabel: input.contentType ? documentTypeLabel(input.contentType) : null,
+    contentType: input.contentType ?? null,
+    // Only indexed documents are searchable or readable, so that is the honest default here.
+    status: input.status ?? 'indexed',
+    excerpt: documentExcerpt(input.excerpt ?? null),
+    passages: input.passages ?? 0,
+    // A tool result carries no size and no original; the card omits both rather than render zero.
+    sizeBytes: null,
+    fileId: null,
+    href: documentPath(input.id),
+  }
+}
+
+/**
+ * The documents a knowledge tool's answer named, as cards — the payload of `CUSTOM kit.document`.
+ * PURE: it reads JSON the tool already returned and NEVER queries, so it cannot widen tenant
+ * scope, and `safeParse` means a retuned tool degrades to "no cards" rather than a crash.
+ *
+ * It lives here because FOUR callers need the same answer: the chat stream (the tool's JSON
+ * string), the agent-run projection (the already-parsed, summarised object stored on the event
+ * row), and the UI rendering a PERSISTED message from `messages.toolCalls`. One function is what
+ * makes a live chat, a reloaded thread and a finished run show the same cards. Duplicate ids
+ * within one result collapse — a document with three matching passages is one card.
+ */
+export function documentCardsFromToolResult(toolName: string, result: unknown): DocumentCard[] {
+  let parsed: unknown = result
+  if (typeof result === 'string') {
+    try {
+      parsed = JSON.parse(result)
+    } catch {
+      return []
+    }
+  }
+  if (parsed === null || parsed === undefined) return []
+  const cards: DocumentCard[] = []
+  if (toolName === KNOWLEDGE_TOOLS.search) {
+    const search = searchToolResultShape.safeParse(parsed)
+    if (!search.success) return []
+    for (const doc of search.data.documents) {
+      cards.push(
+        cardFromTool({ id: doc.documentId, title: doc.title, passages: doc.totalPassages })
+      )
+    }
+  } else if (toolName === KNOWLEDGE_TOOLS.list) {
+    const list = listToolResultShape.safeParse(parsed)
+    if (!list.success) return []
+    for (const doc of list.data.documents) {
+      cards.push(
+        cardFromTool({
+          id: doc.documentId,
+          title: doc.title,
+          contentType: doc.contentType,
+          passages: doc.passages,
+        })
+      )
+    }
+  } else if (toolName === KNOWLEDGE_TOOLS.get) {
+    const doc = getToolResultShape.safeParse(parsed)
+    if (!doc.success) return []
+    cards.push(
+      cardFromTool({
+        id: doc.data.documentId,
+        title: doc.data.title,
+        contentType: doc.data.contentType,
+        status: doc.data.status,
+        passages: doc.data.passages,
+        // The window the model was shown IS the honest excerpt for this card.
+        excerpt: doc.data.text ?? null,
+      })
+    )
+  }
+  const seen = new Set<string>()
+  return cards.filter(c => (seen.has(c.id) ? false : (seen.add(c.id), true)))
+}
+
+/** Every card a persisted assistant message's `toolCalls` imply, in call order. */
+export function documentCardsFromToolCalls(
+  calls: readonly { name: string; result?: string }[] | null | undefined
+): DocumentCard[] {
+  const cards: DocumentCard[] = []
+  const seen = new Set<string>()
+  for (const call of calls ?? []) {
+    for (const card of documentCardsFromToolResult(call.name, call.result)) {
+      if (seen.has(card.id)) continue
+      seen.add(card.id)
+      cards.push(card)
+    }
+  }
+  return cards
 }

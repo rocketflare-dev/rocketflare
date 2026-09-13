@@ -7,9 +7,14 @@
  * over text somebody uploaded.
  */
 import {
+  DOCUMENT_EXCERPT_CHARS,
   DOCUMENT_WINDOW_CHARS,
   documentCardFromDocument,
+  documentCardsFromToolCalls,
+  documentCardsFromToolResult,
+  documentExcerpt,
   documentPath,
+  KNOWLEDGE_TOOLS,
   windowStart,
 } from '@rocketflare/shared/ai/embeddings'
 import { describe, expect, it } from 'vitest'
@@ -103,5 +108,97 @@ describe('documentCardFromDocument', () => {
     expect(documentCardFromDocument(row, 'The quarter went well.').excerpt).toBe(
       'The quarter went well.'
     )
+  })
+})
+
+describe('documentExcerpt', () => {
+  it('collapses whitespace, ellipsises past the cap, and maps empty to null', () => {
+    expect(documentExcerpt('  one\n\n two\tthree  ')).toBe('one two three')
+    expect(documentExcerpt(null)).toBeNull()
+    expect(documentExcerpt('   \n  ')).toBeNull()
+    const long = documentExcerpt('x'.repeat(DOCUMENT_EXCERPT_CHARS * 2)) as string
+    expect(long).toHaveLength(DOCUMENT_EXCERPT_CHARS)
+    expect(long.endsWith('…')).toBe(true)
+  })
+})
+
+describe('documentCardsFromToolResult', () => {
+  const OTHER = '66666666-6666-4666-8666-666666666666'
+
+  it('reads a search answer, and says nothing about a type or a size it was not told', () => {
+    const cards = documentCardsFromToolResult(
+      KNOWLEDGE_TOOLS.search,
+      JSON.stringify({
+        query: 'volcanoes',
+        documents: [
+          { documentId: DOC, title: 'Volcanoes', totalPassages: 3, passages: [{ text: 'a' }] },
+          { documentId: OTHER, title: 'Bananas', totalPassages: 1, passages: [] },
+        ],
+      })
+    )
+    expect(cards.map(c => c.id)).toEqual([DOC, OTHER])
+    expect(cards[0]).toMatchObject({
+      title: 'Volcanoes',
+      passages: 3,
+      // A search hit carries no content type, no size and no original. Guessing "Text" for what
+      // might be a PDF is a worse answer than an absent badge.
+      typeLabel: null,
+      contentType: null,
+      sizeBytes: null,
+      fileId: null,
+      status: 'indexed',
+      href: `/documents/${DOC}`,
+    })
+  })
+
+  it('reads a list answer with its types, and a get_document window as the excerpt', () => {
+    const [listed] = documentCardsFromToolResult(KNOWLEDGE_TOOLS.list, {
+      documents: [
+        { documentId: DOC, title: 'Report', contentType: 'application/pdf', passages: 9 },
+      ],
+    })
+    expect(listed).toMatchObject({ typeLabel: 'PDF', contentType: 'application/pdf', passages: 9 })
+
+    const [read] = documentCardsFromToolResult(KNOWLEDGE_TOOLS.get, {
+      documentId: DOC,
+      title: 'Report',
+      contentType: 'application/pdf',
+      status: 'indexed',
+      passages: 9,
+      text: '  The quarter\n went well.  ',
+    })
+    // The window the model was shown IS the honest excerpt — whitespace-collapsed, nothing added.
+    expect(read).toMatchObject({ excerpt: 'The quarter went well.' })
+  })
+
+  it('degrades to no cards rather than crashing on anything it does not recognise', () => {
+    // `search-knowledge.ts` reserves the right to retune its JSON for context budgets, so the
+    // mapper must survive that — this is the whole reason the card is a kit CUSTOM event and not
+    // the UI parsing `TOOL_CALL_RESULT`.
+    expect(documentCardsFromToolResult(KNOWLEDGE_TOOLS.search, '{ not json')).toEqual([])
+    expect(documentCardsFromToolResult(KNOWLEDGE_TOOLS.search, { documents: 'nope' })).toEqual([])
+    expect(documentCardsFromToolResult(KNOWLEDGE_TOOLS.search, null)).toEqual([])
+    // A dead end is a real answer shape: `{ error, hint }` names no documents, so no cards.
+    expect(
+      documentCardsFromToolResult(KNOWLEDGE_TOOLS.get, { error: 'document_not_found', hint: 'x' })
+    ).toEqual([])
+    expect(documentCardsFromToolResult('some_other_tool', { documents: [] })).toEqual([])
+  })
+
+  it('collapses a document named by several calls in one turn to ONE card', () => {
+    const cards = documentCardsFromToolCalls([
+      {
+        name: KNOWLEDGE_TOOLS.search,
+        result: JSON.stringify({ documents: [{ documentId: DOC, title: 'Volcanoes' }] }),
+      },
+      {
+        name: KNOWLEDGE_TOOLS.get,
+        result: JSON.stringify({ documentId: DOC, title: 'Volcanoes', text: 'Lava.' }),
+      },
+      { name: 'unrelated_tool', result: '{}' },
+    ])
+    expect(cards).toHaveLength(1)
+    expect(cards[0]?.id).toBe(DOC)
+    expect(documentCardsFromToolCalls(null)).toEqual([])
   })
 })

@@ -738,7 +738,7 @@ browser (the amendment and its reason are in `packages/shared/CLAUDE.md`, and
 `tests/config/shared-imports.test.ts` enforces the allow-list). It exports `kitAguiEventSchema`,
 a discriminated union over **exactly the 15 events the kit emits** rather than `@ag-ui/core`'s full
 set, and `KIT_CUSTOM_EVENTS` — the `kit.` CUSTOM namespace where every kit-specific semantic lives
-(`kit.chat.ids`, `kit.usage`, `kit.agent.step`, `kit.agent.retry`, `kit.notice`). A third-party
+(`kit.chat.ids`, `kit.usage`, `kit.agent.step`, `kit.agent.retry`, `kit.notice`, `kit.document`). A third-party
 client ignores those for free; **an app adds its own under its own prefix, never `kit.`**.
 
 Two consequences worth stating plainly. **Frames carry no `event:` line** — spec AG-UI SSE is
@@ -841,7 +841,24 @@ only where `waitUntil` really runs. The loop is capped by `CHAT_MAX_TOOL_TURNS` 
 `AGENT_MAX_TURNS` (30) — that is a budget for a Workflow step with a ten-minute timeout, while a
 chat turn is interactive and shares the Worker's CPU and subrequest budget. `TOOL_CALL_RESULT`
 carries the tool's JSON unmodified, which is the AG-UI-native representation a third-party client
-renders, and `messages.toolCalls` now fills for real (the column already existed). On `workers_ai`,
+renders, and `messages.toolCalls` now fills for real (the column already existed).
+
+**The documents a turn touched come back as `CUSTOM kit.document`, one per document, after the
+`TOOL_CALL_RESULT` they were derived from.** Not by parsing `TOOL_CALL_RESULT` in the UI: that
+result is `search-knowledge.ts`'s internal JSON, which that file explicitly reserves the right to
+retune for context budgets, so a prompt change would silently break a React component. Not AG-UI's
+generative-UI path either, which needs client-side tools (`POST /api/agui/run` refuses them) and
+makes the card a *render* contract rather than a *data* one. A kit CUSTOM event is kit-owned,
+versioned, zod-validated, and ignored for free by a third-party client — and an app adds its own
+under its own prefix, never `kit.`. `documentCardsFromToolResult(toolName, result)` in
+`@rocketflare/shared/ai/embeddings` is the mapper, and it is **pure**: it reads JSON the tool already
+returned and never queries, so it cannot widen tenant scope, and it `safeParse`s, so a retuned tool
+degrades to "no cards" rather than a crash. **Four callers, one function** — the chat stream (the
+tool's JSON string), the agent-run projection (the summarised object on the event row, so a finished
+run reads back with the cards a live chat showed), and the UI rendering a persisted message from
+`messages.toolCalls`. That last one is why nothing about a card is stored: a reloaded thread derives
+the same strip. A card built this way says `typeLabel: null` and `sizeBytes: null` rather than
+guessing — a search hit knows the title and the passage count and nothing else. On `workers_ai`,
 which has no documented tool-call event stream, the adapter runs one non-streamed call per turn and
 replays it, so the reply arrives in bursts — the server says so once as `CUSTOM kit.notice
 { code: 'workers_ai_no_token_streaming' }` rather than letting it read as a stall.
@@ -949,6 +966,7 @@ row ids ARE the AG-UI message and tool-call ids, so two reads of one run match b
 | `error` `willRetry` | `CUSTOM kit.agent.retry` — a retry is not terminal |
 | run `succeeded` | `RUN_FINISHED { result: run.output }` |
 | run `failed` / `cancelled` | `RUN_ERROR`, code `agent_run_failed` / `agent_run_cancelled` |
+| `tool.end` naming knowledge documents | `CUSTOM kit.document` ×0..n, through the SAME pure mapper the chat stream uses |
 | run still active | no terminal event |
 
 Two mappings the table could not settle by itself. A settled **cancelled** run is a coded

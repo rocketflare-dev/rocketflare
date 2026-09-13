@@ -26,7 +26,7 @@
  * `get_document` (`get-document.ts`) reads what search found; `buildAgentTools` in `index.ts` is
  * what the runtime puts on `ctx.tools`.
  */
-import { SEARCH_MAX_LIMIT } from '@rocketflare/shared/ai/embeddings'
+import { KNOWLEDGE_TOOLS, SEARCH_MAX_LIMIT } from '@rocketflare/shared/ai/embeddings'
 import { z } from 'zod'
 import type { AppConfig } from '../../../../config'
 import type { Database } from '../../../../db/client'
@@ -36,7 +36,7 @@ import { searchChunks } from '../../ai/retrieval'
 import type { AiEnv } from '../../ai/types'
 import { type KnowledgeBaseEntry, listKnowledgeDocuments } from './list-documents'
 
-export const SEARCH_KNOWLEDGE_TOOL = 'search_knowledge'
+export const SEARCH_KNOWLEDGE_TOOL = KNOWLEDGE_TOOLS.search
 /**
  * Per passage: a whole ~3 200-char chunk fits, but no more. The budgets below are the compromise
  * between "the model can actually read the material" and "the transcript stays inside a small

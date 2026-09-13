@@ -151,7 +151,12 @@ Components subscribe to query state, never to the socket; `WebSocketStatus` (hea
   before writing a modal, empty state, toast, pagination control or section panel
 - `components/ai/` (`Markdown`, `ChatBubble`) is deliberately NOT exported from the
   `components/shared` barrel that `App.tsx` imports eagerly: `react-markdown` + `remark-gfm` must ship
-  only in the lazy chat chunk, never the main bundle. Import them by path from lazy pages only;
+  only in the lazy chat / agents / documents chunks, never the main bundle. Import them by path from
+  lazy pages ONLY — `pages/chat/**`, `pages/agents/**` and `pages/documents/DocumentViewPage.tsx`:
+  `DocumentsPage` and `SearchPage` live in that folder too and must NOT import it. The converse rule
+  holds for `components/shared`, nothing under which may import a markdown renderer — which is why
+  `DocumentCard` renders its excerpt as plain text (`tests/config/ui-bundle.test.ts` asserts both
+  halves);
   render model output through `Markdown` (`skipHtml`, links `noopener`), never
   `dangerouslySetInnerHTML`; user text renders verbatim (`whitespace-pre-wrap`). `pages/agents/**`
   imports `Markdown` too and is lazy for the same reason (Vite emits one shared `Markdown-*.js`)

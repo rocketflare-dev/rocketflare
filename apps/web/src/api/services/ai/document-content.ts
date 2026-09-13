@@ -18,6 +18,7 @@ import {
   type DocumentContent,
   type DocumentPassage,
   type DocumentStatus,
+  documentExcerpt,
   documentPath,
   documentTypeLabel,
 } from '@rocketflare/shared/ai/embeddings'
@@ -214,15 +215,4 @@ export async function readDocumentCard(
     fileId: row.fileId,
     href: documentPath(row.id),
   }
-}
-
-/** Whitespace-collapsed head of a text, ellipsised. Pure; `null` in, `null` out. */
-export function documentExcerpt(
-  text: string | null | undefined,
-  max = DOCUMENT_EXCERPT_CHARS
-): string | null {
-  if (!text) return null
-  const collapsed = text.replace(/\s+/g, ' ').trim()
-  if (!collapsed) return null
-  return collapsed.length <= max ? collapsed : `${collapsed.slice(0, max - 1).trimEnd()}…`
 }

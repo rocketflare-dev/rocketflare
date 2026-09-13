@@ -19,6 +19,7 @@ import {
 import type { KitNoticeCode } from '@rocketflare/shared/ai/agui'
 import type { Conversation } from '@rocketflare/shared/ai/chat'
 import { shortModelName } from '@rocketflare/shared/ai/config'
+import { documentCardsFromToolCalls } from '@rocketflare/shared/ai/embeddings'
 import { type FormEvent, type KeyboardEvent, useEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { ChatBubble } from '@/ui/components/ai/ChatBubble'
@@ -318,6 +319,8 @@ function Transcript({
               content={message.content}
               time={message.createdAt}
               usage={message.usage}
+              // Derived, never stored: the same mapper the stream used, over the row's tool calls.
+              documents={documentCardsFromToolCalls(message.toolCalls)}
             />
           ))
       )}
@@ -330,6 +333,7 @@ function Transcript({
           model={turn.model}
           toolSteps={turn.toolSteps}
           notice={turn.notice ? NOTICE_TEXT[turn.notice] : undefined}
+          documents={turn.documents}
           error={turn.error?.message}
         />
       )}

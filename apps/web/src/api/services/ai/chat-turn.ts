@@ -41,6 +41,7 @@ import {
   CHAT_MAX_TOOL_TURNS,
   CONVERSATION_TITLE_LENGTH,
 } from '@rocketflare/shared/ai/chat'
+import { documentCardsFromToolResult } from '@rocketflare/shared/ai/embeddings'
 import { and, desc, eq } from 'drizzle-orm'
 import { stream } from 'hono/streaming'
 import type { Database } from '../../../db/client'
@@ -209,6 +210,13 @@ export function streamChatTurn(c: AppContext, params: ChatTurnParams): Response 
                 content: call.result,
                 role: 'tool',
               })
+              // …then the documents it named, as cards (D18). A kit CUSTOM event rather than
+              // "let the UI parse the result": that JSON is the knowledge tool's internal shape,
+              // retuned whenever its context budget changes, and a React component must not be
+              // coupled to it. The mapper is pure and never queries, so it cannot widen scope.
+              for (const card of documentCardsFromToolResult(call.name, call.result)) {
+                await emit(kitCustom(KIT_CUSTOM_EVENTS.document, { card }))
+              }
             },
           })
         }

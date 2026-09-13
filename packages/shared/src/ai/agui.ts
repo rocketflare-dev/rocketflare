@@ -40,6 +40,7 @@ import {
 import { z } from 'zod'
 import { MAX_MESSAGE_LENGTH, tokenUsageSchema } from './chat'
 import { aiProviderSchema } from './config'
+import { documentCardSchema } from './embeddings'
 
 export { EventType as AguiEventType }
 
@@ -106,6 +107,16 @@ export const KIT_CUSTOM_EVENTS = {
   agentRetry: 'kit.agent.retry',
   /** Something the reader should know about this run that is not an error (see `KIT_NOTICE_CODES`). */
   notice: 'kit.notice',
+  /**
+   * A knowledge document a tool call in this run touched, as a card (D18). Emitted after the
+   * `TOOL_CALL_RESULT` it was derived from, one event per document.
+   *
+   * It is a kit CUSTOM event rather than "let the UI parse `TOOL_CALL_RESULT`" on purpose: that
+   * result is `search-knowledge.ts`'s internal JSON, which that file explicitly reserves the right
+   * to retune for context budgets — a prompt change would silently break a React component. This
+   * is kit-owned, versioned, zod-validated, and ignored for free by a third-party client.
+   */
+  document: 'kit.document',
 } as const
 
 export type KitCustomEventName = (typeof KIT_CUSTOM_EVENTS)[keyof typeof KIT_CUSTOM_EVENTS]
@@ -152,6 +163,9 @@ export const kitAgentRetrySchema = z.object({
   attempt: z.number().int().positive().optional(),
 })
 
+/** One document a tool call surfaced. The card is built from the tool's JSON, never a query. */
+export const kitDocumentSchema = z.object({ card: documentCardSchema })
+
 export const kitNoticeSchema = z.object({
   code: kitNoticeCodeSchema,
   message: z.string().optional(),
@@ -164,6 +178,7 @@ export const kitCustomPayloadSchema = {
   [KIT_CUSTOM_EVENTS.agentStep]: kitAgentStepSchema,
   [KIT_CUSTOM_EVENTS.agentRetry]: kitAgentRetrySchema,
   [KIT_CUSTOM_EVENTS.notice]: kitNoticeSchema,
+  [KIT_CUSTOM_EVENTS.document]: kitDocumentSchema,
 } as const
 
 /**

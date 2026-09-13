@@ -131,6 +131,8 @@ describe('chat with the knowledge tools', () => {
       'TOOL_CALL_ARGS',
       'TOOL_CALL_END',
       'TOOL_CALL_RESULT',
+      // `CUSTOM kit.document` follows the result it was derived from (D18).
+      'CUSTOM',
       'TEXT_MESSAGE_START',
       'TEXT_MESSAGE_CONTENT',
       'TEXT_MESSAGE_CONTENT',
@@ -156,6 +158,23 @@ describe('chat with the knowledge tools', () => {
     expect(payload.error).toBeUndefined()
     expect(payload.documents?.[0]).toMatchObject({ title: 'Volcanoes' })
     expect(payload.documents[0].passages[0].text).toContain('volcano')
+
+    // …and the same document comes back as a kit CUSTOM card, so the UI never has to parse the
+    // tool's internal JSON — which `search-knowledge.ts` retunes whenever its budget changes.
+    const card = customEvent(frames, KIT_CUSTOM_EVENTS.document)
+    expect(card).toMatchObject({
+      card: {
+        id: payload.documents[0].documentId,
+        title: 'Volcanoes',
+        // A search result knows the title and the passage count and NOTHING else — it does not
+        // guess a type or a size, because a wrong "Text" badge on a PDF is worse than no badge.
+        typeLabel: null,
+        contentType: null,
+        sizeBytes: null,
+        status: 'indexed',
+        href: `/documents/${payload.documents[0].documentId}`,
+      },
+    })
 
     // The tool definitions and the chat turn cap reached the model.
     expect(client.calls[0]?.tools?.map(t => t.name)).toEqual([

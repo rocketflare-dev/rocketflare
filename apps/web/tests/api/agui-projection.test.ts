@@ -12,7 +12,7 @@ import {
 import { describe, expect, it } from 'vitest'
 import { projectRunToAgui } from '@/api/services/agents/agui-projection'
 import { agentRunEvents, agentRuns } from '@/db/schema'
-import { aguiTypes, customEvents } from '../helpers/ai'
+import { aguiTypes, customEvent, customEvents } from '../helpers/ai'
 import {
   createTestSession,
   createTestTenantWithUser,
@@ -126,6 +126,46 @@ describe('projectRunToAgui', () => {
       isError: false,
       result: { hits: 2 },
     })
+  })
+
+  it('projects a knowledge tool result into the same document cards a live chat shows', () => {
+    // The runtime knows nothing about AG-UI: the row holds the SUMMARISED tool result, and the
+    // projection runs the same pure mapper `chat-turn.ts` runs over the raw one. One function, so
+    // a finished run and a live chat cite the same documents.
+    const documentId = '55555555-5555-4555-8555-555555555555'
+    const start = event('tool.start', { name: 'search_knowledge', input: { query: 'x' } })
+    const out = projectRunToAgui(run(), [
+      start,
+      event('tool.end', {
+        name: 'search_knowledge',
+        isError: false,
+        result: {
+          query: 'x',
+          documents: [{ documentId, title: 'Volcanoes', totalPassages: 3, passages: [] }],
+        },
+      }),
+    ])
+    expect(aguiTypes(out)).toEqual([
+      'RUN_STARTED',
+      'TOOL_CALL_START',
+      'TOOL_CALL_ARGS',
+      'TOOL_CALL_END',
+      'TOOL_CALL_RESULT',
+      'CUSTOM',
+      'RUN_FINISHED',
+    ])
+    expect(customEvent(out, KIT_CUSTOM_EVENTS.document)).toMatchObject({
+      card: { id: documentId, title: 'Volcanoes', passages: 3, href: `/documents/${documentId}` },
+    })
+  })
+
+  it('emits no cards when a tool answer does not carry documents', () => {
+    // A retuned tool must degrade to "no cards", never to a crash — the mapper `safeParse`s.
+    const out = projectRunToAgui(run(), [
+      event('tool.start', { name: 'search_knowledge', input: {} }),
+      event('tool.end', { name: 'search_knowledge', result: { query: 'x', somethingElse: true } }),
+    ])
+    expect(customEvent(out, KIT_CUSTOM_EVENTS.document)).toBeUndefined()
   })
 
   it('reports a retry as a non-terminal CUSTOM, not an error', () => {

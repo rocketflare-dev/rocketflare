@@ -3,7 +3,9 @@
  * AG-UI encoder writes them — `data: <json>\n\n`, **no `event:` line** — and enqueued through a
  * `ReadableStream`, optionally split at arbitrary byte offsets to exercise reassembly.
  */
+
 import { AguiEventType, KIT_CUSTOM_EVENTS, type KitAguiEvent } from '@rocketflare/shared/ai/agui'
+import { documentCardsFromToolResult } from '@rocketflare/shared/ai/embeddings'
 
 export function encodeSseFrame(event: KitAguiEvent): string {
   return `data: ${JSON.stringify(event)}\n\n`
@@ -65,6 +67,15 @@ export function aguiRun(options: AguiRunOptions): KitAguiEvent[] {
         role: 'tool',
       }
     )
+    // Mirror the server: `CUSTOM kit.document` follows the result it was derived from, through the
+    // same pure mapper, so a UI test asserting cards is asserting the real framing (D18).
+    for (const card of documentCardsFromToolResult(tool.name, tool.result ?? '{}')) {
+      events.push({
+        type: AguiEventType.CUSTOM,
+        name: KIT_CUSTOM_EVENTS.document,
+        value: { card },
+      })
+    }
   }
   const deltas = options.text ?? []
   if (deltas.length) {

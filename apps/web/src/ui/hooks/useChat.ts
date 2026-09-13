@@ -24,6 +24,7 @@ import {
   type Message,
   type TokenUsage,
 } from '@rocketflare/shared/ai/chat'
+import type { DocumentCard } from '@rocketflare/shared/ai/embeddings'
 import { paginatedResponse } from '@rocketflare/shared/pagination'
 import {
   keepPreviousData,
@@ -121,6 +122,8 @@ export interface StreamingTurn {
   toolSteps: ToolStep[]
   /** A `CUSTOM kit.notice` the reader should see — rendered as a quiet line, not an error. */
   notice?: KitNoticeCode
+  /** Documents the turn's tool calls surfaced (`CUSTOM kit.document`), rendered as a card strip. */
+  documents: DocumentCard[]
   error?: { message: string; code: string }
 }
 
@@ -142,7 +145,7 @@ export function toolLabel(name: string): string {
   return TOOL_LABELS[name] ?? name
 }
 
-const IDLE_TURN: StreamingTurn = { status: 'idle', text: '', toolSteps: [] }
+const IDLE_TURN: StreamingTurn = { status: 'idle', text: '', toolSteps: [], documents: [] }
 
 const OPTIMISTIC_PREFIX = 'optimistic-'
 
@@ -219,6 +222,15 @@ export function useSendMessage(conversationId: string | undefined) {
                 if (usage) setTurn(t => ({ ...t, usage: usage.usage }))
                 const notice = parseKitCustom(KIT_CUSTOM_EVENTS.notice, event)
                 if (notice) setTurn(t => ({ ...t, notice: notice.code }))
+                const document = parseKitCustom(KIT_CUSTOM_EVENTS.document, event)
+                if (document) {
+                  // One card per document, however many tool calls named it this turn.
+                  setTurn(t =>
+                    t.documents.some(d => d.id === document.card.id)
+                      ? t
+                      : { ...t, documents: [...t.documents, document.card] }
+                  )
+                }
                 break
               }
               case AguiEventType.TEXT_MESSAGE_CONTENT:

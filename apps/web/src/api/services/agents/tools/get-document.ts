@@ -11,7 +11,7 @@
  * `tenantId`; another tenant's id, an unknown id or a not-yet-converted upload each get a plain
  * answer rather than an error.
  */
-import type { DocumentContent } from '@rocketflare/shared/ai/embeddings'
+import { type DocumentContent, KNOWLEDGE_TOOLS } from '@rocketflare/shared/ai/embeddings'
 import { z } from 'zod'
 import { readDocumentWindow } from '../../ai/document-content'
 import type { Tool } from '../../ai/kit'
@@ -21,7 +21,7 @@ import type { AgentToolContext } from './search-knowledge'
 /** Documents offered back when the model names one that does not exist. */
 const SUGGEST_DOCUMENTS = 20
 
-export const GET_DOCUMENT_TOOL = 'get_document'
+export const GET_DOCUMENT_TOOL = KNOWLEDGE_TOOLS.get
 /** Characters per call when the model does not say (~5 000 tokens at 4 chars per token). */
 export const GET_DOCUMENT_DEFAULT_CHARS = 20_000
 /** The ceiling for an AGENT RUN, where reading a document IS the job (~12 500 tokens). */

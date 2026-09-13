@@ -21,6 +21,7 @@ import {
   parseKitCustom,
 } from '@rocketflare/shared/ai/agui'
 import type { TokenUsage } from '@rocketflare/shared/ai/chat'
+import type { DocumentCard } from '@rocketflare/shared/ai/embeddings'
 import type { ApiErrorBody } from '@rocketflare/shared/errors'
 import { ApiError, notifyUnauthorized, parseErrorBody } from './api-client'
 import { isAbortError, readSse } from './sse'
@@ -62,6 +63,11 @@ export interface ChatTurnResult {
   notice?: KitNoticeCode
   /** The `RUN_ERROR` event, if the stream ended on one. */
   error?: { message: string; code: string }
+  /**
+   * Documents the turn's tool calls surfaced, from `CUSTOM kit.document` (D18), de-duplicated and
+   * in arrival order. Empty for a turn that called no knowledge tool.
+   */
+  documents: DocumentCard[]
   /** `RUN_FINISHED` arrived — the assistant message is persisted. */
   completed: boolean
   /**
@@ -89,7 +95,7 @@ export async function runChatTurn({
   onEvent,
   signal,
 }: RunChatTurnOptions): Promise<ChatTurnResult> {
-  const result: ChatTurnResult = { text: '', completed: false, aborted: false }
+  const result: ChatTurnResult = { text: '', documents: [], completed: false, aborted: false }
 
   let response: Response
   try {
@@ -144,6 +150,11 @@ export async function runChatTurn({
           if (usage) result.usage = usage.usage
           const notice = parseKitCustom(KIT_CUSTOM_EVENTS.notice, event)
           if (notice) result.notice = notice.code
+          const document = parseKitCustom(KIT_CUSTOM_EVENTS.document, event)
+          // The same document can be named by several tool calls in one turn — one card each.
+          if (document && !result.documents.some(d => d.id === document.card.id)) {
+            result.documents.push(document.card)
+          }
           break
         }
         case AguiEventType.RUN_FINISHED: {

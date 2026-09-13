@@ -8,13 +8,14 @@
  * Only indexed documents are listed: a `pending` upload is still converting and its text cannot be
  * searched or read yet, so offering it would only produce a failed follow-up call.
  */
+import { KNOWLEDGE_TOOLS } from '@rocketflare/shared/ai/embeddings'
 import { and, desc, eq } from 'drizzle-orm'
 import { z } from 'zod'
 import { documents } from '../../../../db/schema'
 import type { Tool } from '../../ai/kit'
 import type { AgentToolContext } from './search-knowledge'
 
-export const LIST_DOCUMENTS_TOOL = 'list_documents'
+export const LIST_DOCUMENTS_TOOL = KNOWLEDGE_TOOLS.list
 export const LIST_DOCUMENTS_DEFAULT_LIMIT = 25
 export const LIST_DOCUMENTS_MAX_LIMIT = 100
 

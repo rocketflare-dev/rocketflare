@@ -23,7 +23,10 @@ response with the same schema. `pnpm test:config` covers the pure parts.
 `jobs.ts` — `JOB_TYPES`, per-type payload schemas, `jobInputSchema` (what `enqueueJob` takes),
 `jobEnvelopeSchema` (`+ id, enqueuedAt, attempt?`, what the consumer parses), `JobOf<T>` (D7) ·
 `files.ts` — `FILE_SCOPES`/`fileScopeSchema`, `MAX_UPLOAD_BYTES`, `AVATAR_MIME_TYPES`/`isAvatarMimeType`,
-`filePath(id)`, `fileSchema`/`uploadResponseSchema`, `uploadQuerySchema` (D23) ·
+`INLINE_MIME_TYPES`/`isInlineMimeType` (served `Content-Disposition: inline`) and
+`EMBEDDABLE_MIME_TYPES`/`isEmbeddableMimeType` (may ALSO be framed) — two lists on purpose, because
+inline and framable are different properties, `filePath(id)`, `fileSchema`/`uploadResponseSchema`,
+`uploadQuerySchema` (D23) ·
 `jobs.ts` also carries `document.index` (`{ tenantId, documentId }` — re-index a `documents` row, D18) ·
 **`ai/`** (Phase 3, D16/D17/D18; barrel `ai/index.ts`, deep imports `@rocketflare/shared/ai/<file>` equally valid):
 `config.ts` — `AI_PROVIDERS`/`aiProviderSchema` (append LAST: the DB column is a text enum), `AI_SCOPES`
@@ -44,14 +47,22 @@ real budget is the `CHAT_HISTORY_MAX_CHARS` var) — the DB-shaped half; the wir
 `agui.ts` — the AG-UI wire protocol (`@ag-ui/core` schemas, the ONE file allowed to import it):
 `kitAguiEventSchema` (a discriminated union over exactly the events the kit emits, never the full
 `@ag-ui/core` set), `KIT_AGUI_EVENT_TYPES`, `KIT_CUSTOM_EVENTS` + `kitCustomPayloadSchema` +
-`parseKitCustom` (the `kit.` CUSTOM namespace where every kit-specific semantic lives),
+`parseKitCustom` (the `kit.` CUSTOM namespace where every kit-specific semantic lives, including
+`kit.document` — a `documentCardSchema` for a document a knowledge tool surfaced),
 `chatRunResultSchema` (`RUN_FINISHED.result` for a chat turn), `kitRunAgentInputSchema` +
 `readRunAgentTail` (`POST /api/agui/run`: the server is the transcript, the client supplies the tail) ·
 `agent-models.ts` — `agentModelAssignmentSchema`, `upsertAgentModelRequestSchema` (at least one of
 `aiConfigId`/`model`), `agentModelEntrySchema` (`effective.source: assignment | tenant | platform | none`) ·
 `embeddings.ts` — `documentSchema` (never the text or vectors), `INGEST_TEXT_MAX_CHARS`, `ingestTextRequestSchema`,
 `documentListQuerySchema`, `searchRequestSchema` (`SEARCH_MAX_LIMIT`), `searchHitSchema` (RRF `score`, `rank`,
-`denseRank`/`lexicalRank`), `searchResponseSchema` · `usage.ts` — `aiUsageSchema`, `aiUsageSummarySchema`,
+`denseRank`/`lexicalRank`), `searchResponseSchema`, and the read side (D18): `documentContentSchema` + `documentContentQuerySchema`
+(`DOCUMENT_WINDOW_CHARS` 20 000, `DOCUMENT_WINDOW_MAX_CHARS` 50 000) + `windowStart()` (snap an offset
+down to a window boundary so a deep link and the reader's paging share one cache entry),
+`documentPassageSchema`, `documentCardSchema` + `DOCUMENT_EXCERPT_CHARS` + `documentPath()` (the ONE
+place the viewer route is written) + `documentCardFromDocument()`, and the pure
+`documentCardsFromToolResult()` / `documentCardsFromToolCalls()` + `KNOWLEDGE_TOOLS` +
+`documentExcerpt()` that the chat stream, the agent-run projection and the UI's persisted-message
+rendering all share · `usage.ts` — `aiUsageSchema`, `aiUsageSummarySchema`,
 `aiUsageSummaryQuerySchema` (`costMicrocents` nullable, `unpricedCalls`) · `pricing.ts` — `MODEL_PRICES`
 (USD per million tokens, per provider, longest-prefix model match), `PRICES_UPDATED`, `priceFor`,
 `estimateCostMicrocents`; the ONE place to correct rates, unknown model → null, never a guess. `errors.ts` codes added: `ai_not_configured`,

@@ -16,7 +16,6 @@ import {
 import { paginatedResponse } from '@rocketflare/shared/pagination'
 import { eq } from 'drizzle-orm'
 import { describe, expect, it } from 'vitest'
-import { documentExcerpt } from '@/api/services/ai/document-content'
 import { chunks, documents } from '@/db/schema'
 import {
   createTestSession,
@@ -273,17 +272,6 @@ describe('GET /api/ai/documents/:id/card', () => {
       await json(await request(`/api/ai/documents/${doc.id}/card`, { headers: a.cookie }))
     )
     expect(card).toMatchObject({ status: 'pending', excerpt: null })
-  })
-})
-
-describe('documentExcerpt', () => {
-  it('collapses whitespace, ellipsises past the cap, and maps empty to null', () => {
-    expect(documentExcerpt('  one\n\n two\tthree  ')).toBe('one two three')
-    expect(documentExcerpt(null)).toBeNull()
-    expect(documentExcerpt('   \n  ')).toBeNull()
-    const long = documentExcerpt('x'.repeat(50), 10) as string
-    expect(long).toHaveLength(10)
-    expect(long.endsWith('…')).toBe(true)
   })
 })
 

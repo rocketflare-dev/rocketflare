@@ -142,6 +142,54 @@ describe('Chat page', () => {
     expect(screen.queryByText('Done')).not.toBeInTheDocument()
   })
 
+  it('shows a document card for what the tools found, streaming and after a reload', async () => {
+    // Cards come from `CUSTOM kit.document`, NOT from parsing `TOOL_CALL_RESULT` — that JSON is
+    // the knowledge tool's internal shape and a React component must not be coupled to it.
+    const DOC = '55555555-5555-4555-8555-555555555555'
+    const searchResult = JSON.stringify({
+      query: 'schedule',
+      documents: [{ documentId: DOC, title: 'Maintenance handbook', totalPassages: 6 }],
+    })
+    const hanging = hangingSseResponse(
+      run({
+        unterminated: true,
+        text: ['Every quarter.'],
+        tools: [{ id: 'c1', name: 'search_knowledge', result: searchResult }],
+      })
+    )
+    mount({
+      [`/api/chat/conversations/${CONV}`]: { ...conversation, messages: [] },
+      [`POST /api/chat/conversations/${CONV}/messages`]: () => hanging.response,
+    })
+    await typeAndSend('What is the maintenance schedule?')
+    const link = await screen.findByRole('link', { name: 'Maintenance handbook' })
+    expect(link).toHaveAttribute('href', `/documents/${DOC}`)
+    expect(screen.getByText(/6 passages/)).toBeInTheDocument()
+
+    // A reloaded thread derives the same strip from the persisted row's `toolCalls`, through the
+    // same pure mapper — nothing about the card is stored.
+    vi.unstubAllGlobals()
+    mount({
+      [`/api/chat/conversations/${CONV}`]: {
+        ...conversation,
+        messages: [
+          {
+            id: ASSISTANT_ID,
+            conversationId: CONV,
+            role: 'assistant',
+            content: 'Every quarter.',
+            toolCalls: [{ id: 'c1', name: 'search_knowledge', input: {}, result: searchResult }],
+            createdAt: now,
+          },
+        ],
+      },
+    })
+    expect(await screen.findByRole('link', { name: 'Maintenance handbook' })).toHaveAttribute(
+      'href',
+      `/documents/${DOC}`
+    )
+  })
+
   it('renders a kit notice as a quiet line, not an error', async () => {
     mount({
       [`/api/chat/conversations/${CONV}`]: { ...conversation, messages: [] },
