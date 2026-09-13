@@ -6,8 +6,11 @@
  * is global, the object is not). Bytes stream through the Worker with `Cache-Control: private`.
  *
  * `avatars` scope: image MIME allowlist, and the caller's `users.avatarUrl` is set to the new URL.
- * Anything not on the image allowlist is served as an attachment so a stored `text/html` can
- * never execute on this origin. `documents` scope rows are created by `/api/ai/documents/upload`
+ * Images and PDFs (`INLINE_MIME_TYPES`) are served `inline`; anything else is an attachment, so a
+ * stored `text/html` or SVG can never execute on this origin. A PDF additionally opts into being
+ * FRAMED (`c.set('embeddable', true)` → `SAMEORIGIN` + `frame-ancestors 'self'`, see
+ * `middleware/security-headers.ts`) so the document viewer can embed it — a separate list from the
+ * inline one on purpose, because inline and framable are not the same property. `documents` scope rows are created by `/api/ai/documents/upload`
  * and only deleted with their document (409 `owned_by_document` here).
  */
 import {
@@ -15,6 +18,8 @@ import {
   type FileScope,
   filePath,
   isAvatarMimeType,
+  isEmbeddableMimeType,
+  isInlineMimeType,
   MAX_UPLOAD_BYTES,
   type StoredFile,
   uploadQuerySchema,
@@ -160,6 +165,10 @@ filesRouter.get('/:id', async c => {
     throw new NotFoundError('File not found')
   }
 
+  // BEFORE the 304: a revalidation from inside the viewer's `<object>` must carry the relaxed
+  // framing headers too, or the embed dies on its second view with nothing in the log.
+  if (isEmbeddableMimeType(row.contentType)) c.set('embeddable', true)
+
   const headers: Record<string, string> = {
     'Cache-Control': 'private, max-age=3600',
     ETag: object.etag,
@@ -170,8 +179,10 @@ filesRouter.get('/:id', async c => {
   }
   headers['Content-Type'] = row.contentType
   headers['Content-Length'] = String(object.size)
-  // Images render inline; anything else downloads, so stored HTML/SVG never executes here.
-  headers['Content-Disposition'] = isAvatarMimeType(row.contentType)
+  // Images and PDFs render inline; everything else downloads, so a stored `text/html` or SVG can
+  // never execute script on this origin. A PDF is safe because the browser hands it to its own
+  // viewer, which does not run the file's script in this document's context.
+  headers['Content-Disposition'] = isInlineMimeType(row.contentType)
     ? 'inline'
     : `attachment; filename="${row.filename.replace(/"/g, '')}"`
   return c.body(object.body, 200, headers)

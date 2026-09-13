@@ -1,7 +1,10 @@
 /**
  * `/api/files` (D23) end to end over the in-memory R2 bucket: avatar upload sets `users.avatarUrl`
  * and stores the object; MIME allowlist (415) and size cap (413); download streams the bytes with
- * Content-Type / Cache-Control / ETag; tenant isolation (404); delete = owner or admin+.
+ * Content-Type / Cache-Control / ETag; tenant isolation (404); delete = owner or admin+. Plus the
+ * header matrix the document viewer depends on: a PDF is `inline` AND framable (`SAMEORIGIN` +
+ * `frame-ancestors 'self'`, on the 304 as well), an avatar is inline but never framable, and
+ * nothing else on this origin is either.
  */
 import { uploadResponseSchema } from '@rocketflare/shared/files'
 import { and, eq } from 'drizzle-orm'
@@ -199,6 +202,71 @@ describe('GET /api/files/:id', () => {
     expect(res.headers.get('content-type')).toBe('text/html')
     expect(res.headers.get('content-disposition')).toBe('attachment; filename="evil.html"')
     expect(res.headers.get('x-content-type-options')).toBe('nosniff')
+  })
+
+  it('framing: a PDF is inline AND framable (304 too); an image is inline but never framable', async () => {
+    // Two separate properties. `Content-Disposition: inline` decides whether the browser renders
+    // the bytes instead of saving them; `X-Frame-Options`/`frame-ancestors` decide whether a page
+    // may put them in an `<object>`. The viewer needs BOTH for a PDF, and `DENY` forbids framing
+    // by our own origin too — so fixing the disposition alone leaves an empty embed.
+    const { cookie } = await tenantWithOwner()
+    const env = createTestEnv()
+    const up = await upload(
+      env,
+      cookie,
+      { bytes: '%PDF-1.4 fake', name: 'report.pdf', type: 'application/pdf' },
+      'uploads'
+    )
+    const { id } = uploadResponseSchema.parse(await json(up))
+
+    const res = await request(`/api/files/${id}`, { headers: cookie }, { env })
+    expect(res.status).toBe(200)
+    expect(res.headers.get('content-disposition')).toBe('inline')
+    expect(res.headers.get('x-frame-options')).toBe('SAMEORIGIN')
+    expect(res.headers.get('content-security-policy')).toContain("frame-ancestors 'self'")
+    expect(res.headers.get('x-content-type-options')).toBe('nosniff')
+
+    // The revalidation the `<object>` sends on a second view: relax framing there as well, or the
+    // embed works once and then goes blank.
+    const etag = res.headers.get('etag') as string
+    const revalidated = await request(
+      `/api/files/${id}`,
+      { headers: { ...cookie, 'If-None-Match': etag } },
+      { env }
+    )
+    expect(revalidated.status).toBe(304)
+    expect(revalidated.headers.get('x-frame-options')).toBe('SAMEORIGIN')
+
+    // An avatar renders in place but is NOT framable: inline and embeddable are separate lists so
+    // that an app adding an inline type does not silently widen the framing hole.
+    const avatar = uploadResponseSchema.parse(await json(await upload(env, cookie, png())))
+    const img = await request(`/api/files/${avatar.id}`, { headers: cookie }, { env })
+    expect(img.headers.get('content-disposition')).toBe('inline')
+    expect(img.headers.get('x-frame-options')).toBe('DENY')
+    expect(img.headers.get('content-security-policy')).toContain("frame-ancestors 'none'")
+  })
+
+  it('the embeddable flag never leaks: an uploaded HTML file and a JSON route stay DENY', async () => {
+    const { cookie } = await tenantWithOwner()
+    const env = createTestEnv()
+    const { id } = uploadResponseSchema.parse(
+      await json(
+        await upload(
+          env,
+          cookie,
+          { bytes: '<b>hi</b>', name: 'page.html', type: 'text/html' },
+          'uploads'
+        )
+      )
+    )
+    const html = await request(`/api/files/${id}`, { headers: cookie }, { env })
+    expect(html.headers.get('content-disposition')).toBe('attachment; filename="page.html"')
+    expect(html.headers.get('x-frame-options')).toBe('DENY')
+
+    // The flag is per request (a context variable), so the next response is unaffected.
+    const shell = await request('/api/me', { headers: cookie }, { env })
+    expect(shell.headers.get('x-frame-options')).toBe('DENY')
+    expect(shell.headers.get('content-security-policy')).toContain("frame-ancestors 'none'")
   })
 
   it('is tenant-scoped: another tenant gets 404; a bad id is 404; no session is 401', async () => {

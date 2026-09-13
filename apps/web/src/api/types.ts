@@ -69,6 +69,14 @@ export interface AppVariables {
   tracer: Tracer
   /** Set by `authMiddleware`; absent on public routes. */
   auth?: AuthContext
+  /**
+   * Opt-in from ONE route: this response may be framed by a same-origin page
+   * (`middleware/security-headers.ts` then relaxes `X-Frame-Options`/`frame-ancestors` for it
+   * alone). Only a route that has PROVED the content type may set it — `routes/files.ts` checks
+   * `isEmbeddableMimeType(row.contentType)` — because framing is the app shell's one clickjacking
+   * defence and a path allowlist would relax it for the `text/html` we deliberately download.
+   */
+  embeddable?: boolean
 }
 
 export type AppEnv = { Bindings: AppBindings; Variables: AppVariables }
