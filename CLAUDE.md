@@ -91,7 +91,8 @@ mints a tenant API key `cli:<host>` → `?key=&tenant_id=&tenant_name=`; stored 
 `[vars]` in both tomls, read via `loadConfig(env)`: `APP_ENV` (`development|staging|production`) ·
 `TENANCY_MODE` (`multi|single` — same schema; single auto-joins the one tenant) ·
 `SIGNUP_MODE` (`open|invite_only|approval`; `BOOTSTRAP_ADMIN_EMAILS` seeds the first admin) ·
-`TENANT_SCOPE_MODE` (`off|enforce`, @docs/RLS.md) · `AGENT_MAX_OUTPUT_TOKENS` · `AGENT_MAX_TURNS`.
+`TENANT_SCOPE_MODE` (`off|enforce`, @docs/RLS.md) · `AGENT_MAX_OUTPUT_TOKENS` · `AGENT_MAX_TURNS` ·
+`CHAT_KNOWLEDGE_TOOLS` (`true|false` — chat may call the knowledge tools).
 
 Rules (auto-loaded by path): @.claude/rules/api.md · database.md · ui.md · cli.md · testing.md ·
 code-quality.md · cloudflare.md. Runbooks: @docs/DEPLOY.md · @docs/RLS.md

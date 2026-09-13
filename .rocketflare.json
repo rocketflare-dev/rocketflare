@@ -114,6 +114,7 @@
         "apps/web/src/api/routes/chat.ts",
         "apps/web/src/api/services/ai/chat-turn.ts",
         "apps/web/tests/api/chat.test.ts",
+        "apps/web/tests/api/chat-tools.test.ts",
         "apps/web/tests/ui/chat-page.test.tsx"
       ],
       "registries": ["apps/web/src/api/index.ts", "apps/web/src/ui/App.tsx"]

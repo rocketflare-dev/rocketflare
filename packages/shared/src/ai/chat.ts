@@ -78,3 +78,10 @@ export type ConversationListQuery = z.infer<typeof conversationListQuerySchema>
 
 /** Auto-title = first user message, trimmed to this many characters. */
 export const CONVERSATION_TITLE_LENGTH = 60
+
+/**
+ * Model turns a chat reply may spend calling tools. Deliberately far below `AGENT_MAX_TURNS` (30):
+ * that is a budget for a Workflow step with a ten-minute timeout, while a chat turn is interactive
+ * and shares the Worker's CPU and subrequest budget with the request that opened it.
+ */
+export const CHAT_MAX_TOOL_TURNS = 6

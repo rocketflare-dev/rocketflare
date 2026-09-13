@@ -188,7 +188,12 @@ describe('POST /api/chat/conversations/:id/messages (AG-UI stream)', () => {
     // The system prompt came from the `chat` registry entry with variables interpolated.
     const params: ChatParams | undefined = client.calls[0]
     expect(String(params?.system)).toContain(`helping ${a.user.name} at ${a.tenant.name}`)
-    expect(params?.tools).toBeUndefined()
+    // Tools are on by default now (`CHAT_KNOWLEDGE_TOOLS`); `chat-tools.test.ts` covers them.
+    expect(params?.tools?.map(t => t.name)).toEqual([
+      'search_knowledge',
+      'get_document',
+      'list_documents',
+    ])
     expect(params?.maxTokens).toBe(2048)
 
     // Persisted: user + assistant rows, usage on the assistant row, ai_usage ledger, title, lastMessageAt.

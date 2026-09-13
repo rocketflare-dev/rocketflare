@@ -35,14 +35,16 @@ import {
   KIT_CUSTOM_EVENTS,
   type KitAguiEvent,
 } from '@rocketflare/shared/ai/agui'
-import { CONVERSATION_TITLE_LENGTH } from '@rocketflare/shared/ai/chat'
+import { CHAT_MAX_TOOL_TURNS, CONVERSATION_TITLE_LENGTH } from '@rocketflare/shared/ai/chat'
 import { and, desc, eq } from 'drizzle-orm'
 import { stream } from 'hono/streaming'
+import type { Database } from '../../../db/client'
 import type { ConversationRow, MessageRow } from '../../../db/schema'
 import { conversations, messages } from '../../../db/schema'
 import { traceChatClient, withAgentTrace } from '../../observability/tracing'
 import type { AppContext } from '../../types'
 import { streamDatabase, withAuthAndDb } from '../../utils/routes/route-helpers'
+import { buildAgentTools } from '../agents/tools'
 import { resolvePrompt } from '../prompts'
 import { aguiTextSegmenter, createAguiEncoder, kitCustom } from './agui'
 import { AiError, describeAiError, normalizeAiError } from './errors'
@@ -59,8 +61,13 @@ export interface ChatTurnParams {
   chatMessages: ChatMessage[]
   system: SystemPrompt
   resolved: ResolvedChat
-  /** Read tools the model may call this turn; empty is the kit's default. */
-  tools: Tool[]
+  /**
+   * Built INSIDE the stream, from the stream's own client. Building them from the request's `db`
+   * is the one bug this design invites: that client is closed in `waitUntil` the moment the
+   * Response is returned, so every tool call would fail after the first frame — as an error frame,
+   * intermittently, only where `waitUntil` really runs.
+   */
+  buildTools: (db: Database) => Tool[]
   /** Hard cap on model turns for THIS run (interactive, so lower than a Workflow's). */
   maxTurns: number
   /** Set the thread's title from the user turn when it is the first one. */
@@ -97,6 +104,7 @@ export function streamChatTurn(c: AppContext, params: ChatTurnParams): Response 
       const bytes = encoder.encode(event)
       if (bytes) await s.write(bytes)
     }
+    const tools = params.buildTools(sdb)
     const text = aguiTextSegmenter(emit, assistantMessageId)
     const openToolCalls = new Set<string>()
 
@@ -118,13 +126,13 @@ export function streamChatTurn(c: AppContext, params: ChatTurnParams): Response 
           conversationId: conversation.id,
           provider: resolved.provider,
           model: resolved.model,
-          tools: params.tools.map(t => t.name),
+          tools: tools.map(t => t.name),
         },
       })
       // Workers AI has no documented tool-call event stream, so the adapter runs a non-streamed
       // call and replays it: with tools on, the reply arrives in bursts per turn, not token by
       // token. Say so once rather than letting it read as a stall.
-      if (resolved.provider === 'workers_ai' && params.tools.length > 0) {
+      if (resolved.provider === 'workers_ai' && tools.length > 0) {
         await emit(kitCustom(KIT_CUSTOM_EVENTS.notice, { code: 'workers_ai_no_token_streaming' }))
       }
 
@@ -150,7 +158,7 @@ export function streamChatTurn(c: AppContext, params: ChatTurnParams): Response 
             maxTokens: resolved.maxOutputTokens,
             system: params.system,
             messages: params.chatMessages,
-            tools: params.tools,
+            tools,
             maxTurns: params.maxTurns,
             signal: abort.signal,
             onDelta: delta => text.delta(delta),
@@ -329,8 +337,12 @@ export async function prepareChatTurn(
     chatMessages,
     system,
     resolved,
-    tools: [],
-    maxTurns: cfg.AGENT_MAX_TURNS,
+    // `AGENT_MAX_TURNS` (30) is a budget for a Workflow step with a ten-minute timeout; an
+    // interactive reply shares the Worker's CPU and subrequest budget, so it gets the lower cap.
+    buildTools: cfg.CHAT_KNOWLEDGE_TOOLS
+      ? sdb => buildAgentTools({ db: sdb, cfg, env: c.env, tenantId })
+      : () => [],
+    maxTurns: Math.min(cfg.AGENT_MAX_TURNS, CHAT_MAX_TOOL_TURNS),
     isFirstUserTurn,
     lead: options.lead,
     runId: options.runId,

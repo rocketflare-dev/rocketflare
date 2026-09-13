@@ -29,6 +29,14 @@ const optionalPositiveInt = (fallback: number) =>
     z.coerce.number().int().positive()
   )
 
+/** `[vars]` arrive as strings: `"false"` / `"0"` / `"no"` are false, blank is the default. */
+const optionalBoolean = (fallback: boolean) =>
+  z.preprocess(value => {
+    if (value === undefined || value === null || String(value).trim() === '') return fallback
+    if (typeof value === 'boolean') return value
+    return !['false', '0', 'no', 'off'].includes(String(value).trim().toLowerCase())
+  }, z.boolean())
+
 const csvList = z.preprocess(
   value =>
     typeof value === 'string'
@@ -64,6 +72,13 @@ const configSchema = z.object({
   /** D17: per-call `max_tokens` when a tenant config sets none; and the tool-loop turn cap. */
   AGENT_MAX_OUTPUT_TOKENS: optionalPositiveInt(16384),
   AGENT_MAX_TURNS: optionalPositiveInt(30),
+  /**
+   * D18: give the chat box the knowledge tools (`search_knowledge`, `get_document`,
+   * `list_documents`), so it answers from the workspace's own material. It costs more tokens per
+   * turn and, on Workers AI — which has no tool-call event stream — the reply stops arriving token
+   * by token. `false` is the operator's way back to a tool-free chat.
+   */
+  CHAT_KNOWLEDGE_TOOLS: optionalBoolean(true),
 
   // ---- Secrets (.dev.vars locally, `wrangler secret put` deployed) — all optional here;
   //      features gate on presence (zero-creds first run) or demand them at use time. -------

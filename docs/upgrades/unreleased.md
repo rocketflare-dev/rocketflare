@@ -21,6 +21,16 @@ the `kit.` CUSTOM namespace (`KIT_CUSTOM_EVENTS`, `kitCustomPayloadSchema`, `par
 every kit-specific semantic lives, `chatRunResultSchema`, and `kitRunAgentInputSchema` +
 `readRunAgentTail`.
 
+**Chat now calls the knowledge tools by default.** `search_knowledge`, `get_document` and
+`list_documents` — the same three every agent gets — are on `POST /conversations/:id/messages`, so
+the chat box answers from the workspace's own material. It costs more tokens per turn, and on
+Workers AI, which has no tool-call event stream, the reply stops arriving token by token and comes
+in bursts per model turn (the server says so once, as `CUSTOM kit.notice`). **Set
+`CHAT_KNOWLEDGE_TOOLS = "false"` in BOTH wrangler tomls to keep the old behaviour** — and add the
+key to both either way, or the parity test fails. The loop is capped by `CHAT_MAX_TOOL_TURNS` (6),
+not `AGENT_MAX_TURNS` (30): a chat turn is interactive and shares the Worker's budget with the
+request that opened it.
+
 **`packages/shared` gained a third dependency.** The rule is amended, with its reason intact, in
 both `packages/shared/CLAUDE.md` and the root `CLAUDE.md`: `@ag-ui/core` is zod-only with no
 platform APIs, so it bundles into the browser and loads in the CLI, and a wire format has to be
