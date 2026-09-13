@@ -26,7 +26,10 @@ Cloudflare Worker (`apps/web`), a CLI (`apps/cli`), private zod contracts
 - **Auth**: arctic (Google, Microsoft) + magic link + dev-login; `__Host-session`; API keys; KV rate limit
 - **Async / realtime**: Queues (`JOBS_QUEUE`), `NotificationsHub` DO `/ws`, R2 (`FILES`), cron, Workflows
 - **AI**: `services/ai/resolve` (`agent_models` → tenant `ai_configs` → platform key → Workers AI via
-  `[ai]`, zero key → 503); Anthropic / OpenAI-compatible / Workers AI chat over SSE, agents on `AGENT_RUN_WORKFLOW`, Workers AI → pgvector (uploads: R2 → `AI.toMarkdown` → pgvector), Langfuse
+  `[ai]`, zero key → 503); Anthropic / OpenAI-compatible / Workers AI chat streamed as **AG-UI**
+  (`@ag-ui/core` pinned; SSE or protobuf; `POST /api/agui/run` is the protocol endpoint), chat calls
+  the knowledge tools, agents on `AGENT_RUN_WORKFLOW` (projected to AG-UI on read), Workers AI →
+  pgvector (uploads: R2 → `AI.toMarkdown` → pgvector), Langfuse
 - **Analytics**: drizzle-cube at `/cubejs-api`+`/mcp`, every cube tenant-scoped in `sql()`; fact tables
   on the `:15` cron; TS dashboard templates → `analytics_pages`
 - **UI**: React 18 + Vite, DaisyUI 5 / Tailwind v4, React Router 6, TanStack Query 5; served as `ASSETS`

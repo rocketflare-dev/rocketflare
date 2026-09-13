@@ -586,9 +586,9 @@ deferred.
 
 **Status: built (Phase 3).** Server: `apps/web/src/api/services/{ai/*,agents/**,prompts.ts}`,
 `api/workflows/agent-run.ts`, `api/observability/*`, `api/middleware/tracing.ts`, seven routers under
-`/api/ai/*`, `/api/chat`, `/api/agents`. Contracts: `packages/shared/src/ai/*`. UI: `pages/chat`,
-`pages/settings/{AI,Prompts,Usage}`, `components/ai/`, `lib/{sse,chatStream}.ts` — specifics in
-`apps/web/src/ui/CLAUDE.md`.
+`/api/ai/*`, `/api/chat`, `/api/agui`, `/api/agents`. Contracts: `packages/shared/src/ai/*`. UI:
+`pages/chat`, `pages/settings/{AI,Prompts,Usage}`, `components/ai/`, `lib/{sse,aguiStream}.ts` —
+specifics in `apps/web/src/ui/CLAUDE.md`.
 
 **Three tiers, one resolver (D17).** `resolveChat(db, cfg, env, tenantId, { promptKey? })` and
 `resolveEmbeddings(...)` in `services/ai/resolve.ts` are the ONLY readers of `ai_configs` /
@@ -668,20 +668,119 @@ override is a `prompt_overrides(tenant_id, key)` row — revert = delete, `PROMP
 shows). `GET /api/ai/prompts` (member read), `PUT | DELETE /:key` (`manage Prompt`). A new prompt is
 one registry entry, no migration; `agent_models` keys on the same registry.
 
+**AG-UI is the wire protocol (D28).** Chat and agent runs both speak
+[AG-UI](https://docs.ag-ui.com) rather than a shape only this repo understands, which is what makes
+the app drivable by any AG-UI client SDK or front end. What we adopted: the event schemas
+(`@ag-ui/core`, **pinned exactly** — its schemas ARE the wire format, so a bump is a protocol bump),
+the reference transport (`@ag-ui/encoder` over `@ag-ui/proto`, so content negotiation and the
+protobuf frame format are the spec's rather than ours), and the `RunAgentInput` endpoint. What we
+deliberately did NOT adopt: `@ag-ui/client` (this app is a conformant AG-UI **server**; acting as a
+client of a remote LangGraph/Mastra/CrewAI agent is separate work behind the `ChatClient` seam),
+frontend tools, and `STATE_DELTA`.
+
+The contract is `packages/shared/src/ai/agui.ts` — the ONE file allowed to import `@ag-ui/core`,
+because a wire format has to be validated by the same runtime schema on the server and in the
+browser (the amendment and its reason are in `packages/shared/CLAUDE.md`, and
+`tests/config/shared-imports.test.ts` enforces the allow-list). It exports `kitAguiEventSchema`,
+a discriminated union over **exactly the 15 events the kit emits** rather than `@ag-ui/core`'s full
+set, and `KIT_CUSTOM_EVENTS` — the `kit.` CUSTOM namespace where every kit-specific semantic lives
+(`kit.chat.ids`, `kit.usage`, `kit.agent.step`, `kit.agent.retry`, `kit.notice`). A third-party
+client ignores those for free; **an app adds its own under its own prefix, never `kit.`**.
+
+Two consequences worth stating plainly. **Frames carry no `event:` line** — spec AG-UI SSE is
+`data: <json>\n\n` and the type is inside the JSON — so nothing may key on the SSE event field, and
+the route uses hono's generic `stream()` rather than `streamSSE`. And `EventEncoder.encodeBinary()`
+covers both transports in one write path: `Accept: application/vnd.ag-ui.event+proto` gets
+length-prefixed protobuf, anything else (including a garbage `Accept`) gets SSE.
+`@ag-ui/proto@0.0.59` has no message for `TOOL_CALL_RESULT` and answers an EMPTY frame for one, so
+`createAguiEncoder` drops an event the negotiated transport cannot carry rather than writing bytes
+no client can decode; `tests/config/agui-contract.test.ts` round-trips every emitted event and
+fails the day upstream gains the message.
+
 **Chat.** `conversations` / `messages`; ownership is the `userId` filter on every query, so another
 member's thread — an admin's too — is a 404. `POST /api/chat/conversations` resolves the client first
 (the 503 arrives before any row exists) and freezes `provider`/`model` on the row.
-`POST /conversations/:id/messages` does everything that can fail as JSON **before** `streamSSE`
-(resolve, prompt, the last 40 turns, the user-message insert), then streams `event: <type>` +
-`data: <ChatStreamEvent JSON>` frames: `message.start → text.delta* → usage → message.end`
-(`tool.start` / `tool.end` between when an app adds tools), or a terminal `error { message, code }`.
+`POST /conversations/:id/messages` is a wrapper around `services/ai/chat-turn.ts`, which is the ONE
+implementation of the sequence below — `POST /api/agui/run` calls the same function.
+`prepareChatTurn` does everything that can fail as JSON **before** the stream opens (resolve,
+prompt, the last 40 turns, the user-message insert); `streamChatTurn` streams:
+
+```
+RUN_STARTED → CUSTOM kit.chat.ids { conversationId, userMessageId, assistantMessageId, provider, model }
+            → STATE_SNAPSHOT { conversationId, provider, model, tools[] }
+            → per model turn: TEXT_MESSAGE_START → CONTENT* → END
+                              TOOL_CALL_START → ARGS → END → TOOL_CALL_RESULT
+            -- persist the row, bump lastMessageAt, auto-title, recordUsage --
+            → CUSTOM kit.usage → RUN_FINISHED { result: chatRunResult }
+```
+
+`kit.chat.ids` carries the ids because `RUN_STARTED` has nowhere to put them and
+`RUN_FINISHED.result` is far too late: the UI swaps its optimistic bubble's id the moment the turn
+starts. **Each model turn opens its own text message** with a fresh uuid — reusing one `messageId`
+across several `START/END` pairs is what strict AG-UI consumers choke on — while the persisted row
+keeps `assistantMessageId`; the UI accumulates deltas across the whole run regardless.
+
+Two terminal conventions. A failure closes any open text/tool message and emits `RUN_ERROR`: no
+`RUN_FINISHED` after it, and nothing is persisted. **A cancelled run emits nothing at all** — AG-UI
+0.0.59 has no cancellation event, so the contract is *a run whose body closes with neither
+`RUN_FINISHED` nor `RUN_ERROR` was cancelled by the client*, checked explicitly so a real write
+failure still reports. Failures BEFORE the stream opens stay JSON envelopes (503
+`ai_not_configured`, 404, 403), which is why the resolve/prompt/history/insert block sits above it.
+
 Inside the stream, all awaited and on a **second DB client** (`streamDatabase(c)` — the request's
 client is closed in `waitUntil` the moment the Response is returned, before the stream body runs):
 persist the assistant message, bump `lastMessageAt`, auto-title from the first user turn (60 chars),
-`recordUsage(feature: 'chat')`, flush the tracer. Zero default tools. UI: `fetch`, not `EventSource`
-(`lib/sse.ts`, `lib/chatStream.ts`); Stop = abort, no toast; the streaming text is local state
-written to the query cache on `message.end`; `react-markdown` + `remark-gfm` live in
-`components/ai/` outside the shared barrel so they ship only in the lazy chat chunk.
+`recordUsage(feature: 'chat')`, flush the tracer.
+
+**Chat calls the knowledge tools.** `search_knowledge`, `get_document` and `list_documents` — the
+same three every agent gets — are on by default, so the chat box answers from the workspace's own
+material; `CHAT_KNOWLEDGE_TOOLS = "false"` in both tomls is the operator's way back to a tool-free
+chat. The tools are built from the STREAM's database client, never the request's: that one is
+already closing, so binding them to it fails every tool call after the first frame, intermittently,
+only where `waitUntil` really runs. The loop is capped by `CHAT_MAX_TOOL_TURNS` (6), not
+`AGENT_MAX_TURNS` (30) — that is a budget for a Workflow step with a ten-minute timeout, while a
+chat turn is interactive and shares the Worker's CPU and subrequest budget. `TOOL_CALL_RESULT`
+carries the tool's JSON unmodified, which is the AG-UI-native representation a third-party client
+renders, and `messages.toolCalls` now fills for real (the column already existed). On `workers_ai`,
+which has no documented tool-call event stream, the adapter runs one non-streamed call per turn and
+replays it, so the reply arrives in bursts — the server says so once as `CUSTOM kit.notice
+{ code: 'workers_ai_no_token_streaming' }` rather than letting it read as a stall.
+
+**`POST /api/agui/run` (the `RunAgentInput` endpoint).** A separate mount beside `/api/chat`, not
+under it: `api/index.ts`'s mount list is the enumerable auth surface. No new auth machinery —
+`authMiddleware` already takes a session cookie or a tenant API key as Bearer, and `csrf.ts` already
+exempts Bearer; a cross-origin browser client needs its origin in the CORS allow-list, which is
+configuration, not code. **Conversation ownership is the `userId` filter, so every thread an API key
+touches belongs to the user who created that key.**
+
+The reconciliation rule is **"the server is the transcript; the client supplies only the tail"**:
+`threadId` must be a UUID and is looked up as `(id, tenantId, userId)`; unknown, it is **adopted**
+(a conversation created with that id, after `resolveChat`, so a 503 lands before any row) — which is
+what lets a stateless client invent a `threadId`; an id that exists but is someone else's collides
+on the primary key and is 404 `agui_thread_not_found`. The LAST message is the new user turn and
+**every earlier message is ignored**; history comes from the DB (40 turns). A last message whose
+UUID `id` already exists in this conversation is not re-inserted, so a client retry is safe (no
+transaction spans a stream body). `MESSAGES_SNAPSHOT` goes out right after `RUN_STARTED` carrying
+the server's transcript — the honest answer to divergence: the client is told in-band what the
+server believes.
+
+Its failure modes, stated rather than fixed: a client that edits or branches history gets the
+server's history (the snapshot makes that visible, not resolved; branching needs a real thread
+model); two concurrent runs on one `threadId` interleave (the fix is an `agent_runs`-style claim
+row, never a `Map`); the client's `runId` is echoed but neither stored nor deduplicated on; adopting
+a thread lets someone create an empty conversation in their OWN tenant, which is harmless. Inbound
+`tools[]` is **refused** with 400 `agui_client_tools_unsupported` — a silently ignored tool leaves
+the client waiting for a call that can never come. The real reason is that frontend tools need the
+loop to suspend mid-turn and resume on a later `RunAgentInput`, and `runStreamingChat` has no
+durable suspend point; the agent runtime already has that machinery (`agent_runs.checkpoint`), so
+v2 is "reuse the checkpoint column on `conversations`". Inbound `state` is ignored; outbound state
+is one read-only `STATE_SNAPSHOT`.
+
+UI: `fetch`, not `EventSource` (`lib/sse.ts` — transport only, it imports no schema, which is what
+keeps `@ag-ui/core` out of the eager shell — and `lib/aguiStream.ts`); Stop = abort, no toast; the
+streaming text is local state written to the query cache on `RUN_FINISHED`; `react-markdown` +
+`remark-gfm` live in `components/ai/` outside the shared barrel so they ship only in the lazy chat
+chunk, and `@ag-ui/core` reaches the browser only through that chunk.
 
 **Agents (D7).** `AGENTS` (`services/agents/registry.ts`) maps each `AgentKey` to the shared
 `AgentMeta` (`@rocketflare/shared/ai/agents`: key, `inputSchema`/`outputSchema`, `promptKey`, `exclusive`)
@@ -730,7 +829,40 @@ running one, and `ctx.checkCancelled()` polls it between turns. Reads reconcile:
 calls `instance.status()` for an active row and settles it when the runtime says `not_found |
 errored | terminated | complete` — **`not_found` is an answer**, not an error. Progress is
 `agent_run_events (run_id, seq)` (`step | tool.start | tool.end | text | status | error`) plus an
-`entity.changed { entity: 'agent-run', id }` nudge — DB is the truth, WS is a nudge. Members list and
+`entity.changed { entity: 'agent-run', id }` nudge — DB is the truth, WS is a nudge.
+
+**A run reads back as AG-UI: a projection, not a rewrite.** `agent_run_events` stays exactly as it
+is — the durable record, written inside Workflow steps where every write is awaited and ordered by
+`seq` — and `services/agents/agui-projection.ts` maps it at READ time for
+`GET /api/agents/runs/:id/agui` (plain JSON, same `reconcileRun` and ownership rules as
+`GET /runs/:id`). Nothing in the runtime knows AG-UI exists. The projection is pure and the event
+row ids ARE the AG-UI message and tool-call ids, so two reads of one run match byte for byte;
+`threadId = runId`, because an agent run is not a conversation.
+
+| row | AG-UI |
+|---|---|
+| *(synthetic, always first)* | `RUN_STARTED { threadId: runId, runId }` |
+| `step` running / done·error | `STEP_STARTED` / `STEP_FINISHED` + `CUSTOM kit.agent.step` (the label and detail `stepName` cannot carry) |
+| `text` | `TEXT_MESSAGE_START → CONTENT → END` |
+| `tool.start` | `TOOL_CALL_START → ARGS → END` |
+| `tool.end` | `TOOL_CALL_RESULT`, paired back to its call |
+| `error` `willRetry` | `CUSTOM kit.agent.retry` — a retry is not terminal |
+| run `succeeded` | `RUN_FINISHED { result: run.output }` |
+| run `failed` / `cancelled` | `RUN_ERROR`, code `agent_run_failed` / `agent_run_cancelled` |
+| run still active | no terminal event |
+
+Two mappings the table could not settle by itself. A settled **cancelled** run is a coded
+`RUN_ERROR` rather than the streaming convention ("closed with no terminal event"), because in a
+finite array the absent terminal event is how an ACTIVE run reads. And there is **no `kit.usage`**:
+`ai_usage` rows carry no run id, so a projection over `(run, events)` has no honest number — the
+Usage page is the ledger. Known fidelity loss: `ToolCallResultEventSchema` in 0.0.59 has no error
+flag, so an errored tool result is projected with its JSON intact.
+
+**There is no SSE endpoint for runs, deliberately.** A run executes in a Workflow, in a different
+isolate from any request, so a live stream would have to poll `agent_run_events` per connection or
+fan out through the DO — a feature, not a mapping; the WS nudge plus the poll already gives
+sub-second updates and "DB is the truth, WebSocket is a nudge" is load-bearing; and SSE-per-run
+holds a Worker invocation open for minutes. Members list and
 cancel their own runs; admin+ every run in the tenant. The tool loop runs inside ONE `execute` step, and
 **that is now a decision, not a gap** — one `step.do` per model turn was investigated and rejected
 (see the Known gaps below for the evidence). Two examples ship, one per shape. `summarize-text` (the
@@ -837,7 +969,17 @@ nudge yet. Requested-by renders "You", a short id or "system" (no name resolutio
 without a registered form gets a JSON textarea validated by the route's 400 `details`; the UI never
 sends `?strict=1`.
 
-**Known gaps / not built yet:** `enqueueRun` does NOT pre-resolve the chat client — a tenant with no
+**Known gaps / not built yet:** AG-UI — one text message PER MODEL TURN, so a client that expects
+one message per run must accumulate (the persisted row's id is in `kit.chat.ids` and
+`RUN_FINISHED.result`); no frontend tools (`POST /api/agui/run` refuses `tools[]`, see above) and
+no `STATE_DELTA`, only a read-only `STATE_SNAPSHOT`; the protobuf transport drops `TOOL_CALL_RESULT`
+because `@ag-ui/proto@0.0.59` has no message for it; `@ag-ui/core` is `0.0.x` and its published
+docs already describe fields the installed version lacks, so a minor bump can rename a schema and
+change the wire format for every adopted copy — the exact pin plus `agui-contract.test.ts` is the
+mitigation and the residual risk is real; the agent projection has no `kit.usage` and no error flag
+on a tool result; live run streaming with `Last-Event-ID` replay is still deferred. Chat tools —
+`CHAT_MAX_TOOL_TURNS` is a constant, not a var; a tool-calling chat costs more per turn and stops
+streaming token by token on `workers_ai`. `enqueueRun` does NOT pre-resolve the chat client — a tenant with no
 provider gets a 202 and a `failed` row at `execute` (chat's `POST /conversations` does pre-resolve;
 moot while the `[ai]` binding exists, since Workers AI is the floor); Workers AI forced tools are an
 instruction plus prose-JSON recovery, not a guarantee — a model that answers in plain prose fails
@@ -978,8 +1120,8 @@ runs from the repo.
 
 **One contract, three consumers, zero build.** The zod schemas, inferred types, error envelope
 (`errors.ts`), pagination (`pagination.ts`), permission vocabulary (`permissions.ts`: actions,
-subjects, `AppAbility`, packed rules) and the AI contracts (`ai/*.ts` — config, prompts, chat + the
-SSE frame union, agents, agent-models, embeddings, usage; barrel `ai/index.ts`, deep imports
+subjects, `AppAbility`, packed rules) and the AI contracts (`ai/*.ts` — config, prompts, chat, the
+AG-UI contract (`agui.ts`), agents, agent-models, embeddings, usage; barrel `ai/index.ts`, deep imports
 `@rocketflare/shared/ai/<file>`) live in `packages/shared/src/` and are consumed as
 TypeScript source through the workspace link: `package.json` `exports` map `@rocketflare/shared` →
 `./src/index.ts` and `@rocketflare/shared/*` → `./src/*.ts`, so `apps/web` (API and UI), `apps/cli` and
@@ -993,8 +1135,10 @@ response/entity, `<thing>RequestSchema` for a body, `<thing>QuerySchema` for que
 it, the UI parses with it (`api.get(..., { schema })`), the CLI parses with it (`api.ts`). jsonb
 column types in the DB schema also come from here (`$type<>()`).
 
-**Dependency rule.** `packages/shared` imports `zod`, its own siblings and type-only `@casl/ability`
-— **never** `apps/web` (it must bundle for the browser and load in the CLI) and never `apps/cli`.
+**Dependency rule.** `packages/shared` imports `zod`, its own siblings, type-only `@casl/ability`
+and — in `src/ai/agui.ts` alone — the pinned, zod-only `@ag-ui/core`, because AG-UI is a wire format
+and both sides must validate against the same runtime schema (§9;
+`apps/web/tests/config/shared-imports.test.ts` enforces the list) — **never** `apps/web` (it must bundle for the browser and load in the CLI) and never `apps/cli`.
 `apps/cli` in turn never imports `apps/web`. Biome and each package's `tsconfig` `include` keep the
 direction honest; a violation shows up as a browser bundle pulling in `postgres` or `hono`.
 

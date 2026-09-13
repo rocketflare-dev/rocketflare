@@ -297,6 +297,17 @@ limits are an app change (`MAX_UPLOAD_BYTES` is one constant today).
   `analytics_pages` / `facts` schema files (+ a migration), the `:15` cron in both tomls, and the
   `drizzle-cube`/`recharts`/`d3`/`react-grid-layout`/`react-is` deps — which takes the largest single
   contributor out of the Worker bundle (`docs/DEPLOY.md`, "Bundle size", on why no figure is quoted).
+- **Your own streamed events (AG-UI)**: chat and agent runs speak AG-UI
+  (`docs/CONCEPTS.md` §9). A new semantic is either an AG-UI event type added to
+  `kitAguiEventSchema` or — far more often — a CUSTOM event. **Put yours in your OWN namespace,
+  never `kit.`**: `KIT_CUSTOM_EVENTS` is the kit's and a later release may add to it, so an
+  `orders.` or `acme.` prefix is what keeps an upgrade from colliding with you. Add the name and its
+  zod payload beside `kitCustomPayloadSchema` in `packages/shared/src/ai/agui.ts`, emit it with
+  `kitCustom`-style builders from `services/ai/agui.ts`, and remember a third-party AG-UI client
+  ignores CUSTOM events for free — which is the point.
+- **Turning chat's knowledge tools off**: `CHAT_KNOWLEDGE_TOOLS = "false"` in BOTH wrangler tomls
+  (the parity test compares `[vars]` keys, so it has to be in both either way). Tool-free chat is
+  cheaper per turn and streams token by token on every provider.
 - **Headless CLI login** (CI, agents, no browser): skip `pnpm cli login`; create a tenant API key in
   Settings → API keys (or `POST /api/keys` with a session cookie) and export `ROCKETFLARE_API_KEY` +
   `ROCKETFLARE_URL`. `pnpm cli whoami` confirms.

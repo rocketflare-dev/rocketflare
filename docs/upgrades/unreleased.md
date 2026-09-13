@@ -71,21 +71,60 @@ case deploys.
 
 ## How to apply
 
-Accept the patch. If your copy added variants to `chatStreamEventSchema`, they become kit CUSTOM
-events under your OWN prefix — never `kit.`.
+**Decide about chat tools first.** `CHAT_KNOWLEDGE_TOOLS` must be added to BOTH wrangler tomls or
+the parity test fails; `"false"` keeps the old, cheaper, always-token-streaming behaviour.
 
-Accept the patch. `.github/workflows/**` is `manual`, so read the diff before taking it — if you
-have changed your deploy workflow, port the `guard` job and the two `if:` conditions by hand rather
-than overwriting yours.
+**Then the protocol.** Take the patch for `packages/shared/src/ai/agui.ts`,
+`apps/web/src/api/services/ai/{agui,chat-turn}.ts`, `routes/{chat,agui}.ts`,
+`services/agents/agui-projection.ts`, `src/ui/lib/{sse,aguiStream}.ts` and `hooks/useChat.ts`, and
+install the dependencies: `@ag-ui/core` in `packages/shared`, plus `@ag-ui/core`,
+`@ag-ui/encoder` and `@ag-ui/proto` in `apps/web`. **Pin all four exactly** — the schemas are the
+wire format.
+
+The old→new frame mapping, for any code of yours that read the stream:
+
+| was | is |
+|---|---|
+| `message.start` | `CUSTOM kit.chat.ids` (the same ids, `messageId` → `assistantMessageId`) |
+| `text.delta` | `TEXT_MESSAGE_CONTENT` — **one text message per model turn**, so accumulate across `messageId`s |
+| `tool.start` | `TOOL_CALL_START` → `TOOL_CALL_ARGS` → `TOOL_CALL_END` |
+| `tool.end` | `TOOL_CALL_RESULT` (the tool's own JSON; no error flag in 0.0.59) |
+| `usage` | `CUSTOM kit.usage`, mirrored into `RUN_FINISHED.result` |
+| `message.end` | `RUN_FINISHED` |
+| `error` | `RUN_ERROR` |
+| *(nothing)* | a cancelled run closes with **no terminal event** — that IS the cancellation signal |
+
+If your copy added variants to `chatStreamEventSchema`, they become CUSTOM events under your OWN
+prefix — never `kit.`, which a later kit release may extend (`docs/ADAPTING.md` §3b).
+
+`.github/workflows/**` is `manual`, so read that diff before taking it — if you have changed your
+deploy workflow, port the `guard` job and the two `if:` conditions by hand rather than overwriting
+yours.
 
 ## Conflicts to expect
 
+Anything of yours that touched the chat stream: a custom `chatStreamEventSchema` variant, a
+`readSse` call site (it takes a `parse` argument now), an import of `lib/chatStream.ts` (deleted —
+`lib/aguiStream.ts`, and `sendChatMessage` is `runChatTurn`), a bespoke chat UI switching on
+`text.delta`, a test using `sseFrames`/`sseResponse` (`aguiFrames` and the `aguiRun` helper), and
+**anything keying on the SSE `event:` field**, which is gone: the type is `JSON.parse(data).type`.
+
 `.github/workflows/deploy.yml` if you have edited it, which most apps do.
+
+**Bundle.** Measured before and after on the kit: `gzip -c apps/web/dist/api/worker.js | wc -c`
+went from 1 311 621 to 1 336 048 — about 24 KB gzip, under 2%, for the schemas plus the protobuf
+encoder. Measure your own; a copy near the free plan's 3 MiB script limit is the one this could
+matter to.
 
 ## Verify
 
 ```
-pnpm web test:config                           # agui-contract + shared-imports
+pnpm web test:config                           # agui-contract, shared-imports, ui-bundle
 node scripts/release-check.mjs --deployable    # in an app: deployable=true
-pnpm lint && pnpm typecheck && pnpm test
+pnpm lint && pnpm typecheck && pnpm test && pnpm build
 ```
+
+Then, with `pnpm dev` running: send a chat message and watch devtools show `data:`-only frames
+carrying `RUN_STARTED → CUSTOM → TEXT_MESSAGE_* → RUN_FINISHED`; press Stop mid-stream and confirm
+no error toast and no terminal frame; ask something answerable only from the knowledge base and
+watch the tool steps appear.
