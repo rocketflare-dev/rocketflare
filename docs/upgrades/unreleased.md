@@ -21,6 +21,17 @@ the `kit.` CUSTOM namespace (`KIT_CUSTOM_EVENTS`, `kitCustomPayloadSchema`, `par
 every kit-specific semantic lives, `chatRunResultSchema`, and `kitRunAgentInputSchema` +
 `readRunAgentTail`.
 
+**New surface: `POST /api/agui/run`.** The AG-UI `RunAgentInput` endpoint, mounted beside
+`/api/chat` behind the same `authMiddleware` — a session cookie, or a tenant API key as Bearer
+(which `csrf.ts` already exempts); a cross-origin browser client needs its origin in the CORS
+allow-list, which is configuration, not code. **Conversation ownership is still the `userId`
+filter, so every thread an API key touches belongs to the user who created that key.** The
+reconciliation rule is "the server is the transcript, the client supplies only the tail": an
+unknown `threadId` is adopted, the last message is the new user turn and earlier ones are ignored,
+a replayed UUID message id is not re-inserted, and `MESSAGES_SNAPSHOT` tells the client in-band
+what the server believes. A non-empty `tools[]` is refused with 400, not ignored. It is a wrapper:
+the same `streamChatTurn` the chat route calls.
+
 **An agent run reads back as AG-UI too.** `GET /api/agents/runs/:id/agui` projects
 `agent_run_events` at read time — plain JSON, same ownership rules as `GET /runs/:id`. The table
 and the runtime are untouched; nothing in a Workflow step knows AG-UI exists. There is no SSE

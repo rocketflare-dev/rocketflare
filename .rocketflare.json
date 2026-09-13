@@ -113,6 +113,8 @@
         "apps/web/src/ui/components/ai/**",
         "apps/web/src/api/routes/chat.ts",
         "apps/web/src/api/services/ai/chat-turn.ts",
+        "apps/web/src/api/routes/agui.ts",
+        "apps/web/tests/api/agui-run.test.ts",
         "apps/web/tests/api/chat.test.ts",
         "apps/web/tests/api/chat-tools.test.ts",
         "apps/web/tests/ui/chat-page.test.tsx"

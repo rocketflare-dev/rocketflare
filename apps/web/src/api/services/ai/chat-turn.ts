@@ -43,6 +43,7 @@ import type { ConversationRow, MessageRow } from '../../../db/schema'
 import { conversations, messages } from '../../../db/schema'
 import { traceChatClient, withAgentTrace } from '../../observability/tracing'
 import type { AppContext } from '../../types'
+import { ConflictError, isUniqueViolation } from '../../utils/core/errors'
 import { streamDatabase, withAuthAndDb } from '../../utils/routes/route-helpers'
 import { buildAgentTools } from '../agents/tools'
 import { resolvePrompt } from '../prompts'
@@ -275,11 +276,18 @@ export function streamChatTurn(c: AppContext, params: ChatTurnParams): Response 
 export const HISTORY_LIMIT = 40
 
 export interface PrepareChatTurnOptions {
+  /** Already resolved by the caller (the AG-UI endpoint resolves before it adopts a thread). */
+  resolved?: ResolvedChat
   /**
    * Reuse an already-persisted user row instead of inserting one. `POST /api/agui/run` passes the
    * row a replayed message id resolved to, so a client retry does not double-insert.
    */
   userMessage?: MessageRow
+  /**
+   * Persist the user turn under an id the CLIENT chose, which is what makes a replay detectable at
+   * all — without it the row gets a fresh id and the same request twice is two turns.
+   */
+  userMessageId?: string
   lead?: KitAguiEvent[]
   runId?: string
 }
@@ -296,7 +304,8 @@ export async function prepareChatTurn(
   options: PrepareChatTurnOptions = {}
 ): Promise<ChatTurnParams> {
   const { db, tenantId, user, cfg, auth } = withAuthAndDb(c)
-  const resolved = await resolveChat(db, cfg, c.env, tenantId, { promptKey: 'chat' })
+  const resolved =
+    options.resolved ?? (await resolveChat(db, cfg, c.env, tenantId, { promptKey: 'chat' }))
   const system = await resolvePrompt(db, tenantId, 'chat', {
     appName: cfg.APP_NAME,
     tenantName: auth.tenant?.name ?? '',
@@ -313,12 +322,28 @@ export async function prepareChatTurn(
     : history
   const isFirstUserTurn = !earlier.some(m => m.role === 'user')
 
+  // A replayed row is the turn: its stored text is what the model saw the first time, so the
+  // caller's copy of it never overrides the record.
   let userMessage = options.userMessage
+  const turnText = userMessage?.content ?? content
   if (!userMessage) {
     const [row] = await db
       .insert(messages)
-      .values({ conversationId: conversation.id, tenantId, role: 'user', content })
+      .values({
+        ...(options.userMessageId ? { id: options.userMessageId } : {}),
+        conversationId: conversation.id,
+        tenantId,
+        role: 'user',
+        content,
+      })
       .returning()
+      .catch(err => {
+        // The client chose an id that already exists in ANOTHER conversation. Rare, and better
+        // said out loud than papered over with a server id the client cannot replay against.
+        if (isUniqueViolation(err))
+          throw new ConflictError('That message id is already in use', 'message_id_in_use')
+        throw err
+      })
     if (!row) throw new Error('messages: insert returned no row')
     userMessage = row
   }
@@ -328,7 +353,7 @@ export async function prepareChatTurn(
       .reverse()
       .filter(m => m.role === 'user' || m.role === 'assistant')
       .map(m => ({ role: m.role as 'user' | 'assistant', content: m.content })),
-    { role: 'user', content },
+    { role: 'user', content: turnText },
   ]
 
   return {
