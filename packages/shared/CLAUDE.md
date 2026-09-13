@@ -40,6 +40,12 @@ response with the same schema. `pnpm test:config` covers the pure parts.
 (the server attaches `run()`), `agentInfoSchema`, `agentRunStatusSchema` + `isRunActive`, `agentRunSchema`,
 `createAgentRunRequest/ResponseSchema` (`deduplicated`), `agentRunListQuerySchema`, `AGENT_RUN_EVENT_TYPES`,
 `agentRunEventSchema`, `agentRunWithEventsSchema`, the example's `summarizeTextInput/OutputSchema` ·
+`agui.ts` — the AG-UI wire protocol (`@ag-ui/core` schemas, the ONE file allowed to import it):
+`kitAguiEventSchema` (a discriminated union over exactly the events the kit emits, never the full
+`@ag-ui/core` set), `KIT_AGUI_EVENT_TYPES`, `KIT_CUSTOM_EVENTS` + `kitCustomPayloadSchema` +
+`parseKitCustom` (the `kit.` CUSTOM namespace where every kit-specific semantic lives),
+`chatRunResultSchema` (`RUN_FINISHED.result` for a chat turn), `kitRunAgentInputSchema` +
+`readRunAgentTail` (`POST /api/agui/run`: the server is the transcript, the client supplies the tail) ·
 `agent-models.ts` — `agentModelAssignmentSchema`, `upsertAgentModelRequestSchema` (at least one of
 `aiConfigId`/`model`), `agentModelEntrySchema` (`effective.source: assignment | tenant | platform | none`) ·
 `embeddings.ts` — `documentSchema` (never the text or vectors), `INGEST_TEXT_MAX_CHARS`, `ingestTextRequestSchema`,
@@ -77,7 +83,13 @@ is a `queryKeys` family). Adding a file scope: `FILE_SCOPES` here AND the mirror
 
 ## Rules
 
-- Imports: `zod`, sibling files, and TYPE-only imports from `@casl/ability`. NEVER import from
-  `apps/web/src/api`, `apps/web/src/db`, `apps/web/src/ui` or `apps/cli` — this package bundles into the browser and the CLI
+- Imports: `zod`, sibling files, TYPE-only imports from `@casl/ability`, and **`@ag-ui/core`
+  (pinned, zod-only, no platform APIs) in `src/ai/agui.ts` alone**. NEVER import from
+  `apps/web/src/api`, `apps/web/src/db`, `apps/web/src/ui` or `apps/cli` — this package bundles into the browser and the CLI.
+  `@ag-ui/core` is on the list because it satisfies that reason AND because AG-UI is a wire format:
+  server and UI must parse the SAME runtime schema, so a loose mirror (the `analytics.ts` precedent,
+  where nothing needs to validate a `DashboardConfig`) would mean two sources of truth. A fifth
+  dependency needs the same written justification here and in the root `CLAUDE.md`;
+  `apps/web/tests/config/shared-imports.test.ts` is the check
 - `tenantRoleSchema` (assignable) on every input; `membershipRoleSchema` (+`support`) on outputs only
 - Server code imports via `@rocketflare/shared/*`; UI too. Re-export every file from `index.ts`

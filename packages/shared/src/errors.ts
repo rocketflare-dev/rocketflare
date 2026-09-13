@@ -38,6 +38,14 @@ export const ERROR_CODES = {
   agentRunsNotConfigured: 'agent_runs_not_configured',
   /** 409: `?strict=1` and an active run already exists for an exclusive agent (D7). */
   agentRunActive: 'agent_run_active',
+  /** 404: `POST /api/agui/run` was given a `threadId` that exists but is not this user's. */
+  aguiThreadNotFound: 'agui_thread_not_found',
+  /** 400: the last message of a `RunAgentInput` was not a user turn. */
+  aguiLastMessageNotUser: 'agui_last_message_not_user',
+  /** 400: `RunAgentInput.tools` was non-empty — frontend tools are not supported. */
+  aguiClientToolsUnsupported: 'agui_client_tools_unsupported',
+  /** 400: the user turn's content was not a usable string. */
+  aguiUnsupportedContent: 'agui_unsupported_content',
 } as const
 
 export type ErrorCode = (typeof ERROR_CODES)[keyof typeof ERROR_CODES]

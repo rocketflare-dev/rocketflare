@@ -76,7 +76,10 @@ docs/upgrades/     one porting note per kit release (+ unreleased.md) — CHANGE
 ```
 
 **`packages/shared`.** Private, no build: `@rocketflare/shared/<module>` → `./src/<module>.ts` (incl. `ai/*`,
-`analytics`). Imports only `zod`, siblings, type-only `@casl/ability`.
+`analytics`). Imports only `zod`, siblings, type-only `@casl/ability`, and `@ag-ui/core` (pinned,
+zod-only, no platform APIs) in `src/ai/agui.ts` alone — the AG-UI wire format is validated by the
+protocol's own schemas on both sides, which a mirror cannot give. A fifth dependency needs the same
+written justification, and `apps/web/tests/config/shared-imports.test.ts` enforces the list.
 
 **`apps/cli`.** `login` opens `GET /auth/cli?redirect_uri=http://127.0.0.1:<port>/callback`; the server
 mints a tenant API key `cli:<host>` → `?key=&tenant_id=&tenant_name=`; stored `0600` in
