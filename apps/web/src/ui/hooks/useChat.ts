@@ -114,11 +114,18 @@ export interface StreamingTurn {
   text: string
   model?: string
   usage?: TokenUsage
-  /** Human one-liners for the run's `TOOL_CALL_*` events. */
-  toolSteps: string[]
+  /** One entry per tool CALL — a call and its result are one thing that happened, not two lines. */
+  toolSteps: ToolStep[]
   /** A `CUSTOM kit.notice` the reader should see — rendered as a quiet line, not an error. */
   notice?: KitNoticeCode
   error?: { message: string; code: string }
+}
+
+/** A tool call in flight or finished: `TOOL_CALL_RESULT` completes the row `TOOL_CALL_START` opened. */
+export interface ToolStep {
+  id: string
+  label: string
+  done: boolean
 }
 
 /** What a tool call is called in the transcript. An unknown tool falls back to its wire name. */
@@ -217,11 +224,20 @@ export function useSendMessage(conversationId: string | undefined) {
               case AguiEventType.TOOL_CALL_START:
                 setTurn(t => ({
                   ...t,
-                  toolSteps: [...t.toolSteps, `${toolLabel(event.toolCallName)}…`],
+                  toolSteps: [
+                    ...t.toolSteps,
+                    { id: event.toolCallId, label: toolLabel(event.toolCallName), done: false },
+                  ],
                 }))
                 break
               case AguiEventType.TOOL_CALL_RESULT:
-                setTurn(t => ({ ...t, toolSteps: [...t.toolSteps, 'Done'] }))
+                // Complete the row this result answers, by id — never append a second one.
+                setTurn(t => ({
+                  ...t,
+                  toolSteps: t.toolSteps.map(step =>
+                    step.id === event.toolCallId ? { ...step, done: true } : step
+                  ),
+                }))
                 break
               case AguiEventType.RUN_ERROR:
                 setTurn(t => ({

@@ -31,7 +31,7 @@ const PROVIDERS = [
     supportsServiceTier: true,
     defaultModel: 'claude-sonnet-4-5',
     presets: [],
-    suggestedModels: ['claude-sonnet-4-5', 'claude-opus-4-1'],
+    suggestedModels: { chat: ['claude-sonnet-4-5', 'claude-opus-4-1'], embeddings: [] },
   },
   {
     id: 'anthropic_compatible',
@@ -43,7 +43,7 @@ const PROVIDERS = [
     supportsServiceTier: true,
     defaultModel: 'accounts/fireworks/models/kimi-k2-instruct',
     presets: [],
-    suggestedModels: [],
+    suggestedModels: { chat: [], embeddings: [] },
   },
   {
     id: 'workers_ai',
@@ -55,7 +55,7 @@ const PROVIDERS = [
     supportsServiceTier: false,
     defaultModel: '@cf/baai/bge-m3',
     presets: [],
-    suggestedModels: ['@cf/baai/bge-m3'],
+    suggestedModels: { chat: [], embeddings: ['@cf/baai/bge-m3'] },
   },
 ]
 

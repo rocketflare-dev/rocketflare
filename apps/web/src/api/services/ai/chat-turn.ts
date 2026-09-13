@@ -55,6 +55,7 @@ import { enqueueJob } from '../jobs'
 import { resolvePrompt } from '../prompts'
 import { aguiTextSegmenter, createAguiEncoder, kitCustom } from './agui'
 import { pendingCompaction, selectHistoryWindow, withSummary } from './chat-history'
+import { workersAiStreamsTools } from './client'
 import { AiError, describeAiError, normalizeAiError } from './errors'
 import { runStreamingChat, type Tool } from './kit'
 import { type ResolvedChat, resolveChat } from './resolve'
@@ -139,10 +140,14 @@ export function streamChatTurn(c: AppContext, params: ChatTurnParams): Response 
           tools: tools.map(t => t.name),
         },
       })
-      // Workers AI has no documented tool-call event stream, so the adapter runs a non-streamed
-      // call and replays it: with tools on, the reply arrives in bursts per turn, not token by
-      // token. Say so once rather than letting it read as a stall.
-      if (resolved.provider === 'workers_ai' && tools.length > 0) {
+      // Only when this model's stream is NOT known to carry tool calls: the adapter then runs one
+      // non-streamed call and replays it, so the reply arrives in bursts per turn rather than
+      // token by token. Say so once rather than letting it read as a stall.
+      if (
+        resolved.provider === 'workers_ai' &&
+        tools.length > 0 &&
+        !workersAiStreamsTools(resolved.model)
+      ) {
         await emit(kitCustom(KIT_CUSTOM_EVENTS.notice, { code: 'workers_ai_no_token_streaming' }))
       }
       for (const code of params.notices ?? []) {

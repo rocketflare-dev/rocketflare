@@ -48,6 +48,29 @@ a replayed UUID message id is not re-inserted, and `MESSAGES_SNAPSHOT` tells the
 what the server believes. A non-empty `tools[]` is refused with 400, not ignored. It is a wrapper:
 the same `streamChatTurn` the chat route calls.
 
+**The Workers AI zero-key floor is now `@cf/zai-org/glm-4.7-flash`** (was
+`@cf/meta/llama-3.3-70b-instruct-fp8-fast`). Measured, not assumed: it accepts `tool_choice`, its
+event stream carries tool calls AND keeps producing text, its context window is 131k rather than
+24k, and it is **cheaper** — $0.06 / $0.40 against $0.293 / $2.253 per million input / output
+tokens. The 70B, asked a knowledge question with tools on, looped the same search until the turn cap
+and emitted no text at all. A tenant that pinned a model in Settings → AI is unaffected; this is the
+platform fallback only.
+
+Two adapter fixes came with it. **Workers AI answers in two shapes** — older models return
+`{ response, tool_calls }`, newer ones the OpenAI `{ choices: [{ message | delta }] }` envelope — and
+reading only the first made every newer model look like it answered with nothing. And **streaming
+with tools is now per-model**: `WORKERS_AI_STREAMING_TOOL_MODELS` is a live-verified allow-list (no
+model documents its stream shape), so the default streams token by token with tools on and the
+`workers_ai_no_token_streaming` notice no longer fires for it.
+
+In the chat bubble, a tool call is now one row — a spinner while it runs, a tick when its result
+arrives, matched by `toolCallId` — instead of a line for the call and a second "Done" line after it.
+
+Also in Settings → AI: model suggestions are keyed BY SCOPE, so a chat config no longer offers an
+embeddings model. They are still a hand-kept list rather than a live read of Cloudflare's catalog —
+`wrangler ai models list` is the live one — and everything suggested is priced in
+`@rocketflare/shared/ai/pricing` so the Usage page does not report `unpricedCalls`.
+
 **Workers AI forced tools recover from one more shape.** A live `summarize-text` run failed with
 `submit_summary: the model did not return valid input` while the model had in fact produced the
 right content — Llama 3.3 70B wrapped it as

@@ -120,6 +120,28 @@ describe('Chat page', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: /Send/ })).toBeDisabled())
   })
 
+  it('shows one row per tool call, completed in place rather than appended to', async () => {
+    // Mid-stream: the steps belong to the turn in flight and clear when it finishes.
+    const hanging = hangingSseResponse(
+      run({
+        unterminated: true,
+        tools: [
+          { id: 'c1', name: 'search_knowledge', result: '{}' },
+          { id: 'c2', name: 'get_document', result: '{}' },
+        ],
+      })
+    )
+    mount({
+      [`/api/chat/conversations/${CONV}`]: { ...conversation, messages: [] },
+      [`POST /api/chat/conversations/${CONV}/messages`]: () => hanging.response,
+    })
+    await typeAndSend('What is the maintenance schedule?')
+    await waitFor(() => expect(screen.getByText('Reading a document')).toBeInTheDocument())
+    expect(screen.getByText('Searching the knowledge base')).toBeInTheDocument()
+    // A call and its result are ONE row: no separate "Done" line per call.
+    expect(screen.queryByText('Done')).not.toBeInTheDocument()
+  })
+
   it('renders a kit notice as a quiet line, not an error', async () => {
     mount({
       [`/api/chat/conversations/${CONV}`]: { ...conversation, messages: [] },

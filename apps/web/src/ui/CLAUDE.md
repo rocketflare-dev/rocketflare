@@ -153,7 +153,10 @@ React 18 + Vite + React Router 6 + TanStack Query 5 + zustand; DaisyUI 5 on Tail
   family (list re-sorts, auto-title arrives). Stop = `AbortController.abort()`: a cancelled run
   emits NO terminal event, which is the protocol's way of saying the client went away — a normal
   end (no toast, no error bubble); a pre-stream failure takes the optimistic bubble back. A
-  `RUN_ERROR` leaves the turn in `error` status until the next send. A `CUSTOM kit.notice` renders
+  `RUN_ERROR` leaves the turn in `error` status until the next send. Tool calls render as ONE row each (`ToolStep { id, label, done }`): `TOOL_CALL_START` opens it with
+a spinner and `TOOL_CALL_RESULT` completes it in place with a tick, matched by `toolCallId` — never
+a second "Done" line, and never an index key. `toolLabel(name)` is where the wording lives.
+A `CUSTOM kit.notice` renders
   as a quiet italic line above the reply (`NOTICE_TEXT` in `ChatPage` is the one place its wording
   lives) — it is information, not a failure, so it never takes the error styling.
 - SSE never goes through `api-client`'s `request()` (JSON only); `lib/aguiStream.ts` does its own

@@ -164,7 +164,7 @@ export const DEFAULT_MODELS: Record<AiProvider, string> = {
  * output is the small half of an agent's token bill. An operator who wants the cheaper floor sets
  * Mistral Small as a tenant chat provider (no key needed) or comments `[ai]` out of both tomls.
  */
-export const WORKERS_AI_CHAT_MODEL = '@cf/meta/llama-3.3-70b-instruct-fp8-fast'
+export const WORKERS_AI_CHAT_MODEL = '@cf/zai-org/glm-4.7-flash'
 
 /** Chat defaults for providers whose `DEFAULT_MODELS` entry is an embeddings model. */
 export const DEFAULT_CHAT_MODELS: Partial<Record<AiProvider, string>> = {

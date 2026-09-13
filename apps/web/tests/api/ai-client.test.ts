@@ -16,7 +16,9 @@ import {
   forcedToolInstruction,
   reconcileThinking,
   recoverForcedToolCall,
+  WORKERS_AI_STREAMING_TOOL_MODELS,
   workersAiChatInputs,
+  workersAiStreamsTools,
 } from '@/api/services/ai/client'
 import { AiError, describeAiError, normalizeAiError, redactSecrets } from '@/api/services/ai/errors'
 import { type ChatDelta, textOf } from '@/api/services/ai/types'
@@ -601,6 +603,94 @@ describe('Workers AI chat client', () => {
       stopReason: 'end_turn',
       content: [{ type: 'text', text: 'Just text' }],
     })
+  })
+
+  it('reads the OpenAI-shaped answer the newer Workers AI models return', async () => {
+    // Workers AI answers in TWO shapes and the model decides which. The newer models — the ones
+    // that also accept `tool_choice` — return the chat-completions envelope; reading only
+    // `{ response }` made them look like they had answered with nothing at all.
+    const ai = new RecordingAi()
+    ai.respond = () => ({
+      id: 'chatcmpl-1',
+      object: 'chat.completion',
+      choices: [
+        { index: 0, message: { role: 'assistant', content: 'Hello!' }, finish_reason: 'stop' },
+      ],
+      usage: { prompt_tokens: 11, completion_tokens: 4, total_tokens: 15 },
+    })
+    const client = createChatClient({ provider: 'workers_ai', ai })
+    const result = await client.complete({ model: 'm', maxTokens: 32, messages })
+    expect(result.content).toEqual([{ type: 'text', text: 'Hello!' }])
+    expect(result.stopReason).toBe('end_turn')
+    expect(result.usage).toMatchObject({ inputTokens: 11, outputTokens: 4 })
+
+    // Tool calls and a length stop come out of the same envelope.
+    ai.respond = () => ({
+      choices: [
+        {
+          message: {
+            content: null,
+            tool_calls: [
+              { id: 'c1', function: { name: 'search_knowledge', arguments: '{"query":"fleet"}' } },
+            ],
+          },
+          finish_reason: 'tool_calls',
+        },
+      ],
+    })
+    const withTools = await client.complete({ model: 'm', maxTokens: 32, messages })
+    expect(withTools.content).toEqual([
+      { type: 'tool_use', id: 'c1', name: 'search_knowledge', input: { query: 'fleet' } },
+    ])
+    expect(withTools.stopReason).toBe('tool_use')
+
+    ai.respond = () => ({ choices: [{ message: { content: 'cut' }, finish_reason: 'length' }] })
+    expect((await client.complete({ model: 'm', maxTokens: 4, messages })).stopReason).toBe(
+      'max_tokens'
+    )
+  })
+
+  it('replays for a model not verified to stream tools, and streams for one that is', async () => {
+    // The allow-list exists because the two behaviours are genuinely different and undocumented:
+    // one model streams tool calls and keeps producing text, another loops and emits none.
+    const tool = { name: 't', description: 'd', inputSchema: { type: 'object' } }
+    const withTools = { model: 'm', messages, maxTokens: 8, tools: [tool] }
+
+    const replaying = new RecordingAi()
+    replaying.respond = () => ({ response: 'Answered in one go.' })
+    const a = createChatClient({ provider: 'workers_ai', ai: replaying })
+    await collect(a.stream(withTools))
+    // Not on the list: one non-streamed call (`stream: true` never sent).
+    expect(replaying.runs[0]?.inputs).not.toMatchObject({ stream: true })
+
+    const streaming = new RecordingAi()
+    streaming.respond = () => sseResponse(['data: {"response":"Hi"}\n\n', 'data: [DONE]\n\n']).body
+    const b = createChatClient({ provider: 'workers_ai', ai: streaming })
+    await collect(
+      b.stream({ ...withTools, model: [...WORKERS_AI_STREAMING_TOOL_MODELS][0] ?? 'm' })
+    )
+    expect(streaming.runs[0]?.inputs).toMatchObject({ stream: true })
+
+    expect(workersAiStreamsTools('@cf/meta/llama-3.3-70b-instruct-fp8-fast')).toBe(false)
+  })
+
+  it('streams OpenAI-shaped deltas as well as the legacy `response` ones', async () => {
+    const ai = new RecordingAi()
+    ai.respond = () =>
+      sseResponse([
+        'data: {"choices":[{"delta":{"content":"Hel"}}]}\n\n',
+        'data: {"choices":[{"delta":{"content":"lo"}}]}\n\n',
+        'data: {"usage":{"prompt_tokens":3,"completion_tokens":2,"total_tokens":5}}\n\n',
+        'data: [DONE]\n\n',
+      ]).body
+    const client = createChatClient({ provider: 'workers_ai', ai })
+    const deltas = await collect(client.stream({ model: 'm', messages, maxTokens: 8 }))
+    expect(deltas.filter(d => d.type === 'text')).toEqual([
+      { type: 'text', text: 'Hel' },
+      { type: 'text', text: 'lo' },
+    ])
+    const end = deltas.at(-1)
+    expect(end?.type === 'end' && end.result.content).toEqual([{ type: 'text', text: 'Hello' }])
   })
 
   it('streams SSE frames from the binding as text deltas, then usage and end', async () => {

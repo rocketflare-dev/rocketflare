@@ -112,7 +112,8 @@ function AiConfigForm({
   const isChat = scope === 'chat'
   const providerSwitched = editing !== null && editing.provider !== provider
   const keepsKey = Boolean(editing?.hasCredential) && !providerSwitched
-  const suggestions = info?.suggestedModels ?? []
+  // By scope: a chat config must not offer an embeddings model, or the other way round.
+  const suggestions = info?.suggestedModels?.[scope] ?? []
   const defaultModel = defaultModelFor(provider, scope)
 
   const changeProvider = (next: AiProvider) => {

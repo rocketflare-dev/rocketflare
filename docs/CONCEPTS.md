@@ -596,7 +596,7 @@ specifics in `apps/web/src/ui/CLAUDE.md`.
 promptKey)` assignment (a chat config id and/or a model override → `source: 'agent'`) → the tenant's
 default `ai_configs(scope='chat')` row (`'tenant'`) → platform `ANTHROPIC_API_KEY` with
 `DEFAULT_MODELS.anthropic` (`'platform'`) → **`workers_ai` with `WORKERS_AI_CHAT_MODEL`
-(`@cf/meta/llama-3.3-70b-instruct-fp8-fast`, zero key) when the `AI` binding exists**
+(`@cf/zai-org/glm-4.7-flash`, zero key) when the `AI` binding exists**
 (`'platform'`) → 503 `ai_not_configured` (`AiNotConfiguredError`). The two platform tiers are ONE
 function, `platformChat(cfg, env)`, read by `resolveChat`, `readiness()` and the agent-models list,
 so they cannot disagree. Because both tomls declare `[ai]`, chat is ready on a fresh workspace with
@@ -625,11 +625,23 @@ data, not enum values), `openai` and `openai_compatible` (chat **and** embedding
 client for `/chat/completions` SSE and `/embeddings`, base URLs include `/v1`), `workers_ai`
 (chat **and** embeddings over `env.AI.run`, zero key: `{ messages, tools, max_tokens, stream }` in the
 OpenAI shape, `{ response, tool_calls, usage }` or an SSE `ReadableStream` back; the catalog suggests
-only chat models whose Cloudflare page lists function calling — Llama 3.3 70B, Mistral Small 3.1).
-The floor is the 70B rather than the 24B because it has to run the AGENTS, not just the chat box: a
-24B model handles a multi-turn tool loop over real documents badly (it stalls, or answers in prose
-where a tool call was required). Its context window is 24k, which is why the knowledge tools budget
-what they return. `env.AI.run` takes no `AbortSignal`, so the adapter races it against
+only chat models whose Cloudflare catalog entry lists function calling, and prices every one it
+suggests so the Usage page does not report `unpricedCalls`; the list is hand-kept, and
+`wrangler ai models list` / `… schema <model>` is the live source to check it against).
+
+**The floor is `glm-4.7-flash`**, because the floor has to run the AGENTS, not just the chat box.
+Chosen on measurements rather than reputation: it accepts `tool_choice` (so a forced tool is a real
+constraint rather than an instruction the model may ignore), its event stream carries tool calls AND
+keeps producing text, its context window is 131k rather than 24k, and it is CHEAPER than the 70B it
+replaced ($0.06 / $0.40 against $0.293 / $2.253 per million input / output tokens). The 70B stalled:
+asked a knowledge question with tools on and streaming, it looped the same search until the turn cap
+and emitted no text at all.
+
+**Workers AI answers in TWO shapes and the model decides which.** Older models return
+`{ response, tool_calls }`; newer ones — the same ones that accept `tool_choice` — return the OpenAI
+chat-completions envelope, `{ choices: [{ message | delta, finish_reason }] }`. `readWorkersAiPart`
+reads either, for both a finished answer and a stream chunk. Reading only the first shape is why a
+newer model looks like it answered with nothing at all. `env.AI.run` takes no `AbortSignal`, so the adapter races it against
 `WORKERS_AI_TIMEOUT_MS` (120 s) and turns an unanswered call into a retryable `unavailable` error —
 without that a stalled call holds a Workflow step until its 10-minute timeout and the run reads as
 stuck. **Model schemas differ per model**: some accept the OpenAI tool extras in a transcript,
@@ -646,9 +658,12 @@ real `tool_use` (both paths verified live with `summarize-text`). It also strips
 a model wraps its arguments in — `{"type":"function","name":…,"parameters":{…}}` (observed from
 Llama 3.3 70B), `arguments` as a JSON string, or the whole thing nested under `function` — but only
 when the object names the tool or declares itself a function call, so a tool whose own schema has a
-`parameters` field is never unwrapped. Because tool calls inside a Workers
-AI event stream are undocumented, `stream()` with tools runs one non-streamed call and replays it as
-deltas — a chat with tools does not stream token by token on this provider.
+`parameters` field is never unwrapped. **Streaming with tools is per-model, and no model documents it** — every Workers AI schema declares
+its SSE branch as opaque `format: binary`, so the only way to know is to run it.
+`WORKERS_AI_STREAMING_TOOL_MODELS` is an allow-list of models verified live to carry tool calls in
+the stream AND still produce text; anything not on it gets one non-streamed call replayed as deltas,
+and the chat surface says so once with `CUSTOM kit.notice { workers_ai_no_token_streaming }`. The
+default is on the list, so the out-of-box chat streams token by token with tools on.
 Per-tenant request defaults are injected where the client is built,
 never at call sites: `service_tier` verbatim, and extended `thinking` **off by default and sent
 explicitly** (`{ type: 'disabled' }`) — a reasoning model otherwise bills for thinking the chat surface

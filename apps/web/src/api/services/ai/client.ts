@@ -651,11 +651,67 @@ interface WorkersAiToolCall {
   function?: { name?: string; arguments?: unknown }
 }
 
+/**
+ * Workers AI answers in TWO shapes and the model decides which. The older models
+ * (`llama-3.3-70b-instruct-fp8-fast`) return `{ response, tool_calls }`; the newer ones — which are
+ * also the ones that accept `tool_choice` — return the OpenAI chat-completions envelope,
+ * `{ choices: [{ message | delta, finish_reason }] }`. Reading only the first shape is why a newer
+ * model appears to answer with nothing at all.
+ */
+interface WorkersAiChoice {
+  message?: { content?: string | null; tool_calls?: WorkersAiToolCall[] }
+  delta?: { content?: string | null; tool_calls?: WorkersAiToolCall[] }
+  finish_reason?: string | null
+}
+
 interface WorkersAiTextOutput {
   response?: string
   tool_calls?: WorkersAiToolCall[]
   usage?: OpenAiUsage
+  choices?: WorkersAiChoice[]
 }
+
+/** Text, tool calls and finish reason from either shape — `message` when finished, `delta` mid-stream. */
+function readWorkersAiPart(chunk: WorkersAiTextOutput): {
+  text: string
+  calls: WorkersAiToolCall[]
+  finishReason?: string | null
+} {
+  const choice = chunk.choices?.[0]
+  const part = choice?.message ?? choice?.delta
+  const text = typeof chunk.response === 'string' ? chunk.response : (part?.content ?? '')
+  return {
+    text: text ?? '',
+    calls: chunk.tool_calls ?? part?.tool_calls ?? [],
+    finishReason: choice?.finish_reason,
+  }
+}
+
+function workersAiStopReason(hasTools: boolean, finishReason?: string | null): StopReason {
+  if (hasTools) return 'tool_use'
+  if (finishReason === 'length') return 'max_tokens'
+  return 'end_turn'
+}
+
+/**
+ * Workers AI models whose event stream is known to carry tool calls AND still produce text.
+ *
+ * This is an allow-list rather than a capability check because **no Workers AI model documents its
+ * stream shape** — every schema declares the SSE branch as opaque `format: binary` — so the only
+ * way to know is to run it. Verified live, and the two behaviours are genuinely different:
+ * `glm-4.7-flash` streams tool calls and then streams its answer token by token, while
+ * `llama-3.3-70b-instruct-fp8-fast` streams the tool calls, loops the same search until the turn
+ * cap, and emits no text at all. Replaying one non-streamed call is what makes the second kind
+ * usable, so the default stays conservative and a model joins this list only after someone has
+ * watched it work.
+ */
+export const WORKERS_AI_STREAMING_TOOL_MODELS: ReadonlySet<string> = new Set([
+  '@cf/zai-org/glm-4.7-flash',
+])
+
+/** Whether `stream()` may send tools to this model instead of replaying a non-streamed call. */
+export const workersAiStreamsTools = (model: string): boolean =>
+  WORKERS_AI_STREAMING_TOOL_MODELS.has(model.trim().toLowerCase())
 
 /** Workers AI has no `tool_choice`: a forced tool is an instruction the model is told to honour. */
 export function forcedToolInstruction(params: ChatParams): string | undefined {
@@ -761,15 +817,14 @@ function fromWorkersAiOutput(out: unknown, model: string): ChatResult {
     return { content: [{ type: 'text', text: out }], stopReason: 'end_turn', usage: ZERO, model }
   }
   const json = (out ?? {}) as WorkersAiTextOutput
+  const part = readWorkersAiPart(json)
   const content: ContentBlock[] = []
-  if (typeof json.response === 'string' && json.response) {
-    content.push({ type: 'text', text: json.response })
-  }
-  const tools = fromWorkersAiToolCalls(json.tool_calls)
+  if (part.text) content.push({ type: 'text', text: part.text })
+  const tools = fromWorkersAiToolCalls(part.calls)
   content.push(...tools)
   return {
     content,
-    stopReason: tools.length ? 'tool_use' : 'end_turn',
+    stopReason: workersAiStopReason(tools.length > 0, part.finishReason),
     usage: fromOpenAiUsage(json.usage),
     model,
   }
@@ -950,8 +1005,13 @@ function createWorkersAiChatClient(opts: ChatClientOptions): ChatClient {
     provider: 'workers_ai',
     complete,
     async *stream(params) {
-      // Tool calls inside a Workers AI event stream are undocumented: one call, replayed.
-      if (params.tools?.length && params.toolChoice?.type !== 'none') {
+      // Streaming WITH tools is per-model behaviour, and no model documents it — see
+      // `workersAiStreamsTools`. For anything not verified, one non-streamed call, replayed.
+      if (
+        params.tools?.length &&
+        params.toolChoice?.type !== 'none' &&
+        !workersAiStreamsTools(params.model)
+      ) {
         yield* replay(await complete(params))
         return
       }
@@ -978,12 +1038,13 @@ function createWorkersAiChatClient(opts: ChatClientOptions): ChatClient {
         for await (const data of sseData(body)) {
           if (params.signal?.aborted) break
           const chunk = safeJson(data) as WorkersAiTextOutput
-          if (typeof chunk.response === 'string' && chunk.response) {
-            text += chunk.response
-            yield { type: 'text', text: chunk.response }
+          const part = readWorkersAiPart(chunk)
+          if (part.text) {
+            text += part.text
+            yield { type: 'text', text: part.text }
           }
           if (chunk.usage) usage = fromOpenAiUsage(chunk.usage)
-          if (chunk.tool_calls?.length) calls.push(...chunk.tool_calls)
+          if (part.calls.length) calls.push(...part.calls)
         }
       } catch (err) {
         throw normalizeAiError(err, 'workers_ai')

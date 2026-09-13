@@ -272,15 +272,17 @@ with nobody to approve it (`SIGNUP_MODE=invite_only` default). Verify: `/admin` 
 Resolution (`docs/CONCEPTS.md` §9): a per-agent assignment → the tenant's default provider in
 Settings → AI → the platform `ANTHROPIC_API_KEY` → **Workers AI through the `AI` binding**. That last
 tier means **chat and agents work on a fresh workspace with nothing configured**: Settings → AI shows
-chat readiness `Cloudflare Workers AI · llama-3.3-70b-instruct-fp8-fast · platform default`. Read the
+chat readiness `Cloudflare Workers AI · glm-4.7-flash · platform default`. Read the
 cost line before relying on it, then pick any of these:
 
 0. **Zero-key default — Workers AI.** Nothing to do; `wrangler dev` proxies the binding to your
    logged-in Cloudflare account and a deployed Worker uses its own. **Every call is billed to that
-   account** (10 000 free neurons a day on any plan, then metered — Llama 3.3 70B fp8-fast is about
-   $0.29 / $2.25 per million input / output tokens); the `ai_usage` ledger counts the tokens. The
-   floor is the 70B because the AGENTS run on it too and a smaller model handles a multi-turn tool
-   loop badly; its context window is 24k, which is what the knowledge tools budget against. To make
+   account** (10 000 free neurons a day on any plan, then metered — GLM-4.7-Flash is about
+   $0.06 / $0.40 per million input / output tokens); the `ai_usage` ledger counts the tokens. The
+   floor is a model that can run the AGENTS, not just the chat box, so it needs real tool use: this
+   one accepts `tool_choice`, carries tool calls in its event stream (so chat still streams token by
+   token with tools on) and has a 131k context window, which is what stops one over-eager search
+   poisoning the next turn. To make
    the kit zero-spend instead, comment the `[ai]` block out of BOTH tomls (the parity test keeps them
    in sync) — chat then answers 503 until a key or tenant provider exists. Any tenant can still add
    Workers AI explicitly as a chat provider (no key) to pick another model — cheaper and weaker,
