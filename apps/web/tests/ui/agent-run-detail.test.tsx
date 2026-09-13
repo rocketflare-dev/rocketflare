@@ -139,6 +139,32 @@ describe('buildTimeline', () => {
     expect(call.kind === 'tool' && call.input).toEqual({ style: 'bullets' })
     expect(call.kind === 'tool' && call.result).toEqual({ keyPoints: 2 })
   })
+
+  it('keeps an error row’s details — the only clue when a forced tool produced no call', () => {
+    // The shape `callStructuredTool` records: what the model said instead of calling the tool.
+    const details = {
+      reason: 'no tool call in the response',
+      stopReason: 'end_turn',
+      text: '{"type": "function", "name": "submit_summary", "parameters": {…}}',
+    }
+    const rows = buildTimeline([
+      {
+        id: 'e1',
+        runId: 'r1',
+        seq: 1,
+        type: 'error',
+        at: new Date(),
+        data: { message: 'submit_summary: the model did not return valid input', details },
+      },
+    ] as never)
+    const row = rows[0]
+    expect(row.kind === 'error' && row.details).toEqual(details)
+    // An error without details stays a bare line rather than an empty disclosure.
+    const plain = buildTimeline([
+      { id: 'e2', runId: 'r1', seq: 1, type: 'error', at: new Date(), data: { message: 'boom' } },
+    ] as never)[0]
+    expect(plain.kind === 'error' && plain.details).toBeUndefined()
+  })
 })
 
 describe('runPollInterval / formatDuration', () => {

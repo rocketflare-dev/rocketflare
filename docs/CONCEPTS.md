@@ -642,7 +642,11 @@ Workers AI has **no `tool_choice`**: `forcedToolInstruction` turns `{ type: 'too
 system instruction the model is told to honour, and when the model still answers with the arguments
 as a JSON object in prose (Mistral Small does, for short inputs — a fenced ```` ```json ```` block),
 `recoverForcedToolCall` treats that object as the forced tool's call, so `callStructuredTool` sees a
-real `tool_use` (both paths verified live with `summarize-text`). Because tool calls inside a Workers
+real `tool_use` (both paths verified live with `summarize-text`). It also strips the CALL ENVELOPE
+a model wraps its arguments in — `{"type":"function","name":…,"parameters":{…}}` (observed from
+Llama 3.3 70B), `arguments` as a JSON string, or the whole thing nested under `function` — but only
+when the object names the tool or declares itself a function call, so a tool whose own schema has a
+`parameters` field is never unwrapped. Because tool calls inside a Workers
 AI event stream are undocumented, `stream()` with tools runs one non-streamed call and replays it as
 deltas — a chat with tools does not stream token by token on this provider.
 Per-tenant request defaults are injected where the client is built,
@@ -984,8 +988,8 @@ provider gets a 202 and a `failed` row at `execute` (chat's `POST /conversations
 moot while the `[ai]` binding exists, since Workers AI is the floor); Workers AI forced tools are an
 instruction plus prose-JSON recovery, not a guarantee — a model that answers in plain prose fails
 `callStructuredTool` after its one retry, and the run's `error` event then carries `details` (the zod
-issues, or `{ reason, stopReason, text }` with what the model said) which the Agents drawer does not
-yet render; `stream()` with tools on `workers_ai` is non-streamed; a Workers AI binding error carries no
+issues, or `{ reason, stopReason, text }` with what the model said), which the Agents drawer renders
+collapsed as "What the model returned"; `stream()` with tools on `workers_ai` is non-streamed; a Workers AI binding error carries no
 HTTP status and classifies as `unknown` (agents do not retry it);
 the connection test spends tokens but writes no `ai_usage` row; `GET /api/ai/config/providers` has
 no shared schema (the UI keeps a permissive `passthrough` one in `hooks/useAiConfig.ts`);

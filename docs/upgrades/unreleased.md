@@ -32,6 +32,16 @@ a replayed UUID message id is not re-inserted, and `MESSAGES_SNAPSHOT` tells the
 what the server believes. A non-empty `tools[]` is refused with 400, not ignored. It is a wrapper:
 the same `streamChatTurn` the chat route calls.
 
+**Workers AI forced tools recover from one more shape.** A live `summarize-text` run failed with
+`submit_summary: the model did not return valid input` while the model had in fact produced the
+right content — Llama 3.3 70B wrapped it as
+`{"type":"function","name":"submit_summary","parameters":{…}}` and `recoverForcedToolCall` only
+unwrapped `{name, arguments}`. It now strips that envelope, `arguments` as a JSON string, and a
+nested `function`, but only when the object names the tool or declares itself a function call — so
+a tool whose own schema has a `parameters` field is never unwrapped. The Agents drawer also renders
+an error event's `details` ("What the model returned"), which is the difference between debugging a
+failed run in the UI and going to the database for it.
+
 **An agent run reads back as AG-UI too.** `GET /api/agents/runs/:id/agui` projects
 `agent_run_events` at read time — plain JSON, same ownership rules as `GET /runs/:id`. The table
 and the runtime are untouched; nothing in a Workflow step knows AG-UI exists. There is no SSE

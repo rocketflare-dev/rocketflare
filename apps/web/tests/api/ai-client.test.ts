@@ -733,6 +733,51 @@ describe('Workers AI chat client', () => {
     expect(extractJsonObject('x {"a": {"b": 1}} y')).toEqual({ a: { b: 1 } })
   })
 
+  it('recoverForcedToolCall unwraps the call envelopes models actually emit', () => {
+    const base = {
+      model: 'm',
+      messages,
+      maxTokens: 8,
+      tools: [tool],
+      toolChoice: { type: 'tool' as const, name: 'submit_summary' },
+    }
+    const prose = (text: string) => ({
+      content: [{ type: 'text' as const, text }],
+      stopReason: 'end_turn' as const,
+      usage: { inputTokens: 0, outputTokens: 0 },
+      model: 'm',
+    })
+    const args = { summary: 's', keyPoints: ['a'] }
+    const recovered = (text: string) => recoverForcedToolCall(base, prose(text)).content[0]
+
+    // Verbatim from a failed run: Llama 3.3 70B on Workers AI puts the arguments under
+    // `parameters`, inside a `type: "function"` envelope.
+    expect(
+      recovered(JSON.stringify({ type: 'function', name: 'submit_summary', parameters: args }))
+    ).toMatchObject({ type: 'tool_use', input: args })
+    // `arguments` as a JSON STRING — the OpenAI wire shape.
+    expect(
+      recovered(JSON.stringify({ name: 'submit_summary', arguments: JSON.stringify(args) }))
+    ).toMatchObject({ input: args })
+    // Nested under `function`, fenced.
+    expect(
+      recovered(
+        '```json\n' +
+          JSON.stringify({
+            type: 'function',
+            function: { name: 'submit_summary', arguments: args },
+          }) +
+          '\n```'
+      )
+    ).toMatchObject({ input: args })
+    // A BARE arguments object is passed through untouched…
+    expect(recovered(JSON.stringify(args))).toMatchObject({ input: args })
+    // …and so is one whose own schema happens to have a `parameters` field: without a name or a
+    // `type: "function"` there is no envelope to strip, and stripping it would lose the answer.
+    const bare = { summary: 's', parameters: { nested: true } }
+    expect(recovered(JSON.stringify(bare))).toMatchObject({ input: bare })
+  })
+
   it('forced-tool instruction only for tool/any; tools omitted under toolChoice none', () => {
     const base = { model: 'm', messages, maxTokens: 8, tools: [tool] }
     expect(forcedToolInstruction({ ...base, toolChoice: { type: 'tool', name: 'x' } })).toContain(

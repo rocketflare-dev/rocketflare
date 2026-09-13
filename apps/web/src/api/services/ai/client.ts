@@ -809,19 +809,55 @@ export function extractJsonObject(text: string): Record<string, unknown> | undef
  * and the reply has no call but does carry a JSON object, treat it as that call — a `{ name,
  * arguments }` object naming the tool is unwrapped, anything else is the input itself.
  */
+/** Keys a model puts its tool ARGUMENTS under when it writes the call out as prose JSON. */
+const ARGUMENT_KEYS = ['arguments', 'parameters', 'input', 'args'] as const
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  Boolean(value) && typeof value === 'object' && !Array.isArray(value)
+
+/**
+ * Strip the call envelope a model wrapped its arguments in, or return the object unchanged when it
+ * IS the arguments. Observed in the wild from Llama 3.3 70B on Workers AI:
+ * `{"type":"function","name":"submit_summary","parameters":{…}}` — the right content, one layer
+ * down. `arguments` also arrives as a JSON string (the OpenAI wire shape), and some models nest the
+ * whole thing under `function`.
+ *
+ * The guard matters: a tool whose OWN schema has a `parameters` field must not be unwrapped, so an
+ * envelope is only believed when it also names the tool or declares itself a function call.
+ */
+function unwrapToolArguments(
+  object: Record<string, unknown>,
+  name: string
+): Record<string, unknown> {
+  const inner = isRecord(object.function) ? object.function : object
+  const isEnvelope = inner.name === name || inner.type === 'function' || isRecord(object.function)
+  if (!isEnvelope) return object
+  for (const key of ARGUMENT_KEYS) {
+    const value = inner[key]
+    if (isRecord(value)) return value
+    if (typeof value === 'string') {
+      try {
+        const parsed: unknown = JSON.parse(value)
+        if (isRecord(parsed)) return parsed
+      } catch {
+        // Not JSON after all — keep looking, then fall through to the object as-is.
+      }
+    }
+  }
+  return object
+}
+
 export function recoverForcedToolCall(params: ChatParams, result: ChatResult): ChatResult {
   const name = forcedToolName(params)
   if (!name || result.content.some(b => b.type === 'tool_use')) return result
   const text = textOf(result.content)
   const object = extractJsonObject(text)
   if (!object) return result
-  const wrapped =
-    object.name === name && object.arguments && typeof object.arguments === 'object'
-      ? (object.arguments as Record<string, unknown>)
-      : object
   return {
     ...result,
-    content: [{ type: 'tool_use', id: crypto.randomUUID(), name, input: wrapped }],
+    content: [
+      { type: 'tool_use', id: crypto.randomUUID(), name, input: unwrapToolArguments(object, name) },
+    ],
     stopReason: 'tool_use',
   }
 }
