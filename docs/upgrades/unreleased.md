@@ -103,6 +103,13 @@ validated by the same runtime schema on both sides. It is confined to `src/ai/ag
 is now machine-checked by `apps/web/tests/config/shared-imports.test.ts` rather than
 documentation-only. A fourth dependency needs the same written justification.
 
+**CI now runs on pull requests.** `ci.yml` triggered only on a push to `main` and on
+`workflow_call`, so no PR ever got a check — and the porting-note guard, which the docs describe as
+a PR gate, could only ever run after merge. `pull_request` is added to the triggers, and the
+porting-note step picks its comparison point per trigger (`pull_request.base.sha` on a PR, the
+previous commit on a push). `push` stays limited to `main`, so a PR branch runs the gate once
+rather than twice. `.github/workflows/**` is `manual` — read the diff before taking it.
+
 The deploy workflow now asks whether there is anything to deploy before it tries. The kit's own
 repository keeps `<PLACEHOLDER>` ids in both wrangler tomls on purpose — that is what stops a copy
 deploying before it is provisioned — so every tag the kit cut went red at the parity check. A
