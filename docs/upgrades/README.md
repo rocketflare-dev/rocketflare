@@ -34,11 +34,15 @@ manual: false
 | `version` | must equal the filename stem and the root `package.json` version at the tag |
 | `previous` | the note this one follows; `null` only on the baseline. The chain must be unbroken — it is what `/rf-upgrade` walks |
 | `breaking` | an adopter has to change their own code, not just accept ours |
-| `migrations` | human descriptions of the schema change, **never file names**. An adopter never copies a kit migration; they port the schema and run `pnpm db:generate` |
+| `migrations` | human descriptions of the schema change, **never file names**. An adopter never copies a kit migration; they port the schema and run `pnpm db:generate`. Several read better as a block sequence (`migrations:` then one `  - "…"` per line) than crammed into one inline list |
 | `areas` | `api` · `ui` · `shared` · `db` · `cli` · `config` · `docs` — what to read first |
 | `touches_surfaces` | surface ids from `.rocketflare.json`. Files under an absent surface are dropped |
 | `requires_surfaces` | gates the WHOLE note: absent locally, the release does not apply to this app |
 | `manual` | true when the change cannot be applied mechanically and the body is the only instruction |
+
+Any list may be written inline (`areas: [api, ui]`) or as a block sequence, one `  - item` per
+line. Quote an item that contains a comma — `parseNote` is quote-aware, so the comma stays inside
+the string instead of splitting it in two.
 
 The four headings are fixed and must appear in that order; `apps/web/tests/config/upgrade-notes.test.ts`
 enforces every rule above.

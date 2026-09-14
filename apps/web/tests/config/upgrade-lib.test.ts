@@ -283,6 +283,50 @@ body
     expect(note?.body).toContain('## What changed')
   })
 
+  it('reads a block sequence, which is how three long migrations are written', () => {
+    const note = parseNote(`---
+version: 0.6.0
+migrations:
+  - "conversations gains a rolling summary"
+  - "messages gains nullable provider and model columns"
+areas: [api]
+---
+
+## What changed
+`)
+    expect(note?.data.migrations).toEqual([
+      'conversations gains a rolling summary',
+      'messages gains nullable provider and model columns',
+    ])
+    expect(note?.data.areas).toEqual(['api'])
+  })
+
+  it('keeps a comma inside a quoted item instead of splitting on it', () => {
+    // A migrations entry is a human sentence, and sentences contain commas. Splitting on every
+    // one turns a description into fragments — a corrupted note rather than a rejected one.
+    const note = parseNote(`---
+migrations: ["group types, groups and membership, and a visibility column", "a second one"]
+---
+
+## What changed
+`)
+    expect(note?.data.migrations).toEqual([
+      'group types, groups and membership, and a visibility column',
+      'a second one',
+    ])
+  })
+
+  it('reads an empty key as null, not as an empty list', () => {
+    const note = parseNote(`---
+previous:
+areas: [api]
+---
+
+## What changed
+`)
+    expect(note?.data.previous).toBeNull()
+  })
+
   it('is null without frontmatter', () => {
     expect(parseNote('# just a heading\n')).toBeNull()
   })

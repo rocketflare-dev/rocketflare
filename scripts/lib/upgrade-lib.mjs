@@ -336,27 +336,67 @@ export const APPLYABLE = new Set(['modified', 'verbatim'])
 
 // ---------------------------------------------------------------- release notes
 
+const unquote = s => s.replace(/^["']|["']$/g, '')
+
+/**
+ * Split the inside of an inline `[a, b]` list. Quote-aware, because a `migrations` entry is a
+ * human sentence and sentences contain commas — splitting on every comma silently turns one
+ * description into two fragments, which is a corrupted release note rather than a failed one.
+ */
+function splitInlineList(inner) {
+  if (inner.trim() === '') return []
+  const items = []
+  let current = ''
+  let quote = null
+  for (const ch of inner) {
+    if (quote) {
+      if (ch === quote) quote = null
+      else current += ch
+    } else if (ch === '"' || ch === "'") quote = ch
+    else if (ch === ',') {
+      items.push(current.trim())
+      current = ''
+    } else current += ch
+  }
+  items.push(current.trim())
+  return items.filter(s => s !== '')
+}
+
 /**
  * Parse the YAML frontmatter of a `docs/upgrades/X.Y.Z.md`. Deliberately a tiny scalar/list
  * reader rather than a YAML dependency: the shape is fixed and asserted by a test, and the kit
  * ships no YAML parser.
+ *
+ * A list may be inline (`areas: [api, ui]`) or a block sequence — three long `migrations`
+ * descriptions read far better one per line, and that is how a person writes them:
+ *
+ *     migrations:
+ *       - "messages gains nullable provider and model columns"
  */
 export function parseNote(text) {
   const m = text.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/)
   if (!m) return null
   const data = {}
-  for (const line of m[1].split('\n')) {
-    const kv = line.match(/^([a-z_]+):\s*(.*)$/)
+  const lines = m[1].split('\n')
+  for (let i = 0; i < lines.length; i++) {
+    const kv = lines[i].match(/^([a-z_]+):\s*(.*)$/)
     if (!kv) continue
     const [, key, rawValue] = kv
     const value = rawValue.trim()
-    if (value === '' || value === 'null' || value === '~') data[key] = null
+    if (value.startsWith('[')) data[key] = splitInlineList(value.slice(1, -1))
+    else if (value === '') {
+      // `key:` with nothing after it: either a block sequence, or an empty scalar.
+      const items = []
+      for (let j = i + 1; j < lines.length; j++) {
+        const item = lines[j].match(/^\s+-\s+(.*)$/)
+        if (!item) break
+        items.push(unquote(item[1].trim()))
+        i = j
+      }
+      data[key] = items.length > 0 ? items : null
+    } else if (value === 'null' || value === '~') data[key] = null
     else if (value === 'true' || value === 'false') data[key] = value === 'true'
-    else if (value.startsWith('[')) {
-      const inner = value.slice(1, -1).trim()
-      data[key] =
-        inner === '' ? [] : inner.split(',').map(s => s.trim().replace(/^["']|["']$/g, ''))
-    } else data[key] = value.replace(/^["']|["']$/g, '')
+    else data[key] = unquote(value)
   }
   return { data, body: m[2] }
 }

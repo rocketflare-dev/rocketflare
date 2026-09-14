@@ -101,7 +101,20 @@ function main(argv) {
 
   const pkg = read('package.json')
   const nextPkg = pkg.replace(/^(\s*"version":\s*)"[^"]+"/m, `$1"${version}"`)
-  manifest.kit.version = version
+
+  // Patch `kit.version` in place rather than re-serialising the manifest: `JSON.stringify` loses
+  // the formatting Biome wants (short arrays on one line), so a re-serialised file fails the
+  // kit's own `pnpm lint` and `kit:release` cannot produce a commit that passes the gate. Same
+  // byte-preserving discipline as `scripts/provision/patch-toml.ts` and `package.json` above.
+  const manifestText = read('.rocketflare.json')
+  const nextManifest = manifestText.replace(
+    /("kit":\s*\{[^}]*?"version":\s*)"[^"]+"/,
+    `$1"${version}"`
+  )
+  if (nextManifest === manifestText) {
+    warn('error: could not find kit.version in .rocketflare.json')
+    return 1
+  }
 
   const freshUnreleased = `---
 version: unreleased
@@ -143,7 +156,7 @@ file for the fields and for what "How to apply" has to say._
   writeFileSync(abs(unreleasedPath), freshUnreleased)
   writeFileSync(abs('CHANGELOG.md'), nextChangelog)
   writeFileSync(abs('package.json'), nextPkg)
-  writeFileSync(abs('.rocketflare.json'), `${JSON.stringify(manifest, null, 2)}\n`)
+  writeFileSync(abs('.rocketflare.json'), nextManifest)
 
   out(
     `✔ docs/upgrades/${version}.md     folded from unreleased.md (previous: ${previous ?? 'null'})`,
