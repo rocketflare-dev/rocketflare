@@ -47,11 +47,16 @@ import {
   agentRunEvents,
   agentRuns,
   aiUsage,
+  analyticsPageGroups,
   analyticsPages,
   apiKeys,
   chunks,
   conversations,
+  documentGroups,
   documents,
+  groupMembers,
+  groups,
+  groupTypes,
   messages,
   teamInvitations,
   tenantActivityDailyFacts,
@@ -1039,6 +1044,37 @@ async function seedDemo(
     }
   }
 
+  // -- Groups (D29) ------------------------------------------------------------------------------
+  // One type, two groups, and one document plus one dashboard restricted to Finance — so the demo
+  // shows the feature working rather than just existing: `member@example.test` is in Operations and
+  // cannot see either of them, while `owner@` and `admin@` can.
+  const departmentId = demoId('group-type:department')
+  await db
+    .insert(groupTypes)
+    .values({ id: departmentId, tenantId, name: 'Department' })
+    .onConflictDoNothing()
+  const financeId = demoId('group:finance')
+  const operationsId = demoId('group:operations')
+  await db
+    .insert(groups)
+    .values([
+      { id: financeId, tenantId, groupTypeId: departmentId, name: 'Finance' },
+      { id: operationsId, tenantId, groupTypeId: departmentId, name: 'Operations' },
+    ])
+    .onConflictDoNothing()
+  const financePeople = [owner.id, admin.id, ...demoMembers.slice(0, 1).map(m => m.user.id)]
+  const operationsPeople = [member.id, ...demoMembers.slice(1).map(m => m.user.id)]
+  await db
+    .insert(groupMembers)
+    .values([
+      ...financePeople.map(userId => ({ tenantId, groupId: financeId, userId })),
+      ...operationsPeople.map(userId => ({ tenantId, groupId: operationsId, userId })),
+    ])
+    .onConflictDoNothing()
+  log(
+    `  groups  1 type, 2 groups (Finance ${financePeople.length}, Operations ${operationsPeople.length})`
+  )
+
   // -- Knowledge base ----------------------------------------------------------------------------
   const docIds = new Map<string, string>()
   const docChunks = new Map<string, ReturnType<typeof chunkText>>()
@@ -1108,7 +1144,21 @@ async function seedDemo(
       chunkRows += pieces.length
     }
   }
-  log(`  docs    ${DEMO_DOCUMENTS.length} (${chunkRows} chunks, deterministic embeddings)`)
+  // The carrier scorecard is commercially sensitive in the story, so it is Finance-only.
+  const restrictedDocId = docIds.get('carrier-scorecard')
+  if (restrictedDocId) {
+    await db
+      .update(documents)
+      .set({ visibility: 'groups' })
+      .where(eq(documents.id, restrictedDocId))
+    await db
+      .insert(documentGroups)
+      .values({ tenantId, documentId: restrictedDocId, groupId: financeId })
+      .onConflictDoNothing()
+  }
+  log(
+    `  docs    ${DEMO_DOCUMENTS.length} (${chunkRows} chunks, deterministic embeddings; 1 restricted to Finance)`
+  )
 
   // -- Conversations -----------------------------------------------------------------------------
   let messageRows = 0
@@ -1393,6 +1443,28 @@ Before release, the export coordinator runs the pre-departure checklist — a ve
   const overview = await db.query.analyticsPages.findFirst({
     where: and(eq(analyticsPages.tenantId, tenantId), eq(analyticsPages.slug, 'tenant-overview')),
   })
+  // A user-created page restricted to Finance. Template pages stay tenant-wide on purpose — they
+  // are seeded for every tenant and resetting one must never change who can see it.
+  const financePageId = demoId('analytics-page:finance')
+  await db
+    .insert(analyticsPages)
+    .values({
+      id: financePageId,
+      tenantId,
+      slug: 'finance-review',
+      name: 'Finance review',
+      description: 'Restricted to the Finance department.',
+      templateKey: null,
+      config: (overview?.config ?? { layoutMode: 'rows', rows: [], portlets: [] }) as never,
+      sortOrder: 200,
+      createdByUserId: owner.id,
+      visibility: 'groups',
+    })
+    .onConflictDoNothing()
+  await db
+    .insert(analyticsPageGroups)
+    .values({ tenantId, pageId: financePageId, groupId: financeId })
+    .onConflictDoNothing()
 
   // -- Activity: two weeks of it, by the people above ---------------------------------------------
   const seedKey = await db.query.apiKeys.findFirst({

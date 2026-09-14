@@ -7,6 +7,7 @@
 import { Command, InvalidArgumentError } from 'commander'
 import { runActivityList } from './commands/activity'
 import { runConfigGet, runConfigPath, runConfigSet } from './commands/config'
+import { runGroupMembers, runGroupsList } from './commands/groups'
 import { runKeysList } from './commands/keys'
 import { runLogin } from './commands/login'
 import { runLogout } from './commands/logout'
@@ -114,6 +115,16 @@ members
   .option('--page <n>', 'page number', positiveInt('--page'))
   .option('--page-size <n>', 'items per page (max 200)', positiveInt('--page-size'))
   .action(action((ctx, cmd) => runMembersList(ctx, cmd.opts())))
+
+const groups = program.command('groups').description('groups of the active tenant (admin+)')
+groups
+  .command('list')
+  .description('list groups with their member counts')
+  .action(action(runGroupsList))
+groups
+  .command('members <groupId>')
+  .description('list the people in one group')
+  .action(action((ctx, cmd) => runGroupMembers(ctx, String(cmd.args[0] ?? ''))))
 
 const keys = program.command('keys').description('API keys of the active tenant')
 keys.command('list').description('list API keys (prefixes only)').action(action(runKeysList))

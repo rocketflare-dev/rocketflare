@@ -3,6 +3,8 @@
  * behind `RequireGuard guard="admin"`; tabs whose content needs more (owner-only slug/delete)
  * gate inside. In single mode the heading reads "Workspace settings". AI tabs (D17, D18): `ai`
  * and `prompts` degrade to read-only inside; `agent-models` and `usage` are `manage AiConfig` only and hidden otherwise.
+ * `groups` (D29) is `manage Group` only and hidden otherwise — a picker that 403s on save is worse
+ * than no tab.
  */
 import {
   ChartBarIcon,
@@ -10,6 +12,7 @@ import {
   CpuChipIcon,
   DocumentTextIcon,
   KeyIcon,
+  RectangleGroupIcon,
   SparklesIcon,
   UserGroupIcon,
 } from '@heroicons/react/24/outline'
@@ -20,6 +23,7 @@ import AgentModelsSettings from './AgentModels'
 import AiSettings from './AI'
 import ApiKeys from './ApiKeys'
 import General from './General'
+import GroupsSettings from './Groups'
 import People from './People'
 import PromptsSettings from './Prompts'
 import UsageSettings from './Usage'
@@ -83,6 +87,16 @@ export default function SettingsLayout() {
             icon: <UserGroupIcon className="w-4 h-4" />,
             content: <People />,
           },
+          ...(can('manage', 'Group')
+            ? [
+                {
+                  id: 'groups',
+                  label: 'Groups',
+                  icon: <RectangleGroupIcon className="w-4 h-4" />,
+                  content: <GroupsSettings />,
+                },
+              ]
+            : []),
           {
             id: 'api-keys',
             label: 'API keys',

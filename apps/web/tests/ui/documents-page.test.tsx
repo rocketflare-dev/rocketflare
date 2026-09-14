@@ -109,6 +109,9 @@ describe('Documents page', () => {
       expect(requestBody(fetchMock, 'POST /api/ai/documents/ingest')).toEqual({
         title: 'Handbook',
         text: 'Twelve chars',
+        // D29: the default is tenant-wide, sent explicitly rather than left to the server.
+        visibility: 'tenant',
+        groupIds: [],
       })
     )
     await waitFor(() =>

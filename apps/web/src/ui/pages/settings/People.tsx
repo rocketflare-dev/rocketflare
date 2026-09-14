@@ -5,6 +5,8 @@
  *   - explicit `role === 'owner'` (or global admin) → touch owner rows / assign owner
  *   - `support` rows are read-only (not an assignable role)
  * Invitation "copy link" appears only when the server includes a `token` on the row.
+ * Groups (D29) come back on the member row itself — one query for the page, never one per group —
+ * and "Edit groups" opens `MemberGroupsModal` for `manage Group`.
  */
 
 import {
@@ -30,6 +32,7 @@ import { useMembers, useRemoveMember, useUpdateMemberRole } from '@/ui/hooks/use
 import { usePermissions } from '@/ui/hooks/usePermissions'
 import { formatDate, timeAgo } from '@/ui/lib/format'
 import { InviteModal } from './InviteModal'
+import { MemberGroupsModal } from './MemberGroupsModal'
 
 const ASSIGNABLE_ROLES = tenantRoleSchema.options
 
@@ -55,8 +58,11 @@ function MembersPanel({ onInvite }: { onInvite?: () => void }) {
   const updateRole = useUpdateMemberRole()
   const removeMember = useRemoveMember()
   const [removing, setRemoving] = useState<Member | null>(null)
+  const [editingGroups, setEditingGroups] = useState<Member | null>(null)
 
   const canManage = can('manage', 'TenantMember')
+  // D29: the Groups column shows for everyone (a badge is not a secret); editing is `manage Group`.
+  const canManageGroups = can('manage', 'Group')
   const canManageOwners = tenant?.role === 'owner' || isGlobalAdmin
   const members = data?.items ?? []
 
@@ -100,6 +106,7 @@ function MembersPanel({ onInvite }: { onInvite?: () => void }) {
               <tr>
                 <th>Person</th>
                 <th>Role</th>
+                <th>Groups</th>
                 <th>Joined</th>
                 <th>Last sign-in</th>
                 {canManage && <th className="text-right">Actions</th>}
@@ -141,10 +148,36 @@ function MembersPanel({ onInvite }: { onInvite?: () => void }) {
                       </select>
                     )}
                   </td>
+                  <td>
+                    {m.groups.length === 0 ? (
+                      <span className="text-xs text-muted">—</span>
+                    ) : (
+                      <span className="flex flex-wrap gap-1">
+                        {m.groups.map(group => (
+                          <span
+                            key={group.id}
+                            className="badge badge-sm badge-ghost"
+                            title={`${group.typeName}: ${group.name}`}
+                          >
+                            {group.name}
+                          </span>
+                        ))}
+                      </span>
+                    )}
+                  </td>
                   <td className="text-secondary whitespace-nowrap">{formatDate(m.joinedAt)}</td>
                   <td className="text-secondary whitespace-nowrap">{timeAgo(m.lastLoginAt)}</td>
                   {canManage && (
-                    <td className="text-right">
+                    <td className="text-right whitespace-nowrap">
+                      {canManageGroups && (
+                        <button
+                          type="button"
+                          className="btn btn-ghost btn-xs"
+                          onClick={() => setEditingGroups(m)}
+                        >
+                          Edit groups
+                        </button>
+                      )}
                       {canRemove(m) && (
                         <button
                           type="button"
@@ -171,6 +204,7 @@ function MembersPanel({ onInvite }: { onInvite?: () => void }) {
           />
         </div>
       )}
+      <MemberGroupsModal member={editingGroups} onClose={() => setEditingGroups(null)} />
       <ConfirmModal
         isOpen={removing !== null}
         title="Remove member"

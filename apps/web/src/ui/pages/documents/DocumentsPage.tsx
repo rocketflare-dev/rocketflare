@@ -28,9 +28,12 @@ import {
   uploadDocumentFieldsSchema,
 } from '@rocketflare/shared/ai/embeddings'
 import { filePath, MAX_UPLOAD_BYTES } from '@rocketflare/shared/files'
+import type { ResourceVisibility } from '@rocketflare/shared/groups'
 import { type FormEvent, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
+  AccessBadge,
+  AccessPicker,
   ConfirmModal,
   EmptyState,
   FieldError,
@@ -41,6 +44,7 @@ import {
   SkeletonRows,
   type TabConfig,
   URLTabs,
+  VisibilityModal,
 } from '@/ui/components/shared'
 import { useAuth } from '@/ui/hooks/useAuth'
 import {
@@ -50,6 +54,7 @@ import {
   useUploadDocument,
   validateDocumentUpload,
 } from '@/ui/hooks/useDocuments'
+import { useGroups, useMyGroups, useSetDocumentVisibility } from '@/ui/hooks/useGroups'
 import { usePermissions } from '@/ui/hooks/usePermissions'
 import { showToast } from '@/ui/lib/api-client'
 import { formatDateTime } from '@/ui/lib/format'
@@ -109,11 +114,30 @@ export default function DocumentsPage() {
   )
 }
 
+/**
+ * The groups this person may share with (D29): every group in the tenant for an admin, their own
+ * for a member — exactly what `resolveRequestedVisibility` will accept from them, so the picker
+ * cannot offer something the save would refuse.
+ */
+function useShareableGroups() {
+  const { can } = usePermissions()
+  const isAdmin = can('manage', 'Group')
+  const all = useGroups(undefined, isAdmin)
+  const mine = useMyGroups()
+  return isAdmin ? (all.data?.items ?? []) : (mine.data?.items ?? [])
+}
+
 function IngestForm() {
   const ingest = useIngestText()
+  const { tenant } = useAuth()
+  const available = useShareableGroups()
   const [title, setTitle] = useState('')
   const [text, setText] = useState('')
   const [source, setSource] = useState('')
+  const [access, setAccess] = useState<{ visibility: ResourceVisibility; groupIds: string[] }>({
+    visibility: 'tenant',
+    groupIds: [],
+  })
   const [issues, setIssues] = useState<Issue[] | undefined>()
   const over = text.length > INGEST_TEXT_MAX_CHARS
 
@@ -123,6 +147,8 @@ function IngestForm() {
       title,
       text,
       source: source.trim() ? source : undefined,
+      visibility: access.visibility,
+      groupIds: access.groupIds,
     })
     if (!parsed.success) return setIssues(parsed.error.issues)
     setIssues(undefined)
@@ -137,6 +163,7 @@ function IngestForm() {
         setTitle('')
         setText('')
         setSource('')
+        setAccess({ visibility: 'tenant', groupIds: [] })
       },
     })
   }
@@ -196,6 +223,15 @@ function IngestForm() {
         />
         <FieldError message={fieldErrorFor(issues, 'source')} />
       </div>
+      <AccessPicker
+        idPrefix="ingest"
+        visibility={access.visibility}
+        groupIds={access.groupIds}
+        available={available}
+        tenantName={tenant?.name}
+        onChange={setAccess}
+        disabled={ingest.isPending}
+      />
       <div className="flex justify-end">
         <button
           type="submit"
@@ -218,6 +254,12 @@ const MAX_UPLOAD_MB = Math.round(MAX_UPLOAD_BYTES / (1024 * 1024))
  */
 function UploadForm() {
   const upload = useUploadDocument()
+  const { tenant } = useAuth()
+  const available = useShareableGroups()
+  const [access, setAccess] = useState<{ visibility: ResourceVisibility; groupIds: string[] }>({
+    visibility: 'tenant',
+    groupIds: [],
+  })
   const inputRef = useRef<HTMLInputElement>(null)
   const [file, setFile] = useState<File | null>(null)
   const [title, setTitle] = useState('')
@@ -240,6 +282,8 @@ function UploadForm() {
     const parsed = uploadDocumentFieldsSchema.safeParse({
       title: title.trim() ? title : undefined,
       source: source.trim() ? source : undefined,
+      visibility: access.visibility,
+      groupIds: access.groupIds,
     })
     if (!parsed.success) return setIssues(parsed.error.issues)
     setIssues(undefined)
@@ -258,6 +302,7 @@ function UploadForm() {
           setFile(null)
           setTitle('')
           setSource('')
+          setAccess({ visibility: 'tenant', groupIds: [] })
         },
       }
     )
@@ -326,6 +371,15 @@ function UploadForm() {
         />
         <FieldError message={fieldErrorFor(issues, 'source')} />
       </div>
+      <AccessPicker
+        idPrefix="upload"
+        visibility={access.visibility}
+        groupIds={access.groupIds}
+        available={available}
+        tenantName={tenant?.name}
+        onChange={setAccess}
+        disabled={upload.isPending}
+      />
       <div className="flex justify-end">
         <button
           type="submit"
@@ -340,17 +394,23 @@ function UploadForm() {
 }
 
 function DocumentsTable() {
-  const { user } = useAuth()
+  const { user, tenant } = useAuth()
   const { can } = usePermissions()
+  const available = useShareableGroups()
+  const setVisibility = useSetDocumentVisibility()
   const canDeleteAny = can('delete', 'Document')
   const [page, setPage] = useState(1)
   const [status, setStatus] = useState<DocumentStatus | ''>('')
   const documents = useDocuments({ page, status })
   const remove = useDeleteDocument()
   const [deleting, setDeleting] = useState<Document | null>(null)
+  const [sharing, setSharing] = useState<Document | null>(null)
   const rows = documents.data?.items ?? []
 
   const canDelete = (doc: Document) => canDeleteAny || doc.ownerUserId === user?.id
+  // The same rule the route applies, so the control only appears where the save would succeed.
+  const canManageDocuments = can('manage', 'Document')
+  const canShare = (doc: Document) => canManageDocuments || doc.ownerUserId === user?.id
 
   return (
     <SectionPanel
@@ -417,7 +477,10 @@ function DocumentsTable() {
                     <Link to={documentPath(doc.id)} className="link link-primary font-medium">
                       {doc.title}
                     </Link>
-                    <div className="text-xs text-muted">{documentTypeLabel(doc.contentType)}</div>
+                    <div className="flex items-center gap-2 text-xs text-muted">
+                      {documentTypeLabel(doc.contentType)}
+                      <AccessBadge visibility={doc.visibility} groups={doc.groups} />
+                    </div>
                   </td>
                   <td className="text-secondary">{doc.source ?? '—'}</td>
                   <td>
@@ -434,6 +497,15 @@ function DocumentsTable() {
                     {formatDateTime(doc.createdAt)}
                   </td>
                   <td className="text-right whitespace-nowrap">
+                    {canShare(doc) && (
+                      <button
+                        type="button"
+                        className="btn btn-ghost btn-xs"
+                        onClick={() => setSharing(doc)}
+                      >
+                        Visibility
+                      </button>
+                    )}
                     {doc.fileId && (
                       <a
                         className="btn btn-ghost btn-xs btn-square"
@@ -482,6 +554,21 @@ function DocumentsTable() {
         onCancel={() => setDeleting(null)}
         onConfirm={() => {
           if (deleting) remove.mutate(deleting.id, { onSuccess: () => setDeleting(null) })
+        }}
+      />
+
+      <VisibilityModal
+        open={sharing !== null}
+        onClose={() => setSharing(null)}
+        name={sharing?.title ?? ''}
+        visibility={sharing?.visibility ?? 'tenant'}
+        groups={sharing?.groups ?? []}
+        available={available}
+        tenantName={tenant?.name}
+        isSaving={setVisibility.isPending}
+        onSave={next => {
+          if (!sharing) return
+          setVisibility.mutate({ id: sharing.id, ...next }, { onSuccess: () => setSharing(null) })
         }}
       />
     </SectionPanel>

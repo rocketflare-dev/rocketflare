@@ -18,6 +18,7 @@ import {
 } from '@/ui/components/shared'
 import { useAuth } from '@/ui/hooks/useAuth'
 import { useAuthMethods } from '@/ui/hooks/useAuthMethods'
+import { useMyGroups } from '@/ui/hooks/useGroups'
 import {
   AVATAR_ACCEPT,
   useLinkedProviders,
@@ -38,8 +39,36 @@ export default function Profile() {
         description="How you appear to others, and how you sign in."
       />
       <ProfileForm />
+      <YourGroups />
       <SignInMethods />
     </div>
+  )
+}
+
+/**
+ * Read-only (D29): group membership is administered under Settings → Groups, but a person should
+ * be able to see what they are in without asking — it is what decides which documents and
+ * dashboards they can open. The panel hides itself when they are in none, so an organisation that
+ * does not use groups never sees it.
+ */
+function YourGroups() {
+  const { data, isLoading } = useMyGroups()
+  const groups = data?.items ?? []
+  if (isLoading || groups.length === 0) return null
+  return (
+    <SectionPanel
+      title="Your groups"
+      description="What you are in decides which restricted documents and dashboards you can open."
+    >
+      <ul className="flex flex-wrap gap-2">
+        {groups.map(group => (
+          <li key={group.id} className="badge badge-lg badge-ghost">
+            <span className="text-muted mr-1">{group.typeName}:</span>
+            {group.name}
+          </li>
+        ))}
+      </ul>
+    </SectionPanel>
   )
 }
 

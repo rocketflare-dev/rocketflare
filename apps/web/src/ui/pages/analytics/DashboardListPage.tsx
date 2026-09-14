@@ -24,6 +24,7 @@ import {
   type DashboardFormValues,
 } from '@/ui/components/analytics/DashboardFormModal'
 import {
+  AccessBadge,
   ConfirmModal,
   EmptyState,
   PageHeader,
@@ -159,8 +160,12 @@ function DashboardCard({ page }: { page: AnalyticsPage }) {
           {page.description && (
             <p className="mt-1 text-xs text-secondary line-clamp-2">{page.description}</p>
           )}
-          <p className="mt-2 text-xs text-muted">
-            {portlets} {portlets === 1 ? 'portlet' : 'portlets'} · updated {timeAgo(page.updatedAt)}
+          <p className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted">
+            <span>
+              {portlets} {portlets === 1 ? 'portlet' : 'portlets'} · updated{' '}
+              {timeAgo(page.updatedAt)}
+            </span>
+            <AccessBadge visibility={page.visibility} groups={page.groups} />
           </p>
         </div>
       </div>

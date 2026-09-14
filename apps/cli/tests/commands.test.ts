@@ -2,6 +2,7 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { runActivityList } from '../src/commands/activity'
 import { runConfigGet, runConfigPath, runConfigSet } from '../src/commands/config'
+import { runGroupMembers, runGroupsList } from '../src/commands/groups'
 import { runKeysList } from '../src/commands/keys'
 import { runMembersList } from '../src/commands/members'
 import { runStatus } from '../src/commands/status'
@@ -66,6 +67,66 @@ const membersBody = {
   ],
   pagination: { page: 1, pageSize: 25, total: 2, totalPages: 1 },
 }
+
+const GROUP_ID = '44444444-3333-4222-8111-000000000001'
+const groupsBody = {
+  items: [
+    {
+      id: GROUP_ID,
+      tenantId: TENANT_ID,
+      groupTypeId: '55555555-3333-4222-8111-000000000002',
+      typeName: 'Department',
+      name: 'Finance',
+      description: null,
+      memberCount: 2,
+      createdAt: '2026-01-05T10:00:00.000Z',
+      updatedAt: '2026-01-05T10:00:00.000Z',
+    },
+  ],
+}
+
+describe('groups', () => {
+  it('list renders type, group and member count', async () => {
+    const store = await loggedInStore()
+    const api = mockFetch({ '/api/groups': () => jsonResponse(groupsBody) })
+    const { ctx, out } = await testContext({ store, fetch: api.fetch })
+    await runGroupsList(ctx)
+    const text = out.content()
+    expect(text).toMatch(/Type\s+Group\s+People\s+Id/)
+    expect(text).toContain('Finance')
+    expect(text).toContain('Department')
+  })
+
+  it('members lists the people in one group, and --json prints the raw body', async () => {
+    const store = await loggedInStore()
+    const detail = {
+      ...groupsBody.items[0],
+      members: [
+        {
+          userId: USER_ID,
+          email: 'alice@example.com',
+          name: 'Alice',
+          avatarUrl: null,
+          addedAt: '2026-02-01T10:00:00.000Z',
+        },
+      ],
+    }
+    const api = mockFetch({ [`/api/groups/${GROUP_ID}`]: () => jsonResponse(detail) })
+    const { ctx, out } = await testContext({ store, fetch: api.fetch, json: true })
+    await runGroupMembers(ctx, GROUP_ID)
+    expect(JSON.parse(out.content())).toEqual(detail)
+  })
+
+  it('a member gets exit 3 (forbidden) — administering groups is admin+', async () => {
+    const store = await loggedInStore()
+    const api = mockFetch({
+      '/api/groups': () => jsonResponse({ error: 'Forbidden', statusCode: 403 }, 403),
+    })
+    const { ctx } = await testContext({ store, fetch: api.fetch })
+    const error = await captureError(runGroupsList(ctx))
+    expect(exitCodeFor(error)).toBe(EXIT_FORBIDDEN)
+  })
+})
 
 describe('members list', () => {
   it('renders a table and passes page/pageSize', async () => {

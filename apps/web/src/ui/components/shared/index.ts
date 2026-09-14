@@ -1,3 +1,4 @@
+export { AccessBadge, AccessPicker, type AccessPickerProps } from './AccessPicker'
 export { AlertModal } from './AlertModal'
 export { ConfirmModal } from './ConfirmModal'
 export { DocumentCard, type DocumentCardProps } from './DocumentCard'
@@ -12,3 +13,4 @@ export { SectionPanel, SectionPanelSkeleton, SkeletonRows } from './SectionPanel
 export { SettingInput, SettingRow, SettingToggle } from './SettingRow'
 export { showToast, type Toast, ToastContainer, type ToastType, useToastStore } from './Toast'
 export { type TabConfig, URLTabs } from './URLTabs'
+export { VisibilityModal, type VisibilityModalProps } from './VisibilityModal'

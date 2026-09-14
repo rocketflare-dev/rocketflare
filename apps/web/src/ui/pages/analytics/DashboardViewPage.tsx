@@ -9,7 +9,13 @@
  * (no data router), so the loader's `beforeunload` guard plus flush-on-leave-edit-mode is the
  * protection; the edit toggle shows "Saving…" / "Unsaved" while a PATCH is pending.
  */
-import { ArrowPathIcon, PencilSquareIcon, TrashIcon, XMarkIcon } from '@heroicons/react/24/outline'
+import {
+  ArrowPathIcon,
+  LockClosedIcon,
+  PencilSquareIcon,
+  TrashIcon,
+  XMarkIcon,
+} from '@heroicons/react/24/outline'
 import { useCallback, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { CubeClientProvider } from '@/ui/components/analytics/CubeClientProvider'
@@ -19,7 +25,14 @@ import {
 } from '@/ui/components/analytics/DashboardFormModal'
 import { DashboardLoader } from '@/ui/components/analytics/DashboardLoader'
 import { DateRangeControl } from '@/ui/components/analytics/DateRangeControl'
-import { ConfirmModal, PageHeader, SectionPanel, SkeletonRows } from '@/ui/components/shared'
+import {
+  AccessBadge,
+  ConfirmModal,
+  PageHeader,
+  SectionPanel,
+  SkeletonRows,
+  VisibilityModal,
+} from '@/ui/components/shared'
 import {
   useAnalyticsPage,
   useDeleteAnalyticsPage,
@@ -27,6 +40,7 @@ import {
   useUpdateAnalyticsPage,
 } from '@/ui/hooks/useAnalyticsPages'
 import { useDashboardDateFilter } from '@/ui/hooks/useDashboardDateFilter'
+import { useGroups, useSetPageVisibility } from '@/ui/hooks/useGroups'
 import { usePermissions } from '@/ui/hooks/usePermissions'
 
 export default function DashboardViewPage() {
@@ -34,6 +48,10 @@ export default function DashboardViewPage() {
   const navigate = useNavigate()
   const { can } = usePermissions()
   const canManage = can('manage', 'Dashboard')
+  const [visibilityOpen, setVisibilityOpen] = useState(false)
+  // Dashboard visibility is admin+, so the picker offers every group in the organisation.
+  const shareableGroups = useGroups(undefined, canManage)
+  const setVisibility = useSetPageVisibility()
   const page = useAnalyticsPage(pageId)
   const dateFilter = useDashboardDateFilter()
 
@@ -100,6 +118,7 @@ export default function DashboardViewPage() {
           <span className="flex items-center gap-1">
             {row.isDefault && <span className="badge badge-sm badge-primary">Default</span>}
             {isTemplate && <span className="badge badge-sm badge-ghost">Template</span>}
+            <AccessBadge visibility={row.visibility} groups={row.groups} />
             {editing && (
               <span
                 className="status-badge no-dot"
@@ -142,6 +161,12 @@ export default function DashboardViewPage() {
                       <button type="button" onClick={() => setRenameOpen(true)}>
                         <PencilSquareIcon className="w-4 h-4" />
                         Rename
+                      </button>
+                    </li>
+                    <li>
+                      <button type="button" onClick={() => setVisibilityOpen(true)}>
+                        <LockClosedIcon className="w-4 h-4" />
+                        Who can see this
                       </button>
                     </li>
                     {isTemplate && (
@@ -213,6 +238,21 @@ export default function DashboardViewPage() {
           />
         </>
       )}
+      <VisibilityModal
+        open={visibilityOpen}
+        onClose={() => setVisibilityOpen(false)}
+        name={row.name}
+        visibility={row.visibility}
+        groups={row.groups}
+        available={shareableGroups.data?.items ?? []}
+        isSaving={setVisibility.isPending}
+        onSave={next =>
+          setVisibility.mutate(
+            { id: row.id, ...next },
+            { onSuccess: () => setVisibilityOpen(false) }
+          )
+        }
+      />
     </div>
   )
 }
