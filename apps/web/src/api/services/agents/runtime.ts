@@ -30,6 +30,7 @@ import { tenants } from '../../../db/schema'
 import { traceChatClient, tracerFor, withAgentTrace } from '../../observability/tracing'
 import { classifyInfrastructureError } from '../../utils/core/errors'
 import type { Logger } from '../../utils/core/logger'
+import { accessScopeForUser } from '../access'
 import { AiError, describeAiError, redactSecrets } from '../ai/errors'
 import { StructuredOutputError } from '../ai/kit'
 import { resolveChat } from '../ai/resolve'
@@ -160,6 +161,7 @@ export async function executeRun(
     await checkCancelled()
     const input = agent.meta.inputSchema.parse(run.input)
     const resolved = await resolveChat(db, cfg, env, tenantId, { promptKey: agent.meta.promptKey })
+    const toolScope = await accessScopeForUser(db, tenantId, run.requestedByUserId)
     const tenant = await db.query.tenants.findFirst({
       columns: { name: true },
       where: eq(tenants.id, tenantId),
@@ -195,7 +197,10 @@ export async function executeRun(
           emit,
           checkCancelled,
           chat: { client, model: resolved.model, maxOutputTokens: resolved.maxOutputTokens },
-          tools: buildAgentTools({ db, cfg, env, tenantId }),
+          // D29: built here, at EXECUTE time, from the run's requester — current membership, not
+          // a snapshot taken when the run was enqueued. No requester ("system") reads tenant-wide
+          // documents only, never an owner's restricted ones.
+          tools: buildAgentTools({ db, cfg, env, scope: toolScope }),
           checkpoint: {
             load: () => loadCheckpoint(db, tenantId, runId),
             save: cp => saveCheckpoint(db, tenantId, runId, cp),

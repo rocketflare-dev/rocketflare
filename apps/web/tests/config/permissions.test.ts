@@ -43,6 +43,8 @@ const MATRIX: Record<string, Record<Role, Level>> = {
   AgentRun: { owner: 'manage', admin: 'manage', support: 'manage', member: 'manage' },
   Document: { owner: 'manage', admin: 'manage', support: 'manage', member: 'create' },
   Dashboard: { owner: 'manage', admin: 'manage', support: 'manage', member: 'read' },
+  // D29 — administering groups is admin+; a member's own groups are a route-scoped read.
+  Group: { owner: 'manage', admin: 'manage', support: 'manage', member: 'read' },
   Analytics: { owner: 'read', admin: 'read', support: 'read', member: 'read' },
   AccessRequest: { owner: 'none', admin: 'none', support: 'none', member: 'none' },
   User: { owner: 'none', admin: 'none', support: 'none', member: 'none' },

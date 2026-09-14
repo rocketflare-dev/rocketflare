@@ -6,6 +6,7 @@
  * `<input accept>` offers and what the route answers 415 to.
  */
 import { z } from 'zod'
+import { groupRefSchema, resourceVisibilitySchema } from '../groups'
 import { paginationQuerySchema } from '../pagination'
 
 export const documentStatusSchema = z.enum(['pending', 'indexed', 'failed'])
@@ -26,6 +27,10 @@ export const documentSchema = z.object({
   chunkCount: z.number().int().nonnegative(),
   status: documentStatusSchema,
   error: z.string().nullable(),
+  /** D29: `tenant` = every member; `groups` = only `groups` below, plus the owner and admins. */
+  visibility: resourceVisibilitySchema,
+  /** The groups it is shared with — empty under `tenant`, and empty under `groups` means private. */
+  groups: z.array(groupRefSchema),
   createdAt: z.coerce.date(),
   updatedAt: z.coerce.date(),
 })
@@ -38,6 +43,9 @@ export const ingestTextRequestSchema = z.object({
   title: z.string().trim().min(1).max(200),
   text: z.string().min(1).max(INGEST_TEXT_MAX_CHARS),
   source: z.string().trim().min(1).max(200).optional(),
+  /** D29 — defaults to `tenant`, so an ingest that says nothing is shared with the organisation. */
+  visibility: resourceVisibilitySchema.optional(),
+  groupIds: z.array(z.string().uuid()).max(200).optional(),
 })
 export type IngestTextRequest = z.infer<typeof ingestTextRequestSchema>
 
@@ -198,6 +206,9 @@ export const uploadDocumentFieldsSchema = z.object({
   title: z.string().trim().min(1).max(200).optional(),
   /** Defaults to the sanitised filename. */
   source: z.string().trim().min(1).max(200).optional(),
+  /** D29 — a multipart form carries these as text parts; `groupIds` is a JSON array of uuids. */
+  visibility: resourceVisibilitySchema.optional(),
+  groupIds: z.array(z.string().uuid()).max(200).optional(),
 })
 export type UploadDocumentFields = z.infer<typeof uploadDocumentFieldsSchema>
 

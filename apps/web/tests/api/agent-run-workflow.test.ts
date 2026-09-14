@@ -12,6 +12,7 @@
  */
 import { and, eq } from 'drizzle-orm'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { fullAccessScope } from '@/api/services/access'
 import { enqueueRun, getRun, listEvents, runOnce } from '@/api/services/agents/runs'
 import { executeRun } from '@/api/services/agents/runtime'
 import { AiError } from '@/api/services/ai/errors'
@@ -284,12 +285,18 @@ describe('AgentRunWorkflow', () => {
     ).toHaveLength(2)
 
     const cfg = loadConfig(env)
-    const hits = await searchChunks(db, cfg, env, tenant.id, { query: 'volcanoes erupt', limit: 5 })
+    const hits = await searchChunks(db, cfg, env, fullAccessScope(tenant.id), {
+      query: 'volcanoes erupt',
+      limit: 5,
+    })
     expect(hits[0]).toMatchObject({ documentId, rank: 1 })
     expect(hits[0]?.text).toContain('Volcanoes are mountains that erupt.')
     const other = await createTestTenantWithUser(db, 'owner')
     expect(
-      await searchChunks(db, cfg, env, other.tenant.id, { query: 'volcanoes erupt', limit: 5 })
+      await searchChunks(db, cfg, env, fullAccessScope(other.tenant.id), {
+        query: 'volcanoes erupt',
+        limit: 5,
+      })
     ).toEqual([])
   })
 

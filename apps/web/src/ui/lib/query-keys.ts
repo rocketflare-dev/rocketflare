@@ -131,6 +131,18 @@ export const queryKeys = {
     factsStatus: ['analytics', 'facts-status'] as const,
     cubeMeta: ['analytics', 'cube-meta'] as const,
   },
+  /**
+   * `/api/groups` (D29). The root is `groups` because the server nudges
+   * `entity.changed { entity: 'groups' }` from every group mutation, and `access.changed` names it
+   * too — so the admin UI and a person's own group list both refresh with no socket code here.
+   */
+  groups: {
+    all: ['groups'] as const,
+    types: ['groups', 'types'] as const,
+    list: (filters: object = {}) => ['groups', 'list', filters] as const,
+    detail: (id: string) => ['groups', 'detail', id] as const,
+    mine: ['groups', 'mine'] as const,
+  },
   /** `/api/admin/*` — cross-tenant; one `admin.all` invalidation after any admin mutation */
   admin: {
     all: ['admin'] as const,

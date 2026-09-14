@@ -7,9 +7,9 @@
  * CALLER, not the tool** (`AgentToolContext.maxDocumentChars`): an agent run may read 50 000
  * characters because reading the document is the job, while a chat turn gets
  * `CHAT_GET_DOCUMENT_MAX_CHARS` because it shares one context window with the whole thread.
- * Tenant-scoped by the run's
- * `tenantId`; another tenant's id, an unknown id or a not-yet-converted upload each get a plain
- * answer rather than an error.
+ * Scoped by the run's `AccessScope`; another tenant's id, an unknown id, a document the requester
+ * may not see (D29 — the SAME answer as unknown, and the hint never says the document exists) or a
+ * not-yet-converted upload each get a plain answer rather than an error.
  */
 import { type DocumentContent, KNOWLEDGE_TOOLS } from '@rocketflare/shared/ai/embeddings'
 import { z } from 'zod'
@@ -96,7 +96,7 @@ export function getDocumentTool(ctx: AgentToolContext): Tool<GetDocumentInput> {
     async handler(input) {
       const window = await readDocumentWindow(
         ctx.db,
-        ctx.tenantId,
+        ctx.scope,
         {
           documentId: input.documentId,
           offset: input.offset,

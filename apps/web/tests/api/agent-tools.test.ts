@@ -10,6 +10,7 @@
  */
 import { eq } from 'drizzle-orm'
 import { describe, expect, it } from 'vitest'
+import { fullAccessScope } from '@/api/services/access'
 import {
   buildAgentTools,
   EVENT_PREVIEW_CHARS,
@@ -87,13 +88,15 @@ function handlerOf<T>(tool: { name: string; handler?: (input: T) => Promise<stri
 describe('search_knowledge tool', () => {
   it('is on ctx.tools and finds the indexed document for the run tenant only', async () => {
     const { tenant, env, cfg, volcano } = await seeded()
-    const tools = buildAgentTools({ db, cfg, env, tenantId: tenant.id })
+    const tools = buildAgentTools({ db, cfg, env, scope: fullAccessScope(tenant.id) })
     expect(tools.map(t => t.name)).toEqual([
       SEARCH_KNOWLEDGE_TOOL,
       GET_DOCUMENT_TOOL,
       LIST_DOCUMENTS_TOOL,
     ])
-    const search = handlerOf(searchKnowledgeTool({ db, cfg, env, tenantId: tenant.id }))
+    const search = handlerOf(
+      searchKnowledgeTool({ db, cfg, env, scope: fullAccessScope(tenant.id) })
+    )
     const out = parse(await search({ query: 'how does a volcano erupt', limit: 5 }))
     expect(out.query).toBe('how does a volcano erupt')
     // Grouped by document, whole passages, position reported.
@@ -112,7 +115,9 @@ describe('search_knowledge tool', () => {
 
     // Another tenant with the same query sees nothing — and is told what it DOES have.
     const other = await createTestTenantWithUser(db, 'owner')
-    const theirs = handlerOf(searchKnowledgeTool({ db, cfg, env, tenantId: other.tenant.id }))
+    const theirs = handlerOf(
+      searchKnowledgeTool({ db, cfg, env, scope: fullAccessScope(other.tenant.id) })
+    )
     const empty = parse(await theirs({ query: 'volcano', limit: 5 }))
     expect(empty.documents).toEqual([])
     expect(empty.knowledgeBase).toEqual([])
@@ -123,7 +128,9 @@ describe('search_knowledge tool', () => {
     // Dense retrieval has no threshold: an unrelated query still gets the closest passages, so the
     // answer must tell the model to judge them rather than trust the ranking.
     const { tenant, env, cfg } = await seeded()
-    const search = handlerOf(searchKnowledgeTool({ db, cfg, env, tenantId: tenant.id }))
+    const search = handlerOf(
+      searchKnowledgeTool({ db, cfg, env, scope: fullAccessScope(tenant.id) })
+    )
     const out = parse(await search({ query: 'quarterly revenue in singapore' }))
     expect(out.passagesReturned).toBeGreaterThan(0)
     expect(out.note).toMatch(/not a relevance filter/)
@@ -138,7 +145,9 @@ describe('search_knowledge tool', () => {
     await db
       .insert(documents)
       .values({ tenantId: tenant.id, title: 'Slides', contentType: 'application/pdf' })
-    const search = handlerOf(searchKnowledgeTool({ db, cfg, env, tenantId: tenant.id }))
+    const search = handlerOf(
+      searchKnowledgeTool({ db, cfg, env, scope: fullAccessScope(tenant.id) })
+    )
     const empty = parse(await search({ query: 'anything' }))
     expect(empty.passagesReturned).toBe(0)
     expect(empty.knowledgeBase).toEqual([])
@@ -151,7 +160,7 @@ describe('search_knowledge tool', () => {
       title: 'Handbook',
       text: 'Access requests are reviewed by a global admin.',
     })
-    const read = handlerOf(getDocumentTool({ db, cfg, env, tenantId: tenant.id }))
+    const read = handlerOf(getDocumentTool({ db, cfg, env, scope: fullAccessScope(tenant.id) }))
     const unknown = JSON.parse(await read({ documentId: crypto.randomUUID() })) as {
       knowledgeBase?: { documentId: string; title: string }[]
     }
@@ -162,7 +171,7 @@ describe('search_knowledge tool', () => {
 
   it('narrows with documentId, and caps a very long passage at the per-passage budget', async () => {
     const { tenant, env, cfg, banana } = await seeded()
-    const tool = searchKnowledgeTool({ db, cfg, env, tenantId: tenant.id })
+    const tool = searchKnowledgeTool({ db, cfg, env, scope: fullAccessScope(tenant.id) })
     const search = handlerOf(tool)
     const narrowed = parse(await search({ query: 'banana', limit: 5, documentId: banana.id }))
     expect(narrowed.documents.every(d => d.documentId === banana.id)).toBe(true)
@@ -188,7 +197,12 @@ describe('search_knowledge tool', () => {
   it('validates its input with the shared limits and explains itself without a provider', async () => {
     const { tenant } = await createTestTenantWithUser(db, 'owner')
     const env = createTestEnv({ AI: undefined, EMBEDDINGS_API_KEY: undefined })
-    const tool = searchKnowledgeTool({ db, cfg: loadConfig(env), env, tenantId: tenant.id })
+    const tool = searchKnowledgeTool({
+      db,
+      cfg: loadConfig(env),
+      env,
+      scope: fullAccessScope(tenant.id),
+    })
     const search = handlerOf(tool)
     expect(tool.schema.safeParse({ query: '' }).success).toBe(false)
     expect(tool.schema.safeParse({ query: 'x', limit: 99 }).success).toBe(false)
@@ -213,7 +227,13 @@ describe('get_document tool', () => {
     // thread, so it may read far less than an agent run, whose job IS reading the document.
     // Below the seeded document's length, so the clamp and the paging are both observable.
     const cap = 20
-    const chat = getDocumentTool({ db, cfg, env, tenantId: tenant.id, maxDocumentChars: cap })
+    const chat = getDocumentTool({
+      db,
+      cfg,
+      env,
+      scope: fullAccessScope(tenant.id),
+      maxDocumentChars: cap,
+    })
     const read = handlerOf(chat)
 
     // The bound is DECLARED, so the model is told rather than left to discover it.
@@ -231,7 +251,7 @@ describe('get_document tool', () => {
     expect(parseDoc(await read({ documentId: volcano.id, maxChars: 8 })).returnedChars).toBe(8)
 
     // Paging still reaches the end, one capped window at a time.
-    const agent = handlerOf(getDocumentTool({ db, cfg, env, tenantId: tenant.id }))
+    const agent = handlerOf(getDocumentTool({ db, cfg, env, scope: fullAccessScope(tenant.id) }))
     const whole = parseDoc(await agent({ documentId: volcano.id }))
     let offset = 0
     let seen = ''
@@ -246,7 +266,7 @@ describe('get_document tool', () => {
 
   it('reads a document in full, or a window with paging hints', async () => {
     const { tenant, env, cfg, volcano } = await seeded()
-    const tool = getDocumentTool({ db, cfg, env, tenantId: tenant.id })
+    const tool = getDocumentTool({ db, cfg, env, scope: fullAccessScope(tenant.id) })
     const read = handlerOf(tool)
     expect(tool.schema.parse({ documentId: volcano.id })).toEqual({ documentId: volcano.id })
     // Small models send numbers as strings ("offset": "120"); coerce rather than fail the call.
@@ -303,12 +323,14 @@ describe('get_document tool', () => {
 
     // Another tenant's id does not exist HERE, and the answer offers this tenant's own documents.
     const other = await createTestTenantWithUser(db, 'owner')
-    const theirs = handlerOf(getDocumentTool({ db, cfg, env, tenantId: other.tenant.id }))
+    const theirs = handlerOf(
+      getDocumentTool({ db, cfg, env, scope: fullAccessScope(other.tenant.id) })
+    )
     const crossTenant = problem(await theirs({ documentId: volcano.id, maxChars: 100 }))
     expect(crossTenant.error).toBe('document_not_found')
     expect(crossTenant.knowledgeBase).toEqual([])
 
-    const mine = handlerOf(getDocumentTool({ db, cfg, env, tenantId: tenant.id }))
+    const mine = handlerOf(getDocumentTool({ db, cfg, env, scope: fullAccessScope(tenant.id) }))
     const unknown = problem(await mine({ documentId: crypto.randomUUID(), maxChars: 100 }))
     expect(unknown.error).toBe('document_not_found')
     expect(unknown.knowledgeBase?.map(d => d.documentId)).toContain(volcano.id)
@@ -333,7 +355,7 @@ describe('get_document tool', () => {
     // one implementation. The model sees this JSON, so its shape is a contract, not an internal:
     // a reordered or renamed key is a prompt change nobody wrote.
     const { tenant, env, cfg, volcano } = await seeded()
-    const read = handlerOf(getDocumentTool({ db, cfg, env, tenantId: tenant.id }))
+    const read = handlerOf(getDocumentTool({ db, cfg, env, scope: fullAccessScope(tenant.id) }))
     const window = JSON.parse(await read({ documentId: volcano.id, maxChars: 20 })) as object
     expect(Object.keys(window)).toEqual([
       'documentId',
@@ -371,7 +393,9 @@ describe('get_document tool', () => {
 describe('summariseToolResult (the tool.end audit trail)', () => {
   it('keeps every hit identifiable and previews only the prose', async () => {
     const { tenant, env, cfg, volcano } = await seeded()
-    const search = handlerOf(searchKnowledgeTool({ db, cfg, env, tenantId: tenant.id }))
+    const search = handlerOf(
+      searchKnowledgeTool({ db, cfg, env, scope: fullAccessScope(tenant.id) })
+    )
     const raw = await search({ query: 'volcano' })
     const summary = summariseToolResult(SEARCH_KNOWLEDGE_TOOL, raw) as SearchKnowledgeResult
 
@@ -428,7 +452,7 @@ describe('list_documents tool', () => {
 
   it('lists indexed documents newest first, with sizes and paging', async () => {
     const { tenant, env, cfg, volcano, banana } = await seeded()
-    const tool = listDocumentsTool({ db, cfg, env, tenantId: tenant.id })
+    const tool = listDocumentsTool({ db, cfg, env, scope: fullAccessScope(tenant.id) })
     const list = handlerOf(tool)
 
     const all = parseList(await list({}))
@@ -457,7 +481,7 @@ describe('list_documents tool', () => {
   it('omits documents that are not indexed yet, and says so when there are none', async () => {
     const { tenant } = await createTestTenantWithUser(db, 'owner')
     const env = keywordEnv()
-    const ctx = { db, cfg: loadConfig(env), env, tenantId: tenant.id }
+    const ctx = { db, cfg: loadConfig(env), env, scope: fullAccessScope(tenant.id) }
     await db
       .insert(documents)
       .values({ tenantId: tenant.id, title: 'Converting', contentType: 'application/pdf' })

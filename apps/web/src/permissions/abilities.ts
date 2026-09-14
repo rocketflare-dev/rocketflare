@@ -43,6 +43,7 @@ export const ADMIN_MANAGED: readonly Subjects[] = [
   'Prompt',
   'Document',
   'Dashboard',
+  'Group',
 ]
 
 /** What every member may at least read. */
@@ -77,6 +78,7 @@ const grantAdmin: RoleGrant = can => {
  * | AgentRun       | manage      | manage | manage | manage  | manage (own only — admin+ see every run, D7) |
  * | Document       | manage      | manage | manage | manage  | create+read (own-document delete is the route's owner check, D18) |
  * | Dashboard      | manage      | manage | manage | manage  | read (D19: analytics_pages CRUD is admin+) |
+ * | Group          | manage      | manage | manage | manage  | read (D29: routes narrow a member's reads to their OWN groups) |
  * | Analytics      | manage      | read   | read   | read    | read (D19: the cube API — tenant-scoped by every cube) |
  * | Feature:<f>    | access all  | by ctx | by ctx | access all | by ctx |
  */

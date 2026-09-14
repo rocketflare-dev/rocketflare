@@ -5,6 +5,7 @@
  * validator refuses `support` for free.
  */
 import { z } from 'zod'
+import { groupRefSchema } from './groups'
 
 export const tenantRoleSchema = z.enum(['owner', 'admin', 'member'])
 export type TenantRole = z.infer<typeof tenantRoleSchema>
@@ -109,6 +110,8 @@ export const memberSchema = z.object({
   /** NULL = invited but never signed in. */
   lastLoginAt: z.coerce.date().nullable(),
   invitedByUserId: z.string().uuid().nullable(),
+  /** D29 — the member's groups, resolved in the SAME query as the list (never one call per group). */
+  groups: z.array(groupRefSchema),
 })
 export type Member = z.infer<typeof memberSchema>
 

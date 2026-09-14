@@ -19,7 +19,7 @@ import {
   uniqueIndex,
   uuid,
 } from 'drizzle-orm/pg-core'
-import { tenantRef, timestamps } from './_helpers'
+import { RESOURCE_VISIBILITY_VALUES, tenantRef, timestamps } from './_helpers'
 import { tenantIsolation } from './rls'
 import { tenants } from './tenants'
 import { users } from './users'
@@ -39,6 +39,10 @@ export const analyticsPages = pgTable(
     /** The page the Analytics section opens first. */
     isDefault: boolean('is_default').notNull().default(false),
     sortOrder: integer('sort_order').notNull().default(0),
+    /** Who may READ this dashboard (D29) — `groups` narrows it to `analytics_page_groups`. */
+    visibility: text('visibility', { enum: RESOURCE_VISIBILITY_VALUES })
+      .notNull()
+      .default('tenant'),
     /** NULL for template pages seeded by the system. */
     createdByUserId: uuid('created_by_user_id').references(() => users.id, {
       onDelete: 'set null',

@@ -31,6 +31,7 @@ import { authRouter } from './routes/auth/index'
 import { chatRouter } from './routes/chat'
 import { cubeApiRouter } from './routes/cube-api'
 import { filesRouter } from './routes/files'
+import { groupsRouter } from './routes/groups'
 import { healthRouter } from './routes/health'
 import { invitationsRouter } from './routes/invitations'
 import { inviteRouter } from './routes/invite'
@@ -98,6 +99,7 @@ for (const [prefix, router] of [
   ['/api/tenant', tenantRouter],
   ['/api/tenants', tenantsRouter],
   ['/api/members', membersRouter],
+  ['/api/groups', groupsRouter],
   ['/api/invitations', invitationsRouter],
   ['/api/keys', keysRouter],
   ['/api/notifications', notificationsRouter],

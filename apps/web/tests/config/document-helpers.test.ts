@@ -93,6 +93,8 @@ describe('documentCardFromDocument', () => {
       chunkCount: 7,
       status: 'indexed' as const,
       error: null,
+      visibility: 'tenant' as const,
+      groups: [],
       createdAt: new Date(),
       updatedAt: new Date(),
     }

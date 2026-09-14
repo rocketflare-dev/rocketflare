@@ -25,9 +25,11 @@ import {
   uploadQuerySchema,
 } from '@rocketflare/shared/files'
 import { and, eq } from 'drizzle-orm'
-import { type FileRow, files, users } from '../../db/schema'
+import type { Database } from '../../db/client'
+import { documents, type FileRow, files, users } from '../../db/schema'
 import { uploadBodyLimit } from '../middleware/body-limit'
 import { can, guardPermission } from '../middleware/permissions'
+import { type AccessScope, accessScopeOf, visibleDocuments } from '../services/access'
 import { recordActivity } from '../services/activity'
 import {
   createR2Storage,
@@ -49,6 +51,30 @@ import { createRouter } from '../utils/routes/router'
 import { validate } from '../utils/routes/validate'
 
 export const filesRouter = createRouter()
+
+/**
+ * May this reader open the document this object belongs to? A `documents`-scope object always has
+ * one; an orphan (the document was deleted but the row survived a failure) reads as NOT visible,
+ * which is the safe direction.
+ */
+async function canReadOwningDocument(
+  db: Database,
+  scope: AccessScope,
+  fileId: string
+): Promise<boolean> {
+  const [row] = await db
+    .select({ id: documents.id })
+    .from(documents)
+    .where(
+      and(
+        eq(documents.fileId, fileId),
+        eq(documents.tenantId, scope.tenantId),
+        visibleDocuments(scope)
+      )
+    )
+    .limit(1)
+  return Boolean(row)
+}
 
 /** The R2 binding or a 503 — a deployment without `FILES` must fail loudly, not 500 on `undefined`. */
 function storageFor(c: AppContext): StorageService {
@@ -151,13 +177,22 @@ filesRouter.post('/', uploadBodyLimit, validate('query', uploadQuerySchema), asy
 // ---- GET /api/files/:id ----------------------------------------------------------------
 
 filesRouter.get('/:id', async c => {
-  const { db, tenantId, logger } = withAuthAndDb(c)
+  const { db, tenantId, auth, logger } = withAuthAndDb(c)
   guardPermission(c, 'read', 'File')
   const id = uuidParam(c, 'id')
   const row = await db.query.files.findFirst({
     where: and(eq(files.id, id), eq(files.tenantId, tenantId)),
   })
   if (!row) throw new NotFoundError('File not found')
+  // D29: a `documents`-scope object is the ORIGINAL behind a knowledge document, so it inherits
+  // that document's visibility. Without this the restriction is one `/api/files/:id` away from
+  // being nothing at all — the id is on the document card of anyone who ever could see it.
+  if (
+    row.scope === 'documents' &&
+    !(await canReadOwningDocument(db, accessScopeOf(auth), row.id))
+  ) {
+    throw new NotFoundError('File not found')
+  }
 
   const object = await storageFor(c).get(row.key)
   if (!object) {

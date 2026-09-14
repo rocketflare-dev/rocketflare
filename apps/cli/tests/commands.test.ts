@@ -48,6 +48,7 @@ const membersBody = {
       joinedAt: '2026-01-05T10:00:00.000Z',
       lastLoginAt: '2026-08-30T09:30:00.000Z',
       invitedByUserId: null,
+      groups: [],
     },
     {
       userId: '99999999-8888-4777-8666-555555555556',
@@ -58,6 +59,9 @@ const membersBody = {
       joinedAt: '2026-02-01T10:00:00.000Z',
       lastLoginAt: null,
       invitedByUserId: USER_ID,
+      groups: [
+        { id: '33333333-2222-4111-8000-000000000001', name: 'Finance', typeName: 'Department' },
+      ],
     },
   ],
   pagination: { page: 1, pageSize: 25, total: 2, totalPages: 1 },

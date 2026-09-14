@@ -24,6 +24,7 @@ import { estimateCostMicrocents } from '@rocketflare/shared/ai/pricing'
 import type { AppConfig } from '../../../config'
 import type { Database } from '../../../db/client'
 import type { ConversationRow, MessageRow } from '../../../db/schema'
+import { fullAccessScope } from '../access'
 import { buildAgentTools } from '../agents/tools'
 import { resolvePrompt } from '../prompts'
 import { pendingCompaction, selectHistoryWindow, withSummary } from './chat-history'
@@ -125,7 +126,11 @@ export async function buildConversationStats(
 
   // Built exactly as the next turn would build them, so their schemas can be measured rather than
   // estimated — they are re-sent on every turn and are routinely larger than the question.
-  const tools = cfg.CHAT_KNOWLEDGE_TOOLS ? buildAgentTools({ db, cfg, env, tenantId }) : []
+  // Only their SCHEMAS are measured here, so a full-access scope is right: the panel reports what
+  // the next turn will send, and the tool definitions do not vary by reader.
+  const tools = cfg.CHAT_KNOWLEDGE_TOOLS
+    ? buildAgentTools({ db, cfg, env, scope: fullAccessScope(tenantId) })
+    : []
   const knowledgeTools = tools.map(t => t.name)
   const toolSchemaChars = tools.reduce(
     (n, tool) => n + JSON.stringify(toToolDefinition(tool)).length,

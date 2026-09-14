@@ -8,6 +8,7 @@
  * Every function takes `tenantId` from the caller's auth context.
  */
 import type { AnalyticsPage as AnalyticsPageDto } from '@rocketflare/shared/analytics'
+import type { GroupRef } from '@rocketflare/shared/groups'
 import { slugify } from '@rocketflare/shared/tenants'
 import { and, eq } from 'drizzle-orm'
 import { getTemplate, listTemplates } from '../../dashboards'
@@ -15,7 +16,8 @@ import type { Database } from '../../db/client'
 import { type AnalyticsPage, analyticsPages } from '../../db/schema'
 import { BadRequestError, NotFoundError } from '../utils/core/errors'
 
-export function toAnalyticsPageDto(row: AnalyticsPage): AnalyticsPageDto {
+/** `groups` comes from `grantsForResources` — the row alone cannot know it (D29). */
+export function toAnalyticsPageDto(row: AnalyticsPage, groups: GroupRef[] = []): AnalyticsPageDto {
   return {
     id: row.id,
     tenantId: row.tenantId,
@@ -27,6 +29,8 @@ export function toAnalyticsPageDto(row: AnalyticsPage): AnalyticsPageDto {
     isDefault: row.isDefault,
     order: row.sortOrder,
     createdBy: row.createdByUserId,
+    visibility: row.visibility,
+    groups,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   }

@@ -13,6 +13,7 @@ import type { AuthContext } from '../types'
 import { ConflictError, ForbiddenError, NotFoundError } from '../utils/core/errors'
 import { asCount, pageWindow } from '../utils/routes/pagination'
 import { recordActivity } from './activity'
+import { groupsForMembers } from './groups'
 import { nudge, type Realtime, realtimeEvent } from './realtime'
 
 export async function listMembers(db: Database, tenantId: string, query: PaginationQuery) {
@@ -37,7 +38,15 @@ export async function listMembers(db: Database, tenantId: string, query: Paginat
       .offset(offset),
     db.select({ count: sql`count(*)` }).from(tenantUsers).where(eq(tenantUsers.tenantId, tenantId)),
   ])
-  return { items: rows satisfies Member[], total: asCount(count?.count) }
+  // D29: group badges for the WHOLE page in one query — the app this was ported from fetched the
+  // member list once per group, which is N+1 in the number of groups.
+  const groups = await groupsForMembers(
+    db,
+    tenantId,
+    rows.map(r => r.userId)
+  )
+  const items: Member[] = rows.map(row => ({ ...row, groups: groups.get(row.userId) ?? [] }))
+  return { items, total: asCount(count?.count) }
 }
 
 export async function countOwners(db: Database, tenantId: string): Promise<number> {

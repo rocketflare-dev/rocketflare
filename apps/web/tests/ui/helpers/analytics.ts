@@ -56,6 +56,8 @@ export function analyticsPage(overrides: Record<string, unknown> = {}) {
     isDefault: true,
     order: 0,
     createdBy: null,
+    visibility: 'tenant',
+    groups: [],
     createdAt: now,
     updatedAt: now,
     ...overrides,

@@ -2,6 +2,7 @@
  * Column helpers shared by every table (D1, 03 §2): `timestamptz` everywhere, and one
  * definition of the tenant foreign key so `tenant_id` never drifts between tables.
  */
+import type { ResourceVisibility } from '@rocketflare/shared/groups'
 import type { AnyPgColumn } from 'drizzle-orm/pg-core'
 import { timestamp, uuid } from 'drizzle-orm/pg-core'
 
@@ -28,3 +29,14 @@ export function tenantRef(tenants: { id: AnyPgColumn }) {
     .notNull()
     .references(() => tenants.id, { onDelete: 'cascade' })
 }
+
+/**
+ * The values of a resource's `visibility` column (D29): `tenant` = every member of the
+ * organisation, `groups` = only the groups granted in that resource's junction table (plus the
+ * owner and admins). Here rather than beside one table because `documents` and `analytics_pages`
+ * both carry it and a third resource will spell it the same way.
+ */
+export const RESOURCE_VISIBILITY_VALUES = [
+  'tenant',
+  'groups',
+] as const satisfies readonly ResourceVisibility[]

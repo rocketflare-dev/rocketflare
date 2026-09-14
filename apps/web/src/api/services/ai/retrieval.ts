@@ -19,6 +19,7 @@ import { and, eq, inArray, sql } from 'drizzle-orm'
 import type { AppConfig } from '../../../config'
 import type { Database } from '../../../db/client'
 import { chunks, documents } from '../../../db/schema'
+import { type AccessScope, visibleDocuments } from '../access'
 import { resolveEmbeddings } from './resolve'
 import type { AiEnv } from './types'
 
@@ -94,17 +95,35 @@ interface Candidate {
   seq: number
 }
 
+/**
+ * Hybrid search, scoped to what this reader may SEE (D29). `access` carries the tenant, so there
+ * is no separate `tenantId` argument to keep in step with it; the visibility predicate is ANDed
+ * with the tenant predicate on both halves, never substituted for it.
+ *
+ * **Recall under a restrictive scope.** The dense half orders by `<=>` over the HNSW index and
+ * takes the first `pool` rows that ALSO satisfy the predicate. An approximate index can exhaust
+ * its candidate list before filling that pool, so a reader who may see one document out of a
+ * thousand could get an empty dense half while the lexical half carries the whole result.
+ * `hnsw.iterative_scan = relaxed_order` (pgvector ≥ 0.8) is the fix, and it is set `LOCAL` in a
+ * transaction around the vector scan ALONE — only when a predicate is actually in play, so an
+ * admin's search still costs one statement. A server whose pgvector predates the setting treats
+ * `hnsw.iterative_scan` as a custom GUC placeholder and accepts it, which is why this is safe to
+ * set unconditionally rather than probing the version.
+ */
 export async function searchChunks(
   db: Database,
   cfg: AppConfig,
   env: AiEnv,
-  tenantId: string,
+  access: AccessScope,
   request: SearchRequest
 ): Promise<SearchHit[]> {
+  const tenantId = access.tenantId
   const limit = request.limit ?? 10
   const pool = candidatePoolSize(limit)
+  const visible = visibleDocuments(access)
   const scope = and(
     eq(chunks.tenantId, tenantId),
+    visible,
     request.documentId ? eq(chunks.documentId, request.documentId) : undefined
   )
   const embeddings = await resolveEmbeddings(db, cfg, env, tenantId)
@@ -119,14 +138,24 @@ export async function searchChunks(
     text: chunks.text,
     seq: chunks.seq,
   }
-  const [dense, lexical] = await Promise.all([
-    db
+  // The tenant predicate is spelled out here rather than only in `scope`, so this closure reads as
+  // tenant-scoped on its own — which is what `tests/config/unscoped-allowlist.test.ts` checks.
+  const denseQuery = (runner: Database) =>
+    runner
       .select(select)
       .from(chunks)
       .innerJoin(documents, eq(documents.id, chunks.documentId))
-      .where(scope)
+      .where(and(eq(chunks.tenantId, tenantId), scope))
       .orderBy(sql`${chunks.embedding} <=> ${vec}::vector`)
-      .limit(pool),
+      .limit(pool)
+
+  const [dense, lexical] = await Promise.all([
+    visible
+      ? db.transaction(async tx => {
+          await tx.execute(sql`set local hnsw.iterative_scan = relaxed_order`)
+          return denseQuery(tx as unknown as Database)
+        })
+      : denseQuery(db),
     db
       .select(select)
       .from(chunks)

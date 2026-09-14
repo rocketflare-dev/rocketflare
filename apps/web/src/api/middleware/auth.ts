@@ -1,7 +1,8 @@
 /**
  * Authentication middleware (D10, D12, D25). Applied PER MOUNT in `index.ts`, never inside a
  * route file. Two credentials:
- *   - `Authorization: Bearer <api key>` → the key's tenant, acting as the key's creator
+ *   - `Authorization: Bearer <api key>` → the key's tenant, acting as the key's creator (its
+ *     GROUPS too, re-read per request — D29)
  *   - `__Host-session` cookie → `resolveSession` (one LATERAL query), sliding expiry via waitUntil
  * Builds `AuthContext` (`buildAbility({ role, isGlobalAdmin, features: [] })`) and `c.set('auth')`.
  * Errors are envelopes: 401 `unauthorized`; 403 `blocked` / `tenant_suspended`. A valid session
@@ -23,6 +24,7 @@ import {
   touchTenantAccess,
   updateSelectedTenant,
 } from '../auth/sessions'
+import { listUserGroups } from '../services/groups'
 import type { AppContext, AppEnv, AuthContext } from '../types'
 import { ForbiddenError, UnauthorizedError } from '../utils/core/errors'
 import { deferOrAwait } from './database'
@@ -94,6 +96,7 @@ export async function resolveCookieAuth(
     }),
     isGlobalAdmin: user.isGlobalAdmin,
     features: [],
+    groups: membership?.groups ?? [],
     accessRequestStatus,
   }
 }
@@ -121,6 +124,9 @@ async function resolveBearerAuth(c: AppContext, plaintext: string): Promise<Auth
     }),
     isGlobalAdmin: result.user.isGlobalAdmin,
     features: [],
+    // A tenant key carries its CREATOR's groups, re-read on every request (D29): removing someone
+    // from a group narrows their keys on the next call, with nothing to revoke.
+    groups: await listUserGroups(db, result.tenant.id, result.user.id),
     accessRequestStatus: null,
   }
 }

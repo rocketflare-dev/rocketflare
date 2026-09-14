@@ -6,12 +6,15 @@
  * result, and `get_document` to an unknown id, so the agent is never left guessing.
  *
  * Only indexed documents are listed: a `pending` upload is still converting and its text cannot be
- * searched or read yet, so offering it would only produce a failed follow-up call.
+ * searched or read yet, so offering it would only produce a failed follow-up call. And only
+ * documents the RUN's requester may read (D29) — this is the tool a model reaches for when a search
+ * comes back empty, so an unfiltered list here would leak every restricted title in the tenant.
  */
 import { KNOWLEDGE_TOOLS } from '@rocketflare/shared/ai/embeddings'
 import { and, desc, eq } from 'drizzle-orm'
 import { z } from 'zod'
 import { documents } from '../../../../db/schema'
+import { visibleDocuments } from '../../access'
 import type { Tool } from '../../ai/kit'
 import type { AgentToolContext } from './search-knowledge'
 
@@ -67,7 +70,11 @@ export async function listKnowledgeDocuments(
 ): Promise<ListDocumentsResult> {
   const limit = input.limit ?? LIST_DOCUMENTS_DEFAULT_LIMIT
   const offset = input.offset ?? 0
-  const where = and(eq(documents.tenantId, ctx.tenantId), eq(documents.status, 'indexed'))
+  const where = and(
+    eq(documents.tenantId, ctx.scope.tenantId),
+    eq(documents.status, 'indexed'),
+    visibleDocuments(ctx.scope)
+  )
   const [rows, total] = await Promise.all([
     ctx.db
       .select({

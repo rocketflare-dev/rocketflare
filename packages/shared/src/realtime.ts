@@ -13,6 +13,8 @@ export const realtimeEventTypeSchema = z.enum([
   'member.changed',
   'invitation.changed',
   'tenant.changed',
+  /** D29: this person's group membership changed — what they may READ has moved under them. */
+  'access.changed',
   'entity.changed',
   'ping',
 ])
@@ -45,6 +47,10 @@ export const REALTIME_INVALIDATIONS: Record<RealtimeEventType, string[][]> = {
   'member.changed': [['members']],
   'invitation.changed': [['invitations'], ['pending-invitations']],
   'tenant.changed': [['tenant'], ['tenants'], ['auth']],
+  // Sent to the affected people only (`nudgeUsers`): their ability to see content changed, so the
+  // session (which carries their groups), both visibility-bearing resources and the groups view
+  // are all stale at once.
+  'access.changed': [['auth'], ['documents'], ['analytics'], ['groups']],
   'entity.changed': [],
   ping: [],
 }

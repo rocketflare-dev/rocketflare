@@ -29,6 +29,8 @@ export const CORE_SUBJECTS = [
   'Conversation',
   'AgentRun',
   'Document',
+  /** Groups (D29): group types, groups and their membership — admin+ `manage`, member `read`. */
+  'Group',
   /** Analytics (D19): `Dashboard` = analytics_pages rows; `Analytics` = the cube API itself. */
   'Dashboard',
   'Analytics',

@@ -6,9 +6,10 @@
  * (`substring(content from :offset+1 for :maxChars)` + `char_length`), so the bytes crossing the
  * wire are the bytes asked for.
  *
- * Every query carries the tenant predicate. An unknown id and another tenant's id are the SAME
- * answer (`document_not_found`) so the API is not an existence oracle. The failure branch carries
- * `title` and `error` because the tool builds a sentence out of them.
+ * Every query carries the tenant predicate AND the reader's visibility predicate (D29). An unknown
+ * id, another tenant's id and a document this reader may not see are the SAME answer
+ * (`document_not_found`) so the API is not an existence oracle in either direction. The failure
+ * branch carries `title` and `error` because the tool builds a sentence out of them.
  */
 import {
   DOCUMENT_EXCERPT_CHARS,
@@ -27,6 +28,7 @@ import { and, asc, count, eq, sql } from 'drizzle-orm'
 import type { Database } from '../../../db/client'
 import { chunks, documents } from '../../../db/schema'
 import { pageWindow } from '../../utils/routes/pagination'
+import { type AccessScope, visibleDocuments } from '../access'
 import { chunkCharOffsetSql } from './retrieval'
 
 export interface ReadDocumentWindowInput {
@@ -60,7 +62,7 @@ export type ReadDocumentWindowResult =
  */
 export async function readDocumentWindow(
   db: Database,
-  tenantId: string,
+  scope: AccessScope,
   input: ReadDocumentWindowInput,
   cap = DOCUMENT_WINDOW_MAX_CHARS
 ): Promise<ReadDocumentWindowResult> {
@@ -87,7 +89,13 @@ export async function readDocumentWindow(
       text: sql<string>`coalesce(substring(${documents.content} from ${requested + 1}::int for ${want}::int), '')`,
     })
     .from(documents)
-    .where(and(eq(documents.id, input.documentId), eq(documents.tenantId, tenantId)))
+    .where(
+      and(
+        eq(documents.id, input.documentId),
+        eq(documents.tenantId, scope.tenantId),
+        visibleDocuments(scope)
+      )
+    )
     .limit(1)
 
   if (!row) return { ok: false, reason: 'document_not_found', title: null, error: null }
@@ -131,18 +139,24 @@ export async function readDocumentWindow(
  */
 export async function listDocumentPassages(
   db: Database,
-  tenantId: string,
+  scope: AccessScope,
   documentId: string,
   query: PaginationQuery
 ): Promise<{ items: DocumentPassage[]; total: number } | null> {
   const [doc] = await db
     .select({ id: documents.id })
     .from(documents)
-    .where(and(eq(documents.id, documentId), eq(documents.tenantId, tenantId)))
+    .where(
+      and(
+        eq(documents.id, documentId),
+        eq(documents.tenantId, scope.tenantId),
+        visibleDocuments(scope)
+      )
+    )
     .limit(1)
   if (!doc) return null
   const { limit, offset } = pageWindow(query)
-  const where = and(eq(chunks.tenantId, tenantId), eq(chunks.documentId, documentId))
+  const where = and(eq(chunks.tenantId, scope.tenantId), eq(chunks.documentId, documentId))
   const [rows, [total]] = await Promise.all([
     db
       .select({
@@ -182,7 +196,7 @@ export async function listDocumentPassages(
  */
 export async function readDocumentCard(
   db: Database,
-  tenantId: string,
+  scope: AccessScope,
   documentId: string
 ): Promise<DocumentCard | null> {
   const [row] = await db
@@ -200,7 +214,13 @@ export async function readDocumentCard(
       >`substring(${documents.content} from 1 for ${DOCUMENT_EXCERPT_CHARS * 4}::int)`,
     })
     .from(documents)
-    .where(and(eq(documents.id, documentId), eq(documents.tenantId, tenantId)))
+    .where(
+      and(
+        eq(documents.id, documentId),
+        eq(documents.tenantId, scope.tenantId),
+        visibleDocuments(scope)
+      )
+    )
     .limit(1)
   if (!row) return null
   return {

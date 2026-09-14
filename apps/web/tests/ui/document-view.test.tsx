@@ -36,6 +36,8 @@ const doc = (overrides: Record<string, unknown> = {}) => ({
   chunkCount: 2,
   status: 'indexed',
   error: null,
+  visibility: 'tenant',
+  groups: [],
   createdAt: now,
   updatedAt: now,
   ...overrides,

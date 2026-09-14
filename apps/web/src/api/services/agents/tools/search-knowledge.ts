@@ -1,7 +1,8 @@
 /**
  * `search_knowledge` (D7, D18) — every agent's read access to the tenant's knowledge base: the same
- * hybrid `searchChunks` the `/search` page uses, bound to the run's `tenantId` (never a
- * model-supplied one).
+ * hybrid `searchChunks` the `/search` page uses, bound to the run's `AccessScope` — the run's
+ * tenant AND the requesting person's group visibility, never a model-supplied one. A document the
+ * requester may not read is not in the corpus this tool searches (D29).
  *
  * The shape of the answer is the whole design here — a model can only reason about what the tool
  * hands back, so:
@@ -30,6 +31,7 @@ import { KNOWLEDGE_TOOLS, SEARCH_MAX_LIMIT } from '@rocketflare/shared/ai/embedd
 import { z } from 'zod'
 import type { AppConfig } from '../../../../config'
 import type { Database } from '../../../../db/client'
+import type { AccessScope } from '../../access'
 import { AiNotConfiguredError } from '../../ai/errors'
 import type { Tool } from '../../ai/kit'
 import { searchChunks } from '../../ai/retrieval'
@@ -116,12 +118,18 @@ export interface SearchKnowledgeResult {
   knowledgeBase?: KnowledgeBaseEntry[]
 }
 
-/** The slice of `AgentContext` the tools need — structural so tests pass `{ db, cfg, env, tenantId }`. */
+/** The slice of `AgentContext` the tools need — structural so tests pass `{ db, cfg, env, scope }`. */
 export interface AgentToolContext {
   db: Database
   cfg: AppConfig
   env: AiEnv
-  tenantId: string
+  /**
+   * What this run may READ (D29) — the tenant AND the requesting person's groups. Built at EXECUTE
+   * time from `agent_runs.requestedByUserId`, not snapshotted at enqueue, so a run started before
+   * someone left a group does not read on their old access. A run with no requesting user
+   * ("system") gets tenant-visible documents only.
+   */
+  scope: AccessScope
   /**
    * Ceiling on one `get_document` window, in characters — the CALLER's budget, not the tool's.
    * Absent means the agent-run ceiling (`GET_DOCUMENT_MAX_CHARS`); the chat path passes far less,
@@ -139,7 +147,7 @@ export function searchKnowledgeTool(ctx: AgentToolContext): Tool<SearchKnowledge
     async handler(input) {
       let hits: Awaited<ReturnType<typeof searchChunks>>
       try {
-        hits = await searchChunks(ctx.db, ctx.cfg, ctx.env, ctx.tenantId, {
+        hits = await searchChunks(ctx.db, ctx.cfg, ctx.env, ctx.scope, {
           query: input.query,
           limit: input.limit ?? SEARCH_KNOWLEDGE_DEFAULT_LIMIT,
           documentId: input.documentId,

@@ -25,6 +25,7 @@ const member = (userId: string, name: string, role: string) => ({
   joinedAt: now,
   lastLoginAt: now,
   invitedByUserId: null,
+  groups: [] as { id: string; name: string; typeName: string }[],
 })
 const MEMBERS = paged([
   member(IDS.user, 'Olive', 'owner'),

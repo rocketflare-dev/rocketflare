@@ -51,6 +51,7 @@ import { traceChatClient, withAgentTrace } from '../../observability/tracing'
 import type { AppContext } from '../../types'
 import { ConflictError, isUniqueViolation } from '../../utils/core/errors'
 import { streamDatabase, withAuthAndDb } from '../../utils/routes/route-helpers'
+import { accessScopeOf } from '../access'
 import { buildAgentTools, CHAT_GET_DOCUMENT_MAX_CHARS } from '../agents/tools'
 import { enqueueJob } from '../jobs'
 import { resolvePrompt } from '../prompts'
@@ -342,6 +343,7 @@ export async function prepareChatTurn(
   options: PrepareChatTurnOptions = {}
 ): Promise<ChatTurnParams> {
   const { db, tenantId, user, cfg, auth, defer } = withAuthAndDb(c)
+  const scope = accessScopeOf(auth)
   const resolved =
     options.resolved ?? (await resolveChat(db, cfg, c.env, tenantId, { promptKey: 'chat' }))
   const system = await resolvePrompt(db, tenantId, 'chat', {
@@ -425,7 +427,9 @@ export async function prepareChatTurn(
             db: sdb,
             cfg,
             env: c.env,
-            tenantId,
+            // D29: the chatting person's own visibility — chat cannot surface a document its
+            // reader could not open on the Knowledge page.
+            scope,
             // An agent run may read 50 000 characters of a document because that is the job; a chat
             // turn may not, because the result sits in the same window as the history and every
             // turn after it. The prompt already discourages it — this is the limit.

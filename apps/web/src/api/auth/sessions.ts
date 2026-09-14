@@ -1,11 +1,12 @@
 /**
  * DB-backed cookie sessions (D12): the cookie holds a random token, the row holds its SHA-256.
  * `resolveSession` is the ONE query behind every cookie-authenticated request — session + user +
- * best membership + tenant + pending access request through LATERAL joins (the Workers reference
- * app's pattern), so the auth middleware costs one round trip however far the Worker is from
- * Postgres. Sliding 30-day expiry: `touchSession` extends at most hourly (SQL-throttled) and is
+ * best membership + tenant + the membership's groups + pending access request through LATERAL
+ * joins (the Workers reference app's pattern), so the auth middleware costs one round trip however
+ * far the Worker is from Postgres. Sliding 30-day expiry: `touchSession` extends at most hourly (SQL-throttled) and is
  * called through `waitUntil`, never awaited on the response path.
  */
+import type { GroupRef } from '@rocketflare/shared/groups'
 import type { MembershipRole, TenantStatus } from '@rocketflare/shared/tenants'
 import { and, eq, isNull, lt, or, sql } from 'drizzle-orm'
 import type { Database } from '../../db/client'
@@ -54,6 +55,8 @@ export interface ResolvedMembership {
   tenantId: string
   role: MembershipRole
   tenant: { id: string; name: string; slug: string; status: TenantStatus }
+  /** The groups this membership belongs to, in the ACTIVE tenant only (D29). */
+  groups: GroupRef[]
 }
 
 export interface ResolvedSession {
@@ -85,7 +88,20 @@ interface SessionRow {
   tenant_name: string | null
   tenant_slug: string | null
   tenant_status: TenantStatus | null
+  groups: GroupRef[] | string | null
   access_request_status: 'pending' | 'approved' | 'rejected' | null
+}
+
+/** postgres.js hands jsonb back parsed; a driver that hands back text must not crash auth. */
+function parseGroups(value: GroupRef[] | string | null): GroupRef[] {
+  if (Array.isArray(value)) return value
+  if (typeof value !== 'string') return []
+  try {
+    const parsed: unknown = JSON.parse(value)
+    return Array.isArray(parsed) ? (parsed as GroupRef[]) : []
+  } catch {
+    return []
+  }
 }
 
 const asDate = (v: Date | string): Date => (v instanceof Date ? v : new Date(v))
@@ -110,6 +126,7 @@ export async function resolveSession(db: Database, token: string): Promise<Resol
       t.name                   AS tenant_name,
       t.slug                   AS tenant_slug,
       t.status                 AS tenant_status,
+      g.groups                 AS groups,
       ar.status                AS access_request_status
     FROM user_sessions us
     INNER JOIN users u ON u.id = us.user_id
@@ -121,6 +138,17 @@ export async function resolveSession(db: Database, token: string): Promise<Resol
       LIMIT 1
     ) m ON true
     LEFT JOIN tenants t ON t.id = m.tenant_id
+    LEFT JOIN LATERAL (
+      SELECT coalesce(
+               jsonb_agg(jsonb_build_object('id', gr.id, 'name', gr.name, 'typeName', gt.name)
+                         ORDER BY gt.name, gr.name),
+               '[]'::jsonb
+             ) AS groups
+      FROM group_members gm
+      INNER JOIN groups gr ON gr.id = gm.group_id
+      INNER JOIN group_types gt ON gt.id = gr.group_type_id
+      WHERE gm.tenant_id = m.tenant_id AND gm.user_id = u.id
+    ) g ON true
     LEFT JOIN LATERAL (
       SELECT a.status
       FROM access_requests a
@@ -157,6 +185,7 @@ export async function resolveSession(db: Database, token: string): Promise<Resol
             slug: row.tenant_slug,
             status: row.tenant_status ?? 'active',
           },
+          groups: parseGroups(row.groups),
         }
       : null
   return {

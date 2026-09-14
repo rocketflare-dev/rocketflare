@@ -25,10 +25,11 @@ import {
   INGEST_TEXT_MAX_CHARS,
   resolveDocumentUploadType,
 } from '@rocketflare/shared/ai/embeddings'
+import type { GroupRef, ResourceVisibility } from '@rocketflare/shared/groups'
 import { and, eq } from 'drizzle-orm'
 import type { AppConfig } from '../../../config'
 import type { Database } from '../../../db/client'
-import { chunks, type DocumentRow, documents, files } from '../../../db/schema'
+import { chunks, type DocumentRow, documentGroups, documents, files } from '../../../db/schema'
 import { enqueueJob, type JobsQueue } from '../jobs'
 import { deleteStoredFile, type StorageService, storeUploadedFile } from '../storage'
 import { chunkText, type TextChunk } from './chunking'
@@ -49,6 +50,13 @@ export interface IngestTextInput {
   text: string
   source?: string | null
   contentType?: string
+  /**
+   * D29 — who may read it. Defaults to `tenant`: a document an AGENT writes, or an ingest that
+   * says nothing, belongs to the organisation rather than inheriting anything. `groupIds` must
+   * already have been validated against the tenant (`resolveRequestedVisibility` at the route).
+   */
+  visibility?: ResourceVisibility
+  groupIds?: readonly string[]
 }
 
 export interface IngestDeps {
@@ -66,7 +74,8 @@ export class ConversionNotConfiguredError extends Error {
   }
 }
 
-export function toDocument(row: DocumentRow): Document {
+/** `groups` comes from `grantsForResources` — the row alone cannot know it. */
+export function toDocument(row: DocumentRow, groups: GroupRef[] = []): Document {
   return {
     id: row.id,
     tenantId: row.tenantId,
@@ -79,6 +88,8 @@ export function toDocument(row: DocumentRow): Document {
     chunkCount: row.chunkCount,
     status: row.status,
     error: row.error,
+    visibility: row.visibility,
+    groups,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   }
@@ -177,6 +188,28 @@ export async function indexDocument(
   }
 }
 
+/**
+ * Grants for a freshly inserted document. Written after the row rather than inside it because the
+ * junction has an FK to it; a `tenant` document has no grants, so this is a no-op for most rows.
+ */
+async function grantDocumentGroups(
+  db: Database,
+  row: DocumentRow,
+  groupIds: readonly string[] | undefined
+): Promise<void> {
+  if (row.visibility !== 'groups' || !groupIds || groupIds.length === 0) return
+  await db
+    .insert(documentGroups)
+    .values(
+      [...new Set(groupIds)].map(groupId => ({
+        tenantId: row.tenantId,
+        documentId: row.id,
+        groupId,
+      }))
+    )
+    .onConflictDoNothing()
+}
+
 export interface IngestResult {
   document: DocumentRow
   /** `inline` = indexed in this call; `queued` = a `document.index` / `document.convert` job will. */
@@ -243,9 +276,11 @@ export async function ingestText(
       sizeBytes: new TextEncoder().encode(input.text).byteLength,
       content: input.text,
       status: 'pending',
+      visibility: input.visibility ?? 'tenant',
     })
     .returning()
   if (!row) throw new Error('documents: insert returned no row')
+  await grantDocumentGroups(db, row, input.groupIds)
   return indexOrEnqueue(db, cfg, env, row, pieces, embeddings, deps)
 }
 
@@ -262,6 +297,9 @@ export interface IngestFileInput {
   type: DocumentUploadType
   title?: string | null
   source?: string | null
+  /** D29 — as `IngestTextInput`: validated at the route, defaults to tenant-wide. */
+  visibility?: ResourceVisibility
+  groupIds?: readonly string[]
 }
 
 export interface IngestFileDeps extends IngestDeps {
@@ -331,9 +369,11 @@ export async function ingestFile(
         content: text,
         fileId: stored.id,
         status: 'pending',
+        visibility: input.visibility ?? 'tenant',
       })
       .returning()
     if (!row) throw new Error('documents: insert returned no row')
+    await grantDocumentGroups(db, row, input.groupIds)
   } catch (err) {
     await deleteStoredFile(db, deps.storage, stored).catch(() => {})
     throw err

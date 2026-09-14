@@ -11,7 +11,7 @@
 import type { DocumentStatus } from '@rocketflare/shared/ai/embeddings'
 import { relations } from 'drizzle-orm'
 import { index, integer, pgTable, text, uuid } from 'drizzle-orm/pg-core'
-import { tenantRef, timestamps } from './_helpers'
+import { RESOURCE_VISIBILITY_VALUES, tenantRef, timestamps } from './_helpers'
 import { files } from './files'
 import { tenantIsolation } from './rls'
 import { tenants } from './tenants'
@@ -42,6 +42,14 @@ export const documents = pgTable(
     /** Which embeddings model produced this document's vectors (D18: warn before mixing). */
     embeddingModel: text('embedding_model'),
     status: text('status', { enum: DOCUMENT_STATUS_VALUES }).notNull().default('pending'),
+    /**
+     * Who may READ this document (D29). Defaults to `tenant`, so every existing row and every
+     * ingest that says nothing keeps the pre-Groups behaviour. `groups` narrows it to
+     * `document_groups` — an EMPTY grant list is legal and means owner-and-admins only.
+     */
+    visibility: text('visibility', { enum: RESOURCE_VISIBILITY_VALUES })
+      .notNull()
+      .default('tenant'),
     error: text('error'),
     ...timestamps(),
   },

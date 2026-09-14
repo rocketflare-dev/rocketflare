@@ -17,6 +17,7 @@
  * consumed through `drizzle-cube/client`, not through schemas here.
  */
 import { z } from 'zod'
+import { groupRefSchema, resourceVisibilitySchema } from './groups'
 
 /** A drizzle-cube `DashboardConfig`; must at least carry a `portlets` array. */
 export const dashboardConfigSchema = z
@@ -37,6 +38,9 @@ export const analyticsPageSchema = z.object({
   isDefault: z.boolean(),
   order: z.number().int(),
   createdBy: z.string().uuid().nullable(),
+  /** D29: `tenant` = every member; `groups` = only `groups` below, plus the creator and admins. */
+  visibility: resourceVisibilitySchema,
+  groups: z.array(groupRefSchema),
   createdAt: z.coerce.date(),
   updatedAt: z.coerce.date(),
 })

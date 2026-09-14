@@ -3,6 +3,7 @@
  * worker-configuration.d.ts), variables are declared once here, and every `Hono` instance is
  * `Hono<AppEnv>` via `utils/routes/router.ts`. No `declare module 'hono'` augmentation.
  */
+import type { GroupRef } from '@rocketflare/shared/groups'
 import type { AppAbility } from '@rocketflare/shared/permissions'
 import type { MembershipRole } from '@rocketflare/shared/tenants'
 import type { Context } from 'hono'
@@ -52,6 +53,12 @@ export interface AuthContext {
   isGlobalAdmin: boolean
   /** Feature flags on for the active tenant → `can('access', 'Feature:<f>')`. */
   features: string[]
+  /**
+   * The groups this person belongs to IN THE ACTIVE TENANT (D29) — empty without a membership.
+   * Read it through `accessScopeOf(auth)` (`services/access.ts`) rather than directly: visibility
+   * is a SQL predicate, never a CASL condition.
+   */
+  groups: GroupRef[]
 }
 
 export type AppBindings = Cloudflare.Env
