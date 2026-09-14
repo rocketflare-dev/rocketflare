@@ -179,6 +179,13 @@ Components subscribe to query state, never to the socket; `WebSocketStatus` (hea
   `syncDarkClass` mirrors `data-theme="rocketflare-dark"` into a `dark` class only while an analytics surface is
   mounted (drizzle-cube detects `.dark`); kit CSS never reads `.dark`. `@nivo/heatmap` is aliased to a stub
   in `vite.config.ts` — see `docs/ADAPTING.md` §3b to enable heat maps.
+- **Visibility (D29)**: `AccessPicker` / `AccessBadge` / `VisibilityModal` in `components/shared` are
+  the ONE wording of "who can see this" — they are markdown-free by construction, which is what lets
+  them live in the eager barrel. Render them only where the save would succeed (owner or
+  `manage Document`; `manage Dashboard`), and offer an admin every group and a member only their own
+  (`useMyGroups`) — the same rule `resolveRequestedVisibility` applies, so the picker cannot offer
+  what the API would refuse. An EMPTY selection is WARNED about, never blocked: "only me and admins"
+  is a real answer and the state a deleted group leaves behind
 - Forms validate with the `@rocketflare/shared` schema the server uses; show `FieldError` per field
 - Icons: `@heroicons/react`. No new UI library without a stated reason in the PR
 - `EnvironmentBadge` + `useEnvironmentTitle` read `APP_ENV`/`RELEASE_VERSION` from `/auth/session`;

@@ -16,6 +16,7 @@ vocabulary in `packages/shared/src/permissions.ts`). Built once per request by t
 | `AiConfig`, `Prompt` (D17) | manage | manage | manage | manage | read (Settings → AI / Prompts are read-only for members; `/api/ai/usage` and `/api/ai/agent-models` writes need `manage AiConfig`) |
 | `Conversation` (D17) | manage | manage | manage | manage | manage (own only — `routes/chat.ts` filters every query by `userId`; another member's thread is 404, admins included) |
 | `AgentRun` (D7) | manage | manage | manage | manage | manage (own runs — `routes/agents.ts` filters by `requestedByUserId` unless `isAdminLevel(auth)`, which sees and cancels every run) |
+| `Group` (D29) | manage | manage | manage | manage | read (administering groups is `manage Group`; a member's only read is `GET /api/groups/mine`. Which ROWS a group lets you see is a SQL predicate in `services/access.ts`, never a CASL condition) |
 | `Document` (D18) | manage | manage | manage | manage | create + read (anyone ingests and searches; own-document delete is `routes/ai-documents.ts`'s `ownerUserId` check, others' need `delete Document`) |
 | `Dashboard` (D19, `analytics_pages`) | manage | manage | manage | manage | read |
 | `Analytics` (D19, the cube API `/cubejs-api`, `/mcp`) | manage | read | read | read | read |

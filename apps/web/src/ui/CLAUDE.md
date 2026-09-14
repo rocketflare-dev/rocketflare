@@ -24,7 +24,8 @@ React 18 + Vite + React Router 6 + TanStack Query 5 + zustand; DaisyUI 5 on Tail
   `invalidateQueries` per root from `invalidationsFor(event)`, toasts `notification.created`),
   `WebSocketStatus` (header dot), `ConnectionBanner` (after 5 s away from `open`).
   `components/shared/` — generic primitives only (Toast, Modal, SectionPanel, PaginationControls,
-  FieldError…). `components/ai/` (D17) — `Markdown` (react-markdown + GFM, `skipHtml`, links
+  FieldError…) plus the D29 visibility trio (`AccessPicker`, `AccessBadge`, `VisibilityModal`) —
+  markdown-free by construction, which is what lets them sit in the eager barrel. `components/ai/` (D17) — `Markdown` (react-markdown + GFM, `skipHtml`, links
   `noopener`) and `ChatBubble`; deliberately NOT in the shared barrel so the markdown dependency
   ships only in the lazy chat chunk.
 - `hooks/` — `useAuth` (session, `status`, `selectTenant`, `logout`, `applySession`,
@@ -34,7 +35,12 @@ React 18 + Vite + React Router 6 + TanStack Query 5 + zustand; DaisyUI 5 on Tail
   `useActivity`, `useAccessRequests`, `useAdminAccessRequests`, `useAdminTenants`, `useAdminUsers`,
   `useAuthMethods`) exporting `xQueryOptions()` + `useX()` + mutation hooks; `useProfile` also
   holds the avatar upload (`useUploadAvatar`, `validateAvatarFile`, `AVATAR_ACCEPT` — D23);
-  `useAppInfo`, `useDebounce`, `useModalState`, `useLocalStoragePreference`. AI (D17/D18):
+  `useAppInfo`, `useDebounce`, `useModalState`, `useLocalStoragePreference`;
+  `useGroups` (D29: `useGroupTypes`, `useGroups(typeId?)`, `useGroup(id)`, `useMyGroups` — the only
+  one a plain member may call — the type/group/member mutations, `useSetMemberGroups`,
+  `useSetDocumentVisibility`, `useSetPageVisibility`; one `['groups']` family so a single
+  invalidation covers it, which is also the root the server's `entity.changed` and `access.changed`
+  nudges name). AI (D17/D18):
   `useAiConfig` (`useAiConfigs/useAiProviders/useAiReadiness`, `useUpsertAiConfig`,
   `useDeleteAiConfig`, `useTestAiConfig`; `providersForScope`, `configsForScope`), `usePrompts`
   (`usePrompts`, `useUpdatePrompt`, `useClearPrompt`), `useAiUsage` (`useAiUsageSummary(days)`,
@@ -78,8 +84,8 @@ React 18 + Vite + React Router 6 + TanStack Query 5 + zustand; DaisyUI 5 on Tail
   `GET /auth/methods` drives the buttons; `?as=<email>` (what `pnpm bootstrap` opens) calls
   `POST /auth/dev-login` once on mount, ONLY when `methods.devLogin` is true AND the email is in
   `DEV_ACCOUNTS` (the allow-list; an arbitrary address does nothing). `settings/`
-  is one page with `URLTabs` (`?tab=general|people|api-keys|ai|prompts|agent-models|usage`;
-  `agent-models` and `usage` only for `manage AiConfig`); `admin/` is nested routes under `AdminLayout`; `chat/ChatPage.tsx` is
+  is one page with `URLTabs` (`?tab=general|people|groups|api-keys|ai|prompts|agent-models|usage`;
+  `groups` only for `manage Group`, `agent-models` and `usage` only for `manage AiConfig`); `admin/` is nested routes under `AdminLayout`; `chat/ChatPage.tsx` is
   `/chat/:conversationId?` (D17, guard `read Conversation`, lazy — its chunk carries the markdown
   renderer). `agents/` — `/agents` + `/agents/runs/:runId` (D7, guard `read AgentRun`; the same
   `AgentsPage` for both, the param opens `RunDetailDrawer`); `documents/DocumentsPage.tsx` —
@@ -332,3 +338,32 @@ A `CUSTOM kit.notice` renders
   `CubeProvider` against `stubFetch` — asserts the library's own request carries the credentials
   and header, and that a 401 reaches `setUnauthorizedHandler`; stub `window.matchMedia` first).
   Fixtures: `tests/ui/helpers/analytics.ts`.
+
+## Groups and visibility (D29)
+
+- **Settings → Groups** (`pages/settings/Groups.tsx`, tab `groups`, `manage Group`): group TYPES on
+  the left, that type's groups on the right, `GroupMembersModal` for who is in one. The tab does not
+  render at all without the ability — a picker or a table you cannot save from is worse than no tab,
+  which is the same rule `agent-models` follows.
+- **Deleting quotes the 409.** `DELETE /api/groups/:id` answers `group_in_use` with
+  `{ documents, dashboards }` while the group still controls access; the confirm dialog shows the
+  counts, says the affected content narrows to its owner and administrators (never opens), and only
+  then offers "Delete anyway" (`?force=1`).
+- **`AccessPicker` is the ONE wording of "who can see this"** — a radio for the organisation or a
+  set of groups, chips grouped by type, and a warning (never a block) when the selection is empty,
+  because "only me and admins" is a real answer and the state a deleted group leaves behind.
+  `useShareableGroups()` in `DocumentsPage` is the rule it is fed: every group for `manage Group`,
+  `useMyGroups()` otherwise — exactly what `resolveRequestedVisibility` accepts, so the picker can
+  never offer what the save would refuse. `VisibilityModal` wraps it for a list row / a header;
+  `AccessBadge` is the read-only lock + names.
+- **Where they appear**: both Knowledge add forms, a Visibility action per Knowledge row (owner or
+  `manage Document`), the dashboard header's ⋯ menu (`manage Dashboard`), badges on the Knowledge
+  rows and the dashboard cards, a Groups column + Edit groups on Settings → People, and a read-only
+  "Your groups" on the profile (hidden when you are in none).
+- **Freshness is the generic nudge again**: the family root is `['groups']`, which the server's
+  `entity.changed { entity: 'groups' }` names, and `access.changed` (sent to the affected people
+  only) invalidates `['auth'] ['documents'] ['analytics'] ['groups']` — so somebody who loses a
+  group watches the content disappear instead of clicking into a 404. No hook here touches the
+  socket.
+- Tests: `tests/ui/groups.test.tsx` (the tab's list/create flows, the 409 confirm, and the
+  `AccessPicker` empty-selection warning).

@@ -37,5 +37,13 @@ Rules:
   `document.convert` for a binary upload; `indexDocument` is shared with
   `queues/handlers/document-index.ts`, `convertAndIndexDocument` with `document-convert.ts`),
   `convert.ts` (`needsConversion` / `canConvert` / `decodeText` / `convertToText` over
-  `env.AI.toMarkdown`; `ConversionFailedError` is the permanent case), `retrieval.ts` (`searchChunks` — dense `<=>` +
+  `env.AI.toMarkdown`; `ConversionFailedError` is the permanent case), `retrieval.ts` (`searchChunks(db, cfg, env, scope, request)` — dense `<=>` +
   lexical `ts_rank_cd`, RRF `k = 60`; `RerankFn` is the documented, unbuilt seam) complete the D18 half.
+- **Reading a document takes an `AccessScope`, not a tenant id** (D29): `searchChunks` and the three
+  `document-content.ts` readers ALL take one, so a restricted document is absent from search, from
+  `get_document` and from the viewer by the same predicate. The scope carries the tenant, which is
+  why there is no separate `tenantId` argument to keep in step with it. `fullAccessScope(tenantId)`
+  is for maintenance paths only. The dense half additionally sets
+  `hnsw.iterative_scan = relaxed_order` `SET LOCAL` inside a transaction WHEN a visibility predicate
+  is in play — an approximate index can otherwise exhaust its candidate list before filling the pool
+  and hand back an empty dense half to a reader who may see very little.

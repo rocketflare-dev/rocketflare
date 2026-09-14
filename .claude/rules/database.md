@@ -84,6 +84,15 @@ predicate**, not SQL injection — the app role can `set_config` itself.
   (with a `queries/<name>.ts` SELECT in the schema's column ORDER) and usually a cube —
   `.claude/rules/api.md`. Rows are derived data: rebuilt with `pnpm web db:refresh-facts`, checked with
   `pnpm web db:check-facts`, never hand-migrated
+- **Visibility (D29)**: a resource people may restrict carries a `visibility` text column
+  (`RESOURCE_VISIBILITY_VALUES` in `_helpers.ts`, `tenant | groups`, default `tenant`) PLUS its own
+  junction table to `groups` (`document_groups`, `analytics_page_groups`: `tenantRef()` first, PK on
+  the pair, both FKs cascade, index `(tenant_id, group_id)`). **The column is the decision and the
+  rows are only the grants** — `groups` with zero rows means owner-and-admins-only, which is what
+  deleting the last group must leave. Never infer "restricted" from "has rows": that turns the same
+  delete into a silent publish. `group_members` shows the other half of the pattern — a composite FK
+  `(tenant_id, user_id) → tenant_users` with cascade, so losing a membership loses the group
+  memberships in the DATABASE rather than in service code
 - Per-call rows: `ai_usage` (append-only, `(tenant_id, at DESC)`), `agent_run_events` (`(run_id, seq)`
   unique, numbering continues across attempts). Concurrency is a claim row, never a lock:
   `agent_runs` `UPDATE … WHERE status IN ('queued','running') RETURNING` plus the partial unique index

@@ -17,7 +17,13 @@ response with the same schema. `pnpm test:config` covers the pure parts.
 `auth.ts` session/login · `tenants.ts` roles, slugs, members, invitations · `access-requests.ts` ·
 `permissions.ts` actions/subjects/`AppAbility`/packed rules (matrix lives in `apps/web/src/permissions/`) ·
 `api-keys.ts` · `tenant-settings.ts` · `user-settings.ts` · `notifications.ts` · `admin.ts` ·
-`activity.ts` · `errors.ts` envelope + codes · `pagination.ts` · Phase 2 (server ⇄ UI, no HTTP):
+`activity.ts` · `errors.ts` envelope + codes · `pagination.ts` ·
+`groups.ts` (D29) — `groupTypeSchema`/`groupSchema` (with `typeName` and `memberCount`)/`groupDetailSchema`,
+`groupRefSchema` (what the auth context, a member row and a restricted resource all carry),
+`myGroupsSchema`, the create/update/`addGroupMembers`/`setMemberGroups` request schemas,
+`resourceVisibilitySchema` (`tenant | groups`), `setVisibilityRequestSchema`, `resourceAccessSchema`
+and `isPrivateSelection()` (a `groups` selection with nothing in it means owner-and-admins only — the
+UI warns, it does not block) · Phase 2 (server ⇄ UI, no HTTP):
 `realtime.ts` — `realtimeEventSchema` `{ type, tenantId, at, payload? }`, `realtimeEventTypeSchema`,
 `REALTIME_INVALIDATIONS` (event type → TanStack query-key roots) + `invalidationsFor()` (D8) ·
 `jobs.ts` — `JOB_TYPES`, per-type payload schemas, `jobInputSchema` (what `enqueueJob` takes),
@@ -92,7 +98,10 @@ cannot parse, so the server may lead. A breaking
 payload change is a NEW type (`email.send.v2`) — the `type` string is the version seam. Adding a
 realtime event type: the enum + its roots in `REALTIME_INVALIDATIONS` (a ui test checks every root
 is a `queryKeys` family). Adding a file scope: `FILE_SCOPES` here AND the mirrored enum in
-`apps/web/src/db/schema/files.ts`.
+`apps/web/src/db/schema/files.ts`. Making a NEW resource restrictable (D29): add `visibility` +
+`groups: z.array(groupRefSchema)` to its schema here, a `visibility` column plus a junction table
+server-side, and a `visible<Resource>(scope)` predicate in `api/services/access.ts` — never infer
+"restricted" from the presence of grant rows.
 
 ## Rules
 

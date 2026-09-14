@@ -37,6 +37,10 @@ The package is **private**; publishing it is an app decision (docs/DEPLOY.md).
   switches the whole `Output` to JSON-only
 - Never import from `apps/web`; only `@rocketflare/shared`, `commander`, `chalk`, `open`, `zod`, `node:*`
 
+Groups (D29) are READ-only here: `groups list` and `groups members <id>`. Creating or deleting a
+group is a decision about who sees what, and the confirmation the web UI gives before a delete
+narrows access has no honest one-line equivalent in a CLI.
+
 ## Output
 
 - Human output goes to stdout via `chalk`; diagnostics and progress to stderr. `--json` on **every

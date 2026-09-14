@@ -86,6 +86,7 @@ injected `features: string[]`.
 | `AgentRun` (D7) | manage | manage | manage | manage | manage (own runs; admin+ see and cancel every run) |
 | `Document` (D18) | manage | manage | manage | manage | create + read (delete own: route's `ownerUserId` check) |
 | `Dashboard` (D19, `analytics_pages`) | manage | manage | manage | manage | read |
+| `Group` (D29) | manage | manage | manage | manage | read (routes narrow it to their OWN groups) |
 | `Analytics` (D19, the cube API `/cubejs-api`, `/mcp`) | manage | read | read | read | read (rows are tenant-scoped by every cube, §8) |
 
 `*` Deleting a tenant and assigning/changing `owner` additionally require an explicit
@@ -99,6 +100,43 @@ opens `/admin/*` directly — `ProtectedRoute`'s one exemption, and `/pending` /
 there — so there is always someone who can approve the first request. "Entering" a customer tenant
 inserts a real `support` membership; `authMiddleware` keeps its single "must be a member" invariant.
 
+**Groups and visibility (D29).** A tenant may declare group TYPES ("Department", "Region",
+"Client"), each holding GROUPS, each holding members. Group membership is part of the auth context
+(`AuthContext.groups`, resolved in the same LATERAL query as the membership; the Bearer path reads
+the KEY'S CREATOR's groups on every request, so removing somebody from a group narrows their keys
+with nothing to revoke) and it decides who may READ a knowledge document (§9) or a dashboard (§8).
+It is core rather than an optional surface, and it is inert until somebody uses it: every row ships
+`visibility: 'tenant'`.
+
+**Visibility is an explicit column, not the absence of grants.** `documents.visibility` and
+`analytics_pages.visibility` are `tenant | groups`; the junction tables (`document_groups`,
+`analytics_page_groups` — one per resource, with a real FK and cascade) hold the grants. That
+asymmetry is the whole design: deleting the last group a document was shared with leaves it
+`groups` with an EMPTY grant list, which matches nobody, so it narrows to its owner and to admins.
+Inferring "restricted" from "has grant rows" — what the app this was ported from did — makes the
+same delete publish the document to the entire organisation, silently. Deleting a group or a type
+that still grants anything is 409 `group_in_use` with a count; `?force=1` proceeds, always in the
+narrowing direction.
+
+**The predicate is SQL, never a CASL condition.** `api/services/access.ts` is the one place it
+lives: `accessScopeOf(auth) → { tenantId, userId, groupIds, bypass }`, then
+`visibleDocuments(scope)` / `visibleAnalyticsPages(scope)` — **ANDed with the tenant predicate,
+never substituted for it**. `bypass` is `isAdminLevel`, so owner, admin, support and global admins
+are not narrowed (support deliberately: it is admin-level everywhere else and is a membership row
+the customer can see). The rule it follows is the kit's existing one — an ability answers "may this
+role do this KIND of thing", and "is this row yours" is always a predicate in the query.
+
+**Group membership grants READ only.** Editing a document or a dashboard stays where it was: the
+owner, or `manage Document` / `manage Dashboard`. `PUT /api/ai/documents/:id/visibility` is the
+owner or admin+; `PUT /api/analytics/pages/:id/visibility` is admin+. A member may only share with
+groups they belong to (403 `group_not_yours`); an admin with any. Administering groups themselves
+(`/api/groups`) is `manage Group` throughout, and a member's only read there is `GET /mine`.
+
+**A membership change is a nudge to the people it moved.** `access.changed` goes to the affected
+users through `nudgeUsers` and invalidates `['auth'] ['documents'] ['analytics'] ['groups']`, so
+somebody who loses a group watches the content disappear rather than clicking into a 404; the admin
+view refreshes tenant-wide on `entity.changed { entity: 'groups' }`.
+
 **Isolation = predicates + inert RLS (D1).** Every query filters by `tenantId` from the auth
 context; every tenant table also carries an RLS policy that is not enforced until `TENANT_SCOPE_MODE
 = enforce` — see §4 and `docs/RLS.md`.
@@ -106,6 +144,14 @@ context; every tenant table also carries an RLS policy that is not enforced unti
 **The CLI is a tenant API key.** `rocketflare login` ends with a tenant-scoped key (§11), so every CLI call
 is already inside one tenant and goes through the same `authMiddleware` Bearer path and CASL
 abilities as the UI; in `single` mode the tenant-select step of the login handoff is skipped.
+
+**Known gaps / not built yet (groups):** no IdP sync — SCIM Groups and SAML/Entra group claims are
+the obvious next step and the kit has neither protocol; no hierarchy or inheritance (`parentId` was
+deliberately not ported — a column nothing reads); groups grant no EDIT rights and carry no
+per-group role; conversations, agent runs, prompts and files uploaded outside Knowledge have no
+visibility; a document an agent writes (`summarize-text` with `index: true`) is always `tenant` —
+inheriting its source's visibility is a follow-up; the group-member picker reads one page of 100
+people, so a very large organisation must search rather than scroll.
 
 **Known gaps / not built yet:** no audit log of admin actions beyond `activity_events`; the domain
 allow-list is new code with no production history; feature-flag source for `access` is undecided
@@ -567,6 +613,17 @@ checks every template structurally — rows sum to 12, ids unique, every portlet
 with x/y/w/h matching its row, every referenced member exists in `allCubes`, `recordsTable` is
 `ungrouped`, the chart-type rules from `DASHBOARD_PATTERNS.md`, registry keys/orders/one default —
 and reset/recreate is the user-facing repair.
+
+**Group visibility (D29).** `analytics_pages` carries `visibility` and `analytics_page_groups`;
+`GET /pages` and `GET /pages/:id` AND `visibleAnalyticsPages(scope)` onto the tenant predicate, and
+a page the reader may not see is the same 404 as one that does not exist. `ensureDefaultDashboards`
+is unchanged and template pages are always `tenant` — they are seeded for every tenant, and reset
+and recreate must never change who can see one. The security context gains `groupIds`, `groups`
+(names by type name) and `groupIdsByType`, plus **`groupFilter(ctx, typeName, column)`**: a helper
+for an app whose own fact table carries a group dimension. No kit cube uses it, because no kit
+table has one. Admin → `undefined` (no narrowing); groups of that type → `column in (…ids)`; NO
+group of that type → **`false`**, fail-closed. It matches on IDS: matching on names means renaming
+a group silently moves rows.
 
 **Permissions.** `Dashboard` (pages): admin+ `manage`, member `read`. `Analytics` (the cube API):
 `read` for every role (§1 matrix). The cube API is read-only by nature.
@@ -1036,6 +1093,20 @@ resource), stores the text and runs the same `indexDocument`. A `format: 'error'
 object or text over the cap is permanent → `failed` with the reason, acked; a thrown binding or
 provider error → `failed` + retry with backoff (a missing `JOBS_QUEUE` throws, never a silent inline
 fallback).
+**Documents carry visibility (D29, §1).** `searchChunks(db, cfg, env, scope, request)` takes an
+`AccessScope`, not a tenant id — the scope carries the tenant, and `visibleDocuments(scope)` is
+ANDed onto BOTH halves of the hybrid query. Because a selective filter on an approximate HNSW scan
+can exhaust its candidate list before filling the pool, the dense half sets
+`hnsw.iterative_scan = relaxed_order` (pgvector ≥ 0.8) `SET LOCAL` in a transaction — but only when
+a predicate is in play, so an admin's search still costs one statement. `document-content.ts`'s
+three readers take the scope too, so `get_document` and the viewer cannot disagree about what is
+readable; `AgentToolContext` carries `scope` rather than `tenantId`, and `executeRun` builds it at
+EXECUTE time from `agent_runs.requestedByUserId` — current membership, never a snapshot taken at
+enqueue — with a requester-less ("system") run getting tenant-visible documents only. A hidden id
+is indistinguishable from an unknown one everywhere, including the `knowledgeBase` list
+`get_document` offers back. `GET /api/files/:id` for a `documents`-scope object checks its owning
+document's visibility, without which the restriction is one file id away from being nothing.
+
 `searchChunks` (`POST /search`) is hybrid: dense `<=>` over the HNSW index plus lexical
 `websearch_to_tsquery` / `ts_rank_cd` over `to_tsvector('english', text)`, each contributing a pool
 of `min(max(limit·4, 50), 200)`, fused by Reciprocal Rank Fusion (`k = 60`); every hit carries
@@ -1432,7 +1503,11 @@ trace when Langfuse keys are set; ingest a text and get it back from the hybrid 
 `research-topic` a question about it and read the answer with its citation; upload a PDF
 on the Knowledge page, watch it go `Indexing → Indexed` and find a phrase from it in search, then
 download the original; open the Agents page and watch a run's timeline fill through the nudge, and
-the Knowledge page list the ingested document; query every cube as two tenants and see disjoint rows
+the Knowledge page list the ingested document; create a Department group type with Finance and Operations under Settings → Groups, restrict a
+document and a dashboard to Finance, and watch `member@example.test` lose them from Knowledge,
+Search, Analytics and the chat box's answers while `owner@` keeps them — then move that person into
+Finance from a second browser and watch them appear without a reload (D29);
+query every cube as two tenants and see disjoint rows
 (`tests/api/cubes/cube-isolation.test.ts`), run `pnpm web db:refresh-facts && pnpm web
 db:check-facts` to a `fresh` fact table, `GET /api/analytics/pages` and find the seeded
 `tenant-overview` page (and render it with live numbers once the analytics UI lands); and,

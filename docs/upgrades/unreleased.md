@@ -3,14 +3,121 @@ version: unreleased
 previous: 0.1.0
 date: null
 breaking: true
-migrations: ["conversations gains a nullable rolling summary and its watermark"]
+migrations:
+  - "conversations gains a nullable rolling summary and its watermark"
+  - "messages gains nullable provider and model columns"
+  - "group types, groups and group membership, one junction per visibility-bearing resource, and a visibility column on documents and analytics pages"
 areas: [api, ui, shared, config, docs]
-touches_surfaces: [feature-chat, feature-agents]
+touches_surfaces: [feature-chat, feature-agents, feature-knowledge, feature-analytics]
 requires_surfaces: []
 manual: false
 ---
 
 ## What changed
+
+### Groups, and visibility for documents and dashboards — **migration**, **breaking**
+
+A tenant can declare group TYPES ("Department", "Region", "Client"), each holding groups, each
+holding members. Group membership joins the auth context and decides who may READ a knowledge
+document or a dashboard. It is **core**, not an optional surface: an app that never creates a group
+type behaves exactly as before, because every existing row is `visibility: 'tenant'`.
+
+**Visibility is an explicit column, not the absence of grant rows** — `documents.visibility` and
+`analytics_pages.visibility`, enum `tenant | groups`, default `tenant`. This is the decision the
+rest follows from, and it is the one the app this was ported from got wrong: there, restriction was
+inferred from "has rows in the junction table", so deleting the last group a document was shared
+with silently published it to the whole organisation. Here the column stays `groups` with an empty
+grant list, which matches nobody — the document narrows to its owner and to admins. Deleting a
+group or a type that still grants anything is refused with 409 `group_in_use` and a count;
+`?force=1` goes ahead, and always in that same narrowing direction.
+
+**New tables** (migration `0009`): `group_types`, `groups`, `group_members`, `document_groups`,
+`analytics_page_groups`, plus the two `visibility` columns. **Port the schema and run
+`pnpm db:generate`; never copy the kit's migration.** Two shapes worth taking deliberately:
+`group_members` has a composite PK `(group_id, user_id)` so an add is `onConflictDoNothing` rather
+than a check-then-insert race, and a composite FK `(tenant_id, user_id) → tenant_users` with
+cascade, so removing somebody from the organisation removes their group memberships **in the
+database** rather than in service code you can forget to write.
+
+**`services/access.ts` is the only place "who may read this row" is expressed.** `accessScopeOf(auth)`
+→ `{ tenantId, userId, groupIds, bypass }`; `visibleDocuments(scope)` and
+`visibleAnalyticsPages(scope)` return SQL that is **ANDed with the tenant predicate and never
+replaces it**. The kit does not use CASL conditions for row access and this does not start:
+visibility is a predicate, exactly like "own" always has been. `bypass` is `isAdminLevel`, so
+owner, admin, support and global admins see everything — support included, deliberately, since it
+is admin-level everywhere else and is a membership row the customer can see.
+
+**Two signature changes, breaking for a copy that calls them directly:**
+
+| was | is |
+|---|---|
+| `searchChunks(db, cfg, env, tenantId, request)` | `searchChunks(db, cfg, env, scope, request)` — the scope carries the tenant |
+| `readDocumentWindow / listDocumentPassages / readDocumentCard(db, tenantId, …)` | `(db, scope, …)` |
+| `AgentToolContext { tenantId }` | `AgentToolContext { scope }` |
+
+`fullAccessScope(tenantId)` is the drop-in for a maintenance path that genuinely should see
+everything, and `accessScopeForUser(db, tenantId, userId)` builds one for a person.
+
+**Every read path took it**, which is the only reason the feature is worth having: the documents
+list, `GET /:id`, `/content`, `/passages`, `/card` and `DELETE`, `POST /search` (both halves of the
+hybrid query), `GET /api/files/:id` for a document's uploaded ORIGINAL — without which the
+restriction is one file id away from being nothing — the three knowledge tools, the chat tools, and
+the analytics pages list and `GET /:id`. A document the caller may not see answers the **same 404
+body** as one that does not exist, so the API is not an existence oracle in either direction.
+
+**An agent run builds its scope at EXECUTE time** from `agent_runs.requestedByUserId`, reading
+current membership rather than a snapshot taken at enqueue — a run started before somebody left a
+group does not read on their old access. A run with no requester ("system") gets tenant-visible
+documents only. `get_document` treats a hidden id exactly like an unknown one, and the
+`knowledgeBase` suggestion list it returns is filtered too, or it would name the document just
+denied.
+
+**Retrieval recall.** A selective filter on an approximate HNSW scan can exhaust its candidate list
+before filling the pool, so a reader who may see one document in a thousand could get an empty
+dense half. `searchChunks` sets `hnsw.iterative_scan = relaxed_order` (pgvector ≥ 0.8) `LOCAL` in a
+transaction around the vector scan **only when a predicate is in play** — an admin's search still
+costs one statement. A server whose pgvector predates the setting treats the name as a custom GUC
+placeholder and accepts it, which is why this needs no version probe.
+
+**Two drizzle traps this hit, worth knowing before you port the predicate.** Drizzle renders a
+column object with whatever table alias is in scope where the fragment is spliced, so
+`documentGroups.documentId` inside a query over `documents` comes out as `documents.document_id` —
+the EXISTS subquery therefore uses a local literal alias and raw column names. And
+`db.query.X.findFirst` renames the table it selects from, which raw predicate SQL cannot see; the
+two reads that used it are plain `select()` now. Both failures are 500s, not wrong answers, but
+only on the branch where the reader actually has groups.
+
+**New CASL subject `Group`** (admin+ `manage`, member `read`) — update `CORE_SUBJECTS`, the matrix
+in `src/permissions/abilities.ts` and `tests/config/permissions.test.ts`. **New realtime event
+`access.changed`**, sent with `nudgeUsers` to the affected people only, mapped to the roots
+`['auth'] ['documents'] ['analytics'] ['groups']`: somebody who loses a group watches the content
+go rather than clicking into a 404.
+
+**New surfaces:** `/api/groups` (types, groups, members, `GET /mine`),
+`PUT /api/members/:userId/groups`, `PUT /api/ai/documents/:id/visibility` (owner or `manage
+Document`) and `PUT /api/analytics/pages/:id/visibility` (`manage Dashboard`). Group membership
+grants **read only** — editing a document or a dashboard stays exactly where it was.
+
+**Contracts gained fields**, so a copy's own parsers need them: `documentSchema` and
+`analyticsPageSchema` gain `visibility` and `groups[]`, and `memberSchema` gains `groups[]` (resolved
+in the SAME query as the member list — the app this was ported from fetched the list once per
+group). `ingestTextRequestSchema` and `uploadDocumentFieldsSchema` accept an optional `visibility`
+and `groupIds`; a member may only name groups they belong to (403 `group_not_yours`), an admin any.
+
+**Analytics: `groupFilter(ctx, typeName, column)`** in `cubes/security.ts`, for an app whose own
+fact table carries a group dimension. **No kit cube uses it** — no kit table has one. Its three
+behaviours: an admin gets `undefined` (no narrowing), a reader with groups of that type gets
+`column in (…their ids)`, and a reader with NO group of that type gets **`false`**. It matches on
+IDS, never names, because renaming a group must not silently move rows; the context carries names
+too (`groups`, keyed by type) for labels and debugging.
+
+**UI**: Settings → Groups (`manage Group` only — a picker that 403s on save is worse than no tab),
+a Groups column and an Edit groups dialog on People, `AccessPicker` / `AccessBadge` /
+`VisibilityModal` in `components/shared` (markdown-free, so they may live in the eager barrel), a
+Visibility action on Knowledge rows and in the dashboard header, and a read-only "Your groups" on
+the profile. The picker offers an admin every group and a member only their own, because that is
+exactly what the API accepts from each, and an empty selection is **warned about, not blocked** —
+"only me and admins" is a real answer and the state a deleted group leaves behind.
 
 ### AG-UI is the wire protocol for chat and agent runs — **breaking**
 
@@ -352,6 +459,22 @@ today. If you have added your own top-level prefix, add it to `API_PREFIXES` and
 
 ## How to apply
 
+**Groups first if you take it**, because the migration and the two signature changes touch
+everything else. Order: `packages/shared/src/groups.ts` and the three schemas that gained fields →
+`src/db/schema/{groups,document-groups,analytics-page-groups}.ts` plus the `visibility` columns in
+`_helpers.ts`, `documents.ts` and `analytics-pages.ts` → **your own `pnpm db:generate`** →
+`services/{access,groups}.ts` → `routes/groups.ts` and the mount → the auth context
+(`auth/sessions.ts`'s third LATERAL join, `middleware/auth.ts` for the Bearer path, `api/types.ts`)
+→ the read paths. A copy that has deleted the knowledge or analytics feature takes only the half it
+still has; `services/access.ts` compiles with either, and `tests/api/access-visibility.test.ts` is
+written against both, so delete the describe blocks for what you removed.
+
+**Decide about API keys.** A tenant key carries its CREATOR's groups, re-read on every request, so
+removing somebody from a group narrows their keys on the next call with nothing to revoke. If you
+would rather a key saw tenant-visible content only, the lever is `resolveBearerAuth` in
+`middleware/auth.ts` — one line, and stated here because it is a policy choice rather than an
+implementation detail.
+
 **The document viewer needs no migration.** Take `packages/shared/src/ai/embeddings.ts` and
 `src/files.ts`, then `services/ai/document-content.ts`, `routes/ai-documents.ts`,
 `services/agents/tools/get-document.ts` (delegate) and `services/ai/retrieval.ts` (it exports
@@ -407,6 +530,13 @@ yours.
 
 ## Conflicts to expect
 
+Anything of yours calling `searchChunks`, the three `document-content.ts` readers, or building an
+`AgentToolContext` — all now take an `AccessScope` rather than a `tenantId`. A custom `toDocument`
+or `toAnalyticsPageDto` (both take a second `groups` argument). A member list of your own that does
+not return `groups`. `src/permissions/abilities.ts` if you have added subjects. A
+`components/shared/index.ts` barrel you have edited. And any raw SQL predicate of your own spliced
+into a `db.query.*` relational query — see the drizzle traps above.
+
 Anything of yours that touched the chat stream: a custom `chatStreamEventSchema` variant, a
 `readSse` call site (it takes a `parse` argument now), an import of `lib/chatStream.ts` (deleted —
 `lib/aguiStream.ts`, and `sendChatMessage` is `runChatTurn`), a bespoke chat UI switching on
@@ -429,10 +559,18 @@ matter to.
 ## Verify
 
 ```
-pnpm web test:config                           # agui-contract, shared-imports, ui-bundle, document-helpers
+pnpm web test:config                           # agui-contract, shared-imports, ui-bundle, document-helpers, permissions
+pnpm web test:api                              # groups, access-visibility (the read-path matrix)
 node scripts/release-check.mjs --deployable    # in an app: deployable=true
 pnpm lint && pnpm typecheck && pnpm test && pnpm build
 ```
+
+And, with `pnpm dev` running and `pnpm seed --demo`: sign in as `member@example.test` and confirm
+the seeded Finance-only document and the "Finance review" dashboard are absent from Knowledge,
+Search, Analytics and the chat box's answers; sign in as `owner@example.test` and confirm they are
+all there. Then take `member@` out of Operations and into Finance under Settings → Groups with both
+browsers open, and watch the content appear without a reload — that is `access.changed` doing its
+job.
 
 And, with `pnpm dev` running: upload a PDF on `/documents`, open it from the Knowledge list, and
 confirm it **renders in the page** — that assertion is what proves the framing fix, not just the

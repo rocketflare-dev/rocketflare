@@ -34,9 +34,14 @@ Drizzle table definitions, one file per table, re-exported from `index.ts` (whic
 | `documents` | `documents.ts` | `tenant_id` | ✓ | text a tenant indexed for retrieval (D18): `ownerUserId`, `title`, `source`, `contentType` (the ORIGINAL media type), `sizeBytes`, `content` (the indexed text, API-invisible — the `document.index` job re-reads it; null for an upload until `document.convert` ran), `fileId` → `files` (`set null`; the uploaded original, scope `documents`), `chunkCount`, `embeddingModel`, `status` `pending\|indexed\|failed`, `error` |
 | `analytics_pages` | `analytics-pages.ts` | `tenant_id` | ✓ | dashboards (D19): `slug` unique per tenant (= `templateKey` for seeded pages), `config` jsonb `$type<DashboardConfig>` (drizzle-cube/client, type-only), `templateKey` nullable (null = user-created; non-null = resettable), `isDefault`, `sortOrder`, `createdByUserId` set-null. Seeded per tenant by `services/dashboard-templates.ts` |
 | `tenant_activity_daily_facts` | `facts/tenant-activity-daily-facts.ts` | `tenant_id` | ✓ | the example FACT table (D19): grain `(tenant_id, day date, user_id nullable)` with `UNIQUE NULLS NOT DISTINCT` (PG15+) so NULL actors collapse to one row; `event_count`, `distinct_event_types`, `first/last_event_at`, `fact_refreshed_at` watermark; no `id`, no FK to users. Rebuilt per tenant by `services/fact-tables` (DELETE+INSERT, cron `15 * * * *`); read by the `TenantActivityDaily` cube |
+| `group_types` | `groups.ts` | `tenant_id` | ✓ | D29: group types ("Department"); unique `(tenant_id, name)` |
+| `groups` | `groups.ts` | `tenant_id` | ✓ | D29: `groupTypeId` cascade; unique `(tenant_id, group_type_id, name)`. No `parentId` — hierarchy without inheritance is a column nothing reads |
+| `group_members` | `groups.ts` | `tenant_id` | ✓ | D29: PK `(group_id, user_id)` so an add is `onConflictDoNothing`; **composite FK `(tenant_id, user_id)` → `tenant_users` cascade**, so losing a membership loses the group memberships in the DATABASE, not in service code; index `(tenant_id, user_id)` is the auth-context read |
+| `document_groups` | `document-groups.ts` | `tenant_id` | ✓ | D29: which groups a `visibility: 'groups'` document is shared with. PK on the pair, both FKs cascade. **Grants, never the decision** — `documents.visibility` is |
+| `analytics_page_groups` | `analytics-page-groups.ts` | `tenant_id` | ✓ | D29: the same shape for `analytics_pages` |
 | `chunks` | `chunks.ts` | `tenant_id` | ✓ | retrieval units (D17/D18): `documentId` cascade, `seq` (unique per document), `text`, `tokenCount` (char estimate), `embedding vector(1024)` (`EMBEDDING_DIM`; a new dimension is a new table); **HNSW `vector_cosine_ops`** index; lexical half is `to_tsvector('english', text)` at query time (generated tsvector + GIN is the scaling path) |
 
-23 policies (`tenants`, `users` + 21 tenant tables); 4 revoked tables = `RLS_REVOKED_TABLES` =
+28 policies (`tenants`, `users` + 26 tenant tables); 4 revoked tables = `RLS_REVOKED_TABLES` =
 `RLS_EXCLUDED_TABLES`. jsonb columns are `$type<>()`d from `@rocketflare/shared` (type-only imports).
 
 ## Conventions
