@@ -61,7 +61,8 @@ function mount(routes: RouteTable = {}, role: 'owner' | 'member' = 'owner') {
 describe('Settings → Groups', () => {
   it('lists types with their group count, and the selected type’s groups', async () => {
     mount()
-    expect(await screen.findByRole('button', { name: /Department/ })).toBeInTheDocument()
+    // The selector row, not the delete button beside it.
+    expect(await screen.findByRole('button', { current: true })).toHaveTextContent('Department')
     expect(await screen.findByText('Finance')).toBeInTheDocument()
     // The member count comes from the list query, never from a call per group.
     expect(screen.getByText('2')).toBeInTheDocument()
@@ -122,6 +123,68 @@ describe('Settings → Groups', () => {
     // And it says which way the change goes — narrower, never wider.
     expect(screen.getByText(/owner and to administrators only/)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Delete anyway' })).toBeInTheDocument()
+  })
+})
+
+describe('GroupMembersModal', () => {
+  it('offers only people NOT in the group, and lists the group on the right', async () => {
+    mount({
+      [`/api/groups/${GROUP_ID}`]: {
+        ...group(),
+        members: [
+          {
+            userId: IDS.user,
+            email: 'olive@example.test',
+            name: 'Olive',
+            avatarUrl: null,
+            addedAt: now,
+          },
+        ],
+      },
+      '/api/members': {
+        items: [
+          {
+            userId: IDS.user,
+            email: 'olive@example.test',
+            name: 'Olive',
+            avatarUrl: null,
+            role: 'owner',
+            joinedAt: now,
+            lastLoginAt: now,
+            invitedByUserId: null,
+            groups: [],
+          },
+          {
+            userId: '66666666-6666-4666-8666-666666666666',
+            email: 'mia@example.test',
+            name: 'Mia',
+            avatarUrl: null,
+            role: 'member',
+            joinedAt: now,
+            lastLoginAt: null,
+            invitedByUserId: null,
+            groups: [],
+          },
+        ],
+        pagination: { page: 1, pageSize: 100, total: 2, totalPages: 1 },
+      },
+    })
+    fireEvent.click(await screen.findByRole('button', { name: 'Members' }))
+
+    // Both columns exist, and say how many are in each.
+    expect(await screen.findByText('Add people')).toBeInTheDocument()
+    expect(screen.getByText('In this group')).toBeInTheDocument()
+    // Olive is already in, so she is offered only on the right; only Mia can be picked.
+    await waitFor(() => expect(screen.getAllByRole('checkbox')).toHaveLength(1))
+    console.log(
+      'PARAS',
+      [...document.querySelectorAll('p')].map(e => JSON.stringify(e.textContent))
+    )
+    expect(await screen.findByText('1 person not in this group')).toBeInTheDocument()
+    expect(screen.getByText('Mia')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('checkbox'))
+    expect(screen.getByRole('button', { name: 'Add 1' })).toBeEnabled()
   })
 })
 

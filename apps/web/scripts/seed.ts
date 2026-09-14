@@ -958,6 +958,40 @@ function preview(text: string): { text: string; truncated?: true } {
   return text.length > 600 ? { text: `${text.slice(0, 600)}…`, truncated: true } : { text }
 }
 
+/** Find-or-create by name, returning the id that is actually in the table. */
+async function upsertGroupType(db: Database, tenantId: string, name: string): Promise<string> {
+  await db
+    .insert(groupTypes)
+    .values({ id: demoId(`group-type:${name.toLowerCase()}`), tenantId, name })
+    .onConflictDoNothing()
+  const row = await db.query.groupTypes.findFirst({
+    where: and(eq(groupTypes.tenantId, tenantId), eq(groupTypes.name, name)),
+  })
+  if (!row) throw new Error(`seed: group type ${name} missing after upsert`)
+  return row.id
+}
+
+async function upsertGroup(
+  db: Database,
+  tenantId: string,
+  groupTypeId: string,
+  name: string
+): Promise<string> {
+  await db
+    .insert(groups)
+    .values({ id: demoId(`group:${name.toLowerCase()}`), tenantId, groupTypeId, name })
+    .onConflictDoNothing()
+  const row = await db.query.groups.findFirst({
+    where: and(
+      eq(groups.tenantId, tenantId),
+      eq(groups.groupTypeId, groupTypeId),
+      eq(groups.name, name)
+    ),
+  })
+  if (!row) throw new Error(`seed: group ${name} missing after upsert`)
+  return row.id
+}
+
 async function seedDemo(
   db: Database,
   tenant: typeof tenants.$inferSelect,
@@ -1048,20 +1082,12 @@ async function seedDemo(
   // One type, two groups, and one document plus one dashboard restricted to Finance — so the demo
   // shows the feature working rather than just existing: `member@example.test` is in Operations and
   // cannot see either of them, while `owner@` and `admin@` can.
-  const departmentId = demoId('group-type:department')
-  await db
-    .insert(groupTypes)
-    .values({ id: departmentId, tenantId, name: 'Department' })
-    .onConflictDoNothing()
-  const financeId = demoId('group:finance')
-  const operationsId = demoId('group:operations')
-  await db
-    .insert(groups)
-    .values([
-      { id: financeId, tenantId, groupTypeId: departmentId, name: 'Finance' },
-      { id: operationsId, tenantId, groupTypeId: departmentId, name: 'Operations' },
-    ])
-    .onConflictDoNothing()
+  // The ids are seeded deterministically, but `(tenant_id, name)` is unique — so a "Department"
+  // somebody already created by hand wins, and everything below must use ITS id rather than the
+  // one we would have chosen. `onConflictDoNothing` + read back, never insert-and-assume.
+  const departmentId = await upsertGroupType(db, tenantId, 'Department')
+  const financeId = await upsertGroup(db, tenantId, departmentId, 'Finance')
+  const operationsId = await upsertGroup(db, tenantId, departmentId, 'Operations')
   const financePeople = [owner.id, admin.id, ...demoMembers.slice(0, 1).map(m => m.user.id)]
   const operationsPeople = [member.id, ...demoMembers.slice(1).map(m => m.user.id)]
   await db

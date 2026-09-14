@@ -14,6 +14,8 @@ import {
   ArrowDownTrayIcon,
   ArrowUpTrayIcon,
   BookOpenIcon,
+  LockClosedIcon,
+  LockOpenIcon,
   PencilSquareIcon,
   TrashIcon,
 } from '@heroicons/react/24/outline'
@@ -500,10 +502,22 @@ function DocumentsTable() {
                     {canShare(doc) && (
                       <button
                         type="button"
-                        className="btn btn-ghost btn-xs"
+                        className="btn btn-ghost btn-xs btn-square"
+                        aria-label={`Who can see ${doc.title}`}
+                        title={
+                          doc.visibility === 'tenant'
+                            ? 'Visible to everyone — change who can see this'
+                            : 'Restricted — change who can see this'
+                        }
                         onClick={() => setSharing(doc)}
                       >
-                        Visibility
+                        {/* The OPEN padlock is the default, so "restricted" is the state that
+                            stands out rather than the one you have to read a word to notice. */}
+                        {doc.visibility === 'tenant' ? (
+                          <LockOpenIcon className="w-4 h-4" />
+                        ) : (
+                          <LockClosedIcon className="w-4 h-4 text-warning" />
+                        )}
                       </button>
                     )}
                     {doc.fileId && (

@@ -62,6 +62,12 @@ export default function GroupsSettings() {
   )
 }
 
+/**
+ * The type list is plain rows, not a DaisyUI `menu`: the delete has to be a BUTTON beside the
+ * selector rather than an icon nested inside it — a button inside a button is invalid markup, and
+ * it was why the selected row never picked up its highlight. Count and delete are right-aligned so
+ * the names read as a column.
+ */
 function GroupTypesPanel({
   types,
   isLoading,
@@ -125,31 +131,41 @@ function GroupTypesPanel({
           description="Create one, such as Department."
         />
       ) : (
-        <ul className="menu menu-sm p-0 gap-0.5" aria-label="Group types">
-          {types.map(type => (
-            <li key={type.id}>
-              <button
-                type="button"
-                className={`justify-between ${type.id === activeTypeId ? 'active' : ''}`}
-                onClick={() => onSelect(type.id)}
+        <ul className="-mx-1 space-y-0.5" aria-label="Group types">
+          {types.map(type => {
+            const selected = type.id === activeTypeId
+            return (
+              <li
+                key={type.id}
+                className={`flex items-center rounded-btn ${
+                  selected ? 'bg-primary/10 text-primary' : 'hover:bg-base-200'
+                }`}
               >
-                <span className="truncate">{type.name}</span>
-                <span className="flex items-center gap-2">
-                  <span className="badge badge-sm badge-ghost">{type.groupCount}</span>
-                  <TrashIcon
-                    className="w-4 h-4 opacity-60 hover:opacity-100"
-                    role="button"
-                    aria-label={`Delete ${type.name}`}
-                    onClick={event => {
-                      event.stopPropagation()
-                      setInUse(null)
-                      setDeleting(type)
-                    }}
-                  />
-                </span>
-              </button>
-            </li>
-          ))}
+                <button
+                  type="button"
+                  aria-current={selected ? 'true' : undefined}
+                  className="flex min-w-0 flex-1 items-center justify-between gap-2 px-2 py-1.5 text-left text-sm"
+                  onClick={() => onSelect(type.id)}
+                >
+                  <span className={`truncate ${selected ? 'font-medium' : ''}`}>{type.name}</span>
+                  <span className="shrink-0 text-xs tabular-nums text-muted">
+                    {type.groupCount}
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-xs btn-square mr-1 text-muted hover:text-error"
+                  aria-label={`Delete ${type.name}`}
+                  onClick={() => {
+                    setInUse(null)
+                    setDeleting(type)
+                  }}
+                >
+                  <TrashIcon className="w-4 h-4" />
+                </button>
+              </li>
+            )
+          })}
         </ul>
       )}
 
