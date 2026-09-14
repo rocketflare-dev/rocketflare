@@ -106,13 +106,19 @@ analyticsPagesRouter.post('/pages', validate('json', createAnalyticsPageRequestS
 analyticsPagesRouter.get('/pages/:id', async c => {
   const { db, tenantId, auth } = withAuthAndDb(c)
   const id = uuidParam(c, 'id')
-  const row = await db.query.analyticsPages.findFirst({
-    where: and(
-      eq(analyticsPages.id, id),
-      eq(analyticsPages.tenantId, tenantId),
-      visibleAnalyticsPages(accessScopeOf(auth))
-    ),
-  })
+  // `select()`, not the relational query builder: it renames the table it selects from, and the
+  // visibility predicate is raw SQL naming `analytics_pages`.
+  const [row] = await db
+    .select()
+    .from(analyticsPages)
+    .where(
+      and(
+        eq(analyticsPages.id, id),
+        eq(analyticsPages.tenantId, tenantId),
+        visibleAnalyticsPages(accessScopeOf(auth))
+      )
+    )
+    .limit(1)
   // A dashboard this reader may not see is the SAME 404 as one that does not exist.
   if (!row) throw new NotFoundError('Dashboard not found')
   return c.json(toAnalyticsPageDto(row, await pageGroups(db, tenantId, id)))

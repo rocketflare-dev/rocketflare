@@ -70,25 +70,35 @@ export function fullAccessScope(tenantId: string): AccessScope {
 }
 
 /**
- * `EXISTS (select 1 from <junction> where <resource fk> = <resource id> and group_id = any($ids))`.
- * Built once here so both resources cannot drift, and so the empty-scope case degrades to `false`
- * rather than to an `in ()` Postgres refuses.
+ * `exists (select 1 from <junction> j where j.<fk> = <resource>.id and j.group_id = any($ids))`.
+ *
+ * The subquery is written with a LITERAL alias and raw column names rather than drizzle column
+ * objects. That is not stylistic: drizzle renders a column object with whatever table alias is in
+ * scope where the fragment is spliced, so `${documentGroups.documentId}` inside a query over
+ * `documents` comes out as `"documents"."document_id"` — a column that does not exist, and a 500
+ * rather than a wrong answer. The alias here is local to the subquery and cannot be captured.
+ *
+ * The ids go in as one bound parameter each — never interpolated, and never as a single array
+ * parameter, whose type Postgres cannot infer inside a subquery.
  */
-function sharedWithMyGroups(scope: AccessScope, exists: SQL): SQL {
-  return scope.groupIds.length === 0 ? sql`false` : exists
+function sharedWithMyGroups(
+  scope: AccessScope,
+  junction: string,
+  foreignKey: string,
+  resourceId: SQL
+): SQL {
+  if (scope.groupIds.length === 0) return sql`false`
+  const ids = sql.join(
+    scope.groupIds.map(id => sql`${id}`),
+    sql`, `
+  )
+  return sql`exists (select 1 from ${sql.raw(`"${junction}" j`)} where ${sql.raw(`j."${foreignKey}"`)} = ${resourceId} and ${sql.raw(`j."group_id"`)} in (${ids}))`
 }
 
 export function visibleDocuments(scope: AccessScope): SQL | undefined {
   if (scope.bypass) return undefined
   const owned = scope.userId ? sql`${documents.ownerUserId} = ${scope.userId}` : sql`false`
-  const shared = sharedWithMyGroups(
-    scope,
-    sql`exists (
-      select 1 from ${documentGroups}
-      where ${documentGroups.documentId} = ${documents.id}
-        and ${inArray(documentGroups.groupId, scope.groupIds)}
-    )`
-  )
+  const shared = sharedWithMyGroups(scope, 'document_groups', 'document_id', sql`${documents.id}`)
   return sql`(${documents.visibility} = 'tenant' or ${owned} or ${shared})`
 }
 
@@ -97,21 +107,11 @@ export function visibleAnalyticsPages(scope: AccessScope): SQL | undefined {
   const owned = scope.userId ? sql`${analyticsPages.createdByUserId} = ${scope.userId}` : sql`false`
   const shared = sharedWithMyGroups(
     scope,
-    sql`exists (
-      select 1 from ${analyticsPageGroups}
-      where ${analyticsPageGroups.pageId} = ${analyticsPages.id}
-        and ${inArray(analyticsPageGroups.groupId, scope.groupIds)}
-    )`
+    'analytics_page_groups',
+    'page_id',
+    sql`${analyticsPages.id}`
   )
   return sql`(${analyticsPages.visibility} = 'tenant' or ${owned} or ${shared})`
-}
-
-/**
- * The same predicate expressed over `chunks`' parent document, for the two halves of hybrid
- * search. `searchChunks` already joins `documents`, so this costs no extra join.
- */
-export function visibleDocumentsForChunks(scope: AccessScope): SQL | undefined {
-  return visibleDocuments(scope)
 }
 
 // ---- Writing visibility ------------------------------------------------------------------------

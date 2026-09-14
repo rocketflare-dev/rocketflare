@@ -25,12 +25,12 @@ import {
   tenantUsers,
   users,
 } from '../../db/schema'
-import { BadRequestError, ConflictError, NotFoundError } from '../utils/core/errors'
-
-/** `23505` — a duplicate name under the tenant's unique constraint. */
-function isUniqueViolation(err: unknown): boolean {
-  return typeof err === 'object' && err !== null && (err as { code?: string }).code === '23505'
-}
+import {
+  BadRequestError,
+  ConflictError,
+  isUniqueViolation,
+  NotFoundError,
+} from '../utils/core/errors'
 
 // ---- Group types -----------------------------------------------------------------------------
 
@@ -43,10 +43,12 @@ export async function listGroupTypes(db: Database, tenantId: string): Promise<Gr
       description: groupTypes.description,
       createdAt: groupTypes.createdAt,
       updatedAt: groupTypes.updatedAt,
-      groupCount: sql<number>`(select count(*) from ${groups} where ${groups.groupTypeId} = ${groupTypes.id})`,
+      groupCount: sql<number>`count(${groups.id})`,
     })
     .from(groupTypes)
+    .leftJoin(groups, eq(groups.groupTypeId, groupTypes.id))
     .where(eq(groupTypes.tenantId, tenantId))
+    .groupBy(groupTypes.id)
     .orderBy(asc(groupTypes.name))
   return rows.map(row => ({ ...row, groupCount: Number(row.groupCount) }))
 }
@@ -115,7 +117,7 @@ const groupSelect = {
   description: groups.description,
   createdAt: groups.createdAt,
   updatedAt: groups.updatedAt,
-  memberCount: sql<number>`(select count(*) from ${groupMembers} where ${groupMembers.groupId} = ${groups.id})`,
+  memberCount: sql<number>`(select count(*) from "group_members" gm where gm.group_id = ${groups.id})`,
 }
 
 const toGroup = (row: Record<string, unknown>): Group =>

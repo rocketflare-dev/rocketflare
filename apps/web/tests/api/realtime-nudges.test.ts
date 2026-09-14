@@ -141,6 +141,63 @@ describe('realtime nudges', () => {
     expect(recorded(env, tenant.id)).toHaveLength(1)
   })
 
+  it('group membership changes nudge access.changed to the AFFECTED people only (D29)', async () => {
+    const { owner, tenant, cookie } = await ownerWithCookie()
+    const env = createTestEnv()
+    const moved = await createTestUser(db)
+    await linkUserToTenant(db, moved.id, tenant.id, 'member')
+
+    const type = (await (
+      await request(
+        '/api/groups/types',
+        { method: 'POST', headers: cookie },
+        { env, json: { name: 'Department' } }
+      )
+    ).json()) as { id: string }
+    const group = (await (
+      await request(
+        '/api/groups',
+        { method: 'POST', headers: cookie },
+        { env, json: { groupTypeId: type.id, name: 'Finance' } }
+      )
+    ).json()) as { id: string }
+
+    await request(
+      `/api/groups/${group.id}/members`,
+      { method: 'POST', headers: cookie },
+      { env, json: { userIds: [moved.id] } }
+    )
+    const added = recorded(env, tenant.id)
+    // The admin UI is refreshed tenant-wide; the person whose access moved is told individually.
+    expect(added).toContainEqual(
+      expect.objectContaining({
+        method: 'broadcast',
+        event: expect.objectContaining({ type: 'entity.changed' }),
+      })
+    )
+    expect(added).toContainEqual(
+      expect.objectContaining({
+        method: 'broadcastToUsers',
+        target: [moved.id],
+        event: expect.objectContaining({ type: 'access.changed' }),
+      })
+    )
+    // The owner is not told: nothing they can see has changed.
+    expect(
+      added.filter(r => r.method === 'broadcastToUsers').flatMap(r => r.target as string[])
+    ).not.toContain(owner.id)
+
+    await request(
+      `/api/groups/${group.id}/members/${moved.id}`,
+      {
+        method: 'DELETE',
+        headers: cookie,
+      },
+      { env }
+    )
+    expect(recorded(env, tenant.id).filter(r => r.event.type === 'access.changed')).toHaveLength(2)
+  })
+
   it('nudges are a no-op without the binding and never throw', () => {
     const defer = vi.fn()
     const env = createTestEnv({ NOTIFICATIONS_HUB: undefined })
