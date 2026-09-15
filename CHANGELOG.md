@@ -6,6 +6,19 @@ copy of the kit forward without recreating anything its owner deleted.
 
 If you are running a copy: `pnpm kit:upgrade` tells you which of these you are missing.
 
+## 0.3.0 — 2026-09-15
+
+Feature flags, in two layers: `FEATURES_ENABLED` in `[vars]` decides whether a surface exists in a
+deployment at all — fail-closed, so half-built code can be released to production dark — and a
+global admin drives the rollout from `/admin` with a percentage, per-organisation overrides and no
+redeploy. Flag keys are code, so adding one needs no migration and a typo is a type error. **A flag
+is configuration, not a permission**: every gate reads `auth.features`, never the CASL ability,
+because `manage all` and `access all` are wildcards that would hand platform staff an unreleased
+surface — the rule comes from an app on this kit that shipped exactly that. A feature ships dark on
+every door, including the two with no nav entry: the cube registry and the dashboard templates,
+which seed themselves into every organisation on the first page load after a deploy. Not breaking;
+one migration. [Porting note](docs/upgrades/0.3.0.md).
+
 ## 0.2.0 — 2026-09-14
 
 Groups: an organisation declares group types, and group membership decides who may read a knowledge
