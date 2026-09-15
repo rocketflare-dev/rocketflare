@@ -22,13 +22,21 @@ vocabulary in `packages/shared/src/permissions.ts`). Built once per request by t
 | `Analytics` (D19, the cube API `/cubejs-api`, `/mcp`) | manage | read | read | read | read |
 | `AccessRequest`, `User` (platform) | manage | – | – | – | – |
 | `Feature:<name>` via `access` | all | by `features` | by `features` | all | by `features` |
+| `FeatureFlag` (D30, administering flags) | manage | – | – | – | – |
 
 - Actions: `manage` (wildcard) · `create` · `read` · `update` · `delete` · `access` (features only)
 - Roles come from `tenant_users.role`; `support` is minted only from `/admin`. `globalAdmin` is `users.isGlobalAdmin`
 - **Owner-only checks are explicit `role === 'owner'`, not CASL** (`isOwnerLevel` in
   `src/api/middleware/permissions.ts`): delete tenant, transfer/assign `owner`. `manage Tenant` alone
   is NOT proof of ownership — `support` and global admins hold it too
-- `features: string[]` is injected by the app (tenant flag, KV, env) and only ever ADDS `access` rules
+- `features: string[]` comes from `src/permissions/features.ts` (D30) and only ever ADDS `access` rules
+- **Never gate a surface on `access Feature:<name>`.** `globalAdmin` is `manage all` and `support`
+  is granted `access all`; in CASL both are wildcards covering `access` on every `Feature:` subject,
+  so an ability check answers "on" for platform staff whatever the deployment ships — while
+  `requireFeature`, `cubesFor` and `listTemplates`, which read the ARRAY, answer "off". An app on
+  this kit shipped that and had five routes open in production to staff. A flag is CONFIGURATION:
+  read `auth.features` / `session.features`. `applyFeatureFlags` stays for an app that wants
+  permission-style entitlements, and nothing hiding a dark surface may use it
 
 ## Usage
 

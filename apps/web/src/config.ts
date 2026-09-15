@@ -37,6 +37,21 @@ const optionalBoolean = (fallback: boolean) =>
     return !['false', '0', 'no', 'off'].includes(String(value).trim().toLowerCase())
   }, z.boolean())
 
+/**
+ * A comma-separated list of lowercase identifiers (feature keys). `csvList` below coerces to email
+ * addresses, which is right for `BOOTSTRAP_ADMIN_EMAILS` and wrong for anything else.
+ */
+const csvKeys = z.preprocess(
+  value =>
+    typeof value === 'string'
+      ? value
+          .split(',')
+          .map(s => s.trim().toLowerCase())
+          .filter(Boolean)
+      : (value ?? []),
+  z.array(z.string())
+)
+
 const csvList = z.preprocess(
   value =>
     typeof value === 'string'
@@ -87,6 +102,18 @@ const configSchema = z.object({
    * rolling summary by the `chat.compact` job.
    */
   CHAT_HISTORY_MAX_CHARS: optionalPositiveInt(24_000),
+  /**
+   * D30, layer 1: the feature keys this deployment ships AT ALL. Only consulted for a flag whose
+   * registry entry sets `environmentGated` — everything else is decided by the rollout state in the
+   * database, so an ordinary flag needs no toml edit.
+   *
+   * Blank means none, which is the FAIL-CLOSED direction and the point: this gate's failure mode is
+   * an unreleased surface appearing in production, so an environment that forgets the var stays
+   * dark. Note `wrangler dev` reads `[vars]` from `wrangler.toml`, so a key listed only in staging
+   * is absent on every developer's laptop unless `.dev.vars` overrides it — which is why
+   * `.dev.vars.example` lists the kit's gated keys.
+   */
+  FEATURES_ENABLED: csvKeys,
 
   // ---- Secrets (.dev.vars locally, `wrangler secret put` deployed) — all optional here;
   //      features gate on presence (zero-creds first run) or demand them at use time. -------

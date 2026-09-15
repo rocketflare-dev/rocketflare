@@ -22,6 +22,7 @@ import type { AuthContext } from '../types'
 import type { Logger } from '../utils/core/logger'
 import { createTenantForUser, getSingleTenant } from '../utils/db/tenant-helpers'
 import { recordActivity } from './activity'
+import { platformFeatures } from './features'
 
 export interface AdmitInput {
   email: string
@@ -228,6 +229,7 @@ export async function onNoTenant(
         slug: 'default',
         userId: user.id,
         role: 'owner',
+        features: await platformFeatures(db, cfg),
       })
       logger.warn(
         { tenantId: created.id },
@@ -254,6 +256,7 @@ export async function onNoTenant(
       name: `${user.name}'s workspace`,
       userId: user.id,
       role: 'owner',
+      features: await platformFeatures(db, cfg),
     })
     return tenant.id
   }

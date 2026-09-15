@@ -11,7 +11,7 @@
  */
 import { createCubeApp } from 'drizzle-cube/adapters/hono'
 import * as schema from '../../db/schema'
-import { allCubes, extractSecurityContext } from '../cubes'
+import { cubesFor, extractSecurityContext } from '../cubes'
 import { guardPermission } from '../middleware/permissions'
 import { withAuthAndDb } from '../utils/routes/route-helpers'
 import { createRouter } from '../utils/routes/router'
@@ -19,11 +19,13 @@ import { createRouter } from '../utils/routes/router'
 export const cubeApiRouter = createRouter()
 
 cubeApiRouter.all('*', async c => {
-  const { db } = withAuthAndDb(c) // 401 / 403 no_tenant before any cube work
+  const { db, auth } = withAuthAndDb(c) // 401 / 403 no_tenant before any cube work
   guardPermission(c, 'read', 'Analytics')
   const securityContext = extractSecurityContext(c)
   const cubeApp = createCubeApp({
-    cubes: allCubes,
+    // Filtered per request rather than at module scope (D30): `allCubes` stays whole so the
+    // isolation test can prove every cube's tenant scoping even while its feature ships dark.
+    cubes: cubesFor(auth.features),
     drizzle: db,
     schema,
     engineType: 'postgres',

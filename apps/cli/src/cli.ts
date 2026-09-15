@@ -7,6 +7,7 @@
 import { Command, InvalidArgumentError } from 'commander'
 import { runActivityList } from './commands/activity'
 import { runConfigGet, runConfigPath, runConfigSet } from './commands/config'
+import { runFeaturesList } from './commands/features'
 import { runGroupMembers, runGroupsList } from './commands/groups'
 import { runKeysList } from './commands/keys'
 import { runLogin } from './commands/login'
@@ -125,6 +126,14 @@ groups
   .command('members <groupId>')
   .description('list the people in one group')
   .action(action((ctx, cmd) => runGroupMembers(ctx, String(cmd.args[0] ?? ''))))
+
+const features = program
+  .command('features')
+  .description('feature flags in effect for the active tenant')
+features
+  .command('list', { isDefault: true })
+  .description('list features and whether they are on')
+  .action(action(runFeaturesList))
 
 const keys = program.command('keys').description('API keys of the active tenant')
 keys.command('list').description('list API keys (prefixes only)').action(action(runKeysList))

@@ -40,9 +40,12 @@ export function toAnalyticsPageDto(row: AnalyticsPage, groups: GroupRef[] = []):
 export async function ensureDefaultDashboards(
   db: Database,
   tenantId: string,
-  createdByUserId: string | null = null
+  createdByUserId: string | null = null,
+  features: readonly string[] = []
 ): Promise<number> {
-  const templates = listTemplates()
+  // D30: a template behind a feature this deployment does not ship must not be seeded. This runs
+  // lazily on every `GET /pages`, so an ungated one would appear in every tenant after a deploy.
+  const templates = listTemplates(features)
   if (templates.length === 0) return 0
   const created = await db
     .insert(analyticsPages)
@@ -99,11 +102,12 @@ export async function resetToTemplate(
 export async function recreateTemplates(
   db: Database,
   tenantId: string,
-  createdByUserId: string | null = null
+  createdByUserId: string | null = null,
+  features: readonly string[] = []
 ): Promise<{ created: number; reset: number }> {
-  const created = await ensureDefaultDashboards(db, tenantId, createdByUserId)
+  const created = await ensureDefaultDashboards(db, tenantId, createdByUserId, features)
   let reset = 0
-  for (const template of listTemplates()) {
+  for (const template of listTemplates(features)) {
     const rows = await db
       .update(analyticsPages)
       .set({

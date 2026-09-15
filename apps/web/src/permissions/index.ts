@@ -21,3 +21,4 @@ export {
   rolePermissions,
   unpackRules,
 } from './abilities'
+export { type FeatureSubjectContext, hasFeature, resolveFeatures } from './features'

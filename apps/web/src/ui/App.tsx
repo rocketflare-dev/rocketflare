@@ -29,6 +29,7 @@ import { UserMenu } from '@/ui/components/UserMenu'
 import { WebSocketProvider } from '@/ui/components/WebSocketProvider'
 import { WebSocketStatus } from '@/ui/components/WebSocketStatus'
 import { AuthProvider, useAuth } from '@/ui/hooks/useAuth'
+import { EXAMPLE_FEATURE } from '@/ui/lib/feature-guards'
 import { NavigationBridge } from '@/ui/lib/navigation'
 import { queryClient } from '@/ui/lib/queryClient'
 import Home from '@/ui/pages/Home'
@@ -66,6 +67,8 @@ const TenantList = lazy(() => import('@/ui/pages/admin/TenantList'))
 const TenantDetail = lazy(() => import('@/ui/pages/admin/TenantDetail'))
 const UserList = lazy(() => import('@/ui/pages/admin/UserList'))
 const UserDetail = lazy(() => import('@/ui/pages/admin/UserDetail'))
+const FeatureFlags = lazy(() => import('@/ui/pages/admin/FeatureFlags'))
+const ExampleFeature = lazy(() => import('@/ui/pages/ExampleFeature'))
 
 // Dev-only TanStack Query devtools. `import.meta.env.DEV` is replaced at build time, so the
 // dynamic import (and its chunk) is dropped from production bundles. Set
@@ -164,6 +167,16 @@ function ShellRoutes() {
               </RequireGuard>
             }
           />
+          {/* D30: the same EXAMPLE_FEATURE const the nav item uses, so a link can never point at a
+              page its reader cannot open. Delete this route with the rest of the demo. */}
+          <Route
+            path="/example-feature"
+            element={
+              <RequireGuard guard={EXAMPLE_FEATURE}>
+                <ExampleFeature />
+              </RequireGuard>
+            }
+          />
           {/* D19: every member may read dashboards; editing is gated per control */}
           <Route
             path="/analytics"
@@ -219,6 +232,7 @@ function ShellRoutes() {
             <Route path="tenants/:id" element={<TenantDetail />} />
             <Route path="users" element={<UserList />} />
             <Route path="users/:id" element={<UserDetail />} />
+            <Route path="feature-flags" element={<FeatureFlags />} />
           </Route>
           <Route path="*" element={<NotFound />} />
         </Routes>

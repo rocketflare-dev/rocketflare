@@ -357,7 +357,27 @@ and it is revoked in the same place. Nothing to deploy; MCP for browser clients 
 Verify: the drizzle-cube CLI's `meta` lists `ActivityEvents`, `TenantActivityDaily`, `TenantUsers`,
 `Users`.
 
-### 2.8 Rebrand checklist
+### 2.8 Feature flags `[ready]` (D30)
+
+Nothing to configure — flags work out of the box, and the kit ships one inert demo
+(`example-feature`, a nav item and a page). As a global admin, open **Admin → Feature flags**: set
+it to On and the nav item appears; to Rollout and the percentage decides deterministically; force it
+on or off for one organisation and that beats the percentage either way.
+
+Two things worth knowing before you add your own:
+
+- **`FEATURES_ENABLED` is the release gate, and `wrangler dev` reads `[vars]` from
+  `wrangler.toml`** — the PRODUCTION value. So a flag you mark `environmentGated` and ship dark in
+  production is dark on your laptop too unless `.dev.vars` lists it. That is why
+  `.dev.vars.example` carries the key.
+- **A flag is not a permission.** Gate with `requireFeature` / `{ feature: 'x' }`, never with
+  `access Feature:x` — a global admin's `manage all` satisfies the CASL form and would show them a
+  surface the deployment does not ship. `docs/CONCEPTS.md` §15 has the incident this rule came from.
+
+Verify: `pnpm cli features list --json` prints the effective flags for your tenant; flipping one in
+`/admin` changes it on the next call.
+
+### 2.9 Rebrand checklist
 See [`docs/ADAPTING.md`](docs/ADAPTING.md) §1 — package names (`@rocketflare/*`), worker names, DB names,
 CLI bin / config dir / env prefix, themes, logo, `EMAIL_FROM`.
 

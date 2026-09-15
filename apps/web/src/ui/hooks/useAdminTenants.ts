@@ -52,8 +52,11 @@ export function adminTenantQueryOptions(id: string) {
   })
 }
 
-export function useAdminTenants(filters: AdminTenantsFilters = {}) {
-  return useQuery(adminTenantsQueryOptions(filters))
+export function useAdminTenants(
+  filters: AdminTenantsFilters = {},
+  options: { enabled?: boolean } = {}
+) {
+  return useQuery({ ...adminTenantsQueryOptions(filters), ...options })
 }
 
 export function useAdminTenant(id: string) {

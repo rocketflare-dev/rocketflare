@@ -48,6 +48,9 @@ const MATRIX: Record<string, Record<Role, Level>> = {
   Analytics: { owner: 'read', admin: 'read', support: 'read', member: 'read' },
   AccessRequest: { owner: 'none', admin: 'none', support: 'none', member: 'none' },
   User: { owner: 'none', admin: 'none', support: 'none', member: 'none' },
+  // D30 — administering flags is a PLATFORM act (`manage all`), never a tenant role. Using a
+  // feature is not this subject at all: it is `AuthContext.features`, which no role can override.
+  FeatureFlag: { owner: 'none', admin: 'none', support: 'none', member: 'none' },
 }
 
 const build = (role: Role | null, features: string[] = [], isGlobalAdmin = false) =>

@@ -4,7 +4,8 @@
  *   - `Authorization: Bearer <api key>` → the key's tenant, acting as the key's creator (its
  *     GROUPS too, re-read per request — D29)
  *   - `__Host-session` cookie → `resolveSession` (one LATERAL query), sliding expiry via waitUntil
- * Builds `AuthContext` (`buildAbility({ role, isGlobalAdmin, features: [] })`) and `c.set('auth')`.
+ * Builds `AuthContext` (`buildAbility({ role, isGlobalAdmin, features })`, the features resolved by
+ * `permissions/features.ts` from `[vars]` plus the tenant's rollout rows — D30) and `c.set('auth')`.
  * Errors are envelopes: 401 `unauthorized`; 403 `blocked` / `tenant_suspended`. A valid session
  * with NO tenant passes with `tenantId: null` — `withAuthAndDb` turns that into 403 `no_tenant` /
  * `pending_approval`, while tenant-free routes (`withAuth`) keep working.
@@ -14,7 +15,7 @@
  */
 import { ERROR_CODES } from '@rocketflare/shared/errors'
 import { createMiddleware } from 'hono/factory'
-import { buildAbility } from '../../permissions'
+import { buildAbility, resolveFeatures } from '../../permissions'
 import { touchApiKeyUsage, validateApiKey } from '../auth/api-keys'
 import { readSessionToken } from '../auth/cookies'
 import {
@@ -24,6 +25,7 @@ import {
   touchTenantAccess,
   updateSelectedTenant,
 } from '../auth/sessions'
+import { listFeatureFlagRows } from '../services/features'
 import { listUserGroups } from '../services/groups'
 import type { AppContext, AppEnv, AuthContext } from '../types'
 import { ForbiddenError, UnauthorizedError } from '../utils/core/errors'
@@ -81,6 +83,11 @@ export async function resolveCookieAuth(
     fireAndForget(c, () => touchTenantAccess(db, membership.tenantId), 'touch tenant access')
   }
 
+  const features = resolveFeatures(c.get('config'), resolved.flagRows, {
+    tenantId: membership?.tenantId ?? null,
+    userId: user.id,
+  })
+
   return {
     user,
     tenantId: membership?.tenantId ?? null,
@@ -92,10 +99,10 @@ export async function resolveCookieAuth(
     ability: buildAbility({
       role: membership?.role ?? null,
       isGlobalAdmin: user.isGlobalAdmin,
-      features: [],
+      features,
     }),
     isGlobalAdmin: user.isGlobalAdmin,
-    features: [],
+    features,
     groups: membership?.groups ?? [],
     accessRequestStatus,
   }
@@ -111,6 +118,16 @@ async function resolveBearerAuth(c: AppContext, plaintext: string): Promise<Auth
   }
   fireAndForget(c, () => touchApiKeyUsage(db, result.key.id), 'touch API key usage')
   fireAndForget(c, () => touchTenantAccess(db, result.tenant.id), 'touch tenant access')
+  // The cookie path gets both of these out of `resolveSession`'s one query; a Bearer request has no
+  // session row to join onto, so it pays two small reads — run together rather than in sequence.
+  const [groups, flagRows] = await Promise.all([
+    listUserGroups(db, result.tenant.id, result.user.id),
+    listFeatureFlagRows(db, result.tenant.id),
+  ])
+  const features = resolveFeatures(c.get('config'), flagRows, {
+    tenantId: result.tenant.id,
+    userId: result.user.id,
+  })
   return {
     user: result.user,
     tenantId: result.tenant.id,
@@ -120,13 +137,14 @@ async function resolveBearerAuth(c: AppContext, plaintext: string): Promise<Auth
     ability: buildAbility({
       role: result.role,
       isGlobalAdmin: result.user.isGlobalAdmin,
-      features: [],
+      features,
     }),
     isGlobalAdmin: result.user.isGlobalAdmin,
-    features: [],
+    features,
     // A tenant key carries its CREATOR's groups, re-read on every request (D29): removing someone
-    // from a group narrows their keys on the next call, with nothing to revoke.
-    groups: await listUserGroups(db, result.tenant.id, result.user.id),
+    // from a group narrows their keys on the next call, with nothing to revoke. Feature flags are
+    // re-read the same way, so a rollout reaches API-key callers on their next request too.
+    groups,
     accessRequestStatus: null,
   }
 }

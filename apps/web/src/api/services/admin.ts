@@ -38,6 +38,7 @@ import { asCount, pageWindow } from '../utils/routes/pagination'
 import { recordActivity } from './activity'
 import { nameFromEmail } from './auth'
 import { accessRequestDecidedEmail } from './email'
+import { platformFeatures } from './features'
 import { enqueueJob, type JobsQueue } from './jobs'
 import { notify } from './notifications'
 
@@ -142,6 +143,7 @@ export async function decideAccessRequest(
         slug: approve.slug,
         userId,
         role: 'owner',
+        features: await platformFeatures(db, cfg),
       })
       tenantId = tenant.id
       tenantName = tenant.name

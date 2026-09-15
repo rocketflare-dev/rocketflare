@@ -93,6 +93,16 @@ predicate**, not SQL injection — the app role can `set_config` itself.
   delete into a silent publish. `group_members` shows the other half of the pattern — a composite FK
   `(tenant_id, user_id) → tenant_users` with cascade, so losing a membership loses the group
   memberships in the DATABASE rather than in service code
+- **Feature flags (D30)** are two tables with different shapes on purpose. `feature_flags` is
+  PLATFORM state — `key` is the primary key (no surrogate `id`: the key is the identity in every
+  consumer, so a uuid beside it is a second identity nobody uses), a `check` keeps
+  `rollout_percent` in 0..100, and it has no `tenant_id`, so it is listed in `RLS_EXCLUDED_TABLES`
+  (excluded, NOT revoked — the app role reads it every request). `tenant_feature_overrides` is
+  ordinary tenant data: `tenantRef()` first, PK on the pair, `tenantIsolation()`. Two things not to
+  "fix": it carries **no composite FK to `tenant_users`** (unlike `group_members` — the person
+  setting an override is a global admin who is almost never a member of that tenant, so the FK would
+  reject every write), and its `flag_key` index is **not led by `tenant_id`**, because the one query
+  it serves is cross-tenant by design behind `globalAdminMiddleware`
 - Per-call rows: `ai_usage` (append-only, `(tenant_id, at DESC)`), `agent_run_events` (`(run_id, seq)`
   unique, numbering continues across attempts). Concurrency is a claim row, never a lock:
   `agent_runs` `UPDATE … WHERE status IN ('queued','running') RETURNING` plus the partial unique index

@@ -56,7 +56,7 @@ const EMPTY_DASHBOARD: DashboardConfig = { layoutMode: 'rows', rows: [], portlet
 
 analyticsPagesRouter.get('/pages', async c => {
   const { db, tenantId, user, auth } = withAuthAndDb(c)
-  await ensureDefaultDashboards(db, tenantId, user.id)
+  await ensureDefaultDashboards(db, tenantId, user.id, auth.features)
   const scope = accessScopeOf(auth)
   const rows = await db
     .select()
@@ -253,16 +253,20 @@ analyticsPagesRouter.post('/pages/:id/reset', async c => {
 })
 
 analyticsPagesRouter.get('/templates', c => {
-  withAuthAndDb(c)
+  const { auth } = withAuthAndDb(c)
   return c.json({
-    items: listTemplates().map(t => ({ key: t.key, name: t.name, description: t.description })),
+    items: listTemplates(auth.features).map(t => ({
+      key: t.key,
+      name: t.name,
+      description: t.description,
+    })),
   })
 })
 
 analyticsPagesRouter.post('/templates/recreate', async c => {
-  const { db, tenantId, user } = withAuthAndDb(c)
+  const { db, tenantId, user, auth } = withAuthAndDb(c)
   guardPermission(c, 'manage', 'Dashboard')
-  return c.json(await recreateTemplates(db, tenantId, user.id))
+  return c.json(await recreateTemplates(db, tenantId, user.id, auth.features))
 })
 
 analyticsPagesRouter.get('/facts/status', async c => {

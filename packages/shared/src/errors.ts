@@ -50,6 +50,12 @@ export const ERROR_CODES = {
   documentNotConverted: 'document_not_converted',
   /** 409: the document's conversion failed, so it has no text and never will without a re-upload. */
   documentConversionFailed: 'document_conversion_failed',
+  /**
+   * 404: the surface exists in the code but not in this deployment — a feature flag is off (D30).
+   * 404 rather than 403 on purpose: a 403 confirms the feature EXISTS, which is exactly what a
+   * surface shipping dark must not reveal. Same class as `tenancy_mode_single`.
+   */
+  featureDisabled: 'feature_disabled',
 } as const
 
 export type ErrorCode = (typeof ERROR_CODES)[keyof typeof ERROR_CODES]

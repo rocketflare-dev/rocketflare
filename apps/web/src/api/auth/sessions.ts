@@ -6,6 +6,7 @@
  * far the Worker is from Postgres. Sliding 30-day expiry: `touchSession` extends at most hourly (SQL-throttled) and is
  * called through `waitUntil`, never awaited on the response path.
  */
+import type { FeatureFlagEvaluation } from '@rocketflare/shared/features'
 import type { GroupRef } from '@rocketflare/shared/groups'
 import type { MembershipRole, TenantStatus } from '@rocketflare/shared/tenants'
 import { and, eq, isNull, lt, or, sql } from 'drizzle-orm'
@@ -66,6 +67,12 @@ export interface ResolvedSession {
   membership: ResolvedMembership | null
   /** Latest access request for the user's email, if any. */
   accessRequestStatus: 'pending' | 'approved' | 'rejected' | null
+  /**
+   * Feature-flag rollout state for the resolved tenant (D30), read in the same round trip. It is
+   * the raw stored state, not the answer: `resolveFeatures` evaluates it, because a percentage
+   * rollout is a hash the `config` test project has to be able to exercise without a database.
+   */
+  flagRows: FeatureFlagEvaluation[]
 }
 
 interface SessionRow {
@@ -89,6 +96,7 @@ interface SessionRow {
   tenant_slug: string | null
   tenant_status: TenantStatus | null
   groups: GroupRef[] | string | null
+  flag_rows: FeatureFlagEvaluation[] | string | null
   access_request_status: 'pending' | 'approved' | 'rejected' | null
 }
 
@@ -99,6 +107,18 @@ function parseGroups(value: GroupRef[] | string | null): GroupRef[] {
   try {
     const parsed: unknown = JSON.parse(value)
     return Array.isArray(parsed) ? (parsed as GroupRef[]) : []
+  } catch {
+    return []
+  }
+}
+
+/** Same tolerance as `parseGroups`: a driver handing jsonb back as text must not break auth. */
+function parseFlagRows(value: FeatureFlagEvaluation[] | string | null): FeatureFlagEvaluation[] {
+  if (Array.isArray(value)) return value
+  if (typeof value !== 'string') return []
+  try {
+    const parsed: unknown = JSON.parse(value)
+    return Array.isArray(parsed) ? (parsed as FeatureFlagEvaluation[]) : []
   } catch {
     return []
   }
@@ -127,6 +147,7 @@ export async function resolveSession(db: Database, token: string): Promise<Resol
       t.slug                   AS tenant_slug,
       t.status                 AS tenant_status,
       g.groups                 AS groups,
+      ff.flag_rows             AS flag_rows,
       ar.status                AS access_request_status
     FROM user_sessions us
     INNER JOIN users u ON u.id = us.user_id
@@ -149,6 +170,25 @@ export async function resolveSession(db: Database, token: string): Promise<Resol
       INNER JOIN group_types gt ON gt.id = gr.group_type_id
       WHERE gm.tenant_id = m.tenant_id AND gm.user_id = u.id
     ) g ON true
+    LEFT JOIN LATERAL (
+      -- Feature flags (D30). Joined here rather than fetched separately so the auth path stays ONE
+      -- round trip, exactly as the groups lateral above does. It returns the stored STATE, not the
+      -- answer: the percentage rollout is evaluated in TypeScript so one frozen hash serves the
+      -- server, the admin preview and the config test project, which has no database.
+      SELECT coalesce(
+               jsonb_agg(jsonb_build_object(
+                 'key', f.key,
+                 'state', f.state,
+                 'rolloutPercent', f.rollout_percent,
+                 'rolloutUnit', f.rollout_unit,
+                 'override', o.enabled
+               ) ORDER BY f.key),
+               '[]'::jsonb
+             ) AS flag_rows
+      FROM feature_flags f
+      LEFT JOIN tenant_feature_overrides o
+        ON o.flag_key = f.key AND o.tenant_id = m.tenant_id
+    ) ff ON true
     LEFT JOIN LATERAL (
       SELECT a.status
       FROM access_requests a
@@ -197,6 +237,7 @@ export async function resolveSession(db: Database, token: string): Promise<Resol
     },
     user,
     membership,
+    flagRows: parseFlagRows(row.flag_rows),
     accessRequestStatus: row.access_request_status,
   }
 }

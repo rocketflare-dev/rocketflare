@@ -23,6 +23,7 @@ section ends with **Known gaps**; sections for phases not yet built say so.
 | 12 | [Shared package](#12-shared-package) | Phase 0 |
 | 13 | [Upgrading a copy](#13-upgrading-a-copy) | built |
 | 14 | [Definition of done](#14-definition-of-done-for-the-kit) | |
+| 15 | [Feature flags](#15-feature-flags) | D30 — built |
 
 Provenance: extracted from two internal applications — one supplied the structure, docs system,
 auth/tenancy/AI layer; the other the Cloudflare substrate and analytics. This file is the decision
@@ -154,8 +155,9 @@ inheriting its source's visibility is a follow-up; the group-member picker reads
 people, so a very large organisation must search rather than scroll.
 
 **Known gaps / not built yet:** no audit log of admin actions beyond `activity_events`; the domain
-allow-list is new code with no production history; feature-flag source for `access` is undecided
-(inject `features`, keep it open); personal API keys are not in v1 (tenant keys only).
+allow-list is new code with no production history; personal API keys are not in v1 (tenant keys
+only). (`features` now has a source — §15 — and it is deliberately NOT read through the `access`
+ability.)
 
 ## 2. Auth
 
@@ -1518,3 +1520,129 @@ run `/rf-provision` (or `pnpm provision all`) with three tokens (`CLOUDFLARE_API
 whose `/api/ready` answers; and, following `SETUP.md` Part 3 by hand, deploy to a new Cloudflare
 account changing only placeholders and secrets — with root `pnpm lint && pnpm typecheck && pnpm
 test && pnpm build` green at every step and every behaviour described here still true.
+
+---
+
+## 15. Feature flags
+
+**Status: built (D30).** Contracts: `packages/shared/src/features.ts` (+ `FEATURES` in
+`permissions.ts`). Server: `apps/web/src/permissions/features.ts`, `api/middleware/feature.ts`,
+`api/services/features.ts`. Schema: `db/schema/feature-flags.ts`, migration `0010`. UI:
+`ui/lib/feature-guards.ts`, `pages/admin/FeatureFlags.tsx`.
+
+**A feature flag is configuration, not a permission.** That sentence is the whole section, and it is
+the one thing to get right. `globalAdmin` is `can('manage', 'all')` and `support` is granted
+`access all`; in CASL both are wildcards covering `access` on every `Feature:<name>` subject. So a
+gate that asks the ability answers "on" for platform staff whatever the deployment ships. An app
+built on this kit shipped exactly that and had five routes open in production to platform staff,
+while its cube and dashboard gates — which read `AuthContext.features` — stayed dark: two sources of
+truth, disagreeing, in the design that set out to have one. **Every gate therefore reads the ARRAY**
+(`hasFeature(auth.features, name)` on the server, `session.features` in the browser).
+`applyFeatureFlags` still populates `Feature:<name>` for an app that genuinely wants
+permission-style entitlements, and nothing that hides an unreleased surface may depend on it.
+
+**Two layers, because there are two questions.** *Does this surface exist in this deployment?* is a
+deploy-time release gate; *which organisations have it yet?* is an admin-controlled rollout.
+`evaluateFlag` composes them as one total order:
+
+```
+environmentGated && key not in FEATURES_ENABLED  -> false     layer 1, the release gate
+a tenant override row exists                     -> override.enabled
+state 'on' / 'off'                               -> true / false
+state 'rollout'                                  -> featureBucket(key, unitId) < rolloutPercent
+no row                                           -> the registry default
+```
+
+Layer 1 is `FEATURES_ENABLED` in `[vars]`, **fail-closed**: blank means none, so a deployment that
+forgets the var stays dark — the right direction, because this gate's failure mode is an unreleased
+surface appearing in production. It is one key rather than one per flag, so an ordinary rollout flag
+needs no toml edit; only a dark-ship (`environmentGated`) flag does, which is the deliberate
+per-environment release decision. `wrangler dev` reads `[vars]` from `wrangler.toml`, which holds
+the production value, so `.dev.vars.example` carries the key too — without it a feature shipped dark
+in production is dark on every developer's laptop.
+
+The override beats the rollout because that is what it is *for*: the design-partner allow-list and
+the "this customer must never get it" block-list. Its `enabled` column is the decision and the row's
+presence is the exception — the same "a column, not the presence of rows" rule `visibility` follows
+(§1) — so the admin UI offers three choices (On / Off / Default), never a checkbox.
+
+**Flag keys are code**, following `PROMPT_REGISTRY` and `AGENT_KEYS`: `FEATURES` in
+`permissions.ts` plus metadata in `features.ts`. Adding a flag needs no migration, and
+`requireFeature('new-reprots')` is a type error rather than a route that 404s for ever. Evaluation
+iterates the registry, so a row whose key has gone is inert by construction — there is no
+`archivedAt` and no create endpoint. Retiring a flag is: remove the gate from the code, deploy,
+delete the registry line. The cost of that choice, stated: an admin cannot invent a key without a
+deploy. Deliberate — a flag no code reads does nothing, and the code and its registry line ship
+together.
+
+**`featureBucket` is a wire format.** FNV-1a 32-bit over `"<key>:<unitId>"`, mod 100, enabled when
+`bucket < rolloutPercent`. Changing the hash, the separator or the modulus reshuffles every live
+rollout, so `tests/config/features.test.ts` pins golden vectors. Three properties it guarantees:
+**monotonic** — the bucket ignores the percentage, so raising one only ever ADDS units and nobody is
+dropped from a rollout that grows (this is why the percentage must never be hashed in);
+**independent across flags** — the key is in the hashed string, so flag A's 10% cohort is
+uncorrelated with flag B's, where hashing the unit alone would inflict every early rollout on the
+same unlucky few; and a **modulo bias** of ~2.3e-8, noted so nobody "fixes" it by swapping the hash.
+
+**Resolution costs no extra round trip on the cookie path.** `resolveSession` carries a third
+`LEFT JOIN LATERAL` beside the groups one, returning the stored state as jsonb; `resolveFeatures`
+evaluates it in TypeScript, so one frozen hash serves the server, the admin preview and the `config`
+test project, which has no database. The Bearer path reads its rows alongside `listUserGroups` under
+one `Promise.all` — so a rollout reaches API-key callers on their next request, with no cache to go
+stale. `resolveFeatures` is the single seam: a third source (a per-plan entitlement, say) unions in
+there and no consumer changes.
+
+**A feature ships dark on EVERY door**, and three of them have no nav entry:
+
+| Door | How |
+|---|---|
+| API mounts | an optional third element in the mount table of `api/index.ts` — `requireFeature('x')` 404s `feature_disabled` beneath the whole prefix. **404, not 403**: a 403 confirms the feature exists. Declared once per surface, like auth |
+| the cube registry | `cubesFor(features)`, filtered per request in `routes/cube-api.ts`. `allCubes` stays whole so `cube-isolation.test.ts` still proves every cube's tenant scoping — a cube's isolation must be proven whether or not its feature is on today |
+| dashboard templates | `DashboardTemplate.feature` + `listTemplates(features)`. The sharpest one: `ensureDefaultDashboards` runs lazily on EVERY `GET /api/analytics/pages`, so an ungated template seeds itself into every organisation on the first load after a deploy — a gate that creates rows, not one that reveals them. `createTenantForUser({ features })` covers the other end, at all four call sites |
+| nav, routes, settings tabs | `NavGuard` gains `{ feature }` and a list meaning AND, so the flag and the permission stay two readable facts rather than one conflated subject |
+
+**Administering flags** is `/admin/feature-flags` behind `globalAdminMiddleware`; `FeatureFlag` is a
+platform CASL subject reached only by `manage all`, like `AccessRequest` and `User`. A per-tenant
+override change nudges that one organisation with `features.changed` (invalidating `['auth']`,
+because flags ride the session); a platform change does not, because the hub is one Durable Object
+per tenant and fanning out would be one RPC per organisation — it reaches open tabs on their next
+`GET /auth/session`. `GET /api/features` is the tenant-scoped effective list for every member, and
+what `rocketflare features list` reads: a tenant API key cannot reach `/api/admin/*` at all, since
+`globalAdminMiddleware` resolves the session cookie only.
+
+**Single-tenant mode.** `/admin/feature-flags` is not behind `requireMultiTenant` — flags are not a
+multi-tenancy concept, and single mode always has a global admin by construction (`onNoTenant`
+returns null unless `isGlobalAdmin`, so only the bootstrap admin can create the one organisation).
+The override sub-routes ARE behind it, because with one organisation the platform state already IS
+that organisation's answer. And a rollout counted in organisations is refused there with a 400: over
+one organisation a percentage is all-or-nothing decided by an opaque hash, which reads as a bug.
+Counting people is the useful unit in single mode, and works unchanged.
+
+**Known gaps / not built yet:** **the gated code still ships in the browser bundle** — client-side
+hiding is cosmetic and the server is the protection, as everywhere in the kit; no per-user targeting
+beyond the rollout unit (no "force on for this person") and no scheduling; the audit trail is the
+two `*_by_user_id` columns plus the request log, because `activity_events` is tenant-scoped and a
+platform flip has no tenant; a platform change reaches open sessions only on their next session
+fetch (past a few hundred active organisations, fan the nudge out through `JOBS_QUEUE` rather than
+looping in the request); no cache on the Bearer path — fine while the registry is small, but past
+~200 live flags memo `listFeatureFlagRows` per isolate and accept a flip taking that long to reach
+API-key callers; and `features` is empty for a session with no organisation, so a flag can never
+gate a pre-tenant surface.
+
+**Cloudflare Flagship was considered and rejected**, and the reasons should be read before anyone
+proposes it again. It is a real product (public beta since May 2026) with a `[[flagship]]` binding,
+an OpenFeature provider, good targeting and consistent hashing on a configurable attribute. But its
+tenancy model is *your Cloudflare account → apps → flags*: it has no notion of your customers, so
+per-tenant state is expressible only as targeting-rule DATA, and mutating targeting rules is an
+operator action rather than an application write path. A toggle is a full-object `PUT` (partial
+updates silently drop rules) with no documented ETag, so two concurrent admin clicks are a lost
+update; the audit trail records the API token, not the person; and there is no local flag store, so
+`wrangler dev` would read the live app and break the kit's clone-and-run promise. Its browser SDK
+needs a Cloudflare token shipped to the client, which a multi-tenant app cannot do. **It remains the
+right tool for a different job** — rolling out the kit's OWN code across deployments, one app, a few
+flags, edited by us. Do not conflate that with per-tenant entitlements. Also not a fit: *gradual
+deployments* (a percentage split across two deployed Worker VERSIONS — a deploy concern that cannot
+condition on request attributes), Zaraz, and `[vars]`/Secrets alone (baked into a version; editing
+one is a redeploy). Workers KV is the only endorsed alternative substrate, but at ≤60 s propagation
+and one write per second per key it is a slower, eventually-consistent, un-audited version of the
+Postgres table the Worker already holds a connection to.
