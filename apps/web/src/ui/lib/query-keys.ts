@@ -143,6 +143,13 @@ export const queryKeys = {
     detail: (id: string) => ['groups', 'detail', id] as const,
     mine: ['groups', 'mine'] as const,
   },
+  /**
+   * `/api/features` (D30). The root is `features` because the server's `features.changed` nudge
+   * names it alongside `auth` — flags ride the session, so both have to be re-fetched when one moves.
+   */
+  features: {
+    all: ['features'] as const,
+  },
   /** `/api/admin/*` — cross-tenant; one `admin.all` invalidation after any admin mutation */
   admin: {
     all: ['admin'] as const,
@@ -154,6 +161,10 @@ export const queryKeys = {
       all: ['admin', 'tenants'] as const,
       list: (filters: object = {}) => ['admin', 'tenants', 'list', filters] as const,
       detail: (id: string) => ['admin', 'tenants', 'detail', id] as const,
+    },
+    featureFlags: {
+      all: ['admin', 'feature-flags'] as const,
+      overrides: (key: string) => ['admin', 'feature-flags', 'overrides', key] as const,
     },
     users: {
       all: ['admin', 'users'] as const,

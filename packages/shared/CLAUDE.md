@@ -18,7 +18,11 @@ response with the same schema. `pnpm test:config` covers the pure parts.
 `permissions.ts` actions/subjects/`AppAbility`/packed rules (matrix lives in `apps/web/src/permissions/`) ·
 `api-keys.ts` · `tenant-settings.ts` · `user-settings.ts` · `notifications.ts` · `admin.ts` ·
 `activity.ts` · `errors.ts` envelope + codes · `pagination.ts` ·
-`groups.ts` (D29) — `groupTypeSchema`/`groupSchema` (with `typeName` and `memberCount`)/`groupDetailSchema`,
+`features.ts` (D30) — the feature-flag registry (`FEATURE_FLAGS` keyed on `FEATURES`/`FeatureName`
+from `permissions.ts`), `featureBucket` (**a wire format — changing it reshuffles every live
+rollout**), `evaluateFlag`/`evaluateFeatures` (the one implementation of the environment-then-rollout
+precedence), and the admin contracts. A flag is CONFIGURATION, not a permission: nothing here
+touches CASL · `groups.ts` (D29) — `groupTypeSchema`/`groupSchema` (with `typeName` and `memberCount`)/`groupDetailSchema`,
 `groupRefSchema` (what the auth context, a member row and a restricted resource all carry),
 `myGroupsSchema`, the create/update/`addGroupMembers`/`setMemberGroups` request schemas,
 `resourceVisibilitySchema` (`tenant | groups`), `setVisibilityRequestSchema`, `resourceAccessSchema`

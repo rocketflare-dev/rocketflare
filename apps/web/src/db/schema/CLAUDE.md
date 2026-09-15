@@ -52,6 +52,9 @@ Drizzle table definitions, one file per table, re-exported from `index.ts` (whic
 - extraConfig is the **array** form: `table => [index(...), tenantIsolation('x')]` (required for `pgPolicy`).
 - Fact tables live in `facts/` (barrel `facts/index.ts`): plain tables, grain-unique, `fact_refreshed_at`, no surrogate id; they are registered in `api/services/fact-tables/registry.ts` too.
 - Enums via `pgEnum`, exported; `relations()` next to the table; `export type X = typeof x.$inferSelect` / `NewX = $inferInsert`.
+- `feature-flags.ts` (D30) holds the pair: `feature_flags` (platform state, `key` as the PK, no
+  `tenant_id`, hence an `RLS_EXCLUDED_TABLES` entry) and `tenant_feature_overrides` (ordinary tenant
+  data). Read its header before touching either — two of its choices look like mistakes and are not.
 - D25: the schema is identical in `TENANCY_MODE=multi` and `single` — every table keeps `tenant_id`.
 
 ## Row-level security — read before adding a table (D1)

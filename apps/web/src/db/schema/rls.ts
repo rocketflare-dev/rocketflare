@@ -93,7 +93,12 @@ export const RLS_REVOKED_TABLES = [
 /**
  * Deliberately NOT policied — every exclusion is a decision recorded here rather than hidden
  * by omission. `tests/api/rls-coverage.test.ts` asserts the unpolicied set in the live catalog
- * equals exactly this list. Today it is exactly the revoked set (revoke is stronger than a
- * policy); add a table here only with a reason.
+ * equals exactly this list, and that none of these tables has a `tenant_id` column (one that did
+ * would need a policy). Add a table here only with a reason.
+ *
+ * The revoked tables are excluded because a REVOKE is stronger than a policy. `feature_flags` is
+ * excluded for a different reason and is NOT revoked: it is platform-level rollout state with no
+ * tenant column at all, readable by the app role on every request (D30). Its per-tenant companion,
+ * `tenant_feature_overrides`, is policied like any other tenant table.
  */
-export const RLS_EXCLUDED_TABLES = [...RLS_REVOKED_TABLES] as const
+export const RLS_EXCLUDED_TABLES = [...RLS_REVOKED_TABLES, 'feature_flags'] as const

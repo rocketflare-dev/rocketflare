@@ -17,6 +17,7 @@ export default function AdminLayout() {
     { to: '/admin/access-requests', label: 'Access requests', badge: pendingCount },
     { to: '/admin/tenants', label: tenancyMode === 'single' ? 'Organisation' : 'Organisations' },
     { to: '/admin/users', label: 'Users' },
+    { to: '/admin/feature-flags', label: 'Feature flags' },
   ]
 
   return (

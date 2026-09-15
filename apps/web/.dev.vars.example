@@ -13,6 +13,11 @@ APP_URL=http://localhost:3000
 DATABASE_URL=postgresql://rocketflare:rocketflare_pass@localhost:5432/rocketflare_dev
 # AES-GCM key for OAuth tokens stored at rest. Generate: openssl rand -hex 32
 OAUTH_ENCRYPTION_KEY=
+# Feature flags, layer 1 (D30): comma-separated keys this machine ships AT ALL. Only consulted for
+# a flag whose registry entry sets `environmentGated`; an ordinary rollout flag ignores it.
+# Listed here because `wrangler dev` reads [vars] from wrangler.toml, which holds the PRODUCTION
+# value — so a key you ship dark in production is dark on every developer's laptop without this.
+FEATURES_ENABLED=
 
 # --- Optional (feature-gated when absent) -----------------------------------------------
 # Email via Resend. Absent → magic-link URLs are logged to the wrangler dev console.

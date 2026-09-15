@@ -5,6 +5,7 @@
  * without dragging Worker-only classes into Node.
  */
 
+import type { Hono, MiddlewareHandler } from 'hono'
 import { authMiddleware, globalAdminMiddleware } from './middleware/auth'
 import { isUploadPath, jsonBodyLimit } from './middleware/body-limit'
 import { configMiddleware } from './middleware/config'
@@ -30,6 +31,7 @@ import { analyticsPagesRouter } from './routes/analytics-pages'
 import { authRouter } from './routes/auth/index'
 import { chatRouter } from './routes/chat'
 import { cubeApiRouter } from './routes/cube-api'
+import { featuresRouter } from './routes/features'
 import { filesRouter } from './routes/files'
 import { groupsRouter } from './routes/groups'
 import { healthRouter } from './routes/health'
@@ -42,6 +44,7 @@ import { notificationsRouter } from './routes/notifications'
 import { tenantRouter } from './routes/tenant'
 import { tenantsRouter } from './routes/tenants'
 import { wsRouter } from './routes/ws'
+import type { AppEnv } from './types'
 import { isApiPath } from './utils/routes/api-prefixes'
 import { createRouter } from './utils/routes/router'
 
@@ -94,12 +97,19 @@ app.use('/api/admin/*', globalAdminMiddleware)
 app.route('/api/admin', adminRouter)
 // WebSocket upgrade resolves the cookie itself (no authMiddleware: browsers can't set headers here).
 app.route('/ws', wsRouter)
-for (const [prefix, router] of [
+// A mount may carry a third element: a feature gate (D30). `requireFeature('x')` 404s
+// `feature_disabled` on every route beneath the prefix, so a surface that ships dark is dark as a
+// WHOLE rather than route by route — declared once here, like auth, instead of remembered in each
+// handler. The kit ships no gated mount; an app adds `['/api/thing', thingRouter, requireFeature('thing')]`.
+// Remember the other doors too: the cube registry (`cubesFor`) and the dashboard templates
+// (`DashboardTemplate.feature`) have no nav entry and leak independently of this one.
+const mounts: readonly (readonly [string, Hono<AppEnv>, MiddlewareHandler?])[] = [
   ['/api/me', meRouter],
   ['/api/tenant', tenantRouter],
   ['/api/tenants', tenantsRouter],
   ['/api/members', membersRouter],
   ['/api/groups', groupsRouter],
+  ['/api/features', featuresRouter],
   ['/api/invitations', invitationsRouter],
   ['/api/keys', keysRouter],
   ['/api/notifications', notificationsRouter],
@@ -120,9 +130,15 @@ for (const [prefix, router] of [
   // drizzle-cube (D19): one router, two prefixes; the adapter registers absolute paths.
   ['/cubejs-api', cubeApiRouter],
   ['/mcp', cubeApiRouter],
-] as const) {
+]
+for (const [prefix, router, gate] of mounts) {
   app.use(prefix, authMiddleware)
   app.use(`${prefix}/*`, authMiddleware)
+  // After auth, never before: the gate reads `auth.features`, which `authMiddleware` sets.
+  if (gate) {
+    app.use(prefix, gate)
+    app.use(`${prefix}/*`, gate)
+  }
   app.route(prefix, router)
 }
 

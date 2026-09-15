@@ -10,12 +10,14 @@ import {
   HomeIcon,
   MagnifyingGlassIcon,
   ShieldCheckIcon,
+  SparklesIcon,
 } from '@heroicons/react/24/outline'
 import type { ComponentType, ReactNode } from 'react'
 import { Link, NavLink, useLocation } from 'react-router-dom'
 import { useAppInfo } from '@/ui/hooks/useAppInfo'
 import { useBooleanPreference } from '@/ui/hooks/useLocalStoragePreference'
 import { type NavGuard, useNavGuard } from '@/ui/hooks/useNavGuard'
+import { EXAMPLE_FEATURE } from '@/ui/lib/feature-guards'
 import { LogoMark } from './shared/LogoMark'
 
 export interface NavItem {
@@ -76,6 +78,16 @@ export const navigationConfig: NavConfig = [
         label: 'Search',
         icon: MagnifyingGlassIcon,
         guard: { action: 'read', subject: 'Document' },
+      },
+      // D30: the kit's demonstration flag. `EXAMPLE_FEATURE` is a `{ feature }` guard, so this item
+      // is hidden for EVERYONE — global admins included — until the flag is on for the session's
+      // organisation. That is the difference between a flag and a permission, and it is the whole
+      // point of the demo: delete this item and its key when you add a real feature.
+      {
+        to: '/example-feature',
+        label: 'Example feature',
+        icon: SparklesIcon,
+        guard: EXAMPLE_FEATURE,
       },
     ],
   },

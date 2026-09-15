@@ -26,7 +26,13 @@ tenantsRouter.post('/', validate('json', createTenantRequestSchema), async c => 
   requireMultiTenant(cfg)
   const { name, slug } = c.req.valid('json')
   const tenant = await operationLock(c.env.RATE_LIMIT_KV, `tenant:create:${user.id}`, () =>
-    createTenantForUser(db, { name, slug, userId: user.id, role: 'owner' })
+    createTenantForUser(db, {
+      name,
+      slug,
+      userId: user.id,
+      role: 'owner',
+      features: auth.features,
+    })
   )
   if (!isApiKeySession(auth)) await updateSelectedTenant(db, auth.session.id, tenant.id)
   return c.json(toTenantDto(tenant), 201)

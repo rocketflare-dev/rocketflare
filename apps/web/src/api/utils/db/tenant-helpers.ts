@@ -43,6 +43,13 @@ export interface CreateTenantForUserInput {
   userId: string
   role?: MembershipRole
   invitedByUserId?: string | null
+  /**
+   * The features this deployment ships (D30), so the new tenant is seeded with the template
+   * dashboards its environment actually has. Omitted, only unconditional templates are copied and a
+   * gated feature's page arrives on the tenant's first `GET /api/analytics/pages` instead — the lazy
+   * repair path that already exists, so forgetting this is late, never wrong.
+   */
+  features?: readonly string[]
 }
 
 export async function createTenantForUser(
@@ -75,7 +82,7 @@ export async function createTenantForUser(
     })
     return tenant
   })
-  await onTenantCreated(db, tenant, input.userId)
+  await onTenantCreated(db, tenant, input.userId, input.features ?? [])
   return tenant
 }
 
@@ -84,9 +91,14 @@ export async function createTenantForUser(
  * OUTSIDE the transaction — a template bug must not break sign-up or invite accept, and
  * `GET /api/analytics/pages` lazily repairs a tenant with no pages on first view anyway.
  */
-async function onTenantCreated(db: Database, tenant: Tenant, userId: string): Promise<void> {
+async function onTenantCreated(
+  db: Database,
+  tenant: Tenant,
+  userId: string,
+  features: readonly string[]
+): Promise<void> {
   try {
-    await ensureDefaultDashboards(db, tenant.id, userId)
+    await ensureDefaultDashboards(db, tenant.id, userId, features)
   } catch {
     // Repaired lazily by the first `GET /api/analytics/pages`; see services/dashboard-templates.ts.
   }

@@ -14,6 +14,12 @@ import {
   setGlobalAdminRequestSchema,
   suspendTenantRequestSchema,
 } from '@rocketflare/shared/admin'
+import {
+  isFeatureName,
+  setTenantOverrideRequestSchema,
+  updateFeatureFlagRequestSchema,
+} from '@rocketflare/shared/features'
+import type { FeatureName } from '@rocketflare/shared/permissions'
 import { resolveCookieAuth } from '../middleware/auth'
 import {
   decideAccessRequest,
@@ -29,7 +35,20 @@ import {
   setUserBlocked,
 } from '../services/admin'
 import { buildSessionResponse } from '../services/auth'
-import { ForbiddenError, UnauthorizedError } from '../utils/core/errors'
+import {
+  clearTenantOverride,
+  listFeatureFlags,
+  listFlagOverrides,
+  setTenantOverride,
+  updateFeatureFlag,
+} from '../services/features'
+import { nudge, realtimeEvent } from '../services/realtime'
+import {
+  ForbiddenError,
+  NotFoundError,
+  UnauthorizedError,
+  ValidationError,
+} from '../utils/core/errors'
 import { paginated } from '../utils/routes/pagination'
 import { requireMultiTenant, uuidParam, withAuth } from '../utils/routes/route-helpers'
 import { createRouter } from '../utils/routes/router'
@@ -134,4 +153,77 @@ adminRouter.post('/users/:id/block', validate('json', blockUserRequestSchema), a
   if (id === user.id) throw new ForbiddenError('You cannot block yourself')
   const updated = await setUserBlocked(db, { userId: id, blocked: c.req.valid('json').blocked })
   return c.json({ id: updated.id, blockedAt: updated.blockedAt })
+})
+
+// ---- Feature flags (D30) ----------------------------------------------------------------------
+
+/**
+ * Keys come from the shared registry, never from the request: a flag that no code reads does
+ * nothing, so there is no "create" here and an unknown key is simply not found.
+ */
+function featureParam(c: Parameters<typeof withAuth>[0]): FeatureName {
+  const key = c.req.param('key')
+  if (!key || !isFeatureName(key)) throw new NotFoundError(`Not found: ${key ?? 'feature'}`)
+  return key
+}
+
+adminRouter.get('/feature-flags', async c => {
+  const { db, cfg } = withAuth(c)
+  return c.json({ items: await listFeatureFlags(db, cfg) })
+})
+
+adminRouter.patch(
+  '/feature-flags/:key',
+  validate('json', updateFeatureFlagRequestSchema),
+  async c => {
+    const { db, cfg, user } = withAuth(c)
+    const key = featureParam(c)
+    const patch = c.req.valid('json')
+    // A percentage over ONE organisation is all-or-nothing decided by an opaque hash, which reads
+    // as a bug rather than a rollout. Fail loud instead of degrading quietly.
+    if (cfg.TENANCY_MODE === 'single') {
+      const unit = patch.rolloutUnit
+      if (patch.state === 'rollout' && unit !== 'user') {
+        throw new ValidationError(
+          { rolloutUnit: 'Must be "user" in single-tenant mode.' },
+          'There is only one organisation, so a rollout counted in organisations is all-or-nothing. Count people instead.'
+        )
+      }
+    }
+    return c.json(await updateFeatureFlag(db, cfg, key, patch, user.id))
+  }
+)
+
+adminRouter.get('/feature-flags/:key/overrides', async c => {
+  const { db, cfg } = withAuth(c)
+  // One organisation means the platform state already IS that organisation's answer.
+  requireMultiTenant(cfg)
+  return c.json({ items: await listFlagOverrides(db, featureParam(c)) })
+})
+
+adminRouter.put(
+  '/feature-flags/:key/overrides/:tenantId',
+  validate('json', setTenantOverrideRequestSchema),
+  async c => {
+    const { db, cfg, user, realtime } = withAuth(c)
+    requireMultiTenant(cfg)
+    const key = featureParam(c)
+    const tenantId = uuidParam(c, 'tenantId')
+    await setTenantOverride(db, key, tenantId, c.req.valid('json').enabled, user.id)
+    // What EXISTS for this organisation just moved, and features ride the session — so the nudge
+    // has to invalidate auth, not just a list. Only the affected tenant is touched: a platform
+    // change would mean one RPC per tenant, which is why it is left to the next session fetch.
+    nudge(realtime, realtimeEvent('features.changed', tenantId))
+    return c.body(null, 204)
+  }
+)
+
+adminRouter.delete('/feature-flags/:key/overrides/:tenantId', async c => {
+  const { db, cfg, realtime } = withAuth(c)
+  requireMultiTenant(cfg)
+  const key = featureParam(c)
+  const tenantId = uuidParam(c, 'tenantId')
+  await clearTenantOverride(db, key, tenantId)
+  nudge(realtime, realtimeEvent('features.changed', tenantId))
+  return c.body(null, 204)
 })

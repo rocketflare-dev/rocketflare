@@ -186,6 +186,14 @@ Components subscribe to query state, never to the socket; `WebSocketStatus` (hea
   (`useMyGroups`) — the same rule `resolveRequestedVisibility` applies, so the picker cannot offer
   what the API would refuse. An EMPTY selection is WARNED about, never blocked: "only me and admins"
   is a real answer and the state a deleted group leaves behind
+- **Feature flags (D30)**: gate with `{ feature: 'x' }` as a `NavGuard`, or `useFeature('x')` — both
+  read `session.features`. **Never `{ action: 'access', subject: 'Feature:x' }`**: a global admin's
+  `manage all` satisfies the CASL form, so they would see a nav item whose routes the server 404s.
+  A `NavGuard` may be a LIST meaning AND, which is how a flag composes with a permission
+  (`featureGuard(MY_FEATURE, { action: 'read', subject: 'Thing' })`) — the flag and the permission
+  stay two readable facts instead of one conflated subject. One const per feature in
+  `lib/feature-guards.ts` so the nav, the routes and the settings tabs cannot drift. All of it is
+  cosmetic: the gated code still ships in the bundle, and the server is the protection
 - Forms validate with the `@rocketflare/shared` schema the server uses; show `FieldError` per field
 - Icons: `@heroicons/react`. No new UI library without a stated reason in the PR
 - `EnvironmentBadge` + `useEnvironmentTitle` read `APP_ENV`/`RELEASE_VERSION` from `/auth/session`;

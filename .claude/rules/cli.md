@@ -37,6 +37,11 @@ The package is **private**; publishing it is an app decision (docs/DEPLOY.md).
   switches the whole `Output` to JSON-only
 - Never import from `apps/web`; only `@rocketflare/shared`, `commander`, `chalk`, `open`, `zod`, `node:*`
 
+Feature flags (D30) are read-only here: `features list` shows the EFFECTIVE flags for the key's
+organisation via `GET /api/features`. Administering one is a global-admin act and
+`globalAdminMiddleware` resolves the session cookie only, so a tenant API key cannot reach
+`/api/admin/*` — by design; do not widen that middleware to make a CLI command possible.
+
 Groups (D29) are READ-only here: `groups list` and `groups members <id>`. Creating or deleting a
 group is a decision about who sees what, and the confirmation the web UI gives before a delete
 narrows access has no honest one-line equivalent in a CLI.

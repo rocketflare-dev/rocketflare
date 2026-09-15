@@ -15,6 +15,8 @@ export const realtimeEventTypeSchema = z.enum([
   'tenant.changed',
   /** D29: this person's group membership changed — what they may READ has moved under them. */
   'access.changed',
+  /** D30: a feature flag moved for this tenant — what EXISTS for them has changed. */
+  'features.changed',
   'entity.changed',
   'ping',
 ])
@@ -51,6 +53,9 @@ export const REALTIME_INVALIDATIONS: Record<RealtimeEventType, string[][]> = {
   // session (which carries their groups), both visibility-bearing resources and the groups view
   // are all stale at once.
   'access.changed': [['auth'], ['documents'], ['analytics'], ['groups']],
+  // Features ride the session, so the session is what has to be re-fetched; `features` covers the
+  // read-only list the CLI and the debugging surface use.
+  'features.changed': [['auth'], ['features']],
   'entity.changed': [],
   ping: [],
 }

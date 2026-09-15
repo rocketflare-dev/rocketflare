@@ -16,9 +16,15 @@ export function getTemplate(key: string): DashboardTemplate | null {
   return DASHBOARD_TEMPLATES[key] ?? null
 }
 
-/** Every template, in nav order. */
-export function listTemplates(): DashboardTemplate[] {
-  return Object.values(DASHBOARD_TEMPLATES).sort((a, b) => a.order - b.order)
+/**
+ * Every template the caller may see, in nav order. `features` is `AuthContext.features`; a template
+ * declaring a `feature` nobody holds is omitted everywhere templates are read — listed, seeded,
+ * reset and recreated — because those are the four ways a page reaches a tenant (D30).
+ */
+export function listTemplates(features: readonly string[] = []): DashboardTemplate[] {
+  return Object.values(DASHBOARD_TEMPLATES)
+    .filter(t => t.feature === undefined || features.includes(t.feature))
+    .sort((a, b) => a.order - b.order)
 }
 
 export type { DashboardTemplate }

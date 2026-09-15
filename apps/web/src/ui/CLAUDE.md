@@ -339,6 +339,26 @@ A `CUSTOM kit.notice` renders
   and header, and that a 401 reaches `setUnauthorizedHandler`; stub `window.matchMedia` first).
   Fixtures: `tests/ui/helpers/analytics.ts`.
 
+## Feature flags (D30)
+
+- `lib/feature-guards.ts` is the client-side spelling: one `NavGuard` const per feature plus
+  `featureGuard(feature, guard)` to compose the flag with a permission. `useNavGuard` gains a
+  `{ feature }` form (answered from `session.features`, checked BEFORE the tenant check — a feature
+  that is off is off for everyone) and a LIST form meaning AND. `useFeature('x')` is the hook.
+- **Never gate on `{ action: 'access', subject: 'Feature:x' }`.** A global admin's `manage all`
+  satisfies it, so they would see a nav item whose routes the server 404s — and the app this rule
+  came from shipped exactly that. The flag is configuration; only `session.features` answers it.
+- `/admin/feature-flags` (`pages/admin/FeatureFlags.tsx` + `FlagOverrides.tsx`, lazy, the
+  `globalAdmin` guard the whole `/admin` block already carries) separates the two layers visually:
+  `availableInEnvironment` is config a redeploy moves, everything else is a click. Overrides offer
+  three states — On / Off / Default — because deleting the row (follow the platform state) is a real
+  third answer a checkbox cannot express; the section is absent in single mode, matching the routes.
+- `pages/ExampleFeature.tsx` and the `Example feature` nav item are the kit's demonstration. Delete
+  them, `EXAMPLE_FEATURE`, and the `example-feature` entries in `packages/shared`.
+- Tests: `tests/ui/feature-flag-nav.test.tsx` drives the REAL `useNavGuard` — never a
+  re-implementation, which is what hid the ability-wildcard bug — and runs every assertion for a
+  global admin as well as an owner.
+
 ## Groups and visibility (D29)
 
 - **Settings → Groups** (`pages/settings/Groups.tsx`, tab `groups`, `manage Group`): group TYPES on

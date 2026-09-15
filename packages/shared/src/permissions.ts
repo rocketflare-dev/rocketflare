@@ -34,12 +34,39 @@ export const CORE_SUBJECTS = [
   /** Analytics (D19): `Dashboard` = analytics_pages rows; `Analytics` = the cube API itself. */
   'Dashboard',
   'Analytics',
+  /**
+   * Feature flags (D30) — ADMINISTERING them, never using a feature. A platform subject like
+   * `AccessRequest` and `User`: reachable only through `manage all`, so it is deliberately absent
+   * from `ADMIN_MANAGED` and `MEMBER_READABLE`. Using a feature is `AuthContext.features`, which is
+   * not a permission at all — see the warning on `FeatureSubject` below.
+   */
+  'FeatureFlag',
 ] as const
 export type CoreSubject = (typeof CORE_SUBJECTS)[number]
 
-/** Feature flags are subjects too: `can('access', 'Feature:analytics')` (D10). */
+/**
+ * Feature flags are subjects too: `can('access', 'Feature:analytics')` (D10).
+ *
+ * **Never gate a surface that ships dark on this.** `globalAdmin` is `can('manage', 'all')` and
+ * `support` is granted `access all`; in CASL those are wildcards covering `access` on every
+ * `Feature:` subject, so an ability check answers "on" for platform staff no matter what the
+ * deployment ships. A feature flag is CONFIGURATION, not a permission: every gate reads the
+ * features ARRAY (`hasFeature(auth.features, name)` on the server, `session.features` in the
+ * browser). `applyFeatureFlags` still populates these subjects for an app that genuinely wants
+ * permission-style entitlements, and nothing that hides an unreleased surface may use them (D30).
+ */
 export type FeatureSubject = `Feature:${string}`
 export const featureSubject = (feature: string): FeatureSubject => `Feature:${feature}`
+
+/**
+ * Every feature key this app knows (D30). Code, not data: a key that no code reads does nothing,
+ * so inventing one at runtime buys nothing, while a registry makes `requireFeature('new-reprots')`
+ * a TYPE ERROR instead of a route that 404s for ever. Adding a flag is a line here plus its
+ * metadata in `features.ts` — no migration. Retiring one: delete the gate from the code, deploy,
+ * then delete the line. Append-only in spirit; the metadata registry is keyed on this.
+ */
+export const FEATURES = ['example-feature'] as const
+export type FeatureName = (typeof FEATURES)[number]
 
 export type Subjects = CoreSubject | FeatureSubject
 

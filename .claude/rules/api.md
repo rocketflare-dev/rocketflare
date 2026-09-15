@@ -44,6 +44,15 @@ Auth is per-mount, not global: the public surface is enumerable and small.
   with `db.query.X.findFirst` (it renames the table it selects from) — use `db.select()`
 - Throw typed errors from `apps/web/src/api/utils/core/errors.ts` (`NotFoundError`, `ForbiddenError`, `ValidationError`, `ConflictError`, …); never `c.json({ error }, 4xx)` by hand
 - Pagination: `paginationQuerySchema` → `{ items, pagination: { page, pageSize, total, totalPages } }` (`packages/shared/src/pagination.ts`)
+- **Feature flags gate at the MOUNT, and never through CASL** (D30). `requireFeature('x')`
+  (`middleware/feature.ts`) is a middleware placed as the optional THIRD element of a mount-table
+  entry in `api/index.ts` — `['/api/thing', thingRouter, requireFeature('thing')]` — so a surface
+  that ships dark is dark as a whole rather than route by route, declared once like auth. It answers
+  **404 `feature_disabled`**, not 403: a 403 confirms the feature exists. It reads
+  `auth.features`, the same array `cubesFor` and `listTemplates` read; an ability check would hand
+  every global admin the dark surface, because `manage all` covers `access` on every `Feature:`
+  subject. **The nav is not the only door** — a feature with cubes or a dashboard template must gate
+  those too, and the template one creates rows (`ensureDefaultDashboards` runs on every `GET /pages`)
 - `TENANCY_MODE=single` (D25): routes that only make sense multi-tenant (`create-org`, `delete-org`, `/select-tenant`, `/admin/tenants` list) return 404 `tenancy_mode_single`; use the `requireMultiTenant` helper, don't inline the check
 - **Streaming routes speak AG-UI** (`services/ai/chat-turn.ts` is the ONE implementation; `routes/chat.ts` and `routes/agui.ts` are wrappers around it): resolve, authorise, validate and write anything that can fail as JSON **before** the stream opens — after the first frame a failure can only be a `RUN_ERROR`. Inside the stream use `streamDatabase(c)` (`utils/routes/route-helpers.ts`) for every write and close it in the stream's `finally`: `databaseMiddleware` ends the request's `db` in `waitUntil` the moment the Response object is returned, which is BEFORE the stream body runs. Transport is hono's generic `stream(c, cb)` plus `createAguiEncoder(c.req.header('Accept'))` (`services/ai/agui.ts`) — **never `streamSSE`**, whose `writeSSE` imposes an `event:` line and pins the content type, and spec AG-UI frames are `data:` only. `encodeBinary` covers SSE and protobuf in one path; await every write and the tracer flush inside the stream — there is no `defer` after the Response. A cancelled run emits NOTHING: closing with neither `RUN_FINISHED` nor `RUN_ERROR` IS the cancellation signal
 
@@ -98,6 +107,23 @@ failures surface as the JSON envelope on this route.
 - `routes/analytics-pages.ts` (`/api/analytics`; contracts `@rocketflare/shared/analytics`): reads for every member — `GET /pages` calls `ensureDefaultDashboards(db, tenantId, user.id)` FIRST, then lists `{ items }` ordered by `sortOrder`; `GET /pages/:id`; `GET /templates`. Writes `guardPermission(c, 'manage', 'Dashboard')` — `POST /pages` (empty rows dashboard unless `config` given; `uniquePageSlug`), `PATCH /pages/:id`, `DELETE /pages/:id` (template page → 403 `template_page`), `POST /pages/:id/reset` (user page → 400 `not_a_template_page`; template gone → 404 `template_not_found`), `POST /templates/recreate` → `{ created, reset }`. `GET /facts/status` is `isAdminLevel(auth)`. Every query carries `eq(analyticsPages.tenantId, tenantId)`; `config` is stored whole (`DashboardConfig` from `drizzle-cube/client`, type-only import); activity `dashboard.created|updated|deleted|reset` via `defer`
 - **`onTenantCreated`** (`utils/db/tenant-helpers.ts`) is the post-commit hook of `createTenantForUser` (every tenant-creating path: `POST /api/tenants`, `onNoTenant`, admin approval, seed): runs AFTER the transaction, best-effort (`try/catch`, swallowed) — a template bug must never break sign-up or invite accept. Add other per-tenant bootstrap there, idempotent, with its own lazy repair path (dashboards have `GET /pages`). Never move it inside the transaction
 - **Fact tables** (`services/fact-tables/`): `FACT_TABLES` in `registry.ts` is the only list — `{ name, table, refreshIntervalMinutes, source: { name, table, timestampColumn }, selectForTenant(tenantId) → SQL }` — and `refresh.ts`, `freshness.ts`, the `15 * * * *` task in `scheduled.ts` and `scripts/{refresh-fact-tables,check-fact-table-freshness}.ts` iterate it; nothing else enumerates fact tables. `queries/<name>.ts` is a parameterised `sql` SELECT whose columns follow the schema file's declaration ORDER and end with `now() as fact_refreshed_at`; the INSERT names its targets from `getTableColumns(def.table)`, so drift fails loudly. Refresh is per tenant in ONE transaction (`DELETE … WHERE tenant_id = $1` then `INSERT INTO t (cols) <select>`), tenants sequential, errors collected per tenant — never `REFRESH MATERIALIZED VIEW` or `ANALYZE` (not through Hyperdrive) and never a cross-tenant DELETE. Freshness = newest `source.timestampColumn` − newest `fact_refreshed_at`, `stale` past 2× `refreshIntervalMinutes`; the route and `db:check-facts` share `checkFactTableFreshness`. Past a few hundred tenants, fan tenants out through `JOBS_QUEUE` instead of looping inside the cron
+
+## Feature flags (D30) — `permissions/features.ts`, `middleware/feature.ts`, `services/features.ts`
+
+- **One seam**: `resolveFeatures(cfg, flagRows, { tenantId, userId })` is the only place the two
+  layers combine — `FEATURES_ENABLED` in `[vars]` (does this deployment ship it at all? fail-closed,
+  consulted only for an `environmentGated` flag) and the `feature_flags` / `tenant_feature_overrides`
+  rollout state. A third source unions in there and no consumer changes. It returns `[]` without a
+  tenant
+- **Keys are code**: `FEATURES` in `@rocketflare/shared/permissions` + metadata in
+  `@rocketflare/shared/features`, the `PROMPT_REGISTRY` pattern. No migration to add one; evaluation
+  iterates the registry, so an orphaned row is inert. There is no create endpoint by design
+- **`featureBucket` is a wire format** — changing the hash, separator or modulus reshuffles every
+  live rollout. Golden vectors in `tests/config/features.test.ts` are the guard. The percentage is
+  never hashed in, which is what makes a rollout monotonic (raising it only ever adds)
+- Admin CRUD lives on `routes/admin.ts` behind `globalAdminMiddleware`; the override sub-routes call
+  `requireMultiTenant`, the list and `PATCH` do not. `GET /api/features` is the member-level
+  effective list (and the CLI's, since a Bearer key cannot reach `/api/admin/*`)
 
 ## Services
 
