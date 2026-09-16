@@ -210,6 +210,21 @@ A `CUSTOM kit.notice` renders
   renders via `components/ai/Markdown`, which is why `pages/agents/**` is a lazy chunk like
   `ChatPage` — Vite emits `Markdown-*.js` once, shared by both; nothing markdown lands in the main
   chunk. Keep every Markdown importer under `pages/agents|chat/` or `components/ai/`.
+- **Live run progress (issue #7) is ADDITIVE.** `lib/runAguiStream.ts` (`streamRunAgui` — GET
+  `/api/agents/runs/:id/agui/stream`, `{ lastSeq, received, terminal, aborted }`; **reconnect lives
+  in the hook, not the transport**) and `hooks/useRunStream.ts` (`useRunStream(runId, { enabled })`
+  → `{ events, isLoading, connected, fallback, lastSeq, terminal }`, plus `streamEnabled(status)` —
+  false for `awaiting_input`, which the server answers and closes at once). The run page is built
+  against the poll path, so deleting the hook must leave a working page. **The cache rule, flatly:
+  the stream is the ONLY writer of `['agent-run-agui', id]`, appends with `setQueryData`, never
+  touches the run row, and invalidates `queryKeys.agentRuns.all` exactly once on a terminal
+  frame** — a terminal status is never synthesised client-side. The cursor moves only on a frame
+  that carries an `id:` (the last of a row's group), so a mid-group drop replays the group whole.
+  After `RUN_STREAM_FALLBACK_ATTEMPTS` connections that delivered nothing it stops and gives the
+  key a `RUN_POLL_MS` `refetchInterval` — today's behaviour against a different URL.
+  **`['agent-run-agui']` must stay out of `REALTIME_INVALIDATIONS`**: the runtime nudges
+  `entity: 'agent-run'` on every row it writes, so parking the accumulated list under that root
+  would make each nudge discard what the stream just built — a more expensive poll.
 - **Forms come from `pages/agents/forms/`**: `formFor(agentKey)` → `{ initial, schema, Component }`.
   `summarize-text` ships its own (textarea counted against `SUMMARIZE_TEXT_MAX_CHARS`, style,
   "index the result" toggle), parsed with the SAME `summarizeTextInputSchema` the route applies

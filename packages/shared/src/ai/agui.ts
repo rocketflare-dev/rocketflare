@@ -266,8 +266,18 @@ export function toAguiInterrupt(row: AgentRunInterrupt): Interrupt {
   })
 }
 
-/** `GET /api/agents/runs/:id/agui` — the run's durable events, projected. */
-export const agentRunAguiResponseSchema = z.object({ events: z.array(kitAguiEventSchema) })
+/**
+ * `GET /api/agents/runs/:id/agui` — the run's durable events, projected.
+ *
+ * `lastSeq` is the `agent_run_events.seq` of the newest row this projection covers (0 for a run
+ * with no rows yet). **AG-UI events carry no sequence of their own**, so without it a client that
+ * fetched this snapshot has no cursor to hand `GET /runs/:id/agui/stream?afterSeq=` and every
+ * reconnect replays the whole run.
+ */
+export const agentRunAguiResponseSchema = z.object({
+  events: z.array(kitAguiEventSchema),
+  lastSeq: z.number().int().nonnegative(),
+})
 export type AgentRunAguiResponse = z.infer<typeof agentRunAguiResponseSchema>
 
 // ---- `POST /api/agui/run` input ---------------------------------------------------------------

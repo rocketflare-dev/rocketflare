@@ -336,6 +336,14 @@ export const RUN_STREAM_IDLE_CAP_MS = 300_000
  * exercised on every stream rather than only during an incident.
  */
 export const RUN_STREAM_MAX_MS = 600_000
+/**
+ * Connections that delivered NOTHING before the client stops reconnecting and falls back to
+ * polling `GET /runs/:id/agui`. Three, because one empty connection is a quiet run and two is bad
+ * luck; three in a row means the stream is not reaching this browser (a proxy that buffers
+ * `text/event-stream`, a corporate middlebox, an exhausted HTTP/1.1 connection pool) and polling —
+ * exactly today's behaviour against a different URL — is better than an invisible outage.
+ */
+export const RUN_STREAM_FALLBACK_ATTEMPTS = 3
 
 // ---- The example agent --------------------------------------------------------------------------
 

@@ -82,201 +82,247 @@ const asString = (value: unknown): string | undefined =>
  * Map a run and its durable events to the AG-UI sequence a client would have seen live. Pure: no
  * database, no clock, no randomness — the event row ids ARE the AG-UI message and tool-call ids,
  * so two projections of the same run are byte-identical.
+ *
+ * A fold over {@link createRunProjector}, which is the same mapping made resumable for the live
+ * stream. Keeping ONE implementation is the point: a finite read and a tail of the same log must
+ * never disagree about what a run looked like (`agui-projection.test.ts` pins the equivalence).
  */
 export function projectRunToAgui(
   run: AgentRun,
   events: AgentRunEvent[],
   context: RunProjectionContext = {}
 ): KitAguiEvent[] {
-  const interrupts = context.interrupts ?? []
-  const artifacts = context.artifacts ?? []
-  const interruptById = new Map(interrupts.map(row => [row.id, row]))
-  const artifactById = new Map(artifacts.map(row => [row.id, row]))
-  const out: KitAguiEvent[] = [
-    { type: AguiEventType.RUN_STARTED, threadId: run.id, runId: run.id },
-    {
-      type: AguiEventType.STATE_SNAPSHOT,
-      snapshot: {
-        runId: run.id,
-        agentKey: run.agentKey,
-        status: run.status,
-        capabilities: AGENT_RUN_CAPABILITIES,
-      },
-    },
+  const projector = createRunProjector(run)
+  return [
+    ...projector.head(),
+    ...events.flatMap(event => projector.push(event, context)),
+    ...projector.finish(run, context),
   ]
-  /** Open `tool.start`s by tool name, so a `tool.end` finds the call it answers. */
+}
+
+/**
+ * The same projection, one row at a time, for `GET /runs/:id/agui/stream` (decision 5).
+ *
+ * Re-projecting the whole array per tick is cheap in CPU and expensive in everything else: it
+ * forces the stream to hold or re-read the entire log every tick, which is exactly the O(events)
+ * behaviour the stream exists to remove. So the projector keeps the little state a fold needs —
+ * open tool calls, the last message id, the last error — and hands back only the frames one row
+ * produced.
+ *
+ * **`finish` takes the run as an argument rather than reading the closure.** In a stream the row
+ * changes underneath you: the run this projector opened on was `running` and the one it must write
+ * a terminal event for is `succeeded`, `awaiting_input` or `failed`.
+ */
+export interface RunProjector {
+  /** `RUN_STARTED` + `STATE_SNAPSHOT`. Emitted only by a stream starting from the beginning. */
+  head(): KitAguiEvent[]
+  /** The frames for ONE durable row — zero, one, or a whole `START → CONTENT → END` group. */
+  push(event: AgentRunEvent, context?: RunProjectionContext): KitAguiEvent[]
+  /** The terminal event for the run AS IT IS NOW, or `[]` while it is still active. */
+  finish(run: AgentRun, context?: RunProjectionContext): KitAguiEvent[]
+}
+
+export function createRunProjector(run: AgentRun): RunProjector {
+  /** Open `tool.start`s by the model's call id (falling back to the tool name). */
   const openToolCalls = new Map<string, string>()
   let lastMessageId = run.id
   let lastError: string | undefined
 
-  for (const event of events) {
-    const data = asRecord(event.data)
-    switch (event.type) {
-      case 'status':
-        // `running` is the synthetic RUN_STARTED above; the terminal ones are handled from the
-        // run row below, which is the authority on how it actually ended.
-        break
-      case 'step': {
-        const step = data as StepData
-        const name = asString(step.key) ?? 'step'
-        const status = asString(step.status) ?? 'running'
-        out.push({
-          type: status === 'running' ? AguiEventType.STEP_STARTED : AguiEventType.STEP_FINISHED,
-          stepName: name,
-        })
-        // `stepName` is a bare string; the label and detail a person reads need a home.
-        out.push(
-          kitCustom(KIT_CUSTOM_EVENTS.agentStep, {
-            key: name,
-            label: asString(step.label) ?? name,
-            status: status === 'done' || status === 'error' ? status : 'running',
-            ...(asString(step.detail) ? { detail: asString(step.detail) } : {}),
+  return {
+    head: () => [
+      { type: AguiEventType.RUN_STARTED, threadId: run.id, runId: run.id },
+      {
+        type: AguiEventType.STATE_SNAPSHOT,
+        snapshot: {
+          runId: run.id,
+          agentKey: run.agentKey,
+          status: run.status,
+          capabilities: AGENT_RUN_CAPABILITIES,
+        },
+      },
+    ],
+
+    push(event, context = {}) {
+      const out: KitAguiEvent[] = []
+      const data = asRecord(event.data)
+      switch (event.type) {
+        case 'status':
+          // `running` is the synthetic RUN_STARTED in `head`; the terminal ones come from the run
+          // row in `finish`, which is the authority on how it actually ended.
+          break
+        case 'step': {
+          const step = data as StepData
+          const name = asString(step.key) ?? 'step'
+          const status = asString(step.status) ?? 'running'
+          out.push({
+            type: status === 'running' ? AguiEventType.STEP_STARTED : AguiEventType.STEP_FINISHED,
+            stepName: name,
           })
-        )
-        break
-      }
-      case 'text': {
-        const text = asString(data.text)
-        if (!text) break
-        lastMessageId = event.id
-        out.push(
-          {
-            type: AguiEventType.TEXT_MESSAGE_START,
+          // `stepName` is a bare string; the label and detail a person reads need a home.
+          out.push(
+            kitCustom(KIT_CUSTOM_EVENTS.agentStep, {
+              key: name,
+              label: asString(step.label) ?? name,
+              status: status === 'done' || status === 'error' ? status : 'running',
+              ...(asString(step.detail) ? { detail: asString(step.detail) } : {}),
+            })
+          )
+          break
+        }
+        case 'text': {
+          const text = asString(data.text)
+          if (!text) break
+          lastMessageId = event.id
+          out.push(
+            { type: AguiEventType.TEXT_MESSAGE_START, messageId: event.id, role: 'assistant' },
+            { type: AguiEventType.TEXT_MESSAGE_CONTENT, messageId: event.id, delta: text },
+            { type: AguiEventType.TEXT_MESSAGE_END, messageId: event.id }
+          )
+          break
+        }
+        case 'tool.start': {
+          const { name: toolName, toolCallId: modelCallId, ...rest } = data
+          const name = asString(toolName) ?? 'tool'
+          // Pair on the MODEL's call id where the runtime recorded one, and on the tool name only
+          // as a fallback for rows written before it did. Name-only pairing is wrong the day two
+          // calls to the same tool run in one turn — the second start overwrites the first and
+          // both results are attributed to the second call.
+          openToolCalls.set(asString(modelCallId) ?? name, event.id)
+          out.push(
+            {
+              type: AguiEventType.TOOL_CALL_START,
+              toolCallId: event.id,
+              toolCallName: name,
+              parentMessageId: lastMessageId,
+            },
+            {
+              type: AguiEventType.TOOL_CALL_ARGS,
+              toolCallId: event.id,
+              delta: JSON.stringify(rest.input ?? rest),
+            },
+            { type: AguiEventType.TOOL_CALL_END, toolCallId: event.id }
+          )
+          break
+        }
+        case 'tool.end': {
+          const name = asString(data.name) ?? 'tool'
+          const key = asString(data.toolCallId) ?? name
+          // The EMITTED id stays `event.id` of the start row: "the event row ids ARE the AG-UI
+          // ids" is the invariant that makes two projections of one run byte-identical.
+          const toolCallId = openToolCalls.get(key) ?? event.id
+          openToolCalls.delete(key)
+          out.push({
+            type: AguiEventType.TOOL_CALL_RESULT,
             messageId: event.id,
-            role: 'assistant',
-          },
-          { type: AguiEventType.TEXT_MESSAGE_CONTENT, messageId: event.id, delta: text },
-          { type: AguiEventType.TEXT_MESSAGE_END, messageId: event.id }
-        )
-        break
+            toolCallId,
+            content: JSON.stringify(data),
+            role: 'tool',
+          })
+          // The same mapper the live chat uses, over the SUMMARISED result stored in the row — so a
+          // run reads back with the cards a chat would have shown, and the runtime still knows
+          // nothing about AG-UI (D18).
+          for (const card of documentCardsFromToolResult(name, data.result)) {
+            out.push(kitCustom(KIT_CUSTOM_EVENTS.document, { card }))
+          }
+          break
+        }
+        case 'interrupt': {
+          // The row travels WHOLE — the panel needs `spec` to draw the question — so the thin event
+          // row is only the position in the timeline and the table is the state. An ask the caller
+          // did not pass is simply not projected: inventing one from the log would show a question
+          // whose status nobody knows.
+          const id = asString(data.interruptId) ?? ''
+          const interrupt = (context.interrupts ?? []).find(row => row.id === id)
+          if (interrupt) out.push(kitCustom(KIT_CUSTOM_EVENTS.agentInterrupt, { interrupt }))
+          break
+        }
+        case 'interrupt.resolved': {
+          const parsed = agentInterruptResolvedEventDataSchema.safeParse(data)
+          if (parsed.success) {
+            out.push(kitCustom(KIT_CUSTOM_EVENTS.agentInterruptResolved, parsed.data))
+          }
+          break
+        }
+        case 'steering': {
+          const parsed = steeringNoteDataSchema.safeParse(data)
+          if (parsed.success) {
+            out.push(
+              kitCustom(KIT_CUSTOM_EVENTS.agentSteering, {
+                note: { ...parsed.data, eventId: event.id, at: event.at },
+              })
+            )
+          }
+          break
+        }
+        case 'artifact': {
+          const id = asString(data.artifactId) ?? ''
+          const artifact = (context.artifacts ?? []).find(row => row.id === id)
+          if (artifact) out.push(kitCustom(KIT_CUSTOM_EVENTS.agentArtifact, { artifact }))
+          break
+        }
+        case 'error': {
+          const message = asString(data.message) ?? 'The run failed'
+          lastError = message
+          // A retry is not terminal: the Workflow step will run again.
+          if (data.willRetry === true) {
+            out.push(
+              kitCustom(KIT_CUSTOM_EVENTS.agentRetry, {
+                message,
+                ...(typeof data.attempt === 'number' && data.attempt > 0
+                  ? { attempt: data.attempt }
+                  : {}),
+              })
+            )
+          }
+          break
+        }
       }
-      case 'tool.start': {
-        const { name: toolName, ...rest } = data
-        const name = asString(toolName) ?? 'tool'
-        openToolCalls.set(name, event.id)
-        out.push(
+      return out
+    },
+
+    finish(current, context = {}) {
+      // A parked run is the ONE active state with a terminal event, and it is the spec's own
+      // delivery (`RunFinishedInterruptOutcome`) rather than anything kit-shaped — which is what
+      // lets a third-party client answer a kit run with zero kit-specific code.
+      if (current.status === 'awaiting_input') {
+        const pending = (context.interrupts ?? []).filter(row => row.status === 'pending')
+        // No pending row is NOT impossible (T6): it is the window between the resolve route's
+        // write and the `resumeRun` that follows it. Treated as active — a terminal event here
+        // would tell a client the run had stopped on a question that has already been answered.
+        if (pending.length === 0) return []
+        return [
           {
-            type: AguiEventType.TOOL_CALL_START,
-            toolCallId: event.id,
-            toolCallName: name,
-            parentMessageId: lastMessageId,
+            type: AguiEventType.RUN_FINISHED,
+            threadId: current.id,
+            runId: current.id,
+            outcome: { type: 'interrupt', interrupts: pending.map(toAguiInterrupt) },
           },
+        ]
+      }
+
+      // Any other active run has no terminal event: the client keeps reading (or reconnects).
+      if (isRunActive(current.status)) return []
+
+      if (current.status === 'succeeded') {
+        return [
           {
-            type: AguiEventType.TOOL_CALL_ARGS,
-            toolCallId: event.id,
-            delta: JSON.stringify(rest.input ?? rest),
+            type: AguiEventType.RUN_FINISHED,
+            threadId: current.id,
+            runId: current.id,
+            result: current.output ?? null,
           },
-          { type: AguiEventType.TOOL_CALL_END, toolCallId: event.id }
-        )
-        break
+        ]
       }
-      case 'tool.end': {
-        const name = asString(data.name) ?? 'tool'
-        const toolCallId = openToolCalls.get(name) ?? event.id
-        openToolCalls.delete(name)
-        out.push({
-          type: AguiEventType.TOOL_CALL_RESULT,
-          messageId: event.id,
-          toolCallId,
-          content: JSON.stringify(data),
-          role: 'tool',
-        })
-        // The same mapper the live chat uses, over the SUMMARISED result stored in the row — so a
-        // run reads back with the cards a chat would have shown, and the runtime still knows
-        // nothing about AG-UI (D18).
-        for (const card of documentCardsFromToolResult(name, data.result)) {
-          out.push(kitCustom(KIT_CUSTOM_EVENTS.document, { card }))
-        }
-        break
-      }
-      case 'interrupt': {
-        // The row travels WHOLE — the panel needs `spec` to draw the question — so the thin event
-        // row is only the position in the timeline and the table is the state. An ask the caller
-        // did not pass is simply not projected: inventing one from the log would show a question
-        // whose status nobody knows.
-        const interrupt = interruptById.get(asString(data.interruptId) ?? '')
-        if (interrupt) out.push(kitCustom(KIT_CUSTOM_EVENTS.agentInterrupt, { interrupt }))
-        break
-      }
-      case 'interrupt.resolved': {
-        const parsed = agentInterruptResolvedEventDataSchema.safeParse(data)
-        if (parsed.success) {
-          out.push(kitCustom(KIT_CUSTOM_EVENTS.agentInterruptResolved, parsed.data))
-        }
-        break
-      }
-      case 'steering': {
-        const parsed = steeringNoteDataSchema.safeParse(data)
-        if (parsed.success) {
-          out.push(
-            kitCustom(KIT_CUSTOM_EVENTS.agentSteering, {
-              note: { ...parsed.data, eventId: event.id, at: event.at },
-            })
-          )
-        }
-        break
-      }
-      case 'artifact': {
-        const artifact = artifactById.get(asString(data.artifactId) ?? '')
-        if (artifact) out.push(kitCustom(KIT_CUSTOM_EVENTS.agentArtifact, { artifact }))
-        break
-      }
-      case 'error': {
-        const message = asString(data.message) ?? 'The run failed'
-        lastError = message
-        // A retry is not terminal: the Workflow step will run again.
-        if (data.willRetry === true) {
-          out.push(
-            kitCustom(KIT_CUSTOM_EVENTS.agentRetry, {
-              message,
-              ...(typeof data.attempt === 'number' && data.attempt > 0
-                ? { attempt: data.attempt }
-                : {}),
-            })
-          )
-        }
-        break
-      }
-    }
+      return [
+        {
+          type: AguiEventType.RUN_ERROR,
+          message:
+            current.status === 'cancelled'
+              ? 'The run was cancelled'
+              : (current.error ?? lastError ?? 'The run failed'),
+          code: current.status === 'cancelled' ? 'agent_run_cancelled' : 'agent_run_failed',
+        },
+      ]
+    },
   }
-
-  // A parked run is the ONE active state with a terminal event, and it is the spec's own delivery
-  // (`RunFinishedInterruptOutcome`) rather than anything kit-shaped — which is what lets a
-  // third-party client answer a kit run with zero kit-specific code.
-  if (run.status === 'awaiting_input') {
-    const pending = interrupts.filter(row => row.status === 'pending')
-    // No pending row is NOT impossible (T6): it is the window between the resolve route's write
-    // and the `resumeRun` that follows it. Treated as active — a terminal event here would tell a
-    // client the run had stopped on a question that has already been answered.
-    if (pending.length === 0) return out
-    out.push({
-      type: AguiEventType.RUN_FINISHED,
-      threadId: run.id,
-      runId: run.id,
-      outcome: { type: 'interrupt', interrupts: pending.map(toAguiInterrupt) },
-    })
-    return out
-  }
-
-  // Any other active run has no terminal event: the client polls (or waits for the nudge).
-  if (isRunActive(run.status)) return out
-
-  if (run.status === 'succeeded') {
-    out.push({
-      type: AguiEventType.RUN_FINISHED,
-      threadId: run.id,
-      runId: run.id,
-      result: run.output ?? null,
-    })
-    return out
-  }
-  out.push({
-    type: AguiEventType.RUN_ERROR,
-    message:
-      run.status === 'cancelled'
-        ? 'The run was cancelled'
-        : (run.error ?? lastError ?? 'The run failed'),
-    code: run.status === 'cancelled' ? 'agent_run_cancelled' : 'agent_run_failed',
-  })
-  return out
 }

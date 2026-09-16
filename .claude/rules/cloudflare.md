@@ -138,6 +138,16 @@ turn was investigated and rejected (`docs/CONCEPTS.md` §9 Known gaps): steps do
   `fetch` dispatch; `fetch()` accepts ONLY the upgrade forwarded by `routes/ws.ts` (trusted `X-*`
   identity headers, safe because the object is reachable solely via the binding). The class is
   exported from `src/worker.ts`, never from `api/index.ts`
+- **A long-lived SSE read (`GET …/agui/stream`, issue #7) budgets three things, and all three are
+  per-INVOCATION.** ONE Hyperdrive client for the life of the stream (`streamDatabase(c)`, closed in
+  `finally`), never one per tick — even for a route that writes nothing. **Subrequests are capped at
+  1 000 per invocation on Paid**, which is why `RUN_STREAM_MAX_MS` is 10 minutes: the adaptive
+  cadence puts the tick count (~320) provably under it, and it makes a redeploy indistinguishable
+  from the normal path, so the client's reconnect is exercised on every stream rather than only
+  during an incident. **Nothing that costs a subrequest may sit inside the loop** — a Workflow
+  `instance.status()` per tick would blow the budget on a question the database already answers. And
+  a run parked on `step.waitForEvent` must NOT hold the connection: the stream sends its terminal
+  frame and closes, so a seven-day park costs no connection, no query and no invocation
 - Never run long work in `fetch`. Enqueue or create a workflow instance (`.claude/rules/api.md`)
 
 ## Bundle size (D19 caveat)

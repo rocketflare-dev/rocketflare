@@ -409,8 +409,8 @@ tenant's member list refresh on the next fetch, not live; `notification.read` is
 and the invalidation map but nothing emits it yet; the `activity.record` handler ships with no kit
 producer (routes still `defer(recordActivity)` inline — enqueue it when an audit write is on a hot
 path); the DO's 101 branch cannot run under Node (undici rejects status 101) and is proven by
-`wrangler dev`, not the suite; `dead_letter_queue` is commented out in both tomls; SSE
-`Last-Event-ID` replay for run progress is deferred; `@cloudflare/vitest-pool-workers` smoke project
+`wrangler dev`, not the suite; `dead_letter_queue` is commented out in both tomls; run progress now streams over SSE
+(§9) but there is no DO fan-out for TOKENS; `@cloudflare/vitest-pool-workers` smoke project
 for DO/Workflow is not in v1 (the Workflow class is driven by `createFakeWorkflowStep()` under Node).
 
 ## 6. Email and storage
@@ -1038,11 +1038,34 @@ finite array the absent terminal event is how an ACTIVE run reads. And there is 
 Usage page is the ledger. Known fidelity loss: `ToolCallResultEventSchema` in 0.0.59 has no error
 flag, so an errored tool result is projected with its JSON intact.
 
-**There is no SSE endpoint for runs, deliberately.** A run executes in a Workflow, in a different
-isolate from any request, so a live stream would have to poll `agent_run_events` per connection or
-fan out through the DO — a feature, not a mapping; the WS nudge plus the poll already gives
-sub-second updates and "DB is the truth, WebSocket is a nudge" is load-bearing; and SSE-per-run
-holds a Worker invocation open for minutes. Members list and
+**A run reads back LIVE too: `GET /api/agents/runs/:id/agui/stream` (issue #7).** A run executes in
+a Workflow, in a different isolate from any request, so the stream is a **poll of
+`agent_run_events` held on one open connection** — `services/agents/run-stream.ts` tails
+`WHERE (tenant_id, run_id) AND seq > $cursor LIMIT 200`, pushes each row through the resumable
+projector and writes it as spec AG-UI. Measure it against what it replaces rather than against
+zero: every 3 s the old poll did `getRun` + `reconcileRun` (*a Workflow subrequest*) +
+`listEvents` returning every row unbounded, so this is **cheaper per unit of wall clock at six
+times the resolution**. GET, so a third-party client can use a bare `EventSource`; `?afterSeq=`
+beats `Last-Event-ID` when both arrive.
+
+Carrying the payload on the WebSocket nudge instead was rejected on **tenant isolation**, not
+taste: `NotificationsHub` fans out per tenant while run visibility is per run, so a nudge carrying
+the payload would broadcast one member's assistant text, tool inputs and document excerpts to every
+socket in the tenant — and "DB is the truth, WebSocket is a nudge" stays load-bearing. A per-run
+Durable Object fan-out is the future seam for TOKENS, which are the one payload legitimately not
+durable; a push can always be missed, so the `seq` tail would still be needed underneath it.
+
+Four rules hold the stream together, and each is a bug if broken. **The SSE `id:` goes on the last
+frame of a row's group and on no other frame in it** — one durable row is not one AG-UI event, and
+a cursor on the first frame means a mid-group drop leaves the client holding a text message that
+never closes. **A read-stream failure emits no `RUN_ERROR`**, a deliberate inversion of the chat
+rule (there the stream IS the run; here it is a read of something durable), so closing with no
+terminal event means *reconnect* — redeploy, idle cap, 10-minute duration cap, transport error,
+abort. **`reconcileRun` runs once, before the first frame, never in the loop.** And **no `: ping`
+comment frame on the protobuf wire**, which has no cursor either. A **parked** run needs no branch:
+the projector already answers `awaiting_input` with the interrupt outcome, so the connection closes
+and a seven-day park costs no connection, no query and no invocation — degrading exactly to the
+architecture that was already there. Members list and
 cancel their own runs; admin+ every run in the tenant. The tool loop runs inside ONE `execute` step, and
 **that is now a decision, not a gap** — one `step.do` per model turn was investigated and rejected
 (see the Known gaps below for the evidence). Two examples ship, one per shape. `summarize-text` (the
@@ -1224,7 +1247,10 @@ because `@ag-ui/proto@0.0.59` has no message for it; `@ag-ui/core` is `0.0.x` an
 docs already describe fields the installed version lacks, so a minor bump can rename a schema and
 change the wire format for every adopted copy — the exact pin plus `agui-contract.test.ts` is the
 mitigation and the residual risk is real; the agent projection has no `kit.usage` and no error flag
-on a tool result; live run streaming with `Last-Event-ID` replay is still deferred. Chat tools —
+on a tool result; the run stream honours `Last-Event-ID` but **the protobuf transport has no
+cursor at all** (it has no SSE framing), so a binary client must resume by `?afterSeq=`, and the
+stream carries only durable ROWS — token-by-token text for a run would need the per-run Durable
+Object fan-out, which is not built. Chat tools —
 `CHAT_MAX_TOOL_TURNS` is a constant, not a var; a tool-calling chat costs more per turn and stops
 streaming token by token on `workers_ai`; `get_document`'s window is capped by the CALLER
 (`AgentToolContext.maxDocumentChars` — 50 000 for an agent run, `CHAT_GET_DOCUMENT_MAX_CHARS`
@@ -1276,7 +1302,7 @@ timeline doubles on replay, and `runToolLoop`'s `max_turns` stop reason would mi
 `research-topic` salvage on every non-final turn. Revisit only if an agent ever does heavy CPU
 *between* model calls; no budgets or
 quotas over `ai_usage` and no price table; prompt versioning, an evals harness, Bedrock/Azure/Gemini
-adapters, SSE `Last-Event-ID` replay for run progress and an orphan-run cron (reconcile-on-read
+adapters, a per-run Durable Object fan-out for live TOKENS and an orphan-run cron (reconcile-on-read
 replaced it) are deferred; the demo seed's chunk vectors are deterministic hash vectors
 (`services/ai/deterministic-embedding.ts`, `embeddingModel: 'seed:deterministic'` — a `tsx` script
 has no embeddings provider), so against a query embedded by the real provider dense retrieval over

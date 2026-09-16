@@ -93,6 +93,19 @@ export const queryKeys = {
     all: ['agent-run'] as const,
     list: (filters: object = {}) => ['agent-run', 'list', filters] as const,
     detail: (id: string) => ['agent-run', 'detail', id] as const,
+    /** `GET /runs/:id?events=0` — the bare row, one indexed read, refreshed by the nudge. */
+    row: (id: string) => ['agent-run', 'row', id] as const,
+  },
+  /**
+   * The run's AG-UI timeline (issue #7) — **its own root on purpose, and it must stay out of
+   * `REALTIME_INVALIDATIONS`.** The kit's convention is that an `entity.changed` entity string IS
+   * a query-key root, and the runtime nudges `entity: 'agent-run'` on EVERY durable row it writes.
+   * Park this list under `['agent-run']` and each of those nudges throws away the list the stream
+   * just built and re-fetches the whole run — turning the stream into a more expensive poll.
+   */
+  agentRunAgui: {
+    all: ['agent-run-agui'] as const,
+    detail: (id: string) => ['agent-run-agui', id] as const,
   },
   /** `/api/ai/documents` — the tenant knowledge base and its search (D18) */
   documents: {

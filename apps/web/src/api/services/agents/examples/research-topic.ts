@@ -205,7 +205,14 @@ export const researchTopicAgent: AgentDefinition<ResearchTopicInput, ResearchTop
         if (event.kind === 'text') {
           await ctx.emit({ type: 'text', data: { text: event.text } })
         } else if (event.kind === 'tool_call') {
-          await ctx.emit({ type: 'tool.start', data: { name: event.name, input: event.input } })
+          // The model's own call id travels with the row so the AG-UI projection can pair this
+          // start with its end. Pairing by tool NAME alone is wrong the moment one turn makes two
+          // `search_knowledge` calls: the second start overwrites the first and both results are
+          // attributed to the second call.
+          await ctx.emit({
+            type: 'tool.start',
+            data: { name: event.name, input: event.input, toolCallId: event.toolUseId },
+          })
         } else {
           await ctx.checkCancelled()
           collectDocuments(event.resultText, seen)
@@ -213,6 +220,7 @@ export const researchTopicAgent: AgentDefinition<ResearchTopicInput, ResearchTop
             type: 'tool.end',
             data: {
               name: event.name,
+              toolCallId: event.toolUseId,
               isError: event.isError,
               // Structured and previewed, not a truncated JSON string: this row IS the audit trail
               // for "where did the answer come from?".

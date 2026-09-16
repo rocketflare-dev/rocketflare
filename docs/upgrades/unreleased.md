@@ -317,6 +317,91 @@ recipient, behind `claimEffect('notify:<interruptId>')`, and falls back to the t
 `approvers: 'admin'` agent **or a system-triggered run with no requester** — a parked run nobody is
 told about is a hung agent.
 
+### Phase 6 — live run progress (issue #7)
+
+A run's timeline now fills in about 500 ms instead of three-second lumps, resumably, **without
+holding a connection for a seven-day park**.
+
+**`GET /api/agents/runs/:id/agui/stream`** (`api/services/agents/run-stream.ts`) tails
+`agent_run_events` on one open connection and frames each new row as spec AG-UI. Measured against
+what it replaces — every 3 s, `getRun` + `reconcileRun` (*a Workflow `instance.status()`
+subrequest*) + `listEvents` returning every row unbounded — it is cheaper per unit of wall clock at
+six times the resolution: one bounded, indexed `WHERE (tenant_id, run_id) AND seq > $cursor LIMIT
+200` that usually returns nothing, plus the run row.
+
+GET rather than POST because `csrf.ts` passes GET, `/api` is already in `run_worker_first` (**no
+toml change**), and a third-party AG-UI client can then use a bare `EventSource` — which is the
+only reason `Last-Event-ID` is honoured at all. **`?afterSeq=` wins when both are present**: the
+kit's own client is explicit and a stale browser value must never override it.
+
+Four rules, each of which is a bug if broken:
+
+- **`id:` goes on the LAST frame of a row's group and on no other frame in it.** One row is not one
+  AG-UI event — a `text` row is `START → CONTENT → END`. Put the cursor on the first frame and a
+  drop mid-group leaves the browser's `Last-Event-ID` already past the row, the resume starts after
+  it, and the client holds a text message that **never closes, for ever, with no error**. Replaying
+  a whole group is free, because every id in it is derived from the row id.
+- **A read-stream failure emits no `RUN_ERROR`** — a deliberate *inversion* of the chat rule, now
+  written down in `.claude/rules/api.md`. `chat-turn.ts` is right to emit one: there the stream IS
+  the run. Here the run is a durable Workflow in another isolate and is almost certainly fine, so
+  the stream logs and closes silently. **Closing with no terminal event means "reconnect",
+  uniformly** — redeploy, idle cap, duration cap, transport error, client abort.
+- **`reconcileRun` runs exactly once, at open, never in the loop.** It is a Workflow subrequest per
+  call; a ten-minute stream would spend ~1 200 of them on a question the tail already answers.
+- **Protobuf has no cursor and no comments.** A binary client resumes by `?afterSeq=` only, and a
+  `: ping` comment frame written into a binary stream is not a valid protobuf frame — it poisons
+  everything after it.
+
+**A parked run needed no code in the route.** The projector already returns
+`RUN_FINISHED { outcome: { type: 'interrupt' } }` for `awaiting_input`, so the generic terminal
+branch fires and the connection closes. A run parked for seven days therefore holds no connection,
+no query and no invocation, and the page re-opens on the existing nudge when the answer lands —
+which degrades exactly to the architecture that was already there.
+
+**The projection became resumable** (`createRunProjector(run) → { head, push, finish }`, with
+`projectRunToAgui` a fold over it and an equivalence test pinning the two together). `finish` takes
+the run as an **argument**, not from the closure: in a stream the row changes underneath you.
+
+**The tool-call pairing bug is fixed here.** `agui-projection.ts` keyed open tool calls by tool
+**name** — harmless while the loop was sequential, catastrophic the day one turn makes two
+`search_knowledge` calls, because the second start overwrites the first and *both* results are
+attributed to the second call. The runtime now writes the model's `toolCallId` into the `data` of
+both `tool.start` and `tool.end`, the projector keys on `data.toolCallId ?? name`, and **the
+emitted AG-UI `toolCallId` is still `event.id`** — "the event row ids ARE the AG-UI ids" is a
+documented invariant. Rows written before this project exactly as they did.
+
+**Text stays one row per assistant turn, and that is not a trade-off.** A 2 000-token answer as
+2 000 rows is ≈ 800 KB per turn, permanently, replayed in full by three endpoints — and because a
+Workflow step must await every write, ~4 seconds of added latency per turn, *spent making the run
+slower in order to look faster*. The real complaint is silence while a tool runs, and the fix for
+that is **more `step` and `tool.*` rows**, which are genuine durable facts landing at 500 ms.
+Tokens are the one payload legitimately not durable; a per-run Durable Object fan-out is the seam
+for them, built on top of this, later.
+
+Contracts and client:
+
+- `AgentRunAguiResponse` gains **`lastSeq`**. AG-UI events carry no sequence of their own, so
+  without it a client that fetched the snapshot has no resume cursor and every reconnect replays
+  the whole run.
+- `RUN_STREAM_FALLBACK_ATTEMPTS = 3` joins the `RUN_STREAM_*` constants.
+- `readSse`'s `onEvent` gains the raw frame as a second argument (purely additive — `aguiStream.ts`
+  ignores it); the frame's `id` is the cursor, and parsing it only to discard it put it out of reach.
+- `ui/lib/runAguiStream.ts` is the transport (`streamRunAgui` → `{ lastSeq, received, terminal,
+  aborted }`). **Reconnect lives in the hook, not the transport.**
+- `ui/hooks/useRunStream.ts` is the hook: `useRunStream(runId, { enabled })` → `{ events,
+  isLoading, connected, fallback, lastSeq, terminal }`, plus `streamEnabled(status)`. It is
+  **additive** — the run page is built against the poll path, and deleting this hook must leave a
+  working page.
+- **The cache rule, flatly:** the stream is the only writer of `['agent-run-agui', id]`, appends to
+  it with `setQueryData`, and never touches the run row. A terminal frame invalidates
+  `queryKeys.agentRuns.all` **once**. Nothing else — and a terminal status is never synthesised
+  client-side, which is how a UI comes to claim success for a run the server later marks failed.
+- **`['agent-run-agui']` is deliberately absent from `REALTIME_INVALIDATIONS`.** The kit's
+  convention is that an `entity.changed` entity string IS a query-key root, and the runtime nudges
+  `entity: 'agent-run'` on **every** row it writes. Park the accumulated list under `['agent-run']`
+  and each of those nudges throws away what the stream just built — **turning the stream into a
+  more expensive poll.** There is a UI test on it.
+
 ## How to apply
 
 Take the four `packages/shared/src/ai/` files and `errors.ts` as written — they are appends, so a
@@ -360,6 +445,19 @@ its own. Two edits are NOT additive and are easy to miss when resolving by hand:
 silently drops every ask and artifact from the timeline. If your UI asserts on the AG-UI sequence of
 a run, note that **`STATE_SNAPSHOT` is now the second event of every projection**.
 
+Phase 6 is additive except for three edits that are easy to miss. `projectRunToAgui` is now a fold
+over `createRunProjector`; take the whole file, because the tool-call pairing fix lives inside it and
+a partial merge that keeps the old name-keyed map silently mis-attributes parallel tool results. An
+agent of your own that emits `tool.start` / `tool.end` should start passing the model's
+`toolCallId` in both (one property each; omitting it keeps the old name-pairing behaviour). And
+`AgentRunAguiResponse` gains `lastSeq`, so any hand-built response object of that type stops
+compiling until it supplies one — take the `events.at(-1)?.seq ?? 0` from `routes/agents.ts`.
+
+The client half is entirely new files plus one additive signature (`readSse`'s `onEvent`), so a copy
+that restyled its run page can take `lib/runAguiStream.ts`, `hooks/useRunStream.ts` and the two
+`query-keys.ts` entries and wire them when it wants to. **Do not put `['agent-run-agui']` in
+`REALTIME_INVALIDATIONS`** — the reason is in the phase note above, and the failure is silent.
+
 ## Conflicts to expect
 
 `packages/shared/src/ai/agents.ts` is the one file with several separate hunks (imports, the status
@@ -399,3 +497,17 @@ the capability snapshot, the interrupt outcome, the empty-pending park and the f
 events.
 After migrating, the index predicate should read
 `WHERE status = ANY (ARRAY['queued','running','awaiting_input'])` in `pg_indexes`.
+
+For phase 6, `apps/web/tests/api/agent-run-stream.test.ts` proves 403 / 404 / 400 land **before the
+first frame**, that `?afterSeq=` wins over `Last-Event-ID` and a resume omits the head, that `id:`
+appears **only on the last frame of each row's group** and a mid-group drop resumes at the previous
+row, that a parked run emits the interrupt outcome and **closes** (the seven-day test), that the
+idle and duration caps close with **no** terminal event, that a body error emits **no `RUN_ERROR`**,
+that a protobuf `Accept` produces no `id:` lines and **no comment frames**, and that `reconcileRun`
+is called **exactly once** (spied on the binding). `apps/web/tests/api/agui-projection.test.ts`
+proves the projector equivalence — `projectRunToAgui(run, rows)` ≡
+`head + rows.flatMap(push) + finish(run)` — that two parallel calls to the same tool pair correctly,
+and that rows without `toolCallId` pair by name exactly as before.
+`apps/web/tests/ui/run-stream.test.tsx` proves the client's cursor only moves on a frame that
+carries one, the `streamEnabled` matrix, the three-empty-connections fallback, and that a run nudge
+leaves `['agent-run-agui']` untouched.

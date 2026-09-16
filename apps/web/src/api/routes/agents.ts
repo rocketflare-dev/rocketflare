@@ -38,6 +38,7 @@ import {
   toAgentRunInterrupt,
 } from '../services/agents/interrupts'
 import { AGENTS, isAgentKey, listAgentInfo } from '../services/agents/registry'
+import { streamRunAgui } from '../services/agents/run-stream'
 import {
   appendEventAtomic,
   enqueueRun,
@@ -218,9 +219,54 @@ agentsRouter.get('/runs/:id/agui', async c => {
       interrupts: interrupts.map(toAgentRunInterrupt),
       artifacts: artifacts.map(toAgentArtifact),
     }),
+    // The cursor a client hands `?afterSeq=` to tail from here. AG-UI events carry no sequence of
+    // their own, so without it every reconnect replays the whole run.
+    lastSeq: events.at(-1)?.seq ?? 0,
   }
   return c.json(body)
 })
+
+// ---- GET /api/agents/runs/:id/agui/stream ---------------------------------------------------------
+
+/**
+ * The same projection, live (issue #7). GET rather than POST on purpose: `csrf.ts` passes GET, and
+ * a third-party AG-UI client can then open it with a bare `EventSource` — which is the only reason
+ * `Last-Event-ID` is honoured at all. **`?afterSeq=` wins when both are present**: the kit's own
+ * client is explicit, and a stale browser value must never override it.
+ *
+ * Everything that can fail is JSON and happens HERE, above `streamRunAgui` — the ability, the uuid,
+ * the 404 for a run this caller cannot see, `reconcileRun` (via `loadRun`, **exactly once, never in
+ * the loop**: it is a Workflow subrequest per call) and a garbage cursor. After the first frame the
+ * only thing left to say is nothing at all (decision 6).
+ */
+agentsRouter.get('/runs/:id/agui/stream', async c => {
+  withAuthAndDb(c)
+  guardPermission(c, 'read', 'AgentRun')
+  const run = await loadRun(c, uuidParam(c, 'id'))
+  return streamRunAgui(c, run, resolveStreamCursor(c))
+})
+
+/**
+ * The resume cursor. An explicit `?afterSeq=` that is not a non-negative integer is a **400** — the
+ * client meant something and got it wrong, and silently rewinding it to 0 would replay a long run
+ * as if nothing had happened. A malformed `Last-Event-ID` is merely ignored: the browser sets that
+ * one, a value from an older build is not the caller's mistake, and a full replay is always correct.
+ */
+function resolveStreamCursor(c: AppContext): number {
+  const explicit = c.req.query('afterSeq')
+  if (explicit !== undefined) {
+    const value = Number(explicit)
+    if (!Number.isInteger(value) || value < 0) {
+      throw new ValidationError(
+        [{ path: ['afterSeq'], message: 'afterSeq must be a non-negative integer' }],
+        'Invalid cursor'
+      )
+    }
+    return value
+  }
+  const header = Number(c.req.header('Last-Event-ID'))
+  return Number.isInteger(header) && header >= 0 ? header : 0
+}
 
 // ---- POST /api/agents/runs/:id/cancel -------------------------------------------------------------
 

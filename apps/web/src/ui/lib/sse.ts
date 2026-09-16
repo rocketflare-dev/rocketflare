@@ -94,11 +94,16 @@ export function isAbortError(error: unknown): boolean {
  * Read a `text/event-stream` response to the end, calling `onEvent` for every frame `parse`
  * accepts. Resolves when the server closes the stream or the signal aborts; rejects only on a
  * transport error. The caller decides what a missing terminal event means.
+ *
+ * `onEvent` receives the raw {@link SseFrame} as a second argument, because a frame's `id` IS the
+ * resume cursor for a route that has one (`GET /runs/:id/agui/stream` writes the event `seq`
+ * there) and parsing it out only to discard it would put that cursor out of reach. Additive: a
+ * caller that does not resume — `aguiStream.ts` — simply ignores it.
  */
 export async function readSse<T>(
   response: Response,
   parse: SseFrameParser<T>,
-  onEvent: (event: T) => void,
+  onEvent: (event: T, frame: SseFrame) => void,
   { signal, onInvalid }: ReadSseOptions = {}
 ): Promise<void> {
   if (!response.body) throw new Error('SSE response has no body')
@@ -119,7 +124,7 @@ export async function readSse<T>(
       onInvalid?.(frame, parsed.reason)
       return
     }
-    onEvent(parsed.event)
+    onEvent(parsed.event, frame)
   }
 
   const onAbort = () => {

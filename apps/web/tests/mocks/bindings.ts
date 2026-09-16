@@ -377,6 +377,8 @@ export class RecordingWorkflow {
   readonly terminated: string[] = []
   /** Every `sendEvent` that was delivered, in order. */
   readonly events: RecordedWorkflowEvent[] = []
+  /** Instance ids `status()` was asked about, in order — the spy for "reconcile ran exactly once". */
+  readonly statusCalls: string[] = []
   /** Make `sendEvent` fail the way a retention-expired or dev-restarted instance does. */
   notFoundOnSendEvent = false
   defaultStatus: FakeInstanceStatus = { status: 'running' }
@@ -405,7 +407,10 @@ export class RecordingWorkflow {
   private instance(id: string) {
     return {
       id,
-      status: async (): Promise<FakeInstanceStatus> => this.statuses.get(id) ?? this.defaultStatus,
+      status: async (): Promise<FakeInstanceStatus> => {
+        this.statusCalls.push(id)
+        return this.statuses.get(id) ?? this.defaultStatus
+      },
       pause: async () => {},
       resume: async () => {},
       terminate: async () => {
@@ -426,6 +431,7 @@ export class RecordingWorkflow {
     this.created.length = 0
     this.terminated.length = 0
     this.events.length = 0
+    this.statusCalls.length = 0
     this.notFoundOnSendEvent = false
     this.statuses.clear()
   }

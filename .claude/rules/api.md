@@ -54,6 +54,21 @@ Auth is per-mount, not global: the public surface is enumerable and small.
   subject. **The nav is not the only door** — a feature with cubes or a dashboard template must gate
   those too, and the template one creates rows (`ensureDefaultDashboards` runs on every `GET /pages`)
 - `TENANCY_MODE=single` (D25): routes that only make sense multi-tenant (`create-org`, `delete-org`, `/select-tenant`, `/admin/tenants` list) return 404 `tenancy_mode_single`; use the `requireMultiTenant` helper, don't inline the check
+- **A READ stream is not a write stream, and the terminal convention INVERTS** (issue #7,
+  `services/agents/run-stream.ts`). `chat-turn.ts` emits `RUN_ERROR` when its body throws, and it is
+  right to: there the stream IS the run. A route that merely TAILS something durable — a Workflow in
+  another isolate — owns nothing, so **it emits no `RUN_ERROR` for its own failure**; it logs and
+  closes. Closing with no terminal event means *reconnect*, uniformly, for a redeploy, an idle cap, a
+  duration cap, a transport error and a client abort. Three rules come with it: **the SSE `id:` goes
+  on the LAST frame of a row's group and on no other frame in it** (one durable row is not one AG-UI
+  event — a `text` row is `START → CONTENT → END`; put the cursor on the first frame and a mid-group
+  drop leaves the client holding a message that never closes, for ever, with no error, while
+  replaying a whole group is free because every id in it derives from the row id); **never
+  `reconcileRun` — or any other Workflow/DO subrequest — inside the loop**, only once, before the
+  first frame; and **never write a `: ping` comment frame when the negotiated transport is binary**,
+  because it is not a valid protobuf frame and poisons everything after it. `?afterSeq=` beats
+  `Last-Event-ID` when both arrive (an explicit client must win over a stale browser value), a
+  garbage explicit cursor is a 400 and a garbage header is ignored
 - **Streaming routes speak AG-UI** (`services/ai/chat-turn.ts` is the ONE implementation; `routes/chat.ts` and `routes/agui.ts` are wrappers around it): resolve, authorise, validate and write anything that can fail as JSON **before** the stream opens — after the first frame a failure can only be a `RUN_ERROR`. Inside the stream use `streamDatabase(c)` (`utils/routes/route-helpers.ts`) for every write and close it in the stream's `finally`: `databaseMiddleware` ends the request's `db` in `waitUntil` the moment the Response object is returned, which is BEFORE the stream body runs. Transport is hono's generic `stream(c, cb)` plus `createAguiEncoder(c.req.header('Accept'))` (`services/ai/agui.ts`) — **never `streamSSE`**, whose `writeSSE` imposes an `event:` line and pins the content type, and spec AG-UI frames are `data:` only. `encodeBinary` covers SSE and protobuf in one path; await every write and the tracer flush inside the stream — there is no `defer` after the Response. A cancelled run emits NOTHING: closing with neither `RUN_FINISHED` nor `RUN_ERROR` IS the cancellation signal
 
 ## Contracts live in `packages/shared` (`@rocketflare/shared`)

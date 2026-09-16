@@ -13,7 +13,7 @@ import {
 import type { AgentArtifact } from '@rocketflare/shared/ai/artifacts'
 import type { AgentRunInterrupt } from '@rocketflare/shared/ai/interrupts'
 import { describe, expect, it } from 'vitest'
-import { projectRunToAgui } from '@/api/services/agents/agui-projection'
+import { createRunProjector, projectRunToAgui } from '@/api/services/agents/agui-projection'
 import { agentRunEvents, agentRuns } from '@/db/schema'
 import { aguiTypes, customEvent, customEvents } from '../helpers/ai'
 import {
@@ -292,6 +292,94 @@ describe('projectRunToAgui', () => {
       event('tool.end', { name: 't', isError: true }),
     ])
     for (const e of out) expect(kitAguiEventSchema.safeParse(e).success).toBe(true)
+  })
+})
+
+describe('createRunProjector (the resumable form)', () => {
+  const rows = () => [
+    event('status', { status: 'running' }),
+    event('step', { key: 'search', label: 'Searching', status: 'running' }),
+    event('text', { text: 'Thinking about it.' }),
+    event('tool.start', { name: 'search_knowledge', input: { query: 'x' }, toolCallId: 'call_a' }),
+    event('tool.end', { name: 'search_knowledge', result: { hits: 1 }, toolCallId: 'call_a' }),
+    event('step', { key: 'search', label: 'Searching', status: 'done', detail: '1 hit' }),
+  ]
+
+  it('is equivalent to the whole-array projection, event for event', () => {
+    // The stream and the finite read MUST agree about what a run looked like. `projectRunToAgui`
+    // is written as this fold today; the assertion is what stops a later "optimisation" that
+    // inlines one of them from silently giving two clients two different runs.
+    const events = rows()
+    const settled = run({ status: 'succeeded', output: { answer: 'yes' } })
+    const projector = createRunProjector(settled)
+    const folded = [
+      ...projector.head(),
+      ...events.flatMap(e => projector.push(e)),
+      ...projector.finish(settled),
+    ]
+    expect(folded).toEqual(projectRunToAgui(settled, events))
+  })
+
+  it('finish reads the run it is GIVEN, not the one the projector opened on', () => {
+    // In a stream the row changes underneath you: the run this projector opened on was `running`.
+    const opening = run({ status: 'running' })
+    const projector = createRunProjector(opening)
+    expect(projector.finish(opening)).toEqual([])
+    const settled = run({ status: 'succeeded', output: { answer: 'yes' } })
+    expect(projector.finish(settled)).toEqual([
+      { type: 'RUN_FINISHED', threadId: RUN_ID, runId: RUN_ID, result: { answer: 'yes' } },
+    ])
+  })
+
+  it('head is only the two opening events, so a resume can skip it', () => {
+    expect(aguiTypes(createRunProjector(run()).head())).toEqual(['RUN_STARTED', 'STATE_SNAPSHOT'])
+  })
+})
+
+describe('tool-call pairing', () => {
+  it('pairs two parallel calls to the SAME tool by the model’s call id', () => {
+    const startA = event('tool.start', { name: 'search_knowledge', toolCallId: 'call_a' })
+    const startB = event('tool.start', { name: 'search_knowledge', toolCallId: 'call_b' })
+    const endB = event('tool.end', { name: 'search_knowledge', toolCallId: 'call_b', result: 'B' })
+    const endA = event('tool.end', { name: 'search_knowledge', toolCallId: 'call_a', result: 'A' })
+    const out = projectRunToAgui(run(), [startA, startB, endB, endA])
+    const results = out.filter(e => e.type === 'TOOL_CALL_RESULT') as {
+      toolCallId: string
+      content: string
+    }[]
+    // Keyed by name alone, the second start overwrote the first and BOTH results claimed call B.
+    expect(results.map(r => r.toolCallId)).toEqual([startB.id, startA.id])
+    expect(results.map(r => JSON.parse(r.content).result)).toEqual(['B', 'A'])
+  })
+
+  it('leaves the emitted toolCallId as the START row’s id — the ids are the row ids', () => {
+    const start = event('tool.start', { name: 'get_document', toolCallId: 'call_z' })
+    const end = event('tool.end', { name: 'get_document', toolCallId: 'call_z' })
+    const out = projectRunToAgui(run(), [start, end])
+    for (const e of out) {
+      if (e.type === 'TOOL_CALL_START' || e.type === 'TOOL_CALL_RESULT') {
+        expect(e.toolCallId).toBe(start.id)
+      }
+    }
+  })
+
+  it('keeps the arguments free of the pairing id', () => {
+    const start = event('tool.start', {
+      name: 'search_knowledge',
+      input: { q: 'x' },
+      toolCallId: 'c',
+    })
+    const out = projectRunToAgui(run(), [start])
+    const args = out.find(e => e.type === 'TOOL_CALL_ARGS') as { delta: string }
+    expect(JSON.parse(args.delta)).toEqual({ q: 'x' })
+  })
+
+  it('pairs rows written BEFORE toolCallId existed by name, exactly as before', () => {
+    const start = event('tool.start', { name: 'search_knowledge', input: { q: 'x' } })
+    const end = event('tool.end', { name: 'search_knowledge', result: 'old' })
+    const out = projectRunToAgui(run(), [start, end])
+    const result = out.find(e => e.type === 'TOOL_CALL_RESULT') as { toolCallId: string }
+    expect(result.toolCallId).toBe(start.id)
   })
 })
 

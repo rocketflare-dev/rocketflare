@@ -169,12 +169,12 @@ event the runtime writes blows away the list the stream just built, triggering a
 
 ## Done when
 
-- [ ] `?afterSeq=` wins over `Last-Event-ID`; resume omits `RUN_STARTED`
-- [ ] **`id:` appears only on the last frame of each row's group**, and a mid-group drop resumes at
+- [x] `?afterSeq=` wins over `Last-Event-ID`; resume omits `RUN_STARTED`
+- [x] **`id:` appears only on the last frame of each row's group**, and a mid-group drop resumes at
       the previous row
-- [ ] a parked run emits the interrupt outcome and **closes** (the seven-day test)
-- [ ] idle and duration caps close with **no** terminal event; a body error emits no `RUN_ERROR`
-- [ ] under a protobuf `Accept`: no `id:` lines, **no comment frames**, `TOOL_CALL_RESULT` still dropped
-- [ ] `reconcileRun` called **exactly once** (spy on the binding)
-- [ ] projector equivalence: `projectRunToAgui(run, rows)` ≡ `head + rows.flatMap(push) + finish(run)`
-- [ ] two parallel calls to the same tool pair correctly; rows without `toolCallId` pair by name as before
+- [x] a parked run emits the interrupt outcome and **closes** (the seven-day test)
+- [x] idle and duration caps close with **no** terminal event; a body error emits no `RUN_ERROR`
+- [x] under a protobuf `Accept`: no `id:` lines, **no comment frames**, `TOOL_CALL_RESULT` still dropped
+- [x] `reconcileRun` called **exactly once** (spy on the binding)
+- [x] projector equivalence: `projectRunToAgui(run, rows)` ≡ `head + rows.flatMap(push) + finish(run)`
+- [x] two parallel calls to the same tool pair correctly; rows without `toolCallId` pair by name as before

@@ -94,14 +94,26 @@ export async function aguiFrames(res: Response): Promise<KitAguiEvent[]> {
     .map(data => kitAguiEventSchema.parse(JSON.parse(data)))
 }
 
-/** Every frame of an SSE body, split into its `event:` (if any) and joined `data:` lines. */
-export function splitSseFrames(text: string): { event: string | null; data: string }[] {
+/**
+ * Every frame of an SSE body, split into its `event:` (if any), its `id:` (if any) and the joined
+ * `data:` lines. A frame with no `data:` — a `: ping` comment — keeps its raw text, so a test can
+ * assert that a binary transport wrote no comment frames at all.
+ */
+export function splitSseFrames(
+  text: string
+): { event: string | null; id: string | null; data: string; raw: string }[] {
   return text
     .split('\n\n')
     .filter(raw => raw.trim())
     .map(raw => {
       const lines = raw.split('\n')
       return {
+        raw,
+        id:
+          lines
+            .find(l => l.startsWith('id:'))
+            ?.slice(3)
+            .trim() ?? null,
         event:
           lines
             .find(l => l.startsWith('event:'))
