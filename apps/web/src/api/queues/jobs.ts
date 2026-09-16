@@ -22,7 +22,6 @@ import { handleChatCompact } from './handlers/chat-compact'
 import { handleDocumentConvert } from './handlers/document-convert'
 import { handleDocumentIndex } from './handlers/document-index'
 import { handleEmailSend } from './handlers/email-send'
-import { handleExamplePing } from './handlers/example-ping'
 
 /** What every handler receives: the bindings, validated config, a job-scoped logger and a DB. */
 export interface JobContext {
@@ -54,7 +53,6 @@ export interface JobsConsumerDeps {
 const coreHandlers: { [T in CoreJobType]: JobHandler<T> } = {
   'email.send': handleEmailSend,
   'activity.record': handleActivityRecord,
-  'example.ping': handleExamplePing,
   'document.index': handleDocumentIndex,
   'document.convert': handleDocumentConvert,
   'chat.compact': handleChatCompact,

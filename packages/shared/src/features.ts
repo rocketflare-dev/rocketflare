@@ -41,7 +41,20 @@ export const FEATURE_ROLLOUT_UNITS = ['tenant', 'user'] as const
 export const featureRolloutUnitSchema = z.enum(FEATURE_ROLLOUT_UNITS)
 export type FeatureRolloutUnit = z.infer<typeof featureRolloutUnitSchema>
 
-export const featureNameSchema = z.enum(FEATURES)
+/**
+ * A key the running deployment actually has (D30, D31).
+ *
+ * **Not `z.enum(FEATURES)`**, and not for style: `FEATURES` is `[...CORE_FEATURES, ...plugins]`,
+ * `CORE_FEATURES` is now empty (the kit's own demonstration flag ships as the `example-feature`
+ * PLUGIN), and a `z.enum` needs a non-empty TUPLE — an array of strings is a type error there.
+ * A refined `z.string()` is the same runtime check and the same output type, and it keeps
+ * validating against whatever is installed rather than against what was compiled in.
+ */
+export const featureNameSchema = z
+  .string()
+  .refine((value): value is FeatureName => (FEATURES as readonly string[]).includes(value), {
+    message: 'Unknown feature',
+  })
 
 export interface FeatureDefinition {
   /** Shown in `/admin`; the key is what code uses. */
@@ -60,23 +73,16 @@ export interface FeatureDefinition {
 }
 
 /**
- * Every flag the KIT ships. Keys come from `CORE_FEATURES` in `permissions.ts`, so a typo anywhere
- * that gates on one is a type error rather than a route that 404s for ever.
+ * Every flag the KIT itself ships — none, deliberately. Keys come from `CORE_FEATURES` in
+ * `permissions.ts`, so a typo anywhere that gates on one is a type error rather than a route that
+ * 404s for ever.
  *
- * `example-feature` is the kit's inert demonstration — it gates one nav item and nothing else.
- * Delete its line here and in `CORE_FEATURES` when you add your own.
+ * The kit's demonstration flag moved into the `example-feature` PLUGIN (D31), which is where both
+ * halves of a flag now arrive together: the key, its metadata, the nav item it gates, the mount it
+ * gates and the page behind it. An app that wants a flag of its own adds it here and to
+ * `CORE_FEATURES` — or, better, ships the whole feature as a plugin.
  */
-export const CORE_FEATURE_FLAGS = {
-  'example-feature': {
-    label: 'Example feature',
-    description:
-      'The kit’s demonstration flag. Gates one nav item so the whole path — environment, rollout, ' +
-      'override, session, nav — can be seen working. Safe to delete.',
-    defaultState: 'off',
-    defaultRolloutUnit: 'tenant',
-    environmentGated: false,
-  },
-} satisfies Record<string, FeatureDefinition>
+export const CORE_FEATURE_FLAGS = {} satisfies Record<string, FeatureDefinition>
 
 /**
  * Core flags plus every installed plugin's (D31). `SharedPlugin.features` is typed against the

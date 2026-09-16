@@ -85,6 +85,13 @@
       "when": 1789532467496,
       "tag": "0011_careful_bullseye",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1789575315645,
+      "tag": "0012_plugin-example-feature-0.1.0",
+      "breakpoints": true
     }
   ]
 }

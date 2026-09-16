@@ -24,4 +24,4 @@
  * the `one()` side on its own table (that is where `fields`/`references` live); it is only the
  * `many()` back-reference that cannot be contributed. Re-measure before relaxing this.
  */
-export {}
+export * from './example-feature/db/schema'

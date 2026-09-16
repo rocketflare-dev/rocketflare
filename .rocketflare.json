@@ -46,15 +46,35 @@
       ]
     },
     {
-      "id": "example-job-ping",
-      "kind": "example",
-      "label": "The example.ping smoke job",
-      "anchor": "apps/web/src/api/queues/handlers/example-ping.ts",
-      "paths": ["apps/web/src/api/queues/handlers/example-ping.ts"],
+      "id": "example-feature",
+      "kind": "plugin",
+      "label": "The example-feature reference plugin (flag, notes table, route, agent tool, CLI)",
+      "anchor": "apps/web/src/plugins/example-feature/plugin.json",
+      "paths": [
+        "apps/web/src/plugins/example-feature/**",
+        "packages/shared/src/plugins/example-feature/**",
+        "apps/cli/src/plugins/example-feature/**"
+      ],
       "registries": [
-        "apps/web/src/api/queues/jobs.ts#coreHandlers",
-        "packages/shared/src/jobs.ts#CORE_JOB_VARIANTS"
-      ]
+        "apps/web/src/plugins/server.ts",
+        "apps/web/src/plugins/ui.ts",
+        "apps/web/src/plugins/schema.ts",
+        "packages/shared/src/plugins/index.ts",
+        "apps/cli/src/plugins/index.ts"
+      ],
+      "source": {
+        "repo": "https://github.com/rocketflare-dev/rocketflare.git",
+        "subdir": "",
+        "version": "0.1.0",
+        "commit": null
+      },
+      "installedAt": "2026-09-16",
+      "requires": {
+        "kit": ">=0.5.0 <1.0.0",
+        "surfaces": [],
+        "plugins": []
+      },
+      "history": []
     },
     {
       "id": "example-cube-activity-events",

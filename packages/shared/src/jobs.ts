@@ -14,7 +14,7 @@
  */
 import { z } from 'zod'
 import { activityMetadataSchema } from './activity'
-import { type SHARED_PLUGINS, sharedPlugins } from './plugins'
+import { type DeclaredBy, type SHARED_PLUGINS, sharedPlugins } from './plugins'
 
 // ---- Payloads ------------------------------------------------------------------------------
 
@@ -41,13 +41,6 @@ export const activityRecordPayloadSchema = z.object({
   metadata: activityMetadataSchema.optional(),
 })
 export type ActivityRecordPayload = z.infer<typeof activityRecordPayloadSchema>
-
-/** The smoke-test job: logs and acks. Kept so the pipeline can be exercised end to end. */
-export const examplePingPayloadSchema = z.object({
-  tenantId: z.string().uuid(),
-  note: z.string().max(200).optional(),
-})
-export type ExamplePingPayload = z.infer<typeof examplePingPayloadSchema>
 
 /** Index (chunk + embed) a `documents` row too large to do inline at ingest (D18). */
 export const documentIndexPayloadSchema = z.object({
@@ -92,20 +85,19 @@ export type ChatCompactPayload = z.infer<typeof chatCompactPayloadSchema>
 export const CORE_JOB_VARIANTS = [
   z.object({ type: z.literal('email.send'), payload: emailSendPayloadSchema }),
   z.object({ type: z.literal('activity.record'), payload: activityRecordPayloadSchema }),
-  z.object({ type: z.literal('example.ping'), payload: examplePingPayloadSchema }),
   z.object({ type: z.literal('document.index'), payload: documentIndexPayloadSchema }),
   z.object({ type: z.literal('document.convert'), payload: documentConvertPayloadSchema }),
   z.object({ type: z.literal('chat.compact'), payload: chatCompactPayloadSchema }),
 ] as const
 
-type PluginJobVariant = NonNullable<(typeof SHARED_PLUGINS)[number]['jobs']>[number]
+type PluginJobVariant = NonNullable<DeclaredBy<(typeof SHARED_PLUGINS)[number], 'jobs'>>[number]
 
 /**
  * Core first, then every installed plugin's variants, as ONE tuple.
  *
  * The spread of an array into a tuple literal is what keeps `z.discriminatedUnion` happy: the type
  * is `[core…, ...PluginVariant[]]`, still non-empty in the type system however many plugins are
- * installed, because the kit's own six lead it. With no plugins the tail is `never[]` and this is
+ * installed, because the kit's own five lead it. With no plugins the tail is `never[]` and this is
  * exactly the list the kit had before.
  */
 export const JOB_VARIANTS = [

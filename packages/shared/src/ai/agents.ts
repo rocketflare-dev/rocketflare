@@ -7,7 +7,7 @@
  */
 import { z } from 'zod'
 import { paginationQuerySchema } from '../pagination'
-import { type SHARED_PLUGINS, sharedPlugins } from '../plugins'
+import { type DeclaredBy, type SHARED_PLUGINS, sharedPlugins } from '../plugins'
 import { agentArtifactEventDataSchema, agentArtifactSchema } from './artifacts'
 import {
   agentApproversSchema,
@@ -22,7 +22,7 @@ import { promptKeySchema } from './prompts'
 /** Stable identifier for each agent the KIT ships. Append LAST; an app extends this list. */
 export const CORE_AGENT_KEYS = ['summarize-text', 'research-topic'] as const
 
-type PluginAgentKey = NonNullable<(typeof SHARED_PLUGINS)[number]['agentKeys']>[number]
+type PluginAgentKey = NonNullable<DeclaredBy<(typeof SHARED_PLUGINS)[number], 'agentKeys'>>[number]
 
 /**
  * Core keys plus every installed plugin's (D31). `z.enum` needs a non-empty tuple and gets one

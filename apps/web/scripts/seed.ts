@@ -54,7 +54,6 @@ import {
   conversations,
   documentGroups,
   documents,
-  featureFlags,
   groupMembers,
   groups,
   groupTypes,
@@ -1870,15 +1869,6 @@ Before release, the export coordinator runs the pre-departure checklist — a ve
     usage: await countOf(aiUsage, inTenant(aiUsage)),
     facts: await countOf(tenantActivityDailyFacts, inTenant(tenantActivityDailyFacts)),
   }
-  // -- Feature flags (D30): the demo flag mid-rollout, so /admin has something to show -----------
-  // Deliberately `rollout` rather than `on`: a percentage is the state whose behaviour is worth
-  // seeing, and 50% counted in organisations means this tenant may or may not have it — which is
-  // the honest demonstration of a deterministic bucket, not a bug.
-  await db
-    .insert(featureFlags)
-    .values({ key: 'example-feature', state: 'rollout', rolloutPercent: 50, rolloutUnit: 'tenant' })
-    .onConflictDoNothing()
-
   log('')
   log(`Workspace ${tenant.slug} now holds (all rows, demo and otherwise):`)
   log(`  tenants        ${summary.tenants} in total`)

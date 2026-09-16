@@ -320,7 +320,7 @@ deleting.
 
 **Jobs (D7) — one queue, typed envelopes, poison never loops.** The contract is
 `@rocketflare/shared/jobs`: a discriminated union on `type` (`email.send`, `activity.record`,
-`example.ping`) wrapped in an envelope `{ id, type, payload, enqueuedAt, attempt? }`. The `type`
+`document.index`) wrapped in an envelope `{ id, type, payload, enqueuedAt, attempt? }`. The `type`
 string is the versioning seam — a breaking payload change ships as a new type (`email.send.v2`)
 with its own handler while the old one drains; there is no schema-version field. The producer
 (`enqueueJob` / `enqueueJobs`, batches of ≤ 100) validates the input and stamps the envelope; a
@@ -337,8 +337,10 @@ unknown queue is `ackAll()`ed so a stray binding can never retry forever.
 What is queued today: the invitation email (create, bulk, resend) and the access-request decision
 email, so those routes answer as soon as the row exists — the `email.send` payload carries the
 optional `link` so the `[email:dev]` console fallback still prints the accept URL. **The magic-link
-email stays inline** (a person is waiting on it; latency beats offloading). `example.ping` is the
-smoke job (logs and acks — enqueue it from any route to prove the pipeline under `wrangler dev`).
+email stays inline** (a person is waiting on it; latency beats offloading). `example-feature.ping`
+is the smoke job (logs and acks) and it now belongs to the `example-feature` PLUGIN (D31) rather
+to the kit — `POST /api/example-feature/ping`, or `rocketflare example-feature ping`, proves the
+pipeline under `wrangler dev`.
 Services that queue take the binding as a parameter: `createInvitation(db, cfg, logger, jobs,
 input)`, `decideAccessRequest(db, cfg, logger, jobs, input)`.
 
@@ -1646,7 +1648,7 @@ early-exits on it — without that, a copy inherits the kit's release discipline
 own first commit.
 
 **The surface manifest.** `surfaces[]` lists what the kit ships that is meant to be replaced:
-`kind: example` (the two example agents, `example.ping`, the two example cubes and their fact table,
+`kind: example` (the two example agents, the two example cubes and their fact table,
 the `tenant-overview` template, the three read-list CLI commands, the demo seed) and
 `kind: optional-feature` (chat, agents, knowledge, analytics — whole features an app may remove).
 Each has an **anchor file, and presence is `existsSync` on it**: the adopter keeps no bookkeeping,

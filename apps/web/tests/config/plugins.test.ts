@@ -216,29 +216,31 @@ describe('installed plugins', () => {
  * is where they belong: what they assert is that the derivations survive, not that a function
  * returns the right value.
  *
- * With no plugins installed the first half pins the CORE shape (a closed set that quietly widened
- * to `string` would still pass every runtime test in the repo). The second half is the half that
- * means something: a FICTIONAL plugin, declared exactly as a real one is, showing that its keys
- * reach `JobTypeOf` / `AgentKeyOf` / `FeatureKeyOf` — the machinery `SHARED_PLUGINS` feeds once a
- * line is written into the barrel.
+ * The first half pins the CORE shape (a closed set that quietly widened to `string` would still
+ * pass every runtime test in the repo) and, now that the reference plugin is installed, that the
+ * kit's own set and the installed one are DIFFERENT — `JobType` is strictly wider than
+ * `CoreJobType`, which is the whole claim A2 makes. The second half is a FICTIONAL plugin, declared
+ * exactly as a real one is, showing that keys reach `JobTypeOf` / `AgentKeyOf` / `FeatureKeyOf`
+ * without anything being installed for it.
  */
 describe('the closed sets a plugin opens', () => {
-  it('still name the kit exactly, with nothing installed', () => {
-    expectTypeOf<JobType>().toEqualTypeOf<CoreJobType>()
-    expectTypeOf<JobType>().toEqualTypeOf<
-      | 'email.send'
-      | 'activity.record'
-      | 'example.ping'
-      | 'document.index'
-      | 'document.convert'
-      | 'chat.compact'
+  it('name the kit exactly, and widen for what is installed', () => {
+    expectTypeOf<CoreJobType>().toEqualTypeOf<
+      'email.send' | 'activity.record' | 'document.index' | 'document.convert' | 'chat.compact'
     >()
+    // The reference plugin (A3) contributes one, so `JobType` is strictly wider than the kit's set
+    // — which is the property the whole "variants are data" change bought.
+    expectTypeOf<JobType>().toEqualTypeOf<CoreJobType | 'example-feature.ping'>()
+    expectTypeOf<JobOf<'example-feature.ping'>['payload']['tenantId']>().toEqualTypeOf<string>()
     // The envelope narrows per type — what a handler is handed, and the reason `runHandler`'s
     // switch could go: this is the property that switch existed to provide.
     expectTypeOf<JobOf<'chat.compact'>['payload']['conversationId']>().toEqualTypeOf<string>()
+    // The reference plugin declares no agent, so this one is unchanged — which is also the proof
+    // that a plugin contributes to the sets it names and to no others.
     expectTypeOf<AgentKey>().toEqualTypeOf<'summarize-text' | 'research-topic'>()
-    // A plugin's subjects union in beside the kit's; with none installed `Subjects` is unchanged.
+    // A plugin's subjects union in beside the kit's.
     expectTypeOf<'Document'>().toMatchTypeOf<Subjects>()
+    expectTypeOf<'ExampleNote'>().toMatchTypeOf<Subjects>()
     expectTypeOf(queryKeys.members.all).toEqualTypeOf<readonly ['members']>()
   })
 

@@ -10,12 +10,48 @@ import {
   evaluateFeatures,
   evaluateFlag,
   FEATURE_FLAGS,
+  FEATURE_KEYS,
+  type FeatureDefinition,
   type FeatureFlagEvaluation,
   featureBucket,
 } from '@rocketflare/shared/features'
-import { describe, expect, it } from 'vitest'
+import type { FeatureName } from '@rocketflare/shared/permissions'
+import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
-const KEY = 'example-feature' as const
+/**
+ * A flag this suite REGISTERS itself, rather than one it borrows (D31).
+ *
+ * The kit ships no feature of its own any more — its demonstration flag is the `example-feature`
+ * plugin — so a suite keyed on a literal would test nothing in a bare kit and would break outright
+ * in an app that removed the plugin. What is under test here is the pure evaluation order, which
+ * has nothing to do with which flags exist, so the fixture is registered in `beforeAll` and removed
+ * in `afterAll`. The `config` project runs each file in its own process, so nothing leaks.
+ *
+ * The golden vectors below deliberately keep their LITERAL key strings: `featureBucket` takes any
+ * string, and those numbers are a wire format — re-keying them would reshuffle every live rollout
+ * as surely as changing the hash would.
+ */
+// A double assertion because `FeatureName` is derived from what is INSTALLED, and this key
+// deliberately is not — registering it below is the point.
+const KEY = 'features-test-fixture' as unknown as FeatureName
+
+const FIXTURE: FeatureDefinition = {
+  label: 'Fixture',
+  description: 'Registered by tests/config/features.test.ts',
+  defaultState: 'off',
+  defaultRolloutUnit: 'tenant',
+  environmentGated: false,
+}
+
+beforeAll(() => {
+  ;(FEATURE_FLAGS as Record<string, FeatureDefinition>)[KEY] = FIXTURE
+  FEATURE_KEYS.push(KEY)
+})
+
+afterAll(() => {
+  delete (FEATURE_FLAGS as Record<string, FeatureDefinition>)[KEY]
+  FEATURE_KEYS.splice(FEATURE_KEYS.indexOf(KEY), 1)
+})
 const ctx = (over: Partial<Parameters<typeof evaluateFlag>[2]> = {}) => ({
   tenantId: 'tenant-1',
   userId: 'user-1',
@@ -133,15 +169,15 @@ describe('evaluateFlag precedence', () => {
   })
 
   it('counts the unit the flag asks for', () => {
-    // tenant-1 buckets at 78 and user-2 at 40, so an 50% rollout includes the user and not the
-    // organisation — the same request, two answers, decided only by the flag's unit.
+    // Under this key tenant-1 buckets at 27 and user-2 at 81, so a 50% rollout includes the
+    // organisation and not the user — the same request, two answers, decided only by the unit.
     const at50 = (unit: 'tenant' | 'user') =>
       evaluateFlag(KEY, row({ state: 'rollout', rolloutPercent: 50, rolloutUnit: unit }), {
         ...ctx(),
         userId: 'user-2',
       })
-    expect(at50('tenant')).toBe(false)
-    expect(at50('user')).toBe(true)
+    expect(at50('tenant')).toBe(true)
+    expect(at50('user')).toBe(false)
   })
 
   it('fails closed when the unit it counts is missing', () => {
@@ -182,14 +218,14 @@ describe('the environment layer', () => {
 })
 
 describe('evaluateFeatures', () => {
-  it('returns only the keys that are on, in registry order', () => {
-    expect(evaluateFeatures([row({ state: 'on' })], ctx())).toEqual([KEY])
-    expect(evaluateFeatures([row({ state: 'off' })], ctx())).toEqual([])
+  // `toContain`, not `toEqual`: an installed plugin may have registered flags of its own, and this
+  // is a statement about THIS key, not about the whole registry.
+  it('returns only the keys that are on', () => {
+    expect(evaluateFeatures([row({ state: 'on' })], ctx())).toContain(KEY)
+    expect(evaluateFeatures([row({ state: 'off' })], ctx())).not.toContain(KEY)
   })
 
   it('treats a missing row as the registry default', () => {
-    expect(evaluateFeatures([], ctx())).toEqual(
-      FEATURE_FLAGS[KEY].defaultState === 'on' ? [KEY] : []
-    )
+    expect(evaluateFeatures([], ctx()).includes(KEY)).toBe(FEATURE_FLAGS[KEY].defaultState === 'on')
   })
 })

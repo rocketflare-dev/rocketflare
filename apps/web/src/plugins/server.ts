@@ -13,9 +13,10 @@
  * tuple indexes to `never`, and `never.mounts` is a type error, so everything that only iterates
  * reads the widened `serverPlugins` beside it.
  */
+import { exampleFeatureServer } from './example-feature'
 import type { AnyServerPlugin } from './types'
 
-export const SERVER_PLUGINS = [] as const satisfies readonly AnyServerPlugin[]
+export const SERVER_PLUGINS = [exampleFeatureServer] as const satisfies readonly AnyServerPlugin[]
 
 /** The barrel as a plain list. Iterate this; `SERVER_PLUGINS` is for type derivation. */
 export const serverPlugins: readonly AnyServerPlugin[] = SERVER_PLUGINS

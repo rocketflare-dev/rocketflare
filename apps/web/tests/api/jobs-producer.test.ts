@@ -44,8 +44,8 @@ describe('enqueueJob / enqueueJobs', () => {
     const queue = new RecordingQueue()
     const before = Date.now()
     const job = await enqueueJob(queue, {
-      type: 'example.ping',
-      payload: { tenantId: TENANT, note: 'hi' },
+      type: 'activity.record',
+      payload: { tenantId: TENANT, type: 'thing.happened', subjectType: 'Thing' },
     })
     expect(job.id).toMatch(/^[0-9a-f-]{36}$/)
     expect(Date.parse(job.enqueuedAt)).toBeGreaterThanOrEqual(before - 1000)
@@ -60,7 +60,7 @@ describe('enqueueJob / enqueueJobs', () => {
     const queue = new RecordingQueue()
     await enqueueJob(
       queue,
-      { type: 'example.ping', payload: { tenantId: TENANT } },
+      { type: 'activity.record', payload: { tenantId: TENANT, type: 't', subjectType: 'T' } },
       { delaySeconds: 30 }
     )
     expect(queue.messages[0]?.options).toEqual({ delaySeconds: 30 })
@@ -78,10 +78,15 @@ describe('enqueueJob / enqueueJobs', () => {
 
   it('a missing binding is a clear configuration error, never a silent drop', async () => {
     await expect(
-      enqueueJob(undefined, { type: 'example.ping', payload: { tenantId: TENANT } })
+      enqueueJob(undefined, {
+        type: 'activity.record',
+        payload: { tenantId: TENANT, type: 't', subjectType: 'T' },
+      })
     ).rejects.toBeInstanceOf(JobsQueueNotConfiguredError)
     await expect(
-      enqueueJobs(null, [{ type: 'example.ping', payload: { tenantId: TENANT } }])
+      enqueueJobs(null, [
+        { type: 'activity.record', payload: { tenantId: TENANT, type: 't', subjectType: 'T' } },
+      ])
     ).rejects.toThrow(/JOBS_QUEUE/)
   })
 
@@ -90,8 +95,8 @@ describe('enqueueJob / enqueueJobs', () => {
     const jobs = await enqueueJobs(
       queue,
       Array.from({ length: 150 }, (_, i) => ({
-        type: 'example.ping' as const,
-        payload: { tenantId: TENANT, note: String(i) },
+        type: 'activity.record' as const,
+        payload: { tenantId: TENANT, type: 'thing.happened', subjectType: String(i) },
       }))
     )
     expect(jobs).toHaveLength(150)

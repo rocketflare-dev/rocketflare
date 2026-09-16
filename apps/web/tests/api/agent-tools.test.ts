@@ -89,7 +89,9 @@ describe('search_knowledge tool', () => {
   it('is on ctx.tools and finds the indexed document for the run tenant only', async () => {
     const { tenant, env, cfg, volcano } = await seeded()
     const tools = buildAgentTools({ db, cfg, env, scope: fullAccessScope(tenant.id) })
-    expect(tools.map(t => t.name)).toEqual([
+    // The kit's three LEAD, in this order; an installed plugin's tools (D31) are appended after
+    // them — which is why this is a prefix assertion rather than an equality one.
+    expect(tools.map(t => t.name).slice(0, 3)).toEqual([
       SEARCH_KNOWLEDGE_TOOL,
       GET_DOCUMENT_TOOL,
       LIST_DOCUMENTS_TOOL,

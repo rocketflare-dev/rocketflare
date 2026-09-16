@@ -10,15 +10,17 @@
  * list widened for iteration — an EMPTY tuple indexes to `never`, and `never.id` is a type error,
  * so every consumer that only wants to loop reads the widened one.
  */
+import { exampleFeatureShared } from './example-feature/index'
 import type { SharedPlugin } from './types'
 
-export const SHARED_PLUGINS = [] as const satisfies readonly SharedPlugin[]
+export const SHARED_PLUGINS = [exampleFeatureShared] as const satisfies readonly SharedPlugin[]
 
 /** The barrel as a plain list. Iterate this; `SHARED_PLUGINS` is for type derivation. */
 export const sharedPlugins: readonly SharedPlugin[] = SHARED_PLUGINS
 
 export type {
   AgentKeyOf,
+  DeclaredBy,
   FeatureKeyOf,
   JobTypeOf,
   JobVariant,

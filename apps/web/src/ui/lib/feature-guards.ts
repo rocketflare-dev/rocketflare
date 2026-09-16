@@ -11,14 +11,14 @@
 import type { NavGuard } from '@/ui/hooks/useNavGuard'
 
 /**
- * The kit's demonstration flag. Gates one nav item and nothing else — delete it, and its line in
- * `FEATURES`, when you add your own.
+ * One const per feature, spelled `{ feature }` and never `{ action: 'access', subject: 'Feature:x' }`:
+ * a global admin's `manage all` satisfies the CASL form, which would show them a nav item whose
+ * routes the server 404s. The flag is configuration; only `session.features` answers it.
  *
- * `{ feature }`, not `{ action: 'access', subject: 'Feature:example-feature' }`: a global admin's
- * `manage all` satisfies the CASL form, which would show them a nav item whose routes the server
- * 404s. The flag is configuration; only `session.features` answers it.
+ * The kit ships none of its own — its demonstration flag lives in the `example-feature` PLUGIN
+ * (D31), which declares its guard beside the route and the nav item it gates, in
+ * `apps/web/src/plugins/example-feature/ui/index.ts`. A plugin never edits this file.
  */
-export const EXAMPLE_FEATURE: NavGuard = { feature: 'example-feature' }
 
-/** `featureGuard(EXAMPLE_FEATURE, { action: 'read', subject: 'Thing' })` → the flag AND the permission. */
+/** `featureGuard(MY_FEATURE, { action: 'read', subject: 'Thing' })` → the flag AND the permission. */
 export const featureGuard = (feature: NavGuard, guard: NavGuard): NavGuard => [feature, guard]

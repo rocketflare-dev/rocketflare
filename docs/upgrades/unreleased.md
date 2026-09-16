@@ -3,9 +3,10 @@ version: unreleased
 previous: 0.4.0
 date: null
 breaking: false
-migrations: []
-areas: [shared, api, ui, config, docs]
-touches_surfaces: []
+migrations:
+  - "example_notes, a tenant-scoped table with two indexes, two foreign keys and an RLS policy"
+areas: [shared, api, ui, cli, db, config, docs]
+touches_surfaces: [example-feature]
 requires_surfaces: []
 manual: false
 ---
@@ -112,6 +113,51 @@ strips `with:` from that table's query results app-wide. The note is in
 in that surface's `registries[]` — an adopter who deletes the agent runtime deletes those four
 fields too, exactly as they already delete lines from `worker.ts`, `api/index.ts` and `App.tsx`.
 
+**Then the kit's own demonstration feature became a PLUGIN (PR A3 of four)** — the reference
+plugin of decision 3, and the first thing installed through the seam A1 and A2 built. It is the
+answer to "what does a plugin look like", and it is meant to be deleted.
+
+`example-feature` now owns, in three directories and five barrel lines, everything it used to
+scatter across the kit:
+
+| Was | Is now |
+|---|---|
+| `CORE_FEATURES` / `CORE_FEATURE_FLAGS` entry | `SharedPlugin.features` |
+| `EXAMPLE_FEATURE` in `ui/lib/feature-guards.ts` | `EXAMPLE_FEATURE_GUARD` beside the route and nav item it gates |
+| the route in `App.tsx`, the item in `SideNav.tsx`, `ui/pages/ExampleFeature.tsx` | `UiPlugin.routes` / `UiPlugin.nav` + a lazy page under the plugin |
+| `example.ping` in `CORE_JOB_VARIANTS` + `queues/handlers/example-ping.ts` | `SharedPlugin.jobs` + `ServerPlugin.jobHandlers`, renamed **`example-feature.ping`** |
+| the demo flag row in `scripts/seed.ts` | `hooks.seedDemo` |
+
+And it GAINED the parts a flag alone could not demonstrate: a tenant-scoped `example_notes` table
+(`tenantRef` + `timestamps` + `tenantIsolation`, indexes led by `tenant_id`), a CRUD mount at
+`/api/example-feature` behind `requireFeature`, `hooks.onTenantCreated`, an agent tool
+(`list_example_notes`) on every run's `ctx.tools`, and two CLI commands
+(`rocketflare example-feature ping|notes list`). So schema migration, tenant isolation and the four
+lifecycle slots are all proven on something an adopter can delete in one command.
+
+**`CORE_FEATURES` is now EMPTY, and that changes one contract.** `FEATURES` may legitimately be an
+empty list, so `FeatureName` can be `never` and `featureNameSchema` can no longer be a `z.enum`
+(which needs a non-empty tuple). It is now `z.string().refine(v => FEATURES.includes(v))` — the same
+runtime check and the same output type, and it validates against what is INSTALLED rather than
+against what was compiled in.
+
+**One A2 derivation was wrong and is fixed here.** `(typeof SHARED_PLUGINS)[number]['agentKeys']`
+reads a property off `as const` LITERALS, and a plugin that omits an optional field genuinely has no
+such property — so installing a plugin with no agents was a compile error in `ai/agents.ts`, for
+every other plugin. `DeclaredBy<P, K>` (`@rocketflare/shared/plugins`) narrows the union to the
+members that DO declare the field first; with none it is `never`, which is exactly the empty
+contribution these derivations want. All six sites use it (`agentKeys`, `promptKeys`, `jobs`,
+`subjects`, `features`, `queryKeys`), as do `AgentKeyOf` and friends.
+
+Two kit tests stopped borrowing a key they do not own. `tests/config/features.test.ts` and
+`tests/api/feature-flags.test.ts` each register their own fixture flag now: the kit ships no flag,
+`featureFlags.key` is PLATFORM state with `tenant_feature_overrides` cascading off it, and two files
+resetting one key would delete each other's rows across tenants. The API one is `// @vitest-isolate`
+because it mutates the shared registry. `tests/ui/feature-flag-nav.test.tsx` MOVED into the plugin
+(`src/plugins/example-feature/tests/ui/`) — the nav item it looks for is the plugin's, and a test
+that outlived it would be a false failure. Three assertions that pinned the exact agent-tool list
+became prefix assertions, because a plugin's tools are appended after the kit's three.
+
 ## How to apply
 
 Mechanical; no schema change and no new dependency. Take the new files whole
@@ -128,6 +174,22 @@ above. Three things the patch cannot do for you:
 3. If you renamed the kit, your barrels are already in your own vocabulary — the upgrade translates
    these files like any other source file, and a plugin you install later is translated on the way
    in by `pnpm plugin add`.
+
+**A3 asks two things of an app that kept the demo.** If you still have `example-feature` wired into
+your own `CORE_FEATURES`, `App.tsx`, `SideNav.tsx` and `jobs.ts`, you have a choice: take the plugin
+whole (the three directories, the five barrel lines, the `.rocketflare.json` surface and
+`pnpm db:generate`) and delete your copies, or keep your copies and skip the plugin entirely — in
+which case leave your `CORE_FEATURES` entry where it is, since `featureNameSchema` works either way.
+**If you queue `example.ping` anywhere, it is now `example-feature.ping`** and it only exists with
+the plugin installed; the old type will fail `jobInputSchema` at the producer, which is the loud
+failure you want rather than a message nothing handles.
+
+**This release adds a migration, and the host generates it — the kit's own
+`0012_plugin-example-feature-0.1.0.sql` is NOT ported** (`kit:upgrade` never applies a kit
+migration). After the plugin's files and the schema barrel line are in place, run
+`pnpm db:generate --name plugin-example-feature-0.1.0` and then `pnpm db:migrate`; you should get
+exactly one `CREATE TABLE "example_notes"` with its two indexes, two foreign keys and one RLS
+policy, numbered in your own journal.
 
 If you have customised the D29 visibility helpers, re-express your resource as a
 `VisibilityResource` entry rather than a third branch: `visibleDocuments` / `visibleAnalyticsPages`
@@ -170,13 +232,25 @@ editing kept its contents and changed its name, so your edit applies cleanly ins
   An edit inside the literal applies cleanly.
 - `apps/web/tests/config/unscoped-allowlist.test.ts` and `tests/api/rls-coverage.test.ts` — both
   gained a union with the installed plugins; your own entries stay where they are.
+- `packages/shared/src/permissions.ts` and `features.ts` (A3) — `CORE_FEATURES` and
+  `CORE_FEATURE_FLAGS` are now empty and `featureNameSchema` is a refined `z.string()`. An app with
+  flags of its own keeps them inside those two literals and needs no other change.
+- `apps/web/src/ui/App.tsx`, `SideNav.tsx` and `ui/lib/feature-guards.ts` — the example route, nav
+  item and `EXAMPLE_FEATURE` const are deleted. If you edited the nav around that item, the deletion
+  will reject; remove your copy by hand.
+- `packages/shared/src/jobs.ts` and `apps/web/src/api/queues/jobs.ts` — the `example.ping` variant
+  and its handler entry are deleted, and `queues/handlers/example-ping.ts` with them.
+- `apps/web/scripts/seed.ts` — the demo feature-flag row moved into the plugin's `seedDemo`.
+- `apps/web/tests/api/{chat,chat-tools,agent-research,agent-tools}.test.ts` — four tool-list
+  equality assertions became prefix assertions.
 
 ## Verify
 
 `pnpm lint && pnpm typecheck && pnpm test && pnpm build` at the root, with
 `git status --porcelain apps/web/worker-configuration.d.ts` empty. Then, specifically:
 
-- `pnpm db:generate` emits **nothing** — this release adds no table.
+- `pnpm db:generate` emits **nothing** AFTER you have generated and applied
+  `plugin-example-feature-0.1.0`. A2 by itself adds no table; A3 adds exactly one.
 - `pnpm --filter @rocketflare/web test:config` is green, including `plugins.test.ts` (17 cases with
   no plugins installed, the last two being the `expectTypeOf` pins on the jobs union, the agent-key
   enum and the query keys — they are checked by `pnpm typecheck`, not at run time),
@@ -190,3 +264,13 @@ editing kept its contents and changed its name, so your edit applies cleanly ins
   every plugin list is empty.
 - `DELETE /api/groups/:id` on a group that still grants access still answers 409 `group_in_use` with
   `{ documents, dashboards }` and the same sentence.
+- The example feature behaves as it always did for a reader: with `example-feature` off under
+  Admin → Feature flags there is no nav item, no `/example-feature` page and
+  `GET /api/example-feature/notes` is a 404 `feature_disabled` — for a global admin too. Turn it on
+  and all three appear.
+- `pnpm seed --demo` prints an `example-feature  2 notes, example-feature flag at 50% rollout` line
+  and `/documents`-style pages are unaffected; `rocketflare example-feature ping --json` prints the
+  queued envelope, and `wrangler dev` logs `example-feature.ping: pong`.
+- `src/plugins/example-feature/tests/{api,ui,config}` run inside the host's own projects — the api
+  file covers the 404 gate, CRUD, ownership, `onTenantCreated`, the enqueue and the tool, and pins
+  that **tenant B can neither list, read nor delete tenant A's notes**.

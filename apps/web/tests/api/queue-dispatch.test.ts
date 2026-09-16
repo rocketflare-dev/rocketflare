@@ -10,11 +10,25 @@ import { createExecutionContext, createTestEnv } from '../mocks/bindings'
 
 const TENANT = '11111111-1111-4111-8111-111111111111'
 
+/**
+ * `email.send` with no `RESEND_API_KEY`: the dev fallback logs and counts as delivered, so this
+ * exercises dispatch → handler → `ack()` without a database row or a provider. A CORE job type
+ * deliberately — what is under test is the queue-name routing, not any particular job.
+ */
 function pingMessage() {
   return {
     id: crypto.randomUUID(),
     timestamp: new Date(),
-    body: buildJobEnvelope({ type: 'example.ping', payload: { tenantId: TENANT } }),
+    body: buildJobEnvelope({
+      type: 'email.send',
+      payload: {
+        to: 'dispatch@example.test',
+        subject: 'S',
+        html: '<p>x</p>',
+        reason: 'queue-dispatch-test',
+        tenantId: TENANT,
+      },
+    }),
     attempts: 1,
     ack: vi.fn(),
     retry: vi.fn(),

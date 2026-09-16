@@ -4,7 +4,7 @@
  * `JOBS_QUEUE` consumer (D7) as a plain function over a hand-built `MessageBatch`: valid
  * `email.send` → email service ran (dev fallback line) + `ack()`; invalid envelope → `ack()` and no
  * retry (poison never loops); provider failure → `retry({ delaySeconds })` with backoff;
- * `activity.record` → row; `example.ping` → log line. Every message gets and closes its own DB handle.
+ * `activity.record` → row. Every message gets and closes its own DB handle.
  */
 import { and, eq } from 'drizzle-orm'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -142,6 +142,7 @@ describe('processJobsBatch', () => {
 
   it('one failing message does not stop the rest of the batch', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('nope', { status: 502 }))
+    const { tenant } = await createTestTenantWithUser(db, 'owner')
     const { deps: d } = deps({ RESEND_API_KEY: 're_test_123' })
     const failing = fakeMessage(
       buildJobEnvelope({
@@ -150,7 +151,10 @@ describe('processJobsBatch', () => {
       })
     )
     const fine = fakeMessage(
-      buildJobEnvelope({ type: 'example.ping', payload: { tenantId: TENANT } })
+      buildJobEnvelope({
+        type: 'activity.record',
+        payload: { tenantId: tenant.id, type: 'thing.happened', subjectType: 'Thing' },
+      })
     )
     await processJobsBatch(fakeBatch([failing, fine]), d)
     expect(failing.retry).toHaveBeenCalledTimes(1)
@@ -187,20 +191,5 @@ describe('processJobsBatch', () => {
       subjectType: 'Thing',
       metadata: { via: 'queue' },
     })
-  })
-
-  it('example.ping logs and acks (default DB factory: lazy, nothing connects)', async () => {
-    const env = createTestEnv()
-    const logger = fakeLogger()
-    const message = fakeMessage(
-      buildJobEnvelope({ type: 'example.ping', payload: { tenantId: TENANT, note: 'smoke' } })
-    )
-    await processJobsBatch(fakeBatch([message]), { env, config: loadConfig(env), logger })
-    expect(message.ack).toHaveBeenCalledTimes(1)
-    expect(infoLines(logger).some(l => l.includes('example.ping: pong'))).toBe(true)
-    expect(logger.info).toHaveBeenCalledWith(
-      expect.objectContaining({ tenantId: TENANT, note: 'smoke' }),
-      'example.ping: pong'
-    )
   })
 })

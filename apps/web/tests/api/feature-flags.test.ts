@@ -1,3 +1,6 @@
+// @vitest-isolate
+// Registers a fixture flag in the shared `FEATURE_FLAGS` registry (see below), so it needs its own
+// module registry rather than leaking that key into every later file.
 /**
  * Feature flags (D30) end to end: the admin surface, the two layers composing, and — the assertion
  * that matters most — that a GLOBAL ADMIN is dark too.
@@ -8,6 +11,9 @@
  * read the features array and stayed dark. Two sources of truth disagreeing. So every assertion
  * here runs for an owner AND for a global admin, and the API test is where that is pinned.
  */
+
+import { FEATURE_FLAGS, FEATURE_KEYS, type FeatureDefinition } from '@rocketflare/shared/features'
+import type { FeatureName } from '@rocketflare/shared/permissions'
 import { eq } from 'drizzle-orm'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { featureFlags, tenantFeatureOverrides } from '@/db/schema'
@@ -26,7 +32,27 @@ import { createTestEnv } from '../mocks/bindings'
 
 const db = setupTestDatabase()
 
-const KEY = 'example-feature'
+/**
+ * A flag this suite REGISTERS, rather than one it borrows (D31).
+ *
+ * Everything below is about the admin surface and the two layers composing, not about any
+ * particular feature — but it needs a real registry key, because `evaluateFlag` answers false for
+ * one it has never heard of and `isFeatureName` 404s the admin routes. The kit ships no flag of its
+ * own any more (its demonstration flag is the `example-feature` PLUGIN), and borrowing the
+ * plugin's would be worse than a literal: `featureFlags.key` is PLATFORM state and
+ * `tenant_feature_overrides` cascades off it, so two files in one project resetting the same key
+ * would delete each other's rows across tenants. A fixture key nothing else knows about cannot
+ * collide — and it keeps this suite true in an app that removed the plugin.
+ */
+const KEY = 'feature-flags-test-fixture' as unknown as FeatureName
+
+const FIXTURE: FeatureDefinition = {
+  label: 'Feature flags fixture',
+  description: 'Registered by tests/api/feature-flags.test.ts',
+  defaultState: 'off',
+  defaultRolloutUnit: 'tenant',
+  environmentGated: false,
+}
 
 let tenantId: string
 let otherTenantId: string
@@ -73,6 +99,9 @@ async function adminList() {
 }
 
 beforeAll(async () => {
+  ;(FEATURE_FLAGS as Record<string, FeatureDefinition>)[KEY] = FIXTURE
+  FEATURE_KEYS.push(KEY)
+
   const tenant = await createTestTenant(db)
   tenantId = tenant.id
   otherTenantId = (await createTestTenant(db)).id
@@ -97,7 +126,11 @@ beforeAll(async () => {
  * `feature_flags` is PLATFORM state — one row for the whole deployment, shared with every other
  * test file against this database. Leave it as we found it.
  */
-afterAll(resetFlag)
+afterAll(async () => {
+  await resetFlag()
+  delete (FEATURE_FLAGS as Record<string, FeatureDefinition>)[KEY]
+  FEATURE_KEYS.splice(FEATURE_KEYS.indexOf(KEY), 1)
+})
 
 describe('GET /api/admin/feature-flags', () => {
   it('lists every registry key, configured or not', async () => {

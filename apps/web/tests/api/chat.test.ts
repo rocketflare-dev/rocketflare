@@ -189,7 +189,8 @@ describe('POST /api/chat/conversations/:id/messages (AG-UI stream)', () => {
     const params: ChatParams | undefined = client.calls[0]
     expect(String(params?.system)).toContain(`helping ${a.user.name} at ${a.tenant.name}`)
     // Tools are on by default now (`CHAT_KNOWLEDGE_TOOLS`); `chat-tools.test.ts` covers them.
-    expect(params?.tools?.map(t => t.name)).toEqual([
+    // The kit's three lead; an installed plugin's tools (D31) follow, hence the prefix.
+    expect(params?.tools?.map(t => t.name).slice(0, 3)).toEqual([
       'search_knowledge',
       'get_document',
       'list_documents',

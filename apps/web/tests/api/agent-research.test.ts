@@ -165,15 +165,12 @@ describe('research-topic agent', () => {
     expect(output.citations).toEqual([{ documentId: document.id, title: 'Onboarding handbook' }])
     expect(output.turns).toBe(2)
 
-    // The search really ran: the model was given the built-in tools and got hits back.
-    expect(client.calls[0]?.tools?.map(t => t.name)).toEqual([
-      'search_knowledge',
-      'get_document',
-      'list_documents',
-      'ask_human',
-      'index_finding',
-      'submit_answer',
-    ])
+    // The search really ran: the model was given the built-in tools and got hits back. An
+    // installed plugin's tools (D31) arrive on `ctx.tools` too, between the kit's three and the
+    // agent's own, so the assertion is "these, in this order, all present" rather than equality.
+    const offered = client.calls[0]?.tools?.map(t => t.name) ?? []
+    expect(offered.slice(0, 3)).toEqual(['search_knowledge', 'get_document', 'list_documents'])
+    expect(offered.slice(-3)).toEqual(['ask_human', 'index_finding', 'submit_answer'])
     const events = await listEvents(db, tenant.id, runId)
     const toolNames = events
       .filter(e => e.type === 'tool.start' || e.type === 'tool.end')

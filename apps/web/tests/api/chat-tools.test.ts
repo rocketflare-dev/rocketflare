@@ -176,8 +176,9 @@ describe('chat with the knowledge tools', () => {
       },
     })
 
-    // The tool definitions and the chat turn cap reached the model.
-    expect(client.calls[0]?.tools?.map(t => t.name)).toEqual([
+    // The tool definitions and the chat turn cap reached the model. The kit's three lead and an
+    // installed plugin's tools (D31) follow, so this is a prefix rather than the whole list.
+    expect(client.calls[0]?.tools?.map(t => t.name).slice(0, 3)).toEqual([
       SEARCH_KNOWLEDGE_TOOL,
       'get_document',
       'list_documents',

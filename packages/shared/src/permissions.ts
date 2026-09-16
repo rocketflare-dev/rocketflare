@@ -7,7 +7,7 @@
 import type { MongoAbility, RawRuleOf } from '@casl/ability'
 import type { PackRule } from '@casl/ability/extra'
 import { z } from 'zod'
-import { type SHARED_PLUGINS, sharedPlugins } from './plugins'
+import { type DeclaredBy, type SHARED_PLUGINS, sharedPlugins } from './plugins'
 import { type MembershipRole, membershipRoleSchema } from './tenants'
 
 export const ACTIONS = ['manage', 'create', 'read', 'update', 'delete', 'access'] as const
@@ -67,14 +67,22 @@ export const featureSubject = (feature: string): FeatureSubject => `Feature:${fe
  * then delete the line. Append-only in spirit; the metadata registry is keyed on this. A plugin
  * brings its own through `SharedPlugin.features`, which is where both halves arrive together.
  */
-export const CORE_FEATURES = ['example-feature'] as const
+export const CORE_FEATURES = [] as const satisfies readonly string[]
 
 type PluginFeatureKey = Extract<
-  keyof NonNullable<(typeof SHARED_PLUGINS)[number]['features']>,
+  keyof NonNullable<DeclaredBy<(typeof SHARED_PLUGINS)[number], 'features'>>,
   string
 >
 
-/** Core keys plus every installed plugin's (D31); `featureNameSchema` is a `z.enum` over it. */
+/**
+ * Core keys plus every installed plugin's (D31).
+ *
+ * **It may legitimately be EMPTY**, which is what happens in a kit with no plugins installed — the
+ * kit's own demonstration flag moved into `example-feature` (A3), and a bare kit ships no feature
+ * of its own. So `FeatureName` can be `never`, `Record<FeatureName, …>` can be `{}`, and
+ * `featureNameSchema` cannot be a `z.enum` (which needs a non-empty tuple). `features.ts` spells it
+ * as a refined `z.string()` for exactly that reason.
+ */
 export const FEATURES = [
   ...CORE_FEATURES,
   ...(sharedPlugins.flatMap(p => Object.keys(p.features ?? {})) as PluginFeatureKey[]),
@@ -82,7 +90,9 @@ export const FEATURES = [
 export type FeatureName = (typeof FEATURES)[number]
 
 /** Subjects an installed plugin adds (D31) — its own nouns, granted by `ServerPlugin.grants`. */
-export type PluginSubject = NonNullable<(typeof SHARED_PLUGINS)[number]['subjects']>[number]
+export type PluginSubject = NonNullable<
+  DeclaredBy<(typeof SHARED_PLUGINS)[number], 'subjects'>
+>[number]
 
 export type Subjects = CoreSubject | PluginSubject | FeatureSubject
 

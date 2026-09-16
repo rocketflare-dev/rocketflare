@@ -100,17 +100,40 @@ export interface SharedPlugin {
 
 // ---- Derivations the host's closed sets read ------------------------------------------------
 
+/**
+ * The value of an OPTIONAL `SharedPlugin` field across the whole barrel, skipping the plugins that
+ * do not declare it.
+ *
+ * Why not `(typeof SHARED_PLUGINS)[number]['agentKeys']`: the barrel holds `as const satisfies
+ * SharedPlugin` LITERALS, and a literal that omits an optional field genuinely has no such
+ * property — so the indexed access is a compile error rather than `undefined`, and installing a
+ * plugin with no agents would break the agent-key derivation for every other plugin. `Extract`
+ * narrows the union to the members that DO declare the field first; with none, it is `never`, and
+ * `never` is exactly the empty contribution every one of these derivations wants.
+ */
+export type DeclaredBy<P, K extends PropertyKey> =
+  Extract<P, Record<K, unknown>> extends infer Declaring
+    ? Declaring extends Record<K, unknown>
+      ? Declaring[K]
+      : never
+    : never
+
 /** The agent keys one plugin declares — what its `ServerPlugin.agents` must cover, exhaustively. */
-export type AgentKeyOf<S extends SharedPlugin> = NonNullable<S['agentKeys']>[number]
+export type AgentKeyOf<S extends SharedPlugin> = NonNullable<DeclaredBy<S, 'agentKeys'>>[number]
 
 /** The prompt keys one plugin declares — what its `ServerPlugin.prompts` must cover. */
-export type PromptKeyOf<S extends SharedPlugin> = NonNullable<S['promptKeys']>[number]
+export type PromptKeyOf<S extends SharedPlugin> = NonNullable<DeclaredBy<S, 'promptKeys'>>[number]
 
 /** The CASL subjects one plugin declares. */
-export type SubjectOf<S extends SharedPlugin> = NonNullable<S['subjects']>[number]
+export type SubjectOf<S extends SharedPlugin> = NonNullable<DeclaredBy<S, 'subjects'>>[number]
 
 /** The feature keys one plugin declares (the keys of its `features` record). */
-export type FeatureKeyOf<S extends SharedPlugin> = Extract<keyof NonNullable<S['features']>, string>
+export type FeatureKeyOf<S extends SharedPlugin> = Extract<
+  keyof NonNullable<DeclaredBy<S, 'features'>>,
+  string
+>
 
 /** The job types one plugin declares — what its `ServerPlugin.jobHandlers` must cover. */
-export type JobTypeOf<S extends SharedPlugin> = TypeOf<NonNullable<S['jobs']>[number]>['type']
+export type JobTypeOf<S extends SharedPlugin> = TypeOf<
+  NonNullable<DeclaredBy<S, 'jobs'>>[number]
+>['type']

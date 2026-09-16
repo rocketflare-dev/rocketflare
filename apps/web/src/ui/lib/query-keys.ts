@@ -6,6 +6,7 @@
  * Families are deliberately independent (`members` is NOT under `tenant`) so a tenant rename does
  * not refetch the member list; switching tenant clears the whole client instead (useAuth).
  */
+import type { DeclaredBy } from '@rocketflare/shared/plugins'
 import { type UI_PLUGINS, uiPlugins } from '@/plugins/ui'
 
 /** Cleaned filters as they appear in a key. Callers pass any plain object (interfaces welcome). */
@@ -212,7 +213,9 @@ const CORE_QUERY_KEYS = {
  * one spread, and at compile time it is the intersection of everything the barrel declares, which
  * is exactly what a plugin's own hooks need to see when they read `queryKeys`.
  */
-type DeclaredQueryKeys = UnionToIntersection<NonNullable<(typeof UI_PLUGINS)[number]['queryKeys']>>
+type DeclaredQueryKeys = UnionToIntersection<
+  NonNullable<DeclaredBy<(typeof UI_PLUGINS)[number], 'queryKeys'>>
+>
 /** No plugins (or none with families) → `unknown`, which intersects away instead of erasing. */
 type PluginQueryKeys = [DeclaredQueryKeys] extends [never] ? unknown : DeclaredQueryKeys
 
