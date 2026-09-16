@@ -95,7 +95,7 @@ function LayoutSplitHandle({ layout, onToggle }: { layout: RunLayoutSplit; onTog
       onClick={onToggle}
       aria-label={label}
       title={label}
-      className={`hidden lg:flex absolute top-8 z-10 -translate-x-1/2 -translate-y-1/2 ${LAYOUT_EDGE[layout]} btn btn-circle btn-xs border border-[color:var(--border-subtle)] bg-base-100 text-base-content/70 shadow-md hover:bg-base-200 hover:text-base-content`}
+      className={`hidden lg:flex absolute top-0 z-10 -translate-x-1/2 -translate-y-1/2 ${LAYOUT_EDGE[layout]} btn btn-circle btn-xs border border-[color:var(--border-subtle)] bg-base-100 text-base-content/70 shadow-md hover:bg-base-200 hover:text-base-content`}
     >
       <Chevron className="w-3.5 h-3.5" aria-hidden="true" />
     </button>
@@ -215,7 +215,7 @@ function RunWorkspace({ run, agent }: { run: AgentRunWithEvents; agent?: AgentIn
       {/* Tabs first under `lg`: on a phone the answer is what people came for. */}
       <div className="relative">
         <div
-          className={`grid grid-cols-1 ${LAYOUT_COLUMNS[layout]} gap-4 items-start`}
+          className={`grid grid-cols-1 ${LAYOUT_COLUMNS[layout]} gap-4 lg:gap-8 items-start`}
           data-layout={layout}
         >
           <SectionPanel title="Timeline" className="order-2 lg:order-1">
