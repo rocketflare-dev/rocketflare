@@ -351,18 +351,34 @@ export interface FakeInstanceStatus {
   output?: unknown
 }
 
+/** What `instance.sendEvent()` was called with — the resume nudge of a parked run (issue #17). */
+export interface RecordedWorkflowEvent {
+  instanceId: string
+  type: string
+  payload: unknown
+}
+
 /**
  * Stub `AGENT_RUN_WORKFLOW` binding (Phase 3b, D7): `create()` records `{ id, params }` and
  * answers an instance whose `status()` is whatever `setStatus(id, …)` said (default `running`);
  * a second `create` with the same id throws like the platform; `get()` throws `instance.not_found`
  * for an id never created unless a status was pre-seeded for it. Nothing runs — tests drive the
  * `AgentRunWorkflow` class directly with a fake step.
+ *
+ * `sendEvent` RECORDS rather than no-ops, because the resume path is a behaviour worth asserting
+ * ("the parked instance was woken, with this interrupt id"), and `notFoundOnSendEvent` makes it
+ * throw the platform's own error so a test can drive the restart fallback — the branch that stops
+ * an answered run hanging forever when its instance is gone (T4/T5).
  */
 export class RecordingWorkflow {
   readonly created: RecordedWorkflowInstance[] = []
   readonly statuses = new Map<string, FakeInstanceStatus>()
   /** Instance ids a forced cancel terminated, in order. */
   readonly terminated: string[] = []
+  /** Every `sendEvent` that was delivered, in order. */
+  readonly events: RecordedWorkflowEvent[] = []
+  /** Make `sendEvent` fail the way a retention-expired or dev-restarted instance does. */
+  notFoundOnSendEvent = false
   defaultStatus: FakeInstanceStatus = { status: 'running' }
 
   async create(options: { id?: string; params?: unknown } = {}) {
@@ -397,13 +413,20 @@ export class RecordingWorkflow {
         this.statuses.set(id, { status: 'terminated' })
       },
       restart: async () => {},
-      sendEvent: async () => {},
+      sendEvent: async (event: { type: string; payload?: unknown }) => {
+        if (this.notFoundOnSendEvent) {
+          throw new Error(`instance.not_found: no instance with id ${id}`)
+        }
+        this.events.push({ instanceId: id, type: event.type, payload: event.payload ?? null })
+      },
     }
   }
 
   clear(): void {
     this.created.length = 0
     this.terminated.length = 0
+    this.events.length = 0
+    this.notFoundOnSendEvent = false
     this.statuses.clear()
   }
 }

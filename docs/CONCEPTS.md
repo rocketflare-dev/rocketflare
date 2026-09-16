@@ -395,7 +395,10 @@ status IN ('queued','running')` — a second enqueue returns the existing run (`
 **Concurrency has no Cloudflare primitive** — it is a DB claim row: `UPDATE agent_runs … SET running,
 attempt + 1 WHERE status IN ('queued','running') RETURNING`; a retried step re-claims, a settled row
 is never rewritten. The Workflow instance id is the run id (`AGENT_RUN_WORKFLOW.create({ id: runId })`
-after the row exists). Never fake either in an in-memory `Map` — isolates are many and short-lived.
+after the row exists) — **until a run parked on a human has to be restarted**, when it becomes
+`<runId>-r1`, `-r2`… (issue #17: on the resume path `instance.not_found` is an ANSWER, not an error,
+so the column is *the latest* instance rather than "the run id"; it stays `unique()`, so a probe
+still maps back 1:1). Never fake either in an in-memory `Map` — isolates are many and short-lived.
 Cancellation is cooperative: flip `cancelRequestedAt`, the run polls between turns. There is no orphan
 sweep cron: an active row is reconciled against `instance.status()` on read. Progress is durable in
 `agent_run_events`; the DO only wakes viewers.

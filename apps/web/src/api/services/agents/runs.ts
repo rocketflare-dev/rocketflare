@@ -23,6 +23,11 @@ import type {
   AgentRunEvent,
   AgentRunEventType,
 } from '@rocketflare/shared/ai/agents'
+import {
+  ACTIVE_RUN_STATUSES,
+  AGENT_RESUME_EVENT,
+  CLAIMABLE_RUN_STATUSES,
+} from '@rocketflare/shared/ai/agents'
 import { ERROR_CODES } from '@rocketflare/shared/errors'
 import { and, asc, eq, inArray, sql } from 'drizzle-orm'
 import type { Database } from '../../../db/client'
@@ -36,6 +41,7 @@ import {
 import { ServiceUnavailableError, ValidationError } from '../../utils/core/errors'
 import { parseToolLoopCheckpoint, type ToolLoopCheckpoint } from '../ai/kit'
 import { nudge, type Realtime, realtimeEvent } from '../realtime'
+import { expireInterrupts, listInterrupts } from './interrupts'
 import { getAgent } from './registry'
 
 /** `{ runId, tenantId }` — everything else is re-read from the row (a retry must not trust a message). */
@@ -51,6 +57,8 @@ export interface AgentRunWorkflowBinding {
     status(): Promise<{ status: string; error?: { name: string; message: string } }>
     /** Kills the instance mid-step — the escape hatch behind a forced cancel. */
     terminate(): Promise<void>
+    /** Wakes a parked instance sitting on `step.waitForEvent` (issue #17). */
+    sendEvent(event: { type: string; payload?: unknown }): Promise<void>
   }>
 }
 
@@ -100,7 +108,21 @@ export function toAgentRunEvent(row: AgentRunEventRow): AgentRunEvent {
   return { id: row.id, runId: row.runId, seq: row.seq, type: row.type, data: row.data, at: row.at }
 }
 
-const ACTIVE = ['queued', 'running'] as const
+/**
+ * The three status lists diverge on purpose (decision 1), and collapsing them back into one is how
+ * a parked run gets claimed by nobody or failed by the backstop:
+ *
+ * - `ACTIVE` ({@link ACTIVE_RUN_STATUSES}, incl. `awaiting_input`) — "still owes an answer": the
+ *   exclusive partial unique index, `findActiveRun`, `settle()` and `saveCheckpoint`. A parked run
+ *   is still *the* active run for its agent, and it must remain cancellable.
+ * - `CLAIMABLE` ({@link CLAIMABLE_RUN_STATUSES}) — `claimRun` ONLY. A parked row is not claimable;
+ *   the resolve route flips it back to `running` before it nudges, so **the answer is the
+ *   transition** and by the time any claim runs the row is `running` again.
+ * - `finishStep`'s backstop keeps its own inline `queued|running` (in `runtime.ts`), because
+ *   widening THAT one turns every legitimately parked run into a `failed` row.
+ */
+const ACTIVE = ACTIVE_RUN_STATUSES
+const CLAIMABLE = CLAIMABLE_RUN_STATUSES
 
 /** Postgres `unique_violation` anywhere in drizzle's cause chain. */
 function isUniqueViolation(err: unknown): boolean {
@@ -228,7 +250,7 @@ export async function claimRun(
       and(
         eq(agentRuns.id, runId),
         eq(agentRuns.tenantId, tenantId),
-        inArray(agentRuns.status, [...ACTIVE])
+        inArray(agentRuns.status, [...CLAIMABLE])
       )
     )
     .returning()
@@ -275,6 +297,63 @@ export function cancelRun(db: Database, tenantId: string, runId: string) {
 }
 
 /**
+ * Park a run on a human decision: `running → awaiting_input` (issue #17).
+ *
+ * **This is deliberately NOT `settle()`** — `finishedAt` stays NULL and, above all, **the
+ * checkpoint survives**, which is the entire reason a resume is cheap: the resumed `execute` step
+ * picks the transcript back up at the turn that asked instead of replaying and re-paying for every
+ * turn before it. `settle()` nulls the checkpoint, because for a terminal run it is scratch space.
+ *
+ * Returns null when the row was not `running` — cancelled from outside while the step was raising,
+ * most likely — and the caller reports what the row says rather than what it intended.
+ */
+export async function parkRun(
+  db: Database,
+  tenantId: string,
+  runId: string
+): Promise<AgentRunRow | null> {
+  const [row] = await db
+    .update(agentRuns)
+    .set({ status: 'awaiting_input' })
+    .where(
+      and(
+        eq(agentRuns.id, runId),
+        eq(agentRuns.tenantId, tenantId),
+        eq(agentRuns.status, 'running')
+      )
+    )
+    .returning()
+  return row ?? null
+}
+
+/**
+ * Un-park a run: `awaiting_input → running`, compare-and-set. **The answer IS the transition**
+ * (decision 2): the resolve route calls this BEFORE it nudges or restarts the instance, which is
+ * what lets `claimRun` keep its narrow `queued|running` predicate — a restarted instance's `claim`
+ * step finds a `running` row because somebody answered, and finds nothing when nobody did.
+ *
+ * Null means the row was not parked: 409 `run_not_awaiting_input`.
+ */
+export async function resumeRun(
+  db: Database,
+  tenantId: string,
+  runId: string
+): Promise<AgentRunRow | null> {
+  const [row] = await db
+    .update(agentRuns)
+    .set({ status: 'running' })
+    .where(
+      and(
+        eq(agentRuns.id, runId),
+        eq(agentRuns.tenantId, tenantId),
+        eq(agentRuns.status, 'awaiting_input')
+      )
+    )
+    .returning()
+  return row ?? null
+}
+
+/**
  * Ask a run to stop. Queued → `cancelled` at once (the claim then finds nothing). Running → set
  * the flag; the run's `checkCancelled()` sees it between turns (a step in flight finishes).
  * Terminal → unchanged. Returns the row as it now is, or null if unknown in this tenant.
@@ -301,7 +380,10 @@ export async function requestCancel(
 ): Promise<AgentRunRow | null> {
   const row = await getRun(db, tenantId, runId)
   if (!row) return null
-  if (row.status === 'queued') {
+  // `queued` and `awaiting_input` are the two states where nothing is executing, so both settle
+  // outright rather than waiting for a poll that will never come: a parked instance is asleep on
+  // `step.waitForEvent` and polls nothing at all.
+  if (row.status === 'queued' || row.status === 'awaiting_input') {
     const [updated] = await db
       .update(agentRuns)
       .set({ status: 'cancelled', cancelRequestedAt: sql`now()`, finishedAt: sql`now()` })
@@ -309,10 +391,17 @@ export async function requestCancel(
         and(
           eq(agentRuns.id, runId),
           eq(agentRuns.tenantId, tenantId),
-          eq(agentRuns.status, 'queued')
+          eq(agentRuns.status, row.status)
         )
       )
       .returning()
+    if (row.status === 'awaiting_input') {
+      // A question whose run is over must not sit in somebody's inbox, and the sleeping instance
+      // has to be woken or it holds its seven-day `waitForEvent` for nothing — it wakes, reads a
+      // settled row and exits. Both are best-effort: the ROW is the truth.
+      await expireInterrupts(db, tenantId, runId)
+      await sendResumeEvent(env, updated ?? row, { interruptId: null })
+    }
     nudgeRun(realtime, tenantId, runId)
     return updated ?? getRun(db, tenantId, runId)
   }
@@ -342,6 +431,116 @@ async function terminateInstance(env: AgentRunsEnv | undefined, run: AgentRunRow
   } catch {
     // Already terminated, already finished, or gone with the local dev server: settle anyway.
   }
+}
+
+// ---- Suspend / resume (issue #17) -----------------------------------------------------------
+
+/** Best-effort wake of a parked instance. Returns false when it could not be delivered. */
+async function sendResumeEvent(
+  env: AgentRunsEnv | undefined,
+  run: AgentRunRow,
+  payload: { interruptId: string | null }
+): Promise<boolean> {
+  if (!env?.AGENT_RUN_WORKFLOW || !run.instanceId) return false
+  try {
+    const instance = await env.AGENT_RUN_WORKFLOW.get(run.instanceId)
+    await instance.sendEvent({ type: AGENT_RESUME_EVENT, payload })
+    return true
+  } catch {
+    return false
+  }
+}
+
+/**
+ * The instance id a restart should take: `<runId>` → `<runId>-r1` → `<runId>-r2`.
+ *
+ * Hyphen, not colon (T5): a colon is not a documented-legal instance-id character, while a uuid
+ * already proves hyphens are, and 36 + 3 is comfortably inside the 64-character limit.
+ */
+export function nextInstanceId(runId: string, current: string | null): string {
+  const match = current && current.startsWith(`${runId}-r`) ? /-r(\d+)$/.exec(current) : null
+  const round = match?.[1] ? Number(match[1]) + 1 : 1
+  return `${runId}-r${round}`
+}
+
+/**
+ * Wake the parked run, and **create a new instance when the old one is gone** (T4/T5).
+ *
+ * `instance.not_found` is an ANSWER, not an error — the same reading `reconcileRun` already takes.
+ * An instance disappears for ordinary reasons: a `wrangler dev` restart, or retention expiring
+ * (30 days on Workers Paid, **3 days on Free**). Without this branch such a park could never be
+ * resumed, which is the worst outcome this feature has: an answered question, a run that never
+ * hears it, and the exclusive slot held forever.
+ *
+ * **The coupling to hold in your head:** the new instance's first step is `claim`, and `claimRun`
+ * only takes `queued|running`. It succeeds solely because the caller already flipped the row with
+ * {@link resumeRun} — *the answer is the transition* (decision 2). Call this AFTER that, never
+ * before.
+ *
+ * `agent_runs.instanceId` therefore becomes *the latest* instance rather than "the run id"; it
+ * stays `unique()`, so a probe still maps back 1:1.
+ */
+export async function nudgeOrRestartInstance(
+  db: Database,
+  env: AgentRunsEnv,
+  run: AgentRunRow,
+  payload: { interruptId: string | null }
+): Promise<AgentRunRow> {
+  const workflow = env.AGENT_RUN_WORKFLOW
+  if (!workflow) return run
+  if (run.instanceId && (await sendResumeEvent(env, run, payload))) return run
+
+  // Either there was no instance to send to, or it is gone. Seed a fresh one from the ROW — never
+  // from a message — and try a couple of ids in case an earlier attempt already made one.
+  let lastError: unknown
+  let candidate = nextInstanceId(run.id, run.instanceId)
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const instance = await workflow.create({
+        id: candidate,
+        params: { runId: run.id, tenantId: run.tenantId },
+      })
+      const [updated] = await db
+        .update(agentRuns)
+        .set({ instanceId: instance.id })
+        .where(and(eq(agentRuns.id, run.id), eq(agentRuns.tenantId, run.tenantId)))
+        .returning()
+      return updated ?? run
+    } catch (err) {
+      lastError = err
+      candidate = nextInstanceId(run.id, candidate)
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error('agent-run: could not restart instance')
+}
+
+/**
+ * The read-path safety net for a park whose instance no longer exists (T6). Lives here, beside
+ * {@link reconcileRun}, because it settles a run — and is called from the same place, on read.
+ *
+ * A parked run whose asks have **all passed their deadline** settles `cancelled` with `error` NULL:
+ * nobody answered, and the `waitForEvent` that would have expired it died with its instance.
+ *
+ * A park with **no pending asks at all is left alone**. That state is not "unreachable" — it is the
+ * window between the resolve route's write and the `resumeRun` that follows it, and settling a run
+ * somebody has just answered would be a far worse bug than a stale-looking row for a few
+ * milliseconds.
+ */
+export async function expireParkedRun(
+  db: Database,
+  run: AgentRunRow,
+  realtime?: Realtime,
+  now: Date = new Date()
+): Promise<AgentRunRow> {
+  if (run.status !== 'awaiting_input') return run
+  const pending = await listInterrupts(db, run.tenantId, run.id, 'pending')
+  if (pending.length === 0) return run
+  // One ask without a deadline, or one still in date, is a run that is legitimately waiting.
+  if (pending.some(row => !row.expiresAt || row.expiresAt.getTime() > now.getTime())) return run
+  await expireInterrupts(db, run.tenantId, run.id)
+  const settled = (await cancelRun(db, run.tenantId, run.id)) ?? run
+  nudgeRun(realtime, run.tenantId, run.id)
+  return settled
 }
 
 /** `true` when a cancel was requested for the run — the poll a run makes between turns. */
@@ -384,6 +583,12 @@ export async function reconcileRun(
     return (await failRun(db, run.tenantId, run.id, 'Workflow instance not found')) ?? run
   }
   switch (status.status) {
+    // A `waiting` instance is parked on `step.waitForEvent` and is exactly where it should be. The
+    // default arm already returns the row, but saying it explicitly is the difference between
+    // correct-by-accident and correct-on-purpose: it is the ONE runtime status that looks idle and
+    // is not, and settling it would strand the answer somebody is about to give.
+    case 'waiting':
+      return run
     // `terminated` is what a forced cancel leaves behind — settle it as cancelled, not failed.
     case 'terminated':
       return (await cancelRun(db, run.tenantId, run.id)) ?? run
@@ -438,6 +643,52 @@ export async function appendEvent(
   if (!row) throw new Error('agent_run_events: insert returned no row')
   nudgeRun(input.realtime, input.tenantId, input.runId)
   return row
+}
+
+/**
+ * Append an event whose `seq` is computed **in SQL**, retrying once on the unique violation.
+ *
+ * `createEmitter` keeps an in-memory counter, which is correct while a Workflow step is the only
+ * writer — and stops being correct the moment a steering route writes to the same run while a step
+ * is emitting. `agent_run_events_run_seq_idx` rejects the loser, so either the note or a progress
+ * row would be silently dropped. Here the number comes from `max(seq) + 1` inside the INSERT, and
+ * a genuine race is one retry rather than a lost row.
+ *
+ * It is not the hot path: the emitter's counter is still what a step uses for its own stream.
+ */
+export async function appendEventAtomic(
+  db: Database,
+  input: {
+    tenantId: string
+    runId: string
+    type: AgentRunEventType
+    data: unknown
+    realtime?: Realtime
+  }
+): Promise<AgentRunEventRow> {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      // `db.execute` hands back RAW column names (postgres.js, no drizzle mapping), so every
+      // column is aliased to the field the row type declares rather than selected with `*`.
+      const rows = await db.execute<AgentRunEventRow>(sql`
+        insert into ${agentRunEvents} (run_id, tenant_id, seq, type, data)
+        select ${input.runId}::uuid, ${input.tenantId}::uuid,
+               coalesce(max(${agentRunEvents.seq}), 0) + 1,
+               ${input.type}, ${JSON.stringify(input.data ?? {})}::jsonb
+          from ${agentRunEvents}
+         where ${agentRunEvents.runId} = ${input.runId}::uuid
+           and ${agentRunEvents.tenantId} = ${input.tenantId}::uuid
+        returning id, run_id as "runId", tenant_id as "tenantId", seq, type, data, at
+      `)
+      const row = rows[0]
+      if (!row) throw new Error('agent_run_events: insert returned no row')
+      nudgeRun(input.realtime, input.tenantId, input.runId)
+      return { ...row, seq: Number(row.seq), at: new Date(row.at) }
+    } catch (err) {
+      if (attempt === 1 || !isUniqueViolation(err)) throw err
+    }
+  }
+  throw new Error('agent_run_events: could not allocate a sequence number')
 }
 
 export async function listEvents(
@@ -519,6 +770,30 @@ export async function runOnce<T>(
   if (inserted) return result
   // Lost the race: the other writer's value is the one every later attempt will read, so use it.
   return (await readEffect<T>(db, tenantId, runId, key))?.result ?? result
+}
+
+/**
+ * "Am I the first to do this?" over the same `(run_id, key)` index {@link runOnce} uses — true
+ * exactly once per run and key, across every attempt and every isolate.
+ *
+ * The difference from `runOnce` is what is replayed. `runOnce` replays a recorded **result**, which
+ * is what an ingest or a ledger write needs. `claimEffect` replays a **decision**, which is what
+ * once-only DELIVERY needs: "has this steering note already been handed to the model?", "has this
+ * park already been notified?". Wrapping those in `runOnce` would work and would store a pointless
+ * jsonb `true` while reading as though the work were replayable; it is not — it already happened.
+ */
+export async function claimEffect(
+  db: Database,
+  tenantId: string,
+  runId: string,
+  key: string
+): Promise<boolean> {
+  const [row] = await db
+    .insert(agentRunEffects)
+    .values({ tenantId, runId, key, result: null })
+    .onConflictDoNothing({ target: [agentRunEffects.runId, agentRunEffects.key] })
+    .returning({ id: agentRunEffects.id })
+  return Boolean(row)
 }
 
 /** Wrapped so `null`/`undefined` results are distinguishable from "not recorded". */

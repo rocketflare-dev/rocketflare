@@ -15,7 +15,7 @@ ships, the durable parts move into `docs/CONCEPTS.md` §9, the `.claude/rules/*`
 |---|---|---|
 | 1 · Contracts | [01-contracts.md](01-contracts.md) | **done** |
 | 2 · Schema + migration | [02-schema.md](02-schema.md) | **done** |
-| 3 · Runtime | [03-runtime.md](03-runtime.md) | not started |
+| 3 · Runtime | [03-runtime.md](03-runtime.md) | **done** |
 | 4 · Workflow | [04-workflow.md](04-workflow.md) | not started |
 | 5 · Routes, permissions, projection | [05-routes.md](05-routes.md) | not started |
 | 6 · Live streaming | [06-streaming.md](06-streaming.md) | not started |
