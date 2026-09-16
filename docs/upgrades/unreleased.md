@@ -402,6 +402,130 @@ Contracts and client:
   and each of those nudges throws away what the stream just built — **turning the stream into a
   more expensive poll.** There is a UI test on it.
 
+### Phase 7 — the run workspace (the UI)
+
+**A run stops being a modal and becomes a page.** `/agents/runs/:runId` keeps its URL and gains its
+own route, its own lazy chunk (`RunPage`) and a breadcrumb; `RunDetailDrawer.tsx` and
+`AgentSteps.tsx` are **deleted**. A modal is the wrong home for something a person is asked to *act*
+on, arrives at from a notification, may need to read a document before deciding, and may leave and
+come back to.
+
+**Three things were stale the moment `awaiting_input` existed, and all three are fixed here.**
+
+- **`runOwesAnswer(status)` is new** (`hooks/useAgents.ts`) and is `queued || running`. `isRunActive`
+  widened to include `awaiting_input` — the exclusive index needs it — and three call sites read it
+  for the wrong question. `runPollInterval`, the runs list's `refetchInterval` and `RunStatusBadge`
+  now read `runOwesAnswer`, so a run parked on a human is **not re-fetched every three seconds for a
+  week** by every open tab, and its badge neither pulses nor `aria-live`-announces itself for the
+  length of `AGENT_INTERRUPT_TIMEOUT`. `isRunActive` keeps its meaning and drives exclusivity copy.
+- **Notification deep links exist.** `lib/notificationLink.ts` maps `type` + `data` to a path
+  (`agent_run_awaiting_input` → `/agents/runs/<id>`, unknown → `null`), used by BOTH
+  `NotificationsBell` and `/notifications`. Neither read `data` at all before: every row landed on
+  the list of notifications *about* the thing rather than on the thing.
+- **`STATUS_LABELS` is one export** (`RunStatusBadge.tsx`) instead of two copies, because the
+  `Record<AgentRunStatus, string>` exhaustiveness is what tells you both places need a new key.
+  `awaiting_input` reads "Awaiting input" and carries a `PauseCircleIcon`.
+
+**The layout is the argument.** The action panel is full-width and **above** the timeline, because
+somebody arriving from a notification is here to decide, not to read; below it a 26rem timeline and
+the tabs. Under `lg` they stack **tabs first, timeline second** — on a phone the answer is what
+people came for. `run.error` renders **above the tab bar, always**: a failure is not a tab.
+
+**The action panel** (`run/ActionRequiredPanel.tsx` + `run/interrupts/*`) dispatches on an
+exhaustive `switch` over the shared kind union, so a fifth kind is a type error until it has a
+branch. Four details it is arranged around:
+
+- **409 is information, not an error.** `isInterruptNotPending(error)` mirrors
+  `isAgentRunsNotConfigured`; the panel swaps to `alert-info` — *"Someone else answered this"* —
+  and refetches. No toast, no red.
+- **Expiry ticks at a rate a pure function chooses.** `expiryState(expiresAt, now)` returns `tickMs`
+  — 1 s under an hour, 60 s under a day, **`null` beyond**. A naive one-second countdown on a
+  seven-day deadline re-renders the panel about 600 000 times.
+- **A non-approver sees no buttons, not disabled ones** — they still see the panel, because they
+  need to know the run is blocked and on whom, with one sentence instead. A disabled control with a
+  tooltip is how you tell a member they are second-class.
+- **Focus goes to the heading on mount, never to Approve.** An autofocused destructive button plus a
+  stray Enter is how 412 subscribers get an email.
+
+**The timeline** is two pure stages plus selectors in `run/timeline/timelineModel.ts` —
+`buildTimeline(events)` then `groupTimeline(rows)`, with `selectArtifacts`, `selectPendingInterrupts`,
+`selectWorkStats`, `defaultExpanded` and `windowGroups` beside them. *Everything the right pane shows
+that is not `run.output` is a selector over the same rows — never a second fetch.* Two corrections to
+the reducer it replaces, both load-bearing:
+
+- **`tool.end` no longer overwrites `at`.** The old one did, destroying the call's start time, which
+  is exactly why a per-call duration was impossible; `at` is the start and `endedAt` / `durationMs`
+  are new. A step row gains `endedSeq` for the same reason — a `done` merges into the row its
+  `running` wrote, so without it the position at which a stage finished is lost and a settled run's
+  trailing rows get swallowed by the last stage.
+- **It is idempotent under duplicated events** (deduplicated by `event.id` first). Once a stream and
+  a fetch can both feed it, the same row arrives twice and the open-call FIFO would pair the second
+  start with the first answer.
+
+Grouping, stated so it is testable: a `running` step opens a group, non-step rows attach, its
+`done`/`error` closes it, a different key implicitly closes the open one (an unclosed step is a real
+state, shown spinning); rows before the first step go to `__preamble__`, rows after the last closed
+one to `__tail__`. Collapsed a group reads `✓ Searching knowledge · 1.4s · 3 tools`; expansion is
+`defaultExpanded` XOR the reader's own toggles, so a new event never yanks open a group somebody
+closed. Auto-scroll (`useStickToBottom`) fires only when the reader is at the bottom **and the last
+row id changed** — keying on height yanks them down whenever they expand an old group. For long runs
+it **windows rather than virtualises** (40 groups from the end, plus one "Show earlier activity"
+button): row heights vary wildly, so a virtualiser needs measurement, and measurement fights both
+auto-scroll and collapsing.
+
+**Real tool results for free.** `documentCardsFromToolResult(name, result)` already existed in
+`@rocketflare/shared/ai/embeddings` and is documented as serving the agent-run projection, so
+`search_knowledge` / `list_documents` / `get_document` render a `DocumentCard` strip and **no tool
+parser was written**. Every other tool keeps `<details><pre>`, truncated at 4 000 characters — a
+200 KB result pretty-printed into the DOM is a real hang.
+
+**The right pane is `URLTabs` (`?tab=output|artifacts|usage|input`), not stacked panels**, so the
+approver — the person this feature exists for — does not scroll past the answer to reach the
+artifact they must inspect.
+
+- **`outputs/` mirrors `forms/`**: `outputFor(agentKey) → { schema, Component, artifacts? }`, which
+  killed the hard-coded `agentKey === 'summarize-text'` / `'research-topic'` branches. **An agent is
+  now one shared input schema + one `forms/` entry + one `outputs/` entry.**
+- **Artifacts come from the table**, ordered by their event rows, with `outputFor().artifacts?.()`
+  as the zero-server-change fallback for an agent that declares none.
+- **Usage says what it does not know.** `ai_usage` gained a run reference in this release but nothing
+  populates it yet, so the tab reports attempts, stages, tool calls with per-tool durations, retries
+  and wall-clock, and **says in words** that model cost is not attributed per run in this deployment
+  rather than rendering a `$0.00`. That is the `unpricedTurns` honesty rule copied across.
+
+**One field renderer, two callers.** `fields/schemaFields.ts` is pure: `fieldsFromJsonSchema(schema)
+→ FieldSpec[] | null` over a flat object of string / number / boolean / enum. **`$ref`,
+`allOf`/`anyOf`/`oneOf`, nested objects and arrays return `null`, and the caller falls back to the
+JSON textarea WHOLE, never per field** — a form that silently drops a field the agent requires is
+worse than a JSON box, and that failure is invisible until the run 400s. `fields/FieldInput.tsx` +
+`FieldSet.tsx` then serve both the `form` interrupt kind and `formFor`'s new middle rung,
+`schemaForm(agent.inputJsonSchema)`, which is why the fourth interrupt kind cost almost nothing.
+`submittableValues` drops empty optionals rather than sending `''`, because `formValuesSchemaFor`
+builds a `.strict()` object.
+
+**Finding what is waiting.** The runs table's filters moved from `useState` to `useSearchParams`, so
+`/agents?awaiting=1` is a URL, and there is a chip for it; every row is a real `<Link>`, so
+middle-click and open-in-new-tab work — half the point of a run being a page. The **SideNav badge**
+is `NavItem.badgeKey` / `badgeTone` resolved by `useNavBadges()` in `SideNav`: `navigationConfig`
+stays plain data consumed by the pure, tested `filterNavConfig` rather than becoming a hook. It reads
+`GET /interrupts?status=pending&pageSize=1`, is keyed `['agent-run','awaiting']` so both server
+nudges already cover it, and is **never polled**. **Collapsed, it renders a dot on the icon** — or
+the whole feature is invisible to everyone who collapsed the sidebar.
+
+**The stream stays additive.** The page is built against `GET /runs/:id` — the row, its durable
+events, its asks and its artifacts — polled while the server owes an answer and refreshed by the
+`agent-run` nudge. `useRunStream` is layered on for CADENCE only: when it reports a `seq` the page
+has not rendered, the page re-reads the run, coalesced so one fetch is ever in flight. That keeps ONE
+representation of the log (the durable rows) instead of a second, lossy one reconstructed from AG-UI
+— AG-UI events carry no `seq`, no row id for a step and no timestamp — and **deleting the hook leaves
+a working page**, which is the property phase 6 was built to preserve. The stream remains the only
+writer of `['agent-run-agui']` and still never touches the run row.
+
+Also: `Row` / `Section` / `formatCost` moved out of `ChatStatsPanel.tsx` into
+**`components/ai/StatRows.tsx`** — a legal markdown zone whose two consumers are both lazy, so Vite
+emits it once. `components/shared` would have been the mistake (it is the eager barrel).
+
+
 ## How to apply
 
 Take the four `packages/shared/src/ai/` files and `errors.ts` as written — they are appends, so a
@@ -458,13 +582,38 @@ that restyled its run page can take `lib/runAguiStream.ts`, `hooks/useRunStream.
 `query-keys.ts` entries and wire them when it wants to. **Do not put `['agent-run-agui']` in
 `REALTIME_INVALIDATIONS`** — the reason is in the phase note above, and the failure is silent.
 
+Phase 7 is a UI phase and touches nothing on the server. `apps/web/src/ui/pages/agents/` is
+substantially new — `RunPage.tsx` plus `run/**`, `outputs/**` and `fields/**` — and
+`RunDetailDrawer.tsx` and `AgentSteps.tsx` are deleted. A copy that restyled its run surface should
+take the new tree wholesale and re-apply its styling, rather than merging hunk by hunk into two
+files that no longer exist. Six edits outside that tree are the ones to make by hand:
+
+1. `hooks/useAgents.ts` — add `runOwesAnswer` and point `runPollInterval`, `useAgentRuns`'s
+   `refetchInterval` and `RunStatusBadge` at it. **Do this even if you take nothing else**: with
+   `awaiting_input` in `ACTIVE_RUN_STATUSES`, a parked run otherwise polls for days.
+2. `lib/format.ts` gains `formatDuration` / `runDuration` (they lived in the deleted drawer, which
+   the runs table imported from — a real coupling).
+3. `lib/query-keys.ts` gains `agentRuns.awaiting`.
+4. `components/SideNav.tsx` — `badgeKey` / `badgeTone` on `NavItem`, resolved in the component. Keep
+   `navigationConfig` a const; `filterNavConfig` must stay pure.
+5. `lib/notificationLink.ts` plus its two call sites. An app with its own notification types adds
+   them to the one `switch`.
+6. `pages/chat/ChatStatsPanel.tsx` — `Row`, `Section` and `formatCost` now come from
+   `components/ai/StatRows.tsx`. Do not move that file into `components/shared`: it is the eagerly
+   imported barrel, and `tests/config/ui-bundle.test.ts` asserts nothing under it touches markdown.
+
+`formFor` now takes the `AgentInfo` rather than the key (the string form still works), so it can try
+`schemaForm(inputJsonSchema)` before falling back to the JSON textarea.
+
 ## Conflicts to expect
 
 `packages/shared/src/ai/agents.ts` is the one file with several separate hunks (imports, the status
 enum, the event-type list, the event-payload block, `agentRunWithEventsSchema`, and two new
 constant sections). An app that added its own statuses, event types or agent metadata will have to
-place them by hand. `apps/web/src/ui/pages/agents/*` is likely to be rejected in a copy that has
-restyled the run list; the compiler names every missing arm, so take the type error as the checklist.
+place them by hand. `apps/web/src/ui/pages/agents/*` is likely to be rejected wholesale in a copy that has restyled the
+run surface — phase 7 deletes two of its files and adds a directory tree — so take that tree fresh
+and re-apply styling rather than resolving hunks into files that no longer exist. Everywhere else
+the compiler names every missing arm, so take the type error as the checklist.
 
 ## Verify
 
@@ -511,3 +660,17 @@ and that rows without `toolCallId` pair by name exactly as before.
 `apps/web/tests/ui/run-stream.test.tsx` proves the client's cursor only moves on a frame that
 carries one, the `streamEnabled` matrix, the three-empty-connections fallback, and that a run nudge
 leaves `['agent-run-agui']` untouched.
+
+For phase 7, `apps/web/tests/config/run-timeline.test.ts` proves the timeline reducer's grouping, its
+implicit close, its `__preamble__` / `__tail__` stretches, **the tool duration from start→end (the
+`at`-overwrite regression)** and **idempotence under duplicated events**; the `expiryState` tick
+selection including the `null` beyond a day; and `fieldsFromJsonSchema` including the **whole-form**
+fallback for every unsupported keyword. `apps/web/tests/ui/run-page.test.tsx` proves the page has no
+`role="dialog"`, that `runPollInterval('awaiting_input')` is `false`, that each interrupt kind posts
+the right payload (`status`, never an `approved` boolean), that a 409 renders as *"Someone else
+answered this"* with **no toast and no red**, that a non-approver gets one sentence rather than
+disabled buttons, that focus lands on the heading, that a failure renders above the tab bar, and
+that an `agent-run` nudge refetches the run while leaving `['agent-run-agui']` untouched.
+`apps/web/tests/ui/sidenav.test.tsx` proves the badge renders and **becomes a dot when the nav is
+collapsed**, while still announcing its count. `apps/web/tests/config/ui-bundle.test.ts` proves
+`RunPage` lands in its own lazy chunk and that the eager entry still carries no markdown.

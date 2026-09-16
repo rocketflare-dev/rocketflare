@@ -51,6 +51,7 @@ const SettingsLayout = lazy(() => import('@/ui/pages/settings/SettingsLayout'))
 const ChatPage = lazy(() => import('@/ui/pages/chat/ChatPage'))
 // D7: also carries the markdown renderer (run transcripts) — lazy for the same reason.
 const AgentsPage = lazy(() => import('@/ui/pages/agents/AgentsPage'))
+const RunPage = lazy(() => import('@/ui/pages/agents/RunPage'))
 // D18: the knowledge base — ingest/upload + list on /documents, hybrid search on /search.
 const DocumentsPage = lazy(() => import('@/ui/pages/documents/DocumentsPage'))
 const SearchPage = lazy(() => import('@/ui/pages/documents/SearchPage'))
@@ -127,18 +128,25 @@ function ShellRoutes() {
               </RequireGuard>
             }
           />
-          {/* D7: one page; `/agents/runs/:runId` opens the run drawer over the list */}
-          {['/agents', '/agents/runs/:runId'].map(path => (
-            <Route
-              key={path}
-              path={path}
-              element={
-                <RequireGuard guard={{ action: 'read', subject: 'AgentRun' }}>
-                  <AgentsPage />
-                </RequireGuard>
-              }
-            />
-          ))}
+          {/* D7 + issue #17: the list and the run are two pages. A run is something a person is
+              asked to ACT on, arrives at from a notification and comes back to — so it has its own
+              route and its own lazy chunk, not a modal over the list. */}
+          <Route
+            path="/agents"
+            element={
+              <RequireGuard guard={{ action: 'read', subject: 'AgentRun' }}>
+                <AgentsPage />
+              </RequireGuard>
+            }
+          />
+          <Route
+            path="/agents/runs/:runId"
+            element={
+              <RequireGuard guard={{ action: 'read', subject: 'AgentRun' }}>
+                <RunPage />
+              </RequireGuard>
+            }
+          />
           <Route
             path="/documents"
             element={

@@ -54,6 +54,15 @@ describe.skipIf(!built)('the UI bundle', () => {
     for (const needle of EAGER_FORBIDDEN) expect(source).not.toContain(needle)
   })
 
+  /**
+   * The run workspace (issue #17) carries `Markdown`, the interrupt panel and the timeline. It must
+   * be its OWN chunk: the route is reached from a notification by people who may never open any
+   * other AI surface, and the shell must not pay for it.
+   */
+  it('lands the run workspace in its own lazy chunk', () => {
+    expect(chunks().filter(f => f.startsWith('RunPage-'))).toHaveLength(1)
+  })
+
   it('ships no protobuf in any chunk', () => {
     const offenders = chunks().filter(file => {
       const source = read(file)

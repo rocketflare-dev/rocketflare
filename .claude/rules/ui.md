@@ -59,7 +59,10 @@ Dev: Vite on :3000 proxies `/api`, `/auth`, `/ws`, `/cubejs-api`, `/mcp` to `wra
 - Mutations invalidate via `queryKeys`; error toast on by default (`showToast`)
 - **Polling rules** (Phase 3b): poll only while the server still owes an answer, with the decision as a
   pure function on the cached row — `refetchInterval: q => runPollInterval(q.state.data?.status)`
-  (`RUN_POLL_MS` 3 s while `isRunActive`; lists poll while any listed row is active); documents 5 s
+  (`RUN_POLL_MS` 3 s while **`runOwesAnswer`**, which is `queued || running` and deliberately NOT
+  `isRunActive` — that includes `awaiting_input`, and a run parked on a person would otherwise be
+  re-fetched every three seconds for the length of `AGENT_INTERRUPT_TIMEOUT`, by every open tab;
+  lists poll while any listed row owes an answer); documents 5 s
   (`DOCUMENT_POLL_MS`) while a row is `pending`. Polling is the belt to the nudge's braces — a resource
   that has a server nudge still polls (the socket may be down); a resource without one (documents) polls
   only. Never poll a settled row, never poll unconditionally, never fight `refetchInterval` with timers in tests
@@ -149,6 +152,27 @@ Components subscribe to query state, never to the socket; `WebSocketStatus` (hea
 
 - Pages in `pages/` (lazy in `App.tsx`), reusable primitives in `components/shared/` — check there
   before writing a modal, empty state, toast, pagination control or section panel
+- **A surface somebody is asked to ACT on is a page, not a modal.** A run
+  (`/agents/runs/:runId`, issue #17) is arrived at from a notification, may need a document read
+  before deciding, and is left and returned to — so it has its own route, its own lazy chunk, a
+  breadcrumb, and no `role="dialog"`. The decision panel is pinned ABOVE the content, **focus lands
+  on its heading and never on the destructive button**, and a non-approver sees one sentence rather
+  than a disabled control with a tooltip. A conflict (409) is rendered as `alert-info` plus a
+  refetch — *information, not an error*: no toast and no red for "somebody else got there first"
+- **A countdown chooses its own tick rate from a pure function.** `expiryState(expiresAt, now) →
+  { tickMs }` — a second under an hour, a minute under a day, `null` beyond. A naive one-second
+  interval on a seven-day deadline is ~600 000 re-renders of a panel nobody is watching
+- **A growing list windows; it does not virtualise.** Render the last N groups plus one "show
+  earlier" button. Virtualising needs measurement, and measurement fights both auto-scroll and
+  collapsible rows. Auto-scroll fires only when the reader is at the bottom AND the last row's **id**
+  changed — keying on height yanks them down whenever they expand something old
+- **A live count in the nav is `NavItem.badgeKey` resolved in `SideNav`**, never a hook inside
+  `navigationConfig`: that const is plain data consumed by the pure, tested `filterNavConfig`. Feed
+  it from a query-key root the server already nudges — **never a poll** — and **render a dot on the
+  icon when the nav is collapsed**, or the badge is invisible to everyone who collapsed the sidebar
+- **A notification's `data` is its deep link.** One `notificationLink(notification)` helper mapping
+  `type` + `data` → a path (unknown → `null`), used by the bell AND the list, so a row means the
+  same thing in both places
 - `components/ai/` (`Markdown`, `ChatBubble`) is deliberately NOT exported from the
   `components/shared` barrel that `App.tsx` imports eagerly: `react-markdown` + `remark-gfm` must ship
   only in the lazy chat / agents / documents chunks, never the main bundle. Import them by path from

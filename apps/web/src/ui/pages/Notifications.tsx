@@ -1,6 +1,7 @@
 /** `/notifications` (D13): the full list, unread filter, mark one / mark all read, paginated. */
 import { BellSlashIcon } from '@heroicons/react/24/outline'
 import { useState } from 'react'
+import { Link } from 'react-router-dom'
 import {
   EmptyState,
   PageHeader,
@@ -10,6 +11,7 @@ import {
 } from '@/ui/components/shared'
 import { useMarkNotificationsRead, useNotifications } from '@/ui/hooks/useNotifications'
 import { formatDateTime } from '@/ui/lib/format'
+import { notificationLink } from '@/ui/lib/notificationLink'
 
 export default function Notifications() {
   const [unreadOnly, setUnreadOnly] = useState(false)
@@ -84,7 +86,21 @@ export default function Notifications() {
                   aria-hidden="true"
                 />
                 <div className="flex-1 min-w-0">
-                  <div className="text-sm font-medium">{n.title}</div>
+                  {/* The same `notificationLink` the bell uses, so a row means the same thing in
+                      both places (issue #17). */}
+                  <div className="text-sm font-medium">
+                    {notificationLink(n) ? (
+                      <Link
+                        to={notificationLink(n) as string}
+                        className="link link-hover"
+                        onClick={() => !n.readAt && markRead.mutate({ ids: [n.id] })}
+                      >
+                        {n.title}
+                      </Link>
+                    ) : (
+                      n.title
+                    )}
+                  </div>
                   {n.body && <div className="text-sm text-secondary">{n.body}</div>}
                   <div className="text-xs text-muted mt-0.5">{formatDateTime(n.createdAt)}</div>
                 </div>

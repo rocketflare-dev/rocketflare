@@ -16,6 +16,7 @@ import type { ComponentType, ReactNode } from 'react'
 import { Link, NavLink, useLocation } from 'react-router-dom'
 import { useAppInfo } from '@/ui/hooks/useAppInfo'
 import { useBooleanPreference } from '@/ui/hooks/useLocalStoragePreference'
+import { type NavBadgeKey, type NavBadges, useNavBadges } from '@/ui/hooks/useNavBadges'
 import { type NavGuard, useNavGuard } from '@/ui/hooks/useNavGuard'
 import { EXAMPLE_FEATURE } from '@/ui/lib/feature-guards'
 import { LogoMark } from './shared/LogoMark'
@@ -28,6 +29,13 @@ export interface NavItem {
   guard?: NavGuard
   /** Optional count after the label */
   badge?: number
+  /**
+   * A live count resolved by `useNavBadges()` (issue #17). Declared here rather than fetched here
+   * so `navigationConfig` stays plain data and `filterNavConfig` stays a pure function.
+   */
+  badgeKey?: NavBadgeKey
+  /** `warning` for "something is waiting on you"; omitted for a quiet count. */
+  badgeTone?: 'warning'
 }
 
 export interface NavGroup {
@@ -60,11 +68,15 @@ export const navigationConfig: NavConfig = [
         guard: { action: 'read', subject: 'Conversation' },
       },
       // D7: every role may start the example agent; members see their own runs
+      // The badge counts the asks waiting on THIS person (issue #17) and is fed by a nudge, never
+      // a poll. It is warning-toned because a parked agent is blocked until somebody answers.
       {
         to: '/agents',
         label: 'Agents',
         icon: CpuChipIcon,
         guard: { action: 'read', subject: 'AgentRun' },
+        badgeKey: 'agentsAwaiting',
+        badgeTone: 'warning',
       },
       // D18: the knowledge base is tenant-shared; every member may read and search
       {
@@ -139,37 +151,76 @@ interface SideNavProps {
   footer?: ReactNode
 }
 
+/** The count an item shows: its live `badgeKey` first, then whatever it declared statically. */
+export function badgeValueFor(item: NavItem, badges: NavBadges): number | undefined {
+  if (item.badgeKey !== undefined) {
+    const live = badges[item.badgeKey]
+    if (live !== undefined) return live
+  }
+  return item.badge
+}
+
 export default function SideNav({ items = navigationConfig, footer }: SideNavProps) {
   const { pathname } = useLocation()
   const canAccess = useNavGuard()
   const { name, version } = useAppInfo()
+  const badges = useNavBadges()
   const [isCollapsed, setIsCollapsed] = useBooleanPreference('sideNavCollapsed', false)
 
   const visible = filterNavConfig(items, canAccess)
 
-  const renderItem = (item: NavItem) => (
-    <div key={item.to} className="relative group">
-      <NavLink
-        to={item.to}
-        onClick={closeMobileDrawer}
-        data-active={isPathActive(pathname, item.to)}
-        className={`nav-item flex items-center gap-2.5 ${
-          isCollapsed ? 'justify-center px-3 py-2.5' : 'px-2.5 py-1.5'
-        }`}
-      >
-        <item.icon className="w-[18px] h-[18px] flex-shrink-0" />
-        {!isCollapsed && <span className="flex-1">{item.label}</span>}
-        {!isCollapsed && item.badge !== undefined && (
-          <span className="text-xs tabular-nums text-muted">{item.badge}</span>
+  const renderItem = (item: NavItem) => {
+    const badge = badgeValueFor(item, badges)
+    const warn = item.badgeTone === 'warning'
+    return (
+      <div key={item.to} className="relative group">
+        <NavLink
+          to={item.to}
+          onClick={closeMobileDrawer}
+          data-active={isPathActive(pathname, item.to)}
+          className={`nav-item flex items-center gap-2.5 ${
+            isCollapsed ? 'justify-center px-3 py-2.5' : 'px-2.5 py-1.5'
+          }`}
+        >
+          <span className="relative flex-shrink-0">
+            <item.icon className="w-[18px] h-[18px]" />
+            {/* Collapsed, the count has nowhere to go — so it becomes a dot on the icon. Without
+              this the whole feature is invisible to everyone who collapsed the sidebar. */}
+            {isCollapsed && badge !== undefined && (
+              <span
+                data-testid={`nav-badge-dot-${item.badgeKey ?? item.to}`}
+                className={`absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full ${
+                  warn ? 'bg-warning' : 'bg-primary'
+                }`}
+                aria-hidden="true"
+              />
+            )}
+          </span>
+          {!isCollapsed && <span className="flex-1">{item.label}</span>}
+          {!isCollapsed && badge !== undefined && (
+            <span
+              className={`text-xs tabular-nums ${
+                warn ? 'badge badge-warning badge-sm' : 'text-muted'
+              }`}
+            >
+              {badge}
+            </span>
+          )}
+          {badge !== undefined && (
+            <span className="sr-only">{warn ? `${badge} waiting for you` : `${badge} items`}</span>
+          )}
+        </NavLink>
+        {isCollapsed && (
+          <div className="hidden md:block absolute left-full ml-2 top-1/2 -translate-y-1/2 z-50 opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity">
+            <div className="popover-surface px-3 py-2 text-sm whitespace-nowrap">
+              {item.label}
+              {badge !== undefined && <span className="ml-1.5 text-muted">{badge}</span>}
+            </div>
+          </div>
         )}
-      </NavLink>
-      {isCollapsed && (
-        <div className="hidden md:block absolute left-full ml-2 top-1/2 -translate-y-1/2 z-50 opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity">
-          <div className="popover-surface px-3 py-2 text-sm whitespace-nowrap">{item.label}</div>
-        </div>
-      )}
-    </div>
-  )
+      </div>
+    )
+  }
 
   return (
     <aside

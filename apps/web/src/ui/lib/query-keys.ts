@@ -95,6 +95,13 @@ export const queryKeys = {
     detail: (id: string) => ['agent-run', 'detail', id] as const,
     /** `GET /runs/:id?events=0` — the bare row, one indexed read, refreshed by the nudge. */
     row: (id: string) => ['agent-run', 'row', id] as const,
+    /**
+     * `GET /interrupts?status=pending&pageSize=1` — the "n waiting" SideNav badge (issue #17).
+     * Under `['agent-run']` so BOTH server nudges already cover it: a park writes an `interrupt`
+     * event row (`entity: 'agent-run'`) and an answer additionally nudges `agent-interrupt`.
+     * **Never polled** — a badge that polls is a request every few seconds on every page.
+     */
+    awaiting: ['agent-run', 'awaiting'] as const,
   },
   /**
    * The run's AG-UI timeline (issue #7) — **its own root on purpose, and it must stay out of

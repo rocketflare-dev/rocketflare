@@ -19,41 +19,12 @@ import type {
   ConversationContextStats,
   ConversationStats,
 } from '@rocketflare/shared/ai/chat'
+import { formatCost, Row, Section } from '@/ui/components/ai/StatRows'
 import { SkeletonRows } from '@/ui/components/shared'
 import { useCompactConversation, useConversationStats } from '@/ui/hooks/useChat'
 import { showToast } from '@/ui/lib/api-client'
 
-const MICROCENTS_PER_USD = 100_000_000
-
-function formatCost(microcents: number | null): string {
-  if (microcents === null) return '—'
-  const usd = microcents / MICROCENTS_PER_USD
-  if (usd === 0) return '$0.00'
-  // Chat turns are cheap enough that two decimals rounds most threads to nothing.
-  return usd < 0.01 ? `$${usd.toFixed(4)}` : `$${usd.toFixed(2)}`
-}
-
 const n = (value: number) => value.toLocaleString()
-
-function Row({ label, value, hint }: { label: string; value: string; hint?: string }) {
-  return (
-    <div className="flex items-baseline justify-between gap-2 py-1">
-      <span className="text-xs text-muted shrink-0">{label}</span>
-      <span className="text-xs font-mono text-right break-all" title={hint}>
-        {value}
-      </span>
-    </div>
-  )
-}
-
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <section className="px-3 py-2 border-b border-[color:var(--border-subtle)]">
-      <h3 className="text-xs font-semibold mb-1">{title}</h3>
-      {children}
-    </section>
-  )
-}
 
 /**
  * The one sentence a person actually wants: how far is this thread from forgetting something?

@@ -46,9 +46,11 @@ React 18 + Vite + React Router 6 + TanStack Query 5 + zustand; DaisyUI 5 on Tail
   (`usePrompts`, `useUpdatePrompt`, `useClearPrompt`), `useAiUsage` (`useAiUsageSummary(days)`,
   keyed on the PRESET, window derived in `queryFn`), `useChat` (`useConversations` paginated,
   `useConversation(id)`, `useCreateConversation`, `useDeleteConversation`, `useSendMessage`).
-  Phase 3b (D7/D18): `useAgents` (`useAgentList`, `useAgentRuns` paginated + filters,
-  `useAgentRun(id)` polling `RUN_POLL_MS` while `isRunActive`, `useCreateAgentRun`,
-  `useCancelAgentRun`, `isAgentRunsNotConfigured`, `runPollInterval`), `useAgentModels`
+  Phase 3b (D7/D18) + issue #17: `useAgents` (`useAgentList`, `useAgentRuns` paginated + filters,
+  `useAgentRun(id)` and `useAgentRunRow(id)` polling `RUN_POLL_MS` while `runOwesAnswer`,
+  `useCreateAgentRun`, `useCancelAgentRun`, `useResolveInterrupt(runId)`, `useSendSteering(runId)`,
+  `useAwaitingInterruptCount`, `isAgentRunsNotConfigured`, `isInterruptNotPending`,
+  `runOwesAnswer`, `runPollInterval`), `useNavBadges` (the SideNav counts), `useAgentModels`
   (`useAgentModels`, `useUpsertAgentModel`, `useDeleteAgentModel`), `useDocuments` (`useDocuments`
   polling while any row is `pending`, `useDocument`, `useIngestText`, `useDeleteDocument`,
   `useSearch` — mutation-style, hits are its `data`).
@@ -87,8 +89,8 @@ React 18 + Vite + React Router 6 + TanStack Query 5 + zustand; DaisyUI 5 on Tail
   is one page with `URLTabs` (`?tab=general|people|groups|api-keys|ai|prompts|agent-models|usage`;
   `groups` only for `manage Group`, `agent-models` and `usage` only for `manage AiConfig`); `admin/` is nested routes under `AdminLayout`; `chat/ChatPage.tsx` is
   `/chat/:conversationId?` (D17, guard `read Conversation`, lazy — its chunk carries the markdown
-  renderer). `agents/` — `/agents` + `/agents/runs/:runId` (D7, guard `read AgentRun`; the same
-  `AgentsPage` for both, the param opens `RunDetailDrawer`); `documents/DocumentsPage.tsx` —
+  renderer). `agents/` — `/agents` (`AgentsPage`, the roster + runs table) and `/agents/runs/:runId`
+  (`RunPage`, its OWN lazy chunk), both `read AgentRun`; `documents/DocumentsPage.tsx` —
   `/documents` (D18, guard `read Document`, nav label "Knowledge"). `analytics/` — `/analytics`
   (`DashboardListPage`), `/analytics/explore` (`QueryBuilderPage`), `/analytics/:pageId`
   (`DashboardViewPage`), all `read Analytics` (D19, below). `public/` — static assets copied as-is.
@@ -189,27 +191,75 @@ A `CUSTOM kit.notice` renders
 ## Agents, agent models, knowledge base (Phase 3b, D7/D18)
 
 - **Runs are durable rows, never client state.** `POST /api/agents/runs` answers 202 with the row
-  and the page navigates to `/agents/runs/:id`; `RunDetailDrawer` renders `GET /runs/:id` (row +
-  `events`, reconciled server-side) through `AgentSteps`. A `deduplicated: true` 202 is a SUCCESS
+  and the page navigates to `/agents/runs/:id`; `RunPage` renders `GET /runs/:id` (row + `events` +
+  `interrupts` + `artifacts`, reconciled server-side). A `deduplicated: true` 202 is a SUCCESS
   (an exclusive agent already had an active run — toast, open that run); 503
   `agent_runs_not_configured` is the modal's business (`isAgentRunsNotConfigured` → `EmptyState`
   naming `AGENT_RUN_WORKFLOW`, no toast); everything else re-toasts. The UI never sends `?strict=1`.
 - **Freshness = nudge + poll.** The runs family root is `['agent-run']` (`queryKeys.agentRuns`),
   the `entity` string in the server's `entity.changed { entity: 'agent-run', id }` nudge, so the
   generic `WebSocketProvider` invalidation already covers it — no hook watches the socket or the
-  store. Belt and braces: `useAgentRun` polls every `RUN_POLL_MS` (3 s) while `isRunActive`, and
-  `useAgentRuns` while any listed row is active. `runPollInterval(status)` is the pure decision
+  store. Belt and braces: `useAgentRun` polls every `RUN_POLL_MS` (3 s) while **`runOwesAnswer`**,
+  and `useAgentRuns` while any listed row does. `runPollInterval(status)` is the pure decision
   (unit-tested); don't fight `refetchInterval` with fake timers.
-- **Event payloads beyond `step` are `unknown` on the wire.** `AgentSteps.buildTimeline` parses each
-  leniently and merges what belongs together: `step` rows by `key`, and a `tool.start`/`tool.end`
-  PAIR into ONE row (FIFO per tool name; input and result share the `<details>`, the row spins until
-  it returns). An agent should not emit tool frames for its TERMINAL tool — that "call" is the
-  answer, which the output panel already renders. Parsers: (`tool.*` → `{ name, …rest }`, `text` → `{ text }`, `status` → `{ status, attempt? }`,
-  `error` → `{ message, willRetry? }`), merges `step` rows by `key` (a `done` replaces the row its
-  `running` announced) and falls back to a raw `<details>` for anything it does not know. `text`
-  renders via `components/ai/Markdown`, which is why `pages/agents/**` is a lazy chunk like
-  `ChatPage` — Vite emits `Markdown-*.js` once, shared by both; nothing markdown lands in the main
-  chunk. Keep every Markdown importer under `pages/agents|chat/` or `components/ai/`.
+  **`runOwesAnswer` (`queued || running`) is NOT `isRunActive`** (issue #17): `isRunActive` includes
+  `awaiting_input`, because the exclusive index and "is this agent busy?" genuinely do — but a run
+  parked on a person changes only when somebody answers, and the server nudges that. Point a poll or
+  a pulse at `isRunActive` and a parked run is re-fetched every three seconds, and announced by
+  `RunStatusBadge`'s `aria-live`, for the length of `AGENT_INTERRUPT_TIMEOUT`. `isRunActive` drives
+  exclusivity copy and "can this still be cancelled/steered"; `runOwesAnswer` drives freshness.
+- **The run workspace is `pages/agents/RunPage.tsx` + `run/**`, and everything it decides is decided
+  in `run/timeline/timelineModel.ts`, which is pure** (`tests/config/run-timeline.test.ts`).
+  `buildTimeline(events)` → rows, `groupTimeline(rows)` → stage groups, then the selectors
+  (`selectArtifacts`, `selectPendingInterrupts`, `selectWorkStats`, `defaultExpanded`,
+  `windowGroups`). **Everything the right pane shows that is not `run.output` is a selector over
+  those same rows — never a second fetch.** Three properties are load-bearing: `at` is the tool
+  call's START (`endedAt`/`durationMs` are separate — overwriting `at` with the answer is why a
+  per-call duration used to be impossible); the reducer is **idempotent under duplicated events**
+  (deduplicated by `event.id`, because a stream and a fetch can both deliver the same row); and a
+  step row carries `endedSeq`, because a `done` merges into the row its `running` wrote, so without
+  it a settled run's trailing rows get swallowed by the last stage. Grouping: a `running` step opens,
+  non-step rows attach, its `done` closes, a different key implicitly closes (an unclosed step is a
+  real state, shown spinning); `__preamble__` and `__tail__` hold the loose stretches. Expansion is
+  `defaultExpanded` XOR the reader's toggles, keyed by `headerId`, so a live run never reopens a
+  group somebody closed. Long runs **window (40 groups from the end), never virtualise** — row
+  heights vary wildly and a virtualiser needs measurement, which fights auto-scroll and collapsing.
+  `useStickToBottom` fires only when the reader is at the bottom AND the last row id changed.
+- **Do not write tool-result parsers.** `documentCardsFromToolResult(name, result)` in
+  `@rocketflare/shared/ai/embeddings` is the one mapper (four callers: the chat stream, the AG-UI
+  projection, a persisted message and now `run/timeline/toolResults.tsx`); every other tool keeps
+  `<details><pre>` truncated at `TOOL_RESULT_MAX_CHARS` — a 200 KB result in the DOM is a real hang.
+  An agent should not emit tool frames for its TERMINAL tool: that "call" is the answer, which the
+  Output tab already renders. `text` renders via `components/ai/Markdown`, which is why
+  `pages/agents/**` is a lazy chunk like `ChatPage` — Vite emits `Markdown-*.js` once, shared by
+  both, and `RunPage-*.js` is its own chunk. Keep every Markdown importer under
+  `pages/agents|chat/` or `components/ai/`; `components/ai/StatRows.tsx` (`Row`, `Section`,
+  `formatCost`, shared with the chat inspector) lives there for the same reason.
+- **The action panel is the reason the page exists** (`run/ActionRequiredPanel.tsx`,
+  `run/interrupts/*`). Pinned ABOVE the timeline and unmounted the moment the run leaves
+  `awaiting_input`; kind dispatch is an exhaustive `switch` over the shared union, so a fifth kind is
+  a type error until it has a branch. Four rules: **409 is information** (`isInterruptNotPending` →
+  `alert-info`, "Someone else answered this", refetch — no toast, no red); **expiry ticks at a rate
+  `expiryState` chooses** (1 s / 60 s / `null` past a day — a naive countdown on a seven-day park is
+  ~600 000 re-renders); **a non-approver sees one sentence, not disabled buttons**; and **focus lands
+  on the heading, never Approve** (an autofocused destructive button plus a stray Enter is how 412
+  subscribers get an email). No optimistic write — this is a decision with a side effect. Validation
+  is `interruptPayloadSchema(spec)`, the same function the route applies, and the answer is
+  `status: 'resolved' | 'cancelled'` — **there is no `approved` boolean anywhere**.
+- **The right pane is `URLTabs` (`?tab=output|artifacts|usage|input`), and `run.error` is above it,
+  always — a failure is not a tab.** `outputs/` mirrors `forms/`: `outputFor(agentKey) → { schema,
+  Component, artifacts? }`, so **an agent is one shared input schema + one `forms/` entry + one
+  `outputs/` entry** and no component branches on an agent key. Artifacts come from the table,
+  ordered by their event rows, with `outputFor().artifacts?.()` as the fallback for an agent that
+  declares none. Usage reports what the ROWS know and **says in words** that model cost is not
+  attributed per run in this deployment, rather than rendering a `$0.00`.
+- **One field renderer, two callers.** `fields/schemaFields.ts` is pure: `fieldsFromJsonSchema`
+  supports a flat object of string / number / boolean / enum and **returns `null` for `$ref`,
+  `allOf`/`anyOf`/`oneOf`, nested objects and arrays — the caller then falls back to the JSON
+  textarea WHOLE, never per field**, because a form that silently drops a required field is
+  invisible until the run 400s. `fields/FieldInput.tsx` + `FieldSet.tsx` serve both the `form`
+  interrupt kind and `formFor`'s middle rung, `schemaForm(agent.inputJsonSchema)`.
+  `submittableValues` drops empty optionals: `formValuesSchemaFor` is `.strict()`.
 - **Live run progress (issue #7) is ADDITIVE.** `lib/runAguiStream.ts` (`streamRunAgui` — GET
   `/api/agents/runs/:id/agui/stream`, `{ lastSeq, received, terminal, aborted }`; **reconnect lives
   in the hook, not the transport**) and `hooks/useRunStream.ts` (`useRunStream(runId, { enabled })`
@@ -229,14 +279,27 @@ A `CUSTOM kit.notice` renders
   `summarize-text` ships its own (textarea counted against `SUMMARIZE_TEXT_MAX_CHARS`, style,
   "index the result" toggle), parsed with the SAME `summarizeTextInputSchema` the route applies
   (trimmed, defaults filled); `research-topic` ships a single question textarea counted against
-  `RESEARCH_TOPIC_MAX_CHARS`, and its output panel renders the Markdown answer plus its citations as
-  links to `/search?documentId=`. Unknown agents get `jsonForm` (a JSON textarea; the server's 400
-  `details` issues map back onto the fields). A new agent = a shared input schema + one registry entry.
-- **Closing the drawer never touches the run**; Cancel is the explicit button (`POST …/cancel`, shown
-  while active). Once `cancelRequestedAt` is set it stays ENABLED as "Force cancel" — the second
-  press makes the server terminate the Workflow instance and settle the row, so a run that stopped
-  polling never strands the user (and never blocks an exclusive agent). Requested-by is "You" / short id /
-  "system" — the row carries only a user id (resolving names is on the to-document list).
+  `RESEARCH_TOPIC_MAX_CHARS`. **`formFor` is three rungs**: a registered form → `schemaForm` built
+  from the agent's own `inputJsonSchema` → `jsonForm` (a JSON textarea; the server's 400 `details`
+  issues map back onto the fields through the one `pages/agents/issues.ts`).
+- **Leaving the page never touches the run**; Cancel is the explicit button (`POST …/cancel`, shown
+  while `isRunActive`). Once `cancelRequestedAt` is set it stays ENABLED as "Force cancel" — the
+  second press makes the server terminate the Workflow instance and settle the row, so a run that
+  stopped polling never strands the user (and never blocks an exclusive agent). `SteerComposer`
+  posts `POST …/steering` while the run is active; the note is an event row, so the timeline shows
+  it where it happened and the runtime delivers it once. Requested-by is "You" / short id / "system"
+  — the row carries only a user id (resolving names is on the to-document list).
+- **Finding what is waiting** (issue #17): the runs table's filters live in `useSearchParams`, so
+  `/agents?awaiting=1` is a URL and there is a chip for it, and every row is a real `<Link>` (so
+  middle-click and open-in-new-tab work — half the point of a run being a page). The SideNav badge is
+  `NavItem.badgeKey`/`badgeTone` resolved by `useNavBadges()` inside `SideNav`: **`navigationConfig`
+  stays plain data consumed by the pure, tested `filterNavConfig` — do not make it a hook.** It is
+  fed by `GET /interrupts?status=pending&pageSize=1` under `['agent-run','awaiting']` (both server
+  nudges cover it), **never polled**, and **renders a DOT on the icon when the nav is collapsed** —
+  without that the feature is invisible to everyone who collapsed the sidebar.
+  `lib/notificationLink.ts` maps a notification's `type` + `data` to a path (unknown → `null`) and
+  is used by BOTH `NotificationsBell` and `/notifications`, so a parked run's bell entry opens the
+  run rather than a list of notifications about it.
 - **Settings → Agent models** (`pages/settings/AgentModels.tsx`, tab `agent-models`, `manage
   AiConfig`): `GET /api/ai/agent-models` is the whole truth (every prompt key, its assignment, and
   the effective provider/model/source the server's planner computed — the page never re-derives
@@ -269,7 +332,7 @@ A `CUSTOM kit.notice` renders
   one invalidation still covers the family; `documentPollInterval(status)` is the pure decision.
 - **`DocumentCard`** (`components/shared/DocumentCard.tsx`) is the compact citation form and is
   **markdown-free by construction** — that is what lets it sit in the eager barrel and be used from
-  Search, from `RunDetailDrawer` and from inside `Markdown` itself (an anchor whose href matches
+  Search, from the run timeline's tool results and from inside `Markdown` itself (an anchor whose href matches
   `/documents/<uuid>` renders as a card). Its `excerpt` is the head of the text, not a summary, and
   there is no thumbnail.
 - **Search (`/search`, nav "Search", guard `read Document`)**: its own page (`pages/documents/SearchPage.tsx`). The Knowledge header states that everything indexed is also available to agents (`search_knowledge` / `get_document`, `services/agents/tools/`). Delete shows only for own rows unless `delete Document` (admin+) — the route
@@ -283,12 +346,14 @@ A `CUSTOM kit.notice` renders
   are no longer the same click. `?documentId=` preselects the per-document filter; `?q=` prefills the box and runs the search on mount (once — a `lastRun`
   ref stops StrictMode and the URL write from repeating it), and every submitted search sets `?q=`
   with `replace`; an empty knowledge base shows an EmptyState linking to `/documents`.
-- Tests: `agents-page`, `agent-run-detail` (renders `RunDetailDrawer` inside `WebSocketProvider`
-  with the `FakeSocket` from `websocket-provider.test.tsx` to prove the nudge refetches),
-  `agent-models-settings`, `documents-page`, `search-page`, `document-view`, `document-card`
-  (pure helpers — `documentPath`, `windowStart`, `highlightMatches` — in
-  `tests/config/document-helpers.test.ts`). Mount `AgentsPage` inside the same `<Routes>` pair
-  App.tsx uses so `navigate('/agents/runs/:id')` really opens the drawer.
+- Tests: `agents-page`, `run-page` (mounts `RunPage` on the real `/agents/runs/:runId` route, inside
+  `WebSocketProvider` with the `FakeSocket` from `websocket-provider.test.tsx`, to prove the nudge
+  refetches AND leaves `['agent-run-agui']` alone), `run-stream`, `sidenav` (the badge and its
+  collapsed dot), `agent-models-settings`, `documents-page`, `search-page`, `document-view`,
+  `document-card`. The pure halves live in the `config` project:
+  `tests/config/run-timeline.test.ts` (the reducer, grouping, `expiryState`, `fieldsFromJsonSchema`)
+  and `tests/config/document-helpers.test.ts`. Mount `AgentsPage` inside the same `<Routes>` pair
+  App.tsx uses so `navigate('/agents/runs/:id')` really lands on `RunPage`.
 
 ## Analytics dashboards (Phase 4, D19/D20)
 

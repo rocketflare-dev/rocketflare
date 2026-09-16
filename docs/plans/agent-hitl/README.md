@@ -19,7 +19,7 @@ ships, the durable parts move into `docs/CONCEPTS.md` §9, the `.claude/rules/*`
 | 4 · Workflow | [04-workflow.md](04-workflow.md) | **done** |
 | 5 · Routes, permissions, projection | [05-routes.md](05-routes.md) | **done** |
 | 6 · Live streaming | [06-streaming.md](06-streaming.md) | **done** |
-| 7 · The run workspace (UI) | [07-ui.md](07-ui.md) | not started |
+| 7 · The run workspace (UI) | [07-ui.md](07-ui.md) | **done** |
 | 8 · Examples + docs | [08-examples-docs.md](08-examples-docs.md) | not started |
 | — · Verification | [09-verification.md](09-verification.md) | — |
 
