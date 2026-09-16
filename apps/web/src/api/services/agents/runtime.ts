@@ -10,8 +10,10 @@
  *                 last attempt settles the row `failed` instead of escaping; anything else (bad
  *                 credentials, invalid request, a malformed tool answer, agent bugs) → `failed` at
  *                 once — a retry cannot fix it.
- *   finishStep  — backstop: an ACTIVE row after execute (the step threw past its retries) is marked
- *                 failed; then one last nudge. Returns the terminal `{ runId, status }`.
+ *   finishStep  — two arms, then one last nudge, returning the terminal `{ runId, status }`: a
+ *                 `queued|running` row after execute (the step threw past its retries) is marked
+ *                 failed; an `awaiting_input` row at the END OF THE WORKFLOW is a park nothing can
+ *                 wake any more, and settles `cancelled` with `error` NULL (T7).
  * Progress events are awaited (a Workflow step has no `waitUntil`) and never fail the run.
  *
  * A retry re-enters `executeRun` from the top, so two pieces of `ctx` exist to make that cheap and
@@ -477,7 +479,22 @@ export async function executeRun(
   }
 }
 
-/** Step 3: settle anything still active (execute escaped its retries) and nudge one last time. */
+/**
+ * The last step: settle anything the loop left unsettled, and nudge one last time.
+ *
+ * **Two arms, and the difference between them is T7.** The backstop predicate stays
+ * `queued | running` — widening it to `ACTIVE_RUN_STATUSES` would turn every legitimately
+ * parked run into a `failed` row. A row that is `awaiting_input` when the WORKFLOW IS ENDING is a
+ * different fact: the instance that would have woken it is finishing, so nobody can ever resume it.
+ * That is the expiry arm — `cancelled` with **`error` NULL**, because a cancel is a status, not a
+ * message, and the reason goes on a `status` event row where the UI can render it as one. The one
+ * exception is a park the loop ABANDONED (`MAX_INTERRUPT_ROUNDS`), which arrives with
+ * `outcome.status === 'failed'`: a runaway agent is a bug and belongs in the failed bucket with a
+ * sentence explaining itself. It is the OUTCOME that says so, never the row.
+ *
+ * Called twice on the expiry path (once as `expire#N`, once as `finish`) and idempotent: the second
+ * call finds a settled row and only nudges.
+ */
 export async function finishStep(
   db: Database,
   env: RuntimeEnv,
@@ -488,13 +505,25 @@ export async function finishStep(
   const { tenantId, runId } = params
   const { realtime, settle } = createStepRealtime(env, logger)
   let row = await getRun(db, tenantId, runId)
-  if (row && (row.status === 'queued' || row.status === 'running')) {
+  // The workflow is ENDING. A row still parked at this point can never be woken — the instance
+  // that would have heard the answer is finishing — so the open asks go either way.
+  if (row?.status === 'awaiting_input') await expireInterrupts(db, tenantId, runId)
+  // The one case where a parked row is a FAILURE rather than an expiry: the loop gave up on an
+  // agent that kept asking (`MAX_INTERRUPT_ROUNDS`) and said so in the outcome. It is the outcome
+  // that decides, never the row's status — widening the predicate below is T7.
+  const abandoned = row?.status === 'awaiting_input' && outcome?.status === 'failed'
+  // T7: NOT `ACTIVE_RUN_STATUSES`. A parked run is not a failure, and this list must never grow.
+  if (row && (row.status === 'queued' || row.status === 'running' || abandoned)) {
     const message =
       outcome?.error ?? 'The agent run did not complete (execute step exhausted its retries)'
     row = (await failRun(db, tenantId, runId, message)) ?? row
     const emit = await createEmitter(db, params, realtime, logger)
     await emit({ type: 'error', data: { message, willRetry: false } })
     await emit({ type: 'status', data: { status: 'failed' } })
+  } else if (row && row.status === 'awaiting_input') {
+    row = (await cancelRun(db, tenantId, runId)) ?? row
+    const emit = await createEmitter(db, params, realtime, logger)
+    await emit({ type: 'status', data: { status: 'cancelled', reason: 'expired' } })
   }
   nudgeRun(realtime, tenantId, runId)
   await settle()

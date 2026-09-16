@@ -200,6 +200,46 @@ or a step retry re-asks somebody who has already said no.
 Test harness: `RecordingWorkflow.sendEvent` now records instead of no-opping, and
 `notFoundOnSendEvent` drives the restart path.
 
+### Phase 4 — the Workflow loop
+
+`AgentRunWorkflow` stops being three steps and becomes a loop. It is a small diff and two of its
+lines are the whole feature.
+
+```
+claim → execute#0 → [ resume#0 → execute#1 → resume#1 → … ] → finish
+                      └ or expire#N when nobody answers
+```
+
+- **Every step name carries its round.** A Workflow step name is its identity to the platform: call
+  `step.do('execute')` twice and the second call hands back the FIRST one's cached result. Inside a
+  loop that is not a small bug — the run replays the turn that asked the question, parks again, and
+  the whole thing reads as *"the agent ignored my approval"*. Hence `execute#N`, `resume#N`,
+  `expire#N`.
+- **`resume#N` is `step.waitForEvent(AGENT_RESUME_EVENT, { timeout: AGENT_INTERRUPT_TIMEOUT })`**,
+  and **its payload is deliberately ignored**. The answer is already a row, written by the resolve
+  route before it woke the instance; the event is a nudge, and the next `execute#N+1` re-enters
+  `run()` from the top and reads it. That is what makes the restart fallback work at all: an
+  instance created from scratch has no event to replay and does not need one.
+- **The `try/catch` around `execute` moved inside the loop and clears `outcome`.** Letting a
+  previous round's `awaiting_input` fall through to `finish` would tell it the run is parked when it
+  is not.
+- **`MAX_INTERRUPT_ROUNDS` (32)** bounds the loop. A correctness guard, not a capacity one — the
+  step budget is 10,000 and a round is two steps — for the agent that asks the same question
+  forever. It settles `failed` with a sentence, because a runaway agent is a bug.
+- **`finishStep` gains a second arm, and the first one did NOT change.** The failure backstop stays
+  `queued | running`: widen it to `ACTIVE_RUN_STATUSES` and every legitimately parked run becomes a
+  `failed` row. The new arm is for a row that is still `awaiting_input` *when the workflow is
+  ending* — nothing can wake it now — and settles **`cancelled` with `error` NULL**, the reason on a
+  `status` event row. A cancel is a status, not a message. The single exception is the abandoned
+  park above, which arrives carrying `outcome.status === 'failed'`; it is the OUTCOME that decides,
+  never the row.
+
+Test harness: `createFakeWorkflowStep()` used to throw on `waitForEvent` and is now a recorder —
+`{ step, calls, waits, names, queueEvent }` plus `{ events?, onWait? }`. `onWait` is the test's
+stand-in for the resolve route (write the answer, flip the row, return a payload); an empty queue
+with no `onWait` rejects the way the platform's timeout does. `names` is every step name in call
+order, `do` and `waitForEvent` alike, which is how "distinct per round" is asserted.
+
 ## How to apply
 
 Take the four `packages/shared/src/ai/` files and `errors.ts` as written — they are appends, so a
@@ -217,6 +257,11 @@ that keep the workspace compiling; each is one edit:
 
 An app with its own agents may set `approvers: 'admin'` on an `AgentMeta` now; it is inert until the
 routes land.
+
+Phase 4 touches two files an app is unlikely to have edited (`api/workflows/agent-run.ts` and
+`finishStep`) plus the test mock. Take `agent-run.ts` whole. If your copy forked the Workflow class
+— an extra step, a different `timeout` — port the loop by hand and **keep the `#${round}` suffix on
+every step name inside it**; that is the one detail nothing in a Node suite can check for you.
 
 Phase 3 is additive everywhere except three lines an app may have touched: the `ACTIVE` constant in
 `services/agents/runs.ts` (now imported, and `claimRun` alone keeps the narrow list), `Tool` in
@@ -254,5 +299,10 @@ handler-raised interrupt propagates; `apps/web/tests/api/agent-interrupts.test.t
 keeps its checkpoint with `finished_at` NULL, that a re-entered `execute` finds its own earlier ask,
 that a declined approval cancels with a NULL error, that a steering note is delivered once across a
 park and resume, and that `sendEvent → not_found` creates `<runId>-r1`.
+For phase 4, `apps/web/tests/api/agent-run-workflow.test.ts` proves the step names are distinct per
+round, that a resume re-enters `execute` and the run completes, that an unanswered park times out to
+`cancelled` with a **NULL `error`**, that `MAX_INTERRUPT_ROUNDS` stops a runaway agent cleanly, and
+that `finishStep` does not fail a parked row. `waitForEvent` itself only runs on the platform — the
+`wrangler dev` walkthrough is the acceptance test for the durable park.
 After migrating, the index predicate should read
 `WHERE status = ANY (ARRAY['queued','running','awaiting_input'])` in `pg_indexes`.
