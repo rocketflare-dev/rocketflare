@@ -27,7 +27,7 @@
  * Everything the right pane shows that is not `run.output` is a selector over the same rows, never
  * a second fetch.
  */
-import { ArrowsRightLeftIcon, CpuChipIcon } from '@heroicons/react/24/outline'
+import { ChevronLeftIcon, ChevronRightIcon, CpuChipIcon } from '@heroicons/react/24/outline'
 import type { AgentInfo, AgentRunWithEvents } from '@rocketflare/shared/ai/agents'
 import { isRunActive } from '@rocketflare/shared/ai/agents'
 import { useEffect, useMemo, useRef, useState } from 'react'
@@ -61,6 +61,45 @@ import {
 const LAYOUT_COLUMNS: Record<RunLayoutSplit, string> = {
   'timeline-major': 'lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]',
   'output-major': 'lg:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]',
+}
+
+/**
+ * Where the boundary between the two columns sits, as a percentage of the grid — the same share
+ * `LAYOUT_COLUMNS` splits it by, so the handle rides the edge it moves. Written as literal classes
+ * in this file (never composed from a value) so Tailwind's scanner emits them.
+ */
+const LAYOUT_EDGE: Record<RunLayoutSplit, string> = {
+  'timeline-major': 'lg:left-[60%]',
+  'output-major': 'lg:left-[40%]',
+}
+
+/**
+ * The split control: a handle ON the edge it drags, not a labelled button inside one panel's
+ * header. A header button has to say which panel it belongs to and which way it moves; a chevron
+ * sitting on the boundary pointing the way the boundary will go says both by position alone.
+ *
+ * It is still a real `<button>` with a real name — `aria-label` carries the sentence the glyph
+ * replaces, because an icon has no accessible name of its own and a screen reader would otherwise
+ * read nothing at all. No `aria-pressed`: the name describes the ACTION and changes with the
+ * layout, which is a different control from a two-state toggle and must not claim to be one.
+ *
+ * Hidden below `lg`, where the columns stack and there is no split to move.
+ */
+function LayoutSplitHandle({ layout, onToggle }: { layout: RunLayoutSplit; onToggle: () => void }) {
+  const widensOutput = layout === 'timeline-major'
+  const label = widensOutput ? 'Widen output' : 'Widen timeline'
+  const Chevron = widensOutput ? ChevronLeftIcon : ChevronRightIcon
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      aria-label={label}
+      title={label}
+      className={`hidden lg:flex absolute top-1/2 z-10 -translate-x-1/2 -translate-y-1/2 ${LAYOUT_EDGE[layout]} btn btn-circle btn-xs border border-[color:var(--border-subtle)] bg-base-100 text-base-content/70 shadow-md hover:bg-base-200 hover:text-base-content`}
+    >
+      <Chevron className="w-3.5 h-3.5" aria-hidden="true" />
+    </button>
+  )
 }
 
 export default function RunPage() {
@@ -174,34 +213,26 @@ function RunWorkspace({ run, agent }: { run: AgentRunWithEvents; agent?: AgentIn
       <RunInputSummary input={run.input} schema={agent?.inputJsonSchema ?? null} />
 
       {/* Tabs first under `lg`: on a phone the answer is what people came for. */}
-      <div
-        className={`grid grid-cols-1 ${LAYOUT_COLUMNS[layout]} gap-4 items-start`}
-        data-layout={layout}
-      >
-        <SectionPanel
-          title="Timeline"
-          className="order-2 lg:order-1"
-          actions={
-            <button
-              type="button"
-              className="btn btn-ghost btn-xs gap-1 hidden lg:inline-flex"
-              aria-pressed={layoutOverride !== null}
-              onClick={() =>
-                setLayoutOverride(layout === 'timeline-major' ? 'output-major' : 'timeline-major')
-              }
-            >
-              <ArrowsRightLeftIcon className="w-3.5 h-3.5" aria-hidden="true" />
-              {layout === 'timeline-major' ? 'Widen output' : 'Widen timeline'}
-            </button>
-          }
+      <div className="relative">
+        <div
+          className={`grid grid-cols-1 ${LAYOUT_COLUMNS[layout]} gap-4 items-start`}
+          data-layout={layout}
         >
-          <RunTimeline events={run.events} />
-          {isRunActive(run.status) && <SteerComposer runId={run.id} />}
-        </SectionPanel>
-        <div className="order-1 lg:order-2 space-y-3 min-w-0">
-          {run.error && <RunErrorAlert error={run.error} />}
-          <URLTabs tabs={tabs} defaultTab="output" />
+          <SectionPanel title="Timeline" className="order-2 lg:order-1">
+            <RunTimeline events={run.events} />
+            {isRunActive(run.status) && <SteerComposer runId={run.id} />}
+          </SectionPanel>
+          <div className="order-1 lg:order-2 space-y-3 min-w-0">
+            {run.error && <RunErrorAlert error={run.error} />}
+            <URLTabs tabs={tabs} defaultTab="output" />
+          </div>
         </div>
+        <LayoutSplitHandle
+          layout={layout}
+          onToggle={() =>
+            setLayoutOverride(layout === 'timeline-major' ? 'output-major' : 'timeline-major')
+          }
+        />
       </div>
     </div>
   )

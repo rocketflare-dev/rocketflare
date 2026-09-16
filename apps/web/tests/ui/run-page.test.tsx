@@ -280,9 +280,14 @@ describe('RunPage', () => {
   it('keeps the reader’s split once they choose one', async () => {
     mount()
     await screen.findByText('Summarising')
-    fireEvent.click(screen.getByRole('button', { name: /Widen output/ }))
+    const handle = screen.getByRole('button', { name: /Widen output/ })
+    // An icon on the boundary, but still a named control: the name is the sentence the glyph
+    // replaces, not the glyph, or a screen reader reads nothing at all.
+    expect(handle).toHaveTextContent('')
+    expect(handle).toHaveAttribute('aria-label', 'Widen output')
+    fireEvent.click(handle)
     expect(document.querySelector('[data-layout]')).toHaveAttribute('data-layout', 'output-major')
-    // And the button now offers the other way round, which is the whole control.
+    // And it now offers the other way round, which is the whole control.
     expect(screen.getByRole('button', { name: /Widen timeline/ })).toBeInTheDocument()
   })
 

@@ -11,6 +11,7 @@ import {
   initialValuesFor,
   submittableValues,
 } from '@/ui/pages/agents/fields/schemaFields'
+import { formFor, jsonForm } from '@/ui/pages/agents/forms'
 import { INPUT_VALUE_PREVIEW_CHARS, summariseInput } from '@/ui/pages/agents/run/inputSummary'
 import { expiryState } from '@/ui/pages/agents/run/interrupts/expiry'
 import {
@@ -248,6 +249,9 @@ describe('fieldsFromJsonSchema', () => {
       ['style', 'select'],
     ])
     expect(fields?.[0].required).toBe(true)
+    // A declared `title` wins; without one the property name is made presentable, because
+    // `zodToJsonSchema` emits no title and `topic` is not a label anybody wrote.
+    expect(fields?.map(f => f.label)).toEqual(['Topic', 'Notes', 'Count', 'Urgent', 'Style'])
     expect(fields?.[2]).toMatchObject({ min: 1, max: 9 })
     expect(fields?.[4].options?.map(o => o.value)).toEqual(['bullets', 'paragraph'])
   })
@@ -283,6 +287,28 @@ describe('fieldsFromJsonSchema', () => {
       count: 3,
       urgent: true,
     })
+  })
+})
+
+describe('formFor', () => {
+  /**
+   * The middle rung had never fired in the running app: the server left `inputJsonSchema`
+   * undefined, so every unregistered agent fell to the JSON textarea. This pins the rung itself —
+   * the route's half is `tests/api/agent-runs.test.ts`, which checks the registry really emits a
+   * schema this renderer accepts.
+   */
+  it('builds a form from the schema for an agent with no registered form', () => {
+    const schema: JsonSchema = {
+      type: 'object',
+      properties: { topic: { type: 'string', maxLength: 2000 } },
+      required: ['topic'],
+    }
+    const built = formFor({ key: 'research-topic' as never, inputJsonSchema: schema })
+    expect(built).not.toBe(jsonForm)
+    expect(built.initial).toEqual({ topic: '' })
+    expect(formFor({ key: 'nope' as never, inputJsonSchema: null })).toBe(jsonForm)
+    // A registered form still wins the first rung.
+    expect(formFor({ key: 'summarize-text', inputJsonSchema: schema })).not.toBe(jsonForm)
   })
 })
 

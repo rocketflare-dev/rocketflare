@@ -16,6 +16,7 @@ import { eq } from 'drizzle-orm'
 import { describe, expect, it } from 'vitest'
 import { RECONCILE_LIVENESS_MS } from '@/api/services/agents/runs'
 import { agentRunEvents, agentRuns } from '@/db/schema'
+import { fieldsFromJsonSchema } from '@/ui/pages/agents/fields/schemaFields'
 import {
   createTestSession,
   createTestTenantWithUser,
@@ -77,6 +78,35 @@ describe('GET /api/agents', () => {
       }),
     ])
     expect((await request('/api/agents')).status).toBe(401)
+  })
+
+  /**
+   * The gap that let `inputJsonSchema` ship unpopulated: every earlier test drove the field
+   * renderer from a schema it wrote ITSELF, so nothing walked registry → route → page. This asserts
+   * the REAL registry's output through the REAL route is something the REAL renderer accepts —
+   * which is the only assertion that would have caught a route returning no schema at all.
+   */
+  it("carries each agent's input schema, and the field renderer accepts what the registry emits", async () => {
+    const a = await actor()
+    const body = agentListResponseSchema.parse(
+      await json(await request('/api/agents', { headers: a.cookie }))
+    )
+    for (const item of body.items) {
+      expect(item.inputJsonSchema, `${item.key} has no inputJsonSchema`).toBeTruthy()
+      expect(item.inputJsonSchema).toMatchObject({ type: 'object' })
+      // Not `toBeTruthy()`: a refusal is `null`, and a refusal here means the run page renders a
+      // JSON blob and `formFor` skips its middle rung — silently, which is how this got through.
+      const fields = fieldsFromJsonSchema(item.inputJsonSchema)
+      expect(
+        fields,
+        `${item.key}: fieldsFromJsonSchema refused the registry's schema`
+      ).not.toBeNull()
+      expect(fields?.length).toBeGreaterThan(0)
+    }
+    const research = body.items.find(i => i.key === 'research-topic')
+    expect(fieldsFromJsonSchema(research?.inputJsonSchema)).toEqual([
+      expect.objectContaining({ name: 'topic', label: 'Topic', type: 'textarea', required: true }),
+    ])
   })
 })
 

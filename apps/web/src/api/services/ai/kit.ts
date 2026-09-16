@@ -10,7 +10,7 @@
 
 import type Anthropic from '@anthropic-ai/sdk'
 import { type TokenUsage, tokenUsageSchema } from '@rocketflare/shared/ai/chat'
-import type { AgentInterruptSpec } from '@rocketflare/shared/ai/interrupts'
+import type { AgentInterruptSpec, JsonSchema } from '@rocketflare/shared/ai/interrupts'
 import { type ZodType, z } from 'zod'
 import { zodToJsonSchema } from 'zod-to-json-schema'
 import { AiError } from './errors'
@@ -121,8 +121,14 @@ export interface Tool<Input = unknown> {
   onReject?: 'cancel_run' | 'tell_model'
 }
 
-/** JSON Schema (draft-07, `$schema` stripped) for a tool input. */
-export function toolInputSchema(schema: ZodType): Record<string, unknown> {
+/**
+ * JSON Schema (draft-07, `$schema` stripped) for a tool input.
+ *
+ * The return type is the shared {@link JsonSchema} — the SAME contract `Interrupt.responseSchema`
+ * and `agentInfoSchema.inputJsonSchema` carry — so a converted schema can be put on the wire
+ * without a cast. Both are `Record<string, unknown>`; naming it says which one it is.
+ */
+export function toolInputSchema(schema: ZodType): JsonSchema {
   const { $schema: _drop, ...json } = zodToJsonSchema(schema, { target: 'jsonSchema7' }) as Record<
     string,
     unknown

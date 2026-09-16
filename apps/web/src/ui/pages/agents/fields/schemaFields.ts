@@ -51,6 +51,22 @@ function enumOptions(values: unknown): FormField['options'] | null {
   return options
 }
 
+/**
+ * The label when the schema declares no `title` — which is EVERY field the kit's own agents emit,
+ * because `zodToJsonSchema` has no zod construct to read a title from. A raw property name read as
+ * `topic` where a person expects `Topic`, so the fallback is the name made presentable: split on
+ * `_`/`-`/camel humps, capitalise the first word. It invents nothing — an agent that wants better
+ * words gives its schema a `title`.
+ */
+export function humaniseFieldName(name: string): string {
+  const words = name
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .replace(/[_-]+/g, ' ')
+    .trim()
+  if (words.length === 0) return name
+  return words.charAt(0).toUpperCase() + words.slice(1)
+}
+
 function fieldFrom(name: string, raw: unknown, required: boolean): FieldSpec | null {
   const schema = asRecord(raw)
   if (!schema) return null
@@ -58,7 +74,7 @@ function fieldFrom(name: string, raw: unknown, required: boolean): FieldSpec | n
 
   const base = {
     name,
-    label: asString(schema.title) ?? name,
+    label: asString(schema.title) ?? humaniseFieldName(name),
     required,
     ...(asString(schema.description)
       ? { description: asString(schema.description) as string }

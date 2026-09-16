@@ -256,6 +256,15 @@ The loop above is now reachable from outside. Until this landed,
 `nudgeOrRestartInstance` had no caller, which means a parked run could never be resumed — so this
 is the step that makes the feature *exist* rather than merely compile.
 
+**`GET /api/agents` now carries each agent's `inputJsonSchema`** — `listAgentInfo()` converts
+`meta.inputSchema` with the same `toolInputSchema()` the tool loop uses, memoised per isolate. It is
+an added field on an existing response, so nothing breaks by taking it; but two UI behaviours read
+it and **silently degrade to a JSON box without it**, which is exactly how it shipped unpopulated
+here: the run page's labelled input summary, and `formFor`'s middle rung (`schemaForm`), which had
+therefore never fired in a running app. An app whose own agents have no hand-written form gets real
+fields the moment it ports this. Field labels fall back to a humanised property name (`topic` →
+`Topic`) because `zodToJsonSchema` emits no `title`; a schema that declares one still wins.
+
 **`/api/agents` gains three routes and two answers:**
 
 | Route | Guard | Notes |
@@ -735,6 +744,10 @@ round, that a resume re-enters `execute` and the run completes, that an unanswer
 `cancelled` with a **NULL `error`**, that `MAX_INTERRUPT_ROUNDS` stops a runaway agent cleanly, and
 that `finishStep` does not fail a parked row. `waitForEvent` itself only runs on the platform — the
 `wrangler dev` walkthrough is the acceptance test for the durable park.
+`apps/web/tests/api/agent-runs.test.ts` proves `GET /api/agents` answers an `inputJsonSchema` the
+REAL field renderer accepts for every shipped agent — the assertion that was missing, because each
+phase had tested its own half against a schema it wrote itself; `apps/web/tests/config/run-timeline.test.ts`
+pins `formFor`'s middle rung and the humanised labels.
 For the routes, `apps/web/tests/api/agent-interrupt-routes.test.ts` proves the 409 on a double answer,
 the 403 for a member under `approvers: 'admin'` (who still sees the ask, `canAnswer: false`), the 404
 for another member's and another tenant's run, the 400 for `editedInput` without `allowEdits` and for

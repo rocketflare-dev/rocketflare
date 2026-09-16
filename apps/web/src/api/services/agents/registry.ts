@@ -8,14 +8,19 @@
  * Adding an agent = a key in `@rocketflare/shared/ai/agents`, a prompt in `services/prompts.ts`, a file in
  * `examples/` and one entry here. No migration.
  */
-import type { AgentKey, AgentMeta, AgentRunEventType } from '@rocketflare/shared/ai/agents'
+import type {
+  AgentInfo,
+  AgentKey,
+  AgentMeta,
+  AgentRunEventType,
+} from '@rocketflare/shared/ai/agents'
 import type { AgentArtifact, AgentArtifactInput } from '@rocketflare/shared/ai/artifacts'
 import type { AgentInterruptSpec, AgentSteeringNote } from '@rocketflare/shared/ai/interrupts'
 import type { AppConfig } from '../../../config'
 import type { Database } from '../../../db/client'
 import type { Tracer } from '../../observability/tracer'
 import type { Logger } from '../../utils/core/logger'
-import type { Tool, ToolApproval, ToolLoopCheckpoint } from '../ai/kit'
+import { type Tool, type ToolApproval, type ToolLoopCheckpoint, toolInputSchema } from '../ai/kit'
 import type { AiEnv, ChatClient } from '../ai/types'
 import type { JobsQueue } from '../jobs'
 import { researchTopicAgent } from './examples/research-topic'
@@ -179,14 +184,29 @@ export function isAgentKey(key: string): key is AgentKey {
   return Object.hasOwn(AGENTS, key)
 }
 
-/** `GET /api/agents` — the metas without their zod schemas. */
-export function listAgentInfo() {
-  return Object.values(AGENTS).map(a => ({
+/**
+ * `GET /api/agents` — the metas without their zod schemas, which are not serialisable.
+ *
+ * **`inputJsonSchema` is the zod schema converted once** by the same `toolInputSchema()` the tool
+ * loop uses, so there is one conversion in the repo rather than two that can disagree. It is what
+ * lets the UI label a run's input (`summariseInput`) and build a form for an agent with no
+ * hand-written one (`formFor`'s middle rung) — both of which read this field and nothing else, so
+ * omitting it does not fail, it silently degrades to a JSON box.
+ *
+ * Built once per isolate: `AGENTS` is a module constant, so the conversion cannot change between
+ * requests and a Worker should not pay for it on each one.
+ */
+let agentInfoCache: AgentInfo[] | null = null
+
+export function listAgentInfo(): AgentInfo[] {
+  agentInfoCache ??= Object.values(AGENTS).map(a => ({
     key: a.meta.key,
     title: a.meta.title,
     description: a.meta.description,
     promptKey: a.meta.promptKey,
     exclusive: a.meta.exclusive,
     approvers: a.meta.approvers ?? 'requester',
+    inputJsonSchema: toolInputSchema(a.meta.inputSchema),
   }))
+  return agentInfoCache
 }
