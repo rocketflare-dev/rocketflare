@@ -8,7 +8,9 @@ import { relations } from 'drizzle-orm'
 import { accessRequests } from './access-requests'
 import { activityEvents } from './activity-events'
 import { agentModels } from './agent-models'
+import { agentRunArtifacts } from './agent-run-artifacts'
 import { agentRunEvents } from './agent-run-events'
+import { agentRunInterrupts } from './agent-run-interrupts'
 import { agentRuns } from './agent-runs'
 import { aiConfigs } from './ai-configs'
 import { aiUsage } from './ai-usage'
@@ -63,6 +65,8 @@ export const tenantsRelations = relations(tenants, ({ one, many }) => ({
   agentModels: many(agentModels),
   agentRuns: many(agentRuns),
   agentRunEvents: many(agentRunEvents),
+  agentRunInterrupts: many(agentRunInterrupts),
+  agentRunArtifacts: many(agentRunArtifacts),
   documents: many(documents),
   chunks: many(chunks),
   analyticsPages: many(analyticsPages),

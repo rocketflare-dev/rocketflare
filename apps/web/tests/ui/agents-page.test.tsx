@@ -9,6 +9,7 @@ import { Route, Routes } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { useToastStore } from '@/ui/components/shared/Toast'
 import AgentsPage from '@/ui/pages/agents/AgentsPage'
+import RunPage from '@/ui/pages/agents/RunPage'
 import {
   errorResponse,
   IDS,
@@ -60,11 +61,12 @@ function mount(routes: RouteTable = {}, route = '/agents') {
     '/api/agents/runs': paged([]),
     ...routes,
   })
-  // The same route pair App.tsx mounts, so `navigate('/agents/runs/:id')` opens the drawer.
+  // The same route pair App.tsx mounts — two PAGES now, not one page and a drawer — so
+  // `navigate('/agents/runs/:id')` really lands on the run workspace.
   renderWithProviders(
     <Routes>
       <Route path="/agents" element={<AgentsPage />} />
-      <Route path="/agents/runs/:runId" element={<AgentsPage />} />
+      <Route path="/agents/runs/:runId" element={<RunPage />} />
     </Routes>,
     { session: makeSession(), route }
   )
@@ -101,7 +103,7 @@ describe('Agents page', () => {
         const body = JSON.parse(String(init?.body)) as { input: unknown }
         return jsonResponse(run({ input: body.input }), 202)
       },
-      [`/api/agents/runs/${RUN_ID}`]: { ...run(), events: [] },
+      [`/api/agents/runs/${RUN_ID}`]: { ...run(), events: [], interrupts: [], artifacts: [] },
     })
     fireEvent.click(await screen.findByRole('button', { name: 'Run Summarize text' }))
     const form = document.getElementById('run-agent-form') as HTMLFormElement
@@ -137,7 +139,7 @@ describe('Agents page', () => {
   it('toasts and opens the existing run when the 202 is deduplicated', async () => {
     const fetchMock = mount({
       'POST /api/agents/runs': () => jsonResponse({ ...run(), deduplicated: true }, 202),
-      [`/api/agents/runs/${RUN_ID}`]: { ...run(), events: [] },
+      [`/api/agents/runs/${RUN_ID}`]: { ...run(), events: [], interrupts: [], artifacts: [] },
     })
     fireEvent.click(await screen.findByRole('button', { name: 'Run Summarize text' }))
     fireEvent.change(screen.getByLabelText('Text to summarise'), { target: { value: 'hello' } })

@@ -35,3 +35,25 @@ export function formatBytes(bytes: number | null | undefined, fallback = '—'):
   }
   return `${value < 10 ? value.toFixed(1) : Math.round(value)} ${units[unit]}`
 }
+
+/** `1m 12s`, `840ms` — how long something took, for run headers, steps and tool calls. */
+export function formatDuration(ms: number): string {
+  if (ms < 1000) return `${Math.max(0, Math.round(ms))}ms`
+  const s = Math.round(ms / 1000)
+  if (s < 60) return `${s}s`
+  const m = Math.floor(s / 60)
+  return `${m}m ${s % 60}s`
+}
+
+/**
+ * Elapsed for a settled run; `null` while it still owes an answer or never started. Here rather
+ * than beside the run page because the runs TABLE needs it too — that shared need is what made it
+ * a real coupling when it lived in the detail component.
+ */
+export function runDuration(run: {
+  startedAt: Date | null
+  finishedAt: Date | null
+}): string | null {
+  if (!run.startedAt || !run.finishedAt) return null
+  return formatDuration(run.finishedAt.getTime() - run.startedAt.getTime())
+}

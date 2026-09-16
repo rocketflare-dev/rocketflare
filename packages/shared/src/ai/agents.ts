@@ -7,6 +7,15 @@
  */
 import { z } from 'zod'
 import { paginationQuerySchema } from '../pagination'
+import { agentArtifactEventDataSchema, agentArtifactSchema } from './artifacts'
+import {
+  agentApproversSchema,
+  agentInterruptEventDataSchema,
+  agentInterruptResolvedEventDataSchema,
+  agentRunInterruptSchema,
+  jsonSchemaSchema,
+  steeringNoteDataSchema,
+} from './interrupts'
 import { promptKeySchema } from './prompts'
 
 /** Stable identifier for each agent the runtime knows. Append LAST; an app extends this list. */
@@ -17,8 +26,11 @@ export type AgentKey = z.infer<typeof agentKeySchema>
 /**
  * Per-agent metadata the server registry and the UI share. `inputSchema` validates the request
  * body at the route (BEFORE any row exists); `outputSchema` validates what the run persists.
- * `exclusive` = at most one queued-or-running run per (tenant, agent) — enforced by a partial
- * unique index on `agent_runs`, never by memory.
+ * `exclusive` = at most one ACTIVE run per (tenant, agent), where active is
+ * {@link ACTIVE_RUN_STATUSES} — `queued`, `running` **and `awaiting_input`**, so a run parked on a
+ * question still holds the slot. Enforced by a partial unique index on `agent_runs` whose predicate
+ * is rendered from that same list, never by memory. `approvers` is who may answer this agent's
+ * interrupts: `'requester'` (the default — whoever can see the run) or `'admin'`.
  */
 export interface AgentMeta<Input = unknown, Output = unknown> {
   key: AgentKey
@@ -30,6 +42,14 @@ export interface AgentMeta<Input = unknown, Output = unknown> {
   /** Registry prompt (and `agent_models` assignment key) the agent runs with. */
   promptKey: z.infer<typeof promptKeySchema>
   exclusive: boolean
+  /**
+   * Who may answer this agent's interrupts (issue #17). `'requester'` (the default) is "whoever
+   * may cancel this run may answer it" — the SAME rule `visible()` already implements, so there is
+   * one mental model rather than two. `'admin'` is the opt-in for agents that touch money,
+   * customers or deletion. It is not a new CASL subject: an app wanting approvals on its own axis
+   * adds its own subject.
+   */
+  approvers?: z.infer<typeof agentApproversSchema>
 }
 
 /** `GET /api/agents` item — the meta without its zod schemas (not serialisable). */
@@ -39,6 +59,15 @@ export const agentInfoSchema = z.object({
   description: z.string(),
   promptKey: promptKeySchema,
   exclusive: z.boolean(),
+  approvers: agentApproversSchema.default('requester'),
+  /**
+   * The agent's `inputSchema` as JSON Schema, produced server-side by `toolInputSchema()`
+   * (`services/ai/kit.ts`). Three reasons it is this and not zod: the conversion already exists;
+   * it keeps zod off the client, which is what holds the zod-3/zod-4 boundary; and it is the SAME
+   * shape `Interrupt.responseSchema` carries, so ONE renderer serves both the run form and the
+   * `form` interrupt kind — which is why that kind costs almost nothing.
+   */
+  inputJsonSchema: jsonSchemaSchema.nullable().optional(),
 })
 export type AgentInfo = z.infer<typeof agentInfoSchema>
 
@@ -49,8 +78,11 @@ export type AgentListResponse = z.infer<typeof agentListResponseSchema>
 
 /**
  * `queued` = row exists, Workflow instance created, not yet claimed; `running` = claimed by the
- * execute step. Terminal: `succeeded` / `failed` / `cancelled` (a status, never a message — see
- * 09 §4.1 on why a cancel must not be a `failed` row with prose).
+ * execute step; `awaiting_input` = parked on a human decision (issue #17), which is a real
+ * lifecycle state and not a terminal one. Terminal: `succeeded` / `failed` / `cancelled` (a
+ * status, never a message — see 09 §4.1 on why a cancel must not be a `failed` row with prose).
+ *
+ * Appended LAST because it is a `z.enum` mirrored by a text column.
  */
 export const agentRunStatusSchema = z.enum([
   'queued',
@@ -58,12 +90,30 @@ export const agentRunStatusSchema = z.enum([
   'succeeded',
   'failed',
   'cancelled',
+  'awaiting_input',
 ])
 export type AgentRunStatus = z.infer<typeof agentRunStatusSchema>
 
+/**
+ * Statuses that still owe an answer — the exclusive partial unique index, `findActiveRun`,
+ * `settle()`, `saveCheckpoint` and {@link isRunActive} all read THIS list. A parked run is still
+ * *the* active run for `(tenant, agentKey)`: leave it out and a second enqueue slips past the
+ * exclusive guarantee while the first waits on a human.
+ */
+export const ACTIVE_RUN_STATUSES = ['queued', 'running', 'awaiting_input'] as const
+
+/**
+ * Statuses the `claim` step may take over — **narrower than {@link ACTIVE_RUN_STATUSES} on
+ * purpose**. A parked row is not claimable: the resolve route flips it back to `running` as part
+ * of its compare-and-set BEFORE nudging the instance, so by the time any claim runs the row is
+ * `running` again. **The answer is the transition.** Widen this and a restarted instance claims a
+ * row nobody has answered.
+ */
+export const CLAIMABLE_RUN_STATUSES = ['queued', 'running'] as const
+
 /** Whether a run still owes an answer — the ONE predicate for "this agent is busy". */
 export const isRunActive = (status: AgentRunStatus): boolean =>
-  status === 'queued' || status === 'running'
+  (ACTIVE_RUN_STATUSES as readonly string[]).includes(status)
 
 export const agentRunSchema = z.object({
   id: z.string().uuid(),
@@ -113,6 +163,10 @@ export const AGENT_RUN_EVENT_TYPES = [
   'text',
   'status',
   'error',
+  'interrupt',
+  'interrupt.resolved',
+  'steering',
+  'artifact',
 ] as const
 export const agentRunEventTypeSchema = z.enum(AGENT_RUN_EVENT_TYPES)
 export type AgentRunEventType = z.infer<typeof agentRunEventTypeSchema>
@@ -125,6 +179,86 @@ export const agentStepEventDataSchema = z.object({
   detail: z.string().optional(),
 })
 export type AgentStepEventData = z.infer<typeof agentStepEventDataSchema>
+
+/**
+ * The other event payloads, promoted from convention into contract. Until now only `step` had a
+ * schema and the UI parsed the rest with local lenient copies (`AgentSteps.tsx`) — a second source
+ * of truth waiting to drift, and the timeline is the audit trail for "where did the answer come
+ * from?", so drifting silently is exactly the wrong failure.
+ *
+ * `tool.*` payloads are `.passthrough()` because an agent may attach whatever it likes beside the
+ * tool name (`style`, `keyPoints`, `isError`) and the timeline shows it as-is. The NAMED fields are
+ * the contract; the rest is detail.
+ */
+export const agentToolStartEventDataSchema = z
+  .object({
+    name: z.string(),
+    /** The model's arguments. Absent for an agent that only announces the call. */
+    input: z.unknown().optional(),
+    /**
+     * The model's own id for this call, when it has one. The projection pairs `tool.start` with
+     * `tool.end` by this when present and falls back to the name — pairing by name alone is wrong
+     * the day two calls to the same tool run in one turn.
+     */
+    toolCallId: z.string().optional(),
+  })
+  .passthrough()
+export type AgentToolStartEventData = z.infer<typeof agentToolStartEventDataSchema>
+
+export const agentToolEndEventDataSchema = z
+  .object({
+    name: z.string(),
+    result: z.unknown().optional(),
+    isError: z.boolean().optional(),
+    toolCallId: z.string().optional(),
+  })
+  .passthrough()
+export type AgentToolEndEventData = z.infer<typeof agentToolEndEventDataSchema>
+
+export const agentTextEventDataSchema = z.object({ text: z.string() })
+export type AgentTextEventData = z.infer<typeof agentTextEventDataSchema>
+
+export const agentStatusEventDataSchema = z
+  .object({
+    status: z.string(),
+    attempt: z.number().int().positive().optional(),
+    /** Why, when the status alone does not say it — `'rejected'` for a declined approval. */
+    reason: z.string().optional(),
+  })
+  .passthrough()
+export type AgentStatusEventData = z.infer<typeof agentStatusEventDataSchema>
+
+export const agentErrorEventDataSchema = z
+  .object({
+    message: z.string(),
+    attempt: z.number().int().positive().optional(),
+    willRetry: z.boolean().optional(),
+    /**
+     * What the runtime knows and the message cannot hold: the zod issues, or — when a forced tool
+     * produced no call — `{ reason, stopReason, text }` with what the model actually said.
+     */
+    details: z.unknown().optional(),
+  })
+  .passthrough()
+export type AgentErrorEventData = z.infer<typeof agentErrorEventDataSchema>
+
+/**
+ * Event type → the schema its `data` parses with. ONE lookup, so the timeline, the AG-UI
+ * projection and any app code read the same shapes. `data` stays `z.unknown()` on
+ * {@link agentRunEventSchema} deliberately: a row written by a newer server must still list.
+ */
+export const AGENT_RUN_EVENT_DATA = {
+  step: agentStepEventDataSchema,
+  'tool.start': agentToolStartEventDataSchema,
+  'tool.end': agentToolEndEventDataSchema,
+  text: agentTextEventDataSchema,
+  status: agentStatusEventDataSchema,
+  error: agentErrorEventDataSchema,
+  interrupt: agentInterruptEventDataSchema,
+  'interrupt.resolved': agentInterruptResolvedEventDataSchema,
+  steering: steeringNoteDataSchema,
+  artifact: agentArtifactEventDataSchema,
+} as const satisfies Record<AgentRunEventType, z.ZodTypeAny>
 
 export const agentRunEventSchema = z.object({
   id: z.string().uuid(),
@@ -139,8 +273,80 @@ export type AgentRunEvent = z.infer<typeof agentRunEventSchema>
 
 export const agentRunWithEventsSchema = agentRunSchema.extend({
   events: z.array(agentRunEventSchema),
+  /** Every ask this run has made, newest last — pending ones are what the action panel draws. */
+  interrupts: z.array(agentRunInterruptSchema).default([]),
+  /** What the run produced that a person opens, keyed by `key` and upserted as it is redrafted. */
+  artifacts: z.array(agentArtifactSchema).default([]),
 })
 export type AgentRunWithEvents = z.infer<typeof agentRunWithEventsSchema>
+
+// ---- Suspend / resume ----------------------------------------------------------------------------
+
+/**
+ * Cloudflare Workflows event type names allow **only letters, digits, `-` and `_`**. A `.` is
+ * rejected with `workflow.invalid_event_type`
+ * (https://developers.cloudflare.com/workflows/build/events-and-parameters/).
+ *
+ * This is here rather than only in a test because nothing else would catch a bad name: the Node
+ * suite's `createFakeWorkflowStep` never validates it, so a `.` would first surface as *a parked
+ * run that can never be resumed*, in production, on the first approval anyone ever gives.
+ */
+export const WORKFLOW_EVENT_TYPE_PATTERN = /^[A-Za-z0-9_-]{1,100}$/
+
+/**
+ * The Workflow event a resolved interrupt sends to wake a parked run.
+ *
+ * **It is a nudge, not the answer.** The payload carries `{ interruptId }` only and the step
+ * re-reads the row: an answer travelling in the event would be a second source of truth that can
+ * disagree with the audit row — the same rule the WebSocket hub already follows.
+ */
+export const AGENT_RESUME_EVENT = 'agent-resume'
+
+/** Most park/resume rounds one run may go through, so a buggy agent cannot grow step state forever. */
+export const MAX_INTERRUPT_ROUNDS = 32
+
+// ---- Live run streaming ---------------------------------------------------------------------------
+
+/**
+ * `GET /api/agents/runs/:id/agui/stream` tails `agent_run_events` on an open connection. These are
+ * PROTOCOL numbers the client agrees with, not `[vars]`: making them configurable would add parity
+ * surface and buy nothing, because both ends ship from one tag.
+ *
+ * The cadence is adaptive because an agent's output is bursty — fast matters just after a row, not
+ * during a two-minute model call — and the slowest tick is still below today's 3 s poll, so the
+ * stream's worst case beats the poll's best.
+ */
+export const RUN_STREAM_POLL_MS = 500
+/** After this many empty ticks, slow to {@link RUN_STREAM_SLOW_MS}. Any row resets the cadence. */
+export const RUN_STREAM_SLOW_AFTER_TICKS = 10
+export const RUN_STREAM_SLOW_MS = 1_000
+/** After this many empty ticks, slow to {@link RUN_STREAM_IDLE_MS}. */
+export const RUN_STREAM_IDLE_AFTER_TICKS = 30
+export const RUN_STREAM_IDLE_MS = 2_000
+/** Rows one tick may read — bounds its CPU and frame burst; a full page re-loops immediately. */
+export const RUN_STREAM_TAIL_LIMIT = 200
+/** Comment frame keeping the connection off an idle proxy's timeout. */
+export const RUN_STREAM_HEARTBEAT_MS = 15_000
+/**
+ * Five minutes of complete silence: the run is wedged or inside one very long step, and the
+ * connection is better recycled than held. Closes with NO terminal event, which means "reconnect".
+ */
+export const RUN_STREAM_IDLE_CAP_MS = 300_000
+/**
+ * Ten minutes, whatever is happening. It keeps the tick count provably under the 1 000-subrequest
+ * ceiling, bounds mid-stream session expiry, matches the `execute` step timeout, and — the real
+ * reason — **makes a redeploy indistinguishable from the normal path**, so the reconnect is
+ * exercised on every stream rather than only during an incident.
+ */
+export const RUN_STREAM_MAX_MS = 600_000
+/**
+ * Connections that delivered NOTHING before the client stops reconnecting and falls back to
+ * polling `GET /runs/:id/agui`. Three, because one empty connection is a quiet run and two is bad
+ * luck; three in a row means the stream is not reaching this browser (a proxy that buffers
+ * `text/event-stream`, a corporate middlebox, an exhausted HTTP/1.1 connection pool) and polling —
+ * exactly today's behaviour against a different URL — is better than an invisible outage.
+ */
+export const RUN_STREAM_FALLBACK_ATTEMPTS = 3
 
 // ---- The example agent --------------------------------------------------------------------------
 

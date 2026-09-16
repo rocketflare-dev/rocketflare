@@ -21,6 +21,8 @@
 import {
   CustomEventSchema,
   EventType,
+  type Interrupt,
+  InterruptSchema,
   MessagesSnapshotEventSchema,
   RunAgentInputSchema,
   RunErrorEventSchema,
@@ -38,9 +40,16 @@ import {
   ToolCallStartEventSchema,
 } from '@ag-ui/core'
 import { z } from 'zod'
+import { agentArtifactSchema } from './artifacts'
 import { MAX_MESSAGE_LENGTH, tokenUsageSchema } from './chat'
 import { aiProviderSchema } from './config'
 import { documentCardSchema } from './embeddings'
+import {
+  type AgentRunInterrupt,
+  agentInterruptResolvedEventDataSchema,
+  agentRunInterruptSchema,
+  agentSteeringNoteSchema,
+} from './interrupts'
 
 export { EventType as AguiEventType }
 
@@ -117,6 +126,20 @@ export const KIT_CUSTOM_EVENTS = {
    * is kit-owned, versioned, zod-validated, and ignored for free by a third-party client.
    */
   document: 'kit.document',
+  /**
+   * An agent run asked a person something (issue #17). This is the ONE new kit CUSTOM event the
+   * HITL work needs, and it is not the *pending* ask — `RUN_FINISHED.outcome` carries those, in
+   * the spec's own vocabulary, which is what lets a third-party client answer a kit run with zero
+   * kit-specific code. It exists because `outcome` can only ever carry what is pending NOW, so a
+   * settled run's HISTORICAL asks would otherwise vanish from the timeline.
+   */
+  agentInterrupt: 'kit.agent.interrupt',
+  /** Somebody answered (or declined, or it expired). */
+  agentInterruptResolved: 'kit.agent.interrupt.resolved',
+  /** A person sent a note to a running agent. */
+  agentSteering: 'kit.agent.steering',
+  /** The run produced something a person opens. */
+  agentArtifact: 'kit.agent.artifact',
 } as const
 
 export type KitCustomEventName = (typeof KIT_CUSTOM_EVENTS)[keyof typeof KIT_CUSTOM_EVENTS]
@@ -171,6 +194,15 @@ export const kitNoticeSchema = z.object({
   message: z.string().optional(),
 })
 
+/** An ask, whole — the panel needs `spec` to draw the question, so the row travels, not a summary. */
+export const kitAgentInterruptSchema = z.object({ interrupt: agentRunInterruptSchema })
+
+export const kitAgentInterruptResolvedSchema = agentInterruptResolvedEventDataSchema
+
+export const kitAgentSteeringSchema = z.object({ note: agentSteeringNoteSchema })
+
+export const kitAgentArtifactSchema = z.object({ artifact: agentArtifactSchema })
+
 /** `CUSTOM.value` keyed by `CUSTOM.name` — the mapping a consumer needs to read the namespace. */
 export const kitCustomPayloadSchema = {
   [KIT_CUSTOM_EVENTS.chatIds]: kitChatIdsSchema,
@@ -179,6 +211,10 @@ export const kitCustomPayloadSchema = {
   [KIT_CUSTOM_EVENTS.agentRetry]: kitAgentRetrySchema,
   [KIT_CUSTOM_EVENTS.notice]: kitNoticeSchema,
   [KIT_CUSTOM_EVENTS.document]: kitDocumentSchema,
+  [KIT_CUSTOM_EVENTS.agentInterrupt]: kitAgentInterruptSchema,
+  [KIT_CUSTOM_EVENTS.agentInterruptResolved]: kitAgentInterruptResolvedSchema,
+  [KIT_CUSTOM_EVENTS.agentSteering]: kitAgentSteeringSchema,
+  [KIT_CUSTOM_EVENTS.agentArtifact]: kitAgentArtifactSchema,
 } as const
 
 /**
@@ -206,8 +242,42 @@ export const chatRunResultSchema = z.object({
 })
 export type ChatRunResult = z.infer<typeof chatRunResultSchema>
 
-/** `GET /api/agents/runs/:id/agui` — the run's durable events, projected. */
-export const agentRunAguiResponseSchema = z.object({ events: z.array(kitAguiEventSchema) })
+// ---- Interrupts on the wire -------------------------------------------------------------------
+
+/**
+ * A kit interrupt row as AG-UI's own `Interrupt`, for `RUN_FINISHED.outcome`.
+ *
+ * This mapper lives HERE and not in `ai/interrupts.ts` because `@ag-ui/core` is confined to this
+ * file (`tests/config/shared-imports.test.ts`). The direction is deliberate: the kit's row is the
+ * truth and the protocol shape is a projection of it, never the other way round.
+ *
+ * `metadata` carries the kit's `kind` and `key` so a client that wants a richer panel can have
+ * one; a client that does not read `responseSchema` and renders a generic form.
+ */
+export function toAguiInterrupt(row: AgentRunInterrupt): Interrupt {
+  return InterruptSchema.parse({
+    id: row.id,
+    reason: row.reason,
+    ...(row.message ? { message: row.message } : {}),
+    ...(row.toolCallId ? { toolCallId: row.toolCallId } : {}),
+    ...(row.responseSchema ? { responseSchema: row.responseSchema } : {}),
+    ...(row.expiresAt ? { expiresAt: row.expiresAt.toISOString() } : {}),
+    metadata: { kind: row.kind, key: row.key },
+  })
+}
+
+/**
+ * `GET /api/agents/runs/:id/agui` — the run's durable events, projected.
+ *
+ * `lastSeq` is the `agent_run_events.seq` of the newest row this projection covers (0 for a run
+ * with no rows yet). **AG-UI events carry no sequence of their own**, so without it a client that
+ * fetched this snapshot has no cursor to hand `GET /runs/:id/agui/stream?afterSeq=` and every
+ * reconnect replays the whole run.
+ */
+export const agentRunAguiResponseSchema = z.object({
+  events: z.array(kitAguiEventSchema),
+  lastSeq: z.number().int().nonnegative(),
+})
 export type AgentRunAguiResponse = z.infer<typeof agentRunAguiResponseSchema>
 
 // ---- `POST /api/agui/run` input ---------------------------------------------------------------

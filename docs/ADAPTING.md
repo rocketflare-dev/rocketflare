@@ -96,8 +96,9 @@ tell it. That is what makes deleting safe.
   `SUMMARIZE_TEXT_MAX_CHARS` in `packages/shared/src/ai/agents.ts`, the `summarize-text` entry in
   `PROMPT_REGISTRY` (`apps/web/src/api/services/prompts.ts`), the `AGENTS` entry in
   `services/agents/registry.ts`, `apps/web/tests/api/{agent-runs,agent-run-workflow,agent-research}.test.ts` (rewrite
-  them around your first agent — the runtime needs at least one), and the agent's form/run page under
-  `apps/web/src/ui/pages/agents/` (see `apps/web/src/ui/CLAUDE.md`). `AGENT_KEYS` must not be empty:
+  them around your first agent — the runtime needs at least one), and the agent's TWO UI entries —
+  `apps/web/src/ui/pages/agents/forms/<key>.tsx` and `outputs/<key>.tsx`, with their registry lines
+  (see `apps/web/src/ui/CLAUDE.md`). `RunPage` itself is the runtime's, not the example's. `AGENT_KEYS` must not be empty:
   `agentKeySchema` is a `z.enum`. Rows in `agent_runs` / `agent_run_events` / `prompt_overrides` /
   `agent_models` for the old key are inert data — delete them or leave them
 - The example cubes `ActivityEvents` / `TenantActivityDaily`, the fact table
@@ -165,19 +166,39 @@ A model you leave out shows "—" on Settings → Usage rather than a wrong numb
    assignable in `/api/ai/agent-models` automatically.
 3. Definition — `apps/web/src/api/services/agents/examples/<key>.ts` (copy `summarize-text.ts`): `meta`
    (`key`, `title`, `description`, schemas, `promptKey`, `exclusive: true` — every v1 agent is
-   exclusive; a non-exclusive one needs `agent_runs_active_exclusive_idx` relaxed) and `run(ctx)`:
+   exclusive; a non-exclusive one needs `agent_runs_active_exclusive_idx` relaxed — plus
+   `approvers`, `'requester'` by default, `'admin'` when only an admin may answer this agent's
+   questions) and `run(ctx)`:
    `ctx.step(...)` for coarse stages, `ctx.checkCancelled()` between model turns, `ctx.chat.client`
    with `ctx.chat.model` / `maxOutputTokens` through `callStructuredTool` (one forced tool) or
    `runToolLoop` (read tools + one terminal tool — include `ctx.tools` so the agent can
    `search_knowledge` / `get_document` the tenant's knowledge base), `recordUsage(ctx.db, { feature: 'agent:<key>', … })`
    from `onUsage`, return the output. Never import an SDK or read `ai_configs`.
+   **If it does anything consequential, ask first** (issue #17, `docs/CONCEPTS.md` §9):
+   `await ctx.interrupt({ key, spec })` for something the AGENT decided to do (`summarize-text`), or
+   `Tool.requiresApproval` / `requiresApprovalWhen(input)` for something the MODEL decided to call
+   (`research-topic`). The `key` must be stable across attempts — `UNIQUE (run_id, key)` is what
+   makes the resumed run find the answer instead of asking again — everything after an interrupt
+   goes behind `ctx.once` because it is on the far side of a park that may last days, and a
+   `runToolLoop` agent with a gated tool MUST pass `approvals: ctx.approvals` and
+   `runApproved: ctx.once` or the gate is re-asked and the approved call runs twice. Record what the
+   run produced with `ctx.artifact({ key, title, data })`, and read what a person typed at it with
+   `ctx.steering()` inside `beforeTurn`.
 4. Registry — one entry in `AGENTS` (`services/agents/registry.ts`); `GET /api/agents` lists it.
-5. Form/run page — `apps/web/src/ui/pages/agents/…` posting `{ agentKey, input }` to
-   `POST /api/agents/runs` (202 → poll/nudge `GET /api/agents/runs/:id` for `events` and `output`);
-   guard `create AgentRun`. UI conventions: `apps/web/src/ui/CLAUDE.md`.
+5. UI — **an agent in this kit is one shared input schema + one `forms/` entry + one `outputs/`
+   entry.** There is no per-agent run page to write: `RunPage` is generic, and it renders the
+   timeline, the interrupt panel, the steering composer and the artifacts for every agent. Add
+   `apps/web/src/ui/pages/agents/forms/<key>.tsx` to `AGENT_FORMS` (skip it and the page generates a
+   form from your input JSON Schema, or falls back to a JSON textarea) and
+   `outputs/<key>.tsx` to `AGENT_OUTPUTS` for how the answer renders. Guards: `create AgentRun` to
+   start one, `update AgentRun` plus the agent's `approvers` to answer a question. UI conventions:
+   `apps/web/src/ui/CLAUDE.md`.
 6. Tests — `tests/api/agent-runs.test.ts` (enqueue → row + `stubs(env).workflow.created`) and a
    `// @vitest-isolate` runtime test mocking `@/api/services/ai/resolve` with a `FakeChatClient` script
-   that answers the terminal tool (`.claude/rules/testing.md`).
+   that answers the terminal tool (`.claude/rules/testing.md`). An agent that interrupts needs one
+   more: park it, answer it, re-enter `execute` and assert there is still exactly ONE interrupt row
+   and one copy of whatever it wrote — `tests/api/agent-research.test.ts` is the template, and
+   `createFakeWorkflowStep({ onWait })` is how a test stands in for a person clicking Approve.
 
 **Adding a cube** (D19 — `apps/web/src/api/cubes/CLAUDE.md`). No migration when the table exists:
 

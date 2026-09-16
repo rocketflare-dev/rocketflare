@@ -95,6 +95,18 @@ const configSchema = z.object({
    */
   CHAT_KNOWLEDGE_TOOLS: optionalBoolean(true),
   /**
+   * Issue #17: how long a run parked on a human question waits before it expires. Consumed
+   * VERBATIM as the `timeout` of `step.waitForEvent`, so it must be a duration string Cloudflare
+   * Workflows accepts ("168 hours", "30 minutes", "7 days") — not a number of seconds.
+   *
+   * Workflows allows 1 second to 365 days here and a `waiting` instance does not count toward
+   * concurrency, so parking really is free. The real bound is **instance retention**: 30 days on
+   * Workers Paid but only 3 days on Free, and a run parked past retention loses its instance, so
+   * `waitForEvent` never fires and only the read-path expiry sweep recovers it. Keep this under
+   * 3 days if you are not on Workers Paid.
+   */
+  AGENT_INTERRUPT_TIMEOUT: z.string().min(1).default('168 hours'),
+  /**
    * D17: characters of stored history a chat turn may replay. The real constraint is the model's
    * context window and the tenant picks the model, so this is the knob rather than a message count
    * — 24 000 chars is roughly 6 000 tokens, which leaves room on the 24k-token Workers AI floor.

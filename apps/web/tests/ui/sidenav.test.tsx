@@ -1,9 +1,19 @@
 import { HomeIcon } from '@heroicons/react/24/outline'
 import { fireEvent, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import SideNav, { filterNavConfig, isPathActive, type NavConfig } from '@/ui/components/SideNav'
+import SideNav, {
+  badgeValueFor,
+  filterNavConfig,
+  isPathActive,
+  type NavConfig,
+} from '@/ui/components/SideNav'
 import type { NavGuard } from '@/ui/hooks/useNavGuard'
-import { renderWithProviders, stubHealthFetch } from './helpers/renderWithProviders'
+import {
+  makeSession,
+  renderWithProviders,
+  stubFetch,
+  stubHealthFetch,
+} from './helpers/renderWithProviders'
 
 const guardMock = vi.fn<(guard: NavGuard | undefined) => boolean>(() => true)
 vi.mock('@/ui/hooks/useNavGuard', async importOriginal => {
@@ -27,7 +37,25 @@ const config: NavConfig = [
     icon: HomeIcon,
     guard: { action: 'read', subject: 'Report' },
   },
+  {
+    to: '/agents',
+    label: 'Agents',
+    icon: HomeIcon,
+    badgeKey: 'agentsAwaiting',
+    badgeTone: 'warning',
+  },
 ]
+
+/** `GET /api/agents/interrupts` is the badge's only source; it reads `pagination.total`. */
+function stubAwaiting(total: number) {
+  return stubFetch({
+    '/api/health': { status: 'ok', version: '1.2.3', env: 'staging' },
+    '/api/agents/interrupts': {
+      items: [],
+      pagination: { page: 1, pageSize: 1, total, totalPages: total },
+    },
+  })
+}
 
 describe('filterNavConfig', () => {
   it('drops guarded items and empties groups', () => {
@@ -35,7 +63,7 @@ describe('filterNavConfig', () => {
     const labels = visible
       .flatMap(item => ('items' in item ? item.items : [item]))
       .map(i => i.label)
-    expect(labels).toEqual(['Home', 'Settings'])
+    expect(labels).toEqual(['Home', 'Settings', 'Agents'])
     // The Platform group vanished entirely rather than rendering an empty heading
     expect(visible.some(item => 'label' in item && item.label === 'Platform')).toBe(false)
   })
@@ -86,6 +114,32 @@ describe('SideNav', () => {
     renderWithProviders(<SideNav items={config} />, { route: '/settings/people' })
     expect(screen.getByRole('link', { name: /Settings/ })).toHaveAttribute('data-active', 'true')
     expect(screen.getByRole('link', { name: /^Home/ })).toHaveAttribute('data-active', 'false')
+  })
+
+  it('renders the live badge, and a DOT on the icon when collapsed', async () => {
+    // Without the dot the whole "something is waiting on you" feature is invisible to everyone who
+    // collapsed the sidebar — which is most people who have used the app for a week.
+    stubAwaiting(3)
+    renderWithProviders(<SideNav items={config} />, { session: makeSession() })
+    await waitFor(() => expect(screen.getByText('3')).toBeInTheDocument())
+    expect(screen.queryByTestId('nav-badge-dot-agentsAwaiting')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Collapse navigation' }))
+    await waitFor(() =>
+      expect(screen.getByTestId('nav-badge-dot-agentsAwaiting')).toBeInTheDocument()
+    )
+    // The count is still announced, so it is not dot-only for a screen reader.
+    expect(screen.getByRole('link', { name: /3 waiting for you/ })).toBeInTheDocument()
+  })
+
+  it('renders no badge when nothing is waiting — an empty inbox is not a nought', async () => {
+    stubAwaiting(0)
+    renderWithProviders(<SideNav items={config} />, { session: makeSession() })
+    await waitFor(() => expect(screen.getByRole('link', { name: /Agents/ })).toBeInTheDocument())
+    expect(
+      badgeValueFor({ to: '/x', label: 'x', icon: HomeIcon, badgeKey: 'agentsAwaiting' }, {})
+    ).toBeUndefined()
+    expect(screen.queryByTestId('nav-badge-dot-agentsAwaiting')).not.toBeInTheDocument()
   })
 
   it('persists the collapsed preference', () => {

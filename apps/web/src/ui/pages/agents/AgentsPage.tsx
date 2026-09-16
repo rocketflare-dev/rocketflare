@@ -1,10 +1,16 @@
 /**
- * `/agents` and `/agents/runs/:runId` (D7, D8, D17, D20): the registered agents on the left (title,
- * description, exclusive badge, Run → `RunAgentModal`), the runs table on the right (status with a
- * live dot, agent, requested by, started/finished, duration; agent + status filters; paginated).
- * A row opens `RunDetailDrawer` at `/agents/runs/:id`, so a run is a URL you can share. The list
- * refreshes on the `agent-run` nudge and polls while any row is active. Members see their own
- * runs, admin+ every run — the route decides. Lazy in App.tsx: this chunk carries `Markdown`.
+ * `/agents` (D7, D8, D17, D20, issue #17): the registered agents on the left (title, description,
+ * exclusive badge, Run → `RunAgentModal`), the runs table on the right (status with a live dot,
+ * agent, requested by, started/finished, duration; agent + status filters and an "awaiting input"
+ * chip; paginated). The list refreshes on the `agent-run` nudge and polls while any row still owes
+ * an answer. Members see their own runs, admin+ every run — the route decides.
+ *
+ * Two deliberate details. **Every row is a real `<Link>`**: middle-click and open-in-new-tab are
+ * half the point of a run being a page rather than a modal, and a `<tr onClick>` gives neither.
+ * And **the filters live in `useSearchParams`**, not `useState`, so `/agents?awaiting=1` is a URL
+ * the status badge, the SideNav badge and a notification can all point at.
+ *
+ * Lazy in `App.tsx`: this chunk carries `Markdown` through the run page's tree.
  */
 
 import { CpuChipIcon, PlayIcon } from '@heroicons/react/24/outline'
@@ -16,7 +22,7 @@ import {
   agentRunStatusSchema,
 } from '@rocketflare/shared/ai/agents'
 import { useState } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import {
   EmptyState,
   PageHeader,
@@ -26,21 +32,11 @@ import {
 } from '@/ui/components/shared'
 import { useAgentList, useAgentRuns } from '@/ui/hooks/useAgents'
 import { useAuth } from '@/ui/hooks/useAuth'
-import { formatDateTime } from '@/ui/lib/format'
+import { formatDateTime, runDuration } from '@/ui/lib/format'
 import { RunAgentModal } from './RunAgentModal'
-import { RunDetailDrawer, runDuration } from './RunDetailDrawer'
-import { RunStatusBadge } from './RunStatusBadge'
-
-const STATUS_LABELS: Record<AgentRunStatus, string> = {
-  queued: 'Queued',
-  running: 'Running',
-  succeeded: 'Succeeded',
-  failed: 'Failed',
-  cancelled: 'Cancelled',
-}
+import { RunStatusBadge, STATUS_LABELS } from './RunStatusBadge'
 
 export default function AgentsPage() {
-  const { runId } = useParams<{ runId: string }>()
   const navigate = useNavigate()
   const agents = useAgentList()
   const [running, setRunning] = useState<AgentInfo | null>(null)
@@ -90,7 +86,7 @@ export default function AgentsPage() {
           )}
         </SectionPanel>
 
-        <RunsTable titleOf={titleOf} onOpen={id => navigate(`/agents/runs/${id}`)} />
+        <RunsTable titleOf={titleOf} />
       </div>
 
       <RunAgentModal
@@ -101,23 +97,39 @@ export default function AgentsPage() {
           navigate(`/agents/runs/${run.id}`)
         }}
       />
-
-      {runId && <RunDetailDrawer runId={runId} onClose={() => navigate('/agents')} />}
     </div>
   )
 }
 
-function RunsTable({
-  titleOf,
-  onOpen,
-}: {
-  titleOf: (agentKey: string) => string
-  onOpen: (id: string) => void
-}) {
+/** The filter state, read from and written to the URL so every filtered view is linkable. */
+function useRunFilters() {
+  const [params, setParams] = useSearchParams()
+  const awaiting = params.get('awaiting') === '1'
+  const page = Number(params.get('page') ?? '1')
+  const status = (params.get('status') ?? '') as AgentRunStatus | ''
+  const patch = (changes: Record<string, string | null>) => {
+    const next = new URLSearchParams(params)
+    for (const [key, value] of Object.entries(changes)) {
+      if (value === null || value === '') next.delete(key)
+      else next.set(key, value)
+    }
+    // Any filter change resets paging: page 3 of the old filter is nowhere in the new one.
+    if (!('page' in changes)) next.delete('page')
+    setParams(next, { replace: true })
+  }
+  return {
+    page: Number.isInteger(page) && page > 0 ? page : 1,
+    agentKey: params.get('agentKey') ?? '',
+    // `?awaiting=1` is a chip over the same status filter, not a second dimension.
+    status: awaiting ? ('awaiting_input' as AgentRunStatus) : status,
+    awaiting,
+    patch,
+  }
+}
+
+function RunsTable({ titleOf }: { titleOf: (agentKey: string) => string }) {
   const { user } = useAuth()
-  const [page, setPage] = useState(1)
-  const [agentKey, setAgentKey] = useState('')
-  const [status, setStatus] = useState<AgentRunStatus | ''>('')
+  const { page, agentKey, status, awaiting, patch } = useRunFilters()
   const runs = useAgentRuns({ page, agentKey, status })
   const rows = runs.data?.items ?? []
 
@@ -137,7 +149,15 @@ function RunsTable({
       flush
       title="Runs"
       actions={
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          <button
+            type="button"
+            className={`btn btn-xs ${awaiting ? 'btn-warning' : 'btn-ghost'}`}
+            aria-pressed={awaiting}
+            onClick={() => patch({ awaiting: awaiting ? null : '1', status: null })}
+          >
+            Awaiting input
+          </button>
           <label htmlFor="runs-agent" className="sr-only">
             Agent
           </label>
@@ -145,10 +165,7 @@ function RunsTable({
             id="runs-agent"
             className="select select-xs"
             value={agentKey}
-            onChange={e => {
-              setAgentKey(e.target.value)
-              setPage(1)
-            }}
+            onChange={e => patch({ agentKey: e.target.value })}
           >
             <option value="">All agents</option>
             {AGENT_KEYS.map(key => (
@@ -164,10 +181,7 @@ function RunsTable({
             id="runs-status"
             className="select select-xs"
             value={status}
-            onChange={e => {
-              setStatus(e.target.value as AgentRunStatus | '')
-              setPage(1)
-            }}
+            onChange={e => patch({ status: e.target.value, awaiting: null })}
           >
             <option value="">Any status</option>
             {agentRunStatusSchema.options.map(s => (
@@ -191,8 +205,8 @@ function RunsTable({
         <EmptyState
           icon={CpuChipIcon}
           size="sm"
-          message="No runs yet"
-          description="Run an agent from the list to see it here."
+          message={awaiting ? 'Nothing is waiting on you' : 'No runs yet'}
+          description={awaiting ? undefined : 'Run an agent from the list to see it here.'}
         />
       ) : (
         <div className="overflow-x-auto">
@@ -209,23 +223,17 @@ function RunsTable({
             </thead>
             <tbody>
               {rows.map(run => (
-                <tr
-                  key={run.id}
-                  className="cursor-pointer"
-                  onClick={() => onOpen(run.id)}
-                  onKeyDown={e => {
-                    if (e.key === 'Enter' || e.key === ' ') {
-                      e.preventDefault()
-                      onOpen(run.id)
-                    }
-                  }}
-                  tabIndex={0}
-                  aria-label={`Open run ${run.id.slice(0, 8)}`}
-                >
+                <tr key={run.id}>
                   <td>
                     <RunStatusBadge status={run.status} />
                   </td>
-                  <td className="font-medium">{titleOf(run.agentKey)}</td>
+                  <td className="font-medium">
+                    {/* A real link, so middle-click and open-in-new-tab work — half the point of
+                        a run being a page. */}
+                    <Link to={`/agents/runs/${run.id}`} className="link link-hover">
+                      {titleOf(run.agentKey)}
+                    </Link>
+                  </td>
                   <td>{requestedBy(run)}</td>
                   <td className="whitespace-nowrap text-secondary">
                     {formatDateTime(run.startedAt ?? run.createdAt)}
@@ -244,7 +252,7 @@ function RunsTable({
         <div className="px-5 pb-5">
           <PaginationControls
             pagination={runs.data.pagination}
-            onPageChange={setPage}
+            onPageChange={next => patch({ page: String(next) })}
             isLoading={runs.isFetching}
           />
         </div>

@@ -48,13 +48,52 @@ export interface RecordedStep {
   config?: Record<string, unknown>
 }
 
+/** One `step.waitForEvent(name, { type, timeout })` the class asked for. */
+export interface RecordedWait {
+  name: string
+  type: string
+  timeout?: string | number
+}
+
+export interface FakeWorkflowStepOptions {
+  /**
+   * Payloads handed to successive `waitForEvent` calls, in order. When the queue is empty and no
+   * {@link FakeWorkflowStepOptions.onWait} supplies one, the wait REJECTS the way the platform's
+   * own timeout does — which is how a test drives the expiry path.
+   */
+  events?: unknown[]
+  /**
+   * Called before each wait resolves — the test's stand-in for the resolve route, whose job in the
+   * real system is to flip `awaiting_input → running` BEFORE it wakes the instance (decision 2).
+   * Return a value to use it as the event payload; return nothing to fall through to the queue.
+   */
+  onWait?: (wait: RecordedWait) => unknown | Promise<unknown>
+}
+
+/** What the platform raises when `waitForEvent` reaches its timeout with nothing delivered. */
+export class FakeWorkflowTimeoutError extends Error {
+  constructor(name: string) {
+    super(`workflow.wait_for_event_timeout: no event delivered to "${name}"`)
+    this.name = 'FakeWorkflowTimeoutError'
+  }
+}
+
 /**
- * A `WorkflowStep` that just runs the callback inline and records `do(name, config?)` calls — no
- * retries, no timeouts, no checkpoints — for unit-testing a `WorkflowEntrypoint` subclass under Node.
+ * A `WorkflowStep` that just runs the callback inline and records what was asked for — no retries,
+ * no timeouts, no checkpoints — for unit-testing a `WorkflowEntrypoint` subclass under Node.
  * A callback that throws propagates to the caller exactly as the platform would after its retries.
+ *
+ * `waitForEvent` is a RECORDER rather than a throw, because the suspend/resume loop (issue #17) is
+ * the interesting thing about this class. The one property no fake can check is the step NAME —
+ * the platform treats it as the step's identity and replays a repeated name's earlier result — so
+ * `names` is exposed in call order for the test that asserts they are distinct per round.
  */
-export function createFakeWorkflowStep() {
+export function createFakeWorkflowStep(options: FakeWorkflowStepOptions = {}) {
   const calls: RecordedStep[] = []
+  const waits: RecordedWait[] = []
+  /** Every recorded step name — `do` and `waitForEvent` alike — in the order they were asked for. */
+  const names: string[] = []
+  const queue: unknown[] = [...(options.events ?? [])]
   const step: WorkflowStep = {
     async do<T>(
       name: string,
@@ -63,13 +102,32 @@ export function createFakeWorkflowStep() {
     ): Promise<T> {
       const fn = typeof configOrFn === 'function' ? configOrFn : (maybeFn as () => Promise<T>)
       calls.push(typeof configOrFn === 'function' ? { name } : { name, config: configOrFn })
+      names.push(name)
       return fn()
     },
     async sleep() {},
     async sleepUntil() {},
-    async waitForEvent() {
-      throw new Error('waitForEvent is not supported by the fake step')
+    async waitForEvent<T>(
+      name: string,
+      waitOptions: { type: string; timeout?: string | number }
+    ): Promise<T> {
+      const wait: RecordedWait = { name, type: waitOptions.type, timeout: waitOptions.timeout }
+      waits.push(wait)
+      names.push(name)
+      const supplied = await options.onWait?.(wait)
+      if (supplied !== undefined) return supplied as T
+      if (queue.length > 0) return queue.shift() as T
+      throw new FakeWorkflowTimeoutError(name)
     },
   }
-  return { step, calls }
+  return {
+    step,
+    calls,
+    waits,
+    names,
+    /** Queue one more payload for a later wait. */
+    queueEvent(payload: unknown) {
+      queue.push(payload)
+    },
+  }
 }

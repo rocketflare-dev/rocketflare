@@ -13,6 +13,7 @@ import {
   useUnreadCount,
 } from '@/ui/hooks/useNotifications'
 import { timeAgo } from '@/ui/lib/format'
+import { notificationLink } from '@/ui/lib/notificationLink'
 import { EmptyState } from './shared/EmptyState'
 
 export function NotificationsBell() {
@@ -59,19 +60,41 @@ function TenantNotificationsBell() {
           <EmptyState message="You're all caught up" size="sm" />
         ) : (
           <ul className="max-h-80 overflow-y-auto">
-            {items.map(n => (
-              <li key={n.id}>
-                <button
-                  type="button"
-                  className="w-full text-left rounded-[var(--radius-control)] p-2 hover:bg-[color:var(--surface-hover)]"
-                  onClick={() => markRead.mutate({ ids: [n.id] })}
-                >
+            {items.map(n => {
+              // `data` is the deep link (issue #17): an agent parked on a question is answered on
+              // the run page, not on a list of notifications about it.
+              const to = notificationLink(n)
+              const body = (
+                <>
                   <div className="text-sm font-medium truncate">{n.title}</div>
                   {n.body && <div className="text-xs text-secondary line-clamp-2">{n.body}</div>}
                   <div className="text-[11px] text-muted mt-0.5">{timeAgo(n.createdAt)}</div>
-                </button>
-              </li>
-            ))}
+                </>
+              )
+              const className =
+                'block w-full text-left rounded-[var(--radius-control)] p-2 hover:bg-[color:var(--surface-hover)]'
+              return (
+                <li key={n.id}>
+                  {to ? (
+                    <Link
+                      to={to}
+                      className={className}
+                      onClick={() => markRead.mutate({ ids: [n.id] })}
+                    >
+                      {body}
+                    </Link>
+                  ) : (
+                    <button
+                      type="button"
+                      className={className}
+                      onClick={() => markRead.mutate({ ids: [n.id] })}
+                    >
+                      {body}
+                    </button>
+                  )}
+                </li>
+              )
+            })}
           </ul>
         )}
         <div className="border-t border-[color:var(--border-subtle)] mt-1 pt-1 px-2">

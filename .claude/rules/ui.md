@@ -59,7 +59,10 @@ Dev: Vite on :3000 proxies `/api`, `/auth`, `/ws`, `/cubejs-api`, `/mcp` to `wra
 - Mutations invalidate via `queryKeys`; error toast on by default (`showToast`)
 - **Polling rules** (Phase 3b): poll only while the server still owes an answer, with the decision as a
   pure function on the cached row — `refetchInterval: q => runPollInterval(q.state.data?.status)`
-  (`RUN_POLL_MS` 3 s while `isRunActive`; lists poll while any listed row is active); documents 5 s
+  (`RUN_POLL_MS` 3 s while **`runOwesAnswer`**, which is `queued || running` and deliberately NOT
+  `isRunActive` — that includes `awaiting_input`, and a run parked on a person would otherwise be
+  re-fetched every three seconds for the length of `AGENT_INTERRUPT_TIMEOUT`, by every open tab;
+  lists poll while any listed row owes an answer); documents 5 s
   (`DOCUMENT_POLL_MS`) while a row is `pending`. Polling is the belt to the nudge's braces — a resource
   that has a server nudge still polls (the socket may be down); a resource without one (documents) polls
   only. Never poll a settled row, never poll unconditionally, never fight `refetchInterval` with timers in tests
@@ -104,7 +107,18 @@ Components subscribe to query state, never to the socket; `WebSocketStatus` (hea
   chunks, each `data` goes through the parser the CALLER passes — `kitAguiEventSchema.safeParse` —
   and unknown frames are dropped, never thrown). **Spec AG-UI frames carry no `event:` line**; the
   type is inside the JSON, so nothing may key on the SSE event field. `lib/sse.ts` imports no
-  schema, which is what keeps `@ag-ui/core` out of the eager shell.
+  schema, which is what keeps `@ag-ui/core` out of the eager shell. The run READ-stream
+  (`lib/runAguiStream.ts` → `hooks/useRunStream.ts`) is the one GET — deliberately, so a third-party
+  client can point a bare `EventSource` at it — resuming with `?afterSeq=`, which beats an inbound
+  `Last-Event-ID` when both arrive. Reconnection lives in the HOOK, not the transport.
+- **A read-stream that carries DURABLE rows writes them into the cache; only chat's in-flight text
+  is local state.** `useRunStream` is the ONLY writer of `['agent-run-agui', id]`, and that key must
+  stay out of `REALTIME_INVALIDATIONS` — a nudge that invalidated it would wipe a live timeline with
+  the very message telling it to refresh. Merge purely (the timeline model is idempotent under
+  duplicated events), never append blindly.
+- **A read-stream closing with no terminal event means RECONNECT, not error** — redeploy, idle cap,
+  duration cap, transport error, abort all look the same, deliberately. That is the inverse of the
+  chat write-stream, where the stream IS the run and a failure is a `RUN_ERROR`.
   It does not go through `api-client`'s `request()` (JSON only) but reuses `parseErrorBody`: a pre-stream
   non-2xx is the shared envelope — 503 `ai_not_configured` becomes `AiNotConfiguredError` so the page
   renders a "configure AI" call to action instead of a toast
@@ -125,10 +139,11 @@ Components subscribe to query state, never to the socket; `WebSocketStatus` (hea
   never `kit.`
 - Guards: `/chat/:conversationId?` is `read Conversation` (every role; ownership is server-side);
   `/settings` (`?tab=ai|prompts|agent-models|usage`) is `guard="admin"`, the last two additionally
-  `manage AiConfig`. Agent runs (`/agents`, `AgentRun`), documents (`/documents`, `Document`) and the
-  agent-models tab follow the same contracts (`@rocketflare/shared/ai/{agents,embeddings,agent-models}`) and
-  poll/nudge, never stream: `entity.changed { entity: 'agent-run' }` invalidates the run query.
-  Page specifics: `apps/web/src/ui/CLAUDE.md`
+  `manage AiConfig`. Agent runs (`/agents`, `/agents/runs/:runId`, `AgentRun`), documents
+  (`/documents`, `Document`) and the agent-models tab follow the same contracts
+  (`@rocketflare/shared/ai/{agents,embeddings,agent-models,interrupts,artifacts}`). Documents
+  poll/nudge; **a run STREAMS** (below) and `entity.changed { entity: 'agent-run' }` invalidates the
+  run query — but never `['agent-run-agui']`. Page specifics: `apps/web/src/ui/CLAUDE.md`
 
 ## Auth and guards
 
@@ -149,6 +164,27 @@ Components subscribe to query state, never to the socket; `WebSocketStatus` (hea
 
 - Pages in `pages/` (lazy in `App.tsx`), reusable primitives in `components/shared/` — check there
   before writing a modal, empty state, toast, pagination control or section panel
+- **A surface somebody is asked to ACT on is a page, not a modal.** A run
+  (`/agents/runs/:runId`, issue #17) is arrived at from a notification, may need a document read
+  before deciding, and is left and returned to — so it has its own route, its own lazy chunk, a
+  breadcrumb, and no `role="dialog"`. The decision panel is pinned ABOVE the content, **focus lands
+  on its heading and never on the destructive button**, and a non-approver sees one sentence rather
+  than a disabled control with a tooltip. A conflict (409) is rendered as `alert-info` plus a
+  refetch — *information, not an error*: no toast and no red for "somebody else got there first"
+- **A countdown chooses its own tick rate from a pure function.** `expiryState(expiresAt, now) →
+  { tickMs }` — a second under an hour, a minute under a day, `null` beyond. A naive one-second
+  interval on a seven-day deadline is ~600 000 re-renders of a panel nobody is watching
+- **A growing list windows; it does not virtualise.** Render the last N groups plus one "show
+  earlier" button. Virtualising needs measurement, and measurement fights both auto-scroll and
+  collapsible rows. Auto-scroll fires only when the reader is at the bottom AND the last row's **id**
+  changed — keying on height yanks them down whenever they expand something old
+- **A live count in the nav is `NavItem.badgeKey` resolved in `SideNav`**, never a hook inside
+  `navigationConfig`: that const is plain data consumed by the pure, tested `filterNavConfig`. Feed
+  it from a query-key root the server already nudges — **never a poll** — and **render a dot on the
+  icon when the nav is collapsed**, or the badge is invisible to everyone who collapsed the sidebar
+- **A notification's `data` is its deep link.** One `notificationLink(notification)` helper mapping
+  `type` + `data` → a path (unknown → `null`), used by the bell AND the list, so a row means the
+  same thing in both places
 - `components/ai/` (`Markdown`, `ChatBubble`) is deliberately NOT exported from the
   `components/shared` barrel that `App.tsx` imports eagerly: `react-markdown` + `remark-gfm` must ship
   only in the lazy chat / agents / documents chunks, never the main bundle. Import them by path from

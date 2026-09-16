@@ -8,12 +8,19 @@
  * Adding an agent = a key in `@rocketflare/shared/ai/agents`, a prompt in `services/prompts.ts`, a file in
  * `examples/` and one entry here. No migration.
  */
-import type { AgentKey, AgentMeta, AgentRunEventType } from '@rocketflare/shared/ai/agents'
+import type {
+  AgentInfo,
+  AgentKey,
+  AgentMeta,
+  AgentRunEventType,
+} from '@rocketflare/shared/ai/agents'
+import type { AgentArtifact, AgentArtifactInput } from '@rocketflare/shared/ai/artifacts'
+import type { AgentInterruptSpec, AgentSteeringNote } from '@rocketflare/shared/ai/interrupts'
 import type { AppConfig } from '../../../config'
 import type { Database } from '../../../db/client'
 import type { Tracer } from '../../observability/tracer'
 import type { Logger } from '../../utils/core/logger'
-import type { Tool, ToolLoopCheckpoint } from '../ai/kit'
+import { type Tool, type ToolApproval, type ToolLoopCheckpoint, toolInputSchema } from '../ai/kit'
 import type { AiEnv, ChatClient } from '../ai/types'
 import type { JobsQueue } from '../jobs'
 import { researchTopicAgent } from './examples/research-topic'
@@ -29,6 +36,37 @@ export interface AgentEvent {
 export interface AgentRunEnv {
   AI?: AiEnv['AI']
   JOBS_QUEUE?: JobsQueue | null
+}
+
+/** What an agent asks a person through {@link AgentContext.interrupt}. */
+export interface AgentInterruptAsk {
+  /**
+   * **Yours, and it must be stable across attempts.** A resumed or retried `execute` step
+   * re-enters `run()` from the TOP and reaches this call again; `(run_id, key)` is what makes the
+   * second call find the ANSWER rather than opening a second question (T2). Derive it from
+   * something durable — the entity id, the step name — never from a counter or `Date.now()`.
+   */
+  key: string
+  /** What is being asked, in the shape the panel needs to draw it. */
+  spec: AgentInterruptSpec
+  /** The tool call this ask gates, when it gates one. Set by the tool loop, rarely by an agent. */
+  toolCallId?: string
+}
+
+/**
+ * The answer. `status` is AG-UI's own `ResumeEntry` vocabulary and there is deliberately no
+ * `approved` boolean: two ways to say no is how a UI and a server end up disagreeing.
+ *
+ * A `cancelled` answer only ever REACHES an agent for a kind whose rejection means "tell the
+ * model" — `choice`, `input`, `form`. A declined `approval` throws `InterruptDeclinedError`
+ * instead, because a person saying no to an action means stop.
+ */
+export interface AgentInterruptAnswer {
+  interruptId: string
+  status: 'resolved' | 'cancelled'
+  /** Validated against `interruptPayloadSchema(spec)` at the route — parse it with the same schema. */
+  payload: unknown
+  resolvedByUserId: string | null
 }
 
 /** What `run()` receives. Never carries a client-supplied tenant id. */
@@ -75,6 +113,45 @@ export interface AgentContext<Input = unknown> {
    * ids and scalars, not rows. At-least-once with a recorded result, not exactly-once.
    */
   once<T>(key: string, fn: () => Promise<T>): Promise<T>
+  /**
+   * Ask a person, and suspend the run until they answer (issue #17).
+   *
+   * Three things are true of every call and each one has bitten somebody:
+   *
+   * 1. **`key` is yours and must be stable across attempts.** A resumed `execute` re-enters
+   *    `run()` from the top and reaches this line again; `UNIQUE (run_id, key)` is what makes the
+   *    second call find the answer instead of asking again, forever (T2).
+   * 2. **Everything after this call is on the far side of a Worker deploy.** The run may resume
+   *    days later, in a different isolate, on different code. Anything with a side effect goes
+   *    behind {@link AgentContext.once}, exactly as it would after any retry.
+   * 3. **Rejection differs by kind.** An `approval` that is declined throws
+   *    `InterruptDeclinedError` and settles the run `cancelled`; `choice` / `input` / `form`
+   *    resolve normally with `{ status: 'cancelled' }`, because declining to answer is an answer.
+   *
+   * The first call raises `InterruptRequested`, which the runtime turns into a row and a parked
+   * run — so it does not return on that attempt at all.
+   */
+  interrupt(ask: AgentInterruptAsk): Promise<AgentInterruptAnswer>
+  /**
+   * Notes a person has sent to this run and that this run has not seen yet — delivered **exactly
+   * once** across every attempt (`agent_run_effects`, keyed by the note's event id), so a step
+   * retry never replays them. Feed them to the model through `runToolLoop`'s `beforeTurn`, which
+   * folds them in with `appendUserText` rather than opening a second consecutive user turn.
+   */
+  steering(): Promise<AgentSteeringNote[]>
+  /**
+   * Record something the run PRODUCED that a person opens — a draft, a table, the document it
+   * wrote. `key` is the UPSERT key, so a redrafted artifact replaces itself instead of piling up.
+   * Safe to call again on a retry for that reason; it also writes a thin `artifact` event so the
+   * timeline says where it appeared.
+   */
+  artifact(input: AgentArtifactInput): Promise<AgentArtifact>
+  /**
+   * Answers to this run's gated TOOL calls, keyed by `toolCallId` — hand it to `runToolLoop` as
+   * `approvals`. **Built by the runtime; an agent never queries for it and never assembles it**,
+   * which is what keeps one set of approval rules in one place.
+   */
+  approvals: ReadonlyMap<string, ToolApproval>
   /** `resolvePrompt(meta.promptKey, vars)` with `appName`/`tenantName` pre-filled. */
   prompt(vars?: Record<string, string | undefined>): Promise<string>
   /** Shortcut for a `step` event: `step('summarize', 'Summarising', 'running')`. */
@@ -107,13 +184,29 @@ export function isAgentKey(key: string): key is AgentKey {
   return Object.hasOwn(AGENTS, key)
 }
 
-/** `GET /api/agents` — the metas without their zod schemas. */
-export function listAgentInfo() {
-  return Object.values(AGENTS).map(a => ({
+/**
+ * `GET /api/agents` — the metas without their zod schemas, which are not serialisable.
+ *
+ * **`inputJsonSchema` is the zod schema converted once** by the same `toolInputSchema()` the tool
+ * loop uses, so there is one conversion in the repo rather than two that can disagree. It is what
+ * lets the UI label a run's input (`summariseInput`) and build a form for an agent with no
+ * hand-written one (`formFor`'s middle rung) — both of which read this field and nothing else, so
+ * omitting it does not fail, it silently degrades to a JSON box.
+ *
+ * Built once per isolate: `AGENTS` is a module constant, so the conversion cannot change between
+ * requests and a Worker should not pay for it on each one.
+ */
+let agentInfoCache: AgentInfo[] | null = null
+
+export function listAgentInfo(): AgentInfo[] {
+  agentInfoCache ??= Object.values(AGENTS).map(a => ({
     key: a.meta.key,
     title: a.meta.title,
     description: a.meta.description,
     promptKey: a.meta.promptKey,
     exclusive: a.meta.exclusive,
+    approvers: a.meta.approvers ?? 'requester',
+    inputJsonSchema: toolInputSchema(a.meta.inputSchema),
   }))
+  return agentInfoCache
 }

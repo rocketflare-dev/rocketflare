@@ -8,6 +8,7 @@ import type { AiProvider } from '@rocketflare/shared/ai/config'
 import { relations } from 'drizzle-orm'
 import { bigint, index, integer, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core'
 import { tenantRef } from './_helpers'
+import { agentRuns } from './agent-runs'
 import { tenantIsolation } from './rls'
 import { tenants } from './tenants'
 import { users } from './users'
@@ -18,6 +19,13 @@ export const aiUsage = pgTable(
     id: uuid('id').primaryKey().defaultRandom(),
     tenantId: tenantRef(tenants),
     userId: uuid('user_id').references(() => users.id, { onDelete: 'set null' }),
+    /**
+     * The run this generation was billed to, when it was an agent run. Nullable and `set null`: a
+     * chat turn and a connection test have no run, and a deleted run must not take the ledger with
+     * it. **Recorded now because it cannot be backfilled** — the same argument `costMicrocents`
+     * makes. Without it "what did this run cost?" is unanswerable for every row already written.
+     */
+    agentRunId: uuid('agent_run_id').references(() => agentRuns.id, { onDelete: 'set null' }),
     /** Prompt key or feature name: `chat`, `summarize-text`, `connection-test`. */
     feature: text('feature').notNull(),
     provider: text('provider').$type<AiProvider>().notNull(),
@@ -38,6 +46,7 @@ export const aiUsage = pgTable(
 export const aiUsageRelations = relations(aiUsage, ({ one }) => ({
   tenant: one(tenants, { fields: [aiUsage.tenantId], references: [tenants.id] }),
   user: one(users, { fields: [aiUsage.userId], references: [users.id] }),
+  agentRun: one(agentRuns, { fields: [aiUsage.agentRunId], references: [agentRuns.id] }),
 }))
 
 export type AiUsageRow = typeof aiUsage.$inferSelect

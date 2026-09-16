@@ -11,20 +11,8 @@ import type { AgentInfo, CreateAgentRunResponse } from '@rocketflare/shared/ai/a
 import { type FormEvent, useState } from 'react'
 import { EmptyState, Modal } from '@/ui/components/shared'
 import { isAgentRunsNotConfigured, useCreateAgentRun } from '@/ui/hooks/useAgents'
-import { ApiError } from '@/ui/lib/api-client'
 import { formFor } from './forms'
-
-type Issue = { path: PropertyKey[]; message: string }
-
-/** zod issues the server put in `details` (validation_failed), if that is what they are. */
-function issuesFrom(error: unknown): Issue[] | undefined {
-  if (!(error instanceof ApiError) || !Array.isArray(error.details)) return undefined
-  const issues = error.details.filter(
-    (d): d is Issue =>
-      typeof d === 'object' && d !== null && Array.isArray((d as Issue).path) && 'message' in d
-  )
-  return issues.length > 0 ? issues : undefined
-}
+import { type Issue, issuesFrom } from './issues'
 
 export function RunAgentModal({
   agent,
@@ -68,7 +56,7 @@ function RunAgentForm({
   agent: AgentInfo
   onStarted: (run: CreateAgentRunResponse) => void
 }) {
-  const form = formFor(agent.key)
+  const form = formFor(agent)
   const create = useCreateAgentRun()
   const [draft, setDraft] = useState<unknown>(form.initial)
   const [issues, setIssues] = useState<Issue[] | undefined>()

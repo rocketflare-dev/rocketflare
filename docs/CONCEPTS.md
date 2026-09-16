@@ -315,7 +315,7 @@ deleting.
 | Need | Primitive | Kit shape |
 |---|---|---|
 | plain job | `JOBS_QUEUE` (one queue) — **built** | `enqueueJob(queue, input)` (`services/jobs.ts`) → `processJobsBatch(batch, { env, config, logger })` (`queues/jobs.ts`) dispatched on `type` to `queues/handlers/*`; `queue.ts` routes `batch.queue` by prefix |
-| durable multi-step | `AGENT_RUN_WORKFLOW` (one class) — **built** | `AgentRunWorkflow` (`api/workflows/agent-run.ts`): `claim → execute → finish`, bodies in `services/agents/runtime.ts`; the agent runtime *is* the example workflow — no throwaway second one (§9) |
+| durable multi-step | `AGENT_RUN_WORKFLOW` (one class) — **built** | `AgentRunWorkflow` (`api/workflows/agent-run.ts`): `claim → (execute#N → resume#N \| expire#N)* → finish`, bodies in `services/agents/runtime.ts`; `resume#N` is `step.waitForEvent` — the run parks on a human and the round number is part of every step NAME (§9). The agent runtime *is* the example workflow — no throwaway second one |
 | periodic | `[triggers] crons` | `scheduled.ts` dispatch table on `event.cron`; each task try/caught; `0 4 * * *` prune, `15 * * * *` fact-table refresh (§8) |
 
 **Jobs (D7) — one queue, typed envelopes, poison never loops.** The contract is
@@ -390,15 +390,30 @@ toasts `notification.created`. `WebSocketStatus` is the header dot; `ConnectionB
 after 5 s away from `open`.
 
 **What replaced the Node queue semantics (built in §9).** `exclusive` (one active run per tenant and
-agent) is the partial unique index `agent_runs_active_exclusive_idx (tenant_id, agent_key) WHERE
-status IN ('queued','running')` — a second enqueue returns the existing run (`deduplicated: true`).
+agent) is the partial unique index `agent_runs_active_exclusive_idx (tenant_id, agent_key)` over
+`ACTIVE_RUN_STATUSES` — `queued`, `running` **and `awaiting_input`**, so a run parked on a question
+still holds the slot and a second enqueue returns it (`deduplicated: true`) rather than starting a
+rival. **The predicate is rendered from that shared list, not typed out**, because an index whose
+SQL and whose TypeScript disagree about what "active" means is a bug nothing can see.
 **Concurrency has no Cloudflare primitive** — it is a DB claim row: `UPDATE agent_runs … SET running,
 attempt + 1 WHERE status IN ('queued','running') RETURNING`; a retried step re-claims, a settled row
-is never rewritten. The Workflow instance id is the run id (`AGENT_RUN_WORKFLOW.create({ id: runId })`
-after the row exists). Never fake either in an in-memory `Map` — isolates are many and short-lived.
-Cancellation is cooperative: flip `cancelRequestedAt`, the run polls between turns. There is no orphan
-sweep cron: an active row is reconciled against `instance.status()` on read. Progress is durable in
-`agent_run_events`; the DO only wakes viewers.
+is never rewritten. That claim reads `CLAIMABLE_RUN_STATUSES`, which is deliberately NARROWER than
+the index's list: a parked run holds the exclusive slot but must not be claimable, or answering it
+and a stray retry would both run it. Three lists, three jobs — widening them together is the
+mistake. The Workflow instance id is the run id (`AGENT_RUN_WORKFLOW.create({ id: runId })`
+after the row exists) — **until a run parked on a human has to be restarted**, when it becomes
+`<runId>-r1`, `-r2`… (issue #17: on the resume path `instance.not_found` is an ANSWER, not an error,
+so the column is *the latest* instance rather than "the run id"; it stays `unique()`, so a probe
+still maps back 1:1). Never fake either in an in-memory `Map` — isolates are many and short-lived.
+Cancellation is cooperative, then forced: the first `POST /cancel` flips `cancelRequestedAt` and the
+run polls it between turns; a second one on a row that already carries it terminates the instance
+and settles the row, because a run stuck inside a model call cannot poll anything. There is no
+orphan sweep cron: an active row is reconciled against `instance.status()` **on read, and only when
+the row has been quiet** — a run that wrote a durable event inside `RECONCILE_LIVENESS_MS` (30 s) is
+alive by definition, and the binding is not touched (a subrequest per reader, per poll, is what that
+guard exists to remove). A parked run is settled by a different net, `expireParkedRun`: every ask
+past its deadline and no instance left to wake. Progress is durable in `agent_run_events` — read
+live over SSE (§9) and nudged over the DO for everything else.
 
 **Known gaps / not built yet:** `/api/admin` paths do not nudge — `decideAccessRequest` writes the
 `access_request_decided` notification without a `Realtime`, so the approved user's bell and the
@@ -406,8 +421,8 @@ tenant's member list refresh on the next fetch, not live; `notification.read` is
 and the invalidation map but nothing emits it yet; the `activity.record` handler ships with no kit
 producer (routes still `defer(recordActivity)` inline — enqueue it when an audit write is on a hot
 path); the DO's 101 branch cannot run under Node (undici rejects status 101) and is proven by
-`wrangler dev`, not the suite; `dead_letter_queue` is commented out in both tomls; SSE
-`Last-Event-ID` replay for run progress is deferred; `@cloudflare/vitest-pool-workers` smoke project
+`wrangler dev`, not the suite; `dead_letter_queue` is commented out in both tomls; run progress now streams over SSE
+(§9) but there is no DO fan-out for TOKENS; `@cloudflare/vitest-pool-workers` smoke project
 for DO/Workflow is not in v1 (the Workflow class is driven by `createFakeWorkflowStep()` under Node).
 
 ## 6. Email and storage
@@ -660,11 +675,12 @@ deferred.
 
 ## 9. AI layer
 
-**Status: built (Phase 3).** Server: `apps/web/src/api/services/{ai/*,agents/**,prompts.ts}`,
+**Status: built (Phase 3; human-in-the-loop and live run progress, issues #17 and #7, built on top).**
+Server: `apps/web/src/api/services/{ai/*,agents/**,prompts.ts}`,
 `api/workflows/agent-run.ts`, `api/observability/*`, `api/middleware/tracing.ts`, seven routers under
 `/api/ai/*`, `/api/chat`, `/api/agui`, `/api/agents`. Contracts: `packages/shared/src/ai/*`. UI:
-`pages/chat`, `pages/settings/{AI,Prompts,Usage}`, `components/ai/`, `lib/{sse,aguiStream}.ts` —
-specifics in `apps/web/src/ui/CLAUDE.md`.
+`pages/chat`, `pages/agents/**`, `pages/settings/{AI,Prompts,Usage}`, `components/ai/`,
+`lib/{sse,aguiStream,runAguiStream}.ts` — specifics in `apps/web/src/ui/CLAUDE.md`.
 
 **Three tiers, one resolver (D17).** `resolveChat(db, cfg, env, tenantId, { promptKey? })` and
 `resolveEmbeddings(...)` in `services/ai/resolve.ts` are the ONLY readers of `ai_configs` /
@@ -959,23 +975,36 @@ streaming text is local state written to the query cache on `RUN_FINISHED`; `rea
 chunk, and `@ag-ui/core` reaches the browser only through that chunk.
 
 **Agents (D7).** `AGENTS` (`services/agents/registry.ts`) maps each `AgentKey` to the shared
-`AgentMeta` (`@rocketflare/shared/ai/agents`: key, `inputSchema`/`outputSchema`, `promptKey`, `exclusive`)
-plus a server-side `run(ctx)`. `POST /api/agents/runs` is the handoff — routes enqueue, never run:
-`enqueueRun` validates against the agent's `inputSchema`, inserts `agent_runs` `queued`, creates the
-Workflow instance with **id = run id**, and answers 202 with the row. The partial unique index
-`agent_runs_active_exclusive_idx (tenant_id, agent_key) WHERE status IN ('queued','running')` IS
-the exclusive guarantee (every v1 agent is exclusive): a second request gets the existing run back
-with `deduplicated: true` (409 `agent_run_active` only with `?strict=1`). No binding → 503
-`agent_runs_not_configured` before any write. `AgentRunWorkflow` (`api/workflows/agent-run.ts`) is
-three steps — `claim` → `execute` (`retries: 2`, exponential from 10 s, `timeout: '10 minutes'`) →
-`finish` — whose bodies are plain functions (`claimStep`, `executeRun`, `finishStep` in
-`services/agents/runtime.ts`), each step opening and closing its own DB client. **The claim is the
-row**: `UPDATE … SET running, attempt + 1 WHERE status IN (queued, running) RETURNING`; every terminal
-write carries the same predicate, so a settled row is never rewritten and a retried step re-claims.
+`AgentMeta` (`@rocketflare/shared/ai/agents`: key, `inputSchema`/`outputSchema`, `promptKey`,
+`exclusive`, `approvers`) plus a server-side `run(ctx)`. `POST /api/agents/runs` is the handoff —
+routes enqueue, never run: `enqueueRun` validates against the agent's `inputSchema`, inserts
+`agent_runs` `queued`, creates the Workflow instance with the run id, and answers 202 with the row.
+**The instance id starts as the run id and does not stay that way**: a run parked on a human whose
+instance is gone is restarted as `<runId>-r1`, `-r2`… , so `agent_runs.instance_id` is *the latest*
+instance (still `unique()`, so a probe maps back 1:1). The partial unique index
+`agent_runs_active_exclusive_idx (tenant_id, agent_key)` over `ACTIVE_RUN_STATUSES` (`queued`,
+`running`, `awaiting_input`) IS the exclusive guarantee (every v1 agent is exclusive): a second
+request gets the existing run back with `deduplicated: true` (409 `agent_run_active` only with
+`?strict=1`), including while it is parked. No binding → 503 `agent_runs_not_configured` before any
+write.
+
+`AgentRunWorkflow` (`api/workflows/agent-run.ts`) is `claim` → `execute#N` (`retries: 2`,
+exponential from 10 s, `timeout: '10 minutes'`) → `finish`, with a round loop between the last two:
+an `execute#N` that returns `awaiting_input` is followed by `resume#N`
+(`step.waitForEvent(AGENT_RESUME_EVENT, { timeout: AGENT_INTERRUPT_TIMEOUT })`) and then
+`execute#N+1`, or by `expire#N` when nobody ever answers. **Every step name carries its round**,
+because the platform treats a step name as that step's identity and replays a repeated one's
+recorded result — reuse `execute` and the second attempt returns the first one's answer, which
+reads exactly like "the agent ignored my approval". `MAX_INTERRUPT_ROUNDS` (32) bounds an agent
+that never stops asking. Step bodies are plain functions (`claimStep`, `executeRun`, `finishStep`
+in `services/agents/runtime.ts`), each opening and closing its own DB client. **The claim is the
+row**: `UPDATE … SET running, attempt + 1 WHERE status IN (queued, running) RETURNING` —
+`CLAIMABLE_RUN_STATUSES`, which is narrower than the index's list on purpose (§5), while every
+terminal write uses the wider one, so a settled row is never rewritten and a retried step re-claims.
 `executeRun` resolves the client for `meta.promptKey` (the per-agent model applies), wraps it in
 `withAgentTrace` + `traceChatClient`, builds the `AgentContext` (`emit`, `checkCancelled`, `chat`,
-`prompt(vars)`, `step(...)`, plus `checkpoint` and `once` below), runs the agent, validates
-`outputSchema`, `finishRun`.
+`tools`, `prompt(vars)`, `step(...)`, plus `checkpoint`, `once`, `interrupt`, `steering`,
+`artifact` and `approvals` below), runs the agent, validates `outputSchema`, `finishRun`.
 
 **A retry is resumed, not replayed.** `execute` re-enters `run()` from the top, so two pieces of
 `AgentContext` make that cheap and safe. `ctx.checkpoint` is the tool loop's resume point on
@@ -997,15 +1026,92 @@ between `fn()` returning and the insert committing repeats the work. An agent th
 from tool results during the loop (`research-topic`'s document→title map) must rebuild it from the
 resumed transcript, or citations earned before the retry are dropped as hallucinations.
 
+**A run can stop and ask a person (issue #17).** This is what lets an agent do something
+consequential: send this email, delete these rows, which of these three customers did you mean.
+`ctx.interrupt({ key, spec })` writes an `agent_run_interrupts` row and raises `InterruptRequested`;
+the runtime parks the run (`awaiting_input`), notifies the approvers and returns, and the Workflow
+sits on `step.waitForEvent`. Answering flips the row and **then** nudges the instance — *the answer
+is the transition*, which is why a lost instance can simply be restarted rather than reconciled.
+`sendEvent` carries `{ interruptId }` only; `executeRun` re-reads the row, because a payload on the
+wire would be a second source of truth that can disagree with the audit row.
+
+Four things about it are load-bearing:
+
+- **`key` is the agent's and must be stable across attempts.** A resumed `execute#N+1` re-enters
+  `run()` from the TOP and reaches the same line again; `UNIQUE (run_id, key)` is what makes the
+  second call find the ANSWER instead of asking again, forever. Derive it from the entity id, the
+  step name or the question — never a counter or a clock.
+- **Everything after an interrupt is on the far side of a park**, which may last days and span a
+  Worker deploy. Side effects go behind `ctx.once`, exactly as they would after any retry — and
+  tokens are a side effect, which is why `summarize-text` wraps its whole summarise phase in one.
+- **Rejection differs by kind**, and the mapping lives in one place (`INTERRUPT_REJECTION`). An
+  `approval` that is declined throws `InterruptDeclinedError` and settles the run `cancelled` with
+  `error` NULL — a refusal is a status, not a fault. `choice` / `input` / `form` resolve with
+  `{ status: 'cancelled' }` and hand the refusal back to the model, because declining to answer is
+  an answer. One ask may override its own default with `onReject`.
+- **`approvers` is per agent**, `'requester'` (whoever can see the run) or `'admin'`. Answering is
+  `update AgentRun` *plus* that policy, and a compare-and-set on `status = 'pending'` is what makes
+  two people answering at once one 200 and one 409 `interrupt_not_pending` rather than a lost
+  decision. Neither shipped example sets `approvers: 'admin'` — no kit agent touches money — so it
+  is exercised by tests.
+
+**Four kinds, closed: `approval`, `choice`, `input`, `form`** (`@rocketflare/shared/ai/interrupts`),
+each with a typed `spec` jsonb the panel draws from and a payload schema **the route and the UI
+validate with the same function**, so a 400 is never a surprise. A fifth kind is one tuple entry,
+one payload schema and one UI branch — deliberately cheaper than a JSON-Schema form generator,
+which would put an unbounded renderer in the browser for a surface with four shapes.
+
+**A tool the MODEL decides to call is gated on the tool, not in the agent.**
+`Tool.requiresApproval` — or `requiresApprovalWhen(input)`, to gate only the calls that matter —
+makes `runToolLoop` scan the WHOLE turn after the assistant message is pushed and **before any
+handler runs**, checkpoint, and raise. So a turn with three calls, one of them gated, parks with
+nothing executed, and resuming has only the approved call to make idempotent. The loop must be
+passed `approvals: ctx.approvals` and `runApproved: ctx.once`: without the first an answered gate is
+asked again, without the second an approved write repeats on a step retry — precisely the side
+effect somebody was asked about. An ask may also be raised from INSIDE a handler (`runHandler`
+rethrows `InterruptRequested` and only that), which is the natural place for "which of these did you
+mean?"; swallowing it into an `isError` result would leave the model asking the same question again
+forever. `allowEdits` lets the approver change the arguments, re-validated server-side against the
+tool's own schema — a client that can edit tool arguments is a client that can call anything.
+
+**Artifacts are a table; steering is an event row**, and the asymmetry is the design.
+`ctx.artifact({ key, title, data })` upserts `agent_run_artifacts` on `(run_id, key)` — an artifact
+is MUTABLE (a redraft replaces itself), queried across runs, and outlives the run with an id a card
+links to; five kinds, `document | file | markdown | table | json`, where the first two carry **ids,
+never content**, because the bytes already live behind routes that enforce tenancy and group
+visibility. What goes in the log is a *thin* `artifact` event giving its position in the timeline.
+A steering note — what somebody types at a run that is still working — is immutable, positional and
+per-run, so it IS an `agent_run_events` row and needs no table; `ctx.steering()` delivers each note
+exactly once across every attempt through the existing `agent_run_effects` ledger keyed
+`steering:<eventId>`, and an agent folds them in through `runToolLoop`'s `beforeTurn`, which appends
+them with `appendUserText` rather than opening a second consecutive user turn (Anthropic rejects
+those, and a resumed transcript usually ends in a user turn of tool results).
+
+`GET /api/agents/interrupts` is the tenant-wide inbox — "what is waiting on me" — ordered by
+`(tenant_id, status, created_at DESC)` and returning `canAnswer` per item rather than filtering, so
+a person sees the question they may not answer instead of a hole. `AGENT_INTERRUPT_TIMEOUT`
+(`168 hours`, `[vars]` in both tomls) is the `waitForEvent` timeout **and** the row's `expiresAt`.
+
 Errors are
 classified: `AgentCancelledError` → `cancelled`; `AiError` `unavailable`/`rate_limit` or a DB outage
-rethrow for a step retry while `attempt <= 2`; anything else → `failed` at once. Cancellation is
-cooperative: `POST /runs/:id/cancel` settles a queued row outright, sets `cancelRequestedAt` on a
-running one, and `ctx.checkCancelled()` polls it between turns. Reads reconcile: `GET /runs/:id`
-calls `instance.status()` for an active row and settles it when the runtime says `not_found |
-errored | terminated | complete` — **`not_found` is an answer**, not an error. Progress is
-`agent_run_events (run_id, seq)` (`step | tool.start | tool.end | text | status | error`) plus an
-`entity.changed { entity: 'agent-run', id }` nudge — DB is the truth, WS is a nudge.
+rethrow for a step retry while `attempt <= 2`; anything else → `failed` at once. **Neither interrupt
+type is retryable** — `isRetryableRunError` answers false for both, or a step retry re-asks somebody
+who has already been asked. Cancellation is cooperative, then forced: `POST /runs/:id/cancel`
+settles a queued row outright and sets `cancelRequestedAt` on a running one, which
+`ctx.checkCancelled()` polls between turns; a SECOND cancel on a row that already carries it
+terminates the instance and settles the row, because a run stuck inside a model call cannot poll.
+Cancelling also expires every pending ask. Reads reconcile: `GET /runs/:id` calls `instance.status()`
+for an active row and settles it when the runtime says `not_found | errored | terminated |
+complete` — **`not_found` is an answer**, not an error — but **only when the row has been quiet**: a
+run that wrote a durable event inside `RECONCILE_LIVENESS_MS` (30 s) is alive by definition, and
+spending a Workflow subrequest per reader per tick to be told so was the cost that guard removes. A
+parked run is left alone by that path and settled by `expireParkedRun` instead, once every ask is
+past its deadline — which is the net that matters on the Free plan, where **instance retention
+(3 days) bounds a park long before the timeout does**. Progress is `agent_run_events (run_id, seq)`
+(`step | tool.start | tool.end | text | status | error | interrupt | interrupt.resolved | steering |
+artifact`, every one with a shared schema in `AGENT_RUN_EVENT_DATA`) plus an `entity.changed
+{ entity: 'agent-run', id }` nudge, and a second nudge for a run's asks that feeds the nav badge —
+DB is the truth, WS is a nudge.
 
 **A run reads back as AG-UI: a projection, not a rewrite.** `agent_run_events` stays exactly as it
 is — the durable record, written inside Workflow steps where every write is awaited and ordered by
@@ -1017,38 +1123,118 @@ row ids ARE the AG-UI message and tool-call ids, so two reads of one run match b
 
 | row | AG-UI |
 |---|---|
-| *(synthetic, always first)* | `RUN_STARTED { threadId: runId, runId }` |
+| *(synthetic, always first)* | `RUN_STARTED { threadId: runId, runId }` then `STATE_SNAPSHOT { capabilities: { humanInTheLoop } }` — a client is told an approve/reject round-trip is possible BEFORE it renders anything |
 | `step` running / done·error | `STEP_STARTED` / `STEP_FINISHED` + `CUSTOM kit.agent.step` (the label and detail `stepName` cannot carry) |
 | `text` | `TEXT_MESSAGE_START → CONTENT → END` |
 | `tool.start` | `TOOL_CALL_START → ARGS → END` |
 | `tool.end` | `TOOL_CALL_RESULT`, paired back to its call |
 | `error` `willRetry` | `CUSTOM kit.agent.retry` — a retry is not terminal |
+| `interrupt` | `CUSTOM kit.agent.interrupt` — the ask as it was MADE, at its place in the timeline |
+| `interrupt.resolved` | `CUSTOM kit.agent.interrupt.resolved` — who answered, and what |
+| `steering` | `CUSTOM kit.agent.steering` — what a person said to the run mid-flight |
+| `artifact` | `CUSTOM kit.agent.artifact` — the thin `{ artifactId, key, kind, title }` row |
 | run `succeeded` | `RUN_FINISHED { result: run.output }` |
+| run `awaiting_input` with pending asks | `RUN_FINISHED { outcome: { type: 'interrupt', interrupts[] } }` — AG-UI's own vocabulary, no `kit.` event needed |
 | run `failed` / `cancelled` | `RUN_ERROR`, code `agent_run_failed` / `agent_run_cancelled` |
 | `tool.end` naming knowledge documents | `CUSTOM kit.document` ×0..n, through the SAME pure mapper the chat stream uses |
 | run still active | no terminal event |
+
+The projector is **resumable** — `createRunProjector(run) → { head(), push(event), finish(run) }`,
+with `projectRunToAgui` a fold over it, pinned by an equivalence test — because the live stream
+(below) must not re-read the whole log every tick. `finish` takes the run as an ARGUMENT rather than
+from the closure, since in a stream the row changes underneath you. It reads `(run, events,
+{ interrupts, artifacts })`: an ask is mutable, so its CURRENT state cannot come from the log.
 
 Two mappings the table could not settle by itself. A settled **cancelled** run is a coded
 `RUN_ERROR` rather than the streaming convention ("closed with no terminal event"), because in a
 finite array the absent terminal event is how an ACTIVE run reads. And there is **no `kit.usage`**:
 `ai_usage` rows carry no run id, so a projection over `(run, events)` has no honest number — the
-Usage page is the ledger. Known fidelity loss: `ToolCallResultEventSchema` in 0.0.59 has no error
+Usage page is the ledger. The interrupt outcome round-trips **intact over protobuf** on
+`@ag-ui/proto@0.0.59` (verified by decoding, not by "encode did not throw" — a malformed event is
+silently written as a 43-byte frame with the outcome dropped), so `PROTO_UNSUPPORTED_EVENTS` stays
+a type list. One trap worth keeping: the outcome discriminator is **`'interrupt'`, not
+`'interrupted'`**. Known fidelity loss: `ToolCallResultEventSchema` in 0.0.59 has no error
 flag, so an errored tool result is projected with its JSON intact.
 
-**There is no SSE endpoint for runs, deliberately.** A run executes in a Workflow, in a different
-isolate from any request, so a live stream would have to poll `agent_run_events` per connection or
-fan out through the DO — a feature, not a mapping; the WS nudge plus the poll already gives
-sub-second updates and "DB is the truth, WebSocket is a nudge" is load-bearing; and SSE-per-run
-holds a Worker invocation open for minutes. Members list and
+**A run reads back LIVE too: `GET /api/agents/runs/:id/agui/stream` (issue #7).** A run executes in
+a Workflow, in a different isolate from any request, so the stream is a **poll of
+`agent_run_events` held on one open connection** — `services/agents/run-stream.ts` tails
+`WHERE (tenant_id, run_id) AND seq > $cursor LIMIT 200`, pushes each row through the resumable
+projector and writes it as spec AG-UI. Measure it against what it replaces rather than against
+zero: every 3 s the old poll did `getRun` + `reconcileRun` (*a Workflow subrequest*) +
+`listEvents` returning every row unbounded, so this is **cheaper per unit of wall clock at six
+times the resolution**. GET, so a third-party client can use a bare `EventSource`; `?afterSeq=`
+beats `Last-Event-ID` when both arrive.
+
+Carrying the payload on the WebSocket nudge instead was rejected on **tenant isolation**, not
+taste: `NotificationsHub` fans out per tenant while run visibility is per run, so a nudge carrying
+the payload would broadcast one member's assistant text, tool inputs and document excerpts to every
+socket in the tenant — and "DB is the truth, WebSocket is a nudge" stays load-bearing. A per-run
+Durable Object fan-out is the future seam for TOKENS, which are the one payload legitimately not
+durable; a push can always be missed, so the `seq` tail would still be needed underneath it.
+
+Four rules hold the stream together, and each is a bug if broken. **The SSE `id:` goes on the last
+frame of a row's group and on no other frame in it** — one durable row is not one AG-UI event, and
+a cursor on the first frame means a mid-group drop leaves the client holding a text message that
+never closes. **A read-stream failure emits no `RUN_ERROR`**, a deliberate inversion of the chat
+rule (there the stream IS the run; here it is a read of something durable), so closing with no
+terminal event means *reconnect* — redeploy, idle cap, 10-minute duration cap, transport error,
+abort. **`reconcileRun` runs once, before the first frame, never in the loop.** And **no `: ping`
+comment frame on the protobuf wire**, which has no cursor either. A **parked** run needs no branch:
+the projector already answers `awaiting_input` with the interrupt outcome, so the connection closes
+and a seven-day park costs no connection, no query and no invocation — degrading exactly to the
+architecture that was already there.
+
+**Why not Cloudflare's Agents SDK — checked against the docs, not recollection.** Cloudflare's
+canonical agent stack is the Agents SDK (a Durable Object per agent) for the LLM/tool loop, **plus**
+Workflows for durable pipelines and HITL pauses. Its own guidance puts *background jobs, scheduled
+sync, event-driven processing* in **Workflows alone**, and a Rocketflare run — started by
+`POST /api/agents/runs`, executing with no connected client, read back from durable rows — is
+exactly that; the HITL row puts the approval pause in the Workflow either way. So the kit is inside
+the documented envelope, and `step.waitForEvent` + `sendEvent` is the blessed pattern (the docs name
+"wait for human approval" as its use case; timeout 1 second to 365 days; `waiting` instances are
+excluded from the concurrency cap, so parking millions is free). What the kit does not have is the
+Agents-SDK half: a stateful DO owning the loop and streaming to a live client.
+
+Adopting it was considered and rejected, and the reason is **tenancy, not taste**. Agent state is an
+embedded SQLite database inside each instance, with no cross-instance query, no backup, no export
+and no delete. That puts it outside every isolation guarantee this kit is built on: no Postgres
+role and no policy to attach RLS to (D1); outside the `tenantRef` FK graph, so **deleting a tenant
+would leave its agents' transcripts behind** — a retention problem, given the kit nulls a settled
+run's transcript precisely so a verbatim copy does not sit there for the life of the row; no
+`(tenant_id, status, created_at)` index for "what is waiting on me across every agent in this
+organisation", which is a cross-instance query DOs do not do; and no path into the cubes or the
+`ai_usage` ledger. Addressing is a smaller problem but the same kind: an agent's instance name is a
+client-supplied string, and while `getAgentByName(env.X, \`${tenantId}:${runId}\`)` derived
+server-side fixes it, that converts isolation from **structure into convention** —
+`tests/config/unscoped-allowlist.test.ts` parses queries, and it cannot see a DO name string. The
+decisive point: the fix for the inbox is to shadow the rows into Postgres, which is this design, so
+the SDK would mean paying for a second state model **and still writing `agent_run_interrupts`**.
+
+It remains the right tool for a different job — an app that is single-tenant, or that wants the
+SDK's client-facing streaming, scheduling and per-agent state, should choose differently on purpose
+rather than by default.
+
+Members list and
 cancel their own runs; admin+ every run in the tenant. The tool loop runs inside ONE `execute` step, and
 **that is now a decision, not a gap** — one `step.do` per model turn was investigated and rejected
-(see the Known gaps below for the evidence). Two examples ship, one per shape. `summarize-text` (the
-single-call shape): precheck (≤ 20 000 chars), one terminal tool `submit_summary` through
-`callStructuredTool`, usage under `agent:summarize-text`, and with `index: true` the summary is
-stored through `ingestText`. `research-topic` (the agentic shape, D18): one question (≤ 2 000
-chars) → `runToolLoop` over `[...ctx.tools, submit_answer]` capped by `AGENT_MAX_TURNS`, the model
-choosing how often to `search_knowledge` / `get_document`, then the terminal `submit_answer
-{ answer (Markdown), citations }`; `ctx.checkCancelled()` runs in the loop's `onStep` (the loop
+(see the Known gaps below for the evidence). Two examples ship, one per shape, and between them they exercise every
+primitive above. `summarize-text` (the single-call shape): precheck (≤ 20 000 chars), one terminal
+tool `submit_summary` through `callStructuredTool`, usage under `agent:summarize-text`, a `markdown`
+artifact, and with `index: true` an `approval` interrupt keyed `approve-index` before the summary is
+stored through `ingestText`. It uses `ctx.interrupt` rather than a gated tool **deliberately**: it
+has no tool loop, so `requiresApproval` has nothing to attach to, and bolting a loop onto the file
+every adopter copies purely to demonstrate a flag would make the simplest agent the most
+complicated one. The whole summarise phase sits inside `ctx.once`, so a park is not a second bill.
+`research-topic` (the agentic shape, D18) carries the rest: one question (≤ 2 000
+chars) → `runToolLoop` over `[...ctx.tools, ask_human, index_finding, submit_answer]` capped by
+`AGENT_MAX_TURNS`, the model choosing how often to `search_knowledge` / `get_document`, then the
+terminal `submit_answer { answer (Markdown), citations }`. `ask_human` raises a `choice` interrupt
+from inside its handler (keyed by the QUESTION, because a handler-raised ask parks before that
+turn's checkpoint and the resumed loop may produce a fresh call id); `index_finding` is gated by
+`Tool.requiresApproval` with `allowEdits` and `onReject: 'tell_model'`, and is the only shipped code
+passing `approvals` / `runApproved`; `beforeTurn` folds in steering notes; the answer and its
+sources are recorded as `markdown` and `table` artifacts. Also: `ctx.checkCancelled()` runs in the loop's `onStep` (the loop
 takes no `AbortSignal`) and each turn's text / tool call / truncated tool result becomes an
 `agent_run_events` row. Two deliberate behaviours: a loop that ends **without** the terminal call
 (`no_tool_call` / `max_turns` — the live failure mode on Workers AI, which has no `tool_choice`) is
@@ -1194,15 +1380,36 @@ writes require `manage AiConfig`.
 `/agents/runs/:runId` (guard `read AgentRun`; nav "Agents"), `/documents` (guard `read Document`;
 nav "Knowledge" — the paginated documents table, then `?tab=text|file` add tabs below it) and `/search` (same guard;
 nav "Search" — hybrid search, `?documentId=` narrows, `?q=` prefills and runs the search on mount and
-every submitted search is written back to the URL), Settings `?tab=agent-models` (`manage AiConfig`). Nothing streams — runs are rows.
-An open run re-reads `GET /runs/:id` every 3 s while `isRunActive` (the list too while any listed
-row is active) AND is refreshed by the server's `entity.changed { entity: 'agent-run', id }` nudge,
-because the runs query-key root is `['agent-run']`. **Convention: the `entity` string of an
-`entity.changed` nudge IS a `queryKeys` family root**, so `invalidationsFor()` covers a new resource
-with no UI socket code. Documents poll every 5 s while a row is `pending` — nothing emits a document
-nudge yet. Requested-by renders "You", a short id or "system" (no name resolution). An agent
-without a registered form gets a JSON textarea validated by the route's 400 `details`; the UI never
-sends `?strict=1`.
+every submitted search is written back to the URL), Settings `?tab=agent-models` (`manage AiConfig`).
+
+**A run is a PAGE, not a drawer**, because it is something a person is asked to *act* on: they
+arrive from a notification, may need to read a document before deciding, and may leave and come
+back. `RunPage` is the workspace — `ActionRequiredPanel` when the run owes an answer, then a header
+carrying the elapsed time and Cancel, then the run's INPUT as labelled values (read from the
+agent's own `inputJsonSchema` through the one field renderer, falling back to the JSON whole), then
+the timeline and a right pane of `URLTabs` (`?tab=output|artifacts|usage`, default `output`) side by
+side, with `SteerComposer` under the timeline while the run is still working. A failure is
+`RunErrorAlert` above the tab bar, not a tab. **The split between the two columns follows the run's
+state and then the reader's** (`runLayout`, pure): timeline-major while it works, output-major once
+it settles, and an override that wins permanently — a run settling mid-read must not swap the
+columns under somebody. The timeline is a bounded, viewport-relative scroller from `lg` up rather
+than a panel that grows for ever. `ActionRequiredPanel` branches on the four interrupt kinds and shares its field
+renderer with the generated input form, which is why a fifth kind is cheap. The Agents nav item
+carries a badge from the interrupts inbox.
+
+**An open run streams** (`useRunStream` over `GET /runs/:id/agui/stream`), and the stream is the
+ONLY writer of `['agent-run-agui', id]` — a nudge must never invalidate that key or a live timeline
+would be wiped by the thing telling it to refresh. Polling is the fallback, and its predicate is
+`runOwesAnswer` (`queued | running`), deliberately **not** `isRunActive`: a run parked on a person
+owes nothing, and polling it would mean every open tab re-reading it for the length of
+`AGENT_INTERRUPT_TIMEOUT`. The list polls while any listed row owes an answer, and everything is
+still refreshed by the server's `entity.changed { entity: 'agent-run', id }` nudge, because the runs
+query-key root is `['agent-run']`. **Convention: the `entity` string of an `entity.changed` nudge IS
+a `queryKeys` family root**, so `invalidationsFor()` covers a new resource with no UI socket code.
+Documents poll every 5 s while a row is `pending` — nothing emits a document nudge yet.
+Requested-by renders "You", a short id or "system" (no name resolution). An agent's input form has
+three rungs: a registered `forms/<key>` entry, else one generated from the agent's own JSON Schema,
+else a JSON textarea validated by the route's 400 `details`; the UI never sends `?strict=1`.
 
 **Known gaps / not built yet:** Reading a document — the card's `excerpt` is the head of the text,
 not a summary, and there is **no thumbnail** (no rasterisation on Workers); `charOffset` is an offset
@@ -1215,13 +1422,18 @@ whole passages, `get_document` full windows), so this widens the convenience rat
 audience, and an app that wants it closed should add a separate ability rather than narrow this one.
 AG-UI — one text message PER MODEL TURN, so a client that expects
 one message per run must accumulate (the persisted row's id is in `kit.chat.ids` and
-`RUN_FINISHED.result`); no frontend tools (`POST /api/agui/run` refuses `tools[]`, see above) and
+`RUN_FINISHED.result`); no frontend tools in CHAT (`POST /api/agui/run` refuses `tools[]`) — the
+agent runtime now has the durable suspend point that argument turned on (`step.waitForEvent` plus
+`agent_run_interrupts`), so what is left is wiring a conversation to it, not inventing it; and
 no `STATE_DELTA`, only a read-only `STATE_SNAPSHOT`; the protobuf transport drops `TOOL_CALL_RESULT`
 because `@ag-ui/proto@0.0.59` has no message for it; `@ag-ui/core` is `0.0.x` and its published
 docs already describe fields the installed version lacks, so a minor bump can rename a schema and
 change the wire format for every adopted copy — the exact pin plus `agui-contract.test.ts` is the
 mitigation and the residual risk is real; the agent projection has no `kit.usage` and no error flag
-on a tool result; live run streaming with `Last-Event-ID` replay is still deferred. Chat tools —
+on a tool result; the run stream honours `Last-Event-ID` but **the protobuf transport has no
+cursor at all** (it has no SSE framing), so a binary client must resume by `?afterSeq=`, and the
+stream carries only durable ROWS — token-by-token text for a run would need the per-run Durable
+Object fan-out, which is not built. Chat tools —
 `CHAT_MAX_TOOL_TURNS` is a constant, not a var; a tool-calling chat costs more per turn and stops
 streaming token by token on `workers_ai`; `get_document`'s window is capped by the CALLER
 (`AgentToolContext.maxDocumentChars` — 50 000 for an agent run, `CHAT_GET_DOCUMENT_MAX_CHARS`
@@ -1245,16 +1457,22 @@ the connection test spends tokens but writes no `ai_usage` row; `GET /api/ai/con
 no shared schema (the UI keeps a permissive `passthrough` one in `hooks/useAiConfig.ts`);
 `ai_configs.label` is the upsert key, so a rename is delete + re-add; `/settings` is admin-guarded,
 so members hold `read AiConfig` / `read Prompt` with no nav path to the read-only views;
-`agent_run_events.data` is `z.unknown()` in `@rocketflare/shared/ai/agents` for every type except `step`
-(`agentStepEventDataSchema`) — the UI's `AgentSteps` parses `tool.*` / `text` / `status` / `error`
-leniently with local schemas, a candidate for promotion into the shared contract; no document
+no document
 nudge (`ingestText` / `ingestFile` / `indexDocument` emit nothing; the Knowledge page polls); runs
-show a user id, not a name; uploads: images are not accepted (their conversion runs two AI models
+show a user id, not a name (a steering note is the one exception — it stores `authorName`); uploads: images are not accepted (their conversion runs two AI models
 and bills — no OCR), converted text is capped at `INGEST_TEXT_MAX_CHARS`, there is no re-convert /
 re-index action (`content` is kept for one), a converted document stores both the original and the
 text, and `content` is the converted markdown — the UI never shows it; no rerank (a `RerankFn` seam is the documented extension) and no
 generated `tsvector` + GIN — the lexical half computes `to_tsvector` at query time; no non-exclusive
-agents (relax the partial unique index); **the tool loop is one `execute` step and stays that way** —
+agents (relax the partial unique index — noting that its predicate now also covers a parked run); HITL: an ask cannot be re-asked or amended once
+written (cancel the run); there is no reminder or escalation as `expiresAt` approaches, and a park
+is bounded in practice by **instance retention — 3 days on Free, 30 on Paid — not by
+`AGENT_INTERRUPT_TIMEOUT`**, so on Free a longer park relies entirely on `expireParkedRun` and the
+`not_found` restart; `MAX_INTERRUPT_ROUNDS` abandonment settles the run `failed` with no way to
+raise the bound per agent; steering is delivered once and never acknowledged back to the sender;
+artifact size caps live in the contract, so an oversized one is a write-time error rather than a
+spill to R2; `approvers` has two values and no per-ask override; and nothing gates an interrupt on
+a feature flag. **The tool loop is one `execute` step and stays that way** —
 one `step.do` per model turn was investigated after the durable transcript landed and rejected,
 because all three things it was supposed to buy turn out to be already delivered or one config line
 away, while the cost is a rewrite of the agent contract. Cloudflare's own limits are the reason:
@@ -1273,8 +1491,10 @@ timeline doubles on replay, and `runToolLoop`'s `max_turns` stop reason would mi
 `research-topic` salvage on every non-final turn. Revisit only if an agent ever does heavy CPU
 *between* model calls; no budgets or
 quotas over `ai_usage` and no price table; prompt versioning, an evals harness, Bedrock/Azure/Gemini
-adapters, SSE `Last-Event-ID` replay for run progress and an orphan-run cron (reconcile-on-read
-replaced it) are deferred; the demo seed's chunk vectors are deterministic hash vectors
+adapters and a per-run Durable Object fan-out for live TOKENS are deferred; an orphan-run cron was
+replaced by settle-on-read plus `expireParkedRun`, which between them cover a lost instance and an
+abandoned park — but both need somebody to OPEN the run, so a run nobody looks at again stays
+active-looking until they do; the demo seed's chunk vectors are deterministic hash vectors
 (`services/ai/deterministic-embedding.ts`, `embeddingModel: 'seed:deterministic'` — a `tsx` script
 has no embeddings provider), so against a query embedded by the real provider dense retrieval over
 seeded documents is noise and the lexical rank is what carries the demo; never mix them with real
@@ -1504,8 +1724,13 @@ test, hold a streamed chat whose turns and usage rows persist; start the `summar
 trace when Langfuse keys are set; ingest a text and get it back from the hybrid search, then ask
 `research-topic` a question about it and read the answer with its citation; upload a PDF
 on the Knowledge page, watch it go `Indexing → Indexed` and find a phrase from it in search, then
-download the original; open the Agents page and watch a run's timeline fill through the nudge, and
-the Knowledge page list the ingested document; create a Department group type with Finance and Operations under Settings → Groups, restrict a
+download the original; open a run's page and watch its timeline fill **live** (not in poll lumps),
+and the Knowledge page list the ingested document; run **Summarise text** with *index the result*
+on, watch it stop on "Add this summary to the knowledge base?", answer it from a second browser as
+another member (one 200, one 409 rendered as "somebody else answered"), and see the run resume and
+the document appear in `/documents` **exactly once** — then park one again, restart `pnpm dev`
+before answering, and watch it resume across the restart (`SETUP.md` §2.5 is that walkthrough step
+by step, and it is the only way to exercise `waitForEvent` — the Node suite cannot); create a Department group type with Finance and Operations under Settings → Groups, restrict a
 document and a dashboard to Finance, and watch `member@example.test` lose them from Knowledge,
 Search, Analytics and the chat box's answers while `owner@` keeps them — then move that person into
 Finance from a second browser and watch them appear without a reload (D29);

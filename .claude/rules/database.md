@@ -107,6 +107,25 @@ predicate**, not SQL injection — the app role can `set_config` itself.
   unique, numbering continues across attempts). Concurrency is a claim row, never a lock:
   `agent_runs` `UPDATE … WHERE status IN ('queued','running') RETURNING` plus the partial unique index
   `agent_runs_active_exclusive_idx` — the pattern for any "one active job per key" need
+- **The predicate is the guarantee, so it is written once and rendered.** `agent_runs` is the worked
+  example. Its exclusive index covers `ACTIVE_RUN_STATUSES` (`queued`, `running`, `awaiting_input` —
+  a run parked on a human still holds the slot), and the SQL literal list in `extraConfig` is BUILT
+  from that exported array rather than typed out, because an index whose SQL and whose TypeScript
+  disagree about what "active" means is a bug no test can see. The claim above reads a deliberately
+  narrower `CLAIMABLE_RUN_STATUSES` (`queued`, `running`): a parked run must hold the slot and must
+  NOT be claimable, or answering it and a stray step retry would both run it. `finishStep` keeps a
+  third, inline list for its "still active at the end → fail it" backstop — widening THAT one turns
+  every legitimately parked run into a `failed` row. Three lists, three jobs; do not unify them
+- **`agent_run_interrupts`** is the HITL question (issue #17): `tenantRef()` first, `UNIQUE (run_id,
+  key)` — the idempotency that makes a re-entered agent find the ANSWER instead of asking again —
+  a typed `spec` jsonb, `(tenant_id, status, created_at DESC)` for the tenant-wide inbox, and a
+  status that only ever moves out of `pending` by **compare-and-set**, which is what makes two
+  people answering at once one 200 and one 409 rather than a lost decision.
+  **`agent_run_artifacts`** is what a run produced: `UNIQUE (run_id, key)` too, but there it is the
+  UPSERT key, so a redrafted artifact replaces itself. A steering note is deliberately NOT a table —
+  it is immutable, positional and per-run, so it is an `agent_run_events` row, and its once-only
+  delivery cursor is the existing `agent_run_effects` ledger. Decide which of those three shapes a
+  new concept is before you reach for a migration
 
 ## Connection
 

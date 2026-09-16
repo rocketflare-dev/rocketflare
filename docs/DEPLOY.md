@@ -143,7 +143,12 @@ in **both** files, and split a heavy phase into its own step to draw a fresh bud
 
 | Kind | Where | Examples |
 |---|---|---|
-| Non-secret config | `[vars]` in each toml (committed) | `APP_ENV`, `APP_URL`, `APP_NAME`, `RELEASE_VERSION`, `LOG_LEVEL`, `EMAIL_FROM`, `TENANCY_MODE`, `SIGNUP_MODE`, `TENANT_SCOPE_MODE`, `AGENT_MAX_OUTPUT_TOKENS` (16384), `AGENT_MAX_TURNS` (30), `CHAT_KNOWLEDGE_TOOLS` (`true`), `CHAT_HISTORY_MAX_CHARS` (24000), `FEATURES_ENABLED` (D30 —
+| Non-secret config | `[vars]` in each toml (committed) | `APP_ENV`, `APP_URL`, `APP_NAME`, `RELEASE_VERSION`, `LOG_LEVEL`, `EMAIL_FROM`, `TENANCY_MODE`, `SIGNUP_MODE`, `TENANT_SCOPE_MODE`, `AGENT_MAX_OUTPUT_TOKENS` (16384), `AGENT_MAX_TURNS` (30), `CHAT_KNOWLEDGE_TOOLS` (`true`), `CHAT_HISTORY_MAX_CHARS` (24000), `AGENT_INTERRUPT_TIMEOUT`
+(`168 hours` — how long an agent run parked on a human question waits before it expires; it is
+passed verbatim to `step.waitForEvent`, so it must be a duration the platform accepts, between
+1 second and 365 days. **Instance retention is the real bound, not this**: 30 days on Paid, 3 on
+Free, after which the instance is gone and the park is recovered by `expireParkedRun` plus the
+`sendEvent → not_found` restart), `FEATURES_ENABLED` (D30 —
 feature keys this environment ships at all; blank is fail-closed, and this is the knob that keeps an
 unreleased surface dark in production while staging has it). Defaulted in `config.ts` and **not** declared in the tomls: `LANGFUSE_BASE_URL` (`https://cloud.langfuse.com`), `LANGFUSE_TRACING_ENVIRONMENT` (= `APP_ENV`) — to override, add the key to BOTH files (the parity test compares `[vars]` keys) |
 | Worker secrets | `pnpm --filter @rocketflare/web exec wrangler secret put <NAME> [-c wrangler.staging.toml]`, once per worker; locally `apps/web/.dev.vars` | `OAUTH_ENCRYPTION_KEY` (also encrypts tenant AI keys — rotating it invalidates every `ai_configs` credential), `BOOTSTRAP_ADMIN_EMAILS`, `RESEND_API_KEY`, `GOOGLE_*`, `MICROSOFT_*`; AI, all optional: `ANTHROPIC_API_KEY` (platform chat), `EMBEDDINGS_API_KEY` (platform OpenAI embeddings when no `AI` binding), `LANGFUSE_PUBLIC_KEY` + `LANGFUSE_SECRET_KEY` (both or tracing is off); `DATABASE_URL` only as a no-Hyperdrive fallback |
@@ -260,8 +265,14 @@ holding the custom domains. One token may serve both environments.
   token ledger regardless of tracing. `ANALYTICS_ENGINE` request metrics are optional and
   fire-and-forget.
 - Agent runs: `… wrangler workflows instances list rocketflare-agent-run[-staging]` / `describe <name>
-  <runId>` (instance id = `agent_runs.id`). A row stuck `queued`/`running` whose instance is gone is
-  settled on the next `GET /api/agents/runs/:id` (reconcile-on-read); there is no sweeper cron.
+  <instanceId>`. **The instance id is `agent_runs.instance_id`, which starts as the run id and is
+  not always it**: a run parked on a human whose instance was lost is restarted as `<runId>-r1`,
+  `-r2`… A row stuck `queued`/`running` whose instance is gone is settled on the next
+  `GET /api/agents/runs/:id` — but only once it has been quiet for `RECONCILE_LIVENESS_MS` (30 s), so
+  a run that is still emitting events is left alone rather than costing a Workflow subrequest per
+  reader. A row stuck `awaiting_input` is settled by `expireParkedRun` on the same read, once every
+  one of its asks is past `expiresAt`; a parked run whose asks are still in date is deliberately
+  left waiting. There is no sweeper cron, which means both nets need somebody to open the run.
 
 ## Rollback
 
@@ -271,7 +282,7 @@ holding the custom domains. One token may serve both environments.
 | Need a specific earlier tag | Actions → Deploy → `production` from that tag, or publish a Release on the earlier tag |
 | Schema migration must be undone | migrations are forward-only: write a compensating migration, tag, and run the dance. `wrangler rollback` does not touch the database |
 | RLS enforce misbehaving | `TENANT_SCOPE_MODE = "off"` in `[vars]` and redeploy — no migration (docs/RLS.md) |
-| A Workflow hijacked by a name collision | fix the staging name, redeploy **both** workers (last deployer owns the name); stuck `agent_runs` rows settle on read (`GET /api/agents/runs/:id` → `reconcileRun` → `instance.status()`; `not_found` marks them `failed`) |
+| A Workflow hijacked by a name collision | fix the staging name, redeploy **both** workers (last deployer owns the name); stuck `agent_runs` rows settle on read (`GET /api/agents/runs/:id` → `reconcileRun` → `instance.status()`; `not_found` marks them `failed`) — except on the RESUME path, where `not_found` is recovered from by starting `<runId>-r1` rather than failing the run |
 | Fact tables stale or wrong after a deploy | `GET /api/analytics/facts/status` says which; fire the `15 * * * *` cron or run `refresh-fact-tables.ts` with that environment's `DATABASE_URL`. Rows are derived data — a rebuild is always safe; a schema change to a fact table is a normal forward migration followed by one rebuild |
 | A dashboard renders empty / errors after a cube change | a cube member referenced by stored `analytics_pages.config` was renamed or removed — restore the member (names are frozen) or, per tenant, `POST /api/analytics/templates/recreate` (admin+) to re-copy the templates; user-created pages need a manual edit |
 | Tenant AI keys unreadable after rotating `OAUTH_ENCRYPTION_KEY` | there is no re-encrypt path: admins re-enter the key in Settings → AI (the row keeps its label/model, `hasCredential` flips back); the platform `ANTHROPIC_API_KEY` is unaffected |

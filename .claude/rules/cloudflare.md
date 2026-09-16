@@ -44,6 +44,7 @@ workspace root) or through the root scripts (`pnpm deploy[:staging]`, `pnpm prov
 - `[vars]` = non-secret config, visible in the toml. Secrets = `.dev.vars` locally,
   `wrangler secret put` deployed. Never a secret in a toml. AI vars in both tomls:
   `AGENT_MAX_OUTPUT_TOKENS = "16384"`, `AGENT_MAX_TURNS = "30"`, `CHAT_KNOWLEDGE_TOOLS = "true"`, `CHAT_HISTORY_MAX_CHARS = "24000"`,
+  `AGENT_INTERRUPT_TIMEOUT = "168 hours"` (passed verbatim to `step.waitForEvent`),
   `FEATURES_ENABLED = ""` (D30: keys this deployment ships at all; blank is fail-closed, and the key
   must ALSO be in `.dev.vars.example` — `wrangler dev` reads `[vars]` from `wrangler.toml`, so a
   feature shipped dark in production would otherwise be dark on every laptop); `LANGFUSE_BASE_URL` /
@@ -121,14 +122,36 @@ turn was investigated and rejected (`docs/CONCEPTS.md` §9 Known gaps): steps do
   them by hand (below). Renaming the fact cron = both tomls + the `SCHEDULED_TASKS` key +
   `tests/api/scheduled-facts.test.ts`
 - `AgentRunWorkflow` (`apps/web/src/api/workflows/agent-run.ts`): `run(event, step)` → `step.do('claim')` →
-  `step.do('execute', { retries, timeout })` → `step.do('finish')`; each step wraps its body in
+  `step.do('execute#N', { retries, timeout })` → `step.do('finish')`, with a round loop in between
+  (below); each step wraps its body in
   `withStepDatabase(env, cfg, db => …)` — ONE DB client per step, `close()` awaited in `finally`
   (Hyperdrive is the pool). Bodies are plain functions in `services/agents/runtime.ts`; step return
   values are small serialisable objects (`{ runId, status }`), never rows. Steps are idempotent because
   the `agent_runs` row is the claim (`UPDATE … WHERE status IN (queued,running) RETURNING`; a retry
-  re-claims). Cancellation is cooperative: the run polls `cancelRequestedAt` between model turns. No
-  `waitUntil` in a step — nudges are collected and awaited by `createStepRealtime().settle()`, the
+  re-claims). Cancellation is cooperative, escalating to `instance.terminate()` on a second request.
+  No `waitUntil` in a step — nudges are collected and awaited by `createStepRealtime().settle()`, the
   tracer is flushed at the end of `executeRun`
+- **Parking on a human is `step.waitForEvent` + `instance.sendEvent`** (issue #17), which is
+  Cloudflare's documented pattern for it — "wait for human approval" is a named use case. Five rules,
+  every one of which has a failure mode nothing else catches:
+  - **An event TYPE may contain only `[A-Za-z0-9_-]`.** A `.` is rejected with
+    `workflow.invalid_event_type`, and no fake validates the name — so `AGENT_RESUME_EVENT` would
+    first fail on a real approval, in production. `tests/config/agent-interrupts.test.ts` pins the
+    regex; keep that test.
+  - **Every step name in the loop carries its round** (`execute#0`, `resume#0`, `expire#0`,
+    `execute#1`…). The platform treats a step name as that step's identity and replays a repeated
+    one's recorded result — reuse `execute` and the second attempt silently returns the first one's
+    answer, which reads exactly like "the agent ignored my approval". `MAX_INTERRUPT_ROUNDS` bounds
+    the loop; step count never will (10 000 per instance on Paid).
+  - **A `waiting` instance is not executing**: it is excluded from the concurrent-instance cap, so
+    millions can park at once, and a park costs no invocation, no connection and no query. The
+    timeout is 1 second to 365 days (`AGENT_INTERRUPT_TIMEOUT` in `[vars]`, both tomls).
+  - **Instance retention — 30 days Paid, 3 days Free — is the real bound on a park, not the
+    timeout.** Past it the instance is gone, `waitForEvent` never fires, and only the read-path
+    `expireParkedRun` and the `sendEvent → not_found` restart (a new instance `<runId>-r1`) recover
+    it. Those two are load-bearing, not defensive.
+  - **`wrangler dev` loses every instance on restart**, which is the same case, so the restart path
+    is exercised locally by stopping and starting the dev server with a run parked (`SETUP.md` §2.5).
 - `NotificationsHub` DO (`apps/web/src/api/durable-objects/notifications-hub.ts`): one per tenant
   (`idFromName(tenantId)`), **stateless** (no `ctx.storage` → `[[migrations]]` stays `new_classes`
   only), hibernation API (`acceptWebSocket` with tags `tenant:<id>`/`user:<id>`, attachment `{
@@ -138,6 +161,16 @@ turn was investigated and rejected (`docs/CONCEPTS.md` §9 Known gaps): steps do
   `fetch` dispatch; `fetch()` accepts ONLY the upgrade forwarded by `routes/ws.ts` (trusted `X-*`
   identity headers, safe because the object is reachable solely via the binding). The class is
   exported from `src/worker.ts`, never from `api/index.ts`
+- **A long-lived SSE read (`GET …/agui/stream`, issue #7) budgets three things, and all three are
+  per-INVOCATION.** ONE Hyperdrive client for the life of the stream (`streamDatabase(c)`, closed in
+  `finally`), never one per tick — even for a route that writes nothing. **Subrequests are capped at
+  1 000 per invocation on Paid**, which is why `RUN_STREAM_MAX_MS` is 10 minutes: the adaptive
+  cadence puts the tick count (~320) provably under it, and it makes a redeploy indistinguishable
+  from the normal path, so the client's reconnect is exercised on every stream rather than only
+  during an incident. **Nothing that costs a subrequest may sit inside the loop** — a Workflow
+  `instance.status()` per tick would blow the budget on a question the database already answers. And
+  a run parked on `step.waitForEvent` must NOT hold the connection: the stream sends its terminal
+  frame and closes, so a seven-day park costs no connection, no query and no invocation
 - Never run long work in `fetch`. Enqueue or create a workflow instance (`.claude/rules/api.md`)
 
 ## Bundle size (D19 caveat)

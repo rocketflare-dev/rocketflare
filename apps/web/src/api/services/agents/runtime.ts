@@ -10,8 +10,10 @@
  *                 last attempt settles the row `failed` instead of escaping; anything else (bad
  *                 credentials, invalid request, a malformed tool answer, agent bugs) → `failed` at
  *                 once — a retry cannot fix it.
- *   finishStep  — backstop: an ACTIVE row after execute (the step threw past its retries) is marked
- *                 failed; then one last nudge. Returns the terminal `{ runId, status }`.
+ *   finishStep  — two arms, then one last nudge, returning the terminal `{ runId, status }`: a
+ *                 `queued|running` row after execute (the step threw past its retries) is marked
+ *                 failed; an `awaiting_input` row at the END OF THE WORKFLOW is a park nothing can
+ *                 wake any more, and settles `cancelled` with `error` NULL (T7).
  * Progress events are awaited (a Workflow step has no `waitUntil`) and never fail the run.
  *
  * A retry re-enters `executeRun` from the top, so two pieces of `ctx` exist to make that cheap and
@@ -23,20 +25,35 @@
  * kit used to lose rather than counting it twice.
  */
 import type { AgentRunStatus } from '@rocketflare/shared/ai/agents'
-import { eq } from 'drizzle-orm'
+import type { AgentSteeringNote } from '@rocketflare/shared/ai/interrupts'
+import { rejectionFor, steeringNoteDataSchema } from '@rocketflare/shared/ai/interrupts'
+import { and, asc, eq, sql } from 'drizzle-orm'
 import type { AppConfig } from '../../../config'
 import type { Database } from '../../../db/client'
-import { tenants } from '../../../db/schema'
+import { type AgentRunInterruptRow, agentRunEvents, tenants, tenantUsers } from '../../../db/schema'
 import { traceChatClient, tracerFor, withAgentTrace } from '../../observability/tracing'
 import { classifyInfrastructureError } from '../../utils/core/errors'
 import type { Logger } from '../../utils/core/logger'
 import { accessScopeForUser } from '../access'
 import { AiError, describeAiError, redactSecrets } from '../ai/errors'
-import { StructuredOutputError } from '../ai/kit'
+import {
+  InterruptDeclinedError,
+  InterruptRequested,
+  StructuredOutputError,
+  type ToolApproval,
+} from '../ai/kit'
 import { resolveChat } from '../ai/resolve'
 import type { AiEnv } from '../ai/types'
+import { notifyMany } from '../notifications'
 import { resolvePrompt } from '../prompts'
 import type { HubEnv, Realtime } from '../realtime'
+import { toAgentArtifact, upsertArtifact } from './artifacts'
+import {
+  approvalsForRun,
+  expireInterrupts,
+  interruptExpiryFrom,
+  requestInterrupt,
+} from './interrupts'
 import type { AgentContext, AgentEvent, AgentRunEnv } from './registry'
 import { getAgent } from './registry'
 import {
@@ -44,6 +61,7 @@ import {
   type AgentRunParams,
   appendEvent,
   cancelRun,
+  claimEffect,
   claimRun,
   errorMessage,
   failRun,
@@ -53,6 +71,7 @@ import {
   lastEventSeq,
   loadCheckpoint,
   nudgeRun,
+  parkRun,
   runOnce,
   saveCheckpoint,
 } from './runs'
@@ -66,8 +85,15 @@ export type RuntimeEnv = HubEnv & AiEnv & AgentRunEnv
 
 export interface ExecuteOutcome {
   runId: string
+  /**
+   * `'awaiting_input'` is a real {@link AgentRunStatus}, not a second vocabulary word like
+   * `'interrupted'`: the Workflow loop branches on it to decide whether to `waitForEvent`, and one
+   * word that means one thing everywhere is what keeps the row and the outcome in step.
+   */
   status: AgentRunStatus | 'skipped'
   error?: string
+  /** Set only with `status: 'awaiting_input'` — the asks a person now owes an answer to. */
+  interruptIds?: string[]
 }
 
 /**
@@ -126,6 +152,10 @@ export async function claimStep(
 export function isRetryableRunError(err: unknown): boolean {
   if (err instanceof AiError) return err.code === 'unavailable' || err.code === 'rate_limit'
   if (err instanceof StructuredOutputError || err instanceof AgentCancelledError) return false
+  // Neither interrupt type is a fault, and retrying either one re-asks a person who has already
+  // been asked — or, worse, one who has already said no. They are handled by their own catch arms
+  // above this classification; answering `true` here would let a step retry overtake them.
+  if (err instanceof InterruptRequested || err instanceof InterruptDeclinedError) return false
   return classifyInfrastructureError(err) === 'database_unavailable'
 }
 
@@ -133,6 +163,84 @@ export function isRetryableRunError(err: unknown): boolean {
 export function describeRunError(err: unknown): string {
   if (err instanceof AiError) return describeAiError(err)
   return redactSecrets(errorMessage(err)).slice(0, 500)
+}
+
+/**
+ * Steering notes this run has not been handed yet, in the order they were sent, marked delivered as
+ * they are read. The cursor is the EXISTING `agent_run_effects` ledger keyed `steering:<eventId>`,
+ * which is why steering needs no table of its own (decision 4): the note is an `agent_run_events`
+ * row, and "has it been delivered?" is a decision, not a result — `claimEffect`, not `runOnce`.
+ *
+ * A note whose `data` no longer parses is CLAIMED and skipped rather than retried forever.
+ */
+export async function takeSteeringNotes(
+  db: Database,
+  tenantId: string,
+  runId: string
+): Promise<AgentSteeringNote[]> {
+  const rows = await db
+    .select()
+    .from(agentRunEvents)
+    .where(
+      and(
+        eq(agentRunEvents.tenantId, tenantId),
+        eq(agentRunEvents.runId, runId),
+        eq(agentRunEvents.type, 'steering')
+      )
+    )
+    .orderBy(asc(agentRunEvents.seq))
+  const notes: AgentSteeringNote[] = []
+  for (const row of rows) {
+    if (!(await claimEffect(db, tenantId, runId, `steering:${row.id}`))) continue
+    const parsed = steeringNoteDataSchema.safeParse(row.data)
+    if (!parsed.success) continue
+    notes.push({ ...parsed.data, eventId: row.id, at: row.at })
+  }
+  return notes
+}
+
+/**
+ * Tell the people who can answer that a run is waiting on them. Inside the `execute` step and
+ * AWAITED — a Workflow step has no `waitUntil`.
+ *
+ * A run with no requester ("system") falls back to the tenant's admins, as does an agent that
+ * declares `approvers: 'admin'`. **A parked run nobody is told about is a hung agent**, so there is
+ * no branch here that notifies nobody.
+ */
+async function notifyApprovers(
+  db: Database,
+  run: { tenantId: string; id: string; requestedByUserId: string | null },
+  agentTitle: string,
+  approvers: 'requester' | 'admin',
+  interrupt: AgentRunInterruptRow,
+  realtime: Realtime
+): Promise<void> {
+  let recipients: string[] = []
+  if (approvers === 'requester' && run.requestedByUserId) {
+    recipients = [run.requestedByUserId]
+  } else {
+    const admins = await db
+      .select({ userId: tenantUsers.userId })
+      .from(tenantUsers)
+      .where(
+        and(eq(tenantUsers.tenantId, run.tenantId), sql`${tenantUsers.role} IN ('owner', 'admin')`)
+      )
+    recipients = admins.map(a => a.userId)
+  }
+  await notifyMany(
+    db,
+    recipients,
+    {
+      tenantId: run.tenantId,
+      type: 'agent_run_awaiting_input',
+      title: `${agentTitle} needs your decision`,
+      body: interrupt.message,
+      // The run id is what the bell deep-links to: the question is answered on the run page, in
+      // front of the timeline that explains why it is being asked.
+      data: { runId: run.id, interruptId: interrupt.id },
+    },
+    realtime
+  )
 }
 
 /** Step 2: run the agent. Returns the terminal outcome, or throws ONLY to request a step retry. */
@@ -162,6 +270,10 @@ export async function executeRun(
     const input = agent.meta.inputSchema.parse(run.input)
     const resolved = await resolveChat(db, cfg, env, tenantId, { promptKey: agent.meta.promptKey })
     const toolScope = await accessScopeForUser(db, tenantId, run.requestedByUserId)
+    // Answers to this run's gated tool calls, read ONCE per attempt and handed to the agent as
+    // `ctx.approvals`. The agent never queries for them, so there is one set of approval rules.
+    const approvals: ReadonlyMap<string, ToolApproval> = await approvalsForRun(db, tenantId, runId)
+    const interruptExpiresAt = interruptExpiryFrom(cfg.AGENT_INTERRUPT_TIMEOUT)
     const tenant = await db.query.tenants.findFirst({
       columns: { name: true },
       where: eq(tenants.id, tenantId),
@@ -206,6 +318,58 @@ export async function executeRun(
             save: cp => saveCheckpoint(db, tenantId, runId, cp),
           },
           once: (key, fn) => runOnce(db, tenantId, runId, key, fn),
+          approvals,
+          interrupt: async ask => {
+            // Create-or-read on `(run_id, key)`: the SECOND time this line runs — a resumed or
+            // retried attempt re-entering `run()` from the top — it finds the answer (T2).
+            const row = await requestInterrupt(db, {
+              tenantId,
+              runId,
+              key: ask.key,
+              spec: ask.spec,
+              toolCallId: ask.toolCallId ?? null,
+              expiresAt: interruptExpiresAt,
+            })
+            if (row.status === 'pending') {
+              throw new InterruptRequested([
+                {
+                  key: row.key,
+                  spec: row.spec,
+                  ...(row.toolCallId ? { toolCallId: row.toolCallId } : {}),
+                },
+              ])
+            }
+            if (row.status === 'resolved') {
+              return {
+                interruptId: row.id,
+                status: 'resolved',
+                payload: row.payload ?? null,
+                resolvedByUserId: row.resolvedByUserId,
+              }
+            }
+            // `cancelled` and `expired` take the same path: nobody is going to answer this, and
+            // what that MEANS is the ask's own rejection semantics. `cancel_run` stops the run;
+            // everything else hands the refusal back so the agent can try another route.
+            if (rejectionFor(row.spec) === 'cancel_run') {
+              const payload = (row.payload ?? {}) as { note?: string }
+              throw new InterruptDeclinedError(row.id, payload.note)
+            }
+            return {
+              interruptId: row.id,
+              status: 'cancelled',
+              payload: row.payload ?? null,
+              resolvedByUserId: row.resolvedByUserId,
+            }
+          },
+          steering: () => takeSteeringNotes(db, tenantId, runId),
+          artifact: async input => {
+            const row = await upsertArtifact(db, tenantId, runId, input)
+            await emit({
+              type: 'artifact',
+              data: { artifactId: row.id, key: row.key, kind: row.kind, title: row.title },
+            })
+            return toAgentArtifact(row)
+          },
           prompt: vars =>
             resolvePrompt(db, tenantId, agent.meta.promptKey as 'summarize-text', {
               appName: cfg.APP_NAME,
@@ -226,7 +390,70 @@ export async function executeRun(
   } catch (err) {
     if (err instanceof AgentCancelledError) {
       await cancelRun(db, tenantId, runId)
+      await expireInterrupts(db, tenantId, runId)
       await emit({ type: 'status', data: { status: 'cancelled' } })
+      return { runId, status: 'cancelled' }
+    }
+    // Park (issue #17). **The order below is the safety property**: a row with no parked run
+    // simply re-asks on the next attempt, while a parked run with no row is a hang — nothing for
+    // anybody to answer and a seven-day `waitForEvent` to sit through. So the rows go first.
+    if (err instanceof InterruptRequested) {
+      const rows = []
+      for (const request of err.requests) {
+        rows.push(
+          await requestInterrupt(db, {
+            tenantId,
+            runId,
+            key: request.key,
+            spec: request.spec,
+            toolCallId: request.toolCallId ?? null,
+            expiresAt: interruptExpiryFrom(cfg.AGENT_INTERRUPT_TIMEOUT),
+          })
+        )
+      }
+      // NOT `settle()`: `finishedAt` stays NULL and the checkpoint survives, which is what makes
+      // the resumed attempt cheap (T7).
+      const parked = await parkRun(db, tenantId, runId)
+      if (!parked) {
+        // Settled underneath us — cancelled from outside while the gate was being raised. The row
+        // is the truth: expire the questions nobody will answer and report what it says.
+        await expireInterrupts(db, tenantId, runId)
+        const current = await getRun(db, tenantId, runId)
+        return { runId, status: current?.status ?? 'cancelled' }
+      }
+      const agentTitle = agent.meta.title
+      const approverPolicy = agent.meta.approvers ?? 'requester'
+      for (const row of rows) {
+        await emit({
+          type: 'interrupt',
+          data: {
+            interruptId: row.id,
+            key: row.key,
+            kind: row.kind,
+            message: row.message,
+            toolCallId: row.toolCallId,
+            expiresAt: row.expiresAt,
+          },
+        })
+        // A re-entered `execute` re-raises the same ask; `claimEffect` is what stops it also
+        // re-notifying everybody who was told the first time.
+        if (await claimEffect(db, tenantId, runId, `notify:${row.id}`)) {
+          try {
+            await notifyApprovers(db, run, agentTitle, approverPolicy, row, realtime)
+          } catch (notifyErr) {
+            logger.warn({ err: notifyErr }, 'agent-run: could not notify approvers')
+          }
+        }
+      }
+      await emit({ type: 'status', data: { status: 'awaiting_input' } })
+      return { runId, status: 'awaiting_input', interruptIds: rows.map(row => row.id) }
+    }
+    if (err instanceof InterruptDeclinedError) {
+      // A refusal is a STATUS, not a message: `agent_runs.error` stays NULL and the reason lives
+      // on the event row, so the UI never renders "this run failed because a person said no".
+      await cancelRun(db, tenantId, runId)
+      await expireInterrupts(db, tenantId, runId)
+      await emit({ type: 'status', data: { status: 'cancelled', reason: 'rejected' } })
       return { runId, status: 'cancelled' }
     }
     const message = describeRunError(err)
@@ -252,7 +479,22 @@ export async function executeRun(
   }
 }
 
-/** Step 3: settle anything still active (execute escaped its retries) and nudge one last time. */
+/**
+ * The last step: settle anything the loop left unsettled, and nudge one last time.
+ *
+ * **Two arms, and the difference between them is T7.** The backstop predicate stays
+ * `queued | running` — widening it to `ACTIVE_RUN_STATUSES` would turn every legitimately
+ * parked run into a `failed` row. A row that is `awaiting_input` when the WORKFLOW IS ENDING is a
+ * different fact: the instance that would have woken it is finishing, so nobody can ever resume it.
+ * That is the expiry arm — `cancelled` with **`error` NULL**, because a cancel is a status, not a
+ * message, and the reason goes on a `status` event row where the UI can render it as one. The one
+ * exception is a park the loop ABANDONED (`MAX_INTERRUPT_ROUNDS`), which arrives with
+ * `outcome.status === 'failed'`: a runaway agent is a bug and belongs in the failed bucket with a
+ * sentence explaining itself. It is the OUTCOME that says so, never the row.
+ *
+ * Called twice on the expiry path (once as `expire#N`, once as `finish`) and idempotent: the second
+ * call finds a settled row and only nudges.
+ */
 export async function finishStep(
   db: Database,
   env: RuntimeEnv,
@@ -263,13 +505,25 @@ export async function finishStep(
   const { tenantId, runId } = params
   const { realtime, settle } = createStepRealtime(env, logger)
   let row = await getRun(db, tenantId, runId)
-  if (row && (row.status === 'queued' || row.status === 'running')) {
+  // The workflow is ENDING. A row still parked at this point can never be woken — the instance
+  // that would have heard the answer is finishing — so the open asks go either way.
+  if (row?.status === 'awaiting_input') await expireInterrupts(db, tenantId, runId)
+  // The one case where a parked row is a FAILURE rather than an expiry: the loop gave up on an
+  // agent that kept asking (`MAX_INTERRUPT_ROUNDS`) and said so in the outcome. It is the outcome
+  // that decides, never the row's status — widening the predicate below is T7.
+  const abandoned = row?.status === 'awaiting_input' && outcome?.status === 'failed'
+  // T7: NOT `ACTIVE_RUN_STATUSES`. A parked run is not a failure, and this list must never grow.
+  if (row && (row.status === 'queued' || row.status === 'running' || abandoned)) {
     const message =
       outcome?.error ?? 'The agent run did not complete (execute step exhausted its retries)'
     row = (await failRun(db, tenantId, runId, message)) ?? row
     const emit = await createEmitter(db, params, realtime, logger)
     await emit({ type: 'error', data: { message, willRetry: false } })
     await emit({ type: 'status', data: { status: 'failed' } })
+  } else if (row && row.status === 'awaiting_input') {
+    row = (await cancelRun(db, tenantId, runId)) ?? row
+    const emit = await createEmitter(db, params, realtime, logger)
+    await emit({ type: 'status', data: { status: 'cancelled', reason: 'expired' } })
   }
   nudgeRun(realtime, tenantId, runId)
   await settle()

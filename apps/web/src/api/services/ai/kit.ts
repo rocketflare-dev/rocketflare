@@ -10,6 +10,7 @@
 
 import type Anthropic from '@anthropic-ai/sdk'
 import { type TokenUsage, tokenUsageSchema } from '@rocketflare/shared/ai/chat'
+import type { AgentInterruptSpec, JsonSchema } from '@rocketflare/shared/ai/interrupts'
 import { type ZodType, z } from 'zod'
 import { zodToJsonSchema } from 'zod-to-json-schema'
 import { AiError } from './errors'
@@ -92,10 +93,42 @@ export interface Tool<Input = unknown> {
   schema: ZodType<Input>
   /** Method syntax on purpose: bivariant params let a `Tool<{ q: string }>` sit in a `Tool[]`. */
   handler?(input: Input): Promise<string>
+  /**
+   * Gate this call on a person (issue #17): the loop stops, asks, and runs the handler only on a
+   * `resolved` answer. Enforced by {@link runToolLoop}, never by the handler — a handler that
+   * checks for itself is a handler that has already run.
+   */
+  requiresApproval?: boolean
+  /**
+   * Gate only the calls that matter (`input => input.recipients.length > 10`), overriding
+   * {@link Tool.requiresApproval}. The input has ALREADY passed `schema`, so arguments the tool
+   * would reject anyway never become a question somebody has to read.
+   *
+   * Method syntax, like `handler`, and for the same reason: a function in PROPERTY position is
+   * contravariant in `Input` under `strictFunctionTypes`, and a `Tool<{ to: string }>` has to be
+   * able to sit in a `Tool[]`. That is also why there is a predicate member beside a boolean one
+   * rather than a `boolean | ((input) => boolean)` union, which cannot be written bivariantly.
+   */
+  requiresApprovalWhen?(input: Input): boolean
+  /**
+   * The question a person is asked. Defaults to a sentence naming the tool; it does not need to
+   * repeat the arguments, because the ask carries them (`spec.tool.input`) and the panel shows them.
+   */
+  approvalMessage?: string
+  /** May the approver change the arguments before approving? The route re-validates the edit. */
+  allowEdits?: boolean
+  /** What a rejection does. Defaults to `INTERRUPT_REJECTION.approval` (`cancel_run`). */
+  onReject?: 'cancel_run' | 'tell_model'
 }
 
-/** JSON Schema (draft-07, `$schema` stripped) for a tool input. */
-export function toolInputSchema(schema: ZodType): Record<string, unknown> {
+/**
+ * JSON Schema (draft-07, `$schema` stripped) for a tool input.
+ *
+ * The return type is the shared {@link JsonSchema} — the SAME contract `Interrupt.responseSchema`
+ * and `agentInfoSchema.inputJsonSchema` carry — so a converted schema can be put on the wire
+ * without a cast. Both are `Record<string, unknown>`; naming it says which one it is.
+ */
+export function toolInputSchema(schema: ZodType): JsonSchema {
   const { $schema: _drop, ...json } = zodToJsonSchema(schema, { target: 'jsonSchema7' }) as Record<
     string,
     unknown
@@ -109,6 +142,89 @@ export function toToolDefinition(tool: Tool): ToolDefinition {
     description: tool.description,
     inputSchema: toolInputSchema(tool.schema),
   }
+}
+
+// ---- Interrupts: the human-in-the-loop seam (issue #17) -------------------------------------
+
+/**
+ * One question the loop needs answered before it can go on. It is not the row: the row lives in
+ * `agent_run_interrupts` and is written by the runtime, because `kit.ts` knows nothing about a
+ * database. `key` is what makes the two idempotent — `UNIQUE (run_id, key)` is why a re-entered
+ * attempt finds the first ask's ANSWER instead of asking again.
+ */
+export interface InterruptRequest {
+  /** Stable across attempts. For a gated tool call it is the call's own id, which the checkpoint replays. */
+  key: string
+  spec: AgentInterruptSpec
+  /** The model's id for the call this ask gates, when it gates one. */
+  toolCallId?: string
+}
+
+/**
+ * Raised out of the loop when a turn needs a person. The host (`executeRun`) writes the rows, parks
+ * the run and returns; there is nothing to catch inside the loop.
+ *
+ * It is a TYPE, not a message, for the same reason `AgentCancelledError` is: nothing downstream may
+ * reclassify a park as a failure, and `isRetryableRunError` must answer `false` for it or a step
+ * retry re-asks somebody who has already been asked.
+ */
+export class InterruptRequested extends Error {
+  constructor(public readonly requests: InterruptRequest[]) {
+    super(`Waiting for a human decision: ${requests.map(r => r.key).join(', ') || 'an interrupt'}`)
+    this.name = 'InterruptRequested'
+  }
+}
+
+/**
+ * A person said no to something whose rejection means STOP (`onReject: 'cancel_run'` — the default
+ * for an `approval`). The run settles `cancelled` with `error` NULL: a refusal is a status, not a
+ * fault, and a retry must never re-ask.
+ */
+export class InterruptDeclinedError extends Error {
+  constructor(
+    public readonly interruptId: string,
+    /** What the person typed when they declined, if anything. */
+    public readonly note?: string
+  ) {
+    super('The run was declined by a human reviewer')
+    this.name = 'InterruptDeclinedError'
+  }
+}
+
+/**
+ * An answered gate, as the loop consumes it — keyed by `toolCallId` in
+ * {@link RunToolLoopOptions.approvals}, built by the runtime from the resolved rows. The agent
+ * never assembles this and never queries for it.
+ */
+export interface ToolApproval {
+  interruptId: string
+  /** AG-UI's own vocabulary: `resolved` = go ahead, `cancelled` = declined. Never an `approved` boolean. */
+  status: 'resolved' | 'cancelled'
+  /** Replaces the model's arguments when the approver edited them (`allowEdits`); re-validated server-side. */
+  input?: unknown
+  note?: string
+  /** What this rejection means — `rejectionFor(spec)`, resolved once by the runtime. */
+  onReject: 'cancel_run' | 'tell_model'
+}
+
+/**
+ * Append free text as a USER turn without ever producing two consecutive user messages — which
+ * Anthropic rejects outright, and which is exactly what naive steering produces: a resumed
+ * transcript usually ends in a user turn of `tool_result` blocks.
+ *
+ * Text after `tool_result` blocks is legal (the spec only requires tool results to come FIRST),
+ * so the note folds into that same turn.
+ */
+export function appendUserText(messages: ChatMessage[], text: string): void {
+  const last = messages[messages.length - 1]
+  if (!last || last.role !== 'user') {
+    messages.push({ role: 'user', content: text })
+    return
+  }
+  messages[messages.length - 1] =
+    typeof last.content === 'string'
+      ? { ...last, content: `${last.content}\n\n${text}` }
+      : { ...last, content: [...last.content, { type: 'text', text }] }
 }
 
 // ---- Structured output -----------------------------------------------------------------------
@@ -320,6 +436,32 @@ export interface RunToolLoopOptions {
    */
   onCheckpoint?: (checkpoint: ToolLoopCheckpoint) => void | Promise<void>
   signal?: AbortSignal
+  /**
+   * Answers to gates already decided, keyed by the model's `toolCallId` — built by the RUNTIME from
+   * the resolved `agent_run_interrupts` rows, never by the agent. A call with an entry here is not
+   * asked about again; it is executed, refused or edited according to the answer.
+   */
+  approvals?: ReadonlyMap<string, ToolApproval>
+  /**
+   * Called with the open gates before the loop stops for them. `'throw'` (the default) raises
+   * {@link InterruptRequested}, which is what an agent run wants: the Workflow step unwinds and the
+   * run parks. `'return'` makes the loop RETURN with `stopReason: 'interrupt'` instead — the
+   * Part-3 seam, because a chat host has no Workflow to unwind.
+   */
+  onInterrupt?: (requests: InterruptRequest[]) => Promise<'throw' | 'return'>
+  /**
+   * Runs an APPROVED tool call at most once across every attempt of the run. The runtime passes
+   * `ctx.once`; without it an approved call re-executes on a step retry, which is precisely the
+   * side effect a person was asked about.
+   */
+  runApproved?: <T>(key: string, fn: () => Promise<T>) => Promise<T>
+  /**
+   * Awaited at the top of every turn, BEFORE the model is called. Anything it returns is folded
+   * into the transcript — this is where a steering note lands. A `user` message with string content
+   * goes through {@link appendUserText}, so a note after a turn of tool results never becomes a
+   * second consecutive user turn.
+   */
+  beforeTurn?: (turn: number) => Promise<ChatMessage[] | void>
 }
 
 export interface ToolLoopResult {
@@ -327,10 +469,12 @@ export interface ToolLoopResult {
   terminalInput: unknown | null
   terminalTool: string | null
   turns: number
-  stopReason: StopReason | 'max_turns' | 'no_tool_call'
+  stopReason: StopReason | 'max_turns' | 'no_tool_call' | 'interrupt'
   usage: TokenUsage
   /** The full transcript (seed + assistant/tool turns); also what `onCheckpoint` persists. */
   messages: ChatMessage[]
+  /** Set only with `stopReason: 'interrupt'` and `onInterrupt` answering `'return'`. */
+  interrupts?: InterruptRequest[]
 }
 
 async function runHandler(tool: Tool | undefined, name: string, input: unknown) {
@@ -347,8 +491,32 @@ async function runHandler(tool: Tool | undefined, name: string, input: unknown) 
   try {
     return { text: await tool.handler(parsed.data), isError: false }
   } catch (err) {
+    // The ONE thing that is not a tool failure. Raising an interrupt from inside a handler is the
+    // natural place to ask ("which of these three customers did you mean?"), and swallowing it into
+    // an `isError` result would leave the model to simply ask the same question again, forever.
+    // `runStreamingChat` deliberately does NOT get this rethrow — see the note on its handler loop.
+    if (err instanceof InterruptRequested) throw err
     return { text: err instanceof Error ? err.message : 'Tool execution failed', isError: true }
   }
+}
+
+/** A `tool_use` block, as the loop and its gate pass one around. */
+type ToolUseBlock = Extract<ContentBlock, { type: 'tool_use' }>
+
+/**
+ * The tool calls of a transcript's TRAILING assistant turn that nothing has answered yet — which is
+ * exactly what a parked run's checkpoint looks like, because the gate raises after the assistant
+ * turn is pushed and before any handler runs.
+ *
+ * Nothing else in the loop can produce this shape: every other path pushes a `user` turn of
+ * `tool_result` blocks before it checkpoints. It matters because `runToolLoop`'s `while` opens with
+ * `client.complete(messages)`, and sending an unanswered `tool_use` is a 400 on Anthropic and
+ * garbage everywhere else — so without this a resumed run could never take its first turn (T1).
+ */
+function pendingToolUses(messages: ChatMessage[]): ToolUseBlock[] {
+  const last = messages[messages.length - 1]
+  if (!last || last.role !== 'assistant' || typeof last.content === 'string') return []
+  return toolUsesOf(last.content)
 }
 
 /**
@@ -360,6 +528,16 @@ async function runHandler(tool: Tool | undefined, name: string, input: unknown) 
  * The loop is RESUMABLE: `onCheckpoint` is awaited at the end of every turn, and handing that
  * checkpoint back as `resume` continues the same conversation with the turn and token counters
  * intact, so a retried Workflow step costs the turns it still owes rather than all of them again.
+ *
+ * It is also INTERRUPTIBLE (issue #17): a tool may declare `requiresApproval`, and a turn with an
+ * unanswered gate checkpoints and raises {@link InterruptRequested} rather than running anything.
+ * Two properties of that are load-bearing and easy to break:
+ *
+ * - **The gate scans the WHOLE turn before any handler runs.** A turn with three calls, one of them
+ *   gated, parks with nothing executed — so resuming has only the approved call to make idempotent,
+ *   and the plural `interrupts[]` is what `RunFinishedInterruptOutcome` already models.
+ * - **The resume path and the in-loop path share ONE `executeToolUses`.** Two copies of the
+ *   approval rules is how a gate ends up bypassed on the resume path only.
  */
 export async function runToolLoop(
   client: ChatClient,
@@ -377,9 +555,138 @@ export async function runToolLoop(
     await opts.onCheckpoint?.({ messages: [...messages], turns, usage })
   }
 
+  /**
+   * Every open gate in a turn, or none. An input that fails the tool's own schema is skipped on
+   * purpose — it takes the existing `isError` path, because nobody should be asked to approve
+   * arguments the tool would reject anyway.
+   */
+  const collectGates = (toolUses: ToolUseBlock[]): InterruptRequest[] => {
+    const requests: InterruptRequest[] = []
+    for (const block of toolUses) {
+      const tool = byName.get(block.name)
+      if (!tool || opts.approvals?.has(block.id)) continue
+      if (!tool.requiresApproval && !tool.requiresApprovalWhen) continue
+      const parsed = tool.schema.safeParse(block.input)
+      if (!parsed.success) continue
+      const gated = tool.requiresApprovalWhen
+        ? tool.requiresApprovalWhen(parsed.data)
+        : tool.requiresApproval === true
+      if (!gated) continue
+      const message = tool.approvalMessage ?? `Run ${tool.name}?`
+      requests.push({
+        // The tool call's own id: the checkpoint replays the same assistant turn, so the same id
+        // comes back on the next attempt — which is what makes `(run_id, key)` find the answer.
+        key: `tool:${block.id}`,
+        toolCallId: block.id,
+        spec: {
+          kind: 'approval',
+          message,
+          tool: {
+            name: tool.name,
+            input: parsed.data,
+            allowEdits: tool.allowEdits ?? false,
+            inputSchema: toolInputSchema(tool.schema),
+          },
+          ...(tool.onReject ? { onReject: tool.onReject } : {}),
+        },
+      })
+    }
+    return requests
+  }
+
+  /** Checkpoint FIRST — the whole point of parking cheaply — then hand the gates to the host. */
+  const raise = async (requests: InterruptRequest[]): Promise<ToolLoopResult | never> => {
+    await checkpoint()
+    const mode = (await opts.onInterrupt?.(requests)) ?? 'throw'
+    if (mode === 'throw') throw new InterruptRequested(requests)
+    return {
+      terminalInput: null,
+      terminalTool: null,
+      turns,
+      stopReason: 'interrupt',
+      usage,
+      messages,
+      interrupts: requests,
+    }
+  }
+
+  /**
+   * Run a turn's tool calls and build its `tool_result` blocks. The ONE place the approval rules
+   * live — the in-loop path and the resume path both call it.
+   */
+  const executeToolUses = async (
+    toolUses: ToolUseBlock[],
+    turn: number
+  ): Promise<ContentBlock[]> => {
+    const results: ContentBlock[] = []
+    for (const block of toolUses) {
+      const tool = byName.get(block.name)
+      const approval = opts.approvals?.get(block.id)
+      let outcome: { text: string; isError: boolean }
+      if (approval?.status === 'cancelled') {
+        if (approval.onReject === 'cancel_run') {
+          throw new InterruptDeclinedError(approval.interruptId, approval.note)
+        }
+        // `tell_model`: declining is an ANSWER, not a fault, so `isError` is false. An error result
+        // would have the model apologising and retrying the thing it was just refused.
+        outcome = {
+          text: approval.note
+            ? `A person declined this action: ${approval.note}`
+            : 'A person declined this action. Do not try it again; continue another way.',
+          isError: false,
+        }
+      } else if (approval) {
+        // An approver may have edited the arguments; the route re-validated them against the tool's
+        // own schema before storing them, and `runHandler` validates once more here.
+        const input = approval.input !== undefined ? approval.input : block.input
+        const run = () => runHandler(tool, block.name, input)
+        outcome = opts.runApproved
+          ? await opts.runApproved(`tool:${approval.interruptId}`, run)
+          : await run()
+      } else {
+        outcome = await runHandler(tool, block.name, block.input)
+      }
+      results.push({
+        type: 'tool_result',
+        toolUseId: block.id,
+        content: outcome.text,
+        isError: outcome.isError,
+      })
+      await opts.onEvent?.({
+        kind: 'tool_result',
+        turn,
+        toolUseId: block.id,
+        name: block.name,
+        resultText: outcome.text,
+        isError: outcome.isError,
+      })
+    }
+    return results
+  }
+
+  // T1 — the resume path. A checkpoint whose last turn is an assistant message with unanswered
+  // tool calls is what parking leaves behind, and it must be answered BEFORE the `while` body ever
+  // calls the model again. A gate that is STILL open (a second round, or a partly answered turn)
+  // parks again rather than running anything.
+  const pending = pendingToolUses(messages)
+  if (pending.length > 0) {
+    const stillGated = collectGates(pending)
+    if (stillGated.length > 0) return await raise(stillGated)
+    messages.push({ role: 'user', content: await executeToolUses(pending, turns) })
+    await checkpoint()
+  }
+
   while (turns < maxTurns) {
     if (opts.signal?.aborted)
       throw new AiError('unavailable', client.provider, 'Agent run cancelled')
+    const injected = await opts.beforeTurn?.(turns + 1)
+    for (const message of injected ?? []) {
+      if (message.role === 'user' && typeof message.content === 'string') {
+        appendUserText(messages, message.content)
+      } else {
+        messages.push(message)
+      }
+    }
     turns += 1
     const result = await client.complete({
       model: opts.model,
@@ -467,20 +774,11 @@ export async function runToolLoop(
       }
     }
 
-    const results: ContentBlock[] = []
-    for (const block of toolUses) {
-      const { text, isError } = await runHandler(byName.get(block.name), block.name, block.input)
-      results.push({ type: 'tool_result', toolUseId: block.id, content: text, isError })
-      await opts.onEvent?.({
-        kind: 'tool_result',
-        turn: turns,
-        toolUseId: block.id,
-        name: block.name,
-        resultText: text,
-        isError,
-      })
-    }
-    messages.push({ role: 'user', content: results })
+    // The gate: after the assistant turn is on the transcript, before any handler has run.
+    const gates = collectGates(toolUses)
+    if (gates.length > 0) return await raise(gates)
+
+    messages.push({ role: 'user', content: await executeToolUses(toolUses, turns) })
     await checkpoint()
   }
 
@@ -589,6 +887,11 @@ export async function runStreamingChat(
     }
     messages.push({ role: 'assistant', content: result.content })
     const results: ContentBlock[] = []
+    // No interrupt gate here, deliberately (T3). Chat has no host that can park a turn — there is
+    // no Workflow to unwind and no `agent_runs` row to hold the answer — so a tool raising
+    // `InterruptRequested` in a chat is a BUG, and `runHandler` turning it into an `isError` result
+    // is what we want to see: a visible wrong answer rather than a stream that never terminates.
+    // Chat HITL is Part 3 and arrives as `onInterrupt: 'return'` plus a conversation checkpoint.
     for (const block of toolUses) {
       await opts.onToolStart?.({ toolUseId: block.id, name: block.name, input: block.input })
       const { text, isError } = await runHandler(byName.get(block.name), block.name, block.input)

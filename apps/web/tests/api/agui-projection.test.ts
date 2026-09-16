@@ -8,9 +8,12 @@ import {
   agentRunAguiResponseSchema,
   KIT_CUSTOM_EVENTS,
   kitAguiEventSchema,
+  parseKitCustom,
 } from '@rocketflare/shared/ai/agui'
+import type { AgentArtifact } from '@rocketflare/shared/ai/artifacts'
+import type { AgentRunInterrupt } from '@rocketflare/shared/ai/interrupts'
 import { describe, expect, it } from 'vitest'
-import { projectRunToAgui } from '@/api/services/agents/agui-projection'
+import { createRunProjector, projectRunToAgui } from '@/api/services/agents/agui-projection'
 import { agentRunEvents, agentRuns } from '@/db/schema'
 import { aguiTypes, customEvent, customEvents } from '../helpers/ai'
 import {
@@ -59,10 +62,69 @@ const event = (type: AgentRunEvent['type'], data: unknown): AgentRunEvent => {
   }
 }
 
+const INTERRUPT_ID = '77777777-7777-4777-8777-777777777777'
+const ARTIFACT_ID = '66666666-6666-4666-8666-666666666666'
+
+const interrupt = (over: Partial<AgentRunInterrupt> = {}): AgentRunInterrupt => ({
+  id: INTERRUPT_ID,
+  tenantId: TENANT_ID,
+  runId: RUN_ID,
+  key: 'send-it',
+  kind: 'approval',
+  reason: 'confirmation',
+  message: 'Send this email?',
+  toolCallId: null,
+  responseSchema: null,
+  spec: { kind: 'approval', message: 'Send this email?' },
+  status: 'pending',
+  payload: null,
+  expiresAt: null,
+  resolvedAt: null,
+  resolvedByUserId: null,
+  createdAt: new Date(),
+  updatedAt: new Date(),
+  ...over,
+})
+
+const artifact = (): AgentArtifact => ({
+  id: ARTIFACT_ID,
+  tenantId: TENANT_ID,
+  runId: RUN_ID,
+  key: 'draft',
+  kind: 'markdown',
+  title: 'Draft reply',
+  description: null,
+  data: { kind: 'markdown', markdown: 'Hello.' },
+  createdAt: new Date(),
+  updatedAt: new Date(),
+})
+
 describe('projectRunToAgui', () => {
   it('opens with a synthetic RUN_STARTED whose thread is the run', () => {
     const [first] = projectRunToAgui(run({ status: 'queued' }), [])
     expect(first).toEqual({ type: 'RUN_STARTED', threadId: RUN_ID, runId: RUN_ID })
+  })
+
+  it('declares what the server can do in the STATE_SNAPSHOT, so an approve button is never a lie', () => {
+    const [, snapshot] = projectRunToAgui(run({ status: 'queued' }), [])
+    expect(snapshot).toMatchObject({
+      type: 'STATE_SNAPSHOT',
+      snapshot: {
+        runId: RUN_ID,
+        agentKey: 'research-topic',
+        status: 'queued',
+        capabilities: {
+          humanInTheLoop: {
+            supported: true,
+            approvals: true,
+            interrupts: true,
+            interventions: true,
+            feedback: false,
+            approveWithEdits: true,
+          },
+        },
+      },
+    })
   })
 
   it('maps a step to STEP_STARTED/FINISHED plus the label CUSTOM stepName cannot carry', () => {
@@ -74,6 +136,7 @@ describe('projectRunToAgui', () => {
     const out = projectRunToAgui(run({ status: 'running' }), events)
     expect(aguiTypes(out)).toEqual([
       'RUN_STARTED',
+      'STATE_SNAPSHOT',
       'STEP_STARTED',
       'CUSTOM',
       'STEP_FINISHED',
@@ -101,6 +164,7 @@ describe('projectRunToAgui', () => {
     const out = projectRunToAgui(run(), events)
     expect(aguiTypes(out)).toEqual([
       'RUN_STARTED',
+      'STATE_SNAPSHOT',
       'TEXT_MESSAGE_START',
       'TEXT_MESSAGE_CONTENT',
       'TEXT_MESSAGE_END',
@@ -147,6 +211,7 @@ describe('projectRunToAgui', () => {
     ])
     expect(aguiTypes(out)).toEqual([
       'RUN_STARTED',
+      'STATE_SNAPSHOT',
       'TOOL_CALL_START',
       'TOOL_CALL_ARGS',
       'TOOL_CALL_END',
@@ -203,7 +268,7 @@ describe('projectRunToAgui', () => {
     expect(cancelled.at(-1)).toMatchObject({ type: 'RUN_ERROR', code: 'agent_run_cancelled' })
     for (const status of ['queued', 'running'] as const) {
       const active = projectRunToAgui(run({ status, output: null }), [])
-      expect(aguiTypes(active)).toEqual(['RUN_STARTED'])
+      expect(aguiTypes(active)).toEqual(['RUN_STARTED', 'STATE_SNAPSHOT'])
     }
   })
 
@@ -227,6 +292,94 @@ describe('projectRunToAgui', () => {
       event('tool.end', { name: 't', isError: true }),
     ])
     for (const e of out) expect(kitAguiEventSchema.safeParse(e).success).toBe(true)
+  })
+})
+
+describe('createRunProjector (the resumable form)', () => {
+  const rows = () => [
+    event('status', { status: 'running' }),
+    event('step', { key: 'search', label: 'Searching', status: 'running' }),
+    event('text', { text: 'Thinking about it.' }),
+    event('tool.start', { name: 'search_knowledge', input: { query: 'x' }, toolCallId: 'call_a' }),
+    event('tool.end', { name: 'search_knowledge', result: { hits: 1 }, toolCallId: 'call_a' }),
+    event('step', { key: 'search', label: 'Searching', status: 'done', detail: '1 hit' }),
+  ]
+
+  it('is equivalent to the whole-array projection, event for event', () => {
+    // The stream and the finite read MUST agree about what a run looked like. `projectRunToAgui`
+    // is written as this fold today; the assertion is what stops a later "optimisation" that
+    // inlines one of them from silently giving two clients two different runs.
+    const events = rows()
+    const settled = run({ status: 'succeeded', output: { answer: 'yes' } })
+    const projector = createRunProjector(settled)
+    const folded = [
+      ...projector.head(),
+      ...events.flatMap(e => projector.push(e)),
+      ...projector.finish(settled),
+    ]
+    expect(folded).toEqual(projectRunToAgui(settled, events))
+  })
+
+  it('finish reads the run it is GIVEN, not the one the projector opened on', () => {
+    // In a stream the row changes underneath you: the run this projector opened on was `running`.
+    const opening = run({ status: 'running' })
+    const projector = createRunProjector(opening)
+    expect(projector.finish(opening)).toEqual([])
+    const settled = run({ status: 'succeeded', output: { answer: 'yes' } })
+    expect(projector.finish(settled)).toEqual([
+      { type: 'RUN_FINISHED', threadId: RUN_ID, runId: RUN_ID, result: { answer: 'yes' } },
+    ])
+  })
+
+  it('head is only the two opening events, so a resume can skip it', () => {
+    expect(aguiTypes(createRunProjector(run()).head())).toEqual(['RUN_STARTED', 'STATE_SNAPSHOT'])
+  })
+})
+
+describe('tool-call pairing', () => {
+  it('pairs two parallel calls to the SAME tool by the model’s call id', () => {
+    const startA = event('tool.start', { name: 'search_knowledge', toolCallId: 'call_a' })
+    const startB = event('tool.start', { name: 'search_knowledge', toolCallId: 'call_b' })
+    const endB = event('tool.end', { name: 'search_knowledge', toolCallId: 'call_b', result: 'B' })
+    const endA = event('tool.end', { name: 'search_knowledge', toolCallId: 'call_a', result: 'A' })
+    const out = projectRunToAgui(run(), [startA, startB, endB, endA])
+    const results = out.filter(e => e.type === 'TOOL_CALL_RESULT') as {
+      toolCallId: string
+      content: string
+    }[]
+    // Keyed by name alone, the second start overwrote the first and BOTH results claimed call B.
+    expect(results.map(r => r.toolCallId)).toEqual([startB.id, startA.id])
+    expect(results.map(r => JSON.parse(r.content).result)).toEqual(['B', 'A'])
+  })
+
+  it('leaves the emitted toolCallId as the START row’s id — the ids are the row ids', () => {
+    const start = event('tool.start', { name: 'get_document', toolCallId: 'call_z' })
+    const end = event('tool.end', { name: 'get_document', toolCallId: 'call_z' })
+    const out = projectRunToAgui(run(), [start, end])
+    for (const e of out) {
+      if (e.type === 'TOOL_CALL_START' || e.type === 'TOOL_CALL_RESULT') {
+        expect(e.toolCallId).toBe(start.id)
+      }
+    }
+  })
+
+  it('keeps the arguments free of the pairing id', () => {
+    const start = event('tool.start', {
+      name: 'search_knowledge',
+      input: { q: 'x' },
+      toolCallId: 'c',
+    })
+    const out = projectRunToAgui(run(), [start])
+    const args = out.find(e => e.type === 'TOOL_CALL_ARGS') as { delta: string }
+    expect(JSON.parse(args.delta)).toEqual({ q: 'x' })
+  })
+
+  it('pairs rows written BEFORE toolCallId existed by name, exactly as before', () => {
+    const start = event('tool.start', { name: 'search_knowledge', input: { q: 'x' } })
+    const end = event('tool.end', { name: 'search_knowledge', result: 'old' })
+    const out = projectRunToAgui(run(), [start, end])
+    const result = out.find(e => e.type === 'TOOL_CALL_RESULT') as { toolCallId: string }
+    expect(result.toolCallId).toBe(start.id)
   })
 })
 
@@ -271,6 +424,7 @@ describe('GET /api/agents/runs/:id/agui', () => {
     const body = agentRunAguiResponseSchema.parse(await json(res))
     expect(aguiTypes(body.events)).toEqual([
       'RUN_STARTED',
+      'STATE_SNAPSHOT',
       'STEP_STARTED',
       'CUSTOM',
       'TEXT_MESSAGE_START',
@@ -297,5 +451,125 @@ describe('GET /api/agents/runs/:id/agui', () => {
     ).toBe(200)
 
     expect((await request(`/api/agents/runs/${row.id}/agui`)).status).toBe(401)
+  })
+})
+
+describe('the human-in-the-loop rows (issue #17)', () => {
+  it('delivers a parked run through the protocol’s OWN interrupt outcome, not a kit event', () => {
+    // This is the entire reason a third-party AG-UI client can answer a kit run with no kit code.
+    // The discriminator is `'interrupt'`: `'interrupted'` does not throw, it is silently dropped.
+    const pending = interrupt()
+    const out = projectRunToAgui(run({ status: 'awaiting_input', output: null }), [], {
+      interrupts: [pending],
+    })
+    const last = out.at(-1)
+    expect(last).toMatchObject({
+      type: 'RUN_FINISHED',
+      threadId: RUN_ID,
+      runId: RUN_ID,
+      outcome: { type: 'interrupt' },
+    })
+    expect(last?.type === 'RUN_FINISHED' && last.outcome).toEqual({
+      type: 'interrupt',
+      interrupts: [
+        {
+          id: INTERRUPT_ID,
+          reason: 'confirmation',
+          message: 'Send this email?',
+          metadata: { kind: 'approval', key: 'send-it' },
+        },
+      ],
+    })
+    for (const e of out) expect(kitAguiEventSchema.safeParse(e).success).toBe(true)
+  })
+
+  it('leaves a park with NO pending asks open (T6) — it is the window between the answer and the resume', () => {
+    const out = projectRunToAgui(run({ status: 'awaiting_input', output: null }), [], {
+      interrupts: [interrupt({ status: 'resolved', resolvedAt: new Date() })],
+    })
+    expect(aguiTypes(out)).toEqual(['RUN_STARTED', 'STATE_SNAPSHOT'])
+  })
+
+  it('carries a settled run’s HISTORICAL asks as kit CUSTOM events — outcome can only hold what is pending', () => {
+    const answered = interrupt({ status: 'resolved', resolvedByUserId: null })
+    const out = projectRunToAgui(
+      run(),
+      [
+        event('interrupt', {
+          interruptId: INTERRUPT_ID,
+          key: 'send-it',
+          kind: 'approval',
+          message: 'Send this email?',
+        }),
+        event('interrupt.resolved', {
+          interruptId: INTERRUPT_ID,
+          key: 'send-it',
+          kind: 'approval',
+          status: 'resolved',
+          resolvedByUserId: null,
+        }),
+      ],
+      { interrupts: [answered] }
+    )
+    expect(aguiTypes(out)).toEqual([
+      'RUN_STARTED',
+      'STATE_SNAPSHOT',
+      'CUSTOM',
+      'CUSTOM',
+      'RUN_FINISHED',
+    ])
+    const asked = out.find(e => parseKitCustom(KIT_CUSTOM_EVENTS.agentInterrupt, e))
+    expect(
+      asked && parseKitCustom(KIT_CUSTOM_EVENTS.agentInterrupt, asked)?.interrupt
+    ).toMatchObject({
+      id: INTERRUPT_ID,
+      // The WHOLE row travels: the panel needs `spec` to draw the question it is showing.
+      spec: { kind: 'approval', message: 'Send this email?' },
+      status: 'resolved',
+    })
+    expect(customEvent(out, KIT_CUSTOM_EVENTS.agentInterruptResolved)).toMatchObject({
+      interruptId: INTERRUPT_ID,
+      status: 'resolved',
+    })
+  })
+
+  it('projects a steering note with the event row’s id and time', () => {
+    const note = event('steering', { text: 'Focus on 2024.', authorUserId: null })
+    const out = projectRunToAgui(run(), [note])
+    expect(customEvent(out, KIT_CUSTOM_EVENTS.agentSteering)).toEqual({
+      note: { text: 'Focus on 2024.', authorUserId: null, eventId: note.id, at: note.at },
+    })
+  })
+
+  it('projects an artifact from the TABLE, keyed by the thin log row', () => {
+    const out = projectRunToAgui(
+      run(),
+      [
+        event('artifact', {
+          artifactId: ARTIFACT_ID,
+          key: 'draft',
+          kind: 'markdown',
+          title: 'Draft reply',
+        }),
+      ],
+      { artifacts: [artifact()] }
+    )
+    expect(customEvent(out, KIT_CUSTOM_EVENTS.agentArtifact)).toMatchObject({
+      artifact: {
+        id: ARTIFACT_ID,
+        kind: 'markdown',
+        data: { kind: 'markdown', markdown: 'Hello.' },
+      },
+    })
+  })
+
+  it('skips an ask or an artifact the caller did not pass, rather than inventing one', () => {
+    // A row whose table entry is missing is a read the caller narrowed, not a reason to guess: an
+    // interrupt with an unknown status is exactly the thing a person must not be shown.
+    const out = projectRunToAgui(run(), [
+      event('interrupt', { interruptId: INTERRUPT_ID, key: 'k', kind: 'approval', message: null }),
+      event('artifact', { artifactId: ARTIFACT_ID, key: 'draft', kind: 'markdown', title: 'T' }),
+    ])
+    expect(aguiTypes(out)).toEqual(['RUN_STARTED', 'STATE_SNAPSHOT', 'RUN_FINISHED'])
   })
 })

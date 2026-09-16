@@ -9,12 +9,29 @@
  * rethrows on attempt 1 (the platform retries) and the finish backstop settles the row; a run
  * cancelled while queued is skipped at claim; `index: true` stores the summary through `ingestText`
  * and `searchChunks` finds it (retrieval is exercised, 00 §1.3); each step closes its DB client.
+ *
+ * Plus the suspend/resume loop (issue #17): `execute#N` / `resume#N` / `expire#N`, whose step names
+ * must be DISTINCT per round — the platform treats a step name as its identity and replays a
+ * repeated one's earlier result, which would read as "the agent ignored my approval".
  */
+import { AGENT_RESUME_EVENT, MAX_INTERRUPT_ROUNDS } from '@rocketflare/shared/ai/agents'
+import type { AgentInterruptSpec } from '@rocketflare/shared/ai/interrupts'
 import { and, eq } from 'drizzle-orm'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { z } from 'zod'
 import { fullAccessScope } from '@/api/services/access'
-import { enqueueRun, getRun, listEvents, runOnce } from '@/api/services/agents/runs'
-import { executeRun } from '@/api/services/agents/runtime'
+import { listArtifacts } from '@/api/services/agents/artifacts'
+import { listInterrupts, resolveInterrupt } from '@/api/services/agents/interrupts'
+import { AGENTS, type AgentContext, type AnyAgentDefinition } from '@/api/services/agents/registry'
+import {
+  enqueueRun,
+  getRun,
+  listEvents,
+  parkRun,
+  resumeRun,
+  runOnce,
+} from '@/api/services/agents/runs'
+import { executeRun, finishStep } from '@/api/services/agents/runtime'
 import { AiError } from '@/api/services/ai/errors'
 import { searchChunks } from '@/api/services/ai/retrieval'
 import type { ChatClient, ChatParams } from '@/api/services/ai/types'
@@ -28,7 +45,7 @@ import { FakeChatClient, type FakeScript } from '../helpers/ai'
 import { createTestTenantWithUser } from '../helpers/auth'
 import { setupTestDatabase } from '../helpers/db'
 import { createExecutionContext, createTestEnv, stubs, type TestEnv } from '../mocks/bindings'
-import { createFakeWorkflowStep } from '../mocks/cloudflare-workers'
+import { createFakeWorkflowStep, type FakeWorkflowStepOptions } from '../mocks/cloudflare-workers'
 
 const state: { client: ChatClient | null } = { client: null }
 
@@ -86,8 +103,13 @@ async function queuedRun(
   return { run, user, tenant }
 }
 
-async function drive(env: TestEnv, runId: string, tenantId: string) {
-  const { step, calls } = createFakeWorkflowStep()
+async function drive(
+  env: TestEnv,
+  runId: string,
+  tenantId: string,
+  stepOptions: FakeWorkflowStepOptions = {}
+) {
+  const { step, calls, waits, names } = createFakeWorkflowStep(stepOptions)
   const workflow = new AgentRunWorkflow(createExecutionContext(), env)
   // The fake covers `do`/`sleep`; the platform type also declares `sleepUntil`/`waitForEvent`.
   const outcome = await workflow.run(
@@ -99,11 +121,58 @@ async function drive(env: TestEnv, runId: string, tenantId: string) {
     },
     step as unknown as Parameters<AgentRunWorkflow['run']>[1]
   )
-  return { outcome, calls }
+  return { outcome, calls, waits, names }
+}
+
+const originalAgent = AGENTS['summarize-text']
+
+/**
+ * Swap `summarize-text` for an agent written for this test. The kit's own agents do not interrupt
+ * until phase 8 and the registry is keyed by `AgentKey`, so there is no third key to borrow; the
+ * swap is undone after every test and the file is `@vitest-isolate` for it.
+ */
+function installAgent(run: (ctx: AgentContext) => Promise<unknown>): void {
+  AGENTS['summarize-text'] = {
+    meta: { ...originalAgent.meta, inputSchema: z.any(), outputSchema: z.any() },
+    run,
+  } as AnyAgentDefinition
+}
+
+const APPROVAL: AgentInterruptSpec = { kind: 'approval', message: 'Send this email?' }
+
+/**
+ * Approve whatever the run is parked on, from inside the fake's `onWait` — the stand-in for a
+ * person clicking Approve while the instance sits on `step.waitForEvent`. Returning a payload is
+ * what makes the wait resolve rather than time out.
+ */
+function approveOnWait(tenantId: string, runId: string, userId: string) {
+  return async () => {
+    await answerAndResume(tenantId, runId, userId)
+    return { interruptId: 'answered' }
+  }
+}
+
+/** Answer everything this run is waiting on, then un-park it — what the resolve route does. */
+async function answerAndResume(tenantId: string, runId: string, userId: string) {
+  for (const row of await listInterrupts(db, tenantId, runId, 'pending')) {
+    await resolveInterrupt(db, {
+      tenantId,
+      runId,
+      interruptId: row.id,
+      status: 'resolved',
+      payload: { approved: true },
+      resolvedByUserId: userId,
+    })
+  }
+  await resumeRun(db, tenantId, runId)
 }
 
 beforeEach(() => {
   state.client = null
+})
+
+afterEach(() => {
+  AGENTS['summarize-text'] = originalAgent
 })
 
 describe('AgentRunWorkflow', () => {
@@ -116,7 +185,7 @@ describe('AgentRunWorkflow', () => {
     const { outcome, calls } = await drive(env, run.id, tenant.id)
 
     expect(outcome).toEqual({ runId: run.id, status: 'succeeded', error: undefined })
-    expect(calls.map(c => c.name)).toEqual(['claim', 'execute', 'finish'])
+    expect(calls.map(c => c.name)).toEqual(['claim', 'execute#0', 'finish'])
     expect(calls[1]?.config).toEqual({
       retries: { limit: 2, delay: '10 seconds', backoff: 'exponential' },
       timeout: '10 minutes',
@@ -148,6 +217,7 @@ describe('AgentRunWorkflow', () => {
       ['tool.end', 'submit_summary'],
       ['text', undefined],
       ['step', 'summarize', 'done'],
+      ['artifact', undefined],
       ['status', 'succeeded'],
     ])
     expect(events.find(e => e.type === 'text')?.data).toEqual({
@@ -242,7 +312,7 @@ describe('AgentRunWorkflow', () => {
     script([{ error: new AiError('unavailable', 'anthropic_compatible', 'timeout') }])
     const retried = await drive(env, b.run.id, b.tenant.id)
     // The fake step has no retries: execute threw (attempt 1 ≤ EXECUTE_RETRIES), finish settled it.
-    expect(retried.calls.map(c => c.name)).toEqual(['claim', 'execute', 'finish'])
+    expect(retried.calls.map(c => c.name)).toEqual(['claim', 'execute#0', 'finish'])
     expect(retried.outcome.status).toBe('failed')
     const rowB = await getRun(db, b.tenant.id, b.run.id)
     expect(rowB?.status).toBe('failed')
@@ -253,12 +323,24 @@ describe('AgentRunWorkflow', () => {
     ).toBe(true)
   })
 
-  it('index: true stores the summary through ingestText and searchChunks finds it; another tenant finds nothing', async () => {
+  it('index: true asks first, then stores the summary through ingestText; searchChunks finds it and another tenant finds nothing', async () => {
     const env = createTestEnv()
     script([TOOL_TURN])
-    const { run, tenant } = await queuedRun(env, { text: 'Volcanoes erupt.', index: true })
-    const { outcome } = await drive(env, run.id, tenant.id)
+    const { run, tenant, user } = await queuedRun(env, { text: 'Volcanoes erupt.', index: true })
+    // The write is gated on a person: `execute#0` parks on `approve-index`, the wait is answered,
+    // `execute#1` re-enters `run()` and finds the ANSWER on `(run_id, 'approve-index')` (T2).
+    const { outcome, calls, waits } = await drive(env, run.id, tenant.id, {
+      onWait: approveOnWait(tenant.id, run.id, user.id),
+    })
     expect(outcome.status).toBe('succeeded')
+    expect(calls.map(c => c.name)).toEqual(['claim', 'execute#0', 'execute#1', 'finish'])
+    expect(waits.map(w => w.name)).toEqual(['resume#0'])
+    // ONE model call across both attempts: the summarise phase is behind `ctx.once`, so a park is
+    // not a second bill. (`script([TOOL_TURN])` would have thrown on a second call.)
+    const interrupts = await listInterrupts(db, tenant.id, run.id)
+    expect(interrupts.map(i => [i.key, i.kind, i.status])).toEqual([
+      ['approve-index', 'approval', 'resolved'],
+    ])
     const row = await getRun(db, tenant.id, run.id)
     const documentId = (row?.output as { documentId?: string } | null)?.documentId
     expect(documentId).toMatch(/^[0-9a-f-]{36}$/)
@@ -283,6 +365,16 @@ describe('AgentRunWorkflow', () => {
     expect(
       events.filter(e => e.type === 'step' && (e.data as { key: string }).key === 'index')
     ).toHaveLength(2)
+    // Two artifacts, each written exactly once despite `run()` being entered twice: `ctx.artifact`
+    // upserts on `(run_id, key)`.
+    expect(
+      events.filter(e => e.type === 'artifact').map(e => (e.data as { key: string }).key)
+    ).toEqual(['summary', 'summary-document'])
+    const artifacts = await listArtifacts(db, tenant.id, run.id)
+    expect(artifacts.map(a => [a.key, a.kind])).toEqual([
+      ['summary', 'markdown'],
+      ['summary-document', 'document'],
+    ])
 
     const cfg = loadConfig(env)
     const hits = await searchChunks(db, cfg, env, fullAccessScope(tenant.id), {
@@ -300,11 +392,44 @@ describe('AgentRunWorkflow', () => {
     ).toEqual([])
   })
 
+  it('a declined approval cancels the run with error NULL and indexes nothing', async () => {
+    const env = createTestEnv()
+    script([TOOL_TURN])
+    const { run, tenant, user } = await queuedRun(env, { text: 'Volcanoes erupt.', index: true })
+    const { outcome } = await drive(env, run.id, tenant.id, {
+      onWait: async () => {
+        for (const row of await listInterrupts(db, tenant.id, run.id, 'pending')) {
+          await resolveInterrupt(db, {
+            tenantId: tenant.id,
+            runId: run.id,
+            interruptId: row.id,
+            status: 'cancelled',
+            payload: { note: 'Not for the knowledge base' },
+            resolvedByUserId: user.id,
+          })
+        }
+        await resumeRun(db, tenant.id, run.id)
+        return { interruptId: 'declined' }
+      },
+    })
+
+    // `approval` rejects as `cancel_run`, so `ctx.interrupt` throws `InterruptDeclinedError` and
+    // the runtime settles the run. A refusal is a STATUS, not a fault: `error` stays NULL.
+    expect(outcome.status).toBe('cancelled')
+    const row = await getRun(db, tenant.id, run.id)
+    expect(row).toMatchObject({ status: 'cancelled', error: null })
+    expect(await db.select().from(documents).where(eq(documents.tenantId, tenant.id))).toEqual([])
+    // The summary was still produced and is still readable — only the WRITE was refused.
+    expect((await listArtifacts(db, tenant.id, run.id)).map(a => a.key)).toEqual(['summary'])
+  })
+
   it('a retry after the ingest does not index the summary twice (ctx.once)', async () => {
     const env = createTestEnv()
     script([TOOL_TURN, TOOL_TURN])
-    const { run, tenant } = await queuedRun(env, { text: 'Volcanoes erupt.', index: true })
-    const { outcome } = await drive(env, run.id, tenant.id)
+    const { run, tenant, user } = await queuedRun(env, { text: 'Volcanoes erupt.', index: true })
+    const { outcome } = await drive(env, run.id, tenant.id, {
+      onWait: approveOnWait(tenant.id, run.id, user.id),
+    })
     expect(outcome.status).toBe('succeeded')
     const documentIdOf = async () =>
       ((await getRun(db, tenant.id, run.id))?.output as { documentId?: string } | null)?.documentId
@@ -333,8 +458,13 @@ describe('AgentRunWorkflow', () => {
     const effects = await db.query.agentRunEffects.findMany({
       where: eq(agentRunEffects.runId, run.id),
     })
-    expect(effects).toHaveLength(1)
-    expect(effects[0]).toMatchObject({ key: 'index-summary', tenantId: tenant.id })
+    // `index-summary` and `summary` are the agent's; `notify:park:*` is the runtime's once-only
+    // "the approvers have been told" claim over the same ledger.
+    expect(effects.filter(e => e.key === 'index-summary')).toHaveLength(1)
+    expect(effects.map(e => e.key).sort()).toEqual(
+      expect.arrayContaining(['index-summary', 'summary'])
+    )
+    expect(effects.every(e => e.tenantId === tenant.id)).toBe(true)
   })
 
   it('runOnce records a result once per key and replays it, including null', async () => {
@@ -370,5 +500,143 @@ describe('AgentRunWorkflow', () => {
       })
     ).rejects.toThrow('boom')
     expect(close).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('the suspend/resume loop (issue #17)', () => {
+  it('parks, resumes and completes — with a distinct step name per round', async () => {
+    const env = createTestEnv()
+    script([])
+    let entries = 0
+    installAgent(async ctx => {
+      entries += 1
+      const answer = await ctx.interrupt({ key: 'send-it', spec: APPROVAL })
+      return { entries, answer: answer.payload }
+    })
+    const { run, tenant, user } = await queuedRun(env)
+
+    const { outcome, names, waits } = await drive(env, run.id, tenant.id, {
+      // The resolve route's two halves, in the order that matters: the answer is written, and the
+      // row is flipped `awaiting_input → running`, BEFORE the instance is woken (decision 2).
+      onWait: async () => {
+        await answerAndResume(tenant.id, run.id, user.id)
+        return { interruptId: null }
+      },
+    })
+
+    expect(outcome.status).toBe('succeeded')
+    // `run()` really was re-entered from the top, and every step name is its own.
+    expect(entries).toBe(2)
+    expect(names).toEqual(['claim', 'execute#0', 'resume#0', 'execute#1', 'finish'])
+    expect(new Set(names).size).toBe(names.length)
+    expect(waits).toEqual([
+      {
+        name: 'resume#0',
+        type: AGENT_RESUME_EVENT,
+        timeout: loadConfig(env).AGENT_INTERRUPT_TIMEOUT,
+      },
+    ])
+    // T8: a `.` in the event type is `workflow.invalid_event_type` — no fake step would catch it.
+    expect(waits[0]?.type).toBe('agent-resume')
+
+    const row = await getRun(db, tenant.id, run.id)
+    expect(row).toMatchObject({ status: 'succeeded', error: null })
+    expect((row?.output as { answer?: unknown })?.answer).toEqual({ approved: true })
+    // The park cleared itself: nothing is left pending and the checkpoint is scratch space again.
+    expect(await listInterrupts(db, tenant.id, run.id, 'pending')).toEqual([])
+    expect(row?.checkpoint).toBeNull()
+  })
+
+  it('nobody answers: the wait times out and the park settles cancelled with a NULL error', async () => {
+    const env = createTestEnv()
+    script([])
+    installAgent(async ctx => {
+      await ctx.interrupt({ key: 'send-it', spec: APPROVAL })
+      return { never: true }
+    })
+    const { run, tenant } = await queuedRun(env)
+
+    // No `onWait` and no queued events: the fake wait rejects exactly as the platform's timeout does.
+    const { outcome, names } = await drive(env, run.id, tenant.id)
+
+    expect(names).toEqual(['claim', 'execute#0', 'resume#0', 'expire#0', 'finish'])
+    expect(outcome.status).toBe('cancelled')
+    const row = await getRun(db, tenant.id, run.id)
+    // A cancel is a STATUS, not a message: the reason is an event row, `error` stays NULL.
+    expect(row).toMatchObject({ status: 'cancelled', error: null })
+    expect(row?.finishedAt).toBeInstanceOf(Date)
+    const events = await listEvents(db, tenant.id, run.id)
+    expect(events.at(-1)).toMatchObject({
+      type: 'status',
+      data: { status: 'cancelled', reason: 'expired' },
+    })
+    expect(events.some(e => e.type === 'error')).toBe(false)
+    // Nothing is left for anybody to answer.
+    expect(await listInterrupts(db, tenant.id, run.id, 'pending')).toEqual([])
+    expect((await listInterrupts(db, tenant.id, run.id)).map(i => i.status)).toEqual(['expired'])
+  })
+
+  it('an agent that never stops asking is abandoned after MAX_INTERRUPT_ROUNDS, cleanly', async () => {
+    const env = createTestEnv()
+    script([])
+    let asked = 0
+    installAgent(async ctx => {
+      // A NEW key every round, which is the only way past `requestInterrupt`'s create-or-read —
+      // and precisely the runaway this guard exists for.
+      asked += 1
+      await ctx.interrupt({ key: `ask-${asked}`, spec: APPROVAL })
+      return { never: true }
+    })
+    const { run, tenant, user } = await queuedRun(env)
+
+    const { outcome, names } = await drive(env, run.id, tenant.id, {
+      onWait: async () => {
+        await answerAndResume(tenant.id, run.id, user.id)
+        return { interruptId: null }
+      },
+    })
+
+    // It stopped, rather than looping until the step budget ran out.
+    expect(outcome.status).toBe('failed')
+    expect(names.filter(n => n.startsWith('resume#'))).toHaveLength(MAX_INTERRUPT_ROUNDS)
+    expect(names.at(-2)).toBe(`execute#${MAX_INTERRUPT_ROUNDS}`)
+    expect(names.at(-1)).toBe('finish')
+    expect(new Set(names).size).toBe(names.length)
+
+    const row = await getRun(db, tenant.id, run.id)
+    expect(row?.status).toBe('failed')
+    expect(row?.error).toContain(String(MAX_INTERRUPT_ROUNDS))
+    // And the questions nobody will now answer are closed, not left pending forever.
+    expect(await listInterrupts(db, tenant.id, run.id, 'pending')).toEqual([])
+  })
+
+  it('finishStep does not FAIL a parked row (T7) — it expires it', async () => {
+    const env = createTestEnv()
+    script([])
+    installAgent(async ctx => {
+      await ctx.interrupt({ key: 'send-it', spec: APPROVAL })
+      return { never: true }
+    })
+    const { run, tenant } = await queuedRun(env)
+    await drive(env, run.id, tenant.id, { onWait: () => undefined })
+    // Put it back the way the expiry found it, and run the backstop on its own.
+    await db
+      .update(agentRuns)
+      .set({ status: 'running', finishedAt: null })
+      .where(eq(agentRuns.id, run.id))
+    const parked = await parkRun(db, tenant.id, run.id)
+    expect(parked?.status).toBe('awaiting_input')
+
+    const outcome = await finishStep(db, env, fakeLogger(), {
+      runId: run.id,
+      tenantId: tenant.id,
+    })
+
+    expect(outcome.status).not.toBe('failed')
+    expect(outcome).toMatchObject({ runId: run.id, status: 'cancelled', error: undefined })
+    expect(await getRun(db, tenant.id, run.id)).toMatchObject({
+      status: 'cancelled',
+      error: null,
+    })
   })
 })

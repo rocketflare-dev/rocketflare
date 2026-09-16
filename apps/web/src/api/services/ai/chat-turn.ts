@@ -140,6 +140,10 @@ export function streamChatTurn(c: AppContext, params: ChatTurnParams): Response 
           provider: resolved.provider,
           model: resolved.model,
           tools: tools.map(t => t.name),
+          // Chat has no human-in-the-loop path yet (agent RUNS do — issue #17). Declaring it
+          // honestly is the point: a client that reads `supported: true` renders an approve button,
+          // and here that button would do nothing at all.
+          capabilities: { humanInTheLoop: { supported: false } },
         },
       })
       // Only when this model's stream is NOT known to carry tool calls: the adapter then runs one
