@@ -13,6 +13,7 @@
  * a turn on a validation error the model often cannot diagnose. Coerce what is unambiguous; keep
  * the bounds.
  */
+import { serverPlugins } from '../../../../plugins/server'
 import type { Tool } from '../../ai/kit'
 import { getDocumentTool } from './get-document'
 import { listDocumentsTool } from './list-documents'
@@ -23,11 +24,17 @@ export * from './get-document'
 export * from './list-documents'
 export * from './search-knowledge'
 
-/** Every built-in tool a run gets on `ctx.tools`, in the order an agent normally needs them. */
+/**
+ * Every built-in tool a run gets on `ctx.tools`, in the order an agent normally needs them —
+ * followed by whatever the installed plugins add (D31), which is how a plugin makes its own data
+ * answerable without every agent importing it. A plugin tool is built from the same `ctx`, so it
+ * is bound to the run's tenant and access scope like the three above.
+ */
 export function buildAgentTools(ctx: AgentToolContext): Tool[] {
   return [
     searchKnowledgeTool(ctx) as Tool,
     getDocumentTool(ctx) as Tool,
     listDocumentsTool(ctx) as Tool,
+    ...serverPlugins.flatMap(p => p.agentTools?.(ctx) ?? []),
   ]
 }

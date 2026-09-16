@@ -102,3 +102,12 @@ export const RLS_REVOKED_TABLES = [
  * `tenant_feature_overrides`, is policied like any other tenant table.
  */
 export const RLS_EXCLUDED_TABLES = [...RLS_REVOKED_TABLES, 'feature_flags'] as const
+
+/**
+ * An installed plugin declares ITS unpolicied tables through `ServerPlugin.rlsExcludedTables`
+ * (D31), and `tests/api/rls-coverage.test.ts` unions the two — deliberately NOT here. This module
+ * is imported by every schema file and by `drizzle.config.ts`; reading the server barrel from it
+ * would close the cycle `rls.ts → plugins/server.ts → <plugin>/index.ts → db/schema → rls.ts`, and
+ * the list above is built at module scope, so the loser of that race reads `undefined`. The list
+ * has exactly one consumer, and unioning at the consumer costs nothing.
+ */

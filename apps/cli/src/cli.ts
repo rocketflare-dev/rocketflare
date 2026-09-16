@@ -19,6 +19,7 @@ import { CONFIG_KEYS, DEFAULT_SERVER_URL, ENV } from './config'
 import { type CommandContext, createContext } from './context'
 import { CliError, exitCodeFor } from './errors'
 import { BIN_NAME, VERSION } from './package-info'
+import { cliPlugins } from './plugins'
 import { createLogger } from './utils/logger'
 import { formatJson } from './utils/output'
 
@@ -161,5 +162,12 @@ config
   .description('set a config value')
   .action(action((ctx, cmd) => runConfigSet(ctx, cmd.args[0] ?? '', cmd.args[1] ?? '')))
 config.command('path').description('print the config file path').action(action(runConfigPath))
+
+// ---- plugins -------------------------------------------------------------------------------
+
+// Installed plugins register LAST (D31), so `--help` lists the kit's commands first and a plugin's
+// under its own id. They get the same `action()` wrapper, and so the same context, error printer
+// and exit-code mapping as everything above.
+for (const plugin of cliPlugins) plugin.register(program, action)
 
 program.parseAsync(process.argv)

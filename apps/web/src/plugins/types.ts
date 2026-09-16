@@ -1,30 +1,42 @@
 /**
  * The Worker half of a plugin (D31): what a plugin contributes to the server and to the UI.
  *
- * Both interfaces are generic over the plugin's `SharedPlugin` so that, once A2 opens the closed
- * sets, `jobHandlers` and `agents` can be checked for exhaustiveness against the keys that same
- * plugin declared — one plugin's missing handler is then a type error in the plugin, not a runtime
- * dispatch failure in the host.
+ * Both interfaces are generic over the plugin's `SharedPlugin` so that `jobHandlers`, `agents` and
+ * `prompts` are checked for exhaustiveness against the keys that same plugin declared — one
+ * plugin's missing handler is a type error in the plugin, not a runtime dispatch failure in the
+ * host. The host's side of the same bargain is the merged table's cast: each half is checked where
+ * it is declared, and only the join is asserted.
  *
- * Fields marked (A2) are DECLARED but read by nothing yet: the registries they feed
- * (`JOB_TYPES`, `AGENT_KEYS`, `PROMPT_REGISTRY`, the CASL subjects, `FEATURES`, `buildAgentTools`,
- * `SCHEDULED_TASKS`, `RLS_EXCLUDED_TABLES`, the unscoped allow-list) are still closed sets and are
- * opened in the next PR. They are typed as loosely as they are honestly known: a precise-looking
- * type over a slot nothing reads would be a promise the host has not made.
+ * **This file names the agent runtime, which is a deletable surface.** `AnyAgentDefinition`,
+ * `AgentToolContext` and `AgentForm` all live inside `feature-agents`, so this file is listed in
+ * that surface's `registries[]` in `.rocketflare.json`: an adopter who deletes the agent runtime
+ * deletes the four fields below too, exactly as they already delete lines from `worker.ts`,
+ * `api/index.ts` and `App.tsx`. The alternative — restating a structural agent type here so the
+ * seam survives on its own — was rejected because it buys nothing: the real types are what makes
+ * `agents: Record<AgentKeyOf<S>, …>` an exhaustiveness check rather than a shape a plugin can get
+ * subtly wrong, and a restated one would be a second definition to keep in step.
  */
 
-import type { SharedPlugin } from '@rocketflare/shared/plugins'
+import type { PromptDefinition } from '@rocketflare/shared/ai/prompts'
+import type { JobType } from '@rocketflare/shared/jobs'
+import type { EffectiveRole } from '@rocketflare/shared/permissions'
+import type { AgentKeyOf, JobTypeOf, PromptKeyOf, SharedPlugin } from '@rocketflare/shared/plugins'
 import type { Hono, MiddlewareHandler } from 'hono'
 import type { ComponentType, LazyExoticComponent } from 'react'
+import type { JobHandler } from '../api/queues/jobs'
 import type { ScheduledTask } from '../api/scheduled'
 import type { VisibilityResource } from '../api/services/access'
+import type { AnyAgentDefinition } from '../api/services/agents/registry'
+import type { AgentToolContext } from '../api/services/agents/tools'
 import type { Tool } from '../api/services/ai/kit'
 import type { AppEnv } from '../api/types'
 import type { Database } from '../db/client'
 import type { Tenant } from '../db/schema'
+import type { RoleGrant } from '../permissions/abilities'
 import type { NavItem } from '../ui/components/SideNav'
 import type { TabConfig } from '../ui/components/shared'
 import type { NavGuard } from '../ui/hooks/useNavGuard'
+import type { AgentForm } from '../ui/pages/agents/forms'
 
 /** One entry of the mount table in `api/index.ts`: prefix, router, optional gate. */
 export type PluginMount = readonly [string, Hono<AppEnv>, MiddlewareHandler?]
@@ -62,37 +74,36 @@ export interface ServerPlugin<S extends SharedPlugin = SharedPlugin> {
    * `run_worker_first` in both tomls by hand; the parity test is what catches a forgotten one.
    */
   apiPrefixes?: readonly string[]
-  /** (A2) `type` → handler, for the job variants `shared.jobs` declares. */
-  jobHandlers?: Readonly<Record<string, unknown>>
   /**
-   * (A2) Agent definitions for the keys in `shared.agentKeys`.
-   *
-   * `unknown`, not `AnyAgentDefinition`: that type lives in `api/services/agents/**`, which is the
-   * `feature-agents` SURFACE — an adopter may delete it, and the plugin seam itself must still
-   * typecheck when they do. A2 owns the shape and has to pick one that survives that deletion:
-   * either list this file in the surface's `registries[]` so the deletion is a decision somebody
-   * takes, or declare a structural agent type outside the surface. The same applies to
-   * `agentTools` below.
+   * `type` → handler, covering EXACTLY the job variants `shared.jobs` declares. Merged into the
+   * consumer's dispatch table; each handler gets its own DB client and awaits everything, like the
+   * kit's own (there is no `waitUntil` in a queue consumer).
    */
-  agents?: Readonly<Record<string, unknown>>
-  /** (A2) Prompt registry entries for the keys in `shared.promptKeys`. */
-  prompts?: Readonly<Record<string, unknown>>
+  jobHandlers?: { [T in JobTypeOf<S> & string]: JobHandler<Extract<T, JobType>> }
+  /** Agent definitions, one per key in `shared.agentKeys`. */
+  agents?: { [K in AgentKeyOf<S> & string]: AnyAgentDefinition }
+  /** Prompt registry entries, one per key in `shared.promptKeys`. */
+  prompts?: { [K in PromptKeyOf<S> & string]: PromptDefinition }
   /**
-   * (A2) Tools added to every agent run, beside the kit's knowledge tools. `Tool` is core
-   * (`services/ai/kit.ts`), but its CONTEXT is not — `AgentToolContext` is inside `feature-agents`
-   * — so the parameter is `never` here: a concrete `(ctx: AgentToolContext) => Tool[]` is
-   * assignable to it, and the host cannot call it, which is exactly the state of a slot nothing
-   * reads yet. A2 replaces this with a real context type (see `agents` above).
+   * Tools added to every agent run, beside the kit's three knowledge tools. Bound to the run's
+   * access scope, so a plugin tool reads what its REQUESTER may read and nothing more.
    */
-  agentTools?: (ctx: never) => Tool[]
-  /** (A2) Cron expression → tasks, merged into `SCHEDULED_TASKS`. Also needs both tomls. */
+  agentTools?: (ctx: AgentToolContext) => Tool[]
+  /**
+   * Cron expression → tasks, merged into `SCHEDULED_TASKS` (tasks on a cron the kit already runs
+   * are appended after the kit's). A cron the kit does NOT run must also be added to `[triggers]`
+   * in BOTH tomls by hand — the parity test is what catches a forgotten one.
+   */
   scheduledTasks?: Readonly<Record<string, ScheduledTask[]>>
-  /** (A2) Per-role CASL rules, applied after the kit's own matrix. */
-  grants?: Readonly<Record<string, unknown>>
-  /** (A2) Plugin tables with no `tenant_id`, for `RLS_EXCLUDED_TABLES`. */
+  /** Per-role CASL rules, applied after the kit's own matrix — additive, never a replacement. */
+  grants?: Partial<Record<EffectiveRole, RoleGrant>>
+  /** Plugin tables with no `tenant_id`, unioned into `RLS_EXCLUDED_TABLES` with a reason each. */
   rlsExcludedTables?: readonly string[]
-  /** (A2) Functions the cross-tenant allow-list scan may skip, each with a written reason. */
-  unscopedAllowlist?: readonly string[]
+  /**
+   * Source files the cross-tenant allow-list scan may skip, keyed the way that test keys its own:
+   * a path relative to `apps/web/` (`src/plugins/<id>/…`) mapped to the REASON it is correct.
+   */
+  unscopedAllowlist?: Readonly<Record<string, string>>
   /** D29: rows of this plugin that a group may restrict. Read by `services/access.ts`. */
   visibilityResources?: readonly VisibilityResource[]
   hooks?: {
@@ -142,8 +153,11 @@ export interface UiPlugin<S extends SharedPlugin = SharedPlugin> {
   settingsTabs?: (ctx: { can: (action: string, subject: string) => boolean }) => TabConfig[]
   /** Families merged into `queryKeys`; every root must start with `<id>:`. */
   queryKeys?: Readonly<Record<string, unknown>>
-  /** (A2) `AGENT_FORMS` entries for the agents this plugin registers. */
-  agentForms?: Readonly<Record<string, unknown>>
+  /**
+   * `AGENT_FORMS` entries for the agents this plugin registers. Optional per agent: `formFor`
+   * falls back to a form generated from the agent's own JSON Schema, then to a JSON textarea.
+   */
+  agentForms?: Readonly<Partial<Record<AgentKeyOf<S> & string, AgentForm>>>
 }
 
 /** The element type of the barrels — a plugin whose shared half is not narrowed. */

@@ -29,6 +29,7 @@
  */
 import { z } from 'zod'
 import { FEATURES, type FeatureName } from './permissions'
+import { sharedPlugins } from './plugins'
 
 /** Platform state of a flag. `off` and `rollout` at 0% are the same OUTCOME, not the same intent. */
 export const FEATURE_FLAG_STATES = ['off', 'on', 'rollout'] as const
@@ -59,13 +60,13 @@ export interface FeatureDefinition {
 }
 
 /**
- * Every flag this app ships. Keys come from `FEATURES` in `permissions.ts`, so a typo anywhere that
- * gates on one is a type error rather than a route that 404s for ever.
+ * Every flag the KIT ships. Keys come from `CORE_FEATURES` in `permissions.ts`, so a typo anywhere
+ * that gates on one is a type error rather than a route that 404s for ever.
  *
  * `example-feature` is the kit's inert demonstration — it gates one nav item and nothing else.
- * Delete its line here and in `FEATURES` when you add your own.
+ * Delete its line here and in `CORE_FEATURES` when you add your own.
  */
-export const FEATURE_FLAGS: Record<FeatureName, FeatureDefinition> = {
+export const CORE_FEATURE_FLAGS = {
   'example-feature': {
     label: 'Example feature',
     description:
@@ -75,7 +76,21 @@ export const FEATURE_FLAGS: Record<FeatureName, FeatureDefinition> = {
     defaultRolloutUnit: 'tenant',
     environmentGated: false,
   },
-}
+} satisfies Record<string, FeatureDefinition>
+
+/**
+ * Core flags plus every installed plugin's (D31). `SharedPlugin.features` is typed against the
+ * `FeatureDefinition` above — `plugins/**` may not import this module at RUNTIME, but a
+ * whole-declaration `import type` is erased and so is fine — which means there is ONE definition of
+ * a flag's shape, and a plugin that gets it wrong fails in its own file rather than here.
+ */
+export const FEATURE_FLAGS = {
+  ...CORE_FEATURE_FLAGS,
+  ...(Object.assign({}, ...sharedPlugins.map(p => p.features ?? {})) as Record<
+    string,
+    FeatureDefinition
+  >),
+} as Record<FeatureName, FeatureDefinition>
 
 export const FEATURE_KEYS = Object.keys(FEATURE_FLAGS) as FeatureName[]
 

@@ -9,6 +9,7 @@ import { getTableConfig, PgTable } from 'drizzle-orm/pg-core'
 import { describe, expect, it } from 'vitest'
 import * as schema from '@/db/schema'
 import { APP_ROLE, RLS_EXCLUDED_TABLES, RLS_REVOKED_TABLES } from '@/db/schema/rls'
+import { serverPlugins } from '@/plugins/server'
 import { setupTestDatabase } from '../helpers/db'
 
 const db = setupTestDatabase()
@@ -89,17 +90,27 @@ describe('row-level security coverage', () => {
     }
   })
 
+  /**
+   * The kit's exclusions plus every installed plugin's (D31). The union lives here rather than in
+   * `rls.ts`, which every schema file imports and which must not read the server barrel — see the
+   * note beside `RLS_EXCLUDED_TABLES`.
+   */
+  const excluded = [
+    ...RLS_EXCLUDED_TABLES,
+    ...serverPlugins.flatMap(p => p.rlsExcludedTables ?? []),
+  ]
+
   it('the unpolicied tables are exactly RLS_EXCLUDED_TABLES', async () => {
     const unpolicied = await rows<{ name: string }>(sql`
       SELECT t.table_name::text AS name FROM information_schema.tables t
       WHERE t.table_schema = 'public' AND t.table_type = 'BASE TABLE'
         AND NOT EXISTS (SELECT 1 FROM pg_policies p WHERE p.schemaname = 'public' AND p.tablename = t.table_name)`)
-    expect(unpolicied.map(r => r.name).sort()).toEqual([...RLS_EXCLUDED_TABLES].sort())
+    expect(unpolicied.map(r => r.name).sort()).toEqual([...excluded].sort())
     // Excluded tables have no tenant_id — otherwise they would need a policy.
     const withTenant = await rows<{ name: string }>(sql`
       SELECT table_name::text AS name FROM information_schema.columns
       WHERE table_schema = 'public' AND column_name = 'tenant_id'
-        AND table_name::text = ANY(${textArray(RLS_EXCLUDED_TABLES)})`)
+        AND table_name::text = ANY(${textArray(excluded)})`)
     expect(withTenant).toEqual([])
   })
 

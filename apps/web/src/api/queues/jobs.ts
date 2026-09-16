@@ -6,9 +6,15 @@
  * `max_retries`). Each message gets its own DB client, closed in `finally` — there is no
  * `waitUntil` in a queue consumer, everything is awaited.
  */
-import { type JobEnvelope, type JobType, jobEnvelopeSchema } from '@rocketflare/shared/jobs'
+import {
+  type CoreJobType,
+  type JobEnvelope,
+  type JobType,
+  jobEnvelopeSchema,
+} from '@rocketflare/shared/jobs'
 import type { AppConfig } from '../../config'
 import { createDatabase, type DatabaseHandle, resolveDatabaseUrl } from '../../db/client'
+import { serverPlugins } from '../../plugins/server'
 import type { AppBindings } from '../types'
 import type { Logger } from '../utils/core/logger'
 import { handleActivityRecord } from './handlers/activity-record'
@@ -39,8 +45,13 @@ export interface JobsConsumerDeps {
   createDb?: () => DatabaseHandle
 }
 
-/** The type → handler table. Adding a job type = the shared schema variants + an entry here + a `runHandler` case. */
-const handlers: { [T in JobType]: JobHandler<T> } = {
+/**
+ * The type → handler table. Adding a job type = a variant in `CORE_JOB_VARIANTS` (shared) + a
+ * `queues/handlers/<name>.ts` + one entry here. The mapped type is the completeness check: a
+ * variant with no handler is a compile error in THIS object, which is why there is no `switch`
+ * beside it repeating the same list.
+ */
+const coreHandlers: { [T in CoreJobType]: JobHandler<T> } = {
   'email.send': handleEmailSend,
   'activity.record': handleActivityRecord,
   'example.ping': handleExamplePing,
@@ -48,6 +59,20 @@ const handlers: { [T in JobType]: JobHandler<T> } = {
   'document.convert': handleDocumentConvert,
   'chat.compact': handleChatCompact,
 }
+
+/**
+ * Core handlers plus every installed plugin's (D31). The two halves are checked where each is
+ * DECLARED — the kit's against `CoreJobType` above, a plugin's against the job types that same
+ * plugin declared (`ServerPlugin.jobHandlers` is `{ [T in JobTypeOf<S>]: JobHandler<T> }`) — so the
+ * merge is the one place neither half can prove the other, and the cast says exactly that.
+ */
+const handlers = {
+  ...coreHandlers,
+  ...(Object.assign({}, ...serverPlugins.map(p => p.jobHandlers ?? {})) as Record<
+    string,
+    JobHandler<JobType>
+  >),
+} as { [T in JobType]: JobHandler<T> }
 
 /** First retry after 30 s, doubling, capped at 15 min. The toml's `retry_delay` is the floor. */
 export const BACKOFF_BASE_SECONDS = 30
@@ -99,7 +124,10 @@ async function processMessage(
   const handle = createDb()
   try {
     const ctx: JobContext = { env: deps.env, config: deps.config, logger, db: handle.db }
-    await runHandler(job, ctx)
+    // `job` is the union and `handlers[job.type]` the matching handler, but TypeScript pairs them
+    // only by widening both to their union — which makes the CALL the intersection of every
+    // handler's parameter. The table's mapped type is what keeps the pairing honest.
+    await handlers[job.type](job as never, ctx)
     message.ack()
     logger.info('jobs: done')
   } catch (err) {
@@ -108,23 +136,5 @@ async function processMessage(
     message.retry({ delaySeconds })
   } finally {
     await handle.close()
-  }
-}
-
-/** Narrow once so each handler is typed to its own payload. */
-function runHandler(job: JobEnvelope, ctx: JobContext): Promise<void> {
-  switch (job.type) {
-    case 'email.send':
-      return handlers['email.send'](job, ctx)
-    case 'activity.record':
-      return handlers['activity.record'](job, ctx)
-    case 'example.ping':
-      return handlers['example.ping'](job, ctx)
-    case 'document.index':
-      return handlers['document.index'](job, ctx)
-    case 'chat.compact':
-      return handlers['chat.compact'](job, ctx)
-    case 'document.convert':
-      return handlers['document.convert'](job, ctx)
   }
 }

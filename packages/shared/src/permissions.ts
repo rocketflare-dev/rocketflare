@@ -7,6 +7,7 @@
 import type { MongoAbility, RawRuleOf } from '@casl/ability'
 import type { PackRule } from '@casl/ability/extra'
 import { z } from 'zod'
+import { type SHARED_PLUGINS, sharedPlugins } from './plugins'
 import { type MembershipRole, membershipRoleSchema } from './tenants'
 
 export const ACTIONS = ['manage', 'create', 'read', 'update', 'delete', 'access'] as const
@@ -59,16 +60,31 @@ export type FeatureSubject = `Feature:${string}`
 export const featureSubject = (feature: string): FeatureSubject => `Feature:${feature}`
 
 /**
- * Every feature key this app knows (D30). Code, not data: a key that no code reads does nothing,
+ * Every feature key the KIT ships (D30). Code, not data: a key that no code reads does nothing,
  * so inventing one at runtime buys nothing, while a registry makes `requireFeature('new-reprots')`
  * a TYPE ERROR instead of a route that 404s for ever. Adding a flag is a line here plus its
  * metadata in `features.ts` — no migration. Retiring one: delete the gate from the code, deploy,
- * then delete the line. Append-only in spirit; the metadata registry is keyed on this.
+ * then delete the line. Append-only in spirit; the metadata registry is keyed on this. A plugin
+ * brings its own through `SharedPlugin.features`, which is where both halves arrive together.
  */
-export const FEATURES = ['example-feature'] as const
+export const CORE_FEATURES = ['example-feature'] as const
+
+type PluginFeatureKey = Extract<
+  keyof NonNullable<(typeof SHARED_PLUGINS)[number]['features']>,
+  string
+>
+
+/** Core keys plus every installed plugin's (D31); `featureNameSchema` is a `z.enum` over it. */
+export const FEATURES = [
+  ...CORE_FEATURES,
+  ...(sharedPlugins.flatMap(p => Object.keys(p.features ?? {})) as PluginFeatureKey[]),
+] as const
 export type FeatureName = (typeof FEATURES)[number]
 
-export type Subjects = CoreSubject | FeatureSubject
+/** Subjects an installed plugin adds (D31) — its own nouns, granted by `ServerPlugin.grants`. */
+export type PluginSubject = NonNullable<(typeof SHARED_PLUGINS)[number]['subjects']>[number]
+
+export type Subjects = CoreSubject | PluginSubject | FeatureSubject
 
 export type AppAbility = MongoAbility<[Actions, Subjects]>
 

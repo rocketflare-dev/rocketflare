@@ -19,6 +19,7 @@ import {
   type Role,
   type Subjects,
 } from '@rocketflare/shared/permissions'
+import { serverPlugins } from '../plugins/server'
 
 type Can = AbilityBuilder<AppAbility>['can']
 type Cannot = AbilityBuilder<AppAbility>['cannot']
@@ -134,7 +135,13 @@ export function getEffectiveRole(session: {
 export function buildAbility(ctx: AbilityContext): AppAbility {
   const { can, cannot, build } = new AbilityBuilder<AppAbility>(createMongoAbility)
   const effective = getEffectiveRole(ctx)
-  if (effective) rolePermissions[effective](can, cannot, ctx)
+  if (effective) {
+    rolePermissions[effective](can, cannot, ctx)
+    // A plugin's rules run AFTER the kit's, over its OWN subjects (D31). Additive only: CASL has
+    // no way to take a rule back except `cannot`, and a plugin that revoked a kit grant would
+    // change what every role may do by being installed.
+    for (const plugin of serverPlugins) plugin.grants?.[effective]?.(can, cannot, ctx)
+  }
   applyFeatureFlags(can, ctx.features)
   return build()
 }

@@ -26,13 +26,14 @@ import { getTableConfig, PgTable } from 'drizzle-orm/pg-core'
 import ts from 'typescript'
 import { describe, expect, it } from 'vitest'
 import * as schema from '@/db/schema'
+import { serverPlugins } from '@/plugins/server'
 import { sourceFiles, WEB_ROOT } from '../helpers/source-files'
 
 /**
  * Files with a query on a tenant table inside a function that never names a tenant, and why each
  * is correct. Adding an entry is a design decision — say so in the PR; it is not a refactor.
  */
-const UNSCOPED_ALLOWLIST: Record<string, string> = {
+const CORE_UNSCOPED_ALLOWLIST: Record<string, string> = {
   'src/api/auth/api-keys.ts':
     'touchApiKeyUsage stamps last_used_at by primary key on a key that has already authenticated (and which carries its own tenantId)',
   'src/api/services/auth.ts':
@@ -41,6 +42,17 @@ const UNSCOPED_ALLOWLIST: Record<string, string> = {
     'deleteStoredFile removes a row by primary key that its caller already resolved under the tenant predicate',
   'src/api/services/invitations.ts':
     'pruneInvitations is the nightly cron: expired invitations are deleted across every tenant, which is the job',
+}
+
+/**
+ * Plus every installed plugin's own exceptions (D31), keyed exactly the same way — a path relative
+ * to `apps/web/` (so `src/plugins/<id>/…`) mapped to the reason it is correct. The scan already
+ * walks `src/**`, so a plugin's files are checked like the kit's; what a plugin cannot do is add a
+ * line to a kit test file, which is why the reason travels with the plugin instead.
+ */
+const UNSCOPED_ALLOWLIST: Record<string, string> = {
+  ...CORE_UNSCOPED_ALLOWLIST,
+  ...Object.assign({}, ...serverPlugins.map(p => p.unscopedAllowlist ?? {})),
 }
 
 /** Anything in an enclosing statement that shows the query knows about a tenant. */
@@ -165,14 +177,15 @@ describe('cross-tenant query allow-list', () => {
       offenders.filter(f => !(f in UNSCOPED_ALLOWLIST)),
       `A query on a tenant table must filter by tenantId from the auth context.\n${detail}\n` +
         'If it is genuinely cross-tenant, that is a design decision: add the file to ' +
-        'UNSCOPED_ALLOWLIST in this test WITH A REASON, and say so in the PR.'
+        'CORE_UNSCOPED_ALLOWLIST in this test (or, in a plugin, to its own ' +
+        'ServerPlugin.unscopedAllowlist) WITH A REASON, and say so in the PR.'
     ).toEqual([])
 
     // The other direction: an entry that no longer needs to be here is removed, so the list
     // stays a true statement about the code rather than a historical one.
     expect(
       allowed.filter(f => !offenders.includes(f)),
-      'These files no longer query a tenant table unscoped — drop them from UNSCOPED_ALLOWLIST.'
+      'These files no longer query a tenant table unscoped — drop them from the allow-list.'
     ).toEqual([])
   })
 })

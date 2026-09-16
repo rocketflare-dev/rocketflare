@@ -22,10 +22,10 @@
         "apps/web/tests/api/agent-run-workflow.test.ts"
       ],
       "registries": [
-        "apps/web/src/api/services/agents/registry.ts#AGENTS",
-        "packages/shared/src/ai/agents.ts#AGENT_KEYS",
-        "apps/web/src/api/services/prompts.ts#PROMPT_REGISTRY",
-        "apps/web/src/ui/pages/agents/forms/index.ts#AGENT_FORMS"
+        "apps/web/src/api/services/agents/registry.ts#CORE_AGENTS",
+        "packages/shared/src/ai/agents.ts#CORE_AGENT_KEYS",
+        "apps/web/src/api/services/prompts.ts#CORE_PROMPT_REGISTRY",
+        "apps/web/src/ui/pages/agents/forms/index.ts#CORE_AGENT_FORMS"
       ]
     },
     {
@@ -39,10 +39,10 @@
         "apps/web/tests/api/agent-research.test.ts"
       ],
       "registries": [
-        "apps/web/src/api/services/agents/registry.ts#AGENTS",
-        "packages/shared/src/ai/agents.ts#AGENT_KEYS",
-        "apps/web/src/api/services/prompts.ts#PROMPT_REGISTRY",
-        "apps/web/src/ui/pages/agents/forms/index.ts#AGENT_FORMS"
+        "apps/web/src/api/services/agents/registry.ts#CORE_AGENTS",
+        "packages/shared/src/ai/agents.ts#CORE_AGENT_KEYS",
+        "apps/web/src/api/services/prompts.ts#CORE_PROMPT_REGISTRY",
+        "apps/web/src/ui/pages/agents/forms/index.ts#CORE_AGENT_FORMS"
       ]
     },
     {
@@ -52,8 +52,8 @@
       "anchor": "apps/web/src/api/queues/handlers/example-ping.ts",
       "paths": ["apps/web/src/api/queues/handlers/example-ping.ts"],
       "registries": [
-        "apps/web/src/api/queues/jobs.ts#handlers",
-        "packages/shared/src/jobs.ts#JOB_TYPES"
+        "apps/web/src/api/queues/jobs.ts#coreHandlers",
+        "packages/shared/src/jobs.ts#CORE_JOB_VARIANTS"
       ]
     },
     {
@@ -141,7 +141,8 @@
       "registries": [
         "apps/web/src/worker.ts",
         "apps/web/src/api/index.ts",
-        "apps/web/src/ui/App.tsx"
+        "apps/web/src/ui/App.tsx",
+        "apps/web/src/plugins/types.ts#ServerPlugin.agents"
       ]
     },
     {

@@ -18,6 +18,7 @@ import type { AgentArtifact, AgentArtifactInput } from '@rocketflare/shared/ai/a
 import type { AgentInterruptSpec, AgentSteeringNote } from '@rocketflare/shared/ai/interrupts'
 import type { AppConfig } from '../../../config'
 import type { Database } from '../../../db/client'
+import { serverPlugins } from '../../../plugins/server'
 import type { Tracer } from '../../observability/tracer'
 import type { Logger } from '../../utils/core/logger'
 import { type Tool, type ToolApproval, type ToolLoopCheckpoint, toolInputSchema } from '../ai/kit'
@@ -171,10 +172,24 @@ export interface AgentDefinition<Input = unknown, Output = unknown> {
 // biome-ignore lint/suspicious/noExplicitAny: the catalog mixes agent input/output types.
 export type AnyAgentDefinition = AgentDefinition<any, any>
 
-export const AGENTS: Record<AgentKey, AnyAgentDefinition> = {
+/** The kit's own agents. A plugin adds its own through `ServerPlugin.agents`. */
+const CORE_AGENTS = {
   'summarize-text': summarizeTextAgent,
   'research-topic': researchTopicAgent,
-}
+} satisfies Record<string, AnyAgentDefinition>
+
+/**
+ * Core plus every installed plugin's (D31). `AGENT_KEYS` already carries a plugin's keys, and the
+ * plugin's own `agents` is checked against the keys IT declared — so the only thing this merge
+ * asserts is that the two halves together cover the union.
+ */
+export const AGENTS = {
+  ...CORE_AGENTS,
+  ...(Object.assign({}, ...serverPlugins.map(p => p.agents ?? {})) as Record<
+    string,
+    AnyAgentDefinition
+  >),
+} as Record<AgentKey, AnyAgentDefinition>
 
 export function getAgent(key: AgentKey): AnyAgentDefinition {
   return AGENTS[key]

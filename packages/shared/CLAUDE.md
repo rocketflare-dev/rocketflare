@@ -31,10 +31,14 @@ UI warns, it does not block) · Phase 2 (server ⇄ UI, no HTTP):
 `realtime.ts` — `realtimeEventSchema` `{ type, tenantId, at, payload? }`, `realtimeEventTypeSchema`,
 `REALTIME_INVALIDATIONS` (event type → TanStack query-key roots) + `invalidationsFor()` (D8; it is
 one of the five composers — it unions each plugin's `realtimeRoots` into `access.changed`) ·
-`plugins/types.ts` + `plugins/index.ts` (D31) — `SharedPlugin`, `PLUGIN_ID_RE`/`isPluginId`, and the
-`SHARED_PLUGINS` barrel one line per installed plugin is written into; **leaf-only, see Rules** ·
-`jobs.ts` — `JOB_TYPES`, per-type payload schemas, `jobInputSchema` (what `enqueueJob` takes),
-`jobEnvelopeSchema` (`+ id, enqueuedAt, attempt?`, what the consumer parses), `JobOf<T>` (D7) ·
+`plugins/types.ts` + `plugins/index.ts` (D31) — `SharedPlugin`, `PLUGIN_ID_RE`/`isPluginId`, the
+`SHARED_PLUGINS` barrel one line per installed plugin is written into, and the per-plugin
+derivations the composers read (`JobTypeOf`, `AgentKeyOf`, `PromptKeyOf`, `SubjectOf`,
+`FeatureKeyOf`); **no runtime import of a composer, see Rules** ·
+`jobs.ts` — per-type payload schemas and `CORE_JOB_VARIANTS`, the ONE list everything else is
+DERIVED from (D31): `JOB_VARIANTS` = core + every plugin's, `jobInputSchema` (what `enqueueJob`
+takes), `jobEnvelopeSchema` (`+ id, enqueuedAt, attempt?`, what the consumer parses), `JobType` /
+`CoreJobType` / `JOB_TYPES`, `JobOf<T>` (D7) ·
 `files.ts` — `FILE_SCOPES`/`fileScopeSchema`, `MAX_UPLOAD_BYTES`, `AVATAR_MIME_TYPES`/`isAvatarMimeType`,
 `INLINE_MIME_TYPES`/`isInlineMimeType` (served `Content-Disposition: inline`) and
 `EMBEDDABLE_MIME_TYPES`/`isEmbeddableMimeType` (may ALSO be framed) — two lists on purpose, because
@@ -122,9 +126,10 @@ contract, consumed through `drizzle-cube/client` — no schema here. Known gap: 
 Adding an interrupt kind: the literal in `AGENT_INTERRUPT_KINDS` + an ask variant in
 `agentInterruptSpecSchema` + a payload schema + arms in `INTERRUPT_REJECTION`, `AGUI_REASON_FOR_KIND`
 and `interruptPayloadSchema` (all four are exhaustive, so the compiler is the checklist) + one UI
-branch. Adding a job type: a payload schema + a variant in BOTH `jobInputSchema` and `jobEnvelopeSchema` +
-the literal in `JOB_TYPES` (then the handler table in `apps/web/src/api/queues/jobs.ts`). Adding an
-agent: the key in `AGENT_KEYS` + its input/output schemas in `ai/agents.ts` (then the prompt, the
+branch. Adding a job type: a payload schema + ONE variant in `CORE_JOB_VARIANTS` (both unions and both
+type lists follow from it) + an entry in `coreHandlers` (`apps/web/src/api/queues/jobs.ts`); there
+is no `runHandler` switch to keep in step, because the handler table's mapped type is the check. Adding an
+agent: the key in `CORE_AGENT_KEYS` + its input/output schemas in `ai/agents.ts` (then the prompt, the
 definition and the `AGENTS` entry server-side — `docs/ADAPTING.md` §3). Adding an AI provider: the
 value in `AI_PROVIDERS` + `DEFAULT_MODELS` (mirrored in `apps/web/src/db/schema/ai-configs.ts`); a
 vendor on an existing wire format is a `PROVIDER_PRESETS` entry only. Adding a streamed event: an AG-UI type in
@@ -148,12 +153,16 @@ entry in `api/services/access.ts` — never infer "restricted" from the presence
   where nothing needs to validate a `DashboardConfig`) would mean two sources of truth. A fifth
   dependency needs the same written justification here and in the root `CLAUDE.md`;
   `apps/web/tests/config/shared-imports.test.ts` is the check
-- **`plugins/**` is LEAF-ONLY (D31).** `plugins/types.ts`, `plugins/index.ts` and every installed
-  plugin's `plugins/<id>/index.ts` may import zod and leaf contract files, and **never one of the
-  five composers — `ai/agents.ts`, `jobs.ts`, `permissions.ts`, `features.ts`, `realtime.ts`**.
-  Those five read the plugin barrel to open their closed sets (agent keys, job variants, subjects,
-  feature keys, the `access.changed` roots), so a plugin module importing one back closes a cycle
-  through `plugins/index.ts` — and two zod modules in a cycle crash at module evaluation, not at
-  compile time. A2 adds the check to `apps/web/tests/config/shared-imports.test.ts`
+- **`plugins/**` never imports one of the five composers AT RUNTIME (D31).** The five are
+  `ai/agents.ts`, `jobs.ts`, `permissions.ts`, `features.ts` and `realtime.ts`; each reads the
+  plugin barrel to open a closed set (agent keys, job variants, subjects, feature keys, the
+  `access.changed` roots), so a plugin module importing one back closes a cycle through
+  `plugins/index.ts` — and two zod modules in a cycle crash at module evaluation, not at compile
+  time. **A whole-declaration `import type { X } from` is fine**: it is erased before anything
+  evaluates, and it is how `SharedPlugin.features` is typed against the one `FeatureDefinition`
+  rather than a restatement that drifts. **`import { type X } from` is not** — eliding every
+  specifier leaves an empty import clause, and whether that survives as a bare side-effect import is
+  the bundler's decision rather than ours. `apps/web/tests/config/shared-imports.test.ts` checks all
+  three spellings
 - `tenantRoleSchema` (assignable) on every input; `membershipRoleSchema` (+`support`) on outputs only
 - Server code imports via `@rocketflare/shared/*`; UI too. Re-export every file from `index.ts`

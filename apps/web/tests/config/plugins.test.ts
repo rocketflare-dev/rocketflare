@@ -11,7 +11,9 @@
  *   - nothing reaches INTO a plugin except through its published entries, so a plugin's semver
  *     means something;
  *   - a plugin's `ui.ts` imports nothing heavy and reaches its pages only through `lazy()`, so
- *     installing a plugin cannot quietly move its pages into the main bundle.
+ *     installing a plugin cannot quietly move its pages into the main bundle;
+ *   - the closed sets a plugin opens are still OPEN at the type level (the `expectTypeOf` block at
+ *     the end), which is the one property no runtime assertion can reach.
  *
  * Every check is a pure function over strings, exercised here with fixtures AND run over whatever
  * is installed. With no plugins installed the second half is vacuous — which is why the fixtures
@@ -20,10 +22,21 @@
 import { execFileSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
-import { isPluginId } from '@rocketflare/shared/plugins'
-import { describe, expect, it } from 'vitest'
+import type { AgentKey } from '@rocketflare/shared/ai/agents'
+import type { CoreJobType, JobOf, JobType } from '@rocketflare/shared/jobs'
+import type { Subjects } from '@rocketflare/shared/permissions'
+import {
+  type AgentKeyOf,
+  type FeatureKeyOf,
+  isPluginId,
+  type JobTypeOf,
+  type SharedPlugin,
+} from '@rocketflare/shared/plugins'
+import { describe, expect, expectTypeOf, it } from 'vitest'
+import { z } from 'zod'
 import { SERVER_PLUGINS, serverPlugins } from '@/plugins/server'
 import { UI_PLUGINS, uiPlugins } from '@/plugins/ui'
+import { queryKeys } from '@/ui/lib/query-keys'
 import {
   deepImportIssue,
   isPluginEntry,
@@ -193,5 +206,66 @@ describe('installed plugins', () => {
       uiEntryIssues(f, readFileSync(path.join(REPO_ROOT, f), 'utf8'))
     )
     expect(issues).toEqual([])
+  })
+})
+
+// ---- the closed sets, at the type level ---------------------------------------------------------
+
+/**
+ * `expectTypeOf` compiles to nothing, so these run in `pnpm typecheck` rather than in vitest — which
+ * is where they belong: what they assert is that the derivations survive, not that a function
+ * returns the right value.
+ *
+ * With no plugins installed the first half pins the CORE shape (a closed set that quietly widened
+ * to `string` would still pass every runtime test in the repo). The second half is the half that
+ * means something: a FICTIONAL plugin, declared exactly as a real one is, showing that its keys
+ * reach `JobTypeOf` / `AgentKeyOf` / `FeatureKeyOf` — the machinery `SHARED_PLUGINS` feeds once a
+ * line is written into the barrel.
+ */
+describe('the closed sets a plugin opens', () => {
+  it('still name the kit exactly, with nothing installed', () => {
+    expectTypeOf<JobType>().toEqualTypeOf<CoreJobType>()
+    expectTypeOf<JobType>().toEqualTypeOf<
+      | 'email.send'
+      | 'activity.record'
+      | 'example.ping'
+      | 'document.index'
+      | 'document.convert'
+      | 'chat.compact'
+    >()
+    // The envelope narrows per type — what a handler is handed, and the reason `runHandler`'s
+    // switch could go: this is the property that switch existed to provide.
+    expectTypeOf<JobOf<'chat.compact'>['payload']['conversationId']>().toEqualTypeOf<string>()
+    expectTypeOf<AgentKey>().toEqualTypeOf<'summarize-text' | 'research-topic'>()
+    // A plugin's subjects union in beside the kit's; with none installed `Subjects` is unchanged.
+    expectTypeOf<'Document'>().toMatchTypeOf<Subjects>()
+    expectTypeOf(queryKeys.members.all).toEqualTypeOf<readonly ['members']>()
+  })
+
+  it('carry a plugin’s own keys through, once one declares them', () => {
+    const ordersShared = {
+      id: 'orders',
+      label: 'Orders',
+      agentKeys: ['orders-triage'],
+      promptKeys: ['orders-triage'],
+      subjects: ['Order'],
+      features: {
+        'orders-beta': {
+          label: 'Orders beta',
+          description: 'x',
+          defaultState: 'off',
+          defaultRolloutUnit: 'tenant',
+          environmentGated: false,
+        },
+      },
+      jobs: [
+        z.object({ type: z.literal('orders.sync'), payload: z.object({ tenantId: z.string() }) }),
+      ],
+    } as const satisfies SharedPlugin
+
+    type Orders = typeof ordersShared
+    expectTypeOf<JobTypeOf<Orders>>().toEqualTypeOf<'orders.sync'>()
+    expectTypeOf<AgentKeyOf<Orders>>().toEqualTypeOf<'orders-triage'>()
+    expectTypeOf<FeatureKeyOf<Orders>>().toEqualTypeOf<'orders-beta'>()
   })
 })

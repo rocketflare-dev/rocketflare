@@ -119,7 +119,7 @@ turn was investigated and rejected (`docs/CONCEPTS.md` §9 Known gaps): steps do
   DELETE+INSERT, per-tenant failures collected and logged as a warning); one DB client per run, closed
   in `waitUntil`; each task try/caught; a new cron string must be added to BOTH tomls and the table
   (the parity test compares `[triggers].crons`). `wrangler dev` never fires crons on its own — trigger
-  them by hand (below). Renaming the fact cron = both tomls + the `SCHEDULED_TASKS` key +
+  them by hand (below). Renaming the fact cron = both tomls + the `CORE_SCHEDULED_TASKS` key +
   `tests/api/scheduled-facts.test.ts`
 - `AgentRunWorkflow` (`apps/web/src/api/workflows/agent-run.ts`): `run(event, step)` → `step.do('claim')` →
   `step.do('execute#N', { retries, timeout })` → `step.do('finish')`, with a round loop in between

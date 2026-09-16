@@ -14,6 +14,7 @@
  */
 import type { AgentInfo, AgentKey } from '@rocketflare/shared/ai/agents'
 import { z } from 'zod'
+import { uiPlugins } from '@/plugins/ui'
 import { JsonForm } from './JsonForm'
 import { researchTopicForm } from './research-topic'
 import { schemaForm } from './SchemaForm'
@@ -34,9 +35,21 @@ export const jsonForm: AgentForm<string> = {
   Component: JsonForm,
 }
 
-const AGENT_FORMS: Partial<Record<AgentKey, AgentForm>> = {
+const CORE_AGENT_FORMS: Partial<Record<AgentKey, AgentForm>> = {
   'summarize-text': summarizeTextForm as AgentForm,
   'research-topic': researchTopicForm as AgentForm,
+}
+
+/**
+ * Core forms plus every installed plugin's (D31). A plugin's agent needs no entry — `formFor`
+ * falls through to a form generated from its own JSON Schema — so this merge is the first rung
+ * only, and a plugin that registers one keeps it in its own lazy chunk.
+ */
+const AGENT_FORMS: Partial<Record<AgentKey, AgentForm>> = {
+  ...CORE_AGENT_FORMS,
+  ...(Object.assign({}, ...uiPlugins.map(p => p.agentForms ?? {})) as Partial<
+    Record<AgentKey, AgentForm>
+  >),
 }
 
 export function formFor(agent: Pick<AgentInfo, 'key' | 'inputJsonSchema'> | AgentKey): AgentForm {

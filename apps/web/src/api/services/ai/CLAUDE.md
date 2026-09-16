@@ -29,7 +29,7 @@ Rules:
 - **A streaming route needs its own DB client** (`streamDatabase(c)` in `utils/routes/route-helpers.ts`):
   the request's client is closed in `waitUntil` the moment the Response is returned.
 - Adding a provider: enum value in `@rocketflare/shared/ai/config` (append last) → `PROVIDERS` entry →
-  adapter branch in `client.ts` → `ai-client.test.ts` case. Adding a prompt: `PROMPT_REGISTRY` in
+  adapter branch in `client.ts` → `ai-client.test.ts` case. Adding a prompt: `CORE_PROMPT_REGISTRY` in
   `../prompts.ts` (no migration). Per-agent model assignment (`agent_models`, Phase 3b — built) is
   `resolveChat`'s `promptKey` branch (`planChat` — shared with `routes/ai-agent-models.ts`).
 - `chunking.ts` (pure paragraph-aware chunker, ~800 tokens / 100 overlap, 4 chars per token),

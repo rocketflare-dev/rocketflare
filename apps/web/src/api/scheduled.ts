@@ -12,6 +12,7 @@ import { sql } from 'drizzle-orm'
 import { type AppConfig, loadConfig } from '../config'
 import { createDatabase, type Database, resolveDatabaseUrl } from '../db/client'
 import { userSessions } from '../db/schema'
+import { serverPlugins } from '../plugins/server'
 import { pruneMagicLinkTokens } from './auth/magic-link'
 import { refreshAllFactTables } from './services/fact-tables'
 import { pruneInvitations } from './services/invitations'
@@ -88,9 +89,27 @@ export const refreshFactTables: ScheduledTask = {
 }
 
 /** Cron expression → tasks. Keep in sync with `[triggers] crons` in both wrangler tomls. */
-export const SCHEDULED_TASKS: Record<string, ScheduledTask[]> = {
+const CORE_SCHEDULED_TASKS: Record<string, ScheduledTask[]> = {
   '0 4 * * *': [pruneExpired],
   '15 * * * *': [refreshFactTables],
+}
+
+/**
+ * Core tasks plus every installed plugin's (D31). A plugin naming a cron the kit already runs
+ * APPENDS to it — each task is try/caught on its own, so a plugin's failure cannot stop the kit's
+ * prune — and a plugin naming a new cron expression must also add it to `[triggers]` in BOTH
+ * tomls; nothing here can do that, and the parity test is what catches a forgotten one.
+ */
+export const SCHEDULED_TASKS: Record<string, ScheduledTask[]> = Object.entries(
+  CORE_SCHEDULED_TASKS
+).reduce<Record<string, ScheduledTask[]>>(
+  (registry, [cron, tasks]) => Object.assign(registry, { [cron]: [...tasks] }),
+  {}
+)
+for (const plugin of serverPlugins) {
+  for (const [cron, tasks] of Object.entries(plugin.scheduledTasks ?? {})) {
+    SCHEDULED_TASKS[cron] = [...(SCHEDULED_TASKS[cron] ?? []), ...tasks]
+  }
 }
 
 /** Runs every task registered for `cron` and returns a per-task report (used by tests). */

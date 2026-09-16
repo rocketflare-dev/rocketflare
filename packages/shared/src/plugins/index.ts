@@ -17,5 +17,13 @@ export const SHARED_PLUGINS = [] as const satisfies readonly SharedPlugin[]
 /** The barrel as a plain list. Iterate this; `SHARED_PLUGINS` is for type derivation. */
 export const sharedPlugins: readonly SharedPlugin[] = SHARED_PLUGINS
 
-export type { SharedPlugin } from './types'
+export type {
+  AgentKeyOf,
+  FeatureKeyOf,
+  JobTypeOf,
+  JobVariant,
+  PromptKeyOf,
+  SharedPlugin,
+  SubjectOf,
+} from './types'
 export { isPluginId, PLUGIN_ID_RE, pluginNamespace } from './types'

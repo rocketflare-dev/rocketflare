@@ -7,19 +7,14 @@
  * Versioning: the `type` string IS the version seam. A breaking payload change ships as a new type
  * (`email.send.v2`) with its own handler while the old one keeps draining in-flight messages; the
  * old type is removed once the queue is empty of it.
+ *
+ * The variants are DATA (D31): `CORE_JOB_VARIANTS` below plus whatever the installed plugins
+ * declare, so `jobInputSchema`, `jobEnvelopeSchema`, `JobType` and `JOB_TYPES` are all DERIVED from
+ * one list rather than four hand-kept ones that can disagree about what a job is.
  */
 import { z } from 'zod'
 import { activityMetadataSchema } from './activity'
-
-export const JOB_TYPES = [
-  'email.send',
-  'activity.record',
-  'example.ping',
-  'document.index',
-  'document.convert',
-  'chat.compact',
-] as const
-export type JobType = (typeof JOB_TYPES)[number]
+import { type SHARED_PLUGINS, sharedPlugins } from './plugins'
 
 // ---- Payloads ------------------------------------------------------------------------------
 
@@ -90,15 +85,38 @@ export type ChatCompactPayload = z.infer<typeof chatCompactPayloadSchema>
 
 // ---- Envelope ------------------------------------------------------------------------------
 
-/** What a caller hands to `enqueueJob` — the envelope fields are stamped by the producer. */
-export const jobInputSchema = z.discriminatedUnion('type', [
+/**
+ * The kit's own variants. A plugin adds its own through `SharedPlugin.jobs`, so this list stays
+ * the KIT's and an app that deletes a feature deletes its line here and nothing else.
+ */
+export const CORE_JOB_VARIANTS = [
   z.object({ type: z.literal('email.send'), payload: emailSendPayloadSchema }),
   z.object({ type: z.literal('activity.record'), payload: activityRecordPayloadSchema }),
   z.object({ type: z.literal('example.ping'), payload: examplePingPayloadSchema }),
   z.object({ type: z.literal('document.index'), payload: documentIndexPayloadSchema }),
   z.object({ type: z.literal('document.convert'), payload: documentConvertPayloadSchema }),
   z.object({ type: z.literal('chat.compact'), payload: chatCompactPayloadSchema }),
-])
+] as const
+
+type PluginJobVariant = NonNullable<(typeof SHARED_PLUGINS)[number]['jobs']>[number]
+
+/**
+ * Core first, then every installed plugin's variants, as ONE tuple.
+ *
+ * The spread of an array into a tuple literal is what keeps `z.discriminatedUnion` happy: the type
+ * is `[core…, ...PluginVariant[]]`, still non-empty in the type system however many plugins are
+ * installed, because the kit's own six lead it. With no plugins the tail is `never[]` and this is
+ * exactly the list the kit had before.
+ */
+export const JOB_VARIANTS = [
+  ...CORE_JOB_VARIANTS,
+  // Iterated through the widened list (an EMPTY tuple indexes to `never`, and `never.jobs` is a
+  // type error); the cast restores what the tuple above says those elements actually are.
+  ...(sharedPlugins.flatMap(p => p.jobs ?? []) as PluginJobVariant[]),
+] as const
+
+/** What a caller hands to `enqueueJob` — the envelope fields are stamped by the producer. */
+export const jobInputSchema = z.discriminatedUnion('type', [...JOB_VARIANTS])
 export type JobInput = z.infer<typeof jobInputSchema>
 
 const envelopeFields = {
@@ -109,36 +127,40 @@ const envelopeFields = {
   attempt: z.number().int().min(1).optional(),
 }
 
+type EnvelopeFields = typeof envelopeFields
+
+/** One variant with the envelope fields folded in — what `.extend(envelopeFields)` returns. */
+type WithEnvelope<T> =
+  T extends z.ZodObject<infer Shape, infer Unknown, infer Catchall>
+    ? z.ZodObject<Shape & EnvelopeFields, Unknown, Catchall>
+    : never
+
+/**
+ * `.map()` over a tuple answers an ARRAY, and `z.discriminatedUnion` needs a non-empty tuple — so
+ * the result is re-described with a mapped type, which preserves both the length and each variant's
+ * own shape. The cast asserts nothing the line above does not already do.
+ */
+type Enveloped<T extends readonly unknown[]> = { [K in keyof T]: WithEnvelope<T[K]> }
+
 /** The on-the-wire message body. Same discriminant as `jobInputSchema` plus the envelope. */
-export const jobEnvelopeSchema = z.discriminatedUnion('type', [
-  z.object({ ...envelopeFields, type: z.literal('email.send'), payload: emailSendPayloadSchema }),
-  z.object({
-    ...envelopeFields,
-    type: z.literal('activity.record'),
-    payload: activityRecordPayloadSchema,
-  }),
-  z.object({
-    ...envelopeFields,
-    type: z.literal('example.ping'),
-    payload: examplePingPayloadSchema,
-  }),
-  z.object({
-    ...envelopeFields,
-    type: z.literal('document.index'),
-    payload: documentIndexPayloadSchema,
-  }),
-  z.object({
-    ...envelopeFields,
-    type: z.literal('document.convert'),
-    payload: documentConvertPayloadSchema,
-  }),
-  z.object({
-    ...envelopeFields,
-    type: z.literal('chat.compact'),
-    payload: chatCompactPayloadSchema,
-  }),
-])
+export const jobEnvelopeSchema = z.discriminatedUnion(
+  'type',
+  JOB_VARIANTS.map(variant => variant.extend(envelopeFields)) as unknown as Enveloped<
+    typeof JOB_VARIANTS
+  >
+)
 export type JobEnvelope = z.infer<typeof jobEnvelopeSchema>
+
+/** Every job type this app knows, derived from the variants rather than kept beside them. */
+export type JobType = JobEnvelope['type']
+
+/** The kit's own types, without any plugin's — what the core handler table is checked against. */
+export type CoreJobType = z.infer<(typeof CORE_JOB_VARIANTS)[number]>['type']
+
+/** The same list at runtime, in declaration order. */
+export const JOB_TYPES: readonly JobType[] = JOB_VARIANTS.map(
+  variant => variant.shape.type.value as JobType
+)
 
 /** The envelope narrowed to one `type` — what a handler receives. */
 export type JobOf<T extends JobType> = Extract<JobEnvelope, { type: T }>

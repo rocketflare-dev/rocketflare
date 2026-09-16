@@ -92,13 +92,13 @@ tell it. That is what makes deleting safe.
   `summarize-text` is the one-forced-call shape, `research-topic` the tool-loop-over-the-knowledge-base
   shape; delete whichever you are not copying (keep
   `services/agents/{registry,runs,runtime}.ts` and `api/workflows/agent-run.ts` — that is the runtime,
-  not the example). Removing it touches: `AGENT_KEYS` + `summarizeText*Schema` +
+  not the example). Removing it touches: `CORE_AGENT_KEYS` + `summarizeText*Schema` +
   `SUMMARIZE_TEXT_MAX_CHARS` in `packages/shared/src/ai/agents.ts`, the `summarize-text` entry in
-  `PROMPT_REGISTRY` (`apps/web/src/api/services/prompts.ts`), the `AGENTS` entry in
+  `CORE_PROMPT_REGISTRY` (`apps/web/src/api/services/prompts.ts`), the `CORE_AGENTS` entry in
   `services/agents/registry.ts`, `apps/web/tests/api/{agent-runs,agent-run-workflow,agent-research}.test.ts` (rewrite
   them around your first agent — the runtime needs at least one), and the agent's TWO UI entries —
   `apps/web/src/ui/pages/agents/forms/<key>.tsx` and `outputs/<key>.tsx`, with their registry lines
-  (see `apps/web/src/ui/CLAUDE.md`). `RunPage` itself is the runtime's, not the example's. `AGENT_KEYS` must not be empty:
+  (see `apps/web/src/ui/CLAUDE.md`). `RunPage` itself is the runtime's, not the example's. `AGENT_KEYS` must not be empty (it is a `z.enum`, and `CORE_AGENT_KEYS` leads it):
   `agentKeySchema` is a `z.enum`. Rows in `agent_runs` / `agent_run_events` / `prompt_overrides` /
   `agent_models` for the old key are inert data — delete them or leave them
 - The example cubes `ActivityEvents` / `TenantActivityDaily`, the fact table
@@ -109,7 +109,7 @@ tell it. That is what makes deleting safe.
   `apps/web/src/db/schema/facts/tenant-activity-daily-facts.ts` (+ `facts/index.ts`, `relations.ts`) with
   a `DROP TABLE` migration; `FACT_TABLES` in `services/fact-tables/registry.ts` and
   `queries/tenant-activity-daily.ts` (an empty registry is fine — the `:15` cron then does nothing; or
-  drop the cron from BOTH tomls + `SCHEDULED_TASKS` + `tests/api/scheduled-facts.test.ts`);
+  drop the cron from BOTH tomls + `CORE_SCHEDULED_TASKS` + `tests/api/scheduled-facts.test.ts`);
   `apps/web/src/dashboards/general-templates/tenant-overview.ts` (+ its `GENERAL_TEMPLATES` entry —
   `DASHBOARD_TEMPLATES` may be empty: `ensureDefaultDashboards` returns 0); and the tests
   `tests/api/cubes/cube-isolation.test.ts` (rewrite the `cases` around your cubes — its coverage
@@ -157,10 +157,10 @@ A model you leave out shows "—" on Settings → Usage rather than a wrong numb
 
 **Adding an agent** (D7, D17 — `apps/web/src/api/services/agents/CLAUDE.md`). No migration:
 
-1. Contract — `packages/shared/src/ai/agents.ts`: append the key to `AGENT_KEYS`, add
+1. Contract — `packages/shared/src/ai/agents.ts`: append the key to `CORE_AGENT_KEYS`, add
    `<name>InputSchema` / `<name>OutputSchema` (the input is validated at the route AND again before
    `run()`; the output when the run persists it).
-2. Prompt — `PROMPT_REGISTRY` in `apps/web/src/api/services/prompts.ts`: `{ key, title, description,
+2. Prompt — `CORE_PROMPT_REGISTRY` in `apps/web/src/api/services/prompts.ts`: `{ key, title, description,
    variables, defaultText }` with `{{var}}` placeholders (`appName`/`tenantName` are pre-filled by the
    runtime; pass the rest through `ctx.prompt({ … })`). It becomes editable in Settings → Prompts and
    assignable in `/api/ai/agent-models` automatically.
@@ -188,7 +188,7 @@ A model you leave out shows "—" on Settings → Usage rather than a wrong numb
 5. UI — **an agent in this kit is one shared input schema + one `forms/` entry + one `outputs/`
    entry.** There is no per-agent run page to write: `RunPage` is generic, and it renders the
    timeline, the interrupt panel, the steering composer and the artifacts for every agent. Add
-   `apps/web/src/ui/pages/agents/forms/<key>.tsx` to `AGENT_FORMS` (skip it and the page generates a
+   `apps/web/src/ui/pages/agents/forms/<key>.tsx` to `CORE_AGENT_FORMS` (skip it and the page generates a
    form from your input JSON Schema, or falls back to a JSON textarea) and
    `outputs/<key>.tsx` to `AGENT_OUTPUTS` for how the answer renders. Guards: `create AgentRun` to
    start one, `update AgentRun` plus the agent's `approvers` to answer a question. UI conventions:
@@ -228,7 +228,7 @@ A model you leave out shows "—" on Settings → Usage rather than a wrong numb
 3. Registry — one entry in `FACT_TABLES` (`registry.ts`): `{ name, table, refreshIntervalMinutes,
    source: { name, table, timestampColumn }, selectForTenant }`. The `:15` cron, `db:refresh-facts`,
    `db:check-facts` and `GET /api/analytics/facts/status` pick it up with no other change. A table
-   that needs a different cadence is a second cron entry (both tomls + `SCHEDULED_TASKS`) calling
+   that needs a different cadence is a second cron entry (both tomls + `CORE_SCHEDULED_TASKS`) calling
    `refreshFactTable(db, name)`.
 4. Cube — `apps/web/src/api/cubes/<name>.ts` over the table (direct `tenant_id` scoping), + the
    isolation case; `refreshFactTable(db, '<name>', { tenantId })` in `seedTenant` so it has rows.
@@ -258,7 +258,7 @@ A model you leave out shows "—" on Settings → Usage rather than a wrong numb
    every tenant silently, and `reset`/`recreate` is the only way back.
 
 **Renaming or retiming the fact cron.** The expression `15 * * * *` appears in `[triggers] crons` of
-BOTH tomls (the parity test compares them), as the key of `SCHEDULED_TASKS` in
+BOTH tomls (the parity test compares them), as the key of `CORE_SCHEDULED_TASKS` in
 `apps/web/src/api/scheduled.ts`, and in `tests/api/scheduled-facts.test.ts`; change all four together.
 If you retime it, change `refreshIntervalMinutes` in the registry too — freshness flags `stale` at
 2× that interval, so a slower cron with the old interval reports stale between runs. The local trigger
@@ -288,12 +288,14 @@ then re-index every document (`indexDocument` from `documents.content` — a one
 `document.index` job per row); set the new default in `DEFAULT_MODELS` and the readiness/test
 expectations. Do it before the first production migration if you can.
 
-**Adding a job type** (D7): payload schema + a variant in BOTH `jobInputSchema` and
-`jobEnvelopeSchema` + the literal in `JOB_TYPES` (`packages/shared/src/jobs.ts`) → a handler
+**Adding a job type** (D7): payload schema + ONE variant in `CORE_JOB_VARIANTS`
+(`packages/shared/src/jobs.ts` — both unions, `JobType` and `JOB_TYPES` are derived from that list)
+→ a handler
 `apps/web/src/api/queues/handlers/<name>.ts` (copy `example-ping.ts`, or `document-index.ts` for one
 that re-reads a row by id; signature `(job: JobOf<'x'>,
 ctx: { env, config, logger, db })`, throw to retry, return to ack, await everything) → one entry in
-the `handlers` table of `apps/web/src/api/queues/jobs.ts` (the `switch` in `runHandler` too) →
+`coreHandlers` in `apps/web/src/api/queues/jobs.ts` (its mapped type is the completeness check;
+there is no `runHandler` switch to update) →
 callers use `enqueueJob(c.env.JOBS_QUEUE, { type: 'x', payload })` → a case in
 `tests/api/jobs-consumer.test.ts`. A breaking payload change is a NEW type (`x.v2`), never an edited
 schema — in-flight messages of the old type must still parse.

@@ -12,9 +12,11 @@ import {
   type PromptRegistry,
   type PromptWithResolved,
 } from '@rocketflare/shared/ai/prompts'
+import type { PromptKeyOf, SHARED_PLUGINS } from '@rocketflare/shared/plugins'
 import { and, eq } from 'drizzle-orm'
 import type { Database } from '../../db/client'
 import { type PromptOverrideRow, promptOverrides } from '../../db/schema'
+import { serverPlugins } from '../../plugins/server'
 
 const CHAT_DEFAULT = `You are the assistant built into {{appName}}, helping {{userName}} at {{tenantName}}.
 
@@ -88,7 +90,7 @@ message. Write terse third-person notes, not prose — "User is migrating from P
 zero downtime" — and never invent anything that is not in the material. Preserve the previous
 summary's content unless a later message contradicts it, in which case keep the later version.`
 
-export const PROMPT_REGISTRY = {
+export const CORE_PROMPT_REGISTRY = {
   chat: {
     key: 'chat',
     title: 'Chat assistant',
@@ -122,7 +124,19 @@ export const PROMPT_REGISTRY = {
   },
 } as const satisfies PromptRegistry
 
-export type RegistryPromptKey = keyof typeof PROMPT_REGISTRY
+/**
+ * Core prompts plus every installed plugin's (D31). A plugin's entries are checked against the
+ * prompt keys IT declared (`SharedPlugin.promptKeys`), so a prompt with no key — or a key with no
+ * prompt — is a type error in the plugin.
+ */
+export const PROMPT_REGISTRY = {
+  ...CORE_PROMPT_REGISTRY,
+  ...(Object.assign({}, ...serverPlugins.map(p => p.prompts ?? {})) as PromptRegistry),
+}
+
+export type RegistryPromptKey =
+  | keyof typeof CORE_PROMPT_REGISTRY
+  | PromptKeyOf<(typeof SHARED_PLUGINS)[number]>
 
 export const PROMPT_KEYS = Object.keys(PROMPT_REGISTRY) as RegistryPromptKey[]
 
@@ -131,7 +145,7 @@ export function isPromptKey(key: string): key is RegistryPromptKey {
 }
 
 export function promptDefinition(key: RegistryPromptKey): PromptDefinition {
-  return PROMPT_REGISTRY[key]
+  return PROMPT_REGISTRY[key] as PromptDefinition
 }
 
 export async function getPromptOverride(

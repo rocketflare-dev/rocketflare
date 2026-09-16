@@ -7,6 +7,7 @@
  */
 import { z } from 'zod'
 import { paginationQuerySchema } from '../pagination'
+import { type SHARED_PLUGINS, sharedPlugins } from '../plugins'
 import { agentArtifactEventDataSchema, agentArtifactSchema } from './artifacts'
 import {
   agentApproversSchema,
@@ -18,8 +19,21 @@ import {
 } from './interrupts'
 import { promptKeySchema } from './prompts'
 
-/** Stable identifier for each agent the runtime knows. Append LAST; an app extends this list. */
-export const AGENT_KEYS = ['summarize-text', 'research-topic'] as const
+/** Stable identifier for each agent the KIT ships. Append LAST; an app extends this list. */
+export const CORE_AGENT_KEYS = ['summarize-text', 'research-topic'] as const
+
+type PluginAgentKey = NonNullable<(typeof SHARED_PLUGINS)[number]['agentKeys']>[number]
+
+/**
+ * Core keys plus every installed plugin's (D31). `z.enum` needs a non-empty tuple and gets one
+ * because the kit's own keys lead the list; iterate the widened barrel to build the tail (an EMPTY
+ * tuple indexes to `never`, and `never.agentKeys` is a type error), then restore what the tuple
+ * says those elements are.
+ */
+export const AGENT_KEYS = [
+  ...CORE_AGENT_KEYS,
+  ...(sharedPlugins.flatMap(p => p.agentKeys ?? []) as PluginAgentKey[]),
+] as const
 export const agentKeySchema = z.enum(AGENT_KEYS)
 export type AgentKey = z.infer<typeof agentKeySchema>
 
