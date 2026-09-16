@@ -18,10 +18,36 @@ const alias = {
 const MAX_WORKERS = Math.min(6, Math.max(3, (os.availableParallelism?.() ?? 4) - 2))
 
 const API_TEST_DIR = path.resolve(__dirname, './tests/api')
+const PLUGINS_DIR = path.resolve(__dirname, './src/plugins')
+
+/**
+ * A plugin (D31) keeps its tests inside its own directory — `src/plugins/<id>/tests/{api,ui,config}`
+ * — so that installing or removing one moves its tests with it and never touches `tests/`. The api
+ * ones have to be discovered the same way the kit's are, because the `// @vitest-isolate` marker
+ * decides which of the two api projects a file belongs to.
+ */
+function pluginDirs(): string[] {
+  if (!fs.existsSync(PLUGINS_DIR)) return []
+  return fs
+    .readdirSync(PLUGINS_DIR, { withFileTypes: true })
+    .filter(e => e.isDirectory())
+    .map(e => e.name)
+    .sort()
+}
+
 function apiTestFiles(isolated: boolean): string[] {
-  return listApiTestFiles(API_TEST_DIR)
-    .filter(f => isMarkedIsolated(fs.readFileSync(path.join(API_TEST_DIR, f), 'utf8')) === isolated)
-    .map(f => `tests/api/${f}`)
+  const dirs: Array<{ abs: string; rel: string }> = [
+    { abs: API_TEST_DIR, rel: 'tests/api' },
+    ...pluginDirs().map(id => ({
+      abs: path.join(PLUGINS_DIR, id, 'tests/api'),
+      rel: `src/plugins/${id}/tests/api`,
+    })),
+  ]
+  return dirs.flatMap(dir =>
+    listApiTestFiles(dir.abs)
+      .filter(f => isMarkedIsolated(fs.readFileSync(path.join(dir.abs, f), 'utf8')) === isolated)
+      .map(f => `${dir.rel}/${f}`)
+  )
 }
 
 export default defineConfig({
@@ -84,7 +110,11 @@ export default defineConfig({
         test: {
           name: 'config',
           environment: 'node',
-          include: ['tests/config/**/*.{test,spec}.ts', 'tests/dashboards/**/*.{test,spec}.ts'],
+          include: [
+            'tests/config/**/*.{test,spec}.ts',
+            'tests/dashboards/**/*.{test,spec}.ts',
+            'src/plugins/*/tests/config/**/*.{test,spec}.ts',
+          ],
         },
         resolve: { alias },
       },
@@ -95,7 +125,10 @@ export default defineConfig({
           name: 'ui',
           environment: 'jsdom',
           setupFiles: ['./tests/ui/setup.ts'],
-          include: ['tests/ui/**/*.{test,spec}.{ts,tsx}'],
+          include: [
+            'tests/ui/**/*.{test,spec}.{ts,tsx}',
+            'src/plugins/*/tests/ui/**/*.{test,spec}.{ts,tsx}',
+          ],
         },
         resolve: { alias },
       },

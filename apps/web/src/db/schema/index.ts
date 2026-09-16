@@ -3,6 +3,15 @@
  * `src/db/client.ts` (`typeof schema`) and the RLS coverage test see one surface.
  * Read ./CLAUDE.md before adding a table (RLS checklist).
  */
+
+/**
+ * Installed plugin tables (D31). Position in this file decides nothing: a name exported by two
+ * `export *` declarations is AMBIGUOUS, and TypeScript reports it (TS2308) instead of silently
+ * letting one win — which is the loud failure that wants to happen before `pnpm db:generate`
+ * writes DDL for a table that shadows a kit one. Biome sorts these lines, so this one sits where
+ * the sorter puts it.
+ */
+export * from '../../plugins/schema'
 export * from './_helpers'
 export * from './access-requests'
 export * from './activity-events'

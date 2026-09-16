@@ -16,6 +16,8 @@ import {
   SparklesIcon,
   UserGroupIcon,
 } from '@heroicons/react/24/outline'
+import type { Actions, Subjects } from '@rocketflare/shared/permissions'
+import { uiPlugins } from '@/plugins/ui'
 import { PageHeader, type TabConfig, URLTabs } from '@/ui/components/shared'
 import { useAuth } from '@/ui/hooks/useAuth'
 import { usePermissions } from '@/ui/hooks/usePermissions'
@@ -62,6 +64,16 @@ export default function SettingsLayout() {
         ]
       : []),
   ]
+  // D31: installed plugins add their tabs LAST, so the kit's order never moves under a reader.
+  // Each is handed `can` and decides for itself — a tab that would 403 on save is worse than none.
+  // `can` is widened to strings on the way out, the same way a `NavGuard` pair is: a plugin's
+  // subjects are not in the kit's union until it is installed, and the ability takes them anyway.
+  const pluginTabs: TabConfig[] = uiPlugins.flatMap(
+    p =>
+      p.settingsTabs?.({
+        can: (action, subject) => can(action as Actions, subject as Subjects),
+      }) ?? []
+  )
   return (
     <div className="max-w-5xl">
       <PageHeader
@@ -104,6 +116,7 @@ export default function SettingsLayout() {
             content: <ApiKeys />,
           },
           ...aiTabs,
+          ...pluginTabs,
         ]}
       />
     </div>

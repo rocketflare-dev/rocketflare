@@ -3,6 +3,8 @@ import { fireEvent, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import SideNav, {
   badgeValueFor,
+  composeNav,
+  DEFAULT_NAV_ANCHOR,
   filterNavConfig,
   isPathActive,
   type NavConfig,
@@ -66,6 +68,45 @@ describe('filterNavConfig', () => {
     expect(labels).toEqual(['Home', 'Settings', 'Agents'])
     // The Platform group vanished entirely rather than rendering an empty heading
     expect(visible.some(item => 'label' in item && item.label === 'Platform')).toBe(false)
+  })
+})
+
+describe('composeNav', () => {
+  // D31: where a plugin's nav group lands. Pure, so it is tested rather than reasoned about — the
+  // failure mode is a plugin whose pages exist and have no way in, which nothing else would catch.
+  const item = (to: string) => ({ to, label: to, icon: HomeIcon })
+  const plugin = { items: [item('/orders')] }
+
+  it('puts a group before the anchor group by default', () => {
+    const out = composeNav(config, [plugin])
+    const labels = out.map(e => ('items' in e ? (e.label ?? '(unlabelled)') : e.label))
+    expect(labels.indexOf('(unlabelled)')).toBeLessThan(labels.indexOf(DEFAULT_NAV_ANCHOR))
+  })
+
+  it('honours an explicit anchor, and keeps declaration order for several', () => {
+    const out = composeNav(config, [
+      { label: 'A', items: [item('/a')], before: 'Platform' },
+      { label: 'B', items: [item('/b')], before: 'Platform' },
+    ])
+    const labels = out.filter(e => 'items' in e).map(e => e.label)
+    expect(labels.indexOf('A')).toBeLessThan(labels.indexOf('B'))
+    expect(labels.indexOf('B')).toBeLessThan(labels.indexOf('Platform'))
+  })
+
+  it('appends when the anchor is not there — an app that deleted it still gets the pages', () => {
+    const out = composeNav([{ items: [item('/')] }], [{ label: 'A', items: [item('/a')] }])
+    expect(out).toHaveLength(2)
+    expect((out[1] as { label?: string }).label).toBe('A')
+  })
+
+  it('does not mutate the core config', () => {
+    const before = config.length
+    composeNav(config, [plugin, plugin])
+    expect(config).toHaveLength(before)
+  })
+
+  it('is the identity with no plugins installed — which is the kit today', () => {
+    expect(composeNav(config)).toEqual(config)
   })
 })
 

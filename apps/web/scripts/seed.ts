@@ -65,6 +65,7 @@ import {
   tenantUsers,
   users,
 } from '../src/db/schema'
+import { serverPlugins } from '../src/plugins/server'
 
 const DATABASE_URL = process.env.DATABASE_URL
 const TENANCY_MODE = process.env.TENANCY_MODE === 'single' ? 'single' : 'multi'
@@ -1819,6 +1820,25 @@ Before release, the export coordinator runs the pre-departure checklist — a ve
   for (const r of refreshed.results) {
     log(`  facts   ${r.table} tenants=${r.tenants} rows=${r.rows}`)
     for (const e of r.errors) log(`    FAILED tenant ${e.tenantId}: ${e.error}`)
+  }
+
+  // -- Installed plugins (D31) -------------------------------------------------------------------
+  // After the kit's own blocks, so a plugin can reference the demo tenant, its people and its
+  // content. Same contract as everything above: fixed ids (`demoId` arrives already namespaced
+  // with the plugin's id) and `onConflictDoNothing`, so re-running adds nothing. One plugin's
+  // failure is reported and the rest still run — a half-seeded demo beats no demo.
+  for (const plugin of serverPlugins) {
+    if (!plugin.hooks?.seedDemo) continue
+    try {
+      await plugin.hooks.seedDemo(db, {
+        tenantId,
+        ownerId: owner.id,
+        demoId: (key: string) => demoId(`${plugin.shared.id}:${key}`),
+        log: line => log(`  ${plugin.shared.id.padEnd(7)} ${line}`),
+      })
+    } catch (error) {
+      log(`  ${plugin.shared.id.padEnd(7)} FAILED: ${(error as Error).message}`)
+    }
   }
 
   // -- Summary: what the database now holds for this tenant -------------------------------------

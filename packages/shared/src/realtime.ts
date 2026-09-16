@@ -6,6 +6,7 @@
  * `apps/web/src/ui/lib/query-keys.ts`); the server emits, the UI reacts, both through this file.
  */
 import { z } from 'zod'
+import { sharedPlugins } from './plugins/index'
 
 export const realtimeEventTypeSchema = z.enum([
   'notification.created',
@@ -43,7 +44,7 @@ export type RealtimeEvent = z.infer<typeof realtimeEventSchema>
  * `queryKeys`; `entity.changed` is resolved from its payload at runtime and `ping` invalidates
  * nothing. A ui test asserts every root here is a real `queryKeys` family.
  */
-export const REALTIME_INVALIDATIONS: Record<RealtimeEventType, string[][]> = {
+const CORE_REALTIME_INVALIDATIONS: Record<RealtimeEventType, string[][]> = {
   'notification.created': [['notifications']],
   'notification.read': [['notifications']],
   'member.changed': [['members']],
@@ -58,6 +59,22 @@ export const REALTIME_INVALIDATIONS: Record<RealtimeEventType, string[][]> = {
   'features.changed': [['auth'], ['features']],
   'entity.changed': [],
   ping: [],
+}
+
+/**
+ * The same map with every installed plugin's `realtimeRoots` added to `access.changed` (D29, D31).
+ *
+ * Only that event: a plugin whose rows carry `visibility` has to be re-fetched when somebody's
+ * group membership moves under them, or they keep looking at content they can no longer open.
+ * Everything else a plugin needs is an `entity.changed` nudge naming its own query-key root, which
+ * needs no registration at all.
+ */
+export const REALTIME_INVALIDATIONS: Record<RealtimeEventType, string[][]> = {
+  ...CORE_REALTIME_INVALIDATIONS,
+  'access.changed': [
+    ...CORE_REALTIME_INVALIDATIONS['access.changed'],
+    ...sharedPlugins.flatMap(p => (p.realtimeRoots ?? []).map(root => [root])),
+  ],
 }
 
 /** The query-key roots an event should invalidate, including the `entity.changed` payload root. */

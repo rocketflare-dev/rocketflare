@@ -41,7 +41,12 @@ Auth is per-mount, not global: the public surface is enumerable and small.
   a CASL condition — the kit uses none, and "own" has always been the route's own check. Two drizzle
   rules come with it: the EXISTS subquery uses a LITERAL alias (a column object renders with
   whatever table alias is in scope where the fragment lands), and a raw predicate cannot be used
-  with `db.query.X.findFirst` (it renames the table it selects from) — use `db.select()`
+  with `db.query.X.findFirst` (it renames the table it selects from) — use `db.select()`.
+  **A restrictable resource is a `VISIBILITY_RESOURCES` entry** (`services/access.ts`):
+  `{ key, noun, usageKey, predicate, setGroups, grantRows, countGrants }`. Documents and analytics
+  pages are two of them, an installed plugin (D31) adds its own through
+  `ServerPlugin.visibilityResources`, and `setResourceGroups` / `grantsForResources` /
+  `countGroupGrants` dispatch through the registry — never a new `if (kind === …)` branch
 - Throw typed errors from `apps/web/src/api/utils/core/errors.ts` (`NotFoundError`, `ForbiddenError`, `ValidationError`, `ConflictError`, …); never `c.json({ error }, 4xx)` by hand
 - Pagination: `paginationQuerySchema` → `{ items, pagination: { page, pageSize, total, totalPages } }` (`packages/shared/src/pagination.ts`)
 - **Feature flags gate at the MOUNT, and never through CASL** (D30). `requireFeature('x')`

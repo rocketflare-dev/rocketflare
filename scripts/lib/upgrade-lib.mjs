@@ -114,6 +114,7 @@ export const CLASSES = Object.freeze([
   'modified',
   'deleted',
   'skipped-surface-absent',
+  'skipped-plugin-owned',
   'skipped-locally-deleted',
   'skipped-kit-only',
   'migration-derived',
@@ -151,6 +152,19 @@ export function classifyPath(relPath, ctx) {
       class: 'skipped-surface-absent',
       translate: false,
       reason: `surface ${surface.id} is not in this app`,
+      surface: surface.id,
+    }
+  }
+  // A plugin (D31) owns its own files and its own release chain: `pnpm plugin upgrade <id>` ports
+  // them from the plugin's repository. A KIT diff must never touch those bytes — the kit does not
+  // know what version of the plugin is installed, and the two histories would fight. This sits
+  // second, right after "the adopter deleted it", because both are about not writing where the kit
+  // has no say.
+  if (surface && surface.kind === 'plugin') {
+    return {
+      class: 'skipped-plugin-owned',
+      translate: false,
+      reason: `plugin ${surface.id} owns this file — use \`pnpm plugin upgrade ${surface.id}\``,
       surface: surface.id,
     }
   }

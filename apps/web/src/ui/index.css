@@ -9,6 +9,11 @@
 
 @source "./index.html";
 @source "./**/*.{ts,tsx}";
+/* Installed plugins (D31) ship their own pages and components under `src/plugins/<id>/ui/`, which
+   is OUTSIDE this directory — without this line their classes are simply not generated, and the
+   page renders unstyled with nothing in the console to say why. Scoped to `ui/` so a plugin's
+   server code is no more scanned than the kit's is. */
+@source "../plugins/**/ui/**/*.{ts,tsx}";
 
 /* drizzle-cube ships its own precompiled, `dc:`-prefixed stylesheet (imported by the lazy analytics
    chunk), so scanning its dist with `@source` generates ZERO drizzle-cube classes and only stray

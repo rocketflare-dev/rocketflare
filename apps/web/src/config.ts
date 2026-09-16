@@ -7,6 +7,7 @@
  * `c.env`. Nothing in `src/` reads `process.env` — the validation style is the Node reference app's
  * `src/config.ts`, the source is the env object Cloudflare hands us.
  */
+import { sharedPlugins } from '@rocketflare/shared/plugins'
 import { z } from 'zod'
 
 /** `wrangler dev` passes `KEY=` lines from .dev.vars as empty strings; treat those as unset. */
@@ -65,7 +66,7 @@ const csvList = z.preprocess(
 
 export const LOG_LEVELS = ['trace', 'debug', 'info', 'warn', 'error', 'fatal', 'silent'] as const
 
-const configSchema = z.object({
+const coreConfigSchema = z.object({
   // ---- [vars] (non-secret, wrangler.toml) -------------------------------------------------
   APP_ENV: z.enum(['development', 'staging', 'production']).default('development'),
   /** Public origin; derives OAuth redirect URIs, magic-link URLs, CSRF/CORS allow-lists. */
@@ -148,7 +149,24 @@ const configSchema = z.object({
   LANGFUSE_SECRET_KEY: optionalString,
 })
 
-export type AppConfig = z.infer<typeof configSchema>
+/**
+ * `[vars]` and secrets contributed by installed plugins (D31), validated with everything else so a
+ * plugin with a missing var fails at `loadConfig` rather than at its first request.
+ *
+ * `AppConfig` stays the CORE type on purpose, and the cast is what holds that line: `extend()` over
+ * a `ZodRawShape` collapses the inferred shape to an index signature, which would turn every kit
+ * key into `any`. A plugin reads its own keys through its own narrowing helper — one plugin's vars
+ * can never widen, or weaken, the type the kit is checked against.
+ */
+const pluginConfigShape: z.ZodRawShape = Object.assign(
+  {},
+  ...sharedPlugins.map(p => p.config ?? {})
+)
+const configSchema = coreConfigSchema.extend(
+  pluginConfigShape
+) as unknown as typeof coreConfigSchema
+
+export type AppConfig = z.infer<typeof coreConfigSchema>
 export type AppEnvName = AppConfig['APP_ENV']
 export type OAuthProviderName = 'google' | 'microsoft'
 

@@ -6,6 +6,7 @@
  */
 
 import type { Hono, MiddlewareHandler } from 'hono'
+import { serverPlugins } from '../plugins/server'
 import { authMiddleware, globalAdminMiddleware } from './middleware/auth'
 import { isUploadPath, jsonBodyLimit } from './middleware/body-limit'
 import { configMiddleware } from './middleware/config'
@@ -130,6 +131,11 @@ const mounts: readonly (readonly [string, Hono<AppEnv>, MiddlewareHandler?])[] =
   // drizzle-cube (D19): one router, two prefixes; the adapter registers absolute paths.
   ['/cubejs-api', cubeApiRouter],
   ['/mcp', cubeApiRouter],
+  // D31: installed plugins, last, so a plugin can never shadow a kit prefix — Hono matches in
+  // registration order. Each mount gets `authMiddleware` and its own optional gate exactly like a
+  // kit mount; the convention is `/api/<plugin id>`, and `tests/config/plugins.test.ts` is what
+  // keeps two plugins from claiming the same one.
+  ...serverPlugins.flatMap(p => p.mounts ?? []),
 ]
 for (const [prefix, router, gate] of mounts) {
   app.use(prefix, authMiddleware)

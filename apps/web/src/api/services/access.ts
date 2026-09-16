@@ -15,7 +15,7 @@
  * so a resource whose last group was deleted becomes owner-and-admins-only rather than public.
  */
 import type { GroupRef, ResourceVisibility } from '@rocketflare/shared/groups'
-import { and, eq, inArray, type SQL, sql } from 'drizzle-orm'
+import { and, count, eq, inArray, type SQL, sql } from 'drizzle-orm'
 import type { Database } from '../../db/client'
 import {
   analyticsPageGroups,
@@ -25,6 +25,7 @@ import {
   groups,
   groupTypes,
 } from '../../db/schema'
+import { serverPlugins } from '../../plugins/server'
 import { isAdminLevel } from '../middleware/permissions'
 import type { AuthContext } from '../types'
 import { ForbiddenError } from '../utils/core/errors'
@@ -114,14 +115,202 @@ export function visibleAnalyticsPages(scope: AccessScope): SQL | undefined {
   return sql`(${analyticsPages.visibility} = 'tenant' or ${owned} or ${shared})`
 }
 
-// ---- Writing visibility ------------------------------------------------------------------------
-
-export type VisibilityResource = 'document' | 'analytics-page'
+// ---- The registry of restrictable resources (D29, D31) -----------------------------------------
 
 export interface SetResourceGroupsInput {
   visibility: ResourceVisibility
   groupIds: readonly string[]
 }
+
+/** One row of `grantsForResources`, before it is grouped by resource. */
+export interface ResourceGrantRow {
+  resourceId: string
+  id: string
+  name: string
+  typeName: string
+}
+
+/**
+ * What it takes to be a resource a group can restrict.
+ *
+ * This was a two-value union and an `if (kind === 'document')` in three places. A plugin (D31) may
+ * own restrictable rows of its own, and the host cannot know its tables — so the four behaviours
+ * became a registry entry the owner supplies, rather than metadata the host interprets. Behaviour,
+ * not columns, is deliberate: drizzle's types only hold for a concrete table, and a registry of
+ * generic `PgTable`s would have to cast away exactly the checking that makes these queries safe.
+ *
+ * The rules a new entry must keep are the kit's existing ones: `predicate` is ANDed with the tenant
+ * predicate and NEVER replaces it, it returns `undefined` for an admin-level scope, and
+ * `visibility` is a COLUMN — an empty grant list under `groups` means owner-and-admins-only, never
+ * "everyone".
+ */
+export interface VisibilityResource {
+  /** `document`, `analytics-page`; `<id>:<thing>` for a plugin. */
+  key: string
+  /** Singular noun for the 409 that says what deleting a group would narrow. */
+  noun: string
+  /** Key this resource's count takes in `GroupUsage` and in the 409 `details`. */
+  usageKey: string
+  /** The SQL predicate, ANDed with the tenant predicate. `undefined` = no narrowing. */
+  predicate: (scope: AccessScope) => SQL | undefined
+  /** Set the row's `visibility` and replace its grants, inside the caller's transaction. */
+  setGroups: (
+    tx: Database,
+    tenantId: string,
+    resourceId: string,
+    input: SetResourceGroupsInput,
+    groupIds: readonly string[]
+  ) => Promise<void>
+  /** Which groups these resources are shared with. */
+  grantRows: (db: Database, tenantId: string, resourceIds: string[]) => Promise<ResourceGrantRow[]>
+  /** How many grants these groups still hold over this resource. */
+  countGrants: (db: Database, tenantId: string, groupIds: string[]) => Promise<number>
+}
+
+const documentVisibility: VisibilityResource = {
+  key: 'document',
+  noun: 'document',
+  usageKey: 'documents',
+  predicate: visibleDocuments,
+  setGroups: async (tx, tenantId, resourceId, input, groupIds) => {
+    await tx
+      .update(documents)
+      .set({ visibility: input.visibility })
+      .where(and(eq(documents.id, resourceId), eq(documents.tenantId, tenantId)))
+    await tx
+      .delete(documentGroups)
+      .where(and(eq(documentGroups.tenantId, tenantId), eq(documentGroups.documentId, resourceId)))
+    if (groupIds.length > 0) {
+      await tx
+        .insert(documentGroups)
+        .values(groupIds.map(groupId => ({ tenantId, documentId: resourceId, groupId })))
+        .onConflictDoNothing()
+    }
+  },
+  grantRows: (db, tenantId, resourceIds) =>
+    db
+      .select({
+        resourceId: documentGroups.documentId,
+        id: groups.id,
+        name: groups.name,
+        typeName: groupTypes.name,
+      })
+      .from(documentGroups)
+      .innerJoin(groups, eq(groups.id, documentGroups.groupId))
+      .innerJoin(groupTypes, eq(groupTypes.id, groups.groupTypeId))
+      .where(
+        and(eq(documentGroups.tenantId, tenantId), inArray(documentGroups.documentId, resourceIds))
+      ),
+  countGrants: async (db, tenantId, groupIds) => {
+    const [row] = await db
+      .select({ n: count() })
+      .from(documentGroups)
+      .where(and(eq(documentGroups.tenantId, tenantId), inArray(documentGroups.groupId, groupIds)))
+    return row?.n ?? 0
+  },
+}
+
+const analyticsPageVisibility: VisibilityResource = {
+  key: 'analytics-page',
+  noun: 'dashboard',
+  usageKey: 'dashboards',
+  predicate: visibleAnalyticsPages,
+  setGroups: async (tx, tenantId, resourceId, input, groupIds) => {
+    await tx
+      .update(analyticsPages)
+      .set({ visibility: input.visibility })
+      .where(and(eq(analyticsPages.id, resourceId), eq(analyticsPages.tenantId, tenantId)))
+    await tx
+      .delete(analyticsPageGroups)
+      .where(
+        and(eq(analyticsPageGroups.tenantId, tenantId), eq(analyticsPageGroups.pageId, resourceId))
+      )
+    if (groupIds.length > 0) {
+      await tx
+        .insert(analyticsPageGroups)
+        .values(groupIds.map(groupId => ({ tenantId, pageId: resourceId, groupId })))
+        .onConflictDoNothing()
+    }
+  },
+  grantRows: (db, tenantId, resourceIds) =>
+    db
+      .select({
+        resourceId: analyticsPageGroups.pageId,
+        id: groups.id,
+        name: groups.name,
+        typeName: groupTypes.name,
+      })
+      .from(analyticsPageGroups)
+      .innerJoin(groups, eq(groups.id, analyticsPageGroups.groupId))
+      .innerJoin(groupTypes, eq(groupTypes.id, groups.groupTypeId))
+      .where(
+        and(
+          eq(analyticsPageGroups.tenantId, tenantId),
+          inArray(analyticsPageGroups.pageId, resourceIds)
+        )
+      ),
+  countGrants: async (db, tenantId, groupIds) => {
+    const [row] = await db
+      .select({ n: count() })
+      .from(analyticsPageGroups)
+      .where(
+        and(
+          eq(analyticsPageGroups.tenantId, tenantId),
+          inArray(analyticsPageGroups.groupId, groupIds)
+        )
+      )
+    return row?.n ?? 0
+  },
+}
+
+export const CORE_VISIBILITY_RESOURCES: readonly VisibilityResource[] = [
+  documentVisibility,
+  analyticsPageVisibility,
+]
+
+/** The kit's restrictable resources plus every installed plugin's (D31). */
+export const VISIBILITY_RESOURCES: readonly VisibilityResource[] = [
+  ...CORE_VISIBILITY_RESOURCES,
+  ...serverPlugins.flatMap(p => p.visibilityResources ?? []),
+]
+
+/**
+ * `kind` is a plain string rather than a union, because a plugin's keys are not knowable here. An
+ * unknown one throws: a silent no-op would leave a resource that looks restricted and is not.
+ */
+export function visibilityResourceFor(kind: string): VisibilityResource {
+  const found = VISIBILITY_RESOURCES.find(r => r.key === kind)
+  if (!found) throw new Error(`visibilityResourceFor: no visibility resource named '${kind}'`)
+  return found
+}
+
+/**
+ * One count per restrictable resource, keyed by its `usageKey` (`documents`, `dashboards`, and
+ * whatever an installed plugin registers). Every key is always present, including the zeroes: the
+ * 409 quotes the whole picture, and a missing key would read as "none of those" rather than "none
+ * counted".
+ */
+export type GroupUsage = Record<string, number>
+
+/** What a group still grants, across every registered visibility resource. */
+export async function countGroupGrants(
+  db: Database,
+  tenantId: string,
+  groupIds: string[]
+): Promise<GroupUsage> {
+  const usage: GroupUsage = {}
+  for (const resource of VISIBILITY_RESOURCES) usage[resource.usageKey] = 0
+  if (groupIds.length === 0) return usage
+  const counts = await Promise.all(
+    VISIBILITY_RESOURCES.map(r => r.countGrants(db, tenantId, groupIds))
+  )
+  VISIBILITY_RESOURCES.forEach((r, i) => {
+    usage[r.usageKey] = counts[i] ?? 0
+  })
+  return usage
+}
+
+// ---- Writing visibility ------------------------------------------------------------------------
 
 /**
  * Replace a resource's visibility and its grants in ONE transaction. Every group id is checked
@@ -132,58 +321,17 @@ export interface SetResourceGroupsInput {
 export async function setResourceGroups(
   db: Database,
   scope: Pick<AccessScope, 'tenantId'>,
-  kind: VisibilityResource,
+  kind: string,
   resourceId: string,
   input: SetResourceGroupsInput
 ): Promise<string[]> {
+  const resource = visibilityResourceFor(kind)
   const groupIds =
     input.visibility === 'groups'
       ? await assertGroupsInTenant(db, scope.tenantId, input.groupIds)
       : []
   await db.transaction(async tx => {
-    if (kind === 'document') {
-      await tx
-        .update(documents)
-        .set({ visibility: input.visibility })
-        .where(and(eq(documents.id, resourceId), eq(documents.tenantId, scope.tenantId)))
-      await tx
-        .delete(documentGroups)
-        .where(
-          and(
-            eq(documentGroups.tenantId, scope.tenantId),
-            eq(documentGroups.documentId, resourceId)
-          )
-        )
-      if (groupIds.length > 0) {
-        await tx
-          .insert(documentGroups)
-          .values(
-            groupIds.map(groupId => ({ tenantId: scope.tenantId, documentId: resourceId, groupId }))
-          )
-          .onConflictDoNothing()
-      }
-    } else {
-      await tx
-        .update(analyticsPages)
-        .set({ visibility: input.visibility })
-        .where(and(eq(analyticsPages.id, resourceId), eq(analyticsPages.tenantId, scope.tenantId)))
-      await tx
-        .delete(analyticsPageGroups)
-        .where(
-          and(
-            eq(analyticsPageGroups.tenantId, scope.tenantId),
-            eq(analyticsPageGroups.pageId, resourceId)
-          )
-        )
-      if (groupIds.length > 0) {
-        await tx
-          .insert(analyticsPageGroups)
-          .values(
-            groupIds.map(groupId => ({ tenantId: scope.tenantId, pageId: resourceId, groupId }))
-          )
-          .onConflictDoNothing()
-      }
-    }
+    await resource.setGroups(tx as unknown as Database, scope.tenantId, resourceId, input, groupIds)
   })
   return groupIds
 }
@@ -223,45 +371,12 @@ export async function resolveRequestedVisibility(
 export async function grantsForResources(
   db: Database,
   tenantId: string,
-  kind: VisibilityResource,
+  kind: string,
   resourceIds: string[]
 ): Promise<Map<string, GroupRef[]>> {
   const out = new Map<string, GroupRef[]>()
   if (resourceIds.length === 0) return out
-  const rows =
-    kind === 'document'
-      ? await db
-          .select({
-            resourceId: documentGroups.documentId,
-            id: groups.id,
-            name: groups.name,
-            typeName: groupTypes.name,
-          })
-          .from(documentGroups)
-          .innerJoin(groups, eq(groups.id, documentGroups.groupId))
-          .innerJoin(groupTypes, eq(groupTypes.id, groups.groupTypeId))
-          .where(
-            and(
-              eq(documentGroups.tenantId, tenantId),
-              inArray(documentGroups.documentId, resourceIds)
-            )
-          )
-      : await db
-          .select({
-            resourceId: analyticsPageGroups.pageId,
-            id: groups.id,
-            name: groups.name,
-            typeName: groupTypes.name,
-          })
-          .from(analyticsPageGroups)
-          .innerJoin(groups, eq(groups.id, analyticsPageGroups.groupId))
-          .innerJoin(groupTypes, eq(groupTypes.id, groups.groupTypeId))
-          .where(
-            and(
-              eq(analyticsPageGroups.tenantId, tenantId),
-              inArray(analyticsPageGroups.pageId, resourceIds)
-            )
-          )
+  const rows = await visibilityResourceFor(kind).grantRows(db, tenantId, resourceIds)
   for (const row of rows) {
     const list = out.get(row.resourceId) ?? []
     list.push({ id: row.id, name: row.name, typeName: row.typeName })

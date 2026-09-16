@@ -29,7 +29,10 @@ touches CASL · `groups.ts` (D29) — `groupTypeSchema`/`groupSchema` (with `typ
 and `isPrivateSelection()` (a `groups` selection with nothing in it means owner-and-admins only — the
 UI warns, it does not block) · Phase 2 (server ⇄ UI, no HTTP):
 `realtime.ts` — `realtimeEventSchema` `{ type, tenantId, at, payload? }`, `realtimeEventTypeSchema`,
-`REALTIME_INVALIDATIONS` (event type → TanStack query-key roots) + `invalidationsFor()` (D8) ·
+`REALTIME_INVALIDATIONS` (event type → TanStack query-key roots) + `invalidationsFor()` (D8; it is
+one of the five composers — it unions each plugin's `realtimeRoots` into `access.changed`) ·
+`plugins/types.ts` + `plugins/index.ts` (D31) — `SharedPlugin`, `PLUGIN_ID_RE`/`isPluginId`, and the
+`SHARED_PLUGINS` barrel one line per installed plugin is written into; **leaf-only, see Rules** ·
 `jobs.ts` — `JOB_TYPES`, per-type payload schemas, `jobInputSchema` (what `enqueueJob` takes),
 `jobEnvelopeSchema` (`+ id, enqueuedAt, attempt?`, what the consumer parses), `JobOf<T>` (D7) ·
 `files.ts` — `FILE_SCOPES`/`fileScopeSchema`, `MAX_UPLOAD_BYTES`, `AVATAR_MIME_TYPES`/`isAvatarMimeType`,
@@ -132,8 +135,8 @@ realtime event type: the enum + its roots in `REALTIME_INVALIDATIONS` (a ui test
 is a `queryKeys` family). Adding a file scope: `FILE_SCOPES` here AND the mirrored enum in
 `apps/web/src/db/schema/files.ts`. Making a NEW resource restrictable (D29): add `visibility` +
 `groups: z.array(groupRefSchema)` to its schema here, a `visibility` column plus a junction table
-server-side, and a `visible<Resource>(scope)` predicate in `api/services/access.ts` — never infer
-"restricted" from the presence of grant rows.
+server-side, and a `visible<Resource>(scope)` predicate registered as a `VISIBILITY_RESOURCES`
+entry in `api/services/access.ts` — never infer "restricted" from the presence of grant rows.
 
 ## Rules
 
@@ -145,5 +148,12 @@ server-side, and a `visible<Resource>(scope)` predicate in `api/services/access.
   where nothing needs to validate a `DashboardConfig`) would mean two sources of truth. A fifth
   dependency needs the same written justification here and in the root `CLAUDE.md`;
   `apps/web/tests/config/shared-imports.test.ts` is the check
+- **`plugins/**` is LEAF-ONLY (D31).** `plugins/types.ts`, `plugins/index.ts` and every installed
+  plugin's `plugins/<id>/index.ts` may import zod and leaf contract files, and **never one of the
+  five composers — `ai/agents.ts`, `jobs.ts`, `permissions.ts`, `features.ts`, `realtime.ts`**.
+  Those five read the plugin barrel to open their closed sets (agent keys, job variants, subjects,
+  feature keys, the `access.changed` roots), so a plugin module importing one back closes a cycle
+  through `plugins/index.ts` — and two zod modules in a cycle crash at module evaluation, not at
+  compile time. A2 adds the check to `apps/web/tests/config/shared-imports.test.ts`
 - `tenantRoleSchema` (assignable) on every input; `membershipRoleSchema` (+`support`) on outputs only
 - Server code imports via `@rocketflare/shared/*`; UI too. Re-export every file from `index.ts`

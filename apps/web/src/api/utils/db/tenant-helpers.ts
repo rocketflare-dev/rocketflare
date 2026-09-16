@@ -10,6 +10,7 @@ import { slugify } from '@rocketflare/shared/tenants'
 import { asc, eq, like } from 'drizzle-orm'
 import type { Database } from '../../../db/client'
 import { type Tenant, tenantSettings, tenants, tenantUsers } from '../../../db/schema'
+import { serverPlugins } from '../../../plugins/server'
 import { recordActivity } from '../../services/activity'
 import { ensureDefaultDashboards } from '../../services/dashboard-templates'
 import { ConflictError } from '../core/errors'
@@ -90,6 +91,11 @@ export async function createTenantForUser(
  * Post-commit hooks for a new organisation (D19): seed its template dashboards. Best-effort and
  * OUTSIDE the transaction — a template bug must not break sign-up or invite accept, and
  * `GET /api/analytics/pages` lazily repairs a tenant with no pages on first view anyway.
+ *
+ * Installed plugins (D31) run after the kit's own hooks, each in its OWN try/catch: one plugin's
+ * bad hook must not cost the next plugin its rows, and none of them may cost somebody a sign-up.
+ * Same contract as the kit's: post-commit, idempotent, and with a lazy repair path of its own,
+ * because a swallowed failure here is a tenant that quietly starts life half-seeded.
  */
 async function onTenantCreated(
   db: Database,
@@ -101,6 +107,13 @@ async function onTenantCreated(
     await ensureDefaultDashboards(db, tenant.id, userId, features)
   } catch {
     // Repaired lazily by the first `GET /api/analytics/pages`; see services/dashboard-templates.ts.
+  }
+  for (const plugin of serverPlugins) {
+    try {
+      await plugin.hooks?.onTenantCreated?.(db, tenant, userId)
+    } catch {
+      // Best-effort, exactly like the kit's own: the plugin owns its repair path.
+    }
   }
 }
 

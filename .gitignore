@@ -41,6 +41,10 @@ apps/web/.provision.json
 # written 0600 by `pnpm provision tokens`. `.provision.env.example` (blank values) IS committed.
 apps/web/.provision.env
 
+# Plugins installed into THIS checkout only (D31): the kit, or `pnpm plugin add --local`.
+# An app records its plugins as surfaces in the committed `.rocketflare.json` instead.
+.rocketflare.local.json
+
 # Kit upgrade cache — the bare mirror of the kit and the working artifacts of
 # `pnpm kit:upgrade` (scripts/upgrade.mjs). Safe to delete at any time.
 .upgrade/

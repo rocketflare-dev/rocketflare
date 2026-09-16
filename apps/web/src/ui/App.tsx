@@ -12,6 +12,8 @@
 import { QueryClientProvider } from '@tanstack/react-query'
 import { lazy, Suspense } from 'react'
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
+import type { PluginRouteTier } from '@/plugins/types'
+import { uiPlugins } from '@/plugins/ui'
 import { ConnectionBanner } from '@/ui/components/ConnectionBanner'
 import { ErrorBoundary } from '@/ui/components/ErrorBoundary'
 import Layout from '@/ui/components/Layout'
@@ -81,6 +83,37 @@ const ReactQueryDevtools =
         import('@tanstack/react-query-devtools').then(m => ({ default: m.ReactQueryDevtools }))
       )
     : null
+
+/**
+ * Routes contributed by installed plugins (D31), for one tier. Rendered from the SAME `RequireGuard`
+ * the nav item uses, so a plugin link can no more point at a page its reader cannot open than a
+ * kit one can. `Component` is always a `lazy()` wrapper — checked in the source by
+ * `tests/config/plugins.test.ts` — so a plugin's pages never reach the main bundle.
+ */
+function pluginRoutes(tier: PluginRouteTier) {
+  return uiPlugins
+    .flatMap(p => p.routes)
+    .filter(r => (r.tier ?? 'shell') === tier)
+    .map(r => {
+      const page = <r.Component />
+      const guarded = r.guard ? <RequireGuard guard={r.guard}>{page}</RequireGuard> : page
+      return (
+        <Route
+          key={`${tier}:${r.path}`}
+          path={r.path}
+          element={
+            tier === 'noTenant' ? (
+              <NoTenantRoute>{guarded}</NoTenantRoute>
+            ) : tier === 'public' ? (
+              <Suspense fallback={<LoadingIndicator size="lg" centered />}>{guarded}</Suspense>
+            ) : (
+              guarded
+            )
+          }
+        />
+      )
+    })
+}
 
 /** Sidebar footer: which org (and as what) the reader is acting in. */
 function TenantFooter() {
@@ -242,6 +275,7 @@ function ShellRoutes() {
             <Route path="users/:id" element={<UserDetail />} />
             <Route path="feature-flags" element={<FeatureFlags />} />
           </Route>
+          {pluginRoutes('shell')}
           <Route path="*" element={<NotFound />} />
         </Routes>
       </Suspense>
@@ -302,6 +336,8 @@ function AppRoutes() {
           </NoTenantRoute>
         }
       />
+      {pluginRoutes('public')}
+      {pluginRoutes('noTenant')}
       <Route
         path="/*"
         element={

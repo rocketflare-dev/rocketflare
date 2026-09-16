@@ -16,15 +16,7 @@ import type {
 } from '@rocketflare/shared/groups'
 import { and, asc, count, eq, inArray, sql } from 'drizzle-orm'
 import type { Database } from '../../db/client'
-import {
-  analyticsPageGroups,
-  documentGroups,
-  groupMembers,
-  groups,
-  groupTypes,
-  tenantUsers,
-  users,
-} from '../../db/schema'
+import { groupMembers, groups, groupTypes, tenantUsers, users } from '../../db/schema'
 import {
   BadRequestError,
   ConflictError,
@@ -232,35 +224,9 @@ export async function updateGroup(
 
 // ---- Deleting, and what it costs --------------------------------------------------------------
 
-export interface GroupUsage {
-  documents: number
-  dashboards: number
-}
-
-/** What a group still grants. The delete route quotes these numbers in its 409. */
-export async function countGroupGrants(
-  db: Database,
-  tenantId: string,
-  groupIds: string[]
-): Promise<GroupUsage> {
-  if (groupIds.length === 0) return { documents: 0, dashboards: 0 }
-  const [[docs], [pages]] = await Promise.all([
-    db
-      .select({ n: count() })
-      .from(documentGroups)
-      .where(and(eq(documentGroups.tenantId, tenantId), inArray(documentGroups.groupId, groupIds))),
-    db
-      .select({ n: count() })
-      .from(analyticsPageGroups)
-      .where(
-        and(
-          eq(analyticsPageGroups.tenantId, tenantId),
-          inArray(analyticsPageGroups.groupId, groupIds)
-        )
-      ),
-  ])
-  return { documents: docs?.n ?? 0, dashboards: pages?.n ?? 0 }
-}
+// `countGroupGrants` — what a group still grants, and the 409 the delete route quotes — lives in
+// `services/access.ts`, beside the visibility registry that answers it (D29, D31). Importing it
+// here instead would close a module cycle: access.ts already imports this file.
 
 export async function groupIdsOfType(
   db: Database,

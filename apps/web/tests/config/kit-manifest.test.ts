@@ -12,10 +12,11 @@
  * The `config` project: no database, no filesystem beyond `git ls-files`.
  */
 import { execFileSync } from 'node:child_process'
-import { existsSync, statSync } from 'node:fs'
+import { existsSync, readdirSync, statSync } from 'node:fs'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import rawManifest from '../../../../.rocketflare.json'
+import { readManifest } from '../../../../scripts/lib/manifest.mjs'
 import type { Manifest } from '../../../../scripts/lib/upgrade-lib.d.mts'
 import {
   absentSurfaces,
@@ -25,7 +26,15 @@ import {
 } from '../../../../scripts/lib/upgrade-lib.mjs'
 
 // A JSON import widens every literal to `string`; the manifest's shape is the lib's contract.
-const manifest = rawManifest as unknown as Manifest
+const committed = rawManifest as unknown as Manifest
+
+/**
+ * What the tooling actually sees: the committed manifest with the git-ignored
+ * `.rocketflare.local.json` sidecar folded in (D31). In the kit that is where a plugin installed
+ * with `--local` is recorded, so a developer with one installed must not fail this suite — and its
+ * files must still be classified, which is exactly what the coverage assertion below then proves.
+ */
+const manifest = (readManifest().manifest ?? committed) as Manifest
 
 const REPO_ROOT = path.resolve(__dirname, '../../../..')
 // Tracked AND untracked-but-not-ignored — the same file set `scripts/rename.mjs` walks. A new file
@@ -39,19 +48,22 @@ const tracked = execFileSync('git', ['ls-files', '--cached', '--others', '--excl
 
 describe('.rocketflare.json', () => {
   it('is the kit, not an app (the `app` block is what a copy gets)', () => {
-    expect(isKitManifest(manifest)).toBe(true)
-    expect(manifest.kit.name).toBe('rocketflare')
-    expect(manifest.kit.repo).toMatch(/^https:\/\/github\.com\/.+\.git$/)
+    // The COMMITTED file, deliberately: the sidecar may not make a checkout look like something
+    // else, and `readManifest().isKit` answers from the same place.
+    expect(isKitManifest(committed)).toBe(true)
+    expect(readManifest().isKit).toBe(true)
+    expect(committed.kit.name).toBe('rocketflare')
+    expect(committed.kit.repo).toMatch(/^https:\/\/github\.com\/.+\.git$/)
   })
 
   it('carries the two prose keys that stop it being deleted as cruft', () => {
-    expect(manifest.$purpose).toMatch(/kit:upgrade/)
-    expect(manifest.$doNotDelete).toMatch(/--adopt/)
+    expect(committed.$purpose).toMatch(/kit:upgrade/)
+    expect(committed.$doNotDelete).toMatch(/--adopt/)
   })
 
   it('pins a version that matches the root package.json', async () => {
     const root = await import('../../../../package.json')
-    expect(manifest.kit.version).toBe(root.default.version)
+    expect(committed.kit.version).toBe(root.default.version)
   })
 })
 
@@ -91,7 +103,34 @@ describe('surfaces', () => {
   it('ids are unique and kinds are known', () => {
     const ids = manifest.surfaces.map(s => s.id)
     expect(new Set(ids).size).toBe(ids.length)
-    for (const s of manifest.surfaces) expect(['example', 'optional-feature']).toContain(s.kind)
+    for (const s of manifest.surfaces)
+      expect(['example', 'optional-feature', 'plugin']).toContain(s.kind)
+  })
+
+  it('every plugin surface says where it came from', () => {
+    // D31: `source.repo` is never null. An installed plugin whose origin is unknown cannot be
+    // upgraded, cannot be checked against its `requires.kit` range, and cannot be re-fetched — so
+    // it would be a directory nobody can maintain, recorded as though somebody could.
+    for (const s of manifest.surfaces.filter(x => x.kind === 'plugin')) {
+      expect(s.source?.repo, `${s.id} source.repo`).toBeTruthy()
+      expect(s.anchor, `${s.id} anchor`).toMatch(/^apps\/web\/src\/plugins\/[^/]+\//)
+    }
+  })
+
+  it('every installed plugin directory is a declared surface', () => {
+    // The manifest is what `kit:upgrade` reads to leave a plugin's bytes alone. A plugin on disk
+    // that no surface claims would be treated as core and rewritten by the next kit release.
+    const dir = path.join(REPO_ROOT, 'apps/web/src/plugins')
+    const installed = existsSync(dir)
+      ? readdirSync(dir, { withFileTypes: true })
+          .filter(e => e.isDirectory())
+          .map(e => e.name)
+      : []
+    const declared = new Set(manifest.surfaces.filter(s => s.kind === 'plugin').map(s => s.id))
+    expect(
+      installed.filter(id => !declared.has(id)),
+      'run `pnpm plugin add` rather than copying a plugin in by hand'
+    ).toEqual([])
   })
 
   it('reports nothing absent in the kit itself', () => {

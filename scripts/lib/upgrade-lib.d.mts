@@ -7,7 +7,14 @@ import type { Names } from './rename-lib.d.mts'
 export function globToRegExp(glob: string): RegExp
 export function matchesAny(relPath: string, globs: readonly string[]): boolean
 
-export type SurfaceKind = 'example' | 'optional-feature'
+export type SurfaceKind = 'example' | 'optional-feature' | 'plugin'
+export interface PluginSource {
+  /** Canonical git URL — never null for a `kind: 'plugin'` surface. */
+  repo: string
+  subdir?: string
+  version?: string
+  commit?: string | null
+}
 export interface Surface {
   id: string
   kind: SurfaceKind
@@ -16,6 +23,15 @@ export interface Surface {
   anchor: string
   paths: string[]
   registries: string[]
+  /** `kind: 'plugin'` only (D31): where the plugin came from. */
+  source?: PluginSource
+  installedAt?: string
+  requires?: {
+    kit?: string
+    surfaces?: string[]
+    plugins?: string[]
+  }
+  history?: HistoryEntry[]
 }
 export interface KitBlock {
   name: string
@@ -68,6 +84,7 @@ export type FileClass =
   | 'modified'
   | 'deleted'
   | 'skipped-surface-absent'
+  | 'skipped-plugin-owned'
   | 'skipped-locally-deleted'
   | 'skipped-kit-only'
   | 'migration-derived'

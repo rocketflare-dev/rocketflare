@@ -6,10 +6,19 @@
  * Families are deliberately independent (`members` is NOT under `tenant`) so a tenant rename does
  * not refetch the member list; switching tenant clears the whole client instead (useAuth).
  */
+import { type UI_PLUGINS, uiPlugins } from '@/plugins/ui'
+
 /** Cleaned filters as they appear in a key. Callers pass any plain object (interfaces welcome). */
 export type Filters = Record<string, string | number | boolean>
 
-export const queryKeys = {
+/** `A | B | C` → `A & B & C`. Distributes over the union, then collapses it by inference. */
+type UnionToIntersection<U> = (U extends unknown ? (u: U) => void : never) extends (
+  i: infer I
+) => void
+  ? I
+  : never
+
+const CORE_QUERY_KEYS = {
   /** `/api/health` — version + environment; effectively immutable for the tab's lifetime */
   appInfo: {
     all: ['app-info'] as const,
@@ -193,6 +202,24 @@ export const queryKeys = {
     },
   },
 } as const
+
+/**
+ * Families contributed by installed plugins (D31), merged in. Every root a plugin declares starts
+ * with `<id>:` — `tests/config/plugins.test.ts` is the check — so a plugin can no more collide with
+ * a kit family, or with another plugin's, than two plugins can share a table name.
+ *
+ * The cast is the price of merging objects the kit cannot know the shape of: at runtime this is
+ * one spread, and at compile time it is the intersection of everything the barrel declares, which
+ * is exactly what a plugin's own hooks need to see when they read `queryKeys`.
+ */
+type DeclaredQueryKeys = UnionToIntersection<NonNullable<(typeof UI_PLUGINS)[number]['queryKeys']>>
+/** No plugins (or none with families) → `unknown`, which intersects away instead of erasing. */
+type PluginQueryKeys = [DeclaredQueryKeys] extends [never] ? unknown : DeclaredQueryKeys
+
+export const queryKeys = {
+  ...CORE_QUERY_KEYS,
+  ...(Object.assign({}, ...uiPlugins.map(p => p.queryKeys ?? {})) as Record<string, unknown>),
+} as typeof CORE_QUERY_KEYS & PluginQueryKeys
 
 /** Drop undefined/empty filters so `{ q: '' }` and `{}` share one cache entry. */
 export function cleanFilters(filters: object): Filters {

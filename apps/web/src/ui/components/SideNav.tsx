@@ -14,6 +14,8 @@ import {
 } from '@heroicons/react/24/outline'
 import type { ComponentType, ReactNode } from 'react'
 import { Link, NavLink, useLocation } from 'react-router-dom'
+import type { PluginNavGroup } from '@/plugins/types'
+import { uiPlugins } from '@/plugins/ui'
 import { useAppInfo } from '@/ui/hooks/useAppInfo'
 import { useBooleanPreference } from '@/ui/hooks/useLocalStoragePreference'
 import { type NavBadgeKey, type NavBadges, useNavBadges } from '@/ui/hooks/useNavBadges'
@@ -47,9 +49,10 @@ export type NavConfig = (NavItem | NavGroup)[]
 
 /**
  * The kit's navigation (D10: each `guard` is the SAME flag the route uses). Profile and
- * Notifications live in the header `UserMenu`; apps add their own groups above "Organisation".
+ * Notifications live in the header `UserMenu`; apps add their own groups above "Organisation",
+ * and an installed plugin (D31) does the same through `UiPlugin.nav` — see `composeNav` below.
  */
-export const navigationConfig: NavConfig = [
+const CORE_NAVIGATION: NavConfig = [
   {
     items: [
       { to: '/', label: 'Home', icon: HomeIcon },
@@ -119,6 +122,34 @@ export const navigationConfig: NavConfig = [
 function isNavGroup(item: NavItem | NavGroup): item is NavGroup {
   return 'items' in item
 }
+
+/** Where a plugin group lands when it names no anchor: above the kit's "Organisation" group. */
+export const DEFAULT_NAV_ANCHOR = 'Organisation'
+
+/**
+ * Splice plugin nav groups into the kit's config (D31). Pure, so it is unit-tested rather than
+ * reasoned about: a group is placed BEFORE the core group whose label it names, and appended when
+ * that label is not there — which is what an app that deleted the anchor group gets, rather than a
+ * plugin whose pages have no way in. Several groups naming the same anchor keep their declared
+ * order. The core config is never mutated.
+ */
+export function composeNav(core: NavConfig, plugins: readonly PluginNavGroup[] = []): NavConfig {
+  const out: NavConfig = [...core]
+  for (const group of plugins) {
+    const anchor = group.before ?? DEFAULT_NAV_ANCHOR
+    const entry: NavGroup = { label: group.label, items: group.items }
+    const at = out.findIndex(item => isNavGroup(item) && item.label === anchor)
+    if (at === -1) out.push(entry)
+    else out.splice(at, 0, entry)
+  }
+  return out
+}
+
+/** The kit's nav with every installed plugin's groups spliced in. */
+export const navigationConfig: NavConfig = composeNav(
+  CORE_NAVIGATION,
+  uiPlugins.flatMap(p => p.nav ?? [])
+)
 
 /** Apply `canAccess` to every item and drop groups that end up empty. Pure — unit-testable. */
 export function filterNavConfig(

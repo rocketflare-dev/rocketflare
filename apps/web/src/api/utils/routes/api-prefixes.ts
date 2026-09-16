@@ -13,8 +13,20 @@
  *    mirror this list instead.
  *
  * `/cubejs-api` and `/mcp` are the drizzle-cube API (D19), `/ws` the realtime upgrade (Phase 2).
+ *
+ * A plugin (D31) may own a prefix OUTSIDE `/api` — a protocol endpoint, say. Those are unioned in
+ * from the server barrel, which means installing such a plugin also means adding its patterns to
+ * `run_worker_first` in BOTH tomls by hand: the parity test reads this list, so a forgotten one
+ * fails the gate rather than silently serving the app shell.
  */
-export const API_PREFIXES = ['/api', '/auth', '/cubejs-api', '/mcp', '/ws'] as const
+import { serverPlugins } from '../../../plugins/server'
+
+const CORE_API_PREFIXES = ['/api', '/auth', '/cubejs-api', '/mcp', '/ws'] as const
+
+export const API_PREFIXES: readonly string[] = [
+  ...CORE_API_PREFIXES,
+  ...serverPlugins.flatMap(p => p.apiPrefixes ?? []),
+]
 
 export function isApiPath(pathname: string): boolean {
   return API_PREFIXES.some(p => pathname === p || pathname.startsWith(`${p}/`))

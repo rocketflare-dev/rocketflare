@@ -590,6 +590,17 @@ function report(plan, notes, applicable) {
     )
   }
   if (skippedLocal > 0) lines.push(`Skipped ${skippedLocal} file(s) you had already deleted.`)
+  // D31: a plugin ships its own release chain, so a KIT diff never touches its files. Reported
+  // rather than silently dropped, because "the kit changed nothing here" and "the kit is not
+  // allowed to change anything here" are different answers.
+  const pluginOwned = bucket('skipped-plugin-owned')
+  if (pluginOwned.length > 0) {
+    const ids = [...new Set(pluginOwned.map(f => f.surface).filter(Boolean))]
+    lines.push(
+      `Skipped ${pluginOwned.length} file(s) owned by installed plugin(s) (${ids.join(', ')}). ` +
+        `Upgrade those with \`pnpm plugin upgrade <id>\`, after this.`
+    )
+  }
   const manual = [
     ...bucket('manual'),
     ...bucket('manual-toml'),

@@ -74,6 +74,58 @@ describe('classifyPath', () => {
     expect(c.translate).toBe(false)
   })
 
+  it('never touches a file an installed plugin owns, even though the kit shipped it', () => {
+    // D31: a plugin has its own repository and its own release chain. A kit diff that rewrote its
+    // files would be porting one version of a plugin over another, with neither side told.
+    const withPlugin = {
+      ...manifest,
+      surfaces: [
+        ...manifest.surfaces,
+        {
+          id: 'approvals',
+          kind: 'plugin' as const,
+          label: 'Approvals',
+          anchor: 'apps/web/src/plugins/approvals/plugin.json',
+          paths: ['apps/web/src/plugins/approvals/**'],
+          registries: ['apps/web/src/plugins/server.ts'],
+        },
+      ],
+    }
+    const c = classifyPath('apps/web/src/plugins/approvals/api/routes.ts', {
+      ...base,
+      manifest: withPlugin,
+    })
+    expect(c.class).toBe('skipped-plugin-owned')
+    expect(c.surface).toBe('approvals')
+    expect(c.translate).toBe(false)
+    expect(c.reason).toMatch(/pnpm plugin upgrade approvals/)
+  })
+
+  it('still drops a plugin whose anchor is gone as absent, not as plugin-owned', () => {
+    // Order matters: "the adopter removed it" is the stronger statement, and an uninstalled
+    // plugin's leftovers must not be recreated by an upgrade any more than a deleted example is.
+    const withPlugin = {
+      ...manifest,
+      surfaces: [
+        ...manifest.surfaces,
+        {
+          id: 'approvals',
+          kind: 'plugin' as const,
+          label: 'Approvals',
+          anchor: 'apps/web/src/plugins/approvals/plugin.json',
+          paths: ['apps/web/src/plugins/approvals/**'],
+          registries: [],
+        },
+      ],
+    }
+    const c = classifyPath('apps/web/src/plugins/approvals/api/routes.ts', {
+      ...base,
+      manifest: withPlugin,
+      absent: ['approvals'],
+    })
+    expect(c.class).toBe('skipped-surface-absent')
+  })
+
   it('never applies a kit migration', () => {
     const c = classifyPath('apps/web/migrations/0007_add_thing.sql', base)
     expect(c.class).toBe('migration-derived')
