@@ -11,7 +11,7 @@
  * the DOM is a real hang, not a theoretical one.
  */
 import { documentCardsFromToolResult } from '@rocketflare/shared/ai/embeddings'
-import { DocumentCard } from '@/ui/components/shared'
+import { DocumentLink, documentLinkProps } from '@/ui/components/shared'
 
 /** Longest JSON blob rendered into a `<pre>`. Past it the reader gets the head and a byte count. */
 export const TOOL_RESULT_MAX_CHARS = 4_000
@@ -29,16 +29,25 @@ export function truncate(text: string, max = TOOL_RESULT_MAX_CHARS): string {
   return `${text.slice(0, max)}\n… ${(text.length - max).toLocaleString()} more characters`
 }
 
-/** The document strip a knowledge tool's answer implies, or null for every other tool. */
+/**
+ * The documents a knowledge tool's answer named, or null for every other tool.
+ *
+ * **One line each.** A card strip was right when this was the only thing on the screen; inside a
+ * timeline row, four cards bury the stage that comes next — and the reader is here for the shape of
+ * the run, not to read a document from inside it. The title still links to the viewer, which is the
+ * one thing they might want.
+ */
 export function ToolResultCards({ name, result }: { name: string; result: unknown }) {
   const cards = documentCardsFromToolResult(name, result)
   if (cards.length === 0) return null
   return (
-    <div className="mt-1.5 grid gap-1.5 sm:grid-cols-2">
+    <ul className="mt-1.5 space-y-0.5" aria-label="Documents this answer used">
       {cards.map(card => (
-        <DocumentCard key={card.id} card={card} dense />
+        <li key={card.id} className="min-w-0">
+          <DocumentLink {...documentLinkProps(card)} />
+        </li>
       ))}
-    </div>
+    </ul>
   )
 }
 

@@ -2,6 +2,7 @@ export { AccessBadge, AccessPicker, type AccessPickerProps } from './AccessPicke
 export { AlertModal } from './AlertModal'
 export { ConfirmModal } from './ConfirmModal'
 export { DocumentCard, type DocumentCardProps } from './DocumentCard'
+export { DocumentLink, type DocumentLinkProps, documentLinkProps } from './DocumentLink'
 export { EmptyState, EmptyStateCard } from './EmptyState'
 export { FieldError, fieldErrorFor } from './FieldError'
 export { LogoMark } from './LogoMark'

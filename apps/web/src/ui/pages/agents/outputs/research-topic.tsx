@@ -3,12 +3,11 @@
  * Citations are filtered server-side against what the tools returned, so a title here is a document
  * the run really read — the link opens the viewer, not a search narrowed to it.
  */
-import { DocumentMagnifyingGlassIcon } from '@heroicons/react/24/outline'
 import { type ResearchTopicOutput, researchTopicOutputSchema } from '@rocketflare/shared/ai/agents'
 import type { AgentArtifact } from '@rocketflare/shared/ai/artifacts'
 import { documentPath } from '@rocketflare/shared/ai/embeddings'
-import { Link } from 'react-router-dom'
 import { Markdown } from '@/ui/components/ai/Markdown'
+import { DocumentLink } from '@/ui/components/shared'
 import type { AgentOutput, AgentOutputProps } from './types'
 
 function ResearchTopicOutputView({ output }: AgentOutputProps<ResearchTopicOutput>) {
@@ -20,16 +19,15 @@ function ResearchTopicOutputView({ output }: AgentOutputProps<ResearchTopicOutpu
           {output.citations.length > 0 ? 'Sources' : 'No sources'}
         </h3>
         {output.citations.length > 0 ? (
-          <ul className="text-sm space-y-0.5">
+          <ul className="space-y-0.5">
             {output.citations.map(citation => (
-              <li key={citation.documentId}>
-                <Link
+              <li key={citation.documentId} className="min-w-0">
+                {/* The same one-liner the timeline's tool results use — a source is a link. */}
+                <DocumentLink
+                  id={citation.documentId}
                   to={documentPath(citation.documentId)}
-                  className="link link-primary inline-flex items-center gap-1.5"
-                >
-                  <DocumentMagnifyingGlassIcon className="w-4 h-4" />
-                  {citation.title}
-                </Link>
+                  title={citation.title}
+                />
               </li>
             ))}
           </ul>

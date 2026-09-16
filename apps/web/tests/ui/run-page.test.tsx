@@ -7,6 +7,9 @@
  * - a non-approver sees one sentence, not disabled buttons;
  * - focus lands on the heading, never on Approve;
  * - a parked run does not poll and its badge does not pulse;
+ * - the input is ONE block above the columns (never a tab), labelled from the agent's own schema
+ *   and falling back to the JSON whole;
+ * - the column split follows the run's state until the reader overrides it, and then never again;
  * - an `entity.changed { entity: 'agent-run' }` nudge refetches the run and leaves
  *   `['agent-run-agui']` — the key the stream owns — untouched.
  */
@@ -34,6 +37,7 @@ import {
 
 const RUN_ID = '99999999-9999-4999-8999-999999999999'
 const ASK_ID = '77777777-7777-4777-8777-777777777777'
+const DOC_ID = '66666666-6666-4666-8666-666666666666'
 const t = (s: number) => `2025-06-01T00:00:${String(s).padStart(2, '0')}Z`
 const eid = (n: number) => `${String(n).padStart(8, '0')}-0000-4000-8000-000000000000`
 
@@ -108,6 +112,16 @@ const ask = (spec: unknown, overrides: Record<string, unknown> = {}) => ({
   ...overrides,
 })
 
+const INPUT_SCHEMA = {
+  type: 'object',
+  properties: {
+    text: { type: 'string', title: 'Text' },
+    style: { type: 'string', title: 'Style', enum: ['bullets', 'paragraph'] },
+    index: { type: 'boolean', title: 'Index the result' },
+  },
+  required: ['text'],
+}
+
 const agents = (overrides: Record<string, unknown> = {}) => ({
   items: [
     {
@@ -117,6 +131,7 @@ const agents = (overrides: Record<string, unknown> = {}) => ({
       promptKey: 'summarize-text',
       exclusive: true,
       approvers: 'requester',
+      inputJsonSchema: INPUT_SCHEMA,
       ...overrides,
     },
   ],
@@ -217,6 +232,80 @@ describe('RunPage', () => {
     expect(screen.getByText('Submit summary')).toBeInTheDocument()
     expect(screen.getByRole('tab', { name: /Output/ })).toBeInTheDocument()
     expect(screen.getByRole('tab', { name: /Usage/ })).toBeInTheDocument()
+  })
+
+  it('renders the input ABOVE the columns from the agent’s schema, and has no Input tab', async () => {
+    mount()
+    const input = await screen.findByRole('region', { name: 'Run input' })
+    // One home for one fact: it was `?tab=input`, four clicks from the thing it explains.
+    expect(screen.queryByRole('tab', { name: /Input/ })).not.toBeInTheDocument()
+    expect(input).toHaveTextContent('Text')
+    expect(input).toHaveTextContent('hello')
+    // Labelled values, not a JSON blob.
+    expect(input.querySelector('pre')).toBeNull()
+    expect(input.compareDocumentPosition(screen.getByLabelText('Run timeline'))).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING
+    )
+  })
+
+  it('falls back to the JSON WHOLE when the schema cannot label the input', async () => {
+    mount({ '/api/agents': agents({ inputJsonSchema: null }) })
+    const input = await screen.findByRole('region', { name: 'Run input' })
+    expect(input.querySelector('pre')?.textContent).toContain('"style": "bullets"')
+  })
+
+  it('moves the timestamps into Usage and keeps duration in the header', async () => {
+    mount()
+    const summary = await screen.findByRole('region', { name: 'Run summary' })
+    expect(summary).toHaveTextContent('Duration')
+    // Three rows of chrome above the fold, read once in a hundred visits: they live with the rest
+    // of what the rows know instead.
+    expect(summary).not.toHaveTextContent('Requested')
+    fireEvent.click(screen.getByRole('tab', { name: /Usage/ }))
+    expect(await screen.findByText('Requested')).toBeInTheDocument()
+    expect(screen.getByText('Started')).toBeInTheDocument()
+    expect(screen.getByText('Finished')).toBeInTheDocument()
+  })
+
+  it('gives the timeline the major column while working, the output once settled', async () => {
+    mount()
+    await screen.findByText('Summarising')
+    expect(document.querySelector('[data-layout]')).toHaveAttribute('data-layout', 'timeline-major')
+    cleanup()
+    mount({ [`/api/agents/runs/${RUN_ID}`]: run({ status: 'succeeded', finishedAt: t(4) }) })
+    await screen.findByText('Summarising')
+    expect(document.querySelector('[data-layout]')).toHaveAttribute('data-layout', 'output-major')
+  })
+
+  it('keeps the reader’s split once they choose one', async () => {
+    mount()
+    await screen.findByText('Summarising')
+    fireEvent.click(screen.getByRole('button', { name: /Widen output/ }))
+    expect(document.querySelector('[data-layout]')).toHaveAttribute('data-layout', 'output-major')
+    // And the button now offers the other way round, which is the whole control.
+    expect(screen.getByRole('button', { name: /Widen timeline/ })).toBeInTheDocument()
+  })
+
+  it('renders a knowledge tool’s documents as one line each, not as cards', async () => {
+    mount({
+      [`/api/agents/runs/${RUN_ID}`]: run({
+        events: [
+          ...EVENTS,
+          event(8, 'tool.start', { name: 'search_knowledge', input: { query: 'leave' } }),
+          event(9, 'tool.end', {
+            name: 'search_knowledge',
+            result: {
+              documents: [{ documentId: DOC_ID, title: 'Handbook', totalPassages: 3 }],
+            },
+          }),
+        ],
+      }),
+    })
+    const link = await screen.findByRole('link', { name: 'Handbook' })
+    expect(link).toHaveAttribute('href', `/documents/${DOC_ID}`)
+    // `DocumentCard` renders an <article>; in a timeline row four of those bury the next stage.
+    expect(document.querySelector('article[data-document]')).toBeNull()
+    expect(link.closest('[data-document]')).toHaveTextContent('3 passages')
   })
 
   it('expands a collapsed stage on click and keeps the choice', async () => {

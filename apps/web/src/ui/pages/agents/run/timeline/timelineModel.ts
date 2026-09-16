@@ -22,6 +22,7 @@
  */
 import {
   type AgentRunEventType,
+  type AgentRunStatus,
   type AgentStepEventData,
   agentErrorEventDataSchema,
   agentStatusEventDataSchema,
@@ -29,6 +30,7 @@ import {
   agentTextEventDataSchema,
   agentToolEndEventDataSchema,
   agentToolStartEventDataSchema,
+  isRunActive,
 } from '@rocketflare/shared/ai/agents'
 import type { AgentArtifact } from '@rocketflare/shared/ai/artifacts'
 import { agentArtifactEventDataSchema } from '@rocketflare/shared/ai/artifacts'
@@ -661,4 +663,28 @@ export function windowGroups(
 export function humaniseToolName(name: string): string {
   const words = name.replace(/[_-]+/g, ' ').trim()
   return words.charAt(0).toUpperCase() + words.slice(1)
+}
+
+/**
+ * Which of the two columns is the major one — the same shape as `defaultExpanded` above: a default
+ * the run's own state chooses, XOR'd with what the reader said.
+ *
+ * While a run is working, the PROGRESS is the story and the output pane is an empty state, so the
+ * timeline takes the larger share; once it settles, the answer is what the person came for. The
+ * reader's override wins **permanently** once set, and that is the whole reason this is a function
+ * rather than a ternary at the call site: a run settles while somebody is mid-sentence in the
+ * timeline, and swapping the columns under them at that exact moment is the hazard here. An
+ * override survives the transition; nothing else does.
+ *
+ * The minor column is narrow but never collapsed: a settled run's timeline is still where you check
+ * HOW it got there, and a rail you have to open first makes that a two-click journey.
+ */
+export type RunLayoutSplit = 'timeline-major' | 'output-major'
+
+export function runLayout(
+  status: AgentRunStatus,
+  override: RunLayoutSplit | null = null
+): RunLayoutSplit {
+  if (override) return override
+  return isRunActive(status) ? 'timeline-major' : 'output-major'
 }

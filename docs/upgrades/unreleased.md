@@ -437,9 +437,21 @@ come back to.
   `awaiting_input` reads "Awaiting input" and carries a `PauseCircleIcon`.
 
 **The layout is the argument.** The action panel is full-width and **above** the timeline, because
-somebody arriving from a notification is here to decide, not to read; below it a 26rem timeline and
-the tabs. Under `lg` they stack **tabs first, timeline second** — on a phone the answer is what
-people came for. `run.error` renders **above the tab bar, always**: a failure is not a tab.
+somebody arriving from a notification is here to decide, not to read; under it the run's INPUT as
+labelled values (from the agent's own `inputJsonSchema` through the one field renderer, falling back
+to the JSON whole), and below that the timeline and the tabs side by side. Under `lg` they stack
+**tabs first, timeline second** — on a phone the answer is what people came for. `run.error` renders
+**above the tab bar, always**: a failure is not a tab.
+
+Two things in that row are decisions rather than numbers, and an app that restyles this page should
+keep them. **The split is `runLayout(status, override)`** (pure, in `timelineModel.ts`): the
+timeline is the major column while the run is working — the progress IS the story and the output
+pane is an empty state — and the output takes it once the run settles, but **a reader's override
+wins permanently**, because a run that settles mid-read must not swap the columns underneath them.
+The minor column stays narrow and readable rather than collapsing to a rail. And **the timeline is a
+bounded scroller** (`lg:max-h` + `overflow-y-auto`, dropped below `lg` where the page scrolls
+instead): without a scroll container the `<ol>` grew for ever, the panel grew with it, and the
+stick-to-bottom sentinel scrolled the PAGE rather than the list.
 
 **The action panel** (`run/ActionRequiredPanel.tsx` + `run/interrupts/*`) dispatches on an
 exhaustive `switch` over the shared kind union, so a fifth kind is a type error until it has a
@@ -485,13 +497,17 @@ auto-scroll and collapsing.
 
 **Real tool results for free.** `documentCardsFromToolResult(name, result)` already existed in
 `@rocketflare/shared/ai/embeddings` and is documented as serving the agent-run projection, so
-`search_knowledge` / `list_documents` / `get_document` render a `DocumentCard` strip and **no tool
-parser was written**. Every other tool keeps `<details><pre>`, truncated at 4 000 characters — a
+`search_knowledge` / `list_documents` / `get_document` render a `DocumentLink` one-liner each —
+`components/shared/DocumentLink.tsx`, the same document a `DocumentCard` shows, on one line, because
+inside a timeline row four cards bury the stage that comes next — and **no tool parser was
+written**. Every other tool keeps `<details><pre>`, truncated at 4 000 characters — a
 200 KB result pretty-printed into the DOM is a real hang.
 
-**The right pane is `URLTabs` (`?tab=output|artifacts|usage|input`), not stacked panels**, so the
+**The right pane is `URLTabs` (`?tab=output|artifacts|usage`), not stacked panels**, so the
 approver — the person this feature exists for — does not scroll past the answer to reach the
-artifact they must inspect.
+artifact they must inspect. The input is deliberately NOT a tab (it is the block above both
+columns), and the run's timestamps live in Usage: only the elapsed time is in the header, which is
+the one figure a person glances at.
 
 - **`outputs/` mirrors `forms/`**: `outputFor(agentKey) → { schema, Component, artifacts? }`, which
   killed the hard-coded `agentKey === 'summarize-text'` / `'research-topic'` branches. **An agent is

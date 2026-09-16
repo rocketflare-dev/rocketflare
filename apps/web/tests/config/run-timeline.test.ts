@@ -1,7 +1,8 @@
 /**
  * The pure half of the run workspace (issue #17): the timeline reducer and its grouping, the
- * expiry tick chooser, and the JSON-Schema → fields conversion. No database, no DOM — these are
- * data functions, and each of them is guarding a specific way the page could be silently wrong.
+ * column split, the input summary, the expiry tick chooser, and the JSON-Schema → fields
+ * conversion. No database, no DOM — these are data functions, and each of them is guarding a
+ * specific way the page could be silently wrong.
  */
 import type { JsonSchema } from '@rocketflare/shared/ai/interrupts'
 import { describe, expect, it } from 'vitest'
@@ -10,12 +11,14 @@ import {
   initialValuesFor,
   submittableValues,
 } from '@/ui/pages/agents/fields/schemaFields'
+import { INPUT_VALUE_PREVIEW_CHARS, summariseInput } from '@/ui/pages/agents/run/inputSummary'
 import { expiryState } from '@/ui/pages/agents/run/interrupts/expiry'
 import {
   buildTimeline,
   defaultExpanded,
   groupTimeline,
   PREAMBLE_KEY,
+  runLayout,
   selectWorkStats,
   TAIL_KEY,
   type TimelineEvent,
@@ -280,5 +283,75 @@ describe('fieldsFromJsonSchema', () => {
       count: 3,
       urgent: true,
     })
+  })
+})
+
+describe('runLayout', () => {
+  it('follows the run while it is working, then the answer once it settles', () => {
+    expect(runLayout('queued')).toBe('timeline-major')
+    expect(runLayout('running')).toBe('timeline-major')
+    // A parked run is still working as far as the reader is concerned: the story is the timeline.
+    expect(runLayout('awaiting_input')).toBe('timeline-major')
+    expect(runLayout('succeeded')).toBe('output-major')
+    expect(runLayout('failed')).toBe('output-major')
+    expect(runLayout('cancelled')).toBe('output-major')
+  })
+
+  it('lets the reader’s choice win permanently — including across the run settling', () => {
+    // The hazard this exists for: somebody widens the timeline on a live run and reads it; the run
+    // finishes mid-sentence, and without the override the columns swap underneath them.
+    expect(runLayout('running', 'output-major')).toBe('output-major')
+    expect(runLayout('succeeded', 'timeline-major')).toBe('timeline-major')
+    expect(runLayout('running', null)).toBe('timeline-major')
+  })
+})
+
+describe('summariseInput', () => {
+  const schema: JsonSchema = {
+    type: 'object',
+    properties: {
+      question: { type: 'string', title: 'Question' },
+      index: { type: 'boolean', title: 'Index the result' },
+    },
+    required: ['question'],
+  }
+
+  it('labels the values from the agent’s own schema', () => {
+    const summary = summariseInput({ question: 'Why?', index: true }, schema)
+    expect(summary).toEqual({
+      kind: 'fields',
+      values: [
+        { name: 'question', label: 'Question', text: 'Why?', long: false },
+        { name: 'index', label: 'Index the result', text: 'Yes', long: false },
+      ],
+    })
+  })
+
+  it('flags a long value for the expand control rather than clipping it silently', () => {
+    const long = 'x'.repeat(INPUT_VALUE_PREVIEW_CHARS + 1)
+    const summary = summariseInput({ question: long, index: false }, schema)
+    expect(summary.kind === 'fields' && summary.values[0]).toMatchObject({ long: true, text: long })
+    expect(summary.kind === 'fields' && summary.values[1].text).toBe('No')
+  })
+
+  it('falls back to the JSON WHOLE — never per field — and says so in one shape', () => {
+    const input = { question: 'Why?', index: false }
+    // No schema at all, and a schema outside the closed set: both are "we cannot label this".
+    expect(summariseInput(input, null)).toEqual({
+      kind: 'json',
+      text: JSON.stringify(input, null, 2),
+    })
+    expect(
+      summariseInput(input, { type: 'object', properties: { question: { $ref: '#/$defs/Q' } } })
+    ).toMatchObject({ kind: 'json' })
+    // A key the schema never declared: labelling the rest would HIDE it, which is the worse answer.
+    expect(summariseInput({ ...input, secret: 1 }, schema)).toMatchObject({ kind: 'json' })
+    // Not an object at all.
+    expect(summariseInput('just a string', schema)).toMatchObject({ kind: 'json' })
+  })
+
+  it('renders nothing for an input that carries nothing', () => {
+    expect(summariseInput(null, schema)).toEqual({ kind: 'empty' })
+    expect(summariseInput({}, schema)).toEqual({ kind: 'empty' })
   })
 })

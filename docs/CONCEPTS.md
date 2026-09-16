@@ -1384,10 +1384,16 @@ every submitted search is written back to the URL), Settings `?tab=agent-models`
 
 **A run is a PAGE, not a drawer**, because it is something a person is asked to *act* on: they
 arrive from a notification, may need to read a document before deciding, and may leave and come
-back. `RunPage` is the workspace — a header, the timeline, `ActionRequiredPanel` when the run owes
-an answer, `SteerComposer` while it is still working, and a right pane of `URLTabs`
-(`?tab=output|artifacts|usage|input`, default `output`). A failure is `RunErrorAlert` above the tab
-bar, not a tab. `ActionRequiredPanel` branches on the four interrupt kinds and shares its field
+back. `RunPage` is the workspace — `ActionRequiredPanel` when the run owes an answer, then a header
+carrying the elapsed time and Cancel, then the run's INPUT as labelled values (read from the
+agent's own `inputJsonSchema` through the one field renderer, falling back to the JSON whole), then
+the timeline and a right pane of `URLTabs` (`?tab=output|artifacts|usage`, default `output`) side by
+side, with `SteerComposer` under the timeline while the run is still working. A failure is
+`RunErrorAlert` above the tab bar, not a tab. **The split between the two columns follows the run's
+state and then the reader's** (`runLayout`, pure): timeline-major while it works, output-major once
+it settles, and an override that wins permanently — a run settling mid-read must not swap the
+columns under somebody. The timeline is a bounded, viewport-relative scroller from `lg` up rather
+than a panel that grows for ever. `ActionRequiredPanel` branches on the four interrupt kinds and shares its field
 renderer with the generated input form, which is why a fifth kind is cheap. The Agents nav item
 carries a badge from the interrupts inbox.
 

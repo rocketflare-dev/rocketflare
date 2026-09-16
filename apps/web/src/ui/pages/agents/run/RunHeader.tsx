@@ -1,5 +1,11 @@
 /**
- * The run's identity line: which agent, what state, how long, and the one destructive control.
+ * The run's identity line: how long it has been going, whether it is live, and the one destructive
+ * control. The status badge is the page header's, beside the title.
+ *
+ * **Duration is the only figure here.** Requested / Started / Finished were three more rows of
+ * chrome above the fold, read once in a hundred visits and never glanced at; they now sit in the
+ * Usage tab with everything else the rows know about this run. Elapsed time is the one a person
+ * actually watches, so it stays where they are already looking.
  *
  * Cancel stays CLICKABLE once a cancel has been asked for — the second press forces it (the server
  * terminates the Workflow instance and settles the row), so a run whose loop stopped polling can
@@ -8,15 +14,13 @@
 import type { AgentRun } from '@rocketflare/shared/ai/agents'
 import { isRunActive } from '@rocketflare/shared/ai/agents'
 import { useCancelAgentRun } from '@/ui/hooks/useAgents'
-import { formatDateTime, formatDuration, runDuration } from '@/ui/lib/format'
+import { formatDuration, runDuration } from '@/ui/lib/format'
 
 export function RunHeader({
   run,
-  requestedBy,
   live,
 }: {
   run: AgentRun
-  requestedBy: string
   /** A connection is open: the timeline is filling as it happens rather than on a timer. */
   live: boolean
 }) {
@@ -28,15 +32,7 @@ export function RunHeader({
 
   return (
     <section className="flex flex-wrap items-start justify-between gap-4" aria-label="Run summary">
-      <dl className="grid grid-cols-2 sm:grid-cols-4 gap-x-6 gap-y-1 text-xs flex-1 min-w-0">
-        <dt className="text-muted">Requested</dt>
-        <dd className="truncate">
-          {formatDateTime(run.createdAt)} <span className="text-muted">by {requestedBy}</span>
-        </dd>
-        <dt className="text-muted">Started</dt>
-        <dd>{formatDateTime(run.startedAt)}</dd>
-        <dt className="text-muted">Finished</dt>
-        <dd>{formatDateTime(run.finishedAt)}</dd>
+      <dl className="flex items-baseline gap-2 text-xs flex-1 min-w-0">
         <dt className="text-muted">Duration</dt>
         <dd className="tabular-nums">
           {elapsed ?? '—'}

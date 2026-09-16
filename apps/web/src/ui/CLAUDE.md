@@ -224,10 +224,24 @@ A `CUSTOM kit.notice` renders
   `defaultExpanded` XOR the reader's toggles, keyed by `headerId`, so a live run never reopens a
   group somebody closed. Long runs **window (40 groups from the end), never virtualise** — row
   heights vary wildly and a virtualiser needs measurement, which fights auto-scroll and collapsing.
-  `useStickToBottom` fires only when the reader is at the bottom AND the last row id changed.
+  `useStickToBottom` fires only when the reader is at the bottom AND the last row id changed — and
+  it needs a REAL scroll container to do it: from `lg` up the list is `overflow-y-auto` under a
+  viewport-relative `max-h`, without which the `<ol>` grew unbounded, the panel grew with it, and
+  `scrollIntoView` moved the page instead of the list. Below `lg` the bound is dropped on purpose
+  (the columns stack, and a fixed-height inner scroller on a phone is worse than the page
+  scrolling), and the "Jump to latest" pill is absolutely positioned over the scroller so it lands
+  in the same place either way.
+- **The column split is `runLayout(status, override)`, pure and beside the rest of the model** —
+  timeline-major while the run is active (progress is the story, the output pane is an empty
+  state), output-major once it settles, **and the reader's override wins permanently**. Same shape
+  as `defaultExpanded` XOR the toggles: the default is a guess, and a run settling mid-read must
+  never swap the columns under somebody. The minor column stays narrow but readable, never
+  collapsed to a rail — a settled run's timeline is where you check HOW it got there.
 - **Do not write tool-result parsers.** `documentCardsFromToolResult(name, result)` in
   `@rocketflare/shared/ai/embeddings` is the one mapper (four callers: the chat stream, the AG-UI
-  projection, a persisted message and now `run/timeline/toolResults.tsx`); every other tool keeps
+  projection, a persisted message and now `run/timeline/toolResults.tsx`) — the rendering is a
+  `DocumentLink` ONE-LINER there, not a card strip: in a timeline row four cards bury the stage that
+  comes next. Every other tool keeps
   `<details><pre>` truncated at `TOOL_RESULT_MAX_CHARS` — a 200 KB result in the DOM is a real hang.
   An agent should not emit tool frames for its TERMINAL tool: that "call" is the answer, which the
   Output tab already renders. `text` renders via `components/ai/Markdown`, which is why
@@ -246,12 +260,21 @@ A `CUSTOM kit.notice` renders
   subscribers get an email). No optimistic write — this is a decision with a side effect. Validation
   is `interruptPayloadSchema(spec)`, the same function the route applies, and the answer is
   `status: 'resolved' | 'cancelled'` — **there is no `approved` boolean anywhere**.
-- **The right pane is `URLTabs` (`?tab=output|artifacts|usage|input`), and `run.error` is above it,
+- **The input is ONE block above both columns, not a tab** (`run/RunInputSummary.tsx` over the pure
+  `run/inputSummary.ts`): labelled values read from the agent's `inputJsonSchema` through the SAME
+  `fieldsFromJsonSchema`, with a per-value "Show more" for the long one (`research-topic`'s
+  question). It falls back to the JSON **whole** — never per field — both when the schema is outside
+  the closed set and when the input carries a key the schema never declared, because labelling the
+  rest would silently hide it. "What was it asked?" is the first question about a run you did not
+  start, and two homes for one fact is the trap the rest of this feature avoids.
+- **The right pane is `URLTabs` (`?tab=output|artifacts|usage`), and `run.error` is above it,
   always — a failure is not a tab.** `outputs/` mirrors `forms/`: `outputFor(agentKey) → { schema,
   Component, artifacts? }`, so **an agent is one shared input schema + one `forms/` entry + one
   `outputs/` entry** and no component branches on an agent key. Artifacts come from the table,
   ordered by their event rows, with `outputFor().artifacts?.()` as the fallback for an agent that
-  declares none. Usage reports what the ROWS know and **says in words** that model cost is not
+  declares none. Usage reports what the ROWS know — including the run's timestamps (requested, by
+  whom, started, finished), which used to be four rows of chrome in the header; only DURATION
+  stayed, because it is the one a person glances at — and **says in words** that model cost is not
   attributed per run in this deployment, rather than rendering a `$0.00`.
 - **One field renderer, two callers.** `fields/schemaFields.ts` is pure: `fieldsFromJsonSchema`
   supports a flat object of string / number / boolean / enum and **returns `null` for `$ref`,
@@ -332,9 +355,13 @@ A `CUSTOM kit.notice` renders
   one invalidation still covers the family; `documentPollInterval(status)` is the pure decision.
 - **`DocumentCard`** (`components/shared/DocumentCard.tsx`) is the compact citation form and is
   **markdown-free by construction** — that is what lets it sit in the eager barrel and be used from
-  Search, from the run timeline's tool results and from inside `Markdown` itself (an anchor whose href matches
-  `/documents/<uuid>` renders as a card). Its `excerpt` is the head of the text, not a summary, and
-  there is no thumbnail.
+  Search and from inside `Markdown` itself (an anchor whose href matches `/documents/<uuid>` renders
+  as a card). Its `excerpt` is the head of the text, not a summary, and there is no thumbnail.
+  **`DocumentLink` beside it is the same document on ONE LINE** (icon, title, passage count) for
+  dense lists — the run timeline's tool results and `research-topic`'s Sources both use it, through
+  `documentLinkProps(card)` where they hold a card, so the two cannot drift. Same markdown-free
+  rule, same barrel. A card is right where the document IS the content; a link is right where it is
+  a reference inside something else.
 - **Search (`/search`, nav "Search", guard `read Document`)**: its own page (`pages/documents/SearchPage.tsx`). The Knowledge header states that everything indexed is also available to agents (`search_knowledge` / `get_document`, `services/agents/tools/`). Delete shows only for own rows unless `delete Document` (admin+) — the route
   enforces. Search is `useSearch()` (mutation): `{ query, limit: 10, documentId? }` → hits with
   `rank`, `passage n of m` (where the passage sits in its document), RRF `score`, `dense #n` /
@@ -351,7 +378,8 @@ A `CUSTOM kit.notice` renders
   refetches AND leaves `['agent-run-agui']` alone), `run-stream`, `sidenav` (the badge and its
   collapsed dot), `agent-models-settings`, `documents-page`, `search-page`, `document-view`,
   `document-card`. The pure halves live in the `config` project:
-  `tests/config/run-timeline.test.ts` (the reducer, grouping, `expiryState`, `fieldsFromJsonSchema`)
+  `tests/config/run-timeline.test.ts` (the reducer, grouping, `runLayout`, `summariseInput`,
+  `expiryState`, `fieldsFromJsonSchema`)
   and `tests/config/document-helpers.test.ts`. Mount `AgentsPage` inside the same `<Routes>` pair
   App.tsx uses so `navigate('/agents/runs/:id')` really lands on `RunPage`.
 
