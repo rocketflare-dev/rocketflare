@@ -41,8 +41,9 @@ function SummarizeTextOutputView({ output }: AgentOutputProps<SummarizeTextOutpu
 export const summarizeTextOutput: AgentOutput<SummarizeTextOutput> = {
   schema: summarizeTextOutputSchema,
   Component: SummarizeTextOutputView,
-  // The fallback for a run that predates `ctx.artifact()`: the summary is a thing you open, so it
-  // belongs on the Artifacts tab whether or not the agent declared it.
+  // The FALLBACK, not the path: `summarize-text` calls `ctx.artifact()` for both of these, so a
+  // run from this build has them on the Artifacts tab from the table. This exists for a run written
+  // before the agent declared them — and as the pattern for an agent that never declares any.
   artifacts: (output, runId): AgentArtifact[] => {
     const at = new Date(0)
     const base = { tenantId: runId, runId, description: null, createdAt: at, updatedAt: at }

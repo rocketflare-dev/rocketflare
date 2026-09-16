@@ -15,7 +15,7 @@ vocabulary in `packages/shared/src/permissions.ts`). Built once per request by t
 | `File` (D23) | manage | manage | manage | manage | create + read (own-file delete is `routes/files.ts`'s `ownerUserId` check, not CASL) |
 | `AiConfig`, `Prompt` (D17) | manage | manage | manage | manage | read (Settings → AI / Prompts are read-only for members; `/api/ai/usage` and `/api/ai/agent-models` writes need `manage AiConfig`) |
 | `Conversation` (D17) | manage | manage | manage | manage | manage (own only — `routes/chat.ts` filters every query by `userId`; another member's thread is 404, admins included) |
-| `AgentRun` (D7) | manage | manage | manage | manage | manage (own runs — `routes/agents.ts` filters by `requestedByUserId` unless `isAdminLevel(auth)`, which sees and cancels every run) |
+| `AgentRun` (D7, #17) | manage | manage | manage | manage | manage (own runs — `routes/agents.ts` filters by `requestedByUserId` unless `isAdminLevel(auth)`, which sees and cancels every run) |
 | `Group` (D29) | manage | manage | manage | manage | read (administering groups is `manage Group`; a member's only read is `GET /api/groups/mine`. Which ROWS a group lets you see is a SQL predicate in `services/access.ts`, never a CASL condition) |
 | `Document` (D18) | manage | manage | manage | manage | create + read (anyone ingests and searches; own-document delete is `routes/ai-documents.ts`'s `ownerUserId` check, others' need `delete Document`) |
 | `Dashboard` (D19, `analytics_pages`) | manage | manage | manage | manage | read |
@@ -52,3 +52,12 @@ an explicit `can('create', …)` for the member only when anyone may write, as `
 do; `can('manage', …)` for the member only when ownership is enforced by the route's `userId`
 filter, as `Conversation` and `AgentRun` are), add the row above and to the matrix test
 (`tests/config/permissions.test.ts`). CASL conditions are never used — "own" is always a route predicate.
+
+**Answering an agent's question is `update AgentRun` PLUS a policy the ABILITY cannot express**
+(issue #17). `AgentMeta.approvers` is `'requester'` (the default — anyone who can see the run) or
+`'admin'`, and `canAnswer` in `routes/agents.ts` is `approversFor(agentKey) === 'admin' ?
+isAdminLevel(auth) : <the run is visible to you>`. It is a route check rather than a CASL condition
+for the reason every "is this row yours" check in this kit is: an ability answers "may this role do
+this KIND of thing", and the rest is a predicate where the query is. The inbox
+(`GET /api/agents/interrupts`) returns `canAnswer` **per item instead of filtering**, so somebody
+sees the question they may not answer rather than a hole they cannot explain.

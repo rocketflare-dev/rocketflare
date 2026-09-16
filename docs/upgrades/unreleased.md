@@ -8,22 +8,32 @@ migrations:
   - "two new tenant tables for the asks an agent makes and the artifacts it produces, each with an RLS policy"
   - "the partial unique index that guarantees one active run per (tenant, agent) is dropped and recreated with a wider predicate"
   - "ai_usage gains a nullable run reference, set null on delete"
-areas: [shared, api, ui, docs]
-touches_surfaces: [feature-agents]
+areas: [shared, db, api, ui, config, docs]
+touches_surfaces: [feature-agents, example-agent-summarize-text, example-agent-research-topic]
 requires_surfaces: [feature-agents]
 manual: false
 ---
 
 ## What changed
 
-**Agent runs are getting human-in-the-loop interrupts, live streaming and a run workspace**
-(issues #17 and #7). This entry accumulates across the work; later phases extend it rather than
-adding a second note.
+**An agent run can now stop and ask a person, resume on their answer, and be watched live on a
+page of its own** (issues #17 and #7).
 
-### Phase 1 — contracts (appends only, nothing renamed)
+Before this the agent layer was durable and correct but fire-and-forget: a run succeeded, failed or
+was cancelled, and there was no third answer. That ceiling is what stopped the kit shipping an agent
+that does anything consequential — *send this email? delete these rows? which of these three
+customers did you mean?* A run now suspends durably on `step.waitForEvent`, costs nothing while it
+waits, and carries on when somebody decides. The surface moved with it: a run was a modal over the
+runs table, filling in 3-second poll lumps, which is the wrong home for something a person is asked
+to **act** on, arrives at from a notification, and may leave and come back to.
+
+The sections below are in dependency order — contracts, schema, runtime, workflow, routes, stream,
+UI, examples — which is also the order to port them in.
+
+### The contracts (appends only, nothing renamed)
 
 An agent run may now suspend mid-run and wait for a person ("send this email?", "which of these
-three customers?") and resume on their answer. Phase 1 lands the vocabulary; nothing reads it yet.
+three customers?") and resume on their answer. This is the vocabulary all of it is written in.
 
 `packages/shared/src/ai/`:
 
@@ -68,7 +78,7 @@ Two things worth knowing before building on this:
   ever gives. `WORKFLOW_EVENT_TYPE_PATTERN` and a test in
   `apps/web/tests/config/agent-interrupts.test.ts` are the guard.
 
-### Phase 2 — schema and migration `0011`
+### The schema
 
 Two tables, one widened index, one column that could never be added later, one `[vars]` key.
 
@@ -105,10 +115,10 @@ Two tables, one widened index, one column that could never be added later, one `
   retention is 30 days on Workers Paid and only 3 days on Free**, and past retention the instance is
   gone and the resume event can never arrive. Keep it under 3 days if you are not on Paid.
 
-### Phase 3 — the runtime
+### The runtime
 
 The machinery: an agent can now ask, suspend and resume. Nothing is reachable from a route yet
-(phase 5) and no shipped agent uses it (phase 8), so this phase changes no existing behaviour —
+(the routes, below) and no shipped agent sets it, so it changes no existing behaviour —
 every addition is inert until something calls it.
 
 **`services/ai/kit.ts` — the gate lives in the tool loop, never in a handler.** `Tool` gains
@@ -200,7 +210,7 @@ or a step retry re-asks somebody who has already said no.
 Test harness: `RecordingWorkflow.sendEvent` now records instead of no-opping, and
 `notFoundOnSendEvent` drives the restart path.
 
-### Phase 4 — the Workflow loop
+### The Workflow loop
 
 `AgentRunWorkflow` stops being three steps and becomes a loop. It is a small diff and two of its
 lines are the whole feature.
@@ -240,11 +250,11 @@ stand-in for the resolve route (write the answer, flip the row, return a payload
 with no `onWait` rejects the way the platform's timeout does. `names` is every step name in call
 order, `do` and `waitForEvent` alike, which is how "distinct per round" is asserted.
 
-### Phase 5 — routes, permissions and the projection
+### Routes, permissions and the projection
 
-The loop from phase 4 is now reachable from outside. Until this landed,
+The loop above is now reachable from outside. Until this landed,
 `nudgeOrRestartInstance` had no caller, which means a parked run could never be resumed — so this
-phase is the one that makes the feature *exist* rather than merely compile.
+is the step that makes the feature *exist* rather than merely compile.
 
 **`/api/agents` gains three routes and two answers:**
 
@@ -311,13 +321,13 @@ Nudges: answering emits the usual `entity.changed { entity: 'agent-run' }` plus 
 `entity: 'agent-interrupt'`, so an inbox badge can refresh without subscribing to every progress row
 the runtime writes.
 
-**Notification on park needs nothing new here** — phase 3's `notifyApprovers` already runs inside the
+**Notification on park needs nothing new here** — the runtime's `notifyApprovers` already runs inside the
 `execute` step, awaited (a Workflow step has no `waitUntil`), through `notifyMany` even for one
 recipient, behind `claimEffect('notify:<interruptId>')`, and falls back to the tenant's admins for an
 `approvers: 'admin'` agent **or a system-triggered run with no requester** — a parked run nobody is
 told about is a hung agent.
 
-### Phase 6 — live run progress (issue #7)
+### Live run progress (issue #7)
 
 A run's timeline now fills in about 500 ms instead of three-second lumps, resumably, **without
 holding a connection for a seven-day park**.
@@ -402,7 +412,7 @@ Contracts and client:
   and each of those nudges throws away what the stream just built — **turning the stream into a
   more expensive poll.** There is a UI test on it.
 
-### Phase 7 — the run workspace (the UI)
+### The run workspace (the UI)
 
 **A run stops being a modal and becomes a page.** `/agents/runs/:runId` keeps its URL and gains its
 own route, its own lazy chunk (`RunPage`) and a breadcrumb; `RunDetailDrawer.tsx` and
@@ -518,11 +528,11 @@ events, its asks and its artifacts — polled while the server owes an answer an
 has not rendered, the page re-reads the run, coalesced so one fetch is ever in flight. That keeps ONE
 representation of the log (the durable rows) instead of a second, lossy one reconstructed from AG-UI
 — AG-UI events carry no `seq`, no row id for a step and no timestamp — and **deleting the hook leaves
-a working page**, which is the property phase 6 was built to preserve. The stream remains the only
+a working page**, which is the property the stream was built to preserve. The stream remains the only
 writer of `['agent-run-agui']` and still never touches the run row.
 
 **And because the page re-reads a run on every new `seq`, `reconcileRun` gained a liveness guard.**
-Phase 6 removed a Workflow `instance.status()` subrequest from a 3 s loop; re-reading `GET
+The stream removed a Workflow `instance.status()` subrequest from a 3 s loop; re-reading `GET
 /runs/:id` on every stream cursor advance put a busier one back, on the client — up to ~2 a second
 per viewer against the poll's 0.33. The rule that fixes it is not a throttle:
 
@@ -543,13 +553,45 @@ reconcile, where `'waiting'` and the default arm both leave the row alone.
 `routes/agents.ts` splits `loadRun` into `requireRun` (lookup + the ownership 404) and
 `settleOnRead` (reconcile + `expireParkedRun`), so the two routes with a log in hand can read it
 *before* they settle. Nothing is lost by the reordering: settling a run writes no event row.
-**Phase 6's "`reconcileRun` exactly once, never in the loop" is unchanged** — the stream route still
+**"`reconcileRun` exactly once, never in the loop" is unchanged** — the stream route still
 reconciles unconditionally at open, and its test still pins it.
 
 Also: `Row` / `Section` / `formatCost` moved out of `ChatStatsPanel.tsx` into
 **`components/ai/StatRows.tsx`** — a legal markdown zone whose two consumers are both lazy, so Vite
 emits it once. `components/shared` would have been the mistake (it is the eager barrel).
 
+
+### The shipped examples
+
+Both example agents now exercise the machine, and the contrast between them is the teaching:
+
+- **`summarize-text` asks with `ctx.interrupt`.** With `index: true` it raises an `approval` keyed
+  `approve-index` before writing the summary into the knowledge base, and records a `markdown`
+  artifact for the summary and a `document` artifact for the stored copy. It does **not** use
+  `Tool.requiresApproval`, deliberately: it has no tool loop — one `callStructuredTool`, and the
+  write is straight-line code — so the flag has nothing to attach to, and bolting a loop onto *the
+  file every adopter copies* purely to demonstrate one would make the simplest agent the most
+  complicated. Its whole summarise phase now sits inside `ctx.once`, because a park is a retry
+  boundary and tokens are a side effect: without it a run parked for a day pays for the summary
+  twice and shows the phase twice in its timeline.
+- **`research-topic` carries the rest.** `ask_human` raises a `choice` interrupt **from inside a
+  tool handler** — the single best exercise of the whole machine, because the handler throws,
+  `runHandler` rethrows, the loop parks, the resume executes the pending call and the re-entered
+  handler finds its answer already recorded. `index_finding` is a write the MODEL decides to make,
+  so it is gated with `requiresApproval` + `allowEdits` + `onReject: 'tell_model'`, and it is the
+  only shipped code passing `approvals: ctx.approvals` and `runApproved: ctx.once` — the two halves
+  that stop an answered gate being re-asked and an approved write running twice. `beforeTurn` folds
+  in steering notes, and the answer and its sources are recorded as `markdown` and `table`
+  artifacts.
+
+Neither sets `approvers: 'admin'` — no kit agent touches money — so that policy is exercised by
+tests only. The `research-topic` prompt gained two numbered steps telling the model when each new
+tool is appropriate; an app that overrode that prompt keeps its own text and should add the
+equivalent, or the model will never call them.
+
+**A handler-raised ask must key on the QUESTION, not the call.** It parks *before* the loop
+checkpoints that turn, so the resumed loop calls the model again and may get a fresh tool-call id;
+only a question-derived key lands back on the same `(run_id, key)` row.
 
 ## How to apply
 
@@ -559,34 +601,34 @@ that keep the workspace compiling; each is one edit:
 
 1. `apps/web/src/db/schema/agent-runs.ts` — append `'awaiting_input'` to
    `AGENT_RUN_STATUS_VALUES`. **No DDL for the column**: it is `text`, which is exactly why it is
-   `text`. The index predicate beside it *does* change (phase 2 above).
+   `text`. The index predicate beside it *does* change — see the schema step below.
 2. `apps/web/src/api/routes/agents.ts` — `GET /runs/:id` builds an `AgentRunWithEvents`, which now
-   has `interrupts` and `artifacts`; phase 5 fills them from the tables.
+   has `interrupts` and `artifacts`; the routes step fills them from the tables.
 3. Any `Record<AgentRunStatus, …>` in your own UI gains an `awaiting_input` arm; the kit's two
    (`AgentsPage`, `RunStatusBadge`) use the label "Waiting for you" and the stylesheet's existing
    `awaiting-review` warning tone.
 
-An app with its own agents may set `approvers: 'admin'` on an `AgentMeta`; phase 5 is what reads it.
+An app with its own agents may set `approvers: 'admin'` on an `AgentMeta`; the answer route reads it.
 
-Phase 4 touches two files an app is unlikely to have edited (`api/workflows/agent-run.ts` and
+**The Workflow loop** touches two files an app is unlikely to have edited (`api/workflows/agent-run.ts` and
 `finishStep`) plus the test mock. Take `agent-run.ts` whole. If your copy forked the Workflow class
 — an extra step, a different `timeout` — port the loop by hand and **keep the `#${round}` suffix on
 every step name inside it**; that is the one detail nothing in a Node suite can check for you.
 
-Phase 3 is additive everywhere except three lines an app may have touched: the `ACTIVE` constant in
+**The runtime** is additive everywhere except three lines an app may have touched: the `ACTIVE` constant in
 `services/agents/runs.ts` (now imported, and `claimRun` alone keeps the narrow list), `Tool` in
 `services/ai/kit.ts`, and `AgentContext`. An app with its **own** `AgentContext` implementation — a
 test double, most likely — gains four members it must provide. An app that copied `runToolLoop`
 rather than importing it gets none of this and should re-take the file.
 
-For phase 2, take the two new `apps/web/src/db/schema/` files, the `agent-runs.ts` index change, the
+**For the schema**, take the two new `apps/web/src/db/schema/` files, the `agent-runs.ts` index change, the
 `ai_usage` column and the `[vars]` key, then run **your own** `pnpm db:generate` — never copy the
 kit's `migrations/0011_*.sql`, because every `meta/*_snapshot.json` describes the whole cumulative
 schema and yours has tables the kit has never heard of. Read what drizzle-kit emits before applying
 it: a *changed* partial-index predicate is the case it is weakest on, and a `CREATE` with no `DROP`
 silently leaves the old narrow index in place.
 
-Phase 5 is mostly additive inside `apps/web/src/api/routes/agents.ts` (three new routes, two helpers
+**The routes** are mostly additive inside `apps/web/src/api/routes/agents.ts` (three new routes, two helpers
 and a shared `loadRun`), so a copy that restyled its agent routes should take the new blocks and keep
 its own. Two edits are NOT additive and are easy to miss when resolving by hand: `GET /runs/:id` and
 `/agui` must both go through `loadRun` so `expireParkedRun` runs on read, and
@@ -594,7 +636,7 @@ its own. Two edits are NOT additive and are easy to miss when resolving by hand:
 silently drops every ask and artifact from the timeline. If your UI asserts on the AG-UI sequence of
 a run, note that **`STATE_SNAPSHOT` is now the second event of every projection**.
 
-Phase 6 is additive except for three edits that are easy to miss. `projectRunToAgui` is now a fold
+**The stream** is additive except for three edits that are easy to miss. `projectRunToAgui` is now a fold
 over `createRunProjector`; take the whole file, because the tool-call pairing fix lives inside it and
 a partial merge that keeps the old name-keyed map silently mis-attributes parallel tool results. An
 agent of your own that emits `tool.start` / `tool.end` should start passing the model's
@@ -605,9 +647,9 @@ compiling until it supplies one — take the `events.at(-1)?.seq ?? 0` from `rou
 The client half is entirely new files plus one additive signature (`readSse`'s `onEvent`), so a copy
 that restyled its run page can take `lib/runAguiStream.ts`, `hooks/useRunStream.ts` and the two
 `query-keys.ts` entries and wire them when it wants to. **Do not put `['agent-run-agui']` in
-`REALTIME_INVALIDATIONS`** — the reason is in the phase note above, and the failure is silent.
+`REALTIME_INVALIDATIONS`** — the reason is in the stream section above, and the failure is silent.
 
-Phase 7 is a UI phase and touches nothing on the server. `apps/web/src/ui/pages/agents/` is
+**The run workspace** is a UI change and touches nothing on the server. `apps/web/src/ui/pages/agents/` is
 substantially new — `RunPage.tsx` plus `run/**`, `outputs/**` and `fields/**` — and
 `RunDetailDrawer.tsx` and `AgentSteps.tsx` are deleted. A copy that restyled its run surface should
 take the new tree wholesale and re-apply its styling, rather than merging hunk by hunk into two
@@ -630,13 +672,30 @@ files that no longer exist. Six edits outside that tree are the ones to make by 
 `formFor` now takes the `AgentInfo` rather than the key (the string form still works), so it can try
 `schemaForm(inputJsonSchema)` before falling back to the JSON textarea.
 
+**The two example agents** are behind `example-agent-summarize-text` /
+`example-agent-research-topic`, so a copy that deleted one never sees its changes. A copy that KEPT
+one and modified it should read the diff rather than take it: the changes are small and pointed —
+an interrupt around the existing `ingestText` call, `ctx.once` around the existing model call, two
+`ctx.artifact` calls, and for `research-topic` two new tool factories plus `approvals` /
+`runApproved` / `beforeTurn` on the existing `runToolLoop` options object. The prompt change is one
+`PROMPT_REGISTRY` entry, which an app may have overridden per tenant; a tenant override wins over
+the registry, so those tenants keep the old text and the new tools silently go unused until somebody
+updates the override in Settings → Prompts.
+
+**Docs.** `docs/CONCEPTS.md` §5, §9 and §14, `docs/ADAPTING.md` §3, `docs/DEPLOY.md`, `SETUP.md`
+§2.5 (a `wrangler dev` acceptance walkthrough for the park — the only way to exercise
+`waitForEvent`), `.claude/rules/{api,cloudflare,database,ui,testing}.md` and the per-directory
+`CLAUDE.md` files are all updated in this release; a copy that keeps its own prose should still read
+the new `.claude/rules` bullets, because they are the ones an agent working in that copy will be
+held to.
+
 ## Conflicts to expect
 
 `packages/shared/src/ai/agents.ts` is the one file with several separate hunks (imports, the status
 enum, the event-type list, the event-payload block, `agentRunWithEventsSchema`, and two new
 constant sections). An app that added its own statuses, event types or agent metadata will have to
 place them by hand. `apps/web/src/ui/pages/agents/*` is likely to be rejected wholesale in a copy that has restyled the
-run surface — phase 7 deletes two of its files and adds a directory tree — so take that tree fresh
+run surface — two of its files are deleted and a directory tree added — so take that tree fresh
 and re-apply styling rather than resolving hunks into files that no longer exist. Everywhere else
 the compiler names every missing arm, so take the type error as the checklist.
 
@@ -649,18 +708,18 @@ SSE and protobuf and that `resume[]` parses, and
 event type, the rejection semantics, and the four payload validators;
 `apps/web/tests/api/rls-coverage.test.ts` proves both new tables are policied;
 `apps/web/tests/config/wrangler-parity.test.ts` proves `AGENT_INTERRUPT_TIMEOUT` is in both tomls.
-For phase 3, `apps/web/tests/api/agent-tool-loop-interrupt.test.ts` proves the gate raises **before**
+For the runtime, `apps/web/tests/api/agent-tool-loop-interrupt.test.ts` proves the gate raises **before**
 any handler runs, that the resume path answers pending calls through the same code, and that a
 handler-raised interrupt propagates; `apps/web/tests/api/agent-interrupts.test.ts` proves a park
 keeps its checkpoint with `finished_at` NULL, that a re-entered `execute` finds its own earlier ask,
 that a declined approval cancels with a NULL error, that a steering note is delivered once across a
 park and resume, and that `sendEvent → not_found` creates `<runId>-r1`.
-For phase 4, `apps/web/tests/api/agent-run-workflow.test.ts` proves the step names are distinct per
+For the Workflow loop, `apps/web/tests/api/agent-run-workflow.test.ts` proves the step names are distinct per
 round, that a resume re-enters `execute` and the run completes, that an unanswered park times out to
 `cancelled` with a **NULL `error`**, that `MAX_INTERRUPT_ROUNDS` stops a runaway agent cleanly, and
 that `finishStep` does not fail a parked row. `waitForEvent` itself only runs on the platform — the
 `wrangler dev` walkthrough is the acceptance test for the durable park.
-For phase 5, `apps/web/tests/api/agent-interrupt-routes.test.ts` proves the 409 on a double answer,
+For the routes, `apps/web/tests/api/agent-interrupt-routes.test.ts` proves the 409 on a double answer,
 the 403 for a member under `approvers: 'admin'` (who still sees the ask, `canAnswer: false`), the 404
 for another member's and another tenant's run, the 400 for `editedInput` without `allowEdits` and for
 an edit that does not fit the tool's schema, that a second enqueue while parked deduplicates, that
@@ -672,7 +731,7 @@ events.
 After migrating, the index predicate should read
 `WHERE status = ANY (ARRAY['queued','running','awaiting_input'])` in `pg_indexes`.
 
-For phase 6, `apps/web/tests/api/agent-run-stream.test.ts` proves 403 / 404 / 400 land **before the
+For the stream, `apps/web/tests/api/agent-run-stream.test.ts` proves 403 / 404 / 400 land **before the
 first frame**, that `?afterSeq=` wins over `Last-Event-ID` and a resume omits the head, that `id:`
 appears **only on the last frame of each row's group** and a mid-group drop resumes at the previous
 row, that a parked run emits the interrupt outcome and **closes** (the seven-day test), that the
@@ -686,7 +745,7 @@ and that rows without `toolCallId` pair by name exactly as before.
 carries one, the `streamEnabled` matrix, the three-empty-connections fallback, and that a run nudge
 leaves `['agent-run-agui']` untouched.
 
-For phase 7, `apps/web/tests/config/run-timeline.test.ts` proves the timeline reducer's grouping, its
+For the run workspace, `apps/web/tests/config/run-timeline.test.ts` proves the timeline reducer's grouping, its
 implicit close, its `__preamble__` / `__tail__` stretches, **the tool duration from start→end (the
 `at`-overwrite regression)** and **idempotence under duplicated events**; the `expiryState` tick
 selection including the `null` beyond a day; and `fieldsFromJsonSchema` including the **whole-form**
@@ -699,3 +758,13 @@ that an `agent-run` nudge refetches the run while leaving `['agent-run-agui']` u
 `apps/web/tests/ui/sidenav.test.tsx` proves the badge renders and **becomes a dot when the nav is
 collapsed**, while still announcing its count. `apps/web/tests/config/ui-bundle.test.ts` proves
 `RunPage` lands in its own lazy chunk and that the eager entry still carries no markdown.
+
+For the examples, `apps/web/tests/api/agent-run-workflow.test.ts` proves `summarize-text` with
+`index: true` parks on `approve-index`, that answering it resumes the run and leaves the document in
+`/documents` **exactly once** with exactly one artifact per key despite `run()` being entered twice,
+that ONE model call covers both attempts, and that a DECLINED approval settles `cancelled` with
+`error` NULL and nothing written. `apps/web/tests/api/agent-research.test.ts` proves `ask_human`
+parks with a `choice` keyed on the question and that the re-entered handler finds the answer — one
+interrupt row, not two — and that `index_finding` parks with **nothing written** (the gate raises
+before the handler), then runs exactly once on approval, with the approver's `editedInput` replacing
+the model's arguments.

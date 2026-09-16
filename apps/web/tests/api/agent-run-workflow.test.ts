@@ -20,6 +20,7 @@ import { and, eq } from 'drizzle-orm'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
 import { fullAccessScope } from '@/api/services/access'
+import { listArtifacts } from '@/api/services/agents/artifacts'
 import { listInterrupts, resolveInterrupt } from '@/api/services/agents/interrupts'
 import { AGENTS, type AgentContext, type AnyAgentDefinition } from '@/api/services/agents/registry'
 import {
@@ -139,6 +140,18 @@ function installAgent(run: (ctx: AgentContext) => Promise<unknown>): void {
 
 const APPROVAL: AgentInterruptSpec = { kind: 'approval', message: 'Send this email?' }
 
+/**
+ * Approve whatever the run is parked on, from inside the fake's `onWait` — the stand-in for a
+ * person clicking Approve while the instance sits on `step.waitForEvent`. Returning a payload is
+ * what makes the wait resolve rather than time out.
+ */
+function approveOnWait(tenantId: string, runId: string, userId: string) {
+  return async () => {
+    await answerAndResume(tenantId, runId, userId)
+    return { interruptId: 'answered' }
+  }
+}
+
 /** Answer everything this run is waiting on, then un-park it — what the resolve route does. */
 async function answerAndResume(tenantId: string, runId: string, userId: string) {
   for (const row of await listInterrupts(db, tenantId, runId, 'pending')) {
@@ -204,6 +217,7 @@ describe('AgentRunWorkflow', () => {
       ['tool.end', 'submit_summary'],
       ['text', undefined],
       ['step', 'summarize', 'done'],
+      ['artifact', undefined],
       ['status', 'succeeded'],
     ])
     expect(events.find(e => e.type === 'text')?.data).toEqual({
@@ -309,12 +323,24 @@ describe('AgentRunWorkflow', () => {
     ).toBe(true)
   })
 
-  it('index: true stores the summary through ingestText and searchChunks finds it; another tenant finds nothing', async () => {
+  it('index: true asks first, then stores the summary through ingestText; searchChunks finds it and another tenant finds nothing', async () => {
     const env = createTestEnv()
     script([TOOL_TURN])
-    const { run, tenant } = await queuedRun(env, { text: 'Volcanoes erupt.', index: true })
-    const { outcome } = await drive(env, run.id, tenant.id)
+    const { run, tenant, user } = await queuedRun(env, { text: 'Volcanoes erupt.', index: true })
+    // The write is gated on a person: `execute#0` parks on `approve-index`, the wait is answered,
+    // `execute#1` re-enters `run()` and finds the ANSWER on `(run_id, 'approve-index')` (T2).
+    const { outcome, calls, waits } = await drive(env, run.id, tenant.id, {
+      onWait: approveOnWait(tenant.id, run.id, user.id),
+    })
     expect(outcome.status).toBe('succeeded')
+    expect(calls.map(c => c.name)).toEqual(['claim', 'execute#0', 'execute#1', 'finish'])
+    expect(waits.map(w => w.name)).toEqual(['resume#0'])
+    // ONE model call across both attempts: the summarise phase is behind `ctx.once`, so a park is
+    // not a second bill. (`script([TOOL_TURN])` would have thrown on a second call.)
+    const interrupts = await listInterrupts(db, tenant.id, run.id)
+    expect(interrupts.map(i => [i.key, i.kind, i.status])).toEqual([
+      ['approve-index', 'approval', 'resolved'],
+    ])
     const row = await getRun(db, tenant.id, run.id)
     const documentId = (row?.output as { documentId?: string } | null)?.documentId
     expect(documentId).toMatch(/^[0-9a-f-]{36}$/)
@@ -339,6 +365,16 @@ describe('AgentRunWorkflow', () => {
     expect(
       events.filter(e => e.type === 'step' && (e.data as { key: string }).key === 'index')
     ).toHaveLength(2)
+    // Two artifacts, each written exactly once despite `run()` being entered twice: `ctx.artifact`
+    // upserts on `(run_id, key)`.
+    expect(
+      events.filter(e => e.type === 'artifact').map(e => (e.data as { key: string }).key)
+    ).toEqual(['summary', 'summary-document'])
+    const artifacts = await listArtifacts(db, tenant.id, run.id)
+    expect(artifacts.map(a => [a.key, a.kind])).toEqual([
+      ['summary', 'markdown'],
+      ['summary-document', 'document'],
+    ])
 
     const cfg = loadConfig(env)
     const hits = await searchChunks(db, cfg, env, fullAccessScope(tenant.id), {
@@ -356,11 +392,44 @@ describe('AgentRunWorkflow', () => {
     ).toEqual([])
   })
 
+  it('a declined approval cancels the run with error NULL and indexes nothing', async () => {
+    const env = createTestEnv()
+    script([TOOL_TURN])
+    const { run, tenant, user } = await queuedRun(env, { text: 'Volcanoes erupt.', index: true })
+    const { outcome } = await drive(env, run.id, tenant.id, {
+      onWait: async () => {
+        for (const row of await listInterrupts(db, tenant.id, run.id, 'pending')) {
+          await resolveInterrupt(db, {
+            tenantId: tenant.id,
+            runId: run.id,
+            interruptId: row.id,
+            status: 'cancelled',
+            payload: { note: 'Not for the knowledge base' },
+            resolvedByUserId: user.id,
+          })
+        }
+        await resumeRun(db, tenant.id, run.id)
+        return { interruptId: 'declined' }
+      },
+    })
+
+    // `approval` rejects as `cancel_run`, so `ctx.interrupt` throws `InterruptDeclinedError` and
+    // the runtime settles the run. A refusal is a STATUS, not a fault: `error` stays NULL.
+    expect(outcome.status).toBe('cancelled')
+    const row = await getRun(db, tenant.id, run.id)
+    expect(row).toMatchObject({ status: 'cancelled', error: null })
+    expect(await db.select().from(documents).where(eq(documents.tenantId, tenant.id))).toEqual([])
+    // The summary was still produced and is still readable — only the WRITE was refused.
+    expect((await listArtifacts(db, tenant.id, run.id)).map(a => a.key)).toEqual(['summary'])
+  })
+
   it('a retry after the ingest does not index the summary twice (ctx.once)', async () => {
     const env = createTestEnv()
     script([TOOL_TURN, TOOL_TURN])
-    const { run, tenant } = await queuedRun(env, { text: 'Volcanoes erupt.', index: true })
-    const { outcome } = await drive(env, run.id, tenant.id)
+    const { run, tenant, user } = await queuedRun(env, { text: 'Volcanoes erupt.', index: true })
+    const { outcome } = await drive(env, run.id, tenant.id, {
+      onWait: approveOnWait(tenant.id, run.id, user.id),
+    })
     expect(outcome.status).toBe('succeeded')
     const documentIdOf = async () =>
       ((await getRun(db, tenant.id, run.id))?.output as { documentId?: string } | null)?.documentId
@@ -389,8 +458,13 @@ describe('AgentRunWorkflow', () => {
     const effects = await db.query.agentRunEffects.findMany({
       where: eq(agentRunEffects.runId, run.id),
     })
-    expect(effects).toHaveLength(1)
-    expect(effects[0]).toMatchObject({ key: 'index-summary', tenantId: tenant.id })
+    // `index-summary` and `summary` are the agent's; `notify:park:*` is the runtime's once-only
+    // "the approvers have been told" claim over the same ledger.
+    expect(effects.filter(e => e.key === 'index-summary')).toHaveLength(1)
+    expect(effects.map(e => e.key).sort()).toEqual(
+      expect.arrayContaining(['index-summary', 'summary'])
+    )
+    expect(effects.every(e => e.tenantId === tenant.id)).toBe(true)
   })
 
   it('runOnce records a result once per key and replays it, including null', async () => {

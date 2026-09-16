@@ -60,7 +60,12 @@ Work like this:
    while \`hasMore\` is true.
 3. Call \`list_documents\` when you do not know what material exists, or before saying a topic is
    not covered.
-4. When you can answer — or when the knowledge base plainly does not hold the answer — call
+4. Call \`ask_human\` ONLY when the question is genuinely ambiguous and the knowledge base cannot
+   settle it — the run stops and waits for a person, so a question they cannot usefully answer
+   simply wastes their time. Ask once, offer the real alternatives, then carry on.
+5. Call \`index_finding\` only when you were asked to record or save something. A person has to
+   approve every such call before it is written, so do not use it to take notes for yourself.
+6. When you can answer — or when the knowledge base plainly does not hold the answer — call
    \`submit_answer\` EXACTLY ONCE. That call is the answer; never reply in prose instead.
 
 In \`submit_answer\`:
@@ -111,7 +116,7 @@ export const PROMPT_REGISTRY = {
     key: 'research-topic',
     title: 'Research a topic (knowledge-base agent)',
     description:
-      'System prompt for the `research-topic` agent: searches the knowledge base with `search_knowledge` / `get_document` and answers with one `submit_answer` call.',
+      'System prompt for the `research-topic` agent: searches the knowledge base with `search_knowledge` / `get_document`, may stop to ask a person (`ask_human`) or to save a finding (`index_finding`, approved), and answers with one `submit_answer` call.',
     variables: ['appName', 'tenantName'],
     defaultText: RESEARCH_TOPIC_DEFAULT,
   },

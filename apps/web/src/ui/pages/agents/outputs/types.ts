@@ -3,8 +3,10 @@
  * by the runtime against its own `outputSchema`, so each entry ships the SAME shared schema and
  * parses before rendering — a run written by an older build simply falls through to the raw JSON.
  *
- * `artifacts` is the zero-server-change fallback: an agent that never called `ctx.artifact()` can
- * still put its result on the Artifacts tab by deriving one from the output it already returns.
+ * `artifacts` is the zero-server-change FALLBACK, used only when the run's table rows are empty:
+ * an agent that never called `ctx.artifact()` can still put its result on the Artifacts tab by
+ * deriving one from the output it already returns. Both shipped agents DO call `ctx.artifact()`,
+ * so for them this covers runs recorded before they did.
  */
 import type { AgentArtifact } from '@rocketflare/shared/ai/artifacts'
 import type { ComponentType } from 'react'

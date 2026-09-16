@@ -22,8 +22,10 @@ vitest 3 resolves `isolate` per run, not per project.
   `DATABASE_URL` from `apps/web/.env.test`, `MemoryKV` as `RATE_LIMIT_KV`, a `RecordingQueue` as
   `JOBS_QUEUE`, a `MemoryR2Bucket` as `FILES`, a `RecordingDurableObjectNamespace` as
   `NOTIFICATIONS_HUB`, a `RecordingAi` as `AI` (deterministic 1024-dim vectors; `respond` overridable),
-  a `RecordingWorkflow` as `AGENT_RUN_WORKFLOW` (records `create({ id, params })`, `setStatus(id, …)`
-  drives `instance.status()`, `get()` of an unknown id throws `instance.not_found`), a `HYPERDRIVE`
+  a `RecordingWorkflow` as `AGENT_RUN_WORKFLOW` (records `create({ id, params })` and `sendEvent`,
+  `setStatus(id, …)` drives `instance.status()`, `terminated[]` records a forced cancel, `get()` of
+  an unknown id throws `instance.not_found`, and `failSendEvent` simulates the instance a park
+  outlived — retention expired, or `wrangler dev` restarted), a `HYPERDRIVE`
   whose `connectionString` is the test URL; `ctx = createExecutionContext()` collects `waitUntil`
   promises so a test can `await waitOnExecutionContext(ctx)` before asserting side effects
 - Reach the stubs through **`stubs(env)`** → `{ kv, queue, files, hub, ai, workflow }`: `queue.messages`
@@ -35,8 +37,12 @@ vitest 3 resolves `isolate` per run, not per project.
   `{ AGENT_RUN_WORKFLOW: undefined }` / `{ AI: undefined }` exercise the missing-binding branches
   (throws / 503 / no-op / 503 `agent_runs_not_configured` / next embeddings tier)
 - `cloudflare:workers` is aliased to `apps/web/tests/mocks/cloudflare-workers.ts` (stub `DurableObject`,
-  `WorkflowEntrypoint`, plus `createFakeWorkflowStep()` → `{ step, calls }` — runs each `step.do`
-  callback inline and records `{ name, config? }`) so worker modules import under Node
+  `WorkflowEntrypoint`, plus `createFakeWorkflowStep(options)` → `{ step, calls, waits, names }` —
+  runs each `step.do` callback inline and records `{ name, config? }`; `waitForEvent` is a RECORDER,
+  not a throw, with an `events[]` payload queue, an `onWait` hook (the test's stand-in for a person
+  clicking Approve, which must flip the row BEFORE the wait resolves) and a `FakeWorkflowTimeoutError`
+  for the expiry path. `names` is every step name in order, because the one property no fake can
+  check is that they are DISTINCT per round) so worker modules import under Node
 - `apps/web/tests/helpers/request.ts` `request()` / `json()` drive the app through every middleware with a
   per-file random client IP (rate-limit isolation); `apps/web/tests/helpers/auth.ts` factories
   (`createTestUser`, `createTestTenant`, `linkUserToTenant`, `createTestTenantWithUser`,
@@ -101,8 +107,10 @@ a fake `WebSocket` factory left set) is on you.
   logger, params)`, `executeRun(db, cfg, env, logger, params)`, `finishStep(db, env, logger, params,
   outcome?)` — call them directly against Postgres, or instantiate `new AgentRunWorkflow(ctx, env)`
   with `createTestEnv()` and drive `run({ payload: { runId, tenantId } }, createFakeWorkflowStep().step)`;
-  assert on `calls` (`claim`, `execute` with its `retries`/`timeout` config, `finish`) and on the
-  `agent_runs` / `agent_run_events` rows. Test the claim-row gate: `claimRun` on a settled row returns
+  assert on `calls` (`claim`, `execute#0` with its `retries`/`timeout` config, then `resume#0` /
+  `expire#0` / `execute#1` for a parked run, `finish`) and on the `agent_runs` / `agent_run_events`
+  rows. **Assert the step NAMES are distinct** — the platform replays a repeated name's recorded
+  result, which reads as "the agent ignored my approval", and only `names` can catch it. Test the claim-row gate: `claimRun` on a settled row returns
   `null` and `claimStep` returns `false`; a cancel while `queued` never reaches `execute`
 - AI seam: `vi.mock('@/api/services/ai/resolve', async importOriginal => ({ ...(await importOriginal()),
   resolveChat: vi.fn(async () => ({ client: new FakeChatClient(script), provider, model, source,
@@ -110,11 +118,24 @@ a fake `WebSocket` factory left set) is on you.
   `FakeChatClient(script)` (`tests/helpers/ai.ts`) answers turns of `{ text, toolUses, usage, error }`,
   streams text in word-sized deltas and records every `calls[i]` (`ChatParams`) so a test can assert the
   system prompt, tools and `toolChoice` the route sent; `aguiFrames(res)` parses an AG-UI stream body
-  back into typed events, `splitSseFrames` exposes the raw frames (so a test can assert there is NO
-  `event:` line), and `aguiTypes` / `customEvents` / `customEvent` let a test assert the SEQUENCE
+  back into typed events, `splitSseFrames` returns `{ event, id, data, raw }` per frame (so a test can assert there is NO
+  `event:` line, that `id:` lands only on the last frame of a row's group, and that a binary
+  transport wrote no comment frames), and `aguiTypes` / `customEvents` / `customEvent` let a test assert the SEQUENCE
   rather than a dozen literals. Adapters (`ai-client.test.ts`) take an injected `fetch` — `sseResponse(chunks)`
   builds a fake `text/event-stream` `Response` — so no test reaches a provider. Connection-test and
   resolver branches use `createTestEnv({ ANTHROPIC_API_KEY, EMBEDDINGS_API_KEY })` overrides
+- **Human-in-the-loop (issue #17)** spreads over five files and each owns one seam:
+  `tests/config/agent-interrupts.test.ts` (the pure contracts — payload schemas, `INTERRUPT_REJECTION`,
+  and the golden assertion that `AGENT_RESUME_EVENT` matches `/^[A-Za-z0-9_-]{1,100}$/`, because
+  Cloudflare rejects a `.` with `workflow.invalid_event_type` and no fake would ever catch it);
+  `agent-interrupts.test.ts` (the service: create-or-read on `(run_id, key)`, compare-and-set,
+  expiry); `agent-interrupt-routes.test.ts` (403 under `approvers: 'admin'`, 409 on a double answer,
+  404 across tenants, `editedInput` without `allowEdits` → 400); `agent-tool-loop-interrupt.test.ts`
+  (**the gate raises BEFORE the handler runs — assert the spy was not called**; a whole turn parks
+  when one of three calls is gated; an approved tool executes exactly once across a step retry);
+  and `agent-run-stream.test.ts`, which injects `{ now, sleep }` (`RunStreamDeps`) so the suite is
+  never timer-bound, and asserts a body error emits **no `RUN_ERROR`** — the deliberate inversion of
+  the chat rule
 - Agent runs (`agent-runs.test.ts`): `POST /api/agents/runs` → 202 + a `queued` row + one entry in
   `stubs(env).workflow.created` with `id === run.id`; the exclusive dedupe (same run back with
   `deduplicated: true`; 409 with `?strict=1`); `createTestEnv({ AGENT_RUN_WORKFLOW: undefined })` →
@@ -166,10 +187,11 @@ a fake `WebSocket` factory left set) is on you.
 
 `apps/web/tests/ui/setup.ts` (jest-dom). `renderWithProviders()` gives QueryClient + Auth + Ability + Router.
 Shallow component tests; mock `fetch` where needed, no MSW. `contrast.test.ts` gates the design tokens.
-Polling hooks (`agents-page`, `agent-run-detail`, `documents-page`): test the pure decision
-(`runPollInterval(status)`), not `refetchInterval` with fake timers; `agent-run-detail` mounts inside
-`WebSocketProvider` with the `FakeSocket` to prove an `entity.changed { entity: 'agent-run' }` nudge
-refetches. Streaming (`chat-page.test.tsx`, `sse.test.ts`): `tests/ui/helpers/sse.ts` builds fake
+Polling hooks (`agents-page`, `run-page`, `documents-page`): test the pure decision
+(`runPollInterval(status)` over `runOwesAnswer`, so a parked run polls NEVER), not `refetchInterval`
+with fake timers; `run-page` mounts inside `WebSocketProvider` with the `FakeSocket` to prove an
+`entity.changed { entity: 'agent-run' }` nudge refetches — and that it does NOT wipe
+`['agent-run-agui']`, which the stream owns. `run-stream` covers the read-stream client. Streaming (`chat-page.test.tsx`, `sse.test.ts`): `tests/ui/helpers/sse.ts` builds fake
 `text/event-stream` `Response`s in the server's AG-UI framing — `data:` only, no `event:` line —
 (`aguiRun({ text, tools, unterminated })` for a whole turn, `sseResponse(frames)`,
 `streamResponse` for arbitrary chunk boundaries, `hangingSseResponse` for the Stop button); assert with `waitFor`, not `findBy` — bubbles

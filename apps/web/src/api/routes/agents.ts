@@ -2,10 +2,22 @@
  * `/api/agents` (D7): the registry and its runs. `POST /runs` is the handoff — validate → insert
  * `queued` → create the Workflow instance → 202 with the row (the route never runs the agent). An
  * exclusive agent with an active run answers THAT run with `deduplicated: true` (409
- * `agent_run_active` only with `?strict=1`). `GET /runs/:id` returns the row + its durable events
- * after `reconcileRun` (a stale active row whose instance is gone is settled on read — `not_found`
- * is an answer). Members see and cancel their OWN runs; admin+ (`isAdminLevel`) every run in the
- * tenant. Every query carries the tenant predicate from the auth context.
+ * `agent_run_active` only with `?strict=1`).
+ *
+ * `GET /runs/:id` returns the row, its durable events, its asks and its artifacts — **in that
+ * order, and the order is the contract**: read the log, then `settleOnRead` (a stale active row
+ * whose instance is gone is settled here — `not_found` is an answer; a run that emitted an event
+ * inside `RECONCILE_LIVENESS_MS` is alive by definition and the binding is not touched), then read
+ * the interrupts. Reading the asks BEFORE the settle returns a `pending` ask beside a `cancelled`
+ * run, which is a screen nobody can act on.
+ *
+ * Beyond the run itself: `GET /runs/:id/agui` projects it to AG-UI, `GET /runs/:id/agui/stream` is
+ * the live read-stream (issue #7), `POST /runs/:id/interrupts/:interruptId` is the answer (issue
+ * #17 — `update AgentRun` plus the agent's `approvers` policy; a compare-and-set on `pending` is
+ * what makes one 200 and one 409 `interrupt_not_pending` true when two people answer at once),
+ * `POST /runs/:id/steering` adds a note to a live run, and `GET /api/agents/interrupts` is the
+ * tenant-wide inbox. Members see, cancel and steer their OWN runs; admin+ (`isAdminLevel`) every
+ * run in the tenant. Every query carries the tenant predicate from the auth context.
  */
 import {
   type AgentRun,

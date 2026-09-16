@@ -334,6 +334,38 @@ instances locally). Without it `POST /api/agents/runs` is 503 `agent_runs_not_co
 `POST /api/agents/runs` `{ "agentKey": "summarize-text", "input": { "text": "<a paragraph>" } }` →
 202; `GET /api/agents/runs/<id>` reaches `succeeded` with `output.summary`.
 
+**Human-in-the-loop walkthrough** (`docs/CONCEPTS.md` §9). A run can stop and ask a person, and
+**`wrangler dev` is the only way to exercise that** — the suspend is `step.waitForEvent`, which the
+Node test suite drives with a fake. Nothing extra to configure; `AGENT_INTERRUPT_TIMEOUT`
+(`168 hours`) is already in both tomls. With `pnpm dev` running and signed in at
+`/login?as=owner@example.test`:
+
+1. **Agents → Summarise text**, paste a paragraph, turn *index the result* ON, run it. Watch the
+   timeline fill **live** (token-by-token it is not — the stream carries durable rows — but it
+   arrives in well under a second, not in 3-second lumps), then stop on *"Add this summary to the
+   knowledge base?"*. The Agents nav item shows a badge of 1, and the notification bell deep-links
+   to the run.
+   Verify: `GET /api/agents/runs/<id>` reports `status: "awaiting_input"` with one pending interrupt.
+2. **Answer it from a second browser** signed in as `admin@example.test`, then answer the same one
+   in the first. One gets a 200, the other a 409 `interrupt_not_pending` rendered as *"somebody else
+   answered"* — not an error toast. The run resumes on its own.
+   Verify: the run reaches `succeeded` and the document appears in `/documents` **exactly once**
+   (the write is behind `ctx.once`; a second copy means that broke).
+3. **Restart `pnpm dev` while a run is parked**, then answer it. The run resumes across the
+   restart — `wrangler dev` loses the instance, so this also exercises the `sendEvent → not_found`
+   path that creates `<runId>-r1`. This is the durability claim; if anything is going to be wrong,
+   it is this.
+4. **Cancel a parked run.** It settles `cancelled` with `error` NULL and its interrupts `expired` —
+   a refusal is a status, not a fault.
+5. **Ask `research-topic` something ambiguous.** It calls `ask_human` and raises a `choice` from
+   inside a tool handler; answer it, then type a **steering note** into the still-running run and
+   watch it appear in the timeline and change the answer. Ask it to *save* what it finds and it
+   calls `index_finding`, which is gated by `Tool.requiresApproval` — approve it (editing the text
+   first, which `allowEdits` permits) and the note lands in the knowledge base.
+6. **Reload a settled run**: identical to the streamed version.
+   `curl -N -H 'Accept: text/event-stream' "http://localhost:3001/api/agents/runs/<id>/agui/stream"`
+   shows `data:`-only frames with `id:` on group boundaries only.
+
 ### 2.6 Tracing — Langfuse
 1. Langfuse (cloud or self-hosted) → project → API keys → `LANGFUSE_PUBLIC_KEY` + `LANGFUSE_SECRET_KEY`
    in `apps/web/.dev.vars` (deployed: `wrangler secret put`)

@@ -107,7 +107,18 @@ Components subscribe to query state, never to the socket; `WebSocketStatus` (hea
   chunks, each `data` goes through the parser the CALLER passes — `kitAguiEventSchema.safeParse` —
   and unknown frames are dropped, never thrown). **Spec AG-UI frames carry no `event:` line**; the
   type is inside the JSON, so nothing may key on the SSE event field. `lib/sse.ts` imports no
-  schema, which is what keeps `@ag-ui/core` out of the eager shell.
+  schema, which is what keeps `@ag-ui/core` out of the eager shell. The run READ-stream
+  (`lib/runAguiStream.ts` → `hooks/useRunStream.ts`) is the one GET — deliberately, so a third-party
+  client can point a bare `EventSource` at it — resuming with `?afterSeq=`, which beats an inbound
+  `Last-Event-ID` when both arrive. Reconnection lives in the HOOK, not the transport.
+- **A read-stream that carries DURABLE rows writes them into the cache; only chat's in-flight text
+  is local state.** `useRunStream` is the ONLY writer of `['agent-run-agui', id]`, and that key must
+  stay out of `REALTIME_INVALIDATIONS` — a nudge that invalidated it would wipe a live timeline with
+  the very message telling it to refresh. Merge purely (the timeline model is idempotent under
+  duplicated events), never append blindly.
+- **A read-stream closing with no terminal event means RECONNECT, not error** — redeploy, idle cap,
+  duration cap, transport error, abort all look the same, deliberately. That is the inverse of the
+  chat write-stream, where the stream IS the run and a failure is a `RUN_ERROR`.
   It does not go through `api-client`'s `request()` (JSON only) but reuses `parseErrorBody`: a pre-stream
   non-2xx is the shared envelope — 503 `ai_not_configured` becomes `AiNotConfiguredError` so the page
   renders a "configure AI" call to action instead of a toast
@@ -128,10 +139,11 @@ Components subscribe to query state, never to the socket; `WebSocketStatus` (hea
   never `kit.`
 - Guards: `/chat/:conversationId?` is `read Conversation` (every role; ownership is server-side);
   `/settings` (`?tab=ai|prompts|agent-models|usage`) is `guard="admin"`, the last two additionally
-  `manage AiConfig`. Agent runs (`/agents`, `AgentRun`), documents (`/documents`, `Document`) and the
-  agent-models tab follow the same contracts (`@rocketflare/shared/ai/{agents,embeddings,agent-models}`) and
-  poll/nudge, never stream: `entity.changed { entity: 'agent-run' }` invalidates the run query.
-  Page specifics: `apps/web/src/ui/CLAUDE.md`
+  `manage AiConfig`. Agent runs (`/agents`, `/agents/runs/:runId`, `AgentRun`), documents
+  (`/documents`, `Document`) and the agent-models tab follow the same contracts
+  (`@rocketflare/shared/ai/{agents,embeddings,agent-models,interrupts,artifacts}`). Documents
+  poll/nudge; **a run STREAMS** (below) and `entity.changed { entity: 'agent-run' }` invalidates the
+  run query — but never `['agent-run-agui']`. Page specifics: `apps/web/src/ui/CLAUDE.md`
 
 ## Auth and guards
 

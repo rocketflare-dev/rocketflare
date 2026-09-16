@@ -13,11 +13,18 @@
  * the next `execute` attempt continues that conversation instead of replaying (and re-billing) it —
  * including the documents the first attempt's searches found, which are folded back out of the
  * stored transcript so their citations are not dropped as hallucinations.
+ *
+ * And the two human-in-the-loop shapes this agent exists to demonstrate (issue #17): `ask_human`
+ * raising a `choice` interrupt from INSIDE a tool handler, and `index_finding` gated by
+ * `Tool.requiresApproval` — where the point of the second is that the gate raises before the
+ * handler ever runs, so a parked run has written nothing.
  */
 import { researchTopicOutputSchema } from '@rocketflare/shared/ai/agents'
 import { eq } from 'drizzle-orm'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { enqueueRun, getRun, listEvents } from '@/api/services/agents/runs'
+import { listArtifacts } from '@/api/services/agents/artifacts'
+import { listInterrupts, resolveInterrupt } from '@/api/services/agents/interrupts'
+import { enqueueRun, getRun, listEvents, resumeRun } from '@/api/services/agents/runs'
 import { claimStep, executeRun } from '@/api/services/agents/runtime'
 import { AiError } from '@/api/services/ai/errors'
 import { ingestText } from '@/api/services/ai/ingest'
@@ -25,7 +32,7 @@ import { parseToolLoopCheckpoint } from '@/api/services/ai/kit'
 import type { ChatClient } from '@/api/services/ai/types'
 import type { Logger } from '@/api/utils/core/logger'
 import { loadConfig } from '@/config'
-import { agentRunEffects, agentRuns, aiUsage } from '@/db/schema'
+import { agentRunEffects, agentRuns, aiUsage, documents } from '@/db/schema'
 import { FakeChatClient, type FakeScript } from '../helpers/ai'
 import { createTestTenantWithUser } from '../helpers/auth'
 import { setupTestDatabase } from '../helpers/db'
@@ -90,6 +97,32 @@ function script(s: FakeScript) {
   return client
 }
 
+/** Answer the run's one pending ask and re-enter `execute` — what the route + workflow do. */
+async function answerAndReExecute(
+  env: TestEnv,
+  tenantId: string,
+  runId: string,
+  userId: string,
+  payload: unknown,
+  status: 'resolved' | 'cancelled' = 'resolved'
+) {
+  const [pending] = await listInterrupts(db, tenantId, runId, 'pending')
+  if (!pending) throw new Error('nothing pending to answer')
+  await resolveInterrupt(db, {
+    tenantId,
+    runId,
+    interruptId: pending.id,
+    status,
+    payload,
+    resolvedByUserId: userId,
+  })
+  await resumeRun(db, tenantId, runId)
+  return {
+    pending,
+    outcome: await executeRun(db, loadConfig(env), env, fakeLogger(), { runId, tenantId }),
+  }
+}
+
 beforeEach(() => {
   state.client = null
 })
@@ -137,6 +170,8 @@ describe('research-topic agent', () => {
       'search_knowledge',
       'get_document',
       'list_documents',
+      'ask_human',
+      'index_finding',
       'submit_answer',
     ])
     const events = await listEvents(db, tenant.id, runId)
@@ -335,5 +370,112 @@ describe('research-topic agent', () => {
     // is dropped. The run is correct — just as expensive as before checkpoints existed.
     const output = researchTopicOutputSchema.parse((await getRun(db, tenant.id, run.id))?.output)
     expect(output.citations).toEqual([])
+  })
+
+  it('ask_human raises a choice interrupt from inside its handler, and the re-entered handler finds the ANSWER', async () => {
+    const env = createTestEnv()
+    const { tenant, user } = await tenantWithDocument(env)
+    const question = 'Do you mean the UK onboarding process or the US one?'
+    const ask = {
+      toolUses: [{ name: 'ask_human', input: { question, options: ['UK', 'US'] } }],
+      usage: { inputTokens: 10, outputTokens: 4 },
+    }
+    // Turn 1 asks. The park loses the turn's checkpoint (a handler-raised interrupt throws before
+    // the loop checkpoints), so the resumed attempt asks the model again and it asks again too —
+    // which is exactly the case `(run_id, key)` exists for.
+    const client = script([
+      ask,
+      ask,
+      {
+        toolUses: [
+          {
+            name: 'submit_answer',
+            input: { answer: 'The US process.', citations: [] },
+          },
+        ],
+        usage: { inputTokens: 12, outputTokens: 6 },
+      },
+    ])
+
+    const { outcome, runId } = await runResearch(env, tenant.id, user.id, 'onboarding')
+    expect(outcome.status).toBe('awaiting_input')
+    const [parked] = await listInterrupts(db, tenant.id, runId, 'pending')
+    expect(parked).toMatchObject({
+      key: `ask-human:${question}`,
+      kind: 'choice',
+      status: 'pending',
+    })
+    const spec = parked?.spec as { options: { value: string }[] } | undefined
+    expect(spec?.options.map(o => o.value)).toEqual(['UK', 'US'])
+    expect(await getRun(db, tenant.id, runId)).toMatchObject({ status: 'awaiting_input' })
+
+    const { outcome: resumed } = await answerAndReExecute(env, tenant.id, runId, user.id, {
+      value: 'US',
+    })
+    expect(resumed.status).toBe('succeeded')
+    // ONE row, not two: the second `ask_human` call landed on the same `(run_id, key)` and read the
+    // answer instead of opening a second question (T2).
+    expect(await listInterrupts(db, tenant.id, runId)).toHaveLength(1)
+    // …and the model was told what the person said.
+    const transcript = JSON.stringify(client.calls[2]?.messages ?? [])
+    expect(transcript).toContain('The person answered: US.')
+  })
+
+  it('index_finding is gated: the run parks with NOTHING written, then the approved call runs once', async () => {
+    const env = createTestEnv()
+    const { tenant, user } = await tenantWithDocument(env)
+    const client = script([
+      {
+        toolUses: [
+          {
+            name: 'index_finding',
+            input: { title: 'Access SLA', text: 'Access requests take two working days.' },
+          },
+        ],
+        usage: { inputTokens: 9, outputTokens: 3 },
+      },
+      {
+        toolUses: [{ name: 'submit_answer', input: { answer: 'Saved.', citations: [] } }],
+        usage: { inputTokens: 4, outputTokens: 2 },
+      },
+    ])
+    const before = await db.select().from(documents).where(eq(documents.tenantId, tenant.id))
+
+    const { outcome, runId } = await runResearch(env, tenant.id, user.id, 'access SLA')
+    expect(outcome.status).toBe('awaiting_input')
+    const [gate] = await listInterrupts(db, tenant.id, runId, 'pending')
+    expect(gate).toMatchObject({ kind: 'approval', status: 'pending' })
+    expect(gate?.key).toMatch(/^tool:/)
+    expect(gate?.spec).toMatchObject({
+      kind: 'approval',
+      tool: { name: 'index_finding', allowEdits: true },
+      onReject: 'tell_model',
+    })
+    // The gate raises BEFORE any handler runs: the write has not happened.
+    expect(await db.select().from(documents).where(eq(documents.tenantId, tenant.id))).toHaveLength(
+      before.length
+    )
+    expect(client.calls).toHaveLength(1)
+
+    // Approve, with the arguments edited — `allowEdits` is why that is allowed at all.
+    const { outcome: resumed } = await answerAndReExecute(env, tenant.id, runId, user.id, {
+      editedInput: { title: 'Access SLA (checked)', text: 'Two working days.' },
+    })
+    expect(resumed.status).toBe('succeeded')
+
+    const after = await db.select().from(documents).where(eq(documents.tenantId, tenant.id))
+    expect(after).toHaveLength(before.length + 1)
+    const saved = after.find(d => !before.some(b => b.id === d.id))
+    expect(saved).toMatchObject({ title: 'Access SLA (checked)', source: 'agent:research-topic' })
+    // `runApproved: ctx.once` is the ledger entry that stops a step retry writing it twice.
+    const effects = await db.query.agentRunEffects.findMany({
+      where: eq(agentRunEffects.runId, runId),
+    })
+    expect(effects.filter(e => e.key.startsWith('tool:'))).toHaveLength(1)
+    const artifacts = await listArtifacts(db, tenant.id, runId)
+    expect(artifacts.map(a => [a.key, a.kind])).toEqual([
+      [`finding:${saved?.id}`, 'document'],
+      ['answer', 'markdown'],
+    ])
   })
 })

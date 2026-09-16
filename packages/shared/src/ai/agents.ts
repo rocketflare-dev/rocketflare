@@ -26,8 +26,11 @@ export type AgentKey = z.infer<typeof agentKeySchema>
 /**
  * Per-agent metadata the server registry and the UI share. `inputSchema` validates the request
  * body at the route (BEFORE any row exists); `outputSchema` validates what the run persists.
- * `exclusive` = at most one queued-or-running run per (tenant, agent) — enforced by a partial
- * unique index on `agent_runs`, never by memory.
+ * `exclusive` = at most one ACTIVE run per (tenant, agent), where active is
+ * {@link ACTIVE_RUN_STATUSES} — `queued`, `running` **and `awaiting_input`**, so a run parked on a
+ * question still holds the slot. Enforced by a partial unique index on `agent_runs` whose predicate
+ * is rendered from that same list, never by memory. `approvers` is who may answer this agent's
+ * interrupts: `'requester'` (the default — whoever can see the run) or `'admin'`.
  */
 export interface AgentMeta<Input = unknown, Output = unknown> {
   key: AgentKey
