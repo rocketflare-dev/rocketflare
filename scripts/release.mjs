@@ -83,12 +83,20 @@ function main(argv) {
     .replace(/^previous: .*$/m, `previous: ${previous ?? 'null'}`)
     .replace(/^date: .*$/m, `date: ${date}`)
 
+  // The first PARAGRAPH of "What changed", rewrapped onto one line — not the first LINE. Notes are
+  // written to the repo's 100-column convention, so a summary sentence almost always spans several
+  // physical lines and taking the first one truncates it mid-clause, in the file adopters read to
+  // decide whether a release concerns them.
   const summary =
     (parsed.body.split('## What changed')[1] ?? '')
-      .split('##')[0]
+      .split(/\n## /)[0]
       .trim()
-      .split('\n')
-      .find(l => l.trim() !== '') ?? 'See the porting note.'
+      .split(/\n\s*\n/)
+      .map(block => block.trim())
+      .find(block => block !== '')
+      ?.split('\n')
+      .map(line => line.trim())
+      .join(' ') ?? 'See the porting note.'
 
   const changelog = read('CHANGELOG.md')
   const marker = '\n## '

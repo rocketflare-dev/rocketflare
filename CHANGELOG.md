@@ -6,6 +6,11 @@ copy of the kit forward without recreating anything its owner deleted.
 
 If you are running a copy: `pnpm kit:upgrade` tells you which of these you are missing.
 
+## 0.4.0 — 2026-09-16
+
+**An agent run can now stop and ask a person, resume on their answer, and be watched live on a page of its own** (issues #17 and #7).
+[Porting note](docs/upgrades/0.4.0.md).
+
 ## 0.3.0 — 2026-09-15
 
 Feature flags, in two layers: `FEATURES_ENABLED` in `[vars]` decides whether a surface exists in a
