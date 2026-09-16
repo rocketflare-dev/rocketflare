@@ -14,7 +14,8 @@ import {
 } from '@rocketflare/shared/ai/agents'
 import { eq } from 'drizzle-orm'
 import { describe, expect, it } from 'vitest'
-import { agentRuns } from '@/db/schema'
+import { RECONCILE_LIVENESS_MS } from '@/api/services/agents/runs'
+import { agentRunEvents, agentRuns } from '@/db/schema'
 import {
   createTestSession,
   createTestTenantWithUser,
@@ -381,5 +382,106 @@ describe('reconcile on read', () => {
       await json(await request(`/api/agents/runs/${run3.id}`, { headers: a.cookie }, { env }))
     )
     expect(detail.status).toBe('succeeded')
+  })
+})
+
+/**
+ * The liveness guard (`RECONCILE_LIVENESS_MS`): a run that has written a durable event inside the
+ * window is alive by definition, so a read must ask the Workflow runtime NOTHING. Without this the
+ * run page's stream-driven refetch turns one `instance.status()` subrequest every 3 s into several
+ * a second, per viewer — the poll it replaced, moved to the client.
+ */
+describe('reconcile liveness guard', () => {
+  /** Append one raw progress row with an explicit timestamp. */
+  const emit = (run: { id: string; tenantId: string }, agoMs: number) =>
+    db.insert(agentRunEvents).values({
+      runId: run.id,
+      tenantId: run.tenantId,
+      seq: Math.floor(Math.random() * 1_000_000),
+      type: 'status',
+      data: {},
+      at: new Date(Date.now() - agoMs),
+    })
+
+  it('a recent event answers for the runtime: zero status() calls, and a dead instance is NOT settled yet', async () => {
+    const a = await actor()
+    const env = createTestEnv()
+    const run = createAgentRunResponseSchema.parse(await json(await start(a.cookie, env)))
+    await emit({ id: run.id, tenantId: a.tenant.id }, 2_000)
+    // The runtime would settle this row the moment it was asked.
+    stubs(env).workflow?.setStatus(run.id, {
+      status: 'errored',
+      error: { name: 'Error', message: 'gone' },
+    })
+    stubs(env).workflow?.statusCalls.splice(0)
+
+    const detail = agentRunWithEventsSchema.parse(
+      await json(await request(`/api/agents/runs/${run.id}`, { headers: a.cookie }, { env }))
+    )
+    expect(detail.status).toBe('queued')
+    expect(stubs(env).workflow?.statusCalls.filter(id => id === run.id)).toHaveLength(0)
+
+    // `/agui` reads the same log and takes the same shortcut.
+    await request(`/api/agents/runs/${run.id}/agui`, { headers: a.cookie }, { env })
+    expect(stubs(env).workflow?.statusCalls.filter(id => id === run.id)).toHaveLength(0)
+
+    // `?events=0` has no log in hand, so it reconciles — and finds the dead instance at once.
+    const bare = await json<{ status: string }>(
+      await request(`/api/agents/runs/${run.id}?events=0`, { headers: a.cookie }, { env })
+    )
+    expect(bare.status).toBe('failed')
+    expect(stubs(env).workflow?.statusCalls.filter(id => id === run.id)).toHaveLength(1)
+  })
+
+  it('an event older than the window, and a run with no events at all, both still reconcile', async () => {
+    const a = await actor()
+    const env = createTestEnv()
+
+    const stale = createAgentRunResponseSchema.parse(await json(await start(a.cookie, env)))
+    await emit({ id: stale.id, tenantId: a.tenant.id }, RECONCILE_LIVENESS_MS + 5_000)
+    stubs(env).workflow?.setStatus(stale.id, { status: 'complete' })
+    stubs(env).workflow?.statusCalls.splice(0)
+    expect(
+      agentRunWithEventsSchema.parse(
+        await json(await request(`/api/agents/runs/${stale.id}`, { headers: a.cookie }, { env }))
+      ).status
+    ).toBe('succeeded')
+    expect(stubs(env).workflow?.statusCalls.filter(id => id === stale.id)).toHaveLength(1)
+
+    const silent = createAgentRunResponseSchema.parse(await json(await start(a.cookie, env)))
+    stubs(env).workflow?.setStatus(silent.id, { status: 'complete' })
+    expect(
+      agentRunWithEventsSchema.parse(
+        await json(await request(`/api/agents/runs/${silent.id}`, { headers: a.cookie }, { env }))
+      ).status
+    ).toBe('succeeded')
+    expect(stubs(env).workflow?.statusCalls.filter(id => id === silent.id)).toHaveLength(1)
+  })
+
+  it('a run that goes quiet is settled on the read after the window lapses', async () => {
+    const a = await actor()
+    const env = createTestEnv()
+    const run = createAgentRunResponseSchema.parse(await json(await start(a.cookie, env)))
+    // Written just inside the window, read just outside it: the same row, two answers.
+    await emit({ id: run.id, tenantId: a.tenant.id }, RECONCILE_LIVENESS_MS - 1_000)
+    stubs(env).workflow?.setStatus(run.id, {
+      status: 'errored',
+      error: { name: 'Error', message: 'instance died mid-run' },
+    })
+    expect(
+      agentRunWithEventsSchema.parse(
+        await json(await request(`/api/agents/runs/${run.id}`, { headers: a.cookie }, { env }))
+      ).status
+    ).toBe('queued')
+
+    await db
+      .update(agentRunEvents)
+      .set({ at: new Date(Date.now() - RECONCILE_LIVENESS_MS - 1_000) })
+      .where(eq(agentRunEvents.runId, run.id))
+    expect(
+      agentRunWithEventsSchema.parse(
+        await json(await request(`/api/agents/runs/${run.id}`, { headers: a.cookie }, { env }))
+      )
+    ).toMatchObject({ status: 'failed', error: 'instance died mid-run' })
   })
 })

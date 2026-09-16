@@ -521,6 +521,31 @@ representation of the log (the durable rows) instead of a second, lossy one reco
 a working page**, which is the property phase 6 was built to preserve. The stream remains the only
 writer of `['agent-run-agui']` and still never touches the run row.
 
+**And because the page re-reads a run on every new `seq`, `reconcileRun` gained a liveness guard.**
+Phase 6 removed a Workflow `instance.status()` subrequest from a 3 s loop; re-reading `GET
+/runs/:id` on every stream cursor advance put a busier one back, on the client — up to ~2 a second
+per viewer against the poll's 0.33. The rule that fixes it is not a throttle:
+
+> **A run that has written a durable event within the last 30 s is alive by definition. Do not
+> spend a Workflow subrequest asking.**
+
+`reconcileRun(db, env, run, { lastEventAt })` exists to settle a run whose *instance has vanished*,
+and a run that wrote a row two seconds ago manifestly has not. It is an **optional argument, so
+every call site opts in explicitly** rather than inheriting a hidden default: `GET /runs/:id` and
+`GET /runs/:id/agui` already load the log, so they pass its newest `at` and the binding is never
+touched; `?events=0`, the stream route and every other caller pass nothing and reconcile exactly as
+before. `RECONCILE_LIVENESS_MS` (30 s, exported from `services/agents/runs.ts`) is chosen from both
+ends — far longer than the gap between rows in a healthy run, far shorter than a stall anybody
+would notice — and the only cost is that a genuinely dead instance is detected up to one window
+later. A legitimately silent minute (one long `execute` step) falls straight through to a real
+reconcile, where `'waiting'` and the default arm both leave the row alone.
+
+`routes/agents.ts` splits `loadRun` into `requireRun` (lookup + the ownership 404) and
+`settleOnRead` (reconcile + `expireParkedRun`), so the two routes with a log in hand can read it
+*before* they settle. Nothing is lost by the reordering: settling a run writes no event row.
+**Phase 6's "`reconcileRun` exactly once, never in the loop" is unchanged** — the stream route still
+reconciles unconditionally at open, and its test still pins it.
+
 Also: `Row` / `Section` / `formatCost` moved out of `ChatStatsPanel.tsx` into
 **`components/ai/StatRows.tsx`** — a legal markdown zone whose two consumers are both lazy, so Vite
 emits it once. `components/shared` would have been the mistake (it is the eager barrel).

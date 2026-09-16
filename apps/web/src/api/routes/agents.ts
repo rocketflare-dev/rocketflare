@@ -89,17 +89,43 @@ function canAnswer(auth: AuthContext, run: AgentRunRow): boolean {
 }
 
 /**
- * The read path for one run: tenant-scoped, ownership-checked, then reconciled against the
- * runtime. `expireParkedRun` sits beside `reconcileRun` because they answer the same question for
- * the two halves of "active" — `reconcileRun` settles a `queued`/`running` row whose instance is
- * gone, and `expireParkedRun` settles an `awaiting_input` row whose asks have all passed their
- * deadline (T6). Without it a park whose instance died holds the exclusive slot forever.
+ * The read path for one run in one call: tenant-scoped, ownership-checked, then reconciled — for a
+ * caller with no events in hand to prove the run is alive. A caller that HAS them uses the two
+ * halves directly and hands {@link settleOnRead} the newest event's timestamp.
  */
 async function loadRun(c: AppContext, runId: string): Promise<AgentRunRow> {
-  const { db, tenantId, auth, realtime } = withAuthAndDb(c)
+  return settleOnRead(c, await requireRun(c, runId))
+}
+
+/** Tenant-scoped lookup plus the ownership check: another member's run is the same 404 as none. */
+async function requireRun(c: AppContext, runId: string): Promise<AgentRunRow> {
+  const { db, tenantId, auth } = withAuthAndDb(c)
   const row = await getRun(db, tenantId, runId)
   if (!row || !visible(auth, row)) throw new NotFoundError('Agent run not found')
-  return expireParkedRun(db, await reconcileRun(db, c.env, row), realtime)
+  return row
+}
+
+/**
+ * The second half of the read path: settle a stale active row against the runtime.
+ * `expireParkedRun` sits beside `reconcileRun` because they answer the same question for the two
+ * halves of "active" — `reconcileRun` settles a `queued`/`running` row whose instance is gone, and
+ * `expireParkedRun` settles an `awaiting_input` row whose asks have all passed their deadline (T6).
+ * Without it a park whose instance died holds the exclusive slot forever.
+ *
+ * `lastEventAt` is passed by every caller that has the run's events in hand, and it is why this is
+ * split out of {@link loadRun} at all. `reconcileRun` costs a Workflow `instance.status()`
+ * subrequest per call, and the run page re-reads a run on EVERY new `seq` the live stream reports
+ * — several a second on a bursty run, per viewer. A run that wrote a durable event two seconds ago
+ * is alive by definition, so the newest event's timestamp answers the question for free and the
+ * binding is never touched. A caller with no events passes nothing and reconciles as it always did.
+ */
+async function settleOnRead(
+  c: AppContext,
+  row: AgentRunRow,
+  options?: { lastEventAt?: Date | null }
+): Promise<AgentRunRow> {
+  const { db, realtime } = withAuthAndDb(c)
+  return expireParkedRun(db, await reconcileRun(db, c.env, row, options), realtime)
 }
 
 // ---- GET /api/agents ------------------------------------------------------------------------------
@@ -177,15 +203,20 @@ agentsRouter.post('/runs', validate('json', createAgentRunRequestSchema), async 
 agentsRouter.get('/runs/:id', async c => {
   const { db, tenantId } = withAuthAndDb(c)
   guardPermission(c, 'read', 'AgentRun')
-  const run = await loadRun(c, uuidParam(c, 'id'))
+  const row = await requireRun(c, uuidParam(c, 'id'))
   // `?events=0` is the bare row: one indexed read instead of the whole log, for a client that is
-  // tailing the events over the stream and only wants the row the nudge refreshes.
+  // tailing the events over the stream and only wants the row the nudge refreshes. It has no
+  // events to prove liveness with, so it reconciles unconditionally.
   if (c.req.query('events') === '0') {
-    const bare: AgentRun = toAgentRun(run)
+    const bare: AgentRun = toAgentRun(await settleOnRead(c, row))
     return c.json(bare)
   }
-  const [events, interrupts, artifacts] = await Promise.all([
-    listEvents(db, tenantId, run.id),
+  // The log is read BEFORE the settle, because its newest row's timestamp is what buys the Workflow
+  // subrequest away; nothing is lost by that, since settling a run writes no event. The asks are
+  // read AFTER it, because `expireParkedRun` is exactly the thing that rewrites them.
+  const events = await listEvents(db, tenantId, row.id)
+  const run = await settleOnRead(c, row, { lastEventAt: events.at(-1)?.at ?? null })
+  const [interrupts, artifacts] = await Promise.all([
     listInterrupts(db, tenantId, run.id),
     listArtifacts(db, tenantId, run.id),
   ])
@@ -208,9 +239,11 @@ agentsRouter.get('/runs/:id', async c => {
 agentsRouter.get('/runs/:id/agui', async c => {
   const { db, tenantId } = withAuthAndDb(c)
   guardPermission(c, 'read', 'AgentRun')
-  const run = await loadRun(c, uuidParam(c, 'id'))
-  const [events, interrupts, artifacts] = await Promise.all([
-    listEvents(db, tenantId, run.id),
+  const row = await requireRun(c, uuidParam(c, 'id'))
+  // Log first (it proves liveness), settle, then the asks — `expireParkedRun` rewrites those.
+  const events = await listEvents(db, tenantId, row.id)
+  const run = await settleOnRead(c, row, { lastEventAt: events.at(-1)?.at ?? null })
+  const [interrupts, artifacts] = await Promise.all([
     listInterrupts(db, tenantId, run.id),
     listArtifacts(db, tenantId, run.id),
   ])

@@ -9,6 +9,8 @@
  *   requestCancel — queued → `cancelled` outright; running → `cancelRequestedAt` (the run polls).
  *   reconcileRun — on read: an active row whose instance is `not_found|errored|terminated|complete`
  *                 is stale → settle it. `not_found` is an ANSWER, not an error; no binding → no-op.
+ *                 A caller with the run's log in hand passes `lastEventAt` and a recent row skips
+ *                 the subrequest entirely — see RECONCILE_LIVENESS_MS.
  *   appendEvent — durable progress row + `entity.changed { entity: 'agent-run' }` nudge (D8).
  *   loadCheckpoint / saveCheckpoint — the tool loop's resume point on `agent_runs.checkpoint`, so a
  *                 retried `execute` continues the conversation instead of replaying it. Cleared by
@@ -563,17 +565,44 @@ export function isMissingInstanceError(error: unknown): boolean {
 }
 
 /**
+ * How recently a run must have written a durable event for {@link reconcileRun} to take its word
+ * for it and ask the runtime nothing at all.
+ *
+ * 30 s is chosen from both ends. It is far longer than the gap between rows in a healthy run — a
+ * tool call, a step boundary and a model turn all land inside a few seconds — so a run that is
+ * genuinely working never pays for a subrequest. And it is far shorter than any stall a person
+ * would notice, so a crashed instance is still detected on the read after the window lapses.
+ *
+ * The one case that legitimately emits nothing for minutes — a single long `execute` step — falls
+ * straight through to a real reconcile, which is correct: `'waiting'` and the default arm both
+ * return the row untouched, so a slow step is never mistaken for a dead one.
+ */
+export const RECONCILE_LIVENESS_MS = 30_000
+
+/**
  * Reconcile an ACTIVE row against the Workflow runtime on read. The row is truth for anything the
  * runtime still owns; when the runtime says the instance is gone or finished while the row says
  * active, the row is stale (a crash between steps, a terminated instance) and is settled here.
  * No binding, no instance id, or an unreachable runtime → the row is returned untouched.
+ *
+ * **`lastEventAt` is the liveness proof, and it is opt-in per call site.** This function costs a
+ * Workflow `instance.status()` subrequest every time, and the run page re-reads a run on *every*
+ * new `seq` the stream reports — so on a bursty run that is a subrequest several times a second
+ * per viewer, to ask whether a run that wrote a durable event two seconds ago is still alive. It
+ * manifestly is. A caller that already has the run's events to hand passes the newest one's
+ * timestamp and the binding is not touched; a caller that has none passes nothing and behaves
+ * exactly as it always did. The whole cost of the guard is that a genuinely dead instance is
+ * detected up to {@link RECONCILE_LIVENESS_MS} later than it would have been.
  */
 export async function reconcileRun(
   db: Database,
   env: AgentRunsEnv,
-  run: AgentRunRow
+  run: AgentRunRow,
+  options: { lastEventAt?: Date | null } = {}
 ): Promise<AgentRunRow> {
   if (run.status !== 'queued' && run.status !== 'running') return run
+  const lastEventAt = options.lastEventAt
+  if (lastEventAt && Date.now() - lastEventAt.getTime() < RECONCILE_LIVENESS_MS) return run
   if (!env.AGENT_RUN_WORKFLOW || !run.instanceId) return run
   let status: Awaited<ReturnType<Awaited<ReturnType<AgentRunWorkflowBinding['get']>>['status']>>
   try {

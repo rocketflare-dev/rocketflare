@@ -178,8 +178,13 @@ function RunWorkspace({
  * `useRunStream` owns `['agent-run-agui', id]` and never touches the run row — that rule is phase
  * 6's and it stays. Here we read only its cursor: when the server has written a `seq` this page has
  * not rendered, re-read the run. That keeps ONE representation of the log (the durable rows) rather
- * than a second, lossy one reconstructed from AG-UI, and it is strictly cheaper than the 3 s poll
- * it replaces — an idle run makes no requests at all, where the poll made twenty a minute.
+ * than a second, lossy one reconstructed from AG-UI, and an idle run makes no requests at all where
+ * the poll made twenty a minute.
+ *
+ * The re-read is bursty by nature, which is why the SERVER holds the other half of the bargain:
+ * `GET /runs/:id` hands `reconcileRun` the newest event's timestamp, so a run that is actively
+ * writing rows costs no Workflow subrequest to re-read. Coalescing here is one fetch in flight at a
+ * time and nothing more — a debounce would spend exactly the latency phase 6 was built to buy.
  *
  * Deleting this hook leaves `useAgentRun`'s own `refetchInterval`, which is a working page.
  */
