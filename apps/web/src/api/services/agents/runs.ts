@@ -610,6 +610,22 @@ export function nudgeRun(realtime: Realtime | undefined, tenantId: string, runId
   nudge(realtime, realtimeEvent('entity.changed', tenantId, { entity: 'agent-run', id: runId }))
 }
 
+/**
+ * The nudge for the ASKS of a run, distinct from the run's own (issue #17). It exists so a screen
+ * that only watches the inbox — the "3 waiting" badge — refreshes on an answer without subscribing
+ * to every progress row the runtime writes, which is most of them.
+ */
+export function nudgeInterrupts(
+  realtime: Realtime | undefined,
+  tenantId: string,
+  runId: string
+): void {
+  nudge(
+    realtime,
+    realtimeEvent('entity.changed', tenantId, { entity: 'agent-interrupt', id: runId })
+  )
+}
+
 /** `max(seq)` for a run — the writer continues numbering from here across attempts. */
 export async function lastEventSeq(db: Database, tenantId: string, runId: string): Promise<number> {
   const [row] = await db

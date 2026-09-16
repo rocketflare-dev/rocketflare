@@ -240,6 +240,83 @@ stand-in for the resolve route (write the answer, flip the row, return a payload
 with no `onWait` rejects the way the platform's timeout does. `names` is every step name in call
 order, `do` and `waitForEvent` alike, which is how "distinct per round" is asserted.
 
+### Phase 5 — routes, permissions and the projection
+
+The loop from phase 4 is now reachable from outside. Until this landed,
+`nudgeOrRestartInstance` had no caller, which means a parked run could never be resumed — so this
+phase is the one that makes the feature *exist* rather than merely compile.
+
+**`/api/agents` gains three routes and two answers:**
+
+| Route | Guard | Notes |
+|---|---|---|
+| `POST /runs/:id/interrupts/:interruptId` | `update AgentRun` + the agent's `approvers` | the eight steps below |
+| `POST /runs/:id/steering` | same as cancel | `appendEventAtomic` + nudge; **409 on a settled run** |
+| `GET /interrupts?status=pending` | `read AgentRun` | the inbox, paginated, joined to its run |
+| `GET /runs/:id` · `/agui` | unchanged | now carry real `interrupts[]` / `artifacts[]` |
+| `GET /runs/:id?events=0` | unchanged | the bare row, for a client tailing the events elsewhere |
+
+**The resolve handler is eight steps and the ORDER is the design** — each is a precondition for the
+next. (1) the run must exist and be visible → 404; (2) the caller must be an approver → 403; (3) the
+ask must belong to that run → 404; (4) the answer validates against `interruptPayloadSchema(spec)` →
+400; (5) `resolveInterrupt` is one compare-and-set → null is **409 `interrupt_not_pending`**, which
+is what makes two people answering at once *one 200, one 409, one side effect*; (6) an
+`interrupt.resolved` row through `appendEventAtomic` (a steering write can race a step's emitter for
+`seq`); (7) **only when nothing is still pending**, `resumeRun` and then `nudgeOrRestartInstance`; (8)
+activity, nudge, 200.
+
+Two of those repay a second reading:
+
+- **Step 7 is where T4 is fixed.** `resumeRun` flips `awaiting_input → running` **before** the
+  instance is woken — *the answer IS the transition* — and that is the only reason a restarted
+  instance's `claim` step, whose predicate is the narrow `queued | running`, finds anything at all.
+  It also must not fire early: a turn with three gated calls parks **once** and needs all three
+  answers, so resuming on the first would re-enter the loop with questions still open.
+- **Step 4 refuses `editedInput` unless the ask offered it** (`tool.allowEdits`) and then re-checks
+  the edit against the tool's stored JSON Schema (`checkEditedToolInput`) — *a client that can edit
+  tool arguments is a client that can call anything*. That check is defence in depth, not a JSON
+  Schema implementation: `runHandler` still re-parses the input with the tool's real zod schema
+  immediately before the handler runs.
+
+**Permissions add no CASL action and no subject.** `canAnswer` is the `update AgentRun` the route
+already guards **plus** `AgentMeta.approvers`: `'requester'` (the default) is exactly the predicate
+`visible()` already implements, so there is one mental model rather than two, and `'admin'` is the
+opt-in for agents that touch money, customers or deletion. A member under `approvers: 'admin'`
+**sees** their own run's ask in the inbox (`canAnswer: false` travels per item) and gets a 403 on
+answering; the UI renders it read-only. An app wanting approvals on its own axis adds its **own**
+subject.
+
+**`expireParkedRun` is now wired onto the read path, beside `reconcileRun`** (T6). They answer the
+same question for the two halves of "active": `reconcileRun` settles a `queued`/`running` row whose
+instance is gone, and `expireParkedRun` settles an `awaiting_input` row whose asks have all passed
+their deadline. Without it a park whose instance died — a `wrangler dev` restart, retention expiring
+— holds the exclusive slot for ever.
+
+**The projection takes the rows it was missing.** `projectRunToAgui(run, events, { interrupts,
+artifacts })` — still pure, still "the event row ids ARE the AG-UI ids", it just needs the two
+tables, because the log records *where* an ask appeared while the table records *what became of it*.
+
+- Every run now emits a **`STATE_SNAPSHOT` right after `RUN_STARTED`** carrying
+  `capabilities.humanInTheLoop`. A client reads that before it renders anything, so `POST
+  /api/agui/run`'s snapshot declares `humanInTheLoop: { supported: false }` until chat HITL lands —
+  lying there is how a client draws an approve button that does nothing.
+- A run `awaiting_input` **with** pending asks ends in `RUN_FINISHED { outcome: { type:
+  'interrupt', interrupts } }` — AG-UI's own delivery, which is what lets a third-party client answer
+  a kit run with zero kit-specific code. With **no** pending asks it emits no terminal event: that
+  state is the window between the resolve write and `resumeRun`, and it is reachable, not impossible.
+- `interrupt` / `interrupt.resolved` / `steering` / `artifact` rows project as the four
+  `kit.agent.*` CUSTOM events. A row whose table entry was not passed is **skipped, not invented**.
+
+Nudges: answering emits the usual `entity.changed { entity: 'agent-run' }` plus a new
+`entity: 'agent-interrupt'`, so an inbox badge can refresh without subscribing to every progress row
+the runtime writes.
+
+**Notification on park needs nothing new here** — phase 3's `notifyApprovers` already runs inside the
+`execute` step, awaited (a Workflow step has no `waitUntil`), through `notifyMany` even for one
+recipient, behind `claimEffect('notify:<interruptId>')`, and falls back to the tenant's admins for an
+`approvers: 'admin'` agent **or a system-triggered run with no requester** — a parked run nobody is
+told about is a hung agent.
+
 ## How to apply
 
 Take the four `packages/shared/src/ai/` files and `errors.ts` as written — they are appends, so a
@@ -250,13 +327,12 @@ that keep the workspace compiling; each is one edit:
    `AGENT_RUN_STATUS_VALUES`. **No DDL for the column**: it is `text`, which is exactly why it is
    `text`. The index predicate beside it *does* change (phase 2 above).
 2. `apps/web/src/api/routes/agents.ts` — `GET /runs/:id` builds an `AgentRunWithEvents`, which now
-   has `interrupts` and `artifacts`. Pass `[]` for both until the tables exist.
+   has `interrupts` and `artifacts`; phase 5 fills them from the tables.
 3. Any `Record<AgentRunStatus, …>` in your own UI gains an `awaiting_input` arm; the kit's two
    (`AgentsPage`, `RunStatusBadge`) use the label "Waiting for you" and the stylesheet's existing
    `awaiting-review` warning tone.
 
-An app with its own agents may set `approvers: 'admin'` on an `AgentMeta` now; it is inert until the
-routes land.
+An app with its own agents may set `approvers: 'admin'` on an `AgentMeta`; phase 5 is what reads it.
 
 Phase 4 touches two files an app is unlikely to have edited (`api/workflows/agent-run.ts` and
 `finishStep`) plus the test mock. Take `agent-run.ts` whole. If your copy forked the Workflow class
@@ -275,6 +351,14 @@ kit's `migrations/0011_*.sql`, because every `meta/*_snapshot.json` describes th
 schema and yours has tables the kit has never heard of. Read what drizzle-kit emits before applying
 it: a *changed* partial-index predicate is the case it is weakest on, and a `CREATE` with no `DROP`
 silently leaves the old narrow index in place.
+
+Phase 5 is mostly additive inside `apps/web/src/api/routes/agents.ts` (three new routes, two helpers
+and a shared `loadRun`), so a copy that restyled its agent routes should take the new blocks and keep
+its own. Two edits are NOT additive and are easy to miss when resolving by hand: `GET /runs/:id` and
+`/agui` must both go through `loadRun` so `expireParkedRun` runs on read, and
+`projectRunToAgui` now takes a third argument — a call site that omits it still compiles, and
+silently drops every ask and artifact from the timeline. If your UI asserts on the AG-UI sequence of
+a run, note that **`STATE_SNAPSHOT` is now the second event of every projection**.
 
 ## Conflicts to expect
 
@@ -304,5 +388,14 @@ round, that a resume re-enters `execute` and the run completes, that an unanswer
 `cancelled` with a **NULL `error`**, that `MAX_INTERRUPT_ROUNDS` stops a runaway agent cleanly, and
 that `finishStep` does not fail a parked row. `waitForEvent` itself only runs on the platform — the
 `wrangler dev` walkthrough is the acceptance test for the durable park.
+For phase 5, `apps/web/tests/api/agent-interrupt-routes.test.ts` proves the 409 on a double answer,
+the 403 for a member under `approvers: 'admin'` (who still sees the ask, `canAnswer: false`), the 404
+for another member's and another tenant's run, the 400 for `editedInput` without `allowEdits` and for
+an edit that does not fit the tool's schema, that a second enqueue while parked deduplicates, that
+cancelling a park expires its asks, that steering a settled run is a 409, and — end to end —
+**`sendEvent → not_found` → `<runId>-r1` → and the run then completes**, which is the whole T4/T5
+path including a restarted instance's `claim`. `apps/web/tests/api/agui-projection.test.ts` proves
+the capability snapshot, the interrupt outcome, the empty-pending park and the four `kit.agent.*`
+events.
 After migrating, the index predicate should read
 `WHERE status = ANY (ARRAY['queued','running','awaiting_input'])` in `pg_indexes`.

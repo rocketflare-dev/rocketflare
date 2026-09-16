@@ -89,3 +89,21 @@ registries, and the cache rule.
 Delete `docs/plans/agent-hitl/` in the PR that ships the last phase. Git history is the archive, and
 a stale plan sitting beside current documentation is exactly what
 `.claude/rules/code-quality.md` forbids.
+
+---
+
+## Docs debt found during phases 1–4 (close it here)
+
+Each verified stale against the code as it now stands, not guessed:
+
+- **`docs/CONCEPTS.md` §9, line ~968** — "creates the Workflow instance with **id = run id**" is now
+  wrong on the resume path. §5 was corrected in phase 3; §9 was not.
+- **`docs/CONCEPTS.md` §5, line ~393** — the exclusive index is quoted as
+  `WHERE status IN ('queued','running')`. Phase 2 widened it to include `awaiting_input`, and the
+  predicate is now *derived* from `ACTIVE_RUN_STATUSES` rather than typed out.
+- **§9's "There is no SSE endpoint for runs, deliberately"** and **"Nothing streams — runs are
+  rows"** — both become false with phase 6. Already in this file's list; repeated here so the three
+  travel together.
+- **`docs/CONCEPTS.md` §9 Known gaps** — the "live run streaming with `Last-Event-ID` replay is
+  still deferred" line, and the AG-UI gap list, need re-reading end to end rather than patching:
+  several entries are closed by phases 5–7.

@@ -306,3 +306,76 @@ export function interruptExpiryFrom(timeout: string, now = new Date()): Date | n
   const ms = parseDurationMs(timeout)
   return ms === null ? null : new Date(now.getTime() + ms)
 }
+
+// ---- Edited tool input ---------------------------------------------------------------------------
+
+/** One complaint about an edited tool input, shaped like a zod issue so `details` reads the same. */
+export interface EditedInputIssue {
+  path: string[]
+  message: string
+}
+
+const JSON_TYPE_OF = (value: unknown): string => {
+  if (value === null) return 'null'
+  if (Array.isArray(value)) return 'array'
+  return typeof value === 'number' && Number.isInteger(value) ? 'integer' : typeof value
+}
+
+/**
+ * Re-check an approver's EDITED tool arguments against the tool's stored JSON Schema.
+ *
+ * *A client that can edit tool arguments is a client that can call anything*, so an edit is never
+ * taken on trust — but this is **defence in depth, not a JSON Schema implementation**: the real
+ * gate is `runHandler` (`services/ai/kit.ts`), which re-parses the input with the tool's own zod
+ * schema immediately before the handler runs, on both the fresh and the resumed path. What this
+ * catches is the class of edit worth a 400 rather than a wasted model turn — a wrong shape, a
+ * missing required argument, an unexpected key, a value outside an enum.
+ *
+ * An ask with no stored schema returns no issues: there is nothing to check against, and the zod
+ * pass still stands between the edit and the tool.
+ */
+export function checkEditedToolInput(spec: AgentInterruptSpec, value: unknown): EditedInputIssue[] {
+  if (spec.kind !== 'approval') return []
+  const schema = spec.tool?.inputSchema
+  if (!schema) return []
+  const issues: EditedInputIssue[] = []
+  if (JSON_TYPE_OF(value) !== 'object') {
+    return [{ path: ['editedInput'], message: 'must be an object' }]
+  }
+  const object = value as Record<string, unknown>
+  const properties = (schema.properties ?? {}) as Record<string, Record<string, unknown>>
+  const required = Array.isArray(schema.required) ? (schema.required as string[]) : []
+  for (const name of required) {
+    if (object[name] === undefined) {
+      issues.push({ path: ['editedInput', name], message: 'is required' })
+    }
+  }
+  if (schema.additionalProperties === false) {
+    for (const name of Object.keys(object)) {
+      if (!properties[name]) {
+        issues.push({ path: ['editedInput', name], message: 'is not an argument of this tool' })
+      }
+    }
+  }
+  for (const [name, property] of Object.entries(properties)) {
+    const given = object[name]
+    if (given === undefined) continue
+    const expected = property.type
+    if (typeof expected === 'string') {
+      const actual = JSON_TYPE_OF(given)
+      // `integer` is a number, and a JSON Schema `number` accepts an integer.
+      const ok =
+        actual === expected ||
+        (expected === 'number' && actual === 'integer') ||
+        (expected === 'integer' && actual === 'integer')
+      if (!ok) issues.push({ path: ['editedInput', name], message: `must be a ${expected}` })
+    }
+    if (Array.isArray(property.enum) && !property.enum.includes(given as never)) {
+      issues.push({
+        path: ['editedInput', name],
+        message: `must be one of ${property.enum.map(v => JSON.stringify(v)).join(', ')}`,
+      })
+    }
+  }
+  return issues
+}
