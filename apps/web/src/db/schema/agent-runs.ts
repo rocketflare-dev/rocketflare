@@ -10,6 +10,7 @@
  * `checkpoint` is where a retried step picks the tool loop back up instead of replaying it.
  */
 import type { AgentKey, AgentRunStatus } from '@rocketflare/shared/ai/agents'
+import { ACTIVE_RUN_STATUSES } from '@rocketflare/shared/ai/agents'
 import { relations, sql } from 'drizzle-orm'
 import {
   index,
@@ -35,6 +36,13 @@ export const AGENT_RUN_STATUS_VALUES = [
   'cancelled',
   'awaiting_input',
 ] as const satisfies readonly AgentRunStatus[]
+
+/**
+ * `'queued', 'running', 'awaiting_input'` as SQL literals, derived from the shared list rather than
+ * typed out, so the index predicate and `ACTIVE_RUN_STATUSES` cannot drift. `sql.raw` because this
+ * renders into DDL: a bound parameter is not a thing a partial index predicate can hold.
+ */
+const ACTIVE_STATUS_LITERALS = ACTIVE_RUN_STATUSES.map(status => `'${status}'`).join(', ')
 
 export const agentRuns = pgTable(
   'agent_runs',
@@ -73,9 +81,13 @@ export const agentRuns = pgTable(
     index('agent_runs_tenant_agent_status_idx').on(table.tenantId, table.agentKey, table.status),
     index('agent_runs_tenant_created_idx').on(table.tenantId, table.createdAt.desc()),
     // The EXCLUSIVE guarantee (D7): at most one active run per (tenant, agent), by the database.
+    // The predicate is `ACTIVE_RUN_STATUSES`, which INCLUDES `awaiting_input`: a run parked on a
+    // human is still *the* active run for that agent, and a narrower predicate would let a second
+    // enqueue slip past the guarantee while the first waits for an answer. It is deliberately wider
+    // than `CLAIMABLE_RUN_STATUSES`, which the claim step uses.
     uniqueIndex('agent_runs_active_exclusive_idx')
       .on(table.tenantId, table.agentKey)
-      .where(sql`${table.status} IN ('queued', 'running')`),
+      .where(sql`${table.status} IN (${sql.raw(ACTIVE_STATUS_LITERALS)})`),
     tenantIsolation('agent_runs'),
   ]
 )

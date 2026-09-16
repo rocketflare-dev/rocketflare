@@ -28,6 +28,7 @@ AGENT_MAX_OUTPUT_TOKENS = "16384"      # AI (D17): per-call max_tokens when a te
 AGENT_MAX_TURNS = "30"                 # AI (D17): turn cap for every tool loop
 CHAT_KNOWLEDGE_TOOLS = "true"          # AI (D18): chat may call the knowledge tools ("false" = tool-free chat)
 CHAT_HISTORY_MAX_CHARS = "24000"       # AI (D17): history a chat turn replays; older turns are summarised
+AGENT_INTERRUPT_TIMEOUT = "168 hours"   # Agents (#17): how long a run parked on a human waits (step.waitForEvent timeout)
 FEATURES_ENABLED = ""                  # Feature flags (D30): keys this environment ships at all; blank = none (fail-closed)
 # Secrets are NOT here: `wrangler secret put <NAME>` for every non-var in .dev.vars.example
 
