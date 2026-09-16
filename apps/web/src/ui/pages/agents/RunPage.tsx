@@ -64,16 +64,6 @@ const LAYOUT_COLUMNS: Record<RunLayoutSplit, string> = {
 }
 
 /**
- * Where the boundary between the two columns sits, as a percentage of the grid — the same share
- * `LAYOUT_COLUMNS` splits it by, so the handle rides the edge it moves. Written as literal classes
- * in this file (never composed from a value) so Tailwind's scanner emits them.
- */
-const LAYOUT_EDGE: Record<RunLayoutSplit, string> = {
-  'timeline-major': 'lg:left-[60%]',
-  'output-major': 'lg:left-[40%]',
-}
-
-/**
  * The split control: a handle ON the edge it drags, not a labelled button inside one panel's
  * header. A header button has to say which panel it belongs to and which way it moves; a chevron
  * sitting on the boundary pointing the way the boundary will go says both by position alone.
@@ -82,6 +72,13 @@ const LAYOUT_EDGE: Record<RunLayoutSplit, string> = {
  * replaces, because an icon has no accessible name of its own and a screen reader would otherwise
  * read nothing at all. No `aria-pressed`: the name describes the ACTION and changes with the
  * layout, which is a different control from a two-state toggle and must not claim to be one.
+ *
+ * **It is a CHILD of the timeline panel, and rides that panel's own right edge** (`right-0` +
+ * `translate-x-1/2`, `top-1` so it tucks just under the corner). It used to be absolutely
+ * positioned over the grid at `left-[60%]`, which is wrong and cannot be made right by tuning the
+ * number: with `grid-cols-[3fr_2fr] gap-8` the panel's border sits at `3/5 × (W − gap)`, so the
+ * handle floated `0.6 × gap` to the right of it, and every widening of the gutter made it worse.
+ * Anchored to the element that OWNS the border, it is correct for any fraction and any gap.
  *
  * Hidden below `lg`, where the columns stack and there is no split to move.
  */
@@ -95,7 +92,7 @@ function LayoutSplitHandle({ layout, onToggle }: { layout: RunLayoutSplit; onTog
       onClick={onToggle}
       aria-label={label}
       title={label}
-      className={`hidden lg:flex absolute top-0 z-10 -translate-x-1/2 -translate-y-1/2 ${LAYOUT_EDGE[layout]} btn btn-circle btn-xs border border-[color:var(--border-subtle)] bg-base-100 text-base-content/70 shadow-md hover:bg-base-200 hover:text-base-content`}
+      className="hidden lg:flex absolute right-0 top-1 z-10 translate-x-1/2 btn btn-circle btn-xs border border-[color:var(--border-subtle)] bg-base-100 text-base-content/70 shadow-md hover:bg-base-200 hover:text-base-content"
     >
       <Chevron className="w-3.5 h-3.5" aria-hidden="true" />
     </button>
@@ -213,26 +210,24 @@ function RunWorkspace({ run, agent }: { run: AgentRunWithEvents; agent?: AgentIn
       <RunInputSummary input={run.input} schema={agent?.inputJsonSchema ?? null} />
 
       {/* Tabs first under `lg`: on a phone the answer is what people came for. */}
-      <div className="relative">
-        <div
-          className={`grid grid-cols-1 ${LAYOUT_COLUMNS[layout]} gap-4 lg:gap-8 items-start`}
-          data-layout={layout}
-        >
-          <SectionPanel title="Timeline" className="order-2 lg:order-1">
-            <RunTimeline events={run.events} />
-            {isRunActive(run.status) && <SteerComposer runId={run.id} />}
-          </SectionPanel>
-          <div className="order-1 lg:order-2 space-y-3 min-w-0">
-            {run.error && <RunErrorAlert error={run.error} />}
-            <URLTabs tabs={tabs} defaultTab="output" />
-          </div>
+      <div
+        className={`grid grid-cols-1 ${LAYOUT_COLUMNS[layout]} gap-4 lg:gap-8 items-start`}
+        data-layout={layout}
+      >
+        <SectionPanel title="Timeline" className="relative order-2 lg:order-1">
+          <LayoutSplitHandle
+            layout={layout}
+            onToggle={() =>
+              setLayoutOverride(layout === 'timeline-major' ? 'output-major' : 'timeline-major')
+            }
+          />
+          <RunTimeline events={run.events} />
+          {isRunActive(run.status) && <SteerComposer runId={run.id} />}
+        </SectionPanel>
+        <div className="order-1 lg:order-2 space-y-3 min-w-0">
+          {run.error && <RunErrorAlert error={run.error} />}
+          <URLTabs tabs={tabs} defaultTab="output" />
         </div>
-        <LayoutSplitHandle
-          layout={layout}
-          onToggle={() =>
-            setLayoutOverride(layout === 'timeline-major' ? 'output-major' : 'timeline-major')
-          }
-        />
       </div>
     </div>
   )

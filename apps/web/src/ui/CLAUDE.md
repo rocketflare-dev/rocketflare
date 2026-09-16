@@ -235,7 +235,10 @@ A `CUSTOM kit.notice` renders
   timeline-major while the run is active (progress is the story, the output pane is an empty
   state), output-major once it settles, **and the reader's override wins permanently**. Same shape
   as `defaultExpanded` XOR the toggles: the default is a guess, and a run settling mid-read must
-  never swap the columns under somebody. The minor column stays narrow but readable, never
+  never swap the columns under somebody. The chevron that flips it is a CHILD of the timeline panel
+  riding that panel's own right edge — never absolutely positioned over the grid at a percentage,
+  which ignores the gutter (`3fr/2fr` + `gap-8` puts the real border at `3/5 × (W − gap)`) and drifts
+  further every time the gap widens. The minor column stays narrow but readable, never
   collapsed to a rail — a settled run's timeline is where you check HOW it got there.
 - **Do not write tool-result parsers.** `documentCardsFromToolResult(name, result)` in
   `@rocketflare/shared/ai/embeddings` is the one mapper (four callers: the chat stream, the AG-UI
