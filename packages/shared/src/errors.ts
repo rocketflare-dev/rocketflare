@@ -56,6 +56,14 @@ export const ERROR_CODES = {
    * surface shipping dark must not reveal. Same class as `tenancy_mode_single`.
    */
   featureDisabled: 'feature_disabled',
+  /**
+   * 409: the interrupt was already answered, declined or expired (issue #17). Two people opening
+   * the same approval is normal, so one gets a 200 and the other this — and the UI renders it as
+   * "somebody else answered", not as an error.
+   */
+  interruptNotPending: 'interrupt_not_pending',
+  /** 409: the run is not parked, so there is nothing to resume. */
+  runNotAwaitingInput: 'run_not_awaiting_input',
 } as const
 
 export type ErrorCode = (typeof ERROR_CODES)[keyof typeof ERROR_CODES]

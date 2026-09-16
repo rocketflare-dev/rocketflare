@@ -122,7 +122,14 @@ agentsRouter.get('/runs/:id', async c => {
   if (!row || !visible(auth, row)) throw new NotFoundError('Agent run not found')
   const run = await reconcileRun(db, c.env, row)
   const events = await listEvents(db, tenantId, run.id)
-  const body: AgentRunWithEvents = { ...toAgentRun(run), events: events.map(toAgentRunEvent) }
+  // `interrupts` / `artifacts` are part of the contract from phase 1 of the HITL work and are
+  // filled once the tables exist; an empty list is the honest answer until then.
+  const body: AgentRunWithEvents = {
+    ...toAgentRun(run),
+    events: events.map(toAgentRunEvent),
+    interrupts: [],
+    artifacts: [],
+  }
   return c.json(body)
 })
 

@@ -33,6 +33,7 @@ export const AGENT_RUN_STATUS_VALUES = [
   'succeeded',
   'failed',
   'cancelled',
+  'awaiting_input',
 ] as const satisfies readonly AgentRunStatus[]
 
 export const agentRuns = pgTable(

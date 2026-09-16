@@ -196,6 +196,7 @@
     "pnpm-lock.yaml",
     "CHANGELOG.md",
     "docs/ADAPTING.md",
+    "docs/plans/**",
     ".claude/skills/rf-adapt/**",
     "scripts/install.sh",
     "scripts/rename.mjs",

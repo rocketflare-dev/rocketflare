@@ -53,13 +53,38 @@ real budget is the `CHAT_HISTORY_MAX_CHARS` var) — the DB-shaped half; the wir
 `agents.ts` — `AGENT_KEYS`/`agentKeySchema` (append; never empty — it is a `z.enum`), `AgentMeta<Input, Output>`
 (the server attaches `run()`), `agentInfoSchema`, `agentRunStatusSchema` + `isRunActive`, `agentRunSchema`,
 `createAgentRunRequest/ResponseSchema` (`deduplicated`), `agentRunListQuerySchema`, `AGENT_RUN_EVENT_TYPES`,
-`agentRunEventSchema`, `agentRunWithEventsSchema`, the example's `summarizeTextInput/OutputSchema` ·
+`agentRunEventSchema` + `AGENT_RUN_EVENT_DATA` (type → payload schema; `tool.*`/`text`/`status`/`error`
+were conventional and are now contracts), `agentRunWithEventsSchema` (`+ interrupts[]`, `artifacts[]`),
+`ACTIVE_RUN_STATUSES` vs `CLAIMABLE_RUN_STATUSES` (a parked run holds the exclusive slot but is NOT
+claimable — the resolve route flips it back to `running` first), `AGENT_RESUME_EVENT` +
+`WORKFLOW_EVENT_TYPE_PATTERN` (Workflows event names allow only letters, digits, `-`, `_`; a `.` is
+`workflow.invalid_event_type`, which no Node test would catch), `MAX_INTERRUPT_ROUNDS`, the
+`RUN_STREAM_*` cadence constants, the example's `summarizeTextInput/OutputSchema` ·
+`interrupts.ts` — human-in-the-loop (issue #17): `AGENT_INTERRUPT_KINDS` (`approval · choice · input ·
+form`, closed), `agentInterruptSpecSchema` (the TYPED `spec` column — an untyped jsonb blob called
+`metadata` is where render bugs live), the four payload schemas + `interruptPayloadSchema(spec)` and
+`formValuesSchemaFor(fields)` (the ONE validator the route and the UI both call),
+`INTERRUPT_REJECTION`/`rejectionFor` (a declined APPROVAL stops the run; every other decline is an
+answer the model is told), `AGUI_REASON_FOR_KIND`/`aguiReasonFor`, `agentRunInterruptSchema` (the row;
+`key` is MANDATORY and `UNIQUE (run_id, key)` is what stops a re-entered step asking twice),
+`resolveInterruptRequestSchema` (`status` + `payload`, AG-UI's own `ResumeEntry` vocabulary — there is
+deliberately no second `approved` boolean), the inbox contracts, steering, and the `interrupt` /
+`interrupt.resolved` event payloads. **It must not import `@ag-ui/core`** (that is `agui.ts` alone,
+where `toAguiInterrupt` lives) **and must not import `./agents`**, which imports IT — two zod modules
+in a cycle crash at module evaluation, not at compile time ·
+`artifacts.ts` — what a run produces that a person opens: `AGENT_ARTIFACT_KINDS`,
+`agentArtifactDataSchema` (`document`/`file` carry IDS, never content), `agentArtifactSchema` (`key`
+is the upsert key), the thin `artifact` event payload. A table rather than an event type because an
+artifact is mutable, queried across runs and outlives the run; size caps live here, not in the column ·
 `agui.ts` — the AG-UI wire protocol (`@ag-ui/core` schemas, the ONE file allowed to import it):
 `kitAguiEventSchema` (a discriminated union over exactly the events the kit emits, never the full
 `@ag-ui/core` set), `KIT_AGUI_EVENT_TYPES`, `KIT_CUSTOM_EVENTS` + `kitCustomPayloadSchema` +
 `parseKitCustom` (the `kit.` CUSTOM namespace where every kit-specific semantic lives, including
 `kit.document` — a `documentCardSchema` for a document a knowledge tool surfaced),
-`chatRunResultSchema` (`RUN_FINISHED.result` for a chat turn), `kitRunAgentInputSchema` +
+`chatRunResultSchema` (`RUN_FINISHED.result` for a chat turn), `toAguiInterrupt(row)` (the kit row is
+the truth, the protocol shape is a projection of it — and the HITL pause/answer need NO new event:
+`RunFinishedEventSchema` already validates an `outcome` and `RunAgentInputSchema` already carries
+`resume[]`), `kitRunAgentInputSchema` +
 `readRunAgentTail` (`POST /api/agui/run`: the server is the transcript, the client supplies the tail) ·
 `agent-models.ts` — `agentModelAssignmentSchema`, `upsertAgentModelRequestSchema` (at least one of
 `aiConfigId`/`model`), `agentModelEntrySchema` (`effective.source: assignment | tenant | platform | none`) ·
@@ -91,7 +116,10 @@ is in the file header) · `analyticsPageSchema` (`slug`, `templateKey` null = us
 contract, consumed through `drizzle-cube/client` — no schema here. Known gap: `GET /api/ai/config/providers` has no schema here
 (the catalog is server data in `apps/web/src/api/services/ai/providers.ts`; the UI keeps a permissive one).
 
-Adding a job type: a payload schema + a variant in BOTH `jobInputSchema` and `jobEnvelopeSchema` +
+Adding an interrupt kind: the literal in `AGENT_INTERRUPT_KINDS` + an ask variant in
+`agentInterruptSpecSchema` + a payload schema + arms in `INTERRUPT_REJECTION`, `AGUI_REASON_FOR_KIND`
+and `interruptPayloadSchema` (all four are exhaustive, so the compiler is the checklist) + one UI
+branch. Adding a job type: a payload schema + a variant in BOTH `jobInputSchema` and `jobEnvelopeSchema` +
 the literal in `JOB_TYPES` (then the handler table in `apps/web/src/api/queues/jobs.ts`). Adding an
 agent: the key in `AGENT_KEYS` + its input/output schemas in `ai/agents.ts` (then the prompt, the
 definition and the `AGENTS` entry server-side — `docs/ADAPTING.md` §3). Adding an AI provider: the

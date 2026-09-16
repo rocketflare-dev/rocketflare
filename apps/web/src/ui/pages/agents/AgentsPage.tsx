@@ -37,6 +37,7 @@ const STATUS_LABELS: Record<AgentRunStatus, string> = {
   succeeded: 'Succeeded',
   failed: 'Failed',
   cancelled: 'Cancelled',
+  awaiting_input: 'Waiting for you',
 }
 
 export default function AgentsPage() {
