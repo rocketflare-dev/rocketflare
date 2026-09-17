@@ -20,9 +20,9 @@
  * are not optional: they are what keeps this suite meaningful in the kit itself.
  */
 import { execFileSync } from 'node:child_process'
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
-import type { AgentKey } from '@rocketflare/shared/ai/agents'
+import type { AgentKey, CORE_AGENT_KEYS } from '@rocketflare/shared/ai/agents'
 import type { CoreJobType, JobOf, JobType } from '@rocketflare/shared/jobs'
 import type { Subjects } from '@rocketflare/shared/permissions'
 import {
@@ -152,6 +152,10 @@ const tracked = execFileSync('git', ['ls-files', '--cached', '--others', '--excl
   .trim()
   .split('\n')
   .filter(f => /\.tsx?$/.test(f))
+  // `git ls-files` reads the INDEX, so a file deleted on disk and not yet staged is still listed.
+  // `pnpm plugin remove --apply` deletes three directories and the gate runs BEFORE any `git add`,
+  // so without this filter the scan dies with ENOENT on a file the tool correctly removed.
+  .filter(f => existsSync(path.join(REPO_ROOT, f)))
 
 describe('installed plugins', () => {
   it('the barrels agree on what is installed', () => {
@@ -217,30 +221,32 @@ describe('installed plugins', () => {
  * returns the right value.
  *
  * The first half pins the CORE shape (a closed set that quietly widened to `string` would still
- * pass every runtime test in the repo) and, now that the reference plugin is installed, that the
- * kit's own set and the installed one are DIFFERENT — `JobType` is strictly wider than
- * `CoreJobType`, which is the whole claim A2 makes. The second half is a FICTIONAL plugin, declared
- * exactly as a real one is, showing that keys reach `JobTypeOf` / `AgentKeyOf` / `FeatureKeyOf`
- * without anything being installed for it.
+ * pass every runtime test in the repo) and the RELATION between it and the installed set: core is
+ * always a subset, never wider. It deliberately names no plugin — what `example-feature`
+ * contributes is `example-feature`'s claim, and it lives in that plugin's own
+ * `tests/config/contracts.test.ts`, which is deleted along with it. A host assertion naming the
+ * reference plugin is a host that cannot uninstall it, and uninstalling it is the one thing it is
+ * for. The second half is a FICTIONAL plugin, declared exactly as a real one is, showing that keys
+ * reach `JobTypeOf` / `AgentKeyOf` / `FeatureKeyOf` without anything being installed for it.
  */
 describe('the closed sets a plugin opens', () => {
   it('name the kit exactly, and widen for what is installed', () => {
     expectTypeOf<CoreJobType>().toEqualTypeOf<
       'email.send' | 'activity.record' | 'document.index' | 'document.convert' | 'chat.compact'
     >()
-    // The reference plugin (A3) contributes one, so `JobType` is strictly wider than the kit's set
-    // — which is the property the whole "variants are data" change bought.
-    expectTypeOf<JobType>().toEqualTypeOf<CoreJobType | 'example-feature.ping'>()
-    expectTypeOf<JobOf<'example-feature.ping'>['payload']['tenantId']>().toEqualTypeOf<string>()
+    // A plugin may only WIDEN the kit's set — the property the whole "variants are data" change
+    // bought. Which types a particular plugin adds is that plugin's own test to make.
+    expectTypeOf<CoreJobType>().toMatchTypeOf<JobType>()
     // The envelope narrows per type — what a handler is handed, and the reason `runHandler`'s
     // switch could go: this is the property that switch existed to provide.
     expectTypeOf<JobOf<'chat.compact'>['payload']['conversationId']>().toEqualTypeOf<string>()
-    // The reference plugin declares no agent, so this one is unchanged — which is also the proof
-    // that a plugin contributes to the sets it names and to no others.
-    expectTypeOf<AgentKey>().toEqualTypeOf<'summarize-text' | 'research-topic'>()
-    // A plugin's subjects union in beside the kit's.
+    // The kit's own agent keys, pinned exactly; the installed union may only be wider.
+    expectTypeOf<(typeof CORE_AGENT_KEYS)[number]>().toEqualTypeOf<
+      'summarize-text' | 'research-topic'
+    >()
+    expectTypeOf<(typeof CORE_AGENT_KEYS)[number]>().toMatchTypeOf<AgentKey>()
+    // A plugin's subjects union in beside the kit's; naming one is that plugin's own test.
     expectTypeOf<'Document'>().toMatchTypeOf<Subjects>()
-    expectTypeOf<'ExampleNote'>().toMatchTypeOf<Subjects>()
     expectTypeOf(queryKeys.members.all).toEqualTypeOf<readonly ['members']>()
   })
 

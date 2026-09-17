@@ -28,8 +28,22 @@ export const KIT = Object.freeze({
   upper: 'ROCKETFLARE',
   display: 'Rocketflare',
   domains: ['rocketflare.dev', 'rocketflare.local'],
-  /** Literal strings restored after the pass: the kit's origin, not the app's. */
-  preserved: ['github.com/rocketflare-dev/rocketflare'],
+  /**
+   * Literal strings restored after the pass, longest first: the kit's origin, and the three
+   * filenames that keep the KIT's name in a renamed app.
+   *
+   * `.rocketflare.json` is deliberately not renamed — it describes the KIT, and a fixed path is
+   * what lets `kit:upgrade` and `pnpm plugin` find it (D27, D31). Its sidecar follows it, and
+   * `rocketflare-plugin.json` is the ECOSYSTEM's filename, identical in every plugin repository.
+   * Without these three, a copy renamed to `acme` looked for `.acme.json`, `.gitignore` stopped
+   * ignoring the sidecar, and an app could never install any plugin at all.
+   */
+  preserved: [
+    'github.com/rocketflare-dev/rocketflare',
+    '.rocketflare.local.json',
+    'rocketflare-plugin.json',
+    '.rocketflare.json',
+  ],
 })
 
 export const SLUG_RE = /^[a-z][a-z0-9-]*$/

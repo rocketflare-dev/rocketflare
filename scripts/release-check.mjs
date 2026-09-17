@@ -19,6 +19,7 @@ import { execFileSync } from 'node:child_process'
 import { appendFileSync, existsSync, readdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { MANIFEST_FILE } from './lib/manifest.mjs'
 import {
   compareVersions,
   isDeployable,
@@ -85,13 +86,13 @@ function checkNote(note, problems, { expectPrevious } = {}) {
       )
     }
   }
-  const manifest = JSON.parse(read('.rocketflare.json'))
+  const manifest = JSON.parse(read(MANIFEST_FILE))
   const ids = new Set(manifest.surfaces.map(s => s.id))
   for (const key of ['touches_surfaces', 'requires_surfaces']) {
     for (const id of data[key] ?? []) {
       if (!ids.has(id))
         problems.push(
-          `${note.file}: ${key} names '${id}', which is not a surface in .rocketflare.json`
+          `${note.file}: ${key} names '${id}', which is not a surface in ${MANIFEST_FILE}`
         )
     }
   }
@@ -113,10 +114,10 @@ function checkTag(tag, problems) {
   if (rootVersion !== tag)
     problems.push(`root package.json version is ${rootVersion}, the tag is ${tag}`)
 
-  const manifest = JSON.parse(read('.rocketflare.json'))
+  const manifest = JSON.parse(read(MANIFEST_FILE))
   if (manifest.kit.version !== tag) {
     problems.push(
-      `.rocketflare.json kit.version is ${manifest.kit.version}, the tag is ${tag} — an adopter's --from resolves through it`
+      `${MANIFEST_FILE} kit.version is ${manifest.kit.version}, the tag is ${tag} — an adopter's --from resolves through it`
     )
   }
 
@@ -147,7 +148,7 @@ function checkTag(tag, problems) {
 
 /** The I/O half of `isDeployable`: read the manifest and both tomls, then ask the pure function. */
 export function deployable() {
-  const manifestPath = path.join(REPO_ROOT, '.rocketflare.json')
+  const manifestPath = path.join(REPO_ROOT, MANIFEST_FILE)
   const manifest = existsSync(manifestPath) ? JSON.parse(readFileSync(manifestPath, 'utf8')) : null
   const tomls = Object.fromEntries(
     ['apps/web/wrangler.toml', 'apps/web/wrangler.staging.toml']
@@ -223,11 +224,11 @@ function main(argv) {
     if (!ok) out('deployable=false')
     return 0
   }
-  if (!existsSync(path.join(REPO_ROOT, '.rocketflare.json'))) {
-    out('release-check: no .rocketflare.json — nothing to check')
+  if (!existsSync(path.join(REPO_ROOT, MANIFEST_FILE))) {
+    out(`release-check: no ${MANIFEST_FILE} — nothing to check`)
     return 0
   }
-  if (!isKitManifest(JSON.parse(read('.rocketflare.json')))) {
+  if (!isKitManifest(JSON.parse(read(MANIFEST_FILE)))) {
     out('release-check: this is an app, not the kit — skipped')
     return 0
   }

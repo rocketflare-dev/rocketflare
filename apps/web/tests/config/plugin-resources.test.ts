@@ -13,6 +13,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
+import { pluginSurfaces, readManifest } from '../../../../scripts/lib/manifest.mjs'
 import {
   PluginResourceError,
   pluginDeclarations,
@@ -207,8 +208,10 @@ describe('readPluginResources', () => {
   it('the kit’s own installed plugins declare only things this kit can provision', () => {
     // Against the REAL checkout: `example-feature` declares nothing today, and the day one of them
     // declares a binding this is what proves the declaration is well formed before a deploy does.
+    // Through `readManifest()`, never a literal filename: it is the one place the manifest and its
+    // git-ignored sidecar are read, so a plugin installed with `--local` is covered here too.
     const repoRoot = path.resolve(__dirname, '../../../..')
-    const raw = JSON.parse(fs.readFileSync(path.join(repoRoot, '.rocketflare.json'), 'utf8'))
-    expect(() => readPluginResources(repoRoot, raw.surfaces ?? [])).not.toThrow()
+    const { manifest } = readManifest(repoRoot)
+    expect(() => readPluginResources(repoRoot, pluginSurfaces(manifest))).not.toThrow()
   })
 })

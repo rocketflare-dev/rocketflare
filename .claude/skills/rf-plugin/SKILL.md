@@ -135,6 +135,11 @@ an authoring convenience, and committing it would push that wiring into every co
 commit. `export` writes the three trees plus a regenerated `rocketflare-plugin.json`; `git init &&
 git add -A && git commit` makes it a plugin repository.
 
+**Only the SIDECAR is git-ignored — the copied source files are not.** So in the host, `git add -A`
+after a `--local` install stages the whole plugin tree, and in the kit that commits somebody's
+working copy into every clone made afterwards. Stage by path while authoring, and check
+`git status --short` before every commit.
+
 Cutting a plugin release: there is **no `pnpm plugin:release`**. In the plugin's own repository run
 `node scripts/release.mjs X.Y.Z` — the same script the kit uses, which detects a
 `rocketflare-plugin.json` with no `.rocketflare.json` and stamps that manifest's `version` (and a

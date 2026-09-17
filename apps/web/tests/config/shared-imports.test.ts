@@ -27,7 +27,7 @@
  * rule should not rest on that.)
  */
 import { execFileSync } from 'node:child_process'
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import ts from 'typescript'
 import { describe, expect, it } from 'vitest'
@@ -56,10 +56,16 @@ function sharedSources(): string[] {
     ['ls-files', '--cached', '--others', '--exclude-standard', '--', 'src'],
     { cwd: SHARED_ROOT, encoding: 'utf8' }
   )
-  return out
-    .split('\n')
-    .filter(f => f.endsWith('.ts'))
-    .sort()
+  return (
+    out
+      .split('\n')
+      .filter(f => f.endsWith('.ts'))
+      // `git ls-files` reads the INDEX, so a file deleted on disk and not yet staged is still listed.
+      // `pnpm plugin remove --apply` deletes three directories and the gate runs BEFORE any `git add`,
+      // so without this filter the scan dies with ENOENT on a file the tool correctly removed.
+      .filter(f => existsSync(path.join(SHARED_ROOT, f)))
+      .sort()
+  )
 }
 
 interface Specifier {

@@ -28,7 +28,8 @@ import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { readManifest } from './lib/manifest.mjs'
+import { MANIFEST_FILE, readManifest } from './lib/manifest.mjs'
+import { PLUGIN_MANIFEST_FILE } from './lib/plugin-lib.mjs'
 import {
   defaultPluginEntries,
   defaultPluginProblems,
@@ -63,8 +64,8 @@ const TOP_LEVEL_VERSION = /^( {2}"version":\s*)"[^"]+"/m
  */
 export function releaseContext(root = REPO_ROOT) {
   const at = p => path.join(root, p)
-  if (existsSync(at('.rocketflare.json'))) {
-    const manifest = JSON.parse(readFileSync(at('.rocketflare.json'), 'utf8'))
+  if (existsSync(at(MANIFEST_FILE))) {
+    const manifest = JSON.parse(readFileSync(at(MANIFEST_FILE), 'utf8'))
     if (!isKitManifest(manifest)) return { kind: 'app' }
     return {
       kind: 'kit',
@@ -73,20 +74,20 @@ export function releaseContext(root = REPO_ROOT) {
       versionFiles: [
         { file: 'package.json', pattern: TOP_LEVEL_VERSION, label: 'version' },
         {
-          file: '.rocketflare.json',
+          file: MANIFEST_FILE,
           pattern: /("kit":\s*\{[^}]*?"version":\s*)"[^"]+"/,
           label: 'kit.version',
         },
       ],
     }
   }
-  if (existsSync(at('rocketflare-plugin.json'))) {
+  if (existsSync(at(PLUGIN_MANIFEST_FILE))) {
     return {
       kind: 'plugin',
       notesDir: 'docs/upgrades',
       changelog: 'CHANGELOG.md',
       versionFiles: [
-        { file: 'rocketflare-plugin.json', pattern: TOP_LEVEL_VERSION, label: 'version' },
+        { file: PLUGIN_MANIFEST_FILE, pattern: TOP_LEVEL_VERSION, label: 'version' },
         { file: 'package.json', pattern: TOP_LEVEL_VERSION, label: 'version' },
       ],
     }
@@ -176,7 +177,7 @@ function main(argv) {
   }
   if (ctx.kind === 'unknown') {
     warn(
-      'error: no .rocketflare.json and no rocketflare-plugin.json — this is neither the kit nor a',
+      `error: no ${MANIFEST_FILE} and no ${PLUGIN_MANIFEST_FILE} — this is neither the kit nor a`,
       'plugin repository, so there is nothing whose release this would be.'
     )
     return 1

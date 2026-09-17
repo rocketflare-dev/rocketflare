@@ -26,6 +26,8 @@ export interface Mirror {
   showRaw(ref: string, file: string): Buffer
   tryShow(ref: string, file: string): GitResult
   listFiles(ref: string, prefix?: string): string[]
+  /** True when `ancestor` is reachable from `descendant` (so a diff between them runs backwards). */
+  isAncestor(ancestor: string, descendant: string): boolean
   latestTag(): string | null
 }
 export function mirror(dir: string): Mirror

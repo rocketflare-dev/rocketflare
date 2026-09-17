@@ -386,6 +386,10 @@ function main(argv) {
  * this is a copy, not the kit.
  */
 function stampManifest(names) {
+  // The one literal spelling left in the toolchain, on purpose: this file is on `EXCLUDED_PATHS`
+  // (the tool must keep working after it has run) and the name is in `KIT.preserved` besides, so
+  // it is safe twice over — and the rename must not grow a dependency on `manifest.mjs`, which is
+  // the thing it is about to stamp.
   const file = path.join(REPO_ROOT, '.rocketflare.json')
   if (!existsSync(file)) {
     warn(

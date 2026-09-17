@@ -25,6 +25,7 @@ import {
   versionAtLeast,
   withDatabaseUrlPort,
 } from '../../../../scripts/lib/bootstrap-lib.mjs'
+import { readManifest } from '../../../../scripts/lib/manifest.mjs'
 
 const WEB_DIR = path.resolve(__dirname, '../..')
 const readWeb = (file: string) => fs.readFileSync(path.join(WEB_DIR, file), 'utf8')
@@ -397,10 +398,8 @@ describe('planDefaultPlugins', () => {
   })
 
   it('matches what the kit ships in .rocketflare.json', () => {
-    const manifest = JSON.parse(
-      fs.readFileSync(path.join(WEB_DIR, '../../.rocketflare.json'), 'utf8')
-    )
-    expect(Array.isArray(manifest.defaultPlugins)).toBe(true)
-    expect(planDefaultPlugins(manifest.defaultPlugins, []).problems).toEqual([])
+    const { manifest } = readManifest(path.join(WEB_DIR, '../..'))
+    expect(Array.isArray(manifest?.defaultPlugins)).toBe(true)
+    expect(planDefaultPlugins(manifest?.defaultPlugins, []).problems).toEqual([])
   })
 })

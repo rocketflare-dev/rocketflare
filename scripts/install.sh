@@ -30,6 +30,9 @@ KIT_COMMIT="$(git rev-parse HEAD)"
 # Your history starts here (README / docs/ADAPTING.md §0). The kit commit is recorded twice: in the
 # first commit's message for a human, and in .rocketflare.json for `pnpm kit:upgrade`, which needs
 # it to know what to diff against. Node is not guaranteed yet, so this is sed on one known line.
+# The literal name is safe here twice over: this script runs on a FRESH clone, before any rename,
+# and `.rocketflare.json` is on the rename's `KIT.preserved` list anyway (it names the kit, not the
+# app). `install.sh` is also on `neverPort`, so a copy never receives a translated version of it.
 if [ -f .rocketflare.json ]; then
   sed -i.bak "s|\"commit\": null|\"commit\": \"$KIT_COMMIT\"|" .rocketflare.json && rm -f .rocketflare.json.bak
 fi

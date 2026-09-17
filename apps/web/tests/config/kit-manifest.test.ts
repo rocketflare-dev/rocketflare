@@ -17,6 +17,7 @@ import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import rawManifest from '../../../../.rocketflare.json'
 import { readManifest } from '../../../../scripts/lib/manifest.mjs'
+import { KIT } from '../../../../scripts/lib/rename-lib.mjs'
 import type { Manifest } from '../../../../scripts/lib/upgrade-lib.d.mts'
 import {
   absentSurfaces,
@@ -36,6 +37,20 @@ const committed = rawManifest as unknown as Manifest
  */
 const manifest = (readManifest().manifest ?? committed) as Manifest
 
+/**
+ * This suite travels into every adopted copy, and half of what it asserts is only true of the KIT.
+ *
+ * A copy deletes surfaces on purpose — that IS the design (`absentSurfaces`, `existsSync` on the
+ * anchor) — and its root `package.json` version is its own release, not the kit release it came
+ * from. Asserted unconditionally, those claims made an app's very first `pnpm test` red, which is
+ * the opposite of what D27 promises. So the disk-state and provenance claims run only in the kit;
+ * everything that is true of ANY manifest — ids unique, kinds known, every plugin surface says
+ * where it came from, every plugin directory is declared, 100% coverage — runs everywhere, because
+ * that is where they earn their keep.
+ */
+const { isKit } = readManifest()
+const kitOnly = it.skipIf(!isKit)
+
 const REPO_ROOT = path.resolve(__dirname, '../../../..')
 // Tracked AND untracked-but-not-ignored — the same file set `scripts/rename.mjs` walks. A new file
 // that nobody has classified yet should fail this suite before it is committed, not after.
@@ -45,30 +60,47 @@ const tracked = execFileSync('git', ['ls-files', '--cached', '--others', '--excl
 })
   .trim()
   .split('\n')
+  // `git ls-files` reads the INDEX, so a file deleted on disk and not yet staged is still listed.
+  // `pnpm plugin remove --apply` deletes three directories and the gate runs BEFORE any `git add`,
+  // so without this filter the scan dies with ENOENT on a file the tool correctly removed.
+  .filter(f => existsSync(path.join(REPO_ROOT, f)))
 
 describe('.rocketflare.json', () => {
-  it('is the kit, not an app (the `app` block is what a copy gets)', () => {
-    // The COMMITTED file, deliberately: the sidecar may not make a checkout look like something
-    // else, and `readManifest().isKit` answers from the same place.
-    expect(isKitManifest(committed)).toBe(true)
-    expect(readManifest().isKit).toBe(true)
-    expect(committed.kit.name).toBe('rocketflare')
+  it('names the KIT, in the kit and in every copy', () => {
+    // The rename leaves this file alone by design, so the provenance is the same string everywhere
+    // — which is what `kit:upgrade` descends from.
+    expect(committed.kit.name).toBe(KIT.slug)
     expect(committed.kit.repo).toMatch(/^https:\/\/github\.com\/.+\.git$/)
+    // …and the two readers agree about which checkout this is, whichever it is.
+    expect(isKitManifest(committed)).toBe(committed.app == null)
+    expect(isKit).toBe(committed.app == null)
   })
 
-  it('carries the two prose keys that stop it being deleted as cruft', () => {
+  kitOnly('is the kit, not an app (the `app` block is what a copy gets)', () => {
+    expect(isKitManifest(committed)).toBe(true)
+    expect(isKit).toBe(true)
+  })
+
+  kitOnly('carries the two prose keys that stop it being deleted as cruft', () => {
     expect(committed.$purpose).toMatch(/kit:upgrade/)
     expect(committed.$doNotDelete).toMatch(/--adopt/)
   })
 
-  it('pins a version that matches the root package.json', async () => {
+  kitOnly('pins a version that matches the root package.json', async () => {
+    // Kit-only: in an app the root version is the APP's release, while `kit.version` records the
+    // kit release it last absorbed. They are different numbers on purpose.
     const root = await import('../../../../package.json')
     expect(committed.kit.version).toBe(root.default.version)
   })
 })
 
 describe('surfaces', () => {
-  it('every anchor is a tracked FILE, and unique', () => {
+  // The next three are kit-only: a copy DELETES surfaces on purpose and the entries stay behind —
+  // `absentSurfaces` and the `existsSync` anchor rule exist for exactly that state — so asserting
+  // that every anchor, path and registry is still on disk would fail every app that used the kit
+  // the way it is meant to be used. Uniqueness and shape, below, are about the manifest and run
+  // everywhere.
+  kitOnly('every anchor is a tracked FILE, and unique', () => {
     const anchors = new Set<string>()
     for (const s of manifest.surfaces) {
       expect(tracked, `${s.id} anchor`).toContain(s.anchor)
@@ -81,7 +113,7 @@ describe('surfaces', () => {
     }
   })
 
-  it('every declared path matches at least one tracked file', () => {
+  kitOnly('every declared path matches at least one tracked file', () => {
     for (const s of manifest.surfaces) {
       for (const glob of s.paths) {
         expect(
@@ -92,7 +124,7 @@ describe('surfaces', () => {
     }
   })
 
-  it('every registry it names still exists', () => {
+  kitOnly('every registry it names still exists', () => {
     for (const s of manifest.surfaces) {
       for (const ref of s.registries) {
         expect(tracked, `${s.id}: ${ref}`).toContain(ref.split('#')[0])
@@ -133,13 +165,13 @@ describe('surfaces', () => {
     ).toEqual([])
   })
 
-  it('reports nothing absent in the kit itself', () => {
+  kitOnly('reports nothing absent in the kit itself', () => {
     expect(absentSurfaces(manifest, tracked)).toEqual([])
   })
 })
 
 describe('never-port and manual lists', () => {
-  it('name files that exist, so a rename cannot silently empty them', () => {
+  kitOnly('name files that exist, so a rename cannot silently empty them', () => {
     for (const glob of [...manifest.neverPort, ...manifest.manual]) {
       expect(
         tracked.some(f => matchesAny(f, [glob])),

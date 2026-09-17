@@ -143,6 +143,35 @@ describe('applyReplacements', () => {
     expect(text.replaceAll(KIT.preserved[0], '')).not.toMatch(/[Rr]ocketflare/)
   })
 
+  /**
+   * The three filenames that keep the KIT's name in a renamed app. `.rocketflare.json` describes
+   * the kit and is deliberately never renamed (D27); its sidecar follows it; and
+   * `rocketflare-plugin.json` is the same in every plugin repository in the world (D31). Rewritten,
+   * a copy renamed to `acme` looked for `.acme.json` and every `pnpm plugin` command died against a
+   * file sitting in its root, `.gitignore` stopped ignoring the sidecar, and the app could never
+   * install any plugin. They are preserved LONGEST FIRST, or `.rocketflare.json` would claim the
+   * head of `.rocketflare.local.json` and leave `.local.json` behind for the domain class.
+   */
+  it('never rewrites the three filenames that name the kit on purpose', () => {
+    const names = deriveNames('acme', 'Acme')
+    const input = [
+      'Provenance lives in `.rocketflare.json`, and `pnpm plugin` reads it.', // prose
+      '.rocketflare.local.json', // a .gitignore line, alone on it
+      'node_modules/', // its neighbour, untouched either way
+      "export const MANIFEST_FILE = '.rocketflare.json'", // a JS string
+      "if (!source.has('rocketflare-plugin.json')) stop(5)", // and the plugin manifest
+      'but rocketflare-web and @rocketflare/shared still move', // …while everything else does
+    ].join('\n')
+    const { text, preserved } = applyReplacements(input, names)
+    expect(text).toContain('`.rocketflare.json`')
+    expect(text.split('\n')[1]).toBe('.rocketflare.local.json')
+    expect(text).toContain("MANIFEST_FILE = '.rocketflare.json'")
+    expect(text).toContain("source.has('rocketflare-plugin.json')")
+    expect(text).toContain('acme-web and @acme/shared still move')
+    expect(text).not.toMatch(/\.acme\.json|acme-plugin\.json|acme\.example\.com\.json/)
+    expect(preserved).toBe(4)
+  })
+
   it('applies the classes longest-first: the env class takes the bare ENV_PREFIX too', () => {
     const { text, counts } = applyReplacements("'ROCKETFLARE' ROCKETFLARE_X", deriveNames('a-b'))
     expect(text).toBe("'A_B' A_B_X")

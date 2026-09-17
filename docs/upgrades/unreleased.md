@@ -386,6 +386,39 @@ real on a renamed copy and in the kit (D31, Phase B step 6).
   when nothing is.
 - Wording: `plugin remove` with one dependent said "'smoke' require 'example-feature'".
 
+And the six the round trip found in files the first pass did not own, fixed in the same wave:
+
+- **`scripts/rename.mjs` never rewrites the three filenames.** `.rocketflare.json`,
+  `.rocketflare.local.json` and `rocketflare-plugin.json` are now `KIT.preserved` literals, longest
+  first, so they survive a rename in prose, in `.gitignore` and in a JS string. Building the
+  constants from `KIT.slug` (above) fixed the code; this fixes `.gitignore` — which had stopped
+  ignoring the sidecar in a renamed app — and every doc sentence that named the file.
+- **The host suite no longer names the reference plugin.**
+  `apps/web/tests/config/plugins.test.ts` keeps the plugin-agnostic pins (core job types exactly,
+  `CoreJobType` a subset of `JobType`, the kit's own agent keys exactly); what `example-feature`
+  contributes moved into its own `tests/config/contracts.test.ts`, which is deleted along with it.
+  `expectTypeOf` compiles to nothing, so a host assertion naming the plugin was a `pnpm typecheck`
+  that failed the moment somebody uninstalled it.
+- **No test reads the manifest by literal.** `wrangler-parity.test.ts`, `plugin-resources.test.ts`
+  and `bootstrap-lib.test.ts` go through `readManifest()` / `pluginSurfaces()`, and
+  `scripts/changelog-nudge.mjs` through `MANIFEST_FILE` / `PLUGIN_MANIFEST_FILE` — so a `--local`
+  install is covered by the parity and provisioning checks too. (`scripts/install.sh` keeps the
+  literal: it is bash, it runs on a fresh clone before any rename, and it is on `neverPort`.)
+- **`kit-manifest.test.ts` early-exits its kit-only claims in an app.** Whether the anchors, paths
+  and registries are all still on disk, whether anything is absent, and whether `kit.version`
+  matches the root `package.json` are claims about THE KIT — a copy deletes surfaces on purpose and
+  has its own release version. What is true of any manifest (ids unique, kinds known, every plugin
+  surface says where it came from, every plugin directory declared, 100% coverage) still runs
+  everywhere.
+- **The `git ls-files` scanners tolerate a deleted-but-unstaged file.** `git ls-files` reads the
+  INDEX, so the three directories `plugin remove --apply` deletes were still listed and
+  `shared-imports`, `plugins`, `kit-manifest` and `unscoped-allowlist` all died with ENOENT — the
+  gate was unrunnable between the uninstall and `git add`. All four filter by `existsSync` now.
+- **`kit:upgrade` warns when the target is an ANCESTOR of the source.** An untagged branch head as
+  `--from` leaves `latestTag()` picking an older release as `--to`, and the backwards diff reads as
+  "the kit deleted 22 file(s)", whole subsystems included. One warning line; the exit code is
+  unchanged, because replaying an older kit on purpose is legitimate.
+
 ## How to apply
 
 Mechanical; no schema change and no new dependency. Take the new files whole
@@ -494,9 +527,15 @@ every skill change is documentation.
 
 **What the round trip found (Phase B, step 6).**
 
-Take the five script/lib files whole (`scripts/plugin.mjs`, `scripts/upgrade.mjs`,
-`scripts/lib/{plugin-lib.mjs,plugin-lib.d.mts,manifest.mjs}`) — none of them is a file an app
-edits. The three test files are the kit's own and are ported like any other core file.
+Take the script and lib files whole (`scripts/plugin.mjs`, `scripts/upgrade.mjs`,
+`scripts/changelog-nudge.mjs`, `scripts/lib/{plugin-lib.mjs,plugin-lib.d.mts,manifest.mjs,
+git-lib.mjs,git-lib.d.mts,rename-lib.mjs}`) — none of them is a file an app edits. The test files
+are the kit's own and are ported like any other core file.
+
+Two are worth knowing about rather than just applying. If your copy hand-patched `MANIFEST_FILE` or
+`PLUGIN_MANIFEST_FILE` back to a literal because `pnpm plugin` could not find your manifest, drop
+that patch — this is the fix for it. And check your `.gitignore` still has a line reading exactly
+`.rocketflare.local.json`: a rename before this release turned it into `.<your domain>.json`.
 
 No migration, no schema change, no toml change, no new dependency.
 
@@ -675,4 +714,12 @@ pnpm lint && pnpm typecheck && pnpm test && pnpm build
 ```
 
 In a renamed copy, `grep -n 'MANIFEST_FILE = ' scripts/lib/manifest.mjs` must show a template built
-from `KIT.slug` and not your own slug.
+from `KIT.slug` and not your own slug, and `grep -c '.rocketflare.local.json' .gitignore` must be 1.
+
+The sharper check, if you keep a scratch copy: uninstall the reference plugin and run the gate
+without staging anything first — that is the state all six of the second batch were found in.
+
+```
+pnpm plugin remove example-feature --apply
+pnpm lint && pnpm typecheck && pnpm test && pnpm build   # green, with nothing staged
+```

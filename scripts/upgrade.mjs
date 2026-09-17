@@ -48,7 +48,7 @@ import {
   makeWriter,
   notesBetween,
 } from './lib/git-lib.mjs'
-import { pluginSurfaces, readManifest } from './lib/manifest.mjs'
+import { MANIFEST_FILE, pluginSurfaces, readManifest } from './lib/manifest.mjs'
 import { unsupportedForKit } from './lib/plugin-lib.mjs'
 import { applyReplacements, deriveNames } from './lib/rename-lib.mjs'
 import {
@@ -63,7 +63,9 @@ import {
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const REPO_ROOT = path.resolve(HERE, '..')
-const MANIFEST = '.rocketflare.json'
+// Re-exported rather than restated: `manifest.mjs` is the one place the provenance file is named,
+// and it builds the name from `KIT.slug` so a rename cannot rewrite it.
+const MANIFEST = MANIFEST_FILE
 const WORK_DIR = '.upgrade'
 
 const out = (...lines) => {
@@ -236,6 +238,16 @@ function main(argv) {
   if (kit.commitOf(from) === kit.commitOf(to)) {
     out('', `Already on ${to} — nothing to do.`)
     return 0
+  }
+  // Going BACKWARDS. Not an error — replaying an older kit on purpose is a legitimate, if rare,
+  // thing to want — but silently it reads as "the kit deleted 22 file(s)", including whole
+  // subsystems, which is alarming and easy to act on by mistake. The usual cause is an untagged
+  // branch head as `--from`, leaving `latestTag()` to pick an OLDER release as the target.
+  if (kit.isAncestor(to, from)) {
+    warn(
+      `warning: '${to}' is an ancestor of '${from}' — this diff runs BACKWARDS, so kit additions`,
+      'read as deletions. Pass --to <later ref> unless you meant to go back.'
+    )
   }
 
   // 2/6 — surfaces

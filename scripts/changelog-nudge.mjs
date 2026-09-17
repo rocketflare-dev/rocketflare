@@ -23,6 +23,8 @@ import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { MANIFEST_FILE } from './lib/manifest.mjs'
+import { PLUGIN_MANIFEST_FILE } from './lib/plugin-lib.mjs'
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const NOTE = 'docs/upgrades/unreleased.md'
@@ -48,8 +50,8 @@ function main() {
   const command = payload?.tool_input?.command ?? ''
   if (payload.tool_name !== 'Bash' || !/\bgit\s+commit\b/.test(command)) return
 
-  const manifestPath = path.join(REPO_ROOT, '.rocketflare.json')
-  const isPluginRepo = existsSync(path.join(REPO_ROOT, 'rocketflare-plugin.json'))
+  const manifestPath = path.join(REPO_ROOT, MANIFEST_FILE)
+  const isPluginRepo = existsSync(path.join(REPO_ROOT, PLUGIN_MANIFEST_FILE))
   if (!existsSync(manifestPath) && !isPluginRepo) return
   if (existsSync(manifestPath) && JSON.parse(readFileSync(manifestPath, 'utf8')).app != null) return
   if (!existsSync(path.join(REPO_ROOT, NOTE))) return

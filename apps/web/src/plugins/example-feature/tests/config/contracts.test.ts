@@ -9,7 +9,9 @@
  */
 
 import { FEATURE_FLAGS, FEATURE_KEYS } from '@rocketflare/shared/features'
+import type { CoreJobType, JobOf, JobType } from '@rocketflare/shared/jobs'
 import { JOB_TYPES, jobInputSchema } from '@rocketflare/shared/jobs'
+import type { Subjects } from '@rocketflare/shared/permissions'
 import { pluginNamespace } from '@rocketflare/shared/plugins'
 import {
   createExampleNoteRequestSchema,
@@ -22,7 +24,7 @@ import {
   exampleFeatureShared,
   updateExampleNoteRequestSchema,
 } from '@rocketflare/shared/plugins/example-feature/index'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, expectTypeOf, it } from 'vitest'
 import { exampleFeatureServer } from '../..'
 import { EXAMPLE_NOTES_ENTITY } from '../../shared'
 import { exampleFeatureUi } from '../../ui'
@@ -86,5 +88,25 @@ describe('the note contracts', () => {
   it('refuse an empty PATCH, so a no-op write can never look like a success', () => {
     expect(updateExampleNoteRequestSchema.safeParse({}).success).toBe(false)
     expect(updateExampleNoteRequestSchema.safeParse({ title: 'x' }).success).toBe(true)
+  })
+})
+
+/**
+ * What this plugin contributes to the kit's closed sets, at the TYPE level.
+ *
+ * These belong here rather than in `tests/config/plugins.test.ts` because they name
+ * `example-feature`, and `expectTypeOf` compiles to nothing — so a host assertion naming this
+ * plugin is a `pnpm typecheck` that fails the moment somebody uninstalls it, which is the one thing
+ * this plugin exists for. Here they are deleted along with the directory that makes them true.
+ * The host keeps the plugin-agnostic half (core is a subset of the installed union, never wider).
+ */
+describe('what this plugin adds to the kit’s closed sets', () => {
+  it('widens JobType by exactly its own job, with a narrowed payload', () => {
+    expectTypeOf<JobType>().toEqualTypeOf<CoreJobType | 'example-feature.ping'>()
+    expectTypeOf<JobOf<'example-feature.ping'>['payload']['tenantId']>().toEqualTypeOf<string>()
+  })
+
+  it('unions its CASL subject in beside the kit’s', () => {
+    expectTypeOf<'ExampleNote'>().toMatchTypeOf<Subjects>()
   })
 })

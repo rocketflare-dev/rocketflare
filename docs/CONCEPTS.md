@@ -2140,8 +2140,11 @@ And **a VENDORED plugin is the kit's**: `source.repo` equal to the kit's own rep
 subdirectory means `plugin upgrade` defers to `kit:upgrade`, and `requires.kit` is not checked at
 all, because the same release cut both and the range describes the kit it shipped inside rather
 than a compatibility claim. `kit:upgrade` learned the other half: it prints the installed plugins,
-exits 6 when the target kit version leaves one's `requires.kit` range (`--force` to proceed), and
-flags a kit change to a file in a plugin's `registries[]` as `touches-plugin-registry`.
+exits 6 when the target kit version leaves one's `requires.kit` range — **except for a vendored
+plugin, exempt there for the same reason** (one predicate, `unsupportedForKit`, serves both) —
+(`--force` to proceed), and flags a kit change to a file in a plugin's `registries[]` as
+`touches-plugin-registry`. It warns, without changing its exit code, when the target ref turns out
+to be an ANCESTOR of the source, because that diff reads as the kit deleting whole subsystems.
 
 **Known gaps / not built yet:** No third-party trust model (no sandbox, no review process, no signature —
 "first-party only" is the whole of it). No rename migrations: expand/contract only, because

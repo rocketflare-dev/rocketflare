@@ -119,6 +119,14 @@ export function mirror(dir) {
       if (prefix !== '') args.push('--', `${prefix.replace(/\/$/, '')}/`)
       return quiet(args).out.split(NUL).filter(Boolean)
     },
+    /**
+     * True when `ancestor` is reachable from `descendant` — i.e. the diff from `descendant` to
+     * `ancestor` runs BACKWARDS. A target that is an ancestor of the source is almost always a
+     * mistake (an untagged branch head as `--from`, so `latestTag()` picks an older release as
+     * `--to`), and the report it produces reads as "the kit deleted 22 files".
+     */
+    isAncestor: (ancestor, descendant) =>
+      quiet(['merge-base', '--is-ancestor', ancestor, descendant]).ok,
     /** Newest `X.Y.Z` tag, or null. */
     latestTag: () =>
       quiet(['tag', '--list', '--sort=-v:refname'])

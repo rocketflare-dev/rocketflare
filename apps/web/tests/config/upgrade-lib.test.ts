@@ -8,6 +8,7 @@
  * stripped (so `git apply --3way` cannot silently merge against a preimage that no longer
  * describes anything).
  */
+import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import rawManifest from '../../../../.rocketflare.json'
 import { deriveNames } from '../../../../scripts/lib/rename-lib.mjs'
@@ -536,5 +537,24 @@ areas: [api]
 
   it('is null without frontmatter', () => {
     expect(parseNote('# just a heading\n')).toBeNull()
+  })
+})
+
+/**
+ * `mirror().isAncestor` — the predicate behind `kit:upgrade`'s "this diff runs BACKWARDS" warning.
+ *
+ * The failure it guards against is not a crash: with an untagged branch head as `--from`,
+ * `latestTag()` picks an OLDER release as `--to` and the report says "the kit deleted 22 file(s)",
+ * listing whole subsystems. Exercised against this repository's own history, which always has at
+ * least two commits.
+ */
+describe('mirror().isAncestor', () => {
+  it('knows which way round two commits are', async () => {
+    const { mirror } = await import('../../../../scripts/lib/git-lib.mjs')
+    const repo = mirror(path.resolve(__dirname, '../../../..'))
+    expect(repo.isAncestor('HEAD~1', 'HEAD')).toBe(true)
+    expect(repo.isAncestor('HEAD', 'HEAD~1')).toBe(false)
+    // A commit is its own ancestor, which is why `upgrade.mjs` answers "already on it" first.
+    expect(repo.isAncestor('HEAD', 'HEAD')).toBe(true)
   })
 })

@@ -19,6 +19,7 @@ import path from 'node:path'
 import TOML from '@iarna/toml'
 import { describe, expect, it } from 'vitest'
 import { WORKER_FIRST_PATTERNS } from '@/api/utils/routes/api-prefixes'
+import { pluginSurfaces, readManifest } from '../../../../scripts/lib/manifest.mjs'
 import { patchToml } from '../../scripts/provision/patch-toml'
 import {
   pluginParityIssues,
@@ -366,10 +367,16 @@ describe('wrangler parity: plugin resources', () => {
 
   // ---- and against what this checkout actually has ---------------------------------------
 
+  // Through `readManifest()` rather than a literal filename — the one place the manifest and its
+  // git-ignored sidecar are read, so a `--local` install is held to the same parity rule.
+  const repoRoot = path.resolve(WEB_DIR, '../..')
   const installed = readPluginResources(
-    path.resolve(WEB_DIR, '../..'),
-    (JSON.parse(fs.readFileSync(path.resolve(WEB_DIR, '../../.rocketflare.json'), 'utf8'))
-      .surfaces ?? []) as Array<{ id: string; kind: string; anchor: string }>
+    repoRoot,
+    pluginSurfaces(readManifest(repoRoot).manifest) as Array<{
+      id: string
+      kind: string
+      anchor: string
+    }>
   )
 
   it('every installed plugin is declared in both tomls', () => {
