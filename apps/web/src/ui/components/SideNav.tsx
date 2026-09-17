@@ -1,6 +1,5 @@
 import {
   BookOpenIcon,
-  ChartBarIcon,
   ChatBubbleLeftRightIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
@@ -54,13 +53,6 @@ const CORE_NAVIGATION: NavConfig = [
   {
     items: [
       { to: '/', label: 'Home', icon: HomeIcon },
-      // D19: dashboards are tenant-shared; every member may read them (admins edit)
-      {
-        to: '/analytics',
-        label: 'Analytics',
-        icon: ChartBarIcon,
-        guard: { action: 'read', subject: 'Analytics' },
-      },
       // D17: every role may chat (ownership is the route's userId filter)
       {
         to: '/chat',

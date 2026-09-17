@@ -9,7 +9,6 @@
  */
 
 import { documentSchema } from '@rocketflare/shared/ai/embeddings'
-import { analyticsPageSchema } from '@rocketflare/shared/analytics'
 import {
   type AddGroupMembersRequest,
   type CreateGroupRequest,
@@ -185,15 +184,6 @@ export function useSetDocumentVisibility() {
     mutationFn: ({ id, ...body }: SetVisibilityInput) =>
       api.put(`/api/ai/documents/${id}/visibility`, body, { schema: documentSchema }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.documents.all }),
-  })
-}
-
-export function useSetPageVisibility() {
-  const queryClient = useQueryClient()
-  return useMutation({
-    mutationFn: ({ id, ...body }: SetVisibilityInput) =>
-      api.put(`/api/analytics/pages/${id}/visibility`, body, { schema: analyticsPageSchema }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.analytics.all }),
   })
 }
 

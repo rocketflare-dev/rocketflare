@@ -28,16 +28,31 @@ import {
 import { ApiError } from '@/ui/lib/api-client'
 import { GroupMembersModal } from './GroupMembersModal'
 
-/** The 409 body: how much content the delete is about to narrow. */
-interface InUse {
-  documents: number
-  dashboards: number
-}
+/**
+ * The 409 body: how much content the delete is about to narrow, one count per restrictable
+ * resource. The KEYS are whatever `VISIBILITY_RESOURCES` holds on the server — the kit's own
+ * `documents`, plus one per installed plugin (the analytics plugin's `dashboards`) — so this is
+ * read generically rather than as a fixed pair (D31). Zeroes are included by the server on
+ * purpose: the sentence says what the whole organisation would lose, not only the non-empty parts.
+ */
+type InUse = Record<string, number>
 
 function inUseFrom(err: unknown): InUse | null {
   if (!(err instanceof ApiError) || err.code !== 'group_in_use') return null
-  const details = err.details as Partial<InUse> | undefined
-  return { documents: details?.documents ?? 0, dashboards: details?.dashboards ?? 0 }
+  const details = err.details
+  if (!details || typeof details !== 'object') return null
+  const counts: InUse = {}
+  for (const [key, value] of Object.entries(details as Record<string, unknown>)) {
+    if (typeof value === 'number') counts[key] = value
+  }
+  return counts
+}
+
+/** `3 documents and 1 dashboard` — the usage keys are already plural, so 1 drops the trailing s. */
+function describeInUse(inUse: InUse): string {
+  return Object.entries(inUse)
+    .map(([key, n]) => `${n} ${n === 1 ? key.replace(/s$/, '') : key}`)
+    .join(' and ')
 }
 
 export default function GroupsSettings() {
@@ -188,7 +203,7 @@ function GroupTypesPanel({
         title={`Delete “${deleting?.name}”?`}
         message={
           inUse
-            ? `This type still controls access to ${inUse.documents} document(s) and ${inUse.dashboards} dashboard(s). Deleting it leaves them visible to their owner and to administrators only — never to everyone.`
+            ? `This type still controls access to ${describeInUse(inUse)}. Deleting it leaves them visible to their owner and to administrators only — never to everyone.`
             : 'Its groups and their memberships go with it.'
         }
         confirmText={inUse ? 'Delete anyway' : 'Delete'}
@@ -332,7 +347,7 @@ function GroupsPanel({ type }: { type: GroupType | null }) {
         title={`Delete “${deleting?.name}”?`}
         message={
           inUse
-            ? `This group still controls access to ${inUse.documents} document(s) and ${inUse.dashboards} dashboard(s). Deleting it leaves them visible to their owner and to administrators only — never to everyone.`
+            ? `This group still controls access to ${describeInUse(inUse)}. Deleting it leaves them visible to their owner and to administrators only — never to everyone.`
             : 'Its memberships go with it.'
         }
         confirmText={inUse ? 'Delete anyway' : 'Delete'}

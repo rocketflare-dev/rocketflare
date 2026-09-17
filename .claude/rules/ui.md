@@ -9,7 +9,8 @@ globs:
 
 React 18 + Vite, DaisyUI 5 on Tailwind v4, React Router v6, TanStack Query 5, zustand only for the
 websocket store. Served as Workers Static Assets from the same Worker as the API (SPA fallback).
-Dev: Vite on :3000 proxies `/api`, `/auth`, `/ws`, `/cubejs-api`, `/mcp` to `wrangler dev` on :3001.
+Dev: Vite on :3000 proxies `/api`, `/auth`, `/ws` — plus every prefix an installed plugin declares
+(the analytics plugin's `/cubejs-api` and `/mcp`, added by hand on install) — to `wrangler dev` on :3001.
 
 ## Design tokens, not raw colours
 
@@ -27,9 +28,12 @@ Dev: Vite on :3000 proxies `/api`, `/auth`, `/ws`, `/cubejs-api`, `/mcp` to `wra
   repo — docs, API code, tests, migrations — and DaisyUI emits a component for every stray word that
   looks like a class (`card`, `table`, `menu` in a comment). Keep the scan scoped. A dependency that
   ships pre-built JSX **and uncompiled Tailwind classes** is an explicit `@source` line pointing at
-  its dist. drizzle-cube is NOT such a dependency: its styles are precompiled and `dc:`-prefixed in
-  `drizzle-cube/client/styles.css` (loaded by the lazy analytics chunk), so scanning its dist generated
-  zero of its classes and a pile of stray DaisyUI components — pure cost, measured, then removed. Never
+  its dist. drizzle-cube (the analytics plugin's) is NOT such a dependency: its styles are
+  precompiled and `dc:`-prefixed in `drizzle-cube/client/styles.css`, loaded by that plugin's lazy
+  chunk, so scanning its dist generated zero of its classes and a pile of stray DaisyUI components —
+  pure cost, measured, then removed. An installed plugin's own pages DO need a line, and there is
+  one: `@source "../plugins/**/ui/**/*.{ts,tsx}"` — without it a plugin page renders unstyled with
+  nothing in the console to say why. Never
   `@source` node_modules without measuring the output first. Safelist (`@source inline(...)`) only classes built from
   props (`alert-*`, `btn-*`), never from data or from a dependency
 - Fonts self-hosted via `@fontsource` imports in `main.tsx`
@@ -196,25 +200,29 @@ Components subscribe to query state, never to the socket; `WebSocketStatus` (hea
   render model output through `Markdown` (`skipHtml`, links `noopener`), never
   `dangerouslySetInnerHTML`; user text renders verbatim (`whitespace-pre-wrap`). `pages/agents/**`
   imports `Markdown` too and is lazy for the same reason (Vite emits one shared `Markdown-*.js`)
-- **Analytics chunk isolation (D19)**: `drizzle-cube/client`, `recharts`, `d3`, `react-grid-layout` and
-  `react-is` ship ONLY in the lazy analytics chunk — import them from `pages/analytics/**` /
-  `components/analytics/**` by path, never from the `components/shared` barrel, `App.tsx`, `SideNav` or
-  a hook the shell loads eagerly; **the main chunk must not gain them**. When you touch an import,
-  compare `pnpm web build:ui` output before and after — the delta is the check, not any figure a doc
-  could quote — and `grep recharts dist/ui/assets/index-*.js` must stay at 0. The server contract
-  the pages consume is `@rocketflare/shared/analytics` + `/cubejs-api/v1/*` (drizzle-cube's own
-  client); page specifics: `apps/web/src/ui/CLAUDE.md`
+- **A plugin's heavy dependencies stay in its own lazy chunk (D19, D31)**: the analytics plugin's
+  `drizzle-cube/client`, `recharts`, `d3`, `react-grid-layout` and `react-is` are reached only from
+  its own pages and components, never from the `components/shared` barrel, `App.tsx`, `SideNav` or a
+  hook the shell loads eagerly. Its `ui/index.ts` ships in the MAIN bundle — every page is
+  `lazy(() => import(...))` and `tests/config/plugins.test.ts` reads that file's SOURCE to prove it.
+  Two more boundaries the same rule implies: a registry the browser reads must be a separate file
+  from the one that composes other plugins' contributions (importing the composing one drags
+  `postgres` into the UI bundle — measured), and a plugin's own CSS is imported beside the library's
+  in its lazy component, never added to `index.css`. When you touch an import, compare
+  `pnpm web build:ui` output before and after — the delta is the check, not any figure a doc could
+  quote — and `grep recharts dist/ui/assets/index-*.js` must stay at 0
 - **Third-party providers with their own TanStack Query** (drizzle-cube does this): the app's global
-  `QueryCache.onError` never sees their failures. Wrap them (`components/analytics/CubeClientProvider.tsx`)
+  `QueryCache.onError` never sees their failures. Wrap them (the analytics plugin's `CubeClientProvider`)
   with a dedicated `QueryClient` whose `onError` maps 401 → `notifyUnauthorized`, and pass cookie auth
   explicitly (`credentials: 'include'`, `X-Requested-With`). Kit hooks rendered inside still resolve the
   app's client.
-- **Dashboards**: edit mode autosaves the whole config (debounced 1.5 s PATCH); there is no router-level
+- **Dashboards** (the analytics plugin's, D31): edit mode autosaves the whole config (debounced 1.5 s PATCH); there is no router-level
   unsaved-changes blocker — `beforeunload` while dirty plus a flush when leaving edit mode/unmount.
   `useFactTableStatus({ enabled })` MUST be gated on `manage Dashboard` (admin-only endpoint).
   `syncDarkClass` mirrors `data-theme="rocketflare-dark"` into a `dark` class only while an analytics surface is
-  mounted (drizzle-cube detects `.dark`); kit CSS never reads `.dark`. `@nivo/heatmap` is aliased to a stub
-  in `vite.config.ts` — see `docs/ADAPTING.md` §3b to enable heat maps.
+  mounted (drizzle-cube detects `.dark`); kit CSS never reads `.dark`. `@nivo/heatmap` is aliased in
+  `vite.config.ts` to a stub the PLUGIN ships — one of the two core lines its install prints, since
+  a plugin edits no core file — see `docs/ADAPTING.md` §3b to enable heat maps.
 - **Visibility (D29)**: `AccessPicker` / `AccessBadge` / `VisibilityModal` in `components/shared` are
   the ONE wording of "who can see this" — they are markdown-free by construction, which is what lets
   them live in the eager barrel. Render them only where the save would succeed (owner or

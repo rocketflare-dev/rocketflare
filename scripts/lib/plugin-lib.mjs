@@ -127,6 +127,9 @@ export function hasBarrelLine(text, kind, id) {
  * the very line this matches (`export const SERVER_PLUGINS = [approvalsServer]`) as the example of
  * what an install writes, so an unanchored regex reads the documentation instead of the code.
  */
+/** Biome's `lineWidth` (biome.json). A tuple wider than this is written one entry per line. */
+const BARREL_LINE_WIDTH = 100
+
 export function tupleEntries(text, constName) {
   const m = text.match(new RegExp(`^export const ${constName} = \\[([^\\]]*)\\]`, 'm'))
   if (!m) return []
@@ -136,10 +139,23 @@ export function tupleEntries(text, constName) {
     .filter(Boolean)
 }
 
+/**
+ * Rewrite `export const X = [ … ]`, in the formatting Biome would choose.
+ *
+ * The line width matters, and it is not cosmetics: `removeBarrelLine` is documented as the exact
+ * inverse of `addBarrelLine`, and `plugin-lib.test.ts` proves it against the REAL barrels — so if
+ * the writer emits one line where the formatter would emit five, every round trip over a formatted
+ * barrel reports a diff that is not there. One plugin fits on a line; two stopped fitting the day
+ * analytics was extracted (D31, Phase C), which is how this was found.
+ */
 function replaceTuple(text, constName, entries) {
   return text.replace(
-    new RegExp(`^(export const ${constName} = \\[)[^\\]]*(\\])`, 'm'),
-    `$1${entries.join(', ')}$2`
+    new RegExp(`^(export const ${constName} = \\[)[^\\]]*(\\][^\\n]*)$`, 'm'),
+    (_match, open, close) => {
+      const oneLine = `${open}${entries.join(', ')}${close}`
+      if (oneLine.length <= BARREL_LINE_WIDTH || entries.length === 0) return oneLine
+      return `${open}\n${entries.map(e => `  ${e},`).join('\n')}\n${close}`
+    }
   )
 }
 
@@ -276,7 +292,15 @@ const REPO_ONLY = [
   'pnpm-lock.yaml',
   'biome.json',
 ]
-const REPO_ONLY_DIRS = ['.github/', '.git/', 'node_modules/', '.claude/']
+/**
+ * `scripts/` is on this list because a plugin repository needs the kit's `release.mjs` and the four
+ * `lib/*.mjs` it imports in order to cut a release at all (there is no `pnpm plugin:release`; the
+ * skill tells an author to copy them in). They are the plugin repo's OWN tooling in exactly the
+ * sense `.github/` is — and without this entry the first real plugin was refused at install for
+ * carrying the very files the kit told it to carry, which is how this was found (D31, Phase C).
+ * Nothing under here is ever copied into a host, where `scripts/` is the kit's.
+ */
+const REPO_ONLY_DIRS = ['.github/', '.git/', 'node_modules/', '.claude/', 'scripts/']
 
 /**
  * What `add` does with one repo-relative path of a plugin's tree.
@@ -430,7 +454,17 @@ export function buildPluginSurface(manifest, { repo, subdir = '', commit = null,
     kind: 'plugin',
     label: manifest.label ?? id,
     anchor: manifest.anchor ?? `apps/web/src/plugins/${id}/plugin.json`,
-    paths: manifest.paths ?? pluginRoots(id).map(r => `${r}**`),
+    // `docs/plugins/<id>/**` is always included, declared or not: `add` copies the plugin's release
+    // notes there, and if the surface did not name them `kit-manifest.test.ts` would report them as
+    // unclassified files and `remove` would leave them behind. A plugin's own `paths` name its CODE
+    // trees, which is what an author thinks about — the notes are the host's doing, so the host
+    // adds them (D31, found in Phase C the first time a plugin shipped notes).
+    paths: [
+      ...new Set([
+        ...(manifest.paths ?? pluginRoots(id).map(r => `${r}**`)),
+        `docs/plugins/${id}/**`,
+      ]),
+    ],
     registries: manifest.registries ?? Object.values(BARRELS).map(b => b.file),
     source: { repo, subdir, version: manifest.version ?? null, commit },
     installedAt: at,

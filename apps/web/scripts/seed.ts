@@ -8,7 +8,9 @@
  * `pnpm seed --demo` (or `SEED_DEMO=1`) additionally fills the workspace with a realistic picture
  * of a logistics company in use — more members, two sibling tenants, two weeks of activity,
  * conversations, an indexed knowledge base, finished agent runs, an AI usage ledger and rebuilt
- * fact tables — so every page has something to show. Every demo row carries a fixed id derived
+ * agent runs and AI usage — so every page has something to show; an installed plugin adds its
+ * own through `seedDemo` (the analytics plugin seeds dashboards and rebuilds its fact table).
+ * Every demo row carries a fixed id derived
  * from a namespace (`demoId`) and is inserted `onConflictDoNothing`, so re-running adds nothing
  * (timestamps are therefore frozen at the first demo run) — except what is DERIVED from the demo
  * document texts: a changed text replaces that document's content and chunks, and the two agent
@@ -36,8 +38,6 @@ import {
   DETERMINISTIC_EMBEDDING_MODEL,
   deterministicEmbedding,
 } from '../src/api/services/ai/deterministic-embedding'
-import { ensureDefaultDashboards } from '../src/api/services/dashboard-templates'
-import { refreshAllFactTables } from '../src/api/services/fact-tables'
 import { hashToken } from '../src/api/utils/core/hash'
 import { randomToken } from '../src/api/utils/core/ids'
 import { createTenantForUser, getSingleTenant } from '../src/api/utils/db/tenant-helpers'
@@ -47,8 +47,6 @@ import {
   agentRunEvents,
   agentRuns,
   aiUsage,
-  analyticsPageGroups,
-  analyticsPages,
   apiKeys,
   chunks,
   conversations,
@@ -59,7 +57,6 @@ import {
   groupTypes,
   messages,
   teamInvitations,
-  tenantActivityDailyFacts,
   tenants,
   tenantUsers,
   users,
@@ -1080,9 +1077,10 @@ async function seedDemo(
   }
 
   // -- Groups (D29) ------------------------------------------------------------------------------
-  // One type, two groups, and one document plus one dashboard restricted to Finance — so the demo
-  // shows the feature working rather than just existing: `member@example.test` is in Operations and
-  // cannot see either of them, while `owner@` and `admin@` can.
+  // One type and two groups, with a document restricted to Finance — so the demo shows the feature
+  // working rather than just existing: `member@example.test` is in Operations and cannot see it,
+  // while `owner@` and `admin@` can. The analytics plugin's own `seedDemo` restricts a dashboard to
+  // the same group, which is how the demo shows that visibility is per RESOURCE, not per feature.
   // The ids are seeded deterministically, but `(tenant_id, name)` is unique — so a "Department"
   // somebody already created by hand wins, and everything below must use ITS id rather than the
   // one we would have chosen. `onConflictDoNothing` + read back, never insert-and-assume.
@@ -1464,35 +1462,6 @@ Before release, the export coordinator runs the pre-departure checklist — a ve
   }
   log(`  runs    2 agent runs (${eventRows} events)`)
 
-  // -- Dashboards (so the activity below can point at a real page) -------------------------------
-  await ensureDefaultDashboards(db, tenantId, owner.id)
-  for (const sibling of siblings) await ensureDefaultDashboards(db, sibling.id, null)
-  const overview = await db.query.analyticsPages.findFirst({
-    where: and(eq(analyticsPages.tenantId, tenantId), eq(analyticsPages.slug, 'tenant-overview')),
-  })
-  // A user-created page restricted to Finance. Template pages stay tenant-wide on purpose — they
-  // are seeded for every tenant and resetting one must never change who can see it.
-  const financePageId = demoId('analytics-page:finance')
-  await db
-    .insert(analyticsPages)
-    .values({
-      id: financePageId,
-      tenantId,
-      slug: 'finance-review',
-      name: 'Finance review',
-      description: 'Restricted to the Finance department.',
-      templateKey: null,
-      config: (overview?.config ?? { layoutMode: 'rows', rows: [], portlets: [] }) as never,
-      sortOrder: 200,
-      createdByUserId: owner.id,
-      visibility: 'groups',
-    })
-    .onConflictDoNothing()
-  await db
-    .insert(analyticsPageGroups)
-    .values({ tenantId, pageId: financePageId, groupId: financeId })
-    .onConflictDoNothing()
-
   // -- Activity: two weeks of it, by the people above ---------------------------------------------
   const seedKey = await db.query.apiKeys.findFirst({
     where: and(eq(apiKeys.tenantId, tenantId), eq(apiKeys.name, SEED_KEY_NAME)),
@@ -1580,17 +1549,6 @@ Before release, the export coordinator runs the pre-departure checklist — a ve
     metadata: { email: 'temp@acme.example' },
     at: ago(6, 1),
   })
-  if (overview) {
-    activity.push({
-      key: 'dashboard-created',
-      userId: owner.id,
-      type: 'dashboard.created',
-      subjectType: 'Dashboard',
-      subjectId: overview.id,
-      metadata: { name: overview.name },
-      at: ago(12, 4),
-    })
-  }
   for (const doc of DEMO_DOCUMENTS) {
     const pieces = docChunks.get(doc.key) ?? []
     activity.push({
@@ -1814,13 +1772,6 @@ Before release, the export coordinator runs the pre-departure checklist — a ve
     `  usage   ${usageRows.length} ai_usage rows (≈ $${(costTotal / 100_000_000).toFixed(4)} estimated)`
   )
 
-  // -- Fact tables -------------------------------------------------------------------------------
-  const refreshed = await refreshAllFactTables(db)
-  for (const r of refreshed.results) {
-    log(`  facts   ${r.table} tenants=${r.tenants} rows=${r.rows}`)
-    for (const e of r.errors) log(`    FAILED tenant ${e.tenantId}: ${e.error}`)
-  }
-
   // -- Installed plugins (D31) -------------------------------------------------------------------
   // After the kit's own blocks, so a plugin can reference the demo tenant, its people and its
   // content. Same contract as everything above: fixed ids (`demoId` arrives already namespaced
@@ -1867,7 +1818,6 @@ Before release, the export coordinator runs the pre-departure checklist — a ve
     runs: await countOf(agentRuns, inTenant(agentRuns)),
     runEvents: await countOf(agentRunEvents, inTenant(agentRunEvents)),
     usage: await countOf(aiUsage, inTenant(aiUsage)),
-    facts: await countOf(tenantActivityDailyFacts, inTenant(tenantActivityDailyFacts)),
   }
   log('')
   log(`Workspace ${tenant.slug} now holds (all rows, demo and otherwise):`)
@@ -1880,7 +1830,6 @@ Before release, the export coordinator runs the pre-departure checklist — a ve
   )
   log(`  agent runs     ${summary.runs} (${summary.runEvents} events)`)
   log(`  ai usage       ${summary.usage} rows`)
-  log(`  fact rows      ${summary.facts} tenant_activity_daily_facts`)
 }
 
 main()

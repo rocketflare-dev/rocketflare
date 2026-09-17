@@ -136,7 +136,7 @@ chooses, and `readManifest()` (`scripts/lib/manifest.mjs`) is the one kit-vs-app
 installs before the app is first run. `scripts/bootstrap.mjs`'s `plugins` step reads it, skips every
 id already installed, runs `pnpm plugin add <repo> --apply` for the rest, then `pnpm db:generate`
 and `pnpm db:migrate` once. `pnpm bootstrap --no-plugins` skips the step. It is `[]` in the kit
-today — analytics joins it when it is extracted — so the step reports "nothing to install" and
+today — `analytics`, extracted in 0.6.0 — so the step installs it and
 passes.
 
 ## Two things nothing else will catch

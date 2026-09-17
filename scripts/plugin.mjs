@@ -1045,11 +1045,25 @@ function cmdCheck(_args, host) {
       )
       continue
     }
-    // A vendored plugin is version-locked to the kit it ships inside, so its range describes that
+    // Two plugins are not held to a kit range, for the same reason in two shapes.
+    //
+    // A VENDORED plugin is version-locked to the kit it ships inside, so its range describes that
     // kit rather than a claim about compatibility. Checking it makes the kit fail against itself
     // for the whole of the release in which the range is raised.
+    //
+    // A plugin being AUTHORED — recorded in the sidecar, inside the kit itself — is in exactly the
+    // same position: the working tree it is written against is the release that has not been cut
+    // yet, so its floor is always one bump ahead of `package.json` until `pnpm kit:release` runs.
+    // That is the authoring loop working, not a fault, and failing it here would mean the gate
+    // could never be green on the branch that raises the floor. In an APP (where `isKit` is false)
+    // a `--local` plugin is still checked: there the range is a real claim about somebody's kit.
+    // Narrower than it looks: the range is still CHECKED, and a plugin whose range this kit
+    // already satisfies passes on its own merits. What is skipped is the failure an uncut release
+    // guarantees — and only in the kit, for a plugin recorded in the sidecar, which is exactly the
+    // authoring loop.
+    const authoredHere = host.isKit && host.sidecarIds.includes(id)
     for (const problem of checkRequirements({
-      requires: s.requires,
+      requires: authoredHere ? { ...s.requires, kit: undefined } : s.requires,
       kitVersion: host.kitVersion,
       presentSurfaces: host.presentSurfaces,
       installedPlugins: host.plugins.map(p => ({ id: p.id, version: p.source?.version ?? null })),
@@ -1102,6 +1116,22 @@ function cmdCheck(_args, host) {
     if (vendored.length > 0) {
       out(
         `  (${vendored.join(', ')} vendored — shipped inside the kit, so requires.kit is not checked)`
+      )
+    }
+    // Only the ones whose range this kit does NOT yet satisfy are worth a line: an author on the
+    // branch that raises the floor sees why they were let through, and an author whose range is
+    // already met sees nothing, because nothing was skipped for them.
+    const ahead = host.isKit
+      ? host.plugins.filter(
+          p =>
+            host.sidecarIds.includes(p.id) &&
+            p.requires?.kit &&
+            !satisfies(host.kitVersion, p.requires.kit)
+        )
+      : []
+    if (ahead.length > 0) {
+      out(
+        `  (${ahead.map(p => `${p.id} wants kit ${p.requires.kit}`).join(', ')} — authored here, and the kit release it names is not cut yet)`
       )
     }
     return 0

@@ -12,7 +12,7 @@
  *    directly and never goes near the asset router, so `wrangler-parity.test.ts` asserts the tomls
  *    mirror this list instead.
  *
- * `/cubejs-api` and `/mcp` are the drizzle-cube API (D19), `/ws` the realtime upgrade (Phase 2).
+ * `/ws` is the realtime upgrade (Phase 2). The analytics plugin adds `/cubejs-api` and `/mcp`.
  *
  * A plugin (D31) may own a prefix OUTSIDE `/api` — a protocol endpoint, say. Those are unioned in
  * from the server barrel, which means installing such a plugin also means adding its patterns to
@@ -21,7 +21,7 @@
  */
 import { serverPlugins } from '../../../plugins/server'
 
-const CORE_API_PREFIXES = ['/api', '/auth', '/cubejs-api', '/mcp', '/ws'] as const
+const CORE_API_PREFIXES = ['/api', '/auth', '/ws'] as const
 
 export const API_PREFIXES: readonly string[] = [
   ...CORE_API_PREFIXES,

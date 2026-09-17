@@ -28,7 +28,7 @@ import {
   updateGroupTypeRequestSchema,
 } from '@rocketflare/shared/groups'
 import { guardPermission } from '../middleware/permissions'
-import { countGroupGrants, VISIBILITY_RESOURCES } from '../services/access'
+import { countGroupGrants, visibilityResources } from '../services/access'
 import { recordActivity } from '../services/activity'
 import {
   addGroupMembers,
@@ -288,7 +288,9 @@ async function refuseWhileInUse(
   if (total === 0) return
   // One clause per registered visibility resource, zeroes included — the sentence says what the
   // whole organisation would lose, not only the parts that happen to be non-empty.
-  const held = VISIBILITY_RESOURCES.map(r => `${usage[r.usageKey] ?? 0} ${r.noun}(s)`).join(' and ')
+  const held = visibilityResources()
+    .map(r => `${usage[r.usageKey] ?? 0} ${r.noun}(s)`)
+    .join(' and ')
   throw new ConflictError(
     `This ${what} still controls access to ${held}. Deleting it leaves them visible to their owner and to admins only — re-send with ?force=1 to go ahead.`,
     'group_in_use',

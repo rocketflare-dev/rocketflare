@@ -109,6 +109,11 @@ contracts, schema, routes, jobs, agents, UI and CLI commands through five barrel
 have; the bootstrap's `6/10 plugins` step installs each one that is not already there with
 `pnpm plugin add <repo> --apply`, then generates and applies its migration:
 
+> In the kit itself (`app: null` in `.rocketflare.json`) the step records each install in the
+> git-ignored `.rocketflare.local.json` sidecar rather than the committed manifest, so a fresh clone
+> of the kit never commits a plugin's surface — the installed FILES are not ignored, though, so do not
+> `git add -A` them into the kit. In an app (`app` set) the surface goes into `.rocketflare.json`.
+
 ```bash
 pnpm plugin add <repo|path>[@ref]          # prints the plan and stops
 pnpm plugin add <repo|path>[@ref] --apply  # copies, writes the barrel lines, records the surface
@@ -171,20 +176,29 @@ land on Home. Shortcut (dev only): `http://localhost:3000/login?as=owner@example
 through `/auth/dev-login` on load — honoured only when the server reports `devLogin`
 (`APP_ENV=development`) and for the four seeded accounts, so an arbitrary address does nothing.
 
-**Analytics check** (D19, still in 1.6 — same terminal pair):
+**Analytics check** (still in 1.6 — same terminal pair). Analytics is a PLUGIN from 0.6.0
+(`docs/CONCEPTS.md` §8, §16) and the bootstrap's `plugins` step installs it, so this works on a
+fresh clone unless you ran `--no-plugins`:
 ```bash
-pnpm web db:refresh-facts && pnpm web db:check-facts   # rebuild the fact table, then read its freshness
+pnpm cli analytics check-facts       # fact-table freshness; exits 1 when any table is stale
+pnpm cli analytics refresh-facts     # enqueue a rebuild for this organisation
 ```
-Verify: `db:refresh-facts` prints `tenant_activity_daily_facts  tenants=1 rows=…` with no `FAILED`
-line and `db:check-facts` prints that table as `fresh` and exits 0 (it exits 1 when a table is
-`STALE` — lag > 2× its hourly interval; `wrangler dev` never fires the `15 * * * *` cron by itself,
-so a laptop database goes stale two hours after its last rebuild until you run this or
-`curl "http://localhost:3001/cdn-cgi/local/scheduled?cron=15+*+*+*+*"`). Then, signed in, open
+Verify: `check-facts` prints `analytics_tenant_activity_daily_facts … fresh` and exits 0.
+`refresh-facts` returns a job id, and the `wrangler dev` terminal logs the consumer running it
+(`wrangler dev` runs the queue consumer in-process). The `15 * * * *` cron is still the normal,
+cross-tenant path and `wrangler dev` never fires it by itself, so a laptop database goes stale two
+hours after its last rebuild until you run one of the above or
+`curl "http://localhost:3001/cdn-cgi/local/scheduled?cron=15+*+*+*+*"`. Then, signed in, open
 **Analytics** in the nav: the seeded **Organisation Overview** page renders with live member and
-activity numbers (the analytics UI is landing — see `apps/web/src/ui/CLAUDE.md`; by hand,
-`curl -b <cookie> localhost:3001/api/analytics/pages` lists one page with `templateKey:
-"tenant-overview"`, and an unauthenticated `curl -i localhost:3001/cubejs-api/v1/meta` is a JSON 401,
-never HTML). `GET /api/analytics/facts/status` (owner/admin) shows the same freshness as the script.
+activity numbers. By hand, `curl -b <cookie> localhost:3001/api/analytics/pages` lists one page with
+`templateKey: "tenant-overview"`, and an unauthenticated `curl -i localhost:3001/cubejs-api/v1/meta`
+is a JSON 401, never HTML. `GET /api/analytics/facts/status` (owner/admin) shows the same freshness
+as the CLI.
+
+**With `--no-plugins` there is no analytics at all** — no nav item, no `/api/analytics`, no
+`/cubejs-api`, no `/mcp`, and no drizzle-cube in either bundle. That is the kit's bare shape, and
+`pnpm plugin add https://github.com/rocketflare-dev/rocketflare-plugin-analytics.git@1.0.0 --apply`
+(then `pnpm db:generate --name plugin-analytics-1.0.0 && pnpm db:migrate`) is how it comes back.
 
 > **Cookie note.** The session cookie is `__Host-session`, and the `__Host-` prefix *requires* the
 > `Secure` flag even in development. Chrome and Firefox treat `http://localhost` as a secure context so
@@ -219,8 +233,9 @@ scripts, `ROCKETFLARE_API_KEY` + `ROCKETFLARE_URL` in the environment replace th
 pnpm test:db:up       # ephemeral Postgres on :5433 (max_connections=300; apps/web/docker-compose.test.yml)
 pnpm test             # every package: web api + api-isolated (real DB), ui (jsdom), config (no DB); cli
 ```
-Verify: all projects green — including `tests/api/cubes/cube-isolation.test.ts` (two tenants, every
-cube, disjoint rows) and `tests/dashboards/all-templates.test.ts` (`config` project).
+Verify: all projects green — including every installed plugin's own tests, which run in the host's
+projects (`src/plugins/*/tests/{api,ui,config}`). The analytics plugin's `cube-isolation.test.ts`
+is the one to watch: two tenants, every cube, disjoint rows.
 `apps/web/tests/config/wrangler-parity.test.ts` passes with the
 placeholder ids still in the tomls — the placeholder check only runs with `REQUIRE_PROVISIONED=1`
 (Part 3). Single web projects: `pnpm web test:api`, `pnpm web test:ui`, `pnpm web test:config`.
@@ -409,14 +424,36 @@ no-op and nothing changes in behaviour. Traces are batched per request and shipp
 agent; a trace named `chat` / `summarize-text` with one `generation` carrying token usage appears in
 Langfuse within a minute, tagged with the environment.
 
-### 2.7 Analytics tooling — drizzle-cube CLI / Claude Code plugin (optional)
-`cp apps/web/.drizzle-cube.json.example apps/web/.drizzle-cube.json` (git-ignored) and set `apiToken`
-to a tenant API key from Settings → API keys (`serverUrl` is your `wrangler dev` origin or a deployed
-host). The key is an ordinary Bearer key: every query it makes is scoped to that tenant by the cubes
-and it is revoked in the same place. Nothing to deploy; MCP for browser clients additionally needs
-`mcp.allowedOrigins` in `routes/cube-api.ts`, which the kit leaves unset.
-Verify: the drizzle-cube CLI's `meta` lists `ActivityEvents`, `TenantActivityDaily`, `TenantUsers`,
-`Users`.
+### 2.7 Plugins `[ready]` (D31)
+
+Analytics is not part of the kit; it is the `analytics` PLUGIN, and it is the one entry in
+`.rocketflare.json` `defaultPlugins`, so `bash scripts/bootstrap.sh` installs it in its `plugins`
+step and a fresh clone has dashboards without you doing anything. Nothing to configure.
+
+```bash
+pnpm plugin list                                   # what is installed, and from where
+pnpm plugin check                                  # anchors, kit range, barrel lines, migrations
+pnpm plugin remove analytics --apply               # then pnpm db:generate && pnpm db:migrate
+pnpm plugin add <repo|path>[@ref]                  # read the plan; --apply installs it
+```
+
+**Every command prints its plan and stops until `--apply`.** Installing a plugin gives it full
+Worker and database access — it is as trusting as merging a pull request — and the plan is what you
+say yes to. It will never generate a migration, edit a wrangler toml or write a resource id: those
+arrive as numbered steps you run yourself. The analytics plugin's are the `15 * * * *` cron and the
+`/cubejs-api` + `/mcp` prefixes in both tomls, and two `resolve` entries plus two proxy lines in
+`apps/web/vite.config.ts`.
+
+**The drizzle-cube CLI / Claude Code plugin** (optional, with analytics installed): create
+`apps/web/.drizzle-cube.json` — git-ignored, and the plugin repository's README has the shape —
+with `apiToken` set to a tenant API key from Settings → API keys and `serverUrl` your `wrangler dev`
+origin or a deployed host. It is an ordinary Bearer key: every query it makes is scoped to that
+tenant by the cubes and it is revoked in the same place. Verify: the CLI's `meta` lists
+`ActivityEvents`, `TenantActivityDaily`, `TenantUsers`, `Users`.
+
+Writing one of your own: `/rf-plugin`, or `apps/web/src/plugins/CLAUDE.md` and
+`apps/web/src/plugins/example-feature/` — the vendored reference plugin, which exists to be read
+and then deleted.
 
 ### 2.8 Feature flags `[ready]` (D30)
 

@@ -29,7 +29,7 @@ closes a cycle back through `plugins/schema.ts`.
 | `tenant_settings` | `tenant-settings.ts` | `tenant_id` (PK) | ✓ | `timezone`, `notificationsEnabled`, `settings` jsonb |
 | `tenant_user_settings` | `tenant-user-settings.ts` | `tenant_id` | ✓ | PK `(tenant_id, user_id)`; `preferences` jsonb |
 | `notifications` | `notifications.ts` | `tenant_id` | ✓ | per user; `readAt`; `data` jsonb |
-| `activity_events` | `activity-events.ts` | `tenant_id` | ✓ | audit log + analytics source; `(tenant_id, created_at DESC)` |
+| `activity_events` | `activity-events.ts` | `tenant_id` | ✓ | audit log, and the source the analytics plugin's cubes and fact table read; `(tenant_id, created_at DESC)` |
 | `files` | `files.ts` | `tenant_id` | ✓ | R2 object index (D23): `key` unique (`tenants/<tenant>/<scope>/<uuid>-<name>`), `scope` enum (`avatars`, `uploads`, `documents` — mirrors `FILE_SCOPES` in shared), `ownerUserId`, immutable (no `updated_at`) |
 | `ai_configs` | `ai-configs.ts` | `tenant_id` | ✓ | tenant AI providers (D17): `scope` chat\|embeddings, `provider` text enum, `label` (unique per tenant+scope, the upsert key), `apiKeyEnc` (AES-GCM, never returned), `thinking` jsonb, partial unique **one default per (tenant, scope)**; only `services/ai/resolve.ts` reads it |
 | `prompt_overrides` | `prompt-overrides.ts` | `tenant_id` | ✓ | PK `(tenant_id, key)`; row exists only when a registry prompt is overridden (revert = delete); `updatedByUserId` |
@@ -43,13 +43,10 @@ closes a cycle back through `plugins/schema.ts`.
 | `agent_run_interrupts` | `agent-run-interrupts.ts` | `tenant_id` | ✓ | human-in-the-loop asks (#17): `id` **IS the AG-UI `Interrupt.id`**, `runId` cascade, `key`, `kind` text (`approval\|choice\|input\|form`, from `AGENT_INTERRUPT_KINDS`), `reason`, `message`, `toolCallId`, `responseSchema` jsonb, `spec` jsonb `$type<AgentInterruptSpec>`, `status` text (`pending\|resolved\|cancelled\|expired`, default `pending`), `payload` jsonb (validated by `interruptPayloadSchema(spec)`, so untyped here), `expiresAt`, `resolvedAt`, `resolvedByUserId` set-null. **Unique `(run_id, key)` IS the idempotency** — a re-entered `execute` finds the first ask's answer, never a second question. Indexes `(tenant_id, status, created_at DESC)` (the inbox) and `(tenant_id, run_id)` (the run page). `runId` is the only host-specific column: chat HITL is a nullable `conversationId` sibling plus a `num_nonnulls` CHECK |
 | `agent_run_artifacts` | `agent-run-artifacts.ts` | `tenant_id` | ✓ | what a run PRODUCED (#17): `runId` cascade, `key` (**the UPSERT key — a redraft replaces itself**), `kind` text (`document\|file\|markdown\|table\|json`, a real column so `(tenant_id, kind)` can index it), `title`, `description`, `data` jsonb `$type<AgentArtifactData>` (`document`/`file` carry **ids, never content**). Unique `(run_id, key)`; indexes `(tenant_id, created_at DESC)`, `(tenant_id, kind)`. A table and not an event type because an artifact is mutable, cross-run queryable and outlives the run — a steering note is the opposite and stays an `agent_run_events` row |
 | `documents` | `documents.ts` | `tenant_id` | ✓ | text a tenant indexed for retrieval (D18): `ownerUserId`, `title`, `source`, `contentType` (the ORIGINAL media type), `sizeBytes`, `content` (the indexed text, API-invisible — the `document.index` job re-reads it; null for an upload until `document.convert` ran), `fileId` → `files` (`set null`; the uploaded original, scope `documents`), `chunkCount`, `embeddingModel`, `status` `pending\|indexed\|failed`, `error` |
-| `analytics_pages` | `analytics-pages.ts` | `tenant_id` | ✓ | dashboards (D19): `slug` unique per tenant (= `templateKey` for seeded pages), `config` jsonb `$type<DashboardConfig>` (drizzle-cube/client, type-only), `templateKey` nullable (null = user-created; non-null = resettable), `isDefault`, `sortOrder`, `createdByUserId` set-null. Seeded per tenant by `services/dashboard-templates.ts` |
-| `tenant_activity_daily_facts` | `facts/tenant-activity-daily-facts.ts` | `tenant_id` | ✓ | the example FACT table (D19): grain `(tenant_id, day date, user_id nullable)` with `UNIQUE NULLS NOT DISTINCT` (PG15+) so NULL actors collapse to one row; `event_count`, `distinct_event_types`, `first/last_event_at`, `fact_refreshed_at` watermark; no `id`, no FK to users. Rebuilt per tenant by `services/fact-tables` (DELETE+INSERT, cron `15 * * * *`); read by the `TenantActivityDaily` cube |
 | `group_types` | `groups.ts` | `tenant_id` | ✓ | D29: group types ("Department"); unique `(tenant_id, name)` |
 | `groups` | `groups.ts` | `tenant_id` | ✓ | D29: `groupTypeId` cascade; unique `(tenant_id, group_type_id, name)`. No `parentId` — hierarchy without inheritance is a column nothing reads |
 | `group_members` | `groups.ts` | `tenant_id` | ✓ | D29: PK `(group_id, user_id)` so an add is `onConflictDoNothing`; **composite FK `(tenant_id, user_id)` → `tenant_users` cascade**, so losing a membership loses the group memberships in the DATABASE, not in service code; index `(tenant_id, user_id)` is the auth-context read |
 | `document_groups` | `document-groups.ts` | `tenant_id` | ✓ | D29: which groups a `visibility: 'groups'` document is shared with. PK on the pair, both FKs cascade. **Grants, never the decision** — `documents.visibility` is |
-| `analytics_page_groups` | `analytics-page-groups.ts` | `tenant_id` | ✓ | D29: the same shape for `analytics_pages` |
 | `chunks` | `chunks.ts` | `tenant_id` | ✓ | retrieval units (D17/D18): `documentId` cascade, `seq` (unique per document), `text`, `tokenCount` (char estimate), `embedding vector(1024)` (`EMBEDDING_DIM`; a new dimension is a new table); **HNSW `vector_cosine_ops`** index; lexical half is `to_tsvector('english', text)` at query time (generated tsvector + GIN is the scaling path) |
 
 31 policies (`tenants`, `users` + 29 tenant tables); 4 revoked tables = `RLS_REVOKED_TABLES` =
@@ -61,7 +58,15 @@ closes a cycle back through `plugins/schema.ts`.
 - Tenant FK: `tenantId: tenantRef(tenants)` from `_helpers.ts` → `tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE`. First column of every index on a tenant table is `tenant_id`.
 - Timestamps: `...timestamps()` from `_helpers.ts` — `created_at`/`updated_at` as **`timestamptz`**. Never a naive `timestamp`.
 - extraConfig is the **array** form: `table => [index(...), tenantIsolation('x')]` (required for `pgPolicy`).
-- Fact tables live in `facts/` (barrel `facts/index.ts`): plain tables, grain-unique, `fact_refreshed_at`, no surrogate id; they are registered in `api/services/fact-tables/registry.ts` too.
+- An installed PLUGIN's tables are here too, through one `export * from '../../plugins/schema'`
+  line — so drizzle-kit, `typeof schema` and `rls-coverage.test.ts` see them exactly like a kit
+  table, and a name exported twice is TS2308 rather than a silent shadow (D31). They are named
+  `<id>_*`; the analytics plugin's are `analytics_pages`, `analytics_page_groups` and
+  `analytics_tenant_activity_daily_facts`. A plugin declares `relations()` for its OWN tables only.
+- **Fact tables** — the shape for any pre-aggregated table, and the analytics plugin's worked
+  example: plain tables (not materialised views — `REFRESH` cannot run through Hyperdrive), grain
+  unique with `.nullsNotDistinct()` where a grain column is nullable, `fact_refreshed_at` as the
+  freshness watermark, no surrogate `id`, no FK to a table whose rows may vanish.
 - Enums via `pgEnum`, exported; `relations()` next to the table; `export type X = typeof x.$inferSelect` / `NewX = $inferInsert`.
 - `feature-flags.ts` (D30) holds the pair: `feature_flags` (platform state, `key` as the PK, no
   `tenant_id`, hence an `RLS_EXCLUDED_TABLES` entry) and `tenant_feature_overrides` (ordinary tenant

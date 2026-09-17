@@ -92,6 +92,13 @@
       "when": 1789575315645,
       "tag": "0012_plugin-example-feature-0.1.0",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1789631557120,
+      "tag": "0013_kit-analytics-removed",
+      "breakpoints": true
     }
   ]
 }

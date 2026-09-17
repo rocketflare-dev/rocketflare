@@ -32,6 +32,23 @@ const releases = readdirSync(UPGRADES)
 
 const surfaceIds = new Set(manifest.surfaces.map(s => s.id))
 
+/**
+ * Surfaces a LATER release retired, and the release that did it.
+ *
+ * A released note is never rewritten (`docs/CONCEPTS.md` §13) — every copy of the kit pins a
+ * commit, and editing history orphans them — so a note that named a surface keeps naming it after
+ * the surface goes. Listing them here is what keeps the typo check below meaningful for the note
+ * somebody is writing TODAY, which is the only note it can still protect.
+ */
+const RETIRED_SURFACE_IDS: Record<string, string> = {
+  // 0.6.0: analytics left the kit for `rocketflare-plugin-analytics` (D31, Phase C), taking its
+  // two example cubes, its example dashboard template and the optional-feature surface with it.
+  'feature-analytics': '0.6.0',
+  'example-cube-activity-events': '0.6.0',
+  'example-cube-tenant-activity-daily': '0.6.0',
+  'example-dashboard-tenant-overview': '0.6.0',
+}
+
 describe('release notes', () => {
   it('there is at least one, and it is the baseline', () => {
     expect(releases.length).toBeGreaterThan(0)
@@ -70,7 +87,10 @@ describe('release notes', () => {
   it.each(releases)('%s names only real surfaces', version => {
     const { data } = parseNote(read(`${version}.md`))!
     for (const key of ['touches_surfaces', 'requires_surfaces'] as const) {
-      for (const id of (data[key] as string[] | undefined) ?? []) expect(surfaceIds).toContain(id)
+      for (const id of (data[key] as string[] | undefined) ?? []) {
+        if (RETIRED_SURFACE_IDS[id]) continue
+        expect(surfaceIds, `${version}: ${key} names '${id}'`).toContain(id)
+      }
     }
   })
 

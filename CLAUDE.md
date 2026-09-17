@@ -35,8 +35,8 @@ Cloudflare Worker (`apps/web`), a CLI (`apps/cli`), private zod contracts
   (`@ag-ui/core` pinned; SSE or protobuf; `POST /api/agui/run` is the protocol endpoint), chat calls
   the knowledge tools, agents on `AGENT_RUN_WORKFLOW` (projected to AG-UI on read), Workers AI →
   pgvector (uploads: R2 → `AI.toMarkdown` → pgvector), Langfuse
-- **Analytics**: drizzle-cube at `/cubejs-api`+`/mcp`, every cube tenant-scoped in `sql()`; fact tables
-  on the `:15` cron; TS dashboard templates → `analytics_pages`
+- **Analytics**: not core — the `analytics` PLUGIN (D31, the one `defaultPlugins` entry, installed
+  by the bootstrap): drizzle-cube at `/cubejs-api`+`/mcp`, fact tables on the `:15` cron, dashboards
 - **UI**: React 18 + Vite, DaisyUI 5 / Tailwind v4, React Router 6, TanStack Query 5; served as `ASSETS`
 - **CLI**: commander + chalk + open; `tsx` in dev, `tsc` → `dist/cli.js` (bin `rocketflare`)
 - **Tests**: vitest projects `api` · `api-isolated` · `ui` · `config` (Postgres :5433); cli
@@ -52,7 +52,7 @@ pnpm dev:stop · pnpm dev:status · pnpm dev:db:status  # kill this repo's dev t
 pnpm cli login --server http://localhost:3001  # browser → ~/.rocketflare/config.json, then whoami
 pnpm test:db:up && pnpm test  # every package; web loads .env.test
 pnpm lint · pnpm typecheck · pnpm build  # workspace-wide
-pnpm web <script>  # any apps/web script (test:api, db:check, db:*-facts…)
+pnpm web <script>  # any apps/web script (test:api, db:check…)
 pnpm db:generate · pnpm db:studio · pnpm deploy[:staging] · pnpm provision all  # (or one phase: --help)
 pnpm kit:upgrade [--to X.Y.Z] [--apply] · pnpm kit:release X.Y.Z  # port a kit release into a copy / cut one
 ```
@@ -69,12 +69,13 @@ apps/web/          @rocketflare/web — wrangler*.toml, worker-configuration.d.t
 │  src/config.ts   loadConfig(env): zod over Cloudflare.Env; routes read c.get('config')
 │  src/permissions/  CASL owner/admin/member/support + isGlobalAdmin   src/db/  client, tenant-scope, schema/
 │  src/api/        index.ts (Hono app, middleware order, ASSETS catch-all) · queue.ts · scheduled.ts ·
-│                  middleware/ · auth/ · routes/ (thin) · cubes/ (drizzle-cube, tenant-scoped) · services/ (ai/,
-│                  agents/, fact-tables/, prompts.ts) · workflows/ · observability/ · utils/ · queues/ · durable-objects/
-│  src/dashboards/ TS dashboard templates → analytics_pages    src/ui/  React app
+│                  middleware/ · auth/ · routes/ (thin) · services/ (ai/, agents/, prompts.ts) ·
+│                  workflows/ · observability/ · utils/ · queues/ · durable-objects/
+│  src/ui/         React app
 │  src/plugins/    D31 seam: types.ts + the server/ui/schema barrels (one line per installed plugin)
-│                  + each plugin's tree — `example-feature/` is vendored as the reference one
-│                  (per-dir CLAUDE.md: permissions, db/schema, dashboards, api/*, ui, plugins)
+│                  + each plugin's tree — `example-feature/` vendored as the reference one, and
+│                  `analytics/` (cubes, dashboards, fact tables) once the default set is installed
+│                  (per-dir CLAUDE.md: permissions, db/schema, api/*, ui, plugins, plugins/<id>)
 apps/cli/          @rocketflare/cli — src/cli.ts, commands/*, api.ts (only fetch site), config.ts, login.ts,
                    plugins/ (CLI_PLUGINS barrel + each plugin's commands)
 packages/shared/   @rocketflare/shared — src/*.ts zod contracts, errors, pagination, permissions,
@@ -89,7 +90,7 @@ docs/upgrades/     one porting note per kit release (+ unreleased.md) — CHANGE
 ```
 
 **`packages/shared`.** Private, no build: `@rocketflare/shared/<module>` → `./src/<module>.ts` (incl. `ai/*`,
-`analytics`). Imports only `zod`, siblings, type-only `@casl/ability`, and `@ag-ui/core` (pinned,
+`plugins/<id>`). Imports only `zod`, siblings, type-only `@casl/ability`, and `@ag-ui/core` (pinned,
 zod-only, no platform APIs) in `src/ai/agui.ts` alone — the AG-UI wire format is validated by the
 protocol's own schemas on both sides, which a mirror cannot give. A fifth dependency needs the same
 written justification, and `apps/web/tests/config/shared-imports.test.ts` enforces the list.
@@ -117,8 +118,9 @@ code-quality.md · cloudflare.md. Runbooks: @docs/DEPLOY.md · @docs/RLS.md
 
 - **Gate**: `pnpm lint && pnpm typecheck && pnpm test && pnpm build` pass before every commit
 - **Tenant isolation**: every domain query filters by `tenantId` from the auth context; every tenant
-  table calls `tenantIsolation()` (RLS inert; `rls-coverage.test.ts` enforces); every cube scopes its
-  `sql()` by `tenantIdOf(ctx)` (`cube-isolation.test.ts` is the only enforcement)
+  table calls `tenantIsolation()` (RLS inert; `rls-coverage.test.ts` enforces), a plugin's tables
+  included — and a plugin adding a query surface of its own (the analytics plugin's cubes) owns the
+  test that proves it scopes, because the kit cannot
 - **Contracts first**: zod schema in `packages/shared/src/` → route `validate()` → UI/CLI parse the same
   schema; errors are `{ error, statusCode, code?, details? }`
 - **shared is private** — never publish it; never import `apps/web` from `packages/shared` or `apps/cli`

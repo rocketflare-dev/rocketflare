@@ -185,7 +185,11 @@ describe('the barrel writer', () => {
     expect(bare).toContain('export {}')
     // …and the marker gives way to the first plugin that arrives, byte for byte.
     expect(addBarrelLine(bare, 'schema', 'orders')).not.toContain('export {}')
-    if (subject) expect(addBarrelLine(bare, 'schema', subject)).toBe(real)
+    // Putting every installed plugin back has to reproduce the file exactly — all of them, not
+    // just the first: the moment a second plugin was installed (D31, Phase C) a one-id round trip
+    // stopped being the same file, and a test that only ever saw one would not have noticed.
+    const rebuilt = installedHere.reduce((text, s) => addBarrelLine(text, 'schema', s.id), bare)
+    if (installedHere.length > 0) expect(rebuilt).toBe(real)
   })
 
   it('points each barrel at the file whose presence means the plugin ships that half', () => {
@@ -242,7 +246,17 @@ describe('what a plugin may bring', () => {
   })
 
   it("leaves the plugin repository's own tooling behind", () => {
-    for (const p of ['.github/workflows/ci.yml', 'package.json', '.gitignore', 'pnpm-lock.yaml']) {
+    for (const p of [
+      '.github/workflows/ci.yml',
+      'package.json',
+      '.gitignore',
+      'pnpm-lock.yaml',
+      // A plugin repo carries the kit's release script and the libs it imports — there is no
+      // `pnpm plugin:release`, so cutting a release means having them. They belong to that
+      // repository and never to a host, where `scripts/` is the kit's own.
+      'scripts/release.mjs',
+      'scripts/lib/upgrade-lib.mjs',
+    ]) {
       expect(roles(p)).toBe('repo-only')
     }
     expect(roles(PLUGIN_MANIFEST_FILE)).toBe('meta')
@@ -422,6 +436,10 @@ describe('the surface an install records', () => {
       history: [],
     })
     expect(surface.paths).toContain('apps/web/src/plugins/orders/**')
+    // Always, whether the plugin declared it or not: `add` copies the plugin's release notes to
+    // `docs/plugins/<id>/upgrades/`, so a surface that did not name them would leave the host with
+    // files no surface classifies (`kit-manifest.test.ts`) and a `remove` that leaves them behind.
+    expect(surface.paths).toContain('docs/plugins/orders/**')
     expect(surface.registries).toContain('apps/web/src/plugins/server.ts')
   })
 

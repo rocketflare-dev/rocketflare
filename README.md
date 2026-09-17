@@ -113,7 +113,7 @@ you removed. [`CHANGELOG.md`](CHANGELOG.md) is what you would be catching up on.
 
 ### Analytics
 - **Semantic layer** — drizzle-cube mounted at `/cubejs-api` and `/mcp` behind the app's auth; every cube scopes its SQL to the current tenant, and a mandatory isolation test queries every cube as two tenants and asserts disjoint rows.
-- **Fact tables** — plain tables rebuilt per tenant in one transaction by the hourly cron, with a freshness endpoint and `pnpm web db:check-facts` for ops.
+- **Fact tables** — plain tables rebuilt per tenant in one transaction by the hourly cron, with a freshness endpoint and `rocketflare analytics check-facts` for ops.
 - **Dashboards** — TypeScript templates copied into each tenant's `analytics_pages` (seeded on tenant creation and lazily on first read), editable in the UI with autosave, reset-to-template and recreate; an explore/query-builder page; a shipped "Organisation Overview" dashboard.
 - **MCP** — the same semantic layer is an MCP endpoint, so an AI client can query a tenant's analytics with a tenant API key.
 

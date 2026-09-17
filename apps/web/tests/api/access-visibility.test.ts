@@ -1,11 +1,14 @@
 /**
  * The visibility matrix (D29). Groups are only worth having if EVERY read path agrees about them,
- * so this file walks one restricted document and one restricted dashboard past every way the kit
- * can hand content to a person or to a model:
+ * so this file walks one restricted document past every way the kit can hand content to a person
+ * or to a model:
  *
  *   documents list · get · content · passages · card · delete · hybrid search ·
- *   `GET /api/files/:id` for the uploaded original · the three agent tools ·
- *   analytics pages list · get
+ *   `GET /api/files/:id` for the uploaded original · the three agent tools
+ *
+ * An installed PLUGIN whose rows carry `visibility` owns the same matrix for its own resource —
+ * the analytics plugin's dashboards used to be a second half of this file and are now
+ * `src/plugins/analytics/tests/api/dashboard-visibility.test.ts` (D31).
  *
  * Readers: the owner, somebody in the group, somebody who is not, an admin, and support. The two
  * shapes that matter most are at the bottom: an EMPTY grant list (what a force-deleted group
@@ -19,16 +22,7 @@ import { buildAgentTools } from '@/api/services/agents/tools'
 import { ingestText } from '@/api/services/ai/ingest'
 import { searchChunks } from '@/api/services/ai/retrieval'
 import { loadConfig } from '@/config'
-import {
-  analyticsPageGroups,
-  analyticsPages,
-  documentGroups,
-  documents,
-  files,
-  groupMembers,
-  groups,
-  groupTypes,
-} from '@/db/schema'
+import { documentGroups, documents, files, groupMembers, groups, groupTypes } from '@/db/schema'
 import {
   createTestSession,
   createTestTenant,
@@ -70,7 +64,6 @@ let groupId: string
 /** The restricted document and the tenant-wide one it sits beside. */
 let restrictedId: string
 let openId: string
-let restrictedPageId: string
 let owner: Reader
 let inGroup: Reader
 let outsider: Reader
@@ -123,20 +116,6 @@ beforeAll(async () => {
     text: 'The office opens at eight. Payroll is not discussed here.',
   })
   openId = open.document.id
-
-  const [page] = await db
-    .insert(analyticsPages)
-    .values({
-      tenantId,
-      slug: `finance-${Date.now()}`,
-      name: 'Finance dashboard',
-      config: { layoutMode: 'rows', rows: [], portlets: [] } as never,
-      createdByUserId: owner.userId,
-      visibility: 'groups',
-    })
-    .returning()
-  restrictedPageId = page?.id ?? ''
-  await db.insert(analyticsPageGroups).values({ tenantId, pageId: restrictedPageId, groupId })
 })
 
 const readers = () =>
@@ -301,21 +280,6 @@ describe('the knowledge tools see exactly what their requester sees', () => {
   })
 })
 
-describe('dashboards', () => {
-  for (const [label, get, canSee] of readers()) {
-    it(`${label} ${canSee ? 'sees' : 'does not see'} the restricted dashboard`, async () => {
-      const headers = get().cookie
-      const list = await json<{ items: { id: string }[] }>(
-        await request('/api/analytics/pages', { headers })
-      )
-      expect(list.items.map(p => p.id).includes(restrictedPageId)).toBe(canSee)
-      expect((await request(`/api/analytics/pages/${restrictedPageId}`, { headers })).status).toBe(
-        canSee ? 200 : 404
-      )
-    })
-  }
-})
-
 describe('an EMPTY grant list is private, not public', () => {
   it('hides the document from everyone but its owner and admins', async () => {
     const { document } = await ingestText(db, cfg, env, {
@@ -373,27 +337,6 @@ describe('who may restrict what', () => {
       { json: { visibility: 'tenant', groupIds: [] } }
     )
     expect(res.status).toBe(403)
-  })
-
-  it('dashboard visibility is admin+, never a member who can merely see it', async () => {
-    expect(
-      (
-        await request(
-          `/api/analytics/pages/${restrictedPageId}/visibility`,
-          { method: 'PUT', headers: inGroup.cookie },
-          { json: { visibility: 'tenant', groupIds: [] } }
-        )
-      ).status
-    ).toBe(403)
-    expect(
-      (
-        await request(
-          `/api/analytics/pages/${restrictedPageId}/visibility`,
-          { method: 'PUT', headers: admin.cookie },
-          { json: { visibility: 'tenant', groupIds: [] } }
-        )
-      ).status
-    ).toBe(200)
   })
 })
 

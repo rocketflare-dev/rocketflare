@@ -105,14 +105,13 @@ export default defineConfig({
         resolve: { alias },
       },
       {
-        // No database: config schema, wrangler parity, pure helpers, dashboard templates (D19).
+        // No database: config schema, wrangler parity, pure helpers, and every installed plugin's own.
         extends: true,
         test: {
           name: 'config',
           environment: 'node',
           include: [
             'tests/config/**/*.{test,spec}.ts',
-            'tests/dashboards/**/*.{test,spec}.ts',
             'src/plugins/*/tests/config/**/*.{test,spec}.ts',
           ],
         },

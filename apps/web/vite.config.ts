@@ -67,22 +67,23 @@ export default defineConfig({
       },
     },
     // Everything the Worker serves in production is proxied to `wrangler dev` here.
+    // An installed plugin's own prefixes are added here by hand on install — this file is core,
+    // and a plugin edits no core file (D31). The analytics plugin's are `/cubejs-api` and `/mcp`.
     proxy: {
       '/api': proxyTo(),
       '/auth': proxyTo(),
-      '/cubejs-api': proxyTo(),
-      '/mcp': proxyTo(),
       '/ws': proxyTo('ws://localhost:3001', { ws: true }),
     },
   },
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
-      // D19: drizzle-cube's heat-map chunk names an export of this OPTIONAL peer; without the
-      // package Rollup fails the build. The stub renders a notice (src/ui/lib/stubs).
-      '@nivo/heatmap': path.resolve(__dirname, './src/ui/lib/stubs/nivo-heatmap.tsx'),
+      // An installed plugin may need an alias of its own, and this is a core file it cannot
+      // write — `pnpm plugin add` prints the lines as a numbered step (D31). The analytics plugin
+      // needs two: `'@nivo/heatmap'` pointed at its own stub (drizzle-cube's heat-map chunk names
+      // that OPTIONAL peer, and Rollup fails the build without the package), and `'recharts'`
+      // added to `dedupe` below, because drizzle-cube's chart chunks import it.
     },
-    // D19: drizzle-cube's chart chunks import recharts; one copy, shared with any kit chart.
-    dedupe: ['react', 'react-dom', 'recharts'],
+    dedupe: ['react', 'react-dom'],
   },
 })

@@ -223,9 +223,12 @@ describe('deleting something that still grants access', () => {
       headers: ownerCookie,
     })
     expect(refused.status).toBe(409)
+    // One count per REGISTERED visibility resource — the kit's `documents`, plus one per installed
+    // plugin (D31). `toMatchObject` on the kit's own key, so installing a plugin that adds a
+    // resource widens the body without failing this.
     expect(await json(refused)).toMatchObject({
       code: 'group_in_use',
-      details: { documents: 1, dashboards: 0 },
+      details: { documents: 1 },
     })
 
     const forced = await request(`/api/groups/${group.id}?force=1`, {

@@ -146,22 +146,6 @@ const CORE_QUERY_KEYS = {
     },
   },
   /**
-   * `/api/analytics/*` + `/cubejs-api/v1/meta` (D19). Pages are one family so a create/reset/
-   * recreate invalidates the list and every open detail together; templates and the fact-table
-   * status are effectively immutable for a tab; cube meta changes only with a deploy.
-   */
-  analytics: {
-    all: ['analytics'] as const,
-    pages: {
-      all: ['analytics', 'pages'] as const,
-      list: ['analytics', 'pages', 'list'] as const,
-      detail: (id: string) => ['analytics', 'pages', 'detail', id] as const,
-    },
-    templates: ['analytics', 'templates'] as const,
-    factsStatus: ['analytics', 'facts-status'] as const,
-    cubeMeta: ['analytics', 'cube-meta'] as const,
-  },
-  /**
    * `/api/groups` (D29). The root is `groups` because the server nudges
    * `entity.changed { entity: 'groups' }` from every group mutation, and `access.changed` names it
    * too — so the admin UI and a person's own group list both refresh with no socket code here.

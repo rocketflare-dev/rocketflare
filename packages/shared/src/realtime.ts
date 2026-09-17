@@ -53,7 +53,7 @@ const CORE_REALTIME_INVALIDATIONS: Record<RealtimeEventType, string[][]> = {
   // Sent to the affected people only (`nudgeUsers`): their ability to see content changed, so the
   // session (which carries their groups), both visibility-bearing resources and the groups view
   // are all stale at once.
-  'access.changed': [['auth'], ['documents'], ['analytics'], ['groups']],
+  'access.changed': [['auth'], ['documents'], ['groups']],
   // Features ride the session, so the session is what has to be re-fetched; `features` covers the
   // read-only list the CLI and the debugging surface use.
   'features.changed': [['auth'], ['features']],

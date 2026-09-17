@@ -101,8 +101,13 @@ describe('the note contracts', () => {
  * The host keeps the plugin-agnostic half (core is a subset of the installed union, never wider).
  */
 describe('what this plugin adds to the kit’s closed sets', () => {
-  it('widens JobType by exactly its own job, with a narrowed payload', () => {
-    expectTypeOf<JobType>().toEqualTypeOf<CoreJobType | 'example-feature.ping'>()
+  it('widens JobType by its own job, with a narrowed payload', () => {
+    // `toMatchTypeOf`, not `toEqualTypeOf`: the union is the KIT's plus every installed plugin's,
+    // so pinning it whole would make this plugin's test fail whenever a SECOND plugin is
+    // installed. What this plugin can honestly assert is that the kit's types survived and that
+    // its own arrived — the rest of the union belongs to whoever declared it.
+    expectTypeOf<CoreJobType>().toMatchTypeOf<JobType>()
+    expectTypeOf<'example-feature.ping'>().toMatchTypeOf<JobType>()
     expectTypeOf<JobOf<'example-feature.ping'>['payload']['tenantId']>().toEqualTypeOf<string>()
   })
 

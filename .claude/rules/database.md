@@ -48,9 +48,10 @@ predicate**, not SQL injection — the app role can `set_config` itself.
   `timestamptz` — never bare `timestamp`
 - `pgEnum` for closed sets; append values last (a migration cannot USE an enum value it adds)
 - `jsonb` for flexible metadata, typed with `$type<>()` from a `@rocketflare/shared` zod schema. The one
-  exception is `analytics_pages.config`, typed `$type<DashboardConfig>()` from `drizzle-cube/client`
-  (type-only import) — shared may import only zod, so its `dashboardConfigSchema` is loose and the
-  drizzle-cube type lives on this side (D19)
+  one exception is a PLUGIN's column typed from the plugin's own dependency: the analytics plugin's
+  `analytics_pages.config` is `$type<DashboardConfig>()` from `drizzle-cube/client` (type-only
+  import), because shared may import only zod, so its `dashboardConfigSchema` is loose and the
+  precise type lives on the web side (D19, D31)
 - `relations()` for type-safe joins; no polymorphic FKs
 - Encrypted-at-rest columns (`oauth_providers.access_token`, `ai_configs.credentials`) are `text`
   written only through `token-crypto.ts`
@@ -69,24 +70,20 @@ predicate**, not SQL injection — the app role can `set_config` itself.
 - Query vectors are parameters: `vectorLiteral(v)` (`[0.1,0.2,…]`) interpolated through the drizzle
   `sql` tag and cast `::vector` — never string-concatenate a query; `embedding` values are inserted as
   `number[]` through drizzle
-- **Fact tables (D19)** live in `apps/web/src/db/schema/facts/` (barrel `facts/index.ts`, re-exported from
-  `schema/index.ts`): plain tables rebuilt per tenant by `api/services/fact-tables` — NOT materialised
-  views (`REFRESH MATERIALIZED VIEW` cannot run through Hyperdrive or be scoped to one tenant). Shape:
+- **Fact tables (D19)** are the ANALYTICS PLUGIN's now, and so is every rule about them
+  (`apps/web/src/plugins/analytics/services/fact-tables/CLAUDE.md` once it is installed). The shape
+  is worth knowing anyway, because it is what any pre-aggregated table should look like:
   `tenantRef()` first, the grain columns, the measures, then
-  `factRefreshedAt: timestamp('fact_refreshed_at', { withTimezone: true }).notNull().defaultNow()` —
-  every fact table carries that column, spelled exactly so; the freshness check reads
-  `MAX(fact_refreshed_at)` — and `tenantIsolation('<table>')`. **No surrogate `id`, no `timestamps()`**
-  (the grain IS the key), and no FK to a table whose rows may vanish (`users`): a refresh must never
-  fail because an actor was deleted. The grain is a `unique('<table>_grain').on(...)` constraint; when a
-  grain column is nullable add `.nullsNotDistinct()` (`UNIQUE NULLS NOT DISTINCT`, Postgres 15+ — Neon
-  and the `pg17` compose image qualify), or every NULL actor becomes its own row. First index column is
-  `tenant_id`, as everywhere. A fact table is also an entry in `api/services/fact-tables/registry.ts`
-  (with a `queries/<name>.ts` SELECT in the schema's column ORDER) and usually a cube —
-  `.claude/rules/api.md`. Rows are derived data: rebuilt with `pnpm web db:refresh-facts`, checked with
-  `pnpm web db:check-facts`, never hand-migrated
+  `factRefreshedAt: timestamp('fact_refreshed_at', { withTimezone: true }).notNull().defaultNow()`
+  and `tenantIsolation('<table>')`. **No surrogate `id`, no `timestamps()`** (the grain IS the key),
+  and no FK to a table whose rows may vanish (`users`): a refresh must never fail because an actor
+  was deleted. The grain is a `unique('<table>_grain').on(...)` constraint, `.nullsNotDistinct()`
+  when a grain column is nullable (`UNIQUE NULLS NOT DISTINCT`, Postgres 15+). First index column is
+  `tenant_id`, as everywhere. Rows are derived data — rebuilt, never hand-migrated.
 - **Visibility (D29)**: a resource people may restrict carries a `visibility` text column
   (`RESOURCE_VISIBILITY_VALUES` in `_helpers.ts`, `tenant | groups`, default `tenant`) PLUS its own
-  junction table to `groups` (`document_groups`, `analytics_page_groups`: `tenantRef()` first, PK on
+  junction table to `groups` (`document_groups`, and a plugin's own — the analytics plugin's
+  `analytics_page_groups`: `tenantRef()` first, PK on
   the pair, both FKs cascade, index `(tenant_id, group_id)`). **The column is the decision and the
   rows are only the grants** — `groups` with zero rows means owner-and-admins-only, which is what
   deleting the last group must leave. Never infer "restricted" from "has rows": that turns the same

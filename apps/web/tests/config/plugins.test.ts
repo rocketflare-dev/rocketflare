@@ -176,11 +176,16 @@ describe('installed plugins', () => {
   })
 
   it('declares no API prefix or mount that collides with another plugin', () => {
-    const prefixes = serverPlugins.flatMap(p => [
-      ...(p.apiPrefixes ?? []),
-      ...(p.mounts ?? []).map(m => m[0]),
+    // Deduped WITHIN a plugin first, because both repetitions are normal and neither is a
+    // collision: a prefix outside `/api` has to appear in `mounts` (the router) AND in
+    // `apiPrefixes` (the SPA catch-all, the parity test, `run_worker_first`), and one router may be
+    // mounted at two prefixes — the analytics plugin's `/cubejs-api` and `/mcp` are both
+    // (drizzle-cube's adapter registers absolute paths). What must never happen is TWO plugins
+    // claiming one prefix, because Hono matches in registration order and the loser is invisible.
+    const claimed = serverPlugins.flatMap(p => [
+      ...new Set([...(p.apiPrefixes ?? []), ...(p.mounts ?? []).map(m => m[0])]),
     ])
-    expect(new Set(prefixes).size, prefixes.join(', ')).toBe(prefixes.length)
+    expect(new Set(claimed).size, claimed.join(', ')).toBe(claimed.length)
   })
 
   it('namespaces every query-key root it declares', () => {

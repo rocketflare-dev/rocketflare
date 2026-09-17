@@ -14,7 +14,6 @@ import { createDatabase, type Database, resolveDatabaseUrl } from '../db/client'
 import { userSessions } from '../db/schema'
 import { serverPlugins } from '../plugins/server'
 import { pruneMagicLinkTokens } from './auth/magic-link'
-import { refreshAllFactTables } from './services/fact-tables'
 import { pruneInvitations } from './services/invitations'
 import type { AppBindings } from './types'
 import { type Logger, loggerFor } from './utils/core/logger'
@@ -63,35 +62,9 @@ export const pruneExpired: ScheduledTask = {
   },
 }
 
-/**
- * Hourly fact-table rebuild (D19): every registry entry, per tenant, DELETE+INSERT. Per-tenant
- * failures are isolated inside the service and surface here as a warning with the failing tenants.
- */
-export const refreshFactTables: ScheduledTask = {
-  name: 'refreshFactTables',
-  async run({ db, logger }) {
-    const summary = await refreshAllFactTables(db, { logger })
-    const log = summary.failed > 0 ? logger.warn.bind(logger) : logger.info.bind(logger)
-    log(
-      {
-        durationMs: summary.durationMs,
-        failed: summary.failed,
-        tables: summary.results.map(r => ({
-          table: r.table,
-          tenants: r.tenants,
-          rows: r.rows,
-          errors: r.errors,
-        })),
-      },
-      'refreshFactTables: fact tables rebuilt'
-    )
-  },
-}
-
 /** Cron expression → tasks. Keep in sync with `[triggers] crons` in both wrangler tomls. */
 const CORE_SCHEDULED_TASKS: Record<string, ScheduledTask[]> = {
   '0 4 * * *': [pruneExpired],
-  '15 * * * *': [refreshFactTables],
 }
 
 /**

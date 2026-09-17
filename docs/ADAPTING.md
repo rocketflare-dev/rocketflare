@@ -101,22 +101,24 @@ tell it. That is what makes deleting safe.
   (see `apps/web/src/ui/CLAUDE.md`). `RunPage` itself is the runtime's, not the example's. `AGENT_KEYS` must not be empty (it is a `z.enum`, and `CORE_AGENT_KEYS` leads it):
   `agentKeySchema` is a `z.enum`. Rows in `agent_runs` / `agent_run_events` / `prompt_overrides` /
   `agent_models` for the old key are inert data — delete them or leave them
-- The example cubes `ActivityEvents` / `TenantActivityDaily`, the fact table
-  `tenant_activity_daily_facts` and the `tenant-overview` template (keep `Users` / `TenantUsers` — they
-  document both scoping patterns, and keep `cubes/security.ts`, `routes/cube-api.ts`,
-  `services/fact-tables/{refresh,freshness,registry}.ts`, `services/dashboard-templates.ts` — that is
-  the runtime). Removing them touches: the two cube files + `allCubes` in `apps/web/src/api/cubes/index.ts`;
-  `apps/web/src/db/schema/facts/tenant-activity-daily-facts.ts` (+ `facts/index.ts`, `relations.ts`) with
-  a `DROP TABLE` migration; `FACT_TABLES` in `services/fact-tables/registry.ts` and
-  `queries/tenant-activity-daily.ts` (an empty registry is fine — the `:15` cron then does nothing; or
-  drop the cron from BOTH tomls + `CORE_SCHEDULED_TASKS` + `tests/api/scheduled-facts.test.ts`);
-  `apps/web/src/dashboards/general-templates/tenant-overview.ts` (+ its `GENERAL_TEMPLATES` entry —
-  `DASHBOARD_TEMPLATES` may be empty: `ensureDefaultDashboards` returns 0); and the tests
-  `tests/api/cubes/cube-isolation.test.ts` (rewrite the `cases` around your cubes — its coverage
-  assertion requires one per cube), `tests/api/services/fact-table-refresh.test.ts`,
-  `tests/api/analytics-pages.test.ts` (template expectations), `tests/dashboards/all-templates.test.ts`.
-  Existing tenants keep their `tenant-overview` rows as inert `analytics_pages` data (`reset` on them →
-  404 `template_not_found`); delete the rows or leave them
+- **Analytics** — it is a PLUGIN (D31, `docs/CONCEPTS.md` §8), so removing it is one command
+  rather than a list of files:
+
+  ```bash
+  pnpm plugin remove analytics --apply    # three directories, five barrel lines, the surface
+  pnpm db:generate --name plugin-analytics-remove && pnpm db:migrate   # read the DROP TABLEs first
+  pnpm --dir apps/web remove d3 drizzle-cube react-grid-layout react-is recharts
+  ```
+
+  Then the three things a plugin never wrote for you, which the removal plan prints: the
+  `15 * * * *` cron out of `[triggers]` in BOTH tomls, `/cubejs-api` and `/mcp` out of
+  `[assets] run_worker_first` in both, and the two proxy lines plus the `@nivo/heatmap` alias and
+  the `recharts` dedupe entry out of `apps/web/vite.config.ts`. That takes the largest single
+  contributor out of the Worker bundle and drizzle-cube out of the UI entirely (`docs/DEPLOY.md`,
+  "Bundle size", on why no figure is quoted). To keep analytics but trim ITS examples — the
+  `ActivityEvents` / `TenantActivityDaily` cubes, the fact table, the `tenant-overview` template —
+  read the plugin's own `CLAUDE.md`; they are its files now, not yours, and `pnpm plugin upgrade`
+  will not recreate what you delete
 - The reference PLUGIN `example-feature` (D31) — a feature flag, a `example_notes` table, a CRUD
   mount at `/api/example-feature`, `example-feature.ping`, an agent tool, two lifecycle hooks, a
   lazy page with a nav item and two CLI commands, all in three directories. It exists to be read
@@ -272,69 +274,48 @@ A model you leave out shows "—" on Settings → Usage rather than a wrong numb
    and one copy of whatever it wrote — `tests/api/agent-research.test.ts` is the template, and
    `createFakeWorkflowStep({ onWait })` is how a test stands in for a person clicking Approve.
 
-**Adding a cube** (D19 — `apps/web/src/api/cubes/CLAUDE.md`). No migration when the table exists:
+**Adding a cube, a fact table or a dashboard template** (D19) — all three belong to the ANALYTICS
+PLUGIN now, and the instructions live with the code: `apps/web/src/plugins/analytics/CLAUDE.md`,
+`cubes/CLAUDE.md`, `services/fact-tables/CLAUDE.md` and `dashboards/DASHBOARD_PATTERNS.md`, once
+the plugin is installed. Two things are worth knowing before you open them.
 
-1. `apps/web/src/api/cubes/<name>.ts`: `defineCube('Name', { sql: ctx => ({ from: table, where:
-   eq(table.tenantId, tenantIdOf(ctx)) }), dimensions, measures, joins? })`. **The `where` is the tenant
-   predicate and is not optional**; a table without `tenant_id` scopes through membership like
-   `users.ts` (`inArray(...)` over a bound `tenant_users` subquery). One `primaryKey: true` dimension;
-   joins on the `belongsTo` side only (`targetCube: () => otherCube`); an event table adds
-   `meta.eventStream`. Member names are a frozen contract — choose them once.
-2. Register it in `allCubes` (`cubes/index.ts`).
-3. **Add a case to `apps/web/tests/api/cubes/cube-isolation.test.ts`**: seed rows for its table in
-   `seedTenant`, a query and an `expect` per side. The suite fails until every cube in `allCubes` has
-   one — that test is the only enforcement of tenant scoping in the cube layer.
-4. Optional: portlets in a template (below); the template test then also checks your member names.
+**Where your code goes depends on whose feature it is.** A cube over YOUR tables, in an app you own,
+goes inside the plugin's tree like any other file you have adopted — it is ordinary source in your
+repository. A cube that belongs to a SECOND plugin goes through the extension seam instead
+(D31 decision 6), because one plugin may not reach into another's internals:
 
-**Adding a fact table** (D19 — `apps/web/src/api/services/fact-tables/CLAUDE.md`):
+```ts
+import { analyticsExtensions } from '@/plugins/analytics'
 
-1. Schema — `apps/web/src/db/schema/facts/<name>.ts` (copy `tenant-activity-daily-facts.ts`):
-   `tenantRef()`, the grain columns, the measures, `fact_refreshed_at` (`timestamptz`, `defaultNow()`),
-   `unique('<name>_grain').on(...)` (`.nullsNotDistinct()` when a grain column is nullable), a
-   `(tenant_id, …)` index, `tenantIsolation('<name>')`; no `id`, no `timestamps()`, no FK to `users`.
-   Export from `facts/index.ts`; `pnpm db:generate`, read the SQL, `pnpm db:migrate`.
-2. Query — `services/fact-tables/queries/<name>.ts`: `export function <name>Select(tenantId: string):
-   SQL` — a `sql` tag SELECT with `where tenant_id = ${tenantId}` (bound), columns in the schema file's
-   declaration ORDER, ending with `now() as fact_refreshed_at`. The INSERT names its targets from
-   `getTableColumns`, so a wrong order fails loudly rather than shifting values.
-3. Registry — one entry in `FACT_TABLES` (`registry.ts`): `{ name, table, refreshIntervalMinutes,
-   source: { name, table, timestampColumn }, selectForTenant }`. The `:15` cron, `db:refresh-facts`,
-   `db:check-facts` and `GET /api/analytics/facts/status` pick it up with no other change. A table
-   that needs a different cadence is a second cron entry (both tomls + `CORE_SCHEDULED_TASKS`) calling
-   `refreshFactTable(db, name)`.
-4. Cube — `apps/web/src/api/cubes/<name>.ts` over the table (direct `tenant_id` scoping), + the
-   isolation case; `refreshFactTable(db, '<name>', { tenantId })` in `seedTenant` so it has rows.
-5. Tests — extend `tests/api/services/fact-table-refresh.test.ts` (one row per grain, idempotent,
-   only the refreshed tenant replaced). `pnpm web db:refresh-facts <name> --tenant=<uuid>` for a
-   manual run.
+export const ordersServer = {
+  shared: ordersShared,
+  extensions: analyticsExtensions({
+    cubes: [ordersCube],
+    factTables: [ordersDailyFacts],
+    dashboardTemplates: [ordersOverview],
+    cubeIsolationCases: [ordersIsolationCase],
+  }),
+} satisfies ServerPlugin<typeof ordersShared>
+```
 
-**Adding or changing a dashboard template** (D19 — `apps/web/src/dashboards/CLAUDE.md`, read
-`DASHBOARD_PATTERNS.md` first; the layout mistakes it lists are silent at runtime):
+with `requires: { plugins: ['analytics'] }` in your `plugin.json`, so installing without it is
+refused rather than quietly doing nothing. Each list is zod-narrowed by the analytics plugin and
+**throws naming your plugin** when it cannot be parsed.
 
-1. A file under a category folder (`general-templates/`, or a new sibling folder spread into
-   `DASHBOARD_TEMPLATES` in `dashboards/index.ts`): a `DashboardConfig` with `layoutMode: 'rows'`,
-   explicit `rows` (widths sum to 12), `groups` for KPI strips, one `isUniversalTime` filter,
-   portlets whose `query` is `JSON.stringify(<cube query>)` and whose x/y/w/h mirror the rows.
-   Templates are pure data — no drizzle or schema imports.
-2. The registry entry: `{ key, name, description, order (unique), isDefault? (at most one), config }`.
-   `key` is also the page slug.
-3. `pnpm web test:config` — `tests/dashboards/all-templates.test.ts` checks the structure and that
-   **every `Cube.member` you reference exists in `allCubes`**; the cube isolation test then executes
-   every portlet query against Postgres (rows > 0 for a tenant with members and activity — seed
-   accordingly).
-4. Rollout: a NEW template reaches every tenant on its next `GET /api/analytics/pages` (and new
-   tenants at creation). A CHANGED template does **not** — `analytics_pages.config` is a copy. Repair
-   per page with `POST /api/analytics/pages/:id/reset` or per tenant with `POST
-   /api/analytics/templates/recreate` (`{ created, reset }`; admin+). **Frozen names**: never rename a
-   cube member a stored dashboard may reference — add a new one; a rename breaks every saved page in
-   every tenant silently, and `reset`/`recreate` is the only way back.
+**The one rule that has no second line of defence** is unchanged wherever the cube lives: its `sql()`
+scopes by `tenantIdOf(ctx)`, and it is not done until it has a case in `cube-isolation.test.ts` —
+whose coverage assertion walks the whole registry, contributed cubes included, so a cube with no
+case fails your gate. Member names are a frozen contract: stored dashboards reference
+`Cube.measure` strings in jsonb, so add members, never rename them.
 
-**Renaming or retiming the fact cron.** The expression `15 * * * *` appears in `[triggers] crons` of
-BOTH tomls (the parity test compares them), as the key of `CORE_SCHEDULED_TASKS` in
-`apps/web/src/api/scheduled.ts`, and in `tests/api/scheduled-facts.test.ts`; change all four together.
-If you retime it, change `refreshIntervalMinutes` in the registry too — freshness flags `stale` at
-2× that interval, so a slower cron with the old interval reports stale between runs. The local trigger
-is `curl "http://localhost:3001/cdn-cgi/local/scheduled?cron=<expression, + for spaces>"`.
+**Renaming or retiming the fact cron.** The expression `15 * * * *` is the analytics plugin's
+declaration, and it has to agree in three places: `crons` in its `plugin.json`, `[triggers] crons`
+in BOTH tomls (the parity test compares the two files to each other, not to the plugin), and the
+key of `ServerPlugin.scheduledTasks`. **A task registered under an expression no toml declares
+simply never runs, and nothing says so.** If you retime it, change `refreshIntervalMinutes` in the
+fact-table registry too — freshness flags `stale` at 2× that interval, so a slower cron with the
+old interval reports stale between runs. Local trigger:
+`curl "http://localhost:3001/cdn-cgi/local/scheduled?cron=<expression, + for spaces>"`.
 
 **Adding a chat/embeddings provider** (D17). Append the value to `AI_PROVIDERS` in
 `packages/shared/src/ai/config.ts` (LAST — the DB column is a text enum, so no migration; mirror it in
@@ -383,18 +364,15 @@ limits are an app change (`MAX_UPLOAD_BYTES` is one constant today).
 
 ## 3b. Optional add-ons and knobs
 
-- **Heat-map charts**: `@nivo/heatmap` is an optional drizzle-cube peer whose named import breaks the
-  Rollup build, so `apps/web/vite.config.ts` aliases it to `apps/web/src/ui/lib/stubs/nivo-heatmap.tsx`
-  (renders a notice). To enable: `pnpm --filter @rocketflare/web add @nivo/heatmap`, delete the alias and the
-  stub, run `pnpm build:ui`.
-- **Dashboard theming**: drizzle-cube reads `--dc-*` CSS variables; the kit maps them to its tokens under
-  `:root[data-theme=…]` in `apps/web/src/ui/index.css`. Change the tokens, not the `--dc-*` lines.
-- **Removing analytics entirely**: delete `apps/web/src/ui/{pages,components}/analytics`, the three
-  analytics hooks, the `/analytics*` routes in `App.tsx`, the nav item, `src/api/cubes`, `src/dashboards`,
-  `services/{dashboard-templates.ts,fact-tables}`, `routes/{cube-api,analytics-pages}.ts`, the
-  `analytics_pages` / `facts` schema files (+ a migration), the `:15` cron in both tomls, and the
-  `drizzle-cube`/`recharts`/`d3`/`react-grid-layout`/`react-is` deps — which takes the largest single
-  contributor out of the Worker bundle (`docs/DEPLOY.md`, "Bundle size", on why no figure is quoted).
+- **Analytics add-ons** — all of these need the analytics plugin installed, and all of them live in
+  its tree. **Heat-map charts**: `@nivo/heatmap` is an optional drizzle-cube peer whose named import
+  breaks the Rollup build, so `apps/web/vite.config.ts` aliases it to the plugin's own
+  `ui/lib/nivo-heatmap.tsx` stub (which renders a notice). To enable it:
+  `pnpm --filter @rocketflare/web add @nivo/heatmap`, delete the alias and the stub, `pnpm build:ui`.
+  **Dashboard theming**: drizzle-cube reads `--dc-*` CSS variables, mapped to the kit's tokens in
+  the plugin's `ui/drizzle-cube-theme.css` — which is imported beside the library's own stylesheet
+  so it ships only in the lazy analytics chunk. Change the kit's tokens, not the `--dc-*` lines.
+  **Removing analytics entirely** is `pnpm plugin remove analytics --apply` (§2 above).
 - **Your own streamed events (AG-UI)**: chat and agent runs speak AG-UI
   (`docs/CONCEPTS.md` §9). A new semantic is either an AG-UI event type added to
   `kitAguiEventSchema` or — far more often — a CUSTOM event. **Put yours in your OWN namespace,

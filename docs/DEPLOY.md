@@ -27,7 +27,7 @@ package is private by default (`"private": true`, like `packages/shared`, which 
               │ .toml            │  │                  │   + NotificationsHub DO
               └───────┬──────────┘  └────────┬─────────┘   + AgentRunWorkflow
    bindings:  HYPERDRIVE  RATE_LIMIT_KV  [JOBS_QUEUE  FILES  AGENT_RUN_WORKFLOW  AI]  ASSETS
-   crons:     0 4 * * * (prune)   15 * * * * (fact tables)         routes: /api /auth /ws /cubejs-api /mcp
+   crons:     0 4 * * * (prune)  + every installed plugin's       routes: /api /auth /ws + plugins'
                       │                      │
               Hyperdrive <app>-staging   Hyperdrive <app>-production      (direct Neon host)
                       │                      │
@@ -80,9 +80,9 @@ hidden gap. `apps/web/tests/config/wrangler-parity.test.ts` enforces the table b
 | Durable Object (Phase 2) | `NOTIFICATIONS_HUB` | class `NotificationsHub` | declared in toml + `[[migrations]] tag = "v1", new_classes` — no create step |
 | Workflow (Phase 3, built) | `AGENT_RUN_WORKFLOW` | `<app>-agent-run` / `<app>-agent-run-staging` | `[[workflows]] name / binding / class_name = "AgentRunWorkflow"` — `wrangler deploy` registers it, no create step; **account-scoped name** |
 | Workers AI (Phase 3, built) | `AI` | — | `[ai] binding = "AI"` — no resource; the zero-key floor for chat (`@cf/zai-org/glm-4.7-flash`) and embeddings (`@cf/baai/bge-m3`); **billed per call to this account** (10k free neurons/day), `wrangler dev` proxies to the logged-in account; remove from BOTH tomls for zero-spend |
-| Analytics (Phase 4, built) | — | — | **no resource and no binding**: cubes read through `HYPERDRIVE`, fact tables rebuild on the `15 * * * *` cron (below); `/cubejs-api` + `/mcp` are routes of this Worker |
+| Analytics (a PLUGIN, D31) | — | — | **no resource and no binding**: its cubes read through `HYPERDRIVE`, its fact tables rebuild on the `15 * * * *` cron it declares, and `/cubejs-api` + `/mcp` are routes of this Worker. Installing it means adding that cron and those two prefixes to BOTH tomls — `pnpm provision cloudflare <env>` reads them off the installed surface and writes them (decision 12) |
 | Analytics Engine (optional) | `ANALYTICS_ENGINE` | `<app>_analytics[_staging]` | declared in toml — deliberately NOT wired by the kit (only a comment in both tomls) |
-| Static Assets | `ASSETS` | — | `[assets] directory = "./dist/ui"` uploaded atomically with each deploy; `run_worker_first` keeps `/api`, `/auth`, `/cubejs-api`, `/mcp`, `/ws` off the asset router |
+| Static Assets | `ASSETS` | — | `[assets] directory = "./dist/ui"` uploaded atomically with each deploy; `run_worker_first` keeps `/api`, `/auth`, `/ws` — and every prefix an installed plugin declares — off the asset router |
 | RLS app role (optional, docs/RLS.md) | `HYPERDRIVE_APP` | `<app>-<env>-app` | `… hyperdrive create … --caching-disabled` |
 | Plugin resources (D31) | whatever the plugin's `plugin.json` declares (`APPROVALS_CACHE`…) | `<app>-<id>-<name>[-staging]`, and `<APP>_<ID>_<NAME>[_STAGING]` for KV | `pnpm provision cloudflare <env>` — it reads each installed plugin's `bindings[]`, creates them through `cf-provision.sh` and patches the block into that environment's toml |
 
@@ -130,13 +130,14 @@ the orchestrator around it — phases `tokens` (TTY only: hidden prompts → `ap
 | Expression | Task | What it does | Local trigger (`wrangler dev` never fires crons itself) |
 |---|---|---|---|
 | `0 4 * * *` | `pruneExpired` | deletes expired sessions, consumed/expired magic links, invitations older than 30 days | `curl "http://localhost:3001/cdn-cgi/local/scheduled?cron=0+4+*+*+*"` |
-| `15 * * * *` | `refreshFactTables` (D19) | every `FACT_TABLES` entry, per tenant, DELETE+INSERT in one transaction; per-tenant failures collected, logged as a warning, never abort the run | `curl "http://localhost:3001/cdn-cgi/local/scheduled?cron=15+*+*+*+*"` — or the same code without the Worker: `pnpm web db:refresh-facts [table] [--tenant=<uuid>]` |
+| `15 * * * *` | `analytics.refreshFactTables` (the analytics PLUGIN, D31) | every registered fact table, per tenant, DELETE+INSERT in one transaction; per-tenant failures collected, logged as a warning, never abort the run. The expression is the plugin's `crons` declaration and the task is `ServerPlugin.scheduledTasks` — **a task under an expression no toml declares simply never runs** | `curl "http://localhost:3001/cdn-cgi/local/scheduled?cron=15+*+*+*+*"` — or, for one organisation, `rocketflare analytics refresh-facts` |
 
 Health of the fact tables: `GET /api/analytics/facts/status` (admin+; `stale` = newest source row
-has waited > 2× the table's interval) or `pnpm web db:check-facts` (exit 1 when stale; needs
-`DATABASE_URL` — in a deployed environment run it with that branch's connection string, never by
-pointing `.dev.vars` at Neon). Cron runs share the Worker's CPU budget: past a few hundred tenants,
-fan the per-tenant rebuilds out through `JOBS_QUEUE`.
+has waited > 2× the table's interval) or `rocketflare analytics check-facts`, which exits 1 when
+any table is stale and so works as a pipeline health check. Both go through the deployed API with a
+tenant API key, so there is no path here that wants a production `DATABASE_URL` on somebody's
+laptop. Cron runs share the Worker's CPU budget: past a few hundred tenants, fan the per-tenant
+rebuilds out through `JOBS_QUEUE`.
 
 ## Account-scoped names — the incident this guards against
 
@@ -176,7 +177,7 @@ unreleased surface dark in production while staging has it). Defaulted in `confi
 | Worker secrets | `pnpm --filter @rocketflare/web exec wrangler secret put <NAME> [-c wrangler.staging.toml]`, once per worker; locally `apps/web/.dev.vars` | `OAUTH_ENCRYPTION_KEY` (also encrypts tenant AI keys — rotating it invalidates every `ai_configs` credential), `BOOTSTRAP_ADMIN_EMAILS`, `RESEND_API_KEY`, `GOOGLE_*`, `MICROSOFT_*`; AI, all optional: `ANTHROPIC_API_KEY` (platform chat), `EMBEDDINGS_API_KEY` (platform OpenAI embeddings when no `AI` binding), `LANGFUSE_PUBLIC_KEY` + `LANGFUSE_SECRET_KEY` (both or tracing is off); `DATABASE_URL` only as a no-Hyperdrive fallback |
 | CI secrets | GitHub Environments `staging` / `production` | `DATABASE_URL` (that branch), `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` |
 | Scripts only | migration environment | `APP_DATABASE_URL` (db-roles, RLS enforce only) |
-| Developer-local only | `apps/web/.drizzle-cube.json` (git-ignored; copy `.drizzle-cube.json.example`) | a **tenant API key** for the drizzle-cube CLI / Claude Code plugin against `/cubejs-api` — it is an ordinary key from Settings → API keys, scopes every query to that tenant, and is revoked there; never deployed, never committed |
+| Developer-local only | `apps/web/.drizzle-cube.json` (git-ignored; the analytics plugin's README has the shape) | a **tenant API key** for the drizzle-cube CLI / Claude Code plugin against `/cubejs-api` — it is an ordinary key from Settings → API keys, scopes every query to that tenant, and is revoked there; never deployed, never committed |
 | Resource ids | tomls (committed) | Hyperdrive / KV ids — not secrets |
 | Provisioning transport | `apps/web/.provision.env` (git-ignored, 0600; written by `pnpm provision tokens` or copied from `.provision.env.example`), overridden by an exported variable of the same name (CI) | `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, `NEON_API_KEY`, `RESEND_API_KEY` (the full-access account key, not the Worker's sending key) + the optional Worker secrets. Not `.dev.vars`: `wrangler dev` loads that into the Worker, and account-level tokens must never reach one. Every resolved value is registered with `redact()`; Neon connection strings are fetched from the API on demand (`reveal_password` / `reset_password`) and reach children by env or stdin (`wrangler secret put`, `gh secret set`); every printed line passes one `redact()`; `apps/web/.provision.json` (git-ignored) caches ids and answers only and refuses any secret-shaped value |
 
@@ -373,7 +374,7 @@ holding the custom domains. One token may serve both environments.
 | Schema migration must be undone | migrations are forward-only: write a compensating migration, tag, and run the dance. `wrangler rollback` does not touch the database |
 | RLS enforce misbehaving | `TENANT_SCOPE_MODE = "off"` in `[vars]` and redeploy — no migration (docs/RLS.md) |
 | A Workflow hijacked by a name collision | fix the staging name, redeploy **both** workers (last deployer owns the name); stuck `agent_runs` rows settle on read (`GET /api/agents/runs/:id` → `reconcileRun` → `instance.status()`; `not_found` marks them `failed`) — except on the RESUME path, where `not_found` is recovered from by starting `<runId>-r1` rather than failing the run |
-| Fact tables stale or wrong after a deploy | `GET /api/analytics/facts/status` says which; fire the `15 * * * *` cron or run `refresh-fact-tables.ts` with that environment's `DATABASE_URL`. Rows are derived data — a rebuild is always safe; a schema change to a fact table is a normal forward migration followed by one rebuild |
+| Fact tables stale or wrong after a deploy | `GET /api/analytics/facts/status` (or `rocketflare analytics check-facts`) says which; fire the `15 * * * *` cron, or `rocketflare analytics refresh-facts` for one organisation. Rows are derived data — a rebuild is always safe; a schema change to a fact table is a normal forward migration followed by one rebuild. **First check the cron is in both tomls at all**: it is the analytics plugin's declaration, and an install that skipped that step leaves a task nothing ever dispatches |
 | A dashboard renders empty / errors after a cube change | a cube member referenced by stored `analytics_pages.config` was renamed or removed — restore the member (names are frozen) or, per tenant, `POST /api/analytics/templates/recreate` (admin+) to re-copy the templates; user-created pages need a manual edit |
 | Tenant AI keys unreadable after rotating `OAUTH_ENCRYPTION_KEY` | there is no re-encrypt path: admins re-enter the key in Settings → AI (the row keeps its label/model, `hasCredential` flips back); the platform `ANTHROPIC_API_KEY` is unaffected |
 

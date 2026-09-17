@@ -94,7 +94,10 @@ row you have to place), or apply anything you have not read.
 A file in a plugin's repository that falls outside `apps/web/src/plugins/<id>/`,
 `packages/shared/src/plugins/<id>/`, `apps/cli/src/plugins/<id>/`, `docs/plugins/<id>/`,
 `migrations/`, `docs/upgrades/` or its own root metadata is a **refusal**, not a warning: an
-install has to stay reversible by deleting a directory.
+install has to stay reversible by deleting a directory. The exception is the plugin REPOSITORY's
+own tooling — `.github/`, `.claude/`, `scripts/`, `package.json`, `.gitignore` — which is neither
+copied nor refused, because a plugin repo needs a CI workflow (half of decision 5) and a copy of
+`release.mjs` to cut a release with.
 
 `remove` deletes the trees, the five lines and the surface, then `pnpm db:generate` emits the
 `DROP TABLE`s — which is correct here; the kit's warning is about importing a foreign SNAPSHOT, not

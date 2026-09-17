@@ -92,7 +92,7 @@ The repo's **non-negotiables** are listed in `CLAUDE.md`; the ones contributors 
   `packages/shared/src/`, then the route validates with it, then the UI/CLI parse with it.
 - **Tenant isolation**: every domain query filters by the tenant from the auth context; every tenant
   table calls `tenantIsolation()`; every analytics cube scopes its SQL and has a case in
-  `tests/api/cubes/cube-isolation.test.ts`.
+  the analytics plugin's own `cube-isolation.test.ts`.
 - **Routes enqueue, never run** long work; concurrency is a database claim row, never a `Map`.
 - **Two tomls, one shape**: a binding, cron or `[vars]` key is added to both `wrangler*.toml` files.
 - **Docs in sync**: a behaviour change updates `docs/CONCEPTS.md` (and its "Known gaps"), `SETUP.md`,

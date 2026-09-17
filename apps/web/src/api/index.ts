@@ -28,10 +28,8 @@ import { aiConfigRouter } from './routes/ai-config'
 import { aiDocumentsRouter } from './routes/ai-documents'
 import { aiPromptsRouter } from './routes/ai-prompts'
 import { aiUsageRouter } from './routes/ai-usage'
-import { analyticsPagesRouter } from './routes/analytics-pages'
 import { authRouter } from './routes/auth/index'
 import { chatRouter } from './routes/chat'
-import { cubeApiRouter } from './routes/cube-api'
 import { featuresRouter } from './routes/features'
 import { filesRouter } from './routes/files'
 import { groupsRouter } from './routes/groups'
@@ -102,8 +100,8 @@ app.route('/ws', wsRouter)
 // `feature_disabled` on every route beneath the prefix, so a surface that ships dark is dark as a
 // WHOLE rather than route by route — declared once here, like auth, instead of remembered in each
 // handler. The kit ships no gated mount; an app adds `['/api/thing', thingRouter, requireFeature('thing')]`.
-// Remember the other doors too: the cube registry (`cubesFor`) and the dashboard templates
-// (`DashboardTemplate.feature`) have no nav entry and leak independently of this one.
+// Remember the other doors too: a surface with no nav entry (an analytics cube, a dashboard
+// template, a CLI command) leaks independently of this one.
 const mounts: readonly (readonly [string, Hono<AppEnv>, MiddlewareHandler?])[] = [
   ['/api/me', meRouter],
   ['/api/tenant', tenantRouter],
@@ -127,10 +125,6 @@ const mounts: readonly (readonly [string, Hono<AppEnv>, MiddlewareHandler?])[] =
   // list is the enumerable auth surface (D13).
   ['/api/agui', aguiRouter],
   ['/api/agents', agentsRouter],
-  ['/api/analytics', analyticsPagesRouter],
-  // drizzle-cube (D19): one router, two prefixes; the adapter registers absolute paths.
-  ['/cubejs-api', cubeApiRouter],
-  ['/mcp', cubeApiRouter],
   // D31: installed plugins, last, so a plugin can never shadow a kit prefix — Hono matches in
   // registration order. Each mount gets `authMiddleware` and its own optional gate exactly like a
   // kit mount; the convention is `/api/<plugin id>`, and `tests/config/plugins.test.ts` is what

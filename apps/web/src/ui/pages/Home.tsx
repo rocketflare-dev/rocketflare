@@ -4,7 +4,6 @@
  */
 import {
   BellIcon,
-  ChartBarIcon,
   ClockIcon,
   Cog6ToothIcon,
   ShieldCheckIcon,
@@ -12,6 +11,7 @@ import {
 } from '@heroicons/react/24/outline'
 import type { ComponentType } from 'react'
 import { Link } from 'react-router-dom'
+import { uiPlugins } from '@/plugins/ui'
 import { RoleBadge } from '@/ui/components/RoleBadge'
 import { EmptyState, PageHeader, SectionPanel, SkeletonRows } from '@/ui/components/shared'
 import { useActivity } from '@/ui/hooks/useActivity'
@@ -19,7 +19,7 @@ import { useAuth } from '@/ui/hooks/useAuth'
 import { type NavGuard, useNavGuard } from '@/ui/hooks/useNavGuard'
 import { timeAgo } from '@/ui/lib/format'
 
-interface QuickLink {
+export interface QuickLink {
   to: string
   label: string
   description: string
@@ -27,15 +27,7 @@ interface QuickLink {
   guard?: NavGuard
 }
 
-const QUICK_LINKS: QuickLink[] = [
-  {
-    // D19: the dashboards every member can read (admins edit)
-    to: '/analytics',
-    label: 'Analytics',
-    description: 'Dashboards over this organisation',
-    icon: ChartBarIcon,
-    guard: { action: 'read', subject: 'Analytics' },
-  },
+const CORE_QUICK_LINKS: QuickLink[] = [
   {
     to: '/profile',
     label: 'Your account',
@@ -70,6 +62,13 @@ const QUICK_LINKS: QuickLink[] = [
     guard: 'globalAdmin',
   },
 ]
+
+/**
+ * The kit's links, with every installed plugin's ahead of them (D31). Plugin first because a
+ * plugin is what this app ADDED — the kit's own links (account, notifications, settings) are the
+ * furniture — and because it reproduces where Analytics sat while it was part of the kit.
+ */
+const QUICK_LINKS: QuickLink[] = [...uiPlugins.flatMap(p => p.homeLinks ?? []), ...CORE_QUICK_LINKS]
 
 export default function Home() {
   const { user, tenant, tenancyMode } = useAuth()

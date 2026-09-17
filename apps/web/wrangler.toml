@@ -62,12 +62,11 @@ run_worker_first = [
   "/api/*",
   "/auth",
   "/auth/*",
-  "/cubejs-api",
-  "/cubejs-api/*",
-  "/mcp",
-  "/mcp/*",
   "/ws",
   "/ws/*",
+  # An installed plugin's own prefixes go here too, in barrel order (D31) — the analytics plugin
+  # adds "/cubejs-api" and "/mcp". `pnpm plugin add` prints the step; `pnpm provision cloudflare
+  # <env>` writes it. The parity test reads `API_PREFIXES`, so a forgotten one fails the gate.
 ]
 
 # Postgres via Hyperdrive → Neon. Create: wrangler hyperdrive create rocketflare-production \
@@ -91,7 +90,10 @@ id = "<KV_RATE_LIMIT_ID>"
 [triggers]
 crons = [
   "0 4 * * *",     # Daily 04:00 UTC — prune expired sessions, magic links, rate-limit state
-  "15 * * * *",    # Hourly at :15 — rebuild fact tables per tenant (D19, services/fact-tables)
+  # An installed plugin's crons go here too, identical in both files (D31): a plugin declares the
+  # EXPRESSION in its `plugin.json` and contributes the TASK through `ServerPlugin.scheduledTasks`,
+  # and a task registered under an expression no toml declares simply never runs. The analytics
+  # plugin's is "15 * * * *" — hourly, rebuilding its fact tables per tenant.
 ]
 
 # Background jobs (D7): one queue, one consumer; `src/api/queue.ts` dispatches on `batch.queue`.

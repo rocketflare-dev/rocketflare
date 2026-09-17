@@ -13,7 +13,7 @@ globs:
 Vitest in `apps/web` (all commands below are root scripts that delegate there, or run inside
 `apps/web`), four projects (`apps/web/vitest.config.ts`): `api` + `api-isolated` (Node, **real Postgres** on 5433),
 `ui` (jsdom + Testing Library), `config` (Node, no database: wrangler parity, env schema, pure
-helpers, the cross-tenant allow-list scan, and `tests/dashboards/**` — the dashboard-template structure test, D19). `pnpm test` is two `vitest run` invocations (`test:shared`, `test:isolated`) because
+helpers, and every installed plugin's own `src/plugins/*/tests/config/**`). `pnpm test` is two `vitest run` invocations (`test:shared`, `test:isolated`) because
 vitest 3 resolves `isolate` per run, not per project.
 
 ## Tests run under Node, against the real Hono app
@@ -150,25 +150,28 @@ a fake `WebSocket` factory left set) is on you.
   ack) or a throw (→ `failed` + retry); `createTestEnv({ AI: undefined, EMBEDDINGS_API_KEY })` is the
   Worker that embeds but cannot convert (503 `conversion_not_configured`, nothing stored)
 - Cron: call `scheduled({ cron: '0 4 * * *' }, env, ctx)` and assert the task ran; unknown cron → no-op.
-  `scheduled-facts.test.ts` does the same for `'15 * * * *'` (asserts `SCHEDULED_TASKS` registers
-  `refreshFactTables`, then dispatches it and reads the fact rows for seeded activity)
-- **Cube isolation (D19, MANDATORY — `tests/api/cubes/cube-isolation.test.ts`)**: seed two tenants with
-  different members and `activity_events` (`refreshFactTable(db, name, { tenantId })` after seeding so
-  the fact cube has rows), then for EVERY cube in `allCubes` run the same `POST /cubejs-api/v1/load`
-  as tenant A and as tenant B with a session cookie + `Origin` and assert each sees exactly its own
-  rows — and that B's user/tenant ids never appear anywhere in A's payload. The `cases` table is keyed
-  by cube name and compared to `allCubes` — **adding a cube without a case fails the suite**. The file
-  also covers a join (`ActivityEvents → Users`), `/meta`, 401 / 403 `no_tenant` envelopes, `/mcp`
-  JSON-RPC `initialize`, and executes every template portlet query for a tenant (rows > 0).
-  `cubes/security.test.ts` unit-tests `extractSecurityContext` / `tenantIdOf`
-- Fact tables (`tests/api/services/fact-table-refresh.test.ts`): call `refreshFactTable` directly
-  against Postgres — one row per grain (NULL actor included), idempotent, only the refreshed tenant's
-  rows replaced, `factTableColumnNames` in declaration order, unknown table throws; `computeFreshness`
-  is pure (fresh / stale / never-built cases) and `checkFactTableFreshness` reads the live tables
-- Analytics pages (`analytics-pages.test.ts`): first `GET /pages` creates the template pages once;
-  `POST /api/tenants` seeds them; CRUD as owner, 403 for a member on every write, 404 across tenants,
-  reset restores the template, template delete → 403 `template_page`, `recreate` repairs,
-  `/facts/status` is admin+
+  A PLUGIN's cron task is tested the same way and the test belongs to the plugin (the analytics
+  plugin's `scheduled-facts.test.ts` asserts `SCHEDULED_TASKS` registers `analytics.refreshFactTables`
+  under `'15 * * * *'`, then dispatches it and reads the fact rows) — which is the one thing that
+  proves the host's toml and the plugin's task met, because a task under an expression no toml
+  declares never runs
+- **A PLUGIN's tests live inside it and run in the host's projects** (D31):
+  `src/plugins/<id>/tests/{api,ui,config}` are in `vitest.config.ts`'s `include` globs, so they use
+  the same `createTestEnv`, the same `setupTestDatabase` and the same `request()` helpers, reached
+  by a relative path out of the plugin. **The rule is: a plugin tests its BEHAVIOUR, the host tests
+  that it is a well-formed plugin** (`tests/config/plugins.test.ts` — ids, namespaced query-key
+  roots, no deep import past the four entries, a `ui.ts` with no eager page). Two of the analytics
+  plugin's are worth copying:
+  - **Cube isolation (MANDATORY)**: seed two tenants with different members and `activity_events`,
+    then for EVERY cube in `allCubes()` run the same `POST /cubejs-api/v1/load` as tenant A and as
+    tenant B and assert each sees exactly its own rows — and that B's ids never appear anywhere in
+    A's payload. The `cases` table is compared to the whole registry, **contributed cubes included**,
+    so adding a cube without a case fails the suite. drizzle-cube adds no second line of defence, so
+    this file is the only enforcement of tenant scoping in the cube layer.
+  - **A visibility matrix per restrictable resource**: the kit's `access-visibility.test.ts` walks a
+    restricted DOCUMENT past every read path; the plugin's `dashboard-visibility.test.ts` does the
+    same for its own rows, including the two shapes that matter most — an EMPTY grant list is
+    private rather than public, and a hidden row answers the SAME 404 as a missing one.
 - Producers: assert on `stubs(env).queue.messages` (RecordingQueue) — `body.type`, `body.payload` —
   and that the route did NOT do the work itself (no `[email:dev]` line, no provider fetch)
 - Uploads: `new FormData()` + `form.append('file', new File([bytes], 'a.png', { type: 'image/png' }))`
@@ -179,7 +182,7 @@ a fake `WebSocket` factory left set) is on you.
 ## What every API test file includes
 
 - A tenant-isolation assertion for list/read endpoints (tenant B cannot see tenant A's row); for a
-  cube that assertion is a case in `tests/api/cubes/cube-isolation.test.ts`
+  cube or other query surface a plugin adds, that assertion is a case in the plugin's own isolation test
 - An unauthenticated 401 and a wrong-role 403 for a protected route
 - The error envelope shape `{ error, statusCode, code? }` on at least one failure path
 
@@ -197,13 +200,10 @@ with fake timers; `run-page` mounts inside `WebSocketProvider` with the `FakeSoc
 `streamResponse` for arbitrary chunk boundaries, `hangingSseResponse` for the Stop button); assert with `waitFor`, not `findBy` — bubbles
 remount when the optimistic id becomes the persisted one. Pure parsers (`chunking.test.ts`,
 `permissions.test.ts` — the matrix incl. `AiConfig`/`Prompt`/`Conversation`/`AgentRun`/`Document`/
-`Dashboard`/`Analytics`) live in the `config` project, as does **`tests/dashboards/all-templates.test.ts`**
-(D19, no database): every `DASHBOARD_TEMPLATES` entry is checked structurally — `layoutMode: 'rows'`,
-row widths sum to 12, unique row/group/portlet ids, every column resolves to a portlet or group, every
-portlet placed exactly once with x/y/w/h matching its row, filters mapped only to declared filters,
-**every `Cube.member` in a portlet query exists in `allCubes`** (the frozen-names guard), `recordsTable`
-is `ungrouped`, the chart rules from `DASHBOARD_PATTERNS.md`, registry keys/orders/one default.
-Changing a template or a cube member without running it is how a stored dashboard breaks silently.
+plus whatever a plugin declares) live in the `config` project, as do every installed plugin's own
+`tests/config/**` — the analytics plugin's `all-templates.test.ts` is the pattern: a pure structural
+check over a registry, with no database, that would otherwise only fail at runtime in somebody's
+tenant.
 
 ## Commands
 

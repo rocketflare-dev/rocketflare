@@ -18,8 +18,6 @@ vocabulary in `packages/shared/src/permissions.ts`). Built once per request by t
 | `AgentRun` (D7, #17) | manage | manage | manage | manage | manage (own runs — `routes/agents.ts` filters by `requestedByUserId` unless `isAdminLevel(auth)`, which sees and cancels every run) |
 | `Group` (D29) | manage | manage | manage | manage | read (administering groups is `manage Group`; a member's only read is `GET /api/groups/mine`. Which ROWS a group lets you see is a SQL predicate in `services/access.ts`, never a CASL condition) |
 | `Document` (D18) | manage | manage | manage | manage | create + read (anyone ingests and searches; own-document delete is `routes/ai-documents.ts`'s `ownerUserId` check, others' need `delete Document`) |
-| `Dashboard` (D19, `analytics_pages`) | manage | manage | manage | manage | read |
-| `Analytics` (D19, the cube API `/cubejs-api`, `/mcp`) | manage | read | read | read | read |
 | `AccessRequest`, `User` (platform) | manage | – | – | – | – |
 | `Feature:<name>` via `access` | all | by `features` | by `features` | all | by `features` |
 | `FeatureFlag` (D30, administering flags) | manage | – | – | – | – |
@@ -33,7 +31,7 @@ vocabulary in `packages/shared/src/permissions.ts`). Built once per request by t
 - **Never gate a surface on `access Feature:<name>`.** `globalAdmin` is `manage all` and `support`
   is granted `access all`; in CASL both are wildcards covering `access` on every `Feature:` subject,
   so an ability check answers "on" for platform staff whatever the deployment ships — while
-  `requireFeature`, `cubesFor` and `listTemplates`, which read the ARRAY, answer "off". An app on
+  `requireFeature` and an installed plugin's own registries, which read the ARRAY, answer "off". An app on
   this kit shipped that and had five routes open in production to staff. A flag is CONFIGURATION:
   read `auth.features` / `session.features`. `applyFeatureFlags` stays for an app that wants
   permission-style entitlements, and nothing hiding a dark surface may use it

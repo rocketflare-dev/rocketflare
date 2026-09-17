@@ -109,10 +109,13 @@ ones their slice touches, and say what enforces each, so the rule is a test and 
 - **The realtime `entity` string IS the query-key family root.** `entity.changed { entity: 'order' }`
   invalidates `queryKeys.orders` only if that family is named `['order']`. Pick the string once and
   use it in the service nudge and in `lib/query-keys.ts`.
-- **Cube member names are frozen** — dashboards store `Cube.measure` strings in jsonb, so a rename
-  silently breaks every saved page. And a new cube is not done until it has a case in
-  `tests/api/cubes/cube-isolation.test.ts`; that test is the only thing enforcing tenant scoping in
-  the cube layer.
+- **Analytics is a PLUGIN** (D31), so "and a dashboard" means the analytics plugin is installed —
+  and where the cube goes depends on whose feature it is: inside the plugin's tree for an app that
+  owns its copy, or through `analyticsExtensions({ cubes, cubeIsolationCases })` for a second
+  plugin. Two rules survive the move unchanged: **cube member names are frozen** (dashboards store
+  `Cube.measure` strings in jsonb, so a rename silently breaks every saved page), and **a new cube
+  is not done until it has a case in `cube-isolation.test.ts`** — that test is the only thing
+  enforcing tenant scoping in the cube layer.
 - **The gate** — `pnpm lint && pnpm typecheck && pnpm test && pnpm build` — passes before every
   commit, and a behaviour change updates `docs/CONCEPTS.md` in the same PR.
 

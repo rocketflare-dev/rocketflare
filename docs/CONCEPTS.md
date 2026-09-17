@@ -16,7 +16,7 @@ section ends with **Known gaps**; sections for phases not yet built say so.
 | 5 | [Background work and realtime](#5-background-work-and-realtime) | Phase 2–3 — built |
 | 6 | [Email and storage](#6-email-and-storage) | Phase 1–2 — built |
 | 7 | [UI shell](#7-ui-shell) | Phase 0–1 |
-| 8 | [Analytics](#8-analytics) | Phase 4 — built (server + UI) |
+| 8 | [Analytics](#8-analytics) | Phase 4 — extracted to the `analytics` plugin (D31) |
 | 9 | [AI layer](#9-ai-layer) | Phase 3 — built |
 | 10 | [Deployment](#10-deployment) | Phase 0 / 5 |
 | 11 | [CLI](#11-cli) | Phase 1 |
@@ -70,7 +70,8 @@ strands a user who lost their last organisation.
 or `support` (minted only from `/admin`, excluded from member counts, visible to the customer by
 design). `users.isGlobalAdmin` is a platform flag, not a tenant role. CASL subjects: `all`, `Tenant`,
 `TenantMember`, `Invitation`, `ApiKey`, `ActivityEvent`, `Notification`, `File`, `AiConfig`, `Prompt`,
-`Conversation`, `AgentRun`, `Document`, `Dashboard`, `Analytics`, plus an `access` hook over an
+`Conversation`, `AgentRun`, `Document`, plus whatever an installed plugin declares (`Dashboard`
+and `Analytics` arrive with the analytics plugin, §8), plus an `access` hook over an
 injected `features: string[]`.
 
 | Subject \ Role | globalAdmin | owner | admin | support | member |
@@ -87,9 +88,7 @@ injected `features: string[]`.
 | `Conversation` (D17) | manage | manage | manage | manage | manage (own only: routes filter by `userId`, others' threads are 404) |
 | `AgentRun` (D7) | manage | manage | manage | manage | manage (own runs; admin+ see and cancel every run) |
 | `Document` (D18) | manage | manage | manage | manage | create + read (delete own: route's `ownerUserId` check) |
-| `Dashboard` (D19, `analytics_pages`) | manage | manage | manage | manage | read |
 | `Group` (D29) | manage | manage | manage | manage | read (routes narrow it to their OWN groups) |
-| `Analytics` (D19, the cube API `/cubejs-api`, `/mcp`) | manage | read | read | read | read (rows are tenant-scoped by every cube, §8) |
 
 `*` Deleting a tenant and assigning/changing `owner` additionally require an explicit
 `role === 'owner'` check — CASL conditions are not used anywhere, so don't pretend they are. A new
@@ -221,7 +220,8 @@ request logger (request id for everything) → config → security headers → b
 CSRF so preflights are answered) → CSRF (cheap, no DB) → database (per-request client, first real
 cost) → optional tracing flush → mounts. Auth is per-mount because the public surface (health,
 OAuth callbacks, invite accept) is small and enumerable. The ASSETS catch-all serves the SPA and
-404s `/api|/auth|/cubejs-api|/mcp` so a missing route never returns `index.html`.
+404s `/api|/auth|/ws` — and every prefix an installed plugin declares (§16) — so a missing route
+never returns `index.html`.
 
 **Contracts (D13, D26).** zod schemas in `packages/shared/src/` (`@rocketflare/shared`, §12) are the API
 contract; the server validates with them, the UI and the CLI parse responses with them. No
@@ -518,8 +518,11 @@ emitted tokens; the palette *pipeline* is documented, not shipped (D20). Tailwin
 opted out globally (`@import "tailwindcss" source(none)`) and re-enabled with explicit `@source`
 lines scoped to `apps/web/src/ui` — auto-detection scanned the whole repo (docs, API code) and
 DaisyUI emitted components for stray words; the safelist exists only for classes built from props.
-A dependency that ships JSX (drizzle-cube's `dist/client`, §8) gets its own explicit `@source`
-line, never safelist entries.
+A dependency that ships UN-COMPILED Tailwind classes gets its own explicit `@source` line, never
+safelist entries — and one that ships PRE-COMPILED CSS (drizzle-cube, which the analytics plugin
+imports in its own lazy chunk) must not get one: measured, it generated zero of the library's
+classes and 6.5 KB gzip of stray DaisyUI components. An installed plugin's own pages live outside
+`src/ui`, so `@source "../plugins/**/ui/**/*.{ts,tsx}"` is what makes their classes exist at all.
 
 **Providers, in order** (06 §b): `ErrorBoundary` → `QueryClientProvider` → `AuthProvider`
 (`GET /auth/session`, zod-parsed, tenant selection) → `AbilityProvider` (CASL from
@@ -544,143 +547,46 @@ theme option or cross-tab sync; dev quick-login account list should come from a 
 
 ## 8. Analytics
 
-**Status: built (Phase 4) — server and UI; UI specifics in `apps/web/src/ui/CLAUDE.md`.** Server:
-`apps/web/src/api/cubes/*` (+ `CLAUDE.md`), `routes/{cube-api,analytics-pages}.ts`,
-`services/dashboard-templates.ts`, `services/fact-tables/**` (+ `CLAUDE.md`), `src/dashboards/**`
-(`CLAUDE.md`, `DASHBOARD_PATTERNS.md`), `db/schema/{analytics-pages.ts,facts/*}`, migration `0004`.
-Contracts: `@rocketflare/shared/analytics`.
+**Status: shipped as the `analytics` PLUGIN, installed by default (D31, Phase C — kit 0.6.0).**
+Repository: `rocketflare-dev/rocketflare-plugin-analytics`; once installed, its code is ordinary
+source at `apps/web/src/plugins/analytics/**` (+ `CLAUDE.md`),
+`packages/shared/src/plugins/analytics/` and `apps/cli/src/plugins/analytics/`. **Its docs live in
+the plugin**: `apps/web/src/plugins/analytics/CLAUDE.md`, `cubes/CLAUDE.md`,
+`dashboards/DASHBOARD_PATTERNS.md`, `services/fact-tables/CLAUDE.md`, and the plugin repository's
+own README and release notes.
 
-**drizzle-cube is the semantic layer; tenant scoping is inside every cube's `sql()` (D19).**
-`routes/cube-api.ts` is ONE router mounted at both `/cubejs-api` and `/mcp` behind
-`authMiddleware`. Per request it does `withAuthAndDb(c)` → `guardPermission(c, 'read',
-'Analytics')` → `extractSecurityContext(c)` (`cubes/security.ts`: `{ tenantId, userId, role }`
-from `c.get('auth')`, throws without a tenant) → `createCubeApp({ cubes: allCubes, drizzle: db,
-schema, engineType: 'postgres', mcp: { enabled: true } })` from `drizzle-cube/adapters/hono`, then
-forwards `c.req.raw` — the adapter registers absolute paths `/cubejs-api/v1/{load,meta,sql,batch,
-dry-run}` and `/mcp`. The compiler is rebuilt per request because the Hyperdrive-backed `db` exists
-only inside one. Both prefixes are in the SPA catch-all's JSON-404 guard, so an unauthenticated hit
-is a 401 envelope, never `index.html` (`tests/api/health.test.ts`). MCP uses drizzle-cube's default
-origin policy (loopback and clients that send no `Origin`, e.g. a desktop connector); a browser MCP
-client needs `mcp.allowedOrigins`, which the kit does not set. `apps/web/.drizzle-cube.json.example`
-→ a git-ignored `.drizzle-cube.json` holding a tenant API key for the drizzle-cube CLI / Claude Code
-plugin — the Bearer key scopes it to one tenant like any other request.
+It was §8 of this file up to 0.5.0, and nothing about what it DOES changed when it moved — cubes
+still scope every `sql()` by `tenantIdOf(ctx)`, `analytics_pages` is still a `DashboardConfig`
+stored whole as jsonb, dashboards are still restrictable to groups, the fact table is still
+rebuilt per tenant on the `:15` cron, and the isolation test is still mandatory. What changed is
+that **the kit's core is now ignorant of drizzle-cube**, which is what §16 decision 6 is for:
+another plugin contributes cubes, fact tables, dashboard templates and cube-isolation cases through
+`analyticsExtensions({...})`, narrowed with zod by the owning plugin and thrown on by name.
 
-**Every cube filters on `tenantIdOf(ctx)`** — directly (`TenantUsers`, `ActivityEvents`,
-`TenantActivityDaily`: `where: eq(table.tenantId, tenantIdOf(ctx))`) or, for a global table,
-through a membership subquery (`Users`: `inArray(users.id, select user_id from tenant_users where
-tenant_id = $1)` — the pattern for any table without `tenant_id`). `tenantIdOf` throws on an empty
-tenant rather than compiling `tenant_id = NULL`. **This is convention, not enforcement** — drizzle-
-cube joins whatever a query asks for and there is no second line of defence in the cube layer — so
-`apps/web/tests/api/cubes/cube-isolation.test.ts` is mandatory: two seeded tenants, every cube in
-`allCubes` through the real `POST /cubejs-api/v1/load` as each tenant, only that tenant's rows back
-(and none of the other's ids anywhere in the payload), a join case (`ActivityEvents → Users`),
-`/meta` lists every cube, 401 and 403 `no_tenant` envelopes, `/mcp` answers a JSON-RPC
-`initialize`, and every template portlet query executes with rows. A new cube must add a case —
-the coverage assertion compares `allCubes` to the case keys. No cube reads `role`; access is
-membership + `read Analytics`, filtering is by tenant.
+A fresh clone is unchanged: `analytics` is in `.rocketflare.json` `defaultPlugins`, so
+`bash scripts/bootstrap.sh` installs it as its `plugins` step. `pnpm bootstrap --no-plugins` gives
+a kit with no `/analytics`, no `/cubejs-api`, no `/mcp` and no drizzle-cube in either bundle, which
+is the shape every other optional surface already had.
 
-**Ship set** (`cubes/index.ts`, sorted by title). `ActivityEvents` — event stream over
-`activity_events` with `meta.eventStream { bindingKey, timeDimension, eventDimension }` (funnel /
-flow / retention modes); measures `count`, `activeUsers`. `TenantActivityDaily` — over the fact
-table; `eventCount` (sum), `activeUsers`, `activeDays`; dimensions `day`, `userId`,
-`factRefreshedAt`. `TenantUsers` — `count` plus filtered `ownerCount` / `adminCount` /
-`memberCount` over a synthetic `tenant:user` key (the junction has no `id`); `role`, `joinedAt`.
-`Users` — `count`; `name`, `email`, `createdAt`, `lastLoginAt`. Joins are declared on the
-`belongsTo` side only (the three tenant cubes → `Users`); `Users` declares none, because drizzle-cube
-0.8.3 resolves join paths in both directions and a declared `hasMany` makes every ungrouped
-(`recordsTable`) query that mixes the two cubes a 400.
+Three things the kit still owns, because they are not analytics:
 
-**Fact tables.** `tenant_activity_daily_facts` (`db/schema/facts/`, migration `0004`): grain
-`(tenant_id, day, user_id)` declared `UNIQUE NULLS NOT DISTINCT` (Postgres 15+ — NULL actors collapse
-to one row), `event_count`, `distinct_event_types`, `first_event_at` / `last_event_at`,
-`fact_refreshed_at` watermark; no surrogate `id`, no FK to `users` (a refresh must never fail
-because a person left), RLS policy like every tenant table. It is a plain table, not a materialised
-view: `REFRESH MATERIALIZED VIEW` cannot run through Hyperdrive and cannot be scoped to one tenant.
-`services/fact-tables/registry.ts` `FACT_TABLES` is the one list — `{ name, table,
-refreshIntervalMinutes: 60, source: { table, timestampColumn }, selectForTenant(tenantId) }` — that
-`refresh.ts`, `freshness.ts`, the cron and both scripts iterate. `refreshFactTableForTenant` runs
-one transaction per tenant: `DELETE … WHERE tenant_id = $1`, then `INSERT INTO t (<columns from
-getTableColumns>) <selectForTenant>` — the target list comes from the drizzle mirror, so a column
-drift between `queries/<name>.ts` and the schema fails loudly instead of shifting values. Tenants
-run sequentially; errors are isolated per tenant (`errors[]`; the cron logs a warning). Cron
-`"15 * * * *"` → `refreshFactTables` (`scheduled.ts`, both tomls). Freshness: `lagSeconds` = newest
-`source.timestampColumn` minus newest `fact_refreshed_at` (0 when the build is newer; a never-built
-table with source rows is measured to now); `stale` = lag > 2× the interval (one missed cron is
-fine, two is not). `GET /api/analytics/facts/status` (admin+, `isAdminLevel`) and `pnpm web
-db:check-facts` (exit 1 when any table is stale) read it; `pnpm web db:refresh-facts [table]
-[--tenant=<uuid>]` runs the same service the cron does. `wrangler dev` never fires crons — trigger
-`:15` by hand (`.claude/rules/cloudflare.md`).
+- **`activity_events`** — the audit log the plugin's cubes and its one fact table read. It is the
+  kit's table and stays core; the plugin only queries it.
+- **`GET /api/analytics/*`, `/cubejs-api` and `/mcp`** are the plugin's prefixes, but the SPA
+  catch-all's JSON-404 guard, `run_worker_first` and the Vite proxy are core files — so installing
+  the plugin means adding its two prefixes to them by hand (§16: a plugin edits no toml and no core
+  file; `pnpm plugin add` prints the step and `pnpm provision cloudflare <env>` writes the toml half).
+- **Visibility** (`VisibilityResource`, §1 D29) is a core registry with a plugin entry in it, not an
+  analytics concept. So is the `access.changed` nudge, which picks up the plugin's query-key root
+  through `SharedPlugin.realtimeRoots`.
 
-**Dashboards.** Templates are TypeScript `DashboardConfig`s (type from `drizzle-cube/client`) in
-`src/dashboards/`: `layoutMode: 'rows'` with explicit `rows` (widths sum to 12), `groups` for KPI
-strips, one `isUniversalTime` filter, portlets whose `query` is a cube query as a JSON string;
-registered in `DASHBOARD_TEMPLATES` (`index.ts`; categories are folders such as
-`general-templates/`; `key` doubles as the page slug; `order` unique; at most one `isDefault`).
-One ships: `tenant-overview` ("Organisation Overview", default) — it exercises every ship-set cube.
-`analytics_pages` (`slug` unique per tenant, `config` jsonb, `templateKey` — null = user page,
-`isDefault`, `sortOrder`, `createdByUserId`) are copied from templates by `ensureDefaultDashboards`
-in two places: `onTenantCreated` (`utils/db/tenant-helpers.ts`) after the create transaction
-commits — best-effort, a failure is swallowed — AND lazily on every `GET /api/analytics/pages`,
-idempotent through `(tenant_id, slug)` `onConflictDoNothing`. The lazy path is the guarantee and
-is how a template added later reaches existing tenants. Routes (`/api/analytics`, contracts in
-`@rocketflare/shared/analytics`): every member — `GET /pages` (`{ items }`, ordered by `sortOrder`),
-`GET /pages/:id`, `GET /templates`; `manage Dashboard` (admin+) — `POST /pages` (an empty rows
-dashboard unless `config` is given; unique slug from the name), `PATCH /pages/:id` (name,
-description, config, order, isDefault), `DELETE /pages/:id` (a template page → 403
-`template_page`), `POST /pages/:id/reset` (a user page → 400 `not_a_template_page`; a template
-that no longer exists → 404 `template_not_found`), `POST /templates/recreate` → `{ created, reset }`.
-Activity: `dashboard.created | updated | deleted | reset`. `config` is a copy: **a template change
-reaches existing tenants only through reset or recreate.**
-
-**Frozen member names.** Stored dashboards reference `Cube.measure` / `Cube.dimension` strings in
-JSONB, so renaming a member silently breaks every saved page in every tenant. Add members, never
-rename them. `apps/web/tests/dashboards/all-templates.test.ts` (the `config` project, no database)
-checks every template structurally — rows sum to 12, ids unique, every portlet placed exactly once
-with x/y/w/h matching its row, every referenced member exists in `allCubes`, `recordsTable` is
-`ungrouped`, the chart-type rules from `DASHBOARD_PATTERNS.md`, registry keys/orders/one default —
-and reset/recreate is the user-facing repair.
-
-**Group visibility (D29).** `analytics_pages` carries `visibility` and `analytics_page_groups`;
-`GET /pages` and `GET /pages/:id` AND `visibleAnalyticsPages(scope)` onto the tenant predicate, and
-a page the reader may not see is the same 404 as one that does not exist. `ensureDefaultDashboards`
-is unchanged and template pages are always `tenant` — they are seeded for every tenant, and reset
-and recreate must never change who can see one. The security context gains `groupIds`, `groups`
-(names by type name) and `groupIdsByType`, plus **`groupFilter(ctx, typeName, column)`**: a helper
-for an app whose own fact table carries a group dimension. No kit cube uses it, because no kit
-table has one. Admin → `undefined` (no narrowing); groups of that type → `column in (…ids)`; NO
-group of that type → **`false`**, fail-closed. It matches on IDS: matching on names means renaming
-a group silently moves rows.
-
-**Permissions.** `Dashboard` (pages): admin+ `manage`, member `read`. `Analytics` (the cube API):
-`read` for every role (§1 matrix). The cube API is read-only by nature.
-
-**UI.** In progress; specifics in `apps/web/src/ui/CLAUDE.md`. It renders `analytics_pages` with
-drizzle-cube's React components (`drizzle-cube/client`; the dependencies added for it are
-`recharts`, `d3`, `react-grid-layout`, `react-is`) in its own lazy chunk. Nothing in this section
-depends on it — the contract is the routes above.
-
-**Dependencies and bundle.** `drizzle-cube@0.8.3`, pinned exactly (one transitive peer warning,
-`@duckdb/node-api`, is expected). It is **by far the largest thing in the Worker bundle**, and it is
-one import: `drizzle-cube/adapters/hono` statically imports `dist/adapters/mcp-transport-*.js` (the
-MCP SDK plus inlined chart rendering) even when `mcp.enabled` is false — not the kit's own imports
-(the sourcemap has no `node_modules/react` or `recharts` entries reached from our code). It stays
-under the Workers size cap (3 MiB gzip on the free plan, higher on Paid, which the kit needs
-anyway). No byte count is quoted anywhere in these docs on purpose: it moves with every dependency
-bump, so `gzip -c apps/web/dist/api/worker.js | wc -c` after `pnpm build` is the only figure worth
-trusting. The fix is upstream — a lazy `import()` of the MCP path in the adapter — or a thin adapter
-of our own over `drizzle-cube/server`.
-
-**Known gaps / not built yet:** UI — no router-level unsaved-changes blocker (`beforeunload` + flush on leaving edit mode), heat-map charts stubbed (`@nivo/heatmap` aliased to a notice; install it and drop the alias), drizzle-cube runs its own TanStack Query context so `CubeClientProvider` gives it a dedicated `QueryClient` whose 401 handler calls `notifyUnauthorized`, and mirrors `data-theme="rocketflare-dark"` into a `dark` class while mounted; isolation is convention
-enforced by one test — no per-cube CASL gate, no second line of defence in the cube layer; the
-compiler is rebuilt per request (4 cubes — cheap; `SemanticLayerCompiler` + cube sets is the
-scaling path) and drizzle-cube's `MemoryCacheProvider` is per-isolate (a KV provider would be an
-extension); fact refresh is a sequential full rebuild — fan tenants out through `JOBS_QUEUE` past a
-few hundred — and two rebuilds of the SAME tenant must not overlap (the later DELETE misses the
-earlier INSERT and trips the grain unique index, so that tenant is reported in `errors[]` and keeps
-the older rows): don't run `db:refresh-facts` while the cron is due; no realtime nudge for facts or pages (a dashboard refreshes on the next fetch);
-`mcp.allowedOrigins` unset; the bundle growth above; the `ANALYTICS_ENGINE` binding is deliberately
-not wired; drizzle-cube's `rlsSetup` unused; reporting/export, AI dashboard generation, benchmarks
-deferred.
+**Known gaps / not built yet:** the ones that were listed here are the plugin's now and live in its
+README and `CLAUDE.md`. What is the KIT's: `activity_events` has no retention policy, so a plugin
+aggregating it inherits an unbounded source; nothing in the kit proves that a plugin's cron
+expression reached both tomls beyond the parity test comparing the two files to each other (a cron
+nobody declared simply never fires, silently); and `pnpm web db:refresh-facts` / `db:check-facts`
+are gone from the kit's scripts — they are `rocketflare analytics refresh-facts` and `check-facts`,
+which need a running server and a logged-in CLI rather than a bare `DATABASE_URL`.
 
 ## 9. AI layer
 
@@ -1664,9 +1570,10 @@ the git-ignored `.rocketflare.local.json` sidecar that records a plugin installe
 checkout (§16).
 
 **The surface manifest.** `surfaces[]` lists what the kit ships that is meant to be replaced:
-`kind: example` (the two example agents, the two example cubes and their fact table,
+`kind: example` (the two example agents,
 the `tenant-overview` template, the three read-list CLI commands, the demo seed),
-`kind: optional-feature` (chat, agents, knowledge, analytics — whole features an app may remove) and
+`kind: optional-feature` (chat, agents, knowledge — whole features an app may remove; analytics is
+a plugin now and so is recorded as `kind: plugin` instead) and
 **`kind: plugin`** (D31, §16 — code that came from another repository, carrying the `source` block
 that says which one). A plugin surface is also the one kind `classifyPath` answers
 `skipped-plugin-owned` for: a kit diff never touches a byte a plugin owns, because that plugin has
@@ -1756,10 +1663,14 @@ by step, and it is the only way to exercise `waitForEvent` — the Node suite ca
 document and a dashboard to Finance, and watch `member@example.test` lose them from Knowledge,
 Search, Analytics and the chat box's answers while `owner@` keeps them — then move that person into
 Finance from a second browser and watch them appear without a reload (D29);
-query every cube as two tenants and see disjoint rows
-(`tests/api/cubes/cube-isolation.test.ts`), run `pnpm web db:refresh-facts && pnpm web
-db:check-facts` to a `fresh` fact table, `GET /api/analytics/pages` and find the seeded
-`tenant-overview` page (and render it with live numbers once the analytics UI lands); and,
+watch the bootstrap's `plugins` step install the ANALYTICS plugin (§8, §16) from
+`defaultPlugins` and generate its migration, then open **Analytics** and find the seeded
+**Organisation Overview** page rendering with live member and activity numbers, query every cube as
+two tenants and see disjoint rows (the plugin's own `cube-isolation.test.ts`), run `rocketflare
+analytics check-facts` to a `fresh` fact table — and run `bash scripts/bootstrap.sh --no-plugins`
+on another clone and find no `/analytics`, no `/cubejs-api`, no `/mcp` and no `recharts` in either
+bundle; then `pnpm plugin remove analytics --apply`, watch `pnpm db:generate` emit exactly three
+`DROP TABLE`s, and have the whole gate stay green on the bare kit; and,
 port a later kit release into a renamed copy with `pnpm kit:upgrade --apply` and watch it skip the
 examples that copy deleted rather than recreating them (§13); turn the `example-feature` flag on
 under Admin → Feature flags and watch the kit's reference PLUGIN (§16) appear whole — the nav item
@@ -1858,8 +1769,8 @@ there and no consumer changes.
 | Door | How |
 |---|---|
 | API mounts | an optional third element in the mount table of `api/index.ts` — `requireFeature('x')` 404s `feature_disabled` beneath the whole prefix. **404, not 403**: a 403 confirms the feature exists. Declared once per surface, like auth |
-| the cube registry | `cubesFor(features)`, filtered per request in `routes/cube-api.ts`. `allCubes` stays whole so `cube-isolation.test.ts` still proves every cube's tenant scoping — a cube's isolation must be proven whether or not its feature is on today |
-| dashboard templates | `DashboardTemplate.feature` + `listTemplates(features)`. The sharpest one: `ensureDefaultDashboards` runs lazily on EVERY `GET /api/analytics/pages`, so an ungated template seeds itself into every organisation on the first load after a deploy — a gate that creates rows, not one that reveals them. `createTenantForUser({ features })` covers the other end, at all four call sites |
+| a plugin's own registry | the analytics plugin's `cubesFor(features)`, filtered per request in its `cube-api` route. `allCubes()` stays whole so `cube-isolation.test.ts` still proves every cube's tenant scoping — a cube's isolation must be proven whether or not its feature is on today |
+| a hook that CREATES rows | the sharpest one, and it belongs to whichever plugin owns the hook: the analytics plugin's `ensureDefaultDashboards` runs lazily on EVERY `GET /api/analytics/pages`, so an ungated template would seed itself into every organisation on the first load after a deploy. `ServerPlugin.hooks.onTenantCreated` is handed `features` for exactly that reason, and `createTenantForUser({ features })` covers the other end, at all four call sites |
 | nav, routes, settings tabs | `NavGuard` gains `{ feature }` and a list meaning AND, so the flag and the permission stay two readable facts rather than one conflated subject |
 
 **Administering flags** is `/admin/feature-flags` behind `globalAdminMiddleware`; `FeatureFlag` is a
@@ -1912,7 +1823,9 @@ Postgres table the Worker already holds a connection to.
 
 ## 16. Plugins
 
-**Status: the seam and the reference plugin built (D31, Phase A).** Types:
+**Status: built (D31). The seam and the reference plugin in Phase A, the lifecycle and the
+skills in Phase B, and the kit went BARE in Phase C — analytics is a plugin (§8) and the one entry
+in `defaultPlugins`.** Types:
 `packages/shared/src/plugins/types.ts`, `apps/web/src/plugins/types.ts`,
 `apps/cli/src/plugins/types.ts`. Barrels: `packages/shared/src/plugins/index.ts`,
 `apps/web/src/plugins/{server,ui,schema}.ts`, `apps/cli/src/plugins/index.ts`. Provenance:
@@ -1973,7 +1886,7 @@ moves; what moves is where you ADD to it.
 | `ServerPlugin.jobHandlers` · `agents` · `prompts` · `agentTools` · `scheduledTasks` | `coreHandlers` · `CORE_AGENTS` · `CORE_PROMPT_REGISTRY` · `buildAgentTools` · `CORE_SCHEDULED_TASKS` |
 | `ServerPlugin.grants` · `rlsExcludedTables` · `unscopedAllowlist` · `visibilityResources` | `buildAbility` after the kit's matrix · `RLS_EXCLUDED_TABLES` · `CORE_UNSCOPED_ALLOWLIST` · `VISIBILITY_RESOURCES` |
 | `ServerPlugin.hooks` · `extensions` | `onTenantCreated`, `seed --demo`; whatever another plugin reads |
-| `UiPlugin.routes` · `nav` · `settingsTabs` · `queryKeys` · `agentForms` | `App.tsx` per tier · `composeNav(CORE_NAVIGATION, …)` · the settings tabs · `CORE_QUERY_KEYS` · `CORE_AGENT_FORMS` |
+| `UiPlugin.routes` · `nav` · `homeLinks` · `settingsTabs` · `queryKeys` · `agentForms` | `App.tsx` per tier · `composeNav(CORE_NAVIGATION, …)` · `CORE_QUICK_LINKS` on Home · the settings tabs · `CORE_QUERY_KEYS` · `CORE_AGENT_FORMS` |
 | `CliPlugin.register(program, action)` | the commander chain, after the kit's own commands |
 
 `ServerPlugin<S>` and `UiPlugin<S>` are generic over the plugin's own `SharedPlugin`, so
@@ -2095,8 +2008,10 @@ before anything bigger moves out. Its surface's `source.repo` is the kit repo wi
 | 13 | Where a plugin comes from | Every manifest carries a required `repo` (+ optional `subdir`), so a surface's `source.repo` is never null |
 
 Decisions 11 and 12 arrived with `scripts/plugin.mjs` and `provision/plugin-resources.ts` (below),
-and 5's CI half with `.github/workflows/{gate,ci,plugin-ci}.yml` (next paragraph); 6 and 7 land with
-the analytics extraction in Phase C. The rest are true today.
+5's CI half with `.github/workflows/{gate,ci,plugin-ci}.yml` (next paragraph), and 6 and 7 with the
+analytics extraction in 0.6.0 (§8): the kit is bare, `defaultPlugins` names the one plugin a fresh
+clone installs, and `analyticsExtensions({...})` is how a second plugin adds a cube. All thirteen
+are true today.
 
 **Compatibility is proved from both ends, by two workflows and one refusal (decision 5).** The
 gate's steps live in `.github/workflows/gate.yml` and `ci.yml` calls it TWICE — plain, and again
@@ -2146,6 +2061,22 @@ plugin, exempt there for the same reason** (one predicate, `unsupportedForKit`, 
 `touches-plugin-registry`. It warns, without changing its exit code, when the target ref turns out
 to be an ANCESTOR of the source, because that diff reads as the kit deleting whole subsystems.
 
+**What Phase C measured, which the seam had not been stressed by before.** Extracting something
+real found four things `example-feature` could not, and each is now a rule rather than a story.
+**A registry a plugin composes into must be a FUNCTION, not a const**: `allCubes()`,
+`factTables()`, `DASHBOARD_TEMPLATES()` and the kit's own `visibilityResources()` read the server
+barrel, which imports the plugin, so evaluated at module scope one side finds `serverPlugins`
+`undefined` — and the failure is `undefined.flatMap` at IMPORT time, taking the Worker down rather
+than failing one request, with which entry point loses the race depending on nothing a reader can
+see. **A value a plugin needs from a composing module has to move to a LEAF**: that is why
+`sharedWithMyGroups` and `AccessScope` are `api/services/access-sql.ts`, re-exported from
+`access.ts` so no core importer moved. **A registry the BROWSER reads has to be a separate file
+from the one that composes**: `dashboards/registry.ts` is plain data, `dashboards/index.ts` reads
+the barrel, and importing the second from a page drags `postgres` into the UI bundle (it did, and
+the build said so). And **the barrel writer had to learn Biome's line width** — two plugins in one
+tuple stopped fitting on a line, and `removeBarrelLine` is documented as the exact inverse of
+`addBarrelLine`, so a one-line writer against a wrapped file reported a diff that was not there.
+
 **Known gaps / not built yet:** No third-party trust model (no sandbox, no review process, no signature —
 "first-party only" is the whole of it). No rename migrations: expand/contract only, because
 drizzle-kit's rename prompt has no non-interactive answer. No cross-plugin FK tooling, and no
@@ -2165,7 +2096,7 @@ pinned (Phase C) — and `plugin-ci.yml` first runs when a plugin repository exi
 `kit:release`'s refusal reads a plugin's `requires.kit` from the INSTALLED surface or not at all —
 `git ls-remote` proves a ref exists but cannot read a file out of it — so a default plugin that is
 not installed in the release checkout reports an unreadable range rather than being waved through.
-Neither workflow proves a MIDDLE version of a range, and neither proves two plugins installed
-together: the kit's job installs whatever `defaultPlugins` lists, which is the only combination
-anybody has declared. Analytics has not been extracted (Phase C), so the kit is
-not yet bare, and the website's plugin pages are Phase D.
+Neither workflow proves a MIDDLE version of a range. Two plugins installed TOGETHER is now the
+kit's own default state — `example-feature` is vendored and `analytics` is in `defaultPlugins` —
+so the collision rules (one prefix per plugin, one query-key namespace, TS2308 on a duplicated
+schema export) are exercised on every run rather than only in fixtures. The website's plugin pages are Phase D.

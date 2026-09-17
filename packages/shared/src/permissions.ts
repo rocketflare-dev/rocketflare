@@ -32,9 +32,6 @@ export const CORE_SUBJECTS = [
   'Document',
   /** Groups (D29): group types, groups and their membership — admin+ `manage`, member `read`. */
   'Group',
-  /** Analytics (D19): `Dashboard` = analytics_pages rows; `Analytics` = the cube API itself. */
-  'Dashboard',
-  'Analytics',
   /**
    * Feature flags (D30) — ADMINISTERING them, never using a feature. A platform subject like
    * `AccessRequest` and `User`: reachable only through `manage all`, so it is deliberately absent

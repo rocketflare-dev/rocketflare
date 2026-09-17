@@ -3,8 +3,9 @@
  *
  * The kit never uses CASL conditions: an ability answers "may this role do this KIND of thing",
  * and "is this particular row yours" is always a predicate in the query. Groups follow that rule
- * exactly — `visibleDocuments(scope)` and `visibleAnalyticsPages(scope)` return a `SQL` fragment
- * that is **ANDed with the tenant predicate and never replaces it**.
+ * exactly — `visibleDocuments(scope)` returns a `SQL` fragment that is **ANDed with the tenant
+ * predicate and never replaces it**, and an installed plugin contributes its own the same way
+ * through `ServerPlugin.visibilityResources` (D31; the analytics plugin's dashboards are one).
  *
  * The predicate reads: the resource is tenant-wide, OR the reader owns it, OR the reader is in one
  * of the groups it was shared with. `bypass` (admin, owner, support, global admin) drops the
@@ -17,18 +18,12 @@
 import type { GroupRef, ResourceVisibility } from '@rocketflare/shared/groups'
 import { and, count, eq, inArray, type SQL, sql } from 'drizzle-orm'
 import type { Database } from '../../db/client'
-import {
-  analyticsPageGroups,
-  analyticsPages,
-  documentGroups,
-  documents,
-  groups,
-  groupTypes,
-} from '../../db/schema'
+import { documentGroups, documents, groups, groupTypes } from '../../db/schema'
 import { serverPlugins } from '../../plugins/server'
 import { isAdminLevel } from '../middleware/permissions'
 import type { AuthContext } from '../types'
 import { ForbiddenError } from '../utils/core/errors'
+import { type AccessScope, sharedWithMyGroups } from './access-sql'
 import { assertGroupsInTenant, listUserGroups } from './groups'
 
 /**
@@ -36,14 +31,6 @@ import { assertGroupsInTenant, listUserGroups } from './groups'
  * system agent run): such a reader sees tenant-visible resources only, never an owner's private
  * ones.
  */
-export interface AccessScope {
-  tenantId: string
-  userId: string | null
-  groupIds: string[]
-  /** Admin-level readers see every row in the tenant. */
-  bypass: boolean
-}
-
 export function accessScopeOf(auth: AuthContext): AccessScope {
   if (!auth.tenantId) throw new Error('accessScopeOf: no tenant in the auth context')
   return {
@@ -70,49 +57,11 @@ export function fullAccessScope(tenantId: string): AccessScope {
   return { tenantId, userId: null, groupIds: [], bypass: true }
 }
 
-/**
- * `exists (select 1 from <junction> j where j.<fk> = <resource>.id and j.group_id = any($ids))`.
- *
- * The subquery is written with a LITERAL alias and raw column names rather than drizzle column
- * objects. That is not stylistic: drizzle renders a column object with whatever table alias is in
- * scope where the fragment is spliced, so `${documentGroups.documentId}` inside a query over
- * `documents` comes out as `"documents"."document_id"` — a column that does not exist, and a 500
- * rather than a wrong answer. The alias here is local to the subquery and cannot be captured.
- *
- * The ids go in as one bound parameter each — never interpolated, and never as a single array
- * parameter, whose type Postgres cannot infer inside a subquery.
- */
-function sharedWithMyGroups(
-  scope: AccessScope,
-  junction: string,
-  foreignKey: string,
-  resourceId: SQL
-): SQL {
-  if (scope.groupIds.length === 0) return sql`false`
-  const ids = sql.join(
-    scope.groupIds.map(id => sql`${id}`),
-    sql`, `
-  )
-  return sql`exists (select 1 from ${sql.raw(`"${junction}" j`)} where ${sql.raw(`j."${foreignKey}"`)} = ${resourceId} and ${sql.raw(`j."group_id"`)} in (${ids}))`
-}
-
 export function visibleDocuments(scope: AccessScope): SQL | undefined {
   if (scope.bypass) return undefined
   const owned = scope.userId ? sql`${documents.ownerUserId} = ${scope.userId}` : sql`false`
   const shared = sharedWithMyGroups(scope, 'document_groups', 'document_id', sql`${documents.id}`)
   return sql`(${documents.visibility} = 'tenant' or ${owned} or ${shared})`
-}
-
-export function visibleAnalyticsPages(scope: AccessScope): SQL | undefined {
-  if (scope.bypass) return undefined
-  const owned = scope.userId ? sql`${analyticsPages.createdByUserId} = ${scope.userId}` : sql`false`
-  const shared = sharedWithMyGroups(
-    scope,
-    'analytics_page_groups',
-    'page_id',
-    sql`${analyticsPages.id}`
-  )
-  return sql`(${analyticsPages.visibility} = 'tenant' or ${owned} or ${shared})`
 }
 
 // ---- The registry of restrictable resources (D29, D31) -----------------------------------------
@@ -145,7 +94,7 @@ export interface ResourceGrantRow {
  * "everyone".
  */
 export interface VisibilityResource {
-  /** `document`, `analytics-page`; `<id>:<thing>` for a plugin. */
+  /** `document`; `<id>:<thing>` for a plugin (`analytics:page`). */
   key: string
   /** Singular noun for the 409 that says what deleting a group would narrow. */
   noun: string
@@ -210,76 +159,37 @@ const documentVisibility: VisibilityResource = {
   },
 }
 
-const analyticsPageVisibility: VisibilityResource = {
-  key: 'analytics-page',
-  noun: 'dashboard',
-  usageKey: 'dashboards',
-  predicate: visibleAnalyticsPages,
-  setGroups: async (tx, tenantId, resourceId, input, groupIds) => {
-    await tx
-      .update(analyticsPages)
-      .set({ visibility: input.visibility })
-      .where(and(eq(analyticsPages.id, resourceId), eq(analyticsPages.tenantId, tenantId)))
-    await tx
-      .delete(analyticsPageGroups)
-      .where(
-        and(eq(analyticsPageGroups.tenantId, tenantId), eq(analyticsPageGroups.pageId, resourceId))
-      )
-    if (groupIds.length > 0) {
-      await tx
-        .insert(analyticsPageGroups)
-        .values(groupIds.map(groupId => ({ tenantId, pageId: resourceId, groupId })))
-        .onConflictDoNothing()
-    }
-  },
-  grantRows: (db, tenantId, resourceIds) =>
-    db
-      .select({
-        resourceId: analyticsPageGroups.pageId,
-        id: groups.id,
-        name: groups.name,
-        typeName: groupTypes.name,
-      })
-      .from(analyticsPageGroups)
-      .innerJoin(groups, eq(groups.id, analyticsPageGroups.groupId))
-      .innerJoin(groupTypes, eq(groupTypes.id, groups.groupTypeId))
-      .where(
-        and(
-          eq(analyticsPageGroups.tenantId, tenantId),
-          inArray(analyticsPageGroups.pageId, resourceIds)
-        )
-      ),
-  countGrants: async (db, tenantId, groupIds) => {
-    const [row] = await db
-      .select({ n: count() })
-      .from(analyticsPageGroups)
-      .where(
-        and(
-          eq(analyticsPageGroups.tenantId, tenantId),
-          inArray(analyticsPageGroups.groupId, groupIds)
-        )
-      )
-    return row?.n ?? 0
-  },
+export const CORE_VISIBILITY_RESOURCES: readonly VisibilityResource[] = [documentVisibility]
+
+/**
+ * The kit's restrictable resources plus every installed plugin's (D31).
+ *
+ * **A function, memoised — not a const.** A plugin's visibility resource sits in a module that
+ * imports this one (for `sharedWithMyGroups`, for typed route helpers, for anything), so this
+ * module and the plugin barrel are in a cycle whichever way round the app is entered. Evaluated at
+ * module scope, `serverPlugins` is `undefined` for whichever side loses the race, and the failure
+ * is `undefined.flatMap` at IMPORT time — the Worker never starts, and which entry point triggers
+ * it depends on nothing a reader can see. Read at CALL time, live bindings make it always defined.
+ * The memo is what keeps `countGroupGrants` from re-walking every plugin per request.
+ */
+let visibilityResourcesMemo: readonly VisibilityResource[] | null = null
+
+export function visibilityResources(): readonly VisibilityResource[] {
+  if (visibilityResourcesMemo === null) {
+    visibilityResourcesMemo = [
+      ...CORE_VISIBILITY_RESOURCES,
+      ...serverPlugins.flatMap(p => p.visibilityResources ?? []),
+    ]
+  }
+  return visibilityResourcesMemo
 }
-
-export const CORE_VISIBILITY_RESOURCES: readonly VisibilityResource[] = [
-  documentVisibility,
-  analyticsPageVisibility,
-]
-
-/** The kit's restrictable resources plus every installed plugin's (D31). */
-export const VISIBILITY_RESOURCES: readonly VisibilityResource[] = [
-  ...CORE_VISIBILITY_RESOURCES,
-  ...serverPlugins.flatMap(p => p.visibilityResources ?? []),
-]
 
 /**
  * `kind` is a plain string rather than a union, because a plugin's keys are not knowable here. An
  * unknown one throws: a silent no-op would leave a resource that looks restricted and is not.
  */
 export function visibilityResourceFor(kind: string): VisibilityResource {
-  const found = VISIBILITY_RESOURCES.find(r => r.key === kind)
+  const found = visibilityResources().find(r => r.key === kind)
   if (!found) throw new Error(`visibilityResourceFor: no visibility resource named '${kind}'`)
   return found
 }
@@ -299,12 +209,11 @@ export async function countGroupGrants(
   groupIds: string[]
 ): Promise<GroupUsage> {
   const usage: GroupUsage = {}
-  for (const resource of VISIBILITY_RESOURCES) usage[resource.usageKey] = 0
+  const resources = visibilityResources()
+  for (const resource of resources) usage[resource.usageKey] = 0
   if (groupIds.length === 0) return usage
-  const counts = await Promise.all(
-    VISIBILITY_RESOURCES.map(r => r.countGrants(db, tenantId, groupIds))
-  )
-  VISIBILITY_RESOURCES.forEach((r, i) => {
+  const counts = await Promise.all(resources.map(r => r.countGrants(db, tenantId, groupIds)))
+  resources.forEach((r, i) => {
     usage[r.usageKey] = counts[i] ?? 0
   })
   return usage
@@ -384,3 +293,10 @@ export async function grantsForResources(
   }
   return out
 }
+
+/**
+ * Re-exported so every existing importer of `services/access` is unchanged. The definitions now
+ * live in the LEAF `./access-sql`, because this module reads the plugin barrel: anything an
+ * installed plugin needs at module scope has to come from a file that does not (D31).
+ */
+export { type AccessScope, sharedWithMyGroups } from './access-sql'

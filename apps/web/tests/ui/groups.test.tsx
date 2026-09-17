@@ -119,7 +119,10 @@ describe('Settings → Groups', () => {
     })
     fireEvent.click(await screen.findByLabelText('Delete Finance'))
     fireEvent.click(await screen.findByRole('button', { name: 'Delete' }))
-    expect(await screen.findByText(/3 document\(s\) and 1 dashboard\(s\)/)).toBeInTheDocument()
+    // The keys come from the server's visibility registry — the kit's `documents` plus whatever
+    // an installed plugin adds (`dashboards` is the analytics plugin's) — so the sentence is built
+    // from whatever arrives rather than from a fixed pair (D31).
+    expect(await screen.findByText(/3 documents and 1 dashboard/)).toBeInTheDocument()
     // And it says which way the change goes — narrower, never wider.
     expect(screen.getByText(/owner and to administrators only/)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Delete anyway' })).toBeInTheDocument()

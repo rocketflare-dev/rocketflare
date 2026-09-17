@@ -1,7 +1,7 @@
 # UI (React SPA)
 
 React 18 + Vite + React Router 6 + TanStack Query 5 + zustand; DaisyUI 5 on Tailwind v4. Dev: Vite on
-:3000 proxies `/api`,`/auth`,`/ws`,`/cubejs-api`,`/mcp` → :3001. Prod: `dist/ui` via the `ASSETS` binding.
+:3000 proxies `/api`,`/auth`,`/ws` (+ an installed plugin's own prefixes) → :3001. Prod: `dist/ui` via the `ASSETS` binding.
 
 ## Layout
 
@@ -54,14 +54,10 @@ React 18 + Vite + React Router 6 + TanStack Query 5 + zustand; DaisyUI 5 on Tail
   (`useAgentModels`, `useUpsertAgentModel`, `useDeleteAgentModel`), `useDocuments` (`useDocuments`
   polling while any row is `pending`, `useDocument`, `useIngestText`, `useDeleteDocument`,
   `useSearch` — mutation-style, hits are its `data`).
-  Analytics (Phase 4, D19): `useAnalyticsPages` (`useAnalyticsPages` default-first via
-  `orderPages`, `useAnalyticsPage(id)`, `useCreateAnalyticsPage`, `useUpdateAnalyticsPage`,
-  `useAutosaveDashboardConfig(pageId)` — debounced whole-config PATCH, `DASHBOARD_AUTOSAVE_MS`,
-  `useDeleteAnalyticsPage`, `useResetAnalyticsPage`, `useAnalyticsTemplates`,
-  `useRecreateTemplates`, `useFactTableStatus({ enabled })`), `useCubeMeta` (`GET
-  /cubejs-api/v1/meta` via `api.get`, cached an hour; `memberTitle`, `timeDimensionsOf`),
-  `useDashboardDateFilter` (URL-synced `?range=7d|30d|90d|custom&from&to`; pure
-  `parseDateFilterParams`, `dateRangeValue`, `dashboardDateFilters(config, range)`).
+  An installed PLUGIN's hooks live in its own tree (`src/plugins/<id>/ui/hooks/`) and read its own
+  query keys directly rather than the merged `queryKeys` — a plugin must work the same whether it is
+  the only one installed or the fifth. The analytics plugin's are `useAnalyticsPages`, `useCubeMeta`
+  and `useDashboardDateFilter` (D19, D31).
 - `lib/` — `api-client` (fetch wrapper, `ApiError`, `setUnauthorizedHandler`, `api.upload` for
   multipart — no JSON content-type), `queryClient` (module-level, 401 → handler), `query-keys`
   (factory + `cleanFilters`/`toSearchParams`; the family roots — `['invitations']`,
@@ -78,8 +74,9 @@ React 18 + Vite + React Router 6 + TanStack Query 5 + zustand; DaisyUI 5 on Tail
   (`runChatTurn({ conversationId, content, onEvent, signal })` POSTs and streams **AG-UI**, parsing
   with `kitAguiEventSchema`; a pre-stream 503 `ai_not_configured` throws `AiNotConfiguredError`;
   `isAiNotConfigured()`),
-  `stubs/nivo-heatmap.tsx` (D19: the build-time stand-in `vite.config.ts` aliases `@nivo/heatmap`
-  to — see "Analytics dashboards").
+  An installed plugin may need an alias in `vite.config.ts` pointing at a file in ITS tree (the
+  analytics plugin's `@nivo/heatmap` stub) — one of the core lines its install prints, since a
+  plugin edits no core file (D31).
 - `stores/websocketStore.ts` — the one zustand store: `status | connectedAt | disconnectedAt |
   attempt | lastEvent`; written only by `websocketClient`, read by the status dot and the banner.
 - `pages/` — route-level components, lazy in `App.tsx` except Home/Login/NotFound. `Login.tsx`:
@@ -91,17 +88,15 @@ React 18 + Vite + React Router 6 + TanStack Query 5 + zustand; DaisyUI 5 on Tail
   `/chat/:conversationId?` (D17, guard `read Conversation`, lazy — its chunk carries the markdown
   renderer). `agents/` — `/agents` (`AgentsPage`, the roster + runs table) and `/agents/runs/:runId`
   (`RunPage`, its OWN lazy chunk), both `read AgentRun`; `documents/DocumentsPage.tsx` —
-  `/documents` (D18, guard `read Document`, nav label "Knowledge"). `analytics/` — `/analytics`
-  (`DashboardListPage`), `/analytics/explore` (`QueryBuilderPage`), `/analytics/:pageId`
-  (`DashboardViewPage`), all `read Analytics` (D19, below). `public/` — static assets copied as-is.
-- `components/analytics/` (D19) — `CubeClientProvider` (drizzle-cube `CubeProvider` + cookie auth
-  + 401 routing + the library stylesheet), `DashboardLoader` (`AnalyticsDashboard` glue: local
-  config, date-filter overrides, autosave, unsaved guard), `DashboardFormModal` (create/rename,
-  optional "start from template"), `DateRangeControl`. Like `components/ai/`, NOT in the shared
-  barrel: importing any of them pulls the drizzle-cube runtime into the chunk.
-
-## Conventions
-
+  `/documents` (D18, guard `read Document`, nav label "Knowledge"). An installed plugin's pages are
+  NOT here — they are `src/plugins/<id>/ui/pages/`, reached through `UiPlugin.routes` as
+  `lazy(() => import(...))` (the analytics plugin's `/analytics`, `/analytics/explore`,
+  `/analytics/:pageId`). `public/` — static assets copied as-is.
+- An installed PLUGIN's components live in its own tree too (`src/plugins/<id>/ui/components/`), and
+  the same bundle rule applies as to `components/ai/`: they are never exported from the shared
+  barrel, so their dependencies ship only in the plugin's lazy chunk. The plugin's `ui/index.ts` is
+  the exception that proves it — that file IS in the main bundle, which is why every page in it is
+  `lazy(() => import(...))` and `tests/config/plugins.test.ts` reads its source to check.
 - Imports: `@/ui/...` and `@rocketflare/shared/...`; never import from `src/api`, `src/db` or
   `src/permissions` (the ability MATRIX is server code; the UI only unpacks rules).
 - Server data lives ONLY in the query cache: `useQuery` + a key from `query-keys.ts` + a
@@ -386,70 +381,6 @@ A `CUSTOM kit.notice` renders
   and `tests/config/document-helpers.test.ts`. Mount `AgentsPage` inside the same `<Routes>` pair
   App.tsx uses so `navigate('/agents/runs/:id')` really lands on `RunPage`.
 
-## Analytics dashboards (Phase 4, D19/D20)
-
-- **GM wrote no chart code.** drizzle-cube renders everything: `AnalyticsDashboard` (react-grid-layout
-  editor, portlet editor with its own query builder, drill-down, charts) and `AnalysisBuilder`
-  (`/analytics/explore`). The kit owns the glue only: pages, hooks over `/api/analytics/*`
-  (`@rocketflare/shared/analytics`), the provider wiring and the theme mapping. drizzle-cube 0.8.3 client
-  API actually used: `CubeProvider` from `drizzle-cube/client/providers` (`apiOptions`,
-  `queryClient`, `features`), `AnalyticsDashboard` (`config`, `editable`, `dashboardFilters`,
-  `onConfigChange`, `onSave`, `loadingComponent`), `AnalysisBuilder` + `AnalysisBuilderRef`
-  (`getAnalysisConfig()`), types `DashboardConfig`/`PortletConfig`/`CubeApiOptions`/
-  `FeaturesConfig` from `drizzle-cube/client`, and `drizzle-cube/client/styles.css`.
-- **Same-origin cookie auth**: `CubeClientProvider` passes `apiOptions = { apiUrl:
-  '/cubejs-api/v1', credentials: 'include', headers: { 'X-Requested-With': 'fetch' } }` — the
-  library's `CubeClient` forwards both to every `fetch` (it defaults to `include` anyway; the
-  header is the kit's marker). No token. drizzle-cube runs its queries on a BUNDLED TanStack Query
-  (separate React context), so the app's `QueryCache.onError` never sees a cube failure: the
-  provider hands it `createCubeQueryClient()`, whose `onError` maps a `status === 401`
-  (`CubeQueryError`) to `notifyUnauthorized(new ApiError(...))` → the global D20 handler. Our hooks
-  rendered inside `CubeProvider` still resolve the APP client (different context) — that is why
-  `DashboardLoader` can call `useAutosaveDashboardConfig` from inside it.
-- **Bundle discipline**: nothing under `pages/analytics/**` or `components/analytics/**` may be
-  imported from the main bundle; `App.tsx` lazy-loads the three pages and `DashboardListPage`
-  deliberately imports no drizzle-cube runtime (it lists rows; the library loads with the view /
-  explore chunks — Vite emits a `DashboardLoader-*.js` shared by both, plus per-chart chunks; it is
-  the largest thing the UI ships, which is exactly why it is lazy). `grep recharts
-  dist/ui/assets/index-*.js` must stay at 0 — that check, not a byte count, is the guardrail.
-  `vite.config.ts` dedupes `recharts` and aliases `@nivo/heatmap` (an OPTIONAL peer the heat-map chunk names an export of —
-  Rollup fails without it) to `lib/stubs/nivo-heatmap.tsx`, which renders a notice; install the
-  package and drop the alias to enable heat maps.
-- **Theme**: drizzle-cube styles itself from `--dc-*` variables; `index.css` re-points every one at
-  a kit token under `:root[data-theme="rocketflare-light"], :root[data-theme="rocketflare-dark"]` (specificity
-  (0,2,0) beats the library's `:root` and `html.dark` regardless of stylesheet order; the values are
-  `var()`s that flip with the theme, so one block covers both). Its chart palettes decide dark from
-  `data-theme="dark"` or a `dark` class on `<html>`, so `CubeClientProvider` mirrors `rocketflare-dark` into
-  that class while mounted (`syncDarkClass`) — the kit's own CSS never reads `.dark`. `index.css`
-  also `@source`s `node_modules/drizzle-cube/dist/client/**/*.js` (the rule for JSX-shipping
-  dependencies); measured effect: the library's utilities are `dc:`-prefixed and precompiled into
-  its own stylesheet, so the scan generates no drizzle-cube class — only stray-word DaisyUI
-  components (`stat`, `steps`, `tooltip`, `vc`…), i.e. pure cost on `index-*.css`.
-- **Editing & autosave**: `DashboardLoader` keeps the config as local state (seeded from the row,
-  re-seeded when the server row changes and nothing is dirty — a reset arrives that way). In edit
-  mode each `onConfigChange` schedules ONE debounced whole-config `PATCH` (`DASHBOARD_AUTOSAVE_MS`
-  = 1.5 s); the editor's `onSave`, leaving edit mode and unmount flush it; while dirty a
-  `beforeunload` guard warns (no data router, so no `useBlocker`). Edit / rename / reset / delete /
-  create / recreate are `manage Dashboard` (admin+); the route and nav are `read Analytics`.
-  Template pages (`templateKey !== null`) offer "Reset to template", never delete (server: 403
-  `template_page`); user pages the reverse. "Start from template" copies the config from the
-  pure `src/dashboards` registry client-side (`getTemplate(key).config` → `POST /pages`).
-- **Date range** is URL state (`useDashboardDateFilter`), never a store: presets emit exactly
-  `'last 7|30|90 days'` or an ISO pair — an unknown relative string makes drizzle-cube DROP the
-  condition and silently query all time, so anything unparseable falls back to 90 days.
-  `dashboardDateFilters(config, range)` returns override copies of the `isUniversalTime` filters;
-  `AnalyticsDashboard dashboardFilters` merges them by id, so a KPI with its own window is untouched.
-- **Explore → Save to dashboard** (admin+): `ref.getAnalysisConfig()` becomes a portlet
-  (`analysisConfig`, the canonical format) appended as a full-width `rows` entry with mirrored
-  x/y/w/h (`appendPortlet`, pure) and saved with `PATCH /pages/:id`.
-- Tests: `analytics-pages` (no library needed), `dashboard-view` (mocks `drizzle-cube/client`,
-  `drizzle-cube/client/providers` and the stylesheet with stand-ins that fire the same callbacks;
-  the debounce is asserted with real timers, `waitFor` timeout 4 s), `date-filter` (pure + hook
-  URL sync via `renderHook` in a `MemoryRouter`), `cube-client-provider` (mounts the REAL
-  `CubeProvider` against `stubFetch` — asserts the library's own request carries the credentials
-  and header, and that a 401 reaches `setUnauthorizedHandler`; stub `window.matchMedia` first).
-  Fixtures: `tests/ui/helpers/analytics.ts`.
-
 ## Feature flags (D30)
 
 - `lib/feature-guards.ts` is the client-side spelling: one `NavGuard` const per feature plus
@@ -496,7 +427,8 @@ A `CUSTOM kit.notice` renders
   "Your groups" on the profile (hidden when you are in none).
 - **Freshness is the generic nudge again**: the family root is `['groups']`, which the server's
   `entity.changed { entity: 'groups' }` names, and `access.changed` (sent to the affected people
-  only) invalidates `['auth'] ['documents'] ['analytics'] ['groups']` — so somebody who loses a
+  only) invalidates `['auth'] ['documents'] ['groups']` plus every installed plugin's
+  `realtimeRoots` (the analytics plugin's `['analytics:dashboards']`) — so somebody who loses a
   group watches the content disappear instead of clicking into a 404. No hook here touches the
   socket.
 - Tests: `tests/ui/groups.test.tsx` (the tab's list/create flows, the 409 confirm, and the

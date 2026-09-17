@@ -37,6 +37,7 @@ import type { NavItem } from '../ui/components/SideNav'
 import type { TabConfig } from '../ui/components/shared'
 import type { NavGuard } from '../ui/hooks/useNavGuard'
 import type { AgentForm } from '../ui/pages/agents/forms'
+import type { QuickLink } from '../ui/pages/Home'
 
 /** One entry of the mount table in `api/index.ts`: prefix, router, optional gate. */
 export type PluginMount = readonly [string, Hono<AppEnv>, MiddlewareHandler?]
@@ -107,8 +108,19 @@ export interface ServerPlugin<S extends SharedPlugin = SharedPlugin> {
   /** D29: rows of this plugin that a group may restrict. Read by `services/access.ts`. */
   visibilityResources?: readonly VisibilityResource[]
   hooks?: {
-    /** Post-commit, best-effort, per plugin try/caught — exactly like the kit's own hooks. */
-    onTenantCreated?: (db: Database, tenant: Tenant, userId: string) => Promise<void>
+    /**
+     * Post-commit, best-effort, per plugin try/caught — exactly like the kit's own hooks were.
+     *
+     * `features` is the set this DEPLOYMENT ships (D30), passed because a plugin that seeds rows
+     * for a gated surface must not seed them where the surface does not exist: a hook that CREATES
+     * rows is the sharpest feature door there is, and it has no nav entry to hide behind.
+     */
+    onTenantCreated?: (
+      db: Database,
+      tenant: Tenant,
+      userId: string,
+      features: readonly string[]
+    ) => Promise<void>
     /** `pnpm seed --demo`, after the kit's own block. Fixed ids + `onConflictDoNothing`. */
     seedDemo?: (db: Database, ctx: PluginSeedContext) => Promise<void>
   }
@@ -151,6 +163,15 @@ export interface UiPlugin<S extends SharedPlugin = SharedPlugin> {
   nav?: readonly PluginNavGroup[]
   /** Extra `/settings?tab=` tabs, appended after the kit's. `can` is the caller's ability. */
   settingsTabs?: (ctx: { can: (action: string, subject: string) => boolean }) => TabConfig[]
+  /**
+   * Quick links for the Home page, merged AHEAD of the kit's own (D31). A feature somebody reaches
+   * from Home is one they were told about; a plugin that only adds a nav item is one they have to
+   * find. Each link carries the SAME guard object as its route, so Home can never offer a door the
+   * page refuses — `useNavGuard` filters these exactly as it filters the nav.
+   *
+   * The host does NOT de-duplicate or re-order: two plugins offering the same `to` show twice.
+   */
+  homeLinks?: readonly QuickLink[]
   /** Families merged into `queryKeys`; every root must start with `<id>:`. */
   queryKeys?: Readonly<Record<string, unknown>>
   /**

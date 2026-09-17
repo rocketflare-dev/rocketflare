@@ -58,11 +58,6 @@ const DocumentsPage = lazy(() => import('@/ui/pages/documents/DocumentsPage'))
 const SearchPage = lazy(() => import('@/ui/pages/documents/SearchPage'))
 // The detail page — no SideNav entry; it is reached from the list, from Search and from a citation.
 const DocumentViewPage = lazy(() => import('@/ui/pages/documents/DocumentViewPage'))
-// D19: analytics. The list page is plain kit UI; the view and explore pages carry drizzle-cube
-// (charts, grid editor, recharts) and must stay out of the main bundle.
-const DashboardListPage = lazy(() => import('@/ui/pages/analytics/DashboardListPage'))
-const DashboardViewPage = lazy(() => import('@/ui/pages/analytics/DashboardViewPage'))
-const QueryBuilderPage = lazy(() => import('@/ui/pages/analytics/QueryBuilderPage'))
 const AdminLayout = lazy(() => import('@/ui/pages/admin/AdminLayout'))
 const AccessRequests = lazy(() => import('@/ui/pages/admin/AccessRequests'))
 const TenantList = lazy(() => import('@/ui/pages/admin/TenantList'))
@@ -203,31 +198,6 @@ function ShellRoutes() {
             element={
               <RequireGuard guard={{ action: 'read', subject: 'Document' }}>
                 <SearchPage />
-              </RequireGuard>
-            }
-          />
-          {/* D19: every member may read dashboards; editing is gated per control */}
-          <Route
-            path="/analytics"
-            element={
-              <RequireGuard guard={{ action: 'read', subject: 'Analytics' }}>
-                <DashboardListPage />
-              </RequireGuard>
-            }
-          />
-          <Route
-            path="/analytics/explore"
-            element={
-              <RequireGuard guard={{ action: 'read', subject: 'Analytics' }}>
-                <QueryBuilderPage />
-              </RequireGuard>
-            }
-          />
-          <Route
-            path="/analytics/:pageId"
-            element={
-              <RequireGuard guard={{ action: 'read', subject: 'Analytics' }}>
-                <DashboardViewPage />
               </RequireGuard>
             }
           />

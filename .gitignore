@@ -14,7 +14,7 @@ node_modules/
 .env.local
 *.local
 .secrets.*.json
-.drizzle-cube.json
+.drizzle-cube.json  # the analytics plugin's local tooling config (D31) — never committed
 .cfld.json
 
 # Logs / coverage

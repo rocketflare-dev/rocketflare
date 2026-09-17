@@ -1,6 +1,7 @@
 import { ERROR_CODES } from '@rocketflare/shared/errors'
 import { describe, expect, it } from 'vitest'
 import { SESSION_COOKIE_NAME } from '@/api/middleware/csrf'
+import { API_PREFIXES } from '@/api/utils/routes/api-prefixes'
 import { json, request } from '../helpers/request'
 
 describe('GET /api/health', () => {
@@ -28,20 +29,36 @@ describe('not found', () => {
     expect(await json(res)).toMatchObject({ statusCode: 404, code: ERROR_CODES.notFound })
   })
 
-  // Reserved prefixes never fall through to the SPA: unknown → 404, the cube API (behind
-  // authMiddleware, D19) → 401 — always the JSON envelope, never index.html.
+  // Reserved prefixes never fall through to the SPA — always the JSON envelope, never index.html.
   it.each([
     ['/auth/x', 404],
     ['/ws/x', 404],
-    ['/cubejs-api/v1/load', 401],
-    ['/cubejs-api/nope', 401],
-    ['/mcp', 401],
-    ['/mcp/x', 401],
   ])('%s → JSON %i', async (path, status) => {
     const res = await request(path)
     expect(res.status).toBe(status)
     expect(res.headers.get('content-type')).toContain('application/json')
     expect(await json(res)).toMatchObject({ statusCode: status })
+  })
+
+  /**
+   * The same guarantee for every prefix an installed PLUGIN owns (D31). It is asserted over
+   * `API_PREFIXES` rather than a list of literals, because the kit cannot know what is installed —
+   * and because the point of the guard is structural: a plugin prefix missing from that list is
+   * silently served `index.html`, which reads as "the route works" until somebody parses it.
+   *
+   * A path under a plugin prefix is an envelope, never HTML. Whether it is 401 (a mount behind
+   * `authMiddleware`) or 404 (a prefix with no route there) is the plugin's business; both are
+   * JSON, and that is what this checks.
+   */
+  it('every prefix API_PREFIXES names answers an envelope, not the SPA', async () => {
+    const pluginPrefixes = API_PREFIXES.filter(p => !['/api', '/auth', '/ws'].includes(p))
+    for (const prefix of pluginPrefixes) {
+      for (const path of [prefix, `${prefix}/nope`]) {
+        const res = await request(path)
+        expect(res.headers.get('content-type'), path).toContain('application/json')
+        expect(await json(res), path).toMatchObject({ statusCode: expect.any(Number) })
+      }
+    }
   })
 
   // `wrangler dev` sends its reload control to the Worker on /cdn-cgi/ProxyWorker/pause|play
