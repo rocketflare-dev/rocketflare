@@ -6,6 +6,11 @@ copy of the kit forward without recreating anything its owner deleted.
 
 If you are running a copy: `pnpm kit:upgrade` tells you which of these you are missing.
 
+## 0.5.0 — 2026-09-17
+
+**The kit gained plugins (D31).** A plugin is a git repository copied into an app, never an npm package, wired through five barrels and installed, upgraded, removed and audited with `pnpm plugin` (and `/rf-plugin`); the demo feature became the vendored reference plugin `example-feature`, provisioning creates a plugin's bindings, CI proves the kit against its `defaultPlugins`, and every skill and the bootstrap know about it. An app with no plugins installed behaves exactly as before.
+[Porting note](docs/upgrades/0.5.0.md).
+
 ## 0.4.0 — 2026-09-16
 
 **An agent run can now stop and ask a person, resume on their answer, and be watched live on a page of its own** (issues #17 and #7).
