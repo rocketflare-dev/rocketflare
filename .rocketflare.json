@@ -13,7 +13,7 @@
     {
       "id": "analytics",
       "repo": "https://github.com/rocketflare-dev/rocketflare-plugin-analytics.git",
-      "ref": "1.0.0"
+      "ref": "1.0.1"
     }
   ],
   "history": [],

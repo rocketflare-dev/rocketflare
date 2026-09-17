@@ -248,7 +248,7 @@ because a second copy of those steps would prove nothing about the copy nobody r
 
 ```json
 "defaultPlugins": [
-  { "id": "analytics", "repo": "https://github.com/rocketflare-dev/rocketflare-plugin-analytics.git", "ref": "0.2.0" }
+  { "id": "analytics", "repo": "https://github.com/rocketflare-dev/rocketflare-plugin-analytics.git", "ref": "1.0.1" }
 ]
 ```
 
