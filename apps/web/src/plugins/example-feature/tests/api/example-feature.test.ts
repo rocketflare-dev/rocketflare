@@ -8,16 +8,23 @@
  * plugin** (`tests/config/plugins.test.ts`). `vitest.config.ts` discovers this directory, so it
  * runs in the host's `api` project against the host's real Postgres, exactly like a kit test.
  *
- * This file is the one place `example-feature`'s PLATFORM flag row is written. `featureFlags.key`
- * is global state and `tenant_feature_overrides` cascades off it, so a second file resetting the
- * same key would delete this one's rows mid-run — which is why `tests/api/feature-flags.test.ts`
- * registers a fixture key of its own rather than borrowing this one.
+ * **The flag is turned on with a per-tenant OVERRIDE, never with the platform row**, and that is
+ * not a style choice. `feature_flags.state` is one row for the whole deployment: setting it to
+ * `on` here turns `example-feature` on for EVERY tenant in the test database, including the seeded
+ * one that `tests/api/auth-session.test.ts` asserts has `features: []` — and the `api` project runs
+ * files in parallel workers, so that shows up as a failure in the OTHER file, only on some orders.
+ * An override is scoped to one organisation and beats the platform state in both directions, so
+ * this file can be as loud as it likes without being visible to anybody else.
+ *
+ * The platform row still has to EXIST, because `tenant_feature_overrides.flag_key` is a foreign key
+ * to it — but it is written `off`, which evaluates identically to no row at all for every tenant
+ * that has no override. That is the whole of this file's global footprint.
  */
 import { EXAMPLE_FEATURE_FLAG } from '@rocketflare/shared/plugins/example-feature/index'
-import { and, eq } from 'drizzle-orm'
+import { and, eq, inArray } from 'drizzle-orm'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { loadConfig } from '@/config'
-import { featureFlags } from '@/db/schema'
+import { featureFlags, tenantFeatureOverrides } from '@/db/schema'
 import {
   createTestSession,
   createTestTenant,
@@ -44,12 +51,23 @@ let memberCookie: Record<string, string>
 let otherCookie: Record<string, string>
 let memberId: string
 
-/** The whole mount is gated, so the flag has to be on for anything below to be reachable at all. */
-async function setFlag(state: 'on' | 'off') {
+/**
+ * The whole mount is gated, so the flag has to be on for anything below to be reachable at all —
+ * and it is turned on for THIS FILE'S OWN organisations only, through an override. The platform
+ * row exists solely to satisfy the override's foreign key and stays `off`.
+ */
+async function setFlagFor(tenant: string, enabled: boolean) {
   await db
     .insert(featureFlags)
-    .values({ key: EXAMPLE_FEATURE_FLAG, state })
-    .onConflictDoUpdate({ target: featureFlags.key, set: { state } })
+    .values({ key: EXAMPLE_FEATURE_FLAG, state: 'off' })
+    .onConflictDoNothing()
+  await db
+    .insert(tenantFeatureOverrides)
+    .values({ tenantId: tenant, flagKey: EXAMPLE_FEATURE_FLAG, enabled })
+    .onConflictDoUpdate({
+      target: [tenantFeatureOverrides.tenantId, tenantFeatureOverrides.flagKey],
+      set: { enabled },
+    })
 }
 
 async function createNote(headers: Record<string, string>, title: string) {
@@ -76,10 +94,23 @@ beforeAll(async () => {
   await linkUserToTenant(db, outsider.id, otherTenantId, 'owner')
   otherCookie = sessionCookieHeader(await createTestSession(db, outsider.id, otherTenantId))
 
-  await setFlag('on')
+  // Both of this file's organisations: the isolation case below drives the mount as tenant B, so
+  // B needs the surface to EXIST for it in order to prove it cannot see A's rows through it.
+  await setFlagFor(tenantId, true)
+  await setFlagFor(otherTenantId, true)
 })
 
-afterAll(() => setFlag('off'))
+/** Leave the database as we found it — our two override rows go, the `off` platform row stays. */
+afterAll(async () => {
+  await db
+    .delete(tenantFeatureOverrides)
+    .where(
+      and(
+        eq(tenantFeatureOverrides.flagKey, EXAMPLE_FEATURE_FLAG),
+        inArray(tenantFeatureOverrides.tenantId, [tenantId, otherTenantId])
+      )
+    )
+})
 
 describe('the feature gate', () => {
   it('is a 401 without a credential, whatever the flag says', async () => {
@@ -91,13 +122,15 @@ describe('the feature gate', () => {
   })
 
   it('hides the whole mount as a 404 — never a 403, which would confirm it exists', async () => {
-    await setFlag('off')
+    // The same override, flipped to `false`: an override beats the platform state in BOTH
+    // directions, so this is the dark case without touching one byte of global state.
+    await setFlagFor(tenantId, false)
     try {
       const res = await request(`${BASE}/notes`, { headers: ownerCookie })
       expect(res.status).toBe(404)
       expect(await json<{ code?: string }>(res)).toMatchObject({ code: 'feature_disabled' })
     } finally {
-      await setFlag('on')
+      await setFlagFor(tenantId, true)
     }
   })
 })
