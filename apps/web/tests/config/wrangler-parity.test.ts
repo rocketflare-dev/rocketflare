@@ -19,6 +19,13 @@ import path from 'node:path'
 import TOML from '@iarna/toml'
 import { describe, expect, it } from 'vitest'
 import { WORKER_FIRST_PATTERNS } from '@/api/utils/routes/api-prefixes'
+import { patchToml } from '../../scripts/provision/patch-toml'
+import {
+  pluginParityIssues,
+  pluginResourceName,
+  readPluginResources,
+  validatePluginManifest,
+} from '../../scripts/provision/plugin-resources'
 
 type Toml = Record<string, unknown>
 type Row = Record<string, unknown>
@@ -224,3 +231,166 @@ describe.runIf(process.env.REQUIRE_PROVISIONED === '1')(
     })
   }
 )
+
+// ---- plugin resources (D31, Decision 12) --------------------------------------------------
+
+/**
+ * A plugin ships no toml — the two files are the host's, always — so everything it needs from the
+ * platform is declared in its `plugin.json` and written into BOTH tomls by
+ * `pnpm provision cloudflare <env>`. The rules above then apply to those blocks unchanged: same
+ * `binding` name in both files, account-scoped names differing by the `-staging` / `_STAGING`
+ * suffix, no `<PLACEHOLDER>` left at deploy time.
+ *
+ * The kit's one plugin (`example-feature`) declares NOTHING, so asserting only against what is
+ * installed would be a test that passes because there is nothing to check. The rule is therefore a
+ * pure function exercised against a FIXTURE plugin and fixture tomls built from the real files —
+ * the same shape an app with a real plugin has — and then, separately, against the checkout.
+ */
+describe('wrangler parity: plugin resources', () => {
+  const prodRaw = fs.readFileSync(path.join(WEB_DIR, 'wrangler.toml'), 'utf8')
+  const stagingRaw = fs.readFileSync(path.join(WEB_DIR, 'wrangler.staging.toml'), 'utf8')
+  const app = String(prod.name)
+
+  const fixture = validatePluginManifest(
+    {
+      id: 'parity-fixture',
+      bindings: [
+        { type: 'kv', binding: 'PARITY_FIXTURE_CACHE', name: 'cache' },
+        { type: 'queue', binding: 'PARITY_FIXTURE_QUEUE', name: 'jobs', consumer: true },
+        { type: 'r2', binding: 'PARITY_FIXTURE_FILES', name: 'files' },
+      ],
+      crons: ['7 3 * * *'],
+      apiPrefixes: ['/parity-fixture-hook'],
+      vars: [
+        { key: 'PARITY_FIXTURE_MAX_ITEMS', example: '50' },
+        { key: 'PARITY_FIXTURE_SECRET', example: '', secret: true },
+      ],
+    },
+    'apps/web/src/plugins/parity-fixture/plugin.json'
+  )
+
+  /** Exactly what `applyPluginDeclarations` in scripts/provision.ts writes, for one environment. */
+  const provisionedText = (text: string, env: 'production' | 'staging', kvId: string) =>
+    patchToml(text, {
+      bindings: fixture.bindings.map(b => ({
+        type: b.type,
+        binding: b.binding,
+        pluginId: fixture.id,
+        ...(b.type === 'kv'
+          ? { id: kvId }
+          : { name: pluginResourceName(b.type, app, fixture.id, b.name, env) }),
+        ...(b.consumer ? { consumer: true } : {}),
+      })),
+      crons: fixture.crons,
+      workerFirstPrefixes: fixture.apiPrefixes,
+      vars: fixture.vars.filter(v => !v.secret).map(v => ({ key: v.key, value: v.example ?? '' })),
+    })
+
+  const docs = (prodKv: string, stagingKv: string) => ({
+    production: TOML.parse(provisionedText(prodRaw, 'production', prodKv)),
+    staging: TOML.parse(provisionedText(stagingRaw, 'staging', stagingKv)),
+  })
+
+  it('unpatched tomls fail every rule the fixture declares, in both environments', () => {
+    // Empty documents, deliberately, rather than the repo’s tomls: this assertion is about what
+    // the rule REPORTS, and it must not change meaning in a copy that has real plugins installed.
+    const issues = pluginParityIssues(app, [fixture], { production: {}, staging: {} })
+    // 3 bindings + 1 cron + 2 run_worker_first patterns + 1 non-secret var, each in both files.
+    // (The consumer check is not among them: a missing producer stops at one message per binding
+    // rather than piling a second on top of it.)
+    expect(issues).toHaveLength(14)
+    for (const env of ['production', 'staging'])
+      for (const fragment of [
+        '[[kv_namespaces]] has no binding "PARITY_FIXTURE_CACHE"',
+        '[[queues.producers]] has no binding "PARITY_FIXTURE_QUEUE"',
+        '[[r2_buckets]] has no binding "PARITY_FIXTURE_FILES"',
+        '[triggers] crons is missing "7 3 * * *"',
+        '[assets] run_worker_first is missing "/parity-fixture-hook/*"',
+        '[vars] is missing "PARITY_FIXTURE_MAX_ITEMS"',
+      ])
+        expect(issues).toContainEqual(expect.stringContaining(`${env}: ${fragment}`))
+    // The secret var is NOT a [vars] key — it is a Worker secret (`provision secrets <env>`).
+    expect(issues.join('\n')).not.toContain('PARITY_FIXTURE_SECRET')
+  })
+
+  it('patched tomls satisfy every rule, in both environments', () => {
+    expect(
+      pluginParityIssues(
+        app,
+        [fixture],
+        docs('<KV_PARITY_FIXTURE_CACHE_ID>', '<KV_PARITY_FIXTURE_CACHE_STAGING_ID>')
+      )
+    ).toEqual([])
+  })
+
+  it('the account-scoped names differ and carry the staging suffix', () => {
+    const d = docs('<KV_PARITY_FIXTURE_CACHE_ID>', '<KV_PARITY_FIXTURE_CACHE_STAGING_ID>') as {
+      production: Toml
+      staging: Toml
+    }
+    for (const [section, key] of [
+      ['queues.producers', 'queue'],
+      ['r2_buckets', 'bucket_name'],
+    ] as const) {
+      const p = names(d.production, section, key)
+      const s = names(d.staging, section, key)
+      expect(s).toHaveLength(p.length)
+      for (const name of s) {
+        expect(name).toMatch(/-staging$/)
+        expect(p).not.toContain(name)
+      }
+    }
+    // The KV namespace has no name in the toml — its account-scoped name is created by
+    // cf-provision.sh — so what the two files must not share is the ID.
+    expect(get(d.production, 'kv_namespaces')).not.toEqual(get(d.staging, 'kv_namespaces'))
+  })
+
+  it('a placeholder id is allowed until REQUIRE_PROVISIONED, and refused then', () => {
+    const withPlaceholders = docs(
+      '<KV_PARITY_FIXTURE_CACHE_ID>',
+      '<KV_PARITY_FIXTURE_CACHE_STAGING_ID>'
+    )
+    expect(pluginParityIssues(app, [fixture], withPlaceholders)).toEqual([])
+    expect(
+      pluginParityIssues(app, [fixture], withPlaceholders, { requireProvisioned: true })
+    ).toEqual([
+      'production: "PARITY_FIXTURE_CACHE" id is still <KV_PARITY_FIXTURE_CACHE_ID>',
+      'staging: "PARITY_FIXTURE_CACHE" id is still <KV_PARITY_FIXTURE_CACHE_STAGING_ID>',
+    ])
+    expect(
+      pluginParityIssues(app, [fixture], docs('a'.repeat(32), 'b'.repeat(32)), {
+        requireProvisioned: true,
+      })
+    ).toEqual([])
+  })
+
+  // ---- and against what this checkout actually has ---------------------------------------
+
+  const installed = readPluginResources(
+    path.resolve(WEB_DIR, '../..'),
+    (JSON.parse(fs.readFileSync(path.resolve(WEB_DIR, '../../.rocketflare.json'), 'utf8'))
+      .surfaces ?? []) as Array<{ id: string; kind: string; anchor: string }>
+  )
+
+  it('every installed plugin is declared in both tomls', () => {
+    expect(
+      pluginParityIssues(
+        app,
+        installed,
+        { production: prod, staging },
+        {
+          requireProvisioned: process.env.REQUIRE_PROVISIONED === '1',
+        }
+      )
+    ).toEqual([])
+  })
+
+  it('every installed plugin prefix reaches the Worker first', () => {
+    // `run_worker_first` is asserted equal to WORKER_FIRST_PATTERNS above, and that list is built
+    // from the server barrel — so this checks the other half: that the MANIFEST and the barrel
+    // agree about which prefixes the plugin owns.
+    for (const plugin of installed)
+      for (const prefix of plugin.apiPrefixes)
+        expect(WORKER_FIRST_PATTERNS, `${plugin.id} declares ${prefix}`).toContain(prefix)
+  })
+})

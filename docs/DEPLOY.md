@@ -84,16 +84,38 @@ hidden gap. `apps/web/tests/config/wrangler-parity.test.ts` enforces the table b
 | Analytics Engine (optional) | `ANALYTICS_ENGINE` | `<app>_analytics[_staging]` | declared in toml — deliberately NOT wired by the kit (only a comment in both tomls) |
 | Static Assets | `ASSETS` | — | `[assets] directory = "./dist/ui"` uploaded atomically with each deploy; `run_worker_first` keeps `/api`, `/auth`, `/cubejs-api`, `/mcp`, `/ws` off the asset router |
 | RLS app role (optional, docs/RLS.md) | `HYPERDRIVE_APP` | `<app>-<env>-app` | `… hyperdrive create … --caching-disabled` |
+| Plugin resources (D31) | whatever the plugin's `plugin.json` declares (`APPROVALS_CACHE`…) | `<app>-<id>-<name>[-staging]`, and `<APP>_<ID>_<NAME>[_STAGING]` for KV | `pnpm provision cloudflare <env>` — it reads each installed plugin's `bindings[]`, creates them through `cf-provision.sh` and patches the block into that environment's toml |
 
 `pnpm web provision:cloudflare <staging|production> [app] [--apply] [--force]` (the `apps/web`
 script → `scripts/cf-provision.sh`, which `cd`s to `apps/web` itself so it also works as
-`bash apps/web/scripts/cf-provision.sh …`) creates all four resources idempotently — Hyperdrive, KV,
-Queue and R2, each found by name and reused when it exists — and either prints the Hyperdrive/KV ids
+`bash apps/web/scripts/cf-provision.sh …`) creates a RESOURCE LIST idempotently — the kit's own
+four, Hyperdrive, KV, Queue and R2, are the default list, each found by name and reused when it
+exists, and `PLUGIN_RESOURCES` (a JSON array of `{ type, name, binding }`, set by
+`pnpm provision cloudflare <env>` from the installed plugins' manifests) appends to it — and either
+prints the Hyperdrive/KV ids
 with a `sed` line per toml, or with `--apply` writes them into that toml through
 `scripts/provision/patch-toml.ts` (a DIFFERENT existing id is refused unless `--force`). It needs
 `NEON_DATABASE_URL` (direct host) and an authenticated wrangler (`wrangler login`, or
 `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID`); the connection string is an argument of the one
 `wrangler hyperdrive create` process and is redacted from every echoed line.
+**Plugin resources (D31, Decision 12).** A plugin ships no toml — the two files are the host's,
+always — so its `plugin.json` DECLARES what the account has to provide and `pnpm provision
+cloudflare <env>` applies it. `scripts/provision/plugin-resources.ts` owns the naming rule
+(`<app>-<id>-<name>[-staging]` for a queue or bucket, `<APP>_<ID>_<NAME>[_STAGING]` for a KV
+namespace, mirroring the kit's own `<APP>_RATE_LIMIT[_STAGING]`) and the refusal: a `type` outside
+`kv | queue | r2` names itself in the error rather than being skipped, because a binding quietly
+not created is a Worker that deploys and then 503s. `hyperdrive` is deliberately not offered — the
+host owns the one database.
+
+The phase writes the DECLARATIONS into **both** tomls first (the binding block with a
+`<PLACEHOLDER>` id, the `crons`, the `[vars]` keys, the `apiPrefixes` in `run_worker_first`), then
+creates the resources for the environment it was given and patches that file's ids. Both files,
+because the ordinary parity test compares binding names, `[vars]` keys, crons and
+`run_worker_first` on every `pnpm test`; the placeholder in the other environment is refused by
+`REQUIRE_PROVISIONED=1` until `pnpm provision cloudflare <other>` runs — exactly how the kit's own
+`<HYPERDRIVE_ID>` behaves. A `var` marked `"secret": true` is a Worker secret offered by
+`pnpm provision secrets <env>`, never a `[vars]` key.
+
 `pnpm provision <phase> [env]` (`apps/web/scripts/provision.ts`, driven by the `/rf-provision` skill) is
 the orchestrator around it — phases `tokens` (TTY only: hidden prompts → `apps/web/.provision.env`) · `preflight` · `email create|status|verify` · `neon` ·
 `cloudflare <env>` (this script with `--apply`) · `migrate <env>` · `github <env>` · `urls` ·

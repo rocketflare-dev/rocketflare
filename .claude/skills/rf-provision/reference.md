@@ -50,6 +50,12 @@ Optional Worker secrets copied by `pnpm provision secrets <env>` when exported o
 | deploy | `pnpm deploy[:staging]`, `wrangler deployments list --json`, `GET /api/health`, `GET /api/ready` |
 | secrets | `wrangler secret list --format json`, `wrangler secret put NAME` (stdin) |
 
+Plugin resources (D31, Decision 12): `cloudflare <env>` also creates whatever each installed
+plugin's `plugin.json` declares in `bindings[]`, named **`<app>-<id>-<name>[-staging]`** — and
+**`<APP>_<ID>_<NAME>[_STAGING]`** for a KV namespace, mirroring the kit's own
+`<APP>_RATE_LIMIT[_STAGING]`. `binding` is identical in both tomls; only the resource name carries
+the environment suffix.
+
 API references: Neon https://api-docs.neon.tech/reference/ · Resend https://resend.com/docs/api-reference/
 · Cloudflare https://developers.cloudflare.com/api/ · wrangler https://developers.cloudflare.com/workers/wrangler/commands/
 · gh https://cli.github.com/manual/ · GitHub Environments https://docs.github.com/en/rest/deployments/environments

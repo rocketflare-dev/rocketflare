@@ -37,6 +37,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import readline from 'node:readline/promises'
 import postgres from 'postgres'
+import { readManifest } from '../../../scripts/lib/manifest.mjs'
 import {
   CloudflareClient,
   hostsNeedingZone,
@@ -81,6 +82,14 @@ import {
   pickRole,
 } from './provision/neon'
 import { patchTomlFile, readTomlString, tomlPlaceholders } from './provision/patch-toml'
+import {
+  type PluginResources,
+  pluginDeclarations,
+  pluginKvPlaceholder,
+  pluginResourceList,
+  pluginResourceName,
+  readPluginResources,
+} from './provision/plugin-resources'
 import { redact } from './provision/redact'
 import { emailFromFor, ResendClient, resendRecordsToDns, zoneCandidates } from './provision/resend'
 import { generateHexKey, listWorkerSecrets, putWorkerSecret } from './provision/secrets'
@@ -742,11 +751,66 @@ async function parityTest(provisioned: boolean): Promise<void> {
   })
 }
 
+/**
+ * What every installed plugin declares that this account has to know about (D31, Decision 12).
+ * Read once per phase; a checkout with no plugins returns `[]` and every branch below is a no-op,
+ * which is why none of them is conditional on "is this the kit".
+ */
+function installedPluginResources(): PluginResources[] {
+  const { manifest } = readManifest(ROOT_DIR)
+  return readPluginResources(ROOT_DIR, manifest?.surfaces ?? [])
+}
+
+/**
+ * Write a plugin's DECLARATIONS into BOTH tomls before anything is created.
+ *
+ * Both, and before, for one reason each. Both, because the parity test compares binding names,
+ * `[vars]` KEYS, crons and `run_worker_first` across the two files on every `pnpm test` — patching
+ * only the environment being provisioned would leave the ordinary gate red until somebody
+ * remembered to run the other one. Before, because `cf-provision.sh --apply` patches an id INTO an
+ * existing block: the block has to be there first, carrying the `<PLACEHOLDER>` that
+ * `REQUIRE_PROVISIONED=1` then refuses until both environments are done — exactly how the kit's own
+ * `<HYPERDRIVE_ID>` behaves.
+ */
+function applyPluginDeclarations(app: string, plugins: PluginResources[]): void {
+  if (plugins.length === 0) return
+  const { crons, apiPrefixes, vars } = pluginDeclarations(plugins)
+  for (const env of ENV_NAMES) {
+    const changed = patchTomlFile(tomlFor(env), {
+      bindings: plugins.flatMap(plugin =>
+        plugin.bindings.map(b => ({
+          type: b.type,
+          binding: b.binding,
+          pluginId: plugin.id,
+          ...(b.type === 'kv'
+            ? { id: pluginKvPlaceholder(plugin.id, b.name, env) }
+            : { name: pluginResourceName(b.type, app, plugin.id, b.name, env) }),
+          ...(b.consumer ? { consumer: true } : {}),
+        }))
+      ),
+      crons,
+      workerFirstPrefixes: apiPrefixes,
+      // A secret is a Worker secret (`provision secrets <env>`), never a [vars] key.
+      vars: vars.filter(v => !v.secret).map(v => ({ key: v.key, value: v.example ?? '' })),
+    })
+    log(`${tomlBasename(env)}: plugin declarations ${changed ? 'written' : 'unchanged'}`)
+  }
+}
+
 async function cloudflarePhase(env: EnvName, flags: Flags): Promise<void> {
   heading(`cloudflare ${env}`)
   const info = await resolveNeon(flags, { quiet: true })
+  const app = readAppName()
+  const plugins = installedPluginResources()
+  const resources = pluginResourceList(app, plugins, env)
+  if (resources.length)
+    log(
+      `plugins: ${plugins.map(p => p.id).join(', ')} → ${resources.map(r => `${r.binding}=${r.name}`).join(', ')}`
+    )
+  applyPluginDeclarations(app, plugins)
   // The URL travels in the child's environment; cf-provision.sh hands it to
   // `wrangler hyperdrive create --connection-string=` (an argv of that one process) and redacts its output.
+  // PLUGIN_RESOURCES travels the same way and holds nothing secret — names and binding names only.
   await run(
     'bash',
     ['scripts/cf-provision.sh', env, '--apply', ...(flags.force ? ['--force'] : [])],
@@ -756,6 +820,7 @@ async function cloudflarePhase(env: EnvName, flags: Flags): Promise<void> {
         NEON_DATABASE_URL: info[env].url,
         CLOUDFLARE_API_TOKEN: token('CLOUDFLARE_API_TOKEN'),
         CLOUDFLARE_ACCOUNT_ID: token('CLOUDFLARE_ACCOUNT_ID'),
+        ...(resources.length ? { PLUGIN_RESOURCES: JSON.stringify(resources) } : {}),
       },
     }
   )
@@ -969,6 +1034,23 @@ async function secretsPhase(env: EnvName, flags: Flags): Promise<void> {
     await putWorkerSecret(env, name, value) // never DATABASE_URL — deployed Workers use HYPERDRIVE
     set.push(name)
   }
+
+  // Plugin vars marked `secret` (D31, Decision 12) are Worker secrets, not `[vars]` keys, so they
+  // are offered here from the same two places as the kit's own: an exported variable first, then
+  // apps/web/.provision.env. An unset one is SKIPPED rather than written blank — a plugin that
+  // needs it should 503 loudly at runtime, not read an empty string as a configured value.
+  for (const v of pluginDeclarations(installedPluginResources()).vars) {
+    if (!v.secret) continue
+    if (set.includes(v.key) || OPTIONAL_WORKER_SECRETS.includes(v.key as never)) continue
+    const value = token(v.key)
+    if (!value) {
+      skipped.push(v.key)
+      continue
+    }
+    await putWorkerSecret(env, v.key, value)
+    set.push(v.key)
+  }
+
   const after = await listWorkerSecrets(env)
   const missing = set.filter(n => !after.includes(n))
   if (missing.length)

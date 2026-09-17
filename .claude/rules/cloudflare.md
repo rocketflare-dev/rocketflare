@@ -192,21 +192,28 @@ is the thing to look at, not the absolute.**
 
 ## Plugins and the tomls (D31)
 
-**A plugin never edits a wrangler toml, and until Phase B's provisioning reads its manifest, that
-means you do — by hand, in BOTH files.** A plugin's `plugin.json` declares four things the runtime
-cannot invent:
+**A plugin never edits a wrangler toml; `pnpm provision cloudflare <env>` does it for you, from the
+plugin's own `plugin.json`.** Four declarations, and the phase writes the first four rows into BOTH
+tomls before it creates anything — the ordinary parity test compares binding names, `[vars]` keys,
+crons and `run_worker_first` across the two files on every `pnpm test`, so patching only one would
+leave the gate red until somebody remembered the other.
 
-| Declared | Add to |
-|---|---|
-| `bindings[]` (KV, queue, R2…) | both tomls, identical `binding` name, account-scoped `name` suffixed `-staging` in the staging file; then `pnpm types` and commit `worker-configuration.d.ts` |
-| `crons[]` | `[triggers] crons` in BOTH tomls (the parity test compares them); the task itself arrives through `ServerPlugin.scheduledTasks`, keyed on the same expression |
-| `apiPrefixes[]` | `[assets] run_worker_first` in BOTH tomls, and the Vite dev proxy. The prefix itself is unioned into `API_PREFIXES` from the server barrel, and `wrangler-parity.test.ts` asserts both tomls MIRROR that list — so a forgotten one fails the gate rather than silently serving the app shell for an `<object>` embed or an `<a download>` |
-| `vars[]` | `[vars]` keys in BOTH tomls (the parity test compares keys, not values) and a line in `.dev.vars.example` for a secret. The key itself is validated by `SharedPlugin.config`, merged into the Worker's config schema |
+| Declared | What provisioning does | Still by hand |
+|---|---|---|
+| `bindings[]` — `{ type: "kv"\|"queue"\|"r2", binding, name, consumer? }` | creates `<app>-<id>-<name>[-staging]` (`<APP>_<ID>_<NAME>[_STAGING]` for KV) and inserts the block in BOTH tomls, identical `binding`, per-env account-scoped name, KV id as a `<PLACEHOLDER>` until that env is provisioned | `pnpm types` and committing `worker-configuration.d.ts`; a type outside those three (`d1`, `vectorize`, `analytics_engine`…) is a **loud refusal naming the type** — create it and add the block to both files yourself |
+| `crons[]` | appends to `[triggers] crons` in BOTH tomls, idempotently | the task itself arrives through `ServerPlugin.scheduledTasks`, keyed on the same expression |
+| `apiPrefixes[]` | appends `p` and `p/*` to `[assets] run_worker_first` in BOTH tomls | the Vite dev proxy. The prefix is also unioned into `API_PREFIXES` from the server barrel, and `wrangler-parity.test.ts` asserts both tomls MIRROR that list — so a drift between the MANIFEST and the barrel fails the gate rather than silently serving the app shell for an `<object>` embed or an `<a download>` |
+| `vars[]` — `{ key, example?, secret? }` | a non-secret key is appended to `[vars]` in BOTH tomls with its `example` as the value (an existing key is never rewritten — its value is the operator's); a `"secret": true` one is offered by `pnpm provision secrets <env>` from an exported variable or `.provision.env` | the `.dev.vars.example` line for a secret, and the local value. The key itself is validated by `SharedPlugin.config`, merged into the Worker's config schema |
 
 The account-scoping rule is unchanged and applies to a plugin's resources exactly as to the kit's: a
 queue, R2 bucket, Workflow name or Analytics Engine dataset is unique per Cloudflare ACCOUNT, so
 staging's must differ. `binding` and `class_name` stay identical, because no application code — a
-plugin's included — is environment-aware.
+plugin's included — is environment-aware. The naming rule lives in ONE place,
+`scripts/provision/plugin-resources.ts`, and it is a wire format: rename a resource and the next
+provision run creates a second one beside the live one and points the toml at it.
+
+`hyperdrive` is deliberately not a plugin binding type — the host owns the one database, and asking
+for a second is a design conversation rather than a flag.
 
 ## `nodejs_compat`: what is allowed
 

@@ -25,11 +25,23 @@
 # NEON_DATABASE_URL — the DIRECT (non `-pooler`) host of that environment's Neon branch. Hyperdrive
 # pools itself; see docs/DEPLOY.md → Neon.
 #
-# Creates (all four, idempotently — both tomls already declare every binding):
+# Creates a RESOURCE LIST, idempotently. The kit’s own four are the default list — both tomls
+# already declare every one of these bindings:
 #   Hyperdrive config   <app>-<env>                 → [[hyperdrive]] id            (patched / printed)
 #   KV namespace        <APP>_RATE_LIMIT[_STAGING]  → [[kv_namespaces]] id         (patched / printed)
 #   Queue               <app>-jobs[-staging]        → [[queues.*]] queue           (name-referenced)
 #   R2 bucket           <app>-files[-staging]       → [[r2_buckets]] bucket_name   (name-referenced)
+#
+# PLUGIN_RESOURCES (D31, Decision 12) appends to that list: a JSON array of
+# `{ "type": "kv"|"queue"|"r2", "name": "<already env-suffixed>", "binding": "APPROVALS_CACHE" }`,
+# built by `pnpm provision cloudflare <env>` from each installed plugin’s `plugin.json` through
+# scripts/provision/plugin-resources.ts (which owns the `<app>-<id>-<name>[-staging]` naming rule,
+# and the `<APP>_<ID>_<NAME>[_STAGING]` one for KV). It travels in the ENVIRONMENT rather than in
+# argv or a temp file: nothing in it is secret, nothing is left on disk, and the redaction rule
+# below is unchanged — the connection string is still the one thing that never reaches a log.
+# An unsupported type (`d1`, `vectorize`, `analytics_engine`…) is a loud refusal naming the type,
+# never a silent skip: a binding that is quietly not created is a Worker that deploys and 503s.
+#
 # Workflows, Durable Objects and the Workers AI binding need no create step: `wrangler deploy`
 # registers them. Workflow names are ACCOUNT-scoped, so the staging toml MUST use
 # `<app>-agent-run-staging`.
@@ -53,7 +65,7 @@ for arg in "$@"; do
 done
 case "$ENV_NAME" in
   staging|production) ;;
-  *) echo "usage: NEON_DATABASE_URL=… bash $0 <staging|production> [app-name] [--apply] [--force]" >&2; exit 2 ;;
+  *) echo "usage: NEON_DATABASE_URL=… [PLUGIN_RESOURCES='[{\"type\":\"kv\",\"name\":\"…\",\"binding\":\"…\"}]'] bash $0 <staging|production> [app-name] [--apply] [--force]" >&2; exit 2 ;;
 esac
 
 # apps/web — the package that owns the tomls and the wrangler devDependency (NOT the workspace root).
@@ -96,57 +108,138 @@ esac
 echo "== ${APP} / ${ENV_NAME} → ${TOML}"
 echo
 
-# ---- Hyperdrive -----------------------------------------------------------------------------
-# `wrangler hyperdrive list` prints a table; match the name column and take the id column.
-HD_ID="$(wr hyperdrive list 2>/dev/null | awk -v n="$HYPERDRIVE_NAME" '$0 ~ "[| ]"n"[| ]" { for (i=1;i<=NF;i++) if ($i ~ /^[0-9a-f]{32}$/) { print $i; exit } }')"
-if [ -n "$HD_ID" ]; then
-  echo "hyperdrive  ${HYPERDRIVE_NAME}  exists  id=${HD_ID}"
-else
-  echo "hyperdrive  ${HYPERDRIVE_NAME}  creating…"
+# ---- the resource list --------------------------------------------------------------------
+# TYPE<TAB>NAME<TAB>BINDING per line: the kit’s four, then whatever PLUGIN_RESOURCES declares.
+RESOURCE_LIST="$(printf '%s\t%s\t%s\n' \
+  hyperdrive "$HYPERDRIVE_NAME" HYPERDRIVE \
+  kv         "$KV_NAME"         RATE_LIMIT_KV \
+  queue      "$QUEUE_NAME"      JOBS_QUEUE \
+  r2         "$BUCKET_NAME"     FILES)"
+
+if [ -n "${PLUGIN_RESOURCES:-}" ]; then
+  EXTRA="$(printf '%s' "$PLUGIN_RESOURCES" | node -e '
+    let s=""; process.stdin.on("data", d => (s += d)).on("end", () => {
+      let list;
+      try { list = JSON.parse(s) } catch (e) {
+        console.error("PLUGIN_RESOURCES is not valid JSON: " + e.message); process.exit(2)
+      }
+      if (!Array.isArray(list)) { console.error("PLUGIN_RESOURCES must be a JSON array"); process.exit(2) }
+      const supported = ["kv", "queue", "r2"];
+      for (const r of list) {
+        if (!r || !supported.includes(r.type)) {
+          console.error("unsupported plugin binding type " + JSON.stringify(r && r.type) +
+            " for binding " + JSON.stringify(r && r.binding) + " (supported: " + supported.join(", ") +
+            "). Create it and add the block to BOTH tomls by hand.");
+          process.exit(2)
+        }
+        if (!r.name || !r.binding) { console.error("plugin resource needs name and binding: " + JSON.stringify(r)); process.exit(2) }
+        process.stdout.write(r.type + "\t" + r.name + "\t" + r.binding + "\n")
+      }
+    })')"
+  if [ -n "$EXTRA" ]; then
+    RESOURCE_LIST="${RESOURCE_LIST}
+${EXTRA}"
+  fi
+fi
+
+# ---- one find-or-create per type ------------------------------------------------------------
+# Each sets RESULT_ID (empty for the name-referenced types) rather than echoing it, so the log
+# lines below stay on stdout where a human reads them.
+RESULT_ID=""
+
+ensure_hyperdrive() {
+  local name="$1"
+  # `wrangler hyperdrive list` prints a table; match the name column and take the id column.
+  RESULT_ID="$(wr hyperdrive list 2>/dev/null | awk -v n="$name" '$0 ~ "[| ]"n"[| ]" { for (i=1;i<=NF;i++) if ($i ~ /^[0-9a-f]{32}$/) { print $i; exit } }')"
+  if [ -n "$RESULT_ID" ]; then
+    echo "hyperdrive  ${name}  exists  id=${RESULT_ID}"
+    return
+  fi
+  echo "hyperdrive  ${name}  creating…"
   set +e
-  OUT="$(wr hyperdrive create "$HYPERDRIVE_NAME" --connection-string="$NEON_DATABASE_URL" 2>&1 | redact)"
+  OUT="$(wr hyperdrive create "$name" --connection-string="$NEON_DATABASE_URL" 2>&1 | redact)"
   set -e
-  HD_ID="$(printf '%s\n' "$OUT" | grep -oE '[0-9a-f]{32}' | head -1)"
-  if [ -z "$HD_ID" ]; then
+  RESULT_ID="$(printf '%s\n' "$OUT" | grep -oE '[0-9a-f]{32}' | head -1)"
+  if [ -z "$RESULT_ID" ]; then
     printf '%s\n' "$OUT" >&2
     if printf '%s' "$OUT" | grep -qiE 'paid|plan|upgrade|not (available|enabled)|10021|entitle'; then
       echo "Hyperdrive requires Workers Paid: https://dash.cloudflare.com/?to=/:account/workers/plans" >&2
     fi
     echo "could not parse Hyperdrive id" >&2; exit 1
   fi
-  echo "hyperdrive  ${HYPERDRIVE_NAME}  created id=${HD_ID}"
-fi
+  echo "hyperdrive  ${name}  created id=${RESULT_ID}"
+}
 
-# ---- KV -------------------------------------------------------------------------------------
-KV_ID="$(wr kv namespace list 2>/dev/null | node -e '
-  let s=""; process.stdin.on("data",d=>s+=d).on("end",()=>{
-    try { const a=JSON.parse(s.slice(s.indexOf("["))); const m=a.find(x=>x.title===process.argv[1]||x.title.endsWith("-"+process.argv[1])); if(m) console.log(m.id) } catch {}
-  })' "$KV_NAME")"
-if [ -n "$KV_ID" ]; then
-  echo "kv          ${KV_NAME}  exists  id=${KV_ID}"
-else
-  echo "kv          ${KV_NAME}  creating…"
-  OUT="$(wr kv namespace create "$KV_NAME" 2>&1)"
-  KV_ID="$(printf '%s\n' "$OUT" | grep -oE '[0-9a-f]{32}' | head -1)"
-  if [ -z "$KV_ID" ]; then echo "$OUT" >&2; echo "could not parse KV namespace id" >&2; exit 1; fi
-  echo "kv          ${KV_NAME}  created id=${KV_ID}"
-fi
+ensure_kv() {
+  local name="$1"
+  RESULT_ID="$(wr kv namespace list 2>/dev/null | node -e '
+    let s=""; process.stdin.on("data",d=>s+=d).on("end",()=>{
+      try { const a=JSON.parse(s.slice(s.indexOf("["))); const m=a.find(x=>x.title===process.argv[1]||x.title.endsWith("-"+process.argv[1])); if(m) console.log(m.id) } catch {}
+    })' "$name")"
+  if [ -n "$RESULT_ID" ]; then
+    echo "kv          ${name}  exists  id=${RESULT_ID}"
+    return
+  fi
+  echo "kv          ${name}  creating…"
+  OUT="$(wr kv namespace create "$name" 2>&1)"
+  RESULT_ID="$(printf '%s\n' "$OUT" | grep -oE '[0-9a-f]{32}' | head -1)"
+  if [ -z "$RESULT_ID" ]; then echo "$OUT" >&2; echo "could not parse KV namespace id" >&2; exit 1; fi
+  echo "kv          ${name}  created id=${RESULT_ID}"
+}
 
-# ---- Queue + R2 (bindings JOBS_QUEUE / FILES; name-referenced, no ids to paste) ------------------
-if ! wr queues list 2>/dev/null | grep -qE "(^|[^A-Za-z0-9_-])${QUEUE_NAME}([^A-Za-z0-9_-]|$)"; then
-  wr queues create "$QUEUE_NAME"
-fi
-echo "queue       ${QUEUE_NAME}  (name-referenced; no id to paste)"
-if ! wr r2 bucket list 2>/dev/null | grep -qE "name: *${BUCKET_NAME}\$"; then
-  wr r2 bucket create "$BUCKET_NAME"
-fi
-echo "r2          ${BUCKET_NAME}  (name-referenced; no id to paste)"
+ensure_queue() {
+  local name="$1"
+  RESULT_ID=""
+  if ! wr queues list 2>/dev/null | grep -qE "(^|[^A-Za-z0-9_-])${name}([^A-Za-z0-9_-]|$)"; then
+    wr queues create "$name"
+  fi
+  echo "queue       ${name}  (name-referenced; no id to paste)"
+}
+
+ensure_r2() {
+  local name="$1"
+  RESULT_ID=""
+  if ! wr r2 bucket list 2>/dev/null | grep -qE "name: *${name}\$"; then
+    wr r2 bucket create "$name"
+  fi
+  echo "r2          ${name}  (name-referenced; no id to paste)"
+}
+
+HD_ID=""
+KV_ID=""
+PATCH_ARGS=()
+while IFS="$(printf '\t')" read -r RTYPE RNAME RBINDING; do
+  [ -z "${RTYPE:-}" ] && continue
+  case "$RTYPE" in
+    hyperdrive)
+      ensure_hyperdrive "$RNAME"; HD_ID="$RESULT_ID"
+      PATCH_ARGS+=(--hyperdrive-id "$HD_ID") ;;
+    kv)
+      ensure_kv "$RNAME"
+      if [ "$RBINDING" = "RATE_LIMIT_KV" ]; then
+        KV_ID="$RESULT_ID"; PATCH_ARGS+=(--kv-id "$KV_ID")
+      else
+        PATCH_ARGS+=(--binding "{\"type\":\"kv\",\"binding\":\"${RBINDING}\",\"id\":\"${RESULT_ID}\"}")
+      fi ;;
+    queue)
+      ensure_queue "$RNAME"
+      [ "$RBINDING" = "JOBS_QUEUE" ] || \
+        PATCH_ARGS+=(--binding "{\"type\":\"queue\",\"binding\":\"${RBINDING}\",\"name\":\"${RNAME}\"}") ;;
+    r2)
+      ensure_r2 "$RNAME"
+      [ "$RBINDING" = "FILES" ] || \
+        PATCH_ARGS+=(--binding "{\"type\":\"r2\",\"binding\":\"${RBINDING}\",\"name\":\"${RNAME}\"}") ;;
+    *) echo "unsupported resource type: ${RTYPE}" >&2; exit 2 ;;
+  esac
+done <<EOF
+${RESOURCE_LIST}
+EOF
 
 # ---- apply / output -------------------------------------------------------------------------
 if [ "$APPLY" = "1" ]; then
   FORCE_FLAG=""; [ "$FORCE" = "1" ] && FORCE_FLAG="--force"
   # shellcheck disable=SC2086
-  pnpm exec tsx scripts/provision/patch-toml.ts "$TOML" --hyperdrive-id "$HD_ID" --kv-id "$KV_ID" $FORCE_FLAG
+  pnpm exec tsx scripts/provision/patch-toml.ts "$TOML" ${PATCH_ARGS[@]+"${PATCH_ARGS[@]}"} $FORCE_FLAG
 fi
 
 cat <<EOT
@@ -174,3 +267,10 @@ Name-referenced resources for this environment (already declared in ${TOML}):
   bucket     = "${BUCKET_NAME}"
   workflow   = "${APP}-agent-run${SUFFIX}"    # ACCOUNT-scoped: must differ from the other env; registered by wrangler deploy
 EOT
+if [ -n "${PLUGIN_RESOURCES:-}" ]; then
+cat <<EOT
+Plugin resources for this environment (D31 — declared in each plugin's plugin.json, named
+<app>-<id>-<name>${SUFFIX} / <APP>_<ID>_<NAME>${KV_SUFFIX}, block patched into ${TOML}):
+EOT
+  printf '%s\n' "$RESOURCE_LIST" | awk -F'\t' 'NR > 4 { printf "  %-11s %-42s binding = \"%s\"\n", $1, $2, $3 }'
+fi

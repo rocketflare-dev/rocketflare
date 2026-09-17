@@ -83,6 +83,10 @@ localConnectionString = "postgresql://rocketflare:rocketflare_pass@localhost:543
 binding = "RATE_LIMIT_KV"
 id = "<KV_RATE_LIMIT_ID>"
 
+# Plugin bindings (D31) are appended to the sections above by `pnpm provision cloudflare <env>`,
+# which reads each installed plugin’s plugin.json (bindings, crons, apiPrefixes, vars) and writes
+# the same declarations into BOTH tomls. Never hand-edit one of a plugin’s blocks in one file only.
+
 # Cron triggers — dispatched by src/api/scheduled.ts keyed on event.cron.
 [triggers]
 crons = [
