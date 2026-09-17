@@ -490,3 +490,103 @@ function satisfiesComparator(version, comparator) {
       return c >= 0 && compareVersions(version, bump(target, 1)) < 0
   }
 }
+
+// ---------------------------------------------------------------- default plugins (D31, decision 5)
+
+/**
+ * The `defaultPlugins` list from `.rocketflare.json`, normalised.
+ *
+ * **The shape is an OBJECT per entry** — `{ id, repo, ref?, subdir? }` — because a default plugin
+ * has to be installable by a machine that has only this file: a bare id says nothing about where
+ * the plugin comes from, and decision 13 already made `repo` required of every plugin manifest for
+ * exactly that reason. `ref` is the pinned tag CI installs (omitted = the repository's default
+ * branch, which is a moving target and only sensible while a plugin is being written). A plain
+ * STRING is accepted and normalised to `{ id, repo: null }` so an older manifest still parses, but
+ * it has no repo and every consumer below reports that as a problem rather than guessing a URL.
+ */
+export function defaultPluginEntries(manifest) {
+  return (manifest?.defaultPlugins ?? []).map(entry =>
+    typeof entry === 'string'
+      ? { id: entry, repo: null, ref: null, subdir: '' }
+      : {
+          id: entry.id ?? null,
+          repo: entry.repo ?? null,
+          ref: entry.ref ?? null,
+          subdir: entry.subdir ?? '',
+        }
+  )
+}
+
+/** A vendored plugin is the kit's own: same repository, no subdirectory (§16). */
+function isVendored(entry, kitRepo) {
+  const norm = r => (r ?? '').replace(/\.git$/, '').replace(/\/+$/, '')
+  return norm(entry.repo) !== '' && norm(entry.repo) === norm(kitRepo) && !entry.subdir
+}
+
+/**
+ * Why this version must NOT be released — one sentence per problem, empty when it may be.
+ *
+ * Pure: `resolve(entry)` is injected and does the I/O (reach the repository, read its
+ * `rocketflare-plugin.json`). It returns `{ ok, reason?, requiresKit?, version? }`.
+ *
+ * What this proves and what it does not, stated plainly because the difference matters: it proves
+ * every default plugin is still FETCHABLE at the ref the kit pins and that its declared
+ * `requires.kit` range admits the version being cut. It does not prove that plugin's tests pass
+ * against it — nothing a release script can do proves that. The kit's own CI installs every default
+ * plugin and runs the full gate on the release commit (`.github/workflows/ci.yml`), and each plugin
+ * repository runs the mirrored check against the kit (`.github/workflows/plugin-ci.yml`). Those two
+ * are the compatibility proof; this is the stop that catches a pin nobody updated.
+ *
+ * A VENDORED entry (the kit's own repository, no subdirectory) is exempt from the range check for
+ * the reason §16 gives: the same release cut both, so the range describes the kit it shipped inside
+ * rather than a compatibility claim.
+ */
+export function defaultPluginProblems(entries, version, resolve, { kitRepo = null } = {}) {
+  const problems = []
+  const seen = new Set()
+  for (const entry of entries) {
+    const id = entry.id ?? '(unnamed)'
+    if (!entry.id) {
+      problems.push('a defaultPlugins entry has no "id"')
+      continue
+    }
+    if (seen.has(entry.id)) problems.push(`defaultPlugins lists '${id}' twice`)
+    seen.add(entry.id)
+    if (!entry.repo) {
+      problems.push(
+        `defaultPlugins '${id}' has no "repo" — a default plugin CI cannot fetch is a default plugin nobody can install`
+      )
+      continue
+    }
+    const resolved = resolve(entry) ?? { ok: false, reason: 'not resolved' }
+    if (!resolved.ok) {
+      problems.push(
+        `defaultPlugins '${id}' (${entry.repo}${entry.ref ? `@${entry.ref}` : ''}): ${resolved.reason}`
+      )
+      continue
+    }
+    if (isVendored(entry, kitRepo)) continue
+    const range = resolved.requiresKit
+    if (range == null) {
+      problems.push(
+        `defaultPlugins '${id}': cannot read its requires.kit range — install it (\`pnpm plugin add\`) or keep a mirror, so the pin can be checked`
+      )
+      continue
+    }
+    let ok = false
+    try {
+      ok = satisfies(version, range)
+    } catch (error) {
+      problems.push(
+        `defaultPlugins '${id}': requires.kit '${range}' is not a range this kit can read (${error.message})`
+      )
+      continue
+    }
+    if (!ok) {
+      problems.push(
+        `defaultPlugins '${id}'${resolved.version ? ` ${resolved.version}` : ''} requires kit '${range}', which ${version} does not satisfy — release the plugin first, or repin it`
+      )
+    }
+  }
+  return problems
+}

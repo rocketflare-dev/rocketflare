@@ -512,9 +512,11 @@ function cmdAdd(args, host) {
 
   // --- apply
   let written = 0
+  const targets = []
   for (const f of files) {
     if (f.role !== 'copy' && f.role !== 'note') continue
     writeInto(f.target, materialise(source.read(f.path), host.names))
+    targets.push(f.target)
     written += 1
   }
   for (const kind of barrels) {
@@ -522,6 +524,7 @@ function cmdAdd(args, host) {
     writeFileSync(file, addBarrelLine(readFileSync(file, 'utf8'), kind, m.id))
   }
   installDependencies(m, 'add')
+  const formatted = formatWritten([...targets, ...barrels.map(k => BARRELS[k].file)])
   const recordedIn = recordSurface(
     host,
     buildPluginSurface(m, {
@@ -536,12 +539,42 @@ function cmdAdd(args, host) {
     '',
     `✔ ${written} file(s) copied${host.names ? ' and translated' : ''}`,
     `✔ ${barrels.length} barrel line(s) written`,
+    ...(formatted ? [`✔ ${formatted}`] : []),
     `✔ surface '${m.id}' recorded in ${path.relative(REPO_ROOT, recordedIn)}`,
     '',
     'Now do the "by hand" steps above — the schema migration first; nothing else can run until the',
     'tables exist. Then `pnpm lint && pnpm typecheck && pnpm test && pnpm build`.'
   )
   return 0
+}
+
+/**
+ * Biome over what was just written, and this is not tidiness.
+ *
+ * A plugin is authored in the KIT's vocabulary and translated on the way in, so its import
+ * specifiers change length AND sort order: `@heroicons/react` sorts BEFORE `@rocketflare/shared`
+ * and AFTER `@acme/shared`. The kit's own file is correctly sorted; the same file translated into
+ * an app whose scope sorts the other way is not, and `pnpm lint` — the first line of the gate the
+ * plan tells you to run next — fails on a file the tool wrote. `rename.mjs` solves the identical
+ * problem the identical way (it runs `pnpm lint:fix` at the end of its pass).
+ *
+ * Best-effort, like the rename's: a host without biome, or a rule biome cannot fix, is a warning
+ * and not a failed install. Scoped to the paths this install touched, so it never reformats
+ * somebody's unrelated work in progress.
+ */
+function formatWritten(paths) {
+  const r = spawnSync('pnpm', ['exec', 'biome', 'check', '--write', ...paths], {
+    cwd: REPO_ROOT,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  })
+  if (r.error || r.status === null) {
+    warn('note: biome did not run — check the formatting of the copied files with `pnpm lint`.')
+    return null
+  }
+  if (r.status !== 0) {
+    warn('note: biome reported problems it could not fix — `pnpm lint` will show them.')
+  }
+  return 'formatted with biome (translation changes import order)'
 }
 
 /**
@@ -856,7 +889,7 @@ function cmdRemove(args, host) {
   )
   if (dependents.length > 0) {
     warn(
-      `error: ${dependents.map(d => `'${d.id}'`).join(', ')} require '${id}'.`,
+      `error: ${dependents.map(d => `'${d.id}'`).join(', ')} ${dependents.length === 1 ? 'requires' : 'require'} '${id}'.`,
       'Remove them first, or drop the requirement from their manifests.'
     )
     return 6

@@ -49,13 +49,13 @@ import {
   notesBetween,
 } from './lib/git-lib.mjs'
 import { pluginSurfaces, readManifest } from './lib/manifest.mjs'
+import { unsupportedForKit } from './lib/plugin-lib.mjs'
 import { applyReplacements, deriveNames } from './lib/rename-lib.mjs'
 import {
   absentSurfaces,
   classifyPath,
   countLines,
   matchesAny,
-  satisfies,
   splitDiff,
   stripIndexLines,
   translateBlock,
@@ -257,9 +257,12 @@ function main(argv) {
         ` — owned by their own repos; upgrade each with \`pnpm plugin upgrade <id>\` after this`
     )
   }
-  const unsupported = toVersion
-    ? plugins.filter(p => p.requires?.kit && !satisfies(toVersion, p.requires.kit))
-    : []
+  // A vendored plugin is exempt, for the reason `plugin check` gives: the kit release that moves
+  // the kit moves it too, so its range names the kit it shipped inside. One predicate, both tools.
+  const unsupported = unsupportedForKit(plugins, {
+    kitRepo: manifest.kit.repo,
+    version: toVersion,
+  })
   if (unsupported.length > 0 && !args.force) {
     warn(
       `error: ${unsupported.length} installed plugin(s) do not support kit ${toVersion}:`,
@@ -390,7 +393,8 @@ function main(argv) {
       id: p.id,
       version: p.source?.version ?? null,
       requiresKit: p.requires?.kit ?? null,
-      supported: toVersion && p.requires?.kit ? satisfies(toVersion, p.requires.kit) : null,
+      // Same answer the text report gives, vendored exemption included.
+      supported: toVersion && p.requires?.kit ? !unsupported.includes(p) : null,
     })),
     surfaces: {
       present: manifest.surfaces.map(s => s.id).filter(id => !absent.includes(id)),

@@ -22,6 +22,12 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
+  MANIFEST_FILE,
+  pluginSurfaces,
+  readManifest,
+  SIDECAR_FILE,
+} from '../../../../scripts/lib/manifest.mjs'
+import {
   addBarrelLine,
   archiveSql,
   BARREL_KINDS,
@@ -34,6 +40,7 @@ import {
   classifyPluginFile,
   hasBarrelLine,
   isVendored,
+  PLUGIN_MANIFEST_FILE,
   parsePluginRequirement,
   pluginIdProblem,
   pluginPlatformProblems,
@@ -44,12 +51,25 @@ import {
   SUPPORTED_PLUGIN_BINDING_TYPES,
   surfaceDirectories,
   tupleEntries,
+  unsupportedForKit,
 } from '../../../../scripts/lib/plugin-lib.mjs'
+import { applyReplacements, deriveNames, KIT } from '../../../../scripts/lib/rename-lib.mjs'
 import type { Surface } from '../../../../scripts/lib/upgrade-lib.d.mts'
 import { SUPPORTED_PLUGIN_BINDING_TYPES as PROVISION_TYPES } from '../../scripts/provision/plugin-resources'
 
 const REPO_ROOT = path.resolve(__dirname, '../../../..')
 const read = (rel: string) => readFileSync(path.join(REPO_ROOT, rel), 'utf8')
+
+/**
+ * Everything below drives the script against THIS checkout, so its subject is whatever plugin is
+ * installed here rather than the kit's reference one by name. An app is expected to delete
+ * `example-feature` — that is what it is for — and these tests travel into every app with the rest
+ * of the kit's suite, so naming it would turn "I uninstalled the example" into a red gate.
+ */
+const installedHere = pluginSurfaces(readManifest().manifest)
+const subject = installedHere[0]?.id ?? null
+const kitRepo = readManifest().manifest?.kit.repo ?? ''
+const vendoredHere = installedHere.find(s => isVendored(s.source, kitRepo))?.id ?? null
 
 describe('plugin ids', () => {
   it('accepts a namespace and rejects everything that is not one', () => {
@@ -62,7 +82,7 @@ describe('plugin ids', () => {
   })
 
   it("refuses the kit's own name, because the rename would rewrite it", () => {
-    expect(pluginIdProblem('rocketflare-extras')).toMatch(/kit's name/)
+    expect(pluginIdProblem(`${KIT.slug}-extras`)).toMatch(/kit's name/)
   })
 
   it('refuses a barrel filename', () => {
@@ -128,17 +148,20 @@ describe('the barrel writer', () => {
     ])
   })
 
-  it('removes exactly what it added, for every barrel, against the REAL files', () => {
-    // If a round trip is not byte-identical, `pnpm plugin add` produces a commit that fails lint.
-    for (const kind of BARREL_KINDS) {
-      const original = read(BARRELS[kind].file)
-      expect(hasBarrelLine(original, kind, 'example-feature')).toBe(true)
-      const without = removeBarrelLine(original, kind, 'example-feature')
-      expect(hasBarrelLine(without, kind, 'example-feature')).toBe(false)
-      expect(addBarrelLine(without, kind, 'example-feature')).toBe(original)
-      expect(addBarrelLine(original, kind, 'example-feature')).toBe(original)
+  it.skipIf(!subject)(
+    'removes exactly what it added, for every barrel, against the REAL files',
+    () => {
+      // If a round trip is not byte-identical, `pnpm plugin add` produces a commit that fails lint.
+      for (const kind of BARREL_KINDS) {
+        const original = read(BARRELS[kind].file)
+        expect(hasBarrelLine(original, kind, subject as string)).toBe(true)
+        const without = removeBarrelLine(original, kind, subject as string)
+        expect(hasBarrelLine(without, kind, subject as string)).toBe(false)
+        expect(addBarrelLine(without, kind, subject as string)).toBe(original)
+        expect(addBarrelLine(original, kind, subject as string)).toBe(original)
+      }
     }
-  })
+  )
 
   it('writes one `export *` into the schema barrel and no tuple entry', () => {
     expect(barrelLines('schema', 'orders')).toEqual(["export * from './orders/db/schema'"])
@@ -148,12 +171,49 @@ describe('the barrel writer', () => {
     ])
   })
 
+  /**
+   * A TypeScript file with no top-level import or export is a SCRIPT, not a module. The schema
+   * barrel is the one of the five that declares no const, so removing the last plugin left it as a
+   * comment and `db/schema/index.ts`'s `export * from '../plugins/schema'` became TS2306 — the
+   * whole app stopped typechecking the moment somebody uninstalled the reference plugin, which is
+   * the one thing that plugin exists for.
+   */
+  it('leaves the schema barrel a MODULE when the last plugin goes', () => {
+    const real = read(BARRELS.schema.file)
+    const bare = installedHere.reduce((text, s) => removeBarrelLine(text, 'schema', s.id), real)
+    expect(bare).not.toMatch(/^export \* from/m)
+    expect(bare).toContain('export {}')
+    // …and the marker gives way to the first plugin that arrives, byte for byte.
+    expect(addBarrelLine(bare, 'schema', 'orders')).not.toContain('export {}')
+    if (subject) expect(addBarrelLine(bare, 'schema', subject)).toBe(real)
+  })
+
   it('points each barrel at the file whose presence means the plugin ships that half', () => {
     expect(BARRELS.shared.half('orders')).toBe('packages/shared/src/plugins/orders/index.ts')
     expect(BARRELS.ui.half('orders')).toBe('apps/web/src/plugins/orders/ui/index.ts')
     // The shared entry is imported as `.../orders/index` — the package's `./*` export maps to a
     // FILE, so dropping the `/index` does not resolve.
     expect(BARRELS.shared.specifier('orders')).toBe('./orders/index')
+  })
+})
+
+/**
+ * Why `scripts/plugin.mjs` runs biome over the files it just wrote.
+ *
+ * A plugin is authored in the KIT's vocabulary and translated on the way in, and translation moves
+ * a package scope in the alphabet: `@heroicons/react` sorts AFTER `@acme/shared` and BEFORE
+ * `@rocketflare/shared`. So a file that is correctly sorted in the kit arrives unsorted in an app
+ * whose scope sorts the other way, and `pnpm lint` — the first line of the gate the install plan
+ * tells you to run next — fails on a file the tool wrote. `rename.mjs` has the same problem and
+ * solves it the same way.
+ */
+describe('translation and import order', () => {
+  it('moves a scope past its neighbours in the sort', () => {
+    const kitOrder = [`@heroicons/react/24/outline`, `@${KIT.slug}/shared/plugins/x/index`]
+    expect([...kitOrder].sort()).toEqual(kitOrder)
+    const appOrder = kitOrder.map(s => applyReplacements(s, deriveNames('acme', 'Acme')).text)
+    // The same two imports, in the same file, now in the WRONG order for this app.
+    expect([...appOrder].sort()).not.toEqual(appOrder)
   })
 })
 
@@ -185,7 +245,7 @@ describe('what a plugin may bring', () => {
     for (const p of ['.github/workflows/ci.yml', 'package.json', '.gitignore', 'pnpm-lock.yaml']) {
       expect(roles(p)).toBe('repo-only')
     }
-    expect(roles('rocketflare-plugin.json')).toBe('meta')
+    expect(roles(PLUGIN_MANIFEST_FILE)).toBe('meta')
     expect(roles('README.md')).toBe('meta')
   })
 
@@ -242,6 +302,32 @@ describe('requirements', () => {
     expect(
       checkRequirements({ ...base, installedPlugins, requires: { plugins: ['approvals@^2.0.0'] } })
     ).toEqual(["plugin 'approvals' is 1.2.0, which does not satisfy ^2.0.0"])
+  })
+
+  /**
+   * `plugin check` and `kit:upgrade` have to answer this identically, and once did not: check
+   * printed "vendored — requires.kit is not checked" and exited 0 while `kit:upgrade`, in the same
+   * checkout and over the same range, refused with exit 6. Every copy of the kit would have been
+   * stopped from upgrading by the plugin the kit itself ships.
+   */
+  it('exempts a vendored plugin from the kit range for `kit:upgrade` too', () => {
+    const kitRepo = 'https://github.com/rocketflare-dev/rocketflare.git'
+    const vendored = {
+      id: 'example',
+      source: { repo: kitRepo, subdir: '' },
+      requires: { kit: '>=9.0.0' },
+    }
+    const third = {
+      id: 'orders',
+      source: { repo: 'https://github.com/acme/p.git' },
+      requires: { kit: '>=9.0.0' },
+    }
+    expect(
+      unsupportedForKit([vendored, third], { kitRepo, version: '0.4.0' }).map(p => p.id)
+    ).toEqual(['orders'])
+    // In range, nobody is unsupported; with no target version there is nothing to judge against.
+    expect(unsupportedForKit([third], { kitRepo, version: '9.1.0' })).toEqual([])
+    expect(unsupportedForKit([third], { kitRepo, version: null })).toEqual([])
   })
 
   it('splits a requirement into an id and a range', () => {
@@ -380,7 +466,7 @@ describe('the install plan', () => {
     host: {
       label: 'Acme Logistics (acme)',
       kitVersion: '0.5.0',
-      recordsIn: '.rocketflare.json',
+      recordsIn: MANIFEST_FILE,
       translated: true,
     },
     vendored: false,
@@ -424,7 +510,7 @@ describe('the install plan', () => {
     const text = renderAddPlan({ ...plan, barrels: [...plan.barrels] }).join('\n')
     expect(text).toContain('orders@1.1.0 — Orders')
     expect(text).toContain('@ 1.1.0 (abc123def456)')
-    expect(text).toContain('records into .rocketflare.json')
+    expect(text).toContain(`records into ${MANIFEST_FILE}`)
     expect(text).toContain("translated into Acme Logistics (acme)'s vocabulary")
     expect(text).toContain("Verify (from the plugin's own note)")
     expect(text).toContain('The Orders page lists one order.')
@@ -466,59 +552,60 @@ const plugin = (args: string[], cwd = REPO_ROOT) => {
 }
 
 describe('scripts/plugin.mjs, end to end', () => {
-  it('exports a plugin, adds it back under a fresh id, and writes nothing without --apply', () => {
-    const dir = mkdtempSync(path.join(tmpdir(), 'rf-plugin-'))
-    try {
-      expect(plugin(['export', 'example-feature', dir]).status).toBe(0)
-      expect(existsSync(path.join(dir, 'rocketflare-plugin.json'))).toBe(true)
-      expect(existsSync(path.join(dir, 'apps/web/src/plugins/example-feature/plugin.json'))).toBe(
-        true
-      )
+  it.skipIf(!subject)(
+    'exports a plugin, adds it back under a fresh id, and writes nothing without --apply',
+    () => {
+      const dir = mkdtempSync(path.join(tmpdir(), 'rf-plugin-'))
+      try {
+        expect(plugin(['export', subject as string, dir]).status).toBe(0)
+        expect(existsSync(path.join(dir, PLUGIN_MANIFEST_FILE))).toBe(true)
+        expect(existsSync(path.join(dir, `apps/web/src/plugins/${subject}/plugin.json`))).toBe(true)
 
-      // Re-badge the export as a plugin this checkout does not have: same tree, a new id, its own
-      // repository (so it is not vendored) and a kit range this kit satisfies. Without that it is
-      // simply the installed plugin, and `add` correctly refuses with exit 7.
-      for (const base of [
-        'apps/web/src/plugins',
-        'packages/shared/src/plugins',
-        'apps/cli/src/plugins',
-      ]) {
-        const from = path.join(dir, base, 'example-feature')
-        if (existsSync(from)) {
-          mkdirSync(path.dirname(path.join(dir, base, 'smoke-plugin')), { recursive: true })
-          renameSync(from, path.join(dir, base, 'smoke-plugin'))
+        // Re-badge the export as a plugin this checkout does not have: same tree, a new id, its own
+        // repository (so it is not vendored) and a kit range this kit satisfies. Without that it is
+        // simply the installed plugin, and `add` correctly refuses with exit 7.
+        for (const base of [
+          'apps/web/src/plugins',
+          'packages/shared/src/plugins',
+          'apps/cli/src/plugins',
+        ]) {
+          const from = path.join(dir, base, subject as string)
+          if (existsSync(from)) {
+            mkdirSync(path.dirname(path.join(dir, base, 'smoke-plugin')), { recursive: true })
+            renameSync(from, path.join(dir, base, 'smoke-plugin'))
+          }
         }
+        const manifestFile = path.join(dir, PLUGIN_MANIFEST_FILE)
+        const rebadged = JSON.parse(
+          readFileSync(manifestFile, 'utf8').replaceAll(subject as string, 'smoke-plugin')
+        )
+        rebadged.repo = 'https://github.com/acme/rocketflare-plugin-smoke.git'
+        rebadged.requires.kit = '>=0.1.0'
+        writeFileSync(manifestFile, `${JSON.stringify(rebadged, null, 2)}\n`)
+
+        const before = BARREL_KINDS.map(k => read(BARRELS[k].file))
+        const sidecarBefore = existsSync(path.join(REPO_ROOT, SIDECAR_FILE))
+
+        const plan = plugin(['add', dir, '--local'])
+        expect(plan.status).toBe(0)
+        expect(plan.out).toContain('Plugin      smoke-plugin@')
+        expect(plan.out).toContain('Barrel lines')
+        expect(plan.out).toContain('Nothing written.')
+
+        // Nothing written means nothing written.
+        expect(BARREL_KINDS.map(k => read(BARRELS[k].file))).toEqual(before)
+        expect(existsSync(path.join(REPO_ROOT, SIDECAR_FILE))).toBe(sidecarBefore)
+        expect(existsSync(path.join(REPO_ROOT, 'apps/web/src/plugins/smoke-plugin'))).toBe(false)
+      } finally {
+        rmSync(dir, { recursive: true, force: true })
       }
-      const manifestFile = path.join(dir, 'rocketflare-plugin.json')
-      const rebadged = JSON.parse(
-        readFileSync(manifestFile, 'utf8').replaceAll('example-feature', 'smoke-plugin')
-      )
-      rebadged.repo = 'https://github.com/acme/rocketflare-plugin-smoke.git'
-      rebadged.requires.kit = '>=0.1.0'
-      writeFileSync(manifestFile, `${JSON.stringify(rebadged, null, 2)}\n`)
-
-      const before = BARREL_KINDS.map(k => read(BARRELS[k].file))
-      const sidecarBefore = existsSync(path.join(REPO_ROOT, '.rocketflare.local.json'))
-
-      const plan = plugin(['add', dir, '--local'])
-      expect(plan.status).toBe(0)
-      expect(plan.out).toContain('Plugin      smoke-plugin@')
-      expect(plan.out).toContain('Barrel lines')
-      expect(plan.out).toContain('Nothing written.')
-
-      // Nothing written means nothing written.
-      expect(BARREL_KINDS.map(k => read(BARRELS[k].file))).toEqual(before)
-      expect(existsSync(path.join(REPO_ROOT, '.rocketflare.local.json'))).toBe(sidecarBefore)
-      expect(existsSync(path.join(REPO_ROOT, 'apps/web/src/plugins/smoke-plugin'))).toBe(false)
-    } finally {
-      rmSync(dir, { recursive: true, force: true })
     }
-  })
+  )
 
-  it('refuses to add a plugin that is already installed, by id', () => {
+  it.skipIf(!subject)('refuses to add a plugin that is already installed, by id', () => {
     const dir = mkdtempSync(path.join(tmpdir(), 'rf-plugin-'))
     try {
-      expect(plugin(['export', 'example-feature', dir]).status).toBe(0)
+      expect(plugin(['export', subject as string, dir]).status).toBe(0)
       const again = plugin(['add', dir, '--local'])
       expect(again.status).toBe(7)
       expect(again.out).toMatch(/already installed/)
@@ -532,21 +619,24 @@ describe('scripts/plugin.mjs, end to end', () => {
     try {
       const r = plugin(['add', dir])
       expect(r.status).toBe(5)
-      expect(r.out).toContain('rocketflare-plugin.json')
+      expect(r.out).toContain(PLUGIN_MANIFEST_FILE)
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
   })
 
-  it('checks this checkout, and skips the vendored plugin’s kit range while doing it', () => {
-    const r = plugin(['check'])
-    expect(r.status).toBe(0)
-    expect(r.out).toContain('example-feature')
-    expect(r.out).toContain('vendored')
-  })
+  it.skipIf(!vendoredHere)(
+    'checks this checkout, and skips the vendored plugin’s kit range while doing it',
+    () => {
+      const r = plugin(['check'])
+      expect(r.status).toBe(0)
+      expect(r.out).toContain(vendoredHere)
+      expect(r.out).toContain('vendored')
+    }
+  )
 
-  it('defers a vendored upgrade to `pnpm kit:upgrade`', () => {
-    const r = plugin(['upgrade', 'example-feature'])
+  it.skipIf(!vendoredHere)('defers a vendored upgrade to `pnpm kit:upgrade`', () => {
+    const r = plugin(['upgrade', vendoredHere as string])
     expect(r.status).toBe(0)
     expect(r.out).toContain('kit:upgrade')
   })

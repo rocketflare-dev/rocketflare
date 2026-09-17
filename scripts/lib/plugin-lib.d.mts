@@ -73,6 +73,16 @@ export interface PluginManifest {
   migrations?: string[]
 }
 
+/** The installed plugins a move to kit `version` would leave unsupported (vendored ones exempt). */
+export function unsupportedForKit(
+  plugins: Array<{
+    id: string
+    source?: { repo?: string; subdir?: string } | null
+    requires?: { kit?: string } | null
+  }>,
+  at: { kitRepo?: string | null; version?: string | null }
+): Array<{ id: string; requires: { kit: string } }>
+
 export function checkRequirements(input: {
   requires?: PluginRequires
   kitVersion: string

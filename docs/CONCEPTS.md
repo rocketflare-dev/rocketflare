@@ -2084,7 +2084,7 @@ before anything bigger moves out. Its surface's `source.repo` is the kit repo wi
 | 2 | Fresh clone | The kit becomes bare; `defaultPlugins` in `.rocketflare.json` and a bootstrap step install a default set, so a fresh clone is unchanged (Phase C) |
 | 3 | Reference plugin | `example-feature`, grown to carry a table, a route, a tool, both hooks and a CLI command |
 | 4 | Record of installed plugins | A `kind: 'plugin'` surface — committed in an app, in the git-ignored sidecar in the kit or with `--local`; `readManifest()` is the one predicate |
-| 5 | Compatibility | A declared `requires.kit` range PLUS proof both ways in CI. No separate plugin-API version: untyped imports are the real exposure and only the gate catches them |
+| 5 | Compatibility | A declared `requires.kit` range PLUS proof both ways in CI — **built**: `ci.yml` installs every `defaultPlugins` entry and runs the whole gate on it, `.github/workflows/plugin-ci.yml` is the reusable workflow a plugin repository calls to do the mirror image against the oldest and newest kit in its range, and `kit:release` refuses a version its default plugins do not resolve at or admit. No separate plugin-API version: untyped imports are the real exposure and only the gate catches them |
 | 6 | Cubes, fact tables, dashboards | Plugin-owned registries through `extensions: Record<string, readonly unknown[]>`; the owning plugin narrows with zod and fails loudly. Core stays ignorant of drizzle-cube |
 | 7 | The extraction boundary | No compatibility path: analytics moves out under the `<id>_*` rule and the release note says its tables are dropped |
 | 8 | Bundle safety | `LazyExoticComponent` for pages, plus a source-level structural test in the host |
@@ -2094,9 +2094,26 @@ before anything bigger moves out. Its surface's `source.repo` is the kit repo wi
 | 12 | Plugin bindings | Provisioning learns them: `provision cloudflare <env>` reads each plugin's `bindings[]`, and the parity test applies the `-staging` rule to them |
 | 13 | Where a plugin comes from | Every manifest carries a required `repo` (+ optional `subdir`), so a surface's `source.repo` is never null |
 
-Decisions 11 and 12 arrived with `scripts/plugin.mjs` and `provision/plugin-resources.ts` (below);
-2 (a bootstrap step installing `defaultPlugins`) and 5's CI half are the rest of Phase B; 6 and 7
-land with the analytics extraction in Phase C. The rest are true today.
+Decisions 11 and 12 arrived with `scripts/plugin.mjs` and `provision/plugin-resources.ts` (below),
+and 5's CI half with `.github/workflows/{gate,ci,plugin-ci}.yml` (next paragraph); 6 and 7 land with
+the analytics extraction in Phase C. The rest are true today.
+
+**Compatibility is proved from both ends, by two workflows and one refusal (decision 5).** The
+gate's steps live in `.github/workflows/gate.yml` and `ci.yml` calls it TWICE — plain, and again
+with every `defaultPlugins` entry installed at its pinned ref, `pnpm db:generate` run per plugin and
+`db:migrate:ci` applied — because a second copy of those steps would prove nothing about the copy
+nobody ran. `defaultPlugins` entries are objects (`{ id, repo, ref?, subdir? }`): a bare id says
+nothing about where a plugin comes from, which is the same reason decision 13 made `repo` required.
+The mirror image belongs to the plugin, but the FILE stays here —
+`.github/workflows/plugin-ci.yml` is a `workflow_call` template a plugin repository invokes in three
+lines, and it resolves the oldest and the newest kit release inside the plugin's own `requires.kit`
+(with the kit's own `satisfies`, so the answer matches `plugin add`'s), clones each, installs the
+plugin from the checkout under test and runs the gate. Both ENDS of the range rather than a
+midpoint: the floor an adopter may still be on, and the ceiling the kit has just reached.
+`pnpm kit:release` adds the stop at the other end — it refuses a version whose default plugins no
+longer resolve at their pin or whose declared range excludes it (`--skip-plugin-check` is the loud
+escape hatch) — and it is honest about its reach: a release script can prove a pin, not somebody
+else's tests. The `plugins` job on the release commit is what proves those green.
 
 **The lifecycle is `scripts/plugin.mjs` (`pnpm plugin`).** `add` mirrors a plugin repository (or
 reads a local path — that is the authoring loop), checks its `requires` three ways, refuses any
@@ -2138,5 +2155,14 @@ become a refined `z.string()` rather than a `z.enum`, which needs a non-empty tu
 `grants` is additive by documentation only: CASL can take a rule back with `cannot`, and nothing
 stops a plugin doing so. Provisioning creates a plugin's resources but never DELETES one, so
 `plugin remove` prints the toml blocks and the Cloudflare resources to remove rather than removing
-them. Analytics has not been extracted (Phase C), so the kit is
+them. The CI half of decision 5 is written but **has never been executed by GitHub Actions**: the
+workflows parse and every shell step is syntax-checked, and with `defaultPlugins` empty the second
+gate is skipped, so the install-and-gate path first runs for real when the first default plugin is
+pinned (Phase C) — and `plugin-ci.yml` first runs when a plugin repository exists to call it.
+`kit:release`'s refusal reads a plugin's `requires.kit` from the INSTALLED surface or not at all —
+`git ls-remote` proves a ref exists but cannot read a file out of it — so a default plugin that is
+not installed in the release checkout reports an unreadable range rather than being waved through.
+Neither workflow proves a MIDDLE version of a range, and neither proves two plugins installed
+together: the kit's job installs whatever `defaultPlugins` lists, which is the only combination
+anybody has declared. Analytics has not been extracted (Phase C), so the kit is
 not yet bare, and the website's plugin pages are Phase D.

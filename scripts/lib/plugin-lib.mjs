@@ -13,6 +13,7 @@
  *
  * `plugin-lib.d.mts` beside this file is the hand-written type surface (no `allowJs`).
  */
+import { KIT } from './rename-lib.mjs'
 import { satisfies } from './upgrade-lib.mjs'
 
 // ---------------------------------------------------------------- identity
@@ -29,7 +30,7 @@ export function pluginIdProblem(id) {
   if (!PLUGIN_ID_RE.test(id)) return `'${id}' must match ${PLUGIN_ID_RE.source}`
   // The rename translator rewrites the kit's name everywhere; an id carrying it would be rewritten
   // along with everything else, and the plugin would arrive under a name nothing imports.
-  if (id.includes('rocketflare')) return `'${id}' must not contain the kit's name`
+  if (id.includes(KIT.slug)) return `'${id}' must not contain the kit's name`
   if (RESERVED_PLUGIN_IDS.includes(id)) return `'${id}' is a barrel filename`
   return null
 }
@@ -73,6 +74,11 @@ export const BARRELS = Object.freeze({
     file: 'apps/web/src/plugins/schema.ts',
     constName: null, // `export *`, not a tuple
     suffix: null,
+    // With no plugin installed this file is a comment and nothing else, and a TypeScript file with
+    // no top-level import or export is a SCRIPT, not a module — so `db/schema/index.ts`'s
+    // `export * from '../plugins/schema'` is TS2306 "is not a module" and the whole app stops
+    // typechecking. The other four barrels always declare a const, so only this one needs it.
+    empty: 'export {}',
     specifier: id => `./${id}/db/schema`,
     half: id => `apps/web/src/plugins/${id}/db/schema/index.ts`,
   },
@@ -163,6 +169,8 @@ function pluginImports(text) {
 export function addBarrelLine(text, kind, id) {
   if (hasBarrelLine(text, kind, id)) return text
   const b = BARRELS[kind]
+  // The first plugin displaces the "this is a module" marker the last one left behind.
+  if (b.empty) text = dropLine(text, b.empty)
   const spec = b.specifier(id)
   const name = barrelExportName(kind, id)
   const newLine = b.constName ? `import { ${name} } from '${spec}'` : `export * from '${spec}'`
@@ -194,15 +202,32 @@ export function removeBarrelLine(text, kind, id) {
   const spec = b.specifier(id)
   const name = barrelExportName(kind, id)
   const drop = b.constName ? `import { ${name} } from '${spec}'` : `export * from '${spec}'`
-  let next = text
-    .split('\n')
-    .filter(l => l !== drop)
-    .join('\n')
+  let next = dropLine(text, drop)
   if (b.constName) {
     const entries = tupleEntries(next, b.constName).filter(e => e !== name)
     next = replaceTuple(next, b.constName, entries)
   }
+  // Removing the LAST plugin from the schema barrel would leave a file with no exports at all,
+  // which TypeScript reads as a script rather than a module (TS2306 at its one importer). A bare
+  // kit has to typecheck, so the marker goes back exactly where the line was.
+  if (b.empty && pluginImports(next).length === 0 && !next.includes(b.empty)) {
+    next = appendAfterHeader(next, b.empty)
+  }
   return next
+}
+
+const dropLine = (text, line) =>
+  text
+    .split('\n')
+    .filter(l => l !== line)
+    .join('\n')
+
+/** Put `line` after the last non-empty line of a barrel with nothing else in it. */
+function appendAfterHeader(text, line) {
+  const lines = text.split('\n')
+  const lastText = lines.reduce((acc, l, i) => (l.trim() === '' ? acc : i), 0)
+  lines.splice(lastText + 1, 0, line)
+  return lines.join('\n')
 }
 
 // ---------------------------------------------------------------- the plugin tree
@@ -227,7 +252,12 @@ export function pluginRoots(id) {
   ]
 }
 
-export const PLUGIN_MANIFEST_FILE = 'rocketflare-plugin.json'
+/**
+ * Built from `KIT.slug` for the reason `MANIFEST_FILE` is (see `manifest.mjs`): this is the
+ * ECOSYSTEM's filename, the same in every plugin repository, so a renamed copy that looked for
+ * `<slug>-plugin.json` could never install any plugin at all.
+ */
+export const PLUGIN_MANIFEST_FILE = `${KIT.slug}-plugin.json`
 
 const META_FILES = ['README.md', 'CHANGELOG.md', 'LICENSE', 'LICENSE.md', 'SECURITY.md']
 /**
@@ -353,6 +383,22 @@ export function checkRequirements({
     }
   }
   return problems
+}
+
+/**
+ * The installed plugins a move to kit `version` would leave unsupported.
+ *
+ * Shared by `plugin add|check` and by `kit:upgrade` because it has to answer the same, and once did
+ * not: `plugin check` printed "vendored — requires.kit is not checked" and exited 0 while
+ * `kit:upgrade`, in the same checkout, refused with exit 6 over the same range. A VENDORED plugin
+ * ships inside the kit, so its range describes the kit it came out of rather than a compatibility
+ * claim about a kit it has never seen — the release that moves the kit moves it too.
+ */
+export function unsupportedForKit(plugins, { kitRepo, version }) {
+  if (!version) return []
+  return plugins.filter(
+    p => p.requires?.kit && !isVendored(p.source, kitRepo) && !satisfies(version, p.requires.kit)
+  )
 }
 
 /** `"approvals@>=1.0.0 <2.0.0"` → `{ id, range }`; a bare id has a null range. */

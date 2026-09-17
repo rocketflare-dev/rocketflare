@@ -17,6 +17,8 @@ import {
   BinaryPatchError,
   classifyPath,
   countLines,
+  defaultPluginEntries,
+  defaultPluginProblems,
   globToRegExp,
   isDeployable,
   isKitManifest,
@@ -49,10 +51,16 @@ describe('globs', () => {
 
 describe('the manifest predicate', () => {
   it('says the kit is the kit and a copy is not', () => {
-    expect(isKitManifest(manifest)).toBe(true)
+    // The predicate, both ways, on values rather than on whichever checkout is running this —
+    // `app === null` IS the question, so a renamed copy answers `false` and is RIGHT to. Asserting
+    // `isKitManifest(manifest) === true` against the repo's own file made every adopted copy's
+    // `pnpm test` red on its first run, which is the opposite of what D27 promises.
+    expect(isKitManifest({ ...manifest, app: null })).toBe(true)
     expect(
       isKitManifest({ ...manifest, app: { slug: 'acme', display: 'Acme', domain: 'acme.io' } })
     ).toBe(false)
+    // …and this checkout agrees with itself, whichever of the two it is.
+    expect(isKitManifest(manifest)).toBe(manifest.app === null)
   })
 
   it('finds the surfaces whose anchor is gone', () => {
@@ -265,6 +273,102 @@ describe('satisfies', () => {
     expect(() => satisfies('1.2.3', '>=1.0.0 || <0.5.0')).toThrow(/unsupported version range/)
     expect(() => satisfies('1.2.3', '1.x')).toThrow(/unsupported version range/)
     expect(() => satisfies('1.2.3', 'latest')).toThrow(/unsupported version range/)
+  })
+})
+
+describe('default plugins', () => {
+  // `defaultPlugins` is what a fresh clone installs and what `kit:release` refuses to ship past
+  // (D31, decision 5). The entries are OBJECTS because a bare id says nothing about where the
+  // plugin comes from; a string still parses, and is then reported as having no repo rather than
+  // having a URL guessed for it.
+  const KIT = 'https://github.com/rocketflare-dev/rocketflare.git'
+  const ok = (requiresKit: string | null) => () => ({ ok: true, requiresKit })
+
+  it('normalises both shapes and defaults the optional fields', () => {
+    expect(
+      defaultPluginEntries({
+        defaultPlugins: [{ id: 'analytics', repo: KIT, ref: '0.6.0' }, 'legacy'],
+      } as never)
+    ).toEqual([
+      { id: 'analytics', repo: KIT, ref: '0.6.0', subdir: '' },
+      { id: 'legacy', repo: null, ref: null, subdir: '' },
+    ])
+    expect(defaultPluginEntries(null)).toEqual([])
+    expect(defaultPluginEntries({} as never)).toEqual([])
+  })
+
+  it('passes a plugin whose range admits the version being cut', () => {
+    const entries = defaultPluginEntries({
+      defaultPlugins: [{ id: 'analytics', repo: 'https://example.test/a.git', ref: '0.2.0' }],
+    } as never)
+    expect(defaultPluginProblems(entries, '0.6.0', ok('>=0.5.0 <1.0.0'))).toEqual([])
+  })
+
+  it("refuses a version outside a plugin's declared range, naming both", () => {
+    const entries = defaultPluginEntries({
+      defaultPlugins: [{ id: 'analytics', repo: 'https://example.test/a.git' }],
+    } as never)
+    const problems = defaultPluginProblems(entries, '1.0.0', ok('>=0.5.0 <1.0.0'))
+    expect(problems).toHaveLength(1)
+    expect(problems[0]).toMatch(/analytics.*>=0\.5\.0 <1\.0\.0.*1\.0\.0 does not satisfy/)
+  })
+
+  it('refuses an entry the resolver cannot reach, and one with no repo', () => {
+    const entries = defaultPluginEntries({
+      defaultPlugins: [
+        { id: 'gone', repo: 'https://example.test/gone.git', ref: '9.9.9' },
+        'nameless',
+      ],
+    } as never)
+    const problems = defaultPluginProblems(entries, '0.6.0', entry =>
+      entry.id === 'gone' ? { ok: false, reason: 'no such ref' } : { ok: true, requiresKit: '*' }
+    )
+    expect(problems).toEqual([
+      expect.stringContaining('no such ref'),
+      expect.stringContaining('has no "repo"'),
+    ])
+  })
+
+  it('reports an unreadable range rather than assuming it is fine', () => {
+    // "I could not check" and "I checked and it is fine" are different answers, and only one of
+    // them may cut a release.
+    const entries = defaultPluginEntries({
+      defaultPlugins: [{ id: 'analytics', repo: 'https://example.test/a.git' }],
+    } as never)
+    expect(defaultPluginProblems(entries, '0.6.0', ok(null))[0]).toMatch(
+      /cannot read its requires.kit/
+    )
+    expect(defaultPluginProblems(entries, '0.6.0', ok('1.x'))[0]).toMatch(
+      /not a range this kit can read/
+    )
+  })
+
+  it('exempts a VENDORED plugin from the range check, as §16 says', () => {
+    // Same repository, no subdirectory: the same release cut both, so the range describes the kit
+    // it shipped inside rather than a compatibility claim.
+    const entries = defaultPluginEntries({
+      defaultPlugins: [{ id: 'example-feature', repo: KIT, ref: '0.4.0' }],
+    } as never)
+    expect(defaultPluginProblems(entries, '9.9.9', ok('>=0.5.0 <1.0.0'), { kitRepo: KIT })).toEqual(
+      []
+    )
+    // …but a plugin in a SUBDIRECTORY of the kit repo is not vendored, and is checked.
+    const sub = [{ id: 'x', repo: KIT, ref: null, subdir: 'plugins/x' }]
+    expect(
+      defaultPluginProblems(sub, '9.9.9', ok('>=0.5.0 <1.0.0'), { kitRepo: KIT })
+    ).toHaveLength(1)
+  })
+
+  it('catches the same plugin listed twice', () => {
+    const entries = defaultPluginEntries({
+      defaultPlugins: [
+        { id: 'a', repo: 'https://example.test/a.git' },
+        { id: 'a', repo: 'https://example.test/a.git' },
+      ],
+    } as never)
+    expect(defaultPluginProblems(entries, '0.6.0', ok('*'))).toEqual([
+      expect.stringContaining("lists 'a' twice"),
+    ])
   })
 })
 

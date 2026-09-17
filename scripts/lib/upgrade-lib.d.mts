@@ -59,6 +59,8 @@ export interface Manifest {
   app: AppBlock | null
   history: HistoryEntry[]
   surfaces: Surface[]
+  /** Plugins a fresh clone installs, and the kit's own CI gates on (D31, decisions 2 and 5). */
+  defaultPlugins?: (string | Partial<DefaultPluginEntry>)[]
   neverPort: string[]
   manual: string[]
   core: string[]
@@ -163,3 +165,31 @@ export const VERSION_RE: RegExp
  * version, `^`, `~`, `*` and space-separated conjunctions. Throws on anything else.
  */
 export function satisfies(version: string, range: string | null | undefined): boolean
+
+/** One `defaultPlugins` entry, normalised (D31, decision 5). */
+export interface DefaultPluginEntry {
+  id: string | null
+  repo: string | null
+  ref: string | null
+  subdir: string
+}
+export function defaultPluginEntries(manifest: Manifest | null): DefaultPluginEntry[]
+
+/** What an injected resolver answers about one default plugin. */
+export interface ResolvedDefaultPlugin {
+  ok: boolean
+  reason?: string
+  requiresKit?: string | null
+  version?: string | null
+}
+
+/**
+ * Why `version` must not be released — one sentence per problem. Pure; `resolve` does the I/O.
+ * A vendored entry (`kitRepo`, no subdir) is exempt from the range check.
+ */
+export function defaultPluginProblems(
+  entries: readonly DefaultPluginEntry[],
+  version: string,
+  resolve: (entry: DefaultPluginEntry) => ResolvedDefaultPlugin | null,
+  options?: { kitRepo?: string | null }
+): string[]

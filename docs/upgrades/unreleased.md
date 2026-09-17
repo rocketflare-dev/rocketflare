@@ -304,6 +304,88 @@ a human editing both files by hand.
   what this checkout has installed — with `example-feature` declaring nothing, an installed-only
   assertion would pass because there is nothing to check.
 
+**CI now proves the kit against the plugins a fresh clone installs, and `kit:release` refuses a
+version they are not ready for (D31, decision 5).** The gate's steps moved into a reusable
+`.github/workflows/gate.yml`, and `ci.yml` calls it twice: once on the checkout as it is, once with
+every `.rocketflare.json` `defaultPlugins` entry installed at its pinned ref, each followed by
+`pnpm db:generate` and one `pnpm db:migrate:ci` — the host numbers a plugin's DDL, so that is what
+installing one looks like everywhere. A third job reads the list and says what it found, including
+"none", and the expensive second pass is skipped when there is nothing to install. `defaultPlugins`
+entries are OBJECTS — `{ id, repo, ref?, subdir? }` — because a bare id says nothing about where a
+plugin comes from. `.github/workflows/plugin-ci.yml` is the mirror image, a `workflow_call`
+template a PLUGIN repository invokes in three lines: it resolves the oldest and the newest kit
+release inside the plugin's own `requires.kit` (using the kit's `satisfies`), clones each, installs
+the plugin from the checkout under test and runs the whole gate. `pnpm kit:release` gains the stop
+at the other end — every default plugin must still resolve at its pin and its declared
+`requires.kit` must admit the version being cut, with `--skip-plugin-check` as a loud escape hatch —
+and `scripts/lib/upgrade-lib.mjs` gains the two pure helpers it is built on, `defaultPluginEntries`
+and `defaultPluginProblems`.
+
+**Every skill knows about plugins, and the bootstrap installs the default set (D31).**
+
+- **`/rf-plugin` is new** (`.claude/skills/rf-plugin/{SKILL.md,reference.md}`) — install, upgrade,
+  remove, audit and author a plugin, modelled on `/rf-upgrade`. It stops on the printed plan and
+  asks a human before `--apply`, because a plugin has full Worker and database access. `reference.md`
+  carries the manifest shape, the exit codes, the file-classification roles, what `check` verifies
+  and where an install is recorded (`.rocketflare.json` or the git-ignored
+  `.rocketflare.local.json` sidecar).
+- **`scripts/bootstrap.mjs` gained a `plugins` step and `--no-plugins`.** It is now **ten** steps, and
+  they renumbered: `6 plugins`, `7 seed`, `8 cloudflare`, `9 cli`, `10 run` (1–5 unchanged). The
+  step reads `.rocketflare.json`'s new top-level **`defaultPlugins`**, skips every id already
+  recorded as a surface, runs `pnpm plugin add <repo>[@ref] --apply` for the rest, then one
+  `pnpm db:generate --name plugin-<id>` each and a single `pnpm db:migrate`. It runs BEFORE the seed
+  so a plugin's demo-data hook is in place when `pnpm seed --demo` runs. `defaultPlugins` ships `[]`,
+  so the step prints `no defaultPlugins declared — nothing to install` and passes.
+- `planDefaultPlugins()` in `scripts/lib/bootstrap-lib.mjs` (+ `.d.mts`) is the pure half, unit-tested
+  in `apps/web/tests/config/bootstrap-lib.test.ts`: idempotence, the `@ref` / `--subdir` spec, and a
+  malformed entry reported as a sentence rather than thrown.
+- **`/rf-setup`** documents the new step and `--no-plugins`, and its closing report names installed
+  plugins. **`/rf-preflight`** runs `pnpm plugin list` + `pnpm plugin check`, maps every `check`
+  failure to a fix, and explains the sidecar inside the kit. **`/rf-adapt`** gained checklist row (g)
+  — the rename translates a plugin's files (they appear as ordinary rows in the dry-run table, not a
+  group), and `plugin add`/`upgrade` re-translate on the way in. **`/rf-provision`** says the
+  `cloudflare <env>` phase creates plugin bindings and writes their declarations into both tomls, and
+  that `secrets <env>` covers plugin `vars` marked `secret`. **`/rf-upgrade`** reads installed plugins
+  in step 1, explains `skipped-plugin-owned`, `touches-plugin-registry` and exit 6, and gained a step
+  6 handing each plugin to `/rf-plugin`; `porting.md` documents the class. **`/rf-how-do-i`** asks
+  "app or plugin?" first, quotes `docs/ADAPTING.md` §3's plugin-slot column, and its worked slice
+  (`example-orders.md`) is now a plugin with the plugin structural tests in its traps table.
+- `SETUP.md` gained **§1.4b Plugins** and the ten-step count; `README.md` and the root `CLAUDE.md`
+  name `/rf-plugin`.
+
+Six fixes to the plugin lifecycle, all found by running the export → remove → add round trip for
+real on a renamed copy and in the kit (D31, Phase B step 6).
+
+- **The three fixed filenames are built from `KIT.slug`, not written as literals.**
+  `.rocketflare.json`, `.rocketflare.local.json` and `rocketflare-plugin.json` keep the KIT's name
+  in a renamed app — the provenance file is deliberately not renamed, and a plugin repository ships
+  one manifest filename for the whole ecosystem. Written as literals, `scripts/rename.mjs` rewrote
+  all three, so a copy renamed to `acme` looked for `.acme.json`, found nothing, and **every
+  `pnpm plugin` command died** against a file sitting in its root. (`scripts/lib/manifest.mjs`,
+  `scripts/lib/plugin-lib.mjs`.)
+- **Removing the last plugin leaves the schema barrel a MODULE.** `apps/web/src/plugins/schema.ts`
+  declares no const, so with no `export *` line left it was a comment and nothing else — a TS
+  SCRIPT, not a module — and `db/schema/index.ts` failed with TS2306. The whole app stopped
+  typechecking the moment anyone uninstalled the reference plugin, which is the one thing that
+  plugin is for. `remove` now writes `export {}`, and the first `add` displaces it.
+- **`plugin add --apply` formats what it wrote.** A plugin is authored in the kit's vocabulary and
+  translated on the way in, and translation moves a package scope in the alphabet:
+  `@heroicons/react` sorts after `@acme/shared` and before `@rocketflare/shared`. So a correctly
+  sorted kit file arrived unsorted and `pnpm lint` — the first line of the gate the install plan
+  tells you to run next — failed on a file the tool had just written. `rename.mjs` has the same
+  problem and solves it the same way; best-effort, scoped to the paths the install touched.
+- **`pnpm kit:upgrade` honours the vendored exemption.** `plugin check` printed
+  "vendored — requires.kit is not checked" and exited 0 while `kit:upgrade`, in the same checkout
+  and over the same range, refused with exit 6. One predicate now serves both
+  (`unsupportedForKit` in `plugin-lib.mjs`).
+- **The kit's own suite stays green in a renamed copy and with no plugin installed.** The identity
+  assertions (`isKitManifest(manifest) === true`, `readManifest().isKit === true`) were about
+  whichever checkout was running them, so every adopted copy went red on day one; they are now
+  assertions about the PREDICATE. The end-to-end plugin tests named `example-feature`, so an app
+  that deleted the reference plugin went red too; they read what is actually installed and skip
+  when nothing is.
+- Wording: `plugin remove` with one dependent said "'smoke' require 'example-feature'".
+
 ## How to apply
 
 Mechanical; no schema change and no new dependency. Take the new files whole
@@ -380,6 +462,44 @@ taking the mirror directory as an argument and RETURNING the mirror handle.
    `pnpm provision cloudflare staging` then `pnpm provision cloudflare production`, then
    `pnpm types` and commit `apps/web/worker-configuration.d.ts`.
 
+**CI and the release gate (Phase B, step 5).**
+
+Take the three workflow files as they are; they are `manual` in the surface manifest, so the
+upgrade tooling reports them rather than patching them. If your repository has customised `ci.yml`,
+move your extra steps into `gate.yml` (that is now where the gate lives) and keep `ci.yml` as the
+caller — otherwise the second pass would not run your steps. `defaultPlugins` is optional: with no
+key, or an empty list, everything behaves exactly as before. An app that publishes its own plugins
+points each plugin repository at `plugin-ci.yml` with the three-line caller in `docs/DEPLOY.md`.
+
+**Skills and the bootstrap plugins step (Phase B, step 4).**
+
+Nothing to do in an app that has no plugins: the bootstrap step reports "nothing to install" and
+every skill change is documentation.
+
+1. Take the `.claude/skills/**` changes wholesale unless you have edited a skill — they are
+   instructions, not code. `rf-plugin/` is a new directory; the others are in-place edits.
+2. Take `scripts/bootstrap.mjs` and `scripts/lib/bootstrap-lib.mjs` (+ `.d.mts`). If you have edited
+   the bootstrap, the pieces are: the `planDefaultPlugins` import, `TOTAL_STEPS = 10`, the
+   `--no-plugins` flag, `stepPlugins`, the renumbered `bootstrap()` / `check()` calls, and the header
+   comment.
+3. Add `defaultPlugins` to your `.rocketflare.json` — `[]` is correct until you list one:
+
+   ```json
+   "defaultPlugins": [
+     { "id": "<id>", "repo": "https://github.com/…/rocketflare-plugin-<id>.git", "ref": "1.0.0" }
+   ]
+   ```
+
+   `ref` and `subdir` are optional. `.rocketflare.json` is `neverPort`, so this line is yours to add.
+
+**What the round trip found (Phase B, step 6).**
+
+Take the five script/lib files whole (`scripts/plugin.mjs`, `scripts/upgrade.mjs`,
+`scripts/lib/{plugin-lib.mjs,plugin-lib.d.mts,manifest.mjs}`) — none of them is a file an app
+edits. The three test files are the kit's own and are ported like any other core file.
+
+No migration, no schema change, no toml change, no new dependency.
+
 ## Conflicts to expect
 
 - `apps/web/src/api/services/access.ts` — the largest single edit; `setResourceGroups` and
@@ -443,6 +563,27 @@ Provisioning (Phase B, step 3):
   A copy that rewrote the parity test will reject that hunk; the new `describe` is self-contained
   and can be appended by hand.
 
+**CI and the release gate (Phase B, step 5).**
+
+`ci.yml` is rewritten rather than edited, so an app that has added steps to it will take the whole
+file as a reference copy and merge by hand. Nothing else changes: `deploy.yml` still calls `ci.yml`
+and gains only a comment.
+
+**Skills and the bootstrap plugins step (Phase B, step 4).**
+
+- **`scripts/bootstrap.mjs`** is the one likely reject, and only if you changed the step list. The
+  step numbers moved by one from `seed` onwards — check nothing of yours still prints `n/9`.
+- **`.rocketflare.json`** is never ported: add `defaultPlugins` by hand.
+- **`SETUP.md`, `README.md`, `CLAUDE.md`** are `manual`: take the sentences you want.
+- A skill you have rewritten for your own app will reject; the plugin paragraphs are additive and can
+  be pasted in on their own.
+
+**What the round trip found (Phase B, step 6).**
+
+None in app code. If your copy has already hand-patched `MANIFEST_FILE` or `PLUGIN_MANIFEST_FILE`
+back to a literal because `pnpm plugin` could not find your manifest, drop that patch — this is the
+fix for it.
+
 ## Verify
 
 `pnpm lint && pnpm typecheck && pnpm test && pnpm build` at the root, with
@@ -503,3 +644,35 @@ and `<KV_<ID>_<NAME>_ID>` in production, `pnpm test` green, and
 `REQUIRE_PROVISIONED=1 pnpm web test:config` failing on that placeholder until
 `pnpm provision cloudflare production` runs.
 
+**CI and the release gate (Phase B, step 5).**
+
+`pnpm lint && pnpm typecheck && pnpm test && pnpm build` is green, and
+`pnpm --filter @rocketflare/web exec vitest run --project config tests/config/upgrade-lib.test.ts`
+covers the new helpers. `node scripts/release.mjs <next version> --dry-run` prints a
+`✔ default plugins` line once the list is non-empty, and fails with the reason when a pin is stale.
+On GitHub, a pull request shows `Gate`, `Default plugins` and — once `defaultPlugins` is non-empty —
+`Gate with default plugins`.
+
+**Skills and the bootstrap plugins step (Phase B, step 4).**
+
+```bash
+node scripts/bootstrap.mjs --help          # lists --no-plugins; exit codes unchanged
+pnpm preflight                             # ✔ 1/10, 3/10, 4/10, 8/10 — the new numbering
+pnpm plugin list && pnpm plugin check      # the audit /rf-preflight now runs
+pnpm lint && pnpm typecheck && pnpm test && pnpm build
+```
+
+`pnpm web test:config` covers the new `planDefaultPlugins` cases in `bootstrap-lib.test.ts`,
+including one that parses your own `.rocketflare.json`'s `defaultPlugins` and asserts it has no
+problems.
+
+**What the round trip found (Phase B, step 6).**
+
+```
+pnpm plugin list          # names your installed plugins rather than erroring on a missing file
+pnpm plugin check         # exit 0
+pnpm lint && pnpm typecheck && pnpm test && pnpm build
+```
+
+In a renamed copy, `grep -n 'MANIFEST_FILE = ' scripts/lib/manifest.mjs` must show a template built
+from `KIT.slug` and not your own slug.
