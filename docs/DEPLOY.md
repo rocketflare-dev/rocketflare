@@ -212,9 +212,15 @@ All steps run at the repository root; the root scripts fan out with `pnpm -r` / 
 `working-directory` is set anywhere.
 
 ```
- push to main ─► ci.yml (root): pnpm install --frozen-lockfile → gitleaks → pnpm lint → pnpm typecheck
-                        → git diff --exit-code apps/web/worker-configuration.d.ts → pnpm test (pg 5433; web + cli)
-                        → pnpm build (web: vite + dry-run wrangler deploy; cli: tsc → dist/cli.js)
+ push to main ─► ci.yml (root) ─► check      → gate.yml: pnpm install --frozen-lockfile → gitleaks
+                        │                       → porting note → pnpm lint → pnpm typecheck
+                        │                       → git diff --exit-code apps/web/worker-configuration.d.ts
+                        │                       → pnpm test (pg 5433; web + cli)
+                        │                       → pnpm build (web: vite + dry-run wrangler deploy; cli: tsc)
+                        ├─► default-plugins → what .rocketflare.json `defaultPlugins` names (or "none")
+                        └─► plugins         → gate.yml again with `plugins: true`: pnpm plugin add each
+                                              entry at its pinned ref → pnpm db:generate → db:migrate:ci
+                                              → the same gate (D31; skipped when there are none)
                                                                                                             │
  push tag X.Y.Z ──► deploy.yml ─► ci (workflow_call, same file) ─► staging job (environment: staging)
                                      tag == ROOT package.json version?
@@ -230,6 +236,66 @@ All steps run at the repository root; the root scripts fan out with `pnpm -r` / 
 
  workflow_dispatch(environment) ──► either job from the dispatched ref (first deploy; emergencies)
 ```
+
+### Default plugins in CI, and the template a plugin repository calls (D31, decision 5)
+
+The gate's steps live in `.github/workflows/gate.yml` and `ci.yml` calls it twice — once on the
+checkout as it is, once with every default plugin installed. One boolean input is the difference,
+because a second copy of those steps would prove nothing about the copy nobody ran.
+
+`defaultPlugins` in `.rocketflare.json` is a list of OBJECTS, and CI is its only strict reader:
+
+```json
+"defaultPlugins": [
+  { "id": "analytics", "repo": "https://github.com/rocketflare-dev/rocketflare-plugin-analytics.git", "ref": "0.2.0" }
+]
+```
+
+`repo` because a bare id says nothing about where a plugin comes from (decision 13 already made a
+repository required of every plugin manifest); `ref` because CI installs a PINNED version rather
+than whatever the default branch says this morning; `subdir` when the plugin is not the root of its
+repository. A bare string parses as an id with no repo and is reported as such rather than having a
+URL guessed for it. With the list empty the `default-plugins` job still runs and says so — that is
+the answer worth seeing on a bare kit — and the expensive second gate is skipped, since with nothing
+installed it would re-run the first one verbatim.
+
+**`pnpm kit:release X.Y.Z` refuses a version its default plugins are not ready for**: every entry
+must still resolve at the ref the kit pins (`git ls-remote`), and a declared `requires.kit` range
+must admit the version being cut. `--skip-plugin-check` is the escape hatch and says so loudly. Be
+clear about what that proves: it catches a pin nobody updated. **"CI green" is proven by the
+`plugins` job above, on the release commit** — a release script cannot run somebody else's tests.
+
+The mirror image, for a plugin repository, is `.github/workflows/plugin-ci.yml`, which lives in the
+kit so that a change to how compatibility is proved reaches every plugin through one file. It reads
+the plugin's own `requires.kit`, resolves the OLDEST and NEWEST kit releases inside that range, and
+for each clones that kit, installs the plugin from the checkout under test, generates and applies
+the migrations the host owns, and runs the full gate. Both ends of the range, not a midpoint: the
+floor an adopter may still be on and the ceiling the kit has just reached. A plugin repository
+copies this and nothing else:
+
+```yaml
+# .github/workflows/ci.yml in the plugin repository
+name: CI
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  ci:
+    uses: rocketflare-dev/rocketflare/.github/workflows/plugin-ci.yml@main
+    # with:
+    #   kit_repo: https://github.com/rocketflare-dev/rocketflare.git  # the default
+    #   kit_range: "=0.6.0"        # override the plugin's own requires.kit
+    #   plugin_subdir: ""          # when the plugin is not the root of this repository
+    # secrets:
+    #   kit_token: ${{ secrets.KIT_READ_TOKEN }}   # only if the kit repository is private
+```
+
+Failing there means one of two things and the matrix says which: at the FLOOR, the plugin has
+started using something the kit only gained later — raise `requires.kit` and release the plugin; at
+the CEILING, the kit has moved under it — port the plugin (`pnpm plugin upgrade` is the adopter's
+side of the same change) and widen the range.
 
 **Bundle size.** `pnpm build` (`build:api` = `wrangler deploy --dry-run --outdir dist/api`) produces
 `dist/api/worker.js`; **`gzip -c apps/web/dist/api/worker.js | wc -c` is the size that matters, and
@@ -253,7 +319,9 @@ ambiguous case, because a false skip is a release quietly not happening.
 otherwise. It also fails without `docs/upgrades/<tag>.md`, its `CHANGELOG.md` section and a
 matching `.rocketflare.json` `kit.version` (`scripts/release-check.mjs --tag`): a release with no
 porting note is a permanent gap in the chain `/rf-upgrade` walks, and every copy of the kit has to
-step over it. `pnpm kit:release <version>` writes all of that, so the gate passes by construction.
+step over it. `pnpm kit:release <version>` writes all of that, so the gate passes by construction — and in the
+kit it also refuses a version whose `defaultPlugins` no longer resolve at their pinned ref or whose
+declared `requires.kit` excludes it (D31, above).
 **Released history is never rewritten** — a copy pins a kit commit and a force-push orphans it. One tag ships `apps/web` and `apps/cli` together — the `apps/*` and `packages/*` versions
 are informational and are not checked. Bump the root version, commit, tag.
 

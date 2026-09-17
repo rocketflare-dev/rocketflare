@@ -2,7 +2,7 @@
 /**
  * Cut a release — the mechanical half, so `scripts/release-check.mjs` passes by construction.
  *
- *   node scripts/release.mjs <X.Y.Z> [--date YYYY-MM-DD] [--dry-run]
+ *   node scripts/release.mjs <X.Y.Z> [--date YYYY-MM-DD] [--dry-run] [--skip-plugin-check]
  *
  * Folds `docs/upgrades/unreleased.md` into `docs/upgrades/X.Y.Z.md`, fills its `version`,
  * `previous` and `date`, bumps every version file, prepends a `CHANGELOG.md` section, and writes a
@@ -17,12 +17,25 @@
  * by exactly the same machinery: `previous` chains, the four headings, and `pnpm plugin upgrade`
  * walking the notes between two commits. `releaseContext()` is the whole of the difference.
  *
+ * In the KIT it additionally refuses a version its `defaultPlugins` are not ready for (D31,
+ * decision 5): every entry must still resolve at the ref the kit pins, and a declared
+ * `requires.kit` range must admit the version being cut. `--skip-plugin-check` is the escape
+ * hatch, and it says so loudly.
+ *
  * Exit 0 ok · 1 error · 2 usage.
  */
+import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { isKitManifest, parseNote, VERSION_RE } from './lib/upgrade-lib.mjs'
+import { readManifest } from './lib/manifest.mjs'
+import {
+  defaultPluginEntries,
+  defaultPluginProblems,
+  isKitManifest,
+  parseNote,
+  VERSION_RE,
+} from './lib/upgrade-lib.mjs'
 import { releaseNotes } from './release-check.mjs'
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
@@ -35,7 +48,8 @@ const warn = (...lines) => {
   for (const l of lines) process.stderr.write(`${l}\n`)
 }
 
-export const USAGE = 'usage: node scripts/release.mjs <X.Y.Z> [--date YYYY-MM-DD] [--dry-run]'
+export const USAGE =
+  'usage: node scripts/release.mjs <X.Y.Z> [--date YYYY-MM-DD] [--dry-run] [--skip-plugin-check]'
 
 /** Match `"version": "x"` at the top level of a JSON file (two-space indent, so exactly one). */
 const TOP_LEVEL_VERSION = /^( {2}"version":\s*)"[^"]+"/m
@@ -80,13 +94,68 @@ export function releaseContext(root = REPO_ROOT) {
   return { kind: 'unknown' }
 }
 
+/**
+ * Resolve one `defaultPlugins` entry: is it still fetchable at the ref the kit pins, and what
+ * `requires.kit` range does it declare? The I/O half of `defaultPluginProblems` (D31, decision 5).
+ *
+ * Two sources, in this order. The INSTALLED surface first — a default plugin installed in this
+ * checkout is the copy the gate just ran against, and its recorded `requires` is that copy's own
+ * statement. Then `git ls-remote`, which proves the pin still resolves on the remote; it cannot
+ * read a file, so a plugin that is not installed here reports its range as unknown rather than
+ * being guessed at, and the caller turns that into a problem with the fix in it.
+ */
+export function resolveDefaultPlugin(entry, { manifest = null } = {}) {
+  const surface = (manifest?.surfaces ?? []).find(s => s.kind === 'plugin' && s.id === entry.id)
+  try {
+    execFileSync('git', ['ls-remote', '--exit-code', entry.repo, entry.ref ?? 'HEAD'], {
+      cwd: REPO_ROOT,
+      stdio: ['ignore', 'ignore', 'pipe'],
+      timeout: 30_000,
+      env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+    })
+  } catch {
+    return {
+      ok: false,
+      reason: entry.ref
+        ? `git ls-remote found no '${entry.ref}' there — release the plugin, or repin the ref`
+        : 'the repository is unreachable',
+    }
+  }
+  return {
+    ok: true,
+    requiresKit: surface?.requires?.kit ?? null,
+    version: surface?.source?.version ?? null,
+  }
+}
+
+/**
+ * The stop decision 5 asks for: do not cut `version` while a default plugin cannot be fetched at
+ * its pin or declares a kit range that excludes it. Returns a problem list; empty means go.
+ */
+function checkDefaultPlugins(version) {
+  const { manifest } = readManifest(REPO_ROOT)
+  const entries = defaultPluginEntries(manifest)
+  if (entries.length === 0) return { entries, problems: [] }
+  return {
+    entries,
+    problems: defaultPluginProblems(
+      entries,
+      version,
+      entry => resolveDefaultPlugin(entry, { manifest }),
+      { kitRepo: manifest?.kit?.repo }
+    ),
+  }
+}
+
 function main(argv) {
   let version = null
   let date = new Date().toISOString().slice(0, 10)
   let dryRun = false
+  let skipPluginCheck = false
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === '--date') date = argv[++i]
     else if (argv[i] === '--dry-run') dryRun = true
+    else if (argv[i] === '--skip-plugin-check') skipPluginCheck = true
     else if (argv[i] === '-h' || argv[i] === '--help') {
       out(USAGE)
       return 0
@@ -115,6 +184,31 @@ function main(argv) {
   if (existsSync(abs(`${ctx.notesDir}/${version}.md`))) {
     warn(`error: ${ctx.notesDir}/${version}.md already exists`)
     return 1
+  }
+
+  // A kit release ships a `defaultPlugins` set with it: a fresh clone installs those plugins, so a
+  // version whose default plugins cannot be fetched at their pin — or that falls outside a range
+  // one of them declares — is a version that does not bootstrap. What this can and cannot prove is
+  // written out on `defaultPluginProblems`; the CI job is what proves them GREEN.
+  if (ctx.kind === 'kit' && !skipPluginCheck) {
+    const { entries, problems } = checkDefaultPlugins(version)
+    if (problems.length > 0) {
+      warn(
+        `error: ${version} cannot be released — its default plugins are not ready:`,
+        ...problems.map(p => `  ${p}`),
+        '',
+        'Fix the pin (or the plugin), or pass --skip-plugin-check if you know why this is fine.'
+      )
+      return 1
+    }
+    if (entries.length > 0) {
+      out(`✔ default plugins            ${entries.map(e => e.id).join(', ')} resolve at ${version}`)
+    }
+  } else if (skipPluginCheck) {
+    warn(
+      '⚠ --skip-plugin-check: the default plugins were NOT checked against this version. A fresh',
+      '  clone installs them, so if one of them does not support it, that breaks on somebody else.'
+    )
   }
 
   const notes = releaseNotes(ctx.notesDir)

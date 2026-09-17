@@ -18,6 +18,10 @@ name: Deploy
 # deploy` is executed INSIDE apps/web (via `--filter … exec`) so `wrangler.toml` and its
 # `[assets] directory = "./dist/ui"` resolve.
 #
+# The CI gate it calls is ci.yml, which since D31 is two passes of `gate.yml`: the ordinary one and
+# the same gate with every `defaultPlugins` entry installed. So a tag proves the kit AND what a
+# fresh clone of it installs; with no default plugins the second pass is skipped.
+#
 # Each job: verify tag == root package.json version → CI gate (staging only; production re-ships a
 # validated tag) → parity test with REQUIRE_PROVISIONED=1 (no <PLACEHOLDER> may remain) →
 # `pnpm db:migrate:ci` against that environment's Neon branch → build UI → `wrangler deploy`

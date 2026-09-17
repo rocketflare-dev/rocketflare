@@ -3,17 +3,13 @@ name: CI
 # The quality gate, in ONE place. It runs on every pull request and every push to main, and
 # deploy.yml calls this same file (`workflow_call`) before deploying a tag to staging, rather than
 # keeping a second copy of the job — a gate that drifts between main and deploy is worse than no
-# gate at all.
+# gate at all. The gate's STEPS live in `gate.yml`, which this file calls twice: once on the
+# checkout as it is, and once with the `defaultPlugins` installed (D31, decision 5).
 #
 # `pull_request` is the trigger that matters: a gate that only runs AFTER merge reports problems to
-# someone who has already moved on, and the porting-note check below is written as a PR check and
-# can only do its job there. `push` stays on `main` alone, so a PR branch runs this once, not twice.
-#
-# Workspace note: the repo is a pnpm workspace (apps/web, apps/cli, packages/shared). Every step
-# runs at the repository ROOT; the root scripts fan out with `pnpm -r` / `--filter`, and pnpm runs
-# each package's script with that package as its cwd. No `working-directory` is needed anywhere:
-# the web tests load `apps/web/.env.test` through their own `dotenv -e .env.test` script, wrangler
-# resolves `wrangler.toml` / `[assets] directory` inside apps/web, and the CLI builds in apps/cli.
+# someone who has already moved on, and the porting-note check in gate.yml is written as a PR check
+# and can only do its job there. `push` stays on `main` alone, so a PR branch runs this once, not
+# twice.
 on:
   pull_request:
   push:
@@ -27,88 +23,60 @@ concurrency:
 
 jobs:
   check:
+    name: Gate
+    uses: ./.github/workflows/gate.yml
+
+  # What does a fresh clone of this kit install? (D31, decisions 2 and 5.)
+  #
+  # `defaultPlugins` in .rocketflare.json is a list of OBJECTS: `{ id, repo, ref?, subdir? }` —
+  # `repo` because a bare id says nothing about where a plugin comes from and decision 13 made a
+  # repository required of every plugin, `ref` because CI installs a PINNED version rather than
+  # whatever the default branch says this morning.
+  #
+  # This job always runs and always says what it found, including "none" — that answer is the one
+  # worth seeing on a bare kit, and it is also where a malformed entry is caught. The expensive
+  # second gate below is conditional on it, because with no default plugins that gate would be a
+  # verbatim re-run of `check`.
+  default-plugins:
+    name: Default plugins
     runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: pgvector/pgvector:pg17 # migration 0000 runs CREATE EXTENSION vector (D17)
-        env:
-          POSTGRES_USER: test
-          POSTGRES_PASSWORD: test
-          POSTGRES_DB: rocketflare_test
-        ports:
-          - 5433:5432
-        options: >-
-          --health-cmd "pg_isready -U test -d rocketflare_test"
-          --health-interval 5s --health-timeout 5s --health-retries 10
+    outputs:
+      count: ${{ steps.read.outputs.count }}
+      ids: ${{ steps.read.outputs.ids }}
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0 # full history for the gitleaks scan below
-      # pnpm version comes from `packageManager` in the root package.json (pnpm 10). Must precede
-      # setup-node so `cache: pnpm` can find the store.
-      - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
           node-version-file: .nvmrc
-          cache: pnpm
-      # One install for the whole workspace; packages/shared is linked as TypeScript source.
-      - run: pnpm install --frozen-lockfile
-
-      # Match apps/web/docker-compose.test.yml's `-c max_connections=300`. A `services:` container
-      # takes no command arg, so the setting is applied and the container restarted instead. At the
-      # 100 default the suite flaked ~1 in 8 with `53300 sorry, too many clients already`:
-      # vitest runs up to 6 forks and each holds its own postgres.js pool.
-      - name: Raise the test database connection limit
+      - id: read
         run: |
-          cid=$(docker ps --filter "ancestor=pgvector/pgvector:pg17" --format '{{.ID}}' | head -1)
-          docker exec "$cid" psql -U test -d rocketflare_test -c "ALTER SYSTEM SET max_connections = 300;"
-          docker restart "$cid"
-          for _ in $(seq 1 30); do
-            docker exec "$cid" pg_isready -U test -d rocketflare_test >/dev/null 2>&1 && break
-            sleep 2
-          done
-          docker exec "$cid" psql -U test -d rocketflare_test -c "show max_connections;"
+          node --input-type=module -e "
+            import { appendFileSync } from 'node:fs'
+            import { readManifest } from './scripts/lib/manifest.mjs'
+            import { defaultPluginEntries } from './scripts/lib/upgrade-lib.mjs'
+            // readManifest() rather than a literal filename: the provenance file keeps the kit's
+            // name in a renamed copy, but a literal here would be renamed with everything else.
+            const entries = defaultPluginEntries(readManifest().manifest)
+            const bad = entries.filter(e => !e.id || !e.repo)
+            for (const e of bad) {
+              process.stderr.write(\`::error::defaultPlugins entry '\${e.id ?? '?'}' needs an id and a repo\n\`)
+            }
+            const ids = entries.map(e => e.id).join(', ')
+            console.log(entries.length === 0
+              ? 'No default plugins — a fresh clone of this kit installs nothing beyond the kit.'
+              : \`\${entries.length} default plugin(s): \${ids}\`)
+            appendFileSync(process.env.GITHUB_OUTPUT, \`count=\${entries.length}\nids=\${ids}\n\`)
+            process.exit(bad.length === 0 ? 0 : 1)
+          "
 
-      # Secrets scan first: cheapest step, and the one whose failure must not be buried under a
-      # test log. Runs the binary directly (the marketplace action needs a licence for org repos).
-      # Scans the full history so a secret committed-then-removed is still caught.
-      - name: gitleaks
-        run: |
-          curl -sSL "https://github.com/gitleaks/gitleaks/releases/download/v8.24.3/gitleaks_8.24.3_linux_x64.tar.gz" \
-            | tar -xz -C "$RUNNER_TEMP" gitleaks
-          "$RUNNER_TEMP/gitleaks" git --redact --exit-code 1 --verbose .
-
-      # A behaviour change with no porting note is invisible to every copy of the kit that is
-      # already out there: `pnpm kit:upgrade` replays a translated diff guided by those notes, so
-      # the gap is permanent. The script exits 0 immediately in an adopted copy (`.rocketflare.json`
-      # with an `app` block), so this never fires in somebody's product.
-      - name: A behaviour change carries its porting note
-        env:
-          # The comparison point differs per trigger: a PR diffs against the branch it targets (so a
-          # branch of several commits may carry its note in any one of them), a push to main against
-          # the commit before it. The script diffs `base...HEAD`, and skips rather than fails when a
-          # range will not resolve — which is what keeps the tag path (`workflow_call`, where
-          # `event.before` is all zeros) quiet.
-          BASE: ${{ github.event.pull_request.base.sha || github.event.before || 'HEAD~1' }}
-        run: node scripts/release-check.mjs --unreleased --base "$BASE"
-
-      # Biome runs once over the whole workspace from the root biome.json.
-      - run: pnpm lint
-      # `pnpm typecheck` = `pnpm -r typecheck`: web runs `wrangler types` + `tsc`, cli and shared run
-      # `tsc`. The web typegen file is committed (D22) so a fresh clone typechecks without wrangler
-      # auth; if regenerating it changes anything, a binding or var was edited without committing
-      # the regenerated file.
-      - run: pnpm typecheck
-      - name: apps/web/worker-configuration.d.ts is up to date
-        run: git diff --exit-code -- apps/web/worker-configuration.d.ts
-
-      # `pnpm -r test`. Web: apps/web/.env.test points at localhost:5433 with dummy secrets
-      # (committed); apps/web/tests/setup.ts runs db-roles --phase=role → migrate → --phase=grants,
-      # truncates, seeds. TENANT_SCOPE_MODE=off: predicates-only; policies exist and
-      # rls-coverage.test.ts checks every tenant table has one. CLI: plain vitest, no database.
-      - run: pnpm test
-
-      # `pnpm -r build`: web = typecheck (repeated, cheap) + `vite build` + dry-run `wrangler deploy`
-      # (needs dist/ui for `[assets]`; it is what catches a Node-only import that tsc cannot see);
-      # cli = `tsc -p tsconfig.build.json` → apps/cli/dist/cli.js; shared has nothing to build.
-      - run: pnpm build
+  # The same gate again, with every default plugin installed and its migrations generated and
+  # applied. This is the kit's half of decision 5's "proof both ways": the other half is each
+  # plugin repository running `.github/workflows/plugin-ci.yml` against the kit versions its
+  # `requires.kit` range names.
+  plugins:
+    name: Gate with default plugins
+    needs: [check, default-plugins]
+    if: needs.default-plugins.outputs.count != '0'
+    uses: ./.github/workflows/gate.yml
+    with:
+      plugins: true

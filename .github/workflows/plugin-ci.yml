@@ -1,0 +1,212 @@
+name: Plugin CI
+
+# **The other half of decision 5's compatibility proof** (D31, docs/CONCEPTS.md §16).
+#
+# The kit's own CI installs its `defaultPlugins` and runs the gate (ci.yml). This file is the
+# mirror, and it lives HERE rather than in each plugin so that a change to how a plugin is proved
+# compatible reaches every plugin through one file: a plugin repository calls it with
+#
+#   jobs:
+#     ci:
+#       uses: rocketflare-dev/rocketflare/.github/workflows/plugin-ci.yml@main
+#
+# and it: reads the plugin's declared `requires.kit` range, finds the OLDEST and the NEWEST kit
+# release inside that range, and for each one clones that kit, installs the plugin into it from
+# this checkout, generates and applies the migrations the host owns, and runs the full gate.
+#
+# Both ends, not a midpoint, because those are the two a range actually promises: the floor an
+# adopter may still be on, and the ceiling the kit has just moved to. A plugin that passes at both
+# and fails in between is a possibility nobody has ever reported and a matrix of every release is a
+# cost paid on every push.
+#
+# It never publishes, never deploys and never pushes: it clones the kit into a scratch directory
+# and throws it away.
+
+on:
+  workflow_call:
+    inputs:
+      kit_repo:
+        description: The kit repository to clone (https URL).
+        type: string
+        default: https://github.com/rocketflare-dev/rocketflare.git
+      kit_range:
+        description: >-
+          Override the range taken from the plugin's own `rocketflare-plugin.json` `requires.kit`.
+          Use it to prove one specific version (`=0.6.0`) or a wider net than the plugin declares.
+        type: string
+        default: ""
+      plugin_subdir:
+        description: The plugin's directory within its own repository, when it is not the root.
+        type: string
+        default: ""
+    secrets:
+      kit_token:
+        description: A token with read access to the kit, when the kit repository is private.
+        required: false
+
+jobs:
+  # Which kit versions does this plugin claim to work with, and which of them exist?
+  versions:
+    name: Resolve kit versions
+    runs-on: ubuntu-latest
+    outputs:
+      kits: ${{ steps.resolve.outputs.kits }}
+      range: ${{ steps.resolve.outputs.range }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: plugin
+      - name: Clone the kit (tip, for its tooling)
+        env:
+          KIT_TOKEN: ${{ secrets.kit_token }}
+          KIT_REPO: ${{ inputs.kit_repo }}
+        run: |
+          set -euo pipefail
+          url="$KIT_REPO"
+          # A private kit needs a token in the URL; a public one needs nothing, which is the case
+          # that must stay simple.
+          if [ -n "${KIT_TOKEN:-}" ]; then
+            url="https://x-access-token:${KIT_TOKEN}@${KIT_REPO#https://}"
+          fi
+          git clone --depth 1 --quiet "$url" kit
+          git -C kit config remote.origin.url "$KIT_REPO"
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: kit/.nvmrc
+      # The kit owns the range matcher (`satisfies` in scripts/lib/upgrade-lib.mjs), so the answer
+      # here is the same answer `pnpm plugin add` and `pnpm kit:upgrade` give — one implementation,
+      # not a shell approximation of one. `ls-remote --tags --refs` is used rather than the shallow
+      # clone's own tags, which a --depth 1 clone does not have.
+      - id: resolve
+        env:
+          KIT_REPO: ${{ inputs.kit_repo }}
+          RANGE_OVERRIDE: ${{ inputs.kit_range }}
+          PLUGIN_SUBDIR: ${{ inputs.plugin_subdir }}
+        run: |
+          set -euo pipefail
+          git ls-remote --tags --refs "$KIT_REPO" > "$RUNNER_TEMP/kit-tags.txt"
+          node --input-type=module -e "
+            import { appendFileSync, readFileSync } from 'node:fs'
+            import { compareVersions, satisfies, VERSION_RE } from './kit/scripts/lib/upgrade-lib.mjs'
+            const subdir = process.env.PLUGIN_SUBDIR
+            const manifestPath = ['plugin', subdir, 'rocketflare-plugin.json'].filter(Boolean).join('/')
+            const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
+            const range = process.env.RANGE_OVERRIDE || manifest.requires?.kit || '*'
+            const tags = readFileSync(process.env.RUNNER_TEMP + '/kit-tags.txt', 'utf8')
+              .split('\n')
+              .map(l => l.split('refs/tags/')[1])
+              .filter(t => t && VERSION_RE.test(t))
+              .sort(compareVersions)
+            const inRange = tags.filter(t => satisfies(t, range))
+            if (inRange.length === 0) {
+              process.stderr.write(\`::error::no released kit version satisfies requires.kit '\${range}' — the range names versions that do not exist\n\`)
+              process.exit(1)
+            }
+            // The floor and the ceiling: the oldest release an adopter may still be on, and the
+            // newest the kit has reached. One entry when they are the same version.
+            const kits = [...new Set([inRange[0], inRange[inRange.length - 1]])]
+            console.log(\`requires.kit '\${range}' → \${kits.join(', ')} (of \${inRange.length} in range)\`)
+            appendFileSync(process.env.GITHUB_OUTPUT, \`kits=\${JSON.stringify(kits)}\nrange=\${range}\n\`)
+          "
+
+  gate:
+    name: Kit ${{ matrix.kit }}
+    needs: versions
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false # which END of the range broke is the whole diagnosis
+      matrix:
+        kit: ${{ fromJson(needs.versions.outputs.kits) }}
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17 # migration 0000 runs CREATE EXTENSION vector
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: rocketflare_test
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U test -d rocketflare_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: plugin
+      - name: Clone the kit at ${{ matrix.kit }}
+        env:
+          KIT_TOKEN: ${{ secrets.kit_token }}
+          KIT_REPO: ${{ inputs.kit_repo }}
+        run: |
+          set -euo pipefail
+          url="$KIT_REPO"
+          # A private kit needs a token in the URL; a public one needs nothing, which is the case
+          # that must stay simple.
+          if [ -n "${KIT_TOKEN:-}" ]; then
+            url="https://x-access-token:${KIT_TOKEN}@${KIT_REPO#https://}"
+          fi
+          git clone --depth 1 --branch "${{ matrix.kit }}" --quiet "$url" kit
+          git -C kit config remote.origin.url "$KIT_REPO"
+          if [ ! -f kit/scripts/plugin.mjs ]; then
+            echo "::error::kit ${{ matrix.kit }} has no scripts/plugin.mjs — it predates plugins. Raise the floor of requires.kit."
+            exit 1
+          fi
+      # The pnpm version comes from the KIT's `packageManager`, not from this repository — a plugin
+      # repo may have no package.json at all.
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: kit/package.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: kit/.nvmrc
+          cache: pnpm
+          cache-dependency-path: kit/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+        working-directory: kit
+
+      - name: Raise the test database connection limit
+        run: |
+          cid=$(docker ps --filter "ancestor=pgvector/pgvector:pg17" --format '{{.ID}}' | head -1)
+          docker exec "$cid" psql -U test -d rocketflare_test -c "ALTER SYSTEM SET max_connections = 300;"
+          docker restart "$cid"
+          for _ in $(seq 1 30); do
+            docker exec "$cid" pg_isready -U test -d rocketflare_test >/dev/null 2>&1 && break
+            sleep 2
+          done
+
+      # The host — never the plugin — numbers the DDL in its own journal (§16), which is why this is
+      # `plugin add` then `db:generate` rather than anything the plugin ships. Installing from a
+      # PATH is the authoring loop: the working copy is read directly, so the commit under test is
+      # the one installed.
+      - name: Install this plugin into the kit
+        working-directory: kit
+        env:
+          PLUGIN_SUBDIR: ${{ inputs.plugin_subdir }}
+        run: |
+          set -euo pipefail
+          # db:generate runs `dotenv -e .dev.vars`, so the file has to exist here as it does on a
+          # laptop. Git-ignored, and it holds nothing secret: a throwaway local database URL.
+          printf 'DATABASE_URL=postgresql://test:test@localhost:5433/rocketflare_test\n' > apps/web/.dev.vars
+          args=(add "$GITHUB_WORKSPACE/plugin" --apply --local)
+          if [ -n "$PLUGIN_SUBDIR" ]; then args+=(--subdir "$PLUGIN_SUBDIR"); fi
+          pnpm plugin "${args[@]}"
+          manifest="$GITHUB_WORKSPACE/plugin/$PLUGIN_SUBDIR"
+          id=$(node -p "require('${manifest%/}/rocketflare-plugin.json').id")
+          pnpm db:generate --name "plugin-$id-ci"
+
+      - name: Apply the generated migrations
+        working-directory: kit
+        env:
+          DATABASE_URL: postgresql://test:test@localhost:5433/rocketflare_test
+        run: pnpm db:migrate:ci
+
+      # The kit's own gate, unchanged — including the plugin's tests, which vitest discovers under
+      # `src/plugins/*/tests/{api,ui,config}` once the plugin is installed.
+      - run: pnpm lint
+        working-directory: kit
+      - run: pnpm typecheck
+        working-directory: kit
+      - run: pnpm test
+        working-directory: kit
+      - run: pnpm build
+        working-directory: kit

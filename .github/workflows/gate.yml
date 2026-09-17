@@ -1,0 +1,181 @@
+name: Gate
+
+# The gate itself — lint, typecheck, test, build — in ONE job, called twice (D31, decision 5):
+#
+#   ci.yml `check`    the ordinary gate, on the checkout as it is;
+#   ci.yml `plugins`  the same gate with every `defaultPlugins` entry installed first.
+#
+# A second copy of these steps was the alternative, and a gate that drifts between its two copies
+# proves nothing about the copy nobody ran. So the Postgres service, the install and the gate live
+# here and the difference is one boolean input.
+#
+# Workspace note: the repo is a pnpm workspace (apps/web, apps/cli, packages/shared). Every step
+# runs at the repository ROOT; the root scripts fan out with `pnpm -r` / `--filter`, and pnpm runs
+# each package's script with that package as its cwd. No `working-directory` is needed anywhere:
+# the web tests load `apps/web/.env.test` through their own `dotenv -e .env.test` script, wrangler
+# resolves `wrangler.toml` / `[assets] directory` inside apps/web, and the CLI builds in apps/cli.
+
+on:
+  workflow_call:
+    inputs:
+      plugins:
+        description: >-
+          Install every `defaultPlugins` entry from .rocketflare.json before running the gate, and
+          generate + apply their migrations. The secrets scan and the porting-note check are skipped
+          in that pass — they are properties of the checkout, and the first pass already ran them.
+        type: boolean
+        default: false
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17 # migration 0000 runs CREATE EXTENSION vector (D17)
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: rocketflare_test
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U test -d rocketflare_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history for the gitleaks scan below
+      # pnpm version comes from `packageManager` in the root package.json (pnpm 10). Must precede
+      # setup-node so `cache: pnpm` can find the store.
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      # One install for the whole workspace; packages/shared is linked as TypeScript source.
+      - run: pnpm install --frozen-lockfile
+
+      # Match apps/web/docker-compose.test.yml's `-c max_connections=300`. A `services:` container
+      # takes no command arg, so the setting is applied and the container restarted instead. At the
+      # 100 default the suite flaked ~1 in 8 with `53300 sorry, too many clients already`:
+      # vitest runs up to 6 forks and each holds its own postgres.js pool.
+      - name: Raise the test database connection limit
+        run: |
+          cid=$(docker ps --filter "ancestor=pgvector/pgvector:pg17" --format '{{.ID}}' | head -1)
+          docker exec "$cid" psql -U test -d rocketflare_test -c "ALTER SYSTEM SET max_connections = 300;"
+          docker restart "$cid"
+          for _ in $(seq 1 30); do
+            docker exec "$cid" pg_isready -U test -d rocketflare_test >/dev/null 2>&1 && break
+            sleep 2
+          done
+          docker exec "$cid" psql -U test -d rocketflare_test -c "show max_connections;"
+
+      # Secrets scan first: cheapest step, and the one whose failure must not be buried under a
+      # test log. Runs the binary directly (the marketplace action needs a licence for org repos).
+      # Scans the full history so a secret committed-then-removed is still caught.
+      - name: gitleaks
+        if: ${{ !inputs.plugins }}
+        run: |
+          curl -sSL "https://github.com/gitleaks/gitleaks/releases/download/v8.24.3/gitleaks_8.24.3_linux_x64.tar.gz" \
+            | tar -xz -C "$RUNNER_TEMP" gitleaks
+          "$RUNNER_TEMP/gitleaks" git --redact --exit-code 1 --verbose .
+
+      # A behaviour change with no porting note is invisible to every copy of the kit that is
+      # already out there: `pnpm kit:upgrade` replays a translated diff guided by those notes, so
+      # the gap is permanent. The script exits 0 immediately in an adopted copy (`.rocketflare.json`
+      # with an `app` block), so this never fires in somebody's product.
+      - name: A behaviour change carries its porting note
+        if: ${{ !inputs.plugins }}
+        env:
+          # The comparison point differs per trigger: a PR diffs against the branch it targets (so a
+          # branch of several commits may carry its note in any one of them), a push to main against
+          # the commit before it. The script diffs `base...HEAD`, and skips rather than fails when a
+          # range will not resolve — which is what keeps the tag path (`workflow_call`, where
+          # `event.before` is all zeros) quiet.
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before || 'HEAD~1' }}
+        run: node scripts/release-check.mjs --unreleased --base "$BASE"
+
+      # ------------------------------------------------------------------ default plugins (D31)
+      #
+      # `defaultPlugins` in .rocketflare.json is a list of OBJECTS — `{ id, repo, ref?, subdir? }`
+      # (`scripts/lib/upgrade-lib.mjs` `defaultPluginEntries` is the one reader, and it accepts a
+      # bare string as an id with no repo, which fails here with the reason). `ref` is the pinned
+      # tag; without one the repository's default branch is installed, which is a moving target and
+      # only sensible while a plugin is being written.
+      #
+      # `pnpm plugin add` never copies a migration — the HOST numbers the DDL in its own journal
+      # (§16) — so `db:generate` after each install and one `db:migrate:ci` at the end is the whole
+      # of it, and it is exactly what a person does locally.
+      - name: Install the default plugins
+        if: ${{ inputs.plugins }}
+        run: |
+          set -euo pipefail
+          # db:generate runs `dotenv -e .dev.vars`, so the file has to exist here as it does on a
+          # laptop. It is git-ignored and holds nothing secret: a throwaway local database URL.
+          printf 'DATABASE_URL=postgresql://test:test@localhost:5433/rocketflare_test\n' > apps/web/.dev.vars
+          node --input-type=module -e "
+            import { readManifest } from './scripts/lib/manifest.mjs'
+            import { defaultPluginEntries } from './scripts/lib/upgrade-lib.mjs'
+            // readManifest() rather than a literal filename — see ci.yml.
+            for (const e of defaultPluginEntries(readManifest().manifest)) {
+              if (!e.id || !e.repo) {
+                process.stderr.write(\`::error::defaultPlugins entry '\${e.id ?? '?'}' needs an id and a repo\n\`)
+                process.exit(1)
+              }
+              process.stdout.write([e.id, e.repo, e.ref ?? '', e.subdir ?? ''].join('\t') + '\n')
+            }
+          " > "$RUNNER_TEMP/default-plugins.tsv"
+          while IFS=$'\t' read -r id repo ref subdir; do
+            [ -n "$id" ] || continue
+            spec="$repo"
+            if [ -n "$ref" ]; then spec="$repo@$ref"; fi
+            echo "::group::plugin add $spec"
+            # `--allow-dirty` because the PREVIOUS plugin's `db:generate` left migration files in
+            # the tree; the checkout itself is pristine and nothing here is committed.
+            if [ -n "$subdir" ]; then
+              pnpm plugin add "$spec" --subdir "$subdir" --apply --allow-dirty
+            else
+              pnpm plugin add "$spec" --apply --allow-dirty
+            fi
+            version=$(node --input-type=module -e "
+              import { readFileSync } from 'node:fs'
+              import { readManifest } from './scripts/lib/manifest.mjs'
+              const { manifest } = readManifest()
+              const s = (manifest?.surfaces ?? []).find(s => s.id === '$id')
+              process.stdout.write(s?.source?.version ?? 'unpinned')
+            ")
+            pnpm db:generate --name "plugin-$id-$version"
+            echo "::endgroup::"
+          done < "$RUNNER_TEMP/default-plugins.tsv"
+
+      - name: Apply the generated migrations
+        if: ${{ inputs.plugins }}
+        env:
+          DATABASE_URL: postgresql://test:test@localhost:5433/rocketflare_test
+        run: pnpm db:migrate:ci
+
+      # ------------------------------------------------------------------ the gate
+      # Biome runs once over the whole workspace from the root biome.json.
+      - run: pnpm lint
+      # `pnpm typecheck` = `pnpm -r typecheck`: web runs `wrangler types` + `tsc`, cli and shared run
+      # `tsc`. The web typegen file is committed (D22) so a fresh clone typechecks without wrangler
+      # auth; if regenerating it changes anything, a binding or var was edited without committing
+      # the regenerated file.
+      - run: pnpm typecheck
+      # A plugin declares its bindings rather than editing a toml (§16, decision 12), so installing
+      # one must not move this file either — `pnpm provision cloudflare <env>` is what writes them.
+      - name: apps/web/worker-configuration.d.ts is up to date
+        run: git diff --exit-code -- apps/web/worker-configuration.d.ts
+
+      # `pnpm -r test`. Web: apps/web/.env.test points at localhost:5433 with dummy secrets
+      # (committed); apps/web/tests/setup.ts runs db-roles --phase=role → migrate → --phase=grants,
+      # truncates, seeds. TENANT_SCOPE_MODE=off: predicates-only; policies exist and
+      # rls-coverage.test.ts checks every tenant table has one. CLI: plain vitest, no database.
+      # With plugins installed this also runs each plugin's own tests: vitest discovers
+      # `src/plugins/*/tests/{api,ui,config}` (§16).
+      - run: pnpm test
+
+      # `pnpm -r build`: web = typecheck (repeated, cheap) + `vite build` + dry-run `wrangler deploy`
+      # (needs dist/ui for `[assets]`; it is what catches a Node-only import that tsc cannot see);
+      # cli = `tsc -p tsconfig.build.json` → apps/cli/dist/cli.js; shared has nothing to build.
+      - run: pnpm build
