@@ -328,8 +328,18 @@ const IS_PLACEHOLDER = /^<[A-Z0-9_]+>$/
  * `[]` for any pair of documents, so the rule is only meaningful when exercised against a fixture,
  * which is precisely why it is a function and not an inline block of assertions.
  *
- * `requireProvisioned` is the `REQUIRE_PROVISIONED=1` half: a KV id may be a `<PLACEHOLDER>` while
- * the environment is unprovisioned and may not be at deploy time.
+ * `requireProvisioned` is the `REQUIRE_PROVISIONED=1` half, and it now covers three things rather
+ * than one: a KV id may be a `<PLACEHOLDER>`, and the crons and `run_worker_first` prefixes a
+ * plugin declares may be absent, while the environment is unprovisioned. None of them may be at
+ * deploy time.
+ *
+ * Crons and prefixes are gated because `pnpm plugin add` deliberately does not touch a toml (D31,
+ * decision 12) — `pnpm provision cloudflare <env>` writes them. So a checkout that has installed a
+ * plugin and not yet provisioned is a legitimate, documented state, and the ordinary gate must not
+ * fail it. The kit's own CI is exactly that state: it installs every `defaultPlugins` entry and has
+ * no Cloudflare credentials to provision with. `deploy.yml` runs this same test with
+ * `REQUIRE_PROVISIONED=1`, so an app that installed a plugin and never provisioned is still stopped
+ * before it can deploy, which is the moment the missing cron or prefix would actually bite.
  */
 export function pluginParityIssues(
   app: string,
@@ -370,17 +380,20 @@ export function pluginParityIssues(
         }
       }
     }
-    for (const cron of plugin.crons)
-      for (const [env, doc] of envs)
-        if (!list(doc, 'triggers.crons').includes(cron))
-          issues.push(`${env}: [triggers] crons is missing "${cron}" (plugin ${plugin.id})`)
-    for (const prefix of plugin.apiPrefixes)
-      for (const [env, doc] of envs)
-        for (const pattern of [prefix, `${prefix}/*`])
-          if (!list(doc, 'assets.run_worker_first').includes(pattern))
-            issues.push(
-              `${env}: [assets] run_worker_first is missing "${pattern}" (plugin ${plugin.id})`
-            )
+    // Written by `provision cloudflare`, not by `plugin add` — so only required once provisioned.
+    if (opts.requireProvisioned) {
+      for (const cron of plugin.crons)
+        for (const [env, doc] of envs)
+          if (!list(doc, 'triggers.crons').includes(cron))
+            issues.push(`${env}: [triggers] crons is missing "${cron}" (plugin ${plugin.id})`)
+      for (const prefix of plugin.apiPrefixes)
+        for (const [env, doc] of envs)
+          for (const pattern of [prefix, `${prefix}/*`])
+            if (!list(doc, 'assets.run_worker_first').includes(pattern))
+              issues.push(
+                `${env}: [assets] run_worker_first is missing "${pattern}" (plugin ${plugin.id})`
+              )
+    }
     for (const v of plugin.vars) {
       if (v.secret) continue
       for (const [env, doc] of envs) {

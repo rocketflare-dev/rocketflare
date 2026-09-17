@@ -40,6 +40,24 @@ const read = (file: string): Toml =>
 const prod = read('wrangler.toml')
 const staging = read('wrangler.staging.toml')
 
+// What this checkout actually has installed. Through `readManifest()` rather than a literal
+// filename — the one place the manifest and its git-ignored sidecar are read, so a `--local`
+// install is held to the same parity rules. At module scope because two describes need it.
+const REPO_ROOT = path.resolve(WEB_DIR, '../..')
+const installed = readPluginResources(
+  REPO_ROOT,
+  pluginSurfaces(readManifest(REPO_ROOT).manifest) as Array<{
+    id: string
+    kind: string
+    anchor: string
+  }>
+)
+
+/** The run_worker_first patterns an installed plugin contributes, rather than the kit itself. */
+const PLUGIN_WORKER_FIRST = new Set(
+  installed.flatMap(p => p.apiPrefixes.flatMap(prefix => [prefix, `${prefix}/*`]))
+)
+
 // ---- helpers ----------------------------------------------------------------------------
 
 const get = (obj: unknown, dotted: string): unknown =>
@@ -158,7 +176,17 @@ describe('wrangler parity: must match', () => {
       ['staging', staging],
     ] as const) {
       expect(get(config, 'assets.not_found_handling'), label).toBe('single-page-application')
-      expect(get(config, 'assets.run_worker_first'), label).toEqual(WORKER_FIRST_PATTERNS)
+      // Equality, not a subset — but over the prefixes the KIT owns. WORKER_FIRST_PATTERNS is
+      // built from the server barrel, so an installed plugin inflates it while the toml stays bare
+      // until `provision cloudflare` writes them (D31, decision 12). Subtracting the plugin's
+      // patterns from both sides keeps this exact where it protects something, and silent where
+      // provisioning rather than the kit fills the gap; `pluginParityIssues` under
+      // REQUIRE_PROVISIONED=1 is what demands the plugin half.
+      const workerFirst = (get(config, 'assets.run_worker_first') ?? []) as string[]
+      expect(
+        workerFirst.filter(pattern => !PLUGIN_WORKER_FIRST.has(pattern)),
+        label
+      ).toEqual(WORKER_FIRST_PATTERNS.filter(pattern => !PLUGIN_WORKER_FIRST.has(pattern)))
     }
   })
 
@@ -292,26 +320,43 @@ describe('wrangler parity: plugin resources', () => {
     staging: TOML.parse(provisionedText(stagingRaw, 'staging', stagingKv)),
   })
 
-  it('unpatched tomls fail every rule the fixture declares, in both environments', () => {
-    // Empty documents, deliberately, rather than the repo’s tomls: this assertion is about what
-    // the rule REPORTS, and it must not change meaning in a copy that has real plugins installed.
-    const issues = pluginParityIssues(app, [fixture], { production: {}, staging: {} })
-    // 3 bindings + 1 cron + 2 run_worker_first patterns + 1 non-secret var, each in both files.
-    // (The consumer check is not among them: a missing producer stops at one message per binding
-    // rather than piling a second on top of it.)
-    expect(issues).toHaveLength(14)
+  // Empty documents, deliberately, rather than the repo’s tomls: these assertions are about what
+  // the rule REPORTS, and they must not change meaning in a copy that has real plugins installed.
+  const emptyDocs = { production: {}, staging: {} }
+
+  it('unpatched tomls fail every rule `plugin add` is answerable for, in both environments', () => {
+    // 3 bindings + 1 non-secret var, each in both files. The cron and the two run_worker_first
+    // patterns are deliberately NOT here: `plugin add` never writes a toml (D31, decision 12), so a
+    // plugin installed and not yet provisioned is a documented state the ordinary gate must pass.
+    const issues = pluginParityIssues(app, [fixture], emptyDocs)
+    expect(issues).toHaveLength(8)
     for (const env of ['production', 'staging'])
       for (const fragment of [
         '[[kv_namespaces]] has no binding "PARITY_FIXTURE_CACHE"',
         '[[queues.producers]] has no binding "PARITY_FIXTURE_QUEUE"',
         '[[r2_buckets]] has no binding "PARITY_FIXTURE_FILES"',
-        '[triggers] crons is missing "7 3 * * *"',
-        '[assets] run_worker_first is missing "/parity-fixture-hook/*"',
         '[vars] is missing "PARITY_FIXTURE_MAX_ITEMS"',
       ])
         expect(issues).toContainEqual(expect.stringContaining(`${env}: ${fragment}`))
+    expect(issues.join('\n')).not.toContain('[triggers] crons')
+    expect(issues.join('\n')).not.toContain('run_worker_first')
     // The secret var is NOT a [vars] key — it is a Worker secret (`provision secrets <env>`).
     expect(issues.join('\n')).not.toContain('PARITY_FIXTURE_SECRET')
+  })
+
+  it('under REQUIRE_PROVISIONED the crons and prefixes are demanded too', () => {
+    // The deploy-time half: the 8 above, plus 1 cron and 2 run_worker_first patterns in both files.
+    // (The consumer check is not among them: a missing producer stops at one message per binding
+    // rather than piling a second on top of it.)
+    const issues = pluginParityIssues(app, [fixture], emptyDocs, { requireProvisioned: true })
+    expect(issues).toHaveLength(14)
+    for (const env of ['production', 'staging'])
+      for (const fragment of [
+        '[triggers] crons is missing "7 3 * * *"',
+        '[assets] run_worker_first is missing "/parity-fixture-hook"',
+        '[assets] run_worker_first is missing "/parity-fixture-hook/*"',
+      ])
+        expect(issues).toContainEqual(expect.stringContaining(`${env}: ${fragment}`))
   })
 
   it('patched tomls satisfy every rule, in both environments', () => {
@@ -366,18 +411,6 @@ describe('wrangler parity: plugin resources', () => {
   })
 
   // ---- and against what this checkout actually has ---------------------------------------
-
-  // Through `readManifest()` rather than a literal filename — the one place the manifest and its
-  // git-ignored sidecar are read, so a `--local` install is held to the same parity rule.
-  const repoRoot = path.resolve(WEB_DIR, '../..')
-  const installed = readPluginResources(
-    repoRoot,
-    pluginSurfaces(readManifest(repoRoot).manifest) as Array<{
-      id: string
-      kind: string
-      anchor: string
-    }>
-  )
 
   it('every installed plugin is declared in both tomls', () => {
     expect(
