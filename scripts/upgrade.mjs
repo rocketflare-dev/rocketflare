@@ -25,19 +25,37 @@
  * wrangler toml, and never deletes a file without `--apply-deletes`. Resolving rejects and making
  * the judgement calls is the agent's job: `.claude/skills/rf-upgrade/`.
  *
+ * Installed plugins (D31) are reported but never touched: `classifyPath` drops every file a
+ * `kind: 'plugin'` surface owns as `skipped-plugin-owned`, because the plugin has its own
+ * repository and its own release chain (`pnpm plugin upgrade <id>`, run AFTER this). Two things it
+ * does say out loud: a kit change to a file listed in a plugin's `registries[]` — the five barrels
+ * are shared, so the kit CAN move ground under a plugin — and a target kit version that leaves an
+ * installed plugin's `requires.kit` range, which is exit 6.
+ *
  * Exit 0 ok · 1 error · 2 usage · 3 kit unreachable with no cached mirror · 4 applied with
- * rejects (work remains, not a failure) · 5 `.rocketflare.json` missing. Zero dependencies, Node ≥ 24.
+ * rejects (work remains, not a failure) · 5 `.rocketflare.json` missing · 6 an installed plugin
+ * does not support the target kit version (`--force` to proceed). Zero dependencies, Node ≥ 24.
  */
-import { execFileSync, spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import {
+  collectChanges,
+  collectRenames,
+  dirtyTree,
+  ensureMirror,
+  makeGit,
+  makeWriter,
+  notesBetween,
+} from './lib/git-lib.mjs'
+import { pluginSurfaces, readManifest } from './lib/manifest.mjs'
 import { applyReplacements, deriveNames } from './lib/rename-lib.mjs'
 import {
   absentSurfaces,
   classifyPath,
   countLines,
-  isKitManifest,
+  matchesAny,
+  satisfies,
   splitDiff,
   stripIndexLines,
   translateBlock,
@@ -69,7 +87,8 @@ export const USAGE = `usage: node scripts/upgrade.mjs [--to <ref>] [--from <ref>
   --adopt <ref>          one-off: stamp this ref into .rocketflare.json and exit (for a copy made
                          before the manifest existed)
   --dry-run              resolve and classify, write nothing at all
-  --force                run on a dirty git tree
+  --force                run on a dirty git tree, and past an installed plugin that does not
+                         support the target kit version
   --json                 print the plan as JSON on stdout (what /rf-upgrade reads)
   -h, --help`
 
@@ -109,153 +128,17 @@ export function parseArgs(argv) {
 }
 
 // ---------------------------------------------------------------- git helpers
+//
+// The mirror, the git wrappers, the artifact writer and the note reader now live in
+// `scripts/lib/git-lib.mjs` — `scripts/plugin.mjs` runs the same pipeline over a plugin's
+// repository, and two copies of `ensureMirror` is how one of them grows a fallback the other
+// never gets (D31, Phase B).
 
-const git = (args, opts = {}) =>
-  execFileSync('git', args, {
-    cwd: REPO_ROOT,
-    encoding: 'utf8',
-    maxBuffer: 256 * 1024 * 1024,
-    ...opts,
-  })
-
-const gitQuiet = (args, opts = {}) => {
-  try {
-    return { ok: true, out: git(args, { stdio: ['ignore', 'pipe', 'pipe'], ...opts }) }
-  } catch (err) {
-    return { ok: false, out: '', err }
-  }
-}
-
-const mirrorDir = () => path.join(REPO_ROOT, WORK_DIR, 'kit.git')
-const inMirror = args => git(['-C', mirrorDir(), ...args])
-const inMirrorQuiet = args => gitQuiet(['-C', mirrorDir(), ...args])
-
-/** A blobless bare mirror, reused across runs. `rm -rf .upgrade` is a complete uninstall. */
-function ensureMirror(repo, doFetch) {
-  const dir = mirrorDir()
-  if (!existsSync(dir)) {
-    if (!doFetch)
-      throw new Error(`no cached mirror at ${WORK_DIR}/kit.git and --no-fetch was given`)
-    mkdirSync(path.dirname(dir), { recursive: true })
-    const clone = spawnSync(
-      'git',
-      ['clone', '--bare', '--filter=blob:none', '--no-tags', repo, dir],
-      { cwd: REPO_ROOT, stdio: 'inherit' }
-    )
-    if (clone.status !== 0) {
-      // A git too old for partial clone, or a server that refuses it.
-      rmSync(dir, { recursive: true, force: true })
-      const plain = spawnSync('git', ['clone', '--bare', repo, dir], {
-        cwd: REPO_ROOT,
-        stdio: 'inherit',
-      })
-      if (plain.status !== 0)
-        throw Object.assign(new Error(`cannot clone ${repo}`), { exitCode: 3 })
-    }
-    inMirror(['config', 'remote.origin.fetch', '+refs/heads/*:refs/remotes/origin/*'])
-  } else {
-    const url = inMirrorQuiet(['remote', 'get-url', 'origin']).out.trim()
-    if (url && url !== repo) {
-      throw new Error(`${WORK_DIR}/kit.git points at ${url}, not ${repo} — delete it and re-run`)
-    }
-  }
-  if (doFetch) {
-    const fetched = inMirrorQuiet(['fetch', '--prune', '--tags', 'origin'])
-    if (!fetched.ok && !existsSync(path.join(dir, 'HEAD'))) {
-      throw Object.assign(new Error(`cannot reach ${repo}`), { exitCode: 3 })
-    }
-    if (!fetched.ok) warn('note: fetch failed — using the cached mirror as it is')
-  }
-}
-
-/** Newest `X.Y.Z` tag in the mirror. */
-function latestTag() {
-  const tags = inMirrorQuiet(['tag', '--list', '--sort=-v:refname'])
-    .out.trim()
-    .split('\n')
-    .filter(t => /^\d+\.\d+\.\d+$/.test(t))
-  return tags[0] ?? null
-}
-
-const resolves = ref => inMirrorQuiet(['rev-parse', '--verify', `${ref}^{commit}`]).ok
+const { git, quiet: gitQuiet } = makeGit(REPO_ROOT)
 
 // ---------------------------------------------------------------- plan
 
-const CHANGE_OF = { A: 'added', M: 'modified', D: 'deleted', T: 'modified' }
-
-function collectChanges(from, to) {
-  const nameStatus = inMirror(['diff', '--no-renames', '--name-status', '-z', from, to])
-  const numstat = inMirror(['diff', '--no-renames', '--numstat', '-z', from, to])
-
-  const binary = new Set()
-  const numFields = numstat.split('\0').filter(Boolean)
-  for (let i = 0; i + 2 < numFields.length + 1; i += 3) {
-    const [adds, dels, file] = [numFields[i], numFields[i + 1], numFields[i + 2]]
-    if (file && adds === '-' && dels === '-') binary.add(file)
-  }
-
-  const fields = nameStatus.split('\0').filter(Boolean)
-  const changes = []
-  for (let i = 0; i + 1 < fields.length; i += 2) {
-    const status = fields[i][0]
-    const file = fields[i + 1]
-    changes.push({
-      path: file,
-      change: binary.has(file) ? 'binary' : (CHANGE_OF[status] ?? 'modified'),
-    })
-  }
-  return changes
-}
-
-/** The `-M` pass is narrative only — never bytes that are applied. */
-function collectRenames(from, to) {
-  const raw = inMirrorQuiet(['diff', '-M', '--name-status', '-z', from, to]).out
-  const fields = raw.split('\0').filter(Boolean)
-  const renames = []
-  for (let i = 0; i < fields.length; i++) {
-    if (/^R\d+$/.test(fields[i])) {
-      renames.push({
-        from: fields[i + 1],
-        to: fields[i + 2],
-        similarity: Number(fields[i].slice(1)),
-      })
-      i += 2
-    } else if (/^[AMDT]$/.test(fields[i])) i += 1
-  }
-  return renames
-}
-
-function notesBetween(from, to, fromVersion, toVersion) {
-  const listed = inMirrorQuiet(['ls-tree', '--name-only', `${to}:docs/upgrades`]).out
-  const files = listed.trim() === '' ? [] : listed.trim().split('\n')
-  const notes = []
-  for (const f of files) {
-    const m = f.match(/^(\d+\.\d+\.\d+)\.md$/)
-    if (!m) continue
-    const version = m[1]
-    if (fromVersion && cmp(version, fromVersion) <= 0) continue
-    if (toVersion && cmp(version, toVersion) > 0) continue
-    const text = inMirrorQuiet(['show', `${to}:docs/upgrades/${f}`]).out
-    notes.push({ version, file: `docs/upgrades/${f}`, text })
-  }
-  return notes.sort((a, b) => cmp(a.version, b.version))
-}
-
-const cmp = (a, b) => {
-  const pa = a.split('.').map(Number)
-  const pb = b.split('.').map(Number)
-  for (let i = 0; i < 3; i++)
-    if ((pa[i] ?? 0) !== (pb[i] ?? 0)) return (pa[i] ?? 0) < (pb[i] ?? 0) ? -1 : 1
-  return 0
-}
-
 // ---------------------------------------------------------------- main
-
-function readManifest() {
-  const file = path.join(REPO_ROOT, MANIFEST)
-  if (!existsSync(file)) return null
-  return JSON.parse(readFileSync(file, 'utf8'))
-}
 
 function writeManifest(manifest) {
   writeFileSync(path.join(REPO_ROOT, MANIFEST), `${JSON.stringify(manifest, null, 2)}\n`)
@@ -272,7 +155,7 @@ function main(argv) {
     return 2
   }
 
-  const manifest = readManifest()
+  const { manifest, isKit } = readManifest(REPO_ROOT)
   if (!manifest) {
     warn(
       `error: ${MANIFEST} not found — this copy predates the upgrade path.`,
@@ -296,7 +179,7 @@ function main(argv) {
     return 0
   }
 
-  if (isKitManifest(manifest)) {
+  if (isKit) {
     warn(
       'error: this checkout IS the kit (no `app` block in .rocketflare.json), so there is nothing',
       'to upgrade. Run this in a copy made from the kit.'
@@ -305,7 +188,7 @@ function main(argv) {
   }
 
   if (!args.dryRun && !args.force) {
-    const dirty = gitQuiet(['status', '--porcelain']).out.trim()
+    const dirty = dirtyTree(REPO_ROOT)
     if (dirty !== '') {
       warn(
         'error: the git tree is not clean — commit or stash first so the upgrade is one reviewable',
@@ -321,7 +204,11 @@ function main(argv) {
   })
 
   // 1/6 — the mirror
-  ensureMirror(manifest.kit.repo, args.fetch)
+  const kit = ensureMirror(manifest.kit.repo, path.join(REPO_ROOT, WORK_DIR, 'kit.git'), {
+    fetch: args.fetch,
+    cwd: REPO_ROOT,
+    warn,
+  })
   out(`✔ 1/6 kit       mirror ${WORK_DIR}/kit.git ready (${manifest.kit.repo})`)
   if (!gitQuiet(['check-ignore', '-q', WORK_DIR]).ok) {
     warn(`note: add \`${WORK_DIR}/\` to .gitignore — it is a cache, not part of your app`)
@@ -329,15 +216,15 @@ function main(argv) {
 
   // refs
   const from = args.from ?? manifest.kit.commit ?? manifest.kit.version
-  if (!resolves(from)) {
+  if (!kit.resolves(from)) {
     warn(
       `error: '${from}' is not in the kit's history. The kit does not rewrite released history, so`,
       'this usually means the ref was a local commit. Pass --from <tag> with the release you started from.'
     )
     return 1
   }
-  const to = args.to ?? latestTag()
-  if (!to || !resolves(to)) {
+  const to = args.to ?? kit.latestTag()
+  if (!to || !kit.resolves(to)) {
     warn(
       `error: cannot resolve the target ref${to ? ` '${to}'` : ' (no release tags in the mirror)'}`
     )
@@ -346,10 +233,7 @@ function main(argv) {
   const toVersion = /^\d+\.\d+\.\d+$/.test(to) ? to : null
   const fromVersion = /^\d+\.\d+\.\d+$/.test(from) ? from : manifest.kit.version
 
-  if (
-    inMirror(['rev-parse', `${from}^{commit}`]).trim() ===
-    inMirror(['rev-parse', `${to}^{commit}`]).trim()
-  ) {
+  if (kit.commitOf(from) === kit.commitOf(to)) {
     out('', `Already on ${to} — nothing to do.`)
     return 0
   }
@@ -363,8 +247,35 @@ function main(argv) {
       (absent.length > 0 ? ` — absent: ${absent.join(', ')}` : '')
   )
 
+  // 2b — installed plugins. Reported before anything is classified, because "which plugins are
+  // installed" changes what this run may write (their files are skipped wholesale) and what has to
+  // happen after it (one `pnpm plugin upgrade` each).
+  const plugins = pluginSurfaces(manifest).filter(p => !absent.includes(p.id))
+  if (plugins.length > 0) {
+    out(
+      `  plugins     ${plugins.map(p => `${p.id}@${p.source?.version ?? '?'}`).join(', ')}` +
+        ` — owned by their own repos; upgrade each with \`pnpm plugin upgrade <id>\` after this`
+    )
+  }
+  const unsupported = toVersion
+    ? plugins.filter(p => p.requires?.kit && !satisfies(toVersion, p.requires.kit))
+    : []
+  if (unsupported.length > 0 && !args.force) {
+    warn(
+      `error: ${unsupported.length} installed plugin(s) do not support kit ${toVersion}:`,
+      ...unsupported.map(p => `  ${p.id} requires kit ${p.requires.kit}`),
+      '',
+      'Three honest answers: stay on this kit version, `pnpm plugin remove <id>` first, or pass',
+      '--force and fix what breaks — the gate is what will tell you.'
+    )
+    return 6
+  }
+  for (const p of unsupported) {
+    warn(`warning: ${p.id} requires kit ${p.requires.kit} — forced past it`)
+  }
+
   // 3/6 — notes
-  const notes = notesBetween(from, to, fromVersion, toVersion)
+  const notes = notesBetween(kit, to, { after: fromVersion, through: toVersion })
   const applicableNotes = notes.filter(n => {
     const req = (n.text.match(/^requires_surfaces:\s*\[(.*)\]/m)?.[1] ?? '')
       .split(',')
@@ -381,8 +292,8 @@ function main(argv) {
 
   // 4/6 — classify
   const localSet = new Set(tracked)
-  const changes = collectChanges(from, to)
-  const renames = collectRenames(from, to)
+  const changes = collectChanges(kit, from, to)
+  const renames = collectRenames(kit, from, to)
   const files = changes.map(c => ({
     ...c,
     ...classifyPath(c.path, {
@@ -394,25 +305,32 @@ function main(argv) {
     }),
   }))
 
+  // A plugin's `registries[]` are the kit's own files (the five barrels), so the kit may change
+  // them and this run may apply that change — but the line the plugin owns lives there, so a
+  // conflict lands on somebody who did not write either side. Annotate rather than skip.
+  for (const f of files) {
+    const owners = plugins
+      .filter(p => (p.registries ?? []).some(r => r === f.path || matchesAny(f.path, [r])))
+      .map(p => p.id)
+    if (owners.length > 0) f.touchesPluginRegistry = owners
+  }
+
   const byClass = {}
   for (const f of files) byClass[f.class] = (byClass[f.class] ?? 0) + 1
 
   // 5/6 — artifacts
   const workRoot = path.join(REPO_ROOT, WORK_DIR, 'work', toVersion ?? to.slice(0, 12))
-  const write = (rel, text) => {
-    const abs = path.join(workRoot, rel)
-    mkdirSync(path.dirname(abs), { recursive: true })
-    writeFileSync(abs, text)
-  }
+  const artifacts = makeWriter(workRoot)
+  const write = artifacts.write
 
   const patches = []
   const addedFiles = []
   const warnings = []
   if (!args.dryRun) {
-    rmSync(workRoot, { recursive: true, force: true })
+    artifacts.reset()
     for (const f of files) {
       if (f.class === 'modified' || f.class === 'verbatim') {
-        const raw = inMirror(['diff', '--no-renames', from, to, '--', f.path])
+        const raw = kit.run(['diff', '--no-renames', from, to, '--', f.path])
         const blocks = splitDiff(raw)
         if (blocks.length === 0) continue
         let translated
@@ -436,7 +354,7 @@ function main(argv) {
         write(path.join('files', `${f.path}.patch`), translated)
         patches.push(translated)
       } else if (f.class === 'added' || f.class === 'added-collides') {
-        const body = inMirror(['show', `${to}:${f.path}`])
+        const body = kit.show(to, f.path)
         const text = f.translate ? applyNames(body, names) : body
         write(path.join('added', f.path), text)
         if (f.class === 'added') addedFiles.push(f.path)
@@ -447,8 +365,7 @@ function main(argv) {
         f.class === 'manual' ||
         f.class === 'binary'
       ) {
-        if (f.change !== 'deleted')
-          write(path.join('reference', f.path), inMirror(['show', `${to}:${f.path}`]))
+        if (f.change !== 'deleted') write(path.join('reference', f.path), kit.show(to, f.path))
       }
     }
     for (const n of notes) write(path.join('notes', path.basename(n.file)), n.text)
@@ -458,10 +375,10 @@ function main(argv) {
   const plan = {
     from: {
       ref: from,
-      commit: inMirror(['rev-parse', `${from}^{commit}`]).trim(),
+      commit: kit.commitOf(from),
       version: fromVersion,
     },
-    to: { ref: to, commit: inMirror(['rev-parse', `${to}^{commit}`]).trim(), version: toVersion },
+    to: { ref: to, commit: kit.commitOf(to), version: toVersion },
     names: {
       slug: names.slug,
       snake: names.snake,
@@ -469,6 +386,12 @@ function main(argv) {
       display: names.display,
       domain: names.domain,
     },
+    plugins: plugins.map(p => ({
+      id: p.id,
+      version: p.source?.version ?? null,
+      requiresKit: p.requires?.kit ?? null,
+      supported: toVersion && p.requires?.kit ? satisfies(toVersion, p.requires.kit) : null,
+    })),
     surfaces: {
       present: manifest.surfaces.map(s => s.id).filter(id => !absent.includes(id)),
       absent,
@@ -484,6 +407,7 @@ function main(argv) {
       change: f.change,
       reason: f.reason,
       surface: f.surface,
+      touchesPluginRegistry: f.touchesPluginRegistry,
     })),
     renames,
     counts: byClass,
@@ -600,6 +524,17 @@ function report(plan, notes, applicable) {
       `Skipped ${pluginOwned.length} file(s) owned by installed plugin(s) (${ids.join(', ')}). ` +
         `Upgrade those with \`pnpm plugin upgrade <id>\`, after this.`
     )
+  }
+  const registryTouches = plan.files.filter(f => f.touchesPluginRegistry?.length > 0)
+  if (registryTouches.length > 0) {
+    lines.push(
+      '',
+      'touches-plugin-registry — the kit changed a file an installed plugin also writes a line',
+      'into. Apply the kit change, then check the plugin line survived it:'
+    )
+    for (const f of registryTouches) {
+      lines.push(`  ${f.path} — ${f.touchesPluginRegistry.join(', ')}`)
+    }
   }
   const manual = [
     ...bucket('manual'),

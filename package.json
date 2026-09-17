@@ -20,6 +20,7 @@
     "bootstrap": "node scripts/bootstrap.mjs",
     "kit:upgrade": "node scripts/upgrade.mjs",
     "kit:release": "node scripts/release.mjs",
+    "plugin": "node scripts/plugin.mjs",
     "preflight": "node scripts/bootstrap.mjs --check",
     "test:db:up": "pnpm --filter @rocketflare/web test:db:up",
     "test:db:down": "pnpm --filter @rocketflare/web test:db:down",

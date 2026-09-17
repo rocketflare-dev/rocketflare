@@ -64,22 +64,55 @@ in the host. Each half is checked where it is written; only the merge is cast.
   as a type (`AgentToolContext`, `Tool`) and naming a file DIRECTLY rather than a barrel that
   re-exports the plugin (`db/schema/feature-flags`, not `db/schema`).
 
-## Installing one by hand (until `pnpm plugin add`, Phase B)
+## Installing, upgrading and removing one
 
-1. Copy the plugin's three trees in at the identical paths (`apps/web/src/plugins/<id>/`,
-   `packages/shared/src/plugins/<id>/`, `apps/cli/src/plugins/<id>/`).
-2. Write the five barrel lines — an import and a tuple entry in each of `server.ts`, `ui.ts`,
-   `packages/shared/src/plugins/index.ts`, `apps/cli/src/plugins/index.ts`, and one `export *` in
-   `schema.ts`.
-3. Add its surface to `.rocketflare.json` (`kind: 'plugin'`, its `anchor`, `paths`, `registries`
-   and `source.repo`), or `.rocketflare.local.json` when installing into the kit itself.
-4. `pnpm db:generate --name plugin-<id>-<version>` → read the SQL → `pnpm db:migrate`.
-5. Any binding, cron or `[vars]` key from its `plugin.json` into BOTH tomls (+ `.dev.vars.example`).
-6. `pnpm lint && pnpm typecheck && pnpm test && pnpm build`.
+`pnpm plugin` (`scripts/plugin.mjs`) does all of it, and **every command prints its plan and stops
+until `--apply`** — installing a plugin gives it full Worker and database access, so it is as
+trusting as merging a pull request, and the plan is what a person says yes to.
 
-Removing one is the same list backwards: delete the trees, delete the five lines, delete the
-surface, then `pnpm db:generate` emits the `DROP TABLE`s. Orphaned tables are not a stable state.
-Phase B's `pnpm plugin add|remove` writes all of it and shows the plan before `--apply`.
+```bash
+pnpm plugin add <repo|path>[@ref] [--subdir <dir>] [--local]   # read the plan
+pnpm plugin add <repo|path>[@ref] --apply                      # then install it
+pnpm plugin upgrade <id> [--to <ref>] [--apply]                # its own releases, not the kit's
+pnpm plugin remove <id> [--archive] [--apply]
+pnpm plugin list · pnpm plugin check · pnpm plugin export <id> <dir>
+```
+
+`add --apply` copies the three trees (translated into this app's names by the same token map the
+rename used), copies the plugin's release notes to `docs/plugins/<id>/upgrades/`, writes the five
+barrel lines, installs the dependencies the manifest declares, and records the surface — in
+`.rocketflare.json`, or in the git-ignored `.rocketflare.local.json` sidecar with `--local` and
+always inside the kit itself. Exit codes: 0 ok · 1 error · 2 usage · 3 unreachable with no cached
+mirror · 4 rejects remain (upgrade) · 5 no `rocketflare-plugin.json` at the source · 6 a
+requirement is unmet · 7 the target path exists.
+
+**What it will not do, ever**, and each is in the plan instead: generate or copy a migration
+(`pnpm db:generate --name plugin-<id>-<version>` is yours, after the barrel line exists), edit a
+wrangler toml or write a resource id (a declared binding, cron or `[vars]` key is printed with the
+row you have to place), or apply anything you have not read.
+
+A file in a plugin's repository that falls outside `apps/web/src/plugins/<id>/`,
+`packages/shared/src/plugins/<id>/`, `apps/cli/src/plugins/<id>/`, `docs/plugins/<id>/`,
+`migrations/`, `docs/upgrades/` or its own root metadata is a **refusal**, not a warning: an
+install has to stay reversible by deleting a directory.
+
+`remove` deletes the trees, the five lines and the surface, then `pnpm db:generate` emits the
+`DROP TABLE`s — which is correct here; the kit's warning is about importing a foreign SNAPSHOT, not
+about your own barrel shrinking. `--archive` first writes a `--custom` migration copying each table
+into schema `archive`. Orphaned tables are not a stable state.
+
+**Authoring loop.** A local PATH is read directly rather than mirrored, so
+`pnpm plugin add ../rocketflare-plugin-approvals --local --apply` installs a working copy, you edit
+it in place with the host's own tests running on every `pnpm test`, and `pnpm plugin export
+<id> <dir>` copies it back out with a regenerated `rocketflare-plugin.json`. `pnpm plugin check`
+audits every installed plugin — anchor present, kit range satisfied, required plugins present, the
+barrel line there for each half that is on disk, no `*.rej`, and a migration naming it when it
+declares tables.
+
+**A VENDORED plugin is upgraded by `pnpm kit:upgrade`, not by this script.** `example-feature`'s
+`source.repo` is the kit's own repository with no subdirectory, so the kit release that moves it
+forward is the one that moves it — and for the same reason its `requires.kit` range is not checked
+(the same release cut both, so the range describes the kit it shipped inside).
 
 ## Adding a SLOT to the seam
 

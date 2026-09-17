@@ -157,3 +157,9 @@ export function parseNote(text: string): ParsedNote | null
 export const NOTE_HEADINGS: readonly string[]
 export function compareVersions(a: string, b: string): -1 | 0 | 1
 export const VERSION_RE: RegExp
+
+/**
+ * A tiny semver range matcher for `requires.kit` (D31). Supports `>=` `>` `<=` `<` `=`, a bare
+ * version, `^`, `~`, `*` and space-separated conjunctions. Throws on anything else.
+ */
+export function satisfies(version: string, range: string | null | undefined): boolean

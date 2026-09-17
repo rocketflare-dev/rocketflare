@@ -5,7 +5,7 @@ date: null
 breaking: false
 migrations:
   - "example_notes, a tenant-scoped table with two indexes, two foreign keys and an RLS policy"
-areas: [shared, api, ui, cli, db, config, docs]
+areas: [shared, api, ui, cli, db, config, docs, scripts, provisioning]
 touches_surfaces: [example-feature]
 requires_surfaces: []
 manual: false
@@ -20,8 +20,8 @@ host half of that contract; nothing is extracted into a plugin yet, and an app w
 installed behaves exactly as it did.
 
 Five barrels, each shipping an `as const` tuple that one line per installed plugin goes into, plus
-the types they hold. (`pnpm plugin add|remove` will write those lines; the script is the next phase,
-so today they are written by hand — five lines, a surface entry and one `pnpm db:generate`.)
+the types they hold. (`pnpm plugin add|remove` writes those lines — see B1–B2 below; an install is
+those five lines, a surface entry and one `pnpm db:generate`.)
 
 | Barrel | Exports | Types |
 |---|---|---|
@@ -172,6 +172,138 @@ and the known gaps. Sections 5, 12, 13, 14 and 15 were corrected where A2 and A3
 (`.claude/rules/*.md`) and the per-directory `CLAUDE.md` files name the plugin slot beside the core
 location for each layer.
 
+
+---
+
+**Then the lifecycle became a script (PR B1–B2).** Phase A left the seam wired and one plugin
+vendored into it, but installing a second one was five barrel lines, a hand-written surface entry
+and a `db:generate` — every step of which is exactly the sort of thing that is done slightly
+differently the second time. `scripts/plugin.mjs` (`pnpm plugin`) is now the whole lifecycle:
+
+| Command | Does | Exit |
+|---|---|---|
+| `add <repo\|path>[@ref] [--subdir] [--local] [--apply]` | mirror a plugin repository (a local PATH is read directly — that is the authoring loop), read `rocketflare-plugin.json`, check `requires` three ways, refuse any file outside the plugin's four roots, **print the plan and stop** unless `--apply`; on apply copy the trees through `applyReplacements`, copy its notes to `docs/plugins/<id>/upgrades/`, write the five barrel lines, `pnpm add` its declared dependencies and append the surface | 0 · 5 no manifest · 6 requirement unmet · 7 target exists |
+| `upgrade <id> [--to] [--from] [--apply]` | the kit-upgrade pipeline pointed at the PLUGIN's repository: classify, translate, `apply.patch`, `reference/`, `plan.json`, per-file `--reject` fallback; stamps `source` and `history[]` only on a clean apply | 0 · 4 rejects · 6 |
+| `remove <id> [--archive] [--apply]` | refuses while another installed plugin requires it; deletes the trees, the barrel lines and the surface; `--archive` first writes a `--custom` migration copying each table into schema `archive` | 0 · 6 |
+| `list` / `check` | what is installed; and the audit — anchor present, kit range satisfied, required plugins present, a barrel line for every half that is on disk, no `*.rej`, a journal entry naming the plugin when it declares tables | 0 · 1 |
+| `export <id> <dir>` | copy an installed plugin back out as a plugin repository, with a regenerated `rocketflare-plugin.json` | 0 |
+
+Common: 1 error · 2 usage · 3 unreachable with no cached mirror. Every command refuses a dirty tree
+(`--allow-dirty`), and **none of them applies anything without `--apply`** — decision 1 says
+installing a plugin is as trusting as merging a pull request, so the plan is what a person says yes
+to.
+
+Three refusals are the design rather than politeness. **It never copies a migration**: the host runs
+`pnpm db:generate --name plugin-<id>-<version>` once the schema barrel line exists, because a
+foreign snapshot describes a whole cumulative schema that has never heard of the app's own tables.
+**It never edits a wrangler toml or writes a resource id**: a declared binding, cron, `[vars]` key
+or `workerExports` class is a numbered row in the plan for a person to place. And **a file outside
+`apps/web/src/plugins/<id>/`, `packages/shared/src/plugins/<id>/`, `apps/cli/src/plugins/<id>/`,
+`docs/plugins/<id>/`, `migrations/`, `docs/upgrades/` or the repository's own root metadata is a
+refusal, not a warning** — an install has to stay reversible by deleting a directory. (A plugin
+repository's own `.github/`, `.gitignore` and `package.json` are recognised and simply not copied:
+a plugin needs CI of its own, and its dependencies are declared in the manifest and installed into
+the HOST's packages.)
+
+**A VENDORED plugin is the kit's.** `source.repo` equal to the kit's own repository with no
+subdirectory — which is `example-feature` — means `plugin upgrade` prints "upgrade it with
+`pnpm kit:upgrade`" and exits 0, and `requires.kit` is not checked at all. The same release cut
+both, so that range describes the kit the plugin shipped inside rather than a claim about
+compatibility; checking it would make the kit fail `plugin check` against itself for the whole of
+any release that raises it.
+
+**`pnpm kit:upgrade` learned the other half.** It prints the installed plugins before it classifies
+anything, exits **6** when the target kit version leaves an installed plugin's `requires.kit` range
+(three honest answers: stay, remove the plugin, or `--force` with eyes open), and annotates a kit
+change to any file in a plugin's `registries[]` as **`touches-plugin-registry`** — the five barrels
+are shared, so the kit can move ground under a plugin, and the conflict would otherwise land on
+somebody who wrote neither side.
+
+**Four helpers moved out of `scripts/upgrade.mjs` into `scripts/lib/`** so both scripts run one
+pipeline rather than two that drift: `git-lib.mjs` (the git wrappers, `ensureMirror`, `mirror()`,
+`collectChanges`, `collectRenames`, `notesBetween`, `makeWriter`) and, pure beside it,
+`plugin-lib.mjs` (the id rules, the five barrel definitions and the idempotent sorted line writer,
+the file-root classification, `checkRequirements`, the surface builder, `archiveSql` and the plan
+text). `upgrade-lib.mjs` gained `satisfies(version, range)` — a 40-line semver matcher for
+`>=`/`>`/`<=`/`<`/`=`/bare/`^`/`~`/`*` and space-separated conjunctions, which THROWS on anything
+else rather than guessing, because a silent `false` reads as an incompatible plugin and a silent
+`true` installs one. `upgrade.mjs` also now reads the manifest through `readManifest()`, so a
+plugin recorded in the sidecar is visible to it.
+
+**The platform half of an install is provisioning's, not a hand edit.** A plugin's `bindings[]`,
+`crons[]`, `apiPrefixes[]` and `vars[]` become ONE numbered step in the plan — `pnpm provision
+cloudflare <env>` per environment — and a `secret: true` var becomes a `.dev.vars.example` key plus
+`pnpm provision secrets <env>`; `remove` prints the inverse and removes none of it, because
+provisioning has no delete-block op and a live bucket is not something a script drops because a
+directory went. A binding whose `type` is outside `kv | queue | r2` is refused at INSTALL, naming
+the type. That list lives twice — `plugin-lib.mjs` for the plain-Node install script and
+`apps/web/scripts/provision/plugin-resources.ts` for provisioning — and `plugin-lib.test.ts`
+asserts they are identical, so narrowing one without the other fails the suite. The provisioning
+side is its own entry (see the Decision-12 section of this release).
+
+**`scripts/release.mjs` is parameterised by repository kind.** `releaseContext()` answers
+`kit | app | plugin`, and a PLUGIN repository — a checkout with a `rocketflare-plugin.json` at its
+root and no `.rocketflare.json` — cuts releases with the same machinery: the same four headings,
+the same `previous` chain, the same `CHANGELOG.md` section, stamping that manifest's `version` (and
+its `package.json` if it has one) instead of `kit.version`. `releaseNotes(notesDir)` takes its
+directory for the same reason. `scripts/changelog-nudge.mjs` fires in a plugin repository too, with
+the sentence adjusted: a host absorbs a plugin release by reading its notes, so a release with none
+is the same permanent gap.
+
+Tests: `tests/config/plugin-lib.test.ts` (the id rules, the barrel writer — including a
+byte-identical round trip against all five REAL barrels, since an install that leaves a lint diff
+cannot be committed — the file-root refusals, `checkRequirements` and the vendored skip, the surface
+builder, the plan text, and an end-to-end `export` → re-badge → `add` in a temp directory asserting
+a plan run writes nothing at all) and a table of 27 `satisfies` cases in `upgrade-lib.test.ts`.
+
+**Provisioning learns a plugin's platform declarations (D31, Decision 12).** A plugin ships no
+wrangler toml — the two files are the host's, always — so its `plugin.json` declares what the
+Cloudflare account has to provide, and `pnpm provision cloudflare <env>` now applies it instead of
+a human editing both files by hand.
+
+- **New: `apps/web/scripts/provision/plugin-resources.ts`** — the one owner of the naming rule and
+  the one validator of the four platform declarations. Resources are
+  `<app>-<id>-<name>[-staging]`, and `<APP>_<ID>_<NAME>[_STAGING]` for a KV namespace (mirroring the
+  kit's own `<APP>_RATE_LIMIT[_STAGING]`); the `binding` name is identical in both environments.
+  Supported `type`s are `kv`, `queue`, `r2`. Anything else — `d1`, `vectorize`,
+  `analytics_engine`, `hyperdrive` — is a **loud refusal naming the type**, never a silent skip: a
+  binding quietly not created is a Worker that deploys and then 503s on its first request.
+  `hyperdrive` is refused deliberately — the host owns the one database.
+- **`plugin.json` gains a documented shape for four fields** that were declared but unread:
+
+  ```json
+  "bindings":    [{ "type": "kv", "binding": "APPROVALS_CACHE", "name": "cache" },
+                  { "type": "queue", "binding": "APPROVALS_QUEUE", "name": "jobs", "consumer": true },
+                  { "type": "r2", "binding": "APPROVALS_FILES", "name": "files" }],
+  "crons":       ["30 * * * *"],
+  "apiPrefixes": ["/approvals-hook"],
+  "vars":        [{ "key": "APPROVALS_MAX_ITEMS", "example": "50" },
+                  { "key": "APPROVALS_WEBHOOK_SECRET", "example": "", "secret": true }]
+  ```
+
+  `secret` is new and defaults to false: a non-secret var is a `[vars]` key in both tomls, a secret
+  one is a Worker secret offered by `pnpm provision secrets <env>`.
+- **`cf-provision.sh` takes a resource list** rather than its fixed four. The kit's Hyperdrive, KV,
+  Queue and R2 are the default list and its CLI is unchanged; `PLUGIN_RESOURCES` (a JSON array of
+  `{ type, name, binding }`, in the ENVIRONMENT — nothing in it is secret and nothing is left on
+  disk) appends to it. The connection-string redaction rule is untouched.
+- **`patch-toml.ts` gains four byte-preserving, idempotent ops**: insert-or-update a binding block
+  (`[[kv_namespaces]]` / `[[queues.producers]]` + `[[queues.consumers]]` / `[[r2_buckets]]`, placed
+  after the last block of the same kind, or appended at the end of the file when there is none),
+  append a cron, append a `[vars]` key (after the last assignment in the table, and never rewriting
+  an existing key's value), and append a `run_worker_first` prefix as both `p` and `p/*`. A
+  DIFFERENT existing id or name for the same `binding` is refused unless `--force`.
+- **`pnpm provision cloudflare <env>`** writes the declarations into **both** tomls first (binding
+  blocks with a `<PLACEHOLDER>` KV id, crons, `[vars]` keys, `run_worker_first` prefixes), then
+  creates that environment's resources and patches its ids. Both files, because the ordinary parity
+  test compares those across the pair on every `pnpm test`; the other environment's placeholder is
+  refused by `REQUIRE_PROVISIONED=1` until it is provisioned too — exactly how `<HYPERDRIVE_ID>`
+  already behaves.
+- **`wrangler-parity.test.ts`** applies the same rules to plugin resources through the pure
+  `pluginParityIssues()`, exercised against a FIXTURE plugin and fixture tomls as well as against
+  what this checkout has installed — with `example-feature` declaring nothing, an installed-only
+  assertion would pass because there is nothing to check.
+
 ## How to apply
 
 Mechanical; no schema change and no new dependency. Take the new files whole
@@ -219,6 +351,35 @@ before and after, so in-flight messages are unaffected. The same shape applies t
 (`CORE_FEATURES`, `CORE_FEATURE_FLAGS`) and crons (`CORE_SCHEDULED_TASKS`): the literal you were
 editing kept its contents and changed its name, so your edit applies cleanly inside it.
 
+
+**B1–B2 add no schema and no dependency.** Take `scripts/plugin.mjs`, `scripts/lib/git-lib.{mjs,d.mts}`
+and `scripts/lib/plugin-lib.{mjs,d.mts}` whole, plus the edits to `scripts/upgrade.mjs`,
+`scripts/release.mjs`, `scripts/release-check.mjs`, `scripts/changelog-nudge.mjs` and the two test
+files. Two things the patch cannot do for you:
+
+1. **The root `package.json` gains `"plugin": "node scripts/plugin.mjs"`.** That file is on the
+   manifest's `manual` list, so the upgrade will not edit it.
+2. **`.gitignore` already covers `.upgrade/`**, which is where the plugin mirrors and artifacts now
+   live too (`.upgrade/plugins/<repo>.git`, `.upgrade/plugins/work/<id>/<ref>/`). If you narrowed
+   that entry, widen it back.
+
+If you had written your own helper around `scripts/upgrade.mjs`, note that `ensureMirror`,
+`collectChanges`, `collectRenames`, `notesBetween` and the artifact writer are no longer defined in
+it — they are imported from `scripts/lib/git-lib.mjs`, with `ensureMirror(repo, dir, options)`
+taking the mirror directory as an argument and RETURNING the mirror handle.
+
+**Provisioning (Phase B, step 3).**
+
+1. Take the four changed provisioning files (`apps/web/scripts/provision.ts`,
+   `apps/web/scripts/provision/patch-toml.ts`, the new
+   `apps/web/scripts/provision/plugin-resources.ts`, `apps/web/scripts/cf-provision.sh`) and the two
+   test files. They are kit core; a copy with no plugins installed behaves exactly as before.
+2. The comment near the bindings in both `wrangler*.toml` is cosmetic — take it or leave it.
+3. If you have a plugin installed that needs a KV namespace, queue or bucket, add its `bindings[]`,
+   `crons[]`, `apiPrefixes[]` and `vars[]` to its `plugin.json` in the shape above and run
+   `pnpm provision cloudflare staging` then `pnpm provision cloudflare production`, then
+   `pnpm types` and commit `apps/web/worker-configuration.d.ts`.
+
 ## Conflicts to expect
 
 - `apps/web/src/api/services/access.ts` — the largest single edit; `setResourceGroups` and
@@ -258,6 +419,30 @@ editing kept its contents and changed its name, so your edit applies cleanly ins
 - `apps/web/tests/api/{chat,chat-tools,agent-research,agent-tools}.test.ts` — four tool-list
   equality assertions became prefix assertions.
 
+
+- `scripts/upgrade.mjs` — the largest edit of B1: about 120 lines of git plumbing are gone and the
+  call sites now use a `kit` mirror handle (`kit.show(to, path)`, `kit.commitOf(ref)`,
+  `kit.latestTag()`). A local edit inside one of those helpers has nowhere to go back to; move it
+  into `scripts/lib/git-lib.mjs`.
+- `scripts/release.mjs` — `main` now reads a `releaseContext()` and stamps a LIST of version files.
+  An app that taught it to bump another file adds an entry to that list.
+- `scripts/release-check.mjs` — `releaseNotes()` takes an optional `notesDir`; a caller passing
+  nothing is unaffected.
+- `package.json` (root) — one new script, in a file you own.
+
+Provisioning (Phase B, step 3):
+
+- `apps/web/scripts/provision/patch-toml.ts`: `patchBindingId` was renamed `patchBindingKey` and
+  takes the key (`id` / `queue` / `bucket_name`) as an argument; its intervening-line pattern is now
+  `[^\n]+` rather than `[^\n]*`, so a match can no longer run past a blank line into the next block.
+  If you extended that file, re-apply on top of the new signature.
+- `apps/web/scripts/cf-provision.sh`: the four inline creation blocks became `ensure_hyperdrive`,
+  `ensure_kv`, `ensure_queue` and `ensure_r2` functions driven by one loop over the resource list.
+  Any local edit inside those blocks moves into the matching function.
+- `apps/web/tests/config/wrangler-parity.test.ts` gains imports from `../../scripts/provision/*`.
+  A copy that rewrote the parity test will reject that hunk; the new `describe` is self-contained
+  and can be appended by hand.
+
 ## Verify
 
 `pnpm lint && pnpm typecheck && pnpm test && pnpm build` at the root, with
@@ -288,3 +473,33 @@ editing kept its contents and changed its name, so your edit applies cleanly ins
 - `src/plugins/example-feature/tests/{api,ui,config}` run inside the host's own projects — the api
   file covers the 404 gate, CRUD, ownership, `onTenantCreated`, the enqueue and the tool, and pins
   that **tenant B can neither list, read nor delete tenant A's notes**.
+
+Then, for B1–B2 specifically:
+
+- `pnpm plugin --help` prints the six commands and the exit codes; `pnpm plugin list` shows
+  `example-feature` with its version, repo and install date; `pnpm plugin check` exits **0** and
+  says `example-feature` is vendored, so its `requires.kit` is not checked.
+- `pnpm plugin upgrade example-feature` exits 0 and points at `pnpm kit:upgrade` rather than
+  fetching anything.
+- `pnpm plugin export example-feature /tmp/p` writes 20 files and a `rocketflare-plugin.json`;
+  `pnpm plugin add /tmp/p --local` then exits **7** (`already installed`), which is the collision
+  guard doing its job.
+- `pnpm --filter @rocketflare/web test:config` is green, including `plugin-lib.test.ts` (36 cases)
+  and `upgrade-lib.test.ts` (58).
+- `node scripts/release.mjs 9.9.9 --dry-run` lists `package.json version` and
+  `.rocketflare.json kit.version`, and writes nothing.
+
+Provisioning (Phase B, step 3):
+
+```bash
+pnpm lint && pnpm typecheck && pnpm test && pnpm build      # green
+pnpm web exec vitest run --project config tests/config/plugin-resources.test.ts   # 19 passing
+bash apps/web/scripts/cf-provision.sh --help                # usage line mentions PLUGIN_RESOURCES
+```
+
+With a plugin installed that declares a KV binding: `pnpm provision cloudflare staging` leaves a
+`[[kv_namespaces]] binding = "<ITS_BINDING>"` block in **both** tomls, a real id in the staging file
+and `<KV_<ID>_<NAME>_ID>` in production, `pnpm test` green, and
+`REQUIRE_PROVISIONED=1 pnpm web test:config` failing on that placeholder until
+`pnpm provision cloudflare production` runs.
+

@@ -1943,9 +1943,9 @@ another's, is a config-test failure rather than a convention — otherwise the v
 nothing. (The shared entry is imported as `@rocketflare/shared/plugins/<id>/index`: the package's
 `./*` export maps to a FILE, so the `/index` is load-bearing.)
 
-**Five barrels, one line per plugin each.** `pnpm plugin add|remove` will write those lines
-(Phase B); until it exists they are written by hand, which is the whole of an install beside the
-surface entry and one `db:generate`.
+**Five barrels, one line per plugin each**, and `pnpm plugin add|remove` writes them — an import
+and a tuple entry in four, one `export *` in the fifth. That, the surface entry and one
+`db:generate` are the whole of an install.
 
 | Barrel | Exports | Read by |
 |---|---|---|
@@ -2094,23 +2094,49 @@ before anything bigger moves out. Its surface's `source.repo` is the kit repo wi
 | 12 | Plugin bindings | Provisioning learns them: `provision cloudflare <env>` reads each plugin's `bindings[]`, and the parity test applies the `-staging` rule to them |
 | 13 | Where a plugin comes from | Every manifest carries a required `repo` (+ optional `subdir`), so a surface's `source.repo` is never null |
 
-Decisions 2, 5, 11 and 12 describe machinery that arrives with `scripts/plugin.mjs` in Phase B; 6
-and 7 land with the analytics extraction in Phase C. The rest are true today.
+Decisions 11 and 12 arrived with `scripts/plugin.mjs` and `provision/plugin-resources.ts` (below);
+2 (a bootstrap step installing `defaultPlugins`) and 5's CI half are the rest of Phase B; 6 and 7
+land with the analytics extraction in Phase C. The rest are true today.
 
-**Known gaps / not built yet:** **there is no `scripts/plugin.mjs` yet** — installing a plugin today
-is five barrel lines, a surface entry in `.rocketflare.json` and `pnpm db:generate` by hand, and
-nothing reads `plugin.json`'s `requires.kit` range, so an incompatible plugin fails at the gate
-rather than at install. No third-party trust model (no sandbox, no review process, no signature —
+**The lifecycle is `scripts/plugin.mjs` (`pnpm plugin`).** `add` mirrors a plugin repository (or
+reads a local path — that is the authoring loop), checks its `requires` three ways, refuses any
+file outside the plugin's own four roots, **prints the plan and stops unless `--apply`**, and on
+apply copies the trees through `applyReplacements`, writes the five barrel lines, installs the
+declared dependencies and appends the surface. `upgrade <id>` is the kit-upgrade pipeline pointed
+at the plugin's own repository, reading ITS notes (`requires_kit`, `requires_plugins`,
+`migrations`, `data_migrations`, `touches_registries`) and stamping `source` and `history[]` only
+on a clean apply. `remove` deletes the trees, the lines and the surface — `--archive` first copies
+each table into schema `archive`, which `rls-coverage` cannot see because every one of its catalog
+queries is scoped to `public`. `list` and `check` are the audit; `export <id> <dir>` writes a
+plugin back out as a repository. Exit codes: 0 · 1 error · 2 usage · 3 unreachable · 4 rejects ·
+5 no manifest · 6 requirement unmet · 7 target exists.
+
+Three rules it enforces that nothing else can. **It never copies a migration** — the host runs
+`pnpm db:generate` once the schema barrel line exists. **It never edits a toml or writes a resource
+id** — a declared `bindings[]`, `crons[]`, `apiPrefixes[]` or `vars[]` entry becomes one numbered
+step in the plan: `pnpm provision cloudflare <env>` per environment, which reads those same
+declarations off the installed surface and writes the blocks into BOTH tomls (decision 12), or, for
+a var marked `secret: true`, a `.dev.vars.example` key plus `pnpm provision secrets <env>`. A
+binding whose `type` is outside `kv | queue | r2` is refused at INSTALL, naming the type, rather
+than surfacing as a 503 after a deploy that silently skipped it.
+And **a VENDORED plugin is the kit's**: `source.repo` equal to the kit's own repository with no
+subdirectory means `plugin upgrade` defers to `kit:upgrade`, and `requires.kit` is not checked at
+all, because the same release cut both and the range describes the kit it shipped inside rather
+than a compatibility claim. `kit:upgrade` learned the other half: it prints the installed plugins,
+exits 6 when the target kit version leaves one's `requires.kit` range (`--force` to proceed), and
+flags a kit change to a file in a plugin's `registries[]` as `touches-plugin-registry`.
+
+**Known gaps / not built yet:** No third-party trust model (no sandbox, no review process, no signature —
 "first-party only" is the whole of it). No rename migrations: expand/contract only, because
 drizzle-kit's rename prompt has no non-interactive answer. No cross-plugin FK tooling, and no
 `many()` back-reference onto a core table (the type-level finding above). The shared entry must be
 imported as `@rocketflare/shared/plugins/<id>/index` — the `./*` export maps to a file, which reads
 as a typo and is not one. `api-prefixes.ts` imports the server barrel, so the module that both the
-SPA catch-all and the parity test read is now downstream of every installed plugin; a plugin that
-owns a prefix outside `/api` must still be added to `run_worker_first` in both tomls by hand.
+SPA catch-all and the parity test read is now downstream of every installed plugin.
 `CORE_FEATURES` is empty, so `FeatureName` is `never` in a bare kit and `featureNameSchema` had to
 become a refined `z.string()` rather than a `z.enum`, which needs a non-empty tuple (§15).
 `grants` is additive by documentation only: CASL can take a rule back with `cannot`, and nothing
-stops a plugin doing so. Provisioning does not yet read a plugin's `bindings`, crons or
-`vars` — they are manual toml edits today. Analytics has not been extracted (Phase C), so the kit is
+stops a plugin doing so. Provisioning creates a plugin's resources but never DELETES one, so
+`plugin remove` prints the toml blocks and the Cloudflare resources to remove rather than removing
+them. Analytics has not been extracted (Phase C), so the kit is
 not yet bare, and the website's plugin pages are Phase D.

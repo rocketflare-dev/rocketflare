@@ -22,6 +22,7 @@ import {
   isKitManifest,
   matchesAny,
   parseNote,
+  satisfies,
   splitDiff,
   stripIndexLines,
   translateBlock,
@@ -216,6 +217,56 @@ index aaa..bbb 100644
 -Copyright Rocketflare
 +Copyright Rocketflare Ltd
 `
+
+describe('satisfies', () => {
+  // `requires.kit` in a plugin's manifest (D31) is the only consumer, and the kit ships no semver
+  // dependency to evaluate it with. A table, because the zero-major caret rule is the one people
+  // get wrong and a wrong answer here installs a plugin the gate then rejects.
+  it.each([
+    ['0.5.0', '>=0.5.0 <1.0.0', true],
+    ['0.9.9', '>=0.5.0 <1.0.0', true],
+    ['0.4.0', '>=0.5.0 <1.0.0', false],
+    ['1.0.0', '>=0.5.0 <1.0.0', false],
+    ['1.0.0', '>0.5.0', true],
+    ['0.5.0', '<=0.5.0', true],
+    ['0.5.1', '<=0.5.0', false],
+    ['1.2.3', '1.2.3', true],
+    ['1.2.3', '=1.2.3', true],
+    ['1.2.4', '1.2.3', false],
+    // `^` with a non-zero major is the next major; with a zero major it is the next MINOR, because
+    // a 0.x minor bump may break anything. `~` is the next minor either way.
+    ['1.9.9', '^1.0.0', true],
+    ['2.0.0', '^1.0.0', false],
+    ['0.5.9', '^0.5.0', true],
+    ['0.6.0', '^0.5.0', false],
+    ['0.0.3', '^0.0.3', true],
+    ['0.0.4', '^0.0.3', false],
+    ['0.5.9', '~0.5.0', true],
+    ['0.6.0', '~0.5.0', false],
+    ['1.5.9', '~1.5.0', true],
+    ['1.6.0', '~1.5.0', false],
+    // No bound at all, and a range with surrounding whitespace.
+    ['9.9.9', '*', true],
+    ['9.9.9', '', true],
+    ['0.6.0', '  >=0.5.0   <1.0.0  ', true],
+  ])('%s vs %s → %s', (version, range, expected) => {
+    expect(satisfies(version, range)).toBe(expected)
+  })
+
+  it('is false for a version that is not X.Y.Z, and true for a missing range', () => {
+    expect(satisfies('1.2', '>=1.0.0')).toBe(false)
+    expect(satisfies('1.2.3-beta.1', '>=1.0.0')).toBe(false)
+    expect(satisfies('1.2.3', null)).toBe(true)
+    expect(satisfies('1.2.3', undefined)).toBe(true)
+  })
+
+  it('throws on a range it does not implement rather than guessing', () => {
+    // A silent "false" would read as an incompatible plugin; a silent "true" would install one.
+    expect(() => satisfies('1.2.3', '>=1.0.0 || <0.5.0')).toThrow(/unsupported version range/)
+    expect(() => satisfies('1.2.3', '1.x')).toThrow(/unsupported version range/)
+    expect(() => satisfies('1.2.3', 'latest')).toThrow(/unsupported version range/)
+  })
+})
 
 describe('isDeployable', () => {
   // This gates the deploy workflow, so the expensive mistake is a false "skip": somebody's

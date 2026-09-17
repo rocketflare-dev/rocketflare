@@ -29,7 +29,6 @@ import {
 } from './lib/upgrade-lib.mjs'
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
-const UPGRADES = path.join(REPO_ROOT, 'docs', 'upgrades')
 const read = p => readFileSync(path.join(REPO_ROOT, p), 'utf8')
 const out = (...lines) => {
   for (const l of lines) process.stdout.write(`${l}\n`)
@@ -40,11 +39,19 @@ const warn = (...lines) => {
 
 export const USAGE = `usage: node scripts/release-check.mjs --tag <X.Y.Z> | --unreleased [--base <ref>] | --deployable`
 
-/** Every `docs/upgrades/X.Y.Z.md`, oldest first. */
-export function releaseNotes() {
-  return readdirSync(UPGRADES)
+/**
+ * Every `X.Y.Z.md` in a notes directory, oldest first.
+ *
+ * `notesDir` is a parameter because a PLUGIN repository runs the same release machinery over its
+ * own notes (D31): a plugin has releases, a chain of `previous` and the same four headings, and
+ * one copy of this walk is better than two that drift.
+ */
+export function releaseNotes(notesDir = 'docs/upgrades') {
+  const dir = path.join(REPO_ROOT, notesDir)
+  if (!existsSync(dir)) return []
+  return readdirSync(dir)
     .filter(f => VERSION_RE.test(f.replace(/\.md$/, '')))
-    .map(f => ({ version: f.replace(/\.md$/, ''), file: `docs/upgrades/${f}` }))
+    .map(f => ({ version: f.replace(/\.md$/, ''), file: `${notesDir}/${f}` }))
     .sort((a, b) => compareVersions(a.version, b.version))
 }
 

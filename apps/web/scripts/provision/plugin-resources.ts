@@ -33,7 +33,14 @@ import path from 'node:path'
  * `durable_object`, `workflow`…) is refused BY NAME rather than skipped, because a silently
  * ignored binding is a plugin that deploys and then 503s on its first request.
  */
-export const SUPPORTED_PLUGIN_BINDING_TYPES = ['kv', 'queue', 'r2'] as const
+import { SUPPORTED_PLUGIN_BINDING_TYPES } from '../../../../scripts/lib/plugin-lib.mjs'
+
+/**
+ * ONE list, owned by `scripts/lib/plugin-lib.mjs` so `pnpm plugin add` refuses an unsupported
+ * type at INSTALL time and provisioning refuses the same one later; the `.d.mts` types it as the
+ * literal tuple, which is what keeps `PluginBindingType` narrow here.
+ */
+export { SUPPORTED_PLUGIN_BINDING_TYPES }
 export type PluginBindingType = (typeof SUPPORTED_PLUGIN_BINDING_TYPES)[number]
 
 export type EnvName = 'staging' | 'production'

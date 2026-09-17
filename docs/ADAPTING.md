@@ -120,14 +120,22 @@ tell it. That is what makes deleting safe.
 - The reference PLUGIN `example-feature` (D31) — a feature flag, a `example_notes` table, a CRUD
   mount at `/api/example-feature`, `example-feature.ping`, an agent tool, two lifecycle hooks, a
   lazy page with a nav item and two CLI commands, all in three directories. It exists to be read
-  first and deleted second. Until `pnpm plugin remove` lands (Phase B) that is by hand, and it is
-  four things: its **three directories** (`apps/web/src/plugins/example-feature/`,
+  first and deleted second — and deleting it is one command:
+
+  ```bash
+  pnpm plugin remove example-feature            # read the plan: what is deleted, which barrel
+  pnpm plugin remove example-feature --apply    # lines go, which tables db:generate will drop
+  pnpm db:generate --name plugin-example-feature-remove   # → DROP TABLE "example_notes"
+  pnpm db:migrate
+  ```
+
+  It removes the **three directories** (`apps/web/src/plugins/example-feature/`,
   `packages/shared/src/plugins/example-feature/`, `apps/cli/src/plugins/example-feature/`), the
   **five barrel lines** that name them (`apps/web/src/plugins/{server,ui,schema}.ts`,
   `packages/shared/src/plugins/index.ts`, `apps/cli/src/plugins/index.ts` — import and list entry
-  both), its **surface in `.rocketflare.json`**, and then `pnpm db:generate`, which emits the
-  `DROP TABLE "example_notes"` for you (read the SQL, then `pnpm db:migrate`). Nothing else in the
-  kit names it, which is the point of the seam
+  both) and its **surface in `.rocketflare.json`**. Nothing else in the kit names it, which is the
+  point of the seam. Add `--archive` to copy `example_notes` into schema `archive` first if you
+  seeded anything into it you want to keep
 - CLI commands you do not want (`apps/cli/src/commands/*` — `members list`, `keys list`,
   `activity list` are examples of the pattern; keep `login`, `logout`, `whoami`, `status`, `config`)
 - Lines in `README.md` "Features" that describe the kit rather than your app

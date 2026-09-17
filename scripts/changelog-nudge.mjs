@@ -12,7 +12,10 @@
  * tag (`scripts/release-check.mjs`). Change the final `exit 0` to `exit 2` to make it blocking.
  *
  * It exits silently in an app rather than the kit: `.rocketflare.json` with an `app` block means
- * somebody's product, and the kit's release discipline is none of its business.
+ * somebody's product, and the kit's release discipline is none of its business. It DOES fire in a
+ * plugin repository (D31) — a checkout with a `rocketflare-plugin.json` at its root — because a
+ * plugin has the same problem for the same reason: a host absorbs a plugin release by reading its
+ * notes, so a release with none is a gap every host has to step over.
  *
  * Reads the hook payload as JSON on stdin. Never fails a commit on its own error.
  */
@@ -46,8 +49,9 @@ function main() {
   if (payload.tool_name !== 'Bash' || !/\bgit\s+commit\b/.test(command)) return
 
   const manifestPath = path.join(REPO_ROOT, '.rocketflare.json')
-  if (!existsSync(manifestPath)) return
-  if (JSON.parse(readFileSync(manifestPath, 'utf8')).app != null) return
+  const isPluginRepo = existsSync(path.join(REPO_ROOT, 'rocketflare-plugin.json'))
+  if (!existsSync(manifestPath) && !isPluginRepo) return
+  if (existsSync(manifestPath) && JSON.parse(readFileSync(manifestPath, 'utf8')).app != null) return
   if (!existsSync(path.join(REPO_ROOT, NOTE))) return
 
   const staged = execFileSync('git', ['diff', '--cached', '--name-only'], {
@@ -75,7 +79,7 @@ function main() {
 
   process.stdout.write(
     `This commit changes ${behaviour.length} file(s) under apps/ or packages/ with no entry in ${NOTE}.\n` +
-      'Every copy of the kit absorbs this change by reading that note; without one the change is\n' +
+      `Every ${isPluginRepo ? 'host that installed this plugin' : 'copy of the kit'} absorbs this change by reading that note; without one the change is\n` +
       'invisible to all of them. Add an entry (docs/upgrades/README.md has the shape), or say why\n' +
       'this one needs none.\n' +
       `First few: ${behaviour.slice(0, 5).join(', ')}\n`

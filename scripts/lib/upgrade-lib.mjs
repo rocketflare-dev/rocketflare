@@ -434,3 +434,59 @@ export function compareVersions(a, b) {
 }
 
 export const VERSION_RE = /^\d+\.\d+\.\d+$/
+
+/**
+ * Does `version` satisfy `range`? A deliberately tiny semver matcher (D31): `plugin.json` declares
+ * `requires.kit` as a range, and the kit ships no dependency to evaluate one with.
+ *
+ * Supported, which is all a `requires` range has ever needed: `>=x.y.z`, `>x.y.z`, `<=x.y.z`,
+ * `<x.y.z`, `=x.y.z`, a bare `x.y.z` (exact), `^x.y.z`, `~x.y.z`, `*` / `''` (anything), and a
+ * space-separated CONJUNCTION of any of those (`>=0.5.0 <1.0.0`). Deliberately NOT supported:
+ * `||`, hyphen ranges, `x`/`*` placeholders inside a version, and pre-release tags — the kit's own
+ * versions are `X.Y.Z` (`VERSION_RE`) and a plugin declaring anything else should fail loudly here
+ * rather than be approximated.
+ *
+ * `^` follows npm exactly, including the zero-major rule that catches people out: `^0.5.0` is
+ * `>=0.5.0 <0.6.0`, NOT `<1.0.0` — a 0.x minor bump may break anything. `~0.5.0` is `>=0.5.0
+ * <0.6.0` too; they only differ once the major is non-zero.
+ */
+export function satisfies(version, range) {
+  if (!VERSION_RE.test(version ?? '')) return false
+  const text = (range ?? '').trim()
+  if (text === '' || text === '*') return true
+  return text.split(/\s+/).every(part => satisfiesComparator(version, part))
+}
+
+const bump = (v, index) => {
+  const parts = v.split('.').map(Number)
+  parts[index] += 1
+  for (let i = index + 1; i < 3; i++) parts[i] = 0
+  return parts.join('.')
+}
+
+function satisfiesComparator(version, comparator) {
+  const m = comparator.match(/^(>=|<=|>|<|=|\^|~)?\s*(\d+\.\d+\.\d+)$/)
+  if (!m) throw new Error(`unsupported version range '${comparator}'`)
+  const [, op = '=', target] = m
+  const c = compareVersions(version, target)
+  switch (op) {
+    case '>=':
+      return c >= 0
+    case '>':
+      return c > 0
+    case '<=':
+      return c <= 0
+    case '<':
+      return c < 0
+    case '=':
+      return c === 0
+    case '^': {
+      const [major, minor] = target.split('.').map(Number)
+      const ceiling = major > 0 ? bump(target, 0) : minor > 0 ? bump(target, 1) : bump(target, 2)
+      return c >= 0 && compareVersions(version, ceiling) < 0
+    }
+    default:
+      // `~x.y.z`: up to the next minor.
+      return c >= 0 && compareVersions(version, bump(target, 1)) < 0
+  }
+}

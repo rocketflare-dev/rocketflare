@@ -46,5 +46,6 @@ apps/web/.provision.env
 .rocketflare.local.json
 
 # Kit upgrade cache — the bare mirror of the kit and the working artifacts of
-# `pnpm kit:upgrade` (scripts/upgrade.mjs). Safe to delete at any time.
+# `pnpm kit:upgrade` (scripts/upgrade.mjs), plus `plugins/` holding the same two for every plugin
+# `pnpm plugin add|upgrade` has fetched (D31). Safe to delete at any time.
 .upgrade/
