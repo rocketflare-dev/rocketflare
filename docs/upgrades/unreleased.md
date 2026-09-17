@@ -1,7 +1,7 @@
 ---
-version: 0.6.0
+version: unreleased
 previous: 0.5.0
-date: 2026-09-17
+date: null
 breaking: true
 migrations:
   - "analytics tables leave the kit: an app that kept analytics must install the plugin BEFORE `db:generate`, or `db:generate` drops analytics_pages, analytics_page_groups and the fact table"
