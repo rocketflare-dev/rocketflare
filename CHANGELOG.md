@@ -6,6 +6,11 @@ copy of the kit forward without recreating anything its owner deleted.
 
 If you are running a copy: `pnpm kit:upgrade` tells you which of these you are missing.
 
+## 0.6.1 — 2026-09-17
+
+**0.6.0's gate was red for anyone with a default plugin installed, and this is the fix.** The wrangler parity test demanded that every installed plugin's declared crons and `run_worker_first` prefixes already be in both tomls. But `pnpm plugin add` deliberately never writes a toml (D31, decision 12) — `pnpm provision cloudflare <env>` does. So a checkout that had installed a plugin and not yet provisioned failed a rule nothing in that state could satisfy. The kit's own CI is exactly that checkout: `ci.yml` runs the gate a second time with every `defaultPlugins` entry installed, and it has no Cloudflare credentials to provision with. `analytics` is the first plugin to declare any platform resource, so 0.6.0 is the release where the contradiction first had something to bite.
+[Porting note](docs/upgrades/0.6.1.md).
+
 ## 0.6.0 — 2026-09-17
 
 **Analytics left the kit.** It is `rocketflare-plugin-analytics` 1.0.0 now — a separate repository, installed by `pnpm plugin add`, and listed in `.rocketflare.json` `defaultPlugins` so `bash scripts/bootstrap.sh` still gives a fresh clone dashboards without anybody doing anything (D31 decisions 2, 6 and 7; `docs/CONCEPTS.md` §8 is now a pointer, §16 is the decision record).
