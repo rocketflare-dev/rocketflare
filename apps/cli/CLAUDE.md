@@ -16,6 +16,9 @@ pnpm --filter @rocketflare/cli typecheck · test · build   # vitest node env, n
 - `src/api.ts` — `createApiClient` → `request/get/post/del`, envelope → `CliApiError { status, code, body }`
 - `src/auth.ts` — loopback `127.0.0.1:8765–8770/callback`, `/auth/cli?redirect_uri=`, 5-min timeout, `/api/me`
 - `src/commands/*.ts` — thin `run<X>(ctx, opts)`; `src/utils/{brand,logger,output}.ts`
+- `src/plugins/{index.ts,types.ts}` + `src/plugins/<id>/index.ts` (D31) — the `CLI_PLUGINS` barrel
+  and the `CliPlugin` type. `cli.ts` calls each `register(program, action)` LAST, so a plugin's
+  commands sit under its id and can never shadow a kit one
 
 ## Rules
 
@@ -23,4 +26,6 @@ pnpm --filter @rocketflare/cli typecheck · test · build   # vitest node env, n
 - Data → stdout via `ctx.out.data(raw, human)`; status/errors → stderr via `ctx.log`; `--json` prints the raw body
 - Never print the API key in full — `redactKey`; never `process.exit` in a command, throw `CliError`
 - `open`/`fetch`/config dir are injected (`ContextOptions`, `ROCKETFLARE_CONFIG_DIR`) — tests use them, so keep them injectable
+- A plugin's commands live in `src/plugins/<id>/`, never `src/commands/` — same rules (thin, inject
+  everything, throw `CliError`, parse with the plugin's own `@rocketflare/shared/plugins/<id>` schema)
 - Header comment per file referencing D26; Biome style; `import type`

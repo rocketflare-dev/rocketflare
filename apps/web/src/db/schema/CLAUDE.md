@@ -4,6 +4,15 @@ Drizzle table definitions, one file per table, re-exported from `index.ts` (whic
 `src/db/client.ts` and the RLS coverage test all read). `many()` relations live in `relations.ts`
 (the hub tables `users`/`tenants` must not import their dependents — `tenantRef(tenants)` is eager).
 
+**`index.ts` carries `export * from '../../plugins/schema'`** (D31 — Biome sorts these lines, so
+it sits where the sorter puts it; its position decides nothing, because a name exported twice is
+TS2308 rather than a silent shadow), so an installed
+plugin's tables are migrated, typed and RLS-checked exactly like these — named `<id>_*` with the
+hyphens dropped, declaring `relations()` for their own tables only, and never shipping a migration
+(the host generates it). Two plugins exporting one name is a TS2308 error, not a silent shadow.
+A file inside `src/plugins/<id>/` must import a schema file DIRECTLY rather than this barrel, or it
+closes a cycle back through `plugins/schema.ts`.
+
 ## Table registry
 
 | Table | File | Tenant key | RLS | Notes |

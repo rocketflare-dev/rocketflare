@@ -24,6 +24,7 @@ section ends with **Known gaps**; sections for phases not yet built say so.
 | 13 | [Upgrading a copy](#13-upgrading-a-copy) | built |
 | 14 | [Definition of done](#14-definition-of-done-for-the-kit) | |
 | 15 | [Feature flags](#15-feature-flags) | D30 — built |
+| 16 | [Plugins](#16-plugins) | D31 — Phase A built |
 
 Provenance: extracted from two internal applications — one supplied the structure, docs system,
 auth/tenancy/AI layer; the other the Cloudflare substrate and analytics. This file is the decision
@@ -314,13 +315,19 @@ deleting.
 
 | Need | Primitive | Kit shape |
 |---|---|---|
-| plain job | `JOBS_QUEUE` (one queue) — **built** | `enqueueJob(queue, input)` (`services/jobs.ts`) → `processJobsBatch(batch, { env, config, logger })` (`queues/jobs.ts`) dispatched on `type` to `queues/handlers/*`; `queue.ts` routes `batch.queue` by prefix |
+| plain job | `JOBS_QUEUE` (one queue) — **built** | `enqueueJob(queue, input)` (`services/jobs.ts`) → `processJobsBatch(batch, { env, config, logger })` (`queues/jobs.ts`) dispatched on `type` through one merged handler table (`queues/handlers/*` plus each installed plugin's, §16); `queue.ts` routes `batch.queue` by prefix |
 | durable multi-step | `AGENT_RUN_WORKFLOW` (one class) — **built** | `AgentRunWorkflow` (`api/workflows/agent-run.ts`): `claim → (execute#N → resume#N \| expire#N)* → finish`, bodies in `services/agents/runtime.ts`; `resume#N` is `step.waitForEvent` — the run parks on a human and the round number is part of every step NAME (§9). The agent runtime *is* the example workflow — no throwaway second one |
 | periodic | `[triggers] crons` | `scheduled.ts` dispatch table on `event.cron`; each task try/caught; `0 4 * * *` prune, `15 * * * *` fact-table refresh (§8) |
 
 **Jobs (D7) — one queue, typed envelopes, poison never loops.** The contract is
 `@rocketflare/shared/jobs`: a discriminated union on `type` (`email.send`, `activity.record`,
-`document.index`) wrapped in an envelope `{ id, type, payload, enqueuedAt, attempt? }`. The `type`
+`document.index`) wrapped in an envelope `{ id, type, payload, enqueuedAt, attempt? }`. **The
+variants are DATA** — `CORE_JOB_VARIANTS` is one list, both unions, `JobType` and `JOB_TYPES` are
+derived from it, and a plugin's `SharedPlugin.jobs` are appended (§16), so the set the consumer must
+cover is one the kit cannot enumerate. That is why the consumer's dispatch is
+`handlers[job.type](job as never, ctx)` over a mapped table (`coreHandlers` merged with each
+plugin's `jobHandlers`) and there is **no `runHandler` switch**: the mapped type already proves
+completeness, for a set that grows. The `type`
 string is the versioning seam — a breaking payload change ships as a new type (`email.send.v2`)
 with its own handler while the old one drains; there is no schema-version field. The producer
 (`enqueueJob` / `enqueueJobs`, batches of ≤ 100) validates the input and stamps the envelope; a
@@ -338,9 +345,9 @@ What is queued today: the invitation email (create, bulk, resend) and the access
 email, so those routes answer as soon as the row exists — the `email.send` payload carries the
 optional `link` so the `[email:dev]` console fallback still prints the accept URL. **The magic-link
 email stays inline** (a person is waiting on it; latency beats offloading). `example-feature.ping`
-is the smoke job (logs and acks) and it now belongs to the `example-feature` PLUGIN (D31) rather
-to the kit — `POST /api/example-feature/ping`, or `rocketflare example-feature ping`, proves the
-pipeline under `wrangler dev`.
+is the smoke job (logs and acks) and it belongs to the `example-feature` PLUGIN (D31) rather than to
+the kit — `POST /api/example-feature/ping`, or `rocketflare example-feature ping`, proves the
+pipeline under `wrangler dev` when that plugin is installed.
 Services that queue take the binding as a parameter: `createInvitation(db, cfg, logger, jobs,
 input)`, `decideAccessRequest(db, cfg, logger, jobs, input)`.
 
@@ -1600,7 +1607,9 @@ subjects, `AppAbility`, packed rules) and the AI contracts (`ai/*.ts` — config
 AG-UI contract (`agui.ts`), agents, agent-models, embeddings, usage; barrel `ai/index.ts`, deep imports
 `@rocketflare/shared/ai/<file>`) live in `packages/shared/src/` and are consumed as
 TypeScript source through the workspace link: `package.json` `exports` map `@rocketflare/shared` →
-`./src/index.ts` and `@rocketflare/shared/*` → `./src/*.ts`, so `apps/web` (API and UI), `apps/cli` and
+`./src/index.ts`, `./ai` and `./plugins` (D31, §16) to their barrels, and `@rocketflare/shared/*` →
+`./src/*.ts` — a FILE, which is why a plugin's contracts are imported as
+`@rocketflare/shared/plugins/<id>/index`. So `apps/web` (API and UI), `apps/cli` and
 their tests import `@rocketflare/shared/<module>` and Vite / wrangler / tsx / vitest all resolve the `.ts`
 directly. There is no `dist`, nothing to rebuild after an edit, and typecheck is one `tsc` per
 package extending `tsconfig.base.json`.
@@ -1615,7 +1624,11 @@ column types in the DB schema also come from here (`$type<>()`).
 and — in `src/ai/agui.ts` alone — the pinned, zod-only `@ag-ui/core`, because AG-UI is a wire format
 and both sides must validate against the same runtime schema (§9;
 `apps/web/tests/config/shared-imports.test.ts` enforces the list) — **never** `apps/web` (it must bundle for the browser and load in the CLI) and never `apps/cli`.
-`apps/cli` in turn never imports `apps/web`. Biome and each package's `tsconfig` `include` keep the
+`apps/cli` in turn never imports `apps/web`. `src/plugins/**` carries one more rule of the same
+kind (D31, §16): never a RUNTIME import of one of the five composers — `ai/agents.ts`, `jobs.ts`,
+`permissions.ts`, `features.ts`, `realtime.ts` — because those read the plugin barrel, and two zod
+modules in a cycle crash at module evaluation rather than failing to compile.
+Biome and each package's `tsconfig` `include` keep the
 direction honest; a violation shows up as a browser bundle pulling in `postgres` or `hono`.
 
 **Known gaps / not built yet:** shared has no test suite of its own (its `test` script is a no-op) —
@@ -1645,12 +1658,19 @@ domain}` is written by `rename.mjs` at the end of its pass and re-derives the fu
 `deriveNames()`; `history[]` records each upgrade. It is on `EXCLUDED_PATHS`, so the rename never
 substitutes inside it. **`app === null` is the "am I the kit?" predicate**, and every kit-only check
 early-exits on it — without that, a copy inherits the kit's release discipline and fails CI on its
-own first commit.
+own first commit. That question is now asked in exactly one place:
+`readManifest()` (`scripts/lib/manifest.mjs`) returns `{ manifest, isKit, sidecar }`, having merged
+the git-ignored `.rocketflare.local.json` sidecar that records a plugin installed into a kit
+checkout (§16).
 
 **The surface manifest.** `surfaces[]` lists what the kit ships that is meant to be replaced:
 `kind: example` (the two example agents, the two example cubes and their fact table,
-the `tenant-overview` template, the three read-list CLI commands, the demo seed) and
-`kind: optional-feature` (chat, agents, knowledge, analytics — whole features an app may remove).
+the `tenant-overview` template, the three read-list CLI commands, the demo seed),
+`kind: optional-feature` (chat, agents, knowledge, analytics — whole features an app may remove) and
+**`kind: plugin`** (D31, §16 — code that came from another repository, carrying the `source` block
+that says which one). A plugin surface is also the one kind `classifyPath` answers
+`skipped-plugin-owned` for: a kit diff never touches a byte a plugin owns, because that plugin has
+its own release chain.
 Each has an **anchor file, and presence is `existsSync` on it**: the adopter keeps no bookkeeping,
 there is nothing to drift, and deleting the anchor is the entire act of opting out, forever. Beside
 it, `neverPort` (the kit's identity — LICENSE, SECURITY.md, `install.sh`, the rename toolchain,
@@ -1741,7 +1761,12 @@ query every cube as two tenants and see disjoint rows
 db:check-facts` to a `fresh` fact table, `GET /api/analytics/pages` and find the seeded
 `tenant-overview` page (and render it with live numbers once the analytics UI lands); and,
 port a later kit release into a renamed copy with `pnpm kit:upgrade --apply` and watch it skip the
-examples that copy deleted rather than recreating them (§13); and,
+examples that copy deleted rather than recreating them (§13); turn the `example-feature` flag on
+under Admin → Feature flags and watch the kit's reference PLUGIN (§16) appear whole — the nav item
+and page, notes created and deleted at `/api/example-feature/notes` with tenant B unable to see
+them, `rocketflare example-feature ping --json` enqueuing a job `wrangler dev` logs as
+`example-feature.ping: pong`, and `pnpm db:generate` after its barrel lines were written producing
+exactly one `example_notes` migration in the host's own journal; and,
 run `/rf-provision` (or `pnpm provision all`) with three tokens (`CLOUDFLARE_API_TOKEN` +
 `CLOUDFLARE_ACCOUNT_ID`, `NEON_API_KEY`, `RESEND_API_KEY` — or `--skip-email`) to a staging URL
 whose `/api/ready` answers; and, following `SETUP.md` Part 3 by hand, deploy to a new Cloudflare
@@ -1801,6 +1826,15 @@ iterates the registry, so a row whose key has gone is inert by construction — 
 delete the registry line. The cost of that choice, stated: an admin cannot invent a key without a
 deploy. Deliberate — a flag no code reads does nothing, and the code and its registry line ship
 together.
+
+**The kit itself ships no flag**, and that is a contract, not an omission. `CORE_FEATURES` is empty:
+the demonstration flag moved into the `example-feature` plugin (§16), and a feature an app builds
+usually ships as a plugin too. So `FEATURES` may legitimately be `[]`, `FeatureName` may be `never`,
+and `featureNameSchema` can no longer be a `z.enum` (which needs a non-empty tuple) — it is
+`z.string()` refined against `FEATURES`. Same runtime check, same output type, and it validates
+against what is INSTALLED rather than against what was compiled in. `FeatureName` itself still names
+the keys — it is derived from `[...CORE_FEATURES, ...plugin keys]` — so `requireFeature` and
+`{ feature }` guards keep their compile-time check; it is only the wire-level schema that widened.
 
 **`featureBucket` is a wire format.** FNV-1a 32-bit over `"<key>:<unitId>"`, mod 100, enabled when
 `bucket < rolloutPercent`. Changing the hash, the separator or the modulus reshuffles every live
@@ -1873,3 +1907,210 @@ condition on request attributes), Zaraz, and `[vars]`/Secrets alone (baked into 
 one is a redeploy). Workers KV is the only endorsed alternative substrate, but at ≤60 s propagation
 and one write per second per key it is a slower, eventually-consistent, un-audited version of the
 Postgres table the Worker already holds a connection to.
+
+---
+
+## 16. Plugins
+
+**Status: the seam and the reference plugin built (D31, Phase A).** Types:
+`packages/shared/src/plugins/types.ts`, `apps/web/src/plugins/types.ts`,
+`apps/cli/src/plugins/types.ts`. Barrels: `packages/shared/src/plugins/index.ts`,
+`apps/web/src/plugins/{server,ui,schema}.ts`, `apps/cli/src/plugins/index.ts`. Provenance:
+`scripts/lib/manifest.mjs` + `.rocketflare.json` / `.rocketflare.local.json`. Tests:
+`apps/web/tests/config/plugins.test.ts` (+ `helpers/plugins.ts`), `manifest-lib.test.ts`,
+`shared-imports.test.ts`. Reference plugin: `apps/web/src/plugins/example-feature/**`,
+`packages/shared/src/plugins/example-feature/`, `apps/cli/src/plugins/example-feature/`.
+
+**A plugin is a git repository COPIED into an app, never installed from npm — exactly like the kit
+itself.** That is the whole premise. npm would mean a published package, a compiled surface and a
+version of the kit's internals frozen into someone else's build; copying means the plugin's code is
+ordinary source in the app, readable, debuggable, editable, and translated into the app's own
+vocabulary by `applyReplacements()` on the way in (§13) like every other line the kit ships. The
+price is that an upgrade is a patch rather than a version bump, which is a machine the kit already
+owns. **First-party only for now**: a plugin gets full Worker and database access, so installing one
+is as trusting as merging a pull request, and there is no sandbox that would make it otherwise.
+
+A plugin repo **mirrors the host tree exactly** — `apps/web/src/plugins/<id>/`,
+`packages/shared/src/plugins/<id>/`, `apps/cli/src/plugins/<id>/`, `docs/plugins/<id>/` — so path
+classification, the diff translator, `git apply -p1` and a reader's mental model all work unchanged.
+It ships no migration, no toml and no `package.json`: those three are the host's, always.
+
+**Four published entries, and nothing else is API.** `apps/web/src/plugins/<id>/index.ts` (server),
+`.../ui/index.ts`, `packages/shared/src/plugins/<id>/index.ts` and
+`apps/cli/src/plugins/<id>/index.ts` are what the plugin's own semver covers; everything else under
+those directories is private. Core reaching into a plugin's internals, or one plugin reaching into
+another's, is a config-test failure rather than a convention — otherwise the version number promises
+nothing. (The shared entry is imported as `@rocketflare/shared/plugins/<id>/index`: the package's
+`./*` export maps to a FILE, so the `/index` is load-bearing.)
+
+**Five barrels, one line per plugin each.** `pnpm plugin add|remove` will write those lines
+(Phase B); until it exists they are written by hand, which is the whole of an install beside the
+surface entry and one `db:generate`.
+
+| Barrel | Exports | Read by |
+|---|---|---|
+| `packages/shared/src/plugins/index.ts` | `SHARED_PLUGINS` / `sharedPlugins` | `jobs.ts`, `ai/agents.ts`, `permissions.ts`, `features.ts`, `realtime.ts`, `config.ts` |
+| `apps/web/src/plugins/server.ts` | `SERVER_PLUGINS` / `serverPlugins` | `api/index.ts`, `utils/routes/api-prefixes.ts`, `queues/jobs.ts`, `scheduled.ts`, `agents/registry.ts`, `agents/tools/index.ts`, `prompts.ts`, `permissions/abilities.ts`, `utils/db/tenant-helpers.ts`, `services/access.ts`, `scripts/seed.ts`, `rls-coverage` and the unscoped allow-list |
+| `apps/web/src/plugins/schema.ts` | `export *` of each plugin's tables | one `export *` line in `db/schema/index.ts` — the single surface drizzle-kit, `typeof schema` and `rls-coverage` read (a name exported twice is TS2308, never a silent shadow) |
+| `apps/web/src/plugins/ui.ts` | `UI_PLUGINS` / `uiPlugins` | `App.tsx`, `SideNav.tsx`, `SettingsLayout.tsx`, `lib/query-keys.ts`, `pages/agents/forms/index.ts` |
+| `apps/cli/src/plugins/index.ts` | `CLI_PLUGINS` / `cliPlugins` | `cli.ts` |
+
+**Every barrel exports two names for one list, and the reason is not style.** The `as const` tuple
+(`SERVER_PLUGINS`) is what type-level derivations index; an EMPTY tuple indexes to `never`, and
+`never.mounts` is a compile error — so everything that merely iterates reads the widened list
+(`serverPlugins`) beside it. A bare kit has empty barrels and must still typecheck.
+
+**Opening a closed set is one pattern: the kit's literal becomes `CORE_X`, and
+`X = [...CORE_X, ...plugins]`.** The public name never changes, so nothing that READS a registry
+moves; what moves is where you ADD to it.
+
+| Slot | Kit registry it feeds |
+|---|---|
+| `SharedPlugin.jobs` | `CORE_JOB_VARIANTS` → `jobInputSchema` / `jobEnvelopeSchema`; `JobType` and `JOB_TYPES` are DERIVED from the schema |
+| `SharedPlugin.agentKeys` · `promptKeys` · `subjects` · `features` | `CORE_AGENT_KEYS` · `CORE_PROMPT_REGISTRY` keys · `Subjects` · `CORE_FEATURES` / `CORE_FEATURE_FLAGS` |
+| `SharedPlugin.config` · `realtimeRoots` | `coreConfigSchema.extend(...)` in `config.ts`; the `access.changed` invalidation roots |
+| `ServerPlugin.mounts` · `apiPrefixes` | the mount table of `api/index.ts`; `API_PREFIXES` |
+| `ServerPlugin.jobHandlers` · `agents` · `prompts` · `agentTools` · `scheduledTasks` | `coreHandlers` · `CORE_AGENTS` · `CORE_PROMPT_REGISTRY` · `buildAgentTools` · `CORE_SCHEDULED_TASKS` |
+| `ServerPlugin.grants` · `rlsExcludedTables` · `unscopedAllowlist` · `visibilityResources` | `buildAbility` after the kit's matrix · `RLS_EXCLUDED_TABLES` · `CORE_UNSCOPED_ALLOWLIST` · `VISIBILITY_RESOURCES` |
+| `ServerPlugin.hooks` · `extensions` | `onTenantCreated`, `seed --demo`; whatever another plugin reads |
+| `UiPlugin.routes` · `nav` · `settingsTabs` · `queryKeys` · `agentForms` | `App.tsx` per tier · `composeNav(CORE_NAVIGATION, …)` · the settings tabs · `CORE_QUERY_KEYS` · `CORE_AGENT_FORMS` |
+| `CliPlugin.register(program, action)` | the commander chain, after the kit's own commands |
+
+`ServerPlugin<S>` and `UiPlugin<S>` are generic over the plugin's own `SharedPlugin`, so
+`jobHandlers`, `agents`, `prompts` and `agentForms` are checked for EXHAUSTIVENESS against the keys
+that same plugin declared: a missing handler is a type error in the plugin rather than a dispatch
+failure in the host. That is also why `runHandler`'s `switch` is gone — the mapped handler table
+already proves completeness, and it proves it for a set the kit cannot enumerate.
+
+**`DeclaredBy<P, K>` is why those derivations survive an optional slot.**
+`(typeof SHARED_PLUGINS)[number]['agentKeys']` reads a property off `as const` LITERALS, and a
+plugin that omits an optional field genuinely has no such property — so the indexed access is a
+compile error, not `undefined`, and installing one plugin with no agents would break the agent-key
+derivation for every other plugin. `DeclaredBy` narrows the union to the members that DO declare the
+field first; with none it is `never`, which is exactly the empty contribution these derivations
+want. All six derivations use it.
+
+**Namespacing is the rule that lets two plugins share one app.** The id matches
+`^[a-z][a-z0-9-]*$` and never contains `rocketflare` (the rename translator would rewrite it, and
+`index`/`server`/`ui`/`schema`/`types` are reserved because they are barrel filenames). Everything
+keyed carries it: tables `<id>_*`, job types `<id>.x`, query-key roots and demo-seed ids `<id>:…`,
+the API prefix `/api/<id>`, the CLI's top-level command, feature/prompt/agent keys, and AG-UI CUSTOM
+events under `<id>.` — **never `kit.`**, which is the kit's own namespace and the one a third-party
+client is entitled to ignore.
+
+**A plugin is a SURFACE, so §13's machinery covers it for free.** The record is a
+`kind: 'plugin'` entry in `.rocketflare.json` carrying `source: { repo, subdir, version, commit }`
+(`repo` is never null — a plugin you cannot fetch again cannot be upgraded), `installedAt`,
+`requires` and `history[]`. Presence is still `existsSync` on the anchor (`plugin.json`), so
+deleting the directory IS uninstalling and there is no bookkeeping to drift. Two additions:
+
+- **The git-ignored `.rocketflare.local.json` sidecar.** A plugin installed into the KIT
+  (`app === null`) or anywhere with `--local` is an authoring convenience, not part of what the kit
+  ships — committing it would push wiring for files a copy does not have into every copy made from
+  that commit. `readManifest()` in `scripts/lib/manifest.mjs` returns the merged view plus `isKit`
+  and `sidecar`, and is now **the one kit-vs-app predicate**: four scripts and two test files used to
+  re-parse the manifest and each decide for themselves what "this is the kit" meant.
+- **`classifyPath` gains `skipped-plugin-owned`.** A kit diff never touches a byte an installed
+  plugin owns, because the plugin has its own repository and its own release chain.
+
+**A plugin tests its behaviour; the host tests that it is a well-formed plugin.** A plugin's own
+tests live inside its directory and run in the host's projects (`vitest.config.ts` discovers
+`src/plugins/*/tests/{api,ui,config}`). `tests/config/plugins.test.ts` checks only what no plugin
+author can verify for the combination a particular app installed: ids are namespaces and never the
+kit's; query-key roots carry the id; nothing reaches into a plugin except through its four entries;
+and a plugin's `ui.ts` imports only from a small allowlist (`react`, the heroicons set,
+`@rocketflare/shared/*`, `@/plugins/types` and the three kit UI modules a nav item needs) with every
+page reached as `lazy(() => import(...))` — that file ships in the MAIN bundle, for every reader,
+including the ones who never open the plugin. Each check is a pure function over strings exercised
+against fixtures as well as against what is installed, so the suite still means something with zero
+plugins.
+
+**Two constraints were measured rather than assumed, and both are load-bearing.**
+
+- **Nothing under `packages/shared/src/plugins/` imports one of the five composers at RUNTIME** —
+  `ai/agents.ts`, `jobs.ts`, `permissions.ts`, `features.ts`, `realtime.ts`. Those five read the
+  plugin barrel, so importing one back closes a cycle, and two zod modules in a cycle do not fail to
+  compile: they crash at module evaluation with one side holding `undefined`. A whole-declaration
+  `import type { X } from` is fine (erased, and it is how `SharedPlugin.features` is typed against
+  the ONE `FeatureDefinition` instead of a copy that drifts); `import { type X } from` is not,
+  because eliding every specifier leaves an empty import clause whose fate is the bundler's.
+  `shared-imports.test.ts` checks all three spellings.
+- **A plugin declares `relations()` for its OWN tables only.** On drizzle-orm 0.45.2 a second
+  `relations()` for a core table merges at runtime but NOT at the type level:
+  `ExtractTableRelationsFromSchema` unions the two configs and `BuildRelationResult` then keys over
+  their INTERSECTION, so adding one silently strips `with:` from that table's query results
+  app-wide. The `one()` side on the plugin's own table expresses the FK fully; only the `many()`
+  back-reference is unavailable. Re-measure before relaxing it.
+
+**Visibility became a registry (D29).** `services/access.ts` exports `VisibilityResource`
+(`{ key, noun, usageKey, predicate, setGroups, grantRows, countGrants }`) and
+`VISIBILITY_RESOURCES`; documents and analytics pages are two entries in it and a plugin adds its
+own through `visibilityResources`, so `setResourceGroups`, `grantsForResources` and the 409
+`group_in_use` count are one dispatch instead of a two-value branch.
+
+**Hooks are post-commit, idempotent and best-effort**, exactly like the kit's own:
+`onTenantCreated` runs after the create transaction commits, each plugin in its own try/catch (a
+plugin must never break sign-up), and `seedDemo` runs after the kit's `--demo` block with fixed ids
+and `onConflictDoNothing`, its `demoId(key)` already namespaced.
+
+**Migrations are never shipped and always generated by the HOST.** A plugin's schema files arrive,
+the `export *` line is written, then `pnpm db:generate --name plugin-<id>-<version>` numbers the DDL
+in the host's own journal. This is the same rule §13 states for kit upgrades and for the same
+reason: a snapshot describes a whole cumulative schema, and importing a foreign one teaches drizzle
+a current state that has never heard of the app's tables. Uninstalling is the mirror — the barrel
+line goes, `db:generate` emits the `DROP TABLE`s, and orphaned tables are not a stable state.
+`rls-coverage` treats a plugin table exactly like a kit table: `tenantIsolation()` or an entry in
+`rlsExcludedTables` with a reason.
+
+**`example-feature` is the reference, and it exists to be deleted.** It was the kit's demonstration
+feature flag; it is now a plugin, and it gained the parts a flag alone could not demonstrate. In
+three directories and five barrel lines it exercises every slot: the `example-feature` flag; a
+tenant-scoped `example_notes` table (`tenantRef` + `timestamps` + `tenantIsolation`, indexes led by
+`tenant_id`); a CRUD mount at `/api/example-feature` behind `requireFeature` (404
+`feature_disabled`, gated at the MOUNT); the `example-feature.ping` job variant and its handler; the
+`ExampleNote` subject with additive `grants`; a `list_example_notes` agent tool on every run's
+`ctx.tools`; `onTenantCreated` and `seedDemo`; a lazy page with a nav item whose guard is the same
+object the route uses; and `rocketflare example-feature ping|notes list`. Its own tests sit under
+`src/plugins/example-feature/tests/` and pin that **tenant B can neither list, read nor delete
+tenant A's notes** — so schema migration and tenant isolation are proven on something removable
+before anything bigger moves out. Its surface's `source.repo` is the kit repo with `subdir: ""`
+(vendored), which is why upgrading it defers to `kit:upgrade`.
+
+**The decisions, in one place.**
+
+| # | Decision | Choice |
+|---|---|---|
+| 1 | Who writes plugins | First-party only for now; full Worker and DB access, so installing is as trusting as merging a PR. The install plan is always shown and waits for a human |
+| 2 | Fresh clone | The kit becomes bare; `defaultPlugins` in `.rocketflare.json` and a bootstrap step install a default set, so a fresh clone is unchanged (Phase C) |
+| 3 | Reference plugin | `example-feature`, grown to carry a table, a route, a tool, both hooks and a CLI command |
+| 4 | Record of installed plugins | A `kind: 'plugin'` surface — committed in an app, in the git-ignored sidecar in the kit or with `--local`; `readManifest()` is the one predicate |
+| 5 | Compatibility | A declared `requires.kit` range PLUS proof both ways in CI. No separate plugin-API version: untyped imports are the real exposure and only the gate catches them |
+| 6 | Cubes, fact tables, dashboards | Plugin-owned registries through `extensions: Record<string, readonly unknown[]>`; the owning plugin narrows with zod and fails loudly. Core stays ignorant of drizzle-cube |
+| 7 | The extraction boundary | No compatibility path: analytics moves out under the `<id>_*` rule and the release note says its tables are dropped |
+| 8 | Bundle safety | `LazyExoticComponent` for pages, plus a source-level structural test in the host |
+| 9 | Public surface | Four entry files are the API; a deep import across a plugin boundary is a test failure |
+| 10 | Cutting the work | Phase A is four PRs on one branch and one kit release |
+| 11 | Uninstall data | Drop by default, `--archive` on request. Orphaned tables are not a stable state |
+| 12 | Plugin bindings | Provisioning learns them: `provision cloudflare <env>` reads each plugin's `bindings[]`, and the parity test applies the `-staging` rule to them |
+| 13 | Where a plugin comes from | Every manifest carries a required `repo` (+ optional `subdir`), so a surface's `source.repo` is never null |
+
+Decisions 2, 5, 11 and 12 describe machinery that arrives with `scripts/plugin.mjs` in Phase B; 6
+and 7 land with the analytics extraction in Phase C. The rest are true today.
+
+**Known gaps / not built yet:** **there is no `scripts/plugin.mjs` yet** — installing a plugin today
+is five barrel lines, a surface entry in `.rocketflare.json` and `pnpm db:generate` by hand, and
+nothing reads `plugin.json`'s `requires.kit` range, so an incompatible plugin fails at the gate
+rather than at install. No third-party trust model (no sandbox, no review process, no signature —
+"first-party only" is the whole of it). No rename migrations: expand/contract only, because
+drizzle-kit's rename prompt has no non-interactive answer. No cross-plugin FK tooling, and no
+`many()` back-reference onto a core table (the type-level finding above). The shared entry must be
+imported as `@rocketflare/shared/plugins/<id>/index` — the `./*` export maps to a file, which reads
+as a typo and is not one. `api-prefixes.ts` imports the server barrel, so the module that both the
+SPA catch-all and the parity test read is now downstream of every installed plugin; a plugin that
+owns a prefix outside `/api` must still be added to `run_worker_first` in both tomls by hand.
+`CORE_FEATURES` is empty, so `FeatureName` is `never` in a bare kit and `featureNameSchema` had to
+become a refined `z.string()` rather than a `z.enum`, which needs a non-empty tuple (§15).
+`grants` is additive by documentation only: CASL can take a rule back with `cannot`, and nothing
+stops a plugin doing so. Provisioning does not yet read a plugin's `bindings`, crons or
+`vars` — they are manual toml edits today. Analytics has not been extracted (Phase C), so the kit is
+not yet bare, and the website's plugin pages are Phase D.

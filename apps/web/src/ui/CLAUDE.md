@@ -468,9 +468,10 @@ A `CUSTOM kit.notice` renders
   (D31), not kit files: they live in `src/plugins/example-feature/ui/` and arrive through
   `UiPlugin.routes` / `UiPlugin.nav`. Delete the whole plugin (three directories, five barrel lines,
   its surface in `.rocketflare.json`) rather than editing the shell.
-- Tests: `tests/ui/feature-flag-nav.test.tsx` drives the REAL `useNavGuard` — never a
-  re-implementation, which is what hid the ability-wildcard bug — and runs every assertion for a
-  global admin as well as an owner.
+- Tests: `src/plugins/example-feature/tests/ui/feature-flag-nav.test.tsx` — it MOVED into the
+  plugin with the nav item it looks for (a test that outlived its subject is a false failure). It
+  drives the REAL `useNavGuard` — never a re-implementation, which is what hid the ability-wildcard
+  bug — and runs every assertion for a global admin as well as an owner.
 
 ## Groups and visibility (D29)
 
@@ -500,3 +501,25 @@ A `CUSTOM kit.notice` renders
   socket.
 - Tests: `tests/ui/groups.test.tsx` (the tab's list/create flows, the 409 confirm, and the
   `AccessPicker` empty-selection warning).
+
+## Plugins (D31)
+
+- **An installed plugin contributes UI through `UiPlugin`** (`apps/web/src/plugins/types.ts`), one
+  line in `src/plugins/ui.ts`, and its own entry `src/plugins/<id>/ui/index.ts`. `App.tsx` maps
+  `UI_PLUGINS.flatMap(p => p.routes)` per tier (`shell | noTenant | public`) inside the existing
+  `Suspense`; `SideNav`'s `navigationConfig` is `composeNav(CORE_NAVIGATION, …)`;
+  `SettingsLayout` appends `settingsTabs(ctx)`; `queryKeys` is `CORE_QUERY_KEYS` spread with every
+  plugin's families; `pages/agents/forms/index.ts` is `CORE_AGENT_FORMS` plus every plugin's.
+  **Nothing in the shell names a plugin** — that is what makes install and remove five lines.
+- **The UI entry ships in the MAIN bundle**, because the shell imports the barrel that imports it.
+  So it wires and nothing else: pages are `lazy(() => import(...))`, and its runtime imports are
+  limited to `react`, `@heroicons/react/24/outline`, `@rocketflare/shared/*`, `@/plugins/types`,
+  `@/ui/components/SideNav`, `@/ui/hooks/useNavGuard` and `@/ui/lib/feature-guards` (type-only
+  imports are free — they are erased). `tests/config/plugins.test.ts` reads the SOURCE and enforces
+  both rules; a statically imported page is the mistake it exists to catch, and it is exactly the
+  same rule the `components/ai` / analytics chunk isolation already follows.
+- Query-key roots are `<id>:…`, and **the root is the same string the server's `entity.changed`
+  nudge carries**, declared once (the plugin's `shared.ts`), so the socket wiring is free. A
+  plugin's own hooks read its `query-keys.ts` directly; the merge into `queryKeys` is for the host.
+- A route's guard and its nav item's guard are ONE const declared beside them —
+  `EXAMPLE_FEATURE_GUARD` — so a link can never point at a page its reader cannot open.

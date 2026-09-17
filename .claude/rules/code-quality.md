@@ -55,6 +55,7 @@ Changing behaviour changes the doc in the same PR:
 | a skill or its flags | the skill's `SKILL.md` (and its companion `checklist.md` / `reference.md`), `README.md` "Getting started", `docs/CONCEPTS.md` §13 |
 | a binding, a toml key, the release flow | `docs/DEPLOY.md`, both `wrangler*.toml` comments |
 | a convention in a layer | the matching `.claude/rules/*.md` and `apps/web/src/<dir>/CLAUDE.md` / `packages/shared/CLAUDE.md` |
+| a plugin slot, the plugin contract or the reference plugin (D31) | `docs/CONCEPTS.md` §16 + the matching `.claude/rules/*.md` + `apps/web/src/plugins/CLAUDE.md` |
 | a CLI command, flag or exit code | `docs/CONCEPTS.md` → CLI, `.claude/rules/cli.md` |
 | a rename target | `docs/ADAPTING.md` |
 

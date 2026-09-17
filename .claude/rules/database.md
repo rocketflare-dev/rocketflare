@@ -154,3 +154,33 @@ Never hand-edit an applied migration or `apps/web/migrations/meta/`. Custom SQL 
 is a generated file edited before it is applied, journal intact.
 
 Tests migrate a throwaway database on 5433 from `apps/web/tests/setup.ts` — never Neon.
+
+## Plugins (D31) — a plugin's tables
+
+An installed plugin owns tables exactly like the kit's, in `src/plugins/<id>/db/schema/*`:
+
+- **Name every table `<id>_*` with the hyphens dropped** — `example-feature` → `example_notes`,
+  `analytics` → `analytics_pages`. Two plugins in one app must never collide, and a table name is
+  the one identifier neither the type system nor the module graph namespaces for you
+- **One `export * from './<id>/db/schema'` in `apps/web/src/plugins/schema.ts`**, which is
+  re-exported by one `export *` line in `db/schema/index.ts` — the one surface `drizzle.config.ts`,
+  `db/client.ts` (`typeof schema`) and `rls-coverage.test.ts` read. So a plugin table is migrated,
+  typed and RLS-checked like any other, and a duplicated export name is a TS2308 error rather than
+  a silent shadow
+- **`tenantIsolation('<table>')` is as mandatory here as anywhere**; a plugin table with no
+  `tenant_id` goes in `ServerPlugin.rlsExcludedTables` with its reason, which `rls-coverage.test.ts`
+  unions into `RLS_EXCLUDED_TABLES`. `tenantRef()` first, `(tenant_id, …)` indexes
+- **A plugin ships NO migration.** The HOST generates it after the barrel line exists:
+  `pnpm db:generate --name plugin-<id>-<version>`, read the SQL, `pnpm db:migrate` — so the DDL is
+  numbered in the host's own journal and a plugin can never renumber somebody else's. A plugin's
+  `migrations/` directory, if it has one, holds plain-SQL DATA fragments (backfills), never DDL
+- **Never rename a plugin's column or table across releases** — expand/contract only. `drizzle-kit`'s
+  rename prompt has no non-interactive answer, so a rename stops an unattended install dead
+- **`relations()` for the plugin's OWN tables only.** Measured on drizzle-orm 0.45.2: a second
+  `relations()` for a core table merges at runtime but not at the type level
+  (`ExtractTableRelationsFromSchema` unions the two configs and `BuildRelationResult` keys over
+  their intersection), so it silently strips `with:` from that table's query results app-wide. The
+  `one()` side on the plugin's own table expresses the FK fully; only the `many()` back-reference
+  cannot be contributed. The long form of the measurement is in `apps/web/src/plugins/schema.ts`
+- Removing a plugin drops its tables: delete the files and the barrel line, then `pnpm db:generate`
+  emits the `DROP TABLE`. Orphaned tables are not a stable state

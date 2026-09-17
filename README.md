@@ -126,6 +126,7 @@ you removed. [`CHANGELOG.md`](CHANGELOG.md) is what you would be catching up on.
 - **Release dance** — tag = root version → staging deploys; publish the GitHub Release → production ships the same tag. Migrations run in CI against the environment's Neon branch before deploy.
 - **Tests that mean something** — API tests drive the real Hono app against a real Postgres; queue consumers, Workflow steps, the Durable Object and cron tasks are plain functions tested directly; UI tests in jsdom; a config project checks tomls, permissions and dashboard templates with no database.
 - **Agent-readable** — `CLAUDE.md` (also `AGENTS.md`), path-scoped rules in `.claude/rules/`, a `CLAUDE.md` in every significant directory, and `docs/CONCEPTS.md` describing each subsystem, its invariant and its known gaps.
+- **Plugins** — a feature can be a separate git repository copied in (never npm-installed, exactly like the kit): five barrels take one line each, and a plugin contributes contracts, tables with RLS policies, routes, jobs, agent tools, lifecycle hooks, lazy pages, nav items and CLI commands without a core file naming it. A host test suite proves each installed plugin is well-formed (namespaced keys, no deep imports, no page in the main bundle); `example-feature` is the vendored reference one, and it is meant to be deleted.
 - **Design tokens** — two DaisyUI themes whose brand values live in one header block; a contrast test gates the emitted tokens.
 
 ## Layout

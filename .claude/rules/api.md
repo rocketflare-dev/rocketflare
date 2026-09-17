@@ -159,6 +159,50 @@ failures surface as the JSON envelope on this route.
   `requireMultiTenant`, the list and `PATCH` do not. `GET /api/features` is the member-level
   effective list (and the CLI's, since a Bearer key cannot reach `/api/admin/*`)
 
+## Plugins (D31) — `src/plugins/*`, the server barrel
+
+A plugin is a separate git repository copied into the app that contributes through
+`ServerPlugin` (`apps/web/src/plugins/types.ts`). Server-side rules, all of them checkable:
+
+- **`mounts` are spread LAST into the mount table of `api/index.ts`**, so the enumerable auth
+  surface stays one list. An entry is the same tuple a kit mount is — `['/api/<id>', router,
+  middleware?]` — and the prefix is `/api/<id>` by convention, which is what stops two plugins
+  claiming one path. A prefix the Worker owns OUTSIDE `/api` also goes in `apiPrefixes`, or the SPA
+  catch-all answers `index.html` for it
+- **A feature flag gates the MOUNT, not each route** — `requireFeature('<id>')` as the third element,
+  exactly like a kit surface, answering 404 `feature_disabled`. Never `access Feature:<id>`: a global
+  admin's `manage all` satisfies the CASL form (§ Feature flags above)
+- **`jobHandlers` is checked against the plugin's OWN `shared.jobs`** (`{ [T in JobTypeOf<S>]: … }`),
+  so a declared variant with no handler is a type error in the plugin rather than a dispatch failure
+  in the host. Namespace every `type` `<id>.verb`; the handler contract is the kit's (own DB client,
+  await everything, throw to retry)
+- **`agentTools(ctx)` is bound to the run's `AgentToolContext`**, which carries the `AccessScope` —
+  so a plugin tool reads what its REQUESTER may read, never a bare `tenantId` it chose itself. It is
+  appended after the kit's three knowledge tools; a test that pinned the exact tool list must become
+  a prefix assertion
+- **`grants` is ADDITIVE and over the plugin's OWN subjects.** It runs after the kit's matrix in
+  `buildAbility`; CASL can take a rule back only with `cannot`, so a plugin that revoked a kit grant
+  would change what every role may do merely by being installed. Declare the subject in
+  `SharedPlugin.subjects`, then grant it here
+- **`hooks.onTenantCreated` and `hooks.seedDemo` are post-commit, idempotent and best-effort**, each
+  try/caught by the host after the kit's own — a plugin hook that throws must never break sign-up or
+  invite accept, so nothing a tenant NEEDS may arrive only that way. `seedDemo` gets a `demoId`
+  already namespaced with the plugin's id; fixed ids + `onConflictDoNothing`, as everywhere
+- `visibilityResources` (D29) registers rows a group may restrict — `{ key, noun, usageKey,
+  predicate, setGroups, grantRows, countGrants }` in `services/access.ts`'s registry, so the
+  predicate is SQL ANDed onto the tenant one and the 409 `group_in_use` count includes it.
+  `rlsExcludedTables` and `unscopedAllowlist` are the plugin's own entries in the two enforcement
+  tests, keyed exactly as the kit keys its own (a path under `apps/web/` → the reason)
+- **Module-evaluation order is the one trap the type system cannot see.** The barrels are read at
+  MODULE SCOPE by `queues/jobs.ts`, `services/agents/registry.ts`, `services/prompts.ts`,
+  `api/scheduled.ts`, `utils/routes/api-prefixes.ts` and `services/access.ts`, so a plugin module
+  that reads a module-scope value from one of those at its OWN module scope closes a cycle and one
+  side holds `undefined` — a crash at import, not a compile error. `example-feature` shows the two
+  avoidances: **`import type`** for anything only needed as a type (`AgentToolContext`, `Tool`), and
+  **naming the file directly** rather than the barrel (`db/schema/feature-flags`, because
+  `db/schema/index.ts` re-exports `plugins/schema.ts`, which re-exports the plugin). The shared side
+  has the same rule and a test for it (`tests/config/shared-imports.test.ts`)
+
 ## Services
 
 Plain modules, signature `(db, cfg, logger, …args)` — dependencies are passed, never imported as
@@ -193,9 +237,9 @@ A route never runs long work. Rule (05 §1.4):
 Jobs rules (D7):
 
 - **Adding a job type** = a variant in `CORE_JOB_VARIANTS` (shared — `jobInputSchema`, `jobEnvelopeSchema`, `JobType` and `JOB_TYPES` are all DERIVED from that one list), a handler in `queues/handlers/`, and its entry in `coreHandlers` (`queues/jobs.ts`). **There is no `runHandler` switch**: the mapped type `{ [T in CoreJobType]: JobHandler<T> }` is the completeness check, and dispatch is `handlers[job.type](job as never, ctx)`. A plugin (D31) brings its variants in `SharedPlugin.jobs` and its handlers in `ServerPlugin.jobHandlers`, checked against the types IT declared
-  (`packages/shared/src/jobs.ts`) + one entry in the `handlers` table of `queues/jobs.ts` + a
-  `queues/handlers/<name>.ts` (copy `example-ping.ts`). The `type` string is the version seam: a
-  breaking payload change is a new type (`email.send.v2`), never an edited schema
+  (`packages/shared/src/jobs.ts`). The `type` string is the version seam: a breaking payload change
+  is a new type (`email.send.v2`), never an edited schema. `handlers/document-index.ts` is the
+  shortest kit handler to copy; `src/plugins/example-feature/jobs/ping.ts` is the shortest one full stop
 - Handler signature `(job: JobOf<'x'>, ctx: { env, config, logger, db })`; each message gets its
   own DB client, closed in `finally`. **Never `waitUntil` in a consumer — await everything**; a
   handler that throws is retried, one that returns is acked

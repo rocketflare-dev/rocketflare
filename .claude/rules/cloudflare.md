@@ -190,6 +190,24 @@ MCP path in the adapter) or a thin adapter of our own over `drizzle-cube/server`
 dependency to `src/api`, compare `gzip -c dist/api/worker.js | wc -c` before and after — **the delta
 is the thing to look at, not the absolute.**
 
+## Plugins and the tomls (D31)
+
+**A plugin never edits a wrangler toml, and until Phase B's provisioning reads its manifest, that
+means you do — by hand, in BOTH files.** A plugin's `plugin.json` declares four things the runtime
+cannot invent:
+
+| Declared | Add to |
+|---|---|
+| `bindings[]` (KV, queue, R2…) | both tomls, identical `binding` name, account-scoped `name` suffixed `-staging` in the staging file; then `pnpm types` and commit `worker-configuration.d.ts` |
+| `crons[]` | `[triggers] crons` in BOTH tomls (the parity test compares them); the task itself arrives through `ServerPlugin.scheduledTasks`, keyed on the same expression |
+| `apiPrefixes[]` | `[assets] run_worker_first` in BOTH tomls, and the Vite dev proxy. The prefix itself is unioned into `API_PREFIXES` from the server barrel, and `wrangler-parity.test.ts` asserts both tomls MIRROR that list — so a forgotten one fails the gate rather than silently serving the app shell for an `<object>` embed or an `<a download>` |
+| `vars[]` | `[vars]` keys in BOTH tomls (the parity test compares keys, not values) and a line in `.dev.vars.example` for a secret. The key itself is validated by `SharedPlugin.config`, merged into the Worker's config schema |
+
+The account-scoping rule is unchanged and applies to a plugin's resources exactly as to the kit's: a
+queue, R2 bucket, Workflow name or Analytics Engine dataset is unique per Cloudflare ACCOUNT, so
+staging's must differ. `binding` and `class_name` stay identical, because no application code — a
+plugin's included — is environment-aware.
+
 ## `nodejs_compat`: what is allowed
 
 Allowed and used: `Buffer`, `AsyncLocalStorage`, `node:crypto` hashing, `process.env` **inside

@@ -117,14 +117,64 @@ tell it. That is what makes deleting safe.
   `tests/api/analytics-pages.test.ts` (template expectations), `tests/dashboards/all-templates.test.ts`.
   Existing tenants keep their `tenant-overview` rows as inert `analytics_pages` data (`reset` on them →
   404 `template_not_found`); delete the rows or leave them
+- The reference PLUGIN `example-feature` (D31) — a feature flag, a `example_notes` table, a CRUD
+  mount at `/api/example-feature`, `example-feature.ping`, an agent tool, two lifecycle hooks, a
+  lazy page with a nav item and two CLI commands, all in three directories. It exists to be read
+  first and deleted second. Until `pnpm plugin remove` lands (Phase B) that is by hand, and it is
+  four things: its **three directories** (`apps/web/src/plugins/example-feature/`,
+  `packages/shared/src/plugins/example-feature/`, `apps/cli/src/plugins/example-feature/`), the
+  **five barrel lines** that name them (`apps/web/src/plugins/{server,ui,schema}.ts`,
+  `packages/shared/src/plugins/index.ts`, `apps/cli/src/plugins/index.ts` — import and list entry
+  both), its **surface in `.rocketflare.json`**, and then `pnpm db:generate`, which emits the
+  `DROP TABLE "example_notes"` for you (read the SQL, then `pnpm db:migrate`). Nothing else in the
+  kit names it, which is the point of the seam
 - CLI commands you do not want (`apps/cli/src/commands/*` — `members list`, `keys list`,
   `activity list` are examples of the pattern; keep `login`, `logout`, `whoami`, `status`, `config`)
 - Lines in `README.md` "Features" that describe the kit rather than your app
 
 ## 3. Your first three features — where each goes
 
-Every feature is the same loop; the rules files load automatically as you touch each layer. The
-contract comes first and lives in the shared package so the API, the UI and the CLI parse one schema.
+**Ask first: is this a feature of YOUR app, or a capability somebody else could install?** (D31,
+`docs/CONCEPTS.md` §16.) A plugin is a separate git repository copied into an app — never installed
+from npm, exactly like the kit itself — that contributes contracts, schema, routes, jobs, agents,
+UI and CLI commands through five barrels it is the only thing allowed to write a line into. Written
+as a plugin, a feature is one tree you can lift out, version and install somewhere else; written
+into core, it is diffused across twenty files nobody can separate again.
+
+Default to the plugin. **Core is still right when the change is to the kit's OWN tables
+(`tenants`, `users`, `tenant_users`, `documents`…), to auth or tenancy, or to a cross-cutting
+middleware** — the things a plugin composes ON TOP of and must not redefine. Everything else — a
+resource with its own table, its own screens, its own jobs — is a plugin, and
+`apps/web/src/plugins/example-feature/` is the worked example of every slot below.
+
+The layer walk is the same either way; what changes is where the line goes. The contract comes
+first and lives in the shared package, so the API, the UI and the CLI parse one schema.
+
+| Layer | Core location | The plugin slot |
+|---|---|---|
+| contract | `packages/shared/src/<feature>.ts` | `packages/shared/src/plugins/<id>/index.ts` |
+| job types | `CORE_JOB_VARIANTS` (`shared/src/jobs.ts`) | `SharedPlugin.jobs` |
+| CASL subject | `CORE_SUBJECTS` (`shared/src/permissions.ts`) | `SharedPlugin.subjects` + `ServerPlugin.grants` |
+| feature flag | `CORE_FEATURES` / `CORE_FEATURE_FLAGS` (`shared/src/features.ts`) | `SharedPlugin.features` |
+| `[vars]` | `apps/web/src/config.ts` | `SharedPlugin.config` (a zod raw shape) |
+| realtime roots | `REALTIME_INVALIDATIONS` (`shared/src/realtime.ts`) | `SharedPlugin.realtimeRoots` (what `access.changed` invalidates) |
+| table | `apps/web/src/db/schema/<feature>.ts` + the barrel | `<id>/db/schema/*` + one `export *` in `plugins/schema.ts` |
+| route | `api/routes/<feature>.ts` + the mount table | `ServerPlugin.mounts` (+ `apiPrefixes` for a prefix outside `/api`) |
+| job handler | `coreHandlers` (`api/queues/jobs.ts`) | `ServerPlugin.jobHandlers` |
+| agent | `CORE_AGENT_KEYS` / `CORE_AGENTS` / `CORE_PROMPT_REGISTRY` | `SharedPlugin.agentKeys` + `ServerPlugin.agents` / `prompts` |
+| agent tool | `buildAgentTools` (`services/agents/tools/index.ts`) | `ServerPlugin.agentTools(ctx)` |
+| cron | `CORE_SCHEDULED_TASKS` (`api/scheduled.ts`) | `ServerPlugin.scheduledTasks` |
+| RLS exclusion / allow-list | `RLS_EXCLUDED_TABLES` / `CORE_UNSCOPED_ALLOWLIST` | `ServerPlugin.rlsExcludedTables` / `unscopedAllowlist` |
+| D29 visibility | `VISIBILITY_RESOURCES` (`services/access.ts`) | `ServerPlugin.visibilityResources` |
+| new-tenant / demo data | `onTenantCreated` (`utils/db/tenant-helpers.ts`), `scripts/seed.ts` | `ServerPlugin.hooks.onTenantCreated` / `hooks.seedDemo` |
+| page + route | `App.tsx` (lazy) | `UiPlugin.routes` (always `lazy()`) |
+| nav item | `CORE_NAVIGATION` (`SideNav.tsx`) | `UiPlugin.nav` (a group placed `before` a core one) |
+| settings tab | `SettingsLayout.tsx` | `UiPlugin.settingsTabs(ctx)` |
+| query keys | `CORE_QUERY_KEYS` (`lib/query-keys.ts`) | `UiPlugin.queryKeys` (roots `<id>:…`) |
+| agent form | `CORE_AGENT_FORMS` (`pages/agents/forms/index.ts`) | `UiPlugin.agentForms` |
+| CLI command | `apps/cli/src/commands/<feature>.ts` + `cli.ts` | `CliPlugin.register(program, action)` |
+
+Written into core, the loop is:
 
 1. **Contract** — `packages/shared/src/<feature>.ts`: zod schemas for the resource, its
    create/update bodies, and list query (`paginationQuerySchema`). Export types with `z.infer`;
@@ -146,6 +196,18 @@ contract comes first and lives in the shared package so the API, the UI and the 
 6. **Command** (optional) — `apps/cli/src/commands/<feature>.ts`: a thin commander command over
    `apps/cli/src/api.ts`, parsing the response with the same `@rocketflare/shared/<feature>` schema;
    `--json` on every list; exit codes per `.claude/rules/cli.md`. Register it in `cli.ts`.
+
+Written as a plugin, the same six steps land in the four published files instead — the shared
+entry (1, and every key the plugin owns), the server entry (2, 3), the UI entry (4, 5) and the CLI
+entry (6) — and the host merges each contribution into the registry it could not otherwise be
+edited into. Everything the plugin keys carries its id: tables `<id>_*`, job types `<id>.verb`,
+the API prefix `/api/<id>`, query-key roots `<id>:…`, the CLI command `<id>`, AG-UI CUSTOM events
+`<id>.` (**never `kit.`**). Read `apps/web/src/plugins/CLAUDE.md` for the seam and
+`apps/web/src/plugins/example-feature/CLAUDE.md` for the example, and remember the two things a
+plugin never does: **it ships no migration** (the HOST runs `pnpm db:generate --name
+plugin-<id>-<version>` once its schema barrel line is in place) and **it edits no toml** (a binding,
+cron or `[vars]` key it declares is added to both files by hand until Phase B's provisioning reads
+them).
 
 Long-running work inside a feature: enqueue on `JOBS_QUEUE` (< 30 s) or create a Workflow
 instance; never run it in the route.
@@ -184,7 +246,9 @@ A model you leave out shows "—" on Settings → Usage rather than a wrong numb
    `runApproved: ctx.once` or the gate is re-asked and the approved call runs twice. Record what the
    run produced with `ctx.artifact({ key, title, data })`, and read what a person typed at it with
    `ctx.steering()` inside `beforeTurn`.
-4. Registry — one entry in `AGENTS` (`services/agents/registry.ts`); `GET /api/agents` lists it.
+4. Registry — one entry in `CORE_AGENTS` (`services/agents/registry.ts`); `GET /api/agents` lists
+   it. In a plugin it is `ServerPlugin.agents` instead, checked for exhaustiveness against the keys
+   that plugin's `SharedPlugin.agentKeys` declared.
 5. UI — **an agent in this kit is one shared input schema + one `forms/` entry + one `outputs/`
    entry.** There is no per-agent run page to write: `RunPage` is generic, and it renders the
    timeline, the interrupt panel, the steering composer and the artifacts for every agent. Add
@@ -291,14 +355,17 @@ expectations. Do it before the first production migration if you can.
 **Adding a job type** (D7): payload schema + ONE variant in `CORE_JOB_VARIANTS`
 (`packages/shared/src/jobs.ts` — both unions, `JobType` and `JOB_TYPES` are derived from that list)
 → a handler
-`apps/web/src/api/queues/handlers/<name>.ts` (copy `example-ping.ts`, or `document-index.ts` for one
-that re-reads a row by id; signature `(job: JobOf<'x'>,
+`apps/web/src/api/queues/handlers/<name>.ts` (copy `document-index.ts` for one that re-reads a row
+by id, or `src/plugins/example-feature/jobs/ping.ts` for the shortest one there is; signature
+`(job: JobOf<'x'>,
 ctx: { env, config, logger, db })`, throw to retry, return to ack, await everything) → one entry in
 `coreHandlers` in `apps/web/src/api/queues/jobs.ts` (its mapped type is the completeness check;
 there is no `runHandler` switch to update) →
 callers use `enqueueJob(c.env.JOBS_QUEUE, { type: 'x', payload })` → a case in
 `tests/api/jobs-consumer.test.ts`. A breaking payload change is a NEW type (`x.v2`), never an edited
-schema — in-flight messages of the old type must still parse.
+schema — in-flight messages of the old type must still parse. In a plugin it is `SharedPlugin.jobs`
+(namespace the `type` with the plugin's id) and `ServerPlugin.jobHandlers`, which is checked to
+cover exactly the variants that plugin declared.
 
 **Adding a file scope** (D23): add it to `FILE_SCOPES` in `packages/shared/src/files.ts` AND the
 mirrored `FILE_SCOPES` in `apps/web/src/db/schema/files.ts` (a `text` enum — no migration for a new

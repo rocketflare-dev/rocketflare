@@ -391,10 +391,12 @@ Verify: the drizzle-cube CLI's `meta` lists `ActivityEvents`, `TenantActivityDai
 
 ### 2.8 Feature flags `[ready]` (D30)
 
-Nothing to configure — flags work out of the box, and the kit ships one inert demo
-(`example-feature`, a nav item and a page). As a global admin, open **Admin → Feature flags**: set
-it to On and the nav item appears; to Rollout and the percentage decides deterministically; force it
-on or off for one organisation and that beats the percentage either way.
+Nothing to configure — flags work out of the box, and the kit itself ships none: the one inert demo
+flag (`example-feature`, a nav item, a page and a notes API) belongs to the reference PLUGIN of the
+same name (D31, `apps/web/src/plugins/example-feature/`), which is installed by default and safe to
+delete. As a global admin, open **Admin → Feature flags**: set it to On and the nav item appears; to
+Rollout and the percentage decides deterministically; force it on or off for one organisation and
+that beats the percentage either way.
 
 Two things worth knowing before you add your own:
 

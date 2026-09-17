@@ -53,6 +53,13 @@ do; `can('manage', …)` for the member only when ownership is enforced by the r
 filter, as `Conversation` and `AgentRun` are), add the row above and to the matrix test
 (`tests/config/permissions.test.ts`). CASL conditions are never used — "own" is always a route predicate.
 
+A PLUGIN (D31) never touches either literal: it declares the noun in `SharedPlugin.subjects` (which
+`Subjects` unions in as `PluginSubject`) and its rules in `ServerPlugin.grants`, run after the
+kit's matrix in `buildAbility`. Those grants are **additive and over the plugin's OWN subjects** —
+CASL can only take a rule back with `cannot`, so a plugin that revoked a kit grant would change what
+every role may do merely by being installed. The core matrix test stays core-only; a plugin ships
+its own.
+
 **Answering an agent's question is `update AgentRun` PLUS a policy the ABILITY cannot express**
 (issue #17). `AgentMeta.approvers` is `'requester'` (the default — anyone who can see the run) or
 `'admin'`, and `canAnswer` in `routes/agents.ts` is `approversFor(agentKey) === 'admin' ?

@@ -18,8 +18,11 @@ response with the same schema. `pnpm test:config` covers the pure parts.
 `permissions.ts` actions/subjects/`AppAbility`/packed rules (matrix lives in `apps/web/src/permissions/`) ·
 `api-keys.ts` · `tenant-settings.ts` · `user-settings.ts` · `notifications.ts` · `admin.ts` ·
 `activity.ts` · `errors.ts` envelope + codes · `pagination.ts` ·
-`features.ts` (D30) — the feature-flag registry (`FEATURE_FLAGS` keyed on `FEATURES`/`FeatureName`
-from `permissions.ts`), `featureBucket` (**a wire format — changing it reshuffles every live
+`features.ts` (D30) — the feature-flag registry (`CORE_FEATURE_FLAGS`, now EMPTY — the kit's demo
+flag is the `example-feature` PLUGIN — merged with each plugin's `SharedPlugin.features` into
+`FEATURE_FLAGS`, keyed on `FEATURES`/`FeatureName` from `permissions.ts`, where `CORE_FEATURES` is
+likewise empty; so `featureNameSchema` is a refined `z.string()` over the runtime list rather than a
+`z.enum`, which needs a non-empty tuple), `featureBucket` (**a wire format — changing it reshuffles every live
 rollout**), `evaluateFlag`/`evaluateFeatures` (the one implementation of the environment-then-rollout
 precedence), and the admin contracts. A flag is CONFIGURATION, not a permission: nothing here
 touches CASL · `groups.ts` (D29) — `groupTypeSchema`/`groupSchema` (with `typeName` and `memberCount`)/`groupDetailSchema`,
@@ -33,8 +36,13 @@ UI warns, it does not block) · Phase 2 (server ⇄ UI, no HTTP):
 one of the five composers — it unions each plugin's `realtimeRoots` into `access.changed`) ·
 `plugins/types.ts` + `plugins/index.ts` (D31) — `SharedPlugin`, `PLUGIN_ID_RE`/`isPluginId`, the
 `SHARED_PLUGINS` barrel one line per installed plugin is written into, and the per-plugin
-derivations the composers read (`JobTypeOf`, `AgentKeyOf`, `PromptKeyOf`, `SubjectOf`,
-`FeatureKeyOf`); **no runtime import of a composer, see Rules** ·
+derivations the composers read — `DeclaredBy<P, K>` first, which narrows the barrel union to the
+plugins that actually DECLARE an optional field (indexing `as const` literals directly is a compile
+error for a plugin that omits one, and `never` is exactly the empty contribution wanted), then
+`JobTypeOf`, `AgentKeyOf`, `PromptKeyOf`, `SubjectOf`, `FeatureKeyOf` on top of it;
+**no runtime import of a composer, see Rules**. A plugin's own contracts live in
+`plugins/<id>/index.ts`, which is its ONE published shared surface — nothing outside the plugin may
+import a deeper path, and `tests/config/plugins.test.ts` is the check ·
 `jobs.ts` — per-type payload schemas and `CORE_JOB_VARIANTS`, the ONE list everything else is
 DERIVED from (D31): `JOB_VARIANTS` = core + every plugin's, `jobInputSchema` (what `enqueueJob`
 takes), `jobEnvelopeSchema` (`+ id, enqueuedAt, attempt?`, what the consumer parses), `JobType` /
@@ -57,7 +65,9 @@ inline and framable are different properties, `filePath(id)`, `fileSchema`/`uplo
 `MAX_MESSAGE_LENGTH`, `CONVERSATION_TITLE_LENGTH`, `CHAT_MAX_TOOL_TURNS`, and the history budget
 (`CHAT_HISTORY_MAX_MESSAGES` backstop, `CHAT_SUMMARY_MAX_CHARS`, `CHAT_COMPACTION_MIN_CHARS`; the
 real budget is the `CHAT_HISTORY_MAX_CHARS` var) — the DB-shaped half; the wire protocol is `agui.ts` ·
-`agents.ts` — `AGENT_KEYS`/`agentKeySchema` (append; never empty — it is a `z.enum`), `AgentMeta<Input, Output>`
+`agents.ts` — `CORE_AGENT_KEYS` (what you append to) leading `AGENT_KEYS` = core + every plugin's
+`agentKeys`, and `agentKeySchema` over it (never empty — it is a `z.enum`, and CORE is what keeps it
+non-empty), `AgentMeta<Input, Output>`
 (the server attaches `run()`), `agentInfoSchema`, `agentRunStatusSchema` + `isRunActive`, `agentRunSchema`,
 `createAgentRunRequest/ResponseSchema` (`deduplicated`), `agentRunListQuerySchema`, `AGENT_RUN_EVENT_TYPES`,
 `agentRunEventSchema` + `AGENT_RUN_EVENT_DATA` (type → payload schema; `tool.*`/`text`/`status`/`error`
@@ -130,7 +140,11 @@ branch. Adding a job type: a payload schema + ONE variant in `CORE_JOB_VARIANTS`
 type lists follow from it) + an entry in `coreHandlers` (`apps/web/src/api/queues/jobs.ts`); there
 is no `runHandler` switch to keep in step, because the handler table's mapped type is the check. Adding an
 agent: the key in `CORE_AGENT_KEYS` + its input/output schemas in `ai/agents.ts` (then the prompt, the
-definition and the `AGENTS` entry server-side — `docs/ADAPTING.md` §3). Adding an AI provider: the
+definition and the `CORE_AGENTS` entry server-side — `docs/ADAPTING.md` §3). **Each of those is a
+PLUGIN slot too** (D31): a job type is `SharedPlugin.jobs` + `ServerPlugin.jobHandlers`, an agent
+`SharedPlugin.agentKeys` + `ServerPlugin.agents`, a flag `SharedPlugin.features`, a subject
+`SharedPlugin.subjects` — declared in `packages/shared/src/plugins/<id>/index.ts` and merged in by
+the composer, so a plugin never edits one of these literals. Adding an AI provider: the
 value in `AI_PROVIDERS` + `DEFAULT_MODELS` (mirrored in `apps/web/src/db/schema/ai-configs.ts`); a
 vendor on an existing wire format is a `PROVIDER_PRESETS` entry only. Adding a streamed event: an AG-UI type in
 `kitAguiEventSchema` or a member of the kit CUSTOM namespace in `ai/agui.ts` — the UI drops frames it

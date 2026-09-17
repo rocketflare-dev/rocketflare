@@ -19,8 +19,9 @@ contributes contracts, routes, schema, UI, agent tools, jobs and CLI commands. T
 host half of that contract; nothing is extracted into a plugin yet, and an app with no plugins
 installed behaves exactly as it did.
 
-Five barrels, each shipping an empty `as const` tuple that `pnpm plugin add|remove` writes one line
-into, plus the types they hold:
+Five barrels, each shipping an `as const` tuple that one line per installed plugin goes into, plus
+the types they hold. (`pnpm plugin add|remove` will write those lines; the script is the next phase,
+so today they are written by hand — five lines, a surface entry and one `pnpm db:generate`.)
 
 | Barrel | Exports | Types |
 |---|---|---|
@@ -158,6 +159,19 @@ because it mutates the shared registry. `tests/ui/feature-flag-nav.test.tsx` MOV
 that outlived it would be a false failure. Three assertions that pinned the exact agent-tool list
 became prefix assertions, because a plugin's tools are appended after the kit's three.
 
+**Finally, the docs caught up (PR A4 of four)** — no code, so nothing to apply, but it is where the
+seam is explained rather than merely shipped. `docs/CONCEPTS.md` gains **§16 Plugins**: what a
+plugin is and why it is copied rather than installed, the five barrels and the four published
+entries, every slot and the kit registry it feeds, the `CORE_X` pattern, `DeclaredBy`, the
+namespacing rules, the anchor/surface model with the sidecar and `skipped-plugin-owned`, "a plugin
+tests its behaviour; the host tests that it is a well-formed plugin", the two measured constraints
+(no runtime import of a composer; `relations()` for own tables only), the visibility registry, the
+hooks, the host-generates-migrations rule, `example-feature` as the reference, the decisions table
+and the known gaps. Sections 5, 12, 13, 14 and 15 were corrected where A2 and A3 made them untrue.
+`docs/ADAPTING.md` §3 is rewritten around "write it as a plugin", and the layer rules
+(`.claude/rules/*.md`) and the per-directory `CLAUDE.md` files name the plugin slot beside the core
+location for each layer.
+
 ## How to apply
 
 Mechanical; no schema change and no new dependency. Take the new files whole
@@ -172,8 +186,8 @@ above. Three things the patch cannot do for you:
    with `--local` is committed, and every copy made from that commit inherits wiring for files it
    does not have.
 3. If you renamed the kit, your barrels are already in your own vocabulary — the upgrade translates
-   these files like any other source file, and a plugin you install later is translated on the way
-   in by `pnpm plugin add`.
+   these files like any other source file, and a plugin you install later will be translated on
+   the way in by `pnpm plugin add` (until that script lands, translate it as you copy it).
 
 **A3 asks two things of an app that kept the demo.** If you still have `example-feature` wired into
 your own `CORE_FEATURES`, `App.tsx`, `SideNav.tsx` and `jobs.ts`, you have a choice: take the plugin

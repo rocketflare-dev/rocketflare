@@ -75,3 +75,25 @@ Vitest, Node, no database (`.claude/rules/testing.md`). Build a `CommandContext`
 a no-op `open`, a memory `Output` (`createMemoryOutput`) and a config store in a temp dir
 (`ROCKETFLARE_CONFIG_DIR`); call the command function; assert the thrown `CliError.exitCode` and the parsed
 `--json` output. Never touch the real `~/.rocketflare`.
+
+## Plugins (D31) — `apps/cli/src/plugins/<id>/index.ts`
+
+A plugin that ships commands exports a `CliPlugin` — `{ shared, register(program, action) }` — and
+one line in `apps/cli/src/plugins/index.ts` adds it to `CLI_PLUGINS`. `cli.ts` loops over
+`cliPlugins` and calls `register` once each, **after** every kit command, so `rocketflare --help`
+lists them together and a plugin can never shadow `login`.
+
+- **The top-level command name is the plugin's id** (`rocketflare example-feature …`), which is what
+  keeps two installed plugins from claiming the same word. Sub-commands below it are the plugin's
+  own (`ping`, `notes list`)
+- **It registers with the host's `action()` wrapper**, so it inherits one context, one error printer
+  and the same exit codes (0 · 1 · 2 · 3). It throws `CliError`; it never prints an error, never
+  calls `process.exit`, and never reads `process.env` outside `config.ts`
+- **It owns no second copy of the contract**: it calls the plugin's own routes through
+  `requireClient(ctx).request(...)` and parses with the same `@rocketflare/shared/plugins/<id>`
+  schema the server validated with. `example-feature ping` POSTs the route that enqueues rather than
+  building an envelope, so producer validation and the `JOBS_QUEUE` binding stay on the server
+- `--json` on every list, key prefixes only, chalk to stdout and diagnostics to stderr — the rules
+  above apply unchanged. The two shipped examples are
+  `apps/cli/src/plugins/example-feature/index.ts`: `example-feature ping` (a write) and
+  `example-feature notes list` (the read-list shape with pagination)

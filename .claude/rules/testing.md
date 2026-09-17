@@ -219,3 +219,40 @@ Plain vitest, Node, no database. Test commands in-process through their exported
 `CommandContext` carrying a fake `fetch`, a no-op `open`, a memory output and a temp `ROCKETFLARE_CONFIG_DIR`;
 never touch the real `~/.rocketflare`. Assert `CliError.exitCode` and `--json` output shape (parsed with the
 `@rocketflare/shared` schema), never chalk-coloured text (`.claude/rules/cli.md`).
+
+## Plugin tests (D31)
+
+**A plugin tests its behaviour; the host tests that it is a well-formed plugin.** That division is
+the whole rule, and it is why neither half duplicates the other.
+
+- **A plugin's tests live inside it** — `src/plugins/<id>/tests/{api,ui,config}` — so installing or
+  removing one moves its tests with it and never touches `tests/`. `vitest.config.ts` discovers all
+  three: the `ui` and `config` projects by glob, and the api ones through the same `apiTestFiles()`
+  walk the kit's use, so **the `// @vitest-isolate` marker decides which api project a plugin file
+  lands in exactly as it does for a kit file** (first line, exact match, reason on line 2)
+- **A plugin's api test MUST carry a tenant-isolation case.** Its tables are tenant-scoped like any
+  other and the kit's own suites cannot see them:
+  `src/plugins/example-feature/tests/api/example-feature.test.ts` is the template — tenant B can
+  neither list, read nor delete tenant A's notes — beside the 404 feature gate, CRUD, ownership,
+  the hooks, the enqueue and the tool
+- **The host's structural suite is `tests/config/plugins.test.ts`**: ids are namespaces and never
+  contain the kit's name, query-key roots carry `<id>:`, nothing reaches INTO a plugin except
+  through its four published entries, and a plugin's `ui.ts` imports only from the allowlist and
+  reaches its pages only through `lazy(() => import(...))`. Every check is a pure function over
+  strings, exercised with FIXTURES as well as over whatever is installed — which is what keeps it
+  meaningful in a kit with no plugins. The `expectTypeOf` block at the end is checked by
+  `pnpm typecheck`, not at run time
+- `tests/config/shared-imports.test.ts` carries the leaf rule: `packages/shared/src/plugins/**`
+  never imports one of the five composers (`ai/agents.ts`, `jobs.ts`, `permissions.ts`,
+  `features.ts`, `realtime.ts`) **at runtime** — a whole-declaration `import type` is fine,
+  `import { type X } from` is not — because those five read the plugin barrel and two zod modules
+  in a cycle crash at module evaluation rather than failing to compile. All three spellings are
+  checked. `rls-coverage.test.ts` and `unscoped-allowlist.test.ts` union in each plugin's own
+  entries, so a plugin table still has to prove its policy
+- **A kit test must not borrow a plugin's keys.** `tests/config/features.test.ts` and
+  `tests/api/feature-flags.test.ts` register their own fixture flag now: the kit ships none,
+  `feature_flags.key` is platform state with `tenant_feature_overrides` cascading off it, and two
+  files resetting one key delete each other's rows across tenants. The API one is
+  `// @vitest-isolate` because it mutates the shared registry. For the same reason an assertion that
+  pinned the exact agent-tool list is a PREFIX assertion — a plugin's tools are appended after the
+  kit's three

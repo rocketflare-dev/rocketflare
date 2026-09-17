@@ -67,9 +67,13 @@ apps/web/          @rocketflare/web — wrangler*.toml, worker-configuration.d.t
 │                  middleware/ · auth/ · routes/ (thin) · cubes/ (drizzle-cube, tenant-scoped) · services/ (ai/,
 │                  agents/, fact-tables/, prompts.ts) · workflows/ · observability/ · utils/ · queues/ · durable-objects/
 │  src/dashboards/ TS dashboard templates → analytics_pages    src/ui/  React app
-│                  (per-dir CLAUDE.md: permissions, db/schema, dashboards, api/*, ui)
-apps/cli/          @rocketflare/cli — src/cli.ts, commands/*, api.ts (only fetch site), config.ts, login.ts
-packages/shared/   @rocketflare/shared — src/*.ts zod contracts, errors, pagination, permissions (CLAUDE.md)
+│  src/plugins/    D31 seam: types.ts + the server/ui/schema barrels (one line per installed plugin)
+│                  + each plugin's tree — `example-feature/` is vendored as the reference one
+│                  (per-dir CLAUDE.md: permissions, db/schema, dashboards, api/*, ui, plugins)
+apps/cli/          @rocketflare/cli — src/cli.ts, commands/*, api.ts (only fetch site), config.ts, login.ts,
+                   plugins/ (CLI_PLUGINS barrel + each plugin's commands)
+packages/shared/   @rocketflare/shared — src/*.ts zod contracts, errors, pagination, permissions,
+                   plugins/ (SharedPlugin + the SHARED_PLUGINS barrel + each plugin's contracts) (CLAUDE.md)
 scripts/           bootstrap.sh → bootstrap.mjs (9 steps), install.sh (curl one-liner), rename.mjs,
                    upgrade.mjs (port a kit release into a copy), release{,-check}.mjs, changelog-nudge.mjs, lib/
 .rocketflare.json  kit version + commit, the app's names, the replaceable-surface manifest
@@ -123,5 +127,9 @@ code-quality.md · cloudflare.md. Runbooks: @docs/DEPLOY.md · @docs/RLS.md
 - **Docs in sync**: a behaviour change updates CONCEPTS / SETUP / DEPLOY / rules in the same PR,
   **and adds an entry to `docs/upgrades/unreleased.md`** — copies of the kit absorb changes by
   reading those notes, so a change with no note never reaches them (CI and the tag gate enforce it)
+- **A plugin composes, it never redefines** (D31): it namespaces everything with its id (tables
+  `<id>_*`, job types `<id>.x`, query-key roots `<id>:…`, `/api/<id>`, CUSTOM events `<id>.` —
+  **never `kit.`**), reaches core only through the five barrels and its own four entries, and ships
+  no migration and no toml edit — the host generates the DDL; its bindings go in BOTH tomls
 - **Released history is never rewritten**: an adopted copy pins a kit commit in `.rocketflare.json`;
   a force-push to a released tag orphans every copy that came from it

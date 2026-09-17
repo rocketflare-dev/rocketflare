@@ -227,10 +227,45 @@ Components subscribe to query state, never to the socket; `WebSocketStatus` (hea
   `manage all` satisfies the CASL form, so they would see a nav item whose routes the server 404s.
   A `NavGuard` may be a LIST meaning AND, which is how a flag composes with a permission
   (`featureGuard(MY_FEATURE, { action: 'read', subject: 'Thing' })`) — the flag and the permission
-  stay two readable facts instead of one conflated subject. One const per feature in
-  `lib/feature-guards.ts` so the nav, the routes and the settings tabs cannot drift. All of it is
-  cosmetic: the gated code still ships in the bundle, and the server is the protection
+  stay two readable facts instead of one conflated subject. One const per feature, so the nav, the
+  routes and the settings tabs cannot drift — in `lib/feature-guards.ts` for an app's own flag
+  (the kit ships none there now; that file exports only `featureGuard`), and beside the route and
+  nav item it gates for a plugin's (D31). All of it is cosmetic: the gated code still ships in the
+  bundle, and the server is the protection
 - Forms validate with the `@rocketflare/shared` schema the server uses; show `FieldError` per field
 - Icons: `@heroicons/react`. No new UI library without a stated reason in the PR
 - `EnvironmentBadge` + `useEnvironmentTitle` read `APP_ENV`/`RELEASE_VERSION` from `/auth/session`;
   staging must look different from production
+
+## Plugins (D31) — `UiPlugin`, `src/plugins/ui.ts`
+
+A plugin's UI half is `apps/web/src/plugins/<id>/ui/index.ts`, and that file is the whole of what
+the eager shell sees. The rules follow from that one fact:
+
+- **`routes` are per tier** (`shell` — the default, inside `Layout` with a tenant — `noTenant`,
+  `public`) and every `Component` is `lazy(() => import('./pages/X'))`. A statically imported page
+  puts the plugin in the main bundle for readers who never open it; `tests/config/plugins.test.ts`
+  reads the SOURCE of the UI entry and enforces both halves — an import allowlist (`react`, the
+  heroicons set, `@rocketflare/shared/*`, `@/plugins/types`, `@/ui/components/SideNav`,
+  `@/ui/hooks/useNavGuard`, `@/ui/lib/feature-guards`; type-only imports are unrestricted because
+  they are erased) and "every dynamic `import()` is inside `lazy(() => …)`"
+- **The route's guard and its nav item's guard are the SAME object**, declared once beside them, so
+  a link can never point at a page its reader cannot open — `EXAMPLE_FEATURE_GUARD` is the pattern
+- **`nav` is a list of GROUPS**, spliced by `composeNav(CORE_NAVIGATION, …)`: `before: '<label>'`
+  inserts before that core group (the kit's own default is "Organisation"), and a group with no
+  `before` lands above it, which is where an app's own features go. A label that is not found
+  appends. The kit's nav literal is `CORE_NAVIGATION`; `navigationConfig` is the composed result,
+  and `filterNavConfig` is unchanged — plugin items obey the same guards
+- `settingsTabs(ctx)` appends tabs after the kit's (`ctx.can` is the caller's ability);
+  `agentForms` is the plugin's half of `AGENT_FORMS`
+- **`queryKeys` roots must start with `<id>:`** (checked by `plugins.test.ts`), so one plugin's
+  invalidation can never reach another's cache. The `entity.changed` convention is unchanged and is
+  what makes the socket wiring free: **the `entity` string of a nudge IS a query-key family root**,
+  so declare it once — `example-feature`'s `EXAMPLE_NOTES_ENTITY` is both the server's nudge entity
+  and the UI's family root — and `invalidationsFor()` covers it with no hook-side socket code
+- A plugin's own hooks read its `query-keys.ts` directly rather than the merged `queryKeys`: the
+  merge is for the HOST's benefit, and a plugin must behave the same whether it is the only one
+  installed or the fifth
+- **The demo `Example feature` nav item, its page and its notes CRUD are the `example-feature`
+  PLUGIN**, not kit files: `src/plugins/example-feature/ui/`. There is no `pages/ExampleFeature.tsx`
+  and no `EXAMPLE_FEATURE` const in `lib/feature-guards.ts` any more

@@ -4,7 +4,8 @@
  *
  *     export * from './approvals/db/schema'
  *
- * It is re-exported as the LAST line of `src/db/schema/index.ts`, which is the one surface
+ * It is re-exported by one `export *` line in `src/db/schema/index.ts` (its position there decides
+ * nothing — a name exported twice is TS2308, never a silent shadow), which is the one surface
  * `drizzle.config.ts`, `db/client.ts` (`typeof schema`) and `rls-coverage.test.ts` read. So a
  * plugin table is migrated, RLS-checked and typed exactly like a kit table, and a name collision
  * between two plugins is a TypeScript error rather than a silent shadow.
