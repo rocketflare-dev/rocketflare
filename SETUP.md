@@ -197,8 +197,8 @@ as the CLI.
 
 **With `--no-plugins` there is no analytics at all** — no nav item, no `/api/analytics`, no
 `/cubejs-api`, no `/mcp`, and no drizzle-cube in either bundle. That is the kit's bare shape, and
-`pnpm plugin add https://github.com/rocketflare-dev/rocketflare-plugin-analytics.git@1.0.1 --apply`
-(then `pnpm db:generate --name plugin-analytics-1.0.1 && pnpm db:migrate`) is how it comes back.
+`pnpm plugin add https://github.com/rocketflare-dev/rocketflare-plugin-analytics.git@1.0.2 --apply`
+(then `pnpm db:generate --name plugin-analytics-1.0.2 && pnpm db:migrate`) is how it comes back.
 
 > **Cookie note.** The session cookie is `__Host-session`, and the `__Host-` prefix *requires* the
 > `Secure` flag even in development. Chrome and Firefox treat `http://localhost` as a secure context so
