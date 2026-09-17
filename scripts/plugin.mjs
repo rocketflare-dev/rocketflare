@@ -52,6 +52,7 @@ import {
 import { pluginSurfaces, readManifest } from './lib/manifest.mjs'
 import {
   addBarrelLine,
+  applyCoreEdits,
   archiveSql,
   BARREL_KINDS,
   BARRELS,
@@ -59,6 +60,7 @@ import {
   buildPluginSurface,
   checkRequirements,
   classifyPluginFile,
+  coreEditsByFile,
   hasBarrelLine,
   isVendored,
   PLUGIN_MANIFEST_FILE,
@@ -69,6 +71,7 @@ import {
   removeBarrelLine,
   renderAddPlan,
   renderList,
+  revertCoreEdits,
   surfaceDirectories,
 } from './lib/plugin-lib.mjs'
 import { applyReplacements, deriveNames, isBinary } from './lib/rename-lib.mjs'
@@ -523,8 +526,19 @@ function cmdAdd(args, host) {
     const file = abs(BARRELS[kind].file)
     writeFileSync(file, addBarrelLine(readFileSync(file, 'utf8'), kind, m.id))
   }
+  // Core files the plugin declared but may not edit itself. The host writes them, exactly as
+  // `provision cloudflare` writes a declared binding — printing them as a "by hand" step left
+  // `pnpm build` broken for anyone who did not read the plan, `plugin-ci.yml` included.
+  const coreEdits = coreEditsByFile(m)
+  for (const [file, edits] of coreEdits) {
+    writeFileSync(abs(file), applyCoreEdits(readFileSync(abs(file), 'utf8'), edits))
+  }
   installDependencies(m, 'add')
-  const formatted = formatWritten([...targets, ...barrels.map(k => BARRELS[k].file)])
+  const formatted = formatWritten([
+    ...targets,
+    ...barrels.map(k => BARRELS[k].file),
+    ...coreEdits.keys(),
+  ])
   const recordedIn = recordSurface(
     host,
     buildPluginSurface(m, {
@@ -539,6 +553,9 @@ function cmdAdd(args, host) {
     '',
     `✔ ${written} file(s) copied${host.names ? ' and translated' : ''}`,
     `✔ ${barrels.length} barrel line(s) written`,
+    ...(coreEdits.size > 0
+      ? [`✔ core edit(s) applied to ${[...coreEdits.keys()].join(', ')}`]
+      : []),
     ...(formatted ? [`✔ ${formatted}`] : []),
     `✔ surface '${m.id}' recorded in ${path.relative(REPO_ROOT, recordedIn)}`,
     '',
@@ -976,11 +993,21 @@ function cmdRemove(args, host) {
     const file = abs(BARRELS[kind].file)
     writeFileSync(file, removeBarrelLine(readFileSync(file, 'utf8'), kind, id))
   }
+  // The exact inverse of what `add` wrote, so uninstalling does not strand an alias pointing at
+  // a directory that has just been deleted.
+  const removedEdits = coreEditsByFile(anchorManifest)
+  for (const [file, edits] of removedEdits) {
+    if (!existsSync(abs(file))) continue
+    writeFileSync(abs(file), revertCoreEdits(readFileSync(abs(file), 'utf8'), edits))
+  }
   const dropped = dropSurface(host, id)
   out(
     '',
     `✔ ${directories.length} director(ies) deleted`,
     `✔ ${barrels.length} barrel line(s) removed`,
+    ...(removedEdits.size > 0
+      ? [`✔ core edit(s) reverted in ${[...removedEdits.keys()].join(', ')}`]
+      : []),
     `✔ surface dropped from ${dropped.map(f => path.basename(f)).join(', ') || '(nowhere — it was not recorded)'}`,
     '',
     ...(tables.length > 0

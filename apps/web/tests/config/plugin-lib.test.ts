@@ -29,6 +29,7 @@ import {
 } from '../../../../scripts/lib/manifest.mjs'
 import {
   addBarrelLine,
+  applyCoreEdits,
   archiveSql,
   BARREL_KINDS,
   BARRELS,
@@ -38,6 +39,7 @@ import {
   camelId,
   checkRequirements,
   classifyPluginFile,
+  coreEditsByFile,
   hasBarrelLine,
   isVendored,
   PLUGIN_MANIFEST_FILE,
@@ -48,6 +50,7 @@ import {
   removeBarrelLine,
   renderAddPlan,
   renderList,
+  revertCoreEdits,
   SUPPORTED_PLUGIN_BINDING_TYPES,
   surfaceDirectories,
   tupleEntries,
@@ -211,6 +214,77 @@ describe('the barrel writer', () => {
  * tells you to run next — fails on a file the tool wrote. `rename.mjs` has the same problem and
  * solves it the same way.
  */
+describe('core edits a plugin declares', () => {
+  const VITE = `export default defineConfig({
+  server: {
+    proxy: {
+      '/api': proxyTo(),
+      '/ws': proxyTo('ws://localhost:3001', { ws: true }),
+    },
+  },
+  resolve: {
+    alias: {
+      '@': path.resolve(__dirname, './src'),
+    },
+    dedupe: ['react', 'react-dom'],
+  },
+})
+`
+  const edits = [
+    {
+      file: 'apps/web/vite.config.ts',
+      after: "'/ws': proxyTo(",
+      lines: ["'/cubejs-api': proxyTo(),", "'/mcp': proxyTo(),"],
+    },
+    {
+      file: 'apps/web/vite.config.ts',
+      after: "'@': path.resolve(",
+      lines: [
+        "'@nivo/heatmap': path.resolve(__dirname, './src/plugins/analytics/ui/lib/nivo-heatmap.tsx'),",
+      ],
+    },
+  ]
+
+  it('inserts each line after its anchor, at the anchor indentation', () => {
+    const out = applyCoreEdits(VITE, edits)
+    expect(out).toContain("      '/cubejs-api': proxyTo(),")
+    expect(out).toContain("      '/mcp': proxyTo(),")
+    expect(out).toContain("      '@nivo/heatmap': path.resolve(")
+    // the anchor line itself is untouched and still precedes what was inserted
+    expect(out.indexOf("'/ws': proxyTo(")).toBeLessThan(out.indexOf("'/cubejs-api'"))
+  })
+
+  it('is idempotent — applying twice changes nothing', () => {
+    const once = applyCoreEdits(VITE, edits)
+    expect(applyCoreEdits(once, edits)).toBe(once)
+  })
+
+  it('reverts to the original bytes — add then remove is a round trip', () => {
+    expect(revertCoreEdits(applyCoreEdits(VITE, edits), edits)).toBe(VITE)
+  })
+
+  it('throws, naming the file and the anchor, when the anchor has moved', () => {
+    // Silently skipping a missing anchor is the whole failure this replaces: the build breaks
+    // somewhere else entirely, with nothing pointing back at the plugin.
+    expect(() =>
+      applyCoreEdits(VITE, [
+        { file: 'apps/web/vite.config.ts', after: 'noSuchAnchor', lines: ['x'] },
+      ])
+    ).toThrow(/apps\/web\/vite\.config\.ts.*noSuchAnchor/s)
+  })
+
+  it("groups a manifest's edits by the file they touch", () => {
+    const byFile = coreEditsByFile({ coreEdits: edits })
+    expect([...byFile.keys()]).toEqual(['apps/web/vite.config.ts'])
+    expect(byFile.get('apps/web/vite.config.ts')).toHaveLength(2)
+  })
+
+  it('is empty for a manifest that declares none', () => {
+    expect(coreEditsByFile({}).size).toBe(0)
+    expect(applyCoreEdits(VITE, [])).toBe(VITE)
+  })
+})
+
 describe('translation and import order', () => {
   it('moves a scope past its neighbours in the sort', () => {
     const kitOrder = [`@heroicons/react/24/outline`, `@${KIT.slug}/shared/plugins/x/index`]

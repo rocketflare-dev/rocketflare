@@ -232,6 +232,74 @@ export function removeBarrelLine(text, kind, id) {
   return next
 }
 
+/**
+ * A plugin's edits to a CORE file, applied and reversed (D31, decision 12's sibling).
+ *
+ * A plugin owns four directories and edits no core file — that rule is what lets two plugins share
+ * one app. But some need a line in one: the analytics plugin cannot render at all unless
+ * `apps/web/vite.config.ts` aliases `@nivo/heatmap` to the stub it ships, because drizzle-cube's
+ * heat-map chunk names that OPTIONAL peer and Rollup fails the whole build without it.
+ *
+ * Printing the line as a "by hand" step left `pnpm build` failing for anyone who did not read the
+ * plan — including `plugin-ci.yml`, which runs the gate unattended and applies nothing. So a
+ * plugin DECLARES the edit and the host writes it, exactly as `bindings[]` declares a resource
+ * that `provision cloudflare` writes: the plugin still edits nothing, and the host still owns
+ * every byte of its own files.
+ *
+ * An edit is `{ file, after, lines }` — insert `lines` on the line following the first occurrence
+ * of `after`, at that anchor's indentation. Anchored rather than positional because a core file
+ * moves underneath a plugin between kit releases, and a line number would silently land in the
+ * wrong block.
+ *
+ * Idempotent (a line already present is left alone), and `revertCoreEdits` is its exact inverse,
+ * so add → remove returns the original bytes. A missing anchor THROWS with the file and the text
+ * it looked for: silently skipping it produces a build failure somewhere else entirely, which is
+ * the failure mode this whole function exists to remove.
+ */
+export function applyCoreEdits(text, edits) {
+  let next = text
+  for (const edit of edits) {
+    const anchorIndex = next.split('\n').findIndex(l => l.includes(edit.after))
+    if (anchorIndex === -1) {
+      throw new Error(
+        `core edit for ${edit.file}: no line contains ${JSON.stringify(edit.after)} — ` +
+          'the anchor moved, so the kit and the plugin disagree about this file'
+      )
+    }
+    const lines = next.split('\n')
+    const indent = lines[anchorIndex].match(/^\s*/)[0]
+    const missing = edit.lines.filter(l => !lines.some(existing => existing.trim() === l.trim()))
+    if (missing.length === 0) continue
+    lines.splice(anchorIndex + 1, 0, ...missing.map(l => `${indent}${l}`))
+    next = lines.join('\n')
+  }
+  return next
+}
+
+/** The exact inverse of `applyCoreEdits`: a round trip returns the original bytes. */
+export function revertCoreEdits(text, edits) {
+  let next = text
+  for (const edit of edits) {
+    for (const line of edit.lines) {
+      next = next
+        .split('\n')
+        .filter(existing => existing.trim() !== line.trim())
+        .join('\n')
+    }
+  }
+  return next
+}
+
+/** Every core edit a manifest declares, grouped by the file it touches. */
+export function coreEditsByFile(manifest) {
+  const byFile = new Map()
+  for (const edit of manifest.coreEdits ?? []) {
+    if (!byFile.has(edit.file)) byFile.set(edit.file, [])
+    byFile.get(edit.file).push(edit)
+  }
+  return byFile
+}
+
 const dropLine = (text, line) =>
   text
     .split('\n')
@@ -560,6 +628,14 @@ export function renderAddPlan(plan) {
         .map(([n, v]) => `${n}@${v}`)
         .join(' ')}`
     )
+  }
+
+  const declaredEdits = m.coreEdits ?? []
+  if (declaredEdits.length > 0) {
+    lines.push('', 'Core files (applied for you — a plugin may not edit these itself)')
+    for (const [file, edits] of coreEditsByFile(m)) {
+      lines.push(`  ${pad(file, 44)}${edits.flatMap(e => e.lines).length} line(s)`)
+    }
   }
 
   lines.push('', 'Then, by hand — nothing below is done for you')

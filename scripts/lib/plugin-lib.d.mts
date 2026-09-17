@@ -28,6 +28,19 @@ export function tupleEntries(text: string, constName: string): string[]
 export function addBarrelLine(text: string, kind: BarrelKind, id: string): string
 export function removeBarrelLine(text: string, kind: BarrelKind, id: string): string
 
+/** One line a plugin declares for a core file it may not edit itself (D31). */
+export interface CoreEdit {
+  /** Repo-relative path of the core file, e.g. `apps/web/vite.config.ts`. */
+  file: string
+  /** Insert after the first line CONTAINING this text; anchored, never a line number. */
+  after: string
+  /** The line(s) to insert, at the anchor's indentation. */
+  lines: string[]
+}
+export function applyCoreEdits(text: string, edits: CoreEdit[]): string
+export function revertCoreEdits(text: string, edits: CoreEdit[]): string
+export function coreEditsByFile(manifest: { coreEdits?: CoreEdit[] }): Map<string, CoreEdit[]>
+
 export type FileRole = 'copy' | 'note' | 'fragment' | 'meta' | 'repo-only' | 'refused'
 export const FILE_ROLES: readonly FileRole[]
 export function pluginRoots(id: string): string[]
