@@ -214,8 +214,8 @@ the API prefix `/api/<id>`, query-key roots `<id>:…`, the CLI command `<id>`, 
 `apps/web/src/plugins/example-feature/CLAUDE.md` for the example, and remember the two things a
 plugin never does: **it ships no migration** (the HOST runs `pnpm db:generate --name
 plugin-<id>-<version>` once its schema barrel line is in place) and **it edits no toml** (a binding,
-cron or `[vars]` key it declares is added to both files by hand until Phase B's provisioning reads
-them).
+cron, route prefix or `[vars]` key it declares in `plugin.json` is written into BOTH files by
+`pnpm provision cloudflare <env>`; a `secret: true` var goes in through `provision secrets <env>`).
 
 Long-running work inside a feature: enqueue on `JOBS_QUEUE` (< 30 s) or create a Workflow
 instance; never run it in the route.

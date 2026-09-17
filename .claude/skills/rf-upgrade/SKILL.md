@@ -20,9 +20,13 @@ those files before you see them. If you find yourself typing out a file the plan
 
 ```
 git status --short && node -e "const m=require('./.rocketflare.json');console.log(m.kit.name,m.kit.version,m.kit.commit??'(no commit)')"
+pnpm plugin list
 ```
 
-Expect a clean tree and a kit name, version and commit. A dirty tree: ask them to commit or stash —
+Expect a clean tree, a kit name, version and commit, and either `No plugins installed.` or one line
+per installed plugin. **Say which plugins are installed before you plan** — a plugin has its own
+repository and its own release chain, the kit diff never touches a byte one owns, and each is a
+separate `pnpm plugin upgrade` AFTER this (step 6). A dirty tree: ask them to commit or stash —
 the upgrade should be one reviewable diff. **No `.rocketflare.json`:** this copy predates the
 upgrade path. Find the commit it started from and stamp it, then continue:
 
@@ -44,6 +48,26 @@ three or four lines: which versions they are crossing, what each release note sa
 files apply cleanly, and what has been skipped **and why**. A large `skipped-locally-deleted` or
 `skipped-surface-absent` count is the normal, healthy case for an app that followed
 `docs/ADAPTING.md` §2 — say so rather than reporting it as a problem.
+
+Two plugin things can appear here — one a class, one an annotation — and neither is a problem to
+route around:
+
+- **`skipped-plugin-owned`** (a class) — files an installed plugin owns. The script drops them because the
+  plugin's own repository is what moves them, so the count is health, exactly like the other skips.
+  The report names the plugins and says to run `pnpm plugin upgrade <id>` after this.
+- **`touches-plugin-registry`** (an annotation on an otherwise ordinary `modified` file, listed as
+  `<path> — <plugin ids>`) — the kit changed a file an installed plugin also writes a line into. The five barrels are shared, so the kit CAN move ground under a plugin. **Apply the kit
+  change, then check the plugin's line survived it** (`pnpm plugin check` is the fastest proof).
+
+And one hard stop: **exit 6 — an installed plugin does not support the target kit version.** Its
+`requires.kit` range excludes it, and nothing is written. Do not reach for `--force` first. Put the
+three honest answers to the user and let them choose:
+
+1. **stay** on this kit version until the plugin ships a release that supports the next one;
+2. **`pnpm plugin remove <id>`** first — it takes that plugin's tables with it, so `--archive` is
+   the conversation to have before, not after;
+3. **`pnpm kit:upgrade --force`** with eyes open — the plugin is then running against a kit its
+   author never tested it on, and whatever breaks is yours to fix.
 
 If more than one release is in range, ask whether to go all the way or stop at one. Going one
 release at a time, committing each, is easier to review and easier to abandon.
@@ -86,11 +110,28 @@ pnpm install && pnpm types && pnpm lint && pnpm typecheck && pnpm test && pnpm b
 Expect exit 0. Then commit — one commit per kit release, message `Upgrade to kit <version>`, so the
 next upgrade can be read against it.
 
-## 6. Hand back
+## 6. Then upgrade each plugin — separately, and after the kit
+
+A plugin is not part of this diff and never was. Once the kit's release is committed and green,
+hand off to **`/rf-plugin`** (or do it directly) once per installed plugin:
+
+```
+pnpm plugin upgrade <id>            # the plan — read it, as with the kit
+pnpm plugin upgrade <id> --apply
+```
+
+Three things carry over from this skill unchanged: **exit 4 means rejects remain**, and the script
+deliberately withholds the new version stamp until they are resolved; **a migration is never
+copied** — `pnpm db:generate --name plugin-<id>-<version>` writes yours; and **a vendored plugin**
+(one whose `source.repo` is the kit's own repository) answers *"upgrade it with `pnpm kit:upgrade`"*
+and does nothing, because the kit release you just applied is what moved it. Finish with
+`pnpm plugin check`.
+
+## 7. Hand back
 
 End the turn with `AskUserQuestion`, not a paragraph — the same as `/rf-adapt` does. The choices
-after an upgrade are: **run it** (`pnpm dev`), **do the next release** if more are in range,
-**review the diff** together, or **stop**.
+after an upgrade are: **run it** (`pnpm dev`), **upgrade the plugins** (step 6, via `/rf-plugin`),
+**do the next release** if more are in range, **review the diff** together, or **stop**.
 
 ## Rules
 
@@ -100,6 +141,10 @@ after an upgrade are: **run it** (`pnpm dev`), **do the next release** if more a
 - **Never write a resource id into a wrangler toml.** A new binding goes in with its
   `<PLACEHOLDER>`; `pnpm provision cloudflare <env>` fills it.
 - **Never apply the kit's deletions** without asking — the adopter may have built on that file.
+- **Never hand-write a file a plugin owns**, and never resolve a `touches-plugin-registry` row by
+  deleting the plugin's barrel line. `pnpm plugin` owns those five files.
+- **Never `--force` past exit 6 without the user saying so**, in those words. It runs a plugin
+  against a kit version its author never tested it on.
 - **Never squash the releases into one commit.** The per-release commit is what makes the next
   upgrade legible.
 - Do not edit `.rocketflare.json` by hand. The script writes it, last, only when the apply is clean.

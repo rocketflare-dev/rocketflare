@@ -16,13 +16,55 @@ deliberately refuses to do automatically, and why doing it the obvious way goes 
 | `skipped-surface-absent` | belongs to a surface this app deleted | **nothing. Ever.** |
 | `skipped-locally-deleted` | the adopter deleted this file | nothing |
 | `skipped-kit-only` | the kit's own identity: LICENSE, SECURITY.md, install.sh, the rename tool | nothing |
+| `skipped-plugin-owned` | a file an installed plugin owns — see below | **nothing here.** `pnpm plugin upgrade <id>`, after this |
 | `migration-derived` | `apps/web/migrations/**` | regenerate — see below |
 | `manual-toml` / `manual-env` | wrangler tomls, `.dev.vars.example`, `.env.test` | see below |
 | `manual` | README, CI workflows, `package.json` | read the diff in `reference/`, apply what they want |
 | `binary` | not text | copy by hand if wanted |
 
+Plus one **annotation** that is not a class: a file of any class may also carry
+`touchesPluginRegistry: [<plugin ids>]`, and the report lists those under a
+`touches-plugin-registry` heading as `<path> — <ids>`.
+
 A high skipped count is health, not damage. `docs/ADAPTING.md` §2 tells every adopter to delete the
 example agents, cubes and CLI commands; those deletions are what the skipped counts are made of.
+
+## Plugins — `skipped-plugin-owned`, and the one place the two diffs meet
+
+A plugin (D31, `docs/CONCEPTS.md` §16) is a separate git repository copied into this app, with its
+own version, its own release notes and its own upgrade command. So **a kit diff never touches a byte
+a plugin owns** — `classifyPath` drops every file under an installed plugin's surface as
+`skipped-plugin-owned` and names the plugins in the report. That count is reported rather than
+silently dropped because *"the kit changed nothing here"* and *"the kit is not allowed to change
+anything here"* are different answers, and only the second one means "go and run
+`pnpm plugin upgrade <id>`".
+
+The two diffs meet in exactly one place: **the five barrels**
+(`apps/web/src/plugins/{server,ui,schema}.ts`, `packages/shared/src/plugins/index.ts`,
+`apps/cli/src/plugins/index.ts`). They are the kit's own files, so a kit release may change them —
+but each installed plugin has written one line into each, and it names them in its manifest's
+`registries[]`. Hence the `touches-plugin-registry` annotation. **Apply the kit change, then prove
+the plugin's line survived it**:
+
+```
+pnpm plugin check
+```
+
+Never resolve one of these by deleting the plugin's line to make the patch apply cleanly: that
+silently uninstalls half a plugin — the directories stay, the wiring goes, and the only symptom is
+a feature that no longer exists. If the kit's change and the plugin's line genuinely cannot
+coexist, that is a plugin release's job, not yours.
+
+**Exit 6 — an installed plugin does not support the target kit version.** Its `requires.kit` range
+excludes the version being ported and nothing is written. The three honest answers are: stay on this
+kit version, `pnpm plugin remove <id>` first (which takes its tables — decide about `--archive`
+BEFORE, not after), or `--force` with eyes open. `--force` runs the plugin against a kit its author
+never tested it on.
+
+Migrations follow the same rule as the kit's, for the same reason: a plugin ships none, and the host
+runs `pnpm db:generate --name plugin-<id>-<version>`. And a **vendored** plugin — `source.repo`
+equal to the kit's own repository with no subdirectory — is upgraded BY this kit upgrade;
+`pnpm plugin upgrade` on one says so and does nothing.
 
 ## Migrations — the sharpest trap
 

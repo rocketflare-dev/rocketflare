@@ -255,3 +255,58 @@ export function checkoutTag(absolutePath) {
   for (const char of String(absolutePath)) hash = ((hash * 33) ^ char.charCodeAt(0)) >>> 0
   return hash.toString(36).padStart(7, '0').slice(0, 7)
 }
+
+/**
+ * What the bootstrap's `plugins` step has to do, given `.rocketflare.json`'s `defaultPlugins` and
+ * the ids already installed (D31).
+ *
+ * Pure, because the interesting part is the arithmetic and not the copying: an entry whose id is
+ * already a surface is SKIPPED rather than re-added (a second `pnpm plugin add` of an installed
+ * plugin is exit 7), the rest become one `pnpm plugin add <repo>[@ref] [--subdir d] --apply` each,
+ * and a malformed entry is a sentence rather than a crash — `defaultPlugins` is hand-edited, and a
+ * typo in it must not be the thing that stops a first run.
+ *
+ * The entry shape is an object, not a bare URL, because the step has to answer "is this one
+ * already here?" BEFORE fetching anything, and only the id can answer that.
+ */
+export function planDefaultPlugins(entries, installedIds = []) {
+  const installed = new Set(installedIds)
+  const install = []
+  const skipped = []
+  const problems = []
+  for (const entry of entries ?? []) {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+      problems.push(`defaultPlugins entry is not an object: ${JSON.stringify(entry)}`)
+      continue
+    }
+    const { id, repo, ref, subdir } = entry
+    if (typeof id !== 'string' || id.length === 0) {
+      problems.push(`defaultPlugins entry has no id: ${JSON.stringify(entry)}`)
+      continue
+    }
+    if (typeof repo !== 'string' || repo.length === 0) {
+      problems.push(`defaultPlugins entry '${id}' has no repo`)
+      continue
+    }
+    if (installed.has(id)) {
+      skipped.push(id)
+      continue
+    }
+    const spec = ref ? `${repo}@${ref}` : repo
+    install.push({
+      id,
+      spec,
+      // `--allow-dirty`: from the second plugin on, the previous one's `db:generate` has left
+      // migration files in the tree, and the install must not refuse its own earlier step.
+      args: [
+        'plugin',
+        'add',
+        spec,
+        ...(subdir ? ['--subdir', subdir] : []),
+        '--apply',
+        '--allow-dirty',
+      ],
+    })
+  }
+  return { install, skipped, problems }
+}

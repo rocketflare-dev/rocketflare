@@ -19,6 +19,12 @@ known risks, the manual path) is in `reference.md` next to this file.
 Prerequisites: `/rf-setup` Part 1 has passed locally and, on a fresh copy, `/rf-adapt` has renamed the
 app (the script reads the app name from `apps/web/wrangler.toml`, never a literal).
 
+**Install the plugins first.** Every phase reads the plugins that are installed *now*: `cloudflare
+<env>` creates their bindings and writes their declarations into both tomls, and `secrets <env>`
+offers their secret `vars`. Adding a plugin afterwards means re-running those two phases (they are
+idempotent, so that is cheap — but it is a re-run, not automatic). Run `pnpm plugin list` before you
+start and say what it shows; `/rf-plugin` installs one.
+
 ## Step 0 — accounts and tokens (the user does this, not you)
 
 **Before anything: three accounts you create yourself** (no script can):
@@ -105,12 +111,12 @@ re-running `all` afterwards is safe.
 | `preflight` | tokens, tools, accounts, answers; every custom host and the sending domain resolved to a zone on the account, DNS readable | missing token → step 0; `gh` not logged in → the user runs `gh auth login` themselves; "not on this Cloudflare account" → step 0 (1), or `workers.dev` + `--skip-email`; "cannot read DNS records" → the token lacks `Zone: DNS — Edit` on that zone |
 | `email create` | Resend domain + DNS records in your Cloudflare zone, `EMAIL_FROM` in both tomls | "no Cloudflare zone" → the apex domain must be in this Cloudflare account (or `--skip-email`) |
 | `neon` | project + `staging` branch, `SELECT 1` on both | region name wrong → `--region`; 412 password storage → it resets the password itself |
-| `cloudflare staging/production` | Hyperdrive, KV, Queue, R2; ids patched into the toml | "Hyperdrive requires Workers Paid" → upgrade the plan at the printed URL; "already has id" → `--force` only if you know the old resource is gone |
+| `cloudflare staging/production` | Hyperdrive, KV, Queue, R2; ids patched into the toml — **plus every installed plugin's declared bindings, crons, route prefixes and non-secret `[vars]`**, written into BOTH tomls (D31) | "Hyperdrive requires Workers Paid" → upgrade the plan at the printed URL; "already has id" → `--force` only if you know the old resource is gone; a plugin binding whose `type` is not `kv`/`queue`/`r2` is refused by name at install time, not here |
 | `migrate <env>` | migrations on that branch, count == journal | a schema error is a code problem — do not retry blindly |
 | `github <env>` | GitHub Environment + `DATABASE_URL`, `CLOUDFLARE_*` secrets | `gh` needs `repo` scope; the remote must be GitHub |
 | `urls` | `APP_URL` + `routes` (custom host) or `workers.dev` in both tomls; parity test | "no workers.dev subdomain" → pick one in the Cloudflare dashboard once |
 | `deploy <env>` | `pnpm deploy[:staging]`, then `/api/health` and `/api/ready` | `/api/ready` 503 → Hyperdrive cannot reach Neon: wrong host / SSL; re-run `cloudflare <env> --force` after checking |
-| `secrets <env>` | `OAUTH_ENCRYPTION_KEY` (generated) + every optional secret in the environment or `apps/web/.provision.env` | nothing to fix; unset ones are listed as skipped |
+| `secrets <env>` | `OAUTH_ENCRYPTION_KEY` (generated) + every optional secret in the environment or `apps/web/.provision.env` — **including every installed plugin's `vars` marked `secret`**, from the same two places | nothing to fix; unset ones are listed as skipped. A plugin secret that is skipped means the plugin 503s at runtime rather than reading a blank string as configured — add it to `apps/web/.provision.env` and re-run this phase |
 | `email verify <env>` | Resend verification (polls ≤ 10 min), mints a sending key into `RESEND_API_KEY` | "DNS still propagating" → wait and re-run `pnpm provision email verify <env>` later |
 
 `pnpm provision email status` shows each DNS record's presence when verification stalls.

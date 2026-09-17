@@ -28,13 +28,13 @@ Engine and add your user to the `docker` group. Confirm the tool works, then car
 ## Part 1 — First run (local) `[ready]`
 
 > **The short way.** `bash scripts/bootstrap.sh` (or `/rf-setup` in Claude Code; `pnpm bootstrap` once
-> Node and pnpm exist) does 1.1–1.7 in one go — nine steps, one `✔ n/9 <name> <what it verified>`
+> Node and pnpm exist) does 1.1–1.7 in one go — ten steps, one `✔ n/10 <name> <what it verified>`
 > line each, a `✖` line plus a `fix:` hint on the first failure — and ends with the browser open at
 > `http://localhost:3000/login?as=owner@example.test`. macOS or Linux (Windows: WSL2). Re-runnable on
 > a half-done machine: it inspects before it acts and never overwrites a value you wrote. Flags:
 > `--offline` (no Cloudflare account: comments the `[ai]` block out of both tomls), `--online`
-> (restore it), `--no-demo` (plain `pnpm seed`), `--no-dev` (stop after step 7 and print what to run
-> next), `--no-open`,
+> (restore it), `--no-demo` (plain `pnpm seed`), `--no-plugins` (do not install `defaultPlugins`,
+> §1.4b), `--no-dev` (stop after step 8 and print what to run next), `--no-open`,
 > `--as <email>`, `--yes`, `--verbose`; `--check` is `pnpm preflight`.
 > Exit codes: `0` ok · `1` a step failed · `2` usage · `3` prerequisite missing · `4` port/container
 > held by another checkout · `5` Cloudflare login required
@@ -97,6 +97,35 @@ and `wrangler dev` through `CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_HYPERD
 Why three steps: a policy's `TO rocketflare_app` needs the role
 before migrations; the `REVOKE`s need the tables after. With `APP_DATABASE_URL` unset the role is
 created `NOLOGIN` and RLS stays inert ([`docs/RLS.md`](docs/RLS.md)).
+
+### 1.4b Plugins `[ready]`
+```bash
+pnpm plugin list                  # what is installed (id, version, repo, when)
+pnpm plugin check                 # audit them: exit 1 with one line per failure
+```
+A **plugin** is a git repository copied into this app — never an npm package — that contributes
+contracts, schema, routes, jobs, agents, UI and CLI commands through five barrel files
+(`docs/CONCEPTS.md` §16). `.rocketflare.json`'s `defaultPlugins` lists the ones a fresh clone should
+have; the bootstrap's `6/10 plugins` step installs each one that is not already there with
+`pnpm plugin add <repo> --apply`, then generates and applies its migration:
+
+```bash
+pnpm plugin add <repo|path>[@ref]          # prints the plan and stops
+pnpm plugin add <repo|path>[@ref] --apply  # copies, writes the barrel lines, records the surface
+pnpm db:generate --name plugin-<id>-<version> && pnpm db:migrate   # the HOST's migration, always
+```
+
+**It runs before the seed on purpose**: a plugin can contribute demo data, so installing one after
+`pnpm seed` leaves the demo workspace missing exactly the rows it exists to show. `pnpm bootstrap
+--no-plugins` skips the step; an id already installed is skipped anyway, so a re-run is safe.
+
+Verify: `pnpm plugin list` shows a line per plugin (the kit ships the vendored `example-feature`),
+and `pnpm plugin check` prints `✔ n plugin(s) check out` and exits 0. `defaultPlugins` is `[]` in
+the kit today, so the bootstrap step reports `no defaultPlugins declared — nothing to install`.
+
+A plugin ships **no migration and no toml edit**: the host runs `pnpm db:generate`, and a binding,
+cron or `[vars]` key it declares is written into both tomls by `pnpm provision cloudflare <env>`
+(Part 3). `/rf-plugin` drives all of it and always shows the plan before anything is written.
 
 ### 1.5 Seed
 ```bash

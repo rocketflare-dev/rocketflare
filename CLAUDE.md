@@ -7,10 +7,15 @@ Cloudflare Worker (`apps/web`), a CLI (`apps/cli`), private zod contracts
 > **How it works**: @docs/CONCEPTS.md — one section per subsystem with its known gaps. **Check it
 > before assuming a capability exists; update it when you change one.**
 > **Setup**: asked for setup help → run `/rf-setup` (it drives `scripts/bootstrap.sh --no-dev`, then
-> starts the server): show each `✔ n/9` line, stop on failure. By hand: @SETUP.md Part 1.
-> **Fresh copy?** `/rf-adapt <slug>`, then @docs/ADAPTING.md. `/rf-setup`, `/rf-adapt` and `/rf-preflight` you
+> starts the server): show each `✔ n/10` line, stop on failure. By hand: @SETUP.md Part 1.
+> **Fresh copy?** `/rf-adapt <slug>`, then @docs/ADAPTING.md. `/rf-setup`, `/rf-adapt`, `/rf-preflight`
+> and `/rf-plugin` you
 > may run yourself; **`/rf-provision` is user-invoked only** (it creates paid resources and prompts for
 > tokens on a TTY) — asked to deploy, tell the user to run `/rf-provision`.
+> **Plugins** (D31, @docs/CONCEPTS.md §16): a plugin is a git repository copied in, wired through five
+> barrels — `pnpm plugin add|upgrade|remove|list|check`, driven by `/rf-plugin`, which always shows the
+> plan before `--apply`. `.rocketflare.json`'s `defaultPlugins` is what a fresh clone installs
+> (bootstrap step `6/10 plugins`).
 > **Copies of the kit upgrade.** `.rocketflare.json` records the kit version, the app's names and the
 > manifest of replaceable surfaces; `/rf-upgrade` ports later releases into a copy and never
 > recreates a surface whose anchor file is gone. **A behaviour change here needs an entry in
@@ -79,7 +84,8 @@ scripts/           bootstrap.sh → bootstrap.mjs (9 steps), install.sh (curl on
 .rocketflare.json  kit version + commit, the app's names, the replaceable-surface manifest
 docs/upgrades/     one porting note per kit release (+ unreleased.md) — CHANGELOG.md is the index
 .claude/skills/    rf-setup · rf-preflight · rf-adapt (+ checklist.md) · rf-provision (+ reference.md) ·
-                   rf-how-do-i (+ example-orders.md) · rf-upgrade (+ porting.md — port later kit releases)
+                   rf-how-do-i (+ example-orders.md) · rf-upgrade (+ porting.md — port later kit releases) ·
+                   rf-plugin (+ reference.md — install/upgrade/remove a plugin, D31)
 ```
 
 **`packages/shared`.** Private, no build: `@rocketflare/shared/<module>` → `./src/<module>.ts` (incl. `ai/*`,

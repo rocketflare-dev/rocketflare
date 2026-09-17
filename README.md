@@ -26,7 +26,9 @@ here. Cut loose is not cut off: your copy keeps a `.rocketflare.json` saying whe
 toolchain, starts Postgres, migrates, seeds the demo workspace and leaves you signed in, showing one
 verification line per step. Then **`/rf-adapt <slug> "Your App"`** renames the kit to your app, and
 **`/rf-provision`** deploys it (you type that one yourself: it creates paid resources and prompts for
-vendor tokens). Later, when the kit has moved on, **`/rf-upgrade`**.
+vendor tokens). **`/rf-plugin`** installs a capability as a plugin — a git repository copied into your
+app, with the plan shown before anything is written. Later, when the kit has moved on,
+**`/rf-upgrade`**.
 
 **One command.** Read [`scripts/install.sh`](scripts/install.sh) first — it is short — then:
 
@@ -169,7 +171,7 @@ there list every known gap.
 | [`docs/DEPLOY.md`](docs/DEPLOY.md) | Cloudflare topology, the two tomls, resources, release dance, rollback, bundle size |
 | [`docs/RLS.md`](docs/RLS.md) | tenant isolation posture and how to turn row-level security on |
 | `.claude/rules/*.md` | layer conventions (api, database, ui, cli, testing, code-quality, cloudflare) — auto-loaded by path |
-| `.claude/skills/` | the slash commands a coding agent drives: `/rf-setup` (first run), `/rf-preflight` (read-only diagnosis), `/rf-adapt` (rename + checklist), `/rf-how-do-i` (coaching for a new feature — asks, plans, writes `docs/features/<slug>.md`, never the code), `/rf-upgrade` (port later kit releases into your copy) — an agent may run those when you ask in plain words — and `/rf-provision` (deploy to Cloudflare + Neon + Resend), which only you can start: it creates paid resources and prompts for tokens |
+| `.claude/skills/` | the slash commands a coding agent drives: `/rf-setup` (first run), `/rf-preflight` (read-only diagnosis), `/rf-adapt` (rename + checklist), `/rf-how-do-i` (coaching for a new feature — asks, plans, writes `docs/features/<slug>.md`, never the code), `/rf-upgrade` (port later kit releases into your copy), `/rf-plugin` (install, upgrade, remove or audit a plugin) — an agent may run those when you ask in plain words — and `/rf-provision` (deploy to Cloudflare + Neon + Resend), which only you can start: it creates paid resources and prompts for tokens |
 
 ## Provenance
 

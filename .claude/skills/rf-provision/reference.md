@@ -43,7 +43,7 @@ Optional Worker secrets copied by `pnpm provision secrets <env>` when exported o
 | email create | Resend `GET/POST /domains`, `GET /domains/{id}`; Cloudflare `GET /zones?name=`, `GET/POST/PUT /zones/{zone}/dns_records`; `patch-toml` (`EMAIL_FROM`) |
 | email verify | Resend `POST /domains/{id}/verify`, `GET /domains/{id}` (poll ≤ 10 min), `POST /api-keys` (`sending_access`, `domain_id`); `wrangler secret put RESEND_API_KEY` (stdin) |
 | neon | `GET/POST /projects` (+ operations polling), `GET/POST /projects/{id}/branches`, `…/branches/{b}/{endpoints,databases,roles}`, `…/roles/{r}/reveal_password` or `reset_password`; `SELECT 1` with the `postgres` package |
-| cloudflare | `scripts/cf-provision.sh <env> --apply` → `wrangler hyperdrive create`, `kv namespace create`, `queues create`, `r2 bucket create`; `patch-toml` (ids); `REQUIRE_PROVISIONED=1 pnpm web test:config` once both tomls are done |
+| cloudflare | `scripts/cf-provision.sh <env> --apply` → `wrangler hyperdrive create`, `kv namespace create`, `queues create`, `r2 bucket create`; `patch-toml` (ids, and every installed plugin's declarations); `REQUIRE_PROVISIONED=1 pnpm web test:config` once both tomls are done |
 | migrate | `DATABASE_URL=… pnpm db:migrate:ci`; `SELECT count(*) FROM drizzle.__drizzle_migrations` vs `migrations/meta/_journal.json` |
 | github | `gh api -X PUT repos/{owner}/{repo}/environments/{env}`, `gh secret set NAME -e env` (value on stdin), `gh secret list -e env --json name` |
 | urls | Cloudflare `GET /accounts/{id}/workers/subdomain` (when `workers.dev`); `patch-toml` (`APP_URL`, `routes`); parity test |
@@ -55,6 +55,24 @@ plugin's `plugin.json` declares in `bindings[]`, named **`<app>-<id>-<name>[-sta
 **`<APP>_<ID>_<NAME>[_STAGING]`** for a KV namespace, mirroring the kit's own
 `<APP>_RATE_LIMIT[_STAGING]`. `binding` is identical in both tomls; only the resource name carries
 the environment suffix.
+
+What that means phase by phase, and what it deliberately does not do:
+
+- The phase prints `plugins: <id>, <id> → <BINDING>=<name>, …` before it creates anything, then
+  `<toml>: plugin declarations written` (or `unchanged`) **per toml**. Both files always, because
+  the parity test compares binding names and `[vars]` KEYS across them.
+- It writes the plugin's `crons[]`, `apiPrefixes[]` and non-secret `vars[]` into both tomls too —
+  the same `patch-toml.ts` string-level writer the kit's own ids use, so every comment survives.
+- **Supported binding types are `kv`, `queue` and `r2`, and that is the whole list.** `hyperdrive`
+  is deliberately absent: it needs a connection string, it is the host's one database, and the
+  binding already exists. An unsupported type is refused at `pnpm plugin add`, naming the type —
+  the alternative is a plugin that deploys and 503s on its first request.
+- A `vars[]` entry marked `secret: true` is **never** a `[vars]` key, not even in staging: it is a
+  Worker secret, offered by `secrets <env>` from an exported variable first, then
+  `apps/web/.provision.env`. An unset one is SKIPPED rather than written blank.
+- **Nothing is ever deprovisioned.** `pnpm plugin remove` prints the toml blocks and the Cloudflare
+  resources to remove and removes neither — a resource something else has meanwhile started using
+  is a broken deploy no re-run can undo.
 
 API references: Neon https://api-docs.neon.tech/reference/ · Resend https://resend.com/docs/api-reference/
 · Cloudflare https://developers.cloudflare.com/api/ · wrangler https://developers.cloudflare.com/workers/wrangler/commands/

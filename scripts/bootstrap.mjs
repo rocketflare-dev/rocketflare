@@ -1,21 +1,21 @@
 #!/usr/bin/env node
 /**
  * One-shot first run (`pnpm bootstrap`, or `bash scripts/bootstrap.sh` when Node/pnpm may be
- * missing): nine steps from a fresh clone to a running stack with the browser signed in — the
+ * missing): ten steps from a fresh clone to a running stack with the browser signed in — the
  * hand-run walkthrough in SETUP.md Part 1, as one idempotent command. Every step is re-runnable on
  * a half-done machine: it inspects before it acts and never overwrites a value a person wrote.
  *
- *   1 toolchain   2 install   3 secrets   4 database   5 migrate   6 seed
- *   7 cloudflare  8 cli       9 run
+ *   1 toolchain   2 install   3 secrets   4 database   5 migrate   6 plugins
+ *   7 seed        8 cloudflare  9 cli      10 run
  *
  * Output follows `apps/web/scripts/dev-server.mjs`: each child's output is buffered and shown only
- * when it fails (`--verbose` / `DEV_VERBOSE=1` streams everything), one `✔ n/9` line per step with
+ * when it fails (`--verbose` / `DEV_VERBOSE=1` streams everything), one `✔ n/10` line per step with
  * its verification, and the dev stack is started through `pnpm dev` so its preflight sweep and
  * ownership rules apply unchanged. Everything shells out to the root pnpm scripts — `migrate.ts`
  * and `seed.ts` need `tsx` and `node_modules`, which may not exist yet.
  *
  * `--check` (`pnpm preflight`) is the read-only half: steps 1, 3, 4 (one `db:check`, no compose
- * up), 7 and `dev-server.mjs --status`, every failure listed, exit 3 if any.
+ * up), 8 and `dev-server.mjs --status`, every failure listed, exit 3 if any.
  *
  * Exit codes: 0 ok · 1 a step failed · 2 usage · 3 prerequisite missing · 4 a port or the Postgres
  * container is held by another checkout · 5 Cloudflare login required.
@@ -33,10 +33,12 @@ import {
   fillDevVars,
   parseNvmrc,
   parseWhoami,
+  planDefaultPlugins,
   readDevVars,
   toggleAiBlock,
   versionAtLeast,
 } from './lib/bootstrap-lib.mjs'
+import { pluginSurfaces, readManifest } from './lib/manifest.mjs'
 
 const REPO_ROOT = path.resolve(import.meta.dirname, '..')
 const WEB_DIR = path.join(REPO_ROOT, 'apps/web')
@@ -50,7 +52,7 @@ const API_URL = 'http://localhost:3001'
 const UI_URL = 'http://localhost:3000'
 const HEALTH_TIMEOUT_MS = 90_000
 const DB_CHECK_ATTEMPTS = 30
-const TOTAL_STEPS = 9
+const TOTAL_STEPS = 10
 const TAIL_LINES = 30
 
 const EXIT = { ok: 0, failed: 1, usage: 2, prerequisite: 3, held: 4, login: 5 }
@@ -65,8 +67,9 @@ Take a fresh clone to a running, signed-in dev stack in one command. Re-runnable
   --offline     comment the [ai] block out of both wrangler tomls (no Cloudflare account needed;
                 chat/agents/embeddings then need a key or a tenant provider)
   --online      keep/restore the [ai] block; exit 5 if wrangler is not logged in
-  --no-dev      stop after step 7 and print the commands to run next
+  --no-dev      stop after step 8 and print the commands to run next
   --no-demo     seed without the demo data (plain \`pnpm seed\`)
+  --no-plugins  skip the plugins step (do not install .rocketflare.json's defaultPlugins)
   --share-db    accepted and ignored: every checkout now gets its own database (pnpm dev:db:status)
   --no-open     do not open the browser once the server answers
   --as <email>  seeded account to sign in as (default owner@example.test)
@@ -86,6 +89,7 @@ function parseArgs(argv) {
     online: false,
     dev: true,
     demo: true,
+    plugins: true,
     open: true,
     as: 'owner@example.test',
     check: false,
@@ -109,6 +113,9 @@ function parseArgs(argv) {
         break
       case '--no-demo':
         opts.demo = false
+        break
+      case '--no-plugins':
+        opts.plugins = false
         break
       // Kept so an older command line (or doc) still runs. Sharing was only ever a workaround
       // for the fixed port; scripts/dev-db.mjs now gives each checkout its own database.
@@ -448,6 +455,74 @@ async function stepMigrate() {
   return { verify: 'Migrations applied (role → migrations → grants)' }
 }
 
+/**
+ * Install `.rocketflare.json`'s `defaultPlugins` (D31) — what makes a fresh clone of a kit whose
+ * features live in plugins come up with those features already there.
+ *
+ * It runs BEFORE the seed on purpose: a plugin contributes a `hooks.seedDemo`, so installing one
+ * after `pnpm seed` would leave the demo workspace missing exactly the rows the plugin exists to
+ * show. And it runs the migration itself rather than printing it, because the bootstrap promises a
+ * working app: a barrel line with no table is a checkout that does not typecheck.
+ *
+ * Idempotent: an id already recorded as a surface is skipped, never re-added (a second
+ * `pnpm plugin add` of an installed plugin is exit 7).
+ */
+async function stepPlugins({ plugins }) {
+  if (!plugins) return { verify: 'skipped (--no-plugins)' }
+  const { manifest } = readManifest(REPO_ROOT)
+  const declared = manifest?.defaultPlugins ?? []
+  const plan = planDefaultPlugins(
+    declared,
+    pluginSurfaces(manifest).map(surface => surface.id)
+  )
+  if (plan.problems.length > 0) {
+    throw new StepError(`.rocketflare.json defaultPlugins: ${plan.problems[0]}`, {
+      hint: 'each entry is { "id": "…", "repo": "…", "ref"?: "…", "subdir"?: "…" }',
+      output: plan.problems.join('\n'),
+    })
+  }
+  if (plan.install.length === 0) {
+    const verify =
+      declared.length === 0
+        ? 'no defaultPlugins declared — nothing to install'
+        : `already installed: ${plan.skipped.join(', ')}`
+    return { verify }
+  }
+  const installed = []
+  for (const entry of plan.install) {
+    const result = await pnpm(entry.args)
+    if (result.code !== 0) {
+      throw new StepError(`pnpm plugin add ${entry.spec} exited ${result.code}`, {
+        hint: `pnpm plugin add ${entry.spec} (no --apply) and read the plan`,
+        output: result.output,
+      })
+    }
+    if (!verbose) process.stdout.write(result.output)
+    installed.push(entry.id)
+    // One migration per plugin, named after it, so the journal says which release brought which
+    // tables — and so a failure names the plugin rather than "the schema".
+    const generated = await pnpm(['db:generate', '--name', `plugin-${entry.id}`])
+    if (generated.code !== 0) {
+      throw new StepError(`pnpm db:generate for ${entry.id} exited ${generated.code}`, {
+        hint: `pnpm db:generate --name plugin-${entry.id} by hand and read the SQL`,
+        output: generated.output,
+      })
+    }
+  }
+  const migrated = await pnpm(['db:migrate'])
+  if (migrated.code !== 0 || !migrated.output.includes('Migrations applied')) {
+    throw new StepError(
+      'pnpm db:migrate after the plugin schema did not report "Migrations applied"',
+      {
+        hint: 'pnpm db:migrate by hand and read its output',
+        output: migrated.output,
+      }
+    )
+  }
+  const skipped = plan.skipped.length > 0 ? ` (already there: ${plan.skipped.join(', ')})` : ''
+  return { verify: `installed ${installed.join(', ')}; tables generated and migrated${skipped}` }
+}
+
 /** Returns the one-time API key, kept in memory only, or undefined when the seed had one. */
 async function stepSeed({ demo }) {
   const result = await pnpm(demo ? ['seed', '--demo'] : ['seed'])
@@ -620,7 +695,7 @@ async function check() {
   await tryStep(1, 'toolchain', stepToolchain)
   await tryStep(3, 'secrets', () => stepSecrets({ write: false }))
   await tryStep(4, 'database', stepDatabaseCheck)
-  await tryStep(7, 'cloudflare', async () => {
+  await tryStep(8, 'cloudflare', async () => {
     if (!existsSync(path.join(WEB_DIR, 'node_modules/.bin/wrangler'))) {
       throw new StepError('wrangler not installed yet', {
         hint: 'pnpm bootstrap (step 2 installs it), then pnpm preflight again',
@@ -657,28 +732,29 @@ async function bootstrap(opts) {
   await step(3, 'secrets', () => stepSecrets({ write: true }))
   await step(4, 'database', () => stepDatabase(opts))
   await step(5, 'migrate', stepMigrate)
-  const seeded = await step(6, 'seed', () => stepSeed({ demo: opts.demo }))
-  await step(7, 'cloudflare', () => stepCloudflare(opts))
+  await step(6, 'plugins', () => stepPlugins(opts))
+  const seeded = await step(7, 'seed', () => stepSeed({ demo: opts.demo }))
+  await step(8, 'cloudflare', () => stepCloudflare(opts))
 
   const loginUrl = `${UI_URL}/login?as=${encodeURIComponent(opts.as)}`
   if (!opts.dev) {
     const why = seeded.key ? '--no-dev' : 'no new seed key'
-    printOk(8, 'cli', `skipped (${why}) — after \`pnpm dev\`: pnpm cli login --server ${API_URL}`)
-    printOk(9, 'run', 'skipped (--no-dev). Next:')
+    printOk(9, 'cli', `skipped (${why}) — after \`pnpm dev\`: pnpm cli login --server ${API_URL}`)
+    printOk(10, 'run', 'skipped (--no-dev). Next:')
     say('  pnpm dev')
     say(`  ${loginUrl}`)
     say(`  pnpm cli login --server ${API_URL}`)
     return
   }
-  if (seeded.key) say(`${dim('·')} ${stepLabel(8, 'cli')} deferred until the server answers`)
-  else printOk(8, 'cli', 'skipped — key already exists; run `pnpm cli login` once the server is up')
+  if (seeded.key) say(`${dim('·')} ${stepLabel(9, 'cli')} deferred until the server answers`)
+  else printOk(9, 'cli', 'skipped — key already exists; run `pnpm cli login` once the server is up')
 
   // dev-server's preflight, piped, so a foreign port holder is a clear exit 4 rather than a
   // child dying on the terminal; `pnpm dev` runs the same sweep again (idempotent) in a moment.
   const preflight = await run('node', [path.join(WEB_DIR, 'scripts/dev-server.mjs'), '--preflight'])
   if (preflight.code !== 0) {
     printFail(
-      9,
+      10,
       'run',
       new StepError('a dev port is held by another checkout or app', {
         hint: 'stop it (pnpm dev:stop there, or kill <pid>) and re-run',
@@ -689,7 +765,7 @@ async function bootstrap(opts) {
     process.exit(EXIT.held)
   }
 
-  say(`${dim('·')} ${stepLabel(9, 'run')} starting pnpm dev (Ctrl-C stops everything)`)
+  say(`${dim('·')} ${stepLabel(10, 'run')} starting pnpm dev (Ctrl-C stops everything)`)
   const startedAt = Date.now()
   const child = spawn('pnpm', ['dev'], { cwd: REPO_ROOT, env: process.env, stdio: 'inherit' })
   const forward = signal => () => {
@@ -705,7 +781,7 @@ async function bootstrap(opts) {
   if (!(await waitForHealth())) {
     runFailed = true
     printFail(
-      9,
+      10,
       'run',
       new StepError(`${API_URL}/api/health did not answer within ${HEALTH_TIMEOUT_MS / 1000} s`, {
         hint: 'read the [api] lines above; pnpm dev:status shows what is running',
@@ -715,16 +791,16 @@ async function bootstrap(opts) {
     return
   }
   const secs = ((Date.now() - startedAt) / 1000).toFixed(1)
-  printOk(9, 'run', `${API_URL}/api/health ok in ${secs}s`)
+  printOk(10, 'run', `${API_URL}/api/health ok in ${secs}s`)
 
   if (seeded.key) {
     try {
       const cli = await stepCli(seeded.key)
-      printOk(8, 'cli', cli.verify)
+      printOk(9, 'cli', cli.verify)
       for (const line of cli.output.trimEnd().split('\n')) say(`  ${line}`)
     } catch (error) {
       const err = error instanceof StepError ? error : new StepError(String(error))
-      printFail(8, 'cli', err) // the server is up; a CLI hiccup does not stop the stack
+      printFail(9, 'cli', err) // the server is up; a CLI hiccup does not stop the stack
     }
   }
 

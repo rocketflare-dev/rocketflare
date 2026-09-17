@@ -1,7 +1,7 @@
 ---
 name: rf-setup
 description: First run of this kit on this machine — checks the toolchain, starts Postgres, migrates, seeds demo data, and gets you signed in
-argument-hint: "[--offline] [--no-demo]"
+argument-hint: "[--offline] [--no-demo] [--no-plugins]"
 ---
 
 # First run
@@ -21,6 +21,10 @@ SETUP.md Part 1 end to end and is **idempotent** — re-running after a fix is a
   `pnpm dev:stop` / `pnpm dev:status` own that.
 - Show the user the script's output as you go. Every step prints a `✔` line; the last line is the
   verification line. Do not summarise a failure away — quote it.
+- The `plugins` step (6) installs code from other repositories into this one. In the kit today
+  `defaultPlugins` is empty, so it prints one line and passes — but if it is NOT empty, name the
+  plugins it is about to install before you run the bootstrap, the same way you name the Postgres
+  container. `/rf-plugin` is the skill for installing one afterwards, where the plan is read first.
 
 ## 0. Is this a copy, or the kit itself?
 
@@ -67,14 +71,17 @@ bash scripts/bootstrap.sh --no-dev $ARGUMENTS
 ```
 
 `--no-dev` means the script does NOT start the servers (you will, in step 3). `--offline` skips
-the Cloudflare login / Workers AI probe; `--no-demo` runs plain `pnpm seed` (tenant, users and key, but no populated workspace).
+the Cloudflare login / Workers AI probe; `--no-demo` runs plain `pnpm seed` (tenant, users and key,
+but no populated workspace); `--no-plugins` skips the `plugins` step, which installs the plugins
+`.rocketflare.json` lists in `defaultPlugins` (step 6 below) — use it when the machine is offline or
+when somebody wants the app bare first.
 
 ## 2. Read the exit code
 
 | Exit | Meaning | What you do |
 |---|---|---|
 | 0 | every step passed | go to step 3 |
-| 1 | a step failed | show the tail of the output, fix the cause, re-run the same command (idempotent) |
+| 1 | a step failed | show the tail of the output, fix the cause, re-run the same command (idempotent). A failing `6/10 plugins` is the one worth reading closely: re-run with `--no-plugins` to get a working app, then install the plugin with `/rf-plugin`, where the plan is shown before anything is written |
 | 2 | usage error | check `$ARGUMENTS` against the hint above and re-run |
 | 3 | a prerequisite is missing | install it, then re-run: Node 24 via `nvm install` (reads `.nvmrc`) or `fnm use`; pnpm via `corepack enable`; Docker via Docker Desktop, or `brew install colima docker && colima start` on macOS, or Docker Engine + the `docker` group on Linux |
 | 4 | a dev port is held by another checkout | the DATABASE port is chosen automatically (`scripts/dev-db.mjs` takes the next free one), so this is :3000/:3001: run `pnpm dev:status` and `pnpm dev:db:status`, show the user the other path/pid, and let THEM decide — never kill another checkout's processes |
@@ -108,8 +115,10 @@ or stay offline?
    ```
 4. Report what is true now, in **at most six lines** — where the app is (the two URLs), who they
    are signed in as (**owner@example.test**; also `admin@` and `member@example.test`, and the
-   global admin `admin@rocketflare.local`), the port Postgres landed on if it was not 5432, and
-   any note the script printed (an orphaned volume, `--offline`). Do not restate the nine ✔ lines
+   global admin `admin@rocketflare.local`), the port Postgres landed on if it was not 5432, **any
+   plugin the `plugins` step installed and the page it adds** (`pnpm plugin list` names them; say
+   "no plugins installed" rather than nothing when there are none), and any note the script printed
+   (an orphaned volume, `--offline`). Do not restate the ten ✔ lines
    they just watched, and **do not echo the seeded API key** — it was printed once by the seed and
    is in their scrollback; say that `pnpm cli login` mints another whenever they want one.
 
@@ -124,6 +133,7 @@ open "want me to do anything else?". Offer these, in this order, with the first 
 | **Show me around** | Walk the seeded app: **Chat** (streams a reply — Workers AI needs the `wrangler login`, else a key), **Agents** (`summarize-text`, watch the timeline fill), **Knowledge → Search** (the demo documents are indexed), **Analytics** (the seeded Organisation Overview). Drive it with them; one screen at a time |
 | **Check it really works** | `pnpm test:db:up && pnpm test` (ephemeral Postgres on :5433), then the SETUP.md 1.6 analytics check `pnpm web db:refresh-facts && pnpm web db:check-facts` |
 | **Make it mine** | `/rf-adapt <slug>` — the rename (package scope, Worker, database, CLI, theme). Ask for the slug if they have not said one |
+| **Add a capability** | `/rf-plugin` — install a plugin (a git repository copied in, with a plan you read first), or audit what is installed with `pnpm plugin list` / `pnpm plugin check` |
 | **Deploy it** | `/rf-provision` — **user-invoked only**: tell them to type it, and that it needs the three accounts (Cloudflare on Workers Paid, Neon, Resend) and `pnpm provision tokens` in their own terminal first |
 
 Leave the dev stack running unless they ask you to stop it (`pnpm dev:stop`). If they pick
@@ -131,9 +141,9 @@ something not on the list, just do that — the list is a starting point, not a 
 
 ## What each ✔ line means
 
-Lines read `✔ n/9 <name> <what it verified>` (a failure is `✖ n/9 <name> <message>` plus a
+Lines read `✔ n/10 <name> <what it verified>` (a failure is `✖ n/10 <name> <message>` plus a
 `fix:` hint). `bash scripts/bootstrap.sh` first prints its own `✔ os / git / docker / node / pnpm`
-prerequisite lines, then hands over to `scripts/bootstrap.mjs` for the nine steps:
+prerequisite lines, then hands over to `scripts/bootstrap.mjs` for the ten steps:
 
 | Step | Name | What it proved |
 |---|---|---|
@@ -142,11 +152,19 @@ prerequisite lines, then hands over to `scripts/bootstrap.mjs` for the nine step
 | 3 | `secrets` | `apps/web/.dev.vars` exists with `DATABASE_URL`, `OAUTH_ENCRYPTION_KEY` (generated, git-ignored) |
 | 4 | `database` | this checkout's Postgres container is up and healthy on the port it chose (5432 unless taken; the step says so and writes it to `.dev.vars`) |
 | 5 | `migrate` | role → migrations → grants applied; the pgvector extension is installed |
-| 6 | `seed` | demo tenant, owner/admin/member users, one API key (printed once), plus the populated demo workspace unless `--no-demo` |
-| 7 | `cloudflare` | wrangler is logged in (Workers AI available) — or `--offline` was chosen |
-| 8 | `cli` | `pnpm cli whoami` with the seeded key — deferred/skipped with `--no-dev` (needs the server) |
-| 9 | `run` | `pnpm dev` started and `/api/health` answered — skipped with `--no-dev` (you do it in step 3) |
+| 6 | `plugins` | every plugin in `.rocketflare.json`'s `defaultPlugins` is installed, its tables generated and migrated — or `no defaultPlugins declared — nothing to install`, which is the kit today. Skipped with `--no-plugins` |
+| 7 | `seed` | demo tenant, owner/admin/member users, one API key (printed once), plus the populated demo workspace unless `--no-demo` |
+| 8 | `cloudflare` | wrangler is logged in (Workers AI available) — or `--offline` was chosen |
+| 9 | `cli` | `pnpm cli whoami` with the seeded key — deferred/skipped with `--no-dev` (needs the server) |
+| 10 | `run` | `pnpm dev` started and `/api/health` answered — skipped with `--no-dev` (you do it in step 3) |
 
-With `--no-dev` the script stops after step 7 and prints the three things to run next (`pnpm
+**Why `plugins` sits before `seed`:** a plugin may contribute a demo-data hook, so installing one
+after the seed would leave the demo workspace missing exactly the rows the plugin exists to show.
+The step runs `pnpm plugin add <repo> --apply` per plugin, then one `pnpm db:generate --name
+plugin-<id>` each and a single `pnpm db:migrate` — it does not print those and leave them to you,
+because the bootstrap promises a working app and a barrel line with no table does not typecheck.
+An id already installed is skipped, so a re-run is safe.
+
+With `--no-dev` the script stops after step 8 and prints the three things to run next (`pnpm
 dev`, the login URL, `pnpm cli login`). If a line reads `✖`, the exit code table above says what
 to do. The script's own output is authoritative; when it and this table disagree, trust the script.

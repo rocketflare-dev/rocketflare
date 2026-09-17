@@ -8,7 +8,8 @@ argument-hint: "<slug> [\"Display Name\"] [--domain example.com] [--colour #hex]
 
 `docs/ADAPTING.md` §1 is a 20-row find/replace table. `scripts/rename.mjs` does the mechanical
 rows in one pass and reports the six that need a person; `checklist.md` beside this file walks
-those six. You drive both. Every step ends with what the user should see.
+those six, plus a seventh — (g) — when a plugin is installed. You drive both. Every step ends with
+what the user should see.
 
 Arguments: `$ARGUMENTS` — the slug is required (`my-app`: lowercase, digits, hyphens); the display
 name, `--domain` and `--colour` are optional. No slug → ask for one before doing anything.
@@ -43,6 +44,13 @@ are what they want — the display name and domain in particular — then ask: *
 
 Exit 2 is a usage problem (bad slug, missing value): show the message and fix the arguments.
 
+**Installed plugins are renamed too, and the table does not group them.** It is one row per FILE,
+so a plugin's files appear as ordinary rows under `apps/web/src/plugins/<id>/`,
+`packages/shared/src/plugins/<id>/` and `apps/cli/src/plugins/<id>/` — there is no "plugins"
+heading to look for. Say so when `pnpm plugin list` shows anything, and check one of those rows has
+a non-zero count: a plugin is written in the kit's vocabulary and this pass is what translates it
+(row (g) of `checklist.md`).
+
 ## 3. Apply
 
 ```
@@ -56,11 +64,12 @@ re-run with `--skip-install` and tell the user to run `pnpm install && pnpm lint
 
 ## 4. Walk the checklist
 
-Open `checklist.md` (this directory) and go through rows (a)–(f) **one at a time**, in order.
-For each: say what to check, run the "how to check" command, show the result, and either confirm
-"nothing to do" or make the change the row describes — with the user's yes for anything that is a
-design choice (colour, logo, domain). Rows (a), (c), (d) are usually already done by the script;
-(b) is a database decision; (e) and (f) are the user's brand.
+Open `checklist.md` (this directory) and go through rows (a)–(f) **one at a time**, in order —
+then (g) if `pnpm plugin list` printed anything. For each: say what to check, run the "how to check"
+command, show the result, and either confirm "nothing to do" or make the change the row describes —
+with the user's yes for anything that is a design choice (colour, logo, domain). Rows (a), (c), (d)
+are usually already done by the script; (b) is a database decision; (e) and (f) are the user's
+brand; (g) verifies that the rename reached the installed plugins.
 
 ## 5. Verify
 

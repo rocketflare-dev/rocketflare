@@ -8,6 +8,8 @@
     "commit": null
   },
   "app": null,
+  "$defaultPlugins": "The plugins a FRESH clone installs before the app is first run (D31, docs/CONCEPTS.md \u00a716). `scripts/bootstrap.mjs`'s `plugins` step reads it, skips every id already recorded as a surface, runs `pnpm plugin add <repo>[@ref] --apply` for the rest and then generates and applies their migration; `pnpm bootstrap --no-plugins` skips it. Each entry is { \"id\", \"repo\", \"ref\"?, \"subdir\"? } \u2014 the id is what answers \"is this one already here?\" without fetching anything. Empty here because the kit is not bare yet.",
+  "defaultPlugins": [],
   "history": [],
   "surfaces": [
     {
