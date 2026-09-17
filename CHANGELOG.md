@@ -6,6 +6,11 @@ copy of the kit forward without recreating anything its owner deleted.
 
 If you are running a copy: `pnpm kit:upgrade` tells you which of these you are missing.
 
+## 0.6.0 — 2026-09-17
+
+**Analytics left the kit.** It is `rocketflare-plugin-analytics` 1.0.0 now — a separate repository, installed by `pnpm plugin add`, and listed in `.rocketflare.json` `defaultPlugins` so `bash scripts/bootstrap.sh` still gives a fresh clone dashboards without anybody doing anything (D31 decisions 2, 6 and 7; `docs/CONCEPTS.md` §8 is now a pointer, §16 is the decision record).
+[Porting note](docs/upgrades/0.6.0.md).
+
 ## 0.5.0 — 2026-09-17
 
 **The kit gained plugins (D31).** A plugin is a git repository copied into an app, never an npm package, wired through five barrels and installed, upgraded, removed and audited with `pnpm plugin` (and `/rf-plugin`); the demo feature became the vendored reference plugin `example-feature`, provisioning creates a plugin's bindings, CI proves the kit against its `defaultPlugins`, and every skill and the bootstrap know about it. An app with no plugins installed behaves exactly as before.
