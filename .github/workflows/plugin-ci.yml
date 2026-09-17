@@ -145,7 +145,12 @@ jobs:
           if [ -n "${KIT_TOKEN:-}" ]; then
             url="https://x-access-token:${KIT_TOKEN}@${KIT_REPO#https://}"
           fi
-          git clone --depth 1 --branch "${{ matrix.kit }}" --quiet "$url" kit
+          # --depth 2, not 1: the kit's own suite asserts against its real history
+          # (`mirror().isAncestor` in tests/config/upgrade-lib.test.ts resolves HEAD~1), and the
+          # kit's gate.yml hands it `fetch-depth: 0`. A depth-1 clone leaves HEAD~1 unresolvable,
+          # so `pnpm test` below failed for EVERY plugin, at every kit version, with an error that
+          # names neither the clone nor the plugin. Two commits is all that assertion needs.
+          git clone --depth 2 --branch "${{ matrix.kit }}" --quiet "$url" kit
           git -C kit config remote.origin.url "$KIT_REPO"
           if [ ! -f kit/scripts/plugin.mjs ]; then
             echo "::error::kit ${{ matrix.kit }} has no scripts/plugin.mjs — it predates plugins. Raise the floor of requires.kit."
