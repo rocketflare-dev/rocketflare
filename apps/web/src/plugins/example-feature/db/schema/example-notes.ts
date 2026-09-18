@@ -19,10 +19,12 @@
  */
 import { relations } from 'drizzle-orm'
 import { index, pgTable, text, uuid } from 'drizzle-orm/pg-core'
-import { tenantRef, timestamps } from '../../../../db/schema/_helpers'
-import { tenantIsolation } from '../../../../db/schema/rls'
-import { tenants } from '../../../../db/schema/tenants'
-import { users } from '../../../../db/schema/users'
+// The schema kit (D31): the build-time symbols a table file needs at MODULE scope, which is why
+// they are importable at all rather than injected — a `pgTable(...)` runs when the module is
+// evaluated, long before any request exists, and drizzle-kit reads the result statically. Named
+// relatively rather than as `@/db/schema/kit` because drizzle-kit bundles this file itself and
+// resolves no tsconfig path.
+import { tenantIsolation, tenantRef, tenants, timestamps, users } from '../../../../db/schema/kit'
 
 export const exampleNotes = pgTable(
   'example_notes',

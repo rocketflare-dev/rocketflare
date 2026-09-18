@@ -17,7 +17,12 @@
     "packages/shared/src/plugins/index.ts",
     "apps/cli/src/plugins/index.ts"
   ],
-  "requires": { "kit": ">=0.5.0 <1.0.0", "surfaces": [], "plugins": [] },
+  "requires": {
+    "kit": ">=0.5.0 <1.0.0",
+    "pluginApi": "1",
+    "surfaces": [],
+    "plugins": []
+  },
   "dependencies": { "apps/web": {}, "packages/shared": {}, "apps/cli": {} },
   "bindings": [],
   "crons": [],

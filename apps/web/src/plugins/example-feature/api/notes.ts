@@ -11,7 +11,10 @@
 import type { PaginationQuery } from '@rocketflare/shared/pagination'
 import type { CreateExampleNoteRequest } from '@rocketflare/shared/plugins/example-feature/index'
 import { and, desc, eq } from 'drizzle-orm'
-import type { Database } from '../../../db/client'
+// `Database` is one of the handful of types a plugin NAMES rather than receives: this module is the
+// kit's service shape — a plain `(db, tenantId, …)` function one plugin calls from a route, a job,
+// a hook and an agent tool alike — and such a function cannot take "whichever context this is".
+import type { Database } from '@/plugins/api'
 import { type ExampleNoteRow, exampleNotes } from '../db/schema'
 
 export async function listExampleNotes(

@@ -16,7 +16,9 @@ import {
   examplePingResponseSchema,
 } from '@rocketflare/shared/plugins/example-feature/index'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { api } from '@/ui/lib/api-client'
+// Every request goes through this: `credentials: 'include'`, the shared error envelope, and a
+// `schema` option that parses the response with the same contract the server validated with.
+import { api } from '@/plugins/api/ui'
 import { exampleNotesKeys } from '../query-keys'
 
 export function useExampleNotes(page = 1) {
