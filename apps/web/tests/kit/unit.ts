@@ -23,6 +23,7 @@
  * builds. `makeRequestCtx` is the exception and says so on itself.
  */
 
+import type { GroupRef } from '@rocketflare/shared/groups'
 import type { PaginationQuery } from '@rocketflare/shared/pagination'
 import type { Actions, Subjects } from '@rocketflare/shared/permissions'
 import type { MembershipRole } from '@rocketflare/shared/tenants'
@@ -93,6 +94,12 @@ export interface RequestCtxOptions extends BaseOptions {
   features?: readonly string[]
   /** Group memberships, for a visibility predicate (D29). */
   groupIds?: string[]
+  /**
+   * The same memberships WITH their type names — what `ctx.groups` answers, and what anything
+   * narrowing or labelling by group TYPE needs. Give these instead of `groupIds` and the ids are
+   * taken from them, so the two halves cannot disagree in a test the way they could in a session.
+   */
+  groups?: readonly GroupRef[]
   /** What `ctx.valid('json' | 'query' | …)` answers — the values `validate()` would have parsed. */
   valid?: Partial<Record<'json' | 'query' | 'param' | 'form' | 'header' | 'cookie', unknown>>
   /** What `ctx.uuid(name)` answers. A name that is absent or not a UUID is a 404, as in a route. */
@@ -167,10 +174,11 @@ export function makeRequestCtx(options: RequestCtxOptions): FakeRequestCtx {
   }
   const realtime = { defer, env }
 
+  const groups = options.groups ?? []
   const scope: AccessScope = {
     tenantId: options.tenantId,
     userId,
-    groupIds: options.groupIds ?? [],
+    groupIds: options.groupIds ?? groups.map(g => g.id),
     bypass: isAdmin,
   }
 
@@ -189,7 +197,26 @@ export function makeRequestCtx(options: RequestCtxOptions): FakeRequestCtx {
     isGlobalAdmin,
     features,
     scope,
+    groups,
     realtime,
+
+    // Lazily imported for the same reason the real adapter does it: `services/access` composes the
+    // visibility registry by reading the plugin barrel. These are the REAL helpers over the real
+    // handle, so a test of a plugin's visibility rules is testing the kit's, not a restatement.
+    visibility: {
+      resolve: async input => {
+        const { resolveRequestedVisibility } = await import('@/api/services/access')
+        return resolveRequestedVisibility(db, scope, input)
+      },
+      set: async (kind, resourceId, input) => {
+        const { setResourceGroups } = await import('@/api/services/access')
+        return setResourceGroups(db, scope, kind, resourceId, input)
+      },
+      grantsFor: async (kind, resourceIds) => {
+        const { grantsForResources } = await import('@/api/services/access')
+        return grantsForResources(db, options.tenantId, kind, [...resourceIds])
+      },
+    },
 
     guard: (action: Actions, subject: Subjects) => {
       if (!ability.can(action, subject)) {
@@ -267,6 +294,7 @@ export function makeRequestCtx(options: RequestCtxOptions): FakeRequestCtx {
       isAdmin,
       features,
       scope,
+      groups,
     }),
 
     deferred,

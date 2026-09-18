@@ -78,7 +78,13 @@ export {
   realtimeEvent,
   recordActivity,
 } from './events'
-export type { AppRouter, DetachedCtx, PluginMount, RequestCtx } from './http'
+export type {
+  AppRouter,
+  DetachedCtx,
+  PluginMount,
+  RequestCtx,
+  RequestVisibility,
+} from './http'
 export { createRouter, pageWindow, requestCtx, validate } from './http'
 export type {
   CronCtx,

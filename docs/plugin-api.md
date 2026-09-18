@@ -61,6 +61,8 @@ name here is a name you can import today.
 | Ledger a model call | `recordUsage` | `@/plugins/api` |
 | Trace a model call | `withAgentTrace` | `@/plugins/api` |
 | Restrict a row to groups | `sharedWithMyGroups` | `@/plugins/api` |
+| Read or write who may see a row | `RequestCtx.visibility` | `@/plugins/api` |
+| Read the reader’s groups and their types | `RequestCtx.groups` | `@/plugins/api` |
 | Escape a handler with a snapshot | `RequestCtx.detached` | `@/plugins/api` |
 | Read what other plugins contributed | `extensions` | `@/plugins/api/peers` |
 | Hand a library the whole schema | `allTables` | `@/plugins/api/peers` |
@@ -74,6 +76,7 @@ name here is a name you can import today.
 | Add a CLI command | `CliPlugin` | `'./types' (apps/cli/src/plugins/types.ts)` |
 | Call the API from a command | `requireClient` | `'../api' (apps/cli/src/plugins/api.ts)` |
 | Prove tenant isolation | `request` | `@testkit/integration` |
+| Prove a cron task is dispatched | `dispatchScheduled` | `@testkit/integration` |
 | Build a fake request context | `makeRequestCtx` | `@testkit/unit` |
 
 ## The plugin API version
@@ -179,6 +182,8 @@ The server surface: the context family, and the types a plugin must be able to n
   - `isAdmin: boolean`
   - `features: readonly string[]`
   - `scope: AccessScope`
+  - `groups: readonly GroupRef[]`
+    As on `RequestCtx` — a value, so it survives the request that resolved it.
 - `class DuplicateStepNameError extends Error`
   Thrown when a run reuses a step name — see rule 1.
 - `function durableObject<T extends Rpc.DurableObjectBranded \| undefined = undefined>( namespace: DurableObjectNamespace<T>, tenantId: string, key?: string ): DurableObjectStub<T>`
@@ -292,6 +297,10 @@ The server surface: the context family, and the types a plugin must be able to n
   What a route handler is handed.
   - `readonly scope: AccessScope`
     Tenant-wide visibility scope (D29) — hand it to a predicate, never to a query as a tenant id.
+  - `readonly groups: readonly GroupRef[]`
+    The reader's groups in this organisation, each with the name of the TYPE it belongs to.
+  - `readonly visibility: RequestVisibility`
+    Read and write who may see one of this plugin's own rows (D29) — see `RequestVisibility`.
   - `guard(action: Actions, subject: Subjects): void`
     403 unless this role may `action` the `subject`. The KIND of thing, never the row.
   - `can(action: Actions, subject: Subjects): boolean`
@@ -325,6 +334,14 @@ The server surface: the context family, and the types a plugin must be able to n
     A snapshot of this context that outlives the handler (D31).
   - `readonly realtime: Realtime`
     The realtime handle, for a plugin service that takes `realtime?` the way the kit's do.
+- `interface RequestVisibility`
+  Reading and writing who may see one of a plugin's own rows (D29, D31).
+  - `resolve( input: { visibility?: ResourceVisibility; groupIds?: readonly string[] } \| undefined ): Promise<SetResourceGroupsInput>`
+    Validate what a CLIENT asked for, against the caller's own groups. Absent input keeps the default, which is tenant-wide; `'tenant'` always clears the grants, because leaving stale…
+  - `set(kind: string, resourceId: string, input: SetResourceGroupsInput): Promise<string[]>`
+    Write the row's `visibility` and replace its grants, in ONE transaction, through the registry entry this `kind` names. Answers the group ids that were actually stored.
+  - `grantsFor(kind: string, resourceIds: readonly string[]): Promise<Map<string, GroupRef[]>>`
+    Which groups each of these rows is shared with, in ONE query — so a badge strip on a list costs one extra round trip rather than one per row.
 - `function requireFeature(feature: FeatureName)` — **used by** example-feature
 - `interface ResourceGrantRow`
   One row of `grantsForResources`, before it is grouped by resource.
@@ -688,6 +705,7 @@ The build-time schema symbols. A `pgTable(...)` runs at module scope, so these c
 > The schema kit (D31) — the build-time symbols a plugin's table file needs at MODULE scope.
 
 - `const activityEvents: table "activity_events" { id, tenantId, userId, type, subjectType, subjectId, metadata, createdAt }`
+- `const groupMembers: table "group_members" { tenantId, groupId, userId, createdAt }`
 - `const groups: table "groups" { createdAt, updatedAt, id, tenantId, groupTypeId, name, description }`
 - `const groupTypes: table "group_types" { createdAt, updatedAt, id, tenantId, name, description }`
 - `function membershipIsolation()`
@@ -873,6 +891,8 @@ The harness: a real database, the real Hono app, real bindings-shaped stubs, the
 - `async function createTestTenantWithUser( db: Database, role: MembershipRole = 'owner', userOverrides: Partial<NewUser> = {}, tenantOverrides: Partial<NewTenant> = {} )`
   Tenant + one member in one call (default `owner`).
 - `async function createTestUser(db: Database, overrides: Partial<NewUser> = {})` — **used by** example-feature
+- `async function dispatchScheduled( cron: string, env: AppBindings, ctx: Pick<ExecutionContext, 'waitUntil'>, registry: Record<string, ScheduledTask[]> = SCHEDULED_TASKS ): Promise<TaskReport[]>`
+  Runs every task registered for `cron` and returns a per-task report (used by tests).
 - `function errorResponse(status: number, error = 'Error', code?: string)`
 - `const IDS: { user: string; otherUser: string; tenant: string; otherTenant: string; }`
 - `async function json<T = unknown>(res: Response): Promise<T>` — **used by** example-feature
@@ -897,6 +917,9 @@ The harness: a real database, the real Hono app, real bindings-shaped stubs, the
   `{ 'GET /api/members': handler }`; the method defaults to GET when omitted from the key.
 - `function rulesFor( role: MembershipRole \| null, isGlobalAdmin = false, features: string[] = [] )` — **used by** example-feature
   Packed rules EXACTLY as the server emits them for this role (same matrix, same packer).
+- `const SCHEDULED_TASKS: Record<string, ScheduledTask[]>`
+  Core tasks plus every installed plugin's (D31). A plugin naming a cron the kit already runs APPENDS to it — each task is try/caught on its own, so a plugin's failure cannot stop…
+- `interface ScheduledTask`
 - `const SESSION_COOKIE_NAME: "__Host-session"`
   The login cookie. `middleware/csrf.ts` re-exports this so the CSRF check names the same cookie.
 - `function sessionCookieHeader(token: string): Record<string, string>` — **used by** example-feature
@@ -911,6 +934,7 @@ The harness: a real database, the real Hono app, real bindings-shaped stubs, the
   Typed access to the in-memory stubs behind a `createTestEnv()` env.
 - `function stubSessionFetch(session: SessionResponse \| null)`
   Layer a `/auth/session` answer over whatever `fetch` the test already installed.
+- `interface TaskReport`
 - `function testDatabaseUrl(): string`
 - `type TestEnv = AppBindings & { DATABASE_URL: string [secret: string]: unknown }`
   Structurally `Cloudflare.Env` so it can be passed straight to `app.request`, `queue()` and `scheduled()`. The bindings are in-memory stubs cast to the platform types; reach the…
@@ -1056,6 +1080,7 @@ plugin-api 1
 @/plugins/api :: member :: DetachedCtx.isAdmin :: isAdmin: boolean
 @/plugins/api :: member :: DetachedCtx.features :: features: readonly string[]
 @/plugins/api :: member :: DetachedCtx.scope :: scope: AccessScope
+@/plugins/api :: member :: DetachedCtx.groups :: groups: readonly GroupRef[]
 @/plugins/api :: class :: DuplicateStepNameError :: class DuplicateStepNameError extends Error
 @/plugins/api :: function :: durableObject :: function durableObject<T extends Rpc.DurableObjectBranded | undefined = undefined>( namespace: DurableObjectNamespace<T>, tenantId: string, key?: string ): DurableObjectStub<T>
 @/plugins/api :: function :: hasFeature :: function hasFeature(auth: Pick<PluginAuth, 'features'>, name: string): boolean
@@ -1125,6 +1150,8 @@ plugin-api 1
 @/plugins/api :: function :: requestCtx :: function requestCtx(c: AppContext): RequestCtx
 @/plugins/api :: interface :: RequestCtx :: interface RequestCtx extends PluginContext, PluginAuth
 @/plugins/api :: member :: RequestCtx.scope :: readonly scope: AccessScope
+@/plugins/api :: member :: RequestCtx.groups :: readonly groups: readonly GroupRef[]
+@/plugins/api :: member :: RequestCtx.visibility :: readonly visibility: RequestVisibility
 @/plugins/api :: member :: RequestCtx.guard :: guard(action: Actions, subject: Subjects): void
 @/plugins/api :: member :: RequestCtx.can :: can(action: Actions, subject: Subjects): boolean
 @/plugins/api :: member :: RequestCtx.hasFeature :: hasFeature(name: string): boolean
@@ -1145,6 +1172,10 @@ plugin-api 1
 @/plugins/api :: member :: RequestCtx.unavailable :: unavailable(message?: string, code?: string): never
 @/plugins/api :: member :: RequestCtx.detached :: detached(): DetachedCtx
 @/plugins/api :: member :: RequestCtx.realtime :: readonly realtime: Realtime
+@/plugins/api :: interface :: RequestVisibility :: interface RequestVisibility
+@/plugins/api :: member :: RequestVisibility.resolve :: resolve( input: { visibility?: ResourceVisibility; groupIds?: readonly string[] } | undefined ): Promise<SetResourceGroupsInput>
+@/plugins/api :: member :: RequestVisibility.set :: set(kind: string, resourceId: string, input: SetResourceGroupsInput): Promise<string[]>
+@/plugins/api :: member :: RequestVisibility.grantsFor :: grantsFor(kind: string, resourceIds: readonly string[]): Promise<Map<string, GroupRef[]>>
 @/plugins/api :: function :: requireFeature :: function requireFeature(feature: FeatureName)
 @/plugins/api :: interface :: ResourceGrantRow :: interface ResourceGrantRow
 @/plugins/api :: interface :: ScheduledTask :: interface ScheduledTask
@@ -1353,6 +1384,7 @@ plugin-api 1
 @/plugins/types :: member :: UiPlugin.queryKeys :: queryKeys?: Readonly<Record<string, unknown>>
 @/plugins/types :: member :: UiPlugin.agentForms :: agentForms?: Readonly<Partial<Record<AgentKeyOf<S> & string, AgentForm>>>
 @/db/schema/kit :: const :: activityEvents :: const activityEvents: table "activity_events" { id, tenantId, userId, type, subjectType, subjectId, metadata, createdAt }
+@/db/schema/kit :: const :: groupMembers :: const groupMembers: table "group_members" { tenantId, groupId, userId, createdAt }
 @/db/schema/kit :: const :: groups :: const groups: table "groups" { createdAt, updatedAt, id, tenantId, groupTypeId, name, description }
 @/db/schema/kit :: const :: groupTypes :: const groupTypes: table "group_types" { createdAt, updatedAt, id, tenantId, name, description }
 @/db/schema/kit :: function :: membershipIsolation :: function membershipIsolation()
@@ -1454,6 +1486,7 @@ plugin-api 1
 @testkit/integration :: function :: createTestTenant :: async function createTestTenant(db: Database, overrides: Partial<NewTenant> = {})
 @testkit/integration :: function :: createTestTenantWithUser :: async function createTestTenantWithUser( db: Database, role: MembershipRole = 'owner', userOverrides: Partial<NewUser> = {}, tenantOverrides: Partial<NewTenant> = {} )
 @testkit/integration :: function :: createTestUser :: async function createTestUser(db: Database, overrides: Partial<NewUser> = {})
+@testkit/integration :: function :: dispatchScheduled :: async function dispatchScheduled( cron: string, env: AppBindings, ctx: Pick<ExecutionContext, 'waitUntil'>, registry: Record<string, ScheduledTask[]> = SCHEDULED_TASKS ): Promise<TaskReport[]>
 @testkit/integration :: function :: errorResponse :: function errorResponse(status: number, error = 'Error', code?: string)
 @testkit/integration :: const :: IDS :: const IDS: { user: string; otherUser: string; tenant: string; otherTenant: string; }
 @testkit/integration :: function :: json :: async function json<T = unknown>(res: Response): Promise<T>
@@ -1471,6 +1504,8 @@ plugin-api 1
 @testkit/integration :: interface :: RequestOptions :: interface RequestOptions
 @testkit/integration :: type :: RouteTable :: type RouteTable = Record< string, Response | unknown | ((init: RequestInit | undefined, url: URL) => Response | unknown) >
 @testkit/integration :: function :: rulesFor :: function rulesFor( role: MembershipRole | null, isGlobalAdmin = false, features: string[] = [] )
+@testkit/integration :: const :: SCHEDULED_TASKS :: const SCHEDULED_TASKS: Record<string, ScheduledTask[]>
+@testkit/integration :: interface :: ScheduledTask :: interface ScheduledTask
 @testkit/integration :: const :: SESSION_COOKIE_NAME :: const SESSION_COOKIE_NAME: "__Host-session"
 @testkit/integration :: function :: sessionCookieHeader :: function sessionCookieHeader(token: string): Record<string, string>
 @testkit/integration :: function :: setupTestDatabase :: function setupTestDatabase(): Database
@@ -1478,6 +1513,7 @@ plugin-api 1
 @testkit/integration :: function :: stubHealthFetch :: function stubHealthFetch(info: Record<string, unknown> = {})
 @testkit/integration :: function :: stubs :: function stubs(env: TestEnv)
 @testkit/integration :: function :: stubSessionFetch :: function stubSessionFetch(session: SessionResponse | null)
+@testkit/integration :: interface :: TaskReport :: interface TaskReport
 @testkit/integration :: function :: testDatabaseUrl :: function testDatabaseUrl(): string
 @testkit/integration :: type :: TestEnv :: type TestEnv = AppBindings & { DATABASE_URL: string [secret: string]: unknown }
 @testkit/integration :: interface :: TestSeed :: interface TestSeed

@@ -53,6 +53,34 @@ export {
   waitOnExecutionContext,
 } from '../mocks/bindings'
 
+// ---- the cron dispatcher -----------------------------------------------------------------------
+
+/**
+ * The host's scheduled dispatcher, so a plugin can prove its task and the toml expression MET.
+ *
+ * A plugin declares the cron EXPRESSION in its `plugin.json` (which is what
+ * `pnpm provision cloudflare <env>` copies into both tomls) and the TASK through
+ * `ServerPlugin.scheduledTasks`. Those are two halves of a handshake, and the failure mode when
+ * they disagree is silent: a task registered under an expression no toml carries simply never
+ * runs, and nothing anywhere says so.
+ *
+ * `SCHEDULED_TASKS` is the merged registry — the kit's tasks plus every installed plugin's — and
+ * `dispatchScheduled(cron, env, ctx)` runs the ones registered for that expression and returns a
+ * report per task. So the assertion a plugin wants is one line: dispatch the expression the
+ * manifest declares, and find your task's name in the report with `status: 'ok'`.
+ *
+ * Note what the report gives you that a direct call does not: a task that THREW is `'failed'`
+ * rather than a rejected promise, because the dispatcher try/catches each task individually so one
+ * plugin's failure cannot stop the kit's nightly prune. Asserting `'ok'` is therefore a real
+ * assertion, not a formality.
+ */
+export {
+  dispatchScheduled,
+  SCHEDULED_TASKS,
+  type ScheduledTask,
+  type TaskReport,
+} from '@/api/scheduled'
+
 // ---- fixtures ----------------------------------------------------------------------------------
 
 /**

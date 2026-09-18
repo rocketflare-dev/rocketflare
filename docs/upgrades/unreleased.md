@@ -353,6 +353,54 @@ resource cannot write one and has to reimplement the rules. Publishing them from
 `plugins/api/access.ts` would reintroduce exactly this cycle, so they need the same leaf treatment
 first. Known gap, not an oversight.
 
+### The visibility helpers a plugin needed are published, and three smaller gaps with them
+
+Migrating `analytics` onto the contract found one real hole and three smaller ones, all of the same
+shape: something the kit's own routes do that a plugin registering the same kind of resource could
+not reach.
+
+**A plugin could DECLARE a restrictable resource and not write one.** `ServerPlugin.visibilityResources`
+takes the declaration and the kit reads it for the predicate and the 409 `group_in_use` count — but
+`resolveRequestedVisibility`, `setResourceGroups` and `grantsForResources`, which is what the kit's
+own routes do AROUND that declaration, were on no declared entry. Analytics reimplemented all three,
+and the two rules they carry are security properties rather than conveniences: **every group id is
+checked against the tenant before it is stored**, and **a member may share only with groups they are
+in** (403 `group_not_yours`). A reimplementation that loses either is a grant naming another
+organisation's group, or "restrict to Finance" becoming a way to enumerate the groups you are not in.
+
+They could not simply be exported. They dispatch through `VISIBILITY_RESOURCES`, which reads the
+plugin barrel — composition is their entire purpose — so `plugins/api` importing that module
+recreates the cycle fixed earlier this release: with a SECOND plugin installed, `createRouter is not
+a function` at import. `accessScopeOf` escaped by moving to a leaf; these cannot.
+
+So they are **injected**, which is the kit's own rule for exactly this case: `ctx.visibility.resolve`,
+`.set(kind, id, input)` and `.grantsFor(kind, ids)` on `RequestCtx`. The adapter reaches
+`services/access` through a **function-scope `await import(...)`** — all three are async anyway, so
+the laziness costs nothing and is confined to one adapter file rather than changing a core service's
+shape for one consumer. Making `services/access` read the barrel lazily is structurally cleaner and
+is the fix if this ever recurs.
+
+**`ctx.groups` carries the reader's groups WITH their type names.** `AccessScope` carries ids, which
+is all a visibility predicate needs; anything that narrows or labels by group TYPE — a cube's
+`groupFilter`, a report grouped by Department — needs the names, and analytics was resolving them
+with a query per cube request. They are already on the session, resolved in the same LATERAL query as
+the membership, so reading them is free. It is on `DetachedCtx` too, because that is what a callback
+running outside the handler is handed.
+
+**`groupMembers` joins `@/db/schema/kit`.** It is the last kit table a plugin's own isolation and
+visibility TESTS need — putting somebody in a group is how you prove the predicate narrows — and they
+were reaching it through `allTables()`, the widest accessor in the surface, for a table whose name
+they already knew. A declared name is the narrower answer.
+
+**`@testkit/integration` publishes the cron dispatcher.** A plugin declares the cron EXPRESSION in its
+manifest and the TASK through `ServerPlugin.scheduledTasks`; when those two disagree the task simply
+never runs and nothing says so. Proving they met needs the host's dispatcher, and `@/api/scheduled` is
+a kit internal — so analytics' own test could assert only that its task existed, and said so in a
+comment. `dispatchScheduled`, `SCHEDULED_TASKS` and the two types are now on the entry.
+
+All four are ADDITIONS, so `PLUGIN_API.current` does not move — the generated reference records them
+and the gate stays green, which is exactly the asymmetry that version is for.
+
 ## How to apply
 
 There is no migration and no schema change.
@@ -455,6 +503,29 @@ Nothing to do. If you carried a deferred-initialisation workaround in a plugin �
 first read, `mounts` as a getter — remove it: it is now unnecessary, and left in place every plugin
 author who reads that plugin copies the pattern for a reason that no longer exists.
 
+
+**Nothing to do unless you own a plugin with restrictable rows.** If you reimplemented the three
+visibility helpers against kit internals because the declared entry lacked them, replace that with
+`ctx.visibility` — it is the same code, through the registry, and the deep import would now fail the
+contract check. Check as you go that your version kept both rules: the tenant check on every group
+id, and 403 `group_not_yours` for a member naming a group they are not in.
+
+A cube, report or predicate that narrows by group TYPE should read `ctx.groups` (or
+`ctx.detached().groups`) rather than re-querying `groups` and `group_types` per request. A test that
+puts somebody in a group should import `groupMembers` from `@/db/schema/kit` instead of digging it out
+of `allTables()`. And a plugin with a cron task can now prove the handshake end to end:
+
+```ts
+import { createExecutionContext, createTestEnv, dispatchScheduled } from '@testkit/integration'
+
+const reports = await dispatchScheduled('15 * * * *', createTestEnv(), createExecutionContext())
+expect(reports).toContainEqual(expect.objectContaining({ task: 'analytics.refreshFactTables', status: 'ok' }))
+```
+
+Assert `status: 'ok'` rather than that it did not throw: the dispatcher try/catches each task
+individually, so one plugin's failure cannot stop the kit's nightly prune, and a task that threw comes
+back as `'failed'` instead of a rejected promise.
+
 ## Conflicts to expect
 
 `apps/web/src/api/services/tenants.ts` and `apps/web/src/api/services/storage.ts` if you have edited
@@ -494,6 +565,12 @@ re-apply its own changes on top. `.github/workflows/ci.yml` gains a job.
 `docs/CONCEPTS.md` §§13 and 16 are substantially rewritten and gain decisions 14–22.
 `.claude/rules/*.md`, both `CLAUDE.md` plugin sections and the three skills change wording.
 `scripts/lib/plugin-lib.mjs` and `scripts/plugin.mjs` gain the collision check.
+
+
+`apps/web/src/plugins/api/http.ts` gains a `RequestVisibility` interface and three members;
+`apps/web/src/db/schema/kit.ts` and `apps/web/tests/kit/{integration,unit}.ts` each gain exports;
+`docs/plugin-api.md` is regenerated. All additive, so an app that has not edited those files sees no
+conflict — and one that HAS edited the schema kit will conflict only on the export line.
 
 ## Verify
 
@@ -586,3 +663,20 @@ The human and `--json` forms must report identically, and CI runs the same check
 pnpm plugin check    # with two plugins installed that declare the same table name:
                      # names both plugins, the shared table, and says to rename one and release it
 ```
+
+The published visibility helpers, which are only proved by a SECOND plugin — one plugin never shows
+the cycle, because the barrel re-enters a module already in progress and is never re-executed:
+
+```bash
+pnpm plugin add <a plugin declaring visibilityResources> --apply
+pnpm db:generate --name plugin-<id>-check && pnpm db:migrate
+pnpm test     # a route calling ctx.visibility.set must not die at import with
+              # "createRouter is not a function"
+```
+
+Use a DEDICATED Postgres rather than the shared `:5433` for a check like that: another checkout's
+`db:migrate:ci` leaves its tables behind, and `rls-coverage` then fails with a live-versus-declared
+count mismatch that reads exactly like a code defect. If you must reset `:5433`, only
+`docker compose -f apps/web/docker-compose.test.yml down -v` works — `DROP SCHEMA public CASCADE`
+leaves the `drizzle` journal, after which migrate no-ops and every run dies with
+`relation "users" does not exist`.

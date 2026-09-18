@@ -123,6 +123,7 @@ const ENTRIES = [
 const EXPANDED = new Set([
   'PluginContext',
   'PluginAuth',
+  'RequestVisibility',
   'ServerPlugin',
   'UiPlugin',
   'SharedPlugin',
@@ -174,6 +175,8 @@ const CAPABILITIES = [
   ['Ledger a model call', 'recordUsage', '@/plugins/api'],
   ['Trace a model call', 'withAgentTrace', '@/plugins/api'],
   ['Restrict a row to groups', 'sharedWithMyGroups', '@/plugins/api'],
+  ['Read or write who may see a row', 'RequestCtx.visibility', '@/plugins/api'],
+  ['Read the reader’s groups and their types', 'RequestCtx.groups', '@/plugins/api'],
   ['Escape a handler with a snapshot', 'RequestCtx.detached', '@/plugins/api'],
   ['Read what other plugins contributed', 'extensions', '@/plugins/api/peers'],
   ['Hand a library the whole schema', 'allTables', '@/plugins/api/peers'],
@@ -191,6 +194,7 @@ const CAPABILITIES = [
   ['Add a CLI command', 'CliPlugin', "'./types' (apps/cli/src/plugins/types.ts)"],
   ['Call the API from a command', 'requireClient', "'../api' (apps/cli/src/plugins/api.ts)"],
   ['Prove tenant isolation', 'request', '@testkit/integration'],
+  ['Prove a cron task is dispatched', 'dispatchScheduled', '@testkit/integration'],
   ['Build a fake request context', 'makeRequestCtx', '@testkit/unit'],
 ]
 

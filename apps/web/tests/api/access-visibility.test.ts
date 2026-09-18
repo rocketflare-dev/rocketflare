@@ -15,6 +15,7 @@
  * leaves) must hide the document from everyone but its owner and admins, and a hidden document
  * must answer the SAME 404 as one that does not exist.
  */
+import { makeRequestCtx } from '@testkit/unit'
 import { eq } from 'drizzle-orm'
 import { beforeAll, describe, expect, it } from 'vitest'
 import { accessScopeForUser } from '@/api/services/access'
@@ -375,5 +376,99 @@ describe('retrieval recall under a restrictive scope', () => {
     const scope = await accessScopeForUser(db, tenant.id, user.id)
     const hits = await searchChunks(db, cfg, env, scope, { query: 'payroll', limit: 5 })
     expect(hits.map(h => h.documentId)).toContain(document.id)
+  })
+})
+
+/**
+ * The same rules, reached the way a PLUGIN reaches them (D31).
+ *
+ * A plugin declares a restrictable resource and the kit reads the declaration — but the three
+ * helpers the kit's own routes use around it (`resolve`, `set`, `grantsFor`) live in the module
+ * that COMPOSES the registry, which a plugin cannot import without closing a cycle through the
+ * plugin barrel. So they are injected as `ctx.visibility`, and this block drives the published
+ * surface over the same fixtures the rest of the file proves the predicate with: whatever holds
+ * above holds for a plugin's own rows, or the two halves have drifted.
+ */
+describe('ctx.visibility: the published helpers', () => {
+  const ctxFor = (r: Reader, role: 'member' | 'admin' = 'member', inFinance = false) =>
+    makeRequestCtx({
+      db,
+      tenantId,
+      userId: r.userId,
+      role,
+      groups: inFinance ? [{ id: groupId, name: 'Finance', typeName: 'Department' }] : [],
+    })
+
+  it('reads the grants of many rows in one call, and says nothing about an unshared one', async () => {
+    const grants = await ctxFor(admin, 'admin').visibility.grantsFor('document', [
+      restrictedId,
+      openId,
+    ])
+    expect(grants.get(restrictedId)).toEqual([
+      { id: groupId, name: 'Finance', typeName: 'Department' },
+    ])
+    expect(grants.get(openId)).toBeUndefined()
+  })
+
+  it('refuses a member sharing with a group they are not in — 403 group_not_yours', async () => {
+    await expect(
+      ctxFor(outsider).visibility.resolve({ visibility: 'groups', groupIds: [groupId] })
+    ).rejects.toMatchObject({ statusCode: 403, code: 'group_not_yours' })
+  })
+
+  it('allows the member who IS in it, and an admin with any group', async () => {
+    await expect(
+      ctxFor(inGroup, 'member', true).visibility.resolve({
+        visibility: 'groups',
+        groupIds: [groupId],
+      })
+    ).resolves.toEqual({ visibility: 'groups', groupIds: [groupId] })
+    // `bypass` is admin-level, so an admin is never narrowed to their own memberships.
+    await expect(
+      ctxFor(admin, 'admin').visibility.resolve({ visibility: 'groups', groupIds: [groupId] })
+    ).resolves.toEqual({ visibility: 'groups', groupIds: [groupId] })
+  })
+
+  it('defaults to tenant-wide when the client asked for nothing', async () => {
+    await expect(ctxFor(owner).visibility.resolve(undefined)).resolves.toEqual({
+      visibility: 'tenant',
+      groupIds: [],
+    })
+  })
+
+  it('writes grants through the registry, and clears them when it goes back to tenant', async () => {
+    // Its own document, so the matrix above cannot depend on the order this file runs in.
+    const { document } = await ingestText(db, cfg, env, {
+      tenantId,
+      userId: owner.userId,
+      title: 'Shift rota',
+      text: 'The rota is published on Fridays.',
+    })
+    const ctx = ctxFor(admin, 'admin')
+
+    expect(
+      await ctx.visibility.set('document', document.id, {
+        visibility: 'groups',
+        groupIds: [groupId],
+      })
+    ).toEqual([groupId])
+    expect((await ctx.visibility.grantsFor('document', [document.id])).get(document.id)).toEqual([
+      { id: groupId, name: 'Finance', typeName: 'Department' },
+    ])
+
+    // 'tenant' CLEARS the grants: stale rows would silently re-restrict the document the next time
+    // somebody flipped it back to 'groups'.
+    expect(
+      await ctx.visibility.set('document', document.id, { visibility: 'tenant', groupIds: [] })
+    ).toEqual([])
+    expect(
+      (await ctx.visibility.grantsFor('document', [document.id])).get(document.id)
+    ).toBeUndefined()
+  })
+
+  it('is a 404-shaped failure for a kind nothing registered', async () => {
+    await expect(
+      ctxFor(admin, 'admin').visibility.grantsFor('nope:thing', [restrictedId])
+    ).rejects.toThrow(/no visibility resource named 'nope:thing'/)
   })
 })

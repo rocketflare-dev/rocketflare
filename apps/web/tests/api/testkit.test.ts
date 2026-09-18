@@ -18,6 +18,7 @@ import { describe, expect, it } from 'vitest'
 
 const db = setupTestDatabase()
 const TENANT = '11111111-1111-4111-8111-111111111111'
+const GROUP = '22222222-2222-4222-8222-222222222222'
 
 /** Everything a context builder takes, minus the handle under test. */
 const base = { tenantId: TENANT }
@@ -86,6 +87,22 @@ describe('the fake request context', () => {
       payload: { tenantId: TENANT, type: 'note.created', subjectType: 'ExampleNote' },
     })
     expect(stubs(env).queue.messages).toHaveLength(1)
+  })
+
+  it('carries the reader’s groups WITH their type names, and the ids agree', () => {
+    // `scope` carries ids, which is all a predicate needs; anything narrowing or labelling by group
+    // TYPE needs the names, and re-resolving them is a query per request for rows the session
+    // already resolved. Taking the ids FROM the refs is what stops the two halves disagreeing.
+    const ctx = makeRequestCtx({
+      ...base,
+      db,
+      role: 'member',
+      groups: [{ id: GROUP, name: 'Finance', typeName: 'Department' }],
+    })
+    expect(ctx.groups.map(g => g.typeName)).toEqual(['Department'])
+    expect(ctx.scope.groupIds).toEqual([GROUP])
+    expect(ctx.detached().groups).toEqual(ctx.groups)
+    expect(makeRequestCtx({ ...base, db }).groups).toEqual([])
   })
 
   it('is a 404 for a param that is not a UUID — never a database error', () => {

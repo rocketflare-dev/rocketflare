@@ -26,10 +26,12 @@
  */
 
 import { ERROR_CODES } from '@rocketflare/shared/errors'
+import type { GroupRef, ResourceVisibility } from '@rocketflare/shared/groups'
 import type { JobEnvelope, JobInput } from '@rocketflare/shared/jobs'
 import type { PaginationMeta, PaginationQuery } from '@rocketflare/shared/pagination'
 import type { Actions, Subjects } from '@rocketflare/shared/permissions'
 import { can as canDo, guardPermission } from '../../api/middleware/permissions'
+import type { SetResourceGroupsInput } from '../../api/services/access'
 import type { AccessScope } from '../../api/services/access-sql'
 import { accessScopeOf } from '../../api/services/access-sql'
 import { enqueueJob, enqueueJobs } from '../../api/services/jobs'
@@ -62,6 +64,53 @@ export type { PluginMount } from '../types'
 export { createRouter, pageWindow, validate }
 
 /**
+ * Reading and writing who may see one of a plugin's own rows (D29, D31).
+ *
+ * A plugin DECLARES a restrictable resource through `ServerPlugin.visibilityResources`, and the
+ * kit reads that declaration for the predicate and for the 409 `group_in_use` count. These three
+ * are the other half — what the kit's own routes do around that declaration, and what a plugin
+ * had to reimplement without them. They dispatch through the registry, so they work for the
+ * plugin's own `key` exactly as they do for `document`.
+ *
+ * **They are methods rather than importable functions because the module that implements them
+ * composes the registry, and composing it means reading the plugin barrel.** A plugin importing
+ * that module closes the cycle `plugins/api → access → plugins/server → <plugin>/index →
+ * plugins/api`, which with a SECOND plugin installed throws `createRouter is not a function` at
+ * import (`services/access-sql.ts` carries the measurement). `accessScopeOf` escaped by moving to
+ * a leaf; these cannot, because composition is their entire purpose. So they are injected, which
+ * is the kit's own rule for exactly this case.
+ *
+ * Two behaviours they carry that are easy to lose in a reimplementation, and both are security
+ * properties rather than conveniences:
+ *
+ * - **Every group id is checked against the tenant before it is stored**, so a grant can never
+ *   name another organisation's group.
+ * - **A member may share only with groups they are in** — 403 `group_not_yours`. Otherwise
+ *   "restrict to Finance" is a way to hide a row from yourself, and to discover which groups
+ *   exist. An admin-level caller (`scope.bypass`) may use any group in the tenant.
+ */
+export interface RequestVisibility {
+  /**
+   * Validate what a CLIENT asked for, against the caller's own groups. Absent input keeps the
+   * default, which is tenant-wide; `'tenant'` always clears the grants, because leaving stale
+   * rows behind silently re-restricts the row the next time somebody flips it back.
+   */
+  resolve(
+    input: { visibility?: ResourceVisibility; groupIds?: readonly string[] } | undefined
+  ): Promise<SetResourceGroupsInput>
+  /**
+   * Write the row's `visibility` and replace its grants, in ONE transaction, through the registry
+   * entry this `kind` names. Answers the group ids that were actually stored.
+   */
+  set(kind: string, resourceId: string, input: SetResourceGroupsInput): Promise<string[]>
+  /**
+   * Which groups each of these rows is shared with, in ONE query — so a badge strip on a list
+   * costs one extra round trip rather than one per row.
+   */
+  grantsFor(kind: string, resourceIds: readonly string[]): Promise<Map<string, GroupRef[]>>
+}
+
+/**
  * What a route handler is handed.
  *
  * Everything on it is already bound to THIS request and THIS tenant, which is the property that
@@ -71,6 +120,17 @@ export { createRouter, pageWindow, validate }
 export interface RequestCtx extends PluginContext, PluginAuth {
   /** Tenant-wide visibility scope (D29) — hand it to a predicate, never to a query as a tenant id. */
   readonly scope: AccessScope
+  /**
+   * The reader's groups in this organisation, each with the name of the TYPE it belongs to.
+   *
+   * `scope` carries group IDS, which is all a visibility predicate needs; anything that narrows or
+   * labels by group TYPE ("this reader's Departments") needs the names, and they are already on the
+   * session — resolved in the same LATERAL query as the membership. Reading them here costs nothing,
+   * where re-resolving them is a query per request for rows the caller has already been handed.
+   */
+  readonly groups: readonly GroupRef[]
+  /** Read and write who may see one of this plugin's own rows (D29) — see `RequestVisibility`. */
+  readonly visibility: RequestVisibility
 
   // ---- authorisation --------------------------------------------------------------------------
 
@@ -170,6 +230,8 @@ export interface DetachedCtx extends PluginContext {
   isAdmin: boolean
   features: readonly string[]
   scope: AccessScope
+  /** As on `RequestCtx` — a value, so it survives the request that resolved it. */
+  groups: readonly GroupRef[]
 }
 
 /**
@@ -203,6 +265,40 @@ export function requestCtx(c: AppContext): RequestCtx {
     get scope() {
       scope ??= accessScopeOf(auth)
       return scope
+    },
+    groups: auth.groups,
+
+    /**
+     * Every method here reaches `services/access` through a FUNCTION-SCOPE `await import(...)`, and
+     * that is the whole reason these can be published at all.
+     *
+     * That module composes `VISIBILITY_RESOURCES` by reading the plugin barrel, so naming it in an
+     * import statement at the top of this file closes the cycle `plugins/api → http → access →
+     * plugins/server → <plugin>/index → plugins/api`. With a SECOND plugin installed the plugin's
+     * routes then evaluate while this module is still executing, and `createRouter` is `undefined`
+     * (fixed once already in `037d082`; one plugin never shows it, because the barrel re-enters a
+     * module already in progress and is never re-executed). Deferring the import to call time
+     * breaks the cycle without changing a core module's shape, and costs nothing: all three are
+     * async anyway, and the module is loaded long before any request reaches a route.
+     *
+     * The laziness is confined to this adapter deliberately. Making `services/access` read the
+     * barrel lazily would be structurally cleaner and is the fix if this ever recurs — but it
+     * changes a core service for one consumer, and `visibilityResources()` is already a function
+     * for a related reason.
+     */
+    visibility: {
+      resolve: async input => {
+        const { resolveRequestedVisibility } = await import('../../api/services/access')
+        return resolveRequestedVisibility(route.db, ctx.scope, input)
+      },
+      set: async (kind, resourceId, input) => {
+        const { setResourceGroups } = await import('../../api/services/access')
+        return setResourceGroups(route.db, ctx.scope, kind, resourceId, input)
+      },
+      grantsFor: async (kind, resourceIds) => {
+        const { grantsForResources } = await import('../../api/services/access')
+        return grantsForResources(route.db, route.tenantId, kind, [...resourceIds])
+      },
     },
 
     realtime: route.realtime,
@@ -266,6 +362,7 @@ export function requestCtx(c: AppContext): RequestCtx {
       isAdmin: isAdminLevel(auth),
       features: auth.features,
       scope: ctx.scope,
+      groups: auth.groups,
     }),
   }
   return ctx
