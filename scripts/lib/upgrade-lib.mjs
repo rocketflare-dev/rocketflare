@@ -544,6 +544,32 @@ export function hasChangelogSection(text, version) {
   return new RegExp(`^## ${version.replace(/\./g, '\\.')}(\\s|$)`, 'm').test(text)
 }
 
+/**
+ * The `## X.Y.Z — <date>` section a release prepends to `CHANGELOG.md`, from one entry per note.
+ *
+ * ONE entry renders exactly as it always has — a summary paragraph, then the link — because the
+ * kit and every single-plugin repository have exactly one porting note per release and their
+ * changelogs are already written that way. SEVERAL entries is the plugin monorepo (D31), where one
+ * release covers every plugin in the repository: an unlabelled paragraph followed by three links
+ * says nothing about which summary belongs to which plugin, so each one is named.
+ */
+export function changelogSection(version, date, entries) {
+  const body =
+    entries.length === 1
+      ? `${entries[0].summary}\n[Porting note](${entries[0].note}).\n`
+      : entries.map(e => `**${e.id}** — ${e.summary}\n[Porting note](${e.note}).\n`).join('\n')
+  return `## ${version} — ${date}\n\n${body}\n`
+}
+
+/**
+ * Put `section` above the newest existing one, or at the end of a changelog that has none yet.
+ * Split out of `scripts/release.mjs` only so that a test can drive it.
+ */
+export function prependChangelogSection(text, section) {
+  const at = text.indexOf('\n## ')
+  return at === -1 ? `${text}\n${section}` : text.slice(0, at + 1) + section + text.slice(at + 1)
+}
+
 // ---------------------------------------------------------------- behaviour changes
 
 /**
@@ -558,9 +584,24 @@ export function hasChangelogSection(text, version) {
 export const BEHAVIOUR_PATH_RE = /^(apps|packages)\//
 export const BEHAVIOUR_EXEMPT_RE = /(^|\/)(tests?|__tests__)\/|\.test\.(ts|tsx)$|\.md$/
 
-/** The subset of `changed` that needs an entry in `docs/upgrades/unreleased.md`. */
-export function behaviourFiles(changed) {
-  return (changed ?? []).filter(f => BEHAVIOUR_PATH_RE.test(f) && !BEHAVIOUR_EXEMPT_RE.test(f))
+/**
+ * The subset of `changed` that needs an entry in `docs/upgrades/unreleased.md`.
+ *
+ * `within` is the subdirectory the predicate is applied INSIDE, and it exists for the plugin
+ * MONOREPO (D31). There a plugin's source is `plugins/<id>/apps/web/src/...`, so the bare
+ * `^(apps|packages)/` matches nothing at all and the gate passes silently on every change it was
+ * written to catch — the worst failure this check has, because it looks exactly like success.
+ * Stripping the prefix first asks the same question of the plugin's own tree; what comes back is
+ * still repo-root-relative, because that is what the caller compares against the list of changed
+ * paths it was handed. Empty (the default) is the kit and a single-plugin repository, unchanged.
+ */
+export function behaviourFiles(changed, { within = '' } = {}) {
+  const prefix = within === '' ? '' : `${within.replace(/\/+$/, '')}/`
+  return (changed ?? []).filter(f => {
+    if (!f.startsWith(prefix)) return false
+    const rel = f.slice(prefix.length)
+    return BEHAVIOUR_PATH_RE.test(rel) && !BEHAVIOUR_EXEMPT_RE.test(rel)
+  })
 }
 
 /**

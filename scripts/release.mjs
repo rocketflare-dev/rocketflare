@@ -12,10 +12,18 @@
  *
  * **Two kinds of repository run this** (D31). The kit stamps the root `package.json` and
  * `.rocketflare.json`'s `kit.version`; a PLUGIN repository — a checkout with a
- * `rocketflare-plugin.json` and no `.rocketflare.json` — stamps that manifest's `version` and its
+ * `rocketflare-plugin.json` and no `.rocketflare.json` — stamps every plugin manifest in it and its
  * `package.json` if it has one. Everything else is identical, because a plugin's releases are read
  * by exactly the same machinery: `previous` chains, the four headings, and `pnpm plugin upgrade`
  * walking the notes between two commits. `releaseContext()` is the whole of the difference.
+ *
+ * `--plugin <subdir>` (repeatable) resolves that context INSIDE a subdirectory, which is the whole
+ * of what a plugin MONOREPO needs: `rocketflare-plugins` holds `plugins/<id>/rocketflare-plugin.json`
+ * and nothing at the root, so without it `releaseContext()` answers `unknown` and this exits 1.
+ * Every plugin in such a repository ships at ONE version and is tagged plain `X.Y.Z`, with no
+ * prefix and no per-plugin namespacing — a tag has to stay resolvable by `ls-remote <repo> <ref>`,
+ * which cannot resolve a bare SHA, and `latestTag()` is how `--to` and `openSource` default. The
+ * accepted cost of that lockstep: a fix to one plugin bumps every plugin's version.
  *
  * In the KIT it additionally refuses a version its `defaultPlugins` are not ready for (D31,
  * decision 5): every entry must still resolve at the ref the kit pins, and a declared
@@ -32,13 +40,15 @@ import { ensureMirror, mirrorDirFor, PLUGIN_MIRROR_ROOT } from './lib/git-lib.mj
 import { MANIFEST_FILE, readManifest } from './lib/manifest.mjs'
 import { PLUGIN_MANIFEST_FILE } from './lib/plugin-lib.mjs'
 import {
+  changelogSection,
   defaultPluginEntries,
   defaultPluginProblems,
   isKitManifest,
   parseNote,
+  prependChangelogSection,
   VERSION_RE,
 } from './lib/upgrade-lib.mjs'
-import { releaseNotes } from './release-check.mjs'
+import { findPluginManifests, releaseNotes } from './release-check.mjs'
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const abs = p => path.join(REPO_ROOT, p)
@@ -50,8 +60,10 @@ const warn = (...lines) => {
   for (const l of lines) process.stderr.write(`${l}\n`)
 }
 
-export const USAGE =
-  'usage: node scripts/release.mjs <X.Y.Z> [--date YYYY-MM-DD] [--dry-run] [--skip-plugin-check]'
+export const USAGE = [
+  'usage: node scripts/release.mjs <X.Y.Z> [--plugin <subdir>]... [--date YYYY-MM-DD]',
+  '                                [--dry-run] [--skip-plugin-check]',
+].join('\n')
 
 /** Match `"version": "x"` at the top level of a JSON file (two-space indent, so exactly one). */
 const TOP_LEVEL_VERSION = /^( {2}"version":\s*)"[^"]+"/m
@@ -63,14 +75,19 @@ const TOP_LEVEL_VERSION = /^( {2}"version":\s*)"[^"]+"/m
  * discipline is its own. `plugin` — a `rocketflare-plugin.json` at the root (D31), which is the
  * whole of what makes a repository a plugin.
  */
-export function releaseContext(root = REPO_ROOT) {
+export function releaseContext(root = REPO_ROOT, { repoRoot = root } = {}) {
   const at = p => path.join(root, p)
+  // Every path in a context is relative to the REPOSITORY root, because that is what each consumer
+  // joins against `REPO_ROOT`. For the kit and a single-plugin repository `root` IS the repository
+  // root and this is the identity; only a monorepo's `--plugin plugins/<id>` makes it move.
+  const rel = p => path.relative(repoRoot, path.join(root, p)).split(path.sep).join('/')
+
   if (existsSync(at(MANIFEST_FILE))) {
     const manifest = JSON.parse(readFileSync(at(MANIFEST_FILE), 'utf8'))
     if (!isKitManifest(manifest)) return { kind: 'app' }
     return {
       kind: 'kit',
-      notesDir: 'docs/upgrades',
+      notesDir: rel('docs/upgrades'),
       changelog: 'CHANGELOG.md',
       versionFiles: [
         { file: 'package.json', pattern: TOP_LEVEL_VERSION, label: 'version' },
@@ -83,12 +100,31 @@ export function releaseContext(root = REPO_ROOT) {
     }
   }
   if (existsSync(at(PLUGIN_MANIFEST_FILE))) {
+    let id = null
+    try {
+      id = JSON.parse(readFileSync(at(PLUGIN_MANIFEST_FILE), 'utf8')).id ?? null
+    } catch {
+      // A manifest that will not parse is still a plugin directory; `release-check --tag` is what
+      // reports it. Falling back to the directory name keeps the changelog label readable.
+      id = path.basename(root)
+    }
+    // EVERY plugin manifest in the repository, not only this one, plus the root `package.json`.
+    // Lockstep: one release, one version, one tag — and a manifest left at the old number is not
+    // cosmetic, because `pnpm plugin check` compares an installed surface's recorded version
+    // against the anchor manifest and would report a mismatch for every install of that plugin.
+    // `requires.pluginApi` is deliberately NOT touched: which kit contract a plugin compiles
+    // against is a different question from which release shipped it, and it is nested, so the
+    // two-space `TOP_LEVEL_VERSION` anchor cannot reach it.
+    const manifests = [...new Set([...findPluginManifests(repoRoot), rel(PLUGIN_MANIFEST_FILE)])]
     return {
       kind: 'plugin',
-      notesDir: 'docs/upgrades',
+      id,
+      notesDir: rel('docs/upgrades'),
+      // The CHANGELOG is the REPOSITORY's, never a plugin's: a monorepo keeps one index for one
+      // lockstep version, and in a single-plugin repository this is the same path it always was.
       changelog: 'CHANGELOG.md',
       versionFiles: [
-        { file: PLUGIN_MANIFEST_FILE, pattern: TOP_LEVEL_VERSION, label: 'version' },
+        ...manifests.sort().map(file => ({ file, pattern: TOP_LEVEL_VERSION, label: 'version' })),
         { file: 'package.json', pattern: TOP_LEVEL_VERSION, label: 'version' },
       ],
     }
@@ -211,16 +247,71 @@ function checkDefaultPlugins(version) {
   }
 }
 
+/**
+ * The first PARAGRAPH of "What changed", rewrapped onto one line — not the first LINE. Notes are
+ * written to the repo's 100-column convention, so a summary sentence almost always spans several
+ * physical lines and taking the first one truncates it mid-clause, in the file adopters read to
+ * decide whether a release concerns them.
+ */
+function summaryOf(parsed) {
+  return (
+    (parsed.body.split('## What changed')[1] ?? '')
+      .split(/\n## /)[0]
+      .trim()
+      .split(/\n\s*\n/)
+      .map(block => block.trim())
+      .find(block => block !== '')
+      ?.split('\n')
+      .map(line => line.trim())
+      .join(' ') ?? 'See the porting note.'
+  )
+}
+
+const freshUnreleased = version => `---
+version: unreleased
+previous: ${version}
+date: null
+breaking: false
+migrations: []
+areas: []
+touches_surfaces: []
+requires_surfaces: []
+manual: false
+---
+
+## What changed
+
+_Nothing yet. Add an entry here in the same pull request as the change — see \`README.md\` beside this
+file for the fields and for what "How to apply" has to say._
+
+## How to apply
+
+## Conflicts to expect
+
+## Verify
+`
+
 function main(argv) {
   let version = null
   let date = new Date().toISOString().slice(0, 10)
   let dryRun = false
   let skipPluginCheck = false
+  const pluginDirs = []
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === '--date') date = argv[++i]
     else if (argv[i] === '--dry-run') dryRun = true
     else if (argv[i] === '--skip-plugin-check') skipPluginCheck = true
-    else if (argv[i] === '-h' || argv[i] === '--help') {
+    else if (argv[i] === '--plugin') {
+      // REPEATABLE rather than comma-separated, because the value is a PATH: splitting a
+      // path-valued option on a comma invents an escaping rule for a character a path may legally
+      // contain, and this flag is read by people typing it once per plugin anyway.
+      const sub = argv[++i]
+      if (!sub || sub.startsWith('-')) {
+        warn('error: --plugin needs a subdirectory, e.g. --plugin plugins/analytics', '', USAGE)
+        return 2
+      }
+      pluginDirs.push(sub.replace(/\/+$/, ''))
+    } else if (argv[i] === '-h' || argv[i] === '--help') {
       out(USAGE)
       return 0
     } else if (!version) version = argv[i]
@@ -233,22 +324,47 @@ function main(argv) {
     warn('error: a version like 0.2.0 is required', '', USAGE)
     return 2
   }
-  const ctx = releaseContext()
-  if (ctx.kind === 'app') {
-    warn('error: this is an app, not the kit — `pnpm kit:release` cuts KIT releases.')
-    return 1
+  if (new Set(pluginDirs).size !== pluginDirs.length) {
+    warn('error: --plugin names the same subdirectory twice', '', USAGE)
+    return 2
   }
-  if (ctx.kind === 'unknown') {
-    warn(
-      `error: no ${MANIFEST_FILE} and no ${PLUGIN_MANIFEST_FILE} — this is neither the kit nor a`,
-      'plugin repository, so there is nothing whose release this would be.'
-    )
-    return 1
+
+  // With no `--plugin` this is exactly what it always was: one context, resolved at the root.
+  const targets =
+    pluginDirs.length === 0
+      ? [{ subdir: '', ctx: releaseContext() }]
+      : pluginDirs.map(subdir => ({
+          subdir,
+          ctx: releaseContext(path.join(REPO_ROOT, subdir), { repoRoot: REPO_ROOT }),
+        }))
+
+  for (const { subdir, ctx } of targets) {
+    if (ctx.kind === 'app') {
+      warn('error: this is an app, not the kit — `pnpm kit:release` cuts KIT releases.')
+      return 1
+    }
+    if (ctx.kind === 'unknown') {
+      if (subdir) {
+        warn(
+          `error: no ${PLUGIN_MANIFEST_FILE} in ${subdir} — --plugin names the directory that holds`,
+          'one, e.g. --plugin plugins/analytics.'
+        )
+      } else {
+        warn(
+          `error: no ${MANIFEST_FILE} and no ${PLUGIN_MANIFEST_FILE} — this is neither the kit nor a`,
+          'plugin repository, so there is nothing whose release this would be.',
+          '',
+          `If this is a plugin MONOREPO, name the plugin: --plugin plugins/<id>.`
+        )
+      }
+      return 1
+    }
+    if (subdir && ctx.kind !== 'plugin') {
+      warn(`error: ${subdir} is not a plugin — --plugin is only for a plugin repository.`)
+      return 1
+    }
   }
-  if (existsSync(abs(`${ctx.notesDir}/${version}.md`))) {
-    warn(`error: ${ctx.notesDir}/${version}.md already exists`)
-    return 1
-  }
+  const ctx = targets[0].ctx
 
   // A kit release ships a `defaultPlugins` set with it: a fresh clone installs those plugins, so a
   // version whose default plugins cannot be fetched at their pin — or that falls outside a range
@@ -275,59 +391,76 @@ function main(argv) {
     )
   }
 
-  const notes = releaseNotes(ctx.notesDir)
-  const previous = notes.length > 0 ? notes[notes.length - 1].version : null
-
-  const unreleasedPath = `${ctx.notesDir}/unreleased.md`
-  const unreleased = read(unreleasedPath)
-  const parsed = parseNote(unreleased)
-  if (!parsed) {
-    warn(`error: ${unreleasedPath} has no frontmatter`)
-    return 1
+  // One JOB per plugin being released. In the kit and in a single-plugin repository there is
+  // exactly one, and everything below reads the same as it always did.
+  const jobs = []
+  for (const { ctx: target } of targets) {
+    const notePath = `${target.notesDir}/${version}.md`
+    if (existsSync(abs(notePath))) {
+      warn(`error: ${notePath} already exists`)
+      return 1
+    }
+    const unreleasedPath = `${target.notesDir}/unreleased.md`
+    if (!existsSync(abs(unreleasedPath))) {
+      warn(`error: ${unreleasedPath} does not exist`)
+      return 1
+    }
+    const unreleased = read(unreleasedPath)
+    const parsed = parseNote(unreleased)
+    if (!parsed) {
+      warn(`error: ${unreleasedPath} has no frontmatter`)
+      return 1
+    }
+    if (/_Nothing yet\./.test(unreleased)) {
+      warn(
+        `error: ${unreleasedPath} is empty — a release with nothing to port is a gap every adopter`,
+        'has to step over. Write what changed first (docs/upgrades/README.md).'
+      )
+      return 1
+    }
+    const notes = releaseNotes(target.notesDir)
+    const previous = notes.length > 0 ? notes[notes.length - 1].version : null
+    jobs.push({
+      id: target.id ?? null,
+      notePath,
+      unreleasedPath,
+      previous,
+      summary: summaryOf(parsed),
+      note: unreleased
+        .replace(/^version: .*$/m, `version: ${version}`)
+        .replace(/^previous: .*$/m, `previous: ${previous ?? 'null'}`)
+        .replace(/^date: .*$/m, `date: ${date}`),
+    })
   }
-  if (/_Nothing yet\./.test(unreleased)) {
-    warn(
-      `error: ${unreleasedPath} is empty — a release with nothing to port is a gap every adopter`,
-      'has to step over. Write what changed first (docs/upgrades/README.md).'
-    )
-    return 1
-  }
-
-  const note = unreleased
-    .replace(/^version: .*$/m, `version: ${version}`)
-    .replace(/^previous: .*$/m, `previous: ${previous ?? 'null'}`)
-    .replace(/^date: .*$/m, `date: ${date}`)
-
-  // The first PARAGRAPH of "What changed", rewrapped onto one line — not the first LINE. Notes are
-  // written to the repo's 100-column convention, so a summary sentence almost always spans several
-  // physical lines and taking the first one truncates it mid-clause, in the file adopters read to
-  // decide whether a release concerns them.
-  const summary =
-    (parsed.body.split('## What changed')[1] ?? '')
-      .split(/\n## /)[0]
-      .trim()
-      .split(/\n\s*\n/)
-      .map(block => block.trim())
-      .find(block => block !== '')
-      ?.split('\n')
-      .map(line => line.trim())
-      .join(' ') ?? 'See the porting note.'
 
   const changelog = existsSync(abs(ctx.changelog)) ? read(ctx.changelog) : '# Changelog\n'
-  const marker = '\n## '
-  const at = changelog.indexOf(marker)
-  const section = `## ${version} — ${date}\n\n${summary}\n[Porting note](${ctx.notesDir}/${version}.md).\n\n`
-  const nextChangelog =
-    at === -1
-      ? `${changelog}\n${section}`
-      : changelog.slice(0, at + 1) + section + changelog.slice(at + 1)
+  const nextChangelog = prependChangelogSection(
+    changelog,
+    changelogSection(
+      version,
+      date,
+      jobs.map(j => ({ id: j.id, summary: j.summary, note: j.notePath }))
+    )
+  )
 
   // Patch each version in place rather than re-serialising the JSON: `JSON.stringify` loses the
   // formatting Biome wants (short arrays on one line), so a re-serialised file fails the repo's own
   // `pnpm lint` and the release cannot produce a commit that passes the gate. Same byte-preserving
   // discipline as `scripts/provision/patch-toml.ts`.
+  //
+  // The list is deduplicated across targets because a monorepo's contexts each name EVERY manifest
+  // in the repository — releasing two plugins must stamp each file once, not twice.
+  const versionFiles = []
+  const seen = new Set()
+  for (const { ctx: target } of targets) {
+    for (const vf of target.versionFiles) {
+      if (seen.has(vf.file)) continue
+      seen.add(vf.file)
+      versionFiles.push(vf)
+    }
+  }
   const stamped = []
-  for (const { file, pattern, label } of ctx.versionFiles) {
+  for (const { file, pattern, label } of versionFiles) {
     if (!existsSync(abs(file))) continue
     const text = read(file)
     const next = text.replace(pattern, `$1"${version}"`)
@@ -338,55 +471,49 @@ function main(argv) {
     stamped.push({ file, text: next, label })
   }
   if (stamped.length === 0) {
-    warn(`error: none of ${ctx.versionFiles.map(v => v.file).join(', ')} exists`)
+    warn(`error: none of ${versionFiles.map(v => v.file).join(', ')} exists`)
     return 1
   }
 
-  const freshUnreleased = `---
-version: unreleased
-previous: ${version}
-date: null
-breaking: false
-migrations: []
-areas: []
-touches_surfaces: []
-requires_surfaces: []
-manual: false
----
-
-## What changed
-
-_Nothing yet. Add an entry here in the same pull request as the change — see \`README.md\` beside this
-file for the fields and for what "How to apply" has to say._
-
-## How to apply
-
-## Conflicts to expect
-
-## Verify
-`
+  // The column is as wide as the widest path, floored at 32 so the kit's own output is byte for
+  // byte what it always was (its longest path, `docs/upgrades/unreleased.md`, is 27). A monorepo's
+  // `plugins/<id>/docs/upgrades/<version>.md` is far longer, and a fixed 32 ran the two columns
+  // together into one unreadable word.
+  const width = Math.max(
+    32,
+    1 + Math.max(...jobs.flatMap(j => [j.notePath.length, j.unreleasedPath.length])),
+    1 + ctx.changelog.length,
+    1 + Math.max(...stamped.map(s => s.file.length))
+  )
+  const pad = value => value.padEnd(width)
 
   if (dryRun) {
     out(
       `dry run — would write:`,
-      `  ${`${ctx.notesDir}/${version}.md`.padEnd(32)}from unreleased.md (previous: ${previous ?? 'null'})`,
-      `  ${unreleasedPath.padEnd(32)}reset`,
-      `  ${ctx.changelog.padEnd(32)}new '## ${version}' section`,
-      ...stamped.map(s => `  ${s.file.padEnd(32)}${s.label} ${version}`)
+      ...jobs.flatMap(j => [
+        `  ${pad(j.notePath)}from unreleased.md (previous: ${j.previous ?? 'null'})`,
+        `  ${pad(j.unreleasedPath)}reset`,
+      ]),
+      `  ${pad(ctx.changelog)}new '## ${version}' section`,
+      ...stamped.map(s => `  ${pad(s.file)}${s.label} ${version}`)
     )
     return 0
   }
 
-  writeFileSync(abs(`${ctx.notesDir}/${version}.md`), note)
-  writeFileSync(abs(unreleasedPath), freshUnreleased)
+  for (const j of jobs) {
+    writeFileSync(abs(j.notePath), j.note)
+    writeFileSync(abs(j.unreleasedPath), freshUnreleased(version))
+  }
   writeFileSync(abs(ctx.changelog), nextChangelog)
   for (const s of stamped) writeFileSync(abs(s.file), s.text)
 
   out(
-    `✔ ${`${ctx.notesDir}/${version}.md`.padEnd(32)}folded from unreleased.md (previous: ${previous ?? 'null'})`,
-    `✔ ${unreleasedPath.padEnd(32)}reset`,
-    `✔ ${ctx.changelog.padEnd(32)}'## ${version}' prepended`,
-    ...stamped.map(s => `✔ ${s.file.padEnd(32)}${s.label} ${version}`),
+    ...jobs.flatMap(j => [
+      `✔ ${pad(j.notePath)}folded from unreleased.md (previous: ${j.previous ?? 'null'})`,
+      `✔ ${pad(j.unreleasedPath)}reset`,
+    ]),
+    `✔ ${pad(ctx.changelog)}'## ${version}' prepended`,
+    ...stamped.map(s => `✔ ${pad(s.file)}${s.label} ${version}`),
     '',
     'Verify:',
     `  node scripts/release-check.mjs --tag ${version}`,
