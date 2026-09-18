@@ -6,6 +6,11 @@ copy of the kit forward without recreating anything its owner deleted.
 
 If you are running a copy: `pnpm kit:upgrade` tells you which of these you are missing.
 
+## 0.9.0 — 2026-09-18
+
+A plugin's `agentTools` may now be async and answer per tenant, and `@/plugins/api` exports `sealSecret`/`openSecret` so a plugin can store a tenant's credential encrypted.
+[Porting note](docs/upgrades/0.9.0.md).
+
 ## 0.8.1 — 2026-09-18
 
 Agent context now loads on demand: rules scope by `paths:` and `CLAUDE.md` names its docs rather than `@`-importing them, cutting roughly 100k tokens from every session start.
