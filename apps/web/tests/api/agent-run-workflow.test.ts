@@ -576,6 +576,10 @@ describe('the suspend/resume loop (issue #17)', () => {
     expect((await listInterrupts(db, tenant.id, run.id)).map(i => i.status)).toEqual(['expired'])
   })
 
+  // 32 rounds of real DB work — the slowest test in the suite BY DESIGN, and the only one that
+  // needs a budget rather than vitest's arbitrary 5 s default. Measured: 1.4 s locally, 5.004 s on
+  // a CI runner during the second gate pass (88 test files instead of 81), where it then failed
+  // twice running. Raised here rather than globally, so a genuine hang elsewhere still surfaces.
   it('an agent that never stops asking is abandoned after MAX_INTERRUPT_ROUNDS, cleanly', async () => {
     const env = createTestEnv()
     script([])
@@ -608,7 +612,7 @@ describe('the suspend/resume loop (issue #17)', () => {
     expect(row?.error).toContain(String(MAX_INTERRUPT_ROUNDS))
     // And the questions nobody will now answer are closed, not left pending forever.
     expect(await listInterrupts(db, tenant.id, run.id, 'pending')).toEqual([])
-  })
+  }, 30_000)
 
   it('finishStep does not FAIL a parked row (T7) — it expires it', async () => {
     const env = createTestEnv()

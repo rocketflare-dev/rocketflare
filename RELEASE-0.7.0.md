@@ -7,7 +7,7 @@
 
 | | |
 |---|---|
-| kit `main` | `037d082`, CI green (all four jobs, incl. *Gate with default plugins*) |
+| kit `main` | CI green on all four jobs, incl. *Gate with default plugins* |
 | `.rocketflare.json` | `kit.version 0.6.1`, `kit.pluginApi {current:1, minSupported:1}` |
 | `docs/upgrades/unreleased.md` | `previous: 0.6.1`, **10 entries** — the whole of 0.7.0 |
 | `defaultPlugins` | still the OLD repo, `rocketflare-plugin-analytics@1.0.2` |
