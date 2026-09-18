@@ -48,13 +48,17 @@ blocks and **"Nothing written. Read the plan, then re-run with --apply to instal
 - `Requirements` — three `✔` lines (`kit <version> satisfies <range>`, `surfaces`, `plugins`) or one
   `✖` per unmet requirement. **Any `✖` is exit 6 and nothing is written** — report it and stop.
 - `Files (n)` — a count per root, plus `(not copied) migrations/` for any install fragment.
-- `Barrel lines` — the exact line each of the five barrels gains.
+- `Barrel lines` — the exact line each of the six barrels gains (the sixth, `worker-exports.ts`,
+  only when the plugin ships a Durable Object or Workflow class).
 - `Dependencies` — what will be installed into which package.
-- **`Then, by hand — nothing below is done for you`** — the numbered steps in step 3's table.
+- **`Steps — nothing below is done for you`** — split into **Human steps** (a decision: the
+  tooling stops and waits) and **Agent steps** (a command PLUS the assertion that proves it ran).
+  Each carries `run` / `expect` / `assert`. `--json` emits the same list with a `kind` on every
+  entry, which is the form to use when you are driving this rather than reading it.
 - `Verify` — the plugin's own note, if it ships one.
 
-Summarise it in three or four lines — what the plugin is, what it adds, what tables it wants, which
-by-hand rows apply — then **ask** (`AskUserQuestion`): install it, or stop. On yes:
+Summarise it in three or four lines — what the plugin is, what it adds, what tables it wants, and
+**every `human` step it will need** — then **ask** (`AskUserQuestion`): install it, or stop. On yes:
 
 ```
 pnpm plugin add <repo|path>[@ref] --apply
@@ -64,19 +68,32 @@ Expect `✔ n file(s) copied and translated`, `✔ n barrel line(s) written`, `�
 recorded in .rocketflare.json`. Then do step 3 — **the app does not typecheck or run until the
 tables exist.**
 
-## 3. The by-hand rows the plan printed
+## 3. The steps the plan printed
 
-The script refuses these deliberately. Each one appears in the plan only when the plugin declares
-it; work through the ones that did, in the order printed.
+The script does not do these, and each says which KIND it is. An **agent** step is an instruction
+plus a check — run the command, then run the assertion. A **human** step is a decision: stop, and
+ask. Each appears only when the plugin declares the thing it is about.
 
-| What | How | Expect | What you change |
-|---|---|---|---|
-| **The migration** (`schema.tables` declared) | `pnpm db:generate --name plugin-<id>-<version>`, **read the SQL**, then `pnpm db:migrate` | `CREATE TABLE` for each declared table, at YOUR migration index, in YOUR journal | Nothing by hand. Never copy a migration from the plugin repo — a foreign snapshot teaches drizzle a current state that never heard of your tables, and your next `db:generate` drops them |
-| **An install fragment** (`migrations/` in the repo) | `pnpm db:generate --custom --name plugin-<id>-install`, then paste the named file into it | an empty custom migration to fill | The data half only (backfills, extensions, triggers) — DDL still comes from the schema |
-| **Bindings, crons, route prefixes, non-secret `[vars]`** | `pnpm provision cloudflare <env>` per environment | `plugins: <id> → <BINDING>=<app>-<id>-<name>[-staging]`, then `<toml>: plugin declarations written` for BOTH tomls | Nothing by hand. You never type a resource id into a toml and never edit one while a phase runs (`/rf-provision`) |
-| **A `vars` entry marked `secret`** | add `KEY=` to `apps/web/.dev.vars.example` **and** `apps/web/.dev.vars`, then `pnpm provision secrets <env>` | the key listed by `wrangler secret list` for that environment | The two files by hand. A secret is never a `[vars]` key — not even in staging |
-| **`workerExports`** (a Durable Object or Workflow class) | add `export { <Class> } from './plugins/<id>/…'` to `apps/web/src/worker.ts` | `pnpm typecheck` green, the class named in both tomls' `[[durable_objects]]`/`[[workflows]]` after provisioning | That one export line. `api/index.ts` exports the Hono app only — the classes live in `worker.ts` |
-| **The gate** | `pnpm lint && pnpm typecheck && pnpm test && pnpm build` | exit 0 | Nothing. A failure here is the install, not the kit — read it before committing |
+Nothing about the barrel lines, the bindings, the crons, the route prefixes, the `[vars]` keys or a
+Durable Object's `[[migrations]]` tag is here any more: those are **declarative**, written by
+`plugin add` and `pnpm provision cloudflare <env>`, and a step that has become declarative is
+removed rather than reworded.
+
+| What | Kind | How | Expect | What you change |
+|---|---|---|---|---|
+| **The migration** (`schema.tables` declared) | agent | `pnpm db:generate --name plugin-<id>-<version>`, **read the SQL**, then `pnpm db:migrate` | `CREATE TABLE` for each declared table, at YOUR migration index, in YOUR journal | Nothing by hand. Never copy a migration from the plugin repo — a foreign snapshot teaches drizzle a current state that never heard of your tables, and your next `db:generate` drops them |
+| **An install fragment** (`migrations/` in the repo) | agent | `pnpm db:generate --custom --name plugin-<id>-install`, then paste the named file into it | an empty custom migration to fill | The data half only (backfills, extensions, triggers) — DDL still comes from the schema |
+| **Bindings, crons, route prefixes, non-secret `[vars]`** | agent | `pnpm provision cloudflare <env>` per environment | `plugins: <id> → <BINDING>=<app>-<id>-<name>[-staging]`, then `<toml>: plugin declarations written` for BOTH tomls | Nothing by hand. You never type a resource id into a toml and never edit one while a phase runs (`/rf-provision`) |
+| **A `vars` entry marked `secret`** — the KEY | agent | add `KEY=` to `apps/web/.dev.vars.example` | the key in that file and in NEITHER toml | One line. A secret is never a `[vars]` key — not even in staging |
+| **A `vars` entry marked `secret`** — the VALUE | **human** | `pnpm provision secrets <env>` | the key listed by `wrangler secret list` for that environment | Nothing you can derive: ask for the credential |
+| **The gate** | agent | `pnpm lint && pnpm typecheck && pnpm test && pnpm build` | exit 0 | Nothing. A failure here is the install, not the kit — read it before committing |
+
+**`workerExports` is no longer a row here.** A Durable Object or Workflow class reaches
+`apps/web/src/worker.ts` through the sixth barrel, `apps/web/src/plugins/worker-exports.ts`, which
+`plugin add` writes — and `pnpm provision cloudflare <env>` writes the matching
+`[[workflows]]` / `[[durable_objects.bindings]]` blocks and the `plugin-<id>-v1` `[[migrations]]`
+tag into both tomls. Removing such a plugin DOES have a human step: a `deleted_classes` migration
+deletes the namespace and everything stored in it.
 
 Then commit: one commit, message `Install plugin <id>@<version>`, so the next upgrade reads against it.
 
@@ -116,7 +133,7 @@ pnpm db:generate --name plugin-<id>-remove    # → DROP TABLE …; read it, the
 ```
 
 Ask about `--archive` **before** applying — after the drop it is not a choice any more. The plan
-also prints what to deprovision by hand: provisioning creates a plugin's Cloudflare resources but
+also prints what to deprovision as HUMAN steps: provisioning creates a plugin's Cloudflare resources but
 never deletes one, and `pnpm remove` on a dependency is printed rather than run.
 
 ## 6. Authoring a plugin
@@ -164,7 +181,7 @@ they type that one themselves), **install another**, or **stop**.
   and database access; this stop is the only review there is.
 - **Never copy a plugin's migration**, and never touch `apps/web/migrations/meta/`. The host
   generates its own once the schema barrel line exists.
-- **Never edit `.rocketflare.json`, `.rocketflare.local.json` or any of the five barrels by hand.**
+- **Never edit `.rocketflare.json`, `.rocketflare.local.json` or any of the six barrels by hand.**
   The script writes them, and `pnpm plugin check` is what proves the two halves agree.
 - **Never write a resource id into a wrangler toml.** A declared binding is `pnpm provision
   cloudflare <env>`'s job, per environment, into both files.

@@ -54,6 +54,7 @@ import {
 import { pluginSurfaces, readManifest } from './lib/manifest.mjs'
 import {
   addBarrelLine,
+  addPlanJson,
   applyCoreEdits,
   archiveSql,
   BARREL_KINDS,
@@ -65,14 +66,17 @@ import {
   coreEditsByFile,
   hasBarrelLine,
   isVendored,
+  nextPluginMigrationTag,
   PLUGIN_MANIFEST_FILE,
   parsePluginRequirement,
   pluginIdProblem,
   pluginPlatformProblems,
   pluginRoots,
   removeBarrelLine,
+  removeSteps,
   renderAddPlan,
   renderList,
+  renderSteps,
   revertCoreEdits,
   surfaceDirectories,
 } from './lib/plugin-lib.mjs'
@@ -122,7 +126,13 @@ export const USAGE = `usage: node scripts/plugin.mjs <command> [options]
 
   list                    the installed plugins, one line each
   check                   audit every installed plugin; one line per failure, exit 1 on any
+
   export <id> <dir>       copy a plugin back out into a plugin repository checkout (authoring)
+
+  --json                  on add, remove and check: the same facts as DATA rather than prose.
+                          Every step carries its kind — agent (a command plus the assertion that
+                          proves it) or human (a decision the tooling stops for) — so a human step
+                          is a field rather than a sentence somebody has to notice.
 
   -h, --help
 
@@ -141,6 +151,7 @@ export function parseArgs(argv) {
     archive: false,
     fetch: true,
     allowDirty: false,
+    json: false,
   }
   const takesValue = { '--subdir': 'subdir', '--to': 'to', '--from': 'from' }
   for (let i = 0; i < argv.length; i++) {
@@ -157,6 +168,7 @@ export function parseArgs(argv) {
     else if (a === '--archive') args.archive = true
     else if (a === '--no-fetch') args.fetch = false
     else if (a === '--allow-dirty') args.allowDirty = true
+    else if (a === '--json') args.json = true
     else if (a.startsWith('-')) return { error: `unknown option '${a}'` }
     else if (!args.command) args.command = a
     else args.positional.push(a)
@@ -501,14 +513,15 @@ function cmdAdd(args, host) {
     barrels,
     verify: verifyText(source, m.version),
   }
-  out(...renderAddPlan(plan))
+  if (args.json) out(JSON.stringify(addPlanJson(plan), null, 2))
+  else out(...renderAddPlan(plan))
 
   if (problems.length > 0) {
     warn('', `error: ${problems.length} requirement(s) unmet — nothing written.`)
     return 6
   }
   if (!args.apply) {
-    out('', 'Nothing written. Read the plan, then re-run with --apply to install.')
+    if (!args.json) out('', 'Nothing written. Read the plan, then re-run with --apply to install.')
     return 0
   }
 
@@ -558,8 +571,8 @@ function cmdAdd(args, host) {
     ...(formatted ? [`✔ ${formatted}`] : []),
     `✔ surface '${m.id}' recorded in ${path.relative(REPO_ROOT, recordedIn)}`,
     '',
-    'Now do the "by hand" steps above — the schema migration first; nothing else can run until the',
-    'tables exist. Then `pnpm lint && pnpm typecheck && pnpm test && pnpm build`.'
+    'Now work the steps above — the schema migration first; nothing else can run until the tables',
+    'exist. Each AGENT step names the assertion that proves it; each HUMAN step is a decision.'
   )
   return 0
 }
@@ -998,7 +1011,10 @@ function cmdRemove(args, host) {
     : {}
   const tables = anchorManifest.schema?.tables ?? []
 
-  out(
+  const say = (...lines) => {
+    if (!args.json) out(...lines)
+  }
+  say(
     `Remove ${id}@${surface.source?.version ?? '?'} from ${host.label}`,
     '',
     'Deletes',
@@ -1011,56 +1027,35 @@ function cmdRemove(args, host) {
     '',
     `Surface '${id}' dropped from ${path.basename(host.sidecarIds.includes(id) ? host.sidecarPath : host.manifestPath)}`
   )
-  if (tables.length > 0) {
+  // What is LEFT, classified. Most of it is `human`, and that is the honest answer rather than a
+  // gap: a migration full of `DROP TABLE`, an `--archive` copy taken or knowingly skipped, a
+  // `deleted_classes` migration that deletes a Durable Object namespace and everything in it, and
+  // live Cloudflare resources that may still hold somebody's data. Provisioning creates a plugin's
+  // resources (decision 12) and deliberately never deletes one.
+  const steps = removeSteps(anchorManifest, {
+    archive: args.archive,
+    // Read from the toml rather than assumed: the tag is append-only, so the next one is the next
+    // free number after every `plugin-<id>-v<n>` this Worker has already told Cloudflare about.
+    migrationTag: nextPluginMigrationTag(tomlMigrationTags(), id),
+  })
+  if (args.json) {
     out(
-      '',
-      'Tables — `pnpm db:generate` will emit DROP TABLE for each, which is correct here (the kit',
-      'warns about a foreign SNAPSHOT, not about your own barrel shrinking). Orphaned tables are',
-      'not a stable state:',
-      ...tables.map(t => `  ${t}`),
-      args.archive
-        ? '  --archive: they are copied into schema "archive" by a --custom migration first'
-        : '  pass --archive to copy them into schema "archive" before they go'
+      JSON.stringify(
+        {
+          plugin: { id, version: surface.source?.version ?? null },
+          deletes: { directories, barrels: barrels.map(k => BARRELS[k].file), tables },
+          steps,
+        },
+        null,
+        2
+      )
     )
-  }
-  const deps = Object.entries(anchorManifest.dependencies ?? {}).filter(
-    ([, d]) => Object.keys(d ?? {}).length > 0
-  )
-  if (deps.length > 0) {
-    out('', 'Dependencies — run these YOURSELF if nothing else has started using them:')
-    installDependencies(anchorManifest, 'remove')
-  }
-  // Provisioning creates a plugin's platform resources (decision 12) but deliberately never
-  // deletes one: `patch-toml.ts` has no delete-block op, and it should not — a live bucket or
-  // queue with somebody's data in it is not something a script removes because a directory went.
-  const bindings = anchorManifest.bindings ?? []
-  const crons = anchorManifest.crons ?? []
-  const prefixes = anchorManifest.apiPrefixes ?? []
-  const vars = anchorManifest.vars ?? []
-  if (bindings.length + crons.length + prefixes.length + vars.length > 0) {
-    out('', 'To deprovision BY HAND — nothing below is removed for you:')
-    for (const b of bindings) {
-      out(
-        `  ${b.type} binding ${b.binding ?? b.name}: delete its block from BOTH tomls, then delete the resource in Cloudflare`
-      )
-    }
-    for (const c of crons)
-      out(`  cron "${c.cron ?? c}": remove from [triggers] crons in BOTH tomls`)
-    for (const p of prefixes) {
-      out(`  route prefix ${p}: remove from [assets] run_worker_first in BOTH tomls`)
-    }
-    for (const v of vars) {
-      const key = v.key ?? v.name ?? v
-      out(
-        v.secret
-          ? `  secret ${key}: \`wrangler secret delete ${key}\` per environment, and drop it from .dev.vars(.example)`
-          : `  [vars] ${key}: remove from BOTH tomls (the parity test compares the KEYS) and .dev.vars.example`
-      )
-    }
+  } else {
+    out(...renderSteps(steps, 'Steps — nothing below is done for you'))
   }
 
   if (!args.apply) {
-    out('', 'Nothing written. Re-run with --apply to remove it.')
+    say('', 'Nothing written. Re-run with --apply to remove it.')
     return 0
   }
 
@@ -1078,7 +1073,7 @@ function cmdRemove(args, host) {
     writeFileSync(abs(file), revertCoreEdits(readFileSync(abs(file), 'utf8'), edits))
   }
   const dropped = dropSurface(host, id)
-  out(
+  say(
     '',
     `✔ ${directories.length} director(ies) deleted`,
     `✔ ${barrels.length} barrel line(s) removed`,
@@ -1086,13 +1081,7 @@ function cmdRemove(args, host) {
       ? [`✔ core edit(s) reverted in ${[...removedEdits.keys()].join(', ')}`]
       : []),
     `✔ surface dropped from ${dropped.map(f => path.basename(f)).join(', ') || '(nowhere — it was not recorded)'}`,
-    '',
-    ...(tables.length > 0
-      ? [
-          `Next: pnpm db:generate --name plugin-${id}-remove   → read the DROP TABLE SQL → pnpm db:migrate`,
-        ]
-      : []),
-    'Then: pnpm lint && pnpm typecheck && pnpm test && pnpm build'
+    ...renderSteps(steps, 'Steps that remain')
   )
   return 0
 }
@@ -1127,6 +1116,17 @@ function writeArchiveMigration(id, tables) {
   )
 }
 
+/**
+ * Every `[[migrations]]` tag already in the production toml. Read textually rather than parsed: the
+ * tomls are patched at the string level everywhere else for the same reason (`patch-toml.ts`), and
+ * this script has no TOML dependency.
+ */
+function tomlMigrationTags() {
+  const file = abs('apps/web/wrangler.toml')
+  if (!existsSync(file)) return []
+  return [...readFileSync(file, 'utf8').matchAll(/^tag\s*=\s*"([^"]+)"/gm)].map(m => m[1])
+}
+
 // ---------------------------------------------------------------- list / check
 
 function cmdList(_args, host) {
@@ -1138,7 +1138,7 @@ function cmdList(_args, host) {
  * Audit every installed plugin. One line per failure and exit 1 on any — this is the thing
  * `/rf-preflight` and CI run, so it says what is wrong rather than how to fix it.
  */
-function cmdCheck(_args, host) {
+function cmdCheck(args, host) {
   const failures = []
   // Things worth SAYING that are not faults — a state the kit itself is legitimately in, or a
   // silence somebody should know about. Printed either way; they never change the exit code.
@@ -1203,6 +1203,28 @@ function cmdCheck(_args, host) {
     for (const f of rejects) failures.push(`${id}: ${f} — an upgrade left work behind`)
 
     const anchor = JSON.parse(readFileSync(abs(s.anchor), 'utf8'))
+    // A DO or Workflow class reaches the Worker through the sixth barrel and nowhere else, so
+    // `workerExports` is checkable rather than advisory: the half has to be on disk (the barrel
+    // loop above proves the LINE) and it has to export every name the manifest declares. A class
+    // in the file but not in the manifest is invisible to provisioning, which is what writes its
+    // `[[durable_objects.bindings]]` / `[[workflows]]` block; a name in the manifest but not in the
+    // file is a binding pointed at nothing, and `wrangler deploy` refuses the whole script for it.
+    const declaredExports = anchor.workerExports ?? []
+    if (declaredExports.length > 0) {
+      const half = BARRELS.worker.half(id)
+      if (!existsSync(abs(half))) {
+        failures.push(
+          `${id}: declares workerExports (${declaredExports.join(', ')}) and ships no ${half}`
+        )
+      } else {
+        const source = readFileSync(abs(half), 'utf8')
+        for (const name of declaredExports) {
+          if (!new RegExp(`\\b${name}\\b`).test(source)) {
+            failures.push(`${id}: ${half} does not export ${name}, which its manifest declares`)
+          }
+        }
+      }
+    }
     if (anchor.version && s.source?.version && anchor.version !== s.source.version) {
       failures.push(
         `${id}: the surface says ${s.source.version}, ${s.anchor} says ${anchor.version}`
@@ -1237,6 +1259,34 @@ function cmdCheck(_args, host) {
         `${declared.id}: installed at ${have}, but defaultPlugins pins ${declared.ref} — repin the entry, or \`pnpm plugin upgrade ${declared.id}\``
       )
     }
+  }
+  // The audit as DATA. Every failure `check` can report is agent-fixable — it is a statement about
+  // this tree, not a decision about somebody's data — so each carries `kind: 'agent'` and the one
+  // assertion that settles it. A `human` failure would be a contradiction: nothing here waits.
+  if (args.json) {
+    out(
+      JSON.stringify(
+        {
+          ok: failures.length === 0,
+          plugins: host.plugins.map(s => ({
+            id: s.id,
+            version: s.source?.version ?? null,
+            vendored: isVendored(s.source, host.kitRepo),
+            local: host.sidecarIds.includes(s.id),
+          })),
+          failures: failures.map((message, i) => ({
+            id: `check-${i + 1}`,
+            message,
+            kind: 'agent',
+            assert: 'pnpm plugin check',
+          })),
+          notes,
+        },
+        null,
+        2
+      )
+    )
+    return failures.length === 0 ? 0 : 1
   }
   for (const n of notes) out(`note: ${n}`)
 

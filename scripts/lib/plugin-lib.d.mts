@@ -9,12 +9,17 @@ export const RESERVED_PLUGIN_IDS: readonly string[]
 export function pluginIdProblem(id: unknown): string | null
 export function camelId(id: string): string
 
-export type BarrelKind = 'shared' | 'server' | 'ui' | 'schema' | 'cli'
+export type BarrelKind = 'shared' | 'server' | 'ui' | 'schema' | 'worker' | 'cli'
 export interface BarrelDefinition {
   file: string
-  /** `null` for the schema barrel, which is `export *` rather than a tuple. */
+  /** `null` for the two `export *` barrels (`schema`, `worker`), which declare no tuple. */
   constName: string | null
   suffix: string | null
+  /**
+   * The "this file is still a module" marker an `export *` barrel falls back to when its last
+   * plugin goes. Absent on the four list barrels, which always declare a const.
+   */
+  empty?: string
   specifier(id: string): string
   /** The file whose presence means the plugin ships this half. */
   half(id: string): string
@@ -54,12 +59,31 @@ export interface FileClassification {
 export function classifyPluginFile(relPath: string, id: string): FileClassification
 
 /**
- * The binding types provisioning can create. Pinned against
+ * The binding types provisioning can write. Pinned against
  * `apps/web/scripts/provision/plugin-resources.ts`'s `SUPPORTED_PLUGIN_BINDING_TYPES` by
  * `plugin-lib.test.ts` — one is TypeScript, one has to be loadable from a plain `.mjs` script.
  */
-export const SUPPORTED_PLUGIN_BINDING_TYPES: readonly ['kv', 'queue', 'r2']
+export const SUPPORTED_PLUGIN_BINDING_TYPES: readonly [
+  'kv',
+  'queue',
+  'r2',
+  'workflow',
+  'durable_object',
+]
+/** The subset an account must CREATE; `wrangler deploy` registers the other two from the toml. */
+export const CREATED_PLUGIN_BINDING_TYPES: readonly ['kv', 'queue', 'r2']
+/** The types whose block names a class exported from the Worker entry (the sixth barrel). */
+export const CLASS_PLUGIN_BINDING_TYPES: readonly ['workflow', 'durable_object']
+/** The types carrying an account-scoped resource name, which must differ between environments. */
+export const NAMED_PLUGIN_BINDING_TYPES: readonly ['kv', 'queue', 'r2', 'workflow']
+export const DO_STORAGE_KINDS: readonly ['sqlite', 'none']
 export function pluginPlatformProblems(manifest: PluginManifest): string[]
+/** `plugin-<id>-v<n>` — append-only, host-owned, never renumbered. */
+export function pluginMigrationTag(pluginId: string, n?: number): string
+export function nextPluginMigrationTag(
+  existingTags: readonly string[],
+  pluginId: string
+): string
 
 export interface PluginRequires {
   kit?: string
@@ -77,7 +101,17 @@ export interface PluginManifest {
   registries?: string[]
   requires?: PluginRequires
   dependencies?: Record<string, Record<string, string>>
-  bindings?: Array<{ type: string; binding?: string; name?: string; consumer?: boolean }>
+  bindings?: Array<{
+    type: string
+    binding?: string
+    /** The account-scoped half; absent on a `durable_object`, which creates no resource. */
+    name?: string
+    consumer?: boolean
+    /** `workflow` / `durable_object`: the class the sixth barrel re-exports into `worker.ts`. */
+    className?: string
+    /** `durable_object` only, and required there — it picks new_sqlite_classes vs new_classes. */
+    storage?: string
+  }>
   crons?: Array<string | { cron: string; task?: string }>
   apiPrefixes?: string[]
   vars?: Array<string | { key?: string; name?: string; example?: string; secret?: boolean }>
@@ -132,6 +166,36 @@ export interface AddPlan {
   verify?: string | null
 }
 export function renderAddPlan(plan: AddPlan): string[]
+
+/**
+ * What a step costs somebody (D31). `declarative` never appears in a plan — the tooling does it —
+ * so the only two a reader ever sees are `agent` (an instruction PLUS a check) and `human` (a
+ * decision the tooling stops for).
+ */
+export type StepKind = 'declarative' | 'agent' | 'human'
+export const STEP_KINDS: readonly StepKind[]
+export interface PlanStep {
+  kind: StepKind
+  /** Stable across runs, so a caller can key on it (`secret-value:APPROVALS_TOKEN`). */
+  id: string
+  title: string
+  /** The exact command, or the exact edit, with nothing left to infer. */
+  command: string
+  /** What is observably true afterwards. */
+  expect: string
+  /** What proves it — a command for an `agent` step, a judgement for a `human` one. */
+  assert: string
+}
+export function planSteps(
+  manifest: PluginManifest,
+  options?: { fragments?: readonly string[] }
+): PlanStep[]
+export function removeSteps(
+  manifest: PluginManifest,
+  options?: { archive?: boolean; migrationTag?: string | null }
+): PlanStep[]
+export function renderSteps(steps: readonly PlanStep[], heading?: string): string[]
+export function addPlanJson(plan: AddPlan): Record<string, unknown>
 export function renderList(
   surfaces: readonly Surface[],
   options?: { sidecarIds?: readonly string[] }

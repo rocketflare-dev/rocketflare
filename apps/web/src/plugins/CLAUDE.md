@@ -5,7 +5,7 @@ like the kit itself — that contributes contracts, schema, routes, jobs, agents
 This directory is the host half: the types, the two web barrels, and every installed plugin's tree.
 `docs/CONCEPTS.md` §16 is the decision record; `example-feature/` is the worked example.
 
-The whole seam is **five barrel lines**. Installing a plugin is writing them; removing it is
+The whole seam is **six barrel lines**. Installing a plugin is writing them; removing it is
 deleting them. Nothing else in the kit ever names a plugin, which is what makes both reversible.
 
 | Barrel | Exports | Read by |
@@ -14,7 +14,14 @@ deleting them. Nothing else in the kit ever names a plugin, which is what makes 
 | `server.ts` | `SERVER_PLUGINS` / `serverPlugins` | `api/index.ts`, `utils/routes/api-prefixes.ts`, `queues/jobs.ts`, `scheduled.ts`, `agents/registry.ts`, `agents/tools/index.ts`, `prompts.ts`, `permissions/abilities.ts`, `utils/db/tenant-helpers.ts`, `services/access.ts`, `scripts/seed.ts`, the `rls-coverage` and unscoped-allowlist tests (never `db/schema/rls.ts` — a cycle) |
 | `ui.ts` | `UI_PLUGINS` / `uiPlugins` | `App.tsx`, `SideNav.tsx`, `SettingsLayout.tsx`, `lib/query-keys.ts`, `pages/agents/forms/index.ts` |
 | `schema.ts` | one `export *` per plugin | one `export *` line in `db/schema/index.ts` (position irrelevant — a duplicated name is TS2308) |
+| `worker-exports.ts` | one `export *` per plugin | one `export *` line in `src/worker.ts` — the Worker's ENTRY module, which is the only place Cloudflare resolves a binding's `class_name` from |
 | `apps/cli/src/plugins/index.ts` | `CLI_PLUGINS` / `cliPlugins` | `cli.ts` |
+
+**The two `export *` barrels carry an empty marker.** `schema.ts` and `worker-exports.ts` declare
+no const, so removing the last plugin would leave a file with no top-level export — which
+TypeScript reads as a SCRIPT rather than a module, making its one importer TS2306 and stopping the
+whole app typechecking. `addBarrelLine` displaces `export {}` and `removeBarrelLine` puts it back,
+byte for byte.
 
 **Two names per barrel, and the reason is not style.** The `as const` TUPLE is what type-level
 derivations read (the job-variant union, the agent-key enum, the subject union). An EMPTY tuple
@@ -38,17 +45,26 @@ in the host. Each half is checked where it is written; only the merge is cast.
 - **It has exactly four published entries** — `src/plugins/<id>/index.ts`, `<id>/ui/index.ts`,
   `packages/shared/src/plugins/<id>/index.ts` and `apps/cli/src/plugins/<id>/index.ts`. Everything
   else under it is private, which is what lets its semver cover a knowable surface. **No deep import
-  across a plugin boundary**, in either direction, except the five barrel lines;
+  across a plugin boundary**, in either direction, except the six barrel lines;
   `tests/config/plugins.test.ts` is the check. (`plugin.json` is the surface ANCHOR, read by the
   tooling, never imported.)
+- **It reaches the Worker's entry through the barrel, never by editing it.** A Durable Object or
+  Workflow class is bound by `class_name` against the named exports of `src/worker.ts` and nowhere
+  else, so a plugin shipping one puts `apps/web/src/plugins/<id>/worker-exports.ts` in its tree —
+  a file that re-exports its classes and nothing else — and lists their names in `workerExports`.
+  `plugin add` writes the barrel line; `plugin check` asserts the file exports every declared name.
+  The `[[durable_objects.bindings]]`, `[[workflows]]` and `[[migrations]]` blocks stay the HOST's
+  and are written by `pnpm provision cloudflare <env>` from the same manifest.
 - **It ships no migration.** The HOST generates it once the schema barrel line exists:
   `pnpm db:generate --name plugin-<id>-<version>`, read the SQL, `pnpm db:migrate`. A plugin's own
   `migrations/` holds plain-SQL DATA fragments (backfills), never DDL — a kit or plugin migration
   copied in replaces drizzle's notion of current state with one that has never heard of the app's
   own tables.
 - **It edits no toml and no `package.json`.** A binding, cron or `[vars]` key it declares in
-  `plugin.json` is added to BOTH tomls by hand (`.claude/rules/cloudflare.md`) until Phase B's
-  provisioning reads them.
+  `plugin.json` is written into BOTH tomls by `pnpm provision cloudflare <env>`
+  (`.claude/rules/cloudflare.md`) — including a `workflow` or `durable_object` block and, for a
+  Durable Object, its `plugin-<id>-v1` `[[migrations]]` tag. The host owns every byte of its own
+  files; the plugin only declares.
 - **It never renames anything across releases** — expand/contract only. `drizzle-kit`'s rename
   prompt has no non-interactive answer, so a rename stops an unattended install dead.
 - **It composes, never redefines.** `grants` are additive over its own subjects; hooks are
@@ -79,12 +95,26 @@ pnpm plugin list · pnpm plugin check · pnpm plugin export <id> <dir>
 ```
 
 `add --apply` copies the three trees (translated into this app's names by the same token map the
-rename used), copies the plugin's release notes to `docs/plugins/<id>/upgrades/`, writes the five
+rename used), copies the plugin's release notes to `docs/plugins/<id>/upgrades/`, writes the six
 barrel lines, installs the dependencies the manifest declares, and records the surface — in
 `.rocketflare.json`, or in the git-ignored `.rocketflare.local.json` sidecar with `--local` and
 always inside the kit itself. Exit codes: 0 ok · 1 error · 2 usage · 3 unreachable with no cached
 mirror · 4 rejects remain (upgrade) · 5 no `rocketflare-plugin.json` at the source · 6 a
 requirement is unmet · 7 the target path exists.
+
+**Every step it does not do is CLASSIFIED**, because an install is performed by an agent as often
+as by a person and prose an agent may skim is not a control:
+
+- **declarative** — nobody does it; the tooling does. These do not appear in the plan at all. The
+  barrel lines, a declared binding, cron, route prefix or `[vars]` key, and a Durable Object's
+  `[[migrations]]` tag are all here, which is why the plan is short.
+- **agent** — an instruction PLUS the assertion that proves it ran. Every one carries `run`,
+  `expect` and `assert`.
+- **human** — a decision the tooling stops for: a secret's VALUE, a migration containing `DROP`,
+  `--archive`, retiring a Durable Object namespace, deleting a live Cloudflare resource.
+
+`--json` emits the same plan as data, with `kind` on every step, so a human step is a field rather
+than a sentence in a paragraph. `pnpm plugin check --json` does the same for the audit.
 
 **What it will not do, ever**, and each is in the plan instead: generate or copy a migration
 (`pnpm db:generate --name plugin-<id>-<version>` is yours, after the barrel line exists), edit a
@@ -99,7 +129,7 @@ own tooling — `.github/`, `.claude/`, `scripts/`, `package.json`, `.gitignore`
 copied nor refused, because a plugin repo needs a CI workflow (half of decision 5) and a copy of
 `release.mjs` to cut a release with.
 
-`remove` deletes the trees, the five lines and the surface, then `pnpm db:generate` emits the
+`remove` deletes the trees, the six lines and the surface, then `pnpm db:generate` emits the
 `DROP TABLE`s — which is correct here; the kit's warning is about importing a foreign SNAPSHOT, not
 about your own barrel shrinking. `--archive` first writes a `--custom` migration copying each table
 into schema `archive`. Orphaned tables are not a stable state.

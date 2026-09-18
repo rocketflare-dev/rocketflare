@@ -337,3 +337,93 @@ describe('plugin crons, vars and run_worker_first', () => {
     expect(() => patchToml('name = "x"\n', { crons: ['0 0 * * *'] })).toThrowError(TomlPatchError)
   })
 })
+
+/**
+ * Class bindings (D31). A `workflow` and a `durable_object` need no resource created — the block
+ * IS the registration and `wrangler deploy` does the rest — so what matters here is that the
+ * blocks are spelled the way Cloudflare reads them, and that re-running provisioning is a no-op.
+ */
+describe('plugin workflow and Durable Object blocks', () => {
+  const blocks = [
+    {
+      type: 'workflow' as const,
+      binding: 'ORDERS_SYNC',
+      name: 'acme-orders-sync',
+      className: 'OrdersSyncWorkflow',
+      pluginId: 'orders',
+    },
+    {
+      type: 'durable_object' as const,
+      binding: 'ORDERS_HUB',
+      className: 'OrdersHub',
+      pluginId: 'orders',
+    },
+  ]
+  const migrations = [
+    { tag: 'plugin-orders-v1', newSqliteClasses: ['OrdersHub'], pluginId: 'orders' },
+  ]
+  const baseline = TOML.parse(prodText) as any
+  const patched = patchToml(prodText, { bindings: blocks, migrations })
+  const doc = TOML.parse(patched) as any
+
+  it('adds the workflow beside the kit’s, keeping binding and class_name', () => {
+    expect(doc.workflows).toHaveLength(baseline.workflows.length + 1)
+    expect(doc.workflows.at(-1)).toEqual({
+      name: 'acme-orders-sync',
+      binding: 'ORDERS_SYNC',
+      class_name: 'OrdersSyncWorkflow',
+    })
+  })
+
+  it('spells a Durable Object binding as `name`, which is how the toml names one', () => {
+    // Not `binding`: the kit's own is `name = "NOTIFICATIONS_HUB"`. A patcher keyed on `binding`
+    // would never find an existing block and would insert a second one on every run.
+    expect(doc.durable_objects.bindings).toHaveLength(baseline.durable_objects.bindings.length + 1)
+    expect(doc.durable_objects.bindings.at(-1)).toEqual({
+      name: 'ORDERS_HUB',
+      class_name: 'OrdersHub',
+    })
+  })
+
+  it('appends the migration tag and never touches the kit’s', () => {
+    expect(doc.migrations).toHaveLength(baseline.migrations.length + 1)
+    expect(doc.migrations[0]).toEqual(baseline.migrations[0])
+    expect(doc.migrations.at(-1)).toEqual({
+      tag: 'plugin-orders-v1',
+      new_sqlite_classes: ['OrdersHub'],
+    })
+  })
+
+  it('is idempotent, and never rewrites a tag Cloudflare has already applied', () => {
+    expect(patchToml(patched, { bindings: blocks, migrations })).toBe(patched)
+    // A tag is an identity, not a value: re-running with different classes under the SAME tag
+    // leaves the recorded one alone, because replaying it loses the namespace it created.
+    const rival = patchToml(patched, {
+      migrations: [{ tag: 'plugin-orders-v1', newClasses: ['SomethingElse'] }],
+    })
+    expect((TOML.parse(rival) as any).migrations.at(-1)).toEqual({
+      tag: 'plugin-orders-v1',
+      new_sqlite_classes: ['OrdersHub'],
+    })
+  })
+
+  it('refuses to rename a live Workflow, and renames one block rather than adding a second', () => {
+    // Each toml is patched from its own baseline, so the production file only ever sees the
+    // production name — a DIFFERENT name arriving means the app was renamed, and a Workflow name
+    // is account-scoped state with instances under it. Same protection the KV id has, same escape.
+    const renamed = { ...blocks[0], name: 'acme-orders-sync-staging' }
+    expect(() => patchToml(patched, { bindings: [renamed] })).toThrowError(TomlPatchError)
+    const forced = patchToml(patched, { bindings: [renamed], force: true })
+    const after = TOML.parse(forced) as any
+    expect(after.workflows).toHaveLength(baseline.workflows.length + 1)
+    expect(after.workflows.at(-1).name).toBe('acme-orders-sync-staging')
+    // and the kit's own Workflow is untouched by any of it
+    expect(after.workflows[0]).toEqual(baseline.workflows[0])
+  })
+
+  it('refuses a class binding with no class to name', () => {
+    expect(() =>
+      patchToml(prodText, { bindings: [{ type: 'durable_object', binding: 'X' }] })
+    ).toThrowError(TomlPatchError)
+  })
+})

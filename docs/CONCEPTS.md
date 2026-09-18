@@ -1874,8 +1874,8 @@ another's, is a config-test failure rather than a convention — otherwise the v
 nothing. (The shared entry is imported as `@rocketflare/shared/plugins/<id>/index`: the package's
 `./*` export maps to a FILE, so the `/index` is load-bearing.)
 
-**Five barrels, one line per plugin each**, and `pnpm plugin add|remove` writes them — an import
-and a tuple entry in four, one `export *` in the fifth. That, the surface entry and one
+**Six barrels, one line per plugin each**, and `pnpm plugin add|remove` writes them — an import
+and a tuple entry in four, one `export *` in each of the other two. That, the surface entry and one
 `db:generate` are the whole of an install.
 
 | Barrel | Exports | Read by |
@@ -1884,6 +1884,7 @@ and a tuple entry in four, one `export *` in the fifth. That, the surface entry 
 | `apps/web/src/plugins/server.ts` | `SERVER_PLUGINS` / `serverPlugins` | `api/index.ts`, `utils/routes/api-prefixes.ts`, `queues/jobs.ts`, `scheduled.ts`, `agents/registry.ts`, `agents/tools/index.ts`, `prompts.ts`, `permissions/abilities.ts`, `utils/db/tenant-helpers.ts`, `services/access.ts`, `scripts/seed.ts`, `rls-coverage` and the unscoped allow-list |
 | `apps/web/src/plugins/schema.ts` | `export *` of each plugin's tables | one `export *` line in `db/schema/index.ts` — the single surface drizzle-kit, `typeof schema` and `rls-coverage` read (a name exported twice is TS2308, never a silent shadow) |
 | `apps/web/src/plugins/ui.ts` | `UI_PLUGINS` / `uiPlugins` | `App.tsx`, `SideNav.tsx`, `SettingsLayout.tsx`, `lib/query-keys.ts`, `pages/agents/forms/index.ts` |
+| `apps/web/src/plugins/worker-exports.ts` | `export *` of each plugin's DO / Workflow classes | one `export *` line in `src/worker.ts` — the Worker's ENTRY module, and the only place Cloudflare resolves a binding's `class_name` from |
 | `apps/cli/src/plugins/index.ts` | `CLI_PLUGINS` / `cliPlugins` | `cli.ts` |
 
 **Every barrel exports two names for one list, and the reason is not style.** The `as const` tuple
@@ -1995,7 +1996,7 @@ line goes, `db:generate` emits the `DROP TABLE`s, and orphaned tables are not a 
 
 **`example-feature` is the reference, and it exists to be deleted.** It was the kit's demonstration
 feature flag; it is now a plugin, and it gained the parts a flag alone could not demonstrate. In
-three directories and five barrel lines it exercises every slot: the `example-feature` flag; a
+three directories and its barrel lines it exercises every slot: the `example-feature` flag; a
 tenant-scoped `example_notes` table (`tenantRef` + `timestamps` + `tenantIsolation`, indexes led by
 `tenant_id`); a CRUD mount at `/api/example-feature` behind `requireFeature` (404
 `feature_disabled`, gated at the MOUNT); the `example-feature.ping` job variant and its handler; the
@@ -2022,7 +2023,7 @@ before anything bigger moves out. Its surface's `source.repo` is the kit repo wi
 | 9 | Public surface | Four entry files are the API; a deep import across a plugin boundary is a test failure |
 | 10 | Cutting the work | Phase A is four PRs on one branch and one kit release |
 | 11 | Uninstall data | Drop by default, `--archive` on request. Orphaned tables are not a stable state |
-| 12 | Plugin bindings | Provisioning learns them: `provision cloudflare <env>` reads each plugin's `bindings[]`, and the parity test applies the `-staging` rule to them |
+| 12 | Plugin bindings | Provisioning learns them: `provision cloudflare <env>` reads each plugin's `bindings[]`, and the parity test applies the `-staging` rule to them. Five types: `kv`/`queue`/`r2` are created, `workflow`/`durable_object` are declared only (`wrangler deploy` registers them) and reach the entry module through the sixth barrel |
 | 13 | Where a plugin comes from | Every manifest carries a required `repo` (+ optional `subdir`), so a surface's `source.repo` is never null |
 
 Decisions 11 and 12 arrived with `scripts/plugin.mjs` and `provision/plugin-resources.ts` (below),
@@ -2051,7 +2052,7 @@ else's tests. The `plugins` job on the release commit is what proves those green
 **The lifecycle is `scripts/plugin.mjs` (`pnpm plugin`).** `add` mirrors a plugin repository (or
 reads a local path — that is the authoring loop), checks its `requires` three ways, refuses any
 file outside the plugin's own four roots, **prints the plan and stops unless `--apply`**, and on
-apply copies the trees through `applyReplacements`, writes the five barrel lines, installs the
+apply copies the trees through `applyReplacements`, writes the six barrel lines, installs the
 declared dependencies and appends the surface. `upgrade <id>` is the kit-upgrade pipeline pointed
 at the plugin's own repository, reading ITS notes (`requires_kit`, `requires_plugins`,
 `migrations`, `data_migrations`, `touches_registries`) and stamping `source` and `history[]` only
@@ -2063,12 +2064,37 @@ plugin back out as a repository. Exit codes: 0 · 1 error · 2 usage · 3 unreac
 
 Three rules it enforces that nothing else can. **It never copies a migration** — the host runs
 `pnpm db:generate` once the schema barrel line exists. **It never edits a toml or writes a resource
-id** — a declared `bindings[]`, `crons[]`, `apiPrefixes[]` or `vars[]` entry becomes one numbered
-step in the plan: `pnpm provision cloudflare <env>` per environment, which reads those same
-declarations off the installed surface and writes the blocks into BOTH tomls (decision 12), or, for
-a var marked `secret: true`, a `.dev.vars.example` key plus `pnpm provision secrets <env>`. A
-binding whose `type` is outside `kv | queue | r2` is refused at INSTALL, naming the type, rather
-than surfacing as a 503 after a deploy that silently skipped it.
+id** — a declared `bindings[]`, `crons[]`, `apiPrefixes[]` or `vars[]` entry is written by
+`pnpm provision cloudflare <env>` per environment, which reads those same declarations off the
+installed surface and writes the blocks into BOTH tomls (decision 12), or, for a var marked
+`secret: true`, a `.dev.vars.example` key plus `pnpm provision secrets <env>`. A binding whose
+`type` is outside `kv | queue | r2 | workflow | durable_object` is refused at INSTALL, naming the
+type, rather than surfacing as a 503 after a deploy that silently skipped it.
+
+**A class binding is provisionable only because the sixth barrel exists.** `workflow` and
+`durable_object` carry a `class_name`, which Cloudflare resolves against the named exports of
+`src/worker.ts` and nowhere else. Before `plugins/worker-exports.ts`, a plugin shipping a class
+declared `workerExports` and the plan PRINTED "add this export to worker.ts" — and a printed
+instruction is not a mechanism: an unattended install performs nothing it reads, so the tree built,
+deployed, and failed at the binding. Writing the toml block in that world would have named a class
+nothing exported, which makes `wrangler deploy` refuse the whole SCRIPT. With the barrel the class
+arrives wired, `plugin check` proves every declared name is exported, and the block can be written.
+`d1` and `vectorize` have no equivalent mechanism, which is why they are still refused rather than
+merely unimplemented. A Durable Object also brings one `[[migrations]]` entry tagged
+`plugin-<id>-v1`, with `new_sqlite_classes` or `new_classes` per its required `storage`: **DO
+migration tags are to `worker.ts` what SQL migrations are to `db/schema`** — append-only,
+host-owned, never renumbered, because replaying one loses a namespace and everything in it.
+
+**"By hand" is retired as a phrase.** Installs are performed by AGENTS as often as by people, and
+prose an agent may skim is not a control — which is exactly how `workerExports` and `coreEdits`
+each produced a tree that built and then failed elsewhere. Every step a plan prints is one of
+three: **declarative** (the tooling does it, so it does not appear — the barrel lines, the toml
+blocks, the crons, the prefixes, the vars, the DO tag), **agent** (an instruction PLUS the
+assertion that proves it ran), or **human** (a decision the tooling stops for: a secret's value, a
+migration containing `DROP`, `--archive`, retiring a DO namespace, deleting a live resource). Each
+carries its exact command, its observable result and its assertion, and `--json` on `add`, `remove`
+and `check` emits the same list with `kind` on every entry, so a human step is a field rather than
+a sentence somebody has to notice.
 And **a VENDORED plugin is the kit's**: `source.repo` equal to the kit's own repository with no
 subdirectory means `plugin upgrade` defers to `kit:upgrade`, and `requires.kit` is not checked at
 all, because the same release cut both and the range describes the kit it shipped inside rather

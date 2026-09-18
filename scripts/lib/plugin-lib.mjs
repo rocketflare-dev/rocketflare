@@ -1,11 +1,11 @@
 /**
- * The pure half of `scripts/plugin.mjs` (D31, Phase B): the plugin id rules, the five barrel
+ * The pure half of `scripts/plugin.mjs` (D31, Phase B): the plugin id rules, the six barrel
  * lines, the file-root classification, the requirement check, the surface builder and the plan
  * text. No I/O and nothing runs at import time, so `apps/web/tests/config/plugin-lib.test.ts` can
  * drive every rule against a FIXTURE — which matters because most of them are rules about a plugin
  * this checkout does not have installed.
  *
- * The barrel writer is the part to read twice. Installing a plugin IS five lines; if this file
+ * The barrel writer is the part to read twice. Installing a plugin IS six lines; if this file
  * writes them differently from the way a person would, every install produces a lint diff and the
  * gate stops passing by construction. So it inserts in sorted order, it is idempotent (running
  * `add` twice writes nothing), and `remove` is its exact inverse — the test asserts the round trip
@@ -21,8 +21,19 @@ import { isVendored, satisfiesResult } from './upgrade-lib.mjs'
 /** The same rule `@rocketflare/shared/plugins` enforces at the type level. */
 export const PLUGIN_ID_RE = /^[a-z][a-z0-9-]*$/
 
-/** Barrel FILENAMES. An id that collides with one makes `./<id>` ambiguous with a barrel import. */
-export const RESERVED_PLUGIN_IDS = Object.freeze(['index', 'server', 'ui', 'schema', 'types'])
+/**
+ * Barrel FILENAMES. An id that collides with one makes `./<id>` ambiguous with a barrel import —
+ * and worse, `apps/web/src/plugins/<name>.ts` would then read as the entry of a plugin called
+ * `<name>` to every rule that derives a plugin id from a path. Add a barrel, add its stem here.
+ */
+export const RESERVED_PLUGIN_IDS = Object.freeze([
+  'index',
+  'server',
+  'ui',
+  'schema',
+  'types',
+  'worker-exports',
+])
 
 /** `null` when `id` is a legal plugin id, else the sentence saying why it is not. */
 export function pluginIdProblem(id) {
@@ -40,12 +51,16 @@ export function camelId(id) {
   return id.replace(/-([a-z0-9])/g, (_, c) => c.toUpperCase())
 }
 
-// ---------------------------------------------------------------- the five barrels
+// ---------------------------------------------------------------- the six barrels
 
 /**
- * The five barrel lines, as data. `half` is the file under the plugin's tree whose PRESENCE means
+ * The six barrel lines, as data. `half` is the file under the plugin's tree whose PRESENCE means
  * the plugin ships that half — an install writes a line only for the halves that arrived, so a
  * plugin with no CLI command does not get a CLI import of a file that is not there.
+ *
+ * Two of the six are `export *` rather than a tuple entry, and both carry `empty`: a TypeScript
+ * file with no top-level import or export is a SCRIPT, not a module, so removing the last plugin
+ * from one would make its single importer TS2306 and stop the whole app typechecking.
  */
 export const BARRELS = Object.freeze({
   shared: {
@@ -77,10 +92,26 @@ export const BARRELS = Object.freeze({
     // With no plugin installed this file is a comment and nothing else, and a TypeScript file with
     // no top-level import or export is a SCRIPT, not a module — so `db/schema/index.ts`'s
     // `export * from '../plugins/schema'` is TS2306 "is not a module" and the whole app stops
-    // typechecking. The other four barrels always declare a const, so only this one needs it.
+    // typechecking. The four LIST barrels always declare a const; the two `export *` ones
+    // (this and `worker`) are the ones that need the marker.
     empty: 'export {}',
     specifier: id => `./${id}/db/schema`,
     half: id => `apps/web/src/plugins/${id}/db/schema/index.ts`,
+  },
+  /**
+   * Durable Object and Workflow CLASSES (D31). Cloudflare resolves a binding's `class_name`
+   * against the named exports of the Worker's ENTRY module, so a plugin shipping one needs a line
+   * in `src/worker.ts` — and this barrel is that line, written once and for ever, so no install
+   * ever edits the entry itself. Before it, the class was a printed instruction in the plan, which
+   * an unattended install simply did not perform.
+   */
+  worker: {
+    file: 'apps/web/src/plugins/worker-exports.ts',
+    constName: null, // `export *`, not a tuple
+    suffix: null,
+    empty: 'export {}',
+    specifier: id => `./${id}/worker-exports`,
+    half: id => `apps/web/src/plugins/${id}/worker-exports.ts`,
   },
   cli: {
     file: 'apps/cli/src/plugins/index.ts',
@@ -93,7 +124,7 @@ export const BARRELS = Object.freeze({
 
 export const BARREL_KINDS = Object.freeze(Object.keys(BARRELS))
 
-/** `exampleFeatureServer`, and so on. `null` for the schema barrel, which exports no name. */
+/** `exampleFeatureServer`, and so on. `null` for an `export *` barrel, which exports no name. */
 export function barrelExportName(kind, id) {
   const { suffix } = BARRELS[kind]
   return suffix ? `${camelId(id)}${suffix}` : null
@@ -403,7 +434,7 @@ export function classifyPluginFile(relPath, id) {
 // ---------------------------------------------------------------- platform declarations
 
 /**
- * The binding types provisioning knows how to create (D31, decision 12).
+ * The binding types provisioning knows how to write (D31, decision 12).
  *
  * **This list exists twice and the duplication is pinned, not silent.**
  * `apps/web/scripts/provision/plugin-resources.ts` owns the TypeScript half and is what
@@ -413,7 +444,29 @@ export function classifyPluginFile(relPath, id) {
  * what makes an unsupported type stop an INSTALL, rather than surface as a 503 on the first
  * request after a deploy that silently skipped the binding.
  */
-export const SUPPORTED_PLUGIN_BINDING_TYPES = Object.freeze(['kv', 'queue', 'r2'])
+export const SUPPORTED_PLUGIN_BINDING_TYPES = Object.freeze([
+  'kv',
+  'queue',
+  'r2',
+  'workflow',
+  'durable_object',
+])
+
+/**
+ * The subset an account has to CREATE before a deploy. `workflow` and `durable_object` are not
+ * here because `wrangler deploy` registers both from the toml — there is nothing to find-or-create
+ * — so `PLUGIN_RESOURCES` never carries one and `cf-provision.sh` never sees one.
+ */
+export const CREATED_PLUGIN_BINDING_TYPES = Object.freeze(['kv', 'queue', 'r2'])
+
+/** Types whose block names a CLASS exported from the Worker's entry module (the sixth barrel). */
+export const CLASS_PLUGIN_BINDING_TYPES = Object.freeze(['workflow', 'durable_object'])
+
+/** Types carrying an account-scoped resource NAME, which must differ between the environments. */
+export const NAMED_PLUGIN_BINDING_TYPES = Object.freeze(['kv', 'queue', 'r2', 'workflow'])
+
+/** How a Durable Object's storage is created. Irreversible, so it is declared rather than guessed. */
+export const DO_STORAGE_KINDS = Object.freeze(['sqlite', 'none'])
 
 /**
  * Everything wrong with a plugin's platform declarations, as sentences. Empty means installable.
@@ -425,14 +478,61 @@ export const SUPPORTED_PLUGIN_BINDING_TYPES = Object.freeze(['kv', 'queue', 'r2'
 export function pluginPlatformProblems(manifest) {
   const problems = []
   for (const b of manifest.bindings ?? []) {
+    const who = b.binding ?? b.name ?? '?'
     if (!SUPPORTED_PLUGIN_BINDING_TYPES.includes(b.type)) {
       problems.push(
-        `binding ${b.binding ?? b.name ?? '?'} declares type '${b.type}', which provisioning cannot ` +
-          `create (supported: ${SUPPORTED_PLUGIN_BINDING_TYPES.join(', ')})`
+        `binding ${who} declares type '${b.type}', which provisioning cannot ` +
+          `write (supported: ${SUPPORTED_PLUGIN_BINDING_TYPES.join(', ')})`
       )
+      continue
+    }
+    // A class binding is only writable because the sixth barrel makes the class reachable from
+    // `src/worker.ts`; the manifest has to say WHICH class, or the block points at nothing and
+    // `wrangler deploy` refuses the whole script.
+    if (CLASS_PLUGIN_BINDING_TYPES.includes(b.type) && !b.className) {
+      problems.push(`binding ${who} is a ${b.type} and declares no className`)
+    }
+    if (!CLASS_PLUGIN_BINDING_TYPES.includes(b.type) && b.className) {
+      problems.push(
+        `binding ${who} declares className, which is only meaningful on a class binding`
+      )
+    }
+    // A Durable Object's storage kind cannot be changed after the namespace exists, so it is
+    // declared rather than defaulted: guessing it wrong is not a thing anyone can undo.
+    if (b.type === 'durable_object' && !DO_STORAGE_KINDS.includes(b.storage)) {
+      problems.push(
+        `binding ${who} must declare storage as one of ${DO_STORAGE_KINDS.join(' | ')} — ` +
+          'it picks new_sqlite_classes vs new_classes and cannot be changed later'
+      )
+    }
+    if (b.type !== 'durable_object' && b.storage) {
+      problems.push(`binding ${who} declares storage, which only a durable_object has`)
+    }
+    if (NAMED_PLUGIN_BINDING_TYPES.includes(b.type) && !b.name) {
+      problems.push(`binding ${who} declares no name (the account-scoped half of the resource)`)
     }
   }
   return problems
+}
+
+/**
+ * The `[[migrations]]` tag an install writes for a plugin's Durable Object classes.
+ *
+ * **DO migrations are to `worker.ts` what SQL migrations are to `db/schema`**: an append-only
+ * record of what this Worker has already told Cloudflare, numbered in the HOST's file. A tag is
+ * never renumbered and never rewritten — replaying one under a different meaning loses a namespace
+ * and everything stored in it. Install is always `v1`; a later change (a removal's
+ * `deleted_classes`) takes the next free number.
+ */
+export function pluginMigrationTag(pluginId, n = 1) {
+  return `plugin-${pluginId}-v${n}`
+}
+
+/** The next free `plugin-<id>-v<n>`, given every tag already in the toml. */
+export function nextPluginMigrationTag(existingTags, pluginId) {
+  const re = new RegExp(`^plugin-${pluginId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}-v(\\d+)$`)
+  const used = existingTags.map(t => Number(re.exec(t)?.[1])).filter(n => Number.isInteger(n))
+  return pluginMigrationTag(pluginId, used.length === 0 ? 1 : Math.max(...used) + 1)
 }
 
 // ---------------------------------------------------------------- requirements
@@ -672,52 +772,287 @@ export function renderAddPlan(plan) {
     }
   }
 
-  lines.push('', 'Then, by hand — nothing below is done for you')
-  let n = 0
-  const step = line => lines.push(`  ${++n}. ${line}`)
-  if ((m.schema?.tables ?? []).length > 0) {
-    step(
-      `pnpm db:generate --name plugin-${m.id}-${m.version ?? '0.0.0'}   → CREATE TABLE ` +
-        `${m.schema.tables.join(', ')}; read the SQL, then pnpm db:migrate`
-    )
-  }
-  if (fragments.length > 0) {
-    step(
-      `pnpm db:generate --custom --name plugin-${m.id}-install, then paste ` +
-        `${fragments.map(f => f.path).join(', ')} into it`
-    )
-  }
-  // The platform half is one command per environment, not a hand edit of two tomls (decision 12):
-  // `pnpm provision cloudflare <env>` reads these same declarations off the installed surface,
-  // creates the resources and writes the blocks into BOTH files.
-  const platform = [
+  lines.push(...renderSteps(planSteps(m, { fragments: fragments.map(f => f.path) })))
+
+  if (plan.verify) lines.push('', "Verify (from the plugin's own note)", ...indent(plan.verify))
+  return lines
+}
+
+// ---------------------------------------------------------------- the step taxonomy
+
+/**
+ * What a step COSTS somebody, and why "by hand" is retired as a phrase.
+ *
+ * It answers neither of the two questions that matter to whatever performs the step, and installs
+ * are performed by AGENTS as often as by people now. Prose an agent may skim is not a control —
+ * that is precisely how `workerExports` and `coreEdits` each produced a tree that built and then
+ * failed somewhere else entirely. So every remaining step declares which of three it is:
+ *
+ *   - `declarative` — nobody does it; the tooling does. These do not appear at all. Everything
+ *     Parts 1 and 2 moved (the barrel lines, bindings, crons, prefixes, vars, the DO migration
+ *     tag) left this list by BECOMING declarative, which is the only honest way to shorten it.
+ *   - `agent`       — an instruction PLUS a check that proves it was done. Without the check it is
+ *     a sentence, and a sentence is the thing being replaced.
+ *   - `human`       — a DECISION: a secret's value, a migration that drops something, retiring a
+ *     Durable Object namespace, deleting a live resource. Not automatable in PRINCIPLE rather than
+ *     merely unimplemented — that distinction is what stops this list collecting excuses.
+ *
+ * Every step carries the exact `command`, the observable `expect` and the `assert` that proves it,
+ * so `--json` can make a human step structurally unmissable rather than a sentence in a paragraph.
+ */
+export const STEP_KINDS = Object.freeze(['declarative', 'agent', 'human'])
+
+const mkStep = (kind, id, title, command, expected, assertion) => ({
+  kind,
+  id,
+  title,
+  command,
+  expect: expected,
+  assert: assertion,
+})
+
+const GATE = 'pnpm lint && pnpm typecheck && pnpm test && pnpm build'
+
+/** The platform declarations one `pnpm provision cloudflare <env>` run will write, as phrases. */
+function platformSummary(m) {
+  return [
     ...(m.bindings ?? []).map(b => `${b.type} binding ${b.binding ?? b.name}`),
     ...(m.crons ?? []).map(c => `cron "${c.cron ?? c}"`),
     ...(m.apiPrefixes ?? []).map(p => `route prefix ${p}`),
     ...(m.vars ?? []).filter(v => !v.secret).map(v => `[vars] ${v.key ?? v.name ?? v}`),
   ]
+}
+
+const varKey = v => v.key ?? v.name ?? v
+
+/**
+ * Every step an INSTALL still needs once the tooling has done its half, classified.
+ *
+ * `fragments` is the repo-relative path of each `migrations/` file the plugin ships, which is
+ * never copied — the host pastes it into a `--custom` migration of its own.
+ */
+export function planSteps(m, { fragments = [] } = {}) {
+  const steps = []
+  const version = m.version ?? '0.0.0'
+  const tables = m.schema?.tables ?? []
+  if (tables.length > 0) {
+    steps.push(
+      mkStep(
+        'agent',
+        'schema-migration',
+        `Generate and apply the migration for ${tables.join(', ')}`,
+        `pnpm db:generate --name plugin-${m.id}-${version}   # read the SQL, then: pnpm db:migrate`,
+        `one new migration whose SQL is CREATE TABLE ${tables.join(', ')} and nothing else`,
+        'pnpm plugin check   # fails while a plugin declares tables and no migration names it'
+      )
+    )
+  }
+  if (fragments.length > 0) {
+    steps.push(
+      mkStep(
+        'agent',
+        'data-fragment',
+        `Paste the plugin's ${fragments.length} install fragment(s) into a --custom migration`,
+        `pnpm db:generate --custom --name plugin-${m.id}-install   # paste ${fragments.join(', ')}`,
+        'an empty migration file, then the fragment SQL inside it',
+        'pnpm db:migrate   # it applies, and the rows the fragment seeds are there'
+      )
+    )
+  }
+  const platform = platformSummary(m)
   if (platform.length > 0) {
-    step(
-      'run `pnpm provision cloudflare <env>` for each environment — it creates and writes ' +
-        `${platform.join(', ')} into BOTH tomls`
+    // ONE command per environment rather than a hand edit of two tomls (decision 12). An AGENT
+    // step and not a declarative one because somebody still has to RUN it, against an account,
+    // with credentials — what disappeared is every byte of the toml, not the invocation.
+    steps.push(
+      mkStep(
+        'agent',
+        'provision',
+        "Create and declare this plugin's platform resources, per environment",
+        'pnpm provision cloudflare staging && pnpm provision cloudflare production',
+        `${platform.join(', ')} written into BOTH tomls; ids patched per environment`,
+        'REQUIRE_PROVISIONED=1 pnpm --filter @rocketflare/web test:config'
+      )
     )
   }
   for (const v of (m.vars ?? []).filter(v => v.secret)) {
-    const key = v.key ?? v.name ?? v
-    // A secret never goes in a toml — not even the staging one — so this is its own sentence
-    // rather than a parenthesis on the one above.
-    step(
-      `add \`${key}=\` to apps/web/.dev.vars.example and apps/web/.dev.vars, then ` +
-        `run \`pnpm provision secrets <env>\` — a secret is never a [vars] key`
+    const key = varKey(v)
+    // The KEY and the VALUE are two different kinds, and splitting them is the point: declaring
+    // the key is mechanical and checkable, while the value is a credential only a person has.
+    steps.push(
+      mkStep(
+        'agent',
+        `secret-key:${key}`,
+        `Declare the secret ${key} — the key only, never a [vars] entry`,
+        `add \`${key}=\` to apps/web/.dev.vars.example`,
+        `${key} listed in .dev.vars.example and in NEITHER wrangler toml`,
+        `grep -q '^${key}=' apps/web/.dev.vars.example`
+      ),
+      mkStep(
+        'human',
+        `secret-value:${key}`,
+        `Set a value for ${key}`,
+        'pnpm provision secrets <env>   # read from your shell or apps/web/.provision.env',
+        `${key} in \`wrangler secret list\` for that environment`,
+        'a person supplies the credential; nothing can derive it'
+      )
     )
   }
-  for (const e of m.workerExports ?? []) {
-    step(`export { ${e} } from its plugin in apps/web/src/worker.ts (a DO or Workflow class)`)
-  }
-  step('pnpm lint && pnpm typecheck && pnpm test && pnpm build')
+  steps.push(
+    mkStep(
+      'agent',
+      'gate',
+      'Run the gate',
+      GATE,
+      'all four commands exit 0',
+      'the exit code of the last command is 0'
+    )
+  )
+  return steps
+}
 
-  if (plan.verify) lines.push('', "Verify (from the plugin's own note)", ...indent(plan.verify))
+/**
+ * The steps a REMOVE still needs. Most are human, and each destroys something: a migration full of
+ * `DROP TABLE`, the `--archive` copy taken (or knowingly not taken) before it, a `deleted_classes`
+ * migration that takes a Durable Object namespace and everything stored in it, and live Cloudflare
+ * resources that may still hold somebody's data.
+ */
+export function removeSteps(m, { archive = false, migrationTag = null } = {}) {
+  const steps = []
+  const tables = m.schema?.tables ?? []
+  if (tables.length > 0 && archive) {
+    steps.push(
+      mkStep(
+        'human',
+        'archive',
+        `Copy ${tables.join(', ')} into schema "archive" BEFORE they are dropped`,
+        'pnpm db:migrate   # applies the --custom archive migration `plugin remove --archive` wrote',
+        'each table copied into schema "archive"; `public` untouched until the drop',
+        'a person decides whether this data is worth keeping — skipping it is not reversible'
+      )
+    )
+  }
+  if (tables.length > 0) {
+    steps.push(
+      mkStep(
+        'human',
+        'drop-migration',
+        `Generate and apply the migration that DROPS ${tables.join(', ')}`,
+        `pnpm db:generate --name plugin-${m.id}-remove   # read the SQL, then: pnpm db:migrate`,
+        `DROP TABLE for ${tables.join(', ')} and nothing else`,
+        'a person reads a migration containing DROP before it runs'
+      )
+    )
+  }
+  const doBindings = (m.bindings ?? []).filter(b => b.type === 'durable_object')
+  if (doBindings.length > 0) {
+    // Both halves are why this is a decision. A DO class that leaves the code with no
+    // `deleted_classes` migration makes `wrangler deploy` REFUSE the whole script — and the
+    // migration itself deletes the namespace and its storage.
+    steps.push(
+      mkStep(
+        'human',
+        'do-migration',
+        `Retire the Durable Object class(es) ${doBindings.map(b => b.className).join(', ')}`,
+        `add to BOTH tomls:  [[migrations]] tag = "${migrationTag ?? `plugin-${m.id}-v2`}"  ` +
+          `deleted_classes = [${doBindings.map(b => `"${b.className}"`).join(', ')}]`,
+        'the tag appended AFTER every existing one — never renumbered, never rewritten',
+        'a person accepts that this deletes the namespace and everything stored in it'
+      )
+    )
+  }
+  const platform = platformSummary(m)
+  // `platformSummary` already names every binding, a Durable Object's included.
+  if (platform.length > 0) {
+    steps.push(
+      mkStep(
+        'human',
+        'deprovision',
+        "Remove this plugin's blocks from both tomls and its resources from Cloudflare",
+        `remove ${platform.join(', ')} from BOTH tomls, then delete the resources`,
+        "both tomls free of the plugin's blocks; the parity test still green",
+        'a live queue or bucket may hold data — nothing deletes one because a directory went'
+      )
+    )
+  }
+  const deps = Object.entries(m.dependencies ?? {}).filter(
+    ([, d]) => Object.keys(d ?? {}).length > 0
+  )
+  for (const [pkg, d] of deps) {
+    steps.push(
+      mkStep(
+        'agent',
+        `dependencies:${pkg}`,
+        `Drop ${pkg}'s dependencies on this plugin, if nothing else uses them`,
+        `pnpm --dir ${pkg} remove ${Object.keys(d).join(' ')}`,
+        'the packages gone from that package.json',
+        GATE
+      )
+    )
+  }
+  steps.push(
+    mkStep('agent', 'gate', 'Run the gate', GATE, 'all four commands exit 0', 'the exit code is 0')
+  )
+  return steps
+}
+
+const KIND_HEADING = {
+  agent: 'Agent steps — run the command, then check the assertion',
+  human: 'Human steps — a DECISION. Nothing here is automatable; the tooling stops',
+}
+
+/** The steps as plan lines, grouped by kind so a human step cannot read as one more command. */
+export function renderSteps(steps, heading = 'Steps — nothing below is done for you') {
+  const lines = ['', heading]
+  for (const kind of ['human', 'agent']) {
+    const group = steps.filter(s => s.kind === kind)
+    if (group.length === 0) continue
+    lines.push('', `  ${KIND_HEADING[kind]}`)
+    group.forEach((s, i) => {
+      lines.push(
+        `    ${i + 1}. ${s.title}`,
+        `       run     ${s.command}`,
+        `       expect  ${s.expect}`,
+        `       assert  ${s.assert}`
+      )
+    })
+  }
   return lines
+}
+
+/**
+ * The install plan as DATA — `pnpm plugin add --json`. The same facts as the text, in a shape
+ * where a `human` step is a field rather than a paragraph somebody has to notice.
+ */
+export function addPlanJson(plan) {
+  const m = plan.manifest
+  const fragments = plan.files.filter(f => f.role === 'fragment').map(f => f.path)
+  return {
+    plugin: { id: m.id, version: m.version ?? null, label: m.label ?? m.id },
+    source: plan.source,
+    host: plan.host,
+    vendored: plan.vendored,
+    problems: plan.problems,
+    installable: plan.problems.length === 0,
+    files: {
+      copied: plan.files.filter(f => f.role === 'copy' || f.role === 'note').length,
+      byRoot: plan.byRoot,
+      fragments,
+      refused: plan.files.filter(f => f.role === 'refused').map(f => f.path),
+    },
+    barrels: plan.barrels.map(kind => ({
+      kind,
+      file: BARRELS[kind].file,
+      lines: barrelLines(kind, m.id),
+    })),
+    dependencies: m.dependencies ?? {},
+    coreEdits: [...coreEditsByFile(m)].map(([file, edits]) => ({
+      file,
+      lines: edits.flatMap(e => e.lines),
+    })),
+    steps: planSteps(m, { fragments }),
+    verify: plan.verify ?? null,
+  }
 }
 
 const indent = text =>

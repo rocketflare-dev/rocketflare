@@ -15,9 +15,15 @@ import path from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
 import { pluginSurfaces, readManifest } from '../../../../scripts/lib/manifest.mjs'
 import {
+  CLASS_PLUGIN_BINDING_TYPES,
+  CREATED_PLUGIN_BINDING_TYPES,
+  NAMED_PLUGIN_BINDING_TYPES,
   PluginResourceError,
+  pluginBindingBlocks,
   pluginDeclarations,
   pluginKvPlaceholder,
+  pluginMigrationBlocks,
+  pluginMigrationTag,
   pluginResourceList,
   pluginResourceName,
   readPluginResources,
@@ -45,6 +51,29 @@ const manifest = () =>
     'apps/web/src/plugins/approvals/plugin.json'
   )
 
+describe('the supported set', () => {
+  /**
+   * The two groups PARTITION the supported list, and that is the whole shape of decision 12 now:
+   * `kv`/`queue`/`r2` are CREATED (an account must hold the resource before a deploy), while
+   * `workflow`/`durable_object` are DECLARED ONLY (`wrangler deploy` registers them from the block).
+   * A type in neither group — or in both — would be one provisioning writes and nobody creates, or
+   * one `cf-provision.sh` is handed and rightly refuses.
+   */
+  it('splits into created and class bindings, with nothing left over', () => {
+    expect([...CREATED_PLUGIN_BINDING_TYPES, ...CLASS_PLUGIN_BINDING_TYPES].sort()).toEqual(
+      [...SUPPORTED_PLUGIN_BINDING_TYPES].sort()
+    )
+    for (const type of CREATED_PLUGIN_BINDING_TYPES)
+      expect(CLASS_PLUGIN_BINDING_TYPES).not.toContain(type)
+    // Every created type also has an account-scoped name; a workflow has one WITHOUT being created,
+    // which is exactly why the two lists are not the same list.
+    for (const type of CREATED_PLUGIN_BINDING_TYPES)
+      expect(NAMED_PLUGIN_BINDING_TYPES).toContain(type)
+    expect(NAMED_PLUGIN_BINDING_TYPES).toContain('workflow')
+    expect(NAMED_PLUGIN_BINDING_TYPES).not.toContain('durable_object')
+  })
+})
+
 describe('naming', () => {
   it('lowercase resources are <app>-<id>-<name>[-staging]', () => {
     expect(pluginResourceName('queue', 'acme', 'approvals', 'jobs', 'production')).toBe(
@@ -70,7 +99,10 @@ describe('naming', () => {
   })
 
   it('the staging name always differs and carries the account-scoping suffix', () => {
-    for (const type of SUPPORTED_PLUGIN_BINDING_TYPES) {
+    // Only the types that HAVE an account-scoped resource name. A `durable_object` has none — its
+    // block is byte-identical in both files — so asserting a suffix for it would be asserting
+    // something about a string nothing reads.
+    for (const type of NAMED_PLUGIN_BINDING_TYPES) {
       const prod = pluginResourceName(type, 'acme', 'approvals', 'jobs', 'production')
       const staging = pluginResourceName(type, 'acme', 'approvals', 'jobs', 'staging')
       expect(staging).not.toBe(prod)
@@ -95,7 +127,60 @@ describe('validation', () => {
   it('names the unsupported type rather than skipping it', () => {
     expect(() =>
       validatePluginBinding('approvals', { type: 'd1', binding: 'DB', name: 'main' })
-    ).toThrowError(/binding type "d1" is not provisioned by this kit \(supported: kv, queue, r2\)/)
+    ).toThrowError(
+      /binding type "d1" is not provisioned by this kit \(supported: kv, queue, r2, workflow, durable_object\)/
+    )
+  })
+
+  /**
+   * The two types that graduated with the sixth barrel, and the three fields that make each block
+   * writable at all. A `class_name` resolves against the named exports of `src/worker.ts`, so a
+   * block naming a class nothing exports makes `wrangler deploy` refuse the whole SCRIPT — which
+   * is why the manifest has to say which class, and why `plugin check` proves it is exported.
+   */
+  it('validates a workflow and a durable object', () => {
+    expect(
+      validatePluginBinding('orders', {
+        type: 'workflow',
+        binding: 'ORDERS_SYNC',
+        name: 'sync',
+        className: 'OrdersSyncWorkflow',
+      })
+    ).toEqual({
+      type: 'workflow',
+      binding: 'ORDERS_SYNC',
+      name: 'sync',
+      className: 'OrdersSyncWorkflow',
+    })
+    expect(
+      validatePluginBinding('orders', {
+        type: 'durable_object',
+        binding: 'ORDERS_HUB',
+        className: 'OrdersHub',
+        storage: 'sqlite',
+      })
+    ).toEqual({
+      type: 'durable_object',
+      binding: 'ORDERS_HUB',
+      name: '',
+      className: 'OrdersHub',
+      storage: 'sqlite',
+    })
+  })
+
+  it.each([
+    [{ type: 'workflow', binding: 'W', name: 'w' }, /must declare className/],
+    [{ type: 'durable_object', binding: 'H', className: 'H' }, /storage must be sqlite \| none/],
+    [{ type: 'durable_object', binding: 'H', className: 'H', storage: 'kv' }, /storage must be/],
+    // A DO creates no resource, so a `name` there is a value nothing would ever read.
+    [
+      { type: 'durable_object', binding: 'H', name: 'hub', className: 'H', storage: 'sqlite' },
+      /no account-scoped name/,
+    ],
+    [{ type: 'kv', binding: 'K', name: 'k', className: 'K' }, /only meaningful on a class binding/],
+    [{ type: 'workflow', binding: 'W', className: 'W' }, /must match/],
+  ])('refuses %j', (raw, message) => {
+    expect(() => validatePluginBinding('orders', raw)).toThrowError(message)
   })
 
   it('refuses hyperdrive from a plugin — the host owns the one database', () => {
@@ -213,5 +298,90 @@ describe('readPluginResources', () => {
     const repoRoot = path.resolve(__dirname, '../../../..')
     const { manifest } = readManifest(repoRoot)
     expect(() => readPluginResources(repoRoot, pluginSurfaces(manifest))).not.toThrow()
+  })
+})
+
+/**
+ * The ONE mapping from a declaration to a `[[…]]` block. `pnpm provision cloudflare <env>` and the
+ * parity test's fixture both read it, so they cannot disagree about what provisioning writes —
+ * which they could, and did, when each built its own blocks.
+ */
+describe('the blocks provisioning writes', () => {
+  const classy = () =>
+    validatePluginManifest(
+      {
+        id: 'orders',
+        bindings: [
+          { type: 'kv', binding: 'ORDERS_CACHE', name: 'cache' },
+          {
+            type: 'workflow',
+            binding: 'ORDERS_SYNC',
+            name: 'sync',
+            className: 'OrdersSyncWorkflow',
+          },
+          {
+            type: 'durable_object',
+            binding: 'ORDERS_HUB',
+            className: 'OrdersHub',
+            storage: 'sqlite',
+          },
+          {
+            type: 'durable_object',
+            binding: 'ORDERS_LOG',
+            className: 'OrdersLog',
+            storage: 'none',
+          },
+        ],
+      },
+      'apps/web/src/plugins/orders/plugin.json'
+    )
+
+  it('creates only what an account has to create', () => {
+    // A workflow and a Durable Object are registered by `wrangler deploy` from the block
+    // provisioning already wrote, so neither reaches `cf-provision.sh` — which is right to refuse
+    // a type it cannot create.
+    expect(pluginResourceList('acme', [classy()], 'staging').map(r => r.binding)).toEqual([
+      'ORDERS_CACHE',
+    ])
+  })
+
+  it('gives a workflow an account-scoped name and a DO none at all', () => {
+    const blocks = pluginBindingBlocks('acme', [classy()], 'staging')
+    expect(blocks.find(b => b.binding === 'ORDERS_SYNC')).toEqual({
+      type: 'workflow',
+      binding: 'ORDERS_SYNC',
+      pluginId: 'orders',
+      name: 'acme-orders-sync-staging',
+      className: 'OrdersSyncWorkflow',
+    })
+    // The incident in docs/DEPLOY.md is a shared Workflow name running one environment's instances
+    // against the other's database, with nothing erroring. The suffix is what prevents it.
+    expect(
+      pluginBindingBlocks('acme', [classy()], 'production').find(b => b.binding === 'ORDERS_SYNC')
+        ?.name
+    ).toBe('acme-orders-sync')
+    expect(blocks.find(b => b.binding === 'ORDERS_HUB')).toEqual({
+      type: 'durable_object',
+      binding: 'ORDERS_HUB',
+      pluginId: 'orders',
+      className: 'OrdersHub',
+    })
+    // A KV block carries the placeholder, because the block must exist before an id can be
+    // patched into it.
+    expect(blocks.find(b => b.binding === 'ORDERS_CACHE')?.id).toBe('<KV_ORDERS_CACHE_STAGING_ID>')
+  })
+
+  it('writes ONE install migration per plugin, split by declared storage', () => {
+    expect(pluginMigrationBlocks([classy()])).toEqual([
+      {
+        tag: pluginMigrationTag('orders'),
+        pluginId: 'orders',
+        newClasses: ['OrdersLog'],
+        newSqliteClasses: ['OrdersHub'],
+      },
+    ])
+    // A plugin with no Durable Object needs no migration at all — an empty `[[migrations]]` entry
+    // would be a tag claiming something Cloudflare never has to do.
+    expect(pluginMigrationBlocks([manifest()])).toEqual([])
   })
 })

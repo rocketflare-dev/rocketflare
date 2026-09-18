@@ -24,24 +24,66 @@
  */
 import fs from 'node:fs'
 import path from 'node:path'
-
 /**
- * The binding types provisioning knows how to create. `hyperdrive` is deliberately NOT here: it
- * needs a connection string, it is the host's one database, and the binding already exists — a
- * plugin asking for its own is asking for a second database, which is a design conversation and
- * not a flag. Everything else Cloudflare offers (`d1`, `vectorize`, `analytics_engine`,
- * `durable_object`, `workflow`…) is refused BY NAME rather than skipped, because a silently
- * ignored binding is a plugin that deploys and then 503s on its first request.
+ * The binding types provisioning knows how to write, and why the line falls where it does.
+ *
+ * Two groups. `kv`, `queue` and `r2` are CREATED — an account has to hold the resource before a
+ * deploy, so `cf-provision.sh` finds-or-creates each one and the block carries its account-scoped
+ * name (or, for KV, its id). `workflow` and `durable_object` are DECLARED only: `wrangler deploy`
+ * registers both from the toml, so there is nothing to create and the block carries a `class_name`
+ * instead.
+ *
+ * **Those two graduated because the sixth barrel exists** (D31). A `class_name` is resolved against
+ * the named exports of the Worker's ENTRY module and nowhere else, so until
+ * `apps/web/src/plugins/worker-exports.ts` made a plugin's class reachable from `src/worker.ts`
+ * without anybody editing it, writing either block would have produced a toml pointing at a class
+ * that was not exported — and `wrangler deploy` refuses the whole script for that, which is worse
+ * than refusing the install. With the barrel, `plugin add` wires the class and `plugin check`
+ * proves every name the manifest declares is really exported, so the block can be written.
+ *
+ * **`d1`, `vectorize`, `analytics_engine` and the rest have no such mechanism** and are refused BY
+ * NAME rather than skipped, because a silently ignored binding is a plugin that deploys and then
+ * 503s on its first request. What each of them would need is a way for the host to provide the
+ * resource AND for the plugin's code to reach it, which for a stateful store is a design
+ * conversation about migrations and tenancy rather than one more entry in a list.
+ *
+ * `hyperdrive` is deliberately refused for a different reason: it needs a connection string, it is
+ * the host's one database, and the binding already exists — a plugin asking for its own is asking
+ * for a second database.
  */
-import { SUPPORTED_PLUGIN_BINDING_TYPES } from '../../../../scripts/lib/plugin-lib.mjs'
+import {
+  CLASS_PLUGIN_BINDING_TYPES,
+  CREATED_PLUGIN_BINDING_TYPES,
+  DO_STORAGE_KINDS,
+  NAMED_PLUGIN_BINDING_TYPES,
+  pluginMigrationTag,
+  SUPPORTED_PLUGIN_BINDING_TYPES,
+} from '../../../../scripts/lib/plugin-lib.mjs'
+import type { BindingBlock, MigrationBlock } from './patch-toml'
 
 /**
  * ONE list, owned by `scripts/lib/plugin-lib.mjs` so `pnpm plugin add` refuses an unsupported
  * type at INSTALL time and provisioning refuses the same one later; the `.d.mts` types it as the
  * literal tuple, which is what keeps `PluginBindingType` narrow here.
  */
-export { SUPPORTED_PLUGIN_BINDING_TYPES }
+export {
+  CLASS_PLUGIN_BINDING_TYPES,
+  CREATED_PLUGIN_BINDING_TYPES,
+  DO_STORAGE_KINDS,
+  NAMED_PLUGIN_BINDING_TYPES,
+  pluginMigrationTag,
+  SUPPORTED_PLUGIN_BINDING_TYPES,
+}
 export type PluginBindingType = (typeof SUPPORTED_PLUGIN_BINDING_TYPES)[number]
+export type CreatedPluginBindingType = (typeof CREATED_PLUGIN_BINDING_TYPES)[number]
+export type DoStorageKind = (typeof DO_STORAGE_KINDS)[number]
+
+const isCreated = (type: PluginBindingType): type is CreatedPluginBindingType =>
+  (CREATED_PLUGIN_BINDING_TYPES as readonly string[]).includes(type)
+const isClassBinding = (type: PluginBindingType): boolean =>
+  (CLASS_PLUGIN_BINDING_TYPES as readonly string[]).includes(type)
+const isNamed = (type: PluginBindingType): boolean =>
+  (NAMED_PLUGIN_BINDING_TYPES as readonly string[]).includes(type)
 
 export type EnvName = 'staging' | 'production'
 
@@ -49,10 +91,18 @@ export interface PluginBinding {
   type: PluginBindingType
   /** The name on `Cloudflare.Env` — identical in both tomls. */
   binding: string
-  /** The account-scoped half; the full resource name is derived by `pluginResourceName`. */
+  /**
+   * The account-scoped half; the full resource name is derived by `pluginResourceName`. Empty for
+   * a `durable_object`, which has no account-scoped name at all: its block carries the BINDING as
+   * its `name` and the class as `class_name`, identically in both files.
+   */
   name: string
   /** `type: 'queue'` only: also emit a `[[queues.consumers]]` block. */
   consumer?: boolean
+  /** `workflow` / `durable_object`: the class `plugins/worker-exports.ts` re-exports. */
+  className?: string
+  /** `durable_object` only: picks `new_sqlite_classes` over `new_classes`. Irreversible. */
+  storage?: DoStorageKind
 }
 
 export interface PluginVar {
@@ -86,6 +136,7 @@ export class PluginResourceError extends Error {}
 const BINDING_NAME = /^[A-Z][A-Z0-9_]*$/
 const RESOURCE_NAME = /^[a-z][a-z0-9-]*$/
 const VAR_KEY = /^[A-Z][A-Z0-9_]*$/
+const CLASS_NAME = /^[A-Z][A-Za-z0-9_]*$/
 
 /**
  * `<app>-<id>-<name>[-staging]` for the lowercase, hyphenated resources (queue, R2), and
@@ -139,18 +190,51 @@ export function validatePluginBinding(pluginId: string, raw: unknown): PluginBin
   const binding = b.binding
   if (typeof binding !== 'string' || !BINDING_NAME.test(binding))
     fail(pluginId, `binding name ${JSON.stringify(binding)} must match ${BINDING_NAME}`)
-  const name = b.name
-  if (typeof name !== 'string' || !RESOURCE_NAME.test(name))
+  const narrowed = type as PluginBindingType
+  // A `durable_object` has no account-scoped resource: its block is `name = "<BINDING>"` plus a
+  // class, identical in both files. Demanding a `name` there would invent a value nothing reads.
+  const name = isNamed(narrowed) ? b.name : (b.name ?? '')
+  if (typeof name !== 'string' || (isNamed(narrowed) && !RESOURCE_NAME.test(name)))
     fail(pluginId, `binding "${binding}": name ${JSON.stringify(name)} must match ${RESOURCE_NAME}`)
+  if (!isNamed(narrowed) && name !== '')
+    fail(pluginId, `binding "${binding}": a ${type} has no account-scoped name; drop \`name\``)
   if (b.consumer !== undefined && typeof b.consumer !== 'boolean')
     fail(pluginId, `binding "${binding}": consumer must be a boolean`)
   if (b.consumer === true && type !== 'queue')
     fail(pluginId, `binding "${binding}": consumer is only meaningful on a queue`)
+
+  const className = b.className
+  if (isClassBinding(narrowed)) {
+    if (typeof className !== 'string' || !CLASS_NAME.test(className)) {
+      fail(
+        pluginId,
+        `binding "${binding}": a ${type} must declare className (the class its worker-exports.ts re-exports)`
+      )
+    }
+  } else if (className !== undefined) {
+    fail(pluginId, `binding "${binding}": className is only meaningful on a class binding`)
+  }
+
+  const storage = b.storage
+  if (narrowed === 'durable_object') {
+    if (typeof storage !== 'string' || !(DO_STORAGE_KINDS as readonly string[]).includes(storage)) {
+      fail(
+        pluginId,
+        `binding "${binding}": storage must be ${DO_STORAGE_KINDS.join(' | ')} — it picks ` +
+          'new_sqlite_classes vs new_classes and a namespace cannot be migrated between them'
+      )
+    }
+  } else if (storage !== undefined) {
+    fail(pluginId, `binding "${binding}": storage is only meaningful on a durable_object`)
+  }
+
   return {
-    type: type as PluginBindingType,
+    type: narrowed,
     binding,
     name,
     ...(b.consumer === true ? { consumer: true as const } : {}),
+    ...(typeof className === 'string' ? { className } : {}),
+    ...(typeof storage === 'string' ? { storage: storage as DoStorageKind } : {}),
   }
 }
 
@@ -260,6 +344,10 @@ export function pluginResourceList(
           `binding "${b.binding}" is declared by both "${owner}" and "${plugin.id}" — one of them must rename it`
         )
       byBinding.set(b.binding, plugin.id)
+      // Only the types an account has to CREATE reach `cf-provision.sh`. A workflow or a Durable
+      // Object is registered by `wrangler deploy` from the block provisioning already wrote, so
+      // passing one down would be an unsupported type in a script that is right to refuse it.
+      if (!isCreated(b.type)) continue
       out.push({
         type: b.type,
         name: pluginResourceName(b.type, app, plugin.id, b.name, env),
@@ -288,6 +376,61 @@ export function pluginDeclarations(plugins: PluginResources[]): {
   return { crons, apiPrefixes, vars }
 }
 
+/**
+ * Every toml block one environment needs for the installed plugins — the ONE mapping from a
+ * declaration to a `[[…]]` block, so `pnpm provision cloudflare <env>` and the parity test's
+ * fixture cannot disagree about what provisioning writes.
+ *
+ * A KV id is a `<PLACEHOLDER>` here: the block has to exist before `cf-provision.sh` can patch the
+ * real id INTO it, and `REQUIRE_PROVISIONED=1` is what refuses the placeholder at deploy time.
+ */
+export function pluginBindingBlocks(
+  app: string,
+  plugins: PluginResources[],
+  env: EnvName
+): BindingBlock[] {
+  return plugins.flatMap(plugin =>
+    plugin.bindings.map(b => ({
+      type: b.type,
+      binding: b.binding,
+      pluginId: plugin.id,
+      ...(b.type === 'kv'
+        ? { id: pluginKvPlaceholder(plugin.id, b.name, env) }
+        : isNamed(b.type)
+          ? { name: pluginResourceName(b.type, app, plugin.id, b.name, env) }
+          : {}),
+      ...(b.consumer ? { consumer: true } : {}),
+      ...(b.className ? { className: b.className } : {}),
+    }))
+  )
+}
+
+/**
+ * One `[[migrations]]` entry per plugin that ships Durable Object classes, tagged `plugin-<id>-v1`.
+ *
+ * **Always `v1`, because this is the INSTALL entry** and a tag is an identity Cloudflare has
+ * already acted on. Anything later — a removal's `deleted_classes` — takes the next free number
+ * through `nextPluginMigrationTag`; nothing ever renumbers or rewrites one.
+ */
+export function pluginMigrationBlocks(plugins: PluginResources[]): MigrationBlock[] {
+  const out: MigrationBlock[] = []
+  for (const plugin of plugins) {
+    const classes = plugin.bindings.filter(b => b.type === 'durable_object')
+    if (classes.length === 0) continue
+    const named = (kind: DoStorageKind) =>
+      classes.filter(b => b.storage === kind).map(b => b.className as string)
+    const newSqliteClasses = named('sqlite')
+    const newClasses = named('none')
+    out.push({
+      tag: pluginMigrationTag(plugin.id),
+      pluginId: plugin.id,
+      ...(newClasses.length ? { newClasses } : {}),
+      ...(newSqliteClasses.length ? { newSqliteClasses } : {}),
+    })
+  }
+  return out
+}
+
 // ---- parity ---------------------------------------------------------------------------------
 
 /** A parsed wrangler toml, read loosely — this module never re-serialises one. */
@@ -313,10 +456,23 @@ function list(doc: unknown, dotted: string): string[] {
   return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []
 }
 
-const SECTION_OF: Record<PluginBindingType, { section: string; nameKey: string }> = {
-  kv: { section: 'kv_namespaces', nameKey: 'id' },
-  queue: { section: 'queues.producers', nameKey: 'queue' },
-  r2: { section: 'r2_buckets', nameKey: 'bucket_name' },
+/**
+ * Where each type's block lives, how it is IDENTIFIED there, and which key holds the value that
+ * differs per environment.
+ *
+ * `idKey` is `name` for a Durable Object because that is how the toml spells a DO binding — the
+ * kit's own is `name = "NOTIFICATIONS_HUB"` — and `nameKey` is null there because nothing in the
+ * block differs between the two files at all.
+ */
+const SECTION_OF: Record<
+  PluginBindingType,
+  { section: string; idKey: string; nameKey: string | null }
+> = {
+  kv: { section: 'kv_namespaces', idKey: 'binding', nameKey: 'id' },
+  queue: { section: 'queues.producers', idKey: 'binding', nameKey: 'queue' },
+  r2: { section: 'r2_buckets', idKey: 'binding', nameKey: 'bucket_name' },
+  workflow: { section: 'workflows', idKey: 'binding', nameKey: 'name' },
+  durable_object: { section: 'durable_objects.bindings', idKey: 'name', nameKey: null },
 }
 
 const IS_PLACEHOLDER = /^<[A-Z0-9_]+>$/
@@ -354,13 +510,24 @@ export function pluginParityIssues(
   ]
   for (const plugin of plugins) {
     for (const b of plugin.bindings) {
-      const { section, nameKey } = SECTION_OF[b.type]
+      const { section, idKey, nameKey } = SECTION_OF[b.type]
       for (const [env, doc] of envs) {
-        const row = rows(doc, section).find(r => r.binding === b.binding)
+        const row = rows(doc, section).find(r => r[idKey] === b.binding)
         if (!row) {
           issues.push(`${env}: [[${section}]] has no binding "${b.binding}" (plugin ${plugin.id})`)
           continue
         }
+        // A class binding is only as good as the class it names, and the name has to be identical
+        // in both files — `class_name` is resolved against the Worker's exports, which are the
+        // same code in both environments.
+        if (b.className && row.class_name !== b.className) {
+          issues.push(
+            `${env}: "${b.binding}" class_name is ${JSON.stringify(row.class_name)}, want "${b.className}"`
+          )
+        }
+        // A Durable Object block has nothing that differs per environment, so there is nothing
+        // left to compare once the binding and the class agree.
+        if (nameKey === null) continue
         const value = row[nameKey]
         if (b.type === 'kv') {
           if (typeof value !== 'string' || value === '')
@@ -377,6 +544,31 @@ export function pluginParityIssues(
         if (b.type === 'queue' && b.consumer) {
           if (!rows(doc, 'queues.consumers').some(r => r[nameKey] === expected))
             issues.push(`${env}: no [[queues.consumers]] for "${expected}" (plugin ${plugin.id})`)
+        }
+      }
+    }
+    // A Durable Object binding with no `[[migrations]]` entry creating its class is a toml
+    // `wrangler deploy` REFUSES — the whole script, not just that binding — so this is checked
+    // beside the block rather than gated behind `requireProvisioned`: both are written by the same
+    // `provision cloudflare` call, so their presence is perfectly correlated.
+    const doBindings = plugin.bindings.filter(b => b.type === 'durable_object')
+    if (doBindings.length > 0) {
+      const tag = pluginMigrationTag(plugin.id)
+      for (const [env, doc] of envs) {
+        const entry = rows(doc, 'migrations').find(r => r.tag === tag)
+        if (!entry) {
+          issues.push(`${env}: [[migrations]] has no tag "${tag}" (plugin ${plugin.id})`)
+          continue
+        }
+        const created = new Set(
+          [
+            ...(Array.isArray(entry.new_classes) ? entry.new_classes : []),
+            ...(Array.isArray(entry.new_sqlite_classes) ? entry.new_sqlite_classes : []),
+          ].map(String)
+        )
+        for (const b of doBindings) {
+          if (b.className && !created.has(b.className))
+            issues.push(`${env}: [[migrations]] "${tag}" does not create ${b.className}`)
         }
       }
     }

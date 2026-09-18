@@ -3,7 +3,7 @@
  *
  * Almost everything here is a rule about a plugin THIS checkout does not have installed, so almost
  * everything is exercised against a fixture. The two that are not: the barrel writer is checked
- * against the five real barrel files (if it does not reproduce their bytes, every install leaves a
+ * against the six real barrel files (if it does not reproduce their bytes, every install leaves a
  * lint diff and the gate stops passing by construction), and the last block drives the script
  * itself — `export` into a temp directory, then `add` back with a fresh id, asserting that a plan
  * run writes NOTHING. The `config` project: no database, no network.
@@ -29,6 +29,7 @@ import {
 } from '../../../../scripts/lib/manifest.mjs'
 import {
   addBarrelLine,
+  addPlanJson,
   applyCoreEdits,
   archiveSql,
   BARREL_KINDS,
@@ -42,15 +43,21 @@ import {
   coreEditsByFile,
   hasBarrelLine,
   isVendored,
+  nextPluginMigrationTag,
   PLUGIN_MANIFEST_FILE,
   parsePluginRequirement,
+  planSteps,
   pluginIdProblem,
+  pluginMigrationTag,
   pluginPlatformProblems,
   pluginRoots,
   removeBarrelLine,
+  removeSteps,
   renderAddPlan,
   renderList,
+  renderSteps,
   revertCoreEdits,
+  STEP_KINDS,
   SUPPORTED_PLUGIN_BINDING_TYPES,
   surfaceDirectories,
   tupleEntries,
@@ -89,7 +96,7 @@ describe('plugin ids', () => {
   })
 
   it('refuses a barrel filename', () => {
-    for (const reserved of ['index', 'server', 'ui', 'schema', 'types']) {
+    for (const reserved of ['index', 'server', 'ui', 'schema', 'types', 'worker-exports']) {
       expect(pluginIdProblem(reserved)).toMatch(/barrel filename/)
     }
   })
@@ -155,7 +162,12 @@ describe('the barrel writer', () => {
     'removes exactly what it added, for every barrel, against the REAL files',
     () => {
       // If a round trip is not byte-identical, `pnpm plugin add` produces a commit that fails lint.
+      // Only the barrels whose HALF the subject ships: an install writes a line per half that
+      // arrived, so a plugin with no Durable Object has no line in the worker barrel and a plugin
+      // with no CLI command has none in the CLI one. Asserting otherwise tests the fixture, not
+      // the writer.
       for (const kind of BARREL_KINDS) {
+        if (!existsSync(path.join(REPO_ROOT, BARRELS[kind].half(subject as string)))) continue
         const original = read(BARRELS[kind].file)
         expect(hasBarrelLine(original, kind, subject as string)).toBe(true)
         const without = removeBarrelLine(original, kind, subject as string)
@@ -193,6 +205,39 @@ describe('the barrel writer', () => {
     // stopped being the same file, and a test that only ever saw one would not have noticed.
     const rebuilt = installedHere.reduce((text, s) => addBarrelLine(text, 'schema', s.id), bare)
     if (installedHere.length > 0) expect(rebuilt).toBe(real)
+  })
+
+  /**
+   * The sixth barrel, and the reason it exists rather than a `coreEdits` entry or a printed line.
+   *
+   * Cloudflare resolves a binding's `class_name` against the named exports of the Worker's ENTRY
+   * module, so a plugin shipping a Durable Object or a Workflow needs a line in `src/worker.ts`.
+   * That used to be a numbered step in the install plan, which an unattended install (CI applies
+   * nothing it reads) simply did not perform: the tree built, deployed, and every request that
+   * reached the binding failed. `coreEdits` would work and is the wrong shape — it would have every
+   * class-shipping plugin mutating `worker.ts`, which is what a barrel exists to prevent.
+   */
+  it('writes one `export *` into the worker barrel, and worker.ts re-exports it permanently', () => {
+    expect(barrelLines('worker', 'orders')).toEqual(["export * from './orders/worker-exports'"])
+    expect(BARRELS.worker.half('orders')).toBe('apps/web/src/plugins/orders/worker-exports.ts')
+    // The one line in the entry module. It names no plugin, so no install ever edits this file.
+    expect(read('apps/web/src/worker.ts')).toContain("export * from './plugins/worker-exports'")
+  })
+
+  /**
+   * Driven with a FIXTURE id rather than what is installed, because no plugin here ships a class —
+   * and that is the state this has to hold in: `worker.ts` does `export *` from this barrel, and a
+   * TypeScript file with no top-level export is a SCRIPT rather than a module (TS2306 at the
+   * importer), so a bare kit must still carry the marker. The schema barrel's equivalent test can
+   * use the installed set because `example-feature` does ship tables.
+   */
+  it('keeps the worker barrel a MODULE with no plugin in it, and round-trips byte for byte', () => {
+    const real = read(BARRELS.worker.file)
+    expect(real).toContain('export {}')
+    const added = addBarrelLine(real, 'worker', 'orders')
+    expect(added).toContain("export * from './orders/worker-exports'")
+    expect(added).not.toContain('export {}')
+    expect(removeBarrelLine(added, 'worker', 'orders')).toBe(real)
   })
 
   it('points each barrel at the file whose presence means the plugin ships that half', () => {
@@ -474,7 +519,7 @@ describe('platform declarations', () => {
     expect([...SUPPORTED_PLUGIN_BINDING_TYPES]).toEqual([...PROVISION_TYPES])
   })
 
-  it('refuses a binding type provisioning cannot create, at INSTALL time', () => {
+  it('refuses a binding type provisioning cannot write, at INSTALL time', () => {
     // Otherwise it installs cleanly, deploys, and 503s on the first request that reads it off
     // `Cloudflare.Env` — days later, for somebody else.
     expect(pluginPlatformProblems(fixtureManifest)).toEqual([])
@@ -488,7 +533,82 @@ describe('platform declarations', () => {
     })
     expect(problems).toHaveLength(2)
     expect(problems[0]).toMatch(/binding B declares type 'd1'/)
-    expect(problems[1]).toMatch(/supported: kv, queue, r2/)
+    expect(problems[1]).toMatch(/supported: kv, queue, r2, workflow, durable_object/)
+  })
+
+  /**
+   * `workflow` and `durable_object` graduated when the sixth barrel landed, and only then: a
+   * `class_name` resolves against the named exports of `src/worker.ts`, so before
+   * `plugins/worker-exports.ts` made a plugin's class reachable there, either block would have
+   * named a class nothing exported — and `wrangler deploy` refuses the whole SCRIPT for that,
+   * which is worse than refusing the install. `d1` and `vectorize` still have no such mechanism.
+   */
+  it('accepts a workflow and a durable object, and demands what each block cannot be written without', () => {
+    expect(
+      pluginPlatformProblems({
+        ...fixtureManifest,
+        bindings: [
+          {
+            type: 'workflow',
+            binding: 'ORDERS_SYNC',
+            name: 'sync',
+            className: 'OrdersSyncWorkflow',
+          },
+          {
+            type: 'durable_object',
+            binding: 'ORDERS_HUB',
+            className: 'OrdersHub',
+            storage: 'sqlite',
+          },
+        ],
+      })
+    ).toEqual([])
+
+    // No class → a block pointing at nothing.
+    expect(
+      pluginPlatformProblems({
+        ...fixtureManifest,
+        bindings: [{ type: 'workflow', binding: 'W', name: 'w' }],
+      })
+    ).toContainEqual(expect.stringContaining('declares no className'))
+    // A workflow name is ACCOUNT-scoped, so it is the half that must differ between environments.
+    expect(
+      pluginPlatformProblems({
+        ...fixtureManifest,
+        bindings: [{ type: 'workflow', binding: 'W', className: 'W' }],
+      })
+    ).toContainEqual(expect.stringContaining('declares no name'))
+    // Storage is REQUIRED rather than defaulted: a namespace cannot be migrated between the two,
+    // so guessing it is not something anybody can undo.
+    expect(
+      pluginPlatformProblems({
+        ...fixtureManifest,
+        bindings: [{ type: 'durable_object', binding: 'H', className: 'H' }],
+      })
+    ).toContainEqual(expect.stringContaining('storage'))
+    // …and it is meaningless anywhere else.
+    expect(
+      pluginPlatformProblems({
+        ...fixtureManifest,
+        bindings: [{ type: 'kv', binding: 'K', name: 'k', storage: 'sqlite' }],
+      })
+    ).toContainEqual(expect.stringContaining('only a durable_object has'))
+  })
+
+  /**
+   * A DO migration tag is an identity Cloudflare has already acted on — the same thing a SQL
+   * migration's name is — so the numbering is append-only and the helper never reuses one.
+   */
+  it('numbers a plugin migration tag append-only, per plugin', () => {
+    expect(pluginMigrationTag('orders')).toBe('plugin-orders-v1')
+    expect(nextPluginMigrationTag([], 'orders')).toBe('plugin-orders-v1')
+    expect(nextPluginMigrationTag(['v1', 'plugin-orders-v1'], 'orders')).toBe('plugin-orders-v2')
+    // Gaps are never filled: the highest wins, so a tag can only ever move forward.
+    expect(nextPluginMigrationTag(['plugin-orders-v1', 'plugin-orders-v7'], 'orders')).toBe(
+      'plugin-orders-v8'
+    )
+    // Another plugin's tags are not this plugin's sequence.
+    expect(nextPluginMigrationTag(['plugin-billing-v9'], 'orders')).toBe('plugin-orders-v1')
   })
 })
 
@@ -586,7 +706,7 @@ describe('the install plan', () => {
       { path: 'migrations/install/0001_seed.sql', role: 'fragment' as const },
     ],
     byRoot: { 'apps/web/src/plugins/orders/': 1 },
-    barrels: ['shared', 'server', 'ui', 'schema', 'cli'] as const,
+    barrels: ['shared', 'server', 'ui', 'schema', 'worker', 'cli'] as const,
     verify: 'The Orders page lists one order.',
   }
 
@@ -597,18 +717,26 @@ describe('the install plan', () => {
     expect(text).toContain('CREATE TABLE orders_orders, orders_lines')
     // The platform half is one command per environment (decision 12), not a hand edit of two
     // tomls — `pnpm provision cloudflare <env>` reads the same declarations off the surface.
-    expect(text).toContain('pnpm provision cloudflare <env>')
+    expect(text).toContain('pnpm provision cloudflare staging')
     expect(text).toContain('kv binding ORDERS_KV')
     expect(text).toContain('cron "0 3 * * *"')
     expect(text).toContain('route prefix /orders-webhook')
     expect(text).toContain('[vars] ORDERS_MODE')
-    // A secret is its own step, because it must never reach a toml at all.
+    // A secret is TWO steps, because the key and the value are different kinds of work.
     expect(text).toContain('add `ORDERS_TOKEN=` to apps/web/.dev.vars.example')
     expect(text).toContain('pnpm provision secrets <env>')
     expect(text).not.toMatch(/\[vars\] ORDERS_TOKEN/)
-    expect(text).toContain('export { OrdersWorkflow }')
+    // NOT a step any more: `workerExports` became the sixth barrel, so the class reaches
+    // `src/worker.ts` through a line `plugin add` writes rather than one a person is told to write.
+    expect(text).not.toContain('apps/web/src/worker.ts')
+    expect(text).toContain('apps/web/src/plugins/worker-exports.ts')
     expect(text).toContain('paste migrations/install/0001_seed.sql')
     expect(text).toContain('pnpm lint && pnpm typecheck && pnpm test && pnpm build')
+    // "by hand" is retired: every step says which KIND it is, and carries its own assertion.
+    expect(text).not.toContain('by hand')
+    expect(text).toContain('Human steps')
+    expect(text).toContain('Agent steps')
+    expect(text).toContain('assert')
   })
 
   it('shows where it came from, where it is recorded, and whether it was translated', () => {
@@ -763,5 +891,121 @@ describe('scripts/plugin.mjs, end to end', () => {
     expect(plugin([]).status).toBe(2)
     expect(plugin(['add']).status).toBe(2)
     expect(plugin(['remove', 'nope']).status).toBe(1)
+  })
+})
+
+/**
+ * The step taxonomy (D31). "By hand" is retired as a phrase because it answers neither question
+ * that matters to whatever performs the step — and installs are performed by AGENTS as often as by
+ * people, for whom prose is not a control.
+ *
+ * The two assertions that carry weight here are what is ABSENT and what is HUMAN. Absent, because a
+ * step becomes declarative by being MECHANISED (Parts 1 and 2) rather than by being reworded; and
+ * human, because that list must only ever hold things that are not automatable in principle.
+ */
+describe('the step taxonomy', () => {
+  const classy = {
+    ...fixtureManifest,
+    bindings: [
+      { type: 'kv', binding: 'ORDERS_KV', name: 'orders' },
+      { type: 'durable_object', binding: 'ORDERS_HUB', className: 'OrdersHub', storage: 'sqlite' },
+    ],
+  }
+
+  it('has exactly three kinds, and only two of them ever reach a plan', () => {
+    expect([...STEP_KINDS]).toEqual(['declarative', 'agent', 'human'])
+    const kinds = new Set(planSteps(classy).map(s => s.kind))
+    expect(kinds.has('declarative')).toBe(false)
+  })
+
+  it('drops every step Parts 1 and 2 mechanised', () => {
+    const steps = planSteps(classy)
+    const text = JSON.stringify(steps)
+    // The barrel lines, the sixth included: `plugin add` writes them.
+    expect(text).not.toContain('worker.ts')
+    expect(text).not.toContain('barrel')
+    // The toml blocks, the cron, the prefixes and the DO migration tag: `provision cloudflare`
+    // writes them. What survives is the one INVOCATION, which somebody still has to run.
+    expect(text).not.toContain('[[durable_objects')
+    expect(text).not.toContain('[[migrations]]')
+    expect(steps.filter(s => s.id === 'provision')).toHaveLength(1)
+  })
+
+  it('gives every step a command, an observable result and the assertion that proves it', () => {
+    const every = [
+      ...planSteps(classy, { fragments: ['migrations/0001.sql'] }),
+      ...removeSteps(classy),
+    ]
+    for (const s of every) {
+      expect(s.kind, s.id).toMatch(/^(agent|human)$/)
+      for (const field of ['id', 'title', 'command', 'expect', 'assert'] as const)
+        expect(String(s[field]).length, `${s.id}.${field}`).toBeGreaterThan(0)
+    }
+  })
+
+  it('splits a secret into an agent step (the key) and a human step (the value)', () => {
+    const steps = planSteps(fixtureManifest)
+    const key = steps.find(s => s.id === 'secret-key:ORDERS_TOKEN')
+    const value = steps.find(s => s.id === 'secret-value:ORDERS_TOKEN')
+    expect(key?.kind).toBe('agent')
+    expect(key?.assert).toContain('grep')
+    // A credential is the one thing nothing can derive, which is the whole test for `human`.
+    expect(value?.kind).toBe('human')
+  })
+
+  it('makes every destructive part of a REMOVE human, and nothing else', () => {
+    const steps = removeSteps(classy, { archive: true, migrationTag: 'plugin-orders-v2' })
+    const human = steps.filter(s => s.kind === 'human').map(s => s.id)
+    // A `DROP TABLE`, the archive copy taken or knowingly skipped, a `deleted_classes` migration
+    // that deletes a namespace and its contents, and live resources that may hold somebody's data.
+    expect(human).toEqual(['archive', 'drop-migration', 'do-migration', 'deprovision'])
+    expect(steps.filter(s => s.kind === 'agent').map(s => s.id)).toEqual([
+      'dependencies:apps/web',
+      'gate',
+    ])
+    // The DO tag is the NEXT free one, never a reused identity.
+    expect(steps.find(s => s.id === 'do-migration')?.command).toContain('plugin-orders-v2')
+    expect(steps.find(s => s.id === 'do-migration')?.command).toContain('deleted_classes')
+  })
+
+  it('renders human steps FIRST and under their own heading', () => {
+    // A human step printed among the commands reads as one more command. The grouping is the
+    // difference between a plan somebody acts on and a plan somebody skims.
+    const text = renderSteps(planSteps(fixtureManifest)).join('\n')
+    expect(text.indexOf('Human steps')).toBeLessThan(text.indexOf('Agent steps'))
+    expect(text).toContain('       assert  ')
+  })
+})
+
+describe('the plan as JSON', () => {
+  it('carries every step with its kind, so a human step is a field and not a paragraph', () => {
+    const json = addPlanJson({
+      manifest: fixtureManifest,
+      source: { repo: fixtureManifest.repo, subdir: '', ref: '1.1.0', commit: 'abc123' },
+      host: { label: 'Acme', kitVersion: '0.6.1', recordsIn: MANIFEST_FILE, translated: true },
+      vendored: false,
+      problems: [],
+      files: [
+        { path: 'apps/web/src/plugins/orders/index.ts', role: 'copy' },
+        { path: 'migrations/0001_seed.sql', role: 'fragment' },
+      ],
+      byRoot: { 'apps/web/src/plugins/orders/': 1 },
+      barrels: ['server', 'worker'],
+      verify: null,
+    }) as Record<string, any>
+
+    expect(json.plugin).toEqual({ id: 'orders', version: '1.1.0', label: 'Orders' })
+    expect(json.installable).toBe(true)
+    expect(json.files.fragments).toEqual(['migrations/0001_seed.sql'])
+    expect(json.barrels).toContainEqual({
+      kind: 'worker',
+      file: 'apps/web/src/plugins/worker-exports.ts',
+      lines: ["export * from './orders/worker-exports'"],
+    })
+    for (const step of json.steps) expect(['agent', 'human']).toContain(step.kind)
+    expect(json.steps.some((s: { kind: string }) => s.kind === 'human')).toBe(true)
+    // The fragment reached the steps, which is what makes `files` and `steps` one answer rather
+    // than two that can disagree.
+    expect(json.steps.some((s: { id: string }) => s.id === 'data-fragment')).toBe(true)
   })
 })

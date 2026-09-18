@@ -202,22 +202,40 @@ tomls before it creates anything — the ordinary parity test compares binding n
 crons and `run_worker_first` across the two files on every `pnpm test`, so patching only one would
 leave the gate red until somebody remembered the other.
 
-| Declared | What provisioning does | Still by hand |
+| Declared | What provisioning does | Still an agent step |
 |---|---|---|
-| `bindings[]` — `{ type: "kv"\|"queue"\|"r2", binding, name, consumer? }` | creates `<app>-<id>-<name>[-staging]` (`<APP>_<ID>_<NAME>[_STAGING]` for KV) and inserts the block in BOTH tomls, identical `binding`, per-env account-scoped name, KV id as a `<PLACEHOLDER>` until that env is provisioned | `pnpm types` and committing `worker-configuration.d.ts`; a type outside those three (`d1`, `vectorize`, `analytics_engine`…) is a **loud refusal naming the type** — create it and add the block to both files yourself |
+| `bindings[]` — `{ type: "kv"\|"queue"\|"r2", binding, name, consumer? }` | creates `<app>-<id>-<name>[-staging]` (`<APP>_<ID>_<NAME>[_STAGING]` for KV) and inserts the block in BOTH tomls, identical `binding`, per-env account-scoped name, KV id as a `<PLACEHOLDER>` until that env is provisioned | `pnpm types` and committing `worker-configuration.d.ts`; a type outside the supported five (`d1`, `vectorize`, `analytics_engine`…) is a **loud refusal naming the type** — create it and add the block to both files yourself |
+| `bindings[]` — `{ type: "workflow", binding, name, className }` | inserts `[[workflows]]` in BOTH tomls with the same `binding` and `class_name` and the account-scoped `name = "<app>-<id>-<name>[-staging]"`. **Nothing is created**: `wrangler deploy` registers it | `pnpm types` |
+| `bindings[]` — `{ type: "durable_object", binding, className, storage }` | inserts `[[durable_objects.bindings]]` in BOTH tomls (`name = "<BINDING>"`, `class_name`) **plus one `[[migrations]]` entry tagged `plugin-<id>-v1`**, `new_sqlite_classes` or `new_classes` per `storage` | `pnpm types`; on REMOVAL, the `deleted_classes` migration is a **human** step — it destroys the namespace and everything in it |
 | `crons[]` | appends to `[triggers] crons` in BOTH tomls, idempotently | the task itself arrives through `ServerPlugin.scheduledTasks`, keyed on the same expression |
 | `apiPrefixes[]` | appends `p` and `p/*` to `[assets] run_worker_first` in BOTH tomls | the Vite dev proxy. The prefix is also unioned into `API_PREFIXES` from the server barrel, and `wrangler-parity.test.ts` asserts both tomls MIRROR that list — so a drift between the MANIFEST and the barrel fails the gate rather than silently serving the app shell for an `<object>` embed or an `<a download>` |
 | `vars[]` — `{ key, example?, secret? }` | a non-secret key is appended to `[vars]` in BOTH tomls with its `example` as the value (an existing key is never rewritten — its value is the operator's); a `"secret": true` one is offered by `pnpm provision secrets <env>` from an exported variable or `.provision.env` | the `.dev.vars.example` line for a secret, and the local value. The key itself is validated by `SharedPlugin.config`, merged into the Worker's config schema |
 
 The account-scoping rule is unchanged and applies to a plugin's resources exactly as to the kit's: a
 queue, R2 bucket, Workflow name or Analytics Engine dataset is unique per Cloudflare ACCOUNT, so
-staging's must differ. `binding` and `class_name` stay identical, because no application code — a
-plugin's included — is environment-aware. The naming rule lives in ONE place,
-`scripts/provision/plugin-resources.ts`, and it is a wire format: rename a resource and the next
-provision run creates a second one beside the live one and points the toml at it.
+staging's must differ. **A plugin's Workflow is the sharpest case of that** — the incident in
+`docs/DEPLOY.md` is one script owning a shared Workflow name and running the other environment's
+instances against the other environment's database, with nothing erroring — so its `name` carries
+`-staging` exactly as `<app>-agent-run-staging` does. A Durable Object binding has no
+account-scoped name at all and is byte-identical in both files. `binding` and `class_name` stay
+identical everywhere, because no application code — a plugin's included — is environment-aware. The
+naming rule lives in ONE place, `scripts/provision/plugin-resources.ts`, and it is a wire format:
+rename a resource and the next provision run creates a second one beside the live one and points
+the toml at it.
 
-`hyperdrive` is deliberately not a plugin binding type — the host owns the one database, and asking
-for a second is a design conversation rather than a flag.
+**A class binding is only writable because of the sixth barrel** (D31). `class_name` resolves
+against the named exports of `src/worker.ts` and nowhere else, so before
+`apps/web/src/plugins/worker-exports.ts` existed, writing either block would have produced a toml
+pointing at a class nothing exported — and `wrangler deploy` refuses the whole script for that.
+`d1`, `vectorize` and `analytics_engine` have no equivalent mechanism and stay refused BY NAME.
+`hyperdrive` is refused for a different reason — the host owns the one database, and asking for a
+second is a design conversation rather than a flag.
+
+**A `[[migrations]]` tag is append-only and host-owned**, which is the same rule the SQL migrations
+follow and for the same reason: it is the record of what this Worker has already told Cloudflare.
+An install writes `plugin-<id>-v1`; a removal takes the next free `plugin-<id>-v<n>` with
+`deleted_classes`. A tag is never renumbered and never rewritten — replaying one under a different
+meaning loses a namespace and everything stored in it.
 
 ## `nodejs_compat`: what is allowed
 

@@ -84,10 +84,10 @@ import {
 import { patchTomlFile, readTomlString, tomlPlaceholders } from './provision/patch-toml'
 import {
   type PluginResources,
+  pluginBindingBlocks,
   pluginDeclarations,
-  pluginKvPlaceholder,
+  pluginMigrationBlocks,
   pluginResourceList,
-  pluginResourceName,
   readPluginResources,
 } from './provision/plugin-resources'
 import { redact } from './provision/redact'
@@ -777,17 +777,11 @@ function applyPluginDeclarations(app: string, plugins: PluginResources[]): void 
   const { crons, apiPrefixes, vars } = pluginDeclarations(plugins)
   for (const env of ENV_NAMES) {
     const changed = patchTomlFile(tomlFor(env), {
-      bindings: plugins.flatMap(plugin =>
-        plugin.bindings.map(b => ({
-          type: b.type,
-          binding: b.binding,
-          pluginId: plugin.id,
-          ...(b.type === 'kv'
-            ? { id: pluginKvPlaceholder(plugin.id, b.name, env) }
-            : { name: pluginResourceName(b.type, app, plugin.id, b.name, env) }),
-          ...(b.consumer ? { consumer: true } : {}),
-        }))
-      ),
+      bindings: pluginBindingBlocks(app, plugins, env),
+      // A Durable Object class needs a `[[migrations]]` entry or `wrangler deploy` refuses the
+      // whole script, so the tag goes in with the block. Append-only and never renumbered: it is
+      // the record of what this Worker has already told Cloudflare.
+      migrations: pluginMigrationBlocks(plugins),
       crons,
       workerFirstPrefixes: apiPrefixes,
       // A secret is a Worker secret (`provision secrets <env>`), never a [vars] key.
