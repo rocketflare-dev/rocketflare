@@ -276,6 +276,32 @@ satisfied. Another was caught by its own fixture, which passed while plainly bre
 **A structural check must read comment-free code, or it validates prose**; a green check that proves
 nothing is worse than no check at all.
 
+### Two plugins can no longer claim one table name
+
+The kit said a plugin's tables are `<id>_*` "with the hyphens dropped". **Its own reference plugin
+broke that rule** — `example-feature` ships `example_notes`, not `examplefeature_notes` — and the
+rule was asserted in seven places including the reference plugin's own file header. An honest check
+would have failed the kit's own example, which is why none was ever written.
+
+The rule now says what is true and what matters: *every table starts with the first
+hyphen-separated segment of its plugin's id (`example-feature` → `example_*`, `analytics` →
+`analytics_*`); a longer prefix is welcome, not required; and two plugins must never collide.* The
+prefix is a convention a human picks — every call site treats the id as a prefix for collision
+avoidance and nothing anywhere derives a table name from an id, so a mechanical rule would buy no
+mechanism, only a rename.
+
+**The collision itself is now checked**, by `tableClashes` in `pnpm plugin check`, and it fails
+**unconditionally** rather than through the warn/fail tier the other new rules use. The tier asks
+"could a released plugin retroactively satisfy this?" — and here neither plugin is non-compliant
+alone. The fault is the combination, and the host cannot run it either way.
+
+**Why this was missing is the part worth reading.** The kit believed TypeScript was already catching
+it: `example-notes.ts`, `db/schema/CLAUDE.md` and §16 all said a duplicate would surface as TS2308.
+That is false. TS2308 is a duplicated export SYMBOL; two plugins calling `pgTable('orders', …)`
+under different symbol names compile perfectly. A single `DROP TABLE` would then take the other
+plugin's data. **A believed-in guarantee that does not exist is worse than a known gap**, because
+nobody writes the check.
+
 ## How to apply
 
 There is no migration and no schema change.
@@ -363,6 +389,13 @@ into strict checking; until you do, the new rules warn rather than fail.
 A reported dependency clash is information, not an error: decide whether your plugin or the other
 declaration should move, and edit the manifest that should lose.
 
+**Check your own plugins' table names against each other** — `pnpm plugin check` now does it for the
+installed set, but only once they are installed together. Renaming a table is an expand/contract
+migration, so finding a clash late is expensive.
+
+If you documented the old "hyphens dropped" rule anywhere in your own app, correct it; nothing
+enforced it and nothing ever will.
+
 ## Conflicts to expect
 
 `apps/web/src/api/services/tenants.ts` and `apps/web/src/api/services/storage.ts` if you have edited
@@ -398,6 +431,10 @@ conflicts with an app's own edits unless you have restructured that workflow.
 `scripts/plugin.mjs` and `scripts/lib/plugin-lib.mjs` are substantially rewritten — three separate
 workstreams touched them this release — so an app that has edited either should expect rejects and
 re-apply its own changes on top. `.github/workflows/ci.yml` gains a job.
+
+`docs/CONCEPTS.md` §§13 and 16 are substantially rewritten and gain decisions 14–22.
+`.claude/rules/*.md`, both `CLAUDE.md` plugin sections and the three skills change wording.
+`scripts/lib/plugin-lib.mjs` and `scripts/plugin.mjs` gain the collision check.
 
 ## Verify
 
@@ -485,3 +522,8 @@ pnpm plugin check --json    # the same results as data, warnings separate from f
 ```
 
 The human and `--json` forms must report identically, and CI runs the same check.
+
+```bash
+pnpm plugin check    # with two plugins installed that declare the same table name:
+                     # names both plugins, the shared table, and says to rename one and release it
+```
