@@ -4,8 +4,8 @@ previous: 0.6.1
 date: null
 breaking: true
 migrations: []
-areas: [api, shared, config]
-touches_surfaces: []
+areas: [api, ui, shared, db, cli, config]
+touches_surfaces: [example-feature]
 requires_surfaces: []
 manual: false
 ---
@@ -72,6 +72,56 @@ Four duplicated statements of the porting-note schema became one `noteProblems()
 tag-versus-version check, which lived in three places including two inline shell steps in
 `deploy.yml`, became one.
 
+### The plugin surface is injected context, not imported symbols
+
+**The documented plugin contract was "four published entries per plugin". The measured contract was
+128 distinct (module, symbol) pairs across 55 kit modules** — including six-level relative climbs
+into `apps/web/tests/**` — because `deepImportIssue` guarded core→plugin and plugin→plugin but not
+plugin→core, the one direction that breaks when the kit moves.
+
+Almost all of that sprawl was already a method in waiting. The kit injected context in five places
+that were never recognised as a family, so they had drifted (`cfg` in the request and agent
+contexts, `config` in the job and cron ones), and nearly every imported symbol already took that
+context as its first argument. So the surface is now **one context family**: `RequestCtx`, `JobCtx`,
+`CronCtx`, `ToolCtx`, `AgentCtx`, `WorkflowCtx`, `HookCtx`, `SeedCtx`, plus `DetachedCtx` for a
+callback that runs outside a handler. Methods replace imports — `ctx.guard(...)`, `ctx.uuid('id')`,
+`ctx.enqueue(...)`, `ctx.nudge(...)`, `ctx.page(...)`, `ctx.notFound(...)`.
+
+**They are thin adapters over the kit's internal contexts, not the same objects**, which is what
+lets the plugin surface stay still while kit internals move. It is also why standardising on
+`config` cost no kit route a single edit: the adapter is the only place `cfg` is named.
+
+`WorkflowCtx` encodes the rules a plugin would otherwise get wrong: `ctx.step(name, opts, fn)` hands
+`fn` a fresh per-step `db`, everything is awaited, and a duplicate step name throws — the platform
+otherwise replays the cached result, which reads as "the agent ignored my approval". Durable Object
+access is `ctx.durableObject(binding, tenantId, key?)`, which builds the id itself, **so a plugin
+never calls `idFromName`** and the tenant prefix is structural rather than conventional.
+
+Two surfaces cannot be injected and are declared entries instead. **`@/db/schema/kit`** carries the
+seven build-time symbols drizzle-kit needs at module scope (`tenantRef`, `timestamps`,
+`tenantIsolation`, `RESOURCE_VISIBILITY_VALUES`, and `tenants`/`users`/`groups` as FK targets); it
+sits beside `rls.ts`, not above it, because of the cycle that file already documents. **`uiKit` is
+split in two**: `@/plugins/api/ui-wiring` is what a plugin's `ui/index.ts` may import, and
+`@/plugins/api/ui` is for lazy pages only — not new policy, just a name for the rule
+`uiEntryIssues` already enforced, because the UI entry ships in the main bundle for every reader.
+
+**The test harness is `@testkit`**, two entries: integration (the database, bindings, `request`,
+`json` and the fixtures) and unit (`makeRequestCtx`, `makeJobCtx`, `makeCronCtx`, `makeWorkflowCtx`,
+`makeToolCtx`). It is registered in `tsconfig.json` and `vitest.config.ts` and **deliberately not in
+`vite.config.ts`**, so importing it from `src/` fails the build rather than shipping fixtures to a
+browser. **The builders refuse a fake `db`** — they require a handle blessed by `setupTestDatabase`,
+tracked in a `WeakSet` rather than by shape, because `{ execute: vi.fn() }` passes a shape check and
+is precisely the object the rule exists to refuse. A fake context may test branching, guards and
+response shape; anything touching data is on real Postgres by construction. The cost, accepted and
+stated: there is no fast database-free test of a data-touching handler.
+
+**Enforcement is conditional on the plugin declaring `requires.pluginApi`** — declared means
+strictly checked, undeclared means warned. That is not a transition hack; it is the permanent rule
+for third-party plugins, and it dissolves a real circularity, because a plugin's CI resolves its
+matrix from *released* kit tags and so cannot declare a version that does not exist yet.
+Every failure names the file, the line and the exact replacement, because installs are performed by
+agents and a diagnostic that only says what is wrong is useless to one.
+
 ## How to apply
 
 There is no migration and no schema change.
@@ -95,6 +145,26 @@ There is no migration and no schema change.
 list. If you call `satisfies` from your own scripts it is now `satisfiesResult(version, range)`
 returning `{ ok, problem }`.
 
+**If you have no plugins of your own, there is nothing to do.** The kit's own reference plugin,
+`example-feature`, is migrated, and it is the worked example to read.
+
+If you do have one, the migration is mechanical and the check tells you each edit:
+
+1. Add `"requires": { "pluginApi": "1" }` to its `plugin.json`. Until you do, it is warned rather
+   than failed — so you can migrate in your own time, but nothing is verifying it meanwhile.
+2. Routes take `RequestCtx` (`const ctx: RequestCtx = requestCtx(c)`), job handlers `JobCtx`, cron
+   tasks `CronCtx`, agent tools `ToolCtx`, hooks `HookCtx`/`SeedCtx`.
+3. Schema files import from `@/db/schema/kit` — **by relative path**, because drizzle-kit bundles
+   them and resolves no tsconfig path alias.
+4. `ui/index.ts` imports only `@/plugins/api/ui-wiring`; pages import `@/plugins/api/ui`.
+5. Tests import `@testkit/integration` and `@testkit/unit` instead of climbing into `tests/`.
+
+**One TypeScript subtlety worth knowing before it costs you an afternoon**: `ctx.notFound(...)`
+returns `never`, but TypeScript applies never-return narrowing only when every name in the call
+target is explicitly annotated. `const ctx = requestCtx(c)` is inferred, so the guard throws at
+runtime while the compiler still believes the row may be undefined. Annotate it —
+`const ctx: RequestCtx = requestCtx(c)`.
+
 ## Conflicts to expect
 
 `apps/web/src/api/services/tenants.ts` and `apps/web/src/api/services/storage.ts` if you have edited
@@ -106,6 +176,12 @@ and the resolution is to keep both. `apps/web/src/plugins/types.ts` gains one op
 `scripts/release.mjs` and `scripts/release-check.mjs` are substantially rewritten; an app that has
 edited any of them should expect rejects and re-apply its own change on top. `.github/workflows/`
 loses two inline shell steps in favour of `scripts/default-plugins.mjs`.
+
+`apps/web/src/plugins/types.ts`, `apps/web/tests/helpers/plugins.ts`, `apps/web/vitest.config.ts`
+and `apps/web/tsconfig.json` all change. If you deleted `example-feature` (it exists to be deleted)
+every file under it is dropped from the patch, which is the intended behaviour and not a failure.
+`apps/web/src/ui/components/shared/index.ts` gains exports, and `LoadingIndicator` moves into that
+barrel.
 
 ## Verify
 
@@ -125,3 +201,28 @@ The two checks that were broken:
 node scripts/release.mjs <next> --dry-run     # passes WITHOUT --skip-plugin-check
 node scripts/release-check.mjs --tag 0.3.0    # no longer reports 'feature-analytics'
 ```
+
+The contract enforces itself, so the check is to break it deliberately:
+
+```bash
+# in any plugin file — the failure must name the file, the line and the replacement
+echo "import { tenantIsolation } from '../../../db/schema/rls'" >> <a plugin file>
+pnpm --filter @rocketflare/web test:config     # fails, naming the edit
+```
+
+And the bundle boundary — **which the two builds protect asymmetrically, so check both**:
+
+```bash
+# add `import '@testkit/integration'` to a file under apps/web/src/ui/
+pnpm --filter @rocketflare/web build:ui    # FAILS: Rollup cannot resolve it. The alias is
+                                           # deliberately absent from vite.config.ts.
+
+# add the same import to a file under apps/web/src/api/
+pnpm --filter @rocketflare/web build:api   # SUCCEEDS — and that is the point. wrangler resolves
+                                           # tsconfig paths, so the kit is bundled rather than
+                                           # refused: measured at +866 KB on a 1.98 MB Worker.
+```
+
+So on the API side the build is **not** the protection — `tests/config/plugins.test.ts`'s source
+scan is, and it is the only thing standing between a stray import and 866 KB of test fixtures in
+production. Do not weaken that scan on the assumption the bundler will catch it.
