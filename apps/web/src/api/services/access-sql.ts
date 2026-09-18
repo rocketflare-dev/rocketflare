@@ -11,6 +11,8 @@
  * `./access.ts`, so core code is unchanged and only a plugin has to know the distinction.
  */
 import { type SQL, sql } from 'drizzle-orm'
+import { isAdminLevel } from '../middleware/permissions'
+import type { AuthContext } from '../types'
 
 export interface AccessScope {
   tenantId: string
@@ -44,4 +46,31 @@ export function sharedWithMyGroups(
     sql`, `
   )
   return sql`exists (select 1 from ${sql.raw(`"${junction}" j`)} where ${sql.raw(`j."${foreignKey}"`)} = ${resourceId} and ${sql.raw(`j."group_id"`)} in (${ids}))`
+}
+
+/**
+ * Everything a visibility predicate needs. `userId` is null for work with no requesting person (a
+ * system agent run): such a reader sees tenant-visible resources only, never an owner's private
+ * ones.
+ *
+ * **It lives in this LEAF, not in `access.ts`, and that placement is load-bearing.** `access.ts`
+ * reads the plugin barrel to compose `VISIBILITY_RESOURCES`, so anything importing it is downstream
+ * of every installed plugin. `plugins/api/http.ts` needs this one function, and importing it from
+ * `access.ts` closed the cycle `plugins/api → http → access → plugins/server → <plugin>/index →
+ * plugins/api`: with a SECOND plugin installed, the plugin's routes evaluated while `http.ts` was
+ * still executing, so `createRouter` was `undefined` and every such plugin died at import with
+ * `createRouter is not a function`. One plugin never showed it — the barrel re-enters a module
+ * already in progress and is never re-executed.
+ *
+ * `isAdminLevel` is safe to reach from here because `middleware/permissions` imports only shared
+ * types, `api/types` and the error classes; it touches no barrel.
+ */
+export function accessScopeOf(auth: AuthContext): AccessScope {
+  if (!auth.tenantId) throw new Error('accessScopeOf: no tenant in the auth context')
+  return {
+    tenantId: auth.tenantId,
+    userId: auth.user.id,
+    groupIds: auth.groups.map(g => g.id),
+    bypass: isAdminLevel(auth),
+  }
 }

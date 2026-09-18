@@ -323,6 +323,36 @@ Both are additions, so no `PLUGIN_API.current` bump: the generated reference rec
 gate stays green, which is exactly the asymmetry that version is for — additions are free, changes
 and removals are not.
 
+### A second installed plugin could not call `createRouter` at module scope
+
+The declared entry `@/plugins/api` was unusable at module scope for the SECOND installed plugin —
+and two plugins is the kit's own default state. A plugin doing the ordinary thing,
+`export const thingRouter = createRouter()`, died at import with
+`TypeError: (0 , createRouter) is not a function`.
+
+The cycle: `plugins/api → ./http → api/services/access → plugins/server → <plugin>/index →
+plugins/api`. `http.ts` imported `accessScopeOf` from `services/access`, which reads the plugin
+barrel to compose `VISIBILITY_RESOURCES`; the barrel imports each plugin's index; that index imports
+`@/plugins/api` again. So a plugin's routes evaluated while `http.ts` was still executing, sixteen
+lines before it had bound `createRouter`.
+
+**One plugin never showed it**, which is why it survived every gate: the barrel re-enters a module
+already in progress and is never re-executed, so nothing evaluates a plugin's routes early. It needs
+a second plugin, and the failure then surfaces from whichever plugin's test happens to be the entry
+module — not from the plugin that actually throws.
+
+The fix is the one the kit already documents for this shape: **a value a plugin needs from a
+composing module moves to a LEAF.** `accessScopeOf` now lives in `api/services/access-sql.ts`,
+`access.ts` re-exports it so no core importer moves, and — the part that actually breaks the cycle —
+`plugins/api/http.ts` imports it *from the leaf*. Moving the function while `http.ts` still named
+`services/access` would have changed nothing and read like a fix that did not work.
+
+**The same constraint still blocks three members.** `grantsForResources`, `setResourceGroups` and
+`resolveRequestedVisibility` are not on any declared entry, so a plugin that registers a restrictable
+resource cannot write one and has to reimplement the rules. Publishing them from
+`plugins/api/access.ts` would reintroduce exactly this cycle, so they need the same leaf treatment
+first. Known gap, not an oversight.
+
 ## How to apply
 
 There is no migration and no schema change.
@@ -420,6 +450,10 @@ enforced it and nothing ever will.
 Nothing to do unless you want them. If you reimplemented any of these against kit internals because
 the declared entry lacked them, replace that with the published version — it is the same code, and
 the deep import would now fail the contract check.
+
+Nothing to do. If you carried a deferred-initialisation workaround in a plugin — building routers on
+first read, `mounts` as a getter — remove it: it is now unnecessary, and left in place every plugin
+author who reads that plugin copies the pattern for a reason that no longer exists.
 
 ## Conflicts to expect
 

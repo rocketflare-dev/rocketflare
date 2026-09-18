@@ -20,26 +20,14 @@ import { and, count, eq, inArray, type SQL, sql } from 'drizzle-orm'
 import type { Database } from '../../db/client'
 import { documentGroups, documents, groups, groupTypes } from '../../db/schema'
 import { serverPlugins } from '../../plugins/server'
-import { isAdminLevel } from '../middleware/permissions'
-import type { AuthContext } from '../types'
 import { ForbiddenError } from '../utils/core/errors'
-import { type AccessScope, sharedWithMyGroups } from './access-sql'
+import { type AccessScope, accessScopeOf, sharedWithMyGroups } from './access-sql'
+
 import { assertGroupsInTenant, listUserGroups } from './groups'
 
-/**
- * Everything a visibility predicate needs. `userId` is null for work with no requesting person (a
- * system agent run): such a reader sees tenant-visible resources only, never an owner's private
- * ones.
- */
-export function accessScopeOf(auth: AuthContext): AccessScope {
-  if (!auth.tenantId) throw new Error('accessScopeOf: no tenant in the auth context')
-  return {
-    tenantId: auth.tenantId,
-    userId: auth.user.id,
-    groupIds: auth.groups.map(g => g.id),
-    bypass: isAdminLevel(auth),
-  }
-}
+// Re-exported so no core importer moves: the function now lives in the leaf, because a plugin's
+// `http.ts` reaching THIS module closes a cycle through the plugin barrel (see access-sql.ts).
+export { accessScopeOf }
 
 /** The scope an agent run or a background job gets for a person (or for nobody). */
 export async function accessScopeForUser(
