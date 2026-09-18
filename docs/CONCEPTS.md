@@ -90,6 +90,14 @@ injected `features: string[]`.
 | `Document` (D18) | manage | manage | manage | manage | create + read (delete own: route's `ownerUserId` check) |
 | `Group` (D29) | manage | manage | manage | manage | read (routes narrow it to their OWN groups) |
 
+**Deleting an organisation is two halves, and only one of them is the cascade.** Inside Postgres
+the `tenantRef()` FK cascade is complete — one `DELETE` removes the tenant's world — and it reaches
+nothing else. So `deleteTenant` also enqueues **`tenant.purge`** on `JOBS_QUEUE` (§5), which deletes
+the tenant's R2 objects (`tenants/<tenantId>/`, §6) and runs every installed plugin's
+`onTenantDeleted` hook (§16) for whatever it keeps outside the database. The job carries the tenant
+id because by the time it runs there is no row left to look it up from; the queue binding is proved
+BEFORE the delete, so a deployment that cannot purge fails while the tenant still exists.
+
 `*` Deleting a tenant and assigning/changing `owner` additionally require an explicit
 `role === 'owner'` check — CASL conditions are not used anywhere, so don't pretend they are. A new
 app subject defaults to owner/admin/support `manage`, member `read` with route-scoped writes.
@@ -341,7 +349,9 @@ closes its own DB client and **everything is awaited — there is no `waitUntil`
 'rocketflare-jobs'`) because queue names are account-scoped and staging's carries `-staging`; an
 unknown queue is `ackAll()`ed so a stray binding can never retry forever.
 
-What is queued today: the invitation email (create, bulk, resend) and the access-request decision
+What is queued today: `tenant.purge` (the out-of-database half of deleting an organisation, §1 —
+idempotent, so a retry is free), and the invitation email (create, bulk, resend) and the
+access-request decision
 email, so those routes answer as soon as the row exists — the `email.send` payload carries the
 optional `link` so the `[email:dev]` console fallback still prints the accept URL. **The magic-link
 email stays inline** (a person is waiting on it; latency beats offloading). `example-feature.ping`
@@ -493,6 +503,14 @@ which stays forbidden.
   `documents`-scope file (the original behind a knowledge document, §9) is 409 `owned_by_document` —
   delete the document instead; it takes the object and the row with it.
 
+**Deleting a tenant deletes its bytes (`tenant.purge`, §1, §5).** The `files` ROWS go with the FK
+cascade; the objects behind them would otherwise sit in the bucket for the life of the deployment,
+because nothing outside Postgres is reachable from a row that no longer exists. `purgeTenantObjects`
+walks `tenants/<tenantId>/` a page at a time — `listPage` + `deleteMany`, so a large tenant is never
+held whole in a 128 MiB isolate and costs two subrequests a page rather than one an object — and it
+is idempotent by construction, which is what makes the job safe to retry. A deployment with no
+`FILES` binding logs and acks: no binding means no objects, and no retry can conjure one.
+
 Missing `FILES` binding → 503 `storage_not_configured` (loud, unlike the hub's silent no-op).
 `wrangler dev` emulates R2 locally, so there is no filesystem adapter; tests use `MemoryR2Bucket`.
 UI: `api.upload(url, FormData)` (no JSON content-type — the browser sets the boundary),
@@ -502,8 +520,8 @@ then refreshes `me` and the session), and the Profile avatar block.
 **Known gaps / not built yet:** `users.avatarUrl` is global but the object is tenant-scoped, so
 the picture 404s in another organisation and the `<img onError>` fallback shows initials; a
 re-upload leaves the previous object and row in place (rows are immutable — a cleanup job is the
-app's call); no listing endpoint (`StorageService.list` exists, no route uses it); no per-tenant
-quota or storage configuration; presigned URLs would need S3 credentials + `aws4fetch`; email
+app's call); no listing endpoint (`list` / `listPage` exist and only `tenant.purge` uses them); no
+per-tenant quota or storage configuration; presigned URLs would need S3 credentials + `aws4fetch`; email
 templates are neutral and need branding.
 
 ## 7. UI shell
