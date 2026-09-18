@@ -28,6 +28,7 @@ import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { ensureMirror, mirrorDirFor, PLUGIN_MIRROR_ROOT } from './lib/git-lib.mjs'
 import { MANIFEST_FILE, readManifest } from './lib/manifest.mjs'
 import { PLUGIN_MANIFEST_FILE } from './lib/plugin-lib.mjs'
 import {
@@ -95,37 +96,99 @@ export function releaseContext(root = REPO_ROOT) {
   return { kind: 'unknown' }
 }
 
-/**
- * Resolve one `defaultPlugins` entry: is it still fetchable at the ref the kit pins, and what
- * `requires.kit` range does it declare? The I/O half of `defaultPluginProblems` (D31, decision 5).
- *
- * Two sources, in this order. The INSTALLED surface first — a default plugin installed in this
- * checkout is the copy the gate just ran against, and its recorded `requires` is that copy's own
- * statement. Then `git ls-remote`, which proves the pin still resolves on the remote; it cannot
- * read a file, so a plugin that is not installed here reports its range as unknown rather than
- * being guessed at, and the caller turns that into a problem with the fix in it.
- */
-export function resolveDefaultPlugin(entry, { manifest = null } = {}) {
-  const surface = (manifest?.surfaces ?? []).find(s => s.kind === 'plugin' && s.id === entry.id)
+/** `git ls-remote` as a boolean: does `ref` exist on that remote? The offline-ish fallback. */
+function lsRemoteResolves(repo, ref) {
   try {
-    execFileSync('git', ['ls-remote', '--exit-code', entry.repo, entry.ref ?? 'HEAD'], {
+    execFileSync('git', ['ls-remote', '--exit-code', repo, ref], {
       cwd: REPO_ROOT,
       stdio: ['ignore', 'ignore', 'pipe'],
       timeout: 30_000,
       env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
     })
+    return true
   } catch {
-    return {
-      ok: false,
-      reason: entry.ref
-        ? `git ls-remote found no '${entry.ref}' there — release the plugin, or repin the ref`
-        : 'the repository is unreachable',
-    }
+    return false
   }
-  return {
-    ok: true,
+}
+
+/** The blobless bare mirror `scripts/plugin.mjs` would use for the same repository. */
+function openPluginMirror(repo) {
+  return ensureMirror(repo, mirrorDirFor(repo, abs(PLUGIN_MIRROR_ROOT)), {
+    cwd: REPO_ROOT,
+    warn: () => {},
+  })
+}
+
+/**
+ * Resolve one `defaultPlugins` entry: is it still fetchable at the ref the kit pins, and what
+ * `requires.kit` range does it declare? The I/O half of `defaultPluginProblems` (D31, decision 5).
+ *
+ * **The MIRROR is what answers the second half**, and it has to: `git ls-remote` proves a ref
+ * exists but cannot read a file out of it, so before this the range came only from an INSTALLED
+ * surface — and the kit does not install its own default plugins. `pnpm kit:release 0.7.0` was
+ * therefore refused every single time with "cannot read its requires.kit range", making
+ * `--skip-plugin-check` mandatory rather than the loud escape hatch it was written as, which is
+ * the same as having no check at all.
+ *
+ * So: fetch the plugin at its pinned ref into the same blobless mirror `pnpm plugin` already keeps
+ * (one clone, cached under `.upgrade/plugins/`), and read `rocketflare-plugin.json` out of it. That
+ * is the plugin's own statement AT THE PIN, which is strictly better than an installed surface's
+ * record of whatever was true when somebody last installed it.
+ *
+ * Three fallbacks, each deliberate:
+ *
+ *   - the mirror cannot be opened (offline, no access) → `ls-remote` proves the ref, and the range
+ *     falls back to the installed surface, or to null, which the caller still reports;
+ *   - the ref resolves but carries no manifest → the surface's record, rather than a refusal: an
+ *     older plugin release may predate the file;
+ *   - the manifest is there but is not JSON → a refusal, because that is a broken plugin rather
+ *     than a missing answer.
+ *
+ * `openMirror` and `lsRemote` are injected so the test can drive every branch without a network.
+ */
+export function resolveDefaultPlugin(
+  entry,
+  { manifest = null, openMirror = openPluginMirror, lsRemote = lsRemoteResolves } = {}
+) {
+  const surface = (manifest?.surfaces ?? []).find(s => s.kind === 'plugin' && s.id === entry.id)
+  const recorded = {
     requiresKit: surface?.requires?.kit ?? null,
     version: surface?.source?.version ?? null,
+  }
+  const missingRef = () => ({
+    ok: false,
+    reason: entry.ref
+      ? `no '${entry.ref}' in that repository — release the plugin, or repin the ref`
+      : 'the repository is unreachable',
+  })
+
+  let mirror = null
+  try {
+    mirror = openMirror(entry.repo)
+  } catch {
+    mirror = null
+  }
+  if (!mirror) {
+    if (!lsRemote(entry.repo, entry.ref ?? 'HEAD')) return missingRef()
+    return { ok: true, ...recorded }
+  }
+
+  const ref = entry.ref ?? mirror.latestTag() ?? 'HEAD'
+  if (!mirror.resolves(ref)) return missingRef()
+  const file = entry.subdir
+    ? `${entry.subdir.replace(/\/+$/, '')}/${PLUGIN_MANIFEST_FILE}`
+    : PLUGIN_MANIFEST_FILE
+  const shown = mirror.tryShow(ref, file)
+  if (!shown.ok) return { ok: true, ...recorded }
+  try {
+    const declared = JSON.parse(shown.out)
+    return {
+      ok: true,
+      requiresKit: declared.requires?.kit ?? recorded.requiresKit,
+      version: declared.version ?? recorded.version,
+    }
+  } catch {
+    return { ok: false, reason: `${file} at ${ref} is not valid JSON` }
   }
 }
 

@@ -47,7 +47,9 @@ import {
   ensureMirror,
   makeGit,
   makeWriter,
+  mirrorDirFor,
   notesBetween,
+  PLUGIN_MIRROR_ROOT,
 } from './lib/git-lib.mjs'
 import { pluginSurfaces, readManifest } from './lib/manifest.mjs'
 import {
@@ -85,7 +87,9 @@ import {
 } from './lib/upgrade-lib.mjs'
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
-const WORK_DIR = path.join('.upgrade', 'plugins')
+// The mirror location is shared with `scripts/release.mjs`, which fetches the same plugin
+// repositories to read their manifests — one clone, not two that take turns being stale.
+const WORK_DIR = PLUGIN_MIRROR_ROOT
 
 const out = (...lines) => {
   for (const l of lines) process.stdout.write(`${l}\n`)
@@ -289,17 +293,7 @@ const findSurface = (host, id) => {
 
 // ---------------------------------------------------------------- the source
 
-const mirrorDirFor = repo =>
-  abs(
-    path.join(
-      WORK_DIR,
-      `${repo
-        .replace(/\.git$/, '')
-        .split(/[/:]/)
-        .filter(Boolean)
-        .pop()}.git`
-    )
-  )
+const pluginMirrorDir = repo => mirrorDirFor(repo, abs(WORK_DIR))
 
 /** `<repo|path>[@ref]`, without mistaking the `@` of `git@github.com:…` for a ref. */
 export function splitRef(spec) {
@@ -353,7 +347,11 @@ function openSource(spec, args) {
       has: rel => existsSync(path.join(root, rel)),
     }
   }
-  const m = ensureMirror(target, mirrorDirFor(target), { fetch: args.fetch, cwd: REPO_ROOT, warn })
+  const m = ensureMirror(target, pluginMirrorDir(target), {
+    fetch: args.fetch,
+    cwd: REPO_ROOT,
+    warn,
+  })
   const at = ref ?? m.latestTag() ?? 'HEAD'
   if (!m.resolves(at)) stop(1, `error: '${at}' is not in ${target}`)
   const full = p => (subdir === '' ? p : `${subdir}/${p}`)
@@ -645,7 +643,7 @@ function cmdUpgrade(args, host) {
   }
   if (args.apply) requireClean(host, args)
 
-  const m = ensureMirror(source.repo, mirrorDirFor(source.repo), {
+  const m = ensureMirror(source.repo, pluginMirrorDir(source.repo), {
     fetch: args.fetch,
     cwd: REPO_ROOT,
     warn,
