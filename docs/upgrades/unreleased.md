@@ -12,7 +12,9 @@ manual: false
 
 ## What changed
 
-**A deleted tenant's state outside Postgres is now deleted too.** Until now `deleteTenant` was one
+### Deleting a tenant now purges what the cascade cannot reach
+
+**The FK cascade was never the whole story.** Until now `deleteTenant` was one
 SQL `DELETE` plus a nudge, and the FK cascade in `tenantRef()` was the entire cleanup mechanism —
 which is only the whole story for rows. R2 objects under `tenants/<id>/` were never removed, so
 every deleted organisation left its uploads, avatars and knowledge originals in the bucket for ever.
