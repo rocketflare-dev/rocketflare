@@ -169,6 +169,21 @@ describe('the barrel writer', () => {
     ])
   })
 
+  it('sorts a plugin whose id follows `types` below the type import, as Biome does', () => {
+    const alone = addBarrelLine(fixtureBarrel, 'server', 'zebras')
+    expect(alone).toContain(
+      "import type { AnyServerPlugin } from './types'\nimport { zebrasServer }"
+    )
+    const both = addBarrelLine(alone, 'server', 'orders')
+    const imports = both.split('\n').filter(l => l.startsWith('import '))
+    expect(imports).toEqual([
+      "import { ordersServer } from './orders'",
+      "import type { AnyServerPlugin } from './types'",
+      "import { zebrasServer } from './zebras'",
+    ])
+    expect(removeBarrelLine(both, 'server', 'orders')).toBe(alone)
+  })
+
   it.skipIf(!subject)(
     'removes exactly what it added, for every barrel, against the REAL files',
     () => {

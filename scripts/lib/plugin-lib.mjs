@@ -219,6 +219,16 @@ function pluginImports(text) {
   return found
 }
 
+/** Every one-line relative import or `export *` in a barrel — the lines Biome sorts together. */
+function sortedImports(text) {
+  const found = []
+  for (const [index, line] of text.split('\n').entries()) {
+    const m = line.match(/^(?:import (?:type )?\{ [^}]+ \}|export \*) from '(\.\/[^']+)'$/)
+    if (m) found.push({ index, specifier: m[1] })
+  }
+  return found
+}
+
 /**
  * Write `id`'s line(s) into a barrel's text. Idempotent, and sorted by module specifier so the
  * result is byte-identical to what Biome's import sorting would produce — an install that leaves
@@ -233,15 +243,16 @@ export function addBarrelLine(text, kind, id) {
   const name = barrelExportName(kind, id)
   const newLine = b.constName ? `import { ${name} } from '${spec}'` : `export * from '${spec}'`
 
-  const existing = pluginImports(text)
+  // Biome sorts by specifier across EVERY import, the `import type … from './types'` included — so
+  // a plugin whose id sorts after `types` (`web-knowledge`) lands BELOW it, not above. Sorting
+  // against the plugin lines alone put it above and failed the round trip the moment one existed.
+  const existing = sortedImports(text)
   const lines = text.split('\n')
   if (existing.length === 0) {
-    // No plugin installed yet. A list barrel always has an `import type … from './types'`, and
-    // Biome sorts value imports above it; the schema barrel has no imports at all, so its one line
-    // goes after the last non-empty line of the header comment.
-    const anchor = lines.findIndex(l => l.startsWith('import type '))
+    // The schema barrel has no imports at all, so its one line goes after the last non-empty line
+    // of the header comment.
     const lastText = lines.reduce((acc, l, i) => (l.trim() === '' ? acc : i), 0)
-    lines.splice(anchor === -1 ? lastText + 1 : anchor, 0, newLine)
+    lines.splice(lastText + 1, 0, newLine)
   } else {
     const before = existing.find(e => e.specifier > spec)
     lines.splice(before ? before.index : existing[existing.length - 1].index + 1, 0, newLine)
