@@ -230,6 +230,34 @@ the whole rule, and it is why neither half duplicates the other.
   three: the `ui` and `config` projects by glob, and the api ones through the same `apiTestFiles()`
   walk the kit's use, so **the `// @vitest-isolate` marker decides which api project a plugin file
   lands in exactly as it does for a kit file** (first line, exact match, reason on line 2)
+- **A plugin reaches the harness through `@testkit`, never a relative climb into `tests/`.** Two
+  entries, split by what a test needs: `@testkit/integration` is the harness (`setupTestDatabase`,
+  `request` / `json`, `createTestEnv` / `stubs`, the auth factories, `renderWithProviders`) and
+  `@testkit/unit` the context builders (`makeRequestCtx`, `makeJobCtx`, `makeCronCtx`,
+  `makeWorkflowCtx`, `makeToolCtx`). Both are re-exports, so a plugin and a kit test run the same
+  code. The alias is in `tsconfig.json` and `vitest.config.ts` and **deliberately not in
+  `vite.config.ts`**, so a `src/` file importing it fails `build:ui` rather than shipping the
+  harness into a browser bundle — `tests/config/testkit-alias.test.ts` pins all three halves and
+  scans `src/` directly, because a scan says WHICH file is wrong where a failed build says only that
+  one is. **`build:api` does not protect the other side**: wrangler resolves tsconfig paths, so a
+  stray import there is bundled rather than refused (measured at +866 KB), and the source scan in
+  `tests/config/plugins.test.ts` is the only thing standing between it and production
+- **The builders refuse a `db` nobody handed out** — they require a handle blessed by
+  `setupTestDatabase`, tracked in a `WeakSet` rather than by shape, because `{ execute: vi.fn() }`
+  passes a shape check and is exactly the object the rule exists to refuse. Injection is what makes
+  it easy to write a test that LOOKS like an isolation proof and proves nothing: a stub answering
+  `[]` satisfies "tenant B sees no rows" whatever the query said. So a fake context may test
+  branching, guards and response shape; **anything touching data is on real Postgres by
+  construction**, and the isolation case drives the real mount through `request(...)` as a second
+  tenant. Accepted cost, stated rather than discovered: there is no fast, database-free test of a
+  data-touching handler
+- **A structural check must read comment-free code, or it validates prose.** The rule is for anyone
+  writing one, because the failure mode is invisible — a green check that proves nothing. Three in
+  `scripts/lib/plugin-lib.mjs` were silently substring-matching: `workerExports` over raw source,
+  satisfied by a class named only in a comment; `onTenantDeleted` through `.includes(...)`, which
+  passed on a fixture that plainly broke the rule; `isolationEvidence` through regexes a header
+  paragraph or a commented-out `createTestTenant(db)` satisfied. `stripComments` runs first in all
+  three now, and each requires a real DECLARATION (`declaresProperty`) rather than a mention
 - **A plugin's api test MUST carry a tenant-isolation case.** Its tables are tenant-scoped like any
   other and the kit's own suites cannot see them:
   `src/plugins/example-feature/tests/api/example-feature.test.ts` is the template — tenant B can

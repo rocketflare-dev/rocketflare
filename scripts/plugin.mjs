@@ -90,6 +90,7 @@ import {
   resolveSubdir,
   revertCoreEdits,
   surfaceDirectories,
+  tableClashes,
   workerExportNames,
 } from './lib/plugin-lib.mjs'
 import { applyReplacements, deriveNames, isBinary } from './lib/rename-lib.mjs'
@@ -1243,6 +1244,9 @@ function cmdCheck(args, host) {
   // FAILING it on that declaration. A field that contradicts the severity beside it is worse than
   // an absent one.
   const declaredApi = new Map()
+  // Every plugin's parsed manifest, kept for the checks that are about the COMBINATION rather than
+  // about one plugin: two plugins cannot share a table name, and neither of them is wrong alone.
+  const anchors = []
   for (const s of host.plugins) {
     const id = s.id
     const vendored = isVendored(s.source, host.kitRepo)
@@ -1289,6 +1293,7 @@ function cmdCheck(args, host) {
     }
     const severity = auditSeverity(anchor)
     declaredApi.set(id, anchor.requires?.pluginApi ?? null)
+    anchors.push({ surface: s, source: anchorSource, manifest: anchor })
 
     // Every field, naming the field and its legal values. Two-tier, because a plugin RELEASED
     // before this check existed cannot retroactively satisfy it.
@@ -1518,6 +1523,26 @@ function cmdCheck(args, host) {
         })
       }
     }
+  }
+  // **Two plugins declaring one table name.** The prefix convention is what keeps them apart and
+  // nothing enforces it, because nothing derives a table name from an id — so the collision is the
+  // checkable half, and it is checked here, where every manifest is in hand. Nothing else sees it:
+  // TS2308 catches a duplicated EXPORT name, not a duplicated `pgTable('orders')`, and past that
+  // point drizzle-kit emits DDL for one name twice and `plugin remove` drops the other's table.
+  for (const clash of tableClashes(anchors.map(a => a.manifest))) {
+    const entry = anchors.find(a => a.manifest.id === clash.id)
+    if (!entry) continue
+    const others = clash.others.map(o => `'${o}'`).join(', ')
+    add('fail', `${clash.id}:table:${clash.table}`, {
+      file: entry.surface.anchor,
+      line: jsonKeyLine(entry.source, 'schema.tables'),
+      problem: `declares the table ${clash.table}, which ${others} also declares`,
+      fix:
+        'rename one of them and release that plugin — every table starts with the first ' +
+        `hyphen-separated segment of its plugin's id ('${clash.id}' → ` +
+        `'${clash.id.split('-')[0]}_*'), and two plugins cannot share a host with one name ` +
+        "between them: a single DROP TABLE takes the other plugin's data",
+    })
   }
   // Is what is INSTALLED what `.rocketflare.json` says a fresh clone would get? (D31, decision 2.)
   // Nothing compared the two, and the drift is invisible from either side: CI installs each default

@@ -397,7 +397,7 @@ A `CUSTOM kit.notice` renders
   third answer a checkbox cannot express; the section is absent in single mode, matching the routes.
 - The `Example feature` nav item, its page and its notes CRUD are the `example-feature` PLUGIN
   (D31), not kit files: they live in `src/plugins/example-feature/ui/` and arrive through
-  `UiPlugin.routes` / `UiPlugin.nav`. Delete the whole plugin (three directories, five barrel lines,
+  `UiPlugin.routes` / `UiPlugin.nav`. Delete the whole plugin (three directories, its barrel lines,
   its surface in `.rocketflare.json`) rather than editing the shell.
 - Tests: `src/plugins/example-feature/tests/ui/feature-flag-nav.test.tsx` — it MOVED into the
   plugin with the nav item it looks for (a test that outlived its subject is a false failure). It
@@ -442,10 +442,13 @@ A `CUSTOM kit.notice` renders
   `Suspense`; `SideNav`'s `navigationConfig` is `composeNav(CORE_NAVIGATION, …)`;
   `SettingsLayout` appends `settingsTabs(ctx)`; `queryKeys` is `CORE_QUERY_KEYS` spread with every
   plugin's families; `pages/agents/forms/index.ts` is `CORE_AGENT_FORMS` plus every plugin's.
-  **Nothing in the shell names a plugin** — that is what makes install and remove five lines.
+  **Nothing in the shell names a plugin** — that is what makes install and remove a handful of
+  barrel lines, and reversible by deleting a directory.
 - **The UI entry ships in the MAIN bundle**, because the shell imports the barrel that imports it.
   So it wires and nothing else: pages are `lazy(() => import(...))`, and its runtime imports are
   limited to `react`, `@heroicons/react/24/outline`, `@rocketflare/shared/*`, `@/plugins/types`,
+  `@/plugins/api/ui-wiring` (the WIRING half of the UI kit — its COMPONENTS half,
+  `@/plugins/api/ui`, is for a lazy PAGE and is deliberately absent from this list),
   `@/ui/components/SideNav`, `@/ui/hooks/useNavGuard` and `@/ui/lib/feature-guards` (type-only
   imports are free — they are erased). `tests/config/plugins.test.ts` reads the SOURCE and enforces
   both rules; a statically imported page is the mistake it exists to catch, and it is exactly the

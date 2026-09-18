@@ -9,10 +9,13 @@ argument-hint: "[add <repo|path> | upgrade <id> | remove <id> | list | check]"
 A plugin is a **git repository copied into this app**, exactly like the kit itself: never an npm
 package, never a build artefact. Its code lands as ordinary source under three roots
 (`apps/web/src/plugins/<id>/`, `packages/shared/src/plugins/<id>/`, `apps/cli/src/plugins/<id>/`),
-translated into this app's own vocabulary on the way in, and it reaches the host through five
-barrel files and nothing else. `docs/CONCEPTS.md` §16 is the design; `apps/web/src/plugins/CLAUDE.md`
-is the seam; `reference.md` beside this file is the manifest shape, the exit codes and what each
-command verifies.
+translated into this app's own vocabulary on the way in, and it reaches the host through six
+barrel files and nothing else. In the other direction it imports the host only through the DECLARED
+entries — `@/plugins/api` (the context family), `@/db/schema/kit`, the shared and CLI entries,
+`@testkit/*` — and receives everything else as injected context; `docs/plugin-api.md` is the
+generated reference for that surface. `docs/CONCEPTS.md` §16 is the design;
+`apps/web/src/plugins/CLAUDE.md` is the seam; `reference.md` beside this file is the manifest shape,
+the exit codes and what each command verifies.
 
 **The rule that matters most:** installing a plugin gives it full Worker and database access, so it
 is as trusting as merging a pull request. Every command prints a plan and stops. **You show the
@@ -180,9 +183,13 @@ plugin repo does not carry it yet. It folds `docs/upgrades/unreleased.md` into
 `docs/upgrades/X.Y.Z.md` and prepends the `CHANGELOG.md` section — the same four headings and
 `previous` chain `pnpm plugin upgrade` walks, which is what makes the release portable at all.
 
-Everything the plugin keys carries its id: tables `<id>_*`, job types `<id>.verb`, the API prefix
+Everything the plugin keys carries its id: tables prefixed with the id's first hyphen-separated
+segment (`example-feature` → `example_*`; `pnpm plugin check` fails when two installed plugins
+declare one table name), job types `<id>.verb`, the API prefix
 `/api/<id>`, query-key roots `<id>:…`, the CLI command `<id>`, feature/prompt/agent keys, and AG-UI
-CUSTOM events under `<id>.`.
+CUSTOM events under `<id>.`. Declare `requires.pluginApi` in its manifest — a whole number, the
+version of the plugin CONTRACT it was written against, and what moves it from *warned* to
+*checked*.
 
 ## 7. Hand back
 

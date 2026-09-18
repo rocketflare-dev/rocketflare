@@ -70,6 +70,7 @@ import {
   STEP_KINDS,
   SUPPORTED_PLUGIN_BINDING_TYPES,
   surfaceDirectories,
+  tableClashes,
   tupleEntries,
   unsupportedForKit,
   workerExportNames,
@@ -1294,6 +1295,33 @@ describe('the audit', () => {
     expect(checkRequirements({ ...base, requires: {} })).toEqual([])
     // …and with no `pluginApi` handed in, nothing about it is checked at all.
     expect(checkRequirements({ kitVersion: '0.6.1', requires: { pluginApi: '99' } })).toEqual([])
+  })
+
+  /**
+   * **The one part of the table-naming rule that is mechanical.** The prefix itself is a convention
+   * a human picks — nothing derives a table name from an id, so there is nothing to check a shape
+   * against — and the collision is what actually breaks a host. Nothing else sees it: TS2308
+   * catches a duplicated EXPORT name, and two plugins spelling `pgTable('orders')` under different
+   * symbols compile cleanly, after which one `DROP TABLE` takes the other plugin's data.
+   */
+  it('catches two plugins claiming one table name, and files it against both', () => {
+    const orders = { id: 'orders', schema: { tables: ['orders_items', 'orders_lines'] } }
+    const billing = { id: 'billing', schema: { tables: ['billing_items', 'orders_items'] } }
+    expect(tableClashes([orders, billing])).toEqual([
+      { table: 'orders_items', id: 'billing', others: ['orders'] },
+      { table: 'orders_items', id: 'orders', others: ['billing'] },
+    ])
+    // A plugin never clashes with itself on a re-read, and a manifest with no tables — or no
+    // manifest at all, which is what an unreadable anchor leaves behind — contributes nothing.
+    expect(tableClashes([orders, orders])).toEqual([])
+    expect(tableClashes([{ id: 'orders' }, null, undefined])).toEqual([])
+    // The installed set is clean, which is the assertion that would fail the day somebody adds a
+    // plugin whose tables collide with one already here.
+    const installedManifests = installedHere.map(s => {
+      const anchor = path.join(REPO_ROOT, s.anchor)
+      return existsSync(anchor) ? JSON.parse(read(s.anchor)) : { id: s.id }
+    })
+    expect(tableClashes(installedManifests)).toEqual([])
   })
 
   it('reports the audit as DATA, with warnings kept out of the exit code', () => {

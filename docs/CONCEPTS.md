@@ -1579,8 +1579,14 @@ kit's name in a renamed app — because it describes the kit, and because a fixe
 the tooling find it. `kit.{repo,version,commit}` says where the copy came from (`scripts/install.sh`
 stamps the commit, and `version` ships pre-set so a hand-clone knows it too); `app.{slug,display,
 domain}` is written by `rename.mjs` at the end of its pass and re-derives the full token map through
-`deriveNames()`; `history[]` records each upgrade. It is on `EXCLUDED_PATHS`, so the rename never
-substitutes inside it. **`app === null` is the "am I the kit?" predicate**, and every kit-only check
+`deriveNames()`; `history[]` records each upgrade. Two keys beside them are read by the tooling
+rather than by a person: **`kit.pluginApi`** mirrors `PLUGIN_API` from
+`packages/shared/src/plugins/contract.ts` (§16), because a `.mjs` script runs under plain Node and
+cannot import a `.ts` module; and **`retiredSurfaces`** maps a surface id to the release that
+removed it (`feature-analytics` → `0.6.0`). That second one exists because `release-check --tag
+0.2.0` failed on a note it forbids rewriting: a released note names surfaces that were real when it
+was written, and the kit has to be able to re-verify its own history. An entry there is never
+deleted. It is on `EXCLUDED_PATHS`, so the rename never substitutes inside it. **`app === null` is the "am I the kit?" predicate**, and every kit-only check
 early-exits on it — without that, a copy inherits the kit's release discipline and fails CI on its
 own first commit. That question is now asked in exactly one place:
 `readManifest()` (`scripts/lib/manifest.mjs`) returns `{ manifest, isKit, sidecar }`, having merged
@@ -1635,6 +1641,19 @@ ports the root `package.json` version, which is the app's release version. And t
 written **last, only on a clean apply**, so an interrupted or rejected run re-runs from an unchanged
 baseline (exit 4 means "work remains", not "failed").
 
+**A plugin upgrade is this pipeline pointed at another repository (§16), and three things it does
+there are not obvious.** The surface's `requires` is **refreshed** from the manifest at the version
+being installed rather than frozen at first install — and that range is checked BEFORE the patch
+applies, not after. Any `coreEdits` the plugin declares are **re-applied** on upgrade, and edits the
+new release no longer declares are reverted, so a line a plugin needs in a file it may not own
+follows the plugin's own version rather than being written once and forgotten. And a default
+plugin's `requires.kit` is read out of the blobless mirror `pnpm plugin` already keeps, at the ref
+the kit pins: `git ls-remote` proves a ref exists but cannot read a file out of it, which is why
+`pnpm kit:release` used to fail on every release unless `--skip-plugin-check` was passed — a check
+that effectively did not exist. When the mirror cannot be opened the range falls back to the
+recorded surface, and when the ref carries no manifest at all the surface's record is used rather
+than a refusal; a manifest that is not JSON is refused outright.
+
 **The discipline that keeps it true.** A behaviour change adds an entry to `unreleased.md` in the
 same commit: a Claude Code `PreToolUse` hook nudges before `git commit` (advisory, and only inside a
 session), `ci.yml` fails a PR that touches `apps/**` or `packages/**` without one, and `deploy.yml`
@@ -1646,6 +1665,29 @@ somebody's release quietly not happening. `pnpm kit:release <version>` writes al
 by construction. The constraint under all of it: **released history is never rewritten**, because
 every copy pins a kit commit.
 
+**One statement of the note schema, one validator, one tag check.** The porting-note frontmatter was
+restated in four places and the tag-versus-version comparison in three, two of them inline shell in
+`deploy.yml`; they are now `noteProblems()` (`scripts/lib/upgrade-lib.mjs`, read by both
+`scripts/release-check.mjs` and `tests/config/upgrade-notes.test.ts`, and the one reader of
+`retiredSurfaces`), one `defaultPluginEntries()` in `scripts/default-plugins.mjs` that both
+workflows call, and one version check. `release-check --tag` also **auto-discovers** every
+`rocketflare-plugin.json` in the checkout rather than taking a flag, because a gate you can forget
+to pass a flag to is not a gate — and a plugin manifest nobody stamped is exactly what it catches.
+`behaviourFiles(changed, { within })` came with that: `^(apps|packages)/` matches nothing against
+`plugins/<id>/apps/web/…`, so the porting-note gate had been silently passing in a monorepo, the
+one place it had never run.
+
+**A repository may hold several plugins, released in lockstep.** `node scripts/release.mjs <version>
+--plugin <subdir>` (repeatable — a path may legally contain a comma, so splitting one on a comma
+invents an escaping rule) stamps the root `package.json` plus **every** `rocketflare-plugin.json` in
+the repository, found by a bounded walk. That is not cosmetic: `pnpm plugin check` compares an
+installed surface's version against the anchor manifest, so a manifest left at an older number makes
+every install of that plugin report a mismatch. Plain `X.Y.Z` tags follow from lockstep — no
+prefixes, no per-plugin namespacing, because a tag has to stay resolvable by `git ls-remote`, which
+cannot resolve a bare SHA. The accepted cost is that a fix to one plugin bumps every plugin's
+version; `requires.pluginApi` stays per manifest and is never hoisted, since which contract a plugin
+compiles against is a different question from which release shipped it.
+
 **Known gaps / not built yet:** the wrangler tomls and `.dev.vars.example` are reported with a
 rendered diff rather than semantically merged — the planned differ would emit typed ops through
 `scripts/provision/patch-toml.ts` and insert a new binding as a placeholder; the reject rate scales
@@ -1653,7 +1695,15 @@ with how far an adopter has drifted from the kit's names and the report does not
 made before `.rocketflare.json` existed needs a one-off `--adopt <ref>`; there is no way to upgrade
 only part of a release; `docs/upgrades/` has one entry per release, so a release that should never be
 ported at all can only say so in prose; and nothing verifies that an adopter actually ran the
-migration step — the report says it, the gate does not check it.
+migration step — the report says it, the gate does not check it. `retiredSurfaces` only grows, by
+design, so the typo check over `touches_surfaces` weakens slowly as ids retire — it protects the
+note somebody is writing today, which is the only note it can still protect. The monorepo release
+is lockstep, so a fix to one plugin bumps every plugin's version, and `release-check` finds
+manifests by a bounded walk rather than a glob — a plugin nested deeper than that walk is not
+stamped and not checked. And `kit:release`'s default-plugin check reads a range from the mirror or
+from the installed surface: a default plugin that is neither fetchable nor installed here reports
+an unreadable range rather than being waved through, which is right, but it is a report and not a
+proof that somebody else's tests are green.
 
 ## 14. Definition of done for the kit
 
@@ -1842,13 +1892,20 @@ Postgres table the Worker already holds a connection to.
 ## 16. Plugins
 
 **Status: built (D31). The seam and the reference plugin in Phase A, the lifecycle and the
-skills in Phase B, and the kit went BARE in Phase C — analytics is a plugin (§8) and the one entry
-in `defaultPlugins`.** Types:
-`packages/shared/src/plugins/types.ts`, `apps/web/src/plugins/types.ts`,
-`apps/cli/src/plugins/types.ts`. Barrels: `packages/shared/src/plugins/index.ts`,
-`apps/web/src/plugins/{server,ui,schema}.ts`, `apps/cli/src/plugins/index.ts`. Provenance:
-`scripts/lib/manifest.mjs` + `.rocketflare.json` / `.rocketflare.local.json`. Tests:
-`apps/web/tests/config/plugins.test.ts` (+ `helpers/plugins.ts`), `manifest-lib.test.ts`,
+skills in Phase B, the kit went BARE in Phase C — analytics is a plugin (§8) and the one entry
+in `defaultPlugins` — and in 0.7.0 the CONTRACT became injected context with a version of its
+own.** Types: `packages/shared/src/plugins/types.ts`, `apps/web/src/plugins/types.ts`,
+`apps/cli/src/plugins/types.ts`. The surface a plugin imports: `apps/web/src/plugins/api/**`
+(the context family), `apps/web/src/db/schema/kit.ts`, `apps/web/src/plugins/api/ui{,-wiring}.ts`,
+`packages/shared/src/plugins/api.ts`, `apps/cli/src/plugins/api.ts`, `apps/web/tests/kit/*`
+(`@testkit`) — generated as `docs/plugin-api.md`, versioned by `PLUGIN_API` in
+`packages/shared/src/plugins/contract.ts` and compared by `scripts/lib/plugin-api.mjs`. Barrels:
+`packages/shared/src/plugins/index.ts`,
+`apps/web/src/plugins/{server,ui,schema,worker-exports}.ts`, `apps/cli/src/plugins/index.ts`.
+Provenance: `scripts/lib/manifest.mjs` + `.rocketflare.json` / `.rocketflare.local.json`.
+Lifecycle: `scripts/plugin.mjs` + `scripts/lib/plugin-lib.mjs`. Tests:
+`apps/web/tests/config/plugins.test.ts` (+ `helpers/plugins.ts`), `plugin-lib.test.ts`,
+`plugin-api.test.ts`, `testkit-alias.test.ts`, `manifest-lib.test.ts`,
 `shared-imports.test.ts`. Reference plugin: `apps/web/src/plugins/example-feature/**`,
 `packages/shared/src/plugins/example-feature/`, `apps/cli/src/plugins/example-feature/`.
 
@@ -1866,13 +1923,25 @@ A plugin repo **mirrors the host tree exactly** — `apps/web/src/plugins/<id>/`
 classification, the diff translator, `git apply -p1` and a reader's mental model all work unchanged.
 It ships no migration, no toml and no `package.json`: those three are the host's, always.
 
-**Four published entries, and nothing else is API.** `apps/web/src/plugins/<id>/index.ts` (server),
-`.../ui/index.ts`, `packages/shared/src/plugins/<id>/index.ts` and
-`apps/cli/src/plugins/<id>/index.ts` are what the plugin's own semver covers; everything else under
-those directories is private. Core reaching into a plugin's internals, or one plugin reaching into
-another's, is a config-test failure rather than a convention — otherwise the version number promises
-nothing. (The shared entry is imported as `@rocketflare/shared/plugins/<id>/index`: the package's
+**The boundary has two directions, and only one of them was ever enforced.** Outward, a plugin
+PUBLISHES four entries — `apps/web/src/plugins/<id>/index.ts` (server), `.../ui/index.ts`,
+`packages/shared/src/plugins/<id>/index.ts` and `apps/cli/src/plugins/<id>/index.ts` — which is what
+its own semver covers; everything else under those directories is private, and core reaching into a
+plugin's internals, or one plugin reaching into another's, is a config-test failure rather than a
+convention. (The shared entry is imported as `@rocketflare/shared/plugins/<id>/index`: the package's
 `./*` export maps to a FILE, so the `/index` is load-bearing.)
+
+Inward was the gap. `deepImportIssue` guarded core→plugin and plugin→plugin and **never
+plugin→core** — the one direction that breaks when the KIT moves — so the documented contract said
+"four entries" while the measured one was **128 distinct (module, symbol) pairs across 55 kit
+modules**, six-level relative climbs into `apps/web/tests/**` included. None of it was covered by
+anybody's version number, which is what made every plugin's pin a guess.
+
+**So the inbound surface is now injected context plus a short list of declared entries**, and the
+rule both halves make true is one sentence: *a plugin imports only from declared entries, and
+receives everything else as injected context.* `apps/web/tests/helpers/plugins.ts` enforces it and
+every diagnostic it prints carries the replacement import, because installs are performed by agents
+and a message that says only what is wrong gives one nothing to do.
 
 **Six barrels, one line per plugin each**, and `pnpm plugin add|remove` writes them — an import
 and a tuple entry in four, one `export *` in each of the other two. That, the surface entry and one
@@ -1925,10 +1994,29 @@ want. All six derivations use it.
 **Namespacing is the rule that lets two plugins share one app.** The id matches
 `^[a-z][a-z0-9-]*$` and never contains `rocketflare` (the rename translator would rewrite it, and
 `index`/`server`/`ui`/`schema`/`types` are reserved because they are barrel filenames). Everything
-keyed carries it: tables `<id>_*`, job types `<id>.x`, query-key roots and demo-seed ids `<id>:…`,
+keyed carries it: job types `<id>.x`, query-key roots and demo-seed ids `<id>:…`,
 the API prefix `/api/<id>`, the CLI's top-level command, feature/prompt/agent keys, and AG-UI CUSTOM
 events under `<id>.` — **never `kit.`**, which is the kit's own namespace and the one a third-party
 client is entitled to ignore.
+
+**Tables are the one that reads as a mechanical rule and is not.** Every table starts with a prefix
+derived from the id — its first hyphen-separated segment (`example-feature` → `example_*`,
+`analytics` → `analytics_*`), a longer prefix welcome, not required — and **the prefix is a
+convention a human picks, not a string the tooling derives**. Nothing anywhere turns an id into a
+table name or a table name into an id: `plugin remove` reads `schema.tables` verbatim, `archiveSql`
+quotes them, `rls-coverage` reads the catalog. The kit said "`<id>_*` with the hyphens dropped" for
+three releases while its own reference plugin shipped `example_notes`, which is why no check was
+ever written against it — the strict reading bought a rename rather than a mechanism, and renaming
+is the one thing a plugin may never do (drizzle-kit's prompt has no non-interactive answer).
+
+What IS mechanical is the collision: **`pnpm plugin check` fails when two installed plugins declare
+the same table name** (`tableClashes`), filed against both manifests with the edit on the line, and
+unconditionally rather than through the two-tier rule — neither plugin is non-compliant on its own,
+the fault is in the combination, and the host cannot run it either way. Nothing else sees it:
+TS2308 catches a duplicated EXPORT symbol on the `export *` line, not a duplicated
+`pgTable('orders', …)` under two different symbols, and past that point drizzle-kit emits DDL for
+one name twice, `rls-coverage` reads one policy as covering both, and a single generated
+`DROP TABLE` takes the other plugin's data.
 
 **A plugin is a SURFACE, so §13's machinery covers it for free.** The record is a
 `kind: 'plugin'` entry in `.rocketflare.json` carrying `source: { repo, subdir, version, commit }`
@@ -1946,16 +2034,22 @@ deleting the directory IS uninstalling and there is no bookkeeping to drift. Two
   plugin owns, because the plugin has its own repository and its own release chain.
 
 **A plugin tests its behaviour; the host tests that it is a well-formed plugin.** A plugin's own
-tests live inside its directory and run in the host's projects (`vitest.config.ts` discovers
-`src/plugins/*/tests/{api,ui,config}`). `tests/config/plugins.test.ts` checks only what no plugin
+tests live inside its directory, reach the harness through `@testkit` and run in the host's projects
+(`vitest.config.ts` discovers `src/plugins/*/tests/{api,ui,config}`, and the `// @vitest-isolate`
+marker places a plugin's api file exactly as it places a kit one).
+`tests/config/plugins.test.ts` checks only what no plugin
 author can verify for the combination a particular app installed: ids are namespaces and never the
-kit's; query-key roots carry the id; nothing reaches into a plugin except through its four entries;
+kit's; query-key roots carry the id; nothing reaches into a plugin except through its four published
+entries; nothing in a plugin imports the host except through a DECLARED entry (the inbound half,
+each diagnostic carrying its replacement import);
 and a plugin's `ui.ts` imports only from a small allowlist (`react`, the heroicons set,
-`@rocketflare/shared/*`, `@/plugins/types` and the three kit UI modules a nav item needs) with every
+`@rocketflare/shared/*`, `@/plugins/types`, `@/plugins/api/ui-wiring` and the three kit UI modules a
+nav item needs) with every
 page reached as `lazy(() => import(...))` — that file ships in the MAIN bundle, for every reader,
 including the ones who never open the plugin. Each check is a pure function over strings exercised
 against fixtures as well as against what is installed, so the suite still means something with zero
-plugins.
+plugins. What the host cannot write is the plugin's own **tenant-isolation** case; `plugin check`
+now at least proves such a test exists (above).
 
 **Two constraints were measured rather than assumed, and both are load-bearing.**
 
@@ -1973,6 +2067,139 @@ plugins.
   their INTERSECTION, so adding one silently strips `with:` from that table's query results
   app-wide. The `one()` side on the plugin's own table expresses the FK fully; only the `many()`
   back-reference is unavailable. Re-measure before relaxing it.
+
+**The context family (D31, decision 14).** Almost all of that 128-symbol sprawl was a method in
+waiting. The kit already injected context in five places that had never been recognised as a family
+— and had therefore drifted, `cfg` in the request and agent contexts against `config` in the job and
+cron ones — and nearly every imported symbol already took one of them as its first argument. So the
+surface is **`RequestCtx`, `JobCtx`, `CronCtx`, `ToolCtx`, `AgentCtx`, `WorkflowCtx`, `HookCtx`,
+`SeedCtx`**, plus **`DetachedCtx`** for a callback that runs outside a handler. Methods replace
+imports: `ctx.guard(...)`, `ctx.uuid('id')`, `ctx.page(...)`, `ctx.enqueue(...)`, `ctx.nudge(...)`,
+`ctx.notFound(...)`.
+
+**They are thin ADAPTERS over the kit's internal contexts, not the same objects**, and that is the
+whole design: it is what lets the plugin surface stand still while kit internals move, and it is why
+standardising on `config` cost no kit route a single edit — the adapter is the only place `cfg` is
+named. `WorkflowCtx` encodes the rules a plugin would otherwise get wrong: `ctx.step(name, opts, fn)`
+hands `fn` a fresh per-step `db`, everything is awaited, and a duplicate step name throws rather
+than silently replaying the platform's cached result (which reads as "the agent ignored my
+approval", §5). Durable Object access is `ctx.durableObject(binding, tenantId, key?)`, which builds
+the id itself, **so a plugin never calls `idFromName`** and the tenant prefix is structural rather
+than conventional — which is also what makes a deleted tenant's DO state reachable at all (below).
+
+One trap worth stating because it costs an afternoon: `ctx.notFound(...)` returns `never`, but
+TypeScript applies never-return narrowing only when every name in the call target is explicitly
+annotated. `const ctx = requestCtx(c)` is inferred, so the guard throws at runtime while the
+compiler goes on believing the row may be undefined. Annotate it — `const ctx: RequestCtx =
+requestCtx(c)`.
+
+**Two surfaces cannot be injected, and are declared entries instead (decision 15).**
+**`@/db/schema/kit`** carries the build-time symbols a table file needs at MODULE scope
+(`tenantRef`, `timestamps`, `tenantIsolation`, `RESOURCE_VISIBILITY_VALUES`, and
+`tenants`/`users`/`groups` as FK targets): a `pgTable(...)` runs when the module is evaluated, long
+before any request exists, and drizzle-kit reads the result statically. It sits beside `rls.ts`
+rather than above it, and names individual FILES rather than `db/schema/index.ts`, because that
+barrel re-exports `plugins/schema.ts`, which re-exports every installed plugin — the cycle `rls.ts`
+already documents. A plugin's schema file imports it **by relative path**, since drizzle-kit bundles
+that file itself and resolves no tsconfig alias. And **`uiKit` is split in two**:
+`@/plugins/api/ui-wiring` is what a plugin's `ui/index.ts` may import (types, one helper, one hook)
+and `@/plugins/api/ui` is for lazy PAGES — not new policy, just a name on each side of the line
+`uiEntryIssues` already drew, because the UI entry ships in the main bundle for every reader.
+
+**The test harness is a declared entry too, and its builders refuse a fake database (decision 19).**
+`@testkit/integration` is the harness — a real database, the real Hono app, bindings-shaped stubs,
+the UI's provider tree — and `@testkit/unit` the context builders (`makeRequestCtx`, `makeJobCtx`,
+`makeCronCtx`, `makeWorkflowCtx`, `makeToolCtx`). Before it, both installed plugins reached the
+harness through six-level relative climbs into `tests/**`: five modules and twenty-one symbols
+nobody's semver covered, left out of the rule only because there was nowhere to point them. It is
+registered in `tsconfig.json` and `vitest.config.ts` and **deliberately not in `vite.config.ts`**,
+so a `src/` file importing it fails the build rather than shipping fixtures to a browser.
+
+The builders **require a `db` blessed by `setupTestDatabase`**, tracked in a `WeakSet` rather than by
+shape — `{ execute: vi.fn() }` passes a shape check and is precisely the object the rule exists to
+refuse. Injection is what makes it easy to write a test that LOOKS like an isolation proof and
+proves nothing: a stub answering `[]` satisfies "tenant B sees no rows" whatever the query said. So
+a fake context may test branching, guards and response shape; anything touching data is on real
+Postgres by construction. The cost is accepted and stated rather than discovered later: **there is
+no fast, database-free test of a data-touching handler.**
+
+**The surface has its own version, two integers (decision 5b).** `PLUGIN_API = { current,
+minSupported }` lives in a zero-import leaf, `packages/shared/src/plugins/contract.ts`, and is
+mirrored as `kit.pluginApi` in `.rocketflare.json` because a `.mjs` script cannot import a `.ts`
+module — the same trade `SUPPORTED_PLUGIN_BINDING_TYPES` already lives with, pinned together by
+`tests/config/plugin-api.test.ts`. A plugin declares `requires.pluginApi`, a whole number.
+`requires.kit` answers *which releases may I be installed into*; this answers *which surface was I
+written against*, and they move at different rates — the kit cut 0.5.0, 0.6.0 and 0.6.1 without the
+plugin surface moving at all, and a plugin pinned by kit range had to be re-released for each.
+
+**The comparison is integer and there is no range language near it**, deliberately: a malformed
+semver range throws out of the matcher and arrives as a generic failure with nothing to act on,
+which is the exact shape of bug this replaces. `scripts/lib/plugin-api.mjs` is the one comparison.
+**Declared means strictly checked, undeclared means warned — permanently, not as a migration step.**
+It dissolves a real circularity: a plugin's CI resolves its matrix from *released* kit tags, so it
+cannot declare a version that does not exist yet; and refusing an undeclared plugin would break
+installs of plugins nobody can retroactively change (`analytics` 1.0.2, which the kit's own second
+CI pass installs, is the live case).
+
+**`docs/plugin-api.md` is generated, committed and diff-checked in the gate** — beside the step that
+does the same for `worker-configuration.d.ts`, and for the same reason. `scripts/plugin-api-doc.mjs`
+does three jobs: **version enforcement** (a changed or removed member with no bump to
+`PLUGIN_API.current` fails, naming the member), **break attribution** (`used by`, derived from the
+plugins actually installed) and **agent discovery** — a capability index, first in the file, so an
+agent writing a plugin reads one document instead of inferring a surface from 19 module paths and
+128 symbols. One defect found while building it is the failure mode of every generator that reads a
+type graph: run without `node_modules`, neither `zod` nor `drizzle-orm` resolves, every inferred
+type degrades silently to `any`, and **the document generates cleanly while recording a surface that
+is wrong** — handing the next person a dozen bogus "changed" entries and an instruction to bump for
+a change nobody made. It now refuses to run without dependencies and fails on any `TS2307`.
+
+**Deleting a tenant reaches outside Postgres (decision 18).** The FK cascade in `tenantRef()` is
+complete inside the database and reaches nothing else, so every deleted organisation used to leave
+its R2 objects behind for ever — a live bug, not a hypothetical. Deletion is now two halves: the
+`DELETE` and its cascade, unchanged and synchronous, and a `tenant.purge` job (§5) carrying
+everything else. It runs each plugin's `hooks.onTenantDeleted(db, tenantId, env)` — best-effort and
+individually try/caught, exactly like `onTenantCreated` — then the kit's own purge of the R2 prefix.
+Two orderings in `deleteTenant` are load-bearing: the queue binding is proved **before** the
+`DELETE`, because a deployment that cannot purge must fail while the tenant still exists to
+describe, and the message is sent **after** the row is gone, so nothing is ever purged for an
+organisation that still exists.
+
+**Durable Object state is purgeable only because instance names are DERIVED.** Nothing enumerates
+the instances of a namespace, so state is reachable only where the KEYS are known: a plugin derives
+every instance name from the tenant id, keeps the set finite, and the purge loops the names the
+plugin DECLARES rather than trying to discover instances (`NotificationsHub`'s `idFromName(tenantId)`
+is already that shape, and `ctx.durableObject` makes it the only shape). A plugin wanting one DO per
+ROW cannot be purged under this rule; the escape hatch — a purge-intent ledger, a `tenant_id` column
+with no FK so it survives the cascade, as `access_requests.requested_tenant_id` already is — is
+documented on the hook and deliberately **not built**. `plugin check` fails a plugin that declares a
+`durable_object` binding and no `onTenantDeleted`, because no other check can see that: its tables
+are gone, so everything else reads as clean.
+
+**`pnpm plugin check` is an exhaustive oracle, not a smoke test (decision 21).** Fifteen checks per
+installed plugin, and **every finding is `<file>:<line> <what is wrong> — <the exact change>`**, with
+the line number present only where the complaint is AT a place in a file — a fabricated one sends a
+reader somewhere real and wrong. Saying only what is wrong is right for a person with `reference.md`
+open beside them and useless to an agent, who has only the line. It covers: the anchor exists and
+parses; **every manifest field**, naming the field and its legal values; all four `requires`;
+a barrel line for each half on disk and no line for a half that is not; no `*.rej`; the anchor's
+version against the surface's; a migration tag naming the plugin when it declares tables; **every
+declared dependency really present in the host `package.json`**; the worker-exports barrel BOTH
+ways; **a tenant-isolation test** when it declares tenant-scoped tables; `onTenantDeleted` when it
+declares a Durable Object; the installed version against what `defaultPlugins` pins; and **no two
+plugins declaring one table name**. `--json` carries `failures` and `warnings` as separate lists, so
+`ok` keeps meaning "this exits 0", and **CI runs the same command a person runs** — the local oracle
+and the gating oracle cannot disagree.
+
+Two of those deserve their reason stated. The isolation test is the kit's one non-negotiable that
+the kit itself cannot write (§14, `.claude/rules/testing.md`), and until now nothing verified it at
+all — with agents writing plugins, the area treated as non-negotiable had the least enforcement. The
+check is structural: it proves such a test EXISTS, not that it is right, and the message says so.
+And **a structural check must read comment-free code, or it validates prose.** Three checks were
+silently substring-matching — `workerExports` over raw source, satisfied by a class named only in a
+comment; `onTenantDeleted` by `.includes(...)`, which passed on a fixture that plainly broke the
+rule; `isolationEvidence` by regexes a header paragraph or a commented-out `createTestTenant(db)`
+satisfied. All three strip comments first and require a real declaration now. The failure mode is
+invisible from the outside: a green check that proves nothing.
 
 **Visibility became a registry (D29).** `services/access.ts` exports `VisibilityResource`
 (`{ key, noun, usageKey, predicate, setGroups, grantRows, countGrants }`) and
@@ -1996,7 +2223,9 @@ line goes, `db:generate` emits the `DROP TABLE`s, and orphaned tables are not a 
 
 **`example-feature` is the reference, and it exists to be deleted.** It was the kit's demonstration
 feature flag; it is now a plugin, and it gained the parts a flag alone could not demonstrate. In
-three directories and its barrel lines it exercises every slot: the `example-feature` flag; a
+three directories and its barrel lines it exercises every slot — and it is migrated onto the
+contract, declaring `requires.pluginApi: "1"`, which makes it the live canary for the STRICT tier
+of every check: the `example-feature` flag; a
 tenant-scoped `example_notes` table (`tenantRef` + `timestamps` + `tenantIsolation`, indexes led by
 `tenant_id`); a CRUD mount at `/api/example-feature` behind `requireFeature` (404
 `feature_disabled`, gated at the MOUNT); the `example-feature.ping` job variant and its handler; the
@@ -2019,13 +2248,22 @@ before anything bigger moves out. Its surface's `source.repo` is the kit repo wi
 | 5a | Compatibility, proved | A declared `requires.kit` range PLUS proof both ways in CI — **built**: `ci.yml` installs every `defaultPlugins` entry and runs the whole gate on it, `.github/workflows/plugin-ci.yml` is the reusable workflow a plugin repository calls to do the mirror image against the oldest and newest kit in its range (and takes a `kit_ref` so a kit BRANCH can be proved before either side releases), and `kit:release` refuses a version its default plugins do not resolve at or admit |
 | 5b | Compatibility, declared | **This reverses the second half of 5.** The original read "no separate plugin-API version: untyped imports are the real exposure and only the gate catches them" — true while the surface was imported symbols, and false once it is not. The surface is now injected CONTEXT plus a handful of declared entries, so `PLUGIN_API = { current, minSupported }` is two integers a plugin names in `requires.pluginApi`. `requires.kit` answers *which releases*; this answers *which API*, and conflating them was the root of the pin drift. Integer comparison, never a range, so it cannot inherit the throw a malformed range gave. Declared is strictly checked, undeclared is warned — permanently, for the third-party horizon, not as a migration step |
 | 6 | Cubes, fact tables, dashboards | Plugin-owned registries through `extensions: Record<string, readonly unknown[]>`; the owning plugin narrows with zod and fails loudly. Core stays ignorant of drizzle-cube |
-| 7 | The extraction boundary | No compatibility path: analytics moves out under the `<id>_*` rule and the release note says its tables are dropped |
+| 7 | The extraction boundary | No compatibility path: analytics moves out under the table-prefix rule (its tables become `analytics_*`) and the release note says its old ones are dropped |
 | 8 | Bundle safety | `LazyExoticComponent` for pages, plus a source-level structural test in the host |
 | 9 | Public surface | Four entry files are the API, and a deep import across a plugin boundary is a test failure **in either direction**. The guard used to run core→plugin and plugin→plugin only — never plugin→core, the one direction that breaks when the kit moves, which is how the documented "four entries" became 128 (module, symbol) pairs across 55 kit modules unnoticed |
 | 10 | Cutting the work | Phase A is four PRs on one branch and one kit release |
 | 11 | Uninstall data | Drop by default, `--archive` on request. Orphaned tables are not a stable state |
 | 12 | Plugin bindings | Provisioning learns them: `provision cloudflare <env>` reads each plugin's `bindings[]`, and the parity test applies the `-staging` rule to them. Five types: `kv`/`queue`/`r2` are created, `workflow`/`durable_object` are declared only (`wrangler deploy` registers them) and reach the entry module through the sixth barrel |
 | 13 | Where a plugin comes from | Every manifest carries a required `repo` (+ optional `subdir`), so a surface's `source.repo` is never null |
+| 14 | The INBOUND surface | Injected context, not imported symbols: nine `*Ctx` types, built by thin ADAPTERS over the kit's internal contexts — which is what lets the plugin surface stand still while kit internals move. The documented "four entries" had measured as 128 (module, symbol) pairs across 55 kit modules, because the deep-import guard never ran plugin→core |
+| 15 | What cannot be injected | Two things, and they are declared ENTRIES rather than exceptions: `@/db/schema/kit` (a `pgTable(...)` runs at module scope, and drizzle-kit reads it statically) and the split UI kit — `ui-wiring` for the entry that ships in the main bundle, `ui` for lazy pages. Plus `@testkit/{integration,unit}`, because a plugin's TESTS were out of the rule only for want of somewhere to point them |
+| 16 | A printed instruction is not a mechanism | `workerExports` and `coreEdits` each PRINTED a step ("add this export to `worker.ts`") and each produced a tree that built and then failed elsewhere — an unattended install performs nothing it reads. Hence the sixth barrel, `plugins/worker-exports.ts`: one `export *` per plugin, written by `plugin add`, so a class arrives wired. `coreEdits` was not the fix either — it would have every class-shipping plugin mutating `worker.ts`, which is what a barrel prevents |
+| 17 | Durable Object migration tags | Append-only and host-owned: **DO migrations are to `worker.ts` what SQL migrations are to `db/schema`**. Install writes `plugin-<id>-v1`; the manifest's required `storage` picks `new_sqlite_classes` over `new_classes` and cannot be changed afterwards; a tag is never renumbered, because replaying one loses a namespace and everything in it |
+| 18 | Tenant state outside Postgres | `hooks.onTenantDeleted` from the `tenant.purge` job. DO state is reachable only through DERIVED instance names — nothing enumerates a namespace — so a plugin declares a finite key set from the tenant id and the purge loops the declared keys. One DO per ROW is unpurgeable under this rule; the purge-intent ledger is documented and not built |
+| 19 | Fake databases in tests | The `@testkit/unit` builders refuse a `db` nobody handed out, tracked in a `WeakSet` rather than by shape. A stub answering `[]` satisfies "tenant B sees no rows" whatever the query said, which is the cheap wrong version of the kit's one non-negotiable. Accepted cost: no fast, database-free test of a data-touching handler |
+| 20 | Every step a plan prints | **declarative** (the tooling does it, so it does not appear at all), **agent** (an instruction PLUS the assertion that proves it ran), **human** (a decision the tooling stops for). `--json` on `add`, `remove` and `check` carries `kind` per entry, so a human step is a field rather than a sentence somebody has to notice. "By hand" is retired as a phrase |
+| 21 | The audit | An exhaustive oracle, not a smoke test: every finding carries the file, the line and the exact edit, and CI runs the same command a person runs. Two tiers keyed on `requires.pluginApi` — a rule a RELEASED plugin cannot retroactively satisfy warns rather than fails — and a structural check reads comment-free code, or it validates prose |
+| 22 | Table names | A prefix derived from the id is a CONVENTION (nothing derives a table name from an id, so there is no shape to check); the COLLISION is the check, it fails both plugins, and it is exempt from the two-tier rule because neither plugin is wrong on its own |
 
 Decisions 11 and 12 arrived with `scripts/plugin.mjs` and `provision/plugin-resources.ts` (below),
 5's CI half with `.github/workflows/{gate,ci,plugin-ci}.yml` (next paragraph), and 6 and 7 with the
@@ -2134,14 +2372,33 @@ become a refined `z.string()` rather than a `z.enum`, which needs a non-empty tu
 `grants` is additive by documentation only: CASL can take a rule back with `cannot`, and nothing
 stops a plugin doing so. Provisioning creates a plugin's resources but never DELETES one, so
 `plugin remove` prints the toml blocks and the Cloudflare resources to remove rather than removing
-them. The CI half of decision 5 is written but **has never been executed by GitHub Actions**: the
-workflows parse and every shell step is syntax-checked, and with `defaultPlugins` empty the second
-gate is skipped, so the install-and-gate path first runs for real when the first default plugin is
-pinned (Phase C) — and `plugin-ci.yml` first runs when a plugin repository exists to call it.
-`kit:release`'s refusal reads a plugin's `requires.kit` from the INSTALLED surface or not at all —
-`git ls-remote` proves a ref exists but cannot read a file out of it — so a default plugin that is
-not installed in the release checkout reports an unreadable range rather than being waved through.
-Neither workflow proves a MIDDLE version of a range. Two plugins installed TOGETHER is now the
-kit's own default state — `example-feature` is vendored and `analytics` is in `defaultPlugins` —
-so the collision rules (one prefix per plugin, one query-key namespace, TS2308 on a duplicated
-schema export) are exercised on every run rather than only in fixtures. The website's plugin pages are Phase D.
+them; and `d1`, `vectorize` and `analytics_engine` stay refused BY NAME, because unlike `workflow`
+and `durable_object` they have no mechanism that makes them reachable from the entry module.
+
+On the CONTRACT: **the enforcement is two-tier and always will be**, so a plugin that declares no
+`requires.pluginApi` — every plugin released before 0.7.0 — is warned rather than checked, which
+means "clean" on such a plugin says less than it looks. `PLUGIN_API.minSupported` has never been
+raised, so the "this plugin needs migrating" branch has never fired against a real plugin. The
+generated reference **truncates a printed type over 300 characters**, so a signature change beyond
+that point is not caught (drizzle tables are exempt — they summarise to `table "users" { id, email,
+… }`, which keeps the column names a foreign key points at inside the checked region). The table
+COLLISION is caught by `plugin check` and therefore by CI, but it is not refused at `plugin add`:
+an install that creates one lands, and the next audit is what says so. The isolation check is
+structural — it proves a test exists, not that it is right. And the accepted cost of the test kit's
+blessed-handle rule stands: there is no fast, database-free test of a data-touching handler.
+
+On tenant purge: a plugin holding one Durable Object per ROW cannot be purged, because only DERIVED
+instance names are reachable; the purge-intent ledger that would fix it is documented on the hook
+and not built.
+
+On CI: the second gate now runs for real — `analytics` is pinned in `defaultPlugins`, so
+`ci.yml` installs it and runs the whole gate on the result — but `.github/workflows/plugin-ci.yml`
+first runs when a plugin repository calls it, and **its two new inputs (`kit_ref`, `plugin_subdirs`)
+are unusable by a repository pinning `@main` until this release reaches the kit's default branch**.
+Neither workflow proves a MIDDLE version of a range. `kit:release`'s refusal reads a plugin's
+`requires.kit` from the mirror at the pinned ref, falling back to the installed surface: a default
+plugin that is neither fetchable nor installed here reports an unreadable range rather than being
+waved through, which is a report and not a proof that somebody else's tests are green.
+Two plugins installed TOGETHER is the kit's own default state — `example-feature` is vendored and
+`analytics` is in `defaultPlugins` — so the collision rules are exercised on every run rather than
+only in fixtures. The website's plugin pages are Phase D.

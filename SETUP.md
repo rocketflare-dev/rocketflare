@@ -104,8 +104,9 @@ pnpm plugin list                  # what is installed (id, version, repo, when)
 pnpm plugin check                 # audit them: exit 1 with one line per failure
 ```
 A **plugin** is a git repository copied into this app — never an npm package — that contributes
-contracts, schema, routes, jobs, agents, UI and CLI commands through five barrel files
-(`docs/CONCEPTS.md` §16). `.rocketflare.json`'s `defaultPlugins` lists the ones a fresh clone should
+contracts, schema, routes, jobs, agents, UI and CLI commands through six barrel files
+(`docs/CONCEPTS.md` §16), importing the host only through the declared entries
+(`docs/plugin-api.md`) and receiving everything else as injected context. `.rocketflare.json`'s `defaultPlugins` lists the ones a fresh clone should
 have; the bootstrap's `6/10 plugins` step installs each one that is not already there with
 `pnpm plugin add <repo> --apply`, then generates and applies its migration:
 

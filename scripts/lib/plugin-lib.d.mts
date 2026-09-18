@@ -320,3 +320,15 @@ export function dependencyClashes(
   }
 ): DependencyClash[]
 export function describeClash(clash: DependencyClash): string
+
+/** A table two installed plugins both declare, reported once per plugin involved. */
+export interface TableClash {
+  table: string
+  /** The plugin this entry is filed against. */
+  id: string
+  /** The other plugins declaring the same name, sorted. */
+  others: string[]
+}
+export function tableClashes(
+  manifests?: ReadonlyArray<PluginManifest | null | undefined>
+): TableClash[]

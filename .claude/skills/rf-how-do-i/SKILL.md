@@ -22,8 +22,9 @@ uses it before anything else.
 
 Ask it before the interview, because it changes where every file lands (D31, `docs/CONCEPTS.md`
 §16). A **plugin** is a separate git repository copied into this app — never npm — that contributes
-contracts, schema, routes, jobs, agents, UI and CLI commands through five barrels it is the only
-thing allowed to write a line into. Written as a plugin, a feature is one tree you can lift out,
+contracts, schema, routes, jobs, agents, UI and CLI commands through six barrels it is the only
+thing allowed to write a line into — importing the kit only through the declared entries
+(`docs/plugin-api.md`) and receiving everything else as injected context. Written as a plugin, a feature is one tree you can lift out,
 version and install somewhere else; written into core, it is diffused across twenty files nobody
 can separate again.
 
@@ -40,7 +41,8 @@ Two things to say out loud when the answer is "plugin", because they surprise pe
   `pnpm plugin` (`/rf-plugin`), and the host generates its migration — the plugin ships none, ever.
   `apps/web/src/plugins/example-feature/` is the worked example of every slot.
 
-Everything the plugin keys carries its id: tables `<id>_*`, job types `<id>.verb`, the API prefix
+Everything the plugin keys carries its id: tables prefixed from it (`example-feature` →
+`example_*`), job types `<id>.verb`, the API prefix
 `/api/<id>`, query-key roots `<id>:…`, the CLI command `<id>`, feature/prompt/agent keys, and AG-UI
 CUSTOM events `<id>.` — **never `kit.`**, which is the kit's own namespace.
 
