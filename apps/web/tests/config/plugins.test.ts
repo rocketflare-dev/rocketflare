@@ -41,8 +41,9 @@ import {
   DECLARED_ENTRIES,
   deepImportIssue,
   isPluginEntry,
-  isPluginSource,
+  isPluginFile,
   PLUGIN_IMPORT_ENFORCEMENT,
+  pluginApiDeclaration,
   pluginIdOfPath,
   pluginImportIssue,
   queryKeyRootIssues,
@@ -210,19 +211,30 @@ describe('the plugin import rule', () => {
     expect(pluginImportIssue(ROUTE, '@/api/routes/members')).toMatch(/'@\/plugins\/api'/)
   })
 
-  it('scopes itself to a plugin’s SOURCE, not its tests', () => {
-    // A plugin's tests import the host's TEST harness, which is a coupling to the rig rather than
-    // to the running app, and there is no test-kit entry to point them at yet. Scope, stated —
-    // not an exceptions list.
-    expect(isPluginSource(ROUTE)).toBe(true)
-    expect(isPluginSource('apps/web/src/plugins/orders/tests/api/orders.test.ts')).toBe(false)
-    expect(isPluginSource('apps/web/src/api/index.ts')).toBe(false)
-    expect(
-      pluginImportIssue(
-        'apps/web/src/plugins/orders/tests/api/orders.test.ts',
-        '../../../../../../tests/mocks/bindings'
-      )
-    ).toBeNull()
+  it('covers a plugin’s tests as well as its source', () => {
+    const TEST = 'apps/web/src/plugins/orders/tests/api/orders.test.ts'
+    expect(isPluginFile(ROUTE)).toBe(true)
+    expect(isPluginFile(TEST)).toBe(true)
+    expect(isPluginFile('apps/web/src/api/index.ts')).toBe(false)
+
+    // The climb into the host's test tree is what `@testkit` replaced — and the diagnostic names
+    // the entry rather than only the offence.
+    // Five levels out of `plugins/<id>/tests/api` is `apps/web/`, which is how a plugin's test
+    // actually spelled the climb before `@testkit` existed.
+    expect(pluginImportIssue(TEST, '../../../../../tests/mocks/bindings', 7)).toBe(
+      "orders.test.ts:7 imports '../../../../../tests/mocks/bindings' — replace with: " +
+        "import { createTestEnv, stubs } from '@testkit/integration'"
+    )
+    expect(pluginImportIssue(TEST, '../../../../../tests/helpers/db')).toMatch(/setupTestDatabase/)
+    expect(pluginImportIssue(TEST, '@testkit/integration')).toBeNull()
+    expect(pluginImportIssue(TEST, '@testkit/unit')).toBeNull()
+  })
+
+  it('reads a plugin’s own declaration of the contract it was written against', () => {
+    // The reference plugin is migrated, so it declares one — which is what puts it in the strict
+    // group below. A plugin that predates the surface declares nothing and is only warned about.
+    expect(pluginApiDeclaration(REPO_ROOT, 'example-feature')).not.toBeNull()
+    expect(pluginApiDeclaration(REPO_ROOT, 'a-plugin-that-is-not-installed')).toBeNull()
   })
 })
 
@@ -301,36 +313,58 @@ describe('installed plugins', () => {
   })
 
   it('reaches the host only through a declared entry', () => {
-    const issues: string[] = []
-    for (const file of tracked.filter(isPluginSource)) {
+    /**
+     * Two groups, and which one a plugin is in is the plugin's OWN statement about itself.
+     *
+     * A plugin that declares `requires.pluginApi` has said it is written against the plugin context
+     * API, and is held to the rule strictly. One that does not predates the surface, and is warned
+     * about — which is the only reason this can be enforced at all: `pnpm test` runs the gate a
+     * second time with `defaultPlugins` installed at their pinned refs, and `analytics` 1.0.2 is
+     * older than the surface and cannot be retroactively changed. A plugin moves between the groups
+     * in the release that migrates it, by adding one manifest field.
+     */
+    const declared = new Map<string, boolean>()
+    const declares = (id: string) => {
+      const known = declared.get(id)
+      if (known !== undefined) return known
+      const answer = pluginApiDeclaration(REPO_ROOT, id) !== null
+      declared.set(id, answer)
+      return answer
+    }
+
+    const strict: string[] = []
+    const legacy: string[] = []
+    for (const file of tracked.filter(isPluginFile)) {
+      const id = pluginIdOfPath(file)
+      if (!id) continue
       const source = readFileSync(path.join(REPO_ROOT, file), 'utf8')
       for (const { specifier, line } of staticImports(source)) {
         const issue = pluginImportIssue(file, specifier, line)
-        if (issue) issues.push(issue)
+        if (!issue) continue
+        ;(declares(id) ? strict : legacy).push(issue)
       }
     }
 
-    if (PLUGIN_IMPORT_ENFORCEMENT === 'fail') {
-      expect(
-        issues,
-        'A plugin imports only from declared entries and receives everything else as injected ' +
-          'context (D31). Each line below carries its replacement.'
-      ).toEqual([])
+    if (legacy.length > 0) {
+      console.warn(
+        `\nplugin import rule — ${legacy.length} import(s) in plugins that declare no ` +
+          'requires.pluginApi (warned, not failed; they predate the plugin context API):\n' +
+          `${legacy.map(i => `  ${i}`).join('\n')}\n`
+      )
+    }
+
+    if (PLUGIN_IMPORT_ENFORCEMENT !== 'fail') {
+      if (strict.length > 0) {
+        console.warn(`\nplugin import rule (warn-only):\n${strict.map(i => `  ${i}`).join('\n')}\n`)
+      }
       return
     }
 
-    // Warn-only, on purpose and temporarily: the reference plugin has not been migrated onto the
-    // new surface yet — migrating it BEFORE this check landed would have meant the canary told us
-    // nothing — and an unmigrated `analytics` has to keep working at every commit on this branch,
-    // where the gate runs twice, once with it installed. Flipping `PLUGIN_IMPORT_ENFORCEMENT` to
-    // `'fail'` is the one-line change that closes it.
-    if (issues.length > 0) {
-      console.warn(
-        `\nplugin import rule (warn-only) — ${issues.length} import(s) still to migrate:\n` +
-          `${issues.map(i => `  ${i}`).join('\n')}\n`
-      )
-    }
-    expect(PLUGIN_IMPORT_ENFORCEMENT).toBe('warn')
+    expect(
+      strict,
+      'A plugin imports only from declared entries and receives everything else as injected ' +
+        'context (D31). Each line below carries its replacement.'
+    ).toEqual([])
   })
 })
 
