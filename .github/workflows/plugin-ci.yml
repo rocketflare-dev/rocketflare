@@ -238,6 +238,24 @@ jobs:
       # `plugin add` then `db:generate` rather than anything the plugin ships. Installing from a
       # PATH is the authoring loop: the working copy is read directly, so the commit under test is
       # the one installed.
+      # A FILE rather than `node -e`, for the reason the resolve step above documents: inside a
+      # double-quoted shell string every backtick and `${` needs escaping, and one wrong escape
+      # yields a workflow whose YAML parses perfectly and whose node step is nonsense.
+      - name: Write the unpin helper
+        run: |
+          set -euo pipefail
+          cat > "$GITHUB_WORKSPACE/unpin.mjs" <<'UNPIN'
+          import { readFileSync, writeFileSync } from 'node:fs'
+          const [file, id] = process.argv.slice(2)
+          const manifest = JSON.parse(readFileSync(file, 'utf8'))
+          const before = manifest.defaultPlugins?.length ?? 0
+          manifest.defaultPlugins = (manifest.defaultPlugins ?? []).filter(
+            entry => (entry && entry.id ? entry.id : entry) !== id
+          )
+          writeFileSync(file, `${JSON.stringify(manifest, null, 2)}\n`)
+          console.log(`defaultPlugins: ${before} -> ${manifest.defaultPlugins.length} (dropped ${id})`)
+          UNPIN
+
       - name: Install this plugin into the kit
         working-directory: kit
         env:
@@ -247,11 +265,26 @@ jobs:
           # db:generate runs `dotenv -e .dev.vars`, so the file has to exist here as it does on a
           # laptop. Git-ignored, and it holds nothing secret: a throwaway local database URL.
           printf 'DATABASE_URL=postgresql://test:test@localhost:5433/rocketflare_test\n' > apps/web/.dev.vars
+          manifest="$GITHUB_WORKSPACE/plugin/$PLUGIN_SUBDIR"
+          id=$(node -p "require('${manifest%/}/rocketflare-plugin.json').id")
+          # The kit cloned above is a RELEASED tag, so its `defaultPlugins` pins whichever version of
+          # this plugin was current when that kit shipped — never the commit under test. `pnpm plugin
+          # check`, which the kit's own gate runs below, compares an installed plugin against that
+          # pin, so leaving it in place fails EVERY plugin release that has moved past it, BY
+          # CONSTRUCTION: analytics 2.0.1 against a kit pinning 1.0.2 turned this workflow red for a
+          # release whose code was correct, and it would stay red until a kit shipped pinning the new
+          # version — which cannot happen before the plugin is released.
+          #
+          # So the entry is dropped rather than repinned. The pin is a statement about what that kit
+          # RELEASE ships; this run is proving the working copy, which is a different artefact and
+          # deliberately a different version. Repinning would make the check pass by asserting
+          # something untrue.
+          node "$GITHUB_WORKSPACE/unpin.mjs" .rocketflare.json "$id"
+          # Re-formatted because `pnpm lint` runs against this clone and Biome owns this file's shape.
+          pnpm exec biome check --write .rocketflare.json >/dev/null 2>&1 || true
           args=(add "$GITHUB_WORKSPACE/plugin" --apply --local)
           if [ -n "$PLUGIN_SUBDIR" ]; then args+=(--subdir "$PLUGIN_SUBDIR"); fi
           pnpm plugin "${args[@]}"
-          manifest="$GITHUB_WORKSPACE/plugin/$PLUGIN_SUBDIR"
-          id=$(node -p "require('${manifest%/}/rocketflare-plugin.json').id")
           pnpm db:generate --name "plugin-$id-ci"
 
       - name: Apply the generated migrations
