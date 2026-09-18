@@ -1432,6 +1432,24 @@ export function workerExportNames(source) {
 }
 
 /**
+ * A source with its comments removed.
+ *
+ * **Shared by every check that SCANS source**, because the failure mode is one and it is
+ * invisible: a check a comment can talk its way past reports SUCCESS. The fixture written to prove
+ * the `onTenantDeleted` rule carried the sentence "declares no `hooks.onTenantDeleted`" in its own
+ * doc comment and passed on it; a test file whose header says "tenant isolation" would have
+ * satisfied the isolation check the same way. Prose about a rule is not the rule being kept.
+ */
+function stripComments(source) {
+  return (
+    String(source)
+      .replace(/\/\*[\s\S]*?\*\//g, ' ')
+      // `[^:]` so a `https://…` inside a string is not mistaken for a line comment.
+      .replace(/(^|[^:])\/\/[^\n]*/g, '$1')
+  )
+}
+
+/**
  * Structural evidence that a test file proves cross-tenant isolation.
  *
  * **This proves a test EXISTS, not that it is right**, and the diagnostic says so. A structural
@@ -1442,7 +1460,9 @@ export function workerExportNames(source) {
  * CREATE at least two organisations, and it must NAME the second one or the property.
  */
 export function isolationEvidence(source) {
-  const text = String(source)
+  // Comments stripped FIRST: a commented-out `createTestTenant(db)`, or a header paragraph about
+  // tenant isolation, is talk about the test rather than the test.
+  const text = stripComments(source)
   const named = /describe\(\s*['"`][^'"`]*isolation/i.test(text)
   // No word boundary AFTER `tenant`: the usual spelling is `otherTenantId` / `otherTenantCookie`,
   // and a trailing `\b` refuses every one of them.
@@ -1461,11 +1481,7 @@ export function isolationEvidence(source) {
  * past is worse than no check, because it reports success.
  */
 export function declaresProperty(source, name) {
-  const code = String(source)
-    .replace(/\/\*[\s\S]*?\*\//g, ' ')
-    // `[^:]` so a `https://…` inside a string is not mistaken for a line comment.
-    .replace(/(^|[^:])\/\/[^\n]*/g, '$1')
-  return new RegExp(`\\b${escapeRe(name)}\\s*[:(]`).test(code)
+  return new RegExp(`\\b${escapeRe(name)}\\s*[:(]`).test(stripComments(source))
 }
 
 /**
