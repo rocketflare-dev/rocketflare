@@ -10,10 +10,12 @@ import { slugify } from '@rocketflare/shared/tenants'
 import { asc, eq, like } from 'drizzle-orm'
 import type { Database } from '../../../db/client'
 import { type Tenant, tenantSettings, tenants, tenantUsers } from '../../../db/schema'
-import { serverPlugins } from '../../../plugins/server'
+import { type AnyServerPlugin, serverPlugins } from '../../../plugins/server'
 import { recordActivity } from '../../services/activity'
+import type { AppBindings } from '../../types'
 import { ConflictError } from '../core/errors'
 import { randomToken } from '../core/ids'
+import type { Logger } from '../core/logger'
 
 /** `slugify(name)`, with `-2`, `-3`… appended while the slug is taken. */
 export async function uniqueSlug(db: Database, base: string, fallback = 'org'): Promise<string> {
@@ -108,6 +110,35 @@ async function onTenantCreated(
       await plugin.hooks?.onTenantCreated?.(db, tenant, userId, features)
     } catch {
       // Best-effort, exactly like the kit's own: the plugin owns its repair path.
+    }
+  }
+}
+
+/**
+ * Post-delete hooks for an organisation that is gone (D7 `tenant.purge`). The mirror of
+ * `onTenantCreated` and the same contract — best-effort, idempotent, each plugin in its own
+ * try/catch — with one difference that matters: this runs from a QUEUE consumer, so a failure here
+ * is logged rather than swallowed silently, and the job still acks. A plugin whose hook throws must
+ * not make the purge retry for ever, because every retry re-runs the kit's own deletion too.
+ *
+ * `plugins` is injectable so the hook contract can be tested against fixtures rather than against
+ * whatever happens to be installed.
+ */
+export async function runTenantDeletedHooks(
+  db: Database,
+  tenantId: string,
+  env: AppBindings,
+  logger?: Logger,
+  plugins: readonly AnyServerPlugin[] = serverPlugins
+): Promise<void> {
+  for (const plugin of plugins) {
+    try {
+      await plugin.hooks?.onTenantDeleted?.(db, tenantId, env)
+    } catch (err) {
+      logger?.warn(
+        { err, tenantId, plugin: plugin.shared.id },
+        'tenant.purge: plugin onTenantDeleted hook failed'
+      )
     }
   }
 }
