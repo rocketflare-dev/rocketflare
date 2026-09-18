@@ -12,7 +12,9 @@ manual: false
 
 ## What changed
 
-**A deleted tenant's state outside Postgres is now deleted too.** Until now `deleteTenant` was one
+### Deleting a tenant now purges what the cascade cannot reach
+
+**The FK cascade was never the whole story.** Until now `deleteTenant` was one
 SQL `DELETE` plus a nudge, and the FK cascade in `tenantRef()` was the entire cleanup mechanism —
 which is only the whole story for rows. R2 objects under `tenants/<id>/` were never removed, so
 every deleted organisation left its uploads, avatars and knowledge originals in the bucket for ever.
@@ -122,6 +124,116 @@ matrix from *released* kit tags and so cannot declare a version that does not ex
 Every failure names the file, the line and the exact replacement, because installs are performed by
 agents and a diagnostic that only says what is wrong is useless to one.
 
+### A plugin's classes reach the Worker through a sixth barrel
+
+A plugin that ships a Durable Object or Workflow class used to declare `workerExports` in its
+manifest, and the install plan **printed** "export { ApprovalsHub } … in apps/web/src/worker.ts".
+**A printed instruction is not a mechanism.** An unattended install applies nothing it reads, so the
+tree deployed without the class and answered every request that reached it with a binding error —
+the same failure `coreEdits` was introduced to remove, one file along.
+
+So `apps/web/src/plugins/worker-exports.ts` is now the sixth barrel — one `export *` per installed
+plugin, written by `pnpm plugin add` and removed by `pnpm plugin remove`, exactly as `schema.ts` is
+— and `worker.ts` carries one permanent line that names no plugin. `coreEdits` was not the fix
+either: using it here would have every class-shipping plugin mutating `worker.ts`, which is
+precisely what a barrel prevents.
+
+**`workflow` and `durable_object` join the provisionable binding types**, and the rationale comment
+for the refusal list now says why those two graduated and `d1`/`vectorize` did not — the barrel is
+what makes a class reachable from the entry module, and the others still have no such mechanism.
+`pnpm provision cloudflare <env>` writes `[[workflows]]` and `[[durable_objects.bindings]]` into
+**both** tomls with the `-staging` account-scoped rule. Note that a DO binding's identity key in the
+toml is `name`, not `binding` — the kit's own is `name = "NOTIFICATIONS_HUB"` — so a patcher keyed
+on `binding` inserts a duplicate block on every run.
+
+**Durable Object migration tags are append-only and host-owned.** *DO migrations are to `worker.ts`
+what SQL migrations are to `db/schema`.* Installing writes `plugin-<id>-v1`; the manifest's required
+`storage: 'sqlite' | 'none'` picks `new_sqlite_classes` versus `new_classes`; an existing tag is
+never rewritten, because it records what this Worker has already told Cloudflare and renumbering one
+loses a namespace.
+
+**"By hand" is retired as a phrase.** Every step the tooling does not perform is classified, because
+an install is performed by an agent as often as by a person and prose an agent may skim is not a
+control: **declarative** (the tooling does it — the barrel lines, bindings, crons, prefixes, vars
+and the DO tag, all now absent from the plan entirely), **agent** (an instruction plus the assertion
+that proves it ran — each carries `run`, `expect` and `assert`), **human** (a decision the tooling
+stops for — a secret's value, a migration containing `DROP`, `--archive`, retiring a DO namespace,
+deleting a live Cloudflare resource). `--json` on `add`, `remove` and `check` emits the same plan as
+data with `kind` on every step, so a human step is a field rather than a sentence.
+
+### Releasing a repository that holds several plugins, and proving one against a kit branch
+
+`releaseContext()` already took a `root` parameter and was only ever called with its default, so a
+repository whose manifests live in subdirectories and which has none at the root fell through to
+`kind: 'unknown'` and exited 1. The parameter is now passed: `node scripts/release.mjs <version>
+--plugin <subdir>`, repeatable. Repeatable rather than comma-separated because the value is a path,
+and splitting a path on a comma invents an escaping rule for a character a path may legally contain.
+
+`versionFiles` stamps the root `package.json` **plus every `rocketflare-plugin.json` in the
+repository**, found by a bounded walk rather than a `plugins/*` glob, since `--plugin` takes an
+arbitrary subdir. That is not cosmetic: `pnpm plugin check` compares the version recorded in an
+installed surface against the anchor manifest, so a manifest left at an older number makes every
+install of that plugin report a mismatch. Lockstep is the model and plain `X.Y.Z` tags follow from
+it — no tag prefixes, no per-plugin namespacing, because a tag has to stay resolvable by
+`git ls-remote`, which cannot resolve a bare SHA. Accepted cost: a fix to one plugin bumps every
+plugin's version. `requires.pluginApi` stays per manifest, never hoisted — which kit contract a
+plugin compiles against is a different question from which release shipped it.
+
+**`release-check.mjs` auto-discovers rather than taking `--plugin`**: a gate you can forget to pass
+a flag to is not a gate, and a plugin whose version nobody stamped is exactly what it catches. It
+also needed `behaviourFiles(changed, { within })`, because `^(apps|packages)/` matches nothing
+against `plugins/<id>/apps/web/…` — so the porting-note gate was silently passing in a monorepo,
+which is the one place it had never been run.
+
+**`plugin-ci.yml` gains `kit_ref` and `plugin_subdirs`.** `kit_ref` proves a plugin against a kit
+**branch**, which is what makes a coordinated kit-and-plugin change verifiable rather than hopeful:
+a plugin cannot declare `>=0.7.0` before 0.7.0 exists, so without it the two repositories can only
+be cross-tested after one has already released. `plugin_subdirs` drives an **include-matrix of
+`{kit, plugin}` pairs** — deliberately not a cross product, because each plugin is proved against
+the kit versions its OWN range admits, and a shared ceiling is normal while a shared floor is not.
+
+**`notify-plugins.yml` closes the gap that a kit release notified nothing.** There was no `schedule`
+and no `repository_dispatch` anywhere, so a plugin outside `defaultPlugins` learned the kit had
+moved whenever somebody next happened to push to it — for a stable plugin, months. A tag now
+dispatches `kit-released`, with a weekly schedule as the backstop, and both are no-ops without
+`PLUGINS_DISPATCH_TOKEN`.
+
+### The plugin API has its own version, and a generated reference
+
+`requires.kit` answers *which kit releases* a plugin works with. It cannot also answer *which API
+surface it compiles against* — conflating the two is the root of the pin-drift this release is
+fixing. So `PLUGIN_API = { current, minSupported }` is **two integers** in a zero-import leaf,
+`packages/shared/src/plugins/contract.ts` (zero-import because everything under
+`packages/shared/src/plugins/**` is forbidden from importing the five composers at runtime — two zod
+modules in a cycle crash at module evaluation rather than failing to compile). Both integers are
+mirrored in `.rocketflare.json` as `kit.pluginApi`, because a `.mjs` script cannot import a `.ts` —
+the same deliberate duplication `SUPPORTED_PLUGIN_BINDING_TYPES` already lives with — and a test
+pins the two together so they cannot drift.
+
+**The comparison is integer, never a range**, and that is the point rather than a simplification: a
+range language is what let a malformed `requires.kit` throw to a generic exit 1 instead of the
+documented "requirement unmet". A plugin declares `requires.pluginApi`; **declared means strictly
+checked, undeclared means warned.** That is not a migration hack — it is the permanent rule for
+third-party plugins, and it dissolves a real circularity, because a plugin's CI resolves its matrix
+from *released* kit tags and so cannot declare a version that does not exist yet.
+
+**`docs/plugin-api.md` is generated by `scripts/plugin-api-doc.mjs`, committed, and diff-checked in
+the gate** beside the existing `worker-configuration.d.ts` step — that was already the precedent for
+a committed artefact that must not drift from its source. It does three jobs: **version
+enforcement** (a changed or removed member with no bump to `PLUGIN_API.current` fails, naming the
+member), **break attribution** (`used by`, derived from the plugins actually installed), and
+**agent discovery** — a capability index, first in the file, so an agent writing a plugin reads one
+document instead of inferring the surface from 19 module paths and 128 symbols. The gate step
+carries `if: !inputs.plugins`, because the `used by` annotations legitimately change when
+`defaultPlugins` are installed; it is a property of the checkout, like the secrets scan beside it.
+
+One defect found while building it is worth stating, because it is the failure mode of every
+generator that reads a type graph: run without `node_modules`, neither `zod` nor `drizzle-orm`
+resolves, every inferred type silently degrades to `any`, and **the document generates cleanly while
+recording a surface that is wrong** — handing the next person a dozen bogus "changed" entries and an
+instruction to bump the version for a change nobody made. The generator now refuses to run without
+dependencies and fails on any `TS2307`.
+
 ## How to apply
 
 There is no migration and no schema change.
@@ -165,6 +277,43 @@ target is explicitly annotated. `const ctx = requestCtx(c)` is inferred, so the 
 runtime while the compiler still believes the row may be undefined. Annotate it —
 `const ctx: RequestCtx = requestCtx(c)`.
 
+**A plugin shipping a Durable Object or Workflow class** now needs three things, and
+`pnpm plugin check` asserts all three: a `src/plugins/<id>/worker-exports.ts` re-exporting its
+classes, those names listed in the manifest's `workerExports`, and `storage` on each
+`durable_object` binding. A class in the barrel but not the manifest is invisible to provisioning;
+the reverse is a binding pointed at nothing.
+
+It must also declare `hooks.onTenantDeleted` — a Durable Object holds state the FK cascade cannot
+reach, and the `tenant.purge` job above is what reaches it.
+
+Then run `pnpm provision cloudflare <env>` once per environment; it is an `agent` step rather than a
+declarative one, because the toml *editing* disappeared but somebody still has to run the command
+against an account with credentials.
+
+**Single-plugin repositories and the kit itself are unaffected** — `--plugin` is additive and
+`releaseContext` is the identity when `root === repoRoot`.
+
+For a repository holding several plugins: `node scripts/release.mjs <version> --plugin <subdir>`,
+then `node scripts/release-check.mjs --tag <version>`, which discovers the rest. If you want a kit
+release to notify your plugin repositories, add a fine-grained PAT as `PLUGINS_DISPATCH_TOKEN`
+(Contents: read, Metadata: read on those repositories) and name them in `notify-plugins.yml`; the
+receiving repository needs `repository_dispatch: types: [kit-released]` on its own workflow, or the
+notification arrives and does nothing.
+
+**Declare `requires.pluginApi` in your plugin's manifest.** It is `"1"` for this release, and
+`example-feature` is the worked example. Until you declare it your plugin is warned rather than
+failed, so you can migrate in your own time — but nothing is verifying it meanwhile.
+
+**If you change a member of any declared entry**, regenerate and commit the document
+(`node scripts/plugin-api-doc.mjs`) and bump `PLUGIN_API.current` — in both
+`packages/shared/src/plugins/contract.ts` and `.rocketflare.json`. The gate fails otherwise, naming
+the member, which is the whole point of the artefact being committed.
+
+One limitation to know: a printed type over 300 characters is truncated in the ledger, so a change
+beyond that point is not caught. Drizzle tables are exempt — they summarise to
+`table "users" { id, email, … }`, which keeps the column names a plugin points a foreign key at
+inside the checked region.
+
 ## Conflicts to expect
 
 `apps/web/src/api/services/tenants.ts` and `apps/web/src/api/services/storage.ts` if you have edited
@@ -182,6 +331,20 @@ and `apps/web/tsconfig.json` all change. If you deleted `example-feature` (it ex
 every file under it is dropped from the patch, which is the intended behaviour and not a failure.
 `apps/web/src/ui/components/shared/index.ts` gains exports, and `LoadingIndicator` moves into that
 barrel.
+
+`apps/web/src/worker.ts` gains one line. `scripts/plugin.mjs` and `scripts/lib/plugin-lib.mjs` are
+substantially rewritten again (the plan builder and the barrel table), so an app that has edited
+either should expect rejects. `apps/web/tests/helpers/plugins.ts` gains `worker-exports` in both
+`BARRELS` and `RESERVED_PLUGIN_IDS` — without both, that barrel reads as a plugin named
+`worker-exports` and its own export line reads as a deep import into one.
+
+`scripts/release.mjs`, `scripts/release-check.mjs` and `scripts/lib/upgrade-lib.mjs` are
+substantially rewritten. `.github/workflows/plugin-ci.yml` gains two inputs and restructures its
+matrix — note that a plugin repository pinning `plugin-ci.yml@main` cannot use either input until
+this release reaches the kit's default branch.
+
+`.rocketflare.json` gains `kit.pluginApi` and `.github/workflows/gate.yml` gains one step. Neither
+conflicts with an app's own edits unless you have restructured that workflow.
 
 ## Verify
 
@@ -226,3 +389,35 @@ pnpm --filter @rocketflare/web build:api   # SUCCEEDS — and that is the point.
 So on the API side the build is **not** the protection — `tests/config/plugins.test.ts`'s source
 scan is, and it is the only thing standing between a stray import and 866 KB of test fixtures in
 production. Do not weaken that scan on the assumption the bundler will catch it.
+
+The barrel's round trip, which is the property that makes an install reversible:
+
+```bash
+pnpm plugin add <a plugin declaring workerExports> --apply
+pnpm plugin remove <id> --apply
+git diff --exit-code apps/web/src/plugins/worker-exports.ts   # must be byte-identical
+```
+
+`removeBarrelLine` has to be the exact inverse of `addBarrelLine`, including restoring the
+`export {}` empty marker — a file with no top-level export is a script, not a module, and TypeScript
+answers TS2306 at its one importer.
+
+```bash
+node scripts/release.mjs <next> --dry-run    # in the kit: byte-identical output to before
+```
+
+And in a monorepo, the resolve step of `plugin-ci.yml` is worth exercising directly rather than
+trusting — **YAML that parses says nothing about an embedded shell-quoted node script**, which is
+the only kind of break that file can have, since it never runs on a push to the kit itself. The
+script is therefore written to a file in the WORKSPACE, not `$RUNNER_TEMP`: ESM resolves a relative
+specifier against the module's own directory, so the same file one directory away would look
+identical and never find the kit.
+
+The version gate, which is the check that makes the number mean anything:
+
+```bash
+# delete a member from any context, e.g. RequestCtx.uuid in plugins/api/http.ts
+node scripts/plugin-api-doc.mjs      # exit 3: "removed  @/plugins/api :: RequestCtx.uuid"
+```
+
+And the generator must be idempotent — running it twice leaves no diff.

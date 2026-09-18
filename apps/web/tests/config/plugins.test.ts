@@ -82,6 +82,9 @@ describe('the plugin boundary', () => {
     expect(pluginIdOfPath('apps/web/src/plugins/orders/api/routes.ts')).toBe('orders')
     expect(pluginIdOfPath('packages/shared/src/plugins/orders/index.ts')).toBe('orders')
     expect(pluginIdOfPath('apps/web/src/plugins/server.ts')).toBeNull()
+    // The sixth barrel, added with worker-exports: without it this file reads as a plugin
+    // called 'worker-exports', and its own line reads as a deep import into one.
+    expect(pluginIdOfPath('apps/web/src/plugins/worker-exports.ts')).toBeNull()
     // An import specifier carries no extension, which is the spelling that used to read as a plugin
     // called "index".
     expect(pluginIdOfPath('packages/shared/src/plugins/index')).toBeNull()
@@ -111,6 +114,9 @@ describe('the plugin boundary', () => {
     expect(deepImportIssue('apps/web/src/ui/App.tsx', '@/plugins/orders/ui')).toBeNull()
     // The schema barrel names a plugin's inner file by design — that line IS the installation.
     expect(deepImportIssue('apps/web/src/plugins/schema.ts', './orders/db/schema')).toBeNull()
+    expect(
+      deepImportIssue('apps/web/src/plugins/worker-exports.ts', './orders/worker-exports')
+    ).toBeNull()
   })
 })
 

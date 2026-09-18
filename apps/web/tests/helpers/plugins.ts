@@ -26,6 +26,7 @@ export const BARRELS = [
   'apps/web/src/plugins/server.ts',
   'apps/web/src/plugins/ui.ts',
   'apps/web/src/plugins/schema.ts',
+  'apps/web/src/plugins/worker-exports.ts',
   'packages/shared/src/plugins/index.ts',
   'apps/cli/src/plugins/index.ts',
 ]
@@ -64,7 +65,15 @@ export function normaliseModulePath(p: string): string {
  * without this, every core import of `@/plugins/api` would read as reaching into a plugin called
  * "api", and the directory would be reported as an installed plugin with no declared surface.
  */
-export const RESERVED_PLUGIN_IDS = new Set(['index', 'server', 'ui', 'schema', 'types', 'api'])
+export const RESERVED_PLUGIN_IDS = new Set([
+  'index',
+  'server',
+  'ui',
+  'schema',
+  'types',
+  'api',
+  'worker-exports',
+])
 
 /** The plugin id a repo-relative path belongs to, or null when it is not inside a plugin. */
 export function pluginIdOfPath(repoPath: string): string | null {
