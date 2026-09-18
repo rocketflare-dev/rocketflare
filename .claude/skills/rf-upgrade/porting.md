@@ -39,12 +39,13 @@ silently dropped because *"the kit changed nothing here"* and *"the kit is not a
 anything here"* are different answers, and only the second one means "go and run
 `pnpm plugin upgrade <id>`".
 
-The two diffs meet in exactly one place: **the five barrels**
-(`apps/web/src/plugins/{server,ui,schema}.ts`, `packages/shared/src/plugins/index.ts`,
-`apps/cli/src/plugins/index.ts`). They are the kit's own files, so a kit release may change them —
-but each installed plugin has written one line into each, and it names them in its manifest's
-`registries[]`. Hence the `touches-plugin-registry` annotation. **Apply the kit change, then prove
-the plugin's line survived it**:
+The two diffs meet in exactly one place: **the six barrels**
+(`apps/web/src/plugins/{server,ui,schema,worker-exports}.ts`,
+`packages/shared/src/plugins/index.ts`, `apps/cli/src/plugins/index.ts`). They are the kit's own
+files, so a kit release may change them — but each installed plugin has written one line into each
+it uses (`worker-exports.ts` only when it ships a Durable Object or Workflow class), and it names
+them in its manifest's `registries[]`. Hence the `touches-plugin-registry` annotation. **Apply the
+kit change, then prove the plugin's line survived it**:
 
 ```
 pnpm plugin check

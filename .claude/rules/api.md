@@ -177,6 +177,29 @@ and `services/fact-tables/CLAUDE.md`. Three things a KIT route author still has 
 A plugin is a separate git repository copied into the app that contributes through
 `ServerPlugin` (`apps/web/src/plugins/types.ts`). Server-side rules, all of them checkable:
 
+- **A plugin imports the host only from a DECLARED entry, and receives everything else as injected
+  context.** On the server that entry is `@/plugins/api`: `const ctx: RequestCtx = requestCtx(c)` in
+  a route, `jobCtx` in a handler, `cronCtx` in a task, `toolCtx` in an agent tool, `workflowCtx` in
+  a Workflow, `HookCtx` / `SeedCtx` in the two hooks, `DetachedCtx` for a callback that outlives the
+  handler. The methods are the kit's own helpers under another name — `ctx.guard`, `ctx.uuid`,
+  `ctx.page`, `ctx.enqueue`, `ctx.nudge`, `ctx.notFound`, `ctx.defer`, `ctx.storage`, `ctx.scope` —
+  and the ADAPTER (`requestCtx` and its siblings) is the only thing that reads the kit's internal
+  context, which is what lets `cfg` stay `cfg` in a kit route while every plugin says `config`.
+  `docs/plugin-api.md` is the generated reference; `tests/helpers/plugins.ts` enforces the rule and
+  every diagnostic carries the replacement import. **Annotate the context explicitly** —
+  `ctx.notFound()` returns `never`, and TypeScript narrows on that only when the call target is
+  explicitly typed, so `const ctx = requestCtx(c)` throws at runtime while the compiler still
+  believes the row may be undefined
+- **The two things that cannot be injected are entries instead**: `@/db/schema/kit` for a table file
+  (a `pgTable(...)` runs at module scope, and drizzle-kit reads it statically — imported by RELATIVE
+  path, since drizzle-kit bundles that file and resolves no tsconfig alias) and the split UI kit.
+  `@testkit/{integration,unit}` is the third, for a plugin's tests
+- **`PLUGIN_API = { current, minSupported }`** (`packages/shared/src/plugins/contract.ts`, mirrored
+  in `.rocketflare.json`) versions that surface, and a plugin declares `requires.pluginApi` as a
+  whole number. Change or remove a member of a declared entry → regenerate `docs/plugin-api.md`
+  (`node scripts/plugin-api-doc.mjs`) and bump `current`; the gate diffs the file and names the
+  member. Declared is strictly checked, undeclared is warned — permanently
+
 - **`mounts` are spread LAST into the mount table of `api/index.ts`**, so the enumerable auth
   surface stays one list. An entry is the same tuple a kit mount is — `['/api/<id>', router,
   middleware?]` — and the prefix is `/api/<id>` by convention, which is what stops two plugins

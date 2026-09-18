@@ -22,8 +22,9 @@ uses it before anything else.
 
 Ask it before the interview, because it changes where every file lands (D31, `docs/CONCEPTS.md`
 §16). A **plugin** is a separate git repository copied into this app — never npm — that contributes
-contracts, schema, routes, jobs, agents, UI and CLI commands through five barrels it is the only
-thing allowed to write a line into. Written as a plugin, a feature is one tree you can lift out,
+contracts, schema, routes, jobs, agents, UI and CLI commands through six barrels it is the only
+thing allowed to write a line into — importing the kit only through the declared entries
+(`docs/plugin-api.md`) and receiving everything else as injected context. Written as a plugin, a feature is one tree you can lift out,
 version and install somewhere else; written into core, it is diffused across twenty files nobody
 can separate again.
 
