@@ -1,5 +1,5 @@
 ---
-globs:
+paths:
   - apps/web/src/api/**
   - apps/web/src/worker.ts
   - apps/web/src/config.ts

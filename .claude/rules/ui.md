@@ -1,5 +1,5 @@
 ---
-globs:
+paths:
   - apps/web/src/ui/**
   - apps/web/vite.config.ts
   - apps/web/postcss.config.js

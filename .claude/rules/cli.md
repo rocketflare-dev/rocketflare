@@ -1,5 +1,5 @@
 ---
-globs:
+paths:
   - apps/cli/src/**
   - apps/cli/tests/**
 ---

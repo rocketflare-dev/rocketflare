@@ -1,5 +1,5 @@
 ---
-globs:
+paths:
   - apps/web/tests/**
   - apps/web/vitest.config.ts
   - apps/web/.env.test

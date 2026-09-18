@@ -4,23 +4,23 @@ Multi-tenant SaaS starter for internal tools and B2B products, a **pnpm workspac
 Cloudflare Worker (`apps/web`), a CLI (`apps/cli`), private zod contracts
 (`packages/shared`). `AGENTS.md` symlinks here.
 
-> **How it works**: @docs/CONCEPTS.md — one section per subsystem with its known gaps. **Check it
+> **How it works**: `docs/CONCEPTS.md` — one section per subsystem with its known gaps. **Check it
 > before assuming a capability exists; update it when you change one.**
 > **Setup**: asked for setup help → run `/rf-setup` (it drives `scripts/bootstrap.sh --no-dev`, then
-> starts the server): show each `✔ n/10` line, stop on failure. By hand: @SETUP.md Part 1.
-> **Fresh copy?** `/rf-adapt <slug>`, then @docs/ADAPTING.md. `/rf-setup`, `/rf-adapt`, `/rf-preflight`
+> starts the server): show each `✔ n/10` line, stop on failure. By hand: `SETUP.md` Part 1.
+> **Fresh copy?** `/rf-adapt <slug>`, then `docs/ADAPTING.md`. `/rf-setup`, `/rf-adapt`, `/rf-preflight`
 > and `/rf-plugin` you
 > may run yourself; **`/rf-provision` is user-invoked only** (it creates paid resources and prompts for
 > tokens on a TTY) — asked to deploy, tell the user to run `/rf-provision`.
-> **Plugins** (D31, @docs/CONCEPTS.md §16): a plugin is a git repository copied in, wired through six
+> **Plugins** (D31, `docs/CONCEPTS.md` §16): a plugin is a git repository copied in, wired through six
 > barrels — `pnpm plugin add|upgrade|remove|list|check`, driven by `/rf-plugin`, which always shows the
-> plan before `--apply`. It imports the host only through the DECLARED entries (@docs/plugin-api.md,
+> plan before `--apply`. It imports the host only through the DECLARED entries (`docs/plugin-api.md`,
 > generated and diff-checked) and receives everything else as injected context. `.rocketflare.json`'s `defaultPlugins` is what a fresh clone installs
 > (bootstrap step `6/10 plugins`).
 > **Copies of the kit upgrade.** `.rocketflare.json` records the kit version, the app's names and the
 > manifest of replaceable surfaces; `/rf-upgrade` ports later releases into a copy and never
 > recreates a surface whose anchor file is gone. **A behaviour change here needs an entry in
-> @docs/upgrades/unreleased.md in the same commit** — CI fails without one, and the tag gate refuses
+> `docs/upgrades/unreleased.md` in the same commit** — CI fails without one, and the tag gate refuses
 > a release with no note. `pnpm kit:release <version>` writes the release assets.
 
 ## Stack
@@ -100,21 +100,21 @@ written justification, and `apps/web/tests/config/shared-imports.test.ts` enforc
 **`apps/cli`.** `login` opens `GET /auth/cli?redirect_uri=http://127.0.0.1:<port>/callback`; the server
 mints a tenant API key `cli:<host>` → `?key=&tenant_id=&tenant_name=`; stored `0600` in
 `~/.rocketflare/config.json` (`ROCKETFLARE_API_KEY`/`ROCKETFLARE_URL` for CI). Also `logout|whoami|status|config`,
-`members|keys|activity list --json` (@.claude/rules/cli.md)
+`members|keys|activity list --json` (`.claude/rules/cli.md`)
 
 ## Config model
 
 `[vars]` in both tomls, read via `loadConfig(env)`: `APP_ENV` (`development|staging|production`) ·
 `TENANCY_MODE` (`multi|single` — same schema; single auto-joins the one tenant) ·
 `SIGNUP_MODE` (`open|invite_only|approval`; `BOOTSTRAP_ADMIN_EMAILS` seeds the first admin) ·
-`TENANT_SCOPE_MODE` (`off|enforce`, @docs/RLS.md) · `AGENT_MAX_OUTPUT_TOKENS` · `AGENT_MAX_TURNS` ·
+`TENANT_SCOPE_MODE` (`off|enforce`, `docs/RLS.md`) · `AGENT_MAX_OUTPUT_TOKENS` · `AGENT_MAX_TURNS` ·
 `CHAT_KNOWLEDGE_TOOLS` (`true|false` — chat may call the knowledge tools) ·
 `CHAT_HISTORY_MAX_CHARS` (history a turn replays; older turns are summarised by `chat.compact`) ·
 `FEATURES_ENABLED` (D30 — comma-separated feature keys this deployment ships at all; fail-closed,
 consulted only for a flag marked `environmentGated`; the rollout state itself lives in Postgres).
 
-Rules (auto-loaded by path): @.claude/rules/api.md · database.md · ui.md · cli.md · testing.md ·
-code-quality.md · cloudflare.md. Runbooks: @docs/DEPLOY.md · @docs/RLS.md
+Rules (auto-loaded by path): `.claude/rules/api.md` · database.md · ui.md · cli.md · testing.md ·
+code-quality.md · cloudflare.md. Runbooks: `docs/DEPLOY.md` · `docs/RLS.md`
 
 ## Non-Negotiables
 
@@ -141,7 +141,7 @@ code-quality.md · cloudflare.md. Runbooks: @docs/DEPLOY.md · @docs/RLS.md
   prefixed from it — `example-feature` → `example_*`, and `plugin check` fails a collision — job
   types `<id>.x`, query-key roots `<id>:…`, `/api/<id>`, CUSTOM events `<id>.` — **never `kit.`**),
   reaches core only through the six barrels, its own four published entries and the DECLARED import
-  entries (`@/plugins/api`, `@/db/schema/kit`, `@testkit/*` — @docs/plugin-api.md), and ships
+  entries (`@/plugins/api`, `@/db/schema/kit`, `@testkit/*` — `docs/plugin-api.md`), and ships
   no migration and no toml edit — the host generates the DDL; its bindings go in BOTH tomls
 - **Released history is never rewritten**: an adopted copy pins a kit commit in `.rocketflare.json`;
   a force-push to a released tag orphans every copy that came from it

@@ -1,5 +1,5 @@
 ---
-globs:
+paths:
   - apps/web/wrangler*.toml
   - apps/web/src/worker.ts
   - apps/web/src/api/queue.ts

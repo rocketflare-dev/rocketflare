@@ -1,5 +1,5 @@
 ---
-globs:
+paths:
   - apps/web/src/db/**
   - apps/web/migrations/**
   - apps/web/drizzle.config.ts

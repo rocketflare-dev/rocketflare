@@ -12,20 +12,22 @@ manual: false
 
 ## What changed
 
-_Nothing yet. Add an entry here in the same pull request as the change. This first paragraph is
-lifted VERBATIM into `CHANGELOG.md`, so make it ONE standalone summary sentence of ≤ 40 words —
-then one bullet per change, one line each, and no `###` sub-headings. Rationale belongs in
-`docs/CONCEPTS.md` and is linked, never restated; see `README.md` beside this file._
+Agent context now loads on demand: rules scope by `paths:` and `CLAUDE.md` names its docs rather than `@`-importing them, cutting roughly 100k tokens from every session start.
+
+- `.claude/rules/*.md` frontmatter key `globs:` → `paths:` (Claude Code ignores `globs:` and loaded every rule unconditionally).
+- `CLAUDE.md` refers to `docs/CONCEPTS.md`, `SETUP.md`, `docs/DEPLOY.md`, `docs/RLS.md`, `docs/upgrades/unreleased.md` and two rules by backticked path, not `@` import.
 
 ## How to apply
 
-_Numbered, imperative, each step self-contained — no "these", "them" or "the above" reaching
-outside its own step._
+1. In every `.claude/rules/*.md`, replace the frontmatter line `globs:` with `paths:`.
+2. In `CLAUDE.md`, rewrite each `@docs/…`, `@SETUP.md` and `@.claude/rules/…` reference as a backticked path; leave `@rocketflare/*`, `@/…` and `@testkit/*` untouched.
 
 ## Conflicts to expect
 
-_One line each: `path → what changed → what to do`. Or exactly `None.`_
+`CLAUDE.md` → reference lines reworded → keep your own prose and apply only the `@` → backtick change.
 
 ## Verify
 
-_Numbered checkable commands and assertions only._
+1. `grep -l '^globs:' .claude/rules/*.md` prints nothing.
+2. `grep -nE '(^|[^`[:alnum:]])@(docs|SETUP|\.claude)' CLAUDE.md` prints nothing.
+3. In a new Claude Code session, `/context` lists `CLAUDE.md` but none of `SETUP.md`, `docs/DEPLOY.md`, `docs/CONCEPTS.md` or `.claude/rules/*` under Memory files.
