@@ -39,6 +39,9 @@ const UI_ENTRY_ALLOWED = [
   '@heroicons/react/24/outline',
   '@rocketflare/shared/',
   '@/plugins/types',
+  // The WIRING half of the UI kit: the nav/route/guard vocabulary and nothing that renders. Its
+  // components half (`@/plugins/api/ui`) is deliberately absent — that is for a lazy PAGE.
+  '@/plugins/api/ui-wiring',
   '@/ui/components/SideNav',
   '@/ui/hooks/useNavGuard',
   '@/ui/lib/feature-guards',
@@ -52,10 +55,15 @@ export function normaliseModulePath(p: string): string {
 }
 
 /**
- * The barrel filenames. A plugin may not take one of these as its id: `plugins/ui.ts` and
- * `plugins/ui/index.ts` would then be two different things spelled the same way in an import.
+ * Names a plugin may not take as its id.
+ *
+ * Most are barrel FILENAMES: `plugins/ui.ts` and `plugins/ui/index.ts` would otherwise be two
+ * different things spelled the same way in an import. `api` is the plugin API directory
+ * (`plugins/api/**`), which is a host surface rather than a plugin and must classify as one —
+ * without this, every core import of `@/plugins/api` would read as reaching into a plugin called
+ * "api", and the directory would be reported as an installed plugin with no declared surface.
  */
-export const RESERVED_PLUGIN_IDS = new Set(['index', 'server', 'ui', 'schema', 'types'])
+export const RESERVED_PLUGIN_IDS = new Set(['index', 'server', 'ui', 'schema', 'types', 'api'])
 
 /** The plugin id a repo-relative path belongs to, or null when it is not inside a plugin. */
 export function pluginIdOfPath(repoPath: string): string | null {
@@ -114,6 +122,8 @@ export function deepImportIssue(importer: string, specifier: string): string | n
 export interface StaticImport {
   specifier: string
   typeOnly: boolean
+  /** 1-based, so a diagnostic can name the line to edit rather than only the file. */
+  line: number
 }
 
 /** Static import/export specifiers of a TypeScript source, with whether the import is type-only. */
@@ -129,7 +139,8 @@ export function staticImports(source: string): StaticImport[] {
       const typeOnly = ts.isImportDeclaration(node)
         ? Boolean(node.importClause?.isTypeOnly)
         : node.isTypeOnly
-      out.push({ specifier: node.moduleSpecifier.text, typeOnly })
+      const { line } = file.getLineAndCharacterOfPosition(node.getStart(file))
+      out.push({ specifier: node.moduleSpecifier.text, typeOnly, line: line + 1 })
     }
     ts.forEachChild(node, visit)
   }
@@ -170,3 +181,215 @@ export function uiEntryIssues(file: string, source: string): string[] {
 export function queryKeyRootIssues(id: string, roots: readonly string[]): string[] {
   return roots.filter(r => !r.startsWith(`${id}:`)).map(r => `${id}: query-key root '${r}'`)
 }
+
+// ---- the plugin import rule (D31) ----------------------------------------------------------------
+
+/**
+ * **A plugin imports only from declared entries, and receives everything else as injected context.**
+ *
+ * That sentence is the whole rule, and it is why there is no per-symbol allow-list here and no
+ * exceptions list. The measurement this came from found 128 distinct (module, symbol) pairs across
+ * 55 kit modules, and the answer to that is not a longer table — a table of 128 exceptions is the
+ * sprawl written down rather than fixed. Nearly every one of those symbols already took an
+ * execution context as its first argument, so nearly every one became a method on
+ * `apps/web/src/plugins/api`.
+ *
+ * `deepImportIssue` above guards core→plugin and plugin→plugin. This guards the third direction —
+ * **plugin→core** — which is the one that actually breaks: it is what makes a plugin's semver
+ * meaningless, because the plugin is pinned to kit internals nobody promised to keep.
+ */
+
+/**
+ * Where a plugin may import the host from. Resolved repo paths, so `@/x`, `../../x` and
+ * `@rocketflare/shared/x` all land in the same vocabulary.
+ */
+export const DECLARED_ENTRIES = [
+  // The server surface and the context family, plus the two UI halves and the peer escape hatches.
+  'apps/web/src/plugins/api',
+  // `ServerPlugin` / `UiPlugin` themselves.
+  'apps/web/src/plugins/types',
+  // The build-time schema symbols, which cannot be injected: a `pgTable(...)` runs at module scope.
+  'apps/web/src/db/schema/kit',
+  // The CLI half.
+  'apps/cli/src/plugins/api',
+  'apps/cli/src/plugins/types',
+  // Every shared contract module — the package is the contract, and a plugin's own schemas are
+  // built out of it.
+  'packages/shared/src',
+]
+
+/** Packages of the repo a plugin could reach into. Anything else is a third-party dependency. */
+const HOST_ROOTS = [
+  'apps/web/src/',
+  'apps/web/tests/',
+  'apps/cli/src/',
+  'apps/cli/tests/',
+  'packages/shared/src/',
+]
+
+/**
+ * The edit, per kit module a plugin used to reach for.
+ *
+ * **Every diagnostic carries its replacement**, because installs are performed by agents and a
+ * message that says only what is wrong gives one nothing to do. Longest prefix wins, so a whole
+ * directory can be answered once and a particular module inside it more precisely.
+ */
+const SUGGESTED_ENTRY: ReadonlyArray<readonly [string, string]> = [
+  ['apps/web/src/db/schema/rls', "import { tenantIsolation } from '@/db/schema/kit'"],
+  ['apps/web/src/db/schema/_helpers', "import { tenantRef, timestamps } from '@/db/schema/kit'"],
+  ['apps/web/src/db/schema/tenants', "import { tenants } from '@/db/schema/kit'"],
+  ['apps/web/src/db/schema/users', "import { users } from '@/db/schema/kit'"],
+  ['apps/web/src/db/schema/groups', "import { groups } from '@/db/schema/kit'"],
+  [
+    'apps/web/src/db/schema',
+    "import { tenantRef, timestamps, tenantIsolation, tenants, users } from '@/db/schema/kit' — for a row TYPE, import type { Tenant } from '@/plugins/api'; for the whole merged namespace, allTables() from '@/plugins/api/peers'",
+  ],
+  [
+    'apps/web/src/db/client',
+    "the handle is ctx.db; for a signature, import type { Database } from '@/plugins/api'",
+  ],
+  [
+    'apps/web/src/config',
+    "the value is ctx.config; for a signature, import type { PluginConfig } from '@/plugins/api'",
+  ],
+  [
+    'apps/web/src/api/utils/core/logger',
+    "the value is ctx.logger; for a signature, import type { Logger } from '@/plugins/api'",
+  ],
+  [
+    'apps/web/src/api/utils/core/errors',
+    'throw through the context: ctx.notFound(…), ctx.forbidden(…), ctx.conflict(…)',
+  ],
+  [
+    'apps/web/src/api/utils/routes/route-helpers',
+    "const ctx = requestCtx(c) — import { requestCtx } from '@/plugins/api'",
+  ],
+  ['apps/web/src/api/utils/routes/router', "import { createRouter } from '@/plugins/api'"],
+  ['apps/web/src/api/utils/routes/validate', "import { validate } from '@/plugins/api'"],
+  [
+    'apps/web/src/api/utils/routes/pagination',
+    "ctx.page(items, total, query) — or import { pageWindow } from '@/plugins/api'",
+  ],
+  [
+    'apps/web/src/api/middleware/permissions',
+    'ctx.guard(action, subject) / ctx.can(action, subject)',
+  ],
+  ['apps/web/src/api/middleware/feature', "import { requireFeature } from '@/plugins/api'"],
+  ['apps/web/src/api/services/jobs', 'ctx.enqueue(input) — the binding is already bound'],
+  [
+    'apps/web/src/api/services/realtime',
+    "ctx.nudge(entity, id) — or import { realtimeEvent, nudge } from '@/plugins/api'",
+  ],
+  ['apps/web/src/api/services/notifications', "import { notify, notifyMany } from '@/plugins/api'"],
+  ['apps/web/src/api/services/activity', "import { recordActivity } from '@/plugins/api'"],
+  [
+    'apps/web/src/api/services/storage',
+    'ctx.storage() — 503 storage_not_configured without the binding',
+  ],
+  [
+    'apps/web/src/api/services/access',
+    "import { sharedWithMyGroups } from '@/plugins/api'; the scope is ctx.scope",
+  ],
+  [
+    'apps/web/src/api/services/ai/kit',
+    "import { defineTool } from '@/plugins/api'; the loop is ctx.toolLoop(…)",
+  ],
+  [
+    'apps/web/src/api/services/ai',
+    "import { recordUsage, AiNotConfiguredError } from '@/plugins/api'",
+  ],
+  ['apps/web/src/api/services/agents', "import { toolCtx, agentCtx } from '@/plugins/api'"],
+  [
+    'apps/web/src/api/observability',
+    "import { withAgentTrace, traceChatClient } from '@/plugins/api'; the tracer is on the context",
+  ],
+  [
+    'apps/web/src/api/queues/jobs',
+    "const ctx = jobCtx(raw) — import { jobCtx } from '@/plugins/api'",
+  ],
+  [
+    'apps/web/src/api/scheduled',
+    "const ctx = cronCtx(raw) — import { cronCtx } from '@/plugins/api'",
+  ],
+  ['apps/web/src/api/workflows', "import { workflowCtx } from '@/plugins/api'"],
+  ['apps/web/src/api/types', "import type { PluginBindings } from '@/plugins/api'"],
+  [
+    'apps/web/src/plugins/server',
+    "import { extensions } from '@/plugins/api/peers' — never the barrel",
+  ],
+  [
+    'apps/web/src/plugins/schema',
+    "import { allTables } from '@/plugins/api/peers' — never the barrel",
+  ],
+  ['apps/web/src/ui/components/SideNav', "import type { NavItem } from '@/plugins/api/ui-wiring'"],
+  ['apps/web/src/ui/hooks/useNavGuard', "import { useNavGuard } from '@/plugins/api/ui-wiring'"],
+  ['apps/web/src/ui/lib/feature-guards', "import { featureGuard } from '@/plugins/api/ui-wiring'"],
+  ['apps/web/src/ui/pages/Home', "import type { QuickLink } from '@/plugins/api/ui-wiring'"],
+  ['apps/web/src/ui/components/shared', "import { … } from '@/plugins/api/ui' (a lazy page only)"],
+  ['apps/web/src/ui/components', "import { … } from '@/plugins/api/ui' (a lazy page only)"],
+  ['apps/web/src/ui/lib/api-client', "import { api } from '@/plugins/api/ui'"],
+  ['apps/web/src/ui/lib/format', "import { formatDate } from '@/plugins/api/ui'"],
+  ['apps/web/src/ui/hooks', "import { useAuth, usePermissions } from '@/plugins/api/ui'"],
+  ['apps/cli/src/context', "import { requireClient } from '../api'"],
+  ['apps/cli/src/api', "import { CliApiError } from '../api'"],
+  ['apps/cli/src/errors', "import { CliError } from '../api'"],
+  ['apps/cli/src/utils/output', "import { renderTable, formatPagination } from '../api'"],
+]
+
+function suggestionFor(target: string): string {
+  let best: readonly [string, string] | undefined
+  for (const entry of SUGGESTED_ENTRY) {
+    if (target === entry[0] || target.startsWith(`${entry[0]}/`)) {
+      if (!best || entry[0].length > best[0].length) best = entry
+    }
+  }
+  return best ? best[1] : "reach the host through '@/plugins/api' (or '@/plugins/api/ui' in a page)"
+}
+
+/**
+ * A plugin's SOURCE — what it ships into the host's runtime.
+ *
+ * A plugin's own tests are deliberately out of scope. They import the host's test harness
+ * (`createTestEnv`, `request()`), which is a coupling to the TEST rig rather than to the running
+ * application, and there is no test-kit entry to point them at yet. Naming that as scope rather
+ * than burying it in an exceptions list keeps the rule one sentence, and keeps the gap visible.
+ */
+export function isPluginSource(repoPath: string): boolean {
+  return pluginIdOfPath(repoPath) !== null && !/(^|\/)tests\//.test(repoPath)
+}
+
+/**
+ * One message when a plugin file imports the host from anywhere but a declared entry, else null.
+ *
+ * Third-party packages (`react`, `zod`, `drizzle-orm`, `commander`) are not the host and are never
+ * an issue; the rule is about coupling to kit INTERNALS.
+ */
+export function pluginImportIssue(
+  importer: string,
+  specifier: string,
+  line?: number
+): string | null {
+  if (!isPluginSource(importer)) return null
+  const target = resolveSpecifier(importer, specifier)
+  // A bare specifier that is not `@/` or `@rocketflare/shared/` — an ordinary dependency.
+  if (!target) return null
+  // Its own files are always fine; another plugin's are `deepImportIssue`'s to report.
+  if (pluginIdOfPath(target) === pluginIdOfPath(importer)) return null
+  const normalised = normaliseModulePath(target)
+  if (DECLARED_ENTRIES.some(e => normalised === e || normalised.startsWith(`${e}/`))) return null
+  if (!HOST_ROOTS.some(root => `${normalised}/`.startsWith(root) || normalised.startsWith(root))) {
+    return null
+  }
+  const where = `${importer.split('/').pop()}${line === undefined ? '' : `:${line}`}`
+  return `${where} imports '${specifier}' — replace with: ${suggestionFor(normalised)}`
+}
+
+/**
+ * Whether the rule FAILS the suite or only reports.
+ *
+ * **Warn-only for now**, and the switch is one constant so flipping it is one line. The reference
+ * plugin has not been migrated onto the new surface yet, and migrating it before this check landed
+ * would have meant the canary told us nothing. An unmigrated `analytics` must also keep working at
+ * every commit on this branch — the gate runs twice, once with it installed.
+ */
+export const PLUGIN_IMPORT_ENFORCEMENT: 'warn' | 'fail' = 'warn'

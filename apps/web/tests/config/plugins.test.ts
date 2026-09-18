@@ -38,9 +38,13 @@ import { SERVER_PLUGINS, serverPlugins } from '@/plugins/server'
 import { UI_PLUGINS, uiPlugins } from '@/plugins/ui'
 import { queryKeys } from '@/ui/lib/query-keys'
 import {
+  DECLARED_ENTRIES,
   deepImportIssue,
   isPluginEntry,
+  isPluginSource,
+  PLUGIN_IMPORT_ENFORCEMENT,
   pluginIdOfPath,
+  pluginImportIssue,
   queryKeyRootIssues,
   RESERVED_PLUGIN_IDS,
   staticImports,
@@ -143,6 +147,85 @@ describe('a plugin UI entry', () => {
   })
 })
 
+describe('the plugin import rule', () => {
+  const ROUTE = 'apps/web/src/plugins/orders/api/routes.ts'
+  const TABLE = 'apps/web/src/plugins/orders/db/schema/orders.ts'
+
+  it('names entries that all exist on disk', () => {
+    // Vacuous the day an entry is renamed: the rule would then pass everything it used to catch.
+    for (const entry of DECLARED_ENTRIES) {
+      const candidates = [`${entry}.ts`, `${entry}/index.ts`, entry]
+      expect(
+        candidates.some(c => existsSync(path.join(REPO_ROOT, c))),
+        entry
+      ).toBe(true)
+    }
+  })
+
+  it('passes a declared entry, in every spelling', () => {
+    expect(pluginImportIssue(ROUTE, '@/plugins/api')).toBeNull()
+    expect(pluginImportIssue(ROUTE, '@/plugins/types')).toBeNull()
+    // The schema kit is reached relatively from a table file, which is how a plugin's own tree
+    // spells it — four levels out of `plugins/<id>/db/schema`.
+    expect(pluginImportIssue(TABLE, '../../../../db/schema/kit')).toBeNull()
+    expect(pluginImportIssue(ROUTE, '@rocketflare/shared/plugins/orders/index')).toBeNull()
+    expect(pluginImportIssue(ROUTE, '@rocketflare/shared/pagination')).toBeNull()
+    expect(
+      pluginImportIssue('apps/web/src/plugins/orders/ui/index.ts', '@/plugins/api/ui-wiring')
+    ).toBeNull()
+    expect(pluginImportIssue('apps/cli/src/plugins/orders/index.ts', '../api')).toBeNull()
+  })
+
+  it('leaves third-party packages and the plugin’s own files alone', () => {
+    // The rule is about coupling to kit INTERNALS, not about dependencies.
+    expect(pluginImportIssue(ROUTE, 'zod')).toBeNull()
+    expect(pluginImportIssue(ROUTE, 'drizzle-orm')).toBeNull()
+    expect(pluginImportIssue(ROUTE, 'react')).toBeNull()
+    expect(pluginImportIssue(ROUTE, './service')).toBeNull()
+    expect(pluginImportIssue(ROUTE, '../shared')).toBeNull()
+  })
+
+  it('says nothing about a core file — this guards ONE direction', () => {
+    // `deepImportIssue` owns core→plugin and plugin→plugin; this owns plugin→core.
+    expect(pluginImportIssue('apps/web/src/api/index.ts', '@/api/services/jobs')).toBeNull()
+  })
+
+  it('refuses a kit internal, and the message carries the EDIT', () => {
+    // The whole point: an install is performed by an agent, and a diagnostic that says only what
+    // is wrong gives one nothing to do.
+    expect(pluginImportIssue(TABLE, '../../../../db/schema/rls', 4)).toBe(
+      "orders.ts:4 imports '../../../../db/schema/rls' — replace with: " +
+        "import { tenantIsolation } from '@/db/schema/kit'"
+    )
+    expect(pluginImportIssue(ROUTE, '@/api/services/jobs', 9)).toMatch(/ctx\.enqueue\(input\)/)
+    expect(pluginImportIssue(ROUTE, '@/api/utils/routes/route-helpers')).toMatch(/requestCtx\(c\)/)
+    expect(pluginImportIssue(ROUTE, '@/api/middleware/permissions')).toMatch(/ctx\.guard/)
+    expect(pluginImportIssue(ROUTE, '@/api/utils/core/errors')).toMatch(/ctx\.notFound/)
+    expect(
+      pluginImportIssue('apps/web/src/plugins/orders/ui/pages/List.tsx', '@/ui/components/shared')
+    ).toMatch(/@\/plugins\/api\/ui/)
+  })
+
+  it('falls back to naming the entry when it has no better suggestion', () => {
+    expect(pluginImportIssue(ROUTE, '@/api/routes/members')).toMatch(/'@\/plugins\/api'/)
+  })
+
+  it('scopes itself to a plugin’s SOURCE, not its tests', () => {
+    // A plugin's tests import the host's TEST harness, which is a coupling to the rig rather than
+    // to the running app, and there is no test-kit entry to point them at yet. Scope, stated —
+    // not an exceptions list.
+    expect(isPluginSource(ROUTE)).toBe(true)
+    expect(isPluginSource('apps/web/src/plugins/orders/tests/api/orders.test.ts')).toBe(false)
+    expect(isPluginSource('apps/web/src/api/index.ts')).toBe(false)
+    expect(
+      pluginImportIssue(
+        'apps/web/src/plugins/orders/tests/api/orders.test.ts',
+        '../../../../../../tests/mocks/bindings'
+      )
+    ).toBeNull()
+  })
+})
+
 // ---- the same helpers, against what is actually installed ----------------------------------------
 
 const tracked = execFileSync('git', ['ls-files', '--cached', '--others', '--exclude-standard'], {
@@ -215,6 +298,39 @@ describe('installed plugins', () => {
       uiEntryIssues(f, readFileSync(path.join(REPO_ROOT, f), 'utf8'))
     )
     expect(issues).toEqual([])
+  })
+
+  it('reaches the host only through a declared entry', () => {
+    const issues: string[] = []
+    for (const file of tracked.filter(isPluginSource)) {
+      const source = readFileSync(path.join(REPO_ROOT, file), 'utf8')
+      for (const { specifier, line } of staticImports(source)) {
+        const issue = pluginImportIssue(file, specifier, line)
+        if (issue) issues.push(issue)
+      }
+    }
+
+    if (PLUGIN_IMPORT_ENFORCEMENT === 'fail') {
+      expect(
+        issues,
+        'A plugin imports only from declared entries and receives everything else as injected ' +
+          'context (D31). Each line below carries its replacement.'
+      ).toEqual([])
+      return
+    }
+
+    // Warn-only, on purpose and temporarily: the reference plugin has not been migrated onto the
+    // new surface yet — migrating it BEFORE this check landed would have meant the canary told us
+    // nothing — and an unmigrated `analytics` has to keep working at every commit on this branch,
+    // where the gate runs twice, once with it installed. Flipping `PLUGIN_IMPORT_ENFORCEMENT` to
+    // `'fail'` is the one-line change that closes it.
+    if (issues.length > 0) {
+      console.warn(
+        `\nplugin import rule (warn-only) — ${issues.length} import(s) still to migrate:\n` +
+          `${issues.map(i => `  ${i}`).join('\n')}\n`
+      )
+    }
+    expect(PLUGIN_IMPORT_ENFORCEMENT).toBe('warn')
   })
 })
 
