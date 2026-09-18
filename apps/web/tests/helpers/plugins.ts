@@ -7,6 +7,7 @@
  * fixture is one that quietly stops meaning anything the moment no plugin is installed — which is
  * the kit's own default state.
  */
+import fs from 'node:fs'
 import path from 'node:path'
 import ts from 'typescript'
 
@@ -94,8 +95,18 @@ export function isPluginEntry(repoPath: string): boolean {
   return false
 }
 
-/** `@/x` → `apps/web/src/x`; `@rocketflare/shared/x` → `packages/shared/src/x`; else relative. */
+/**
+ * `@/x` → `apps/web/src/x`; `@rocketflare/shared/x` → `packages/shared/src/x`;
+ * `@testkit/x` → `apps/web/tests/kit/x`; else relative.
+ *
+ * `@testkit` is resolved rather than left as an unknown bare specifier, which would be allowed by
+ * accident. Mapping it makes it a DECLARED entry like the others — visible in `DECLARED_ENTRIES`,
+ * and covered by the check that every entry exists on disk.
+ */
 export function resolveSpecifier(importer: string, specifier: string): string | null {
+  if (specifier === '@testkit') return 'apps/web/tests/kit'
+  if (specifier.startsWith('@testkit/'))
+    return `apps/web/tests/kit/${specifier.slice('@testkit/'.length)}`
   if (specifier.startsWith('@/')) return `apps/web/src/${specifier.slice(2)}`
   if (specifier.startsWith('@rocketflare/shared/'))
     return `packages/shared/src/${specifier.slice('@rocketflare/shared/'.length)}`
@@ -213,6 +224,10 @@ export const DECLARED_ENTRIES = [
   // The CLI half.
   'apps/cli/src/plugins/api',
   'apps/cli/src/plugins/types',
+  // The TEST kit: `@testkit/integration` is the harness (a real database, the real app, the real
+  // provider tree), `@testkit/unit` the context builders. A plugin's tests were out of scope for
+  // this rule only because there was nowhere to point them; there is now.
+  'apps/web/tests/kit',
   // Every shared contract module — the package is the contract, and a plugin's own schemas are
   // built out of it.
   'packages/shared/src',
@@ -330,6 +345,22 @@ const SUGGESTED_ENTRY: ReadonlyArray<readonly [string, string]> = [
   ['apps/web/src/ui/lib/api-client', "import { api } from '@/plugins/api/ui'"],
   ['apps/web/src/ui/lib/format', "import { formatDate } from '@/plugins/api/ui'"],
   ['apps/web/src/ui/hooks', "import { useAuth, usePermissions } from '@/plugins/api/ui'"],
+  // The test harness. Longest prefix wins, so the particular modules answer before the catch-all.
+  [
+    'apps/web/tests/helpers/auth',
+    "import { createTestUser, createTestTenantWithUser, createTestSession, sessionCookieHeader } from '@testkit/integration'",
+  ],
+  ['apps/web/tests/helpers/db', "import { setupTestDatabase } from '@testkit/integration'"],
+  ['apps/web/tests/helpers/request', "import { request, json } from '@testkit/integration'"],
+  ['apps/web/tests/mocks/bindings', "import { createTestEnv, stubs } from '@testkit/integration'"],
+  [
+    'apps/web/tests/ui/helpers/renderWithProviders',
+    "import { renderWithProviders, makeSession, makeUser, rulesFor } from '@testkit/integration'",
+  ],
+  [
+    'apps/web/tests',
+    "the harness is '@testkit/integration'; a context builder (makeRequestCtx, makeJobCtx, makeToolCtx…) is '@testkit/unit'",
+  ],
   ['apps/cli/src/context', "import { requireClient } from '../api'"],
   ['apps/cli/src/api', "import { CliApiError } from '../api'"],
   ['apps/cli/src/errors', "import { CliError } from '../api'"],
@@ -347,15 +378,16 @@ function suggestionFor(target: string): string {
 }
 
 /**
- * A plugin's SOURCE — what it ships into the host's runtime.
+ * Every file a plugin owns — its source AND its tests.
  *
- * A plugin's own tests are deliberately out of scope. They import the host's test harness
- * (`createTestEnv`, `request()`), which is a coupling to the TEST rig rather than to the running
- * application, and there is no test-kit entry to point them at yet. Naming that as scope rather
- * than burying it in an exceptions list keeps the rule one sentence, and keeps the gap visible.
+ * The tests used to be out of scope, and the reason was honest rather than lenient: they import the
+ * host's test harness, which is a coupling to the TEST rig rather than to the running application,
+ * and there was no declared entry to point them at. `@testkit` is that entry, so the exemption has
+ * gone with the gap that justified it. In practice this is where the worst of the coupling was —
+ * six-level relative climbs into `apps/web/tests/**`, five modules, twenty-one symbols.
  */
-export function isPluginSource(repoPath: string): boolean {
-  return pluginIdOfPath(repoPath) !== null && !/(^|\/)tests\//.test(repoPath)
+export function isPluginFile(repoPath: string): boolean {
+  return pluginIdOfPath(repoPath) !== null
 }
 
 /**
@@ -369,7 +401,7 @@ export function pluginImportIssue(
   specifier: string,
   line?: number
 ): string | null {
-  if (!isPluginSource(importer)) return null
+  if (!isPluginFile(importer)) return null
   const target = resolveSpecifier(importer, specifier)
   // A bare specifier that is not `@/` or `@rocketflare/shared/` — an ordinary dependency.
   if (!target) return null
@@ -385,11 +417,47 @@ export function pluginImportIssue(
 }
 
 /**
+ * What a plugin DECLARES about the contract it was written against, or null.
+ *
+ * `requires.pluginApi` in a plugin's own `plugin.json` is the opt-in: a plugin that declares it is
+ * saying "I am written against the plugin context API", and is held to the import rule strictly. A
+ * plugin that does not has said nothing, and is only warned about.
+ *
+ * **That two-tier reading is the whole reason the rule can be turned on at all.** `pnpm test` runs
+ * the gate twice, the second time with `defaultPlugins` installed at their pinned refs — today that
+ * is `analytics` at 1.0.2, which predates this surface entirely and still imports the old paths. A
+ * single-tier rule would either fail that second pass (breaking CI on a released plugin nobody can
+ * retroactively change) or stay warn-only for everyone. Declaring the contract is what moves a
+ * plugin from the second group to the first, and it happens in the same release that migrates it.
+ *
+ * Read from the plugin's own manifest rather than from `.rocketflare.json`, because
+ * `buildPluginSurface` copies only `kit`/`surfaces`/`plugins` into a surface — and because the
+ * manifest is the plugin's statement about itself, which is exactly what is being asked here.
+ */
+export function pluginApiDeclaration(repoRoot: string, id: string): string | null {
+  const manifestPath = path.join(repoRoot, 'apps/web/src/plugins', id, 'plugin.json')
+  if (!fs.existsSync(manifestPath)) return null
+  try {
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8')) as {
+      requires?: { pluginApi?: unknown }
+    }
+    const declared = manifest.requires?.pluginApi
+    return typeof declared === 'string' && declared.trim() !== '' ? declared.trim() : null
+  } catch {
+    // An unreadable manifest is not this rule's business to report — `pnpm plugin check` owns that.
+    return null
+  }
+}
+
+/**
  * Whether the rule FAILS the suite or only reports.
  *
- * **Warn-only for now**, and the switch is one constant so flipping it is one line. The reference
- * plugin has not been migrated onto the new surface yet, and migrating it before this check landed
- * would have meant the canary told us nothing. An unmigrated `analytics` must also keep working at
- * every commit on this branch — the gate runs twice, once with it installed.
+ * **Failing**, for every plugin that declares `requires.pluginApi` (see above). The reference
+ * plugin is migrated and declares it, so the canary is live; a plugin that predates the surface is
+ * still warned about rather than broken, which is what keeps the second gate pass green on
+ * `analytics` 1.0.2.
+ *
+ * Setting this back to `'warn'` turns the whole rule into a report again — one line, and it says
+ * exactly what it costs.
  */
-export const PLUGIN_IMPORT_ENFORCEMENT: 'warn' | 'fail' = 'warn'
+export const PLUGIN_IMPORT_ENFORCEMENT: 'warn' | 'fail' = 'fail'

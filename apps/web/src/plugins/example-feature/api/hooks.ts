@@ -8,15 +8,16 @@
  * note is decoration, and a tenant without one works perfectly. `seedDemo` is handed a `demoId`
  * already namespaced with the plugin's id, so two plugins that both seed `note:1` cannot collide
  * and re-running the seed adds nothing.
+ *
+ * Note what `HookCtx` does NOT carry: a logger, an `env`, a way to enqueue or nudge. A hook runs at
+ * somebody else's transaction boundary and has no business doing any of that — if it needs to, it is
+ * not a hook.
  */
 
 import { EXAMPLE_FEATURE_FLAG } from '@rocketflare/shared/plugins/example-feature/index'
 import { eq } from 'drizzle-orm'
-import type { Database } from '../../../db/client'
-// Named directly rather than through `db/schema/index.ts`: that barrel re-exports THIS plugin's
-// tables, so importing it from inside the plugin is a cycle back through `plugins/schema`.
-import { featureFlags } from '../../../db/schema/feature-flags'
-import type { PluginSeedContext } from '../../types'
+import type { HookCtx, SeedCtx } from '@/plugins/api'
+import { allTables } from '@/plugins/api/peers'
 import { exampleNotes } from '../db/schema'
 
 /**
@@ -24,7 +25,7 @@ import { exampleNotes } from '../db/schema'
  * construction: it inserts only when the tenant has none, which is also what makes it safe if the
  * host ever retries the hook.
  */
-export async function onTenantCreated(db: Database, tenantId: string): Promise<void> {
+export async function onTenantCreated({ db, tenantId }: HookCtx): Promise<void> {
   const existing = await db.$count(exampleNotes, eq(exampleNotes.tenantId, tenantId))
   if (existing > 0) return
   await db.insert(exampleNotes).values({
@@ -44,11 +45,15 @@ export async function onTenantCreated(db: Database, tenantId: string): Promise<v
  * whose behaviour is worth seeing, and 50% counted in organisations means this tenant may or may
  * not have it, which is the honest demonstration of a deterministic bucket rather than a bug.
  *
- * The flag row moved here from the kit's seed with the rest of the plugin: a flag belongs to
- * whatever ships it, and a kit with this plugin removed must not seed state for a key no code reads.
+ * The flag row belongs to whatever SHIPS the flag, which is this plugin: a kit with this plugin
+ * removed must not seed state for a key no code reads. `feature_flags` is the KIT's table, though,
+ * so it is reached through `allTables()` — the declared way to name the merged schema — and
+ * **called inside the function rather than at module scope**, because that module reads the plugin
+ * barrel and a module-scope call closes the cycle with one side still `undefined`.
  */
-export async function seedDemo(db: Database, ctx: PluginSeedContext): Promise<void> {
-  await db
+export async function seedDemo(ctx: SeedCtx): Promise<void> {
+  const { featureFlags } = allTables()
+  await ctx.db
     .insert(exampleNotes)
     .values([
       {
@@ -67,7 +72,7 @@ export async function seedDemo(db: Database, ctx: PluginSeedContext): Promise<vo
       },
     ])
     .onConflictDoNothing()
-  await db
+  await ctx.db
     .insert(featureFlags)
     .values({
       key: EXAMPLE_FEATURE_FLAG,

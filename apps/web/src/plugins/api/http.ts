@@ -16,7 +16,7 @@
  */
 
 import { ERROR_CODES } from '@rocketflare/shared/errors'
-import type { JobInput } from '@rocketflare/shared/jobs'
+import type { JobEnvelope, JobInput } from '@rocketflare/shared/jobs'
 import type { PaginationMeta, PaginationQuery } from '@rocketflare/shared/pagination'
 import type { Actions, Subjects } from '@rocketflare/shared/permissions'
 import { can as canDo, guardPermission } from '../../api/middleware/permissions'
@@ -103,7 +103,7 @@ export interface RequestCtx extends PluginContext, PluginAuth {
    * than running inline, because silently doing the work in the request is how a 30-second route
    * gets shipped.
    */
-  enqueue(input: JobInput, options?: { delaySeconds?: number }): Promise<{ id: string }>
+  enqueue(input: JobInput, options?: { delaySeconds?: number }): Promise<JobEnvelope>
   enqueueMany(inputs: readonly JobInput[], options?: { delaySeconds?: number }): Promise<void>
   /**
    * Tell this organisation's open tabs that a family of rows moved. `entity` IS the query-key

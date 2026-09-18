@@ -3,10 +3,12 @@
  *
  * **This file ships in the MAIN bundle**, because `App.tsx` and `SideNav` import the barrel that
  * imports it, for every reader — including the ones who never open the plugin. So it wires things
- * up and nothing else: the page arrives as `lazy(() => import(...))`, and the only runtime imports
- * allowed are `react`, the heroicons set, `@rocketflare/shared/*` and the three kit UI modules a
- * nav item needs. `tests/config/plugins.test.ts` reads this file's SOURCE and enforces both rules —
- * a statically imported page is the mistake it exists to catch.
+ * up and nothing else: the page arrives as `lazy(() => import(...))`, and the only host module it
+ * may import is `@/plugins/api/ui-wiring` — the WIRING half of the UI kit, which is types, one
+ * helper and one hook. The COMPONENTS half (`@/plugins/api/ui`) is deliberately unreachable from
+ * here; that is for a lazy PAGE, which ships in its own chunk.
+ * `tests/config/plugins.test.ts` reads this file's SOURCE and enforces both rules — a statically
+ * imported page is the mistake it exists to catch.
  *
  * The route's guard and the nav item's guard are the SAME object, so a link can never point at a
  * page its reader cannot open. It is `{ feature }`, never `{ action: 'access', subject:
@@ -19,8 +21,7 @@ import {
   exampleFeatureShared,
 } from '@rocketflare/shared/plugins/example-feature/index'
 import { lazy } from 'react'
-import type { UiPlugin } from '@/plugins/types'
-import type { NavGuard } from '@/ui/hooks/useNavGuard'
+import type { NavGuard, UiPlugin } from '@/plugins/api/ui-wiring'
 import { exampleFeatureQueryKeys } from './query-keys'
 
 const ExampleFeaturePage = lazy(() => import('./pages/ExampleFeaturePage'))

@@ -23,6 +23,17 @@
  * tree. It is re-exported from the shared barrel now, and from here.
  */
 export { LoadingIndicator } from '../../ui/components/LoadingIndicator'
+/**
+ * The kit's sidebar, for a plugin's own nav TEST.
+ *
+ * It is here rather than in `./ui-wiring` because it RENDERS — the wiring half must stay weightless,
+ * and a plugin's `ui/index.ts` has no business importing a component. What needs it is the test that
+ * proves a plugin's nav item obeys the kit's guards: an app on this kit wrote that test against a
+ * re-implementation of the guard logic, and the re-implementation is precisely what hid the bug it
+ * was meant to catch. Driving the real `SideNav` is the whole value; anything that re-derives what
+ * it does is worthless.
+ */
+export { default as SideNav } from '../../ui/components/SideNav'
 export type {
   AccessPickerProps,
   Breadcrumb,
@@ -80,6 +91,5 @@ export {
   initials,
   timeAgo,
 } from '../../ui/lib/format'
-
 /** A page may also want the wiring vocabulary — a guard on a sub-route, say. */
 export type { NavGuard } from './ui-wiring'

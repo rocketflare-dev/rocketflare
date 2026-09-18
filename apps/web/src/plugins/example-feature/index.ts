@@ -10,6 +10,12 @@
  * behind which gate, which job types it handles, which tools it gives every agent run, what a new
  * organisation and the demo seed get, and which CASL rules it adds. The host merges each of those
  * into a kit registry it cannot otherwise be edited into.
+ *
+ * **It is also the boundary.** The registration slots below are the kit's shapes, and the plugin's
+ * own code is written against the plugin surface — so the adapters (`toolCtx`, and the two hook
+ * spreads) are called here, once each, and nowhere else. That is the sentence the whole contract
+ * makes true: *a plugin imports only from declared entries, and receives everything else as
+ * injected context.*
  */
 
 import {
@@ -18,10 +24,8 @@ import {
   EXAMPLE_PING_JOB,
   exampleFeatureShared,
 } from '@rocketflare/shared/plugins/example-feature/index'
-import { requireFeature } from '../../api/middleware/feature'
-import type { Tool } from '../../api/services/ai/kit'
-import type { Tenant } from '../../db/schema'
-import type { ServerPlugin } from '../types'
+import type { ServerPlugin, Tool } from '@/plugins/api'
+import { requireFeature, toolCtx } from '@/plugins/api'
 import { onTenantCreated, seedDemo } from './api/hooks'
 import { exampleFeatureRouter } from './api/routes'
 import { handleExamplePing } from './jobs/ping'
@@ -38,7 +42,12 @@ export const exampleFeatureServer = {
    */
   mounts: [['/api/example-feature', exampleFeatureRouter, requireFeature(EXAMPLE_FEATURE_FLAG)]],
   jobHandlers: { [EXAMPLE_PING_JOB]: handleExamplePing },
-  agentTools: ctx => [listExampleNotesTool(ctx) as Tool],
+  /**
+   * The tool is written against `ToolCtx`; `toolCtx` adapts the runtime's context at this one
+   * boundary. The scope inside it carries the tenant AND what the run's REQUESTER may read, which
+   * is why a tool never takes a tenant id of its own.
+   */
+  agentTools: ctx => [listExampleNotesTool(toolCtx(ctx)) as Tool],
   /**
    * Additive only, and over this plugin's OWN subject. CASL can take a rule back only with
    * `cannot`, so a plugin that revoked a kit grant would change what every role may do merely by
@@ -55,7 +64,15 @@ export const exampleFeatureServer = {
     },
   },
   hooks: {
-    onTenantCreated: (db, tenant: Tenant) => onTenantCreated(db, tenant.id),
-    seedDemo,
+    onTenantCreated: (db, tenant, userId, features) =>
+      onTenantCreated({ db, tenant, tenantId: tenant.id, userId, features }),
+    seedDemo: (db, ctx) =>
+      seedDemo({
+        db,
+        tenantId: ctx.tenantId,
+        ownerId: ctx.ownerId,
+        demoId: ctx.demoId,
+        log: ctx.log,
+      }),
   },
 } satisfies ServerPlugin<typeof exampleFeatureShared>

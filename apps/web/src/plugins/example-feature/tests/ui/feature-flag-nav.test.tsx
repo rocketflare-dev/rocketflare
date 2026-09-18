@@ -19,15 +19,13 @@
 
 import { EXAMPLE_FEATURE_FLAG } from '@rocketflare/shared/plugins/example-feature/index'
 import { screen } from '@testing-library/react'
+import { makeSession, makeUser, renderWithProviders, rulesFor } from '@testkit/integration'
 import { describe, expect, it } from 'vitest'
-import SideNav from '@/ui/components/SideNav'
-import { featureGuard } from '@/ui/lib/feature-guards'
-import {
-  makeSession,
-  makeUser,
-  renderWithProviders,
-  rulesFor,
-} from '../../../../../tests/ui/helpers/renderWithProviders'
+// The kit's own sidebar and its own guard composer, through the two declared UI entries — the
+// COMPONENTS half for what renders, the WIRING half for the vocabulary. Driving the real ones is
+// the entire value of this file; see the note below on what a re-implementation hid.
+import { SideNav } from '@/plugins/api/ui'
+import { featureGuard } from '@/plugins/api/ui-wiring'
 import { EXAMPLE_FEATURE_GUARD } from '../../ui'
 
 const KEY = EXAMPLE_FEATURE_FLAG

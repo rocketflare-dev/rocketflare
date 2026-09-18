@@ -10,9 +10,11 @@
  * nor its contracts — reaches the main bundle for the readers who never open it.
  */
 import { useState } from 'react'
-import { EmptyState, SectionPanel, showToast } from '@/ui/components/shared'
-import { useAuth } from '@/ui/hooks/useAuth'
-import { usePermissions } from '@/ui/hooks/usePermissions'
+// The COMPONENTS half of the UI kit (D31). A page may import it because a page is lazy and ships in
+// its own chunk; the plugin's `ui/index.ts` may not, because that one is in everybody's first
+// download. `showToast` comes from here and only here — it is reachable in the kit by two public
+// paths, and one plugin took each, which is how two call sites of one function come to look like two.
+import { EmptyState, SectionPanel, showToast, useAuth, usePermissions } from '@/plugins/api/ui'
 import {
   useCreateExampleNote,
   useDeleteExampleNote,
