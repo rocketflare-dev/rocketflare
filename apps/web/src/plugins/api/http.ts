@@ -9,10 +9,20 @@
  * **The adapter is the seam.** `requestCtx(c)` reads the kit's `RouteContext` and nothing else
  * reads it, which is why `cfg` can stay `cfg` inside the kit while every plugin says `config`.
  *
- * The error helpers return `never` and THROW rather than returning an error to throw. That is for
- * the narrowing: `if (!row) ctx.notFound('Note not found')` leaves `row` non-null on the next line,
- * which `throw ctx.notFound(...)` also does but reads worse, and `return ctx.notFound(...)` does
- * not do at all.
+ * The error helpers return `never` and THROW rather than returning an error to throw, so that
+ * `if (!row) ctx.notFound('Note not found')` leaves `row` non-null on the next line —
+ * `throw ctx.notFound(...)` narrows too but reads worse, and `return ctx.notFound(...)` does not
+ * narrow at all.
+ *
+ * **That narrowing needs `ctx` to be EXPLICITLY annotated**, which is the one trap in this file:
+ *
+ *     const ctx: RequestCtx = requestCtx(c)   // narrows
+ *     const ctx = requestCtx(c)               // does NOT narrow
+ *
+ * TypeScript applies never-return narrowing only when every name in the call target is explicitly
+ * typed, and an inferred `const` is not. The inferred spelling still throws at runtime, so nothing
+ * misbehaves — the compiler simply goes on believing the row may be undefined, and the resulting
+ * error surfaces in whatever file next touches it rather than here.
  */
 
 import { ERROR_CODES } from '@rocketflare/shared/errors'
