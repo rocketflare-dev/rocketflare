@@ -159,6 +159,43 @@ stops for — a secret's value, a migration containing `DROP`, `--archive`, reti
 deleting a live Cloudflare resource). `--json` on `add`, `remove` and `check` emits the same plan as
 data with `kind` on every step, so a human step is a field rather than a sentence.
 
+### Releasing a repository that holds several plugins, and proving one against a kit branch
+
+`releaseContext()` already took a `root` parameter and was only ever called with its default, so a
+repository whose manifests live in subdirectories and which has none at the root fell through to
+`kind: 'unknown'` and exited 1. The parameter is now passed: `node scripts/release.mjs <version>
+--plugin <subdir>`, repeatable. Repeatable rather than comma-separated because the value is a path,
+and splitting a path on a comma invents an escaping rule for a character a path may legally contain.
+
+`versionFiles` stamps the root `package.json` **plus every `rocketflare-plugin.json` in the
+repository**, found by a bounded walk rather than a `plugins/*` glob, since `--plugin` takes an
+arbitrary subdir. That is not cosmetic: `pnpm plugin check` compares the version recorded in an
+installed surface against the anchor manifest, so a manifest left at an older number makes every
+install of that plugin report a mismatch. Lockstep is the model and plain `X.Y.Z` tags follow from
+it — no tag prefixes, no per-plugin namespacing, because a tag has to stay resolvable by
+`git ls-remote`, which cannot resolve a bare SHA. Accepted cost: a fix to one plugin bumps every
+plugin's version. `requires.pluginApi` stays per manifest, never hoisted — which kit contract a
+plugin compiles against is a different question from which release shipped it.
+
+**`release-check.mjs` auto-discovers rather than taking `--plugin`**: a gate you can forget to pass
+a flag to is not a gate, and a plugin whose version nobody stamped is exactly what it catches. It
+also needed `behaviourFiles(changed, { within })`, because `^(apps|packages)/` matches nothing
+against `plugins/<id>/apps/web/…` — so the porting-note gate was silently passing in a monorepo,
+which is the one place it had never been run.
+
+**`plugin-ci.yml` gains `kit_ref` and `plugin_subdirs`.** `kit_ref` proves a plugin against a kit
+**branch**, which is what makes a coordinated kit-and-plugin change verifiable rather than hopeful:
+a plugin cannot declare `>=0.7.0` before 0.7.0 exists, so without it the two repositories can only
+be cross-tested after one has already released. `plugin_subdirs` drives an **include-matrix of
+`{kit, plugin}` pairs** — deliberately not a cross product, because each plugin is proved against
+the kit versions its OWN range admits, and a shared ceiling is normal while a shared floor is not.
+
+**`notify-plugins.yml` closes the gap that a kit release notified nothing.** There was no `schedule`
+and no `repository_dispatch` anywhere, so a plugin outside `defaultPlugins` learned the kit had
+moved whenever somebody next happened to push to it — for a stable plugin, months. A tag now
+dispatches `kit-released`, with a weekly schedule as the backstop, and both are no-ops without
+`PLUGINS_DISPATCH_TOKEN`.
+
 ## How to apply
 
 There is no migration and no schema change.
@@ -215,6 +252,16 @@ Then run `pnpm provision cloudflare <env>` once per environment; it is an `agent
 declarative one, because the toml *editing* disappeared but somebody still has to run the command
 against an account with credentials.
 
+**Single-plugin repositories and the kit itself are unaffected** — `--plugin` is additive and
+`releaseContext` is the identity when `root === repoRoot`.
+
+For a repository holding several plugins: `node scripts/release.mjs <version> --plugin <subdir>`,
+then `node scripts/release-check.mjs --tag <version>`, which discovers the rest. If you want a kit
+release to notify your plugin repositories, add a fine-grained PAT as `PLUGINS_DISPATCH_TOKEN`
+(Contents: read, Metadata: read on those repositories) and name them in `notify-plugins.yml`; the
+receiving repository needs `repository_dispatch: types: [kit-released]` on its own workflow, or the
+notification arrives and does nothing.
+
 ## Conflicts to expect
 
 `apps/web/src/api/services/tenants.ts` and `apps/web/src/api/services/storage.ts` if you have edited
@@ -238,6 +285,11 @@ substantially rewritten again (the plan builder and the barrel table), so an app
 either should expect rejects. `apps/web/tests/helpers/plugins.ts` gains `worker-exports` in both
 `BARRELS` and `RESERVED_PLUGIN_IDS` — without both, that barrel reads as a plugin named
 `worker-exports` and its own export line reads as a deep import into one.
+
+`scripts/release.mjs`, `scripts/release-check.mjs` and `scripts/lib/upgrade-lib.mjs` are
+substantially rewritten. `.github/workflows/plugin-ci.yml` gains two inputs and restructures its
+matrix — note that a plugin repository pinning `plugin-ci.yml@main` cannot use either input until
+this release reaches the kit's default branch.
 
 ## Verify
 
@@ -294,3 +346,14 @@ git diff --exit-code apps/web/src/plugins/worker-exports.ts   # must be byte-ide
 `removeBarrelLine` has to be the exact inverse of `addBarrelLine`, including restoring the
 `export {}` empty marker — a file with no top-level export is a script, not a module, and TypeScript
 answers TS2306 at its one importer.
+
+```bash
+node scripts/release.mjs <next> --dry-run    # in the kit: byte-identical output to before
+```
+
+And in a monorepo, the resolve step of `plugin-ci.yml` is worth exercising directly rather than
+trusting — **YAML that parses says nothing about an embedded shell-quoted node script**, which is
+the only kind of break that file can have, since it never runs on a push to the kit itself. The
+script is therefore written to a file in the WORKSPACE, not `$RUNNER_TEMP`: ESM resolves a relative
+specifier against the module's own directory, so the same file one directory away would look
+identical and never find the kit.
