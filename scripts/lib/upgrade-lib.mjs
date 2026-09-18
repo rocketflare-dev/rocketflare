@@ -423,6 +423,104 @@ export const NOTE_HEADINGS = Object.freeze([
   '## Verify',
 ])
 
+/** The frontmatter fields that must be lists, even when empty. */
+const NOTE_LIST_FIELDS = Object.freeze([
+  'migrations',
+  'areas',
+  'touches_surfaces',
+  'requires_surfaces',
+])
+
+/**
+ * Everything wrong with one porting note, as sentences. Empty means it is well formed.
+ *
+ * **One statement of the note schema, for every reader of it.** It was written out in four places
+ * and the four had already drifted — most expensively over retired surfaces: only the test knew
+ * that an id a LATER release removed must still be accepted, so `release-check.mjs --tag 0.3.0`
+ * reported a released note as broken over a surface 0.6.0 had deliberately deleted. The kit could
+ * not re-verify its own history, and the note it complained about is one it forbids rewriting.
+ *
+ * Pure, so a test can drive it over fixtures as well as over the notes on disk:
+ *
+ *   - `version` is the filename's stem. Pass `null` for `unreleased.md`, which has no version and
+ *     no date yet, and both checks are skipped rather than failed.
+ *   - `expectPrevious` is checked only when given, because the CALLER is what knows the chain;
+ *     the baseline note expects the string `'null'`.
+ *   - `surfaceIds` null skips the surface check entirely — the honest answer when the caller has no
+ *     manifest, rather than reporting every id in the note as unknown.
+ *   - `retiredSurfaceIds` is `.rocketflare.json`'s `retiredSurfaces`: ids that were real when the
+ *     note was written and have since been removed on purpose.
+ */
+export function noteProblems(
+  text,
+  {
+    file = 'the note',
+    version = null,
+    expectPrevious,
+    surfaceIds = null,
+    retiredSurfaceIds = {},
+    // Named by the caller rather than written here: the provenance file keeps the KIT's name in a
+    // renamed copy, so a literal in this file would be rewritten into one that does not exist.
+    manifestFile = 'the manifest',
+  } = {}
+) {
+  const problems = []
+  const say = message => `${file}: ${message}`
+  const parsed = parseNote(text)
+  if (!parsed) return [say('no YAML frontmatter')]
+  const { data, body } = parsed
+
+  if (version !== null && data.version !== version) {
+    problems.push(say(`frontmatter version is '${data.version}', the filename says '${version}'`))
+  }
+  if (version !== null && !/^\d{4}-\d{2}-\d{2}$/.test(String(data.date ?? ''))) {
+    problems.push(say(`date is '${data.date}', expected YYYY-MM-DD`))
+  }
+  if (expectPrevious !== undefined && (data.previous ?? 'null') !== expectPrevious) {
+    problems.push(
+      say(
+        `previous is '${data.previous}', expected '${expectPrevious}' — the chain /rf-upgrade walks must be unbroken`
+      )
+    )
+  }
+  for (const key of ['breaking', 'manual']) {
+    if (typeof data[key] !== 'boolean') problems.push(say(`${key} must be true or false`))
+  }
+  for (const key of NOTE_LIST_FIELDS) {
+    if (!Array.isArray(data[key])) problems.push(say(`${key} must be a list`))
+  }
+  for (const m of data.migrations ?? []) {
+    if (/\.sql$|^\d{4}_/.test(m)) {
+      problems.push(
+        say(
+          `migrations names a file ('${m}') — describe the change; an adopter regenerates their own`
+        )
+      )
+    }
+  }
+  if (surfaceIds) {
+    const known = new Set(surfaceIds)
+    for (const key of ['touches_surfaces', 'requires_surfaces']) {
+      for (const id of data[key] ?? []) {
+        // A surface a later release retired is still named by every note that shipped before it,
+        // and released history is never rewritten — so it is accepted rather than reported.
+        if (retiredSurfaceIds[id]) continue
+        if (!known.has(id)) {
+          problems.push(say(`${key} names '${id}', which is not a surface in ${manifestFile}`))
+        }
+      }
+    }
+  }
+  let cursor = -1
+  for (const heading of NOTE_HEADINGS) {
+    const found = body.indexOf(`\n${heading}`)
+    if (found === -1) problems.push(say(`missing the '${heading}' heading`))
+    else if (found < cursor) problems.push(say(`'${heading}' is out of order`))
+    else cursor = found
+  }
+  return problems
+}
+
 /** `-1 | 0 | 1`, comparing `X.Y.Z` numerically. */
 export function compareVersions(a, b) {
   const pa = a.split('.').map(Number)

@@ -61,6 +61,11 @@ export interface Manifest {
   surfaces: Surface[]
   /** Plugins a fresh clone installs, and the kit's own CI gates on (D31, decisions 2 and 5). */
   defaultPlugins?: (string | Partial<DefaultPluginEntry>)[]
+  /**
+   * Surface id → the release that retired it. Released notes still name these, and released
+   * history is never rewritten, so both readers of a note accept them (§13).
+   */
+  retiredSurfaces?: Record<string, string>
   neverPort: string[]
   manual: string[]
   core: string[]
@@ -157,6 +162,27 @@ export interface ParsedNote {
 }
 export function parseNote(text: string): ParsedNote | null
 export const NOTE_HEADINGS: readonly string[]
+
+/** What `noteProblems` needs from its caller; see the implementation for why each is optional. */
+export interface NoteCheckOptions {
+  /** How the note is named in every sentence — a path, usually. */
+  file?: string
+  /** The filename's version stem; `null` for `unreleased.md` (no version, no date to check). */
+  version?: string | null
+  /** Checked only when given; the baseline note expects the string `'null'`. */
+  expectPrevious?: string
+  /** `null` skips the surface check rather than reporting every id as unknown. */
+  surfaceIds?: readonly string[] | null
+  /** `.rocketflare.json`'s `retiredSurfaces`: removed on purpose, still named by older notes. */
+  retiredSurfaceIds?: Record<string, string>
+  manifestFile?: string
+}
+
+/**
+ * Everything wrong with one porting note, as sentences — the ONE statement of the note schema,
+ * read by `release-check.mjs` and by `upgrade-notes.test.ts`.
+ */
+export function noteProblems(text: string, options?: NoteCheckOptions): string[]
 export function compareVersions(a: string, b: string): -1 | 0 | 1
 export const VERSION_RE: RegExp
 

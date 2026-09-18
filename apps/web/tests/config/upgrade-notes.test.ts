@@ -14,6 +14,7 @@ import type { Manifest } from '../../../../scripts/lib/upgrade-lib.d.mts'
 import {
   compareVersions,
   NOTE_HEADINGS,
+  noteProblems,
   parseNote,
   VERSION_RE,
 } from '../../../../scripts/lib/upgrade-lib.mjs'
@@ -33,21 +34,15 @@ const releases = readdirSync(UPGRADES)
 const surfaceIds = new Set(manifest.surfaces.map(s => s.id))
 
 /**
- * Surfaces a LATER release retired, and the release that did it.
+ * Surfaces a LATER release retired — read from `.rocketflare.json`, not restated here.
  *
- * A released note is never rewritten (`docs/CONCEPTS.md` §13) — every copy of the kit pins a
- * commit, and editing history orphans them — so a note that named a surface keeps naming it after
- * the surface goes. Listing them here is what keeps the typo check below meaningful for the note
- * somebody is writing TODAY, which is the only note it can still protect.
+ * A released note is never rewritten (`docs/CONCEPTS.md` §13): every copy of the kit pins a commit
+ * and editing history orphans them, so a note keeps naming a surface after the surface goes. This
+ * list used to be a const in THIS file, which meant `scripts/release-check.mjs --tag 0.2.0` — the
+ * gate that proves a released tag is still intact — reported those notes as broken while the suite
+ * called them fine. Two readers, one list, in the manifest they both already open.
  */
-const RETIRED_SURFACE_IDS: Record<string, string> = {
-  // 0.6.0: analytics left the kit for `rocketflare-plugin-analytics` (D31, Phase C), taking its
-  // two example cubes, its example dashboard template and the optional-feature surface with it.
-  'feature-analytics': '0.6.0',
-  'example-cube-activity-events': '0.6.0',
-  'example-cube-tenant-activity-daily': '0.6.0',
-  'example-dashboard-tenant-overview': '0.6.0',
-}
+const retiredSurfaceIds = manifest.retiredSurfaces ?? {}
 
 describe('release notes', () => {
   it('there is at least one, and it is the baseline', () => {
@@ -55,51 +50,24 @@ describe('release notes', () => {
     expect(parseNote(read(`${releases[0]}.md`))?.data.previous).toBe(null)
   })
 
-  it.each(releases)('%s parses, and its frontmatter is well formed', version => {
-    const parsed = parseNote(read(`${version}.md`))
-    expect(parsed, 'frontmatter').not.toBeNull()
-    const { data } = parsed!
-    expect(data.version).toBe(version)
-    expect(typeof data.breaking).toBe('boolean')
-    expect(typeof data.manual).toBe('boolean')
-    expect(Array.isArray(data.migrations)).toBe(true)
-    expect(Array.isArray(data.areas)).toBe(true)
-    expect(data.date).toMatch(/^\d{4}-\d{2}-\d{2}$/)
-  })
-
-  it.each(releases)('%s chains to the release before it', version => {
+  /**
+   * The whole schema, through the one function `scripts/release-check.mjs --tag` also calls:
+   * frontmatter shape, the unbroken `previous` chain, the date, migrations described rather than
+   * named, only real (or deliberately retired) surfaces, and the four headings in order.
+   *
+   * It was five assertions here and a second copy in `release-check.mjs`, and they had drifted.
+   */
+  it.each(releases)('%s is a well-formed porting note', version => {
     const i = releases.indexOf(version)
-    const previous = i === 0 ? null : releases[i - 1]
-    expect(parseNote(read(`${version}.md`))?.data.previous ?? null).toBe(previous)
-  })
-
-  it.each(releases)('%s carries the four headings, in order', version => {
-    const body = parseNote(read(`${version}.md`))!.body
-    let cursor = -1
-    for (const heading of NOTE_HEADINGS) {
-      const at = body.indexOf(`\n${heading}`)
-      expect(at, heading).toBeGreaterThan(-1)
-      expect(at, `${heading} out of order`).toBeGreaterThan(cursor)
-      cursor = at
-    }
-  })
-
-  it.each(releases)('%s names only real surfaces', version => {
-    const { data } = parseNote(read(`${version}.md`))!
-    for (const key of ['touches_surfaces', 'requires_surfaces'] as const) {
-      for (const id of (data[key] as string[] | undefined) ?? []) {
-        if (RETIRED_SURFACE_IDS[id]) continue
-        expect(surfaceIds, `${version}: ${key} names '${id}'`).toContain(id)
-      }
-    }
-  })
-
-  it.each(releases)('%s describes migrations, never names their files', version => {
-    // An adopter regenerates their own migration; the kit's file number and snapshot are
-    // meaningless — and dangerous — in their tree.
-    for (const m of (parseNote(read(`${version}.md`))!.data.migrations as string[]) ?? []) {
-      expect(m, 'describe the schema change, not the file').not.toMatch(/\.sql$|^\d{4}_/)
-    }
+    expect(
+      noteProblems(read(`${version}.md`), {
+        file: `docs/upgrades/${version}.md`,
+        version,
+        expectPrevious: i === 0 ? 'null' : releases[i - 1],
+        surfaceIds: [...surfaceIds],
+        retiredSurfaceIds,
+      })
+    ).toEqual([])
   })
 
   it('no note is newer than the version the kit claims to be', () => {
@@ -133,5 +101,104 @@ describe('unreleased.md', () => {
 
   it('carries the same four headings a release note must have', () => {
     for (const heading of NOTE_HEADINGS) expect(parseNote(text)!.body).toContain(heading)
+  })
+
+  it('is judged by the same function, with no version and no date to check', () => {
+    // `unreleased.md` has `version: unreleased` and `date: null` by design, so a caller passes
+    // `version: null` and those two checks are skipped rather than failed.
+    expect(noteProblems(text, { file: 'unreleased.md', version: null })).toEqual([])
+  })
+})
+
+/**
+ * The schema function itself, over fixtures — because every assertion above passes trivially if it
+ * silently checks nothing, and the notes on disk are all (correctly) well formed.
+ */
+describe('noteProblems', () => {
+  const note = (frontmatter: string, body = '') => `---\n${frontmatter}\n---\n${body}`
+  const HEADINGS = '\n## What changed\nx\n## How to apply\n## Conflicts to expect\n## Verify\n'
+  const GOOD = `version: 0.9.0
+previous: 0.8.0
+date: 2026-01-02
+breaking: false
+migrations: ["a budget column on agent_runs"]
+areas: [api]
+touches_surfaces: [feature-chat]
+requires_surfaces: []
+manual: false`
+  const check = (frontmatter: string, body = HEADINGS, options = {}) =>
+    noteProblems(note(frontmatter, body), {
+      file: 'n.md',
+      version: '0.9.0',
+      expectPrevious: '0.8.0',
+      surfaceIds: ['feature-chat'],
+      ...options,
+    })
+
+  it('passes a well-formed note', () => {
+    expect(check(GOOD)).toEqual([])
+  })
+
+  it('reports a missing frontmatter, and nothing else — there is nothing else to read', () => {
+    expect(noteProblems('# just a heading\n', { file: 'n.md' })).toEqual([
+      'n.md: no YAML frontmatter',
+    ])
+  })
+
+  it('catches a version, date or chain that does not match', () => {
+    expect(check(GOOD.replace('version: 0.9.0', 'version: 0.9.1'))[0]).toMatch(
+      /frontmatter version/
+    )
+    expect(check(GOOD.replace('date: 2026-01-02', 'date: null'))[0]).toMatch(/expected YYYY-MM-DD/)
+    expect(check(GOOD.replace('previous: 0.8.0', 'previous: 0.7.0'))[0]).toMatch(/must be unbroken/)
+    // The baseline note is the one whose `previous` is the literal string 'null'.
+    expect(
+      check(GOOD.replace('previous: 0.8.0', 'previous: null'), HEADINGS, {
+        expectPrevious: 'null',
+      })
+    ).toEqual([])
+  })
+
+  it('insists the booleans are booleans and the lists are lists', () => {
+    expect(check(GOOD.replace('breaking: false', 'breaking: maybe'))[0]).toMatch(
+      /breaking must be true or false/
+    )
+    expect(check(GOOD.replace('areas: [api]', 'areas: api'))[0]).toMatch(/areas must be a list/)
+  })
+
+  it('refuses a migration named as a FILE rather than described', () => {
+    // An adopter regenerates their own; the kit's file number is meaningless in their tree.
+    expect(check(GOOD.replace('"a budget column on agent_runs"', '"0012_budget.sql"'))[0]).toMatch(
+      /describe the change/
+    )
+  })
+
+  it('reports an unknown surface, accepts a RETIRED one, and skips the check with no manifest', () => {
+    const named = GOOD.replace('[feature-chat]', '[feature-analytics]')
+    expect(check(named)[0]).toMatch(/touches_surfaces names 'feature-analytics'/)
+    // The whole point of `retiredSurfaces`: 0.2.0 and 0.3.0 name a surface 0.6.0 deleted, and a
+    // released note is never rewritten.
+    expect(check(named, HEADINGS, { retiredSurfaceIds: { 'feature-analytics': '0.6.0' } })).toEqual(
+      []
+    )
+    // No manifest is "I cannot check", not "every id is wrong".
+    expect(check(named, HEADINGS, { surfaceIds: null })).toEqual([])
+  })
+
+  it('wants the four headings, in order', () => {
+    expect(check(GOOD, '\n## What changed\n## How to apply\n## Verify\n')).toEqual([
+      "n.md: missing the '## Conflicts to expect' heading",
+    ])
+    const swapped = '\n## How to apply\n## What changed\n## Conflicts to expect\n## Verify\n'
+    expect(check(GOOD, swapped)[0]).toMatch(/out of order/)
+  })
+
+  it('names the manifest the way its caller does', () => {
+    // The provenance file keeps the KIT's name in a renamed copy, so the literal cannot live in
+    // `upgrade-lib.mjs` — the rename would rewrite it into a filename that does not exist.
+    const problems = check(GOOD.replace('[feature-chat]', '[nope]'), HEADINGS, {
+      manifestFile: '.rocketflare.json',
+    })
+    expect(problems[0]).toContain('.rocketflare.json')
   })
 })

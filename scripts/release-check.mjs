@@ -24,8 +24,7 @@ import {
   compareVersions,
   isDeployable,
   isKitManifest,
-  NOTE_HEADINGS,
-  parseNote,
+  noteProblems,
   VERSION_RE,
 } from './lib/upgrade-lib.mjs'
 
@@ -56,53 +55,26 @@ export function releaseNotes(notesDir = 'docs/upgrades') {
     .sort((a, b) => compareVersions(a.version, b.version))
 }
 
+/**
+ * The note schema is `noteProblems` in `scripts/lib/upgrade-lib.mjs` — this is the I/O around it.
+ *
+ * It used to be stated here in full, and separately in `upgrade-notes.test.ts`, and the two had
+ * drifted: the test accepted a surface a later release RETIRED, this did not, so the tag gate
+ * called `docs/upgrades/0.2.0.md` and `0.3.0.md` broken over `feature-analytics` — notes the kit
+ * forbids rewriting. `retiredSurfaces` in the manifest is now the one list, and both read it.
+ */
 function checkNote(note, problems, { expectPrevious } = {}) {
-  const parsed = parseNote(read(note.file))
-  if (!parsed) {
-    problems.push(`${note.file}: no YAML frontmatter`)
-    return
-  }
-  const { data, body } = parsed
-  if (data.version !== note.version) {
-    problems.push(
-      `${note.file}: frontmatter version is '${data.version}', the filename says '${note.version}'`
-    )
-  }
-  if (expectPrevious !== undefined && (data.previous ?? 'null') !== expectPrevious) {
-    problems.push(
-      `${note.file}: previous is '${data.previous}', expected '${expectPrevious}' — the chain /rf-upgrade walks must be unbroken`
-    )
-  }
-  for (const key of ['breaking', 'manual']) {
-    if (typeof data[key] !== 'boolean') problems.push(`${note.file}: ${key} must be true or false`)
-  }
-  for (const key of ['migrations', 'areas', 'touches_surfaces', 'requires_surfaces']) {
-    if (!Array.isArray(data[key])) problems.push(`${note.file}: ${key} must be a list`)
-  }
-  for (const m of data.migrations ?? []) {
-    if (/\.sql$|^\d{4}_/.test(m)) {
-      problems.push(
-        `${note.file}: migrations names a file ('${m}') — describe the change; an adopter regenerates their own`
-      )
-    }
-  }
   const manifest = JSON.parse(read(MANIFEST_FILE))
-  const ids = new Set(manifest.surfaces.map(s => s.id))
-  for (const key of ['touches_surfaces', 'requires_surfaces']) {
-    for (const id of data[key] ?? []) {
-      if (!ids.has(id))
-        problems.push(
-          `${note.file}: ${key} names '${id}', which is not a surface in ${MANIFEST_FILE}`
-        )
-    }
-  }
-  let cursor = -1
-  for (const heading of NOTE_HEADINGS) {
-    const at = body.indexOf(`\n${heading}`)
-    if (at === -1) problems.push(`${note.file}: missing the '${heading}' heading`)
-    else if (at < cursor) problems.push(`${note.file}: '${heading}' is out of order`)
-    else cursor = at
-  }
+  problems.push(
+    ...noteProblems(read(note.file), {
+      file: note.file,
+      version: note.version,
+      expectPrevious,
+      surfaceIds: manifest.surfaces.map(s => s.id),
+      retiredSurfaceIds: manifest.retiredSurfaces ?? {},
+      manifestFile: MANIFEST_FILE,
+    })
+  )
 }
 
 function checkTag(tag, problems) {
