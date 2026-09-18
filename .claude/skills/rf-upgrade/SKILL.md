@@ -86,6 +86,11 @@ a failure, and the script deliberately does NOT stamp the new version until it i
 A reject means the adopter's copy has diverged there; their version usually wins on anything they
 changed on purpose.
 
+**Work each release note's `## How to apply` as a numbered list of self-contained steps**, top
+to bottom — a step never depends on a sentence elsewhere in the note, so do exactly what it says
+and do not go hunting for a referent. `## Conflicts to expect` is `path → what changed → what to
+do`, and `## Verify` is what you run at the end.
+
 Then the manual rows the report lists. `porting.md` beside this file has the per-area detail:
 migrations, the wrangler tomls, `.dev.vars.example`, `package.json`, registries. **Read it before
 touching any of them** — each has a way to get it wrong that is silent.

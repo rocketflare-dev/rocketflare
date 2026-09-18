@@ -56,6 +56,7 @@ import {
   classifyPath,
   countLines,
   matchesAny,
+  parseNote,
   splitDiff,
   stripIndexLines,
   translateBlock,
@@ -292,10 +293,15 @@ function main(argv) {
   // 3/6 — notes
   const notes = notesBetween(kit, to, { after: fromVersion, through: toVersion })
   const applicableNotes = notes.filter(n => {
-    const req = (n.text.match(/^requires_surfaces:\s*\[(.*)\]/m)?.[1] ?? '')
-      .split(',')
-      .map(s => s.trim())
-      .filter(Boolean)
+    // `parseNote`, never a regex over the raw text: a hand-rolled `^requires_surfaces:\s*\[(.*)\]`
+    // matches INLINE lists only, so a note written as a block sequence read as EMPTY and the whole
+    // release was deemed applicable to an app that does not have the surface. README.md permits
+    // both spellings, and `parseNote` is the one reader that knows it (and is quote-aware).
+    const declared = parseNote(n.text)?.data?.requires_surfaces
+    // `Array.isArray`, not `?? []`: a malformed `requires_surfaces: feature-agents` parses as a
+    // SCALAR, and `.some` on a string is a TypeError — a generic crash on the upgrade path, which
+    // is the failure shape this read was fixed to remove. An unreadable value means "not gated".
+    const req = Array.isArray(declared) ? declared : []
     return !req.some(id => absent.includes(id))
   })
   out(

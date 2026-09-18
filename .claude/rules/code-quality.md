@@ -49,7 +49,7 @@ Changing behaviour changes the doc in the same PR:
 
 | You changed | Update |
 |---|---|
-| any behaviour an adopted copy could want | an entry in `docs/upgrades/unreleased.md` — the ONLY thing that carries a change into the copies people are running (`docs/upgrades/README.md`); CI fails a PR touching `apps/**` or `packages/**` without one |
+| any behaviour an adopted copy could want | an entry in `docs/upgrades/unreleased.md` — the ONLY thing that carries a change into the copies people are running (`docs/upgrades/README.md`); CI fails a PR touching `apps/**` or `packages/**` without one. **Write it in the note format** (`docs/upgrades/README.md` § "Writing one"): four headings, paragraph 1 of "What changed" is lifted verbatim into `CHANGELOG.md` so it is one standalone sentence of ≤ 40 words, no `###` sub-headings, "How to apply" numbered and self-contained, ≤ 150 lines, rationale linked from `docs/CONCEPTS.md` rather than restated |
 | a capability, a mode, a default | `docs/CONCEPTS.md` section + its "Known gaps" |
 | a command, an env name, a setup step | `SETUP.md`, `apps/web/.dev.vars.example`, `README.md` commands; root `package.json` scripts if a new package script should be reachable from the root; `scripts/bootstrap.mjs` (the step that runs it and its verify line) and `.claude/skills/rf-setup/SKILL.md` (the step table) |
 | a skill or its flags | the skill's `SKILL.md` (and its companion `checklist.md` / `reference.md`), `README.md` "Getting started", `docs/CONCEPTS.md` §13 |

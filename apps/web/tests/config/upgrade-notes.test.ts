@@ -202,3 +202,34 @@ manual: false`
     expect(problems[0]).toContain('.rocketflare.json')
   })
 })
+
+/**
+ * The house format (`docs/upgrades/README.md`): `## What changed` opens with one standalone
+ * summary sentence — `summaryOf()` lifts it verbatim into `CHANGELOG.md` — and continues as a
+ * bullet list. It is never an essay with chapters. Sub-headings under it are precisely what turned
+ * released notes into 600-800 line documents at roughly 3:1 rationale-to-instruction; rationale
+ * belongs in `docs/CONCEPTS.md`, which is the decision record, and is linked rather than restated.
+ *
+ * This lives here rather than in `noteProblems` deliberately. `scripts/release-check.mjs --tag`
+ * calls that function to prove a RELEASED tag is still intact, and a style rule has no business
+ * failing a tag that shipped long ago — the same reasoning that keeps `retiredSurfaces` permissive.
+ */
+const whatChanged = (text: string) =>
+  (parseNote(text)?.body ?? '').split('## What changed')[1]?.split(/\n## /)[0] ?? ''
+
+const subHeadings = (section: string) => section.split('\n').filter(l => /^###+\s/.test(l))
+
+describe('house format', () => {
+  it.each([...releases.map(v => `${v}.md`), 'unreleased.md'])(
+    '%s keeps "What changed" free of sub-headings',
+    file => {
+      expect(subHeadings(whatChanged(read(file)))).toEqual([])
+    }
+  )
+
+  it('detects a sub-heading rather than passing trivially', () => {
+    // Every assertion above is vacuous if the extraction silently returns nothing.
+    const essay = '---\nversion: 0.9.0\n---\n## What changed\n### A chapter\nx\n## How to apply\n'
+    expect(subHeadings(whatChanged(essay))).toEqual(['### A chapter'])
+  })
+})

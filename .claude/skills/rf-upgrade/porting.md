@@ -3,6 +3,12 @@
 The per-area detail behind step 3 of `SKILL.md`. Each section is a thing `pnpm kit:upgrade`
 deliberately refuses to do automatically, and why doing it the obvious way goes wrong quietly.
 
+Release notes themselves read the same way every time: `## What changed` opens with one summary
+sentence and then one bullet per change, `## How to apply` is a numbered list of self-contained
+steps to work top to bottom, `## Conflicts to expect` is `path → what changed → what to do`, and
+`## Verify` is commands. The reasoning behind a change is not in the note — it is linked from
+`docs/CONCEPTS.md`.
+
 ## Reading the plan
 
 `.upgrade/work/<version>/plan.json` has one entry per changed file. The classes:
