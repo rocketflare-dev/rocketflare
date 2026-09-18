@@ -190,10 +190,29 @@ export const VERSION_RE: RegExp
 /** Anchored `## <version>` — `includes('## 0.6.1')` also matches `## 0.6.10`. */
 export function hasChangelogSection(text: string, version: string): boolean
 
+/** One porting note's line in a `CHANGELOG.md` section. */
+export interface ChangelogEntry {
+  /** The plugin's id — rendered only when a release covers more than one (D31). */
+  id?: string | null
+  summary: string
+  /** Repo-root-relative path of the note, as the link target. */
+  note: string
+}
+export function changelogSection(
+  version: string,
+  date: string,
+  entries: readonly ChangelogEntry[]
+): string
+export function prependChangelogSection(text: string, section: string): string
+
 /** What needs a porting note: `apps/` or `packages/` source, tests and markdown excluded. */
 export const BEHAVIOUR_PATH_RE: RegExp
 export const BEHAVIOUR_EXEMPT_RE: RegExp
-export function behaviourFiles(changed: readonly string[] | undefined): string[]
+export function behaviourFiles(
+  changed: readonly string[] | undefined,
+  /** `within` scopes the predicate to a subdirectory — the plugin monorepo (D31). */
+  options?: { within?: string }
+): string[]
 
 /**
  * A tiny semver range matcher for `requires.kit` (D31). Supports `>=` `>` `<=` `<` `=`, a bare
