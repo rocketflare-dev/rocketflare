@@ -234,6 +234,48 @@ recording a surface that is wrong** — handing the next person a dozen bogus "c
 instruction to bump the version for a change nobody made. The generator now refuses to run without
 dependencies and fails on any `TS2307`.
 
+### `pnpm plugin check` becomes the agent's oracle
+
+It checked six things and deliberately said what was wrong rather than how to fix it — right for a
+person with `reference.md` open beside them, **wrong for an agent**, and installs are now performed
+by agents as often as by people. It is now fifteen checks, every failure formatted
+`<file>:<line> <what is wrong> — <the exact change>`, with `--json` carrying the same results and
+**CI running the same check**, so the local and the gating oracle cannot disagree.
+
+New: the anchor is valid JSON at all; every manifest field against its legal values (naming the
+field, not "invalid manifest"); `requires.pluginApi`; `workerExports` in **both** directions (a class
+the half does not export is a deploy Cloudflare refuses for a `class_name` nothing exports; a class
+the manifest does not name is invisible to provisioning); a `durable_object` binding with no
+`hooks.onTenantDeleted`; a declared dependency missing from the host's `package.json`; a declared
+dependency whose range the host contradicts; and a plugin declaring tenant-scoped tables with no test
+proving another organisation cannot read them.
+
+That last one had been mandatory in prose since D31 and **enforced by nothing**. The check proves
+such a test EXISTS, not that it is correct, and says so in its own message; combined with
+`@testkit`'s refusal of a fake `db`, the cheap wrong version is now hard to write.
+
+**Severity is two-tier.** Every NEW rule warns for a plugin declaring no `requires.pluginApi` and
+fails for one that does. That is forced rather than chosen: the second gate pass installs a released
+plugin predating all of this, which cannot be retroactively changed. The six pre-existing checks
+stayed unconditional failures, and `warnings` is a separate list from `failures` so `ok` keeps
+meaning "this exits 0".
+
+**A dependency clash warns rather than refuses.** A plugin needing a newer major is how a shared
+dependency moves at all, so refusing would make an ordinary upgrade impossible without editing
+somebody else's manifest. It surfaces as a **human** step, plus `dependencyClashes` in `--json` and a
+warning on stderr as `pnpm add` is about to overwrite the range.
+
+**One install bug fixed**: `m.subdir ?? source.subdir ?? ''` falls through only on nullish, so a
+manifest shipping `"subdir": ""` beat an explicit `--subdir` flag and recorded the surface as
+root-relative, breaking `plugin upgrade` later. Hit for real installing from a monorepo.
+
+**Comment-stripping is now the rule for every source-scanning check**, and this is the part worth
+carrying into your own code. Three checks matched substrings against raw source, and one was
+**pre-existing kit code** — `workerExports` tested `\b<name>\b`, which a class named only in a comment
+satisfied. Another was caught by its own fixture, which passed while plainly breaking the rule.
+**A structural check must read comment-free code, or it validates prose**; a green check that proves
+nothing is worse than no check at all.
+
 ## How to apply
 
 There is no migration and no schema change.
@@ -314,6 +356,13 @@ beyond that point is not caught. Drizzle tables are exempt — they summarise to
 `table "users" { id, email, … }`, which keeps the column names a plugin points a foreign key at
 inside the checked region.
 
+**Run `pnpm plugin check` after upgrading.** It is the fastest way to find what this release expects
+of a plugin you own, because every failure carries its own fix. Declare `requires.pluginApi` to opt
+into strict checking; until you do, the new rules warn rather than fail.
+
+A reported dependency clash is information, not an error: decide whether your plugin or the other
+declaration should move, and edit the manifest that should lose.
+
 ## Conflicts to expect
 
 `apps/web/src/api/services/tenants.ts` and `apps/web/src/api/services/storage.ts` if you have edited
@@ -345,6 +394,10 @@ this release reaches the kit's default branch.
 
 `.rocketflare.json` gains `kit.pluginApi` and `.github/workflows/gate.yml` gains one step. Neither
 conflicts with an app's own edits unless you have restructured that workflow.
+
+`scripts/plugin.mjs` and `scripts/lib/plugin-lib.mjs` are substantially rewritten — three separate
+workstreams touched them this release — so an app that has edited either should expect rejects and
+re-apply its own changes on top. `.github/workflows/ci.yml` gains a job.
 
 ## Verify
 
@@ -421,3 +474,14 @@ node scripts/plugin-api-doc.mjs      # exit 3: "removed  @/plugins/api :: Reques
 ```
 
 And the generator must be idempotent — running it twice leaves no diff.
+
+Point it at a plugin you have deliberately broken — a manifest field with a bad value, a
+`workerExports` name nothing exports, a `durable_object` binding with no `onTenantDeleted`, a missing
+isolation test:
+
+```bash
+pnpm plugin check           # one line per failure, each naming the file and the exact edit
+pnpm plugin check --json    # the same results as data, warnings separate from failures
+```
+
+The human and `--json` forms must report identically, and CI runs the same check.
