@@ -1,0 +1,45 @@
+name: Notify plugins
+
+# **A kit release used to notify nothing.** There was no `schedule` and no `repository_dispatch`
+# anywhere in this repository, so a plugin outside `defaultPlugins` got no signal that the kit it
+# declares a range against had moved — its CI would first discover a break whenever someone next
+# happened to push to it, which for a stable plugin can be months.
+#
+# Two triggers, because they fail in different directions. The dispatch is immediate and precise
+# but depends on a token and on the receiving repository still existing; the weekly schedule is the
+# backstop that keeps working when the dispatch silently stops. Neither deploys anything.
+on:
+  push:
+    tags: ['*']
+  schedule:
+    # Mondays, early. A backstop wants to be boring and predictable, not clever.
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Without the token this job is a no-op that SAYS so. It is deliberately not a failure: a
+      # fork, or a checkout by someone who has no plugin repositories, must not show a red run for
+      # a notification nobody is waiting on.
+      - name: Tell the plugin repositories the kit moved
+        env:
+          GH_TOKEN: ${{ secrets.PLUGINS_DISPATCH_TOKEN }}
+          KIT_REF: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "::notice::PLUGINS_DISPATCH_TOKEN is not set — skipping. Add a fine-grained PAT with"
+            echo "::notice::Contents: read + Metadata: read on the plugin repositories to enable this."
+            exit 0
+          fi
+          for repo in rocketflare-dev/rocketflare-plugins; do
+            echo "::group::dispatch → $repo"
+            gh api "repos/$repo/dispatches" \
+              -f event_type=kit-released \
+              -F "client_payload[kit_ref]=$KIT_REF" \
+              || echo "::warning::could not dispatch to $repo — is the token scoped to it?"
+            echo "::endgroup::"
+          done
