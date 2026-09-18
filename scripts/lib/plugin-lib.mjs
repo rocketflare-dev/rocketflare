@@ -1,11 +1,11 @@
 /**
- * The pure half of `scripts/plugin.mjs` (D31, Phase B): the plugin id rules, the five barrel
+ * The pure half of `scripts/plugin.mjs` (D31, Phase B): the plugin id rules, the six barrel
  * lines, the file-root classification, the requirement check, the surface builder and the plan
  * text. No I/O and nothing runs at import time, so `apps/web/tests/config/plugin-lib.test.ts` can
  * drive every rule against a FIXTURE — which matters because most of them are rules about a plugin
  * this checkout does not have installed.
  *
- * The barrel writer is the part to read twice. Installing a plugin IS five lines; if this file
+ * The barrel writer is the part to read twice. Installing a plugin IS six lines; if this file
  * writes them differently from the way a person would, every install produces a lint diff and the
  * gate stops passing by construction. So it inserts in sorted order, it is idempotent (running
  * `add` twice writes nothing), and `remove` is its exact inverse — the test asserts the round trip
@@ -21,8 +21,19 @@ import { isVendored, satisfiesResult } from './upgrade-lib.mjs'
 /** The same rule `@rocketflare/shared/plugins` enforces at the type level. */
 export const PLUGIN_ID_RE = /^[a-z][a-z0-9-]*$/
 
-/** Barrel FILENAMES. An id that collides with one makes `./<id>` ambiguous with a barrel import. */
-export const RESERVED_PLUGIN_IDS = Object.freeze(['index', 'server', 'ui', 'schema', 'types'])
+/**
+ * Barrel FILENAMES. An id that collides with one makes `./<id>` ambiguous with a barrel import —
+ * and worse, `apps/web/src/plugins/<name>.ts` would then read as the entry of a plugin called
+ * `<name>` to every rule that derives a plugin id from a path. Add a barrel, add its stem here.
+ */
+export const RESERVED_PLUGIN_IDS = Object.freeze([
+  'index',
+  'server',
+  'ui',
+  'schema',
+  'types',
+  'worker-exports',
+])
 
 /** `null` when `id` is a legal plugin id, else the sentence saying why it is not. */
 export function pluginIdProblem(id) {
@@ -40,12 +51,16 @@ export function camelId(id) {
   return id.replace(/-([a-z0-9])/g, (_, c) => c.toUpperCase())
 }
 
-// ---------------------------------------------------------------- the five barrels
+// ---------------------------------------------------------------- the six barrels
 
 /**
- * The five barrel lines, as data. `half` is the file under the plugin's tree whose PRESENCE means
+ * The six barrel lines, as data. `half` is the file under the plugin's tree whose PRESENCE means
  * the plugin ships that half — an install writes a line only for the halves that arrived, so a
  * plugin with no CLI command does not get a CLI import of a file that is not there.
+ *
+ * Two of the six are `export *` rather than a tuple entry, and both carry `empty`: a TypeScript
+ * file with no top-level import or export is a SCRIPT, not a module, so removing the last plugin
+ * from one would make its single importer TS2306 and stop the whole app typechecking.
  */
 export const BARRELS = Object.freeze({
   shared: {
@@ -77,10 +92,26 @@ export const BARRELS = Object.freeze({
     // With no plugin installed this file is a comment and nothing else, and a TypeScript file with
     // no top-level import or export is a SCRIPT, not a module — so `db/schema/index.ts`'s
     // `export * from '../plugins/schema'` is TS2306 "is not a module" and the whole app stops
-    // typechecking. The other four barrels always declare a const, so only this one needs it.
+    // typechecking. The four LIST barrels always declare a const; the two `export *` ones
+    // (this and `worker`) are the ones that need the marker.
     empty: 'export {}',
     specifier: id => `./${id}/db/schema`,
     half: id => `apps/web/src/plugins/${id}/db/schema/index.ts`,
+  },
+  /**
+   * Durable Object and Workflow CLASSES (D31). Cloudflare resolves a binding's `class_name`
+   * against the named exports of the Worker's ENTRY module, so a plugin shipping one needs a line
+   * in `src/worker.ts` — and this barrel is that line, written once and for ever, so no install
+   * ever edits the entry itself. Before it, the class was a printed instruction in the plan, which
+   * an unattended install simply did not perform.
+   */
+  worker: {
+    file: 'apps/web/src/plugins/worker-exports.ts',
+    constName: null, // `export *`, not a tuple
+    suffix: null,
+    empty: 'export {}',
+    specifier: id => `./${id}/worker-exports`,
+    half: id => `apps/web/src/plugins/${id}/worker-exports.ts`,
   },
   cli: {
     file: 'apps/cli/src/plugins/index.ts',
@@ -93,7 +124,7 @@ export const BARRELS = Object.freeze({
 
 export const BARREL_KINDS = Object.freeze(Object.keys(BARRELS))
 
-/** `exampleFeatureServer`, and so on. `null` for the schema barrel, which exports no name. */
+/** `exampleFeatureServer`, and so on. `null` for an `export *` barrel, which exports no name. */
 export function barrelExportName(kind, id) {
   const { suffix } = BARRELS[kind]
   return suffix ? `${camelId(id)}${suffix}` : null
@@ -710,9 +741,6 @@ export function renderAddPlan(plan) {
       `add \`${key}=\` to apps/web/.dev.vars.example and apps/web/.dev.vars, then ` +
         `run \`pnpm provision secrets <env>\` — a secret is never a [vars] key`
     )
-  }
-  for (const e of m.workerExports ?? []) {
-    step(`export { ${e} } from its plugin in apps/web/src/worker.ts (a DO or Workflow class)`)
   }
   step('pnpm lint && pnpm typecheck && pnpm test && pnpm build')
 

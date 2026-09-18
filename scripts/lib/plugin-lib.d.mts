@@ -9,12 +9,17 @@ export const RESERVED_PLUGIN_IDS: readonly string[]
 export function pluginIdProblem(id: unknown): string | null
 export function camelId(id: string): string
 
-export type BarrelKind = 'shared' | 'server' | 'ui' | 'schema' | 'cli'
+export type BarrelKind = 'shared' | 'server' | 'ui' | 'schema' | 'worker' | 'cli'
 export interface BarrelDefinition {
   file: string
-  /** `null` for the schema barrel, which is `export *` rather than a tuple. */
+  /** `null` for the two `export *` barrels (`schema`, `worker`), which declare no tuple. */
   constName: string | null
   suffix: string | null
+  /**
+   * The "this file is still a module" marker an `export *` barrel falls back to when its last
+   * plugin goes. Absent on the four list barrels, which always declare a const.
+   */
+  empty?: string
   specifier(id: string): string
   /** The file whose presence means the plugin ships this half. */
   half(id: string): string

@@ -1203,6 +1203,28 @@ function cmdCheck(_args, host) {
     for (const f of rejects) failures.push(`${id}: ${f} — an upgrade left work behind`)
 
     const anchor = JSON.parse(readFileSync(abs(s.anchor), 'utf8'))
+    // A DO or Workflow class reaches the Worker through the sixth barrel and nowhere else, so
+    // `workerExports` is checkable rather than advisory: the half has to be on disk (the barrel
+    // loop above proves the LINE) and it has to export every name the manifest declares. A class
+    // in the file but not in the manifest is invisible to provisioning, which is what writes its
+    // `[[durable_objects.bindings]]` / `[[workflows]]` block; a name in the manifest but not in the
+    // file is a binding pointed at nothing, and `wrangler deploy` refuses the whole script for it.
+    const declaredExports = anchor.workerExports ?? []
+    if (declaredExports.length > 0) {
+      const half = BARRELS.worker.half(id)
+      if (!existsSync(abs(half))) {
+        failures.push(
+          `${id}: declares workerExports (${declaredExports.join(', ')}) and ships no ${half}`
+        )
+      } else {
+        const source = readFileSync(abs(half), 'utf8')
+        for (const name of declaredExports) {
+          if (!new RegExp(`\\b${name}\\b`).test(source)) {
+            failures.push(`${id}: ${half} does not export ${name}, which its manifest declares`)
+          }
+        }
+      }
+    }
     if (anchor.version && s.source?.version && anchor.version !== s.source.version) {
       failures.push(
         `${id}: the surface says ${s.source.version}, ${s.anchor} says ${anchor.version}`

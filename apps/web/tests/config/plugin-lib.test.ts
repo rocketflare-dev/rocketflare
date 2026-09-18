@@ -3,7 +3,7 @@
  *
  * Almost everything here is a rule about a plugin THIS checkout does not have installed, so almost
  * everything is exercised against a fixture. The two that are not: the barrel writer is checked
- * against the five real barrel files (if it does not reproduce their bytes, every install leaves a
+ * against the six real barrel files (if it does not reproduce their bytes, every install leaves a
  * lint diff and the gate stops passing by construction), and the last block drives the script
  * itself — `export` into a temp directory, then `add` back with a fresh id, asserting that a plan
  * run writes NOTHING. The `config` project: no database, no network.
@@ -89,7 +89,7 @@ describe('plugin ids', () => {
   })
 
   it('refuses a barrel filename', () => {
-    for (const reserved of ['index', 'server', 'ui', 'schema', 'types']) {
+    for (const reserved of ['index', 'server', 'ui', 'schema', 'types', 'worker-exports']) {
       expect(pluginIdProblem(reserved)).toMatch(/barrel filename/)
     }
   })
@@ -155,7 +155,12 @@ describe('the barrel writer', () => {
     'removes exactly what it added, for every barrel, against the REAL files',
     () => {
       // If a round trip is not byte-identical, `pnpm plugin add` produces a commit that fails lint.
+      // Only the barrels whose HALF the subject ships: an install writes a line per half that
+      // arrived, so a plugin with no Durable Object has no line in the worker barrel and a plugin
+      // with no CLI command has none in the CLI one. Asserting otherwise tests the fixture, not
+      // the writer.
       for (const kind of BARREL_KINDS) {
+        if (!existsSync(path.join(REPO_ROOT, BARRELS[kind].half(subject as string)))) continue
         const original = read(BARRELS[kind].file)
         expect(hasBarrelLine(original, kind, subject as string)).toBe(true)
         const without = removeBarrelLine(original, kind, subject as string)
@@ -193,6 +198,39 @@ describe('the barrel writer', () => {
     // stopped being the same file, and a test that only ever saw one would not have noticed.
     const rebuilt = installedHere.reduce((text, s) => addBarrelLine(text, 'schema', s.id), bare)
     if (installedHere.length > 0) expect(rebuilt).toBe(real)
+  })
+
+  /**
+   * The sixth barrel, and the reason it exists rather than a `coreEdits` entry or a printed line.
+   *
+   * Cloudflare resolves a binding's `class_name` against the named exports of the Worker's ENTRY
+   * module, so a plugin shipping a Durable Object or a Workflow needs a line in `src/worker.ts`.
+   * That used to be a numbered step in the install plan, which an unattended install (CI applies
+   * nothing it reads) simply did not perform: the tree built, deployed, and every request that
+   * reached the binding failed. `coreEdits` would work and is the wrong shape — it would have every
+   * class-shipping plugin mutating `worker.ts`, which is what a barrel exists to prevent.
+   */
+  it('writes one `export *` into the worker barrel, and worker.ts re-exports it permanently', () => {
+    expect(barrelLines('worker', 'orders')).toEqual(["export * from './orders/worker-exports'"])
+    expect(BARRELS.worker.half('orders')).toBe('apps/web/src/plugins/orders/worker-exports.ts')
+    // The one line in the entry module. It names no plugin, so no install ever edits this file.
+    expect(read('apps/web/src/worker.ts')).toContain("export * from './plugins/worker-exports'")
+  })
+
+  /**
+   * Driven with a FIXTURE id rather than what is installed, because no plugin here ships a class —
+   * and that is the state this has to hold in: `worker.ts` does `export *` from this barrel, and a
+   * TypeScript file with no top-level export is a SCRIPT rather than a module (TS2306 at the
+   * importer), so a bare kit must still carry the marker. The schema barrel's equivalent test can
+   * use the installed set because `example-feature` does ship tables.
+   */
+  it('keeps the worker barrel a MODULE with no plugin in it, and round-trips byte for byte', () => {
+    const real = read(BARRELS.worker.file)
+    expect(real).toContain('export {}')
+    const added = addBarrelLine(real, 'worker', 'orders')
+    expect(added).toContain("export * from './orders/worker-exports'")
+    expect(added).not.toContain('export {}')
+    expect(removeBarrelLine(added, 'worker', 'orders')).toBe(real)
   })
 
   it('points each barrel at the file whose presence means the plugin ships that half', () => {
@@ -586,7 +624,7 @@ describe('the install plan', () => {
       { path: 'migrations/install/0001_seed.sql', role: 'fragment' as const },
     ],
     byRoot: { 'apps/web/src/plugins/orders/': 1 },
-    barrels: ['shared', 'server', 'ui', 'schema', 'cli'] as const,
+    barrels: ['shared', 'server', 'ui', 'schema', 'worker', 'cli'] as const,
     verify: 'The Orders page lists one order.',
   }
 
@@ -606,7 +644,10 @@ describe('the install plan', () => {
     expect(text).toContain('add `ORDERS_TOKEN=` to apps/web/.dev.vars.example')
     expect(text).toContain('pnpm provision secrets <env>')
     expect(text).not.toMatch(/\[vars\] ORDERS_TOKEN/)
-    expect(text).toContain('export { OrdersWorkflow }')
+    // NOT a step any more: `workerExports` became the sixth barrel, so the class reaches
+    // `src/worker.ts` through a line `plugin add` writes rather than one a person is told to write.
+    expect(text).not.toContain('apps/web/src/worker.ts')
+    expect(text).toContain('apps/web/src/plugins/worker-exports.ts')
     expect(text).toContain('paste migrations/install/0001_seed.sql')
     expect(text).toContain('pnpm lint && pnpm typecheck && pnpm test && pnpm build')
   })
