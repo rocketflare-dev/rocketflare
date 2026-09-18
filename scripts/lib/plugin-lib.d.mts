@@ -2,7 +2,7 @@
  * Hand-written types for `plugin-lib.mjs` (the workspace has no `allowJs`). Keep in step with the
  * exports there; `apps/web/tests/config/plugin-lib.test.ts` is what typechecks against this.
  */
-import type { PluginApiVersions } from './plugin-api.d.mts'
+import type { Ledger, PluginUses } from './surface.d.mts'
 import type { Surface } from './upgrade-lib.d.mts'
 
 export const PLUGIN_ID_RE: RegExp
@@ -86,20 +86,11 @@ export function nextPluginMigrationTag(
   pluginId: string
 ): string
 
+/** A required peer plugin: an id alone asks for presence, `minVersion` adds a FLOOR. */
+export type PluginRequirement = string | { id: string; minVersion?: string | null }
 export interface PluginRequires {
-  kit?: string
   surfaces?: string[]
-  plugins?: string[]
-  /**
-   * The plugin CONTRACT version this plugin was written against (`docs/plugin-api.md`) — an
-   * integer, spelled as a string or a number. A different question from `requires.kit`, which is
-   * the range of kit RELEASES it may be installed into; conflating the two is what made every
-   * plugin need re-releasing for a kit version that never touched the plugin surface.
-   *
-   * It is also the switch between the audit's two tiers: declaring it opts a plugin into being
-   * FAILED by rules it can satisfy, rather than merely warned.
-   */
-  pluginApi?: string | number
+  plugins?: PluginRequirement[]
 }
 export interface PluginManifest {
   id: string
@@ -108,6 +99,21 @@ export interface PluginManifest {
   repo?: string
   subdir?: string
   anchor?: string
+  /**
+   * The oldest kit release this plugin supports — ONE version, no ceiling, and a TOP-LEVEL key.
+   *
+   * It replaces `requires.kit`, which was a semver range and therefore a prediction about kits
+   * that did not exist yet. Which future kit still fits is measured by `uses` against the kit's
+   * ledger instead of guessed at here.
+   */
+  minKit?: string
+  /**
+   * What this plugin uses of the host surface: `{ [entry]: [symbol names] }`.
+   *
+   * **Derived, never hand-written** — `pnpm plugin export` writes it from the plugin's own
+   * imports. It is one side of the set difference that replaced `requires.pluginApi`.
+   */
+  uses?: PluginUses
   paths?: string[]
   registries?: string[]
   requires?: PluginRequires
@@ -136,26 +142,33 @@ export function unsupportedForKit(
   plugins: Array<{
     id: string
     source?: { repo?: string; subdir?: string } | null
-    requires?: { kit?: string } | null
+    minKit?: string | null
   }>,
   at: { kitRepo?: string | null; version?: string | null }
-): Array<{ id: string; requires: { kit: string } }>
+): Array<{ id: string; minKit?: string | null }>
+
+/**
+ * A plugin's declared floor. **Top level only** — a fallback to `requires.minKit` would disagree
+ * with `.github/workflows/plugin-ci.yml`, which reads the top-level key and nothing else.
+ */
+export function floorOf(m: { minKit?: string | null } | null | undefined): string | null
 
 export function checkRequirements(input: {
   requires?: PluginRequires
+  /** The plugin's floor. Omitted or null, no kit version is checked against it. */
+  minKit?: string | null
+  /** What the plugin uses of the host surface; with `ledger`, the observed compatibility check. */
+  uses?: PluginUses | null
+  /** The kit's ledger. Omitted or null, the surface is not checked — the CALLER owns that. */
+  ledger?: Ledger | null
   kitVersion: string
   presentSurfaces?: readonly string[]
   installedPlugins?: ReadonlyArray<{ id: string; version?: string | null }>
   vendored?: boolean
-  /**
-   * `{ current, minSupported }` from `readPluginApi(manifest)`. Omitted, the plugin API version is
-   * not checked at all — which is what keeps every existing caller and test unchanged.
-   */
-  pluginApi?: PluginApiVersions | null
 }): string[]
-export function parsePluginRequirement(entry: string | { id: string; range?: string }): {
+export function parsePluginRequirement(entry: PluginRequirement): {
   id: string
-  range: string | null
+  minVersion: string | null
 }
 /**
  * Re-exported from `upgrade-lib.mjs`, which owns the one implementation (two that disagreed about
@@ -231,14 +244,6 @@ export interface Diagnostic {
 }
 export function renderDiagnostic(d: Diagnostic): string
 export function jsonKeyLine(source: string, keyPath: string): number | null
-
-/**
- * Whether a check a PRE-CONTRACT plugin cannot satisfy fails the audit or only reports it.
- * `fail` exactly when the plugin declares `requires.pluginApi` — the same opt-in the import rule
- * uses, and the permanent rule for a third-party plugin rather than a transition hack.
- */
-export type AuditSeverity = 'fail' | 'warn'
-export function auditSeverity(manifest: { requires?: { pluginApi?: unknown } } | null): AuditSeverity
 
 /** Everything wrong with a manifest, each naming the FIELD and its legal values. */
 export function pluginManifestProblems(

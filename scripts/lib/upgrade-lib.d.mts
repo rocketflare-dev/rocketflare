@@ -26,11 +26,14 @@ export interface Surface {
   /** `kind: 'plugin'` only (D31): where the plugin came from. */
   source?: PluginSource
   installedAt?: string
+  /**
+   * The oldest kit release this plugin supports — one version, no ceiling (D31). `null` when the
+   * plugin declared none, which means no kit version is ever checked against it.
+   */
+  minKit?: string | null
   requires?: {
-    /** `null` when the plugin declared no range — never `'*'`, which would read as "checked". */
-    kit?: string | null
     surfaces?: string[]
-    plugins?: string[]
+    plugins?: Array<string | { id: string; minVersion?: string | null }>
   }
   history?: HistoryEntry[]
 }
@@ -215,25 +218,6 @@ export function behaviourFiles(
 ): string[]
 
 /**
- * A tiny semver range matcher for `requires.kit` (D31). Supports `>=` `>` `<=` `<` `=`, a bare
- * version, `^`, `~`, `*`, space-separated conjunctions, `||` alternation and a space after the
- * operator. A range it cannot read is REPORTED through `problem` — it is never thrown, because the
- * throw surfaced as a generic exit 1 where the documented answer is "requirement unmet".
- */
-export interface SatisfiesResult {
-  ok: boolean
-  /** The sentence to show when the range is unreadable; null when the answer is a real yes/no. */
-  problem: string | null
-}
-export function satisfiesResult(
-  version: string,
-  range: string | null | undefined
-): SatisfiesResult
-
-/** The boolean half of `satisfiesResult`: an unreadable range answers `false`. */
-export function satisfies(version: string, range: string | null | undefined): boolean
-
-/**
  * True when a plugin ships inside the kit itself (`source.repo` is the kit's, no subdirectory).
  * The ONE implementation; `plugin-lib.mjs` re-exports it.
  */
@@ -260,13 +244,19 @@ export function defaultPluginEntryProblems(
 export interface ResolvedDefaultPlugin {
   ok: boolean
   reason?: string
-  requiresKit?: string | null
+  /** The plugin's declared floor — one bare `X.Y.Z`, read from the TOP level only. */
+  minKit?: string | null
+  /**
+   * A `requires.kit` range the source still declares, carried out so the caller can name the
+   * field and its replacement. Never used as a floor: there is no range machinery left to read it.
+   */
+  legacyRange?: string | null
   version?: string | null
 }
 
 /**
  * Why `version` must not be released — one sentence per problem. Pure; `resolve` does the I/O.
- * A vendored entry (`kitRepo`, no subdir) is exempt from the range check.
+ * A vendored entry (`kitRepo`, no subdir) is exempt from the floor check.
  */
 export function defaultPluginProblems(
   entries: readonly DefaultPluginEntry[],

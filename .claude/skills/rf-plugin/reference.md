@@ -14,7 +14,7 @@ looking things up mid-run.
 | 3 | unreachable with no cached mirror | a bad repo URL, or offline with nothing under `.upgrade/plugins/` — `--no-fetch` reuses the cache |
 | 4 | applied with rejects (`upgrade`) | work remains; the version stamp is deliberately withheld until the `*.rej` files are gone |
 | 5 | no `rocketflare-plugin.json` at the SOURCE | the path or repo is not a plugin. That is the filename at a plugin REPOSITORY's root; the copy inside a host is `plugin.json` |
-| 6 | a requirement is unmet | `requires.kit` / `requires.surfaces` / `requires.plugins`. **Nothing is written** |
+| 6 | a requirement is unmet | the `minKit` floor, `requires.surfaces`, `requires.plugins`, or a symbol its `uses` names that this kit's ledger does not carry. **Nothing is written** |
 | 7 | the target path exists | most often "plugin '<id>' is already installed — `pnpm plugin upgrade <id>` moves it forward" |
 
 ## The manifest — `rocketflare-plugin.json` in the repo, `plugin.json` in the host
@@ -36,6 +36,12 @@ plugin is the worked example — `apps/web/src/plugins/example-feature/plugin.js
   "repo": "https://github.com/rocketflare-dev/rocketflare.git",
   "subdir": "",
   "anchor": "apps/web/src/plugins/example-feature/plugin.json",
+  "minKit": "0.8.0",
+  "uses": {
+    "@/plugins/api": ["createRouter", "requestCtx", "RequestCtx", "requireFeature", "validate"],
+    "@/db/schema/kit": ["tenantIsolation", "tenantRef", "tenants", "timestamps"],
+    "@testkit/integration": ["createTestEnv", "request", "setupTestDatabase"]
+  },
   "paths": [
     "apps/web/src/plugins/example-feature/**",
     "packages/shared/src/plugins/example-feature/**",
@@ -48,7 +54,7 @@ plugin is the worked example — `apps/web/src/plugins/example-feature/plugin.js
     "packages/shared/src/plugins/index.ts",
     "apps/cli/src/plugins/index.ts"
   ],
-  "requires": { "kit": ">=0.5.0 <1.0.0", "pluginApi": "1", "surfaces": [], "plugins": [] },
+  "requires": { "surfaces": [], "plugins": [] },
   "dependencies": { "apps/web": {}, "packages/shared": {}, "apps/cli": {} },
   "bindings": [],
   "crons": [],
@@ -71,15 +77,26 @@ Field notes, in the order they bite:
   required). That last one is a convention rather than something the tooling derives — nothing
   anywhere turns an id into a table name — so what is enforced is the COLLISION: `check` fails when
   two installed plugins declare the same table name.
-- **`requires.pluginApi`** is a whole number (as a string), never a range: which version of the
-  PLUGIN CONTRACT this plugin was written against (`docs/plugin-api.md`). `requires.kit` answers a
-  different question — which kit RELEASES it may be installed into — and conflating the two is what
-  made every pin a guess. **Declared means strictly checked; undeclared means warned**, permanently,
-  because a plugin released before the field existed cannot retroactively declare one.
+- **`minKit`** is a TOP-LEVEL key — a sibling of `id` and `version`, never nested under `requires`,
+  which is refused by name. One bare `X.Y.Z`: a FLOOR, no ceiling, no range language (`>=`, `^` and
+  a second bound are all errors). It says how old a kit this plugin still works with, which is the
+  only half of compatibility a plugin can state honestly.
+- **`uses`** is the other half and is **DERIVED, never hand-written**: `{ "<entry>": ["<symbol>"] }`,
+  the host symbols this plugin imports, written by `pnpm plugin export` from its own files. The kit
+  emits the matching `## Surface ledger` in `docs/plugin-api.md`, and compatibility is the set
+  difference — every symbol `uses` names that the ledger does not carry fails the install, naming
+  the symbol and the import that replaces it. A hand-written `uses` is a claim rather than a
+  measurement, which is the failure mode all of this replaced.
+- **`requires.kit` and `requires.pluginApi` are gone**, and a manifest still carrying either fails
+  LOUDLY naming the replacement rather than being ignored. Both were predictions about kits that did
+  not exist yet, and both went stale (`docs/CONCEPTS.md` §16, decision 5c).
 - **`repo` is required** and `subdir` optional — a plugin you cannot fetch again cannot be upgraded.
   `repo` equal to the kit's own repository with an empty `subdir` means **vendored**: `upgrade`
-  defers to `pnpm kit:upgrade` and `requires.kit` is not checked at all, because the same release
-  cut both.
+  defers to `pnpm kit:upgrade` and `minKit` is not checked at all, because the same release cut
+  both.
+- **`anchor`** is the path the manifest is copied to inside a host, and that copy is written by
+  `pnpm plugin add` from the source manifest. **Do not hand-edit it**: a plugin's version exists
+  once, which is what stops an anchor left behind failing every install of a correct release.
 - **`registries`** are the six host barrels, listed so `pnpm kit:upgrade` can flag a kit change to
   one of them as `touches-plugin-registry` — the kit CAN move ground under a plugin.
 - **`dependencies`** are installed into the HOST's packages (`pnpm --dir apps/web add …`). A plugin
@@ -134,15 +151,21 @@ where the complaint is AT a place in a file, never fabricated. Per installed plu
 
 - the **anchor** file exists — "the surface says installed, the tree says no" — and **parses**;
 - **every manifest field**, naming the field and its legal values: a non-semver `version`, a
-  `requires.kit` this kit cannot read, a cron that is not five fields, a `vars` entry with no key,
-  `schema.tables` that is not an array, a malformed `coreEdits` entry, and the `bindings[]` rules;
-- **`requires`** still holds: the kit version is inside `requires.kit`, every required surface is
-  present, every required plugin is installed (skipped entirely for a vendored plugin), and
-  `requires.pluginApi` is an integer this kit's plugin API supports;
+  `minKit` that is not a bare `X.Y.Z` or is nested under `requires`, a retired `requires.kit` or
+  `requires.pluginApi`, a `requires.plugins` entry written as `"<id>@<range>"`, a `uses` that is not
+  a map of arrays, a cron that is not five fields, a `vars` entry with no key, `schema.tables` that
+  is not an array, a malformed `coreEdits` entry, and the `bindings[]` rules;
+- **`requires` and the floor** still hold: this kit is at or above `minKit` (skipped for a vendored
+  plugin, and for one being authored inside the kit itself — there the floor is always one bump
+  ahead of `package.json` until `pnpm kit:release` runs), every required surface is present, and
+  every required plugin is installed at or above its `minVersion`;
+- **the ledger diff** — every symbol the plugin's `uses` names against what this kit's
+  `## Surface ledger` provides. This is the compatibility check, and unlike the two version numbers
+  it replaced it cannot go stale: `uses` is derived from the plugin's own imports and the ledger is
+  generated from the kit's own source. Each finding names the symbol and its replacement import;
 - for each of the six barrels, the **line and the half agree both ways** — a barrel that names a
   plugin half that is not on disk, and a half on disk that no barrel names;
 - no **`*.rej`** anywhere under its directories ("an upgrade left work behind");
-- the **anchor's `version` matches the surface's** `source.version`;
 - when it declares tables, **some migration tag names `plugin-<id>`** — otherwise the tables were
   never generated, which is the most common thing to have skipped;
 - **every declared dependency is really in the host `package.json`** — `plugin add --apply` runs
@@ -166,14 +189,14 @@ where the complaint is AT a place in a file, never fabricated. Per installed plu
   and nothing else in the kit sees it. TS2308 catches a duplicated EXPORT symbol, not a duplicated
   `pgTable('orders', …)`, and past that point drizzle-kit emits DDL for one name twice and a single
   generated `DROP TABLE` takes the other plugin's data. It fails for BOTH plugins and in both tiers
-  (a plugin that declares no `requires.pluginApi` is not excused), because neither plugin is
+  (neither is excused, and there is no tier to be excused by), because neither plugin is
   non-compliant on its own — the fault is the combination, and the host cannot run it either way.
 
-**Two tiers.** A check a RELEASED plugin cannot retroactively satisfy prints as `warn:` and does
-not change the exit code; it FAILS for a plugin that declares `requires.pluginApi`. That is the
-same opt-in the plugin import rule uses, and it is the permanent arrangement for a third-party
-plugin rather than a transition hack: a plugin's CI resolves its matrix from *released* kit tags,
-so it cannot declare a version that does not exist yet.
+**No tiers.** Every installed plugin is checked strictly. The two tiers keyed on a declared
+`requires.pluginApi` are gone with it, because nothing left is a rule a RELEASED plugin cannot
+retroactively satisfy: `uses` is a measurement of the plugin's own code, which anybody holding it
+can re-derive with `pnpm plugin export`. `warn:` and `note:` survive for findings that are not
+faults in a plugin at all — a plugin declaring no `minKit`, or a vendored one.
 
 `pnpm plugin check --json` prints the same audit as data: `{ ok, plugins, failures, warnings,
 notes }`. `failures` and `warnings` are separate lists so `ok` keeps meaning "this exits 0", and
@@ -209,12 +232,12 @@ chooses, and `readManifest()` (`scripts/lib/manifest.mjs`) is the one kit-vs-app
 installs before the app is first run. `scripts/bootstrap.mjs`'s `plugins` step reads it, skips every
 id already installed, runs `pnpm plugin add <repo> --apply` for the rest, then `pnpm db:generate`
 and `pnpm db:migrate` once. `pnpm bootstrap --no-plugins` skips the step. The kit's own list names
-`analytics` — extracted into a plugin in 0.6.0 — at a PINNED ref, and `check` fails when the
-version installed here is not the one pinned: CI installs each default plugin at its pin, so a
-checkout carrying a different version passes its own gate while the gate that matters runs
-something else. In the kit itself the entry is ordinarily *declared and not installed*, which
-prints as a `note:` rather than a failure — that is exactly the state `bash scripts/bootstrap.sh`
-resolves on a fresh clone.
+`analytics` — extracted into a plugin in 0.6.0 — at a PINNED ref. **`check` no longer compares the
+installed version against that pin**: a released kit pins whichever plugin version was current when
+it shipped, so the comparison failed every plugin release that had moved past it, by construction,
+until a kit shipped pinning the new one — which cannot happen before the plugin is released. In the
+kit itself the entry is ordinarily *declared and not installed*, which is exactly the state
+`bash scripts/bootstrap.sh` resolves on a fresh clone.
 
 ## Two things nothing else will catch
 

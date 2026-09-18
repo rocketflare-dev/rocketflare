@@ -43,7 +43,6 @@ import {
   isPluginEntry,
   isPluginFile,
   PLUGIN_IMPORT_ENFORCEMENT,
-  pluginApiDeclaration,
   pluginIdOfPath,
   pluginImportIssue,
   queryKeyRootIssues,
@@ -235,13 +234,6 @@ describe('the plugin import rule', () => {
     expect(pluginImportIssue(TEST, '@testkit/integration')).toBeNull()
     expect(pluginImportIssue(TEST, '@testkit/unit')).toBeNull()
   })
-
-  it('reads a plugin’s own declaration of the contract it was written against', () => {
-    // The reference plugin is migrated, so it declares one — which is what puts it in the strict
-    // group below. A plugin that predates the surface declares nothing and is only warned about.
-    expect(pluginApiDeclaration(REPO_ROOT, 'example-feature')).not.toBeNull()
-    expect(pluginApiDeclaration(REPO_ROOT, 'a-plugin-that-is-not-installed')).toBeNull()
-  })
 })
 
 // ---- the same helpers, against what is actually installed ----------------------------------------
@@ -320,54 +312,32 @@ describe('installed plugins', () => {
 
   it('reaches the host only through a declared entry', () => {
     /**
-     * Two groups, and which one a plugin is in is the plugin's OWN statement about itself.
-     *
-     * A plugin that declares `requires.pluginApi` has said it is written against the plugin context
-     * API, and is held to the rule strictly. One that does not predates the surface, and is warned
-     * about — which is the only reason this can be enforced at all: `pnpm test` runs the gate a
-     * second time with `defaultPlugins` installed at their pinned refs, and `analytics` 1.0.2 is
-     * older than the surface and cannot be retroactively changed. A plugin moves between the groups
-     * in the release that migrates it, by adding one manifest field.
+     * **One group, and every installed plugin is in it.** The rule used to have two tiers, keyed
+     * on a plugin declaring `requires.pluginApi`, because the gate's second pass installed
+     * `defaultPlugins` at refs older than the surface. That field is gone — compatibility is
+     * measured from a plugin's `uses` against the kit's ledger — and with it the tier, so there is
+     * nothing here a released plugin cannot satisfy by being re-exported.
      */
-    const declared = new Map<string, boolean>()
-    const declares = (id: string) => {
-      const known = declared.get(id)
-      if (known !== undefined) return known
-      const answer = pluginApiDeclaration(REPO_ROOT, id) !== null
-      declared.set(id, answer)
-      return answer
-    }
-
-    const strict: string[] = []
-    const legacy: string[] = []
+    const issues: string[] = []
     for (const file of tracked.filter(isPluginFile)) {
       const id = pluginIdOfPath(file)
       if (!id) continue
       const source = readFileSync(path.join(REPO_ROOT, file), 'utf8')
       for (const { specifier, line } of staticImports(source)) {
         const issue = pluginImportIssue(file, specifier, line)
-        if (!issue) continue
-        ;(declares(id) ? strict : legacy).push(issue)
+        if (issue) issues.push(issue)
       }
     }
 
-    if (legacy.length > 0) {
-      console.warn(
-        `\nplugin import rule — ${legacy.length} import(s) in plugins that declare no ` +
-          'requires.pluginApi (warned, not failed; they predate the plugin context API):\n' +
-          `${legacy.map(i => `  ${i}`).join('\n')}\n`
-      )
-    }
-
     if (PLUGIN_IMPORT_ENFORCEMENT !== 'fail') {
-      if (strict.length > 0) {
-        console.warn(`\nplugin import rule (warn-only):\n${strict.map(i => `  ${i}`).join('\n')}\n`)
+      if (issues.length > 0) {
+        console.warn(`\nplugin import rule (warn-only):\n${issues.map(i => `  ${i}`).join('\n')}\n`)
       }
       return
     }
 
     expect(
-      strict,
+      issues,
       'A plugin imports only from declared entries and receives everything else as injected ' +
         'context (D31). Each line below carries its replacement.'
     ).toEqual([])

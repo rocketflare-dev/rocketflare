@@ -278,17 +278,21 @@ the answer worth seeing on a bare kit — and the expensive second gate is skipp
 installed it would re-run the first one verbatim.
 
 **`pnpm kit:release X.Y.Z` refuses a version its default plugins are not ready for**: every entry
-must still resolve at the ref the kit pins (`git ls-remote`), and a declared `requires.kit` range
-must admit the version being cut. `--skip-plugin-check` is the escape hatch and says so loudly. Be
-clear about what that proves: it catches a pin nobody updated. **"CI green" is proven by the
-`plugins` job above, on the release commit** — a release script cannot run somebody else's tests.
+must still resolve at the ref the kit pins (`git ls-remote`), and the `minKit` floor it declares
+there must be at or below the version being cut. A plugin still carrying the retired `requires.kit`
+is named as such, with the edit, rather than approximated — there is no range machinery left to fall
+back on. `--skip-plugin-check` is the escape hatch and says so loudly. Be clear about what that proves: it catches a pin nobody updated.
+**"CI green" is proven by the `plugins` job above, on the release commit** — a release script cannot
+run somebody else's tests.
 
 The mirror image, for a plugin repository, is `.github/workflows/plugin-ci.yml`, which lives in the
 kit so that a change to how compatibility is proved reaches every plugin through one file. It reads
-the plugin's own `requires.kit`, resolves the OLDEST and NEWEST kit releases inside that range, and
-for each clones that kit, installs the plugin from the checkout under test, generates and applies
-the migrations the host owns, and runs the full gate. Both ends of the range, not a midpoint: the
-floor an adopter may still be on and the ceiling the kit has just reached. A plugin repository
+the plugin's own top-level `minKit` — one bare `X.Y.Z`, a floor with no ceiling — pairs it with the
+kit's NEWEST release tag, and for each clones that kit, installs the plugin from the checkout under
+test, generates and applies the migrations the host owns, and runs the full gate. Both ends, not a
+midpoint: the floor an adopter may still be on and the ceiling the kit has just reached. It compares
+no versions itself — `sort -V` over `git ls-remote --tags` picks the newest, and everything left in
+JavaScript is exact string matching, so there is no range to be malformed. A plugin repository
 copies this and nothing else:
 
 ```yaml
@@ -304,16 +308,22 @@ jobs:
     uses: rocketflare-dev/rocketflare/.github/workflows/plugin-ci.yml@main
     # with:
     #   kit_repo: https://github.com/rocketflare-dev/rocketflare.git  # the default
-    #   kit_range: "=0.6.0"        # override the plugin's own requires.kit
+    #   kit_ref: my-branch         # prove against one kit branch/tag; minKit is not consulted
     #   plugin_subdir: ""          # when the plugin is not the root of this repository
+    #   plugin_subdirs: '["plugins/analytics"]'   # a repository holding several plugins
     # secrets:
     #   kit_token: ${{ secrets.KIT_READ_TOKEN }}   # only if the kit repository is private
 ```
 
+There is no `kit_range` input: it was removed with the ranges, and **passing an input a reusable
+workflow does not declare is a hard error**, so a caller that still names it fails outright rather
+than being ignored.
+
 Failing there means one of two things and the matrix says which: at the FLOOR, the plugin has
-started using something the kit only gained later — raise `requires.kit` and release the plugin; at
-the CEILING, the kit has moved under it — port the plugin (`pnpm plugin upgrade` is the adopter's
-side of the same change) and widen the range.
+started using something the kit only gained later — raise `minKit` and release the plugin; at the
+CEILING, the kit has moved under it — port the plugin (`pnpm plugin upgrade` is the adopter's side
+of the same change) and release it. `pnpm plugin check` names the symbols, because compatibility is
+the set difference between what a plugin `uses` and the kit's `## Surface ledger` (D31, §16).
 
 **Bundle size.** `pnpm build` (`build:api` = `wrangler deploy --dry-run --outdir dist/api`) produces
 `dist/api/worker.js`; **`gzip -c apps/web/dist/api/worker.js | wc -c` is the size that matters, and
@@ -338,8 +348,8 @@ otherwise. It also fails without `docs/upgrades/<tag>.md`, its `CHANGELOG.md` se
 matching `.rocketflare.json` `kit.version` (`scripts/release-check.mjs --tag`): a release with no
 porting note is a permanent gap in the chain `/rf-upgrade` walks, and every copy of the kit has to
 step over it. `pnpm kit:release <version>` writes all of that, so the gate passes by construction — and in the
-kit it also refuses a version whose `defaultPlugins` no longer resolve at their pinned ref or whose
-declared `requires.kit` excludes it (D31, above).
+kit it also refuses a version whose `defaultPlugins` no longer resolve at their pinned ref
+(D31, above).
 **Released history is never rewritten** — a copy pins a kit commit and a force-push orphans it. One tag ships `apps/web` and `apps/cli` together — the `apps/*` and `packages/*` versions
 are informational and are not checked. Bump the root version, commit, tag.
 

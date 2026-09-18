@@ -56,7 +56,7 @@ Changing behaviour changes the doc in the same PR:
 | a binding, a toml key, the release flow | `docs/DEPLOY.md`, both `wrangler*.toml` comments |
 | a convention in a layer | the matching `.claude/rules/*.md` and `apps/web/src/<dir>/CLAUDE.md` / `packages/shared/CLAUDE.md` |
 | a plugin slot, the plugin contract or the reference plugin (D31) | `docs/CONCEPTS.md` §16 + the matching `.claude/rules/*.md` + `apps/web/src/plugins/CLAUDE.md` |
-| a MEMBER of a declared plugin API entry — `@/plugins/api`, `@/db/schema/kit`, `@/plugins/api/ui{,-wiring}`, `@rocketflare/shared/plugins/*`, the CLI entry, `@testkit/*` (D31) | `node scripts/plugin-api-doc.mjs` and commit `docs/plugin-api.md`, **and** bump `PLUGIN_API.current` in `packages/shared/src/plugins/contract.ts` + `.rocketflare.json`'s `kit.pluginApi`. The gate regenerates and diffs the file, and refuses a changed or removed member with no bump, naming it — the same shape as the `worker-configuration.d.ts` step beside it |
+| a MEMBER of a declared plugin API entry — `@/plugins/api`, `@/db/schema/kit`, `@/plugins/api/ui{,-wiring}`, `@rocketflare/shared/plugins/*`, the CLI entry, `@testkit/*` (D31) | `node scripts/plugin-api-doc.mjs` and commit `docs/plugin-api.md` — the same shape as the `worker-configuration.d.ts` step beside it. There is no version to bump: the file's `## Surface ledger` block IS the contract, and a plugin naming a symbol it no longer carries fails `pnpm plugin check` by name, with its replacement import |
 | a CLI command, flag or exit code | `docs/CONCEPTS.md` → CLI, `.claude/rules/cli.md` |
 | a rename target | `docs/ADAPTING.md` |
 

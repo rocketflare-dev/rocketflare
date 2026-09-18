@@ -68,6 +68,14 @@ in the host. Each half is checked where it is written; only the merge is cast.
   (`.claude/rules/cloudflare.md`) — including a `workflow` or `durable_object` block and, for a
   Durable Object, its `plugin-<id>-v1` `[[migrations]]` tag. The host owns every byte of its own
   files; the plugin only declares.
+- **It declares compatibility as a FLOOR and a MEASUREMENT, never a prediction.** `minKit` is one
+  bare `X.Y.Z` at the TOP level of `plugin.json` — the oldest kit it supports, with no ceiling,
+  because a plugin cannot know which future kit will break it. `uses` is the host symbols it
+  imports, written by `pnpm plugin export` and **never by hand**; the kit emits what it provides as
+  the `## Surface ledger` block of `docs/plugin-api.md`, and compatibility is `uses \ ledger`. The
+  old `requires.kit` range and `requires.pluginApi` version are refused by name, as is `minKit`
+  nested under `requires` — one spelling, read in one place, and a misplaced one fails loudly
+  rather than being quietly repaired.
 - **It never renames anything across releases** — expand/contract only. `drizzle-kit`'s rename
   prompt has no non-interactive answer, so a rename stops an unattended install dead.
 - **It composes, never redefines.** `grants` are additive over its own subjects; hooks are
@@ -152,12 +160,12 @@ thing complained about is AT a place in a file; a fabricated one sends a reader 
 wrong.
 
 Per installed plugin: the anchor exists and parses; **every manifest field**, naming the field and
-its legal values; `requires.kit`, `requires.surfaces`, `requires.plugins` and `requires.pluginApi`;
-a barrel line for each half on disk and no line for a half that is not; no `*.rej`; the anchor's
-version matches the surface's; a migration naming it when it declares tables; **every declared
-dependency really present in the host `package.json`**; the **worker-exports barrel both ways**;
-**a tenant-isolation test** when it declares tenant-scoped tables; and **`hooks.onTenantDeleted`
-when it declares a `durable_object`**.
+its legal values; `minKit`, `requires.surfaces` and `requires.plugins`; **every symbol in `uses`
+against the kit's ledger**; a barrel line for each half on disk and no line for a half that is not;
+no `*.rej`; a migration naming it when it declares tables; **every declared dependency really
+present in the host `package.json`**; the **worker-exports barrel both ways**; **a tenant-isolation
+test** when it declares tenant-scoped tables; and **`hooks.onTenantDeleted` when it declares a
+`durable_object`**.
 
 Two of those deserve their reason stated. The isolation test is the kit's one non-negotiable that
 the kit itself cannot write — `docs/CONCEPTS.md` §16 and `.claude/rules/testing.md` both require
@@ -166,16 +174,24 @@ than that it is right, and says so in the message. And a `durable_object` is sta
 cannot reach: a deleted tenant's DO state outlives it, and no other check can see that, because
 its tables are gone and everything else reads as clean.
 
-**A check a RELEASED plugin cannot retroactively satisfy warns rather than fails**, keyed on
-`requires.pluginApi` — the same two-tier rule the import enforcement uses, and the permanent
-arrangement for a third-party plugin rather than a transition hack. `--json` carries `failures` and
-`warnings` as separate lists, because `ok` has to keep meaning "this exits 0". CI runs the same
-command a person runs, so the local oracle and the gating oracle cannot disagree.
+**There is no longer a tier a plugin opts into.** The audit used to warn rather than fail for a
+plugin that declared no `requires.pluginApi`, because a released plugin could not retroactively
+declare one. That field is gone with the prediction it encoded, and nothing left here is a rule a
+released plugin cannot satisfy by being re-exported — so every installed plugin is checked
+strictly. `--json` still carries `failures` and `warnings` as separate lists, because `ok` has to
+keep meaning "this exits 0". CI runs the same command a person runs, so the local oracle and the
+gating oracle cannot disagree.
+
+**Two checks were DELETED rather than relaxed**, because each failed a plugin whose code was
+correct: the anchor's version against the surface's (the anchor is now written by `plugin add` from
+the source manifest, so they cannot differ), and the installed version against the `defaultPlugins`
+pin (the gate already installs each default plugin at its pinned ref and runs the whole suite on
+the result, which is the real proof).
 
 **A VENDORED plugin is upgraded by `pnpm kit:upgrade`, not by this script.** `example-feature`'s
 `source.repo` is the kit's own repository with no subdirectory, so the kit release that moves it
-forward is the one that moves it — and for the same reason its `requires.kit` range is not checked
-(the same release cut both, so the range describes the kit it shipped inside).
+forward is the one that moves it — and for the same reason its `minKit` floor is not checked (the
+same release cut both, so the floor describes the kit it shipped inside).
 
 ## Adding a SLOT to the seam
 

@@ -1579,11 +1579,10 @@ kit's name in a renamed app — because it describes the kit, and because a fixe
 the tooling find it. `kit.{repo,version,commit}` says where the copy came from (`scripts/install.sh`
 stamps the commit, and `version` ships pre-set so a hand-clone knows it too); `app.{slug,display,
 domain}` is written by `rename.mjs` at the end of its pass and re-derives the full token map through
-`deriveNames()`; `history[]` records each upgrade. Two keys beside them are read by the tooling
-rather than by a person: **`kit.pluginApi`** mirrors `PLUGIN_API` from
-`packages/shared/src/plugins/contract.ts` (§16), because a `.mjs` script runs under plain Node and
-cannot import a `.ts` module; and **`retiredSurfaces`** maps a surface id to the release that
-removed it (`feature-analytics` → `0.6.0`). That second one exists because `release-check --tag
+`deriveNames()`; `history[]` records each upgrade. One key beside them is read by the tooling
+rather than by a person: **`retiredSurfaces`**, which maps a surface id to the release that
+removed it (`feature-analytics` → `0.6.0`). `kit.pluginApi` sat beside it until the plugin contract
+stopped carrying a version at all (§16). That second one exists because `release-check --tag
 0.2.0` failed on a note it forbids rewriting: a released note names surfaces that were real when it
 was written, and the kit has to be able to re-verify its own history. An entry there is never
 deleted. It is on `EXCLUDED_PATHS`, so the rename never substitutes inside it. **`app === null` is the "am I the kit?" predicate**, and every kit-only check
@@ -1642,15 +1641,15 @@ written **last, only on a clean apply**, so an interrupted or rejected run re-ru
 baseline (exit 4 means "work remains", not "failed").
 
 **A plugin upgrade is this pipeline pointed at another repository (§16), and three things it does
-there are not obvious.** The surface's `requires` is **refreshed** from the manifest at the version
-being installed rather than frozen at first install — and that range is checked BEFORE the patch
-applies, not after. Any `coreEdits` the plugin declares are **re-applied** on upgrade, and edits the
+there are not obvious.** The surface's `minKit` and `requires` are **refreshed** from the manifest at
+the version being installed rather than frozen at first install — and they are checked BEFORE the
+patch applies, not after. Any `coreEdits` the plugin declares are **re-applied** on upgrade, and edits the
 new release no longer declares are reverted, so a line a plugin needs in a file it may not own
 follows the plugin's own version rather than being written once and forgotten. And a default
-plugin's `requires.kit` is read out of the blobless mirror `pnpm plugin` already keeps, at the ref
+plugin's own declaration is read out of the blobless mirror `pnpm plugin` already keeps, at the ref
 the kit pins: `git ls-remote` proves a ref exists but cannot read a file out of it, which is why
 `pnpm kit:release` used to fail on every release unless `--skip-plugin-check` was passed — a check
-that effectively did not exist. When the mirror cannot be opened the range falls back to the
+that effectively did not exist. When the mirror cannot be opened the answer falls back to the
 recorded surface, and when the ref carries no manifest at all the surface's record is used rather
 than a refusal; a manifest that is not JSON is refused outright.
 
@@ -1680,13 +1679,18 @@ one place it had never run.
 **A repository may hold several plugins, released in lockstep.** `node scripts/release.mjs <version>
 --plugin <subdir>` (repeatable — a path may legally contain a comma, so splitting one on a comma
 invents an escaping rule) stamps the root `package.json` plus **every** `rocketflare-plugin.json` in
-the repository, found by a bounded walk. That is not cosmetic: `pnpm plugin check` compares an
-installed surface's version against the anchor manifest, so a manifest left at an older number makes
-every install of that plugin report a mismatch. Plain `X.Y.Z` tags follow from lockstep — no
+the repository, found by a bounded walk. It does NOT stamp the in-tree anchor, and that is a fix rather
+than an omission: **`pnpm plugin add` writes the anchor from the source manifest**, so a plugin's
+version exists in one place and the two copies cannot disagree. They did — `analytics` 2.0.1 was cut
+solely because its anchor still said `1.0.2`, and `pnpm plugin check` compared the two and failed
+every install of it, taking each host's whole gate down for a release whose code was correct.
+Stamping both copies at release time was the first fix; deleting one of them is the real one, and it
+makes that class of failure unrepresentable rather than merely caught. Plain `X.Y.Z` tags follow
+from lockstep — no
 prefixes, no per-plugin namespacing, because a tag has to stay resolvable by `git ls-remote`, which
 cannot resolve a bare SHA. The accepted cost is that a fix to one plugin bumps every plugin's
-version; `requires.pluginApi` stays per manifest and is never hoisted, since which contract a plugin
-compiles against is a different question from which release shipped it.
+version; `minKit` and `uses` stay per manifest and are never hoisted, since which kit a plugin
+supports — and which symbols it names — are different questions from which release shipped it.
 
 **Known gaps / not built yet:** the wrangler tomls and `.dev.vars.example` are reported with a
 rendered diff rather than semantically merged — the planned differ would emit typed ops through
@@ -1893,19 +1897,19 @@ Postgres table the Worker already holds a connection to.
 
 **Status: built (D31). The seam and the reference plugin in Phase A, the lifecycle and the
 skills in Phase B, the kit went BARE in Phase C — analytics is a plugin (§8) and the one entry
-in `defaultPlugins` — and in 0.7.0 the CONTRACT became injected context with a version of its
-own.** Types: `packages/shared/src/plugins/types.ts`, `apps/web/src/plugins/types.ts`,
+in `defaultPlugins` — in 0.7.0 the CONTRACT became injected context, and after it compatibility
+became OBSERVED rather than declared.** Types: `packages/shared/src/plugins/types.ts`, `apps/web/src/plugins/types.ts`,
 `apps/cli/src/plugins/types.ts`. The surface a plugin imports: `apps/web/src/plugins/api/**`
 (the context family), `apps/web/src/db/schema/kit.ts`, `apps/web/src/plugins/api/ui{,-wiring}.ts`,
 `packages/shared/src/plugins/api.ts`, `apps/cli/src/plugins/api.ts`, `apps/web/tests/kit/*`
-(`@testkit`) — generated as `docs/plugin-api.md`, versioned by `PLUGIN_API` in
-`packages/shared/src/plugins/contract.ts` and compared by `scripts/lib/plugin-api.mjs`. Barrels:
+(`@testkit`) — generated as `docs/plugin-api.md`, whose `## Surface ledger` block is the
+machine-readable half `scripts/lib/surface.mjs` measures a plugin against. Barrels:
 `packages/shared/src/plugins/index.ts`,
 `apps/web/src/plugins/{server,ui,schema,worker-exports}.ts`, `apps/cli/src/plugins/index.ts`.
 Provenance: `scripts/lib/manifest.mjs` + `.rocketflare.json` / `.rocketflare.local.json`.
 Lifecycle: `scripts/plugin.mjs` + `scripts/lib/plugin-lib.mjs`. Tests:
 `apps/web/tests/config/plugins.test.ts` (+ `helpers/plugins.ts`), `plugin-lib.test.ts`,
-`plugin-api.test.ts`, `testkit-alias.test.ts`, `manifest-lib.test.ts`,
+`surface.test.ts`, `testkit-alias.test.ts`, `manifest-lib.test.ts`,
 `shared-imports.test.ts`. Reference plugin: `apps/web/src/plugins/example-feature/**`,
 `packages/shared/src/plugins/example-feature/`, `apps/cli/src/plugins/example-feature/`.
 
@@ -2123,35 +2127,67 @@ a fake context may test branching, guards and response shape; anything touching 
 Postgres by construction. The cost is accepted and stated rather than discovered later: **there is
 no fast, database-free test of a data-touching handler.**
 
-**The surface has its own version, two integers (decision 5b).** `PLUGIN_API = { current,
-minSupported }` lives in a zero-import leaf, `packages/shared/src/plugins/contract.ts`, and is
-mirrored as `kit.pluginApi` in `.rocketflare.json` because a `.mjs` script cannot import a `.ts`
-module — the same trade `SUPPORTED_PLUGIN_BINDING_TYPES` already lives with, pinned together by
-`tests/config/plugin-api.test.ts`. A plugin declares `requires.pluginApi`, a whole number.
-`requires.kit` answers *which releases may I be installed into*; this answers *which surface was I
-written against*, and they move at different rates — the kit cut 0.5.0, 0.6.0 and 0.6.1 without the
-plugin surface moving at all, and a plugin pinned by kit range had to be re-released for each.
+**Compatibility is OBSERVED, not declared (decision 5c, which reverses 5b).** Two numbers used to
+answer it, and both were PREDICTIONS a person typed: `requires.kit`, a semver RANGE saying which kit
+releases a plugin may be installed into, and `requires.pluginApi`, an integer saying which version
+of the contract it was written against. Splitting the question in two was right as far as it went —
+those really are different questions, and conflating them was the root of the pin drift 5b set out
+to fix — but a prediction about kits that do not exist yet goes stale the moment either side moves,
+and **the fix for a stale prediction is not a second prediction**. Both went stale, and each took a
+host's whole gate down on the way.
 
-**The comparison is integer and there is no range language near it**, deliberately: a malformed
-semver range throws out of the matcher and arrives as a generic failure with nothing to act on,
-which is the exact shape of bug this replaces. `scripts/lib/plugin-api.mjs` is the one comparison.
-**Declared means strictly checked, undeclared means warned — permanently, not as a migration step.**
-It dissolves a real circularity: a plugin's CI resolves its matrix from *released* kit tags, so it
-cannot declare a version that does not exist yet; and refusing an undeclared plugin would break
-installs of plugins nobody can retroactively change (`analytics` 1.0.2, which the kit's own second
-CI pass installs, is the live case).
+What is measurable instead, and what runs now:
+
+- **The kit EMITS a ledger.** The `## Surface ledger` block of `docs/plugin-api.md` is one line per
+  member the kit provides — `entry :: kind :: name :: signature` — generated from the source of the
+  declared entries, committed, and diff-checked in the gate beside `worker-configuration.d.ts`.
+- **A plugin's `uses` is DERIVED, never typed.** It is a map of entry → symbol names written by
+  `pnpm plugin export` from the plugin's own imports, re-derived on every export, and read with the
+  TypeScript compiler's parser rather than a regex — `import { a }`, `import { a as b }`,
+  `import { type a }`, `import type { a }` and `export { a } from` are five spellings of one fact,
+  and a regex over them is a check that stops matching without saying so. A hand-written `uses` is
+  the prediction this removes, and `pnpm plugin check` says so in those words.
+- **Compatibility is `uses \ ledger`** (`missingFrom`, `scripts/lib/surface.mjs`), computed by
+  `pnpm plugin add` **before a single file is copied**. What is missing names itself symbol by
+  symbol and carries the replacement import where the symbol has merely MOVED entry — the common
+  case, because a surface is reorganised far more often than it is deleted. Where it exists nowhere
+  the suggestion is `null`, because inventing one sends the reader to a name that is not there.
+
+**A set difference over strings is the whole point: it is deterministic, it has no grammar to get
+wrong, and no path out of it can THROW.** That is the bug class being removed rather than a style
+preference — a malformed range throws out of the matcher and reaches the caller as a generic failure
+with nothing to act on, which is exactly how a wrong pin always presented.
+
+One number survives, and it is the half a plugin can state honestly. **`minKit` is a top-level key,
+one bare `X.Y.Z`, a floor with no ceiling**, compared by three-integer `compareVersions`: a plugin
+can say how old a kit it still works with, and cannot say which future kit will break it — the
+ledger diff measures that instead of guessing at it. `requires.plugins` entries lose `@<range>` for
+`{ id, minVersion }`, so **no range language survives anywhere on the install path**. A manifest
+still carrying `requires.kit`, `requires.pluginApi`, or `minKit` nested under `requires`, fails
+LOUDLY naming the field and where it belongs rather than being quietly ignored or repaired: a field
+nobody reads is one somebody is still maintaining in the belief that it does something.
+
+**The two tiers went with them.** `PLUGIN_API`, `packages/shared/src/plugins/contract.ts`,
+`scripts/lib/plugin-api.mjs`, `kit.pluginApi` and the audit's `auditSeverity` are deleted, and every
+installed plugin is checked STRICTLY. The tier existed because a RELEASED plugin could not
+retroactively declare a number that did not exist when it shipped; nothing left is a rule of that
+kind, because `uses` is a measurement of the plugin's own code that anybody holding it can
+re-derive.
 
 **`docs/plugin-api.md` is generated, committed and diff-checked in the gate** — beside the step that
 does the same for `worker-configuration.d.ts`, and for the same reason. `scripts/plugin-api-doc.mjs`
-does three jobs: **version enforcement** (a changed or removed member with no bump to
-`PLUGIN_API.current` fails, naming the member), **break attribution** (`used by`, derived from the
-plugins actually installed) and **agent discovery** — a capability index, first in the file, so an
-agent writing a plugin reads one document instead of inferring a surface from 19 module paths and
-128 symbols. One defect found while building it is the failure mode of every generator that reads a
+does two jobs. **Agent discovery**: a capability index, first in the file, so an agent writing a
+plugin reads one document instead of inferring a surface from 19 module paths and several hundred
+symbols — and every name in that index is checked to exist, because an index nobody maintains is
+worse than none. **Emitting the LEDGER**: the fenced block at the end, which is what makes
+compatibility an observation rather than a claim. Version enforcement used to be the third job and
+is gone with `PLUGIN_API`; the ledger diff answers the same question from facts, per symbol, at
+install time. One defect found while building it is the failure mode of every generator that reads a
 type graph: run without `node_modules`, neither `zod` nor `drizzle-orm` resolves, every inferred
 type degrades silently to `any`, and **the document generates cleanly while recording a surface that
-is wrong** — handing the next person a dozen bogus "changed" entries and an instruction to bump for
-a change nobody made. It now refuses to run without dependencies and fails on any `TS2307`.
+is wrong**. It refuses to run without dependencies installed, and fails on any unresolved
+import (`TS2307`) — a declared entry that does not resolve degrades in exactly the same
+silent way, and the ledger is now what every install is judged against.
 
 **Deleting a tenant reaches outside Postgres (decision 18).** The FK cascade in `tenantRef()` is
 complete inside the database and reaches nothing else, so every deleted organisation used to leave
@@ -2175,20 +2211,24 @@ documented on the hook and deliberately **not built**. `plugin check` fails a pl
 `durable_object` binding and no `onTenantDeleted`, because no other check can see that: its tables
 are gone, so everything else reads as clean.
 
-**`pnpm plugin check` is an exhaustive oracle, not a smoke test (decision 21).** Fifteen checks per
+**`pnpm plugin check` is an exhaustive oracle, not a smoke test (decision 21).** The checks run per
 installed plugin, and **every finding is `<file>:<line> <what is wrong> — <the exact change>`**, with
 the line number present only where the complaint is AT a place in a file — a fabricated one sends a
 reader somewhere real and wrong. Saying only what is wrong is right for a person with `reference.md`
 open beside them and useless to an agent, who has only the line. It covers: the anchor exists and
-parses; **every manifest field**, naming the field and its legal values; all four `requires`;
-a barrel line for each half on disk and no line for a half that is not; no `*.rej`; the anchor's
-version against the surface's; a migration tag naming the plugin when it declares tables; **every
-declared dependency really present in the host `package.json`**; the worker-exports barrel BOTH
-ways; **a tenant-isolation test** when it declares tenant-scoped tables; `onTenantDeleted` when it
-declares a Durable Object; the installed version against what `defaultPlugins` pins; and **no two
-plugins declaring one table name**. `--json` carries `failures` and `warnings` as separate lists, so
-`ok` keeps meaning "this exits 0", and **CI runs the same command a person runs** — the local oracle
-and the gating oracle cannot disagree.
+parses; **every manifest field**, naming the field and its legal values; the `minKit` floor and the
+surfaces and plugins it requires; **the ledger diff** — every symbol its `uses` names against what
+this kit's `## Surface ledger` provides; a barrel line for each half on disk and no line for a half
+that is not; no `*.rej`; a migration tag naming the plugin when it declares tables; **every declared
+dependency really present in the host `package.json`** (and a differing range reported separately);
+the worker-exports barrel BOTH ways; **a tenant-isolation test** when it declares tenant-scoped
+tables; `onTenantDeleted` when it declares a Durable Object; and **no two plugins declaring one
+table name**. Two checks were DELETED with the duplication that made them necessary: the anchor's
+version against the surface's, and the installed version against what `defaultPlugins` pins. Both
+failed correct plugins — the anchor is now a copy `plugin add` writes, and a plugin released past
+the ref a kit pins is normal rather than wrong. `--json` carries `failures`, `warnings` and `notes`
+as separate lists, so `ok` keeps meaning "this exits 0", and **CI runs the same command a person
+runs** — the local oracle and the gating oracle cannot disagree.
 
 Two of those deserve their reason stated. The isolation test is the kit's one non-negotiable that
 the kit itself cannot write (§14, `.claude/rules/testing.md`), and until now nothing verified it at
@@ -2224,8 +2264,8 @@ line goes, `db:generate` emits the `DROP TABLE`s, and orphaned tables are not a 
 **`example-feature` is the reference, and it exists to be deleted.** It was the kit's demonstration
 feature flag; it is now a plugin, and it gained the parts a flag alone could not demonstrate. In
 three directories and its barrel lines it exercises every slot — and it is migrated onto the
-contract, declaring `requires.pluginApi: "1"`, which makes it the live canary for the STRICT tier
-of every check: the `example-feature` flag; a
+contract, declaring a top-level `minKit` and a derived `uses`, which makes it the live canary for
+every check the kit runs against a plugin: the `example-feature` flag; a
 tenant-scoped `example_notes` table (`tenantRef` + `timestamps` + `tenantIsolation`, indexes led by
 `tenant_id`); a CRUD mount at `/api/example-feature` behind `requireFeature` (404
 `feature_disabled`, gated at the MOUNT); the `example-feature.ping` job variant and its handler; the
@@ -2245,8 +2285,9 @@ before anything bigger moves out. Its surface's `source.repo` is the kit repo wi
 | 2 | Fresh clone | The kit becomes bare; `defaultPlugins` in `.rocketflare.json` and a bootstrap step install a default set, so a fresh clone is unchanged (Phase C) |
 | 3 | Reference plugin | `example-feature`, grown to carry a table, a route, a tool, both hooks and a CLI command |
 | 4 | Record of installed plugins | A `kind: 'plugin'` surface — committed in an app, in the git-ignored sidecar in the kit or with `--local`; `readManifest()` is the one predicate |
-| 5a | Compatibility, proved | A declared `requires.kit` range PLUS proof both ways in CI — **built**: `ci.yml` installs every `defaultPlugins` entry and runs the whole gate on it, `.github/workflows/plugin-ci.yml` is the reusable workflow a plugin repository calls to do the mirror image against the oldest and newest kit in its range (and takes a `kit_ref` so a kit BRANCH can be proved before either side releases), and `kit:release` refuses a version its default plugins do not resolve at or admit |
-| 5b | Compatibility, declared | **This reverses the second half of 5.** The original read "no separate plugin-API version: untyped imports are the real exposure and only the gate catches them" — true while the surface was imported symbols, and false once it is not. The surface is now injected CONTEXT plus a handful of declared entries, so `PLUGIN_API = { current, minSupported }` is two integers a plugin names in `requires.pluginApi`. `requires.kit` answers *which releases*; this answers *which API*, and conflating them was the root of the pin drift. Integer comparison, never a range, so it cannot inherit the throw a malformed range gave. Declared is strictly checked, undeclared is warned — permanently, for the third-party horizon, not as a migration step |
+| 5a | Compatibility, proved | A declared floor PLUS proof both ways in CI — **built**: `ci.yml` installs every `defaultPlugins` entry and runs the whole gate on it, `.github/workflows/plugin-ci.yml` is the reusable workflow a plugin repository calls to do the mirror image against its `minKit` floor and the kit's newest release (and takes a `kit_ref` so a kit BRANCH can be proved before either side releases), and `kit:release` refuses a version whose default plugins no longer resolve at the ref it pins, or that declare a `minKit` floor above it |
+| 5b | Compatibility, declared *(reversed by 5c)* | **This reversed the second half of 5, and 5c reverses it in turn.** The original read "no separate plugin-API version: untyped imports are the real exposure and only the gate catches them" — true while the surface was imported symbols, and false once it is not. The surface is now injected CONTEXT plus a handful of declared entries, so `PLUGIN_API = { current, minSupported }` is two integers a plugin names in `requires.pluginApi`. `requires.kit` answers *which releases*; this answers *which API*, and conflating them was the root of the pin drift. Integer comparison, never a range, so it cannot inherit the throw a malformed range gave. Declared is strictly checked, undeclared is warned — permanently, for the third-party horizon, not as a migration step |
+| 5c | Compatibility, observed | **This reverses 5b.** `requires.kit` and `requires.pluginApi` were both PREDICTIONS a person typed about kits that did not exist yet, and both went stale. Splitting the question in two was RIGHT — they are different questions — and it did not help, because the fix for a stale prediction is not a second prediction. So the kit EMITS a ledger (`## Surface ledger` in `docs/plugin-api.md`), a plugin's `uses` is DERIVED from its own imports by `pnpm plugin export`, and compatibility is the set difference `uses \ ledger`: deterministic, no grammar to get wrong, and nothing in it can throw — which is the bug class a malformed range gave. One floor survives, a top-level `minKit` of one bare `X.Y.Z`, and no range language survives anywhere on the install path. The gate is still the real proof; the ledger diff is an earlier and more precise signal, derived from facts rather than from claims |
 | 6 | Cubes, fact tables, dashboards | Plugin-owned registries through `extensions: Record<string, readonly unknown[]>`; the owning plugin narrows with zod and fails loudly. Core stays ignorant of drizzle-cube |
 | 7 | The extraction boundary | No compatibility path: analytics moves out under the table-prefix rule (its tables become `analytics_*`) and the release note says its old ones are dropped |
 | 8 | Bundle safety | `LazyExoticComponent` for pages, plus a source-level structural test in the host |
@@ -2262,14 +2303,14 @@ before anything bigger moves out. Its surface's `source.repo` is the kit repo wi
 | 18 | Tenant state outside Postgres | `hooks.onTenantDeleted` from the `tenant.purge` job. DO state is reachable only through DERIVED instance names — nothing enumerates a namespace — so a plugin declares a finite key set from the tenant id and the purge loops the declared keys. One DO per ROW is unpurgeable under this rule; the purge-intent ledger is documented and not built |
 | 19 | Fake databases in tests | The `@testkit/unit` builders refuse a `db` nobody handed out, tracked in a `WeakSet` rather than by shape. A stub answering `[]` satisfies "tenant B sees no rows" whatever the query said, which is the cheap wrong version of the kit's one non-negotiable. Accepted cost: no fast, database-free test of a data-touching handler |
 | 20 | Every step a plan prints | **declarative** (the tooling does it, so it does not appear at all), **agent** (an instruction PLUS the assertion that proves it ran), **human** (a decision the tooling stops for). `--json` on `add`, `remove` and `check` carries `kind` per entry, so a human step is a field rather than a sentence somebody has to notice. "By hand" is retired as a phrase |
-| 21 | The audit | An exhaustive oracle, not a smoke test: every finding carries the file, the line and the exact edit, and CI runs the same command a person runs. Two tiers keyed on `requires.pluginApi` — a rule a RELEASED plugin cannot retroactively satisfy warns rather than fails — and a structural check reads comment-free code, or it validates prose |
-| 22 | Table names | A prefix derived from the id is a CONVENTION (nothing derives a table name from an id, so there is no shape to check); the COLLISION is the check, it fails both plugins, and it is exempt from the two-tier rule because neither plugin is wrong on its own |
+| 21 | The audit | An exhaustive oracle, not a smoke test: every finding carries the file, the line and the exact edit, and CI runs the same command a person runs. No tiers — every installed plugin is checked strictly, because nothing left is a rule a released plugin cannot retroactively satisfy (`uses` is a measurement of its own code, re-derivable by anybody holding it) — and a structural check reads comment-free code, or it validates prose |
+| 22 | Table names | A prefix derived from the id is a CONVENTION (nothing derives a table name from an id, so there is no shape to check); the COLLISION is the check, and it fails BOTH plugins, because neither is wrong on its own — the fault is in the combination, which is not something any per-plugin rule could have expressed |
 
 Decisions 11 and 12 arrived with `scripts/plugin.mjs` and `provision/plugin-resources.ts` (below),
 5's CI half with `.github/workflows/{gate,ci,plugin-ci}.yml` (next paragraph), and 6 and 7 with the
 analytics extraction in 0.6.0 (§8): the kit is bare, `defaultPlugins` names the one plugin a fresh
-clone installs, and `analyticsExtensions({...})` is how a second plugin adds a cube. All thirteen
-are true today.
+clone installs, and `analyticsExtensions({...})` is how a second plugin adds a cube. Every one
+of them is true today.
 
 **Compatibility is proved from both ends, by two workflows and one refusal (decision 5).** The
 gate's steps live in `.github/workflows/gate.yml` and `ci.yml` calls it TWICE — plain, and again
@@ -2279,18 +2320,38 @@ nobody ran. `defaultPlugins` entries are objects (`{ id, repo, ref?, subdir? }`)
 nothing about where a plugin comes from, which is the same reason decision 13 made `repo` required.
 The mirror image belongs to the plugin, but the FILE stays here —
 `.github/workflows/plugin-ci.yml` is a `workflow_call` template a plugin repository invokes in three
-lines, and it resolves the oldest and the newest kit release inside the plugin's own `requires.kit`
-(with the kit's own `satisfies`, so the answer matches `plugin add`'s), clones each, installs the
-plugin from the checkout under test and runs the gate. Both ENDS of the range rather than a
+lines. It pairs the plugin's declared `minKit` with the kit's newest release tag, clones each,
+installs the plugin from the checkout under test and runs the gate. Both ENDS rather than a
 midpoint: the floor an adopter may still be on, and the ceiling the kit has just reached.
+
+**That workflow now compares no versions at all**, which is the shape of the whole change. With
+ranges gone the only ordering question left is *which tag is newest*, and `sort -V` answers it in
+the shell — so the `kit_range` input is deleted, and the job no longer clones the kit merely to
+import `satisfies` from a RELEASED tag's tooling, an asymmetry that forced every workaround under
+it. What is left in JavaScript is exact string work: `releasedTags.includes(floor)`, which is why
+ONE message covers both ways of getting it wrong — a floor naming a version that was never
+released, and a floor still written as a range. A fifth private semver comparator copied into a
+workflow is precisely the defect this removes.
+
+Two more things went with it. A `minKit` floor equal to the newest release yields ONE matrix entry
+rather than a duplicate pair. And the "unpin the plugin under test from the cloned kit's
+`defaultPlugins`" dance — an edit, a Biome re-format and a commit, performed on every run — is
+deleted, because the check that made it necessary is: a released tag's `defaultPlugins` pins
+whichever version of the plugin was current when that kit shipped, so comparing the installed plugin
+against that pin failed every plugin release that had moved past it, by construction, until a kit
+shipped pinning the new one — which cannot happen before the plugin is released.
+
 `pnpm kit:release` adds the stop at the other end — it refuses a version whose default plugins no
-longer resolve at their pin or whose declared range excludes it (`--skip-plugin-check` is the loud
-escape hatch) — and it is honest about its reach: a release script can prove a pin, not somebody
-else's tests. The `plugins` job on the release commit is what proves those green.
+longer resolve at the ref it pins, or whose declared `minKit` is above the version being cut, and it
+names a plugin still carrying the retired `requires.kit` rather than approximating it, because there
+is no range machinery left to fall back on (`--skip-plugin-check` is the loud escape hatch). It is
+honest about its reach: a release script can prove a pin, not somebody else's tests. The `plugins`
+job on the release commit is what proves those green.
 
 **The lifecycle is `scripts/plugin.mjs` (`pnpm plugin`).** `add` mirrors a plugin repository (or
-reads a local path — that is the authoring loop), checks its `requires` three ways, refuses any
-file outside the plugin's own four roots, **prints the plan and stops unless `--apply`**, and on
+reads a local path — that is the authoring loop), checks four things before copying a single file —
+the `minKit` floor, the surfaces it requires, the plugins it requires, and the ledger diff — refuses
+any file outside the plugin's own four roots, **prints the plan and stops unless `--apply`**, and on
 apply copies the trees through `applyReplacements`, writes the six barrel lines, installs the
 declared dependencies and appends the surface. `upgrade <id>` is the kit-upgrade pipeline pointed
 at the plugin's own repository, reading ITS notes (`requires_kit`, `requires_plugins`,
@@ -2335,10 +2396,10 @@ carries its exact command, its observable result and its assertion, and `--json`
 and `check` emits the same list with `kind` on every entry, so a human step is a field rather than
 a sentence somebody has to notice.
 And **a VENDORED plugin is the kit's**: `source.repo` equal to the kit's own repository with no
-subdirectory means `plugin upgrade` defers to `kit:upgrade`, and `requires.kit` is not checked at
-all, because the same release cut both and the range describes the kit it shipped inside rather
+subdirectory means `plugin upgrade` defers to `kit:upgrade`, and `minKit` is not checked at
+all, because the same release cut both and the floor describes the kit it shipped inside rather
 than a compatibility claim. `kit:upgrade` learned the other half: it prints the installed plugins,
-exits 6 when the target kit version leaves one's `requires.kit` range — **except for a vendored
+exits 6 when the target kit version is below one's `minKit` floor — **except for a vendored
 plugin, exempt there for the same reason** (one predicate, `unsupportedForKit`, serves both) —
 (`--force` to proceed), and flags a kit change to a file in a plugin's `registries[]` as
 `touches-plugin-registry`. It warns, without changing its exit code, when the target ref turns out
@@ -2375,30 +2436,43 @@ stops a plugin doing so. Provisioning creates a plugin's resources but never DEL
 them; and `d1`, `vectorize` and `analytics_engine` stay refused BY NAME, because unlike `workflow`
 and `durable_object` they have no mechanism that makes them reachable from the entry module.
 
-On the CONTRACT: **the enforcement is two-tier and always will be**, so a plugin that declares no
-`requires.pluginApi` — every plugin released before 0.7.0 — is warned rather than checked, which
-means "clean" on such a plugin says less than it looks. `PLUGIN_API.minSupported` has never been
-raised, so the "this plugin needs migrating" branch has never fired against a real plugin. The
-generated reference **truncates a printed type over 300 characters**, so a signature change beyond
-that point is not caught (drizzle tables are exempt — they summarise to `table "users" { id, email,
-… }`, which keeps the column names a foreign key points at inside the checked region). The table
-COLLISION is caught by `plugin check` and therefore by CI, but it is not refused at `plugin add`:
-an install that creates one lands, and the next audit is what says so. The isolation check is
-structural — it proves a test exists, not that it is right. And the accepted cost of the test kit's
-blessed-handle rule stands: there is no fast, database-free test of a data-touching handler.
+On OBSERVED compatibility, the method's own boundary, which is wider than it first reads.
+**Only the entries the LEDGER carries are judged**: `missingFrom` derives that set from the ledger
+itself, so a symbol imported from a declared entry the generator does not emit — most of
+`packages/shared/src`, of which two files are ledgered — is recorded in `uses` and compared against
+nothing. Recording it anyway is deliberate (dropping it in the walk made a plugin that imports
+`@rocketflare/shared/pagination` measure as using *nothing*, indistinguishable from one that imports
+nothing at all), but the gate, not the diff, is what catches a break there. **A namespace import
+(`import * as x`) binds no attributable names**, so it contributes nothing and says so. `uses` is
+only as true as the last `pnpm plugin export`, since it is written at export time rather than
+recomputed from the installed tree — a plugin hand-edited in place can drift from its own manifest
+until it is exported again. The generated reference **truncates a printed type over 300
+characters**, so a signature change beyond that point is not caught (drizzle tables are exempt —
+they summarise to `table "users" { id, email, … }`, which keeps the column names a foreign key
+points at inside the checked region). The table COLLISION is caught by `plugin check` and therefore
+by CI, but it is not refused at `plugin add`: an install that creates one lands, and the next audit
+is what says so. The isolation check is structural — it proves a test exists, not that it is right.
+And the accepted cost of the test kit's blessed-handle rule stands: there is no fast, database-free
+test of a data-touching handler.
 
 On tenant purge: a plugin holding one Durable Object per ROW cannot be purged, because only DERIVED
 instance names are reachable; the purge-intent ledger that would fix it is documented on the hook
 and not built.
 
-On CI: the second gate now runs for real — `analytics` is pinned in `defaultPlugins`, so
-`ci.yml` installs it and runs the whole gate on the result — but `.github/workflows/plugin-ci.yml`
-first runs when a plugin repository calls it, and **its two new inputs (`kit_ref`, `plugin_subdirs`)
-are unusable by a repository pinning `@main` until this release reaches the kit's default branch**.
-Neither workflow proves a MIDDLE version of a range. `kit:release`'s refusal reads a plugin's
-`requires.kit` from the mirror at the pinned ref, falling back to the installed surface: a default
-plugin that is neither fetchable nor installed here reports an unreadable range rather than being
-waved through, which is a report and not a proof that somebody else's tests are green.
+On CI: the second gate runs for real — `analytics` is pinned in `defaultPlugins`, so `ci.yml`
+installs it and runs the whole gate on the result — but `.github/workflows/plugin-ci.yml` only runs
+when a plugin repository CALLS it, so **a change to its inputs reaches nobody until it lands on the
+kit's default branch**, every caller pinning `@main`. Removing `kit_range` is such a change, and a
+caller still passing it gets a hard workflow error rather than a warning, because an input a
+reusable workflow does not declare is a refusal. Neither workflow proves a version BETWEEN a
+plugin's floor and the kit's ceiling. `kit:release`'s refusal reads the pinned plugin's `minKit`
+out of the mirror, falling back to the installed surface: a default plugin that is neither
+fetchable nor installed here reports an unreadable floor rather than being waved through, which is
+right, and is still a report rather than a proof that somebody else's tests are green. **The
+transition is live rather than finished**: a default plugin still carrying `requires.kit` is named
+as such and refuses the release until it is re-cut with a floor, which is why `analytics` has to
+ship a `minKit` before the next kit version can be tagged. It fails in the safe direction, but it
+does mean the two repositories have to be released in order, once.
 Two plugins installed TOGETHER is the kit's own default state — `example-feature` is vendored and
 `analytics` is in `defaultPlugins` — so the collision rules are exercised on every run rather than
 only in fixtures. The website's plugin pages are Phase D.

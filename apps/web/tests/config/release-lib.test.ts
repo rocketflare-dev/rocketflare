@@ -3,11 +3,11 @@
  * one `defaultPlugins` entry is resolved (D31, decision 5).
  *
  * The second is the one that had a bug with teeth. `git ls-remote` proves a ref exists but cannot
- * read a file out of it, so the `requires.kit` range came only from an INSTALLED surface — and the
+ * read a file out of it, so the plugin's declaration came only from an INSTALLED surface — and the
  * kit does not install its own default plugins. Every `pnpm kit:release` was therefore refused with
- * "cannot read its requires.kit range", which made `--skip-plugin-check` mandatory rather than the
- * loud escape hatch it was written as. Reading the manifest out of the mirror is the fix, and the
- * mirror is injected here so every branch runs with no network at all.
+ * "cannot read" it, which made `--skip-plugin-check` mandatory rather than the loud escape hatch it
+ * was written as. Reading the manifest out of the mirror is the fix, and the mirror is injected
+ * here so every branch runs with no network at all. What it reads is the top-level `minKit` floor.
  *
  * The `config` project: no database.
  */
@@ -49,19 +49,20 @@ const fakeMirror = (
     files[file] === undefined ? { ok: false, out: '' } : { ok: true, out: files[file] },
 })
 
-const declaring = (requiresKit: string, version = '1.0.2', at = PLUGIN_MANIFEST) =>
-  fakeMirror({ [at]: JSON.stringify({ id: 'orders', version, requires: { kit: requiresKit } }) })
+const declaring = (minKit: string, version = '1.0.2', at = PLUGIN_MANIFEST) =>
+  fakeMirror({ [at]: JSON.stringify({ id: 'orders', version, minKit }) })
+
+/** A plugin still on the OLD shape: a `requires.kit` RANGE and no floor. */
+const legacyDeclaring = (requiresKit: string, version = '1.0.2') =>
+  fakeMirror({
+    [PLUGIN_MANIFEST]: JSON.stringify({ id: 'orders', version, requires: { kit: requiresKit } }),
+  })
 
 /** A manifest recording `orders` as installed at an OLDER version than the pin. */
-const withInstalled = (requiresKit: string | null, version = '0.9.0') =>
+const withInstalled = (minKit: string | null, version = '0.9.0') =>
   ({
     surfaces: [
-      {
-        id: 'orders',
-        kind: 'plugin',
-        source: { repo: REPO, version },
-        requires: requiresKit === null ? {} : { kit: requiresKit },
-      },
+      { id: 'orders', kind: 'plugin', source: { repo: REPO, version }, minKit, requires: {} },
     ],
   }) as unknown as Manifest
 
@@ -70,14 +71,36 @@ const never = () => {
 }
 
 describe('resolveDefaultPlugin', () => {
-  it('reads requires.kit out of the mirror for a plugin that is NOT installed', () => {
+  it('reads minKit out of the mirror for a plugin that is NOT installed', () => {
     // The whole bug: nothing is installed here, and the answer is still the plugin's own.
     const resolved = resolveDefaultPlugin(entry(), {
       manifest: null,
-      openMirror: () => declaring('>=0.6.0 <1.0.0'),
+      openMirror: () => declaring('0.7.0'),
       lsRemote: never,
     })
-    expect(resolved).toEqual({ ok: true, requiresKit: '>=0.6.0 <1.0.0', version: '1.0.2' })
+    expect(resolved).toEqual({ ok: true, minKit: '0.7.0', legacyRange: null, version: '1.0.2' })
+  })
+
+  it('carries a requires.kit RANGE out as legacyRange, and never as a floor', () => {
+    // The old shape is not "no floor": the caller names the field and its replacement, which it
+    // can only do if the range reaches it. Nothing here reads it as a version bound.
+    const resolved = resolveDefaultPlugin(entry(), {
+      manifest: null,
+      openMirror: () => legacyDeclaring('>=0.6.0 <1.0.0'),
+      lsRemote: never,
+    })
+    expect(resolved).toEqual({
+      ok: true,
+      minKit: null,
+      legacyRange: '>=0.6.0 <1.0.0',
+      version: '1.0.2',
+    })
+    const entries = defaultPluginEntries({
+      defaultPlugins: [{ id: 'orders', repo: REPO, ref: '1.0.2' }],
+    } as unknown as Manifest)
+    expect(defaultPluginProblems(entries, '0.7.0', () => resolved)[0]).toMatch(
+      /declares requires\.kit.*"minKit"/
+    )
   })
 
   it('so `kit:release` passes its own gate without --skip-plugin-check', () => {
@@ -86,15 +109,17 @@ describe('resolveDefaultPlugin', () => {
       defaultPlugins: [{ id: 'orders', repo: REPO, ref: '1.0.2' }],
     } as unknown as Manifest)
     const resolve = (e: DefaultPluginEntry) =>
-      resolveDefaultPlugin(e, { openMirror: () => declaring('>=0.6.0 <1.0.0'), lsRemote: never })
+      resolveDefaultPlugin(e, { openMirror: () => declaring('0.7.0'), lsRemote: never })
     expect(defaultPluginProblems(entries, '0.7.0', resolve)).toEqual([])
-    // …and still refuses a version the plugin's range excludes, which is the point of checking.
-    expect(defaultPluginProblems(entries, '1.0.0', resolve)[0]).toMatch(/does not satisfy/)
+    // …and still refuses a version below the plugin's floor, which is the point of checking.
+    expect(defaultPluginProblems(entries, '0.6.0', resolve)[0]).toMatch(
+      /needs kit 0\.7\.0 or newer/
+    )
   })
 
   it('reads the manifest from inside a subdirectory when the entry names one', () => {
     const resolved = resolveDefaultPlugin(entry({ subdir: 'packages/orders/' }), {
-      openMirror: () => declaring('*', '2.0.0', `packages/orders/${PLUGIN_MANIFEST}`),
+      openMirror: () => declaring('0.7.0', '2.0.0', `packages/orders/${PLUGIN_MANIFEST}`),
       lsRemote: never,
     })
     expect(resolved).toMatchObject({ ok: true, version: '2.0.0' })
@@ -102,10 +127,10 @@ describe('resolveDefaultPlugin', () => {
 
   it('falls back to the newest tag when the entry pins no ref', () => {
     const resolved = resolveDefaultPlugin(entry({ ref: null }), {
-      openMirror: () => declaring('^0.6.0'),
+      openMirror: () => declaring('0.6.0'),
       lsRemote: never,
     })
-    expect(resolved).toMatchObject({ ok: true, requiresKit: '^0.6.0' })
+    expect(resolved).toMatchObject({ ok: true, minKit: '0.6.0' })
   })
 
   it('refuses a pin the repository does not have, naming the ref', () => {
@@ -120,11 +145,11 @@ describe('resolveDefaultPlugin', () => {
   it('falls back to the installed surface when the ref carries no manifest', () => {
     // An older plugin release may predate the file; that is a missing answer, not a broken plugin.
     const resolved = resolveDefaultPlugin(entry(), {
-      manifest: withInstalled('>=0.5.0'),
+      manifest: withInstalled('0.5.0'),
       openMirror: () => fakeMirror({}),
       lsRemote: never,
     })
-    expect(resolved).toEqual({ ok: true, requiresKit: '>=0.5.0', version: '0.9.0' })
+    expect(resolved).toEqual({ ok: true, minKit: '0.5.0', legacyRange: null, version: '0.9.0' })
   })
 
   it('refuses a manifest that is not JSON — that IS a broken plugin', () => {
@@ -143,19 +168,19 @@ describe('resolveDefaultPlugin', () => {
     }
     expect(
       resolveDefaultPlugin(entry(), {
-        manifest: withInstalled('>=0.5.0'),
+        manifest: withInstalled('0.5.0'),
         openMirror: unreachable,
         lsRemote: () => true,
       })
-    ).toEqual({ ok: true, requiresKit: '>=0.5.0', version: '0.9.0' })
-    // With nothing installed either, the range is honestly unknown — and the CALLER reports that.
+    ).toEqual({ ok: true, minKit: '0.5.0', legacyRange: null, version: '0.9.0' })
+    // With nothing installed either, the floor is honestly unknown — and the CALLER reports that.
     expect(
       resolveDefaultPlugin(entry(), {
         manifest: null,
         openMirror: unreachable,
         lsRemote: () => true,
       })
-    ).toEqual({ ok: true, requiresKit: null, version: null })
+    ).toEqual({ ok: true, minKit: null, legacyRange: null, version: null })
     expect(
       resolveDefaultPlugin(entry(), { openMirror: unreachable, lsRemote: () => false }).ok
     ).toBe(false)

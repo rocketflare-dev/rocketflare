@@ -6,12 +6,8 @@ step that does the same for `apps/web/worker-configuration.d.ts`, and for the sa
 generated artefact that is committed and diff-checked cannot drift from its source. **A diff
 failure means this file is stale. Run the script and commit what it writes.**
 
-Two other failures come out of the same script and mean something different:
+One other failure comes out of the same script and means something different:
 
-- *"changed without a bump"* — a member's signature moved, or the member is gone, while
-  `PLUGIN_API.current` still reads 1. Either restore the member, or raise
-  `current` in `packages/shared/src/plugins/contract.ts` and mirror it in
-  `.rocketflare.json`. The script names the member.
 - *"capability names a member that does not exist"* — the index at the top points at a symbol that
   has been renamed. Fix the index in the generator; a capability index nobody maintains is worse
   than none, because it sends the next reader to a name that is not there.
@@ -79,39 +75,6 @@ name here is a name you can import today.
 | Prove a cron task is dispatched | `dispatchScheduled` | `@testkit/integration` |
 | Build a fake request context | `makeRequestCtx` | `@testkit/unit` |
 
-## The plugin API version
-
-```
-current       1
-minSupported  1
-```
-
-A plugin declares `requires.pluginApi` in its own `plugin.json` — **a whole number, never a
-range**:
-
-```json
-"requires": { "kit": ">=0.6.0 <1.0.0", "pluginApi": "1" }
-```
-
-**It is not `requires.kit`, and merging the two is the bug this replaces.** `requires.kit` says
-which kit RELEASES a plugin may be installed into; this says which version of the SURFACE above it
-was written against. The kit cut three releases without the surface moving at all, and a plugin
-pinned only by kit range had to be re-released for each — so every pin became a guess, and the
-guesses drifted.
-
-The comparison is integer and lives in one place, `scripts/lib/plugin-api.mjs`:
-
-- declared > `current` — the plugin needs a newer kit.
-- declared < `minSupported` — the plugin needs migrating to the current contract.
-- **not declared at all — warned, never refused.** A plugin released before this existed cannot
-  retroactively declare anything, and refusing it would break installs of plugins nobody can
-  change. Declaring the version is what moves a plugin from *warned* to *checked*, and it happens
-  in the release that migrates it.
-
-There is deliberately no range language anywhere near this number. A malformed semver range throws
-out of the matcher and reaches the caller as a generic failure with nothing to act on; an integer
-has one way to be wrong and one sentence to say so.
-
 ## The entries
 
 One section per declared entry. A nested list under a type is its own members: those are part
@@ -163,16 +126,16 @@ The server surface: the context family, and the types a plugin must be able to n
   The element type of the barrels — a plugin whose shared half is not narrowed.
 - `type AnyUiPlugin = UiPlugin<SharedPlugin>`
 - `type AppRouter = Hono<AppEnv>`
-- `function createRouter(): Hono<AppEnv>` — **used by** example-feature
+- `function createRouter(): Hono<AppEnv>`
 - `function createStepRealtimeFor(env: HubEnv): StepRealtime`
 - `function cronCtx(ctx: TaskContext): CronCtx`
   Adapt the kit's `TaskContext`.
 - `interface CronCtx extends PluginContext, BackgroundMethods`
   One cron run. `waitUntil` exists here because a scheduled invocation genuinely has one.
   - `waitUntil(promise: Promise<unknown>): void`
-- `type Database = PostgresJsDatabase<typeof schema>` — **used by** example-feature
+- `type Database = PostgresJsDatabase<typeof schema>`
 - `interface DatabaseHandle`
-- `function defineTool<Input>(tool: Tool<Input>): Tool<Input>` — **used by** example-feature
+- `function defineTool<Input>(tool: Tool<Input>): Tool<Input>`
   Declare a tool. A thin helper, and its only job is to be the thing a plugin imports instead of the `Tool` type from a kit path — but it is also where the two rules in this file's…
 - `interface DetachedCtx extends PluginContext`
   What survives the handler: data and a database, no request.
@@ -190,7 +153,7 @@ The server surface: the context family, and the types a plugin must be able to n
   A Durable Object stub for one tenant, **with the tenant prefix built here rather than by the caller** (D31).
 - `function hasFeature(auth: Pick<PluginAuth, 'features'>, name: string): boolean`
   `true` when this deployment ships the surface AND this organisation has it yet.
-- `interface HookCtx extends Pick<PluginContext, 'db'>` — **used by** example-feature
+- `interface HookCtx extends Pick<PluginContext, 'db'>`
   A lifecycle hook: `onTenantCreated`, `onTenantDeleted`, `seedDemo`.
   - `tenant: Tenant`
   - `tenantId: string`
@@ -204,12 +167,12 @@ The server surface: the context family, and the types a plugin must be able to n
   `users.isGlobalAdmin` — the platform flag, independent of any tenant role.
 - `function isOwnerLevel(session: RoleView): boolean`
   Irreversible tenant actions: explicit `owner` (or global admin), NOT `manage Tenant`.
-- `function jobCtx(ctx: JobContext): JobCtx` — **used by** example-feature
+- `function jobCtx(ctx: JobContext): JobCtx`
   Adapt the kit's `JobContext`. The only place a plugin's job half names a kit internal.
-- `interface JobCtx extends PluginContext, BackgroundMethods` — **used by** example-feature
+- `interface JobCtx extends PluginContext, BackgroundMethods`
   One queue message. `job.payload` is already narrowed to the variant this handler was registered for — `ServerPlugin.jobHandlers` is checked against the job types the plugin's own…
 - `type JobEnvelope = z.infer<typeof jobEnvelopeSchema>`
-- `type JobHandler = ( job: Extract<JobEnvelope, { type: T }>, ctx: JobContext ) => Promise<void>` — **used by** example-feature
+- `type JobHandler = ( job: Extract<JobEnvelope, { type: T }>, ctx: JobContext ) => Promise<void>`
 - `type JobInput = z.infer<typeof jobInputSchema>`
 - `type JobOf = Extract<JobEnvelope, { type: T }>`
   The envelope narrowed to one `type` — what a handler receives.
@@ -291,9 +254,9 @@ The server surface: the context family, and the types a plugin must be able to n
 - `function realtimeEvent( type: RealtimeEventType, tenantId: string, payload?: unknown ): RealtimeEvent`
 - `async function recordActivity(db: Database, input: ActivityInput): Promise<void>`
 - `async function recordUsage(db: Database, input: UsageInput): Promise<void>`
-- `function requestCtx(c: AppContext): RequestCtx` — **used by** example-feature
+- `function requestCtx(c: AppContext): RequestCtx`
   Build a plugin's request context from the kit's.
-- `interface RequestCtx extends PluginContext, PluginAuth` — **used by** example-feature
+- `interface RequestCtx extends PluginContext, PluginAuth`
   What a route handler is handed.
   - `readonly scope: AccessScope`
     Tenant-wide visibility scope (D29) — hand it to a predicate, never to a query as a tenant id.
@@ -342,17 +305,17 @@ The server surface: the context family, and the types a plugin must be able to n
     Write the row's `visibility` and replace its grants, in ONE transaction, through the registry entry this `kind` names. Answers the group ids that were actually stored.
   - `grantsFor(kind: string, resourceIds: readonly string[]): Promise<Map<string, GroupRef[]>>`
     Which groups each of these rows is shared with, in ONE query — so a badge strip on a list costs one extra round trip rather than one per row.
-- `function requireFeature(feature: FeatureName)` — **used by** example-feature
+- `function requireFeature(feature: FeatureName)`
 - `interface ResourceGrantRow`
   One row of `grantsForResources`, before it is grouped by resource.
 - `interface ScheduledTask`
-- `interface SeedCtx extends Pick<PluginContext, 'db'>` — **used by** example-feature
+- `interface SeedCtx extends Pick<PluginContext, 'db'>`
   `pnpm seed --demo`, after the kit's own block.
   - `tenantId: string`
   - `ownerId: string`
   - `demoId: (key: string) => string`
   - `log: (line: string) => void`
-- `interface ServerPlugin<S extends SharedPlugin = SharedPlugin>` — **used by** example-feature
+- `interface ServerPlugin<S extends SharedPlugin = SharedPlugin>`
   - `shared: S`
   - `requires?: PluginRequires`
   - `mounts?: readonly PluginMount[]`
@@ -404,13 +367,13 @@ The server surface: the context family, and the types a plugin must be able to n
   - `sendToUsers(userIds: string[], event: RealtimeEvent): Promise<void>`
 - `type Subjects = CoreSubject \| PluginSubject \| FeatureSubject`
 - `type Tenant = typeof tenants.$inferSelect`
-- `interface Tool<Input = unknown>` — **used by** example-feature
+- `interface Tool<Input = unknown>`
   A tool the model may call. `handler` runs it; a tool WITHOUT a handler is terminal (its input is the answer).
 - `interface ToolApproval`
   An answered gate, as the loop consumes it — keyed by `toolCallId` in {@link RunToolLoopOptions.approvals}, built by the runtime from the resolved rows. The agent never assembles…
-- `function toolCtx(ctx: AgentToolContext): ToolCtx` — **used by** example-feature
+- `function toolCtx(ctx: AgentToolContext): ToolCtx`
   Adapt the runtime's tool context. The only place a plugin's tools name a kit internal.
-- `interface ToolCtx` — **used by** example-feature
+- `interface ToolCtx`
   What `ServerPlugin.agentTools(ctx)` is handed, spelled as the plugin surface rather than as the runtime's internal shape.
   - `db: Database`
   - `config: PluginConfig`
@@ -446,7 +409,7 @@ The server surface: the context family, and the types a plugin must be able to n
   - `agentForms?: Readonly<Partial<Record<AgentKeyOf<S> & string, AgentForm>>>`
     `AGENT_FORMS` entries for the agents this plugin registers. Optional per agent: `formFor` falls back to a form generated from the agent's own JSON Schema, then to a JSON textarea.
 - `type User = typeof users.$inferSelect`
-- `function validate<T extends ZodSchema, Target extends keyof ValidationTargets>( target: Target, schema: T )` — **used by** example-feature
+- `function validate<T extends ZodSchema, Target extends keyof ValidationTargets>( target: Target, schema: T )`
 - `interface VisibilityResource`
   What it takes to be a resource a group can restrict.
 - `async function withAgentTrace<T>( name: string, ctx: AgentTraceContext, fn: (trace: TraceHandle) => Promise<T> ): Promise<T>`
@@ -470,7 +433,7 @@ The two escape hatches that read the whole installed set. Not on the barrel, on 
 
 > The two escape hatches that read the WHOLE installed set (D31).
 
-- `function allTables(): AllTables` — **used by** example-feature
+- `function allTables(): AllTables`
   The whole schema namespace, for a library that takes one (drizzle-cube's `createCubeApp({ schema })` is the case this exists for).
 - `type AllTables = typeof schema`
   The merged drizzle schema: every kit table AND every installed plugin's.
@@ -486,13 +449,13 @@ The only host module a plugin's `ui/index.ts` may import — it ships in the mai
 > The WIRING half of the UI kit (D31) — the only host module a plugin's `ui/index.ts` may import.
 
 - `type AnyUiPlugin = UiPlugin<SharedPlugin>`
-- `const featureGuard: (feature: NavGuard, guard: NavGuard) => NavGuard` — **used by** example-feature
+- `const featureGuard: (feature: NavGuard, guard: NavGuard) => NavGuard`
   `featureGuard(MY_FEATURE, { action: 'read', subject: 'Thing' })` → the flag AND the permission.
 - `const isGuardList: (guard: NavGuard) => guard is readonly NavGuard[]`
   `Array.isArray` widens a `readonly T[]` to `any[]` rather than narrowing the union, so this.
 - `type NavConfig = (NavItem \| NavGroup)[]`
 - `interface NavGroup`
-- `type NavGuard = \| 'admin' \| 'globalAdmin' \| { action: string; subject: string } \| { feature: string } \| readonly NavGuard[]` — **used by** example-feature
+- `type NavGuard = \| 'admin' \| 'globalAdmin' \| { action: string; subject: string } \| { feature: string } \| readonly NavGuard[]`
   Coarse role flags for routing (`AdminRoute` / `GlobalAdminRoute` semantics), a CASL `{ action, subject }` pair for per-page checks, a feature flag, or a list meaning AND. Strings,…
 - `interface NavItem`
 - `interface PluginNavGroup`
@@ -513,7 +476,7 @@ The only host module a plugin's `ui/index.ts` may import — it ships in the mai
 - `type PluginRouteTier = 'shell' \| 'noTenant' \| 'public'`
 - `interface QuickLink`
 - `interface TabConfig`
-- `interface UiPlugin<S extends SharedPlugin = SharedPlugin>` — **used by** example-feature
+- `interface UiPlugin<S extends SharedPlugin = SharedPlugin>`
   - `shared: S`
   - `routes: readonly PluginRoute[]`
   - `nav?: readonly PluginNavGroup[]`
@@ -539,7 +502,7 @@ Components and hooks, for a lazy PAGE. Never for the UI entry.
 - `interface AccessPickerProps`
 - `function AlertModal({ isOpen, title, message, type = 'info', onClose }: AlertModalProps)`
   One-button acknowledgement on the `<dialog>` Modal.
-- `const api: { get<T>(url: string, options?: ApiRequestOptions<T>): Promise<T>; post<T>(url: string, body?: unknown, options?: ApiRequestOptions<T>): Promise<T>; put<T>(url: string, body?: unknown, options?: ApiRequestOptions<T>): Promise<T>; patch<T>(url: string, body?: unknown, options?: ApiRequestOptions<T>):… (truncated)` — **used by** example-feature
+- `const api: { get<T>(url: string, options?: ApiRequestOptions<T>): Promise<T>; post<T>(url: string, body?: unknown, options?: ApiRequestOptions<T>): Promise<T>; put<T>(url: string, body?: unknown, options?: ApiRequestOptions<T>): Promise<T>; patch<T>(url: string, body?: unknown, options?: ApiRequestOptions<T>):… (truncated)`
   GET → no error toast by default (queries render their own error state); mutations → toast.
 - `class ApiError extends Error`
   Thrown for every non-2xx response. `body` is the parsed error envelope.
@@ -553,7 +516,7 @@ Components and hooks, for a lazy PAGE. Never for the UI entry.
 - `function documentLinkProps(card: DocumentCardData): DocumentLinkProps`
   A `DocumentCard` as a one-liner: everything that survives the width, nothing that does not.
 - `interface DocumentLinkProps`
-- `function EmptyState({ icon: Icon, message, description, action, className = '', size = 'md', }: EmptyStateProps)` — **used by** example-feature
+- `function EmptyState({ icon: Icon, message, description, action, className = '', size = 'md', }: EmptyStateProps)`
   "Nothing here yet" for lists and panels.
 - `function EmptyStateCard(props: EmptyStateProps)`
   Panel-wrapped empty state for grid layouts.
@@ -586,7 +549,7 @@ Components and hooks, for a lazy PAGE. Never for the UI entry.
   "Showing X to Y of Z" + Previous/Next. Renders nothing for a single page.
 - `function SearchInput({ value, onChange, placeholder = 'Search…', debounceMs = 300, className = '', size = 'md', 'aria-label': ariaLabel = 'Search', }: SearchInputProps)`
   Debounced search box with a clear button, for server-side search on index pages.
-- `function SectionPanel({ title, description, actions, children, className = '', flush = false, }: SectionPanelProps)` — **used by** example-feature
+- `function SectionPanel({ title, description, actions, children, className = '', flush = false, }: SectionPanelProps)`
   The default content container: `.surface-panel` with an optional header row.
 - `function SectionPanelSkeleton({ rows = 4, className = '', }: { rows?: number className?: string })`
   Loading placeholder shaped like `SectionPanel`, so content does not jump on resolve.
@@ -598,9 +561,9 @@ Components and hooks, for a lazy PAGE. Never for the UI entry.
   Toggle variant.
 - `function setUnauthorizedHandler(handler: UnauthorizedHandler \| null): void`
   Register the global 401 handler. One handler; the last registration wins. Pass `null` to remove it. Phase 1 calls this from `AuthProvider` with the redirect-to-login behaviour.
-- `function showToast(message: string, type: ToastType, duration?: number): void` — **used by** example-feature
+- `function showToast(message: string, type: ToastType, duration?: number): void`
   Show a toast from anywhere, inside or outside React.
-- `default function SideNav({ items = navigationConfig, footer }: SideNavProps)` — **used by** example-feature
+- `default function SideNav({ items = navigationConfig, footer }: SideNavProps)`
 - `function SkeletonRows({ rows = 4, className = '' }: { rows?: number; className?: string })`
   Placeholder lines on their own, for panels that stay mounted while loading.
 - `interface TabConfig`
@@ -612,14 +575,14 @@ Components and hooks, for a lazy PAGE. Never for the UI entry.
 - `type ToastType = 'success' \| 'error' \| 'warning' \| 'info'`
 - `function URLTabs({ tabs, defaultTab, param = 'tab', className = '', actions, }: URLTabsProps)`
   Tabs whose active state lives in `?tab=`, so deep links and back/forward work.
-- `function useAuth(): AuthContextValue` — **used by** example-feature
+- `function useAuth(): AuthContextValue`
 - `function useFeature(name: FeatureName): boolean`
   Is a feature on for this session (D30)? Reads `session.features` — the array the server resolved — and NEVER the ability: `manage all` covers `access` on every `Feature:` subject,…
 - `function useGroups(typeId?: string, enabled = true)`
 - `function useGroupTypes(enabled = true)`
 - `function useMyGroups()`
   Every member may read their OWN groups — the profile list, and what the picker offers them.
-- `function usePermissions()` — **used by** example-feature
+- `function usePermissions()`
 - `function useTenancyMode(): TenancyMode`
   `'single'` hides OrgSwitcher, /select-tenant and org create/delete (D25).
 - `const useToastStore: UseBoundStore<StoreApi<ToastStore>>`
@@ -798,17 +761,6 @@ What a plugin's CONTRACT module imports: the error envelope, pagination, `Shared
   The CASL subjects one plugin declares.
 - `type Subjects = CoreSubject \| PluginSubject \| FeatureSubject`
 
-### `@rocketflare/shared/plugins/contract`
-
-The plugin API version itself.
-
-> The plugin API version (D31) — which SURFACE a plugin compiles against, as two integers.
-
-- `const PLUGIN_API: { readonly current: 1; readonly minSupported: 1; }`
-  The plugin API version this kit provides, and the oldest one it still honours.
-- `interface PluginApiVersions`
-  `{ current, minSupported }` — what `pluginApiProblem` compares a plugin's declaration against.
-
 ### `'../api' (apps/cli/src/plugins/api.ts)`
 
 The CLI half: the one `fetch` site, the exit codes, the output helpers.
@@ -822,12 +774,12 @@ The CLI half: the one `fetch` site, the exit codes, the output helpers.
 - `interface ApiResponse<T>`
 - `class CliApiError extends CliError`
 - `class CliError extends Error`
-- `interface CliPlugin<S extends SharedPlugin = SharedPlugin>` — **used by** example-feature
+- `interface CliPlugin<S extends SharedPlugin = SharedPlugin>`
   - `shared: S`
   - `register(program: Command, action: ActionWrapper): void`
     Add `program.command(...)` entries. The top-level command name is the plugin's id.
 - `interface Column<Row>`
-- `interface CommandContext` — **used by** example-feature
+- `interface CommandContext`
 - `interface ContextOptions`
 - `const EXIT_ERROR: 1`
 - `const EXIT_FORBIDDEN: 3`
@@ -836,10 +788,10 @@ The CLI half: the one `fetch` site, the exit codes, the output helpers.
   CLI error types and the exit-code mapping (D26): 0 ok · 1 error · 2 not logged in · 3 forbidden. Commands throw; `cli.ts` catches once, prints once, and sets `process.exitCode`.
 - `function exitCodeForStatus(status: number): number`
 - `function formatCell(value: unknown): string`
-- `function formatDate(value: Date \| string \| null \| undefined): string` — **used by** example-feature
+- `function formatDate(value: Date \| string \| null \| undefined): string`
   `2026-09-01 07:54` in local time, or `-` for null.
 - `function formatJson(value: unknown): string`
-- `function formatPagination(meta: { page: number totalPages: number total: number pageSize: number }): string` — **used by** example-feature
+- `function formatPagination(meta: { page: number totalPages: number total: number pageSize: number }): string`
   `Page 2/5 · 113 items` — footer for paginated lists.
 - `class NotLoggedInError extends CliError`
 - `type OpenLike = (url: string) => Promise<unknown>`
@@ -847,10 +799,10 @@ The CLI half: the one `fetch` site, the exit codes, the output helpers.
 - `function publicClient(ctx: CommandContext): ApiClient`
   An unauthenticated client (health checks).
 - `type QueryValue = string \| number \| boolean \| undefined \| null`
-- `function renderTable<Row>(rows: readonly Row[], columns: readonly Column<Row>[]): string` — **used by** example-feature
+- `function renderTable<Row>(rows: readonly Row[], columns: readonly Column<Row>[]): string`
   Left-aligned columns separated by two spaces; header in bold; `-` for null/undefined.
 - `interface RequestOptions<T>`
-- `function requireClient(ctx: CommandContext): ApiClient` — **used by** example-feature
+- `function requireClient(ctx: CommandContext): ApiClient`
   An authenticated client, or `NotLoggedInError` (exit 2) when no key is configured.
 
 ### `'./types' (apps/cli/src/plugins/types.ts)`
@@ -879,58 +831,58 @@ The harness: a real database, the real Hono app, real bindings-shaped stubs, the
 - `function createExecutionContext(): TestExecutionContext`
 - `async function createTestApiKey( db: Database, tenantId: string, userId: string, overrides: Partial<Omit<NewApiKey, 'keyHash' \| 'keyPrefix'>> = {} )`
   A tenant API key created by `userId` (who must be a member). Returns the plaintext `key` for an `Authorization: Bearer` header plus the stored row.
-- `function createTestEnv(overrides: Partial<TestEnv> = {}): TestEnv` — **used by** example-feature
+- `function createTestEnv(overrides: Partial<TestEnv> = {}): TestEnv`
   A fresh env per call (KV and queue state are not shared between calls). Vars come from process.env with .env.test-compatible defaults; pass `overrides` to change any of them.
 - `function createTestGlobalAdmin(db: Database, overrides: Partial<NewUser> = {})`
   A platform staff account (`users.isGlobalAdmin`), the gate for `/api/admin/*`.
 - `function createTestQueryClient()`
   A fresh client with retries off so failing queries settle immediately.
-- `async function createTestSession( db: Database, userId: string, tenantId?: string \| null, options: { expiresInDays?: number; ip?: string; userAgent?: string } = {} ): Promise<string>` — **used by** example-feature
+- `async function createTestSession( db: Database, userId: string, tenantId?: string \| null, options: { expiresInDays?: number; ip?: string; userAgent?: string } = {} ): Promise<string>`
   A cookie session for `userId` (optionally pinned to `tenantId`). Returns the COOKIE VALUE — the raw token; the row stores only `hashToken(token)`.
-- `async function createTestTenant(db: Database, overrides: Partial<NewTenant> = {})` — **used by** example-feature
+- `async function createTestTenant(db: Database, overrides: Partial<NewTenant> = {})`
 - `async function createTestTenantWithUser( db: Database, role: MembershipRole = 'owner', userOverrides: Partial<NewUser> = {}, tenantOverrides: Partial<NewTenant> = {} )`
   Tenant + one member in one call (default `owner`).
-- `async function createTestUser(db: Database, overrides: Partial<NewUser> = {})` — **used by** example-feature
+- `async function createTestUser(db: Database, overrides: Partial<NewUser> = {})`
 - `async function dispatchScheduled( cron: string, env: AppBindings, ctx: Pick<ExecutionContext, 'waitUntil'>, registry: Record<string, ScheduledTask[]> = SCHEDULED_TASKS ): Promise<TaskReport[]>`
   Runs every task registered for `cron` and returns a per-task report (used by tests).
 - `function errorResponse(status: number, error = 'Error', code?: string)`
 - `const IDS: { user: string; otherUser: string; tenant: string; otherTenant: string; }`
-- `async function json<T = unknown>(res: Response): Promise<T>` — **used by** example-feature
+- `async function json<T = unknown>(res: Response): Promise<T>`
 - `function jsonResponse(body: unknown, status = 200)`
   JSON `Response` helper for `vi.stubGlobal('fetch', …)`.
-- `async function linkUserToTenant( db: Database, userId: string, tenantId: string, role: MembershipRole = 'member', invitedByUserId: string \| null = null )` — **used by** example-feature
+- `async function linkUserToTenant( db: Database, userId: string, tenantId: string, role: MembershipRole = 'member', invitedByUserId: string \| null = null )`
   Membership row. `support` is allowed here because fixtures must reach states only /admin mints.
-- `function makeSession(overrides: Partial<SessionResponse> = {}): SessionResponse` — **used by** example-feature
+- `function makeSession(overrides: Partial<SessionResponse> = {}): SessionResponse`
   A signed-in owner of Acme by default. Pass `tenant: null` for the "no active tenant" states; `permissions` follows `tenant.role`/`user.isGlobalAdmin` unless given explicitly.
 - `function makeTenant(overrides: Partial<TenantSummary> = {}): TenantSummary`
-- `function makeUser(overrides: Partial<User> = {}): User` — **used by** example-feature
+- `function makeUser(overrides: Partial<User> = {}): User`
 - `const notFoundResponse: () => Response`
 - `function paged<T>(items: T[], pageSize = 25)`
   `{ items, pagination }` for a one-page list response.
 - `interface RecordedMessage<T = unknown>`
-- `function renderWithProviders( ui: ReactElement, { route = '/', queryClient = createTestQueryClient(), session, ...options }: ProviderOptions = {} )` — **used by** example-feature
-- `async function request( path: string, init: RequestInit = {}, options: RequestOptions = {} ): Promise<Response>` — **used by** example-feature
+- `function renderWithProviders( ui: ReactElement, { route = '/', queryClient = createTestQueryClient(), session, ...options }: ProviderOptions = {} )`
+- `async function request( path: string, init: RequestInit = {}, options: RequestOptions = {} ): Promise<Response>`
 - `function requestBody(fetchMock: ReturnType<typeof vi.fn<FetchLike>>, key: string)`
   Body of the JSON request made to `"METHOD /path"`, or undefined if never called.
 - `interface RequestOptions`
 - `type RouteTable = Record< string, Response \| unknown \| ((init: RequestInit \| undefined, url: URL) => Response \| unknown) >`
   `{ 'GET /api/members': handler }`; the method defaults to GET when omitted from the key.
-- `function rulesFor( role: MembershipRole \| null, isGlobalAdmin = false, features: string[] = [] )` — **used by** example-feature
+- `function rulesFor( role: MembershipRole \| null, isGlobalAdmin = false, features: string[] = [] )`
   Packed rules EXACTLY as the server emits them for this role (same matrix, same packer).
 - `const SCHEDULED_TASKS: Record<string, ScheduledTask[]>`
   Core tasks plus every installed plugin's (D31). A plugin naming a cron the kit already runs APPENDS to it — each task is try/caught on its own, so a plugin's failure cannot stop…
 - `interface ScheduledTask`
 - `const SESSION_COOKIE_NAME: "__Host-session"`
   The login cookie. `middleware/csrf.ts` re-exports this so the CSRF check names the same cookie.
-- `function sessionCookieHeader(token: string): Record<string, string>` — **used by** example-feature
+- `function sessionCookieHeader(token: string): Record<string, string>`
   `{ Cookie }` header for a token from `createTestSession`.
-- `function setupTestDatabase(): Database` — **used by** example-feature
+- `function setupTestDatabase(): Database`
   Shared pooled handle for fixtures/assertions (max 5 connections per fork).
 - `function stubFetch(routes: RouteTable = {})`
   Stub `fetch` from a route table. Keys are `"METHOD /path"` (path compared without the query string); unmatched requests 404 with the shared envelope. Returns the mock for call…
 - `function stubHealthFetch(info: Record<string, unknown> = {})`
   Stub `fetch` so `/api/health` answers with the given app info; everything else 404s.
-- `function stubs(env: TestEnv)` — **used by** example-feature
+- `function stubs(env: TestEnv)`
   Typed access to the in-memory stubs behind a `createTestEnv()` env.
 - `function stubSessionFetch(session: SessionResponse \| null)`
   Layer a `/auth/session` answer over whatever `fetch` the test already installed.
@@ -962,7 +914,7 @@ Builders for the context family, for tests that never touch data.
   One queue message's context, through the kit's own `jobCtx` adapter.
 - `function makeRequestCtx(options: RequestCtxOptions): FakeRequestCtx`
   A `RequestCtx` with no request behind it.
-- `function makeToolCtx(options: ToolCtxOptions): ToolCtx` — **used by** example-feature
+- `function makeToolCtx(options: ToolCtxOptions): ToolCtx`
   What `ServerPlugin.agentTools(ctx)` is handed, through the kit's own `toolCtx` adapter.
 - `function makeWorkflowCtx(options: WorkflowCtxOptions): FakeWorkflowCtx`
   A `WorkflowCtx` over a recording step.
@@ -970,75 +922,18 @@ Builders for the context family, for tests that never touch data.
 - `interface ToolCtxOptions extends BaseOptions`
 - `interface WorkflowCtxOptions extends BaseOptions`
 
-## Who uses what
-
-Derived from the imports of the plugins installed **in this checkout** — so it answers "what does
-removing this cost" for this app, and it changes when somebody installs a plugin. An unannotated
-member is not a dead one: only the reference plugin ships with the kit, so most of the surface has
-no user here and never will have until an app installs something that needs it. Interface members
-carry no annotation at all, because there is no import to observe.
-
-| Member | Entry | Used by |
-|---|---|---|
-| `Database` | `@/plugins/api` | example-feature |
-| `HookCtx` | `@/plugins/api` | example-feature |
-| `JobCtx` | `@/plugins/api` | example-feature |
-| `JobHandler` | `@/plugins/api` | example-feature |
-| `RequestCtx` | `@/plugins/api` | example-feature |
-| `SeedCtx` | `@/plugins/api` | example-feature |
-| `ServerPlugin` | `@/plugins/api` | example-feature |
-| `Tool` | `@/plugins/api` | example-feature |
-| `ToolCtx` | `@/plugins/api` | example-feature |
-| `createRouter` | `@/plugins/api` | example-feature |
-| `defineTool` | `@/plugins/api` | example-feature |
-| `jobCtx` | `@/plugins/api` | example-feature |
-| `requestCtx` | `@/plugins/api` | example-feature |
-| `requireFeature` | `@/plugins/api` | example-feature |
-| `toolCtx` | `@/plugins/api` | example-feature |
-| `validate` | `@/plugins/api` | example-feature |
-| `allTables` | `@/plugins/api/peers` | example-feature |
-| `NavGuard` | `@/plugins/api/ui-wiring` | example-feature |
-| `UiPlugin` | `@/plugins/api/ui-wiring` | example-feature |
-| `featureGuard` | `@/plugins/api/ui-wiring` | example-feature |
-| `EmptyState` | `@/plugins/api/ui` | example-feature |
-| `SectionPanel` | `@/plugins/api/ui` | example-feature |
-| `SideNav` | `@/plugins/api/ui` | example-feature |
-| `api` | `@/plugins/api/ui` | example-feature |
-| `showToast` | `@/plugins/api/ui` | example-feature |
-| `useAuth` | `@/plugins/api/ui` | example-feature |
-| `usePermissions` | `@/plugins/api/ui` | example-feature |
-| `CliPlugin` | `'../api' (apps/cli/src/plugins/api.ts)` | example-feature |
-| `CommandContext` | `'../api' (apps/cli/src/plugins/api.ts)` | example-feature |
-| `formatDate` | `'../api' (apps/cli/src/plugins/api.ts)` | example-feature |
-| `formatPagination` | `'../api' (apps/cli/src/plugins/api.ts)` | example-feature |
-| `renderTable` | `'../api' (apps/cli/src/plugins/api.ts)` | example-feature |
-| `requireClient` | `'../api' (apps/cli/src/plugins/api.ts)` | example-feature |
-| `SharedPlugin` | `'./types' (apps/cli/src/plugins/types.ts)` | example-feature |
-| `createTestEnv` | `@testkit/integration` | example-feature |
-| `createTestSession` | `@testkit/integration` | example-feature |
-| `createTestTenant` | `@testkit/integration` | example-feature |
-| `createTestUser` | `@testkit/integration` | example-feature |
-| `json` | `@testkit/integration` | example-feature |
-| `linkUserToTenant` | `@testkit/integration` | example-feature |
-| `makeSession` | `@testkit/integration` | example-feature |
-| `makeUser` | `@testkit/integration` | example-feature |
-| `renderWithProviders` | `@testkit/integration` | example-feature |
-| `request` | `@testkit/integration` | example-feature |
-| `rulesFor` | `@testkit/integration` | example-feature |
-| `sessionCookieHeader` | `@testkit/integration` | example-feature |
-| `setupTestDatabase` | `@testkit/integration` | example-feature |
-| `stubs` | `@testkit/integration` | example-feature |
-| `makeToolCtx` | `@testkit/unit` | example-feature |
-
 ## Surface ledger
 
-The machine-readable snapshot, and the only part of this file the generator reads back. Every
-member is one line; the version is the number the snapshot was taken at. A change or a removal
-below with that number unchanged is what fails the gate, which is the whole mechanism by which the
-version means something rather than being a claim.
+The machine-readable half of this file: one line per member the kit provides,
+`entry :: kind :: name :: signature`.
+
+**It is one side of a set difference.** What a plugin USES is derived from its own imports rather
+than declared by its author (`usesOf` in `scripts/lib/surface.mjs`), and whatever it names that
+this block does not carry is what fails an install — symbol by symbol, with the replacement import
+where the symbol has merely moved entry. So there is no version to predict, no range to parse, and
+nothing in the comparison that can throw.
 
 ```text
-plugin-api 1
 @/plugins/api :: type :: AbilityCheck :: type AbilityCheck = (action: Actions, subject: Subjects) => boolean
 @/plugins/api :: interface :: AccessScope :: interface AccessScope
 @/plugins/api :: type :: Actions :: type Actions = (typeof ACTIONS)[number]
@@ -1439,8 +1334,6 @@ plugin-api 1
 @rocketflare/shared/plugins/api :: member :: SharedPlugin.realtimeRoots :: readonly realtimeRoots?: readonly string[]
 @rocketflare/shared/plugins/api :: type :: SubjectOf :: type SubjectOf = NonNullable<DeclaredBy<S, 'subjects'>>[number]
 @rocketflare/shared/plugins/api :: type :: Subjects :: type Subjects = CoreSubject | PluginSubject | FeatureSubject
-@rocketflare/shared/plugins/contract :: const :: PLUGIN_API :: const PLUGIN_API: { readonly current: 1; readonly minSupported: 1; }
-@rocketflare/shared/plugins/contract :: interface :: PluginApiVersions :: interface PluginApiVersions
 '../api' (apps/cli/src/plugins/api.ts) :: type :: ActionWrapper :: type ActionWrapper = ( handler: (ctx: CommandContext, command: Command) => Promise<void> ) => (...args: unknown[]) => Promise<void>
 '../api' (apps/cli/src/plugins/api.ts) :: type :: AnyCliPlugin :: type AnyCliPlugin = CliPlugin<SharedPlugin>
 '../api' (apps/cli/src/plugins/api.ts) :: interface :: ApiClient :: interface ApiClient

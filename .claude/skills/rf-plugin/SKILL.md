@@ -13,7 +13,8 @@ translated into this app's own vocabulary on the way in, and it reaches the host
 barrel files and nothing else. In the other direction it imports the host only through the DECLARED
 entries — `@/plugins/api` (the context family), `@/db/schema/kit`, the shared and CLI entries,
 `@testkit/*` — and receives everything else as injected context; `docs/plugin-api.md` is the
-generated reference for that surface. `docs/CONCEPTS.md` §16 is the design;
+generated reference for that surface, and its `## Surface ledger` block is what every plugin's
+declared `uses` is checked against. `docs/CONCEPTS.md` §16 is the design;
 `apps/web/src/plugins/CLAUDE.md` is the seam; `reference.md` beside this file is the manifest shape,
 the exit codes and what each command verifies.
 
@@ -48,8 +49,12 @@ blocks and **"Nothing written. Read the plan, then re-run with --apply to instal
 
 - `Plugin` / `Source` / `Host` / `Names` — what, from where, into which manifest file, and whether
   the names are being translated into this app's vocabulary or copied in kit vocabulary.
-- `Requirements` — three `✔` lines (`kit <version> satisfies <range>`, `surfaces`, `plugins`) or one
-  `✖` per unmet requirement. **Any `✖` is exit 6 and nothing is written** — report it and stop.
+- `Requirements` — four `✔` lines or one `✖` per unmet requirement: the kit is at or above the
+  plugin's `minKit` floor (or `⚠` when it declares none, meaning no kit version is ever checked
+  against it); **`surface`, the measured one** — every symbol the plugin `uses` is in this kit's
+  ledger; then `surfaces` and `plugins`. **Any `✖` is exit 6 and nothing is written** — report it
+  and stop. A surface `✖` names the symbol and the import that replaces it, so it is actionable
+  without reading anything else.
 - `Files (n)` — a count per root, plus `(not copied) migrations/` for any install fragment.
 - `Barrel lines` — the exact line each of the six barrels gains (the sixth, `worker-exports.ts`,
   only when the plugin ships a Durable Object or Workflow class).
@@ -113,10 +118,12 @@ pnpm plugin check
 
 Three other kinds of line, none of which changes the exit code:
 
-- `warn: …` — the same shape, for a plugin that declares no `requires.pluginApi`. It was released
-  before the rule existed and cannot retroactively satisfy it. **Report these to the user**: they
-  are real findings, and the fix is usually "migrate the plugin and declare the contract".
-- `note: …` — a state that is legitimately fine (a `defaultPlugins` entry not installed here).
+- `warn: …` — the same shape, for a finding that is not a fault in the plugin itself. **There is no
+  longer a tier a plugin opts into**: every installed plugin is checked strictly, because nothing
+  left is a rule a released plugin cannot retroactively satisfy.
+- `note: …` — a state that is legitimately fine, or a silence worth knowing about: a plugin
+  declaring no `minKit` (so no kit version is ever checked against it), or a vendored plugin, whose
+  floor describes the kit it shipped inside rather than a compatibility claim.
 - `✔ n plugin(s) check out` — nothing to do.
 
 Use `pnpm plugin check --json` when you are driving rather than reading: `{ ok, plugins, failures,
@@ -178,8 +185,11 @@ working copy into every clone made afterwards. Stage by path while authoring, an
 Cutting a plugin release: there is **no `pnpm plugin:release`**. In the plugin's own repository run
 `node scripts/release.mjs X.Y.Z` — the same script the kit uses, which detects a
 `rocketflare-plugin.json` with no `.rocketflare.json` and stamps that manifest's `version` (and a
-`package.json` if the repo has one) instead of the kit's. Copy the script in from the kit if the
-plugin repo does not carry it yet. It folds `docs/upgrades/unreleased.md` into
+`package.json` if the repo has one) instead of the kit's. It takes `--repo-root <path>`, so a plugin
+repository can keep a thin shim that delegates to a kit checkout rather than its own drifting copy;
+without the flag the root is the git toplevel of the working directory. It does NOT stamp the
+in-tree anchor — `pnpm plugin add` writes that from the source manifest, so a plugin's version
+exists in one place. It folds `docs/upgrades/unreleased.md` into
 `docs/upgrades/X.Y.Z.md` and prepends the `CHANGELOG.md` section — the same four headings and
 `previous` chain `pnpm plugin upgrade` walks, which is what makes the release portable at all.
 
@@ -187,9 +197,12 @@ Everything the plugin keys carries its id: tables prefixed with the id's first h
 segment (`example-feature` → `example_*`; `pnpm plugin check` fails when two installed plugins
 declare one table name), job types `<id>.verb`, the API prefix
 `/api/<id>`, query-key roots `<id>:…`, the CLI command `<id>`, feature/prompt/agent keys, and AG-UI
-CUSTOM events under `<id>.`. Declare `requires.pluginApi` in its manifest — a whole number, the
-version of the plugin CONTRACT it was written against, and what moves it from *warned* to
-*checked*.
+CUSTOM events under `<id>.`. Two manifest keys carry its compatibility, and only one of them is
+written by a person: a top-level **`minKit`** — one bare `X.Y.Z`, the oldest kit release it
+supports, a floor with no ceiling — and **`uses`**, the host symbols it imports. **Never hand-write
+`uses`**: `pnpm plugin export` derives it from the plugin's own imports, and a hand-written one is
+exactly the prediction this replaced. Re-export after any change to what the plugin imports, and
+paste the block it writes into the manifest.
 
 ## 7. Hand back
 

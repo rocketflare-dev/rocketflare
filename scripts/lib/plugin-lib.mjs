@@ -13,9 +13,19 @@
  *
  * `plugin-lib.d.mts` beside this file is the hand-written type surface (no `allowJs`).
  */
-import { pluginApiProblem } from './plugin-api.mjs'
 import { KIT } from './rename-lib.mjs'
-import { isVendored, satisfiesResult } from './upgrade-lib.mjs'
+import { missingFrom } from './surface.mjs'
+import { compareVersions, isVendored } from './upgrade-lib.mjs'
+
+/**
+ * A bare `X.Y.Z`, and nothing that resembles a range.
+ *
+ * **There is no range language anywhere in this file and there must never be one again.** A
+ * malformed semver range threw out of the matcher and arrived at the caller as a generic failure
+ * with nothing to act on — the exact shape of bug observed compatibility removes. A floor has one
+ * way to be wrong, one comparison (`compareVersions`) and one sentence to say so.
+ */
+const BARE_VERSION = /^\d+\.\d+\.\d+$/
 
 // ---------------------------------------------------------------- identity
 
@@ -393,10 +403,11 @@ const REPO_ONLY = [
   'biome.json',
 ]
 /**
- * `scripts/` is on this list because a plugin repository needs the kit's `release.mjs` and the four
- * `lib/*.mjs` it imports in order to cut a release at all (there is no `pnpm plugin:release`; the
- * skill tells an author to copy them in). They are the plugin repo's OWN tooling in exactly the
- * sense `.github/` is — and without this entry the first real plugin was refused at install for
+ * `scripts/` is on this list because a plugin repository carries its own release entry point: there
+ * is no `pnpm plugin:release`, so a plugin repo keeps a thin `scripts/` of its own that DELEGATES to
+ * a kit checkout — `release.mjs` takes `--repo-root <path>`, so the machinery lives in one place and
+ * the plugin repo holds the shim rather than a copy that drifts. They are the plugin repo's OWN
+ * tooling in exactly the sense `.github/` is — and without this entry the first real plugin was refused at install for
  * carrying the very files the kit told it to carry, which is how this was found (D31, Phase C).
  * Nothing under here is ever copied into a host, where `scripts/` is the kit's.
  */
@@ -552,50 +563,62 @@ export function nextPluginMigrationTag(existingTags, pluginId) {
  */
 export function checkRequirements({
   requires = {},
+  minKit = null,
+  uses = null,
+  ledger = null,
   kitVersion,
   presentSurfaces = [],
   installedPlugins = [],
   vendored = false,
-  pluginApi = null,
 }) {
   const problems = []
-  // `requires.kit` answers "which kit RELEASES may I be installed into"; `requires.pluginApi`
-  // answers "which version of the CONTRACT was I written against". Conflating them is what made
-  // every plugin need re-releasing for a kit version that never touched the plugin surface. An
-  // UNDECLARED value is null here and warned elsewhere, never refused — a plugin released before
-  // the field existed cannot retroactively declare one.
-  if (pluginApi) {
-    const problem = pluginApiProblem(requires.pluginApi, pluginApi)
-    if (problem) problems.push(problem)
-  }
-  const range = requires.kit
-  if (range && !vendored) {
-    // A range this kit cannot READ is its own problem, distinct from "the version is outside it":
-    // it means the plugin declared something the matcher does not implement, and saying so is what
-    // turns a thrown generic error into this function's exit-6 answer.
-    const answer = satisfiesResult(kitVersion, range)
-    if (answer.problem) problems.push(`requires.kit '${range}' is not a range this kit can read`)
-    else if (!answer.ok) problems.push(`kit ${kitVersion} does not satisfy ${range}`)
+  // (a) The FLOOR. One version, no ceiling: a plugin can say how old a kit it still works with,
+  // and cannot predict which future kit will break it — that is what the ledger diff below
+  // measures instead of guessing.
+  if (minKit && !vendored) {
+    if (!BARE_VERSION.test(minKit)) {
+      problems.push(
+        `minKit '${minKit}' is not a bare X.Y.Z version — minKit is a floor, not a range`
+      )
+    } else if (compareVersions(kitVersion, minKit) < 0) {
+      problems.push(
+        `kit ${kitVersion} is older than this plugin's minKit ${minKit} — upgrade the kit, or install an earlier release of the plugin`
+      )
+    }
   }
   for (const id of requires.surfaces ?? []) {
     if (!presentSurfaces.includes(id)) problems.push(`surface '${id}' is not present in this app`)
   }
   for (const req of requires.plugins ?? []) {
-    const { id, range: r } = parsePluginRequirement(req)
+    const { id, minVersion } = parsePluginRequirement(req)
     const found = installedPlugins.find(p => p.id === id)
     if (!found) {
       problems.push(`plugin '${id}' is required and not installed`)
       continue
     }
-    if (!r) continue
-    const answer = satisfiesResult(found.version ?? '0.0.0', r)
-    if (answer.problem)
-      problems.push(`plugin '${id}' requires '${r}', which is not a readable range`)
-    else if (!answer.ok) {
+    if (!minVersion) continue
+    if (!BARE_VERSION.test(minVersion)) {
       problems.push(
-        `plugin '${id}' is ${found.version ?? 'unversioned'}, which does not satisfy ${r}`
+        `plugin '${id}' is required at minVersion '${minVersion}', which is not a bare X.Y.Z version`
+      )
+      continue
+    }
+    if (compareVersions(found.version ?? '0.0.0', minVersion) < 0) {
+      problems.push(
+        `plugin '${id}' is ${found.version ?? 'unversioned'}, older than the minVersion ${minVersion} this plugin needs`
       )
     }
+  }
+  // (d) **The ledger diff — the whole of the compatibility question.** `uses` is what this plugin
+  // names of the host surface (derived from its own imports, never typed by an author); `ledger`
+  // is what this kit provides. The answer is a set difference over strings: deterministic, with no
+  // grammar to get wrong, and with no path out of it that can throw. Whatever is missing names
+  // itself and carries the replacement import when the symbol has merely moved entry.
+  for (const m of missingFrom(uses, ledger)) {
+    problems.push(
+      `${m.entry} :: ${m.symbol} is not in this kit's surface — ` +
+        (m.suggestion ?? 'no replacement: it is gone (see docs/plugin-api.md)')
+    )
   }
   return problems
 }
@@ -604,31 +627,47 @@ export function checkRequirements({
  * The installed plugins a move to kit `version` would leave unsupported.
  *
  * Shared by `plugin add|check` and by `kit:upgrade` because it has to answer the same, and once did
- * not: `plugin check` printed "vendored — requires.kit is not checked" and exited 0 while
- * `kit:upgrade`, in the same checkout, refused with exit 6 over the same range. A VENDORED plugin
- * ships inside the kit, so its range describes the kit it came out of rather than a compatibility
+ * not: `plugin check` printed "vendored — the floor is not checked" and exited 0 while
+ * `kit:upgrade`, in the same checkout, refused with exit 6 over the same plugin. A VENDORED plugin
+ * ships inside the kit, so its floor describes the kit it came out of rather than a compatibility
  * claim about a kit it has never seen — the release that moves the kit moves it too.
  */
 export function unsupportedForKit(plugins, { kitRepo, version }) {
   if (!version) return []
-  // An unreadable range counts as unsupported: `satisfiesResult(...).ok` is false either way, and
-  // "I cannot check this plugin against the target" is not a reason to wave it through.
-  return plugins.filter(
-    p =>
-      p.requires?.kit &&
-      !isVendored(p.source, kitRepo) &&
-      !satisfiesResult(version, p.requires.kit).ok
-  )
+  return plugins.filter(p => {
+    const floor = floorOf(p)
+    if (!floor || isVendored(p.source, kitRepo)) return false
+    // A floor this kit cannot READ counts as unsupported: "I cannot check this plugin against the
+    // target" is not a reason to wave it through.
+    if (!BARE_VERSION.test(floor)) return true
+    return compareVersions(version, floor) < 0
+  })
 }
 
-/** `"approvals@>=1.0.0 <2.0.0"` → `{ id, range }`; a bare id has a null range. */
+/**
+ * A plugin's declared floor, from a manifest or from a surface.
+ *
+ * **Top level ONLY, and the strictness is the point.** `minKit` is a sibling of `id` and
+ * `version`; a fallback to `requires.minKit` would mean this reader and
+ * `.github/workflows/plugin-ci.yml` — which reads the top-level key and nothing else — disagreed
+ * about one spelling, so a misplaced floor would pass `pnpm plugin check` here and fail in CI
+ * there. Quietly repairing the wrong shape is the silent drift this whole change removes;
+ * `pluginManifestProblems` fails it loudly instead, naming where the field belongs.
+ */
+export function floorOf(m) {
+  return m?.minKit ?? null
+}
+
+/**
+ * `{ id, minVersion }` — a FLOOR, never a range.
+ *
+ * A bare `"approvals"` asks only for presence. The old `"approvals@>=1.0.0 <2.0.0"` spelling is
+ * gone: `pluginManifestProblems` refuses it by name, so it can never reach here silently.
+ */
 export function parsePluginRequirement(entry) {
   if (typeof entry === 'object' && entry !== null)
-    return { id: entry.id, range: entry.range ?? null }
-  const at = String(entry).indexOf('@')
-  return at === -1
-    ? { id: String(entry), range: null }
-    : { id: entry.slice(0, at), range: entry.slice(at + 1) }
+    return { id: entry.id, minVersion: entry.minVersion ?? null }
+  return { id: String(entry), minVersion: null }
 }
 
 /**
@@ -669,13 +708,13 @@ export function buildPluginSurface(manifest, { repo, subdir = '', commit = null,
     registries: manifest.registries ?? Object.values(BARRELS).map(b => b.file),
     source: { repo, subdir, version: manifest.version ?? null, commit },
     installedAt: at,
+    // `null`, not a wildcard. A plugin that declares no floor has said nothing, and recording
+    // "anything" puts it beyond every gate there is: `checkRequirements` skips it,
+    // `unsupportedForKit` skips it, and `kit:upgrade` would carry it across a major version
+    // without a word. Null is the same silence, but it is VISIBLE — `plugin check` and the
+    // install plan both say so.
+    minKit: floorOf(manifest),
     requires: {
-      // `null`, not `'*'`. A plugin that declares no kit range has said nothing, and recording
-      // "anything" put that plugin beyond every gate there is: `checkRequirements` skips it,
-      // `unsupportedForKit` skips it, and `kit:upgrade` would carry it across a major version
-      // without a word. Null is the same silence, but it is VISIBLE — `plugin check` and the
-      // install plan both say so, and `defaultPluginProblems` refuses to cut a release over it.
-      kit: manifest.requires?.kit ?? null,
       surfaces: manifest.requires?.surfaces ?? [],
       plugins: manifest.requires?.plugins ?? [],
     },
@@ -729,18 +768,22 @@ export function renderAddPlan(plan) {
     'Requirements',
   ]
   if (plan.problems.length === 0) {
-    const range = m.requires?.kit ?? null
+    const floor = floorOf(m)
+    const symbols = Object.values(m.uses ?? {}).reduce((n, names) => n + names.length, 0)
     lines.push(
-      // An undeclared range is stated rather than rendered as a tick against `*`: it means nothing
-      // will ever gate this plugin against a kit version, which is worth reading before saying yes.
-      range === null
-        ? `  ⚠ kit ${plan.host.kitVersion} — this plugin declares no requires.kit, so no kit version is ever checked against it`
-        : `  ✔ kit ${plan.host.kitVersion} satisfies ${range}` +
+      // An undeclared floor is stated rather than ticked: it means no kit version is ever checked
+      // against this plugin, which is worth reading before saying yes.
+      floor === null
+        ? `  ⚠ kit ${plan.host.kitVersion} — this plugin declares no minKit, so no kit version is ever checked against it`
+        : `  ✔ kit ${plan.host.kitVersion} is at or above minKit ${floor}` +
             (plan.vendored
-              ? ' (vendored — shipped with the kit, so the range is not checked)'
+              ? ' (vendored — shipped with the kit, so the floor is not checked)'
               : ''),
+      // The measured half: every symbol this plugin names is one this kit still provides. It is
+      // the answer a version number used to guess at.
+      `  ✔ surface: all ${symbols} symbol(s) it uses are in this kit's ledger`,
       `  ✔ surfaces: ${(m.requires?.surfaces ?? []).join(', ') || 'none required'}`,
-      `  ✔ plugins:  ${(m.requires?.plugins ?? []).join(', ') || 'none required'}`
+      `  ✔ plugins:  ${(m.requires?.plugins ?? []).map(p => p?.id ?? p).join(', ') || 'none required'}`
     )
   } else {
     for (const p of plan.problems) lines.push(`  ✖ ${p}`)
@@ -1151,25 +1194,6 @@ export function jsonKeyLine(source, keyPath) {
   return found
 }
 
-/**
- * Whether a check a PRE-CONTRACT plugin cannot satisfy fails the audit or merely reports it.
- *
- * `requires.pluginApi` is the opt-in the import rule already uses (`tests/helpers/plugins.ts`),
- * and this is the same two-tier reading for the same reason: `pnpm test` runs the gate a second
- * time with `defaultPlugins` installed at their pinned refs, and those releases predate every rule
- * added after them. A single tier either breaks CI on a plugin nobody can retroactively change, or
- * stays advisory for everyone and so checks nothing.
- *
- * Declaring the contract is what moves a plugin from the second group to the first, and it happens
- * in the release that migrates it. Not a transition hack — it is the permanent rule for a
- * third-party plugin, whose CI resolves its matrix from RELEASED kit tags and therefore cannot
- * declare a version that does not exist yet.
- */
-export function auditSeverity(manifest) {
-  const declared = manifest?.requires?.pluginApi
-  return typeof declared === 'string' && declared.trim() !== '' ? 'fail' : 'warn'
-}
-
 const isStr = v => typeof v === 'string' && v.trim() !== ''
 const isStrArray = v => Array.isArray(v) && v.every(x => typeof x === 'string')
 const isObj = v => typeof v === 'object' && v !== null && !Array.isArray(v)
@@ -1241,24 +1265,74 @@ export function pluginManifestProblems(manifest) {
     }
   }
 
+  // **The floor, and the two fields it replaces.** A manifest still carrying `requires.kit` or
+  // `requires.pluginApi` is a LOUD error naming the replacement, never a field quietly ignored:
+  // both were PREDICTIONS, both went stale, and a manifest that still declares one was written
+  // against a contract this kit no longer honours. Silence here would install it and let the
+  // staleness surface later as something else entirely.
+  if (m.minKit !== undefined && !isStr(m.minKit)) {
+    bad('minKit', 'declares a non-string minKit', 'set "minKit" to a bare version like "0.8.0"')
+  } else if (isStr(m.minKit) && !BARE_VERSION.test(m.minKit.trim())) {
+    bad(
+      'minKit',
+      `declares minKit ${JSON.stringify(m.minKit)}, which is not a bare X.Y.Z version`,
+      'set "minKit" to one version — it is a FLOOR, not a range: no >=, no ^, no ceiling'
+    )
+  } else if (m.minKit === undefined) {
+    bad(
+      'minKit',
+      'declares no minKit',
+      'add "minKit": "0.8.0" at the TOP level — the oldest kit release this plugin supports'
+    )
+  }
+  // One spelling, and a misplaced one is loud. Reading both here would mean this and
+  // `plugin-ci.yml` — which reads the top-level key alone — disagreed about the same manifest.
+  if (isObj(m.requires) && m.requires.minKit !== undefined) {
+    bad(
+      'requires.minKit',
+      'declares minKit under "requires"',
+      'move it to the TOP level, beside "id" and "version" — that is the only place it is read'
+    )
+  }
+  if (m.uses !== undefined && !isObj(m.uses)) {
+    bad(
+      'uses',
+      'declares uses as other than an object',
+      'set "uses" to { "<entry>": ["<symbol>"] } — derived, never hand-written: `pnpm plugin export` writes it'
+    )
+  } else {
+    for (const [entry, names] of Object.entries(m.uses ?? {})) {
+      if (!isStrArray(names)) {
+        bad(
+          'uses',
+          `declares ${entry} as other than an array of symbol names`,
+          `set "uses"."${entry}" to an array of the symbols this plugin imports from it`
+        )
+      }
+    }
+  }
+
   if (m.requires !== undefined && !isObj(m.requires)) {
-    bad('requires', 'declares requires as other than an object', 'set "requires" to { "kit": "…" }')
+    bad(
+      'requires',
+      'declares requires as other than an object',
+      'set "requires" to { "surfaces": [], "plugins": [] }'
+    )
   } else {
     const r = m.requires ?? {}
     if (r.kit !== undefined) {
-      if (!isStr(r.kit)) {
-        bad(
-          'requires.kit',
-          'declares a non-string kit range',
-          'set "requires.kit" to a range like ">=0.6.0 <1.0.0"'
-        )
-      } else if (satisfiesResult('0.0.0', r.kit).problem) {
-        bad(
-          'requires.kit',
-          `declares the range ${JSON.stringify(r.kit)}, which this kit cannot read`,
-          'use >=, <=, <, >, =, ^, ~ or *; alternatives are separated by ||'
-        )
-      }
+      bad(
+        'requires.kit',
+        'declares requires.kit, a semver RANGE this kit no longer reads',
+        'replace it with a top-level "minKit": "X.Y.Z" — one floor, no ceiling, no range language'
+      )
+    }
+    if (r.pluginApi !== undefined) {
+      bad(
+        'requires.pluginApi',
+        'declares requires.pluginApi, a contract version this kit no longer reads',
+        'delete it — compatibility is now OBSERVED from "uses" against the kit\'s ledger (docs/plugin-api.md)'
+      )
     }
     if (r.surfaces !== undefined && !isStrArray(r.surfaces)) {
       bad(
@@ -1279,20 +1353,38 @@ export function pluginManifestProblems(manifest) {
           bad(
             'requires.plugins',
             `carries the entry ${JSON.stringify(entry)}`,
-            'each entry is "<id>" or "<id>@<range>"'
+            'each entry is "<id>" or { "id": "<id>", "minVersion": "X.Y.Z" }'
           )
+          continue
+        }
+        // The old range spellings, refused by name rather than parsed: `"<id>@<range>"` and a
+        // `range` key are both range language, and a floor is the only thing read now.
+        if (isStr(entry) && entry.includes('@')) {
+          bad(
+            'requires.plugins',
+            `carries the entry ${JSON.stringify(entry)}, which pins a RANGE`,
+            `write { "id": "${entry.split('@')[0]}", "minVersion": "X.Y.Z" } — a floor, not a range`
+          )
+          continue
+        }
+        if (isObj(entry) && entry.range !== undefined) {
+          bad(
+            'requires.plugins',
+            `declares a range for '${entry.id}'`,
+            `replace "range" with "minVersion": "X.Y.Z" — one floor, no ceiling`
+          )
+          continue
+        }
+        if (isObj(entry) && entry.minVersion !== undefined) {
+          if (!isStr(entry.minVersion) || !BARE_VERSION.test(entry.minVersion.trim())) {
+            bad(
+              'requires.plugins',
+              `declares minVersion ${JSON.stringify(entry.minVersion)} for '${entry.id}'`,
+              'set "minVersion" to a bare X.Y.Z version'
+            )
+          }
         }
       }
-    }
-    // Checked as a STRING and no further, deliberately: comparing it to the contract's
-    // `PLUGIN_API.minSupported` belongs to the module that owns those numbers, and two
-    // implementations of one comparison is worse than none.
-    if (r.pluginApi !== undefined && !isStr(r.pluginApi)) {
-      bad(
-        'requires.pluginApi',
-        'declares a non-string pluginApi',
-        'set "requires.pluginApi" to the contract version it was written against, e.g. "1"'
-      )
     }
   }
 
@@ -1581,8 +1673,8 @@ export const describeClash = c =>
  * it — `archiveSql` and the generated `DROP TABLE` both name the table verbatim, so neither can
  * tell whose it is.
  *
- * It fails unconditionally rather than through `auditSeverity`: the two-tier rule answers "can a
- * plugin released before this rule existed retroactively satisfy it", and neither plugin here is
+ * It fails whoever is installed, and it always did: the audit's old two tiers asked "can a plugin
+ * released before this rule existed retroactively satisfy it", and neither plugin here is
  * non-compliant on its own. The fault is in the COMBINATION, and the host cannot run it either way.
  *
  * One entry per plugin involved, so every finding is filed against a manifest somebody can edit.

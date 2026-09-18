@@ -29,8 +29,6 @@ import {
   isVendored,
   matchesAny,
   parseNote,
-  satisfies,
-  satisfiesResult,
   splitDiff,
   stripIndexLines,
   translateBlock,
@@ -232,75 +230,6 @@ index aaa..bbb 100644
 +Copyright Rocketflare Ltd
 `
 
-describe('satisfies', () => {
-  // `requires.kit` in a plugin's manifest (D31) is the only consumer, and the kit ships no semver
-  // dependency to evaluate it with. A table, because the zero-major caret rule is the one people
-  // get wrong and a wrong answer here installs a plugin the gate then rejects.
-  it.each([
-    ['0.5.0', '>=0.5.0 <1.0.0', true],
-    ['0.9.9', '>=0.5.0 <1.0.0', true],
-    ['0.4.0', '>=0.5.0 <1.0.0', false],
-    ['1.0.0', '>=0.5.0 <1.0.0', false],
-    ['1.0.0', '>0.5.0', true],
-    ['0.5.0', '<=0.5.0', true],
-    ['0.5.1', '<=0.5.0', false],
-    ['1.2.3', '1.2.3', true],
-    ['1.2.3', '=1.2.3', true],
-    ['1.2.4', '1.2.3', false],
-    // `^` with a non-zero major is the next major; with a zero major it is the next MINOR, because
-    // a 0.x minor bump may break anything. `~` is the next minor either way.
-    ['1.9.9', '^1.0.0', true],
-    ['2.0.0', '^1.0.0', false],
-    ['0.5.9', '^0.5.0', true],
-    ['0.6.0', '^0.5.0', false],
-    ['0.0.3', '^0.0.3', true],
-    ['0.0.4', '^0.0.3', false],
-    ['0.5.9', '~0.5.0', true],
-    ['0.6.0', '~0.5.0', false],
-    ['1.5.9', '~1.5.0', true],
-    ['1.6.0', '~1.5.0', false],
-    // No bound at all, and a range with surrounding whitespace.
-    ['9.9.9', '*', true],
-    ['9.9.9', '', true],
-    ['0.6.0', '  >=0.5.0   <1.0.0  ', true],
-    // A space after the operator, and `||` alternation: both are ordinary semver spellings a
-    // person reaches for without thinking, and both were refused as unreadable until now.
-    ['0.6.0', '>= 0.5.0', true],
-    ['0.4.0', '>= 0.5.0', false],
-    ['0.6.0', '>= 0.5.0 < 1.0.0', true],
-    ['0.6.5', '^0.6.0 || ^0.7.0', true],
-    ['0.7.1', '^0.6.0 || ^0.7.0', true],
-    ['0.8.0', '^0.6.0 || ^0.7.0', false],
-    ['1.2.3', '>=2.0.0 || <1.0.0', false],
-  ])('%s vs %s → %s', (version, range, expected) => {
-    expect(satisfies(version, range)).toBe(expected)
-  })
-
-  it('is false for a version that is not X.Y.Z, and true for a missing range', () => {
-    expect(satisfies('1.2', '>=1.0.0')).toBe(false)
-    expect(satisfies('1.2.3-beta.1', '>=1.0.0')).toBe(false)
-    expect(satisfies('1.2.3', null)).toBe(true)
-    expect(satisfies('1.2.3', undefined)).toBe(true)
-  })
-
-  it('REPORTS a range it does not implement rather than throwing or guessing', () => {
-    // It used to throw, and the throw arrived as a generic exit 1 from `pnpm plugin add` — where
-    // the documented answer for an unmet requirement is exit 6. A silent "true" would install an
-    // incompatible plugin, so the structured `problem` is what every caller folds into its list.
-    for (const range of ['1.x', 'latest', '>=1.0.0 - 2.0.0']) {
-      const answer = satisfiesResult('1.2.3', range)
-      expect(answer.ok, range).toBe(false)
-      expect(answer.problem, range).toMatch(/unsupported version range/)
-    }
-    expect(satisfiesResult('1.2.3', '^1.0.0 || ').problem).toMatch(/empty alternative/)
-    // A real yes/no carries no problem — that is how a caller tells "no" from "I cannot tell".
-    expect(satisfiesResult('1.2.3', '>=2.0.0')).toEqual({ ok: false, problem: null })
-    expect(satisfiesResult('1.2.3', '>=1.0.0')).toEqual({ ok: true, problem: null })
-    // A version that is not X.Y.Z is a plain no, not an unreadable range.
-    expect(satisfiesResult('1.2', '>=1.0.0')).toEqual({ ok: false, problem: null })
-  })
-})
-
 describe('isVendored', () => {
   // ONE implementation, in this file, re-exported by plugin-lib. The two that existed disagreed:
   // this one normalises the URL, the other compared strings exactly — so the same plugin could be
@@ -332,7 +261,7 @@ describe('default plugins', () => {
   // plugin comes from; a string still parses, and is then reported as having no repo rather than
   // having a URL guessed for it.
   const KIT = 'https://github.com/rocketflare-dev/rocketflare.git'
-  const ok = (requiresKit: string | null) => () => ({ ok: true, requiresKit })
+  const ok = (minKit: string | null) => () => ({ ok: true, minKit })
 
   it('normalises both shapes and defaults the optional fields', () => {
     expect(
@@ -347,20 +276,23 @@ describe('default plugins', () => {
     expect(defaultPluginEntries({} as never)).toEqual([])
   })
 
-  it('passes a plugin whose range admits the version being cut', () => {
+  it('passes a plugin whose floor is at or below the version being cut', () => {
     const entries = defaultPluginEntries({
       defaultPlugins: [{ id: 'analytics', repo: 'https://example.test/a.git', ref: '0.2.0' }],
     } as never)
-    expect(defaultPluginProblems(entries, '0.6.0', ok('>=0.5.0 <1.0.0'))).toEqual([])
+    expect(defaultPluginProblems(entries, '0.6.0', ok('0.5.0'))).toEqual([])
+    // The floor is a floor: equal passes, and there is no ceiling to fall off the top of.
+    expect(defaultPluginProblems(entries, '0.6.0', ok('0.6.0'))).toEqual([])
+    expect(defaultPluginProblems(entries, '9.9.9', ok('0.5.0'))).toEqual([])
   })
 
-  it("refuses a version outside a plugin's declared range, naming both", () => {
+  it('refuses a version BELOW the floor, naming the floor and the release', () => {
     const entries = defaultPluginEntries({
       defaultPlugins: [{ id: 'analytics', repo: 'https://example.test/a.git' }],
     } as never)
-    const problems = defaultPluginProblems(entries, '1.0.0', ok('>=0.5.0 <1.0.0'))
+    const problems = defaultPluginProblems(entries, '0.6.0', ok('0.7.0'))
     expect(problems).toHaveLength(1)
-    expect(problems[0]).toMatch(/analytics.*>=0\.5\.0 <1\.0\.0.*1\.0\.0 does not satisfy/)
+    expect(problems[0]).toMatch(/analytics.*needs kit 0\.7\.0 or newer.*this release is 0\.6\.0/)
   })
 
   it('refuses an entry the resolver cannot reach, and one with no repo', () => {
@@ -371,7 +303,7 @@ describe('default plugins', () => {
       ],
     } as never)
     const problems = defaultPluginProblems(entries, '0.6.0', entry =>
-      entry.id === 'gone' ? { ok: false, reason: 'no such ref' } : { ok: true, requiresKit: '*' }
+      entry.id === 'gone' ? { ok: false, reason: 'no such ref' } : { ok: true, minKit: '0.1.0' }
     )
     // Shape problems come first now: they are the whole of `defaultPluginEntryProblems`, and
     // somebody fixing a hand-edited list wants every one of them in one run.
@@ -381,34 +313,38 @@ describe('default plugins', () => {
     ])
   })
 
-  it('reports an unreadable range rather than assuming it is fine', () => {
-    // "I could not check" and "I checked and it is fine" are different answers, and only one of
-    // them may cut a release.
+  it('tells an unread floor, an OLD-SHAPE declaration and a real refusal apart', () => {
+    // "I could not check", "this plugin was written against a contract this kit no longer reads"
+    // and "I checked and it is too old" are three different answers with three different fixes,
+    // and only the absence of all three may cut a release.
     const entries = defaultPluginEntries({
       defaultPlugins: [{ id: 'analytics', repo: 'https://example.test/a.git' }],
     } as never)
     expect(defaultPluginProblems(entries, '0.6.0', ok(null))[0]).toMatch(
-      /cannot read its requires.kit/
+      /cannot read its minKit floor/
     )
-    expect(defaultPluginProblems(entries, '0.6.0', ok('1.x'))[0]).toMatch(
-      /not a range this kit can read/
+    // A manifest still carrying `requires.kit` is named, never silently skipped — the range is
+    // carried out of the resolver for exactly this sentence, and is never used as a floor.
+    const legacy = () => ({ ok: true, minKit: null, legacyRange: '>=0.5.0 <1.0.0' })
+    const problem = defaultPluginProblems(entries, '0.6.0', legacy)[0]
+    expect(problem).toMatch(/declares requires\.kit '>=0\.5\.0 <1\.0\.0'/)
+    expect(problem).toMatch(/"minKit"/)
+    // And a floor wearing range language is reported, not approximated: nothing here can read it.
+    expect(defaultPluginProblems(entries, '0.6.0', ok('>=0.5.0'))[0]).toMatch(
+      /not a bare X\.Y\.Z version/
     )
   })
 
-  it('exempts a VENDORED plugin from the range check, as §16 says', () => {
-    // Same repository, no subdirectory: the same release cut both, so the range describes the kit
+  it('exempts a VENDORED plugin from the floor check, as §16 says', () => {
+    // Same repository, no subdirectory: the same release cut both, so the floor describes the kit
     // it shipped inside rather than a compatibility claim.
     const entries = defaultPluginEntries({
       defaultPlugins: [{ id: 'example-feature', repo: KIT, ref: '0.4.0' }],
     } as never)
-    expect(defaultPluginProblems(entries, '9.9.9', ok('>=0.5.0 <1.0.0'), { kitRepo: KIT })).toEqual(
-      []
-    )
+    expect(defaultPluginProblems(entries, '0.6.0', ok('9.9.9'), { kitRepo: KIT })).toEqual([])
     // …but a plugin in a SUBDIRECTORY of the kit repo is not vendored, and is checked.
     const sub = [{ id: 'x', repo: KIT, ref: null, subdir: 'plugins/x' }]
-    expect(
-      defaultPluginProblems(sub, '9.9.9', ok('>=0.5.0 <1.0.0'), { kitRepo: KIT })
-    ).toHaveLength(1)
+    expect(defaultPluginProblems(sub, '0.6.0', ok('9.9.9'), { kitRepo: KIT })).toHaveLength(1)
   })
 
   it('catches the same plugin listed twice', () => {
@@ -418,7 +354,7 @@ describe('default plugins', () => {
         { id: 'a', repo: 'https://example.test/a.git' },
       ],
     } as never)
-    expect(defaultPluginProblems(entries, '0.6.0', ok('*'))).toEqual([
+    expect(defaultPluginProblems(entries, '0.6.0', ok('0.1.0'))).toEqual([
       expect.stringContaining("lists 'a' twice"),
     ])
   })

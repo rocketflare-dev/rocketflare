@@ -30,7 +30,7 @@
  * repository and its own release chain (`pnpm plugin upgrade <id>`, run AFTER this). Two things it
  * does say out loud: a kit change to a file listed in a plugin's `registries[]` — the five barrels
  * are shared, so the kit CAN move ground under a plugin — and a target kit version that leaves an
- * installed plugin's `requires.kit` range, which is exit 6.
+ * installed plugin's `minKit` floor, which is exit 6.
  *
  * Exit 0 ok · 1 error · 2 usage · 3 kit unreachable with no cached mirror · 4 applied with
  * rejects (work remains, not a failure) · 5 `.rocketflare.json` missing · 6 an installed plugin
@@ -279,7 +279,7 @@ function main(argv) {
   if (unsupported.length > 0 && !args.force) {
     warn(
       `error: ${unsupported.length} installed plugin(s) do not support kit ${toVersion}:`,
-      ...unsupported.map(p => `  ${p.id} requires kit ${p.requires.kit}`),
+      ...unsupported.map(p => `  ${p.id} needs kit ${p.minKit} or newer`),
       '',
       'Three honest answers: stay on this kit version, `pnpm plugin remove <id>` first, or pass',
       '--force and fix what breaks — the gate is what will tell you.'
@@ -287,7 +287,7 @@ function main(argv) {
     return 6
   }
   for (const p of unsupported) {
-    warn(`warning: ${p.id} requires kit ${p.requires.kit} — forced past it`)
+    warn(`warning: ${p.id} needs kit ${p.minKit} or newer — forced past it`)
   }
 
   // 3/6 — notes
@@ -410,9 +410,11 @@ function main(argv) {
     plugins: plugins.map(p => ({
       id: p.id,
       version: p.source?.version ?? null,
-      requiresKit: p.requires?.kit ?? null,
-      // Same answer the text report gives, vendored exemption included.
-      supported: toVersion && p.requires?.kit ? !unsupported.includes(p) : null,
+      minKit: p.minKit ?? null,
+      // Same answer the text report gives, vendored exemption included. Read `minKit`, not the
+      // deleted `requires.kit`: reading the old field left `supported` permanently null for every
+      // plugin, so `--json` answered "cannot tell" where the text report answered correctly.
+      supported: toVersion && p.minKit ? !unsupported.includes(p) : null,
     })),
     surfaces: {
       present: manifest.surfaces.map(s => s.id).filter(id => !absent.includes(id)),

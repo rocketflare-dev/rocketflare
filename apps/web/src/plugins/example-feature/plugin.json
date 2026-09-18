@@ -5,6 +5,74 @@
   "repo": "https://github.com/rocketflare-dev/rocketflare.git",
   "subdir": "",
   "anchor": "apps/web/src/plugins/example-feature/plugin.json",
+  "minKit": "0.8.0",
+  "uses": {
+    "@/plugins/api": [
+      "createRouter",
+      "Database",
+      "defineTool",
+      "HookCtx",
+      "jobCtx",
+      "JobCtx",
+      "JobHandler",
+      "requestCtx",
+      "RequestCtx",
+      "requireFeature",
+      "SeedCtx",
+      "ServerPlugin",
+      "Tool",
+      "toolCtx",
+      "ToolCtx",
+      "validate"
+    ],
+    "@/plugins/api/peers": ["allTables"],
+    "@/plugins/api/ui-wiring": ["featureGuard", "NavGuard", "UiPlugin"],
+    "@/plugins/api/ui": [
+      "api",
+      "EmptyState",
+      "SectionPanel",
+      "showToast",
+      "SideNav",
+      "useAuth",
+      "usePermissions"
+    ],
+    "@/db/schema/kit": ["tenantIsolation", "tenantRef", "tenants", "timestamps", "users"],
+    "'../api' (apps/cli/src/plugins/api.ts)": [
+      "CliPlugin",
+      "CommandContext",
+      "formatDate",
+      "formatPagination",
+      "renderTable",
+      "requireClient"
+    ],
+    "@testkit/integration": [
+      "createTestEnv",
+      "createTestSession",
+      "createTestTenant",
+      "createTestUser",
+      "json",
+      "linkUserToTenant",
+      "makeSession",
+      "makeUser",
+      "renderWithProviders",
+      "request",
+      "rulesFor",
+      "sessionCookieHeader",
+      "setupTestDatabase",
+      "stubs"
+    ],
+    "@testkit/unit": ["makeToolCtx"],
+    "@rocketflare/shared/features": ["FEATURE_FLAGS", "FEATURE_KEYS", "FeatureDefinition"],
+    "@rocketflare/shared/jobs": ["CoreJobType", "JOB_TYPES", "jobInputSchema", "JobOf", "JobType"],
+    "@rocketflare/shared/pagination": [
+      "paginatedResponse",
+      "PaginationQuery",
+      "paginationQuerySchema"
+    ],
+    "@rocketflare/shared/permissions": ["Subjects"],
+    "@rocketflare/shared/plugins": ["pluginNamespace"],
+    "@rocketflare/shared/plugins/types": ["SharedPlugin"]
+  },
   "paths": [
     "apps/web/src/plugins/example-feature/**",
     "packages/shared/src/plugins/example-feature/**",
@@ -17,12 +85,7 @@
     "packages/shared/src/plugins/index.ts",
     "apps/cli/src/plugins/index.ts"
   ],
-  "requires": {
-    "kit": ">=0.5.0 <1.0.0",
-    "pluginApi": "1",
-    "surfaces": [],
-    "plugins": []
-  },
+  "requires": { "surfaces": [], "plugins": [] },
   "dependencies": { "apps/web": {}, "packages/shared": {}, "apps/cli": {} },
   "bindings": [],
   "crons": [],

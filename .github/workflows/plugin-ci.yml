@@ -10,14 +10,16 @@ name: Plugin CI
 #     ci:
 #       uses: rocketflare-dev/rocketflare/.github/workflows/plugin-ci.yml@main
 #
-# and it: reads the plugin's declared `requires.kit` range, finds the OLDEST and the NEWEST kit
-# release inside that range, and for each one clones that kit, installs the plugin into it from
-# this checkout, generates and applies the migrations the host owns, and runs the full gate.
+# and it: reads the plugin's declared `minKit`, pairs it with the newest kit release, and for each
+# of those two clones that kit, installs the plugin into it from this checkout, generates and
+# applies the migrations the host owns, and runs the full gate.
 #
-# Both ends, not a midpoint, because those are the two a range actually promises: the floor an
-# adopter may still be on, and the ceiling the kit has just moved to. A plugin that passes at both
-# and fails in between is a possibility nobody has ever reported and a matrix of every release is a
-# cost paid on every push.
+# **Two ends, not a midpoint, and they are no longer a range.** A plugin declares `minKit` — one
+# bare `X.Y.Z`, a floor with no ceiling — so the floor is that version and the ceiling is whatever
+# the kit has most recently released. Those are the two that matter: the oldest kit an adopter may
+# still be on, and the newest the kit has moved to. A plugin that passes at both and fails in
+# between is a possibility nobody has ever reported, and a matrix of every release is a cost paid
+# on every push.
 #
 # It never publishes, never deploys and never pushes: it clones the kit into a scratch directory
 # and throws it away.
@@ -31,17 +33,11 @@ on:
         default: https://github.com/rocketflare-dev/rocketflare.git
       kit_ref:
         description: >-
-          A kit BRANCH or tag to prove against, instead of resolving releases from the plugin's
-          `requires.kit`. This is what makes a coordinated change verifiable rather than hopeful: a
-          plugin cannot declare `>=0.7.0` before 0.7.0 exists, so without this the two repos can
-          only be cross-tested after one of them has already released. A ref given here is used
-          verbatim and the range is NOT consulted — a branch has no version to match against one.
-        type: string
-        default: ""
-      kit_range:
-        description: >-
-          Override the range taken from the plugin's own `rocketflare-plugin.json` `requires.kit`.
-          Use it to prove one specific version (`=0.6.0`) or a wider net than the plugin declares.
+          A kit BRANCH or tag to prove against, instead of deriving the floor and the ceiling from
+          the plugin's `minKit`. This is what makes a coordinated change verifiable rather than
+          hopeful: a plugin cannot declare `minKit: 0.8.0` before 0.8.0 exists, so without this the
+          two repos can only be cross-tested after one of them has already released. A ref given
+          here is used verbatim and `minKit` is NOT consulted — a branch has no version to compare.
         type: string
         default: ""
       plugin_subdir:
@@ -52,7 +48,7 @@ on:
         description: >-
           A JSON array of plugin directories, for a repository holding several
           (`'["plugins/analytics","plugins/approvals"]'`). One CI run then proves every plugin
-          against every kit version its OWN range admits, instead of N repositories each running
+          against the kit versions ITS OWN `minKit` names, instead of N repositories each running
           their own. Overrides `plugin_subdir` when set.
         type: string
         default: ""
@@ -62,7 +58,7 @@ on:
         required: false
 
 jobs:
-  # Which kit versions does this plugin claim to work with, and which of them exist?
+  # Which kit versions is this plugin proved against — its floor, and the kit's own ceiling?
   versions:
     name: Resolve kit versions
     runs-on: ubuntu-latest
@@ -72,46 +68,54 @@ jobs:
       - uses: actions/checkout@v4
         with:
           path: plugin
-      - name: Clone the kit (tip, for its tooling)
-        env:
-          KIT_TOKEN: ${{ secrets.kit_token }}
-          KIT_REPO: ${{ inputs.kit_repo }}
-        run: |
-          set -euo pipefail
-          url="$KIT_REPO"
-          # A private kit needs a token in the URL; a public one needs nothing, which is the case
-          # that must stay simple.
-          if [ -n "${KIT_TOKEN:-}" ]; then
-            url="https://x-access-token:${KIT_TOKEN}@${KIT_REPO#https://}"
-          fi
-          git clone --depth 1 --quiet "$url" kit
-          git -C kit config remote.origin.url "$KIT_REPO"
-      - uses: actions/setup-node@v4
-        with:
-          node-version-file: kit/.nvmrc
-      # The kit owns the range matcher (`satisfies` in scripts/lib/upgrade-lib.mjs), so the answer
-      # here is the same answer `pnpm plugin add` and `pnpm kit:upgrade` give — one implementation,
-      # not a shell approximation of one. `ls-remote --tags --refs` is used rather than the shallow
-      # clone's own tags, which a --depth 1 clone does not have.
-      # The script goes to a FILE beside the checkout rather than `node -e "..."`. Two reasons,
-      # and the second is a trap: inside a double-quoted shell string every backtick and `${` in
-      # the JS needs escaping, and one wrong escape yields a workflow whose YAML parses perfectly
-      # and whose node step is nonsense; and it is written to the WORKSPACE, not `$RUNNER_TEMP`,
-      # because ESM resolves `./kit/...` against the module's own directory — `node -e` resolved it
-      # against the cwd, so a file in RUNNER_TEMP would look identical and never find the kit.
+      # **This job no longer clones the kit at all**, and that is the point of the change. It used
+      # to, solely to import `satisfies`/`compareVersions` from the cloned kit's
+      # `scripts/lib/upgrade-lib.mjs` — which meant this file, called as `@main`, depended on the
+      # shape of a RELEASED tag's tooling. That asymmetry is what forced every workaround below it.
+      #
+      # **And it compares no versions.** With ranges gone, the only ordering question left is
+      # "which tag is newest", which `sort -V` answers in the shell below. This repository already
+      # carries several private semver comparators, and a fifth one copied into a workflow is the
+      # exact defect this change exists to remove. What is left in JS is exact string work.
+      #
+      # The script goes to a FILE beside the checkout rather than `node -e "..."`. Two reasons, and
+      # the second is a trap: inside a double-quoted shell string every backtick and `${` in the JS
+      # needs escaping, and one wrong escape yields a workflow whose YAML parses perfectly and
+      # whose node step is nonsense; and it is written to the WORKSPACE, not `$RUNNER_TEMP`,
+      # because ESM resolves relative paths against the module's own directory.
       - id: resolve
         env:
           KIT_REPO: ${{ inputs.kit_repo }}
           KIT_REF: ${{ inputs.kit_ref }}
-          RANGE_OVERRIDE: ${{ inputs.kit_range }}
           PLUGIN_SUBDIR: ${{ inputs.plugin_subdir }}
           PLUGIN_SUBDIRS: ${{ inputs.plugin_subdirs }}
         run: |
           set -euo pipefail
-          git ls-remote --tags --refs "$KIT_REPO" > "$RUNNER_TEMP/kit-tags.txt"
+          # `ls-remote --tags --refs` rather than a clone's own tags: nothing is cloned in this job,
+          # and a shallow clone would not carry them anyway.
+          # `sort -V` is a VERSION sort — it puts 0.10.0 ABOVE 0.7.0, where the lexical default puts
+          # it below. GNU coreutils, present on every GitHub Ubuntu runner.
+          # The grep is wrapped in `|| true` because grep EXITS 1 when nothing matches, and under
+          # `set -euo pipefail` that would kill the step for a kit with no releases at all — a case
+          # the script below reports properly, against the plugin that asked, by name.
+          git ls-remote --tags --refs "$KIT_REPO" \
+            | sed 's#.*refs/tags/##' \
+            | { grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' || true; } \
+            | sort -V > "$RUNNER_TEMP/kit-tags.txt"
+          KIT_CEILING="$(tail -n 1 "$RUNNER_TEMP/kit-tags.txt")"
+          export KIT_CEILING
+          echo "newest kit release: ${KIT_CEILING:-<none>}"
           cat > resolve.mjs <<'RESOLVE'
           import { appendFileSync, existsSync, readFileSync } from 'node:fs'
-          import { compareVersions, satisfies, VERSION_RE } from './kit/scripts/lib/upgrade-lib.mjs'
+
+          // **No version comparison happens in this file.** The ORDER was decided by `sort -V` in
+          // the step above, so the newest tag arrives ready-made as KIT_CEILING and everything here
+          // is exact string work: `releasedTags.includes(...)` is the `grep -Fx` of the shell
+          // version, and the dedup is `===`. Nothing here parses a version number.
+          const fail = message => {
+            process.stderr.write(`::error::${message}\n`)
+            process.exit(1)
+          }
 
           // One repository may hold several plugins (the lockstep monorepo). Each still answers the
           // compatibility question for ITSELF: which kit contract a plugin compiles against is a
@@ -120,41 +124,58 @@ jobs:
             ? JSON.parse(process.env.PLUGIN_SUBDIRS)
             : [process.env.PLUGIN_SUBDIR ?? '']
 
-          const tags = readFileSync(`${process.env.RUNNER_TEMP}/kit-tags.txt`, 'utf8')
+          const releasedTags = readFileSync(`${process.env.RUNNER_TEMP}/kit-tags.txt`, 'utf8')
             .split('\n')
-            .map(l => l.split('refs/tags/')[1])
-            .filter(t => t && VERSION_RE.test(t))
-            .sort(compareVersions)
+            .map(line => line.trim())
+            .filter(Boolean)
+          const ceiling = process.env.KIT_CEILING ?? ''
 
           const ref = process.env.KIT_REF
           const pairs = []
           for (const subdir of subdirs) {
             const manifestPath = ['plugin', subdir, 'rocketflare-plugin.json'].filter(Boolean).join('/')
             if (!existsSync(manifestPath)) {
-              process.stderr.write(`::error::no rocketflare-plugin.json at '${manifestPath}' — check plugin_subdir(s)\n`)
-              process.exit(1)
+              fail(`no rocketflare-plugin.json at '${manifestPath}' — check plugin_subdir(s)`)
             }
-            const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
+            // Parsed inside a try: a manifest with a trailing comma used to throw a raw stack whose
+            // top frame is this workflow, naming neither the file nor the plugin.
+            let manifest
+            try {
+              manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
+            } catch (err) {
+              fail(`${manifestPath} is not valid JSON: ${err.message}`)
+            }
             const label = manifest.id ?? subdir ?? 'plugin'
 
             // An explicit ref wins and is used verbatim: it is usually a branch, which has no
-            // version, so there is nothing for a range to match.
+            // version, so there is nothing to match a floor against.
             if (ref) {
-              console.log(`${label}: kit_ref '${ref}' (requires.kit not consulted)`)
+              console.log(`${label}: kit_ref '${ref}' (minKit not consulted)`)
               pairs.push({ kit: ref, plugin: subdir ?? '', label })
               continue
             }
 
-            const range = process.env.RANGE_OVERRIDE || manifest.requires?.kit || '*'
-            const inRange = tags.filter(t => satisfies(t, range))
-            if (inRange.length === 0) {
-              process.stderr.write(`::error::${label}: no released kit version satisfies requires.kit '${range}' — the range names versions that do not exist\n`)
-              process.exit(1)
+            // `minKit` is a TOP-LEVEL manifest key, sibling to id/version/repo, and it is read in
+            // exactly ONE spelling: one written in the wrong place must fail loudly here rather
+            // than be quietly accepted, which is what a fallback would do.
+            const floor = manifest.minKit
+            if (!floor) {
+              fail(`${label}: declares no minKit — add a top-level "minKit": "0.7.0" naming the oldest kit release this plugin supports`)
             }
-            // The floor and the ceiling: the oldest release an adopter may still be on, and the
-            // newest the kit has reached. One entry when they are the same version.
-            const kits = [...new Set([inRange[0], inRange[inRange.length - 1]])]
-            console.log(`${label}: requires.kit '${range}' -> ${kits.join(', ')} (of ${inRange.length} in range)`)
+            if (!ceiling) {
+              fail(`${label}: the kit repository has no X.Y.Z release tags, so there is no version to prove against`)
+            }
+            // Exact membership, never a comparison — which is why ONE message covers both ways of
+            // arriving here: a floor naming a version that was never released, and a floor still
+            // written as a range. Checked here rather than left to `git clone --branch`, which
+            // fails naming neither the plugin nor the field that was wrong.
+            if (!releasedTags.includes(floor)) {
+              fail(`${label}: minKit '${floor}' is not a released kit version (newest is ${ceiling}) — minKit is ONE bare X.Y.Z floor, not a range`)
+            }
+            // The floor and the ceiling: the oldest kit an adopter may still be on, and the newest
+            // the kit has reached. ONE entry when a plugin's floor is already the newest kit.
+            const kits = floor === ceiling ? [floor] : [floor, ceiling]
+            console.log(`${label}: minKit ${floor}, newest kit ${ceiling} -> ${kits.join(', ')}`)
             for (const kit of kits) pairs.push({ kit, plugin: subdir ?? '', label })
           }
           appendFileSync(process.env.GITHUB_OUTPUT, `pairs=${JSON.stringify(pairs)}\n`)
@@ -166,11 +187,10 @@ jobs:
     needs: versions
     runs-on: ubuntu-latest
     strategy:
-      fail-fast: false # which END of the range broke is the whole diagnosis
+      fail-fast: false # which END broke — the floor or the ceiling — is the whole diagnosis
       matrix:
         # An `include`-only matrix, because the pairs are not a cross product: each plugin is
-        # proved against the kit versions ITS OWN range admits, and a shared ceiling is normal
-        # while a shared floor is not.
+        # proved against its OWN floor, and a shared ceiling is normal while a shared floor is not.
         include: ${{ fromJson(needs.versions.outputs.pairs) }}
     services:
       postgres:
@@ -208,7 +228,7 @@ jobs:
           git clone --depth 2 --branch "${{ matrix.kit }}" --quiet "$url" kit
           git -C kit config remote.origin.url "$KIT_REPO"
           if [ ! -f kit/scripts/plugin.mjs ]; then
-            echo "::error::kit ${{ matrix.kit }} has no scripts/plugin.mjs — it predates plugins. Raise the floor of requires.kit."
+            echo "::error::kit ${{ matrix.kit }} has no scripts/plugin.mjs — it predates plugins. Raise minKit."
             exit 1
           fi
       # The pnpm version comes from the KIT's `packageManager`, not from this repository — a plugin
@@ -238,24 +258,6 @@ jobs:
       # `plugin add` then `db:generate` rather than anything the plugin ships. Installing from a
       # PATH is the authoring loop: the working copy is read directly, so the commit under test is
       # the one installed.
-      # A FILE rather than `node -e`, for the reason the resolve step above documents: inside a
-      # double-quoted shell string every backtick and `${` needs escaping, and one wrong escape
-      # yields a workflow whose YAML parses perfectly and whose node step is nonsense.
-      - name: Write the unpin helper
-        run: |
-          set -euo pipefail
-          cat > "$GITHUB_WORKSPACE/unpin.mjs" <<'UNPIN'
-          import { readFileSync, writeFileSync } from 'node:fs'
-          const [file, id] = process.argv.slice(2)
-          const manifest = JSON.parse(readFileSync(file, 'utf8'))
-          const before = manifest.defaultPlugins?.length ?? 0
-          manifest.defaultPlugins = (manifest.defaultPlugins ?? []).filter(
-            entry => (entry && entry.id ? entry.id : entry) !== id
-          )
-          writeFileSync(file, `${JSON.stringify(manifest, null, 2)}\n`)
-          console.log(`defaultPlugins: ${before} -> ${manifest.defaultPlugins.length} (dropped ${id})`)
-          UNPIN
-
       - name: Install this plugin into the kit
         working-directory: kit
         env:
@@ -267,30 +269,14 @@ jobs:
           printf 'DATABASE_URL=postgresql://test:test@localhost:5433/rocketflare_test\n' > apps/web/.dev.vars
           manifest="$GITHUB_WORKSPACE/plugin/$PLUGIN_SUBDIR"
           id=$(node -p "require('${manifest%/}/rocketflare-plugin.json').id")
-          # The kit cloned above is a RELEASED tag, so its `defaultPlugins` pins whichever version of
-          # this plugin was current when that kit shipped — never the commit under test. `pnpm plugin
-          # check`, which the kit's own gate runs below, compares an installed plugin against that
-          # pin, so leaving it in place fails EVERY plugin release that has moved past it, BY
-          # CONSTRUCTION: analytics 2.0.1 against a kit pinning 1.0.2 turned this workflow red for a
-          # release whose code was correct, and it would stay red until a kit shipped pinning the new
-          # version — which cannot happen before the plugin is released.
-          #
-          # So the entry is dropped rather than repinned. The pin is a statement about what that kit
-          # RELEASE ships; this run is proving the working copy, which is a different artefact and
-          # deliberately a different version. Repinning would make the check pass by asserting
-          # something untrue.
-          node "$GITHUB_WORKSPACE/unpin.mjs" .rocketflare.json "$id"
-          # Re-formatted because `pnpm lint` runs against this clone and Biome owns this file's shape.
-          pnpm exec biome check --write .rocketflare.json >/dev/null 2>&1 || true
-          # `pnpm plugin add` refuses a dirty tree, so that an install is ONE reviewable diff. The
-          # unpin above is a deliberate edit to a throwaway clone, so it is COMMITTED rather than
-          # waved through with `--allow-dirty`: the guard then still means what it says about the
-          # install that follows, instead of being switched off for it.
-          # Conditional because `git commit` EXITS 1 when there is nothing to commit, and under
-          # `set -euo pipefail` that kills the step. The tree is only dirty when this kit actually
-          # pinned this plugin — true for a default plugin, false for every third-party one, which
-          # is the case this workflow mostly serves.
-          git diff --quiet || git -c user.name=ci -c user.email=ci@local commit -qam 'ci: drop the pin for the plugin under test'
+          # Nothing edits the cloned kit before this point, so `pnpm plugin add`'s refusal of a
+          # dirty tree — which keeps an install to ONE reviewable diff — is satisfied by doing
+          # nothing rather than by a commit. It used to take an edit and a commit: the kit cloned
+          # above is a RELEASED tag, so its `defaultPlugins` pinned whichever version of this plugin
+          # was current when that kit shipped, and a check compared the installed plugin against
+          # that pin — failing every plugin release that had moved past it, by construction, until a
+          # kit shipped pinning the new version, which cannot happen before the plugin is released.
+          # That check is gone, so the unpin edit, its Biome re-format and its commit are gone too.
           args=(add "$GITHUB_WORKSPACE/plugin" --apply --local)
           if [ -n "$PLUGIN_SUBDIR" ]; then args+=(--subdir "$PLUGIN_SUBDIR"); fi
           pnpm plugin "${args[@]}"

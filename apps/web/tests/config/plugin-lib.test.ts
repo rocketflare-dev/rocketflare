@@ -32,7 +32,6 @@ import {
   addPlanJson,
   applyCoreEdits,
   archiveSql,
-  auditSeverity,
   BARREL_KINDS,
   BARRELS,
   barrelExportName,
@@ -416,6 +415,25 @@ describe('what a plugin may bring', () => {
   })
 })
 
+/**
+ * A ledger-shaped object, so a fixture can drive the observed half without a temp repository.
+ * `missingFrom` reads `members.values()` and `has(entry, name)` and nothing else.
+ */
+const fakeLedger = (rows: Array<[string, string]>) => {
+  const members = new Map(
+    rows.map(([entry, name]) => [
+      `${entry} :: ${name}`,
+      { entry, kind: 'function', name, signature: name },
+    ])
+  )
+  return {
+    members,
+    size: members.size,
+    has: (entry: string, name: string) => members.has(`${entry} :: ${name}`),
+    get: (entry: string, name: string) => members.get(`${entry} :: ${name}`),
+  }
+}
+
 describe('requirements', () => {
   const base = { kitVersion: '0.5.0', presentSurfaces: ['feature-agents'], installedPlugins: [] }
 
@@ -423,7 +441,8 @@ describe('requirements', () => {
     expect(
       checkRequirements({
         ...base,
-        requires: { kit: '>=0.5.0 <1.0.0', surfaces: ['feature-agents'], plugins: [] },
+        minKit: '0.5.0',
+        requires: { surfaces: ['feature-agents'], plugins: [] },
       })
     ).toEqual([])
   })
@@ -431,41 +450,93 @@ describe('requirements', () => {
   it('reports EVERY unmet requirement, not the first', () => {
     const problems = checkRequirements({
       ...base,
-      requires: { kit: '>=0.6.0', surfaces: ['feature-analytics'], plugins: ['approvals'] },
+      minKit: '0.6.0',
+      requires: { surfaces: ['feature-analytics'], plugins: ['approvals'] },
     })
     expect(problems).toHaveLength(3)
-    expect(problems[0]).toMatch(/kit 0\.5\.0 does not satisfy >=0\.6\.0/)
+    expect(problems[0]).toMatch(/kit 0\.5\.0 is older than this plugin's minKit 0\.6\.0/)
     expect(problems[1]).toMatch(/surface 'feature-analytics'/)
     expect(problems[2]).toMatch(/plugin 'approvals' is required and not installed/)
   })
 
-  it('checks a required plugin VERSION, not just its presence', () => {
+  /**
+   * A FLOOR, and the comparison is three integers. There is no range language left to be malformed,
+   * which is the whole reason this replaced a matcher that threw out of the caller.
+   */
+  it('reads minKit as a floor with no ceiling', () => {
+    expect(checkRequirements({ ...base, kitVersion: '9.9.9', minKit: '0.5.0' })).toEqual([])
+    expect(checkRequirements({ ...base, kitVersion: '0.5.0', minKit: '0.5.0' })).toEqual([])
+    expect(checkRequirements({ ...base, kitVersion: '0.4.9', minKit: '0.5.0' })[0]).toMatch(
+      /older than this plugin's minKit/
+    )
+    // A range where a floor belongs is named as such rather than approximated.
+    expect(checkRequirements({ ...base, minKit: '>=0.5.0' })[0]).toMatch(
+      /is not a bare X\.Y\.Z version — minKit is a floor, not a range/
+    )
+  })
+
+  it('checks a required plugin VERSION as a floor, not just its presence', () => {
     const installedPlugins = [{ id: 'approvals', version: '1.2.0' }]
     expect(
-      checkRequirements({ ...base, installedPlugins, requires: { plugins: ['approvals@^1.0.0'] } })
+      checkRequirements({
+        ...base,
+        installedPlugins,
+        requires: { plugins: [{ id: 'approvals', minVersion: '1.0.0' }] },
+      })
     ).toEqual([])
     expect(
-      checkRequirements({ ...base, installedPlugins, requires: { plugins: ['approvals@^2.0.0'] } })
-    ).toEqual(["plugin 'approvals' is 1.2.0, which does not satisfy ^2.0.0"])
+      checkRequirements({
+        ...base,
+        installedPlugins,
+        requires: { plugins: [{ id: 'approvals', minVersion: '2.0.0' }] },
+      })
+    ).toEqual(["plugin 'approvals' is 1.2.0, older than the minVersion 2.0.0 this plugin needs"])
+    // A bare id asks only for presence.
+    expect(
+      checkRequirements({ ...base, installedPlugins, requires: { plugins: ['approvals'] } })
+    ).toEqual([])
+  })
+
+  /**
+   * **The observed half.** Compatibility is `uses \ ledger` — a set difference over strings that
+   * cannot throw — and every finding names the symbol and, where it merely moved entry, the exact
+   * replacement import.
+   */
+  it('reports every symbol the kit no longer provides, with its replacement', () => {
+    const ledger = fakeLedger([
+      ['@/plugins/api', 'requestCtx'],
+      ['@/plugins/api/ui', 'api'],
+    ])
+    expect(
+      checkRequirements({ ...base, uses: { '@/plugins/api': ['requestCtx'] }, ledger })
+    ).toEqual([])
+    // Gone entirely: named, with no replacement invented for it.
+    expect(
+      checkRequirements({ ...base, uses: { '@/plugins/api': ['withAuthAndDb'] }, ledger })[0]
+    ).toBe(
+      "@/plugins/api :: withAuthAndDb is not in this kit's surface — no replacement: it is gone (see docs/plugin-api.md)"
+    )
+    // Moved entry: the replacement is a FACT the ledger already carries.
+    expect(checkRequirements({ ...base, uses: { '@/plugins/api': ['api'] }, ledger })[0]).toBe(
+      "@/plugins/api :: api is not in this kit's surface — import { api } from '@/plugins/api/ui'"
+    )
+    // No ledger handed in, nothing about the surface is checked — the CALLER owns that.
+    expect(checkRequirements({ ...base, uses: { '@/plugins/api': ['gone'] } })).toEqual([])
   })
 
   /**
    * `plugin check` and `kit:upgrade` have to answer this identically, and once did not: check
-   * printed "vendored — requires.kit is not checked" and exited 0 while `kit:upgrade`, in the same
-   * checkout and over the same range, refused with exit 6. Every copy of the kit would have been
+   * printed "vendored — the floor is not checked" and exited 0 while `kit:upgrade`, in the same
+   * checkout and over the same plugin, refused with exit 6. Every copy of the kit would have been
    * stopped from upgrading by the plugin the kit itself ships.
    */
   it('exempts a vendored plugin from the kit range for `kit:upgrade` too', () => {
     const kitRepo = 'https://github.com/rocketflare-dev/rocketflare.git'
-    const vendored = {
-      id: 'example',
-      source: { repo: kitRepo, subdir: '' },
-      requires: { kit: '>=9.0.0' },
-    }
+    const vendored = { id: 'example', source: { repo: kitRepo, subdir: '' }, minKit: '9.0.0' }
     const third = {
       id: 'orders',
       source: { repo: 'https://github.com/acme/p.git' },
-      requires: { kit: '>=9.0.0' },
+      minKit: '9.0.0',
     }
     expect(
       unsupportedForKit([vendored, third], { kitRepo, version: '0.4.0' }).map(p => p.id)
@@ -475,23 +546,22 @@ describe('requirements', () => {
     expect(unsupportedForKit([third], { kitRepo, version: null })).toEqual([])
   })
 
-  it('splits a requirement into an id and a range', () => {
-    expect(parsePluginRequirement('approvals')).toEqual({ id: 'approvals', range: null })
-    expect(parsePluginRequirement('approvals@>=1.0.0 <2.0.0')).toEqual({
+  it('splits a requirement into an id and a floor', () => {
+    expect(parsePluginRequirement('approvals')).toEqual({ id: 'approvals', minVersion: null })
+    expect(parsePluginRequirement({ id: 'approvals', minVersion: '1.0.0' })).toEqual({
       id: 'approvals',
-      range: '>=1.0.0 <2.0.0',
+      minVersion: '1.0.0',
     })
   })
 
-  it('does not hold a VENDORED plugin to a kit range', () => {
-    // It ships inside the kit, so the same release cut both: the range describes the kit it came
+  it('does not hold a VENDORED plugin to a kit floor', () => {
+    // It ships inside the kit, so the same release cut both: the floor describes the kit it came
     // with, and checking it makes the kit fail against itself for the whole of the release that
     // raises it.
-    const requires = { kit: '>=0.5.0 <1.0.0' }
-    expect(checkRequirements({ ...base, kitVersion: '0.4.0', requires })).toHaveLength(1)
-    expect(checkRequirements({ ...base, kitVersion: '0.4.0', requires, vendored: true })).toEqual(
-      []
-    )
+    expect(checkRequirements({ ...base, kitVersion: '0.4.0', minKit: '0.5.0' })).toHaveLength(1)
+    expect(
+      checkRequirements({ ...base, kitVersion: '0.4.0', minKit: '0.5.0', vendored: true })
+    ).toEqual([])
   })
 
   it("calls a plugin vendored only when it is the kit's own repo with no subdirectory", () => {
@@ -510,7 +580,9 @@ const fixtureManifest = {
   version: '1.1.0',
   repo: 'https://github.com/acme/rocketflare-plugin-orders.git',
   subdir: '',
-  requires: { kit: '>=0.5.0 <1.0.0', surfaces: [], plugins: [] },
+  minKit: '0.5.0',
+  uses: { '@/plugins/api': ['requestCtx'] },
+  requires: { surfaces: [], plugins: [] },
   dependencies: { 'apps/web': { 'date-fns': '^3.0.0' } },
   bindings: [{ type: 'kv', binding: 'ORDERS_KV', name: 'orders' }],
   crons: ['0 3 * * *'],
@@ -647,17 +719,17 @@ describe('the surface an install records', () => {
     // files no surface classifies (`kit-manifest.test.ts`) and a `remove` that leaves them behind.
     expect(surface.paths).toContain('docs/plugins/orders/**')
     expect(surface.registries).toContain('apps/web/src/plugins/server.ts')
-    expect(surface.requires?.kit).toBe('>=0.5.0 <1.0.0')
+    expect(surface.minKit).toBe('0.5.0')
   })
 
-  it('records an UNDECLARED kit range as null, never as "*"', () => {
-    // `'*'` reads as "checked, and anything is allowed", and it put such a plugin beyond every gate
-    // there is: `checkRequirements`, `unsupportedForKit` and `kit:upgrade` all skip a falsy range,
-    // so a plugin that declared nothing was carried across a major kit version without a word.
-    // Null is the same silence — but `plugin check` and the install plan both say it out loud.
+  it('records an UNDECLARED floor as null, never as a wildcard', () => {
+    // A wildcard reads as "checked, and anything is allowed", and it put such a plugin beyond every
+    // gate there is: `checkRequirements`, `unsupportedForKit` and `kit:upgrade` all skip a falsy
+    // floor, so a plugin that declared nothing was carried across a major kit version without a
+    // word. Null is the same silence — but `plugin check` and the install plan both say it aloud.
     const silent = { id: 'orders', label: 'Orders', version: '1.1.0', repo: 'https://x.test/o.git' }
     const surface = buildPluginSurface(silent, { repo: silent.repo, at: '2026-09-17' })
-    expect(surface.requires?.kit).toBeNull()
+    expect(surface.minKit).toBeNull()
     expect(surface.requires?.surfaces).toEqual([])
     expect(surface.requires?.plugins).toEqual([])
   })
@@ -766,27 +838,27 @@ describe('the install plan', () => {
     const text = renderAddPlan({
       ...plan,
       barrels: [...plan.barrels],
-      problems: ['kit 0.4.0 does not satisfy >=0.5.0 <1.0.0'],
+      problems: ["kit 0.4.0 is older than this plugin's minKit 0.5.0"],
     }).join('\n')
-    expect(text).toContain('✖ kit 0.4.0 does not satisfy')
+    expect(text).toContain('✖ kit 0.4.0 is older than')
     expect(text).not.toContain('✔ kit')
   })
 
-  it('says a vendored plugin is not held to the range', () => {
+  it('says a vendored plugin is not held to the floor', () => {
     const text = renderAddPlan({ ...plan, barrels: [...plan.barrels], vendored: true }).join('\n')
     expect(text).toContain('vendored — shipped with the kit')
   })
 
-  it('WARNS rather than ticking when the plugin declares no kit range', () => {
+  it('WARNS rather than ticking when the plugin declares no floor', () => {
     // The plan is what a person reads before saying yes, and "no version will ever be checked
-    // against this" is not the same sentence as "✔ kit 0.5.0 satisfies *".
+    // against this" is not the same sentence as a tick.
     const silent = { id: 'orders', label: 'Orders', version: '1.1.0', repo: 'https://x.test/o.git' }
     const text = renderAddPlan({
       ...plan,
       manifest: silent,
       barrels: [...plan.barrels],
     }).join('\n')
-    expect(text).toContain('declares no requires.kit')
+    expect(text).toContain('declares no minKit')
     expect(text).not.toContain('✔ kit')
   })
 })
@@ -820,8 +892,8 @@ describe('scripts/plugin.mjs, end to end', () => {
         expect(existsSync(path.join(dir, `apps/web/src/plugins/${subject}/plugin.json`))).toBe(true)
 
         // Re-badge the export as a plugin this checkout does not have: same tree, a new id, its own
-        // repository (so it is not vendored) and a kit range this kit satisfies. Without that it is
-        // simply the installed plugin, and `add` correctly refuses with exit 7.
+        // repository (so it is not vendored) and a floor this kit is at or above. Without that it
+        // is simply the installed plugin, and `add` correctly refuses with exit 7.
         for (const base of [
           'apps/web/src/plugins',
           'packages/shared/src/plugins',
@@ -838,7 +910,7 @@ describe('scripts/plugin.mjs, end to end', () => {
           readFileSync(manifestFile, 'utf8').replaceAll(subject as string, 'smoke-plugin')
         )
         rebadged.repo = 'https://github.com/acme/rocketflare-plugin-smoke.git'
-        rebadged.requires.kit = '>=0.1.0'
+        rebadged.minKit = '0.1.0'
         writeFileSync(manifestFile, `${JSON.stringify(rebadged, null, 2)}\n`)
 
         const before = BARREL_KINDS.map(k => read(BARRELS[k].file))
@@ -1057,19 +1129,6 @@ describe('the audit', () => {
     expect(jsonKeyLine(read(anchorFile), 'nope')).toBeNull()
   })
 
-  it('fails a plugin that declares the contract and only warns one that does not', () => {
-    // The two-tier rule the import enforcement already uses. `pnpm test` runs the gate a second
-    // time with `defaultPlugins` installed at their pinned refs, and those releases predate every
-    // rule added after them — a single tier either breaks CI on a plugin nobody can retroactively
-    // change, or stays advisory for everyone and checks nothing.
-    expect(auditSeverity({ requires: { pluginApi: '1' } })).toBe('fail')
-    expect(auditSeverity({ requires: { pluginApi: '' } })).toBe('warn')
-    expect(auditSeverity({ requires: {} })).toBe('warn')
-    expect(auditSeverity(null)).toBe('warn')
-    // The reference plugin is migrated, so the canary is live in the kit itself.
-    expect(auditSeverity(JSON.parse(read(anchorFile)))).toBe('fail')
-  })
-
   it("passes the kit's own reference manifest", () => {
     expect(pluginManifestProblems(JSON.parse(read(anchorFile)))).toEqual([])
   })
@@ -1079,7 +1138,9 @@ describe('the audit', () => {
       id: 'Orders',
       version: 'one',
       repo: 42,
-      requires: { kit: 5, surfaces: 'feature-agents', plugins: [{}], pluginApi: 3 },
+      minKit: '>=0.6.0',
+      uses: 'everything',
+      requires: { kit: '>=0.6.0', surfaces: 'feature-agents', plugins: [{}], pluginApi: 3 },
       dependencies: { 'apps/web': { 'date-fns': 3 } },
       bindings: [{ type: 'd1', binding: 'B', name: 'b' }],
       crons: ['* * *'],
@@ -1094,6 +1155,11 @@ describe('the audit', () => {
         'version',
         'repo',
         'apiPrefixes',
+        'minKit',
+        'uses',
+        // Both replaced fields are refused BY NAME rather than ignored: a manifest still carrying
+        // one was written against a contract this kit no longer honours, and silence would install
+        // it and let the staleness surface later as something else entirely.
         'requires.kit',
         'requires.surfaces',
         'requires.plugins',
@@ -1281,23 +1347,6 @@ describe('the audit', () => {
   })
 
   /**
-   * `requires.kit` answers which kit RELEASES a plugin may be installed into; `requires.pluginApi`
-   * answers which version of the CONTRACT it was written against. The comparison itself lives in
-   * `scripts/lib/plugin-api.mjs` — this asserts only that `checkRequirements` consults it.
-   */
-  it('consults the plugin API version, and leaves an undeclared one to the warning', () => {
-    const base = { kitVersion: '0.6.1', pluginApi: { current: 1, minSupported: 1 } }
-    expect(checkRequirements({ ...base, requires: { pluginApi: '1' } })).toEqual([])
-    expect(checkRequirements({ ...base, requires: { pluginApi: '2' } })).toHaveLength(1)
-    expect(checkRequirements({ ...base, requires: { pluginApi: '2' } })[0]).toMatch(/newer than/)
-    // Undeclared is never a refusal: a plugin released before the field existed cannot
-    // retroactively declare one, and `analytics` 1.0.2 is the live case.
-    expect(checkRequirements({ ...base, requires: {} })).toEqual([])
-    // …and with no `pluginApi` handed in, nothing about it is checked at all.
-    expect(checkRequirements({ kitVersion: '0.6.1', requires: { pluginApi: '99' } })).toEqual([])
-  })
-
-  /**
    * **The one part of the table-naming rule that is mechanical.** The prefix itself is a convention
    * a human picks — nothing derives a table name from an id, so there is nothing to check a shape
    * against — and the collision is what actually breaks a host. Nothing else sees it: TS2308
@@ -1330,7 +1379,7 @@ describe('the audit', () => {
       ok: boolean
       failures: unknown[]
       warnings: unknown[]
-      plugins: { id: string; pluginApi: string | null }[]
+      plugins: { id: string; minKit: string | null }[]
     }
     expect(r.status).toBe(0)
     expect(json.ok).toBe(true)

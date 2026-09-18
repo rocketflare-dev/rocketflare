@@ -4,6 +4,9 @@
  *
  *   node scripts/release.mjs <X.Y.Z> [--date YYYY-MM-DD] [--dry-run] [--skip-plugin-check]
  *
+ * WHICH repository it releases is `resolveRepoRoot` (`release-check.mjs`): `--repo-root <path>`,
+ * else the git toplevel of the working directory, else the directory this script lives in.
+ *
  * Folds `docs/upgrades/unreleased.md` into `docs/upgrades/X.Y.Z.md`, fills its `version`,
  * `previous` and `date`, bumps every version file, prepends a `CHANGELOG.md` section, and writes a
  * fresh empty `unreleased.md`.
@@ -26,8 +29,8 @@
  * accepted cost of that lockstep: a fix to one plugin bumps every plugin's version.
  *
  * In the KIT it additionally refuses a version its `defaultPlugins` are not ready for (D31,
- * decision 5): every entry must still resolve at the ref the kit pins, and a declared
- * `requires.kit` range must admit the version being cut. `--skip-plugin-check` is the escape
+ * decision 5): every entry must still resolve at the ref the kit pins, and the version being cut
+ * must be at or above the `minKit` floor that entry declares. `--skip-plugin-check` is the escape
  * hatch, and it says so loudly.
  *
  * Exit 0 ok · 1 error · 2 usage.
@@ -48,11 +51,12 @@ import {
   prependChangelogSection,
   VERSION_RE,
 } from './lib/upgrade-lib.mjs'
-import { findPluginManifests, releaseNotes } from './release-check.mjs'
+import { findPluginManifests, releaseNotes, resolveRepoRoot } from './release-check.mjs'
 
-const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
-const abs = p => path.join(REPO_ROOT, p)
-const read = p => readFileSync(abs(p), 'utf8')
+/** Where this SCRIPT lives — the last resort, and what the exported seams default to. */
+const SCRIPT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+const abs = (root, p) => path.join(root, p)
+const read = (root, p) => readFileSync(abs(root, p), 'utf8')
 const out = (...lines) => {
   for (const l of lines) process.stdout.write(`${l}\n`)
 }
@@ -62,41 +66,11 @@ const warn = (...lines) => {
 
 export const USAGE = [
   'usage: node scripts/release.mjs <X.Y.Z> [--plugin <subdir>]... [--date YYYY-MM-DD]',
-  '                                [--dry-run] [--skip-plugin-check]',
+  '                                [--dry-run] [--skip-plugin-check] [--repo-root <path>]',
 ].join('\n')
 
 /** Match `"version": "x"` at the top level of a JSON file (two-space indent, so exactly one). */
 const TOP_LEVEL_VERSION = /^( {2}"version":\s*)"[^"]+"/m
-
-/**
- * The ANCHOR a plugin manifest declares, repo-root-relative — the file a release must stamp
- * alongside the manifest itself.
- *
- * A plugin carries the version TWICE and only one copy was ever stamped. `rocketflare-plugin.json`
- * is the release manifest, read from the plugin's own repository; `apps/web/src/plugins/<id>/
- * plugin.json` is the ANCHOR, which is what gets copied into a host and therefore what
- * `pnpm plugin check` compares against the recorded surface. Stamping only the manifest leaves the
- * anchor behind, and every install of that release then reports
- * `plugin.json says <old>, and the surface says <new>` — which is a failure, so it takes the host's
- * whole gate down rather than reading as the cosmetic thing it looks like.
- *
- * It was kept in step by HAND while each plugin was its own repository, and nothing said so; the
- * move into a monorepo dropped the habit and the next release surfaced it. A hand-maintained
- * duplicate is not a convention, it is an unexploded one.
- *
- * Returns null when the manifest declares no anchor or will not parse — `release-check --tag` is
- * what reports a malformed manifest, and a missing file is skipped by the stamping loop anyway.
- */
-function anchorPathOf(repoRoot, manifestFile) {
-  try {
-    const declared = JSON.parse(readFileSync(path.join(repoRoot, manifestFile), 'utf8')).anchor
-    if (typeof declared !== 'string' || declared === '') return null
-    const dir = path.dirname(manifestFile)
-    return dir === '.' ? declared : `${dir}/${declared}`
-  } catch {
-    return null
-  }
-}
 
 /**
  * Which repository is this, and what does a release stamp here?
@@ -105,10 +79,10 @@ function anchorPathOf(repoRoot, manifestFile) {
  * discipline is its own. `plugin` — a `rocketflare-plugin.json` at the root (D31), which is the
  * whole of what makes a repository a plugin.
  */
-export function releaseContext(root = REPO_ROOT, { repoRoot = root } = {}) {
+export function releaseContext(root = SCRIPT_ROOT, { repoRoot = root } = {}) {
   const at = p => path.join(root, p)
   // Every path in a context is relative to the REPOSITORY root, because that is what each consumer
-  // joins against `REPO_ROOT`. For the kit and a single-plugin repository `root` IS the repository
+  // joins against. For the kit and a single-plugin repository `root` IS the repository
   // root and this is the identity; only a monorepo's `--plugin plugins/<id>` makes it move.
   const rel = p => path.relative(repoRoot, path.join(root, p)).split(path.sep).join('/')
 
@@ -140,11 +114,15 @@ export function releaseContext(root = REPO_ROOT, { repoRoot = root } = {}) {
     }
     // EVERY plugin manifest in the repository, not only this one, plus the root `package.json`.
     // Lockstep: one release, one version, one tag — and a manifest left at the old number is not
-    // cosmetic, because `pnpm plugin check` compares an installed surface's recorded version
-    // against the ANCHOR and would report a mismatch for every install of that plugin.
-    // `requires.pluginApi` is deliberately NOT touched: which kit contract a plugin compiles
-    // against is a different question from which release shipped it, and it is nested, so the
-    // two-space `TOP_LEVEL_VERSION` anchor cannot reach it.
+    // cosmetic, because it is what a host records as the installed version.
+    //
+    // The ANCHOR (`apps/web/src/plugins/<id>/plugin.json`) is deliberately NOT stamped, though a
+    // release briefly did. It carried the version a second time, by hand, and a stale one failed
+    // every install; it is a COPY written by `pnpm plugin add` now, so the duplicate it was
+    // compensating for is gone. Stamping a generated file only invites the two to disagree again.
+    // `requires.pluginApi` is untouched for a different reason: which kit contract a plugin
+    // compiles against is a different question from which release shipped it, and it is nested, so
+    // the two-space `TOP_LEVEL_VERSION` anchor cannot reach it.
     const manifests = [...new Set([...findPluginManifests(repoRoot), rel(PLUGIN_MANIFEST_FILE)])]
     return {
       kind: 'plugin',
@@ -154,18 +132,7 @@ export function releaseContext(root = REPO_ROOT, { repoRoot = root } = {}) {
       // lockstep version, and in a single-plugin repository this is the same path it always was.
       changelog: 'CHANGELOG.md',
       versionFiles: [
-        ...manifests.sort().flatMap(file => [
-          { file, pattern: TOP_LEVEL_VERSION, label: 'version' },
-          ...(anchorPathOf(repoRoot, file)
-            ? [
-                {
-                  file: anchorPathOf(repoRoot, file),
-                  pattern: TOP_LEVEL_VERSION,
-                  label: 'version',
-                },
-              ]
-            : []),
-        ]),
+        ...manifests.sort().map(file => ({ file, pattern: TOP_LEVEL_VERSION, label: 'version' })),
         { file: 'package.json', pattern: TOP_LEVEL_VERSION, label: 'version' },
       ],
     }
@@ -174,10 +141,10 @@ export function releaseContext(root = REPO_ROOT, { repoRoot = root } = {}) {
 }
 
 /** `git ls-remote` as a boolean: does `ref` exist on that remote? The offline-ish fallback. */
-function lsRemoteResolves(repo, ref) {
+function lsRemoteResolves(repo, ref, root = SCRIPT_ROOT) {
   try {
     execFileSync('git', ['ls-remote', '--exit-code', repo, ref], {
-      cwd: REPO_ROOT,
+      cwd: root,
       stdio: ['ignore', 'ignore', 'pipe'],
       timeout: 30_000,
       env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
@@ -189,21 +156,21 @@ function lsRemoteResolves(repo, ref) {
 }
 
 /** The blobless bare mirror `scripts/plugin.mjs` would use for the same repository. */
-function openPluginMirror(repo) {
-  return ensureMirror(repo, mirrorDirFor(repo, abs(PLUGIN_MIRROR_ROOT)), {
-    cwd: REPO_ROOT,
+function openPluginMirror(repo, root = SCRIPT_ROOT) {
+  return ensureMirror(repo, mirrorDirFor(repo, abs(root, PLUGIN_MIRROR_ROOT)), {
+    cwd: root,
     warn: () => {},
   })
 }
 
 /**
  * Resolve one `defaultPlugins` entry: is it still fetchable at the ref the kit pins, and what
- * `requires.kit` range does it declare? The I/O half of `defaultPluginProblems` (D31, decision 5).
+ * `minKit` floor does it declare? The I/O half of `defaultPluginProblems` (D31, decision 5).
  *
  * **The MIRROR is what answers the second half**, and it has to: `git ls-remote` proves a ref
- * exists but cannot read a file out of it, so before this the range came only from an INSTALLED
+ * exists but cannot read a file out of it, so before this the floor came only from an INSTALLED
  * surface — and the kit does not install its own default plugins. `pnpm kit:release 0.7.0` was
- * therefore refused every single time with "cannot read its requires.kit range", making
+ * therefore refused every single time with "cannot read its declaration", making
  * `--skip-plugin-check` mandatory rather than the loud escape hatch it was written as, which is
  * the same as having no check at all.
  *
@@ -212,9 +179,15 @@ function openPluginMirror(repo) {
  * is the plugin's own statement AT THE PIN, which is strictly better than an installed surface's
  * record of whatever was true when somebody last installed it.
  *
+ * **`minKit` is read from the TOP LEVEL only**, exactly as `plugin-lib.mjs`'s `floorOf` and
+ * `.github/workflows/plugin-ci.yml` read it. A manifest still carrying `requires.kit` is not
+ * quietly treated as having no floor: the range is carried out as `legacyRange` so the caller can
+ * name the field and its replacement. Reading a second spelling here would mean this and CI
+ * disagreed about one manifest, which is the silent drift the whole change removes.
+ *
  * Three fallbacks, each deliberate:
  *
- *   - the mirror cannot be opened (offline, no access) → `ls-remote` proves the ref, and the range
+ *   - the mirror cannot be opened (offline, no access) → `ls-remote` proves the ref, and the floor
  *     falls back to the installed surface, or to null, which the caller still reports;
  *   - the ref resolves but carries no manifest → the surface's record, rather than a refusal: an
  *     older plugin release may predate the file;
@@ -229,7 +202,8 @@ export function resolveDefaultPlugin(
 ) {
   const surface = (manifest?.surfaces ?? []).find(s => s.kind === 'plugin' && s.id === entry.id)
   const recorded = {
-    requiresKit: surface?.requires?.kit ?? null,
+    minKit: surface?.minKit ?? null,
+    legacyRange: surface?.requires?.kit ?? null,
     version: surface?.source?.version ?? null,
   }
   const missingRef = () => ({
@@ -261,7 +235,8 @@ export function resolveDefaultPlugin(
     const declared = JSON.parse(shown.out)
     return {
       ok: true,
-      requiresKit: declared.requires?.kit ?? recorded.requiresKit,
+      minKit: declared.minKit ?? recorded.minKit,
+      legacyRange: declared.requires?.kit ?? recorded.legacyRange,
       version: declared.version ?? recorded.version,
     }
   } catch {
@@ -271,10 +246,10 @@ export function resolveDefaultPlugin(
 
 /**
  * The stop decision 5 asks for: do not cut `version` while a default plugin cannot be fetched at
- * its pin or declares a kit range that excludes it. Returns a problem list; empty means go.
+ * its pin or declares a minKit floor above it. Returns a problem list; empty means go.
  */
-function checkDefaultPlugins(version) {
-  const { manifest } = readManifest(REPO_ROOT)
+function checkDefaultPlugins(version, root) {
+  const { manifest } = readManifest(root)
   const entries = defaultPluginEntries(manifest)
   if (entries.length === 0) return { entries, problems: [] }
   return {
@@ -282,7 +257,12 @@ function checkDefaultPlugins(version) {
     problems: defaultPluginProblems(
       entries,
       version,
-      entry => resolveDefaultPlugin(entry, { manifest }),
+      entry =>
+        resolveDefaultPlugin(entry, {
+          manifest,
+          openMirror: repo => openPluginMirror(repo, root),
+          lsRemote: (repo, ref) => lsRemoteResolves(repo, ref, root),
+        }),
       { kitRepo: manifest?.kit?.repo }
     ),
   }
@@ -342,31 +322,36 @@ _Numbered checkable commands and assertions only._
 `
 
 function main(argv) {
+  const { root: repoRoot, rest, error } = resolveRepoRoot(argv)
+  if (error) {
+    warn(`error: ${error}`, '', USAGE)
+    return 2
+  }
   let version = null
   let date = new Date().toISOString().slice(0, 10)
   let dryRun = false
   let skipPluginCheck = false
   const pluginDirs = []
-  for (let i = 0; i < argv.length; i++) {
-    if (argv[i] === '--date') date = argv[++i]
-    else if (argv[i] === '--dry-run') dryRun = true
-    else if (argv[i] === '--skip-plugin-check') skipPluginCheck = true
-    else if (argv[i] === '--plugin') {
+  for (let i = 0; i < rest.length; i++) {
+    if (rest[i] === '--date') date = rest[++i]
+    else if (rest[i] === '--dry-run') dryRun = true
+    else if (rest[i] === '--skip-plugin-check') skipPluginCheck = true
+    else if (rest[i] === '--plugin') {
       // REPEATABLE rather than comma-separated, because the value is a PATH: splitting a
       // path-valued option on a comma invents an escaping rule for a character a path may legally
       // contain, and this flag is read by people typing it once per plugin anyway.
-      const sub = argv[++i]
+      const sub = rest[++i]
       if (!sub || sub.startsWith('-')) {
         warn('error: --plugin needs a subdirectory, e.g. --plugin plugins/analytics', '', USAGE)
         return 2
       }
       pluginDirs.push(sub.replace(/\/+$/, ''))
-    } else if (argv[i] === '-h' || argv[i] === '--help') {
+    } else if (rest[i] === '-h' || rest[i] === '--help') {
       out(USAGE)
       return 0
-    } else if (!version) version = argv[i]
+    } else if (!version) version = rest[i]
     else {
-      warn(`error: unexpected argument '${argv[i]}'`, '', USAGE)
+      warn(`error: unexpected argument '${rest[i]}'`, '', USAGE)
       return 2
     }
   }
@@ -382,10 +367,10 @@ function main(argv) {
   // With no `--plugin` this is exactly what it always was: one context, resolved at the root.
   const targets =
     pluginDirs.length === 0
-      ? [{ subdir: '', ctx: releaseContext() }]
+      ? [{ subdir: '', ctx: releaseContext(repoRoot) }]
       : pluginDirs.map(subdir => ({
           subdir,
-          ctx: releaseContext(path.join(REPO_ROOT, subdir), { repoRoot: REPO_ROOT }),
+          ctx: releaseContext(path.join(repoRoot, subdir), { repoRoot }),
         }))
 
   for (const { subdir, ctx } of targets) {
@@ -417,11 +402,11 @@ function main(argv) {
   const ctx = targets[0].ctx
 
   // A kit release ships a `defaultPlugins` set with it: a fresh clone installs those plugins, so a
-  // version whose default plugins cannot be fetched at their pin — or that falls outside a range
+  // version whose default plugins cannot be fetched at their pin — or that falls below a floor
   // one of them declares — is a version that does not bootstrap. What this can and cannot prove is
   // written out on `defaultPluginProblems`; the CI job is what proves them GREEN.
   if (ctx.kind === 'kit' && !skipPluginCheck) {
-    const { entries, problems } = checkDefaultPlugins(version)
+    const { entries, problems } = checkDefaultPlugins(version, repoRoot)
     if (problems.length > 0) {
       warn(
         `error: ${version} cannot be released — its default plugins are not ready:`,
@@ -446,16 +431,16 @@ function main(argv) {
   const jobs = []
   for (const { ctx: target } of targets) {
     const notePath = `${target.notesDir}/${version}.md`
-    if (existsSync(abs(notePath))) {
+    if (existsSync(abs(repoRoot, notePath))) {
       warn(`error: ${notePath} already exists`)
       return 1
     }
     const unreleasedPath = `${target.notesDir}/unreleased.md`
-    if (!existsSync(abs(unreleasedPath))) {
+    if (!existsSync(abs(repoRoot, unreleasedPath))) {
       warn(`error: ${unreleasedPath} does not exist`)
       return 1
     }
-    const unreleased = read(unreleasedPath)
+    const unreleased = read(repoRoot, unreleasedPath)
     const parsed = parseNote(unreleased)
     if (!parsed) {
       warn(`error: ${unreleasedPath} has no frontmatter`)
@@ -468,7 +453,7 @@ function main(argv) {
       )
       return 1
     }
-    const notes = releaseNotes(target.notesDir)
+    const notes = releaseNotes(target.notesDir, { root: repoRoot })
     const previous = notes.length > 0 ? notes[notes.length - 1].version : null
     jobs.push({
       id: target.id ?? null,
@@ -483,7 +468,9 @@ function main(argv) {
     })
   }
 
-  const changelog = existsSync(abs(ctx.changelog)) ? read(ctx.changelog) : '# Changelog\n'
+  const changelog = existsSync(abs(repoRoot, ctx.changelog))
+    ? read(repoRoot, ctx.changelog)
+    : '# Changelog\n'
   const nextChangelog = prependChangelogSection(
     changelog,
     changelogSection(
@@ -511,8 +498,8 @@ function main(argv) {
   }
   const stamped = []
   for (const { file, pattern, label } of versionFiles) {
-    if (!existsSync(abs(file))) continue
-    const text = read(file)
+    if (!existsSync(abs(repoRoot, file))) continue
+    const text = read(repoRoot, file)
     const next = text.replace(pattern, `$1"${version}"`)
     if (next === text) {
       warn(`error: could not find the version to stamp in ${file}`)
@@ -551,11 +538,11 @@ function main(argv) {
   }
 
   for (const j of jobs) {
-    writeFileSync(abs(j.notePath), j.note)
-    writeFileSync(abs(j.unreleasedPath), freshUnreleased(version))
+    writeFileSync(abs(repoRoot, j.notePath), j.note)
+    writeFileSync(abs(repoRoot, j.unreleasedPath), freshUnreleased(version))
   }
-  writeFileSync(abs(ctx.changelog), nextChangelog)
-  for (const s of stamped) writeFileSync(abs(s.file), s.text)
+  writeFileSync(abs(repoRoot, ctx.changelog), nextChangelog)
+  for (const s of stamped) writeFileSync(abs(repoRoot, s.file), s.text)
 
   out(
     ...jobs.flatMap(j => [

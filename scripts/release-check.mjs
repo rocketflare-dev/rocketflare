@@ -6,6 +6,10 @@
  *   node scripts/release-check.mjs --unreleased       the PR gate, run by ci.yml
  *   node scripts/release-check.mjs --deployable       "is there anything here to deploy?" (deploy.yml)
  *
+ * `--repo-root <path>` on any of them names the repository to check. Without it the root is the git
+ * toplevel of the working directory, and only then the directory this script lives in — see
+ * `resolveRepoRoot`.
+ *
  * A copy of the kit can never merge from upstream; it replays translated diffs guided by these
  * notes. So a release with no note is a release no adopter can cross, and the gap is permanent —
  * `previous` chains through it. That is worth failing a deploy over.
@@ -31,8 +35,9 @@ import {
   VERSION_RE,
 } from './lib/upgrade-lib.mjs'
 
-const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
-const read = p => readFileSync(path.join(REPO_ROOT, p), 'utf8')
+/** Where this SCRIPT lives — the last resort, and what the exported helpers default to. */
+const SCRIPT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+const read = (root, p) => readFileSync(path.join(root, p), 'utf8')
 const out = (...lines) => {
   for (const l of lines) process.stdout.write(`${l}\n`)
 }
@@ -40,7 +45,68 @@ const warn = (...lines) => {
   for (const l of lines) process.stderr.write(`${l}\n`)
 }
 
-export const USAGE = `usage: node scripts/release-check.mjs --tag <X.Y.Z> | --unreleased [--base <ref>] | --deployable`
+export const USAGE = `usage: node scripts/release-check.mjs --tag <X.Y.Z> | --unreleased [--base <ref>] | --deployable
+                            [--repo-root <path>]`
+
+/** `git rev-parse --show-toplevel` as an answer or a null: not a checkout, or no git at all. */
+function gitToplevel(cwd) {
+  try {
+    return (
+      execFileSync('git', ['rev-parse', '--show-toplevel'], {
+        cwd,
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+      }).trim() || null
+    )
+  } catch {
+    return null
+  }
+}
+
+/**
+ * WHICH repository is being released or checked — a decision, not a constant.
+ *
+ * It used to be `path.resolve(dirname(import.meta.url), '..')`, so the root was wherever the SCRIPT
+ * lived. That is why the first-party plugins repository carries a verbatim copy of this file,
+ * `release.mjs` and six `scripts/lib/*.mjs`: a shim that cloned the kit and ran
+ * `node .kit/scripts/release-check.mjs` would answer `.kit/` and check the KIT's release rather
+ * than the plugin repository's. Four thousand lines of duplicate, already drifting, because one
+ * path was computed instead of asked for.
+ *
+ * Three steps, narrowest first:
+ *
+ *   1. `--repo-root <path>` — an explicit answer always wins, and is what a shim passes;
+ *   2. the git toplevel of the working directory — which is what makes running the kit's copy from
+ *      inside another checkout mean that other checkout, and also what makes `cd apps/web && node
+ *      ../../scripts/release.mjs` work at all;
+ *   3. the directory this script lives in — the original derivation, so the kit running its own
+ *      scripts in place is unchanged byte for byte.
+ *
+ * Returns the remaining argv as `rest` because the flag has to be consumed before either script's
+ * option loop sees it — one of them would read it as a version, the other as an unknown option.
+ * `gitToplevel` is injected so the whole decision is testable without a filesystem.
+ */
+export function resolveRepoRoot(
+  argv = [],
+  { cwd = process.cwd(), scriptRoot = SCRIPT_ROOT, toplevel = gitToplevel } = {}
+) {
+  const rest = []
+  let named = null
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i] !== '--repo-root') {
+      rest.push(argv[i])
+      continue
+    }
+    const value = argv[++i]
+    if (value === undefined || value.startsWith('-')) {
+      return { root: scriptRoot, rest, error: '--repo-root needs a path, e.g. --repo-root .' }
+    }
+    named = value
+  }
+  if (named !== null) return { root: path.resolve(cwd, named), rest, error: null }
+  const top = toplevel(cwd)
+  return { root: top ? path.resolve(top) : scriptRoot, rest, error: null }
+}
 
 /**
  * Every `X.Y.Z.md` in a notes directory, oldest first.
@@ -49,8 +115,8 @@ export const USAGE = `usage: node scripts/release-check.mjs --tag <X.Y.Z> | --un
  * own notes (D31): a plugin has releases, a chain of `previous` and the same four headings, and
  * one copy of this walk is better than two that drift.
  */
-export function releaseNotes(notesDir = 'docs/upgrades') {
-  const dir = path.join(REPO_ROOT, notesDir)
+export function releaseNotes(notesDir = 'docs/upgrades', { root = SCRIPT_ROOT } = {}) {
+  const dir = path.join(root, notesDir)
   if (!existsSync(dir)) return []
   return readdirSync(dir)
     .filter(f => VERSION_RE.test(f.replace(/\.md$/, '')))
@@ -78,7 +144,7 @@ const SKIP_DIRS = new Set(['node_modules', 'dist', 'build', 'coverage'])
  * nothing below it this needs. A single-plugin repository answers `[PLUGIN_MANIFEST_FILE]`, which
  * is exactly the list that was written out by hand before.
  */
-export function findPluginManifests(root = REPO_ROOT, { maxDepth = 3 } = {}) {
+export function findPluginManifests(root = SCRIPT_ROOT, { maxDepth = 3 } = {}) {
   const found = []
   const walk = (dir, rel, depth) => {
     if (existsSync(path.join(dir, PLUGIN_MANIFEST_FILE))) {
@@ -115,15 +181,15 @@ function subdirOf(manifestFile) {
  * called `docs/upgrades/0.2.0.md` and `0.3.0.md` broken over `feature-analytics` — notes the kit
  * forbids rewriting. `retiredSurfaces` in the manifest is now the one list, and both read it.
  */
-function checkNote(note, problems, { expectPrevious } = {}) {
+function checkNote(root, note, problems, { expectPrevious } = {}) {
   // A PLUGIN repository has no `.rocketflare.json`, and `surfaceIds: null` is the honest answer
   // there rather than reporting every id in the note as unknown: the ids a note may name belong to
   // the KIT's manifest, so with none to read there is nothing to check them against.
-  const manifest = existsSync(path.join(REPO_ROOT, MANIFEST_FILE))
-    ? JSON.parse(read(MANIFEST_FILE))
+  const manifest = existsSync(path.join(root, MANIFEST_FILE))
+    ? JSON.parse(read(root, MANIFEST_FILE))
     : null
   problems.push(
-    ...noteProblems(read(note.file), {
+    ...noteProblems(read(root, note.file), {
       file: note.file,
       version: note.version,
       expectPrevious,
@@ -134,23 +200,23 @@ function checkNote(note, problems, { expectPrevious } = {}) {
   )
 }
 
-function checkTag(tag, problems) {
+function checkTag(root, tag, problems) {
   if (!VERSION_RE.test(tag)) {
     problems.push(`'${tag}' is not an X.Y.Z version`)
     return
   }
-  const rootVersion = JSON.parse(read('package.json')).version
+  const rootVersion = JSON.parse(read(root, 'package.json')).version
   if (rootVersion !== tag)
     problems.push(`root package.json version is ${rootVersion}, the tag is ${tag}`)
 
-  const manifest = JSON.parse(read(MANIFEST_FILE))
+  const manifest = JSON.parse(read(root, MANIFEST_FILE))
   if (manifest.kit.version !== tag) {
     problems.push(
       `${MANIFEST_FILE} kit.version is ${manifest.kit.version}, the tag is ${tag} — an adopter's --from resolves through it`
     )
   }
 
-  const notes = releaseNotes()
+  const notes = releaseNotes('docs/upgrades', { root })
   const note = notes.find(n => n.version === tag)
   if (!note) {
     problems.push(
@@ -159,16 +225,16 @@ function checkTag(tag, problems) {
     return
   }
   const idx = notes.indexOf(note)
-  checkNote(note, problems, { expectPrevious: idx === 0 ? 'null' : notes[idx - 1].version })
+  checkNote(root, note, problems, { expectPrevious: idx === 0 ? 'null' : notes[idx - 1].version })
 
-  const changelog = read('CHANGELOG.md')
+  const changelog = read(root, 'CHANGELOG.md')
   // Anchored: `includes('## 0.6.1')` is also satisfied by `## 0.6.10`, so a two-digit patch would
   // let the tag gate pass on another release's section.
   if (!hasChangelogSection(changelog, tag)) problems.push(`CHANGELOG.md has no '## ${tag}' section`)
   if (!changelog.includes(`docs/upgrades/${tag}.md`))
     problems.push(`CHANGELOG.md does not link docs/upgrades/${tag}.md`)
 
-  const unreleased = read('docs/upgrades/unreleased.md')
+  const unreleased = read(root, 'docs/upgrades/unreleased.md')
   if (!/_Nothing yet\./.test(unreleased)) {
     problems.push('docs/upgrades/unreleased.md still has entries — they belong in the release note')
   }
@@ -191,24 +257,24 @@ function checkTag(tag, problems) {
  * that IS the permanent gap this gate exists to refuse — so those two are distinguished rather
  * than conflated into "every plugin must have a note".
  */
-function checkPluginTag(tag, manifests, problems) {
+function checkPluginTag(root, tag, manifests, problems) {
   if (!VERSION_RE.test(tag)) {
     problems.push(`'${tag}' is not an X.Y.Z version`)
     return
   }
-  if (existsSync(path.join(REPO_ROOT, 'package.json'))) {
-    const rootVersion = JSON.parse(read('package.json')).version
+  if (existsSync(path.join(root, 'package.json'))) {
+    const rootVersion = JSON.parse(read(root, 'package.json')).version
     if (rootVersion !== tag)
       problems.push(`root package.json version is ${rootVersion}, the tag is ${tag}`)
   }
-  const changelog = existsSync(path.join(REPO_ROOT, 'CHANGELOG.md')) ? read('CHANGELOG.md') : ''
+  const changelog = existsSync(path.join(root, 'CHANGELOG.md')) ? read(root, 'CHANGELOG.md') : ''
   let noted = 0
 
   for (const file of manifests) {
     const dir = subdirOf(file)
     let declared = {}
     try {
-      declared = JSON.parse(read(file))
+      declared = JSON.parse(read(root, file))
     } catch {
       problems.push(`${file} is not valid JSON`)
       continue
@@ -221,10 +287,10 @@ function checkPluginTag(tag, manifests, problems) {
 
     const notesDir = dir === '' ? 'docs/upgrades' : `${dir}/docs/upgrades`
     const unreleasedPath = `${notesDir}/unreleased.md`
-    const unreleased = existsSync(path.join(REPO_ROOT, unreleasedPath))
-      ? read(unreleasedPath)
+    const unreleased = existsSync(path.join(root, unreleasedPath))
+      ? read(root, unreleasedPath)
       : null
-    const notes = releaseNotes(notesDir)
+    const notes = releaseNotes(notesDir, { root })
     const note = notes.find(n => n.version === tag)
 
     if (!note) {
@@ -237,7 +303,9 @@ function checkPluginTag(tag, manifests, problems) {
     }
     noted++
     const idx = notes.indexOf(note)
-    checkNote(note, problems, { expectPrevious: idx === 0 ? 'null' : notes[idx - 1].version })
+    checkNote(root, note, problems, {
+      expectPrevious: idx === 0 ? 'null' : notes[idx - 1].version,
+    })
     if (!changelog.includes(note.file)) problems.push(`CHANGELOG.md does not link ${note.file}`)
     if (unreleased === null) problems.push(`${unreleasedPath} does not exist`)
     else {
@@ -259,23 +327,23 @@ function checkPluginTag(tag, manifests, problems) {
 }
 
 /** The I/O half of `isDeployable`: read the manifest and both tomls, then ask the pure function. */
-export function deployable() {
-  const manifestPath = path.join(REPO_ROOT, MANIFEST_FILE)
+export function deployable(root = SCRIPT_ROOT) {
+  const manifestPath = path.join(root, MANIFEST_FILE)
   const manifest = existsSync(manifestPath) ? JSON.parse(readFileSync(manifestPath, 'utf8')) : null
   const tomls = Object.fromEntries(
     ['apps/web/wrangler.toml', 'apps/web/wrangler.staging.toml']
-      .filter(f => existsSync(path.join(REPO_ROOT, f)))
-      .map(f => [f, read(f)])
+      .filter(f => existsSync(path.join(root, f)))
+      .map(f => [f, read(root, f)])
   )
   return isDeployable(manifest, tomls)
 }
 
-function checkUnreleased(base, problems, pluginManifests = []) {
+function checkUnreleased(root, base, problems, pluginManifests = []) {
   let changed = []
   try {
     const range = base ? `${base}...HEAD` : 'HEAD~1...HEAD'
     changed = execFileSync('git', ['diff', '--name-only', range], {
-      cwd: REPO_ROOT,
+      cwd: root,
       encoding: 'utf8',
     })
       .trim()
@@ -314,21 +382,26 @@ function checkUnreleased(base, problems, pluginManifests = []) {
 }
 
 function main(argv) {
+  const { root, rest, error } = resolveRepoRoot(argv)
+  if (error) {
+    warn(`error: ${error}`, '', USAGE)
+    return 2
+  }
   let mode = null
   let tag = null
   let base = null
-  for (let i = 0; i < argv.length; i++) {
-    if (argv[i] === '--tag') {
+  for (let i = 0; i < rest.length; i++) {
+    if (rest[i] === '--tag') {
       mode = 'tag'
-      tag = argv[++i]
-    } else if (argv[i] === '--unreleased') mode = 'unreleased'
-    else if (argv[i] === '--deployable') mode = 'deployable'
-    else if (argv[i] === '--base') base = argv[++i]
-    else if (argv[i] === '-h' || argv[i] === '--help') {
+      tag = rest[++i]
+    } else if (rest[i] === '--unreleased') mode = 'unreleased'
+    else if (rest[i] === '--deployable') mode = 'deployable'
+    else if (rest[i] === '--base') base = rest[++i]
+    else if (rest[i] === '-h' || rest[i] === '--help') {
       out(USAGE)
       return 0
     } else {
-      warn(`error: unknown option '${argv[i]}'`, '', USAGE)
+      warn(`error: unknown option '${rest[i]}'`, '', USAGE)
       return 2
     }
   }
@@ -337,7 +410,7 @@ function main(argv) {
     return 2
   }
   if (mode === 'deployable') {
-    const { deployable: ok, reason } = deployable()
+    const { deployable: ok, reason } = deployable(root)
     // The workflow reads this line; `::notice::` puts the reason in the run summary, so a skipped
     // deploy explains itself instead of looking like something went wrong.
     if (process.env.GITHUB_OUTPUT) {
@@ -350,13 +423,13 @@ function main(argv) {
   // A PLUGIN repository (D31) has no `.rocketflare.json` and one or more `rocketflare-plugin.json`.
   // DISCOVERED rather than named by a flag, deliberately: this is a gate, and a flag can be
   // forgotten — a plugin whose version nobody stamped is precisely what it exists to catch.
-  const hasManifest = existsSync(path.join(REPO_ROOT, MANIFEST_FILE))
-  const pluginManifests = hasManifest ? [] : findPluginManifests(REPO_ROOT)
+  const hasManifest = existsSync(path.join(root, MANIFEST_FILE))
+  const pluginManifests = hasManifest ? [] : findPluginManifests(root)
   if (!hasManifest && pluginManifests.length === 0) {
     out(`release-check: no ${MANIFEST_FILE} — nothing to check`)
     return 0
   }
-  if (hasManifest && !isKitManifest(JSON.parse(read(MANIFEST_FILE)))) {
+  if (hasManifest && !isKitManifest(JSON.parse(read(root, MANIFEST_FILE)))) {
     out('release-check: this is an app, not the kit — skipped')
     return 0
   }
@@ -367,10 +440,10 @@ function main(argv) {
       warn('error: --tag needs a version', '', USAGE)
       return 2
     }
-    if (hasManifest) checkTag(tag, problems)
-    else checkPluginTag(tag, pluginManifests, problems)
+    if (hasManifest) checkTag(root, tag, problems)
+    else checkPluginTag(root, tag, pluginManifests, problems)
   } else {
-    checkUnreleased(base, problems, pluginManifests)
+    checkUnreleased(root, base, problems, pluginManifests)
   }
 
   if (problems.length > 0) {

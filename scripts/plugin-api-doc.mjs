@@ -1,115 +1,71 @@
 #!/usr/bin/env node
 /**
- * Generate `docs/plugin-api.md` from the declared entries, and refuse a surface change that did
- * not bump `PLUGIN_API.current` (D31).
+ * Generate `docs/plugin-api.md` from the declared entries (D31).
  *
  *     node scripts/plugin-api-doc.mjs            write the document
  *     node scripts/plugin-api-doc.mjs --check    exit 2 if it is out of date, write nothing
  *
- * **Why generated rather than written.** The document does three jobs a hand-written one cannot
- * keep doing past its first week:
+ * **Why generated rather than written.** The document does two jobs a hand-written one cannot keep
+ * doing past its first week:
  *
- * 1. **It enforces the version.** The committed document is the previous snapshot of the surface.
- *    A member that has changed or gone since, with `PLUGIN_API.current` still at the number the
- *    snapshot records, fails here — naming the member. That check is the only thing that makes the
- *    version mean anything: without it the number is a claim nobody verifies, which is the failure
- *    mode this whole piece of work exists to remove.
- * 2. **It attributes breaks.** Every member carries `used-by:` for the plugins installed in THIS
- *    checkout, derived from their imports. So the answer to "what does removing this cost" is in
- *    the file rather than in somebody's head. Only the reference plugin is installed in the kit, so
- *    nearly nothing is annotated — that is the honest answer for a kit with one plugin in it, and
- *    an unannotated member is not a dead one.
- * 3. **It is the discovery surface.** An agent writing a plugin should read one file, not infer a
- *    contract from 19 module paths and a hundred-odd symbols. Hence the capability index first:
- *    what you want to do, and the one name that does it.
+ * 1. **It is the discovery surface.** An agent writing a plugin should read one file, not infer a
+ *    contract from a dozen module paths and several hundred symbols. Hence the capability index
+ *    first: what you want to do, and the one name that does it. Every entry in that index is
+ *    checked to exist, because an index nobody maintains is worse than none — it sends the next
+ *    reader to a name that is not there.
+ * 2. **It emits the LEDGER.** The fenced block at the end is the machine-readable half: one line
+ *    per member the kit provides. It is what makes compatibility an OBSERVATION rather than a
+ *    prediction — a plugin's use is derived from its own imports and the answer is the set
+ *    difference `uses \ ledger` (`scripts/lib/surface.mjs`). Nothing here asks anybody to declare
+ *    a number, and nothing here can throw.
  *
  * **A diff failure in CI means the document is stale, not that the gate is broken.** Run this
  * script and commit what it writes — the same contract as `apps/web/worker-configuration.d.ts`,
  * and it sits beside that step in `.github/workflows/gate.yml` for that reason.
  *
- * Exit codes: 0 ok · 1 error · 2 out of date (`--check`) · 3 a surface change needs a version bump.
+ * Exit codes: 0 ok · 1 error · 2 out of date (`--check`).
  */
 
-import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import ts from 'typescript'
+import { LEDGER_ENTRIES } from './lib/surface.mjs'
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const DOC_PATH = path.join(REPO_ROOT, 'docs/plugin-api.md')
-const CONTRACT = 'packages/shared/src/plugins/contract.ts'
 
 /**
- * The declared entries, in reading order: the server surface first, then the halves a plugin
- * reaches for less often.
+ * One sentence per declared entry, saying what it is for.
  *
- * `import` is the specifier a plugin actually writes, which is the thing a reader needs — the
- * repo path is an implementation detail of this script. The CLI entries are relative because a
- * plugin's CLI half lives beside them and there is no alias for that package.
+ * **The LIST itself is `LEDGER_ENTRIES` in `scripts/lib/surface.mjs`**, because an entry's label is
+ * the ledger's KEY: it is what a plugin's measured imports are counted under, so a second copy of
+ * it here would be exactly the duplication-drift this document exists to remove. What lives in
+ * this file is only the prose, which nothing reads back.
  */
-const ENTRIES = [
-  {
-    import: '@/plugins/api',
-    file: 'apps/web/src/plugins/api/index.ts',
-    role: 'The server surface: the context family, and the types a plugin must be able to name.',
-  },
-  {
-    import: '@/plugins/api/peers',
-    file: 'apps/web/src/plugins/api/peers.ts',
-    role: 'The two escape hatches that read the whole installed set. Not on the barrel, on purpose.',
-  },
-  {
-    import: '@/plugins/api/ui-wiring',
-    file: 'apps/web/src/plugins/api/ui-wiring.ts',
-    role: "The only host module a plugin's `ui/index.ts` may import — it ships in the main bundle.",
-  },
-  {
-    import: '@/plugins/api/ui',
-    file: 'apps/web/src/plugins/api/ui.ts',
-    role: 'Components and hooks, for a lazy PAGE. Never for the UI entry.',
-  },
-  {
-    import: '@/plugins/types',
-    file: 'apps/web/src/plugins/types.ts',
-    role: '`ServerPlugin` and `UiPlugin` — the slots a plugin fills.',
-  },
-  {
-    import: '@/db/schema/kit',
-    file: 'apps/web/src/db/schema/kit.ts',
-    role: 'The build-time schema symbols. A `pgTable(...)` runs at module scope, so these cannot be injected.',
-  },
-  {
-    import: '@rocketflare/shared/plugins/api',
-    file: 'packages/shared/src/plugins/api.ts',
-    role: "What a plugin's CONTRACT module imports: the error envelope, pagination, `SharedPlugin`.",
-  },
-  {
-    import: '@rocketflare/shared/plugins/contract',
-    file: CONTRACT,
-    role: 'The plugin API version itself.',
-  },
-  {
-    import: "'../api' (apps/cli/src/plugins/api.ts)",
-    file: 'apps/cli/src/plugins/api.ts',
-    role: 'The CLI half: the one `fetch` site, the exit codes, the output helpers.',
-  },
-  {
-    import: "'./types' (apps/cli/src/plugins/types.ts)",
-    file: 'apps/cli/src/plugins/types.ts',
-    role: '`CliPlugin` and the `action()` wrapper it registers with.',
-  },
-  {
-    import: '@testkit/integration',
-    file: 'apps/web/tests/kit/integration.ts',
-    role: 'The harness: a real database, the real Hono app, real bindings-shaped stubs, the provider tree.',
-  },
-  {
-    import: '@testkit/unit',
-    file: 'apps/web/tests/kit/unit.ts',
-    role: 'Builders for the context family, for tests that never touch data.',
-  },
-]
+const ROLES = {
+  '@/plugins/api':
+    'The server surface: the context family, and the types a plugin must be able to name.',
+  '@/plugins/api/peers':
+    'The two escape hatches that read the whole installed set. Not on the barrel, on purpose.',
+  '@/plugins/api/ui-wiring':
+    "The only host module a plugin's `ui/index.ts` may import — it ships in the main bundle.",
+  '@/plugins/api/ui': 'Components and hooks, for a lazy PAGE. Never for the UI entry.',
+  '@/plugins/types': '`ServerPlugin` and `UiPlugin` — the slots a plugin fills.',
+  '@/db/schema/kit':
+    'The build-time schema symbols. A `pgTable(...)` runs at module scope, so these cannot be injected.',
+  '@rocketflare/shared/plugins/api':
+    "What a plugin's CONTRACT module imports: the error envelope, pagination, `SharedPlugin`.",
+  "'../api' (apps/cli/src/plugins/api.ts)":
+    'The CLI half: the one `fetch` site, the exit codes, the output helpers.',
+  "'./types' (apps/cli/src/plugins/types.ts)":
+    '`CliPlugin` and the `action()` wrapper it registers with.',
+  '@testkit/integration':
+    'The harness: a real database, the real Hono app, real bindings-shaped stubs, the provider tree.',
+  '@testkit/unit': 'Builders for the context family, for tests that never touch data.',
+}
+
+const ENTRIES = LEDGER_ENTRIES.map(entry => ({ ...entry, role: ROLES[entry.import] ?? '' }))
 
 /**
  * Types whose MEMBERS are part of the contract, not just their names.
@@ -431,98 +387,6 @@ function fileIntro(source) {
   return summarise(body)
 }
 
-// ---- who uses what -----------------------------------------------------------------------------
-
-const PLUGIN_ROOTS = [
-  'apps/web/src/plugins/',
-  'packages/shared/src/plugins/',
-  'apps/cli/src/plugins/',
-]
-const RESERVED = new Set(['index', 'server', 'ui', 'schema', 'types', 'api', 'contract'])
-
-function pluginIdOf(repoPath) {
-  for (const root of PLUGIN_ROOTS) {
-    if (!repoPath.startsWith(root)) continue
-    const id = (repoPath.slice(root.length).split('/')[0] ?? '').replace(/\.(tsx?|jsx?)$/, '')
-    if (!id || id.includes('.') || RESERVED.has(id)) return null
-    return id
-  }
-  return null
-}
-
-/**
- * `plugin id → the names it imports from an entry`, for the `used-by:` annotations.
- *
- * Only what an installed plugin NAMES in an import, which is why an interface member never carries
- * one: there is no import to observe. That is a limit of the method rather than a claim about the
- * member, and the document says so where the annotations are.
- */
-function usedBy(entries) {
-  const files = execFileSync('git', ['ls-files', '--cached', '--others', '--exclude-standard'], {
-    cwd: REPO_ROOT,
-    encoding: 'utf8',
-    maxBuffer: 32 * 1024 * 1024,
-  })
-    .split('\n')
-    .filter(f => /\.(tsx?|jsx?)$/.test(f) && pluginIdOf(f) && existsSync(path.join(REPO_ROOT, f)))
-
-  const byEntry = new Map(entries.map(e => [e.import, new Map()]))
-  const alias = specifier => {
-    if (specifier === '@/plugins/api' || specifier.startsWith('@/plugins/api/')) {
-      return [
-        '@/plugins/api',
-        '@/plugins/api/peers',
-        '@/plugins/api/ui',
-        '@/plugins/api/ui-wiring',
-      ].includes(specifier)
-        ? specifier
-        : null
-    }
-    if (specifier === '@/plugins/types') return '@/plugins/types'
-    if (specifier === '@/db/schema/kit') return '@/db/schema/kit'
-    if (specifier === '@rocketflare/shared/plugins/api') return '@rocketflare/shared/plugins/api'
-    if (specifier === '@rocketflare/shared/plugins/contract') {
-      return '@rocketflare/shared/plugins/contract'
-    }
-    if (/(^|\/)\.\.?\/api$/.test(specifier) || specifier === '../api') {
-      return "'../api' (apps/cli/src/plugins/api.ts)"
-    }
-    if (specifier === './types' || specifier === '../types') {
-      return "'./types' (apps/cli/src/plugins/types.ts)"
-    }
-    if (specifier === '@testkit/integration') return '@testkit/integration'
-    if (specifier === '@testkit/unit') return '@testkit/unit'
-    return null
-  }
-
-  for (const file of files) {
-    const id = pluginIdOf(file)
-    const source = ts.createSourceFile(
-      file,
-      readFileSync(path.join(REPO_ROOT, file), 'utf8'),
-      ts.ScriptTarget.Latest,
-      true
-    )
-    const visit = node => {
-      if (ts.isImportDeclaration(node) && ts.isStringLiteral(node.moduleSpecifier)) {
-        const entry = alias(node.moduleSpecifier.text)
-        const bindings = node.importClause?.namedBindings
-        if (entry && bindings && ts.isNamedImports(bindings)) {
-          const map = byEntry.get(entry)
-          for (const element of bindings.elements) {
-            const name = (element.propertyName ?? element.name).text
-            if (!map.has(name)) map.set(name, new Set())
-            map.get(name).add(id)
-          }
-        }
-      }
-      ts.forEachChild(node, visit)
-    }
-    visit(source)
-  }
-  return byEntry
-}
-
 // ---- the ledger --------------------------------------------------------------------------------
 
 const LEDGER_FENCE = '```text'
@@ -542,61 +406,12 @@ function ledgerLines(entries) {
   return lines
 }
 
-/** The committed document's snapshot: its version, and every member it recorded. */
-function parseLedger(markdown) {
-  const start = markdown.indexOf('## Surface ledger')
-  if (start === -1) return null
-  const fence = markdown.indexOf(LEDGER_FENCE, start)
-  if (fence === -1) return null
-  const body = markdown.slice(fence + LEDGER_FENCE.length)
-  const end = body.indexOf('```')
-  const lines = body
-    .slice(0, end === -1 ? undefined : end)
-    .split('\n')
-    .map(l => l.trim())
-  const header = lines.find(l => l.startsWith('plugin-api '))
-  const version = header ? Number.parseInt(header.slice('plugin-api '.length), 10) : null
-  const members = new Map()
-  for (const line of lines) {
-    const parts = line.split(' :: ')
-    if (parts.length < 4) continue
-    const [entry, kind, name] = parts
-    members.set(`${entry} :: ${name}`, { kind, signature: parts.slice(3).join(' :: ') })
-  }
-  return { version, members }
-}
-
-/**
- * What changed since the committed snapshot, and whether the version covers it.
- *
- * Additions are free at the same version — a plugin written against version N still compiles
- * against N plus one more method, which is the whole reason the number is not bumped per commit.
- * A change or a removal is not free, and neither is silent: both name the member.
- */
-function surfaceChanges(previous, entries) {
-  if (!previous) return { changed: [], removed: [] }
-  const next = new Map()
-  for (const line of ledgerLines(entries)) {
-    const parts = line.split(' :: ')
-    next.set(`${parts[0]} :: ${parts[2]}`, parts.slice(3).join(' :: '))
-  }
-  const changed = []
-  const removed = []
-  for (const [key, recorded] of previous.members) {
-    const now = next.get(key)
-    if (now === undefined) removed.push(key)
-    else if (now !== recorded.signature)
-      changed.push({ key, before: recorded.signature, after: now })
-  }
-  return { changed, removed }
-}
-
 // ---- rendering ---------------------------------------------------------------------------------
 
 /** `|` in a signature would end a markdown table cell, so a code span carries it escaped. */
 const cell = text => `\`${text.replace(/\|/g, '\\|')}\``
 
-function renderHeader(api) {
+function renderHeader() {
   return `# The plugin API
 
 **Generated. Do not edit.** \`node scripts/plugin-api-doc.mjs\` writes this file from the source of
@@ -605,12 +420,8 @@ step that does the same for \`apps/web/worker-configuration.d.ts\`, and for the 
 generated artefact that is committed and diff-checked cannot drift from its source. **A diff
 failure means this file is stale. Run the script and commit what it writes.**
 
-Two other failures come out of the same script and mean something different:
+One other failure comes out of the same script and means something different:
 
-- *"changed without a bump"* — a member's signature moved, or the member is gone, while
-  \`PLUGIN_API.current\` still reads ${api.current}. Either restore the member, or raise
-  \`current\` in \`${CONTRACT}\` and mirror it in
-  \`.rocketflare.json\`. The script names the member.
 - *"capability names a member that does not exist"* — the index at the top points at a symbol that
   has been renamed. Fix the index in the generator; a capability index nobody maintains is worse
   than none, because it sends the next reader to a name that is not there.
@@ -655,49 +466,11 @@ ${rows.join('\n')}
 `
 }
 
-function renderVersion(api) {
-  return `## The plugin API version
-
-\`\`\`
-current       ${api.current}
-minSupported  ${api.minSupported}
-\`\`\`
-
-A plugin declares \`requires.pluginApi\` in its own \`plugin.json\` — **a whole number, never a
-range**:
-
-\`\`\`json
-"requires": { "kit": ">=0.6.0 <1.0.0", "pluginApi": "${api.current}" }
-\`\`\`
-
-**It is not \`requires.kit\`, and merging the two is the bug this replaces.** \`requires.kit\` says
-which kit RELEASES a plugin may be installed into; this says which version of the SURFACE above it
-was written against. The kit cut three releases without the surface moving at all, and a plugin
-pinned only by kit range had to be re-released for each — so every pin became a guess, and the
-guesses drifted.
-
-The comparison is integer and lives in one place, \`scripts/lib/plugin-api.mjs\`:
-
-- declared > \`current\` — the plugin needs a newer kit.
-- declared < \`minSupported\` — the plugin needs migrating to the current contract.
-- **not declared at all — warned, never refused.** A plugin released before this existed cannot
-  retroactively declare anything, and refusing it would break installs of plugins nobody can
-  change. Declaring the version is what moves a plugin from *warned* to *checked*, and it happens
-  in the release that migrates it.
-
-There is deliberately no range language anywhere near this number. A malformed semver range throws
-out of the matcher and reaches the caller as a generic failure with nothing to act on; an integer
-has one way to be wrong and one sentence to say so.
-`
-}
-
-function renderEntry(entry, used) {
+function renderEntry(entry) {
   const lines = [`### \`${entry.import}\``, '', entry.role, '']
   if (entry.intro) lines.push(`> ${entry.intro}`, '')
   for (const member of entry.members) {
-    const who = used.get(member.name)
-    const tail = who ? ` — **used by** ${[...who].sort().join(', ')}` : ''
-    lines.push(`- ${cell(member.signature)}${tail}`)
+    lines.push(`- ${cell(member.signature)}`)
     if (member.doc) lines.push(`  ${member.doc}`)
     for (const inner of member.members) {
       lines.push(`  - ${cell(inner.signature)}`)
@@ -708,59 +481,31 @@ function renderEntry(entry, used) {
   return lines.join('\n')
 }
 
-function renderUsedBy(entries, usage) {
-  const rows = []
-  for (const entry of entries) {
-    const used = usage.get(entry.import)
-    for (const [name, ids] of [...used.entries()].sort()) {
-      rows.push(`| ${cell(name)} | ${cell(entry.import)} | ${[...ids].sort().join(', ')} |`)
-    }
-  }
-  if (rows.length === 0) {
-    return `## Who uses what
-
-No installed plugin names anything from these entries. That is the honest answer for this checkout
-rather than a defect, and it is what the annotations exist to say when it stops being true.
-`
-  }
-  return `## Who uses what
-
-Derived from the imports of the plugins installed **in this checkout** — so it answers "what does
-removing this cost" for this app, and it changes when somebody installs a plugin. An unannotated
-member is not a dead one: only the reference plugin ships with the kit, so most of the surface has
-no user here and never will have until an app installs something that needs it. Interface members
-carry no annotation at all, because there is no import to observe.
-
-| Member | Entry | Used by |
-|---|---|---|
-${rows.join('\n')}
-`
-}
-
-function renderLedger(entries, api) {
+function renderLedger(entries) {
   return `## Surface ledger
 
-The machine-readable snapshot, and the only part of this file the generator reads back. Every
-member is one line; the version is the number the snapshot was taken at. A change or a removal
-below with that number unchanged is what fails the gate, which is the whole mechanism by which the
-version means something rather than being a claim.
+The machine-readable half of this file: one line per member the kit provides,
+\`entry :: kind :: name :: signature\`.
+
+**It is one side of a set difference.** What a plugin USES is derived from its own imports rather
+than declared by its author (\`usesOf\` in \`scripts/lib/surface.mjs\`), and whatever it names that
+this block does not carry is what fails an install — symbol by symbol, with the replacement import
+where the symbol has merely moved entry. So there is no version to predict, no range to parse, and
+nothing in the comparison that can throw.
 
 ${LEDGER_FENCE}
-plugin-api ${api.current}
 ${ledgerLines(entries).join('\n')}
 \`\`\`
 `
 }
 
-function render(entries, api, usage) {
+function render(entries) {
   const parts = [
-    renderHeader(api),
+    renderHeader(),
     renderCapabilities(entries),
-    renderVersion(api),
     '## The entries\n\nOne section per declared entry. A nested list under a type is its own members: those are part\nof the contract too, and removing one is a break the ledger catches.\n',
-    ...entries.map(e => renderEntry(e, usage.get(e.import))),
-    renderUsedBy(entries, usage),
-    renderLedger(entries, api),
+    ...entries.map(e => renderEntry(e)),
+    renderLedger(entries),
   ]
   return `${parts
     .join('\n')
@@ -768,68 +513,18 @@ function render(entries, api, usage) {
     .trimEnd()}\n`
 }
 
-// ---- the version, from the one source and its mirror ---------------------------------------------
-
-/**
- * `PLUGIN_API` read out of the TypeScript leaf by parsing it.
- *
- * Parsed rather than imported because this script is plain Node and the constant is a `.ts` file —
- * the same reason `.rocketflare.json` carries the mirror at all. The mirror is not read here on
- * purpose: the TypeScript file is the source, and `apps/web/tests/config/plugin-api.test.ts` is
- * what proves the two agree.
- */
-function readPluginApiSource() {
-  const text = readFileSync(path.join(REPO_ROOT, CONTRACT), 'utf8')
-  const current = text.match(/current:\s*(\d+)/)
-  const minSupported = text.match(/minSupported:\s*(\d+)/)
-  if (!current || !minSupported) throw new Error(`cannot read PLUGIN_API from ${CONTRACT}`)
-  return {
-    current: Number.parseInt(current[1], 10),
-    minSupported: Number.parseInt(minSupported[1], 10),
-  }
-}
-
 // ---- main --------------------------------------------------------------------------------------
 
 function main(argv) {
   const check = argv.includes('--check')
-  const api = readPluginApiSource()
   const entries = extract()
-  const usage = usedBy(entries)
-  const previous = existsSync(DOC_PATH) ? parseLedger(readFileSync(DOC_PATH, 'utf8')) : null
-
-  if (previous?.version !== null && previous !== null && previous.version > api.current) {
-    console.error(
-      `✖ docs/plugin-api.md records plugin API ${previous.version}, but ${CONTRACT} says ` +
-        `${api.current}. The version only ever goes up.`
-    )
-    return 3
-  }
-
-  const { changed, removed } = surfaceChanges(previous, entries)
-  if ((changed.length > 0 || removed.length > 0) && previous.version === api.current) {
-    console.error(
-      `✖ the plugin API surface changed, but PLUGIN_API.current is still ${api.current}.\n` +
-        `  Raise it in ${CONTRACT} and mirror it in .rocketflare.json, or restore what moved.\n`
-    )
-    for (const key of removed) console.error(`  removed  ${key}`)
-    for (const c of changed) {
-      console.error(
-        `  changed  ${c.key}\n             was: ${c.before}\n             now: ${c.after}`
-      )
-    }
-    console.error(
-      '\n  A plugin written against this version compiles against the surface it was given. ' +
-        'Additions are free; these are not.'
-    )
-    return 3
-  }
-
-  const markdown = render(entries, api, usage)
+  const markdown = render(entries)
   const existing = existsSync(DOC_PATH) ? readFileSync(DOC_PATH, 'utf8') : null
+  const members = ledgerLines(entries).length
+
   if (check) {
     if (existing === markdown) {
-      console.log(`✔ docs/plugin-api.md is up to date (plugin API ${api.current})`)
+      console.log(`✔ docs/plugin-api.md is up to date (${members} members)`)
       return 0
     }
     console.error('✖ docs/plugin-api.md is out of date — run `node scripts/plugin-api-doc.mjs`')
@@ -837,9 +532,9 @@ function main(argv) {
   }
   if (existing !== markdown) {
     writeFileSync(DOC_PATH, markdown)
-    console.log(`✔ wrote docs/plugin-api.md (plugin API ${api.current})`)
+    console.log(`✔ wrote docs/plugin-api.md (${members} members)`)
   } else {
-    console.log(`✔ docs/plugin-api.md is up to date (plugin API ${api.current})`)
+    console.log(`✔ docs/plugin-api.md is up to date (${members} members)`)
   }
   return 0
 }

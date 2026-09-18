@@ -604,100 +604,6 @@ export function behaviourFiles(changed, { within = '' } = {}) {
   })
 }
 
-/**
- * Does `version` satisfy `range`, and — when that cannot be answered — why not?
- *
- * A deliberately tiny semver matcher (D31): `plugin.json` declares `requires.kit` as a range, and
- * the kit ships no dependency to evaluate one with.
- *
- * Supported: `>=x.y.z`, `>x.y.z`, `<=x.y.z`, `<x.y.z`, `=x.y.z`, a bare `x.y.z` (exact), `^x.y.z`,
- * `~x.y.z`, `*` / `''` (anything), a space-separated CONJUNCTION of any of those
- * (`>=0.5.0 <1.0.0`), a `||` ALTERNATION of conjunctions (`^0.6.0 || ^0.7.0`), and **a space after
- * the operator** (`>= 0.5.0`). Those last two are ordinary semver spellings that anyone writing a
- * `requires.kit` by hand reaches for without thinking, and refusing them taught nobody anything.
- * Still NOT supported: hyphen ranges, `x`/`*` placeholders inside a version, and pre-release tags —
- * the kit's own versions are `X.Y.Z` (`VERSION_RE`), so anything else is REPORTED rather than
- * approximated.
- *
- * **Reported, not thrown.** This used to throw on a range it could not read, and the throw
- * travelled out of `pnpm plugin add` as a generic error with exit 1 — while the documented answer
- * for "a requirement is unmet" is exit 6. So the primitive returns `{ ok, problem }`: `problem` is
- * the sentence to show, and each caller folds it into its own problem list, which is what maps it
- * to the right exit code.
- *
- * `^` follows npm exactly, including the zero-major rule that catches people out: `^0.5.0` is
- * `>=0.5.0 <0.6.0`, NOT `<1.0.0` — a 0.x minor bump may break anything. `~0.5.0` is `>=0.5.0
- * <0.6.0` too; they only differ once the major is non-zero.
- */
-export function satisfiesResult(version, range) {
-  if (!VERSION_RE.test(version ?? '')) return { ok: false, problem: null }
-  const text = (range ?? '').trim()
-  if (text === '' || text === '*') return { ok: true, problem: null }
-  // A space after the operator is part of the SAME comparator: without this, `>= 0.5.0` tokenises
-  // as `>=` and `0.5.0` — two comparators, the first of them unreadable.
-  const normalised = text.replace(/([<>]=?|[=^~])\s+/g, '$1')
-  let ok = false
-  for (const alternative of normalised.split('||')) {
-    const parts = alternative.trim().split(/\s+/).filter(Boolean)
-    // `^1.0.0 || ` — an empty alternative is a missing bound, not "anything".
-    if (parts.length === 0) {
-      return { ok: false, problem: `unsupported version range '${text}' (an empty alternative)` }
-    }
-    let all = true
-    for (const part of parts) {
-      const answer = satisfiesComparator(version, part)
-      if (answer === null) return { ok: false, problem: `unsupported version range '${part}'` }
-      if (!answer) all = false
-    }
-    if (all) ok = true
-  }
-  return { ok, problem: null }
-}
-
-/**
- * The boolean half of `satisfiesResult`. A range this matcher cannot read answers `false`, which is
- * safe ONLY because every caller that has to tell those two apart reads `problem` from
- * `satisfiesResult` and reports it. Never decide whether to install something on this alone.
- */
-export function satisfies(version, range) {
-  return satisfiesResult(version, range).ok
-}
-
-const bump = (v, index) => {
-  const parts = v.split('.').map(Number)
-  parts[index] += 1
-  for (let i = index + 1; i < 3; i++) parts[i] = 0
-  return parts.join('.')
-}
-
-/** `true` | `false`, or `null` when this is not a comparator the matcher implements. */
-function satisfiesComparator(version, comparator) {
-  const m = comparator.match(/^(>=|<=|>|<|=|\^|~)?\s*(\d+\.\d+\.\d+)$/)
-  if (!m) return null
-  const [, op = '=', target] = m
-  const c = compareVersions(version, target)
-  switch (op) {
-    case '>=':
-      return c >= 0
-    case '>':
-      return c > 0
-    case '<=':
-      return c <= 0
-    case '<':
-      return c < 0
-    case '=':
-      return c === 0
-    case '^': {
-      const [major, minor] = target.split('.').map(Number)
-      const ceiling = major > 0 ? bump(target, 0) : minor > 0 ? bump(target, 1) : bump(target, 2)
-      return c >= 0 && compareVersions(version, ceiling) < 0
-    }
-    default:
-      // `~x.y.z`: up to the next minor.
-      return c >= 0 && compareVersions(version, bump(target, 1)) < 0
-  }
-}
-
 // ---------------------------------------------------------------- default plugins (D31, decision 5)
 
 /**
@@ -755,18 +661,19 @@ export function isVendored(source, kitRepo) {
  * Why this version must NOT be released — one sentence per problem, empty when it may be.
  *
  * Pure: `resolve(entry)` is injected and does the I/O (reach the repository, read its
- * `rocketflare-plugin.json`). It returns `{ ok, reason?, requiresKit?, version? }`.
+ * `rocketflare-plugin.json`). It returns `{ ok, reason?, minKit?, legacyRange?, version? }`.
  *
  * What this proves and what it does not, stated plainly because the difference matters: it proves
- * every default plugin is still FETCHABLE at the ref the kit pins and that its declared
- * `requires.kit` range admits the version being cut. It does not prove that plugin's tests pass
- * against it — nothing a release script can do proves that. The kit's own CI installs every default
- * plugin and runs the full gate on the release commit (`.github/workflows/ci.yml`), and each plugin
- * repository runs the mirrored check against the kit (`.github/workflows/plugin-ci.yml`). Those two
- * are the compatibility proof; this is the stop that catches a pin nobody updated.
+ * every default plugin is still FETCHABLE at the ref the kit pins, and that the version being cut
+ * is at or above the `minKit` floor it declares — one integer comparison, no range language. It
+ * does not prove that plugin's tests pass against it, and nothing a release script can do proves
+ * that. The kit's own CI installs every default plugin and runs the full gate on the release
+ * commit (`.github/workflows/ci.yml`), and each plugin repository runs the mirrored check against
+ * the kit (`.github/workflows/plugin-ci.yml`). Those two are the compatibility proof; this is the
+ * stop that catches a pin nobody updated.
  *
- * A VENDORED entry (the kit's own repository, no subdirectory) is exempt from the range check for
- * the reason §16 gives: the same release cut both, so the range describes the kit it shipped inside
+ * A VENDORED entry (the kit's own repository, no subdirectory) is exempt from the floor check for
+ * the reason §16 gives: the same release cut both, so the floor describes the kit it shipped inside
  * rather than a compatibility claim.
  */
 /**
@@ -813,23 +720,30 @@ export function defaultPluginProblems(entries, version, resolve, { kitRepo = nul
       continue
     }
     if (isVendored(entry, kitRepo)) continue
-    const range = resolved.requiresKit
-    if (range == null) {
+    const at = resolved.version ? ` ${resolved.version}` : ''
+    const floor = resolved.minKit
+    // Three answers, three fixes, and conflating any two of them is how this gate stops meaning
+    // anything: a plugin still on the OLD shape, a plugin whose declaration could not be read at
+    // all, and a plugin that read fine and does not admit the version being cut.
+    if (floor == null) {
       problems.push(
-        `defaultPlugins '${id}': cannot read its requires.kit range — install it (\`pnpm plugin add\`) or keep a mirror, so the pin can be checked`
+        resolved.legacyRange
+          ? `defaultPlugins '${id}'${at} declares requires.kit '${resolved.legacyRange}', a semver RANGE this kit no longer reads — release the plugin with a top-level "minKit": "X.Y.Z" instead (one floor, no ceiling), then repin it here`
+          : `defaultPlugins '${id}': cannot read its minKit floor — install it (\`pnpm plugin add\`) or keep a mirror, so the pin can be checked`
       )
       continue
     }
-    const answer = satisfiesResult(version, range)
-    if (answer.problem) {
+    // A floor that is not one bare version is the old shape wearing the new field's name, and it
+    // is reported rather than approximated: there is no range machinery left here to fall back on.
+    if (!VERSION_RE.test(floor)) {
       problems.push(
-        `defaultPlugins '${id}': requires.kit '${range}' is not a range this kit can read (${answer.problem})`
+        `defaultPlugins '${id}'${at} declares minKit '${floor}', which is not a bare X.Y.Z version — minKit is a FLOOR, not a range`
       )
       continue
     }
-    if (!answer.ok) {
+    if (compareVersions(version, floor) < 0) {
       problems.push(
-        `defaultPlugins '${id}'${resolved.version ? ` ${resolved.version}` : ''} requires kit '${range}', which ${version} does not satisfy — release the plugin first, or repin it`
+        `defaultPlugins '${id}'${at} needs kit ${floor} or newer, and this release is ${version} — raise the version, or repin to a plugin release that supports it`
       )
     }
   }

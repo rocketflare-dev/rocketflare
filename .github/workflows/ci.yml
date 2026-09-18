@@ -61,8 +61,11 @@ jobs:
   # Node, no `pnpm install`, no database, seconds. It audits whatever is recorded in
   # `.rocketflare.json` — in the kit, the vendored reference plugin.
   #
-  # Warnings never reach the exit code (a plugin released before a rule existed cannot retroactively
-  # satisfy it), so this fails only on a finding that names a file, a line and an edit.
+  # Warnings and notes never reach the exit code — they are states worth saying rather than faults
+  # (a plugin that declares no `minKit`, or one vendored inside the kit) — so this fails only on a
+  # finding that names a file, a line and an edit. There is no longer a tier a plugin opts into:
+  # compatibility is measured from what it `uses` against the kit's ledger, so every installed
+  # plugin is checked strictly.
   plugin-check:
     name: Plugins are well formed
     runs-on: ubuntu-latest
@@ -75,8 +78,8 @@ jobs:
 
   # The same gate again, with every default plugin installed and its migrations generated and
   # applied. This is the kit's half of decision 5's "proof both ways": the other half is each
-  # plugin repository running `.github/workflows/plugin-ci.yml` against the kit versions its
-  # `requires.kit` range names.
+  # plugin repository running `.github/workflows/plugin-ci.yml` against its own `minKit` floor and
+  # the kit's newest release.
   plugins:
     name: Gate with default plugins
     needs: [check, default-plugins]

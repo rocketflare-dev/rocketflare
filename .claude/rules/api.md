@@ -194,11 +194,15 @@ A plugin is a separate git repository copied into the app that contributes throu
   (a `pgTable(...)` runs at module scope, and drizzle-kit reads it statically — imported by RELATIVE
   path, since drizzle-kit bundles that file and resolves no tsconfig alias) and the split UI kit.
   `@testkit/{integration,unit}` is the third, for a plugin's tests
-- **`PLUGIN_API = { current, minSupported }`** (`packages/shared/src/plugins/contract.ts`, mirrored
-  in `.rocketflare.json`) versions that surface, and a plugin declares `requires.pluginApi` as a
-  whole number. Change or remove a member of a declared entry → regenerate `docs/plugin-api.md`
-  (`node scripts/plugin-api-doc.mjs`) and bump `current`; the gate diffs the file and names the
-  member. Declared is strictly checked, undeclared is warned — permanently
+- **Compatibility is OBSERVED, not versioned.** There is no plugin-API number: a plugin declares a
+  top-level `minKit` (one bare `X.Y.Z` floor, no ceiling) and `uses` (the host symbols it imports,
+  derived by `pnpm plugin export`), the kit emits its surface as the `## Surface ledger` block of
+  `docs/plugin-api.md`, and the check is `uses \ ledger` — a set difference that cannot throw and
+  names each missing symbol with its replacement import. Change or remove a member of a declared
+  entry → regenerate `docs/plugin-api.md` (`node scripts/plugin-api-doc.mjs`) and commit it; the
+  gate diffs the file, and any plugin naming the removed symbol fails `pnpm plugin check` by name.
+  `requires.kit` and `requires.pluginApi` were both PREDICTIONS, both went stale, and both are now
+  refused by name rather than ignored
 
 - **`mounts` are spread LAST into the mount table of `api/index.ts`**, so the enumerable auth
   surface stays one list. An entry is the same tuple a kit mount is — `['/api/<id>', router,

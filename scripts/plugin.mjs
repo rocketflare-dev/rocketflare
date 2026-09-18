@@ -52,13 +52,11 @@ import {
   PLUGIN_MIRROR_ROOT,
 } from './lib/git-lib.mjs'
 import { pluginSurfaces, readManifest } from './lib/manifest.mjs'
-import { readPluginApi } from './lib/plugin-api.mjs'
 import {
   addBarrelLine,
   addPlanJson,
   applyCoreEdits,
   archiveSql,
-  auditSeverity,
   BARREL_KINDS,
   BARRELS,
   barrelLines,
@@ -69,6 +67,7 @@ import {
   declaresProperty,
   dependencyClashes,
   describeClash,
+  floorOf,
   hasBarrelLine,
   isolationEvidence,
   isVendored,
@@ -94,15 +93,37 @@ import {
   workerExportNames,
 } from './lib/plugin-lib.mjs'
 import { applyReplacements, deriveNames, isBinary } from './lib/rename-lib.mjs'
+import { missingFrom, readLedger, usesOf } from './lib/surface.mjs'
 import {
+  compareVersions,
   countLines,
-  defaultPluginEntries,
   parseNote,
-  satisfies,
   splitDiff,
   stripIndexLines,
   translateBlock,
 } from './lib/upgrade-lib.mjs'
+
+/** A bare `X.Y.Z`. There is no range language left anywhere in the plugin lifecycle. */
+const BARE_VERSION = /^\d+\.\d+\.\d+$/
+
+/**
+ * The kit's ledger, or a deliberate stop.
+ *
+ * `readLedger` answers null for three legitimate absences, and **a caller that treats null as "
+ * nothing is missing" has disabled its own check** — so every caller here turns it into a refusal
+ * that names the fix instead.
+ */
+function requireLedger() {
+  const ledger = readLedger(REPO_ROOT)
+  if (!ledger) {
+    stop(
+      1,
+      'error: docs/plugin-api.md carries no surface ledger, so there is nothing to check a plugin',
+      'against. Run `node scripts/plugin-api-doc.mjs` and commit what it writes.'
+    )
+  }
+  return ledger
+}
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 // The mirror location is shared with `scripts/release.mjs`, which fetches the same plugin
@@ -226,11 +247,6 @@ function loadHost() {
     manifestPath,
     sidecarPath,
     kitVersion,
-    // `requires.kit` answers which kit RELEASES a plugin may be installed into; this answers which
-    // version of the CONTRACT it was written against (`docs/plugin-api.md`). Two questions, two
-    // fields — conflating them is what made every plugin need re-releasing for a kit version that
-    // never touched the plugin surface.
-    pluginApi: readPluginApi(manifest),
     names,
     tracked,
     label: manifest.app ? `${manifest.app.display} (${manifest.app.slug})` : 'the kit itself',
@@ -479,8 +495,9 @@ function cmdAdd(args, host) {
       5,
       `error: no ${PLUGIN_MANIFEST_FILE} at ${source.origin}${source.subdir ? `/${source.subdir}` : ''}` +
         `${source.ref ? ` (${source.ref})` : ''}.`,
-      'That file is what makes a repository a plugin: it declares the id, the version, the kit range',
-      'it supports and everything the host has to place by hand (bindings, crons, vars).'
+      'That file is what makes a repository a plugin: it declares the id, the version, the oldest',
+      'kit it supports (minKit), the host surface it uses, and everything the host has to place',
+      'for it (bindings, crons, vars).'
     )
   }
   const m = JSON.parse(source.read(PLUGIN_MANIFEST_FILE).toString('utf8'))
@@ -543,13 +560,19 @@ function cmdAdd(args, host) {
     stop(7, `error: these directories already exist:`, ...collisions.map(r => `  ${r}`))
   }
 
+  // **The compatibility answer, computed BEFORE a single byte is copied.** `m.uses` is what this
+  // plugin names of the host surface — derived from its own imports by its release, never typed by
+  // an author — and the ledger is what this kit provides. The difference is a set difference over
+  // strings: it cannot throw, and whatever is missing names itself and carries its replacement.
   const problems = checkRequirements({
     requires: m.requires,
+    minKit: floorOf(m),
+    uses: m.uses,
+    ledger: requireLedger(),
     kitVersion: host.kitVersion,
     presentSurfaces: host.presentSurfaces,
     installedPlugins: host.plugins.map(p => ({ id: p.id, version: p.source?.version ?? null })),
     vendored,
-    pluginApi: host.pluginApi,
   })
 
   // A dependency this plugin wants at a range the host — or another installed plugin — already
@@ -606,6 +629,14 @@ function cmdAdd(args, host) {
     targets.push(f.target)
     written += 1
   }
+  // **The anchor is a COPY, not a second thing an author keeps in step.** It used to be a file the
+  // plugin shipped alongside its release manifest, and the two drifted the moment a release stamped
+  // one and not the other: every install of `analytics` 2.0.1 then failed the audit with "plugin.json
+  // says X and the surface says Y", over code that was perfectly correct. Writing it from the source
+  // manifest here makes that state unrepresentable.
+  const anchorPath = m.anchor ?? `apps/web/src/plugins/${m.id}/plugin.json`
+  writeInto(anchorPath, materialise(source.read(PLUGIN_MANIFEST_FILE), host.names))
+  if (!targets.includes(anchorPath)) targets.push(anchorPath)
   for (const kind of barrels) {
     const file = abs(BARRELS[kind].file)
     writeFileSync(file, addBarrelLine(readFileSync(file, 'utf8'), kind, m.id))
@@ -899,18 +930,17 @@ function cmdUpgrade(args, host) {
   // Two sources for one question: a release may raise its floor in a NOTE, or simply by changing
   // the manifest — and the manifest's is the one that ends up recorded on the surface, so checking
   // only the notes would let an upgrade stamp a range this kit does not satisfy.
-  const floors = noteFacts.filter(
-    n => n.requires_kit && !satisfies(host.kitVersion, n.requires_kit)
-  )
-  const declaredRange = targetManifest?.requires?.kit ?? null
-  const manifestFloor =
-    declaredRange && !satisfies(host.kitVersion, declaredRange) ? declaredRange : null
+  const below = floor =>
+    Boolean(floor) && (!BARE_VERSION.test(floor) || compareVersions(host.kitVersion, floor) < 0)
+  const floors = noteFacts.filter(n => below(n.requires_kit))
+  const declaredFloor = floorOf(targetManifest)
+  const manifestFloor = below(declaredFloor) ? declaredFloor : null
   if (floors.length > 0 || manifestFloor) {
     warn(
       '',
       `error: this kit is ${host.kitVersion}, and ${id} needs more:`,
-      ...floors.map(n => `  ${n.version} requires kit ${n.requires_kit}`),
-      ...(manifestFloor ? [`  ${toVersion ?? to} declares requires.kit ${manifestFloor}`] : []),
+      ...floors.map(n => `  ${n.version} needs kit ${n.requires_kit} or newer`),
+      ...(manifestFloor ? [`  ${toVersion ?? to} declares minKit ${manifestFloor}`] : []),
       '',
       'Upgrade the kit first (`pnpm kit:upgrade`), then come back to this.'
     )
@@ -1029,8 +1059,8 @@ function cmdUpgrade(args, host) {
     // `kit:upgrade` and `kit:release` all read the surface, so all three would keep agreeing with
     // a statement that is no longer true. Nothing ELSE on the entry is rewritten here.
     if (targetManifest) {
+      entry.minKit = floorOf(targetManifest)
       entry.requires = {
-        kit: targetManifest.requires?.kit ?? null,
         surfaces: targetManifest.requires?.surfaces ?? [],
         plugins: targetManifest.requires?.plugins ?? [],
       }
@@ -1215,13 +1245,15 @@ function cmdList(_args, host) {
  */
 function cmdCheck(args, host) {
   const findings = []
+  const ledger = requireLedger()
   /**
    * One finding, carrying the EDIT rather than only the complaint.
    *
-   * `fail` changes the exit code; `warn` reports and does not — which is how a plugin RELEASED
-   * before a rule existed is held to it. `auditSeverity` is the switch, and it reads
-   * `requires.pluginApi`: the same opt-in the import rule uses, and the permanent arrangement for
-   * a third-party plugin rather than a transition hack.
+   * `fail` changes the exit code; `warn` reports and does not. **There is no longer a tier a
+   * plugin opts into**: the two PREDICTED numbers that used to decide it — a kit range and a
+   * contract version — are gone, and nothing left here is a rule a released plugin cannot
+   * retroactively satisfy. Every plugin is checked strictly; `warn` is kept for the findings that
+   * are not faults in the plugin at all.
    */
   const add = (severity, key, d) =>
     findings.push({
@@ -1238,12 +1270,6 @@ function cmdCheck(args, host) {
   // Things worth SAYING that are not faults — a state the kit itself is legitimately in, or a
   // silence somebody should know about. Printed either way; they never change the exit code.
   const notes = []
-  // Read from each plugin's own MANIFEST rather than from its surface: `buildPluginSurface` copies
-  // only `kit`/`surfaces`/`plugins`, so a surface never carries `pluginApi` and reading it there
-  // reported `null` for a plugin that plainly declares one — while the same run was correctly
-  // FAILING it on that declaration. A field that contradicts the severity beside it is worse than
-  // an absent one.
-  const declaredApi = new Map()
   // Every plugin's parsed manifest, kept for the checks that are about the COMBINATION rather than
   // about one plugin: two plugins cannot share a table name, and neither of them is wrong alone.
   const anchors = []
@@ -1291,14 +1317,11 @@ function cmdCheck(args, host) {
       })
       continue
     }
-    const severity = auditSeverity(anchor)
-    declaredApi.set(id, anchor.requires?.pluginApi ?? null)
     anchors.push({ surface: s, source: anchorSource, manifest: anchor })
 
-    // Every field, naming the field and its legal values. Two-tier, because a plugin RELEASED
-    // before this check existed cannot retroactively satisfy it.
+    // Every field, naming the field and its legal values.
     for (const p of pluginManifestProblems(anchor)) {
-      add(severity, `${id}:manifest:${p.field || 'root'}`, {
+      add('fail', `${id}:manifest:${p.field || 'root'}`, {
         file: s.anchor,
         line: p.field ? jsonKeyLine(anchorSource, p.field) : null,
         problem: p.problem,
@@ -1308,12 +1331,15 @@ function cmdCheck(args, host) {
 
     const authoredHere = host.isKit && host.sidecarIds.includes(id)
     for (const problem of checkRequirements({
-      requires: authoredHere ? { ...s.requires, kit: undefined } : s.requires,
+      requires: s.requires,
+      // A plugin AUTHORED here names the floor of a release that has not been cut yet, so it is
+      // always one bump ahead of `package.json` until `pnpm kit:release` runs. That is the
+      // authoring loop working, not a fault — and only in the kit, for a sidecar plugin.
+      minKit: authoredHere ? null : floorOf(s),
       kitVersion: host.kitVersion,
       presentSurfaces: host.presentSurfaces,
       installedPlugins: host.plugins.map(p => ({ id: p.id, version: p.source?.version ?? null })),
       vendored,
-      pluginApi: host.pluginApi,
     })) {
       add('fail', `${id}:requires`, {
         file: s.anchor,
@@ -1322,11 +1348,26 @@ function cmdCheck(args, host) {
         fix: `satisfy it, or amend "requires" in ${s.anchor} to describe what this plugin needs`,
       })
     }
-    // A plugin that declares no kit range is beyond every gate there is — `checkRequirements`
-    // skips it, `unsupportedForKit` skips it, and `kit:upgrade` would carry it across a major
-    // version without a word. That is the plugin's choice to make, but not silently.
-    if (!vendored && (s.requires?.kit ?? null) === null) {
-      notes.push(`${id}: declares no requires.kit, so no kit version is ever checked against it`)
+    // A plugin that declares no floor is beyond every gate there is — `checkRequirements` skips
+    // it, `unsupportedForKit` skips it, and `kit:upgrade` would carry it across a major version
+    // without a word. That is the plugin's choice to make, but not silently.
+    if (!vendored && floorOf(s) === null) {
+      notes.push(`${id}: declares no minKit, so no kit version is ever checked against it`)
+    }
+
+    // **Compatibility, OBSERVED.** Every symbol the plugin names of the host surface, against what
+    // this kit's ledger actually provides. This is the check the two predicted numbers were
+    // standing in for, and unlike them it cannot be stale: `uses` is derived from the plugin's own
+    // imports and the ledger is generated from the kit's own source.
+    for (const gone of missingFrom(anchor.uses, ledger)) {
+      add('fail', `${id}:surface:${gone.entry}:${gone.symbol}`, {
+        file: s.anchor,
+        line: jsonKeyLine(anchorSource, 'uses'),
+        problem: `uses ${gone.symbol} from ${gone.entry}, which this kit no longer provides`,
+        fix:
+          gone.suggestion ??
+          `${gone.symbol} is gone from the kit's surface — see docs/plugin-api.md for what replaces it, then release the plugin`,
+      })
     }
     for (const kind of BARREL_KINDS) {
       const half = BARRELS[kind].half(id)
@@ -1385,7 +1426,7 @@ function cmdCheck(args, host) {
       // the whole audit.
       const { names, opaque } = workerExportNames(readFileSync(abs(workerHalf), 'utf8'))
       if (declaredExports.length === 0) {
-        add(severity, `${id}:worker-undeclared`, {
+        add('fail', `${id}:worker-undeclared`, {
           file: s.anchor,
           line: jsonKeyLine(anchorSource, 'workerExports'),
           problem: `declares no workerExports, and ${workerHalf} is on disk`,
@@ -1405,7 +1446,7 @@ function cmdCheck(args, host) {
           })
         }
         for (const name of names.filter(n => !declaredExports.includes(n))) {
-          add(severity, `${id}:worker-extra:${name}`, {
+          add('fail', `${id}:worker-extra:${name}`, {
             file: s.anchor,
             line: jsonKeyLine(anchorSource, 'workerExports'),
             problem: `does not declare ${name}, which ${workerHalf} exports`,
@@ -1434,7 +1475,7 @@ function cmdCheck(args, host) {
         )
       if (!declaresHook) {
         const which = doBindings.map(b => b.binding ?? b.className ?? '?').join(', ')
-        add(severity, `${id}:on-tenant-deleted`, {
+        add('fail', `${id}:on-tenant-deleted`, {
           file: `${tree}/index.ts`,
           problem: `declares the durable_object binding(s) ${which} and no hooks.onTenantDeleted`,
           fix:
@@ -1444,17 +1485,6 @@ function cmdCheck(args, host) {
             'the instances of a namespace, so only derived keys are reachable',
         })
       }
-    }
-
-    if (anchor.version && s.source?.version && anchor.version !== s.source.version) {
-      add('fail', `${id}:version`, {
-        file: s.anchor,
-        line: jsonKeyLine(anchorSource, 'version'),
-        problem: `says ${anchor.version}, and the surface says ${s.source.version}`,
-        fix:
-          `set them to the same version — \`pnpm plugin upgrade ${id} --apply\` stamps the ` +
-          'surface, and a hand-edited manifest is the usual way they part',
-      })
     }
 
     // Two separate things a plugin with tables owes, and neither is visible from the other side.
@@ -1489,7 +1519,7 @@ function cmdCheck(args, host) {
       }
       // A DIFFERENT range is not the same fault: `package.json` is `manual` in `.rocketflare.json`,
       // so an operator is entitled to have pinned it themselves and no kit upgrade reconciles it.
-      add(severity, `${id}:dependency-range:${d.name}`, {
+      add('fail', `${id}:dependency-range:${d.name}`, {
         file: `${d.pkg}/package.json`,
         line: jsonKeyLine(readHostPackageJsonSource(d.pkg), d.name),
         problem: `pins ${d.name} at ${d.have}, and ${s.anchor} declares ${d.range}`,
@@ -1513,7 +1543,7 @@ function cmdCheck(args, host) {
         f => isolationEvidence(readFileSync(abs(`${testDir}/${f}`), 'utf8')).ok
       )
       if (!proven) {
-        add(severity, `${id}:isolation`, {
+        add('fail', `${id}:isolation`, {
           file: `${testDir}/`,
           problem: `has no test proving another organisation cannot read ${tables.join(', ')}`,
           fix:
@@ -1544,29 +1574,6 @@ function cmdCheck(args, host) {
         "between them: a single DROP TABLE takes the other plugin's data",
     })
   }
-  // Is what is INSTALLED what `.rocketflare.json` says a fresh clone would get? (D31, decision 2.)
-  // Nothing compared the two, and the drift is invisible from either side: CI installs each default
-  // plugin at its PINNED ref, so a checkout carrying a different version passes its own gate while
-  // the gate that matters runs something else entirely.
-  for (const declared of defaultPluginEntries(host.manifest)) {
-    const installed = host.plugins.find(p => p.id === declared.id)
-    if (!installed) {
-      // Not a fault: the kit declares its defaults without installing them, and that is exactly
-      // the state `bash scripts/bootstrap.sh` exists to resolve on a fresh clone.
-      notes.push(`${declared.id}: named in defaultPlugins and not installed here`)
-      continue
-    }
-    const have = installed.source?.version ?? null
-    if (declared.ref && have && declared.ref !== have) {
-      add('fail', `${declared.id}:pin`, {
-        file: path.basename(host.manifestPath),
-        line: jsonKeyLine(readFileSync(host.manifestPath, 'utf8'), 'defaultPlugins'),
-        problem: `pins ${declared.id} at ${declared.ref}, and ${have} is installed`,
-        fix: `pnpm plugin upgrade ${declared.id} --to ${declared.ref} --apply   # or repin to ${have}`,
-      })
-    }
-  }
-
   const failures = findings.filter(f => f.severity === 'fail')
   const warnings = findings.filter(f => f.severity === 'warn')
 
@@ -1587,9 +1594,7 @@ function cmdCheck(args, host) {
             version: s.source?.version ?? null,
             vendored: isVendored(s.source, host.kitRepo),
             local: host.sidecarIds.includes(s.id),
-            // Which tier this plugin's new-rule findings landed in, so a reader knows whether a
-            // clean run means "checked" or "not checked yet".
-            pluginApi: declaredApi.get(s.id) ?? null,
+            minKit: floorOf(s),
           })),
           failures,
           warnings,
@@ -1612,24 +1617,24 @@ function cmdCheck(args, host) {
     out(`✔ ${host.plugins.length} plugin(s) check out: ${host.plugins.map(p => p.id).join(', ')}`)
     const vendored = host.plugins.filter(p => isVendored(p.source, host.kitRepo)).map(p => p.id)
     if (vendored.length > 0) {
-      out(
-        `  (${vendored.join(', ')} vendored — shipped inside the kit, so requires.kit is not checked)`
-      )
+      out(`  (${vendored.join(', ')} vendored — shipped inside the kit, so minKit is not checked)`)
     }
-    // Only the ones whose range this kit does NOT yet satisfy are worth a line: an author on the
-    // branch that raises the floor sees why they were let through, and an author whose range is
+    // Only the ones whose floor this kit does NOT yet reach are worth a line: an author on the
+    // branch that raises the floor sees why they were let through, and an author whose floor is
     // already met sees nothing, because nothing was skipped for them.
     const ahead = host.isKit
-      ? host.plugins.filter(
-          p =>
+      ? host.plugins.filter(p => {
+          const floor = floorOf(p)
+          return (
             host.sidecarIds.includes(p.id) &&
-            p.requires?.kit &&
-            !satisfies(host.kitVersion, p.requires.kit)
-        )
+            floor &&
+            (!BARE_VERSION.test(floor) || compareVersions(host.kitVersion, floor) < 0)
+          )
+        })
       : []
     if (ahead.length > 0) {
       out(
-        `  (${ahead.map(p => `${p.id} wants kit ${p.requires.kit}`).join(', ')} — authored here, and the kit release it names is not cut yet)`
+        `  (${ahead.map(p => `${p.id} wants kit ${floorOf(p)}`).join(', ')} — authored here, and the kit release it names is not cut yet)`
       )
     }
     return 0
@@ -1667,6 +1672,11 @@ function cmdExport(args, host) {
     repo: anchor.repo ?? surface.source?.repo,
     subdir: anchor.subdir ?? surface.source?.subdir ?? '',
     anchor: surface.anchor,
+    // **`uses` is DERIVED here, never carried over from the anchor.** It is a measurement of the
+    // tree being exported, so re-deriving it is what keeps a plugin's declared surface true of the
+    // code it actually ships — the whole reason compatibility is observed rather than predicted.
+    uses: usesOf(REPO_ROOT, id),
+    minKit: floorOf(anchor),
     paths: surface.paths,
     registries: surface.registries,
   }

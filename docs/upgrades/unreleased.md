@@ -2,9 +2,9 @@
 version: unreleased
 previous: 0.7.0
 date: null
-breaking: false
+breaking: true
 migrations: []
-areas: [config, docs]
+areas: [config, docs, shared]
 touches_surfaces: []
 requires_surfaces: []
 manual: false
@@ -12,9 +12,9 @@ manual: false
 
 ## What changed
 
-**Porting notes are instructions now, not essays**: every released note is rewritten as one summary
-sentence, bulleted changes and numbered self-contained steps, and two release-tooling defects are
-fixed.
+**Plugin compatibility is OBSERVED rather than declared**: a plugin states one `minKit` floor and
+the symbols it `uses`, which the kit checks against a ledger it emits — and porting notes become
+instructions rather than essays.
 
 - The eight kit notes went from 3,270 lines to 1,291 with no instruction dropped — rationale now
   links to `docs/CONCEPTS.md` rather than being restated. `docs/upgrades/README.md` § "Writing one"
@@ -28,9 +28,27 @@ fixed.
   block sequence — which `README.md` explicitly permits — read as EMPTY and the release was deemed
   applicable to an app lacking the surface. It uses `parseNote` now, and an unreadable value means
   "not gated" rather than a `TypeError` on the upgrade path.
-- A plugin release stamps its `anchor` as well as its manifest, so the two copies of a plugin's
-  version can no longer disagree. The anchor is what `pnpm plugin check` compares against the
-  recorded surface, so one left behind failed every install and took the host's whole gate down.
+- **A plugin's version now exists once.** `analytics` 2.0.1 was cut solely because its anchor still
+  said `1.0.2`: `plugin check` failed every install and took the host's whole gate down, for a
+  release whose code was correct. Stamping the anchor at release time was the first fix; deleting
+  the duplication is the real one, so release-time anchor stamping is gone with it.
+- **`requires.kit` and `requires.pluginApi` are gone.** Both were PREDICTIONS about kits that did
+  not exist yet, and both went stale. A plugin declares a top-level `minKit` (one bare version, a
+  floor, no ceiling) and `uses` (the host symbols it imports, written by `pnpm plugin export` and
+  never by hand); the kit emits its surface as the `## Surface ledger` block of
+  `docs/plugin-api.md`; compatibility is `uses \ ledger`, a set difference that cannot throw and
+  names each missing symbol with its replacement import.
+- **No range language survives**: every comparison is `compareVersions`. `requires.plugins` entries
+  are `{ "id", "minVersion" }`, and the `"<id>@<range>"` spelling is refused by name. A manifest
+  still carrying `requires.kit`, `requires.pluginApi`, or `minKit` nested under `requires`, fails
+  LOUDLY naming the field and where it belongs — it is never quietly ignored or repaired.
+- `PLUGIN_API`, `packages/shared/src/plugins/contract.ts`, `scripts/lib/plugin-api.mjs` and
+  `kit.pluginApi` in `.rocketflare.json` are deleted. The audit's two tiers went with them: every
+  installed plugin is checked strictly, because nothing left is a rule a released plugin cannot
+  satisfy by being re-exported.
+- `pnpm plugin add` now WRITES the anchor from the source manifest, so it cannot drift from the
+  release that shipped it, and `plugin check` no longer compares an installed version against the
+  `defaultPlugins` pin — the two checks that made a correct plugin fail its host's gate.
 
 ## How to apply
 
@@ -38,15 +56,41 @@ fixed.
    in fewer words. Your own notes are unaffected.
 2. Take `scripts/upgrade.mjs` for the `requires_surfaces` fix if you wrote any note's
    `requires_surfaces` as a YAML block sequence — before the fix that note was never gated.
-3. Take `scripts/release.mjs` if you maintain a plugin repository, and re-cut any release whose
-   anchor is behind its manifest.
+3. Take `scripts/release.mjs` if you maintain a plugin repository: it no longer stamps the anchor,
+   and it accepts `--repo-root <path>` so a plugin repo can delegate to a kit checkout instead of
+   carrying its own copy of the release machinery.
+4. In every plugin manifest (`rocketflare-plugin.json`), replace `"requires": { "kit": "<range>" }`
+   with a top-level `"minKit": "0.8.0"` — one bare `X.Y.Z`, the oldest kit that plugin supports. It
+   is a sibling of `"id"` and `"version"`; nested under `"requires"` it is refused by name.
+5. Delete `"pluginApi"` from every plugin manifest's `"requires"`. Nothing reads it.
+6. Rewrite each `"requires": { "plugins": ["<id>@<range>"] }` entry as
+   `{ "id": "<id>", "minVersion": "X.Y.Z" }`.
+7. Add a `"uses"` block to every plugin manifest: run `pnpm plugin export <id> <dir>` and copy the
+   `uses` it writes into the manifest. Never hand-write it — it is a measurement of that plugin's
+   own imports, and a hand-written one is the prediction this release removes.
+8. Delete `packages/shared/src/plugins/contract.ts`, `scripts/lib/plugin-api.mjs`,
+   `scripts/lib/plugin-api.d.mts` and `apps/web/tests/config/plugin-api.test.ts`, and remove
+   `kit.pluginApi` and the `$pluginApi` prose key from `.rocketflare.json`.
+9. Run `node scripts/plugin-api-doc.mjs` and commit the regenerated `docs/plugin-api.md`. Its
+   `## Surface ledger` block is what every plugin is checked against, so a copy that does not
+   regenerate it has nothing to check plugins against — `pnpm plugin add` refuses rather than
+   passing silently.
 
 ## Conflicts to expect
 
-`scripts/release.mjs` → `releaseContext` gained anchor stamping and a new `unreleased.md` template →
-accept ours. `scripts/upgrade.mjs` → the `requires_surfaces` read moved to `parseNote` → accept ours.
+`scripts/release.mjs` → anchor stamping removed, `--repo-root` added, new `unreleased.md` template →
+accept ours. `scripts/upgrade.mjs` → the `requires_surfaces` read moved to `parseNote`, and the
+installed-plugin check reads `minKit` → accept ours.
+`apps/web/src/plugins/<id>/plugin.json` → the anchor is written by `pnpm plugin add` from the source
+manifest → accept the incoming file and stop hand-editing it.
+`.rocketflare.json` → `kit.pluginApi` removed, and each plugin surface's `requires.kit` replaced by a
+top-level `minKit` → take the kit's shape, then re-state your own plugins' floors.
+`apps/web/tests/helpers/plugins.ts` → `pluginApiDeclaration` and the import rule's two tiers are gone
+→ accept ours unless the copy added rules of its own.
 
 ## Verify
 
-1. `pnpm web test:config` passes, including `upgrade-notes.test.ts`.
+1. `pnpm web test:config` passes, including `upgrade-notes.test.ts` and `surface.test.ts`.
 2. `node scripts/release.mjs <next> --dry-run` exits 0 and lists the files it would stamp.
+3. `node scripts/plugin.mjs check` exits 0 and prints one line per installed plugin.
+4. `node scripts/plugin-api-doc.mjs && git diff --exit-code -- docs/plugin-api.md` is clean.
