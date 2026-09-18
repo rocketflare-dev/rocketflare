@@ -5,7 +5,7 @@
   "kit": {
     "name": "rocketflare",
     "repo": "https://github.com/rocketflare-dev/rocketflare.git",
-    "version": "0.6.1",
+    "version": "0.7.0",
     "commit": null,
     "pluginApi": { "current": 1, "minSupported": 1 }
   },
