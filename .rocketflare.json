@@ -14,8 +14,9 @@
   "defaultPlugins": [
     {
       "id": "analytics",
-      "repo": "https://github.com/rocketflare-dev/rocketflare-plugin-analytics.git",
-      "ref": "1.0.2"
+      "repo": "https://github.com/rocketflare-dev/rocketflare-plugins.git",
+      "ref": "2.0.0",
+      "subdir": "plugins/analytics"
     }
   ],
   "$retiredSurfaces": "Surfaces a LATER release removed, and the release that removed each one (§13). A released porting note is never rewritten — every copy of the kit pins a commit, so editing history orphans them — which is why `docs/upgrades/0.2.0.md` still names `feature-analytics` after 0.6.0 moved analytics out into a plugin. Both readers of a note's `touches_surfaces` / `requires_surfaces` (`scripts/release-check.mjs` and `apps/web/tests/config/upgrade-notes.test.ts`, through one `noteProblems()`) accept an id listed here, so the typo check stays meaningful for the note somebody is writing TODAY — the only note it can still protect. Add an entry in the same commit that deletes the surface; never delete one, or the kit stops being able to re-verify its own released tags.",
