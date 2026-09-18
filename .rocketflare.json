@@ -1,11 +1,13 @@
 {
   "$purpose": "Provenance for this copy of the Rocketflare starter kit: which kit version and commit it came from, the rename applied to it, and the manifest of replaceable surfaces. `pnpm kit:upgrade` and the /rf-upgrade skill read this file to port later kit improvements forward without recreating anything you deleted.",
   "$doNotDelete": "Deleting or renaming this file breaks upgrades. Recovering it means working out by hand which kit commit you started from and running `node scripts/upgrade.mjs --adopt <ref>`. It holds no secrets and is safe to commit.",
+  "$pluginApi": "The plugin API version this kit provides (D31, docs/plugin-api.md) — which SURFACE a plugin compiles against, as two integers, and deliberately NOT the same question as a plugin's `requires.kit`. That one says which kit RELEASES a plugin may be installed into; this one says which version of the plugin contract — the context family, the schema kit, the shared/CLI entries, the test kit — it was written against. The kit cut three releases without the surface moving at all, and every plugin pinned by kit range had to be re-released for each: conflating the two is what made every pin a guess. It is mirrored from `PLUGIN_API` in packages/shared/src/plugins/contract.ts because scripts/*.mjs runs under plain Node and cannot import a .ts module — the same trade SUPPORTED_PLUGIN_BINDING_TYPES lives with — and apps/web/tests/config/plugin-api.test.ts pins the two together. A plugin declares `requires.pluginApi` as a whole number; scripts/lib/plugin-api.mjs is the one comparison, and a plugin that declares nothing is warned, never refused.",
   "kit": {
     "name": "rocketflare",
     "repo": "https://github.com/rocketflare-dev/rocketflare.git",
     "version": "0.6.1",
-    "commit": null
+    "commit": null,
+    "pluginApi": { "current": 1, "minSupported": 1 }
   },
   "app": null,
   "$defaultPlugins": "The plugins a FRESH clone installs before the app is first run (D31, docs/CONCEPTS.md §16). `scripts/bootstrap.mjs`'s `plugins` step reads it, skips every id already recorded as a surface, runs `pnpm plugin add <repo>[@ref] --apply` for the rest and then generates and applies their migration; `pnpm bootstrap --no-plugins` skips it. Each entry is { \"id\", \"repo\", \"ref\"?, \"subdir\"? } — the id is what answers \"is this one already here?\" without fetching anything. Analytics is here because the kit is bare from 0.6.0: a fresh clone still gets dashboards, cubes and the drizzle-cube API, but as an installed plugin rather than as core.",
