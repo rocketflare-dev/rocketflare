@@ -20,12 +20,14 @@ import { appendFileSync, existsSync, readdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { MANIFEST_FILE } from './lib/manifest.mjs'
+import { PLUGIN_MANIFEST_FILE } from './lib/plugin-lib.mjs'
 import {
+  behaviourFiles,
   compareVersions,
+  hasChangelogSection,
   isDeployable,
   isKitManifest,
-  NOTE_HEADINGS,
-  parseNote,
+  noteProblems,
   VERSION_RE,
 } from './lib/upgrade-lib.mjs'
 
@@ -56,53 +58,80 @@ export function releaseNotes(notesDir = 'docs/upgrades') {
     .sort((a, b) => compareVersions(a.version, b.version))
 }
 
+/** Directory names a manifest scan never descends into. */
+const SKIP_DIRS = new Set(['node_modules', 'dist', 'build', 'coverage'])
+
+/**
+ * Every `rocketflare-plugin.json` in a checkout, repo-root-relative and sorted (D31).
+ *
+ * A plugin MONOREPO — `rocketflare-plugins` — holds `plugins/<id>/rocketflare-plugin.json` and
+ * nothing at the root, and one release covers every plugin in it at one version. So both the
+ * release script and this gate have to find them all rather than look in one place: a manifest left
+ * at an older number is not cosmetic, because `pnpm plugin check` compares an installed surface's
+ * recorded version against the anchor manifest and would report a mismatch for every install of
+ * that plugin.
+ *
+ * A bounded WALK rather than a glob of `plugins/*`: `--plugin` takes an arbitrary subdirectory, so
+ * hardcoding one repository's layout would make the flag a lie. It skips dot-directories and the
+ * build noise, stops at `maxDepth` (the layout is `<group>/<id>/`, so 2 suffices and 3 is headroom)
+ * and never descends INTO a plugin it has found — a plugin's tree mirrors a host app, and there is
+ * nothing below it this needs. A single-plugin repository answers `[PLUGIN_MANIFEST_FILE]`, which
+ * is exactly the list that was written out by hand before.
+ */
+export function findPluginManifests(root = REPO_ROOT, { maxDepth = 3 } = {}) {
+  const found = []
+  const walk = (dir, rel, depth) => {
+    if (existsSync(path.join(dir, PLUGIN_MANIFEST_FILE))) {
+      found.push(rel === '' ? PLUGIN_MANIFEST_FILE : `${rel}/${PLUGIN_MANIFEST_FILE}`)
+      return
+    }
+    if (depth >= maxDepth) return
+    let entries = []
+    try {
+      entries = readdirSync(dir, { withFileTypes: true })
+    } catch {
+      return
+    }
+    for (const entry of entries) {
+      if (!entry.isDirectory() || entry.name.startsWith('.') || SKIP_DIRS.has(entry.name)) continue
+      walk(path.join(dir, entry.name), rel === '' ? entry.name : `${rel}/${entry.name}`, depth + 1)
+    }
+  }
+  walk(root, '', 0)
+  return found.sort()
+}
+
+/** `plugins/analytics/rocketflare-plugin.json` → `plugins/analytics`; a root manifest → `''`. */
+function subdirOf(manifestFile) {
+  const dir = path.posix.dirname(manifestFile)
+  return dir === '.' ? '' : dir
+}
+
+/**
+ * The note schema is `noteProblems` in `scripts/lib/upgrade-lib.mjs` — this is the I/O around it.
+ *
+ * It used to be stated here in full, and separately in `upgrade-notes.test.ts`, and the two had
+ * drifted: the test accepted a surface a later release RETIRED, this did not, so the tag gate
+ * called `docs/upgrades/0.2.0.md` and `0.3.0.md` broken over `feature-analytics` — notes the kit
+ * forbids rewriting. `retiredSurfaces` in the manifest is now the one list, and both read it.
+ */
 function checkNote(note, problems, { expectPrevious } = {}) {
-  const parsed = parseNote(read(note.file))
-  if (!parsed) {
-    problems.push(`${note.file}: no YAML frontmatter`)
-    return
-  }
-  const { data, body } = parsed
-  if (data.version !== note.version) {
-    problems.push(
-      `${note.file}: frontmatter version is '${data.version}', the filename says '${note.version}'`
-    )
-  }
-  if (expectPrevious !== undefined && (data.previous ?? 'null') !== expectPrevious) {
-    problems.push(
-      `${note.file}: previous is '${data.previous}', expected '${expectPrevious}' — the chain /rf-upgrade walks must be unbroken`
-    )
-  }
-  for (const key of ['breaking', 'manual']) {
-    if (typeof data[key] !== 'boolean') problems.push(`${note.file}: ${key} must be true or false`)
-  }
-  for (const key of ['migrations', 'areas', 'touches_surfaces', 'requires_surfaces']) {
-    if (!Array.isArray(data[key])) problems.push(`${note.file}: ${key} must be a list`)
-  }
-  for (const m of data.migrations ?? []) {
-    if (/\.sql$|^\d{4}_/.test(m)) {
-      problems.push(
-        `${note.file}: migrations names a file ('${m}') — describe the change; an adopter regenerates their own`
-      )
-    }
-  }
-  const manifest = JSON.parse(read(MANIFEST_FILE))
-  const ids = new Set(manifest.surfaces.map(s => s.id))
-  for (const key of ['touches_surfaces', 'requires_surfaces']) {
-    for (const id of data[key] ?? []) {
-      if (!ids.has(id))
-        problems.push(
-          `${note.file}: ${key} names '${id}', which is not a surface in ${MANIFEST_FILE}`
-        )
-    }
-  }
-  let cursor = -1
-  for (const heading of NOTE_HEADINGS) {
-    const at = body.indexOf(`\n${heading}`)
-    if (at === -1) problems.push(`${note.file}: missing the '${heading}' heading`)
-    else if (at < cursor) problems.push(`${note.file}: '${heading}' is out of order`)
-    else cursor = at
-  }
+  // A PLUGIN repository has no `.rocketflare.json`, and `surfaceIds: null` is the honest answer
+  // there rather than reporting every id in the note as unknown: the ids a note may name belong to
+  // the KIT's manifest, so with none to read there is nothing to check them against.
+  const manifest = existsSync(path.join(REPO_ROOT, MANIFEST_FILE))
+    ? JSON.parse(read(MANIFEST_FILE))
+    : null
+  problems.push(
+    ...noteProblems(read(note.file), {
+      file: note.file,
+      version: note.version,
+      expectPrevious,
+      surfaceIds: manifest ? manifest.surfaces.map(s => s.id) : null,
+      retiredSurfaceIds: manifest?.retiredSurfaces ?? {},
+      manifestFile: MANIFEST_FILE,
+    })
+  )
 }
 
 function checkTag(tag, problems) {
@@ -133,7 +162,9 @@ function checkTag(tag, problems) {
   checkNote(note, problems, { expectPrevious: idx === 0 ? 'null' : notes[idx - 1].version })
 
   const changelog = read('CHANGELOG.md')
-  if (!changelog.includes(`## ${tag}`)) problems.push(`CHANGELOG.md has no '## ${tag}' section`)
+  // Anchored: `includes('## 0.6.1')` is also satisfied by `## 0.6.10`, so a two-digit patch would
+  // let the tag gate pass on another release's section.
+  if (!hasChangelogSection(changelog, tag)) problems.push(`CHANGELOG.md has no '## ${tag}' section`)
   if (!changelog.includes(`docs/upgrades/${tag}.md`))
     problems.push(`CHANGELOG.md does not link docs/upgrades/${tag}.md`)
 
@@ -143,6 +174,87 @@ function checkTag(tag, problems) {
   }
   if (!unreleased.includes(`previous: ${tag}`)) {
     problems.push(`docs/upgrades/unreleased.md should now read 'previous: ${tag}'`)
+  }
+}
+
+/**
+ * The same four release facts, for a PLUGIN repository (D31): one version, one tag, a porting note
+ * per plugin that changed, and a changelog that links each of them.
+ *
+ * **Lockstep is checked here and nowhere else.** Every plugin in the repository ships at the
+ * repository's version, so a manifest still carrying the previous number is a hard failure — that
+ * number is what `pnpm plugin check` compares an installed surface against, so leaving one behind
+ * makes every install of that plugin report a mismatch it cannot explain.
+ *
+ * A plugin whose files did not change needs no note: its `previous` chain simply skips a version,
+ * which is still unbroken. Entries left in its `unreleased.md` are the other case entirely, and
+ * that IS the permanent gap this gate exists to refuse — so those two are distinguished rather
+ * than conflated into "every plugin must have a note".
+ */
+function checkPluginTag(tag, manifests, problems) {
+  if (!VERSION_RE.test(tag)) {
+    problems.push(`'${tag}' is not an X.Y.Z version`)
+    return
+  }
+  if (existsSync(path.join(REPO_ROOT, 'package.json'))) {
+    const rootVersion = JSON.parse(read('package.json')).version
+    if (rootVersion !== tag)
+      problems.push(`root package.json version is ${rootVersion}, the tag is ${tag}`)
+  }
+  const changelog = existsSync(path.join(REPO_ROOT, 'CHANGELOG.md')) ? read('CHANGELOG.md') : ''
+  let noted = 0
+
+  for (const file of manifests) {
+    const dir = subdirOf(file)
+    let declared = {}
+    try {
+      declared = JSON.parse(read(file))
+    } catch {
+      problems.push(`${file} is not valid JSON`)
+      continue
+    }
+    if (declared.version !== tag) {
+      problems.push(
+        `${file} version is ${declared.version}, the tag is ${tag} — every plugin here ships at the repository's version`
+      )
+    }
+
+    const notesDir = dir === '' ? 'docs/upgrades' : `${dir}/docs/upgrades`
+    const unreleasedPath = `${notesDir}/unreleased.md`
+    const unreleased = existsSync(path.join(REPO_ROOT, unreleasedPath))
+      ? read(unreleasedPath)
+      : null
+    const notes = releaseNotes(notesDir)
+    const note = notes.find(n => n.version === tag)
+
+    if (!note) {
+      if (unreleased !== null && !/_Nothing yet\./.test(unreleased)) {
+        problems.push(
+          `${unreleasedPath} has entries but there is no ${notesDir}/${tag}.md — release them, or move them out`
+        )
+      }
+      continue
+    }
+    noted++
+    const idx = notes.indexOf(note)
+    checkNote(note, problems, { expectPrevious: idx === 0 ? 'null' : notes[idx - 1].version })
+    if (!changelog.includes(note.file)) problems.push(`CHANGELOG.md does not link ${note.file}`)
+    if (unreleased === null) problems.push(`${unreleasedPath} does not exist`)
+    else {
+      if (!/_Nothing yet\./.test(unreleased)) {
+        problems.push(`${unreleasedPath} still has entries — they belong in the release note`)
+      }
+      if (!unreleased.includes(`previous: ${tag}`)) {
+        problems.push(`${unreleasedPath} should now read 'previous: ${tag}'`)
+      }
+    }
+  }
+
+  if (!hasChangelogSection(changelog, tag)) problems.push(`CHANGELOG.md has no '## ${tag}' section`)
+  if (noted === 0) {
+    problems.push(
+      `no plugin here has a docs/upgrades/${tag}.md — a release nobody can port is a permanent gap in the chain \`pnpm plugin upgrade\` walks`
+    )
   }
 }
 
@@ -158,10 +270,7 @@ export function deployable() {
   return isDeployable(manifest, tomls)
 }
 
-const WATCHED = /^(apps|packages)\//
-const EXEMPT = /(^|\/)(tests?|__tests__)\/|\.test\.(ts|tsx)$|\.md$/
-
-function checkUnreleased(base, problems) {
+function checkUnreleased(base, problems, pluginManifests = []) {
   let changed = []
   try {
     const range = base ? `${base}...HEAD` : 'HEAD~1...HEAD'
@@ -176,17 +285,31 @@ function checkUnreleased(base, problems) {
     out('release-check: cannot resolve the diff range — skipping the unreleased check')
     return
   }
-  const behaviour = changed.filter(f => WATCHED.test(f) && !EXEMPT.test(f))
-  if (behaviour.length === 0) {
-    out('release-check: no behaviour change in apps/ or packages/ — nothing to record')
-    return
-  }
-  if (!changed.includes('docs/upgrades/unreleased.md')) {
+  // The same predicate the pre-commit hook uses (`scripts/changelog-nudge.mjs`) — they were two
+  // copies of one regex pair, and a hook that disagrees with the gate is a hook people learn to
+  // ignore.
+  // ONE rule, asked once in the kit and once per PLUGIN in a monorepo. `within` is what makes the
+  // second case work at all: there a plugin's source is `plugins/<id>/apps/web/...`, which the bare
+  // `^(apps|packages)/` predicate does not match — so without it the gate would pass silently on
+  // every change it was written to catch, which looks exactly like success.
+  const scopes = pluginManifests.length === 0 ? [''] : pluginManifests.map(subdirOf)
+  let recorded = 0
+  for (const within of scopes) {
+    const behaviour = behaviourFiles(changed, { within })
+    if (behaviour.length === 0) continue
+    recorded++
+    const where = within === '' ? 'apps/ or packages/' : `${within}/`
+    const notePath =
+      within === '' ? 'docs/upgrades/unreleased.md' : `${within}/docs/upgrades/unreleased.md`
+    if (changed.includes(notePath)) continue
     problems.push(
-      `${behaviour.length} file(s) under apps/ or packages/ changed without an entry in docs/upgrades/unreleased.md.`,
+      `${behaviour.length} file(s) under ${where} changed without an entry in ${notePath}.`,
       'An adopter ports this change by reading that note; without it the change is invisible to every copy.',
       `First few: ${behaviour.slice(0, 5).join(', ')}`
     )
+  }
+  if (recorded === 0) {
+    out('release-check: no behaviour change in apps/ or packages/ — nothing to record')
   }
 }
 
@@ -224,11 +347,16 @@ function main(argv) {
     if (!ok) out('deployable=false')
     return 0
   }
-  if (!existsSync(path.join(REPO_ROOT, MANIFEST_FILE))) {
+  // A PLUGIN repository (D31) has no `.rocketflare.json` and one or more `rocketflare-plugin.json`.
+  // DISCOVERED rather than named by a flag, deliberately: this is a gate, and a flag can be
+  // forgotten — a plugin whose version nobody stamped is precisely what it exists to catch.
+  const hasManifest = existsSync(path.join(REPO_ROOT, MANIFEST_FILE))
+  const pluginManifests = hasManifest ? [] : findPluginManifests(REPO_ROOT)
+  if (!hasManifest && pluginManifests.length === 0) {
     out(`release-check: no ${MANIFEST_FILE} — nothing to check`)
     return 0
   }
-  if (!isKitManifest(JSON.parse(read(MANIFEST_FILE)))) {
+  if (hasManifest && !isKitManifest(JSON.parse(read(MANIFEST_FILE)))) {
     out('release-check: this is an app, not the kit — skipped')
     return 0
   }
@@ -239,9 +367,10 @@ function main(argv) {
       warn('error: --tag needs a version', '', USAGE)
       return 2
     }
-    checkTag(tag, problems)
+    if (hasManifest) checkTag(tag, problems)
+    else checkPluginTag(tag, pluginManifests, problems)
   } else {
-    checkUnreleased(base, problems)
+    checkUnreleased(base, problems, pluginManifests)
   }
 
   if (problems.length > 0) {

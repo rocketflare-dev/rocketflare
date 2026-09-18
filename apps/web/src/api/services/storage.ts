@@ -44,6 +44,13 @@ export interface StoredObject extends StoredObjectMeta {
   body: ReadableStream<Uint8Array>
 }
 
+/** One page of a listing: the objects, and the cursor to resume from when there are more. */
+export interface StorageListPage {
+  objects: StoredObjectMeta[]
+  /** `undefined` when this page is the last one. */
+  cursor?: string
+}
+
 export interface StorageService {
   put(key: string, body: StorageBody, options: PutOptions): Promise<StoredObjectMeta>
   /** `null` when the key does not exist. The body is a one-shot stream. */
@@ -51,6 +58,17 @@ export interface StorageService {
   head(key: string): Promise<StoredObjectMeta | null>
   /** Idempotent — deleting a missing key is not an error. */
   delete(key: string): Promise<void>
+  /**
+   * Delete a batch in ONE call (R2 takes up to 1 000 keys). A caller purging a prefix would
+   * otherwise spend a subrequest per object, and a Worker invocation has a bounded supply of them.
+   */
+  deleteMany(keys: readonly string[]): Promise<void>
+  /**
+   * ONE page of a prefix. The paged form is the primitive and `list` is the convenience over it:
+   * a bulk delete must never hold every key of a large tenant in a 128 MiB isolate at once.
+   */
+  listPage(prefix: string, options?: { cursor?: string; limit?: number }): Promise<StorageListPage>
+  /** Every object under a prefix, accumulated. Fine for a bounded prefix; `listPage` otherwise. */
   list(prefix: string): Promise<StoredObjectMeta[]>
 }
 
@@ -89,6 +107,17 @@ export function createR2Storage(bucket: R2Bucket): StorageService {
     },
     async delete(key) {
       await bucket.delete(key)
+    },
+    async deleteMany(keys) {
+      if (keys.length === 0) return
+      await bucket.delete([...keys])
+    },
+    async listPage(prefix, options) {
+      const page = await bucket.list({ prefix, cursor: options?.cursor, limit: options?.limit })
+      return {
+        objects: page.objects.map(toMeta),
+        cursor: page.truncated ? page.cursor : undefined,
+      }
     },
     async list(prefix) {
       const out: StoredObjectMeta[] = []
@@ -140,9 +169,44 @@ export function buildStorageKey({ tenantId, scope, name, id }: StorageKeyInput):
   return `tenants/${tenantId}/${scope}/${id ?? newId()}-${sanitizeFilename(name)}`
 }
 
+/** Keys deleted per round trip. Under R2's 1 000-key `delete` cap, with room to spare. */
+export const PURGE_PAGE_SIZE = 500
+
 /** The prefix that scopes every object of a tenant (or one scope of it). */
 export function tenantStoragePrefix(tenantId: string, scope?: FileScope): string {
   return scope ? `tenants/${tenantId}/${scope}/` : `tenants/${tenantId}/`
+}
+
+/**
+ * Delete every object of a tenant, a page at a time, and answer how many went (D31 tenant purge).
+ *
+ * This is the other half of what the FK cascade does in Postgres: `tenants/<tenantId>/` is the one
+ * prefix that scopes an organisation's bytes, which is exactly why keys carry it. It is
+ * **idempotent by construction** — a second run lists nothing and deletes nothing — so the
+ * `tenant.purge` job may be retried, and a run that dies halfway resumes from what is left rather
+ * than from the beginning.
+ *
+ * Paged rather than `list()`-then-delete: a large tenant's whole key set must not be held in a
+ * 128 MiB isolate, and one `deleteMany` per page keeps the subrequest count to two per page
+ * instead of one per object.
+ */
+export async function purgeTenantObjects(
+  storage: StorageService,
+  tenantId: string,
+  options: { limit?: number } = {}
+): Promise<number> {
+  const prefix = tenantStoragePrefix(tenantId)
+  const limit = options.limit ?? PURGE_PAGE_SIZE
+  let deleted = 0
+  let cursor: string | undefined
+  for (;;) {
+    const page: StorageListPage = await storage.listPage(prefix, { cursor, limit })
+    if (page.objects.length === 0) return deleted
+    await storage.deleteMany(page.objects.map(o => o.key))
+    deleted += page.objects.length
+    cursor = page.cursor
+    if (!cursor) return deleted
+  }
 }
 
 // ---- Upload = object + row ---------------------------------------------------------------------

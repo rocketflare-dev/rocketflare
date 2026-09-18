@@ -4,15 +4,20 @@
  *
  * Two rules it keeps, both the kit's:
  *
- * - **Bound to the RUN, not to the model.** The tenant comes from `ctx.scope`, which `executeRun`
- *   builds at execute time from the run's requester. Nothing the model says can widen it, and a
- *   `tenantId` argument on the schema would be exactly that mistake.
+ * - **Bound to the RUN, not to the model.** The tenant comes from `ToolCtx`, which the runtime built
+ *   at execute time from the run's requester — current membership, not a snapshot taken at enqueue.
+ *   Nothing the model says can widen it, and a `tenantId` argument on the schema below would be
+ *   exactly that mistake: the model choosing its own tenant.
  * - **A dead end is still information.** An empty knowledge base answers with a `hint` telling the
  *   model what to do instead, because a tool that says only "nothing found" makes a model invent.
+ *
+ * `defineTool` is a thin declaration helper; what it buys is that a plugin names `Tool` from the
+ * plugin surface rather than from `services/ai/kit`, which lives inside the deletable
+ * `feature-agents` surface.
  */
 import { z } from 'zod'
-import type { AgentToolContext } from '../../../api/services/agents/tools'
-import type { Tool } from '../../../api/services/ai/kit'
+import type { Tool, ToolCtx } from '@/plugins/api'
+import { defineTool } from '@/plugins/api'
 import { listExampleNotes } from '../api/notes'
 
 export const LIST_EXAMPLE_NOTES_TOOL = 'list_example_notes'
@@ -31,15 +36,15 @@ export const listExampleNotesInputSchema = z.object({
 })
 export type ListExampleNotesInput = z.infer<typeof listExampleNotesInputSchema>
 
-export function listExampleNotesTool(ctx: AgentToolContext): Tool<ListExampleNotesInput> {
-  return {
+export function listExampleNotesTool(ctx: ToolCtx): Tool<ListExampleNotesInput> {
+  return defineTool({
     name: LIST_EXAMPLE_NOTES_TOOL,
     description:
       'List the example notes saved in this workspace, newest first, with their titles and text. ' +
       'Call it when the question is about what the team has written down here.',
     schema: listExampleNotesInputSchema,
     async handler(input) {
-      const { items, total } = await listExampleNotes(ctx.db, ctx.scope.tenantId, {
+      const { items, total } = await listExampleNotes(ctx.db, ctx.tenantId, {
         page: 1,
         pageSize: input.limit ?? DEFAULT_LIMIT,
       })
@@ -63,5 +68,5 @@ export function listExampleNotesTool(ctx: AgentToolContext): Tool<ListExampleNot
         }),
       })
     },
-  }
+  })
 }

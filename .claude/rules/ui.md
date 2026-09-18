@@ -250,11 +250,22 @@ Components subscribe to query state, never to the socket; `WebSocketStatus` (hea
 A plugin's UI half is `apps/web/src/plugins/<id>/ui/index.ts`, and that file is the whole of what
 the eager shell sees. The rules follow from that one fact:
 
+- **The UI kit is two modules, and which one you may import depends on where you are.**
+  `@/plugins/api/ui-wiring` is the WIRING half — `NavItem`, `NavGroup`, `NavGuard`, `TabConfig`,
+  `QuickLink`, `useNavGuard`, `featureGuard` — and is the only host module a plugin's `ui/index.ts`
+  may import, because that file ships in the MAIN bundle for every reader including the ones who
+  never open the plugin. `@/plugins/api/ui` is the COMPONENTS half, for a lazy PAGE: all of
+  `components/shared`, `LoadingIndicator`, `showToast` (exported once, from here — the kit reaches
+  it by two public paths and one plugin took each, which is how two call sites of one function come
+  to look like two functions) and `SideNav` itself, for the test that drives the REAL nav rather
+  than a re-implementation of its guards. This is not new policy: `uiEntryIssues` always drew this
+  line, and now there is a module on each side of it
 - **`routes` are per tier** (`shell` — the default, inside `Layout` with a tenant — `noTenant`,
   `public`) and every `Component` is `lazy(() => import('./pages/X'))`. A statically imported page
   puts the plugin in the main bundle for readers who never open it; `tests/config/plugins.test.ts`
   reads the SOURCE of the UI entry and enforces both halves — an import allowlist (`react`, the
-  heroicons set, `@rocketflare/shared/*`, `@/plugins/types`, `@/ui/components/SideNav`,
+  heroicons set, `@rocketflare/shared/*`, `@/plugins/types`, `@/plugins/api/ui-wiring`,
+  `@/ui/components/SideNav`,
   `@/ui/hooks/useNavGuard`, `@/ui/lib/feature-guards`; type-only imports are unrestricted because
   they are erased) and "every dynamic `import()` is inside `lazy(() => …)`"
 - **The route's guard and its nav item's guard are the SAME object**, declared once beside them, so

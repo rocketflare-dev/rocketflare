@@ -152,9 +152,9 @@ Expect: `No plugins installed.` (then there is nothing to do here), or one line 
 **empty** grep — every kit token translated — and `✔ n plugin(s) check out`.
 
 **What to change.** Nothing, normally. A surviving `@rocketflare/…` import means the rename could
-not see that file: fix it by hand, then `pnpm typecheck`. Never edit the five barrels
-(`apps/web/src/plugins/{server,ui,schema}.ts`, `packages/shared/src/plugins/index.ts`,
-`apps/cli/src/plugins/index.ts`) to make something pass — `pnpm plugin` writes those lines, and
+not see that file: fix it by hand, then `pnpm typecheck`. Never edit the six barrels
+(`apps/web/src/plugins/{server,ui,schema,worker-exports}.ts`,
+`packages/shared/src/plugins/index.ts`, `apps/cli/src/plugins/index.ts`) to make something pass — `pnpm plugin` writes those lines, and
 `check` comparing them to the tree is what proves the install is real. If `check` reports a missing
 migration for a plugin's tables, that is (b)'s fresh database, not a rename problem: `pnpm
 db:generate --name plugin-<id>-<version>` then `pnpm db:migrate`.

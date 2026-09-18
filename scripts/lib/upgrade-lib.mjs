@@ -423,6 +423,104 @@ export const NOTE_HEADINGS = Object.freeze([
   '## Verify',
 ])
 
+/** The frontmatter fields that must be lists, even when empty. */
+const NOTE_LIST_FIELDS = Object.freeze([
+  'migrations',
+  'areas',
+  'touches_surfaces',
+  'requires_surfaces',
+])
+
+/**
+ * Everything wrong with one porting note, as sentences. Empty means it is well formed.
+ *
+ * **One statement of the note schema, for every reader of it.** It was written out in four places
+ * and the four had already drifted — most expensively over retired surfaces: only the test knew
+ * that an id a LATER release removed must still be accepted, so `release-check.mjs --tag 0.3.0`
+ * reported a released note as broken over a surface 0.6.0 had deliberately deleted. The kit could
+ * not re-verify its own history, and the note it complained about is one it forbids rewriting.
+ *
+ * Pure, so a test can drive it over fixtures as well as over the notes on disk:
+ *
+ *   - `version` is the filename's stem. Pass `null` for `unreleased.md`, which has no version and
+ *     no date yet, and both checks are skipped rather than failed.
+ *   - `expectPrevious` is checked only when given, because the CALLER is what knows the chain;
+ *     the baseline note expects the string `'null'`.
+ *   - `surfaceIds` null skips the surface check entirely — the honest answer when the caller has no
+ *     manifest, rather than reporting every id in the note as unknown.
+ *   - `retiredSurfaceIds` is `.rocketflare.json`'s `retiredSurfaces`: ids that were real when the
+ *     note was written and have since been removed on purpose.
+ */
+export function noteProblems(
+  text,
+  {
+    file = 'the note',
+    version = null,
+    expectPrevious,
+    surfaceIds = null,
+    retiredSurfaceIds = {},
+    // Named by the caller rather than written here: the provenance file keeps the KIT's name in a
+    // renamed copy, so a literal in this file would be rewritten into one that does not exist.
+    manifestFile = 'the manifest',
+  } = {}
+) {
+  const problems = []
+  const say = message => `${file}: ${message}`
+  const parsed = parseNote(text)
+  if (!parsed) return [say('no YAML frontmatter')]
+  const { data, body } = parsed
+
+  if (version !== null && data.version !== version) {
+    problems.push(say(`frontmatter version is '${data.version}', the filename says '${version}'`))
+  }
+  if (version !== null && !/^\d{4}-\d{2}-\d{2}$/.test(String(data.date ?? ''))) {
+    problems.push(say(`date is '${data.date}', expected YYYY-MM-DD`))
+  }
+  if (expectPrevious !== undefined && (data.previous ?? 'null') !== expectPrevious) {
+    problems.push(
+      say(
+        `previous is '${data.previous}', expected '${expectPrevious}' — the chain /rf-upgrade walks must be unbroken`
+      )
+    )
+  }
+  for (const key of ['breaking', 'manual']) {
+    if (typeof data[key] !== 'boolean') problems.push(say(`${key} must be true or false`))
+  }
+  for (const key of NOTE_LIST_FIELDS) {
+    if (!Array.isArray(data[key])) problems.push(say(`${key} must be a list`))
+  }
+  for (const m of data.migrations ?? []) {
+    if (/\.sql$|^\d{4}_/.test(m)) {
+      problems.push(
+        say(
+          `migrations names a file ('${m}') — describe the change; an adopter regenerates their own`
+        )
+      )
+    }
+  }
+  if (surfaceIds) {
+    const known = new Set(surfaceIds)
+    for (const key of ['touches_surfaces', 'requires_surfaces']) {
+      for (const id of data[key] ?? []) {
+        // A surface a later release retired is still named by every note that shipped before it,
+        // and released history is never rewritten — so it is accepted rather than reported.
+        if (retiredSurfaceIds[id]) continue
+        if (!known.has(id)) {
+          problems.push(say(`${key} names '${id}', which is not a surface in ${manifestFile}`))
+        }
+      }
+    }
+  }
+  let cursor = -1
+  for (const heading of NOTE_HEADINGS) {
+    const found = body.indexOf(`\n${heading}`)
+    if (found === -1) problems.push(say(`missing the '${heading}' heading`))
+    else if (found < cursor) problems.push(say(`'${heading}' is out of order`))
+    else cursor = found
+  }
+  return problems
+}
+
 /** `-1 | 0 | 1`, comparing `X.Y.Z` numerically. */
 export function compareVersions(a, b) {
   const pa = a.split('.').map(Number)
@@ -436,25 +534,133 @@ export function compareVersions(a, b) {
 export const VERSION_RE = /^\d+\.\d+\.\d+$/
 
 /**
- * Does `version` satisfy `range`? A deliberately tiny semver matcher (D31): `plugin.json` declares
- * `requires.kit` as a range, and the kit ships no dependency to evaluate one with.
+ * Does `text` carry a `## <version>` section?
  *
- * Supported, which is all a `requires` range has ever needed: `>=x.y.z`, `>x.y.z`, `<=x.y.z`,
- * `<x.y.z`, `=x.y.z`, a bare `x.y.z` (exact), `^x.y.z`, `~x.y.z`, `*` / `''` (anything), and a
- * space-separated CONJUNCTION of any of those (`>=0.5.0 <1.0.0`). Deliberately NOT supported:
- * `||`, hyphen ranges, `x`/`*` placeholders inside a version, and pre-release tags — the kit's own
- * versions are `X.Y.Z` (`VERSION_RE`) and a plugin declaring anything else should fail loudly here
- * rather than be approximated.
+ * Anchored, and the anchoring is the whole point: `changelog.includes('## 0.6.1')` also matches
+ * `## 0.6.10`, so the day a kit reaches a two-digit patch the tag gate starts passing on a section
+ * that belongs to a different release — and passing is the dangerous direction here.
+ */
+export function hasChangelogSection(text, version) {
+  return new RegExp(`^## ${version.replace(/\./g, '\\.')}(\\s|$)`, 'm').test(text)
+}
+
+/**
+ * The `## X.Y.Z — <date>` section a release prepends to `CHANGELOG.md`, from one entry per note.
+ *
+ * ONE entry renders exactly as it always has — a summary paragraph, then the link — because the
+ * kit and every single-plugin repository have exactly one porting note per release and their
+ * changelogs are already written that way. SEVERAL entries is the plugin monorepo (D31), where one
+ * release covers every plugin in the repository: an unlabelled paragraph followed by three links
+ * says nothing about which summary belongs to which plugin, so each one is named.
+ */
+export function changelogSection(version, date, entries) {
+  const body =
+    entries.length === 1
+      ? `${entries[0].summary}\n[Porting note](${entries[0].note}).\n`
+      : entries.map(e => `**${e.id}** — ${e.summary}\n[Porting note](${e.note}).\n`).join('\n')
+  return `## ${version} — ${date}\n\n${body}\n`
+}
+
+/**
+ * Put `section` above the newest existing one, or at the end of a changelog that has none yet.
+ * Split out of `scripts/release.mjs` only so that a test can drive it.
+ */
+export function prependChangelogSection(text, section) {
+  const at = text.indexOf('\n## ')
+  return at === -1 ? `${text}\n${section}` : text.slice(0, at + 1) + section + text.slice(at + 1)
+}
+
+// ---------------------------------------------------------------- behaviour changes
+
+/**
+ * What counts as a BEHAVIOUR change for the porting-note rule: source under `apps/` or `packages/`,
+ * excluding tests and markdown.
+ *
+ * One definition, two readers — `scripts/release-check.mjs --unreleased` (the CI gate) and
+ * `scripts/changelog-nudge.mjs` (the pre-commit hook). They have to agree by construction: a hook
+ * that nudges for a file CI ignores teaches people to ignore the hook, and one that stays quiet for
+ * a file CI fails on is worse still.
+ */
+export const BEHAVIOUR_PATH_RE = /^(apps|packages)\//
+export const BEHAVIOUR_EXEMPT_RE = /(^|\/)(tests?|__tests__)\/|\.test\.(ts|tsx)$|\.md$/
+
+/**
+ * The subset of `changed` that needs an entry in `docs/upgrades/unreleased.md`.
+ *
+ * `within` is the subdirectory the predicate is applied INSIDE, and it exists for the plugin
+ * MONOREPO (D31). There a plugin's source is `plugins/<id>/apps/web/src/...`, so the bare
+ * `^(apps|packages)/` matches nothing at all and the gate passes silently on every change it was
+ * written to catch — the worst failure this check has, because it looks exactly like success.
+ * Stripping the prefix first asks the same question of the plugin's own tree; what comes back is
+ * still repo-root-relative, because that is what the caller compares against the list of changed
+ * paths it was handed. Empty (the default) is the kit and a single-plugin repository, unchanged.
+ */
+export function behaviourFiles(changed, { within = '' } = {}) {
+  const prefix = within === '' ? '' : `${within.replace(/\/+$/, '')}/`
+  return (changed ?? []).filter(f => {
+    if (!f.startsWith(prefix)) return false
+    const rel = f.slice(prefix.length)
+    return BEHAVIOUR_PATH_RE.test(rel) && !BEHAVIOUR_EXEMPT_RE.test(rel)
+  })
+}
+
+/**
+ * Does `version` satisfy `range`, and — when that cannot be answered — why not?
+ *
+ * A deliberately tiny semver matcher (D31): `plugin.json` declares `requires.kit` as a range, and
+ * the kit ships no dependency to evaluate one with.
+ *
+ * Supported: `>=x.y.z`, `>x.y.z`, `<=x.y.z`, `<x.y.z`, `=x.y.z`, a bare `x.y.z` (exact), `^x.y.z`,
+ * `~x.y.z`, `*` / `''` (anything), a space-separated CONJUNCTION of any of those
+ * (`>=0.5.0 <1.0.0`), a `||` ALTERNATION of conjunctions (`^0.6.0 || ^0.7.0`), and **a space after
+ * the operator** (`>= 0.5.0`). Those last two are ordinary semver spellings that anyone writing a
+ * `requires.kit` by hand reaches for without thinking, and refusing them taught nobody anything.
+ * Still NOT supported: hyphen ranges, `x`/`*` placeholders inside a version, and pre-release tags —
+ * the kit's own versions are `X.Y.Z` (`VERSION_RE`), so anything else is REPORTED rather than
+ * approximated.
+ *
+ * **Reported, not thrown.** This used to throw on a range it could not read, and the throw
+ * travelled out of `pnpm plugin add` as a generic error with exit 1 — while the documented answer
+ * for "a requirement is unmet" is exit 6. So the primitive returns `{ ok, problem }`: `problem` is
+ * the sentence to show, and each caller folds it into its own problem list, which is what maps it
+ * to the right exit code.
  *
  * `^` follows npm exactly, including the zero-major rule that catches people out: `^0.5.0` is
  * `>=0.5.0 <0.6.0`, NOT `<1.0.0` — a 0.x minor bump may break anything. `~0.5.0` is `>=0.5.0
  * <0.6.0` too; they only differ once the major is non-zero.
  */
-export function satisfies(version, range) {
-  if (!VERSION_RE.test(version ?? '')) return false
+export function satisfiesResult(version, range) {
+  if (!VERSION_RE.test(version ?? '')) return { ok: false, problem: null }
   const text = (range ?? '').trim()
-  if (text === '' || text === '*') return true
-  return text.split(/\s+/).every(part => satisfiesComparator(version, part))
+  if (text === '' || text === '*') return { ok: true, problem: null }
+  // A space after the operator is part of the SAME comparator: without this, `>= 0.5.0` tokenises
+  // as `>=` and `0.5.0` — two comparators, the first of them unreadable.
+  const normalised = text.replace(/([<>]=?|[=^~])\s+/g, '$1')
+  let ok = false
+  for (const alternative of normalised.split('||')) {
+    const parts = alternative.trim().split(/\s+/).filter(Boolean)
+    // `^1.0.0 || ` — an empty alternative is a missing bound, not "anything".
+    if (parts.length === 0) {
+      return { ok: false, problem: `unsupported version range '${text}' (an empty alternative)` }
+    }
+    let all = true
+    for (const part of parts) {
+      const answer = satisfiesComparator(version, part)
+      if (answer === null) return { ok: false, problem: `unsupported version range '${part}'` }
+      if (!answer) all = false
+    }
+    if (all) ok = true
+  }
+  return { ok, problem: null }
+}
+
+/**
+ * The boolean half of `satisfiesResult`. A range this matcher cannot read answers `false`, which is
+ * safe ONLY because every caller that has to tell those two apart reads `problem` from
+ * `satisfiesResult` and reports it. Never decide whether to install something on this alone.
+ */
+export function satisfies(version, range) {
+  return satisfiesResult(version, range).ok
 }
 
 const bump = (v, index) => {
@@ -464,9 +670,10 @@ const bump = (v, index) => {
   return parts.join('.')
 }
 
+/** `true` | `false`, or `null` when this is not a comparator the matcher implements. */
 function satisfiesComparator(version, comparator) {
   const m = comparator.match(/^(>=|<=|>|<|=|\^|~)?\s*(\d+\.\d+\.\d+)$/)
-  if (!m) throw new Error(`unsupported version range '${comparator}'`)
+  if (!m) return null
   const [, op = '=', target] = m
   const c = compareVersions(version, target)
   switch (op) {
@@ -517,10 +724,31 @@ export function defaultPluginEntries(manifest) {
   )
 }
 
-/** A vendored plugin is the kit's own: same repository, no subdirectory (§16). */
-function isVendored(entry, kitRepo) {
-  const norm = r => (r ?? '').replace(/\.git$/, '').replace(/\/+$/, '')
-  return norm(entry.repo) !== '' && norm(entry.repo) === norm(kitRepo) && !entry.subdir
+/**
+ * A vendored plugin is the kit's own: the same repository, with no subdirectory (§16).
+ *
+ * **One implementation, and it lives here because everything else can import it.** There were two,
+ * and they did not agree: this one normalises the URL (a trailing `/` or a missing `.git` still
+ * names the same repository) while `plugin-lib.mjs`'s compared the strings exactly — so one plugin
+ * could be vendored for `kit:release` and third-party for `plugin check`, in one checkout, over one
+ * manifest. `plugin-lib.mjs` re-exports this under the same name; the dependency can only run that
+ * way round, since `plugin-lib.mjs` already imports this file.
+ *
+ * Takes anything shaped `{ repo, subdir }` — a `defaultPlugins` entry and a surface's `source`
+ * block are the two callers, and they are the same two fields.
+ */
+export function isVendored(source, kitRepo) {
+  // Trailing slashes FIRST, then `.git` — the other order leaves `…/rocketflare.git/` as
+  // `…/rocketflare.git` while the bare form normalises to `…/rocketflare`, so the same repository
+  // reads as two. (The implementation this replaced had exactly that bug, unnoticed because
+  // nothing ever passed it a trailing slash.)
+  const norm = r =>
+    (r ?? '')
+      .trim()
+      .replace(/\/+$/, '')
+      .replace(/\.git$/, '')
+  const repo = norm(source?.repo)
+  return repo !== '' && repo === norm(kitRepo) && (source?.subdir ?? '') === ''
 }
 
 /**
@@ -541,23 +769,42 @@ function isVendored(entry, kitRepo) {
  * the reason §16 gives: the same release cut both, so the range describes the kit it shipped inside
  * rather than a compatibility claim.
  */
-export function defaultPluginProblems(entries, version, resolve, { kitRepo = null } = {}) {
+/**
+ * Everything malformed about a `defaultPlugins` LIST, as sentences — the shape check, with no I/O.
+ *
+ * One validator, four callers: `defaultPluginProblems` below, `planDefaultPlugins` (the bootstrap
+ * step), and the two GitHub workflows, which now reach it through `scripts/default-plugins.mjs`
+ * rather than each inlining a `node -e` block. They had already drifted: the bootstrap called a
+ * bare string "not an object", this file called it an id with no repo, and the workflows only ever
+ * checked truthiness — three answers to one question, in the file that decides what a fresh clone
+ * installs.
+ */
+export function defaultPluginEntryProblems(entries) {
   const problems = []
   const seen = new Set()
-  for (const entry of entries) {
-    const id = entry.id ?? '(unnamed)'
+  for (const entry of entries ?? []) {
     if (!entry.id) {
       problems.push('a defaultPlugins entry has no "id"')
       continue
     }
-    if (seen.has(entry.id)) problems.push(`defaultPlugins lists '${id}' twice`)
+    if (seen.has(entry.id)) problems.push(`defaultPlugins lists '${entry.id}' twice`)
     seen.add(entry.id)
     if (!entry.repo) {
       problems.push(
-        `defaultPlugins '${id}' has no "repo" — a default plugin CI cannot fetch is a default plugin nobody can install`
+        `defaultPlugins '${entry.id}' has no "repo" — a default plugin CI cannot fetch is a default plugin nobody can install`
       )
-      continue
     }
+  }
+  return problems
+}
+
+export function defaultPluginProblems(entries, version, resolve, { kitRepo = null } = {}) {
+  // Shape first, and every shape problem at once: somebody fixing a hand-edited list wants the
+  // whole of it, not one sentence per run.
+  const problems = defaultPluginEntryProblems(entries)
+  for (const entry of entries) {
+    const id = entry.id ?? '(unnamed)'
+    if (!entry.id || !entry.repo) continue
     const resolved = resolve(entry) ?? { ok: false, reason: 'not resolved' }
     if (!resolved.ok) {
       problems.push(
@@ -573,16 +820,14 @@ export function defaultPluginProblems(entries, version, resolve, { kitRepo = nul
       )
       continue
     }
-    let ok = false
-    try {
-      ok = satisfies(version, range)
-    } catch (error) {
+    const answer = satisfiesResult(version, range)
+    if (answer.problem) {
       problems.push(
-        `defaultPlugins '${id}': requires.kit '${range}' is not a range this kit can read (${error.message})`
+        `defaultPlugins '${id}': requires.kit '${range}' is not a range this kit can read (${answer.problem})`
       )
       continue
     }
-    if (!ok) {
+    if (!answer.ok) {
       problems.push(
         `defaultPlugins '${id}'${resolved.version ? ` ${resolved.version}` : ''} requires kit '${range}', which ${version} does not satisfy — release the plugin first, or repin it`
       )

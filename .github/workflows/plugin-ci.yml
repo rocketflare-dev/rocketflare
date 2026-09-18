@@ -29,6 +29,15 @@ on:
         description: The kit repository to clone (https URL).
         type: string
         default: https://github.com/rocketflare-dev/rocketflare.git
+      kit_ref:
+        description: >-
+          A kit BRANCH or tag to prove against, instead of resolving releases from the plugin's
+          `requires.kit`. This is what makes a coordinated change verifiable rather than hopeful: a
+          plugin cannot declare `>=0.7.0` before 0.7.0 exists, so without this the two repos can
+          only be cross-tested after one of them has already released. A ref given here is used
+          verbatim and the range is NOT consulted — a branch has no version to match against one.
+        type: string
+        default: ""
       kit_range:
         description: >-
           Override the range taken from the plugin's own `rocketflare-plugin.json` `requires.kit`.
@@ -37,6 +46,14 @@ on:
         default: ""
       plugin_subdir:
         description: The plugin's directory within its own repository, when it is not the root.
+        type: string
+        default: ""
+      plugin_subdirs:
+        description: >-
+          A JSON array of plugin directories, for a repository holding several
+          (`'["plugins/analytics","plugins/approvals"]'`). One CI run then proves every plugin
+          against every kit version its OWN range admits, instead of N repositories each running
+          their own. Overrides `plugin_subdir` when set.
         type: string
         default: ""
     secrets:
@@ -50,8 +67,7 @@ jobs:
     name: Resolve kit versions
     runs-on: ubuntu-latest
     outputs:
-      kits: ${{ steps.resolve.outputs.kits }}
-      range: ${{ steps.resolve.outputs.range }}
+      pairs: ${{ steps.resolve.outputs.pairs }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -77,46 +93,85 @@ jobs:
       # here is the same answer `pnpm plugin add` and `pnpm kit:upgrade` give — one implementation,
       # not a shell approximation of one. `ls-remote --tags --refs` is used rather than the shallow
       # clone's own tags, which a --depth 1 clone does not have.
+      # The script goes to a FILE beside the checkout rather than `node -e "..."`. Two reasons,
+      # and the second is a trap: inside a double-quoted shell string every backtick and `${` in
+      # the JS needs escaping, and one wrong escape yields a workflow whose YAML parses perfectly
+      # and whose node step is nonsense; and it is written to the WORKSPACE, not `$RUNNER_TEMP`,
+      # because ESM resolves `./kit/...` against the module's own directory — `node -e` resolved it
+      # against the cwd, so a file in RUNNER_TEMP would look identical and never find the kit.
       - id: resolve
         env:
           KIT_REPO: ${{ inputs.kit_repo }}
+          KIT_REF: ${{ inputs.kit_ref }}
           RANGE_OVERRIDE: ${{ inputs.kit_range }}
           PLUGIN_SUBDIR: ${{ inputs.plugin_subdir }}
+          PLUGIN_SUBDIRS: ${{ inputs.plugin_subdirs }}
         run: |
           set -euo pipefail
           git ls-remote --tags --refs "$KIT_REPO" > "$RUNNER_TEMP/kit-tags.txt"
-          node --input-type=module -e "
-            import { appendFileSync, readFileSync } from 'node:fs'
-            import { compareVersions, satisfies, VERSION_RE } from './kit/scripts/lib/upgrade-lib.mjs'
-            const subdir = process.env.PLUGIN_SUBDIR
+          cat > resolve.mjs <<'RESOLVE'
+          import { appendFileSync, existsSync, readFileSync } from 'node:fs'
+          import { compareVersions, satisfies, VERSION_RE } from './kit/scripts/lib/upgrade-lib.mjs'
+
+          // One repository may hold several plugins (the lockstep monorepo). Each still answers the
+          // compatibility question for ITSELF: which kit contract a plugin compiles against is a
+          // different question from which release shipped it.
+          const subdirs = process.env.PLUGIN_SUBDIRS
+            ? JSON.parse(process.env.PLUGIN_SUBDIRS)
+            : [process.env.PLUGIN_SUBDIR ?? '']
+
+          const tags = readFileSync(`${process.env.RUNNER_TEMP}/kit-tags.txt`, 'utf8')
+            .split('\n')
+            .map(l => l.split('refs/tags/')[1])
+            .filter(t => t && VERSION_RE.test(t))
+            .sort(compareVersions)
+
+          const ref = process.env.KIT_REF
+          const pairs = []
+          for (const subdir of subdirs) {
             const manifestPath = ['plugin', subdir, 'rocketflare-plugin.json'].filter(Boolean).join('/')
+            if (!existsSync(manifestPath)) {
+              process.stderr.write(`::error::no rocketflare-plugin.json at '${manifestPath}' — check plugin_subdir(s)\n`)
+              process.exit(1)
+            }
             const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
+            const label = manifest.id ?? subdir ?? 'plugin'
+
+            // An explicit ref wins and is used verbatim: it is usually a branch, which has no
+            // version, so there is nothing for a range to match.
+            if (ref) {
+              console.log(`${label}: kit_ref '${ref}' (requires.kit not consulted)`)
+              pairs.push({ kit: ref, plugin: subdir ?? '', label })
+              continue
+            }
+
             const range = process.env.RANGE_OVERRIDE || manifest.requires?.kit || '*'
-            const tags = readFileSync(process.env.RUNNER_TEMP + '/kit-tags.txt', 'utf8')
-              .split('\n')
-              .map(l => l.split('refs/tags/')[1])
-              .filter(t => t && VERSION_RE.test(t))
-              .sort(compareVersions)
             const inRange = tags.filter(t => satisfies(t, range))
             if (inRange.length === 0) {
-              process.stderr.write(\`::error::no released kit version satisfies requires.kit '\${range}' — the range names versions that do not exist\n\`)
+              process.stderr.write(`::error::${label}: no released kit version satisfies requires.kit '${range}' — the range names versions that do not exist\n`)
               process.exit(1)
             }
             // The floor and the ceiling: the oldest release an adopter may still be on, and the
             // newest the kit has reached. One entry when they are the same version.
             const kits = [...new Set([inRange[0], inRange[inRange.length - 1]])]
-            console.log(\`requires.kit '\${range}' → \${kits.join(', ')} (of \${inRange.length} in range)\`)
-            appendFileSync(process.env.GITHUB_OUTPUT, \`kits=\${JSON.stringify(kits)}\nrange=\${range}\n\`)
-          "
+            console.log(`${label}: requires.kit '${range}' -> ${kits.join(', ')} (of ${inRange.length} in range)`)
+            for (const kit of kits) pairs.push({ kit, plugin: subdir ?? '', label })
+          }
+          appendFileSync(process.env.GITHUB_OUTPUT, `pairs=${JSON.stringify(pairs)}\n`)
+          RESOLVE
+          node resolve.mjs
 
   gate:
-    name: Kit ${{ matrix.kit }}
+    name: ${{ matrix.label }} on kit ${{ matrix.kit }}
     needs: versions
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false # which END of the range broke is the whole diagnosis
       matrix:
-        kit: ${{ fromJson(needs.versions.outputs.kits) }}
+        # An `include`-only matrix, because the pairs are not a cross product: each plugin is
+        # proved against the kit versions ITS OWN range admits, and a shared ceiling is normal
+        # while a shared floor is not.
+        include: ${{ fromJson(needs.versions.outputs.pairs) }}
     services:
       postgres:
         image: pgvector/pgvector:pg17 # migration 0000 runs CREATE EXTENSION vector
@@ -186,7 +241,7 @@ jobs:
       - name: Install this plugin into the kit
         working-directory: kit
         env:
-          PLUGIN_SUBDIR: ${{ inputs.plugin_subdir }}
+          PLUGIN_SUBDIR: ${{ matrix.plugin }}
         run: |
           set -euo pipefail
           # db:generate runs `dotenv -e .dev.vars`, so the file has to exist here as it does on a

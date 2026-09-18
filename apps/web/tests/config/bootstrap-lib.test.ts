@@ -391,9 +391,11 @@ describe('planDefaultPlugins', () => {
       ['https://example.test/x.git', { repo: 'https://example.test/y.git' }, { id: 'z' }, entry],
       []
     )
+    // The sentences come from `defaultPluginEntryProblems` now — one validator for the bootstrap,
+    // `kit:release` and both workflows, which used to answer this differently from each other.
     expect(plan.problems).toHaveLength(3)
-    expect(plan.problems[1]).toMatch(/no id/)
-    expect(plan.problems[2]).toMatch(/'z' has no repo/)
+    expect(plan.problems[1]).toMatch(/no "id"/)
+    expect(plan.problems[2]).toMatch(/'z' has no "repo"/)
     expect(plan.install.map(j => j.id)).toEqual(['analytics'])
   })
 

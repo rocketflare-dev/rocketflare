@@ -18,6 +18,10 @@
       "types": "./src/plugins/index.ts",
       "default": "./src/plugins/index.ts"
     },
+    "./plugin-api": {
+      "types": "./src/plugins/api.ts",
+      "default": "./src/plugins/api.ts"
+    },
     "./*": {
       "types": "./src/*.ts",
       "default": "./src/*.ts"

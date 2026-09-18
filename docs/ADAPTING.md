@@ -133,9 +133,12 @@ tell it. That is what makes deleting safe.
 
   It removes the **three directories** (`apps/web/src/plugins/example-feature/`,
   `packages/shared/src/plugins/example-feature/`, `apps/cli/src/plugins/example-feature/`), the
-  **five barrel lines** that name them (`apps/web/src/plugins/{server,ui,schema}.ts`,
-  `packages/shared/src/plugins/index.ts`, `apps/cli/src/plugins/index.ts` — import and list entry
-  both) and its **surface in `.rocketflare.json`**. Nothing else in the kit names it, which is the
+  **barrel lines** that name them — five of the six barrels here
+  (`apps/web/src/plugins/{server,ui,schema}.ts`, `packages/shared/src/plugins/index.ts`,
+  `apps/cli/src/plugins/index.ts` — import and list entry both; the sixth,
+  `apps/web/src/plugins/worker-exports.ts`, carries a line only for a plugin that ships a Durable
+  Object or Workflow class, and `example-feature` ships neither) — and its
+  **surface in `.rocketflare.json`**. Nothing else in the kit names it, which is the
   point of the seam. Add `--archive` to copy `example_notes` into schema `archive` first if you
   seeded anything into it you want to keep
 - CLI commands you do not want (`apps/cli/src/commands/*` — `members list`, `keys list`,
@@ -147,7 +150,9 @@ tell it. That is what makes deleting safe.
 **Ask first: is this a feature of YOUR app, or a capability somebody else could install?** (D31,
 `docs/CONCEPTS.md` §16.) A plugin is a separate git repository copied into an app — never installed
 from npm, exactly like the kit itself — that contributes contracts, schema, routes, jobs, agents,
-UI and CLI commands through five barrels it is the only thing allowed to write a line into. Written
+UI and CLI commands through six barrels it is the only thing allowed to write a line into — and
+which imports the kit only through the declared entries (`docs/plugin-api.md`), receiving everything
+else as injected context. Written
 as a plugin, a feature is one tree you can lift out, version and install somewhere else; written
 into core, it is diffused across twenty files nobody can separate again.
 
@@ -210,7 +215,8 @@ Written into core, the loop is:
 Written as a plugin, the same six steps land in the four published files instead — the shared
 entry (1, and every key the plugin owns), the server entry (2, 3), the UI entry (4, 5) and the CLI
 entry (6) — and the host merges each contribution into the registry it could not otherwise be
-edited into. Everything the plugin keys carries its id: tables `<id>_*`, job types `<id>.verb`,
+edited into. Everything the plugin keys carries its id: tables prefixed from it
+(`example-feature` → `example_*`), job types `<id>.verb`,
 the API prefix `/api/<id>`, query-key roots `<id>:…`, the CLI command `<id>`, AG-UI CUSTOM events
 `<id>.` (**never `kit.`**). Read `apps/web/src/plugins/CLAUDE.md` for the seam and
 `apps/web/src/plugins/example-feature/CLAUDE.md` for the example, and remember the two things a

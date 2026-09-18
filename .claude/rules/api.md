@@ -177,6 +177,29 @@ and `services/fact-tables/CLAUDE.md`. Three things a KIT route author still has 
 A plugin is a separate git repository copied into the app that contributes through
 `ServerPlugin` (`apps/web/src/plugins/types.ts`). Server-side rules, all of them checkable:
 
+- **A plugin imports the host only from a DECLARED entry, and receives everything else as injected
+  context.** On the server that entry is `@/plugins/api`: `const ctx: RequestCtx = requestCtx(c)` in
+  a route, `jobCtx` in a handler, `cronCtx` in a task, `toolCtx` in an agent tool, `workflowCtx` in
+  a Workflow, `HookCtx` / `SeedCtx` in the two hooks, `DetachedCtx` for a callback that outlives the
+  handler. The methods are the kit's own helpers under another name — `ctx.guard`, `ctx.uuid`,
+  `ctx.page`, `ctx.enqueue`, `ctx.nudge`, `ctx.notFound`, `ctx.defer`, `ctx.storage`, `ctx.scope` —
+  and the ADAPTER (`requestCtx` and its siblings) is the only thing that reads the kit's internal
+  context, which is what lets `cfg` stay `cfg` in a kit route while every plugin says `config`.
+  `docs/plugin-api.md` is the generated reference; `tests/helpers/plugins.ts` enforces the rule and
+  every diagnostic carries the replacement import. **Annotate the context explicitly** —
+  `ctx.notFound()` returns `never`, and TypeScript narrows on that only when the call target is
+  explicitly typed, so `const ctx = requestCtx(c)` throws at runtime while the compiler still
+  believes the row may be undefined
+- **The two things that cannot be injected are entries instead**: `@/db/schema/kit` for a table file
+  (a `pgTable(...)` runs at module scope, and drizzle-kit reads it statically — imported by RELATIVE
+  path, since drizzle-kit bundles that file and resolves no tsconfig alias) and the split UI kit.
+  `@testkit/{integration,unit}` is the third, for a plugin's tests
+- **`PLUGIN_API = { current, minSupported }`** (`packages/shared/src/plugins/contract.ts`, mirrored
+  in `.rocketflare.json`) versions that surface, and a plugin declares `requires.pluginApi` as a
+  whole number. Change or remove a member of a declared entry → regenerate `docs/plugin-api.md`
+  (`node scripts/plugin-api-doc.mjs`) and bump `current`; the gate diffs the file and names the
+  member. Declared is strictly checked, undeclared is warned — permanently
+
 - **`mounts` are spread LAST into the mount table of `api/index.ts`**, so the enumerable auth
   surface stays one list. An entry is the same tuple a kit mount is — `['/api/<id>', router,
   middleware?]` — and the prefix is `/api/<id>` by convention, which is what stops two plugins
@@ -197,10 +220,20 @@ A plugin is a separate git repository copied into the app that contributes throu
   `buildAbility`; CASL can take a rule back only with `cannot`, so a plugin that revoked a kit grant
   would change what every role may do merely by being installed. Declare the subject in
   `SharedPlugin.subjects`, then grant it here
-- **`hooks.onTenantCreated` and `hooks.seedDemo` are post-commit, idempotent and best-effort**, each
+- **`hooks.onTenantCreated`, `hooks.onTenantDeleted` and `hooks.seedDemo` are post-commit, idempotent and best-effort**, each
   try/caught by the host after the kit's own — a plugin hook that throws must never break sign-up or
   invite accept, so nothing a tenant NEEDS may arrive only that way. `seedDemo` gets a `demoId`
   already namespaced with the plugin's id; fixed ids + `onConflictDoNothing`, as everywhere
+- **`onTenantDeleted` is for state the FK cascade cannot reach**, and nothing else: a plugin's
+  TABLES are already gone. It runs from the `tenant.purge` job with the tenant id and `env`, so a
+  plugin reaches its own R2 prefix, KV keys or Durable Object through the bindings rather than a
+  global. **DO state is purgeable only because instance names are DERIVED**: nothing enumerates the
+  instances of a namespace, so a plugin declares a FINITE key set derived from the tenant id and the
+  purge loops the declared keys, never instances (`NotificationsHub`'s `idFromName(tenantId)` is
+  already that shape). One DO per ROW cannot be purged under this rule; the escape hatch is a
+  purge-intent ledger — a table carrying `tenant_id` with NO foreign key, so it survives the cascade
+  (`access_requests.requested_tenant_id` is the precedent) — and it is **deferred until somebody
+  needs it**, deliberately not built
 - `visibilityResources` (D29) registers rows a group may restrict — `{ key, noun, usageKey,
   predicate, setGroups, grantRows, countGrants }` in `services/access.ts`'s registry, so the
   predicate is SQL ANDed onto the tenant one and the 409 `group_in_use` count includes it.
@@ -260,8 +293,19 @@ Jobs rules (D7):
   cannot make it valid). Handler error → `retry({ delaySeconds: backoffSeconds(attempts) })`, 30 s
   doubling to a 15 min cap; the toml's `max_retries = 3` ends it. Unknown queue → `ackAll()`
 - Missing `JOBS_QUEUE` → `JobsQueueNotConfiguredError`, never a silent inline fallback. Queued in
-  the kit: invitation (create/bulk/resend) and access-request-decided emails. The **magic-link email
+  the kit: `tenant.purge`, and invitation (create/bulk/resend) and access-request-decided emails. The **magic-link email
   stays inline** — a person is waiting on it
+- **`tenant.purge` is the out-of-database half of deleting a tenant.** The FK cascade is complete
+  inside Postgres and reaches nothing else, so `deleteTenant` proves the queue binding BEFORE the
+  `DELETE` (a deployment that cannot purge must fail while the tenant still exists), then enqueues
+  with the tenant id and slug — the row is gone, so the payload is all the handler will ever have.
+  The handler runs every plugin's `onTenantDeleted` first (each try/caught, so it cannot fail the
+  job) and then `purgeTenantObjects`, which pages `tenants/<id>/` with `listPage` + `deleteMany`. A
+  missing `FILES` binding is ACKED with a log — no binding, no objects, and no retry can conjure one
+  — which is deliberately the opposite of `document.convert`, where the bytes exist and are
+  unreachable. An R2 error throws and is retried: the alternative is a tenant's files living on for
+  ever because one list call timed out. Everything in it is idempotent, which is what makes that
+  retry free
 - `example-feature.ping` is the smoke job and it belongs to the `example-feature` PLUGIN (D31), not to the kit: `POST /api/example-feature/ping` (or `rocketflare example-feature ping`) enqueues it, then watch `wrangler dev`. The shape to copy is `apps/web/src/plugins/example-feature/jobs/ping.ts`
 - `chat.compact` (D17) folds the messages outside a conversation's `CHAT_HISTORY_MAX_CHARS` budget into `conversations.summary`; the window comes from the same pure `selectHistoryWindow` the route uses, and the write is a compare-and-set on `summarised_through_id` so two deliveries cannot lose an update. `document.index` (D18) re-indexes a `documents` row from its stored `content` (`handlers/document-index.ts` → `indexDocument`); the message carries ids only. `ingestText` enqueues it for texts over 50 chunks
 

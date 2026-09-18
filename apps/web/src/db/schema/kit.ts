@@ -1,0 +1,33 @@
+/**
+ * The schema kit (D31) — the build-time symbols a plugin's table file needs at MODULE scope.
+ *
+ * **This is one of the two things that cannot be injected.** Every other kit capability reaches a
+ * plugin through an execution context, but a `pgTable(...)` call runs when the module is
+ * evaluated, long before any request, job or run exists. drizzle-kit then reads those tables
+ * statically to generate DDL. So these six symbols have to be importable, and this file is where
+ * they are declared to be.
+ *
+ * **Why it sits here, beside `rls.ts`, and not somewhere tidier.** `rls.ts` documents the cycle
+ * this file has to stay out of: `rls.ts → plugins/server.ts → <plugin>/index.ts → db/schema →
+ * rls.ts`. A module that a plugin's SCHEMA imports is as far upstream as anything in the app gets,
+ * so it must read neither the plugin barrel nor `db/schema/index.ts` — which re-exports
+ * `plugins/schema.ts`, which re-exports every installed plugin. Hence the imports below name
+ * individual FILES.
+ *
+ * **It is deliberately not in `db/schema/index.ts`.** Every line of that barrel is an `export *`
+ * over a table file, and drizzle-kit reads it as the schema; a re-export layer in there earns
+ * nothing and invites an ambiguous name. Nothing is lost — a plugin imports this module directly.
+ *
+ * The three tables are here as FK and relation targets, which is the only thing a plugin's table
+ * should want from a kit table. Note the rule that goes with them: **a plugin declares `relations()`
+ * for its OWN tables only.** On drizzle-orm 0.45.2 a second `relations()` for a core table merges
+ * at runtime but not at the type level, and silently strips `with:` from that table's query results
+ * app-wide (`apps/web/src/plugins/schema.ts` has the measurement). The `one()` side on the plugin's
+ * own table expresses the FK fully; only the `many()` back-reference is unavailable.
+ */
+
+export { RESOURCE_VISIBILITY_VALUES, tenantRef, timestamps } from './_helpers'
+export { groups } from './groups'
+export { membershipIsolation, tenantIsolation } from './rls'
+export { tenants } from './tenants'
+export { users } from './users'

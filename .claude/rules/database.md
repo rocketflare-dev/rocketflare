@@ -156,9 +156,17 @@ Tests migrate a throwaway database on 5433 from `apps/web/tests/setup.ts` — ne
 
 An installed plugin owns tables exactly like the kit's, in `src/plugins/<id>/db/schema/*`:
 
-- **Name every table `<id>_*` with the hyphens dropped** — `example-feature` → `example_notes`,
-  `analytics` → `analytics_pages`. Two plugins in one app must never collide, and a table name is
-  the one identifier neither the type system nor the module graph namespaces for you
+- **Every table starts with a prefix derived from the plugin's id** — its first hyphen-separated
+  segment (`example-feature` → `example_*`, `analytics` → `analytics_*`). A longer prefix is
+  welcome, not required. **The prefix is a convention a human picks, not a string the tooling
+  derives**: nothing anywhere turns an id into a table name or a table name into an id
+  (`plugin remove` reads `schema.tables` verbatim, `archiveSql` quotes them, `rls-coverage` reads
+  the catalog), so there is no key to check a shape against. What IS checked is the collision —
+  **`pnpm plugin check` fails when two installed plugins declare the same table name**, because a
+  table name is the one identifier nothing namespaces for you and nothing else in the kit can see
+  it: TS2308 catches a duplicated EXPORT name, and two plugins spelling `pgTable('orders', …)`
+  under different symbols compile cleanly, after which drizzle-kit emits DDL for one name twice and
+  one `DROP TABLE` takes the other plugin's data
 - **One `export * from './<id>/db/schema'` in `apps/web/src/plugins/schema.ts`**, which is
   re-exported by one `export *` line in `db/schema/index.ts` — the one surface `drizzle.config.ts`,
   `db/client.ts` (`typeof schema`) and `rls-coverage.test.ts` read. So a plugin table is migrated,

@@ -1,3 +1,6 @@
+// Sits one directory up because it predates this barrel — an accident of ordering, not a decision,
+// and one every plugin that wanted a loading state had to discover by reading the tree.
+export { LoadingIndicator } from '../LoadingIndicator'
 export { AccessBadge, AccessPicker, type AccessPickerProps } from './AccessPicker'
 export { AlertModal } from './AlertModal'
 export { ConfirmModal } from './ConfirmModal'

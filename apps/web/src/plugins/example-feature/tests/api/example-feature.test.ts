@@ -4,39 +4,49 @@
  * rather than doing the work, and the agent tool answers the run's tenant.
  *
  * It lives inside the plugin because it tests the plugin — the division of labour the kit settled
- * on in A1 is that **a plugin tests its behaviour and the host tests that it is a well-formed
- * plugin** (`tests/config/plugins.test.ts`). `vitest.config.ts` discovers this directory, so it
- * runs in the host's `api` project against the host's real Postgres, exactly like a kit test.
+ * on is that **a plugin tests its behaviour and the host tests that it is a well-formed plugin**
+ * (`tests/config/plugins.test.ts`). `vitest.config.ts` discovers this directory, so it runs in the
+ * host's `api` project against the host's real Postgres, exactly like a kit test.
  *
- * **The flag is turned on with a per-tenant OVERRIDE, never with the platform row**, and that is
- * not a style choice. `feature_flags.state` is one row for the whole deployment: setting it to
- * `on` here turns `example-feature` on for EVERY tenant in the test database, including the seeded
- * one that `tests/api/auth-session.test.ts` asserts has `features: []` — and the `api` project runs
- * files in parallel workers, so that shows up as a failure in the OTHER file, only on some orders.
- * An override is scoped to one organisation and beats the platform state in both directions, so
- * this file can be as loud as it likes without being visible to anybody else.
+ * **It reaches the harness through `@testkit`, which is a DECLARED entry.** Before that existed
+ * these were six-level relative climbs into `apps/web/tests/**` — five modules and twenty-one
+ * symbols nobody had promised to keep — so a plugin's tests were the one part of it still pinned to
+ * kit internals. They are in scope for the import rule now, like the rest of the plugin.
+ *
+ * **The tenant-isolation case below drives the REAL mount through `request(...)` as a second
+ * tenant**, and that is deliberate rather than incidental. A context builder from `@testkit/unit`
+ * can prove a branch; only the real mount can prove a predicate, which is why the builders refuse a
+ * fake `db` at all — a stub returning `[]` passes "tenant B sees no rows" whatever the query said.
+ *
+ * **The flag is turned on with a per-tenant OVERRIDE, never with the platform row.**
+ * `feature_flags.state` is one row for the whole deployment: setting it to `on` here turns
+ * `example-feature` on for EVERY tenant in the test database, including the seeded one that
+ * `tests/api/auth-session.test.ts` asserts has `features: []` — and the `api` project runs files in
+ * parallel workers, so that shows up as a failure in the OTHER file, only on some orders. An
+ * override is scoped to one organisation and beats the platform state in both directions, so this
+ * file can be as loud as it likes without being visible to anybody else.
  *
  * The platform row still has to EXIST, because `tenant_feature_overrides.flag_key` is a foreign key
  * to it — but it is written `off`, which evaluates identically to no row at all for every tenant
  * that has no override. That is the whole of this file's global footprint.
  */
 import { EXAMPLE_FEATURE_FLAG } from '@rocketflare/shared/plugins/example-feature/index'
-import { and, eq, inArray } from 'drizzle-orm'
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { loadConfig } from '@/config'
-import { featureFlags, tenantFeatureOverrides } from '@/db/schema'
 import {
+  createTestEnv,
   createTestSession,
   createTestTenant,
   createTestUser,
+  json,
   linkUserToTenant,
+  request,
   sessionCookieHeader,
-} from '../../../../../tests/helpers/auth'
-import { setupTestDatabase } from '../../../../../tests/helpers/db'
-import { json, request } from '../../../../../tests/helpers/request'
-import { createTestEnv, stubs } from '../../../../../tests/mocks/bindings'
-import { fullAccessScope } from '../../../../api/services/access'
-import type { AgentToolContext } from '../../../../api/services/agents/tools'
+  setupTestDatabase,
+  stubs,
+} from '@testkit/integration'
+import { makeToolCtx } from '@testkit/unit'
+import { and, eq, inArray } from 'drizzle-orm'
+import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { allTables } from '@/plugins/api/peers'
 import { exampleNotes } from '../../db/schema'
 import { listExampleNotesTool } from '../../tools/list-example-notes'
 
@@ -55,8 +65,13 @@ let memberId: string
  * The whole mount is gated, so the flag has to be on for anything below to be reachable at all —
  * and it is turned on for THIS FILE'S OWN organisations only, through an override. The platform
  * row exists solely to satisfy the override's foreign key and stays `off`.
+ *
+ * `feature_flags` is the KIT's table, so it is reached through `allTables()` — the declared way to
+ * name the merged schema — and CALLED rather than read at module scope, because that module reads
+ * the plugin barrel and a module-scope call closes the cycle with one side still `undefined`.
  */
 async function setFlagFor(tenant: string, enabled: boolean) {
+  const { featureFlags, tenantFeatureOverrides } = allTables()
   await db
     .insert(featureFlags)
     .values({ key: EXAMPLE_FEATURE_FLAG, state: 'off' })
@@ -102,6 +117,7 @@ beforeAll(async () => {
 
 /** Leave the database as we found it — our two override rows go, the `off` platform row stays. */
 afterAll(async () => {
+  const { tenantFeatureOverrides } = allTables()
   await db
     .delete(tenantFeatureOverrides)
     .where(
@@ -268,14 +284,9 @@ describe('the ping route', () => {
 })
 
 describe('list_example_notes', () => {
-  const toolContext = (tenant: string): AgentToolContext => {
-    const env = createTestEnv()
-    return { db, cfg: loadConfig(env), env, scope: fullAccessScope(tenant) }
-  }
-
   it('answers the run’s own tenant, and says so when there is nothing to read', async () => {
     const note = await createNote(ownerCookie, 'Depot handover')
-    const tool = listExampleNotesTool(toolContext(tenantId))
+    const tool = listExampleNotesTool(makeToolCtx({ db, tenantId }))
     const answer = JSON.parse((await tool.handler?.({})) ?? '{}') as {
       total: number
       notes: { noteId: string; title: string }[]
@@ -285,7 +296,8 @@ describe('list_example_notes', () => {
 
     const emptyTenant = await createTestTenant(db)
     const empty = JSON.parse(
-      (await listExampleNotesTool(toolContext(emptyTenant.id)).handler?.({})) ?? '{}'
+      (await listExampleNotesTool(makeToolCtx({ db, tenantId: emptyTenant.id })).handler?.({})) ??
+        '{}'
     ) as { total: number; hint?: string }
     expect(empty.total).toBe(0)
     expect(empty.hint).toMatch(/No example notes/)

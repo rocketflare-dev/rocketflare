@@ -1,11 +1,11 @@
 /**
- * The pure half of `scripts/plugin.mjs` (D31, Phase B): the plugin id rules, the five barrel
+ * The pure half of `scripts/plugin.mjs` (D31, Phase B): the plugin id rules, the six barrel
  * lines, the file-root classification, the requirement check, the surface builder and the plan
  * text. No I/O and nothing runs at import time, so `apps/web/tests/config/plugin-lib.test.ts` can
  * drive every rule against a FIXTURE — which matters because most of them are rules about a plugin
  * this checkout does not have installed.
  *
- * The barrel writer is the part to read twice. Installing a plugin IS five lines; if this file
+ * The barrel writer is the part to read twice. Installing a plugin IS six lines; if this file
  * writes them differently from the way a person would, every install produces a lint diff and the
  * gate stops passing by construction. So it inserts in sorted order, it is idempotent (running
  * `add` twice writes nothing), and `remove` is its exact inverse — the test asserts the round trip
@@ -13,16 +13,28 @@
  *
  * `plugin-lib.d.mts` beside this file is the hand-written type surface (no `allowJs`).
  */
+import { pluginApiProblem } from './plugin-api.mjs'
 import { KIT } from './rename-lib.mjs'
-import { satisfies } from './upgrade-lib.mjs'
+import { isVendored, satisfiesResult } from './upgrade-lib.mjs'
 
 // ---------------------------------------------------------------- identity
 
 /** The same rule `@rocketflare/shared/plugins` enforces at the type level. */
 export const PLUGIN_ID_RE = /^[a-z][a-z0-9-]*$/
 
-/** Barrel FILENAMES. An id that collides with one makes `./<id>` ambiguous with a barrel import. */
-export const RESERVED_PLUGIN_IDS = Object.freeze(['index', 'server', 'ui', 'schema', 'types'])
+/**
+ * Barrel FILENAMES. An id that collides with one makes `./<id>` ambiguous with a barrel import —
+ * and worse, `apps/web/src/plugins/<name>.ts` would then read as the entry of a plugin called
+ * `<name>` to every rule that derives a plugin id from a path. Add a barrel, add its stem here.
+ */
+export const RESERVED_PLUGIN_IDS = Object.freeze([
+  'index',
+  'server',
+  'ui',
+  'schema',
+  'types',
+  'worker-exports',
+])
 
 /** `null` when `id` is a legal plugin id, else the sentence saying why it is not. */
 export function pluginIdProblem(id) {
@@ -40,12 +52,16 @@ export function camelId(id) {
   return id.replace(/-([a-z0-9])/g, (_, c) => c.toUpperCase())
 }
 
-// ---------------------------------------------------------------- the five barrels
+// ---------------------------------------------------------------- the six barrels
 
 /**
- * The five barrel lines, as data. `half` is the file under the plugin's tree whose PRESENCE means
+ * The six barrel lines, as data. `half` is the file under the plugin's tree whose PRESENCE means
  * the plugin ships that half — an install writes a line only for the halves that arrived, so a
  * plugin with no CLI command does not get a CLI import of a file that is not there.
+ *
+ * Two of the six are `export *` rather than a tuple entry, and both carry `empty`: a TypeScript
+ * file with no top-level import or export is a SCRIPT, not a module, so removing the last plugin
+ * from one would make its single importer TS2306 and stop the whole app typechecking.
  */
 export const BARRELS = Object.freeze({
   shared: {
@@ -77,10 +93,26 @@ export const BARRELS = Object.freeze({
     // With no plugin installed this file is a comment and nothing else, and a TypeScript file with
     // no top-level import or export is a SCRIPT, not a module — so `db/schema/index.ts`'s
     // `export * from '../plugins/schema'` is TS2306 "is not a module" and the whole app stops
-    // typechecking. The other four barrels always declare a const, so only this one needs it.
+    // typechecking. The four LIST barrels always declare a const; the two `export *` ones
+    // (this and `worker`) are the ones that need the marker.
     empty: 'export {}',
     specifier: id => `./${id}/db/schema`,
     half: id => `apps/web/src/plugins/${id}/db/schema/index.ts`,
+  },
+  /**
+   * Durable Object and Workflow CLASSES (D31). Cloudflare resolves a binding's `class_name`
+   * against the named exports of the Worker's ENTRY module, so a plugin shipping one needs a line
+   * in `src/worker.ts` — and this barrel is that line, written once and for ever, so no install
+   * ever edits the entry itself. Before it, the class was a printed instruction in the plan, which
+   * an unattended install simply did not perform.
+   */
+  worker: {
+    file: 'apps/web/src/plugins/worker-exports.ts',
+    constName: null, // `export *`, not a tuple
+    suffix: null,
+    empty: 'export {}',
+    specifier: id => `./${id}/worker-exports`,
+    half: id => `apps/web/src/plugins/${id}/worker-exports.ts`,
   },
   cli: {
     file: 'apps/cli/src/plugins/index.ts',
@@ -93,7 +125,7 @@ export const BARRELS = Object.freeze({
 
 export const BARREL_KINDS = Object.freeze(Object.keys(BARRELS))
 
-/** `exampleFeatureServer`, and so on. `null` for the schema barrel, which exports no name. */
+/** `exampleFeatureServer`, and so on. `null` for an `export *` barrel, which exports no name. */
 export function barrelExportName(kind, id) {
   const { suffix } = BARRELS[kind]
   return suffix ? `${camelId(id)}${suffix}` : null
@@ -403,7 +435,7 @@ export function classifyPluginFile(relPath, id) {
 // ---------------------------------------------------------------- platform declarations
 
 /**
- * The binding types provisioning knows how to create (D31, decision 12).
+ * The binding types provisioning knows how to write (D31, decision 12).
  *
  * **This list exists twice and the duplication is pinned, not silent.**
  * `apps/web/scripts/provision/plugin-resources.ts` owns the TypeScript half and is what
@@ -413,7 +445,29 @@ export function classifyPluginFile(relPath, id) {
  * what makes an unsupported type stop an INSTALL, rather than surface as a 503 on the first
  * request after a deploy that silently skipped the binding.
  */
-export const SUPPORTED_PLUGIN_BINDING_TYPES = Object.freeze(['kv', 'queue', 'r2'])
+export const SUPPORTED_PLUGIN_BINDING_TYPES = Object.freeze([
+  'kv',
+  'queue',
+  'r2',
+  'workflow',
+  'durable_object',
+])
+
+/**
+ * The subset an account has to CREATE before a deploy. `workflow` and `durable_object` are not
+ * here because `wrangler deploy` registers both from the toml — there is nothing to find-or-create
+ * — so `PLUGIN_RESOURCES` never carries one and `cf-provision.sh` never sees one.
+ */
+export const CREATED_PLUGIN_BINDING_TYPES = Object.freeze(['kv', 'queue', 'r2'])
+
+/** Types whose block names a CLASS exported from the Worker's entry module (the sixth barrel). */
+export const CLASS_PLUGIN_BINDING_TYPES = Object.freeze(['workflow', 'durable_object'])
+
+/** Types carrying an account-scoped resource NAME, which must differ between the environments. */
+export const NAMED_PLUGIN_BINDING_TYPES = Object.freeze(['kv', 'queue', 'r2', 'workflow'])
+
+/** How a Durable Object's storage is created. Irreversible, so it is declared rather than guessed. */
+export const DO_STORAGE_KINDS = Object.freeze(['sqlite', 'none'])
 
 /**
  * Everything wrong with a plugin's platform declarations, as sentences. Empty means installable.
@@ -425,14 +479,61 @@ export const SUPPORTED_PLUGIN_BINDING_TYPES = Object.freeze(['kv', 'queue', 'r2'
 export function pluginPlatformProblems(manifest) {
   const problems = []
   for (const b of manifest.bindings ?? []) {
+    const who = b.binding ?? b.name ?? '?'
     if (!SUPPORTED_PLUGIN_BINDING_TYPES.includes(b.type)) {
       problems.push(
-        `binding ${b.binding ?? b.name ?? '?'} declares type '${b.type}', which provisioning cannot ` +
-          `create (supported: ${SUPPORTED_PLUGIN_BINDING_TYPES.join(', ')})`
+        `binding ${who} declares type '${b.type}', which provisioning cannot ` +
+          `write (supported: ${SUPPORTED_PLUGIN_BINDING_TYPES.join(', ')})`
       )
+      continue
+    }
+    // A class binding is only writable because the sixth barrel makes the class reachable from
+    // `src/worker.ts`; the manifest has to say WHICH class, or the block points at nothing and
+    // `wrangler deploy` refuses the whole script.
+    if (CLASS_PLUGIN_BINDING_TYPES.includes(b.type) && !b.className) {
+      problems.push(`binding ${who} is a ${b.type} and declares no className`)
+    }
+    if (!CLASS_PLUGIN_BINDING_TYPES.includes(b.type) && b.className) {
+      problems.push(
+        `binding ${who} declares className, which is only meaningful on a class binding`
+      )
+    }
+    // A Durable Object's storage kind cannot be changed after the namespace exists, so it is
+    // declared rather than defaulted: guessing it wrong is not a thing anyone can undo.
+    if (b.type === 'durable_object' && !DO_STORAGE_KINDS.includes(b.storage)) {
+      problems.push(
+        `binding ${who} must declare storage as one of ${DO_STORAGE_KINDS.join(' | ')} — ` +
+          'it picks new_sqlite_classes vs new_classes and cannot be changed later'
+      )
+    }
+    if (b.type !== 'durable_object' && b.storage) {
+      problems.push(`binding ${who} declares storage, which only a durable_object has`)
+    }
+    if (NAMED_PLUGIN_BINDING_TYPES.includes(b.type) && !b.name) {
+      problems.push(`binding ${who} declares no name (the account-scoped half of the resource)`)
     }
   }
   return problems
+}
+
+/**
+ * The `[[migrations]]` tag an install writes for a plugin's Durable Object classes.
+ *
+ * **DO migrations are to `worker.ts` what SQL migrations are to `db/schema`**: an append-only
+ * record of what this Worker has already told Cloudflare, numbered in the HOST's file. A tag is
+ * never renumbered and never rewritten — replaying one under a different meaning loses a namespace
+ * and everything stored in it. Install is always `v1`; a later change (a removal's
+ * `deleted_classes`) takes the next free number.
+ */
+export function pluginMigrationTag(pluginId, n = 1) {
+  return `plugin-${pluginId}-v${n}`
+}
+
+/** The next free `plugin-<id>-v<n>`, given every tag already in the toml. */
+export function nextPluginMigrationTag(existingTags, pluginId) {
+  const re = new RegExp(`^plugin-${pluginId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}-v(\\d+)$`)
+  const used = existingTags.map(t => Number(re.exec(t)?.[1])).filter(n => Number.isInteger(n))
+  return pluginMigrationTag(pluginId, used.length === 0 ? 1 : Math.max(...used) + 1)
 }
 
 // ---------------------------------------------------------------- requirements
@@ -455,11 +556,26 @@ export function checkRequirements({
   presentSurfaces = [],
   installedPlugins = [],
   vendored = false,
+  pluginApi = null,
 }) {
   const problems = []
+  // `requires.kit` answers "which kit RELEASES may I be installed into"; `requires.pluginApi`
+  // answers "which version of the CONTRACT was I written against". Conflating them is what made
+  // every plugin need re-releasing for a kit version that never touched the plugin surface. An
+  // UNDECLARED value is null here and warned elsewhere, never refused — a plugin released before
+  // the field existed cannot retroactively declare one.
+  if (pluginApi) {
+    const problem = pluginApiProblem(requires.pluginApi, pluginApi)
+    if (problem) problems.push(problem)
+  }
   const range = requires.kit
-  if (range && !vendored && !satisfies(kitVersion, range)) {
-    problems.push(`kit ${kitVersion} does not satisfy ${range}`)
+  if (range && !vendored) {
+    // A range this kit cannot READ is its own problem, distinct from "the version is outside it":
+    // it means the plugin declared something the matcher does not implement, and saying so is what
+    // turns a thrown generic error into this function's exit-6 answer.
+    const answer = satisfiesResult(kitVersion, range)
+    if (answer.problem) problems.push(`requires.kit '${range}' is not a range this kit can read`)
+    else if (!answer.ok) problems.push(`kit ${kitVersion} does not satisfy ${range}`)
   }
   for (const id of requires.surfaces ?? []) {
     if (!presentSurfaces.includes(id)) problems.push(`surface '${id}' is not present in this app`)
@@ -467,8 +583,15 @@ export function checkRequirements({
   for (const req of requires.plugins ?? []) {
     const { id, range: r } = parsePluginRequirement(req)
     const found = installedPlugins.find(p => p.id === id)
-    if (!found) problems.push(`plugin '${id}' is required and not installed`)
-    else if (r && !satisfies(found.version ?? '0.0.0', r)) {
+    if (!found) {
+      problems.push(`plugin '${id}' is required and not installed`)
+      continue
+    }
+    if (!r) continue
+    const answer = satisfiesResult(found.version ?? '0.0.0', r)
+    if (answer.problem)
+      problems.push(`plugin '${id}' requires '${r}', which is not a readable range`)
+    else if (!answer.ok) {
       problems.push(
         `plugin '${id}' is ${found.version ?? 'unversioned'}, which does not satisfy ${r}`
       )
@@ -488,8 +611,13 @@ export function checkRequirements({
  */
 export function unsupportedForKit(plugins, { kitRepo, version }) {
   if (!version) return []
+  // An unreadable range counts as unsupported: `satisfiesResult(...).ok` is false either way, and
+  // "I cannot check this plugin against the target" is not a reason to wave it through.
   return plugins.filter(
-    p => p.requires?.kit && !isVendored(p.source, kitRepo) && !satisfies(version, p.requires.kit)
+    p =>
+      p.requires?.kit &&
+      !isVendored(p.source, kitRepo) &&
+      !satisfiesResult(version, p.requires.kit).ok
   )
 }
 
@@ -503,10 +631,15 @@ export function parsePluginRequirement(entry) {
     : { id: entry.slice(0, at), range: entry.slice(at + 1) }
 }
 
-/** True when this plugin ships inside the kit itself (`example-feature` is the one that does). */
-export function isVendored(source, kitRepo) {
-  return Boolean(source && source.repo === kitRepo && (source.subdir ?? '') === '')
-}
+/**
+ * True when this plugin ships inside the kit itself (`example-feature` is the one that does).
+ *
+ * **Re-exported, not reimplemented.** There were two of these and they disagreed about a URL with a
+ * trailing slash or without `.git`, so one plugin could read as vendored for `kit:release` and as
+ * third-party for `plugin check` in the same checkout. `upgrade-lib.mjs` owns it — this file
+ * already imports that one, and the reverse direction would be a cycle.
+ */
+export { isVendored }
 
 // ---------------------------------------------------------------- the surface
 
@@ -537,7 +670,12 @@ export function buildPluginSurface(manifest, { repo, subdir = '', commit = null,
     source: { repo, subdir, version: manifest.version ?? null, commit },
     installedAt: at,
     requires: {
-      kit: manifest.requires?.kit ?? '*',
+      // `null`, not `'*'`. A plugin that declares no kit range has said nothing, and recording
+      // "anything" put that plugin beyond every gate there is: `checkRequirements` skips it,
+      // `unsupportedForKit` skips it, and `kit:upgrade` would carry it across a major version
+      // without a word. Null is the same silence, but it is VISIBLE — `plugin check` and the
+      // install plan both say so, and `defaultPluginProblems` refuses to cut a release over it.
+      kit: manifest.requires?.kit ?? null,
       surfaces: manifest.requires?.surfaces ?? [],
       plugins: manifest.requires?.plugins ?? [],
     },
@@ -591,9 +729,16 @@ export function renderAddPlan(plan) {
     'Requirements',
   ]
   if (plan.problems.length === 0) {
+    const range = m.requires?.kit ?? null
     lines.push(
-      `  ✔ kit ${plan.host.kitVersion} satisfies ${m.requires?.kit ?? '*'}` +
-        (plan.vendored ? ' (vendored — shipped with the kit, so the range is not checked)' : ''),
+      // An undeclared range is stated rather than rendered as a tick against `*`: it means nothing
+      // will ever gate this plugin against a kit version, which is worth reading before saying yes.
+      range === null
+        ? `  ⚠ kit ${plan.host.kitVersion} — this plugin declares no requires.kit, so no kit version is ever checked against it`
+        : `  ✔ kit ${plan.host.kitVersion} satisfies ${range}` +
+            (plan.vendored
+              ? ' (vendored — shipped with the kit, so the range is not checked)'
+              : ''),
       `  ✔ surfaces: ${(m.requires?.surfaces ?? []).join(', ') || 'none required'}`,
       `  ✔ plugins:  ${(m.requires?.plugins ?? []).join(', ') || 'none required'}`
     )
@@ -638,52 +783,310 @@ export function renderAddPlan(plan) {
     }
   }
 
-  lines.push('', 'Then, by hand — nothing below is done for you')
-  let n = 0
-  const step = line => lines.push(`  ${++n}. ${line}`)
-  if ((m.schema?.tables ?? []).length > 0) {
-    step(
-      `pnpm db:generate --name plugin-${m.id}-${m.version ?? '0.0.0'}   → CREATE TABLE ` +
-        `${m.schema.tables.join(', ')}; read the SQL, then pnpm db:migrate`
-    )
+  const clashes = plan.clashes ?? []
+  if (clashes.length > 0) {
+    lines.push('', 'Dependency clashes (nothing is overwritten until you say so)')
+    for (const c of clashes) lines.push(`  ⚠ ${describeClash(c)}`)
   }
-  if (fragments.length > 0) {
-    step(
-      `pnpm db:generate --custom --name plugin-${m.id}-install, then paste ` +
-        `${fragments.map(f => f.path).join(', ')} into it`
-    )
-  }
-  // The platform half is one command per environment, not a hand edit of two tomls (decision 12):
-  // `pnpm provision cloudflare <env>` reads these same declarations off the installed surface,
-  // creates the resources and writes the blocks into BOTH files.
-  const platform = [
+
+  lines.push(...renderSteps(planSteps(m, { fragments: fragments.map(f => f.path), clashes })))
+
+  if (plan.verify) lines.push('', "Verify (from the plugin's own note)", ...indent(plan.verify))
+  return lines
+}
+
+// ---------------------------------------------------------------- the step taxonomy
+
+/**
+ * What a step COSTS somebody, and why "by hand" is retired as a phrase.
+ *
+ * It answers neither of the two questions that matter to whatever performs the step, and installs
+ * are performed by AGENTS as often as by people now. Prose an agent may skim is not a control —
+ * that is precisely how `workerExports` and `coreEdits` each produced a tree that built and then
+ * failed somewhere else entirely. So every remaining step declares which of three it is:
+ *
+ *   - `declarative` — nobody does it; the tooling does. These do not appear at all. Everything
+ *     Parts 1 and 2 moved (the barrel lines, bindings, crons, prefixes, vars, the DO migration
+ *     tag) left this list by BECOMING declarative, which is the only honest way to shorten it.
+ *   - `agent`       — an instruction PLUS a check that proves it was done. Without the check it is
+ *     a sentence, and a sentence is the thing being replaced.
+ *   - `human`       — a DECISION: a secret's value, a migration that drops something, retiring a
+ *     Durable Object namespace, deleting a live resource. Not automatable in PRINCIPLE rather than
+ *     merely unimplemented — that distinction is what stops this list collecting excuses.
+ *
+ * Every step carries the exact `command`, the observable `expect` and the `assert` that proves it,
+ * so `--json` can make a human step structurally unmissable rather than a sentence in a paragraph.
+ */
+export const STEP_KINDS = Object.freeze(['declarative', 'agent', 'human'])
+
+const mkStep = (kind, id, title, command, expected, assertion) => ({
+  kind,
+  id,
+  title,
+  command,
+  expect: expected,
+  assert: assertion,
+})
+
+const GATE = 'pnpm lint && pnpm typecheck && pnpm test && pnpm build'
+
+/** The platform declarations one `pnpm provision cloudflare <env>` run will write, as phrases. */
+function platformSummary(m) {
+  return [
     ...(m.bindings ?? []).map(b => `${b.type} binding ${b.binding ?? b.name}`),
     ...(m.crons ?? []).map(c => `cron "${c.cron ?? c}"`),
     ...(m.apiPrefixes ?? []).map(p => `route prefix ${p}`),
     ...(m.vars ?? []).filter(v => !v.secret).map(v => `[vars] ${v.key ?? v.name ?? v}`),
   ]
+}
+
+const varKey = v => v.key ?? v.name ?? v
+
+/**
+ * Every step an INSTALL still needs once the tooling has done its half, classified.
+ *
+ * `fragments` is the repo-relative path of each `migrations/` file the plugin ships, which is
+ * never copied — the host pastes it into a `--custom` migration of its own.
+ */
+export function planSteps(m, { fragments = [], clashes = [] } = {}) {
+  const steps = []
+  const version = m.version ?? '0.0.0'
+  if (clashes.length > 0) {
+    // HUMAN, and first: `pnpm add` would overwrite the existing range without a word, and the
+    // host's `package.json` is `manual` in `.rocketflare.json`, so nothing reconciles it later.
+    // Choosing a range two dependants can both live with is a judgement, not a command.
+    steps.push(
+      mkStep(
+        'human',
+        'dependency-clash',
+        `Decide the range for ${[...new Set(clashes.map(c => c.name))].join(', ')}`,
+        clashes.map(describeClash).join('; '),
+        'one range in the host package.json that every dependant can live with',
+        'a person chooses — `pnpm add` silently overwrites the existing range, and no kit upgrade' +
+          ' ever reconciles a package.json'
+      )
+    )
+  }
+  const tables = m.schema?.tables ?? []
+  if (tables.length > 0) {
+    steps.push(
+      mkStep(
+        'agent',
+        'schema-migration',
+        `Generate and apply the migration for ${tables.join(', ')}`,
+        `pnpm db:generate --name plugin-${m.id}-${version}   # read the SQL, then: pnpm db:migrate`,
+        `one new migration whose SQL is CREATE TABLE ${tables.join(', ')} and nothing else`,
+        'pnpm plugin check   # fails while a plugin declares tables and no migration names it'
+      )
+    )
+  }
+  if (fragments.length > 0) {
+    steps.push(
+      mkStep(
+        'agent',
+        'data-fragment',
+        `Paste the plugin's ${fragments.length} install fragment(s) into a --custom migration`,
+        `pnpm db:generate --custom --name plugin-${m.id}-install   # paste ${fragments.join(', ')}`,
+        'an empty migration file, then the fragment SQL inside it',
+        'pnpm db:migrate   # it applies, and the rows the fragment seeds are there'
+      )
+    )
+  }
+  const platform = platformSummary(m)
   if (platform.length > 0) {
-    step(
-      'run `pnpm provision cloudflare <env>` for each environment — it creates and writes ' +
-        `${platform.join(', ')} into BOTH tomls`
+    // ONE command per environment rather than a hand edit of two tomls (decision 12). An AGENT
+    // step and not a declarative one because somebody still has to RUN it, against an account,
+    // with credentials — what disappeared is every byte of the toml, not the invocation.
+    steps.push(
+      mkStep(
+        'agent',
+        'provision',
+        "Create and declare this plugin's platform resources, per environment",
+        'pnpm provision cloudflare staging && pnpm provision cloudflare production',
+        `${platform.join(', ')} written into BOTH tomls; ids patched per environment`,
+        'REQUIRE_PROVISIONED=1 pnpm --filter @rocketflare/web test:config'
+      )
     )
   }
   for (const v of (m.vars ?? []).filter(v => v.secret)) {
-    const key = v.key ?? v.name ?? v
-    // A secret never goes in a toml — not even the staging one — so this is its own sentence
-    // rather than a parenthesis on the one above.
-    step(
-      `add \`${key}=\` to apps/web/.dev.vars.example and apps/web/.dev.vars, then ` +
-        `run \`pnpm provision secrets <env>\` — a secret is never a [vars] key`
+    const key = varKey(v)
+    // The KEY and the VALUE are two different kinds, and splitting them is the point: declaring
+    // the key is mechanical and checkable, while the value is a credential only a person has.
+    steps.push(
+      mkStep(
+        'agent',
+        `secret-key:${key}`,
+        `Declare the secret ${key} — the key only, never a [vars] entry`,
+        `add \`${key}=\` to apps/web/.dev.vars.example`,
+        `${key} listed in .dev.vars.example and in NEITHER wrangler toml`,
+        `grep -q '^${key}=' apps/web/.dev.vars.example`
+      ),
+      mkStep(
+        'human',
+        `secret-value:${key}`,
+        `Set a value for ${key}`,
+        'pnpm provision secrets <env>   # read from your shell or apps/web/.provision.env',
+        `${key} in \`wrangler secret list\` for that environment`,
+        'a person supplies the credential; nothing can derive it'
+      )
     )
   }
-  for (const e of m.workerExports ?? []) {
-    step(`export { ${e} } from its plugin in apps/web/src/worker.ts (a DO or Workflow class)`)
-  }
-  step('pnpm lint && pnpm typecheck && pnpm test && pnpm build')
+  steps.push(
+    mkStep(
+      'agent',
+      'gate',
+      'Run the gate',
+      GATE,
+      'all four commands exit 0',
+      'the exit code of the last command is 0'
+    )
+  )
+  return steps
+}
 
-  if (plan.verify) lines.push('', "Verify (from the plugin's own note)", ...indent(plan.verify))
+/**
+ * The steps a REMOVE still needs. Most are human, and each destroys something: a migration full of
+ * `DROP TABLE`, the `--archive` copy taken (or knowingly not taken) before it, a `deleted_classes`
+ * migration that takes a Durable Object namespace and everything stored in it, and live Cloudflare
+ * resources that may still hold somebody's data.
+ */
+export function removeSteps(m, { archive = false, migrationTag = null } = {}) {
+  const steps = []
+  const tables = m.schema?.tables ?? []
+  if (tables.length > 0 && archive) {
+    steps.push(
+      mkStep(
+        'human',
+        'archive',
+        `Copy ${tables.join(', ')} into schema "archive" BEFORE they are dropped`,
+        'pnpm db:migrate   # applies the --custom archive migration `plugin remove --archive` wrote',
+        'each table copied into schema "archive"; `public` untouched until the drop',
+        'a person decides whether this data is worth keeping — skipping it is not reversible'
+      )
+    )
+  }
+  if (tables.length > 0) {
+    steps.push(
+      mkStep(
+        'human',
+        'drop-migration',
+        `Generate and apply the migration that DROPS ${tables.join(', ')}`,
+        `pnpm db:generate --name plugin-${m.id}-remove   # read the SQL, then: pnpm db:migrate`,
+        `DROP TABLE for ${tables.join(', ')} and nothing else`,
+        'a person reads a migration containing DROP before it runs'
+      )
+    )
+  }
+  const doBindings = (m.bindings ?? []).filter(b => b.type === 'durable_object')
+  if (doBindings.length > 0) {
+    // Both halves are why this is a decision. A DO class that leaves the code with no
+    // `deleted_classes` migration makes `wrangler deploy` REFUSE the whole script — and the
+    // migration itself deletes the namespace and its storage.
+    steps.push(
+      mkStep(
+        'human',
+        'do-migration',
+        `Retire the Durable Object class(es) ${doBindings.map(b => b.className).join(', ')}`,
+        `add to BOTH tomls:  [[migrations]] tag = "${migrationTag ?? `plugin-${m.id}-v2`}"  ` +
+          `deleted_classes = [${doBindings.map(b => `"${b.className}"`).join(', ')}]`,
+        'the tag appended AFTER every existing one — never renumbered, never rewritten',
+        'a person accepts that this deletes the namespace and everything stored in it'
+      )
+    )
+  }
+  const platform = platformSummary(m)
+  // `platformSummary` already names every binding, a Durable Object's included.
+  if (platform.length > 0) {
+    steps.push(
+      mkStep(
+        'human',
+        'deprovision',
+        "Remove this plugin's blocks from both tomls and its resources from Cloudflare",
+        `remove ${platform.join(', ')} from BOTH tomls, then delete the resources`,
+        "both tomls free of the plugin's blocks; the parity test still green",
+        'a live queue or bucket may hold data — nothing deletes one because a directory went'
+      )
+    )
+  }
+  const deps = Object.entries(m.dependencies ?? {}).filter(
+    ([, d]) => Object.keys(d ?? {}).length > 0
+  )
+  for (const [pkg, d] of deps) {
+    steps.push(
+      mkStep(
+        'agent',
+        `dependencies:${pkg}`,
+        `Drop ${pkg}'s dependencies on this plugin, if nothing else uses them`,
+        `pnpm --dir ${pkg} remove ${Object.keys(d).join(' ')}`,
+        'the packages gone from that package.json',
+        GATE
+      )
+    )
+  }
+  steps.push(
+    mkStep('agent', 'gate', 'Run the gate', GATE, 'all four commands exit 0', 'the exit code is 0')
+  )
+  return steps
+}
+
+const KIND_HEADING = {
+  agent: 'Agent steps — run the command, then check the assertion',
+  human: 'Human steps — a DECISION. Nothing here is automatable; the tooling stops',
+}
+
+/** The steps as plan lines, grouped by kind so a human step cannot read as one more command. */
+export function renderSteps(steps, heading = 'Steps — nothing below is done for you') {
+  const lines = ['', heading]
+  for (const kind of ['human', 'agent']) {
+    const group = steps.filter(s => s.kind === kind)
+    if (group.length === 0) continue
+    lines.push('', `  ${KIND_HEADING[kind]}`)
+    group.forEach((s, i) => {
+      lines.push(
+        `    ${i + 1}. ${s.title}`,
+        `       run     ${s.command}`,
+        `       expect  ${s.expect}`,
+        `       assert  ${s.assert}`
+      )
+    })
+  }
   return lines
+}
+
+/**
+ * The install plan as DATA — `pnpm plugin add --json`. The same facts as the text, in a shape
+ * where a `human` step is a field rather than a paragraph somebody has to notice.
+ */
+export function addPlanJson(plan) {
+  const m = plan.manifest
+  const fragments = plan.files.filter(f => f.role === 'fragment').map(f => f.path)
+  return {
+    plugin: { id: m.id, version: m.version ?? null, label: m.label ?? m.id },
+    source: plan.source,
+    host: plan.host,
+    vendored: plan.vendored,
+    problems: plan.problems,
+    installable: plan.problems.length === 0,
+    files: {
+      copied: plan.files.filter(f => f.role === 'copy' || f.role === 'note').length,
+      byRoot: plan.byRoot,
+      fragments,
+      refused: plan.files.filter(f => f.role === 'refused').map(f => f.path),
+    },
+    barrels: plan.barrels.map(kind => ({
+      kind,
+      file: BARRELS[kind].file,
+      lines: barrelLines(kind, m.id),
+    })),
+    dependencies: m.dependencies ?? {},
+    dependencyClashes: (plan.clashes ?? []).map(c => ({ ...c, message: describeClash(c) })),
+    coreEdits: [...coreEditsByFile(m)].map(([file, edits]) => ({
+      file,
+      lines: edits.flatMap(e => e.lines),
+    })),
+    steps: planSteps(m, { fragments, clashes: plan.clashes ?? [] }),
+    verify: plan.verify ?? null,
+  }
 }
 
 const indent = text =>
@@ -703,4 +1106,504 @@ export function renderList(surfaces, { sidecarIds = [] } = {}) {
       `${s.installedAt ?? '?'}${sidecarIds.includes(s.id) ? '  (local)' : ''}`
     ).trimEnd()
   })
+}
+
+// ---------------------------------------------------------------- the audit
+
+/**
+ * **`pnpm plugin check` is the agent's oracle, so every failure carries the EDIT.**
+ *
+ * It used to say what was wrong and stop there, which is right for a person with `reference.md`
+ * open beside them and useless to an agent, who has only the line. Installs are performed by
+ * agents as often as by people now — the same observation that retired "by hand" from the step
+ * taxonomy above — so a diagnostic naming a problem without naming its fix is the same non-control
+ * as a printed instruction nobody performs.
+ *
+ * One line: `<file>:<line> <what is wrong> — <the exact change>`. The line number is there
+ * whenever the thing complained about is IN a file at a place (a manifest key), and absent when
+ * the complaint is that a file, a test or an export does not exist at all: a fabricated line
+ * number sends a reader somewhere real and wrong, which is worse than sending them nowhere.
+ */
+export function renderDiagnostic({ file, line = null, problem, fix }) {
+  return `${line ? `${file}:${line}` : file} ${problem} — ${fix}`
+}
+
+/**
+ * The 1-based line of `"a"."b"."c"` in a JSON source, or `null` when the path is not there.
+ *
+ * Textual rather than a parse, deliberately: `JSON.parse` throws position away, and the whole
+ * point of this number is to put a cursor on the key somebody has to edit. It walks the path
+ * FORWARDS, so `schema.tables` is found after the `"schema"` line rather than wherever the word
+ * first appears, and it answers the deepest segment it reached — a partially present path still
+ * points somewhere useful instead of nowhere.
+ */
+export function jsonKeyLine(source, keyPath) {
+  const lines = String(source).split('\n')
+  let from = 0
+  let found = null
+  for (const part of String(keyPath).split('.')) {
+    const re = new RegExp(`"${escapeRe(part)}"\\s*:`)
+    const at = lines.findIndex((l, i) => i >= from && re.test(l))
+    if (at === -1) return found
+    found = at + 1
+    from = at
+  }
+  return found
+}
+
+/**
+ * Whether a check a PRE-CONTRACT plugin cannot satisfy fails the audit or merely reports it.
+ *
+ * `requires.pluginApi` is the opt-in the import rule already uses (`tests/helpers/plugins.ts`),
+ * and this is the same two-tier reading for the same reason: `pnpm test` runs the gate a second
+ * time with `defaultPlugins` installed at their pinned refs, and those releases predate every rule
+ * added after them. A single tier either breaks CI on a plugin nobody can retroactively change, or
+ * stays advisory for everyone and so checks nothing.
+ *
+ * Declaring the contract is what moves a plugin from the second group to the first, and it happens
+ * in the release that migrates it. Not a transition hack — it is the permanent rule for a
+ * third-party plugin, whose CI resolves its matrix from RELEASED kit tags and therefore cannot
+ * declare a version that does not exist yet.
+ */
+export function auditSeverity(manifest) {
+  const declared = manifest?.requires?.pluginApi
+  return typeof declared === 'string' && declared.trim() !== '' ? 'fail' : 'warn'
+}
+
+const isStr = v => typeof v === 'string' && v.trim() !== ''
+const isStrArray = v => Array.isArray(v) && v.every(x => typeof x === 'string')
+const isObj = v => typeof v === 'object' && v !== null && !Array.isArray(v)
+
+/**
+ * Every field of a plugin manifest that is missing, mistyped or unreadable — each naming the FIELD
+ * and its legal values, never "invalid manifest".
+ *
+ * A manifest is the one file in a plugin that nothing else validates: the trees are typechecked,
+ * the barrels are written by the tooling, the tables are migrated by the host. This is read with
+ * `JSON.parse` and then indexed into, so a key spelled wrong is silence — and the silence surfaces
+ * as a binding missing after a deploy, or a plugin nothing ever gates against a kit version.
+ * `pluginPlatformProblems` owns the `bindings[]` half and is called from here, so a caller asks
+ * once and gets one list.
+ */
+export function pluginManifestProblems(manifest) {
+  const out = []
+  const bad = (field, problem, fix) => out.push({ field, problem, fix })
+  if (!isObj(manifest)) {
+    bad('', 'is not a JSON object', 'the manifest is one object with an "id" at its top level')
+    return out
+  }
+  const m = manifest
+
+  const idProblem = pluginIdProblem(m.id)
+  if (idProblem) {
+    bad(
+      'id',
+      `has no usable id (${idProblem})`,
+      `set "id" to a namespace matching ${PLUGIN_ID_RE.source}`
+    )
+  }
+
+  if (m.version === undefined) {
+    bad(
+      'version',
+      'declares no version',
+      'add "version": "0.1.0" — defaultPlugins pins it and the surface is compared to it'
+    )
+  } else if (!(isStr(m.version) && /^\d+\.\d+\.\d+/.test(m.version))) {
+    bad(
+      'version',
+      `declares version ${JSON.stringify(m.version)}`,
+      'set "version" to "MAJOR.MINOR.PATCH"'
+    )
+  }
+
+  for (const [field, label] of [
+    ['repo', 'the git URL this plugin is fetched from again'],
+    ['subdir', 'the directory inside that repository, or ""'],
+    ['label', 'the human name the plan prints'],
+    ['anchor', 'the manifest path inside a host'],
+  ]) {
+    if (m[field] !== undefined && typeof m[field] !== 'string') {
+      bad(field, `declares ${field} as ${typeof m[field]}`, `set "${field}" to a string — ${label}`)
+    }
+  }
+  if (typeof m.repo === 'string' && m.repo.trim() === '') {
+    bad(
+      'repo',
+      'declares an empty repo',
+      'set "repo" — a plugin nobody can fetch again cannot be upgraded'
+    )
+  }
+
+  for (const field of ['paths', 'registries', 'apiPrefixes', 'workerExports', 'migrations']) {
+    if (m[field] !== undefined && !isStrArray(m[field])) {
+      bad(field, `declares ${field} as other than an array of strings`, `set "${field}" to []`)
+    }
+  }
+
+  if (m.requires !== undefined && !isObj(m.requires)) {
+    bad('requires', 'declares requires as other than an object', 'set "requires" to { "kit": "…" }')
+  } else {
+    const r = m.requires ?? {}
+    if (r.kit !== undefined) {
+      if (!isStr(r.kit)) {
+        bad(
+          'requires.kit',
+          'declares a non-string kit range',
+          'set "requires.kit" to a range like ">=0.6.0 <1.0.0"'
+        )
+      } else if (satisfiesResult('0.0.0', r.kit).problem) {
+        bad(
+          'requires.kit',
+          `declares the range ${JSON.stringify(r.kit)}, which this kit cannot read`,
+          'use >=, <=, <, >, =, ^, ~ or *; alternatives are separated by ||'
+        )
+      }
+    }
+    if (r.surfaces !== undefined && !isStrArray(r.surfaces)) {
+      bad(
+        'requires.surfaces',
+        'declares surfaces as other than an array of strings',
+        'set "requires.surfaces" to []'
+      )
+    }
+    if (r.plugins !== undefined && !Array.isArray(r.plugins)) {
+      bad(
+        'requires.plugins',
+        'declares plugins as other than an array',
+        'set "requires.plugins" to []'
+      )
+    } else {
+      for (const entry of r.plugins ?? []) {
+        if (!isStr(entry) && !(isObj(entry) && isStr(entry.id))) {
+          bad(
+            'requires.plugins',
+            `carries the entry ${JSON.stringify(entry)}`,
+            'each entry is "<id>" or "<id>@<range>"'
+          )
+        }
+      }
+    }
+    // Checked as a STRING and no further, deliberately: comparing it to the contract's
+    // `PLUGIN_API.minSupported` belongs to the module that owns those numbers, and two
+    // implementations of one comparison is worse than none.
+    if (r.pluginApi !== undefined && !isStr(r.pluginApi)) {
+      bad(
+        'requires.pluginApi',
+        'declares a non-string pluginApi',
+        'set "requires.pluginApi" to the contract version it was written against, e.g. "1"'
+      )
+    }
+  }
+
+  if (m.dependencies !== undefined && !isObj(m.dependencies)) {
+    bad(
+      'dependencies',
+      'declares dependencies as other than an object',
+      'set "dependencies" to { "apps/web": {} }'
+    )
+  } else {
+    for (const [pkg, deps] of Object.entries(m.dependencies ?? {})) {
+      if (!isObj(deps) || Object.values(deps).some(v => typeof v !== 'string')) {
+        bad(
+          'dependencies',
+          `declares ${pkg} as other than a name → version map`,
+          `set "dependencies"."${pkg}" to { "<package>": "<range>" }`
+        )
+      }
+    }
+  }
+
+  if (m.bindings !== undefined && !Array.isArray(m.bindings)) {
+    bad('bindings', 'declares bindings as other than an array', 'set "bindings" to []')
+  } else {
+    for (const b of m.bindings ?? []) {
+      if (!isObj(b)) {
+        bad(
+          'bindings',
+          `carries the entry ${JSON.stringify(b)}`,
+          'each binding is { "type", "binding", … }'
+        )
+      }
+    }
+    for (const problem of pluginPlatformProblems(m)) {
+      bad('bindings', problem, `supported types are ${SUPPORTED_PLUGIN_BINDING_TYPES.join(', ')}`)
+    }
+  }
+
+  if (m.crons !== undefined && !Array.isArray(m.crons)) {
+    bad('crons', 'declares crons as other than an array', 'set "crons" to []')
+  } else {
+    for (const c of m.crons ?? []) {
+      const expression = isObj(c) ? c.cron : c
+      if (!isStr(expression) || expression.trim().split(/\s+/).length !== 5) {
+        bad(
+          'crons',
+          `carries the expression ${JSON.stringify(expression ?? c)}`,
+          'a cron is five whitespace-separated fields ("15 * * * *") — the string the toml gets'
+        )
+      }
+    }
+  }
+
+  if (m.vars !== undefined && !Array.isArray(m.vars)) {
+    bad('vars', 'declares vars as other than an array', 'set "vars" to []')
+  } else {
+    for (const v of m.vars ?? []) {
+      const key = isObj(v) ? (v.key ?? v.name) : v
+      if (!isStr(key)) {
+        bad(
+          'vars',
+          `carries the entry ${JSON.stringify(v)}`,
+          'each var is { "key", "example"?, "secret"? }'
+        )
+        continue
+      }
+      if (isObj(v) && v.secret !== undefined && typeof v.secret !== 'boolean') {
+        bad(
+          'vars',
+          `declares ${key} with a non-boolean secret`,
+          `set ${key}'s "secret" to a boolean`
+        )
+      }
+    }
+  }
+
+  if (m.schema !== undefined && !isObj(m.schema)) {
+    bad(
+      'schema',
+      'declares schema as other than an object',
+      'set "schema" to { "tables": [], "rlsExcluded": [] }'
+    )
+  } else {
+    for (const field of ['tables', 'rlsExcluded']) {
+      const value = m.schema?.[field]
+      if (value !== undefined && !isStrArray(value)) {
+        bad(
+          `schema.${field}`,
+          `declares ${field} as other than an array of strings`,
+          `set "schema"."${field}" to []`
+        )
+      }
+    }
+  }
+
+  if (m.coreEdits !== undefined && !Array.isArray(m.coreEdits)) {
+    bad('coreEdits', 'declares coreEdits as other than an array', 'set "coreEdits" to []')
+  } else {
+    for (const e of m.coreEdits ?? []) {
+      if (!isObj(e) || !isStr(e.file) || !isStr(e.after) || !isStrArray(e.lines)) {
+        bad(
+          'coreEdits',
+          `carries the entry ${JSON.stringify(e)}`,
+          'each edit is { "file", "after", "lines": [] } — anchored on text, never a line number'
+        )
+      }
+    }
+  }
+
+  return out
+}
+
+/**
+ * The value names a `worker-exports.ts` exports, and whether they can be known at all.
+ *
+ * `opaque` is an `export * from './x'`, whose names need the module resolved to enumerate. Both
+ * directions of the worker-barrel check are skipped for one rather than guessed: reporting
+ * "declares OrdersHub and does not export it" against a star re-export that plainly does would
+ * teach an author to distrust the whole audit.
+ */
+export function workerExportNames(source) {
+  const text = String(source)
+  const names = new Set()
+  for (const m of text.matchAll(/export\s*\{([^}]*)\}/g)) {
+    for (const part of m[1].split(',')) {
+      const spec = part.trim()
+      if (spec === '' || spec.startsWith('type ')) continue
+      const halves = spec.split(/\s+as\s+/)
+      names.add((halves[1] ?? halves[0]).trim())
+    }
+  }
+  const declaration =
+    /export\s+(?:default\s+)?(?:abstract\s+)?(?:class|const|let|var|function\*?)\s+([A-Za-z_$][\w$]*)/g
+  for (const m of text.matchAll(declaration)) names.add(m[1])
+  names.delete('')
+  return { names: [...names], opaque: /export\s+\*/.test(text) }
+}
+
+/**
+ * A source with its comments removed.
+ *
+ * **Shared by every check that SCANS source**, because the failure mode is one and it is
+ * invisible: a check a comment can talk its way past reports SUCCESS. The fixture written to prove
+ * the `onTenantDeleted` rule carried the sentence "declares no `hooks.onTenantDeleted`" in its own
+ * doc comment and passed on it; a test file whose header says "tenant isolation" would have
+ * satisfied the isolation check the same way. Prose about a rule is not the rule being kept.
+ */
+function stripComments(source) {
+  return (
+    String(source)
+      .replace(/\/\*[\s\S]*?\*\//g, ' ')
+      // `[^:]` so a `https://…` inside a string is not mistaken for a line comment.
+      .replace(/(^|[^:])\/\/[^\n]*/g, '$1')
+  )
+}
+
+/**
+ * Structural evidence that a test file proves cross-tenant isolation.
+ *
+ * **This proves a test EXISTS, not that it is right**, and the diagnostic says so. A structural
+ * check cannot read a predicate — but it does not have to be alone: `@testkit`'s builders refuse a
+ * fake `db` (they require a handle blessed by `setupTestDatabase`, tracked in a `WeakSet` rather
+ * than by shape), so the cheap wrong version — a stub answering `[]` to "tenant B sees no rows" —
+ * is already hard to write. Two signals together, because either alone is noise: the file must
+ * CREATE at least two organisations, and it must NAME the second one or the property.
+ */
+export function isolationEvidence(source) {
+  // Comments stripped FIRST: a commented-out `createTestTenant(db)`, or a header paragraph about
+  // tenant isolation, is talk about the test rather than the test.
+  const text = stripComments(source)
+  const named = /describe\(\s*['"`][^'"`]*isolation/i.test(text)
+  // No word boundary AFTER `tenant`: the usual spelling is `otherTenantId` / `otherTenantCookie`,
+  // and a trailing `\b` refuses every one of them.
+  const secondTenant = /\b(?:other|second|another|foreign)[A-Za-z]*[Tt]enant|\btenantB\b/.test(text)
+  const tenantsCreated = [...text.matchAll(/createTestTenant(?:WithUser)?\s*\(/g)].length
+  return { named, secondTenant, tenantsCreated, ok: tenantsCreated >= 2 && (named || secondTenant) }
+}
+
+/**
+ * Whether a TypeScript source really DECLARES `name` as a property or method, rather than merely
+ * mentioning it.
+ *
+ * Comments are stripped first, and that is not belt-and-braces: the fixture written to prove the
+ * `onTenantDeleted` check works carried the sentence *"declares no `hooks.onTenantDeleted`"* in its
+ * own doc comment, and a substring search was satisfied by it. A check a comment can talk its way
+ * past is worse than no check, because it reports success.
+ */
+export function declaresProperty(source, name) {
+  return new RegExp(`\\b${escapeRe(name)}\\s*[:(]`).test(stripComments(source))
+}
+
+/**
+ * Where an install's `subdir` comes from, in precedence order: the flag somebody typed, then the
+ * manifest, then where the source was opened.
+ *
+ * **`||` and not `??`, and that is the whole function.** Nullish-coalescing falls through only on
+ * `null`/`undefined`, so a manifest shipping `"subdir": ""` — which every root-level plugin does —
+ * BEAT an explicit `--subdir`, and the surface was recorded as root-relative. Nothing fails at
+ * install; it fails at the next `pnpm plugin upgrade`, which diffs and applies against that path
+ * and finds the plugin nowhere. Hit for real installing from a monorepo.
+ */
+export function resolveSubdir({ flag = null, manifest = null, source = null } = {}) {
+  const trim = v => (typeof v === 'string' ? v.replace(/^\/+|\/+$/g, '') : '')
+  return trim(flag) || trim(manifest) || trim(source) || ''
+}
+
+/** The range a package is pinned at in a host `package.json`, either section, or null. */
+const rangeIn = (json, name) => json?.dependencies?.[name] ?? json?.devDependencies?.[name] ?? null
+
+/**
+ * Declared dependencies that are not in the host package's `package.json`, or are at another range.
+ *
+ * **Nothing checked this, and both halves fail silently.** `plugin add --apply` really runs
+ * `pnpm --dir <pkg> add <name>@<range>`, so a plugin whose install failed part-way — or whose
+ * dependency was dropped later by `remove`, which deliberately only PRINTS `pnpm remove` — reports
+ * as perfectly healthy while its imports cannot resolve. `have: null` is the missing case and is a
+ * failure; a different range is reported separately, because the host's `package.json` is listed
+ * under `manual` in `.rocketflare.json` and an operator is entitled to have pinned it themselves.
+ */
+export function missingDependencies(manifest, packageJsons = {}) {
+  const out = []
+  for (const [pkg, deps] of Object.entries(manifest?.dependencies ?? {})) {
+    for (const [name, range] of Object.entries(deps ?? {})) {
+      const have = rangeIn(packageJsons[pkg], name)
+      if (have === null) out.push({ pkg, name, range, have: null })
+      else if (have !== range) out.push({ pkg, name, range, have })
+    }
+  }
+  return out
+}
+
+/**
+ * A dependency this plugin wants at a range the host, or another installed plugin, already has
+ * pinned differently.
+ *
+ * **`pnpm add` silently overwrites the range in the host's `package.json`**, so two plugins wanting
+ * different majors of one package is last-install-wins with nothing said — at the exact moment
+ * somebody is being asked to approve an install that carries full Worker and database access. And
+ * `package.json` is `manual` in `.rocketflare.json`, so no kit upgrade ever reconciles it for
+ * anyone afterwards.
+ *
+ * It WARNS rather than refusing, and the reason is not timidity: a clash is very often the intended
+ * change — a plugin that legitimately needs a newer major of a shared package is how a dependency
+ * moves forward at all — so refusing would make an ordinary upgrade impossible without editing
+ * somebody else's manifest. What it must not be is quiet, so it is surfaced as a **human** step,
+ * where the taxonomy already makes a decision structurally unmissable rather than a sentence in a
+ * paragraph.
+ */
+export function dependencyClashes(manifest, { packageJsons = {}, installed = [] } = {}) {
+  const out = []
+  for (const [pkg, deps] of Object.entries(manifest?.dependencies ?? {})) {
+    for (const [name, range] of Object.entries(deps ?? {})) {
+      const hostRange = rangeIn(packageJsons[pkg], name)
+      if (hostRange && hostRange !== range) {
+        out.push({ pkg, name, range, holder: `${pkg}/package.json`, theirs: hostRange })
+      }
+      for (const other of installed) {
+        if (other.id === manifest.id) continue
+        const theirs = other.dependencies?.[pkg]?.[name]
+        if (theirs && theirs !== range) {
+          out.push({ pkg, name, range, holder: `the '${other.id}' plugin`, theirs })
+        }
+      }
+    }
+  }
+  return out
+}
+
+/** One clash as the sentence both the plan and `--json` show. */
+export const describeClash = c =>
+  `${c.pkg}: ${c.name} — this plugin wants ${c.range}, ${c.holder} has ${c.theirs}`
+
+/**
+ * Tables that two installed plugins both declare.
+ *
+ * **This is the only part of the table-naming rule that is mechanical, and it is the only part that
+ * has to be.** The prefix convention — every table starting with the first hyphen-separated segment
+ * of the plugin's id — is a convention a human picks: nothing anywhere derives a table name from an
+ * id or an id from a table name, so there is no key to check a shape against. What CAN be checked,
+ * and what actually breaks a host, is two plugins claiming one name.
+ *
+ * **Nothing else sees it.** `db/schema/index.ts` answers TS2308 for a duplicated EXPORT NAME, which
+ * is a different fault: two plugins spelling `pgTable('orders', …)` under the symbols `orders` and
+ * `orderRows` compile cleanly, and then drizzle-kit emits DDL for one name twice, `rls-coverage`
+ * reads one policy as covering both, and `pnpm plugin remove` takes the other plugin's table with
+ * it — `archiveSql` and the generated `DROP TABLE` both name the table verbatim, so neither can
+ * tell whose it is.
+ *
+ * It fails unconditionally rather than through `auditSeverity`: the two-tier rule answers "can a
+ * plugin released before this rule existed retroactively satisfy it", and neither plugin here is
+ * non-compliant on its own. The fault is in the COMBINATION, and the host cannot run it either way.
+ *
+ * One entry per plugin involved, so every finding is filed against a manifest somebody can edit.
+ */
+export function tableClashes(manifests = []) {
+  const holders = new Map()
+  for (const m of manifests) {
+    if (!m?.id) continue
+    for (const table of m.schema?.tables ?? []) {
+      if (typeof table !== 'string' || table.trim() === '') continue
+      const ids = holders.get(table) ?? []
+      if (!ids.includes(m.id)) ids.push(m.id)
+      holders.set(table, ids)
+    }
+  }
+  const out = []
+  for (const [table, ids] of [...holders].sort(([a], [b]) => a.localeCompare(b))) {
+    if (ids.length < 2) continue
+    for (const id of [...ids].sort()) {
+      out.push({ table, id, others: ids.filter(other => other !== id).sort() })
+    }
+  }
+  return out
 }

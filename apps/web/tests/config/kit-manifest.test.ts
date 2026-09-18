@@ -25,6 +25,7 @@ import {
   isKitManifest,
   matchesAny,
 } from '../../../../scripts/lib/upgrade-lib.mjs'
+import { RESERVED_PLUGIN_IDS } from '../helpers/plugins'
 
 // A JSON import widens every literal to `string`; the manifest's shape is the lib's contract.
 const committed = rawManifest as unknown as Manifest
@@ -156,6 +157,9 @@ describe('surfaces', () => {
     const installed = existsSync(dir)
       ? readdirSync(dir, { withFileTypes: true })
           .filter(e => e.isDirectory())
+          // `plugins/api/**` is the host's plugin API, not an installed plugin — the same reserved
+          // set that stops anybody taking `api` as a plugin id (D31).
+          .filter(e => !RESERVED_PLUGIN_IDS.has(e.name))
           .map(e => e.name)
       : []
     const declared = new Set(manifest.surfaces.filter(s => s.kind === 'plugin').map(s => s.id))

@@ -22,8 +22,9 @@ import { WORKER_FIRST_PATTERNS } from '@/api/utils/routes/api-prefixes'
 import { pluginSurfaces, readManifest } from '../../../../scripts/lib/manifest.mjs'
 import { patchToml } from '../../scripts/provision/patch-toml'
 import {
+  pluginBindingBlocks,
+  pluginMigrationBlocks,
   pluginParityIssues,
-  pluginResourceName,
   readPluginResources,
   validatePluginManifest,
 } from '../../scripts/provision/plugin-resources'
@@ -287,6 +288,21 @@ describe('wrangler parity: plugin resources', () => {
         { type: 'kv', binding: 'PARITY_FIXTURE_CACHE', name: 'cache' },
         { type: 'queue', binding: 'PARITY_FIXTURE_QUEUE', name: 'jobs', consumer: true },
         { type: 'r2', binding: 'PARITY_FIXTURE_FILES', name: 'files' },
+        // The two that graduated with the sixth barrel (D31): a Workflow whose `name` is
+        // ACCOUNT-scoped, and a Durable Object whose block is identical in both files but which
+        // drags a `[[migrations]]` tag along with it.
+        {
+          type: 'workflow',
+          binding: 'PARITY_FIXTURE_SYNC',
+          name: 'sync',
+          className: 'ParityFixtureSyncWorkflow',
+        },
+        {
+          type: 'durable_object',
+          binding: 'PARITY_FIXTURE_HUB',
+          className: 'ParityFixtureHub',
+          storage: 'sqlite',
+        },
       ],
       crons: ['7 3 * * *'],
       apiPrefixes: ['/parity-fixture-hook'],
@@ -298,18 +314,18 @@ describe('wrangler parity: plugin resources', () => {
     'apps/web/src/plugins/parity-fixture/plugin.json'
   )
 
-  /** Exactly what `applyPluginDeclarations` in scripts/provision.ts writes, for one environment. */
+  /**
+   * Exactly what `applyPluginDeclarations` in scripts/provision.ts writes, for one environment —
+   * through the SAME builders, so this cannot drift from what provisioning actually does. Only the
+   * KV id is substituted, because the test wants to drive both the placeholder and the real-id
+   * cases through one helper.
+   */
   const provisionedText = (text: string, env: 'production' | 'staging', kvId: string) =>
     patchToml(text, {
-      bindings: fixture.bindings.map(b => ({
-        type: b.type,
-        binding: b.binding,
-        pluginId: fixture.id,
-        ...(b.type === 'kv'
-          ? { id: kvId }
-          : { name: pluginResourceName(b.type, app, fixture.id, b.name, env) }),
-        ...(b.consumer ? { consumer: true } : {}),
-      })),
+      bindings: pluginBindingBlocks(app, [fixture], env).map(b =>
+        b.type === 'kv' ? { ...b, id: kvId } : b
+      ),
+      migrations: pluginMigrationBlocks([fixture]),
       crons: fixture.crons,
       workerFirstPrefixes: fixture.apiPrefixes,
       vars: fixture.vars.filter(v => !v.secret).map(v => ({ key: v.key, value: v.example ?? '' })),
@@ -325,16 +341,22 @@ describe('wrangler parity: plugin resources', () => {
   const emptyDocs = { production: {}, staging: {} }
 
   it('unpatched tomls fail every rule `plugin add` is answerable for, in both environments', () => {
-    // 3 bindings + 1 non-secret var, each in both files. The cron and the two run_worker_first
-    // patterns are deliberately NOT here: `plugin add` never writes a toml (D31, decision 12), so a
-    // plugin installed and not yet provisioned is a documented state the ordinary gate must pass.
+    // 5 bindings + 1 non-secret var + the Durable Object's migration tag, each in both files. The
+    // cron and the two run_worker_first patterns are deliberately NOT here: `plugin add` never
+    // writes a toml (D31, decision 12), so a plugin installed and not yet provisioned is a
+    // documented state the ordinary gate must pass. The migration tag IS here, with the blocks,
+    // because the same `provision cloudflare` call writes both and `wrangler deploy` refuses the
+    // whole script for a DO class with no migration creating it.
     const issues = pluginParityIssues(app, [fixture], emptyDocs)
-    expect(issues).toHaveLength(8)
+    expect(issues).toHaveLength(14)
     for (const env of ['production', 'staging'])
       for (const fragment of [
         '[[kv_namespaces]] has no binding "PARITY_FIXTURE_CACHE"',
         '[[queues.producers]] has no binding "PARITY_FIXTURE_QUEUE"',
         '[[r2_buckets]] has no binding "PARITY_FIXTURE_FILES"',
+        '[[workflows]] has no binding "PARITY_FIXTURE_SYNC"',
+        '[[durable_objects.bindings]] has no binding "PARITY_FIXTURE_HUB"',
+        '[[migrations]] has no tag "plugin-parity-fixture-v1"',
         '[vars] is missing "PARITY_FIXTURE_MAX_ITEMS"',
       ])
         expect(issues).toContainEqual(expect.stringContaining(`${env}: ${fragment}`))
@@ -345,11 +367,11 @@ describe('wrangler parity: plugin resources', () => {
   })
 
   it('under REQUIRE_PROVISIONED the crons and prefixes are demanded too', () => {
-    // The deploy-time half: the 8 above, plus 1 cron and 2 run_worker_first patterns in both files.
+    // The deploy-time half: the 14 above, plus 1 cron and 2 run_worker_first patterns in both files.
     // (The consumer check is not among them: a missing producer stops at one message per binding
     // rather than piling a second on top of it.)
     const issues = pluginParityIssues(app, [fixture], emptyDocs, { requireProvisioned: true })
-    expect(issues).toHaveLength(14)
+    expect(issues).toHaveLength(20)
     for (const env of ['production', 'staging'])
       for (const fragment of [
         '[triggers] crons is missing "7 3 * * *"',
@@ -377,6 +399,10 @@ describe('wrangler parity: plugin resources', () => {
     for (const [section, key] of [
       ['queues.producers', 'queue'],
       ['r2_buckets', 'bucket_name'],
+      // A plugin's Workflow name is account-scoped exactly as the kit's is, and for the same
+      // reason: the last script to deploy a name owns it, and runs the other environment's
+      // instances under its own bindings (docs/DEPLOY.md).
+      ['workflows', 'name'],
     ] as const) {
       const p = names(d.production, section, key)
       const s = names(d.staging, section, key)

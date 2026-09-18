@@ -25,11 +25,10 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { MANIFEST_FILE } from './lib/manifest.mjs'
 import { PLUGIN_MANIFEST_FILE } from './lib/plugin-lib.mjs'
+import { behaviourFiles } from './lib/upgrade-lib.mjs'
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const NOTE = 'docs/upgrades/unreleased.md'
-const WATCHED = /^(apps|packages)\//
-const EXEMPT = /(^|\/)(tests?|__tests__)\/|\.test\.(ts|tsx)$|\.md$/
 
 const readStdin = () => {
   try {
@@ -76,7 +75,9 @@ function main() {
     : staged
 
   if (all.includes(NOTE)) return
-  const behaviour = all.filter(f => WATCHED.test(f) && !EXEMPT.test(f))
+  // The same predicate `scripts/release-check.mjs --unreleased` applies in CI: this hook exists to
+  // catch the note BEFORE the gate does, which it can only do by agreeing with it exactly.
+  const behaviour = behaviourFiles(all)
   if (behaviour.length === 0) return
 
   process.stdout.write(

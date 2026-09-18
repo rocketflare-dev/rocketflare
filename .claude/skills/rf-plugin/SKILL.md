@@ -9,10 +9,13 @@ argument-hint: "[add <repo|path> | upgrade <id> | remove <id> | list | check]"
 A plugin is a **git repository copied into this app**, exactly like the kit itself: never an npm
 package, never a build artefact. Its code lands as ordinary source under three roots
 (`apps/web/src/plugins/<id>/`, `packages/shared/src/plugins/<id>/`, `apps/cli/src/plugins/<id>/`),
-translated into this app's own vocabulary on the way in, and it reaches the host through five
-barrel files and nothing else. `docs/CONCEPTS.md` §16 is the design; `apps/web/src/plugins/CLAUDE.md`
-is the seam; `reference.md` beside this file is the manifest shape, the exit codes and what each
-command verifies.
+translated into this app's own vocabulary on the way in, and it reaches the host through six
+barrel files and nothing else. In the other direction it imports the host only through the DECLARED
+entries — `@/plugins/api` (the context family), `@/db/schema/kit`, the shared and CLI entries,
+`@testkit/*` — and receives everything else as injected context; `docs/plugin-api.md` is the
+generated reference for that surface. `docs/CONCEPTS.md` §16 is the design;
+`apps/web/src/plugins/CLAUDE.md` is the seam; `reference.md` beside this file is the manifest shape,
+the exit codes and what each command verifies.
 
 **The rule that matters most:** installing a plugin gives it full Worker and database access, so it
 is as trusting as merging a pull request. Every command prints a plan and stops. **You show the
@@ -48,13 +51,17 @@ blocks and **"Nothing written. Read the plan, then re-run with --apply to instal
 - `Requirements` — three `✔` lines (`kit <version> satisfies <range>`, `surfaces`, `plugins`) or one
   `✖` per unmet requirement. **Any `✖` is exit 6 and nothing is written** — report it and stop.
 - `Files (n)` — a count per root, plus `(not copied) migrations/` for any install fragment.
-- `Barrel lines` — the exact line each of the five barrels gains.
+- `Barrel lines` — the exact line each of the six barrels gains (the sixth, `worker-exports.ts`,
+  only when the plugin ships a Durable Object or Workflow class).
 - `Dependencies` — what will be installed into which package.
-- **`Then, by hand — nothing below is done for you`** — the numbered steps in step 3's table.
+- **`Steps — nothing below is done for you`** — split into **Human steps** (a decision: the
+  tooling stops and waits) and **Agent steps** (a command PLUS the assertion that proves it ran).
+  Each carries `run` / `expect` / `assert`. `--json` emits the same list with a `kind` on every
+  entry, which is the form to use when you are driving this rather than reading it.
 - `Verify` — the plugin's own note, if it ships one.
 
-Summarise it in three or four lines — what the plugin is, what it adds, what tables it wants, which
-by-hand rows apply — then **ask** (`AskUserQuestion`): install it, or stop. On yes:
+Summarise it in three or four lines — what the plugin is, what it adds, what tables it wants, and
+**every `human` step it will need** — then **ask** (`AskUserQuestion`): install it, or stop. On yes:
 
 ```
 pnpm plugin add <repo|path>[@ref] --apply
@@ -64,19 +71,32 @@ Expect `✔ n file(s) copied and translated`, `✔ n barrel line(s) written`, `�
 recorded in .rocketflare.json`. Then do step 3 — **the app does not typecheck or run until the
 tables exist.**
 
-## 3. The by-hand rows the plan printed
+## 3. The steps the plan printed
 
-The script refuses these deliberately. Each one appears in the plan only when the plugin declares
-it; work through the ones that did, in the order printed.
+The script does not do these, and each says which KIND it is. An **agent** step is an instruction
+plus a check — run the command, then run the assertion. A **human** step is a decision: stop, and
+ask. Each appears only when the plugin declares the thing it is about.
 
-| What | How | Expect | What you change |
-|---|---|---|---|
-| **The migration** (`schema.tables` declared) | `pnpm db:generate --name plugin-<id>-<version>`, **read the SQL**, then `pnpm db:migrate` | `CREATE TABLE` for each declared table, at YOUR migration index, in YOUR journal | Nothing by hand. Never copy a migration from the plugin repo — a foreign snapshot teaches drizzle a current state that never heard of your tables, and your next `db:generate` drops them |
-| **An install fragment** (`migrations/` in the repo) | `pnpm db:generate --custom --name plugin-<id>-install`, then paste the named file into it | an empty custom migration to fill | The data half only (backfills, extensions, triggers) — DDL still comes from the schema |
-| **Bindings, crons, route prefixes, non-secret `[vars]`** | `pnpm provision cloudflare <env>` per environment | `plugins: <id> → <BINDING>=<app>-<id>-<name>[-staging]`, then `<toml>: plugin declarations written` for BOTH tomls | Nothing by hand. You never type a resource id into a toml and never edit one while a phase runs (`/rf-provision`) |
-| **A `vars` entry marked `secret`** | add `KEY=` to `apps/web/.dev.vars.example` **and** `apps/web/.dev.vars`, then `pnpm provision secrets <env>` | the key listed by `wrangler secret list` for that environment | The two files by hand. A secret is never a `[vars]` key — not even in staging |
-| **`workerExports`** (a Durable Object or Workflow class) | add `export { <Class> } from './plugins/<id>/…'` to `apps/web/src/worker.ts` | `pnpm typecheck` green, the class named in both tomls' `[[durable_objects]]`/`[[workflows]]` after provisioning | That one export line. `api/index.ts` exports the Hono app only — the classes live in `worker.ts` |
-| **The gate** | `pnpm lint && pnpm typecheck && pnpm test && pnpm build` | exit 0 | Nothing. A failure here is the install, not the kit — read it before committing |
+Nothing about the barrel lines, the bindings, the crons, the route prefixes, the `[vars]` keys or a
+Durable Object's `[[migrations]]` tag is here any more: those are **declarative**, written by
+`plugin add` and `pnpm provision cloudflare <env>`, and a step that has become declarative is
+removed rather than reworded.
+
+| What | Kind | How | Expect | What you change |
+|---|---|---|---|---|
+| **The migration** (`schema.tables` declared) | agent | `pnpm db:generate --name plugin-<id>-<version>`, **read the SQL**, then `pnpm db:migrate` | `CREATE TABLE` for each declared table, at YOUR migration index, in YOUR journal | Nothing by hand. Never copy a migration from the plugin repo — a foreign snapshot teaches drizzle a current state that never heard of your tables, and your next `db:generate` drops them |
+| **An install fragment** (`migrations/` in the repo) | agent | `pnpm db:generate --custom --name plugin-<id>-install`, then paste the named file into it | an empty custom migration to fill | The data half only (backfills, extensions, triggers) — DDL still comes from the schema |
+| **Bindings, crons, route prefixes, non-secret `[vars]`** | agent | `pnpm provision cloudflare <env>` per environment | `plugins: <id> → <BINDING>=<app>-<id>-<name>[-staging]`, then `<toml>: plugin declarations written` for BOTH tomls | Nothing by hand. You never type a resource id into a toml and never edit one while a phase runs (`/rf-provision`) |
+| **A `vars` entry marked `secret`** — the KEY | agent | add `KEY=` to `apps/web/.dev.vars.example` | the key in that file and in NEITHER toml | One line. A secret is never a `[vars]` key — not even in staging |
+| **A `vars` entry marked `secret`** — the VALUE | **human** | `pnpm provision secrets <env>` | the key listed by `wrangler secret list` for that environment | Nothing you can derive: ask for the credential |
+| **The gate** | agent | `pnpm lint && pnpm typecheck && pnpm test && pnpm build` | exit 0 | Nothing. A failure here is the install, not the kit — read it before committing |
+
+**`workerExports` is no longer a row here.** A Durable Object or Workflow class reaches
+`apps/web/src/worker.ts` through the sixth barrel, `apps/web/src/plugins/worker-exports.ts`, which
+`plugin add` writes — and `pnpm provision cloudflare <env>` writes the matching
+`[[workflows]]` / `[[durable_objects.bindings]]` blocks and the `plugin-<id>-v1` `[[migrations]]`
+tag into both tomls. Removing such a plugin DOES have a human step: a `deleted_classes` migration
+deletes the namespace and everything stored in it.
 
 Then commit: one commit, message `Install plugin <id>@<version>`, so the next upgrade reads against it.
 
@@ -87,9 +107,24 @@ pnpm plugin list
 pnpm plugin check
 ```
 
-`check` exits 1 with one `✖` line per failure and says what is wrong, not how to fix it. The
-failures it can report, and what each means, are in `reference.md`. The common one:
-`<id>: declares tables (…) and no migration names it` — step 3's first row was never done.
+`check` exits 1 with one `✖` line per failure, and **every line carries the edit**:
+`<file>:<line> <what is wrong> — <the exact change>`. Do what the line says; you should not need
+`reference.md` to act on one, only to understand why the rule exists.
+
+Three other kinds of line, none of which changes the exit code:
+
+- `warn: …` — the same shape, for a plugin that declares no `requires.pluginApi`. It was released
+  before the rule existed and cannot retroactively satisfy it. **Report these to the user**: they
+  are real findings, and the fix is usually "migrate the plugin and declare the contract".
+- `note: …` — a state that is legitimately fine (a `defaultPlugins` entry not installed here).
+- `✔ n plugin(s) check out` — nothing to do.
+
+Use `pnpm plugin check --json` when you are driving rather than reading: `{ ok, plugins, failures,
+warnings, notes }`, and every failure carries `file`, `line`, `problem`, `fix` and `assert` as
+fields rather than as a sentence you have to parse.
+
+The common failure is `apps/web/migrations/meta/_journal.json names no migration for '<id>' …` —
+step 3's first row was never done.
 
 ## 5. `upgrade` and `remove`
 
@@ -116,7 +151,7 @@ pnpm db:generate --name plugin-<id>-remove    # → DROP TABLE …; read it, the
 ```
 
 Ask about `--archive` **before** applying — after the drop it is not a choice any more. The plan
-also prints what to deprovision by hand: provisioning creates a plugin's Cloudflare resources but
+also prints what to deprovision as HUMAN steps: provisioning creates a plugin's Cloudflare resources but
 never deletes one, and `pnpm remove` on a dependency is printed rather than run.
 
 ## 6. Authoring a plugin
@@ -148,9 +183,13 @@ plugin repo does not carry it yet. It folds `docs/upgrades/unreleased.md` into
 `docs/upgrades/X.Y.Z.md` and prepends the `CHANGELOG.md` section — the same four headings and
 `previous` chain `pnpm plugin upgrade` walks, which is what makes the release portable at all.
 
-Everything the plugin keys carries its id: tables `<id>_*`, job types `<id>.verb`, the API prefix
+Everything the plugin keys carries its id: tables prefixed with the id's first hyphen-separated
+segment (`example-feature` → `example_*`; `pnpm plugin check` fails when two installed plugins
+declare one table name), job types `<id>.verb`, the API prefix
 `/api/<id>`, query-key roots `<id>:…`, the CLI command `<id>`, feature/prompt/agent keys, and AG-UI
-CUSTOM events under `<id>.`.
+CUSTOM events under `<id>.`. Declare `requires.pluginApi` in its manifest — a whole number, the
+version of the plugin CONTRACT it was written against, and what moves it from *warned* to
+*checked*.
 
 ## 7. Hand back
 
@@ -164,7 +203,7 @@ they type that one themselves), **install another**, or **stop**.
   and database access; this stop is the only review there is.
 - **Never copy a plugin's migration**, and never touch `apps/web/migrations/meta/`. The host
   generates its own once the schema barrel line exists.
-- **Never edit `.rocketflare.json`, `.rocketflare.local.json` or any of the five barrels by hand.**
+- **Never edit `.rocketflare.json`, `.rocketflare.local.json` or any of the six barrels by hand.**
   The script writes them, and `pnpm plugin check` is what proves the two halves agree.
 - **Never write a resource id into a wrangler toml.** A declared binding is `pnpm provision
   cloudflare <env>`'s job, per environment, into both files.

@@ -8,9 +8,12 @@
  * `TENANT_SCOPE_MODE` is ever flipped to `enforce`. `rls-coverage.test.ts` reads the catalog, so a
  * plugin table with no policy fails the host's suite exactly as a kit one would.
  *
- * The only plugin-specific rule is the NAME: `<id>_*` with the hyphens of the id dropped, so two
- * plugins cannot claim one table and `db/schema/index.ts` never has to arbitrate. A collision
- * would surface as TS2308 on the `export *` line rather than as DDL for a shadowed table.
+ * The only plugin-specific rule is the NAME: a prefix derived from the plugin's id — its first
+ * hyphen-separated segment, so `example-feature` owns `example_*` — kept distinct from every other
+ * installed plugin's. The prefix is a convention rather than something the tooling derives, and the
+ * part that IS enforced is the collision: `pnpm plugin check` fails when two installed plugins
+ * declare one table name. Nothing else would see it — TS2308 catches a duplicated EXPORT symbol on
+ * the `export *` line, not a duplicated `pgTable('…')`, which compiles and then emits DDL twice.
  *
  * `ownerUserId` is nullable and `onDelete: 'set null'`: a note outlives the person who wrote it, and
  * the route's own-row check reads `null` as "nobody owns this", which only admins may then edit.
@@ -19,10 +22,12 @@
  */
 import { relations } from 'drizzle-orm'
 import { index, pgTable, text, uuid } from 'drizzle-orm/pg-core'
-import { tenantRef, timestamps } from '../../../../db/schema/_helpers'
-import { tenantIsolation } from '../../../../db/schema/rls'
-import { tenants } from '../../../../db/schema/tenants'
-import { users } from '../../../../db/schema/users'
+// The schema kit (D31): the build-time symbols a table file needs at MODULE scope, which is why
+// they are importable at all rather than injected — a `pgTable(...)` runs when the module is
+// evaluated, long before any request exists, and drizzle-kit reads the result statically. Named
+// relatively rather than as `@/db/schema/kit` because drizzle-kit bundles this file itself and
+// resolves no tsconfig path.
+import { tenantIsolation, tenantRef, tenants, timestamps, users } from '../../../../db/schema/kit'
 
 export const exampleNotes = pgTable(
   'example_notes',

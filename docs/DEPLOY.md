@@ -84,7 +84,8 @@ hidden gap. `apps/web/tests/config/wrangler-parity.test.ts` enforces the table b
 | Analytics Engine (optional) | `ANALYTICS_ENGINE` | `<app>_analytics[_staging]` | declared in toml — deliberately NOT wired by the kit (only a comment in both tomls) |
 | Static Assets | `ASSETS` | — | `[assets] directory = "./dist/ui"` uploaded atomically with each deploy; `run_worker_first` keeps `/api`, `/auth`, `/ws` — and every prefix an installed plugin declares — off the asset router |
 | RLS app role (optional, docs/RLS.md) | `HYPERDRIVE_APP` | `<app>-<env>-app` | `… hyperdrive create … --caching-disabled` |
-| Plugin resources (D31) | whatever the plugin's `plugin.json` declares (`APPROVALS_CACHE`…) | `<app>-<id>-<name>[-staging]`, and `<APP>_<ID>_<NAME>[_STAGING]` for KV | `pnpm provision cloudflare <env>` — it reads each installed plugin's `bindings[]`, creates them through `cf-provision.sh` and patches the block into that environment's toml |
+| Plugin resources (D31) | whatever the plugin's `plugin.json` declares (`APPROVALS_CACHE`…) | `<app>-<id>-<name>[-staging]`, and `<APP>_<ID>_<NAME>[_STAGING]` for KV | `pnpm provision cloudflare <env>` — it reads each installed plugin's `bindings[]`, creates the `kv`/`queue`/`r2` ones through `cf-provision.sh` and patches every block into BOTH tomls |
+| Plugin Workflow / Durable Object (D31) | whatever the plugin declares (`ORDERS_SYNC`, `ORDERS_HUB`…) | workflow `<app>-<id>-<name>[-staging]`; a DO binding has no account-scoped name | **no create step** — `pnpm provision cloudflare <env>` writes `[[workflows]]` / `[[durable_objects.bindings]]` (+ a `plugin-<id>-v1` `[[migrations]]` tag) into both tomls and `wrangler deploy` registers them. The `class_name` resolves through the sixth barrel, `apps/web/src/plugins/worker-exports.ts` |
 
 `pnpm web provision:cloudflare <staging|production> [app] [--apply] [--force]` (the `apps/web`
 script → `scripts/cf-provision.sh`, which `cd`s to `apps/web` itself so it also works as
@@ -101,11 +102,27 @@ with a `sed` line per toml, or with `--apply` writes them into that toml through
 **Plugin resources (D31, Decision 12).** A plugin ships no toml — the two files are the host's,
 always — so its `plugin.json` DECLARES what the account has to provide and `pnpm provision
 cloudflare <env>` applies it. `scripts/provision/plugin-resources.ts` owns the naming rule
-(`<app>-<id>-<name>[-staging]` for a queue or bucket, `<APP>_<ID>_<NAME>[_STAGING]` for a KV
-namespace, mirroring the kit's own `<APP>_RATE_LIMIT[_STAGING]`) and the refusal: a `type` outside
-`kv | queue | r2` names itself in the error rather than being skipped, because a binding quietly
-not created is a Worker that deploys and then 503s. `hyperdrive` is deliberately not offered — the
-host owns the one database.
+(`<app>-<id>-<name>[-staging]` for a queue, bucket or Workflow, `<APP>_<ID>_<NAME>[_STAGING]` for a
+KV namespace, mirroring the kit's own `<APP>_RATE_LIMIT[_STAGING]`) and the refusal: a `type`
+outside `kv | queue | r2 | workflow | durable_object` names itself in the error rather than being
+skipped, because a binding quietly not created is a Worker that deploys and then 503s.
+
+**Two of those five are declared rather than created.** `workflow` and `durable_object` need no
+`wrangler … create`: the block in the toml is the whole registration, and `wrangler deploy` does
+the rest. They are writable at all only because of the sixth barrel (D31) — a `class_name` resolves
+against the named exports of `src/worker.ts`, so until `apps/web/src/plugins/worker-exports.ts`
+made a plugin's class reachable there without anyone editing the entry module, either block would
+have named a class nothing exported, and `wrangler deploy` refuses the whole script for that.
+`d1`, `vectorize` and `analytics_engine` have no such mechanism and stay refused. `hyperdrive` is
+deliberately not offered — the host owns the one database.
+
+A `durable_object` binding also brings a `[[migrations]]` entry, tagged `plugin-<id>-v1` and
+carrying `new_sqlite_classes` or `new_classes` according to the plugin's declared `storage` (which
+is required, because a namespace cannot be migrated between the two). **Those tags are append-only
+and host-owned**, exactly as the SQL migrations are: a tag is the record of what this Worker has
+already told Cloudflare, so it is never renumbered and never rewritten. Removing the plugin takes
+the next free `plugin-<id>-v<n>` with `deleted_classes` — and that one is a HUMAN step, because it
+destroys the namespace and everything stored in it.
 
 The phase writes the DECLARATIONS into **both** tomls first (the binding block with a
 `<PLACEHOLDER>` id, the `crons`, the `[vars]` keys, the `apiPrefixes` in `run_worker_first`), then

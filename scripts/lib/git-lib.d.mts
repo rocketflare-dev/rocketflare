@@ -37,6 +37,11 @@ export function ensureMirror(
   options?: { fetch?: boolean; cwd?: string; warn?: (line: string) => void }
 ): Mirror
 
+/** Where a plugin repository's mirror lives, relative to the repository root. */
+export const PLUGIN_MIRROR_ROOT: string
+/** `<root>/<last segment of repo>.git`. One rule, so two scripts share one clone. */
+export function mirrorDirFor(repo: string, root: string): string
+
 export interface FileChange {
   path: string
   change: Change

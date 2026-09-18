@@ -7,6 +7,13 @@ import { isMarkedIsolated, apiTestFiles as listApiTestFiles } from './tests/help
 
 const alias = {
   '@': path.resolve(__dirname, './src'),
+  /**
+   * The test kit (D31): `@testkit/integration` is the harness, `@testkit/unit` the context
+   * builders. It is registered HERE and in `tsconfig.json`, and deliberately NOT in
+   * `vite.config.ts` — so a `src/` file importing it fails the build instead of shipping the
+   * harness into the browser bundle. `tests/config/testkit-alias.test.ts` pins all three halves.
+   */
+  '@testkit': path.resolve(__dirname, './tests/kit'),
   // Worker-only module: DurableObject / WorkflowEntrypoint base classes. Tests run under Node
   // (real Postgres, `app.request(req, env)` with tests/mocks/bindings.ts), not workerd.
   'cloudflare:workers': path.resolve(__dirname, './tests/mocks/cloudflare-workers.ts'),

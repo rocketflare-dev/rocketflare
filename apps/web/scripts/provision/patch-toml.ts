@@ -28,6 +28,8 @@ export interface TomlPatch {
   workersDevComment?: string
   /** Plugin binding blocks (D31): inserted if absent, updated in place if present. */
   bindings?: BindingBlock[]
+  /** `[[migrations]]` entries appended when the tag is absent; an existing tag is never rewritten. */
+  migrations?: MigrationBlock[]
   /** Cron expressions appended to `[triggers] crons` (idempotent). */
   crons?: string[]
   /** `[vars]` keys appended when absent (idempotent; an existing key is left alone). */
@@ -44,15 +46,35 @@ export interface TomlPatch {
  * that is what makes re-running `pnpm provision cloudflare <env>` a no-op.
  */
 export interface BindingBlock {
-  type: 'kv' | 'queue' | 'r2'
+  type: 'kv' | 'queue' | 'r2' | 'workflow' | 'durable_object'
   binding: string
-  /** queue → `queue = "…"`, r2 → `bucket_name = "…"`. Unused for KV, which is id-referenced. */
+  /**
+   * queue → `queue = "…"`, r2 → `bucket_name = "…"`, workflow → `name = "…"` (all account-scoped).
+   * Unused for KV, which is id-referenced, and for a Durable Object, which has no resource name.
+   */
   name?: string
   /** KV only: the namespace id, or a `<PLACEHOLDER>` while that environment is unprovisioned. */
   id?: string
   /** queue only: also emit a `[[queues.consumers]]` block for the same queue. */
   consumer?: boolean
+  /** workflow / durable_object: the class exported from `src/worker.ts` through the sixth barrel. */
+  className?: string
   /** The plugin that declared it — written into the block's comment, for a human reading the toml. */
+  pluginId?: string
+}
+
+/**
+ * One `[[migrations]]` entry — the record of what this Worker has already told Cloudflare about
+ * its Durable Object classes. **Append-only and never renumbered**: a tag is an identity, and
+ * replaying one under a different meaning loses a namespace and everything stored in it. That is
+ * the same rule the SQL migrations follow, for the same reason.
+ */
+export interface MigrationBlock {
+  tag: string
+  newClasses?: string[]
+  newSqliteClasses?: string[]
+  deletedClasses?: string[]
+  /** The plugin that declared it — written into the block's comment. */
   pluginId?: string
 }
 
@@ -70,10 +92,11 @@ function patchBindingKey(
   binding: string,
   key: string,
   value: string,
-  force: boolean
+  force: boolean,
+  idKey = 'binding'
 ): string {
   const re = new RegExp(
-    `(binding\\s*=\\s*"${escapeRe(binding)}"[^\\n]*\\n(?:[^\\n]+\\n)*?${key}\\s*=\\s*")([^"]*)(")`
+    `(${escapeRe(idKey)}\\s*=\\s*"${escapeRe(binding)}"[^\\n]*\\n(?:[^\\n]+\\n)*?${key}\\s*=\\s*")([^"]*)(")`
   )
   const m = re.exec(text)
   if (!m) throw new TomlPatchError(`no \`${key}\` line found under binding = "${binding}"`)
@@ -182,10 +205,27 @@ function insertBlock(text: string, header: string, body: string): string {
   return `${before}\n${block}${separated}`
 }
 
-const SECTION: Record<BindingBlock['type'], { header: string; key: string }> = {
-  kv: { header: '[[kv_namespaces]]', key: 'id' },
-  queue: { header: '[[queues.producers]]', key: 'queue' },
-  r2: { header: '[[r2_buckets]]', key: 'bucket_name' },
+/**
+ * Where each binding type's block lives, how a block is IDENTIFIED inside that section, and which
+ * key carries the per-environment value.
+ *
+ * `idKey` is not always `binding`, and that is a real wrinkle rather than a preference:
+ * `[[durable_objects.bindings]]` spells the binding name as `name` (the kit's own
+ * `NOTIFICATIONS_HUB` is `name = "NOTIFICATIONS_HUB"`), so a patcher keyed on `binding` would
+ * insert a second block beside an existing one every time it ran.
+ *
+ * `valueKey` is null where the block has nothing that differs per environment — a Durable Object
+ * binding is byte-identical in both files, so an upsert is insert-if-absent and nothing else.
+ */
+const SECTION: Record<
+  BindingBlock['type'],
+  { header: string; idKey: string; valueKey: string | null }
+> = {
+  kv: { header: '[[kv_namespaces]]', idKey: 'binding', valueKey: 'id' },
+  queue: { header: '[[queues.producers]]', idKey: 'binding', valueKey: 'queue' },
+  r2: { header: '[[r2_buckets]]', idKey: 'binding', valueKey: 'bucket_name' },
+  workflow: { header: '[[workflows]]', idKey: 'binding', valueKey: 'name' },
+  durable_object: { header: '[[durable_objects.bindings]]', idKey: 'name', valueKey: null },
 }
 
 function bindingComment(block: BindingBlock): string {
@@ -202,23 +242,48 @@ function bindingComment(block: BindingBlock): string {
 function upsertBindingBlock(text: string, block: BindingBlock, force: boolean): string {
   const section = SECTION[block.type]
   if (!section) throw new TomlPatchError(`unsupported binding type "${block.type}"`)
+  if (block.type === 'workflow' || block.type === 'durable_object') {
+    if (!block.className)
+      throw new TomlPatchError(
+        `binding "${block.binding}": className is required for a ${block.type}`
+      )
+  }
   const value = block.type === 'kv' ? block.id : block.name
-  if (value === undefined)
+  if (section.valueKey !== null && value === undefined)
     throw new TomlPatchError(
       `binding "${block.binding}": ${block.type === 'kv' ? 'id' : 'name'} is required`
     )
   let out = text
-  const declared = new RegExp(`^binding\\s*=\\s*"${escapeRe(block.binding)}"\\s*(?:#.*)?$`, 'm')
+  const declared = new RegExp(
+    `^${escapeRe(section.idKey)}\\s*=\\s*"${escapeRe(block.binding)}"\\s*(?:#.*)?$`,
+    'm'
+  )
   if (blockRanges(out, section.header).some(r => declared.test(out.slice(r.start, r.end)))) {
-    out = patchBindingKey(out, block.binding, section.key, value, force)
+    // Only the per-environment value is ever rewritten. `class_name` is identical in both files and
+    // a plugin may not rename a class across releases (expand/contract, like every other name), so
+    // patching it would be writing over something nothing is allowed to have changed.
+    if (section.valueKey !== null && value !== undefined) {
+      out = patchBindingKey(
+        out,
+        block.binding,
+        section.valueKey,
+        value as string,
+        force,
+        section.idKey
+      )
+    }
   } else {
-    const body =
-      block.type === 'kv'
-        ? `${bindingComment(block)}\n${section.header}\nbinding = "${block.binding}"\nid = "${value}"`
-        : `${bindingComment(block)}\n${section.header}\nbinding = "${block.binding}"\n${section.key} = "${value}"`
-    out = insertBlock(out, section.header, body)
+    const lines = [bindingComment(block), section.header]
+    if (block.type === 'durable_object') {
+      lines.push(`name = "${block.binding}"`, `class_name = "${block.className}"`)
+    } else {
+      lines.push(`binding = "${block.binding}"`)
+      if (section.valueKey) lines.push(`${section.valueKey} = "${value}"`)
+      if (block.className) lines.push(`class_name = "${block.className}"`)
+    }
+    out = insertBlock(out, section.header, lines.join('\n'))
   }
-  if (block.type === 'queue' && block.consumer) {
+  if (block.type === 'queue' && block.consumer && value !== undefined) {
     const header = '[[queues.consumers]]'
     if (!blockHasKeyValue(out, header, 'queue', value)) {
       // The kit's own consumer settings: a plugin that wants different ones edits the block.
@@ -282,6 +347,30 @@ function appendVar(text: string, key: string, value: string): string {
   return `${text.slice(0, insertAt)}${key} = "${value}"\n${text.slice(insertAt)}`
 }
 
+/**
+ * Append a `[[migrations]]` entry when its tag is absent. An existing tag is left EXACTLY as it is,
+ * whatever it says: the tag is the identity Cloudflare has already acted on, so rewriting one is
+ * how a Durable Object namespace and its contents are lost.
+ */
+function appendMigration(text: string, block: MigrationBlock): string {
+  const header = '[[migrations]]'
+  if (blockHasKeyValue(text, header, 'tag', block.tag)) return text
+  const lines = [
+    `# ${block.pluginId ? `plugin ${block.pluginId}` : 'plugin'}: Durable Object classes, appended by \`pnpm provision cloudflare <env>\`.`,
+    '# Append-only — never renumber or rewrite a tag Cloudflare has already applied.',
+    header,
+    `tag = "${block.tag}"`,
+  ]
+  const list = (key: string, classes?: string[]) => {
+    if (!classes?.length) return
+    lines.push(`${key} = [${classes.map(c => `"${c}"`).join(', ')}]`)
+  }
+  list('new_classes', block.newClasses)
+  list('new_sqlite_classes', block.newSqliteClasses)
+  list('deleted_classes', block.deletedClasses)
+  return insertBlock(text, header, lines.join('\n'))
+}
+
 export function patchToml(text: string, patch: TomlPatch): string {
   let out = text
   const force = patch.force ?? false
@@ -294,6 +383,7 @@ export function patchToml(text: string, patch: TomlPatch): string {
   if (patch.workersDevComment !== undefined)
     out = patchWorkersDevComment(out, patch.workersDevComment)
   for (const block of patch.bindings ?? []) out = upsertBindingBlock(out, block, force)
+  for (const block of patch.migrations ?? []) out = appendMigration(out, block)
   if (patch.crons?.length) out = appendToArray(out, 'crons', patch.crons)
   if (patch.workerFirstPrefixes?.length)
     out = appendToArray(

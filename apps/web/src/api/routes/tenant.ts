@@ -58,7 +58,7 @@ tenantRouter.delete('/', validate('json', deleteTenantRequestSchema), async c =>
     )
   }
   await operationLock(c.env.RATE_LIMIT_KV, `tenant:delete:${tenantId}`, () =>
-    deleteTenant(db, tenantId, realtime)
+    deleteTenant(db, tenantId, c.env.JOBS_QUEUE, realtime)
   )
   return c.body(null, 204)
 })

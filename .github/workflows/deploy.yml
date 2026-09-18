@@ -107,21 +107,19 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "Deploying version: $VERSION"
 
-      # The ROOT package.json is the release version; apps/*/package.json versions are informational.
-      - name: Verify tag matches root package.json version
-        if: github.ref_type == 'tag'
-        shell: bash
-        run: |
-          PKG="$(node -p "require('./package.json').version")"
-          if [ "${{ steps.version.outputs.version }}" != "$PKG" ]; then
-            echo "::error::Tag ${GITHUB_REF_NAME} does not match root package.json version ${PKG}. Bump the root package.json before tagging."
-            exit 1
-          fi
-
+      # `release-check.mjs --tag` checks all four release facts at once: the tag equals the ROOT
+      # package.json version (apps/*/package.json are informational), `.rocketflare.json`'s
+      # kit.version agrees, the porting note exists and chains, and CHANGELOG.md has its section.
+      # The version comparison used to be a third copy of itself, in shell, in both deploy jobs.
+      #
       # A release with no porting note is a gap every copy of the kit has to step over, permanently:
       # `docs/upgrades/` is the chain `/rf-upgrade` walks. `pnpm kit:release <version>` writes all of
       # it. Exits 0 immediately in an adopted copy, so it never gates somebody's own product.
-      - name: Release carries its porting note
+      #
+      # Only on a real tag: `workflow_dispatch` deploys `<branch>-<sha>`, which is not an X.Y.Z
+      # version and has no note of its own.
+      - name: Tag matches the root version and carries its porting note
+        if: github.ref_type == 'tag'
         run: node scripts/release-check.mjs --tag "${{ steps.version.outputs.version }}"
 
       - run: pnpm install --frozen-lockfile
@@ -182,21 +180,11 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "Deploying version: $VERSION"
 
-      # The ROOT package.json is the release version; apps/*/package.json versions are informational.
-      - name: Verify release tag matches root package.json version
+      # As in the staging job: one script checks the tag against the root version, the manifest's
+      # kit.version, the porting note and the changelog section. Only on a real Release — a
+      # `workflow_dispatch` ships `<branch>-<sha>`, which is not an X.Y.Z version.
+      - name: Release tag matches the root version and carries its porting note
         if: github.event_name == 'release'
-        shell: bash
-        run: |
-          PKG="$(node -p "require('./package.json').version")"
-          if [ "${{ steps.version.outputs.version }}" != "$PKG" ]; then
-            echo "::error::Release tag ${{ github.event.release.tag_name }} does not match root package.json version ${PKG}."
-            exit 1
-          fi
-
-      # A release with no porting note is a gap every copy of the kit has to step over, permanently:
-      # `docs/upgrades/` is the chain `/rf-upgrade` walks. `pnpm kit:release <version>` writes all of
-      # it. Exits 0 immediately in an adopted copy, so it never gates somebody's own product.
-      - name: Release carries its porting note
         run: node scripts/release-check.mjs --tag "${{ steps.version.outputs.version }}"
 
       - run: pnpm install --frozen-lockfile

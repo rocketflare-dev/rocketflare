@@ -7,6 +7,7 @@
 import { sql } from 'drizzle-orm'
 import { closeAllDatabases, type Database, getScriptDatabase } from '@/db/client'
 import { runMigrations } from '../../scripts/migrate'
+import { rememberRealDatabase } from '../kit/real-db'
 
 export function testDatabaseUrl(): string {
   safetyCheck()
@@ -37,9 +38,17 @@ export function safetyCheck(): void {
   }
 }
 
-/** Shared pooled handle for fixtures/assertions (max 5 connections per fork). */
+/**
+ * Shared pooled handle for fixtures/assertions (max 5 connections per fork).
+ *
+ * `rememberRealDatabase` is what makes the `@testkit/unit` builders able to refuse a handle nobody
+ * handed out (D31). It is registered HERE rather than in the test kit's own entry so that the
+ * blessing follows the HANDLE, whichever import path a test reached this function through — a kit
+ * test importing `../helpers/db` and a plugin importing `@testkit/integration` get the same object
+ * and the same answer.
+ */
 export function setupTestDatabase(): Database {
-  return getScriptDatabase(testDatabaseUrl())
+  return rememberRealDatabase(getScriptDatabase(testDatabaseUrl()))
 }
 
 /** Same code path as `pnpm db:migrate` — `CREATE EXTENSION vector` then drizzle migrate. */

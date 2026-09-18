@@ -23,10 +23,9 @@ import {
   exampleNoteSchema,
   examplePingResponseSchema,
 } from '@rocketflare/shared/plugins/example-feature/index'
-import type { CommandContext } from '../../context'
-import { requireClient } from '../../context'
-import { formatDate, formatPagination, renderTable } from '../../utils/output'
-import type { CliPlugin } from '../types'
+// The CLI plugin API (D31) — one declared entry, rather than three reaches into the kit's internals.
+import type { CliPlugin, CommandContext } from '../api'
+import { formatDate, formatPagination, renderTable, requireClient } from '../api'
 
 const notesListSchema = paginatedResponse(exampleNoteSchema)
 

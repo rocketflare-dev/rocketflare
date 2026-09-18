@@ -13,16 +13,20 @@ looking things up mid-run.
 | 2 | usage | a missing or unknown argument |
 | 3 | unreachable with no cached mirror | a bad repo URL, or offline with nothing under `.upgrade/plugins/` — `--no-fetch` reuses the cache |
 | 4 | applied with rejects (`upgrade`) | work remains; the version stamp is deliberately withheld until the `*.rej` files are gone |
-| 5 | no `rocketflare-plugin.json` at the source | the path or repo is not a plugin |
+| 5 | no `rocketflare-plugin.json` at the SOURCE | the path or repo is not a plugin. That is the filename at a plugin REPOSITORY's root; the copy inside a host is `plugin.json` |
 | 6 | a requirement is unmet | `requires.kit` / `requires.surfaces` / `requires.plugins`. **Nothing is written** |
 | 7 | the target path exists | most often "plugin '<id>' is already installed — `pnpm plugin upgrade <id>` moves it forward" |
 
-## The manifest — `rocketflare-plugin.json`
+## The manifest — `rocketflare-plugin.json` in the repo, `plugin.json` in the host
 
-At the **root of the plugin repository**, and copied into the host as
-`apps/web/src/plugins/<id>/plugin.json`, which is the surface's **anchor**: presence is `existsSync`
-on it, so deleting the directory IS uninstalling and there is no bookkeeping to drift. The kit's own
-reference plugin is the worked example — `apps/web/src/plugins/example-feature/plugin.json`:
+**One file, two names, and the distinction is load-bearing when you are reading a diagnostic.**
+`rocketflare-plugin.json` is the name at the **root of a plugin repository** — it is what `add`
+looks for at the source, and what exit 5 is about. `plugin.json` is the name it is copied in under,
+at `apps/web/src/plugins/<id>/plugin.json`, and that copy is the surface's **anchor**: presence is
+`existsSync` on it, so deleting the directory IS uninstalling and there is no bookkeeping to drift.
+**Every `pnpm plugin check` finding about a manifest names the in-tree `plugin.json`**, because that
+is the file to edit; `pnpm plugin export` writes the other name back out. The kit's own reference
+plugin is the worked example — `apps/web/src/plugins/example-feature/plugin.json`:
 
 ```json
 {
@@ -44,7 +48,7 @@ reference plugin is the worked example — `apps/web/src/plugins/example-feature
     "packages/shared/src/plugins/index.ts",
     "apps/cli/src/plugins/index.ts"
   ],
-  "requires": { "kit": ">=0.5.0 <1.0.0", "surfaces": [], "plugins": [] },
+  "requires": { "kit": ">=0.5.0 <1.0.0", "pluginApi": "1", "surfaces": [], "plugins": [] },
   "dependencies": { "apps/web": {}, "packages/shared": {}, "apps/cli": {} },
   "bindings": [],
   "crons": [],
@@ -60,29 +64,50 @@ Field notes, in the order they bite:
 
 - **`id`** matches `^[a-z][a-z0-9-]*$`, never contains the kit's name (the rename translator would
   rewrite it), and is never `index` / `server` / `ui` / `schema` / `types` — those are barrel
-  filenames. It is the namespace for everything: tables `<id>_*`, job types `<id>.verb`, query-key
+  filenames. It is the namespace for everything: job types `<id>.verb`, query-key
   roots `<id>:…`, the API prefix `/api/<id>`, the CLI command, feature/prompt/agent keys, AG-UI
-  CUSTOM events `<id>.`.
+  CUSTOM events `<id>.`, and **tables prefixed with the id's first hyphen-separated segment**
+  (`example-feature` → `example_*`, `analytics` → `analytics_*`; a longer prefix is welcome, not
+  required). That last one is a convention rather than something the tooling derives — nothing
+  anywhere turns an id into a table name — so what is enforced is the COLLISION: `check` fails when
+  two installed plugins declare the same table name.
+- **`requires.pluginApi`** is a whole number (as a string), never a range: which version of the
+  PLUGIN CONTRACT this plugin was written against (`docs/plugin-api.md`). `requires.kit` answers a
+  different question — which kit RELEASES it may be installed into — and conflating the two is what
+  made every pin a guess. **Declared means strictly checked; undeclared means warned**, permanently,
+  because a plugin released before the field existed cannot retroactively declare one.
 - **`repo` is required** and `subdir` optional — a plugin you cannot fetch again cannot be upgraded.
   `repo` equal to the kit's own repository with an empty `subdir` means **vendored**: `upgrade`
   defers to `pnpm kit:upgrade` and `requires.kit` is not checked at all, because the same release
   cut both.
-- **`registries`** are the five host barrels, listed so `pnpm kit:upgrade` can flag a kit change to
+- **`registries`** are the six host barrels, listed so `pnpm kit:upgrade` can flag a kit change to
   one of them as `touches-plugin-registry` — the kit CAN move ground under a plugin.
 - **`dependencies`** are installed into the HOST's packages (`pnpm --dir apps/web add …`). A plugin
   ships no `package.json` of its own into a host.
-- **`bindings[]`** is `{ type: "kv" | "queue" | "r2", binding, name, consumer? }`. **Those three
-  types are the whole list** — anything else is refused at INSTALL, naming the type, rather than
-  surfacing as a 503 after a deploy that silently skipped it. `binding` is what the code reads off
-  `Cloudflare.Env` and is identical in both environments; `name` is the account-scoped half.
-  Resource names come out as `<app>-<id>-<name>[-staging]`, and `<APP>_<ID>_<NAME>[_STAGING]` for
-  KV, mirroring the kit's own `<APP>_RATE_LIMIT[_STAGING]`.
+- **`bindings[]`** is `{ type, binding, name?, consumer?, className?, storage? }`, and `type` is one
+  of **five**: `kv`, `queue`, `r2`, `workflow`, `durable_object`. Anything else (`d1`, `vectorize`,
+  `hyperdrive`…) is refused at INSTALL, naming the type, rather than surfacing as a 503 after a
+  deploy that silently skipped it. `binding` is what the code reads off `Cloudflare.Env` and is
+  identical in both environments; `name` is the account-scoped half. Resource names come out as
+  `<app>-<id>-<name>[-staging]`, and `<APP>_<ID>_<NAME>[_STAGING]` for KV, mirroring the kit's own
+  `<APP>_RATE_LIMIT[_STAGING]`.
+  - The first three are **created** by `cf-provision.sh`; `workflow` and `durable_object` are
+    **declared only** — `wrangler deploy` registers both from the block.
+  - A `workflow` or `durable_object` must declare `className`, the class its `worker-exports.ts`
+    re-exports. A `durable_object` must ALSO declare `storage` (`"sqlite"` or `"none"`), which
+    picks `new_sqlite_classes` over `new_classes` and **cannot be changed afterwards** — which is
+    why it is required rather than defaulted — and it declares no `name` at all, because it has no
+    account-scoped resource.
 - **`vars[]`** is `{ key, example?, secret? }`. `secret: true` is a Worker secret
   (`.dev.vars.example` + `pnpm provision secrets <env>`); anything else is a `[vars]` key written
   into BOTH tomls, because the parity test compares the keys.
-- **`workerExports`** are Durable Object / Workflow classes the host must re-export from
-  `apps/web/src/worker.ts` — one line you add by hand.
-- **`schema.tables`** drives both the "generate a migration" step and the `check` below;
+- **`workerExports`** are the Durable Object / Workflow class names the plugin's
+  `apps/web/src/plugins/<id>/worker-exports.ts` re-exports. **Nobody adds a line by hand**: that
+  file is the sixth barrel's half, `plugin add` writes the barrel line, and `plugin check` fails if
+  the file does not export every name declared here. Cloudflare resolves `class_name` against the
+  named exports of `src/worker.ts` and nowhere else, which is the whole reason the barrel exists.
+- **`schema.tables`** drives the "generate a migration" step, the isolation-test check and the
+  cross-plugin collision check below — so a table missing from it is a table nothing verifies;
   `schema.rlsExcluded` is the plugin's half of `RLS_EXCLUDED_TABLES`, with a reason, for a table
   that has no `tenant_id`.
 - **`migrations[]`** carries *descriptions*, never file names. A plugin ships no migration, ever.
@@ -103,18 +128,66 @@ reversible by deleting a directory.
 
 ## What `check` verifies
 
-One `✖` line per failure and exit 1 on any; silence plus `✔ n plugin(s) check out` otherwise. Per
-installed plugin:
+One `✖` line per failure and exit 1 on any; silence plus `✔ n plugin(s) check out` otherwise.
+**Every finding is `<file>:<line> <what is wrong> — <the exact change>`** — the line number only
+where the complaint is AT a place in a file, never fabricated. Per installed plugin:
 
-- the **anchor** file exists — "the surface says installed, the tree says no";
+- the **anchor** file exists — "the surface says installed, the tree says no" — and **parses**;
+- **every manifest field**, naming the field and its legal values: a non-semver `version`, a
+  `requires.kit` this kit cannot read, a cron that is not five fields, a `vars` entry with no key,
+  `schema.tables` that is not an array, a malformed `coreEdits` entry, and the `bindings[]` rules;
 - **`requires`** still holds: the kit version is inside `requires.kit`, every required surface is
-  present, every required plugin is installed (skipped entirely for a vendored plugin);
-- for each of the five barrels, the **line and the half agree both ways** — a barrel that names a
+  present, every required plugin is installed (skipped entirely for a vendored plugin), and
+  `requires.pluginApi` is an integer this kit's plugin API supports;
+- for each of the six barrels, the **line and the half agree both ways** — a barrel that names a
   plugin half that is not on disk, and a half on disk that no barrel names;
 - no **`*.rej`** anywhere under its directories ("an upgrade left work behind");
 - the **anchor's `version` matches the surface's** `source.version`;
 - when it declares tables, **some migration tag names `plugin-<id>`** — otherwise the tables were
-  never generated, which is the most common thing to have skipped.
+  never generated, which is the most common thing to have skipped;
+- **every declared dependency is really in the host `package.json`** — `plugin add --apply` runs
+  `pnpm --dir <pkg> add`, and until now nothing ever looked again, so an install that failed
+  part-way left a plugin whose imports cannot resolve while every other check read as clean;
+- **`workerExports` both ways**: its `worker-exports.ts` exists and exports every declared name (a
+  name in the manifest but not the file is a binding pointed at nothing, and `wrangler deploy`
+  refuses the whole script for it), and it declares every name the file exports (a class the
+  manifest does not name is invisible to provisioning, which reads that list to write the binding
+  block). A file carrying an `export *` is skipped in both directions — its names cannot be known
+  without resolving the module, and guessing teaches an author to distrust the audit;
+- when it declares tenant-scoped tables, **a tenant-isolation test exists** under
+  `src/plugins/<id>/tests/api/`. This is the kit's one non-negotiable that the kit itself cannot
+  write, and it is structural: it proves such a test EXISTS, not that it is right, and the message
+  says so. It wants a file that creates a SECOND organisation and names it or the property;
+- when it declares a `durable_object` binding, **`hooks.onTenantDeleted` is declared somewhere in
+  its tree** — a Durable Object is state the FK cascade cannot reach, so a deleted tenant's DO
+  state outlives it, and no other check can see that because its tables are gone;
+- **no two installed plugins declare the same table name.** The prefix convention is what keeps
+  them apart and nothing derives a table name from an id, so the collision is the checkable half —
+  and nothing else in the kit sees it. TS2308 catches a duplicated EXPORT symbol, not a duplicated
+  `pgTable('orders', …)`, and past that point drizzle-kit emits DDL for one name twice and a single
+  generated `DROP TABLE` takes the other plugin's data. It fails for BOTH plugins and in both tiers
+  (a plugin that declares no `requires.pluginApi` is not excused), because neither plugin is
+  non-compliant on its own — the fault is the combination, and the host cannot run it either way.
+
+**Two tiers.** A check a RELEASED plugin cannot retroactively satisfy prints as `warn:` and does
+not change the exit code; it FAILS for a plugin that declares `requires.pluginApi`. That is the
+same opt-in the plugin import rule uses, and it is the permanent arrangement for a third-party
+plugin rather than a transition hack: a plugin's CI resolves its matrix from *released* kit tags,
+so it cannot declare a version that does not exist yet.
+
+`pnpm plugin check --json` prints the same audit as data: `{ ok, plugins, failures, warnings,
+notes }`. `failures` and `warnings` are separate lists so `ok` keeps meaning "this exits 0", and
+each entry carries `file`, `line`, `problem`, `fix`, `kind` and `assert` as fields.
+
+## Version clashes, at `add` time
+
+`plugin add` compares every declared dependency against the range the host's `package.json` already
+has, and against every other installed plugin's declared range. A difference is printed under
+**Dependency clashes** and becomes a **human** step, because `pnpm add` would overwrite the
+existing range without a word — and `package.json` is `manual` in `.rocketflare.json`, so no kit
+upgrade ever reconciles it for anyone afterwards. It warns rather than refusing: a clash is very
+often the intended change, and refusing would make an ordinary dependency upgrade impossible
+without editing somebody else's manifest.
 
 ## Where an install is recorded
 
@@ -135,9 +208,13 @@ chooses, and `readManifest()` (`scripts/lib/manifest.mjs`) is the one kit-vs-app
 `.rocketflare.json` carries a top-level `defaultPlugins` array — the plugins a **fresh clone**
 installs before the app is first run. `scripts/bootstrap.mjs`'s `plugins` step reads it, skips every
 id already installed, runs `pnpm plugin add <repo> --apply` for the rest, then `pnpm db:generate`
-and `pnpm db:migrate` once. `pnpm bootstrap --no-plugins` skips the step. It is `[]` in the kit
-today — `analytics`, extracted in 0.6.0 — so the step installs it and
-passes.
+and `pnpm db:migrate` once. `pnpm bootstrap --no-plugins` skips the step. The kit's own list names
+`analytics` — extracted into a plugin in 0.6.0 — at a PINNED ref, and `check` fails when the
+version installed here is not the one pinned: CI installs each default plugin at its pin, so a
+checkout carrying a different version passes its own gate while the gate that matters runs
+something else. In the kit itself the entry is ordinarily *declared and not installed*, which
+prints as a `note:` rather than a failure — that is exactly the state `bash scripts/bootstrap.sh`
+resolves on a fresh clone.
 
 ## Two things nothing else will catch
 

@@ -47,13 +47,18 @@ import {
   ensureMirror,
   makeGit,
   makeWriter,
+  mirrorDirFor,
   notesBetween,
+  PLUGIN_MIRROR_ROOT,
 } from './lib/git-lib.mjs'
 import { pluginSurfaces, readManifest } from './lib/manifest.mjs'
+import { readPluginApi } from './lib/plugin-api.mjs'
 import {
   addBarrelLine,
+  addPlanJson,
   applyCoreEdits,
   archiveSql,
+  auditSeverity,
   BARREL_KINDS,
   BARRELS,
   barrelLines,
@@ -61,22 +66,37 @@ import {
   checkRequirements,
   classifyPluginFile,
   coreEditsByFile,
+  declaresProperty,
+  dependencyClashes,
+  describeClash,
   hasBarrelLine,
+  isolationEvidence,
   isVendored,
+  jsonKeyLine,
+  missingDependencies,
+  nextPluginMigrationTag,
   PLUGIN_MANIFEST_FILE,
   parsePluginRequirement,
   pluginIdProblem,
+  pluginManifestProblems,
   pluginPlatformProblems,
   pluginRoots,
   removeBarrelLine,
+  removeSteps,
   renderAddPlan,
+  renderDiagnostic,
   renderList,
+  renderSteps,
+  resolveSubdir,
   revertCoreEdits,
   surfaceDirectories,
+  tableClashes,
+  workerExportNames,
 } from './lib/plugin-lib.mjs'
 import { applyReplacements, deriveNames, isBinary } from './lib/rename-lib.mjs'
 import {
   countLines,
+  defaultPluginEntries,
   parseNote,
   satisfies,
   splitDiff,
@@ -85,7 +105,9 @@ import {
 } from './lib/upgrade-lib.mjs'
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
-const WORK_DIR = path.join('.upgrade', 'plugins')
+// The mirror location is shared with `scripts/release.mjs`, which fetches the same plugin
+// repositories to read their manifests — one clone, not two that take turns being stale.
+const WORK_DIR = PLUGIN_MIRROR_ROOT
 
 const out = (...lines) => {
   for (const l of lines) process.stdout.write(`${l}\n`)
@@ -117,7 +139,13 @@ export const USAGE = `usage: node scripts/plugin.mjs <command> [options]
 
   list                    the installed plugins, one line each
   check                   audit every installed plugin; one line per failure, exit 1 on any
+
   export <id> <dir>       copy a plugin back out into a plugin repository checkout (authoring)
+
+  --json                  on add, remove and check: the same facts as DATA rather than prose.
+                          Every step carries its kind — agent (a command plus the assertion that
+                          proves it) or human (a decision the tooling stops for) — so a human step
+                          is a field rather than a sentence somebody has to notice.
 
   -h, --help
 
@@ -136,6 +164,7 @@ export function parseArgs(argv) {
     archive: false,
     fetch: true,
     allowDirty: false,
+    json: false,
   }
   const takesValue = { '--subdir': 'subdir', '--to': 'to', '--from': 'from' }
   for (let i = 0; i < argv.length; i++) {
@@ -152,6 +181,7 @@ export function parseArgs(argv) {
     else if (a === '--archive') args.archive = true
     else if (a === '--no-fetch') args.fetch = false
     else if (a === '--allow-dirty') args.allowDirty = true
+    else if (a === '--json') args.json = true
     else if (a.startsWith('-')) return { error: `unknown option '${a}'` }
     else if (!args.command) args.command = a
     else args.positional.push(a)
@@ -196,6 +226,11 @@ function loadHost() {
     manifestPath,
     sidecarPath,
     kitVersion,
+    // `requires.kit` answers which kit RELEASES a plugin may be installed into; this answers which
+    // version of the CONTRACT it was written against (`docs/plugin-api.md`). Two questions, two
+    // fields — conflating them is what made every plugin need re-releasing for a kit version that
+    // never touched the plugin surface.
+    pluginApi: readPluginApi(manifest),
     names,
     tracked,
     label: manifest.app ? `${manifest.app.display} (${manifest.app.slug})` : 'the kit itself',
@@ -204,6 +239,43 @@ function loadHost() {
     sidecarIds: (sidecar?.surfaces ?? []).map(s => s.id),
     presentSurfaces: manifest.surfaces.filter(s => existsSync(abs(s.anchor))).map(s => s.id),
   }
+}
+
+/** A host workspace package's `package.json`, or null. Never throws: a caller is reporting. */
+function readHostPackageJson(pkg) {
+  const file = abs(path.join(pkg, 'package.json'))
+  if (!existsSync(file)) return null
+  try {
+    return JSON.parse(readFileSync(file, 'utf8'))
+  } catch {
+    return null
+  }
+}
+
+/** The same file as TEXT, so a diagnostic can name the line a range actually sits on. */
+const readHostPackageJsonSource = pkg => {
+  const file = abs(path.join(pkg, 'package.json'))
+  return existsSync(file) ? readFileSync(file, 'utf8') : ''
+}
+
+/** The host `package.json` of every workspace package a manifest's `dependencies` names. */
+const packageJsonsFor = manifest =>
+  Object.fromEntries(
+    Object.keys(manifest?.dependencies ?? {}).map(pkg => [pkg, readHostPackageJson(pkg)])
+  )
+
+/** Each installed plugin's OWN declared dependencies, for peer-clash detection. */
+function installedDependencyDeclarations(host) {
+  return host.plugins
+    .filter(p => existsSync(abs(p.anchor)))
+    .map(p => {
+      try {
+        const m = JSON.parse(readFileSync(abs(p.anchor), 'utf8'))
+        return { id: p.id, dependencies: m.dependencies ?? {} }
+      } catch {
+        return { id: p.id, dependencies: {} }
+      }
+    })
 }
 
 function requireClean(host, args) {
@@ -289,17 +361,7 @@ const findSurface = (host, id) => {
 
 // ---------------------------------------------------------------- the source
 
-const mirrorDirFor = repo =>
-  abs(
-    path.join(
-      WORK_DIR,
-      `${repo
-        .replace(/\.git$/, '')
-        .split(/[/:]/)
-        .filter(Boolean)
-        .pop()}.git`
-    )
-  )
+const pluginMirrorDir = repo => mirrorDirFor(repo, abs(WORK_DIR))
 
 /** `<repo|path>[@ref]`, without mistaking the `@` of `git@github.com:…` for a ref. */
 export function splitRef(spec) {
@@ -353,7 +415,11 @@ function openSource(spec, args) {
       has: rel => existsSync(path.join(root, rel)),
     }
   }
-  const m = ensureMirror(target, mirrorDirFor(target), { fetch: args.fetch, cwd: REPO_ROOT, warn })
+  const m = ensureMirror(target, pluginMirrorDir(target), {
+    fetch: args.fetch,
+    cwd: REPO_ROOT,
+    warn,
+  })
   const at = ref ?? m.latestTag() ?? 'HEAD'
   if (!m.resolves(at)) stop(1, `error: '${at}' is not in ${target}`)
   const full = p => (subdir === '' ? p : `${subdir}/${p}`)
@@ -428,7 +494,12 @@ function cmdAdd(args, host) {
       'A plugin you cannot fetch again cannot be upgraded, so the surface has nowhere to point.'
     )
   }
-  const subdir = m.subdir ?? source.subdir ?? ''
+  // The flag somebody TYPED wins over the manifest, which wins over where the source was opened.
+  // `??` here read the manifest first and fell through only on nullish — so a plugin shipping
+  // `"subdir": ""`, which every root-level plugin does, beat an explicit `--subdir` and recorded a
+  // root-relative surface. Nothing failed at install; the next `plugin upgrade` diffed against that
+  // path and found the plugin nowhere.
+  const subdir = resolveSubdir({ flag: args.subdir, manifest: m.subdir, source: source.subdir })
   const vendored = isVendored({ repo, subdir }, host.kitRepo)
 
   // Every path, and the refusal that is the whole point of classifying them.
@@ -478,6 +549,17 @@ function cmdAdd(args, host) {
     presentSurfaces: host.presentSurfaces,
     installedPlugins: host.plugins.map(p => ({ id: p.id, version: p.source?.version ?? null })),
     vendored,
+    pluginApi: host.pluginApi,
+  })
+
+  // A dependency this plugin wants at a range the host — or another installed plugin — already
+  // pins differently. `pnpm add` would overwrite it without a word, and `package.json` is `manual`
+  // in `.rocketflare.json`, so no kit upgrade ever reconciles it. It WARNS rather than refusing (a
+  // clash is often the intended change) and is surfaced as a HUMAN step, which is where the
+  // taxonomy makes a decision unmissable.
+  const clashes = dependencyClashes(m, {
+    packageJsons: packageJsonsFor(m),
+    installed: installedDependencyDeclarations(host),
   })
 
   const byRoot = {}
@@ -497,19 +579,21 @@ function cmdAdd(args, host) {
     },
     vendored,
     problems,
+    clashes,
     files,
     byRoot,
     barrels,
     verify: verifyText(source, m.version),
   }
-  out(...renderAddPlan(plan))
+  if (args.json) out(JSON.stringify(addPlanJson(plan), null, 2))
+  else out(...renderAddPlan(plan))
 
   if (problems.length > 0) {
     warn('', `error: ${problems.length} requirement(s) unmet — nothing written.`)
     return 6
   }
   if (!args.apply) {
-    out('', 'Nothing written. Read the plan, then re-run with --apply to install.')
+    if (!args.json) out('', 'Nothing written. Read the plan, then re-run with --apply to install.')
     return 0
   }
 
@@ -533,6 +617,9 @@ function cmdAdd(args, host) {
   for (const [file, edits] of coreEdits) {
     writeFileSync(abs(file), applyCoreEdits(readFileSync(abs(file), 'utf8'), edits))
   }
+  // Said again at the moment it happens, not only in the plan: `pnpm add` is about to overwrite
+  // the range, and stderr is what a log keeps.
+  for (const c of clashes) warn(`warning: ${describeClash(c)}`)
   installDependencies(m, 'add')
   const formatted = formatWritten([
     ...targets,
@@ -559,8 +646,8 @@ function cmdAdd(args, host) {
     ...(formatted ? [`✔ ${formatted}`] : []),
     `✔ surface '${m.id}' recorded in ${path.relative(REPO_ROOT, recordedIn)}`,
     '',
-    'Now do the "by hand" steps above — the schema migration first; nothing else can run until the',
-    'tables exist. Then `pnpm lint && pnpm typecheck && pnpm test && pnpm build`.'
+    'Now work the steps above — the schema migration first; nothing else can run until the tables',
+    'exist. Each AGENT step names the assertion that proves it; each HUMAN step is a decision.'
   )
   return 0
 }
@@ -619,6 +706,9 @@ function installDependencies(m, verb) {
 
 // ---------------------------------------------------------------- upgrade
 
+/** Identity of one declared core edit, for "does the new release still want this one?". */
+const coreEditKey = edit => `${edit.file} ${edit.after} ${(edit.lines ?? []).join('\n')}`
+
 /** The frontmatter fields a PLUGIN note may carry beyond the kit's own. */
 const PLUGIN_NOTE_FIELDS = [
   'requires_kit',
@@ -645,7 +735,7 @@ function cmdUpgrade(args, host) {
   }
   if (args.apply) requireClean(host, args)
 
-  const m = ensureMirror(source.repo, mirrorDirFor(source.repo), {
+  const m = ensureMirror(source.repo, pluginMirrorDir(source.repo), {
     fetch: args.fetch,
     cwd: REPO_ROOT,
     warn,
@@ -685,6 +775,27 @@ function cmdUpgrade(args, host) {
       ...refused.map(f => `  ${f.path}`)
     )
   }
+
+  // The plugin's OWN manifest, at the version being installed — read BEFORE anything is applied,
+  // because the anchor `plugin.json` in the tree is one of the files the patch overwrites.
+  //
+  // It is what `requires` and `coreEdits` must come from. The surface records what the plugin said
+  // on the day it was first installed, and leaving either frozen there is how a plugin that raised
+  // its floor, or that started needing a line in a core file, arrives silently broken.
+  const pluginManifestPath =
+    subdir === '' ? PLUGIN_MANIFEST_FILE : `${subdir}/${PLUGIN_MANIFEST_FILE}`
+  const shownManifest = m.tryShow(to, pluginManifestPath)
+  let targetManifest = null
+  if (shownManifest.ok) {
+    try {
+      targetManifest = JSON.parse(shownManifest.out)
+    } catch {
+      stop(1, `error: ${pluginManifestPath} at ${to} is not valid JSON — a bug in the plugin.`)
+    }
+  }
+  const installedManifest = existsSync(abs(surface.anchor))
+    ? JSON.parse(readFileSync(abs(surface.anchor), 'utf8'))
+    : {}
 
   // Every note's `requires_kit` is checked against THIS kit, because a plugin release may raise
   // its floor and the whole point of the range is that nobody finds out at the gate.
@@ -785,14 +896,21 @@ function cmdUpgrade(args, host) {
       }
     }
   }
+  // Two sources for one question: a release may raise its floor in a NOTE, or simply by changing
+  // the manifest — and the manifest's is the one that ends up recorded on the surface, so checking
+  // only the notes would let an upgrade stamp a range this kit does not satisfy.
   const floors = noteFacts.filter(
     n => n.requires_kit && !satisfies(host.kitVersion, n.requires_kit)
   )
-  if (floors.length > 0) {
+  const declaredRange = targetManifest?.requires?.kit ?? null
+  const manifestFloor =
+    declaredRange && !satisfies(host.kitVersion, declaredRange) ? declaredRange : null
+  if (floors.length > 0 || manifestFloor) {
     warn(
       '',
-      `error: this kit is ${host.kitVersion}, and these plugin releases need more:`,
+      `error: this kit is ${host.kitVersion}, and ${id} needs more:`,
       ...floors.map(n => `  ${n.version} requires kit ${n.requires_kit}`),
+      ...(manifestFloor ? [`  ${toVersion ?? to} declares requires.kit ${manifestFloor}`] : []),
       '',
       'Upgrade the kit first (`pnpm kit:upgrade`), then come back to this.'
     )
@@ -847,10 +965,45 @@ function cmdUpgrade(args, host) {
   // the PLUGIN's releases, which is what the next upgrade's `from` is read against.
   for (const n of notes) writeInto(`docs/plugins/${id}/upgrades/${path.basename(n.file)}`, n.text)
 
+  // Core files the plugin declared but may not edit itself — the same rule `add` follows, and an
+  // UPGRADE has to follow it too: a release that starts needing an alias in `vite.config.ts` would
+  // otherwise apply cleanly and fail at `pnpm build`, which is precisely the failure declared edits
+  // were introduced to remove. Idempotent, so a line already present is not written twice.
+  const coreEditWarnings = []
+  const coreEditFiles = []
+  if (targetManifest) {
+    const wanted = coreEditsByFile(targetManifest)
+    // An edit the new release no longer declares is REVERTED, or the host keeps a line pointing at
+    // something the plugin has stopped shipping.
+    for (const [file, edits] of coreEditsByFile(installedManifest)) {
+      const keep = wanted.get(file) ?? []
+      const dropped = edits.filter(e => !keep.some(k => coreEditKey(k) === coreEditKey(e)))
+      if (dropped.length === 0 || !existsSync(abs(file))) continue
+      writeFileSync(abs(file), revertCoreEdits(readFileSync(abs(file), 'utf8'), dropped))
+      coreEditFiles.push(file)
+    }
+    for (const [file, edits] of wanted) {
+      if (!existsSync(abs(file))) {
+        coreEditWarnings.push(`core edit for ${file}: no such file here — apply it by hand`)
+        continue
+      }
+      try {
+        writeFileSync(abs(file), applyCoreEdits(readFileSync(abs(file), 'utf8'), edits))
+        if (!coreEditFiles.includes(file)) coreEditFiles.push(file)
+      } catch (err) {
+        // A moved anchor must not abort an upgrade whose files are already on disk: report it and
+        // let the person place the line, exactly as they would from the plan.
+        coreEditWarnings.push(err instanceof Error ? err.message : String(err))
+      }
+    }
+  }
+
   out(
     '',
     `✔ ${added.length} added, ${patches.length - rejected} patched` +
-      (rejected > 0 ? `, ${rejected} with rejects (*.rej beside the file)` : '')
+      (rejected > 0 ? `, ${rejected} with rejects (*.rej beside the file)` : ''),
+    ...(coreEditFiles.length > 0 ? [`✔ core edit(s) applied to ${coreEditFiles.join(', ')}`] : []),
+    ...coreEditWarnings.map(w => `  warning: ${w}`)
   )
   if (rejected === 0) {
     const raw = JSON.parse(
@@ -869,6 +1022,18 @@ function cmdUpgrade(args, host) {
       ...entry.source,
       version: toVersion ?? entry.source.version,
       commit: m.commitOf(to),
+    }
+    // `requires` is REFRESHED from the manifest at the version just installed, never left at what
+    // the plugin said on the day it was first installed. Frozen, a plugin that raised its floor or
+    // gained a plugin dependency stays recorded as wanting the old one — and `plugin check`,
+    // `kit:upgrade` and `kit:release` all read the surface, so all three would keep agreeing with
+    // a statement that is no longer true. Nothing ELSE on the entry is rewritten here.
+    if (targetManifest) {
+      entry.requires = {
+        kit: targetManifest.requires?.kit ?? null,
+        surfaces: targetManifest.requires?.surfaces ?? [],
+        plugins: targetManifest.requires?.plugins ?? [],
+      }
     }
     writeManifestFile(host.sidecarIds.includes(id) ? host.sidecarPath : host.manifestPath, raw, {
       format: !host.sidecarIds.includes(id),
@@ -921,7 +1086,10 @@ function cmdRemove(args, host) {
     : {}
   const tables = anchorManifest.schema?.tables ?? []
 
-  out(
+  const say = (...lines) => {
+    if (!args.json) out(...lines)
+  }
+  say(
     `Remove ${id}@${surface.source?.version ?? '?'} from ${host.label}`,
     '',
     'Deletes',
@@ -934,56 +1102,35 @@ function cmdRemove(args, host) {
     '',
     `Surface '${id}' dropped from ${path.basename(host.sidecarIds.includes(id) ? host.sidecarPath : host.manifestPath)}`
   )
-  if (tables.length > 0) {
+  // What is LEFT, classified. Most of it is `human`, and that is the honest answer rather than a
+  // gap: a migration full of `DROP TABLE`, an `--archive` copy taken or knowingly skipped, a
+  // `deleted_classes` migration that deletes a Durable Object namespace and everything in it, and
+  // live Cloudflare resources that may still hold somebody's data. Provisioning creates a plugin's
+  // resources (decision 12) and deliberately never deletes one.
+  const steps = removeSteps(anchorManifest, {
+    archive: args.archive,
+    // Read from the toml rather than assumed: the tag is append-only, so the next one is the next
+    // free number after every `plugin-<id>-v<n>` this Worker has already told Cloudflare about.
+    migrationTag: nextPluginMigrationTag(tomlMigrationTags(), id),
+  })
+  if (args.json) {
     out(
-      '',
-      'Tables — `pnpm db:generate` will emit DROP TABLE for each, which is correct here (the kit',
-      'warns about a foreign SNAPSHOT, not about your own barrel shrinking). Orphaned tables are',
-      'not a stable state:',
-      ...tables.map(t => `  ${t}`),
-      args.archive
-        ? '  --archive: they are copied into schema "archive" by a --custom migration first'
-        : '  pass --archive to copy them into schema "archive" before they go'
+      JSON.stringify(
+        {
+          plugin: { id, version: surface.source?.version ?? null },
+          deletes: { directories, barrels: barrels.map(k => BARRELS[k].file), tables },
+          steps,
+        },
+        null,
+        2
+      )
     )
-  }
-  const deps = Object.entries(anchorManifest.dependencies ?? {}).filter(
-    ([, d]) => Object.keys(d ?? {}).length > 0
-  )
-  if (deps.length > 0) {
-    out('', 'Dependencies — run these YOURSELF if nothing else has started using them:')
-    installDependencies(anchorManifest, 'remove')
-  }
-  // Provisioning creates a plugin's platform resources (decision 12) but deliberately never
-  // deletes one: `patch-toml.ts` has no delete-block op, and it should not — a live bucket or
-  // queue with somebody's data in it is not something a script removes because a directory went.
-  const bindings = anchorManifest.bindings ?? []
-  const crons = anchorManifest.crons ?? []
-  const prefixes = anchorManifest.apiPrefixes ?? []
-  const vars = anchorManifest.vars ?? []
-  if (bindings.length + crons.length + prefixes.length + vars.length > 0) {
-    out('', 'To deprovision BY HAND — nothing below is removed for you:')
-    for (const b of bindings) {
-      out(
-        `  ${b.type} binding ${b.binding ?? b.name}: delete its block from BOTH tomls, then delete the resource in Cloudflare`
-      )
-    }
-    for (const c of crons)
-      out(`  cron "${c.cron ?? c}": remove from [triggers] crons in BOTH tomls`)
-    for (const p of prefixes) {
-      out(`  route prefix ${p}: remove from [assets] run_worker_first in BOTH tomls`)
-    }
-    for (const v of vars) {
-      const key = v.key ?? v.name ?? v
-      out(
-        v.secret
-          ? `  secret ${key}: \`wrangler secret delete ${key}\` per environment, and drop it from .dev.vars(.example)`
-          : `  [vars] ${key}: remove from BOTH tomls (the parity test compares the KEYS) and .dev.vars.example`
-      )
-    }
+  } else {
+    out(...renderSteps(steps, 'Steps — nothing below is done for you'))
   }
 
   if (!args.apply) {
-    out('', 'Nothing written. Re-run with --apply to remove it.')
+    say('', 'Nothing written. Re-run with --apply to remove it.')
     return 0
   }
 
@@ -1001,7 +1148,7 @@ function cmdRemove(args, host) {
     writeFileSync(abs(file), revertCoreEdits(readFileSync(abs(file), 'utf8'), edits))
   }
   const dropped = dropSurface(host, id)
-  out(
+  say(
     '',
     `✔ ${directories.length} director(ies) deleted`,
     `✔ ${barrels.length} barrel line(s) removed`,
@@ -1009,13 +1156,7 @@ function cmdRemove(args, host) {
       ? [`✔ core edit(s) reverted in ${[...removedEdits.keys()].join(', ')}`]
       : []),
     `✔ surface dropped from ${dropped.map(f => path.basename(f)).join(', ') || '(nowhere — it was not recorded)'}`,
-    '',
-    ...(tables.length > 0
-      ? [
-          `Next: pnpm db:generate --name plugin-${id}-remove   → read the DROP TABLE SQL → pnpm db:migrate`,
-        ]
-      : []),
-    'Then: pnpm lint && pnpm typecheck && pnpm test && pnpm build'
+    ...renderSteps(steps, 'Steps that remain')
   )
   return 0
 }
@@ -1050,6 +1191,17 @@ function writeArchiveMigration(id, tables) {
   )
 }
 
+/**
+ * Every `[[migrations]]` tag already in the production toml. Read textually rather than parsed: the
+ * tomls are patched at the string level everywhere else for the same reason (`patch-toml.ts`), and
+ * this script has no TOML dependency.
+ */
+function tomlMigrationTags() {
+  const file = abs('apps/web/wrangler.toml')
+  if (!existsSync(file)) return []
+  return [...readFileSync(file, 'utf8').matchAll(/^tag\s*=\s*"([^"]+)"/gm)].map(m => m[1])
+}
+
 // ---------------------------------------------------------------- list / check
 
 function cmdList(_args, host) {
@@ -1061,15 +1213,51 @@ function cmdList(_args, host) {
  * Audit every installed plugin. One line per failure and exit 1 on any — this is the thing
  * `/rf-preflight` and CI run, so it says what is wrong rather than how to fix it.
  */
-function cmdCheck(_args, host) {
-  const failures = []
+function cmdCheck(args, host) {
+  const findings = []
+  /**
+   * One finding, carrying the EDIT rather than only the complaint.
+   *
+   * `fail` changes the exit code; `warn` reports and does not — which is how a plugin RELEASED
+   * before a rule existed is held to it. `auditSeverity` is the switch, and it reads
+   * `requires.pluginApi`: the same opt-in the import rule uses, and the permanent arrangement for
+   * a third-party plugin rather than a transition hack.
+   */
+  const add = (severity, key, d) =>
+    findings.push({
+      id: key,
+      severity,
+      kind: 'agent',
+      assert: 'pnpm plugin check',
+      file: d.file,
+      line: d.line ?? null,
+      problem: d.problem,
+      fix: d.fix,
+      message: renderDiagnostic(d),
+    })
+  // Things worth SAYING that are not faults — a state the kit itself is legitimately in, or a
+  // silence somebody should know about. Printed either way; they never change the exit code.
+  const notes = []
+  // Read from each plugin's own MANIFEST rather than from its surface: `buildPluginSurface` copies
+  // only `kit`/`surfaces`/`plugins`, so a surface never carries `pluginApi` and reading it there
+  // reported `null` for a plugin that plainly declares one — while the same run was correctly
+  // FAILING it on that declaration. A field that contradicts the severity beside it is worse than
+  // an absent one.
+  const declaredApi = new Map()
+  // Every plugin's parsed manifest, kept for the checks that are about the COMBINATION rather than
+  // about one plugin: two plugins cannot share a table name, and neither of them is wrong alone.
+  const anchors = []
   for (const s of host.plugins) {
     const id = s.id
     const vendored = isVendored(s.source, host.kitRepo)
     if (!existsSync(abs(s.anchor))) {
-      failures.push(
-        `${id}: anchor ${s.anchor} is missing — the surface says installed, the tree says no`
-      )
+      add('fail', `${id}:anchor`, {
+        file: s.anchor,
+        problem: `is missing, and the surface says '${id}' is installed`,
+        fix:
+          `reinstall it with \`pnpm plugin add ${s.source?.repo ?? '<repo>'} --apply\`, or drop ` +
+          `the '${id}' surface from ${path.basename(host.manifestPath)}`,
+      })
       continue
     }
     // Two plugins are not held to a kit range, for the same reason in two shapes.
@@ -1088,6 +1276,36 @@ function cmdCheck(_args, host) {
     // already satisfies passes on its own merits. What is skipped is the failure an uncut release
     // guarantees — and only in the kit, for a plugin recorded in the sidecar, which is exactly the
     // authoring loop.
+    // Read ONCE, and before anything that reports against it: every diagnostic below wants a line
+    // number in this file, and a manifest that will not parse has to be a finding rather than a
+    // stack trace out of `cmdCheck` that says nothing about which plugin it came from.
+    const anchorSource = readFileSync(abs(s.anchor), 'utf8')
+    let anchor
+    try {
+      anchor = JSON.parse(anchorSource)
+    } catch (err) {
+      add('fail', `${id}:manifest-json`, {
+        file: s.anchor,
+        problem: `is not valid JSON (${err instanceof Error ? err.message : String(err)})`,
+        fix: 'fix the syntax — every other check on this plugin reads this file',
+      })
+      continue
+    }
+    const severity = auditSeverity(anchor)
+    declaredApi.set(id, anchor.requires?.pluginApi ?? null)
+    anchors.push({ surface: s, source: anchorSource, manifest: anchor })
+
+    // Every field, naming the field and its legal values. Two-tier, because a plugin RELEASED
+    // before this check existed cannot retroactively satisfy it.
+    for (const p of pluginManifestProblems(anchor)) {
+      add(severity, `${id}:manifest:${p.field || 'root'}`, {
+        file: s.anchor,
+        line: p.field ? jsonKeyLine(anchorSource, p.field) : null,
+        problem: p.problem,
+        fix: p.fix,
+      })
+    }
+
     const authoredHere = host.isKit && host.sidecarIds.includes(id)
     for (const problem of checkRequirements({
       requires: authoredHere ? { ...s.requires, kit: undefined } : s.requires,
@@ -1095,45 +1313,298 @@ function cmdCheck(_args, host) {
       presentSurfaces: host.presentSurfaces,
       installedPlugins: host.plugins.map(p => ({ id: p.id, version: p.source?.version ?? null })),
       vendored,
+      pluginApi: host.pluginApi,
     })) {
-      failures.push(`${id}: ${problem}`)
+      add('fail', `${id}:requires`, {
+        file: s.anchor,
+        line: jsonKeyLine(anchorSource, 'requires'),
+        problem,
+        fix: `satisfy it, or amend "requires" in ${s.anchor} to describe what this plugin needs`,
+      })
+    }
+    // A plugin that declares no kit range is beyond every gate there is — `checkRequirements`
+    // skips it, `unsupportedForKit` skips it, and `kit:upgrade` would carry it across a major
+    // version without a word. That is the plugin's choice to make, but not silently.
+    if (!vendored && (s.requires?.kit ?? null) === null) {
+      notes.push(`${id}: declares no requires.kit, so no kit version is ever checked against it`)
     }
     for (const kind of BARREL_KINDS) {
-      const ships = existsSync(abs(BARRELS[kind].half(id)))
+      const half = BARRELS[kind].half(id)
+      const ships = existsSync(abs(half))
       const wired = hasBarrelLine(readFileSync(abs(BARRELS[kind].file), 'utf8'), kind, id)
-      if (ships && !wired)
-        failures.push(
-          `${id}: ${BARRELS[kind].file} has no line for it, but ${BARRELS[kind].half(id)} is there`
-        )
-      if (!ships && wired)
-        failures.push(
-          `${id}: ${BARRELS[kind].file} names it, but ${BARRELS[kind].half(id)} is not there`
-        )
+      if (ships && !wired) {
+        add('fail', `${id}:barrel:${kind}`, {
+          file: BARRELS[kind].file,
+          problem: `has no line for '${id}', and ${half} is on disk`,
+          fix: `add:  ${barrelLines(kind, id).join('  +  ')}`,
+        })
+      }
+      if (!ships && wired) {
+        add('fail', `${id}:barrel:${kind}`, {
+          file: BARRELS[kind].file,
+          problem: `names '${id}', and ${half} is not on disk`,
+          fix: `remove:  ${barrelLines(kind, id).join('  +  ')}`,
+        })
+      }
     }
     const rejects = surfaceDirectories(s)
       .filter(d => existsSync(abs(d)))
       .flatMap(d => walk(abs(d)).map(f => `${d}/${f}`))
       .filter(f => f.endsWith('.rej'))
-    for (const f of rejects) failures.push(`${id}: ${f} — an upgrade left work behind`)
-
-    const anchor = JSON.parse(readFileSync(abs(s.anchor), 'utf8'))
-    if (anchor.version && s.source?.version && anchor.version !== s.source.version) {
-      failures.push(
-        `${id}: the surface says ${s.source.version}, ${s.anchor} says ${anchor.version}`
-      )
+    for (const f of rejects) {
+      add('fail', `${id}:reject`, {
+        file: f,
+        problem: 'is a rejected hunk an upgrade left behind',
+        fix: `apply it into ${f.replace(/\.rej$/, '')} by reading both, then delete ${f}`,
+      })
     }
+
+    // A DO or Workflow class reaches the Worker through the sixth barrel and nowhere else, so
+    // `workerExports` is checkable rather than advisory — and it is checked BOTH ways. A name in
+    // the manifest that the file does not export is a binding pointed at nothing, and
+    // `wrangler deploy` refuses the whole script for it; a class the file exports that the
+    // manifest does not name is invisible to `pnpm provision cloudflare <env>`, which reads that
+    // list to write the `[[durable_objects.bindings]]` / `[[workflows]]` block — so it deploys
+    // with no binding at all.
+    const declaredExports = anchor.workerExports ?? []
+    const workerHalf = BARRELS.worker.half(id)
+    const shipsWorkerHalf = existsSync(abs(workerHalf))
+    if (declaredExports.length > 0 && !shipsWorkerHalf) {
+      add('fail', `${id}:worker-half`, {
+        file: workerHalf,
+        problem: `is missing, and ${s.anchor} declares workerExports (${declaredExports.join(', ')})`,
+        fix:
+          `create it, re-exporting ${declaredExports.join(', ')} — Cloudflare resolves a binding's ` +
+          'class_name against the named exports of src/worker.ts, which this barrel half feeds',
+      })
+    }
+    if (shipsWorkerHalf) {
+      // `opaque` is an `export *`, whose names need the module resolved to enumerate. Both
+      // directions are skipped for one rather than guessed: reporting "declares OrdersHub and does
+      // not export it" against a star re-export that plainly does teaches an author to distrust
+      // the whole audit.
+      const { names, opaque } = workerExportNames(readFileSync(abs(workerHalf), 'utf8'))
+      if (declaredExports.length === 0) {
+        add(severity, `${id}:worker-undeclared`, {
+          file: s.anchor,
+          line: jsonKeyLine(anchorSource, 'workerExports'),
+          problem: `declares no workerExports, and ${workerHalf} is on disk`,
+          fix:
+            `set "workerExports" to [${names.map(n => `"${n}"`).join(', ')}] — provisioning reads ` +
+            'that list to write the binding block, so a class missing from it gets no binding',
+        })
+      }
+      if (!opaque) {
+        for (const name of declaredExports.filter(n => !names.includes(n))) {
+          add('fail', `${id}:worker-missing:${name}`, {
+            file: workerHalf,
+            problem: `does not export ${name}, which ${s.anchor} declares in workerExports`,
+            fix:
+              `add \`export { ${name} } from './<module>'\` here, or drop "${name}" from ` +
+              'workerExports — wrangler deploy refuses the script for a class_name nothing exports',
+          })
+        }
+        for (const name of names.filter(n => !declaredExports.includes(n))) {
+          add(severity, `${id}:worker-extra:${name}`, {
+            file: s.anchor,
+            line: jsonKeyLine(anchorSource, 'workerExports'),
+            problem: `does not declare ${name}, which ${workerHalf} exports`,
+            fix:
+              `add "${name}" to "workerExports" — a class the manifest does not name is invisible ` +
+              'to `pnpm provision cloudflare <env>`, which writes its binding block',
+          })
+        }
+      }
+    }
+
+    // **A Durable Object is state the FK cascade cannot reach.** Deleting a tenant is one SQL
+    // DELETE plus the `tenant.purge` job (D7), and that job is the ONLY thing that ever visits a
+    // deleted tenant's state outside Postgres — through each plugin's `onTenantDeleted`. A plugin
+    // that keeps a DO and declares no hook leaves one organisation's data live for ever, silently,
+    // and no other check can see it: its TABLES are gone, so everything else reads as clean.
+    const doBindings = (anchor.bindings ?? []).filter(b => b?.type === 'durable_object')
+    if (doBindings.length > 0) {
+      const tree = `apps/web/src/plugins/${id}`
+      const declaresHook =
+        existsSync(abs(tree)) &&
+        walk(abs(tree)).some(
+          f =>
+            /\.tsx?$/.test(f) &&
+            declaresProperty(readFileSync(abs(`${tree}/${f}`), 'utf8'), 'onTenantDeleted')
+        )
+      if (!declaresHook) {
+        const which = doBindings.map(b => b.binding ?? b.className ?? '?').join(', ')
+        add(severity, `${id}:on-tenant-deleted`, {
+          file: `${tree}/index.ts`,
+          problem: `declares the durable_object binding(s) ${which} and no hooks.onTenantDeleted`,
+          fix:
+            'add `hooks: { onTenantDeleted: async (db, tenantId, env) => { … } }` to the ' +
+            "ServerPlugin and delete this plugin's Durable Object state there. Derive every " +
+            'instance name from the tenant id and loop the names you DECLARE — nothing enumerates ' +
+            'the instances of a namespace, so only derived keys are reachable',
+        })
+      }
+    }
+
+    if (anchor.version && s.source?.version && anchor.version !== s.source.version) {
+      add('fail', `${id}:version`, {
+        file: s.anchor,
+        line: jsonKeyLine(anchorSource, 'version'),
+        problem: `says ${anchor.version}, and the surface says ${s.source.version}`,
+        fix:
+          `set them to the same version — \`pnpm plugin upgrade ${id} --apply\` stamps the ` +
+          'surface, and a hand-edited manifest is the usual way they part',
+      })
+    }
+
+    // Two separate things a plugin with tables owes, and neither is visible from the other side.
+    const tables = (anchor.schema?.tables ?? []).filter(
+      t => !(anchor.schema?.rlsExcluded ?? []).includes(t)
+    )
     if ((anchor.schema?.tables ?? []).length > 0) {
       const tags = JSON.parse(
         readFileSync(abs('apps/web/migrations/meta/_journal.json'), 'utf8')
       ).entries.map(e => e.tag)
       if (!tags.some(t => t.includes(`plugin-${id}`))) {
-        failures.push(
-          `${id}: declares tables (${anchor.schema.tables.join(', ')}) and no migration names it — run \`pnpm db:generate --name plugin-${id}-${anchor.version ?? '0.0.0'}\``
-        )
+        add('fail', `${id}:migration`, {
+          file: 'apps/web/migrations/meta/_journal.json',
+          problem: `names no migration for '${id}', which declares tables (${anchor.schema.tables.join(', ')})`,
+          fix: `pnpm db:generate --name plugin-${id}-${anchor.version ?? '0.0.0'} && pnpm db:migrate`,
+        })
+      }
+    }
+
+    // **Declared dependencies are really installed.** `plugin add --apply` runs `pnpm --dir <pkg>
+    // add <name>@<range>` and nothing ever looked again — so an install whose `pnpm add` failed
+    // part-way, or a `remove` whose printed `pnpm remove` somebody ran, leaves a plugin whose
+    // imports cannot resolve while every other check here reads as perfectly clean.
+    for (const d of missingDependencies(anchor, packageJsonsFor(anchor))) {
+      if (d.have === null) {
+        add('fail', `${id}:dependency:${d.name}`, {
+          file: `${d.pkg}/package.json`,
+          problem: `does not list ${d.name}, which ${s.anchor} declares at ${d.range}`,
+          fix: `pnpm --dir ${d.pkg} add ${d.name}@${d.range}`,
+        })
+        continue
+      }
+      // A DIFFERENT range is not the same fault: `package.json` is `manual` in `.rocketflare.json`,
+      // so an operator is entitled to have pinned it themselves and no kit upgrade reconciles it.
+      add(severity, `${id}:dependency-range:${d.name}`, {
+        file: `${d.pkg}/package.json`,
+        line: jsonKeyLine(readHostPackageJsonSource(d.pkg), d.name),
+        problem: `pins ${d.name} at ${d.have}, and ${s.anchor} declares ${d.range}`,
+        fix:
+          `pnpm --dir ${d.pkg} add ${d.name}@${d.range}, or set "dependencies"."${d.pkg}"."${d.name}" ` +
+          `in ${s.anchor} to ${d.have} — whichever range both can live with`,
+      })
+    }
+
+    // **The tenant-isolation test the kit cannot write for you.** A plugin's tables are
+    // tenant-scoped like every other, and no kit suite can see them — which is why both
+    // `docs/CONCEPTS.md` §16 and `.claude/rules/testing.md` say a plugin MUST own this test, and
+    // why nothing verified it until now. With agents writing plugins, the one area the kit treats
+    // as non-negotiable was the one with no enforcement at all.
+    if (tables.length > 0) {
+      const testDir = `apps/web/src/plugins/${id}/tests/api`
+      const testFiles = existsSync(abs(testDir))
+        ? walk(abs(testDir)).filter(f => /\.tsx?$/.test(f))
+        : []
+      const proven = testFiles.some(
+        f => isolationEvidence(readFileSync(abs(`${testDir}/${f}`), 'utf8')).ok
+      )
+      if (!proven) {
+        add(severity, `${id}:isolation`, {
+          file: `${testDir}/`,
+          problem: `has no test proving another organisation cannot read ${tables.join(', ')}`,
+          fix:
+            'add a case that creates a SECOND tenant and drives the real mount as it — copy the ' +
+            "describe('tenant isolation') block from apps/web/src/plugins/example-feature/tests/" +
+            'api/example-feature.test.ts. This proves such a test EXISTS, not that it is correct',
+        })
       }
     }
   }
-  if (host.plugins.length === 0) {
+  // **Two plugins declaring one table name.** The prefix convention is what keeps them apart and
+  // nothing enforces it, because nothing derives a table name from an id — so the collision is the
+  // checkable half, and it is checked here, where every manifest is in hand. Nothing else sees it:
+  // TS2308 catches a duplicated EXPORT name, not a duplicated `pgTable('orders')`, and past that
+  // point drizzle-kit emits DDL for one name twice and `plugin remove` drops the other's table.
+  for (const clash of tableClashes(anchors.map(a => a.manifest))) {
+    const entry = anchors.find(a => a.manifest.id === clash.id)
+    if (!entry) continue
+    const others = clash.others.map(o => `'${o}'`).join(', ')
+    add('fail', `${clash.id}:table:${clash.table}`, {
+      file: entry.surface.anchor,
+      line: jsonKeyLine(entry.source, 'schema.tables'),
+      problem: `declares the table ${clash.table}, which ${others} also declares`,
+      fix:
+        'rename one of them and release that plugin — every table starts with the first ' +
+        `hyphen-separated segment of its plugin's id ('${clash.id}' → ` +
+        `'${clash.id.split('-')[0]}_*'), and two plugins cannot share a host with one name ` +
+        "between them: a single DROP TABLE takes the other plugin's data",
+    })
+  }
+  // Is what is INSTALLED what `.rocketflare.json` says a fresh clone would get? (D31, decision 2.)
+  // Nothing compared the two, and the drift is invisible from either side: CI installs each default
+  // plugin at its PINNED ref, so a checkout carrying a different version passes its own gate while
+  // the gate that matters runs something else entirely.
+  for (const declared of defaultPluginEntries(host.manifest)) {
+    const installed = host.plugins.find(p => p.id === declared.id)
+    if (!installed) {
+      // Not a fault: the kit declares its defaults without installing them, and that is exactly
+      // the state `bash scripts/bootstrap.sh` exists to resolve on a fresh clone.
+      notes.push(`${declared.id}: named in defaultPlugins and not installed here`)
+      continue
+    }
+    const have = installed.source?.version ?? null
+    if (declared.ref && have && declared.ref !== have) {
+      add('fail', `${declared.id}:pin`, {
+        file: path.basename(host.manifestPath),
+        line: jsonKeyLine(readFileSync(host.manifestPath, 'utf8'), 'defaultPlugins'),
+        problem: `pins ${declared.id} at ${declared.ref}, and ${have} is installed`,
+        fix: `pnpm plugin upgrade ${declared.id} --to ${declared.ref} --apply   # or repin to ${have}`,
+      })
+    }
+  }
+
+  const failures = findings.filter(f => f.severity === 'fail')
+  const warnings = findings.filter(f => f.severity === 'warn')
+
+  // The audit as DATA. Every failure `check` can report is agent-fixable — it is a statement about
+  // this tree, not a decision about somebody's data — so each carries `kind: 'agent'` and the one
+  // assertion that settles it. A `human` failure would be a contradiction: nothing here waits.
+  //
+  // `warnings` is the second list rather than a flag on the first, because `ok` has to keep meaning
+  // "this exits 0". A rule a released plugin cannot retroactively satisfy belongs in the output and
+  // not in the exit code (`auditSeverity`).
+  if (args.json) {
+    out(
+      JSON.stringify(
+        {
+          ok: failures.length === 0,
+          plugins: host.plugins.map(s => ({
+            id: s.id,
+            version: s.source?.version ?? null,
+            vendored: isVendored(s.source, host.kitRepo),
+            local: host.sidecarIds.includes(s.id),
+            // Which tier this plugin's new-rule findings landed in, so a reader knows whether a
+            // clean run means "checked" or "not checked yet".
+            pluginApi: declaredApi.get(s.id) ?? null,
+          })),
+          failures,
+          warnings,
+          notes,
+        },
+        null,
+        2
+      )
+    )
+    return failures.length === 0 ? 0 : 1
+  }
+  for (const n of notes) out(`note: ${n}`)
+  for (const w of warnings) out(`warn: ${w.message}`)
+
+  if (host.plugins.length === 0 && failures.length === 0) {
     out('No plugins installed — nothing to check.')
     return 0
   }
@@ -1163,7 +1634,7 @@ function cmdCheck(_args, host) {
     }
     return 0
   }
-  warn(...failures.map(f => `✖ ${f}`))
+  warn(...failures.map(f => `✖ ${f.message}`))
   return 1
 }
 

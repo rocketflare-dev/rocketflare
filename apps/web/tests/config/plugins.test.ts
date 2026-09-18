@@ -38,9 +38,14 @@ import { SERVER_PLUGINS, serverPlugins } from '@/plugins/server'
 import { UI_PLUGINS, uiPlugins } from '@/plugins/ui'
 import { queryKeys } from '@/ui/lib/query-keys'
 import {
+  DECLARED_ENTRIES,
   deepImportIssue,
   isPluginEntry,
+  isPluginFile,
+  PLUGIN_IMPORT_ENFORCEMENT,
+  pluginApiDeclaration,
   pluginIdOfPath,
+  pluginImportIssue,
   queryKeyRootIssues,
   RESERVED_PLUGIN_IDS,
   staticImports,
@@ -77,6 +82,9 @@ describe('the plugin boundary', () => {
     expect(pluginIdOfPath('apps/web/src/plugins/orders/api/routes.ts')).toBe('orders')
     expect(pluginIdOfPath('packages/shared/src/plugins/orders/index.ts')).toBe('orders')
     expect(pluginIdOfPath('apps/web/src/plugins/server.ts')).toBeNull()
+    // The sixth barrel, added with worker-exports: without it this file reads as a plugin
+    // called 'worker-exports', and its own line reads as a deep import into one.
+    expect(pluginIdOfPath('apps/web/src/plugins/worker-exports.ts')).toBeNull()
     // An import specifier carries no extension, which is the spelling that used to read as a plugin
     // called "index".
     expect(pluginIdOfPath('packages/shared/src/plugins/index')).toBeNull()
@@ -106,6 +114,9 @@ describe('the plugin boundary', () => {
     expect(deepImportIssue('apps/web/src/ui/App.tsx', '@/plugins/orders/ui')).toBeNull()
     // The schema barrel names a plugin's inner file by design — that line IS the installation.
     expect(deepImportIssue('apps/web/src/plugins/schema.ts', './orders/db/schema')).toBeNull()
+    expect(
+      deepImportIssue('apps/web/src/plugins/worker-exports.ts', './orders/worker-exports')
+    ).toBeNull()
   })
 })
 
@@ -140,6 +151,96 @@ describe('a plugin UI entry', () => {
   it('catches a heavy dependency, and lets a type-only import of one through', () => {
     expect(uiEntryIssues('ui.ts', `import { Chart } from 'recharts'\n${good}`)).toHaveLength(1)
     expect(uiEntryIssues('ui.ts', `import type { Chart } from 'recharts'\n${good}`)).toEqual([])
+  })
+})
+
+describe('the plugin import rule', () => {
+  const ROUTE = 'apps/web/src/plugins/orders/api/routes.ts'
+  const TABLE = 'apps/web/src/plugins/orders/db/schema/orders.ts'
+
+  it('names entries that all exist on disk', () => {
+    // Vacuous the day an entry is renamed: the rule would then pass everything it used to catch.
+    for (const entry of DECLARED_ENTRIES) {
+      const candidates = [`${entry}.ts`, `${entry}/index.ts`, entry]
+      expect(
+        candidates.some(c => existsSync(path.join(REPO_ROOT, c))),
+        entry
+      ).toBe(true)
+    }
+  })
+
+  it('passes a declared entry, in every spelling', () => {
+    expect(pluginImportIssue(ROUTE, '@/plugins/api')).toBeNull()
+    expect(pluginImportIssue(ROUTE, '@/plugins/types')).toBeNull()
+    // The schema kit is reached relatively from a table file, which is how a plugin's own tree
+    // spells it — four levels out of `plugins/<id>/db/schema`.
+    expect(pluginImportIssue(TABLE, '../../../../db/schema/kit')).toBeNull()
+    expect(pluginImportIssue(ROUTE, '@rocketflare/shared/plugins/orders/index')).toBeNull()
+    expect(pluginImportIssue(ROUTE, '@rocketflare/shared/pagination')).toBeNull()
+    expect(
+      pluginImportIssue('apps/web/src/plugins/orders/ui/index.ts', '@/plugins/api/ui-wiring')
+    ).toBeNull()
+    expect(pluginImportIssue('apps/cli/src/plugins/orders/index.ts', '../api')).toBeNull()
+  })
+
+  it('leaves third-party packages and the plugin’s own files alone', () => {
+    // The rule is about coupling to kit INTERNALS, not about dependencies.
+    expect(pluginImportIssue(ROUTE, 'zod')).toBeNull()
+    expect(pluginImportIssue(ROUTE, 'drizzle-orm')).toBeNull()
+    expect(pluginImportIssue(ROUTE, 'react')).toBeNull()
+    expect(pluginImportIssue(ROUTE, './service')).toBeNull()
+    expect(pluginImportIssue(ROUTE, '../shared')).toBeNull()
+  })
+
+  it('says nothing about a core file — this guards ONE direction', () => {
+    // `deepImportIssue` owns core→plugin and plugin→plugin; this owns plugin→core.
+    expect(pluginImportIssue('apps/web/src/api/index.ts', '@/api/services/jobs')).toBeNull()
+  })
+
+  it('refuses a kit internal, and the message carries the EDIT', () => {
+    // The whole point: an install is performed by an agent, and a diagnostic that says only what
+    // is wrong gives one nothing to do.
+    expect(pluginImportIssue(TABLE, '../../../../db/schema/rls', 4)).toBe(
+      "orders.ts:4 imports '../../../../db/schema/rls' — replace with: " +
+        "import { tenantIsolation } from '@/db/schema/kit'"
+    )
+    expect(pluginImportIssue(ROUTE, '@/api/services/jobs', 9)).toMatch(/ctx\.enqueue\(input\)/)
+    expect(pluginImportIssue(ROUTE, '@/api/utils/routes/route-helpers')).toMatch(/requestCtx\(c\)/)
+    expect(pluginImportIssue(ROUTE, '@/api/middleware/permissions')).toMatch(/ctx\.guard/)
+    expect(pluginImportIssue(ROUTE, '@/api/utils/core/errors')).toMatch(/ctx\.notFound/)
+    expect(
+      pluginImportIssue('apps/web/src/plugins/orders/ui/pages/List.tsx', '@/ui/components/shared')
+    ).toMatch(/@\/plugins\/api\/ui/)
+  })
+
+  it('falls back to naming the entry when it has no better suggestion', () => {
+    expect(pluginImportIssue(ROUTE, '@/api/routes/members')).toMatch(/'@\/plugins\/api'/)
+  })
+
+  it('covers a plugin’s tests as well as its source', () => {
+    const TEST = 'apps/web/src/plugins/orders/tests/api/orders.test.ts'
+    expect(isPluginFile(ROUTE)).toBe(true)
+    expect(isPluginFile(TEST)).toBe(true)
+    expect(isPluginFile('apps/web/src/api/index.ts')).toBe(false)
+
+    // The climb into the host's test tree is what `@testkit` replaced — and the diagnostic names
+    // the entry rather than only the offence.
+    // Five levels out of `plugins/<id>/tests/api` is `apps/web/`, which is how a plugin's test
+    // actually spelled the climb before `@testkit` existed.
+    expect(pluginImportIssue(TEST, '../../../../../tests/mocks/bindings', 7)).toBe(
+      "orders.test.ts:7 imports '../../../../../tests/mocks/bindings' — replace with: " +
+        "import { createTestEnv, stubs } from '@testkit/integration'"
+    )
+    expect(pluginImportIssue(TEST, '../../../../../tests/helpers/db')).toMatch(/setupTestDatabase/)
+    expect(pluginImportIssue(TEST, '@testkit/integration')).toBeNull()
+    expect(pluginImportIssue(TEST, '@testkit/unit')).toBeNull()
+  })
+
+  it('reads a plugin’s own declaration of the contract it was written against', () => {
+    // The reference plugin is migrated, so it declares one — which is what puts it in the strict
+    // group below. A plugin that predates the surface declares nothing and is only warned about.
+    expect(pluginApiDeclaration(REPO_ROOT, 'example-feature')).not.toBeNull()
+    expect(pluginApiDeclaration(REPO_ROOT, 'a-plugin-that-is-not-installed')).toBeNull()
   })
 })
 
@@ -216,6 +317,61 @@ describe('installed plugins', () => {
     )
     expect(issues).toEqual([])
   })
+
+  it('reaches the host only through a declared entry', () => {
+    /**
+     * Two groups, and which one a plugin is in is the plugin's OWN statement about itself.
+     *
+     * A plugin that declares `requires.pluginApi` has said it is written against the plugin context
+     * API, and is held to the rule strictly. One that does not predates the surface, and is warned
+     * about — which is the only reason this can be enforced at all: `pnpm test` runs the gate a
+     * second time with `defaultPlugins` installed at their pinned refs, and `analytics` 1.0.2 is
+     * older than the surface and cannot be retroactively changed. A plugin moves between the groups
+     * in the release that migrates it, by adding one manifest field.
+     */
+    const declared = new Map<string, boolean>()
+    const declares = (id: string) => {
+      const known = declared.get(id)
+      if (known !== undefined) return known
+      const answer = pluginApiDeclaration(REPO_ROOT, id) !== null
+      declared.set(id, answer)
+      return answer
+    }
+
+    const strict: string[] = []
+    const legacy: string[] = []
+    for (const file of tracked.filter(isPluginFile)) {
+      const id = pluginIdOfPath(file)
+      if (!id) continue
+      const source = readFileSync(path.join(REPO_ROOT, file), 'utf8')
+      for (const { specifier, line } of staticImports(source)) {
+        const issue = pluginImportIssue(file, specifier, line)
+        if (!issue) continue
+        ;(declares(id) ? strict : legacy).push(issue)
+      }
+    }
+
+    if (legacy.length > 0) {
+      console.warn(
+        `\nplugin import rule — ${legacy.length} import(s) in plugins that declare no ` +
+          'requires.pluginApi (warned, not failed; they predate the plugin context API):\n' +
+          `${legacy.map(i => `  ${i}`).join('\n')}\n`
+      )
+    }
+
+    if (PLUGIN_IMPORT_ENFORCEMENT !== 'fail') {
+      if (strict.length > 0) {
+        console.warn(`\nplugin import rule (warn-only):\n${strict.map(i => `  ${i}`).join('\n')}\n`)
+      }
+      return
+    }
+
+    expect(
+      strict,
+      'A plugin imports only from declared entries and receives everything else as injected ' +
+        'context (D31). Each line below carries its replacement.'
+    ).toEqual([])
+  })
 })
 
 // ---- the closed sets, at the type level ---------------------------------------------------------
@@ -237,7 +393,12 @@ describe('installed plugins', () => {
 describe('the closed sets a plugin opens', () => {
   it('name the kit exactly, and widen for what is installed', () => {
     expectTypeOf<CoreJobType>().toEqualTypeOf<
-      'email.send' | 'activity.record' | 'document.index' | 'document.convert' | 'chat.compact'
+      | 'email.send'
+      | 'activity.record'
+      | 'document.index'
+      | 'document.convert'
+      | 'chat.compact'
+      | 'tenant.purge'
     >()
     // A plugin may only WIDEN the kit's set — the property the whole "variants are data" change
     // bought. Which types a particular plugin adds is that plugin's own test to make.
