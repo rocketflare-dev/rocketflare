@@ -237,7 +237,12 @@ describe('installed plugins', () => {
 describe('the closed sets a plugin opens', () => {
   it('name the kit exactly, and widen for what is installed', () => {
     expectTypeOf<CoreJobType>().toEqualTypeOf<
-      'email.send' | 'activity.record' | 'document.index' | 'document.convert' | 'chat.compact'
+      | 'email.send'
+      | 'activity.record'
+      | 'document.index'
+      | 'document.convert'
+      | 'chat.compact'
+      | 'tenant.purge'
     >()
     // A plugin may only WIDEN the kit's set — the property the whole "variants are data" change
     // bought. Which types a particular plugin adds is that plugin's own test to make.

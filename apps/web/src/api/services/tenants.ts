@@ -16,6 +16,7 @@ import { and, eq } from 'drizzle-orm'
 import type { Database } from '../../db/client'
 import { tenantSettings, tenants, tenantUserSettings } from '../../db/schema'
 import { ConflictError, NotFoundError } from '../utils/core/errors'
+import { enqueueJob, type JobsQueue, requireJobsQueue } from './jobs'
 import { nudge, type Realtime, realtimeEvent } from './realtime'
 
 export function toTenantDto(row: typeof tenants.$inferSelect): TenantDto {
@@ -62,17 +63,34 @@ export async function updateTenant(
   return toTenantDto(row)
 }
 
-/** Cascades through every `tenantRef` FK — one statement removes the organisation's world. */
+/**
+ * Cascades through every `tenantRef` FK — one statement removes the organisation's world INSIDE
+ * Postgres — then enqueues `tenant.purge` for everything outside it (R2 objects, a plugin's own
+ * out-of-database state). The cascade was the whole story until this job existed, which is why a
+ * deleted tenant's uploads used to live on in the bucket for ever.
+ *
+ * Two orderings are load-bearing. The queue binding is proved BEFORE the delete, because the purge
+ * is the only thing that can ever reach a deleted tenant's state and a misconfigured deployment
+ * must fail while the tenant is still there to describe. And the message is sent AFTER the row is
+ * gone, carrying the slug the row will no longer be able to supply, so nothing is purged for an
+ * organisation that still exists.
+ */
 export async function deleteTenant(
   db: Database,
   tenantId: string,
+  jobs: JobsQueue | undefined | null,
   realtime?: Realtime
 ): Promise<void> {
-  const rows = await db
+  const queue = requireJobsQueue(jobs)
+  const [row] = await db
     .delete(tenants)
     .where(eq(tenants.id, tenantId))
-    .returning({ id: tenants.id })
-  if (rows.length === 0) throw new NotFoundError('Organisation not found')
+    .returning({ id: tenants.id, slug: tenants.slug })
+  if (!row) throw new NotFoundError('Organisation not found')
+  await enqueueJob(queue, {
+    type: 'tenant.purge',
+    payload: { tenantId, tenantSlug: row.slug },
+  })
   // Members still connected refetch the session and land on /select-tenant.
   nudge(realtime, realtimeEvent('tenant.changed', tenantId, { id: tenantId }))
 }

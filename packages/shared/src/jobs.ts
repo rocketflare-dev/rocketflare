@@ -76,6 +76,18 @@ export const chatCompactPayloadSchema = z.object({
 })
 export type ChatCompactPayload = z.infer<typeof chatCompactPayloadSchema>
 
+/**
+ * Delete what a deleted tenant left OUTSIDE Postgres (R2 objects, a plugin's own out-of-database
+ * state). The tenant row is already gone when this is enqueued — the FK cascade took it — so the
+ * payload has to carry everything the purge needs: nothing can be looked up afterwards. `tenantSlug`
+ * is carried for the log line alone, because after the delete there is no row left to name.
+ */
+export const tenantPurgePayloadSchema = z.object({
+  tenantId: z.string().uuid(),
+  tenantSlug: z.string().max(63).optional(),
+})
+export type TenantPurgePayload = z.infer<typeof tenantPurgePayloadSchema>
+
 // ---- Envelope ------------------------------------------------------------------------------
 
 /**
@@ -88,6 +100,7 @@ export const CORE_JOB_VARIANTS = [
   z.object({ type: z.literal('document.index'), payload: documentIndexPayloadSchema }),
   z.object({ type: z.literal('document.convert'), payload: documentConvertPayloadSchema }),
   z.object({ type: z.literal('chat.compact'), payload: chatCompactPayloadSchema }),
+  z.object({ type: z.literal('tenant.purge'), payload: tenantPurgePayloadSchema }),
 ] as const
 
 type PluginJobVariant = NonNullable<DeclaredBy<(typeof SHARED_PLUGINS)[number], 'jobs'>>[number]

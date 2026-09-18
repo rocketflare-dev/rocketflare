@@ -29,7 +29,7 @@ import type { VisibilityResource } from '../api/services/access'
 import type { AnyAgentDefinition } from '../api/services/agents/registry'
 import type { AgentToolContext } from '../api/services/agents/tools'
 import type { Tool } from '../api/services/ai/kit'
-import type { AppEnv } from '../api/types'
+import type { AppBindings, AppEnv } from '../api/types'
 import type { Database } from '../db/client'
 import type { Tenant } from '../db/schema'
 import type { RoleGrant } from '../permissions/abilities'
@@ -121,6 +121,30 @@ export interface ServerPlugin<S extends SharedPlugin = SharedPlugin> {
       userId: string,
       features: readonly string[]
     ) => Promise<void>
+    /**
+     * A tenant has been deleted: drop whatever of its state lives OUTSIDE Postgres. Run from the
+     * `tenant.purge` job (D7), per plugin, each in its own try/catch — post-commit, idempotent and
+     * best-effort, exactly like `onTenantCreated`. There is no `Tenant` to hand over: the row and
+     * everything `tenantRef()` cascades from it are already gone, which is why this takes the id.
+     *
+     * A plugin's TABLES need nothing here — the cascade took them. What needs this is R2 objects
+     * (the kit purges its own `tenants/<id>/` prefix), KV keys and Durable Object state.
+     *
+     * **Durable Object state is purgeable only because instance names are derived.** There is no
+     * API that enumerates the instances of a namespace, so state is reachable only where the KEYS
+     * are known: derive every instance name from the tenant id, keep the set FINITE, and loop the
+     * names this plugin DECLARES rather than trying to discover instances. `NotificationsHub` is
+     * already that shape — `idFromName(tenantId)`, one instance per tenant — and a plugin that
+     * wants one DO per row cannot be purged under this rule. The escape hatch for that case is a
+     * purge-intent ledger: a table carrying `tenant_id` with NO foreign key, so it survives the
+     * cascade and still names the rows to visit (`access_requests.requested_tenant_id` and
+     * `user_sessions.selected_tenant_id` are the precedent for a tenant reference that outlives the
+     * tenant). It is **deferred until somebody needs it** and deliberately not built.
+     *
+     * `env` is here for exactly those bindings; a plugin reaches its own KV or DO namespace
+     * through it, never through a module-level global.
+     */
+    onTenantDeleted?: (db: Database, tenantId: string, env: AppBindings) => Promise<void>
     /** `pnpm seed --demo`, after the kit's own block. Fixed ids + `onConflictDoNothing`. */
     seedDemo?: (db: Database, ctx: PluginSeedContext) => Promise<void>
   }
