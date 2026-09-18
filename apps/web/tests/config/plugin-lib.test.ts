@@ -1157,6 +1157,22 @@ describe('the audit', () => {
   })
 
   /**
+   * The same failure mode as `declaresProperty`, in the check that matters most: a file whose
+   * HEADER talks about tenant isolation, or whose two tenant creations are commented out, is talk
+   * about the test rather than the test. Every source-scanning check strips comments first.
+   */
+  it('does not accept a commented-out isolation test', () => {
+    const talk = [
+      '/** Covers tenant isolation: createTestTenant twice, as a second organisation. */',
+      '// createTestTenant(db)',
+      '// createTestTenant(db)',
+      "describe('notes', () => {})",
+    ].join('\n')
+    expect(isolationEvidence(talk).ok).toBe(false)
+    expect(isolationEvidence(talk).tenantsCreated).toBe(0)
+  })
+
+  /**
    * **A check a COMMENT can talk its way past is worse than no check**, because it reports success.
    *
    * The fixture written to prove the `onTenantDeleted` rule works carried the sentence "declares no
