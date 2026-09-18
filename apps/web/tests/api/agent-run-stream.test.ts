@@ -364,6 +364,10 @@ describe('the loop', () => {
     expect(rec.text).not.toContain('RUN_FINISHED')
   })
 
+  // The fake clock costs nothing, but the LOOP does: reaching the 10-minute duration cap is ~320
+  // adaptive ticks, each a real tail query, plus a real event insert every fifth one. Measured well
+  // under a second locally and 5.004 s on a CI runner — the same shape as the MAX_INTERRUPT_ROUNDS
+  // test, and budgeted the same way rather than globally, so a genuine hang elsewhere still surfaces.
   it('closes with NO terminal event at the duration cap', async () => {
     const a = await actor()
     const run = await makeRun(db, a.tenant.id, a.user.id, 'running')
@@ -383,7 +387,7 @@ describe('the loop', () => {
     expect(outcome).toBe('duration_cap')
     expect(rec.text).not.toContain('RUN_ERROR')
     expect(rec.text).not.toContain('RUN_FINISHED')
-  })
+  }, 30_000)
 
   it('stops as soon as the client goes away, and says nothing about it', async () => {
     const a = await actor()
