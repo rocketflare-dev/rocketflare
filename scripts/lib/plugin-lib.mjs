@@ -14,7 +14,7 @@
  * `plugin-lib.d.mts` beside this file is the hand-written type surface (no `allowJs`).
  */
 import { KIT } from './rename-lib.mjs'
-import { satisfies } from './upgrade-lib.mjs'
+import { isVendored, satisfiesResult } from './upgrade-lib.mjs'
 
 // ---------------------------------------------------------------- identity
 
@@ -458,8 +458,13 @@ export function checkRequirements({
 }) {
   const problems = []
   const range = requires.kit
-  if (range && !vendored && !satisfies(kitVersion, range)) {
-    problems.push(`kit ${kitVersion} does not satisfy ${range}`)
+  if (range && !vendored) {
+    // A range this kit cannot READ is its own problem, distinct from "the version is outside it":
+    // it means the plugin declared something the matcher does not implement, and saying so is what
+    // turns a thrown generic error into this function's exit-6 answer.
+    const answer = satisfiesResult(kitVersion, range)
+    if (answer.problem) problems.push(`requires.kit '${range}' is not a range this kit can read`)
+    else if (!answer.ok) problems.push(`kit ${kitVersion} does not satisfy ${range}`)
   }
   for (const id of requires.surfaces ?? []) {
     if (!presentSurfaces.includes(id)) problems.push(`surface '${id}' is not present in this app`)
@@ -467,8 +472,15 @@ export function checkRequirements({
   for (const req of requires.plugins ?? []) {
     const { id, range: r } = parsePluginRequirement(req)
     const found = installedPlugins.find(p => p.id === id)
-    if (!found) problems.push(`plugin '${id}' is required and not installed`)
-    else if (r && !satisfies(found.version ?? '0.0.0', r)) {
+    if (!found) {
+      problems.push(`plugin '${id}' is required and not installed`)
+      continue
+    }
+    if (!r) continue
+    const answer = satisfiesResult(found.version ?? '0.0.0', r)
+    if (answer.problem)
+      problems.push(`plugin '${id}' requires '${r}', which is not a readable range`)
+    else if (!answer.ok) {
       problems.push(
         `plugin '${id}' is ${found.version ?? 'unversioned'}, which does not satisfy ${r}`
       )
@@ -488,8 +500,13 @@ export function checkRequirements({
  */
 export function unsupportedForKit(plugins, { kitRepo, version }) {
   if (!version) return []
+  // An unreadable range counts as unsupported: `satisfiesResult(...).ok` is false either way, and
+  // "I cannot check this plugin against the target" is not a reason to wave it through.
   return plugins.filter(
-    p => p.requires?.kit && !isVendored(p.source, kitRepo) && !satisfies(version, p.requires.kit)
+    p =>
+      p.requires?.kit &&
+      !isVendored(p.source, kitRepo) &&
+      !satisfiesResult(version, p.requires.kit).ok
   )
 }
 
@@ -503,10 +520,15 @@ export function parsePluginRequirement(entry) {
     : { id: entry.slice(0, at), range: entry.slice(at + 1) }
 }
 
-/** True when this plugin ships inside the kit itself (`example-feature` is the one that does). */
-export function isVendored(source, kitRepo) {
-  return Boolean(source && source.repo === kitRepo && (source.subdir ?? '') === '')
-}
+/**
+ * True when this plugin ships inside the kit itself (`example-feature` is the one that does).
+ *
+ * **Re-exported, not reimplemented.** There were two of these and they disagreed about a URL with a
+ * trailing slash or without `.git`, so one plugin could read as vendored for `kit:release` and as
+ * third-party for `plugin check` in the same checkout. `upgrade-lib.mjs` owns it — this file
+ * already imports that one, and the reverse direction would be a cycle.
+ */
+export { isVendored }
 
 // ---------------------------------------------------------------- the surface
 

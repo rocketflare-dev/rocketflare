@@ -23,9 +23,11 @@ import {
   globToRegExp,
   isDeployable,
   isKitManifest,
+  isVendored,
   matchesAny,
   parseNote,
   satisfies,
+  satisfiesResult,
   splitDiff,
   stripIndexLines,
   translateBlock,
@@ -258,6 +260,15 @@ describe('satisfies', () => {
     ['9.9.9', '*', true],
     ['9.9.9', '', true],
     ['0.6.0', '  >=0.5.0   <1.0.0  ', true],
+    // A space after the operator, and `||` alternation: both are ordinary semver spellings a
+    // person reaches for without thinking, and both were refused as unreadable until now.
+    ['0.6.0', '>= 0.5.0', true],
+    ['0.4.0', '>= 0.5.0', false],
+    ['0.6.0', '>= 0.5.0 < 1.0.0', true],
+    ['0.6.5', '^0.6.0 || ^0.7.0', true],
+    ['0.7.1', '^0.6.0 || ^0.7.0', true],
+    ['0.8.0', '^0.6.0 || ^0.7.0', false],
+    ['1.2.3', '>=2.0.0 || <1.0.0', false],
   ])('%s vs %s → %s', (version, range, expected) => {
     expect(satisfies(version, range)).toBe(expected)
   })
@@ -269,11 +280,46 @@ describe('satisfies', () => {
     expect(satisfies('1.2.3', undefined)).toBe(true)
   })
 
-  it('throws on a range it does not implement rather than guessing', () => {
-    // A silent "false" would read as an incompatible plugin; a silent "true" would install one.
-    expect(() => satisfies('1.2.3', '>=1.0.0 || <0.5.0')).toThrow(/unsupported version range/)
-    expect(() => satisfies('1.2.3', '1.x')).toThrow(/unsupported version range/)
-    expect(() => satisfies('1.2.3', 'latest')).toThrow(/unsupported version range/)
+  it('REPORTS a range it does not implement rather than throwing or guessing', () => {
+    // It used to throw, and the throw arrived as a generic exit 1 from `pnpm plugin add` — where
+    // the documented answer for an unmet requirement is exit 6. A silent "true" would install an
+    // incompatible plugin, so the structured `problem` is what every caller folds into its list.
+    for (const range of ['1.x', 'latest', '>=1.0.0 - 2.0.0']) {
+      const answer = satisfiesResult('1.2.3', range)
+      expect(answer.ok, range).toBe(false)
+      expect(answer.problem, range).toMatch(/unsupported version range/)
+    }
+    expect(satisfiesResult('1.2.3', '^1.0.0 || ').problem).toMatch(/empty alternative/)
+    // A real yes/no carries no problem — that is how a caller tells "no" from "I cannot tell".
+    expect(satisfiesResult('1.2.3', '>=2.0.0')).toEqual({ ok: false, problem: null })
+    expect(satisfiesResult('1.2.3', '>=1.0.0')).toEqual({ ok: true, problem: null })
+    // A version that is not X.Y.Z is a plain no, not an unreadable range.
+    expect(satisfiesResult('1.2', '>=1.0.0')).toEqual({ ok: false, problem: null })
+  })
+})
+
+describe('isVendored', () => {
+  // ONE implementation, in this file, re-exported by plugin-lib. The two that existed disagreed:
+  // this one normalises the URL, the other compared strings exactly — so the same plugin could be
+  // vendored for `kit:release` and third-party for `plugin check`, over one manifest.
+  const KIT_REPO = 'https://github.com/rocketflare-dev/rocketflare.git'
+
+  it('is the same answer from either module', async () => {
+    const { isVendored: fromPluginLib } = await import('../../../../scripts/lib/plugin-lib.mjs')
+    expect(fromPluginLib).toBe(isVendored)
+  })
+
+  it('normalises a trailing slash and a missing .git, and refuses a subdirectory', () => {
+    expect(isVendored({ repo: KIT_REPO, subdir: '' }, KIT_REPO)).toBe(true)
+    expect(isVendored({ repo: KIT_REPO }, KIT_REPO)).toBe(true)
+    expect(isVendored({ repo: 'https://github.com/rocketflare-dev/rocketflare' }, KIT_REPO)).toBe(
+      true
+    )
+    expect(isVendored({ repo: `${KIT_REPO}/` }, KIT_REPO)).toBe(true)
+    expect(isVendored({ repo: KIT_REPO, subdir: 'plugins/x' }, KIT_REPO)).toBe(false)
+    expect(isVendored({ repo: 'https://github.com/acme/p.git' }, KIT_REPO)).toBe(false)
+    expect(isVendored(null, KIT_REPO)).toBe(false)
+    expect(isVendored({ repo: '' }, KIT_REPO)).toBe(false)
   })
 })
 

@@ -162,9 +162,31 @@ export const VERSION_RE: RegExp
 
 /**
  * A tiny semver range matcher for `requires.kit` (D31). Supports `>=` `>` `<=` `<` `=`, a bare
- * version, `^`, `~`, `*` and space-separated conjunctions. Throws on anything else.
+ * version, `^`, `~`, `*`, space-separated conjunctions, `||` alternation and a space after the
+ * operator. A range it cannot read is REPORTED through `problem` — it is never thrown, because the
+ * throw surfaced as a generic exit 1 where the documented answer is "requirement unmet".
  */
+export interface SatisfiesResult {
+  ok: boolean
+  /** The sentence to show when the range is unreadable; null when the answer is a real yes/no. */
+  problem: string | null
+}
+export function satisfiesResult(
+  version: string,
+  range: string | null | undefined
+): SatisfiesResult
+
+/** The boolean half of `satisfiesResult`: an unreadable range answers `false`. */
 export function satisfies(version: string, range: string | null | undefined): boolean
+
+/**
+ * True when a plugin ships inside the kit itself (`source.repo` is the kit's, no subdirectory).
+ * The ONE implementation; `plugin-lib.mjs` re-exports it.
+ */
+export function isVendored(
+  source: { repo?: string | null; subdir?: string | null } | null | undefined,
+  kitRepo: string | null | undefined
+): boolean
 
 /** One `defaultPlugins` entry, normalised (D31, decision 5). */
 export interface DefaultPluginEntry {

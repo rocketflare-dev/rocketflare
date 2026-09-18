@@ -436,25 +436,62 @@ export function compareVersions(a, b) {
 export const VERSION_RE = /^\d+\.\d+\.\d+$/
 
 /**
- * Does `version` satisfy `range`? A deliberately tiny semver matcher (D31): `plugin.json` declares
- * `requires.kit` as a range, and the kit ships no dependency to evaluate one with.
+ * Does `version` satisfy `range`, and — when that cannot be answered — why not?
  *
- * Supported, which is all a `requires` range has ever needed: `>=x.y.z`, `>x.y.z`, `<=x.y.z`,
- * `<x.y.z`, `=x.y.z`, a bare `x.y.z` (exact), `^x.y.z`, `~x.y.z`, `*` / `''` (anything), and a
- * space-separated CONJUNCTION of any of those (`>=0.5.0 <1.0.0`). Deliberately NOT supported:
- * `||`, hyphen ranges, `x`/`*` placeholders inside a version, and pre-release tags — the kit's own
- * versions are `X.Y.Z` (`VERSION_RE`) and a plugin declaring anything else should fail loudly here
- * rather than be approximated.
+ * A deliberately tiny semver matcher (D31): `plugin.json` declares `requires.kit` as a range, and
+ * the kit ships no dependency to evaluate one with.
+ *
+ * Supported: `>=x.y.z`, `>x.y.z`, `<=x.y.z`, `<x.y.z`, `=x.y.z`, a bare `x.y.z` (exact), `^x.y.z`,
+ * `~x.y.z`, `*` / `''` (anything), a space-separated CONJUNCTION of any of those
+ * (`>=0.5.0 <1.0.0`), a `||` ALTERNATION of conjunctions (`^0.6.0 || ^0.7.0`), and **a space after
+ * the operator** (`>= 0.5.0`). Those last two are ordinary semver spellings that anyone writing a
+ * `requires.kit` by hand reaches for without thinking, and refusing them taught nobody anything.
+ * Still NOT supported: hyphen ranges, `x`/`*` placeholders inside a version, and pre-release tags —
+ * the kit's own versions are `X.Y.Z` (`VERSION_RE`), so anything else is REPORTED rather than
+ * approximated.
+ *
+ * **Reported, not thrown.** This used to throw on a range it could not read, and the throw
+ * travelled out of `pnpm plugin add` as a generic error with exit 1 — while the documented answer
+ * for "a requirement is unmet" is exit 6. So the primitive returns `{ ok, problem }`: `problem` is
+ * the sentence to show, and each caller folds it into its own problem list, which is what maps it
+ * to the right exit code.
  *
  * `^` follows npm exactly, including the zero-major rule that catches people out: `^0.5.0` is
  * `>=0.5.0 <0.6.0`, NOT `<1.0.0` — a 0.x minor bump may break anything. `~0.5.0` is `>=0.5.0
  * <0.6.0` too; they only differ once the major is non-zero.
  */
-export function satisfies(version, range) {
-  if (!VERSION_RE.test(version ?? '')) return false
+export function satisfiesResult(version, range) {
+  if (!VERSION_RE.test(version ?? '')) return { ok: false, problem: null }
   const text = (range ?? '').trim()
-  if (text === '' || text === '*') return true
-  return text.split(/\s+/).every(part => satisfiesComparator(version, part))
+  if (text === '' || text === '*') return { ok: true, problem: null }
+  // A space after the operator is part of the SAME comparator: without this, `>= 0.5.0` tokenises
+  // as `>=` and `0.5.0` — two comparators, the first of them unreadable.
+  const normalised = text.replace(/([<>]=?|[=^~])\s+/g, '$1')
+  let ok = false
+  for (const alternative of normalised.split('||')) {
+    const parts = alternative.trim().split(/\s+/).filter(Boolean)
+    // `^1.0.0 || ` — an empty alternative is a missing bound, not "anything".
+    if (parts.length === 0) {
+      return { ok: false, problem: `unsupported version range '${text}' (an empty alternative)` }
+    }
+    let all = true
+    for (const part of parts) {
+      const answer = satisfiesComparator(version, part)
+      if (answer === null) return { ok: false, problem: `unsupported version range '${part}'` }
+      if (!answer) all = false
+    }
+    if (all) ok = true
+  }
+  return { ok, problem: null }
+}
+
+/**
+ * The boolean half of `satisfiesResult`. A range this matcher cannot read answers `false`, which is
+ * safe ONLY because every caller that has to tell those two apart reads `problem` from
+ * `satisfiesResult` and reports it. Never decide whether to install something on this alone.
+ */
+export function satisfies(version, range) {
+  return satisfiesResult(version, range).ok
 }
 
 const bump = (v, index) => {
@@ -464,9 +501,10 @@ const bump = (v, index) => {
   return parts.join('.')
 }
 
+/** `true` | `false`, or `null` when this is not a comparator the matcher implements. */
 function satisfiesComparator(version, comparator) {
   const m = comparator.match(/^(>=|<=|>|<|=|\^|~)?\s*(\d+\.\d+\.\d+)$/)
-  if (!m) throw new Error(`unsupported version range '${comparator}'`)
+  if (!m) return null
   const [, op = '=', target] = m
   const c = compareVersions(version, target)
   switch (op) {
@@ -517,10 +555,31 @@ export function defaultPluginEntries(manifest) {
   )
 }
 
-/** A vendored plugin is the kit's own: same repository, no subdirectory (§16). */
-function isVendored(entry, kitRepo) {
-  const norm = r => (r ?? '').replace(/\.git$/, '').replace(/\/+$/, '')
-  return norm(entry.repo) !== '' && norm(entry.repo) === norm(kitRepo) && !entry.subdir
+/**
+ * A vendored plugin is the kit's own: the same repository, with no subdirectory (§16).
+ *
+ * **One implementation, and it lives here because everything else can import it.** There were two,
+ * and they did not agree: this one normalises the URL (a trailing `/` or a missing `.git` still
+ * names the same repository) while `plugin-lib.mjs`'s compared the strings exactly — so one plugin
+ * could be vendored for `kit:release` and third-party for `plugin check`, in one checkout, over one
+ * manifest. `plugin-lib.mjs` re-exports this under the same name; the dependency can only run that
+ * way round, since `plugin-lib.mjs` already imports this file.
+ *
+ * Takes anything shaped `{ repo, subdir }` — a `defaultPlugins` entry and a surface's `source`
+ * block are the two callers, and they are the same two fields.
+ */
+export function isVendored(source, kitRepo) {
+  // Trailing slashes FIRST, then `.git` — the other order leaves `…/rocketflare.git/` as
+  // `…/rocketflare.git` while the bare form normalises to `…/rocketflare`, so the same repository
+  // reads as two. (The implementation this replaced had exactly that bug, unnoticed because
+  // nothing ever passed it a trailing slash.)
+  const norm = r =>
+    (r ?? '')
+      .trim()
+      .replace(/\/+$/, '')
+      .replace(/\.git$/, '')
+  const repo = norm(source?.repo)
+  return repo !== '' && repo === norm(kitRepo) && (source?.subdir ?? '') === ''
 }
 
 /**
@@ -573,16 +632,14 @@ export function defaultPluginProblems(entries, version, resolve, { kitRepo = nul
       )
       continue
     }
-    let ok = false
-    try {
-      ok = satisfies(version, range)
-    } catch (error) {
+    const answer = satisfiesResult(version, range)
+    if (answer.problem) {
       problems.push(
-        `defaultPlugins '${id}': requires.kit '${range}' is not a range this kit can read (${error.message})`
+        `defaultPlugins '${id}': requires.kit '${range}' is not a range this kit can read (${answer.problem})`
       )
       continue
     }
-    if (!ok) {
+    if (!answer.ok) {
       problems.push(
         `defaultPlugins '${id}'${resolved.version ? ` ${resolved.version}` : ''} requires kit '${range}', which ${version} does not satisfy — release the plugin first, or repin it`
       )
