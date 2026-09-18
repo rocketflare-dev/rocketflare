@@ -80,7 +80,16 @@ export {
 } from './events'
 export type { AppRouter, DetachedCtx, PluginMount, RequestCtx } from './http'
 export { createRouter, pageWindow, requestCtx, validate } from './http'
-export type { CronCtx, JobCtx, JobHandler, JobInput, JobOf, JobType, ScheduledTask } from './jobs'
+export type {
+  CronCtx,
+  JobCtx,
+  JobEnvelope,
+  JobHandler,
+  JobInput,
+  JobOf,
+  JobType,
+  ScheduledTask,
+} from './jobs'
 export { cronCtx, jobCtx } from './jobs'
 export type { AgentTraceContext, TraceHandle, Tracer } from './observability'
 export { noopTracer, traceChatClient, tracingEnabled, withAgentTrace } from './observability'

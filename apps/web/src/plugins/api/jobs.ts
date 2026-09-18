@@ -16,21 +16,27 @@
  * which is exactly the mistake the missing field prevents. Every method that needs one takes it.
  */
 
-import type { JobInput } from '@rocketflare/shared/jobs'
+import type { JobEnvelope, JobInput } from '@rocketflare/shared/jobs'
 import type { JobContext } from '../../api/queues/jobs'
 import type { TaskContext } from '../../api/scheduled'
 import { enqueueJob, enqueueJobs } from '../../api/services/jobs'
 import { createStepRealtimeFor } from './realtime-step'
 import type { PluginContext } from './types'
 
-export type { JobInput, JobOf, JobType } from '@rocketflare/shared/jobs'
+export type { JobEnvelope, JobInput, JobOf, JobType } from '@rocketflare/shared/jobs'
 export type { JobContext, JobHandler } from '../../api/queues/jobs'
 export type { ScheduledTask, TaskContext } from '../../api/scheduled'
 
 /** What every background context can do, tenant supplied per call. */
 interface BackgroundMethods {
-  /** Enqueue follow-on work. A missing `JOBS_QUEUE` throws rather than running inline. */
-  enqueue(input: JobInput, options?: { delaySeconds?: number }): Promise<{ id: string }>
+  /**
+   * Enqueue follow-on work. A missing `JOBS_QUEUE` throws rather than running inline.
+   *
+   * It answers the stamped ENVELOPE, not just an id: the `id`, the `type` and the `enqueuedAt` are
+   * what a caller echoes back so somebody can find the job again, and a narrower return would only
+   * mean re-deriving values the producer already computed.
+   */
+  enqueue(input: JobInput, options?: { delaySeconds?: number }): Promise<JobEnvelope>
   enqueueMany(inputs: readonly JobInput[], options?: { delaySeconds?: number }): Promise<void>
   /**
    * Tell one organisation's open tabs that a family of rows moved. **Awaited**, unlike a route's
