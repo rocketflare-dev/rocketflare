@@ -4,7 +4,7 @@ previous: 0.6.1
 date: null
 breaking: true
 migrations: []
-areas: [api, shared]
+areas: [api, shared, config]
 touches_surfaces: []
 requires_surfaces: []
 manual: false
@@ -42,6 +42,36 @@ A plugin wanting one DO per row cannot be purged under this rule; the escape hat
 ledger, a `tenant_id` column with no FK so it survives the cascade — is documented on the hook and
 deliberately **not built**.
 
+### The release and plugin tooling
+
+**`pnpm kit:release` could not cut a release.** `resolveDefaultPlugin` could only `git ls-remote` a
+default plugin, which proves a ref exists but cannot read a file out of it — so every release failed
+with "cannot read its requires.kit range" unless `--skip-plugin-check` was passed, which made the
+check one that effectively did not exist. It now fetches the plugin at its pinned ref into the same
+blobless bare mirror `pnpm plugin` already keeps and reads the manifest out of it, falling back to
+the recorded surface when a ref predates the file and refusing outright when the manifest is not
+JSON.
+
+**Released history is verifiable again.** `release-check --tag 0.2.0` and `0.3.0` failed on
+`feature-analytics`, a surface retired when analytics became a plugin — the test knew about retired
+surfaces and the release gate did not. That list is now `retiredSurfaces` in `.rocketflare.json` and
+both readers use it. An entry is never deleted: the note files it exempts are releases, and released
+history is never rewritten.
+
+Also: `requires` is refreshed from the plugin's manifest at the version being installed rather than
+silently frozen at first install, and that range is checked *before* the upgrade applies;
+`coreEdits` are re-applied on upgrade (and edits a new release no longer declares are reverted);
+`plugin check` fails when an installed plugin's version differs from what `defaultPlugins` pins;
+`satisfies` accepts `||` alternation and `>= 0.5.0`, and a malformed range now exits 6 rather than
+throwing to a generic 1; an undeclared `requires.kit` records `null` rather than `'*'`, so an
+undeclared plugin is no longer silently ungated; and the changelog check is anchored, so `## 0.6.10`
+no longer satisfies a search for `## 0.6.1`.
+
+Four duplicated statements of the porting-note schema became one `noteProblems()`; four copies of
+`defaultPlugins` validation became one `scripts/default-plugins.mjs` both workflows call; and the
+tag-versus-version check, which lived in three places including two inline shell steps in
+`deploy.yml`, became one.
+
 ## How to apply
 
 There is no migration and no schema change.
@@ -59,12 +89,23 @@ There is no migration and no schema change.
 - A plugin holding tenant state outside Postgres should now declare `hooks.onTenantDeleted`. A
   plugin whose only state is its tables needs nothing — the cascade already took them.
 
+**The tooling changes need nothing from you.** `.rocketflare.json` gains one additive key,
+`retiredSurfaces`; if you have retired a surface of your own and carry an exemption for it in
+`apps/web/tests/config/upgrade-notes.test.ts`, move that id into the new key and delete the local
+list. If you call `satisfies` from your own scripts it is now `satisfiesResult(version, range)`
+returning `{ ok, problem }`.
+
 ## Conflicts to expect
 
 `apps/web/src/api/services/tenants.ts` and `apps/web/src/api/services/storage.ts` if you have edited
 either; both are core files the patch rewrites in place. `packages/shared/src/jobs.ts` gains one
 variant in `CORE_JOB_VARIANTS` — if you have added job variants of your own the list will conflict,
 and the resolution is to keep both. `apps/web/src/plugins/types.ts` gains one optional field.
+
+`scripts/lib/upgrade-lib.mjs`, `scripts/lib/plugin-lib.mjs`, `scripts/plugin.mjs`,
+`scripts/release.mjs` and `scripts/release-check.mjs` are substantially rewritten; an app that has
+edited any of them should expect rejects and re-apply its own change on top. `.github/workflows/`
+loses two inline shell steps in favour of `scripts/default-plugins.mjs`.
 
 ## Verify
 
@@ -77,3 +118,10 @@ pnpm --filter @rocketflare/web exec wrangler r2 object list <app>-files --prefix
 Under `wrangler dev` the consumer runs in-process, so the same terminal logs
 `tenant.purge: removed N object(s)`. Running the job a second time must delete 0 and still ack —
 that is the idempotency the at-least-once delivery depends on.
+
+The two checks that were broken:
+
+```bash
+node scripts/release.mjs <next> --dry-run     # passes WITHOUT --skip-plugin-check
+node scripts/release-check.mjs --tag 0.3.0    # no longer reports 'feature-analytics'
+```
