@@ -61,8 +61,10 @@ in the host. Each half is checked where it is written; only the merge is cast.
   copied in replaces drizzle's notion of current state with one that has never heard of the app's
   own tables.
 - **It edits no toml and no `package.json`.** A binding, cron or `[vars]` key it declares in
-  `plugin.json` is added to BOTH tomls by hand (`.claude/rules/cloudflare.md`) until Phase B's
-  provisioning reads them.
+  `plugin.json` is written into BOTH tomls by `pnpm provision cloudflare <env>`
+  (`.claude/rules/cloudflare.md`) — including a `workflow` or `durable_object` block and, for a
+  Durable Object, its `plugin-<id>-v1` `[[migrations]]` tag. The host owns every byte of its own
+  files; the plugin only declares.
 - **It never renames anything across releases** — expand/contract only. `drizzle-kit`'s rename
   prompt has no non-interactive answer, so a rename stops an unattended install dead.
 - **It composes, never redefines.** `grants` are additive over its own subjects; hooks are

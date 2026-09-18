@@ -39,12 +39,16 @@
 # and the `<APP>_<ID>_<NAME>[_STAGING]` one for KV). It travels in the ENVIRONMENT rather than in
 # argv or a temp file: nothing in it is secret, nothing is left on disk, and the redaction rule
 # below is unchanged — the connection string is still the one thing that never reaches a log.
+# It only ever carries the types an account has to CREATE — kv, queue, r2. A plugin's `workflow` and
+# `durable_object` bindings are written into both tomls by `pnpm provision cloudflare <env>` and
+# registered by `wrangler deploy` from there, so nothing about them reaches this script.
 # An unsupported type (`d1`, `vectorize`, `analytics_engine`…) is a loud refusal naming the type,
 # never a silent skip: a binding that is quietly not created is a Worker that deploys and 503s.
 #
 # Workflows, Durable Objects and the Workers AI binding need no create step: `wrangler deploy`
 # registers them. Workflow names are ACCOUNT-scoped, so the staging toml MUST use
-# `<app>-agent-run-staging`.
+# `<app>-agent-run-staging` — and the same rule applies to a PLUGIN's workflow, whose name
+# `pnpm provision cloudflare <env>` derives as `<app>-<id>-<name>[-staging]`.
 #
 # Nothing here writes to git. The secret connection string is passed to wrangler only (it is an
 # argument of that one `wrangler hyperdrive create` process) and is redacted from every echoed line.
@@ -127,9 +131,11 @@ if [ -n "${PLUGIN_RESOURCES:-}" ]; then
       const supported = ["kv", "queue", "r2"];
       for (const r of list) {
         if (!r || !supported.includes(r.type)) {
-          console.error("unsupported plugin binding type " + JSON.stringify(r && r.type) +
-            " for binding " + JSON.stringify(r && r.binding) + " (supported: " + supported.join(", ") +
-            "). Create it and add the block to BOTH tomls by hand.");
+          console.error("unsupported plugin resource type " + JSON.stringify(r && r.type) +
+            " for binding " + JSON.stringify(r && r.binding) + " (creatable: " + supported.join(", ") +
+            "). workflow and durable_object are written into the tomls and registered by " +
+            "wrangler deploy, so they never reach this script; anything else has to be created " +
+            "and added to BOTH tomls by hand.");
           process.exit(2)
         }
         if (!r.name || !r.binding) { console.error("plugin resource needs name and binding: " + JSON.stringify(r)); process.exit(2) }

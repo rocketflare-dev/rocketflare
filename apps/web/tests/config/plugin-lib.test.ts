@@ -42,9 +42,11 @@ import {
   coreEditsByFile,
   hasBarrelLine,
   isVendored,
+  nextPluginMigrationTag,
   PLUGIN_MANIFEST_FILE,
   parsePluginRequirement,
   pluginIdProblem,
+  pluginMigrationTag,
   pluginPlatformProblems,
   pluginRoots,
   removeBarrelLine,
@@ -512,7 +514,7 @@ describe('platform declarations', () => {
     expect([...SUPPORTED_PLUGIN_BINDING_TYPES]).toEqual([...PROVISION_TYPES])
   })
 
-  it('refuses a binding type provisioning cannot create, at INSTALL time', () => {
+  it('refuses a binding type provisioning cannot write, at INSTALL time', () => {
     // Otherwise it installs cleanly, deploys, and 503s on the first request that reads it off
     // `Cloudflare.Env` — days later, for somebody else.
     expect(pluginPlatformProblems(fixtureManifest)).toEqual([])
@@ -526,7 +528,82 @@ describe('platform declarations', () => {
     })
     expect(problems).toHaveLength(2)
     expect(problems[0]).toMatch(/binding B declares type 'd1'/)
-    expect(problems[1]).toMatch(/supported: kv, queue, r2/)
+    expect(problems[1]).toMatch(/supported: kv, queue, r2, workflow, durable_object/)
+  })
+
+  /**
+   * `workflow` and `durable_object` graduated when the sixth barrel landed, and only then: a
+   * `class_name` resolves against the named exports of `src/worker.ts`, so before
+   * `plugins/worker-exports.ts` made a plugin's class reachable there, either block would have
+   * named a class nothing exported — and `wrangler deploy` refuses the whole SCRIPT for that,
+   * which is worse than refusing the install. `d1` and `vectorize` still have no such mechanism.
+   */
+  it('accepts a workflow and a durable object, and demands what each block cannot be written without', () => {
+    expect(
+      pluginPlatformProblems({
+        ...fixtureManifest,
+        bindings: [
+          {
+            type: 'workflow',
+            binding: 'ORDERS_SYNC',
+            name: 'sync',
+            className: 'OrdersSyncWorkflow',
+          },
+          {
+            type: 'durable_object',
+            binding: 'ORDERS_HUB',
+            className: 'OrdersHub',
+            storage: 'sqlite',
+          },
+        ],
+      })
+    ).toEqual([])
+
+    // No class → a block pointing at nothing.
+    expect(
+      pluginPlatformProblems({
+        ...fixtureManifest,
+        bindings: [{ type: 'workflow', binding: 'W', name: 'w' }],
+      })
+    ).toContainEqual(expect.stringContaining('declares no className'))
+    // A workflow name is ACCOUNT-scoped, so it is the half that must differ between environments.
+    expect(
+      pluginPlatformProblems({
+        ...fixtureManifest,
+        bindings: [{ type: 'workflow', binding: 'W', className: 'W' }],
+      })
+    ).toContainEqual(expect.stringContaining('declares no name'))
+    // Storage is REQUIRED rather than defaulted: a namespace cannot be migrated between the two,
+    // so guessing it is not something anybody can undo.
+    expect(
+      pluginPlatformProblems({
+        ...fixtureManifest,
+        bindings: [{ type: 'durable_object', binding: 'H', className: 'H' }],
+      })
+    ).toContainEqual(expect.stringContaining('storage'))
+    // …and it is meaningless anywhere else.
+    expect(
+      pluginPlatformProblems({
+        ...fixtureManifest,
+        bindings: [{ type: 'kv', binding: 'K', name: 'k', storage: 'sqlite' }],
+      })
+    ).toContainEqual(expect.stringContaining('only a durable_object has'))
+  })
+
+  /**
+   * A DO migration tag is an identity Cloudflare has already acted on — the same thing a SQL
+   * migration's name is — so the numbering is append-only and the helper never reuses one.
+   */
+  it('numbers a plugin migration tag append-only, per plugin', () => {
+    expect(pluginMigrationTag('orders')).toBe('plugin-orders-v1')
+    expect(nextPluginMigrationTag([], 'orders')).toBe('plugin-orders-v1')
+    expect(nextPluginMigrationTag(['v1', 'plugin-orders-v1'], 'orders')).toBe('plugin-orders-v2')
+    // Gaps are never filled: the highest wins, so a tag can only ever move forward.
+    expect(nextPluginMigrationTag(['plugin-orders-v1', 'plugin-orders-v7'], 'orders')).toBe(
+      'plugin-orders-v8'
+    )
+    // Another plugin's tags are not this plugin's sequence.
+    expect(nextPluginMigrationTag(['plugin-billing-v9'], 'orders')).toBe('plugin-orders-v1')
   })
 })
 

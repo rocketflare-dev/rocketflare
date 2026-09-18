@@ -434,7 +434,7 @@ export function classifyPluginFile(relPath, id) {
 // ---------------------------------------------------------------- platform declarations
 
 /**
- * The binding types provisioning knows how to create (D31, decision 12).
+ * The binding types provisioning knows how to write (D31, decision 12).
  *
  * **This list exists twice and the duplication is pinned, not silent.**
  * `apps/web/scripts/provision/plugin-resources.ts` owns the TypeScript half and is what
@@ -444,7 +444,29 @@ export function classifyPluginFile(relPath, id) {
  * what makes an unsupported type stop an INSTALL, rather than surface as a 503 on the first
  * request after a deploy that silently skipped the binding.
  */
-export const SUPPORTED_PLUGIN_BINDING_TYPES = Object.freeze(['kv', 'queue', 'r2'])
+export const SUPPORTED_PLUGIN_BINDING_TYPES = Object.freeze([
+  'kv',
+  'queue',
+  'r2',
+  'workflow',
+  'durable_object',
+])
+
+/**
+ * The subset an account has to CREATE before a deploy. `workflow` and `durable_object` are not
+ * here because `wrangler deploy` registers both from the toml — there is nothing to find-or-create
+ * — so `PLUGIN_RESOURCES` never carries one and `cf-provision.sh` never sees one.
+ */
+export const CREATED_PLUGIN_BINDING_TYPES = Object.freeze(['kv', 'queue', 'r2'])
+
+/** Types whose block names a CLASS exported from the Worker's entry module (the sixth barrel). */
+export const CLASS_PLUGIN_BINDING_TYPES = Object.freeze(['workflow', 'durable_object'])
+
+/** Types carrying an account-scoped resource NAME, which must differ between the environments. */
+export const NAMED_PLUGIN_BINDING_TYPES = Object.freeze(['kv', 'queue', 'r2', 'workflow'])
+
+/** How a Durable Object's storage is created. Irreversible, so it is declared rather than guessed. */
+export const DO_STORAGE_KINDS = Object.freeze(['sqlite', 'none'])
 
 /**
  * Everything wrong with a plugin's platform declarations, as sentences. Empty means installable.
@@ -456,14 +478,61 @@ export const SUPPORTED_PLUGIN_BINDING_TYPES = Object.freeze(['kv', 'queue', 'r2'
 export function pluginPlatformProblems(manifest) {
   const problems = []
   for (const b of manifest.bindings ?? []) {
+    const who = b.binding ?? b.name ?? '?'
     if (!SUPPORTED_PLUGIN_BINDING_TYPES.includes(b.type)) {
       problems.push(
-        `binding ${b.binding ?? b.name ?? '?'} declares type '${b.type}', which provisioning cannot ` +
-          `create (supported: ${SUPPORTED_PLUGIN_BINDING_TYPES.join(', ')})`
+        `binding ${who} declares type '${b.type}', which provisioning cannot ` +
+          `write (supported: ${SUPPORTED_PLUGIN_BINDING_TYPES.join(', ')})`
       )
+      continue
+    }
+    // A class binding is only writable because the sixth barrel makes the class reachable from
+    // `src/worker.ts`; the manifest has to say WHICH class, or the block points at nothing and
+    // `wrangler deploy` refuses the whole script.
+    if (CLASS_PLUGIN_BINDING_TYPES.includes(b.type) && !b.className) {
+      problems.push(`binding ${who} is a ${b.type} and declares no className`)
+    }
+    if (!CLASS_PLUGIN_BINDING_TYPES.includes(b.type) && b.className) {
+      problems.push(
+        `binding ${who} declares className, which is only meaningful on a class binding`
+      )
+    }
+    // A Durable Object's storage kind cannot be changed after the namespace exists, so it is
+    // declared rather than defaulted: guessing it wrong is not a thing anyone can undo.
+    if (b.type === 'durable_object' && !DO_STORAGE_KINDS.includes(b.storage)) {
+      problems.push(
+        `binding ${who} must declare storage as one of ${DO_STORAGE_KINDS.join(' | ')} — ` +
+          'it picks new_sqlite_classes vs new_classes and cannot be changed later'
+      )
+    }
+    if (b.type !== 'durable_object' && b.storage) {
+      problems.push(`binding ${who} declares storage, which only a durable_object has`)
+    }
+    if (NAMED_PLUGIN_BINDING_TYPES.includes(b.type) && !b.name) {
+      problems.push(`binding ${who} declares no name (the account-scoped half of the resource)`)
     }
   }
   return problems
+}
+
+/**
+ * The `[[migrations]]` tag an install writes for a plugin's Durable Object classes.
+ *
+ * **DO migrations are to `worker.ts` what SQL migrations are to `db/schema`**: an append-only
+ * record of what this Worker has already told Cloudflare, numbered in the HOST's file. A tag is
+ * never renumbered and never rewritten — replaying one under a different meaning loses a namespace
+ * and everything stored in it. Install is always `v1`; a later change (a removal's
+ * `deleted_classes`) takes the next free number.
+ */
+export function pluginMigrationTag(pluginId, n = 1) {
+  return `plugin-${pluginId}-v${n}`
+}
+
+/** The next free `plugin-<id>-v<n>`, given every tag already in the toml. */
+export function nextPluginMigrationTag(existingTags, pluginId) {
+  const re = new RegExp(`^plugin-${pluginId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}-v(\\d+)$`)
+  const used = existingTags.map(t => Number(re.exec(t)?.[1])).filter(n => Number.isInteger(n))
+  return pluginMigrationTag(pluginId, used.length === 0 ? 1 : Math.max(...used) + 1)
 }
 
 // ---------------------------------------------------------------- requirements

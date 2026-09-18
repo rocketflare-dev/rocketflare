@@ -59,12 +59,31 @@ export interface FileClassification {
 export function classifyPluginFile(relPath: string, id: string): FileClassification
 
 /**
- * The binding types provisioning can create. Pinned against
+ * The binding types provisioning can write. Pinned against
  * `apps/web/scripts/provision/plugin-resources.ts`'s `SUPPORTED_PLUGIN_BINDING_TYPES` by
  * `plugin-lib.test.ts` — one is TypeScript, one has to be loadable from a plain `.mjs` script.
  */
-export const SUPPORTED_PLUGIN_BINDING_TYPES: readonly ['kv', 'queue', 'r2']
+export const SUPPORTED_PLUGIN_BINDING_TYPES: readonly [
+  'kv',
+  'queue',
+  'r2',
+  'workflow',
+  'durable_object',
+]
+/** The subset an account must CREATE; `wrangler deploy` registers the other two from the toml. */
+export const CREATED_PLUGIN_BINDING_TYPES: readonly ['kv', 'queue', 'r2']
+/** The types whose block names a class exported from the Worker entry (the sixth barrel). */
+export const CLASS_PLUGIN_BINDING_TYPES: readonly ['workflow', 'durable_object']
+/** The types carrying an account-scoped resource name, which must differ between environments. */
+export const NAMED_PLUGIN_BINDING_TYPES: readonly ['kv', 'queue', 'r2', 'workflow']
+export const DO_STORAGE_KINDS: readonly ['sqlite', 'none']
 export function pluginPlatformProblems(manifest: PluginManifest): string[]
+/** `plugin-<id>-v<n>` — append-only, host-owned, never renumbered. */
+export function pluginMigrationTag(pluginId: string, n?: number): string
+export function nextPluginMigrationTag(
+  existingTags: readonly string[],
+  pluginId: string
+): string
 
 export interface PluginRequires {
   kit?: string
@@ -82,7 +101,17 @@ export interface PluginManifest {
   registries?: string[]
   requires?: PluginRequires
   dependencies?: Record<string, Record<string, string>>
-  bindings?: Array<{ type: string; binding?: string; name?: string; consumer?: boolean }>
+  bindings?: Array<{
+    type: string
+    binding?: string
+    /** The account-scoped half; absent on a `durable_object`, which creates no resource. */
+    name?: string
+    consumer?: boolean
+    /** `workflow` / `durable_object`: the class the sixth barrel re-exports into `worker.ts`. */
+    className?: string
+    /** `durable_object` only, and required there — it picks new_sqlite_classes vs new_classes. */
+    storage?: string
+  }>
   crons?: Array<string | { cron: string; task?: string }>
   apiPrefixes?: string[]
   vars?: Array<string | { key?: string; name?: string; example?: string; secret?: boolean }>
