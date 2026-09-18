@@ -515,6 +515,19 @@ describe('the surface an install records', () => {
     // files no surface classifies (`kit-manifest.test.ts`) and a `remove` that leaves them behind.
     expect(surface.paths).toContain('docs/plugins/orders/**')
     expect(surface.registries).toContain('apps/web/src/plugins/server.ts')
+    expect(surface.requires?.kit).toBe('>=0.5.0 <1.0.0')
+  })
+
+  it('records an UNDECLARED kit range as null, never as "*"', () => {
+    // `'*'` reads as "checked, and anything is allowed", and it put such a plugin beyond every gate
+    // there is: `checkRequirements`, `unsupportedForKit` and `kit:upgrade` all skip a falsy range,
+    // so a plugin that declared nothing was carried across a major kit version without a word.
+    // Null is the same silence — but `plugin check` and the install plan both say it out loud.
+    const silent = { id: 'orders', label: 'Orders', version: '1.1.0', repo: 'https://x.test/o.git' }
+    const surface = buildPluginSurface(silent, { repo: silent.repo, at: '2026-09-17' })
+    expect(surface.requires?.kit).toBeNull()
+    expect(surface.requires?.surfaces).toEqual([])
+    expect(surface.requires?.plugins).toEqual([])
   })
 
   it('turns the path globs back into the directories a remove deletes', () => {
@@ -622,6 +635,19 @@ describe('the install plan', () => {
   it('says a vendored plugin is not held to the range', () => {
     const text = renderAddPlan({ ...plan, barrels: [...plan.barrels], vendored: true }).join('\n')
     expect(text).toContain('vendored — shipped with the kit')
+  })
+
+  it('WARNS rather than ticking when the plugin declares no kit range', () => {
+    // The plan is what a person reads before saying yes, and "no version will ever be checked
+    // against this" is not the same sentence as "✔ kit 0.5.0 satisfies *".
+    const silent = { id: 'orders', label: 'Orders', version: '1.1.0', repo: 'https://x.test/o.git' }
+    const text = renderAddPlan({
+      ...plan,
+      manifest: silent,
+      barrels: [...plan.barrels],
+    }).join('\n')
+    expect(text).toContain('declares no requires.kit')
+    expect(text).not.toContain('✔ kit')
   })
 })
 

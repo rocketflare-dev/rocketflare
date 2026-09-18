@@ -27,7 +27,8 @@ export interface Surface {
   source?: PluginSource
   installedAt?: string
   requires?: {
-    kit?: string
+    /** `null` when the plugin declared no range — never `'*'`, which would read as "checked". */
+    kit?: string | null
     surfaces?: string[]
     plugins?: string[]
   }
@@ -61,6 +62,11 @@ export interface Manifest {
   surfaces: Surface[]
   /** Plugins a fresh clone installs, and the kit's own CI gates on (D31, decisions 2 and 5). */
   defaultPlugins?: (string | Partial<DefaultPluginEntry>)[]
+  /**
+   * Surface id → the release that retired it. Released notes still name these, and released
+   * history is never rewritten, so both readers of a note accept them (§13).
+   */
+  retiredSurfaces?: Record<string, string>
   neverPort: string[]
   manual: string[]
   core: string[]
@@ -157,14 +163,65 @@ export interface ParsedNote {
 }
 export function parseNote(text: string): ParsedNote | null
 export const NOTE_HEADINGS: readonly string[]
+
+/** What `noteProblems` needs from its caller; see the implementation for why each is optional. */
+export interface NoteCheckOptions {
+  /** How the note is named in every sentence — a path, usually. */
+  file?: string
+  /** The filename's version stem; `null` for `unreleased.md` (no version, no date to check). */
+  version?: string | null
+  /** Checked only when given; the baseline note expects the string `'null'`. */
+  expectPrevious?: string
+  /** `null` skips the surface check rather than reporting every id as unknown. */
+  surfaceIds?: readonly string[] | null
+  /** `.rocketflare.json`'s `retiredSurfaces`: removed on purpose, still named by older notes. */
+  retiredSurfaceIds?: Record<string, string>
+  manifestFile?: string
+}
+
+/**
+ * Everything wrong with one porting note, as sentences — the ONE statement of the note schema,
+ * read by `release-check.mjs` and by `upgrade-notes.test.ts`.
+ */
+export function noteProblems(text: string, options?: NoteCheckOptions): string[]
 export function compareVersions(a: string, b: string): -1 | 0 | 1
 export const VERSION_RE: RegExp
 
+/** Anchored `## <version>` — `includes('## 0.6.1')` also matches `## 0.6.10`. */
+export function hasChangelogSection(text: string, version: string): boolean
+
+/** What needs a porting note: `apps/` or `packages/` source, tests and markdown excluded. */
+export const BEHAVIOUR_PATH_RE: RegExp
+export const BEHAVIOUR_EXEMPT_RE: RegExp
+export function behaviourFiles(changed: readonly string[] | undefined): string[]
+
 /**
  * A tiny semver range matcher for `requires.kit` (D31). Supports `>=` `>` `<=` `<` `=`, a bare
- * version, `^`, `~`, `*` and space-separated conjunctions. Throws on anything else.
+ * version, `^`, `~`, `*`, space-separated conjunctions, `||` alternation and a space after the
+ * operator. A range it cannot read is REPORTED through `problem` — it is never thrown, because the
+ * throw surfaced as a generic exit 1 where the documented answer is "requirement unmet".
  */
+export interface SatisfiesResult {
+  ok: boolean
+  /** The sentence to show when the range is unreadable; null when the answer is a real yes/no. */
+  problem: string | null
+}
+export function satisfiesResult(
+  version: string,
+  range: string | null | undefined
+): SatisfiesResult
+
+/** The boolean half of `satisfiesResult`: an unreadable range answers `false`. */
 export function satisfies(version: string, range: string | null | undefined): boolean
+
+/**
+ * True when a plugin ships inside the kit itself (`source.repo` is the kit's, no subdirectory).
+ * The ONE implementation; `plugin-lib.mjs` re-exports it.
+ */
+export function isVendored(
+  source: { repo?: string | null; subdir?: string | null } | null | undefined,
+  kitRepo: string | null | undefined
+): boolean
 
 /** One `defaultPlugins` entry, normalised (D31, decision 5). */
 export interface DefaultPluginEntry {
@@ -174,6 +231,11 @@ export interface DefaultPluginEntry {
   subdir: string
 }
 export function defaultPluginEntries(manifest: Manifest | null): DefaultPluginEntry[]
+
+/** The shape check over a normalised list — no I/O. Shared with the bootstrap and both workflows. */
+export function defaultPluginEntryProblems(
+  entries: readonly DefaultPluginEntry[] | undefined
+): string[]
 
 /** What an injected resolver answers about one default plugin. */
 export interface ResolvedDefaultPlugin {

@@ -107,10 +107,11 @@ export function parsePluginRequirement(entry: string | { id: string; range?: str
   id: string
   range: string | null
 }
-export function isVendored(
-  source: { repo?: string; subdir?: string } | null | undefined,
-  kitRepo: string
-): boolean
+/**
+ * Re-exported from `upgrade-lib.mjs`, which owns the one implementation (two that disagreed about
+ * a normalised URL is exactly the bug this removed).
+ */
+export { isVendored } from './upgrade-lib.d.mts'
 
 export function buildPluginSurface(
   manifest: PluginManifest,

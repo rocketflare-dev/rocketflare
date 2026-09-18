@@ -47,7 +47,9 @@ import {
   ensureMirror,
   makeGit,
   makeWriter,
+  mirrorDirFor,
   notesBetween,
+  PLUGIN_MIRROR_ROOT,
 } from './lib/git-lib.mjs'
 import { pluginSurfaces, readManifest } from './lib/manifest.mjs'
 import {
@@ -77,6 +79,7 @@ import {
 import { applyReplacements, deriveNames, isBinary } from './lib/rename-lib.mjs'
 import {
   countLines,
+  defaultPluginEntries,
   parseNote,
   satisfies,
   splitDiff,
@@ -85,7 +88,9 @@ import {
 } from './lib/upgrade-lib.mjs'
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
-const WORK_DIR = path.join('.upgrade', 'plugins')
+// The mirror location is shared with `scripts/release.mjs`, which fetches the same plugin
+// repositories to read their manifests — one clone, not two that take turns being stale.
+const WORK_DIR = PLUGIN_MIRROR_ROOT
 
 const out = (...lines) => {
   for (const l of lines) process.stdout.write(`${l}\n`)
@@ -289,17 +294,7 @@ const findSurface = (host, id) => {
 
 // ---------------------------------------------------------------- the source
 
-const mirrorDirFor = repo =>
-  abs(
-    path.join(
-      WORK_DIR,
-      `${repo
-        .replace(/\.git$/, '')
-        .split(/[/:]/)
-        .filter(Boolean)
-        .pop()}.git`
-    )
-  )
+const pluginMirrorDir = repo => mirrorDirFor(repo, abs(WORK_DIR))
 
 /** `<repo|path>[@ref]`, without mistaking the `@` of `git@github.com:…` for a ref. */
 export function splitRef(spec) {
@@ -353,7 +348,11 @@ function openSource(spec, args) {
       has: rel => existsSync(path.join(root, rel)),
     }
   }
-  const m = ensureMirror(target, mirrorDirFor(target), { fetch: args.fetch, cwd: REPO_ROOT, warn })
+  const m = ensureMirror(target, pluginMirrorDir(target), {
+    fetch: args.fetch,
+    cwd: REPO_ROOT,
+    warn,
+  })
   const at = ref ?? m.latestTag() ?? 'HEAD'
   if (!m.resolves(at)) stop(1, `error: '${at}' is not in ${target}`)
   const full = p => (subdir === '' ? p : `${subdir}/${p}`)
@@ -619,6 +618,9 @@ function installDependencies(m, verb) {
 
 // ---------------------------------------------------------------- upgrade
 
+/** Identity of one declared core edit, for "does the new release still want this one?". */
+const coreEditKey = edit => `${edit.file} ${edit.after} ${(edit.lines ?? []).join('\n')}`
+
 /** The frontmatter fields a PLUGIN note may carry beyond the kit's own. */
 const PLUGIN_NOTE_FIELDS = [
   'requires_kit',
@@ -645,7 +647,7 @@ function cmdUpgrade(args, host) {
   }
   if (args.apply) requireClean(host, args)
 
-  const m = ensureMirror(source.repo, mirrorDirFor(source.repo), {
+  const m = ensureMirror(source.repo, pluginMirrorDir(source.repo), {
     fetch: args.fetch,
     cwd: REPO_ROOT,
     warn,
@@ -685,6 +687,27 @@ function cmdUpgrade(args, host) {
       ...refused.map(f => `  ${f.path}`)
     )
   }
+
+  // The plugin's OWN manifest, at the version being installed — read BEFORE anything is applied,
+  // because the anchor `plugin.json` in the tree is one of the files the patch overwrites.
+  //
+  // It is what `requires` and `coreEdits` must come from. The surface records what the plugin said
+  // on the day it was first installed, and leaving either frozen there is how a plugin that raised
+  // its floor, or that started needing a line in a core file, arrives silently broken.
+  const pluginManifestPath =
+    subdir === '' ? PLUGIN_MANIFEST_FILE : `${subdir}/${PLUGIN_MANIFEST_FILE}`
+  const shownManifest = m.tryShow(to, pluginManifestPath)
+  let targetManifest = null
+  if (shownManifest.ok) {
+    try {
+      targetManifest = JSON.parse(shownManifest.out)
+    } catch {
+      stop(1, `error: ${pluginManifestPath} at ${to} is not valid JSON — a bug in the plugin.`)
+    }
+  }
+  const installedManifest = existsSync(abs(surface.anchor))
+    ? JSON.parse(readFileSync(abs(surface.anchor), 'utf8'))
+    : {}
 
   // Every note's `requires_kit` is checked against THIS kit, because a plugin release may raise
   // its floor and the whole point of the range is that nobody finds out at the gate.
@@ -785,14 +808,21 @@ function cmdUpgrade(args, host) {
       }
     }
   }
+  // Two sources for one question: a release may raise its floor in a NOTE, or simply by changing
+  // the manifest — and the manifest's is the one that ends up recorded on the surface, so checking
+  // only the notes would let an upgrade stamp a range this kit does not satisfy.
   const floors = noteFacts.filter(
     n => n.requires_kit && !satisfies(host.kitVersion, n.requires_kit)
   )
-  if (floors.length > 0) {
+  const declaredRange = targetManifest?.requires?.kit ?? null
+  const manifestFloor =
+    declaredRange && !satisfies(host.kitVersion, declaredRange) ? declaredRange : null
+  if (floors.length > 0 || manifestFloor) {
     warn(
       '',
-      `error: this kit is ${host.kitVersion}, and these plugin releases need more:`,
+      `error: this kit is ${host.kitVersion}, and ${id} needs more:`,
       ...floors.map(n => `  ${n.version} requires kit ${n.requires_kit}`),
+      ...(manifestFloor ? [`  ${toVersion ?? to} declares requires.kit ${manifestFloor}`] : []),
       '',
       'Upgrade the kit first (`pnpm kit:upgrade`), then come back to this.'
     )
@@ -847,10 +877,45 @@ function cmdUpgrade(args, host) {
   // the PLUGIN's releases, which is what the next upgrade's `from` is read against.
   for (const n of notes) writeInto(`docs/plugins/${id}/upgrades/${path.basename(n.file)}`, n.text)
 
+  // Core files the plugin declared but may not edit itself — the same rule `add` follows, and an
+  // UPGRADE has to follow it too: a release that starts needing an alias in `vite.config.ts` would
+  // otherwise apply cleanly and fail at `pnpm build`, which is precisely the failure declared edits
+  // were introduced to remove. Idempotent, so a line already present is not written twice.
+  const coreEditWarnings = []
+  const coreEditFiles = []
+  if (targetManifest) {
+    const wanted = coreEditsByFile(targetManifest)
+    // An edit the new release no longer declares is REVERTED, or the host keeps a line pointing at
+    // something the plugin has stopped shipping.
+    for (const [file, edits] of coreEditsByFile(installedManifest)) {
+      const keep = wanted.get(file) ?? []
+      const dropped = edits.filter(e => !keep.some(k => coreEditKey(k) === coreEditKey(e)))
+      if (dropped.length === 0 || !existsSync(abs(file))) continue
+      writeFileSync(abs(file), revertCoreEdits(readFileSync(abs(file), 'utf8'), dropped))
+      coreEditFiles.push(file)
+    }
+    for (const [file, edits] of wanted) {
+      if (!existsSync(abs(file))) {
+        coreEditWarnings.push(`core edit for ${file}: no such file here — apply it by hand`)
+        continue
+      }
+      try {
+        writeFileSync(abs(file), applyCoreEdits(readFileSync(abs(file), 'utf8'), edits))
+        if (!coreEditFiles.includes(file)) coreEditFiles.push(file)
+      } catch (err) {
+        // A moved anchor must not abort an upgrade whose files are already on disk: report it and
+        // let the person place the line, exactly as they would from the plan.
+        coreEditWarnings.push(err instanceof Error ? err.message : String(err))
+      }
+    }
+  }
+
   out(
     '',
     `✔ ${added.length} added, ${patches.length - rejected} patched` +
-      (rejected > 0 ? `, ${rejected} with rejects (*.rej beside the file)` : '')
+      (rejected > 0 ? `, ${rejected} with rejects (*.rej beside the file)` : ''),
+    ...(coreEditFiles.length > 0 ? [`✔ core edit(s) applied to ${coreEditFiles.join(', ')}`] : []),
+    ...coreEditWarnings.map(w => `  warning: ${w}`)
   )
   if (rejected === 0) {
     const raw = JSON.parse(
@@ -869,6 +934,18 @@ function cmdUpgrade(args, host) {
       ...entry.source,
       version: toVersion ?? entry.source.version,
       commit: m.commitOf(to),
+    }
+    // `requires` is REFRESHED from the manifest at the version just installed, never left at what
+    // the plugin said on the day it was first installed. Frozen, a plugin that raised its floor or
+    // gained a plugin dependency stays recorded as wanting the old one — and `plugin check`,
+    // `kit:upgrade` and `kit:release` all read the surface, so all three would keep agreeing with
+    // a statement that is no longer true. Nothing ELSE on the entry is rewritten here.
+    if (targetManifest) {
+      entry.requires = {
+        kit: targetManifest.requires?.kit ?? null,
+        surfaces: targetManifest.requires?.surfaces ?? [],
+        plugins: targetManifest.requires?.plugins ?? [],
+      }
     }
     writeManifestFile(host.sidecarIds.includes(id) ? host.sidecarPath : host.manifestPath, raw, {
       format: !host.sidecarIds.includes(id),
@@ -1063,6 +1140,9 @@ function cmdList(_args, host) {
  */
 function cmdCheck(_args, host) {
   const failures = []
+  // Things worth SAYING that are not faults — a state the kit itself is legitimately in, or a
+  // silence somebody should know about. Printed either way; they never change the exit code.
+  const notes = []
   for (const s of host.plugins) {
     const id = s.id
     const vendored = isVendored(s.source, host.kitRepo)
@@ -1097,6 +1177,12 @@ function cmdCheck(_args, host) {
       vendored,
     })) {
       failures.push(`${id}: ${problem}`)
+    }
+    // A plugin that declares no kit range is beyond every gate there is — `checkRequirements`
+    // skips it, `unsupportedForKit` skips it, and `kit:upgrade` would carry it across a major
+    // version without a word. That is the plugin's choice to make, but not silently.
+    if (!vendored && (s.requires?.kit ?? null) === null) {
+      notes.push(`${id}: declares no requires.kit, so no kit version is ever checked against it`)
     }
     for (const kind of BARREL_KINDS) {
       const ships = existsSync(abs(BARRELS[kind].half(id)))
@@ -1133,7 +1219,28 @@ function cmdCheck(_args, host) {
       }
     }
   }
-  if (host.plugins.length === 0) {
+  // Is what is INSTALLED what `.rocketflare.json` says a fresh clone would get? (D31, decision 2.)
+  // Nothing compared the two, and the drift is invisible from either side: CI installs each default
+  // plugin at its PINNED ref, so a checkout carrying a different version passes its own gate while
+  // the gate that matters runs something else entirely.
+  for (const declared of defaultPluginEntries(host.manifest)) {
+    const installed = host.plugins.find(p => p.id === declared.id)
+    if (!installed) {
+      // Not a fault: the kit declares its defaults without installing them, and that is exactly
+      // the state `bash scripts/bootstrap.sh` exists to resolve on a fresh clone.
+      notes.push(`${declared.id}: named in defaultPlugins and not installed here`)
+      continue
+    }
+    const have = installed.source?.version ?? null
+    if (declared.ref && have && declared.ref !== have) {
+      failures.push(
+        `${declared.id}: installed at ${have}, but defaultPlugins pins ${declared.ref} — repin the entry, or \`pnpm plugin upgrade ${declared.id}\``
+      )
+    }
+  }
+  for (const n of notes) out(`note: ${n}`)
+
+  if (host.plugins.length === 0 && failures.length === 0) {
     out('No plugins installed — nothing to check.')
     return 0
   }

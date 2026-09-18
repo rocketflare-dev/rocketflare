@@ -48,26 +48,11 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version-file: .nvmrc
+      # One reader, in a file the kit's own rules can reach. This was a `node -e` heredoc here and
+      # another in gate.yml, and they had drifted in what they printed and what they refused —
+      # nothing lints a heredoc, nothing types it, and no test can run it.
       - id: read
-        run: |
-          node --input-type=module -e "
-            import { appendFileSync } from 'node:fs'
-            import { readManifest } from './scripts/lib/manifest.mjs'
-            import { defaultPluginEntries } from './scripts/lib/upgrade-lib.mjs'
-            // readManifest() rather than a literal filename: the provenance file keeps the kit's
-            // name in a renamed copy, but a literal here would be renamed with everything else.
-            const entries = defaultPluginEntries(readManifest().manifest)
-            const bad = entries.filter(e => !e.id || !e.repo)
-            for (const e of bad) {
-              process.stderr.write(\`::error::defaultPlugins entry '\${e.id ?? '?'}' needs an id and a repo\n\`)
-            }
-            const ids = entries.map(e => e.id).join(', ')
-            console.log(entries.length === 0
-              ? 'No default plugins — a fresh clone of this kit installs nothing beyond the kit.'
-              : \`\${entries.length} default plugin(s): \${ids}\`)
-            appendFileSync(process.env.GITHUB_OUTPUT, \`count=\${entries.length}\nids=\${ids}\n\`)
-            process.exit(bad.length === 0 ? 0 : 1)
-          "
+        run: node scripts/default-plugins.mjs --github-output
 
   # The same gate again, with every default plugin installed and its migrations generated and
   # applied. This is the kit's half of decision 5's "proof both ways": the other half is each

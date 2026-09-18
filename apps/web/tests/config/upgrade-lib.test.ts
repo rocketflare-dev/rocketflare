@@ -16,16 +16,21 @@ import type { Manifest } from '../../../../scripts/lib/upgrade-lib.d.mts'
 import {
   absentSurfaces,
   BinaryPatchError,
+  behaviourFiles,
   classifyPath,
   countLines,
   defaultPluginEntries,
+  defaultPluginEntryProblems,
   defaultPluginProblems,
   globToRegExp,
+  hasChangelogSection,
   isDeployable,
   isKitManifest,
+  isVendored,
   matchesAny,
   parseNote,
   satisfies,
+  satisfiesResult,
   splitDiff,
   stripIndexLines,
   translateBlock,
@@ -258,6 +263,15 @@ describe('satisfies', () => {
     ['9.9.9', '*', true],
     ['9.9.9', '', true],
     ['0.6.0', '  >=0.5.0   <1.0.0  ', true],
+    // A space after the operator, and `||` alternation: both are ordinary semver spellings a
+    // person reaches for without thinking, and both were refused as unreadable until now.
+    ['0.6.0', '>= 0.5.0', true],
+    ['0.4.0', '>= 0.5.0', false],
+    ['0.6.0', '>= 0.5.0 < 1.0.0', true],
+    ['0.6.5', '^0.6.0 || ^0.7.0', true],
+    ['0.7.1', '^0.6.0 || ^0.7.0', true],
+    ['0.8.0', '^0.6.0 || ^0.7.0', false],
+    ['1.2.3', '>=2.0.0 || <1.0.0', false],
   ])('%s vs %s → %s', (version, range, expected) => {
     expect(satisfies(version, range)).toBe(expected)
   })
@@ -269,11 +283,46 @@ describe('satisfies', () => {
     expect(satisfies('1.2.3', undefined)).toBe(true)
   })
 
-  it('throws on a range it does not implement rather than guessing', () => {
-    // A silent "false" would read as an incompatible plugin; a silent "true" would install one.
-    expect(() => satisfies('1.2.3', '>=1.0.0 || <0.5.0')).toThrow(/unsupported version range/)
-    expect(() => satisfies('1.2.3', '1.x')).toThrow(/unsupported version range/)
-    expect(() => satisfies('1.2.3', 'latest')).toThrow(/unsupported version range/)
+  it('REPORTS a range it does not implement rather than throwing or guessing', () => {
+    // It used to throw, and the throw arrived as a generic exit 1 from `pnpm plugin add` — where
+    // the documented answer for an unmet requirement is exit 6. A silent "true" would install an
+    // incompatible plugin, so the structured `problem` is what every caller folds into its list.
+    for (const range of ['1.x', 'latest', '>=1.0.0 - 2.0.0']) {
+      const answer = satisfiesResult('1.2.3', range)
+      expect(answer.ok, range).toBe(false)
+      expect(answer.problem, range).toMatch(/unsupported version range/)
+    }
+    expect(satisfiesResult('1.2.3', '^1.0.0 || ').problem).toMatch(/empty alternative/)
+    // A real yes/no carries no problem — that is how a caller tells "no" from "I cannot tell".
+    expect(satisfiesResult('1.2.3', '>=2.0.0')).toEqual({ ok: false, problem: null })
+    expect(satisfiesResult('1.2.3', '>=1.0.0')).toEqual({ ok: true, problem: null })
+    // A version that is not X.Y.Z is a plain no, not an unreadable range.
+    expect(satisfiesResult('1.2', '>=1.0.0')).toEqual({ ok: false, problem: null })
+  })
+})
+
+describe('isVendored', () => {
+  // ONE implementation, in this file, re-exported by plugin-lib. The two that existed disagreed:
+  // this one normalises the URL, the other compared strings exactly — so the same plugin could be
+  // vendored for `kit:release` and third-party for `plugin check`, over one manifest.
+  const KIT_REPO = 'https://github.com/rocketflare-dev/rocketflare.git'
+
+  it('is the same answer from either module', async () => {
+    const { isVendored: fromPluginLib } = await import('../../../../scripts/lib/plugin-lib.mjs')
+    expect(fromPluginLib).toBe(isVendored)
+  })
+
+  it('normalises a trailing slash and a missing .git, and refuses a subdirectory', () => {
+    expect(isVendored({ repo: KIT_REPO, subdir: '' }, KIT_REPO)).toBe(true)
+    expect(isVendored({ repo: KIT_REPO }, KIT_REPO)).toBe(true)
+    expect(isVendored({ repo: 'https://github.com/rocketflare-dev/rocketflare' }, KIT_REPO)).toBe(
+      true
+    )
+    expect(isVendored({ repo: `${KIT_REPO}/` }, KIT_REPO)).toBe(true)
+    expect(isVendored({ repo: KIT_REPO, subdir: 'plugins/x' }, KIT_REPO)).toBe(false)
+    expect(isVendored({ repo: 'https://github.com/acme/p.git' }, KIT_REPO)).toBe(false)
+    expect(isVendored(null, KIT_REPO)).toBe(false)
+    expect(isVendored({ repo: '' }, KIT_REPO)).toBe(false)
   })
 })
 
@@ -324,9 +373,11 @@ describe('default plugins', () => {
     const problems = defaultPluginProblems(entries, '0.6.0', entry =>
       entry.id === 'gone' ? { ok: false, reason: 'no such ref' } : { ok: true, requiresKit: '*' }
     )
+    // Shape problems come first now: they are the whole of `defaultPluginEntryProblems`, and
+    // somebody fixing a hand-edited list wants every one of them in one run.
     expect(problems).toEqual([
-      expect.stringContaining('no such ref'),
       expect.stringContaining('has no "repo"'),
+      expect.stringContaining('no such ref'),
     ])
   })
 
@@ -370,6 +421,84 @@ describe('default plugins', () => {
     expect(defaultPluginProblems(entries, '0.6.0', ok('*'))).toEqual([
       expect.stringContaining("lists 'a' twice"),
     ])
+  })
+})
+
+describe('defaultPluginEntryProblems', () => {
+  // The shape check, alone. Four callers share it — `kit:release`, the bootstrap's plugins step and
+  // both GitHub workflows (through `scripts/default-plugins.mjs`) — and before that they answered
+  // the same question three different ways.
+  const entries = (list: unknown[]) =>
+    defaultPluginEntries({ defaultPlugins: list } as unknown as Manifest)
+
+  it('passes a well-formed list', () => {
+    expect(
+      defaultPluginEntryProblems(entries([{ id: 'a', repo: 'https://x.test/a.git', ref: '1.0.0' }]))
+    ).toEqual([])
+    expect(defaultPluginEntryProblems([])).toEqual([])
+    expect(defaultPluginEntryProblems(undefined)).toEqual([])
+  })
+
+  it('reports a missing id, a missing repo and a duplicate — all of them, in one pass', () => {
+    const problems = defaultPluginEntryProblems(
+      entries([
+        { repo: 'https://x.test/a.git' },
+        { id: 'b' },
+        { id: 'c', repo: 'https://x.test/c.git' },
+        { id: 'c', repo: 'https://x.test/c.git' },
+      ])
+    )
+    expect(problems).toEqual([
+      expect.stringContaining('has no "id"'),
+      expect.stringContaining(`'b' has no "repo"`),
+      expect.stringContaining(`lists 'c' twice`),
+    ])
+  })
+
+  it('treats a bare STRING as an id with no repo, which is what it is', () => {
+    // Not "not an object": the entry names something, it just cannot be fetched.
+    expect(defaultPluginEntryProblems(entries(['analytics']))[0]).toMatch(
+      /'analytics' has no "repo"/
+    )
+  })
+})
+
+describe('behaviourFiles', () => {
+  // The porting-note predicate, shared by the CI gate (`release-check --unreleased`) and the
+  // pre-commit hook (`changelog-nudge.mjs`). They were two copies of one regex pair, and a hook
+  // that disagrees with the gate is a hook people learn to ignore.
+  it('is source under apps/ or packages/, tests and markdown excluded', () => {
+    expect(
+      behaviourFiles([
+        'apps/web/src/api/index.ts',
+        'packages/shared/src/jobs.ts',
+        'apps/web/tests/api/chat.test.ts',
+        'apps/web/src/api/thing.test.ts',
+        'apps/web/src/ui/CLAUDE.md',
+        'docs/CONCEPTS.md',
+        'scripts/release.mjs',
+        '.github/workflows/ci.yml',
+      ])
+    ).toEqual(['apps/web/src/api/index.ts', 'packages/shared/src/jobs.ts'])
+    expect(behaviourFiles([])).toEqual([])
+    expect(behaviourFiles(undefined)).toEqual([])
+  })
+})
+
+describe('hasChangelogSection', () => {
+  const changelog = '# Changelog\n\n## 0.6.10 — 2026-01-02\n\nx\n\n## 0.6.1 — 2026-01-01\n\ny\n'
+
+  it('does not accept 0.6.10 as 0.6.1 — the bug a two-digit patch would have found', () => {
+    // `changelog.includes('## 0.6.1')` is true of `## 0.6.10`, so the tag gate would have passed
+    // on another release's section, in the direction that lets a release through.
+    expect(hasChangelogSection('# Changelog\n\n## 0.6.10 — 2026-01-02\n', '0.6.1')).toBe(false)
+    expect(hasChangelogSection(changelog, '0.6.1')).toBe(true)
+    expect(hasChangelogSection(changelog, '0.6.10')).toBe(true)
+    expect(hasChangelogSection(changelog, '0.7.0')).toBe(false)
+  })
+
+  it('anchors to the start of a line, so a mention in prose is not a section', () => {
+    expect(hasChangelogSection('see ## 0.6.1 below\n', '0.6.1')).toBe(false)
   })
 })
 

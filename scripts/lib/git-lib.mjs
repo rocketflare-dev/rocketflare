@@ -47,6 +47,28 @@ export function dirtyTree(cwd) {
 }
 
 /**
+ * Where a PLUGIN repository's mirror lives, relative to the repository root. One constant, because
+ * `scripts/plugin.mjs` and `scripts/release.mjs` mirror the same repositories: a second spelling
+ * would mean two clones of one plugin, and whichever the release read would be the stale one.
+ */
+export const PLUGIN_MIRROR_ROOT = path.join('.upgrade', 'plugins')
+
+/**
+ * `<root>/<last path segment of repo>.git` — the directory a repository's bare mirror occupies.
+ *
+ * Shared for the same reason as the constant above. `root` is absolute; the caller decides which
+ * work directory it is mirroring into.
+ */
+export function mirrorDirFor(repo, root) {
+  const name = String(repo)
+    .replace(/\.git$/, '')
+    .split(/[/:]/)
+    .filter(Boolean)
+    .pop()
+  return path.join(root, `${name}.git`)
+}
+
+/**
  * A blobless bare mirror of `repo` at `dir`, reused across runs — never a remote on the host
  * repository, whose tags would collide with the mirrored one's and whose objects the host would
  * push. `rm -rf .upgrade` is a complete uninstall.
