@@ -38,6 +38,7 @@ deliberate omissions with a reason).
 - [Running tests](#running-tests)
 - [Commit message guidelines](#commit-message-guidelines)
 - [PR guidelines](#pr-guidelines)
+- [Cutting a release](#cutting-a-release)
 - [Architecture guidelines](#architecture-guidelines)
 
 ### <a name="setup"></a> Setup
@@ -157,6 +158,22 @@ the approval. Enqueue email.send instead — the consumer retries with backoff.
 3. Tests for the feature or the bug, in the project and shape above.
 4. Docs updated in the same PR (see "Docs in sync").
 5. One concern per PR; a rename or refactor travels separately from a behaviour change.
+
+### <a name="cutting-a-release"></a> Cutting a release
+
+Maintainers only. `SETUP.md` 3.7 is the release dance every copy of the kit deploys with; the kit
+adds one step, because rocketflare.dev keeps its own copy of the release list.
+
+1. `pnpm kit:release X.Y.Z`, then `node scripts/release-check.mjs --tag X.Y.Z` and the gate.
+2. `git commit -am "Release X.Y.Z" && git tag -m "Release X.Y.Z" X.Y.Z && git push origin main X.Y.Z`.
+   The tag has to be annotated because tags are signed. The kit's `deploy.yml` skips deployment,
+   since its tomls hold placeholders, and `notify-plugins.yml` pings the plugin repositories.
+3. **Update the site's changelog**, which never happens automatically. `rocketflare-www` stores
+   the release list as committed data (`src/data/releases.ts`) so it can build without the kit. In a
+   checkout next to this one, on a branch (a push to its `main` deploys):
+   `npm run sync:releases` adds the entry from the new porting note's frontmatter with a `TODO`
+   summary. Replace that with one line in the site's voice, then run
+   `npm run check:releases && npm run build` and open a PR. Merging deploys rocketflare.dev.
 
 ### <a name="architecture-guidelines"></a> Architecture guidelines
 

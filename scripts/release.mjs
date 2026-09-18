@@ -11,7 +11,8 @@
  * `previous` and `date`, bumps every version file, prepends a `CHANGELOG.md` section, and writes a
  * fresh empty `unreleased.md`.
  *
- * Then: commit, `git tag X.Y.Z && git push origin X.Y.Z` (docs/DEPLOY.md, "The release dance").
+ * Then: commit, `git tag -m "Release X.Y.Z" X.Y.Z && git push origin main X.Y.Z` (docs/DEPLOY.md,
+ * "The release dance"); for the kit, also the site's changelog (CONTRIBUTING.md, "Cutting a release").
  *
  * **Two kinds of repository run this** (D31). The kit stamps the root `package.json` and
  * `.rocketflare.json`'s `kit.version`; a PLUGIN repository — a checkout with a
@@ -556,7 +557,14 @@ function main(argv) {
     `  node scripts/release-check.mjs --tag ${version}`,
     `  pnpm lint && pnpm typecheck && pnpm test && pnpm build`,
     '',
-    `Then: git commit -am "Release ${version}" && git tag ${version} && git push origin ${version}`
+    `Then: git commit -am "Release ${version}" && git tag -m "Release ${version}" ${version} && git push origin main ${version}`,
+    // The site mirrors the kit's notes as committed data and nothing triggers it (CONTRIBUTING.md).
+    ...(ctx.kind === 'kit'
+      ? [
+          `And:  rocketflare-www — on a branch, \`npm run sync:releases\`, write the ${version} summary,`,
+          '      `npm run check:releases && npm run build`, open a PR (merging deploys rocketflare.dev)',
+        ]
+      : [])
   )
   return 0
 }

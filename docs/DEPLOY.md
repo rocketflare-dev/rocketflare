@@ -351,7 +351,9 @@ step over it. `pnpm kit:release <version>` writes all of that, so the gate passe
 kit it also refuses a version whose `defaultPlugins` no longer resolve at their pinned ref
 (D31, above).
 **Released history is never rewritten** — a copy pins a kit commit and a force-push orphans it. One tag ships `apps/web` and `apps/cli` together — the `apps/*` and `packages/*` versions
-are informational and are not checked. Bump the root version, commit, tag.
+are informational and are not checked. Bump the root version, commit, tag. The kit itself has one
+more step after the tag, which nothing automates: updating rocketflare.dev's changelog
+(`CONTRIBUTING.md`, "Cutting a release").
 
 Publishing the Release is the promotion gate (required reviewers are unavailable on private repos
 on the free plan; add them to the `production` environment if the plan allows). Production does not
