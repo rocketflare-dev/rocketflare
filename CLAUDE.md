@@ -12,9 +12,10 @@ Cloudflare Worker (`apps/web`), a CLI (`apps/cli`), private zod contracts
 > and `/rf-plugin` you
 > may run yourself; **`/rf-provision` is user-invoked only** (it creates paid resources and prompts for
 > tokens on a TTY) — asked to deploy, tell the user to run `/rf-provision`.
-> **Plugins** (D31, @docs/CONCEPTS.md §16): a plugin is a git repository copied in, wired through five
+> **Plugins** (D31, @docs/CONCEPTS.md §16): a plugin is a git repository copied in, wired through six
 > barrels — `pnpm plugin add|upgrade|remove|list|check`, driven by `/rf-plugin`, which always shows the
-> plan before `--apply`. `.rocketflare.json`'s `defaultPlugins` is what a fresh clone installs
+> plan before `--apply`. It imports the host only through the DECLARED entries (@docs/plugin-api.md,
+> generated and diff-checked) and receives everything else as injected context. `.rocketflare.json`'s `defaultPlugins` is what a fresh clone installs
 > (bootstrap step `6/10 plugins`).
 > **Copies of the kit upgrade.** `.rocketflare.json` records the kit version, the app's names and the
 > manifest of replaceable surfaces; `/rf-upgrade` ports later releases into a copy and never
@@ -72,7 +73,8 @@ apps/web/          @rocketflare/web — wrangler*.toml, worker-configuration.d.t
 │                  middleware/ · auth/ · routes/ (thin) · services/ (ai/, agents/, prompts.ts) ·
 │                  workflows/ · observability/ · utils/ · queues/ · durable-objects/
 │  src/ui/         React app
-│  src/plugins/    D31 seam: types.ts + the server/ui/schema barrels (one line per installed plugin)
+│  src/plugins/    D31 seam: types.ts, api/ (the context family a plugin imports) + the
+│                  server/ui/schema/worker-exports barrels (one line per installed plugin)
 │                  + each plugin's tree — `example-feature/` vendored as the reference one, and
 │                  `analytics/` (cubes, dashboards, fact tables) once the default set is installed
 │                  (per-dir CLAUDE.md: permissions, db/schema, api/*, ui, plugins, plugins/<id>)
@@ -136,8 +138,10 @@ code-quality.md · cloudflare.md. Runbooks: @docs/DEPLOY.md · @docs/RLS.md
   **and adds an entry to `docs/upgrades/unreleased.md`** — copies of the kit absorb changes by
   reading those notes, so a change with no note never reaches them (CI and the tag gate enforce it)
 - **A plugin composes, it never redefines** (D31): it namespaces everything with its id (tables
-  `<id>_*`, job types `<id>.x`, query-key roots `<id>:…`, `/api/<id>`, CUSTOM events `<id>.` —
-  **never `kit.`**), reaches core only through the five barrels and its own four entries, and ships
+  prefixed from it — `example-feature` → `example_*`, and `plugin check` fails a collision — job
+  types `<id>.x`, query-key roots `<id>:…`, `/api/<id>`, CUSTOM events `<id>.` — **never `kit.`**),
+  reaches core only through the six barrels, its own four published entries and the DECLARED import
+  entries (`@/plugins/api`, `@/db/schema/kit`, `@testkit/*` — @docs/plugin-api.md), and ships
   no migration and no toml edit — the host generates the DDL; its bindings go in BOTH tomls
 - **Released history is never rewritten**: an adopted copy pins a kit commit in `.rocketflare.json`;
   a force-push to a released tag orphans every copy that came from it

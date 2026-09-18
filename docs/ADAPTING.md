@@ -210,7 +210,8 @@ Written into core, the loop is:
 Written as a plugin, the same six steps land in the four published files instead — the shared
 entry (1, and every key the plugin owns), the server entry (2, 3), the UI entry (4, 5) and the CLI
 entry (6) — and the host merges each contribution into the registry it could not otherwise be
-edited into. Everything the plugin keys carries its id: tables `<id>_*`, job types `<id>.verb`,
+edited into. Everything the plugin keys carries its id: tables prefixed from it
+(`example-feature` → `example_*`), job types `<id>.verb`,
 the API prefix `/api/<id>`, query-key roots `<id>:…`, the CLI command `<id>`, AG-UI CUSTOM events
 `<id>.` (**never `kit.`**). Read `apps/web/src/plugins/CLAUDE.md` for the seam and
 `apps/web/src/plugins/example-feature/CLAUDE.md` for the example, and remember the two things a

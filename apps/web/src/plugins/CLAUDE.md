@@ -35,7 +35,10 @@ in the host. Each half is checked where it is written; only the merge is cast.
 
 ## What a plugin may and may not do
 
-- **It namespaces everything with its id.** Tables `<id>_*` (hyphens dropped), job types
+- **It namespaces everything with its id.** Tables prefixed with the id's first hyphen-separated
+  segment (`example-feature` → `example_*`, `analytics` → `analytics_*`; a longer prefix is welcome,
+  not required — the prefix is a convention, and the CHECK is that no two installed plugins declare
+  the same table name), job types
   `<id>.verb`, CASL subjects, prompt/agent/feature keys, query-key roots `<id>:…`, the API prefix
   `/api/<id>`, the CLI command `<id>`, AG-UI CUSTOM events `<id>.` — **never `kit.`**, which is the
   kit's namespace and may grow in a later release. The id itself is `^[a-z][a-z0-9-]*$` and never

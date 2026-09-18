@@ -8,9 +8,12 @@
  * `TENANT_SCOPE_MODE` is ever flipped to `enforce`. `rls-coverage.test.ts` reads the catalog, so a
  * plugin table with no policy fails the host's suite exactly as a kit one would.
  *
- * The only plugin-specific rule is the NAME: `<id>_*` with the hyphens of the id dropped, so two
- * plugins cannot claim one table and `db/schema/index.ts` never has to arbitrate. A collision
- * would surface as TS2308 on the `export *` line rather than as DDL for a shadowed table.
+ * The only plugin-specific rule is the NAME: a prefix derived from the plugin's id — its first
+ * hyphen-separated segment, so `example-feature` owns `example_*` — kept distinct from every other
+ * installed plugin's. The prefix is a convention rather than something the tooling derives, and the
+ * part that IS enforced is the collision: `pnpm plugin check` fails when two installed plugins
+ * declare one table name. Nothing else would see it — TS2308 catches a duplicated EXPORT symbol on
+ * the `export *` line, not a duplicated `pgTable('…')`, which compiles and then emits DDL twice.
  *
  * `ownerUserId` is nullable and `onDelete: 'set null'`: a note outlives the person who wrote it, and
  * the route's own-row check reads `null` as "nobody owns this", which only admins may then edit.

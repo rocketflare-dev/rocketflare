@@ -7,9 +7,11 @@ Drizzle table definitions, one file per table, re-exported from `index.ts` (whic
 **`index.ts` carries `export * from '../../plugins/schema'`** (D31 — Biome sorts these lines, so
 it sits where the sorter puts it; its position decides nothing, because a name exported twice is
 TS2308 rather than a silent shadow), so an installed
-plugin's tables are migrated, typed and RLS-checked exactly like these — named `<id>_*` with the
-hyphens dropped, declaring `relations()` for their own tables only, and never shipping a migration
-(the host generates it). Two plugins exporting one name is a TS2308 error, not a silent shadow.
+plugin's tables are migrated, typed and RLS-checked exactly like these — prefixed with the first
+hyphen-separated segment of the plugin's id, declaring `relations()` for their own tables only, and
+never shipping a migration (the host generates it). Two plugins exporting one SYMBOL is a TS2308
+error, not a silent shadow; two plugins declaring one TABLE NAME is invisible to TypeScript and is
+what `pnpm plugin check` fails on.
 A file inside `src/plugins/<id>/` must import a schema file DIRECTLY rather than this barrel, or it
 closes a cycle back through `plugins/schema.ts`.
 
@@ -60,9 +62,11 @@ closes a cycle back through `plugins/schema.ts`.
 - extraConfig is the **array** form: `table => [index(...), tenantIsolation('x')]` (required for `pgPolicy`).
 - An installed PLUGIN's tables are here too, through one `export * from '../../plugins/schema'`
   line — so drizzle-kit, `typeof schema` and `rls-coverage.test.ts` see them exactly like a kit
-  table, and a name exported twice is TS2308 rather than a silent shadow (D31). They are named
-  `<id>_*`; the analytics plugin's are `analytics_pages`, `analytics_page_groups` and
-  `analytics_tenant_activity_daily_facts`. A plugin declares `relations()` for its OWN tables only.
+  table, and a name exported twice is TS2308 rather than a silent shadow (D31). They are prefixed
+  from the plugin's id; the analytics plugin's are `analytics_pages`, `analytics_page_groups` and
+  `analytics_tenant_activity_daily_facts`, and `example-feature`'s is `example_notes`. A duplicated
+  table NAME is not a TypeScript error at all — `pnpm plugin check` is what catches it. A plugin
+  declares `relations()` for its OWN tables only.
 - **Fact tables** — the shape for any pre-aggregated table, and the analytics plugin's worked
   example: plain tables (not materialised views — `REFRESH` cannot run through Hyperdrive), grain
   unique with `.nullsNotDistinct()` where a grain column is nullable, `fact_refreshed_at` as the

@@ -1564,3 +1564,46 @@ export function dependencyClashes(manifest, { packageJsons = {}, installed = [] 
 /** One clash as the sentence both the plan and `--json` show. */
 export const describeClash = c =>
   `${c.pkg}: ${c.name} — this plugin wants ${c.range}, ${c.holder} has ${c.theirs}`
+
+/**
+ * Tables that two installed plugins both declare.
+ *
+ * **This is the only part of the table-naming rule that is mechanical, and it is the only part that
+ * has to be.** The prefix convention — every table starting with the first hyphen-separated segment
+ * of the plugin's id — is a convention a human picks: nothing anywhere derives a table name from an
+ * id or an id from a table name, so there is no key to check a shape against. What CAN be checked,
+ * and what actually breaks a host, is two plugins claiming one name.
+ *
+ * **Nothing else sees it.** `db/schema/index.ts` answers TS2308 for a duplicated EXPORT NAME, which
+ * is a different fault: two plugins spelling `pgTable('orders', …)` under the symbols `orders` and
+ * `orderRows` compile cleanly, and then drizzle-kit emits DDL for one name twice, `rls-coverage`
+ * reads one policy as covering both, and `pnpm plugin remove` takes the other plugin's table with
+ * it — `archiveSql` and the generated `DROP TABLE` both name the table verbatim, so neither can
+ * tell whose it is.
+ *
+ * It fails unconditionally rather than through `auditSeverity`: the two-tier rule answers "can a
+ * plugin released before this rule existed retroactively satisfy it", and neither plugin here is
+ * non-compliant on its own. The fault is in the COMBINATION, and the host cannot run it either way.
+ *
+ * One entry per plugin involved, so every finding is filed against a manifest somebody can edit.
+ */
+export function tableClashes(manifests = []) {
+  const holders = new Map()
+  for (const m of manifests) {
+    if (!m?.id) continue
+    for (const table of m.schema?.tables ?? []) {
+      if (typeof table !== 'string' || table.trim() === '') continue
+      const ids = holders.get(table) ?? []
+      if (!ids.includes(m.id)) ids.push(m.id)
+      holders.set(table, ids)
+    }
+  }
+  const out = []
+  for (const [table, ids] of [...holders].sort(([a], [b]) => a.localeCompare(b))) {
+    if (ids.length < 2) continue
+    for (const id of [...ids].sort()) {
+      out.push({ table, id, others: ids.filter(other => other !== id).sort() })
+    }
+  }
+  return out
+}
