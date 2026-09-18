@@ -16,11 +16,14 @@ import type { Manifest } from '../../../../scripts/lib/upgrade-lib.d.mts'
 import {
   absentSurfaces,
   BinaryPatchError,
+  behaviourFiles,
   classifyPath,
   countLines,
   defaultPluginEntries,
+  defaultPluginEntryProblems,
   defaultPluginProblems,
   globToRegExp,
+  hasChangelogSection,
   isDeployable,
   isKitManifest,
   isVendored,
@@ -370,9 +373,11 @@ describe('default plugins', () => {
     const problems = defaultPluginProblems(entries, '0.6.0', entry =>
       entry.id === 'gone' ? { ok: false, reason: 'no such ref' } : { ok: true, requiresKit: '*' }
     )
+    // Shape problems come first now: they are the whole of `defaultPluginEntryProblems`, and
+    // somebody fixing a hand-edited list wants every one of them in one run.
     expect(problems).toEqual([
-      expect.stringContaining('no such ref'),
       expect.stringContaining('has no "repo"'),
+      expect.stringContaining('no such ref'),
     ])
   })
 
@@ -416,6 +421,84 @@ describe('default plugins', () => {
     expect(defaultPluginProblems(entries, '0.6.0', ok('*'))).toEqual([
       expect.stringContaining("lists 'a' twice"),
     ])
+  })
+})
+
+describe('defaultPluginEntryProblems', () => {
+  // The shape check, alone. Four callers share it — `kit:release`, the bootstrap's plugins step and
+  // both GitHub workflows (through `scripts/default-plugins.mjs`) — and before that they answered
+  // the same question three different ways.
+  const entries = (list: unknown[]) =>
+    defaultPluginEntries({ defaultPlugins: list } as unknown as Manifest)
+
+  it('passes a well-formed list', () => {
+    expect(
+      defaultPluginEntryProblems(entries([{ id: 'a', repo: 'https://x.test/a.git', ref: '1.0.0' }]))
+    ).toEqual([])
+    expect(defaultPluginEntryProblems([])).toEqual([])
+    expect(defaultPluginEntryProblems(undefined)).toEqual([])
+  })
+
+  it('reports a missing id, a missing repo and a duplicate — all of them, in one pass', () => {
+    const problems = defaultPluginEntryProblems(
+      entries([
+        { repo: 'https://x.test/a.git' },
+        { id: 'b' },
+        { id: 'c', repo: 'https://x.test/c.git' },
+        { id: 'c', repo: 'https://x.test/c.git' },
+      ])
+    )
+    expect(problems).toEqual([
+      expect.stringContaining('has no "id"'),
+      expect.stringContaining(`'b' has no "repo"`),
+      expect.stringContaining(`lists 'c' twice`),
+    ])
+  })
+
+  it('treats a bare STRING as an id with no repo, which is what it is', () => {
+    // Not "not an object": the entry names something, it just cannot be fetched.
+    expect(defaultPluginEntryProblems(entries(['analytics']))[0]).toMatch(
+      /'analytics' has no "repo"/
+    )
+  })
+})
+
+describe('behaviourFiles', () => {
+  // The porting-note predicate, shared by the CI gate (`release-check --unreleased`) and the
+  // pre-commit hook (`changelog-nudge.mjs`). They were two copies of one regex pair, and a hook
+  // that disagrees with the gate is a hook people learn to ignore.
+  it('is source under apps/ or packages/, tests and markdown excluded', () => {
+    expect(
+      behaviourFiles([
+        'apps/web/src/api/index.ts',
+        'packages/shared/src/jobs.ts',
+        'apps/web/tests/api/chat.test.ts',
+        'apps/web/src/api/thing.test.ts',
+        'apps/web/src/ui/CLAUDE.md',
+        'docs/CONCEPTS.md',
+        'scripts/release.mjs',
+        '.github/workflows/ci.yml',
+      ])
+    ).toEqual(['apps/web/src/api/index.ts', 'packages/shared/src/jobs.ts'])
+    expect(behaviourFiles([])).toEqual([])
+    expect(behaviourFiles(undefined)).toEqual([])
+  })
+})
+
+describe('hasChangelogSection', () => {
+  const changelog = '# Changelog\n\n## 0.6.10 — 2026-01-02\n\nx\n\n## 0.6.1 — 2026-01-01\n\ny\n'
+
+  it('does not accept 0.6.10 as 0.6.1 — the bug a two-digit patch would have found', () => {
+    // `changelog.includes('## 0.6.1')` is true of `## 0.6.10`, so the tag gate would have passed
+    // on another release's section, in the direction that lets a release through.
+    expect(hasChangelogSection('# Changelog\n\n## 0.6.10 — 2026-01-02\n', '0.6.1')).toBe(false)
+    expect(hasChangelogSection(changelog, '0.6.1')).toBe(true)
+    expect(hasChangelogSection(changelog, '0.6.10')).toBe(true)
+    expect(hasChangelogSection(changelog, '0.7.0')).toBe(false)
+  })
+
+  it('anchors to the start of a line, so a mention in prose is not a section', () => {
+    expect(hasChangelogSection('see ## 0.6.1 below\n', '0.6.1')).toBe(false)
   })
 })
 

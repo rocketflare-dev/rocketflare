@@ -21,7 +21,9 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { MANIFEST_FILE } from './lib/manifest.mjs'
 import {
+  behaviourFiles,
   compareVersions,
+  hasChangelogSection,
   isDeployable,
   isKitManifest,
   noteProblems,
@@ -105,7 +107,9 @@ function checkTag(tag, problems) {
   checkNote(note, problems, { expectPrevious: idx === 0 ? 'null' : notes[idx - 1].version })
 
   const changelog = read('CHANGELOG.md')
-  if (!changelog.includes(`## ${tag}`)) problems.push(`CHANGELOG.md has no '## ${tag}' section`)
+  // Anchored: `includes('## 0.6.1')` is also satisfied by `## 0.6.10`, so a two-digit patch would
+  // let the tag gate pass on another release's section.
+  if (!hasChangelogSection(changelog, tag)) problems.push(`CHANGELOG.md has no '## ${tag}' section`)
   if (!changelog.includes(`docs/upgrades/${tag}.md`))
     problems.push(`CHANGELOG.md does not link docs/upgrades/${tag}.md`)
 
@@ -130,9 +134,6 @@ export function deployable() {
   return isDeployable(manifest, tomls)
 }
 
-const WATCHED = /^(apps|packages)\//
-const EXEMPT = /(^|\/)(tests?|__tests__)\/|\.test\.(ts|tsx)$|\.md$/
-
 function checkUnreleased(base, problems) {
   let changed = []
   try {
@@ -148,7 +149,10 @@ function checkUnreleased(base, problems) {
     out('release-check: cannot resolve the diff range — skipping the unreleased check')
     return
   }
-  const behaviour = changed.filter(f => WATCHED.test(f) && !EXEMPT.test(f))
+  // The same predicate the pre-commit hook uses (`scripts/changelog-nudge.mjs`) — they were two
+  // copies of one regex pair, and a hook that disagrees with the gate is a hook people learn to
+  // ignore.
+  const behaviour = behaviourFiles(changed)
   if (behaviour.length === 0) {
     out('release-check: no behaviour change in apps/ or packages/ — nothing to record')
     return

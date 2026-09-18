@@ -3,7 +3,12 @@
  * `apps/web/tests/config/bootstrap-lib.test.ts` can pin every text transformation the bootstrap
  * performs on files it does not own (`.dev.vars`, the two wrangler tomls) and every parser it
  * applies to another tool's stdout (`pnpm seed`, `wrangler whoami`). Types: `bootstrap-lib.d.mts`.
+ *
+ * The one import is `upgrade-lib.mjs`, which is pure in the same sense — it owns the reader and the
+ * validator for `.rocketflare.json`'s `defaultPlugins`, and a second parser here is what let the
+ * bootstrap and `kit:release` disagree about a malformed entry.
  */
+import { defaultPluginEntries, defaultPluginEntryProblems } from './upgrade-lib.mjs'
 
 /** The major version in an `.nvmrc` (`24`, `v24.1.0`, `lts/*` → NaN). */
 export function parseNvmrc(text) {
@@ -273,21 +278,15 @@ export function planDefaultPlugins(entries, installedIds = []) {
   const installed = new Set(installedIds)
   const install = []
   const skipped = []
-  const problems = []
-  for (const entry of entries ?? []) {
-    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
-      problems.push(`defaultPlugins entry is not an object: ${JSON.stringify(entry)}`)
-      continue
-    }
+  // Normalised and validated by the ONE reader of this list (`scripts/lib/upgrade-lib.mjs`), not
+  // by a second parser here. The two used to disagree about a bare string — "not an object" in
+  // this file, "an id with no repo" in that one — which is one question with two answers in the
+  // file that decides what a fresh clone installs.
+  const normalised = defaultPluginEntries({ defaultPlugins: entries })
+  const problems = defaultPluginEntryProblems(normalised)
+  for (const entry of normalised) {
     const { id, repo, ref, subdir } = entry
-    if (typeof id !== 'string' || id.length === 0) {
-      problems.push(`defaultPlugins entry has no id: ${JSON.stringify(entry)}`)
-      continue
-    }
-    if (typeof repo !== 'string' || repo.length === 0) {
-      problems.push(`defaultPlugins entry '${id}' has no repo`)
-      continue
-    }
+    if (!id || !repo) continue
     if (installed.has(id)) {
       skipped.push(id)
       continue

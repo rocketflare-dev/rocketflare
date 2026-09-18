@@ -534,6 +534,36 @@ export function compareVersions(a, b) {
 export const VERSION_RE = /^\d+\.\d+\.\d+$/
 
 /**
+ * Does `text` carry a `## <version>` section?
+ *
+ * Anchored, and the anchoring is the whole point: `changelog.includes('## 0.6.1')` also matches
+ * `## 0.6.10`, so the day a kit reaches a two-digit patch the tag gate starts passing on a section
+ * that belongs to a different release — and passing is the dangerous direction here.
+ */
+export function hasChangelogSection(text, version) {
+  return new RegExp(`^## ${version.replace(/\./g, '\\.')}(\\s|$)`, 'm').test(text)
+}
+
+// ---------------------------------------------------------------- behaviour changes
+
+/**
+ * What counts as a BEHAVIOUR change for the porting-note rule: source under `apps/` or `packages/`,
+ * excluding tests and markdown.
+ *
+ * One definition, two readers — `scripts/release-check.mjs --unreleased` (the CI gate) and
+ * `scripts/changelog-nudge.mjs` (the pre-commit hook). They have to agree by construction: a hook
+ * that nudges for a file CI ignores teaches people to ignore the hook, and one that stays quiet for
+ * a file CI fails on is worse still.
+ */
+export const BEHAVIOUR_PATH_RE = /^(apps|packages)\//
+export const BEHAVIOUR_EXEMPT_RE = /(^|\/)(tests?|__tests__)\/|\.test\.(ts|tsx)$|\.md$/
+
+/** The subset of `changed` that needs an entry in `docs/upgrades/unreleased.md`. */
+export function behaviourFiles(changed) {
+  return (changed ?? []).filter(f => BEHAVIOUR_PATH_RE.test(f) && !BEHAVIOUR_EXEMPT_RE.test(f))
+}
+
+/**
  * Does `version` satisfy `range`, and — when that cannot be answered — why not?
  *
  * A deliberately tiny semver matcher (D31): `plugin.json` declares `requires.kit` as a range, and
@@ -698,23 +728,42 @@ export function isVendored(source, kitRepo) {
  * the reason §16 gives: the same release cut both, so the range describes the kit it shipped inside
  * rather than a compatibility claim.
  */
-export function defaultPluginProblems(entries, version, resolve, { kitRepo = null } = {}) {
+/**
+ * Everything malformed about a `defaultPlugins` LIST, as sentences — the shape check, with no I/O.
+ *
+ * One validator, four callers: `defaultPluginProblems` below, `planDefaultPlugins` (the bootstrap
+ * step), and the two GitHub workflows, which now reach it through `scripts/default-plugins.mjs`
+ * rather than each inlining a `node -e` block. They had already drifted: the bootstrap called a
+ * bare string "not an object", this file called it an id with no repo, and the workflows only ever
+ * checked truthiness — three answers to one question, in the file that decides what a fresh clone
+ * installs.
+ */
+export function defaultPluginEntryProblems(entries) {
   const problems = []
   const seen = new Set()
-  for (const entry of entries) {
-    const id = entry.id ?? '(unnamed)'
+  for (const entry of entries ?? []) {
     if (!entry.id) {
       problems.push('a defaultPlugins entry has no "id"')
       continue
     }
-    if (seen.has(entry.id)) problems.push(`defaultPlugins lists '${id}' twice`)
+    if (seen.has(entry.id)) problems.push(`defaultPlugins lists '${entry.id}' twice`)
     seen.add(entry.id)
     if (!entry.repo) {
       problems.push(
-        `defaultPlugins '${id}' has no "repo" — a default plugin CI cannot fetch is a default plugin nobody can install`
+        `defaultPlugins '${entry.id}' has no "repo" — a default plugin CI cannot fetch is a default plugin nobody can install`
       )
-      continue
     }
+  }
+  return problems
+}
+
+export function defaultPluginProblems(entries, version, resolve, { kitRepo = null } = {}) {
+  // Shape first, and every shape problem at once: somebody fixing a hand-edited list wants the
+  // whole of it, not one sentence per run.
+  const problems = defaultPluginEntryProblems(entries)
+  for (const entry of entries) {
+    const id = entry.id ?? '(unnamed)'
+    if (!entry.id || !entry.repo) continue
     const resolved = resolve(entry) ?? { ok: false, reason: 'not resolved' }
     if (!resolved.ok) {
       problems.push(

@@ -187,6 +187,14 @@ export function noteProblems(text: string, options?: NoteCheckOptions): string[]
 export function compareVersions(a: string, b: string): -1 | 0 | 1
 export const VERSION_RE: RegExp
 
+/** Anchored `## <version>` — `includes('## 0.6.1')` also matches `## 0.6.10`. */
+export function hasChangelogSection(text: string, version: string): boolean
+
+/** What needs a porting note: `apps/` or `packages/` source, tests and markdown excluded. */
+export const BEHAVIOUR_PATH_RE: RegExp
+export const BEHAVIOUR_EXEMPT_RE: RegExp
+export function behaviourFiles(changed: readonly string[] | undefined): string[]
+
 /**
  * A tiny semver range matcher for `requires.kit` (D31). Supports `>=` `>` `<=` `<` `=`, a bare
  * version, `^`, `~`, `*`, space-separated conjunctions, `||` alternation and a space after the
@@ -223,6 +231,11 @@ export interface DefaultPluginEntry {
   subdir: string
 }
 export function defaultPluginEntries(manifest: Manifest | null): DefaultPluginEntry[]
+
+/** The shape check over a normalised list — no I/O. Shared with the bootstrap and both workflows. */
+export function defaultPluginEntryProblems(
+  entries: readonly DefaultPluginEntry[] | undefined
+): string[]
 
 /** What an injected resolver answers about one default plugin. */
 export interface ResolvedDefaultPlugin {

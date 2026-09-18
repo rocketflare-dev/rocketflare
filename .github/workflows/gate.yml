@@ -113,18 +113,9 @@ jobs:
           # db:generate runs `dotenv -e .dev.vars`, so the file has to exist here as it does on a
           # laptop. It is git-ignored and holds nothing secret: a throwaway local database URL.
           printf 'DATABASE_URL=postgresql://test:test@localhost:5433/rocketflare_test\n' > apps/web/.dev.vars
-          node --input-type=module -e "
-            import { readManifest } from './scripts/lib/manifest.mjs'
-            import { defaultPluginEntries } from './scripts/lib/upgrade-lib.mjs'
-            // readManifest() rather than a literal filename — see ci.yml.
-            for (const e of defaultPluginEntries(readManifest().manifest)) {
-              if (!e.id || !e.repo) {
-                process.stderr.write(\`::error::defaultPlugins entry '\${e.id ?? '?'}' needs an id and a repo\n\`)
-                process.exit(1)
-              }
-              process.stdout.write([e.id, e.repo, e.ref ?? '', e.subdir ?? ''].join('\t') + '\n')
-            }
-          " > "$RUNNER_TEMP/default-plugins.tsv"
+          # The same reader ci.yml uses — `scripts/default-plugins.mjs`, which validates the list
+          # through `defaultPluginEntryProblems` and refuses a malformed entry with the reason.
+          node scripts/default-plugins.mjs --tsv > "$RUNNER_TEMP/default-plugins.tsv"
           while IFS=$'\t' read -r id repo ref subdir; do
             [ -n "$id" ] || continue
             spec="$repo"
