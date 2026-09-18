@@ -27,7 +27,8 @@ export interface Surface {
   source?: PluginSource
   installedAt?: string
   requires?: {
-    kit?: string
+    /** `null` when the plugin declared no range — never `'*'`, which would read as "checked". */
+    kit?: string | null
     surfaces?: string[]
     plugins?: string[]
   }

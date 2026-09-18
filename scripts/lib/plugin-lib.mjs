@@ -559,7 +559,12 @@ export function buildPluginSurface(manifest, { repo, subdir = '', commit = null,
     source: { repo, subdir, version: manifest.version ?? null, commit },
     installedAt: at,
     requires: {
-      kit: manifest.requires?.kit ?? '*',
+      // `null`, not `'*'`. A plugin that declares no kit range has said nothing, and recording
+      // "anything" put that plugin beyond every gate there is: `checkRequirements` skips it,
+      // `unsupportedForKit` skips it, and `kit:upgrade` would carry it across a major version
+      // without a word. Null is the same silence, but it is VISIBLE — `plugin check` and the
+      // install plan both say so, and `defaultPluginProblems` refuses to cut a release over it.
+      kit: manifest.requires?.kit ?? null,
       surfaces: manifest.requires?.surfaces ?? [],
       plugins: manifest.requires?.plugins ?? [],
     },
@@ -613,9 +618,16 @@ export function renderAddPlan(plan) {
     'Requirements',
   ]
   if (plan.problems.length === 0) {
+    const range = m.requires?.kit ?? null
     lines.push(
-      `  ✔ kit ${plan.host.kitVersion} satisfies ${m.requires?.kit ?? '*'}` +
-        (plan.vendored ? ' (vendored — shipped with the kit, so the range is not checked)' : ''),
+      // An undeclared range is stated rather than rendered as a tick against `*`: it means nothing
+      // will ever gate this plugin against a kit version, which is worth reading before saying yes.
+      range === null
+        ? `  ⚠ kit ${plan.host.kitVersion} — this plugin declares no requires.kit, so no kit version is ever checked against it`
+        : `  ✔ kit ${plan.host.kitVersion} satisfies ${range}` +
+            (plan.vendored
+              ? ' (vendored — shipped with the kit, so the range is not checked)'
+              : ''),
       `  ✔ surfaces: ${(m.requires?.surfaces ?? []).join(', ') || 'none required'}`,
       `  ✔ plugins:  ${(m.requires?.plugins ?? []).join(', ') || 'none required'}`
     )
