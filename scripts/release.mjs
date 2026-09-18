@@ -69,6 +69,36 @@ export const USAGE = [
 const TOP_LEVEL_VERSION = /^( {2}"version":\s*)"[^"]+"/m
 
 /**
+ * The ANCHOR a plugin manifest declares, repo-root-relative — the file a release must stamp
+ * alongside the manifest itself.
+ *
+ * A plugin carries the version TWICE and only one copy was ever stamped. `rocketflare-plugin.json`
+ * is the release manifest, read from the plugin's own repository; `apps/web/src/plugins/<id>/
+ * plugin.json` is the ANCHOR, which is what gets copied into a host and therefore what
+ * `pnpm plugin check` compares against the recorded surface. Stamping only the manifest leaves the
+ * anchor behind, and every install of that release then reports
+ * `plugin.json says <old>, and the surface says <new>` — which is a failure, so it takes the host's
+ * whole gate down rather than reading as the cosmetic thing it looks like.
+ *
+ * It was kept in step by HAND while each plugin was its own repository, and nothing said so; the
+ * move into a monorepo dropped the habit and the next release surfaced it. A hand-maintained
+ * duplicate is not a convention, it is an unexploded one.
+ *
+ * Returns null when the manifest declares no anchor or will not parse — `release-check --tag` is
+ * what reports a malformed manifest, and a missing file is skipped by the stamping loop anyway.
+ */
+function anchorPathOf(repoRoot, manifestFile) {
+  try {
+    const declared = JSON.parse(readFileSync(path.join(repoRoot, manifestFile), 'utf8')).anchor
+    if (typeof declared !== 'string' || declared === '') return null
+    const dir = path.dirname(manifestFile)
+    return dir === '.' ? declared : `${dir}/${declared}`
+  } catch {
+    return null
+  }
+}
+
+/**
  * Which repository is this, and what does a release stamp here?
  *
  * `kit` — `.rocketflare.json` with no `app` block. `app` — somebody's product, whose release
@@ -111,7 +141,7 @@ export function releaseContext(root = REPO_ROOT, { repoRoot = root } = {}) {
     // EVERY plugin manifest in the repository, not only this one, plus the root `package.json`.
     // Lockstep: one release, one version, one tag — and a manifest left at the old number is not
     // cosmetic, because `pnpm plugin check` compares an installed surface's recorded version
-    // against the anchor manifest and would report a mismatch for every install of that plugin.
+    // against the ANCHOR and would report a mismatch for every install of that plugin.
     // `requires.pluginApi` is deliberately NOT touched: which kit contract a plugin compiles
     // against is a different question from which release shipped it, and it is nested, so the
     // two-space `TOP_LEVEL_VERSION` anchor cannot reach it.
@@ -124,7 +154,20 @@ export function releaseContext(root = REPO_ROOT, { repoRoot = root } = {}) {
       // lockstep version, and in a single-plugin repository this is the same path it always was.
       changelog: 'CHANGELOG.md',
       versionFiles: [
-        ...manifests.sort().map(file => ({ file, pattern: TOP_LEVEL_VERSION, label: 'version' })),
+        ...manifests
+          .sort()
+          .flatMap(file => [
+            { file, pattern: TOP_LEVEL_VERSION, label: 'version' },
+            ...(anchorPathOf(repoRoot, file)
+              ? [
+                  {
+                    file: anchorPathOf(repoRoot, file),
+                    pattern: TOP_LEVEL_VERSION,
+                    label: 'version',
+                  },
+                ]
+              : []),
+          ]),
         { file: 'package.json', pattern: TOP_LEVEL_VERSION, label: 'version' },
       ],
     }
