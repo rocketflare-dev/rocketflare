@@ -122,6 +122,43 @@ matrix from *released* kit tags and so cannot declare a version that does not ex
 Every failure names the file, the line and the exact replacement, because installs are performed by
 agents and a diagnostic that only says what is wrong is useless to one.
 
+### A plugin's classes reach the Worker through a sixth barrel
+
+A plugin that ships a Durable Object or Workflow class used to declare `workerExports` in its
+manifest, and the install plan **printed** "export { ApprovalsHub } … in apps/web/src/worker.ts".
+**A printed instruction is not a mechanism.** An unattended install applies nothing it reads, so the
+tree deployed without the class and answered every request that reached it with a binding error —
+the same failure `coreEdits` was introduced to remove, one file along.
+
+So `apps/web/src/plugins/worker-exports.ts` is now the sixth barrel — one `export *` per installed
+plugin, written by `pnpm plugin add` and removed by `pnpm plugin remove`, exactly as `schema.ts` is
+— and `worker.ts` carries one permanent line that names no plugin. `coreEdits` was not the fix
+either: using it here would have every class-shipping plugin mutating `worker.ts`, which is
+precisely what a barrel prevents.
+
+**`workflow` and `durable_object` join the provisionable binding types**, and the rationale comment
+for the refusal list now says why those two graduated and `d1`/`vectorize` did not — the barrel is
+what makes a class reachable from the entry module, and the others still have no such mechanism.
+`pnpm provision cloudflare <env>` writes `[[workflows]]` and `[[durable_objects.bindings]]` into
+**both** tomls with the `-staging` account-scoped rule. Note that a DO binding's identity key in the
+toml is `name`, not `binding` — the kit's own is `name = "NOTIFICATIONS_HUB"` — so a patcher keyed
+on `binding` inserts a duplicate block on every run.
+
+**Durable Object migration tags are append-only and host-owned.** *DO migrations are to `worker.ts`
+what SQL migrations are to `db/schema`.* Installing writes `plugin-<id>-v1`; the manifest's required
+`storage: 'sqlite' | 'none'` picks `new_sqlite_classes` versus `new_classes`; an existing tag is
+never rewritten, because it records what this Worker has already told Cloudflare and renumbering one
+loses a namespace.
+
+**"By hand" is retired as a phrase.** Every step the tooling does not perform is classified, because
+an install is performed by an agent as often as by a person and prose an agent may skim is not a
+control: **declarative** (the tooling does it — the barrel lines, bindings, crons, prefixes, vars
+and the DO tag, all now absent from the plan entirely), **agent** (an instruction plus the assertion
+that proves it ran — each carries `run`, `expect` and `assert`), **human** (a decision the tooling
+stops for — a secret's value, a migration containing `DROP`, `--archive`, retiring a DO namespace,
+deleting a live Cloudflare resource). `--json` on `add`, `remove` and `check` emits the same plan as
+data with `kind` on every step, so a human step is a field rather than a sentence.
+
 ## How to apply
 
 There is no migration and no schema change.
@@ -165,6 +202,19 @@ target is explicitly annotated. `const ctx = requestCtx(c)` is inferred, so the 
 runtime while the compiler still believes the row may be undefined. Annotate it —
 `const ctx: RequestCtx = requestCtx(c)`.
 
+**A plugin shipping a Durable Object or Workflow class** now needs three things, and
+`pnpm plugin check` asserts all three: a `src/plugins/<id>/worker-exports.ts` re-exporting its
+classes, those names listed in the manifest's `workerExports`, and `storage` on each
+`durable_object` binding. A class in the barrel but not the manifest is invisible to provisioning;
+the reverse is a binding pointed at nothing.
+
+It must also declare `hooks.onTenantDeleted` — a Durable Object holds state the FK cascade cannot
+reach, and the `tenant.purge` job above is what reaches it.
+
+Then run `pnpm provision cloudflare <env>` once per environment; it is an `agent` step rather than a
+declarative one, because the toml *editing* disappeared but somebody still has to run the command
+against an account with credentials.
+
 ## Conflicts to expect
 
 `apps/web/src/api/services/tenants.ts` and `apps/web/src/api/services/storage.ts` if you have edited
@@ -182,6 +232,12 @@ and `apps/web/tsconfig.json` all change. If you deleted `example-feature` (it ex
 every file under it is dropped from the patch, which is the intended behaviour and not a failure.
 `apps/web/src/ui/components/shared/index.ts` gains exports, and `LoadingIndicator` moves into that
 barrel.
+
+`apps/web/src/worker.ts` gains one line. `scripts/plugin.mjs` and `scripts/lib/plugin-lib.mjs` are
+substantially rewritten again (the plan builder and the barrel table), so an app that has edited
+either should expect rejects. `apps/web/tests/helpers/plugins.ts` gains `worker-exports` in both
+`BARRELS` and `RESERVED_PLUGIN_IDS` — without both, that barrel reads as a plugin named
+`worker-exports` and its own export line reads as a deep import into one.
 
 ## Verify
 
@@ -226,3 +282,15 @@ pnpm --filter @rocketflare/web build:api   # SUCCEEDS — and that is the point.
 So on the API side the build is **not** the protection — `tests/config/plugins.test.ts`'s source
 scan is, and it is the only thing standing between a stray import and 866 KB of test fixtures in
 production. Do not weaken that scan on the assumption the bundler will catch it.
+
+The barrel's round trip, which is the property that makes an install reversible:
+
+```bash
+pnpm plugin add <a plugin declaring workerExports> --apply
+pnpm plugin remove <id> --apply
+git diff --exit-code apps/web/src/plugins/worker-exports.ts   # must be byte-identical
+```
+
+`removeBarrelLine` has to be the exact inverse of `addBarrelLine`, including restoring the
+`export {}` empty marker — a file with no top-level export is a script, not a module, and TypeScript
+answers TS2306 at its one importer.
