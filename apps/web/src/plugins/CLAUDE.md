@@ -137,10 +137,37 @@ into schema `archive`. Orphaned tables are not a stable state.
 **Authoring loop.** A local PATH is read directly rather than mirrored, so
 `pnpm plugin add ../rocketflare-plugin-approvals --local --apply` installs a working copy, you edit
 it in place with the host's own tests running on every `pnpm test`, and `pnpm plugin export
-<id> <dir>` copies it back out with a regenerated `rocketflare-plugin.json`. `pnpm plugin check`
-audits every installed plugin — anchor present, kit range satisfied, required plugins present, the
-barrel line there for each half that is on disk, no `*.rej`, and a migration naming it when it
-declares tables.
+<id> <dir>` copies it back out with a regenerated `rocketflare-plugin.json`.
+
+## `pnpm plugin check` — the audit, written for an agent
+
+**Every finding is `<file>:<line> <what is wrong> — <the exact change>`.** Saying only what is
+wrong is right for a person with `reference.md` open beside them and useless to an agent, who has
+only the line — and installs are performed by agents as often as by people, which is the same
+observation that retired "by hand" from the step taxonomy. The line number appears only when the
+thing complained about is AT a place in a file; a fabricated one sends a reader somewhere real and
+wrong.
+
+Per installed plugin: the anchor exists and parses; **every manifest field**, naming the field and
+its legal values; `requires.kit`, `requires.surfaces`, `requires.plugins` and `requires.pluginApi`;
+a barrel line for each half on disk and no line for a half that is not; no `*.rej`; the anchor's
+version matches the surface's; a migration naming it when it declares tables; **every declared
+dependency really present in the host `package.json`**; the **worker-exports barrel both ways**;
+**a tenant-isolation test** when it declares tenant-scoped tables; and **`hooks.onTenantDeleted`
+when it declares a `durable_object`**.
+
+Two of those deserve their reason stated. The isolation test is the kit's one non-negotiable that
+the kit itself cannot write — `docs/CONCEPTS.md` §16 and `.claude/rules/testing.md` both require
+it *because the kit cannot* — and the check is structural, so it proves such a test EXISTS rather
+than that it is right, and says so in the message. And a `durable_object` is state the FK cascade
+cannot reach: a deleted tenant's DO state outlives it, and no other check can see that, because
+its tables are gone and everything else reads as clean.
+
+**A check a RELEASED plugin cannot retroactively satisfy warns rather than fails**, keyed on
+`requires.pluginApi` — the same two-tier rule the import enforcement uses, and the permanent
+arrangement for a third-party plugin rather than a transition hack. `--json` carries `failures` and
+`warnings` as separate lists, because `ok` has to keep meaning "this exits 0". CI runs the same
+command a person runs, so the local oracle and the gating oracle cannot disagree.
 
 **A VENDORED plugin is upgraded by `pnpm kit:upgrade`, not by this script.** `example-feature`'s
 `source.repo` is the kit's own repository with no subdirectory, so the kit release that moves it

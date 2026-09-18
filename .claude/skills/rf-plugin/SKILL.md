@@ -104,9 +104,24 @@ pnpm plugin list
 pnpm plugin check
 ```
 
-`check` exits 1 with one `✖` line per failure and says what is wrong, not how to fix it. The
-failures it can report, and what each means, are in `reference.md`. The common one:
-`<id>: declares tables (…) and no migration names it` — step 3's first row was never done.
+`check` exits 1 with one `✖` line per failure, and **every line carries the edit**:
+`<file>:<line> <what is wrong> — <the exact change>`. Do what the line says; you should not need
+`reference.md` to act on one, only to understand why the rule exists.
+
+Three other kinds of line, none of which changes the exit code:
+
+- `warn: …` — the same shape, for a plugin that declares no `requires.pluginApi`. It was released
+  before the rule existed and cannot retroactively satisfy it. **Report these to the user**: they
+  are real findings, and the fix is usually "migrate the plugin and declare the contract".
+- `note: …` — a state that is legitimately fine (a `defaultPlugins` entry not installed here).
+- `✔ n plugin(s) check out` — nothing to do.
+
+Use `pnpm plugin check --json` when you are driving rather than reading: `{ ok, plugins, failures,
+warnings, notes }`, and every failure carries `file`, `line`, `problem`, `fix` and `assert` as
+fields rather than as a sentence you have to parse.
+
+The common failure is `apps/web/migrations/meta/_journal.json names no migration for '<id>' …` —
+step 3's first row was never done.
 
 ## 5. `upgrade` and `remove`
 

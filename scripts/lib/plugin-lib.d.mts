@@ -2,6 +2,7 @@
  * Hand-written types for `plugin-lib.mjs` (the workspace has no `allowJs`). Keep in step with the
  * exports there; `apps/web/tests/config/plugin-lib.test.ts` is what typechecks against this.
  */
+import type { PluginApiVersions } from './plugin-api.d.mts'
 import type { Surface } from './upgrade-lib.d.mts'
 
 export const PLUGIN_ID_RE: RegExp
@@ -89,6 +90,16 @@ export interface PluginRequires {
   kit?: string
   surfaces?: string[]
   plugins?: string[]
+  /**
+   * The plugin CONTRACT version this plugin was written against (`docs/plugin-api.md`) — an
+   * integer, spelled as a string or a number. A different question from `requires.kit`, which is
+   * the range of kit RELEASES it may be installed into; conflating the two is what made every
+   * plugin need re-releasing for a kit version that never touched the plugin surface.
+   *
+   * It is also the switch between the audit's two tiers: declaring it opts a plugin into being
+   * FAILED by rules it can satisfy, rather than merely warned.
+   */
+  pluginApi?: string | number
 }
 export interface PluginManifest {
   id: string
@@ -136,6 +147,11 @@ export function checkRequirements(input: {
   presentSurfaces?: readonly string[]
   installedPlugins?: ReadonlyArray<{ id: string; version?: string | null }>
   vendored?: boolean
+  /**
+   * `{ current, minSupported }` from `readPluginApi(manifest)`. Omitted, the plugin API version is
+   * not checked at all — which is what keeps every existing caller and test unchanged.
+   */
+  pluginApi?: PluginApiVersions | null
 }): string[]
 export function parsePluginRequirement(entry: string | { id: string; range?: string }): {
   id: string
@@ -163,6 +179,8 @@ export interface AddPlan {
   files: Array<{ path: string } & FileClassification>
   byRoot: Record<string, number>
   barrels: BarrelKind[]
+  /** Dependencies the host, or a peer plugin, already pins at another range. */
+  clashes?: readonly DependencyClash[]
   verify?: string | null
 }
 export function renderAddPlan(plan: AddPlan): string[]
@@ -188,7 +206,7 @@ export interface PlanStep {
 }
 export function planSteps(
   manifest: PluginManifest,
-  options?: { fragments?: readonly string[] }
+  options?: { fragments?: readonly string[]; clashes?: readonly DependencyClash[] }
 ): PlanStep[]
 export function removeSteps(
   manifest: PluginManifest,
@@ -200,3 +218,105 @@ export function renderList(
   surfaces: readonly Surface[],
   options?: { sidecarIds?: readonly string[] }
 ): string[]
+
+// ---------------------------------------------------------------- the audit
+
+/** One finding, in the shape an agent can act on: file, where in it, what, and the exact edit. */
+export interface Diagnostic {
+  file: string
+  /** 1-based, and present only when the complaint is AT a place in that file. */
+  line?: number | null
+  problem: string
+  fix: string
+}
+export function renderDiagnostic(d: Diagnostic): string
+export function jsonKeyLine(source: string, keyPath: string): number | null
+
+/**
+ * Whether a check a PRE-CONTRACT plugin cannot satisfy fails the audit or only reports it.
+ * `fail` exactly when the plugin declares `requires.pluginApi` — the same opt-in the import rule
+ * uses, and the permanent rule for a third-party plugin rather than a transition hack.
+ */
+export type AuditSeverity = 'fail' | 'warn'
+export function auditSeverity(manifest: { requires?: { pluginApi?: unknown } } | null): AuditSeverity
+
+/** Everything wrong with a manifest, each naming the FIELD and its legal values. */
+export function pluginManifestProblems(
+  manifest: unknown
+): Array<{ field: string; problem: string; fix: string }>
+
+/**
+ * The value names a `worker-exports.ts` exports. `opaque` when it carries an `export *`, whose
+ * names cannot be known without resolving the module — both directions are skipped for one.
+ */
+export function workerExportNames(source: string): { names: string[]; opaque: boolean }
+
+/** Structural evidence that a test file proves cross-tenant isolation. */
+export interface IsolationEvidence {
+  /** `describe('… isolation …')` or the equivalent. */
+  named: boolean
+  /** Names a SECOND organisation (`otherTenant`, `tenantB`…). */
+  secondTenant: boolean
+  /** How many tenants the file creates. */
+  tenantsCreated: number
+  ok: boolean
+}
+export function isolationEvidence(source: string): IsolationEvidence
+
+/**
+ * Where an install's `subdir` comes from, in precedence order.
+ *
+ * `||` and not `??`: a manifest shipping `"subdir": ""` is nullish-coalescing's blind spot, and it
+ * beat an explicit `--subdir` — recording the surface as root-relative and breaking the next
+ * `plugin upgrade`, which diffs against that path.
+ */
+/**
+ * Whether a source DECLARES `name` as a property or method rather than mentioning it. Comments are
+ * stripped first — a doc comment saying a hook is absent otherwise satisfies a substring search.
+ */
+export function declaresProperty(source: string, name: string): boolean
+
+export function resolveSubdir(input: {
+  flag?: string | null
+  manifest?: string | null
+  source?: string | null
+}): string
+
+/** A workspace `package.json` as read off disk — only the two sections a range can live in. */
+export interface HostPackageJson {
+  dependencies?: Record<string, string>
+  devDependencies?: Record<string, string>
+}
+
+/** A declared dependency the host package does not have, or has at another range. */
+export interface DependencyIssue {
+  pkg: string
+  name: string
+  /** What the plugin declares. */
+  range: string
+  /** What the host has — `null` when the package is absent altogether. */
+  have: string | null
+}
+export function missingDependencies(
+  manifest: PluginManifest,
+  packageJsons?: Record<string, HostPackageJson | null>
+): DependencyIssue[]
+
+/** A dependency two things want at different ranges. */
+export interface DependencyClash {
+  pkg: string
+  name: string
+  /** What the plugin being installed wants. */
+  range: string
+  /** Who already holds a different one — a `package.json` path, or a peer plugin. */
+  holder: string
+  theirs: string
+}
+export function dependencyClashes(
+  manifest: PluginManifest,
+  context?: {
+    packageJsons?: Record<string, HostPackageJson | null>
+    installed?: ReadonlyArray<{ id: string; dependencies?: Record<string, Record<string, string>> }>
+  }
+): DependencyClash[]
+export function describeClash(clash: DependencyClash): string
