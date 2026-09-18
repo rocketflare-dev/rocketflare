@@ -127,11 +127,12 @@ export const USAGE = `usage: node scripts/plugin.mjs <command> [options]
   list                    the installed plugins, one line each
   check                   audit every installed plugin; one line per failure, exit 1 on any
 
+  export <id> <dir>       copy a plugin back out into a plugin repository checkout (authoring)
+
   --json                  on add, remove and check: the same facts as DATA rather than prose.
                           Every step carries its kind — agent (a command plus the assertion that
                           proves it) or human (a decision the tooling stops for) — so a human step
                           is a field rather than a sentence somebody has to notice.
-  export <id> <dir>       copy a plugin back out into a plugin repository checkout (authoring)
 
   -h, --help
 

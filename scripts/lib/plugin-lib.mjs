@@ -962,13 +962,14 @@ export function removeSteps(m, { archive = false, migrationTag = null } = {}) {
     )
   }
   const platform = platformSummary(m)
-  if (platform.length > 0 || doBindings.length > 0) {
+  // `platformSummary` already names every binding, a Durable Object's included.
+  if (platform.length > 0) {
     steps.push(
       mkStep(
         'human',
         'deprovision',
         "Remove this plugin's blocks from both tomls and its resources from Cloudflare",
-        `remove ${[...platform, ...doBindings.map(b => `durable_object ${b.binding}`)].join(', ')} from BOTH tomls, then delete the resources`,
+        `remove ${platform.join(', ')} from BOTH tomls, then delete the resources`,
         "both tomls free of the plugin's blocks; the parity test still green",
         'a live queue or bucket may hold data — nothing deletes one because a directory went'
       )
