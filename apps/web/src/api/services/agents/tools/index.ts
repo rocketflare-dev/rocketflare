@@ -14,6 +14,7 @@
  * the bounds.
  */
 import { serverPlugins } from '../../../../plugins/server'
+import { loggerFor } from '../../../utils/core/logger'
 import type { Tool } from '../../ai/kit'
 import { getDocumentTool } from './get-document'
 import { listDocumentsTool } from './list-documents'
@@ -29,12 +30,28 @@ export * from './search-knowledge'
  * followed by whatever the installed plugins add (D31), which is how a plugin makes its own data
  * answerable without every agent importing it. A plugin tool is built from the same `ctx`, so it
  * is bound to the run's tenant and access scope like the three above.
+ *
+ * A plugin's `agentTools` may be ASYNC, and that is what lets it answer per tenant: it reads its
+ * own settings row for `ctx.scope.tenantId` and returns `[]` when the tenant has not turned it on,
+ * so the model never sees a tool that could only fail. **A builder that throws is logged and
+ * skipped** — one broken plugin must not take chat or every agent run down with it.
  */
-export function buildAgentTools(ctx: AgentToolContext): Tool[] {
+export async function buildAgentTools(ctx: AgentToolContext): Promise<Tool[]> {
+  const contributed = await Promise.allSettled(
+    serverPlugins.map(async p => (await p.agentTools?.(ctx)) ?? [])
+  )
+  const pluginTools = contributed.flatMap((result, i) => {
+    if (result.status === 'fulfilled') return result.value
+    loggerFor(ctx.cfg, { pluginId: serverPlugins[i]?.shared.id }).warn(
+      { err: result.reason },
+      'plugin agentTools failed; its tools are left out of this run'
+    )
+    return []
+  })
   return [
     searchKnowledgeTool(ctx) as Tool,
     getDocumentTool(ctx) as Tool,
     listDocumentsTool(ctx) as Tool,
-    ...serverPlugins.flatMap(p => p.agentTools?.(ctx) ?? []),
+    ...pluginTools,
   ]
 }

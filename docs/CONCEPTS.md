@@ -430,6 +430,12 @@ as merging a PR. A plugin repo mirrors the host tree and ships **no migration, n
   `*.rej`, migration tag, host dependencies, worker exports, a tenant-isolation test for tenant
   tables, `onTenantDeleted` for DOs, table collisions. Each finding names file, line and exact edit.
   Structural checks read comment-free code. CI runs the same command.
+- **Agent tools**: `agentTools(ctx)` may be async and may return `[]`. That is how a tool reaches
+  only the tenants that turned it on: the plugin reads its own settings row for `ctx.scope.tenantId`.
+  A builder that throws is logged and skipped. `buildAgentTools` is therefore async.
+- **Credentials**: a plugin stores a tenant's key with `sealSecret` / `openSecret` from
+  `@/plugins/api`. That is the kit's AES-GCM under `OAUTH_ENCRYPTION_KEY`, with a 503 when the key
+  is unset. Store the sealed value in a `*_enc` column and answer `hasCredential`.
 - **Hooks** (`onTenantCreated`, `onTenantDeleted`, `seedDemo`) run post-commit, are idempotent,
   and are try/caught. DO state is purgeable only through instance names **derived** from the tenant
   id.

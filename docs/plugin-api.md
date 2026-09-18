@@ -193,6 +193,8 @@ The server surface: the context family, and the types a plugin must be able to n
 - `function nudgeUser(rt: Realtime \| undefined, userId: string, event: RealtimeEvent): void`
   One user's sockets in the tenant (their notifications).
 - `function nudgeUsers( rt: Realtime \| undefined, userIds: string[], event: RealtimeEvent ): void`
+- `async function openSecret(config: PluginConfig, sealed: string): Promise<string>`
+  Decrypt what `sealSecret` produced. Throws on a value sealed under another key.
 - `function pageWindow(query: PaginationQuery): { limit: number; offset: number }`
 - `type PluginAgent = AgentDefinition<Input, Output>`
   A plugin's agent, as `ServerPlugin.agents` takes it.
@@ -309,6 +311,8 @@ The server surface: the context family, and the types a plugin must be able to n
 - `interface ResourceGrantRow`
   One row of `grantsForResources`, before it is grouped by resource.
 - `interface ScheduledTask`
+- `async function sealSecret(config: PluginConfig, plaintext: string): Promise<string>`
+  Encrypt a credential for storage. The output is opaque base64; keep it in a `*_enc` column.
 - `interface SeedCtx extends Pick<PluginContext, 'db'>`
   `pnpm seed --demo`, after the kit's own block.
   - `tenantId: string`
@@ -328,8 +332,8 @@ The server surface: the context family, and the types a plugin must be able to n
     Agent definitions, one per key in `shared.agentKeys`.
   - `prompts?: { [K in PromptKeyOf<S> & string]: PromptDefinition }`
     Prompt registry entries, one per key in `shared.promptKeys`.
-  - `agentTools?: (ctx: AgentToolContext) => Tool[]`
-    Tools added to every agent run, beside the kit's three knowledge tools. Bound to the run's access scope, so a plugin tool reads what its REQUESTER may read and nothing more.
+  - `agentTools?: (ctx: AgentToolContext) => Tool[] \| Promise<Tool[]>`
+    Tools added to every agent run, beside the kit's three knowledge tools. Bound to the run's access scope, so a plugin tool reads what its REQUESTER may read and nothing more. May…
   - `scheduledTasks?: Readonly<Record<string, ScheduledTask[]>>`
     Cron expression → tasks, merged into `SCHEDULED_TASKS` (tasks on a cron the kit already runs are appended after the kit's). A cron the kit does NOT run must also be added to…
   - `grants?: Partial<Record<EffectiveRole, RoleGrant>>`
@@ -633,8 +637,8 @@ Components and hooks, for a lazy PAGE. Never for the UI entry.
     Agent definitions, one per key in `shared.agentKeys`.
   - `prompts?: { [K in PromptKeyOf<S> & string]: PromptDefinition }`
     Prompt registry entries, one per key in `shared.promptKeys`.
-  - `agentTools?: (ctx: AgentToolContext) => Tool[]`
-    Tools added to every agent run, beside the kit's three knowledge tools. Bound to the run's access scope, so a plugin tool reads what its REQUESTER may read and nothing more.
+  - `agentTools?: (ctx: AgentToolContext) => Tool[] \| Promise<Tool[]>`
+    Tools added to every agent run, beside the kit's three knowledge tools. Bound to the run's access scope, so a plugin tool reads what its REQUESTER may read and nothing more. May…
   - `scheduledTasks?: Readonly<Record<string, ScheduledTask[]>>`
     Cron expression → tasks, merged into `SCHEDULED_TASKS` (tasks on a cron the kit already runs are appended after the kit's). A cron the kit does NOT run must also be added to…
   - `grants?: Partial<Record<EffectiveRole, RoleGrant>>`
@@ -1004,6 +1008,7 @@ nothing in the comparison that can throw.
 @/plugins/api :: function :: nudgeEntity :: function nudgeEntity( realtime: Realtime | undefined, tenantId: string, entity: string, id?: string ): void
 @/plugins/api :: function :: nudgeUser :: function nudgeUser(rt: Realtime | undefined, userId: string, event: RealtimeEvent): void
 @/plugins/api :: function :: nudgeUsers :: function nudgeUsers( rt: Realtime | undefined, userIds: string[], event: RealtimeEvent ): void
+@/plugins/api :: function :: openSecret :: async function openSecret(config: PluginConfig, sealed: string): Promise<string>
 @/plugins/api :: function :: pageWindow :: function pageWindow(query: PaginationQuery): { limit: number; offset: number }
 @/plugins/api :: type :: PluginAgent :: type PluginAgent = AgentDefinition<Input, Output>
 @/plugins/api :: interface :: PluginAuth :: interface PluginAuth
@@ -1074,6 +1079,7 @@ nothing in the comparison that can throw.
 @/plugins/api :: function :: requireFeature :: function requireFeature(feature: FeatureName)
 @/plugins/api :: interface :: ResourceGrantRow :: interface ResourceGrantRow
 @/plugins/api :: interface :: ScheduledTask :: interface ScheduledTask
+@/plugins/api :: function :: sealSecret :: async function sealSecret(config: PluginConfig, plaintext: string): Promise<string>
 @/plugins/api :: interface :: SeedCtx :: interface SeedCtx extends Pick<PluginContext, 'db'>
 @/plugins/api :: member :: SeedCtx.tenantId :: tenantId: string
 @/plugins/api :: member :: SeedCtx.ownerId :: ownerId: string
@@ -1087,7 +1093,7 @@ nothing in the comparison that can throw.
 @/plugins/api :: member :: ServerPlugin.jobHandlers :: jobHandlers?: { [T in JobTypeOf<S> & string]: JobHandler<Extract<T, JobType>> }
 @/plugins/api :: member :: ServerPlugin.agents :: agents?: { [K in AgentKeyOf<S> & string]: AnyAgentDefinition }
 @/plugins/api :: member :: ServerPlugin.prompts :: prompts?: { [K in PromptKeyOf<S> & string]: PromptDefinition }
-@/plugins/api :: member :: ServerPlugin.agentTools :: agentTools?: (ctx: AgentToolContext) => Tool[]
+@/plugins/api :: member :: ServerPlugin.agentTools :: agentTools?: (ctx: AgentToolContext) => Tool[] | Promise<Tool[]>
 @/plugins/api :: member :: ServerPlugin.scheduledTasks :: scheduledTasks?: Readonly<Record<string, ScheduledTask[]>>
 @/plugins/api :: member :: ServerPlugin.grants :: grants?: Partial<Record<EffectiveRole, RoleGrant>>
 @/plugins/api :: member :: ServerPlugin.rlsExcludedTables :: rlsExcludedTables?: readonly string[]
@@ -1262,7 +1268,7 @@ nothing in the comparison that can throw.
 @/plugins/types :: member :: ServerPlugin.jobHandlers :: jobHandlers?: { [T in JobTypeOf<S> & string]: JobHandler<Extract<T, JobType>> }
 @/plugins/types :: member :: ServerPlugin.agents :: agents?: { [K in AgentKeyOf<S> & string]: AnyAgentDefinition }
 @/plugins/types :: member :: ServerPlugin.prompts :: prompts?: { [K in PromptKeyOf<S> & string]: PromptDefinition }
-@/plugins/types :: member :: ServerPlugin.agentTools :: agentTools?: (ctx: AgentToolContext) => Tool[]
+@/plugins/types :: member :: ServerPlugin.agentTools :: agentTools?: (ctx: AgentToolContext) => Tool[] | Promise<Tool[]>
 @/plugins/types :: member :: ServerPlugin.scheduledTasks :: scheduledTasks?: Readonly<Record<string, ScheduledTask[]>>
 @/plugins/types :: member :: ServerPlugin.grants :: grants?: Partial<Record<EffectiveRole, RoleGrant>>
 @/plugins/types :: member :: ServerPlugin.rlsExcludedTables :: rlsExcludedTables?: readonly string[]

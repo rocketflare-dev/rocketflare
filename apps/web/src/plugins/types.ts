@@ -87,9 +87,12 @@ export interface ServerPlugin<S extends SharedPlugin = SharedPlugin> {
   prompts?: { [K in PromptKeyOf<S> & string]: PromptDefinition }
   /**
    * Tools added to every agent run, beside the kit's three knowledge tools. Bound to the run's
-   * access scope, so a plugin tool reads what its REQUESTER may read and nothing more.
+   * access scope, so a plugin tool reads what its REQUESTER may read and nothing more. May be
+   * async, and may return `[]` — that is how a tool is offered only to the tenants that turned it
+   * on (read the plugin's own settings row for `ctx.scope.tenantId`). A builder that throws is
+   * logged and skipped, never fatal to the run.
    */
-  agentTools?: (ctx: AgentToolContext) => Tool[]
+  agentTools?: (ctx: AgentToolContext) => Tool[] | Promise<Tool[]>
   /**
    * Cron expression → tasks, merged into `SCHEDULED_TASKS` (tasks on a cron the kit already runs
    * are appended after the kit's). A cron the kit does NOT run must also be added to `[triggers]`

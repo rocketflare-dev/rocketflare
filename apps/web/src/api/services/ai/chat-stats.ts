@@ -129,7 +129,7 @@ export async function buildConversationStats(
   // Only their SCHEMAS are measured here, so a full-access scope is right: the panel reports what
   // the next turn will send, and the tool definitions do not vary by reader.
   const tools = cfg.CHAT_KNOWLEDGE_TOOLS
-    ? buildAgentTools({ db, cfg, env, scope: fullAccessScope(tenantId) })
+    ? await buildAgentTools({ db, cfg, env, scope: fullAccessScope(tenantId) })
     : []
   const knowledgeTools = tools.map(t => t.name)
   const toolSchemaChars = tools.reduce(

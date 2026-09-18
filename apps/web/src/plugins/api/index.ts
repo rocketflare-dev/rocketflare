@@ -9,7 +9,8 @@
  *
  * The exports below are grouped by the file they come from and sorted by the formatter, so read
  * them there: `./http` is a request, `./jobs` is background work, `./ai` is agents and tools,
- * `./access` is row visibility, `./events` is nudges and notifications.
+ * `./access` is row visibility, `./events` is nudges and notifications, `./secrets` is a tenant's
+ * credentials at rest.
  *
  * **Three things are deliberately NOT here.**
  *
@@ -101,6 +102,7 @@ export type { AgentTraceContext, TraceHandle, Tracer } from './observability'
 export { noopTracer, traceChatClient, tracingEnabled, withAgentTrace } from './observability'
 export type { StepRealtime } from './realtime-step'
 export { createStepRealtimeFor } from './realtime-step'
+export { openSecret, sealSecret } from './secrets'
 export type {
   Database,
   DatabaseHandle,

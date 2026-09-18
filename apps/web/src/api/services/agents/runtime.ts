@@ -312,7 +312,7 @@ export async function executeRun(
           // D29: built here, at EXECUTE time, from the run's requester — current membership, not
           // a snapshot taken when the run was enqueued. No requester ("system") reads tenant-wide
           // documents only, never an owner's restricted ones.
-          tools: buildAgentTools({ db, cfg, env, scope: toolScope }),
+          tools: await buildAgentTools({ db, cfg, env, scope: toolScope }),
           checkpoint: {
             load: () => loadCheckpoint(db, tenantId, runId),
             save: cp => saveCheckpoint(db, tenantId, runId, cp),

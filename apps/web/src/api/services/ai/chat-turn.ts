@@ -78,7 +78,7 @@ export interface ChatTurnParams {
    * Response is returned, so every tool call would fail after the first frame — as an error frame,
    * intermittently, only where `waitUntil` really runs.
    */
-  buildTools: (db: Database) => Tool[]
+  buildTools: (db: Database) => Promise<Tool[]>
   /** Hard cap on model turns for THIS run (interactive, so lower than a Workflow's). */
   maxTurns: number
   /** Set the thread's title from the user turn when it is the first one. */
@@ -117,7 +117,7 @@ export function streamChatTurn(c: AppContext, params: ChatTurnParams): Response 
       const bytes = encoder.encode(event)
       if (bytes) await s.write(bytes)
     }
-    const tools = params.buildTools(sdb)
+    const tools = await params.buildTools(sdb)
     const text = aguiTextSegmenter(emit, assistantMessageId)
     const openToolCalls = new Set<string>()
 
@@ -439,7 +439,7 @@ export async function prepareChatTurn(
             // turn after it. The prompt already discourages it — this is the limit.
             maxDocumentChars: CHAT_GET_DOCUMENT_MAX_CHARS,
           })
-      : () => [],
+      : async () => [],
     maxTurns: Math.min(cfg.AGENT_MAX_TURNS, CHAT_MAX_TOOL_TURNS),
     isFirstUserTurn,
     lead: options.lead,

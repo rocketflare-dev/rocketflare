@@ -79,7 +79,9 @@ in the host. Each half is checked where it is written; only the merge is cast.
 - **It never renames anything across releases** — expand/contract only. `drizzle-kit`'s rename
   prompt has no non-interactive answer, so a rename stops an unattended install dead.
 - **It composes, never redefines.** `grants` are additive over its own subjects; hooks are
-  post-commit, idempotent and best-effort; `agentTools` are appended after the kit's. A change to
+  post-commit, idempotent and best-effort; `agentTools` are appended after the kit's (async
+  allowed, `[]` for a tenant that has not turned the tool on, a throw is logged and skipped). A
+  tenant credential goes through `sealSecret`/`openSecret`, never crypto of its own. A change to
   the kit's own tables, to auth, to tenancy or to a cross-cutting middleware is a CORE change.
 - **Its shared module imports no composer at runtime** (`ai/agents.ts`, `jobs.ts`,
   `permissions.ts`, `features.ts`, `realtime.ts`). Those five read the shared barrel, so importing

@@ -224,7 +224,7 @@ describe('the knowledge tools see exactly what their requester sees', () => {
 
   async function toolsFor(userId: string | null) {
     const scope = await accessScopeForUser(db, tenantId, userId)
-    const [search, get, list] = buildAgentTools({ db, cfg, env, scope })
+    const [search, get, list] = await buildAgentTools({ db, cfg, env, scope })
     return {
       search: (input: unknown) => search?.handler?.(input as never) ?? Promise.resolve('{}'),
       get: (input: unknown) => get?.handler?.(input as never) ?? Promise.resolve('{}'),
