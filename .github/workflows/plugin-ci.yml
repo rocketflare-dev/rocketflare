@@ -282,6 +282,15 @@ jobs:
           node "$GITHUB_WORKSPACE/unpin.mjs" .rocketflare.json "$id"
           # Re-formatted because `pnpm lint` runs against this clone and Biome owns this file's shape.
           pnpm exec biome check --write .rocketflare.json >/dev/null 2>&1 || true
+          # `pnpm plugin add` refuses a dirty tree, so that an install is ONE reviewable diff. The
+          # unpin above is a deliberate edit to a throwaway clone, so it is COMMITTED rather than
+          # waved through with `--allow-dirty`: the guard then still means what it says about the
+          # install that follows, instead of being switched off for it.
+          # Conditional because `git commit` EXITS 1 when there is nothing to commit, and under
+          # `set -euo pipefail` that kills the step. The tree is only dirty when this kit actually
+          # pinned this plugin — true for a default plugin, false for every third-party one, which
+          # is the case this workflow mostly serves.
+          git diff --quiet || git -c user.name=ci -c user.email=ci@local commit -qam 'ci: drop the pin for the plugin under test'
           args=(add "$GITHUB_WORKSPACE/plugin" --apply --local)
           if [ -n "$PLUGIN_SUBDIR" ]; then args+=(--subdir "$PLUGIN_SUBDIR"); fi
           pnpm plugin "${args[@]}"
