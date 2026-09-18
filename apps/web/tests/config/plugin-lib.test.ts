@@ -42,10 +42,14 @@ import {
   checkRequirements,
   classifyPluginFile,
   coreEditsByFile,
+  declaresProperty,
+  dependencyClashes,
+  describeClash,
   hasBarrelLine,
   isolationEvidence,
   isVendored,
   jsonKeyLine,
+  missingDependencies,
   nextPluginMigrationTag,
   PLUGIN_MANIFEST_FILE,
   parsePluginRequirement,
@@ -1147,8 +1151,31 @@ describe('the audit', () => {
       isolationEvidence("describe('tenant isolation')\ncreateTestTenant(db)\ncreateTestTenant(db)")
         .ok
     ).toBe(true)
-    expect(isolationEvidence('const otherTenantId = x\ncreateTestTenant()\ncreateTestTenant()').ok)
-      .toBe(true)
+    expect(
+      isolationEvidence('const otherTenantId = x\ncreateTestTenant()\ncreateTestTenant()').ok
+    ).toBe(true)
+  })
+
+  /**
+   * **A check a COMMENT can talk its way past is worse than no check**, because it reports success.
+   *
+   * The fixture written to prove the `onTenantDeleted` rule works carried the sentence "declares no
+   * `hooks.onTenantDeleted`" in its own doc comment, and the substring search this replaces was
+   * satisfied by it — the rule passed on a plugin that plainly broke it.
+   */
+  it('tells a declaration from a mention of one', () => {
+    expect(declaresProperty('hooks: { onTenantDeleted: async () => {} }', 'onTenantDeleted')).toBe(
+      true
+    )
+    expect(declaresProperty('async onTenantDeleted(db) {}', 'onTenantDeleted')).toBe(true)
+    expect(declaresProperty('// declares no onTenantDeleted', 'onTenantDeleted')).toBe(false)
+    expect(declaresProperty('/** no onTenantDeleted here */', 'onTenantDeleted')).toBe(false)
+    // A bare mention in code is not a declaration either.
+    expect(declaresProperty('const x = onTenantDeleted', 'onTenantDeleted')).toBe(false)
+    // A URL is not a line comment, so code after one is still read.
+    expect(
+      declaresProperty("const u = 'https://x.test'\nonTenantDeleted: 1", 'onTenantDeleted')
+    ).toBe(true)
   })
 
   /**
@@ -1170,6 +1197,87 @@ describe('the audit', () => {
     )
     expect(resolveSubdir({ flag: '/plugins/orders/', manifest: null })).toBe('plugins/orders')
     expect(resolveSubdir({})).toBe('')
+  })
+
+  /**
+   * **Nothing checked that a declared dependency was ever installed.** `plugin add --apply` really
+   * runs `pnpm --dir <pkg> add <name>@<range>`, and nothing looked again — so an install whose
+   * `pnpm add` failed part-way, or a `remove` whose PRINTED `pnpm remove` somebody ran, left a
+   * plugin whose imports cannot resolve while every other check read as clean.
+   */
+  it('catches a declared dependency the host package does not have', () => {
+    const manifest = { id: 'orders', dependencies: { 'apps/web': { 'date-fns': '^3.0.0' } } }
+    expect(missingDependencies(manifest, { 'apps/web': { dependencies: {} } })).toEqual([
+      { pkg: 'apps/web', name: 'date-fns', range: '^3.0.0', have: null },
+    ])
+    // A different range is reported separately rather than as the same fault: `package.json` is
+    // `manual` in `.rocketflare.json`, so an operator is entitled to have pinned it themselves.
+    expect(
+      missingDependencies(manifest, { 'apps/web': { dependencies: { 'date-fns': '^4.0.0' } } })
+    ).toEqual([{ pkg: 'apps/web', name: 'date-fns', range: '^3.0.0', have: '^4.0.0' }])
+    // A devDependency counts: what matters is whether the import resolves.
+    expect(
+      missingDependencies(manifest, { 'apps/web': { devDependencies: { 'date-fns': '^3.0.0' } } })
+    ).toEqual([])
+  })
+
+  /**
+   * **`pnpm add` silently overwrites the range in the host's `package.json`**, so two plugins
+   * wanting different majors of one package was last-install-wins with nothing said — at the exact
+   * moment somebody is approving an install that carries full Worker and database access.
+   */
+  it('detects a version clash with the host and with a peer plugin, before anything is written', () => {
+    const manifest = { id: 'orders', dependencies: { 'apps/web': { recharts: '^2.12.0' } } }
+    const withHost = dependencyClashes(manifest, {
+      packageJsons: { 'apps/web': { dependencies: { recharts: '^3.0.0' } } },
+    })
+    expect(withHost).toHaveLength(1)
+    expect(describeClash(withHost[0])).toContain('this plugin wants ^2.12.0')
+    expect(describeClash(withHost[0])).toContain('^3.0.0')
+
+    const withPeer = dependencyClashes(manifest, {
+      installed: [{ id: 'analytics', dependencies: { 'apps/web': { recharts: '^3.0.0' } } }],
+    })
+    expect(withPeer).toHaveLength(1)
+    expect(withPeer[0].holder).toContain('analytics')
+
+    // Agreement is not a clash, and a plugin never clashes with itself on a re-read.
+    expect(
+      dependencyClashes(manifest, {
+        packageJsons: { 'apps/web': { dependencies: { recharts: '^2.12.0' } } },
+        installed: [{ id: 'orders', dependencies: { 'apps/web': { recharts: '^9.0.0' } } }],
+      })
+    ).toEqual([])
+  })
+
+  it('makes a clash a HUMAN step rather than refusing the install', () => {
+    // Refusing would make an ordinary dependency upgrade impossible without editing somebody
+    // else's manifest — a clash is very often the intended change. What it must not be is quiet,
+    // so it lands where the taxonomy already makes a decision structurally unmissable.
+    const clashes = dependencyClashes(
+      { id: 'orders', dependencies: { 'apps/web': { recharts: '^2.12.0' } } },
+      { packageJsons: { 'apps/web': { dependencies: { recharts: '^3.0.0' } } } }
+    )
+    const step = planSteps({ id: 'orders' }, { clashes }).find(s => s.id === 'dependency-clash')
+    expect(step?.kind).toBe('human')
+    expect(step?.command).toContain('recharts')
+  })
+
+  /**
+   * `requires.kit` answers which kit RELEASES a plugin may be installed into; `requires.pluginApi`
+   * answers which version of the CONTRACT it was written against. The comparison itself lives in
+   * `scripts/lib/plugin-api.mjs` — this asserts only that `checkRequirements` consults it.
+   */
+  it('consults the plugin API version, and leaves an undeclared one to the warning', () => {
+    const base = { kitVersion: '0.6.1', pluginApi: { current: 1, minSupported: 1 } }
+    expect(checkRequirements({ ...base, requires: { pluginApi: '1' } })).toEqual([])
+    expect(checkRequirements({ ...base, requires: { pluginApi: '2' } })).toHaveLength(1)
+    expect(checkRequirements({ ...base, requires: { pluginApi: '2' } })[0]).toMatch(/newer than/)
+    // Undeclared is never a refusal: a plugin released before the field existed cannot
+    // retroactively declare one, and `analytics` 1.0.2 is the live case.
+    expect(checkRequirements({ ...base, requires: {} })).toEqual([])
+    // …and with no `pluginApi` handed in, nothing about it is checked at all.
+    expect(checkRequirements({ kitVersion: '0.6.1', requires: { pluginApi: '99' } })).toEqual([])
   })
 
   it('reports the audit as DATA, with warnings kept out of the exit code', () => {

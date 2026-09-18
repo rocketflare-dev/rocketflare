@@ -13,6 +13,7 @@
  *
  * `plugin-lib.d.mts` beside this file is the hand-written type surface (no `allowJs`).
  */
+import { pluginApiProblem } from './plugin-api.mjs'
 import { KIT } from './rename-lib.mjs'
 import { isVendored, satisfiesResult } from './upgrade-lib.mjs'
 
@@ -555,8 +556,18 @@ export function checkRequirements({
   presentSurfaces = [],
   installedPlugins = [],
   vendored = false,
+  pluginApi = null,
 }) {
   const problems = []
+  // `requires.kit` answers "which kit RELEASES may I be installed into"; `requires.pluginApi`
+  // answers "which version of the CONTRACT was I written against". Conflating them is what made
+  // every plugin need re-releasing for a kit version that never touched the plugin surface. An
+  // UNDECLARED value is null here and warned elsewhere, never refused — a plugin released before
+  // the field existed cannot retroactively declare one.
+  if (pluginApi) {
+    const problem = pluginApiProblem(requires.pluginApi, pluginApi)
+    if (problem) problems.push(problem)
+  }
   const range = requires.kit
   if (range && !vendored) {
     // A range this kit cannot READ is its own problem, distinct from "the version is outside it":
@@ -772,7 +783,13 @@ export function renderAddPlan(plan) {
     }
   }
 
-  lines.push(...renderSteps(planSteps(m, { fragments: fragments.map(f => f.path) })))
+  const clashes = plan.clashes ?? []
+  if (clashes.length > 0) {
+    lines.push('', 'Dependency clashes (nothing is overwritten until you say so)')
+    for (const c of clashes) lines.push(`  ⚠ ${describeClash(c)}`)
+  }
+
+  lines.push(...renderSteps(planSteps(m, { fragments: fragments.map(f => f.path), clashes })))
 
   if (plan.verify) lines.push('', "Verify (from the plugin's own note)", ...indent(plan.verify))
   return lines
@@ -831,9 +848,25 @@ const varKey = v => v.key ?? v.name ?? v
  * `fragments` is the repo-relative path of each `migrations/` file the plugin ships, which is
  * never copied — the host pastes it into a `--custom` migration of its own.
  */
-export function planSteps(m, { fragments = [] } = {}) {
+export function planSteps(m, { fragments = [], clashes = [] } = {}) {
   const steps = []
   const version = m.version ?? '0.0.0'
+  if (clashes.length > 0) {
+    // HUMAN, and first: `pnpm add` would overwrite the existing range without a word, and the
+    // host's `package.json` is `manual` in `.rocketflare.json`, so nothing reconciles it later.
+    // Choosing a range two dependants can both live with is a judgement, not a command.
+    steps.push(
+      mkStep(
+        'human',
+        'dependency-clash',
+        `Decide the range for ${[...new Set(clashes.map(c => c.name))].join(', ')}`,
+        clashes.map(describeClash).join('; '),
+        'one range in the host package.json that every dependant can live with',
+        'a person chooses — `pnpm add` silently overwrites the existing range, and no kit upgrade' +
+          ' ever reconciles a package.json'
+      )
+    )
+  }
   const tables = m.schema?.tables ?? []
   if (tables.length > 0) {
     steps.push(
@@ -1046,11 +1079,12 @@ export function addPlanJson(plan) {
       lines: barrelLines(kind, m.id),
     })),
     dependencies: m.dependencies ?? {},
+    dependencyClashes: (plan.clashes ?? []).map(c => ({ ...c, message: describeClash(c) })),
     coreEdits: [...coreEditsByFile(m)].map(([file, edits]) => ({
       file,
       lines: edits.flatMap(e => e.lines),
     })),
-    steps: planSteps(m, { fragments }),
+    steps: planSteps(m, { fragments, clashes: plan.clashes ?? [] }),
     verify: plan.verify ?? null,
   }
 }
@@ -1326,7 +1360,11 @@ export function pluginManifestProblems(manifest) {
         continue
       }
       if (isObj(v) && v.secret !== undefined && typeof v.secret !== 'boolean') {
-        bad('vars', `declares ${key} with a non-boolean secret`, `set ${key}'s "secret" to a boolean`)
+        bad(
+          'vars',
+          `declares ${key} with a non-boolean secret`,
+          `set ${key}'s "secret" to a boolean`
+        )
       }
     }
   }
@@ -1406,11 +1444,28 @@ export function workerExportNames(source) {
 export function isolationEvidence(source) {
   const text = String(source)
   const named = /describe\(\s*['"`][^'"`]*isolation/i.test(text)
-  const secondTenant = /\b(?:other|second|another|foreign)[A-Za-z]*[Tt]enant\b|\btenantB\b/.test(
-    text
-  )
+  // No word boundary AFTER `tenant`: the usual spelling is `otherTenantId` / `otherTenantCookie`,
+  // and a trailing `\b` refuses every one of them.
+  const secondTenant = /\b(?:other|second|another|foreign)[A-Za-z]*[Tt]enant|\btenantB\b/.test(text)
   const tenantsCreated = [...text.matchAll(/createTestTenant(?:WithUser)?\s*\(/g)].length
   return { named, secondTenant, tenantsCreated, ok: tenantsCreated >= 2 && (named || secondTenant) }
+}
+
+/**
+ * Whether a TypeScript source really DECLARES `name` as a property or method, rather than merely
+ * mentioning it.
+ *
+ * Comments are stripped first, and that is not belt-and-braces: the fixture written to prove the
+ * `onTenantDeleted` check works carried the sentence *"declares no `hooks.onTenantDeleted`"* in its
+ * own doc comment, and a substring search was satisfied by it. A check a comment can talk its way
+ * past is worse than no check, because it reports success.
+ */
+export function declaresProperty(source, name) {
+  const code = String(source)
+    .replace(/\/\*[\s\S]*?\*\//g, ' ')
+    // `[^:]` so a `https://…` inside a string is not mistaken for a line comment.
+    .replace(/(^|[^:])\/\/[^\n]*/g, '$1')
+  return new RegExp(`\\b${escapeRe(name)}\\s*[:(]`).test(code)
 }
 
 /**
@@ -1427,3 +1482,69 @@ export function resolveSubdir({ flag = null, manifest = null, source = null } = 
   const trim = v => (typeof v === 'string' ? v.replace(/^\/+|\/+$/g, '') : '')
   return trim(flag) || trim(manifest) || trim(source) || ''
 }
+
+/** The range a package is pinned at in a host `package.json`, either section, or null. */
+const rangeIn = (json, name) => json?.dependencies?.[name] ?? json?.devDependencies?.[name] ?? null
+
+/**
+ * Declared dependencies that are not in the host package's `package.json`, or are at another range.
+ *
+ * **Nothing checked this, and both halves fail silently.** `plugin add --apply` really runs
+ * `pnpm --dir <pkg> add <name>@<range>`, so a plugin whose install failed part-way — or whose
+ * dependency was dropped later by `remove`, which deliberately only PRINTS `pnpm remove` — reports
+ * as perfectly healthy while its imports cannot resolve. `have: null` is the missing case and is a
+ * failure; a different range is reported separately, because the host's `package.json` is listed
+ * under `manual` in `.rocketflare.json` and an operator is entitled to have pinned it themselves.
+ */
+export function missingDependencies(manifest, packageJsons = {}) {
+  const out = []
+  for (const [pkg, deps] of Object.entries(manifest?.dependencies ?? {})) {
+    for (const [name, range] of Object.entries(deps ?? {})) {
+      const have = rangeIn(packageJsons[pkg], name)
+      if (have === null) out.push({ pkg, name, range, have: null })
+      else if (have !== range) out.push({ pkg, name, range, have })
+    }
+  }
+  return out
+}
+
+/**
+ * A dependency this plugin wants at a range the host, or another installed plugin, already has
+ * pinned differently.
+ *
+ * **`pnpm add` silently overwrites the range in the host's `package.json`**, so two plugins wanting
+ * different majors of one package is last-install-wins with nothing said — at the exact moment
+ * somebody is being asked to approve an install that carries full Worker and database access. And
+ * `package.json` is `manual` in `.rocketflare.json`, so no kit upgrade ever reconciles it for
+ * anyone afterwards.
+ *
+ * It WARNS rather than refusing, and the reason is not timidity: a clash is very often the intended
+ * change — a plugin that legitimately needs a newer major of a shared package is how a dependency
+ * moves forward at all — so refusing would make an ordinary upgrade impossible without editing
+ * somebody else's manifest. What it must not be is quiet, so it is surfaced as a **human** step,
+ * where the taxonomy already makes a decision structurally unmissable rather than a sentence in a
+ * paragraph.
+ */
+export function dependencyClashes(manifest, { packageJsons = {}, installed = [] } = {}) {
+  const out = []
+  for (const [pkg, deps] of Object.entries(manifest?.dependencies ?? {})) {
+    for (const [name, range] of Object.entries(deps ?? {})) {
+      const hostRange = rangeIn(packageJsons[pkg], name)
+      if (hostRange && hostRange !== range) {
+        out.push({ pkg, name, range, holder: `${pkg}/package.json`, theirs: hostRange })
+      }
+      for (const other of installed) {
+        if (other.id === manifest.id) continue
+        const theirs = other.dependencies?.[pkg]?.[name]
+        if (theirs && theirs !== range) {
+          out.push({ pkg, name, range, holder: `the '${other.id}' plugin`, theirs })
+        }
+      }
+    }
+  }
+  return out
+}
+
+/** One clash as the sentence both the plan and `--json` show. */
+export const describeClash = c =>
+  `${c.pkg}: ${c.name} — this plugin wants ${c.range}, ${c.holder} has ${c.theirs}`

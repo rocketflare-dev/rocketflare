@@ -114,24 +114,59 @@ reversible by deleting a directory.
 
 ## What `check` verifies
 
-One `✖` line per failure and exit 1 on any; silence plus `✔ n plugin(s) check out` otherwise. Per
-installed plugin:
+One `✖` line per failure and exit 1 on any; silence plus `✔ n plugin(s) check out` otherwise.
+**Every finding is `<file>:<line> <what is wrong> — <the exact change>`** — the line number only
+where the complaint is AT a place in a file, never fabricated. Per installed plugin:
 
-- the **anchor** file exists — "the surface says installed, the tree says no";
+- the **anchor** file exists — "the surface says installed, the tree says no" — and **parses**;
+- **every manifest field**, naming the field and its legal values: a non-semver `version`, a
+  `requires.kit` this kit cannot read, a cron that is not five fields, a `vars` entry with no key,
+  `schema.tables` that is not an array, a malformed `coreEdits` entry, and the `bindings[]` rules;
 - **`requires`** still holds: the kit version is inside `requires.kit`, every required surface is
-  present, every required plugin is installed (skipped entirely for a vendored plugin);
+  present, every required plugin is installed (skipped entirely for a vendored plugin), and
+  `requires.pluginApi` is an integer this kit's plugin API supports;
 - for each of the six barrels, the **line and the half agree both ways** — a barrel that names a
   plugin half that is not on disk, and a half on disk that no barrel names;
 - no **`*.rej`** anywhere under its directories ("an upgrade left work behind");
 - the **anchor's `version` matches the surface's** `source.version`;
 - when it declares tables, **some migration tag names `plugin-<id>`** — otherwise the tables were
   never generated, which is the most common thing to have skipped;
-- when it declares `workerExports`, its `worker-exports.ts` exists and **exports every name** —
-  a class in the file but not the manifest is invisible to provisioning, and a name in the manifest
-  but not the file is a binding pointed at nothing, which makes `wrangler deploy` refuse the script.
+- **every declared dependency is really in the host `package.json`** — `plugin add --apply` runs
+  `pnpm --dir <pkg> add`, and until now nothing ever looked again, so an install that failed
+  part-way left a plugin whose imports cannot resolve while every other check read as clean;
+- **`workerExports` both ways**: its `worker-exports.ts` exists and exports every declared name (a
+  name in the manifest but not the file is a binding pointed at nothing, and `wrangler deploy`
+  refuses the whole script for it), and it declares every name the file exports (a class the
+  manifest does not name is invisible to provisioning, which reads that list to write the binding
+  block). A file carrying an `export *` is skipped in both directions — its names cannot be known
+  without resolving the module, and guessing teaches an author to distrust the audit;
+- when it declares tenant-scoped tables, **a tenant-isolation test exists** under
+  `src/plugins/<id>/tests/api/`. This is the kit's one non-negotiable that the kit itself cannot
+  write, and it is structural: it proves such a test EXISTS, not that it is right, and the message
+  says so. It wants a file that creates a SECOND organisation and names it or the property;
+- when it declares a `durable_object` binding, **`hooks.onTenantDeleted` is declared somewhere in
+  its tree** — a Durable Object is state the FK cascade cannot reach, so a deleted tenant's DO
+  state outlives it, and no other check can see that because its tables are gone.
 
-`pnpm plugin check --json` prints the same audit as data: `{ ok, plugins, failures, notes }`, where
-a failure carries the remedial step and its `kind`.
+**Two tiers.** A check a RELEASED plugin cannot retroactively satisfy prints as `warn:` and does
+not change the exit code; it FAILS for a plugin that declares `requires.pluginApi`. That is the
+same opt-in the plugin import rule uses, and it is the permanent arrangement for a third-party
+plugin rather than a transition hack: a plugin's CI resolves its matrix from *released* kit tags,
+so it cannot declare a version that does not exist yet.
+
+`pnpm plugin check --json` prints the same audit as data: `{ ok, plugins, failures, warnings,
+notes }`. `failures` and `warnings` are separate lists so `ok` keeps meaning "this exits 0", and
+each entry carries `file`, `line`, `problem`, `fix`, `kind` and `assert` as fields.
+
+## Version clashes, at `add` time
+
+`plugin add` compares every declared dependency against the range the host's `package.json` already
+has, and against every other installed plugin's declared range. A difference is printed under
+**Dependency clashes** and becomes a **human** step, because `pnpm add` would overwrite the
+existing range without a word — and `package.json` is `manual` in `.rocketflare.json`, so no kit
+upgrade ever reconciles it for anyone afterwards. It warns rather than refusing: a clash is very
+often the intended change, and refusing would make an ordinary dependency upgrade impossible
+without editing somebody else's manifest.
 
 ## Where an install is recorded
 

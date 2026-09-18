@@ -52,6 +52,7 @@ import {
   PLUGIN_MIRROR_ROOT,
 } from './lib/git-lib.mjs'
 import { pluginSurfaces, readManifest } from './lib/manifest.mjs'
+import { readPluginApi } from './lib/plugin-api.mjs'
 import {
   addBarrelLine,
   addPlanJson,
@@ -65,10 +66,14 @@ import {
   checkRequirements,
   classifyPluginFile,
   coreEditsByFile,
+  declaresProperty,
+  dependencyClashes,
+  describeClash,
   hasBarrelLine,
   isolationEvidence,
   isVendored,
   jsonKeyLine,
+  missingDependencies,
   nextPluginMigrationTag,
   PLUGIN_MANIFEST_FILE,
   parsePluginRequirement,
@@ -220,6 +225,11 @@ function loadHost() {
     manifestPath,
     sidecarPath,
     kitVersion,
+    // `requires.kit` answers which kit RELEASES a plugin may be installed into; this answers which
+    // version of the CONTRACT it was written against (`docs/plugin-api.md`). Two questions, two
+    // fields — conflating them is what made every plugin need re-releasing for a kit version that
+    // never touched the plugin surface.
+    pluginApi: readPluginApi(manifest),
     names,
     tracked,
     label: manifest.app ? `${manifest.app.display} (${manifest.app.slug})` : 'the kit itself',
@@ -228,6 +238,43 @@ function loadHost() {
     sidecarIds: (sidecar?.surfaces ?? []).map(s => s.id),
     presentSurfaces: manifest.surfaces.filter(s => existsSync(abs(s.anchor))).map(s => s.id),
   }
+}
+
+/** A host workspace package's `package.json`, or null. Never throws: a caller is reporting. */
+function readHostPackageJson(pkg) {
+  const file = abs(path.join(pkg, 'package.json'))
+  if (!existsSync(file)) return null
+  try {
+    return JSON.parse(readFileSync(file, 'utf8'))
+  } catch {
+    return null
+  }
+}
+
+/** The same file as TEXT, so a diagnostic can name the line a range actually sits on. */
+const readHostPackageJsonSource = pkg => {
+  const file = abs(path.join(pkg, 'package.json'))
+  return existsSync(file) ? readFileSync(file, 'utf8') : ''
+}
+
+/** The host `package.json` of every workspace package a manifest's `dependencies` names. */
+const packageJsonsFor = manifest =>
+  Object.fromEntries(
+    Object.keys(manifest?.dependencies ?? {}).map(pkg => [pkg, readHostPackageJson(pkg)])
+  )
+
+/** Each installed plugin's OWN declared dependencies, for peer-clash detection. */
+function installedDependencyDeclarations(host) {
+  return host.plugins
+    .filter(p => existsSync(abs(p.anchor)))
+    .map(p => {
+      try {
+        const m = JSON.parse(readFileSync(abs(p.anchor), 'utf8'))
+        return { id: p.id, dependencies: m.dependencies ?? {} }
+      } catch {
+        return { id: p.id, dependencies: {} }
+      }
+    })
 }
 
 function requireClean(host, args) {
@@ -501,6 +548,17 @@ function cmdAdd(args, host) {
     presentSurfaces: host.presentSurfaces,
     installedPlugins: host.plugins.map(p => ({ id: p.id, version: p.source?.version ?? null })),
     vendored,
+    pluginApi: host.pluginApi,
+  })
+
+  // A dependency this plugin wants at a range the host — or another installed plugin — already
+  // pins differently. `pnpm add` would overwrite it without a word, and `package.json` is `manual`
+  // in `.rocketflare.json`, so no kit upgrade ever reconciles it. It WARNS rather than refusing (a
+  // clash is often the intended change) and is surfaced as a HUMAN step, which is where the
+  // taxonomy makes a decision unmissable.
+  const clashes = dependencyClashes(m, {
+    packageJsons: packageJsonsFor(m),
+    installed: installedDependencyDeclarations(host),
   })
 
   const byRoot = {}
@@ -520,6 +578,7 @@ function cmdAdd(args, host) {
     },
     vendored,
     problems,
+    clashes,
     files,
     byRoot,
     barrels,
@@ -557,6 +616,9 @@ function cmdAdd(args, host) {
   for (const [file, edits] of coreEdits) {
     writeFileSync(abs(file), applyCoreEdits(readFileSync(abs(file), 'utf8'), edits))
   }
+  // Said again at the moment it happens, not only in the plan: `pnpm add` is about to overwrite
+  // the range, and stderr is what a log keeps.
+  for (const c of clashes) warn(`warning: ${describeClash(c)}`)
   installDependencies(m, 'add')
   const formatted = formatWritten([
     ...targets,
@@ -1175,6 +1237,12 @@ function cmdCheck(args, host) {
   // Things worth SAYING that are not faults — a state the kit itself is legitimately in, or a
   // silence somebody should know about. Printed either way; they never change the exit code.
   const notes = []
+  // Read from each plugin's own MANIFEST rather than from its surface: `buildPluginSurface` copies
+  // only `kit`/`surfaces`/`plugins`, so a surface never carries `pluginApi` and reading it there
+  // reported `null` for a plugin that plainly declares one — while the same run was correctly
+  // FAILING it on that declaration. A field that contradicts the severity beside it is worse than
+  // an absent one.
+  const declaredApi = new Map()
   for (const s of host.plugins) {
     const id = s.id
     const vendored = isVendored(s.source, host.kitRepo)
@@ -1220,6 +1288,7 @@ function cmdCheck(args, host) {
       continue
     }
     const severity = auditSeverity(anchor)
+    declaredApi.set(id, anchor.requires?.pluginApi ?? null)
 
     // Every field, naming the field and its legal values. Two-tier, because a plugin RELEASED
     // before this check existed cannot retroactively satisfy it.
@@ -1239,6 +1308,7 @@ function cmdCheck(args, host) {
       presentSurfaces: host.presentSurfaces,
       installedPlugins: host.plugins.map(p => ({ id: p.id, version: p.source?.version ?? null })),
       vendored,
+      pluginApi: host.pluginApi,
     })) {
       add('fail', `${id}:requires`, {
         file: s.anchor,
@@ -1354,7 +1424,8 @@ function cmdCheck(args, host) {
         existsSync(abs(tree)) &&
         walk(abs(tree)).some(
           f =>
-            /\.tsx?$/.test(f) && readFileSync(abs(`${tree}/${f}`), 'utf8').includes('onTenantDeleted')
+            /\.tsx?$/.test(f) &&
+            declaresProperty(readFileSync(abs(`${tree}/${f}`), 'utf8'), 'onTenantDeleted')
         )
       if (!declaresHook) {
         const which = doBindings.map(b => b.binding ?? b.className ?? '?').join(', ')
@@ -1396,6 +1467,31 @@ function cmdCheck(args, host) {
           fix: `pnpm db:generate --name plugin-${id}-${anchor.version ?? '0.0.0'} && pnpm db:migrate`,
         })
       }
+    }
+
+    // **Declared dependencies are really installed.** `plugin add --apply` runs `pnpm --dir <pkg>
+    // add <name>@<range>` and nothing ever looked again — so an install whose `pnpm add` failed
+    // part-way, or a `remove` whose printed `pnpm remove` somebody ran, leaves a plugin whose
+    // imports cannot resolve while every other check here reads as perfectly clean.
+    for (const d of missingDependencies(anchor, packageJsonsFor(anchor))) {
+      if (d.have === null) {
+        add('fail', `${id}:dependency:${d.name}`, {
+          file: `${d.pkg}/package.json`,
+          problem: `does not list ${d.name}, which ${s.anchor} declares at ${d.range}`,
+          fix: `pnpm --dir ${d.pkg} add ${d.name}@${d.range}`,
+        })
+        continue
+      }
+      // A DIFFERENT range is not the same fault: `package.json` is `manual` in `.rocketflare.json`,
+      // so an operator is entitled to have pinned it themselves and no kit upgrade reconciles it.
+      add(severity, `${id}:dependency-range:${d.name}`, {
+        file: `${d.pkg}/package.json`,
+        line: jsonKeyLine(readHostPackageJsonSource(d.pkg), d.name),
+        problem: `pins ${d.name} at ${d.have}, and ${s.anchor} declares ${d.range}`,
+        fix:
+          `pnpm --dir ${d.pkg} add ${d.name}@${d.range}, or set "dependencies"."${d.pkg}"."${d.name}" ` +
+          `in ${s.anchor} to ${d.have} — whichever range both can live with`,
+      })
     }
 
     // **The tenant-isolation test the kit cannot write for you.** A plugin's tables are
@@ -1468,7 +1564,7 @@ function cmdCheck(args, host) {
             local: host.sidecarIds.includes(s.id),
             // Which tier this plugin's new-rule findings landed in, so a reader knows whether a
             // clean run means "checked" or "not checked yet".
-            pluginApi: s.requires?.pluginApi ?? null,
+            pluginApi: declaredApi.get(s.id) ?? null,
           })),
           failures,
           warnings,
