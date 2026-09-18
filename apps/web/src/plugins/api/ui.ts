@@ -82,7 +82,15 @@ export { useFeature, usePermissions } from '../../ui/hooks/usePermissions'
 export type { ApiRequestOptions } from '../../ui/lib/api-client'
 /** Every request goes through this: `credentials: 'include'`, the shared error envelope, and a
  * `schema` option that parses the response with the same contract the server validated with. */
-export { ApiError, api } from '../../ui/lib/api-client'
+export {
+  ApiError,
+  api,
+  // A plugin embedding a third-party client with its OWN TanStack Query instance never
+  // reaches the app's global QueryCache.onError, so a 401 there would be silent. These two
+  // are how it routes one back into the kit's single sign-out path.
+  notifyUnauthorized,
+  setUnauthorizedHandler,
+} from '../../ui/lib/api-client'
 export {
   formatBytes,
   formatDate,

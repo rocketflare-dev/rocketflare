@@ -302,6 +302,27 @@ under different symbol names compile perfectly. A single `DROP TABLE` would then
 plugin's data. **A believed-in guarantee that does not exist is worse than a known gap**, because
 nobody writes the check.
 
+### Two declared entries gained what the first real consumer needed
+
+Migrating `analytics` onto the contract — the first plugin with genuine third-party shape to try it
+— found two things the declared surface could not do, and both are now on it.
+
+**`@/db/schema/kit` serves two needs, not one.** It shipped `tenants`, `users` and `groups` as FK and
+relation targets, and its own header said that was "the only thing a plugin's table should want from
+a kit table". That is untrue for a plugin that AGGREGATES the kit's rows: a cube or a fact table
+names `activity_events`, `tenant_users` and `group_types` at module scope, where no context exists
+and `allTables()` cannot be called. All three are exported now, and the header says which tables are
+there for which reason instead of asserting there is only one.
+
+**A plugin embedding a third-party client with its own TanStack Query instance never reaches the
+app's global `QueryCache.onError`**, so a 401 inside it would be silent. `notifyUnauthorized` and
+`setUnauthorizedHandler` are now on `@/plugins/api/ui`, which is how such a client routes one back
+into the kit's single sign-out path.
+
+Both are additions, so no `PLUGIN_API.current` bump: the generated reference records them and the
+gate stays green, which is exactly the asymmetry that version is for — additions are free, changes
+and removals are not.
+
 ## How to apply
 
 There is no migration and no schema change.
@@ -395,6 +416,10 @@ migration, so finding a clash late is expensive.
 
 If you documented the old "hyphens dropped" rule anywhere in your own app, correct it; nothing
 enforced it and nothing ever will.
+
+Nothing to do unless you want them. If you reimplemented any of these against kit internals because
+the declared entry lacked them, replace that with the published version — it is the same code, and
+the deep import would now fail the contract check.
 
 ## Conflicts to expect
 

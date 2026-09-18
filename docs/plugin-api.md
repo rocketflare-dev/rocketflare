@@ -561,6 +561,8 @@ Components and hooks, for a lazy PAGE. Never for the UI entry.
 - `interface ModalProps`
 - `type NavGuard = \| 'admin' \| 'globalAdmin' \| { action: string; subject: string } \| { feature: string } \| readonly NavGuard[]`
   Coarse role flags for routing (`AdminRoute` / `GlobalAdminRoute` semantics), a CASL `{ action, subject }` pair for per-page checks, a feature flag, or a list meaning AND. Strings,…
+- `function notifyUnauthorized(error: ApiError): void`
+  Invoke the 401 handler. A stale session makes every in-flight query fail at once, so calls within the same tick are coalesced into ONE handler invocation. Called by `request()`…
 - `function PageHeader({ title, description, breadcrumbs, badge, actions, className = '', }: PageHeaderProps)`
   Page title row: breadcrumbs, a modest title (no enormous headings), description, actions.
 - `function PaginationControls({ pagination, onPageChange, isLoading = false, className = '', }: PaginationControlsProps)`
@@ -577,6 +579,8 @@ Components and hooks, for a lazy PAGE. Never for the UI entry.
   "Label + description on the left, control on the right" — the settings-page row.
 - `function SettingToggle({ id, label, description, checked, onChange, disabled, }: SettingToggleProps)`
   Toggle variant.
+- `function setUnauthorizedHandler(handler: UnauthorizedHandler \| null): void`
+  Register the global 401 handler. One handler; the last registration wins. Pass `null` to remove it. Phase 1 calls this from `AuthProvider` with the redirect-to-login behaviour.
 - `function showToast(message: string, type: ToastType, duration?: number): void` — **used by** example-feature
   Show a toast from anywhere, inside or outside React.
 - `default function SideNav({ items = navigationConfig, footer }: SideNavProps)` — **used by** example-feature
@@ -683,7 +687,9 @@ The build-time schema symbols. A `pgTable(...)` runs at module scope, so these c
 
 > The schema kit (D31) — the build-time symbols a plugin's table file needs at MODULE scope.
 
+- `const activityEvents: table "activity_events" { id, tenantId, userId, type, subjectType, subjectId, metadata, createdAt }`
 - `const groups: table "groups" { createdAt, updatedAt, id, tenantId, groupTypeId, name, description }`
+- `const groupTypes: table "group_types" { createdAt, updatedAt, id, tenantId, name, description }`
 - `function membershipIsolation()`
   `users` has no `tenant_id` — a user is global and belongs to MANY tenants through `tenant_users` — so it is scoped by MEMBERSHIP of the active tenant instead.
 - `const RESOURCE_VISIBILITY_VALUES: readonly ["tenant", "groups"]`
@@ -693,6 +699,7 @@ The build-time schema symbols. A `pgTable(...)` runs at module scope, so these c
 - `function tenantRef(tenants: { id: AnyPgColumn })`
   `tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE`.
 - `const tenants: table "tenants" { createdAt, updatedAt, id, name, slug, status, seedDataCreated, lastAccessedAt }`
+- `const tenantUsers: table "tenant_users" { tenantId, userId, role, joinedAt, invitedByUserId }`
 - `function timestamps()`
   `created_at` / `updated_at` as `timestamptz`, both defaulting to now(). Spread into a table.
 - `const users: table "users" { createdAt, updatedAt, id, email, name, avatarUrl, isGlobalAdmin, emailVerifiedAt, lastLoginAt, blockedAt }`
@@ -1277,6 +1284,7 @@ plugin-api 1
 @/plugins/api/ui :: function :: Modal :: function Modal({ open, onClose, title, children, actions, closeButton = true, className = '', }: ModalProps)
 @/plugins/api/ui :: interface :: ModalProps :: interface ModalProps
 @/plugins/api/ui :: type :: NavGuard :: type NavGuard = | 'admin' | 'globalAdmin' | { action: string; subject: string } | { feature: string } | readonly NavGuard[]
+@/plugins/api/ui :: function :: notifyUnauthorized :: function notifyUnauthorized(error: ApiError): void
 @/plugins/api/ui :: function :: PageHeader :: function PageHeader({ title, description, breadcrumbs, badge, actions, className = '', }: PageHeaderProps)
 @/plugins/api/ui :: function :: PaginationControls :: function PaginationControls({ pagination, onPageChange, isLoading = false, className = '', }: PaginationControlsProps)
 @/plugins/api/ui :: function :: SearchInput :: function SearchInput({ value, onChange, placeholder = 'Search…', debounceMs = 300, className = '', size = 'md', 'aria-label': ariaLabel = 'Search', }: SearchInputProps)
@@ -1285,6 +1293,7 @@ plugin-api 1
 @/plugins/api/ui :: function :: SettingInput :: function SettingInput({ id, label, description, value, onChange, placeholder, type = 'text', disabled, error, }: SettingInputProps)
 @/plugins/api/ui :: function :: SettingRow :: function SettingRow({ label, description, children, htmlFor, className = '', }: SettingRowProps)
 @/plugins/api/ui :: function :: SettingToggle :: function SettingToggle({ id, label, description, checked, onChange, disabled, }: SettingToggleProps)
+@/plugins/api/ui :: function :: setUnauthorizedHandler :: function setUnauthorizedHandler(handler: UnauthorizedHandler | null): void
 @/plugins/api/ui :: function :: showToast :: function showToast(message: string, type: ToastType, duration?: number): void
 @/plugins/api/ui :: function :: SideNav :: default function SideNav({ items = navigationConfig, footer }: SideNavProps)
 @/plugins/api/ui :: function :: SkeletonRows :: function SkeletonRows({ rows = 4, className = '' }: { rows?: number; className?: string })
@@ -1343,12 +1352,15 @@ plugin-api 1
 @/plugins/types :: member :: UiPlugin.homeLinks :: homeLinks?: readonly QuickLink[]
 @/plugins/types :: member :: UiPlugin.queryKeys :: queryKeys?: Readonly<Record<string, unknown>>
 @/plugins/types :: member :: UiPlugin.agentForms :: agentForms?: Readonly<Partial<Record<AgentKeyOf<S> & string, AgentForm>>>
+@/db/schema/kit :: const :: activityEvents :: const activityEvents: table "activity_events" { id, tenantId, userId, type, subjectType, subjectId, metadata, createdAt }
 @/db/schema/kit :: const :: groups :: const groups: table "groups" { createdAt, updatedAt, id, tenantId, groupTypeId, name, description }
+@/db/schema/kit :: const :: groupTypes :: const groupTypes: table "group_types" { createdAt, updatedAt, id, tenantId, name, description }
 @/db/schema/kit :: function :: membershipIsolation :: function membershipIsolation()
 @/db/schema/kit :: const :: RESOURCE_VISIBILITY_VALUES :: const RESOURCE_VISIBILITY_VALUES: readonly ["tenant", "groups"]
 @/db/schema/kit :: function :: tenantIsolation :: function tenantIsolation(table: string, column = sql`tenant_id`)
 @/db/schema/kit :: function :: tenantRef :: function tenantRef(tenants: { id: AnyPgColumn })
 @/db/schema/kit :: const :: tenants :: const tenants: table "tenants" { createdAt, updatedAt, id, name, slug, status, seedDataCreated, lastAccessedAt }
+@/db/schema/kit :: const :: tenantUsers :: const tenantUsers: table "tenant_users" { tenantId, userId, role, joinedAt, invitedByUserId }
 @/db/schema/kit :: function :: timestamps :: function timestamps()
 @/db/schema/kit :: const :: users :: const users: table "users" { createdAt, updatedAt, id, email, name, avatarUrl, isGlobalAdmin, emailVerifiedAt, lastLoginAt, blockedAt }
 @rocketflare/shared/plugins/api :: type :: Actions :: type Actions = (typeof ACTIONS)[number]

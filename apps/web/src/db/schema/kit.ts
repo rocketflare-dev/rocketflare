@@ -18,8 +18,14 @@
  * over a table file, and drizzle-kit reads it as the schema; a re-export layer in there earns
  * nothing and invites an ambiguous name. Nothing is lost — a plugin imports this module directly.
  *
- * The three tables are here as FK and relation targets, which is the only thing a plugin's table
- * should want from a kit table. Note the rule that goes with them: **a plugin declares `relations()`
+ * The kit tables here serve two distinct needs, and the second was missed at first. `tenants`,
+ * `users` and `groups` are **FK and relation targets** — what a plugin's own table points AT.
+ * `activityEvents`, `tenantUsers` and `groupTypes` are **query targets**: a plugin that aggregates
+ * the kit's own rows (a cube, a fact table, a report) names them at module scope, where no context
+ * exists yet and `allTables()` cannot be called. Both are legitimate; neither is a licence to reach
+ * for a kit table that is not on this list, because that is what the injected contexts are for.
+ *
+ * Note the rule that goes with all of them: **a plugin declares `relations()`
  * for its OWN tables only.** On drizzle-orm 0.45.2 a second `relations()` for a core table merges
  * at runtime but not at the type level, and silently strips `with:` from that table's query results
  * app-wide (`apps/web/src/plugins/schema.ts` has the measurement). The `one()` side on the plugin's
@@ -27,7 +33,9 @@
  */
 
 export { RESOURCE_VISIBILITY_VALUES, tenantRef, timestamps } from './_helpers'
-export { groups } from './groups'
+export { activityEvents } from './activity-events'
+export { groups, groupTypes } from './groups'
 export { membershipIsolation, tenantIsolation } from './rls'
+export { tenantUsers } from './tenant-users'
 export { tenants } from './tenants'
 export { users } from './users'
