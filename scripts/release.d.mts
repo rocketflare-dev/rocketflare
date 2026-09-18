@@ -24,11 +24,22 @@ export interface ReleaseVersionFile {
 }
 export interface ReleaseContext {
   kind: ReleaseKind
+  /** The plugin's declared id — `kind: 'plugin'` only, and null when the manifest omits one. */
+  id?: string | null
+  /** Repo-root-relative, always: a monorepo resolves a context inside a subdirectory. */
   notesDir?: string
   changelog?: string
   versionFiles?: ReleaseVersionFile[]
 }
-export function releaseContext(root?: string): ReleaseContext
+export function releaseContext(
+  root?: string,
+  /**
+   * `repoRoot` is what every path in the returned context is relative to. It defaults to `root`,
+   * which is the kit and a single-plugin repository; a plugin MONOREPO passes the repository root
+   * while `root` is `plugins/<id>` (D31).
+   */
+  options?: { repoRoot?: string }
+): ReleaseContext
 
 /**
  * What `resolveDefaultPlugin` asks of a mirror. A test injects a stub with just these three, which

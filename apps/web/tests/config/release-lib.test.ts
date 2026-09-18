@@ -11,12 +11,18 @@
  *
  * The `config` project: no database.
  */
-import { describe, expect, it } from 'vitest'
-import { readManifest } from '../../../../scripts/lib/manifest.mjs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { dirname, join } from 'node:path'
+import { afterAll, describe, expect, it } from 'vitest'
+import { MANIFEST_FILE, readManifest } from '../../../../scripts/lib/manifest.mjs'
 import type { DefaultPluginEntry, Manifest } from '../../../../scripts/lib/upgrade-lib.d.mts'
 import {
+  behaviourFiles,
+  changelogSection,
   defaultPluginEntries,
   defaultPluginProblems,
+  prependChangelogSection,
 } from '../../../../scripts/lib/upgrade-lib.mjs'
 import type { MirrorReader } from '../../../../scripts/release.d.mts'
 import { releaseContext, resolveDefaultPlugin } from '../../../../scripts/release.mjs'
@@ -166,5 +172,165 @@ describe('releaseContext', () => {
 
   it('is "unknown" where there is neither manifest', () => {
     expect(releaseContext('/').kind).toBe('unknown')
+  })
+})
+
+/**
+ * The three repository SHAPES a release can be cut in (D31). The first two must behave exactly as
+ * they did before `--plugin` existed, which is what most of these assertions are for; the third is
+ * the plugin monorepo `rocketflare-plugins`, whose manifests live in subdirectories and which has
+ * none at its root.
+ */
+describe('releaseContext across repository shapes', () => {
+  const scratch: string[] = []
+  afterAll(() => {
+    for (const dir of scratch) rmSync(dir, { recursive: true, force: true })
+  })
+
+  const repo = (files: Record<string, string>): string => {
+    const root = mkdtempSync(join(tmpdir(), 'rf-release-'))
+    scratch.push(root)
+    for (const [rel, body] of Object.entries(files)) {
+      const file = join(root, rel)
+      mkdirSync(dirname(file), { recursive: true })
+      writeFileSync(file, body)
+    }
+    return root
+  }
+
+  const pkg = (version = '1.0.0') => `{\n  "name": "x",\n  "version": "${version}"\n}\n`
+  const pluginManifest = (id: string, version = '1.0.0') =>
+    `{\n  "id": "${id}",\n  "version": "${version}",\n  "requires": {\n    "kit": ">=0.6.1 <1.0.0",\n    "pluginApi": "1"\n  }\n}\n`
+
+  it('the KIT stamps the root package.json and the kit.version, unchanged', () => {
+    const root = repo({
+      'package.json': pkg(),
+      [MANIFEST_FILE]: `{\n  "kit": {\n    "version": "0.6.1"\n  },\n  "app": null,\n  "surfaces": []\n}\n`,
+    })
+    const ctx = releaseContext(root)
+    expect(ctx.kind).toBe('kit')
+    expect(ctx.notesDir).toBe('docs/upgrades')
+    expect(ctx.changelog).toBe('CHANGELOG.md')
+    expect(ctx.versionFiles?.map(v => v.file)).toEqual(['package.json', MANIFEST_FILE])
+    expect(ctx.versionFiles?.map(v => v.label)).toEqual(['version', 'kit.version'])
+  })
+
+  it('an APP is refused, whatever else is in it', () => {
+    const root = repo({
+      'package.json': pkg(),
+      [MANIFEST_FILE]: `{\n  "kit": {},\n  "app": { "slug": "acme" },\n  "surfaces": []\n}\n`,
+    })
+    expect(releaseContext(root).kind).toBe('app')
+  })
+
+  it('a SINGLE-plugin repository stamps its manifest then its package.json, unchanged', () => {
+    const root = repo({
+      'package.json': pkg(),
+      [PLUGIN_MANIFEST]: pluginManifest('orders'),
+    })
+    const ctx = releaseContext(root)
+    expect(ctx).toMatchObject({ kind: 'plugin', id: 'orders', notesDir: 'docs/upgrades' })
+    expect(ctx.changelog).toBe('CHANGELOG.md')
+    expect(ctx.versionFiles?.map(v => v.file)).toEqual([PLUGIN_MANIFEST, 'package.json'])
+  })
+
+  describe('a plugin MONOREPO', () => {
+    const monorepo = () =>
+      repo({
+        'package.json': pkg('1.0.2'),
+        'CHANGELOG.md': '# Changelog\n\n## Before this repository existed\n',
+        [`plugins/analytics/${PLUGIN_MANIFEST}`]: pluginManifest('analytics', '1.0.2'),
+        [`plugins/billing/${PLUGIN_MANIFEST}`]: pluginManifest('billing', '1.0.2'),
+        // A plugin mirrors the host tree, so its own subdirectories must never be descended into.
+        'plugins/analytics/apps/web/src/plugins/analytics/index.ts': 'export {}\n',
+        'node_modules/rubbish/rocketflare-plugin.json': '{ "id": "nope" }\n',
+      })
+
+    it('is "unknown" at the root — which is the bug --plugin exists to fix', () => {
+      expect(releaseContext(monorepo()).kind).toBe('unknown')
+    })
+
+    it('resolves against the named subdirectory, with repo-root-relative paths', () => {
+      const root = monorepo()
+      const ctx = releaseContext(join(root, 'plugins/analytics'), { repoRoot: root })
+      expect(ctx).toMatchObject({ kind: 'plugin', id: 'analytics' })
+      expect(ctx.notesDir).toBe('plugins/analytics/docs/upgrades')
+      // The CHANGELOG is the REPOSITORY's — one index for one lockstep version.
+      expect(ctx.changelog).toBe('CHANGELOG.md')
+    })
+
+    it('stamps EVERY plugin manifest plus the root package.json (lockstep)', () => {
+      // Not cosmetic: `pnpm plugin check` compares an installed surface's recorded version against
+      // the anchor manifest, so a manifest left behind makes every install of that plugin report a
+      // mismatch. Releasing `analytics` therefore stamps `billing` too.
+      const root = monorepo()
+      const ctx = releaseContext(join(root, 'plugins/analytics'), { repoRoot: root })
+      expect(ctx.versionFiles?.map(v => v.file)).toEqual([
+        `plugins/analytics/${PLUGIN_MANIFEST}`,
+        `plugins/billing/${PLUGIN_MANIFEST}`,
+        'package.json',
+      ])
+    })
+
+    it('leaves requires.pluginApi alone — a different question from which release shipped it', () => {
+      const root = monorepo()
+      const ctx = releaseContext(join(root, 'plugins/billing'), { repoRoot: root })
+      const { pattern } = ctx.versionFiles?.find(v => v.file.includes('billing')) ?? {}
+      const stamped = pluginManifest('billing', '1.0.2').replace(pattern as RegExp, '$1"2.0.0"')
+      expect(stamped).toContain('"version": "2.0.0"')
+      expect(stamped).toContain('"pluginApi": "1"')
+    })
+  })
+})
+
+describe('the changelog section a release prepends', () => {
+  it('renders one entry exactly as it always has', () => {
+    expect(
+      changelogSection('0.7.0', '2026-09-18', [{ summary: 'A thing.', note: 'd/0.7.0.md' }])
+    ).toBe('## 0.7.0 — 2026-09-18\n\nA thing.\n[Porting note](d/0.7.0.md).\n\n')
+  })
+
+  it('names each plugin once a release covers more than one', () => {
+    const section = changelogSection('2.0.0', '2026-09-18', [
+      { id: 'analytics', summary: 'A.', note: 'plugins/analytics/docs/upgrades/2.0.0.md' },
+      { id: 'billing', summary: 'B.', note: 'plugins/billing/docs/upgrades/2.0.0.md' },
+    ])
+    expect(section).toContain('**analytics** — A.')
+    expect(section).toContain('**billing** — B.')
+  })
+
+  it('goes above the newest section, or at the end when there are none', () => {
+    expect(prependChangelogSection('# C\n\n## 0.6.0 — x\n', '## 0.7.0 — y\n\n')).toBe(
+      '# C\n\n## 0.7.0 — y\n\n## 0.6.0 — x\n'
+    )
+    expect(prependChangelogSection('# C\n', '## 0.7.0\n')).toBe('# C\n\n## 0.7.0\n')
+  })
+})
+
+describe('behaviourFiles scoped to a subdirectory', () => {
+  const changed = [
+    'plugins/analytics/apps/web/src/plugins/analytics/index.ts',
+    'plugins/analytics/docs/upgrades/unreleased.md',
+    'plugins/billing/packages/shared/src/plugins/billing/index.ts',
+    'apps/web/src/api/index.ts',
+    'README.md',
+  ]
+
+  it('is unchanged with no scope — the kit and a single-plugin repository', () => {
+    expect(behaviourFiles(changed)).toEqual(['apps/web/src/api/index.ts'])
+  })
+
+  it("finds a plugin monorepo's source, which the bare predicate cannot see", () => {
+    // Without this the gate passes silently on every change, which looks exactly like success.
+    expect(behaviourFiles(changed, { within: 'plugins/analytics' })).toEqual([
+      'plugins/analytics/apps/web/src/plugins/analytics/index.ts',
+    ])
+    expect(behaviourFiles(changed, { within: 'plugins/billing/' })).toEqual([
+      'plugins/billing/packages/shared/src/plugins/billing/index.ts',
+    ])
+    // Markdown is still exempt, and the answer is still repo-root-relative.
+    expect(behaviourFiles(changed, { within: 'plugins/analytics' })).not.toContain(
+      'plugins/analytics/docs/upgrades/unreleased.md'
+    )
   })
 })
