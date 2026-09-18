@@ -199,14 +199,29 @@ export class MemoryR2Bucket {
     for (const k of Array.isArray(keys) ? keys : [keys]) this.objects.delete(k)
   }
 
-  async list(options?: { prefix?: string; limit?: number }): Promise<R2Objects> {
+  /**
+   * Honours `cursor` and `limit` the way R2 does — the cursor is the LAST key of the page, and
+   * `truncated` says whether another page follows. Faithful here because a bulk delete pages
+   * through a prefix, and a stub that always answers one untruncated page would make a broken
+   * paging loop look correct.
+   */
+  async list(options?: { prefix?: string; limit?: number; cursor?: string }): Promise<R2Objects> {
     const prefix = options?.prefix ?? ''
-    const objects = [...this.objects.entries()]
+    const limit = options?.limit ?? 1000
+    const matching = [...this.objects.entries()]
       .filter(([k]) => k.startsWith(prefix))
       .sort(([a], [b]) => a.localeCompare(b))
-      .slice(0, options?.limit ?? 1000)
-      .map(([k, e]) => this.toObject(k, e))
-    return { objects, truncated: false, delimitedPrefixes: [] } as unknown as R2Objects
+    const after = options?.cursor
+    const start = after ? matching.findIndex(([k]) => k > after) : 0
+    const page = start < 0 ? [] : matching.slice(start, start + limit)
+    const truncated = start >= 0 && start + page.length < matching.length
+    const objects = page.map(([k, e]) => this.toObject(k, e))
+    return {
+      objects,
+      truncated,
+      cursor: truncated ? page[page.length - 1]?.[0] : undefined,
+      delimitedPrefixes: [],
+    } as unknown as R2Objects
   }
 }
 
