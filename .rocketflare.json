@@ -4,7 +4,7 @@
   "kit": {
     "name": "rocketflare",
     "repo": "https://github.com/rocketflare-dev/rocketflare.git",
-    "version": "0.7.0",
+    "version": "0.8.0",
     "commit": null
   },
   "app": null,
@@ -13,7 +13,7 @@
     {
       "id": "analytics",
       "repo": "https://github.com/rocketflare-dev/rocketflare-plugins.git",
-      "ref": "2.0.1",
+      "ref": "3.0.0",
       "subdir": "plugins/analytics"
     }
   ],

@@ -6,6 +6,11 @@ copy of the kit forward without recreating anything its owner deleted.
 
 If you are running a copy: `pnpm kit:upgrade` tells you which of these you are missing.
 
+## 0.8.0 — 2026-09-18
+
+**Plugin compatibility is OBSERVED rather than declared**: a plugin states one `minKit` floor and the symbols it `uses`, which the kit checks against a ledger it emits — and porting notes become instructions rather than essays.
+[Porting note](docs/upgrades/0.8.0.md).
+
 ## 0.7.0 — 2026-09-18
 
 **The plugin contract becomes injected context with a version of its own, and deleting a tenant now purges the R2 objects and plugin state the FK cascade cannot reach.** (D31; `docs/CONCEPTS.md` §16.)
