@@ -67,21 +67,32 @@ Field notes, in the order they bite:
   `repo` equal to the kit's own repository with an empty `subdir` means **vendored**: `upgrade`
   defers to `pnpm kit:upgrade` and `requires.kit` is not checked at all, because the same release
   cut both.
-- **`registries`** are the five host barrels, listed so `pnpm kit:upgrade` can flag a kit change to
+- **`registries`** are the six host barrels, listed so `pnpm kit:upgrade` can flag a kit change to
   one of them as `touches-plugin-registry` — the kit CAN move ground under a plugin.
 - **`dependencies`** are installed into the HOST's packages (`pnpm --dir apps/web add …`). A plugin
   ships no `package.json` of its own into a host.
-- **`bindings[]`** is `{ type: "kv" | "queue" | "r2", binding, name, consumer? }`. **Those three
-  types are the whole list** — anything else is refused at INSTALL, naming the type, rather than
-  surfacing as a 503 after a deploy that silently skipped it. `binding` is what the code reads off
-  `Cloudflare.Env` and is identical in both environments; `name` is the account-scoped half.
-  Resource names come out as `<app>-<id>-<name>[-staging]`, and `<APP>_<ID>_<NAME>[_STAGING]` for
-  KV, mirroring the kit's own `<APP>_RATE_LIMIT[_STAGING]`.
+- **`bindings[]`** is `{ type, binding, name?, consumer?, className?, storage? }`, and `type` is one
+  of **five**: `kv`, `queue`, `r2`, `workflow`, `durable_object`. Anything else (`d1`, `vectorize`,
+  `hyperdrive`…) is refused at INSTALL, naming the type, rather than surfacing as a 503 after a
+  deploy that silently skipped it. `binding` is what the code reads off `Cloudflare.Env` and is
+  identical in both environments; `name` is the account-scoped half. Resource names come out as
+  `<app>-<id>-<name>[-staging]`, and `<APP>_<ID>_<NAME>[_STAGING]` for KV, mirroring the kit's own
+  `<APP>_RATE_LIMIT[_STAGING]`.
+  - The first three are **created** by `cf-provision.sh`; `workflow` and `durable_object` are
+    **declared only** — `wrangler deploy` registers both from the block.
+  - A `workflow` or `durable_object` must declare `className`, the class its `worker-exports.ts`
+    re-exports. A `durable_object` must ALSO declare `storage` (`"sqlite"` or `"none"`), which
+    picks `new_sqlite_classes` over `new_classes` and **cannot be changed afterwards** — which is
+    why it is required rather than defaulted — and it declares no `name` at all, because it has no
+    account-scoped resource.
 - **`vars[]`** is `{ key, example?, secret? }`. `secret: true` is a Worker secret
   (`.dev.vars.example` + `pnpm provision secrets <env>`); anything else is a `[vars]` key written
   into BOTH tomls, because the parity test compares the keys.
-- **`workerExports`** are Durable Object / Workflow classes the host must re-export from
-  `apps/web/src/worker.ts` — one line you add by hand.
+- **`workerExports`** are the Durable Object / Workflow class names the plugin's
+  `apps/web/src/plugins/<id>/worker-exports.ts` re-exports. **Nobody adds a line by hand**: that
+  file is the sixth barrel's half, `plugin add` writes the barrel line, and `plugin check` fails if
+  the file does not export every name declared here. Cloudflare resolves `class_name` against the
+  named exports of `src/worker.ts` and nowhere else, which is the whole reason the barrel exists.
 - **`schema.tables`** drives both the "generate a migration" step and the `check` below;
   `schema.rlsExcluded` is the plugin's half of `RLS_EXCLUDED_TABLES`, with a reason, for a table
   that has no `tenant_id`.
@@ -109,12 +120,18 @@ installed plugin:
 - the **anchor** file exists — "the surface says installed, the tree says no";
 - **`requires`** still holds: the kit version is inside `requires.kit`, every required surface is
   present, every required plugin is installed (skipped entirely for a vendored plugin);
-- for each of the five barrels, the **line and the half agree both ways** — a barrel that names a
+- for each of the six barrels, the **line and the half agree both ways** — a barrel that names a
   plugin half that is not on disk, and a half on disk that no barrel names;
 - no **`*.rej`** anywhere under its directories ("an upgrade left work behind");
 - the **anchor's `version` matches the surface's** `source.version`;
 - when it declares tables, **some migration tag names `plugin-<id>`** — otherwise the tables were
-  never generated, which is the most common thing to have skipped.
+  never generated, which is the most common thing to have skipped;
+- when it declares `workerExports`, its `worker-exports.ts` exists and **exports every name** —
+  a class in the file but not the manifest is invisible to provisioning, and a name in the manifest
+  but not the file is a binding pointed at nothing, which makes `wrangler deploy` refuse the script.
+
+`pnpm plugin check --json` prints the same audit as data: `{ ok, plugins, failures, notes }`, where
+a failure carries the remedial step and its `kind`.
 
 ## Where an install is recorded
 

@@ -29,6 +29,7 @@ import {
 } from '../../../../scripts/lib/manifest.mjs'
 import {
   addBarrelLine,
+  addPlanJson,
   applyCoreEdits,
   archiveSql,
   BARREL_KINDS,
@@ -45,14 +46,18 @@ import {
   nextPluginMigrationTag,
   PLUGIN_MANIFEST_FILE,
   parsePluginRequirement,
+  planSteps,
   pluginIdProblem,
   pluginMigrationTag,
   pluginPlatformProblems,
   pluginRoots,
   removeBarrelLine,
+  removeSteps,
   renderAddPlan,
   renderList,
+  renderSteps,
   revertCoreEdits,
+  STEP_KINDS,
   SUPPORTED_PLUGIN_BINDING_TYPES,
   surfaceDirectories,
   tupleEntries,
@@ -712,12 +717,12 @@ describe('the install plan', () => {
     expect(text).toContain('CREATE TABLE orders_orders, orders_lines')
     // The platform half is one command per environment (decision 12), not a hand edit of two
     // tomls — `pnpm provision cloudflare <env>` reads the same declarations off the surface.
-    expect(text).toContain('pnpm provision cloudflare <env>')
+    expect(text).toContain('pnpm provision cloudflare staging')
     expect(text).toContain('kv binding ORDERS_KV')
     expect(text).toContain('cron "0 3 * * *"')
     expect(text).toContain('route prefix /orders-webhook')
     expect(text).toContain('[vars] ORDERS_MODE')
-    // A secret is its own step, because it must never reach a toml at all.
+    // A secret is TWO steps, because the key and the value are different kinds of work.
     expect(text).toContain('add `ORDERS_TOKEN=` to apps/web/.dev.vars.example')
     expect(text).toContain('pnpm provision secrets <env>')
     expect(text).not.toMatch(/\[vars\] ORDERS_TOKEN/)
@@ -727,6 +732,11 @@ describe('the install plan', () => {
     expect(text).toContain('apps/web/src/plugins/worker-exports.ts')
     expect(text).toContain('paste migrations/install/0001_seed.sql')
     expect(text).toContain('pnpm lint && pnpm typecheck && pnpm test && pnpm build')
+    // "by hand" is retired: every step says which KIND it is, and carries its own assertion.
+    expect(text).not.toContain('by hand')
+    expect(text).toContain('Human steps')
+    expect(text).toContain('Agent steps')
+    expect(text).toContain('assert')
   })
 
   it('shows where it came from, where it is recorded, and whether it was translated', () => {
@@ -881,5 +891,121 @@ describe('scripts/plugin.mjs, end to end', () => {
     expect(plugin([]).status).toBe(2)
     expect(plugin(['add']).status).toBe(2)
     expect(plugin(['remove', 'nope']).status).toBe(1)
+  })
+})
+
+/**
+ * The step taxonomy (D31). "By hand" is retired as a phrase because it answers neither question
+ * that matters to whatever performs the step — and installs are performed by AGENTS as often as by
+ * people, for whom prose is not a control.
+ *
+ * The two assertions that carry weight here are what is ABSENT and what is HUMAN. Absent, because a
+ * step becomes declarative by being MECHANISED (Parts 1 and 2) rather than by being reworded; and
+ * human, because that list must only ever hold things that are not automatable in principle.
+ */
+describe('the step taxonomy', () => {
+  const classy = {
+    ...fixtureManifest,
+    bindings: [
+      { type: 'kv', binding: 'ORDERS_KV', name: 'orders' },
+      { type: 'durable_object', binding: 'ORDERS_HUB', className: 'OrdersHub', storage: 'sqlite' },
+    ],
+  }
+
+  it('has exactly three kinds, and only two of them ever reach a plan', () => {
+    expect([...STEP_KINDS]).toEqual(['declarative', 'agent', 'human'])
+    const kinds = new Set(planSteps(classy).map(s => s.kind))
+    expect(kinds.has('declarative')).toBe(false)
+  })
+
+  it('drops every step Parts 1 and 2 mechanised', () => {
+    const steps = planSteps(classy)
+    const text = JSON.stringify(steps)
+    // The barrel lines, the sixth included: `plugin add` writes them.
+    expect(text).not.toContain('worker.ts')
+    expect(text).not.toContain('barrel')
+    // The toml blocks, the cron, the prefixes and the DO migration tag: `provision cloudflare`
+    // writes them. What survives is the one INVOCATION, which somebody still has to run.
+    expect(text).not.toContain('[[durable_objects')
+    expect(text).not.toContain('[[migrations]]')
+    expect(steps.filter(s => s.id === 'provision')).toHaveLength(1)
+  })
+
+  it('gives every step a command, an observable result and the assertion that proves it', () => {
+    const every = [
+      ...planSteps(classy, { fragments: ['migrations/0001.sql'] }),
+      ...removeSteps(classy),
+    ]
+    for (const s of every) {
+      expect(s.kind, s.id).toMatch(/^(agent|human)$/)
+      for (const field of ['id', 'title', 'command', 'expect', 'assert'] as const)
+        expect(String(s[field]).length, `${s.id}.${field}`).toBeGreaterThan(0)
+    }
+  })
+
+  it('splits a secret into an agent step (the key) and a human step (the value)', () => {
+    const steps = planSteps(fixtureManifest)
+    const key = steps.find(s => s.id === 'secret-key:ORDERS_TOKEN')
+    const value = steps.find(s => s.id === 'secret-value:ORDERS_TOKEN')
+    expect(key?.kind).toBe('agent')
+    expect(key?.assert).toContain('grep')
+    // A credential is the one thing nothing can derive, which is the whole test for `human`.
+    expect(value?.kind).toBe('human')
+  })
+
+  it('makes every destructive part of a REMOVE human, and nothing else', () => {
+    const steps = removeSteps(classy, { archive: true, migrationTag: 'plugin-orders-v2' })
+    const human = steps.filter(s => s.kind === 'human').map(s => s.id)
+    // A `DROP TABLE`, the archive copy taken or knowingly skipped, a `deleted_classes` migration
+    // that deletes a namespace and its contents, and live resources that may hold somebody's data.
+    expect(human).toEqual(['archive', 'drop-migration', 'do-migration', 'deprovision'])
+    expect(steps.filter(s => s.kind === 'agent').map(s => s.id)).toEqual([
+      'dependencies:apps/web',
+      'gate',
+    ])
+    // The DO tag is the NEXT free one, never a reused identity.
+    expect(steps.find(s => s.id === 'do-migration')?.command).toContain('plugin-orders-v2')
+    expect(steps.find(s => s.id === 'do-migration')?.command).toContain('deleted_classes')
+  })
+
+  it('renders human steps FIRST and under their own heading', () => {
+    // A human step printed among the commands reads as one more command. The grouping is the
+    // difference between a plan somebody acts on and a plan somebody skims.
+    const text = renderSteps(planSteps(fixtureManifest)).join('\n')
+    expect(text.indexOf('Human steps')).toBeLessThan(text.indexOf('Agent steps'))
+    expect(text).toContain('       assert  ')
+  })
+})
+
+describe('the plan as JSON', () => {
+  it('carries every step with its kind, so a human step is a field and not a paragraph', () => {
+    const json = addPlanJson({
+      manifest: fixtureManifest,
+      source: { repo: fixtureManifest.repo, subdir: '', ref: '1.1.0', commit: 'abc123' },
+      host: { label: 'Acme', kitVersion: '0.6.1', recordsIn: MANIFEST_FILE, translated: true },
+      vendored: false,
+      problems: [],
+      files: [
+        { path: 'apps/web/src/plugins/orders/index.ts', role: 'copy' },
+        { path: 'migrations/0001_seed.sql', role: 'fragment' },
+      ],
+      byRoot: { 'apps/web/src/plugins/orders/': 1 },
+      barrels: ['server', 'worker'],
+      verify: null,
+    }) as Record<string, any>
+
+    expect(json.plugin).toEqual({ id: 'orders', version: '1.1.0', label: 'Orders' })
+    expect(json.installable).toBe(true)
+    expect(json.files.fragments).toEqual(['migrations/0001_seed.sql'])
+    expect(json.barrels).toContainEqual({
+      kind: 'worker',
+      file: 'apps/web/src/plugins/worker-exports.ts',
+      lines: ["export * from './orders/worker-exports'"],
+    })
+    for (const step of json.steps) expect(['agent', 'human']).toContain(step.kind)
+    expect(json.steps.some((s: { kind: string }) => s.kind === 'human')).toBe(true)
+    // The fragment reached the steps, which is what makes `files` and `steps` one answer rather
+    // than two that can disagree.
+    expect(json.steps.some((s: { id: string }) => s.id === 'data-fragment')).toBe(true)
   })
 })

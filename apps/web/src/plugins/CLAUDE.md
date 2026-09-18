@@ -102,6 +102,20 @@ always inside the kit itself. Exit codes: 0 ok · 1 error · 2 usage · 3 unreac
 mirror · 4 rejects remain (upgrade) · 5 no `rocketflare-plugin.json` at the source · 6 a
 requirement is unmet · 7 the target path exists.
 
+**Every step it does not do is CLASSIFIED**, because an install is performed by an agent as often
+as by a person and prose an agent may skim is not a control:
+
+- **declarative** — nobody does it; the tooling does. These do not appear in the plan at all. The
+  barrel lines, a declared binding, cron, route prefix or `[vars]` key, and a Durable Object's
+  `[[migrations]]` tag are all here, which is why the plan is short.
+- **agent** — an instruction PLUS the assertion that proves it ran. Every one carries `run`,
+  `expect` and `assert`.
+- **human** — a decision the tooling stops for: a secret's VALUE, a migration containing `DROP`,
+  `--archive`, retiring a Durable Object namespace, deleting a live Cloudflare resource.
+
+`--json` emits the same plan as data, with `kind` on every step, so a human step is a field rather
+than a sentence in a paragraph. `pnpm plugin check --json` does the same for the audit.
+
 **What it will not do, ever**, and each is in the plan instead: generate or copy a migration
 (`pnpm db:generate --name plugin-<id>-<version>` is yours, after the barrel line exists), edit a
 wrangler toml or write a resource id (a declared binding, cron or `[vars]` key is printed with the

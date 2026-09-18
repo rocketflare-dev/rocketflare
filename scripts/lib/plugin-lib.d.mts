@@ -166,6 +166,36 @@ export interface AddPlan {
   verify?: string | null
 }
 export function renderAddPlan(plan: AddPlan): string[]
+
+/**
+ * What a step costs somebody (D31). `declarative` never appears in a plan — the tooling does it —
+ * so the only two a reader ever sees are `agent` (an instruction PLUS a check) and `human` (a
+ * decision the tooling stops for).
+ */
+export type StepKind = 'declarative' | 'agent' | 'human'
+export const STEP_KINDS: readonly StepKind[]
+export interface PlanStep {
+  kind: StepKind
+  /** Stable across runs, so a caller can key on it (`secret-value:APPROVALS_TOKEN`). */
+  id: string
+  title: string
+  /** The exact command, or the exact edit, with nothing left to infer. */
+  command: string
+  /** What is observably true afterwards. */
+  expect: string
+  /** What proves it — a command for an `agent` step, a judgement for a `human` one. */
+  assert: string
+}
+export function planSteps(
+  manifest: PluginManifest,
+  options?: { fragments?: readonly string[] }
+): PlanStep[]
+export function removeSteps(
+  manifest: PluginManifest,
+  options?: { archive?: boolean; migrationTag?: string | null }
+): PlanStep[]
+export function renderSteps(steps: readonly PlanStep[], heading?: string): string[]
+export function addPlanJson(plan: AddPlan): Record<string, unknown>
 export function renderList(
   surfaces: readonly Surface[],
   options?: { sidecarIds?: readonly string[] }
