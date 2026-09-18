@@ -154,20 +154,18 @@ export function releaseContext(root = REPO_ROOT, { repoRoot = root } = {}) {
       // lockstep version, and in a single-plugin repository this is the same path it always was.
       changelog: 'CHANGELOG.md',
       versionFiles: [
-        ...manifests
-          .sort()
-          .flatMap(file => [
-            { file, pattern: TOP_LEVEL_VERSION, label: 'version' },
-            ...(anchorPathOf(repoRoot, file)
-              ? [
-                  {
-                    file: anchorPathOf(repoRoot, file),
-                    pattern: TOP_LEVEL_VERSION,
-                    label: 'version',
-                  },
-                ]
-              : []),
-          ]),
+        ...manifests.sort().flatMap(file => [
+          { file, pattern: TOP_LEVEL_VERSION, label: 'version' },
+          ...(anchorPathOf(repoRoot, file)
+            ? [
+                {
+                  file: anchorPathOf(repoRoot, file),
+                  pattern: TOP_LEVEL_VERSION,
+                  label: 'version',
+                },
+              ]
+            : []),
+        ]),
         { file: 'package.json', pattern: TOP_LEVEL_VERSION, label: 'version' },
       ],
     }
