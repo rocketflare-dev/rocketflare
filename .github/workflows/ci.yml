@@ -54,6 +54,25 @@ jobs:
       - id: read
         run: node scripts/default-plugins.mjs --github-output
 
+  # **The local oracle and the gating oracle must be the same command.** `pnpm plugin check` is
+  # what a person and an agent both run before committing an install, and until now CI ran no part
+  # of it — so a check that passed locally and a gate that failed (or the reverse) were the shape
+  # of both recent CI failures. This runs the identical command over the checkout as it is: plain
+  # Node, no `pnpm install`, no database, seconds. It audits whatever is recorded in
+  # `.rocketflare.json` — in the kit, the vendored reference plugin.
+  #
+  # Warnings never reach the exit code (a plugin released before a rule existed cannot retroactively
+  # satisfy it), so this fails only on a finding that names a file, a line and an edit.
+  plugin-check:
+    name: Plugins are well formed
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+      - run: node scripts/plugin.mjs check
+
   # The same gate again, with every default plugin installed and its migrations generated and
   # applied. This is the kit's half of decision 5's "proof both ways": the other half is each
   # plugin repository running `.github/workflows/plugin-ci.yml` against the kit versions its

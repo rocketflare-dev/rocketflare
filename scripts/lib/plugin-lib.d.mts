@@ -200,3 +200,60 @@ export function renderList(
   surfaces: readonly Surface[],
   options?: { sidecarIds?: readonly string[] }
 ): string[]
+
+// ---------------------------------------------------------------- the audit
+
+/** One finding, in the shape an agent can act on: file, where in it, what, and the exact edit. */
+export interface Diagnostic {
+  file: string
+  /** 1-based, and present only when the complaint is AT a place in that file. */
+  line?: number | null
+  problem: string
+  fix: string
+}
+export function renderDiagnostic(d: Diagnostic): string
+export function jsonKeyLine(source: string, keyPath: string): number | null
+
+/**
+ * Whether a check a PRE-CONTRACT plugin cannot satisfy fails the audit or only reports it.
+ * `fail` exactly when the plugin declares `requires.pluginApi` — the same opt-in the import rule
+ * uses, and the permanent rule for a third-party plugin rather than a transition hack.
+ */
+export type AuditSeverity = 'fail' | 'warn'
+export function auditSeverity(manifest: { requires?: { pluginApi?: unknown } } | null): AuditSeverity
+
+/** Everything wrong with a manifest, each naming the FIELD and its legal values. */
+export function pluginManifestProblems(
+  manifest: unknown
+): Array<{ field: string; problem: string; fix: string }>
+
+/**
+ * The value names a `worker-exports.ts` exports. `opaque` when it carries an `export *`, whose
+ * names cannot be known without resolving the module — both directions are skipped for one.
+ */
+export function workerExportNames(source: string): { names: string[]; opaque: boolean }
+
+/** Structural evidence that a test file proves cross-tenant isolation. */
+export interface IsolationEvidence {
+  /** `describe('… isolation …')` or the equivalent. */
+  named: boolean
+  /** Names a SECOND organisation (`otherTenant`, `tenantB`…). */
+  secondTenant: boolean
+  /** How many tenants the file creates. */
+  tenantsCreated: number
+  ok: boolean
+}
+export function isolationEvidence(source: string): IsolationEvidence
+
+/**
+ * Where an install's `subdir` comes from, in precedence order.
+ *
+ * `||` and not `??`: a manifest shipping `"subdir": ""` is nullish-coalescing's blind spot, and it
+ * beat an explicit `--subdir` — recording the surface as root-relative and breaking the next
+ * `plugin upgrade`, which diffs against that path.
+ */
+export function resolveSubdir(input: {
+  flag?: string | null
+  manifest?: string | null
+  source?: string | null
+}): string

@@ -57,6 +57,7 @@ import {
   addPlanJson,
   applyCoreEdits,
   archiveSql,
+  auditSeverity,
   BARREL_KINDS,
   BARRELS,
   barrelLines,
@@ -65,20 +66,26 @@ import {
   classifyPluginFile,
   coreEditsByFile,
   hasBarrelLine,
+  isolationEvidence,
   isVendored,
+  jsonKeyLine,
   nextPluginMigrationTag,
   PLUGIN_MANIFEST_FILE,
   parsePluginRequirement,
   pluginIdProblem,
+  pluginManifestProblems,
   pluginPlatformProblems,
   pluginRoots,
   removeBarrelLine,
   removeSteps,
   renderAddPlan,
+  renderDiagnostic,
   renderList,
   renderSteps,
+  resolveSubdir,
   revertCoreEdits,
   surfaceDirectories,
+  workerExportNames,
 } from './lib/plugin-lib.mjs'
 import { applyReplacements, deriveNames, isBinary } from './lib/rename-lib.mjs'
 import {
@@ -439,7 +446,12 @@ function cmdAdd(args, host) {
       'A plugin you cannot fetch again cannot be upgraded, so the surface has nowhere to point.'
     )
   }
-  const subdir = m.subdir ?? source.subdir ?? ''
+  // The flag somebody TYPED wins over the manifest, which wins over where the source was opened.
+  // `??` here read the manifest first and fell through only on nullish — so a plugin shipping
+  // `"subdir": ""`, which every root-level plugin does, beat an explicit `--subdir` and recorded a
+  // root-relative surface. Nothing failed at install; the next `plugin upgrade` diffed against that
+  // path and found the plugin nowhere.
+  const subdir = resolveSubdir({ flag: args.subdir, manifest: m.subdir, source: source.subdir })
   const vendored = isVendored({ repo, subdir }, host.kitRepo)
 
   // Every path, and the refusal that is the whole point of classifying them.
@@ -1139,7 +1151,27 @@ function cmdList(_args, host) {
  * `/rf-preflight` and CI run, so it says what is wrong rather than how to fix it.
  */
 function cmdCheck(args, host) {
-  const failures = []
+  const findings = []
+  /**
+   * One finding, carrying the EDIT rather than only the complaint.
+   *
+   * `fail` changes the exit code; `warn` reports and does not — which is how a plugin RELEASED
+   * before a rule existed is held to it. `auditSeverity` is the switch, and it reads
+   * `requires.pluginApi`: the same opt-in the import rule uses, and the permanent arrangement for
+   * a third-party plugin rather than a transition hack.
+   */
+  const add = (severity, key, d) =>
+    findings.push({
+      id: key,
+      severity,
+      kind: 'agent',
+      assert: 'pnpm plugin check',
+      file: d.file,
+      line: d.line ?? null,
+      problem: d.problem,
+      fix: d.fix,
+      message: renderDiagnostic(d),
+    })
   // Things worth SAYING that are not faults — a state the kit itself is legitimately in, or a
   // silence somebody should know about. Printed either way; they never change the exit code.
   const notes = []
@@ -1147,9 +1179,13 @@ function cmdCheck(args, host) {
     const id = s.id
     const vendored = isVendored(s.source, host.kitRepo)
     if (!existsSync(abs(s.anchor))) {
-      failures.push(
-        `${id}: anchor ${s.anchor} is missing — the surface says installed, the tree says no`
-      )
+      add('fail', `${id}:anchor`, {
+        file: s.anchor,
+        problem: `is missing, and the surface says '${id}' is installed`,
+        fix:
+          `reinstall it with \`pnpm plugin add ${s.source?.repo ?? '<repo>'} --apply\`, or drop ` +
+          `the '${id}' surface from ${path.basename(host.manifestPath)}`,
+      })
       continue
     }
     // Two plugins are not held to a kit range, for the same reason in two shapes.
@@ -1168,6 +1204,34 @@ function cmdCheck(args, host) {
     // already satisfies passes on its own merits. What is skipped is the failure an uncut release
     // guarantees — and only in the kit, for a plugin recorded in the sidecar, which is exactly the
     // authoring loop.
+    // Read ONCE, and before anything that reports against it: every diagnostic below wants a line
+    // number in this file, and a manifest that will not parse has to be a finding rather than a
+    // stack trace out of `cmdCheck` that says nothing about which plugin it came from.
+    const anchorSource = readFileSync(abs(s.anchor), 'utf8')
+    let anchor
+    try {
+      anchor = JSON.parse(anchorSource)
+    } catch (err) {
+      add('fail', `${id}:manifest-json`, {
+        file: s.anchor,
+        problem: `is not valid JSON (${err instanceof Error ? err.message : String(err)})`,
+        fix: 'fix the syntax — every other check on this plugin reads this file',
+      })
+      continue
+    }
+    const severity = auditSeverity(anchor)
+
+    // Every field, naming the field and its legal values. Two-tier, because a plugin RELEASED
+    // before this check existed cannot retroactively satisfy it.
+    for (const p of pluginManifestProblems(anchor)) {
+      add(severity, `${id}:manifest:${p.field || 'root'}`, {
+        file: s.anchor,
+        line: p.field ? jsonKeyLine(anchorSource, p.field) : null,
+        problem: p.problem,
+        fix: p.fix,
+      })
+    }
+
     const authoredHere = host.isKit && host.sidecarIds.includes(id)
     for (const problem of checkRequirements({
       requires: authoredHere ? { ...s.requires, kit: undefined } : s.requires,
@@ -1176,7 +1240,12 @@ function cmdCheck(args, host) {
       installedPlugins: host.plugins.map(p => ({ id: p.id, version: p.source?.version ?? null })),
       vendored,
     })) {
-      failures.push(`${id}: ${problem}`)
+      add('fail', `${id}:requires`, {
+        file: s.anchor,
+        line: jsonKeyLine(anchorSource, 'requires'),
+        problem,
+        fix: `satisfy it, or amend "requires" in ${s.anchor} to describe what this plugin needs`,
+      })
     }
     // A plugin that declares no kit range is beyond every gate there is — `checkRequirements`
     // skips it, `unsupportedForKit` skips it, and `kit:upgrade` would carry it across a major
@@ -1185,59 +1254,172 @@ function cmdCheck(args, host) {
       notes.push(`${id}: declares no requires.kit, so no kit version is ever checked against it`)
     }
     for (const kind of BARREL_KINDS) {
-      const ships = existsSync(abs(BARRELS[kind].half(id)))
+      const half = BARRELS[kind].half(id)
+      const ships = existsSync(abs(half))
       const wired = hasBarrelLine(readFileSync(abs(BARRELS[kind].file), 'utf8'), kind, id)
-      if (ships && !wired)
-        failures.push(
-          `${id}: ${BARRELS[kind].file} has no line for it, but ${BARRELS[kind].half(id)} is there`
-        )
-      if (!ships && wired)
-        failures.push(
-          `${id}: ${BARRELS[kind].file} names it, but ${BARRELS[kind].half(id)} is not there`
-        )
+      if (ships && !wired) {
+        add('fail', `${id}:barrel:${kind}`, {
+          file: BARRELS[kind].file,
+          problem: `has no line for '${id}', and ${half} is on disk`,
+          fix: `add:  ${barrelLines(kind, id).join('  +  ')}`,
+        })
+      }
+      if (!ships && wired) {
+        add('fail', `${id}:barrel:${kind}`, {
+          file: BARRELS[kind].file,
+          problem: `names '${id}', and ${half} is not on disk`,
+          fix: `remove:  ${barrelLines(kind, id).join('  +  ')}`,
+        })
+      }
     }
     const rejects = surfaceDirectories(s)
       .filter(d => existsSync(abs(d)))
       .flatMap(d => walk(abs(d)).map(f => `${d}/${f}`))
       .filter(f => f.endsWith('.rej'))
-    for (const f of rejects) failures.push(`${id}: ${f} — an upgrade left work behind`)
+    for (const f of rejects) {
+      add('fail', `${id}:reject`, {
+        file: f,
+        problem: 'is a rejected hunk an upgrade left behind',
+        fix: `apply it into ${f.replace(/\.rej$/, '')} by reading both, then delete ${f}`,
+      })
+    }
 
-    const anchor = JSON.parse(readFileSync(abs(s.anchor), 'utf8'))
     // A DO or Workflow class reaches the Worker through the sixth barrel and nowhere else, so
-    // `workerExports` is checkable rather than advisory: the half has to be on disk (the barrel
-    // loop above proves the LINE) and it has to export every name the manifest declares. A class
-    // in the file but not in the manifest is invisible to provisioning, which is what writes its
-    // `[[durable_objects.bindings]]` / `[[workflows]]` block; a name in the manifest but not in the
-    // file is a binding pointed at nothing, and `wrangler deploy` refuses the whole script for it.
+    // `workerExports` is checkable rather than advisory — and it is checked BOTH ways. A name in
+    // the manifest that the file does not export is a binding pointed at nothing, and
+    // `wrangler deploy` refuses the whole script for it; a class the file exports that the
+    // manifest does not name is invisible to `pnpm provision cloudflare <env>`, which reads that
+    // list to write the `[[durable_objects.bindings]]` / `[[workflows]]` block — so it deploys
+    // with no binding at all.
     const declaredExports = anchor.workerExports ?? []
-    if (declaredExports.length > 0) {
-      const half = BARRELS.worker.half(id)
-      if (!existsSync(abs(half))) {
-        failures.push(
-          `${id}: declares workerExports (${declaredExports.join(', ')}) and ships no ${half}`
-        )
-      } else {
-        const source = readFileSync(abs(half), 'utf8')
-        for (const name of declaredExports) {
-          if (!new RegExp(`\\b${name}\\b`).test(source)) {
-            failures.push(`${id}: ${half} does not export ${name}, which its manifest declares`)
-          }
+    const workerHalf = BARRELS.worker.half(id)
+    const shipsWorkerHalf = existsSync(abs(workerHalf))
+    if (declaredExports.length > 0 && !shipsWorkerHalf) {
+      add('fail', `${id}:worker-half`, {
+        file: workerHalf,
+        problem: `is missing, and ${s.anchor} declares workerExports (${declaredExports.join(', ')})`,
+        fix:
+          `create it, re-exporting ${declaredExports.join(', ')} — Cloudflare resolves a binding's ` +
+          'class_name against the named exports of src/worker.ts, which this barrel half feeds',
+      })
+    }
+    if (shipsWorkerHalf) {
+      // `opaque` is an `export *`, whose names need the module resolved to enumerate. Both
+      // directions are skipped for one rather than guessed: reporting "declares OrdersHub and does
+      // not export it" against a star re-export that plainly does teaches an author to distrust
+      // the whole audit.
+      const { names, opaque } = workerExportNames(readFileSync(abs(workerHalf), 'utf8'))
+      if (declaredExports.length === 0) {
+        add(severity, `${id}:worker-undeclared`, {
+          file: s.anchor,
+          line: jsonKeyLine(anchorSource, 'workerExports'),
+          problem: `declares no workerExports, and ${workerHalf} is on disk`,
+          fix:
+            `set "workerExports" to [${names.map(n => `"${n}"`).join(', ')}] — provisioning reads ` +
+            'that list to write the binding block, so a class missing from it gets no binding',
+        })
+      }
+      if (!opaque) {
+        for (const name of declaredExports.filter(n => !names.includes(n))) {
+          add('fail', `${id}:worker-missing:${name}`, {
+            file: workerHalf,
+            problem: `does not export ${name}, which ${s.anchor} declares in workerExports`,
+            fix:
+              `add \`export { ${name} } from './<module>'\` here, or drop "${name}" from ` +
+              'workerExports — wrangler deploy refuses the script for a class_name nothing exports',
+          })
+        }
+        for (const name of names.filter(n => !declaredExports.includes(n))) {
+          add(severity, `${id}:worker-extra:${name}`, {
+            file: s.anchor,
+            line: jsonKeyLine(anchorSource, 'workerExports'),
+            problem: `does not declare ${name}, which ${workerHalf} exports`,
+            fix:
+              `add "${name}" to "workerExports" — a class the manifest does not name is invisible ` +
+              'to `pnpm provision cloudflare <env>`, which writes its binding block',
+          })
         }
       }
     }
-    if (anchor.version && s.source?.version && anchor.version !== s.source.version) {
-      failures.push(
-        `${id}: the surface says ${s.source.version}, ${s.anchor} says ${anchor.version}`
-      )
+
+    // **A Durable Object is state the FK cascade cannot reach.** Deleting a tenant is one SQL
+    // DELETE plus the `tenant.purge` job (D7), and that job is the ONLY thing that ever visits a
+    // deleted tenant's state outside Postgres — through each plugin's `onTenantDeleted`. A plugin
+    // that keeps a DO and declares no hook leaves one organisation's data live for ever, silently,
+    // and no other check can see it: its TABLES are gone, so everything else reads as clean.
+    const doBindings = (anchor.bindings ?? []).filter(b => b?.type === 'durable_object')
+    if (doBindings.length > 0) {
+      const tree = `apps/web/src/plugins/${id}`
+      const declaresHook =
+        existsSync(abs(tree)) &&
+        walk(abs(tree)).some(
+          f =>
+            /\.tsx?$/.test(f) && readFileSync(abs(`${tree}/${f}`), 'utf8').includes('onTenantDeleted')
+        )
+      if (!declaresHook) {
+        const which = doBindings.map(b => b.binding ?? b.className ?? '?').join(', ')
+        add(severity, `${id}:on-tenant-deleted`, {
+          file: `${tree}/index.ts`,
+          problem: `declares the durable_object binding(s) ${which} and no hooks.onTenantDeleted`,
+          fix:
+            'add `hooks: { onTenantDeleted: async (db, tenantId, env) => { … } }` to the ' +
+            "ServerPlugin and delete this plugin's Durable Object state there. Derive every " +
+            'instance name from the tenant id and loop the names you DECLARE — nothing enumerates ' +
+            'the instances of a namespace, so only derived keys are reachable',
+        })
+      }
     }
+
+    if (anchor.version && s.source?.version && anchor.version !== s.source.version) {
+      add('fail', `${id}:version`, {
+        file: s.anchor,
+        line: jsonKeyLine(anchorSource, 'version'),
+        problem: `says ${anchor.version}, and the surface says ${s.source.version}`,
+        fix:
+          `set them to the same version — \`pnpm plugin upgrade ${id} --apply\` stamps the ` +
+          'surface, and a hand-edited manifest is the usual way they part',
+      })
+    }
+
+    // Two separate things a plugin with tables owes, and neither is visible from the other side.
+    const tables = (anchor.schema?.tables ?? []).filter(
+      t => !(anchor.schema?.rlsExcluded ?? []).includes(t)
+    )
     if ((anchor.schema?.tables ?? []).length > 0) {
       const tags = JSON.parse(
         readFileSync(abs('apps/web/migrations/meta/_journal.json'), 'utf8')
       ).entries.map(e => e.tag)
       if (!tags.some(t => t.includes(`plugin-${id}`))) {
-        failures.push(
-          `${id}: declares tables (${anchor.schema.tables.join(', ')}) and no migration names it — run \`pnpm db:generate --name plugin-${id}-${anchor.version ?? '0.0.0'}\``
-        )
+        add('fail', `${id}:migration`, {
+          file: 'apps/web/migrations/meta/_journal.json',
+          problem: `names no migration for '${id}', which declares tables (${anchor.schema.tables.join(', ')})`,
+          fix: `pnpm db:generate --name plugin-${id}-${anchor.version ?? '0.0.0'} && pnpm db:migrate`,
+        })
+      }
+    }
+
+    // **The tenant-isolation test the kit cannot write for you.** A plugin's tables are
+    // tenant-scoped like every other, and no kit suite can see them — which is why both
+    // `docs/CONCEPTS.md` §16 and `.claude/rules/testing.md` say a plugin MUST own this test, and
+    // why nothing verified it until now. With agents writing plugins, the one area the kit treats
+    // as non-negotiable was the one with no enforcement at all.
+    if (tables.length > 0) {
+      const testDir = `apps/web/src/plugins/${id}/tests/api`
+      const testFiles = existsSync(abs(testDir))
+        ? walk(abs(testDir)).filter(f => /\.tsx?$/.test(f))
+        : []
+      const proven = testFiles.some(
+        f => isolationEvidence(readFileSync(abs(`${testDir}/${f}`), 'utf8')).ok
+      )
+      if (!proven) {
+        add(severity, `${id}:isolation`, {
+          file: `${testDir}/`,
+          problem: `has no test proving another organisation cannot read ${tables.join(', ')}`,
+          fix:
+            'add a case that creates a SECOND tenant and drives the real mount as it — copy the ' +
+            "describe('tenant isolation') block from apps/web/src/plugins/example-feature/tests/" +
+            'api/example-feature.test.ts. This proves such a test EXISTS, not that it is correct',
+        })
       }
     }
   }
@@ -1255,14 +1437,25 @@ function cmdCheck(args, host) {
     }
     const have = installed.source?.version ?? null
     if (declared.ref && have && declared.ref !== have) {
-      failures.push(
-        `${declared.id}: installed at ${have}, but defaultPlugins pins ${declared.ref} — repin the entry, or \`pnpm plugin upgrade ${declared.id}\``
-      )
+      add('fail', `${declared.id}:pin`, {
+        file: path.basename(host.manifestPath),
+        line: jsonKeyLine(readFileSync(host.manifestPath, 'utf8'), 'defaultPlugins'),
+        problem: `pins ${declared.id} at ${declared.ref}, and ${have} is installed`,
+        fix: `pnpm plugin upgrade ${declared.id} --to ${declared.ref} --apply   # or repin to ${have}`,
+      })
     }
   }
+
+  const failures = findings.filter(f => f.severity === 'fail')
+  const warnings = findings.filter(f => f.severity === 'warn')
+
   // The audit as DATA. Every failure `check` can report is agent-fixable — it is a statement about
   // this tree, not a decision about somebody's data — so each carries `kind: 'agent'` and the one
   // assertion that settles it. A `human` failure would be a contradiction: nothing here waits.
+  //
+  // `warnings` is the second list rather than a flag on the first, because `ok` has to keep meaning
+  // "this exits 0". A rule a released plugin cannot retroactively satisfy belongs in the output and
+  // not in the exit code (`auditSeverity`).
   if (args.json) {
     out(
       JSON.stringify(
@@ -1273,13 +1466,12 @@ function cmdCheck(args, host) {
             version: s.source?.version ?? null,
             vendored: isVendored(s.source, host.kitRepo),
             local: host.sidecarIds.includes(s.id),
+            // Which tier this plugin's new-rule findings landed in, so a reader knows whether a
+            // clean run means "checked" or "not checked yet".
+            pluginApi: s.requires?.pluginApi ?? null,
           })),
-          failures: failures.map((message, i) => ({
-            id: `check-${i + 1}`,
-            message,
-            kind: 'agent',
-            assert: 'pnpm plugin check',
-          })),
+          failures,
+          warnings,
           notes,
         },
         null,
@@ -1289,6 +1481,7 @@ function cmdCheck(args, host) {
     return failures.length === 0 ? 0 : 1
   }
   for (const n of notes) out(`note: ${n}`)
+  for (const w of warnings) out(`warn: ${w.message}`)
 
   if (host.plugins.length === 0 && failures.length === 0) {
     out('No plugins installed — nothing to check.')
@@ -1320,7 +1513,7 @@ function cmdCheck(args, host) {
     }
     return 0
   }
-  warn(...failures.map(f => `✖ ${f}`))
+  warn(...failures.map(f => `✖ ${f.message}`))
   return 1
 }
 

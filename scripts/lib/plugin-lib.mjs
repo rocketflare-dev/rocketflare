@@ -1073,3 +1073,357 @@ export function renderList(surfaces, { sidecarIds = [] } = {}) {
     ).trimEnd()
   })
 }
+
+// ---------------------------------------------------------------- the audit
+
+/**
+ * **`pnpm plugin check` is the agent's oracle, so every failure carries the EDIT.**
+ *
+ * It used to say what was wrong and stop there, which is right for a person with `reference.md`
+ * open beside them and useless to an agent, who has only the line. Installs are performed by
+ * agents as often as by people now — the same observation that retired "by hand" from the step
+ * taxonomy above — so a diagnostic naming a problem without naming its fix is the same non-control
+ * as a printed instruction nobody performs.
+ *
+ * One line: `<file>:<line> <what is wrong> — <the exact change>`. The line number is there
+ * whenever the thing complained about is IN a file at a place (a manifest key), and absent when
+ * the complaint is that a file, a test or an export does not exist at all: a fabricated line
+ * number sends a reader somewhere real and wrong, which is worse than sending them nowhere.
+ */
+export function renderDiagnostic({ file, line = null, problem, fix }) {
+  return `${line ? `${file}:${line}` : file} ${problem} — ${fix}`
+}
+
+/**
+ * The 1-based line of `"a"."b"."c"` in a JSON source, or `null` when the path is not there.
+ *
+ * Textual rather than a parse, deliberately: `JSON.parse` throws position away, and the whole
+ * point of this number is to put a cursor on the key somebody has to edit. It walks the path
+ * FORWARDS, so `schema.tables` is found after the `"schema"` line rather than wherever the word
+ * first appears, and it answers the deepest segment it reached — a partially present path still
+ * points somewhere useful instead of nowhere.
+ */
+export function jsonKeyLine(source, keyPath) {
+  const lines = String(source).split('\n')
+  let from = 0
+  let found = null
+  for (const part of String(keyPath).split('.')) {
+    const re = new RegExp(`"${escapeRe(part)}"\\s*:`)
+    const at = lines.findIndex((l, i) => i >= from && re.test(l))
+    if (at === -1) return found
+    found = at + 1
+    from = at
+  }
+  return found
+}
+
+/**
+ * Whether a check a PRE-CONTRACT plugin cannot satisfy fails the audit or merely reports it.
+ *
+ * `requires.pluginApi` is the opt-in the import rule already uses (`tests/helpers/plugins.ts`),
+ * and this is the same two-tier reading for the same reason: `pnpm test` runs the gate a second
+ * time with `defaultPlugins` installed at their pinned refs, and those releases predate every rule
+ * added after them. A single tier either breaks CI on a plugin nobody can retroactively change, or
+ * stays advisory for everyone and so checks nothing.
+ *
+ * Declaring the contract is what moves a plugin from the second group to the first, and it happens
+ * in the release that migrates it. Not a transition hack — it is the permanent rule for a
+ * third-party plugin, whose CI resolves its matrix from RELEASED kit tags and therefore cannot
+ * declare a version that does not exist yet.
+ */
+export function auditSeverity(manifest) {
+  const declared = manifest?.requires?.pluginApi
+  return typeof declared === 'string' && declared.trim() !== '' ? 'fail' : 'warn'
+}
+
+const isStr = v => typeof v === 'string' && v.trim() !== ''
+const isStrArray = v => Array.isArray(v) && v.every(x => typeof x === 'string')
+const isObj = v => typeof v === 'object' && v !== null && !Array.isArray(v)
+
+/**
+ * Every field of a plugin manifest that is missing, mistyped or unreadable — each naming the FIELD
+ * and its legal values, never "invalid manifest".
+ *
+ * A manifest is the one file in a plugin that nothing else validates: the trees are typechecked,
+ * the barrels are written by the tooling, the tables are migrated by the host. This is read with
+ * `JSON.parse` and then indexed into, so a key spelled wrong is silence — and the silence surfaces
+ * as a binding missing after a deploy, or a plugin nothing ever gates against a kit version.
+ * `pluginPlatformProblems` owns the `bindings[]` half and is called from here, so a caller asks
+ * once and gets one list.
+ */
+export function pluginManifestProblems(manifest) {
+  const out = []
+  const bad = (field, problem, fix) => out.push({ field, problem, fix })
+  if (!isObj(manifest)) {
+    bad('', 'is not a JSON object', 'the manifest is one object with an "id" at its top level')
+    return out
+  }
+  const m = manifest
+
+  const idProblem = pluginIdProblem(m.id)
+  if (idProblem) {
+    bad(
+      'id',
+      `has no usable id (${idProblem})`,
+      `set "id" to a namespace matching ${PLUGIN_ID_RE.source}`
+    )
+  }
+
+  if (m.version === undefined) {
+    bad(
+      'version',
+      'declares no version',
+      'add "version": "0.1.0" — defaultPlugins pins it and the surface is compared to it'
+    )
+  } else if (!(isStr(m.version) && /^\d+\.\d+\.\d+/.test(m.version))) {
+    bad(
+      'version',
+      `declares version ${JSON.stringify(m.version)}`,
+      'set "version" to "MAJOR.MINOR.PATCH"'
+    )
+  }
+
+  for (const [field, label] of [
+    ['repo', 'the git URL this plugin is fetched from again'],
+    ['subdir', 'the directory inside that repository, or ""'],
+    ['label', 'the human name the plan prints'],
+    ['anchor', 'the manifest path inside a host'],
+  ]) {
+    if (m[field] !== undefined && typeof m[field] !== 'string') {
+      bad(field, `declares ${field} as ${typeof m[field]}`, `set "${field}" to a string — ${label}`)
+    }
+  }
+  if (typeof m.repo === 'string' && m.repo.trim() === '') {
+    bad(
+      'repo',
+      'declares an empty repo',
+      'set "repo" — a plugin nobody can fetch again cannot be upgraded'
+    )
+  }
+
+  for (const field of ['paths', 'registries', 'apiPrefixes', 'workerExports', 'migrations']) {
+    if (m[field] !== undefined && !isStrArray(m[field])) {
+      bad(field, `declares ${field} as other than an array of strings`, `set "${field}" to []`)
+    }
+  }
+
+  if (m.requires !== undefined && !isObj(m.requires)) {
+    bad('requires', 'declares requires as other than an object', 'set "requires" to { "kit": "…" }')
+  } else {
+    const r = m.requires ?? {}
+    if (r.kit !== undefined) {
+      if (!isStr(r.kit)) {
+        bad(
+          'requires.kit',
+          'declares a non-string kit range',
+          'set "requires.kit" to a range like ">=0.6.0 <1.0.0"'
+        )
+      } else if (satisfiesResult('0.0.0', r.kit).problem) {
+        bad(
+          'requires.kit',
+          `declares the range ${JSON.stringify(r.kit)}, which this kit cannot read`,
+          'use >=, <=, <, >, =, ^, ~ or *; alternatives are separated by ||'
+        )
+      }
+    }
+    if (r.surfaces !== undefined && !isStrArray(r.surfaces)) {
+      bad(
+        'requires.surfaces',
+        'declares surfaces as other than an array of strings',
+        'set "requires.surfaces" to []'
+      )
+    }
+    if (r.plugins !== undefined && !Array.isArray(r.plugins)) {
+      bad(
+        'requires.plugins',
+        'declares plugins as other than an array',
+        'set "requires.plugins" to []'
+      )
+    } else {
+      for (const entry of r.plugins ?? []) {
+        if (!isStr(entry) && !(isObj(entry) && isStr(entry.id))) {
+          bad(
+            'requires.plugins',
+            `carries the entry ${JSON.stringify(entry)}`,
+            'each entry is "<id>" or "<id>@<range>"'
+          )
+        }
+      }
+    }
+    // Checked as a STRING and no further, deliberately: comparing it to the contract's
+    // `PLUGIN_API.minSupported` belongs to the module that owns those numbers, and two
+    // implementations of one comparison is worse than none.
+    if (r.pluginApi !== undefined && !isStr(r.pluginApi)) {
+      bad(
+        'requires.pluginApi',
+        'declares a non-string pluginApi',
+        'set "requires.pluginApi" to the contract version it was written against, e.g. "1"'
+      )
+    }
+  }
+
+  if (m.dependencies !== undefined && !isObj(m.dependencies)) {
+    bad(
+      'dependencies',
+      'declares dependencies as other than an object',
+      'set "dependencies" to { "apps/web": {} }'
+    )
+  } else {
+    for (const [pkg, deps] of Object.entries(m.dependencies ?? {})) {
+      if (!isObj(deps) || Object.values(deps).some(v => typeof v !== 'string')) {
+        bad(
+          'dependencies',
+          `declares ${pkg} as other than a name → version map`,
+          `set "dependencies"."${pkg}" to { "<package>": "<range>" }`
+        )
+      }
+    }
+  }
+
+  if (m.bindings !== undefined && !Array.isArray(m.bindings)) {
+    bad('bindings', 'declares bindings as other than an array', 'set "bindings" to []')
+  } else {
+    for (const b of m.bindings ?? []) {
+      if (!isObj(b)) {
+        bad(
+          'bindings',
+          `carries the entry ${JSON.stringify(b)}`,
+          'each binding is { "type", "binding", … }'
+        )
+      }
+    }
+    for (const problem of pluginPlatformProblems(m)) {
+      bad('bindings', problem, `supported types are ${SUPPORTED_PLUGIN_BINDING_TYPES.join(', ')}`)
+    }
+  }
+
+  if (m.crons !== undefined && !Array.isArray(m.crons)) {
+    bad('crons', 'declares crons as other than an array', 'set "crons" to []')
+  } else {
+    for (const c of m.crons ?? []) {
+      const expression = isObj(c) ? c.cron : c
+      if (!isStr(expression) || expression.trim().split(/\s+/).length !== 5) {
+        bad(
+          'crons',
+          `carries the expression ${JSON.stringify(expression ?? c)}`,
+          'a cron is five whitespace-separated fields ("15 * * * *") — the string the toml gets'
+        )
+      }
+    }
+  }
+
+  if (m.vars !== undefined && !Array.isArray(m.vars)) {
+    bad('vars', 'declares vars as other than an array', 'set "vars" to []')
+  } else {
+    for (const v of m.vars ?? []) {
+      const key = isObj(v) ? (v.key ?? v.name) : v
+      if (!isStr(key)) {
+        bad(
+          'vars',
+          `carries the entry ${JSON.stringify(v)}`,
+          'each var is { "key", "example"?, "secret"? }'
+        )
+        continue
+      }
+      if (isObj(v) && v.secret !== undefined && typeof v.secret !== 'boolean') {
+        bad('vars', `declares ${key} with a non-boolean secret`, `set ${key}'s "secret" to a boolean`)
+      }
+    }
+  }
+
+  if (m.schema !== undefined && !isObj(m.schema)) {
+    bad(
+      'schema',
+      'declares schema as other than an object',
+      'set "schema" to { "tables": [], "rlsExcluded": [] }'
+    )
+  } else {
+    for (const field of ['tables', 'rlsExcluded']) {
+      const value = m.schema?.[field]
+      if (value !== undefined && !isStrArray(value)) {
+        bad(
+          `schema.${field}`,
+          `declares ${field} as other than an array of strings`,
+          `set "schema"."${field}" to []`
+        )
+      }
+    }
+  }
+
+  if (m.coreEdits !== undefined && !Array.isArray(m.coreEdits)) {
+    bad('coreEdits', 'declares coreEdits as other than an array', 'set "coreEdits" to []')
+  } else {
+    for (const e of m.coreEdits ?? []) {
+      if (!isObj(e) || !isStr(e.file) || !isStr(e.after) || !isStrArray(e.lines)) {
+        bad(
+          'coreEdits',
+          `carries the entry ${JSON.stringify(e)}`,
+          'each edit is { "file", "after", "lines": [] } — anchored on text, never a line number'
+        )
+      }
+    }
+  }
+
+  return out
+}
+
+/**
+ * The value names a `worker-exports.ts` exports, and whether they can be known at all.
+ *
+ * `opaque` is an `export * from './x'`, whose names need the module resolved to enumerate. Both
+ * directions of the worker-barrel check are skipped for one rather than guessed: reporting
+ * "declares OrdersHub and does not export it" against a star re-export that plainly does would
+ * teach an author to distrust the whole audit.
+ */
+export function workerExportNames(source) {
+  const text = String(source)
+  const names = new Set()
+  for (const m of text.matchAll(/export\s*\{([^}]*)\}/g)) {
+    for (const part of m[1].split(',')) {
+      const spec = part.trim()
+      if (spec === '' || spec.startsWith('type ')) continue
+      const halves = spec.split(/\s+as\s+/)
+      names.add((halves[1] ?? halves[0]).trim())
+    }
+  }
+  const declaration =
+    /export\s+(?:default\s+)?(?:abstract\s+)?(?:class|const|let|var|function\*?)\s+([A-Za-z_$][\w$]*)/g
+  for (const m of text.matchAll(declaration)) names.add(m[1])
+  names.delete('')
+  return { names: [...names], opaque: /export\s+\*/.test(text) }
+}
+
+/**
+ * Structural evidence that a test file proves cross-tenant isolation.
+ *
+ * **This proves a test EXISTS, not that it is right**, and the diagnostic says so. A structural
+ * check cannot read a predicate — but it does not have to be alone: `@testkit`'s builders refuse a
+ * fake `db` (they require a handle blessed by `setupTestDatabase`, tracked in a `WeakSet` rather
+ * than by shape), so the cheap wrong version — a stub answering `[]` to "tenant B sees no rows" —
+ * is already hard to write. Two signals together, because either alone is noise: the file must
+ * CREATE at least two organisations, and it must NAME the second one or the property.
+ */
+export function isolationEvidence(source) {
+  const text = String(source)
+  const named = /describe\(\s*['"`][^'"`]*isolation/i.test(text)
+  const secondTenant = /\b(?:other|second|another|foreign)[A-Za-z]*[Tt]enant\b|\btenantB\b/.test(
+    text
+  )
+  const tenantsCreated = [...text.matchAll(/createTestTenant(?:WithUser)?\s*\(/g)].length
+  return { named, secondTenant, tenantsCreated, ok: tenantsCreated >= 2 && (named || secondTenant) }
+}
+
+/**
+ * Where an install's `subdir` comes from, in precedence order: the flag somebody typed, then the
+ * manifest, then where the source was opened.
+ *
+ * **`||` and not `??`, and that is the whole function.** Nullish-coalescing falls through only on
+ * `null`/`undefined`, so a manifest shipping `"subdir": ""` — which every root-level plugin does —
+ * BEAT an explicit `--subdir`, and the surface was recorded as root-relative. Nothing fails at
+ * install; it fails at the next `pnpm plugin upgrade`, which diffs and applies against that path
+ * and finds the plugin nowhere. Hit for real installing from a monorepo.
+ */
+export function resolveSubdir({ flag = null, manifest = null, source = null } = {}) {
+  const trim = v => (typeof v === 'string' ? v.replace(/^\/+|\/+$/g, '') : '')
+  return trim(flag) || trim(manifest) || trim(source) || ''
+}
