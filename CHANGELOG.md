@@ -6,6 +6,11 @@ copy of the kit forward without recreating anything its owner deleted.
 
 If you are running a copy: `pnpm kit:upgrade` tells you which of these you are missing.
 
+## 0.8.1 — 2026-09-18
+
+Agent context now loads on demand: rules scope by `paths:` and `CLAUDE.md` names its docs rather than `@`-importing them, cutting roughly 100k tokens from every session start.
+[Porting note](docs/upgrades/0.8.1.md).
+
 ## 0.8.0 — 2026-09-18
 
 **Plugin compatibility is OBSERVED rather than declared**: a plugin states one `minKit` floor and the symbols it `uses`, which the kit checks against a ledger it emits — and porting notes become instructions rather than essays.
