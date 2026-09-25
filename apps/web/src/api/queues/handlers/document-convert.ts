@@ -10,6 +10,8 @@
 import type { JobOf } from '@rocketflare/shared/jobs'
 import { and, eq } from 'drizzle-orm'
 import { documents } from '../../../db/schema'
+import { noopTracer } from '../../observability/tracer'
+import { withAgentTrace } from '../../observability/tracing'
 import { ConversionFailedError } from '../../services/ai/convert'
 import { convertAndIndexDocument } from '../../services/ai/ingest'
 import { createR2Storage } from '../../services/storage'
@@ -35,13 +37,17 @@ export async function handleDocumentConvert(
   }
   const storage = createR2Storage(ctx.env.FILES)
   try {
-    const indexed = await convertAndIndexDocument(
-      ctx.db,
-      ctx.config,
-      ctx.env,
-      storage,
-      tenantId,
-      documentId
+    // D32: a `job document.convert` span, so each embeddings batch nests under something.
+    const indexed = await withAgentTrace(
+      'document.convert',
+      {
+        tracer: ctx.tracer ?? noopTracer,
+        tenantId,
+        kind: 'job',
+        spanName: 'job document.convert',
+        metadata: { documentId },
+      },
+      () => convertAndIndexDocument(ctx.db, ctx.config, ctx.env, storage, tenantId, documentId)
     )
     ctx.logger.info(
       { tenantId, documentId, chunkCount: indexed.chunkCount, model: indexed.embeddingModel },

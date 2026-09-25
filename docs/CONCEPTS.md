@@ -257,9 +257,33 @@ Server: `api/services/{ai,agents}/**` (read their `CLAUDE.md`), `services/prompt
   uploads go to R2, then `AI.toMarkdown`, then the same indexer. Search is hybrid dense + lexical
   with RRF, scoped by `AccessScope` (§1). `document-content.ts` is the one text reader behind both
   the viewer and `get_document`. Agent tools resolve the requester's access at execute time.
-- **Usage and tracing**: one `ai_usage` row per call, costed at write time from the one price table
-  (`shared/ai/pricing`; an unknown model gets `null` and is counted as unpriced). Langfuse tracing is
-  on only when both keys are set (D16).
+- **Usage**: one `ai_usage` row per call, costed at write time from the one price table
+  (`shared/ai/pricing`; an unknown model gets `null` and is counted as unpriced).
+- **Tracing (D32, supersedes D16's Langfuse ingestion client)**: `api/observability/`. Every AI call
+  site talks to the `Tracer` seam; the recorder batches ended spans and flushes (in `waitUntil`, or
+  awaited at the end of a stream, step or job) to two sinks: our own **OTLP/HTTP exporter**
+  (`otlp-fetch.ts` — JSON by default, hand-encoded protobuf for backends that take nothing else,
+  e.g. Phoenix; no dependency, no Node API) and the **local `ai_spans` table**, written whether or
+  not a backend is configured (the request path opens its own short-lived client per non-empty
+  flush). Attribute names — OTel GenAI semconv, OpenInference, Langfuse aliases — live in ONE module,
+  `genai-attributes.ts`. Handles nest, and the active span rides `AsyncLocalStorage`, so a tool
+  span (recorded by the kit's single tool runner — every tool, kit or plugin, chat or run),
+  retrieval and embeddings nest without signature changes. **Workflow continuity**: a run's trace
+  id is its uuid's hex and its root span id is derived from it, so each `execute#N` (a separate
+  invocation) is a child of a root the `finish` step records once the run has settled. Covered:
+  chat turns, agent runs, tools, retrieval, embeddings, the `chat.compact` / `document.index` /
+  `document.convert` jobs. `OBSERVABILITY_PRESET` (`langfuse|phoenix|generic`) fills endpoint and
+  auth — existing `LANGFUSE_*` keys migrate with no new secret; `OBSERVABILITY_CAPTURE_CONTENT=false`
+  strips prompts, completions and tool I/O from both sinks; `pruneAiSpans` on the nightly cron keeps
+  `OBSERVABILITY_SPAN_RETENTION_DAYS` (14). Read back through `GET /api/traces[/:id]` (`read
+  Trace`, admin+ — spans hold other people's prompts) and `rocketflare traces list|show`; the
+  `rf-traces` skill teaches an agent to debug from the span tree. Switch recipes: `docs/DEPLOY.md`
+  § Tracing.
+
+  **D32 decisions** (design grilling, 2026-09-25): our own OTLP exporter behind the existing seam —
+  not Cloudflare's native tracing, not the Langfuse SDK · the backend is platform-wide only ·
+  content capture is on by default, with a flag to disable · agent context comes from the CLI
+  reading our own Postgres, not a backend REST adapter.
 - **Rejected**: Cloudflare's Agents SDK. Per-instance SQLite sits outside RLS, the tenant FK cascade
   and cross-tenant indexes, and the inbox would need Postgres anyway. One `step.do` per model turn
   was also rejected: steps are unlimited in wall-clock time, and splitting would force every side
@@ -274,7 +298,12 @@ does not pre-resolve the client; Workers AI forced tools on off-list models are 
 rerank, no generated `tsvector`; no non-exclusive agents; HITL asks cannot be amended, have no
 reminders, and parks are bounded by instance retention (3 days Free / 30 Paid); runs nobody opens
 stay active-looking; no budgets/quotas over `ai_usage`, prompt versioning or evals; the demo seed's
-vectors are deterministic, so dense search over seeded docs is noise.
+vectors are deterministic, so dense search over seeded docs is noise. Tracing: no per-tenant
+backends (BYO keys via `sealSecret`), no native `tracing.enterSpan`, no metrics export, no
+Langfuse/Phoenix MCP; inline ingest from `POST /api/ai/documents/ingest` is untraced (no active
+span); `rocketflare.eval` is supported (`TraceParams.eval`) but nothing sets it yet; the backend
+receives a run's root only at `finish`, so an in-flight run has no root there; exported content is
+capped at 32 000 chars per value.
 
 ## 10. Deployment
 
@@ -294,7 +323,7 @@ Workers-plan check.
 A thin client over `/api/*` using a tenant API key. It parses with shared schemas and never keeps
 a second copy of the contract (D26). `api.ts` is the only `fetch` site. Config lives in
 `~/.rocketflare/config.json` (0600); `ROCKETFLARE_API_KEY`/`ROCKETFLARE_URL` override it for CI.
-`--json` is available on every read. Exit codes: 0 ok · 1 error · 2 not logged in · 3 forbidden.
+`--json` is available on every read. `traces list|show` reads the local AI trace store (D32). Exit codes: 0 ok · 1 error · 2 not logged in · 3 forbidden.
 No command prints a full key. Plugins register top-level commands named after their id.
 Detail: `.claude/rules/cli.md`.
 

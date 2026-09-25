@@ -42,6 +42,8 @@ const CORE_UNSCOPED_ALLOWLIST: Record<string, string> = {
     'deleteStoredFile removes a row by primary key that its caller already resolved under the tenant predicate',
   'src/api/services/invitations.ts':
     'pruneInvitations is the nightly cron: expired invitations are deleted across every tenant, which is the job',
+  'src/api/observability/span-store.ts':
+    'insertSpans is an INSERT, never a read: every row carries the tenant_id of the trace that recorded it (a span without one is dropped by toSpanRow), and one flush may hold spans from more than one tenant — D32',
 }
 
 /**

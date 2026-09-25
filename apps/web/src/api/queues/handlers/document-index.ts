@@ -7,6 +7,8 @@
 import type { JobOf } from '@rocketflare/shared/jobs'
 import { and, eq } from 'drizzle-orm'
 import { documents } from '../../../db/schema'
+import { noopTracer } from '../../observability/tracer'
+import { withAgentTrace } from '../../observability/tracing'
 import { indexDocument } from '../../services/ai/ingest'
 import type { JobContext } from '../jobs'
 
@@ -23,7 +25,18 @@ export async function handleDocumentIndex(
     ctx.logger.warn({ tenantId, documentId }, 'document.index: document no longer exists')
     return
   }
-  const indexed = await indexDocument(ctx.db, ctx.config, ctx.env, tenantId, documentId)
+  // D32: a `job document.index` span, so each embeddings batch nests under something.
+  const indexed = await withAgentTrace(
+    'document.index',
+    {
+      tracer: ctx.tracer ?? noopTracer,
+      tenantId,
+      kind: 'job',
+      spanName: 'job document.index',
+      metadata: { documentId },
+    },
+    () => indexDocument(ctx.db, ctx.config, ctx.env, tenantId, documentId)
+  )
   ctx.logger.info(
     { tenantId, documentId, chunkCount: indexed.chunkCount, model: indexed.embeddingModel },
     'document.index: indexed'

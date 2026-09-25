@@ -30,6 +30,13 @@ CHAT_KNOWLEDGE_TOOLS = "true"          # AI (D18): chat may call the knowledge t
 CHAT_HISTORY_MAX_CHARS = "24000"       # AI (D17): history a chat turn replays; older turns are summarised
 AGENT_INTERRUPT_TIMEOUT = "168 hours"   # Agents (#17): how long a run parked on a human waits (step.waitForEvent timeout)
 FEATURES_ENABLED = ""                  # Feature flags (D30): keys this environment ships at all; blank = none (fail-closed)
+OBSERVABILITY_CAPTURE_CONTENT = "true"  # Tracing (D32): "false" strips prompts/completions/tool I/O from the export AND ai_spans
+OBSERVABILITY_SPAN_RETENTION_DAYS = "14"   # Tracing (D32): days of ai_spans the nightly prune keeps
+# Tracing backend (D32) — add these to BOTH files when you pick one (docs/DEPLOY.md § Tracing):
+#   OBSERVABILITY_PRESET = "langfuse"    # langfuse | phoenix | generic (unset + Langfuse keys = langfuse)
+#   OTEL_EXPORTER_OTLP_ENDPOINT = "https://…"   # unset + Langfuse keys = <LANGFUSE_BASE_URL>/api/public/otel
+#   OBSERVABILITY_TRACE_URL = "https://cloud.langfuse.com/project/<id>/traces/{traceId}"
+#   Headers are a SECRET: `wrangler secret put OTEL_EXPORTER_OTLP_HEADERS` (k=v,k=v)
 # Secrets are NOT here: `wrangler secret put <NAME>` for every non-var in .dev.vars.example
 
 [placement]

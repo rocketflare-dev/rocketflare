@@ -22,6 +22,8 @@ import type { JobOf } from '@rocketflare/shared/jobs'
 import { and, asc, eq, isNull } from 'drizzle-orm'
 import { z } from 'zod'
 import { conversations, messages } from '../../../db/schema'
+import { noopTracer } from '../../observability/tracer'
+import { traceChatClient, withAgentTrace } from '../../observability/tracing'
 import { pendingCompaction, selectHistoryWindow } from '../../services/ai/chat-history'
 import { AiNotConfiguredError } from '../../services/ai/errors'
 import { callStructuredTool } from '../../services/ai/kit'
@@ -48,8 +50,9 @@ function transcript(rows: { role: string; content: string }[]): string {
 
 export async function handleChatCompact(
   job: JobOf<'chat.compact'>,
-  { db, env, config, logger }: JobContext
+  ctx: JobContext
 ): Promise<void> {
+  const { db, env, config, logger } = ctx
   const { tenantId, conversationId } = job.payload
   const conversation = await db.query.conversations.findFirst({
     where: and(eq(conversations.id, conversationId), eq(conversations.tenantId, tenantId)),
@@ -93,34 +96,53 @@ export async function handleChatCompact(
     maxChars: String(CHAT_SUMMARY_MAX_CHARS),
   })
   const previous = conversation.summary?.trim()
-  const result = await callStructuredTool(resolved.client, {
-    model: resolved.model,
-    maxTokens: resolved.maxOutputTokens,
-    system,
-    messages: [
-      {
-        role: 'user',
-        content: [
-          previous ? `Summary so far:\n\n${previous}` : 'There is no summary yet.',
-          `Messages to fold in:\n\n${transcript(pending)}`,
-        ].join('\n\n---\n\n'),
-      },
-    ],
-    tool: {
-      name: SUBMIT_SUMMARY_TOOL,
-      description: 'Submit the single replacement summary. Call exactly once.',
-      schema: submitSummarySchema,
+  const tracer = ctx.tracer ?? noopTracer
+  // D32: the compaction call is traced as its own job trace, in the thread's session.
+  const result = await withAgentTrace(
+    'chat.compact',
+    {
+      tracer,
+      tenantId,
+      userId: conversation.userId,
+      conversationId,
+      kind: 'job',
+      spanName: 'job chat.compact',
+      tags: ['chat', 'compaction'],
+      metadata: { folded: pending.length, model: resolved.model },
     },
-    onUsage: usage =>
-      void recordUsage(db, {
-        tenantId,
-        userId: conversation.userId,
-        feature: 'chat:compaction',
-        provider: resolved.provider,
-        model: resolved.model,
-        usage,
-      }).catch(err => logger.warn({ err }, 'chat.compact: usage write failed')),
-  })
+    trace =>
+      callStructuredTool(
+        traceChatClient(resolved.client, trace, { provider: resolved.provider }, tracer),
+        {
+          model: resolved.model,
+          maxTokens: resolved.maxOutputTokens,
+          system,
+          messages: [
+            {
+              role: 'user',
+              content: [
+                previous ? `Summary so far:\n\n${previous}` : 'There is no summary yet.',
+                `Messages to fold in:\n\n${transcript(pending)}`,
+              ].join('\n\n---\n\n'),
+            },
+          ],
+          tool: {
+            name: SUBMIT_SUMMARY_TOOL,
+            description: 'Submit the single replacement summary. Call exactly once.',
+            schema: submitSummarySchema,
+          },
+          onUsage: usage =>
+            void recordUsage(db, {
+              tenantId,
+              userId: conversation.userId,
+              feature: 'chat:compaction',
+              provider: resolved.provider,
+              model: resolved.model,
+              usage,
+            }).catch(err => logger.warn({ err }, 'chat.compact: usage write failed')),
+        }
+      )
+  )
 
   // Compare-and-set on what this run read: a concurrent job that already moved the watermark wins,
   // and this one is a no-op rather than a lost update.

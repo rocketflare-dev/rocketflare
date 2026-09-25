@@ -14,6 +14,7 @@ import {
   checkoutTag,
   chooseDevDbPort,
   databaseUrlPort,
+  describeTracing,
   extractSeedKey,
   fillDevVars,
   parseNvmrc,
@@ -44,6 +45,31 @@ describe('parseNvmrc / versionAtLeast', () => {
     expect(versionAtLeast('v22.12.0', 24)).toBe(false)
     expect(versionAtLeast(undefined, 24)).toBe(false)
     expect(versionAtLeast('node: command not found', 24)).toBe(false)
+  })
+})
+
+describe('describeTracing (preflight, D32)', () => {
+  it('reports local-only, the langfuse preset from the keys, and phoenix/generic endpoints — never a secret', () => {
+    expect(describeTracing({})).toBe(
+      'local ai_spans on; export off (local only — no OTEL_EXPORTER_OTLP_ENDPOINT)'
+    )
+    const lf = describeTracing({
+      LANGFUSE_PUBLIC_KEY: 'pk-lf-secret',
+      LANGFUSE_SECRET_KEY: 'sk-lf-secret',
+    })
+    expect(lf).toBe(
+      'local ai_spans on; exporting to langfuse at https://cloud.langfuse.com/api/public/otel'
+    )
+    expect(describeTracing({ OBSERVABILITY_PRESET: 'langfuse' })).toContain('export off')
+    const phoenix = describeTracing({
+      OBSERVABILITY_PRESET: 'phoenix',
+      OTEL_EXPORTER_OTLP_ENDPOINT: 'http://localhost:6006',
+      OTEL_EXPORTER_OTLP_HEADERS: 'authorization=Bearer%20topsecret',
+    })
+    expect(phoenix).toBe(
+      'local ai_spans on; exporting to phoenix at http://localhost:6006 (http/protobuf, headers set)'
+    )
+    for (const text of [lf, phoenix]) expect(text).not.toMatch(/secret/)
   })
 })
 

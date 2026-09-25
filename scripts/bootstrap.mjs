@@ -14,7 +14,7 @@
  * ownership rules apply unchanged. Everything shells out to the root pnpm scripts — `migrate.ts`
  * and `seed.ts` need `tsx` and `node_modules`, which may not exist yet.
  *
- * `--check` (`pnpm preflight`) is the read-only half: steps 1, 3, 4 (one `db:check`, no compose
+ * `--check` (`pnpm preflight`) is the read-only half (plus an informational `· tracing` line, D32): steps 1, 3, 4 (one `db:check`, no compose
  * up), 8 and `dev-server.mjs --status`, every failure listed, exit 3 if any.
  *
  * Exit codes: 0 ok · 1 a step failed · 2 usage · 3 prerequisite missing · 4 a port or the Postgres
@@ -29,6 +29,7 @@ import { createInterface } from 'node:readline'
 import {
   aiBlockState,
   databaseUrlPort,
+  describeTracing,
   extractSeedKey,
   fillDevVars,
   parseNvmrc,
@@ -715,6 +716,12 @@ async function check() {
       : 'not logged in'
     return { verify: `${identity}; [ai] ${state}` }
   })
+  // Informational, never a failure (D32): where AI traces go. Secret values are never printed.
+  if (existsSync(DEV_VARS)) {
+    say(
+      `${dim('·')} ${'tracing'.padEnd(15)} ${describeTracing(readDevVars(readFileSync(DEV_VARS, 'utf8')))}`
+    )
+  }
   const status = await run('node', [path.join(WEB_DIR, 'scripts/dev-server.mjs'), '--status'])
   say(dim('— pnpm dev:status —'))
   process.stdout.write(status.output)

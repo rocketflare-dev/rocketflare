@@ -13,6 +13,7 @@ import { type TokenUsage, tokenUsageSchema } from '@rocketflare/shared/ai/chat'
 import type { AgentInterruptSpec, JsonSchema } from '@rocketflare/shared/ai/interrupts'
 import { type ZodType, z } from 'zod'
 import { zodToJsonSchema } from 'zod-to-json-schema'
+import { traceToolCall } from '../../observability/context'
 import { AiError } from './errors'
 import {
   addUsage,
@@ -477,7 +478,20 @@ export interface ToolLoopResult {
   interrupts?: InterruptRequest[]
 }
 
-async function runHandler(tool: Tool | undefined, name: string, input: unknown) {
+/**
+ * THE tool runner — both loops call it, so it is also where every tool execution becomes an
+ * `execute_tool <name>` span (D32) under whatever span is active. Untraced when nothing is.
+ */
+function runHandler(
+  tool: Tool | undefined,
+  name: string,
+  input: unknown,
+  toolUseId?: string
+): Promise<{ text: string; isError: boolean }> {
+  return traceToolCall(name, toolUseId, input, () => executeHandler(tool, name, input))
+}
+
+async function executeHandler(tool: Tool | undefined, name: string, input: unknown) {
   if (!tool) return { text: `Unknown tool: ${name}`, isError: true }
   const parsed = tool.schema.safeParse(input)
   if (!parsed.success) {
@@ -639,12 +653,12 @@ export async function runToolLoop(
         // An approver may have edited the arguments; the route re-validated them against the tool's
         // own schema before storing them, and `runHandler` validates once more here.
         const input = approval.input !== undefined ? approval.input : block.input
-        const run = () => runHandler(tool, block.name, input)
+        const run = () => runHandler(tool, block.name, input, block.id)
         outcome = opts.runApproved
           ? await opts.runApproved(`tool:${approval.interruptId}`, run)
           : await run()
       } else {
-        outcome = await runHandler(tool, block.name, block.input)
+        outcome = await runHandler(tool, block.name, block.input, block.id)
       }
       results.push({
         type: 'tool_result',
@@ -894,7 +908,12 @@ export async function runStreamingChat(
     // Chat HITL is Part 3 and arrives as `onInterrupt: 'return'` plus a conversation checkpoint.
     for (const block of toolUses) {
       await opts.onToolStart?.({ toolUseId: block.id, name: block.name, input: block.input })
-      const { text, isError } = await runHandler(byName.get(block.name), block.name, block.input)
+      const { text, isError } = await runHandler(
+        byName.get(block.name),
+        block.name,
+        block.input,
+        block.id
+      )
       toolCalls.push({ id: block.id, name: block.name, input: block.input, result: text, isError })
       results.push({ type: 'tool_result', toolUseId: block.id, content: text, isError })
       await opts.onToolEnd?.({ toolUseId: block.id, name: block.name, result: text, isError })

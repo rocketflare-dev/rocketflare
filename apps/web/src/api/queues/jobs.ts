@@ -15,6 +15,9 @@ import {
 import type { AppConfig } from '../../config'
 import { createDatabase, type DatabaseHandle, resolveDatabaseUrl } from '../../db/client'
 import { serverPlugins } from '../../plugins/server'
+import { databaseSpanStore } from '../observability/span-store'
+import type { Tracer } from '../observability/tracer'
+import { tracerFor } from '../observability/tracing'
 import type { AppBindings } from '../types'
 import type { Logger } from '../utils/core/logger'
 import { handleActivityRecord } from './handlers/activity-record'
@@ -30,6 +33,12 @@ export interface JobContext {
   config: AppConfig
   logger: Logger
   db: DatabaseHandle['db']
+  /**
+   * D32: this message's tracer — the `ai_spans` store on `db` plus the OTLP export when configured,
+   * flushed by the consumer after the handler, before `db` closes. Optional so a hand-built context
+   * (a test, a plugin's own harness) need not supply one; AI handlers use `ctx.tracer ?? noopTracer`.
+   */
+  tracer?: Tracer
 }
 
 export type JobHandler<T extends JobType> = (
@@ -122,8 +131,9 @@ async function processMessage(
   const job = parsed.data
   const logger = deps.logger.child({ jobId: job.id, jobType: job.type, attempts: message.attempts })
   const handle = createDb()
+  const tracer = tracerFor(deps.config, { logger, store: databaseSpanStore(handle.db) })
   try {
-    const ctx: JobContext = { env: deps.env, config: deps.config, logger, db: handle.db }
+    const ctx: JobContext = { env: deps.env, config: deps.config, logger, db: handle.db, tracer }
     // `job` is the union and `handlers[job.type]` the matching handler, but TypeScript pairs them
     // only by widening both to their union — which makes the CALL the intersection of every
     // handler's parameter. The table's mapped type is what keeps the pairing honest.
@@ -135,6 +145,8 @@ async function processMessage(
     logger.warn({ err, delaySeconds }, 'jobs: handler failed, retrying')
     message.retry({ delaySeconds })
   } finally {
+    // Awaited, and BEFORE the close: a consumer has no `waitUntil`, and the store writes on `db`.
+    await tracer.flush()
     await handle.close()
   }
 }

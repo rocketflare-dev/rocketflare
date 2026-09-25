@@ -14,13 +14,13 @@
  */
 import { KIT_CUSTOM_EVENTS } from '@rocketflare/shared/ai/agui'
 import { CHAT_MAX_TOOL_TURNS, conversationSchema } from '@rocketflare/shared/ai/chat'
-import { eq } from 'drizzle-orm'
+import { and, eq } from 'drizzle-orm'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { SEARCH_KNOWLEDGE_TOOL } from '@/api/services/agents/tools'
 import { AiNotConfiguredError } from '@/api/services/ai/errors'
 import { ingestText } from '@/api/services/ai/ingest'
 import { loadConfig } from '@/config'
-import { messages } from '@/db/schema'
+import { aiSpans, messages } from '@/db/schema'
 import { aguiFrames, aguiTypes, customEvent, FakeChatClient, type FakeScript } from '../helpers/ai'
 import { createTestSession, createTestTenantWithUser, sessionCookieHeader } from '../helpers/auth'
 import { setupTestDatabase } from '../helpers/db'
@@ -193,6 +193,24 @@ describe('chat with the knowledge tools', () => {
       name: SEARCH_KNOWLEDGE_TOOL,
       isError: false,
     })
+
+    // D32: the turn is one trace in `ai_spans`, written by the stream's flush on its OWN client
+    // (the request's and the stream's are both closed by then), and the assistant row points at it.
+    expect(assistant?.traceId).toMatch(/^[0-9a-f]{32}$/)
+    const spans = await db
+      .select()
+      .from(aiSpans)
+      .where(and(eq(aiSpans.tenantId, a.tenant.id), eq(aiSpans.traceId, assistant?.traceId ?? '')))
+    const byKind = (kind: string) => spans.filter(sp => sp.kind === kind)
+    const root = spans.find(sp => sp.parentSpanId === null)
+    expect(root).toMatchObject({ name: 'invoke_agent chat', conversationId: conv.id })
+    expect(byKind('llm').map(sp => sp.parentSpanId)).toEqual([root?.spanId, root?.spanId])
+    const tool = byKind('tool')[0]
+    expect(tool).toMatchObject({ toolName: SEARCH_KNOWLEDGE_TOOL, parentSpanId: root?.spanId })
+    expect(tool?.attributes['gen_ai.tool.call.id']).toBe('call_1')
+    const retrieval = byKind('retrieval')[0]
+    expect(retrieval?.parentSpanId).toBe(tool?.spanId)
+    expect(byKind('embedding')[0]?.parentSpanId).toBe(retrieval?.spanId)
   })
 
   it('caps the tool loop at the chat cap, not AGENT_MAX_TURNS', async () => {

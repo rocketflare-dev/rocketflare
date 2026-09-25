@@ -149,7 +149,17 @@ a fake `WebSocket` factory left set) is on you.
   fixture PDF is text typed `application/pdf`; override `convert` for `format: 'error'` (→ `failed` +
   ack) or a throw (→ `failed` + retry); `createTestEnv({ AI: undefined, EMBEDDINGS_API_KEY })` is the
   Worker that embeds but cannot convert (503 `conversion_not_configured`, nothing stored)
-- Cron: call `scheduled({ cron: '0 4 * * *' }, env, ctx)` and assert the task ran; unknown cron → no-op.
+- Tracing (D32): `tests/api/observability.test.ts` needs no database — `createTracer({ sinks:
+  [collect] })` hands a test every recorded span, `tracerFor(cfg, { fetch })` takes an injected
+  `fetch` for the OTLP POST, and the OTLP/JSON request is compared to a FIXTURE (the protobuf case
+  walks the bytes back with a small decoder). Nesting is asserted through the real `runToolLoop`, so
+  the tool span comes from the kit's tool runner, not the test. `tests/api/traces.test.ts` writes
+  spans through `databaseSpanStore(db)` and reads them back through `/api/traces` (tenant B's id is a
+  404). The integration assertions live beside the paths they cover: `agent-run-workflow.test.ts`
+  (one trace per run, `execute#0` under the derived root) and `chat-tools.test.ts` (chat → tool →
+  retrieval → embeddings, `messages.trace_id`). `JobContext.tracer` is OPTIONAL, so a hand-built job
+  context needs none
+- Cron: call `scheduled({ cron: '0 4 * * *' }, env, ctx)` and assert the task ran (`pruneExpired` then `pruneAiSpans`); unknown cron → no-op.
   A PLUGIN's cron task is tested the same way and the test belongs to the plugin (the analytics
   plugin's `scheduled-facts.test.ts` asserts `SCHEDULED_TASKS` registers `analytics.refreshFactTables`
   under `'15 * * * *'`, then dispatches it and reads the fact rows) — which is the one thing that

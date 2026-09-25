@@ -39,6 +39,12 @@ export const CORE_SUBJECTS = [
    * not a permission at all — see the warning on `FeatureSubject` below.
    */
   'FeatureFlag',
+  /**
+   * AI traces (D32) — the local span store behind `/api/traces`. Admin+ `read` only: a span holds
+   * other people's prompts and tool results. Deliberately NOT in `ADMIN_MANAGED`, which would hand
+   * every member `read` through `MEMBER_READABLE`.
+   */
+  'Trace',
 ] as const
 export type CoreSubject = (typeof CORE_SUBJECTS)[number]
 

@@ -53,12 +53,13 @@ takes), `jobEnvelopeSchema` (`+ id, enqueuedAt, attempt?`, what the consumer par
 inline and framable are different properties, `filePath(id)`, `fileSchema`/`uploadResponseSchema`,
 `uploadQuerySchema` (D23) ·
 `jobs.ts` also carries `document.index` (`{ tenantId, documentId }` — re-index a `documents` row, D18) ·
-**`ai/`** (Phase 3, D16/D17/D18; barrel `ai/index.ts`, deep imports `@rocketflare/shared/ai/<file>` equally valid):
+**`ai/`** (Phase 3, D17/D18/D32; barrel `ai/index.ts`, deep imports `@rocketflare/shared/ai/<file>` equally valid):
 `config.ts` — `AI_PROVIDERS`/`aiProviderSchema` (append LAST: the DB column is a text enum), `AI_SCOPES`
 (`chat | embeddings`), `thinkingSchema` + `THINKING_*` bounds, `aiConfigSchema` (sanitised row:
 `hasCredential`, never a key), `upsertAiConfigRequestSchema` (`apiKey` write-only), `testAiConfigRequest/ResponseSchema`,
 `aiReadinessSchema`, `DEFAULT_MODELS`, `PROVIDER_PRESETS`/`presetsFor` (vendors are data, not enum values),
 **`EMBEDDING_DIM = 1024`** (the `chunks.embedding` column width — a change is a migration) ·
+`traces.ts` (D32) — `TRACE_SPAN_KINDS` (`agent|llm|tool|retrieval|embedding|job|span`), `traceIdSchema` (32 hex), `traceSpanSchema`, `traceSummarySchema`, `traceListQuerySchema` / `traceListResponseSchema`, `traceDetailSchema`, `traceLookupParamSchema` (trace id OR uuid) — `GET /api/traces` and the CLI ·
 `prompts.ts` — `promptKeySchema` (kebab-case), `PROMPT_MAX_LENGTH`, `promptDefinitionSchema`, `promptOverrideSchema`,
 `updatePromptRequestSchema`, `promptWithResolvedSchema`, `interpolatePrompt()` (`{{var}}`, unknown left visible) ·
 `chat.ts` — `conversationSchema`, `messageSchema`, `tokenUsageSchema`, `toolCallRecordSchema`, request bodies,

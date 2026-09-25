@@ -28,7 +28,7 @@ workspace root) or through the root scripts (`pnpm deploy[:staging]`, `pnpm prov
   dataset is deliberately NOT wired (the toml comment is the only trace). Optional: `ANALYTICS_ENGINE`,
   `HYPERDRIVE_APP`
 - Optional bindings are optional in code too: the rate limiter no-ops without `RATE_LIMIT_KV`,
-  tracing without Langfuse keys, email without `RESEND_API_KEY`, realtime nudges without
+  OTLP export without a configured backend (the local `ai_spans` store still records, D32), email without `RESEND_API_KEY`, realtime nudges without
   `NOTIFICATIONS_HUB`. Check presence, don't crash — **except where silence would lose data**: a
   missing `JOBS_QUEUE` throws `JobsQueueNotConfiguredError` (no inline fallback) and a missing
   `FILES` is a 503 `storage_not_configured`, a missing `AGENT_RUN_WORKFLOW` is a 503
@@ -47,10 +47,13 @@ workspace root) or through the root scripts (`pnpm deploy[:staging]`, `pnpm prov
   `AGENT_INTERRUPT_TIMEOUT = "168 hours"` (passed verbatim to `step.waitForEvent`),
   `FEATURES_ENABLED = ""` (D30: keys this deployment ships at all; blank is fail-closed, and the key
   must ALSO be in `.dev.vars.example` — `wrangler dev` reads `[vars]` from `wrangler.toml`, so a
-  feature shipped dark in production would otherwise be dark on every laptop); `LANGFUSE_BASE_URL` /
-  `LANGFUSE_TRACING_ENVIRONMENT` default in `config.ts` and are added to BOTH files only when
-  overridden (the parity test compares `[vars]` keys). AI secrets: `ANTHROPIC_API_KEY`,
-  `EMBEDDINGS_API_KEY`, `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY` — all optional
+  feature shipped dark in production would otherwise be dark on every laptop),
+  `OBSERVABILITY_CAPTURE_CONTENT = "true"`, `OBSERVABILITY_SPAN_RETENTION_DAYS = "14"` (D32);
+  `OBSERVABILITY_PRESET`, `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_PROTOCOL`,
+  `OBSERVABILITY_TRACE_URL`, `LANGFUSE_BASE_URL` and `LANGFUSE_TRACING_ENVIRONMENT` default in
+  `config.ts` and are added to BOTH files only when used (the parity test compares `[vars]` keys;
+  the tomls carry them as a comment). AI secrets: `ANTHROPIC_API_KEY`, `EMBEDDINGS_API_KEY`,
+  `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `OTEL_EXPORTER_OTLP_HEADERS` (`k=v,k=v`) — all optional
 
 ## Two tomls, one shape (D6)
 
@@ -115,7 +118,8 @@ turn was investigated and rejected (`docs/CONCEPTS.md` §9 Known gaps): steps do
   retry without an explicit delay); own DB client per message, closed in `finally`; **no `waitUntil`
   in a consumer**. Plain function so tests call it (`.claude/rules/testing.md`)
 - `scheduled(event, env, ctx)`: `SCHEDULED_TASKS` keyed on `event.cron` (`'0 4 * * *'` →
-  `pruneExpired`; plus every installed plugin's `scheduledTasks` (the analytics plugin's
+  `pruneExpired` + `pruneAiSpans` (D32 — `ai_spans` past `OBSERVABILITY_SPAN_RETENTION_DAYS`, one
+  DELETE per tenant on the `(tenant_id, started_at)` index); plus every installed plugin's `scheduledTasks` (the analytics plugin's
   `'15 * * * *'` — every registered fact table, per tenant,
   DELETE+INSERT, per-tenant failures collected and logged as a warning); one DB client per run, closed
   in `waitUntil`; each task try/caught; a new cron string must be added to BOTH tomls and the table
@@ -133,7 +137,8 @@ turn was investigated and rejected (`docs/CONCEPTS.md` §9 Known gaps): steps do
   the `agent_runs` row is the claim (`UPDATE … WHERE status IN (queued,running) RETURNING`; a retry
   re-claims). Cancellation is cooperative, escalating to `instance.terminate()` on a second request.
   No `waitUntil` in a step — nudges are collected and awaited by `createStepRealtime().settle()`, the
-  tracer is flushed at the end of `executeRun`
+  tracer (`tracerFor(cfg, { store: databaseSpanStore(db) })`) is flushed at the end of `executeRun`
+  while the step's client is still open, and the `finish` step records the run's root span (D32)
 - **Parking on a human is `step.waitForEvent` + `instance.sendEvent`** (issue #17), which is
   Cloudflare's documented pattern for it — "wait for human approval" is a named use case. Five rules,
   every one of which has a failure mode nothing else catches:

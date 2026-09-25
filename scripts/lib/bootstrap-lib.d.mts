@@ -17,6 +17,7 @@ export function fillDevVars(
   requiredKeys: string[]
 ): FillDevVarsResult
 export function readDevVars(text: string): Record<string, string>
+export function describeTracing(values: Record<string, string>): string
 
 export type AiBlockState = 'on' | 'off' | 'absent'
 export function aiBlockState(tomlText: string): AiBlockState

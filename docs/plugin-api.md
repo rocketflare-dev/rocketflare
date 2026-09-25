@@ -181,7 +181,7 @@ The server surface: the context family, and the types a plugin must be able to n
 - `type Logger = pino.Logger`
 - `type MembershipRole = z.infer<typeof membershipRoleSchema>`
 - `const noopTracer: Tracer`
-  What a request without Langfuse keys carries.
+  What a context carries when no sink is reachable (a unit test, a bare router).
 - `async function notify(db: Database, input: NotifyInput, realtime?: Realtime): Promise<void>`
 - `interface NotifyInput`
 - `async function notifyMany( db: Database, userIds: string[], input: Omit<NotifyInput, 'userId'>, realtime?: Realtime )`
@@ -350,6 +350,9 @@ The server surface: the context family, and the types a plugin must be able to n
 - `interface SetResourceGroupsInput`
 - `function sharedWithMyGroups( scope: AccessScope, junction: string, foreignKey: string, resourceId: SQL ): SQL`
   `exists (select 1 from <junction> j where j.<fk> = <resource>.id and j.group_id = any($ids))`.
+- `type SpanKind = 'agent' \| 'llm' \| 'tool' \| 'retrieval' \| 'embedding' \| 'job' \| 'span'`
+  What a span IS — it picks the GenAI operation name and the backend's observation type.
+- `interface SpanParams`
 - `interface StepCtx extends PluginContext`
   What a step body is handed: the base context, with a client that belongs to THIS step.
   - `name: string`
@@ -375,6 +378,7 @@ The server surface: the context family, and the types a plugin must be able to n
   A tool the model may call. `handler` runs it; a tool WITHOUT a handler is terminal (its input is the answer).
 - `interface ToolApproval`
   An answered gate, as the loop consumes it — keyed by `toolCallId` in {@link RunToolLoopOptions.approvals}, built by the runtime from the resolved rows. The agent never assembles…
+- `interface ToolCallParams`
 - `function toolCtx(ctx: AgentToolContext): ToolCtx`
   Adapt the runtime's tool context. The only place a plugin's tools name a kit internal.
 - `interface ToolCtx`
@@ -393,11 +397,13 @@ The server surface: the context family, and the types a plugin must be able to n
   Everything a later attempt needs to carry on where this one stopped. Deliberately symmetric: what {@link RunToolLoopOptions.onCheckpoint} hands you is exactly what {@link…
 - `interface ToolLoopResult`
 - `function traceChatClient( client: ChatClient, trace: TraceHandle, meta: TraceClientMeta, tracer?: Tracer ): ChatClient`
-  Wrap a client so each call emits a `generation` on `trace`. Returns the client unchanged when tracing is off.
+  Wrap a client so each call emits a `chat <model>` child of `trace`. Unchanged when tracing is off.
 - `interface TraceHandle`
 - `interface Tracer`
+- `async function traceStep<T>( params: StepParams, fn: () => Promise<T>, describe?: (result: T) => StepOutcome ): Promise<T>`
+  Run `fn` as a child span of the active one (and make it active for anything `fn` traces in turn). `describe` turns the result into the span's output — keep it small; it is…
 - `function tracingEnabled(tracer: Tracer): boolean`
-  `true` when this request/run is actually shipping traces — cheap enough to branch on.
+  `true` when this request/run is actually recording spans — cheap enough to branch on.
 - `async function transaction<T>( db: PluginContext['db'], fn: (tx: PluginContext['db']) => Promise<T> ): Promise<T>`
   Run several writes as one transaction.
 - `interface UiPlugin<S extends SharedPlugin = SharedPlugin>`
@@ -417,7 +423,7 @@ The server surface: the context family, and the types a plugin must be able to n
 - `interface VisibilityResource`
   What it takes to be a resource a group can restrict.
 - `async function withAgentTrace<T>( name: string, ctx: AgentTraceContext, fn: (trace: TraceHandle) => Promise<T> ): Promise<T>`
-  Run `fn` inside one trace named `name`; the handle is passed so the body can wrap its client with `traceChatClient`. Output is recorded on success, the error on failure (then…
+  Run `fn` inside one span named for `name` (`invoke_agent <name>` unless `spanName` overrides it), ACTIVE for everything `fn` does, so tools, retrieval and embeddings nest under…
 - `function workflowCtx( step: WorkflowStep, env: PluginBindings, config: AppConfig, logger: Logger ): WorkflowCtx`
   Adapt a Cloudflare `WorkflowStep` into the plugin surface.
 - `interface WorkflowCtx`
@@ -1103,6 +1109,8 @@ nothing in the comparison that can throw.
 @/plugins/api :: member :: ServerPlugin.extensions :: extensions?: Readonly<Record<string, readonly unknown[]>>
 @/plugins/api :: interface :: SetResourceGroupsInput :: interface SetResourceGroupsInput
 @/plugins/api :: function :: sharedWithMyGroups :: function sharedWithMyGroups( scope: AccessScope, junction: string, foreignKey: string, resourceId: SQL ): SQL
+@/plugins/api :: type :: SpanKind :: type SpanKind = 'agent' | 'llm' | 'tool' | 'retrieval' | 'embedding' | 'job' | 'span'
+@/plugins/api :: interface :: SpanParams :: interface SpanParams
 @/plugins/api :: interface :: StepCtx :: interface StepCtx extends PluginContext
 @/plugins/api :: member :: StepCtx.name :: name: string
 @/plugins/api :: member :: StepCtx.realtime :: realtime: StepRealtime
@@ -1120,6 +1128,7 @@ nothing in the comparison that can throw.
 @/plugins/api :: type :: Tenant :: type Tenant = typeof tenants.$inferSelect
 @/plugins/api :: interface :: Tool :: interface Tool<Input = unknown>
 @/plugins/api :: interface :: ToolApproval :: interface ToolApproval
+@/plugins/api :: interface :: ToolCallParams :: interface ToolCallParams
 @/plugins/api :: function :: toolCtx :: function toolCtx(ctx: AgentToolContext): ToolCtx
 @/plugins/api :: interface :: ToolCtx :: interface ToolCtx
 @/plugins/api :: member :: ToolCtx.db :: db: Database
@@ -1134,6 +1143,7 @@ nothing in the comparison that can throw.
 @/plugins/api :: function :: traceChatClient :: function traceChatClient( client: ChatClient, trace: TraceHandle, meta: TraceClientMeta, tracer?: Tracer ): ChatClient
 @/plugins/api :: interface :: TraceHandle :: interface TraceHandle
 @/plugins/api :: interface :: Tracer :: interface Tracer
+@/plugins/api :: function :: traceStep :: async function traceStep<T>( params: StepParams, fn: () => Promise<T>, describe?: (result: T) => StepOutcome ): Promise<T>
 @/plugins/api :: function :: tracingEnabled :: function tracingEnabled(tracer: Tracer): boolean
 @/plugins/api :: function :: transaction :: async function transaction<T>( db: PluginContext['db'], fn: (tx: PluginContext['db']) => Promise<T> ): Promise<T>
 @/plugins/api :: interface :: UiPlugin :: interface UiPlugin<S extends SharedPlugin = SharedPlugin>

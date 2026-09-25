@@ -100,7 +100,7 @@ predicate**, not SQL injection — the app role can `set_config` itself.
   setting an override is a global admin who is almost never a member of that tenant, so the FK would
   reject every write), and its `flag_key` index is **not led by `tenant_id`**, because the one query
   it serves is cross-tenant by design behind `globalAdminMiddleware`
-- Per-call rows: `ai_usage` (append-only, `(tenant_id, at DESC)`), `agent_run_events` (`(run_id, seq)`
+- Per-call rows: `ai_usage` (append-only, `(tenant_id, at DESC)`), `ai_spans` (D32 — append-only trace store, unique `(tenant_id, trace_id, span_id)` for `onConflictDoNothing`, `run_id`/`conversation_id`/`user_id` plain uuids with NO foreign key so deleting a run never rewrites its trace; pruned nightly per tenant), `agent_run_events` (`(run_id, seq)`
   unique, numbering continues across attempts). Concurrency is a claim row, never a lock:
   `agent_runs` `UPDATE … WHERE status IN ('queued','running') RETURNING` plus the partial unique index
   `agent_runs_active_exclusive_idx` — the pattern for any "one active job per key" need

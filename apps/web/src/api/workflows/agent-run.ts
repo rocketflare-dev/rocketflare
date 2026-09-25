@@ -93,7 +93,8 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AppBindings, AgentRunPa
             retries: { limit: EXECUTE_RETRIES, delay: '10 seconds', backoff: 'exponential' },
             timeout: '10 minutes',
           },
-          () => withStepDatabase(env, cfg, db => executeRun(db, cfg, env, logger, params))
+          () =>
+            withStepDatabase(env, cfg, db => executeRun(db, cfg, env, logger, params, { round }))
         )
       } catch (err) {
         // Past its retries (or a fault outside the runtime's classification): finish settles the
@@ -143,7 +144,7 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AppBindings, AgentRunPa
     }
 
     return step.do('finish', () =>
-      withStepDatabase(env, cfg, db => finishStep(db, env, logger, params, outcome))
+      withStepDatabase(env, cfg, db => finishStep(db, env, logger, params, outcome, { cfg }))
     )
   }
 }

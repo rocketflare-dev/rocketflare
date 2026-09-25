@@ -42,6 +42,8 @@ export const messages = pgTable(
      */
     provider: text('provider').$type<AiProvider>(),
     model: text('model'),
+    /** The OTLP trace of the turn that produced this assistant row (D32); null on a user row. */
+    traceId: text('trace_id'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   table => [

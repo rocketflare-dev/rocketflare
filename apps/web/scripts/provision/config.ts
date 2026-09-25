@@ -83,6 +83,7 @@ export const OPTIONAL_WORKER_SECRETS = [
   'EMBEDDINGS_API_KEY',
   'LANGFUSE_PUBLIC_KEY',
   'LANGFUSE_SECRET_KEY',
+  'OTEL_EXPORTER_OTLP_HEADERS',
 ] as const
 
 let tokenFileMemo: Record<string, string> | undefined
