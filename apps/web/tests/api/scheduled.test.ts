@@ -3,8 +3,8 @@ import { dispatchScheduled, SCHEDULED_TASKS, type ScheduledTask, scheduled } fro
 import { createExecutionContext, createTestEnv, waitOnExecutionContext } from '../mocks/bindings'
 
 describe('scheduled dispatcher', () => {
-  it('registers pruneExpired on the nightly cron', () => {
-    expect(SCHEDULED_TASKS['0 4 * * *']?.map(t => t.name)).toEqual(['pruneExpired'])
+  it('registers pruneExpired and the trace-store retention on the nightly cron', () => {
+    expect(SCHEDULED_TASKS['0 4 * * *']?.map(t => t.name)).toEqual(['pruneExpired', 'pruneAiSpans'])
   })
 
   it('runs the tasks registered for event.cron and reports each', async () => {
@@ -14,6 +14,7 @@ describe('scheduled dispatcher', () => {
     await waitOnExecutionContext(ctx)
     expect(reports).toEqual([
       expect.objectContaining({ cron: '0 4 * * *', task: 'pruneExpired', status: 'ok' }),
+      expect.objectContaining({ cron: '0 4 * * *', task: 'pruneAiSpans', status: 'ok' }),
     ])
   })
 

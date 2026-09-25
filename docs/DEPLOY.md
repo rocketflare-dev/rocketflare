@@ -146,7 +146,7 @@ the orchestrator around it — phases `tokens` (TTY only: hidden prompts → `ap
 
 | Expression | Task | What it does | Local trigger (`wrangler dev` never fires crons itself) |
 |---|---|---|---|
-| `0 4 * * *` | `pruneExpired` | deletes expired sessions, consumed/expired magic links, invitations older than 30 days | `curl "http://localhost:3001/cdn-cgi/local/scheduled?cron=0+4+*+*+*"` |
+| `0 4 * * *` | `pruneExpired`, `pruneAiSpans` | deletes expired sessions, consumed/expired magic links, invitations older than 30 days; then `ai_spans` older than `OBSERVABILITY_SPAN_RETENTION_DAYS` (14), one DELETE per tenant (D32) | `curl "http://localhost:3001/cdn-cgi/local/scheduled?cron=0+4+*+*+*"` |
 | `15 * * * *` | `analytics.refreshFactTables` (the analytics PLUGIN, D31) | every registered fact table, per tenant, DELETE+INSERT in one transaction; per-tenant failures collected, logged as a warning, never abort the run. The expression is the plugin's `crons` declaration and the task is `ServerPlugin.scheduledTasks` — **a task under an expression no toml declares simply never runs** | `curl "http://localhost:3001/cdn-cgi/local/scheduled?cron=15+*+*+*+*"` — or, for one organisation, `rocketflare analytics refresh-facts` |
 
 Health of the fact tables: `GET /api/analytics/facts/status` (admin+; `stale` = newest source row
@@ -190,8 +190,8 @@ passed verbatim to `step.waitForEvent`, so it must be a duration the platform ac
 Free, after which the instance is gone and the park is recovered by `expireParkedRun` plus the
 `sendEvent → not_found` restart), `FEATURES_ENABLED` (D30 —
 feature keys this environment ships at all; blank is fail-closed, and this is the knob that keeps an
-unreleased surface dark in production while staging has it). Defaulted in `config.ts` and **not** declared in the tomls: `LANGFUSE_BASE_URL` (`https://cloud.langfuse.com`), `LANGFUSE_TRACING_ENVIRONMENT` (= `APP_ENV`) — to override, add the key to BOTH files (the parity test compares `[vars]` keys) |
-| Worker secrets | `pnpm --filter @rocketflare/web exec wrangler secret put <NAME> [-c wrangler.staging.toml]`, once per worker; locally `apps/web/.dev.vars` | `OAUTH_ENCRYPTION_KEY` (also encrypts tenant AI keys — rotating it invalidates every `ai_configs` credential), `BOOTSTRAP_ADMIN_EMAILS`, `RESEND_API_KEY`, `GOOGLE_*`, `MICROSOFT_*`; AI, all optional: `ANTHROPIC_API_KEY` (platform chat), `EMBEDDINGS_API_KEY` (platform OpenAI embeddings when no `AI` binding), `LANGFUSE_PUBLIC_KEY` + `LANGFUSE_SECRET_KEY` (both or tracing is off); `DATABASE_URL` only as a no-Hyperdrive fallback |
+unreleased surface dark in production while staging has it). `OBSERVABILITY_CAPTURE_CONTENT` (`true`), `OBSERVABILITY_SPAN_RETENTION_DAYS` (`14`) (D32). Defaulted in `config.ts` and **not** declared in the tomls until used: `OBSERVABILITY_PRESET`, `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_PROTOCOL`, `OBSERVABILITY_TRACE_URL`, `LANGFUSE_BASE_URL` (`https://cloud.langfuse.com`), `LANGFUSE_TRACING_ENVIRONMENT` (= `APP_ENV`) — to set one, add the key to BOTH files (the parity test compares `[vars]` keys); § Tracing |
+| Worker secrets | `pnpm --filter @rocketflare/web exec wrangler secret put <NAME> [-c wrangler.staging.toml]`, once per worker; locally `apps/web/.dev.vars` | `OAUTH_ENCRYPTION_KEY` (also encrypts tenant AI keys — rotating it invalidates every `ai_configs` credential), `BOOTSTRAP_ADMIN_EMAILS`, `RESEND_API_KEY`, `GOOGLE_*`, `MICROSOFT_*`; AI, all optional: `ANTHROPIC_API_KEY` (platform chat), `EMBEDDINGS_API_KEY` (platform OpenAI embeddings when no `AI` binding), `LANGFUSE_PUBLIC_KEY` + `LANGFUSE_SECRET_KEY` (the langfuse tracing preset), `OTEL_EXPORTER_OTLP_HEADERS` (`k=v,k=v`, any other OTLP backend's auth); `DATABASE_URL` only as a no-Hyperdrive fallback |
 | CI secrets | GitHub Environments `staging` / `production` | `DATABASE_URL` (that branch), `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` |
 | Scripts only | migration environment | `APP_DATABASE_URL` (db-roles, RLS enforce only) |
 | Developer-local only | `apps/web/.drizzle-cube.json` (git-ignored; the analytics plugin's README has the shape) | a **tenant API key** for the drizzle-cube CLI / Claude Code plugin against `/cubejs-api` — it is an ordinary key from Settings → API keys, scopes every query to that tenant, and is revoked there; never deployed, never committed |
@@ -378,12 +378,11 @@ holding the custom domains. One token may serve both environments.
   `--status error` filters.
 - `pnpm --filter @rocketflare/web exec wrangler deployments list`, `… wrangler workflows instances list <name>`,
   `… wrangler queues info <name>` for the async parts.
-- Langfuse traces (when both keys are set) for every LLM call — one trace per chat turn (`chat`,
-  session = conversation id) or agent run (`summarize-text`, session = run id), one `generation` per
-  model call with token usage, tagged `environment = LANGFUSE_TRACING_ENVIRONMENT ?? APP_ENV`; batched
-  and shipped from `waitUntil`, never on the response path. `ai_usage` in Postgres is the durable
-  token ledger regardless of tracing. `ANALYTICS_ENGINE` request metrics are optional and
-  fire-and-forget.
+- AI traces (D32): spans for every chat turn, agent run, tool call, retrieval, embeddings batch and
+  AI job land in the tenant's `ai_spans` rows (read with `rocketflare traces list|show`) and, when a
+  backend is configured, are exported as OTLP from `waitUntil`, never on the response path —
+  § Tracing below. `ai_usage` in Postgres is the durable token ledger regardless of tracing.
+  `ANALYTICS_ENGINE` request metrics are optional and fire-and-forget.
 - Agent runs: `… wrangler workflows instances list rocketflare-agent-run[-staging]` / `describe <name>
   <instanceId>`. **The instance id is `agent_runs.instance_id`, which starts as the run id and is
   not always it**: a run parked on a human whose instance was lost is restarted as `<runId>-r1`,
@@ -393,6 +392,28 @@ holding the custom domains. One token may serve both environments.
   reader. A row stuck `awaiting_input` is settled by `expireParkedRun` on the same read, once every
   one of its asks is past `expiresAt`; a parked run whose asks are still in date is deliberately
   left waiting. There is no sweeper cron, which means both nets need somebody to open the run.
+
+## Tracing (D32)
+
+The local store needs nothing: every environment writes `ai_spans` and prunes it nightly. A
+backend is ADDITIONAL and platform-wide (one per deployment, never per tenant). Vars go in BOTH
+tomls (the parity test compares `[vars]` keys); headers are a secret. After any change, one chat
+turn or agent run should appear in the backend within a minute.
+
+| Backend | Set |
+|---|---|
+| Langfuse Cloud | nothing new — `LANGFUSE_PUBLIC_KEY` + `LANGFUSE_SECRET_KEY` select the `langfuse` preset, which sends OTLP/JSON to `<LANGFUSE_BASE_URL>/api/public/otel` with Basic auth and `x-langfuse-ingestion-version: 4`. A deployment that ran D16's ingestion client migrates by deploying. Optional `OBSERVABILITY_TRACE_URL = "https://cloud.langfuse.com/project/<id>/traces/{traceId}"` for the CLI's link-out |
+| Self-hosted Langfuse | the two keys + `LANGFUSE_BASE_URL = "https://langfuse.example.com"` (or `OTEL_EXPORTER_OTLP_ENDPOINT` to the full `/api/public/otel` URL) |
+| Phoenix (self-hosted) | `docker run -p 6006:6006 arizephoenix/phoenix` (or your deployment); `OBSERVABILITY_PRESET = "phoenix"`, `OTEL_EXPORTER_OTLP_ENDPOINT = "https://phoenix.example.com"`. The preset defaults to `http/protobuf` — Phoenix answers JSON with a 415. Auth, if enabled: secret `OTEL_EXPORTER_OTLP_HEADERS = authorization=Bearer%20<key>` |
+| Any OTLP/HTTP collector | `OBSERVABILITY_PRESET = "generic"` (the default without Langfuse keys), `OTEL_EXPORTER_OTLP_ENDPOINT` (base URL; `/v1/traces` is appended), optionally `OTEL_EXPORTER_OTLP_PROTOCOL = "http/protobuf"`; headers via the secret |
+
+Headers go in with `pnpm --filter @rocketflare/web exec wrangler secret put OTEL_EXPORTER_OTLP_HEADERS
+[-c wrangler.staging.toml]`, or from `.provision.env` through `pnpm provision secrets <env>`. Values
+are URL-encoded per the OTel spec. `OBSERVABILITY_CAPTURE_CONTENT = "false"` strips prompts,
+completions and tool I/O from BOTH the export and `ai_spans` (names, models, tokens and latency
+stay). `OBSERVABILITY_SPAN_RETENTION_DAYS` bounds the local store only — the backend keeps its own
+retention. Export failures are logged (`tracing: OTLP export returned a non-OK status`) and never
+fail a request; `wrangler tail` is where to look.
 
 ## Rollback
 

@@ -49,6 +49,8 @@ const MATRIX: Record<string, Record<Role, Level>> = {
   // D30 — administering flags is a PLATFORM act (`manage all`), never a tenant role. Using a
   // feature is not this subject at all: it is `AuthContext.features`, which no role can override.
   FeatureFlag: { owner: 'none', admin: 'none', support: 'none', member: 'none' },
+  // D32 — traces hold other people's prompts: admin+ read, members nothing, nobody writes one.
+  Trace: { owner: 'read', admin: 'read', support: 'read', member: 'none' },
 }
 
 const build = (role: Role | null, features: string[] = [], isGlobalAdmin = false) =>

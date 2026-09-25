@@ -19,8 +19,10 @@ pnpm plugin list && pnpm plugin check
 
 `pnpm preflight` (= `node scripts/bootstrap.mjs --check`) runs four of the bootstrap's ten
 steps read-only — `1/10 toolchain`, `3/10 secrets`, `4/10 database`, `8/10 cloudflare` — printing
-`✔ n/10 <name> <what it verified>` or `✖ n/10 <name> <message>` plus a `fix:` hint, then the
-`— pnpm dev:status —` block, and ends with `✔ preflight ok` or `✖ preflight: <failed names>`.
+`✔ n/10 <name> <what it verified>` or `✖ n/10 <name> <message>` plus a `fix:` hint, then one
+informational `· tracing …` line (D32 — the local `ai_spans` store is always on; the line says
+where spans are EXPORTED, or `local only`, and never prints a key or header; it can never fail
+preflight — `/rf-traces` explains the backends), then the `— pnpm dev:status —` block, and ends with `✔ preflight ok` or `✖ preflight: <failed names>`.
 `pnpm dev:status` on its own prints this repo's running dev processes and whoever holds
 :3000 / :3001 (another checkout is *reported*, never touched) — run it again if the first block
 scrolled away.

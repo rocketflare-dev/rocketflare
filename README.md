@@ -71,7 +71,7 @@ you removed. [`CHANGELOG.md`](CHANGELOG.md) is what you would be catching up on.
 | UI | React 18 + Vite, DaisyUI 5 on Tailwind v4, React Router 6, TanStack Query 5; served as Workers Static Assets |
 | CLI | commander + chalk; browser login → tenant API key; `--json` on every list command |
 | Async / realtime | Queues, Workflows, a per-tenant Durable Object over WebSockets, cron triggers, R2 |
-| AI | Anthropic / OpenAI-compatible / Workers AI chat over SSE, agents on Workflows, Workers AI embeddings → pgvector, Langfuse tracing |
+| AI | Anthropic / OpenAI-compatible / Workers AI chat over SSE, agents on Workflows, Workers AI embeddings → pgvector, OTLP tracing (Langfuse, Phoenix, any backend) |
 | Analytics | drizzle-cube semantic layer (`/cubejs-api`, `/mcp`), fact tables on a cron, TypeScript dashboard templates |
 | Quality | Biome 2, strict TypeScript, vitest against real Postgres, gitleaks, one CI gate |
 
@@ -109,7 +109,7 @@ you removed. [`CHANGELOG.md`](CHANGELOG.md) is what you would be catching up on.
 - **Agents on Workflows** — `POST /api/agents/runs` enqueues and answers 202; runs are exclusive per tenant and agent via a partial unique index, emit a durable event timeline, cancel cooperatively, and reconcile against the Workflow engine on read. The `summarize-text` example shows structured output through a forced tool call; an Agents page shows live timelines.
 - **Retrieval** — ingest text into `documents`/`chunks` (paragraph-aware chunking, inline or queued indexing), `vector(1024)` embeddings with an HNSW index, and **hybrid search**: dense cosine + lexical `tsvector`, fused with Reciprocal Rank Fusion. Vectors are ordinary tenant-scoped rows.
 - **Document uploads** — PDF, Word, Excel, OpenDocument, HTML and XML are stored in R2 and converted to Markdown by Workers AI (`env.AI.toMarkdown`, free for documents) in a `document.convert` job, then indexed like pasted text; the original stays downloadable. Agents read the same knowledge base through built-in `search_knowledge` / `get_document` / `list_documents` tools.
-- **Usage ledger and tracing** — one `ai_usage` row per model call with token counts and a usage summary endpoint; Langfuse traces (trace → generation with usage) shipped from `waitUntil` when keys are present, no OpenTelemetry dependency.
+- **Usage ledger and tracing** — one `ai_usage` row per model call with token counts and a usage summary endpoint; vendor-neutral OTLP traces with GenAI conventions (agent → model calls, tools, retrieval, embeddings) exported to Langfuse, Phoenix or any OTLP backend from `waitUntil`, and always recorded locally so `rocketflare traces show <runId>` works with zero config — no OpenTelemetry dependency.
 
 ### Analytics
 - **Semantic layer** — drizzle-cube mounted at `/cubejs-api` and `/mcp` behind the app's auth; every cube scopes its SQL to the current tenant, and a mandatory isolation test queries every cube as two tenants and asserts disjoint rows.
@@ -119,7 +119,7 @@ you removed. [`CHANGELOG.md`](CHANGELOG.md) is what you would be catching up on.
 
 ### CLI
 - `rocketflare login` opens the browser, completes sign-in and tenant selection in the app, and receives a tenant API key on a loopback callback — stored `0600` in `~/.rocketflare/config.json`, never printed in full.
-- `whoami`, `status`, `members list`, `keys list`, `activity list`, `config`; `--json` prints only the parsed response so output pipes into `jq`; `ROCKETFLARE_API_KEY` / `ROCKETFLARE_URL` replace the config file in CI.
+- `whoami`, `status`, `members list`, `keys list`, `activity list`, `traces list|show` (the AI span tree of a run or chat turn, admin+), `config`; `--json` prints only the parsed response so output pipes into `jq`; `ROCKETFLARE_API_KEY` / `ROCKETFLARE_URL` replace the config file in CI.
 - Every response is parsed with the same zod schema the server validated with; exit codes distinguish "not logged in" (2) and "forbidden" (3) from other errors (1).
 
 ### Developer experience
@@ -137,7 +137,7 @@ you removed. [`CHANGELOG.md`](CHANGELOG.md) is what you would be catching up on.
 rocketflare/          workspace root: package.json (scripts delegate via pnpm -r / --filter),
 │                     pnpm-workspace.yaml, biome.json, tsconfig.base.json, CLAUDE.md, docs/, .github/
 ├── apps/web/         @rocketflare/web — Worker (Hono API) + React UI; wrangler*.toml, migrations/, scripts/, tests/
-├── apps/cli/         @rocketflare/cli — `rocketflare` CLI: login, logout, whoami, status, members/keys/activity list, config
+├── apps/cli/         @rocketflare/cli — `rocketflare` CLI: login, logout, whoami, status, members/keys/activity list, traces list|show, config
 └── packages/shared/  @rocketflare/shared — PRIVATE zod contracts, error envelope, pagination, permission types;
                       consumed as TypeScript source through the workspace link (no build step)
 ```
@@ -165,13 +165,13 @@ there list every known gap.
 | File | Read it when |
 |---|---|
 | [`CLAUDE.md`](CLAUDE.md) (`AGENTS.md`) | always — the canonical agent context: stack, commands, map, non-negotiables |
-| [`SETUP.md`](SETUP.md) | getting a clone running, the CLI's first login, configuring OAuth/email/AI providers (or a local OpenAI-compatible mock)/Langfuse, deploying to Cloudflare |
+| [`SETUP.md`](SETUP.md) | getting a clone running, the CLI's first login, configuring OAuth/email/AI providers (or a local OpenAI-compatible mock)/tracing, deploying to Cloudflare |
 | [`docs/CONCEPTS.md`](docs/CONCEPTS.md) | before assuming a capability exists or building a new one — one section per subsystem with its invariant and known gaps |
 | [`docs/ADAPTING.md`](docs/ADAPTING.md) | you just copied the kit to start an app (package names, CLI bin, config dir, env prefix, what to delete, where the first features go) |
 | [`docs/DEPLOY.md`](docs/DEPLOY.md) | Cloudflare topology, the two tomls, resources, release dance, rollback, bundle size |
 | [`docs/RLS.md`](docs/RLS.md) | tenant isolation posture and how to turn row-level security on |
 | `.claude/rules/*.md` | layer conventions (api, database, ui, cli, testing, code-quality, cloudflare) — auto-loaded by path |
-| `.claude/skills/` | the slash commands a coding agent drives: `/rf-setup` (first run), `/rf-preflight` (read-only diagnosis), `/rf-adapt` (rename + checklist), `/rf-how-do-i` (coaching for a new feature — asks, plans, writes `docs/features/<slug>.md`, never the code), `/rf-upgrade` (port later kit releases into your copy), `/rf-plugin` (install, upgrade, remove or audit a plugin) — an agent may run those when you ask in plain words — and `/rf-provision` (deploy to Cloudflare + Neon + Resend), which only you can start: it creates paid resources and prompts for tokens |
+| `.claude/skills/` | the slash commands a coding agent drives: `/rf-setup` (first run), `/rf-preflight` (read-only diagnosis), `/rf-adapt` (rename + checklist), `/rf-how-do-i` (coaching for a new feature — asks, plans, writes `docs/features/<slug>.md`, never the code), `/rf-upgrade` (port later kit releases into your copy), `/rf-plugin` (install, upgrade, remove or audit a plugin), `/rf-traces` (debug a run or chat turn from its span tree; pick or switch a tracing backend) — an agent may run those when you ask in plain words — and `/rf-provision` (deploy to Cloudflare + Neon + Resend), which only you can start: it creates paid resources and prompts for tokens |
 
 ## Provenance
 

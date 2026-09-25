@@ -160,17 +160,20 @@ export function streamChatTurn(c: AppContext, params: ChatTurnParams): Response 
         await emit(kitCustom(KIT_CUSTOM_EVENTS.notice, { code }))
       }
 
+      let traceId: string | null = null
       const result = await withAgentTrace(
         'chat',
         {
           tracer,
           tenantId,
           userId: user.id,
-          sessionId: conversation.id,
+          conversationId: conversation.id,
           tags: ['chat'],
+          metadata: { model: resolved.model },
           input: content,
         },
         trace => {
+          if (tracer.enabled) traceId = trace.traceId
           const client = traceChatClient(
             resolved.client,
             trace,
@@ -241,6 +244,8 @@ export function streamChatTurn(c: AppContext, params: ChatTurnParams): Response 
         // without it a thread whose provider changed cannot be priced or explained after the fact.
         provider: resolved.provider,
         model: resolved.model,
+        // D32: `rocketflare traces show <this message id>` resolves through this column.
+        traceId,
       })
       await sdb
         .update(conversations)

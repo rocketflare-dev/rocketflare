@@ -22,6 +22,13 @@ const optionalSecret = (min: number) =>
     z.string().min(min).optional()
   )
 
+/** A blank-or-absent enum var, for the ones whose ABSENCE means something (auto-detect). */
+const optionalEnum = <const T extends readonly [string, ...string[]]>(values: T) =>
+  z.preprocess(
+    value => (typeof value === 'string' && value.trim() === '' ? undefined : value),
+    z.enum(values as unknown as [T[number], ...T[number][]]).optional()
+  )
+
 /** `[vars]` arrive as strings; blank means "use the default", never 0. */
 const optionalPositiveInt = (fallback: number) =>
   z.preprocess(
@@ -82,9 +89,34 @@ const coreConfigSchema = z.object({
   SIGNUP_MODE: z.enum(['open', 'invite_only', 'approval']).default('invite_only'),
   /** D1: `enforce` wraps tenant-scoped work in a transaction with `set_config(..., true)`. */
   TENANT_SCOPE_MODE: z.enum(['off', 'enforce']).default('off'),
+  /**
+   * D32: where the langfuse preset sends spans when `OTEL_EXPORTER_OTLP_ENDPOINT` is unset —
+   * `<base>/api/public/otel`.
+   */
   LANGFUSE_BASE_URL: z.string().url().default('https://cloud.langfuse.com'),
-  /** Langfuse `environment` tag; defaults to `APP_ENV` at the tracer (D16). */
+  /** `deployment.environment.name` on every exported span; defaults to `APP_ENV` (D32). */
   LANGFUSE_TRACING_ENVIRONMENT: optionalString,
+  /**
+   * D32: the OTLP/HTTP base URL spans are POSTed to (`/v1/traces` is appended). Unset + Langfuse
+   * keys → Langfuse Cloud; unset otherwise → no export (the local `ai_spans` store still records).
+   */
+  OTEL_EXPORTER_OTLP_ENDPOINT: z.preprocess(
+    value => (typeof value === 'string' && value.trim() === '' ? undefined : value),
+    z.string().url().optional()
+  ),
+  /** `http/json` (default) or `http/protobuf` (the phoenix preset's default — Phoenix takes nothing else). */
+  OTEL_EXPORTER_OTLP_PROTOCOL: optionalEnum(['http/json', 'http/protobuf']),
+  /**
+   * D32: which backend's auth and headers to fill in. Unset → `langfuse` when both Langfuse keys
+   * are set (existing deployments migrate with no new secret), else `generic`.
+   */
+  OBSERVABILITY_PRESET: optionalEnum(['langfuse', 'phoenix', 'generic']),
+  /** D32: `false` strips prompts, completions and tool I/O from the export AND from `ai_spans`. */
+  OBSERVABILITY_CAPTURE_CONTENT: optionalBoolean(true),
+  /** D32: link-out template, `{traceId}` substituted — e.g. `https://cloud.langfuse.com/project/<id>/traces/{traceId}`. */
+  OBSERVABILITY_TRACE_URL: optionalString,
+  /** D32: days of `ai_spans` the nightly prune keeps. */
+  OBSERVABILITY_SPAN_RETENTION_DAYS: optionalPositiveInt(14),
   /** D17: per-call `max_tokens` when a tenant config sets none; and the tool-loop turn cap. */
   AGENT_MAX_OUTPUT_TOKENS: optionalPositiveInt(16384),
   AGENT_MAX_TURNS: optionalPositiveInt(30),
@@ -147,6 +179,8 @@ const coreConfigSchema = z.object({
   EMBEDDINGS_API_KEY: optionalString,
   LANGFUSE_PUBLIC_KEY: optionalString,
   LANGFUSE_SECRET_KEY: optionalString,
+  /** D32: extra OTLP request headers, `k=v,k=v` (values URL-encoded, per the OTel spec). A secret. */
+  OTEL_EXPORTER_OTLP_HEADERS: optionalString,
 })
 
 /**

@@ -20,7 +20,7 @@
  *   all [--deploy staging|both] [--skip-email] [--rotate]   0 → 9 in order, stops at the first failure
  *
  * Tokens (CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID, NEON_API_KEY, RESEND_API_KEY; optional
- * BOOTSTRAP_ADMIN_EMAILS, GOOGLE_*, MICROSOFT_*, ANTHROPIC_API_KEY, EMBEDDINGS_API_KEY, LANGFUSE_*)
+ * BOOTSTRAP_ADMIN_EMAILS, GOOGLE_*, MICROSOFT_*, ANTHROPIC_API_KEY, EMBEDDINGS_API_KEY, LANGFUSE_*, OTEL_EXPORTER_OTLP_HEADERS)
  * come from `process.env` first (CI), then the git-ignored `apps/web/.provision.env` (mode 0600,
  * written by `pnpm provision tokens` or copied from `.provision.env.example`) — never `.dev.vars`,
  * which `wrangler dev` loads into the Worker. Nothing else secret is written to disk:

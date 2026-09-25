@@ -40,9 +40,19 @@ MICROSOFT_CLIENT_SECRET=
 # it chat falls back to Workers AI through the [ai] binding (zero key, billed to the Cloudflare account).
 ANTHROPIC_API_KEY=
 EMBEDDINGS_API_KEY=
-# Langfuse tracing (Phase 3): presence of both keys enables it.
+# AI tracing (D32). Spans ALWAYS land in the local `ai_spans` table (`pnpm cli traces list`);
+# these only add an OTLP backend. Langfuse: both keys are enough (preset auto-selected, Langfuse
+# Cloud unless OTEL_EXPORTER_OTLP_ENDPOINT points elsewhere). Phoenix locally:
+#   docker run -p 6006:6006 arizephoenix/phoenix  →  OBSERVABILITY_PRESET=phoenix,
+#   OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:6006 (protobuf by default — Phoenix takes nothing else).
 LANGFUSE_PUBLIC_KEY=
 LANGFUSE_SECRET_KEY=
+OBSERVABILITY_PRESET=
+OTEL_EXPORTER_OTLP_ENDPOINT=
+# Extra request headers, k=v,k=v (URL-encode values) — e.g. authorization=Bearer%20<key>
+OTEL_EXPORTER_OTLP_HEADERS=
+# Link-out for `traces show`: {traceId} is substituted.
+OBSERVABILITY_TRACE_URL=
 
 # --- RLS (see docs/RLS.md) — leave as-is unless running the enforce spike ---------------
 # App-role credential for scripts/db-roles.ts; username must equal APP_ROLE in src/db/schema/rls.ts

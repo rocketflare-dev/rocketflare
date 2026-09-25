@@ -11,7 +11,10 @@ Shape: `step.do('claim')` → a LOOP of `step.do('execute#N', { retries: { limit
 cfg.AGENT_INTERRUPT_TIMEOUT })` → `step.do('finish')`. The bodies are plain functions in
 `../services/agents/runtime.ts` (tests call them with `{ db, env }`); the class only wires steps and
 opens/closes ONE DB client per step (`withStepDatabase`, awaited `close()` in `finally`). Step return
-values are small serialisable objects (ids + status), never rows.
+values are small serialisable objects (ids + status), never rows. Tracing (D32): `execute#N`
+passes `{ round }` so the attempt's span is named for its step, and only `finish` passes `{ cfg }`
+to `finishStep`, which records the run's root span — one root per run, so the `expire#N` call
+must not.
 
 **A step name is its IDENTITY to the platform**, so every name inside the loop carries its round.
 A fixed `'execute'` called a second time replays the first call's cached result — the run re-asks

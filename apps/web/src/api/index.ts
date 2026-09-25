@@ -42,6 +42,7 @@ import { membersRouter } from './routes/members'
 import { notificationsRouter } from './routes/notifications'
 import { tenantRouter } from './routes/tenant'
 import { tenantsRouter } from './routes/tenants'
+import { tracesRouter } from './routes/traces'
 import { wsRouter } from './routes/ws'
 import type { AppEnv } from './types'
 import { isApiPath } from './utils/routes/api-prefixes'
@@ -81,7 +82,7 @@ app.use('*', csrfProtection)
 // 8. Per-request DB client — last of the globals because it is the first thing with real cost.
 app.use('*', databaseMiddleware)
 
-// 9. Per-request tracer (D16): Langfuse batcher when both keys are set, no-op otherwise; flushed in
+// 9. Per-request tracer (D32): OTLP export when a backend is configured + the `ai_spans` store; flushed in
 //    `waitUntil` after the handler. Streaming routes flush again before their stream closes.
 app.use('/api/*', tracerMiddleware)
 
@@ -125,6 +126,8 @@ const mounts: readonly (readonly [string, Hono<AppEnv>, MiddlewareHandler?])[] =
   // list is the enumerable auth surface (D13).
   ['/api/agui', aguiRouter],
   ['/api/agents', agentsRouter],
+  // D32: the local AI trace store, read by `rocketflare traces` — admin+ (`read Trace`).
+  ['/api/traces', tracesRouter],
   // D31: installed plugins, last, so a plugin can never shadow a kit prefix — Hono matches in
   // registration order. Each mount gets `authMiddleware` and its own optional gate exactly like a
   // kit mount; the convention is `/api/<plugin id>`, and `tests/config/plugins.test.ts` is what

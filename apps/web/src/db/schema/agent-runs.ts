@@ -75,6 +75,11 @@ export const agentRuns = pgTable(
      * `db/schema` must not import from `api/services`. Validated in `services/agents/runs.ts`.
      */
     checkpoint: jsonb('checkpoint'),
+    /**
+     * The run's OTLP trace id (D32) — derived from the run id (`traceIdForRun`), so every Workflow
+     * step lands in one trace without carrying anything; stored so a reader need not know the rule.
+     */
+    traceId: text('trace_id'),
     ...timestamps(),
   },
   table => [

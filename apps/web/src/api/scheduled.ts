@@ -8,10 +8,10 @@
  *   curl "http://localhost:3001/cdn-cgi/local/scheduled?cron=0+4+*+*+*"
  * (`wrangler dev --test-scheduled` additionally exposes the same thing at `/__scheduled`).
  */
-import { sql } from 'drizzle-orm'
+import { and, eq, lt, sql } from 'drizzle-orm'
 import { type AppConfig, loadConfig } from '../config'
 import { createDatabase, type Database, resolveDatabaseUrl } from '../db/client'
-import { userSessions } from '../db/schema'
+import { aiSpans, tenants, userSessions } from '../db/schema'
 import { serverPlugins } from '../plugins/server'
 import { pruneMagicLinkTokens } from './auth/magic-link'
 import { pruneInvitations } from './services/invitations'
@@ -62,9 +62,39 @@ export const pruneExpired: ScheduledTask = {
   },
 }
 
+/**
+ * Drop `ai_spans` older than `OBSERVABILITY_SPAN_RETENTION_DAYS` (D32). The local trace store is
+ * written on every traced request whether or not a backend is configured, so without this it grows
+ * for ever. One DELETE per tenant, each on the `(tenant_id, started_at)` index — a cross-tenant
+ * cutoff scan would read the whole table, and every other query on it is tenant-first anyway.
+ */
+export async function runPruneAiSpans(db: Database, retentionDays: number, now = new Date()) {
+  const cutoff = new Date(now.getTime() - retentionDays * 24 * 60 * 60 * 1000)
+  const tenantRows = await db.select({ id: tenants.id }).from(tenants)
+  let spans = 0
+  for (const { id: tenantId } of tenantRows) {
+    // No `.returning()`: a first prune after a busy fortnight can be a lot of rows, and the ids are
+    // not needed — postgres.js reports the affected count on the result.
+    const result = await db
+      .delete(aiSpans)
+      .where(and(eq(aiSpans.tenantId, tenantId), lt(aiSpans.startedAt, cutoff)))
+    spans += (result as unknown as { count?: number }).count ?? 0
+  }
+  return { spans, cutoff: cutoff.toISOString() }
+}
+
+/** Nightly retention for the local trace store (D32). */
+export const pruneAiSpans: ScheduledTask = {
+  name: 'pruneAiSpans',
+  async run({ db, config, logger }) {
+    const result = await runPruneAiSpans(db, config.OBSERVABILITY_SPAN_RETENTION_DAYS)
+    logger.info(result, 'pruneAiSpans: removed expired trace spans')
+  },
+}
+
 /** Cron expression → tasks. Keep in sync with `[triggers] crons` in both wrangler tomls. */
 const CORE_SCHEDULED_TASKS: Record<string, ScheduledTask[]> = {
-  '0 4 * * *': [pruneExpired],
+  '0 4 * * *': [pruneExpired, pruneAiSpans],
 }
 
 /**

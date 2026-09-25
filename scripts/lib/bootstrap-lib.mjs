@@ -96,6 +96,29 @@ export function readDevVars(text) {
   return values
 }
 
+/**
+ * Where AI traces go (D32), as preflight reports it — read from `.dev.vars` values, never printing
+ * one that is a secret (keys, `OTEL_EXPORTER_OTLP_HEADERS`). Mirrors `exporterSettings` in
+ * `apps/web/src/api/observability/tracing.ts`: an explicit preset wins, else Langfuse when both
+ * keys are set, else generic when an endpoint is. The local `ai_spans` store is always on.
+ */
+export function describeTracing(values) {
+  const langfuseKeys = Boolean(values.LANGFUSE_PUBLIC_KEY && values.LANGFUSE_SECRET_KEY)
+  const endpoint = values.OTEL_EXPORTER_OTLP_ENDPOINT || ''
+  const preset = values.OBSERVABILITY_PRESET || (langfuseKeys ? 'langfuse' : 'generic')
+  const local = 'local ai_spans on'
+  if (preset === 'langfuse') {
+    if (!langfuseKeys) return `${local}; export off (preset langfuse without both LANGFUSE_* keys)`
+    const base = (values.LANGFUSE_BASE_URL || 'https://cloud.langfuse.com').replace(/\/+$/, '')
+    return `${local}; exporting to langfuse at ${endpoint || `${base}/api/public/otel`}`
+  }
+  if (!endpoint) return `${local}; export off (local only — no OTEL_EXPORTER_OTLP_ENDPOINT)`
+  const protocol =
+    values.OTEL_EXPORTER_OTLP_PROTOCOL || (preset === 'phoenix' ? 'http/protobuf' : 'http/json')
+  const headers = values.OTEL_EXPORTER_OTLP_HEADERS ? ', headers set' : ''
+  return `${local}; exporting to ${preset} at ${endpoint} (${protocol}${headers})`
+}
+
 const AI_ON = /^\[ai\]\s*$/
 const AI_OFF = /^# \[ai\]\s*$/
 const SECTION = /^\s*\[/

@@ -4,10 +4,10 @@
  */
 import { eq } from 'drizzle-orm'
 import { describe, expect, it } from 'vitest'
-import { dispatchScheduled, runPruneExpired } from '@/api/scheduled'
+import { dispatchScheduled, runPruneAiSpans, runPruneExpired } from '@/api/scheduled'
 import { hashToken } from '@/api/utils/core/hash'
 import { randomToken } from '@/api/utils/core/ids'
-import { magicLinkTokens, teamInvitations, userSessions } from '@/db/schema'
+import { aiSpans, magicLinkTokens, teamInvitations, userSessions } from '@/db/schema'
 import { createTestSession, createTestTenantWithUser, createTestUser } from '../helpers/auth'
 import { setupTestDatabase } from '../helpers/db'
 import { createExecutionContext, createTestEnv, waitOnExecutionContext } from '../mocks/bindings'
@@ -126,6 +126,41 @@ describe('pruneExpired', () => {
     const ctx = createExecutionContext()
     const reports = await dispatchScheduled('0 4 * * *', createTestEnv(), ctx)
     await waitOnExecutionContext(ctx)
-    expect(reports).toEqual([expect.objectContaining({ task: 'pruneExpired', status: 'ok' })])
+    expect(reports).toEqual([
+      expect.objectContaining({ task: 'pruneExpired', status: 'ok' }),
+      expect.objectContaining({ task: 'pruneAiSpans', status: 'ok' }),
+    ])
+  })
+})
+
+describe('pruneAiSpans (D32)', () => {
+  const span = (tenantId: string, spanId: string, startedAt: Date) => ({
+    tenantId,
+    traceId: 'a'.repeat(32),
+    spanId,
+    name: 'chat m',
+    kind: 'llm' as const,
+    status: 'ok' as const,
+    startedAt,
+    endedAt: startedAt,
+    durationMs: 0,
+    attributes: {},
+  })
+
+  it('drops spans older than the retention window in every tenant and keeps the rest', async () => {
+    const { tenant: a } = await createTestTenantWithUser(db)
+    const { tenant: b } = await createTestTenantWithUser(db)
+    const now = new Date()
+    await db
+      .insert(aiSpans)
+      .values([
+        span(a.id, '1'.repeat(16), new Date(now.getTime() - 15 * DAY)),
+        span(a.id, '2'.repeat(16), new Date(now.getTime() - 13 * DAY)),
+        span(b.id, '3'.repeat(16), new Date(now.getTime() - 30 * DAY)),
+      ])
+    const result = await runPruneAiSpans(db, 14, now)
+    expect(result.spans).toBe(2)
+    const left = await db.select({ spanId: aiSpans.spanId }).from(aiSpans)
+    expect(left.map(r => r.spanId).filter(id => /^[123]+$/.test(id))).toEqual(['2'.repeat(16)])
   })
 })

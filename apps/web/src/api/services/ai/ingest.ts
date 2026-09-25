@@ -30,6 +30,7 @@ import { and, eq } from 'drizzle-orm'
 import type { AppConfig } from '../../../config'
 import type { Database } from '../../../db/client'
 import { chunks, type DocumentRow, documentGroups, documents, files } from '../../../db/schema'
+import { traceEmbed } from '../../observability/context'
 import { enqueueJob, type JobsQueue } from '../jobs'
 import { deleteStoredFile, type StorageService, storeUploadedFile } from '../storage'
 import { chunkText, type TextChunk } from './chunking'
@@ -150,7 +151,9 @@ export async function indexDocument(
   try {
     const embeddings = options.embeddings ?? (await resolveEmbeddings(db, cfg, env, tenantId))
     const vectors = await embedInBatches(
-      texts => embeddings.client.embed(texts),
+      // D32: one `embeddings <model>` span per batch, under the active span (an agent run, the
+      // `document.index` job) — untraced where nothing is active.
+      texts => traceEmbed(embeddings, texts, () => embeddings.client.embed(texts)),
       pieces.map(p => p.text)
     )
     const [updated] = await db.transaction(async tx => {

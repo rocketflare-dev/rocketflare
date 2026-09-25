@@ -31,6 +31,8 @@ import { and, asc, eq, sql } from 'drizzle-orm'
 import type { AppConfig } from '../../../config'
 import type { Database } from '../../../db/client'
 import { type AgentRunInterruptRow, agentRunEvents, tenants, tenantUsers } from '../../../db/schema'
+import { databaseSpanStore } from '../../observability/span-store'
+import { rootSpanIdForRun, traceIdForRun } from '../../observability/trace-ids'
 import { traceChatClient, tracerFor, withAgentTrace } from '../../observability/tracing'
 import { classifyInfrastructureError } from '../../utils/core/errors'
 import type { Logger } from '../../utils/core/logger'
@@ -249,7 +251,9 @@ export async function executeRun(
   cfg: AppConfig,
   env: RuntimeEnv,
   logger: Logger,
-  params: AgentRunParams
+  params: AgentRunParams,
+  /** The Workflow round (`execute#N`) — names this step's span. */
+  options: { round?: number } = {}
 ): Promise<ExecuteOutcome> {
   const { tenantId, runId } = params
   const run = await getRun(db, tenantId, runId)
@@ -260,7 +264,8 @@ export async function executeRun(
   const agent = getAgent(run.agentKey)
   const { realtime, settle } = createStepRealtime(env, logger)
   const emit = await createEmitter(db, params, realtime, logger)
-  const tracer = tracerFor(cfg, { logger })
+  // D32: flushed in `finally`, while this step's client is still open — no `waitUntil` in a step.
+  const tracer = tracerFor(cfg, { logger, store: databaseSpanStore(db) })
   const checkCancelled = async () => {
     if (await isCancelRequested(db, tenantId, runId)) throw new AgentCancelledError()
   }
@@ -284,10 +289,16 @@ export async function executeRun(
         tracer,
         tenantId,
         userId: run.requestedByUserId ?? undefined,
-        sessionId: runId,
+        runId,
         tags: ['agent', agent.meta.key],
-        metadata: { runId, attempt: run.attempt, model: resolved.model },
+        metadata: { attempt: run.attempt, model: resolved.model },
         input,
+        // D32: every step of the run joins ONE trace derived from the run id; this span is the
+        // step, a child of the root `finishStep` records once the run has settled.
+        traceId: traceIdForRun(runId),
+        parentSpanId: rootSpanIdForRun(runId),
+        spanName: `execute#${options.round ?? 0}`,
+        kind: 'span',
       },
       async trace => {
         const client = traceChatClient(
@@ -500,7 +511,12 @@ export async function finishStep(
   env: RuntimeEnv,
   logger: Logger,
   params: AgentRunParams,
-  outcome?: ExecuteOutcome
+  outcome?: ExecuteOutcome,
+  /**
+   * D32: given ONLY by the workflow's final `finish` step, which records the run's root span
+   * (`invoke_agent <key>`) — the expiry arm calls this too, and one root per run is the point.
+   */
+  trace?: { cfg: AppConfig }
 ): Promise<ExecuteOutcome> {
   const { tenantId, runId } = params
   const { realtime, settle } = createStepRealtime(env, logger)
@@ -527,9 +543,60 @@ export async function finishStep(
   }
   nudgeRun(realtime, tenantId, runId)
   await settle()
+  if (trace && row) await recordRunRoot(db, trace.cfg, logger, row)
   return {
     runId,
     status: row?.status ?? outcome?.status ?? 'failed',
     error: row?.error ?? undefined,
+  }
+}
+
+/**
+ * The run's root span (D32): `invoke_agent <key>` from the first claim to now, with the run's
+ * input and output, an error status when it failed, and the settled status as an attribute. Its id
+ * is derived from the run id, so the `execute#N` spans every earlier step recorded — each in its
+ * own Worker invocation — already point at it. Never throws: a trace is not worth a failed step.
+ */
+export async function recordRunRoot(
+  db: Database,
+  cfg: AppConfig,
+  logger: Logger,
+  run: {
+    id: string
+    tenantId: string
+    agentKey: string
+    status: AgentRunStatus
+    input: unknown
+    output: unknown
+    error: string | null
+    requestedByUserId: string | null
+    startedAt: Date | null
+    createdAt: Date
+    attempt: number
+  }
+): Promise<void> {
+  try {
+    const tracer = tracerFor(cfg, { logger, store: databaseSpanStore(db) })
+    if (!tracer.enabled) return
+    const root = tracer.startTrace({
+      name: run.agentKey,
+      tenantId: run.tenantId,
+      userId: run.requestedByUserId ?? undefined,
+      runId: run.id,
+      tags: ['agent', run.agentKey],
+      metadata: { status: run.status, attempts: run.attempt },
+      input: run.input,
+      traceId: traceIdForRun(run.id),
+      spanId: rootSpanIdForRun(run.id),
+      startTime: run.startedAt ?? run.createdAt,
+    })
+    root.end(
+      run.status === 'failed'
+        ? { error: run.error ?? 'The agent run failed' }
+        : { output: run.output ?? undefined }
+    )
+    await tracer.flush()
+  } catch (err) {
+    logger.warn({ err, runId: run.id }, 'agent-run: could not record the trace root')
   }
 }

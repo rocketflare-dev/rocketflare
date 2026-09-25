@@ -411,19 +411,19 @@ Node test suite drives with a fake. Nothing extra to configure; `AGENT_INTERRUPT
    `curl -N -H 'Accept: text/event-stream' "http://localhost:3001/api/agents/runs/<id>/agui/stream"`
    shows `data:`-only frames with `id:` on group boundaries only.
 
-### 2.6 Tracing — Langfuse
-1. Langfuse (cloud or self-hosted) → project → API keys → `LANGFUSE_PUBLIC_KEY` + `LANGFUSE_SECRET_KEY`
-   in `apps/web/.dev.vars` (deployed: `wrangler secret put`)
-2. Self-hosted only: `LANGFUSE_BASE_URL` — defaults to `https://cloud.langfuse.com` in
-   `apps/web/src/config.ts`; to override, add it to `[vars]` in **both** tomls (the parity test requires
-   identical `[vars]` keys) or to `.dev.vars`. `LANGFUSE_TRACING_ENVIRONMENT` (defaults to `APP_ENV`)
-   tags the traces the same way
-
-Presence of **both** keys is the switch (`tracerFor(cfg)`); with either missing the tracer is the
-no-op and nothing changes in behaviour. Traces are batched per request and shipped from `waitUntil`
-(fetch, basic auth) — never on the response path. Verify: send a chat message or run the example
-agent; a trace named `chat` / `summarize-text` with one `generation` carrying token usage appears in
-Langfuse within a minute, tagged with the environment.
+### 2.6 Tracing (D32)
+Nothing to set up: every chat turn, agent run, tool call, retrieval and embeddings batch is
+recorded as spans in the local `ai_spans` table, with zero credentials. Verify: send a chat message
+or run the example agent, then (as an owner/admin, logged in with `pnpm cli login`):
+```bash
+pnpm cli traces list                  # newest first; --agent chat · --status error · --run <id>
+pnpm cli traces show <traceId|runId>  # the span tree: model, tokens, latency, tool args/results
+```
+A chat turn shows `invoke_agent chat` with `chat <model>` and `execute_tool <name>` children, and
+retrieval/embeddings under the tool. `OBSERVABILITY_CAPTURE_CONTENT=false` drops prompts and tool
+I/O. Optional backend (Langfuse keys keep working with no new setting; Phoenix locally is
+`docker run -p 6006:6006 arizephoenix/phoenix` + `OBSERVABILITY_PRESET=phoenix` +
+`OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:6006` in `.dev.vars`): `docs/DEPLOY.md` § Tracing.
 
 ### 2.7 Plugins `[ready]` (D31)
 
@@ -611,13 +611,14 @@ Hyperdrive — and `APP_DATABASE_URL` unless enabling RLS):
 ```bash
 # one per name: OAUTH_ENCRYPTION_KEY RESEND_API_KEY BOOTSTRAP_ADMIN_EMAILS GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET
 #   MICROSOFT_CLIENT_ID MICROSOFT_CLIENT_SECRET ANTHROPIC_API_KEY EMBEDDINGS_API_KEY LANGFUSE_PUBLIC_KEY LANGFUSE_SECRET_KEY
+#   OTEL_EXPORTER_OTLP_HEADERS
 printf '%s' "$OAUTH_ENCRYPTION_KEY" | pnpm web exec wrangler secret put OAUTH_ENCRYPTION_KEY -c wrangler.staging.toml
 ```
 `wrangler secret put NAME` reads the value from stdin when stdin is not a terminal — pipe it with
 `printf '%s' "$V"`, never `--body` or an argument, so the value stays out of argv and shell history
 (interactively it prompts). `pnpm provision secrets <env>` does exactly this for every name exported
 in the shell. Repeat without `-c` for production after its first deploy. Use different keys per
-environment. `ANTHROPIC_API_KEY`, `EMBEDDINGS_API_KEY` and the two `LANGFUSE_*` keys are optional
+environment. `ANTHROPIC_API_KEY`, `EMBEDDINGS_API_KEY`, the two `LANGFUSE_*` keys and `OTEL_EXPORTER_OTLP_HEADERS` are optional
 (Part 2.5/2.6): skip them and the features degrade as described there.
 Verify: `pnpm web exec wrangler secret list -c wrangler.staging.toml` shows the names;
 `curl https://<staging-host>/api/health` returns ok, `curl https://<staging-host>/api/ready` returns

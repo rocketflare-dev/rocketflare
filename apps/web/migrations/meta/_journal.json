@@ -99,6 +99,13 @@
       "when": 1789631557120,
       "tag": "0013_kit-analytics-removed",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1790316015619,
+      "tag": "0014_kit-ai-spans",
+      "breakpoints": true
     }
   ]
 }

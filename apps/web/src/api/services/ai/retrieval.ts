@@ -19,6 +19,7 @@ import { and, eq, inArray, sql } from 'drizzle-orm'
 import type { AppConfig } from '../../../config'
 import type { Database } from '../../../db/client'
 import { chunks, documents } from '../../../db/schema'
+import { traceEmbed, traceStep } from '../../observability/context'
 import { type AccessScope, visibleDocuments } from '../access'
 import { resolveEmbeddings } from './resolve'
 import type { AiEnv } from './types'
@@ -110,7 +111,35 @@ interface Candidate {
  * `hnsw.iterative_scan` as a custom GUC placeholder and accepts it, which is why this is safe to
  * set unconditionally rather than probing the version.
  */
-export async function searchChunks(
+export function searchChunks(
+  db: Database,
+  cfg: AppConfig,
+  env: AiEnv,
+  access: AccessScope,
+  request: SearchRequest
+): Promise<SearchHit[]> {
+  // D32: a `retrieval` span under whatever is active (the `search_knowledge` tool span), with the
+  // query embedding nested inside it. The hits are summarised — the passages are the TOOL's output.
+  return traceStep(
+    {
+      name: 'retrieval search_chunks',
+      kind: 'retrieval',
+      input: { query: request.query, limit: request.limit ?? 10, documentId: request.documentId },
+    },
+    () => runSearch(db, cfg, env, access, request),
+    hits => ({
+      output: hits.map(h => ({
+        documentId: h.documentId,
+        title: h.title,
+        seq: h.seq,
+        score: h.score,
+      })),
+      attributes: { 'rocketflare.retrieval.hits': hits.length },
+    })
+  )
+}
+
+async function runSearch(
   db: Database,
   cfg: AppConfig,
   env: AiEnv,
@@ -127,7 +156,9 @@ export async function searchChunks(
     request.documentId ? eq(chunks.documentId, request.documentId) : undefined
   )
   const embeddings = await resolveEmbeddings(db, cfg, env, tenantId)
-  const [queryVector] = await embeddings.client.embed([request.query])
+  const [queryVector] = await traceEmbed(embeddings, [request.query], () =>
+    embeddings.client.embed([request.query])
+  )
   if (!queryVector) return []
   const vec = vectorLiteral(queryVector)
 

@@ -98,8 +98,21 @@ export type {
   ScheduledTask,
 } from './jobs'
 export { cronCtx, jobCtx } from './jobs'
-export type { AgentTraceContext, TraceHandle, Tracer } from './observability'
-export { noopTracer, traceChatClient, tracingEnabled, withAgentTrace } from './observability'
+export type {
+  AgentTraceContext,
+  SpanKind,
+  SpanParams,
+  ToolCallParams,
+  TraceHandle,
+  Tracer,
+} from './observability'
+export {
+  noopTracer,
+  traceChatClient,
+  traceStep,
+  tracingEnabled,
+  withAgentTrace,
+} from './observability'
 export type { StepRealtime } from './realtime-step'
 export { createStepRealtimeFor } from './realtime-step'
 export { openSecret, sealSecret } from './secrets'

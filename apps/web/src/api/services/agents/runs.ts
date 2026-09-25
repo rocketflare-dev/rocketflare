@@ -40,6 +40,7 @@ import {
   agentRunEvents,
   agentRuns,
 } from '../../../db/schema'
+import { traceIdForRun } from '../../observability/trace-ids'
 import { ServiceUnavailableError, ValidationError } from '../../utils/core/errors'
 import { parseToolLoopCheckpoint, type ToolLoopCheckpoint } from '../ai/kit'
 import { nudge, type Realtime, realtimeEvent } from '../realtime'
@@ -192,11 +193,16 @@ export async function enqueueRun(
   const parsed = agent.meta.inputSchema.safeParse(input.input)
   if (!parsed.success) throw new ValidationError(parsed.error.issues, 'Invalid agent input')
 
+  const runId = crypto.randomUUID()
   let row: AgentRunRow | undefined
   try {
     ;[row] = await db
       .insert(agentRuns)
       .values({
+        // Minted here rather than by the column default so the trace id (D32) — derived from it —
+        // is on the row from the first write.
+        id: runId,
+        traceId: traceIdForRun(runId),
         tenantId: input.tenantId,
         agentKey: input.agentKey,
         status: 'queued',

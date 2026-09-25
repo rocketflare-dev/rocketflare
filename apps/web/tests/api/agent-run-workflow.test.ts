@@ -19,6 +19,7 @@ import type { AgentInterruptSpec } from '@rocketflare/shared/ai/interrupts'
 import { and, eq } from 'drizzle-orm'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
+import { rootSpanIdForRun, traceIdForRun } from '@/api/observability/trace-ids'
 import { fullAccessScope } from '@/api/services/access'
 import { listArtifacts } from '@/api/services/agents/artifacts'
 import { listInterrupts, resolveInterrupt } from '@/api/services/agents/interrupts'
@@ -40,7 +41,7 @@ import * as workflowModule from '@/api/workflows/agent-run'
 import { AgentRunWorkflow } from '@/api/workflows/agent-run'
 import { loadConfig } from '@/config'
 import * as dbClient from '@/db/client'
-import { agentRunEffects, agentRuns, aiUsage, chunks, documents } from '@/db/schema'
+import { agentRunEffects, agentRuns, aiSpans, aiUsage, chunks, documents } from '@/db/schema'
 import { FakeChatClient, type FakeScript } from '../helpers/ai'
 import { createTestTenantWithUser } from '../helpers/auth'
 import { setupTestDatabase } from '../helpers/db'
@@ -251,6 +252,33 @@ describe('AgentRunWorkflow', () => {
         type: 'entity.changed',
         payload: { entity: 'agent-run', id: run.id },
       })
+
+    // D32: one trace per run, derived from its id — `execute#0` (written on the step's own client,
+    // hence still three clients above) under the root that `finish` recorded once the run settled.
+    expect(row?.traceId).toBe(traceIdForRun(run.id))
+    const spans = await db
+      .select()
+      .from(aiSpans)
+      .where(and(eq(aiSpans.tenantId, tenant.id), eq(aiSpans.runId, run.id)))
+    expect(new Set(spans.map(s => s.traceId))).toEqual(new Set([traceIdForRun(run.id)]))
+    const root = spans.find(s => s.parentSpanId === null)
+    const step = spans.find(s => s.name === 'execute#0')
+    expect(root).toMatchObject({
+      spanId: rootSpanIdForRun(run.id),
+      name: 'invoke_agent summarize-text',
+      kind: 'agent',
+      status: 'ok',
+      userId: user.id,
+    })
+    expect(step?.parentSpanId).toBe(root?.spanId)
+    const generation = spans.find(s => s.kind === 'llm')
+    expect(generation).toMatchObject({
+      parentSpanId: step?.spanId,
+      name: 'chat fake-model',
+      model: 'fake-model',
+      inputTokens: 33,
+      outputTokens: 12,
+    })
   })
 
   it('a cancel requested between turns → cancelled (a status, not an error)', async () => {

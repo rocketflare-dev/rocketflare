@@ -14,6 +14,7 @@ import { runLogin } from './commands/login'
 import { runLogout } from './commands/logout'
 import { runMembersList } from './commands/members'
 import { runStatus } from './commands/status'
+import { runTracesList, runTracesShow } from './commands/traces'
 import { runWhoami } from './commands/whoami'
 import { CONFIG_KEYS, DEFAULT_SERVER_URL, ENV } from './config'
 import { type CommandContext, createContext } from './context'
@@ -149,6 +150,35 @@ activity
   .option('--page-size <n>', 'items per page (max 200)', positiveInt('--page-size'))
   .option('--type <name>', 'filter by dotted event type, e.g. member.invited')
   .action(action((ctx, cmd) => runActivityList(ctx, cmd.opts())))
+
+const traces = program
+  .command('traces')
+  .description('AI traces of the active tenant — agent runs, chat turns, AI jobs (admin+)')
+traces
+  .command('list')
+  .description('list recent traces, newest first')
+  .option('--agent <key>', 'only this agent or surface, e.g. chat, research-topic')
+  .option('--status <status>', 'ok | error', (value: string) => {
+    if (value !== 'ok' && value !== 'error')
+      throw new InvalidArgumentError('--status must be ok or error')
+    return value
+  })
+  .option('--run <id>', 'only the trace of this agent run')
+  .option('--conversation <id>', 'only traces of this chat thread')
+  .option('--since <iso>', 'only traces that started at or after this ISO timestamp')
+  .option('--page <n>', 'page number', positiveInt('--page'))
+  .option('--page-size <n>', 'items per page (max 200)', positiveInt('--page-size'))
+  .action(
+    action((ctx, cmd) => {
+      const { run, ...rest } = cmd.opts()
+      return runTracesList(ctx, { ...rest, runId: run })
+    })
+  )
+traces
+  .command('show <id>')
+  .description('print one trace as a span tree — <id> is a trace id, agent run id or message id')
+  .option('--full', 'print tool/model content unclipped')
+  .action(action((ctx, cmd) => runTracesShow(ctx, cmd.args[0] ?? '', cmd.opts())))
 
 // ---- config --------------------------------------------------------------------------------
 

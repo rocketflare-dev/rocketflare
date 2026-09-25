@@ -8,8 +8,8 @@ Cloudflare Worker (`apps/web`), a CLI (`apps/cli`), private zod contracts
 > before assuming a capability exists; update it when you change one.**
 > **Setup**: asked for setup help → run `/rf-setup` (it drives `scripts/bootstrap.sh --no-dev`, then
 > starts the server): show each `✔ n/10` line, stop on failure. By hand: `SETUP.md` Part 1.
-> **Fresh copy?** `/rf-adapt <slug>`, then `docs/ADAPTING.md`. `/rf-setup`, `/rf-adapt`, `/rf-preflight`
-> and `/rf-plugin` you
+> **Fresh copy?** `/rf-adapt <slug>`, then `docs/ADAPTING.md`. `/rf-setup`, `/rf-adapt`, `/rf-preflight`,
+> `/rf-traces` and `/rf-plugin` you
 > may run yourself; **`/rf-provision` is user-invoked only** (it creates paid resources and prompts for
 > tokens on a TTY) — asked to deploy, tell the user to run `/rf-provision`.
 > **Plugins** (D31, `docs/CONCEPTS.md` §16): a plugin is a git repository copied in, wired through six
@@ -35,7 +35,8 @@ Cloudflare Worker (`apps/web`), a CLI (`apps/cli`), private zod contracts
   `[ai]`, zero key → 503); Anthropic / OpenAI-compatible / Workers AI chat streamed as **AG-UI**
   (`@ag-ui/core` pinned; SSE or protobuf; `POST /api/agui/run` is the protocol endpoint), chat calls
   the knowledge tools, agents on `AGENT_RUN_WORKFLOW` (projected to AG-UI on read), Workers AI →
-  pgvector (uploads: R2 → `AI.toMarkdown` → pgvector), Langfuse
+  pgvector (uploads: R2 → `AI.toMarkdown` → pgvector), OTLP tracing (D32: GenAI
+  spans → Langfuse/Phoenix/any backend, always also `ai_spans` → `rocketflare traces`)
 - **Analytics**: not core — the `analytics` PLUGIN (D31, the one `defaultPlugins` entry, installed
   by the bootstrap): drizzle-cube at `/cubejs-api`+`/mcp`, fact tables on the `:15` cron, dashboards
 - **UI**: React 18 + Vite, DaisyUI 5 / Tailwind v4, React Router 6, TanStack Query 5; served as `ASSETS`
@@ -88,7 +89,8 @@ scripts/           bootstrap.sh → bootstrap.mjs (9 steps), install.sh (curl on
 docs/upgrades/     one porting note per kit release (+ unreleased.md) — CHANGELOG.md is the index
 .claude/skills/    rf-setup · rf-preflight · rf-adapt (+ checklist.md) · rf-provision (+ reference.md) ·
                    rf-how-do-i (+ example-orders.md) · rf-upgrade (+ porting.md — port later kit releases) ·
-                   rf-plugin (+ reference.md — install/upgrade/remove a plugin, D31)
+                   rf-plugin (+ reference.md — install/upgrade/remove a plugin, D31) ·
+                   rf-traces (debug a run from its span tree; pick a tracing backend, D32)
 ```
 
 **`packages/shared`.** Private, no build: `@rocketflare/shared/<module>` → `./src/<module>.ts` (incl. `ai/*`,

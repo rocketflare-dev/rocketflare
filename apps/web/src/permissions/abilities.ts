@@ -55,6 +55,8 @@ const grantAdmin: RoleGrant = can => {
   can('manage', 'Notification')
   can('manage', 'Conversation')
   can('manage', 'AgentRun')
+  // D32: traces are written by the platform and only read; nobody manages one.
+  can('read', 'Trace')
 }
 
 /**
@@ -76,6 +78,7 @@ const grantAdmin: RoleGrant = can => {
  * | AgentRun       | manage      | manage | manage | manage  | manage (own only — admin+ see every run, D7) |
  * | Document       | manage      | manage | manage | manage  | create+read (own-document delete is the route's owner check, D18) |
  * | Group          | manage      | manage | manage | manage  | read (D29: routes narrow a member's reads to their OWN groups) |
+ * | Trace          | manage      | read   | read   | read    | –      (D32: spans hold other people's prompts) |
  * | Feature:<f>    | access all  | by ctx | by ctx | access all | by ctx |
  */
 export const rolePermissions: Record<EffectiveRole, RoleGrant> = {

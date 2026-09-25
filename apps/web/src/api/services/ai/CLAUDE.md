@@ -1,4 +1,4 @@
-# AI services (D16, D17, D18)
+# AI services (D17, D18, D32)
 
 The provider seam and everything that calls a model. Feature code (routes, agents) never imports an
 SDK, never reads `ai_configs`, never decrypts a key — it asks `resolve.ts` for a client and calls it
@@ -24,7 +24,12 @@ Rules:
 - **Per-tenant request defaults live in the adapter**, never at call sites. Thinking is OFF unless
   a config turns it on; `reconcileThinking` drops it on forced tool choice and lifts `max_tokens`.
 - **Wrap, don't fork.** Tracing (`observability/tracing.ts` `traceChatClient`) and usage
-  (`tapUsage`) are client wrappers; a new cross-cutting concern is another wrapper.
+  (`tapUsage`) are client wrappers; a new cross-cutting concern is another wrapper. The other D32
+  hooks are one line each and in ONE place: `kit.ts`'s `runHandler` (the single tool runner both
+  loops call) wraps every tool in `traceToolCall`, `retrieval.ts` wraps `searchChunks` in a
+  `retrieval` span and its query embedding in `traceEmbed`, `ingest.ts` wraps each embeddings batch.
+  All nest under the ACTIVE span (`observability/context.ts`) and are no-ops without one — never
+  add a `trace` parameter to a service to get nesting.
 - **Credentials never leave the server.** Routes answer `hasCredential`; errors pass `redactSecrets`.
 - **A streaming route needs its own DB client** (`streamDatabase(c)` in `utils/routes/route-helpers.ts`):
   the request's client is closed in `waitUntil` the moment the Response is returned.
