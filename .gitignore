@@ -34,6 +34,8 @@ coverage/
 # Agent worktrees (transient, each is its own git repo)
 .claude/worktrees/
 .claude/settings.local.json
+# Kit update check cache (scripts/kit-update-check.mjs — the newest release, at most a day old)
+.claude/kit-update-check.json
 
 # Provisioning answer cache (ids and hostnames only — no secrets; scripts/provision.ts)
 apps/web/.provision.json

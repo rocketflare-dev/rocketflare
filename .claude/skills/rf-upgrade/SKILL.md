@@ -16,6 +16,12 @@ deliberately refuses to make.
 those files before you see them. If you find yourself typing out a file the plan called
 `skipped-surface-absent`, stop — you are about to break someone's app.
 
+**Often you arrive here from the update check.** In a copy, a `SessionStart` hook
+(`scripts/kit-update-check.mjs`) tells Claude once per session when `kit.repo` has a newer release
+than `kit.version`, with each release's one-line summary. That message is a pointer, not a plan: start at
+step 1 as usual. Silence it with `ROCKETFLARE_UPDATE_CHECK=0`; force a re-check by deleting
+`.claude/kit-update-check.json` (it caches the answer for a day).
+
 ## 1. Check the ground
 
 ```
