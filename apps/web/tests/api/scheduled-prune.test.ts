@@ -2,7 +2,7 @@
  * Nightly prune (D12): expired sessions, expired/consumed magic links, expired invitations older
  * than 30 days are removed; live rows stay.
  */
-import { eq } from 'drizzle-orm'
+import { eq, inArray } from 'drizzle-orm'
 import { describe, expect, it } from 'vitest'
 import { dispatchScheduled, runPruneAiSpans, runPruneExpired } from '@/api/scheduled'
 import { hashToken } from '@/api/utils/core/hash'
@@ -159,8 +159,14 @@ describe('pruneAiSpans (D32)', () => {
         span(b.id, '3'.repeat(16), new Date(now.getTime() - 30 * DAY)),
       ])
     const result = await runPruneAiSpans(db, 14, now)
-    expect(result.spans).toBe(2)
-    const left = await db.select({ spanId: aiSpans.spanId }).from(aiSpans)
-    expect(left.map(r => r.spanId).filter(id => /^[123]+$/.test(id))).toEqual(['2'.repeat(16)])
+    expect(result.cutoff).toBe(new Date(now.getTime() - 14 * DAY).toISOString())
+    // Assert on THIS test's tenants, never on `result.spans`: the prune is cross-tenant by design,
+    // and the nightly-cron tests in other files run the same task concurrently — one of them can
+    // delete these rows first, which is correct behaviour and would make a count flaky.
+    const left = await db
+      .select({ spanId: aiSpans.spanId })
+      .from(aiSpans)
+      .where(inArray(aiSpans.tenantId, [a.id, b.id]))
+    expect(left.map(r => r.spanId)).toEqual(['2'.repeat(16)])
   })
 })
