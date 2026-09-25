@@ -359,9 +359,18 @@ cycle). Detail: `packages/shared/CLAUDE.md`.
   then patches with `--reject` as a fallback. It **never** applies kit migrations (snapshots are
   cumulative), writes resource ids into tomls, applies deletions unasked, or ports the root
   version. The version stamp is written last, only on a clean apply.
+- **A copy hears about releases on its own**: a Claude Code `SessionStart` hook
+  (`scripts/kit-update-check.mjs`, in `.claude/settings.json`) compares `kit.version` with the
+  newest tag at `kit.repo` (`git ls-remote`, cached a day in the git-ignored
+  `.claude/kit-update-check.json`; a failed check an hour) and hands Claude one message to relay
+  once per session, with the CHANGELOG summaries and a pointer to `/rf-upgrade`. Copies only, a
+  fresh `startup` only, never in CI, `ROCKETFLARE_UPDATE_CHECK=0` to silence; any failure is
+  silence.
 - **Released history is never rewritten** — every copy pins a commit.
 
-**Known gaps:** tomls and `.dev.vars.example` are diffed, not merged; the reject rate is not
+**Known gaps:** a copy pinned before 0.10.1 has no update hook until it upgrades (and
+`.claude/settings.json` is `manual`, so that upgrade must add the hook entry by hand); summaries
+only for a GitHub-hosted kit; tomls and `.dev.vars.example` are diffed, not merged; the reject rate is not
 predicted; pre-manifest copies need `--adopt`; no partial upgrades; nothing checks the adopter ran
 migrations; lockstep plugin releases bump every plugin in a monorepo.
 
