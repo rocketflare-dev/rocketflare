@@ -6,6 +6,11 @@ copy of the kit forward without recreating anything its owner deleted.
 
 If you are running a copy: `pnpm kit:upgrade` tells you which of these you are missing.
 
+## 0.10.0 — 2026-09-25
+
+AI tracing now exports vendor-neutral OTLP spans with GenAI conventions — nested model, tool, retrieval and embeddings spans — to Langfuse, Phoenix or any backend, and records them locally for `rocketflare traces`.
+[Porting note](docs/upgrades/0.10.0.md).
+
 ## 0.9.0 — 2026-09-18
 
 A plugin's `agentTools` may now be async and answer per tenant, and `@/plugins/api` exports `sealSecret`/`openSecret` so a plugin can store a tenant's credential encrypted.
