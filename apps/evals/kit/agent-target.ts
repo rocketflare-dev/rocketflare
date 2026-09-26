@@ -24,7 +24,7 @@ import {
   executeRun,
   finishStep,
 } from '@/api/services/agents/runtime'
-import { resolvePrompt } from '@/api/services/prompts'
+import { getPrompt } from '@/api/services/prompts'
 import { loggerFor } from '@/api/utils/core/logger'
 import { agentRunEvents } from '@/db/schema'
 import { caseWorld } from './fixtures'
@@ -74,10 +74,10 @@ export function agentHarness(agentKey: AgentKey): Harness<EvalCase, JsonValue | 
         .orderBy(asc(agentRunEvents.seq))
       const output = (row.output ?? undefined) as JsonValue | undefined
       const transcript = transcriptFromRunEvents(events, row.input, output, row.error)
-      const prompt = await resolvePrompt(world.db, world.tenantId, agent.meta.promptKey as 'chat', {
-        appName: world.cfg.APP_NAME,
-        tenantName: world.tenantName,
-      })
+      // The TEMPLATE (override or default), not the interpolated text: every case has its own
+      // tenant name, and "which prompt ran" must hash the same across cases.
+      const prompt = (await getPrompt(world.db, world.tenantId, agent.meta.promptKey as 'chat'))
+        .effectiveText
       return {
         output,
         events: transcript.events,

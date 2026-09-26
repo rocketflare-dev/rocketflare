@@ -303,7 +303,9 @@ Server: `api/services/{ai,agents}/**` (read their `CLAUDE.md`), `services/prompt
   come first; LLM judges (`Rubric`, `Faithfulness` against what retrieval actually returned,
   `Reference` = vitest-evals' `FactualityJudge`) run through ONE judge harness that calls the kit's
   resolver on the `evals-judge` prompt key — so `agent_models` can pin it, `--judge-model` overrides
-  it, and every call is an `ai_usage` row under `evals.judge`. A run is a vitest JSON report in
+  it, and every call is an `ai_usage` row under `evals.judge`. `--provider` / `--judge-provider
+  fireworks|gemini` put the target or judge on a real encrypted tenant `ai_configs` row
+  (`openai_compatible`), so vendor comparisons also exercise the tenant-config tier. A run is a vitest JSON report in
   `.evals/runs/<ts>-<sha>.json` (git-ignored), stamped with the sha, models and prompt hashes;
   baselines are committed per suite (`baselines/<suite>.json`, `pnpm eval:baseline`) and
   `--compare` exits 1 on a per-case, per-judge drop past `--threshold` (0.1). `pnpm eval:view`
@@ -352,7 +354,8 @@ the report UI has no side-by-side view (the diff is `eval:view`'s terminal table
 against a deployed instance, no red-teaming, no push to Langfuse datasets; a run that parks on a
 person scores as a miss (an eval cannot answer it); run faithfulness sees each passage's
 600-character event preview; without `EMBEDDINGS_API_KEY` retrieval in evals leans on the lexical
-half of hybrid search; the judge is Anthropic-only (the platform key); a thumbs vote is a
+half of hybrid search; `--provider` knows three vendors (anthropic, fireworks, gemini) and the
+latter two are unpriced; a thumbs vote is a
 zero-length span, not an OTLP span event, and is not traced when the answer's root was pruned.
 
 ## 10. Deployment

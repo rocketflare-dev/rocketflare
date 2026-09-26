@@ -6,7 +6,14 @@ export { agentHarness } from './agent-target'
 export { chatHarness } from './chat-target'
 export { loadDataset, parseDataset } from './dataset'
 export { type DescribeCasesOptions, describeCases } from './describe'
-export { EVAL_JUDGE_MODEL, EVAL_MODEL, evalSkipReason, skipEvals } from './env'
+export {
+  EVAL_JUDGE_MODEL,
+  EVAL_JUDGE_PROVIDER,
+  EVAL_MODEL,
+  EVAL_PROVIDER,
+  evalSkipReason,
+  skipEvals,
+} from './env'
 export { judgeHarness } from './judge-harness'
 export {
   BudgetJudge,
@@ -19,4 +26,5 @@ export {
   SchemaJudge,
   TrajectoryJudge,
 } from './judges'
+export { EVAL_PROVIDERS, type EvalProviderName } from './providers'
 export * from './scoring'

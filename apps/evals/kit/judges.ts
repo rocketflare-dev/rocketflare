@@ -132,6 +132,10 @@ async function runOnce(input: Parameters<typeof judgeHarness.run>[0]) {
 const question = (input: EvalCase) =>
   typeof input.input === 'string' ? input.input : JSON.stringify(input.input, null, 2)
 
+function contextBlock(docs: readonly EvalContextDoc[]): string {
+  return docs.map((d, i) => `[${i + 1}] ${d.title}\n${d.text}`).join('\n\n')
+}
+
 const RUBRIC_SYSTEM = `Grade the answer against the rubric. Reply with JSON:
 {"verdict": "pass" | "partial" | "fail", "rationale": "<one or two sentences>"}
 "pass" = every criterion met; "partial" = some met, nothing wrong; "fail" = a criterion missed or anything false.`
@@ -143,10 +147,15 @@ export const RubricJudge = (): EvalJudge =>
     async ctx => {
       const rubric = ctx.input.expected.rubric
       if (!rubric) return unscored('case has no expected.rubric')
+      // A rubric often says "only what the policy says": the judge cannot grade that blind, so it
+      // gets the material the model was shown (what retrieval returned, else the case's documents).
+      const retrieved = (ctx.run.artifacts?.retrieved ?? []) as unknown as EvalContextDoc[]
+      const material = Array.isArray(retrieved) && retrieved.length ? retrieved : ctx.input.context
+      const reference = material.length ? `\n\nREFERENCE MATERIAL\n${contextBlock(material)}` : ''
       const verdict = await askJudge(
         ctx,
         RUBRIC_SYSTEM,
-        `TASK\n${question(ctx.input)}\n\nANSWER\n${outputText(ctx.output)}\n\nRUBRIC\n${rubric}`
+        `TASK\n${question(ctx.input)}${reference}\n\nANSWER\n${outputText(ctx.output)}\n\nRUBRIC\n${rubric}`
       )
       const score = { pass: 1, partial: 0.5, fail: 0 }[String(verdict.verdict)] ?? 0
       return { score, metadata: { rationale: String(verdict.rationale ?? ''), output: verdict } }
@@ -157,10 +166,6 @@ export const RubricJudge = (): EvalJudge =>
 const FAITHFULNESS_SYSTEM = `Check whether every factual claim in the answer is supported by the retrieved context.
 Ignore claims about the conversation itself, greetings, and statements that the context does not cover.
 Reply with JSON: {"supported": <number of supported claims>, "unsupported": ["<each unsupported claim>"], "rationale": "<one sentence>"}`
-
-function contextBlock(docs: readonly EvalContextDoc[]): string {
-  return docs.map((d, i) => `[${i + 1}] ${d.title}\n${d.text}`).join('\n\n')
-}
 
 /**
  * Is the answer grounded in what retrieval ACTUALLY returned (`artifacts.retrieved`, read from the

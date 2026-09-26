@@ -40,6 +40,10 @@ MICROSOFT_CLIENT_SECRET=
 # it chat falls back to Workers AI through the [ai] binding (zero key, billed to the Cloudflare account).
 ANTHROPIC_API_KEY=
 EMBEDDINGS_API_KEY=
+# Evals only (D33, docs/EVALS.md): `pnpm eval --provider fireworks|gemini` (and `--judge-provider`)
+# read these; the Worker never does, which is why they are comments here and not bindings.
+# FIREWORKS_API_KEY=
+# GEMINI_API_KEY=
 # AI tracing (D32). Spans ALWAYS land in the local `ai_spans` table (`pnpm cli traces list`);
 # these only add an OTLP backend. Langfuse: both keys are enough (preset auto-selected, Langfuse
 # Cloud unless OTEL_EXPORTER_OTLP_ENDPOINT points elsewhere). Phoenix locally:

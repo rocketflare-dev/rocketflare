@@ -8,6 +8,8 @@
 | `--case id,id` | Only these case ids (`EVAL_CASE`) |
 | `--model <id>` | Pin the TARGET's model: an `agent_models` row per prompt key on each case's tenant |
 | `--judge-model <id>` | Pin the JUDGE's model (`evals-judge` on the judge's tenant) |
+| `--provider anthropic\|fireworks\|gemini` | The target's provider: `anthropic` = the platform key (default); the others write an encrypted `ai_configs` row (`openai_compatible`) from `FIREWORKS_API_KEY` / `GEMINI_API_KEY` in `.dev.vars` |
+| `--judge-provider …` | The same for the judge |
 | `--compare [baseline\|<run.json>]` | Diff against the committed baselines (default) or another run; exit 1 on a regression |
 | `--threshold 0.1` | The per-judge drop that counts as a regression |
 | `--concurrency 2` | Suite files run at once (`EVAL_CONCURRENCY`) — provider rate limits are the ceiling |
@@ -53,7 +55,7 @@ suite threshold (0.7 by default).
 | `SchemaJudge(zodSchema)` | deterministic | the output | 1 / 0, with the first issues |
 | `TrajectoryJudge(mode)` | deterministic | `expected.tools`, `toolsMatch` | 1 / 0 — agentevals semantics: `strict` same order · `unordered` same multiset · `subset` nothing outside · `superset` at least these |
 | `BudgetJudge({ maxMs, maxTokens, maxCostUsd })` | deterministic | usage, timing | 1 / 0 (unknown cost never fails) |
-| `RubricJudge()` | LLM | `expected.rubric` | pass 1 · partial 0.5 · fail 0 |
+| `RubricJudge()` | LLM | `expected.rubric` + the material retrieved (else the case context) | pass 1 · partial 0.5 · fail 0 |
 | `FaithfulnessJudge()` | LLM | what retrieval RETURNED (`artifacts.retrieved`) | supported / (supported + unsupported); nothing retrieved → 0 |
 | `ReferenceJudge()` | LLM | `expected.output` | vitest-evals `FactualityJudge` (A 0.4 · B 0.6 · C 1 · D 0 · E 1) |
 

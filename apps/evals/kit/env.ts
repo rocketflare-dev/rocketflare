@@ -8,17 +8,25 @@
  * `--model` is given. Without a key there is nothing to evaluate, and every suite SKIPS with the
  * reason instead of failing — `createTestEnv` would otherwise hand the resolver the test `AI` stub,
  * which answers chat with canned text and would score as a real (and terrible) model.
+ * `--provider fireworks|gemini` puts the target on a tenant `ai_configs` row instead
+ * (`providers.ts`); `--judge-provider` does the same for the judge.
  */
 import { loadConfig } from '@/config'
 import { createTestEnv, type TestEnv } from '../../web/tests/mocks/bindings'
+import { evalProvider } from './providers'
 
 export const EVAL_MODEL = process.env.EVAL_MODEL || undefined
 export const EVAL_JUDGE_MODEL = process.env.EVAL_JUDGE_MODEL || undefined
+/** `--provider` / `--judge-provider`: `anthropic` (default, the platform key), `fireworks`, `gemini`. */
+export const EVAL_PROVIDER = evalProvider(process.env.EVAL_PROVIDER)
+export const EVAL_JUDGE_PROVIDER = evalProvider(process.env.EVAL_JUDGE_PROVIDER)
 
-/** Why suites cannot run here, or null when a real chat model resolves. */
+/** Why suites cannot run here, or null when both the target's and the judge's models resolve. */
 export function evalSkipReason(): string | null {
-  if (!process.env.ANTHROPIC_API_KEY) {
-    return 'no ANTHROPIC_API_KEY in apps/web/.dev.vars — evals need a real model (see docs/EVALS.md)'
+  for (const provider of new Set([EVAL_PROVIDER, EVAL_JUDGE_PROVIDER])) {
+    if (!process.env[provider.keyEnv]) {
+      return `no ${provider.keyEnv} in apps/web/.dev.vars — the ${provider.name} provider needs it (see docs/EVALS.md)`
+    }
   }
   return null
 }

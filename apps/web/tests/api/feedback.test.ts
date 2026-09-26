@@ -137,7 +137,7 @@ async function run(tenantId: string, requestedByUserId: string) {
       tenantId,
       agentKey: 'research-topic',
       status: 'succeeded',
-      input: { question: 'What is the refund window?' },
+      input: { topic: 'What is the refund window?' },
       output: { answer: 'Thirty days.', citations: [] },
       requestedByUserId,
     })
@@ -344,7 +344,7 @@ describe('GET /api/evals/export', () => {
     )
     expect(draft).toMatchObject({
       agentKey: 'research-topic',
-      input: { question: 'What is the refund window?' },
+      input: { topic: 'What is the refund window?' },
       expected: { output: { answer: 'Thirty days.' }, tools: ['search_knowledge'] },
       context: [{ title: 'Refund policy' }],
       source: { kind: 'agent_run', id: r.id },

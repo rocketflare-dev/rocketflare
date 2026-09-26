@@ -55,9 +55,19 @@ export function extractCases(report) {
 
 /**
  * The header `pnpm eval` stamps on every run file, next to vitest's own keys.
- * @param {{ sha?: string, dirty?: boolean, createdAt: string, filters?: string[], model?: string | null, judgeModel?: string | null, cases: any[] }} opts
+ * @param {{ sha?: string, dirty?: boolean, createdAt: string, filters?: string[], model?: string | null, judgeModel?: string | null, provider?: string, judgeProvider?: string, cases: any[] }} opts
  */
-export function runHeader({ sha, dirty, createdAt, filters, model, judgeModel, cases }) {
+export function runHeader({
+  sha,
+  dirty,
+  createdAt,
+  filters,
+  model,
+  judgeModel,
+  provider,
+  judgeProvider,
+  cases,
+}) {
   const promptHashes = {}
   const models = new Set()
   for (const c of cases) {
@@ -72,8 +82,10 @@ export function runHeader({ sha, dirty, createdAt, filters, model, judgeModel, c
     dirty,
     createdAt,
     filters,
+    provider: provider ?? 'anthropic',
     model: model ?? null,
     modelsObserved: [...models].sort(),
+    judgeProvider: judgeProvider ?? 'anthropic',
     judgeModel: judgeModel ?? null,
     promptHashes,
   }
@@ -251,6 +263,12 @@ export function parseArgs(argv) {
       case '--judge-model':
         out.judgeModel = next()
         break
+      case '--provider':
+        out.provider = next()
+        break
+      case '--judge-provider':
+        out.judgeProvider = next()
+        break
       case '--threshold':
         out.threshold = Number(next())
         if (!(out.threshold >= 0 && out.threshold <= 1)) throw new Error('--threshold is 0..1')
@@ -266,7 +284,10 @@ export function parseArgs(argv) {
         break
       case '--compare': {
         const v = argv[i + 1]
-        out.compare = v && !v.startsWith('--') ? (i++, v) : 'baseline'
+        if (v && !v.startsWith('--')) {
+          out.compare = v
+          i++
+        } else out.compare = 'baseline'
         break
       }
       default:

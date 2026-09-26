@@ -14,7 +14,7 @@ import { conversationSchema } from '@rocketflare/shared/ai/chat'
 import type { EvalCase } from '@rocketflare/shared/ai/evals'
 import { createHarness, type Harness } from 'vitest-evals'
 import { withEvalScope } from '@/api/observability/context'
-import { resolvePrompt } from '@/api/services/prompts'
+import { getPrompt } from '@/api/services/prompts'
 import { aguiFrames } from '../../web/tests/helpers/ai'
 import { request } from '../../web/tests/helpers/request'
 import { caseWorld, seedHistory } from './fixtures'
@@ -57,11 +57,9 @@ export function chatHarness(): Harness<EvalCase, string> {
       const transcript = transcriptFromAgui(events, question)
       if (transcript.error) throw new Error(`chat turn failed: ${transcript.error}`)
 
-      const prompt = await resolvePrompt(world.db, world.tenantId, 'chat', {
-        appName: world.cfg.APP_NAME,
-        tenantName: world.tenantName,
-        userName: '',
-      })
+      // The TEMPLATE (override or default), not the interpolated text: every case has its own
+      // tenant name, and "which prompt ran" must hash the same across cases.
+      const prompt = (await getPrompt(world.db, world.tenantId, 'chat')).effectiveText
       return {
         output: transcript.output,
         events: transcript.events,

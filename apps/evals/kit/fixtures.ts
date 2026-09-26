@@ -1,7 +1,8 @@
 /**
  * One isolated world per case (D33): a fresh tenant and owner, a session cookie, the case's context
- * documents ingested through the real `ingestText`, and — with `--model` — an `agent_models` row
- * pinning the prompt keys the target uses. A tenant per case is what makes retrieval honest: the
+ * documents ingested through the real `ingestText`, the `--provider`'s `ai_configs` row when it is
+ * not the platform tier, and — with `--model` — an `agent_models` row pinning the prompt keys the
+ * target uses. A tenant per case is what makes retrieval honest: the
  * model can only find what THIS case put there, and nothing a previous case left behind.
  *
  * Rows are left in the test database, as the test suites leave theirs (`.claude/rules/testing.md`).
@@ -16,7 +17,8 @@ import {
 } from '../../web/tests/helpers/auth'
 import { setupTestDatabase } from '../../web/tests/helpers/db'
 import type { TestEnv } from '../../web/tests/mocks/bindings'
-import { EVAL_MODEL, evalConfig, evalWorkerEnv } from './env'
+import { EVAL_MODEL, EVAL_PROVIDER, evalConfig, evalWorkerEnv } from './env'
+import { useProvider } from './providers'
 
 export const evalDb = () => setupTestDatabase()
 
@@ -39,6 +41,7 @@ export async function caseWorld(
   const cfg = evalConfig(env)
   const { user, tenant } = await createTestTenantWithUser(db, 'owner')
   const cookie = sessionCookieHeader(await createTestSession(db, user.id, tenant.id))
+  await useProvider(db, cfg, tenant.id, EVAL_PROVIDER, EVAL_MODEL)
   if (EVAL_MODEL) {
     await db
       .insert(agentModels)

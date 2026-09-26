@@ -1,0 +1,38 @@
+{
+  "suite": "agents-research-topic",
+  "createdAt": "2026-09-26T05:11:40.208Z",
+  "sha": "2d41fc1",
+  "model": "claude-sonnet-4-5",
+  "judgeModel": null,
+  "cases": {
+    "refund-conditions": {
+      "avgScore": 1,
+      "scores": {
+        "Trajectory": 1,
+        "Schema": 1,
+        "Contains": 1,
+        "Faithfulness": 1,
+        "Rubric": 1
+      }
+    },
+    "escalation-chain": {
+      "avgScore": 1,
+      "scores": {
+        "Trajectory": 1,
+        "Schema": 1,
+        "Contains": 1,
+        "Faithfulness": 1,
+        "Rubric": 1
+      }
+    },
+    "not-in-kb": {
+      "avgScore": 1,
+      "scores": {
+        "Trajectory": 1,
+        "Schema": 1,
+        "Faithfulness": 1,
+        "Rubric": 1
+      }
+    }
+  }
+}

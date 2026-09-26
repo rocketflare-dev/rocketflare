@@ -14,9 +14,13 @@ make answers better or worse?** They run locally with `pnpm eval`, cost real tok
    **skips** and says why. `EMBEDDINGS_API_KEY` is optional. Without it, retrieval uses the test
    stub's deterministic vectors and leans on the lexical half of hybrid search. That's enough for
    the starter cases, which share vocabulary with their documents.
-3. `pnpm eval`. The first run takes a minute or two for the three starter suites (12 cases).
+3. `pnpm eval`. The first run takes a minute or two for the three starter suites (12 cases), and
+   about $0.16 on the default Claude model plus the judge.
+4. Optional, to compare vendors: `FIREWORKS_API_KEY` and/or `GEMINI_API_KEY` in `.dev.vars`, then
+   `--provider fireworks|gemini` (and `--judge-provider`, see below).
 
-Only the model, embeddings and tracing keys are read from `.dev.vars`. A variable in the environment
+Only the model keys (Anthropic, Fireworks, Gemini), the embeddings key and the tracing keys are
+read from `.dev.vars`. A variable in the environment
 (CI's secret) wins over both files. If `LANGFUSE_*` or `OTEL_EXPORTER_OTLP_*` keys are set, eval
 traces are exported too, tagged `rocketflare.eval=true`.
 
@@ -89,7 +93,18 @@ assigns it, or on `--judge-model <id>` for one run. Every judge call is costed i
 pnpm eval                          # everything
 pnpm eval knowledge --case refund-window,not-covered
 pnpm eval agents --model claude-haiku-4-5 --judge-model claude-opus-5-5
+pnpm eval knowledge --provider gemini                      # gemini-2.5-flash as the target
+pnpm eval knowledge --provider fireworks --model accounts/fireworks/models/gpt-oss-120b
+pnpm eval knowledge --judge-provider gemini                # a non-Claude judge
 ```
+
+`--provider anthropic` (the default) is the resolver's platform tier. `fireworks` and `gemini`
+write a real, encrypted `ai_configs` row on each case's tenant (both through `openai_compatible`:
+Fireworks at `https://api.fireworks.ai/inference/v1`, Gemini at Google's OpenAI-compatible
+endpoint), so those runs also exercise the tenant-config tier. `--model` picks a model on that
+provider. Fireworks serverless availability varies by account, so pick one your key can call.
+Neither vendor is in the kit's price table, so their cost reads "—". Hold the judge constant when
+comparing targets.
 
 Each case prints its judge scores. The run ends with a table of score, tokens, cost and
 milliseconds, plus the path of the run file. For a failure, the run file has the judge's

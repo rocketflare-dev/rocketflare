@@ -2,7 +2,8 @@
 /**
  * `pnpm eval` (D33) — run the eval suites locally, outside the gate.
  *
- *   pnpm eval [suite…] [--model x] [--judge-model y] [--case id,id] [--compare [baseline|<run.json>]]
+ *   pnpm eval [suite…] [--provider anthropic|fireworks|gemini] [--model x] [--judge-provider p]
+ *             [--judge-model y] [--case id,id] [--compare [baseline|<run.json>]]
  *             [--threshold 0.1] [--concurrency 2]
  *   pnpm eval:baseline [suite…] [--from <run.json>]   write baselines/<suite>.json from a run (default: latest)
  *   pnpm eval:view [a.json [b.json]] [--compare …]    print the score diff, then the vitest-evals report UI
@@ -38,6 +39,8 @@ const VITEST = path.join(ROOT, 'node_modules', '.bin', 'vitest')
 /** The only `.dev.vars` keys a run reads: model and embeddings keys, and a tracing backend. */
 const DEV_VARS_KEYS = [
   'ANTHROPIC_API_KEY',
+  'FIREWORKS_API_KEY',
+  'GEMINI_API_KEY',
   'EMBEDDINGS_API_KEY',
   'LANGFUSE_PUBLIC_KEY',
   'LANGFUSE_SECRET_KEY',
@@ -90,12 +93,21 @@ function run(opts) {
   env.NODE_ENV = 'test'
   if (opts.model) env.EVAL_MODEL = opts.model
   if (opts.judgeModel) env.EVAL_JUDGE_MODEL = opts.judgeModel
+  if (opts.provider) env.EVAL_PROVIDER = opts.provider
+  if (opts.judgeProvider) env.EVAL_JUDGE_PROVIDER = opts.judgeProvider
   if (opts.cases) env.EVAL_CASE = opts.cases
   if (opts.concurrency) env.EVAL_CONCURRENCY = opts.concurrency
-  if (!env.ANTHROPIC_API_KEY) {
-    console.warn(
-      '! No ANTHROPIC_API_KEY (apps/web/.dev.vars or the environment): every suite will skip.'
-    )
+  const keyFor = {
+    anthropic: 'ANTHROPIC_API_KEY',
+    fireworks: 'FIREWORKS_API_KEY',
+    gemini: 'GEMINI_API_KEY',
+  }
+  for (const p of new Set([opts.provider ?? 'anthropic', opts.judgeProvider ?? 'anthropic'])) {
+    if (keyFor[p] && !env[keyFor[p]]) {
+      console.warn(
+        `! No ${keyFor[p]} (apps/web/.dev.vars or the environment): every suite will skip.`
+      )
+    }
   }
 
   mkdirSync(RUNS, { recursive: true })
@@ -129,6 +141,8 @@ function run(opts) {
     filters: opts.filters,
     model: opts.model,
     judgeModel: opts.judgeModel,
+    provider: opts.provider,
+    judgeProvider: opts.judgeProvider,
     cases,
   })
   writeFileSync(file, `${JSON.stringify(report, null, 2)}\n`)

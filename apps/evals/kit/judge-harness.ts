@@ -3,8 +3,9 @@
  * own `FactualityJudge` — calls through here, and here calls through the KIT:
  *
  * - the client comes from `resolveChat(..., { promptKey: 'evals-judge' })`, so Settings → agent
- *   models can pin the judge like any agent, and `--judge-model` pins it for one run (an
- *   `agent_models` row on the judge's own tenant);
+ *   models can pin the judge like any agent, `--judge-model` pins it for one run (an
+ *   `agent_models` row on the judge's own tenant) and `--judge-provider fireworks|gemini` moves it
+ *   to another provider (an `ai_configs` row there);
  * - the system prompt is the `evals-judge` registry entry followed by the judge's own instructions;
  * - every call is costed in `ai_usage` under feature `evals.judge` and traced (`invoke_agent
  *   evals-judge`, marked `rocketflare.eval=true`).
@@ -21,8 +22,9 @@ import { recordUsage } from '@/api/services/ai/usage'
 import { resolvePrompt } from '@/api/services/prompts'
 import { agentModels } from '@/db/schema'
 import { createTestTenant } from '../../web/tests/helpers/auth'
-import { EVAL_JUDGE_MODEL, evalConfig, evalWorkerEnv } from './env'
+import { EVAL_JUDGE_MODEL, EVAL_JUDGE_PROVIDER, evalConfig, evalWorkerEnv } from './env'
 import { evalDb } from './fixtures'
+import { useProvider } from './providers'
 import { JUDGE_FEATURE } from './spend'
 
 let judgeTenant: Promise<string> | undefined
@@ -31,6 +33,7 @@ function judgeTenantId(): Promise<string> {
   judgeTenant ??= (async () => {
     const db = evalDb()
     const tenant = await createTestTenant(db, { name: 'Eval judge' })
+    await useProvider(db, evalConfig(), tenant.id, EVAL_JUDGE_PROVIDER, EVAL_JUDGE_MODEL)
     if (EVAL_JUDGE_MODEL) {
       await db
         .insert(agentModels)
