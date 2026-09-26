@@ -110,6 +110,7 @@ you removed. [`CHANGELOG.md`](CHANGELOG.md) is what you would be catching up on.
 - **Retrieval** — ingest text into `documents`/`chunks` (paragraph-aware chunking, inline or queued indexing), `vector(1024)` embeddings with an HNSW index, and **hybrid search**: dense cosine + lexical `tsvector`, fused with Reciprocal Rank Fusion. Vectors are ordinary tenant-scoped rows.
 - **Document uploads** — PDF, Word, Excel, OpenDocument, HTML and XML are stored in R2 and converted to Markdown by Workers AI (`env.AI.toMarkdown`, free for documents) in a `document.convert` job, then indexed like pasted text; the original stays downloadable. Agents read the same knowledge base through built-in `search_knowledge` / `get_document` / `list_documents` tools.
 - **Usage ledger and tracing** — one `ai_usage` row per model call with token counts and a usage summary endpoint; vendor-neutral OTLP traces with GenAI conventions (agent → model calls, tools, retrieval, embeddings) exported to Langfuse, Phoenix or any OTLP backend from `waitUntil`, and always recorded locally so `rocketflare traces show <runId>` works with zero config — no OpenTelemetry dependency.
+- **Evals and feedback** — `pnpm eval` runs vitest-evals suites against the real chat route and agent runtime in-process, with deterministic judges (tool trajectory, schema, contains, budget) and LLM judges (rubric, faithfulness to what was retrieved, reference answer) that go through the kit's own model resolver; runs are JSON with committed baselines and `--compare` regression checks, plus a local report UI. Thumbs on chat replies and run output feed `rocketflare evals promote`, which turns a bad real answer into a draft case. The `/rf-evals` skill drives all of it.
 
 ### Analytics
 - **Semantic layer** — drizzle-cube mounted at `/cubejs-api` and `/mcp` behind the app's auth; every cube scopes its SQL to the current tenant, and a mandatory isolation test queries every cube as two tenants and asserts disjoint rows.
@@ -119,7 +120,7 @@ you removed. [`CHANGELOG.md`](CHANGELOG.md) is what you would be catching up on.
 
 ### CLI
 - `rocketflare login` opens the browser, completes sign-in and tenant selection in the app, and receives a tenant API key on a loopback callback — stored `0600` in `~/.rocketflare/config.json`, never printed in full.
-- `whoami`, `status`, `members list`, `keys list`, `activity list`, `traces list|show` (the AI span tree of a run or chat turn, admin+), `config`; `--json` prints only the parsed response so output pipes into `jq`; `ROCKETFLARE_API_KEY` / `ROCKETFLARE_URL` replace the config file in CI.
+- `whoami`, `status`, `members list`, `keys list`, `activity list`, `traces list|show` (the AI span tree of a run or chat turn, admin+), `feedback list` and `evals promote` (turn a thumbs-down into an eval case, admin+), `config`; `--json` prints only the parsed response so output pipes into `jq`; `ROCKETFLARE_API_KEY` / `ROCKETFLARE_URL` replace the config file in CI.
 - Every response is parsed with the same zod schema the server validated with; exit codes distinguish "not logged in" (2) and "forbidden" (3) from other errors (1).
 
 ### Developer experience
@@ -137,7 +138,8 @@ you removed. [`CHANGELOG.md`](CHANGELOG.md) is what you would be catching up on.
 rocketflare/          workspace root: package.json (scripts delegate via pnpm -r / --filter),
 │                     pnpm-workspace.yaml, biome.json, tsconfig.base.json, CLAUDE.md, docs/, .github/
 ├── apps/web/         @rocketflare/web — Worker (Hono API) + React UI; wrangler*.toml, migrations/, scripts/, tests/
-├── apps/cli/         @rocketflare/cli — `rocketflare` CLI: login, logout, whoami, status, members/keys/activity list, traces list|show, config
+├── apps/cli/         @rocketflare/cli — `rocketflare` CLI: login, logout, whoami, status, members/keys/activity list, traces list|show, feedback list, evals promote, config
+├── apps/evals/       @rocketflare/evals — developer-run eval suites (vitest-evals): `pnpm eval`, never part of the gate
 └── packages/shared/  @rocketflare/shared — PRIVATE zod contracts, error envelope, pagination, permission types;
                       consumed as TypeScript source through the workspace link (no build step)
 ```
@@ -171,7 +173,7 @@ there list every known gap.
 | [`docs/DEPLOY.md`](docs/DEPLOY.md) | Cloudflare topology, the two tomls, resources, release dance, rollback, bundle size |
 | [`docs/RLS.md`](docs/RLS.md) | tenant isolation posture and how to turn row-level security on |
 | `.claude/rules/*.md` | layer conventions (api, database, ui, cli, testing, code-quality, cloudflare) — auto-loaded by path |
-| `.claude/skills/` | the slash commands a coding agent drives: `/rf-setup` (first run), `/rf-preflight` (read-only diagnosis), `/rf-adapt` (rename + checklist), `/rf-how-do-i` (coaching for a new feature — asks, plans, writes `docs/features/<slug>.md`, never the code), `/rf-upgrade` (port later kit releases into your copy), `/rf-plugin` (install, upgrade, remove or audit a plugin), `/rf-traces` (debug a run or chat turn from its span tree; pick or switch a tracing backend) — an agent may run those when you ask in plain words — and `/rf-provision` (deploy to Cloudflare + Neon + Resend), which only you can start: it creates paid resources and prompts for tokens |
+| `.claude/skills/` | the slash commands a coding agent drives: `/rf-setup` (first run), `/rf-preflight` (read-only diagnosis), `/rf-adapt` (rename + checklist), `/rf-how-do-i` (coaching for a new feature — asks, plans, writes `docs/features/<slug>.md`, never the code), `/rf-upgrade` (port later kit releases into your copy), `/rf-plugin` (install, upgrade, remove or audit a plugin), `/rf-traces` (debug a run or chat turn from its span tree; pick or switch a tracing backend), `/rf-evals` (write, run and interpret evals; compare models or prompts; turn thumbs-down into cases) — an agent may run those when you ask in plain words — and `/rf-provision` (deploy to Cloudflare + Neon + Resend), which only you can start: it creates paid resources and prompts for tokens |
 
 ## Provenance
 

@@ -49,7 +49,8 @@ export interface RunProjectionContext {
 /**
  * What the kit's agent runs can do, in AG-UI's own capability vocabulary. Declared on every run's
  * `STATE_SNAPSHOT` so a third-party client knows — before it renders anything — that an approve
- * button on this server does something. `feedback` is false because nothing consumes a thumbs-up.
+ * button on this server does something. `feedback` is true since D33: a thumbs up/down on the run's
+ * output is `POST /api/feedback` (`target: 'agent_run'`), and it lands in the run's trace.
  */
 export const AGENT_RUN_CAPABILITIES = {
   humanInTheLoop: {
@@ -57,7 +58,7 @@ export const AGENT_RUN_CAPABILITIES = {
     approvals: true,
     interrupts: true,
     interventions: true,
-    feedback: false,
+    feedback: true,
     approveWithEdits: true,
   },
 } as const

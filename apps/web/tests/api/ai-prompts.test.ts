@@ -38,6 +38,7 @@ describe('/api/ai/prompts', () => {
       'summarize-text',
       'chat-compaction',
       'research-topic',
+      'evals-judge',
     ])
     expect(list.items[0]).toMatchObject({
       isOverridden: false,

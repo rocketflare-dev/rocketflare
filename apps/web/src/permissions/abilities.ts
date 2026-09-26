@@ -57,6 +57,9 @@ const grantAdmin: RoleGrant = can => {
   can('manage', 'AgentRun')
   // D32: traces are written by the platform and only read; nobody manages one.
   can('read', 'Trace')
+  // D33: rating answers, and reading everyone's ratings (the promotion queue).
+  can('create', 'Feedback')
+  can('read', 'Feedback')
 }
 
 /**
@@ -79,6 +82,7 @@ const grantAdmin: RoleGrant = can => {
  * | Document       | manage      | manage | manage | manage  | create+read (own-document delete is the route's owner check, D18) |
  * | Group          | manage      | manage | manage | manage  | read (D29: routes narrow a member's reads to their OWN groups) |
  * | Trace          | manage      | read   | read   | read    | –      (D32: spans hold other people's prompts) |
+ * | Feedback       | manage      | create+read | create+read | create+read | create (D33: on answers they can read) |
  * | Feature:<f>    | access all  | by ctx | by ctx | access all | by ctx |
  */
 export const rolePermissions: Record<EffectiveRole, RoleGrant> = {
@@ -110,6 +114,9 @@ export const rolePermissions: Record<EffectiveRole, RoleGrant> = {
     // D18: anyone may ingest text and search; deleting someone else's document needs `delete
     // Document` (admin+). The own-document delete is an explicit `ownerUserId` check in the route.
     can('create', 'Document')
+    // D33: anyone may rate an answer they can read (the service checks the target); reading the
+    // ratings is admin+.
+    can('create', 'Feedback')
   },
 }
 

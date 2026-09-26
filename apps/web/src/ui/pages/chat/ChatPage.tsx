@@ -23,6 +23,7 @@ import { documentCardsFromToolCalls } from '@rocketflare/shared/ai/embeddings'
 import { type FormEvent, type KeyboardEvent, useEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { ChatBubble } from '@/ui/components/ai/ChatBubble'
+import { FeedbackThumbs } from '@/ui/components/ai/FeedbackThumbs'
 import { ConfirmModal, EmptyState, PaginationControls, SkeletonRows } from '@/ui/components/shared'
 import { useAiReadiness } from '@/ui/hooks/useAiConfig'
 import {
@@ -32,6 +33,7 @@ import {
   useDeleteConversation,
   useSendMessage,
 } from '@/ui/hooks/useChat'
+import { useMyFeedback } from '@/ui/hooks/useFeedback'
 import { usePermissions } from '@/ui/hooks/usePermissions'
 import { isAiNotConfigured } from '@/ui/lib/aguiStream'
 import { timeAgo } from '@/ui/lib/format'
@@ -289,6 +291,9 @@ function Transcript({
 }) {
   const bottomRef = useRef<HTMLDivElement>(null)
   const count = messages?.length ?? 0
+  // D33: one query for the page's answers, not one per bubble.
+  const answerIds = (messages ?? []).filter(m => m.role === 'assistant').map(m => m.id)
+  const { data: myVotes } = useMyFeedback('message', answerIds)
 
   // Follow the reply: every delta and every new message scrolls the log to its end.
   // biome-ignore lint/correctness/useExhaustiveDependencies: scroll on content changes, not on ref identity
@@ -321,6 +326,15 @@ function Transcript({
               usage={message.usage}
               // Derived, never stored: the same mapper the stream used, over the row's tool calls.
               documents={documentCardsFromToolCalls(message.toolCalls)}
+              actions={
+                message.role === 'assistant' ? (
+                  <FeedbackThumbs
+                    target="message"
+                    targetId={message.id}
+                    rating={myVotes?.get(message.id)}
+                  />
+                ) : undefined
+              }
             />
           ))
       )}

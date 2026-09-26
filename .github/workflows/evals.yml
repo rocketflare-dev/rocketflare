@@ -1,0 +1,68 @@
+name: Evals
+
+# Developer-run eval suites (D33, docs/EVALS.md) — OUTSIDE the gate, on purpose: a model's run-to-run
+# variance must never block a merge, and every run spends real tokens. Two ways in:
+#
+#   - manual dispatch (Actions → Evals → Run workflow), optionally with a suite filter and a model;
+#   - a pull request labelled `run-evals` (remove and re-add the label to run again).
+#
+# It needs the `ANTHROPIC_API_KEY` repository secret; without it every suite skips and says why.
+# `--compare` diffs against the committed `apps/evals/baselines/` and fails the JOB (not the gate) on
+# a regression past the threshold. The run file is uploaded as an artifact either way — open it with
+# `pnpm eval:view <file>`.
+on:
+  workflow_dispatch:
+    inputs:
+      suite:
+        description: Suite filter (e.g. `knowledge`, `agents`) — empty runs all
+        required: false
+        default: ''
+      model:
+        description: Pin the target model (`--model`) — empty uses the resolver's default
+        required: false
+        default: ''
+  pull_request:
+    types: [labeled]
+
+concurrency:
+  group: evals-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  evals:
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.label.name == 'run-evals' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: rocketflare_test
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U test -d rocketflare_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: pnpm eval --compare
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          SUITE: ${{ inputs.suite }}
+          MODEL: ${{ inputs.model }}
+        run: pnpm eval $SUITE ${MODEL:+--model "$MODEL"} --compare
+      - name: Upload the run
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-run
+          path: apps/evals/.evals/runs/*.json
+          if-no-files-found: ignore

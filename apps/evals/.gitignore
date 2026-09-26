@@ -1,0 +1,3 @@
+# Eval run results (`pnpm eval`): transcripts of real model output, git sha, scores. Local only —
+# baselines are the committed half (`baselines/`).
+.evals/

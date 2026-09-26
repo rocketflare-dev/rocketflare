@@ -86,6 +86,12 @@ const CORE_QUERY_KEYS = {
     },
     /** `/api/ai/agent-models` — every prompt key with its assignment + effective model (D17) */
     agentModels: ['ai', 'agent-models'] as const,
+    /** `/api/feedback/mine` — the caller's own thumbs on a set of answers (D33) */
+    feedback: {
+      all: ['ai', 'feedback'] as const,
+      mine: (target = '', ids: readonly string[] = []) =>
+        ['ai', 'feedback', 'mine', target, [...ids].sort().join(',')] as const,
+    },
   },
   /** `/api/agents` — the registered agent roster (code: changes with a deploy) (D7) */
   agents: {

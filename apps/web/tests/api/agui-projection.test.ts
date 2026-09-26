@@ -119,7 +119,7 @@ describe('projectRunToAgui', () => {
             approvals: true,
             interrupts: true,
             interventions: true,
-            feedback: false,
+            feedback: true,
             approveWithEdits: true,
           },
         },

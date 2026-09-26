@@ -59,6 +59,14 @@ inline and framable are different properties, `filePath(id)`, `fileSchema`/`uplo
 `hasCredential`, never a key), `upsertAiConfigRequestSchema` (`apiKey` write-only), `testAiConfigRequest/ResponseSchema`,
 `aiReadinessSchema`, `DEFAULT_MODELS`, `PROVIDER_PRESETS`/`presetsFor` (vendors are data, not enum values),
 **`EMBEDDING_DIM = 1024`** (the `chunks.embedding` column width — a change is a migration) ·
+`evals.ts` (D33) — `evalCaseSchema` (the dataset line: `id`, `input` string|object, `messages`,
+`context` docs, `expected { output, rubric, tools, toolsMatch, contains }`, `tags`, `source` — a
+promoted case names the message/run, never the tenant, `agentKey`), `EVAL_TRAJECTORY_MODES`,
+feedback (`FEEDBACK_TARGETS` `message|agent_run`, `feedbackRatingSchema` `1|-1`,
+`createFeedbackRequestSchema`, `feedbackSchema`, list/mine queries and responses,
+`feedbackTargetParamSchema`) and `evalExportQuerySchema` (exactly one of `messageId`/`runId`) /
+`evalExportResponseSchema` (`containsTenantData: true`) — `/api/feedback`, `/api/evals`, the CLI and
+`apps/evals` ·
 `traces.ts` (D32) — `TRACE_SPAN_KINDS` (`agent|llm|tool|retrieval|embedding|job|span`), `traceIdSchema` (32 hex), `traceSpanSchema`, `traceSummarySchema`, `traceListQuerySchema` / `traceListResponseSchema`, `traceDetailSchema`, `traceLookupParamSchema` (trace id OR uuid) — `GET /api/traces` and the CLI ·
 `prompts.ts` — `promptKeySchema` (kebab-case), `PROMPT_MAX_LENGTH`, `promptDefinitionSchema`, `promptOverrideSchema`,
 `updatePromptRequestSchema`, `promptWithResolvedSchema`, `interpolatePrompt()` (`{{var}}`, unknown left visible) ·

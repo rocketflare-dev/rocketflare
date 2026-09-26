@@ -18,6 +18,12 @@ slice.
 `$ARGUMENTS` is what they want to build. If it is empty or a single word, ask what it is for and who
 uses it before anything else.
 
+**Not a feature, a quality question?** "How do I test whether the assistant/agent gives good
+answers", "compare models", "is this prompt better", "turn thumbs-down into tests": that's the eval
+harness (D33). Hand over to the `rf-evals` skill rather than planning a slice. And when the feature
+you're planning adds an AI surface (a new agent, a new prompt), put "a suite in `apps/evals`" in the
+plan's test section so its quality is measured from day one.
+
 ## 0. First question: app, or plugin?
 
 Ask it before the interview, because it changes where every file lands (D31, `docs/CONCEPTS.md`

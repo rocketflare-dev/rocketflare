@@ -25,8 +25,11 @@ import {
 const ROLES = membershipRoleSchema.options
 const CRUD: Actions[] = ['create', 'read', 'update', 'delete']
 
-/** `create` = create + read, nothing else (member on `File`). */
-type Level = 'manage' | 'read' | 'create' | 'none'
+/**
+ * `create` = create + read, nothing else (member on `File`). `createOnly` = create and NOT read
+ * (member on `Feedback`: they rate answers, and only admin+ read the ratings back).
+ */
+type Level = 'manage' | 'read' | 'create' | 'createOnly' | 'none'
 
 /** Subject → per-role level, transcribed from the matrix. */
 const MATRIX: Record<string, Record<Role, Level>> = {
@@ -51,6 +54,8 @@ const MATRIX: Record<string, Record<Role, Level>> = {
   FeatureFlag: { owner: 'none', admin: 'none', support: 'none', member: 'none' },
   // D32 — traces hold other people's prompts: admin+ read, members nothing, nobody writes one.
   Trace: { owner: 'read', admin: 'read', support: 'read', member: 'none' },
+  // D33 — anyone rates an answer; reading the ratings (the promotion queue) is admin+.
+  Feedback: { owner: 'create', admin: 'create', support: 'create', member: 'createOnly' },
 }
 
 const build = (role: Role | null, features: string[] = [], isGlobalAdmin = false) =>
@@ -82,6 +87,11 @@ describe('ability matrix (D10)', () => {
             expect(ability.can('read', s)).toBe(true)
             expect(ability.can('manage', s)).toBe(false)
             for (const a of ['update', 'delete'] as Actions[]) expect(ability.can(a, s)).toBe(false)
+          } else if (level === 'createOnly') {
+            expect(ability.can('create', s)).toBe(true)
+            for (const a of ['manage', 'read', 'update', 'delete'] as Actions[]) {
+              expect(ability.can(a, s)).toBe(false)
+            }
           } else {
             for (const a of ['manage', ...CRUD] as Actions[]) expect(ability.can(a, s)).toBe(false)
           }

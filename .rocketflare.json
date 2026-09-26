@@ -165,6 +165,14 @@
       "registries": ["apps/web/src/api/index.ts", "apps/web/src/ui/App.tsx"]
     },
     {
+      "id": "feature-evals",
+      "kind": "optional-feature",
+      "label": "Developer-run eval suites (apps/evals, pnpm eval, the rf-evals skill)",
+      "anchor": "apps/evals/kit/index.ts",
+      "paths": ["apps/evals/**", ".claude/skills/rf-evals/**", "docs/EVALS.md"],
+      "registries": ["package.json#eval", "pnpm-workspace.yaml"]
+    },
+    {
       "id": "demo-seed",
       "kind": "example",
       "label": "The --demo block of the seed script",

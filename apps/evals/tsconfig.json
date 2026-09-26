@@ -1,0 +1,22 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "types": ["node"],
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["../web/src/*"],
+      "vitest": ["node_modules/vitest"]
+    },
+    "allowJs": true
+  },
+  "include": [
+    "kit/**/*",
+    "suites/**/*",
+    "tests/**/*",
+    "scripts/**/*",
+    "*.ts",
+    "../web/worker-configuration.d.ts"
+  ],
+  "exclude": ["node_modules", ".evals"]
+}

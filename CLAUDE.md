@@ -9,7 +9,7 @@ Cloudflare Worker (`apps/web`), a CLI (`apps/cli`), private zod contracts
 > **Setup**: asked for setup help → run `/rf-setup` (it drives `scripts/bootstrap.sh --no-dev`, then
 > starts the server): show each `✔ n/10` line, stop on failure. By hand: `SETUP.md` Part 1.
 > **Fresh copy?** `/rf-adapt <slug>`, then `docs/ADAPTING.md`. `/rf-setup`, `/rf-adapt`, `/rf-preflight`,
-> `/rf-traces` and `/rf-plugin` you
+> `/rf-traces`, `/rf-evals` and `/rf-plugin` you
 > may run yourself; **`/rf-provision` is user-invoked only** (it creates paid resources and prompts for
 > tokens on a TTY) — asked to deploy, tell the user to run `/rf-provision`.
 > **Plugins** (D31, `docs/CONCEPTS.md` §16): a plugin is a git repository copied in, wired through six
@@ -36,12 +36,15 @@ Cloudflare Worker (`apps/web`), a CLI (`apps/cli`), private zod contracts
   (`@ag-ui/core` pinned; SSE or protobuf; `POST /api/agui/run` is the protocol endpoint), chat calls
   the knowledge tools, agents on `AGENT_RUN_WORKFLOW` (projected to AG-UI on read), Workers AI →
   pgvector (uploads: R2 → `AI.toMarkdown` → pgvector), OTLP tracing (D32: GenAI
-  spans → Langfuse/Phoenix/any backend, always also `ai_spans` → `rocketflare traces`)
+  spans → Langfuse/Phoenix/any backend, always also `ai_spans` → `rocketflare traces`); evals (D33:
+  `apps/evals`, vitest-evals on vitest 4, `pnpm eval`, never in the gate) + thumbs feedback →
+  `rocketflare evals promote`
 - **Analytics**: not core — the `analytics` PLUGIN (D31, the one `defaultPlugins` entry, installed
   by the bootstrap): drizzle-cube at `/cubejs-api`+`/mcp`, fact tables on the `:15` cron, dashboards
 - **UI**: React 18 + Vite, DaisyUI 5 / Tailwind v4, React Router 6, TanStack Query 5; served as `ASSETS`
 - **CLI**: commander + chalk + open; `tsx` in dev, `tsc` → `dist/cli.js` (bin `rocketflare`)
-- **Tests**: vitest projects `api` · `api-isolated` · `ui` · `config` (Postgres :5433); cli
+- **Tests**: vitest projects `api` · `api-isolated` · `ui` · `config` (Postgres :5433); cli; the
+  eval kit's unit tests (`apps/evals/tests`). Evals themselves are `pnpm eval`, outside the gate
 - **Lint**: Biome 2 at the root (single quotes, `asNeeded` semicolons, 100 cols)
 
 ## Commands (from the workspace root)
@@ -53,6 +56,7 @@ pnpm seed [--demo] && pnpm dev  # tenant/users/key (+ populated workspace); wran
 pnpm dev:stop · pnpm dev:status · pnpm dev:db:status  # kill this repo's dev tree / port holders / every dev database
 pnpm cli login --server http://localhost:3001  # browser → ~/.rocketflare/config.json, then whoami
 pnpm test:db:up && pnpm test  # every package; web loads .env.test
+pnpm eval [suite] [--model x] [--compare] · pnpm eval:baseline · pnpm eval:view  # real-model evals (D33, docs/EVALS.md)
 pnpm lint · pnpm typecheck · pnpm build  # workspace-wide
 pnpm web <script>  # any apps/web script (test:api, db:check…)
 pnpm db:generate · pnpm db:studio · pnpm deploy[:staging] · pnpm provision all  # (or one phase: --help)
@@ -81,6 +85,8 @@ apps/web/          @rocketflare/web — wrangler*.toml, worker-configuration.d.t
 │                  (per-dir CLAUDE.md: permissions, db/schema, api/*, ui, plugins, plugins/<id>)
 apps/cli/          @rocketflare/cli — src/cli.ts, commands/*, api.ts (only fetch site), config.ts, login.ts,
                    plugins/ (CLI_PLUGINS barrel + each plugin's commands)
+apps/evals/        @rocketflare/evals — vitest-evals suites over apps/web in-process: kit/ (targets, judges),
+                   suites/, datasets/*.jsonl, baselines/; `pnpm eval` only, never the gate (docs/EVALS.md)
 packages/shared/   @rocketflare/shared — src/*.ts zod contracts, errors, pagination, permissions,
                    plugins/ (SharedPlugin + the SHARED_PLUGINS barrel + each plugin's contracts) (CLAUDE.md)
 scripts/           bootstrap.sh → bootstrap.mjs (9 steps), install.sh (curl one-liner), rename.mjs,
@@ -91,7 +97,8 @@ docs/upgrades/     one porting note per kit release (+ unreleased.md) — CHANGE
 .claude/skills/    rf-setup · rf-preflight · rf-adapt (+ checklist.md) · rf-provision (+ reference.md) ·
                    rf-how-do-i (+ example-orders.md) · rf-upgrade (+ porting.md — port later kit releases) ·
                    rf-plugin (+ reference.md — install/upgrade/remove a plugin, D31) ·
-                   rf-traces (debug a run from its span tree; pick a tracing backend, D32)
+                   rf-traces (debug a run from its span tree; pick a tracing backend, D32) ·
+                   rf-evals (+ reference.md — author, run, compare, harvest, baseline, improve; D33)
 ```
 
 **`packages/shared`.** Private, no build: `@rocketflare/shared/<module>` → `./src/<module>.ts` (incl. `ai/*`,

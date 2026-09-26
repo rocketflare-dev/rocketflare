@@ -7,6 +7,7 @@
  * leak what was never kept.
  */
 import type { Logger } from '../utils/core/logger'
+import { inEvalScope } from './context'
 import {
   ATTR,
   contextAttributes,
@@ -256,7 +257,7 @@ export function createTracer(options: RecorderOptions): Tracer {
       sessionId: params.sessionId ?? params.conversationId ?? params.runId,
       runId: params.runId,
       conversationId: params.conversationId,
-      eval: params.eval,
+      eval: params.eval ?? inEvalScope(),
     }
     const root = !params.parentSpanId
     return open(scope, {

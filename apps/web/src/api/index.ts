@@ -30,7 +30,9 @@ import { aiPromptsRouter } from './routes/ai-prompts'
 import { aiUsageRouter } from './routes/ai-usage'
 import { authRouter } from './routes/auth/index'
 import { chatRouter } from './routes/chat'
+import { evalsRouter } from './routes/evals'
 import { featuresRouter } from './routes/features'
+import { feedbackRouter } from './routes/feedback'
 import { filesRouter } from './routes/files'
 import { groupsRouter } from './routes/groups'
 import { healthRouter } from './routes/health'
@@ -128,6 +130,9 @@ const mounts: readonly (readonly [string, Hono<AppEnv>, MiddlewareHandler?])[] =
   ['/api/agents', agentsRouter],
   // D32: the local AI trace store, read by `rocketflare traces` — admin+ (`read Trace`).
   ['/api/traces', tracesRouter],
+  // D33: thumbs on AI answers (member create; admin+ read) and the eval-case export (admin+).
+  ['/api/feedback', feedbackRouter],
+  ['/api/evals', evalsRouter],
   // D31: installed plugins, last, so a plugin can never shadow a kit prefix — Hono matches in
   // registration order. Each mount gets `authMiddleware` and its own optional gate exactly like a
   // kit mount; the convention is `/api/<plugin id>`, and `tests/config/plugins.test.ts` is what

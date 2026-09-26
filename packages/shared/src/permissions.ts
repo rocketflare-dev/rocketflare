@@ -45,6 +45,12 @@ export const CORE_SUBJECTS = [
    * every member `read` through `MEMBER_READABLE`.
    */
   'Trace',
+  /**
+   * Thumbs feedback on AI answers (D33). Every member may `create` it — on an answer they could
+   * read, which the service checks — and admin+ `read` it, because the list is how promotion
+   * candidates are found and each row points at another member's conversation.
+   */
+  'Feedback',
 ] as const
 export type CoreSubject = (typeof CORE_SUBJECTS)[number]
 
