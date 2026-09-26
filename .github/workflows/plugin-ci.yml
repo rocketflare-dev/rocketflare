@@ -349,13 +349,17 @@ jobs:
           # **A plugin that `requires.plugins` gets them installed first** (`deps`, resolved by id
           # from THIS checkout, dependencies before dependants). The tree is dirty after the first
           # install, so every later one passes `--allow-dirty` — the one reviewable diff is a laptop
-          # rule, and this clone is thrown away. The migration is generated ONCE, after the last
-          # install, exactly as an adopter installing the set and then running `db:generate` would.
+          # rule, and this clone is thrown away. A migration is generated after EACH install and
+          # named for that plugin, exactly as an adopter following each install plan would — one
+          # migration for the whole set would name only the last plugin, and `plugin check` fails
+          # every other plugin that declares tables and has no migration naming it.
           dirty=()
           for dep in $PLUGIN_DEPS; do
             echo "installing required plugin $dep"
             pnpm plugin add "$GITHUB_WORKSPACE/plugin" --apply --local --subdir "$dep" "${dirty[@]}"
             dirty=(--allow-dirty)
+            dep_id=$(node -p "require('$GITHUB_WORKSPACE/plugin/${dep%/}/rocketflare-plugin.json').id")
+            pnpm db:generate --name "plugin-$dep_id-ci"
           done
           args=(add "$GITHUB_WORKSPACE/plugin" --apply --local)
           if [ -n "$PLUGIN_SUBDIR" ]; then args+=(--subdir "$PLUGIN_SUBDIR"); fi
