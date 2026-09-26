@@ -1,50 +1,31 @@
 ---
 version: unreleased
-previous: 0.11.0
+previous: 0.12.0
 date: null
 breaking: false
-migrations:
-  - "documents.external_id (nullable text) plus a unique partial index on (tenant_id, source, external_id) where external_id is not null"
-areas: [api, db, docs]
-touches_surfaces: [example-feature, feature-knowledge]
+migrations: []
+areas: []
+touches_surfaces: []
 requires_surfaces: []
 manual: false
 ---
 
 ## What changed
 
-The plugin surface gains the seams a connector needs: unauthenticated public mounts under `/api/hooks/<id>`, signed round-trip state, feature checks off-request, and idempotent knowledge ingest keyed by an external id.
-
-- `ServerPlugin.publicMounts` — routes with no session, only under `/api/hooks/<plugin id>`, mounted before the authed table; handlers use `publicCtx(c)` (`docs/CONCEPTS.md` §16).
-- `signState` / `verifyState` in `@/plugins/api` — HMAC-SHA256 under a key HKDF-derived from `OAUTH_ENCRYPTION_KEY`, purpose-bound, expiring, `null` on every failure.
-- `features(tenantId)` on `JobCtx`, `CronCtx` and `PublicCtx`, backed by the new `tenantFeatures(db, cfg, tenantId)` in `services/features.ts`.
-- `ingestDocument` / `ingestDocumentFile` / `deleteIngestedDocument` in `@/plugins/api` (new `plugins/api/knowledge.ts`, surface `feature-knowledge`).
-- `documents.external_id` — an ingest carrying `externalId` upserts on `(tenant_id, source, external_id)`, replacing grants, chunks and a replaced R2 original (`services/ai/ingest.ts`, `deleteExternalDocument`).
-- `example-feature` demonstrates the public mount: `POST /api/example-feature/ping-link` mints a signed link, `GET /api/hooks/example-feature/ping` verifies it and enqueues.
-- `tests/config/plugins.test.ts` refuses a public mount outside `/api/hooks/<id>` and an authed mount under `/api/hooks` (`publicMountIssues`).
-- Two or more installed plugins now compose: `FeatureKeyOf` and the plugin feature-key union are distributive (they collapsed to `never` once two plugins declared flags), a plugin may import another plugin's PUBLISHED entry, and the schema-barrel round trip ignores plugins with no schema half.
-- `auth-session.test.ts` expects the registry's default-on flags rather than `[]`, so an installed plugin whose flag defaults on no longer fails the kit suite.
-- `.github/workflows/plugin-ci.yml` installs a plugin's `requires.plugins` first — resolved by id from the same checkout, dependencies before dependants, a cycle refused — and proves it from the HIGHEST `minKit` across the set; `tests/config/plugin-ci.test.ts` runs the workflow's own resolve script.
+_Nothing yet. Add an entry here in the same pull request as the change. This first paragraph is
+lifted VERBATIM into `CHANGELOG.md`, so make it ONE standalone summary sentence of ≤ 40 words —
+then one bullet per change, one line each, and no `###` sub-headings. Rationale belongs in
+`docs/CONCEPTS.md` and is linked, never restated; see `README.md` beside this file._
 
 ## How to apply
 
-1. Apply the kit diff for `apps/web/src/plugins/types.ts`, `apps/web/src/plugins/api/{index,jobs,secrets,public,knowledge,http}.ts`, `apps/web/src/api/index.ts`, `apps/web/src/api/services/features.ts`, `apps/web/src/api/services/ai/ingest.ts` and `apps/web/src/db/schema/documents.ts`.
-2. Run `pnpm db:generate --name kit-documents-external-id`, read the SQL (one `ADD COLUMN "external_id"` and one `CREATE UNIQUE INDEX "documents_tenant_source_external_uq"`), then run `pnpm db:migrate`.
-3. Apply the kit diff for `packages/shared/src/permissions.ts`, `packages/shared/src/plugins/types.ts`, `apps/web/tests/helpers/plugins.ts`, `apps/web/tests/config/plugin-lib.test.ts` and `apps/web/tests/api/auth-session.test.ts`, and copy `.github/workflows/plugin-ci.yml` with its new test `apps/web/tests/config/plugin-ci.test.ts` if the app keeps the kit's plugin CI.
-4. Run `node scripts/plugin-api-doc.mjs` and commit the regenerated `docs/plugin-api.md`.
-5. If the app still has `example-feature`, apply its diff (`api/public.ts`, `api/routes.ts`, `index.ts`, `shared.ts`, `plugin.json`, its tests) and the `examplePingLinkResponseSchema` addition in `packages/shared/src/plugins/example-feature/index.ts`.
-6. If the app deleted `feature-knowledge`, skip `apps/web/src/plugins/api/knowledge.ts` and `apps/web/tests/api/plugin-ingest.test.ts`, and delete the two `./knowledge` export lines from `apps/web/src/plugins/api/index.ts`.
-7. If the app has its own route mounted under `/api/hooks`, move it: that prefix now belongs to plugin public mounts and `tests/config/plugins.test.ts` refuses an authed plugin mount there.
+_Numbered, imperative, each step self-contained — no "these", "them" or "the above" reaching
+outside its own step._
 
 ## Conflicts to expect
 
-- `apps/web/src/plugins/api/index.ts` → new export lines beside `./jobs` and `./secrets` → keep both sides.
-- `apps/web/src/api/services/ai/ingest.ts` → `IngestDeps` gains `storage`, `grantDocumentGroups` gains `replace` → keep both sides if the app changed ingest.
-- `apps/web/migrations/` → the app's own next migration number → generate the migration locally rather than copying the kit's `0016`.
+_One line each: `path → what changed → what to do`. Or exactly `None.`_
 
 ## Verify
 
-1. `pnpm test:db:up && pnpm db:migrate` exits 0 and `\d documents` shows `external_id`.
-2. `pnpm web test:api` passes, including `tests/api/plugin-signed-state.test.ts`, `tests/api/plugin-ingest.test.ts` and the public-link cases in `example-feature.test.ts`.
-3. `pnpm web test:config` passes, including the `public mounts` cases in `tests/config/plugins.test.ts`.
-4. `node scripts/plugin-api-doc.mjs --check` exits 0.
+_Numbered checkable commands and assertions only._

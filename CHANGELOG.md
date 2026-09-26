@@ -6,6 +6,11 @@ copy of the kit forward without recreating anything its owner deleted.
 
 If you are running a copy: `pnpm kit:upgrade` tells you which of these you are missing.
 
+## 0.12.0 — 2026-09-26
+
+The plugin surface gains the seams a connector needs: unauthenticated public mounts under `/api/hooks/<id>`, signed round-trip state, feature checks off-request, and idempotent knowledge ingest keyed by an external id.
+[Porting note](docs/upgrades/0.12.0.md).
+
 ## 0.11.0 — 2026-09-26
 
 Developer-run evals for chat and agents: `pnpm eval` runs vitest-evals suites against the real code in-process, with baselines and `--compare`, and thumbs on answers feed `rocketflare evals promote`.
