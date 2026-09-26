@@ -1,62 +1,31 @@
 ---
 version: unreleased
-previous: 0.10.1
+previous: 0.11.0
 date: null
 breaking: false
-migrations:
-  - "new tenant table ai_feedback (thumbs on AI answers, RLS policy included)"
-areas: [api, shared, ui, db, cli, docs]
-touches_surfaces: [feature-chat, feature-agents, feature-evals]
+migrations: []
+areas: []
+touches_surfaces: []
 requires_surfaces: []
 manual: false
 ---
 
 ## What changed
 
-Developer-run evals for chat and agents: `pnpm eval` runs vitest-evals suites against the real code in-process, with baselines and `--compare`, and thumbs on answers feed `rocketflare evals promote`.
-
-- New workspace package `apps/evals` (vitest-evals on vitest 4, apart from web's vitest 3): targets `chatHarness()` (the real chat route) and `agentHarness(key)` (the real run steps inline), one tenant per case. Rationale: `docs/CONCEPTS.md` §9 (D33).
-- Judges in `apps/evals/kit/judges.ts`: `Contains`, `Matches`, `Schema`, `Trajectory` (agentevals modes), `Budget`, plus LLM `Rubric`, `Faithfulness`, `Reference`. `describeCases` attaches a judge only to cases that declare something for it.
-- The LLM judge resolves through `resolveChat` on the new prompt key `evals-judge` (`CORE_PROMPT_REGISTRY`), so `agent_models` can pin it. `--judge-model` overrides it, and its calls are `ai_usage` rows with feature `evals.judge`.
-- `--provider` and `--judge-provider` (`anthropic` by default; `fireworks` or `gemini` from `FIREWORKS_API_KEY` / `GEMINI_API_KEY` in `.dev.vars`) put the target or judge on an encrypted tenant `ai_configs` row. `.dev.vars.example` lists both keys as comments.
-- Root scripts `pnpm eval`, `pnpm eval:baseline` and `pnpm eval:view`. Runs go to `apps/evals/.evals/runs/` (git-ignored) and baselines to `apps/evals/baselines/`. Starter datasets: `knowledge-chat`, `summarize-text` and `research-topic`.
-- `withEvalScope` / `inEvalScope` in `observability/context.ts`: traces started inside get `rocketflare.eval=true` (the recorder's `startTrace` defaults `eval` from it).
-- New table `ai_feedback`, new subject `Feedback` (member `create`, admin+ `create`+`read`), and routes `POST /api/feedback`, `DELETE /api/feedback/:target/:targetId`, `GET /api/feedback/mine` and `GET /api/feedback`. Each vote also records a zero-length `feedback` span in the answer's trace.
-- `GET /api/evals/export?messageId|runId` (admin+) drafts an `EvalCase`. Contracts are in `packages/shared/src/ai/evals.ts`.
-- UI: `FeedbackThumbs` on persisted chat answers (via a new `ChatBubble` `actions` slot) and on the run Output tab. AG-UI capabilities now declare `humanInTheLoop.feedback: true` for chat and runs.
-- CLI: `rocketflare feedback list [--rating] [--target]` and `rocketflare evals promote <id> --dataset <name> [--run] [--id] [--dir] [--yes]`. `traces show` prints feedback spans.
-- Fireworks preset: the default model is now `accounts/fireworks/models/gpt-oss-120b` (`PROVIDER_PRESETS`, `DEFAULT_MODELS.anthropic_compatible`, the suggested models), because `kimi-k2-instruct` is no longer served. The Anthropic adapter retries an `anthropic_compatible` call once without `thinking` when the vendor refuses `disabled` with a reasoning-effort 400 (gpt-oss does), and remembers that for the client.
-- New skill `rf-evals` (+ `reference.md`, trigger evals), `docs/EVALS.md`, an optional `.github/workflows/evals.yml`, and the `feature-evals` surface in `.rocketflare.json`.
+_Nothing yet. Add an entry here in the same pull request as the change. This first paragraph is
+lifted VERBATIM into `CHANGELOG.md`, so make it ONE standalone summary sentence of ≤ 40 words —
+then one bullet per change, one line each, and no `###` sub-headings. Rationale belongs in
+`docs/CONCEPTS.md` and is linked, never restated; see `README.md` beside this file._
 
 ## How to apply
 
-1. Add `packages/shared/src/ai/evals.ts` and its `export * from './evals'` line in `packages/shared/src/ai/index.ts`. Add `'Feedback'` to `CORE_SUBJECTS` in `packages/shared/src/permissions.ts`.
-2. In `apps/web/src/permissions/abilities.ts`, add `can('create', 'Feedback')` and `can('read', 'Feedback')` to `grantAdmin`, and `can('create', 'Feedback')` to `member`. Add the `Feedback` row to `apps/web/tests/config/permissions.test.ts` along with its `createOnly` level.
-3. Add `apps/web/src/db/schema/ai-feedback.ts` and export it from `apps/web/src/db/schema/index.ts`, then run `pnpm db:generate` and `pnpm db:migrate`. Never copy the kit's migration file.
-4. Add the two commented eval keys (`# FIREWORKS_API_KEY=`, `# GEMINI_API_KEY=`) to `apps/web/.dev.vars.example` by hand (it is `neverPort`). Add `ATTR.feedbackRating` and `ATTR.feedbackTarget` to `apps/web/src/api/observability/genai-attributes.ts`. Add `withEvalScope`/`inEvalScope` to `apps/web/src/api/observability/context.ts`, and set `eval: params.eval ?? inEvalScope()` in `apps/web/src/api/observability/recorder.ts`'s `startTrace`.
-5. Add `apps/web/src/api/services/feedback.ts`, `apps/web/src/api/services/evals.ts`, `apps/web/src/api/routes/feedback.ts` and `apps/web/src/api/routes/evals.ts`. Add `['/api/feedback', feedbackRouter]` and `['/api/evals', evalsRouter]` to the mount table in `apps/web/src/api/index.ts`.
-6. Add the `evals-judge` entry to `CORE_PROMPT_REGISTRY` in `apps/web/src/api/services/prompts.ts`. Add `'evals-judge'` to the expected key lists in `apps/web/tests/api/ai-prompts.test.ts` and `apps/web/tests/api/agent-models.test.ts`.
-7. Set `feedback: true` in `AGENT_RUN_CAPABILITIES` (`apps/web/src/api/services/agents/agui-projection.ts`) and in the chat `STATE_SNAPSHOT` capabilities (`apps/web/src/api/services/ai/chat-turn.ts`). Update `apps/web/tests/api/agui-projection.test.ts` to match.
-8. UI: add `apps/web/src/ui/hooks/useFeedback.ts`, `apps/web/src/ui/components/ai/FeedbackThumbs.tsx` and the `ai.feedback` family in `apps/web/src/ui/lib/query-keys.ts`. Add the `actions` prop to `ChatBubble.tsx` and wire it in `apps/web/src/ui/pages/chat/ChatPage.tsx` and `apps/web/src/ui/pages/agents/run/output/RunOutputTab.tsx`.
-9. Take the kit's `createAnthropicChatClient` in `apps/web/src/api/services/ai/client.ts` (`bodyFor`, `rejectsDisabledThinking`, `streamOnce`, and the retry in `complete`/`stream`). Update the Fireworks default model in `packages/shared/src/ai/config.ts` (`PROVIDER_PRESETS` and `DEFAULT_MODELS`) and `suggestedModels` in `apps/web/src/api/services/ai/providers.ts`. Existing tenant configs keep the model they name, so tell tenants on `kimi-k2-instruct` to pick another in Settings → AI.
-10. CLI: add `apps/cli/src/commands/feedback.ts`, `apps/cli/src/commands/evals.ts` and their blocks in `apps/cli/src/cli.ts`, plus the feedback-span rendering in `apps/cli/src/commands/traces.ts`.
-11. To keep evals, copy `apps/evals/` whole (without `.evals/`), `.claude/skills/rf-evals/` and `docs/EVALS.md`. Add the `eval`, `eval:baseline` and `eval:view` scripts to the root `package.json` by hand (it is `manual`), run `pnpm install`, and add the `feature-evals` surface to `.rocketflare.json`. To skip evals, leave all of that out: the feedback and export half stands alone.
-12. Optionally copy `.github/workflows/evals.yml` (`.github/**` is `manual`) and add an `ANTHROPIC_API_KEY` repository secret.
-13. If your app has its own agents or prompts, add a suite under `apps/evals/suites/` for each (the `rf-evals` skill scaffolds one).
+_Numbered, imperative, each step self-contained — no "these", "them" or "the above" reaching
+outside its own step._
 
 ## Conflicts to expect
 
-- `apps/web/src/api/services/prompts.ts` → a fifth registry entry → keep your own entries and append `evals-judge`.
-- `apps/web/src/ui/components/ai/ChatBubble.tsx` → new optional `actions` prop and a flex footer → re-apply any local footer changes around it.
-- `apps/web/tests/config/permissions.test.ts` → new `Feedback` row and `createOnly` level → add both next to your own rows.
-- `package.json` → three new scripts → add them by hand.
-- `apps/web/src/api/services/ai/client.ts` → the Anthropic adapter's `complete`/`stream` were restructured around `streamOnce` → take the kit's function, then re-apply local adapter changes.
-- `apps/evals/tsconfig.json` → maps `vitest` to its own vitest 4 → keep that mapping if you add paths.
+_One line each: `path → what changed → what to do`. Or exactly `None.`_
 
 ## Verify
 
-1. `pnpm lint && pnpm typecheck && pnpm test && pnpm build` pass (the gate runs the eval kit's unit tests, never the suites).
-2. With `ANTHROPIC_API_KEY` in `apps/web/.dev.vars` and `pnpm test:db:up`, `pnpm eval` runs the three starter suites and prints a score/cost table. Without a key, each suite prints `evals skipped: …`.
-3. `pnpm eval:baseline`, then `pnpm eval --compare`, exits 0. A deliberately degraded chat prompt makes it list regressions and exit 1.
-4. `pnpm eval:view` prints the diff against the previous run and serves the report UI.
-5. A thumbs-down on a chat reply → `pnpm cli feedback list --rating down` lists it → `pnpm cli traces show <messageId>` shows a `feedback` span → `pnpm cli evals promote <messageId> --dataset scratch --yes` appends a valid case.
+_Numbered checkable commands and assertions only._

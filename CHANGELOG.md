@@ -6,6 +6,11 @@ copy of the kit forward without recreating anything its owner deleted.
 
 If you are running a copy: `pnpm kit:upgrade` tells you which of these you are missing.
 
+## 0.11.0 — 2026-09-26
+
+Developer-run evals for chat and agents: `pnpm eval` runs vitest-evals suites against the real code in-process, with baselines and `--compare`, and thumbs on answers feed `rocketflare evals promote`.
+[Porting note](docs/upgrades/0.11.0.md).
+
 ## 0.10.1 — 2026-09-25
 
 A copy of the kit now hears about newer kit releases on its own: a Claude Code `SessionStart` hook tells the person once per session, with each release's summary and a pointer to `/rf-upgrade`.

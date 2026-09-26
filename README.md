@@ -71,7 +71,7 @@ you removed. [`CHANGELOG.md`](CHANGELOG.md) is what you would be catching up on.
 | UI | React 18 + Vite, DaisyUI 5 on Tailwind v4, React Router 6, TanStack Query 5; served as Workers Static Assets |
 | CLI | commander + chalk; browser login → tenant API key; `--json` on every list command |
 | Async / realtime | Queues, Workflows, a per-tenant Durable Object over WebSockets, cron triggers, R2 |
-| AI | Anthropic / OpenAI-compatible / Workers AI chat over SSE, agents on Workflows, Workers AI embeddings → pgvector, OTLP tracing (Langfuse, Phoenix, any backend) |
+| AI | Anthropic / OpenAI-compatible / Workers AI chat over SSE, agents on Workflows, Workers AI embeddings → pgvector, OTLP tracing (Langfuse, Phoenix, any backend), evals (vitest-evals) with thumbs feedback |
 | Analytics | drizzle-cube semantic layer (`/cubejs-api`, `/mcp`), fact tables on a cron, TypeScript dashboard templates |
 | Quality | Biome 2, strict TypeScript, vitest against real Postgres, gitleaks, one CI gate |
 
@@ -158,8 +158,8 @@ wrangler` at the root. Root `scripts/` holds the first-run tooling: `bootstrap.s
 ## Not included (by design)
 
 Billing and subscriptions, Vectorize (vectors live in pgvector under the tenant predicate), OCR of
-images (document conversion covers PDF/Office/HTML, not pictures), reranking, prompt versioning and
-evals, reporting/export, and any product domain. Each is a documented extension point in `docs/CONCEPTS.md`; the subsystem sections
+images (document conversion covers PDF/Office/HTML, not pictures), reranking, prompt versioning,
+reporting/export, and any product domain. Each is a documented extension point in `docs/CONCEPTS.md`; the subsystem sections
 there list every known gap.
 
 ## Documentation
