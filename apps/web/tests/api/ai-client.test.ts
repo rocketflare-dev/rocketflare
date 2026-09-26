@@ -321,6 +321,59 @@ describe('Anthropic chat client (real SDK, fake transport)', () => {
     })
   })
 
+  it('anthropic_compatible retries once without thinking when the vendor rejects `disabled`, and remembers', async () => {
+    // Fireworks maps `thinking: disabled` to reasoning effort `none`; gpt-oss refuses it with a 400.
+    const refusal = () =>
+      new Response(
+        JSON.stringify({
+          type: 'error',
+          error: { type: 'invalid_request_error', message: 'Invalid reasoning effort: none' },
+        }),
+        { status: 400, headers: { 'content-type': 'application/json' } }
+      )
+    const { fetch, calls } = fakeFetch(req =>
+      req.body.thinking ? refusal() : sseResponse(anthropicStream('Hello'))
+    )
+    const client = createChatClient({
+      provider: 'anthropic_compatible',
+      apiKey: 'fw-token',
+      baseUrl: 'https://compat.test/inference',
+      fetch,
+    })
+    const params = {
+      model: 'accounts/fireworks/models/gpt-oss-120b',
+      maxTokens: 64,
+      messages: [{ role: 'user' as const, content: 'hi' }],
+    }
+    const deltas = await collect(client.stream(params))
+    const text = deltas.map(d => (d.type === 'text' ? d.text : '')).join('')
+    expect(text).toBe('Hello')
+    expect(calls.map(c => 'thinking' in c.body)).toEqual([true, false])
+    // Remembered: the next call goes straight out without the field.
+    await collect(client.stream(params))
+    expect(calls.map(c => 'thinking' in c.body)).toEqual([true, false, false])
+
+    // A different 400 is not retried, and first-party Anthropic never is.
+    const other = fakeFetch(
+      () =>
+        new Response(
+          JSON.stringify({
+            type: 'error',
+            error: { type: 'invalid_request_error', message: 'bad' },
+          }),
+          { status: 400, headers: { 'content-type': 'application/json' } }
+        )
+    )
+    const strict = createChatClient({
+      provider: 'anthropic_compatible',
+      apiKey: 'fw-token',
+      baseUrl: 'https://compat.test/inference',
+      fetch: other.fetch,
+    })
+    await expect(collect(strict.stream(params))).rejects.toBeInstanceOf(AiError)
+    expect(other.calls).toHaveLength(1)
+  })
+
   it('anthropic sends x-api-key and maps 401/429/overloaded to codes', async () => {
     let status = 401
     const { fetch, calls } = fakeFetch(

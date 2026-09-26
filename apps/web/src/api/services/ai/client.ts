@@ -267,58 +267,98 @@ function createAnthropicChatClient(opts: ChatClientOptions): ChatClient {
           maxRetries: 2,
         })
 
+  // The kit sends `thinking: disabled` by default because some vendors' models (Fireworks' GLM/Kimi)
+  // reason — and bill for it — unless told not to. Others reject the field outright: Fireworks maps
+  // it to reasoning effort `none`, which gpt-oss answers with a 400. On that one refusal the client
+  // retries without the field and remembers it for the rest of this client (one resolve, i.e. one
+  // turn or run step), so only its first call pays for finding out.
+  let omitDisabledThinking = false
+  const bodyFor = (params: ChatParams): Anthropic.MessageCreateParams => {
+    const body = anthropicBody(params, opts.defaults)
+    if (!omitDisabledThinking || body.thinking?.type !== 'disabled') return body
+    const { thinking: _off, ...rest } = body
+    return rest as Anthropic.MessageCreateParams
+  }
+  const rejectsDisabledThinking = (err: unknown): boolean =>
+    provider === 'anthropic_compatible' &&
+    !omitDisabledThinking &&
+    err instanceof Anthropic.APIError &&
+    err.status === 400 &&
+    /reasoning effort|thinking/i.test(err.message)
+
+  /** One streamed request, raw SDK errors and all — `stream` decides whether to retry. */
+  async function* streamOnce(params: ChatParams): AsyncIterable<ChatDelta> {
+    const stream = sdk.messages.stream(bodyFor(params), { signal: params.signal })
+    const pendingTools = new Map<number, { id: string; name: string; json: string }>()
+    for await (const event of stream) {
+      if (event.type === 'content_block_start' && event.content_block.type === 'tool_use') {
+        pendingTools.set(event.index, {
+          id: event.content_block.id,
+          name: event.content_block.name,
+          json: '',
+        })
+      } else if (event.type === 'content_block_delta') {
+        if (event.delta.type === 'text_delta') yield { type: 'text', text: event.delta.text }
+        else if (event.delta.type === 'input_json_delta') {
+          const pending = pendingTools.get(event.index)
+          if (pending) pending.json += event.delta.partial_json
+        }
+      } else if (event.type === 'content_block_stop') {
+        const pending = pendingTools.get(event.index)
+        if (pending) {
+          pendingTools.delete(event.index)
+          yield {
+            type: 'tool_use',
+            id: pending.id,
+            name: pending.name,
+            input: safeJson(pending.json),
+          }
+        }
+      }
+    }
+    const result = fromAnthropicMessage(await stream.finalMessage())
+    yield { type: 'usage', usage: result.usage }
+    yield { type: 'end', result }
+  }
+
   return {
     provider,
     async complete(params) {
+      const create = () =>
+        sdk.messages.create({ ...bodyFor(params), stream: false }, { signal: params.signal })
       try {
-        const message = await sdk.messages.create(
-          { ...anthropicBody(params, opts.defaults), stream: false },
-          { signal: params.signal }
-        )
-        return fromAnthropicMessage(message)
+        return fromAnthropicMessage(await create())
       } catch (err) {
+        if (rejectsDisabledThinking(err)) {
+          omitDisabledThinking = true
+          try {
+            return fromAnthropicMessage(await create())
+          } catch (retryErr) {
+            throw normalizeAiError(retryErr, provider)
+          }
+        }
         throw normalizeAiError(err, provider)
       }
     },
     async *stream(params) {
+      let yielded = false
       try {
-        const stream = sdk.messages.stream(anthropicBody(params, opts.defaults), {
-          signal: params.signal,
-        })
-        const pendingTools = new Map<number, { id: string; name: string; json: string }>()
-        for await (const event of stream) {
-          if (event.type === 'content_block_start' && event.content_block.type === 'tool_use') {
-            pendingTools.set(event.index, {
-              id: event.content_block.id,
-              name: event.content_block.name,
-              json: '',
-            })
-          } else if (event.type === 'content_block_delta') {
-            if (event.delta.type === 'text_delta') yield { type: 'text', text: event.delta.text }
-            else if (event.delta.type === 'input_json_delta') {
-              const pending = pendingTools.get(event.index)
-              if (pending) pending.json += event.delta.partial_json
-            }
-          } else if (event.type === 'content_block_stop') {
-            const pending = pendingTools.get(event.index)
-            if (pending) {
-              pendingTools.delete(event.index)
-              yield {
-                type: 'tool_use',
-                id: pending.id,
-                name: pending.name,
-                input: safeJson(pending.json),
-              }
-            }
-          }
+        for await (const delta of streamOnce(params)) {
+          yielded = true
+          yield delta
         }
-        const result = fromAnthropicMessage(await stream.finalMessage())
-        yield { type: 'usage', usage: result.usage }
-        yield { type: 'end', result }
       } catch (err) {
-        throw normalizeAiError(err, provider)
+        // The refusal arrives before the first event, so a retry can never duplicate output.
+        if (yielded || !rejectsDisabledThinking(err)) throw normalizeAiError(err, provider)
+        omitDisabledThinking = true
+        try {
+          yield* streamOnce(params)
+        } catch (retryErr) {
+          throw normalizeAiError(retryErr, provider)
+        }
       }
     },
+
     async countTokens(params) {
       try {
         const body = anthropicBody({ ...params, maxTokens: 1 }, undefined)

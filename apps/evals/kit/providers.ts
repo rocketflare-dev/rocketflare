@@ -5,12 +5,12 @@
  * `OAUTH_ENCRYPTION_KEY`, `isDefault: true`), so an eval on Fireworks or Gemini also exercises the
  * tenant-config tier of the resolver rather than a side door.
  *
- * Both go through `openai_compatible` (the client appends `/chat/completions` to the base URL):
- * Fireworks' primary API at `/inference/v1` — its Anthropic-format endpoint, which the kit's
- * `fireworks` preset uses, rejected every model tried — and Google's OpenAI-compatible Gemini
- * endpoint.
+ * Fireworks is the kit's own `fireworks` preset (`anthropic_compatible`); Gemini is
+ * `openai_compatible` against Google's OpenAI-compatible endpoint (the client appends
+ * `/chat/completions`).
  */
 import type { AiProvider } from '@rocketflare/shared/ai/config'
+import { PROVIDER_PRESETS } from '@rocketflare/shared/ai/config'
 import { encrypt, requireEncryptionKey } from '@/api/auth/oauth-encryption'
 import type { AppConfig } from '@/config'
 import type { Database } from '@/db/client'
@@ -23,15 +23,17 @@ export interface EvalProvider {
   config?: { provider: AiProvider; baseUrl: string; defaultModel: string }
 }
 
+const fireworks = PROVIDER_PRESETS.find(p => p.id === 'fireworks')
+
 export const EVAL_PROVIDERS = {
   anthropic: { keyEnv: 'ANTHROPIC_API_KEY' },
   fireworks: {
     keyEnv: 'FIREWORKS_API_KEY',
+    // The kit's own Fireworks preset, so an eval proves what Settings → AI would offer a tenant.
     config: {
-      provider: 'openai_compatible',
-      baseUrl: 'https://api.fireworks.ai/inference/v1',
-      // Serverless availability varies by account; this one is broadly available. `--model` for others.
-      defaultModel: 'accounts/fireworks/models/gpt-oss-120b',
+      provider: 'anthropic_compatible',
+      baseUrl: fireworks?.baseUrl ?? 'https://api.fireworks.ai/inference',
+      defaultModel: fireworks?.defaultModel ?? 'accounts/fireworks/models/gpt-oss-120b',
     },
   },
   gemini: {

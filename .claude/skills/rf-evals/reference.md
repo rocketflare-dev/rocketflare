@@ -8,7 +8,7 @@
 | `--case id,id` | Only these case ids (`EVAL_CASE`) |
 | `--model <id>` | Pin the TARGET's model: an `agent_models` row per prompt key on each case's tenant |
 | `--judge-model <id>` | Pin the JUDGE's model (`evals-judge` on the judge's tenant) |
-| `--provider anthropic\|fireworks\|gemini` | The target's provider: `anthropic` = the platform key (default); the others write an encrypted `ai_configs` row (`openai_compatible`) from `FIREWORKS_API_KEY` / `GEMINI_API_KEY` in `.dev.vars` |
+| `--provider anthropic\|fireworks\|gemini` | The target's provider: `anthropic` = the platform key (default); the others write an encrypted `ai_configs` row (Fireworks = the kit's `fireworks` preset, Gemini = `openai_compatible`) from `FIREWORKS_API_KEY` / `GEMINI_API_KEY` in `.dev.vars` |
 | `--judge-provider …` | The same for the judge |
 | `--compare [baseline\|<run.json>]` | Diff against the committed baselines (default) or another run; exit 1 on a regression |
 | `--threshold 0.1` | The per-judge drop that counts as a regression |

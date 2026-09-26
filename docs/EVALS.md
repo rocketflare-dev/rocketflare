@@ -99,9 +99,10 @@ pnpm eval knowledge --judge-provider gemini                # a non-Claude judge
 ```
 
 `--provider anthropic` (the default) is the resolver's platform tier. `fireworks` and `gemini`
-write a real, encrypted `ai_configs` row on each case's tenant (both through `openai_compatible`:
-Fireworks at `https://api.fireworks.ai/inference/v1`, Gemini at Google's OpenAI-compatible
-endpoint), so those runs also exercise the tenant-config tier. `--model` picks a model on that
+write a real, encrypted `ai_configs` row on each case's tenant (Fireworks through the kit's own
+`fireworks` preset, which is exactly what Settings → AI offers a tenant; Gemini as
+`openai_compatible` at Google's OpenAI-compatible endpoint), so those runs also exercise the
+tenant-config tier. `--model` picks a model on that
 provider. Fireworks serverless availability varies by account, so pick one your key can call.
 Neither vendor is in the kit's price table, so their cost reads "—". Hold the judge constant when
 comparing targets.

@@ -25,6 +25,7 @@ Developer-run evals for chat and agents: `pnpm eval` runs vitest-evals suites ag
 - `GET /api/evals/export?messageId|runId` (admin+) drafts an `EvalCase`. Contracts are in `packages/shared/src/ai/evals.ts`.
 - UI: `FeedbackThumbs` on persisted chat answers (via a new `ChatBubble` `actions` slot) and on the run Output tab. AG-UI capabilities now declare `humanInTheLoop.feedback: true` for chat and runs.
 - CLI: `rocketflare feedback list [--rating] [--target]` and `rocketflare evals promote <id> --dataset <name> [--run] [--id] [--dir] [--yes]`. `traces show` prints feedback spans.
+- Fireworks preset: the default model is now `accounts/fireworks/models/gpt-oss-120b` (`PROVIDER_PRESETS`, `DEFAULT_MODELS.anthropic_compatible`, the suggested models), because `kimi-k2-instruct` is no longer served. The Anthropic adapter retries an `anthropic_compatible` call once without `thinking` when the vendor refuses `disabled` with a reasoning-effort 400 (gpt-oss does), and remembers that for the client.
 - New skill `rf-evals` (+ `reference.md`, trigger evals), `docs/EVALS.md`, an optional `.github/workflows/evals.yml`, and the `feature-evals` surface in `.rocketflare.json`.
 
 ## How to apply
@@ -37,10 +38,11 @@ Developer-run evals for chat and agents: `pnpm eval` runs vitest-evals suites ag
 6. Add the `evals-judge` entry to `CORE_PROMPT_REGISTRY` in `apps/web/src/api/services/prompts.ts`. Add `'evals-judge'` to the expected key lists in `apps/web/tests/api/ai-prompts.test.ts` and `apps/web/tests/api/agent-models.test.ts`.
 7. Set `feedback: true` in `AGENT_RUN_CAPABILITIES` (`apps/web/src/api/services/agents/agui-projection.ts`) and in the chat `STATE_SNAPSHOT` capabilities (`apps/web/src/api/services/ai/chat-turn.ts`). Update `apps/web/tests/api/agui-projection.test.ts` to match.
 8. UI: add `apps/web/src/ui/hooks/useFeedback.ts`, `apps/web/src/ui/components/ai/FeedbackThumbs.tsx` and the `ai.feedback` family in `apps/web/src/ui/lib/query-keys.ts`. Add the `actions` prop to `ChatBubble.tsx` and wire it in `apps/web/src/ui/pages/chat/ChatPage.tsx` and `apps/web/src/ui/pages/agents/run/output/RunOutputTab.tsx`.
-9. CLI: add `apps/cli/src/commands/feedback.ts`, `apps/cli/src/commands/evals.ts` and their blocks in `apps/cli/src/cli.ts`, plus the feedback-span rendering in `apps/cli/src/commands/traces.ts`.
-10. To keep evals, copy `apps/evals/` whole (without `.evals/`), `.claude/skills/rf-evals/` and `docs/EVALS.md`. Add the `eval`, `eval:baseline` and `eval:view` scripts to the root `package.json` by hand (it is `manual`), run `pnpm install`, and add the `feature-evals` surface to `.rocketflare.json`. To skip evals, leave all of that out: the feedback and export half stands alone.
-11. Optionally copy `.github/workflows/evals.yml` (`.github/**` is `manual`) and add an `ANTHROPIC_API_KEY` repository secret.
-12. If your app has its own agents or prompts, add a suite under `apps/evals/suites/` for each (the `rf-evals` skill scaffolds one).
+9. Take the kit's `createAnthropicChatClient` in `apps/web/src/api/services/ai/client.ts` (`bodyFor`, `rejectsDisabledThinking`, `streamOnce`, and the retry in `complete`/`stream`). Update the Fireworks default model in `packages/shared/src/ai/config.ts` (`PROVIDER_PRESETS` and `DEFAULT_MODELS`) and `suggestedModels` in `apps/web/src/api/services/ai/providers.ts`. Existing tenant configs keep the model they name, so tell tenants on `kimi-k2-instruct` to pick another in Settings → AI.
+10. CLI: add `apps/cli/src/commands/feedback.ts`, `apps/cli/src/commands/evals.ts` and their blocks in `apps/cli/src/cli.ts`, plus the feedback-span rendering in `apps/cli/src/commands/traces.ts`.
+11. To keep evals, copy `apps/evals/` whole (without `.evals/`), `.claude/skills/rf-evals/` and `docs/EVALS.md`. Add the `eval`, `eval:baseline` and `eval:view` scripts to the root `package.json` by hand (it is `manual`), run `pnpm install`, and add the `feature-evals` surface to `.rocketflare.json`. To skip evals, leave all of that out: the feedback and export half stands alone.
+12. Optionally copy `.github/workflows/evals.yml` (`.github/**` is `manual`) and add an `ANTHROPIC_API_KEY` repository secret.
+13. If your app has its own agents or prompts, add a suite under `apps/evals/suites/` for each (the `rf-evals` skill scaffolds one).
 
 ## Conflicts to expect
 
@@ -48,6 +50,7 @@ Developer-run evals for chat and agents: `pnpm eval` runs vitest-evals suites ag
 - `apps/web/src/ui/components/ai/ChatBubble.tsx` → new optional `actions` prop and a flex footer → re-apply any local footer changes around it.
 - `apps/web/tests/config/permissions.test.ts` → new `Feedback` row and `createOnly` level → add both next to your own rows.
 - `package.json` → three new scripts → add them by hand.
+- `apps/web/src/api/services/ai/client.ts` → the Anthropic adapter's `complete`/`stream` were restructured around `streamOnce` → take the kit's function, then re-apply local adapter changes.
 - `apps/evals/tsconfig.json` → maps `vitest` to its own vitest 4 → keep that mapping if you add paths.
 
 ## Verify

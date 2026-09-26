@@ -305,7 +305,8 @@ Server: `api/services/{ai,agents}/**` (read their `CLAUDE.md`), `services/prompt
   resolver on the `evals-judge` prompt key — so `agent_models` can pin it, `--judge-model` overrides
   it, and every call is an `ai_usage` row under `evals.judge`. `--provider` / `--judge-provider
   fireworks|gemini` put the target or judge on a real encrypted tenant `ai_configs` row
-  (`openai_compatible`), so vendor comparisons also exercise the tenant-config tier. A run is a vitest JSON report in
+  (Fireworks through the kit's own `fireworks` preset, Gemini as `openai_compatible`), so vendor
+  comparisons also exercise the tenant-config tier. A run is a vitest JSON report in
   `.evals/runs/<ts>-<sha>.json` (git-ignored), stamped with the sha, models and prompt hashes;
   baselines are committed per suite (`baselines/<suite>.json`, `pnpm eval:baseline`) and
   `--compare` exits 1 on a per-case, per-judge drop past `--threshold` (0.1). `pnpm eval:view`

@@ -146,7 +146,7 @@ export type AiReadiness = z.infer<typeof aiReadinessSchema>
 /** Default model per provider — what a new config lands on and what the platform fallback uses. */
 export const DEFAULT_MODELS: Record<AiProvider, string> = {
   anthropic: 'claude-sonnet-4-5',
-  anthropic_compatible: 'accounts/fireworks/models/kimi-k2-instruct',
+  anthropic_compatible: 'accounts/fireworks/models/gpt-oss-120b',
   openai: 'text-embedding-3-small',
   openai_compatible: '',
   workers_ai: '@cf/baai/bge-m3',
@@ -201,8 +201,10 @@ export const PROVIDER_PRESETS: readonly ProviderPreset[] = [
     name: 'Fireworks AI',
     provider: 'anthropic_compatible',
     baseUrl: 'https://api.fireworks.ai/inference',
-    defaultModel: 'accounts/fireworks/models/kimi-k2-instruct',
-    note: 'Model ids are fully qualified: accounts/<account>/models/<name>.',
+    // Checked against Fireworks serverless 2026-09-26: `kimi-k2-instruct` is gone. Serverless
+    // availability varies by account, which is why the model stays editable in the form.
+    defaultModel: 'accounts/fireworks/models/gpt-oss-120b',
+    note: 'Model ids are fully qualified: accounts/<account>/models/<name>. Serverless availability varies by account.',
   },
   {
     id: 'moonshot',
