@@ -105,7 +105,11 @@ export const PROVIDERS: readonly ProviderInfo[] = [
     defaultModel: DEFAULT_MODELS.anthropic_compatible,
     presets: presetsFor('anthropic_compatible'),
     suggestedModels: {
-      chat: ['accounts/fireworks/models/kimi-k2-instruct', 'kimi-k2-0905-preview'],
+      chat: [
+        'accounts/fireworks/models/gpt-oss-120b',
+        'accounts/fireworks/models/kimi-k2p5',
+        'kimi-k2-0905-preview',
+      ],
       embeddings: [],
     },
   },

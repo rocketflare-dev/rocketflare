@@ -68,6 +68,7 @@ describe('/api/ai/agent-models', () => {
     expect(items.map(i => i.promptKey).sort()).toEqual([
       'chat',
       'chat-compaction',
+      'evals-judge',
       'research-topic',
       'summarize-text',
     ])

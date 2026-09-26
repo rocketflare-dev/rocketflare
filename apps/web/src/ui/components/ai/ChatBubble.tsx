@@ -8,7 +8,7 @@
 import { CheckCircleIcon } from '@heroicons/react/24/outline'
 import type { TokenUsage } from '@rocketflare/shared/ai/chat'
 import type { DocumentCard as DocumentCardData } from '@rocketflare/shared/ai/embeddings'
-import { memo } from 'react'
+import { memo, type ReactNode } from 'react'
 import { DocumentCard } from '@/ui/components/shared'
 import type { ToolStep } from '@/ui/hooks/useChat'
 import { Markdown } from './Markdown'
@@ -34,6 +34,8 @@ export interface ChatBubbleProps {
   documents?: readonly DocumentCardData[]
   /** The stream ended on a `RUN_ERROR`. */
   error?: string
+  /** Rendered in the footer after the usage line — the thumbs on a persisted answer (D33). */
+  actions?: ReactNode
 }
 
 /** `1,204 in · 87 out` (+ cache figures when the provider reported them). */
@@ -58,6 +60,7 @@ function ChatBubbleImpl({
   notice,
   documents,
   error,
+  actions,
 }: ChatBubbleProps) {
   const mine = speaker === 'user'
   const footnote = [usage ? `${formatUsage(usage)} tokens` : null, model].filter(Boolean)
@@ -118,8 +121,11 @@ function ChatBubbleImpl({
           </p>
         )}
       </div>
-      {footnote.length > 0 && (
-        <div className="chat-footer text-xs text-muted mt-0.5">{footnote.join(' · ')}</div>
+      {(footnote.length > 0 || actions) && (
+        <div className="chat-footer text-xs text-muted mt-0.5 flex items-center gap-1.5">
+          {footnote.length > 0 && <span>{footnote.join(' · ')}</span>}
+          {actions}
+        </div>
       )}
     </div>
   )

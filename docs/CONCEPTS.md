@@ -18,7 +18,8 @@ setup in `SETUP.md`; Cloudflare topology in `docs/DEPLOY.md`; RLS in `docs/RLS.m
 | 8 | [Analytics](#8-analytics) | 16 | [Plugins](#16-plugins) |
 
 **Layout (D26).** A pnpm workspace: `apps/web` (the Worker — Hono API + React UI, §§1–10),
-`apps/cli` (§11), `packages/shared` (zod contracts, §12).
+`apps/cli` (§11), `packages/shared` (zod contracts, §12), and `apps/evals` (developer-run eval
+suites on vitest 4, §9 — never part of the gate).
 
 ---
 
@@ -284,6 +285,53 @@ Server: `api/services/{ai,agents}/**` (read their `CLAUDE.md`), `services/prompt
   not Cloudflare's native tracing, not the Langfuse SDK · the backend is platform-wide only ·
   content capture is on by default, with a flag to disable · agent context comes from the CLI
   reading our own Postgres, not a backend REST adapter.
+- **Evals (D33)**: `apps/evals`, its own workspace package because vitest-evals needs vitest 4 and
+  the kit's suites are on vitest 3. `pnpm eval [suite] [--model x] [--judge-model y] [--compare]`
+  runs `suites/**/*.eval.ts` against the TEST database with real models (the platform
+  `ANTHROPIC_API_KEY` from `.dev.vars`; no key → every suite skips and says why). **Targets are
+  in-process and go through the product's own code**: the chat target drives the real
+  `POST /api/chat/conversations/:id/messages` route (so `prepareChatTurn` decides prompt, history and
+  tools, as in production); the agent target runs `enqueueRun` → `claimStep` → `executeRun` →
+  `finishStep` inline. Each case gets a tenant of its own with its `context` documents ingested, so
+  retrieval can only find what the case put there. Everything a target does runs in
+  `withEvalScope` (`observability/context.ts`), which marks its traces `rocketflare.eval=true`.
+  **The harness input IS the `EvalCase`** (`shared/ai/evals.ts`: input, messages, context,
+  expected `{ output, rubric, tools, toolsMatch, contains }`, tags, source), so judges read each
+  case's own expectations; `describeCases` attaches to a case only the judges it declares something
+  for, because vitest-evals averages a `null` score as 0. Deterministic judges (`Contains`,
+  `Matches`, `Schema`, `Trajectory` with agentevals' strict/unordered/subset/superset, `Budget`)
+  come first; LLM judges (`Rubric`, `Faithfulness` against what retrieval actually returned,
+  `Reference` = vitest-evals' `FactualityJudge`) run through ONE judge harness that calls the kit's
+  resolver on the `evals-judge` prompt key — so `agent_models` can pin it, `--judge-model` overrides
+  it, and every call is an `ai_usage` row under `evals.judge`. `--provider` / `--judge-provider
+  fireworks|gemini` put the target or judge on a real encrypted tenant `ai_configs` row
+  (Fireworks through the kit's own `fireworks` preset, Gemini as `openai_compatible`), so vendor
+  comparisons also exercise the tenant-config tier. A run is a vitest JSON report in
+  `.evals/runs/<ts>-<sha>.json` (git-ignored), stamped with the sha, models and prompt hashes;
+  baselines are committed per suite (`baselines/<suite>.json`, `pnpm eval:baseline`) and
+  `--compare` exits 1 on a per-case, per-judge drop past `--threshold` (0.1). `pnpm eval:view`
+  prints the score diff between two runs, then serves the vitest-evals report UI (runs, cases,
+  transcripts, judge rationales). The optional `evals.yml` workflow runs it on manual dispatch or a
+  `run-evals` label, outside the gate. How-to: `docs/EVALS.md`; the `rf-evals` skill drives it.
+- **Feedback and promotion (D33)**: thumbs on assistant messages and run output
+  (`POST /api/feedback`, `create Feedback` for every member, on an answer they can READ — another
+  member's thread is a 404, admins included). One row per `(tenant, target, user)` in
+  `ai_feedback`; voting again replaces, the same thumb twice withdraws. Each vote is also a
+  zero-length `feedback` span under the answer's trace root (`rocketflare.feedback.rating`), shown by
+  `rocketflare traces show`. AG-UI capabilities now declare `feedback: true` for chat and runs.
+  Admins (`read Feedback`) list the queue (`rocketflare feedback list --rating down`) and
+  `GET /api/evals/export?messageId|runId` drafts an `EvalCase` — question, history, the passages
+  retrieved, the tools called, the OBSERVED answer as `expected.output`, the feedback — which
+  `rocketflare evals promote <id> --dataset <name>` appends to a dataset after warning that it is
+  tenant data (it will not write without `--yes` or a confirmed prompt).
+
+  **D33 decisions** (design grilling, 2026-09-25, issue #21): vitest-evals as the runner, in its
+  own vitest-4 package rather than a workspace-wide vitest upgrade or a home-grown runner · targets
+  in-process, through the real route and runtime · no in-app eval UI (JSON runs + the report UI) ·
+  datasets are code; promotion from real traffic and thumbs · the judge goes through the resolver,
+  with a `--judge-model` override · in core, not a plugin · the `rf-evals` skill is a first-class
+  deliverable. The prompt key is `evals-judge` (keys are kebab-case); the ledger feature is
+  `evals.judge`.
 - **Rejected**: Cloudflare's Agents SDK. Per-instance SQLite sits outside RLS, the tenant FK cascade
   and cross-tenant indexes, and the inbox would need Postgres anyway. One `step.do` per model turn
   was also rejected: steps are unlimited in wall-clock time, and splitting would force every side
@@ -297,13 +345,19 @@ not derived from the model; sliding window defeats prompt caching on long thread
 does not pre-resolve the client; Workers AI forced tools on off-list models are best-effort; no
 rerank, no generated `tsvector`; no non-exclusive agents; HITL asks cannot be amended, have no
 reminders, and parks are bounded by instance retention (3 days Free / 30 Paid); runs nobody opens
-stay active-looking; no budgets/quotas over `ai_usage`, prompt versioning or evals; the demo seed's
+stay active-looking; no budgets/quotas over `ai_usage` or prompt versioning; the demo seed's
 vectors are deterministic, so dense search over seeded docs is noise. Tracing: no per-tenant
 backends (BYO keys via `sealSecret`), no native `tracing.enterSpan`, no metrics export, no
 Langfuse/Phoenix MCP; inline ingest from `POST /api/ai/documents/ingest` is untraced (no active
-span); `rocketflare.eval` is supported (`TraceParams.eval`) but nothing sets it yet; the backend
-receives a run's root only at `finish`, so an in-flight run has no root there; exported content is
-capped at 32 000 chars per value.
+span); the backend receives a run's root only at `finish`, so an in-flight run has no root there;
+exported content is capped at 32 000 chars per value. Evals: no in-app eval UI or dataset editor;
+the report UI has no side-by-side view (the diff is `eval:view`'s terminal table); no HTTP targets
+against a deployed instance, no red-teaming, no push to Langfuse datasets; a run that parks on a
+person scores as a miss (an eval cannot answer it); run faithfulness sees each passage's
+600-character event preview; without `EMBEDDINGS_API_KEY` retrieval in evals leans on the lexical
+half of hybrid search; `--provider` knows three vendors (anthropic, fireworks, gemini) and the
+latter two are unpriced; a thumbs vote is a
+zero-length span, not an OTLP span event, and is not traced when the answer's root was pruned.
 
 ## 10. Deployment
 
@@ -323,7 +377,10 @@ Workers-plan check.
 A thin client over `/api/*` using a tenant API key. It parses with shared schemas and never keeps
 a second copy of the contract (D26). `api.ts` is the only `fetch` site. Config lives in
 `~/.rocketflare/config.json` (0600); `ROCKETFLARE_API_KEY`/`ROCKETFLARE_URL` override it for CI.
-`--json` is available on every read. `traces list|show` reads the local AI trace store (D32). Exit codes: 0 ok · 1 error · 2 not logged in · 3 forbidden.
+`--json` is available on every read. `traces list|show` reads the local AI trace store (D32);
+`feedback list` is the thumbs queue and `evals promote <id> --dataset <name>` appends a draft eval
+case to `apps/evals/datasets/` (D33, both admin+). Exit codes: 0 ok · 1 error · 2 not logged in ·
+3 forbidden.
 No command prints a full key. Plugins register top-level commands named after their id.
 Detail: `.claude/rules/cli.md`.
 

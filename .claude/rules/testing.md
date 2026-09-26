@@ -215,6 +215,15 @@ plus whatever a plugin declares) live in the `config` project, as do every insta
 check over a registry, with no database, that would otherwise only fail at runtime in somebody's
 tenant.
 
+## Evals are not tests (D33)
+
+Quality of real model output is measured by `pnpm eval` in `apps/evals` (vitest-evals on vitest 4,
+`docs/EVALS.md`), never by these suites: a test asserts behaviour with a `FakeChatClient` and must
+be deterministic, and an eval scores a real model and is allowed to vary. The eval KIT's own pure
+parts (scorers, transcripts, datasets, the compare) are unit-tested in `apps/evals/tests` and do
+run in `pnpm test`. `tests/api/feedback.test.ts` covers the thumbs and the export (tenant-scoped,
+admin+) and that `withEvalScope` tags spans.
+
 ## Commands
 
 `pnpm test:db:up` once, then `pnpm test` (root: every package, `pnpm -r test`; web tests load

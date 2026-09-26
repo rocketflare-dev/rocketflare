@@ -425,6 +425,18 @@ I/O. Optional backend (Langfuse keys keep working with no new setting; Phoenix l
 `docker run -p 6006:6006 arizephoenix/phoenix` + `OBSERVABILITY_PRESET=phoenix` +
 `OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:6006` in `.dev.vars`): `docs/DEPLOY.md` § Tracing.
 
+### 2.6b Evals (D33)
+Optional, and it costs tokens: put `ANTHROPIC_API_KEY` in `apps/web/.dev.vars`, then
+```bash
+pnpm test:db:up     # evals run against the TEST database and migrate it themselves
+pnpm eval           # three starter suites: knowledge chat, summarize-text, research-topic
+pnpm eval:view      # the score diff against the previous run, then the report UI
+```
+Without a key every suite skips and says why. Thumbs on chat replies and run output are live with
+no setup; `pnpm cli feedback list --rating down` then `pnpm cli evals promote <id> --dataset <name>`
+turns a bad answer into a case. Everything else — suites, judges, baselines, CI — is in
+`docs/EVALS.md`.
+
 ### 2.7 Plugins `[ready]` (D31)
 
 Analytics is not part of the kit; it is the `analytics` PLUGIN, and it is the one entry in

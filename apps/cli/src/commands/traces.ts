@@ -80,7 +80,17 @@ function clip(value: unknown, full: boolean): string {
     : text
 }
 
+/** D33: a thumbs vote on the traced answer, recorded as a zero-length `feedback` span. */
+function feedbackOf(span: TraceSpan): 1 | -1 | null {
+  const rating = span.attributes['rocketflare.feedback.rating']
+  return rating === 1 || rating === -1 ? rating : null
+}
+
 function spanLine(span: TraceSpan): string {
+  const rating = feedbackOf(span)
+  if (rating !== null) {
+    return `${chalk.bold('feedback')}  ${rating === 1 ? chalk.green('👍 up') : chalk.red('👎 down')}`
+  }
   const parts = [chalk.bold(span.name)]
   if (span.model && !span.name.includes(span.model)) parts.push(chalk.cyan(span.model))
   if (span.inputTokens !== null || span.outputTokens !== null) {
@@ -108,7 +118,9 @@ export function renderTraceTree(detail: TraceDetail, options: { full?: boolean }
     for (const span of children.get(parent) ?? []) {
       const indent = '  '.repeat(depth)
       lines.push(`${indent}${depth ? '└ ' : ''}${spanLine(span)}`)
-      if (span.content && SHOW_CONTENT.has(span.kind)) {
+      if (feedbackOf(span) !== null && typeof span.content?.input === 'string') {
+        lines.push(chalk.dim(`${indent}${depth ? '  ' : ''}  "${clip(span.content.input, full)}"`))
+      } else if (span.content && SHOW_CONTENT.has(span.kind)) {
         const pad = `${indent}${depth ? '  ' : ''}  `
         // A model span's input is the whole transcript — the output is what is worth reading.
         if (span.content.input !== undefined && span.kind !== 'llm') {

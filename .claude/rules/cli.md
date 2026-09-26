@@ -42,6 +42,13 @@ organisation via `GET /api/features`. Administering one is a global-admin act an
 `globalAdminMiddleware` resolves the session cookie only, so a tenant API key cannot reach
 `/api/admin/*` — by design; do not widen that middleware to make a CLI command possible.
 
+Evals (D33): `feedback list` reads the thumbs queue (`GET /api/feedback`, admin+) and `evals promote
+<id> --dataset <name>` fetches `GET /api/evals/export` (message id first, run id on a 404, `--run`
+skips the first try) and APPENDS one `EvalCase` line to `apps/evals/datasets/<name>.jsonl`, found by
+walking up from the cwd (`--dir` overrides). It is the one kit command that writes into the
+repository, and what it writes is tenant data, so it warns and refuses without `--yes` or a
+confirmed TTY prompt (tests inject `confirm`), and refuses a duplicate case id.
+
 Groups (D29) are READ-only here: `groups list` and `groups members <id>`. Creating or deleting a
 group is a decision about who sees what, and the confirmation the web UI gives before a delete
 narrows access has no honest one-line equivalent in a CLI.

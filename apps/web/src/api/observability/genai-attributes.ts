@@ -46,6 +46,8 @@ export const ATTR = {
   runId: 'rocketflare.run_id',
   rfConversationId: 'rocketflare.conversation_id',
   eval: 'rocketflare.eval',
+  feedbackRating: 'rocketflare.feedback.rating',
+  feedbackTarget: 'rocketflare.feedback.target',
   provider: 'rocketflare.provider',
   tags: 'rocketflare.tags',
 

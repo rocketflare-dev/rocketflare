@@ -90,6 +90,16 @@ message. Write terse third-person notes, not prose — "User is migrating from P
 zero downtime" — and never invent anything that is not in the material. Preserve the previous
 summary's content unless a later message contradicts it, in which case keep the later version.`
 
+const EVALS_JUDGE_DEFAULT = `You are an impartial evaluator grading the output of an AI assistant built into {{appName}}.
+
+You are given a task and the material to judge it by. Read everything before you decide. Judge only
+what is asked — never reward length, confidence or style the criteria do not mention, and never
+penalise an answer for declining to state something the material does not support. When the
+material is ambiguous, say so in the rationale and choose the more conservative verdict.
+
+Reply with ONE JSON object and nothing else, in exactly the shape the task asks for. The rationale
+is one or two plain sentences a developer can act on: what was wrong, or why it passed.`
+
 export const CORE_PROMPT_REGISTRY = {
   chat: {
     key: 'chat',
@@ -121,6 +131,14 @@ export const CORE_PROMPT_REGISTRY = {
       'System prompt for the `research-topic` agent: searches the knowledge base with `search_knowledge` / `get_document`, may stop to ask a person (`ask_human`) or to save a finding (`index_finding`, approved), and answers with one `submit_answer` call.',
     variables: ['appName', 'tenantName'],
     defaultText: RESEARCH_TOPIC_DEFAULT,
+  },
+  'evals-judge': {
+    key: 'evals-judge',
+    title: 'Eval judge (LLM-as-judge)',
+    description:
+      'System prompt for the LLM judges in `pnpm eval` (rubric, faithfulness, factuality). Never used by the app itself; assign it a strong model in Settings → agent models, or pass `--judge-model`.',
+    variables: ['appName'],
+    defaultText: EVALS_JUDGE_DEFAULT,
   },
 } as const satisfies PromptRegistry
 

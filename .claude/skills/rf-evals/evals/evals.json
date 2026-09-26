@@ -1,0 +1,29 @@
+{
+  "skill_name": "rf-evals",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "I changed the chat system prompt to be more concise — did I make it worse?",
+      "expected_output": "Triggers the skill in Run & interpret / Compare mode: checks the test DB and a model key, proposes pnpm eval chat --compare (baseline) or a before/after run pair, reads the run file and explains per-case changes from the judges' rationales without editing any expectation.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "Set up evals for our new invoice-extraction agent",
+      "expected_output": "Triggers Author mode: asks what a good extraction looks like before writing anything, recommends SchemaJudge on the agent's output schema plus Contains/Rubric, drafts 5–10 cases into apps/evals/datasets/<name>.jsonl with an explanation per case, writes a suite with describeCases and agentHarness, then runs it.",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "A customer gave three thumbs down on research answers yesterday, can we turn those into tests?",
+      "expected_output": "Triggers Harvest mode: runs pnpm cli feedback list --rating down, warns that promoted cases are tenant data before evals promote, drafts corrected expectations and rubrics, and stops for human sign-off on every gold expectation.",
+      "files": []
+    },
+    {
+      "id": 4,
+      "prompt": "Get the knowledge-chat rubric score above 0.9 but don't spend more than three tries",
+      "expected_output": "Triggers the Improve loop: holds out ~1/3 of cases, mines failures on the rest, proposes one prompt/tool change at a time, re-runs both splits, keeps or reverts, stops at the target or after 3 iterations, and never edits expected outputs or loosens a judge.",
+      "files": []
+    }
+  ]
+}

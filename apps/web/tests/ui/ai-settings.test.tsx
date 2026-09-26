@@ -41,7 +41,7 @@ const PROVIDERS = [
     needsBaseUrl: true,
     supportsThinking: true,
     supportsServiceTier: true,
-    defaultModel: 'accounts/fireworks/models/kimi-k2-instruct',
+    defaultModel: 'accounts/fireworks/models/gpt-oss-120b',
     presets: [],
     suggestedModels: { chat: [], embeddings: [] },
   },
@@ -159,7 +159,7 @@ describe('Settings → AI', () => {
     fireEvent.click(within(presets).getByRole('button', { name: 'Fireworks AI' }))
 
     expect(screen.getByLabelText('Base URL')).toHaveValue('https://api.fireworks.ai/inference')
-    expect(screen.getByLabelText('Model')).toHaveValue('accounts/fireworks/models/kimi-k2-instruct')
+    expect(screen.getByLabelText('Model')).toHaveValue('accounts/fireworks/models/gpt-oss-120b')
     // An empty label takes the preset's name
     expect(screen.getByLabelText('Label')).toHaveValue('Fireworks AI')
     expect(screen.getByText(/fully qualified/)).toBeInTheDocument()

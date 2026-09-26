@@ -7,7 +7,9 @@
 import { Command, InvalidArgumentError } from 'commander'
 import { runActivityList } from './commands/activity'
 import { runConfigGet, runConfigPath, runConfigSet } from './commands/config'
+import { runEvalsPromote } from './commands/evals'
 import { runFeaturesList } from './commands/features'
+import { runFeedbackList } from './commands/feedback'
 import { runGroupMembers, runGroupsList } from './commands/groups'
 import { runKeysList } from './commands/keys'
 import { runLogin } from './commands/login'
@@ -179,6 +181,39 @@ traces
   .description('print one trace as a span tree — <id> is a trace id, agent run id or message id')
   .option('--full', 'print tool/model content unclipped')
   .action(action((ctx, cmd) => runTracesShow(ctx, cmd.args[0] ?? '', cmd.opts())))
+
+const feedback = program
+  .command('feedback')
+  .description('thumbs up/down on AI answers — the eval promotion queue (admin+)')
+feedback
+  .command('list')
+  .description('list feedback, newest first')
+  .option('--rating <rating>', 'up | down', (value: string) => {
+    if (value !== 'up' && value !== 'down')
+      throw new InvalidArgumentError('--rating must be up or down')
+    return value
+  })
+  .option('--target <target>', 'message | agent_run', (value: string) => {
+    if (value !== 'message' && value !== 'agent_run')
+      throw new InvalidArgumentError('--target must be message or agent_run')
+    return value
+  })
+  .option('--page <n>', 'page number', positiveInt('--page'))
+  .option('--page-size <n>', 'items per page (max 200)', positiveInt('--page-size'))
+  .action(action((ctx, cmd) => runFeedbackList(ctx, cmd.opts())))
+
+const evals = program.command('evals').description('eval datasets (pnpm eval runs them)')
+evals
+  .command('promote <id>')
+  .description(
+    'append a real answer (message or agent run id) to apps/evals/datasets/<name>.jsonl as a draft case (admin+)'
+  )
+  .requiredOption('--dataset <name>', 'dataset file name, without .jsonl')
+  .option('--dir <path>', 'datasets directory (default: apps/evals/datasets, found from the cwd)')
+  .option('--run', 'the id is an agent run (skip the message lookup)')
+  .option('--id <caseId>', 'case id to write (default message-<8> / run-<8>)')
+  .option('--yes', 'write without asking — the case contains tenant data')
+  .action(action((ctx, cmd) => runEvalsPromote(ctx, cmd.args[0] ?? '', cmd.opts())))
 
 // ---- config --------------------------------------------------------------------------------
 

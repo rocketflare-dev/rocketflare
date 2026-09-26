@@ -13,6 +13,7 @@ import { embeddingAttributes, spanNameFor, toolAttributes } from './genai-attrib
 import type { SpanAttributes, SpanKind, TraceHandle } from './tracer'
 
 const active = new AsyncLocalStorage<TraceHandle>()
+const evaluating = new AsyncLocalStorage<true>()
 
 export function activeSpan(): TraceHandle | undefined {
   return active.getStore()
@@ -20,6 +21,21 @@ export function activeSpan(): TraceHandle | undefined {
 
 export function withActiveSpan<T>(span: TraceHandle, fn: () => T): T {
   return active.run(span, fn)
+}
+
+/**
+ * Run `fn` as an EVALUATION (D33): every trace started inside it is marked `rocketflare.eval=true`,
+ * so a backend — and `ai_spans` — can tell an eval run from production traffic. The eval targets
+ * (`apps/evals/kit`) drive the real chat route and the real agent runtime in-process, so a scope is
+ * the only way to say so without a flag threaded through every signature, or one a request could
+ * set for itself. Nothing in the Worker ever enters it.
+ */
+export function withEvalScope<T>(fn: () => T): T {
+  return evaluating.run(true, fn)
+}
+
+export function inEvalScope(): boolean {
+  return evaluating.getStore() === true
 }
 
 export interface StepParams {

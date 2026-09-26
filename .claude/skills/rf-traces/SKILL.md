@@ -75,10 +75,12 @@ invoke_agent research-topic   ERROR …            ← root: the run / turn / jo
 5. **Report**: the span, what it shows (quote the args/result), the likely cause, and the file where
    the fix lives. Offer the change; do not make it unasked.
 
-**Hand-off.** A failure worth keeping should become a regression case. The kit's eval harness
-(`rf-evals`, issue 2) **is not built yet** — until it is, write the trace id, the input and the bad
-output into the issue or the PR so the case can be added when it lands. Eval runs will be tagged
-`rocketflare.eval=true`.
+**Hand-off.** A failure worth keeping should become a regression case (D33). If a person rated it
+down, `pnpm cli feedback list --rating down` finds it, and `pnpm cli evals promote <messageId|runId>
+--dataset <name>` drafts the case, with the retrieved passages and tool calls included. It's tenant
+data, so say so. Then hand over to `rf-evals` to write the expectation and run it. Traces from eval
+runs are tagged `rocketflare.eval=true`, and a thumbs vote shows in `traces show` as a `feedback`
+span under the root.
 
 ## 4. Coaching: where traces go
 
