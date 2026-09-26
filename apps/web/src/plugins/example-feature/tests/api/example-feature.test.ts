@@ -43,7 +43,7 @@ import {
   setupTestDatabase,
   stubs,
 } from '@testkit/integration'
-import { makeToolCtx } from '@testkit/unit'
+import { makeCronCtx, makeJobCtx, makeToolCtx } from '@testkit/unit'
 import { and, eq, inArray } from 'drizzle-orm'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { allTables } from '@/plugins/api/peers'
@@ -280,6 +280,63 @@ describe('the ping route', () => {
       type: 'example-feature.ping',
       payload: { tenantId },
     })
+  })
+})
+
+describe('features(tenantId) off-request (D34)', () => {
+  it('answers what the session would, for a tenant named per call, from a job and a cron', async () => {
+    const dark = await createTestTenant(db)
+    for (const ctx of [makeJobCtx({ db }), makeCronCtx({ db })]) {
+      expect(await ctx.features(tenantId)).toContain(EXAMPLE_FEATURE_FLAG)
+      expect(await ctx.features(dark.id)).not.toContain(EXAMPLE_FEATURE_FLAG)
+    }
+  })
+})
+
+describe('the public ping link (D34)', () => {
+  async function mintLink(headers: Record<string, string>) {
+    const res = await request(`${BASE}/ping-link`, { method: 'POST', headers })
+    expect(res.status).toBe(200)
+    const { url } = await json<{ url: string }>(res)
+    return new URL(url)
+  }
+
+  it('is answered with NO credential, and pings the tenant the link was minted for', async () => {
+    const link = await mintLink(memberCookie)
+    expect(link.pathname).toBe('/api/hooks/example-feature/ping')
+    const env = createTestEnv()
+    const res = await request(`${link.pathname}${link.search}`, {}, { env })
+    expect(res.status).toBe(202)
+    const [message] = stubs(env).queue.messages
+    expect(message?.body).toMatchObject({ type: 'example-feature.ping', payload: { tenantId } })
+  })
+
+  it('refuses a tampered, foreign or missing state with the same 401', async () => {
+    const link = await mintLink(memberCookie)
+    const state = link.searchParams.get('state') ?? ''
+    const [body = '', sig = ''] = state.split('.')
+    const flipped = `${body.slice(0, -2)}${body.endsWith('A') ? 'B' : 'A'}${body.slice(-1)}.${sig}`
+    for (const bad of [flipped, `${body}.${sig.slice(1)}`, 'not-a-token', '']) {
+      const res = await request(`/api/hooks/example-feature/ping?state=${encodeURIComponent(bad)}`)
+      expect(res.status, bad).toBe(401)
+    }
+  })
+
+  it('goes dark with the flag, although no gate middleware can run without a session', async () => {
+    const link = await mintLink(memberCookie)
+    await setFlagFor(tenantId, false)
+    try {
+      const res = await request(`${link.pathname}${link.search}`)
+      expect(res.status).toBe(404)
+      expect(await json<{ code: string }>(res)).toMatchObject({ code: 'feature_disabled' })
+    } finally {
+      await setFlagFor(tenantId, true)
+    }
+  })
+
+  it('is not reachable at an unauthenticated path the plugin did not declare', async () => {
+    const res = await request('/api/hooks/example-feature/nope')
+    expect(res.status).toBe(404)
   })
 })
 

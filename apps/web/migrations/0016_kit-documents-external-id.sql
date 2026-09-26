@@ -1,0 +1,2 @@
+ALTER TABLE "documents" ADD COLUMN "external_id" text;--> statement-breakpoint
+CREATE UNIQUE INDEX "documents_tenant_source_external_uq" ON "documents" USING btree ("tenant_id","source","external_id") WHERE "documents"."external_id" is not null;

@@ -4,6 +4,7 @@
  */
 import type { SessionResponse } from '@rocketflare/shared/auth'
 import { ERROR_CODES } from '@rocketflare/shared/errors'
+import { FEATURE_FLAGS, FEATURE_KEYS } from '@rocketflare/shared/features'
 import { eq } from 'drizzle-orm'
 import { describe, expect, inject, it } from 'vitest'
 import { SESSION_COOKIE_NAME } from '@/api/auth/cookies'
@@ -45,8 +46,14 @@ describe('GET /auth/session', () => {
     expect(body.tenant).toMatchObject({ id: seed.tenant.id, slug: seed.tenant.slug, role: 'owner' })
     expect(body.tenants.map(t => t.id)).toContain(seed.tenant.id)
     expect(body.permissions.length).toBeGreaterThan(0)
+    // A fresh database is every flag at its registry default — so an installed plugin whose flag
+    // defaults ON is on here, and a bare kit has none.
+    expect(body.features).toEqual(
+      FEATURE_KEYS.filter(
+        k => FEATURE_FLAGS[k].defaultState === 'on' && !FEATURE_FLAGS[k].environmentGated
+      )
+    )
     expect(body).toMatchObject({
-      features: [],
       tenancyMode: 'multi',
       signupMode: 'invite_only',
       version: 'test',

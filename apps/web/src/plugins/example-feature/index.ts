@@ -27,6 +27,7 @@ import {
 import type { ServerPlugin, Tool } from '@/plugins/api'
 import { requireFeature, toolCtx } from '@/plugins/api'
 import { onTenantCreated, seedDemo } from './api/hooks'
+import { exampleFeaturePublicRouter } from './api/public'
 import { exampleFeatureRouter } from './api/routes'
 import { handleExamplePing } from './jobs/ping'
 import { listExampleNotesTool } from './tools/list-example-notes'
@@ -41,6 +42,13 @@ export const exampleFeatureServer = {
    * `Feature:` subject, which is exactly how platform staff end up inside an unreleased surface.
    */
   mounts: [['/api/example-feature', exampleFeatureRouter, requireFeature(EXAMPLE_FEATURE_FLAG)]],
+  /**
+   * **A public mount is the one door with no session behind it** (D34): `/api/hooks/<id>` only,
+   * no `authMiddleware`, no gate. Its handler proves who is calling (here a `verifyState` token)
+   * and re-checks the flag itself, because `requireFeature` reads an `auth.features` that does not
+   * exist without a session.
+   */
+  publicMounts: [['/api/hooks/example-feature', exampleFeaturePublicRouter]],
   jobHandlers: { [EXAMPLE_PING_JOB]: handleExamplePing },
   /**
    * The tool is written against `ToolCtx`; `toolCtx` adapts the runtime's context at this one

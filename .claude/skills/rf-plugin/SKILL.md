@@ -204,6 +204,12 @@ supports, a floor with no ceiling — and **`uses`**, the host symbols it import
 exactly the prediction this replaced. Re-export after any change to what the plugin imports, and
 paste the block it writes into the manifest.
 
+A plugin that builds on another (`requires.plugins: ["connectors"]`) is proved in CI by the kit's
+`plugin-ci.yml` with its requirements installed FIRST, resolved by id from the same repository — so
+the plugin it needs must live in that checkout too, and the proof starts from the highest `minKit`
+across the set. List every plugin in `plugin_subdirs`; each is proved with its own requirements
+installed.
+
 ## 7. Hand back
 
 End the turn with `AskUserQuestion`, not a paragraph. After an install: **run it** (`pnpm dev` and

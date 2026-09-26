@@ -160,9 +160,15 @@
         "apps/web/src/api/routes/ai-documents.ts",
         "apps/web/src/ui/pages/documents/**",
         "apps/web/src/api/queues/handlers/document-index.ts",
-        "apps/web/src/api/queues/handlers/document-convert.ts"
+        "apps/web/src/api/queues/handlers/document-convert.ts",
+        "apps/web/src/plugins/api/knowledge.ts",
+        "apps/web/tests/api/plugin-ingest.test.ts"
       ],
-      "registries": ["apps/web/src/api/index.ts", "apps/web/src/ui/App.tsx"]
+      "registries": [
+        "apps/web/src/api/index.ts",
+        "apps/web/src/ui/App.tsx",
+        "apps/web/src/plugins/api/index.ts"
+      ]
     },
     {
       "id": "feature-evals",

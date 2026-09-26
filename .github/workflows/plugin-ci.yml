@@ -11,8 +11,10 @@ name: Plugin CI
 #       uses: rocketflare-dev/rocketflare/.github/workflows/plugin-ci.yml@main
 #
 # and it: reads the plugin's declared `minKit`, pairs it with the newest kit release, and for each
-# of those two clones that kit, installs the plugin into it from this checkout, generates and
-# applies the migrations the host owns, and runs the full gate.
+# of those two clones that kit, installs the plugin into it from this checkout — after the plugins
+# its `requires.plugins` names, resolved by id from the same checkout — generates and applies the
+# migrations the host owns, and runs the full gate. The floor is the HIGHEST `minKit` across the
+# plugin and those requirements.
 #
 # **Two ends, not a midpoint, and they are no longer a range.** A plugin declares `minKit` — one
 # bare `X.Y.Z`, a floor with no ceiling — so the floor is that version and the ceiling is whatever
@@ -106,12 +108,13 @@ jobs:
           export KIT_CEILING
           echo "newest kit release: ${KIT_CEILING:-<none>}"
           cat > resolve.mjs <<'RESOLVE'
-          import { appendFileSync, existsSync, readFileSync } from 'node:fs'
+          import { appendFileSync, existsSync, readdirSync, readFileSync } from 'node:fs'
 
           // **No version comparison happens in this file.** The ORDER was decided by `sort -V` in
           // the step above, so the newest tag arrives ready-made as KIT_CEILING and everything here
           // is exact string work: `releasedTags.includes(...)` is the `grep -Fx` of the shell
-          // version, and the dedup is `===`. Nothing here parses a version number.
+          // version, the dedup is `===`, and the HIGHEST of several floors is the one latest in that
+          // already-sorted list — an index, not a parse. Nothing here parses a version number.
           const fail = message => {
             process.stderr.write(`::error::${message}\n`)
             process.exit(1)
@@ -130,6 +133,63 @@ jobs:
             .filter(Boolean)
           const ceiling = process.env.KIT_CEILING ?? ''
 
+          // Parsed inside a try: a manifest with a trailing comma used to throw a raw stack whose
+          // top frame is this workflow, naming neither the file nor the plugin.
+          const readManifest = manifestPath => {
+            try {
+              return JSON.parse(readFileSync(manifestPath, 'utf8'))
+            } catch (err) {
+              fail(`${manifestPath} is not valid JSON: ${err.message}`)
+            }
+          }
+
+          // **Every plugin in this checkout, by id** — the pool a `requires.plugins` entry resolves
+          // against. A required plugin is proved from the SAME commit as the plugin that needs it,
+          // never fetched from elsewhere: a lockstep repository changes the two together, and CI
+          // must install what the commit under test actually contains.
+          const byId = new Map()
+          const walk = dir => {
+            for (const entry of readdirSync(dir, { withFileTypes: true })) {
+              if (!entry.isDirectory() || entry.name === 'node_modules' || entry.name.startsWith('.')) continue
+              const sub = `${dir}/${entry.name}`
+              if (existsSync(`${sub}/rocketflare-plugin.json`)) {
+                const manifest = readManifest(`${sub}/rocketflare-plugin.json`)
+                const subdir = sub.slice('plugin/'.length)
+                if (manifest.id && byId.has(manifest.id)) {
+                  fail(`plugin id '${manifest.id}' is declared twice, in '${byId.get(manifest.id).subdir}' and '${subdir}'`)
+                }
+                if (manifest.id) byId.set(manifest.id, { subdir, manifest })
+              }
+              walk(sub)
+            }
+          }
+          walk('plugin')
+
+          // A requirement is "<id>" or { id, minVersion } (`parsePluginRequirement` in the kit). The
+          // minVersion is `pnpm plugin add`'s to enforce once both are installed; here only the id
+          // matters, because the version installed is by definition the one in this commit.
+          const requiredIds = manifest =>
+            (manifest.requires?.plugins ?? []).map(req => (typeof req === 'object' && req ? req.id : String(req)))
+
+          // The plugins to install BEFORE this one, dependencies first (a depth-first post-order), so
+          // `pnpm plugin add` — which refuses a plugin whose requirement is missing — always finds
+          // what it needs. A cycle is refused: no install order satisfies one.
+          const installOrder = (label, manifest) => {
+            const order = []
+            const visit = (id, path) => {
+              if (path.includes(id)) fail(`${label}: requires.plugins forms a cycle: ${[...path, id].join(' -> ')}`)
+              if (order.some(dep => dep.id === id)) return
+              const found = byId.get(id)
+              if (!found) {
+                fail(`${label}: requires plugin '${id}', and no rocketflare-plugin.json in this checkout declares that id`)
+              }
+              for (const next of requiredIds(found.manifest)) visit(next, [...path, id])
+              order.push({ id, subdir: found.subdir, manifest: found.manifest })
+            }
+            for (const id of requiredIds(manifest)) visit(id, [label])
+            return order
+          }
+
           const ref = process.env.KIT_REF
           const pairs = []
           for (const subdir of subdirs) {
@@ -137,46 +197,53 @@ jobs:
             if (!existsSync(manifestPath)) {
               fail(`no rocketflare-plugin.json at '${manifestPath}' — check plugin_subdir(s)`)
             }
-            // Parsed inside a try: a manifest with a trailing comma used to throw a raw stack whose
-            // top frame is this workflow, naming neither the file nor the plugin.
-            let manifest
-            try {
-              manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
-            } catch (err) {
-              fail(`${manifestPath} is not valid JSON: ${err.message}`)
-            }
+            const manifest = readManifest(manifestPath)
             const label = manifest.id ?? subdir ?? 'plugin'
+            const deps = installOrder(label, manifest)
+            // Space-separated: a subdir is a path in a git repository and never needs quoting here,
+            // which is asserted rather than assumed.
+            for (const dep of deps) {
+              if (/\s/.test(dep.subdir)) fail(`${label}: required plugin directory '${dep.subdir}' contains whitespace`)
+            }
+            const depSubdirs = deps.map(dep => dep.subdir).join(' ')
+            if (deps.length > 0) console.log(`${label}: installs ${deps.map(dep => dep.id).join(', ')} first`)
 
             // An explicit ref wins and is used verbatim: it is usually a branch, which has no
             // version, so there is nothing to match a floor against.
             if (ref) {
               console.log(`${label}: kit_ref '${ref}' (minKit not consulted)`)
-              pairs.push({ kit: ref, plugin: subdir ?? '', label })
+              pairs.push({ kit: ref, plugin: subdir ?? '', deps: depSubdirs, label })
               continue
             }
 
             // `minKit` is a TOP-LEVEL manifest key, sibling to id/version/repo, and it is read in
             // exactly ONE spelling: one written in the wrong place must fail loudly here rather
             // than be quietly accepted, which is what a fallback would do.
-            const floor = manifest.minKit
-            if (!floor) {
-              fail(`${label}: declares no minKit — add a top-level "minKit": "0.7.0" naming the oldest kit release this plugin supports`)
-            }
             if (!ceiling) {
               fail(`${label}: the kit repository has no X.Y.Z release tags, so there is no version to prove against`)
             }
-            // Exact membership, never a comparison — which is why ONE message covers both ways of
-            // arriving here: a floor naming a version that was never released, and a floor still
-            // written as a range. Checked here rather than left to `git clone --branch`, which
-            // fails naming neither the plugin nor the field that was wrong.
-            if (!releasedTags.includes(floor)) {
-              fail(`${label}: minKit '${floor}' is not a released kit version (newest is ${ceiling}) — minKit is ONE bare X.Y.Z floor, not a range`)
+            // The floor is the HIGHEST `minKit` across the plugin and everything it installs: a kit
+            // too old for a dependency cannot host the plugin either, whatever the plugin says.
+            let floor = null
+            for (const { id, manifest: m } of [{ id: label, manifest }, ...deps]) {
+              const own = m.minKit
+              if (!own) {
+                fail(`${id}: declares no minKit — add a top-level "minKit": "0.7.0" naming the oldest kit release this plugin supports`)
+              }
+              // Exact membership, never a comparison — which is why ONE message covers both ways of
+              // arriving here: a floor naming a version that was never released, and a floor still
+              // written as a range. Checked here rather than left to `git clone --branch`, which
+              // fails naming neither the plugin nor the field that was wrong.
+              if (!releasedTags.includes(own)) {
+                fail(`${id}: minKit '${own}' is not a released kit version (newest is ${ceiling}) — minKit is ONE bare X.Y.Z floor, not a range`)
+              }
+              if (floor === null || releasedTags.indexOf(own) > releasedTags.indexOf(floor)) floor = own
             }
             // The floor and the ceiling: the oldest kit an adopter may still be on, and the newest
             // the kit has reached. ONE entry when a plugin's floor is already the newest kit.
             const kits = floor === ceiling ? [floor] : [floor, ceiling]
             console.log(`${label}: minKit ${floor}, newest kit ${ceiling} -> ${kits.join(', ')}`)
-            for (const kit of kits) pairs.push({ kit, plugin: subdir ?? '', label })
+            for (const kit of kits) pairs.push({ kit, plugin: subdir ?? '', deps: depSubdirs, label })
           }
           appendFileSync(process.env.GITHUB_OUTPUT, `pairs=${JSON.stringify(pairs)}\n`)
           RESOLVE
@@ -258,10 +325,11 @@ jobs:
       # `plugin add` then `db:generate` rather than anything the plugin ships. Installing from a
       # PATH is the authoring loop: the working copy is read directly, so the commit under test is
       # the one installed.
-      - name: Install this plugin into the kit
+      - name: Install this plugin (and the plugins it requires) into the kit
         working-directory: kit
         env:
           PLUGIN_SUBDIR: ${{ matrix.plugin }}
+          PLUGIN_DEPS: ${{ matrix.deps }}
         run: |
           set -euo pipefail
           # db:generate runs `dotenv -e .dev.vars`, so the file has to exist here as it does on a
@@ -269,17 +337,29 @@ jobs:
           printf 'DATABASE_URL=postgresql://test:test@localhost:5433/rocketflare_test\n' > apps/web/.dev.vars
           manifest="$GITHUB_WORKSPACE/plugin/$PLUGIN_SUBDIR"
           id=$(node -p "require('${manifest%/}/rocketflare-plugin.json').id")
-          # Nothing edits the cloned kit before this point, so `pnpm plugin add`'s refusal of a
-          # dirty tree — which keeps an install to ONE reviewable diff — is satisfied by doing
+          # Nothing edits the cloned kit before the FIRST install, so `pnpm plugin add`'s refusal of
+          # a dirty tree — which keeps an install to ONE reviewable diff — is satisfied by doing
           # nothing rather than by a commit. It used to take an edit and a commit: the kit cloned
           # above is a RELEASED tag, so its `defaultPlugins` pinned whichever version of this plugin
           # was current when that kit shipped, and a check compared the installed plugin against
           # that pin — failing every plugin release that had moved past it, by construction, until a
           # kit shipped pinning the new version, which cannot happen before the plugin is released.
           # That check is gone, so the unpin edit, its Biome re-format and its commit are gone too.
+          #
+          # **A plugin that `requires.plugins` gets them installed first** (`deps`, resolved by id
+          # from THIS checkout, dependencies before dependants). The tree is dirty after the first
+          # install, so every later one passes `--allow-dirty` — the one reviewable diff is a laptop
+          # rule, and this clone is thrown away. The migration is generated ONCE, after the last
+          # install, exactly as an adopter installing the set and then running `db:generate` would.
+          dirty=()
+          for dep in $PLUGIN_DEPS; do
+            echo "installing required plugin $dep"
+            pnpm plugin add "$GITHUB_WORKSPACE/plugin" --apply --local --subdir "$dep" "${dirty[@]}"
+            dirty=(--allow-dirty)
+          done
           args=(add "$GITHUB_WORKSPACE/plugin" --apply --local)
           if [ -n "$PLUGIN_SUBDIR" ]; then args+=(--subdir "$PLUGIN_SUBDIR"); fi
-          pnpm plugin "${args[@]}"
+          pnpm plugin "${args[@]}" "${dirty[@]}"
           pnpm db:generate --name "plugin-$id-ci"
 
       - name: Apply the generated migrations

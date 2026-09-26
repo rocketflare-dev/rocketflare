@@ -16,6 +16,7 @@ setup in `SETUP.md`; Cloudflare topology in `docs/DEPLOY.md`; RLS in `docs/RLS.m
 | 6 | [Email and storage](#6-email-and-storage) | 14 | [Definition of done](#14-definition-of-done-for-the-kit) |
 | 7 | [UI shell](#7-ui-shell) | 15 | [Feature flags](#15-feature-flags) |
 | 8 | [Analytics](#8-analytics) | 16 | [Plugins](#16-plugins) |
+|  |  | 17 | [Connectors](#17-connectors) |
 
 **Layout (D26).** A pnpm workspace: `apps/web` (the Worker — Hono API + React UI, §§1–10),
 `apps/cli` (§11), `packages/shared` (zod contracts, §12), and `apps/evals` (developer-run eval
@@ -258,6 +259,10 @@ Server: `api/services/{ai,agents}/**` (read their `CLAUDE.md`), `services/prompt
   uploads go to R2, then `AI.toMarkdown`, then the same indexer. Search is hybrid dense + lexical
   with RRF, scoped by `AccessScope` (§1). `document-content.ts` is the one text reader behind both
   the viewer and `get_document`. Agent tools resolve the requester's access at execute time.
+  **External ids (D34)**: `documents.external_id` is unique per `(tenant_id, source)` (partial
+  index, `0016`); an ingest carrying one is an upsert — one `ON CONFLICT` statement, grants
+  replaced, chunks rebuilt, a replaced original removed from R2 — so a connector's re-sync never
+  duplicates. Plugins reach it through `ingestDocument` (§16).
 - **Usage**: one `ai_usage` row per call, costed at write time from the one price table
   (`shared/ai/pricing`; an unknown model gets `null` and is counted as unpriced).
 - **Tracing (D32, supersedes D16's Langfuse ingestion client)**: `api/observability/`. Every AI call
@@ -514,7 +519,9 @@ as merging a PR. A plugin repo mirrors the host tree and ships **no migration, n
   by `pnpm plugin export`, and compatibility is the set difference `uses \ ledger`, checked before
   any file is copied. The one surviving number is a top-level `minKit` floor. `requires.kit` /
   `requires.pluginApi` are refused by name. CI proves both ends: `ci.yml` runs the gate with
-  `defaultPlugins` installed, and plugin repos call `plugin-ci.yml` (floor + newest kit).
+  `defaultPlugins` installed, and plugin repos call `plugin-ci.yml` (floor + newest kit), which
+  installs a plugin's `requires.plugins` from the same checkout first and takes the highest
+  `minKit` across the set as the floor.
 - **Lifecycle** (`scripts/plugin.mjs`): `add` (plan, then `--apply`), `upgrade`, `remove`
   (`--archive`), `list`, `check`, `export`. Every plan step is **declarative, agent (with its
   assertion) or human** — a printed instruction is not a mechanism. The host generates the
@@ -531,6 +538,23 @@ as merging a PR. A plugin repo mirrors the host tree and ships **no migration, n
 - **Credentials**: a plugin stores a tenant's key with `sealSecret` / `openSecret` from
   `@/plugins/api`. That is the kit's AES-GCM under `OAUTH_ENCRYPTION_KEY`, with a 503 when the key
   is unset. Store the sealed value in a `*_enc` column and answer `hasCredential`.
+- **Public mounts (D34)**: `publicMounts` are routes a third party calls with no session — an
+  admin-consent callback, a webhook. Only under `/api/hooks/<id>` (so no toml edit and one
+  enumerable prefix per plugin), mounted before the authed table with no `authMiddleware` and no
+  gate; `tests/config/plugins.test.ts` refuses one anywhere else and any authed mount there. The
+  handler gets `publicCtx(c)` — no tenant, no auth fields, `enqueue`, `features(tenantId)` — and
+  proves the caller before naming a tenant. `signState` / `verifyState` are the proof for a
+  round-trip the plugin started: HMAC-SHA256 under a key HKDF-derived from
+  `OAUTH_ENCRYPTION_KEY`, a `purpose` that is part of the signed body, an absolute expiry
+  (default 10 min), `null` for every failure. Signed, not encrypted.
+- **Background feature checks (D34)**: `JobCtx`, `CronCtx` and `PublicCtx` carry
+  `features(tenantId)` — the same resolution as `auth.features`, with no user, so a cron that fans
+  out across tenants can skip the ones whose flag is off.
+- **Knowledge ingest (D34)**: `ingestDocument` / `ingestDocumentFile` / `deleteIngestedDocument`
+  over the kit's ingest paths (§9). With an `externalId`, the same `(tenant, source, externalId)`
+  UPDATES the row — text, owner, visibility, grants, chunks, the stored original — so a sync can
+  replay safely. Group ids are checked against the tenant first. This file belongs to the
+  `feature-knowledge` surface; a plugin that ingests requires it.
 - **Hooks** (`onTenantCreated`, `onTenantDeleted`, `seedDemo`) run post-commit, are idempotent,
   and are try/caught. DO state is purgeable only through instance names **derived** from the tenant
   id.
@@ -578,4 +602,43 @@ chars, and `uses` is only as fresh as the last export; table collisions are caug
 refused at `add`; the isolation check proves a test exists, not that it is right; no database-free
 test of data-touching handlers; one DO per row is unpurgeable (purge-intent ledger not built);
 `plugin-ci.yml` input changes reach callers only via `main`, and nothing tests versions between
-floor and ceiling.
+floor and ceiling. Public mounts (D34) get no rate limit of their own and no `@testkit` builder
+(test them through `request()`); `verifyState` has no replay ledger — a token is reusable until it
+expires, so a plugin whose callback must run once records that itself; an ingested document's
+upsert reads the previous row before writing, so two racing re-ingests of a FILE may leave one
+replaced original behind in R2.
+
+---
+
+## 17. Connectors
+
+An **organisation connection** to Microsoft 365 or Google Workspace (D34): an org admin grants an
+operator-registered app access to the whole directory, calendars and — later — mail and files, and
+Rocketflare syncs them into the tenant. It is **not login** (§2): a different app, a different
+grant (admin consent / domain-wide delegation, app-only tokens), a different subject (the
+organisation, not the signer). The design, operator and customer-admin setup, phases and the MCP
+assessment are in `docs/CONNECTORS.md`.
+
+It ships as plugins, not core: the `connectors` base plugin (installations, connections, sync
+cursors, the settings tab, the sync job and cron) and one provider plugin each (`m365` first,
+`google-workspace` next), registered through `extensions.connectorProviders`. The kit's part is
+four generic seams on the plugin surface (§16): public mounts at `/api/hooks/<id>`, `signState` /
+`verifyState`, `ingestDocument` with an `externalId` upsert (§9), and `features(tenantId)` off the
+request.
+
+| # | Choice |
+|---|---|
+| 1 | Login and connection stay separate apps, even in production |
+| 2 | One operator-registered app per deployment by default; a per-customer BYO app is the escape hatch |
+| 3 | The data model covers all three usage models from day one: installation → connection with `ownerType` `tenant` or `user` |
+| 4 | Org-wide app-only ships first; per-user delegated is phase 4 |
+| 5 | Directory + calendar by delta polling first — no restricted scopes, so no Google CASA gate |
+| 6 | Webhooks only ever trigger a delta fetch; polling stays the backstop |
+| 7 | Every synced row carries its owner; tenant isolation alone is not enough inside one organisation |
+| 8 | Vendor MCP servers are not a data plane (delegated only, no delta or webhooks) — at most a later chat-tool adapter |
+
+**Known gaps:** no webhooks yet (phase 2); no mail or file ingestion (phase 3); no per-user
+delegated connections or refresh-token rotation (phase 4); Google Workspace provider not built;
+M365 uses a client secret, not a certificate assertion; no Exchange RBAC-for-Applications scoping
+script; synced private rows are still readable by tenant admins (D29 owner-and-admins); the kit has
+no MCP client; directory sync does not provision kit users or groups (it only matches by email).

@@ -10,3 +10,12 @@
 
 /** The plugin's query-key family root and its `entity.changed` entity. `<id>:<thing>`. */
 export const EXAMPLE_NOTES_ENTITY = 'example-feature:notes'
+
+/**
+ * The `signState` purpose of the ping link (D34). Part of the signed body, so a token minted for
+ * this flow can never be replayed into another one — which is why it names the plugin AND the flow.
+ */
+export const EXAMPLE_PING_LINK_PURPOSE = 'example-feature:ping-link'
+
+/** How long a ping link stays valid. Short: it is a capability, and anybody holding it may use it. */
+export const EXAMPLE_PING_LINK_TTL_SECONDS = 600

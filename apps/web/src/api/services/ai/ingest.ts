@@ -26,7 +26,7 @@ import {
   resolveDocumentUploadType,
 } from '@rocketflare/shared/ai/embeddings'
 import type { GroupRef, ResourceVisibility } from '@rocketflare/shared/groups'
-import { and, eq } from 'drizzle-orm'
+import { and, eq, sql } from 'drizzle-orm'
 import type { AppConfig } from '../../../config'
 import type { Database } from '../../../db/client'
 import { chunks, type DocumentRow, documentGroups, documents, files } from '../../../db/schema'
@@ -58,11 +58,19 @@ export interface IngestTextInput {
    */
   visibility?: ResourceVisibility
   groupIds?: readonly string[]
+  /**
+   * D34: the item's id in `source`. With one, an existing row for `(tenantId, source, externalId)`
+   * is UPDATED and re-indexed rather than a second row added — how a connector re-syncs an edited
+   * message or file. Requires `source`.
+   */
+  externalId?: string | null
 }
 
 export interface IngestDeps {
   /** `env.JOBS_QUEUE` — required only when the text exceeds the inline limit. */
   jobs?: JobsQueue | null
+  /** R2 — only to remove an original that an external-id re-ingest replaced (D34). */
+  storage?: StorageService | null
 }
 
 /** Thrown by `ingestFile` for a binary upload on a Worker whose `AI` binding cannot convert. */
@@ -198,8 +206,16 @@ export async function indexDocument(
 async function grantDocumentGroups(
   db: Database,
   row: DocumentRow,
-  groupIds: readonly string[] | undefined
+  groupIds: readonly string[] | undefined,
+  options: { replace?: boolean } = {}
 ): Promise<void> {
+  // An external-id re-ingest REPLACES the grants: stale rows would silently keep sharing a
+  // document with a group the source no longer shares it with.
+  if (options.replace) {
+    await db
+      .delete(documentGroups)
+      .where(and(eq(documentGroups.tenantId, row.tenantId), eq(documentGroups.documentId, row.id)))
+  }
   if (row.visibility !== 'groups' || !groupIds || groupIds.length === 0) return
   await db
     .insert(documentGroups)
@@ -268,29 +284,127 @@ export async function ingestText(
 ): Promise<IngestResult> {
   const pieces = chunkText(input.text)
   const embeddings = await resolveEmbeddings(db, cfg, env, input.tenantId)
+  const values = {
+    tenantId: input.tenantId,
+    ownerUserId: input.userId,
+    title: input.title,
+    source: input.source ?? null,
+    contentType: input.contentType ?? 'text/plain',
+    sizeBytes: new TextEncoder().encode(input.text).byteLength,
+    content: input.text,
+    fileId: null,
+    status: 'pending' as const,
+    visibility: input.visibility ?? 'tenant',
+  }
+  const external = externalKey(input)
+  const previous = external ? await findExternal(db, input.tenantId, external) : undefined
+  const row = external
+    ? await upsertExternal(db, { ...values, externalId: external.externalId })
+    : (await db.insert(documents).values(values).returning())[0]
+  if (!row) throw new Error('documents: insert returned no row')
+  await grantDocumentGroups(db, row, input.groupIds, { replace: previous !== undefined })
+  // A re-sync of an item that USED to be a file and is now text leaves its old object behind.
+  if (previous?.fileId && deps.storage)
+    await dropStoredFile(db, deps.storage, input.tenantId, previous.fileId)
+  return indexOrEnqueue(db, cfg, env, row, pieces, embeddings, deps)
+}
+
+// ---- External ids (D34) ----------------------------------------------------------------------
+
+interface ExternalKey {
+  source: string
+  externalId: string
+}
+
+function externalKey(input: {
+  source?: string | null
+  externalId?: string | null
+}): ExternalKey | null {
+  if (!input.externalId) return null
+  const source = input.source?.trim()
+  if (!source) throw new Error('documents: an externalId needs a source to be unique within')
+  return { source, externalId: input.externalId }
+}
+
+async function findExternal(
+  db: Database,
+  tenantId: string,
+  key: ExternalKey
+): Promise<DocumentRow | undefined> {
+  return db.query.documents.findFirst({
+    where: and(
+      eq(documents.tenantId, tenantId),
+      eq(documents.source, key.source),
+      eq(documents.externalId, key.externalId)
+    ),
+  })
+}
+
+/**
+ * Insert, or overwrite the row this `(tenant, source, externalId)` already has — ONE statement, so
+ * two syncs of the same item racing each other converge on one row rather than failing on the
+ * unique index. `ownerUserId`, visibility and the text all move: the source is the truth.
+ */
+async function upsertExternal(
+  db: Database,
+  values: typeof documents.$inferInsert & { externalId: string }
+): Promise<DocumentRow | undefined> {
+  const { tenantId: _t, source: _s, externalId: _e, ...update } = values
   const [row] = await db
     .insert(documents)
-    .values({
-      tenantId: input.tenantId,
-      ownerUserId: input.userId,
-      title: input.title,
-      source: input.source ?? null,
-      contentType: input.contentType ?? 'text/plain',
-      sizeBytes: new TextEncoder().encode(input.text).byteLength,
-      content: input.text,
-      status: 'pending',
-      visibility: input.visibility ?? 'tenant',
+    .values(values)
+    .onConflictDoUpdate({
+      target: [documents.tenantId, documents.source, documents.externalId],
+      targetWhere: sql`${documents.externalId} is not null`,
+      set: { ...update, chunkCount: 0, embeddingModel: null, error: null },
     })
     .returning()
-  if (!row) throw new Error('documents: insert returned no row')
-  await grantDocumentGroups(db, row, input.groupIds)
-  return indexOrEnqueue(db, cfg, env, row, pieces, embeddings, deps)
+  return row
+}
+
+/** Best-effort removal of a replaced original — the new row no longer points at it. */
+async function dropStoredFile(
+  db: Database,
+  storage: StorageService,
+  tenantId: string,
+  fileId: string
+) {
+  const file = await db.query.files.findFirst({
+    where: and(eq(files.id, fileId), eq(files.tenantId, tenantId)),
+  })
+  if (file) await deleteStoredFile(db, storage, file).catch(() => {})
+}
+
+/**
+ * Delete what a source once ingested under `externalId` — the connector saw the item deleted
+ * upstream. Chunks and grants cascade from the row; the uploaded original, if any, is removed from
+ * storage too. Answers whether there was anything to delete.
+ */
+export async function deleteExternalDocument(
+  db: Database,
+  input: { tenantId: string; source: string; externalId: string },
+  deps: { storage?: StorageService | null } = {}
+): Promise<boolean> {
+  const [row] = await db
+    .delete(documents)
+    .where(
+      and(
+        eq(documents.tenantId, input.tenantId),
+        eq(documents.source, input.source),
+        eq(documents.externalId, input.externalId)
+      )
+    )
+    .returning()
+  if (!row) return false
+  if (row.fileId && deps.storage) await dropStoredFile(db, deps.storage, input.tenantId, row.fileId)
+  return true
 }
 
 // ---- Uploads -----------------------------------------------------------------------------------
 
 export interface IngestFileInput {
   tenantId: string
+  /** Required: a `files` row always has an owner (it cascades from the user). */
   userId: string
   /** The multipart part (a Blob carries the length R2 needs). */
   file: Blob
@@ -303,6 +417,8 @@ export interface IngestFileInput {
   /** D29 — as `IngestTextInput`: validated at the route, defaults to tenant-wide. */
   visibility?: ResourceVisibility
   groupIds?: readonly string[]
+  /** D34 — as `IngestTextInput`; the replaced original is removed from storage. */
+  externalId?: string | null
 }
 
 export interface IngestFileDeps extends IngestDeps {
@@ -359,27 +475,33 @@ export async function ingestFile(
   }
 
   let row: DocumentRow | undefined
+  let previous: DocumentRow | undefined
   try {
-    ;[row] = await db
-      .insert(documents)
-      .values({
-        tenantId: input.tenantId,
-        ownerUserId: input.userId,
-        title: input.title?.trim() || titleFromFilename(input.filename),
-        source: input.source?.trim() || stored.filename,
-        contentType: input.type.contentType,
-        sizeBytes: input.file.size,
-        content: text,
-        fileId: stored.id,
-        status: 'pending',
-        visibility: input.visibility ?? 'tenant',
-      })
-      .returning()
+    const values = {
+      tenantId: input.tenantId,
+      ownerUserId: input.userId,
+      title: input.title?.trim() || titleFromFilename(input.filename),
+      source: input.source?.trim() || stored.filename,
+      contentType: input.type.contentType,
+      sizeBytes: input.file.size,
+      content: text,
+      fileId: stored.id,
+      status: 'pending' as const,
+      visibility: input.visibility ?? 'tenant',
+    }
+    const external = externalKey(input)
+    previous = external ? await findExternal(db, input.tenantId, external) : undefined
+    ;[row] = external
+      ? [await upsertExternal(db, { ...values, externalId: external.externalId })]
+      : await db.insert(documents).values(values).returning()
     if (!row) throw new Error('documents: insert returned no row')
-    await grantDocumentGroups(db, row, input.groupIds)
+    await grantDocumentGroups(db, row, input.groupIds, { replace: previous !== undefined })
   } catch (err) {
     await deleteStoredFile(db, deps.storage, stored).catch(() => {})
     throw err
+  }
+  if (previous?.fileId && previous.fileId !== stored.id) {
+    await dropStoredFile(db, deps.storage, input.tenantId, previous.fileId)
   }
 
   if (input.type.kind === 'convert') {

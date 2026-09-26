@@ -72,6 +72,21 @@ export async function listFeatureFlagRows(
 }
 
 /**
+ * The features one organisation has with no request in hand — a queue job, a cron task or a public
+ * webhook (D30, D34). No user, so a flag rolled out by USER buckets resolves on the tenant's
+ * override and platform state alone; that is the honest answer for background work, which acts on
+ * behalf of the organisation rather than of any one member.
+ */
+export async function tenantFeatures(
+  db: Database,
+  cfg: AppConfig,
+  tenantId: string
+): Promise<FeatureName[]> {
+  const rows = await listFeatureFlagRows(db, tenantId)
+  return resolveFeatures(cfg, rows, { tenantId, userId: null })
+}
+
+/**
  * The features a deployment has with no tenant in hand — what a brand-new organisation is seeded
  * with (D30). A flag mid-ROLLOUT resolves false here, because the tenant it would be bucketed on
  * does not exist yet; its page then arrives on that tenant's first `GET /api/analytics/pages`

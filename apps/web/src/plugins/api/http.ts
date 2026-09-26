@@ -55,7 +55,7 @@ import { durableObject, nudgeEntity } from './events'
 import type { PluginContext } from './types'
 
 export type { AppRouter } from '../../api/utils/routes/router'
-export type { PluginMount } from '../types'
+export type { PluginMount, PluginPublicMount } from '../types'
 /**
  * The three things a plugin builds a router out of. They are functions rather than context methods
  * because they run at MODULE scope, when the router is defined and no request exists yet.

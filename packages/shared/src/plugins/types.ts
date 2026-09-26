@@ -127,9 +127,16 @@ export type PromptKeyOf<S extends SharedPlugin> = NonNullable<DeclaredBy<S, 'pro
 /** The CASL subjects one plugin declares. */
 export type SubjectOf<S extends SharedPlugin> = NonNullable<DeclaredBy<S, 'subjects'>>[number]
 
-/** The feature keys one plugin declares (the keys of its `features` record). */
+/**
+ * The feature keys one plugin declares (the keys of its `features` record). Distributive, so a
+ * UNION of plugins yields every plugin's keys — plain `keyof (A | B)` is only the keys they share.
+ */
 export type FeatureKeyOf<S extends SharedPlugin> = Extract<
-  keyof NonNullable<DeclaredBy<S, 'features'>>,
+  NonNullable<DeclaredBy<S, 'features'>> extends infer F
+    ? F extends unknown
+      ? keyof F
+      : never
+    : never,
   string
 >
 

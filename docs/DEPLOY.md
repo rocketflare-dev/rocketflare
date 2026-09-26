@@ -289,7 +289,11 @@ The mirror image, for a plugin repository, is `.github/workflows/plugin-ci.yml`,
 kit so that a change to how compatibility is proved reaches every plugin through one file. It reads
 the plugin's own top-level `minKit` — one bare `X.Y.Z`, a floor with no ceiling — pairs it with the
 kit's NEWEST release tag, and for each clones that kit, installs the plugin from the checkout under
-test, generates and applies the migrations the host owns, and runs the full gate. Both ends, not a
+test, generates and applies the migrations the host owns, and runs the full gate. A plugin whose
+`requires.plugins` names others gets them installed FIRST — each resolved by `id` to a directory in
+the same checkout, dependencies before dependants, a missing id or a cycle failing the resolve job
+by name — and its floor is the highest `minKit` across the plugin and those requirements, because a
+kit too old for a dependency cannot host the plugin either. Both ends, not a
 midpoint: the floor an adopter may still be on and the ceiling the kit has just reached. It compares
 no versions itself — `sort -V` over `git ls-remote --tags` picks the newest, and everything left in
 JavaScript is exact string matching, so there is no range to be malformed. A plugin repository
