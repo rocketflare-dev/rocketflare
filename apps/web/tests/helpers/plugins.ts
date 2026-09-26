@@ -135,6 +135,28 @@ export function queryKeyRootIssues(id: string, roots: readonly string[]): string
   return roots.filter(r => !r.startsWith(`${id}:`)).map(r => `${id}: query-key root '${r}'`)
 }
 
+/**
+ * D34: where a plugin may mount a route with NO auth. Only `/api/hooks/<its own id>` and beneath,
+ * so the unauthenticated surface is one enumerable prefix per plugin; and no AUTHED mount may sit
+ * under `/api/hooks` at all, so a reader can trust that everything there is public by design.
+ */
+export function publicMountIssues(
+  id: string,
+  publicPrefixes: readonly string[],
+  authedPrefixes: readonly string[]
+): string[] {
+  const root = `/api/hooks/${id}`
+  const issues = publicPrefixes
+    .filter(p => p !== root && !p.startsWith(`${root}/`))
+    .map(p => `${id}: public mount '${p}' is outside ${root}`)
+  for (const p of authedPrefixes) {
+    if (p === '/api/hooks' || p.startsWith('/api/hooks/')) {
+      issues.push(`${id}: authed mount '${p}' is under /api/hooks, which is public by definition`)
+    }
+  }
+  return issues
+}
+
 // ---- the plugin import rule (D31) ----------------------------------------------------------------
 
 /**
@@ -189,8 +211,9 @@ export function pluginImportIssue(
   const target = resolveSpecifier(importer, specifier)
   // A bare specifier that is not `@/` or `@rocketflare/shared/` — an ordinary dependency.
   if (!target) return null
-  // Its own files are always fine; another plugin's are `deepImportIssue`'s to report.
-  if (pluginIdOfPath(target) === pluginIdOfPath(importer)) return null
+  // Its own files are always fine; another plugin's are `deepImportIssue`'s to report — and a
+  // PUBLISHED entry of a plugin it requires is allowed (D31), so every plugin path stops here.
+  if (pluginIdOfPath(target) !== null) return null
   const normalised = normaliseModulePath(target)
   if (DECLARED_ENTRIES.some(e => normalised === e || normalised.startsWith(`${e}/`))) return null
   if (!HOST_ROOTS.some(root => `${normalised}/`.startsWith(root) || normalised.startsWith(root))) {

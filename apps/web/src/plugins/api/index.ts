@@ -83,11 +83,13 @@ export type {
   AppRouter,
   DetachedCtx,
   PluginMount,
+  PluginPublicMount,
   RequestCtx,
   RequestVisibility,
 } from './http'
 export { createRouter, pageWindow, requestCtx, validate } from './http'
 export type {
+  BackgroundMethods,
   CronCtx,
   JobCtx,
   JobEnvelope,
@@ -98,6 +100,12 @@ export type {
   ScheduledTask,
 } from './jobs'
 export { cronCtx, jobCtx } from './jobs'
+export type {
+  PluginIngestFileInput,
+  PluginIngestResult,
+  PluginIngestTextInput,
+} from './knowledge'
+export { deleteIngestedDocument, ingestDocument, ingestDocumentFile } from './knowledge'
 export type {
   AgentTraceContext,
   SpanKind,
@@ -113,9 +121,11 @@ export {
   tracingEnabled,
   withAgentTrace,
 } from './observability'
+export type { PublicCtx } from './public'
+export { PUBLIC_MOUNT_ROOT, publicCtx } from './public'
 export type { StepRealtime } from './realtime-step'
 export { createStepRealtimeFor } from './realtime-step'
-export { openSecret, sealSecret } from './secrets'
+export { openSecret, sealSecret, signState, verifyState } from './secrets'
 export type {
   Database,
   DatabaseHandle,

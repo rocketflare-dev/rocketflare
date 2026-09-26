@@ -229,8 +229,10 @@ describe('the barrel writer', () => {
     // Putting every installed plugin back has to reproduce the file exactly — all of them, not
     // just the first: the moment a second plugin was installed (D31, Phase C) a one-id round trip
     // stopped being the same file, and a test that only ever saw one would not have noticed.
-    const rebuilt = installedHere.reduce((text, s) => addBarrelLine(text, 'schema', s.id), bare)
-    if (installedHere.length > 0) expect(rebuilt).toBe(real)
+    // Only the plugins that HAVE a schema half own a line in this barrel.
+    const withSchema = installedHere.filter(s => (s.registries ?? []).includes(BARRELS.schema.file))
+    const rebuilt = withSchema.reduce((text, s) => addBarrelLine(text, 'schema', s.id), bare)
+    if (withSchema.length > 0) expect(rebuilt).toBe(real)
   })
 
   /**

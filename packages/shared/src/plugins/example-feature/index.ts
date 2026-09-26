@@ -83,6 +83,18 @@ export const examplePingResponseSchema = z.object({
 })
 export type ExamplePingResponse = z.infer<typeof examplePingResponseSchema>
 
+/**
+ * `POST /api/example-feature/ping-link` (D34) — a signed, expiring URL that anybody holding it can
+ * open WITHOUT a session, and that pings this organisation's queue. The worked example of a public
+ * mount: the shape an admin-consent callback or a webhook takes, with the proof of who is calling
+ * carried in the token rather than a cookie.
+ */
+export const examplePingLinkResponseSchema = z.object({
+  url: z.string().url(),
+  expiresInSeconds: z.number().int().positive(),
+})
+export type ExamplePingLinkResponse = z.infer<typeof examplePingLinkResponseSchema>
+
 /** The job's payload. Ids and a note only — a handler recomputes everything else from the DB. */
 export const examplePingPayloadSchema = z.object({
   tenantId: z.string().uuid(),

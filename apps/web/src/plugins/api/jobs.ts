@@ -19,6 +19,7 @@
 import type { JobEnvelope, JobInput } from '@rocketflare/shared/jobs'
 import type { JobContext } from '../../api/queues/jobs'
 import type { TaskContext } from '../../api/scheduled'
+import { tenantFeatures } from '../../api/services/features'
 import { enqueueJob, enqueueJobs } from '../../api/services/jobs'
 import { createStepRealtimeFor } from './realtime-step'
 import type { PluginContext } from './types'
@@ -28,7 +29,7 @@ export type { JobContext, JobHandler } from '../../api/queues/jobs'
 export type { ScheduledTask, TaskContext } from '../../api/scheduled'
 
 /** What every background context can do, tenant supplied per call. */
-interface BackgroundMethods {
+export interface BackgroundMethods {
   /**
    * Enqueue follow-on work. A missing `JOBS_QUEUE` throws rather than running inline.
    *
@@ -49,6 +50,13 @@ interface BackgroundMethods {
     tenantId: string,
     key?: string
   ): DurableObjectStub<T>
+  /**
+   * The feature keys one organisation has (D30) — what `auth.features` is on a request, resolved
+   * here for a tenant named per call. A cron that fans out across every organisation reads this to
+   * skip the ones whose flag is off; there is no user, so a user-bucketed rollout answers on the
+   * tenant's override and the platform state alone.
+   */
+  features(tenantId: string): Promise<readonly string[]>
 }
 
 /**
@@ -64,7 +72,8 @@ export interface CronCtx extends PluginContext, BackgroundMethods {
   waitUntil(promise: Promise<unknown>): void
 }
 
-function backgroundMethods(env: PluginContext['env']): BackgroundMethods {
+/** Shared by `JobCtx`, `CronCtx` and the public-mount context (`./public`). */
+export function backgroundMethods({ db, config, env }: PluginContext): BackgroundMethods {
   return {
     enqueue: (input, options) => enqueueJob(env.JOBS_QUEUE, input, options),
     enqueueMany: async (inputs, options) => {
@@ -75,6 +84,7 @@ function backgroundMethods(env: PluginContext['env']): BackgroundMethods {
     },
     durableObject: (namespace, tenantId, key) =>
       namespace.get(namespace.idFromName(key ? `${tenantId}:${key}` : tenantId)),
+    features: tenantId => tenantFeatures(db, config, tenantId),
   }
 }
 
@@ -85,7 +95,7 @@ export function jobCtx(ctx: JobContext): JobCtx {
     config: ctx.config,
     logger: ctx.logger,
     env: ctx.env,
-    ...backgroundMethods(ctx.env),
+    ...backgroundMethods(ctx),
   }
 }
 
@@ -97,6 +107,6 @@ export function cronCtx(ctx: TaskContext): CronCtx {
     logger: ctx.logger,
     env: ctx.env,
     waitUntil: ctx.waitUntil,
-    ...backgroundMethods(ctx.env),
+    ...backgroundMethods(ctx),
   }
 }

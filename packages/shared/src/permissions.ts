@@ -78,8 +78,10 @@ export const featureSubject = (feature: string): FeatureSubject => `Feature:${fe
  */
 export const CORE_FEATURES = [] as const satisfies readonly string[]
 
+/** Distributive: `keyof (A | B)` is the keys A and B SHARE, which is never for two plugins' flags. */
+type KeysOfEach<T> = T extends unknown ? keyof T : never
 type PluginFeatureKey = Extract<
-  keyof NonNullable<DeclaredBy<(typeof SHARED_PLUGINS)[number], 'features'>>,
+  KeysOfEach<NonNullable<DeclaredBy<(typeof SHARED_PLUGINS)[number], 'features'>>>,
   string
 >
 

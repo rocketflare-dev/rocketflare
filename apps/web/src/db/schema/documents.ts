@@ -9,8 +9,8 @@
  * `error`. Chunks cascade from here; the file row is deleted by the document route.
  */
 import type { DocumentStatus } from '@rocketflare/shared/ai/embeddings'
-import { relations } from 'drizzle-orm'
-import { index, integer, pgTable, text, uuid } from 'drizzle-orm/pg-core'
+import { relations, sql } from 'drizzle-orm'
+import { index, integer, pgTable, text, uniqueIndex, uuid } from 'drizzle-orm/pg-core'
 import { RESOURCE_VISIBILITY_VALUES, tenantRef, timestamps } from './_helpers'
 import { files } from './files'
 import { tenantIsolation } from './rls'
@@ -32,6 +32,13 @@ export const documents = pgTable(
     title: text('title').notNull(),
     /** Origin marker: `upload`, `agent:summarize-text`, a URL … */
     source: text('source'),
+    /**
+     * D34: the id this document has IN its source — a message id, a drive item id — so a sync that
+     * sees the same item again updates this row instead of adding a second one. Null for anything a
+     * person uploaded or pasted. Unique per `(tenant, source)`, which is why a plugin's `source` is
+     * namespaced (`m365:mail`): two sources may reuse one another's ids freely.
+     */
+    externalId: text('external_id'),
     contentType: text('content_type').notNull().default('text/plain'),
     sizeBytes: integer('size_bytes').notNull().default(0),
     /** The text `indexDocument` chunks — API-invisible; null for an upload not yet converted. */
@@ -56,6 +63,9 @@ export const documents = pgTable(
   table => [
     index('documents_tenant_created_idx').on(table.tenantId, table.createdAt.desc()),
     index('documents_tenant_owner_idx').on(table.tenantId, table.ownerUserId),
+    uniqueIndex('documents_tenant_source_external_uq')
+      .on(table.tenantId, table.source, table.externalId)
+      .where(sql`${table.externalId} is not null`),
     tenantIsolation('documents'),
   ]
 )

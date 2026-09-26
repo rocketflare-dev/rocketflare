@@ -15,15 +15,20 @@
       "jobCtx",
       "JobCtx",
       "JobHandler",
+      "PUBLIC_MOUNT_ROOT",
+      "publicCtx",
+      "PublicCtx",
       "requestCtx",
       "RequestCtx",
       "requireFeature",
       "SeedCtx",
       "ServerPlugin",
+      "signState",
       "Tool",
       "toolCtx",
       "ToolCtx",
-      "validate"
+      "validate",
+      "verifyState"
     ],
     "@/plugins/api/peers": ["allTables"],
     "@/plugins/api/ui-wiring": ["featureGuard", "NavGuard", "UiPlugin"],
@@ -61,7 +66,7 @@
       "setupTestDatabase",
       "stubs"
     ],
-    "@testkit/unit": ["makeToolCtx"],
+    "@testkit/unit": ["makeCronCtx", "makeJobCtx", "makeToolCtx"],
     "@rocketflare/shared/features": ["FEATURE_FLAGS", "FEATURE_KEYS", "FeatureDefinition"],
     "@rocketflare/shared/jobs": ["CoreJobType", "JOB_TYPES", "jobInputSchema", "JobOf", "JobType"],
     "@rocketflare/shared/pagination": [

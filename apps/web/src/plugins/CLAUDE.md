@@ -78,6 +78,20 @@ in the host. Each half is checked where it is written; only the merge is cast.
   rather than being quietly repaired.
 - **It never renames anything across releases** — expand/contract only. `drizzle-kit`'s rename
   prompt has no non-interactive answer, so a rename stops an unattended install dead.
+- **Its unauthenticated routes live under `/api/hooks/<id>` and nowhere else** (D34,
+  `ServerPlugin.publicMounts`). Mounted before the authed table with no `authMiddleware` and no
+  gate; the handler builds `publicCtx(c)` (no tenant, no auth fields), PROVES the caller —
+  `verifyState` over a token it minted, a stored per-subscription secret, the provider's
+  signature — and only then names the tenant that proof carried. It re-checks its own flag with
+  `ctx.features(tenantId)` (a `requireFeature` gate reads `auth.features`, which does not exist
+  here) and answers by enqueueing. `tests/config/plugins.test.ts` refuses a public mount outside
+  the plugin's own `/api/hooks/<id>` and any authed mount under `/api/hooks`.
+- **It puts text into the knowledge base through `ingestDocument` / `ingestDocumentFile`**, never
+  by writing `documents` rows (D34). Pass `source: '<id>:<kind>'` and the item's upstream
+  `externalId`, and a re-sync UPDATES the row rather than adding one; `deleteIngestedDocument`
+  removes it. Visibility defaults to the whole organisation — a plugin syncing ONE person's data
+  passes the owner's `userId` + `visibility: 'groups'` + `groupIds: []` (owner and admins only).
+  A plugin that ingests declares `requires.surfaces: ["feature-knowledge"]`.
 - **It composes, never redefines.** `grants` are additive over its own subjects; hooks are
   post-commit, idempotent and best-effort; `agentTools` are appended after the kit's (async
   allowed, `[]` for a tenant that has not turned the tool on, a throw is logged and skipped). A

@@ -105,6 +105,13 @@ app.route('/ws', wsRouter)
 // handler. The kit ships no gated mount; an app adds `['/api/thing', thingRouter, requireFeature('thing')]`.
 // Remember the other doors too: a surface with no nav entry (an analytics cube, a dashboard
 // template, a CLI command) leaks independently of this one.
+// D34: a plugin's PUBLIC mounts — consent callbacks and webhooks a third party calls with no
+// session. Only under `/api/hooks/<plugin id>` (the config test refuses anything else, and refuses
+// an authed mount there), so this line is the whole of the plugin-owned unauthenticated surface.
+// Before the authed table, which never claims `/api/hooks`, so order is belt and braces.
+for (const [prefix, router] of serverPlugins.flatMap(p => p.publicMounts ?? [])) {
+  app.route(prefix, router)
+}
 const mounts: readonly (readonly [string, Hono<AppEnv>, MiddlewareHandler?])[] = [
   ['/api/me', meRouter],
   ['/api/tenant', tenantRouter],

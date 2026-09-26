@@ -2,6 +2,7 @@
  * `/api/example-feature` (D31) — the reference plugin's CRUD surface.
  *
  *   POST   /ping                    read ExampleNote   — enqueue the smoke job, 202
+ *   POST   /ping-link               read ExampleNote   — a signed link to the PUBLIC ping (D34)
  *   GET    /notes                   read ExampleNote
  *   POST   /notes                   create ExampleNote
  *   GET    /notes/:id               read ExampleNote
@@ -41,8 +42,12 @@ import {
   updateExampleNoteRequestSchema,
 } from '@rocketflare/shared/plugins/example-feature/index'
 import type { RequestCtx } from '@/plugins/api'
-import { createRouter, requestCtx, validate } from '@/plugins/api'
-import { EXAMPLE_NOTES_ENTITY } from '../shared'
+import { createRouter, PUBLIC_MOUNT_ROOT, requestCtx, signState, validate } from '@/plugins/api'
+import {
+  EXAMPLE_NOTES_ENTITY,
+  EXAMPLE_PING_LINK_PURPOSE,
+  EXAMPLE_PING_LINK_TTL_SECONDS,
+} from '../shared'
 import {
   createExampleNote,
   deleteExampleNote,
@@ -71,6 +76,25 @@ exampleFeatureRouter.post('/ping', async c => {
     payload: { tenantId: ctx.tenantId, note: 'from /api/example-feature/ping' },
   })
   return c.json({ jobId: job.id, type: job.type, enqueuedAt: job.enqueuedAt }, 202)
+})
+
+/**
+ * Mint the link `./public.ts` answers (D34). The signed state carries the TENANT, because the
+ * public route has no session to read one from — this is the half of a consent round-trip that
+ * runs while somebody IS signed in, and the token is the only thing that crosses to the other half.
+ */
+exampleFeatureRouter.post('/ping-link', async c => {
+  const ctx: RequestCtx = requestCtx(c)
+  ctx.guard('read', EXAMPLE_NOTE_SUBJECT)
+  const state = await signState(
+    ctx.config,
+    EXAMPLE_PING_LINK_PURPOSE,
+    { tenantId: ctx.tenantId, userId: ctx.userId },
+    { ttlSeconds: EXAMPLE_PING_LINK_TTL_SECONDS }
+  )
+  const url = new URL(`${PUBLIC_MOUNT_ROOT}/example-feature/ping`, ctx.config.APP_URL)
+  url.searchParams.set('state', state)
+  return c.json({ url: url.toString(), expiresInSeconds: EXAMPLE_PING_LINK_TTL_SECONDS })
 })
 
 // ---- Notes ------------------------------------------------------------------------------------

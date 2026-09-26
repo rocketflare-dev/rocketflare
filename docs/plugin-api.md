@@ -126,6 +126,8 @@ The server surface: the context family, and the types a plugin must be able to n
   The element type of the barrels — a plugin whose shared half is not narrowed.
 - `type AnyUiPlugin = UiPlugin<SharedPlugin>`
 - `type AppRouter = Hono<AppEnv>`
+- `interface BackgroundMethods`
+  What every background context can do, tenant supplied per call.
 - `function createRouter(): Hono<AppEnv>`
 - `function createStepRealtimeFor(env: HubEnv): StepRealtime`
 - `function cronCtx(ctx: TaskContext): CronCtx`
@@ -137,6 +139,8 @@ The server surface: the context family, and the types a plugin must be able to n
 - `interface DatabaseHandle`
 - `function defineTool<Input>(tool: Tool<Input>): Tool<Input>`
   Declare a tool. A thin helper, and its only job is to be the thing a plugin imports instead of the `Tool` type from a kit path — but it is also where the two rules in this file's…
+- `async function deleteIngestedDocument( ctx: PluginContext, input: { tenantId: string; source: string; externalId: string } ): Promise<boolean>`
+  The item is gone upstream: delete its document, chunks, grants and stored original.
 - `interface DetachedCtx extends PluginContext`
   What survives the handler: data and a database, no request.
   - `tenantId: string`
@@ -161,6 +165,10 @@ The server surface: the context family, and the types a plugin must be able to n
     Who caused it — the signing-up user, the approving admin. Null for a system path.
   - `features: readonly string[]`
     The features this DEPLOYMENT ships (D30). A hook that CREATES rows is the sharpest feature door there is, because it has no nav entry to hide behind: seed nothing for a surface…
+- `async function ingestDocument( ctx: PluginContext, input: PluginIngestTextInput ): Promise<PluginIngestResult>`
+  Index text. Small texts are indexed before this returns; larger ones return `queued`. No embeddings provider → 503 `ai_not_configured`, checked before anything is written.
+- `async function ingestDocumentFile( ctx: PluginContext, input: PluginIngestFileInput ): Promise<PluginIngestResult>`
+  Store a file in R2 and index it — text-like types now, binary ones (PDF, Office…) through the `document.convert` job. Unsupported type → 415 `unsupported_media_type`; no `FILES`…
 - `function isAdminLevel(session: RoleView): boolean`
   May administer members / invitations / keys: owner, admin, support, or global admin.
 - `function isGlobalAdmin(session: RoleView): boolean`
@@ -223,6 +231,10 @@ The server surface: the context family, and the types a plugin must be able to n
   - `logger: PluginLogger`
   - `env: PluginBindings`
     The Worker bindings. A plugin reads the ones its own `plugin.json` declares; reaching for a kit binding directly is usually the sign that a method is missing from this surface.
+- `interface PluginIngestFileInput extends IngestCommon`
+- `interface PluginIngestResult`
+  What an ingest answers. `queued` means a `document.index` / `document.convert` job finishes it.
+- `interface PluginIngestTextInput extends IngestCommon`
 - `type PluginLogger = Pick<Logger, 'debug' \| 'info' \| 'warn' \| 'error'>`
   The four level methods, and deliberately no more.
 - `type PluginMount = readonly [string, Hono<AppEnv>, MiddlewareHandler?]`
@@ -233,6 +245,8 @@ The server surface: the context family, and the types a plugin must be able to n
   - `before?: string`
     Insert before the core group with this label; appended when the label is not found.
   - `items: NavItem[]`
+- `type PluginPublicMount = readonly [string, Hono<AppEnv>]`
+  One UNAUTHENTICATED mount (D34): prefix and router, no gate — a feature gate reads `auth.features`, and there is no auth here. The prefix must be `/api/hooks/<plugin id>` or…
 - `interface PluginRequires`
   What `pnpm plugin check` verifies before an install, mirrored from the plugin's manifest.
 - `interface PluginRoute`
@@ -251,6 +265,19 @@ The server surface: the context family, and the types a plugin must be able to n
   `callStructuredTool` minus what the runtime supplies.
 - `type PluginToolLoopOptions = Omit< RunToolLoopOptions, 'model' \| 'maxTokens' \| 'approvals' \| 'runApproved' > & { maxTokens?: number }`
   `runToolLoop` minus what the runtime supplies.
+- `const PUBLIC_MOUNT_ROOT: "/api/hooks"`
+  The prefix every public mount lives under; the plugin's id is the next segment.
+- `function publicCtx(c: AppContext): PublicCtx`
+  Build a public handler's context. The only function here that reads the Hono context.
+- `interface PublicCtx extends PluginContext, BackgroundMethods`
+  - `readonly appUrl: string`
+    `APP_URL` — the origin a third party is told to call back, and to redirect a browser to.
+  - `defer(fn: () => Promise<unknown>): void`
+    As on `RequestCtx`: through `waitUntil`, never awaited, logged rather than thrown.
+  - `notFound(message?: string, code?: string): never`
+  - `badRequest(message?: string, code?: string, details?: unknown): never`
+  - `forbidden(message?: string, code?: string): never`
+  - `unauthorized(message?: string): never`
 - `interface Realtime`
   Everything a service needs to nudge: how to defer, and the hub binding. Built by `withAuth`.
 - `function realtimeEvent( type: RealtimeEventType, tenantId: string, payload?: unknown ): RealtimeEvent`
@@ -324,6 +351,8 @@ The server surface: the context family, and the types a plugin must be able to n
   - `requires?: PluginRequires`
   - `mounts?: readonly PluginMount[]`
     Spread into the mount table of `api/index.ts`; the prefix is `/api/<id>` by convention.
+  - `publicMounts?: readonly PluginPublicMount[]`
+    Routes a third party calls with no session or key — an admin-consent callback, a webhook (D34). Mounted BEFORE the authed mounts and without `authMiddleware`, under…
   - `apiPrefixes?: readonly string[]`
     Extra path prefixes the Worker owns, unioned into `API_PREFIXES` — so an unmatched path under one is a JSON 404 rather than `index.html`. Adding one ALSO means adding it to…
   - `jobHandlers?: { [T in JobTypeOf<S> & string]: JobHandler<Extract<T, JobType>> }`
@@ -350,6 +379,8 @@ The server surface: the context family, and the types a plugin must be able to n
 - `interface SetResourceGroupsInput`
 - `function sharedWithMyGroups( scope: AccessScope, junction: string, foreignKey: string, resourceId: SQL ): SQL`
   `exists (select 1 from <junction> j where j.<fk> = <resource>.id and j.group_id = any($ids))`.
+- `async function signState( config: PluginConfig, purpose: string, payload: Record<string, unknown>, opts: { ttlSeconds?: number } = {} ): Promise<string>`
+  Sign `payload` for `purpose`. The result is URL-safe: `<body>.<signature>`, both base64url.
 - `type SpanKind = 'agent' \| 'llm' \| 'tool' \| 'retrieval' \| 'embedding' \| 'job' \| 'span'`
   What a span IS — it picks the GenAI operation name and the backend's observation type.
 - `interface SpanParams`
@@ -420,6 +451,8 @@ The server surface: the context family, and the types a plugin must be able to n
     `AGENT_FORMS` entries for the agents this plugin registers. Optional per agent: `formFor` falls back to a form generated from the agent's own JSON Schema, then to a JSON textarea.
 - `type User = typeof users.$inferSelect`
 - `function validate<T extends ZodSchema, Target extends keyof ValidationTargets>( target: Target, schema: T )`
+- `async function verifyState<T = Record<string, unknown>>( config: PluginConfig, purpose: string, token: string ): Promise<T \| null>`
+  The payload `signState` signed for this `purpose`, or `null`. `p` and `exp` are stripped, so the caller gets back exactly what it put in. Parse the result with zod before trusting…
 - `interface VisibilityResource`
   What it takes to be a resource a group can restrict.
 - `async function withAgentTrace<T>( name: string, ctx: AgentTraceContext, fn: (trace: TraceHandle) => Promise<T> ): Promise<T>`
@@ -616,6 +649,8 @@ Components and hooks, for a lazy PAGE. Never for the UI entry.
   - `before?: string`
     Insert before the core group with this label; appended when the label is not found.
   - `items: NavItem[]`
+- `type PluginPublicMount = readonly [string, Hono<AppEnv>]`
+  One UNAUTHENTICATED mount (D34): prefix and router, no gate — a feature gate reads `auth.features`, and there is no auth here. The prefix must be `/api/hooks/<plugin id>` or…
 - `interface PluginRequires`
   What `pnpm plugin check` verifies before an install, mirrored from the plugin's manifest.
 - `interface PluginRoute`
@@ -635,6 +670,8 @@ Components and hooks, for a lazy PAGE. Never for the UI entry.
   - `requires?: PluginRequires`
   - `mounts?: readonly PluginMount[]`
     Spread into the mount table of `api/index.ts`; the prefix is `/api/<id>` by convention.
+  - `publicMounts?: readonly PluginPublicMount[]`
+    Routes a third party calls with no session or key — an admin-consent callback, a webhook (D34). Mounted BEFORE the authed mounts and without `authMiddleware`, under…
   - `apiPrefixes?: readonly string[]`
     Extra path prefixes the Worker owns, unioned into `API_PREFIXES` — so an unmatched path under one is a JSON 404 rather than `index.html`. Adding one ALSO means adding it to…
   - `jobHandlers?: { [T in JobTypeOf<S> & string]: JobHandler<Extract<T, JobType>> }`
@@ -714,8 +751,8 @@ What a plugin's CONTRACT module imports: the error envelope, pagination, `Shared
 - `type ErrorCode = (typeof ERROR_CODES)[keyof typeof ERROR_CODES]`
 - `interface FeatureDefinition`
 - `type FeatureFlagState = z.infer<typeof featureFlagStateSchema>`
-- `type FeatureKeyOf = Extract< keyof NonNullable<DeclaredBy<S, 'features'>>, string >`
-  The feature keys one plugin declares (the keys of its `features` record).
+- `type FeatureKeyOf = Extract< NonNullable<DeclaredBy<S, 'features'>> extends infer F ? F extends unknown ? keyof F : never : never, string >`
+  The feature keys one plugin declares (the keys of its `features` record). Distributive, so a UNION of plugins yields every plugin's keys — plain `keyof (A | B)` is only the keys…
 - `type FeatureRolloutUnit = z.infer<typeof featureRolloutUnitSchema>`
 - `type GroupRef = z.infer<typeof groupRefSchema>`
 - `function isPluginId(value: string): boolean`
@@ -970,6 +1007,7 @@ nothing in the comparison that can throw.
 @/plugins/api :: type :: AnyServerPlugin :: type AnyServerPlugin = ServerPlugin<SharedPlugin>
 @/plugins/api :: type :: AnyUiPlugin :: type AnyUiPlugin = UiPlugin<SharedPlugin>
 @/plugins/api :: type :: AppRouter :: type AppRouter = Hono<AppEnv>
+@/plugins/api :: interface :: BackgroundMethods :: interface BackgroundMethods
 @/plugins/api :: function :: createRouter :: function createRouter(): Hono<AppEnv>
 @/plugins/api :: function :: createStepRealtimeFor :: function createStepRealtimeFor(env: HubEnv): StepRealtime
 @/plugins/api :: function :: cronCtx :: function cronCtx(ctx: TaskContext): CronCtx
@@ -978,6 +1016,7 @@ nothing in the comparison that can throw.
 @/plugins/api :: type :: Database :: type Database = PostgresJsDatabase<typeof schema>
 @/plugins/api :: interface :: DatabaseHandle :: interface DatabaseHandle
 @/plugins/api :: function :: defineTool :: function defineTool<Input>(tool: Tool<Input>): Tool<Input>
+@/plugins/api :: function :: deleteIngestedDocument :: async function deleteIngestedDocument( ctx: PluginContext, input: { tenantId: string; source: string; externalId: string } ): Promise<boolean>
 @/plugins/api :: interface :: DetachedCtx :: interface DetachedCtx extends PluginContext
 @/plugins/api :: member :: DetachedCtx.tenantId :: tenantId: string
 @/plugins/api :: member :: DetachedCtx.userId :: userId: string
@@ -994,6 +1033,8 @@ nothing in the comparison that can throw.
 @/plugins/api :: member :: HookCtx.tenantId :: tenantId: string
 @/plugins/api :: member :: HookCtx.userId :: userId: string | null
 @/plugins/api :: member :: HookCtx.features :: features: readonly string[]
+@/plugins/api :: function :: ingestDocument :: async function ingestDocument( ctx: PluginContext, input: PluginIngestTextInput ): Promise<PluginIngestResult>
+@/plugins/api :: function :: ingestDocumentFile :: async function ingestDocumentFile( ctx: PluginContext, input: PluginIngestFileInput ): Promise<PluginIngestResult>
 @/plugins/api :: function :: isAdminLevel :: function isAdminLevel(session: RoleView): boolean
 @/plugins/api :: function :: isGlobalAdmin :: function isGlobalAdmin(session: RoleView): boolean
 @/plugins/api :: function :: isOwnerLevel :: function isOwnerLevel(session: RoleView): boolean
@@ -1033,12 +1074,16 @@ nothing in the comparison that can throw.
 @/plugins/api :: member :: PluginContext.config :: config: PluginConfig
 @/plugins/api :: member :: PluginContext.logger :: logger: PluginLogger
 @/plugins/api :: member :: PluginContext.env :: env: PluginBindings
+@/plugins/api :: interface :: PluginIngestFileInput :: interface PluginIngestFileInput extends IngestCommon
+@/plugins/api :: interface :: PluginIngestResult :: interface PluginIngestResult
+@/plugins/api :: interface :: PluginIngestTextInput :: interface PluginIngestTextInput extends IngestCommon
 @/plugins/api :: type :: PluginLogger :: type PluginLogger = Pick<Logger, 'debug' | 'info' | 'warn' | 'error'>
 @/plugins/api :: type :: PluginMount :: type PluginMount = readonly [string, Hono<AppEnv>, MiddlewareHandler?]
 @/plugins/api :: interface :: PluginNavGroup :: interface PluginNavGroup
 @/plugins/api :: member :: PluginNavGroup.label :: label?: string
 @/plugins/api :: member :: PluginNavGroup.before :: before?: string
 @/plugins/api :: member :: PluginNavGroup.items :: items: NavItem[]
+@/plugins/api :: type :: PluginPublicMount :: type PluginPublicMount = readonly [string, Hono<AppEnv>]
 @/plugins/api :: interface :: PluginRequires :: interface PluginRequires
 @/plugins/api :: interface :: PluginRoute :: interface PluginRoute
 @/plugins/api :: member :: PluginRoute.path :: path: string
@@ -1049,6 +1094,15 @@ nothing in the comparison that can throw.
 @/plugins/api :: interface :: PluginSeedContext :: interface PluginSeedContext
 @/plugins/api :: type :: PluginStructuredOptions :: type PluginStructuredOptions = Omit< CallStructuredToolOptions<T>, 'model' | 'maxTokens' > & { maxTokens?: number }
 @/plugins/api :: type :: PluginToolLoopOptions :: type PluginToolLoopOptions = Omit< RunToolLoopOptions, 'model' | 'maxTokens' | 'approvals' | 'runApproved' > & { maxTokens?: number }
+@/plugins/api :: const :: PUBLIC_MOUNT_ROOT :: const PUBLIC_MOUNT_ROOT: "/api/hooks"
+@/plugins/api :: function :: publicCtx :: function publicCtx(c: AppContext): PublicCtx
+@/plugins/api :: interface :: PublicCtx :: interface PublicCtx extends PluginContext, BackgroundMethods
+@/plugins/api :: member :: PublicCtx.appUrl :: readonly appUrl: string
+@/plugins/api :: member :: PublicCtx.defer :: defer(fn: () => Promise<unknown>): void
+@/plugins/api :: member :: PublicCtx.notFound :: notFound(message?: string, code?: string): never
+@/plugins/api :: member :: PublicCtx.badRequest :: badRequest(message?: string, code?: string, details?: unknown): never
+@/plugins/api :: member :: PublicCtx.forbidden :: forbidden(message?: string, code?: string): never
+@/plugins/api :: member :: PublicCtx.unauthorized :: unauthorized(message?: string): never
 @/plugins/api :: interface :: Realtime :: interface Realtime
 @/plugins/api :: function :: realtimeEvent :: function realtimeEvent( type: RealtimeEventType, tenantId: string, payload?: unknown ): RealtimeEvent
 @/plugins/api :: function :: recordActivity :: async function recordActivity(db: Database, input: ActivityInput): Promise<void>
@@ -1095,6 +1149,7 @@ nothing in the comparison that can throw.
 @/plugins/api :: member :: ServerPlugin.shared :: shared: S
 @/plugins/api :: member :: ServerPlugin.requires :: requires?: PluginRequires
 @/plugins/api :: member :: ServerPlugin.mounts :: mounts?: readonly PluginMount[]
+@/plugins/api :: member :: ServerPlugin.publicMounts :: publicMounts?: readonly PluginPublicMount[]
 @/plugins/api :: member :: ServerPlugin.apiPrefixes :: apiPrefixes?: readonly string[]
 @/plugins/api :: member :: ServerPlugin.jobHandlers :: jobHandlers?: { [T in JobTypeOf<S> & string]: JobHandler<Extract<T, JobType>> }
 @/plugins/api :: member :: ServerPlugin.agents :: agents?: { [K in AgentKeyOf<S> & string]: AnyAgentDefinition }
@@ -1109,6 +1164,7 @@ nothing in the comparison that can throw.
 @/plugins/api :: member :: ServerPlugin.extensions :: extensions?: Readonly<Record<string, readonly unknown[]>>
 @/plugins/api :: interface :: SetResourceGroupsInput :: interface SetResourceGroupsInput
 @/plugins/api :: function :: sharedWithMyGroups :: function sharedWithMyGroups( scope: AccessScope, junction: string, foreignKey: string, resourceId: SQL ): SQL
+@/plugins/api :: function :: signState :: async function signState( config: PluginConfig, purpose: string, payload: Record<string, unknown>, opts: { ttlSeconds?: number } = {} ): Promise<string>
 @/plugins/api :: type :: SpanKind :: type SpanKind = 'agent' | 'llm' | 'tool' | 'retrieval' | 'embedding' | 'job' | 'span'
 @/plugins/api :: interface :: SpanParams :: interface SpanParams
 @/plugins/api :: interface :: StepCtx :: interface StepCtx extends PluginContext
@@ -1156,6 +1212,7 @@ nothing in the comparison that can throw.
 @/plugins/api :: member :: UiPlugin.agentForms :: agentForms?: Readonly<Partial<Record<AgentKeyOf<S> & string, AgentForm>>>
 @/plugins/api :: type :: User :: type User = typeof users.$inferSelect
 @/plugins/api :: function :: validate :: function validate<T extends ZodSchema, Target extends keyof ValidationTargets>( target: Target, schema: T )
+@/plugins/api :: function :: verifyState :: async function verifyState<T = Record<string, unknown>>( config: PluginConfig, purpose: string, token: string ): Promise<T | null>
 @/plugins/api :: interface :: VisibilityResource :: interface VisibilityResource
 @/plugins/api :: function :: withAgentTrace :: async function withAgentTrace<T>( name: string, ctx: AgentTraceContext, fn: (trace: TraceHandle) => Promise<T> ): Promise<T>
 @/plugins/api :: function :: workflowCtx :: function workflowCtx( step: WorkflowStep, env: PluginBindings, config: AppConfig, logger: Logger ): WorkflowCtx
@@ -1262,6 +1319,7 @@ nothing in the comparison that can throw.
 @/plugins/types :: member :: PluginNavGroup.label :: label?: string
 @/plugins/types :: member :: PluginNavGroup.before :: before?: string
 @/plugins/types :: member :: PluginNavGroup.items :: items: NavItem[]
+@/plugins/types :: type :: PluginPublicMount :: type PluginPublicMount = readonly [string, Hono<AppEnv>]
 @/plugins/types :: interface :: PluginRequires :: interface PluginRequires
 @/plugins/types :: interface :: PluginRoute :: interface PluginRoute
 @/plugins/types :: member :: PluginRoute.path :: path: string
@@ -1274,6 +1332,7 @@ nothing in the comparison that can throw.
 @/plugins/types :: member :: ServerPlugin.shared :: shared: S
 @/plugins/types :: member :: ServerPlugin.requires :: requires?: PluginRequires
 @/plugins/types :: member :: ServerPlugin.mounts :: mounts?: readonly PluginMount[]
+@/plugins/types :: member :: ServerPlugin.publicMounts :: publicMounts?: readonly PluginPublicMount[]
 @/plugins/types :: member :: ServerPlugin.apiPrefixes :: apiPrefixes?: readonly string[]
 @/plugins/types :: member :: ServerPlugin.jobHandlers :: jobHandlers?: { [T in JobTypeOf<S> & string]: JobHandler<Extract<T, JobType>> }
 @/plugins/types :: member :: ServerPlugin.agents :: agents?: { [K in AgentKeyOf<S> & string]: AnyAgentDefinition }
@@ -1315,7 +1374,7 @@ nothing in the comparison that can throw.
 @rocketflare/shared/plugins/api :: type :: ErrorCode :: type ErrorCode = (typeof ERROR_CODES)[keyof typeof ERROR_CODES]
 @rocketflare/shared/plugins/api :: interface :: FeatureDefinition :: interface FeatureDefinition
 @rocketflare/shared/plugins/api :: type :: FeatureFlagState :: type FeatureFlagState = z.infer<typeof featureFlagStateSchema>
-@rocketflare/shared/plugins/api :: type :: FeatureKeyOf :: type FeatureKeyOf = Extract< keyof NonNullable<DeclaredBy<S, 'features'>>, string >
+@rocketflare/shared/plugins/api :: type :: FeatureKeyOf :: type FeatureKeyOf = Extract< NonNullable<DeclaredBy<S, 'features'>> extends infer F ? F extends unknown ? keyof F : never : never, string >
 @rocketflare/shared/plugins/api :: type :: FeatureRolloutUnit :: type FeatureRolloutUnit = z.infer<typeof featureRolloutUnitSchema>
 @rocketflare/shared/plugins/api :: type :: GroupRef :: type GroupRef = z.infer<typeof groupRefSchema>
 @rocketflare/shared/plugins/api :: function :: isPluginId :: function isPluginId(value: string): boolean

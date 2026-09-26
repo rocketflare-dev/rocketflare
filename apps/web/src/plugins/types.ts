@@ -42,6 +42,13 @@ import type { QuickLink } from '../ui/pages/Home'
 /** One entry of the mount table in `api/index.ts`: prefix, router, optional gate. */
 export type PluginMount = readonly [string, Hono<AppEnv>, MiddlewareHandler?]
 
+/**
+ * One UNAUTHENTICATED mount (D34): prefix and router, no gate — a feature gate reads
+ * `auth.features`, and there is no auth here. The prefix must be `/api/hooks/<plugin id>` or
+ * beneath it; handlers build `publicCtx(c)` and prove who is calling before they touch a row.
+ */
+export type PluginPublicMount = readonly [string, Hono<AppEnv>]
+
 /** What `pnpm plugin check` verifies before an install, mirrored from the plugin's manifest. */
 export interface PluginRequires {
   /** A semver range over the kit version, e.g. `">=0.5.0 <1.0.0"`. */
@@ -69,6 +76,13 @@ export interface ServerPlugin<S extends SharedPlugin = SharedPlugin> {
   requires?: PluginRequires
   /** Spread into the mount table of `api/index.ts`; the prefix is `/api/<id>` by convention. */
   mounts?: readonly PluginMount[]
+  /**
+   * Routes a third party calls with no session or key — an admin-consent callback, a webhook
+   * (D34). Mounted BEFORE the authed mounts and without `authMiddleware`, under
+   * `/api/hooks/<id>` only (`tests/config/plugins.test.ts` enforces it), so the unauthenticated
+   * surface stays enumerable. Already under `/api`, so no `apiPrefixes` or toml edit is needed.
+   */
+  publicMounts?: readonly PluginPublicMount[]
   /**
    * Extra path prefixes the Worker owns, unioned into `API_PREFIXES` — so an unmatched path under
    * one is a JSON 404 rather than `index.html`. Adding one ALSO means adding it to

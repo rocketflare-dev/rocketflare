@@ -45,6 +45,7 @@ import {
   PLUGIN_IMPORT_ENFORCEMENT,
   pluginIdOfPath,
   pluginImportIssue,
+  publicMountIssues,
   queryKeyRootIssues,
   RESERVED_PLUGIN_IDS,
   staticImports,
@@ -73,6 +74,24 @@ describe('query-key roots', () => {
     expect(queryKeyRootIssues('orders', ['orders:list', 'orders:detail'])).toEqual([])
     expect(queryKeyRootIssues('orders', ['orders'])).toHaveLength(1)
     expect(queryKeyRootIssues('orders', ['documents'])).toHaveLength(1)
+  })
+})
+
+describe('public mounts', () => {
+  it('live under /api/hooks/<id> and nowhere else', () => {
+    expect(publicMountIssues('orders', ['/api/hooks/orders'], ['/api/orders'])).toEqual([])
+    expect(publicMountIssues('orders', ['/api/hooks/orders/stripe'], [])).toEqual([])
+    expect(publicMountIssues('orders', ['/api/orders/webhook'], [])).toHaveLength(1)
+    // Another plugin's slot, and a prefix that merely starts with the id, are both refused.
+    expect(publicMountIssues('orders', ['/api/hooks/billing'], [])).toHaveLength(1)
+    expect(publicMountIssues('orders', ['/api/hooks/orders-x'], [])).toHaveLength(1)
+  })
+
+  it('never share /api/hooks with an authed mount', () => {
+    expect(publicMountIssues('orders', [], ['/api/hooks/orders'])[0]).toMatch(
+      /public by definition/
+    )
+    expect(publicMountIssues('orders', [], ['/api/hooks'])).toHaveLength(1)
   })
 })
 
@@ -276,9 +295,24 @@ describe('installed plugins', () => {
     // (drizzle-cube's adapter registers absolute paths). What must never happen is TWO plugins
     // claiming one prefix, because Hono matches in registration order and the loser is invisible.
     const claimed = serverPlugins.flatMap(p => [
-      ...new Set([...(p.apiPrefixes ?? []), ...(p.mounts ?? []).map(m => m[0])]),
+      ...new Set([
+        ...(p.apiPrefixes ?? []),
+        ...(p.mounts ?? []).map(m => m[0]),
+        ...(p.publicMounts ?? []).map(m => m[0]),
+      ]),
     ])
     expect(new Set(claimed).size, claimed.join(', ')).toBe(claimed.length)
+  })
+
+  it('mounts its public routes only under /api/hooks/<id>', () => {
+    const issues = serverPlugins.flatMap(p =>
+      publicMountIssues(
+        p.shared.id,
+        (p.publicMounts ?? []).map(m => m[0]),
+        (p.mounts ?? []).map(m => m[0])
+      )
+    )
+    expect(issues).toEqual([])
   })
 
   it('namespaces every query-key root it declares', () => {
