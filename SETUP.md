@@ -35,7 +35,8 @@ Engine and add your user to the `docker` group. Confirm the tool works, then car
 > `--offline` (no Cloudflare account: comments the `[ai]` block out of both tomls), `--online`
 > (restore it), `--no-demo` (plain `pnpm seed`), `--no-plugins` (do not install `defaultPlugins`,
 > §1.4b), `--no-dev` (stop after step 8 and print what to run next), `--no-open`,
-> `--as <email>`, `--yes`, `--verbose`; `--check` is `pnpm preflight`.
+> `--as <email>`, `--yes`, `--verbose`, `--db-url <url>` (an existing Postgres instead of Docker,
+> §1.4); `--check` is `pnpm preflight`.
 > Exit codes: `0` ok · `1` a step failed · `2` usage · `3` prerequisite missing · `4` port/container
 > held by another checkout · `5` Cloudflare login required
 > (`node scripts/bootstrap.mjs --help`).
@@ -97,6 +98,22 @@ and `wrangler dev` through `CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_HYPERD
 Why three steps: a policy's `TO rocketflare_app` needs the role
 before migrations; the `REVOKE`s need the tables after. With `APP_DATABASE_URL` unset the role is
 created `NOLOGIN` and RLS stays inert ([`docs/RLS.md`](docs/RLS.md)).
+
+**No Docker: use an existing database.** Where Docker is not available (a coding sandbox with a
+Neon branch, a shared dev server), point the bootstrap at the database you already have:
+```bash
+bash scripts/bootstrap.sh --no-dev --db-url "postgresql://user:pass@ep-x.neon.tech/neondb?sslmode=require"
+```
+It still runs ten steps. `1/10 toolchain` skips the Docker checks, and `3/10 secrets` writes the URL
+to `DATABASE_URL` in `apps/web/.dev.vars`. `4/10 database` doesn't start a container; it waits for
+`db:check` to answer (`external <host>/<db> · Connected to …`). `7/10 seed` runs with
+`SEED_ALLOW_REMOTE=1`, because the seed refuses a non-local host otherwise. The seed always prints
+`seeding <host>/<db>`, never the credentials. The database needs the pgvector extension available
+(Neon has it). Afterwards `pnpm dev` uses that URL unchanged, `pnpm dev:db:up` reports there is
+nothing to start, and `pnpm preflight` skips its Docker checks while `DATABASE_URL` points off this
+machine. `--db-url` can't be combined with `--check`. A loopback URL (`localhost`, `127.0.0.1`)
+still counts as this checkout's Docker database to `pnpm preflight` and `dev:db:*`. The URL, password
+included, lands in your shell history.
 
 ### 1.4b Plugins `[ready]`
 ```bash

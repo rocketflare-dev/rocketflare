@@ -32,6 +32,7 @@ import { type TokenUsage, tokenUsageSchema } from '@rocketflare/shared/ai/chat'
 import { type AiProvider, WORKERS_AI_CHAT_MODEL } from '@rocketflare/shared/ai/config'
 import { estimateCostMicrocents } from '@rocketflare/shared/ai/pricing'
 import { and, count, eq, gt, isNull, sql } from 'drizzle-orm'
+import { databaseUrlTarget } from '../../../scripts/lib/bootstrap-lib.mjs'
 import { devPorts } from '../../../scripts/lib/dev-ports.mjs'
 import { mintApiKey } from '../src/api/auth/api-keys'
 import { chunkText } from '../src/api/services/ai/chunking'
@@ -123,6 +124,9 @@ async function ensureMembership(
 
 async function main() {
   if (!DATABASE_URL) throw new Error('DATABASE_URL is required (pnpm seed loads .dev.vars)')
+  // Always say where the rows are going — `pnpm bootstrap --db-url` points this at a remote
+  // branch. Host and database only: the user and password never reach the terminal.
+  console.log(`seeding ${databaseUrlTarget(DATABASE_URL)}`)
   if (!/localhost|127\.0\.0\.1/.test(DATABASE_URL) && !process.env.SEED_ALLOW_REMOTE) {
     throw new Error('Refusing to seed a non-local database (set SEED_ALLOW_REMOTE=1 to override)')
   }

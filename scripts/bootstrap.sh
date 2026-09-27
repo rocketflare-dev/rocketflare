@@ -22,14 +22,27 @@ PNPM_VERSION="$(sed -n 's/.*"packageManager": *"pnpm@\([^"]*\)".*/\1/p' package.
 command -v git >/dev/null 2>&1 || fail "git not found" "install git (xcode-select --install / apt install git)"
 ok "git $(git --version | awk '{print $3}')"
 
-if ! command -v docker >/dev/null 2>&1; then
-  if [ "$(uname -s)" = Darwin ]; then
-    fail "docker not found" "brew install colima docker && colima start"
-  else
-    fail "docker not found" "install Docker Engine and add your user to the docker group"
+# `--db-url <url>` bootstraps against a database this checkout does not run (a Neon branch in a
+# sandbox with no Docker), so Docker is not a prerequisite then.
+EXTERNAL_DB=0
+for arg in ${1+"$@"}; do
+  case "$arg" in
+    --db-url|--db-url=*) EXTERNAL_DB=1 ;;
+  esac
+done
+
+if [ "$EXTERNAL_DB" = 1 ]; then
+  ok "docker skipped (--db-url)"
+else
+  if ! command -v docker >/dev/null 2>&1; then
+    if [ "$(uname -s)" = Darwin ]; then
+      fail "docker not found" "brew install colima docker && colima start"
+    else
+      fail "docker not found" "install Docker Engine and add your user to the docker group"
+    fi
   fi
+  ok "docker $(docker --version | sed 's/,.*//' | awk '{print $3}')"
 fi
-ok "docker $(docker --version | sed 's/,.*//' | awk '{print $3}')"
 
 node_ok() { command -v node >/dev/null 2>&1 && [ "$(node -v | sed 's/^v//' | cut -d. -f1)" -ge "$NODE_MAJOR" ]; }
 if ! node_ok; then

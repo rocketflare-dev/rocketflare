@@ -11,12 +11,18 @@ import TOML from '@iarna/toml'
 import { describe, expect, it } from 'vitest'
 import {
   aiBlockState,
+  BootstrapUsageError,
+  bootstrapStepPlan,
   checkoutTag,
   chooseDevDbPort,
   databaseUrlPort,
+  databaseUrlTarget,
   describeTracing,
   extractSeedKey,
   fillDevVars,
+  isLocalDatabaseUrl,
+  isPostgresUrl,
+  parseBootstrapArgs,
   parseNvmrc,
   parseWhoami,
   planDefaultPlugins,
@@ -429,5 +435,123 @@ describe('planDefaultPlugins', () => {
     const { manifest } = readManifest(path.join(WEB_DIR, '../..'))
     expect(Array.isArray(manifest?.defaultPlugins)).toBe(true)
     expect(planDefaultPlugins(manifest?.defaultPlugins, []).problems).toEqual([])
+  })
+})
+
+/**
+ * `--db-url` (0.14.0): bootstrap against a database this checkout does not run — a Neon branch in
+ * a coding sandbox with no Docker. Without the flag every default must stay exactly as it was.
+ */
+describe('parseBootstrapArgs', () => {
+  const NEON = 'postgresql://u:secret@ep-x-123.eu-central-1.aws.neon.tech/neondb?sslmode=require'
+
+  it('keeps the historical defaults when no flag is given', () => {
+    expect(parseBootstrapArgs([], {})).toEqual({
+      yes: false,
+      shareDbIgnored: false,
+      offline: false,
+      online: false,
+      dev: true,
+      demo: true,
+      plugins: true,
+      open: true,
+      as: 'owner@example.test',
+      dbUrl: null,
+      check: false,
+      verbose: false,
+      help: false,
+    })
+    expect(parseBootstrapArgs([], { DEV_VERBOSE: '1' }).verbose).toBe(true)
+  })
+
+  it('reads --db-url as a separate value and in = form', () => {
+    expect(parseBootstrapArgs(['--db-url', NEON, '--yes']).dbUrl).toBe(NEON)
+    expect(parseBootstrapArgs([`--db-url=${NEON}`]).dbUrl).toBe(NEON)
+    expect(parseBootstrapArgs(['--db-url=postgres://h/db']).dbUrl).toBe('postgres://h/db')
+  })
+
+  it('is a usage error when the value is missing or not a postgres URL, never echoing it', () => {
+    expect(() => parseBootstrapArgs(['--db-url'])).toThrow(BootstrapUsageError)
+    expect(() => parseBootstrapArgs(['--db-url', '--yes'])).toThrow(/needs a postgres/)
+    expect(() => parseBootstrapArgs(['--db-url='])).toThrow(/needs a postgres/)
+    expect(() => parseBootstrapArgs(['--db-url', 'mysql://u:pw@h/db'])).toThrow(
+      /must be a postgres/
+    )
+    expect(() => parseBootstrapArgs(['--db-url', 'https://u:hunter2@h/db'])).toThrow(
+      /^(?!.*hunter2)/
+    )
+  })
+
+  it('refuses --db-url with --check (preflight reads .dev.vars)', () => {
+    expect(() => parseBootstrapArgs(['--check', '--db-url', NEON])).toThrow(/--check/)
+  })
+
+  it('keeps the existing flag rules', () => {
+    expect(() => parseBootstrapArgs(['--offline', '--online'])).toThrow(BootstrapUsageError)
+    expect(() => parseBootstrapArgs(['--nope'])).toThrow(/unknown option --nope/)
+    expect(() => parseBootstrapArgs(['--as'])).toThrow(/--as needs an email/)
+    expect(parseBootstrapArgs(['--as=a@b.test', '--no-dev']).as).toBe('a@b.test')
+    expect(parseBootstrapArgs(['-h']).help).toBe(true)
+  })
+})
+
+describe('database URL helpers', () => {
+  it('isPostgresUrl accepts both schemes with a host, nothing else', () => {
+    expect(isPostgresUrl('postgresql://u:p@localhost:5432/db')).toBe(true)
+    expect(isPostgresUrl('postgres://h/db')).toBe(true)
+    expect(isPostgresUrl('mysql://h/db')).toBe(false)
+    expect(isPostgresUrl('not a url')).toBe(false)
+  })
+
+  it('isLocalDatabaseUrl: loopback is local, anything else is off-box, garbage stays local', () => {
+    expect(isLocalDatabaseUrl('postgresql://u:p@localhost:5432/db')).toBe(true)
+    expect(isLocalDatabaseUrl('postgresql://u:p@127.0.0.1:5434/db')).toBe(true)
+    expect(isLocalDatabaseUrl('postgresql://u:p@[::1]:5432/db')).toBe(true)
+    expect(isLocalDatabaseUrl('postgresql://u:p@ep-x.neon.tech/db')).toBe(false)
+    expect(isLocalDatabaseUrl('postgresql://u:p@10.0.0.5:5432/db')).toBe(false)
+    expect(isLocalDatabaseUrl('not a url')).toBe(true)
+  })
+
+  it('databaseUrlTarget drops the credentials and the query', () => {
+    expect(databaseUrlTarget('postgresql://u:secret@ep-x.neon.tech/neondb?sslmode=require')).toBe(
+      'ep-x.neon.tech/neondb'
+    )
+    expect(databaseUrlTarget('postgresql://u:p@localhost:5434/rocketflare_dev')).toBe(
+      'localhost:5434/rocketflare_dev'
+    )
+    expect(databaseUrlTarget('nope')).not.toContain('nope')
+  })
+})
+
+describe('bootstrapStepPlan', () => {
+  const NEON = 'postgresql://u:secret@ep-x.neon.tech/neondb?sslmode=require'
+  const LOCAL = 'postgresql://rocketflare:rocketflare_pass@localhost:5432/rocketflare_dev'
+  const COMPOSE = { docker: true, database: 'compose', target: null, seedEnv: {} }
+
+  it('is the Docker plan by default, unchanged from before --db-url', () => {
+    expect(bootstrapStepPlan()).toEqual(COMPOSE)
+    expect(bootstrapStepPlan({ dbUrl: null })).toEqual(COMPOSE)
+  })
+
+  it('--db-url: no Docker, an external database, and the seed may write to it', () => {
+    expect(bootstrapStepPlan({ dbUrl: NEON })).toEqual({
+      docker: false,
+      database: 'external',
+      target: 'ep-x.neon.tech/neondb',
+      seedEnv: { SEED_ALLOW_REMOTE: '1' },
+    })
+  })
+
+  it('--check skips Docker only for an off-box .dev.vars, and never allows a remote seed', () => {
+    expect(bootstrapStepPlan({ check: true, devVarsDatabaseUrl: LOCAL })).toEqual(COMPOSE)
+    expect(bootstrapStepPlan({ check: true, devVarsDatabaseUrl: undefined })).toEqual(COMPOSE)
+    expect(bootstrapStepPlan({ check: true, devVarsDatabaseUrl: NEON })).toEqual({
+      docker: false,
+      database: 'external',
+      target: 'ep-x.neon.tech/neondb',
+      seedEnv: {},
+    })
+    // An off-box .dev.vars matters to preflight only; a plain bootstrap still owns its Docker db.
+    expect(bootstrapStepPlan({ devVarsDatabaseUrl: NEON })).toEqual(COMPOSE)
   })
 })

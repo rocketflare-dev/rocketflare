@@ -118,6 +118,10 @@ path); no per-PR previews.
   extension first. Detail: `.claude/rules/database.md`.
 - **Local port is chosen** (`scripts/dev-db.mjs`): each checkout gets its own compose project and
   port, written back to `DATABASE_URL`, so two copies never share a database.
+- **Or an existing database** (`pnpm bootstrap --db-url <url>`): for a machine with no Docker (a
+  coding sandbox on a Neon branch). The URL goes into `DATABASE_URL` and nothing is started. An
+  off-box `DATABASE_URL` (not loopback) is left alone by `dev-db.mjs` and skips preflight's Docker
+  checks. The seed runs there with `SEED_ALLOW_REMOTE=1`.
 - **Migrations**: `db:generate` → read the SQL → `db:migrate` (role → migrations → grants).
   Migrations are forward-only.
 - **Cross-tenant allow-list**: `tests/config/unscoped-allowlist.test.ts` fails a function that
@@ -127,7 +131,9 @@ path); no per-PR previews.
   and `TENANT_SCOPE_MODE=enforce` waits on the spike in `docs/RLS.md`.
 
 **Known gaps:** the RLS spike has not been run; no read replicas; the TEST database is pinned to
-5433, so two checkouts cannot run `pnpm test` at once.
+5433, so two checkouts cannot run `pnpm test` at once. `--db-url` with a loopback URL (a native
+Postgres) still looks like this checkout's Docker database to preflight and `dev:db:*`, and a
+re-run of the bootstrap without the flag checks for Docker again.
 
 ## 5. Background work and realtime
 
