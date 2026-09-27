@@ -49,6 +49,7 @@ describe('nudge-lib', () => {
     expect(kit).toContain('npm run sync:releases')
     expect(kit).toContain('PLAIN TEXT')
     expect(plugins).toContain('src/data/plugins.ts')
+    expect(plugins).toContain('npm run sync:plugins')
     expect(kit).not.toContain('src/data/plugins.ts')
     expect(siteReminder({ from: null, to: '1.0.0', kind: 'kit', wwwDir: '/w' })).toContain('In /w,')
   })
