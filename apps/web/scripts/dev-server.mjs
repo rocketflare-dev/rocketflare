@@ -2,14 +2,15 @@
 /**
  * The local dev stack: `wrangler dev` (:3001) + Vite (:3000), supervised here instead of by
  * `concurrently` — two children of ONE node process is a tree that can actually be killed, and it
- * lets us own the output. Modes:
+ * lets us own the output. The ports are `DEV_API_PORT` / `DEV_UI_PORT` when set, in the shell or in
+ * `.dev.vars` (`scripts/lib/dev-ports.mjs`). Modes:
  *
  *   --start       (`pnpm dev`) preflight, then run both servers: a spinner while they boot, then
  *                 one ready line with the Vite URL, then only what matters (app logs, warnings,
  *                 errors). `DEV_VERBOSE=1` or `--verbose` prints every raw line instead; the
  *                 unfiltered servers are still one command away (`pnpm dev:api` / `pnpm dev:ui`).
  *   --preflight   clear THIS repo's leftover dev processes, then refuse to start if something
- *                 else still holds :3000/:3001 — a loud failure beats two servers fighting over
+ *                 else still holds a dev port — a loud failure beats two servers fighting over
  *                 a port (Vite is `strictPort`, so it cannot quietly land on the API's).
  *   --stop        (`pnpm dev:stop`) kill the whole tree, supervisor FIRST, looping until quiet:
  *                 a supervisor that restarts children can respawn one between passes, and
@@ -17,7 +18,8 @@
  *   --status      (`pnpm dev:status`) print what is running and who holds the ports; no signals.
  *
  * Ownership is deliberate: a process counts as ours only when its command line or its cwd is
- * inside THIS repository. Another checkout (or another app) on :3001 is reported, never killed.
+ * inside THIS repository. Another checkout (or another app) on a dev port is reported, never
+ * killed.
  * `ps`/`lsof` only — no pidfile to go stale, no dependency to install.
  */
 import { execFileSync, spawn } from 'node:child_process'
@@ -25,10 +27,12 @@ import { existsSync, mkdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { readDevVars } from '../../../scripts/lib/bootstrap-lib.mjs'
+import { devPorts } from '../../../scripts/lib/dev-ports.mjs'
 
 const WEB_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const REPO_ROOT = path.resolve(WEB_DIR, '../..')
-const PORTS = [3000, 3001]
+const DEV_PORTS = devPorts()
+const PORTS = [DEV_PORTS.ui, DEV_PORTS.api]
 /**
  * The dev stack's process names; anything else in the repo is left alone. Only `--start` matches:
  * a `--stop` / `--status` run must never be a target of another instance's sweep.
@@ -342,8 +346,8 @@ async function start({ verbose }) {
     spinner.clear()
     const secs = ((Date.now() - startedAt) / 1000).toFixed(1)
     process.stdout.write(
-      `${COLOR.ui}✔${COLOR.reset} dev ready in ${secs}s  ${COLOR.ui}${state.url || 'http://localhost:3000'}${COLOR.reset}\n` +
-        `${COLOR.dim}  api http://localhost:3001 · stop with pnpm dev:stop${COLOR.reset}\n`
+      `${COLOR.ui}✔${COLOR.reset} dev ready in ${secs}s  ${COLOR.ui}${state.url || `http://localhost:${DEV_PORTS.ui}`}${COLOR.reset}\n` +
+        `${COLOR.dim}  api http://localhost:${DEV_PORTS.api} · stop with pnpm dev:stop${COLOR.reset}\n`
     )
   }
 
@@ -422,7 +426,7 @@ async function start({ verbose }) {
   process.on('SIGTERM', () => void shutdown(0))
 
   phase()
-  launch('api', 'wrangler', ['dev', '--port', '3001'])
+  launch('api', 'wrangler', ['dev', '--port', String(DEV_PORTS.api)])
   launch('ui', 'vite', [])
 }
 

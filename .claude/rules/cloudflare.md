@@ -255,7 +255,11 @@ the check `tsc` cannot do — run it before pushing a new dependency.
 `wrangler dev` (`pnpm dev:api`, :3001) emulates KV, Queues, DO, R2 and Workflows locally and uses
 `localConnectionString` for Hyperdrive. **Start and stop the stack through the scripts, never by
 killing a pid**: `pnpm dev` runs `scripts/dev-server.mjs --preflight` first (clears this repo's
-leftovers, then refuses to start — exit 1, naming the pid — if anything else holds :3000/:3001),
+leftovers, then refuses to start — exit 1, naming the pid — if anything else holds :3000/:3001,
+or `DEV_UI_PORT`/`DEV_API_PORT` when set in the shell or `.dev.vars` — `scripts/lib/dev-ports.mjs`
+is the one reader, and `APP_URL` must follow the UI port by hand because the Worker cannot read the
+shell; outside production CORS/CSRF also allow the loopback twin of `APP_URL` and of the request's
+own loopback origin, so nothing else changes),
 then supervises `wrangler dev` and Vite ITSELF (no `concurrently`: two children of one node
 process is a tree that can be killed, and it lets the script own the output) — a spinner while
 they boot, then ONE ready line with the Vite URL, then only app logs, warnings and errors

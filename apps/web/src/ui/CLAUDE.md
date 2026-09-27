@@ -1,7 +1,7 @@
 # UI (React SPA)
 
 React 18 + Vite + React Router 6 + TanStack Query 5 + zustand; DaisyUI 5 on Tailwind v4. Dev: Vite on
-:3000 proxies `/api`,`/auth`,`/ws` (+ an installed plugin's own prefixes) → :3001. Prod: `dist/ui` via the `ASSETS` binding.
+:3000 proxies `/api`,`/auth`,`/ws` (+ an installed plugin's own prefixes) → :3001 (`DEV_UI_PORT` / `DEV_API_PORT` move them, `scripts/lib/dev-ports.mjs`). Prod: `dist/ui` via the `ASSETS` binding.
 
 ## Layout
 

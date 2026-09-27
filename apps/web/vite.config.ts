@@ -3,6 +3,7 @@ import path from 'node:path'
 import react from '@vitejs/plugin-react'
 import type { HttpProxy } from 'vite'
 import { defineConfig } from 'vite'
+import { devAllowedHosts, devPorts } from '../../scripts/lib/dev-ports.mjs'
 
 /** Prevent proxy errors from crashing Vite when the API (wrangler dev) is restarting */
 function onProxyError(proxy: HttpProxy.Server) {
@@ -20,7 +21,13 @@ function onProxyError(proxy: HttpProxy.Server) {
 // URL as PUBLIC_URL. Allow that host and point HMR at the tunnel's wss endpoint.
 const tunnelHost = process.env.PUBLIC_URL ? new URL(process.env.PUBLIC_URL).host : undefined
 
-const API = 'http://localhost:3001'
+// The dev ports (default :3000 UI / :3001 API) and any extra hosts Vite must answer for (a
+// sandbox preview hostname) — DEV_UI_PORT / DEV_API_PORT / DEV_ALLOWED_HOSTS, from the shell or
+// apps/web/.dev.vars (scripts/lib/dev-ports.mjs).
+const ports = devPorts()
+const allowedHosts = [...new Set([...devAllowedHosts(), ...(tunnelHost ? [tunnelHost] : [])])]
+
+const API = `http://localhost:${ports.api}`
 const proxyTo = (target = API, extra: Record<string, unknown> = {}) => ({
   target,
   changeOrigin: true,
@@ -38,18 +45,14 @@ export default defineConfig({
     minify: 'esbuild',
   },
   server: {
-    port: 3000,
-    // Never silently move to another port: 3001 is `wrangler dev`, and a Vite that lands there
+    port: ports.ui,
+    // Never silently move to another port: the next one is `wrangler dev`, and a Vite that lands there
     // serves the UI from the API's port while the proxy talks to itself. Fail loudly instead —
     // `pnpm dev` runs scripts/dev-server.mjs --preflight to clear or name the squatter first.
     strictPort: true,
     host: true,
-    ...(tunnelHost
-      ? {
-          allowedHosts: [tunnelHost],
-          hmr: { protocol: 'wss', host: tunnelHost, clientPort: 443 },
-        }
-      : {}),
+    ...(allowedHosts.length > 0 ? { allowedHosts } : {}),
+    ...(tunnelHost ? { hmr: { protocol: 'wss', host: tunnelHost, clientPort: 443 } } : {}),
     watch: {
       // The UI only depends on src/ui and src/shared — allowlist those so API/migration/doc
       // edits don't churn the Vite watcher. wrangler dev watches the API side.
@@ -72,7 +75,7 @@ export default defineConfig({
     proxy: {
       '/api': proxyTo(),
       '/auth': proxyTo(),
-      '/ws': proxyTo('ws://localhost:3001', { ws: true }),
+      '/ws': proxyTo(`ws://localhost:${ports.api}`, { ws: true }),
     },
   },
   resolve: {
