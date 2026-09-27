@@ -6,6 +6,12 @@
 # driver talks to (D35): `pnpm test:neon` and CI's `test-neon` job start it; the gate never does.
 # Our build on a mirror of a community image packaging Neon's open-source proxy, PINNED BY DIGEST (rules/database.md). It
 # creates a `neon_control_plane` schema in the database it fronts; nothing in the kit reads it.
+#
+# `name:` pins the Compose project per app (the rename moves it with the slug). Without it the
+# project was `web` — the directory — in every copy of the kit, so `pnpm test:db:up` in one copy
+# recreated another copy's test Postgres on its volume (#38). Both still publish 5433.
+name: rocketflare-test
+
 services:
   postgres-test:
     image: pgvector/pgvector:pg17

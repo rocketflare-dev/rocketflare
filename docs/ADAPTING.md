@@ -40,8 +40,9 @@ without `--dry-run`, performs the mechanical rows below in one pass and reports 
 `.claude/skills/rf-adapt/checklist.md` walks those six, lettered (a)–(f) as in the **Script** column.
 The script walks every text file git knows about (tracked and untracked, `.gitignore` honoured;
 `pnpm-lock.yaml`, `LICENSE`, `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `SECURITY.md`, the two svgs,
-the tool itself, its test and the adapt skill are skipped; `github.com/rocketflare-dev/rocketflare`
-is preserved as the kit's origin) plus `apps/web/.dev.vars` when it exists (git-ignored, but its
+the tool itself, its test and the adapt skill are skipped; the `rocketflare-dev` org and every
+`rocketflare-dev/<repo>` — the kit's origin, its plugins, the neon-proxy image, the reusable plugin
+CI — is preserved as upstream) plus `apps/web/.dev.vars` when it exists (git-ignored, but its
 `DATABASE_URL` must follow the compose file), applies nine ordered token classes — `@rocketflare/`
 → `@<slug>/`, `ROCKETFLARE` → `<UPPER>`, `rocketflare.dev|.local` → `<domain>` (default
 `<slug>.example.com`), `.rocketflare` → `.<slug>`, the Postgres owner `rocketflare` → `<snake>`,

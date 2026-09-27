@@ -29,8 +29,16 @@ export const KIT = Object.freeze({
   display: 'Rocketflare',
   domains: ['rocketflare.dev', 'rocketflare.local'],
   /**
-   * Literal strings restored after the pass, longest first: the kit's origin, and the three
-   * filenames that keep the KIT's name in a renamed app.
+   * Upstream references restored after the pass: anything in the `rocketflare-dev` GitHub org —
+   * the org alone, or `rocketflare-dev/<repo>` (the kit, its plugins, the mirrored neon-proxy
+   * image, the reusable plugin CI). A renamed app still pulls those from upstream; rewritten, they
+   * pointed at `<slug>-dev/…`, an org that does not exist (#37). `rocketflare-dev-postgres` and
+   * friends are container names, not the org, and still move.
+   */
+  preservedPattern: /\brocketflare-dev(?:\/[\w.-]+|(?![\w-]))/g,
+  /**
+   * Literal strings restored after the pass, longest first: the three filenames that keep the
+   * KIT's name in a renamed app.
    *
    * `.rocketflare.json` is deliberately not renamed — it describes the KIT, and a fixed path is
    * what lets `kit:upgrade` and `pnpm plugin` find it (D27, D31). Its sidecar follows it, and
@@ -38,12 +46,7 @@ export const KIT = Object.freeze({
    * Without these three, a copy renamed to `acme` looked for `.acme.json`, `.gitignore` stopped
    * ignoring the sidecar, and an app could never install any plugin at all.
    */
-  preserved: [
-    'github.com/rocketflare-dev/rocketflare',
-    '.rocketflare.local.json',
-    'rocketflare-plugin.json',
-    '.rocketflare.json',
-  ],
+  preserved: ['.rocketflare.local.json', 'rocketflare-plugin.json', '.rocketflare.json'],
 })
 
 export const SLUG_RE = /^[a-z][a-z0-9-]*$/
@@ -161,6 +164,7 @@ export function buildReplacements(names) {
 export const CLASS_IDS = Object.freeze(buildReplacements(deriveNames('x')).map(c => c.id))
 
 const PRESERVE_MARK = i => `\u0000P${i}\u0000`
+const UPSTREAM_MARK = i => `\u0000U${i}\u0000`
 
 /**
  * One pass over `text`: every class in order, counting matches per class. Returns the new text
@@ -170,6 +174,12 @@ export function applyReplacements(text, names) {
   const counts = Object.fromEntries(CLASS_IDS.map(id => [id, 0]))
   let out = text
   let preservedHits = 0
+  const upstream = []
+  out = out.replace(KIT.preservedPattern, ref => {
+    preservedHits += 1
+    upstream.push(ref)
+    return UPSTREAM_MARK(upstream.length - 1)
+  })
   KIT.preserved.forEach((literal, i) => {
     const parts = out.split(literal)
     preservedHits += parts.length - 1
@@ -184,6 +194,9 @@ export function applyReplacements(text, names) {
   }
   KIT.preserved.forEach((literal, i) => {
     out = out.split(PRESERVE_MARK(i)).join(literal)
+  })
+  upstream.forEach((ref, i) => {
+    out = out.split(UPSTREAM_MARK(i)).join(ref)
   })
   const total = Object.values(counts).reduce((a, b) => a + b, 0)
   return { text: total === 0 ? text : out, counts, total, preserved: preservedHits }

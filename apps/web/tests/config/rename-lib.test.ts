@@ -4,6 +4,9 @@
  * project. This file is on the tool's exclusion list precisely because it asserts on the kit's
  * own token strings.
  */
+import { execFileSync } from 'node:child_process'
+import { existsSync, readFileSync } from 'node:fs'
+import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
   API_KEY_HANDLE_MARGIN,
@@ -140,7 +143,50 @@ describe('applyReplacements', () => {
     expect(text).toContain('acme_app')
     expect(text).toContain('acme-agent-run-staging')
     expect(text).toContain('APP_NAME=Acme Ops Test')
-    expect(text.replaceAll(KIT.preserved[0], '')).not.toMatch(/[Rr]ocketflare/)
+    expect(text.replace(KIT.preservedPattern, '')).not.toMatch(/[Rr]ocketflare/)
+  })
+
+  /**
+   * #37: anything in the `rocketflare-dev` org is upstream — the kit, its plugin repositories, the
+   * mirrored neon-proxy image, the reusable plugin CI — and a renamed app still pulls it from
+   * there. Only `github.com/rocketflare-dev/rocketflare` used to be preserved, so the rest became
+   * `acme-dev/…`, an org that does not exist, and `pnpm test:neon` could not pull its image.
+   */
+  it('never rewrites the rocketflare-dev org or its repositories, but still moves container names', () => {
+    const input = [
+      'image: ghcr.io/rocketflare-dev/local-neon-proxy@sha256:abc',
+      'uses: rocketflare-dev/rocketflare/.github/workflows/plugin-ci.yml@main',
+      'repo=rocketflare-dev/rocketflare-plugins;',
+      'see rocketflare-dev/rocketflare-plugin-analytics.git@1.0.2',
+      'mirrored to `ghcr.io/rocketflare-dev` and rebuilt',
+      'https://raw.githubusercontent.com/rocketflare-dev/rocketflare/0.10.0/CHANGELOG.md',
+      'container_name: rocketflare-dev-postgres, volume rocketflare-dev-data',
+    ].join('\n')
+    const { text, preserved } = applyReplacements(input, deriveNames('acme'))
+    expect(text).toBe(
+      input
+        .replace('rocketflare-dev-postgres', 'acme-dev-postgres')
+        .replace('rocketflare-dev-data', 'acme-dev-data')
+    )
+    expect(preserved).toBe(6)
+  })
+
+  it('leaves no <slug>-dev/ reference anywhere in the renamed tree', () => {
+    const repoRoot = path.resolve(__dirname, '../../../..')
+    const files = execFileSync('git', ['ls-files', '-z'], { cwd: repoRoot, encoding: 'utf8' })
+      .split('\0')
+      .filter(f => f.length > 0 && !isExcluded(f))
+    const names = deriveNames('acme')
+    const offenders = files.filter(f => {
+      const full = path.join(repoRoot, f)
+      if (!existsSync(full)) return false
+      const buffer = readFileSync(full)
+      if (isBinary(buffer)) return false
+      return /acme-dev\/|ghcr\.io\/acme\b/.test(
+        applyReplacements(buffer.toString('utf8'), names).text
+      )
+    })
+    expect(offenders).toEqual([])
   })
 
   /**
