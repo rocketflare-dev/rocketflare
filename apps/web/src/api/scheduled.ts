@@ -68,17 +68,30 @@ export const pruneExpired: ScheduledTask = {
  * for ever. One DELETE per tenant, each on the `(tenant_id, started_at)` index — a cross-tenant
  * cutoff scan would read the whole table, and every other query on it is tenant-first anyway.
  */
+/** Tenants pruned in parallel per batch — see the loop. */
+const PRUNE_CONCURRENCY = 10
+
 export async function runPruneAiSpans(db: Database, retentionDays: number, now = new Date()) {
   const cutoff = new Date(now.getTime() - retentionDays * 24 * 60 * 60 * 1000)
   const tenantRows = await db.select({ id: tenants.id }).from(tenants)
   let spans = 0
-  for (const { id: tenantId } of tenantRows) {
-    // No `.returning()`: a first prune after a busy fortnight can be a lot of rows, and the ids are
-    // not needed — both drivers report the affected count, which `affected()` reads.
-    const result = await db
-      .delete(aiSpans)
-      .where(and(eq(aiSpans.tenantId, tenantId), lt(aiSpans.startedAt, cutoff)))
-    spans += affected(result)
+  // PRUNE_CONCURRENCY tenants at a time: under `neon` every DELETE is its own HTTP round trip
+  // (D35), so a strictly sequential loop costs tenants × latency — minutes for a large fleet.
+  // postgres.js (`max: 1`) pipelines the same batch on its one connection.
+  for (let i = 0; i < tenantRows.length; i += PRUNE_CONCURRENCY) {
+    const batch = tenantRows.slice(i, i + PRUNE_CONCURRENCY)
+    const counts = await Promise.all(
+      batch.map(async ({ id: tenantId }) =>
+        // No `.returning()`: a first prune after a busy fortnight can be a lot of rows, and the
+        // ids are not needed — both drivers report the affected count, which `affected()` reads.
+        affected(
+          await db
+            .delete(aiSpans)
+            .where(and(eq(aiSpans.tenantId, tenantId), lt(aiSpans.startedAt, cutoff)))
+        )
+      )
+    )
+    for (const count of counts) spans += count
   }
   return { spans, cutoff: cutoff.toISOString() }
 }
