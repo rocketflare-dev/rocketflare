@@ -13,7 +13,7 @@ import {
   jobEnvelopeSchema,
 } from '@rocketflare/shared/jobs'
 import type { AppConfig } from '../../config'
-import { createDatabase, type DatabaseHandle, resolveDatabaseUrl } from '../../db/client'
+import { type DatabaseHandle, openDatabase } from '../../db/client'
 import { serverPlugins } from '../../plugins/server'
 import { databaseSpanStore } from '../observability/span-store'
 import type { Tracer } from '../observability/tracer'
@@ -50,7 +50,7 @@ export interface JobsConsumerDeps {
   env: AppBindings
   config: AppConfig
   logger: Logger
-  /** Override the per-message DB factory (tests). Defaults to `createDatabase(resolveDatabaseUrl(env))`. */
+  /** Override the per-message DB factory (tests). Defaults to `openDatabase({ ...config, HYPERDRIVE })`. */
   createDb?: () => DatabaseHandle
 }
 
@@ -97,15 +97,7 @@ export async function processJobsBatch(
   deps: JobsConsumerDeps
 ): Promise<void> {
   const createDb =
-    deps.createDb ??
-    (() =>
-      createDatabase(
-        resolveDatabaseUrl({
-          HYPERDRIVE: deps.env.HYPERDRIVE,
-          PREVIEW_DATABASE_URL: deps.config.PREVIEW_DATABASE_URL,
-          DATABASE_URL: deps.config.DATABASE_URL,
-        })
-      ))
+    deps.createDb ?? (() => openDatabase({ ...deps.config, HYPERDRIVE: deps.env.HYPERDRIVE }))
 
   for (const message of batch.messages) {
     await processMessage(message, deps, createDb)

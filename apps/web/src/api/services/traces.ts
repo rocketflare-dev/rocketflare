@@ -16,7 +16,7 @@ import type {
 import { paginationMeta } from '@rocketflare/shared/pagination'
 import { and, asc, eq, type SQL, sql } from 'drizzle-orm'
 import type { AppConfig } from '../../config'
-import type { Database } from '../../db/client'
+import { type Database, rows } from '../../db/client'
 import { agentRuns, aiSpans, messages } from '../../db/schema'
 import { isTraceId, traceIdForRun } from '../observability/trace-ids'
 import { traceUrlFor } from '../observability/tracing'
@@ -92,7 +92,8 @@ function aggregateQuery(
         coalesce(bool_or(s.parent_span_id IS NULL AND s.status = 'error'), false) AS root_failed,
         coalesce(sum(s.input_tokens) FILTER (WHERE s.kind = 'llm'), 0) AS input_tokens,
         coalesce(sum(s.output_tokens) FILTER (WHERE s.kind = 'llm'), 0) AS output_tokens,
-        -- json, not text[]: \`db.execute\` returns raw values, and postgres.js parses json.
+        -- json, not text[]: \`db.execute\` returns raw values; both drivers parse json, only Neon
+        -- parses a raw array (postgres.js with fetch_types off returns "{a,b}") — D35.
         json_agg(DISTINCT s.model) FILTER (WHERE s.model IS NOT NULL AND s.kind = 'llm') AS models,
         max(s.run_id::text) AS run_id,
         max(s.conversation_id::text) AS conversation_id,
@@ -131,10 +132,9 @@ export async function listTraces(
       ELSE bool_or(s.status = 'error') END`)
   }
   const offset = (query.page - 1) * query.pageSize
-  const rows = await db.execute<TraceAggregateRow>(
-    aggregateQuery(tenantId, where, having, query.pageSize, offset)
+  const list = rows<TraceAggregateRow>(
+    await db.execute(aggregateQuery(tenantId, where, having, query.pageSize, offset))
   )
-  const list = Array.from(rows)
   const total = list.length ? Number(list[0]?.total) : 0
   return {
     items: list.map(row => toSummary(cfg, row)),
@@ -171,20 +171,18 @@ export async function getTrace(
   id: string
 ): Promise<TraceDetail> {
   const traceId = await resolveTraceId(db, tenantId, id)
-  const rows = await db
+  const spanRows = await db
     .select()
     .from(aiSpans)
     .where(and(eq(aiSpans.tenantId, tenantId), eq(aiSpans.traceId, traceId)))
     .orderBy(asc(aiSpans.startedAt), asc(aiSpans.createdAt))
-  if (rows.length === 0)
+  if (spanRows.length === 0)
     throw new NotFoundError('No spans recorded for that trace', 'trace_not_found')
-  const [summary] = Array.from(
-    await db.execute<TraceAggregateRow>(
-      aggregateQuery(tenantId, [sql`s.trace_id = ${traceId}`], [], 1, 0)
-    )
+  const [summary] = rows<TraceAggregateRow>(
+    await db.execute(aggregateQuery(tenantId, [sql`s.trace_id = ${traceId}`], [], 1, 0))
   )
   if (!summary) throw new NotFoundError('No spans recorded for that trace', 'trace_not_found')
-  const spans: TraceSpan[] = rows.map(row => ({
+  const spans: TraceSpan[] = spanRows.map(row => ({
     traceId: row.traceId,
     spanId: row.spanId,
     parentSpanId: row.parentSpanId,

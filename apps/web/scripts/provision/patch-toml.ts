@@ -9,11 +9,29 @@
  * Idempotent: writing the value already present is a no-op. A DIFFERENT existing (non-placeholder)
  * id throws — an environment's Hyperdrive/KV id is not something to overwrite by accident — unless
  * `force` is set.
+ *
+ * The database driver (D35) is patched here too: `databaseDriver: 'postgres'` sets
+ * `DATABASE_DRIVER = "postgres"` and adds the `[[hyperdrive]]` block when it is absent;
+ * `databaseDriver: 'neon'` sets `"neon"` and REMOVES the block — wrangler refuses to deploy a
+ * Hyperdrive binding whose id does not exist, so a Neon Worker cannot carry one.
  */
 import fs from 'node:fs'
 import { fileURLToPath } from 'node:url'
 
+export type DatabaseDriver = 'neon' | 'postgres'
+
+export interface HyperdriveBlock {
+  /** A 32-hex id, or the environment's `<HYPERDRIVE[_STAGING]_ID>` placeholder. */
+  id: string
+  /** What `wrangler dev` connects to when the block is present (the local compose Postgres). */
+  localConnectionString: string
+}
+
 export interface TomlPatch {
+  /** D35: `[vars] DATABASE_DRIVER`, plus the `[[hyperdrive]]` block it implies (see the header). */
+  databaseDriver?: DatabaseDriver
+  /** With `databaseDriver: 'postgres'`: the block written when the file has none. */
+  hyperdriveBlock?: HyperdriveBlock
   /** Value for `[[hyperdrive]] id = "<HYPERDRIVE[_STAGING]_ID>"`. */
   hyperdriveId?: string
   /** Value for `[[kv_namespaces]] id = "<KV_RATE_LIMIT[_STAGING]_ID>"`. */
@@ -79,6 +97,15 @@ export interface MigrationBlock {
 }
 
 const PLACEHOLDER = /^<[A-Z0-9_]+>$/
+
+/** What `wrangler dev` used before D35 — the compose Postgres on :5432. */
+export const DEFAULT_LOCAL_CONNECTION_STRING =
+  'postgresql://rocketflare:rocketflare_pass@localhost:5432/rocketflare_dev'
+
+/** `<HYPERDRIVE_ID>` / `<HYPERDRIVE_STAGING_ID>` — the id a block carries until it is provisioned. */
+export function hyperdrivePlaceholder(env: 'staging' | 'production'): string {
+  return env === 'staging' ? '<HYPERDRIVE_STAGING_ID>' : '<HYPERDRIVE_ID>'
+}
 
 export class TomlPatchError extends Error {}
 
@@ -371,9 +398,88 @@ function appendMigration(text: string, block: MigrationBlock): string {
   return insertBlock(text, header, lines.join('\n'))
 }
 
+// ---- database driver (D35) ----------------------------------------------------------------
+
+/** The byte ranges of every `[[hyperdrive]]` block that declares `binding = "HYPERDRIVE"`. */
+function hyperdriveBlocks(text: string): Array<{ start: number; end: number }> {
+  const declared = /^binding\s*=\s*"HYPERDRIVE"\s*(?:#.*)?$/m
+  return blockRanges(text, '[[hyperdrive]]').filter(r => declared.test(text.slice(r.start, r.end)))
+}
+
+/** Does the text declare the `HYPERDRIVE` binding? (What `postgres` needs and `neon` must not have.) */
+export function hasHyperdriveBlock(text: string): boolean {
+  return hyperdriveBlocks(text).length > 0
+}
+
+/** The driver the toml selects: `[vars] DATABASE_DRIVER`, missing meaning `postgres` (as `loadConfig`). */
+export function readDatabaseDriver(text: string): DatabaseDriver {
+  return readTomlString(text, 'DATABASE_DRIVER') === 'neon' ? 'neon' : 'postgres'
+}
+
+/** Set `DATABASE_DRIVER`, inserting it after `TENANT_SCOPE_MODE` (else at the end of `[vars]`). */
+function setDriverVar(text: string, driver: DatabaseDriver): string {
+  if (/^DATABASE_DRIVER\s*=/m.test(text)) return patchVar(text, 'DATABASE_DRIVER', driver)
+  const anchor = /^TENANT_SCOPE_MODE\s*=[^\n]*\n/m.exec(text)
+  if (!anchor) return appendVar(text, 'DATABASE_DRIVER', driver)
+  const at = anchor.index + anchor[0].length
+  return `${text.slice(0, at)}DATABASE_DRIVER = "${driver}"\n${text.slice(at)}`
+}
+
+/** Drop every HYPERDRIVE block and the blank line that separated it from the next. */
+function removeHyperdriveBlocks(text: string): string {
+  let out = text
+  for (const r of hyperdriveBlocks(text).reverse()) {
+    const end = out.slice(r.end, r.end + 1) === '\n' ? r.end + 1 : r.end
+    out = out.slice(0, r.start) + out.slice(end)
+  }
+  return out
+}
+
+/**
+ * Insert the HYPERDRIVE block where the kit kept it: just above the KV block's leading comment, so
+ * the database binding reads first in the bindings section. No KV block → the end of the file.
+ */
+function insertHyperdriveBlock(text: string, block: HyperdriveBlock): string {
+  const body = [
+    '[[hyperdrive]]',
+    '# DATABASE_DRIVER = "postgres" (D35): Postgres through Hyperdrive. Written by `pnpm provision',
+    '# cloudflare <env> --driver postgres`; `--driver neon` removes it. `wrangler dev` ignores `id`',
+    '# and uses localConnectionString (.dev.vars DATABASE_DRIVER=postgres uses DATABASE_URL anyway).',
+    'binding = "HYPERDRIVE"',
+    `id = "${block.id}"`,
+    `localConnectionString = "${block.localConnectionString}"`,
+  ].join('\n')
+  const lines = text.split('\n')
+  let at = lines.findIndex(l => l.trim() === '[[kv_namespaces]]')
+  if (at === -1) return insertBlock(text, '[[hyperdrive]]', body)
+  while (at > 0 && /^#/.test(lines[at - 1])) at--
+  const offset = lines.slice(0, at).reduce((n, l) => n + l.length + 1, 0)
+  return `${text.slice(0, offset)}${body}\n\n${text.slice(offset)}`
+}
+
+function patchDatabaseDriver(
+  text: string,
+  driver: DatabaseDriver,
+  block: HyperdriveBlock | undefined
+): string {
+  let out = setDriverVar(text, driver)
+  if (driver === 'neon') return removeHyperdriveBlocks(out)
+  if (!hasHyperdriveBlock(out)) {
+    if (!block)
+      throw new TomlPatchError(
+        'DATABASE_DRIVER = "postgres" needs a [[hyperdrive]] block and none was given to write'
+      )
+    out = insertHyperdriveBlock(out, block)
+  }
+  return out
+}
+
 export function patchToml(text: string, patch: TomlPatch): string {
   let out = text
   const force = patch.force ?? false
+  // First: a `postgres` switch creates the block the `hyperdriveId` below is patched into.
+  if (patch.databaseDriver !== undefined)
+    out = patchDatabaseDriver(out, patch.databaseDriver, patch.hyperdriveBlock)
   if (patch.hyperdriveId !== undefined)
     out = patchBindingKey(out, 'HYPERDRIVE', 'id', patch.hyperdriveId, force)
   if (patch.kvId !== undefined) out = patchBindingKey(out, 'RATE_LIMIT_KV', 'id', patch.kvId, force)
@@ -419,7 +525,7 @@ export function patchTomlFile(file: string, patch: TomlPatch): boolean {
 
 function usage(): never {
   console.error(
-    'usage: tsx scripts/provision/patch-toml.ts <toml> [--hyperdrive-id ID] [--kv-id ID] [--app-url URL] [--email-from "Name <a@b>"] [--route-host HOST] [--binding \'{"type":"kv","binding":"X","id":"…"}\']… [--force]'
+    'usage: tsx scripts/provision/patch-toml.ts <toml> [--database-driver neon|postgres [--local-connection-string URL]] [--hyperdrive-id ID] [--kv-id ID] [--app-url URL] [--email-from "Name <a@b>"] [--route-host HOST] [--binding \'{"type":"kv","binding":"X","id":"…"}\']… [--force]'
   )
   process.exit(2)
 }
@@ -428,6 +534,7 @@ function main(argv: string[]) {
   const file = argv[0]
   if (!file || file.startsWith('--')) usage()
   const patch: TomlPatch = {}
+  let localConnectionString = DEFAULT_LOCAL_CONNECTION_STRING
   for (let i = 1; i < argv.length; i++) {
     const a = argv[i]
     const next = () => {
@@ -445,13 +552,27 @@ function main(argv: string[]) {
         process.exit(2)
       }
       patch.bindings = [...(patch.bindings ?? []), parsed as BindingBlock]
-    } else if (a === '--hyperdrive-id') patch.hyperdriveId = next()
+    } else if (a === '--database-driver') {
+      const v = next()
+      if (v !== 'neon' && v !== 'postgres') usage()
+      patch.databaseDriver = v
+    } else if (a === '--local-connection-string') localConnectionString = next()
+    else if (a === '--hyperdrive-id') patch.hyperdriveId = next()
     else if (a === '--kv-id') patch.kvId = next()
     else if (a === '--app-url') patch.appUrl = next()
     else if (a === '--email-from') patch.emailFrom = next()
     else if (a === '--route-host') patch.routeHost = next()
     else if (a === '--force') patch.force = true
     else usage()
+  }
+  if (patch.databaseDriver === 'postgres') {
+    // The id arrives through --hyperdrive-id (patched into the new block right after); until then
+    // the block carries the environment's placeholder, exactly as a fresh kit toml used to.
+    const staging = /staging/.test(file)
+    patch.hyperdriveBlock = {
+      id: patch.hyperdriveId ?? hyperdrivePlaceholder(staging ? 'staging' : 'production'),
+      localConnectionString,
+    }
   }
   try {
     const changed = patchTomlFile(file, patch)

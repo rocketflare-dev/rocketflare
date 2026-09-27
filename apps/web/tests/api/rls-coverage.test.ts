@@ -4,9 +4,11 @@
  * `RLS_EXCLUDED_TABLES`, and the revoked tables grant NOTHING to the app role. Runs in `off` mode:
  * the policies exist and are inert (owner connection bypasses them); the role cannot bypass RLS.
  */
+
 import { sql } from 'drizzle-orm'
 import { getTableConfig, PgTable } from 'drizzle-orm/pg-core'
 import { describe, expect, it } from 'vitest'
+import { rows as resultRows } from '@/db/client'
 import * as schema from '@/db/schema'
 import { APP_ROLE, RLS_EXCLUDED_TABLES, RLS_REVOKED_TABLES } from '@/db/schema/rls'
 import { serverPlugins } from '@/plugins/server'
@@ -15,7 +17,7 @@ import { setupTestDatabase } from '../helpers/db'
 const db = setupTestDatabase()
 
 async function rows<T>(query: ReturnType<typeof sql>): Promise<T[]> {
-  return (await db.execute(query)) as unknown as T[]
+  return resultRows<T>(await db.execute(query))
 }
 
 /** `ARRAY['a','b']::text[]` — drizzle renders a JS array parameter as a record, not an array. */

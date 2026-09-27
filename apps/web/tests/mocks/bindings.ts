@@ -1,6 +1,7 @@
 /**
- * `Cloudflare.Env`-shaped test bindings (D15): in-memory KV, a 404 ASSETS fetcher, HYPERDRIVE
- * pointing at the test Postgres, a recording Queue, an in-memory R2 bucket, a recording DO namespace,
+ * `Cloudflare.Env`-shaped test bindings (D15): in-memory KV, a 404 ASSETS fetcher, the database
+ * for the driver `.env.test` selects (D35 — a HYPERDRIVE stub pointing at the test Postgres under
+ * `postgres`; `DATABASE_URL` + `NEON_LOCAL_PROXY` under `neon`), a recording Queue, an in-memory R2 bucket, a recording DO namespace,
  * a recording Workers AI stub, a recording Workflow namespace, and vars from `process.env` (loaded
  * from .env.test by dotenv-cli). The AI stub also answers `toMarkdown` (D18 uploads). Tests may
  * read `process.env`; `src/` may not.
@@ -521,9 +522,11 @@ function hyperdriveStub(connectionString: string): Hyperdrive {
 export function createTestEnv(overrides: Partial<TestEnv> = {}): TestEnv {
   const databaseUrl =
     process.env.DATABASE_URL ?? 'postgresql://test:test@localhost:5433/rocketflare_test'
+  const driver = process.env.DATABASE_DRIVER || 'postgres'
   const env: Record<string, unknown> = {
     RATE_LIMIT_KV: new MemoryKV() as unknown as KVNamespace,
-    HYPERDRIVE: hyperdriveStub(databaseUrl),
+    // A deployed `neon` Worker has no Hyperdrive binding at all, so neither does its test env.
+    ...(driver === 'postgres' ? { HYPERDRIVE: hyperdriveStub(databaseUrl) } : {}),
     ASSETS: assetsStub(),
     JOBS_QUEUE: new RecordingQueue() as unknown as Queue,
     FILES: new MemoryR2Bucket() as unknown as R2Bucket,
@@ -539,6 +542,8 @@ export function createTestEnv(overrides: Partial<TestEnv> = {}): TestEnv {
     TENANCY_MODE: process.env.TENANCY_MODE ?? 'multi',
     SIGNUP_MODE: process.env.SIGNUP_MODE ?? 'invite_only',
     TENANT_SCOPE_MODE: process.env.TENANT_SCOPE_MODE ?? 'off',
+    DATABASE_DRIVER: driver,
+    ...(process.env.NEON_LOCAL_PROXY ? { NEON_LOCAL_PROXY: process.env.NEON_LOCAL_PROXY } : {}),
   }
   for (const key of SECRET_KEYS) {
     const value = process.env[key]

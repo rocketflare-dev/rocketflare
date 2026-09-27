@@ -390,6 +390,7 @@ export function parseBootstrapArgs(argv, env = {}) {
     open: true,
     as: 'owner@example.test',
     dbUrl: null,
+    driver: null,
     check: false,
     verbose: env.DEV_VERBOSE === '1',
     help: false,
@@ -446,7 +447,15 @@ export function parseBootstrapArgs(argv, env = {}) {
         opts.dbUrl = takeValue('--db-url', i, 'a postgres:// URL')
         i += 1
         break
+      case '--driver':
+        opts.driver = takeValue('--driver', i, 'neon or postgres')
+        i += 1
+        break
       default:
+        if (arg.startsWith('--driver=')) {
+          opts.driver = arg.slice('--driver='.length)
+          break
+        }
         if (arg.startsWith('--as=')) {
           opts.as = arg.slice('--as='.length)
           break
@@ -462,6 +471,18 @@ export function parseBootstrapArgs(argv, env = {}) {
   if (opts.offline && opts.online) {
     throw new BootstrapUsageError('--offline and --online exclude each other')
   }
+  if (opts.driver !== null && !DATABASE_DRIVERS.includes(opts.driver)) {
+    throw new BootstrapUsageError('--driver must be neon or postgres')
+  }
+  if (opts.driver !== null && opts.check) {
+    throw new BootstrapUsageError('--driver and --check exclude each other (preflight only reads)')
+  }
+  if (opts.driver === 'neon' && opts.dbUrl !== null && !isNeonDatabaseUrl(opts.dbUrl)) {
+    throw new BootstrapUsageError(
+      '--driver neon needs a Neon --db-url (*.neon.tech): the neon driver speaks only to Neon, ' +
+        'or to the local proxy in front of the Docker database. Use --driver postgres for this URL.'
+    )
+  }
   if (opts.dbUrl !== null) {
     // Never echo the value: it carries a password.
     if (!isPostgresUrl(opts.dbUrl)) {
@@ -474,6 +495,34 @@ export function parseBootstrapArgs(argv, env = {}) {
     }
   }
   return opts
+}
+
+/** D35: the two values `DATABASE_DRIVER` takes (apps/web/src/db/client.ts). */
+export const DATABASE_DRIVERS = ['neon', 'postgres']
+
+/** A Neon host — the only external database the `neon` driver can reach. */
+export function isNeonDatabaseUrl(url) {
+  try {
+    return new URL(url).hostname.endsWith('.neon.tech')
+  } catch {
+    return false
+  }
+}
+
+/**
+ * The LOCAL driver the bootstrap writes to `.dev.vars` (D35) — the toml's value is the DEPLOYED
+ * one, and `.dev.vars` overrides it for wrangler dev, the scripts and the tests.
+ *
+ * `--driver` wins. Then `--db-url`: a Neon branch gets `neon`, because a coding sandbox has no TCP
+ * out and postgres.js could not reach it at all; any other URL gets `postgres`. Then whatever
+ * `.dev.vars` already says (a developer's `dev:db:up --neon` survives a re-run). Else `postgres`:
+ * the compose database over TCP, no proxy — the default local setup.
+ */
+export function localDriverFor({ flag = null, dbUrl = null, existing = '' } = {}) {
+  if (flag) return flag
+  if (dbUrl) return isNeonDatabaseUrl(dbUrl) ? 'neon' : 'postgres'
+  if (DATABASE_DRIVERS.includes(existing)) return existing
+  return 'postgres'
 }
 
 /**

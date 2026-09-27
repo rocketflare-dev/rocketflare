@@ -130,7 +130,7 @@ async function main() {
   if (!/localhost|127\.0\.0\.1/.test(DATABASE_URL) && !process.env.SEED_ALLOW_REMOTE) {
     throw new Error('Refusing to seed a non-local database (set SEED_ALLOW_REMOTE=1 to override)')
   }
-  const db = getScriptDatabase(DATABASE_URL)
+  const db = getScriptDatabase(DATABASE_URL, process.env)
   const log = (s: string) => console.log(s)
 
   log(`Seeding (${TENANCY_MODE}-tenant mode)…`)

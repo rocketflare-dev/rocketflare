@@ -21,13 +21,19 @@
 # from apps/web, or by absolute path.
 #
 # Requires: pnpm, an authenticated wrangler session (`pnpm --filter @rocketflare/web exec wrangler login`
-# from the root, or CLOUDFLARE_API_TOKEN + CLOUDFLARE_ACCOUNT_ID in the environment), and
-# NEON_DATABASE_URL — the DIRECT (non `-pooler`) host of that environment's Neon branch. Hyperdrive
-# pools itself; see docs/DEPLOY.md → Neon.
+# from the root, or CLOUDFLARE_API_TOKEN + CLOUDFLARE_ACCOUNT_ID in the environment), and — only
+# under DATABASE_DRIVER=postgres — NEON_DATABASE_URL, the DIRECT (non `-pooler`) host of that
+# environment's Postgres. Hyperdrive pools itself; see docs/DEPLOY.md → Database driver.
 #
-# Creates a RESOURCE LIST, idempotently. The kit’s own four are the default list — both tomls
-# already declare every one of these bindings:
-#   Hyperdrive config   <app>-<env>                 → [[hyperdrive]] id            (patched / printed)
+# DATABASE_DRIVER (D35) comes from the environment (`pnpm provision cloudflare <env> --driver …`
+# passes it), else the toml's `[vars] DATABASE_DRIVER`, missing meaning postgres:
+#   neon       no Hyperdrive — the Worker reads the DATABASE_URL secret (`pnpm provision secrets`);
+#              with --apply the toml gets DATABASE_DRIVER = "neon" and loses any [[hyperdrive]] block
+#   postgres   the Hyperdrive config below; with --apply the toml gets DATABASE_DRIVER = "postgres"
+#              and the [[hyperdrive]] block (localConnectionString from .dev.vars DATABASE_URL)
+#
+# Creates a RESOURCE LIST, idempotently. The kit’s own are the default list:
+#   Hyperdrive config   <app>-<env>                 → [[hyperdrive]] id            (postgres only)
 #   KV namespace        <APP>_RATE_LIMIT[_STAGING]  → [[kv_namespaces]] id         (patched / printed)
 #   Queue               <app>-jobs[-staging]        → [[queues.*]] queue           (name-referenced)
 #   R2 bucket           <app>-files[-staging]       → [[r2_buckets]] bucket_name   (name-referenced)
@@ -69,7 +75,7 @@ for arg in "$@"; do
 done
 case "$ENV_NAME" in
   staging|production) ;;
-  *) echo "usage: NEON_DATABASE_URL=… [PLUGIN_RESOURCES='[{\"type\":\"kv\",\"name\":\"…\",\"binding\":\"…\"}]'] bash $0 <staging|production> [app-name] [--apply] [--force]" >&2; exit 2 ;;
+  *) echo "usage: [DATABASE_DRIVER=neon|postgres] [NEON_DATABASE_URL=…] [PLUGIN_RESOURCES='[{\"type\":\"kv\",\"name\":\"…\",\"binding\":\"…\"}]'] bash $0 <staging|production> [app-name] [--apply] [--force]" >&2; exit 2 ;;
 esac
 
 # apps/web — the package that owns the tomls and the wrangler devDependency (NOT the workspace root).
@@ -81,12 +87,18 @@ if [ -z "$APP" ]; then echo "could not read \`name\` from wrangler.toml; pass [a
 APP_UPPER="$(printf '%s' "$APP" | tr '[:lower:]-' '[:upper:]_')"
 
 if [ "$ENV_NAME" = "staging" ]; then
-  TOML="wrangler.staging.toml"; SUFFIX="-staging"; KV_SUFFIX="_STAGING"; ID_TAG="_STAGING"
+  TOML="wrangler.staging.toml"; SUFFIX="-staging"; KV_SUFFIX="_STAGING"
 else
-  TOML="wrangler.toml"; SUFFIX=""; KV_SUFFIX=""; ID_TAG=""
+  TOML="wrangler.toml"; SUFFIX=""; KV_SUFFIX=""
 fi
 
 HYPERDRIVE_NAME="${APP}-${ENV_NAME}"
+DRIVER="${DATABASE_DRIVER:-$(sed -n 's/^DATABASE_DRIVER *= *"\([^"]*\)".*/\1/p' "$TOML" | head -1)}"
+DRIVER="${DRIVER:-postgres}"
+case "$DRIVER" in
+  neon|postgres) ;;
+  *) echo "DATABASE_DRIVER must be neon or postgres (got \"$DRIVER\")" >&2; exit 2 ;;
+esac
 KV_NAME="${APP_UPPER}_RATE_LIMIT${KV_SUFFIX}"
 QUEUE_NAME="${APP}-jobs${SUFFIX}"
 BUCKET_NAME="${APP}-files${SUFFIX}"
@@ -101,24 +113,31 @@ if ! wr whoami >/dev/null 2>&1; then
   echo "wrangler is not authenticated. Run: pnpm --filter @rocketflare/web exec wrangler login   (or export CLOUDFLARE_API_TOKEN)" >&2
   exit 1
 fi
-if [ -z "${NEON_DATABASE_URL:-}" ]; then
-  echo "NEON_DATABASE_URL is required (direct host of the ${ENV_NAME} Neon branch)." >&2
-  exit 1
+if [ "$DRIVER" = "postgres" ]; then
+  if [ -z "${NEON_DATABASE_URL:-}" ]; then
+    echo "NEON_DATABASE_URL is required under DATABASE_DRIVER=postgres (direct host of the ${ENV_NAME} Postgres)." >&2
+    exit 1
+  fi
+  case "$NEON_DATABASE_URL" in
+    *-pooler.*) echo "warning: NEON_DATABASE_URL uses the -pooler host; Hyperdrive should point at the DIRECT host." >&2 ;;
+  esac
 fi
-case "$NEON_DATABASE_URL" in
-  *-pooler.*) echo "warning: NEON_DATABASE_URL uses the -pooler host; Hyperdrive should point at the DIRECT host." >&2 ;;
-esac
 
-echo "== ${APP} / ${ENV_NAME} → ${TOML}"
+echo "== ${APP} / ${ENV_NAME} → ${TOML} (DATABASE_DRIVER=${DRIVER})"
 echo
 
 # ---- the resource list --------------------------------------------------------------------
-# TYPE<TAB>NAME<TAB>BINDING per line: the kit’s four, then whatever PLUGIN_RESOURCES declares.
+# TYPE<TAB>NAME<TAB>BINDING per line: the kit’s own (Hyperdrive only under postgres), then
+# whatever PLUGIN_RESOURCES declares.
 RESOURCE_LIST="$(printf '%s\t%s\t%s\n' \
-  hyperdrive "$HYPERDRIVE_NAME" HYPERDRIVE \
   kv         "$KV_NAME"         RATE_LIMIT_KV \
   queue      "$QUEUE_NAME"      JOBS_QUEUE \
   r2         "$BUCKET_NAME"     FILES)"
+if [ "$DRIVER" = "postgres" ]; then
+  RESOURCE_LIST="$(printf '%s\t%s\t%s\n' hyperdrive "$HYPERDRIVE_NAME" HYPERDRIVE)
+${RESOURCE_LIST}"
+fi
+KIT_RESOURCE_COUNT="$(printf '%s\n' "$RESOURCE_LIST" | grep -c .)"
 
 if [ -n "${PLUGIN_RESOURCES:-}" ]; then
   EXTRA="$(printf '%s' "$PLUGIN_RESOURCES" | node -e '
@@ -213,7 +232,12 @@ ensure_r2() {
 
 HD_ID=""
 KV_ID=""
-PATCH_ARGS=()
+# The driver goes first: under postgres it creates the [[hyperdrive]] block --hyperdrive-id patches.
+LOCAL_DB_URL="$( [ -f .dev.vars ] && sed -n 's/^DATABASE_URL=//p' .dev.vars | head -1 || true)"
+PATCH_ARGS=(--database-driver "$DRIVER")
+if [ "$DRIVER" = "postgres" ] && [ -n "$LOCAL_DB_URL" ]; then
+  PATCH_ARGS+=(--local-connection-string "$LOCAL_DB_URL")
+fi
 while IFS="$(printf '\t')" read -r RTYPE RNAME RBINDING; do
   [ -z "${RTYPE:-}" ] && continue
   case "$RTYPE" in
@@ -252,15 +276,16 @@ cat <<EOT
 
 == ${TOML}: ==
 
-[[hyperdrive]]  binding = "HYPERDRIVE"      id = "${HD_ID}"
+DATABASE_DRIVER = "${DRIVER}"
+$( [ "$DRIVER" = "postgres" ] && printf '[[hyperdrive]]  binding = "HYPERDRIVE"      id = "%s"' "$HD_ID" || printf '(no [[hyperdrive]] block — the Worker reads the DATABASE_URL secret: pnpm provision secrets %s)' "$ENV_NAME")
 [[kv_namespaces]] binding = "RATE_LIMIT_KV" id = "${KV_ID}"
 
 EOT
 if [ "$APPLY" != "1" ]; then
 cat <<EOT
-Paste the ids above into apps/web/${TOML}, or run the sed line from apps/web (or re-run with --apply):
-
-  sed -i.bak 's|<HYPERDRIVE${ID_TAG}_ID>|${HD_ID}|; s|<KV_RATE_LIMIT${ID_TAG}_ID>|${KV_ID}|' ${TOML} && rm ${TOML}.bak
+Paste the ids above into apps/web/${TOML} (or re-run with --apply, which also sets DATABASE_DRIVER
+and adds or removes the [[hyperdrive]] block). The other toml must match: a [[hyperdrive]] block in
+both or neither (the parity test).
 
 EOT
 fi
@@ -278,5 +303,5 @@ cat <<EOT
 Plugin resources for this environment (D31 — declared in each plugin's plugin.json, named
 <app>-<id>-<name>${SUFFIX} / <APP>_<ID>_<NAME>${KV_SUFFIX}, block patched into ${TOML}):
 EOT
-  printf '%s\n' "$RESOURCE_LIST" | awk -F'\t' 'NR > 4 { printf "  %-11s %-42s binding = \"%s\"\n", $1, $2, $3 }'
+  printf '%s\n' "$RESOURCE_LIST" | awk -F'\t' -v kit="$KIT_RESOURCE_COUNT" 'NR > kit { printf "  %-11s %-42s binding = \"%s\"\n", $1, $2, $3 }'
 fi

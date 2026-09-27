@@ -106,6 +106,13 @@ binding names and DO `class_name`s — and a **new binding**, which goes in with
 fills, and `wrangler-parity.test.ts` only fails on placeholders under `REQUIRE_PROVISIONED=1`, so
 CI stays green in between.
 
+**`[vars]` values are the adopter's choice, not the kit's.** A new var goes in with the adopter's
+value; an existing var keeps it. The sharpest case is `DATABASE_DRIVER` (0.15.0, D35): the kit's
+tomls say `"neon"` and carry no `[[hyperdrive]]` block because a FRESH copy deploys on Neon, while
+an adopted copy's missing var means `postgres`. Never carry `"neon"` across and never delete the
+adopter's `[[hyperdrive]]` block — that would switch a live deployment's driver on the next deploy.
+Switching is `pnpm provision cloudflare <env> --driver neon`, a decision the adopter makes.
+
 Every edit goes into **both** files or the parity test fails — which is the point of it. Account-
 scoped names (`queue`, `bucket_name`, workflow `name`) keep the adopter's prefix and staging keeps
 its `-staging` suffix. Verify with `pnpm web test:config`.

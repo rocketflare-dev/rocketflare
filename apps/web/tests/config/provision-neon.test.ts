@@ -10,6 +10,7 @@ import {
   pickDatabase,
   pickEndpoint,
   pickRole,
+  toPooledNeonUrl,
 } from '../../scripts/provision/neon'
 import { redact, sanitizeNeon } from '../../scripts/provision/redact'
 
@@ -42,6 +43,29 @@ describe('buildConnectionUrl', () => {
     expect(toDirectNeonHost(DIRECT)).toBe(DIRECT)
     const url = buildConnectionUrl({ role: 'r', password: 'p', host: DIRECT, database: 'd' })
     expect(toDirectNeonHost(url)).toBe(url)
+  })
+})
+
+describe('toPooledNeonUrl (D35: the neon Worker secret)', () => {
+  const direct = buildConnectionUrl({
+    role: 'r',
+    password: 'p@ss/w:rd',
+    host: DIRECT,
+    database: 'd',
+  })
+  it('adds -pooler to the endpoint label, keeping credentials, database and sslmode', () => {
+    expect(toPooledNeonUrl(direct)).toBe(
+      `postgresql://r:p%40ss%2Fw%3Ard@${POOLER}/d?sslmode=require`
+    )
+  })
+  it('is idempotent, and inverts toDirectNeonHost', () => {
+    const pooled = toPooledNeonUrl(direct)
+    expect(toPooledNeonUrl(pooled)).toBe(pooled)
+    expect(toDirectNeonHost(pooled)).toBe(direct)
+  })
+  it('leaves a non-Neon URL alone', () => {
+    const local = 'postgresql://u:p@localhost:5432/db'
+    expect(toPooledNeonUrl(local)).toBe(local)
   })
 })
 

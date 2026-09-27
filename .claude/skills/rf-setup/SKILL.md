@@ -1,7 +1,7 @@
 ---
 name: rf-setup
 description: First run of this kit on this machine — checks the toolchain, starts Postgres, migrates, seeds demo data, and gets you signed in
-argument-hint: "[--offline] [--no-demo] [--no-plugins] [--db-url <postgres-url>]"
+argument-hint: "[--offline] [--no-demo] [--no-plugins] [--db-url <postgres-url>] [--driver neon|postgres]"
 ---
 
 # First run
@@ -79,7 +79,16 @@ when somebody wants the app bare first. `--db-url <postgres-url>` uses a databas
 exists (a Neon branch in a sandbox with no Docker) instead of starting one. Docker is then not
 checked, the URL goes into `apps/web/.dev.vars`, step 4 only waits for it to answer, and the seed
 is allowed to write to it. Use it when `docker` is missing and the user has given you a URL; never
-invent one, and never echo the URL back (it holds a password).
+invent one, and never echo the URL back (it holds a password). A Neon URL (`*.neon.tech`) also
+selects the `neon` driver locally — HTTPS and WebSocket only, which a sandbox with no TCP out
+allows; any other URL gets `postgres`.
+
+`--driver neon|postgres` sets the LOCAL database driver (D35), written to `apps/web/.dev.vars` as
+`DATABASE_DRIVER`. The default is `postgres` (TCP to the Docker database, nothing else running),
+whatever the tomls say — their `DATABASE_DRIVER` is the DEPLOYED driver, `neon` in a fresh copy.
+Don't pass `--driver` unless the user asks to run the deployed Neon driver locally: `neon` with the
+Docker database also starts a Neon proxy container in step 4 (a community image, pinned). A re-run
+keeps whatever `.dev.vars` already says. Switch later with `pnpm dev:db:up --neon` / `--postgres`.
 
 ## 2. Read the exit code
 
@@ -121,7 +130,8 @@ or stay offline?
    ```
 4. Report what is true now, in **at most six lines** — where the app is (the two URLs), who they
    are signed in as (**owner@example.test**; also `admin@` and `member@example.test`, and the
-   global admin `admin@rocketflare.local`), the port Postgres landed on if it was not 5432, **any
+   global admin `admin@rocketflare.local`), the port Postgres landed on if it was not 5432, the
+   local database driver if it is not `postgres` (`neon`, through the proxy — step 4 says so), **any
    plugin the `plugins` step installed and the page it adds** (`pnpm plugin list` names them; say
    "no plugins installed" rather than nothing when there are none), and any note the script printed
    (an orphaned volume, `--offline`). Do not restate the ten ✔ lines
@@ -155,8 +165,8 @@ prerequisite lines, then hands over to `scripts/bootstrap.mjs` for the ten steps
 |---|---|---|
 | 1 | `toolchain` | Node 24, pnpm 10, Docker daemon and `docker compose` reachable. With `--db-url` it reads `docker skipped (external database <host>/<db>)` |
 | 2 | `install` | `pnpm install` done; `wrangler` resolves in `apps/web` |
-| 3 | `secrets` | `apps/web/.dev.vars` exists with `DATABASE_URL`, `OAUTH_ENCRYPTION_KEY` (generated, git-ignored). With `--db-url` it notes `DATABASE_URL set from --db-url` |
-| 4 | `database` | this checkout's Postgres container is up and healthy on the port it chose (5432 unless taken; the step says so and writes it to `.dev.vars`). With `--db-url` there is no container: the line reads `external <host>/<db> · Connected to …` once `db:check` answers |
+| 3 | `secrets` | `apps/web/.dev.vars` exists with `DATABASE_URL`, `OAUTH_ENCRYPTION_KEY` (generated, git-ignored) and `DATABASE_DRIVER` (the LOCAL driver, D35: `postgres` unless `--driver`, a Neon `--db-url`, or a value already there says otherwise — a note names it when it changes). With `--db-url` it notes `DATABASE_URL set from --db-url` |
+| 4 | `database` | this checkout's Postgres container is up and healthy on the port it chose (5432 unless taken; the step says so and writes it to `.dev.vars`); the `Connected to … (<driver> driver)` part names the local driver. Under `neon` the Neon proxy container is up too (`local driver neon: Neon proxy at http://localhost:<port>`). With `--db-url` there is no container: the line reads `external <host>/<db> · Connected to …` once `db:check` answers |
 | 5 | `migrate` | role → migrations → grants applied; the pgvector extension is installed |
 | 6 | `plugins` | every plugin in `.rocketflare.json`'s `defaultPlugins` is installed, its tables generated and migrated. The kit declares ONE — `analytics`, which is where dashboards, cubes and the fact table live from 0.6.0 (`docs/CONCEPTS.md` §8) — so this step is what makes **Analytics** appear in the nav. Skipped with `--no-plugins`, which is a perfectly good app with no analytics in it and no drizzle-cube in either bundle |
 | 7 | `seed` | demo tenant, owner/admin/member users, one API key (printed once), plus the populated demo workspace unless `--no-demo`. The seed prints `seeding <host>/<db>` first; with `--db-url` it runs with `SEED_ALLOW_REMOTE=1` |

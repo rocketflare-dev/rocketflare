@@ -26,7 +26,10 @@ LOG_LEVEL = "info"
 EMAIL_FROM = "Rocketflare <noreply@rocketflare.dev>"
 TENANCY_MODE = "multi"                 # multi | single   (docs/CONCEPTS.md → Tenancy)
 SIGNUP_MODE = "invite_only"            # open | invite_only | approval
-TENANT_SCOPE_MODE = "off"              # off | enforce    (docs/RLS.md — enforce needs HYPERDRIVE_APP)
+TENANT_SCOPE_MODE = "off"              # off | enforce    (docs/RLS.md — enforce needs an app-role connection)
+DATABASE_DRIVER = "neon"               # neon | postgres (D35, docs/DEPLOY.md § Database driver). Missing = postgres.
+                                       # neon: the DATABASE_URL Worker secret (pooled Neon URI), no Hyperdrive.
+                                       # postgres: the [[hyperdrive]] block below, any Postgres. Locally .dev.vars wins.
 AGENT_MAX_OUTPUT_TOKENS = "16384"      # AI (D17): per-call max_tokens when a tenant config sets none
 AGENT_MAX_TURNS = "30"                 # AI (D17): turn cap for every tool loop
 CHAT_KNOWLEDGE_TOOLS = "true"          # AI (D18): chat may call the knowledge tools ("false" = tool-free chat)
@@ -87,13 +90,14 @@ run_worker_first = [
   # <env>` writes it. The parity test reads `API_PREFIXES`, so a forgotten one fails the gate.
 ]
 
-# Postgres via Hyperdrive → Neon. Create: wrangler hyperdrive create rocketflare-staging \
-#   --connection-string="<neon direct url>"   (then paste the id below)
-# `wrangler dev` ignores `id` and uses localConnectionString (docker-compose.dev.yml).
-[[hyperdrive]]
-binding = "HYPERDRIVE"
-id = "<HYPERDRIVE_STAGING_ID>"
-localConnectionString = "postgresql://rocketflare:rocketflare_pass@localhost:5432/rocketflare_dev"
+# Postgres (D35). Under DATABASE_DRIVER = "neon" there is NO [[hyperdrive]] block — wrangler refuses
+# to deploy one whose id does not exist — and the Worker reads the DATABASE_URL secret instead.
+# `pnpm provision cloudflare staging --driver postgres` switches: it creates the Hyperdrive config, adds
+# the block below to BOTH files and sets DATABASE_DRIVER = "postgres". The block it writes:
+#   [[hyperdrive]]
+#   binding = "HYPERDRIVE"
+#   id = "<id>"
+#   localConnectionString = "<.dev.vars DATABASE_URL>"
 
 # KV for auth rate limiting + per-tenant operation locks. Create: wrangler kv namespace create RATE_LIMIT_STAGING
 [[kv_namespaces]]

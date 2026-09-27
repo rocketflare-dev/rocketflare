@@ -91,9 +91,18 @@ whenever that is still free or still this checkout's, and otherwise takes the ne
 checkout on the same machine starts its own database instead of failing on a taken port or quietly
 attaching to the first one's container — and a re-run never moves a database that is working.
 Everything downstream reads that one value: `db:migrate`, `seed` and `drizzle-kit` through dotenv,
-and `wrangler dev` through `CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_HYPERDRIVE`, which
-`pnpm dev` sets (the toml's `localConnectionString` is only the single-checkout default).
+and `wrangler dev` from `.dev.vars` too (a copy whose toml has a `[[hyperdrive]]` block also gets it
+through `CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_HYPERDRIVE`, which `pnpm dev` sets).
 `pnpm dev:db:down` stops this checkout's database and never another's.
+
+**The local driver is `postgres`, whatever you deploy.** The tomls' `DATABASE_DRIVER` is the
+DEPLOYED driver (`neon` in a fresh copy, D35); `.dev.vars` overrides it locally, and the bootstrap
+writes `DATABASE_DRIVER=postgres` there — postgres.js over TCP to the compose database, nothing else
+running. To run the deployed Neon driver against the same local database, `pnpm dev:db:up --neon`
+also starts a Neon proxy in front of it (per-checkout port from :4444) and writes
+`DATABASE_DRIVER=neon` + `NEON_LOCAL_PROXY`; `pnpm dev:db:up --postgres` switches back and stops the
+proxy. `pnpm bootstrap --driver neon|postgres` sets the same thing. Verify: `pnpm db:check` prints
+`Connected to … (neon driver)` or `(postgres driver)`.
 
 Why three steps: a policy's `TO rocketflare_app` needs the role
 before migrations; the `REVOKE`s need the tables after. With `APP_DATABASE_URL` unset the role is
@@ -105,7 +114,9 @@ Neon branch, a shared dev server), point the bootstrap at the database you alrea
 bash scripts/bootstrap.sh --no-dev --db-url "postgresql://user:pass@ep-x.neon.tech/neondb?sslmode=require"
 ```
 It still runs ten steps. `1/10 toolchain` skips the Docker checks, and `3/10 secrets` writes the URL
-to `DATABASE_URL` in `apps/web/.dev.vars`. `4/10 database` doesn't start a container; it waits for
+to `DATABASE_URL` in `apps/web/.dev.vars` — and, for a `*.neon.tech` URL, `DATABASE_DRIVER=neon`,
+which reaches Neon over HTTPS and WebSocket only (what a sandbox with no TCP out allows); any other
+URL gets `postgres`, and `--driver` overrides either. `4/10 database` doesn't start a container; it waits for
 `db:check` to answer (`external <host>/<db> · Connected to …`). `7/10 seed` runs with
 `SEED_ALLOW_REMOTE=1`, because the seed refuses a non-local host otherwise. The seed always prints
 `seeding <host>/<db>`, never the credentials. The database needs the pgvector extension available
@@ -259,7 +270,8 @@ scripts, `ROCKETFLARE_API_KEY` + `ROCKETFLARE_URL` in the environment replace th
 ### 1.8 Tests
 ```bash
 pnpm test:db:up       # ephemeral Postgres on :5433 (max_connections=300; apps/web/docker-compose.test.yml)
-pnpm test             # every package: web api + api-isolated (real DB), ui (jsdom), config (no DB); cli
+pnpm test             # every package: web api + api-isolated + driver (real DB), ui (jsdom), config (no DB); cli
+pnpm test:neon        # optional: the Neon proxy on :4433 + api, api-isolated and driver on the neon driver (CI's test-neon)
 ```
 Verify: all projects green — including every installed plugin's own tests, which run in the host's
 projects (`src/plugins/*/tests/{api,ui,config}`). The analytics plugin's `cube-isolation.test.ts`
@@ -567,13 +579,16 @@ deployed; the CLI is built by CI but not published (publishing it is an app deci
 
 **Before anything — three accounts you create yourself:**
 
-1. **Cloudflare** on **Workers Paid** (Hyperdrive, Workflows, `[limits]`), **with your domain on the
+1. **Cloudflare** on **Workers Paid** (Workflows, `[limits]`, and Hyperdrive if you deploy on
+   `postgres`), **with your domain on the
    account** — registered there (https://dash.cloudflare.com/?to=/:account/domains/register) or added
    as a site with its nameservers moved (https://dash.cloudflare.com/?to=/:account/add-site). The
    app hosts (`routes`) and the Resend DNS records are created in that zone; `pnpm provision
    preflight` refuses a host or sending domain whose zone is not on the account. No domain yet →
    `--staging-host workers.dev --production-host workers.dev --skip-email`.
-2. **Neon** — the free tier is fine for the two branches.
+2. **Neon** — the free tier is fine for the two branches. (Deploying on another Postgres instead
+   means `DATABASE_DRIVER = "postgres"` and Hyperdrive — `docs/DEPLOY.md` § Database driver; the
+   provisioning below assumes Neon.)
 3. **Resend** — the free tier is fine; it verifies the domain from (1). `--skip-email` skips it
    (magic links are logged in `wrangler tail`).
 
@@ -586,11 +601,17 @@ prompts with hidden input, verifies each against its vendor and writes the file 
 `apps/web/.provision.env.example` and fill it in. An exported variable of the same name overrides
 the file (that is how CI runs it); never paste a token into a chat, and never put these in
 `.dev.vars` (`wrangler dev` would load them into the Worker, and its `RESEND_API_KEY` is the app's
-sending key, not this full-access one):
+sending key, not this full-access one).
+
+**The deployed driver** comes from the tomls' `DATABASE_DRIVER` — `neon` in a fresh copy: no
+Hyperdrive, and the Worker holds the pooled Neon URI as its `DATABASE_URL` secret. Pass
+`--driver postgres` to `pnpm provision cloudflare <env>` (or `all`) for Hyperdrive instead — any
+Postgres, a read cache, one Hyperdrive config per environment. Either writes BOTH tomls.
+`docs/DEPLOY.md` § Database driver has the table and the switch:
 
 | Variable | Mint at | Scope |
 |---|---|---|
-| `CLOUDFLARE_API_TOKEN` | https://dash.cloudflare.com/profile/api-tokens | Account: Workers Scripts, Workers KV Storage, Queues, Workflows, Durable Objects, Hyperdrive, R2 — Edit; Workers AI, Account Analytics — Read. Zone: DNS — Edit on the zone holding your hosts and the sending domain |
+| `CLOUDFLARE_API_TOKEN` | https://dash.cloudflare.com/profile/api-tokens | Account: Workers Scripts, Workers KV Storage, Queues, Workflows, Durable Objects, R2 (+ Hyperdrive under `postgres`) — Edit; Workers AI, Account Analytics — Read. Zone: DNS — Edit on the zone holding your hosts and the sending domain |
 | `CLOUDFLARE_ACCOUNT_ID` | Workers & Pages → Overview (right-hand column / the URL) | the 32-hex account id |
 | `NEON_API_KEY` | https://console.neon.tech/app/settings/api-keys | personal or organisation key; creates the project and branches |
 | `RESEND_API_KEY` | https://resend.com/api-keys | Full access (creates the domain, mints a `sending_access` key per environment); or `--skip-email` |
@@ -609,12 +630,12 @@ pnpm provision all [--deploy staging|both] [--skip-email] [--rotate]   # 10–20
 | `preflight` | checks tools, tokens (environment, then the file) and accounts; resolves every custom host and the sending domain to a zone on the Cloudflare account (DNS readable by the token) — a missing zone fails with the registrar / add-site links; caches the four answers and the zone ids in `apps/web/.provision.json` (git-ignored, non-secret) | `preflight ok — app=… account=… neon=… resend=… zone=<zone> (<id>)` |
 | `email create` | Resend domain, its DNS records in the Cloudflare zone, `EMAIL_FROM` in both tomls | `email create ok — domain=… zone=… records=… EMAIL_FROM="…"` |
 | `neon` | Neon project (pg 17) + `staging` branch from the default branch, direct hosts, a password per branch | `neon ok — production=<host> staging=<host> (SELECT 1 on both)` |
-| `cloudflare <env>` | `cf-provision.sh <env> --apply`: Hyperdrive, KV, Queue, R2; ids patched into the toml | `cloudflare <env> ok — <toml> patched; REQUIRE_PROVISIONED=1 parity test passed for both tomls` (once both are done) |
+| `cloudflare <env> [--driver d]` | `cf-provision.sh <env> --apply`: KV, Queue, R2 (+ Hyperdrive under `postgres`); ids patched into the toml; `--driver` rewrites `DATABASE_DRIVER` and the `[[hyperdrive]]` block in both tomls | `cloudflare <env> ok — <toml> patched; REQUIRE_PROVISIONED=1 parity test passed for both tomls` (once both are done) |
 | `migrate <env>` | `pnpm db:migrate:ci` against that branch; applied count == journal entries | `migrate <env> ok — n/n migrations applied on <host>` |
 | `github <env>` | GitHub Environment + `DATABASE_URL`, `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` secrets (stdin) | `github <env> ok — environment <env> on <repo> has …` |
 | `urls` | `APP_URL` + `routes` (custom host) or the `workers.dev` host in both tomls; parity test | `urls ok — staging=… production=…; parity test passed` |
-| `deploy <env>` | `pnpm deploy[:staging]`, then `/api/health` and `/api/ready` | `deploy <env> ok — <url>/api/health ok (version …), /api/ready ok, deployments listed` |
-| `secrets <env>` | `OAUTH_ENCRYPTION_KEY` (generated) + every optional secret exported or in `apps/web/.provision.env`, over stdin | `secrets <env> ok — wrangler secret list shows n secret(s): …` |
+| `deploy <env>` | `pnpm deploy[:staging]` (under `neon` it puts the Worker's `DATABASE_URL` right after the first deploy), then `/api/health` and `/api/ready` | `deploy <env> ok — <url>/api/health ok (version …), /api/ready ok, deployments listed` |
+| `secrets <env>` | `OAUTH_ENCRYPTION_KEY` (generated) + every optional secret exported or in `apps/web/.provision.env`, over stdin; under `neon` also `DATABASE_URL` (the pooled Neon URI; `--rotate` re-puts it) | `secrets <env> ok — wrangler secret list shows n secret(s): …` |
 | `email verify <env>` | Resend verification (polls ≤ 10 min), a per-environment sending key into `RESEND_API_KEY` | `email verify <env> ok — domain=… verified, RESEND_API_KEY set, …/auth/methods reports magic link` |
 | `all` | every phase in order (`--deploy staging` by default), then a close-out checklist | `all ok — n phases passed; deployed …` |
 
@@ -625,34 +646,38 @@ Known limits: `.claude/skills/rf-provision/reference.md`. The manual sequence be
 what each phase does.
 
 ### 3.1 Accounts and access
-1. Cloudflare account on **Workers Paid** (Hyperdrive, Workflows and `[limits]` need it — Hyperdrive's
-   plan availability has changed over time; the Hyperdrive create step reports if the plan refuses
-   it) **with your domain as a zone on it** (registered there, or its nameservers moved — the two
+1. Cloudflare account on **Workers Paid** (Workflows and `[limits]` need it, and Hyperdrive under
+   `postgres` — Hyperdrive's plan availability has changed over time; the Hyperdrive create step
+   reports if the plan refuses it) **with your domain as a zone on it** (registered there, or its nameservers moved — the two
    links at the top of Part 3): the custom-domain `routes` and the email DNS records live in that
    zone. Without one, both hosts are `workers.dev` and email is `--skip-email`. `pnpm web exec
    wrangler login`.
    Verify: `pnpm web exec wrangler whoami` prints the account, and the dashboard lists the domain
    as an active zone.
-2. CI API token (account scope): Workers Scripts, KV, Queues, Workflows, Durable Objects,
-   Hyperdrive, R2 — edit; Workers AI, Account Analytics — read; Zone → DNS — edit on your zone.
+2. CI API token (account scope): Workers Scripts, KV, Queues, Workflows, Durable Objects, R2
+   (+ Hyperdrive under `postgres`) — edit; Workers AI, Account Analytics — read; Zone → DNS — edit on your zone.
    Verify: `CLOUDFLARE_API_TOKEN=… pnpm web exec wrangler whoami` succeeds.
 3. Neon: one project; branches `production` (main) and `staging` — create `staging` **before** the
    first migration, so each branch is migrated with its own password rather than inheriting a
-   migrated main (the database's default owner role is kept on both). Record the **direct** and `-pooler` connection strings for each. Hyperdrive gets
-   the direct host; `apps/web/scripts/migrate.ts` strips `-pooler` itself. Never put these strings in
+   migrated main (the database's default owner role is kept on both). Record the **direct** and `-pooler` connection strings for each. Under `neon` the
+   Worker gets the pooled one (3.5); under `postgres` Hyperdrive gets the direct host; `apps/web/scripts/migrate.ts` strips `-pooler` itself. Never put these strings in
    a file in this repo. Verify: `psql "<direct url>" -c 'select 1'` on both branches.
 
 ### 3.2 Provision Cloudflare resources
 ```bash
-NEON_DATABASE_URL='<staging direct url>'    pnpm web provision:cloudflare staging --apply
-NEON_DATABASE_URL='<production direct url>' pnpm web provision:cloudflare production --apply
+pnpm web provision:cloudflare staging --apply        # DATABASE_DRIVER = "neon" (the kit's tomls)
+pnpm web provision:cloudflare production --apply
+# tomls already on postgres (Hyperdrive needs the direct host):
+NEON_DATABASE_URL='<staging direct url>' pnpm web provision:cloudflare staging --apply
 ```
 `pnpm web provision:cloudflare` runs `apps/web/scripts/cf-provision.sh` with `apps/web` as its
 working directory (the script also `cd`s there itself, so `bash apps/web/scripts/cf-provision.sh
-staging --apply` from the root works too). It creates (or finds, by name) all four resources: the
-Hyperdrive config `<app>-<env>`, the KV namespace `<APP>_RATE_LIMIT[_STAGING]`, the Queue
-`<app>-jobs[-staging]` and the R2 bucket `<app>-files[-staging]` (the last two are name-referenced —
-nothing to paste). `--apply` writes the Hyperdrive and KV ids into the toml through
+staging --apply` from the root works too). It creates (or finds, by name) the resources: the KV
+namespace `<APP>_RATE_LIMIT[_STAGING]`, the Queue `<app>-jobs[-staging]`, the R2 bucket
+`<app>-files[-staging]` (the last two are name-referenced — nothing to paste) and, under
+`postgres` only, the Hyperdrive config `<app>-<env>`. Switching the driver (the var and the
+`[[hyperdrive]]` block, in both tomls) is `pnpm provision cloudflare <env> --driver neon|postgres`.
+`--apply` writes the KV (and Hyperdrive) ids into the toml through
 `scripts/provision/patch-toml.ts` (byte-preserving; a DIFFERENT existing id is refused unless
 `--force`); without it the script prints the ids and a `sed` line to run yourself. The Workflow
 (`[[workflows]]` `AGENT_RUN_WORKFLOW`), the Workers AI binding (`[ai]`) and the DO need no create
@@ -680,8 +705,11 @@ deploys `wrangler.staging.toml` from inside `apps/web`. Runtime 500s are expecte
 Verify: the run is green; `pnpm web exec wrangler deployments list -c wrangler.staging.toml` shows it.
 
 ### 3.5 Worker secrets
-For every non-`[vars]` name in `apps/web/.dev.vars.example` (skip `DATABASE_URL` — deployed envs use
-Hyperdrive — and `APP_DATABASE_URL` unless enabling RLS; the `OIDC_*` names other than
+**Under `neon`, first** put the Worker's database connection — the branch's **pooled** URI:
+`printf '%s' "$POOLED_URL" | pnpm web exec wrangler secret put DATABASE_URL -c wrangler.staging.toml`
+(`pnpm provision secrets <env>` does it from the Neon API). Then, for every other non-`[vars]` name
+in `apps/web/.dev.vars.example` (skip `DATABASE_DRIVER` and `NEON_LOCAL_PROXY` — local only —
+`DATABASE_URL` under `postgres`, which uses Hyperdrive, and `APP_DATABASE_URL` unless enabling RLS; the `OIDC_*` names other than
 `OIDC_CLIENT_SECRET`, and `AUTH_OIDC_ONLY`, are `[vars]` — Part 2.3b):
 ```bash
 # one per name: OAUTH_ENCRYPTION_KEY RESEND_API_KEY BOOTSTRAP_ADMIN_EMAILS GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET
@@ -697,8 +725,8 @@ environment. `ANTHROPIC_API_KEY`, `EMBEDDINGS_API_KEY`, the two `LANGFUSE_*` key
 (Part 2.5/2.6): skip them and the features degrade as described there.
 Verify: `pnpm web exec wrangler secret list -c wrangler.staging.toml` shows the names;
 `curl https://<staging-host>/api/health` returns ok, `curl https://<staging-host>/api/ready` returns
-ok (it runs a query through Hyperdrive — a 503 there means Hyperdrive cannot reach Neon: wrong host
-or SSL), and `/auth/methods` lists your providers. With `SIGNUP_MODE=invite_only` (the default) the
+ok (it runs a query — a 503 there means the Worker cannot reach Neon: under `neon` a missing or
+wrong `DATABASE_URL` secret, under `postgres` Hyperdrive pointing at the wrong host or SSL), and `/auth/methods` lists your providers. With `SIGNUP_MODE=invite_only` (the default) the
 admin's first login lands on `/pending`; the first organisation is created at `/admin`.
 Point the CLI at it: `pnpm cli login --server https://<staging-host>`.
 
@@ -739,5 +767,6 @@ Verify: `/auth/session` shows the expected version; `pnpm web exec wrangler tail
 requires: identical binding names and DO `class_name`s, `compatibility_date`/`flags`, `[limits]`,
 `[triggers].crons`, `[assets]`, `[[migrations]]` and `[vars]` keys across both files; staging `name`
 = production `name` + `-staging`; every Workflow `name`, queue `queue`, R2 `bucket_name` in staging
-ends in `-staging` and differs from production; Hyperdrive/KV ids differ. When you add a binding, add
+ends in `-staging` and differs from production; Hyperdrive/KV ids differ; a `[[hyperdrive]]` block
+is in both files or neither, and never in a `neon` file. When you add a binding, add
 it to both files, run `pnpm types`, and commit `apps/web/worker-configuration.d.ts`.

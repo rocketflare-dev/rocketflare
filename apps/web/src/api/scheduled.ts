@@ -10,7 +10,7 @@
  */
 import { and, eq, lt, sql } from 'drizzle-orm'
 import { type AppConfig, loadConfig } from '../config'
-import { createDatabase, type Database, resolveDatabaseUrl } from '../db/client'
+import { affected, type Database, openDatabase } from '../db/client'
 import { aiSpans, tenants, userSessions } from '../db/schema'
 import { serverPlugins } from '../plugins/server'
 import { pruneMagicLinkTokens } from './auth/magic-link'
@@ -74,11 +74,11 @@ export async function runPruneAiSpans(db: Database, retentionDays: number, now =
   let spans = 0
   for (const { id: tenantId } of tenantRows) {
     // No `.returning()`: a first prune after a busy fortnight can be a lot of rows, and the ids are
-    // not needed — postgres.js reports the affected count on the result.
+    // not needed — both drivers report the affected count, which `affected()` reads.
     const result = await db
       .delete(aiSpans)
       .where(and(eq(aiSpans.tenantId, tenantId), lt(aiSpans.startedAt, cutoff)))
-    spans += (result as unknown as { count?: number }).count ?? 0
+    spans += affected(result)
   }
   return { spans, cutoff: cutoff.toISOString() }
 }
@@ -130,13 +130,7 @@ export async function dispatchScheduled(
     return []
   }
 
-  const handle = createDatabase(
-    resolveDatabaseUrl({
-      HYPERDRIVE: env.HYPERDRIVE,
-      PREVIEW_DATABASE_URL: config.PREVIEW_DATABASE_URL,
-      DATABASE_URL: config.DATABASE_URL,
-    })
-  )
+  const handle = openDatabase({ ...config, HYPERDRIVE: env.HYPERDRIVE })
   const reports: TaskReport[] = []
   try {
     for (const task of tasks) {

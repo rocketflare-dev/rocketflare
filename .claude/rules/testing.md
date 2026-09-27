@@ -11,9 +11,11 @@ paths:
 # Testing Patterns
 
 Vitest in `apps/web` (all commands below are root scripts that delegate there, or run inside
-`apps/web`), four projects (`apps/web/vitest.config.ts`): `api` + `api-isolated` (Node, **real Postgres** on 5433),
-`ui` (jsdom + Testing Library), `config` (Node, no database: wrangler parity, env schema, pure
-helpers, and every installed plugin's own `src/plugins/*/tests/config/**`). `pnpm test` is two `vitest run` invocations (`test:shared`, `test:isolated`) because
+`apps/web`), five projects (`apps/web/vitest.config.ts`): `api` + `api-isolated` (Node, **real Postgres** on 5433),
+`driver` (D35: `tests/driver/**` — the code that differs between the two database drivers, through
+`openDatabase`, against the real database), `ui` (jsdom + Testing Library), `config` (Node, no
+database: wrangler parity, env schema, pure helpers, the raw-result guard
+`driver-results.test.ts`, and every installed plugin's own `src/plugins/*/tests/config/**`). `pnpm test` is two `vitest run` invocations (`test:shared`, `test:isolated`) because
 vitest 3 resolves `isolate` per run, not per project.
 
 ## Tests run under Node, against the real Hono app
@@ -25,8 +27,10 @@ vitest 3 resolves `isolate` per run, not per project.
   a `RecordingWorkflow` as `AGENT_RUN_WORKFLOW` (records `create({ id, params })` and `sendEvent`,
   `setStatus(id, …)` drives `instance.status()`, `terminated[]` records a forced cancel, `get()` of
   an unknown id throws `instance.not_found`, and `failSendEvent` simulates the instance a park
-  outlived — retention expired, or `wrangler dev` restarted), a `HYPERDRIVE`
-  whose `connectionString` is the test URL; `ctx = createExecutionContext()` collects `waitUntil`
+  outlived — retention expired, or `wrangler dev` restarted), and the database for the driver
+  `.env.test` selects — under `postgres` (the default) a `HYPERDRIVE` stub whose `connectionString`
+  is the test URL, under `neon` NO `HYPERDRIVE` (a deployed `neon` Worker has none) plus
+  `DATABASE_DRIVER` / `NEON_LOCAL_PROXY`; `ctx = createExecutionContext()` collects `waitUntil`
   promises so a test can `await waitOnExecutionContext(ctx)` before asserting side effects
 - Reach the stubs through **`stubs(env)`** → `{ kv, queue, files, hub, ai, workflow }`: `queue.messages`
   (what a route enqueued — `[{ body, options }]`), `files.objects` (key → stored bytes/metadata),
@@ -60,6 +64,14 @@ vitest 3 resolves `isolate` per run, not per project.
 - `apps/web/tests/helpers/db.ts` `safetyCheck()` refuses to run unless `NODE_ENV=test` and `DATABASE_URL`
   is `localhost`. Never point tests at Neon
 - Per-file `apps/web/tests/api-setup.ts` closes clients after each file (connection budget: forks × pools)
+- **Both drivers (D35).** `.env.test` sets `DATABASE_DRIVER=postgres`, so the gate runs postgres.js.
+  `pnpm test:neon` (root or web) starts the test Postgres PLUS the Neon proxy on :4433
+  (`test:db:up:neon`, compose profile `neon`) and runs `api`, `api-isolated` and `driver` with
+  `DATABASE_DRIVER=neon` — CI's `test-neon` job. Fixture handles (`setupTestDatabase` →
+  `getScriptDatabase(url, process.env)`) follow the same var and use the WebSocket pool under
+  `neon`; the request path is neon-http, as deployed. A raw result is read with `rows()` /
+  `affected()` in tests too. A test that is slow only under `neon` is walking to a limit query by
+  query — lower the limit it drives, never scale a timeout by driver
 
 ## The `// @vitest-isolate` marker
 
@@ -226,7 +238,8 @@ admin+) and that `withEvalScope` tags spans.
 
 ## Commands
 
-`pnpm test:db:up` once, then `pnpm test` (root: every package, `pnpm -r test`; web tests load
+`pnpm test:db:up` once, then `pnpm test` (`pnpm test:neon` for the `neon` half; `pnpm web
+test:driver` for the driver project alone) (root: every package, `pnpm -r test`; web tests load
 `apps/web/.env.test` via their own `dotenv` script, so no cwd juggling). Single projects run through
 the web package: `pnpm web test:api` · `pnpm web test:ui` · `pnpm web test:config` ·
 `pnpm test:coverage`. `REQUIRE_PROVISIONED=1 pnpm --filter @rocketflare/web test:config` is what CI runs

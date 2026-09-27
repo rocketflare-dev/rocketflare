@@ -112,6 +112,20 @@ export default defineConfig({
         resolve: { alias },
       },
       {
+        // D35: the code that differs between the two database drivers, against a real database
+        // under whichever driver the environment selects — `postgres` in the gate, `neon` in
+        // `pnpm test:neon` / CI's `test-neon` job.
+        extends: true,
+        test: {
+          name: 'driver',
+          environment: 'node',
+          globalSetup: ['./tests/setup.ts'],
+          setupFiles: ['./tests/api-setup.ts'],
+          include: ['tests/driver/**/*.{test,spec}.ts'],
+        },
+        resolve: { alias },
+      },
+      {
         // No database: config schema, wrangler parity, pure helpers, and every installed plugin's own.
         extends: true,
         test: {

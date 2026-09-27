@@ -2,8 +2,9 @@
  * Tenant scoping (D1). `off` (default): predicates-only, `fn` gets the handle it was given.
  * `enforce`: run `fn` inside a transaction that first sets the transaction-local GUC
  * `app.tenant_id`, so RLS policies (schema/rls.ts) apply on a connection that is NOT the
- * table owner. Transaction-local because Hyperdrive is a transaction-mode pooler — session
- * state does not survive between statements (03 §3.6).
+ * table owner. Transaction-local because both paths are transaction-mode poolers (Hyperdrive,
+ * Neon's pooled endpoint) — session state does not survive between statements (03 §3.6). Under
+ * `neon` the transaction runs on the handle's WebSocket pool (D35).
  *
  * Ported from the Node reference app's `src/db/tenant-scope.ts` without the AsyncLocalStorage-pinned
  * connection: there is no connection to pin here, the transaction IS the scope.
@@ -68,8 +69,8 @@ export async function withTenantScope<T>(
   return db.transaction(async tx => {
     scopedHandles.set(tx, tenantId)
     await tx.execute(sql`select set_config('app.tenant_id', ${tenantId}, true)`)
-    // drizzle's transaction handle has the same query surface as `Database`; the cast keeps
-    // every service signature `(db: Database)` without a second type.
-    return fn(tx as unknown as Database)
+    // drizzle's transaction handle extends the `PgDatabase` base `Database` is (D35), so every
+    // service signature stays `(db: Database)` without a second type or a cast.
+    return fn(tx)
   })
 }

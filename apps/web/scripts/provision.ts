@@ -11,12 +11,14 @@
  *   email create|status|verify [env] Resend domain → DNS records in the Cloudflare zone → EMAIL_FROM;
  *                                   verify + mint the per-env sending key into RESEND_API_KEY
  *   neon                            project + `staging` branch, direct hosts, SELECT 1 per branch
- *   cloudflare <env>                scripts/cf-provision.sh <env> --apply (Hyperdrive/KV/Queue/R2 → toml ids)
+ *   cloudflare <env> [--driver d]   scripts/cf-provision.sh <env> --apply (KV/Queue/R2 → toml ids; Hyperdrive
+ *                                   only under DATABASE_DRIVER=postgres). `--driver` switches BOTH tomls (D35)
  *   migrate <env>                   DATABASE_URL=<branch> pnpm db:migrate:ci, count == journal entries
  *   github <env>                    GitHub Environment + DATABASE_URL / CLOUDFLARE_* secrets (stdin)
  *   urls                            APP_URL + routes (custom host) or workers.dev per toml
  *   deploy <env>                    pnpm deploy[:staging] locally, then /api/health and /api/ready
- *   secrets <env>                   OAUTH_ENCRYPTION_KEY (generated) + every optional secret in env
+ *   secrets <env>                   OAUTH_ENCRYPTION_KEY (generated) + every optional secret in env;
+ *                                   under DATABASE_DRIVER=neon also DATABASE_URL (the POOLED Neon URI)
  *   all [--deploy staging|both] [--skip-email] [--rotate]   0 → 9 in order, stops at the first failure
  *
  * Tokens (CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID, NEON_API_KEY, RESEND_API_KEY; optional
@@ -27,8 +29,14 @@
  * `.provision.json` caches ids and answers, every printed line passes `redact()` (which also
  * masks the exact token values), connection strings reach child processes through their
  * environment or stdin only. The one exception is
- * inherited from cf-provision.sh: the Neon URL is briefly an argument to
+ * inherited from cf-provision.sh: under `postgres` the Neon URL is briefly an argument to
  * `wrangler hyperdrive create --connection-string=…` (a process-local argv, redacted in output).
+ * Under `neon` it goes to the Worker as the `DATABASE_URL` secret, over stdin like every secret.
+ *
+ * The database driver (D35): `--driver neon|postgres`, else what the toml's `[vars]
+ * DATABASE_DRIVER` says (missing = postgres). `neon` → no Hyperdrive, the Worker holds the pooled
+ * URI; `postgres` → Hyperdrive, any Postgres. `cloudflare <env> --driver x` writes the choice into
+ * BOTH tomls (the parity test wants a [[hyperdrive]] block in both or neither).
  *
  * Vendor REST calls (no vendor CLIs): scripts/provision/{neon,resend,cloudflare-dns}.ts carry the
  * verified API facts. wrangler runs as `pnpm exec wrangler` INSIDE apps/web.
@@ -36,8 +44,8 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import readline from 'node:readline/promises'
-import postgres from 'postgres'
 import { readManifest } from '../../../scripts/lib/manifest.mjs'
+import { openScriptSql } from './lib/sql'
 import {
   CloudflareClient,
   hostsNeedingZone,
@@ -80,8 +88,17 @@ import {
   pickDatabase,
   pickEndpoint,
   pickRole,
+  toPooledNeonUrl,
 } from './provision/neon'
-import { patchTomlFile, readTomlString, tomlPlaceholders } from './provision/patch-toml'
+import {
+  type DatabaseDriver,
+  DEFAULT_LOCAL_CONNECTION_STRING,
+  hyperdrivePlaceholder,
+  patchTomlFile,
+  readDatabaseDriver,
+  readTomlString,
+  tomlPlaceholders,
+} from './provision/patch-toml'
 import {
   type PluginResources,
   pluginBindingBlocks,
@@ -110,6 +127,8 @@ interface Flags {
   stagingHost?: string
   productionHost?: string
   adminEmail?: string
+  /** D35: `neon | postgres`; unset → what the toml says. */
+  driver?: DatabaseDriver
 }
 
 const USAGE = `usage: pnpm provision <phase> [env] [flags]
@@ -119,17 +138,22 @@ phases
   preflight                          check tools, tokens, accounts and the Cloudflare zone; record the answers
   email create | status | verify [env]   Resend domain + DNS records; verify and mint the sending key
   neon                               Neon project + staging branch (direct hosts, SELECT 1)
-  cloudflare <staging|production>    Hyperdrive, KV, Queue, R2 → ids patched into the toml
+  cloudflare <staging|production>    KV, Queue, R2 (+ Hyperdrive under postgres) → ids patched into the toml
   migrate <staging|production>       run the migrations against that branch
   github <staging|production>        GitHub Environment + DATABASE_URL / CLOUDFLARE_* secrets
   urls                               APP_URL + routes (custom host) or workers.dev in both tomls
   deploy <staging|production>        pnpm deploy[:staging], then /api/health and /api/ready
   secrets <staging|production>       OAUTH_ENCRYPTION_KEY + every optional secret in env or .provision.env
+                                     (+ DATABASE_URL, the pooled Neon URI, under DATABASE_DRIVER=neon)
   all                                every phase in order; stops at the first failed Verify
 
 flags
   --deploy staging|both              which environments \`all\` deploys (default staging)
   --skip-email                       no Resend: skip email create/verify (magic links are logged); tokens skips the Resend prompt
+  --driver neon|postgres             database driver (D35): neon = Neon over HTTPS, no Hyperdrive (the
+                                     DATABASE_URL Worker secret); postgres = Hyperdrive, any Postgres.
+                                     Default: the toml's DATABASE_DRIVER (missing = postgres). On
+                                     \`cloudflare <env>\` it rewrites BOTH tomls to the chosen driver
   --rotate                           regenerate OAUTH_ENCRYPTION_KEY / Neon passwords / RESEND key
   --region <neon region>             e.g. aws-us-east-1 (default)
   --domain <sending domain>          e.g. mail.example.com
@@ -206,6 +230,13 @@ function parseArgs(argv: string[]): { positional: string[]; flags: Flags } {
       case '--admin-email':
         flags.adminEmail = value()
         break
+      case '--driver': {
+        const v = value()
+        if (v !== 'neon' && v !== 'postgres')
+          throw new ProvisionError('--driver must be neon or postgres', 2)
+        flags.driver = v
+        break
+      }
       default:
         if (a.startsWith('--')) throw new ProvisionError(`unknown flag ${a}\n${USAGE}`, 2)
         positional.push(a)
@@ -580,6 +611,55 @@ async function emailVerify(env: EnvName, flags: Flags): Promise<void> {
   )
 }
 
+// ---- database driver (D35) ----------------------------------------------------------------
+
+/** `--driver`, else the environment's toml (`[vars] DATABASE_DRIVER`, missing = postgres). */
+function driverFor(env: EnvName, flags: Flags): DatabaseDriver {
+  return flags.driver ?? readDatabaseDriver(fs.readFileSync(tomlFor(env), 'utf8'))
+}
+
+/**
+ * Write the driver into BOTH tomls. Both, because the parity test wants a `[[hyperdrive]]` block in
+ * both files or neither — the same reason plugin declarations go into both (below). A `postgres`
+ * switch adds the block with each environment's `<HYPERDRIVE[_STAGING]_ID>` placeholder, which
+ * `cf-provision.sh --apply` then fills for the environment being provisioned; `neon` removes it.
+ */
+function applyDriver(driver: DatabaseDriver): void {
+  const devVars = path.join(WEB_DIR, '.dev.vars')
+  const local =
+    (fs.existsSync(devVars) &&
+      /^DATABASE_URL=(.+)$/m.exec(fs.readFileSync(devVars, 'utf8'))?.[1]?.trim()) ||
+    DEFAULT_LOCAL_CONNECTION_STRING
+  for (const env of ENV_NAMES) {
+    const changed = patchTomlFile(tomlFor(env), {
+      databaseDriver: driver,
+      hyperdriveBlock: { id: hyperdrivePlaceholder(env), localConnectionString: local },
+    })
+    log(`${tomlBasename(env)}: DATABASE_DRIVER = "${driver}" ${changed ? 'written' : 'unchanged'}`)
+  }
+}
+
+/**
+ * Put the `DATABASE_URL` Worker secret a `neon` Worker reads — the POOLED form of the branch URL
+ * (many short-lived Worker connections share Neon's pooler; DDL and CI keep the direct host). Over
+ * stdin, never printed. `force` re-puts an existing one (a rotated password).
+ */
+async function ensureWorkerDatabaseUrl(
+  env: EnvName,
+  url: string,
+  opts: { force: boolean; say?: (s: string) => void }
+): Promise<boolean> {
+  const say = opts.say ?? log
+  const existing = await listWorkerSecrets(env)
+  if (existing.includes('DATABASE_URL') && !opts.force) {
+    say(`  ${env}: DATABASE_URL already set on the Worker (pass --rotate to re-put it)`)
+    return false
+  }
+  await putWorkerSecret(env, 'DATABASE_URL', toPooledNeonUrl(url))
+  say(`  ${env}: DATABASE_URL (pooled Neon URI) set on the Worker`)
+  return true
+}
+
 // ---- 2. neon ------------------------------------------------------------------------------
 
 interface NeonBranchInfo {
@@ -685,8 +765,21 @@ async function resolveNeonUncached(
       role: roleName,
     },
   })
-  for (const env of rotated) await syncHyperdrivePassword(env, out[env].url, say)
+  for (const env of rotated) {
+    if (driverFor(env, flags) === 'neon') await syncWorkerDatabaseUrl(env, out[env].url, say)
+    else await syncHyperdrivePassword(env, out[env].url, say)
+  }
   return out
+}
+
+/**
+ * The `neon` twin of `syncHyperdrivePassword`: after a password reset, a Worker that ALREADY holds
+ * `DATABASE_URL` must get the new one, or it keeps the dead password until someone notices 500s.
+ * A Worker without it (never deployed, or not yet through `secrets`) is left for `secrets <env>`.
+ */
+async function syncWorkerDatabaseUrl(env: EnvName, url: string, say: (s: string) => void) {
+  if (!(await listWorkerSecrets(env)).includes('DATABASE_URL')) return
+  await ensureWorkerDatabaseUrl(env, url, { force: true, say })
 }
 
 /** After a password reset an EXISTING Hyperdrive config (reused by name) must learn the new credential. */
@@ -711,9 +804,11 @@ function hyperdriveIdFor(env: EnvName): string | undefined {
 /** Neon computes scale to zero; the first connection can take a few seconds to wake one. */
 async function waitForSelectOne(url: string, label: string, attempts = 10): Promise<void> {
   for (let i = 1; i <= attempts; i++) {
-    const sql = postgres(url, { max: 1, connect_timeout: 20, onnotice: () => {} })
+    // The operator's own DATABASE_DRIVER decides the transport: postgres.js over TCP, or a Neon
+    // WebSocket pool from a sandbox with no TCP out (scripts/lib/sql.ts).
+    const sql = openScriptSql(url, process.env, { connectTimeout: 20 })
     try {
-      await sql`SELECT 1`
+      await sql.query('SELECT 1')
       return
     } catch (err) {
       if (i === attempts)
@@ -723,7 +818,7 @@ async function waitForSelectOne(url: string, label: string, attempts = 10): Prom
       if (i === 1) log(`  ${label}: waiting for the compute to wake…`)
       await sleep(4000)
     } finally {
-      await sql.end({ timeout: 2 }).catch(() => {})
+      await sql.end()
     }
   }
 }
@@ -793,6 +888,8 @@ function applyPluginDeclarations(app: string, plugins: PluginResources[]): void 
 
 async function cloudflarePhase(env: EnvName, flags: Flags): Promise<void> {
   heading(`cloudflare ${env}`)
+  const driver = driverFor(env, flags)
+  if (flags.driver) applyDriver(flags.driver)
   const info = await resolveNeon(flags, { quiet: true })
   const app = readAppName()
   const plugins = installedPluginResources()
@@ -802,8 +899,9 @@ async function cloudflarePhase(env: EnvName, flags: Flags): Promise<void> {
       `plugins: ${plugins.map(p => p.id).join(', ')} → ${resources.map(r => `${r.binding}=${r.name}`).join(', ')}`
     )
   applyPluginDeclarations(app, plugins)
-  // The URL travels in the child's environment; cf-provision.sh hands it to
-  // `wrangler hyperdrive create --connection-string=` (an argv of that one process) and redacts its output.
+  // The URL travels in the child's environment; under postgres cf-provision.sh hands it to
+  // `wrangler hyperdrive create --connection-string=` (an argv of that one process) and redacts its
+  // output; under neon it is not passed at all (the Worker gets it from `secrets <env>`).
   // PLUGIN_RESOURCES travels the same way and holds nothing secret — names and binding names only.
   await run(
     'bash',
@@ -811,7 +909,8 @@ async function cloudflarePhase(env: EnvName, flags: Flags): Promise<void> {
     {
       cwd: WEB_DIR,
       env: {
-        NEON_DATABASE_URL: info[env].url,
+        DATABASE_DRIVER: driver,
+        ...(driver === 'postgres' ? { NEON_DATABASE_URL: info[env].url } : {}),
         CLOUDFLARE_API_TOKEN: token('CLOUDFLARE_API_TOKEN'),
         CLOUDFLARE_ACCOUNT_ID: token('CLOUDFLARE_ACCOUNT_ID'),
         ...(resources.length ? { PLUGIN_RESOURCES: JSON.stringify(resources) } : {}),
@@ -828,12 +927,12 @@ async function cloudflarePhase(env: EnvName, flags: Flags): Promise<void> {
   if (bothProvisioned()) {
     await parityTest(true)
     verifyLine(
-      `cloudflare ${env} ok — ${tomlBasename(env)} patched; REQUIRE_PROVISIONED=1 parity test passed for both tomls`
+      `cloudflare ${env} ok — ${tomlBasename(env)} patched (DATABASE_DRIVER=${driver}); REQUIRE_PROVISIONED=1 parity test passed for both tomls`
     )
   } else {
     const other = env === 'staging' ? 'production' : 'staging'
     verifyLine(
-      `cloudflare ${env} ok — ${tomlBasename(env)} patched; run \`pnpm provision cloudflare ${other}\` and the provisioned parity test runs then`
+      `cloudflare ${env} ok — ${tomlBasename(env)} patched (DATABASE_DRIVER=${driver}); run \`pnpm provision cloudflare ${other}\` and the provisioned parity test runs then`
     )
   }
 }
@@ -851,13 +950,15 @@ async function migratePhase(env: EnvName, flags: Flags): Promise<void> {
   heading(`migrate ${env}`)
   const info = await resolveNeon(flags, { quiet: true })
   await run('pnpm', ['db:migrate:ci'], { cwd: WEB_DIR, env: { DATABASE_URL: info[env].url } })
-  const sql = postgres(info[env].url, { max: 1, connect_timeout: 20, onnotice: () => {} })
+  const sql = openScriptSql(info[env].url, process.env, { connectTimeout: 20 })
   let applied = 0
   try {
-    const [row] = await sql<{ n: string }[]>`SELECT count(*) AS n FROM drizzle.__drizzle_migrations`
+    const [row] = await sql.query<{ n: string }>(
+      'SELECT count(*) AS n FROM drizzle.__drizzle_migrations'
+    )
     applied = Number(row?.n ?? 0)
   } finally {
-    await sql.end({ timeout: 2 }).catch(() => {})
+    await sql.end()
   }
   const expected = journalCount()
   if (applied !== expected)
@@ -972,8 +1073,9 @@ async function fetchJson(url: string, attempts = 6): Promise<any> {
   )
 }
 
-async function deployPhase(env: EnvName): Promise<void> {
+async function deployPhase(env: EnvName, flags: Flags): Promise<void> {
   heading(`deploy ${env}`)
+  const driver = driverFor(env, flags)
   const appUrl = readTomlString(fs.readFileSync(tomlFor(env), 'utf8'), 'APP_URL')
   if (!appUrl) throw new ProvisionError(`${tomlBasename(env)} has no APP_URL`)
   await run('pnpm', [env === 'staging' ? 'deploy:staging' : 'deploy'], {
@@ -988,16 +1090,25 @@ async function deployPhase(env: EnvName): Promise<void> {
   })
   const deployments = JSON.parse(list.stdout.slice(list.stdout.indexOf('['))) as any[]
   log(`deployments: ${deployments.length} listed`)
+  // A `neon` Worker fails `loadConfig` until it holds DATABASE_URL, and a secret can only be put on
+  // a Worker that exists — so the first deploy is followed straight away by the secret, before the
+  // health checks below (which retry while the new version rolls out).
+  if (driver === 'neon') {
+    const info = await resolveNeon(flags, { quiet: true })
+    await ensureWorkerDatabaseUrl(env, info[env].url, { force: false })
+  }
   const health = await fetchJson(`${appUrl}/api/health`)
   if (health?.status !== 'ok')
     throw new ProvisionError(`${appUrl}/api/health → ${JSON.stringify(health)}`)
   const ready = await fetchJson(`${appUrl}/api/ready`)
   if (ready?.__status === 503 || ready?.status !== 'ready')
     throw new ProvisionError(
-      `${appUrl}/api/ready → ${JSON.stringify(ready)} — the Worker cannot reach Postgres through Hyperdrive: check the Hyperdrive config points at the DIRECT Neon host with sslmode=require (pnpm provision cloudflare ${env} --force after fixing)`
+      driver === 'neon'
+        ? `${appUrl}/api/ready → ${JSON.stringify(ready)} — the Worker cannot reach Neon (DATABASE_DRIVER=neon): check its DATABASE_URL secret is the POOLED Neon URI with sslmode=require and a live password (\`pnpm provision secrets ${env} --rotate\` re-puts it)`
+        : `${appUrl}/api/ready → ${JSON.stringify(ready)} — the Worker cannot reach Postgres through Hyperdrive (DATABASE_DRIVER=postgres): check the Hyperdrive config points at the DIRECT host with sslmode=require (pnpm provision cloudflare ${env} --force after fixing)`
     )
   verifyLine(
-    `deploy ${env} ok — ${appUrl}/api/health ok (version ${health.version}), /api/ready ok, deployments listed`
+    `deploy ${env} ok — ${appUrl}/api/health ok (version ${health.version}), /api/ready ok (DATABASE_DRIVER=${driver}), deployments listed`
   )
 }
 
@@ -1017,6 +1128,14 @@ async function secretsPhase(env: EnvName, flags: Flags): Promise<void> {
     set.push('OAUTH_ENCRYPTION_KEY')
   } else log('OAUTH_ENCRYPTION_KEY already set (pass --rotate to regenerate)')
 
+  // D35: a `neon` Worker's database connection IS a secret (the pooled Neon URI); a `postgres`
+  // Worker reads the HYPERDRIVE binding and never holds DATABASE_URL.
+  if (driverFor(env, flags) === 'neon') {
+    const info = await resolveNeon(flags, { quiet: true })
+    if (await ensureWorkerDatabaseUrl(env, info[env].url, { force: flags.rotate }))
+      set.push('DATABASE_URL')
+  }
+
   const answers = await collectAnswers(flags)
   for (const name of OPTIONAL_WORKER_SECRETS) {
     const value =
@@ -1025,7 +1144,9 @@ async function secretsPhase(env: EnvName, flags: Flags): Promise<void> {
       skipped.push(name)
       continue
     }
-    await putWorkerSecret(env, name, value) // never DATABASE_URL — deployed Workers use HYPERDRIVE
+    // Never DATABASE_URL here: it is not in OPTIONAL_WORKER_SECRETS, and it is set above only under
+    // DATABASE_DRIVER=neon (a postgres Worker reads HYPERDRIVE).
+    await putWorkerSecret(env, name, value)
     set.push(name)
   }
 
@@ -1101,7 +1222,7 @@ async function allPhase(flags: Flags): Promise<void> {
     ),
     ['urls', () => urlsPhase(flags)],
     ...deployed.map(
-      env => [`deploy ${env}`, () => deployPhase(env)] as [string, () => Promise<void>]
+      env => [`deploy ${env}`, () => deployPhase(env, flags)] as [string, () => Promise<void>]
     ),
     ...deployed.map(
       env => [`secrets ${env}`, () => secretsPhase(env, flags)] as [string, () => Promise<void>]
@@ -1160,7 +1281,7 @@ async function main(argv: string[]): Promise<void> {
     case 'urls':
       return urlsPhase(flags)
     case 'deploy':
-      return deployPhase(parseEnv(a, phase))
+      return deployPhase(parseEnv(a, phase), flags)
     case 'secrets':
       return secretsPhase(parseEnv(a, phase), flags)
     case 'all':

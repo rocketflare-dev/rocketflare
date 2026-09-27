@@ -91,6 +91,8 @@ The server surface: the context family, and the types a plugin must be able to n
 - `interface AccessScope`
 - `type Actions = (typeof ACTIONS)[number]`
 - `interface ActivityInput`
+- `function affected(result: unknown): number`
+  The number of rows an `insert` / `update` / `delete` without `.returning()` touched: postgres.js reports `.count`, Neon `.rowCount`.
 - `function agentCtx<Input>(ctx: AgentContext<Input>): AgentCtx<Input>`
   Adapt the runtime's `AgentContext`.
 - `interface AgentCtx<Input = unknown>`
@@ -135,7 +137,7 @@ The server surface: the context family, and the types a plugin must be able to n
 - `interface CronCtx extends PluginContext, BackgroundMethods`
   One cron run. `waitUntil` exists here because a scheduled invocation genuinely has one.
   - `waitUntil(promise: Promise<unknown>): void`
-- `type Database = PostgresJsDatabase<typeof schema>`
+- `type Database = PgDatabase<PgQueryResultHKT, typeof schema>`
 - `interface DatabaseHandle`
 - `function defineTool<Input>(tool: Tool<Input>): Tool<Input>`
   Declare a tool. A thin helper, and its only job is to be the thing a plugin imports instead of the `Tool` type from a kit path — but it is also where the two rules in this file's…
@@ -337,6 +339,8 @@ The server surface: the context family, and the types a plugin must be able to n
 - `function requireFeature(feature: FeatureName)`
 - `interface ResourceGrantRow`
   One row of `grantsForResources`, before it is grouped by resource.
+- `function rows<T = Record<string, unknown>>(result: unknown): T[]`
+  The rows of a raw `db.execute(sql…)`, whichever driver ran it: postgres.js returns the array itself, Neon a `{ rows }` object. The only way code outside this file reads one (the…
 - `interface ScheduledTask`
 - `async function sealSecret(config: PluginConfig, plaintext: string): Promise<string>`
   Encrypt a credential for storage. The output is opaque base64; keep it in a `*_enc` column.
@@ -985,6 +989,7 @@ nothing in the comparison that can throw.
 @/plugins/api :: interface :: AccessScope :: interface AccessScope
 @/plugins/api :: type :: Actions :: type Actions = (typeof ACTIONS)[number]
 @/plugins/api :: interface :: ActivityInput :: interface ActivityInput
+@/plugins/api :: function :: affected :: function affected(result: unknown): number
 @/plugins/api :: function :: agentCtx :: function agentCtx<Input>(ctx: AgentContext<Input>): AgentCtx<Input>
 @/plugins/api :: interface :: AgentCtx :: interface AgentCtx<Input = unknown>
 @/plugins/api :: member :: AgentCtx.db :: db: Database
@@ -1013,7 +1018,7 @@ nothing in the comparison that can throw.
 @/plugins/api :: function :: cronCtx :: function cronCtx(ctx: TaskContext): CronCtx
 @/plugins/api :: interface :: CronCtx :: interface CronCtx extends PluginContext, BackgroundMethods
 @/plugins/api :: member :: CronCtx.waitUntil :: waitUntil(promise: Promise<unknown>): void
-@/plugins/api :: type :: Database :: type Database = PostgresJsDatabase<typeof schema>
+@/plugins/api :: type :: Database :: type Database = PgDatabase<PgQueryResultHKT, typeof schema>
 @/plugins/api :: interface :: DatabaseHandle :: interface DatabaseHandle
 @/plugins/api :: function :: defineTool :: function defineTool<Input>(tool: Tool<Input>): Tool<Input>
 @/plugins/api :: function :: deleteIngestedDocument :: async function deleteIngestedDocument( ctx: PluginContext, input: { tenantId: string; source: string; externalId: string } ): Promise<boolean>
@@ -1138,6 +1143,7 @@ nothing in the comparison that can throw.
 @/plugins/api :: member :: RequestVisibility.grantsFor :: grantsFor(kind: string, resourceIds: readonly string[]): Promise<Map<string, GroupRef[]>>
 @/plugins/api :: function :: requireFeature :: function requireFeature(feature: FeatureName)
 @/plugins/api :: interface :: ResourceGrantRow :: interface ResourceGrantRow
+@/plugins/api :: function :: rows :: function rows<T = Record<string, unknown>>(result: unknown): T[]
 @/plugins/api :: interface :: ScheduledTask :: interface ScheduledTask
 @/plugins/api :: function :: sealSecret :: async function sealSecret(config: PluginConfig, plaintext: string): Promise<string>
 @/plugins/api :: interface :: SeedCtx :: interface SeedCtx extends Pick<PluginContext, 'db'>

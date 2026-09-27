@@ -8,7 +8,11 @@ import path from 'node:path'
 import TOML from '@iarna/toml'
 import { describe, expect, it } from 'vitest'
 import {
+  DEFAULT_LOCAL_CONNECTION_STRING,
+  hasHyperdriveBlock,
+  hyperdrivePlaceholder,
   patchToml,
+  readDatabaseDriver,
   readTomlString,
   TomlPatchError,
   tomlPlaceholders,
@@ -43,14 +47,31 @@ const kitPlaceholders = (env: 'staging' | 'production') =>
   env === 'staging'
     ? ['<HYPERDRIVE_STAGING_ID>', '<KV_RATE_LIMIT_STAGING_ID>']
     : ['<HYPERDRIVE_ID>', '<KV_RATE_LIMIT_ID>']
-const stagingText = unprovision(
+/** The tomls exactly as on disk (unprovisioned): `neon` in the kit, maybe `postgres` in a copy. */
+const shippedStaging = unprovision(
   fs.readFileSync(path.join(WEB_DIR, 'wrangler.staging.toml'), 'utf8'),
   'staging'
 )
-const prodText = unprovision(
+const shippedProd = unprovision(
   fs.readFileSync(path.join(WEB_DIR, 'wrangler.toml'), 'utf8'),
   'production'
 )
+
+/**
+ * The same files under `DATABASE_DRIVER = "postgres"` (D35) — what `pnpm provision cloudflare <env>
+ * --driver postgres` writes before it creates the Hyperdrive config. The id tests below run on
+ * this shape, since only it has a HYPERDRIVE block; a copy already on postgres is unchanged by it.
+ */
+const asPostgres = (text: string, env: 'staging' | 'production') =>
+  patchToml(text, {
+    databaseDriver: 'postgres',
+    hyperdriveBlock: {
+      id: hyperdrivePlaceholder(env),
+      localConnectionString: DEFAULT_LOCAL_CONNECTION_STRING,
+    },
+  })
+const stagingText = asPostgres(shippedStaging, 'staging')
+const prodText = asPostgres(shippedProd, 'production')
 
 // Obviously fake 32-hex ids (the real ones are also 32 hex — that is what the parity test expects).
 const HD_STAGING = '0123456789abcdef0123456789abcdef'
@@ -201,6 +222,93 @@ describe('patch-toml: the patched pair satisfies the parity test invariants', ()
     expect(staging.kv_namespaces[0].binding).toBe(prod.kv_namespaces[0].binding)
     expect(staging.name).toBe(`${prod.name}-staging`)
     expect(staging.routes[0].pattern).not.toBe(prod.routes[0].pattern)
+  })
+})
+
+// ---- database driver (D35) ----------------------------------------------------------------
+
+describe('patch-toml: DATABASE_DRIVER and the [[hyperdrive]] block', () => {
+  const block = (env: 'staging' | 'production') => ({
+    id: hyperdrivePlaceholder(env),
+    localConnectionString: DEFAULT_LOCAL_CONNECTION_STRING,
+  })
+  const asNeon = (text: string) => patchToml(text, { databaseDriver: 'neon' })
+
+  it('postgres: sets the var and adds the block with the placeholder, above the KV block', () => {
+    const doc = TOML.parse(stagingText) as any
+    expect(doc.vars.DATABASE_DRIVER).toBe('postgres')
+    expect(readDatabaseDriver(stagingText)).toBe('postgres')
+    expect(doc.hyperdrive).toHaveLength(1)
+    expect(doc.hyperdrive[0].binding).toBe('HYPERDRIVE')
+    expect(doc.hyperdrive[0].id).toBe('<HYPERDRIVE_STAGING_ID>')
+    expect(doc.hyperdrive[0].localConnectionString).toBe(DEFAULT_LOCAL_CONNECTION_STRING)
+    expect(stagingText.indexOf('[[hyperdrive]]')).toBeLessThan(
+      stagingText.indexOf('[[kv_namespaces]]')
+    )
+  })
+
+  it('neon: sets the var and removes the block; everything else is identical', () => {
+    for (const [text, env] of [
+      [stagingText, 'staging'],
+      [prodText, 'production'],
+    ] as const) {
+      const neon = asNeon(text)
+      expect(hasHyperdriveBlock(neon)).toBe(false)
+      expect(readDatabaseDriver(neon)).toBe('neon')
+      const { hyperdrive: _dropped, vars, ...rest } = TOML.parse(text) as any
+      const after = TOML.parse(neon) as any
+      expect(after.hyperdrive).toBeUndefined()
+      expect({ ...after, vars: undefined }).toEqual({ ...rest, vars: undefined })
+      expect({ ...after.vars, DATABASE_DRIVER: 'x' }).toEqual({ ...vars, DATABASE_DRIVER: 'x' })
+      // Back to postgres restores the same document.
+      expect(TOML.parse(asPostgres(neon, env))).toEqual(TOML.parse(text))
+    }
+  })
+
+  it('is idempotent in both directions', () => {
+    expect(asPostgres(stagingText, 'staging')).toBe(stagingText)
+    const neon = asNeon(stagingText)
+    expect(asNeon(neon)).toBe(neon)
+  })
+
+  it('switching to postgres keeps an existing block (and its real id)', () => {
+    const provisioned = patchToml(stagingText, { hyperdriveId: HD_STAGING })
+    const again = patchToml(provisioned, {
+      databaseDriver: 'postgres',
+      hyperdriveBlock: block('staging'),
+    })
+    expect(again).toBe(provisioned)
+    expect((TOML.parse(again) as any).hyperdrive[0].id).toBe(HD_STAGING)
+  })
+
+  it('one patch switches to postgres AND fills the id (what cf-provision.sh --apply sends)', () => {
+    const out = patchToml(asNeon(stagingText), {
+      databaseDriver: 'postgres',
+      hyperdriveBlock: block('staging'),
+      hyperdriveId: HD_STAGING,
+    })
+    expect((TOML.parse(out) as any).hyperdrive[0].id).toBe(HD_STAGING)
+  })
+
+  it('inserts DATABASE_DRIVER after TENANT_SCOPE_MODE when a (pre-0.15) toml has none', () => {
+    const old = stagingText.replace(/^DATABASE_DRIVER\s*=[^\n]*\n(?:[ \t]+#[^\n]*\n)*/m, '')
+    expect(readTomlString(old, 'DATABASE_DRIVER')).toBeUndefined()
+    expect(readDatabaseDriver(old)).toBe('postgres')
+    const out = patchToml(old, { databaseDriver: 'neon' })
+    const lines = out.split('\n')
+    const at = lines.findIndex(l => l.startsWith('TENANT_SCOPE_MODE'))
+    expect(lines[at + 1]).toBe('DATABASE_DRIVER = "neon"')
+  })
+
+  it('refuses postgres with no block present and none to write', () => {
+    expect(() => patchToml(asNeon(stagingText), { databaseDriver: 'postgres' })).toThrow(
+      /needs a \[\[hyperdrive\]\] block/
+    )
+  })
+
+  it('the neon pair and the postgres pair each keep both-or-neither (parity)', () => {
+    expect(hasHyperdriveBlock(asNeon(stagingText))).toBe(hasHyperdriveBlock(asNeon(prodText)))
+    expect(hasHyperdriveBlock(stagingText)).toBe(hasHyperdriveBlock(prodText))
   })
 })
 

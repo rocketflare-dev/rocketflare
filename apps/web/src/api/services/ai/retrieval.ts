@@ -184,7 +184,7 @@ async function runSearch(
     visible
       ? db.transaction(async tx => {
           await tx.execute(sql`set local hnsw.iterative_scan = relaxed_order`)
-          return denseQuery(tx as unknown as Database)
+          return denseQuery(tx)
         })
       : denseQuery(db),
     db

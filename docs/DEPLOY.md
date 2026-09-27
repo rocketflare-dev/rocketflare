@@ -26,21 +26,66 @@ package is private by default (`"private": true`, like `packages/shared`, which 
               │ wrangler.staging │  │ wrangler.toml    │   fetch + queue + scheduled
               │ .toml            │  │                  │   + NotificationsHub DO
               └───────┬──────────┘  └────────┬─────────┘   + AgentRunWorkflow
-   bindings:  HYPERDRIVE  RATE_LIMIT_KV  [JOBS_QUEUE  FILES  AGENT_RUN_WORKFLOW  AI]  ASSETS
+   bindings:  RATE_LIMIT_KV  [JOBS_QUEUE  FILES  AGENT_RUN_WORKFLOW  AI]  ASSETS  (+ HYPERDRIVE under postgres)
    crons:     0 4 * * * (prune)  + every installed plugin's       routes: /api /auth /ws + plugins'
                       │                      │
-              Hyperdrive <app>-staging   Hyperdrive <app>-production      (direct Neon host)
+   neon:      DATABASE_URL secret        DATABASE_URL secret              (pooled Neon host, HTTPS + WS)
+   postgres:  Hyperdrive <app>-staging   Hyperdrive <app>-production      (direct host, any Postgres)
                       │                      │
               Neon branch `staging`      Neon branch `production` (main)  one project, role per branch
 ```
 
-Workers Paid plan is required (Hyperdrive, Workflows, `[limits]`) — Hyperdrive's plan availability
-has changed over time; the create step (`cf-provision.sh`) reports if the plan refuses it, with the
-upgrade URL. The account also holds your domain as a zone (registered there, or its nameservers
+The database path is per deployment (`DATABASE_DRIVER`, D35 — § Database driver below). Workers Paid
+plan is required (Workflows, `[limits]`, and Hyperdrive under `postgres`) — Hyperdrive's plan
+availability has changed over time; under `postgres` the create step (`cf-provision.sh`) reports if
+the plan refuses it, with the upgrade URL. The account also holds your domain as a zone (registered there, or its nameservers
 moved): the custom-domain `routes` and the Resend DNS records are created in it and `pnpm provision
 preflight` proves it exists — without one, both hosts are `workers.dev` and email is skipped.
 Smart Placement runs the Worker
 near Neon rather than near the user, which is what makes sequential queries cheap.
+
+## Database driver (D35)
+
+`[vars] DATABASE_DRIVER` in each toml picks how the Worker reaches Postgres. **A toml with no
+`DATABASE_DRIVER` means `postgres`** — every copy from before 0.15.0 — and the kit's own tomls say
+`"neon"`, so a fresh copy deploys on Neon. Locally `apps/web/.dev.vars` overrides it (the bootstrap
+writes `DATABASE_DRIVER=postgres`), so development never needs the deployed driver.
+
+| | `neon` | `postgres` |
+|---|---|---|
+| Driver | Neon serverless: neon-http per query, a WebSocket `Pool` per transaction | postgres.js |
+| Reaches | Neon only, over HTTPS / WebSocket | any Postgres, through Hyperdrive |
+| Worker holds | the `DATABASE_URL` secret — the **pooled** Neon URI | the `[[hyperdrive]]` binding (direct host) |
+| `[[hyperdrive]]` block | **absent** — wrangler refuses a deploy naming an id that does not exist | present in BOTH tomls |
+| Read cache | none | Hyperdrive's (60 s default) |
+| Hyperdrive configs used (25 per account) | none | one per environment |
+
+**Choosing.** Neon, and especially many apps in one account (a fleet) or a sandbox with no TCP out →
+`neon`. Any other Postgres (RDS, Supabase, Crunchy, self-hosted), or one app that wants Hyperdrive's
+read cache → `postgres`. `pnpm provision` reads the toml and `--driver neon|postgres` switches:
+`pnpm provision cloudflare <env> --driver <d>` rewrites BOTH tomls (the var, and the
+`[[hyperdrive]]` block added or removed), because the parity test wants the block in both or neither.
+
+**Three `DATABASE_URL`s, one name.** The Worker secret (`neon` only: the pooled URI, written by
+`pnpm provision secrets|deploy <env>`), the GitHub Environment secret (the DIRECT host, for
+`db:migrate:ci` — any driver) and `.dev.vars` (the local database). Same name, different stores;
+none of them is ever the other.
+
+**Switching a live deployment `postgres` → `neon`**, one environment at a time, staging first:
+
+1. `NEON_API_KEY=… pnpm provision secrets <env> --driver neon` (or `wrangler secret put
+   DATABASE_URL` with the pooled URI). A `postgres` Worker ignores the secret, so this is safe first.
+2. `pnpm provision cloudflare <env> --driver neon` — `DATABASE_DRIVER = "neon"` and no
+   `[[hyperdrive]]` block, in both tomls. Commit.
+3. Keep the `test-neon` CI job (§ CI/CD flow) green, deploy staging, check `/api/ready`, compare
+   p95 with the Hyperdrive baseline, then production.
+4. **Keep the Hyperdrive configs for about a week**: `wrangler rollback` to a `postgres` version
+   restores its `HYPERDRIVE` binding and needs the config to still exist. Deleting them is a
+   separate cleanup, never part of the switch.
+
+`neon` → `postgres` is `pnpm provision cloudflare <env> --driver postgres` (creates the Hyperdrive
+config, writes the block and the var into both tomls), commit, deploy. The Worker's `DATABASE_URL`
+secret can stay; `postgres` reads it only when there is no binding.
 
 ## Wrangler anatomy — two files, one shape (D6)
 
@@ -55,7 +100,7 @@ hidden gap. `apps/web/tests/config/wrangler-parity.test.ts` enforces the table b
 | `routes[].pattern` (custom domain) | app host | staging host |
 | `workers_dev` | unset | `true` acceptable as fallback host |
 | `[vars] APP_ENV`, `APP_URL` | `production`, `https://<app host>` | `staging`, `https://<staging host>` |
-| `hyperdrive[].id`, `kv_namespaces[].id` | env's ids | env's ids |
+| `hyperdrive[].id` (under `postgres`), `kv_namespaces[].id` | env's ids | env's ids |
 | `queues.*.queue`, `workflows[].name`, `r2_buckets[].bucket_name`, `analytics_engine_datasets[].dataset` | `<app>-jobs`, `<app>-agent-run`, `<app>-files`, `<app>_analytics` | same + `-staging` / `_staging` |
 
 | Must be **identical** | Why |
@@ -65,38 +110,40 @@ hidden gap. `apps/web/tests/config/wrangler-parity.test.ts` enforces the table b
 | `[limits]` (present in both or neither) | Workflows bound CPU per step by it — see below |
 | `[triggers].crons` | the dispatcher table in `scheduled.ts` is one file |
 | `[assets]` (incl. `run_worker_first`), `[placement]`, `[observability]` | same SPA, same placement, same logging. `run_worker_first` must list every prefix the Worker owns: the asset router runs BEFORE the Worker and `single-page-application` answers any NAVIGATION with `index.html` without invoking `fetch` — and an `<object>` embed or an `<a download>` click is a navigation, so a missing prefix silently serves the app shell for those (`wrangler-parity.test.ts` asserts it mirrors `API_PREFIXES`) |
-| `[vars]` **keys** (values may differ) | `loadConfig` validates one schema |
+| `[vars]` **keys** (values may differ) | `loadConfig` validates one schema. `DATABASE_DRIVER` is a value, so staging may switch driver before production |
+| `[[hyperdrive]]` present in both or neither | it exists only under `postgres` (D35) |
 
-`localConnectionString` is dev-only and is the same in both files (one local database).
+`localConnectionString` (in the `[[hyperdrive]]` block, `postgres` only) is dev-only and is the same
+in both files (one local database).
 
 ## Resources per environment
 
 | Resource | Binding | Name (prod / staging) | Create |
 |---|---|---|---|
-| Hyperdrive | `HYPERDRIVE` | `<app>-production` / `<app>-staging` | `pnpm --filter @rocketflare/web exec wrangler hyperdrive create <name> --connection-string="<direct neon url>"` → `id` |
+| Hyperdrive (`postgres` only) | `HYPERDRIVE` | `<app>-production` / `<app>-staging` | `pnpm --filter @rocketflare/web exec wrangler hyperdrive create <name> --connection-string="<direct neon url>"` → `id` |
 | KV | `RATE_LIMIT_KV` | `<APP>_RATE_LIMIT` / `<APP>_RATE_LIMIT_STAGING` | `pnpm --filter @rocketflare/web exec wrangler kv namespace create <name>` → `id` |
 | Queue (Phase 2) | `JOBS_QUEUE` | `<app>-jobs` / `<app>-jobs-staging` | `pnpm --filter @rocketflare/web exec wrangler queues create <name>` (name-referenced) |
 | R2 (Phase 2) | `FILES` | `<app>-files` / `<app>-files-staging` | `pnpm --filter @rocketflare/web exec wrangler r2 bucket create <name>` |
 | Durable Object (Phase 2) | `NOTIFICATIONS_HUB` | class `NotificationsHub` | declared in toml + `[[migrations]] tag = "v1", new_classes` — no create step |
 | Workflow (Phase 3, built) | `AGENT_RUN_WORKFLOW` | `<app>-agent-run` / `<app>-agent-run-staging` | `[[workflows]] name / binding / class_name = "AgentRunWorkflow"` — `wrangler deploy` registers it, no create step; **account-scoped name** |
 | Workers AI (Phase 3, built) | `AI` | — | `[ai] binding = "AI"` — no resource; the zero-key floor for chat (`@cf/zai-org/glm-4.7-flash`) and embeddings (`@cf/baai/bge-m3`); **billed per call to this account** (10k free neurons/day), `wrangler dev` proxies to the logged-in account; remove from BOTH tomls for zero-spend |
-| Analytics (a PLUGIN, D31) | — | — | **no resource and no binding**: its cubes read through `HYPERDRIVE`, its fact tables rebuild on the `15 * * * *` cron it declares, and `/cubejs-api` + `/mcp` are routes of this Worker. Installing it means adding that cron and those two prefixes to BOTH tomls — `pnpm provision cloudflare <env>` reads them off the installed surface and writes them (decision 12) |
+| Analytics (a PLUGIN, D31) | — | — | **no resource and no binding**: its cubes read through the request's database handle (either driver), its fact tables rebuild on the `15 * * * *` cron it declares, and `/cubejs-api` + `/mcp` are routes of this Worker. Installing it means adding that cron and those two prefixes to BOTH tomls — `pnpm provision cloudflare <env>` reads them off the installed surface and writes them (decision 12) |
 | Analytics Engine (optional) | `ANALYTICS_ENGINE` | `<app>_analytics[_staging]` | declared in toml — deliberately NOT wired by the kit (only a comment in both tomls) |
 | Static Assets | `ASSETS` | — | `[assets] directory = "./dist/ui"` uploaded atomically with each deploy; `run_worker_first` keeps `/api`, `/auth`, `/ws` — and every prefix an installed plugin declares — off the asset router |
-| RLS app role (optional, docs/RLS.md) | `HYPERDRIVE_APP` | `<app>-<env>-app` | `… hyperdrive create … --caching-disabled` |
+| RLS app role (optional, docs/RLS.md, not wired yet) | `postgres`: `HYPERDRIVE_APP`; `neon`: an `APP_DATABASE_URL` Worker secret | `<app>-<env>-app` | `postgres`: `… hyperdrive create … --caching-disabled`; `neon`: `wrangler secret put APP_DATABASE_URL` |
 | Plugin resources (D31) | whatever the plugin's `plugin.json` declares (`APPROVALS_CACHE`…) | `<app>-<id>-<name>[-staging]`, and `<APP>_<ID>_<NAME>[_STAGING]` for KV | `pnpm provision cloudflare <env>` — it reads each installed plugin's `bindings[]`, creates the `kv`/`queue`/`r2` ones through `cf-provision.sh` and patches every block into BOTH tomls |
 | Plugin Workflow / Durable Object (D31) | whatever the plugin declares (`ORDERS_SYNC`, `ORDERS_HUB`…) | workflow `<app>-<id>-<name>[-staging]`; a DO binding has no account-scoped name | **no create step** — `pnpm provision cloudflare <env>` writes `[[workflows]]` / `[[durable_objects.bindings]]` (+ a `plugin-<id>-v1` `[[migrations]]` tag) into both tomls and `wrangler deploy` registers them. The `class_name` resolves through the sixth barrel, `apps/web/src/plugins/worker-exports.ts` |
 
 `pnpm web provision:cloudflare <staging|production> [app] [--apply] [--force]` (the `apps/web`
 script → `scripts/cf-provision.sh`, which `cd`s to `apps/web` itself so it also works as
 `bash apps/web/scripts/cf-provision.sh …`) creates a RESOURCE LIST idempotently — the kit's own
-four, Hyperdrive, KV, Queue and R2, are the default list, each found by name and reused when it
-exists, and `PLUGIN_RESOURCES` (a JSON array of `{ type, name, binding }`, set by
+ones, KV, Queue and R2 (plus Hyperdrive when `DATABASE_DRIVER` — from the environment, else the
+toml — is `postgres`), are the default list, each found by name and reused when it exists, and `PLUGIN_RESOURCES` (a JSON array of `{ type, name, binding }`, set by
 `pnpm provision cloudflare <env>` from the installed plugins' manifests) appends to it — and either
 prints the Hyperdrive/KV ids
 with a `sed` line per toml, or with `--apply` writes them into that toml through
-`scripts/provision/patch-toml.ts` (a DIFFERENT existing id is refused unless `--force`). It needs
-`NEON_DATABASE_URL` (direct host) and an authenticated wrangler (`wrangler login`, or
+`scripts/provision/patch-toml.ts` (a DIFFERENT existing id is refused unless `--force`). Under `postgres` it needs
+`NEON_DATABASE_URL` (direct host); both drivers need an authenticated wrangler (`wrangler login`, or
 `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID`); the connection string is an argument of the one
 `wrangler hyperdrive create` process and is redacted from every echoed line.
 **Plugin resources (D31, Decision 12).** A plugin ships no toml — the two files are the host's,
@@ -130,7 +177,7 @@ creates the resources for the environment it was given and patches that file's i
 because the ordinary parity test compares binding names, `[vars]` keys, crons and
 `run_worker_first` on every `pnpm test`; the placeholder in the other environment is refused by
 `REQUIRE_PROVISIONED=1` until `pnpm provision cloudflare <other>` runs — exactly how the kit's own
-`<HYPERDRIVE_ID>` behaves. A `var` marked `"secret": true` is a Worker secret offered by
+`<KV_RATE_LIMIT_ID>` behaves. A `var` marked `"secret": true` is a Worker secret offered by
 `pnpm provision secrets <env>`, never a `[vars]` key.
 
 `pnpm provision <phase> [env]` (`apps/web/scripts/provision.ts`, driven by the `/rf-provision` skill) is
@@ -191,18 +238,19 @@ Free, after which the instance is gone and the park is recovered by `expireParke
 `sendEvent → not_found` restart), `FEATURES_ENABLED` (D30 —
 feature keys this environment ships at all; blank is fail-closed, and this is the knob that keeps an
 unreleased surface dark in production while staging has it). `OBSERVABILITY_CAPTURE_CONTENT` (`true`), `OBSERVABILITY_SPAN_RETENTION_DAYS` (`14`) (D32). Defaulted in `config.ts` and **not** declared in the tomls until used: the OIDC sign-in vars `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_LABEL` (`Single sign-on`), `OIDC_SCOPES` (`openid email profile`), `AUTH_OIDC_ONLY` (`false`; `true` without an issuer is a config error), `OIDC_TRUST_EMAIL` (`false` — a missing `email_verified` is refused; `true` only for an issuer that controls the email claim, e.g. single-tenant Entra) — add them to BOTH tomls to turn SSO on (`SETUP.md` 2.3b); `OBSERVABILITY_PRESET`, `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_PROTOCOL`, `OBSERVABILITY_TRACE_URL`, `LANGFUSE_BASE_URL` (`https://cloud.langfuse.com`), `LANGFUSE_TRACING_ENVIRONMENT` (= `APP_ENV`) — to set one, add the key to BOTH files (the parity test compares `[vars]` keys); § Tracing |
-| Worker secrets | `pnpm --filter @rocketflare/web exec wrangler secret put <NAME> [-c wrangler.staging.toml]`, once per worker; locally `apps/web/.dev.vars` | `OAUTH_ENCRYPTION_KEY` (also encrypts tenant AI keys — rotating it invalidates every `ai_configs` credential), `BOOTSTRAP_ADMIN_EMAILS`, `RESEND_API_KEY`, `GOOGLE_*`, `MICROSOFT_*`, `OIDC_CLIENT_SECRET` (optional even with OIDC on — a public client has none); AI, all optional: `ANTHROPIC_API_KEY` (platform chat), `EMBEDDINGS_API_KEY` (platform OpenAI embeddings when no `AI` binding), `LANGFUSE_PUBLIC_KEY` + `LANGFUSE_SECRET_KEY` (the langfuse tracing preset), `OTEL_EXPORTER_OTLP_HEADERS` (`k=v,k=v`, any other OTLP backend's auth); `DATABASE_URL` only as a no-Hyperdrive fallback |
+| Worker secrets | `pnpm --filter @rocketflare/web exec wrangler secret put <NAME> [-c wrangler.staging.toml]`, once per worker; locally `apps/web/.dev.vars` | `OAUTH_ENCRYPTION_KEY` (also encrypts tenant AI keys — rotating it invalidates every `ai_configs` credential), `BOOTSTRAP_ADMIN_EMAILS`, `RESEND_API_KEY`, `GOOGLE_*`, `MICROSOFT_*`, `OIDC_CLIENT_SECRET` (optional even with OIDC on — a public client has none); AI, all optional: `ANTHROPIC_API_KEY` (platform chat), `EMBEDDINGS_API_KEY` (platform OpenAI embeddings when no `AI` binding), `LANGFUSE_PUBLIC_KEY` + `LANGFUSE_SECRET_KEY` (the langfuse tracing preset), `OTEL_EXPORTER_OTLP_HEADERS` (`k=v,k=v`, any other OTLP backend's auth); `DATABASE_URL` — under `neon` THE connection (the pooled Neon URI, put by `pnpm provision secrets|deploy`), under `postgres` only a no-Hyperdrive fallback |
 | CI secrets | GitHub Environments `staging` / `production` | `DATABASE_URL` (that branch), `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` |
 | Scripts only | migration environment | `APP_DATABASE_URL` (db-roles, RLS enforce only) |
 | Developer-local only | `apps/web/.drizzle-cube.json` (git-ignored; the analytics plugin's README has the shape) | a **tenant API key** for the drizzle-cube CLI / Claude Code plugin against `/cubejs-api` — it is an ordinary key from Settings → API keys, scopes every query to that tenant, and is revoked there; never deployed, never committed |
-| Resource ids | tomls (committed) | Hyperdrive / KV ids — not secrets |
+| Resource ids | tomls (committed) | Hyperdrive (`postgres`) / KV ids — not secrets |
 | Provisioning transport | `apps/web/.provision.env` (git-ignored, 0600; written by `pnpm provision tokens` or copied from `.provision.env.example`), overridden by an exported variable of the same name (CI) | `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, `NEON_API_KEY`, `RESEND_API_KEY` (the full-access account key, not the Worker's sending key) + the optional Worker secrets. Not `.dev.vars`: `wrangler dev` loads that into the Worker, and account-level tokens must never reach one. Every resolved value is registered with `redact()`; Neon connection strings are fetched from the API on demand (`reveal_password` / `reset_password`) and reach children by env or stdin (`wrangler secret put`, `gh secret set`); every printed line passes one `redact()`; `apps/web/.provision.json` (git-ignored) caches ids and answers only and refuses any secret-shaped value |
 
 `wrangler secret put` (run in `apps/web`) requires the worker to exist: the first deploy of a fresh environment runs via
 `workflow_dispatch` and 500s until the secrets are set. Use different key material per environment.
-The worker never receives `DATABASE_URL` in deployed environments — it uses `HYPERDRIVE`.
+A `postgres` Worker never receives `DATABASE_URL` in deployed environments — it uses `HYPERDRIVE`.
+A `neon` Worker holds nothing else: `loadConfig` fails at startup without `DATABASE_URL`.
 
-## Neon: project, branches, Hyperdrive host
+## Neon: project, branches, hosts
 
 - **One project, a branch per environment** (`production` = main, `staging`), plus a dedicated role
   per branch. Branches are cheap and share compute quota; separate projects give separate quotas and
@@ -212,10 +260,15 @@ The worker never receives `DATABASE_URL` in deployed environments — it uses `H
   branch is migrated under its own role and password rather than inheriting a migrated main; the
   `neon` phase of `pnpm provision` branches `staging` from the default branch before any `migrate`
   phase, keeps the database's default owner role and sets (or reveals) a password per branch —
-  `--rotate` resets them and updates an existing Hyperdrive config to match.
-- **Hyperdrive points at the DIRECT host** (`ep-….<region>.aws.neon.tech`), not `-pooler`. Hyperdrive
-  is itself a pooler; stacking it on Neon's PgBouncer adds a hop and a second transaction-mode
-  layer with nothing to gain.
+  `--rotate` resets them and updates what the Worker holds to match — an existing Hyperdrive config
+  (`postgres`) or the `DATABASE_URL` secret (`neon`).
+- **`postgres`: Hyperdrive points at the DIRECT host** (`ep-….<region>.aws.neon.tech`), not
+  `-pooler`. Hyperdrive is itself a pooler; stacking it on Neon's PgBouncer adds a hop and a second
+  transaction-mode layer with nothing to gain.
+- **`neon`: the Worker's `DATABASE_URL` is the POOLED host** (`ep-…-pooler.…`). Every request opens
+  its own HTTP queries and at most one WebSocket transaction, so Neon's pooler is what bounds the
+  connection count. `set_config(…, true)` / `SET LOCAL` are transaction-local, so the
+  transaction-mode pooler is safe for RLS enforce and retrieval.
 - **Migrations use the direct host too.** `apps/web/scripts/migrate.ts` strips `-pooler` from any Neon host it
   is given, so the CI `DATABASE_URL` secret may be either form. A pooled backend can carry a stale
   `default_transaction_read_only` GUC that blocks DDL; the source app hit exactly that.
@@ -227,7 +280,8 @@ The worker never receives `DATABASE_URL` in deployed environments — it uses `H
   `current_setting('is_superuser') = 'on'` (locally) and relies on `CREATE ROLE`'s defaults on Neon.
   Its post-check still fails the run if `rocketflare_app` ends with `rolsuper` or `rolbypassrls`.
   Before 0.14.0 this step failed on Neon with `permission denied to alter role`.
-- Tests never use Neon (`safetyCheck` requires `localhost`). `PREVIEW_DATABASE_URL` is an inert hook
+- Tests never use Neon (`safetyCheck` requires `localhost`) — the `neon` test run talks to the local
+  proxy in front of the test Postgres (`pnpm test:neon`). `PREVIEW_DATABASE_URL` is an inert hook
   for per-PR Neon branches if previews are ever reinstated.
 
 ## CI/CD flow
@@ -241,6 +295,9 @@ All steps run at the repository root; the root scripts fan out with `pnpm -r` / 
                         │                       → git diff --exit-code apps/web/worker-configuration.d.ts
                         │                       → pnpm test (pg 5433; web + cli)
                         │                       → pnpm build (web: vite + dry-run wrangler deploy; cli: tsc)
+                        ├─► test-neon       → pnpm web test:neon: test Postgres + the Neon proxy (compose
+                        │                     `--profile neon`), api + api-isolated + driver projects under
+                        │                     DATABASE_DRIVER=neon (D35 — the gate runs `postgres`)
                         ├─► default-plugins → what .rocketflare.json `defaultPlugins` names (or "none")
                         └─► plugins         → gate.yml again with `plugins: true`: pnpm plugin add each
                                               entry at its pinned ref → pnpm db:generate → db:migrate:ci
@@ -252,7 +309,7 @@ All steps run at the repository root; the root scripts fan out with `pnpm -r` / 
                                      → pnpm db:migrate:ci (staging DATABASE_URL) → pnpm --filter @rocketflare/web build:ui
                                      → pnpm --filter @rocketflare/web exec wrangler deploy -c wrangler.staging.toml --var RELEASE_VERSION:X.Y.Z
                                                                                     │
-                                                              verify on staging: /api/health, /api/ready (Hyperdrive → Neon), nav version
+                                                              verify on staging: /api/health, /api/ready (the database, either driver), nav version
                                                                                     │
  gh release create X.Y.Z ──► deploy.yml ─► production job (environment: production, checkout the release tag)
                                      tag == ROOT version? → REQUIRE_PROVISIONED=1 test:config → db:migrate:ci (production)
@@ -353,13 +410,17 @@ CEILING, the kit has moved under it — port the plugin (`pnpm plugin upgrade` i
 of the same change) and release it. `pnpm plugin check` names the symbols, because compatibility is
 the set difference between what a plugin `uses` and the kit's `## Surface ledger` (D31, §16).
 
+**`test-neon`** is how a fresh copy's DEPLOYED path is tested before it deploys: local development
+and the gate run `postgres`. It is required in the kit; a copy that deploys on `postgres` everywhere
+may delete the job.
+
 **Bundle size.** `pnpm build` (`build:api` = `wrangler deploy --dry-run --outdir dist/api`) produces
 `dist/api/worker.js`; **`gzip -c apps/web/dist/api/worker.js | wc -c` is the size that matters, and
 no figure is quoted here on purpose** — it moves with every dependency bump, and a stale number in a
 doc reads as a budget nobody is holding. What is stable: drizzle-cube's Hono adapter statically
 imports its MCP transport (MCP SDK + inlined chart rendering) even with MCP disabled, and that
 dominates the bundle — it is not the kit shipping React to the Worker. The ceiling is the Workers
-script limit (3 MiB gzip free / higher on Paid, which Hyperdrive needs anyway). If a deploy is
+script limit (3 MiB gzip free / higher on Paid, which Workflows need anyway). If a deploy is
 refused for size, look at new `src/api` dependencies first; the structural fix is upstream or a thin
 adapter over `drizzle-cube/server` (`.claude/rules/cloudflare.md`). UI: the analytics chunk
 (drizzle-cube client + recharts + d3) is the largest and lazy — it must never merge into the main
@@ -395,7 +456,8 @@ CI is the path. `wrangler deploy` always runs with `apps/web` as cwd so `[assets
 
 ## Cloudflare API token scopes (CI token, account scope)
 
-Workers Scripts · Workers KV Storage · Queues · Workflows · Durable Objects · Hyperdrive · R2 —
+Workers Scripts · Workers KV Storage · Queues · Workflows · Durable Objects · R2 · Hyperdrive (only
+under `postgres`) —
 **Edit**. Workers AI · Account Analytics — **Read** (if used). Zone → DNS — **Edit** on the zone
 holding the custom domains. One token may serve both environments.
 
@@ -452,6 +514,7 @@ fail a request; `wrangler tail` is where to look.
 | Bad Worker version, schema unchanged | `pnpm --filter @rocketflare/web exec wrangler rollback [-c wrangler.staging.toml]` — previous version, seconds. Or `wrangler rollback <version-id>` from `deployments list` |
 | Need a specific earlier tag | Actions → Deploy → `production` from that tag, or publish a Release on the earlier tag |
 | Schema migration must be undone | migrations are forward-only: write a compensating migration, tag, and run the dance. `wrangler rollback` does not touch the database |
+| Bad deploy right after switching a deployment to `neon` | `wrangler rollback` to the last `postgres` version — it restores that version's `HYPERDRIVE` binding, which is why the Hyperdrive configs are kept about a week (§ Database driver). Then switch the toml back with `pnpm provision cloudflare <env> --driver postgres` before the next deploy |
 | RLS enforce misbehaving | `TENANT_SCOPE_MODE = "off"` in `[vars]` and redeploy — no migration (docs/RLS.md) |
 | A Workflow hijacked by a name collision | fix the staging name, redeploy **both** workers (last deployer owns the name); stuck `agent_runs` rows settle on read (`GET /api/agents/runs/:id` → `reconcileRun` → `instance.status()`; `not_found` marks them `failed`) — except on the RESUME path, where `not_found` is recovered from by starting `<runId>-r1` rather than failing the run |
 | Fact tables stale or wrong after a deploy | `GET /api/analytics/facts/status` (or `rocketflare analytics check-facts`) says which; fire the `15 * * * *` cron, or `rocketflare analytics refresh-facts` for one organisation. Rows are derived data — a rebuild is always safe; a schema change to a fact table is a normal forward migration followed by one rebuild. **First check the cron is in both tomls at all**: it is the analytics plugin's declaration, and an install that skipped that step leaves a task nothing ever dispatches |

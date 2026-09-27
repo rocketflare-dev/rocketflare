@@ -32,7 +32,7 @@ import {
 } from '@rocketflare/shared/ai/agents'
 import { ERROR_CODES } from '@rocketflare/shared/errors'
 import { and, asc, eq, inArray, sql } from 'drizzle-orm'
-import type { Database } from '../../../db/client'
+import { type Database, rows } from '../../../db/client'
 import {
   type AgentRunEventRow,
   type AgentRunRow,
@@ -719,9 +719,9 @@ export async function appendEventAtomic(
 ): Promise<AgentRunEventRow> {
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
-      // `db.execute` hands back RAW column names (postgres.js, no drizzle mapping), so every
+      // `db.execute` hands back RAW column names (no drizzle mapping, either driver), so every
       // column is aliased to the field the row type declares rather than selected with `*`.
-      const rows = await db.execute<AgentRunEventRow>(sql`
+      const result = await db.execute(sql`
         insert into ${agentRunEvents} (run_id, tenant_id, seq, type, data)
         select ${input.runId}::uuid, ${input.tenantId}::uuid,
                coalesce(max(${agentRunEvents.seq}), 0) + 1,
@@ -731,7 +731,7 @@ export async function appendEventAtomic(
            and ${agentRunEvents.tenantId} = ${input.tenantId}::uuid
         returning id, run_id as "runId", tenant_id as "tenantId", seq, type, data, at
       `)
-      const row = rows[0]
+      const row = rows<AgentRunEventRow>(result)[0]
       if (!row) throw new Error('agent_run_events: insert returned no row')
       nudgeRun(input.realtime, input.tenantId, input.runId)
       return { ...row, seq: Number(row.seq), at: new Date(row.at) }

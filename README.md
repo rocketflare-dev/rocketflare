@@ -49,6 +49,7 @@ bash scripts/bootstrap.sh          # checks Node 24 / pnpm 10 / Docker, generate
                                    #   --offline  skip the Cloudflare login by disabling Workers AI ([ai] off in both tomls)
                                    #   --no-demo  seed the bare tenant and users only (plain `pnpm seed`)
                                    #   --db-url <url>  no Docker: use an existing Postgres (a Neon branch)
+                                   #   --driver neon|postgres  the LOCAL database driver (default postgres)
 ```
 
 `SETUP.md` Part 1 is the same thing written out, one verification line per step.
@@ -56,7 +57,8 @@ bash scripts/bootstrap.sh          # checks Node 24 / pnpm 10 / Docker, generate
 Nothing external is required: no `RESEND_API_KEY` → magic-link URLs are logged by `wrangler dev`; no AI
 key → chat, agents and embeddings run on Workers AI through the `[ai]` binding (billed to your
 Cloudflare account, 10k free neurons/day); no Cloudflare login, or zero-spend wanted → `--offline`.
-Then `pnpm test:db:up && pnpm test` (the full suite against a throwaway Postgres on :5433). Before
+Then `pnpm test:db:up && pnpm test` (the full suite against a throwaway Postgres on :5433;
+`pnpm test:neon` runs it again on the Neon driver, as CI does). Before
 building your app, rename it: `/rf-adapt` or [`docs/ADAPTING.md`](docs/ADAPTING.md). Later,
 `/rf-upgrade` (or `pnpm kit:upgrade`) reads `.rocketflare.json` and the release notes in
 [`docs/upgrades/`](docs/upgrades/), translates the kit's diff into your names, and skips every part
@@ -68,7 +70,7 @@ you removed. [`CHANGELOG.md`](CHANGELOG.md) is what you would be catching up on.
 |---|---|
 | Runtime | Cloudflare Workers (`nodejs_compat`): one Worker exports `fetch` + `queue` + `scheduled`, a Durable Object and a Workflow |
 | API | Hono 4, zod contracts, CASL abilities, JSON error envelope everywhere |
-| Database | Postgres 17 + pgvector — Neon through Hyperdrive when deployed, Docker locally; Drizzle over `postgres.js`, one client per request |
+| Database | Postgres 17 + pgvector — Docker locally; deployed, Neon over its serverless driver (a fresh copy's default) or any Postgres through Hyperdrive and `postgres.js` (`DATABASE_DRIVER`, D35); Drizzle, one client per request |
 | UI | React 18 + Vite, DaisyUI 5 on Tailwind v4, React Router 6, TanStack Query 5; served as Workers Static Assets |
 | CLI | commander + chalk; browser login → tenant API key; `--json` on every list command |
 | Async / realtime | Queues, Workflows, a per-tenant Durable Object over WebSockets, cron triggers, R2 |

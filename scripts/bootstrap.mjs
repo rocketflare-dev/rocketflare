@@ -38,6 +38,7 @@ import {
   describeTracing,
   extractSeedKey,
   fillDevVars,
+  localDriverFor,
   parseBootstrapArgs,
   parseNvmrc,
   parseWhoami,
@@ -90,8 +91,13 @@ Take a fresh clone to a running, signed-in dev stack in one command. Re-runnable
   --db-url <url>
                 use this Postgres (e.g. a Neon branch) instead of the Docker one: no Docker
                 checks, DATABASE_URL written to apps/web/.dev.vars, step 4 only waits for it,
-                the seed may write to it (SEED_ALLOW_REMOTE=1). Also --db-url=<url>;
+                the seed may write to it (SEED_ALLOW_REMOTE=1). A Neon URL selects the neon
+                driver (HTTPS/WebSocket — works with no TCP out). Also --db-url=<url>;
                 not with --check
+  --driver neon|postgres
+                the LOCAL database driver, written to apps/web/.dev.vars (D35). Default: what
+                .dev.vars already says, else neon for a Neon --db-url, else postgres (TCP to the
+                Docker database). neon with the Docker database also starts the Neon proxy
   --check      read-only preflight (= pnpm preflight): toolchain, secrets, database, Cloudflare,
                 dev status; exit 3 when anything is missing
   --verbose     stream every child's output (also DEV_VERBOSE=1)
@@ -268,7 +274,7 @@ async function stepInstall() {
  * Verify-only when `write` is false (`--check`). `dbUrl` (`--db-url`) is written as DATABASE_URL —
  * an explicit flag, so it replaces whatever the file had; the value itself is never printed.
  */
-function stepSecrets({ write, dbUrl = null }) {
+function stepSecrets({ write, dbUrl = null, driver = null }) {
   const example = readFileSync(DEV_VARS_EXAMPLE, 'utf8')
   const existing = existsSync(DEV_VARS) ? readFileSync(DEV_VARS, 'utf8') : null
   const notes = []
@@ -286,6 +292,15 @@ function stepSecrets({ write, dbUrl = null }) {
       text = upsertDevVar(text, 'DATABASE_URL', dbUrl)
       if (text !== before) notes.push('DATABASE_URL set from --db-url')
     }
+    // D35: the local driver. Written only when it changes, so a re-run never churns the file.
+    const current = readDevVars(text)
+    const local = localDriverFor({ flag: driver, dbUrl, existing: current.DATABASE_DRIVER })
+    if (current.DATABASE_DRIVER !== local) {
+      text = upsertDevVar(text, 'DATABASE_DRIVER', local)
+      notes.push(`DATABASE_DRIVER=${local} (local driver)`)
+    }
+    // An external database is reached directly, never through the local proxy.
+    if (dbUrl && current.NEON_LOCAL_PROXY) text = upsertDevVar(text, 'NEON_LOCAL_PROXY', '')
     if (existing === null || text !== existing) writeFileSync(DEV_VARS, text)
     if (existing === null) notes.push('created apps/web/.dev.vars from .dev.vars.example')
     if (result.filled.length > 0) notes.push(`generated ${result.filled.join(', ')}`)
@@ -395,7 +410,8 @@ async function stepDatabase(opts, plan) {
       `port ${chosen.port}: the previous one was taken by another checkout or another program`
     )
   }
-  if (chosen?.wroteDevVars) notes.push('DATABASE_URL in apps/web/.dev.vars updated to match')
+  if (chosen?.wroteDevVars) notes.push('apps/web/.dev.vars updated to match (DATABASE_URL, driver)')
+  if (chosen?.driver === 'neon') notes.push(`local driver neon: Neon proxy at ${chosen.proxy}`)
   const orphan = await legacyVolume()
   if (orphan) {
     notes.push(
@@ -734,7 +750,9 @@ async function bootstrap(opts) {
   const plan = bootstrapStepPlan({ dbUrl: opts.dbUrl })
   await step(1, 'toolchain', () => stepToolchain(plan))
   await step(2, 'install', stepInstall)
-  await step(3, 'secrets', () => stepSecrets({ write: true, dbUrl: opts.dbUrl }))
+  await step(3, 'secrets', () =>
+    stepSecrets({ write: true, dbUrl: opts.dbUrl, driver: opts.driver })
+  )
   await step(4, 'database', () => stepDatabase(opts, plan))
   await step(5, 'migrate', stepMigrate)
   await step(6, 'plugins', () => stepPlugins(opts))

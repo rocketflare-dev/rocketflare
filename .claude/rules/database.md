@@ -10,8 +10,11 @@ paths:
 
 # Database Patterns
 
-Drizzle ORM over PostgreSQL (Neon in deployed envs, Docker locally). **One driver: `postgres.js`**
-(`postgres`). Never add `pg` or `@neondatabase/serverless` (D2). All domain data is tenant-scoped.
+Drizzle ORM over PostgreSQL (Neon or any Postgres deployed, Docker locally). **Two drivers (D35):**
+the Neon serverless driver (`DATABASE_DRIVER=neon`) or `postgres.js` (`postgres`, through
+Hyperdrive), chosen per deployment. Never add `pg`. **No driver import outside
+`apps/web/src/db/client.ts` and `apps/web/scripts/lib/sql.ts`** (+ `migrate.ts`'s migrators) —
+`tests/config/driver-results.test.ts` fails one in `src/`. All domain data is tenant-scoped.
 
 ## Tenant isolation (the invariant)
 
@@ -37,8 +40,9 @@ true), '')::uuid`. `apps/web/scripts/db-roles.ts` creates `rocketflare_app` `NOL
 `neon_superuser`), so policies resolve while nothing can connect as the role.
 
 `TENANT_SCOPE_MODE`: `off` (default — `withTenantScope(db, tenantId, fn)` is `fn(db)`) · `enforce`
-(`db.transaction` + `set_config('app.tenant_id', $1, true)` on the `HYPERDRIVE_APP` client; needs the
-spike in docs/RLS.md to pass first). Threat model stated honestly: RLS catches a **forgotten
+(`db.transaction` + `set_config('app.tenant_id', $1, true)` — over the WebSocket pool under `neon`
+— on an app-role connection that is not wired yet: `HYPERDRIVE_APP` under `postgres`,
+`APP_DATABASE_URL` under `neon`; needs the spike in docs/RLS.md to pass first). Threat model stated honestly: RLS catches a **forgotten
 predicate**, not SQL injection — the app role can `set_config` itself.
 
 ## Schema conventions
@@ -126,16 +130,46 @@ predicate**, not SQL injection — the app role can `set_config` itself.
 
 ## Connection
 
-- `apps/web/src/db/client.ts`: `createDatabase(url) → { db, close }`; `Database = PostgresJsDatabase<typeof schema>`
-- `resolveDatabaseUrl(env) = PREVIEW_DATABASE_URL ?? env.HYPERDRIVE.connectionString ?? DATABASE_URL`
+- `apps/web/src/db/client.ts`: `openDatabase(env) → { db, close }` — the ONLY way the Worker opens a
+  database (middleware, `streamDatabase`, queue consumer, cron, workflow steps, the span store).
+  `env` is `{ ...config, HYPERDRIVE }`. `Database = PgDatabase<PgQueryResultHKT, typeof schema>`,
+  the base both drivers share, and a transaction `tx` IS a `Database` — no cast
+- Driver: `DATABASE_DRIVER` (`neon | postgres`, missing = `postgres`; `loadConfig` refuses `neon`
+  without `DATABASE_URL`). URL: `neon` → `PREVIEW_DATABASE_URL ?? DATABASE_URL` (the pooled Neon URI);
+  `postgres` → `PREVIEW_DATABASE_URL ?? HYPERDRIVE.connectionString ?? DATABASE_URL`
+- `neon` handle: every query over neon-http (one round trip each, no connection held); the first
+  `db.transaction` opens a WebSocket `Pool` (max 1) that `close()` ends. `NEON_LOCAL_PROXY` (local
+  only) routes both through the proxy in front of the compose Postgres
+- `postgres` handle: postgres.js `max: 1`, `prepare: false`, `fetch_types: false` — Hyperdrive is the pool
 - One client per request/invocation, built in `databaseMiddleware` (or at the top of a queue
-  consumer / workflow step / cron task), closed in `waitUntil` or `finally`. Hyperdrive is the pool;
-  `max: 5` per client. Don't carry pool-budget arithmetic into this repo — it is meaningless here
-- `db.transaction(tx => …)` for multi-table writes (invite accept, tenant create). Transactions are
-  why postgres.js was kept; keep them short — Hyperdrive cannot reuse a connection mid-transaction
-- No `LISTEN/NOTIFY`, advisory locks or `PREPARE` on the request path — Hyperdrive does not support
-  them. Realtime goes through the DO hub; locks go through `RATE_LIMIT_KV` `operationLock`
-- `db.execute(sql\`…\`)` returns rows directly (postgres.js), not `{ rows }`
+  consumer / workflow step / cron task), closed in `waitUntil` or `finally`. Don't carry
+  pool-budget arithmetic into this repo — it is meaningless here
+- `db.transaction(tx => …)` for multi-table writes (invite accept, tenant create). Keep them short:
+  under `neon` each one costs a WebSocket handshake, under `postgres` Hyperdrive cannot reuse a
+  connection mid-transaction
+- No `LISTEN/NOTIFY`, advisory locks or `PREPARE` on the request path — neither Hyperdrive nor
+  Neon's pooler supports them. Realtime goes through the DO hub; locks go through `RATE_LIMIT_KV`
+  `operationLock`
+- **Raw results go through `rows()` / `affected()`** (`@/db/client`, and `@/plugins/api` for a
+  plugin). `db.execute(sql\`…\`)` is typed `unknown`: postgres.js returns the rows array (with
+  `.count`), Neon `{ rows, rowCount }`. `rows<T>(await db.execute(…))` for the rows,
+  `affected(await db.delete(…).where(…))` for an unreturned write's count. Never cast, index or read
+  `.rows`/`.count` off a raw result — `tests/config/driver-results.test.ts` fails it
+- **Raw arrays are not portable**: postgres.js (`fetch_types: false`) returns a `text[]` column from
+  raw SQL as the literal `"{a,b}"`, Neon as an array. Raw SQL returning a list uses `json_agg` /
+  `to_jsonb` (`services/traces.ts`). Raw timestamps are a `Date` under postgres.js and a string
+  under neon-http — wrap them (`asDate` in `sessions.ts` / `traces.ts`). The query builder maps both
+- Scripts (`apps/web/scripts/lib/sql.ts` `openScriptSql`) and test fixtures (`getScriptDatabase(url,
+  process.env)`) read `DATABASE_DRIVER` from the ENVIRONMENT only (`.dev.vars` via dotenv, never the
+  toml); under `neon` they use the WebSocket pool for everything (`poolOnly`) — one held connection
+  instead of an HTTP round trip per query. `db:migrate:ci` is `postgres` unless CI sets the var
+- **The local Neon proxy** (compose profile `neon`, `pnpm dev:db:up --neon`, `pnpm web test:db:up:neon`)
+  is `ghcr.io/timowilhelm/local-neon-http-proxy`, a community image of Neon's open-source proxy,
+  **pinned by digest** in BOTH compose files — bump both together, never to a tag. It runs our
+  `apps/web/docker/neon-proxy-start.sh`, not the image's script (one SCRAM round for the local
+  role, no endpoint rate limit, pooled HTTP: ~8 ms a query instead of ~70). It creates a
+  `neon_control_plane` schema, which nothing reads. If the image goes, build one from Neon's
+  `proxy` crate; Neon's own "Neon Local" needs a cloud account
 
 ## Migrations
 
@@ -150,7 +184,8 @@ DDL never hits a pooled backend.
 Never hand-edit an applied migration or `apps/web/migrations/meta/`. Custom SQL (an extension, a fact table)
 is a generated file edited before it is applied, journal intact.
 
-Tests migrate a throwaway database on 5433 from `apps/web/tests/setup.ts` — never Neon.
+Tests migrate a throwaway database on 5433 from `apps/web/tests/setup.ts` — never Neon (under
+`pnpm test:neon` through the local proxy on :4433, still that database).
 
 ## Plugins (D31) — a plugin's tables
 

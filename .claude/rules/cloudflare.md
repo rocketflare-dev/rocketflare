@@ -21,10 +21,14 @@ workspace root) or through the root scripts (`pnpm deploy[:staging]`, `pnpm prov
 
 - Typed by `pnpm types` → `apps/web/worker-configuration.d.ts` (`Cloudflare.Env`), committed. After editing a
   toml, run `pnpm types` and commit the result
-- Baseline: `ASSETS`, `HYPERDRIVE`, `RATE_LIMIT_KV`. Phase 2: `JOBS_QUEUE`, `NOTIFICATIONS_HUB`,
+- Baseline: `ASSETS`, `RATE_LIMIT_KV`, and `HYPERDRIVE` **only under `DATABASE_DRIVER = "postgres"`**
+  (D35): the kit's tomls say `neon` and carry no `[[hyperdrive]]` block, so `wrangler types` omits
+  it and `AppBindings` (`api/types.ts`) adds it back as optional — `Cloudflare.Env & { HYPERDRIVE?:
+  Hyperdrive }`. The parity test wants the block in both tomls or neither, and none in a `neon` file.
+  Phase 2: `JOBS_QUEUE`, `NOTIFICATIONS_HUB`,
   `FILES`. Phase 3 (built): `AGENT_RUN_WORKFLOW` (`[[workflows]]`, class `AgentRunWorkflow`) and `AI`
   (`[ai] binding = "AI"`, Workers AI embeddings). The analytics PLUGIN (D19, D31) adds **no binding**:
-  its cubes read through `HYPERDRIVE`, its fact tables rebuild on a cron, and the optional `ANALYTICS_ENGINE`
+  its cubes read through the request's database handle, its fact tables rebuild on a cron, and the optional `ANALYTICS_ENGINE`
   dataset is deliberately NOT wired (the toml comment is the only trace). Optional: `ANALYTICS_ENGINE`,
   `HYPERDRIVE_APP`
 - Optional bindings are optional in code too: the rate limiter no-ops without `RATE_LIMIT_KV`,
@@ -132,7 +136,7 @@ turn was investigated and rejected (`docs/CONCEPTS.md` §9 Known gaps): steps do
   `step.do('execute#N', { retries, timeout })` → `step.do('finish')`, with a round loop in between
   (below); each step wraps its body in
   `withStepDatabase(env, cfg, db => …)` — ONE DB client per step, `close()` awaited in `finally`
-  (Hyperdrive is the pool). Bodies are plain functions in `services/agents/runtime.ts`; step return
+  (Hyperdrive or Neon is the pool). Bodies are plain functions in `services/agents/runtime.ts`; step return
   values are small serialisable objects (`{ runId, status }`), never rows. Steps are idempotent because
   the `agent_runs` row is the claim (`UPDATE … WHERE status IN (queued,running) RETURNING`; a retry
   re-claims). Cancellation is cooperative, escalating to `instance.terminate()` on a second request.
@@ -170,7 +174,7 @@ turn was investigated and rejected (`docs/CONCEPTS.md` §9 Known gaps): steps do
   identity headers, safe because the object is reachable solely via the binding). The class is
   exported from `src/worker.ts`, never from `api/index.ts`
 - **A long-lived SSE read (`GET …/agui/stream`, issue #7) budgets three things, and all three are
-  per-INVOCATION.** ONE Hyperdrive client for the life of the stream (`streamDatabase(c)`, closed in
+  per-INVOCATION.** ONE database client for the life of the stream (`streamDatabase(c)`, closed in
   `finally`), never one per tick — even for a route that writes nothing. **Subrequests are capped at
   1 000 per invocation on Paid**, which is why `RUN_STREAM_MAX_MS` is 10 minutes: the adaptive
   cadence puts the tick count (~320) provably under it, and it makes a redeploy indistinguishable
@@ -233,8 +237,8 @@ against the named exports of `src/worker.ts` and nowhere else, so before
 `apps/web/src/plugins/worker-exports.ts` existed, writing either block would have produced a toml
 pointing at a class nothing exported — and `wrangler deploy` refuses the whole script for that.
 `d1`, `vectorize` and `analytics_engine` have no equivalent mechanism and stay refused BY NAME.
-`hyperdrive` is refused for a different reason — the host owns the one database, and asking for a
-second is a design conversation rather than a flag.
+`hyperdrive` is refused for a different reason — the host owns the one database (and may not use
+Hyperdrive at all, D35), and asking for a second is a design conversation rather than a flag.
 
 **A `[[migrations]]` tag is append-only and host-owned**, which is the same rule the SQL migrations
 follow and for the same reason: it is the record of what this Worker has already told Cloudflare.
@@ -252,8 +256,10 @@ the check `tsc` cannot do — run it before pushing a new dependency.
 
 ## Local testing of the non-HTTP entry points
 
-`wrangler dev` (`pnpm dev:api`, :3001) emulates KV, Queues, DO, R2 and Workflows locally and uses
-`localConnectionString` for Hyperdrive. **Start and stop the stack through the scripts, never by
+`wrangler dev` (`pnpm dev:api`, :3001) emulates KV, Queues, DO, R2 and Workflows locally and reads
+the database from `.dev.vars` (`DATABASE_DRIVER=postgres` + `DATABASE_URL`, or `neon` +
+`NEON_LOCAL_PROXY` after `pnpm dev:db:up --neon`; a copy with a `[[hyperdrive]]` block also gets its
+`localConnectionString`). **Start and stop the stack through the scripts, never by
 killing a pid**: `pnpm dev` runs `scripts/dev-server.mjs --preflight` first (clears this repo's
 leftovers, then refuses to start — exit 1, naming the pid — if anything else holds :3000/:3001,
 or `DEV_UI_PORT`/`DEV_API_PORT` when set in the shell or `.dev.vars` — `scripts/lib/dev-ports.mjs`
@@ -312,11 +318,14 @@ pnpm --filter @rocketflare/web exec wrangler workflows instances describe rocket
 The tomls are patched at the **string level only**: `wrangler --update-config` refuses the
 commented TOML the kit ships and re-serialising through a TOML library drops every comment, so
 `scripts/provision/patch-toml.ts` (anchored regexes, every other byte preserved, idempotent, a
-different existing id refused unless `--force`) is the one writer of ids, `APP_URL`, `EMAIL_FROM`
-and the `routes` line — `cf-provision.sh --apply` calls it; nobody hand-types an id. (The only other
+different existing id refused unless `--force`) is the one writer of ids, `APP_URL`, `EMAIL_FROM`,
+the `routes` line and the database driver (`DATABASE_DRIVER` plus the `[[hyperdrive]]` block, added
+under `postgres` and removed under `neon`, in BOTH tomls — `pnpm provision cloudflare <env> --driver
+neon|postgres`, D35) — `cf-provision.sh --apply` calls it; nobody hand-types an id. (The only other
 programmatic toml writer is `toggleAiBlock` above, same byte-preserving rule.) Worker secrets go in
 over stdin (`wrangler secret put NAME` reads stdin when it is not a TTY — never `--body`, never
-`secret bulk`); the vendor tokens are read from the environment first, then `apps/web/.provision.env`
+`secret bulk`), including a `neon` Worker's `DATABASE_URL` (the pooled Neon URI, put by `secrets`
+and `deploy`; `--rotate` re-puts it where `postgres` updates the Hyperdrive config); the vendor tokens are read from the environment first, then `apps/web/.provision.env`
 (git-ignored, 0600, written by `pnpm provision tokens` — TTY only, hidden input, verified per vendor —
 never `.dev.vars`, which `wrangler dev` loads into the Worker); every printed line passes the
 ONE `redact()` in `scripts/provision/redact.ts` (connection strings, `re_*`, `napi_*`, bearer tokens,

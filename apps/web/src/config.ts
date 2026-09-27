@@ -90,6 +90,16 @@ const coreConfigSchema = z.object({
   /** D1: `enforce` wraps tenant-scoped work in a transaction with `set_config(..., true)`. */
   TENANT_SCOPE_MODE: z.enum(['off', 'enforce']).default('off'),
   /**
+   * D35: `neon` (Neon serverless: HTTP queries, a WebSocket pool for transactions, needs the
+   * `DATABASE_URL` secret) or `postgres` (postgres.js via the `HYPERDRIVE` binding, any Postgres).
+   * Missing means `postgres`, so a copy that never set it is unchanged. `.dev.vars` overrides the
+   * toml locally — the bootstrap writes `postgres` there.
+   */
+  DATABASE_DRIVER: z.preprocess(
+    value => (typeof value === 'string' && value.trim() === '' ? undefined : value),
+    z.enum(['neon', 'postgres']).default('postgres')
+  ),
+  /**
    * D32: where the langfuse preset sends spans when `OTEL_EXPORTER_OTLP_ENDPOINT` is unset —
    * `<base>/api/public/otel`.
    */
@@ -195,10 +205,21 @@ const coreConfigSchema = z.object({
 
   // ---- Secrets (.dev.vars locally, `wrangler secret put` deployed) — all optional here;
   //      features gate on presence (zero-creds first run) or demand them at use time. -------
-  /** Dev/fallback owner connection string; deployed Workers use the HYPERDRIVE binding. */
+  /**
+   * The owner connection string. Under `neon` it is THE connection (the pooled Neon URI, a Worker
+   * secret); under `postgres` the fallback when there is no HYPERDRIVE binding (local, tests).
+   */
   DATABASE_URL: optionalString,
-  /** Per-PR Neon branch; when set it wins over HYPERDRIVE (see db/client.ts). */
+  /** Per-PR Neon branch; when set it wins over HYPERDRIVE and DATABASE_URL (see db/client.ts). */
   PREVIEW_DATABASE_URL: optionalString,
+  /**
+   * D35, local only: the Neon proxy in front of the compose Postgres (`http://localhost:4444`),
+   * written by `pnpm dev:db:up --neon`. Never set in a deployed environment.
+   */
+  NEON_LOCAL_PROXY: z.preprocess(
+    value => (typeof value === 'string' && value.trim() === '' ? undefined : value),
+    z.string().url().optional()
+  ),
   /** AES-GCM key for OAuth tokens at rest (D12). */
   OAUTH_ENCRYPTION_KEY: optionalSecret(32),
   RESEND_API_KEY: optionalString,
@@ -238,6 +259,14 @@ const configSchema = coreConfigSchema.extend(pluginConfigShape).superRefine((cfg
       code: z.ZodIssueCode.custom,
       path: ['AUTH_OIDC_ONLY'],
       message: 'AUTH_OIDC_ONLY=true needs OIDC_ISSUER and OIDC_CLIENT_ID',
+    })
+  }
+  // A Neon deployment has no HYPERDRIVE fallback: fail here, not on the first query.
+  if (cfg.DATABASE_DRIVER === 'neon' && !(cfg.DATABASE_URL || cfg.PREVIEW_DATABASE_URL)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['DATABASE_URL'],
+      message: 'DATABASE_DRIVER=neon needs the DATABASE_URL secret (the pooled Neon URI)',
     })
   }
 }) as unknown as typeof coreConfigSchema

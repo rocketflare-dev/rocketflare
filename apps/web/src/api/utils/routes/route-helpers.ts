@@ -14,12 +14,7 @@
 import { ERROR_CODES } from '@rocketflare/shared/errors'
 import type { PinoLogger } from 'hono-pino'
 import type { AppConfig } from '../../../config'
-import {
-  createDatabase,
-  type Database,
-  type DatabaseHandle,
-  resolveDatabaseUrl,
-} from '../../../db/client'
+import { type Database, type DatabaseHandle, openDatabase } from '../../../db/client'
 import type { User } from '../../../db/schema'
 import { deferOrAwait } from '../../middleware/database'
 import { requireAuth } from '../../middleware/permissions'
@@ -117,15 +112,9 @@ export function uuidParam(c: AppContext, name: string): string {
  * A SECOND database client for a streaming response (SSE). `databaseMiddleware` ends the request's
  * client in `waitUntil` as soon as the handler returns the Response — which for `streamSSE` is
  * before the stream body runs — so writes made while streaming need their own handle, closed in the
- * stream's `finally`. Same URL resolution as the middleware (D2).
+ * stream's `finally`. Same driver and URL as the middleware (D35).
  */
 export function streamDatabase(c: AppContext): DatabaseHandle {
   const cfg = c.get('config')
-  return createDatabase(
-    resolveDatabaseUrl({
-      HYPERDRIVE: c.env.HYPERDRIVE,
-      PREVIEW_DATABASE_URL: cfg.PREVIEW_DATABASE_URL,
-      DATABASE_URL: cfg.DATABASE_URL,
-    })
-  )
+  return openDatabase({ ...cfg, HYPERDRIVE: c.env.HYPERDRIVE })
 }

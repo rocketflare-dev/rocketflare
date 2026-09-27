@@ -24,7 +24,8 @@
  * per step is UNLIMITED (the 10 minutes below is our policy, raise it if a run needs longer), CPU
  * per step excludes I/O and goes to 300 s via `[limits] cpu_ms`, and resuming a retry at turn N is
  * what `agent_runs.checkpoint` already does.
- * Each step opens its OWN DB client and closes it in `finally` — Hyperdrive is the pool.
+ * Each step opens its OWN DB client (`openDatabase`, either driver — D35) and closes it in
+ * `finally`; Hyperdrive or Neon is the pool.
  * Exported from `src/worker.ts`, never from `api/index.ts`.
  */
 
@@ -36,7 +37,7 @@ import {
 } from 'cloudflare:workers'
 import { AGENT_RESUME_EVENT, MAX_INTERRUPT_ROUNDS } from '@rocketflare/shared/ai/agents'
 import { type AppConfig, loadConfig } from '../../config'
-import { createDatabase, type Database, resolveDatabaseUrl } from '../../db/client'
+import { type Database, openDatabase } from '../../db/client'
 import type { AgentRunParams } from '../services/agents/runs'
 import {
   claimStep,
@@ -54,13 +55,7 @@ export async function withStepDatabase<T>(
   cfg: AppConfig,
   fn: (db: Database) => Promise<T>
 ): Promise<T> {
-  const handle = createDatabase(
-    resolveDatabaseUrl({
-      HYPERDRIVE: env.HYPERDRIVE,
-      PREVIEW_DATABASE_URL: cfg.PREVIEW_DATABASE_URL,
-      DATABASE_URL: cfg.DATABASE_URL,
-    })
-  )
+  const handle = openDatabase({ ...cfg, HYPERDRIVE: env.HYPERDRIVE })
   try {
     return await fn(handle.db)
   } finally {

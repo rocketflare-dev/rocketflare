@@ -15,6 +15,14 @@
 import type { Tenant } from '../../db/schema'
 import type { PluginContext } from './types'
 
+/**
+ * Reading a raw `db.execute(sql…)` result (D35). The kit runs on two drivers whose raw results
+ * differ — postgres.js returns the rows array, Neon a `{ rows, rowCount }` object — so a plugin
+ * never casts or indexes one: `rows<T>(result)` for the rows, `affected(result)` for the count of
+ * an insert / update / delete without `.returning()`. The host's `driver-results` config test
+ * fails on anything else. A raw Postgres ARRAY differs too: return a list as `json_agg`/`to_jsonb`.
+ */
+export { affected, rows } from '../../db/client'
 export type { Tenant } from '../../db/schema'
 export type { Database, DatabaseHandle } from './types'
 
@@ -58,14 +66,14 @@ export interface SeedCtx extends Pick<PluginContext, 'db'> {
 /**
  * Run several writes as one transaction.
  *
- * Keep it SHORT. Hyperdrive is a transaction-mode pooler and cannot reuse a connection mid
- * transaction, so a long one holds a real connection out of the pool for its whole life. It is
- * also why there is no nudge or enqueue inside: those go after the commit, or a listener re-queries
- * for a row that is not there yet.
+ * Keep it SHORT. Both drivers hold a real connection for its whole life — Hyperdrive a pooled one
+ * it cannot reuse mid transaction, Neon a WebSocket opened for it (D35). It is also why there is
+ * no nudge or enqueue inside: those go after the commit, or a listener re-queries for a row that
+ * is not there yet.
  */
 export async function transaction<T>(
   db: PluginContext['db'],
   fn: (tx: PluginContext['db']) => Promise<T>
 ): Promise<T> {
-  return db.transaction(tx => fn(tx as unknown as PluginContext['db']))
+  return db.transaction(tx => fn(tx))
 }

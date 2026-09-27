@@ -70,7 +70,7 @@ closes a cycle back through `plugins/schema.ts`.
   table NAME is not a TypeScript error at all — `pnpm plugin check` is what catches it. A plugin
   declares `relations()` for its OWN tables only.
 - **Fact tables** — the shape for any pre-aggregated table, and the analytics plugin's worked
-  example: plain tables (not materialised views — `REFRESH` cannot run through Hyperdrive), grain
+  example: plain tables (not materialised views — `REFRESH` cannot run through Hyperdrive or Neon's pooler), grain
   unique with `.nullsNotDistinct()` where a grain column is nullable, `fact_refreshed_at` as the
   freshness watermark, no surrogate `id`, no FK to a table whose rows may vanish.
 - Enums via `pgEnum`, exported; `relations()` next to the table; `export type X = typeof x.$inferSelect` / `NewX = $inferInsert`.
@@ -93,7 +93,7 @@ exist in every environment so enabling enforcement later is a config change, not
 
 The predicate `tenant_id = nullif(current_setting('app.tenant_id', true), '')::uuid` is ONE shared
 object; never inline a copy (drizzle-kit diffs SQL text). No `FORCE ROW LEVEL SECURITY`: the owner
-connection (HYPERDRIVE) bypasses policies, which is what keeps auth paths and rollback working.
+connection (`DATABASE_URL` under `neon`, `HYPERDRIVE` under `postgres`) bypasses policies, which is what keeps auth paths and rollback working.
 **The `eq(x.tenantId, ...)` predicates stay** — RLS is defence in depth underneath them.
 
 ## Adding a table — checklist

@@ -13,7 +13,7 @@
     {
       "id": "analytics",
       "repo": "https://github.com/rocketflare-dev/rocketflare-plugins.git",
-      "ref": "3.0.0",
+      "ref": "3.4.0",
       "subdir": "plugins/analytics"
     }
   ],
@@ -223,6 +223,7 @@
     "apps/web/src/**",
     "apps/web/tests/**",
     "apps/web/scripts/**",
+    "apps/web/docker/**",
     "apps/web/*",
     "apps/cli/src/**",
     "apps/cli/tests/**",

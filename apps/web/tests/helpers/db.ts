@@ -5,7 +5,7 @@
  * anything but a localhost database under NODE_ENV=test.
  */
 import { sql } from 'drizzle-orm'
-import { closeAllDatabases, type Database, getScriptDatabase } from '@/db/client'
+import { closeAllDatabases, type Database, getScriptDatabase, rows } from '@/db/client'
 import { runMigrations } from '../../scripts/migrate'
 import { rememberRealDatabase } from '../kit/real-db'
 
@@ -48,7 +48,7 @@ export function safetyCheck(): void {
  * and the same answer.
  */
 export function setupTestDatabase(): Database {
-  return rememberRealDatabase(getScriptDatabase(testDatabaseUrl()))
+  return rememberRealDatabase(getScriptDatabase(testDatabaseUrl(), process.env))
 }
 
 /** Same code path as `pnpm db:migrate` — `CREATE EXTENSION vector` then drizzle migrate. */
@@ -59,14 +59,16 @@ export async function runTestMigrations(): Promise<void> {
 /** TRUNCATE every table in `public` (drizzle's bookkeeping lives in schema `drizzle`). */
 export async function cleanDatabase(db: Database): Promise<void> {
   safetyCheck()
-  const rows = (await db.execute(sql`
-    SELECT quote_ident(table_name::text) AS ident
-    FROM information_schema.tables
-    WHERE table_schema = 'public' AND table_type = 'BASE TABLE'
-    ORDER BY table_name`)) as unknown as Array<{ ident: string }>
-  if (rows.length === 0) return
+  const tables = rows<{ ident: string }>(
+    await db.execute(sql`
+      SELECT quote_ident(table_name::text) AS ident
+      FROM information_schema.tables
+      WHERE table_schema = 'public' AND table_type = 'BASE TABLE'
+      ORDER BY table_name`)
+  )
+  if (tables.length === 0) return
   await db.execute(
-    sql.raw(`TRUNCATE TABLE ${rows.map(r => r.ident).join(', ')} RESTART IDENTITY CASCADE`)
+    sql.raw(`TRUNCATE TABLE ${tables.map(r => r.ident).join(', ')} RESTART IDENTITY CASCADE`)
   )
 }
 

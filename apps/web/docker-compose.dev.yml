@@ -6,6 +6,11 @@
 # derives both from `DATABASE_URL` in .dev.vars and sets COMPOSE_PROJECT_NAME per checkout. The
 # defaults below are what a bare `docker compose -f docker-compose.dev.yml up` gets — correct for
 # a single checkout, and the literals `pnpm adapt` rewrites.
+#
+# `neon-proxy-dev` (profile `neon`, off by default) is the Neon HTTP/WebSocket proxy for running
+# the deployed `neon` driver locally (D35): `pnpm dev:db:up --neon` starts it on a per-checkout port
+# and writes NEON_LOCAL_PROXY; `--postgres` stops it. A community image packaging Neon's open-source
+# proxy, PINNED BY DIGEST (rules/database.md). It creates a `neon_control_plane` schema.
 services:
   postgres-dev:
     image: pgvector/pgvector:pg17
@@ -23,6 +28,28 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+
+  neon-proxy-dev:
+    profiles: ["neon"]
+    image: ghcr.io/timowilhelm/local-neon-http-proxy@sha256:cd2ae14edf2feafbc3330492de5c80506f77274c3bd013154cdef697bdeb768a
+    container_name: ${DEV_NEON_PROXY_CONTAINER:-rocketflare-dev-neon-proxy}
+    # Our start script, not the image's: it makes the proxy ~10x faster locally (see the script).
+    entrypoint: ["bash", "/rocketflare/neon-proxy-start.sh"]
+    volumes:
+      - ./docker/neon-proxy-start.sh:/rocketflare/neon-proxy-start.sh:ro
+    environment:
+      PG_CONNECTION_STRING: postgres://rocketflare:rocketflare_pass@postgres-dev:5432/rocketflare_dev
+      PROXY_ROLE_PASSWORD: rocketflare_pass
+    ports:
+      - "${DEV_NEON_PROXY_PORT:-4444}:4444"
+    depends_on:
+      postgres-dev:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf -X POST http://localhost:4444/sql -H 'Neon-Connection-String: postgresql://rocketflare:rocketflare_pass@localhost/rocketflare_dev' -d '{\"query\":\"select 1\",\"params\":[]}' >/dev/null"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
 
 volumes:
   rocketflare-dev-data:
