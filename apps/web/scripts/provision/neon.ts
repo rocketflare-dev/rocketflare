@@ -26,7 +26,7 @@
  * Every response that can carry a credential is passed through `sanitizeNeon` before any debug
  * output; passwords are returned to the caller in memory only.
  */
-import { toDirectNeonHost } from '../migrate'
+import { toDirectNeonHost } from '../lib/sql'
 import { ProvisionError, sleep } from './config'
 import { safeJson } from './redact'
 
@@ -226,6 +226,22 @@ export function buildConnectionUrl(input: {
 }): string {
   const host = toDirectNeonHost(input.host)
   return `postgresql://${encodeURIComponent(input.role)}:${encodeURIComponent(input.password)}@${host}/${encodeURIComponent(input.database)}?sslmode=require`
+}
+
+/**
+ * The POOLED form of a Neon connection string: `ep-xyz.<region>.aws.neon.tech` →
+ * `ep-xyz-pooler.<region>.aws.neon.tech` (Neon's naming convention for the transaction-mode
+ * PgBouncer in front of the same compute). What a `DATABASE_DRIVER = "neon"` Worker holds as its
+ * `DATABASE_URL` secret (D35) — many short-lived Worker connections share the pooler's; DDL and
+ * Hyperdrive keep the direct host. Idempotent; a non-Neon URL is returned unchanged.
+ */
+export function toPooledNeonUrl(connectionString: string): string {
+  const url = new URL(connectionString)
+  if (!url.hostname.endsWith('.neon.tech')) return connectionString
+  const [endpoint, ...rest] = url.hostname.split('.')
+  if (endpoint.endsWith('-pooler')) return connectionString
+  url.hostname = [`${endpoint}-pooler`, ...rest].join('.')
+  return url.toString()
 }
 
 /** Prefer the branch's own database over `postgres`; the default project has exactly one. */

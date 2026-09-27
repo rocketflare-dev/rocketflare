@@ -3,16 +3,23 @@
  * .dev.vars) or `pnpm db:migrate:ci` (DATABASE_URL from the environment); tests import
  * `runMigrations` directly so they exercise the same path.
  *
- * Ported from the Workers reference app's `scripts/migrate.ts`: Neon `-pooler` host rewritten to the direct host
- * (DDL must never go through a transaction pooler — session state such as a stuck
- * `default_transaction_read_only` on a pooled backend once blocked a production deploy),
- * postgres.js `max: 1`, wait-for-database retry. The `@neondatabase/serverless` branch is gone
- * (D2): postgres.js over TCP reaches Neon's direct host fine.
+ * Ported from the Workers reference app's `scripts/migrate.ts`: Neon `-pooler` host rewritten to
+ * the direct host (DDL must never go through a transaction pooler — session state such as a stuck
+ * `default_transaction_read_only` on a pooled backend once blocked a production deploy), one
+ * connection, wait-for-database retry. The driver follows `DATABASE_DRIVER` (D35,
+ * `scripts/lib/sql.ts`): postgres.js over TCP, or a Neon `Pool` over WebSocket where there is no
+ * TCP out (a coding sandbox on a Neon branch).
  */
 import { fileURLToPath } from 'node:url'
-import { drizzle } from 'drizzle-orm/postgres-js'
-import { migrate } from 'drizzle-orm/postgres-js/migrator'
+import { Pool as NeonPool } from '@neondatabase/serverless'
+import { drizzle as drizzleNeon } from 'drizzle-orm/neon-serverless'
+import { migrate as migrateNeon } from 'drizzle-orm/neon-serverless/migrator'
+import { drizzle as drizzlePostgres } from 'drizzle-orm/postgres-js'
+import { migrate as migratePostgres } from 'drizzle-orm/postgres-js/migrator'
 import postgres from 'postgres'
+import { isNeonUrl, openScriptSql, scriptDriver, toDirectNeonHost } from './lib/sql'
+
+export { isNeonUrl, toDirectNeonHost }
 
 export interface RunMigrationsOptions {
   /** Defaults to `./migrations` relative to cwd (drizzle.config.ts `out`). */
@@ -21,22 +28,20 @@ export interface RunMigrationsOptions {
   quiet?: boolean
   /** Retry budget for `waitForDatabase` (1s apart). */
   maxAttempts?: number
+  /** Where `DATABASE_DRIVER` / `NEON_LOCAL_PROXY` are read from. Default `process.env`. */
+  env?: { readonly [key: string]: string | undefined }
 }
 
-export function isNeonUrl(url: string): boolean {
-  return url.includes('.neon.tech')
-}
-
-/** `ep-xyz-pooler.region.aws.neon.tech` → `ep-xyz.region.aws.neon.tech`. */
-export function toDirectNeonHost(connectionString: string): string {
-  return connectionString.replace(/-pooler(?=\.[^/]*)/, '')
-}
-
-async function waitForDatabase(url: string, maxAttempts: number, log: (s: string) => void) {
+async function waitForDatabase(
+  url: string,
+  env: RunMigrationsOptions['env'],
+  maxAttempts: number,
+  log: (s: string) => void
+) {
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    const sql = postgres(url, { max: 1, onnotice: () => {} })
+    const sql = openScriptSql(url, env)
     try {
-      await sql`SELECT 1`
+      await sql.query('SELECT 1')
       return
     } catch (error) {
       if (attempt === maxAttempts) {
@@ -45,7 +50,7 @@ async function waitForDatabase(url: string, maxAttempts: number, log: (s: string
       if (attempt === 1) log('Waiting for database to be ready...')
       await new Promise(resolve => setTimeout(resolve, 1000))
     } finally {
-      await sql.end({ timeout: 2 }).catch(() => {})
+      await sql.end()
     }
   }
 }
@@ -60,6 +65,7 @@ export async function runMigrations(
 ): Promise<void> {
   const log = options.quiet ? () => {} : (s: string) => console.log(s)
   const migrationsFolder = options.migrationsFolder ?? './migrations'
+  const env = options.env ?? process.env
 
   let url = databaseUrl
   if (isNeonUrl(url)) {
@@ -68,17 +74,33 @@ export async function runMigrations(
     url = direct
   }
 
-  await waitForDatabase(url, options.maxAttempts ?? 30, log)
+  await waitForDatabase(url, env, options.maxAttempts ?? 30, log)
+
+  // pgvector (D17) is required by the Phase 3 `documents`/`chunks` tables and must exist
+  // before the first migration that references the `vector` type. Idempotent, and valid on
+  // both Neon (extension available per branch) and the pgvector/pgvector:pg17 compose image.
+  // It lives here rather than in a hand-written 0000 SQL file so the migrations folder stays
+  // 100% drizzle-kit generated and works when it is still empty.
+  const createVector = 'CREATE EXTENSION IF NOT EXISTS vector'
+
+  if (scriptDriver(env) === 'neon') {
+    const sql = openScriptSql(url, env) // routes through NEON_LOCAL_PROXY when set
+    const pool = new NeonPool({ connectionString: url, max: 1 })
+    try {
+      await sql.query(createVector)
+      await migrateNeon(drizzleNeon(pool), { migrationsFolder })
+      log('Migrations applied')
+    } finally {
+      await pool.end().catch(() => {})
+      await sql.end()
+    }
+    return
+  }
 
   const sql = postgres(url, { max: 1, onnotice: () => {} })
   try {
-    // pgvector (D17) is required by the Phase 3 `documents`/`chunks` tables and must exist
-    // before the first migration that references the `vector` type. Idempotent, and valid on
-    // both Neon (extension available per branch) and the pgvector/pgvector:pg17 compose image.
-    // It lives here rather than in a hand-written 0000 SQL file so the migrations folder stays
-    // 100% drizzle-kit generated and works when it is still empty.
-    await sql`CREATE EXTENSION IF NOT EXISTS vector`
-    await migrate(drizzle(sql), { migrationsFolder })
+    await sql.unsafe(createVector)
+    await migratePostgres(drizzlePostgres(sql), { migrationsFolder })
     log('Migrations applied')
   } finally {
     await sql.end({ timeout: 5 })
@@ -92,7 +114,7 @@ async function main() {
     process.exit(1)
   }
   try {
-    console.log('Running database migrations...')
+    console.log(`Running database migrations (${scriptDriver()} driver)...`)
     await runMigrations(databaseUrl)
   } catch (error) {
     console.error('Migration failed:', error)

@@ -1,0 +1,11 @@
+# The local Neon proxy (D35): our mirror of the community image, with our start script baked in.
+# Baked, not bind-mounted: a mount only works where the Docker VM can see the checkout (Colima and
+# remote contexts share $HOME at most), and a missing source mounts as an EMPTY DIRECTORY.
+#
+# Build and publish (COPY-only, so no emulation is needed for the foreign platform):
+#   docker buildx build --platform linux/amd64,linux/arm64 -f docker/Dockerfile.neon-proxy \
+#     -t ghcr.io/rocketflare-dev/local-neon-proxy:rf-<n> --push docker
+# then pin the printed index digest in BOTH compose files (rules/database.md).
+FROM ghcr.io/rocketflare-dev/local-neon-proxy@sha256:cd2ae14edf2feafbc3330492de5c80506f77274c3bd013154cdef697bdeb768a
+COPY neon-proxy-start.sh /rocketflare/neon-proxy-start.sh
+ENTRYPOINT ["bash", "/rocketflare/neon-proxy-start.sh"]

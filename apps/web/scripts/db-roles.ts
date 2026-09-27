@@ -1,7 +1,8 @@
 /**
  * Create (or reconcile) the non-superuser Postgres role that RLS policies target (D1).
- * Ported from the Node reference app's `scripts/db-roles.ts` onto postgres.js; role name from
- * `src/db/schema/rls.ts`, REVOKE list from `RLS_REVOKED_TABLES`.
+ * Ported from the Node reference app's `scripts/db-roles.ts`; role name from
+ * `src/db/schema/rls.ts`, REVOKE list from `RLS_REVOKED_TABLES`. Runs over the driver
+ * `DATABASE_DRIVER` selects (D35, `scripts/lib/sql.ts`).
  *
  * The owner (DATABASE_URL's user) owns every table and bypasses RLS — on Neon it is a
  * `neon_superuser` member (BYPASSRLS, CREATEROLE, but NOT a superuser), locally a real superuser —
@@ -22,8 +23,8 @@
  * LOGIN: rollback is `TENANT_SCOPE_MODE=off`, not locking out a connection something may hold.
  */
 import { fileURLToPath } from 'node:url'
-import postgres from 'postgres'
 import { APP_ROLE, RLS_REVOKED_TABLES } from '../src/db/schema/rls'
+import { isNeonUrl, openScriptSql, toDirectNeonHost } from './lib/sql'
 
 /** Conservative identifier sanity check before we hand a value to quote_ident. */
 const IDENTIFIER_RE = /^[A-Za-z_][A-Za-z0-9_$]*$/
@@ -37,6 +38,8 @@ export interface ApplyDbRolesOptions {
   appDatabaseUrl?: string
   phase?: DbRolesPhase
   quiet?: boolean
+  /** Where `DATABASE_DRIVER` / `NEON_LOCAL_PROXY` are read from. Default `process.env`. */
+  env?: { readonly [key: string]: string | undefined }
 }
 
 export interface ApplyDbRolesResult {
@@ -61,7 +64,7 @@ function parseCredentials(connectionString: string, label: string) {
 
 /** Neon: role DDL must target the direct host, same rule as migrate.ts. */
 function directHost(url: string): string {
-  return url.includes('.neon.tech') ? url.replace(/-pooler(?=\.[^/]*)/, '') : url
+  return isNeonUrl(url) ? toDirectNeonHost(url) : url
 }
 
 export async function applyDbRoles(options: ApplyDbRolesOptions = {}): Promise<ApplyDbRolesResult> {
@@ -94,16 +97,21 @@ export async function applyDbRoles(options: ApplyDbRolesOptions = {}): Promise<A
       `login ${appPassword ? 'configured' : 'not configured — APP_DATABASE_URL unset'})`
   )
 
-  const sql = postgres(directHost(databaseUrl), { max: 1, onnotice: () => {} })
+  const sql = openScriptSql(directHost(databaseUrl), options.env ?? process.env)
   try {
     // Identifiers and the password literal cannot be bound as parameters; let Postgres quote them.
-    const [quoted] = await sql<
-      { role_ident: string; role_lit: string; owner_ident: string; password_lit: string }[]
-    >`
-      SELECT quote_ident(${APP_ROLE}::text)   AS role_ident,
-             quote_literal(${APP_ROLE}::text) AS role_lit,
-             quote_ident(${owner}::text)      AS owner_ident,
-             quote_literal(${appPassword ?? ''}::text) AS password_lit`
+    const [quoted] = await sql.query<{
+      role_ident: string
+      role_lit: string
+      owner_ident: string
+      password_lit: string
+    }>(
+      `SELECT quote_ident($1::text)   AS role_ident,
+              quote_literal($1::text) AS role_lit,
+              quote_ident($2::text)   AS owner_ident,
+              quote_literal($3::text) AS password_lit`,
+      [APP_ROLE, owner, appPassword ?? '']
+    )
     if (!quoted) throw new Error('Failed to quote role identifiers')
     const { role_ident: role, role_lit: roleLit, owner_ident: ownerIdent } = quoted
 
@@ -162,14 +170,18 @@ export async function applyDbRoles(options: ApplyDbRolesOptions = {}): Promise<A
 
     let revoked: string[] = []
     if (wantsGrants) {
-      const revokeTargets = await sql<{ ident: string; name: string }[]>`
-        SELECT quote_ident(table_name::text) AS ident, table_name::text AS name
-        FROM information_schema.tables
-        WHERE table_schema = 'public' AND table_name::text = ANY(${[...RLS_REVOKED_TABLES]}::text[])
-        ORDER BY table_name`
-      const [{ count: publicTables }] = await sql<{ count: number }[]>`
-        SELECT count(*)::int AS count FROM information_schema.tables
-        WHERE table_schema = 'public' AND table_type = 'BASE TABLE'`
+      const revokeTargets = await sql.query<{ ident: string; name: string }>(
+        `SELECT quote_ident(table_name::text) AS ident, table_name::text AS name
+         FROM information_schema.tables
+         WHERE table_schema = 'public' AND table_name::text = ANY($1::text[])
+         ORDER BY table_name`,
+        [[...RLS_REVOKED_TABLES]]
+      )
+      const [counted] = await sql.query<{ count: number }>(
+        `SELECT count(*)::int AS count FROM information_schema.tables
+         WHERE table_schema = 'public' AND table_type = 'BASE TABLE'`
+      )
+      const publicTables = counted?.count ?? 0
 
       statements.push(
         [
@@ -200,15 +212,17 @@ export async function applyDbRoles(options: ApplyDbRolesOptions = {}): Promise<A
       }
     }
 
-    await sql.begin(async tx => {
+    await sql.transaction(async query => {
       for (const [label, statement] of statements) {
-        await tx.unsafe(statement)
+        await query(statement)
         log(`   • ${label}`)
       }
     })
 
-    const [attrs] = await sql<{ rolsuper: boolean; rolbypassrls: boolean }[]>`
-      SELECT rolsuper, rolbypassrls FROM pg_roles WHERE rolname = ${APP_ROLE}`
+    const [attrs] = await sql.query<{ rolsuper: boolean; rolbypassrls: boolean }>(
+      'SELECT rolsuper, rolbypassrls FROM pg_roles WHERE rolname = $1',
+      [APP_ROLE]
+    )
     if (!attrs || attrs.rolsuper || attrs.rolbypassrls) {
       throw new Error(
         `Role '${APP_ROLE}' would bypass RLS (rolsuper=${attrs?.rolsuper}, rolbypassrls=${attrs?.rolbypassrls})`
@@ -221,7 +235,7 @@ export async function applyDbRoles(options: ApplyDbRolesOptions = {}): Promise<A
     )
     return { loginConfigured: appPassword !== null, revoked }
   } finally {
-    await sql.end({ timeout: 5 })
+    await sql.end()
   }
 }
 

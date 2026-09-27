@@ -22,7 +22,7 @@ Worker) while here it is the *full-access* account key.
 
 | Variable | Where to mint | Scope |
 |---|---|---|
-| `CLOUDFLARE_API_TOKEN` | https://dash.cloudflare.com/profile/api-tokens | Account: Workers Scripts, Workers KV Storage, Queues, Workflows, Durable Objects, Hyperdrive, R2 — **Edit**; Workers AI, Account Analytics — **Read**. Zone: **DNS — Edit** on the zone holding the app hosts and the sending domain (docs/DEPLOY.md → API token scopes) |
+| `CLOUDFLARE_API_TOKEN` | https://dash.cloudflare.com/profile/api-tokens | Account: Workers Scripts, Workers KV Storage, Queues, Workflows, Durable Objects, R2 (+ Hyperdrive under `postgres`) — **Edit**; Workers AI, Account Analytics — **Read**. Zone: **DNS — Edit** on the zone holding the app hosts and the sending domain (docs/DEPLOY.md → API token scopes) |
 | `CLOUDFLARE_ACCOUNT_ID` | Workers & Pages → Overview (right-hand column / URL) | the 32-hex account id |
 | `NEON_API_KEY` | https://console.neon.tech/app/settings/api-keys | personal or organisation key; creates the project and branches |
 | `RESEND_API_KEY` | https://resend.com/api-keys | **Full access** (creates the domain, mints a `sending_access` key per environment; the full-access key itself never reaches a Worker) |
@@ -31,7 +31,8 @@ Optional Worker secrets copied by `pnpm provision secrets <env>` when exported o
 `apps/web/.provision.env`: `BOOTSTRAP_ADMIN_EMAILS`
 (defaults to `--admin-email`), `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `MICROSOFT_CLIENT_ID`,
 `MICROSOFT_CLIENT_SECRET`, `OIDC_CLIENT_SECRET`, `ANTHROPIC_API_KEY`, `EMBEDDINGS_API_KEY`, `LANGFUSE_PUBLIC_KEY`,
-`LANGFUSE_SECRET_KEY`. `DATABASE_URL` is never set on a Worker (it uses Hyperdrive);
+`LANGFUSE_SECRET_KEY`. `DATABASE_URL` is set on a Worker **only under `neon`** — the branch's
+pooled URI, resolved from the Neon API, never from the file — and a `postgres` Worker uses Hyperdrive;
 `OAUTH_ENCRYPTION_KEY` is generated (64 hex).
 
 ## What each phase calls
@@ -43,12 +44,12 @@ Optional Worker secrets copied by `pnpm provision secrets <env>` when exported o
 | email create | Resend `GET/POST /domains`, `GET /domains/{id}`; Cloudflare `GET /zones?name=`, `GET/POST/PUT /zones/{zone}/dns_records`; `patch-toml` (`EMAIL_FROM`) |
 | email verify | Resend `POST /domains/{id}/verify`, `GET /domains/{id}` (poll ≤ 10 min), `POST /api-keys` (`sending_access`, `domain_id`); `wrangler secret put RESEND_API_KEY` (stdin) |
 | neon | `GET/POST /projects` (+ operations polling), `GET/POST /projects/{id}/branches`, `…/branches/{b}/{endpoints,databases,roles}`, `…/roles/{r}/reveal_password` or `reset_password`; `SELECT 1` with the `postgres` package |
-| cloudflare | `scripts/cf-provision.sh <env> --apply` → `wrangler hyperdrive create`, `kv namespace create`, `queues create`, `r2 bucket create`; `patch-toml` (ids, and every installed plugin's declarations); `REQUIRE_PROVISIONED=1 pnpm web test:config` once both tomls are done |
+| cloudflare | with `--driver`: `patch-toml` on BOTH tomls (`DATABASE_DRIVER`, the `[[hyperdrive]]` block); then `scripts/cf-provision.sh <env> --apply` → `wrangler hyperdrive create` (under `postgres` only), `kv namespace create`, `queues create`, `r2 bucket create`; `patch-toml` (ids, and every installed plugin's declarations); `REQUIRE_PROVISIONED=1 pnpm web test:config` once both tomls are done |
 | migrate | `DATABASE_URL=… pnpm db:migrate:ci`; `SELECT count(*) FROM drizzle.__drizzle_migrations` vs `migrations/meta/_journal.json` |
 | github | `gh api -X PUT repos/{owner}/{repo}/environments/{env}`, `gh secret set NAME -e env` (value on stdin), `gh secret list -e env --json name` |
 | urls | Cloudflare `GET /accounts/{id}/workers/subdomain` (when `workers.dev`); `patch-toml` (`APP_URL`, `routes`); parity test |
-| deploy | `pnpm deploy[:staging]`, `wrangler deployments list --json`, `GET /api/health`, `GET /api/ready` |
-| secrets | `wrangler secret list --format json`, `wrangler secret put NAME` (stdin) |
+| deploy | `pnpm deploy[:staging]`; under `neon`, `wrangler secret put DATABASE_URL` (stdin) right after the first deploy (a secret needs the Worker to exist); `wrangler deployments list --json`, `GET /api/health`, `GET /api/ready` |
+| secrets | `wrangler secret list --format json`, `wrangler secret put NAME` (stdin) — `DATABASE_URL` too under `neon` |
 
 Plugin resources (D31, Decision 12): `cloudflare <env>` also creates whatever each installed
 plugin's `plugin.json` declares in `bindings[]`, named **`<app>-<id>-<name>[-staging]`** — and
@@ -78,6 +79,34 @@ API references: Neon https://api-docs.neon.tech/reference/ · Resend https://res
 · Cloudflare https://developers.cloudflare.com/api/ · wrangler https://developers.cloudflare.com/workers/wrangler/commands/
 · gh https://cli.github.com/manual/ · GitHub Environments https://docs.github.com/en/rest/deployments/environments
 
+## Choosing and switching drivers (D35)
+
+The driver is `[vars] DATABASE_DRIVER` in each toml — `neon` in the kit's, missing (= `postgres`)
+in a copy from before 0.15.0. `--driver neon|postgres` on any phase overrides the toml for that
+run; on `cloudflare <env>` it also WRITES the choice into both tomls. Coaching:
+
+| The user's situation | Driver |
+|---|---|
+| Neon (the default here), especially several apps in one Cloudflare account, or deploys from a sandbox with no TCP out | `neon` |
+| Postgres that is not Neon (RDS, Supabase, Crunchy, self-hosted) | `postgres` — provisioning still creates a Neon project; skip `neon`/`migrate`, point Hyperdrive at their database by hand (`wrangler hyperdrive create <app>-<env> --connection-string=…`, SETUP.md 3.2) and set the GitHub `DATABASE_URL` to its direct host |
+| One app on Neon that wants Hyperdrive's 60 s read cache and has configs to spare | `postgres` |
+
+**Switching drivers** on a deployment that is already live (one environment at a time, staging
+first) — never through `all`:
+
+1. `pnpm provision secrets <env> --driver neon` — puts the pooled URI as the Worker's
+   `DATABASE_URL`. A `postgres` Worker ignores it, so this is safe before anything else.
+2. `pnpm provision cloudflare <env> --driver neon` — `DATABASE_DRIVER = "neon"` and no
+   `[[hyperdrive]]` block in both tomls. Show the diff, then the user commits it.
+3. The `test-neon` CI job must be green; then `pnpm provision deploy <env>`, check `/api/ready`,
+   and have the user compare p95 with the Hyperdrive baseline before production.
+4. **Tell the user to keep the Hyperdrive configs for about a week** — `wrangler rollback` to a
+   `postgres` version needs them. Deleting them is their separate cleanup.
+
+`neon` → `postgres`: `pnpm provision cloudflare <env> --driver postgres` (creates the Hyperdrive
+config and writes the block into both tomls), commit, deploy. Local development never changes:
+`.dev.vars` says `postgres` either way.
+
 ## Optional exploration tools (NOT the provisioning path)
 
 The official Claude Code plugins and MCP servers are handy for *looking* at an account while
@@ -98,7 +127,7 @@ is the topology reference (two tomls, account-scoped names, the release dance, r
 
 ## Known risks and limits
 
-- **Workers Paid.** Hyperdrive, Workflows and `[limits]` are documented as Paid features in
+- **Workers Paid.** Workflows, `[limits]` and (under `postgres`) Hyperdrive are documented as Paid features in
   `docs/DEPLOY.md`; Cloudflare's pricing page now lists Hyperdrive on Free with a daily query cap
   and without connection pooling. `cf-provision.sh` maps a plan-related create failure to the
   upgrade URL `https://dash.cloudflare.com/?to=/:account/workers/plans`.
@@ -109,16 +138,17 @@ is the topology reference (two tomls, account-scoped names, the release dance, r
 - **Neon cold starts**: the first `SELECT 1` on a scaled-to-zero compute can take several seconds;
   the script retries for ~40 s per branch. `reveal_password` answers 412 on projects without
   password storage — the script then resets the password (and says so).
-- **`--rotate`** resets Neon passwords (once per run, from the `neon` phase only; an existing
-  Hyperdrive config is then updated with `wrangler hyperdrive update <id> --connection-string=…`
-  when the toml already carries its id, and GitHub's `DATABASE_URL` is re-set by `github <env>`),
+- **`--rotate`** resets Neon passwords (once per run, from the `neon` phase only; then under `postgres` an existing
+  Hyperdrive config is updated with `wrangler hyperdrive update <id> --connection-string=…`
+  when the toml already carries its id, under `neon` the Worker's `DATABASE_URL` secret is re-put
+  when the Worker already holds one, and GitHub's `DATABASE_URL` is re-set by `github <env>`),
   `OAUTH_ENCRYPTION_KEY` (invalidates every tenant AI credential and stored OAuth token) and mints
   a new Resend key. Not for routine re-runs.
 - **A conflicting SPF record is not merged.** `email create` adds Resend's `send.<domain>` TXT
   beside an existing one with different content rather than editing it (two SPF TXTs at one name
   are invalid SPF) — `email status` shows both; remove the stale one by hand.
-- **The connection string is an argv once**: `wrangler hyperdrive create --connection-string=…`
-  inside `cf-provision.sh` (inherited behaviour, output redacted). Everything else travels by env or stdin.
+- **The connection string is an argv once** (under `postgres`): `wrangler hyperdrive create
+  --connection-string=…` inside `cf-provision.sh` (inherited behaviour, output redacted). Everything else travels by env or stdin.
 - **`gh api -X PUT …/environments/<env>`** needs the `repo` scope on the `gh` login; the origin
   remote must be `github.com`.
 - **`/auth/methods` always reports `magicLink: true`** — the email verify line proves the Worker is

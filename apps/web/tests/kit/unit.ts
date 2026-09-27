@@ -360,8 +360,8 @@ export interface WorkflowCtxOptions extends BaseOptions {
  *
  * **`db` is required here but is not the handle the steps use**, and that is worth reading rather
  * than working out from a surprise. The kit's rule is one client per STEP, opened when the step body
- * starts and closed when it ends whatever happens — so `workflowCtx` opens its own from
- * `env.HYPERDRIVE`, which `createTestEnv()` already points at the test database. What `db` proves is
+ * starts and closed when it ends whatever happens — so `workflowCtx` opens its own through
+ * `openDatabase`, which `createTestEnv()` already points at the test database (either driver). What `db` proves is
  * that the integration harness is RUNNING: a workflow step hits real Postgres the instant it
  * executes, and without this assertion a test that never started the harness fails inside the step
  * body with a connection error instead of here, naming the fix.

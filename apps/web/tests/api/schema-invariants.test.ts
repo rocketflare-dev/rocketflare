@@ -3,14 +3,16 @@
  * `timestamptz` for every `*_at` column (a naive `timestamp` here is a bug the helper exists to
  * prevent). Catalog-driven so a hand-edited migration cannot drift from the schema silently.
  */
+
 import { sql } from 'drizzle-orm'
 import { describe, expect, it } from 'vitest'
+import { rows as resultRows } from '@/db/client'
 import { setupTestDatabase } from '../helpers/db'
 
 const db = setupTestDatabase()
 
 async function rows<T>(query: ReturnType<typeof sql>): Promise<T[]> {
-  return (await db.execute(query)) as unknown as T[]
+  return resultRows<T>(await db.execute(query))
 }
 
 describe('schema invariants', () => {

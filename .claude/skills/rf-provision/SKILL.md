@@ -2,7 +2,7 @@
 name: rf-provision
 description: Take a locally-running copy to Cloudflare + Neon + Resend — provisions every resource, patches the tomls, migrates, deploys staging, sets secrets, verifies email. Runs after /rf-setup and /rf-adapt.
 disable-model-invocation: true
-argument-hint: "[--deploy staging|both] [--skip-email] [--rotate]"
+argument-hint: "[--driver neon|postgres] [--deploy staging|both] [--skip-email] [--rotate]"
 ---
 
 # /rf-provision — from "runs on my laptop" to "deployed"
@@ -29,7 +29,7 @@ start and say what it shows; `/rf-plugin` installs one.
 
 **Before anything: three accounts you create yourself** (no script can):
 
-1. **Cloudflare** — on the **Workers Paid** plan (Hyperdrive, Workflows), AND your domain on the
+1. **Cloudflare** — on the **Workers Paid** plan (Workflows; Hyperdrive under `postgres`), AND your domain on the
    account: registered there (https://dash.cloudflare.com/?to=/:account/domains/register) or added
    as a site with its nameservers moved (https://dash.cloudflare.com/?to=/:account/add-site). The
    app's hostnames and the email DNS records are created in that zone. Without a domain the skill
@@ -76,7 +76,28 @@ run), re-run. Success reads
 `Verify: preflight ok — app=… account=… neon=… resend=… zone=<zone> (<id>)` (`zone=none` when both
 hosts are `workers.dev` and email is skipped); the zone id is cached for `email create` and `urls`.
 
-## Step 1 — collect the four answers, then run everything
+## Step 1 — the database driver (D35), then the four answers
+
+**Ask which driver to deploy on, and coach the choice** — it is the one decision here that is
+awkward to change later (`docs/DEPLOY.md` § Database driver has the table):
+
+- **`neon`** (the kit's default, what the tomls already say): the Worker talks to Neon over HTTPS
+  with the pooled URI as its `DATABASE_URL` secret. No Hyperdrive, so it scales to many apps in one
+  account (Hyperdrive caps an account at 25 configs) and works from a sandbox with no TCP out.
+  No read cache; a round trip per query. Pick it when the database is Neon — the usual case here.
+- **`postgres`**: postgres.js through a Hyperdrive config per environment. Any Postgres (RDS,
+  Supabase, Crunchy, self-hosted — this skill still provisions Neon; for another Postgres the user
+  points Hyperdrive at it by hand, `reference.md`), plus Hyperdrive's 60 s read cache. Pick it for
+  a non-Neon database, or a single app that wants the cache and has Hyperdrive configs to spare.
+
+Say which the tomls say now (`grep DATABASE_DRIVER apps/web/wrangler.toml`; missing = `postgres`,
+a copy from before 0.15.0). If the user picks the other one, pass `--driver <d>`: the `cloudflare`
+phase rewrites BOTH tomls (the var, and the `[[hyperdrive]]` block added or removed), `secrets`
+and `deploy` put `DATABASE_URL` under `neon`. **Switching a deployment that is already live** is a
+separate procedure, one environment at a time — follow `reference.md` § Switching drivers, never
+`all`. Local development is unaffected either way: `.dev.vars` keeps `DATABASE_DRIVER=postgres`.
+
+Then collect the four answers:
 
 Your Bash has no TTY, so the script cannot ask questions — **ask the user first**, then pass the
 answers as flags (they are cached in `apps/web/.provision.json` after the first run):
@@ -92,10 +113,10 @@ answers as flags (they are cached in `apps/web/.provision.json` after the first 
 Then run the whole sequence (it takes 10–20 minutes; use a long Bash timeout):
 
 ```
-pnpm provision all $ARGUMENTS --region … --domain … --staging-host … --production-host … --admin-email …
+pnpm provision all $ARGUMENTS [--driver neon|postgres] --region … --domain … --staging-host … --production-host … --admin-email …
 ```
 
-`$ARGUMENTS` may carry `--deploy both` (deploy production too; default staging only),
+`$ARGUMENTS` may carry `--driver` (above), `--deploy both` (deploy production too; default staging only),
 `--skip-email` (no Resend: magic links are logged in `wrangler tail` instead of sent) and
 `--rotate` (regenerate keys/passwords — read the warning it prints first).
 
@@ -111,12 +132,12 @@ re-running `all` afterwards is safe.
 | `preflight` | tokens, tools, accounts, answers; every custom host and the sending domain resolved to a zone on the account, DNS readable | missing token → step 0; `gh` not logged in → the user runs `gh auth login` themselves; "not on this Cloudflare account" → step 0 (1), or `workers.dev` + `--skip-email`; "cannot read DNS records" → the token lacks `Zone: DNS — Edit` on that zone |
 | `email create` | Resend domain + DNS records in your Cloudflare zone, `EMAIL_FROM` in both tomls | "no Cloudflare zone" → the apex domain must be in this Cloudflare account (or `--skip-email`) |
 | `neon` | project + `staging` branch, `SELECT 1` on both | region name wrong → `--region`; 412 password storage → it resets the password itself |
-| `cloudflare staging/production` | Hyperdrive, KV, Queue, R2; ids patched into the toml — **plus every installed plugin's declared bindings, crons, route prefixes and non-secret `[vars]`**, written into BOTH tomls (D31) | "Hyperdrive requires Workers Paid" → upgrade the plan at the printed URL; "already has id" → `--force` only if you know the old resource is gone; a plugin binding whose `type` is not `kv`/`queue`/`r2` is refused by name at install time, not here |
+| `cloudflare staging/production` | KV, Queue, R2 (+ Hyperdrive under `postgres`); ids patched into the toml; with `--driver`, `DATABASE_DRIVER` + the `[[hyperdrive]]` block rewritten in both tomls — **plus every installed plugin's declared bindings, crons, route prefixes and non-secret `[vars]`**, written into BOTH tomls (D31) | "Hyperdrive requires Workers Paid" → upgrade the plan at the printed URL; "already has id" → `--force` only if you know the old resource is gone; a plugin binding whose `type` is not `kv`/`queue`/`r2` is refused by name at install time, not here |
 | `migrate <env>` | migrations on that branch, count == journal | a schema error is a code problem — do not retry blindly |
 | `github <env>` | GitHub Environment + `DATABASE_URL`, `CLOUDFLARE_*` secrets | `gh` needs `repo` scope; the remote must be GitHub |
 | `urls` | `APP_URL` + `routes` (custom host) or `workers.dev` in both tomls; parity test | "no workers.dev subdomain" → pick one in the Cloudflare dashboard once |
-| `deploy <env>` | `pnpm deploy[:staging]`, then `/api/health` and `/api/ready` | `/api/ready` 503 → Hyperdrive cannot reach Neon: wrong host / SSL; re-run `cloudflare <env> --force` after checking |
-| `secrets <env>` | `OAUTH_ENCRYPTION_KEY` (generated) + every optional secret in the environment or `apps/web/.provision.env` — **including every installed plugin's `vars` marked `secret`**, from the same two places | nothing to fix; unset ones are listed as skipped. A plugin secret that is skipped means the plugin 503s at runtime rather than reading a blank string as configured — add it to `apps/web/.provision.env` and re-run this phase |
+| `deploy <env>` | `pnpm deploy[:staging]` (under `neon` it puts the Worker's `DATABASE_URL` right after the first deploy), then `/api/health` and `/api/ready` | `/api/ready` 503 → the Worker cannot reach Neon: under `neon` re-run `secrets <env>` (the `DATABASE_URL` secret); under `postgres` Hyperdrive has the wrong host / SSL — re-run `cloudflare <env> --force` after checking |
+| `secrets <env>` | `OAUTH_ENCRYPTION_KEY` (generated), `DATABASE_URL` under `neon` (the pooled Neon URI; `--rotate` re-puts it), + every optional secret in the environment or `apps/web/.provision.env` — **including every installed plugin's `vars` marked `secret`**, from the same two places | nothing to fix; unset ones are listed as skipped. A plugin secret that is skipped means the plugin 503s at runtime rather than reading a blank string as configured — add it to `apps/web/.provision.env` and re-run this phase |
 | `email verify <env>` | Resend verification (polls ≤ 10 min), mints a sending key into `RESEND_API_KEY` | "DNS still propagating" → wait and re-run `pnpm provision email verify <env>` later |
 
 `pnpm provision email status` shows each DNS record's presence when verification stalls.

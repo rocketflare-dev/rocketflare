@@ -86,7 +86,7 @@ export function ensureMirror(
     mkdirSync(path.dirname(dir), { recursive: true })
     const clone = spawnSync(
       'git',
-      ['clone', '--bare', '--filter=blob:none', '--no-tags', repo, dir],
+      [...NO_COMMIT_GRAPH, 'clone', '--bare', '--filter=blob:none', '--no-tags', repo, dir],
       {
         cwd,
         stdio: 'inherit',
@@ -112,6 +112,7 @@ export function ensureMirror(
       throw new Error(`${dir} points at ${url}, not ${repo} — delete it and re-run`)
     }
   }
+  disableCommitGraph(cwd, dir)
   if (fetch) {
     const fetched = makeGit(cwd).quiet(['-C', dir, 'fetch', '--prune', '--tags', 'origin'])
     if (!fetched.ok && !existsSync(path.join(dir, 'HEAD'))) {
@@ -120,6 +121,26 @@ export function ensureMirror(
     if (!fetched.ok) warn('note: fetch failed — using the cached mirror as it is')
   }
   return mirror(dir)
+}
+
+/**
+ * Commit-graph off in a mirror. With a blobless (`--filter=blob:none`) clone, git writes a
+ * commit-graph that can name commits whose objects the partial clone never fetched, and every later
+ * lazy blob fetch then dies with "in the commit graph file but not in the object database" —
+ * measured with Apple Git 2.50.1 on a mirror of a repository pushed to moments earlier. The mirror
+ * is a few commits deep and read-only, so the graph buys nothing: turn it off in the mirror's OWN
+ * config (every command run in it inherits that) and drop any graph already written, which also
+ * repairs a mirror cached by an older kit.
+ */
+const NO_COMMIT_GRAPH = ['-c', 'core.commitGraph=false', '-c', 'fetch.writeCommitGraph=false']
+
+function disableCommitGraph(cwd, dir) {
+  const { quiet } = makeGit(cwd)
+  quiet(['-C', dir, 'config', 'core.commitGraph', 'false'])
+  quiet(['-C', dir, 'config', 'fetch.writeCommitGraph', 'false'])
+  for (const graph of ['objects/info/commit-graph', 'objects/info/commit-graphs']) {
+    rmSync(path.join(dir, graph), { recursive: true, force: true })
+  }
 }
 
 /** The read-only handle onto a bare mirror: everything either script asks of one. */

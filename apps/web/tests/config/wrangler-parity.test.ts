@@ -192,10 +192,32 @@ describe('wrangler parity: must match', () => {
   })
 
   it('both files declare the baseline bindings', () => {
-    expect(names(prod, 'hyperdrive', 'binding')).toContain('HYPERDRIVE')
     expect(names(prod, 'kv_namespaces', 'binding')).toContain('RATE_LIMIT_KV')
     expect(get(prod, 'assets.binding')).toBe('ASSETS')
     expect(prod.compatibility_flags).toContain('nodejs_compat')
+  })
+})
+
+// ---- the database driver (D35) -------------------------------------------------------------
+
+describe('wrangler parity: database driver', () => {
+  const driverOf = (config: Record<string, unknown>) =>
+    (get(config, 'vars.DATABASE_DRIVER') as string | undefined) ?? 'postgres'
+  const hasHyperdrive = (config: Record<string, unknown>) =>
+    names(config, 'hyperdrive', 'binding').includes('HYPERDRIVE')
+
+  it('DATABASE_DRIVER is neon or postgres in each file (they may differ: staging switches first)', () => {
+    for (const config of [prod, staging]) expect(['neon', 'postgres']).toContain(driverOf(config))
+  })
+
+  it('HYPERDRIVE is declared by both files or neither', () => {
+    expect(hasHyperdrive(staging)).toBe(hasHyperdrive(prod))
+  })
+
+  it('a neon file carries no [[hyperdrive]] block — wrangler refuses a Hyperdrive id that does not exist', () => {
+    for (const config of [prod, staging]) {
+      if (driverOf(config) === 'neon') expect(hasHyperdrive(config)).toBe(false)
+    }
   })
 })
 

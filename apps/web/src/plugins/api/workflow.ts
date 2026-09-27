@@ -34,7 +34,7 @@
 
 import type { WorkflowSleepDuration, WorkflowStep } from 'cloudflare:workers'
 import type { AppConfig } from '../../config'
-import { createDatabase, type Database, resolveDatabaseUrl } from '../../db/client'
+import { type Database, openDatabase } from '../../db/client'
 import { createStepRealtimeFor, type StepRealtime } from './realtime-step'
 import type { Logger, PluginBindings, PluginContext } from './types'
 
@@ -100,13 +100,7 @@ async function withStepDatabase<T>(
   config: AppConfig,
   fn: (db: Database) => Promise<T>
 ): Promise<T> {
-  const handle = createDatabase(
-    resolveDatabaseUrl({
-      HYPERDRIVE: env.HYPERDRIVE,
-      PREVIEW_DATABASE_URL: config.PREVIEW_DATABASE_URL,
-      DATABASE_URL: config.DATABASE_URL,
-    })
-  )
+  const handle = openDatabase({ ...config, HYPERDRIVE: env.HYPERDRIVE })
   try {
     return await fn(handle.db)
   } finally {

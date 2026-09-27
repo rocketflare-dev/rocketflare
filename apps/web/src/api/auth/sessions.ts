@@ -10,7 +10,7 @@ import type { FeatureFlagEvaluation } from '@rocketflare/shared/features'
 import type { GroupRef } from '@rocketflare/shared/groups'
 import type { MembershipRole, TenantStatus } from '@rocketflare/shared/tenants'
 import { and, eq, isNull, lt, or, sql } from 'drizzle-orm'
-import type { Database } from '../../db/client'
+import { type Database, rows } from '../../db/client'
 import { tenants, type User, userSessions, users } from '../../db/schema'
 import { hashToken } from '../utils/core/hash'
 import { randomToken } from '../utils/core/ids'
@@ -100,7 +100,7 @@ interface SessionRow {
   access_request_status: 'pending' | 'approved' | 'rejected' | null
 }
 
-/** postgres.js hands jsonb back parsed; a driver that hands back text must not crash auth. */
+/** Both drivers hand jsonb back parsed (D35); a driver that hands back text must not crash auth. */
 function parseGroups(value: GroupRef[] | string | null): GroupRef[] {
   if (Array.isArray(value)) return value
   if (typeof value !== 'string') return []
@@ -130,7 +130,7 @@ const asDateOrNull = (v: Date | string | null): Date | null => (v === null ? nul
 /** One round trip: session → user → best membership → tenant → latest access request. */
 export async function resolveSession(db: Database, token: string): Promise<ResolvedSession | null> {
   const tokenHash = await hashToken(token)
-  const rows = (await db.execute(sql`
+  const result = await db.execute(sql`
     SELECT
       us.id                    AS session_id,
       us.expires_at,
@@ -198,8 +198,8 @@ export async function resolveSession(db: Database, token: string): Promise<Resol
     ) ar ON true
     WHERE us.token_hash = ${tokenHash}
     LIMIT 1
-  `)) as unknown as SessionRow[]
-  const row = rows[0]
+  `)
+  const row = rows<SessionRow>(result)[0]
   if (!row) return null
 
   const user: User = {

@@ -181,7 +181,7 @@ describe('AgentRunWorkflow', () => {
     const env = createTestEnv()
     const client = script([TOOL_TURN])
     const { run, tenant, user } = await queuedRun(env)
-    const created = vi.spyOn(dbClient, 'createDatabase')
+    const created = vi.spyOn(dbClient, 'openDatabase')
 
     const { outcome, calls } = await drive(env, run.id, tenant.id)
 
@@ -521,7 +521,7 @@ describe('AgentRunWorkflow', () => {
     const env = createTestEnv()
     const cfg = loadConfig(env)
     const close = vi.fn(async () => {})
-    vi.spyOn(dbClient, 'createDatabase').mockReturnValueOnce({ db, close })
+    vi.spyOn(dbClient, 'openDatabase').mockReturnValueOnce({ db, close })
     await expect(
       workflowModule.withStepDatabase(env, cfg, async () => {
         throw new Error('boom')

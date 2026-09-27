@@ -23,6 +23,7 @@
     "plugin": "node scripts/plugin.mjs",
     "preflight": "node scripts/bootstrap.mjs --check",
     "test:db:up": "pnpm --filter @rocketflare/web test:db:up",
+    "test:neon": "pnpm --filter @rocketflare/web test:neon",
     "test:db:down": "pnpm --filter @rocketflare/web test:db:down",
     "db:generate": "pnpm --filter @rocketflare/web db:generate",
     "db:migrate": "pnpm --filter @rocketflare/web db:migrate",

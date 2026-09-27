@@ -11,6 +11,10 @@
  * without being told.
  *
  *   node scripts/dev-db.mjs up     [--json]   start it (idempotent; prints the port)
+ *        [--neon | --postgres]                also switch the LOCAL driver (D35): `--neon` starts the
+ *                                             Neon proxy in front of it and writes NEON_LOCAL_PROXY +
+ *                                             DATABASE_DRIVER=neon; `--postgres` stops the proxy.
+ *                                             Neither: keep whatever .dev.vars says (missing = postgres)
  *   node scripts/dev-db.mjs down   [--json]   stop THIS checkout's database, never another's
  *   node scripts/dev-db.mjs status [--json]   what is running, where, on which port
  *   node scripts/dev-db.mjs env -- <cmd…>     run <cmd> with DATABASE_URL and the Worker's
@@ -42,6 +46,9 @@ const DEV_VARS_EXAMPLE = path.join(WEB_DIR, '.dev.vars.example')
 /** Wrangler reads this for the local Hyperdrive binding; the toml's value is only a fallback. */
 const HYPERDRIVE_ENV = 'CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_HYPERDRIVE'
 const SERVICE = 'postgres-dev'
+const PROXY_SERVICE = 'neon-proxy-dev'
+/** The proxy's per-checkout port range (the test proxy holds 4433). */
+const PROXY_PORT_START = 4444
 
 /** This checkout's compose project — unique per path, so two checkouts never share containers. */
 const PROJECT = `rocketflare-dev-${checkoutTag(WEB_DIR)}`
@@ -116,60 +123,131 @@ async function resolvePort() {
   }
 }
 
-/** Persist the port in `.dev.vars` so every other tool reads it through dotenv. */
-function writeUrl(url) {
+/** `.dev.vars` as key → value, or `{}` before the bootstrap has written it. */
+function devVars() {
+  return existsSync(DEV_VARS) ? readDevVars(readFileSync(DEV_VARS, 'utf8')) : {}
+}
+
+/** Persist values in `.dev.vars` so every other tool reads them through dotenv. */
+function writeDevVars(values) {
   if (!existsSync(DEV_VARS)) return false
   const text = readFileSync(DEV_VARS, 'utf8')
-  const next = upsertDevVar(text, 'DATABASE_URL', url)
+  let next = text
+  for (const [key, value] of Object.entries(values)) next = upsertDevVar(next, key, value)
   if (next === text) return false
   writeFileSync(DEV_VARS, next)
   return true
 }
 
-const composeEnv = (port, url) => ({
+/** The local driver (D35): the flag if one was passed, else `.dev.vars`, else `postgres`. */
+function localDriver(argv) {
+  if (argv.includes('--neon')) return 'neon'
+  if (argv.includes('--postgres')) return 'postgres'
+  return devVars().DATABASE_DRIVER === 'neon' ? 'neon' : 'postgres'
+}
+
+/** The proxy's port for this checkout: sticky from NEON_LOCAL_PROXY, else the first free one. */
+async function resolveProxyPort() {
+  const current = devVars().NEON_LOCAL_PROXY
+  const preferred = current ? Number(new URL(current).port) || null : null
+  const ours = oursPorts()
+  const free = new Map()
+  for (let p = PROXY_PORT_START; p < PROXY_PORT_START + 20; p += 1) {
+    free.set(p, await portIsFree(p))
+  }
+  const port = chooseDevDbPort({
+    preferred,
+    isAvailable: p => ours.has(p) || free.get(p) === true,
+    start: PROXY_PORT_START,
+    count: 20,
+    skip: [4433],
+  })
+  if (port === null) {
+    console.error(
+      `dev-db: no free port in ${PROXY_PORT_START}–${PROXY_PORT_START + 19} for the Neon proxy`
+    )
+    process.exit(1)
+  }
+  return port
+}
+
+const composeEnv = (port, url, proxyPort = PROXY_PORT_START) => ({
   ...process.env,
   COMPOSE_PROJECT_NAME: PROJECT,
   DEV_DB_PORT: String(port),
   DEV_DB_CONTAINER: `rocketflare-dev-postgres-${checkoutTag(WEB_DIR)}`,
+  DEV_NEON_PROXY_PORT: String(proxyPort),
+  DEV_NEON_PROXY_CONTAINER: `rocketflare-dev-neon-proxy-${checkoutTag(WEB_DIR)}`,
   DATABASE_URL: url,
   [HYPERDRIVE_ENV]: url,
 })
 
-async function up(json) {
+async function up(argv, json) {
+  const driver = localDriver(argv)
   const { port, url, moved, external } = await resolvePort()
   if (external) {
+    // Somebody else's database: under `neon` the driver talks to Neon directly, no proxy.
+    writeDevVars({ DATABASE_DRIVER: driver, NEON_LOCAL_PROXY: '' })
     const target = databaseUrlTarget(url)
-    if (json) console.log(JSON.stringify({ external: true, target }))
-    else console.log(`DATABASE_URL points at ${target} (not this machine) — nothing to start`)
+    if (json) console.log(JSON.stringify({ external: true, target, driver }))
+    else {
+      console.log(`DATABASE_URL points at ${target} (not this machine) — nothing to start`)
+      console.log(`  local driver: ${driver}`)
+    }
     return
   }
-  const wrote = writeUrl(url)
-  const result = spawnSync(
-    'docker',
-    ['compose', '-p', PROJECT, '-f', COMPOSE_FILE, 'up', '-d', '--wait'],
-    { cwd: WEB_DIR, env: composeEnv(port, url), stdio: json ? 'pipe' : 'inherit' }
-  )
+  const proxyPort = driver === 'neon' ? await resolveProxyPort() : PROXY_PORT_START
+  const env = composeEnv(port, url, proxyPort)
+  const compose = args =>
+    spawnSync('docker', ['compose', '-p', PROJECT, '-f', COMPOSE_FILE, ...args], {
+      cwd: WEB_DIR,
+      env,
+      stdio: json ? 'pipe' : 'inherit',
+    })
+  // `postgres`: the database alone, and a proxy left over from `--neon` is stopped.
+  const result =
+    driver === 'neon'
+      ? compose(['--profile', 'neon', 'up', '-d', '--wait'])
+      : compose(['up', '-d', '--wait', SERVICE])
   if (result.status !== 0) {
     if (json) process.stderr.write(result.stderr ?? '')
     process.exit(result.status ?? 1)
   }
+  if (driver === 'postgres') compose(['--profile', 'neon', 'rm', '-sf', PROXY_SERVICE])
+  const proxy = driver === 'neon' ? `http://localhost:${proxyPort}` : ''
+  const wrote = writeDevVars({
+    DATABASE_URL: url,
+    DATABASE_DRIVER: driver,
+    NEON_LOCAL_PROXY: proxy,
+  })
   if (json) {
-    console.log(JSON.stringify({ port, url, project: PROJECT, moved, wroteDevVars: wrote }))
+    console.log(
+      JSON.stringify({ port, url, project: PROJECT, moved, wroteDevVars: wrote, driver, proxy })
+    )
   } else {
     console.log(`dev database ready on :${port}  (project ${PROJECT})`)
     if (moved)
       console.log(`  :${port} chosen because the previous port was taken by something else`)
-    if (wrote) console.log('  DATABASE_URL in apps/web/.dev.vars updated to match')
+    console.log(
+      driver === 'neon'
+        ? `  local driver: neon, through the Neon proxy on :${proxyPort}`
+        : '  local driver: postgres (postgres.js over TCP)'
+    )
+    if (wrote) console.log('  apps/web/.dev.vars updated to match')
   }
 }
 
 async function down(json) {
   const { port, url } = await resolvePort()
-  const result = spawnSync('docker', ['compose', '-p', PROJECT, '-f', COMPOSE_FILE, 'down'], {
-    cwd: WEB_DIR,
-    env: composeEnv(port, url),
-    stdio: json ? 'pipe' : 'inherit',
-  })
+  const result = spawnSync(
+    'docker',
+    ['compose', '-p', PROJECT, '-f', COMPOSE_FILE, '--profile', 'neon', 'down'],
+    {
+      cwd: WEB_DIR,
+      env: composeEnv(port, url),
+      stdio: json ? 'pipe' : 'inherit',
+    }
+  )
   if (json) console.log(JSON.stringify({ project: PROJECT, code: result.status ?? 0 }))
   process.exit(result.status ?? 0)
 }
@@ -199,10 +277,16 @@ async function status(json) {
   if (json) {
     // An external URL carries a real password: report where it points, never the URL itself.
     const where = external ? { external: true, target: databaseUrlTarget(url) } : { port, url }
-    console.log(JSON.stringify({ project: PROJECT, ...where, containers: rows }))
+    const { DATABASE_DRIVER: driver = 'postgres', NEON_LOCAL_PROXY: proxy = '' } = devVars()
+    console.log(JSON.stringify({ project: PROJECT, ...where, driver, proxy, containers: rows }))
     return
   }
+  const vars = devVars()
   console.log(`this checkout: ${WEB_DIR}`)
+  console.log(
+    `  local driver: ${vars.DATABASE_DRIVER || 'postgres'}` +
+      (vars.NEON_LOCAL_PROXY ? ` (proxy ${vars.NEON_LOCAL_PROXY})` : '')
+  )
   if (external)
     console.log(`  external database ${databaseUrlTarget(url)} (pnpm bootstrap --db-url)`)
   else console.log(`  project ${PROJECT} · port ${port}`)
@@ -239,7 +323,7 @@ async function env(argv) {
 const argv = process.argv.slice(2)
 const command = argv[0] ?? 'up'
 const json = argv.includes('--json')
-if (command === 'up') await up(json)
+if (command === 'up') await up(argv, json)
 else if (command === 'down') await down(json)
 else if (command === 'status') await status(json)
 else if (command === 'env') await env(argv)

@@ -129,17 +129,37 @@ path); no per-PR previews.
 
 ## 4. Database
 
-- **One driver, one client per request (D2)**: Drizzle over `postgres.js`. The client is built per
-  request / consumer message / step / cron run and closed in `waitUntil` or `finally`.
-  `resolveDatabaseUrl` = `PREVIEW_DATABASE_URL ?? HYPERDRIVE.connectionString ?? DATABASE_URL`.
-  Hyperdrive is the pool, so there is no LISTEN/NOTIFY, advisory lock or PREPARE on the request path.
+- **Two drivers, one client per request (D35, replacing D2's "postgres.js only")**:
+  `DATABASE_DRIVER` picks Drizzle over the Neon serverless driver (`neon`: neon-http per query, a
+  WebSocket `Pool` opened for `db.transaction`) or over `postgres.js` (`postgres`, through
+  Hyperdrive — any Postgres). A missing var means `postgres`; the kit's tomls say `neon`;
+  `.dev.vars` says `postgres`, so local work and the gate never need the deployed driver.
+  `openDatabase(env)` (`db/client.ts`) is the one resolver — URL `PREVIEW_DATABASE_URL ??
+  DATABASE_URL` under `neon`, `?? HYPERDRIVE.connectionString ??` in between under `postgres` — and
+  the client is built per request / consumer message / step / cron run and closed in `waitUntil` or
+  `finally`. No LISTEN/NOTIFY, advisory lock or PREPARE on the request path under either.
+  Why two: Hyperdrive caps an account at 25 configs (a fleet of apps cannot each have one) and
+  sandboxes have no TCP out, but Hyperdrive is also how a copy reaches a Postgres that is not Neon.
+  Detail and the switch: `docs/DEPLOY.md` § Database driver, `docs/NEON-DRIVER.md`.
+- **Code never sees the driver.** `Database` is drizzle's `PgDatabase` base, so a raw
+  `db.execute()` is `unknown`: its rows are read with `rows()` and an unreturned write's count with
+  `affected()`, because postgres.js returns an array with `.count` and Neon `{ rows, rowCount }`.
+  `tests/config/driver-results.test.ts` fails a cast, an index or a `.rows`/`.count` read on a raw
+  result, and a driver import, anywhere in `src/` (installed plugins included). Raw SQL returning a
+  list uses `json_agg` / `to_jsonb` — postgres.js leaves a raw array as `"{a,b}"`.
+- **Tested both ways.** The gate runs `postgres`; the `driver` vitest project (the code that
+  differs) runs there too, and CI's `test-neon` job runs it plus the whole api suite under `neon`
+  through a local Neon proxy (`pnpm test:neon`, ~30 s). Locally `pnpm dev:db:up --neon` runs the
+  deployed driver on the local database.
 - **Conventions**: one file per table, `tenantRef()` + `timestamps()` (`timestamptz`), append-only
   enums, `vector(1024)` (a new dimension means a new table). `migrate.ts` creates the `vector`
   extension first. Detail: `.claude/rules/database.md`.
 - **Local port is chosen** (`scripts/dev-db.mjs`): each checkout gets its own compose project and
   port, written back to `DATABASE_URL`, so two copies never share a database.
 - **Or an existing database** (`pnpm bootstrap --db-url <url>`): for a machine with no Docker (a
-  coding sandbox on a Neon branch). The URL goes into `DATABASE_URL` and nothing is started. An
+  coding sandbox on a Neon branch). The URL goes into `DATABASE_URL` and nothing is started; a
+  `*.neon.tech` URL also sets `DATABASE_DRIVER=neon` there (HTTPS + WebSocket only, which is what a
+  sandbox allows; `--driver` overrides). An
   off-box `DATABASE_URL` (not loopback) is left alone by `dev-db.mjs` and skips preflight's Docker
   checks. The seed runs there with `SEED_ALLOW_REMOTE=1`.
 - **Migrations**: `db:generate` → read the SQL → `db:migrate` (role → migrations → grants).
@@ -150,7 +170,11 @@ path); no per-PR previews.
 - **RLS** ships inert: every tenant table has `tenantIsolation()` (enforced by `rls-coverage`),
   and `TENANT_SCOPE_MODE=enforce` waits on the spike in `docs/RLS.md`.
 
-**Known gaps:** the RLS spike has not been run; no read replicas; the TEST database is pinned to
+**Known gaps:** the RLS spike has not been run; no read replicas; the local Neon proxy is a
+community image, mirrored to `ghcr.io/rocketflare-dev` and rebuilt with our start script (pinned by digest) — Neon's official "Neon Local"
+needs a cloud account; `neon` in deployment has no read cache and pays a round trip per query
+(p95 is measured per app when it switches, not gated); `test-neon` installs no plugins, so a
+plugin's own tests run under `neon` only in a local `pnpm test:neon`; the TEST database is pinned to
 5433, so two checkouts cannot run `pnpm test` at once. `--db-url` with a loopback URL (a native
 Postgres) still looks like this checkout's Docker database to preflight and `dev:db:*`, and a
 re-run of the bootstrap without the flag checks for Docker again.
@@ -400,7 +424,8 @@ zero-length span, not an OTLP span event, and is not traced when the answer's ro
 
 Two standalone tomls (D6) kept identical in everything code can see by `wrangler-parity.test.ts`.
 Account-scoped names carry `-staging`. Neon uses one project with a branch and role per
-environment, and Hyperdrive points at the direct host. Tagging `X.Y.Z` (which must equal the root
+environment; under `postgres` Hyperdrive points at the direct host, under `neon` the Worker's
+`DATABASE_URL` secret holds the pooled one (D35). Tagging `X.Y.Z` (which must equal the root
 version) deploys staging; publishing the Release deploys production. `ci.yml` (→ `gate.yml`) is the
 single gate, which `deploy.yml` calls. `pnpm provision <phase>` / `/rf-provision` automates
 accounts → resources → secrets → deploy over REST. Reference: `docs/DEPLOY.md`, `SETUP.md` Part 3.

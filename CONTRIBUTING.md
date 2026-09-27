@@ -185,7 +185,9 @@ adds one step, because rocketflare.dev keeps its own copy of the release list.
 - **Postgres is the truth.** Realtime events are nudges that make the UI re-query; job and run state
   lives in rows; vectors live in pgvector under the tenant predicate.
 - **Drizzle only, parameters only.** SQL goes through Drizzle or the `sql` tag with bound parameters;
-  never string concatenation. `postgres.js` is the only driver.
+  never string concatenation. Two drivers (D35) — Neon serverless or postgres.js — behind
+  `openDatabase`; code outside `db/client.ts` never sees which, and reads raw results through
+  `rows()` / `affected()`.
 - **Optional bindings degrade loudly or silently by design.** A missing binding either no-ops
   (rate limit, tracing, realtime) or throws/503s (queue, storage, workflows) — the service header says
   which; a new binding must choose.

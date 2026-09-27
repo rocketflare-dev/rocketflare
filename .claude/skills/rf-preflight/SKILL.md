@@ -26,6 +26,10 @@ preflight — `/rf-traces` explains the backends), then the `— pnpm dev:status
 When `DATABASE_URL` in `.dev.vars` points off this machine (set by `pnpm bootstrap --db-url`, e.g.
 a Neon branch), `1/10 toolchain` reads `docker skipped (external database <host>/<db>)` and
 `4/10 database` checks that host. No Docker is needed then, so don't suggest installing it.
+`4/10 database` also names the LOCAL driver (`Connected to … (postgres driver)` / `(neon driver)`,
+D35 — `DATABASE_DRIVER` in `.dev.vars`, not the toml, which holds the DEPLOYED one). `postgres` is
+the default and needs nothing but the database; `neon` against the Docker database also needs the
+Neon proxy container (`pnpm dev:db:status` shows the driver and the proxy URL).
 `pnpm dev:status` on its own prints this repo's running dev processes and whoever holds
 :3000 / :3001 — or `DEV_UI_PORT` / `DEV_API_PORT` when set (shell or `.dev.vars`) — (another checkout is *reported*, never touched) — run it again if the first block
 scrolled away.
@@ -58,6 +62,9 @@ hint are authoritative; the table below adds what each fix *does*.
 | `OAUTH_ENCRYPTION_KEY` empty or shorter than 32 chars | the one required secret is blank | as above — generate a 64-hex value; **never** reuse a value from another environment |
 | dev Postgres not running / unhealthy | the container is stopped | `pnpm dev:db:up` — starts this checkout's container on the port in `DATABASE_URL`, or the next free one (data persists in the named volume); `pnpm dev:db:status` lists every dev database on the machine |
 | database unreachable with the container up | `DATABASE_URL` in `.dev.vars` disagrees with the compose file | compare `DATABASE_URL` to `POSTGRES_DB/USER/PASSWORD` in `apps/web/docker-compose.dev.yml`; fix `.dev.vars` (a renamed kit is the usual cause — `docs/ADAPTING.md` §1) |
+| `4/10 database` fails with `(neon driver)` locally and the container is up | the Neon proxy is down, or `NEON_LOCAL_PROXY` in `.dev.vars` points at a port nothing listens on | `pnpm dev:db:up --neon` — (re)starts the proxy on this checkout's port and rewrites `NEON_LOCAL_PROXY`; or `pnpm dev:db:up --postgres` to go back to the default local driver (stops the proxy) |
+| `DATABASE_DRIVER=neon needs the DATABASE_URL secret` from `wrangler dev` / `loadConfig` | the Worker is on `neon` with no URL | locally, `DATABASE_URL` is missing from `.dev.vars` — re-run `/rf-setup`; deployed, the Worker secret is missing — `pnpm provision secrets <env>` (`/rf-provision`) |
+| test run under `neon` (`pnpm test:neon`) cannot connect | the test proxy (:4433) is not up | `pnpm web test:db:up:neon` — starts the test Postgres with the proxy in front |
 | migrations pending / `rocketflare_app` role missing | schema behind the code | `pnpm db:migrate` — role → migrations → grants, idempotent (SETUP.md 1.4) |
 | wrangler not logged in | Workers AI (chat, agents, embeddings, document conversion) will not answer | `pnpm web exec wrangler login` in the user's own terminal (browser OAuth) — or accept it and run offline: chat/agents 503 until a key or tenant provider exists (SETUP.md 2.5) |
 | port :3000 / :3001 (or `DEV_UI_PORT` / `DEV_API_PORT`) held by this repo | a previous `pnpm dev` is still alive | `pnpm dev:stop` — kills only this checkout's dev tree, supervisor first, looping until quiet |

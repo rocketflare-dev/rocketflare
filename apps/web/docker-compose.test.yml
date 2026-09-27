@@ -1,6 +1,11 @@
 # Test Postgres on 5433. `max_connections=300` because vitest runs several forks, each with
 # its own pools; at the 100 default the suite flaked ~1 in 8 with "53300 too many clients".
 # Keep in step with the Postgres service in .github/workflows/ci.yml.
+#
+# `neon-proxy-test` (profile `neon`, off by default) is the Neon HTTP/WebSocket proxy the `neon`
+# driver talks to (D35): `pnpm test:neon` and CI's `test-neon` job start it; the gate never does.
+# Our build on a mirror of a community image packaging Neon's open-source proxy, PINNED BY DIGEST (rules/database.md). It
+# creates a `neon_control_plane` schema in the database it fronts; nothing in the kit reads it.
 services:
   postgres-test:
     image: pgvector/pgvector:pg17
@@ -17,3 +22,24 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+
+  neon-proxy-test:
+    profiles: ["neon"]
+    image: ghcr.io/rocketflare-dev/local-neon-proxy@sha256:fbc2c4dd398d7f8b530bc11e0dbc7e24176d4db7bca2f4d88f21b5b4e50580f8
+    container_name: rocketflare-test-neon-proxy
+    # Our image (docker/Dockerfile.neon-proxy): the mirrored proxy with docker/neon-proxy-start.sh
+    # baked in as the entrypoint, ~10x faster locally than the image's own script. Baked, not
+    # mounted: Colima and remote Docker contexts cannot see a checkout outside $HOME.
+    environment:
+      PG_CONNECTION_STRING: postgres://test:test@postgres-test:5432/rocketflare_test
+      PROXY_ROLE_PASSWORD: test
+    ports:
+      - "4433:4444"
+    depends_on:
+      postgres-test:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf -X POST http://localhost:4444/sql -H 'Neon-Connection-String: postgresql://test:test@localhost/rocketflare_test' -d '{\"query\":\"select 1\",\"params\":[]}' >/dev/null"]
+      interval: 2s
+      timeout: 5s
+      retries: 15

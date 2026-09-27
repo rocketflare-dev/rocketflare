@@ -26,6 +26,26 @@ jobs:
     name: Gate
     uses: ./.github/workflows/gate.yml
 
+  # The api suite again under the `neon` driver (D35). The gate runs `postgres` — local development
+  # does — but a fresh copy DEPLOYS on `neon`, so this job is what tests that path before a deploy.
+  # It uses the compose file rather than a `services:` container so the proxy image is pinned in
+  # one place and the database gets the same `max_connections=300`. Required: a copy that deploys
+  # on `postgres` everywhere may delete it (docs/NEON-DRIVER.md §5).
+  test-neon:
+    name: Tests under the neon driver
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # `test:neon` starts the test Postgres + the Neon proxy (`--profile neon`) and runs the api,
+      # api-isolated and driver projects with DATABASE_DRIVER=neon.
+      - run: pnpm web test:neon
+
   # What does a fresh clone of this kit install? (D31, decisions 2 and 5.)
   #
   # `defaultPlugins` in .rocketflare.json is a list of OBJECTS: `{ id, repo, ref?, subdir? }` —

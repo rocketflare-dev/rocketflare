@@ -6,9 +6,11 @@ ships as *inert scaffolding*: policies exist on every tenant table, the app role
 log in, and turning enforcement on is a configuration change gated by the spike below (D1).
 
 Why not on by default: the proven RLS pattern (a session GUC on a pinned connection) assumes
-session-mode pooling. Hyperdrive is a transaction-mode pooler that resets connections between uses,
-so the GUC must be set *inside a transaction* per request, and Hyperdrive's query cache is
-undocumented for reads after `SET`. Nobody flips this without measuring it first.
+session-mode pooling. Both deployed paths (D35) are transaction-mode poolers that reset connections
+between uses — Hyperdrive under `DATABASE_DRIVER = "postgres"`, Neon's pooler under `neon` — so the
+GUC must be set *inside a transaction* per request (`set_config(…, true)`, transaction-local, which
+both allow; under `neon` the transaction runs over the handle's WebSocket pool). Hyperdrive's query
+cache is also undocumented for reads after `SET`. Nobody flips this without measuring it first.
 
 ## What ships inert
 
@@ -18,7 +20,7 @@ undocumented for reads after `SET`. Nobody flips this without measuring it first
 | `RLS_EXCLUDED_TABLES` with reasons | `apps/web/src/db/schema/rls.ts` | the allow-list for tables without a tenant column |
 | `apps/web/tests/api/rls-coverage.test.ts` | catalog-driven | fails CI if a tenant table lacks a policy or an untenanted table lacks an exclusion |
 | `apps/web/scripts/db-roles.ts --phase=role\|grants` | wrapped by `pnpm db:migrate` | creates `rocketflare_app` via SQL — `NOLOGIN`, `NOSUPERUSER`, `NOBYPASSRLS` (not a `neon_superuser`; set explicitly only when the owner is a superuser, verified after on every host); grants DML; REVOKEs auth-infrastructure tables |
-| `withTenantScope(db, tenantId, fn)` | `apps/web/src/db/tenant-scope.ts` | `off` → `fn(db)`. `enforce` → `db.transaction(tx => set_config('app.tenant_id', $1, true); fn(tx))` on the `HYPERDRIVE_APP` client |
+| `withTenantScope(db, tenantId, fn)` | `apps/web/src/db/tenant-scope.ts` | `off` → `fn(db)`. `enforce` → `db.transaction(tx => set_config('app.tenant_id', $1, true); fn(tx))` on an app-role client — not wired yet: `HYPERDRIVE_APP` under `postgres`, an `APP_DATABASE_URL` Worker secret under `neon` |
 | `apps/web/tests/api/rls.test.ts` | skipped unless `enforce` | the enforcement properties (zero rows on a missing predicate, `42501` on a cross-tenant write) |
 
 Threat model, stated honestly: RLS defends against a **forgotten predicate**, not SQL injection —
@@ -26,14 +28,17 @@ the app role can call `set_config` itself.
 
 ## The spike (half a day; run before anyone sets `enforce`) — 03 §9b
 
-Against a Neon branch plus two real Hyperdrive configs (owner role; SQL-created `rocketflare_app`, both on
-the **direct** host), from `wrangler dev --remote` or a deployed preview Worker:
+Run it for the driver the deployment uses (D35). **`postgres`**: a Neon branch (or your Postgres)
+plus two real Hyperdrive configs (owner role; SQL-created `rocketflare_app`, both on the **direct**
+host). **`neon`**: the branch's pooled host for both roles, no Hyperdrive — step 2 does not apply
+(Neon has no query cache), and step 5 watches Neon's pooler instead. From `wrangler dev --remote`
+or a deployed preview Worker:
 
 1. **Correctness** — 200 concurrent requests alternating tenants A/B through the transactional
    `set_config(..., true)` path. Zero cross-tenant rows; a predicate-less `select count(*)` inside
    the transaction returns only the tenant's rows; a query *outside* any transaction on the app
    binding returns zero rows (fail-closed proof).
-2. **Cache leak** — caching **enabled**: tenant A runs `select * from <table>` (no predicate) in
+2. **Cache leak** (`postgres` only) — caching **enabled**: tenant A runs `select * from <table>` (no predicate) in
    its transaction, then tenant B runs the identical statement. If B ever sees A's rows, the app
    binding must be created `--caching-disabled`. Repeat with caching disabled to confirm.
 3. **Latency** — p50/p95 of `BEGIN + set_config + one select + COMMIT` vs a bare select, with and
@@ -43,30 +48,33 @@ the **direct** host), from `wrangler dev --remote` or a deployed preview Worker:
    branch as the project owner; `ALTER DEFAULT PRIVILEGES` and `REVOKE` succeed; `pg_roles` shows
    `rolbypassrls = false` for `rocketflare_app`; the owner (a `neon_superuser` member) still bypasses
    policies without `FORCE`.
-5. **Pool behaviour** — hold the transaction open 2 s in 50 concurrent requests; watch Hyperdrive
-   connection count and error rate (validates the documented warning about long transactions).
+5. **Pool behaviour** — hold the transaction open 2 s in 50 concurrent requests; watch Hyperdrive's
+   (or Neon's) connection count and error rate (validates the documented warning about long transactions).
 
 **Go/no-go.** Go if 1 passes, 2 is fixable by `--caching-disabled`, and 3 costs under ~10 ms p95
 with Smart Placement. Then `enforce` is promoted to "supported" here and this doc gains the numbers.
-No-go: this section is rewritten as "not supported over Hyperdrive; a direct Neon connection for
+No-go: this section is rewritten as "not supported over <that driver>; a direct Neon connection for
 the app role is the alternative, at connection-setup cost". Record the outcome and date below.
 
 > Spike outcome: _not yet run_ (Track R in the build plan).
 
 ## Turning `enforce` on (only after a Go)
 
-1. Create the second Hyperdrive per environment, **caching disabled**, pointing at the direct host
-   with the `rocketflare_app` credential:
-   `pnpm --filter @rocketflare/web exec wrangler hyperdrive create <app>-<env>-app --connection-string="<app role url>" --caching-disabled`
-   (wrangler lives in `apps/web`; the root has no `pnpm exec wrangler`)
-2. Add `[[hyperdrive]] binding = "HYPERDRIVE_APP"` to **both** tomls (parity test), plus a
-   `localConnectionString` using the local app role.
+1. Wire the app-role connection into `withTenantScope`'s caller (the kit reads none today), then
+   give the Worker the connection:
+   - `postgres`: a second Hyperdrive per environment, **caching disabled**, pointing at the direct
+     host with the `rocketflare_app` credential —
+     `pnpm --filter @rocketflare/web exec wrangler hyperdrive create <app>-<env>-app --connection-string="<app role url>" --caching-disabled`
+     (wrangler lives in `apps/web`; the root has no `pnpm exec wrangler`)
+   - `neon`: `wrangler secret put APP_DATABASE_URL` with the app role's POOLED URI, per environment.
+2. `postgres` only: add `[[hyperdrive]] binding = "HYPERDRIVE_APP"` to **both** tomls (parity test),
+   plus a `localConnectionString` using the local app role.
 3. Set `APP_DATABASE_URL` for `apps/web/scripts/db-roles.ts` in the migration environment (GitHub
    Environment secret, and `apps/web/.dev.vars` locally). The username must equal `APP_ROLE` in `rls.ts`;
    the script reconciles the role's password to the URL, so credential and grant cannot drift.
    Run `pnpm db:migrate` (roles → migrate → grants) once against each database.
 4. Flip `TENANT_SCOPE_MODE = "enforce"` in `[vars]` — staging first, soak, then production.
-5. Watch: error rate, `42501` count, p95 latency, Hyperdrive connection metrics. **A 404 for a row
+5. Watch: error rate, `42501` count, p95 latency, Hyperdrive's (or Neon's) connection metrics. **A 404 for a row
    the user should see is the signature failure** — a genuinely cross-tenant read is missing its
    escape hatch (`apps/web/tests/config/unscoped-allowlist.test.ts` pins the allowed ones).
 

@@ -1,222 +1,159 @@
-# Neon serverless as the only database driver (D35)
+# Two database drivers: Neon serverless or postgres.js (D35)
 
-This is the design for replacing postgres.js and Hyperdrive with the Neon serverless driver. It
-would be kit **0.15.0**, a breaking release. The rules that stay true after it ships go in
-`docs/CONCEPTS.md` §4 and §10, and they replace D2 ("postgres.js is the only driver").
+Status: **built in kit 0.15.0** (non-breaking). The rules that stay true live in
+`docs/CONCEPTS.md` §4 and §10 (D35 replaces D2, "postgres.js is the only driver"), the operator's
+view in `docs/DEPLOY.md` § Database driver, and the conventions in `.claude/rules/database.md`.
+This file keeps the design record: what was decided, why, what was measured, and what was
+rejected.
 
-Status: **proposed, not built.** It was agreed in outline on 2026-09-27 and is to be reviewed
-before any work starts. 0.14.0 shipped the non-breaking changes from the same request (OIDC, the
-external deployer, dev ports, `bootstrap --db-url`, the `db-roles` Neon fix).
+History: the first draft (2026-09-27) made Neon the ONLY driver, a breaking release that removed
+Hyperdrive. On review the same day it became two drivers, so production can run on any Postgres;
+then Neon became the deployed default for fresh copies while local development and the gate stay
+on postgres.js (§7).
 
 ## 1. Decision
 
-Drizzle over the **Neon serverless driver** becomes the kit's one database driver, everywhere:
-Worker, queues, cron, workflows, scripts and tests.
+`DATABASE_DRIVER` picks one of two Drizzle drivers for the Worker, queues, cron, workflows and
+scripts:
 
-- **Queries** go over HTTP (`drizzle-orm/neon-http`), which is one round trip per query.
-- **`db.transaction(...)`** goes over a WebSocket `Pool` (`drizzle-orm/neon-serverless`) opened
-  lazily for that request and closed with the handle.
-- **Locally and in tests**, the same driver points at the compose Postgres through a Neon proxy
-  container.
-- **postgres.js leaves the runtime, and Hyperdrive leaves the kit.**
+| | `neon` | `postgres` |
+|---|---|---|
+| Driver | Neon serverless: neon-http per query, a WebSocket `Pool` per `db.transaction` | postgres.js |
+| Deployed path | HTTPS / WebSocket → Neon only | Hyperdrive → any Postgres |
+| Worker holds | `DATABASE_URL` secret (pooled Neon URI) | `[[hyperdrive]] HYPERDRIVE` |
+| Read cache | none | Hyperdrive's (60 s default) |
+| Hyperdrive configs (25 per account) | none | one per environment |
+| Default for | a fresh copy's deployments; `bootstrap --db-url` on a Neon branch | local dev, the gate, every pre-0.15 copy |
 
-Opting in behind a `DATABASE_DRIVER` switch was considered and rejected (§8).
+It is set in two layers:
+
+- **Deployed — the tomls' `[vars]`.** The kit's say `"neon"` and carry no `[[hyperdrive]]` block
+  (wrangler refuses a deploy naming an id that does not exist). **Missing means `postgres`**, so
+  copies from before 0.15.0 are unchanged.
+- **Local — `.dev.vars` / `.env.test`.** `postgres`: postgres.js over TCP to the compose database.
+  This overrides the toml for `wrangler dev`, the scripts and the tests.
 
 ## 2. Why
 
-**Hyperdrive caps a fleet.** An account gets 25 Hyperdrive configs, which is roughly 12 apps with
-staging and production. A platform that runs many kit apps can't give each one Hyperdrive.
+- **Hyperdrive caps a fleet.** 25 configs per account is ~12 apps with staging and production.
+- **Without Hyperdrive, postgres.js is slow**: direct TCP from the Worker measured ~800 ms per
+  request. Neon HTTP measured ~105 ms per query against ~95 ms through Hyperdrive.
+- **Coding sandboxes have no TCP out**, so `migrate`, `seed` and `db-roles` could not reach
+  Postgres there with postgres.js.
+- **But Neon cannot be the only way in.** Hyperdrive is how a copy reaches a non-Neon Postgres, and
+  a single app with one Hyperdrive config has none of the problems above.
+- **Two drivers are cheap here.** Almost all data access is Drizzle's query builder, which maps
+  both the same. Core had exactly two driver-specific result reads (`auth/sessions.ts`,
+  `scheduled.ts`) plus two uses of `db.execute<T>()` in `services/traces.ts` and
+  `services/agents/runs.ts`, all found by the type change in §3.
 
-**Without Hyperdrive, postgres.js is slow.** It falls back to direct TCP from the Worker, measured
-at about 800 ms per request. Neon's HTTP path was measured at about 105 ms per query, against
-about 95 ms through Hyperdrive.
+## 3. What was built
 
-**Coding sandboxes have no TCP out.** Only HTTPS and WebSocket leave them, so `migrate`, `seed`
-and `db-roles` can't reach Postgres there at all with postgres.js.
+- **`apps/web/src/db/client.ts`** — `openDatabase(env)` replaces eight hand-built resolvers
+  (middleware, `streamDatabase`, the jobs consumer, `scheduled`, both workflow step helpers, the
+  span store; scripts via `getScriptDatabase`). `Database` is `PgDatabase<PgQueryResultHKT, typeof
+  schema>`, so a raw `execute()` is `unknown` and the old `tx as unknown as Database` casts are gone.
+  The neon handle is neon-http with its `transaction` delegated to a lazily created `Pool` (max 1)
+  that `close()` ends. `rows()` / `affected()` read either result shape; `@/plugins/api` exports
+  them to plugins.
+- **`loadConfig`** — `DATABASE_DRIVER` (enum, default `postgres`), `NEON_LOCAL_PROXY` (URL);
+  `neon` without `DATABASE_URL`/`PREVIEW_DATABASE_URL` is a `ConfigError` at startup.
+  `AppBindings = Cloudflare.Env & { HYPERDRIVE?: Hyperdrive }`.
+- **The guard** — `tests/config/driver-results.test.ts` (TypeScript AST over `src/`, plugins
+  included): no cast, index or `.rows`/`.rowCount`/`.count`/`.length` on an `execute()` result, no
+  cast to a `{ count | rowCount | rows }` literal, no driver import outside `db/client.ts`.
+- **Scripts** — `apps/web/scripts/lib/sql.ts` (`openScriptSql`: text + `$n` params, `transaction`,
+  over postgres.js or a Neon `Pool`) under `migrate.ts` (the `neon-serverless` migrator under
+  `neon`), `db-roles.ts`, `test-db-connection.ts` and `provision.ts`. Scripts read the driver from
+  the **environment only** (the `db:*` scripts load `.dev.vars`); there is no fallback to the
+  toml, so `db:migrate:ci` is postgres.js unless CI sets the var. Script and fixture handles
+  (`getScriptDatabase`) use the Pool for everything under `neon` (`poolOnly`).
+- **Tomls and provisioning** — `DATABASE_DRIVER = "neon"`, no `[[hyperdrive]]` block. The parity
+  test wants the block in both files or neither, and none in a `neon` file. `pnpm provision
+  cloudflare <env> --driver neon|postgres` rewrites both tomls; `secrets`/`deploy` put the pooled
+  URI under `neon`; `--rotate` re-puts it (`syncWorkerDatabaseUrl`) where `postgres` updates
+  Hyperdrive.
+- **Local** — `pnpm dev:db:up --neon|--postgres` (per-checkout proxy port from :4444, writes
+  `DATABASE_DRIVER` + `NEON_LOCAL_PROXY`); the bootstrap writes `DATABASE_DRIVER=postgres` when
+  absent, `neon` for a `*.neon.tech` `--db-url`, and takes `--driver`.
+- **Tests** — the gate runs `postgres`. A `driver` vitest project (`tests/driver/`) runs the code
+  that differs through `openDatabase`: in the gate under `postgres`, under `neon` in
+  `pnpm test:neon` and CI's required `test-neon` job, which also run the whole api suite. Under
+  `neon` that suite takes ~30 s.
 
-**Two driver paths would rot.** The gate exercises one driver. An opt-in second driver would be
-tested only by a side CI job, and it would still need helpers and a type cast (§8). Keeping one
-tested path matters more than keeping Hyperdrive.
+## 4. The local Neon proxy
 
-## 3. What changes
+`ghcr.io/rocketflare-dev/local-neon-proxy:rf-<n>` — OUR image (`apps/web/docker/Dockerfile.neon-proxy`):
+a byte-identical mirror (`:2026-03-27`, same digest) of the community image
+`ghcr.io/timowilhelm/local-neon-http-proxy` (Neon's open-source proxy plus Caddy, CC0) with our
+start script baked in as the entrypoint. **Pinned by digest** in both compose files (profile `neon`;
+the test proxy on :4433). The kit therefore depends on no third party's registry. Neon's official
+"Neon Local" proxies to cloud branches, which breaks zero-credential local development.
 
-### 3.1 The client (`apps/web/src/db/client.ts`)
-- **`Database`** becomes the Neon HTTP drizzle type, honestly typed. Its `transaction` delegates to
-  a `neon-serverless` `Pool` db created on first use, and `close()` ends that pool.
-  - Both result types expose `.rows` / `.rowCount`, so there is one result shape.
-  - If the transaction types don't unify, `Database` becomes the shared `PgDatabase<…>` base type.
-- **One resolver, `openDatabase(env)`,** replaces the eight hand-built ones. Each currently builds
-  `{ HYPERDRIVE, PREVIEW_DATABASE_URL, DATABASE_URL }` itself:
-  - `middleware/database.ts`
-  - `utils/routes/route-helpers.ts` (`streamDatabase`)
-  - `queues/jobs.ts`
-  - `scheduled.ts`
-  - `workflows/agent-run.ts`
-  - `plugins/api/workflow.ts`
-  - `observability/span-store.ts`
-  - `getScriptDatabase`
+The script is BAKED, not bind-mounted: a mount only works where the Docker VM can see the checkout
+(Colima and remote contexts share `$HOME` at most), and a missing source silently mounts as an
+empty directory — measured on Colima with a checkout under `/tmp`.
 
-  The URL is `PREVIEW_DATABASE_URL || DATABASE_URL`.
-- **Local routing:** a `NEON_LOCAL_PROXY` var (e.g. `http://localhost:4444`) in `.dev.vars` and
-  `.env.test`. When it is set, the client points `neonConfig.fetchEndpoint` and `wsProxy` at it,
-  with `useSecureWebSocket = false`. It is unset in deployed environments, so there is no host
-  sniffing.
+Out of the box it measured **~70 ms per query** against ~0.3 ms of actual work, and failed under a
+parallel suite. The proxy's `postgres` auth backend (a mock control plane) caches no role secret,
+so every HTTP query paid a 4096-round SCRAM exchange plus two fresh backend logins; its endpoint
+rate limiter (500/s) then rejected the suite with "Too many connections to this endpoint";
+and HTTP connection pooling is opt-in, which only `-pooler` hosts trigger. Logging was not a
+factor. `apps/web/docker/neon-proxy-start.sh` replaces the image's start script: it re-hashes the
+throwaway local role's unchanged password with ONE SCRAM round, raises the rate limit, and pools
+HTTP always — **~8 ms per query**. Real Neon caches secrets, so none of this applies deployed. The
+proxy creates a `neon_control_plane` schema, which nothing reads.
 
-### 3.2 Result shapes
-`db.execute()` returns `{ rows, rowCount, … }` instead of a postgres.js `RowList`, which is an
-array with `.count`. These core sites move to `.rows` / `.rowCount`:
-- `auth/sessions.ts:133,202`: the session resolver, which runs on every request
-- `services/traces.ts:134,182`: check that json columns still parse
-- `services/agents/runs.ts:724-736`
-- `scheduled.ts:78-81`: the delete count
+Changing the script means rebuilding: the command is in the Dockerfile's header (COPY-only, so
+both platforms build without emulation), then pin the new index digest in both compose files.
 
-Anything indexing `rows[0]` on a result becomes a type error, which is how we want it to fail.
-A cast such as `as unknown as Array<…>` or a `.count` read still compiles and then breaks at
-runtime, so a **config test in the gate** fails on those two patterns across `apps/web/src`,
-installed plugins included. There is no runtime guard.
+## 5. Measured traps
 
-### 3.3 Scripts
-- `migrate.ts`: the `neon-serverless` migrator over a `Pool`. It keeps `CREATE EXTENSION vector`
-  and the `-pooler` → direct-host rewrite.
-- `db-roles.ts`: a Pool client with `BEGIN` / `COMMIT` replaces `sql.begin`.
-- `seed.ts`, `test-db-connection.ts`, `provision.ts` and the fact-table scripts go through
-  `getScriptDatabase` or a Pool.
-- `postgres` stays a **devDependency only**, for `drizzle-kit studio` and ad-hoc access to the
-  local Postgres. `rules/database.md` bans it (and `pg`) at runtime.
+- **Raw arrays** — postgres.js with `fetch_types: false` returns a `text[]` from raw SQL as the
+  literal `"{x,y}"`; Neon parses it. Raw SQL returning a list uses `json_agg` / `to_jsonb`.
+- **Raw timestamps** — a `Date` under postgres.js, a string under neon-http; code reading one wraps
+  it (`asDate`). The query builder maps both.
+- **Raw bigint** — a string under both.
 
-### 3.4 Tomls, secrets, provisioning
-- **Tomls:** the `[[hyperdrive]]` blocks leave both files. The parity test drops `HYPERDRIVE` from
-  the baseline bindings, and `worker-configuration.d.ts` is regenerated.
-- **The Worker's `DATABASE_URL`** becomes a Worker secret holding the **pooled** Neon URI.
-  - `pnpm provision secrets <env>` writes it from the credentials `resolveNeon` already fetches.
-  - `syncHyperdrivePassword` becomes `syncWorkerDatabaseUrl`, so `--rotate` can't leave the Worker
-    with a dead password.
-  - The Hyperdrive creation and toml patching in `provision.ts` / `provision/patch-toml.ts` are
-    removed.
-- **The CI `DATABASE_URL`** (the GitHub Environment secret used by `db:migrate:ci`) keeps its name
-  and stays on the **direct** host. It's the same name in a different store, and DEPLOY.md spells
-  out which is which.
-- **Production Postgres must be Neon.** Hyperdrive was the only way to reach any other Postgres.
+`tests/driver/driver.test.ts` pins all three, per driver.
 
-### 3.5 RLS enforce mode
-`withTenantScope` in enforce mode already runs `db.transaction(tx => set_config('app.tenant_id', …,
-true); fn(tx))`. That now runs over the WebSocket Pool, which is exactly its job.
-
-- The app-role connection becomes an **`APP_DATABASE_URL` Worker secret** (pooled host), replacing
-  the never-wired `HYPERDRIVE_APP` binding. Nothing in `apps/web/src` reads it today, so no copy
-  can be using enforce mode.
-- `set_config(…, true)` is transaction-local, so Neon's transaction-mode pooler is fine.
-- RLS.md's Hyperdrive cache-leak spike step and the second `--caching-disabled` Hyperdrive config
-  both go away.
-
-### 3.6 Local compose and tests
-- **The proxy:** `ghcr.io/timowilhelm/local-neon-http-proxy` sits in front of the dev and test
-  Postgres. It is a community image that packages Neon's open-source proxy, not an official Neon
-  product.
-  - It is **pinned by digest**, not tag, in both compose files, with the pin noted in
-    `rules/database.md`.
-  - If it is abandoned, the fallback is our own image built from Neon's open-source `proxy`.
-  - Neon's official "Neon Local" needs a cloud account, which would break zero-credentials local
-    development.
-- **Ports:** `dev-db.mjs` scans a per-checkout port for the proxy, as it does for Postgres, and
-  writes `NEON_LOCAL_PROXY`.
-- **Tests:** `tests/mocks/bindings.ts` sets `DATABASE_URL` + `NEON_LOCAL_PROXY` instead of stubbing
-  `HYPERDRIVE`. CI's Postgres service gains the proxy.
-
-## 4. Costs and risks
+## 6. Costs and risks (as shipped)
 
 | Risk | Handling |
 |---|---|
-| Breaking for every copy: tomls, secrets, compose, the `Database` type | `breaking: true` with a step-by-step porting note (§5) and a dry run of it on a scratch copy before tagging |
-| Hyperdrive's default 60 s read cache disappears (the kit provisions it without `--caching-disabled`) | Stated in the note. Watch database load after cutover |
-| Multi-query request latency over HTTP | No go/no-go gate: this is the only path to the fleet goal. Watch p95 for a day after cutover, and fix forward (first candidate: batch session + membership in one neon-http `batch()`) |
-| A WebSocket handshake per transaction, e.g. every chat retrieval (`SET LOCAL` in `retrieval.ts`) | Accepted: it sits inside a multi-second model call. Measure after cutover |
-| A community proxy image becomes a hard dependency of dev, CI and every bootstrap | Digest pin, plus the self-built fallback (§3.6) |
-| drizzle-cube (analytics) reads results itself from the handle it is given | Must be proven by the spike (§6). If neon-http breaks it, the cube route gets a Pool-backed handle |
-| Neon HTTP limits (response size, statement timeouts, no multi-statement) | Covered by the full gate through the proxy. Keep large exports on the Pool |
+| A fresh copy develops on `postgres` and deploys on `neon` | `test-neon` on every PR; the guard catches driver-specific reads before either; `pnpm test:neon` / `dev:db:up --neon` reproduce locally |
+| An upgrading copy picks up the kit's `DATABASE_DRIVER = "neon"` | tomls are never patched as text by `/rf-upgrade`; its porting rules say not to carry the value; if one did, `loadConfig` fails at startup on the missing secret |
+| `neon` has no read cache and a round trip per query | measured per app when it switches (staging p95 against the Hyperdrive baseline); first fix: batch session + membership in one neon-http `batch()` |
+| A WebSocket handshake per transaction under `neon` (every chat retrieval's `SET LOCAL`) | accepted — it sits inside a multi-second model call |
+| A community image in `test-neon` and `dev:db:up --neon` | digest pin, our own start script, the mirror/build fallback (§4); the default dev loop never pulls it |
+| drizzle-cube (analytics) reads results from the handle it is given | drizzle-cube normalises both shapes itself; analytics 3.4.1 passes the handle as drizzle-cube's type. Checked once before release: all four plugins' 241 tests, `cube-isolation` included, pass under both drivers. In CI the plugins pass runs `postgres` only — `test-neon` installs no plugins (known gap) |
 
-## 5. Upgrading a copy
+## 7. Considered and rejected
 
-Order matters. The plugin compatibility check works by name (`uses \ ledger`), so it can't see
-the `Database` type change.
+- **Neon as the only driver** (the first draft). One tested path, no Hyperdrive — but production
+  would have to be Neon, and every copy would take a breaking cutover to fix a fleet problem it may
+  not have. The draft's objections to two drivers did not survive the code: two driver-specific
+  reads in core, helpers needed anyway (plugins 3.4.0 already wrote one), and the `PgDatabase` base
+  removed casts rather than adding one.
+- **`neon` through the proxy locally and in the gate** (the second draft). Local would match a
+  fresh copy's deployments, but it puts a community image in every bootstrap and test run for a
+  difference the guard, the `driver` project and `test-neon` already cover.
+- **`postgres` as the deployed default for fresh copies.** A fresh copy would need Hyperdrive
+  before its first deploy and could not deploy from a sandbox.
+- **A missing `DATABASE_DRIVER` meaning `neon`** — upgrading would silently switch every existing
+  copy's driver.
+- **Inferring the driver** from a missing binding or a `*.neon.tech` host. A missing binding would
+  silently change drivers, and Neon behind Hyperdrive is a valid `postgres` setup. Only the
+  bootstrap looks at the host, to pick a `.dev.vars` default.
+- **A WebSocket `Pool` for every query on the Worker** — a handshake per request. HTTP for
+  queries plus a pool for transactions matched the measurements. (Node-side handles do use the
+  pool for everything — they hold one connection for thousands of queries.)
+- **Scaling test timeouts under `neon`** — the slowness was the proxy (§4), not the tests.
+- **Renaming the CI secret** (`MIGRATION_DATABASE_URL`) — churn for existing copies; DEPLOY.md
+  names the three `DATABASE_URL`s instead.
 
-1. **Plugins 3.4.0 first** (`minKit` 0.13.0). Analytics reads `execute()` results in both shapes,
-   so it runs on 0.13, 0.14 and 0.15. A copy can take it any time. `defaultPlugins` in
-   `.rocketflare.json` still pins analytics at the stale `3.0.0`, and 0.15.0 bumps it.
-2. **Upgrade the kit to 0.15.0**, then run `pnpm typecheck && pnpm web test:config` and fix every
-   flagged `execute()` site to use `.rows` / `.rowCount`.
-3. **Set the Worker secret per environment:** `NEON_API_KEY=… pnpm provision secrets staging`, or
-   `wrangler secret put DATABASE_URL` with the pooled URI from the Neon console. The 0.14 Worker
-   ignores it, so this can happen before the deploy.
-4. **Deploy staging,** check `/api/ready`, and watch p95. Then do production.
-5. **Keep the Hyperdrive configs for about a week.** `wrangler rollback` to 0.14 restores that
-   version's `HYPERDRIVE` binding and needs the config to still exist. There are no migrations
-   (`migrations: []`), so the schema is identical in both directions. Deleting the configs is a
-   separate cleanup step, never part of the upgrade.
-6. By hand: the compose file and `.dev.vars` (`NEON_LOCAL_PROXY`).
+## 8. Open questions
 
-Before tagging, send known copies a heads-up covering what changes, the cutover, the rollback
-story and plugins-first, and offer to pair on their production cutover. There is no rc tag: the
-tag pattern and deploy pipeline assume plain `X.Y.Z`, and the scratch-copy dry run gives the same
-confidence.
-
-## 6. Spike (functional, before building)
-
-The spike proves the proxy and driver can do everything the kit does. It is not a performance
-gate. If the community image fails a check, we build our own proxy image; the direction doesn't
-change.
-
-- neon-http queries through the proxy
-- a `neon-serverless` Pool transaction with `set_config(…, true)` and `SET LOCAL`
-- the drizzle `neon-serverless` migrator, including `CREATE EXTENSION vector`
-- one proxy serving both the dev and test databases, or one proxy each
-- drizzle-cube over a Neon handle: the kit's analytics `cube-isolation` test
-- `pnpm test` runtime through the proxy, recorded against today's
-
-## 7. Work breakdown
-
-1. The spike (§6).
-2. Plugins 3.4.0: a dual-shape helper in analytics (written in plugins PR #6), and a lockstep
-   release with "no change" notes for the other plugins.
-3. Kit branch:
-   - the client and resolver (§3.1)
-   - result shapes and the gate guard (§3.2)
-   - scripts (§3.3)
-   - tomls, provisioning and secrets (§3.4)
-   - RLS (§3.5)
-   - compose and test harness (§3.6)
-   - `defaultPlugins` → 3.4.0
-4. Docs:
-   - CONCEPTS §4 and §10 (D2 replaced by D35)
-   - CLAUDE.md stack line
-   - `rules/database.md`
-   - DEPLOY.md (topology, secrets, "the Worker holds `DATABASE_URL`", Neon required)
-   - RLS.md, SETUP.md
-   - the rf-provision skill and its reference
-5. Porting note (§5), then the scratch-copy dry run, then the heads-up, then the 0.15.0 release,
-   then the site.
-
-## 8. Considered and rejected
-
-- **Opt-in `DATABASE_DRIVER = postgres | neon`.** It is non-breaking, but it leaves two driver
-  paths with only one tested by the gate. It also needs `rowsOf` / `affectedRows` helpers plus a
-  type cast that lies under Neon.
-- **WebSocket Pool only.** One drizzle flavour and the simplest typing, but every request pays a
-  WebSocket handshake to Neon. HTTP for queries plus a Pool for transactions matches what was
-  measured.
-- **A perf go/no-go gate.** Dropped because there is no alternative path to the fleet goal.
-  Latency is watched after cutover and fixed forward instead.
-- **Renaming the CI secret** (e.g. `MIGRATION_DATABASE_URL`). It would be churn for existing
-  copies. Keeping both named `DATABASE_URL` is documented instead.
-- **Neon Local (official).** It proxies to cloud branches only, which breaks offline, zero-credential
-  local development.
-
-## 9. Open questions for review
-
-- Does `Database` stay the concrete neon-http type, or become the `PgDatabase<…>` base? This
-  decides what `docs/plugin-api.md` shows plugin authors.
-- Can the `.count` / cast guard live in `plugin check` too, so it catches a plugin before install
-  as well as in the host's gate?
-- Should `openDatabase` expose a `pool()` escape hatch for long exports and drizzle-cube, or keep
-  the Pool strictly behind `transaction`?
-- Is `NEON_LOCAL_PROXY` the right name for a var that also appears in `.env.test` and CI?
+- Should the raw-result guard also run in `pnpm plugin check`, catching a plugin before install
+  rather than in the host's gate?
+- Should `openDatabase` expose a `pool()` escape hatch under `neon` for long exports?

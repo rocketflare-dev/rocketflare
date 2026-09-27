@@ -61,7 +61,12 @@ export interface AuthContext {
   groups: GroupRef[]
 }
 
-export type AppBindings = Cloudflare.Env
+/**
+ * The generated `Cloudflare.Env` plus the one binding that exists only under
+ * `DATABASE_DRIVER = "postgres"` (D35): the kit's tomls ship without `[[hyperdrive]]`, so
+ * `wrangler types` omits it, while a copy on postgres has it. Optional either way.
+ */
+export type AppBindings = Cloudflare.Env & { HYPERDRIVE?: Hyperdrive }
 
 export interface AppVariables {
   /** Validated config — routes read this, never `c.env` (D3). */

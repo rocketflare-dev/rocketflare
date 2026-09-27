@@ -67,6 +67,13 @@ export function planDefaultPlugins(
 export class BootstrapUsageError extends Error {}
 export function isPostgresUrl(value: string): boolean
 export function isLocalDatabaseUrl(url: string): boolean
+export const DATABASE_DRIVERS: readonly ['neon', 'postgres']
+export function isNeonDatabaseUrl(url: string): boolean
+export function localDriverFor(input?: {
+  flag?: 'neon' | 'postgres' | null
+  dbUrl?: string | null
+  existing?: string
+}): 'neon' | 'postgres'
 export function databaseUrlTarget(url: string): string
 
 export interface BootstrapOptions {
@@ -81,6 +88,8 @@ export interface BootstrapOptions {
   as: string
   /** `--db-url`: bootstrap against this database instead of the Docker one. */
   dbUrl: string | null
+  /** `--driver` (D35): the local database driver, or null to keep / infer it. */
+  driver: 'neon' | 'postgres' | null
   check: boolean
   verbose: boolean
   help: boolean
