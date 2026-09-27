@@ -56,8 +56,30 @@ export interface FileClassification {
   reason?: string
   target?: string
   root?: string
+  /** Set when the file belongs to a declared skill (`skills/<dir>/…` → `.claude/skills/<dir>/…`). */
+  skill?: string
 }
-export function classifyPluginFile(relPath: string, id: string): FileClassification
+export function classifyPluginFile(
+  relPath: string,
+  id: string,
+  options?: { skills?: readonly string[] }
+): FileClassification
+
+/** `.claude/skills/` — where a plugin's declared skills land in a host. */
+export const SKILLS_ROOT: string
+export function pluginSkillDirs(manifest: { skills?: unknown } | null | undefined): string[]
+export function skillTarget(dir: string): string
+export function skillDirProblem(id: string, dir: unknown): string | null
+export function skillFrontmatter(
+  text: string
+): { name: string | null; description: string | null } | null
+export function skillFileProblems(dir: string, text: string | null | undefined): string[]
+export function undeclaredSkillDirs(
+  id: string,
+  declared: readonly string[],
+  hostDirs: readonly string[],
+  installedIds?: readonly string[]
+): string[]
 
 /**
  * The binding types provisioning can write. Pinned against
@@ -116,6 +138,8 @@ export interface PluginManifest {
   uses?: PluginUses
   paths?: string[]
   registries?: string[]
+  /** Skill directories shipped at `skills/<dir>/`, each `<id>` or `<id>-*`; land in `.claude/skills/`. */
+  skills?: string[]
   requires?: PluginRequires
   dependencies?: Record<string, Record<string, string>>
   bindings?: Array<{

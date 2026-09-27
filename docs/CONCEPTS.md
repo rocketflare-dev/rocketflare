@@ -530,7 +530,7 @@ as merging a PR. A plugin repo mirrors the host tree and ships **no migration, n
   tomls. DO migration tags `plugin-<id>-vN` are append-only.
 - **`plugin check` is an exhaustive oracle**: manifest fields, `minKit`, ledger diff, barrel lines,
   `*.rej`, migration tag, host dependencies, worker exports, a tenant-isolation test for tenant
-  tables, `onTenantDeleted` for DOs, table collisions. Each finding names file, line and exact edit.
+  tables, `onTenantDeleted` for DOs, table collisions, declared skills. Each finding names file, line and exact edit.
   Structural checks read comment-free code. CI runs the same command.
 - **Agent tools**: `agentTools(ctx)` may be async and may return `[]`. That is how a tool reaches
   only the tenants that turned it on: the plugin reads its own settings row for `ctx.scope.tenantId`.
@@ -555,6 +555,14 @@ as merging a PR. A plugin repo mirrors the host tree and ships **no migration, n
   UPDATES the row — text, owner, visibility, grants, chunks, the stored original — so a sync can
   replay safely. Group ids are checked against the tenant first. This file belongs to the
   `feature-knowledge` surface; a plugin that ingests requires it.
+- **Skills**: a plugin ships agent skills at `skills/<dir>/` in its own tree and declares them in
+  `"skills"`; `add` copies each to `.claude/skills/<dir>/` (the one place outside its roots a
+  plugin may write) and records it on the surface, `upgrade` REPLACES it (never patches — an agent's
+  instructions are the plugin's outright), `remove` deletes it. `<dir>` is `<id>` or `<id>-*` and
+  its SKILL.md `name:` equals it, so a plugin skill can never shadow a kit `rf-*` one; an existing
+  directory is a refusal. `plugin check` fails a declared skill that is missing, misnamed or
+  undescribed, and a directory in the plugin's namespace it does not declare. `.claude/` in a
+  plugin repository stays that repository's own tooling. `example-feature` ships one.
 - **Hooks** (`onTenantCreated`, `onTenantDeleted`, `seedDemo`) run post-commit, are idempotent,
   and are try/caught. DO state is purgeable only through instance names **derived** from the tenant
   id.
@@ -593,6 +601,7 @@ as merging a PR. A plugin repo mirrors the host tree and ships **no migration, n
 | 20 | Every plan step is declarative, agent or human (`kind` in `--json`) |
 | 21 | `plugin check` is an exhaustive, untiered oracle that reads comment-free code |
 | 22 | Table prefixes are convention; collisions are the check |
+| 23 | A plugin ships agent skills: `skills/<dir>/` → `.claude/skills/<dir>/`, namespaced by id, replaced on upgrade |
 
 **Known gaps:** no sandbox, review or signing; no rename migrations (expand/contract only); no
 cross-plugin FK tooling or `many()` onto core tables; `grants` is additive by convention only;
@@ -606,7 +615,9 @@ floor and ceiling. Public mounts (D34) get no rate limit of their own and no `@t
 (test them through `request()`); `verifyState` has no replay ledger — a token is reusable until it
 expires, so a plugin whose callback must run once records that itself; an ingested document's
 upsert reads the previous row before writing, so two racing re-ingests of a FILE may leave one
-replaced original behind in R2.
+replaced original behind in R2; a plugin skill edited in place is overwritten by the next
+`plugin upgrade` (copy it to a skill of your own first), and `check` validates a skill's name and
+description, not what it says — a stale command in a SKILL.md is caught only by reading it.
 
 ---
 

@@ -80,6 +80,7 @@ import {
   pluginManifestProblems,
   pluginPlatformProblems,
   pluginRoots,
+  pluginSkillDirs,
   removeBarrelLine,
   removeSteps,
   renderAddPlan,
@@ -88,8 +89,13 @@ import {
   renderSteps,
   resolveSubdir,
   revertCoreEdits,
+  SKILLS_ROOT,
+  skillDirProblem,
+  skillFileProblems,
+  skillTarget,
   surfaceDirectories,
   tableClashes,
+  undeclaredSkillDirs,
   workerExportNames,
 } from './lib/plugin-lib.mjs'
 import { applyReplacements, deriveNames, isBinary } from './lib/rename-lib.mjs'
@@ -520,7 +526,8 @@ function cmdAdd(args, host) {
   const vendored = isVendored({ repo, subdir }, host.kitRepo)
 
   // Every path, and the refusal that is the whole point of classifying them.
-  const files = source.files().map(p => ({ path: p, ...classifyPluginFile(p, m.id) }))
+  const skills = pluginSkillDirs(m)
+  const files = source.files().map(p => ({ path: p, ...classifyPluginFile(p, m.id, { skills }) }))
   const refused = files.filter(f => f.role === 'refused')
   if (refused.length > 0) {
     stop(
@@ -529,7 +536,27 @@ function cmdAdd(args, host) {
       ...refused.map(f => `  ${f.path}`),
       '',
       `A plugin owns ${pluginRoots(m.id).join(', ')} and nothing else — that is what makes an`,
-      'install reversible by deleting a directory. This is a bug in the plugin, not in your tree.'
+      'install reversible by deleting a directory — plus the skills its manifest declares',
+      '(skills/<dir>/ → .claude/skills/<dir>/). This is a bug in the plugin, not in your tree.'
+    )
+  }
+
+  // A skill is read by Claude Code on its NAME and DESCRIPTION alone, so one that is misnamed or
+  // undescribed is not a cosmetic fault: it is a skill that never triggers, or one that answers to
+  // another plugin's name. Refused here, before anything is copied.
+  const skillProblems = skills.flatMap(dir => {
+    const prefix = skillDirProblem(m.id, dir)
+    if (prefix) return [prefix]
+    const file = `skills/${dir}/SKILL.md`
+    return skillFileProblems(dir, source.has(file) ? source.read(file).toString('utf8') : null)
+  })
+  if (skillProblems.length > 0) {
+    stop(
+      1,
+      `error: ${m.id} declares skills this kit cannot install:`,
+      ...skillProblems.map(p => `  ${p}`),
+      '',
+      'That is a bug in the plugin. Nothing has been written.'
     )
   }
 
@@ -555,7 +582,11 @@ function cmdAdd(args, host) {
       `error: plugin '${m.id}' is already installed — \`pnpm plugin upgrade ${m.id}\` moves it forward`
     )
   }
-  const collisions = pluginRoots(m.id).filter(r => existsSync(abs(r)))
+  // A skill directory that is already there belongs to the kit (`rf-*`), to another plugin or to
+  // the person — and an install that overwrote it could not be undone by `remove`.
+  const collisions = [...pluginRoots(m.id), ...skills.map(skillTarget)].filter(r =>
+    existsSync(abs(r))
+  )
   if (collisions.length > 0) {
     stop(7, `error: these directories already exist:`, ...collisions.map(r => `  ${r}`))
   }
@@ -586,7 +617,7 @@ function cmdAdd(args, host) {
   })
 
   const byRoot = {}
-  for (const root of pluginRoots(m.id)) {
+  for (const root of [...pluginRoots(m.id), ...skills.map(skillTarget)]) {
     byRoot[root] = files.filter(f => f.role === 'copy' && f.root === root).length
   }
   const local = args.local || host.isKit
@@ -653,7 +684,8 @@ function cmdAdd(args, host) {
   for (const c of clashes) warn(`warning: ${describeClash(c)}`)
   installDependencies(m, 'add')
   const formatted = formatWritten([
-    ...targets,
+    // Skills are markdown for an agent, not code Biome formats.
+    ...targets.filter(t => !t.startsWith(SKILLS_ROOT)),
     ...barrels.map(k => BARRELS[k].file),
     ...coreEdits.keys(),
   ])
@@ -796,17 +828,6 @@ function cmdUpgrade(args, host) {
     dir: subdir === '' ? 'docs/upgrades' : `${subdir}/docs/upgrades`,
   })
 
-  const changes = collectChanges(m, from, to, { relative })
-  const files = changes.map(c => ({ ...c, ...classifyPluginFile(c.path, id) }))
-  const refused = files.filter(f => f.role === 'refused')
-  if (refused.length > 0) {
-    stop(
-      1,
-      `error: ${refused.length} changed file(s) fall outside ${id}'s roots:`,
-      ...refused.map(f => `  ${f.path}`)
-    )
-  }
-
   // The plugin's OWN manifest, at the version being installed — read BEFORE anything is applied,
   // because the anchor `plugin.json` in the tree is one of the files the patch overwrites.
   //
@@ -828,6 +849,25 @@ function cmdUpgrade(args, host) {
     ? JSON.parse(readFileSync(abs(surface.anchor), 'utf8'))
     : {}
 
+  // Classified against every skill either side declares: one the new release adds is declared by
+  // it, and one it stops declaring still has to be recognised so its directory can be removed
+  // below rather than refused as a stranger or left to rot.
+  const targetSkills = pluginSkillDirs(targetManifest ?? installedManifest)
+  const droppedSkills = pluginSkillDirs(installedManifest).filter(d => !targetSkills.includes(d))
+  const changes = collectChanges(m, from, to, { relative })
+  const files = changes.map(c => ({
+    ...c,
+    ...classifyPluginFile(c.path, id, { skills: [...targetSkills, ...droppedSkills] }),
+  }))
+  const refused = files.filter(f => f.role === 'refused')
+  if (refused.length > 0) {
+    stop(
+      1,
+      `error: ${refused.length} changed file(s) fall outside ${id}'s roots:`,
+      ...refused.map(f => `  ${f.path}`)
+    )
+  }
+
   // Every note's `requires_kit` is checked against THIS kit, because a plugin release may raise
   // its floor and the whole point of the range is that nobody finds out at the gate.
   const local = new Set(host.tracked)
@@ -838,7 +878,22 @@ function cmdUpgrade(args, host) {
   const patches = []
   const added = []
   const warnings = []
+  const skillDeletes = []
   for (const f of files) {
+    // **A skill is REPLACED, never patched.** It is instructions for an agent that the plugin
+    // owns outright — nobody is meant to edit it in place — so the release's bytes are the answer,
+    // and a file the release deleted is deleted rather than "left in place" like code.
+    if (f.skill) {
+      if (f.change === 'deleted' || droppedSkills.includes(f.skill)) skillDeletes.push(f.target)
+      else {
+        artifacts.write(
+          path.join('added', f.target),
+          materialise(m.showRaw(to, subdir === '' ? f.path : `${subdir}/${f.path}`), host.names)
+        )
+        added.push(f.target)
+      }
+      continue
+    }
     if (f.role === 'note') {
       if (f.change !== 'deleted')
         artifacts.write(
@@ -961,6 +1016,10 @@ function cmdUpgrade(args, host) {
   }
 
   for (const rel of added) writeInto(rel, readFileSync(path.join(workRoot, 'added', rel)))
+  for (const rel of skillDeletes) rmSync(abs(rel), { force: true })
+  // A skill the new release no longer declares goes as a WHOLE directory — the surface stops
+  // naming it below, so anything left would be a file no surface claims.
+  for (const dir of droppedSkills) rmSync(abs(skillTarget(dir)), { recursive: true, force: true })
   let rejected = 0
   if (patches.length > 0) {
     const combined = path.join(workRoot, 'apply.patch')
@@ -1064,6 +1123,14 @@ function cmdUpgrade(args, host) {
         surfaces: targetManifest.requires?.surfaces ?? [],
         plugins: targetManifest.requires?.plugins ?? [],
       }
+      // The skill directories are the one part of `paths` a release can move: it may add a skill
+      // or stop shipping one, and `remove` deletes exactly what the surface names.
+      entry.paths = [
+        ...new Set([
+          ...(entry.paths ?? []).filter(p => !p.startsWith(SKILLS_ROOT)),
+          ...targetSkills.map(d => `${skillTarget(d)}**`),
+        ]),
+      ]
     }
     writeManifestFile(host.sidecarIds.includes(id) ? host.sidecarPath : host.manifestPath, raw, {
       format: !host.sidecarIds.includes(id),
@@ -1243,6 +1310,16 @@ function cmdList(_args, host) {
  * Audit every installed plugin. One line per failure and exit 1 on any — this is the thing
  * `/rf-preflight` and CI run, so it says what is wrong rather than how to fix it.
  */
+/** The directories under `.claude/skills/` in this host — every skill, kit and plugin alike. */
+function hostSkillDirs() {
+  const root = abs(SKILLS_ROOT)
+  if (!existsSync(root)) return []
+  return readdirSync(root, { withFileTypes: true })
+    .filter(e => e.isDirectory())
+    .map(e => e.name)
+    .sort()
+}
+
 function cmdCheck(args, host) {
   const findings = []
   const ledger = requireLedger()
@@ -1397,6 +1474,41 @@ function cmdCheck(args, host) {
         file: f,
         problem: 'is a rejected hunk an upgrade left behind',
         fix: `apply it into ${f.replace(/\.rej$/, '')} by reading both, then delete ${f}`,
+      })
+    }
+
+    // **Skills, both ways.** A declared skill missing from `.claude/skills/` is one nobody's agent
+    // will ever find; one that is there but misnamed or undescribed never triggers; and a
+    // directory under this plugin's namespace that it does NOT declare is invisible to `remove`,
+    // so uninstalling would leave instructions behind for code that no longer exists.
+    const declaredSkills = pluginSkillDirs(anchor)
+    for (const dir of declaredSkills) {
+      const file = `${skillTarget(dir)}SKILL.md`
+      const problems = skillFileProblems(
+        dir,
+        existsSync(abs(file)) ? readFileSync(abs(file), 'utf8') : null
+      )
+      for (const problem of problems) {
+        add('fail', `${id}:skill:${dir}`, {
+          file: existsSync(abs(file)) ? file : s.anchor,
+          line: existsSync(abs(file)) ? 1 : jsonKeyLine(anchorSource, 'skills'),
+          problem,
+          fix: existsSync(abs(file))
+            ? `set the frontmatter to "name: ${dir}" and a one-paragraph "description:" saying when to use it`
+            : `reinstall it with \`pnpm plugin upgrade ${id}\` (or \`plugin remove\` + \`add\`), or drop "${dir}" from "skills"`,
+        })
+      }
+    }
+    for (const dir of undeclaredSkillDirs(
+      id,
+      declaredSkills,
+      hostSkillDirs(),
+      host.plugins.map(p => p.id)
+    )) {
+      add('fail', `${id}:skill-undeclared:${dir}`, {
+        file: skillTarget(dir),
+        problem: `is in '${id}'s namespace and '${id}' does not declare it in "skills"`,
+        fix: `add "${dir}" to "skills" in ${s.anchor} (and ship it at skills/${dir}/), or delete ${skillTarget(dir)}`,
       })
     }
 
@@ -1659,8 +1771,11 @@ function cmdExport(args, host) {
   let copied = 0
   for (const d of [...surfaceDirectories(surface), `docs/plugins/${id}`]) {
     if (!existsSync(abs(d))) continue
+    // A skill goes back to where a plugin ships it — `skills/<dir>/`, never `.claude/`, which in a
+    // plugin repository is that repository's own tooling and is never copied into a host.
+    const out = d.startsWith(SKILLS_ROOT) ? `skills/${d.slice(SKILLS_ROOT.length)}` : d
     for (const rel of walk(abs(d))) {
-      const file = path.join(target, d, rel)
+      const file = path.join(target, out, rel)
       mkdirSync(path.dirname(file), { recursive: true })
       writeFileSync(file, readFileSync(abs(`${d}/${rel}`)))
       copied += 1
@@ -1677,7 +1792,9 @@ function cmdExport(args, host) {
     // code it actually ships — the whole reason compatibility is observed rather than predicted.
     uses: usesOf(REPO_ROOT, id),
     minKit: floorOf(anchor),
-    paths: surface.paths,
+    // The skill directories are the HOST's half of a declared skill, derived from "skills" at
+    // every install — carrying them in "paths" would be a second statement of the same thing.
+    paths: (surface.paths ?? []).filter(p => !p.startsWith(SKILLS_ROOT)),
     registries: surface.registries,
   }
   writeFileSync(path.join(target, PLUGIN_MANIFEST_FILE), `${JSON.stringify(manifest, null, 2)}\n`)

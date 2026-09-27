@@ -56,6 +56,9 @@ blocks and **"Nothing written. Read the plan, then re-run with --apply to instal
   and stop. A surface `✖` names the symbol and the import that replaces it, so it is actionable
   without reading anything else.
 - `Files (n)` — a count per root, plus `(not copied) migrations/` for any install fragment.
+- `Skills` — only when the plugin ships agent skills: each `.claude/skills/<dir>/` it installs.
+  Nothing to do for them; after the install, tell the person the skill exists and what it is for
+  (its `description`), because a skill nobody knows about is only found by accident.
 - `Barrel lines` — the exact line each of the six barrels gains (the sixth, `worker-exports.ts`,
   only when the plugin ships a Durable Object or Workflow class).
 - `Dependencies` — what will be installed into which package.
@@ -203,6 +206,15 @@ supports, a floor with no ceiling — and **`uses`**, the host symbols it import
 `uses`**: `pnpm plugin export` derives it from the plugin's own imports, and a hand-written one is
 exactly the prediction this replaced. Re-export after any change to what the plugin imports, and
 paste the block it writes into the manifest.
+
+**Ship a skill with anything a person has to SET UP or OPERATE.** A plugin that needs an app
+registered somewhere, a secret created, a console clicked, or an error decoded should carry an
+agent skill that drives those steps and coaches the human through the ones only they can do. Put it
+at `skills/<id>/SKILL.md` (or `skills/<id>-<what>/`) in the plugin repository — frontmatter
+`name: <dir>` and a `description:` that says when to use it — list the directory in the manifest's
+`"skills"`, and `add` installs it at `.claude/skills/<dir>/`. Companion files (`reference.md`, one
+file per provider) sit beside SKILL.md and travel with it. Never put it under the repository's own
+`.claude/`, which is never copied. `pnpm plugin export` writes installed skills back to `skills/`.
 
 A plugin that builds on another (`requires.plugins: ["connectors"]`) is proved in CI by the kit's
 `plugin-ci.yml` with its requirements installed FIRST, resolved by id from the same repository — so

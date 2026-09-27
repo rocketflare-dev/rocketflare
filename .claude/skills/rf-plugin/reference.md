@@ -45,7 +45,8 @@ plugin is the worked example — `apps/web/src/plugins/example-feature/plugin.js
   "paths": [
     "apps/web/src/plugins/example-feature/**",
     "packages/shared/src/plugins/example-feature/**",
-    "apps/cli/src/plugins/example-feature/**"
+    "apps/cli/src/plugins/example-feature/**",
+    ".claude/skills/example-feature/**"
   ],
   "registries": [
     "apps/web/src/plugins/server.ts",
@@ -61,6 +62,7 @@ plugin is the worked example — `apps/web/src/plugins/example-feature/plugin.js
   "apiPrefixes": [],
   "vars": [],
   "workerExports": [],
+  "skills": ["example-feature"],
   "schema": { "tables": ["example_notes"], "rlsExcluded": [] },
   "migrations": ["example_notes, tenant-scoped, RLS policy"]
 }
@@ -123,6 +125,16 @@ Field notes, in the order they bite:
   file is the sixth barrel's half, `plugin add` writes the barrel line, and `plugin check` fails if
   the file does not export every name declared here. Cloudflare resolves `class_name` against the
   named exports of `src/worker.ts` and nowhere else, which is the whole reason the barrel exists.
+- **`skills`** are the agent skills the plugin ships, one directory name each. The plugin keeps
+  them at `skills/<dir>/SKILL.md` (plus any companion files — `reference.md`, one file per
+  provider…) in its OWN tree, and `add` copies each to **`.claude/skills/<dir>/`**, where Claude
+  Code finds it. `<dir>` is `<id>` or `<id>-<what>` — namespaced like a table, so it can never
+  shadow a kit `rf-*` skill — and the SKILL.md frontmatter `name:` must equal it, with a
+  `description:` that says WHEN to use it (that sentence is all an agent sees before choosing it).
+  A skill directory that already exists in the host stops the install (exit 7). `upgrade`
+  REPLACES a skill's files rather than patching them and deletes the ones a release dropped;
+  `remove` deletes the directory. `.claude/` at the root of a plugin repository is still that
+  repository's own tooling and is never copied — only `skills/` ships. `example-feature` ships one.
 - **`schema.tables`** drives the "generate a migration" step, the isolation-test check and the
   cross-plugin collision check below — so a table missing from it is a table nothing verifies;
   `schema.rlsExcluded` is the plugin's half of `RLS_EXCLUDED_TABLES`, with a reason, for a table
@@ -131,12 +143,13 @@ Field notes, in the order they bite:
 
 ## How `add` classifies each file of the source repo
 
-The rule it enforces: **a plugin writes only inside its own four roots**, so an install stays
-reversible by deleting a directory.
+The rule it enforces: **a plugin writes only inside its own four roots — plus the skills it
+declares** — so an install stays reversible by deleting a directory.
 
 | Role | Which paths | What happens |
 |---|---|---|
 | `copy` | `apps/web/src/plugins/<id>/`, `packages/shared/src/plugins/<id>/`, `apps/cli/src/plugins/<id>/`, `docs/plugins/<id>/` | copied and translated through the same `applyReplacements()` the rename used |
+| `copy` (skill) | `skills/<dir>/**` for a `<dir>` listed in `"skills"` | copied to `.claude/skills/<dir>/**`, translated like code; an UNdeclared `skills/<dir>` is `refused` |
 | `note` | `docs/upgrades/*` | copied to `docs/plugins/<id>/upgrades/` — the release chain `plugin upgrade` walks |
 | `fragment` | `migrations/**` | **never copied**; printed as a `pnpm db:generate --custom` step |
 | `meta` | `rocketflare-plugin.json`, `README.md`, `CHANGELOG.md`, `LICENSE`, `SECURITY.md` | read, not copied |
@@ -166,6 +179,11 @@ where the complaint is AT a place in a file, never fabricated. Per installed plu
 - for each of the six barrels, the **line and the half agree both ways** — a barrel that names a
   plugin half that is not on disk, and a half on disk that no barrel names;
 - no **`*.rej`** anywhere under its directories ("an upgrade left work behind");
+- **its skills, both ways**: every declared skill has `.claude/skills/<dir>/SKILL.md` whose
+  frontmatter `name:` is `<dir>` and whose `description:` is not empty (a skill without both never
+  triggers), and no directory in the plugin's namespace (`<id>` or `<id>-*`) exists that it does
+  NOT declare — `remove` would leave that one behind. When two installed ids share a prefix
+  (`example`, `example-feature`), a directory belongs to the longer one;
 - when it declares tables, **some migration tag names `plugin-<id>`** — otherwise the tables were
   never generated, which is the most common thing to have skipped;
 - **every declared dependency is really in the host `package.json`** — `plugin add --apply` runs
