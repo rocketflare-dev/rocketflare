@@ -6,6 +6,11 @@ copy of the kit forward without recreating anything its owner deleted.
 
 If you are running a copy: `pnpm kit:upgrade` tells you which of these you are missing.
 
+## 0.14.0 — 2026-09-27
+
+Five opt-in capabilities, all off by default: sign-in with any OIDC issuer, deploying through an external deployer so CI holds no Cloudflare token, configurable dev ports, `pnpm bootstrap --db-url` against an existing database with no Docker, and a `db-roles` fix so migrations and deploys work as Neon's owner role.
+[Porting note](docs/upgrades/0.14.0.md).
+
 ## 0.13.0 — 2026-09-27
 
 Plugins can ship agent skills: a plugin declares `"skills"`, keeps them at `skills/<dir>/`, and `pnpm plugin add` installs each at `.claude/skills/<dir>/`, where `upgrade` replaces and `remove` deletes it.
