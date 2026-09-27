@@ -4,6 +4,11 @@
  * `magicLinkRequestSchema` the server uses), and — only when the server says `devLogin` — the
  * seeded quick-login accounts. Server-side failures arrive as `?error=<code>`.
  *
+ * `oidcOnly` (`AUTH_OIDC_ONLY`): the page goes straight to `/auth/oidc` and shows nothing else.
+ * It does NOT auto-redirect after sign-out (`?signedOut=1`), after a failure (`?error=`) or for
+ * `?as=` — each would loop straight back through the issuer — and shows the one SSO button instead.
+ * The other methods are hidden, not disabled: the magic-link endpoint stays live for invitations.
+ *
  * `?as=<email>` (what `pnpm bootstrap` opens) signs in through the same dev-login call once on
  * mount. Threat model: this is login-CSRF against a dev-only route that already 404s outside
  * `APP_ENV=development`; the page honours it ONLY when the server reports `devLogin` AND the email
@@ -11,11 +16,15 @@
  */
 
 import { EnvelopeIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline'
-import { type MagicLinkRequest, magicLinkRequestSchema } from '@rocketflare/shared/auth'
+import {
+  type MagicLinkRequest,
+  magicLinkRequestSchema,
+  type OAuthProviderName,
+} from '@rocketflare/shared/auth'
 import { useEffect, useRef, useState } from 'react'
 import { Navigate, useSearchParams } from 'react-router-dom'
 import { AuthCard } from '@/ui/components/AuthCard'
-import { PROVIDER_ICONS, PROVIDER_LABELS } from '@/ui/components/icons/ProviderIcons'
+import { PROVIDER_ICONS, providerLabel } from '@/ui/components/icons/ProviderIcons'
 import { LoadingIndicator } from '@/ui/components/LoadingIndicator'
 import { FieldError, fieldErrorFor, SkeletonRows } from '@/ui/components/shared'
 import { useAuth } from '@/ui/hooks/useAuth'
@@ -30,6 +39,7 @@ export const LOGIN_ERROR_COPY: Record<string, string> = {
   expired: 'That sign-in link has expired. Request a new one below.',
   not_invited: "There's no invitation for that email address. Ask an administrator to invite you.",
   blocked: 'This account has been blocked. Contact an administrator.',
+  oidc_only: 'This organisation signs in through single sign-on only.',
 }
 const GENERIC_LOGIN_ERROR = 'Sign in failed. Please try again.'
 
@@ -79,6 +89,17 @@ export default function Login() {
     void devLogin(autoLoginEmail)
   }, [autoLoginEmail, status])
 
+  // OIDC-only: straight to the issuer, once — unless that would loop (see the header comment).
+  const oidcOnly = methods?.oidcOnly === true && (methods.providers ?? []).includes('oidc')
+  const signedOut = searchParams.get('signedOut') === '1'
+  const autoOidc = oidcOnly && !signedOut && !errorCode && !asEmail && status === 'unauthenticated'
+  const autoOidcFired = useRef(false)
+  useEffect(() => {
+    if (!autoOidc || autoOidcFired.current) return
+    autoOidcFired.current = true
+    hardNavigate(`/auth/oidc?returnUrl=${encodeURIComponent(returnUrl)}`)
+  }, [autoOidc, returnUrl])
+
   if (status === 'authenticated') return <Navigate to={returnUrl} replace />
 
   const forInvitation = returnUrl.startsWith('/invite/')
@@ -118,7 +139,19 @@ export default function Login() {
     )
   }
 
-  const providers = methods?.providers ?? []
+  if (autoOidc) {
+    return (
+      <AuthCard>
+        <div className="flex items-center gap-3 text-sm text-secondary">
+          <LoadingIndicator size="sm" />
+          Redirecting to {providerLabel('oidc', methods)}…
+        </div>
+      </AuthCard>
+    )
+  }
+
+  const providers: OAuthProviderName[] = oidcOnly ? ['oidc'] : (methods?.providers ?? [])
+  const showMagicLink = Boolean(methods?.magicLink) && !oidcOnly
   const nothingConfigured =
     methods && !methods.magicLink && providers.length === 0 && !methods.devLogin
 
@@ -163,14 +196,14 @@ export default function Login() {
                 onClick={() => signInWith(provider)}
               >
                 {busy === provider ? <LoadingIndicator size="sm" /> : <Icon className="w-5 h-5" />}
-                Continue with {PROVIDER_LABELS[provider]}
+                Continue with {providerLabel(provider, methods)}
               </button>
             )
           })}
         </div>
       )}
 
-      {methods?.magicLink && (
+      {showMagicLink && (
         <>
           {providers.length > 0 && <div className="divider text-xs text-muted">or</div>}
           <form onSubmit={requestMagicLink} className="space-y-3" noValidate>

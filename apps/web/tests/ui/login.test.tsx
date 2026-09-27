@@ -169,4 +169,50 @@ describe('Login', () => {
     )
     await waitFor(() => expect(screen.getByTestId('path')).toHaveTextContent('/'))
   })
+
+  describe('AUTH_OIDC_ONLY', () => {
+    const OIDC_ONLY = {
+      magicLink: true,
+      providers: ['oidc'],
+      devLogin: false,
+      oidc: { label: 'Acme SSO' },
+      oidcOnly: true,
+    }
+
+    it('goes straight to the issuer, carrying returnUrl', async () => {
+      render('/login?returnUrl=%2Fdocuments', OIDC_ONLY)
+      await waitFor(() =>
+        expect(hardNavigate).toHaveBeenCalledWith('/auth/oidc?returnUrl=%2Fdocuments')
+      )
+      expect(hardNavigate).toHaveBeenCalledTimes(1)
+      expect(screen.getByText(/Redirecting to Acme SSO/)).toBeInTheDocument()
+      expect(screen.queryByLabelText('Email address')).not.toBeInTheDocument()
+    })
+
+    it.each([
+      ['after sign-out', '/login?signedOut=1'],
+      ['after a failure', '/login?error=oauth_failed'],
+    ])('does not auto-redirect %s — one SSO button instead (no loop)', async (_label, route) => {
+      render(route, OIDC_ONLY)
+      const button = await screen.findByRole('button', { name: 'Continue with Acme SSO' })
+      expect(hardNavigate).not.toHaveBeenCalled()
+      // Every other method is hidden (not disabled: the magic-link endpoint stays live).
+      expect(screen.queryByLabelText('Email address')).not.toBeInTheDocument()
+      expect(screen.getAllByRole('button', { name: /Continue with/ })).toHaveLength(1)
+      fireEvent.click(button)
+      expect(hardNavigate).toHaveBeenCalledWith('/auth/oidc?returnUrl=%2F')
+    })
+
+    it('without oidcOnly the SSO button sits beside the other methods with its label', async () => {
+      render('/login', {
+        ...ALL_METHODS,
+        providers: ['google', 'oidc'],
+        oidc: { label: 'Acme SSO' },
+      })
+      await screen.findByRole('button', { name: 'Continue with Acme SSO' })
+      expect(screen.getByRole('button', { name: /Continue with Google/ })).toBeInTheDocument()
+      expect(screen.getByLabelText('Email address')).toBeInTheDocument()
+      expect(hardNavigate).not.toHaveBeenCalled()
+    })
+  })
 })

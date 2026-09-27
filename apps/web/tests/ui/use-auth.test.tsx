@@ -1,8 +1,9 @@
-import { screen, waitFor } from '@testing-library/react'
+import { fireEvent, screen, waitFor } from '@testing-library/react'
 import { useLocation } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { noTenantRoute, useAuth } from '@/ui/hooks/useAuth'
 import { api } from '@/ui/lib/api-client'
+import { hardNavigate } from '@/ui/lib/navigation'
 import { queryKeys } from '@/ui/lib/query-keys'
 import {
   makeSession,
@@ -11,6 +12,24 @@ import {
   stubFetch,
   unauthorizedResponse,
 } from './helpers/renderWithProviders'
+
+vi.mock('@/ui/lib/navigation', async importOriginal => {
+  const mod = await importOriginal<typeof import('@/ui/lib/navigation')>()
+  return { ...mod, hardNavigate: vi.fn() }
+})
+
+function LogoutProbe({ returnUrl }: { returnUrl?: string }) {
+  const { logout } = useAuth()
+  const location = useLocation()
+  return (
+    <div>
+      <button type="button" onClick={() => void logout(returnUrl)}>
+        Sign out
+      </button>
+      <span data-testid="path">{location.pathname + location.search}</span>
+    </div>
+  )
+}
 
 function Probe() {
   const { status, user, tenant, tenancyMode, isGlobalAdmin } = useAuth()
@@ -28,7 +47,39 @@ function Probe() {
 }
 
 describe('useAuth', () => {
-  afterEach(() => vi.unstubAllGlobals())
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.mocked(hardNavigate).mockReset()
+  })
+
+  it('logout (204) lands on /login?signedOut=1 — an OIDC-only login page must not bounce back', async () => {
+    stubFetch({ 'POST /auth/logout': () => new Response(null, { status: 204 }) })
+    renderWithProviders(<LogoutProbe />, { session: makeSession(), route: '/settings' })
+    fireEvent.click(screen.getByRole('button', { name: 'Sign out' }))
+    await waitFor(() => expect(screen.getByTestId('path')).toHaveTextContent('/login?signedOut=1'))
+    expect(hardNavigate).not.toHaveBeenCalled()
+  })
+
+  it('logout keeps a returnUrl beside signedOut', async () => {
+    stubFetch({ 'POST /auth/logout': () => new Response(null, { status: 204 }) })
+    renderWithProviders(<LogoutProbe returnUrl="/invite/abc" />, { session: makeSession() })
+    fireEvent.click(screen.getByRole('button', { name: 'Sign out' }))
+    await waitFor(() =>
+      expect(screen.getByTestId('path')).toHaveTextContent(
+        '/login?returnUrl=%2Finvite%2Fabc&signedOut=1'
+      )
+    )
+  })
+
+  it('logout (200 { endSessionUrl }) hands the browser to the OIDC issuer to end its session too', async () => {
+    const endSessionUrl =
+      'https://idp.test/logout?client_id=app&post_logout_redirect_uri=http%3A%2F%2Flocalhost%2Flogin%3FsignedOut%3D1'
+    stubFetch({ 'POST /auth/logout': { endSessionUrl } })
+    renderWithProviders(<LogoutProbe />, { session: makeSession(), route: '/settings' })
+    fireEvent.click(screen.getByRole('button', { name: 'Sign out' }))
+    await waitFor(() => expect(hardNavigate).toHaveBeenCalledWith(endSessionUrl))
+    expect(screen.getByTestId('path')).toHaveTextContent('/settings')
+  })
 
   it('is loading, then unauthenticated on 401', async () => {
     renderWithProviders(<Probe />, { session: null })

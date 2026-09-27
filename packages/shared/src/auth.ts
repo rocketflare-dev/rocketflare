@@ -51,7 +51,8 @@ export const sessionResponseSchema = z.object({
 })
 export type SessionResponse = z.infer<typeof sessionResponseSchema>
 
-export const oauthProviderNameSchema = z.enum(['google', 'microsoft'])
+/** `oidc` is the one generic OpenID Connect issuer a deployment may configure (`OIDC_ISSUER`). */
+export const oauthProviderNameSchema = z.enum(['google', 'microsoft', 'oidc'])
 export type OAuthProviderName = z.infer<typeof oauthProviderNameSchema>
 
 /** Which login methods the server has configured — drives the login page. */
@@ -60,8 +61,22 @@ export const authMethodsSchema = z.object({
   providers: z.array(oauthProviderNameSchema),
   /** `APP_ENV !== 'production'` only; the route 404s otherwise. */
   devLogin: z.boolean(),
+  /** Present only when an OIDC issuer is configured: the button text (`OIDC_LABEL`). */
+  oidc: z.object({ label: z.string() }).optional(),
+  /**
+   * `AUTH_OIDC_ONLY`: the login page goes straight to the issuer and HIDES every other method.
+   * Hides, not disables — the magic-link endpoint stays live for invitations and guests.
+   */
+  oidcOnly: z.boolean().optional(),
 })
 export type AuthMethods = z.infer<typeof authMethodsSchema>
+
+/**
+ * `POST /auth/logout` answers 204 — or, when the OIDC issuer advertises an `end_session_endpoint`,
+ * 200 with the URL the browser must visit to end the issuer's session too (RP-initiated logout).
+ */
+export const logoutResponseSchema = z.object({ endSessionUrl: z.string().url() })
+export type LogoutResponse = z.infer<typeof logoutResponseSchema>
 
 /** A same-origin relative path (`/settings/members`), never a full URL — open-redirect guard. */
 export const redirectToSchema = z

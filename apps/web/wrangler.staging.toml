@@ -40,6 +40,14 @@ OBSERVABILITY_SPAN_RETENTION_DAYS = "14"   # Tracing (D32): days of ai_spans the
 #   OTEL_EXPORTER_OTLP_ENDPOINT = "https://…"   # unset + Langfuse keys = <LANGFUSE_BASE_URL>/api/public/otel
 #   OBSERVABILITY_TRACE_URL = "https://cloud.langfuse.com/project/<id>/traces/{traceId}"
 #   Headers are a SECRET: `wrangler secret put OTEL_EXPORTER_OTLP_HEADERS` (k=v,k=v)
+# Single sign-on through any OIDC issuer — add these to BOTH files (SETUP.md "Sign in with any OIDC issuer"):
+#   OIDC_ISSUER = "https://idp.example.com/realms/acme"   # exactly the issuer's `issuer`; redirect URI {APP_URL}/auth/oidc/callback
+#   OIDC_CLIENT_ID = "rocketflare"
+#   OIDC_LABEL = "Acme SSO"                 # button text (default "Single sign-on")
+#   OIDC_SCOPES = "openid email profile"    # default; add "groups" if your issuer needs it
+#   AUTH_OIDC_ONLY = "false"                # "true" = login page goes straight to the issuer, other methods hidden
+#   OIDC_TRUST_EMAIL = "false"              # "true" = a MISSING email_verified counts as verified (single-tenant Entra); explicit false is always refused
+#   The client secret is a SECRET: `wrangler secret put OIDC_CLIENT_SECRET` (omit for a public client)
 # Secrets are NOT here: `wrangler secret put <NAME>` for every non-var in .dev.vars.example
 
 [placement]

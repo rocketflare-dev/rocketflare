@@ -159,6 +159,39 @@ const coreConfigSchema = z.object({
    * `.dev.vars.example` lists the kit's gated keys.
    */
   FEATURES_ENABLED: csvKeys,
+  /**
+   * Generic OpenID Connect sign-in (`providers/oidc.ts`). Unset → no `oidc` provider, the login
+   * page is exactly what it was. Set it to the issuer's `issuer` value VERBATIM (trailing slash
+   * included when the issuer has one) — discovery must echo it back or sign-in is refused.
+   */
+  OIDC_ISSUER: z.preprocess(
+    value => (typeof value === 'string' && value.trim() === '' ? undefined : value),
+    z.string().url().optional()
+  ),
+  OIDC_CLIENT_ID: optionalString,
+  /** Button text on the login page ("Sign in with …" is the UI's, not this). */
+  OIDC_LABEL: z.preprocess(
+    value => (typeof value === 'string' && value.trim() === '' ? undefined : value),
+    z.string().min(1).default('Single sign-on')
+  ),
+  /** Space-separated; `openid` is always sent whether listed or not. */
+  OIDC_SCOPES: z.preprocess(
+    value => (typeof value === 'string' && value.trim() === '' ? undefined : value),
+    z.string().min(1).default('openid email profile')
+  ),
+  /**
+   * `true` → the login page redirects straight to the OIDC issuer and hides the other methods, and
+   * `/auth/google|microsoft` refuse to start. Hides, not disables: the magic-link endpoint stays
+   * live for invitations. Requires `OIDC_ISSUER` + `OIDC_CLIENT_ID` (a config error otherwise).
+   */
+  AUTH_OIDC_ONLY: optionalBoolean(false),
+  /**
+   * Secure default `false`: an OIDC issuer that omits `email_verified` is not trusted for its
+   * email (the sign-in is refused as `email_unverified`). `true` treats a MISSING flag as verified
+   * — only for an issuer that controls the `email` claim (single-tenant Entra). An explicit
+   * `email_verified: false` is refused either way.
+   */
+  OIDC_TRUST_EMAIL: optionalBoolean(false),
 
   // ---- Secrets (.dev.vars locally, `wrangler secret put` deployed) — all optional here;
   //      features gate on presence (zero-creds first run) or demand them at use time. -------
@@ -175,6 +208,8 @@ const coreConfigSchema = z.object({
   GOOGLE_CLIENT_SECRET: optionalString,
   MICROSOFT_CLIENT_ID: optionalString,
   MICROSOFT_CLIENT_SECRET: optionalString,
+  /** Optional: a PUBLIC client (PKCE only) has none. Sent as HTTP Basic (`client_secret_basic`). */
+  OIDC_CLIENT_SECRET: optionalString,
   ANTHROPIC_API_KEY: optionalString,
   EMBEDDINGS_API_KEY: optionalString,
   LANGFUSE_PUBLIC_KEY: optionalString,
@@ -196,13 +231,20 @@ const pluginConfigShape: z.ZodRawShape = Object.assign(
   {},
   ...sharedPlugins.map(p => p.config ?? {})
 )
-const configSchema = coreConfigSchema.extend(
-  pluginConfigShape
-) as unknown as typeof coreConfigSchema
+const configSchema = coreConfigSchema.extend(pluginConfigShape).superRefine((cfg, ctx) => {
+  // An OIDC-only login page with no issuer would offer no way in at all.
+  if (cfg.AUTH_OIDC_ONLY && !(cfg.OIDC_ISSUER && cfg.OIDC_CLIENT_ID)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['AUTH_OIDC_ONLY'],
+      message: 'AUTH_OIDC_ONLY=true needs OIDC_ISSUER and OIDC_CLIENT_ID',
+    })
+  }
+}) as unknown as typeof coreConfigSchema
 
 export type AppConfig = z.infer<typeof coreConfigSchema>
 export type AppEnvName = AppConfig['APP_ENV']
-export type OAuthProviderName = 'google' | 'microsoft'
+export type OAuthProviderName = 'google' | 'microsoft' | 'oidc'
 
 /** Thrown by `loadConfig`; the message lists every missing/invalid key. */
 export class ConfigError extends Error {
@@ -250,5 +292,12 @@ export function configuredOAuthProviders(cfg: AppConfig): OAuthProviderName[] {
   const providers: OAuthProviderName[] = []
   if (cfg.GOOGLE_CLIENT_ID && cfg.GOOGLE_CLIENT_SECRET) providers.push('google')
   if (cfg.MICROSOFT_CLIENT_ID && cfg.MICROSOFT_CLIENT_SECRET) providers.push('microsoft')
+  if (hasOidc(cfg)) providers.push('oidc')
   return providers
 }
+
+/** An OIDC issuer is configured — issuer + client id (the secret is optional: public clients). */
+export const hasOidc = (cfg: AppConfig): boolean => Boolean(cfg.OIDC_ISSUER && cfg.OIDC_CLIENT_ID)
+
+/** `AUTH_OIDC_ONLY` in force (loadConfig has already refused it without an issuer). */
+export const isOidcOnly = (cfg: AppConfig): boolean => cfg.AUTH_OIDC_ONLY && hasOidc(cfg)

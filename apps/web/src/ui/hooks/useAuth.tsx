@@ -11,6 +11,7 @@
  * `lib/navigation.ts`.
  */
 import {
+  logoutResponseSchema,
   type SessionResponse,
   type SignupMode,
   sessionResponseSchema,
@@ -21,7 +22,13 @@ import {
 import { type QueryClient, queryOptions, useQuery, useQueryClient } from '@tanstack/react-query'
 import { createContext, type ReactNode, useCallback, useContext, useEffect, useMemo } from 'react'
 import { ApiError, api, setUnauthorizedHandler } from '@/ui/lib/api-client'
-import { currentPath, currentPathname, loginUrl, navigateTo } from '@/ui/lib/navigation'
+import {
+  currentPath,
+  currentPathname,
+  hardNavigate,
+  loginUrl,
+  navigateTo,
+} from '@/ui/lib/navigation'
 import { queryKeys } from '@/ui/lib/query-keys'
 
 export type AuthStatus = 'loading' | 'authenticated' | 'unauthenticated'
@@ -50,6 +57,14 @@ export interface AuthContextValue {
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null)
+
+/**
+ * `/login?…&signedOut=1`: an OIDC-only login page must not bounce a user who just signed out
+ * straight back through the issuer (whose own session may still be live). Harmless otherwise.
+ */
+export function signedOutUrl(login: string): string {
+  return `${login}${login.includes('?') ? '&' : '?'}signedOut=1`
+}
 
 /**
  * Where a signed-in user with NO active tenant belongs (D9). A pending/rejected access request
@@ -143,11 +158,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const logout = useCallback(
     async (returnUrl?: string) => {
+      let endSessionUrl: string | null = null
       try {
-        await api.post('/auth/logout', undefined, { showErrorToast: false })
+        // 204 → undefined; 200 → the OIDC issuer's end-session URL (RP-initiated logout).
+        const res = await api.post('/auth/logout', undefined, {
+          showErrorToast: false,
+          schema: logoutResponseSchema.optional(),
+        })
+        endSessionUrl = res?.endSessionUrl ?? null
       } finally {
         replaceSession(queryClient, null)
-        navigateTo(returnUrl ? loginUrl(returnUrl) : '/login', { replace: true })
+        if (endSessionUrl) hardNavigate(endSessionUrl)
+        else navigateTo(signedOutUrl(returnUrl ? loginUrl(returnUrl) : '/login'), { replace: true })
       }
     },
     [queryClient]

@@ -21,6 +21,7 @@ export type LoginErrorCode =
   | 'oauth_failed'
   | 'oauth_state_mismatch'
   | 'provider_linked_elsewhere'
+  | 'oidc_only'
 
 /** A relative same-origin path, else `fallback`. Never `/login` (redirect loop). */
 export function safeRedirectPath(value: string | null | undefined, fallback = '/'): string {

@@ -29,7 +29,7 @@ Cloudflare Worker (`apps/web`), a CLI (`apps/cli`), private zod contracts
   + DO/Workflow classes (`src/worker.ts`). Node 24, pnpm 10
 - **API**: Hono 4, zod contracts from `@rocketflare/shared`, CASL. **DB**: Postgres 17 + pgvector —
   Neon via Hyperdrive deployed, Docker locally; Drizzle over `postgres.js` (only driver), 1 client/request
-- **Auth**: arctic (Google, Microsoft) + magic link + dev-login; `__Host-session`; API keys; KV rate limit
+- **Auth**: arctic (Google, Microsoft, any OIDC issuer — jose-verified `id_token`, off by default) + magic link + dev-login; `__Host-session`; API keys; KV rate limit
 - **Async / realtime**: Queues (`JOBS_QUEUE`), `NotificationsHub` DO `/ws`, R2 (`FILES`), cron, Workflows
 - **AI**: `services/ai/resolve` (`agent_models` → tenant `ai_configs` → platform key → Workers AI via
   `[ai]`, zero key → 503); Anthropic / OpenAI-compatible / Workers AI chat streamed as **AG-UI**
@@ -123,7 +123,10 @@ mints a tenant API key `cli:<host>` → `?key=&tenant_id=&tenant_name=`; stored 
 `CHAT_KNOWLEDGE_TOOLS` (`true|false` — chat may call the knowledge tools) ·
 `CHAT_HISTORY_MAX_CHARS` (history a turn replays; older turns are summarised by `chat.compact`) ·
 `FEATURES_ENABLED` (D30 — comma-separated feature keys this deployment ships at all; fail-closed,
-consulted only for a flag marked `environmentGated`; the rollout state itself lives in Postgres).
+consulted only for a flag marked `environmentGated`; the rollout state itself lives in Postgres) ·
+`OIDC_ISSUER`/`OIDC_CLIENT_ID`/`OIDC_LABEL`/`OIDC_SCOPES`/`AUTH_OIDC_ONLY`/`OIDC_TRUST_EMAIL`
+(optional SSO through any OIDC issuer, declared only when used — `SETUP.md` 2.3b; secret
+`OIDC_CLIENT_SECRET`).
 
 Rules (auto-loaded by path): `.claude/rules/api.md` · database.md · ui.md · cli.md · testing.md ·
 code-quality.md · cloudflare.md. Runbooks: `docs/DEPLOY.md` · `docs/RLS.md`

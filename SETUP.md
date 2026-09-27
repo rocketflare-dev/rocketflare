@@ -334,6 +334,41 @@ An account whose `email_verified` is false is refused — for every provider.
 Absent: button hidden. Verify: round trip. Redirect URIs are always derived from `APP_URL`; there
 is no `*_REDIRECT_URI` variable to set.
 
+### 2.3b Sign in with any OIDC issuer (Keycloak, Okta, Entra single-tenant, Auth0…)
+One generic OpenID Connect issuer per deployment, beside or instead of the buttons above
+(`docs/CONCEPTS.md` §2).
+1. At the issuer, create a **confidential web client** (or a public one — PKCE only, no secret) with
+   the authorization-code flow. Redirect URI: `{APP_URL}/auth/oidc/callback` for each origin, as in
+   2.2. Post-logout redirect URI (if the issuer asks): `{APP_URL}/login?signedOut=1`
+2. Set `OIDC_ISSUER` to the issuer's `issuer` value **exactly** (open
+   `<issuer>/.well-known/openid-configuration` and copy it, trailing slash and all — a mismatch is
+   refused), `OIDC_CLIENT_ID`, and `OIDC_CLIENT_SECRET` unless the client is public. Optional:
+   `OIDC_LABEL` (button text, default "Single sign-on"), `OIDC_SCOPES` (default
+   `openid email profile`), `AUTH_OIDC_ONLY=true` (the login page goes straight to the issuer and
+   hides every other method; the magic-link endpoint stays live for invitations — it hides, it does
+   not disable), `OIDC_TRUST_EMAIL=true` (see Entra below). Locally these go in `.dev.vars`; deployed, everything but the secret is a
+   `[vars]` entry in **both** tomls (commented templates are there) and `OIDC_CLIENT_SECRET` is a
+   Worker secret (3.5)
+3. Issuer notes:
+   - **Keycloak**: `OIDC_ISSUER=https://<host>/realms/<realm>`; "Client authentication" on for a
+     confidential client. A `groups` mapper is optional — the claim is read, not stored
+   - **Okta**: `OIDC_ISSUER=https://<org>.okta.com` (org server) or
+     `https://<org>.okta.com/oauth2/default`; app type "Web", grant "Authorization Code"
+   - **Entra ID, single tenant**: `OIDC_ISSUER=https://login.microsoftonline.com/<tenant-id>/v2.0`;
+     add the optional `email` claim to the ID token (Token configuration) — without it the kit
+     falls back to the userinfo endpoint. Entra sends no `email_verified`, and the kit refuses a
+     missing flag by default, so set **`OIDC_TRUST_EMAIL=true`** — only for a single tenant whose
+     directory controls the `email` claim. (Multi-tenant Entra is the Microsoft button, 2.3)
+   - **Auth0**: `OIDC_ISSUER=https://<tenant>.auth0.com/` — **with** the trailing slash, which is
+     how Auth0 spells its issuer; Regular Web Application
+
+Absent (`OIDC_ISSUER` blank): no `oidc` provider, the login page is unchanged. `AUTH_OIDC_ONLY=true`
+without issuer and client id refuses to boot (config error). Verify: `/auth/methods` shows
+`"oidc": { "label": … }`; "Continue with <label>" round-trips; `Sign out` returns to
+`/login?signedOut=1` (through the issuer's logout page when it advertises `end_session_endpoint`).
+An account whose `email_verified` is `false` — or missing, unless `OIDC_TRUST_EMAIL=true` — is
+refused (`?error=email_unverified`); an existing kit user is linked by verified email.
+
 ### 2.4 First admin
 `BOOTSTRAP_ADMIN_EMAILS=you@example.com` (comma-separated). Promoted to global admin on the first
 **verified** login, logged loudly. Absent: promote by hand once —
@@ -646,10 +681,11 @@ Verify: the run is green; `pnpm web exec wrangler deployments list -c wrangler.s
 
 ### 3.5 Worker secrets
 For every non-`[vars]` name in `apps/web/.dev.vars.example` (skip `DATABASE_URL` — deployed envs use
-Hyperdrive — and `APP_DATABASE_URL` unless enabling RLS):
+Hyperdrive — and `APP_DATABASE_URL` unless enabling RLS; the `OIDC_*` names other than
+`OIDC_CLIENT_SECRET`, and `AUTH_OIDC_ONLY`, are `[vars]` — Part 2.3b):
 ```bash
 # one per name: OAUTH_ENCRYPTION_KEY RESEND_API_KEY BOOTSTRAP_ADMIN_EMAILS GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET
-#   MICROSOFT_CLIENT_ID MICROSOFT_CLIENT_SECRET ANTHROPIC_API_KEY EMBEDDINGS_API_KEY LANGFUSE_PUBLIC_KEY LANGFUSE_SECRET_KEY
+#   MICROSOFT_CLIENT_ID MICROSOFT_CLIENT_SECRET OIDC_CLIENT_SECRET ANTHROPIC_API_KEY EMBEDDINGS_API_KEY LANGFUSE_PUBLIC_KEY LANGFUSE_SECRET_KEY
 #   OTEL_EXPORTER_OTLP_HEADERS
 printf '%s' "$OAUTH_ENCRYPTION_KEY" | pnpm web exec wrangler secret put OAUTH_ENCRYPTION_KEY -c wrangler.staging.toml
 ```
