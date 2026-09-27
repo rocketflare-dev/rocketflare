@@ -221,6 +221,12 @@ The worker never receives `DATABASE_URL` in deployed environments — it uses `H
   `default_transaction_read_only` GUC that blocks DDL; the source app hit exactly that.
 - `apps/web/scripts/db-roles.ts` (RLS role) also needs the direct host — `ALTER DEFAULT PRIVILEGES` and `CREATE ROLE`
   are session-level DDL.
+- Neon's owner role (`neondb_owner`) is **not a superuser** — it has `CREATEROLE` and is a
+  `neon_superuser` member. Postgres lets only a superuser name `SUPERUSER`, `BYPASSRLS` or
+  `REPLICATION` in `ALTER ROLE`, even to switch them off, so `db-roles.ts` sets those three only when
+  `current_setting('is_superuser') = 'on'` (locally) and relies on `CREATE ROLE`'s defaults on Neon.
+  Its post-check still fails the run if `rocketflare_app` ends with `rolsuper` or `rolbypassrls`.
+  Before 0.14.0 this step failed on Neon with `permission denied to alter role`.
 - Tests never use Neon (`safetyCheck` requires `localhost`). `PREVIEW_DATABASE_URL` is an inert hook
   for per-PR Neon branches if previews are ever reinstated.
 
