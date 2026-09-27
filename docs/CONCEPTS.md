@@ -428,6 +428,11 @@ cycle). Detail: `packages/shared/CLAUDE.md`.
   once per session, with the CHANGELOG summaries and a pointer to `/rf-upgrade`. Copies only, a
   fresh `startup` only, never in CI, `ROCKETFLARE_UPDATE_CHECK=0` to silence; any failure is
   silence.
+- **The kit reminds its own maintainers too**: two `PreToolUse` hooks on `git commit` —
+  `changelog-nudge.mjs` (source changed, no `unreleased.md` entry) and `release-site-nudge.mjs`
+  (root `package.json` version changed → update rocketflare.dev after tagging). Both answer with
+  `hookSpecificOutput.additionalContext`, because a `PreToolUse` hook's plain stdout reaches only
+  the debug log. Silent in a copy.
 - **Released history is never rewritten** — every copy pins a commit.
 
 **Known gaps:** a copy pinned before 0.10.1 has no update hook until it upgrades (and
