@@ -6,6 +6,11 @@ copy of the kit forward without recreating anything its owner deleted.
 
 If you are running a copy: `pnpm kit:upgrade` tells you which of these you are missing.
 
+## 0.15.0 — 2026-09-27
+
+The kit now runs on two database drivers, chosen per deployment by `DATABASE_DRIVER`: the Neon serverless driver (a fresh copy's default, no Hyperdrive) or postgres.js through Hyperdrive (any Postgres, and what an existing copy keeps).
+[Porting note](docs/upgrades/0.15.0.md).
+
 ## 0.14.0 — 2026-09-27
 
 Five opt-in capabilities, all off by default: sign-in with any OIDC issuer, deploying through an external deployer so CI holds no Cloudflare token, configurable dev ports, `pnpm bootstrap --db-url` against an existing database with no Docker, and a `db-roles` fix so migrations and deploys work as Neon's owner role.
