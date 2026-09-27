@@ -83,10 +83,16 @@ It is set in two layers:
 
 ## 4. The local Neon proxy
 
-`ghcr.io/rocketflare-dev/local-neon-proxy` — our byte-identical mirror (same digest) of the
-community image `ghcr.io/timowilhelm/local-neon-http-proxy`, Neon's open-source proxy plus Caddy,
-so the kit does not hang on a third party's registry — **pinned by digest** in both compose files (profile `neon`; the test proxy on :4433). Neon's
-official "Neon Local" proxies to cloud branches, which breaks zero-credential local development.
+`ghcr.io/rocketflare-dev/local-neon-proxy:rf-<n>` — OUR image (`apps/web/docker/Dockerfile.neon-proxy`):
+a byte-identical mirror (`:2026-03-27`, same digest) of the community image
+`ghcr.io/timowilhelm/local-neon-http-proxy` (Neon's open-source proxy plus Caddy, CC0) with our
+start script baked in as the entrypoint. **Pinned by digest** in both compose files (profile `neon`;
+the test proxy on :4433). The kit therefore depends on no third party's registry. Neon's official
+"Neon Local" proxies to cloud branches, which breaks zero-credential local development.
+
+The script is BAKED, not bind-mounted: a mount only works where the Docker VM can see the checkout
+(Colima and remote contexts share `$HOME` at most), and a missing source silently mounts as an
+empty directory — measured on Colima with a checkout under `/tmp`.
 
 Out of the box it measured **~70 ms per query** against ~0.3 ms of actual work, and failed under a
 parallel suite. The proxy's `postgres` auth backend (a mock control plane) caches no role secret,
@@ -98,7 +104,8 @@ throwaway local role's unchanged password with ONE SCRAM round, raises the rate 
 HTTP always — **~8 ms per query**. Real Neon caches secrets, so none of this applies deployed. The
 proxy creates a `neon_control_plane` schema, which nothing reads.
 
-If the image disappears: mirror the pinned digest, or build one from Neon's `proxy` crate.
+Changing the script means rebuilding: the command is in the Dockerfile's header (COPY-only, so
+both platforms build without emulation), then pin the new index digest in both compose files.
 
 ## 5. Measured traps
 
@@ -119,7 +126,7 @@ If the image disappears: mirror the pinned digest, or build one from Neon's `pro
 | `neon` has no read cache and a round trip per query | measured per app when it switches (staging p95 against the Hyperdrive baseline); first fix: batch session + membership in one neon-http `batch()` |
 | A WebSocket handshake per transaction under `neon` (every chat retrieval's `SET LOCAL`) | accepted — it sits inside a multi-second model call |
 | A community image in `test-neon` and `dev:db:up --neon` | digest pin, our own start script, the mirror/build fallback (§4); the default dev loop never pulls it |
-| drizzle-cube (analytics) reads results from the handle it is given | analytics 3.4.0 reads both shapes. Its `cube-isolation` test runs in CI's plugins pass, which is `postgres` — `test-neon` installs no plugins, so a plugin under `neon` is exercised only by `pnpm test:neon` locally (known gap) |
+| drizzle-cube (analytics) reads results from the handle it is given | drizzle-cube normalises both shapes itself; analytics 3.4.1 passes the handle as drizzle-cube's type. Checked once before release: all four plugins' 241 tests, `cube-isolation` included, pass under both drivers. In CI the plugins pass runs `postgres` only — `test-neon` installs no plugins (known gap) |
 
 ## 7. Considered and rejected
 
@@ -150,4 +157,3 @@ If the image disappears: mirror the pinned digest, or build one from Neon's `pro
 - Should the raw-result guard also run in `pnpm plugin check`, catching a plugin before install
   rather than in the host's gate?
 - Should `openDatabase` expose a `pool()` escape hatch under `neon` for long exports?
-- Should the proxy image be mirrored into the kit's own registry now, rather than on need?

@@ -171,7 +171,7 @@ path); no per-PR previews.
   and `TENANT_SCOPE_MODE=enforce` waits on the spike in `docs/RLS.md`.
 
 **Known gaps:** the RLS spike has not been run; no read replicas; the local Neon proxy is a
-community image, mirrored to `ghcr.io/rocketflare-dev` (pinned by digest, started through our own script) — Neon's official "Neon Local"
+community image, mirrored to `ghcr.io/rocketflare-dev` and rebuilt with our start script (pinned by digest) — Neon's official "Neon Local"
 needs a cloud account; `neon` in deployment has no read cache and pays a round trip per query
 (p95 is measured per app when it switches, not gated); `test-neon` installs no plugins, so a
 plugin's own tests run under `neon` only in a local `pnpm test:neon`; the TEST database is pinned to

@@ -164,14 +164,14 @@ predicate**, not SQL injection — the app role can `set_config` itself.
   toml); under `neon` they use the WebSocket pool for everything (`poolOnly`) — one held connection
   instead of an HTTP round trip per query. `db:migrate:ci` is `postgres` unless CI sets the var
 - **The local Neon proxy** (compose profile `neon`, `pnpm dev:db:up --neon`, `pnpm web test:db:up:neon`)
-  is `ghcr.io/rocketflare-dev/local-neon-proxy` — our byte-identical MIRROR of the community image
-  `ghcr.io/timowilhelm/local-neon-http-proxy` (Neon's open-source proxy + Caddy, CC0), so the kit
-  does not depend on a third party's registry — **pinned by digest** in BOTH compose files. To
-  bump: `docker buildx imagetools create --tag ghcr.io/rocketflare-dev/local-neon-proxy:<date>
-  ghcr.io/timowilhelm/local-neon-http-proxy@sha256:<new>` (the digest survives the copy), then
-  both compose files together, never to a tag. It runs our
-  `apps/web/docker/neon-proxy-start.sh`, not the image's script (one SCRAM round for the local
-  role, no endpoint rate limit, pooled HTTP: ~8 ms a query instead of ~70). It creates a
+  is OUR image `ghcr.io/rocketflare-dev/local-neon-proxy:rf-<n>` (`apps/web/docker/Dockerfile.neon-proxy`):
+  our byte-identical mirror of the community `ghcr.io/timowilhelm/local-neon-http-proxy` (Neon's
+  open-source proxy + Caddy, CC0) with `apps/web/docker/neon-proxy-start.sh` BAKED IN as the
+  entrypoint (one SCRAM round for the local role, no endpoint rate limit, pooled HTTP: ~8 ms a
+  query instead of ~70). **Pinned by digest** in BOTH compose files, bumped together, never to a
+  tag. Editing the script = rebuild and push (command in the Dockerfile header), then re-pin. Never
+  bind-mount it: Colima and remote Docker contexts cannot see a checkout outside `$HOME`, and a
+  missing source mounts as an empty directory. It creates a
   `neon_control_plane` schema, which nothing reads. If the image goes, build one from Neon's
   `proxy` crate; Neon's own "Neon Local" needs a cloud account
 

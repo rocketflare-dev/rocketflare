@@ -4,7 +4,7 @@
 #
 # `neon-proxy-test` (profile `neon`, off by default) is the Neon HTTP/WebSocket proxy the `neon`
 # driver talks to (D35): `pnpm test:neon` and CI's `test-neon` job start it; the gate never does.
-# Our mirror of a community image packaging Neon's open-source proxy, PINNED BY DIGEST (rules/database.md). It
+# Our build on a mirror of a community image packaging Neon's open-source proxy, PINNED BY DIGEST (rules/database.md). It
 # creates a `neon_control_plane` schema in the database it fronts; nothing in the kit reads it.
 services:
   postgres-test:
@@ -25,12 +25,11 @@ services:
 
   neon-proxy-test:
     profiles: ["neon"]
-    image: ghcr.io/rocketflare-dev/local-neon-proxy@sha256:cd2ae14edf2feafbc3330492de5c80506f77274c3bd013154cdef697bdeb768a
+    image: ghcr.io/rocketflare-dev/local-neon-proxy@sha256:fbc2c4dd398d7f8b530bc11e0dbc7e24176d4db7bca2f4d88f21b5b4e50580f8
     container_name: rocketflare-test-neon-proxy
-    # Our start script, not the image's: it makes the proxy ~10x faster locally (see the script).
-    entrypoint: ["bash", "/rocketflare/neon-proxy-start.sh"]
-    volumes:
-      - ./docker/neon-proxy-start.sh:/rocketflare/neon-proxy-start.sh:ro
+    # Our image (docker/Dockerfile.neon-proxy): the mirrored proxy with docker/neon-proxy-start.sh
+    # baked in as the entrypoint, ~10x faster locally than the image's own script. Baked, not
+    # mounted: Colima and remote Docker contexts cannot see a checkout outside $HOME.
     environment:
       PG_CONNECTION_STRING: postgres://test:test@postgres-test:5432/rocketflare_test
       PROXY_ROLE_PASSWORD: test
