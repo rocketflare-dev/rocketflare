@@ -11,8 +11,11 @@
  * `db/client.ts`, which is where the two shapes are read:
  * 1. an `execute(…)` result is never cast, indexed or read for `.rows` / `.rowCount` / `.count` /
  *    `.length` — pass it to `rows()` or `affected()` from `@/db/client` instead;
- * 2. no cast to a type literal with a `count`, `rowCount` or `rows` member (an insert / update /
- *    delete result read by hand) — `affected()`;
+ * 2. no cast to a type literal that gives a `count`, `rowCount` or `rows` member a CONCRETE type
+ *    (`as { count?: number }` — a result read by hand, trusting one driver's shape) — `affected()`.
+ *    A member typed `unknown` is allowed: the code then has to check it at runtime, which is what
+ *    a reader of BOTH shapes looks like (the analytics plugin's own `rowsOf` / `affectedRows`,
+ *    which it keeps because it supports kits from before `rows()` existed);
  * 3. no driver import (`postgres`, `@neondatabase/serverless`, `drizzle-orm/postgres-js`,
  *    `drizzle-orm/neon-*`) — `openDatabase` picks the driver.
  */
@@ -76,7 +79,10 @@ function findViolations(file: string, text: string): string[] {
     if (ts.isAsExpression(node) && ts.isTypeLiteralNode(node.type)) {
       const member = node.type.members.find(
         m =>
-          m.name && ts.isIdentifier(m.name) && ['count', 'rowCount', 'rows'].includes(m.name.text)
+          ts.isPropertySignature(m) &&
+          ts.isIdentifier(m.name) &&
+          ['count', 'rowCount', 'rows'].includes(m.name.text) &&
+          m.type?.kind !== ts.SyntaxKind.UnknownKeyword
       )
       if (member?.name && ts.isIdentifier(member.name)) {
         at(node, `cast to { ${member.name.text} } — a query result read by hand, use affected()`)
@@ -112,6 +118,9 @@ describe('driver-specific result reads (D35)', () => {
         const c = (await db.execute(sql\`select 1\`)).rows
         const d = (result as unknown as { count?: number }).count
         const ok = rows(await db.execute(sql\`select 1\`))
+        // A reader of BOTH shapes narrows to \`unknown\` and checks at runtime — allowed.
+        const { count, rowCount } = result as { count?: unknown; rowCount?: unknown }
+        const { rows: maybe } = result as { rows: unknown }
       }`
     const found = findViolations(path.join(SRC, 'sample.ts'), sample)
     expect(found).toHaveLength(5)
