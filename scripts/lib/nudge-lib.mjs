@@ -53,7 +53,7 @@ export function siteReminder({ from, to, kind, wwwDir }) {
     '  2. Run `npm run sync:releases` and write the release summary in PLAIN TEXT (no backticks —',
     '     the changelog renders summaries unformatted).',
     kind === 'plugins'
-      ? '  3. Update src/data/plugins.ts: every plugin version and the @<tag> install commands; add any new plugin.'
+      ? '  3. Update src/data/plugins.ts (every plugin version, the @<tag> install commands, any new plugin), then run `npm run sync:plugins` to refresh the per-plugin pages from each README.'
       : '  3. A new capability also gets site content, not only a changelog line (concepts page, landing item, compare row).',
     '  4. Run `npm run check:releases && npm run build`, then open a PR; merging deploys the site.',
     'Say so if this release deliberately needs no site change.',

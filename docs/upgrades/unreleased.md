@@ -17,6 +17,7 @@ The kit's commit-time nudges now actually reach Claude: they answer as JSON `add
 - `scripts/changelog-nudge.mjs` printed plain text, which a `PreToolUse` hook sends only to the debug log, so the "no porting note" nudge was never seen. It now writes `hookSpecificOutput.additionalContext` plus a `systemMessage`.
 - New `scripts/release-site-nudge.mjs` (+ `scripts/lib/nudge-lib.mjs`): on a `git commit` that changes the root `package.json` version in the kit or the plugins monorepo, it hands Claude the rocketflare-www steps. It is silent in a copy of the kit.
 - `.claude/settings.json` registers the new hook beside `changelog-nudge.mjs`.
+- For a plugins release the reminder also says to run `npm run sync:plugins` in rocketflare-www, which refreshes the per-plugin pages from each plugin's README.
 - `tests/config/nudge-hooks.test.ts` covers the output shape and runs the hook in throwaway repositories.
 
 ## How to apply
