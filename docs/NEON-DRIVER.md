@@ -83,8 +83,9 @@ It is set in two layers:
 
 ## 4. The local Neon proxy
 
-`ghcr.io/timowilhelm/local-neon-http-proxy` — a community image of Neon's open-source proxy plus
-Caddy — **pinned by digest** in both compose files (profile `neon`; the test proxy on :4433). Neon's
+`ghcr.io/rocketflare-dev/local-neon-proxy` — our byte-identical mirror (same digest) of the
+community image `ghcr.io/timowilhelm/local-neon-http-proxy`, Neon's open-source proxy plus Caddy,
+so the kit does not hang on a third party's registry — **pinned by digest** in both compose files (profile `neon`; the test proxy on :4433). Neon's
 official "Neon Local" proxies to cloud branches, which breaks zero-credential local development.
 
 Out of the box it measured **~70 ms per query** against ~0.3 ms of actual work, and failed under a

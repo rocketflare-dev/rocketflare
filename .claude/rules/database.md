@@ -164,8 +164,12 @@ predicate**, not SQL injection — the app role can `set_config` itself.
   toml); under `neon` they use the WebSocket pool for everything (`poolOnly`) — one held connection
   instead of an HTTP round trip per query. `db:migrate:ci` is `postgres` unless CI sets the var
 - **The local Neon proxy** (compose profile `neon`, `pnpm dev:db:up --neon`, `pnpm web test:db:up:neon`)
-  is `ghcr.io/timowilhelm/local-neon-http-proxy`, a community image of Neon's open-source proxy,
-  **pinned by digest** in BOTH compose files — bump both together, never to a tag. It runs our
+  is `ghcr.io/rocketflare-dev/local-neon-proxy` — our byte-identical MIRROR of the community image
+  `ghcr.io/timowilhelm/local-neon-http-proxy` (Neon's open-source proxy + Caddy, CC0), so the kit
+  does not depend on a third party's registry — **pinned by digest** in BOTH compose files. To
+  bump: `docker buildx imagetools create --tag ghcr.io/rocketflare-dev/local-neon-proxy:<date>
+  ghcr.io/timowilhelm/local-neon-http-proxy@sha256:<new>` (the digest survives the copy), then
+  both compose files together, never to a tag. It runs our
   `apps/web/docker/neon-proxy-start.sh`, not the image's script (one SCRAM round for the local
   role, no endpoint rate limit, pooled HTTP: ~8 ms a query instead of ~70). It creates a
   `neon_control_plane` schema, which nothing reads. If the image goes, build one from Neon's

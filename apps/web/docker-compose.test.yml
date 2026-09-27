@@ -4,7 +4,7 @@
 #
 # `neon-proxy-test` (profile `neon`, off by default) is the Neon HTTP/WebSocket proxy the `neon`
 # driver talks to (D35): `pnpm test:neon` and CI's `test-neon` job start it; the gate never does.
-# A community image packaging Neon's open-source proxy, PINNED BY DIGEST (rules/database.md). It
+# Our mirror of a community image packaging Neon's open-source proxy, PINNED BY DIGEST (rules/database.md). It
 # creates a `neon_control_plane` schema in the database it fronts; nothing in the kit reads it.
 services:
   postgres-test:
@@ -25,7 +25,7 @@ services:
 
   neon-proxy-test:
     profiles: ["neon"]
-    image: ghcr.io/timowilhelm/local-neon-http-proxy@sha256:cd2ae14edf2feafbc3330492de5c80506f77274c3bd013154cdef697bdeb768a
+    image: ghcr.io/rocketflare-dev/local-neon-proxy@sha256:cd2ae14edf2feafbc3330492de5c80506f77274c3bd013154cdef697bdeb768a
     container_name: rocketflare-test-neon-proxy
     # Our start script, not the image's: it makes the proxy ~10x faster locally (see the script).
     entrypoint: ["bash", "/rocketflare/neon-proxy-start.sh"]
