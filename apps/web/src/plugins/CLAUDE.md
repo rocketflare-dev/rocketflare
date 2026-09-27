@@ -92,6 +92,13 @@ in the host. Each half is checked where it is written; only the merge is cast.
   removes it. Visibility defaults to the whole organisation — a plugin syncing ONE person's data
   passes the owner's `userId` + `visibility: 'groups'` + `groupIds: []` (owner and admins only).
   A plugin that ingests declares `requires.surfaces: ["feature-knowledge"]`.
+- **It ships agent skills at `skills/<dir>/`, declared in `"skills"`** — never under its
+  repository's own `.claude/`, which is never copied. `add` puts each at `.claude/skills/<dir>/`
+  (the one place outside its four roots a plugin writes), `upgrade` replaces it, `remove` deletes
+  it. `<dir>` is `<id>` or `<id>-<what>` and SKILL.md's `name:` equals it. Anything a person must
+  SET UP or OPERATE — an app registration, a secret, a console, an error to decode — deserves one:
+  the skill drives the steps an agent can take and coaches the ones only a human can.
+  `.claude/skills/example-feature/` is the worked example.
 - **It composes, never redefines.** `grants` are additive over its own subjects; hooks are
   post-commit, idempotent and best-effort; `agentTools` are appended after the kit's (async
   allowed, `[]` for a tenant that has not turned the tool on, a throw is logged and skipped). A
@@ -180,8 +187,9 @@ its legal values; `minKit`, `requires.surfaces` and `requires.plugins`; **every 
 against the kit's ledger**; a barrel line for each half on disk and no line for a half that is not;
 no `*.rej`; a migration naming it when it declares tables; **every declared dependency really
 present in the host `package.json`**; the **worker-exports barrel both ways**; **a tenant-isolation
-test** when it declares tenant-scoped tables; and **`hooks.onTenantDeleted` when it declares a
-`durable_object`**.
+test** when it declares tenant-scoped tables; **`hooks.onTenantDeleted` when it declares a
+`durable_object`**; and **its skills both ways** — each declared one present with a matching
+`name:` and a `description:`, and no undeclared directory in its namespace.
 
 Two of those deserve their reason stated. The isolation test is the kit's one non-negotiable that
 the kit itself cannot write — `docs/CONCEPTS.md` §16 and `.claude/rules/testing.md` both require

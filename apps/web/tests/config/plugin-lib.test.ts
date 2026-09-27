@@ -915,12 +915,21 @@ describe('scripts/plugin.mjs, end to end', () => {
           'apps/web/src/plugins',
           'packages/shared/src/plugins',
           'apps/cli/src/plugins',
+          'skills',
         ]) {
           const from = path.join(dir, base, subject as string)
           if (existsSync(from)) {
             mkdirSync(path.dirname(path.join(dir, base, 'smoke-plugin')), { recursive: true })
             renameSync(from, path.join(dir, base, 'smoke-plugin'))
           }
+        }
+        // A skill's frontmatter names its directory, so a rebadge renames it too.
+        const skillFile = path.join(dir, 'skills/smoke-plugin/SKILL.md')
+        if (existsSync(skillFile)) {
+          writeFileSync(
+            skillFile,
+            readFileSync(skillFile, 'utf8').replace(/^name: .*$/m, 'name: smoke-plugin')
+          )
         }
         const manifestFile = path.join(dir, PLUGIN_MANIFEST_FILE)
         const rebadged = JSON.parse(

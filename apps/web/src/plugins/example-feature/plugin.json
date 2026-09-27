@@ -81,7 +81,8 @@
   "paths": [
     "apps/web/src/plugins/example-feature/**",
     "packages/shared/src/plugins/example-feature/**",
-    "apps/cli/src/plugins/example-feature/**"
+    "apps/cli/src/plugins/example-feature/**",
+    ".claude/skills/example-feature/**"
   ],
   "registries": [
     "apps/web/src/plugins/server.ts",
@@ -97,6 +98,7 @@
   "apiPrefixes": [],
   "vars": [],
   "workerExports": [],
+  "skills": ["example-feature"],
   "schema": { "tables": ["example_notes"], "rlsExcluded": [] },
   "migrations": ["example_notes, tenant-scoped, RLS policy"]
 }

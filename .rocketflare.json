@@ -69,7 +69,8 @@
       "paths": [
         "apps/web/src/plugins/example-feature/**",
         "packages/shared/src/plugins/example-feature/**",
-        "apps/cli/src/plugins/example-feature/**"
+        "apps/cli/src/plugins/example-feature/**",
+        ".claude/skills/example-feature/**"
       ],
       "registries": [
         "apps/web/src/plugins/server.ts",

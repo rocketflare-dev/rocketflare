@@ -4,28 +4,38 @@ previous: 0.12.0
 date: null
 breaking: false
 migrations: []
-areas: []
-touches_surfaces: []
+areas: [config, docs]
+touches_surfaces: [example-feature]
 requires_surfaces: []
 manual: false
 ---
 
 ## What changed
 
-_Nothing yet. Add an entry here in the same pull request as the change. This first paragraph is
-lifted VERBATIM into `CHANGELOG.md`, so make it ONE standalone summary sentence of ≤ 40 words —
-then one bullet per change, one line each, and no `###` sub-headings. Rationale belongs in
-`docs/CONCEPTS.md` and is linked, never restated; see `README.md` beside this file._
+Plugins can ship agent skills: a plugin declares `"skills"`, keeps them at `skills/<dir>/`, and `pnpm plugin add` installs each at `.claude/skills/<dir>/`, where `upgrade` replaces and `remove` deletes it.
+
+- New manifest field `"skills": ["<dir>", …]` — each `<dir>` is `<id>` or `<id>-*`, and its `SKILL.md` frontmatter `name:` must equal it, with a non-empty `description:` (`docs/CONCEPTS.md` §16, decision 23).
+- `pnpm plugin add` copies each declared `skills/<dir>/**` to `.claude/skills/<dir>/**`, records `.claude/skills/<dir>/**` on the surface, lists the skills in the plan (`skills` in `--json`), and refuses an undeclared `skills/` directory, a misnamed or undescribed skill (exit 1) or an existing skill directory (exit 7).
+- `pnpm plugin upgrade` replaces a skill's files instead of patching them, deletes files the release dropped, removes a skill the release no longer declares, and refreshes the surface's skill paths.
+- `pnpm plugin remove` deletes the skill directories with the rest of the plugin; `pnpm plugin export` writes them back to `skills/<dir>/`.
+- `pnpm plugin check` fails a declared skill that is missing, misnamed or undescribed, and an undeclared directory in the plugin's namespace.
+- `example-feature` ships `.claude/skills/example-feature/SKILL.md`, a walkthrough of the reference plugin, and declares it.
+- `/rf-plugin` (SKILL.md and `reference.md`) and `apps/web/src/plugins/CLAUDE.md` document shipping a skill; new test `apps/web/tests/config/plugin-skills.test.ts` drives add, check, upgrade, remove and export in a throwaway host.
 
 ## How to apply
 
-_Numbered, imperative, each step self-contained — no "these", "them" or "the above" reaching
-outside its own step._
+1. Apply the kit diff for `scripts/plugin.mjs`, `scripts/lib/plugin-lib.mjs` and `scripts/lib/plugin-lib.d.mts`, and add `apps/web/tests/config/plugin-skills.test.ts`.
+2. Apply the kit diff for `apps/web/tests/config/plugin-lib.test.ts` (the export test renames `skills/<id>` with the rest of a rebadged plugin).
+3. If the app still has `example-feature`, add `.claude/skills/example-feature/SKILL.md`, add `"skills": ["example-feature"]` and the path `.claude/skills/example-feature/**` to `apps/web/src/plugins/example-feature/plugin.json`, and add the same path to the `example-feature` surface's `paths` in `.rocketflare.json`.
+4. Apply the kit diff for `.claude/skills/rf-plugin/SKILL.md`, `.claude/skills/rf-plugin/reference.md`, `apps/web/src/plugins/CLAUDE.md` and `docs/CONCEPTS.md` §16.
 
 ## Conflicts to expect
 
-_One line each: `path → what changed → what to do`. Or exactly `None.`_
+- `scripts/plugin.mjs` → `cmdUpgrade` reads the plugin manifest before classifying files → keep both sides if the app changed `upgrade`.
+- `.rocketflare.json` → the `example-feature` surface gains one path → keep the app's other edits.
 
 ## Verify
 
-_Numbered checkable commands and assertions only._
+1. `node scripts/plugin.mjs check` exits 0.
+2. `pnpm web test:config` passes, including `tests/config/plugin-skills.test.ts`.
+3. If `example-feature` is installed, `.claude/skills/example-feature/SKILL.md` exists and begins with `name: example-feature`.

@@ -389,6 +389,97 @@ export function pluginRoots(id) {
   ]
 }
 
+// ---------------------------------------------------------------- skills
+
+/**
+ * Where a plugin's agent skills land in a host (D34 follow-up). A plugin ships them at
+ * `skills/<dir>/` in its OWN tree — never `.claude/`, which stays the plugin repository's own
+ * tooling — and `add` copies each DECLARED one to `.claude/skills/<dir>/`, where Claude Code finds
+ * it. The directory is the skill's name, so it is namespaced exactly like a table or a job type:
+ * `<id>` or `<id>-<suffix>`, which is what keeps it from ever colliding with a kit `rf-*` skill.
+ */
+export const SKILLS_ROOT = '.claude/skills/'
+
+/** The skill directories a manifest declares — `[]` when it declares none or declares nonsense. */
+export function pluginSkillDirs(manifest) {
+  const skills = manifest?.skills
+  return Array.isArray(skills) ? skills.filter(s => typeof s === 'string') : []
+}
+
+/** The host directory one declared skill lands in. */
+export function skillTarget(dir) {
+  return `${SKILLS_ROOT}${dir}/`
+}
+
+/** `null` when `dir` is a legal skill directory for plugin `id`, else the sentence saying why. */
+export function skillDirProblem(id, dir) {
+  if (typeof dir !== 'string' || !PLUGIN_ID_RE.test(dir)) {
+    return `skill ${JSON.stringify(dir)} must be a directory name matching ${PLUGIN_ID_RE.source}`
+  }
+  if (dir !== id && !dir.startsWith(`${id}-`)) {
+    return `skill '${dir}' is not namespaced — it must be '${id}' or start with '${id}-'`
+  }
+  return null
+}
+
+/**
+ * `name` and `description` from a SKILL.md's YAML frontmatter, or null when there is none.
+ *
+ * Deliberately a line reader rather than a YAML parser: the two keys Claude Code needs are plain
+ * scalars in every skill this kit ships, and the scripts run under bare Node with no dependency to
+ * parse YAML with. A folded `description: >` is read as its continuation lines joined.
+ */
+export function skillFrontmatter(text) {
+  const m = String(text).match(/^---\r?\n([\s\S]*?)\r?\n---\s*(?:\r?\n|$)/)
+  if (!m) return null
+  const lines = m[1].split(/\r?\n/)
+  const fields = {}
+  for (let i = 0; i < lines.length; i += 1) {
+    const kv = lines[i].match(/^([A-Za-z][\w-]*):\s*(.*)$/)
+    if (!kv) continue
+    let value = kv[2].trim()
+    if (value === '>' || value === '|' || value === '>-' || value === '|-') {
+      const block = []
+      while (i + 1 < lines.length && /^\s+\S/.test(lines[i + 1])) block.push(lines[++i].trim())
+      value = block.join(' ')
+    }
+    fields[kv[1]] = value.replace(/^(["'])(.*)\1$/, '$2')
+  }
+  return { name: fields.name ?? null, description: fields.description ?? null }
+}
+
+/** Everything wrong with one skill's SKILL.md, as sentences. `text` null means it is missing. */
+export function skillFileProblems(dir, text) {
+  if (text === null || text === undefined) return [`skill '${dir}' has no SKILL.md`]
+  const fm = skillFrontmatter(text)
+  if (!fm) return [`skill '${dir}' SKILL.md has no frontmatter (--- name / description ---)`]
+  const problems = []
+  if (fm.name !== dir) {
+    problems.push(
+      `skill '${dir}' SKILL.md names itself ${JSON.stringify(fm.name)} — "name" must equal the directory`
+    )
+  }
+  if (!fm.description || fm.description.trim() === '') {
+    problems.push(
+      `skill '${dir}' SKILL.md has no description — it is what decides when the skill is used`
+    )
+  }
+  return problems
+}
+
+/**
+ * The host skill directories that look like `id`'s — `<id>` or `<id>-*` — but that `id` does not
+ * declare. When another installed plugin's id is a LONGER match (`example` vs `example-feature`)
+ * the directory is that plugin's, not this one's.
+ */
+export function undeclaredSkillDirs(id, declared, hostDirs, installedIds = []) {
+  const owner = dir =>
+    [...installedIds, id]
+      .filter(p => dir === p || dir.startsWith(`${p}-`))
+      .sort((a, b) => b.length - a.length)[0]
+  return hostDirs.filter(d => !declared.includes(d) && owner(d) === id)
+}
+
 /**
  * Built from `KIT.slug` for the reason `MANIFEST_FILE` is (see `manifest.mjs`): this is the
  * ECOSYSTEM's filename, the same in every plugin repository, so a renamed copy that looked for
@@ -431,8 +522,27 @@ const REPO_ONLY_DIRS = ['.github/', '.git/', 'node_modules/', '.claude/', 'scrip
  * else is a refusal rather than a warning, because the alternative is a plugin that edits
  * `api/index.ts` on the way in and an install nobody can reverse by deleting a directory.
  */
-export function classifyPluginFile(relPath, id) {
+export function classifyPluginFile(relPath, id, { skills = [] } = {}) {
   if (relPath === PLUGIN_MANIFEST_FILE) return { role: 'meta', reason: "the plugin's manifest" }
+  // A skill is copied OUT of the plugin's roots, into `.claude/skills/<dir>/` — the one place
+  // outside them a plugin may write, and only for a directory its manifest names. An undeclared
+  // one is refused rather than skipped: shipping a skill nobody declared is how a plugin would
+  // claim `.claude/skills/rf-plugin/`.
+  if (relPath.startsWith('skills/')) {
+    const [, dir, ...rest] = relPath.split('/')
+    if (dir && rest.length > 0 && skills.includes(dir)) {
+      return {
+        role: 'copy',
+        target: `${skillTarget(dir)}${rest.join('/')}`,
+        root: skillTarget(dir),
+        skill: dir,
+      }
+    }
+    return {
+      role: 'refused',
+      reason: `skills/${dir ?? ''} is not declared in the manifest's "skills"`,
+    }
+  }
   if (META_FILES.includes(relPath)) return { role: 'meta', reason: 'repository documentation' }
   if (REPO_ONLY.includes(relPath) || REPO_ONLY_DIRS.some(d => relPath.startsWith(d))) {
     return { role: 'repo-only', reason: "belongs to the plugin's repository, not to a host" }
@@ -710,10 +820,13 @@ export function buildPluginSurface(manifest, { repo, subdir = '', commit = null,
     // unclassified files and `remove` would leave them behind. A plugin's own `paths` name its CODE
     // trees, which is what an author thinks about — the notes are the host's doing, so the host
     // adds them (D31, found in Phase C the first time a plugin shipped notes).
+    // Each declared skill's host directory too, for the same reason as the notes: `add` writes it,
+    // so `remove` must find it and `kit-manifest.test.ts` must be able to classify it.
     paths: [
       ...new Set([
         ...(manifest.paths ?? pluginRoots(id).map(r => `${r}**`)),
         `docs/plugins/${id}/**`,
+        ...pluginSkillDirs(manifest).map(d => `${skillTarget(d)}**`),
       ]),
     ],
     registries: manifest.registries ?? Object.values(BARRELS).map(b => b.file),
@@ -808,6 +921,12 @@ export function renderAddPlan(plan) {
   const fragments = plan.files.filter(f => f.role === 'fragment')
   if (fragments.length > 0) {
     lines.push(`  ${pad('(not copied) migrations/', 44)}${fragments.length} install fragment(s)`)
+  }
+
+  const skills = pluginSkillDirs(m)
+  if (skills.length > 0) {
+    lines.push('', 'Skills (Claude Code finds them here — nothing to do)')
+    for (const dir of skills) lines.push(`  ${skillTarget(dir)}`)
   }
 
   lines.push('', 'Barrel lines')
@@ -1127,6 +1246,7 @@ export function addPlanJson(plan) {
       fragments,
       refused: plan.files.filter(f => f.role === 'refused').map(f => f.path),
     },
+    skills: pluginSkillDirs(m).map(dir => ({ name: dir, target: skillTarget(dir) })),
     barrels: plan.barrels.map(kind => ({
       kind,
       file: BARRELS[kind].file,
@@ -1446,6 +1566,24 @@ export function pluginManifestProblems(manifest) {
           'a cron is five whitespace-separated fields ("15 * * * *") — the string the toml gets'
         )
       }
+    }
+  }
+
+  if (m.skills !== undefined && !isStrArray(m.skills)) {
+    bad('skills', 'declares skills as other than an array of strings', 'set "skills" to []')
+  } else {
+    const seen = new Set()
+    for (const dir of m.skills ?? []) {
+      const problem = isStr(m.id) ? skillDirProblem(m.id, dir) : null
+      if (problem) {
+        bad(
+          'skills',
+          problem,
+          `rename skills/${dir}/ (and its SKILL.md "name") to '${m.id}' or '${m.id}-<what>'`
+        )
+      }
+      if (seen.has(dir)) bad('skills', `declares skill '${dir}' twice`, 'list each skill once')
+      seen.add(dir)
     }
   }
 
