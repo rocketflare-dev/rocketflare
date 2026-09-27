@@ -32,6 +32,7 @@ import { type TokenUsage, tokenUsageSchema } from '@rocketflare/shared/ai/chat'
 import { type AiProvider, WORKERS_AI_CHAT_MODEL } from '@rocketflare/shared/ai/config'
 import { estimateCostMicrocents } from '@rocketflare/shared/ai/pricing'
 import { and, count, eq, gt, isNull, sql } from 'drizzle-orm'
+import { devPorts } from '../../../scripts/lib/dev-ports.mjs'
 import { mintApiKey } from '../src/api/auth/api-keys'
 import { chunkText } from '../src/api/services/ai/chunking'
 import {
@@ -66,7 +67,14 @@ import { serverPlugins } from '../src/plugins/server'
 const DATABASE_URL = process.env.DATABASE_URL
 const TENANCY_MODE = process.env.TENANCY_MODE === 'single' ? 'single' : 'multi'
 const APP_NAME = process.env.APP_NAME || 'Rocketflare'
-const APP_URL = process.env.APP_URL || 'http://localhost:3000'
+const DEV_PORTS = devPorts()
+const APP_URL = process.env.APP_URL || `http://localhost:${DEV_PORTS.ui}`
+/** `wrangler dev`'s origin: APP_URL with the UI port swapped for the API's (a tunnel URL stays). */
+function apiUrl(appUrl: string): string {
+  const url = new URL(appUrl)
+  if (url.port === String(DEV_PORTS.ui)) url.port = String(DEV_PORTS.api)
+  return url.origin
+}
 const DEMO = process.argv.includes('--demo') || process.env.SEED_DEMO === '1'
 
 const SEED_USERS = [
@@ -206,7 +214,7 @@ async function main() {
 
   log('')
   log('Sign in locally (APP_ENV=development) without email:')
-  log(`  curl -sS -X POST ${APP_URL.replace(':3000', ':3001')}/auth/dev-login \\`)
+  log(`  curl -sS -X POST ${apiUrl(APP_URL)}/auth/dev-login \\`)
   log(
     `    -H 'Content-Type: application/json' -d '{"email":"${SEED_USERS[0].email}"}' -c cookies.txt`
   )

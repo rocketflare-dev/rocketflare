@@ -43,7 +43,7 @@ export const csrfProtection = createMiddleware<AppEnv>(async (c, next) => {
     throw new ForbiddenError('Cross-site request blocked', ERROR_CODES.csrf)
   }
 
-  const allowed = allowedOrigins(c.get('config'))
+  const allowed = allowedOrigins(c.get('config'), c.req.url)
   const origin = c.req.header('Origin')
   if (origin && !isAllowedOrigin(origin, allowed)) {
     throw new ForbiddenError('Invalid request origin', ERROR_CODES.csrf)

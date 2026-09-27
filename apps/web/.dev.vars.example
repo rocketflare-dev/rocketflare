@@ -6,7 +6,15 @@
 # wrangler dev would run as APP_ENV=production with the prod APP_URL, and cookie-authed POSTs
 # from the Vite origin (:3000) would fail CSRF.
 APP_ENV=development
+# APP_URL follows the UI port: change it together with DEV_UI_PORT below.
 APP_URL=http://localhost:3000
+# Dev ports (scripts/lib/dev-ports.mjs), for a machine where :3000/:3001 are taken (a Cloudflare
+# Sandbox holds :3000). The shell wins over this file; unset means 3000 (Vite) / 3001 (wrangler).
+# `pnpm dev`, Vite, the bootstrap and the seed read them; `pnpm dev:api` alone reads only the shell.
+# DEV_UI_PORT=3000
+# DEV_API_PORT=3001
+# Extra hostnames Vite answers for, comma-separated (a sandbox preview URL's host).
+# DEV_ALLOWED_HOSTS=
 # Owner connection string for local Postgres (docker-compose.dev.yml). In deployed
 # environments the Worker uses the HYPERDRIVE binding instead; this is the dev fallback
 # and what scripts/migrate.ts, db-roles.ts, seed.ts and drizzle-kit use.

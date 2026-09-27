@@ -97,8 +97,14 @@ beyond "log out everywhere"; CLI keys differ from other keys only by name.
   There is no `hono/client` RPC. Errors are `{ error, statusCode, code?, details? }` everywhere,
   and success bodies are bare.
 - **Routes are thin** and never run long work (§5).
+- **Local dev ports**: Vite :3000 proxies to `wrangler dev` :3001, both `strictPort`, unless
+  `DEV_UI_PORT` / `DEV_API_PORT` are set (shell, then `.dev.vars`; `scripts/lib/dev-ports.mjs` is the
+  one reader). `APP_URL` follows the UI port by hand — the Worker cannot read the shell — and
+  outside production CORS/CSRF also allow the loopback twin of `APP_URL` and of the request's own
+  loopback origin. `SETUP.md` 1.6.
 
-**Known gaps:** no `/api/ready` smoke step against a preview; no OpenAPI (`@hono/zod-openapi` is the
+**Known gaps:** `pnpm dev:tunnel` always targets :3000 (cfld reads `package.json`); `pnpm dev:api`
+alone reads `DEV_API_PORT` from the shell only, not `.dev.vars`; no `/api/ready` smoke step against a preview; no OpenAPI (`@hono/zod-openapi` is the
 path); no per-PR previews.
 
 ## 4. Database

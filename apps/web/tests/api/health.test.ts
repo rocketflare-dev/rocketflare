@@ -1,8 +1,11 @@
 import { ERROR_CODES } from '@rocketflare/shared/errors'
 import { describe, expect, it } from 'vitest'
+import { allowedOrigins, DEV_ORIGINS } from '@/api/middleware/cors'
 import { SESSION_COOKIE_NAME } from '@/api/middleware/csrf'
 import { API_PREFIXES } from '@/api/utils/routes/api-prefixes'
+import type { AppConfig } from '@/config'
 import { json, request } from '../helpers/request'
+import { createTestEnv } from '../mocks/bindings'
 
 describe('GET /api/health', () => {
   it('returns ok with version and env', async () => {
@@ -137,6 +140,72 @@ describe('CORS', () => {
   it('does not echo an unknown origin', async () => {
     const res = await request('/api/health', { headers: { Origin: 'https://evil.example' } })
     expect(res.headers.get('Access-Control-Allow-Origin')).toBeNull()
+  })
+
+  // DEV_UI_PORT / DEV_API_PORT (scripts/lib/dev-ports.mjs): only APP_URL follows the UI port, the
+  // Worker never sees the shell — so the allow-list is derived from APP_URL and the request.
+  it('allows a custom dev UI port from APP_URL, and its 127.0.0.1 twin', async () => {
+    const env = createTestEnv({ APP_URL: 'http://localhost:5199' })
+    for (const origin of ['http://localhost:5199', 'http://127.0.0.1:5199']) {
+      const res = await request(
+        '/api/health',
+        { method: 'OPTIONS', headers: { Origin: origin, 'Access-Control-Request-Method': 'GET' } },
+        { env }
+      )
+      expect(res.headers.get('Access-Control-Allow-Origin')).toBe(origin)
+    }
+    // The defaults stay allowed, a stranger on another loopback port does not.
+    const still = await request(
+      '/api/health',
+      { headers: { Origin: 'http://localhost:3000' } },
+      {
+        env,
+      }
+    )
+    expect(still.headers.get('Access-Control-Allow-Origin')).toBe('http://localhost:3000')
+    const other = await request(
+      '/api/health',
+      { headers: { Origin: 'http://localhost:6000' } },
+      {
+        env,
+      }
+    )
+    expect(other.headers.get('Access-Control-Allow-Origin')).toBeNull()
+  })
+
+  it('passes CSRF for a browser on a custom wrangler dev port (the request’s own origin)', async () => {
+    const env = createTestEnv({ APP_URL: 'http://localhost:5199' })
+    const res = await request(
+      'http://localhost:8799/api/anything',
+      {
+        method: 'POST',
+        headers: { Cookie: `${SESSION_COOKIE_NAME}=abc`, Origin: 'http://127.0.0.1:8799' },
+      },
+      { env }
+    )
+    expect(res.status).toBe(404)
+  })
+})
+
+describe('allowedOrigins', () => {
+  // allowedOrigins reads APP_ENV and APP_URL only.
+  const cfg = (APP_ENV: AppConfig['APP_ENV'], APP_URL: string) =>
+    ({ APP_ENV, APP_URL }) as AppConfig
+
+  it('is APP_URL alone in production — no dev origins, no loopback twins', () => {
+    const allowed = allowedOrigins(
+      cfg('production', 'http://localhost:5199'),
+      'http://localhost:8799/x'
+    )
+    expect([...allowed]).toEqual(['http://localhost:5199'])
+  })
+
+  it('adds no twin for a non-loopback APP_URL or request', () => {
+    const allowed = allowedOrigins(
+      cfg('staging', 'https://staging.example.com'),
+      'https://staging.example.com/api'
+    )
+    expect([...allowed].sort()).toEqual(['https://staging.example.com', ...DEV_ORIGINS].sort())
   })
 })
 

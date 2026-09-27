@@ -160,6 +160,16 @@ pnpm dev              # apps/web: wrangler dev :3001 + vite :3000 (strict ports;
 # pnpm dev:status     # what is running here + who holds :3000/:3001
 ```
 
+> **Ports taken?** (a Cloudflare Sandbox holds :3000, or another app does.) Set `DEV_UI_PORT` and
+> `DEV_API_PORT` — in the shell or in `apps/web/.dev.vars` (the shell wins; unset = 3000/3001) —
+> and change `APP_URL` in `.dev.vars` to the new UI port, because the Worker builds its OAuth
+> redirects, magic links and CORS/CSRF allow-list from it. `DEV_ALLOWED_HOSTS=a.example,b.example`
+> lets Vite answer for extra hostnames (a sandbox preview URL). `pnpm dev`, Vite, the bootstrap and
+> the seed all read these through `scripts/lib/dev-ports.mjs`; `pnpm dev:api` on its own reads only
+> the shell. Substitute your ports for 3000/3001 everywhere below; the CLI's default server stays
+> :3001, so pass `--server http://localhost:<DEV_API_PORT>`. `pnpm dev:tunnel` still targets :3000
+> (cfld reads `apps/web/package.json`'s `cfld.port`).
+
 > **Cloudflare login and the AI binding.** `wrangler dev` runs everything locally EXCEPT the Workers AI
 > binding (`[ai]` in `apps/web/wrangler.toml`), which always calls Cloudflare — so the first `pnpm dev`
 > on a machine that has never run `pnpm web exec wrangler login` will ask you to log in (a free account

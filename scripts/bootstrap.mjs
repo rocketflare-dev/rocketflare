@@ -39,6 +39,7 @@ import {
   toggleAiBlock,
   versionAtLeast,
 } from './lib/bootstrap-lib.mjs'
+import { devPorts } from './lib/dev-ports.mjs'
 import { pluginSurfaces, readManifest } from './lib/manifest.mjs'
 
 const REPO_ROOT = path.resolve(import.meta.dirname, '..')
@@ -49,8 +50,10 @@ const TOMLS = ['wrangler.toml', 'wrangler.staging.toml'].map(f => path.join(WEB_
 /** Keys `config.ts` validates with `optionalSecret(32)` — blank is "unset", short is a ConfigError. */
 const REQUIRED_SECRETS = ['OAUTH_ENCRYPTION_KEY']
 const SECRET_MIN_LENGTH = 32
-const API_URL = 'http://localhost:3001'
-const UI_URL = 'http://localhost:3000'
+/** :3001 / :3000 unless DEV_API_PORT / DEV_UI_PORT are set (shell or .dev.vars). */
+const DEV_PORTS = devPorts()
+const API_URL = `http://localhost:${DEV_PORTS.api}`
+const UI_URL = `http://localhost:${DEV_PORTS.ui}`
 const HEALTH_TIMEOUT_MS = 90_000
 const DB_CHECK_ATTEMPTS = 30
 const TOTAL_STEPS = 10
@@ -633,7 +636,7 @@ async function stepCli(key) {
   })
   if (result.code !== 0) {
     throw new StepError(`pnpm cli whoami exited ${result.code}`, {
-      hint: 'pnpm cli login --server http://localhost:3001',
+      hint: `pnpm cli login --server ${API_URL}`,
       output: result.output,
     })
   }

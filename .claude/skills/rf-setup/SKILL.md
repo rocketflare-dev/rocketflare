@@ -85,7 +85,7 @@ when somebody wants the app bare first.
 | 1 | a step failed | show the tail of the output, fix the cause, re-run the same command (idempotent). A failing `6/10 plugins` is the one worth reading closely: re-run with `--no-plugins` to get a working app, then install the plugin with `/rf-plugin`, where the plan is shown before anything is written |
 | 2 | usage error | check `$ARGUMENTS` against the hint above and re-run |
 | 3 | a prerequisite is missing | install it, then re-run: Node 24 via `nvm install` (reads `.nvmrc`) or `fnm use`; pnpm via `corepack enable`; Docker via Docker Desktop, or `brew install colima docker && colima start` on macOS, or Docker Engine + the `docker` group on Linux |
-| 4 | a dev port is held by another checkout | the DATABASE port is chosen automatically (`scripts/dev-db.mjs` takes the next free one), so this is :3000/:3001: run `pnpm dev:status` and `pnpm dev:db:status`, show the user the other path/pid, and let THEM decide — never kill another checkout's processes |
+| 4 | a dev port is held by another checkout | the DATABASE port is chosen automatically (`scripts/dev-db.mjs` takes the next free one), so this is :3000/:3001 (or `DEV_UI_PORT`/`DEV_API_PORT`): run `pnpm dev:status` and `pnpm dev:db:status`, show the user the other path/pid, and let THEM decide — stop it there, or move this checkout with `DEV_UI_PORT`/`DEV_API_PORT` in `apps/web/.dev.vars` plus `APP_URL` on the new UI port (SETUP.md 1.6) — never kill another checkout's processes |
 | 5 | Cloudflare login required | see below |
 
 **Exit 5 — Cloudflare login.** Explain in one sentence: *the kit's zero-key chat and agents run on
@@ -105,7 +105,8 @@ or stay offline?
    ```
    pnpm dev
    ```
-2. Poll until the API answers, at most 90 seconds:
+2. Poll until the API answers, at most 90 seconds (if `apps/web/.dev.vars` sets `DEV_API_PORT` /
+   `DEV_UI_PORT`, use those ports instead of 3001 / 3000 here and in step 3):
    ```
    curl -s localhost:3001/api/health
    ```

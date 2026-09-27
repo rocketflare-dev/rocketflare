@@ -24,7 +24,7 @@ informational `· tracing …` line (D32 — the local `ai_spans` store is alway
 where spans are EXPORTED, or `local only`, and never prints a key or header; it can never fail
 preflight — `/rf-traces` explains the backends), then the `— pnpm dev:status —` block, and ends with `✔ preflight ok` or `✖ preflight: <failed names>`.
 `pnpm dev:status` on its own prints this repo's running dev processes and whoever holds
-:3000 / :3001 (another checkout is *reported*, never touched) — run it again if the first block
+:3000 / :3001 — or `DEV_UI_PORT` / `DEV_API_PORT` when set (shell or `.dev.vars`) — (another checkout is *reported*, never touched) — run it again if the first block
 scrolled away.
 
 `pnpm plugin list` names every installed plugin (`id  version  repo  installedAt`, and `(local)`
@@ -57,8 +57,8 @@ hint are authoritative; the table below adds what each fix *does*.
 | database unreachable with the container up | `DATABASE_URL` in `.dev.vars` disagrees with the compose file | compare `DATABASE_URL` to `POSTGRES_DB/USER/PASSWORD` in `apps/web/docker-compose.dev.yml`; fix `.dev.vars` (a renamed kit is the usual cause — `docs/ADAPTING.md` §1) |
 | migrations pending / `rocketflare_app` role missing | schema behind the code | `pnpm db:migrate` — role → migrations → grants, idempotent (SETUP.md 1.4) |
 | wrangler not logged in | Workers AI (chat, agents, embeddings, document conversion) will not answer | `pnpm web exec wrangler login` in the user's own terminal (browser OAuth) — or accept it and run offline: chat/agents 503 until a key or tenant provider exists (SETUP.md 2.5) |
-| port :3000 / :3001 held by this repo | a previous `pnpm dev` is still alive | `pnpm dev:stop` — kills only this checkout's dev tree, supervisor first, looping until quiet |
-| port held by another path / pid | a different checkout or app | show the path from `pnpm dev:status`; the user stops it there — **never kill it from here** |
+| port :3000 / :3001 (or `DEV_UI_PORT` / `DEV_API_PORT`) held by this repo | a previous `pnpm dev` is still alive | `pnpm dev:stop` — kills only this checkout's dev tree, supervisor first, looping until quiet |
+| port held by another path / pid | a different checkout or app | show the path from `pnpm dev:status`; the user stops it there — **never kill it from here** — or moves this checkout: `DEV_UI_PORT` / `DEV_API_PORT` in `apps/web/.dev.vars`, with `APP_URL` following the UI port (SETUP.md 1.6) |
 | container name already in use | a second copy of the kit on this machine uses the same `container_name` | rename one copy (`docs/ADAPTING.md` §1 row `rocketflare-dev-postgres`) or stop the other's container |
 | test Postgres (:5433) down | only matters for `pnpm test` | `pnpm test:db:up` — starts the ephemeral test container |
 | `plugin check`: `<id>: declares tables (…) and no migration names it` | the plugin is wired in but its schema was never generated | `pnpm db:generate --name plugin-<id>-<version>`, **read the SQL**, then `pnpm db:migrate` — writes the app's own migration at its own index; never copy one from a plugin repo |
