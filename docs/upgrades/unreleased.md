@@ -26,6 +26,7 @@ The kit now runs on two database drivers, chosen per deployment by `DATABASE_DRI
 - Bug-shaped traps the driver test pins: raw SQL arrays arrive as `"{a,b}"` from postgres.js (use `json_agg` / `to_jsonb`), raw timestamps are a `Date` or a string by driver.
 - `classifyInfrastructureError` (`utils/core/errors.ts`) recognises Neon's unreachable-database shapes (`NeonDbError.sourceError`, the WebSocket `ErrorEvent`), so an outage is a 503 `database_unavailable` under either driver; `tests/driver/unreachable.test.ts` pins it.
 - The UI tests register jest-dom on apps/web's OWN vitest (`tests/ui/setup.ts` + `tests/ui/jest-dom-vitest.d.ts`) instead of `@testing-library/jest-dom/vitest`, which augmented whichever vitest pnpm hoisted — vitest 4 from apps/evals as often as not, the "flaky jest-dom matcher types" CI failure. `apps/evals` gains `@neondatabase/serverless` as a devDependency so the workspace resolves one drizzle-orm.
+- `scripts/lib/git-lib.mjs` `ensureMirror` turns commit-graph off in the blobless plugin/upgrade mirrors (and drops a graph already written): with Apple Git 2.50 a fresh mirror of a just-pushed tag failed every lazy blob fetch.
 - `.rocketflare.json` `defaultPlugins` pins analytics at `3.4.1` (it read `3.0.0`), which reads `execute()` results in both shapes and type-checks against the driver-neutral `Database`.
 
 ## How to apply
