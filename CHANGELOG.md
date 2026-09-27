@@ -6,6 +6,11 @@ copy of the kit forward without recreating anything its owner deleted.
 
 If you are running a copy: `pnpm kit:upgrade` tells you which of these you are missing.
 
+## 0.13.0 — 2026-09-27
+
+Plugins can ship agent skills: a plugin declares `"skills"`, keeps them at `skills/<dir>/`, and `pnpm plugin add` installs each at `.claude/skills/<dir>/`, where `upgrade` replaces and `remove` deletes it.
+[Porting note](docs/upgrades/0.13.0.md).
+
 ## 0.12.0 — 2026-09-26
 
 The plugin surface gains the seams a connector needs: unauthenticated public mounts under `/api/hooks/<id>`, signed round-trip state, feature checks off-request, and idempotent knowledge ingest keyed by an external id.
