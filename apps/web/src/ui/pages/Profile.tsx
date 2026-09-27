@@ -8,7 +8,7 @@
 import { LinkIcon } from '@heroicons/react/24/outline'
 import { updateProfileRequestSchema } from '@rocketflare/shared/user-settings'
 import { useEffect, useRef, useState } from 'react'
-import { PROVIDER_ICONS, PROVIDER_LABELS } from '@/ui/components/icons/ProviderIcons'
+import { PROVIDER_ICONS, providerLabel } from '@/ui/components/icons/ProviderIcons'
 import {
   FieldError,
   fieldErrorFor,
@@ -295,7 +295,9 @@ function SignInMethods() {
             return (
               <li key={provider} className="flex items-center gap-3 py-3">
                 <Icon className="w-5 h-5" />
-                <span className="flex-1 text-sm font-medium">{PROVIDER_LABELS[provider]}</span>
+                <span className="flex-1 text-sm font-medium">
+                  {providerLabel(provider, methods)}
+                </span>
                 {isLinked ? (
                   <>
                     <span className="badge badge-sm badge-success">Connected</span>

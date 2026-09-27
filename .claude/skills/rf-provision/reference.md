@@ -30,7 +30,7 @@ Worker) while here it is the *full-access* account key.
 Optional Worker secrets copied by `pnpm provision secrets <env>` when exported or present in
 `apps/web/.provision.env`: `BOOTSTRAP_ADMIN_EMAILS`
 (defaults to `--admin-email`), `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `MICROSOFT_CLIENT_ID`,
-`MICROSOFT_CLIENT_SECRET`, `ANTHROPIC_API_KEY`, `EMBEDDINGS_API_KEY`, `LANGFUSE_PUBLIC_KEY`,
+`MICROSOFT_CLIENT_SECRET`, `OIDC_CLIENT_SECRET`, `ANTHROPIC_API_KEY`, `EMBEDDINGS_API_KEY`, `LANGFUSE_PUBLIC_KEY`,
 `LANGFUSE_SECRET_KEY`. `DATABASE_URL` is never set on a Worker (it uses Hyperdrive);
 `OAUTH_ENCRYPTION_KEY` is generated (64 hex).
 

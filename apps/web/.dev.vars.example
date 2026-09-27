@@ -44,6 +44,18 @@ GOOGLE_CLIENT_ID=
 GOOGLE_CLIENT_SECRET=
 MICROSOFT_CLIENT_ID=
 MICROSOFT_CLIENT_SECRET=
+# Any OpenID Connect issuer (Keycloak, Okta, Entra single-tenant, Auth0…) — SETUP.md "Sign in with
+# any OIDC issuer". Blank OIDC_ISSUER = no SSO button. Redirect URI: {APP_URL}/auth/oidc/callback.
+# OIDC_ISSUER must equal the issuer's `issuer` value exactly (trailing slash included if it has one).
+# Deployed, OIDC_ISSUER/CLIENT_ID/LABEL/SCOPES and AUTH_OIDC_ONLY are [vars] in BOTH tomls;
+# OIDC_CLIENT_SECRET is a secret (omit it for a public client — PKCE only).
+OIDC_ISSUER=
+OIDC_CLIENT_ID=
+OIDC_CLIENT_SECRET=
+OIDC_LABEL=
+OIDC_SCOPES=
+# true = the login page goes straight to the issuer and hides the other methods (needs the two above).
+AUTH_OIDC_ONLY=
 # AI layer (Phase 3): platform default key; tenants may override in Settings → AI. Optional — without
 # it chat falls back to Workers AI through the [ai] binding (zero key, billed to the Cloudflare account).
 ANTHROPIC_API_KEY=

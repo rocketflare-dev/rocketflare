@@ -29,7 +29,7 @@ Cloudflare Worker (`apps/web`), a CLI (`apps/cli`), private zod contracts
   + DO/Workflow classes (`src/worker.ts`). Node 24, pnpm 10
 - **API**: Hono 4, zod contracts from `@rocketflare/shared`, CASL. **DB**: Postgres 17 + pgvector —
   Neon via Hyperdrive deployed, Docker locally; Drizzle over `postgres.js` (only driver), 1 client/request
-- **Auth**: arctic (Google, Microsoft) + magic link + dev-login; `__Host-session`; API keys; KV rate limit
+- **Auth**: arctic (Google, Microsoft, any OIDC issuer — jose-verified `id_token`, off by default) + magic link + dev-login; `__Host-session`; API keys; KV rate limit
 - **Async / realtime**: Queues (`JOBS_QUEUE`), `NotificationsHub` DO `/ws`, R2 (`FILES`), cron, Workflows
 - **AI**: `services/ai/resolve` (`agent_models` → tenant `ai_configs` → platform key → Workers AI via
   `[ai]`, zero key → 503); Anthropic / OpenAI-compatible / Workers AI chat streamed as **AG-UI**

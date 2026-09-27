@@ -3,6 +3,8 @@ import {
   ConfigError,
   configuredOAuthProviders,
   hasEmail,
+  hasOidc,
+  isOidcOnly,
   loadConfig,
   oauthRedirectUri,
 } from '@/config'
@@ -73,5 +75,34 @@ describe('loadConfig', () => {
   it('derives OAuth redirect URIs from APP_URL', () => {
     const cfg = loadConfig({ ...base, APP_URL: 'https://app.example.com' })
     expect(oauthRedirectUri(cfg, 'google')).toBe('https://app.example.com/auth/google/callback')
+  })
+
+  it('OIDC: off unless issuer + client id; defaults for label and scopes', () => {
+    const off = loadConfig({ ...base, OIDC_ISSUER: '', OIDC_CLIENT_ID: '' })
+    expect(hasOidc(off)).toBe(false)
+    expect(off.OIDC_LABEL).toBe('Single sign-on')
+    expect(off.OIDC_SCOPES).toBe('openid email profile')
+    expect(off.AUTH_OIDC_ONLY).toBe(false)
+    expect(hasOidc(loadConfig({ ...base, OIDC_ISSUER: 'https://idp.test' }))).toBe(false)
+    const on = loadConfig({ ...base, OIDC_ISSUER: 'https://idp.test', OIDC_CLIENT_ID: 'app' })
+    expect(hasOidc(on)).toBe(true)
+    expect(isOidcOnly(on)).toBe(false)
+    expect(configuredOAuthProviders(on)).toEqual(['oidc'])
+    expect(oauthRedirectUri(on, 'oidc')).toBe('http://localhost:3001/auth/oidc/callback')
+    expect(() => loadConfig({ ...base, OIDC_ISSUER: 'not a url' })).toThrow(/OIDC_ISSUER/)
+  })
+
+  it('AUTH_OIDC_ONLY=true without an issuer and client id is a config error', () => {
+    expect(() => loadConfig({ ...base, AUTH_OIDC_ONLY: 'true' })).toThrow(/AUTH_OIDC_ONLY/)
+    expect(() =>
+      loadConfig({ ...base, AUTH_OIDC_ONLY: 'true', OIDC_ISSUER: 'https://idp.test' })
+    ).toThrow(ConfigError)
+    const cfg = loadConfig({
+      ...base,
+      AUTH_OIDC_ONLY: 'true',
+      OIDC_ISSUER: 'https://idp.test',
+      OIDC_CLIENT_ID: 'app',
+    })
+    expect(isOidcOnly(cfg)).toBe(true)
   })
 })

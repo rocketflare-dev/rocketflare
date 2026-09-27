@@ -82,7 +82,11 @@ React 18 + Vite + React Router 6 + TanStack Query 5 + zustand; DaisyUI 5 on Tail
 - `pages/` — route-level components, lazy in `App.tsx` except Home/Login/NotFound. `Login.tsx`:
   `GET /auth/methods` drives the buttons; `?as=<email>` (what `pnpm bootstrap` opens) calls
   `POST /auth/dev-login` once on mount, ONLY when `methods.devLogin` is true AND the email is in
-  `DEV_ACCOUNTS` (the allow-list; an arbitrary address does nothing). `settings/`
+  `DEV_ACCOUNTS` (the allow-list; an arbitrary address does nothing). With `methods.oidcOnly` it
+  hard-navigates to `/auth/oidc?returnUrl=` once, EXCEPT on `?signedOut=1`, `?error=` or `?as=`
+  (each would loop through the issuer) — then it shows the one SSO button; other methods are
+  hidden, not disabled. `useAuth().logout` follows a `200 { endSessionUrl }` with `hardNavigate`,
+  else lands on `/login?signedOut=1`. `settings/`
   is one page with `URLTabs` (`?tab=general|people|groups|api-keys|ai|prompts|agent-models|usage`;
   `groups` only for `manage Group`, `agent-models` and `usage` only for `manage AiConfig`); `admin/` is nested routes under `AdminLayout`; `chat/ChatPage.tsx` is
   `/chat/:conversationId?` (D17, guard `read Conversation`, lazy — its chunk carries the markdown

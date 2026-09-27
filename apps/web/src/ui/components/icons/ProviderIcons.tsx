@@ -2,7 +2,8 @@
  * OAuth provider marks (D11), drawn in `currentColor` so they follow the theme like every other
  * icon — no brand hex in the UI (ui.md "tokens, not raw colours").
  */
-import type { OAuthProviderName } from '@rocketflare/shared/auth'
+import { KeyIcon } from '@heroicons/react/24/outline'
+import type { AuthMethods, OAuthProviderName } from '@rocketflare/shared/auth'
 import type { ComponentType } from 'react'
 
 interface IconProps {
@@ -40,9 +41,18 @@ export function MicrosoftIcon({ className = 'w-5 h-5' }: IconProps) {
 export const PROVIDER_ICONS: Record<OAuthProviderName, ComponentType<IconProps>> = {
   google: GoogleIcon,
   microsoft: MicrosoftIcon,
+  /** A generic OIDC issuer has no brand to draw — a key. */
+  oidc: KeyIcon,
 }
 
 export const PROVIDER_LABELS: Record<OAuthProviderName, string> = {
   google: 'Google',
   microsoft: 'Microsoft',
+  oidc: 'Single sign-on',
+}
+
+/** The button text: the OIDC issuer's is configured (`OIDC_LABEL`, via `/auth/methods`). */
+export function providerLabel(provider: OAuthProviderName, methods?: AuthMethods): string {
+  if (provider === 'oidc' && methods?.oidc?.label) return methods.oidc.label
+  return PROVIDER_LABELS[provider]
 }

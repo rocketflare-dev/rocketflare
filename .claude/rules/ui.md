@@ -161,8 +161,9 @@ Components subscribe to query state, never to the socket; `WebSocketStatus` (hea
   guard as the page they open; `ProtectedRoute` requires a tenant for the whole shell EXCEPT
   `/admin/*` for a global admin (no membership needed — `useNavGuard` then passes only
   `'globalAdmin'` guards, so nothing tenant-scoped is linked)
-- OAuth is a full-page redirect to `/auth/:provider`; magic link via `POST /auth/magic-link/request`;
-  `GET /auth/methods` drives which buttons render
+- OAuth is a full-page redirect to `/auth/:provider?returnUrl=`; magic link via
+  `POST /auth/magic-link/request`; `GET /auth/methods` drives which buttons render. `oidcOnly`
+  auto-redirects to `/auth/oidc` — never on `?signedOut=1` / `?error=` / `?as=`, which would loop
 - `/login?as=<email>` signs in through `POST /auth/dev-login` on mount, ONLY when `methods.devLogin`
   is true and the email is in `DEV_ACCOUNTS` (the bootstrap opens it); never widen the allow-list
 

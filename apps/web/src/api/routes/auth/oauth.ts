@@ -1,15 +1,17 @@
 /**
  * ONE generic OAuth router over the provider registry (D11, D12): `GET /auth/:provider` starts,
- * `GET /auth/:provider/callback` finishes. State + PKCE verifier (+ redirectTo, link mode) travel in
- * a single `oauth_state` cookie that also names the provider, so a callback for the wrong provider
- * is rejected. Redirect URI is `oauthRedirectUri(cfg, provider)`. `email_verified === false` is
- * refused; an existing link wins, then email-based linking to an existing user, else `admitUser`.
- * Tokens are AES-GCM encrypted at rest — `OAUTH_ENCRYPTION_KEY` is checked before the redirect.
- * Unknown or unconfigured provider → 404 envelope.
+ * `GET /auth/:provider/callback` finishes. State + PKCE verifier + OIDC nonce (+ the return path,
+ * link mode) travel in a single `oauth_state` cookie that also names the provider, so a callback
+ * for the wrong provider is rejected. The return path is `?returnUrl=` (what the UI sends;
+ * `?redirectTo=` is still accepted). Redirect URI is `oauthRedirectUri(cfg, provider)`.
+ * `email_verified === false` is refused; an existing link wins, then email-based linking to an
+ * existing user, else `admitUser`. Tokens are AES-GCM encrypted at rest — `OAUTH_ENCRYPTION_KEY`
+ * is checked before the redirect. Unknown or unconfigured provider → 404 envelope; under
+ * `AUTH_OIDC_ONLY` every provider but `oidc` → `/login?error=oidc_only`.
  */
 import { ERROR_CODES } from '@rocketflare/shared/errors'
 import { generateCodeVerifier, generateState } from 'arctic'
-import { oauthRedirectUri } from '../../../config'
+import { isOidcOnly, oauthRedirectUri } from '../../../config'
 import {
   clearFlowCookie,
   OAUTH_STATE_COOKIE_NAME,
@@ -18,7 +20,7 @@ import {
 } from '../../auth/cookies'
 import { requireEncryptionKey } from '../../auth/oauth-encryption'
 import { findProviderLink, upsertProviderLink } from '../../auth/oauth-providers'
-import { getProvider, type ProviderDefinition } from '../../auth/providers'
+import { getProvider, type ProviderDefinition, scopesOf } from '../../auth/providers'
 import { resolveCookieAuth } from '../../middleware/auth'
 import { admitUser, findUserByEmail } from '../../services/auth'
 import type { AppContext } from '../../types'
@@ -32,6 +34,8 @@ interface OAuthFlowState {
   provider: string
   state: string
   verifier: string
+  /** OIDC replay defence: sent as `nonce`, must come back inside the verified `id_token`. */
+  nonce?: string
   redirectTo: string
   /** Link mode: attach the provider to THIS signed-in user instead of logging in. */
   linkUserId?: string
@@ -51,6 +55,7 @@ function decodeFlow(value: string | undefined): OAuthFlowState | null {
       provider: parsed.provider,
       state: parsed.state,
       verifier: parsed.verifier,
+      nonce: parsed.nonce,
       redirectTo: parsed.redirectTo ?? '/',
       linkUserId: parsed.linkUserId,
     }
@@ -67,9 +72,15 @@ function requireConfiguredProvider(c: AppContext): ProviderDefinition {
   return def
 }
 
+/** `AUTH_OIDC_ONLY` hides the other providers on the login page AND refuses them here. */
+function refusedByOidcOnly(c: AppContext, def: ProviderDefinition): boolean {
+  return isOidcOnly(c.get('config')) && def.id !== 'oidc'
+}
+
 oauthRouter.get('/:provider', async c => {
   const cfg = c.get('config')
   const def = requireConfiguredProvider(c)
+  if (refusedByOidcOnly(c, def)) return loginErrorRedirect(c, 'oidc_only')
   requireEncryptionKey(cfg)
 
   let linkUserId: string | undefined
@@ -81,8 +92,17 @@ oauthRouter.get('/:provider', async c => {
 
   const state = generateState()
   const verifier = generateCodeVerifier()
+  const nonce = generateState()
   const client = def.client(cfg, oauthRedirectUri(cfg, def.id))
-  const url = client.createAuthorizationURL(state, verifier, def.scopes)
+  let url: URL
+  try {
+    url = await client.createAuthorizationURL(state, verifier, scopesOf(def, cfg), nonce)
+  } catch (err) {
+    // OIDC discovery is the only thing here that can fail (issuer down, issuer mismatch).
+    c.get('logger').warn({ err, provider: def.id }, 'OAuth authorization URL failed')
+    return loginErrorRedirect(c, 'oauth_failed')
+  }
+  const returnPath = c.req.query('returnUrl') ?? c.req.query('redirectTo')
   setFlowCookie(
     c,
     cfg,
@@ -91,7 +111,8 @@ oauthRouter.get('/:provider', async c => {
       provider: def.id,
       state,
       verifier,
-      redirectTo: safeRedirectPath(c.req.query('redirectTo'), linkUserId ? '/settings' : '/'),
+      nonce,
+      redirectTo: safeRedirectPath(returnPath, linkUserId ? '/settings' : '/'),
       linkUserId,
     })
   )
@@ -103,6 +124,7 @@ oauthRouter.get('/:provider/callback', async c => {
   const db = c.get('db')
   const logger = c.get('logger')
   const def = requireConfiguredProvider(c)
+  if (refusedByOidcOnly(c, def)) return loginErrorRedirect(c, 'oidc_only')
 
   const flow = decodeFlow(readFlowCookie(c, OAUTH_STATE_COOKIE_NAME))
   clearFlowCookie(c, cfg, OAUTH_STATE_COOKIE_NAME)
@@ -126,7 +148,7 @@ oauthRouter.get('/:provider/callback', async c => {
   try {
     const client = def.client(cfg, oauthRedirectUri(cfg, def.id))
     tokens = await client.validateAuthorizationCode(code, flow.verifier)
-    profile = await def.fetchProfile(tokens)
+    profile = await def.fetchProfile(tokens, { cfg, nonce: flow.nonce })
   } catch (err) {
     logger.warn({ err, provider: def.id }, 'OAuth code exchange or profile fetch failed')
     return loginErrorRedirect(c, 'oauth_failed')
@@ -142,7 +164,7 @@ oauthRouter.get('/:provider/callback', async c => {
     if (!auth || auth.user.id !== flow.linkUserId)
       throw new UnauthorizedError('Sign in before linking a provider')
     try {
-      await upsertProviderLink(db, cfg, auth.user.id, def.id, profile, tokens, def.scopes)
+      await upsertProviderLink(db, cfg, auth.user.id, def.id, profile, tokens, scopesOf(def, cfg))
     } catch (err) {
       if (err instanceof ConflictError) return loginErrorRedirect(c, 'provider_linked_elsewhere')
       throw err
@@ -172,7 +194,7 @@ oauthRouter.get('/:provider/callback', async c => {
   }
 
   try {
-    await upsertProviderLink(db, cfg, user.id, def.id, profile, tokens, def.scopes)
+    await upsertProviderLink(db, cfg, user.id, def.id, profile, tokens, scopesOf(def, cfg))
   } catch (err) {
     if (err instanceof ConflictError) return loginErrorRedirect(c, 'provider_linked_elsewhere')
     throw err

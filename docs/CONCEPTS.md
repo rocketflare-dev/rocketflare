@@ -64,7 +64,7 @@ are always `tenant`; no audit log beyond `activity_events`; no personal API keys
 
 ## 2. Auth
 
-- **Sessions are rows**: `user_sessions`, 7-day sliding TTL, cookie `__Host-session` (`HttpOnly`,
+- **Sessions are rows**: `user_sessions`, 30-day sliding TTL (`SESSION_TTL_MS`), cookie `__Host-session` (`HttpOnly`,
   `SameSite=Lax`, `Secure` outside development). `authMiddleware` resolves session → user →
   membership → groups → features in one query. The second strategy is a Bearer tenant API key
   (hashed, expiry, soft revoke).
@@ -72,7 +72,19 @@ are always `tenant`; no audit log beyond `activity_events`; no personal API keys
   token. With no `RESEND_API_KEY` the URL is logged. Dev-login exists and 404s in production.
 - **OAuth is a registry** (D11): one generic `/auth/:provider` router over `ProviderDefinition`s
   (Google, Microsoft via arctic). Redirect URIs come from `APP_URL`, accounts link by verified email,
-  and tokens are AES-GCM encrypted under `OAUTH_ENCRYPTION_KEY`.
+  and tokens are AES-GCM encrypted under `OAUTH_ENCRYPTION_KEY`. The return path is `?returnUrl=`
+  (`?redirectTo=` still accepted); the flow cookie carries state, PKCE verifier and a nonce.
+- **Any OIDC issuer** (`providers/oidc.ts`): set `OIDC_ISSUER` + `OIDC_CLIENT_ID` (+ optional
+  `OIDC_CLIENT_SECRET`) and an `oidc` provider appears, labelled `OIDC_LABEL`. Endpoints come from
+  discovery (cached per isolate, refused unless its `issuer` matches exactly); code + PKCE S256 +
+  `nonce`; the `id_token` is verified with jose against the issuer's JWKS (`iss`, `aud`, `exp`,
+  `nonce`; an unknown `kid` refetches the set — rotation). The identity key is `${iss}|${sub}` in
+  `oauth_providers.provider_user_id`, so no migration; a changed issuer falls back to
+  verified-email linking. `AUTH_OIDC_ONLY=true` sends the login page straight to the issuer and
+  refuses `/auth/google|microsoft` — it **hides** magic link, it does not disable it (invitations
+  still use it). With an `end_session_endpoint`, `POST /auth/logout` answers
+  `200 { endSessionUrl }` (RP-initiated logout back to `/login?signedOut=1`, which never
+  auto-redirects); otherwise 204. Setup: `SETUP.md` → "Sign in with any OIDC issuer".
 - **Hardening (D12)**: random tokens hashed with SHA-256, a required encryption key, CSRF by origin
   allow-list (Bearer is exempt), and a KV sliding-window rate limit on login routes that no-ops
   without `RATE_LIMIT_KV`.
@@ -81,7 +93,12 @@ are always `tenant`; no audit log beyond `activity_events`; no personal API keys
   Details: `.claude/rules/api.md`.
 
 **Known gaps:** no provider token refresh; the rate limit is approximate; no session management UI
-beyond "log out everywhere"; CLI keys differ from other keys only by name.
+beyond "log out everywhere"; CLI keys differ from other keys only by name. OIDC: one issuer per
+deployment; the `groups` claim is read into the profile but **not stored or mapped** to kit groups
+or roles; no `id_token_hint` on logout (id_tokens are not kept, so the issuer may ask to confirm);
+no back-channel or front-channel logout; an issuer that omits `email_verified` is trusted for its
+email like Microsoft is — only configure issuers that control the `email` claim; the client secret
+is sent as `client_secret_basic` only (no `private_key_jwt`).
 
 ## 3. API shell
 
