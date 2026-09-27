@@ -35,6 +35,14 @@ name: Deploy
 # Runtime Worker secrets (OAUTH_ENCRYPTION_KEY, RESEND_API_KEY, …) are NOT
 # managed here: `pnpm --filter @rocketflare/web exec wrangler secret put <NAME> [-c wrangler.staging.toml]`
 # once per worker.
+#
+# Deploying through an external deployer (docs/DEPLOYER.md, off by default): set the repository
+# variable DEPLOYER_URL (and optionally DEPLOYER_AUDIENCE) and both jobs take the second path. The
+# job then needs NO Cloudflare token and NO DATABASE_URL secret: it proves who it is with GitHub's
+# OIDC token (`id-token: write`) and `scripts/deployer.mjs` runs start (wait for approval) → build
+# (`wrangler deploy --dry-run --outdir`, no credentials) → upload (the deployer checks the build and
+# returns short-lived migration credentials) → `pnpm db:migrate:ci` with them → activate → finish
+# (always). With DEPLOYER_URL unset nothing below changes: migrate → build UI → `wrangler deploy`.
 
 on:
   push:
@@ -90,6 +98,15 @@ jobs:
       )
     runs-on: ubuntu-latest
     environment: staging
+    # id-token: the deployer path authenticates with a GitHub OIDC token; unused otherwise.
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      DEPLOYER_URL: ${{ vars.DEPLOYER_URL }}
+      DEPLOYER_AUDIENCE: ${{ vars.DEPLOYER_AUDIENCE }}
+      TOML: apps/web/wrangler.staging.toml
+      DEPLOYER_OUTDIR: apps/web/dist/deploy
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -133,20 +150,58 @@ jobs:
 
       # Root script → apps/web `db:migrate:ci` (role → migrate → grants, env from this Environment).
       - name: Run database migrations (staging)
+        if: vars.DEPLOYER_URL == ''
         run: pnpm db:migrate:ci
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
 
+      # Deployer path (docs/DEPLOYER.md): open a ticket and wait for approval (WAIT_SECONDS, 300).
+      # `start` exports DEPLOYER_TICKET for the later deployer steps.
+      - name: Ask the deployer to deploy (waits for approval)
+        if: vars.DEPLOYER_URL != ''
+        run: node scripts/deployer.mjs start
+
+      # Both paths. It must precede the dry run below: wrangler refuses a missing `[assets]
+      # directory`, and the upload sends what it built.
       - name: Build UI
         run: pnpm --filter @rocketflare/web build:ui
+
+      - name: Build the Worker (dry run, no credentials)
+        if: vars.DEPLOYER_URL != ''
+        run: pnpm --filter @rocketflare/web exec wrangler deploy --dry-run --outdir dist/deploy -c wrangler.staging.toml
+
+      # The deployer checks the bindings, stores an undeployed version and only then returns
+      # short-lived migration credentials, exported masked as MIGRATOR_URL.
+      - name: Hand the build to the deployer
+        if: vars.DEPLOYER_URL != ''
+        run: node scripts/deployer.mjs upload
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+
+      - name: Run database migrations (staging, deployer credentials)
+        if: vars.DEPLOYER_URL != ''
+        run: pnpm db:migrate:ci
+        env:
+          DATABASE_URL: ${{ env.MIGRATOR_URL }}
+
+      - name: Activate the uploaded version
+        if: vars.DEPLOYER_URL != ''
+        run: node scripts/deployer.mjs activate
 
       # `--filter … exec` runs wrangler with apps/web as cwd, where wrangler.staging.toml and
       # `[assets] directory = "./dist/ui"` live.
       - name: Deploy (apps/web/wrangler.staging.toml)
+        if: vars.DEPLOYER_URL == ''
         run: pnpm --filter @rocketflare/web exec wrangler deploy -c wrangler.staging.toml --var "RELEASE_VERSION:${{ steps.version.outputs.version }}"
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      # Always, even after a failure or a rejection: the deployer revokes the migration
+      # credentials and closes the ticket. A no-op when `start` never opened one.
+      - name: Tell the deployer the deploy is over
+        if: always() && vars.DEPLOYER_URL != ''
+        run: node scripts/deployer.mjs finish
 
   # Step 2: publishing the GitHub Release is the promotion gate ("required reviewers" is not
   # available on private repos on the free plan). Ships the release's tag, already validated
@@ -161,6 +216,14 @@ jobs:
       )
     runs-on: ubuntu-latest
     environment: production
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      DEPLOYER_URL: ${{ vars.DEPLOYER_URL }}
+      DEPLOYER_AUDIENCE: ${{ vars.DEPLOYER_AUDIENCE }}
+      TOML: apps/web/wrangler.toml
+      DEPLOYER_OUTDIR: apps/web/dist/deploy
     steps:
       - uses: actions/checkout@v4
         with:
@@ -195,15 +258,45 @@ jobs:
           REQUIRE_PROVISIONED: "1"
 
       - name: Run database migrations (production)
+        if: vars.DEPLOYER_URL == ''
         run: pnpm db:migrate:ci
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
 
+      - name: Ask the deployer to deploy (waits for approval)
+        if: vars.DEPLOYER_URL != ''
+        run: node scripts/deployer.mjs start
+
       - name: Build UI
         run: pnpm --filter @rocketflare/web build:ui
 
+      - name: Build the Worker (dry run, no credentials)
+        if: vars.DEPLOYER_URL != ''
+        run: pnpm --filter @rocketflare/web exec wrangler deploy --dry-run --outdir dist/deploy
+
+      - name: Hand the build to the deployer
+        if: vars.DEPLOYER_URL != ''
+        run: node scripts/deployer.mjs upload
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+
+      - name: Run database migrations (production, deployer credentials)
+        if: vars.DEPLOYER_URL != ''
+        run: pnpm db:migrate:ci
+        env:
+          DATABASE_URL: ${{ env.MIGRATOR_URL }}
+
+      - name: Activate the uploaded version
+        if: vars.DEPLOYER_URL != ''
+        run: node scripts/deployer.mjs activate
+
       - name: Deploy (apps/web/wrangler.toml)
+        if: vars.DEPLOYER_URL == ''
         run: pnpm --filter @rocketflare/web exec wrangler deploy --var "RELEASE_VERSION:${{ steps.version.outputs.version }}"
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Tell the deployer the deploy is over
+        if: always() && vars.DEPLOYER_URL != ''
+        run: node scripts/deployer.mjs finish

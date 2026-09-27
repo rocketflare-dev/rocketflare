@@ -385,9 +385,17 @@ version) deploys staging; publishing the Release deploys production. `ci.yml` (�
 single gate, which `deploy.yml` calls. `pnpm provision <phase>` / `/rf-provision` automates
 accounts → resources → secrets → deploy over REST. Reference: `docs/DEPLOY.md`, `SETUP.md` Part 3.
 
+**External deployer (opt-in).** A Cloudflare token that can deploy a Worker can bind any resource in
+the account into it, so a CI job holding one can reach other apps' data. With the repository
+variable `DEPLOYER_URL` set, `deploy.yml` holds no Cloudflare token and no database credential: it
+proves who it is with a GitHub OIDC token and hands the dry-run build to a deployer that checks the
+bindings, stores an undeployed version, issues short-lived migration credentials, then activates
+(`scripts/deployer.mjs`; the v1 contract is `docs/DEPLOYER.md`). Unset, the default path is unchanged.
+
 **Known gaps:** no release helper beyond `kit:release`; no per-PR previews; no CLI publishing;
 provisioning HTTP calls have not been run end-to-end against live accounts; no automated
-Workers-plan check.
+Workers-plan check. The kit ships no deployer, only the client and the contract; the job waits for
+approval on a runner (fine for minutes, wasteful for hours — there is no re-dispatch).
 
 ## 11. CLI
 
