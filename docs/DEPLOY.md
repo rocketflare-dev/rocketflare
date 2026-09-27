@@ -261,6 +261,24 @@ All steps run at the repository root; the root scripts fan out with `pnpm -r` / 
  workflow_dispatch(environment) ──► either job from the dispatched ref (first deploy; emergencies)
 ```
 
+### Deploying through an external deployer (off by default)
+
+Set the repository variable **`DEPLOYER_URL`** (optionally `DEPLOYER_AUDIENCE`) and both jobs take
+a second path with **no `CLOUDFLARE_API_TOKEN` and no `DATABASE_URL` secret**: the job authenticates
+with a GitHub OIDC token (`permissions: id-token: write`) and `scripts/deployer.mjs` runs
+
+```
+start (ticket; waits for approval) → build:ui → wrangler deploy --dry-run --outdir dist/deploy
+  → upload (the deployer checks the bindings, stores an undeployed version, returns a short-lived
+    MIGRATOR_URL, masked) → pnpm db:migrate:ci with DATABASE_URL=$MIGRATOR_URL → activate
+  → finish (if: always())
+```
+
+Triggers, the guard, the CI gate, the parity check and the version resolution are the same on both
+paths; with `DEPLOYER_URL` unset the migrate / `wrangler deploy` steps run exactly as above. The
+contract a deployer implements — endpoints, payload, OIDC claims to check, what `migratorUrl` must be
+able to do — is **`docs/DEPLOYER.md`** (protocol v1).
+
 ### Default plugins in CI, and the template a plugin repository calls (D31, decision 5)
 
 The gate's steps live in `.github/workflows/gate.yml` and `ci.yml` calls it twice — once on the
