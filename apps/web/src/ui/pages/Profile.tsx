@@ -1,8 +1,9 @@
 /**
  * Your account (D13): name/avatar (`updateProfileRequestSchema` → `PATCH /api/me`), an avatar
  * upload (`POST /api/files?scope=avatars`, D23 — type/size checked client-side first) and the
- * sign-in methods linked to it. Connecting a provider is a full-page OAuth round trip with
- * `?returnUrl=/profile`; disconnecting is refused when it would leave no way to sign in.
+ * sign-in methods linked to it. Connecting a provider is a full-page OAuth round trip in LINK
+ * mode (`?link=1&returnUrl=/profile`, so the identity attaches to THIS user instead of signing
+ * in as whoever it matches); disconnecting is refused when it would leave no way to sign in.
  */
 
 import { LinkIcon } from '@heroicons/react/24/outline'
@@ -316,7 +317,9 @@ function SignInMethods() {
                     type="button"
                     className="btn btn-outline btn-xs"
                     onClick={() =>
-                      hardNavigate(`/auth/${provider}?returnUrl=${encodeURIComponent('/profile')}`)
+                      hardNavigate(
+                        `/auth/${provider}?link=1&returnUrl=${encodeURIComponent('/profile')}`
+                      )
                     }
                   >
                     Connect

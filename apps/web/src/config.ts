@@ -185,6 +185,13 @@ const coreConfigSchema = z.object({
    * live for invitations. Requires `OIDC_ISSUER` + `OIDC_CLIENT_ID` (a config error otherwise).
    */
   AUTH_OIDC_ONLY: optionalBoolean(false),
+  /**
+   * Secure default `false`: an OIDC issuer that omits `email_verified` is not trusted for its
+   * email (the sign-in is refused as `email_unverified`). `true` treats a MISSING flag as verified
+   * — only for an issuer that controls the `email` claim (single-tenant Entra). An explicit
+   * `email_verified: false` is refused either way.
+   */
+  OIDC_TRUST_EMAIL: optionalBoolean(false),
 
   // ---- Secrets (.dev.vars locally, `wrangler secret put` deployed) — all optional here;
   //      features gate on presence (zero-creds first run) or demand them at use time. -------

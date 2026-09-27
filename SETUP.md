@@ -346,7 +346,7 @@ One generic OpenID Connect issuer per deployment, beside or instead of the butto
    `OIDC_LABEL` (button text, default "Single sign-on"), `OIDC_SCOPES` (default
    `openid email profile`), `AUTH_OIDC_ONLY=true` (the login page goes straight to the issuer and
    hides every other method; the magic-link endpoint stays live for invitations — it hides, it does
-   not disable). Locally these go in `.dev.vars`; deployed, everything but the secret is a
+   not disable), `OIDC_TRUST_EMAIL=true` (see Entra below). Locally these go in `.dev.vars`; deployed, everything but the secret is a
    `[vars]` entry in **both** tomls (commented templates are there) and `OIDC_CLIENT_SECRET` is a
    Worker secret (3.5)
 3. Issuer notes:
@@ -356,7 +356,9 @@ One generic OpenID Connect issuer per deployment, beside or instead of the butto
      `https://<org>.okta.com/oauth2/default`; app type "Web", grant "Authorization Code"
    - **Entra ID, single tenant**: `OIDC_ISSUER=https://login.microsoftonline.com/<tenant-id>/v2.0`;
      add the optional `email` claim to the ID token (Token configuration) — without it the kit
-     falls back to the userinfo endpoint. (Multi-tenant Entra is the Microsoft button, 2.3)
+     falls back to the userinfo endpoint. Entra sends no `email_verified`, and the kit refuses a
+     missing flag by default, so set **`OIDC_TRUST_EMAIL=true`** — only for a single tenant whose
+     directory controls the `email` claim. (Multi-tenant Entra is the Microsoft button, 2.3)
    - **Auth0**: `OIDC_ISSUER=https://<tenant>.auth0.com/` — **with** the trailing slash, which is
      how Auth0 spells its issuer; Regular Web Application
 
@@ -364,7 +366,8 @@ Absent (`OIDC_ISSUER` blank): no `oidc` provider, the login page is unchanged. `
 without issuer and client id refuses to boot (config error). Verify: `/auth/methods` shows
 `"oidc": { "label": … }`; "Continue with <label>" round-trips; `Sign out` returns to
 `/login?signedOut=1` (through the issuer's logout page when it advertises `end_session_endpoint`).
-An `email_verified: false` account is refused, and an existing kit user is linked by verified email.
+An account whose `email_verified` is `false` — or missing, unless `OIDC_TRUST_EMAIL=true` — is
+refused (`?error=email_unverified`); an existing kit user is linked by verified email.
 
 ### 2.4 First admin
 `BOOTSTRAP_ADMIN_EMAILS=you@example.com` (comma-separated). Promoted to global admin on the first

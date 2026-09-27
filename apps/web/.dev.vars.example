@@ -56,6 +56,9 @@ OIDC_LABEL=
 OIDC_SCOPES=
 # true = the login page goes straight to the issuer and hides the other methods (needs the two above).
 AUTH_OIDC_ONLY=
+# true = trust the issuer's email when it omits `email_verified` (single-tenant Entra does). Default
+# false: such a sign-in is refused. An explicit `email_verified: false` is refused either way.
+OIDC_TRUST_EMAIL=
 # AI layer (Phase 3): platform default key; tenants may override in Settings → AI. Optional — without
 # it chat falls back to Workers AI through the [ai] binding (zero key, billed to the Cloudflare account).
 ANTHROPIC_API_KEY=

@@ -15,6 +15,8 @@
  * - **The identity key** is `${iss}|${sub}`: a `sub` is only unique within its issuer, and packing
  *   both into `provider_user_id` needs no migration. Pointing `OIDC_ISSUER` somewhere new therefore
  *   never matches an old link; those users fall back to verified-email linking via `admitUser`.
+ * - **`email_verified`** must be asserted `true`: a missing flag is UNVERIFIED unless
+ *   `OIDC_TRUST_EMAIL=true`, and an explicit `false` is always refused by the router.
  * - **`groups`** is read into the profile and deliberately not stored (docs/CONCEPTS.md §2 gaps).
  */
 import { CodeChallengeMethod, OAuth2Client } from 'arctic'
@@ -207,6 +209,11 @@ export async function oidcProfile(
   const groups = Array.isArray(claims.groups)
     ? claims.groups.filter((g): g is string => typeof g === 'string')
     : undefined
+
+  // Secure by default: a generic issuer that does not SAY the email is verified is not trusted for
+  // it (no email linking, no email-based admission). `OIDC_TRUST_EMAIL` opts an issuer that
+  // controls the claim but omits the flag (single-tenant Entra) back in. Explicit false: refused.
+  if (emailVerified === undefined) emailVerified = cfg.OIDC_TRUST_EMAIL
 
   return {
     providerUserId: `${doc.issuer}|${sub}`,

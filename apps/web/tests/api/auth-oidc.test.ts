@@ -399,11 +399,43 @@ describe('GET /auth/oidc/callback', () => {
     expect(idp.jwksFetches).toBe(2)
   })
 
-  it.each([false, 'false'])('email_verified = %j is refused', async verified => {
+  it('a MISSING email_verified is refused by default: no email linking, no admission', async () => {
+    const user = await createTestUser(db)
+    const sub = `sub_${uniqueId()}`
+    idp.claims = { sub, email: user.email }
+    const res = await signIn(oidcEnv({ SIGNUP_MODE: 'open' }))
+    expect(location(res).searchParams.get('error')).toBe('email_unverified')
+    expect(cookieValue(res, SESSION_COOKIE_NAME) ?? '').toBe('')
+    expect(await linkFor(sub)).toHaveLength(0)
+    // Nor through userinfo: a flag it omits is just as missing.
+    const sub2 = `sub_${uniqueId()}`
+    idp.claims = { sub: sub2 }
+    idp.userinfo = { sub: sub2, email: user.email }
+    const viaUserinfo = await signIn(oidcEnv())
+    expect(location(viaUserinfo).searchParams.get('error')).toBe('email_unverified')
+  })
+
+  it('OIDC_TRUST_EMAIL=true accepts a missing email_verified (single-tenant Entra)', async () => {
+    const user = await createTestUser(db)
+    const sub = `sub_${uniqueId()}`
+    idp.claims = { sub, email: user.email }
+    const env = oidcEnv({ OIDC_TRUST_EMAIL: 'true' })
+    const res = await signIn(env)
+    expect(await sessionUserId(res, env)).toBe(user.id)
+    const [link] = await linkFor(sub)
+    expect(link?.userId).toBe(user.id)
+  })
+
+  it.each([
+    [false, 'false'],
+    ['false', 'false'],
+    [false, 'true'],
+    ['false', 'true'],
+  ])('email_verified = %j is refused (OIDC_TRUST_EMAIL=%s)', async (verified, trust) => {
     const user = await createTestUser(db)
     const sub = `sub_${uniqueId()}`
     idp.claims = { sub, email: user.email, email_verified: verified }
-    const res = await signIn(oidcEnv())
+    const res = await signIn(oidcEnv({ OIDC_TRUST_EMAIL: trust }))
     expect(location(res).searchParams.get('error')).toBe('email_unverified')
     expect(await linkFor(sub)).toHaveLength(0)
   })

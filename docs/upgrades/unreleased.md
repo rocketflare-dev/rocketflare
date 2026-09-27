@@ -4,7 +4,7 @@ previous: 0.13.0
 date: null
 breaking: false
 migrations: []
-areas: [api, db, config, docs]
+areas: [api, ui, shared, db, config, docs]
 touches_surfaces: []
 requires_surfaces: []
 manual: true
@@ -42,6 +42,19 @@ Dev ports are configurable for a machine where :3000/:3001 are taken (a Cloudfla
 
 - New `scripts/deployer.mjs` (`start | upload | activate | finish`) is the client; `docs/DEPLOYER.md` is the versioned v1 contract any deployer implements; `tests/config/deployer.test.ts` drives the script against a fake deployer.
 
+Sign in with any OIDC issuer, off by default (`docs/CONCEPTS.md` §2).
+
+- A new `oidc` provider (`apps/web/src/api/auth/providers/oidc.ts`, dependency `jose`) appears when `OIDC_ISSUER` + `OIDC_CLIENT_ID` are set — discovery, PKCE S256 + nonce, `id_token` verified against the issuer's JWKS; identity key `${iss}|${sub}`, so no migration.
+- New vars `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_LABEL`, `OIDC_SCOPES`, `AUTH_OIDC_ONLY`, `OIDC_TRUST_EMAIL` and optional secret `OIDC_CLIENT_SECRET`; `AUTH_OIDC_ONLY=true` without issuer + client id is a config error.
+- Secure by default: an OIDC issuer that omits `email_verified` is refused as `email_unverified` (no email linking, no admission); `OIDC_TRUST_EMAIL=true` accepts a missing flag for an issuer that controls the claim (single-tenant Entra). Explicit `false` is always refused.
+- Bug fix: Profile's "Connect" now starts `/auth/<provider>?link=1&returnUrl=/profile`, so it attaches the identity to the signed-in user instead of signing in as whoever it matches.
+- `AUTH_OIDC_ONLY=true`: the login page redirects straight to the issuer (except after `?signedOut=1` or an `?error=`), hides the other methods, and `/auth/google|microsoft` redirect to `/login?error=oidc_only`. Magic link stays live for invitations.
+- Shared contracts, additive: `oauthProviderNameSchema` gains `'oidc'`, `authMethodsSchema` gains optional `oidc: { label }` and `oidcOnly`; `/auth/methods` sends both only when an issuer is configured.
+- Bug fix: `GET /auth/:provider` now reads `?returnUrl=` (what the login page always sent) as well as `?redirectTo=`, so OAuth sign-in returns to the page that asked for it.
+- CONCEPTS §2 now says the session TTL is 30 days sliding (it said 7).
+- `apps/web/src/api/routes/auth/oauth.ts` → the start route now awaits `createAuthorizationURL` and reads `returnUrl` → keep your own changes around both; a provider you added keeps working since the new parameters are optional.
+- `apps/web/src/ui/pages/Login.tsx` → OIDC-only redirect and `providerLabel` → if you restyled the page, re-apply the `autoOidc` effect and the `oidcOnly` hiding by hand.
+
 ## How to apply
 
 1. Copy `scripts/changelog-nudge.mjs`, `scripts/release-site-nudge.mjs`, `scripts/lib/nudge-lib.mjs` and `scripts/lib/nudge-lib.d.mts` from the kit, and the test `apps/web/tests/config/nudge-hooks.test.ts`.
@@ -65,6 +78,10 @@ Dev ports are configurable for a machine where :3000/:3001 are taken (a Cloudfla
    5. As the job's LAST step, add `node scripts/deployer.mjs finish` with `if: always() && vars.DEPLOYER_URL != ''`.
    6. Write your own web package name in place of `@rocketflare/web` if `/rf-adapt` renamed it.
 15. Leave `DEPLOYER_URL` unset to keep deploying as today. To switch, stand up a deployer that implements `docs/DEPLOYER.md`, set the repository variable `DEPLOYER_URL`, then delete `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` and `DATABASE_URL` from the GitHub Environments once a deploy has gone through it.
+16. Add the `jose` dependency to `apps/web/package.json` (a `manual` file): `pnpm --filter <your web package> add jose`.
+17. Port the OIDC change from the kit: new `apps/web/src/api/auth/providers/oidc.ts`; the `oidc: oidcProvider` entry, `scopesOf` and the `AUTH_OIDC_ONLY` filter in `apps/web/src/api/auth/providers/index.ts`; the widened contract in `providers/types.ts`; `routes/auth/oauth.ts` (nonce in the flow cookie, `returnUrl`, `oidc_only` refusal); `routes/auth/session.ts` (`/methods`, `/logout`); `routes/auth/helpers.ts` (`oidc_only` login error code); `apps/web/src/config.ts` (the `OIDC_*`/`AUTH_OIDC_ONLY` keys including `OIDC_TRUST_EMAIL`, the `superRefine`, `hasOidc`, `isOidcOnly`, the `'oidc'` provider name); `packages/shared/src/auth.ts`; `ui/components/icons/ProviderIcons.tsx` (`providerLabel`), `ui/pages/Login.tsx`, `ui/pages/Profile.tsx` (the `link=1` Connect fix), `ui/hooks/useAuth.tsx`; `apps/web/scripts/provision/config.ts` (`OIDC_CLIENT_SECRET` in `OPTIONAL_WORKER_SECRETS`); tests `apps/web/tests/api/auth-oidc.test.ts` plus the additions to `tests/config/env-schema.test.ts`, `tests/ui/login.test.tsx` and `tests/ui/use-auth.test.tsx`, and the new `tests/ui/profile-sign-in-methods.test.tsx`.
+18. Add the blank `OIDC_*`, `AUTH_OIDC_ONLY` and `OIDC_TRUST_EMAIL` lines to `apps/web/.dev.vars.example` (never ported automatically), then run `pnpm typecheck` and commit the regenerated `apps/web/worker-configuration.d.ts`.
+19. To turn SSO on in a deployment, follow `SETUP.md` 2.3b: the `OIDC_*` vars go in `[vars]` of BOTH wrangler tomls (never ported automatically; the kit ships them as comments) and `OIDC_CLIENT_SECRET` is a Worker secret. Nothing to do for a deployment that keeps SSO off.
 
 ## Conflicts to expect
 
@@ -72,6 +89,9 @@ Dev ports are configurable for a machine where :3000/:3001 are taken (a Cloudfla
 - `apps/web/vite.config.ts` → the proxy block carries an installed plugin's prefixes (`/cubejs-api`, `/mcp`) → keep them; only the `/ws` target and `server` keys change.
 - `scripts/bootstrap.mjs` → `parseArgs` and `UsageError` are gone, replaced by imports → keep the app's own steps, drop its parser after porting its flags into `parseBootstrapArgs`.
 - `.github/workflows/deploy.yml` → steps the app added to its deploy jobs (smoke tests, notifications) → keep them; a step that needs `CLOUDFLARE_API_TOKEN` or `DATABASE_URL` takes `if: vars.DEPLOYER_URL == ''` too, and one that must run after the deploy goes after `activate`, before `finish`.
+- `apps/web/src/api/routes/auth/oauth.ts` → the start route now awaits `createAuthorizationURL` and reads `returnUrl` → keep your own changes around both; a provider you added keeps working since the new parameters are optional.
+- `apps/web/src/ui/pages/Login.tsx` → OIDC-only redirect and `providerLabel` → if you restyled the page, re-apply the `autoOidc` effect and the `oidcOnly` hiding by hand.
+- `apps/web/src/api/auth/providers/types.ts` → `fetchProfile` gains a second `{ cfg, nonce }` argument → a provider of your own may ignore it.
 
 ## Verify
 
@@ -84,3 +104,7 @@ Dev ports are configurable for a machine where :3000/:3001 are taken (a Cloudfla
 7. `node scripts/bootstrap.mjs --help` lists `--db-url <url>`.
 8. In `.github/workflows/deploy.yml`, every step using `secrets.CLOUDFLARE_API_TOKEN` or `secrets.DATABASE_URL` has `vars.DEPLOYER_URL == ''` in its `if:`, and the `finish` step has `always()`.
 9. With `DEPLOYER_URL` unset, the next tag's staging run shows the deployer steps as skipped and deploys as before.
+10. `pnpm web test:api` passes, including `auth-oidc.test.ts` and the unchanged `auth-oauth.test.ts`.
+11. `pnpm web test:ui` passes, including the `AUTH_OIDC_ONLY` cases in `login.test.tsx`.
+12. With no `OIDC_ISSUER`, `curl <app>/auth/methods` returns exactly the keys it did before (`magicLink`, `providers`, `devLogin`).
+13. With an issuer configured (`SETUP.md` 2.3b), "Continue with <OIDC_LABEL>" round-trips and Sign out returns to `/login?signedOut=1`.

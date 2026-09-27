@@ -83,6 +83,8 @@ describe('loadConfig', () => {
     expect(off.OIDC_LABEL).toBe('Single sign-on')
     expect(off.OIDC_SCOPES).toBe('openid email profile')
     expect(off.AUTH_OIDC_ONLY).toBe(false)
+    expect(off.OIDC_TRUST_EMAIL).toBe(false)
+    expect(loadConfig({ ...base, OIDC_TRUST_EMAIL: 'true' }).OIDC_TRUST_EMAIL).toBe(true)
     expect(hasOidc(loadConfig({ ...base, OIDC_ISSUER: 'https://idp.test' }))).toBe(false)
     const on = loadConfig({ ...base, OIDC_ISSUER: 'https://idp.test', OIDC_CLIENT_ID: 'app' })
     expect(hasOidc(on)).toBe(true)
