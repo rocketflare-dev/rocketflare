@@ -365,6 +365,10 @@ jobs:
           if [ -n "$PLUGIN_SUBDIR" ]; then args+=(--subdir "$PLUGIN_SUBDIR"); fi
           pnpm plugin "${args[@]}" "${dirty[@]}"
           pnpm db:generate --name "plugin-$id-ci"
+          # Staged, as an adopter commits it: the kit's source scanners (`unscoped-allowlist`,
+          # `driver-results`, …) read `git ls-files`, so an untracked install was never scanned here
+          # and analytics 3.4.1 shipped a test that failed the first app to install it (plugins#8).
+          git add -A
 
       - name: Apply the generated migrations
         working-directory: kit
