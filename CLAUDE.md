@@ -90,7 +90,9 @@ apps/evals/        @rocketflare/evals — vitest-evals suites over apps/web in-p
 packages/shared/   @rocketflare/shared — src/*.ts zod contracts, errors, pagination, permissions,
                    plugins/ (SharedPlugin + the SHARED_PLUGINS barrel + each plugin's contracts) (CLAUDE.md)
 scripts/           bootstrap.sh → bootstrap.mjs (9 steps), install.sh (curl one-liner), rename.mjs,
-                   upgrade.mjs (port a kit release into a copy), release{,-check}.mjs, changelog-nudge.mjs,
+                   upgrade.mjs (port a kit release into a copy), release{,-check}.mjs, changelog-nudge.mjs +
+                   release-site-nudge.mjs (PreToolUse on a commit: missing porting note / version
+                   bump → update rocketflare-www),
                    kit-update-check.mjs (SessionStart: tells a copy about a newer kit release), lib/
 .rocketflare.json  kit version + commit, the app's names, the replaceable-surface manifest
 docs/upgrades/     one porting note per kit release (+ unreleased.md) — CHANGELOG.md is the index

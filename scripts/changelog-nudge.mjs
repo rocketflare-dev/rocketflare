@@ -24,6 +24,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { MANIFEST_FILE } from './lib/manifest.mjs'
+import { hookJson } from './lib/nudge-lib.mjs'
 import { PLUGIN_MANIFEST_FILE } from './lib/plugin-lib.mjs'
 import { behaviourFiles } from './lib/upgrade-lib.mjs'
 
@@ -80,12 +81,17 @@ function main() {
   const behaviour = behaviourFiles(all)
   if (behaviour.length === 0) return
 
+  // JSON, not plain text: a PreToolUse hook's plain stdout goes to the debug log and never reaches
+  // Claude, which is how this nudge was silent until it was rewritten (`lib/nudge-lib.mjs`).
   process.stdout.write(
-    `This commit changes ${behaviour.length} file(s) under apps/ or packages/ with no entry in ${NOTE}.\n` +
-      `Every ${isPluginRepo ? 'host that installed this plugin' : 'copy of the kit'} absorbs this change by reading that note; without one the change is\n` +
-      'invisible to all of them. Add an entry (docs/upgrades/README.md has the shape), or say why\n' +
-      'this one needs none.\n' +
-      `First few: ${behaviour.slice(0, 5).join(', ')}\n`
+    hookJson(
+      `This commit changes ${behaviour.length} file(s) under apps/ or packages/ with no entry in ${NOTE}.\n` +
+        `Every ${isPluginRepo ? 'host that installed this plugin' : 'copy of the kit'} absorbs this change by reading that note; without one the change is\n` +
+        'invisible to all of them. Add an entry (docs/upgrades/README.md has the shape), or say why\n' +
+        'this one needs none.\n' +
+        `First few: ${behaviour.slice(0, 5).join(', ')}`,
+      `No ${NOTE} entry for ${behaviour.length} changed source file(s).`
+    )
   )
 }
 

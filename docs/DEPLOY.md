@@ -357,7 +357,9 @@ kit it also refuses a version whose `defaultPlugins` no longer resolve at their 
 **Released history is never rewritten** — a copy pins a kit commit and a force-push orphans it. One tag ships `apps/web` and `apps/cli` together — the `apps/*` and `packages/*` versions
 are informational and are not checked. Bump the root version, commit, tag. The kit itself has one
 more step after the tag, which nothing automates: updating rocketflare.dev's changelog
-(`CONTRIBUTING.md`, "Cutting a release").
+(`CONTRIBUTING.md`, "Cutting a release"). A Claude Code `PreToolUse` hook
+(`scripts/release-site-nudge.mjs`) reminds the agent of it on any commit that changes the root
+`package.json` version, in the kit and in the plugins monorepo (which carries a copy).
 
 Publishing the Release is the promotion gate (required reviewers are unavailable on private repos
 on the free plan; add them to the `production` environment if the plan allows). Production does not

@@ -174,6 +174,9 @@ adds one step, because rocketflare.dev keeps its own copy of the release list.
    `npm run sync:releases` adds the entry from the new porting note's frontmatter with a `TODO`
    summary. Replace that with one line in the site's voice, then run
    `npm run check:releases && npm run build` and open a PR. Merging deploys rocketflare.dev.
+   In a Claude Code session you are reminded of this step: `scripts/release-site-nudge.mjs` fires
+   on the release commit (any commit that changes the root `package.json` version). The plugins
+   monorepo carries the same hook, and there step 3 also means updating `src/data/plugins.ts`.
 
 ### <a name="architecture-guidelines"></a> Architecture guidelines
 
