@@ -65,13 +65,16 @@ describe('schema invariants', () => {
   })
 
   it('every tenant-owned table cascades from tenants and has uuid ids', async () => {
+    // pg_catalog, not information_schema: the information_schema join on constraint_name is slow
+    // enough (seconds once the default plugins add their tables) to time the test out in CI.
+    // confdeltype 'c' = ON DELETE CASCADE.
     const fks = await rows<{ table_name: string; delete_rule: string }>(sql`
-      SELECT tc.table_name::text, rc.delete_rule::text
-      FROM information_schema.table_constraints tc
-      JOIN information_schema.referential_constraints rc ON rc.constraint_name = tc.constraint_name
-      JOIN information_schema.key_column_usage kcu ON kcu.constraint_name = tc.constraint_name
-      WHERE tc.constraint_type = 'FOREIGN KEY' AND tc.table_schema = 'public'
-        AND kcu.column_name = 'tenant_id'`)
+      SELECT c.conrelid::regclass::text AS table_name,
+             CASE c.confdeltype WHEN 'c' THEN 'CASCADE' ELSE c.confdeltype::text END AS delete_rule
+      FROM pg_constraint c
+      JOIN pg_namespace n ON n.oid = c.connamespace
+      JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = ANY (c.conkey)
+      WHERE c.contype = 'f' AND n.nspname = 'public' AND a.attname = 'tenant_id'`)
     expect(fks.length).toBeGreaterThan(0)
     for (const fk of fks) expect(fk.delete_rule, fk.table_name).toBe('CASCADE')
 
