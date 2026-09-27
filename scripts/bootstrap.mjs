@@ -17,6 +17,10 @@
  * `--check` (`pnpm preflight`) is the read-only half (plus an informational `· tracing` line, D32): steps 1, 3, 4 (one `db:check`, no compose
  * up), 8 and `dev-server.mjs --status`, every failure listed, exit 3 if any.
  *
+ * `--db-url <url>` bootstraps against a database this checkout does not run (a Neon branch in a
+ * sandbox with no Docker): no Docker checks, DATABASE_URL upserted in step 3, step 4 only polls
+ * `db:check`, step 7 seeds with SEED_ALLOW_REMOTE=1. Still ten steps. `bootstrapStepPlan` decides.
+ *
  * Exit codes: 0 ok · 1 a step failed · 2 usage · 3 prerequisite missing · 4 a port or the Postgres
  * container is held by another checkout · 5 Cloudflare login required.
  */
@@ -28,15 +32,19 @@ import path from 'node:path'
 import { createInterface } from 'node:readline'
 import {
   aiBlockState,
+  BootstrapUsageError,
+  bootstrapStepPlan,
   databaseUrlPort,
   describeTracing,
   extractSeedKey,
   fillDevVars,
+  parseBootstrapArgs,
   parseNvmrc,
   parseWhoami,
   planDefaultPlugins,
   readDevVars,
   toggleAiBlock,
+  upsertDevVar,
   versionAtLeast,
 } from './lib/bootstrap-lib.mjs'
 import { devPorts } from './lib/dev-ports.mjs'
@@ -56,6 +64,8 @@ const API_URL = `http://localhost:${DEV_PORTS.api}`
 const UI_URL = `http://localhost:${DEV_PORTS.ui}`
 const HEALTH_TIMEOUT_MS = 90_000
 const DB_CHECK_ATTEMPTS = 30
+/** `--db-url`: nothing is booting, so a short retry covers a Neon compute waking from idle. */
+const EXTERNAL_DB_CHECK_ATTEMPTS = 5
 const TOTAL_STEPS = 10
 const TAIL_LINES = 30
 
@@ -77,88 +87,18 @@ Take a fresh clone to a running, signed-in dev stack in one command. Re-runnable
   --share-db    accepted and ignored: every checkout now gets its own database (pnpm dev:db:status)
   --no-open     do not open the browser once the server answers
   --as <email>  seeded account to sign in as (default owner@example.test)
-  --check       read-only preflight (= pnpm preflight): toolchain, secrets, database, Cloudflare,
+  --db-url <url>
+                use this Postgres (e.g. a Neon branch) instead of the Docker one: no Docker
+                checks, DATABASE_URL written to apps/web/.dev.vars, step 4 only waits for it,
+                the seed may write to it (SEED_ALLOW_REMOTE=1). Also --db-url=<url>;
+                not with --check
+  --check      read-only preflight (= pnpm preflight): toolchain, secrets, database, Cloudflare,
                 dev status; exit 3 when anything is missing
   --verbose     stream every child's output (also DEV_VERBOSE=1)
   --help        this text
 
 Exit codes: 0 ok · 1 a step failed · 2 usage · 3 prerequisite missing · 4 port/container held by
 another checkout · 5 Cloudflare login required`
-
-function parseArgs(argv) {
-  const opts = {
-    yes: false,
-    shareDbIgnored: false,
-    offline: false,
-    online: false,
-    dev: true,
-    demo: true,
-    plugins: true,
-    open: true,
-    as: 'owner@example.test',
-    check: false,
-    verbose: process.env.DEV_VERBOSE === '1',
-    help: false,
-  }
-  for (let i = 0; i < argv.length; i += 1) {
-    const arg = argv[i]
-    switch (arg) {
-      case '--yes':
-        opts.yes = true
-        break
-      case '--offline':
-        opts.offline = true
-        break
-      case '--online':
-        opts.online = true
-        break
-      case '--no-dev':
-        opts.dev = false
-        break
-      case '--no-demo':
-        opts.demo = false
-        break
-      case '--no-plugins':
-        opts.plugins = false
-        break
-      // Kept so an older command line (or doc) still runs. Sharing was only ever a workaround
-      // for the fixed port; scripts/dev-db.mjs now gives each checkout its own database.
-      case '--share-db':
-        opts.shareDbIgnored = true
-        break
-      case '--no-open':
-        opts.open = false
-        break
-      case '--check':
-        opts.check = true
-        break
-      case '--verbose':
-        opts.verbose = true
-        break
-      case '--help':
-      case '-h':
-        opts.help = true
-        break
-      case '--as': {
-        const value = argv[i + 1]
-        if (!value || value.startsWith('--')) throw new UsageError('--as needs an email')
-        opts.as = value
-        i += 1
-        break
-      }
-      default:
-        if (arg.startsWith('--as=')) {
-          opts.as = arg.slice('--as='.length)
-          break
-        }
-        throw new UsageError(`unknown option ${arg}`)
-    }
-  }
-  if (opts.offline && opts.online) throw new UsageError('--offline and --online exclude each other')
-  return opts
-}
-
-class UsageError extends Error {}
 
 /** A step's failure: what to print (the child's tail + a fix hint) and how to exit. */
 class StepError extends Error {
@@ -251,7 +191,8 @@ const pnpm = (args, opts) => run('pnpm', args, opts)
 
 // ---- Steps -------------------------------------------------------------------------------------
 
-async function stepToolchain() {
+/** `plan.docker` false (`--db-url`, or preflight against an off-box DATABASE_URL): no Docker. */
+async function stepToolchain(plan) {
   const nvmrc = parseNvmrc(readFileSync(path.join(REPO_ROOT, '.nvmrc'), 'utf8'))
   if (!versionAtLeast(process.version, nvmrc)) {
     throw new StepError(`node ${process.version} < ${nvmrc}`, {
@@ -268,6 +209,21 @@ async function stepToolchain() {
       exitCode: EXIT.prerequisite,
     })
   }
+  const tools = await dockerToolchain(plan)
+  for (const bin of ['lsof', 'ps', 'git']) {
+    if (!has(bin)) {
+      throw new StepError(`${bin} not on PATH`, {
+        hint: `install ${bin} (dev-server.mjs needs lsof/ps to own its ports)`,
+        exitCode: EXIT.prerequisite,
+      })
+    }
+  }
+  return { verify: `node ${process.version} · pnpm ${pnpmV} · ${tools}` }
+}
+
+/** The Docker half of step 1; skipped when the database is not ours to run. */
+async function dockerToolchain(plan) {
+  if (!plan.docker) return `docker skipped (external database ${plan.target})`
   const docker = await run('docker', ['info', '--format', '{{.ServerVersion}}'])
   if (docker.code !== 0) {
     throw new StepError('docker daemon not reachable', {
@@ -287,17 +243,7 @@ async function stepToolchain() {
       exitCode: EXIT.prerequisite,
     })
   }
-  for (const bin of ['lsof', 'ps', 'git']) {
-    if (!has(bin)) {
-      throw new StepError(`${bin} not on PATH`, {
-        hint: `install ${bin} (dev-server.mjs needs lsof/ps to own its ports)`,
-        exitCode: EXIT.prerequisite,
-      })
-    }
-  }
-  return {
-    verify: `node ${process.version} · pnpm ${pnpmV} · docker ${docker.output.trim()} · compose ${compose.output.trim()}`,
-  }
+  return `docker ${docker.output.trim()} · compose ${compose.output.trim()}`
 }
 
 async function stepInstall() {
@@ -318,8 +264,11 @@ async function stepInstall() {
   return { verify: 'apps/web/node_modules/.bin/wrangler present' }
 }
 
-/** Verify-only when `write` is false (`--check`). */
-function stepSecrets({ write }) {
+/**
+ * Verify-only when `write` is false (`--check`). `dbUrl` (`--db-url`) is written as DATABASE_URL —
+ * an explicit flag, so it replaces whatever the file had; the value itself is never printed.
+ */
+function stepSecrets({ write, dbUrl = null }) {
   const example = readFileSync(DEV_VARS_EXAMPLE, 'utf8')
   const existing = existsSync(DEV_VARS) ? readFileSync(DEV_VARS, 'utf8') : null
   const notes = []
@@ -331,8 +280,13 @@ function stepSecrets({ write }) {
       () => randomBytes(32).toString('hex'),
       REQUIRED_SECRETS
     )
-    if (existing === null || result.text !== existing) writeFileSync(DEV_VARS, result.text)
     text = result.text
+    if (dbUrl) {
+      const before = text
+      text = upsertDevVar(text, 'DATABASE_URL', dbUrl)
+      if (text !== before) notes.push('DATABASE_URL set from --db-url')
+    }
+    if (existing === null || text !== existing) writeFileSync(DEV_VARS, text)
     if (existing === null) notes.push('created apps/web/.dev.vars from .dev.vars.example')
     if (result.filled.length > 0) notes.push(`generated ${result.filled.join(', ')}`)
     for (const key of result.missing) {
@@ -366,9 +320,16 @@ const dbVerifyLine = output =>
     .join(' · ')
 
 /** `--check`: one `db:check` against whatever DATABASE_URL says, no compose. */
-async function stepDatabaseCheck() {
+async function stepDatabaseCheck(plan) {
   const result = await dbCheck()
   if (result.code !== 0) {
+    if (plan.database === 'external') {
+      throw new StepError(`external Postgres ${plan.target} not reachable`, {
+        hint: 'check DATABASE_URL in apps/web/.dev.vars (host, password, sslmode) and the network',
+        output: result.output,
+        exitCode: EXIT.prerequisite,
+      })
+    }
     const url = existsSync(DEV_VARS)
       ? readDevVars(readFileSync(DEV_VARS, 'utf8')).DATABASE_URL
       : undefined
@@ -379,10 +340,32 @@ async function stepDatabaseCheck() {
       exitCode: EXIT.prerequisite,
     })
   }
-  return { verify: dbVerifyLine(result.output) }
+  const line = dbVerifyLine(result.output)
+  return { verify: plan.database === 'external' ? `external ${plan.target} · ${line}` : line }
 }
 
-async function stepDatabase(opts) {
+/**
+ * `--db-url`: the database is somebody else's to run (a Neon branch, a shared server), so there is
+ * no compose and no port to own — only wait for it to answer. Step 3 already wrote DATABASE_URL.
+ */
+async function stepExternalDatabase(plan) {
+  let last = { code: 1, output: '' }
+  for (let attempt = 1; attempt <= EXTERNAL_DB_CHECK_ATTEMPTS; attempt += 1) {
+    last = await dbCheck()
+    if (last.code === 0) break
+    await sleep(2000)
+  }
+  if (last.code !== 0) {
+    throw new StepError(`external Postgres ${plan.target} did not answer`, {
+      hint: 'check the --db-url value (host, password, ?sslmode=require for Neon) and the network',
+      output: last.output,
+    })
+  }
+  return { verify: `external ${plan.target} · ${dbVerifyLine(last.output)}` }
+}
+
+async function stepDatabase(opts, plan) {
+  if (plan.database === 'external') return stepExternalDatabase(plan)
   // scripts/dev-db.mjs owns the port, the container name and the compose project: it keeps the
   // port already in .dev.vars when that is still ours or still free, and otherwise picks the
   // next free one and writes it back. A second checkout therefore starts its OWN database
@@ -528,8 +511,12 @@ async function stepPlugins({ plugins }) {
 }
 
 /** Returns the one-time API key, kept in memory only, or undefined when the seed had one. */
-async function stepSeed({ demo }) {
-  const result = await pnpm(demo ? ['seed', '--demo'] : ['seed'])
+async function stepSeed({ demo }, plan) {
+  // `plan.seedEnv` is `SEED_ALLOW_REMOTE=1` under --db-url: seed.ts refuses a non-local host
+  // otherwise, and the flag is the person saying this database is theirs to seed.
+  const result = await pnpm(demo ? ['seed', '--demo'] : ['seed'], {
+    env: { ...process.env, ...plan.seedEnv },
+  })
   if (result.code !== 0) {
     throw new StepError('pnpm seed failed', {
       hint: 'pnpm seed by hand and read the error above',
@@ -696,9 +683,16 @@ async function check() {
       failures.push(name)
     }
   }
-  await tryStep(1, 'toolchain', stepToolchain)
+  // An off-box DATABASE_URL (a Neon branch set up by `--db-url`) means no Docker to check.
+  const plan = bootstrapStepPlan({
+    check: true,
+    devVarsDatabaseUrl: existsSync(DEV_VARS)
+      ? readDevVars(readFileSync(DEV_VARS, 'utf8')).DATABASE_URL
+      : undefined,
+  })
+  await tryStep(1, 'toolchain', () => stepToolchain(plan))
   await tryStep(3, 'secrets', () => stepSecrets({ write: false }))
-  await tryStep(4, 'database', stepDatabaseCheck)
+  await tryStep(4, 'database', () => stepDatabaseCheck(plan))
   await tryStep(8, 'cloudflare', async () => {
     if (!existsSync(path.join(WEB_DIR, 'node_modules/.bin/wrangler'))) {
       throw new StepError('wrangler not installed yet', {
@@ -737,13 +731,14 @@ async function check() {
 
 async function bootstrap(opts) {
   say(bold(`Rocketflare bootstrap — ${REPO_ROOT}`))
-  await step(1, 'toolchain', stepToolchain)
+  const plan = bootstrapStepPlan({ dbUrl: opts.dbUrl })
+  await step(1, 'toolchain', () => stepToolchain(plan))
   await step(2, 'install', stepInstall)
-  await step(3, 'secrets', () => stepSecrets({ write: true }))
-  await step(4, 'database', () => stepDatabase(opts))
+  await step(3, 'secrets', () => stepSecrets({ write: true, dbUrl: opts.dbUrl }))
+  await step(4, 'database', () => stepDatabase(opts, plan))
   await step(5, 'migrate', stepMigrate)
   await step(6, 'plugins', () => stepPlugins(opts))
-  const seeded = await step(7, 'seed', () => stepSeed({ demo: opts.demo }))
+  const seeded = await step(7, 'seed', () => stepSeed({ demo: opts.demo }, plan))
   await step(8, 'cloudflare', () => stepCloudflare(opts))
 
   const loginUrl = `${UI_URL}/login?as=${encodeURIComponent(opts.as)}`
@@ -823,8 +818,9 @@ async function bootstrap(opts) {
 
 let opts
 try {
-  opts = parseArgs(process.argv.slice(2))
+  opts = parseBootstrapArgs(process.argv.slice(2), process.env)
 } catch (error) {
+  if (!(error instanceof BootstrapUsageError)) throw error
   process.stderr.write(`bootstrap: ${error.message}\n\n${USAGE}\n`)
   process.exit(EXIT.usage)
 }

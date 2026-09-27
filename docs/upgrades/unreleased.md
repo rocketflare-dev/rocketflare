@@ -32,6 +32,12 @@ Dev ports are configurable for a machine where :3000/:3001 are taken (a Cloudfla
 - Its consumers: `apps/web/vite.config.ts` (port, `/api` `/auth` `/ws` proxy targets, `allowedHosts` merged with the cfld tunnel host), `apps/web/scripts/dev-server.mjs` (ports it sweeps, `wrangler dev --port`, ready line), `scripts/bootstrap.mjs` (health/login URLs), `apps/web/scripts/seed.ts` (default `APP_URL`, the dev-login curl). `apps/web` `dev:api` runs `wrangler dev --port ${DEV_API_PORT:-3001}`.
 - CORS/CSRF (`middleware/cors.ts` `allowedOrigins(cfg, requestUrl?)`, called by `csrf.ts` too): outside production it now also allows the loopback twin (localhost ↔ 127.0.0.1) of `APP_URL` and of the request's own loopback origin, so only `APP_URL` has to follow a custom UI port. Production is unchanged: `APP_URL` alone.
 
+`pnpm bootstrap --db-url <url>` (also `--db-url=<url>`) bootstraps against an existing Postgres, such as a Neon branch in a sandbox with no Docker. It skips the Docker checks, upserts `DATABASE_URL` in `apps/web/.dev.vars`, polls `db:check` instead of starting a container, and seeds with `SEED_ALLOW_REMOTE=1`. It is still ten steps, and without the flag nothing changes. See [`docs/CONCEPTS.md` §4](../CONCEPTS.md).
+
+- `bootstrap.mjs`'s argument parser moved to `scripts/lib/bootstrap-lib.mjs` as `parseBootstrapArgs`, beside `bootstrapStepPlan`, `isLocalDatabaseUrl`, `isPostgresUrl` and `databaseUrlTarget`. `bootstrap.sh` skips its `docker` check when `--db-url` is given.
+- `pnpm preflight` skips the Docker lines when `DATABASE_URL` points off this machine. `dev-db.mjs` passes an off-box URL through unchanged (`up` reports nothing to start; `status` never prints that URL). `seed.ts` always prints `seeding <host>/<db>`, without credentials.
+
+
 ## How to apply
 
 1. Copy `scripts/changelog-nudge.mjs`, `scripts/release-site-nudge.mjs`, `scripts/lib/nudge-lib.mjs` and `scripts/lib/nudge-lib.d.mts` from the kit, and the test `apps/web/tests/config/nudge-hooks.test.ts`.
@@ -43,16 +49,22 @@ Dev ports are configurable for a machine where :3000/:3001 are taken (a Cloudfla
 7. Merge the kit's diff into `apps/web/src/api/middleware/cors.ts` (`loopbackOrigins`, the `requestUrl` parameter of `allowedOrigins`) and pass `c.req.url` as that parameter in `apps/web/src/api/middleware/csrf.ts`; the two new cases in `apps/web/tests/api/health.test.ts` cover it.
 8. `apps/web/package.json` is a `manual` file: change the `dev:api` script's `--port 3001` to `--port ${DEV_API_PORT:-3001}`.
 9. `apps/web/.dev.vars.example` is never ported, so add by hand, below `APP_URL`, commented `# DEV_UI_PORT=3000`, `# DEV_API_PORT=3001` and `# DEV_ALLOWED_HOSTS=` lines and a note that `APP_URL` must follow `DEV_UI_PORT`.
+10. For `--db-url`, take the kit's `scripts/bootstrap.sh`, `scripts/bootstrap.mjs`, `scripts/lib/bootstrap-lib.mjs`, `scripts/lib/bootstrap-lib.d.mts`, `apps/web/scripts/dev-db.mjs` and `apps/web/tests/config/bootstrap-lib.test.ts`. If the app changed `bootstrap.mjs`, port its local `parseArgs` edits into `parseBootstrapArgs` in `bootstrap-lib.mjs`, because `bootstrap.mjs` no longer has a parser of its own.
+11. In `apps/web/scripts/seed.ts`, import `databaseUrlTarget` from `../../../scripts/lib/bootstrap-lib.mjs` and print `seeding ${databaseUrlTarget(DATABASE_URL)}` right after the `DATABASE_URL is required` check, before the `SEED_ALLOW_REMOTE` refusal.
+12. Bring over the `--db-url` text in `SETUP.md` §1.4 ("No Docker: use an existing database"), `.claude/skills/rf-setup/SKILL.md` (argument hint, flag paragraph, exit-3 row, step table rows 1, 3, 4 and 7) and `.claude/skills/rf-preflight/SKILL.md`, translated into the app's names.
 
 ## Conflicts to expect
 
 - `.claude/settings.json` → the app may have hooks of its own → keep both sides.
 - `apps/web/vite.config.ts` → the proxy block carries an installed plugin's prefixes (`/cubejs-api`, `/mcp`) → keep them; only the `/ws` target and `server` keys change.
+- `scripts/bootstrap.mjs` → `parseArgs` and `UsageError` are gone, replaced by imports → keep the app's own steps, drop its parser after porting its flags into `parseBootstrapArgs`.
 
 ## Verify
 
-1. `pnpm web test:config` passes, including `nudge-hooks.test.ts` and `dev-ports.test.ts`.
+1. `pnpm web test:config` passes, including `nudge-hooks.test.ts`, `dev-ports.test.ts` and `bootstrap-lib.test.ts` (`parseBootstrapArgs`, `bootstrapStepPlan`).
 2. `pnpm web test:api` passes, including `db-roles.test.ts` and the custom-port CORS and CSRF cases in `health.test.ts`.
 3. On Neon, `pnpm db:migrate` against a branch as its owner role completes the `[role]` phase and prints `Role '<app role>' ready [role]`.
 4. With no `DEV_*` keys set, `pnpm dev` still reports `http://localhost:3000` and `api http://localhost:3001`.
 5. `DEV_UI_PORT=5199 DEV_API_PORT=8799 pnpm dev:status` lists `:5199` and `:8799`.
+6. `node scripts/bootstrap.mjs --check --db-url postgresql://h/db` exits 2, and `node scripts/bootstrap.mjs --db-url mysql://h/db` exits 2.
+7. `node scripts/bootstrap.mjs --help` lists `--db-url <url>`.

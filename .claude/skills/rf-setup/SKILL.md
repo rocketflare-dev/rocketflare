@@ -1,7 +1,7 @@
 ---
 name: rf-setup
 description: First run of this kit on this machine — checks the toolchain, starts Postgres, migrates, seeds demo data, and gets you signed in
-argument-hint: "[--offline] [--no-demo] [--no-plugins]"
+argument-hint: "[--offline] [--no-demo] [--no-plugins] [--db-url <postgres-url>]"
 ---
 
 # First run
@@ -75,7 +75,11 @@ bash scripts/bootstrap.sh --no-dev $ARGUMENTS
 the Cloudflare login / Workers AI probe; `--no-demo` runs plain `pnpm seed` (tenant, users and key,
 but no populated workspace); `--no-plugins` skips the `plugins` step, which installs the plugins
 `.rocketflare.json` lists in `defaultPlugins` (step 6 below) — use it when the machine is offline or
-when somebody wants the app bare first.
+when somebody wants the app bare first. `--db-url <postgres-url>` uses a database that already
+exists (a Neon branch in a sandbox with no Docker) instead of starting one. Docker is then not
+checked, the URL goes into `apps/web/.dev.vars`, step 4 only waits for it to answer, and the seed
+is allowed to write to it. Use it when `docker` is missing and the user has given you a URL; never
+invent one, and never echo the URL back (it holds a password).
 
 ## 2. Read the exit code
 
@@ -84,7 +88,7 @@ when somebody wants the app bare first.
 | 0 | every step passed | go to step 3 |
 | 1 | a step failed | show the tail of the output, fix the cause, re-run the same command (idempotent). A failing `6/10 plugins` is the one worth reading closely: re-run with `--no-plugins` to get a working app, then install the plugin with `/rf-plugin`, where the plan is shown before anything is written |
 | 2 | usage error | check `$ARGUMENTS` against the hint above and re-run |
-| 3 | a prerequisite is missing | install it, then re-run: Node 24 via `nvm install` (reads `.nvmrc`) or `fnm use`; pnpm via `corepack enable`; Docker via Docker Desktop, or `brew install colima docker && colima start` on macOS, or Docker Engine + the `docker` group on Linux |
+| 3 | a prerequisite is missing | install it, then re-run: Node 24 via `nvm install` (reads `.nvmrc`) or `fnm use`; pnpm via `corepack enable`; Docker via Docker Desktop, or `brew install colima docker && colima start` on macOS, or Docker Engine + the `docker` group on Linux. If Docker can't run here (a sandbox), ask the user for a Postgres URL (a Neon branch) and re-run with `--db-url` |
 | 4 | a dev port is held by another checkout | the DATABASE port is chosen automatically (`scripts/dev-db.mjs` takes the next free one), so this is :3000/:3001 (or `DEV_UI_PORT`/`DEV_API_PORT`): run `pnpm dev:status` and `pnpm dev:db:status`, show the user the other path/pid, and let THEM decide — stop it there, or move this checkout with `DEV_UI_PORT`/`DEV_API_PORT` in `apps/web/.dev.vars` plus `APP_URL` on the new UI port (SETUP.md 1.6) — never kill another checkout's processes |
 | 5 | Cloudflare login required | see below |
 
@@ -149,13 +153,13 @@ prerequisite lines, then hands over to `scripts/bootstrap.mjs` for the ten steps
 
 | Step | Name | What it proved |
 |---|---|---|
-| 1 | `toolchain` | Node 24, pnpm 10, Docker daemon and `docker compose` reachable |
+| 1 | `toolchain` | Node 24, pnpm 10, Docker daemon and `docker compose` reachable. With `--db-url` it reads `docker skipped (external database <host>/<db>)` |
 | 2 | `install` | `pnpm install` done; `wrangler` resolves in `apps/web` |
-| 3 | `secrets` | `apps/web/.dev.vars` exists with `DATABASE_URL`, `OAUTH_ENCRYPTION_KEY` (generated, git-ignored) |
-| 4 | `database` | this checkout's Postgres container is up and healthy on the port it chose (5432 unless taken; the step says so and writes it to `.dev.vars`) |
+| 3 | `secrets` | `apps/web/.dev.vars` exists with `DATABASE_URL`, `OAUTH_ENCRYPTION_KEY` (generated, git-ignored). With `--db-url` it notes `DATABASE_URL set from --db-url` |
+| 4 | `database` | this checkout's Postgres container is up and healthy on the port it chose (5432 unless taken; the step says so and writes it to `.dev.vars`). With `--db-url` there is no container: the line reads `external <host>/<db> · Connected to …` once `db:check` answers |
 | 5 | `migrate` | role → migrations → grants applied; the pgvector extension is installed |
 | 6 | `plugins` | every plugin in `.rocketflare.json`'s `defaultPlugins` is installed, its tables generated and migrated. The kit declares ONE — `analytics`, which is where dashboards, cubes and the fact table live from 0.6.0 (`docs/CONCEPTS.md` §8) — so this step is what makes **Analytics** appear in the nav. Skipped with `--no-plugins`, which is a perfectly good app with no analytics in it and no drizzle-cube in either bundle |
-| 7 | `seed` | demo tenant, owner/admin/member users, one API key (printed once), plus the populated demo workspace unless `--no-demo` |
+| 7 | `seed` | demo tenant, owner/admin/member users, one API key (printed once), plus the populated demo workspace unless `--no-demo`. The seed prints `seeding <host>/<db>` first; with `--db-url` it runs with `SEED_ALLOW_REMOTE=1` |
 | 8 | `cloudflare` | wrangler is logged in (Workers AI available) — or `--offline` was chosen |
 | 9 | `cli` | `pnpm cli whoami` with the seeded key — deferred/skipped with `--no-dev` (needs the server) |
 | 10 | `run` | `pnpm dev` started and `/api/health` answered — skipped with `--no-dev` (you do it in step 3) |

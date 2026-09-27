@@ -63,3 +63,45 @@ export function planDefaultPlugins(
   entries: readonly unknown[] | undefined,
   installedIds?: readonly string[]
 ): DefaultPluginPlan
+
+export class BootstrapUsageError extends Error {}
+export function isPostgresUrl(value: string): boolean
+export function isLocalDatabaseUrl(url: string): boolean
+export function databaseUrlTarget(url: string): string
+
+export interface BootstrapOptions {
+  yes: boolean
+  shareDbIgnored: boolean
+  offline: boolean
+  online: boolean
+  dev: boolean
+  demo: boolean
+  plugins: boolean
+  open: boolean
+  as: string
+  /** `--db-url`: bootstrap against this database instead of the Docker one. */
+  dbUrl: string | null
+  check: boolean
+  verbose: boolean
+  help: boolean
+}
+export function parseBootstrapArgs(
+  argv: readonly string[],
+  env?: Record<string, string | undefined>
+): BootstrapOptions
+
+export interface BootstrapStepPlan {
+  /** Step 1 checks `docker info` / `docker compose version`. */
+  docker: boolean
+  /** Step 4: start the compose database, or only poll `db:check` against an external one. */
+  database: 'compose' | 'external'
+  /** `host[:port]/db` of the external database (no credentials), else null. */
+  target: string | null
+  /** Extra environment for step 7's `pnpm seed`. */
+  seedEnv: Record<string, string>
+}
+export function bootstrapStepPlan(input?: {
+  dbUrl?: string | null
+  check?: boolean
+  devVarsDatabaseUrl?: string
+}): BootstrapStepPlan

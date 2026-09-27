@@ -332,3 +332,176 @@ export function planDefaultPlugins(entries, installedIds = []) {
   }
   return { install, skipped, problems }
 }
+
+/* ------------------------------------------------------------------ arguments --
+ * `scripts/bootstrap.mjs`'s command line, parsed here so the flag rules are pinned by a test. */
+
+/** A bad command line: the bootstrap prints the message and the usage text, then exits 2. */
+export class BootstrapUsageError extends Error {}
+
+/** `postgres://` or `postgresql://` with a host — the only shape `--db-url` accepts. */
+export function isPostgresUrl(value) {
+  try {
+    const url = new URL(value)
+    return (url.protocol === 'postgres:' || url.protocol === 'postgresql:') && url.hostname !== ''
+  } catch {
+    return false
+  }
+}
+
+const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]', '0.0.0.0'])
+
+/**
+ * True when a `DATABASE_URL` points at this machine (loopback) — the shape the Docker dev database
+ * has. Anything else (a Neon branch, a LAN host) is "off-box": no compose, no Docker checks.
+ * An unparseable URL counts as local, so a typo never switches the Docker checks off.
+ */
+export function isLocalDatabaseUrl(url) {
+  try {
+    return LOCAL_HOSTS.has(new URL(url).hostname)
+  } catch {
+    return true
+  }
+}
+
+/** `host[:port]/db` of a database URL — never the user or password — for a verify line. */
+export function databaseUrlTarget(url) {
+  try {
+    const parsed = new URL(url)
+    return `${parsed.host}${parsed.pathname}`
+  } catch {
+    return '(unparseable DATABASE_URL)'
+  }
+}
+
+/**
+ * `argv` (without node and the script) → the bootstrap's options. Throws `BootstrapUsageError`
+ * for anything it does not understand. `env` supplies `DEV_VERBOSE` only.
+ */
+export function parseBootstrapArgs(argv, env = {}) {
+  const opts = {
+    yes: false,
+    shareDbIgnored: false,
+    offline: false,
+    online: false,
+    dev: true,
+    demo: true,
+    plugins: true,
+    open: true,
+    as: 'owner@example.test',
+    dbUrl: null,
+    check: false,
+    verbose: env.DEV_VERBOSE === '1',
+    help: false,
+  }
+  const takeValue = (flag, i, what) => {
+    const value = argv[i + 1]
+    if (!value || value.startsWith('--')) throw new BootstrapUsageError(`${flag} needs ${what}`)
+    return value
+  }
+  for (let i = 0; i < argv.length; i += 1) {
+    const arg = argv[i]
+    switch (arg) {
+      case '--yes':
+        opts.yes = true
+        break
+      case '--offline':
+        opts.offline = true
+        break
+      case '--online':
+        opts.online = true
+        break
+      case '--no-dev':
+        opts.dev = false
+        break
+      case '--no-demo':
+        opts.demo = false
+        break
+      case '--no-plugins':
+        opts.plugins = false
+        break
+      // Kept so an older command line (or doc) still runs. Sharing was only ever a workaround
+      // for the fixed port; scripts/dev-db.mjs now gives each checkout its own database.
+      case '--share-db':
+        opts.shareDbIgnored = true
+        break
+      case '--no-open':
+        opts.open = false
+        break
+      case '--check':
+        opts.check = true
+        break
+      case '--verbose':
+        opts.verbose = true
+        break
+      case '--help':
+      case '-h':
+        opts.help = true
+        break
+      case '--as':
+        opts.as = takeValue('--as', i, 'an email')
+        i += 1
+        break
+      case '--db-url':
+        opts.dbUrl = takeValue('--db-url', i, 'a postgres:// URL')
+        i += 1
+        break
+      default:
+        if (arg.startsWith('--as=')) {
+          opts.as = arg.slice('--as='.length)
+          break
+        }
+        if (arg.startsWith('--db-url=')) {
+          opts.dbUrl = arg.slice('--db-url='.length)
+          if (opts.dbUrl === '') throw new BootstrapUsageError('--db-url needs a postgres:// URL')
+          break
+        }
+        throw new BootstrapUsageError(`unknown option ${arg}`)
+    }
+  }
+  if (opts.offline && opts.online) {
+    throw new BootstrapUsageError('--offline and --online exclude each other')
+  }
+  if (opts.dbUrl !== null) {
+    // Never echo the value: it carries a password.
+    if (!isPostgresUrl(opts.dbUrl)) {
+      throw new BootstrapUsageError('--db-url must be a postgres:// or postgresql:// URL')
+    }
+    if (opts.check) {
+      throw new BootstrapUsageError(
+        '--db-url and --check exclude each other (preflight reads DATABASE_URL from .dev.vars)'
+      )
+    }
+  }
+  return opts
+}
+
+/**
+ * How the Docker-dependent steps behave. Two inputs decide it: `--db-url` (bootstrap against a
+ * database this checkout does not run — a Neon branch in a sandbox without Docker) and, for
+ * `--check`, whether `.dev.vars`' DATABASE_URL is off-box.
+ *
+ * - `docker`: step 1 checks `docker info` / `docker compose`
+ * - `database`: `'compose'` → step 4 runs `dev-db.mjs up`; `'external'` → it only polls `db:check`
+ * - `target`: `host[:port]/db` of the external database (no credentials), else null
+ * - `seedEnv`: extra environment for step 7 (`seed.ts` refuses a non-local database without it)
+ */
+export function bootstrapStepPlan({ dbUrl = null, check = false, devVarsDatabaseUrl } = {}) {
+  if (dbUrl) {
+    return {
+      docker: false,
+      database: 'external',
+      target: databaseUrlTarget(dbUrl),
+      seedEnv: { SEED_ALLOW_REMOTE: '1' },
+    }
+  }
+  if (check && devVarsDatabaseUrl && !isLocalDatabaseUrl(devVarsDatabaseUrl)) {
+    return {
+      docker: false,
+      database: 'external',
+      target: databaseUrlTarget(devVarsDatabaseUrl),
+      seedEnv: {},
+    }
+  }
+  return { docker: true, database: 'compose', target: null, seedEnv: {} }
+}

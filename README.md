@@ -48,6 +48,7 @@ bash scripts/bootstrap.sh          # checks Node 24 / pnpm 10 / Docker, generate
                                    # browser signed in as the demo owner. Re-runnable.
                                    #   --offline  skip the Cloudflare login by disabling Workers AI ([ai] off in both tomls)
                                    #   --no-demo  seed the bare tenant and users only (plain `pnpm seed`)
+                                   #   --db-url <url>  no Docker: use an existing Postgres (a Neon branch)
 ```
 
 `SETUP.md` Part 1 is the same thing written out, one verification line per step.

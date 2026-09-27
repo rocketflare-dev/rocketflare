@@ -28,6 +28,8 @@ import {
   checkoutTag,
   chooseDevDbPort,
   databaseUrlPort,
+  databaseUrlTarget,
+  isLocalDatabaseUrl,
   readDevVars,
   upsertDevVar,
   withDatabaseUrlPort,
@@ -95,6 +97,9 @@ const portIsFree = port =>
 async function resolvePort() {
   const url = currentUrl()
   const preferred = databaseUrlPort(url)
+  // An off-box DATABASE_URL (`pnpm bootstrap --db-url`, a Neon branch) is not ours to re-port:
+  // hand it through unchanged, and `up` has nothing to start.
+  if (!isLocalDatabaseUrl(url)) return { port: preferred, url, moved: false, external: true }
   const ours = oursPorts()
   const free = new Map()
   for (let p = 5432; p < 5452; p += 1) free.set(p, await portIsFree(p))
@@ -131,7 +136,13 @@ const composeEnv = (port, url) => ({
 })
 
 async function up(json) {
-  const { port, url, moved } = await resolvePort()
+  const { port, url, moved, external } = await resolvePort()
+  if (external) {
+    const target = databaseUrlTarget(url)
+    if (json) console.log(JSON.stringify({ external: true, target }))
+    else console.log(`DATABASE_URL points at ${target} (not this machine) — nothing to start`)
+    return
+  }
   const wrote = writeUrl(url)
   const result = spawnSync(
     'docker',
@@ -172,6 +183,7 @@ function allDevDatabases() {
     '--format',
     '{{.Names}}\t{{.Ports}}\t{{.Label "com.docker.compose.project.working_dir"}}',
   ])
+  if (ps.status !== 0 || !ps.stdout) return [] // no docker (an external-database checkout)
   return ps.stdout
     .split('\n')
     .filter(Boolean)
@@ -182,14 +194,18 @@ function allDevDatabases() {
 }
 
 async function status(json) {
-  const { port, url } = await resolvePort()
+  const { port, url, external } = await resolvePort()
   const rows = allDevDatabases()
   if (json) {
-    console.log(JSON.stringify({ project: PROJECT, port, url, containers: rows }))
+    // An external URL carries a real password: report where it points, never the URL itself.
+    const where = external ? { external: true, target: databaseUrlTarget(url) } : { port, url }
+    console.log(JSON.stringify({ project: PROJECT, ...where, containers: rows }))
     return
   }
   console.log(`this checkout: ${WEB_DIR}`)
-  console.log(`  project ${PROJECT} · port ${port}`)
+  if (external)
+    console.log(`  external database ${databaseUrlTarget(url)} (pnpm bootstrap --db-url)`)
+  else console.log(`  project ${PROJECT} · port ${port}`)
   if (rows.length === 0) {
     console.log('  no dev Postgres container is running')
     return
