@@ -24,10 +24,14 @@ export function safeEqual(a: string, b: string): boolean {
   return diff === 0
 }
 
-/** Default API-key prefix; parameterised, never from env (01 §6). */
-export const API_KEY_PREFIX = 'rocketflare'
+/**
+ * Default API-key prefix, separator included; parameterised, never from env (01 §6). It carries
+ * its `_` so `scripts/rename.mjs` renames it as the snake form (`my_app_`); the bare kit name
+ * would become the hyphenated slug (`my-app`), while every reader expects `<snake>_`.
+ */
+export const API_KEY_PREFIX = 'rocketflare_'
 /** Characters of the plaintext kept as the human-readable handle in lists (`rocketflare_ab12cd34`). */
-export const API_KEY_PREFIX_LENGTH = 20 // `rocketflare_` (12) + 8 chars — must exceed the prefix + `_`
+export const API_KEY_PREFIX_LENGTH = 20 // `rocketflare_` (12) + 8 chars — must exceed the prefix
 
 export interface GeneratedApiKey {
   /** Plaintext — shown to the user ONCE, never stored. */
@@ -38,6 +42,6 @@ export interface GeneratedApiKey {
 
 /** `rocketflare_<43 base64url chars>`; stored as `{ keyHash, keyPrefix }`, returned as `key` once. */
 export async function generateApiKey(prefix = API_KEY_PREFIX): Promise<GeneratedApiKey> {
-  const key = `${prefix}_${randomToken(32)}`
+  const key = `${prefix}${randomToken(32)}`
   return { key, keyHash: await hashToken(key), keyPrefix: key.slice(0, API_KEY_PREFIX_LENGTH) }
 }

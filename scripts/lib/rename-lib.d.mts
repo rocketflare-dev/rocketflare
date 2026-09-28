@@ -90,6 +90,7 @@ export function prefixGuard(
   current: { apiKeyPrefixLength?: number | null; redactedKeyChars?: number | null }
 ): PrefixGuard
 export function readIntConstant(source: string, name: string): number | null
+export function readStringConstant(source: string, name: string): string | null
 export function rewriteIntConstant(
   source: string,
   name: string,

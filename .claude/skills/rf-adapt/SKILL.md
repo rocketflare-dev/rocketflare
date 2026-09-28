@@ -58,9 +58,10 @@ node scripts/rename.mjs $ARGUMENTS
 ```
 
 Use a 10-minute timeout: the script runs `pnpm install` (relinks `@<slug>/*`, rewrites the
-lockfile) and `pnpm lint:fix` (the new name re-wraps some lines) at the end. Expect `wrote N
-files.`, the install and biome output, then the verify line. If `pnpm install` fails (offline),
-re-run with `--skip-install` and tell the user to run `pnpm install && pnpm lint:fix` later.
+lockfile), `node scripts/plugin-api-doc.mjs` and `pnpm lint:fix` (the new name re-wraps some
+lines) at the end. Expect `wrote N files.`, the install and biome output, then the verify line. If
+`pnpm install` fails (offline), re-run with `--skip-install` and tell the user to run
+`pnpm install && node scripts/plugin-api-doc.mjs && pnpm lint:fix` later.
 
 ## 4. Walk the checklist
 

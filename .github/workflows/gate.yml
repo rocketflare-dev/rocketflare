@@ -1,9 +1,10 @@
 name: Gate
 
-# The gate itself — lint, typecheck, test, build — in ONE job, called twice (D31, decision 5):
+# The gate itself — lint, typecheck, test, build — in ONE job, called three times (D31, decision 5):
 #
 #   ci.yml `check`    the ordinary gate, on the checkout as it is;
-#   ci.yml `plugins`  the same gate with every `defaultPlugins` entry installed first.
+#   ci.yml `plugins`  the same gate with every `defaultPlugins` entry installed first;
+#   ci.yml `renamed`  the same gate on the checkout renamed by `scripts/rename.mjs` first.
 #
 # A second copy of these steps was the alternative, and a gate that drifts between its two copies
 # proves nothing about the copy nobody ran. So the Postgres service, the install and the gate live
@@ -25,6 +26,13 @@ on:
           in that pass — they are properties of the checkout, and the first pass already ran them.
         type: boolean
         default: false
+      rename:
+        description: >-
+          A slug to rename the checkout to with `scripts/rename.mjs` before the gate, as every copy
+          of the kit is. Empty = no rename. The secrets scan and the porting-note check are skipped
+          in that pass, like the plugins pass: they are properties of the kit's checkout.
+        type: string
+        default: ''
 
 jobs:
   gate:
@@ -74,7 +82,7 @@ jobs:
       # test log. Runs the binary directly (the marketplace action needs a licence for org repos).
       # Scans the full history so a secret committed-then-removed is still caught.
       - name: gitleaks
-        if: ${{ !inputs.plugins }}
+        if: ${{ !inputs.plugins && inputs.rename == '' }}
         run: |
           curl -sSL "https://github.com/gitleaks/gitleaks/releases/download/v8.24.3/gitleaks_8.24.3_linux_x64.tar.gz" \
             | tar -xz -C "$RUNNER_TEMP" gitleaks
@@ -85,7 +93,7 @@ jobs:
       # the gap is permanent. The script exits 0 immediately in an adopted copy (`.rocketflare.json`
       # with an `app` block), so this never fires in somebody's product.
       - name: A behaviour change carries its porting note
-        if: ${{ !inputs.plugins }}
+        if: ${{ !inputs.plugins && inputs.rename == '' }}
         env:
           # The comparison point differs per trigger: a PR diffs against the branch it targets (so a
           # branch of several commits may carry its note in any one of them), a push to main against
@@ -94,6 +102,31 @@ jobs:
           # `event.before` is all zeros) quiet.
           BASE: ${{ github.event.pull_request.base.sha || github.event.before || 'HEAD~1' }}
         run: node scripts/release-check.mjs --unreleased --base "$BASE"
+
+      # ------------------------------------------------------------------ a renamed copy
+      #
+      # Every app starts as a copy renamed by `scripts/rename.mjs`, and a hyphenated slug is where
+      # the rename bites: the bare kit name becomes `my-app` while its snake form becomes `my_app`,
+      # so a value built from the wrong one only fails in a copy (0.15.1's API-key prefix did).
+      # This renames the checkout as an adopter does, then commits it — the kit's scanners read
+      # `git ls-files`, and a copy's gate runs on a committed tree — and creates the renamed test
+      # database (`<snake>_test`) in the Postgres service, which `.env.test` now points at.
+      - name: Rename the checkout to ${{ inputs.rename }}
+        if: ${{ inputs.rename != '' }}
+        env:
+          SLUG: ${{ inputs.rename }}
+        run: |
+          set -euo pipefail
+          node scripts/rename.mjs "$SLUG" --domain example.com --force --skip-install
+          # The rename's own install is frozen on a runner and the workspace names just changed.
+          pnpm install --no-frozen-lockfile
+          node scripts/plugin-api-doc.mjs
+          pnpm lint:fix
+          git add -A
+          git -c user.name=ci -c user.email=ci@example.com -c commit.gpgsign=false \
+            commit --quiet --no-verify -m "Rename to $SLUG"
+          cid=$(docker ps --filter "ancestor=pgvector/pgvector:pg17" --format '{{.ID}}' | head -1)
+          docker exec "$cid" createdb -U test "${SLUG//-/_}_test"
 
       # ------------------------------------------------------------------ default plugins (D31)
       #

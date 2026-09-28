@@ -10,7 +10,8 @@
  * nine ordered replacement classes from `scripts/lib/rename-lib.mjs`, then checks and reports the
  * rows a rename cannot do blindly ("careful rows", the letters in `docs/ADAPTING.md`):
  *
- *   (a) the API-key display handles `API_KEY_PREFIX_LENGTH` / `REDACTED_KEY_CHARS` — fixed
+ *   (a) the API-key display handles `API_KEY_PREFIX_LENGTH` / `REDACTED_KEY_CHARS` — fixed;
+ *       `API_KEY_PREFIX` itself must come out as `<snake>_` — checked, warned
  *   (b) `apps/web/migrations/**` names the RLS role — rename BEFORE the first migration — warned
  *   (c) the docker `container_name`s / volume — renamed, reported
  *   (d) staging names keep `-staging` — the parity test is the proof — reported
@@ -19,7 +20,8 @@
  *
  * `--dry-run` prints the per-file table and touches nothing (and skips the dirty-tree check).
  * The real run refuses a dirty tree without `--force`, writes, runs `pnpm install` (the lockfile
- * follows the package names) and `biome check --write` (a shorter or longer name re-wraps lines),
+ * follows the package names), regenerates `docs/plugin-api.md` (its summaries are cut at a fixed
+ * width) and `biome check --write` (a shorter or longer name re-wraps lines),
  * then prints the verify line. Exit 0 ok · 1 error · 2 usage. Zero dependencies, Node ≥ 24.
  */
 import { execFileSync, spawnSync } from 'node:child_process'
@@ -40,6 +42,7 @@ import {
   prefixGuard,
   REDACTED_KEY_MARGIN,
   readIntConstant,
+  readStringConstant,
   rewriteIntConstant,
   rewritePrefixComments,
   USAGE,
@@ -226,6 +229,15 @@ function main(argv) {
           )
         )
       }
+      // The handle arithmetic assumes the key starts with exactly `<snake>_`; a prefix the pass
+      // renamed to anything else (the bare kit name becomes the hyphenated slug) breaks that.
+      const keyPrefix = readStringConstant(edits.get(HASH_TS) ?? hash, 'API_KEY_PREFIX')
+      if (keyPrefix !== guard.prefix) {
+        report.push(
+          `(a) WARNING: API_KEY_PREFIX in ${HASH_TS} reads ${keyPrefix === null ? 'as nothing' : `'${keyPrefix}'`}` +
+            ` after the rename, not '${guard.prefix}' — keys, handles and the key tests expect '${guard.prefix}'; set it by hand.`
+        )
+      }
       const show = (label, v) =>
         `${label} ${v.current}${v.change ? ` → ${v.required}` : ' (unchanged)'}`
       report.push(
@@ -352,6 +364,9 @@ function main(argv) {
         names.slug +
         '/* and rewrites pnpm-lock.yaml)'
     )
+    out(
+      'then `node scripts/plugin-api-doc.mjs` (its summaries are cut at a width the new name moves)'
+    )
     out('and `pnpm lint:fix` (the new name re-wraps some lines) yourself, then:')
   } else {
     out('$ pnpm install')
@@ -362,6 +377,16 @@ function main(argv) {
           'then run `pnpm install && pnpm lint:fix` before the verify line.'
       )
       return 1
+    }
+    // docs/plugin-api.md cuts each summary at a fixed width, so a longer or shorter name moves
+    // the cut, and the gate's "docs/plugin-api.md is up to date" step fails an unregenerated copy.
+    out('', '$ node scripts/plugin-api-doc.mjs   (summaries are cut at a width the name moves)')
+    const doc = spawnSync('node', ['scripts/plugin-api-doc.mjs'], {
+      cwd: REPO_ROOT,
+      stdio: 'inherit',
+    })
+    if (doc.status !== 0) {
+      warn('note: plugin-api-doc failed — run `node scripts/plugin-api-doc.mjs` before committing.')
     }
     out('', '$ pnpm lint:fix   (biome re-wraps the lines the new name changed)')
     const fix = spawnSync('pnpm', ['lint:fix'], { cwd: REPO_ROOT, stdio: 'inherit' })

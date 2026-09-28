@@ -24,6 +24,7 @@ import {
   prefixGuard,
   REDACTED_KEY_MARGIN,
   readIntConstant,
+  readStringConstant,
   rewriteIntConstant,
   rewritePrefixComments,
   validateSlug,
@@ -311,7 +312,7 @@ describe('prefix guard (row a)', () => {
 
   it('reads and rewrites the constants and their arithmetic comments', () => {
     const hash =
-      "export const API_KEY_PREFIX = 'acme'\n" +
+      "export const API_KEY_PREFIX = 'acme_'\n" +
       'export const API_KEY_PREFIX_LENGTH = 20 // `acme_` (12) + 8 chars — must exceed the prefix\n'
     expect(readIntConstant(hash, 'API_KEY_PREFIX_LENGTH')).toBe(20)
     expect(readIntConstant(hash, 'NOPE')).toBeNull()
@@ -319,6 +320,22 @@ describe('prefix guard (row a)', () => {
     expect(out).toContain('export const API_KEY_PREFIX_LENGTH = 13 // `acme_` (5) + 8 chars')
     const cli = '/** Characters shown of a key: `acme_` (12) + 4 — never the full secret. */\n'
     expect(rewritePrefixComments(cli, 'acme_', 4)).toContain('`acme_` (5) + 4 — never')
+  })
+
+  it('the real API_KEY_PREFIX renames to exactly `<snake>_`, hyphenated slug or not', () => {
+    const root = path.resolve(__dirname, '../../../..')
+    const hash = readFileSync(path.join(root, 'apps/web/src/api/utils/core/hash.ts'), 'utf8')
+    // This file is not renamed, but hash.ts is: in a renamed copy the prefix is already the app's.
+    const app = JSON.parse(readFileSync(path.join(root, '.rocketflare.json'), 'utf8')).app
+    const expected = app ? deriveNames(app.slug).prefix : `${KIT.slug}_`
+    expect(readStringConstant(hash, 'API_KEY_PREFIX')).toBe(expected)
+    expect(readStringConstant(hash, 'NOPE')).toBeNull()
+    if (app) return
+    for (const slug of ['acme', 'my-app', 'northwind-traders']) {
+      const names = deriveNames(slug)
+      const renamed = applyReplacements(hash, names).text
+      expect(readStringConstant(renamed, 'API_KEY_PREFIX')).toBe(names.prefix)
+    }
   })
 })
 

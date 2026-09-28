@@ -20,11 +20,13 @@ zero characters of its token; the CLI tests assume exactly prefix + 4.
 grep -n "API_KEY_PREFIX\b\|API_KEY_PREFIX_LENGTH" apps/web/src/api/utils/core/hash.ts
 grep -n "REDACTED_KEY_CHARS" apps/cli/src/config.ts
 ```
-Expect `API_KEY_PREFIX = '<snake>'`, `API_KEY_PREFIX_LENGTH = <len(snake_) + 8>` and
-`REDACTED_KEY_CHARS = <len(snake_) + 4>`, with the `(<n>) + 8` / `+ 4` comments matching.
+Expect `API_KEY_PREFIX = '<snake>_'` (separator included, never the hyphenated `<slug>`),
+`API_KEY_PREFIX_LENGTH = <len(snake_) + 8>` and `REDACTED_KEY_CHARS = <len(snake_) + 4>`, with
+the `(<n>) + 8` / `+ 4` comments matching.
 
-**What to change.** Nothing if the numbers match. If the script reported it could not read a
-constant, set both by hand to the values it printed. Existing keys keep working — only the handle
+**What to change.** Nothing if the values match. If the script reported it could not read a
+constant, set both by hand to the values it printed; if it warned about `API_KEY_PREFIX`, set it
+to `'<snake>_'`. Existing keys keep working — only the handle
 in lists changes.
 
 ## (b) The RLS role and the database — a decision, not a find/replace

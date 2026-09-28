@@ -3,8 +3,9 @@ name: CI
 # The quality gate, in ONE place. It runs on every pull request and every push to main, and
 # deploy.yml calls this same file (`workflow_call`) before deploying a tag to staging, rather than
 # keeping a second copy of the job — a gate that drifts between main and deploy is worse than no
-# gate at all. The gate's STEPS live in `gate.yml`, which this file calls twice: once on the
-# checkout as it is, and once with the `defaultPlugins` installed (D31, decision 5).
+# gate at all. The gate's STEPS live in `gate.yml`, which this file calls three times: on the
+# checkout as it is, with the `defaultPlugins` installed (D31, decision 5), and renamed to a
+# hyphenated slug as every copy of the kit is.
 #
 # `pull_request` is the trigger that matters: a gate that only runs AFTER merge reports problems to
 # someone who has already moved on, and the porting-note check in gate.yml is written as a PR check
@@ -25,6 +26,19 @@ jobs:
   check:
     name: Gate
     uses: ./.github/workflows/gate.yml
+
+  # The same gate on the checkout renamed by `scripts/rename.mjs` to a HYPHENATED slug, as
+  # every app is before its first commit. The kit's own gate cannot see a rename bug: a value that
+  # should be the snake form (`my_app_`) but is built from the bare name (`my-app`) reads the same
+  # in the kit, where both are `rocketflare`. 0.15.1 shipped one (the API-key prefix), and the
+  # first app renamed from it failed its gate. Kit-only: the rename keeps `rocketflare-dev/…`
+  # references verbatim, so in a copy this condition is false and the job is skipped.
+  renamed:
+    name: Gate on a renamed copy
+    if: github.repository == 'rocketflare-dev/rocketflare'
+    uses: ./.github/workflows/gate.yml
+    with:
+      rename: my-app
 
   # The api suite again under the `neon` driver (D35). The gate runs `postgres` — local development
   # does — but a fresh copy DEPLOYS on `neon`, so this job is what tests that path before a deploy.
