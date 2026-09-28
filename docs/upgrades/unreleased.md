@@ -1,10 +1,10 @@
 ---
 version: unreleased
-previous: 0.15.4
+previous: 0.15.5
 date: null
 breaking: false
 migrations: []
-areas: [db]
+areas: []
 touches_surfaces: []
 requires_surfaces: []
 manual: false
@@ -12,22 +12,20 @@ manual: false
 
 ## What changed
 
-`db:migrate:ci` now works as a least-privilege owner without CREATEDB: the role phase switches the app role's CREATEDB and CREATEROLE off only when they are on, which Postgres 16+ otherwise refuses.
-
-- `apps/web/scripts/db-roles.ts`: the "role attributes" statement is a `DO` block that alters only an attribute that is set; the post-check also proves both are off.
-- `apps/web/tests/api/db-roles.test.ts`: runs the role phase as an owner with CREATEROLE and no CREATEDB.
+_Nothing yet. Add an entry here in the same pull request as the change. This first paragraph is
+lifted VERBATIM into `CHANGELOG.md`, so make it ONE standalone summary sentence of ≤ 40 words —
+then one bullet per change, one line each, and no `###` sub-headings. Rationale belongs in
+`docs/CONCEPTS.md` and is linked, never restated; see `README.md` beside this file._
 
 ## How to apply
 
-1. In `apps/web/scripts/db-roles.ts`, replace the `['role attributes', `ALTER ROLE ${role} NOCREATEDB NOCREATEROLE`]` entry with the kit's `DO $do$ … END $do$` block that checks `pg_roles.rolcreatedb` / `rolcreaterole` before each `ALTER ROLE`.
-2. In `apps/web/scripts/db-roles.ts`, extend the post-check query to select `rolcreatedb, rolcreaterole` and throw when either is true after the role phase, as the kit does.
-3. Copy the kit's second `describe` block from `apps/web/tests/api/db-roles.test.ts` into the copy's same file.
+_Numbered, imperative, each step self-contained — no "these", "them" or "the above" reaching
+outside its own step._
 
 ## Conflicts to expect
 
-- `apps/web/scripts/db-roles.ts` → the role-attributes statement changed shape → keep local additions to the statements list and take the kit's `DO` block.
+_One line each: `path → what changed → what to do`. Or exactly `None.`_
 
 ## Verify
 
-1. `pnpm --filter @<slug>/web exec vitest run --project api tests/api/db-roles.test.ts` passes, including "an owner without CREATEDB".
-2. `pnpm db:migrate:ci` succeeds with `DATABASE_URL` set to a role that has CREATEROLE but not CREATEDB.
+_Numbered checkable commands and assertions only._

@@ -4,7 +4,7 @@
   "kit": {
     "name": "rocketflare",
     "repo": "https://github.com/rocketflare-dev/rocketflare.git",
-    "version": "0.15.4",
+    "version": "0.15.5",
     "commit": null
   },
   "app": null,

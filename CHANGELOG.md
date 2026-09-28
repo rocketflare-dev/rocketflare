@@ -6,6 +6,11 @@ copy of the kit forward without recreating anything its owner deleted.
 
 If you are running a copy: `pnpm kit:upgrade` tells you which of these you are missing.
 
+## 0.15.5 — 2026-09-28
+
+`db:migrate:ci` now works as a least-privilege owner without CREATEDB: the role phase switches the app role's CREATEDB and CREATEROLE off only when they are on, which Postgres 16+ otherwise refuses.
+[Porting note](docs/upgrades/0.15.5.md).
+
 ## 0.15.4 — 2026-09-28
 
 An app's staging and production deploys check wrangler parity with the parity test alone, so the depth-1 deploy checkout no longer fails the whole config project on tests that read git history.
