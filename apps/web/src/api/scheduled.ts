@@ -8,10 +8,10 @@
  *   curl "http://localhost:3001/cdn-cgi/local/scheduled?cron=0+4+*+*+*"
  * (`wrangler dev --test-scheduled` additionally exposes the same thing at `/__scheduled`).
  */
-import { and, eq, lt, sql } from 'drizzle-orm'
+import { lt, sql } from 'drizzle-orm'
 import { type AppConfig, loadConfig } from '../config'
 import { affected, type Database, openDatabase } from '../db/client'
-import { aiSpans, tenants, userSessions } from '../db/schema'
+import { aiSpans, userSessions } from '../db/schema'
 import { serverPlugins } from '../plugins/server'
 import { pruneMagicLinkTokens } from './auth/magic-link'
 import { pruneInvitations } from './services/invitations'
@@ -65,34 +65,21 @@ export const pruneExpired: ScheduledTask = {
 /**
  * Drop `ai_spans` older than `OBSERVABILITY_SPAN_RETENTION_DAYS` (D32). The local trace store is
  * written on every traced request whether or not a backend is configured, so without this it grows
- * for ever. One DELETE per tenant, each on the `(tenant_id, started_at)` index — a cross-tenant
- * cutoff scan would read the whole table, and every other query on it is tenant-first anyway.
+ * for ever.
+ *
+ * ONE statement for every tenant. It used to be one DELETE per tenant, ten at a time, on the belief
+ * that a cross-tenant cutoff would read the whole table; it does not — Postgres answers
+ * `started_at < $1` from the `(tenant_id, started_at)` index with a bitmap scan when the cutoff is
+ * selective, and a sequential scan only when most rows are going anyway. Per tenant it cost
+ * `tenants / 10` round trips, each its own HTTP request under `neon` (D35): minutes for a large
+ * fleet, and in the neon test run, where every api file's tenants share one database, a cron test
+ * whose time grew with the size of the suite until it timed out.
  */
-/** Tenants pruned in parallel per batch — see the loop. */
-const PRUNE_CONCURRENCY = 10
-
 export async function runPruneAiSpans(db: Database, retentionDays: number, now = new Date()) {
   const cutoff = new Date(now.getTime() - retentionDays * 24 * 60 * 60 * 1000)
-  const tenantRows = await db.select({ id: tenants.id }).from(tenants)
-  let spans = 0
-  // PRUNE_CONCURRENCY tenants at a time: under `neon` every DELETE is its own HTTP round trip
-  // (D35), so a strictly sequential loop costs tenants × latency — minutes for a large fleet.
-  // postgres.js (`max: 1`) pipelines the same batch on its one connection.
-  for (let i = 0; i < tenantRows.length; i += PRUNE_CONCURRENCY) {
-    const batch = tenantRows.slice(i, i + PRUNE_CONCURRENCY)
-    const counts = await Promise.all(
-      batch.map(async ({ id: tenantId }) =>
-        // No `.returning()`: a first prune after a busy fortnight can be a lot of rows, and the
-        // ids are not needed — both drivers report the affected count, which `affected()` reads.
-        affected(
-          await db
-            .delete(aiSpans)
-            .where(and(eq(aiSpans.tenantId, tenantId), lt(aiSpans.startedAt, cutoff)))
-        )
-      )
-    )
-    for (const count of counts) spans += count
-  }
+  // No `.returning()`: a first prune after a busy fortnight can be a lot of rows, and the ids are
+  // not needed — both drivers report the affected count, which `affected()` reads.
+  const spans = affected(await db.delete(aiSpans).where(lt(aiSpans.startedAt, cutoff)))
   return { spans, cutoff: cutoff.toISOString() }
 }
 

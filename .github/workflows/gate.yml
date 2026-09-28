@@ -3,8 +3,12 @@ name: Gate
 # The gate itself — lint, typecheck, test, build — in ONE job, called three times (D31, decision 5):
 #
 #   ci.yml `check`    the ordinary gate, on the checkout as it is;
-#   ci.yml `plugins`  the same gate with every `defaultPlugins` entry installed first;
-#   ci.yml `renamed`  the same gate on the checkout renamed by `scripts/rename.mjs` first.
+#   ci.yml `plugins`  the same gate with every `defaultPlugins` entry installed first (kit only);
+#   ci.yml `renamed`  the same gate on the checkout renamed by `scripts/rename.mjs` first (kit only).
+#
+# In a copy of the kit only `check` runs: its plugins are installed and committed, so the one gate
+# covers them. deploy.yml reaches this file through ci.yml, and only for a commit that has no
+# successful CI run yet, so a commit pushed to main and then deployed is gated once.
 #
 # A second copy of these steps was the alternative, and a gate that drifts between its two copies
 # proves nothing about the copy nobody ran. So the Postgres service, the install and the gate live

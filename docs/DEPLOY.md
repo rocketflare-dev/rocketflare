@@ -193,7 +193,7 @@ the orchestrator around it — phases `tokens` (TTY only: hidden prompts → `ap
 
 | Expression | Task | What it does | Local trigger (`wrangler dev` never fires crons itself) |
 |---|---|---|---|
-| `0 4 * * *` | `pruneExpired`, `pruneAiSpans` | deletes expired sessions, consumed/expired magic links, invitations older than 30 days; then `ai_spans` older than `OBSERVABILITY_SPAN_RETENTION_DAYS` (14), one DELETE per tenant (D32) | `curl "http://localhost:3001/cdn-cgi/local/scheduled?cron=0+4+*+*+*"` |
+| `0 4 * * *` | `pruneExpired`, `pruneAiSpans` | deletes expired sessions, consumed/expired magic links, invitations older than 30 days; then `ai_spans` older than `OBSERVABILITY_SPAN_RETENTION_DAYS` (14), one DELETE across every tenant (D32) | `curl "http://localhost:3001/cdn-cgi/local/scheduled?cron=0+4+*+*+*"` |
 | `15 * * * *` | `analytics.refreshFactTables` (the analytics PLUGIN, D31) | every registered fact table, per tenant, DELETE+INSERT in one transaction; per-tenant failures collected, logged as a warning, never abort the run. The expression is the plugin's `crons` declaration and the task is `ServerPlugin.scheduledTasks` — **a task under an expression no toml declares simply never runs** | `curl "http://localhost:3001/cdn-cgi/local/scheduled?cron=15+*+*+*+*"` — or, for one organisation, `rocketflare analytics refresh-facts` |
 
 Health of the fact tables: `GET /api/analytics/facts/status` (admin+; `stale` = newest source row
@@ -297,13 +297,22 @@ All steps run at the repository root; the root scripts fan out with `pnpm -r` / 
                         │                       → pnpm build (web: vite + dry-run wrangler deploy; cli: tsc)
                         ├─► test-neon       → pnpm web test:neon: test Postgres + the Neon proxy (compose
                         │                     `--profile neon`), api + api-isolated + driver projects under
-                        │                     DATABASE_DRIVER=neon (D35 — the gate runs `postgres`)
+                        │                     DATABASE_DRIVER=neon (D35 — the gate runs `postgres`); not on
+                        │                     the deploy path
+                        ├─► plugin-check    → node scripts/plugin.mjs check (no install, no database)
+                        │   ── kit only (`github.repository == 'rocketflare-dev/rocketflare'`) ──
+                        ├─► renamed         → gate.yml on the checkout renamed to `my-app`
                         ├─► default-plugins → what .rocketflare.json `defaultPlugins` names (or "none")
                         └─► plugins         → gate.yml again with `plugins: true`: pnpm plugin add each
                                               entry at its pinned ref → pnpm db:generate → db:migrate:ci
                                               → the same gate (D31; skipped when there are none)
                                                                                                             │
- push tag X.Y.Z ──► deploy.yml ─► ci (workflow_call, same file) ─► staging job (environment: staging)
+ push tag X.Y.Z ──► deploy.yml ─► gated: does github.sha already have a SUCCESSFUL `CI` run (push or
+                                  │        pull_request; Actions API, `actions: read`)?
+                                  ├─ yes → ci skipped: the commit was gated once already
+                                  └─ no  → ci (workflow_call, same file, `deploy: true`: no test-neon)
+                                  ─► staging job (environment: staging) — only after ci passed, or ci
+                                     skipped because `gated` found the green run; never after a failure
                                      tag == ROOT package.json version?
                                      → REQUIRE_PROVISIONED=1 pnpm --filter @rocketflare/web test:config
                                      → pnpm db:migrate:ci (staging DATABASE_URL) → pnpm --filter @rocketflare/web build:ui
@@ -315,8 +324,32 @@ All steps run at the repository root; the root scripts fan out with `pnpm -r` / 
                                      tag == ROOT version? → REQUIRE_PROVISIONED=1 test:config → db:migrate:ci (production)
                                      → build:ui → pnpm --filter @rocketflare/web exec wrangler deploy --var RELEASE_VERSION:X.Y.Z
 
- workflow_dispatch(environment) ──► either job from the dispatched ref (first deploy; emergencies)
+ workflow_dispatch(environment) ──► either job from the dispatched ref (first deploy; emergencies);
+                                    staging goes through `gated` → ci exactly as a tag does
 ```
+
+**A commit is gated once.** A copy usually deploys a commit that was pushed to main a minute
+earlier, so `deploy.yml`'s `gated` job asks the Actions API whether `github.sha` already has a
+completed, successful `CI` run from a `push` or a `pull_request`, and skips `ci` if so. A run still
+in progress does NOT count — the deploy gates anyway rather than polling, which costs a duplicate
+gate only on the first deploy after a push and never waits on a run that may be cancelled. Any
+doubt (the API errors, the answer is not a count) means "gate here". `staging` is
+`!cancelled()` so a skipped `ci` does not skip it, and its last clause is the security property:
+
+```yaml
+needs: [guard, gated, ci]
+if: |
+  !cancelled() && needs.guard.outputs.deployable == 'true' && (<tag push or staging dispatch>) && (
+    needs.ci.result == 'success' ||
+    (needs.ci.result == 'skipped' && needs.gated.outputs.gated == 'true')
+  )
+```
+
+**In a copy only `check`, `test-neon` and `plugin-check` run.** `renamed`, `default-plugins` and
+`plugins` prove the KIT — what a rename does to it, what a fresh clone installs — and are guarded on
+the kit's repository name, which `scripts/rename.mjs` keeps verbatim, so the guard is false in every
+copy. A copy's plugins are installed and committed, so `check` already gates them; through 0.15.2
+the second pass re-ran the whole gate and failed at `pnpm plugin add` ("already installed").
 
 ### Deploying through an external deployer (off by default)
 
@@ -338,8 +371,9 @@ able to do — is **`docs/DEPLOYER.md`** (protocol v1).
 
 ### Default plugins in CI, and the template a plugin repository calls (D31, decision 5)
 
-The gate's steps live in `.github/workflows/gate.yml` and `ci.yml` calls it twice — once on the
-checkout as it is, once with every default plugin installed. One boolean input is the difference,
+The gate's steps live in `.github/workflows/gate.yml` and, in the kit's own repository, `ci.yml`
+calls it three times — on the checkout as it is, with every default plugin installed, and renamed to
+a hyphenated slug. A copy runs only the first (see "In a copy" above). One boolean input is the difference,
 because a second copy of those steps would prove nothing about the copy nobody ran.
 
 `defaultPlugins` in `.rocketflare.json` is a list of OBJECTS, and CI is its only strict reader:
@@ -354,7 +388,7 @@ because a second copy of those steps would prove nothing about the copy nobody r
 repository required of every plugin manifest); `ref` because CI installs a PINNED version rather
 than whatever the default branch says this morning; `subdir` when the plugin is not the root of its
 repository. A bare string parses as an id with no repo and is reported as such rather than having a
-URL guessed for it. With the list empty the `default-plugins` job still runs and says so — that is
+URL guessed for it. With the list empty the `default-plugins` job still runs in the kit and says so — that is
 the answer worth seeing on a bare kit — and the expensive second gate is skipped, since with nothing
 installed it would re-run the first one verbatim.
 
@@ -411,8 +445,10 @@ of the same change) and release it. `pnpm plugin check` names the symbols, becau
 the set difference between what a plugin `uses` and the kit's `## Surface ledger` (D31, §16).
 
 **`test-neon`** is how a fresh copy's DEPLOYED path is tested before it deploys: local development
-and the gate run `postgres`. It is required in the kit; a copy that deploys on `postgres` everywhere
-may delete the job.
+and the gate run `postgres`. It runs on every pull request and push to main, not on the deploy path
+(`ci.yml`'s `deploy` input). It is required in the kit; a copy that deploys on `postgres` everywhere
+may delete the job. Under `neon` every query is an HTTP request through a local proxy that opens a
+fresh connection, so its test timeout is 20 s rather than the gate's 5 s (`vitest.config.ts`).
 
 **Bundle size.** `pnpm build` (`build:api` = `wrangler deploy --dry-run --outdir dist/api`) produces
 `dist/api/worker.js`; **`gzip -c apps/web/dist/api/worker.js | wc -c` is the size that matters, and
