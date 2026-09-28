@@ -6,6 +6,11 @@ copy of the kit forward without recreating anything its owner deleted.
 
 If you are running a copy: `pnpm kit:upgrade` tells you which of these you are missing.
 
+## 0.15.6 — 2026-09-28
+
+Opening a magic link no longer spends its token: `GET /auth/magic-link/verify` redirects to a new `/magic-link/confirm` page whose "Sign in" button posts the token, so mail scanners (Safe Links, Mimecast) cannot break sign-in.
+[Porting note](docs/upgrades/0.15.6.md).
+
 ## 0.15.5 — 2026-09-28
 
 `db:migrate:ci` now works as a least-privilege owner without CREATEDB: the role phase switches the app role's CREATEDB and CREATEROLE off only when they are on, which Postgres 16+ otherwise refuses.
