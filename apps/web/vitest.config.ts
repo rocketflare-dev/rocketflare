@@ -71,6 +71,14 @@ export default defineConfig({
       },
     },
     teardownTimeout: 5000,
+    // The neon run (`pnpm test:neon`, CI's `test-neon`) sends every query as an HTTP request to
+    // a local proxy that opens a fresh Postgres connection for each (~75 ms on a laptop, 2-3x on
+    // a 2-vCPU runner), so a test does several times its `postgres` wall time. A test making a
+    // dozen sign-ins in a row (rate-limit's no-op case) or a plugin's cron task that walks every
+    // tenant in the shared test database is latency-bound there and nowhere else, and in a copy
+    // with plugins installed it crossed the 5 s default. The `postgres` gate keeps the default,
+    // so it is still the tripwire for a test that is genuinely slow.
+    testTimeout: process.env.DATABASE_DRIVER === 'neon' ? 20_000 : 5_000,
     coverage: {
       provider: 'v8',
       reporter: ['text', 'html', 'json-summary', 'lcov'],

@@ -18,12 +18,18 @@ name: Deploy
 # deploy` is executed INSIDE apps/web (via `--filter … exec`) so `wrangler.toml` and its
 # `[assets] directory = "./dist/ui"` resolve.
 #
-# The CI gate it calls is ci.yml, which since D31 is two passes of `gate.yml`: the ordinary one and
-# the same gate with every `defaultPlugins` entry installed. So a tag proves the kit AND what a
-# fresh clone of it installs; with no default plugins the second pass is skipped.
+# The CI gate it calls is ci.yml, with `deploy: true`: the gate and the plugin audit, not the
+# `test-neon` suite (a PR/push check). In the kit's own repository ci.yml also runs its kit-only
+# passes (default plugins installed, a renamed copy); in a copy those are skipped.
 #
-# Each job: verify tag == root package.json version → CI gate (staging only; production re-ships a
-# validated tag) → parity test with REQUIRE_PROVISIONED=1 (no <PLACEHOLDER> may remain) →
+# Gated ONCE per commit: the `gated` job asks the Actions API whether `github.sha` already has a
+# successful `CI` run from a push or a pull request. If it has, `ci` is skipped and `staging` runs
+# on that earlier run's verdict; if it has not (a tag on an unpushed commit, a dispatch from a
+# branch nobody opened a PR for, a run still in progress, the API unreachable), `ci` gates here as
+# before. Nothing deploys a commit that no green CI run has passed.
+#
+# Each job: verify tag == root package.json version → CI gate (staging only, and only when the
+# commit has no green CI run yet; production re-ships a validated tag) → parity test with REQUIRE_PROVISIONED=1 (no <PLACEHOLDER> may remain) →
 # `pnpm db:migrate:ci` against that environment's Neon branch → build UI → `wrangler deploy`
 # with RELEASE_VERSION set to the tag.
 #
@@ -81,20 +87,75 @@ jobs:
       - id: check
         run: node scripts/release-check.mjs --deployable
 
-  # Step 1 of the dance: a tag has not necessarily been through a PR, so the gate runs here.
-  ci:
+  # Has this exact commit already passed CI? A deploy is usually of a commit that was pushed to
+  # main a minute earlier (a tag on the release commit, or Launch dispatching right after its
+  # scaffold push), and gating it again here was the whole suite twice for one commit.
+  #
+  # Only a COMPLETED, SUCCESSFUL run of ci.yml counts, from a `push` or a `pull_request` on
+  # `github.sha` (a PR run reports its head sha, which is what GitHub's own required checks attach
+  # to). A run still in progress does not count: the deploy gates anyway rather than polling. That
+  # costs a duplicate gate only on the first deploy of a fresh push, and has no wait to bound, no
+  # cancelled or re-run in-flight run to reason about, and never delays a deploy past its own
+  # gate's length. Any doubt — the API errors, the answer is not a number — prints `gated=false`,
+  # so the fallback is always the gate, never the deploy.
+  gated:
+    name: Already gated?
     if: |
       (github.event_name == 'push' && github.ref_type == 'tag') ||
       (github.event_name == 'workflow_dispatch' && inputs.environment == 'staging')
-    uses: ./.github/workflows/ci.yml
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      gated: ${{ steps.check.outputs.gated }}
+    steps:
+      - id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -uo pipefail
+          count=$(gh api \
+            "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$GITHUB_SHA&status=success&per_page=100" \
+            --jq '[.workflow_runs[] | select((.event == "push" or .event == "pull_request") and .conclusion == "success")] | length' \
+            2>&1) || { echo "::warning::Could not read CI runs for $GITHUB_SHA ($count); gating here."; count=0; }
+          case "$count" in ''|*[!0-9]*) count=0 ;; esac
+          if [ "$count" -gt 0 ]; then
+            echo "gated=true" >> "$GITHUB_OUTPUT"
+            echo "$GITHUB_SHA already has $count successful CI run(s); the gate is not re-run."
+          else
+            echo "gated=false" >> "$GITHUB_OUTPUT"
+            echo "$GITHUB_SHA has no successful CI run yet; gating it here."
+          fi
 
-  staging:
-    name: Deploy to staging
-    needs: [guard, ci]
+  # Step 1 of the dance: a tag has not necessarily been through a PR, so the gate runs here —
+  # unless `gated` found a green CI run on this commit. `!cancelled()` so a FAILED `gated` job
+  # (whose output is then empty) still gates rather than skipping everything.
+  ci:
+    needs: gated
     if: |
-      needs.guard.outputs.deployable == 'true' && (
+      !cancelled() && needs.gated.outputs.gated != 'true' && (
         (github.event_name == 'push' && github.ref_type == 'tag') ||
         (github.event_name == 'workflow_dispatch' && inputs.environment == 'staging')
+      )
+    uses: ./.github/workflows/ci.yml
+    with:
+      deploy: true
+
+  # `!cancelled()` because a skipped `ci` would otherwise skip this job too. The last clause is
+  # the security property: deploy only when `ci` passed HERE, or was skipped BECAUSE `gated`
+  # found a green run. A failed or cancelled `ci` never deploys, and neither does a skipped one
+  # without that proof.
+  staging:
+    name: Deploy to staging
+    needs: [guard, gated, ci]
+    if: |
+      !cancelled() && needs.guard.outputs.deployable == 'true' && (
+        (github.event_name == 'push' && github.ref_type == 'tag') ||
+        (github.event_name == 'workflow_dispatch' && inputs.environment == 'staging')
+      ) && (
+        needs.ci.result == 'success' ||
+        (needs.ci.result == 'skipped' && needs.gated.outputs.gated == 'true')
       )
     runs-on: ubuntu-latest
     environment: staging

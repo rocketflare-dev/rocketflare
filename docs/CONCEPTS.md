@@ -428,7 +428,9 @@ Account-scoped names carry `-staging`. Neon uses one project with a branch and r
 environment; under `postgres` Hyperdrive points at the direct host, under `neon` the Worker's
 `DATABASE_URL` secret holds the pooled one (D35). Tagging `X.Y.Z` (which must equal the root
 version) deploys staging; publishing the Release deploys production. `ci.yml` (→ `gate.yml`) is the
-single gate, which `deploy.yml` calls. `pnpm provision <phase>` / `/rf-provision` automates
+single gate, which `deploy.yml` calls (`deploy: true`: no `test-neon`) only when the commit has no
+successful CI run yet — a commit is gated once. Its default-plugins and renamed passes are kit-only
+(guarded on the kit's repository name, which a rename keeps), so a copy runs one gate. `pnpm provision <phase>` / `/rf-provision` automates
 accounts → resources → secrets → deploy over REST. Reference: `docs/DEPLOY.md`, `SETUP.md` Part 3.
 
 **External deployer (opt-in).** A Cloudflare token that can deploy a Worker can bind any resource in
@@ -441,7 +443,9 @@ bindings, stores an undeployed version, issues short-lived migration credentials
 **Known gaps:** no release helper beyond `kit:release`; no per-PR previews; no CLI publishing;
 provisioning HTTP calls have not been run end-to-end against live accounts; no automated
 Workers-plan check. The kit ships no deployer, only the client and the contract; the job waits for
-approval on a runner (fine for minutes, wasteful for hours — there is no re-dispatch).
+approval on a runner (fine for minutes, wasteful for hours — there is no re-dispatch). A deploy
+dispatched while the pushed commit's CI run is still in progress gates again rather than waiting
+for it, and the deploy path does not run `test-neon` (a PR/push check).
 
 ## 11. CLI
 
@@ -590,9 +594,9 @@ as merging a PR. A plugin repo mirrors the host tree and ships **no migration, n
   by `pnpm plugin export`, and compatibility is the set difference `uses \ ledger`, checked before
   any file is copied. The one surviving number is a top-level `minKit` floor. `requires.kit` /
   `requires.pluginApi` are refused by name. CI proves both ends: `ci.yml` runs the gate with
-  `defaultPlugins` installed, and plugin repos call `plugin-ci.yml` (floor + newest kit), which
-  installs a plugin's `requires.plugins` from the same checkout first and takes the highest
-  `minKit` across the set as the floor.
+  `defaultPlugins` installed (in the kit's own repository only), and plugin repos call
+  `plugin-ci.yml` (floor + newest kit), which installs a plugin's `requires.plugins` from the
+  same checkout first and takes the highest `minKit` across the set as the floor.
 - **Lifecycle** (`scripts/plugin.mjs`): `add` (plan, then `--apply`), `upgrade`, `remove`
   (`--archive`), `list`, `check`, `export`. Every plan step is **declarative, agent (with its
   assertion) or human** — a printed instruction is not a mechanism. The host generates the

@@ -122,8 +122,8 @@ turn was investigated and rejected (`docs/CONCEPTS.md` §9 Known gaps): steps do
   retry without an explicit delay); own DB client per message, closed in `finally`; **no `waitUntil`
   in a consumer**. Plain function so tests call it (`.claude/rules/testing.md`)
 - `scheduled(event, env, ctx)`: `SCHEDULED_TASKS` keyed on `event.cron` (`'0 4 * * *'` →
-  `pruneExpired` + `pruneAiSpans` (D32 — `ai_spans` past `OBSERVABILITY_SPAN_RETENTION_DAYS`, one
-  DELETE per tenant on the `(tenant_id, started_at)` index); plus every installed plugin's `scheduledTasks` (the analytics plugin's
+  `pruneExpired` + `pruneAiSpans` (D32 — `ai_spans` past `OBSERVABILITY_SPAN_RETENTION_DAYS`, ONE
+  DELETE for every tenant, answered from the `(tenant_id, started_at)` index — never a round trip per tenant); plus every installed plugin's `scheduledTasks` (the analytics plugin's
   `'15 * * * *'` — every registered fact table, per tenant,
   DELETE+INSERT, per-tenant failures collected and logged as a warning); one DB client per run, closed
   in `waitUntil`; each task try/caught; a new cron string must be added to BOTH tomls and the table

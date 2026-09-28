@@ -5,7 +5,13 @@ name: CI
 # keeping a second copy of the job — a gate that drifts between main and deploy is worse than no
 # gate at all. The gate's STEPS live in `gate.yml`, which this file calls three times: on the
 # checkout as it is, with the `defaultPlugins` installed (D31, decision 5), and renamed to a
-# hyphenated slug as every copy of the kit is.
+# hyphenated slug as every copy of the kit is. The last two prove the KIT (what a fresh clone
+# installs, what a rename does to it) and run only in the kit's own repository; in a copy the
+# plugins are installed and committed, so the first gate already covers them.
+#
+# On the deploy path (`workflow_call` with `deploy: true`) only what shipping needs runs: the gate
+# and the plugin audit. `test-neon` is a PR/push check, and deploy.yml skips this file altogether
+# when the commit already has a green CI run (a push to main or a PR), so a commit is gated once.
 #
 # `pull_request` is the trigger that matters: a gate that only runs AFTER merge reports problems to
 # someone who has already moved on, and the porting-note check in gate.yml is written as a PR check
@@ -16,6 +22,13 @@ on:
   push:
     branches: [main]
   workflow_call:
+    inputs:
+      deploy:
+        description: >-
+          Called from deploy.yml: run only what shipping needs. Skips `test-neon`, which already
+          ran on the pull request and the push to main. Unset on `pull_request` and `push`.
+        type: boolean
+        default: false
 
 concurrency:
   # Cancel superseded runs on a PR branch, never when called from the deploy path.
@@ -44,9 +57,11 @@ jobs:
   # does — but a fresh copy DEPLOYS on `neon`, so this job is what tests that path before a deploy.
   # It uses the compose file rather than a `services:` container so the proxy image is pinned in
   # one place and the database gets the same `max_connections=300`. Required: a copy that deploys
-  # on `postgres` everywhere may delete it (docs/NEON-DRIVER.md §5).
+  # on `postgres` everywhere may delete it (docs/NEON-DRIVER.md §5). Not on the deploy path: it is
+  # a check on every pull request and push to main, and a deploy does not re-run it.
   test-neon:
     name: Tests under the neon driver
+    if: ${{ !inputs.deploy }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -67,12 +82,21 @@ jobs:
   # repository required of every plugin, `ref` because CI installs a PINNED version rather than
   # whatever the default branch says this morning.
   #
-  # This job always runs and always says what it found, including "none" — that answer is the one
-  # worth seeing on a bare kit, and it is also where a malformed entry is caught. The expensive
-  # second gate below is conditional on it, because with no default plugins that gate would be a
-  # verbatim re-run of `check`.
+  # In the kit this job always runs and always says what it found, including "none" — that answer
+  # is the one worth seeing on a bare kit, and it is also where a malformed entry is caught. The
+  # expensive second gate below is conditional on it, because with no default plugins that gate
+  # would be a verbatim re-run of `check`.
+  #
+  # Kit-only, like `renamed`: proving "the kit plus its defaults" is the kit's concern (decision 5).
+  # A copy has its plugins installed and committed, so `check` already gated them, and a second
+  # gate there was the whole suite again, in sequence, on every PR, push and deploy. The signal is
+  # the repository name, the convention `renamed` set: a job-level `if` costs no runner and no
+  # checkout, and `scripts/rename.mjs` keeps `rocketflare-dev/…` literals verbatim (its
+  # `preservedPattern`), so in every copy this is false. `.rocketflare.json`'s `app` block would
+  # say the same thing, but only after a job had checked the tree out to read it.
   default-plugins:
     name: Default plugins
+    if: github.repository == 'rocketflare-dev/rocketflare'
     runs-on: ubuntu-latest
     outputs:
       count: ${{ steps.read.outputs.count }}
@@ -113,11 +137,12 @@ jobs:
   # The same gate again, with every default plugin installed and its migrations generated and
   # applied. This is the kit's half of decision 5's "proof both ways": the other half is each
   # plugin repository running `.github/workflows/plugin-ci.yml` against its own `minKit` floor and
-  # the kit's newest release.
+  # the kit's newest release. Kit-only, for the reason on `default-plugins` above; the repository
+  # check is repeated here rather than left to the skipped `needs`, so it reads on its own.
   plugins:
     name: Gate with default plugins
     needs: [check, default-plugins]
-    if: needs.default-plugins.outputs.count != '0'
+    if: github.repository == 'rocketflare-dev/rocketflare' && needs.default-plugins.outputs.count != '0'
     uses: ./.github/workflows/gate.yml
     with:
       plugins: true
