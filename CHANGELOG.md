@@ -6,6 +6,11 @@ copy of the kit forward without recreating anything its owner deleted.
 
 If you are running a copy: `pnpm kit:upgrade` tells you which of these you are missing.
 
+## 0.15.3 — 2026-09-28
+
+A copy's CI no longer re-runs its gate with default plugins (which failed on every copy with plugins installed), deploys skip the gate for an already-green commit, and the neon test run stops timing out.
+[Porting note](docs/upgrades/0.15.3.md).
+
 ## 0.15.2 — 2026-09-28
 
 Renaming now keeps `rocketflare-dev/` references upstream, names the test Compose project per app, and gives a hyphenated slug the `<snake>_` API-key prefix and a green gate, which a new CI job proves on every pull request.
