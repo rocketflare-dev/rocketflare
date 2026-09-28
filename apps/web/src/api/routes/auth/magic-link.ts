@@ -1,8 +1,14 @@
 /**
  * Magic-link login (D9, D11, D12). `POST /request` always answers 202 (anti-enumeration) and is
  * rate-limited at the mount; the email — or, with no `RESEND_API_KEY`, the log line — carries
- * `${APP_URL}/auth/magic-link/verify?token=…`. `GET /verify` consumes the token, runs `admitUser`
- * (sign-up gating), sets the cookie and 302s to the validated `redirectTo` or `/`; failures 302 to
+ * `${APP_URL}/auth/magic-link/verify?token=…`.
+ *
+ * Scanner-safe verify: `GET /verify` consumes NOTHING — it 302s to the SPA's
+ * `/magic-link/confirm`, whose "Sign in" button posts a native form back to `POST /verify`. Mail
+ * security scanners (Defender Safe Links, Mimecast, Proofpoint) GET every link on delivery; when
+ * GET consumed the token, the scanner spent it and the person's own click got `invalid_token`.
+ * `POST /verify` consumes the token, runs `admitUser` (sign-up gating), sets the cookie and 303s to
+ * the validated `redirectTo` or `/`; failures redirect to
  * `/login?error=invalid_token|expired|not_invited|blocked`.
  */
 import { magicLinkRequestSchema } from '@rocketflare/shared/auth'
@@ -47,11 +53,21 @@ magicLinkRouter.post('/request', validate('json', magicLinkRequestSchema), async
   return c.json({ ok: true }, 202)
 })
 
-magicLinkRouter.get('/verify', async c => {
+/** Link from the email: never consumes (see header) — hands the token to the confirm page. */
+magicLinkRouter.get('/verify', c => {
+  const params = new URLSearchParams({ token: c.req.query('token') ?? '' })
+  const redirectTo = c.req.query('redirectTo')
+  if (redirectTo) params.set('redirectTo', redirectTo)
+  return c.redirect(`/magic-link/confirm?${params}`, 302)
+})
+
+/** The confirm page's form (`application/x-www-form-urlencoded`): the only consuming request. */
+magicLinkRouter.post('/verify', async c => {
   const db = c.get('db')
   const cfg = c.get('config')
   const logger = c.get('logger')
-  const token = c.req.query('token') ?? ''
+  const form = await c.req.parseBody()
+  const token = typeof form.token === 'string' ? form.token : ''
   const consumed = await consumeMagicLinkToken(db, token)
   if (!consumed.ok) return loginErrorRedirect(c, consumed.reason)
 
@@ -59,6 +75,8 @@ magicLinkRouter.get('/verify', async c => {
   if (!admitted.ok) return loginErrorRedirect(c, admitted.reason)
 
   await completeLogin(c, db, cfg, admitted.user)
-  const target = safeRedirectPath(c.req.query('redirectTo') ?? consumed.redirectTo)
-  return c.redirect(target, 302)
+  const requested = typeof form.redirectTo === 'string' ? form.redirectTo : null
+  const target = safeRedirectPath(requested || consumed.redirectTo)
+  // 303: the browser follows a POST's redirect with a GET.
+  return c.redirect(target, 303)
 })

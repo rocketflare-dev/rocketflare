@@ -69,7 +69,10 @@ are always `tenant`; no audit log beyond `activity_events`; no personal API keys
   membership → groups → features in one query. The second strategy is a Bearer tenant API key
   (hashed, expiry, soft revoke).
 - **Magic link** is the zero-credential path: a 256-bit, 15-minute, single-use, SHA-256-hashed
-  token. With no `RESEND_API_KEY` the URL is logged. Dev-login exists and 404s in production.
+  token. With no `RESEND_API_KEY` the URL is logged. Opening the link consumes nothing: `GET /verify`
+  redirects to `/magic-link/confirm`, and only its "Sign in" button (`POST /verify`) spends the
+  token, so mail security scanners that fetch every link on delivery (Defender Safe Links,
+  Mimecast) cannot. Dev-login exists and 404s in production.
 - **OAuth is a registry** (D11): one generic `/auth/:provider` router over `ProviderDefinition`s
   (Google, Microsoft via arctic). Redirect URIs come from `APP_URL`, accounts link by verified email,
   and tokens are AES-GCM encrypted under `OAUTH_ENCRYPTION_KEY`. The return path is `?returnUrl=`

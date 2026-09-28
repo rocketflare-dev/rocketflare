@@ -1,7 +1,8 @@
 /**
- * Magic-link login + sign-up gating (D9, D11, D12): request is always 202, verify sets the cookie
- * and redirects, expired/invalid/consumed tokens redirect with an error code, SIGNUP_MODE decides
- * new users, BOOTSTRAP_ADMIN_EMAILS promotes on verified login.
+ * Magic-link login + sign-up gating (D9, D11, D12): request is always 202, opening the link
+ * (GET) consumes nothing and lands on the confirm page, the confirm POST sets the cookie and
+ * redirects, expired/invalid/consumed tokens redirect with an error code, SIGNUP_MODE decides new
+ * users, BOOTSTRAP_ADMIN_EMAILS promotes on verified login.
  */
 import { and, eq, isNull, sql } from 'drizzle-orm'
 import { describe, expect, it, vi } from 'vitest'
@@ -50,6 +51,28 @@ function location(res: Response): URL {
   return new URL(res.headers.get('location') ?? '', 'http://localhost:3001')
 }
 
+/** The confirm page's native form post. */
+function postVerify(fields: Record<string, string>, env: TestEnv = createTestEnv()) {
+  return request(
+    '/auth/magic-link/verify',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams(fields).toString(),
+    },
+    { env }
+  )
+}
+
+/** What a person does: open the emailed link, then press "Sign in" on the confirm page. */
+async function signIn(verifyUrl: string, env: TestEnv = createTestEnv()) {
+  const opened = await request(verifyUrl, {}, { env })
+  expect(opened.status).toBe(302)
+  const confirm = location(opened)
+  expect(confirm.pathname).toBe('/magic-link/confirm')
+  return postVerify(Object.fromEntries(confirm.searchParams), env)
+}
+
 describe('POST /auth/magic-link/request', () => {
   it('202 { ok: true } and stores a hashed token row', async () => {
     const email = `ml_${uniqueId().toLowerCase()}@example.test`
@@ -88,12 +111,12 @@ describe('POST /auth/magic-link/request', () => {
   })
 })
 
-describe('GET /auth/magic-link/verify', () => {
-  it('signs in an existing member: cookie set, 302 to /', async () => {
+describe('/auth/magic-link/verify', () => {
+  it('signs in an existing member: cookie set, 303 to /', async () => {
     const { user, tenant } = await createTestTenantWithUser(db, 'member')
     const { verifyUrl } = await linkFor(user.email)
-    const res = await request(verifyUrl)
-    expect(res.status).toBe(302)
+    const res = await signIn(verifyUrl)
+    expect(res.status).toBe(303)
     expect(location(res).pathname).toBe('/')
     const token = sessionCookieFrom(res)
     expect(token).toBeTruthy()
@@ -109,26 +132,55 @@ describe('GET /auth/magic-link/verify', () => {
   it('honours a safe redirectTo and rejects an absolute one', async () => {
     const user = await createTestUser(db)
     const a = await linkFor(user.email, createTestEnv(), '/settings/members')
-    expect(location(await request(a.verifyUrl)).pathname).toBe('/settings/members')
+    expect(location(await signIn(a.verifyUrl)).pathname).toBe('/settings/members')
     const b = await linkFor(user.email)
-    const res = await request(
+    const res = await signIn(
       `${b.verifyUrl}&redirectTo=${encodeURIComponent('https://evil.example/x')}`
     )
     expect(location(res).pathname).toBe('/')
   })
 
+  it('opening the link (a mail scanner, a preview, a reload) consumes nothing', async () => {
+    const user = await createTestUser(db)
+    const { verifyUrl } = await linkFor(user.email)
+    for (let i = 0; i < 3; i++) {
+      const opened = await request(verifyUrl, { headers: { Accept: 'text/html' } })
+      expect(opened.status).toBe(302)
+      expect(opened.headers.getSetCookie()).toEqual([])
+    }
+    const [row] = await db
+      .select()
+      .from(magicLinkTokens)
+      .where(eq(magicLinkTokens.email, user.email.toLowerCase()))
+    expect(row?.consumedAt).toBeNull()
+    const res = await signIn(verifyUrl)
+    expect(res.status).toBe(303)
+    expect(sessionCookieFrom(res)).toBeTruthy()
+  })
+
+  it('GET carries the token and redirectTo to the confirm page', async () => {
+    const res = await request('/auth/magic-link/verify?token=abc&redirectTo=%2Fchat')
+    expect(location(res).pathname).toBe('/magic-link/confirm')
+    expect(Object.fromEntries(location(res).searchParams)).toEqual({
+      token: 'abc',
+      redirectTo: '/chat',
+    })
+  })
+
   it('a consumed token → /login?error=invalid_token', async () => {
     const user = await createTestUser(db)
     const { verifyUrl } = await linkFor(user.email)
-    expect((await request(verifyUrl)).status).toBe(302)
-    const second = await request(verifyUrl)
+    expect((await signIn(verifyUrl)).status).toBe(303)
+    const second = await signIn(verifyUrl)
     expect(location(second).pathname).toBe('/login')
     expect(location(second).searchParams.get('error')).toBe('invalid_token')
   })
 
   it('garbage → invalid_token; expired → expired', async () => {
-    const bad = await request('/auth/magic-link/verify?token=garbage')
+    const bad = await postVerify({ token: 'garbage' })
     expect(location(bad).searchParams.get('error')).toBe('invalid_token')
+    const missing = await postVerify({})
+    expect(location(missing).searchParams.get('error')).toBe('invalid_token')
     const user = await createTestUser(db)
     const token = randomToken(32)
     await db.insert(magicLinkTokens).values({
@@ -136,14 +188,14 @@ describe('GET /auth/magic-link/verify', () => {
       tokenHash: await hashToken(token),
       expiresAt: new Date(Date.now() - 1000),
     })
-    const res = await request(`/auth/magic-link/verify?token=${token}`)
+    const res = await postVerify({ token })
     expect(location(res).searchParams.get('error')).toBe('expired')
   })
 
   it('blocked user → /login?error=blocked', async () => {
     const user = await createTestUser(db, { blockedAt: new Date() })
     const { verifyUrl } = await linkFor(user.email)
-    expect(location(await request(verifyUrl)).searchParams.get('error')).toBe('blocked')
+    expect(location(await signIn(verifyUrl)).searchParams.get('error')).toBe('blocked')
   })
 })
 
@@ -151,7 +203,7 @@ describe('sign-up gating (SIGNUP_MODE)', () => {
   it('invite_only: unknown address → not_invited, no user created', async () => {
     const email = `gate_${uniqueId().toLowerCase()}@example.test`
     const { verifyUrl } = await linkFor(email)
-    const res = await request(verifyUrl)
+    const res = await signIn(verifyUrl)
     expect(location(res).searchParams.get('error')).toBe('not_invited')
     expect(await db.select().from(users).where(eq(users.email, email))).toHaveLength(0)
   })
@@ -168,7 +220,7 @@ describe('sign-up gating (SIGNUP_MODE)', () => {
       expiresAt: new Date(Date.now() + 86_400_000),
     })
     const { verifyUrl } = await linkFor(email)
-    const res = await request(verifyUrl)
+    const res = await signIn(verifyUrl)
     expect(location(res).pathname).toBe('/')
     const token = sessionCookieFrom(res) as string
     const body = await json<{ tenant: unknown; user: { email: string; emailVerifiedAt: string } }>(
@@ -183,7 +235,7 @@ describe('sign-up gating (SIGNUP_MODE)', () => {
     const env = createTestEnv({ SIGNUP_MODE: 'open' })
     const email = `open_${uniqueId().toLowerCase()}@example.test`
     const { verifyUrl } = await linkFor(email, env)
-    const res = await request(verifyUrl, {}, { env })
+    const res = await signIn(verifyUrl, env)
     const token = sessionCookieFrom(res) as string
     const body = await json<{ tenant: { name: string; role: string } | null }>(
       await request('/auth/session', { headers: sessionCookieHeader(token) }, { env })
@@ -196,7 +248,7 @@ describe('sign-up gating (SIGNUP_MODE)', () => {
     const env = createTestEnv({ SIGNUP_MODE: 'approval' })
     const email = `appr_${uniqueId().toLowerCase()}@example.test`
     const { verifyUrl } = await linkFor(email, env)
-    const res = await request(verifyUrl, {}, { env })
+    const res = await signIn(verifyUrl, env)
     const token = sessionCookieFrom(res) as string
     const body = await json<{ tenant: unknown; accessRequest: { status: string } | null }>(
       await request('/auth/session', { headers: sessionCookieHeader(token) }, { env })
@@ -210,7 +262,7 @@ describe('sign-up gating (SIGNUP_MODE)', () => {
     expect(rows).toHaveLength(1)
     // A second login reuses the same pending request.
     const again = await linkFor(email, env)
-    await request(again.verifyUrl, {}, { env })
+    await signIn(again.verifyUrl, env)
     expect(
       await db
         .select()
@@ -229,7 +281,7 @@ describe('sign-up gating (SIGNUP_MODE)', () => {
       BOOTSTRAP_ADMIN_EMAILS: `Other@example.test, ${email.toUpperCase()}`,
     })
     const { verifyUrl } = await linkFor(email, env)
-    const res = await request(verifyUrl, {}, { env })
+    const res = await signIn(verifyUrl, env)
     expect(location(res).pathname).toBe('/')
     const [row] = await db.select().from(users).where(eq(users.email, email))
     expect(row?.isGlobalAdmin).toBe(true)
@@ -248,7 +300,7 @@ describe('sign-up gating (SIGNUP_MODE)', () => {
     const user = await createTestUser(db, { emailVerifiedAt: null })
     const env = createTestEnv({ BOOTSTRAP_ADMIN_EMAILS: user.email })
     const { verifyUrl } = await linkFor(user.email, env)
-    await request(verifyUrl, {}, { env })
+    await signIn(verifyUrl, env)
     const [row] = await db.select().from(users).where(eq(users.id, user.id))
     expect(row?.isGlobalAdmin).toBe(true)
     expect(row?.emailVerifiedAt).not.toBeNull()
@@ -258,7 +310,7 @@ describe('sign-up gating (SIGNUP_MODE)', () => {
     const env = createTestEnv({ TENANCY_MODE: 'single', SIGNUP_MODE: 'open' })
     const email = `single_${uniqueId().toLowerCase()}@example.test`
     const { verifyUrl } = await linkFor(email, env)
-    const res = await request(verifyUrl, {}, { env })
+    const res = await signIn(verifyUrl, env)
     const [oldest] = await db.select().from(tenants).orderBy(tenants.createdAt).limit(1)
     const [user] = await db.select().from(users).where(eq(users.email, email))
     const membership = await db
@@ -268,7 +320,7 @@ describe('sign-up gating (SIGNUP_MODE)', () => {
         and(eq(tenantUsers.userId, user?.id ?? ''), eq(tenantUsers.tenantId, oldest?.id ?? ''))
       )
     expect(membership[0]?.role).toBe('member')
-    expect(res.status).toBe(302)
+    expect(res.status).toBe(303)
     expect(sql).toBeDefined()
   })
 })

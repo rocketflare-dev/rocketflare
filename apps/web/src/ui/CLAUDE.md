@@ -7,9 +7,9 @@ React 18 + Vite + React Router 6 + TanStack Query 5 + zustand; DaisyUI 5 on Tail
 
 - `App.tsx` — providers (ErrorBoundary → QueryClient → Auth → Ability → WebSocket → Router), the
   header `<WebSocketStatus />` dot and `<ConnectionBanner />` above the routed page, and the route
-  table in three tiers: public (`/login`, `/magic-link/sent`, `/invite/:token`), signed-in-without-
-  tenant (`/select-tenant`, `/pending`, `/no-access` — `ProtectedRoute requireTenant={false}`), and
-  the shell (`/*` — `ProtectedRoute`, `Layout` mounted ONCE, nested `<Routes>` beneath it).
+  table in three tiers: public (`/login`, `/magic-link/sent`, `/magic-link/confirm`,
+  `/invite/:token`), signed-in-without-tenant (`/select-tenant`, `/pending`, `/no-access` —
+  `ProtectedRoute requireTenant={false}`), and the shell (`/*` — `ProtectedRoute`, `Layout` mounted ONCE, nested `<Routes>` beneath it).
 - `index.css` — the design system: themes `rocketflare-light`/`rocketflare-dark`, semantic tokens (`--surface-*`,
   `--border-*`, `--text-*`, `--tone-*`), primitives (`.surface-panel`, `.data-table`,
   `.status-badge`, `.nav-item`). Rebrand instructions are in its header comment.
