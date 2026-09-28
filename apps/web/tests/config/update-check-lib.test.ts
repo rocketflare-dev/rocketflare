@@ -58,14 +58,20 @@ describe('skipReason', () => {
     expect(
       skipReason({ source: 'startup', manifest: copy(), env: { ROCKETFLARE_UPDATE_CHECK: '1' } })
     ).toBeNull()
-    expect(skipReason({ source: 'startup', manifest: null, env: {} })).toMatch(/no \.rocketflare/)
+    expect(skipReason({ source: 'startup', manifest: null, env: {} })).toMatch(
+      /no \.rocketflare\.json/
+    )
     const noVersion = copy({ kit: { repo: REPO, version: 'main' } as Manifest['kit'] })
     expect(skipReason({ source: 'startup', manifest: noVersion, env: {} })).toMatch(/kit\.version/)
   })
 
-  it('stays silent in the kit repository itself (its manifest has app: null)', () => {
+  // The real manifest: `app: null` in the kit, stamped by `rename.mjs` in a copy — and this test
+  // ships to both, so it asserts the decision each one should get rather than assuming the kit.
+  it('stays silent in the kit repository itself and checks a renamed copy — from the real manifest', () => {
     const manifest = JSON.parse(readFileSync(path.join(REPO_ROOT, '.rocketflare.json'), 'utf8'))
-    expect(skipReason({ source: 'startup', manifest, env: {} })).toMatch(/kit itself/)
+    const reason = skipReason({ source: 'startup', manifest, env: {} })
+    if (manifest.app === null) expect(reason).toMatch(/kit itself/)
+    else expect(reason).toBeNull()
   })
 })
 

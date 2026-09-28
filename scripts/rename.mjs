@@ -326,7 +326,7 @@ function main(argv) {
   }
   out('Careful rows (docs/ADAPTING.md §1):', ...report.map(r => `  ${r}`), '')
   out(
-    `Preserved as the kit's origin: ${KIT.preserved.join(', ')}. Not touched by design: ` +
+    `Preserved as upstream: the rocketflare-dev org and its repos (the kit, plugins, the neon-proxy image, plugin CI), ${KIT.preserved.join(', ')}. Not touched by design: ` +
       'LICENSE, CONTRIBUTING.md, CODE_OF_CONDUCT.md, SECURITY.md, the two svgs, this tool, its test, ' +
       'the rf-adapt skill and .rocketflare.json (it names the kit, and gets an `app` block instead).',
     ''

@@ -62,9 +62,10 @@ identifier), the databases `<snake>_dev` / `<snake>_test`.
 
 **How to check.**
 ```
-grep -n "container_name\|POSTGRES_\|-dev-data\|pg_isready" apps/web/docker-compose.dev.yml apps/web/docker-compose.test.yml
+grep -n "^name:\|container_name\|POSTGRES_\|-dev-data\|pg_isready" apps/web/docker-compose.dev.yml apps/web/docker-compose.test.yml
 ```
-Expect `<slug>-dev-postgres`, `<slug>-test-postgres`, `<slug>-dev-data`, `POSTGRES_USER: <snake>`,
+Expect `<slug>-dev-postgres`, `<slug>-test-postgres`, `<slug>-dev-data`, `name: <slug>-test` (the test
+file's Compose project), `POSTGRES_USER: <snake>`,
 `POSTGRES_DB: <snake>_dev` / `<snake>_test`, and `pg_isready -U <snake> -d <snake>_dev`.
 
 **What to change.** Nothing, normally. If you want a different owner or password, change the

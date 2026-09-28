@@ -175,7 +175,8 @@ community image, mirrored to `ghcr.io/rocketflare-dev` and rebuilt with our star
 needs a cloud account; `neon` in deployment has no read cache and pays a round trip per query
 (p95 is measured per app when it switches, not gated); `test-neon` installs no plugins, so a
 plugin's own tests run under `neon` only in a local `pnpm test:neon`; the TEST database is pinned to
-5433, so two checkouts cannot run `pnpm test` at once. `--db-url` with a loopback URL (a native
+5433, so two checkouts cannot run `pnpm test` at once (each app has its own Compose project,
+`<slug>-test`, so switching checkouts no longer recreates the other's container). `--db-url` with a loopback URL (a native
 Postgres) still looks like this checkout's Docker database to preflight and `dev:db:*`, and a
 re-run of the bootstrap without the flag checks for Docker again.
 

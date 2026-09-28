@@ -8,6 +8,8 @@ export interface KitNames {
   readonly upper: string
   readonly display: string
   readonly domains: readonly string[]
+  /** Global: `rocketflare-dev` or `rocketflare-dev/<repo>` — upstream, never renamed. */
+  readonly preservedPattern: RegExp
   readonly preserved: readonly string[]
 }
 export const KIT: KitNames
@@ -58,7 +60,7 @@ export interface ReplacementResult {
   text: string
   counts: Record<ClassId, number>
   total: number
-  /** Occurrences of `KIT.preserved` literals that were protected. */
+  /** Occurrences of `KIT.preservedPattern` and `KIT.preserved` literals that were protected. */
   preserved: number
 }
 export function applyReplacements(text: string, names: Names): ReplacementResult
