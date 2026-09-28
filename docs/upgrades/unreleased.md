@@ -1,10 +1,10 @@
 ---
 version: unreleased
-previous: 0.15.3
+previous: 0.15.4
 date: null
 breaking: false
 migrations: []
-areas: [config]
+areas: []
 touches_surfaces: []
 requires_surfaces: []
 manual: false
@@ -12,22 +12,20 @@ manual: false
 
 ## What changed
 
-An app's staging and production deploys check wrangler parity with the parity test alone, so the depth-1 deploy checkout no longer fails the whole config project on tests that read git history.
-
-- `deploy.yml`: both "Wrangler parity (provisioned)" steps run `test:config tests/config/wrangler-parity.test.ts` instead of the whole `config` project.
-- `ci-workflows.test.ts` asserts it for both deploy jobs.
+_Nothing yet. Add an entry here in the same pull request as the change. This first paragraph is
+lifted VERBATIM into `CHANGELOG.md`, so make it ONE standalone summary sentence of ≤ 40 words —
+then one bullet per change, one line each, and no `###` sub-headings. Rationale belongs in
+`docs/CONCEPTS.md` and is linked, never restated; see `README.md` beside this file._
 
 ## How to apply
 
-1. In `.github/workflows/deploy.yml`, in the `staging` job's "Wrangler parity (provisioned)" step, change `run: pnpm --filter @<slug>/web test:config` to `run: pnpm --filter @<slug>/web test:config tests/config/wrangler-parity.test.ts`.
-2. In `.github/workflows/deploy.yml`, make the same change in the `production` job's "Wrangler parity (provisioned)" step.
-3. Copy `apps/web/tests/config/ci-workflows.test.ts` from the kit if the copy has it; otherwise skip this step.
+_Numbered, imperative, each step self-contained — no "these", "them" or "the above" reaching
+outside its own step._
 
 ## Conflicts to expect
 
-- `.github/workflows/deploy.yml` → the parity step's `run:` line gained a test path → keep any other edits to the step and add the path.
+_One line each: `path → what changed → what to do`. Or exactly `None.`_
 
 ## Verify
 
-1. `grep -c "test:config tests/config/wrangler-parity.test.ts" .github/workflows/deploy.yml` prints `2`.
-2. `pnpm web test:config` passes.
+_Numbered checkable commands and assertions only._

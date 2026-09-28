@@ -6,6 +6,11 @@ copy of the kit forward without recreating anything its owner deleted.
 
 If you are running a copy: `pnpm kit:upgrade` tells you which of these you are missing.
 
+## 0.15.4 — 2026-09-28
+
+An app's staging and production deploys check wrangler parity with the parity test alone, so the depth-1 deploy checkout no longer fails the whole config project on tests that read git history.
+[Porting note](docs/upgrades/0.15.4.md).
+
 ## 0.15.3 — 2026-09-28
 
 A copy's CI no longer re-runs its gate with default plugins (which failed on every copy with plugins installed), deploys skip the gate for an already-green commit, and the neon test run stops timing out.
