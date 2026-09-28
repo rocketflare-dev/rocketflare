@@ -6,6 +6,11 @@ copy of the kit forward without recreating anything its owner deleted.
 
 If you are running a copy: `pnpm kit:upgrade` tells you which of these you are missing.
 
+## 0.15.2 — 2026-09-28
+
+Renaming now keeps `rocketflare-dev/` references upstream, names the test Compose project per app, and gives a hyphenated slug the `<snake>_` API-key prefix and a green gate, which a new CI job proves on every pull request.
+[Porting note](docs/upgrades/0.15.2.md).
+
 ## 0.15.1 — 2026-09-28
 
 A rename to a hyphenated slug no longer breaks the evals script: the kit never uses its own name as a code identifier, and a config test enforces it.
