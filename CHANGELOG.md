@@ -6,6 +6,11 @@ copy of the kit forward without recreating anything its owner deleted.
 
 If you are running a copy: `pnpm kit:upgrade` tells you which of these you are missing.
 
+## 0.15.1 — 2026-09-28
+
+A rename to a hyphenated slug no longer breaks the evals script: the kit never uses its own name as a code identifier, and a config test enforces it.
+[Porting note](docs/upgrades/0.15.1.md).
+
 ## 0.15.0 — 2026-09-27
 
 The kit now runs on two database drivers, chosen per deployment by `DATABASE_DRIVER`: the Neon serverless driver (a fresh copy's default, no Hyperdrive) or postgres.js through Hyperdrive (any Postgres, and what an existing copy keeps).
