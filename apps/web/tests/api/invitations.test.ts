@@ -338,7 +338,16 @@ describe('POST /api/invite/:token/accept', () => {
       email,
       redirectTo: `/invite/${token}`,
     })
-    const login = await request(verifyUrl)
+    // Open the link (→ confirm page), then post its form, as the "Sign in" button does.
+    const confirm = new URL(
+      (await request(verifyUrl)).headers.get('location') as string,
+      'http://x'
+    )
+    const login = await request('/auth/magic-link/verify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: confirm.searchParams.toString(),
+    })
     expect(new URL(login.headers.get('location') as string, 'http://x').pathname).toBe(
       `/invite/${token}`
     )

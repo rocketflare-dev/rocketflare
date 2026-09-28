@@ -1,6 +1,6 @@
 /**
  * "Check your email" (D11). Rendered inline by Login after a successful request and at
- * `/magic-link/sent?email=` for deep links. Verification itself is a server redirect.
+ * `/magic-link/sent?email=` for deep links. The emailed link lands on `/magic-link/confirm`.
  */
 import { CheckCircleIcon } from '@heroicons/react/24/outline'
 import { Link, useSearchParams } from 'react-router-dom'

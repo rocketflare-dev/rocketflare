@@ -211,7 +211,7 @@ pnpm dev              # apps/web: wrangler dev :3001 + vite :3000 (strict ports;
 Verify: both processes report ready; `curl -s localhost:3001/api/health` returns `{"status":"ok",…}`;
 http://localhost:3000 renders the shell. Sign in: enter the seeded owner email, copy the magic-link
 URL from the **wrangler dev console** (no `RESEND_API_KEY` → links are logged, not sent), open it,
-land on Home. Shortcut (dev only): `http://localhost:3000/login?as=owner@example.test` signs in
+press **Sign in** on the confirm page, land on Home. Shortcut (dev only): `http://localhost:3000/login?as=owner@example.test` signs in
 through `/auth/dev-login` on load — honoured only when the server reports `devLogin`
 (`APP_ENV=development`) and for the four seeded accounts, so an arbitrary address does nothing.
 
