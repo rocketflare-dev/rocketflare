@@ -30,6 +30,10 @@ import {
   scoreIndex,
 } from './lib.mjs'
 
+// The report's run-header key. A string, not `report.<name>`: scripts/rename.mjs turns it into the
+// app's slug, and a hyphenated slug (`my-app`) is not a valid property name after a dot.
+const HEADER_KEY = 'rocketflare'
+
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const WEB = path.resolve(ROOT, '../web')
 const RUNS = path.join(ROOT, '.evals', 'runs')
@@ -134,7 +138,7 @@ function run(opts) {
 
   const report = readReport(file)
   const cases = extractCases(report)
-  report.rocketflare = runHeader({
+  report[HEADER_KEY] = runHeader({
     sha,
     dirty: git('status', '--porcelain').length > 0,
     createdAt,
@@ -167,7 +171,7 @@ function baseline(opts) {
     return 1
   }
   const report = readReport(source)
-  const header = report.rocketflare ?? runHeader({ createdAt: new Date().toISOString(), cases: [] })
+  const header = report[HEADER_KEY] ?? runHeader({ createdAt: new Date().toISOString(), cases: [] })
   const all = baselinesFrom(extractCases(report), header)
   const wanted = opts.filters.length
     ? Object.keys(all).filter(s => opts.filters.some(f => s.includes(f)))
