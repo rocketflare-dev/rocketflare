@@ -113,6 +113,16 @@ describe('deploy.yml', () => {
     )
   })
 
+  it('checks parity with ONLY the parity test in both deploy jobs (their checkout has no history)', () => {
+    for (const id of ['staging', 'production']) {
+      const text = job(DEPLOY, id).join('\n')
+      expect(text, id).toContain('test:config tests/config/wrangler-parity.test.ts')
+      // The whole config project reads git history (upgrade-lib's mirror tests), which a
+      // depth-1 checkout does not have: that is how the first real app deploy failed.
+      expect(text, id).not.toMatch(/test:config\s*$/m)
+    }
+  })
+
   it('deploys staging after a passing ci, or a ci skipped on proof — never after a failed one', () => {
     const staging = job(DEPLOY, 'staging')
     expect(key(staging, 'needs')).toBe('[guard, gated, ci]')

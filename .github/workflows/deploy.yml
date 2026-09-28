@@ -204,8 +204,10 @@ jobs:
 
       # Runs in apps/web (its `test:config` script loads .env.test itself); reads both tomls
       # relative to the package, so no working-directory is needed.
+      # ONLY the parity test: the whole config project also reads git history
+      # (upgrade-lib's mirror tests), which this job's depth-1 checkout does not have.
       - name: Wrangler parity (provisioned)
-        run: pnpm --filter @rocketflare/web test:config
+        run: pnpm --filter @rocketflare/web test:config tests/config/wrangler-parity.test.ts
         env:
           REQUIRE_PROVISIONED: "1"
 
@@ -313,8 +315,10 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
+      # ONLY the parity test: the whole config project also reads git history
+      # (upgrade-lib's mirror tests), which this job's depth-1 checkout does not have.
       - name: Wrangler parity (provisioned)
-        run: pnpm --filter @rocketflare/web test:config
+        run: pnpm --filter @rocketflare/web test:config tests/config/wrangler-parity.test.ts
         env:
           REQUIRE_PROVISIONED: "1"
 
