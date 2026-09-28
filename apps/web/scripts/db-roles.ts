@@ -128,7 +128,21 @@ export async function applyDbRoles(options: ApplyDbRolesOptions = {}): Promise<A
            EXCEPTION WHEN duplicate_object THEN NULL;
            END $do$`,
         ],
-        ['role attributes', `ALTER ROLE ${role} NOCREATEDB NOCREATEROLE`],
+        [
+          // Only switch OFF what is on. On Postgres 16+ only a role that HAS CREATEDB may change
+          // CREATEDB at all — even to NOCREATEDB — so an owner without it (a least-privilege
+          // migration role, e.g. Launch's `migrator`) failed here on a role CREATE ROLE had just
+          // made without either attribute. The post-check below still proves the result.
+          'role attributes',
+          `DO $do$ BEGIN
+             IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = ${roleLit} AND rolcreatedb) THEN
+               ALTER ROLE ${role} NOCREATEDB;
+             END IF;
+             IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = ${roleLit} AND rolcreaterole) THEN
+               ALTER ROLE ${role} NOCREATEROLE;
+             END IF;
+           END $do$`,
+        ],
         [
           // Only a superuser may name SUPERUSER / BYPASSRLS / REPLICATION, even to turn them off —
           // Neon's owner is not one, and would fail with "permission denied to alter role". A
@@ -219,13 +233,23 @@ export async function applyDbRoles(options: ApplyDbRolesOptions = {}): Promise<A
       }
     })
 
-    const [attrs] = await sql.query<{ rolsuper: boolean; rolbypassrls: boolean }>(
-      'SELECT rolsuper, rolbypassrls FROM pg_roles WHERE rolname = $1',
+    const [attrs] = await sql.query<{
+      rolsuper: boolean
+      rolbypassrls: boolean
+      rolcreatedb: boolean
+      rolcreaterole: boolean
+    }>(
+      'SELECT rolsuper, rolbypassrls, rolcreatedb, rolcreaterole FROM pg_roles WHERE rolname = $1',
       [APP_ROLE]
     )
     if (!attrs || attrs.rolsuper || attrs.rolbypassrls) {
       throw new Error(
         `Role '${APP_ROLE}' would bypass RLS (rolsuper=${attrs?.rolsuper}, rolbypassrls=${attrs?.rolbypassrls})`
+      )
+    }
+    if (wantsRole && (attrs.rolcreatedb || attrs.rolcreaterole)) {
+      throw new Error(
+        `Role '${APP_ROLE}' kept CREATEDB/CREATEROLE (rolcreatedb=${attrs.rolcreatedb}, rolcreaterole=${attrs.rolcreaterole})`
       )
     }
 

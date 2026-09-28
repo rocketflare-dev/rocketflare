@@ -71,3 +71,43 @@ describe('db-roles as a non-superuser owner (Neon)', () => {
     })
   })
 })
+
+/**
+ * A LEAST-privilege migration owner: CREATEROLE but no CREATEDB (Launch's `migrator`). On
+ * Postgres 16+ only a role that has CREATEDB may change CREATEDB at all — even to NOCREATEDB — so
+ * an unconditional `ALTER ROLE … NOCREATEDB NOCREATEROLE` failed the role phase for this owner
+ * ("permission denied to alter role"), on the first real app deploy.
+ */
+describe('db-roles as an owner without CREATEDB (a least-privilege migration role)', () => {
+  const leanRole = `rf_lean_owner_${crypto.randomUUID().replaceAll('-', '').slice(0, 12)}`
+  const leanUrl = () => {
+    const url = new URL(testDatabaseUrl())
+    url.username = leanRole
+    url.password = ownerPassword
+    return url.toString()
+  }
+  const admin = postgres(testDatabaseUrl(), { max: 1, onnotice: () => {} })
+
+  beforeAll(async () => {
+    await admin.unsafe(
+      `CREATE ROLE ${leanRole} LOGIN PASSWORD '${ownerPassword}' NOSUPERUSER NOCREATEDB CREATEROLE`
+    )
+    await admin.unsafe(`GRANT ${APP_ROLE} TO ${leanRole} WITH ADMIN OPTION`)
+    await admin.unsafe(`GRANT USAGE, CREATE ON SCHEMA public TO ${leanRole} WITH GRANT OPTION`)
+  })
+
+  afterAll(async () => {
+    await admin.unsafe(`DROP OWNED BY ${leanRole}`)
+    await admin.unsafe(`DROP ROLE IF EXISTS ${leanRole}`)
+    await admin.end({ timeout: 5 })
+  })
+
+  it('runs the role phase without touching attributes that are already off', async () => {
+    await expect(
+      applyDbRoles({ databaseUrl: leanUrl(), phase: 'role', quiet: true })
+    ).resolves.toMatchObject({ revoked: [] })
+    const [attrs] = await admin<{ rolcreatedb: boolean; rolcreaterole: boolean }[]>`
+      SELECT rolcreatedb, rolcreaterole FROM pg_roles WHERE rolname = ${APP_ROLE}`
+    expect(attrs).toEqual({ rolcreatedb: false, rolcreaterole: false })
+  })
+})
