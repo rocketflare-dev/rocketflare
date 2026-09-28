@@ -304,6 +304,19 @@ export function readIntConstant(source, name) {
   return m ? Number(m[2]) : null
 }
 
+const STRING_CONST_RE = name =>
+  new RegExp(`export const ${name}(?::\\s*string)?\\s*=\\s*'([^'\\n]*)'`)
+
+/**
+ * The current value of `export const <name> = '<text>'` in a source, or null. Row (a) reads
+ * `API_KEY_PREFIX` with it after the pass: it must equal `names.prefix` (`<snake>_`), because
+ * the key format, the handle arithmetic and the tests all assume the snake form.
+ */
+export function readStringConstant(source, name) {
+  const m = source.match(STRING_CONST_RE(name))
+  return m ? m[1] : null
+}
+
 /**
  * Rewrites `export const <name> = <old>` to `<value>` and refreshes the trailing comment's
  * `(<n>)` + `<margin>` arithmetic so the comment keeps telling the truth. Applied AFTER the token

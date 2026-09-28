@@ -47,8 +47,9 @@ CI — is preserved as upstream) plus `apps/web/.dev.vars` when it exists (git-i
 → `@<slug>/`, `ROCKETFLARE` → `<UPPER>`, `rocketflare.dev|.local` → `<domain>` (default
 `<slug>.example.com`), `.rocketflare` → `.<slug>`, the Postgres owner `rocketflare` → `<snake>`,
 `rocketflare_` → `<snake>_`, `rocketflare-` → `<slug>-`, `Rocketflare` → the display name, bare
-`rocketflare` → `<slug>` — refuses a dirty tree without `--force`, then runs `pnpm install` and
-`biome check --write` (`--skip-install` to defer). Exit `0` ok · `1` error · `2` usage. Delete
+`rocketflare` → `<slug>` — refuses a dirty tree without `--force`, then runs `pnpm install`,
+`node scripts/plugin-api-doc.mjs` (the document cuts summaries at a width the name moves) and
+`biome check --write` (`--skip-install` to defer all three). Exit `0` ok · `1` error · `2` usage. Delete
 `apps/web/.provision.json` (the git-ignored provisioning cache) when re-adapting a copy that was
 already provisioned — the rename never rewrites it (`.dev.vars` is the only git-ignored file it
 opts in), so its cached app name and ids would be the old ones. The table stays the reference — the first block
@@ -59,7 +60,7 @@ or nothing resolves.
 |---|---|---|---|
 | `@rocketflare/web`, `@rocketflare/cli`, `@rocketflare/shared` | the `name` field of `apps/web/package.json`, `apps/cli/package.json`, `packages/shared/package.json`; every `"@rocketflare/shared": "workspace:*"` dependency; **every import specifier** `@rocketflare/shared/<module>` in `apps/web/src`, `apps/web/tests`, `apps/cli/src` (`grep -rn "@rocketflare/" apps packages --include=*.ts --include=*.tsx --include=*.json -l`); the root `package.json` scripts (`--filter @rocketflare/web`, `--filter @rocketflare/cli`); `.github/workflows/deploy.yml` (`--filter @rocketflare/web`); `CLAUDE.md`, `docs/*.md`, `.claude/rules/*.md` | `@myapp/web`, `@myapp/cli`, `@myapp/shared` — then `pnpm install` (relinks the workspace) | automatic (`scope`) |
 | `rocketflare` (root package name) | root `package.json` `name` | `myapp` | automatic (`bare`) |
-| `rocketflare` (API key prefix — keys are `rocketflare_<43 chars>`) | `API_KEY_PREFIX` in `apps/web/src/api/utils/core/hash.ts`; SET `API_KEY_PREFIX_LENGTH` (the stored handle) to `len('<prefix>_') + 8` and `REDACTED_KEY_CHARS` in `apps/cli/src/config.ts` (the CLI's masked form) to `len('<prefix>_') + 4` — shorter and every key in a list shows zero characters of its token; the CLI tests assume exactly prefix + 4; the `rocketflare_…` literals in `apps/web/tests/{api/keys,api/auth-cli,ui/api-keys}.test.*` and `apps/cli/tests/*` | `myapp` — existing keys keep working (only the display handle changes) | automatic — both handles SET to prefix + 8 / prefix + 4, reported as (a) |
+| `rocketflare_` (API key prefix, separator included — keys are `rocketflare_<43 chars>`) | `API_KEY_PREFIX` in `apps/web/src/api/utils/core/hash.ts`; SET `API_KEY_PREFIX_LENGTH` (the stored handle) to `len('<prefix>_') + 8` and `REDACTED_KEY_CHARS` in `apps/cli/src/config.ts` (the CLI's masked form) to `len('<prefix>_') + 4` — shorter and every key in a list shows zero characters of its token; the CLI tests assume exactly prefix + 4; the `rocketflare_…` literals in `apps/web/tests/{api/keys,api/auth-cli,ui/api-keys}.test.*` and `apps/cli/tests/*` | `myapp_` — existing keys keep working (only the display handle changes) | automatic — both handles SET to prefix + 8 / prefix + 4, reported as (a) |
 | `rocketflare` (CLI bin) | `apps/cli/package.json` `bin` key; `program.name('rocketflare')` in `apps/cli/src/cli.ts`; the `pnpm cli` examples in `SETUP.md`, `README.md`, `docs/CONCEPTS.md` | `myapp` — users type `myapp login` | automatic (`bare`) |
 | `~/.rocketflare` (CLI config dir) | `apps/cli/src/config.ts` (`ROCKETFLARE_CONFIG_DIR` default); `.claude/rules/cli.md`; `SETUP.md` 1.7 | `~/.myapp` | automatic (`cfgdir`) |
 | `ROCKETFLARE_` (CLI env prefix: `ROCKETFLARE_API_KEY`, `ROCKETFLARE_URL`, `ROCKETFLARE_CONFIG_DIR`, `ROCKETFLARE_DEBUG`) | `apps/cli/src/config.ts`; `apps/cli/tests`; `docs/CONCEPTS.md` → CLI; `.claude/rules/cli.md` | `MYAPP_` | automatic (`env`) |

@@ -58,8 +58,10 @@ describe('skipReason', () => {
     expect(
       skipReason({ source: 'startup', manifest: copy(), env: { ROCKETFLARE_UPDATE_CHECK: '1' } })
     ).toBeNull()
-    expect(skipReason({ source: 'startup', manifest: null, env: {} })).toMatch(
-      /no \.rocketflare\.json/
+    // A plain string: `.rocketflare.json` is a literal the rename preserves, while a regex that
+    // escapes its dots is rewritten with the slug and fails in every renamed copy.
+    expect(skipReason({ source: 'startup', manifest: null, env: {} })).toContain(
+      'no .rocketflare.json'
     )
     const noVersion = copy({ kit: { repo: REPO, version: 'main' } as Manifest['kit'] })
     expect(skipReason({ source: 'startup', manifest: noVersion, env: {} })).toMatch(/kit\.version/)
