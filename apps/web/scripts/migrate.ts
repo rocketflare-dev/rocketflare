@@ -120,6 +120,9 @@ async function main() {
     console.error('Migration failed:', error)
     process.exit(1)
   }
+  // Exit explicitly, as db:check does: an egress interceptor that never ends a closed database
+  // WebSocket's stream (Cloudflare containers) keeps Node alive after the pool has ended.
+  process.exit(0)
 }
 
 // Only run as a CLI — tests/helpers/db.ts imports runMigrations directly.

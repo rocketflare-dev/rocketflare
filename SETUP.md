@@ -272,6 +272,9 @@ scripts, `ROCKETFLARE_API_KEY` + `ROCKETFLARE_URL` in the environment replace th
 pnpm test:db:up       # ephemeral Postgres on :5433 (max_connections=300; apps/web/docker-compose.test.yml)
 pnpm test             # every package: web api + api-isolated + driver (real DB), ui (jsdom), config (no DB); cli
 pnpm test:neon        # optional: the Neon proxy on :4433 + api, api-isolated and driver on the neon driver (CI's test-neon)
+# pnpm test:ephemeral — no Docker: every package against a throwaway Neon GATE branch, for a coding
+# sandbox's gate (DATABASE_URL + TEST_DATABASE_BRANCH=gate-<short>-<n> + TEST_DATABASE_ENDPOINT=ep-…;
+# docs/CONCEPTS.md §4). It refuses any other remote database.
 ```
 Verify: all projects green — including every installed plugin's own tests, which run in the host's
 projects (`src/plugins/*/tests/{api,ui,config}`). The analytics plugin's `cube-isolation.test.ts`

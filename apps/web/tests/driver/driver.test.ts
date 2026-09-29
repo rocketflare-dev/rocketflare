@@ -2,7 +2,8 @@
  * The `driver` project (D35): the code that differs between `postgres` and `neon`, run against a
  * real database under whichever driver `.env.test` (or the environment) selects. The gate runs it
  * under `postgres`; `pnpm test:neon` and CI's `test-neon` job run it under `neon` through the local
- * proxy — so both halves run on every PR.
+ * proxy — so both halves run on every PR. `pnpm test:ephemeral` runs it under `neon` against a
+ * REAL Neon gate branch with no proxy (a coding sandbox's ship gate).
  *
  * Everything here goes through `openDatabase`, the Worker's own path (neon-http for queries, the
  * WebSocket pool for transactions), NOT the pool-only handle scripts and fixtures get.
@@ -23,6 +24,7 @@ import { withTenantScope } from '@/db/tenant-scope'
 import { runMigrations } from '../../scripts/migrate'
 import { createTestSession, createTestTenantWithUser } from '../helpers/auth'
 import { setupTestDatabase, testDatabaseUrl } from '../helpers/db'
+import { isEphemeralTestRun, neonEndpointId } from '../helpers/db-safety'
 
 const env: DatabaseEnv = {
   DATABASE_DRIVER: process.env.DATABASE_DRIVER,
@@ -45,7 +47,15 @@ afterAll(async () => {
 describe(`database driver: ${driver}`, () => {
   it('runs under the driver the environment selects', () => {
     expect(['neon', 'postgres']).toContain(driver)
-    if (driver === 'neon') expect(env.NEON_LOCAL_PROXY).toMatch(/^https?:\/\//)
+    if (driver !== 'neon') return
+    if (env.NEON_LOCAL_PROXY) {
+      expect(env.NEON_LOCAL_PROXY).toMatch(/^https?:\/\//)
+    } else {
+      // No proxy: REAL Neon, which safetyCheck() admits only as an ephemeral gate branch
+      // (`pnpm test:ephemeral`, tests/helpers/db-safety.ts) — the sandbox gate's own shape.
+      expect(isEphemeralTestRun(process.env)).toBe(true)
+      expect(neonEndpointId(env.DATABASE_URL ?? '')).toBe(process.env.TEST_DATABASE_ENDPOINT)
+    }
   })
 
   it('rows() reads a raw result: types parse the same way under both drivers', async () => {

@@ -247,13 +247,13 @@ jobs:
         env:
           DATABASE_URL: ${{ env.MIGRATOR_URL }}
 
-      - name: Activate the uploaded version
+      - name: "Deploy: activate the uploaded version"
         if: vars.DEPLOYER_URL != ''
         run: node scripts/deployer.mjs activate
 
       # `--filter … exec` runs wrangler with apps/web as cwd, where wrangler.staging.toml and
       # `[assets] directory = "./dist/ui"` live.
-      - name: Deploy (apps/web/wrangler.staging.toml)
+      - name: Deploy with wrangler (no deployer)
         if: vars.DEPLOYER_URL == ''
         run: pnpm --filter @rocketflare/web exec wrangler deploy -c wrangler.staging.toml --var "RELEASE_VERSION:${{ steps.version.outputs.version }}"
         env:
@@ -351,11 +351,11 @@ jobs:
         env:
           DATABASE_URL: ${{ env.MIGRATOR_URL }}
 
-      - name: Activate the uploaded version
+      - name: "Deploy: activate the uploaded version"
         if: vars.DEPLOYER_URL != ''
         run: node scripts/deployer.mjs activate
 
-      - name: Deploy (apps/web/wrangler.toml)
+      - name: Deploy with wrangler (no deployer)
         if: vars.DEPLOYER_URL == ''
         run: pnpm --filter @rocketflare/web exec wrangler deploy --var "RELEASE_VERSION:${{ steps.version.outputs.version }}"
         env:

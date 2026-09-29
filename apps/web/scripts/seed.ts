@@ -1844,9 +1844,12 @@ Before release, the export coordinator runs the pre-departure checklist — a ve
   log(`  ai usage       ${summary.usage} rows`)
 }
 
+// Exit explicitly once the pools are closed (see migrate.ts): a closed database WebSocket may
+// never release the process.
 main()
   .catch(err => {
     console.error(err)
     process.exitCode = 1
   })
   .finally(() => closeAllDatabases())
+  .finally(() => process.exit(process.exitCode ?? 0))

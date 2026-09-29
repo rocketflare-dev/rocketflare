@@ -34,6 +34,7 @@
     "test:isolated": "NODE_ENV=test dotenv -e .env.test -- vitest run --project api-isolated --project driver --project ui --project config",
     "test:api": "pnpm test:shared && NODE_ENV=test dotenv -e .env.test -- vitest run --project api-isolated",
     "test:neon": "pnpm test:db:up:neon && DATABASE_DRIVER=neon NEON_LOCAL_PROXY=http://localhost:4433 NODE_ENV=test dotenv -e .env.test -- vitest run --project api --no-isolate && DATABASE_DRIVER=neon NEON_LOCAL_PROXY=http://localhost:4433 NODE_ENV=test dotenv -e .env.test -- vitest run --project api-isolated --project driver",
+    "test:ephemeral": "TEST_DATABASE_EPHEMERAL=1 DATABASE_DRIVER=neon APP_DATABASE_URL= NODE_ENV=test dotenv -e .env.test -- vitest run --project api --no-isolate && TEST_DATABASE_EPHEMERAL=1 DATABASE_DRIVER=neon APP_DATABASE_URL= NODE_ENV=test dotenv -e .env.test -- vitest run --project api-isolated --project driver --project ui --project config",
     "test:driver": "NODE_ENV=test dotenv -e .env.test -- vitest run --project driver",
     "test:ui": "NODE_ENV=test dotenv -e .env.test -- vitest run --project ui",
     "test:config": "NODE_ENV=test dotenv -e .env.test -- vitest run --project config",

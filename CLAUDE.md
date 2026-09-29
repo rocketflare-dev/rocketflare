@@ -61,6 +61,7 @@ pnpm dev:stop · pnpm dev:status · pnpm dev:db:status  # kill this repo's dev t
 pnpm cli login --server http://localhost:3001  # browser → ~/.rocketflare/config.json, then whoami
 pnpm test:db:up && pnpm test  # every package; web loads .env.test (postgres driver)
 pnpm test:neon · pnpm dev:db:up --neon|--postgres  # D35: the suite / local dev on the neon driver via the proxy
+pnpm test:ephemeral  # a sandbox gate: no Docker, a Neon gate branch (TEST_DATABASE_BRANCH/_ENDPOINT, CONCEPTS §4)
 pnpm eval [suite] [--model x] [--compare] · pnpm eval:baseline · pnpm eval:view  # real-model evals (D33, docs/EVALS.md)
 pnpm lint · pnpm typecheck · pnpm build  # workspace-wide
 pnpm web <script>  # any apps/web script (test:api, db:check…)

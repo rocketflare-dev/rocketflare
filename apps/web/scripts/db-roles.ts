@@ -279,6 +279,8 @@ async function main() {
     console.error('Database role setup failed:', error)
     process.exit(1)
   }
+  // Exit explicitly (see migrate.ts): a closed database WebSocket may never release the process.
+  process.exit(0)
 }
 
 // Only run as a CLI — tests/setup.ts imports applyDbRoles directly.

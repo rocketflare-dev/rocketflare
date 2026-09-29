@@ -10,10 +10,20 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { APP_ROLE } from '@/db/schema/rls'
 import { applyDbRoles } from '../../scripts/db-roles'
 import { testDatabaseUrl } from '../helpers/db'
+import { isEphemeralTestRun } from '../helpers/db-safety'
+
+/**
+ * Skipped under `pnpm test:ephemeral` (a Neon gate branch from a coding sandbox): this file drives
+ * postgres.js over TCP, which the sandbox cannot open (443 only), and needs a SUPERUSER to make
+ * and drop throwaway owner roles, which a branch's owner role is not. The local gate and CI run it.
+ */
+const EPHEMERAL = isEphemeralTestRun(process.env)
+const SKIPPED = EPHEMERAL ? ' [skipped: ephemeral gate — no TCP, no superuser]' : ''
 
 const ownerRole = `rf_neon_owner_${crypto.randomUUID().replaceAll('-', '').slice(0, 12)}`
 const ownerPassword = 'neon_owner_test'
 
+// postgres.js connects lazily, so constructing it costs nothing when the suites below are skipped.
 const superuser = postgres(testDatabaseUrl(), { max: 1, onnotice: () => {} })
 
 function ownerUrl(): string {
@@ -23,7 +33,7 @@ function ownerUrl(): string {
   return url.toString()
 }
 
-describe('db-roles as a non-superuser owner (Neon)', () => {
+describe.skipIf(EPHEMERAL)(`db-roles as a non-superuser owner (Neon)${SKIPPED}`, () => {
   beforeAll(async () => {
     await superuser.unsafe(
       `CREATE ROLE ${ownerRole} LOGIN PASSWORD '${ownerPassword}' NOSUPERUSER CREATEDB CREATEROLE`
@@ -78,36 +88,39 @@ describe('db-roles as a non-superuser owner (Neon)', () => {
  * an unconditional `ALTER ROLE … NOCREATEDB NOCREATEROLE` failed the role phase for this owner
  * ("permission denied to alter role"), on the first real app deploy.
  */
-describe('db-roles as an owner without CREATEDB (a least-privilege migration role)', () => {
-  const leanRole = `rf_lean_owner_${crypto.randomUUID().replaceAll('-', '').slice(0, 12)}`
-  const leanUrl = () => {
-    const url = new URL(testDatabaseUrl())
-    url.username = leanRole
-    url.password = ownerPassword
-    return url.toString()
-  }
-  const admin = postgres(testDatabaseUrl(), { max: 1, onnotice: () => {} })
+describe.skipIf(EPHEMERAL)(
+  `db-roles as an owner without CREATEDB (a least-privilege migration role)${SKIPPED}`,
+  () => {
+    const leanRole = `rf_lean_owner_${crypto.randomUUID().replaceAll('-', '').slice(0, 12)}`
+    const leanUrl = () => {
+      const url = new URL(testDatabaseUrl())
+      url.username = leanRole
+      url.password = ownerPassword
+      return url.toString()
+    }
+    const admin = postgres(testDatabaseUrl(), { max: 1, onnotice: () => {} })
 
-  beforeAll(async () => {
-    await admin.unsafe(
-      `CREATE ROLE ${leanRole} LOGIN PASSWORD '${ownerPassword}' NOSUPERUSER NOCREATEDB CREATEROLE`
-    )
-    await admin.unsafe(`GRANT ${APP_ROLE} TO ${leanRole} WITH ADMIN OPTION`)
-    await admin.unsafe(`GRANT USAGE, CREATE ON SCHEMA public TO ${leanRole} WITH GRANT OPTION`)
-  })
+    beforeAll(async () => {
+      await admin.unsafe(
+        `CREATE ROLE ${leanRole} LOGIN PASSWORD '${ownerPassword}' NOSUPERUSER NOCREATEDB CREATEROLE`
+      )
+      await admin.unsafe(`GRANT ${APP_ROLE} TO ${leanRole} WITH ADMIN OPTION`)
+      await admin.unsafe(`GRANT USAGE, CREATE ON SCHEMA public TO ${leanRole} WITH GRANT OPTION`)
+    })
 
-  afterAll(async () => {
-    await admin.unsafe(`DROP OWNED BY ${leanRole}`)
-    await admin.unsafe(`DROP ROLE IF EXISTS ${leanRole}`)
-    await admin.end({ timeout: 5 })
-  })
+    afterAll(async () => {
+      await admin.unsafe(`DROP OWNED BY ${leanRole}`)
+      await admin.unsafe(`DROP ROLE IF EXISTS ${leanRole}`)
+      await admin.end({ timeout: 5 })
+    })
 
-  it('runs the role phase without touching attributes that are already off', async () => {
-    await expect(
-      applyDbRoles({ databaseUrl: leanUrl(), phase: 'role', quiet: true })
-    ).resolves.toMatchObject({ revoked: [] })
-    const [attrs] = await admin<{ rolcreatedb: boolean; rolcreaterole: boolean }[]>`
+    it('runs the role phase without touching attributes that are already off', async () => {
+      await expect(
+        applyDbRoles({ databaseUrl: leanUrl(), phase: 'role', quiet: true })
+      ).resolves.toMatchObject({ revoked: [] })
+      const [attrs] = await admin<{ rolcreatedb: boolean; rolcreaterole: boolean }[]>`
       SELECT rolcreatedb, rolcreaterole FROM pg_roles WHERE rolname = ${APP_ROLE}`
-    expect(attrs).toEqual({ rolcreatedb: false, rolcreaterole: false })
-  })
-})
+      expect(attrs).toEqual({ rolcreatedb: false, rolcreaterole: false })
+    })
+  }
+)

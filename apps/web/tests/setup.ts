@@ -14,6 +14,7 @@ import {
   cleanDatabase,
   closeTestDatabases,
   runTestMigrations,
+  safetyCheck,
   setupTestDatabase,
 } from './helpers/db'
 
@@ -34,6 +35,9 @@ export default async function setup(context: {
 }
 
 async function prepareTestDatabase(): Promise<TestSeed> {
+  // FIRST, before anything connects: applyDbRoles below opens DATABASE_URL itself and would run
+  // its role DDL on whatever database that is before a later helper got to refuse it.
+  safetyCheck()
   // The role RLS policies target must exist before a migration can reference it. With
   // APP_DATABASE_URL unset the role is created NOLOGIN and the policies are inert.
   await applyDbRoles({ phase: 'role', quiet: true })
