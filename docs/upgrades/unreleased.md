@@ -1,10 +1,10 @@
 ---
 version: unreleased
-previous: 0.15.6
+previous: 0.15.7
 date: null
 breaking: false
 migrations: []
-areas: [config, db, docs]
+areas: []
 touches_surfaces: []
 requires_surfaces: []
 manual: false
@@ -12,40 +12,20 @@ manual: false
 
 ## What changed
 
-`pnpm test:ephemeral` runs the test suite with no Docker against a throwaway Neon gate branch, which `safetyCheck()` accepts only when the caller names the branch and binds it to the URL's endpoint.
-
-- `apps/web/tests/helpers/db-safety.ts`: new; the pure rules `safetyCheck()` applies: a local HOST always, a remote URL only with `TEST_DATABASE_EPHEMERAL=1`, `DATABASE_DRIVER=neon`, a `*.neon.tech` host, `TEST_DATABASE_BRANCH=gate-<short>-<attempt>` and `TEST_DATABASE_ENDPOINT` equal to its `ep-…` id. A refusal prints the host only, never the URL. See `docs/CONCEPTS.md` §4.
-- `apps/web/tests/helpers/db.ts`: `safetyCheck()` calls `checkTestDatabaseEnv(process.env)`.
-- `apps/web/tests/setup.ts`: global setup runs `safetyCheck()` first; before, `applyDbRoles` connected and ran its role DDL before any helper checked the URL.
-- `apps/web/tests/config/db-safety.test.ts`: new; every acceptance and refusal.
-- `apps/web/package.json`, root `package.json`: `test:ephemeral` (web: the api run, then the other four projects, with `TEST_DATABASE_EPHEMERAL=1 DATABASE_DRIVER=neon APP_DATABASE_URL=`; root: every other package's `test`, then the web one).
-- `apps/web/vitest.config.ts`: under `TEST_DATABASE_EPHEMERAL=1`, 2 forks, a 60 s test limit, a 120 s hook limit and a 30 s teardown; `TEST_MAX_WORKERS` overrides the fork count in any run.
-- `apps/web/tests/driver/driver.test.ts`: under `neon` with no `NEON_LOCAL_PROXY`, the run must be the ephemeral profile on the named endpoint.
-- `apps/web/tests/api/db-roles.test.ts`: both suites are skipped in the ephemeral profile (postgres.js over TCP, a superuser).
-- `apps/web/scripts/migrate.ts`, `db-roles.ts`, `seed.ts`: `process.exit` when done, as `test-db-connection.ts` does; a closed database WebSocket behind Cloudflare's container egress interceptor never lets Node exit.
-- `.github/workflows/deploy.yml`: the steps "Activate the uploaded version" and "Deploy (apps/web/wrangler[.staging].toml)" are renamed "Deploy: activate the uploaded version" and "Deploy with wrangler (no deployer)".
+_Nothing yet. Add an entry here in the same pull request as the change. This first paragraph is
+lifted VERBATIM into `CHANGELOG.md`, so make it ONE standalone summary sentence of ≤ 40 words —
+then one bullet per change, one line each, and no `###` sub-headings. Rationale belongs in
+`docs/CONCEPTS.md` and is linked, never restated; see `README.md` beside this file._
 
 ## How to apply
 
-1. Copy `apps/web/tests/helpers/db-safety.ts` and `apps/web/tests/config/db-safety.test.ts` from the kit.
-2. In `apps/web/tests/helpers/db.ts`, import `checkTestDatabaseEnv` from `./db-safety` and make the body of `safetyCheck()` exactly `checkTestDatabaseEnv(process.env)`.
-3. In `apps/web/tests/setup.ts`, import `safetyCheck` from `./helpers/db` and call it as the first statement of `prepareTestDatabase()`.
-4. In `apps/web/package.json`, add the kit's `test:ephemeral` script beside `test:neon`, with the copy's package scope in its filters.
-5. In the root `package.json`, add the kit's `test:ephemeral` script, replacing `@rocketflare/web` with the copy's web package name.
-6. In `apps/web/vitest.config.ts`, add the kit's `EPHEMERAL` constant, the `TEST_MAX_WORKERS` / ephemeral branch of `MAX_WORKERS`, the ephemeral `teardownTimeout` and `hookTimeout`, and the `EPHEMERAL ? 60_000` arm of `testTimeout`.
-7. In `apps/web/tests/driver/driver.test.ts`, replace the `NEON_LOCAL_PROXY` assertion in the first test with the kit's proxy-or-ephemeral branch.
-8. In `apps/web/tests/api/db-roles.test.ts`, wrap both `describe` blocks in `describe.skipIf(EPHEMERAL)` as the kit does, and add the same guard to any test of the copy that opens a TCP connection or needs a superuser.
-9. In `apps/web/scripts/migrate.ts` and `apps/web/scripts/db-roles.ts`, add `process.exit(0)` as the last statement of `main()`; in `apps/web/scripts/seed.ts`, chain `.finally(() => process.exit(process.exitCode ?? 0))` after `.finally(() => closeAllDatabases())`.
-10. In `.github/workflows/deploy.yml`, rename both "Activate the uploaded version" steps to `"Deploy: activate the uploaded version"` (quoted, for the colon) and both `Deploy (apps/web/wrangler….toml)` steps to `Deploy with wrangler (no deployer)`.
+_Numbered, imperative, each step self-contained — no "these", "them" or "the above" reaching
+outside its own step._
 
 ## Conflicts to expect
 
-- `apps/web/vitest.config.ts` → `MAX_WORKERS` and the timeouts changed shape → keep a local fork ceiling in the non-ephemeral arm.
-- `.github/workflows/deploy.yml` → two step names changed per job → keep local steps; anything matching the old names (a dashboard, a script) must follow.
+_One line each: `path → what changed → what to do`. Or exactly `None.`_
 
 ## Verify
 
-1. `pnpm --filter @<slug>/web exec vitest run --project config tests/config/db-safety.test.ts` passes.
-2. `pnpm test` passes, and `db-roles.test.ts` still runs (not skipped) there.
-3. With the test Postgres and the Neon proxy up (`pnpm --filter @<slug>/web test:db:up:neon`), `NEON_LOCAL_PROXY=http://localhost:4433 pnpm test:ephemeral` passes and reports `db-roles.test.ts` skipped.
-4. `NODE_ENV=test TEST_DATABASE_EPHEMERAL=1 DATABASE_DRIVER=neon DATABASE_URL=postgresql://u:p@ep-a-1.us-east-2.aws.neon.tech/x pnpm --filter @<slug>/web exec vitest run --project driver` fails with `SAFETY CHECK FAILED: TEST_DATABASE_BRANCH must name a gate branch`.
+_Numbered checkable commands and assertions only._
