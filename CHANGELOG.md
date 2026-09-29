@@ -6,6 +6,11 @@ copy of the kit forward without recreating anything its owner deleted.
 
 If you are running a copy: `pnpm kit:upgrade` tells you which of these you are missing.
 
+## 0.15.8 — 2026-09-29
+
+The kit's own tests now live in `apps/web/tests/kit-only/`, which the rename deletes and the upgrade never ports, so a copy's gate no longer fails on the kit's version chain.
+[Porting note](docs/upgrades/0.15.8.md).
+
 ## 0.15.7 — 2026-09-29
 
 `pnpm test:ephemeral` runs the test suite with no Docker against a throwaway Neon gate branch, which `safetyCheck()` accepts only when the caller names the branch and binds it to the URL's endpoint.

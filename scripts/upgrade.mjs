@@ -55,6 +55,7 @@ import {
   absentSurfaces,
   classifyPath,
   countLines,
+  kitOnlyGlobs,
   matchesAny,
   parseNote,
   splitDiff,
@@ -312,6 +313,18 @@ function main(argv) {
   )
 
   // 4/6 — classify
+  // The TARGET kit's kit-only list, read out of the mirror: `.rocketflare.json` is never ported, so
+  // this copy's own file only knows the kit-only paths of the release it was made from, and a later
+  // release that declares a new one must still never land it here. Unreadable = the local list.
+  const targetManifest = kit.tryShow(to, MANIFEST)
+  let targetKitOnly = []
+  if (targetManifest.ok) {
+    try {
+      targetKitOnly = kitOnlyGlobs(JSON.parse(targetManifest.out))
+    } catch {
+      targetKitOnly = []
+    }
+  }
   const localSet = new Set(tracked)
   const changes = collectChanges(kit, from, to)
   const renames = collectRenames(kit, from, to)
@@ -323,6 +336,7 @@ function main(argv) {
       existsLocally: localSet.has(c.path),
       change: c.change,
       includeKitTooling: args.includeKitTooling,
+      kitOnly: targetKitOnly,
     }),
   }))
 

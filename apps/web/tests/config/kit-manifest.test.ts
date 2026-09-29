@@ -5,14 +5,20 @@
  * that breaks somebody's app is recreating a surface they deleted.
  *
  * So the manifest has to stay true as the kit grows. The coverage assertion below is the check
- * that does it: every tracked file must be claimed by a surface, the never-port list, the manual
- * list or a core prefix. Add a directory the manifest has never heard of and this test fails until
- * somebody says what it is. Same spirit as `rls-coverage.test.ts` and `cube-isolation.test.ts`.
+ * that does it: every tracked file must be claimed by a surface, the never-port list, the kit-only
+ * list, the manual list or a core prefix. Add a directory the manifest has never heard of and this
+ * test fails until somebody says what it is. Same spirit as `rls-coverage.test.ts` and
+ * `cube-isolation.test.ts`.
+ *
+ * This suite travels into every copy, so everything here is true of ANY manifest — the kit's and
+ * an app's alike. The claims that hold only of the KIT (its disk state, its version pin, the
+ * tooling it ships) are in `tests/kit-only/kit-manifest.test.ts`, which a copy never carries
+ * (`docs/CONCEPTS.md` §13).
  *
  * The `config` project: no database, no filesystem beyond `git ls-files`.
  */
 import { execFileSync } from 'node:child_process'
-import { existsSync, readdirSync, statSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import rawManifest from '../../../../.rocketflare.json'
@@ -20,9 +26,10 @@ import { readManifest } from '../../../../scripts/lib/manifest.mjs'
 import { KIT } from '../../../../scripts/lib/rename-lib.mjs'
 import type { Manifest } from '../../../../scripts/lib/upgrade-lib.d.mts'
 import {
-  absentSurfaces,
   classifyPath,
   isKitManifest,
+  KIT_ONLY_PROJECT,
+  kitOnlyGlobs,
   matchesAny,
 } from '../../../../scripts/lib/upgrade-lib.mjs'
 import { RESERVED_PLUGIN_IDS } from '../helpers/plugins'
@@ -37,20 +44,7 @@ const committed = rawManifest as unknown as Manifest
  * files must still be classified, which is exactly what the coverage assertion below then proves.
  */
 const manifest = (readManifest().manifest ?? committed) as Manifest
-
-/**
- * This suite travels into every adopted copy, and half of what it asserts is only true of the KIT.
- *
- * A copy deletes surfaces on purpose — that IS the design (`absentSurfaces`, `existsSync` on the
- * anchor) — and its root `package.json` version is its own release, not the kit release it came
- * from. Asserted unconditionally, those claims made an app's very first `pnpm test` red, which is
- * the opposite of what D27 promises. So the disk-state and provenance claims run only in the kit;
- * everything that is true of ANY manifest — ids unique, kinds known, every plugin surface says
- * where it came from, every plugin directory is declared, 100% coverage — runs everywhere, because
- * that is where they earn their keep.
- */
 const { isKit } = readManifest()
-const kitOnly = it.skipIf(!isKit)
 
 const REPO_ROOT = path.resolve(__dirname, '../../../..')
 // Tracked AND untracked-but-not-ignored — the same file set `scripts/rename.mjs` walks. A new file
@@ -76,63 +70,13 @@ describe('.rocketflare.json', () => {
     expect(isKitManifest(committed)).toBe(committed.app == null)
     expect(isKit).toBe(committed.app == null)
   })
-
-  kitOnly('is the kit, not an app (the `app` block is what a copy gets)', () => {
-    expect(isKitManifest(committed)).toBe(true)
-    expect(isKit).toBe(true)
-  })
-
-  kitOnly('carries the two prose keys that stop it being deleted as cruft', () => {
-    expect(committed.$purpose).toMatch(/kit:upgrade/)
-    expect(committed.$doNotDelete).toMatch(/--adopt/)
-  })
-
-  kitOnly('pins a version that matches the root package.json', async () => {
-    // Kit-only: in an app the root version is the APP's release, while `kit.version` records the
-    // kit release it last absorbed. They are different numbers on purpose.
-    const root = await import('../../../../package.json')
-    expect(committed.kit.version).toBe(root.default.version)
-  })
 })
 
 describe('surfaces', () => {
-  // The next three are kit-only: a copy DELETES surfaces on purpose and the entries stay behind —
-  // `absentSurfaces` and the `existsSync` anchor rule exist for exactly that state — so asserting
-  // that every anchor, path and registry is still on disk would fail every app that used the kit
-  // the way it is meant to be used. Uniqueness and shape, below, are about the manifest and run
-  // everywhere.
-  kitOnly('every anchor is a tracked FILE, and unique', () => {
-    const anchors = new Set<string>()
-    for (const s of manifest.surfaces) {
-      expect(tracked, `${s.id} anchor`).toContain(s.anchor)
-      // Presence is `existsSync` on the anchor, so a directory would always read as present.
-      expect(statSync(path.join(REPO_ROOT, s.anchor)).isFile(), `${s.id} anchor is a file`).toBe(
-        true
-      )
-      expect(anchors.has(s.anchor), `${s.id} anchor is unique`).toBe(false)
-      anchors.add(s.anchor)
-    }
-  })
-
-  kitOnly('every declared path matches at least one tracked file', () => {
-    for (const s of manifest.surfaces) {
-      for (const glob of s.paths) {
-        expect(
-          tracked.some(f => matchesAny(f, [glob])),
-          `${s.id}: ${glob}`
-        ).toBe(true)
-      }
-    }
-  })
-
-  kitOnly('every registry it names still exists', () => {
-    for (const s of manifest.surfaces) {
-      for (const ref of s.registries) {
-        expect(tracked, `${s.id}: ${ref}`).toContain(ref.split('#')[0])
-      }
-    }
-  })
-
+  // Whether each anchor, path and registry is still on disk is a KIT-only claim
+  // (`tests/kit-only/`): a copy DELETES surfaces on purpose and the entries stay behind —
+  // `absentSurfaces` and the `existsSync` anchor rule exist for exactly that state. Uniqueness and
+  // shape are about the manifest and hold everywhere.
   it('ids are unique and kinds are known', () => {
     const ids = manifest.surfaces.map(s => s.id)
     expect(new Set(ids).size).toBe(ids.length)
@@ -168,22 +112,9 @@ describe('surfaces', () => {
       'run `pnpm plugin add` rather than copying a plugin in by hand'
     ).toEqual([])
   })
-
-  kitOnly('reports nothing absent in the kit itself', () => {
-    expect(absentSurfaces(manifest, tracked)).toEqual([])
-  })
 })
 
 describe('never-port and manual lists', () => {
-  kitOnly('name files that exist, so a rename cannot silently empty them', () => {
-    for (const glob of [...manifest.neverPort, ...manifest.manual]) {
-      expect(
-        tracked.some(f => matchesAny(f, [glob])),
-        glob
-      ).toBe(true)
-    }
-  })
-
   it('never translate a file the rename itself refuses to touch', async () => {
     // Such a file is untranslated in an adopted tree. Porting it TRANSLATED would apply a patch
     // whose context cannot match — a silent, guaranteed conflict.
@@ -204,33 +135,44 @@ describe('never-port and manual lists', () => {
   })
 })
 
+/**
+ * The kit's own tests (`kitOnly`, `docs/CONCEPTS.md` §13) are in the kit and in NOTHING made from
+ * it. One assertion that means something in both places: in the kit they exist and the gate runs
+ * them; in a copy there is not one file and not one script left that names them. A copy that
+ * carries one — an upgrade that slipped it in, a hand copy — fails here, in its own gate, before
+ * a kit-only assertion (the root version IS the kit's, say) can fail it for the wrong reason.
+ */
+describe('kit-only tests', () => {
+  const globs = kitOnlyGlobs(committed)
+  const present = tracked.filter(f => matchesAny(f, globs))
+  const webPackage = JSON.parse(
+    readFileSync(path.join(REPO_ROOT, 'apps/web/package.json'), 'utf8')
+  ) as { scripts?: Record<string, string> }
+  const flag = new RegExp(`--project[ =]${KIT_ONLY_PROJECT}(?![\\w-])`)
+  const wired = Object.values(webPackage.scripts ?? {}).some(command => flag.test(command))
+
+  it(isKit ? 'exist in the kit' : 'are not in this copy', () => {
+    expect(present.length > 0, present.join(', ') || 'no kit-only file').toBe(isKit)
+  })
+
+  it(isKit ? 'are run by the kit’s gate' : 'are not wired into this copy’s gate', () => {
+    expect(wired, `a \`--project ${KIT_ONLY_PROJECT}\` in apps/web/package.json`).toBe(isKit)
+  })
+})
+
 describe('coverage', () => {
   it('classifies every tracked file', () => {
     const all = [
       ...manifest.surfaces.flatMap(s => s.paths),
       ...manifest.neverPort,
+      ...kitOnlyGlobs(manifest),
       ...manifest.manual,
       ...manifest.core,
     ]
     const unclassified = tracked.filter(f => !matchesAny(f, all))
     expect(
       unclassified,
-      'add these to a surface, neverPort, manual or core in .rocketflare.json'
+      'add these to a surface, neverPort, kitOnly, manual or core in .rocketflare.json'
     ).toEqual([])
-  })
-
-  it('the kit ships the upgrade tooling it promises', () => {
-    for (const f of [
-      'scripts/upgrade.mjs',
-      'scripts/lib/upgrade-lib.mjs',
-      'scripts/lib/upgrade-lib.d.mts',
-      'scripts/release-check.mjs',
-      'scripts/release.mjs',
-      'docs/upgrades/README.md',
-      'docs/upgrades/unreleased.md',
-      'CHANGELOG.md',
-    ]) {
-      expect(existsSync(path.join(REPO_ROOT, f)), f).toBe(true)
-    }
   })
 })

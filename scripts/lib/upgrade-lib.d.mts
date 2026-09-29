@@ -71,11 +71,27 @@ export interface Manifest {
    */
   retiredSurfaces?: Record<string, string>
   neverPort: string[]
+  /**
+   * The kit's own tests (globs): deleted by the rename, never ported, and a copy that carries one
+   * fails its gate. Absent in a manifest older than 0.15.8 — `KIT_ONLY_PATHS` is the floor.
+   */
+  kitOnly?: string[]
   manual: string[]
   core: string[]
 }
 
 export function isKitManifest(manifest: Manifest | null): boolean
+export const KIT_ONLY_PATHS: readonly string[]
+export const KIT_ONLY_PROJECT: string
+export function kitOnlyGlobs(
+  manifest: Pick<Manifest, 'kitOnly'> | null | undefined,
+  extra?: readonly string[] | null
+): string[]
+export function stripKitOnlyWiring(packageJsonText: string): {
+  text: string
+  removed: string[]
+  edited: string[]
+}
 export function absentSurfaces(manifest: Manifest, presentPaths: readonly string[]): string[]
 
 export interface Deployability {
@@ -114,6 +130,8 @@ export interface ClassifyContext {
   existsLocally?: boolean
   change?: Change
   includeKitTooling?: boolean
+  /** Extra kit-only globs — `upgrade.mjs` passes the TARGET kit's `kitOnly` list. */
+  kitOnly?: readonly string[]
 }
 export interface Classification {
   class: FileClass

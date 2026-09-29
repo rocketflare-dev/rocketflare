@@ -189,10 +189,11 @@ describe('resolveDefaultPlugin', () => {
 
 describe('releaseContext', () => {
   it('agrees with the manifest about which repository this is', () => {
-    // Not `toBe('kit')`: this suite travels into every adopted copy, where 'app' is the honest
-    // answer and a release here is the app's own business.
+    // A kit-only suite (`tests/kit-only/`, never in a copy), so the answer here is always 'kit';
+    // an APP is refused below, over a fixture.
     const { isKit } = readManifest()
-    expect(releaseContext().kind).toBe(isKit ? 'kit' : 'app')
+    expect(isKit).toBe(true)
+    expect(releaseContext().kind).toBe('kit')
   })
 
   it('is "unknown" where there is neither manifest', () => {

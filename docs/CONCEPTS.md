@@ -503,8 +503,15 @@ cycle). Detail: `packages/shared/CLAUDE.md`.
   "this is the kit", asked only through `readManifest()`), `history[]`, `retiredSurfaces`
   (never deleted), and the **surface manifest**. Surfaces are `example`, `optional-feature` and
   `plugin`, each with an anchor file whose existence is its presence (delete the anchor to opt
-  out). Every other path is `neverPort`, `manual` or `core`; `kit-manifest.test.ts` requires 100%
-  coverage.
+  out). Every other path is `neverPort`, `kitOnly`, `manual` or `core`; `kit-manifest.test.ts`
+  requires 100% coverage.
+- **Kit-only tests** (`kitOnly`, `apps/web/tests/kit-only/**`, vitest project `kit-only`): the tests
+  true of the kit repository and of nothing made from it — porting notes and the root version being
+  the kit's, the release/rename machinery, the maintainer hooks, plugin CI, the manifest's kit-state
+  claims. The kit's gate runs them; `scripts/rename.mjs` deletes them and unwires the project when a
+  copy is born; `classifyPath` never ports one (the TARGET kit's list too, and `KIT_ONLY_PATHS` is the
+  floor for a pre-0.15.8 manifest); `tests/config/kit-manifest.test.ts` fails a copy that carries
+  one, and CI's renamed-copy gate asserts none survive and passes at an app version (`1.2.3`).
 - **Porting notes**: one `docs/upgrades/X.Y.Z.md` per release (frontmatter + four headings), with
   `unreleased.md` accumulating. CI fails a PR touching `apps/**`/`packages/**` without an entry,
   and the tag gate refuses a release without one. `pnpm kit:release` writes everything.
@@ -531,7 +538,9 @@ cycle). Detail: `packages/shared/CLAUDE.md`.
 `.claude/settings.json` is `manual`, so that upgrade must add the hook entry by hand); summaries
 only for a GitHub-hosted kit; tomls and `.dev.vars.example` are diffed, not merged; the reject rate is not
 predicted; pre-manifest copies need `--adopt`; no partial upgrades; nothing checks the adopter ran
-migrations; lockstep plugin releases bump every plugin in a monorepo.
+migrations; lockstep plugin releases bump every plugin in a monorepo; a copy on 0.15.7 or older deletes
+its kit-only tests by hand once (its upgrader predates `kitOnly`); the release and rename SCRIPTS
+still ship to copies (they refuse to run in an app), only their tests are kit-only.
 
 ## 14. Definition of done for the kit
 

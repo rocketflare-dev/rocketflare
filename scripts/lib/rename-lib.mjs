@@ -1,7 +1,7 @@
 /**
  * The pure half of `scripts/rename.mjs`: name derivation, the ordered replacement classes, the
  * exclusion list and the "careful row" computations. No I/O and nothing runs at import time, so
- * `apps/web/tests/config/rename-lib.test.ts` can drive it under vitest; `rename-lib.d.mts` beside
+ * `apps/web/tests/kit-only/rename-lib.test.ts` can drive it under vitest; `rename-lib.d.mts` beside
  * this file is the hand-written type surface (no `allowJs`).
  *
  * Every token the kit ships under its own name is one of nine classes, applied per file in the
@@ -226,7 +226,6 @@ export const EXCLUDED_PATHS = Object.freeze([
   'scripts/rename.mjs', // the tool must keep working after it has run
   'scripts/lib/rename-lib.mjs',
   'scripts/lib/rename-lib.d.mts',
-  'apps/web/tests/config/rename-lib.test.ts', // asserts on the kit's own token strings
   '.claude/skills/rf-adapt/SKILL.md', // the skill that drives this tool — written in the kit's terms
   '.claude/skills/rf-adapt/checklist.md',
   // The provenance file names the KIT, not the app: its repo URL, version and surface manifest
@@ -242,7 +241,6 @@ export const EXCLUDED_PATHS = Object.freeze([
   'scripts/lib/upgrade-lib.d.mts',
   'apps/web/tests/config/upgrade-lib.test.ts',
   'apps/web/tests/config/kit-manifest.test.ts',
-  'apps/web/tests/config/upgrade-notes.test.ts',
   'CHANGELOG.md', // the kit's releases, described in the kit's own terms
 ])
 
@@ -250,8 +248,14 @@ export const EXCLUDED_PATHS = Object.freeze([
  * Excluded whole directories, matched by prefix. `docs/upgrades/` holds the kit's release notes —
  * an app accumulates them verbatim as a record of what it has absorbed, so they keep talking about
  * the kit's names. `.claude/skills/rf-upgrade/` drives the tool and names its files literally.
+ * `apps/web/tests/kit-only/` is the kit's OWN tests (`kitOnly` in `.rocketflare.json`): they assert
+ * on the kit's token strings, and `scripts/rename.mjs` deletes them before the pass anyway.
  */
-export const EXCLUDED_PREFIXES = Object.freeze(['docs/upgrades/', '.claude/skills/rf-upgrade/'])
+export const EXCLUDED_PREFIXES = Object.freeze([
+  'docs/upgrades/',
+  '.claude/skills/rf-upgrade/',
+  'apps/web/tests/kit-only/',
+])
 
 export function isExcluded(relPath) {
   const p = relPath.replaceAll('\\', '/')
