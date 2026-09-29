@@ -27,10 +27,13 @@ import {
   isDeployable,
   isKitManifest,
   isVendored,
+  KIT_ONLY_PATHS,
+  kitOnlyGlobs,
   matchesAny,
   parseNote,
   splitDiff,
   stripIndexLines,
+  stripKitOnlyWiring,
   translateBlock,
 } from '../../../../scripts/lib/upgrade-lib.mjs'
 
@@ -166,6 +169,42 @@ describe('classifyPath', () => {
     }
   })
 
+  it("never ports the kit's own tests, whatever the kit did to them", () => {
+    // `kitOnly` (docs/CONCEPTS.md §13): true of the kit repository and of nothing made from it.
+    for (const change of ['added', 'modified', 'deleted'] as const) {
+      const c = classifyPath('apps/web/tests/kit-only/upgrade-notes.test.ts', {
+        ...base,
+        change,
+        existsLocally: false,
+        includeKitTooling: true,
+      })
+      expect(c.class, change).toBe('skipped-kit-only')
+      expect(c.translate).toBe(false)
+    }
+  })
+
+  it("honours the floor for a manifest that predates `kitOnly`, and the TARGET kit's list", () => {
+    // `.rocketflare.json` is never ported, so an older copy's file has no `kitOnly` key at all.
+    const older = { ...manifest, kitOnly: undefined }
+    expect(
+      classifyPath('apps/web/tests/kit-only/x.test.ts', { ...base, manifest: older }).class
+    ).toBe('skipped-kit-only')
+    // A path a LATER kit declares kit-only, which this copy's manifest has never heard of.
+    const later = 'apps/cli/tests/kit-only/release.test.ts'
+    expect(
+      classifyPath(later, { ...base, manifest: older, change: 'added', existsLocally: false }).class
+    ).toBe('added')
+    expect(
+      classifyPath(later, {
+        ...base,
+        manifest: older,
+        change: 'added',
+        existsLocally: false,
+        kitOnly: ['apps/cli/tests/kit-only/**'],
+      }).class
+    ).toBe('skipped-kit-only')
+  })
+
   it('ports the kit tooling untranslated when asked', () => {
     const c = classifyPath('scripts/rename.mjs', { ...base, includeKitTooling: true })
     expect(c.class).toBe('verbatim')
@@ -229,6 +268,47 @@ index aaa..bbb 100644
 -Copyright Rocketflare
 +Copyright Rocketflare Ltd
 `
+
+describe('kit-only wiring', () => {
+  it('unions the floor, the manifest and the extra list, once each', () => {
+    expect(kitOnlyGlobs(null)).toEqual([...KIT_ONLY_PATHS])
+    expect(kitOnlyGlobs({ kitOnly: ['a/**', ...KIT_ONLY_PATHS] }, ['a/**', 'b/**'])).toEqual([
+      ...KIT_ONLY_PATHS,
+      'a/**',
+      'b/**',
+    ])
+  })
+
+  it('drops `--project kit-only` from every script and removes a script that only runs it', () => {
+    const pkg = `${JSON.stringify(
+      {
+        name: '@acme/web',
+        scripts: {
+          'test:isolated': 'vitest run --project api-isolated --project config --project kit-only',
+          'test:ephemeral': 'X=1 vitest run --project kit-only --project ui && echo done',
+          'test:kit-only': 'vitest run --project kit-only',
+          'test:config': 'vitest run --project config',
+          other: 'vitest run --project kit-only-lookalike',
+        },
+      },
+      null,
+      2
+    )}\n`
+    const { text, removed, edited } = stripKitOnlyWiring(pkg)
+    expect(removed).toEqual(['test:kit-only'])
+    expect(edited).toEqual(['test:isolated', 'test:ephemeral'])
+    const scripts = JSON.parse(text).scripts
+    expect(scripts['test:isolated']).toBe('vitest run --project api-isolated --project config')
+    expect(scripts['test:ephemeral']).toBe('X=1 vitest run --project ui && echo done')
+    expect(scripts.other).toBe('vitest run --project kit-only-lookalike')
+    expect(text.endsWith('}\n')).toBe(true)
+  })
+
+  it('returns the text untouched when there is nothing to unwire', () => {
+    const pkg = '{\n  "scripts": { "test": "vitest run" }\n}\n'
+    expect(stripKitOnlyWiring(pkg)).toEqual({ text: pkg, removed: [], edited: [] })
+  })
+})
 
 describe('isVendored', () => {
   // ONE implementation, in this file, re-exported by plugin-lib. The two that existed disagreed:

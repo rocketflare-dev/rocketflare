@@ -267,7 +267,6 @@ describe('exclusions', () => {
       'scripts/rename.mjs',
       'scripts/lib/rename-lib.mjs',
       'scripts/lib/rename-lib.d.mts',
-      'apps/web/tests/config/rename-lib.test.ts',
       '.claude/skills/rf-adapt/SKILL.md',
       '.claude/skills/rf-adapt/checklist.md',
       '.rocketflare.json',
@@ -275,6 +274,8 @@ describe('exclusions', () => {
       expect(EXCLUDED_PATHS, p).toContain(p)
       expect(isExcluded(p), p).toBe(true)
     }
+    // The kit's own tests, this file among them, by prefix — the rename deletes them anyway.
+    expect(isExcluded('apps/web/tests/kit-only/rename-lib.test.ts')).toBe(true)
     for (const d of ['node_modules', 'dist', '.git', '.wrangler'])
       expect(EXCLUDED_DIRS).toContain(d)
     expect(isExcluded('apps/web/node_modules/x/package.json')).toBe(true)

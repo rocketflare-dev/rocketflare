@@ -1,6 +1,6 @@
 /**
  * Hand-written types for `rename-lib.mjs` (the workspace has no `allowJs`). Keep in step with
- * the exports there; `apps/web/tests/config/rename-lib.test.ts` is what typechecks against this.
+ * the exports there; `apps/web/tests/kit-only/rename-lib.test.ts` is what typechecks against this.
  */
 
 export interface KitNames {

@@ -18,6 +18,10 @@
  *   (e) `--colour` rewrites the light theme's primary hex; the rest of the palette is yours — reported
  *   (f) `LogoMark` / `logo.svg` / `favicon.svg` are a human choice — reported
  *
+ * First it DELETES the kit's own tests — every file under a `kitOnly` glob in `.rocketflare.json`
+ * (`apps/web/tests/kit-only/**`) — and unwires their vitest project from the package.json scripts:
+ * they assert what only the kit is, so a copy never carries them (`docs/CONCEPTS.md` §13).
+ *
  * `--dry-run` prints the per-file table and touches nothing (and skips the dirty-tree check).
  * The real run refuses a dirty tree without `--force`, writes, runs `pnpm install` (the lockfile
  * follows the package names), regenerates `docs/plugin-api.md` (its summaries are cut at a fixed
@@ -25,7 +29,15 @@
  * then prints the verify line. Exit 0 ok · 1 error · 2 usage. Zero dependencies, Node ≥ 24.
  */
 import { execFileSync, spawnSync } from 'node:child_process'
-import { existsSync, lstatSync, readFileSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  lstatSync,
+  readdirSync,
+  readFileSync,
+  rmdirSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
@@ -47,6 +59,7 @@ import {
   rewritePrefixComments,
   USAGE,
 } from './lib/rename-lib.mjs'
+import { kitOnlyGlobs, matchesAny, stripKitOnlyWiring } from './lib/upgrade-lib.mjs'
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const HASH_TS = 'apps/web/src/api/utils/core/hash.ts'
@@ -55,6 +68,8 @@ const INDEX_CSS = 'apps/web/src/ui/index.css'
 const INDEX_HTML = 'apps/web/src/ui/index.html'
 const MIGRATIONS_DIR = 'apps/web/migrations/'
 const DEV_VARS = 'apps/web/.dev.vars'
+// The two package.json files that could wire the kit-only vitest project into a script.
+const PACKAGE_JSONS = ['package.json', 'apps/web/package.json']
 
 const out = (...lines) => console.log(lines.join('\n'))
 const warn = (...lines) => console.error(lines.join('\n'))
@@ -78,8 +93,39 @@ function runningContainers() {
   }
 }
 
+/**
+ * The kit's own tests (`kitOnly` in `.rocketflare.json`, `docs/CONCEPTS.md` §13): every file git
+ * knows about under one of those globs. They assert things only the kit is — its version chain, its
+ * release and rename machinery — so a copy never carries them, and this is where a copy is born.
+ * Read as plain JSON, like `stampManifest`: the rename grows no dependency on `manifest.mjs`.
+ */
+function kitOnlyFiles() {
+  const file = path.join(REPO_ROOT, '.rocketflare.json')
+  let manifest = null
+  try {
+    manifest = existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')) : null
+  } catch {
+    manifest = null
+  }
+  const globs = kitOnlyGlobs(manifest)
+  return git(['ls-files', '-z', '--cached', '--others', '--exclude-standard'])
+    .split('\0')
+    .filter(rel => rel && matchesAny(rel, globs) && existsSync(path.join(REPO_ROOT, rel)))
+    .sort()
+}
+
+/** Delete one file, then every parent directory it leaves empty (never the repo root). */
+function removeWithEmptyParents(rel) {
+  rmSync(path.join(REPO_ROOT, rel), { force: true })
+  let dir = path.dirname(path.join(REPO_ROOT, rel))
+  while (dir.startsWith(`${REPO_ROOT}${path.sep}`) && readdirSync(dir).length === 0) {
+    rmdirSync(dir)
+    dir = path.dirname(dir)
+  }
+}
+
 /** Repo-relative POSIX paths of every candidate file: git's view + the opt-in ignored ones. */
-function candidateFiles() {
+function candidateFiles(skip = new Set()) {
   const listed = git(['ls-files', '-z', '--cached', '--others', '--exclude-standard'])
     .split('\0')
     .filter(Boolean)
@@ -87,7 +133,7 @@ function candidateFiles() {
   for (const p of OPT_IN_IGNORED_PATHS) if (existsSync(path.join(REPO_ROOT, p))) set.add(p)
   const files = []
   for (const rel of [...set].sort()) {
-    if (isExcluded(rel)) continue
+    if (isExcluded(rel) || skip.has(rel)) continue
     let st
     try {
       st = lstatSync(path.join(REPO_ROOT, rel))
@@ -164,11 +210,18 @@ function main(argv) {
     ''
   )
 
+  // ------------------------------------------------------------- kit-only tests
+  // Deleted, not renamed: a copy's gate must never run a test that is only true of the kit (the
+  // one that made every app red asserted the root version IS the kit's). Nothing else in the tree
+  // imports them; the only wiring is the `kit-only` vitest project in a package.json script, which
+  // is unwired below. `vitest.config.ts` registers that project only while its directory exists.
+  const kitOnly = kitOnlyFiles()
+
   // ------------------------------------------------------------- the pass
   const rows = []
   const skippedBinary = []
   const edits = new Map() // rel → new content, written at the end
-  for (const rel of candidateFiles()) {
+  for (const rel of candidateFiles(new Set(kitOnly))) {
     const abs = path.join(REPO_ROOT, rel)
     const buf = readFileSync(abs)
     if (isBinary(buf)) {
@@ -182,6 +235,17 @@ function main(argv) {
     edits.set(rel, result.text)
   }
   const current = rel => edits.get(rel) ?? readFileSync(path.join(REPO_ROOT, rel), 'utf8')
+
+  const unwired = []
+  for (const rel of PACKAGE_JSONS) {
+    if (!existsSync(path.join(REPO_ROOT, rel))) continue
+    const { text, removed, edited } = stripKitOnlyWiring(current(rel))
+    if (removed.length === 0 && edited.length === 0) continue
+    edits.set(rel, text)
+    unwired.push(
+      `${rel}: ${[...edited.map(n => `${n} (--project dropped)`), ...removed.map(n => `${n} (removed)`)].join(', ')}`
+    )
+  }
 
   // ------------------------------------------------------------- careful rows
   const report = []
@@ -336,10 +400,19 @@ function main(argv) {
   if (skippedBinary.length > 0) {
     out(`skipped ${skippedBinary.length} binary file(s): ${skippedBinary.join(', ')}`, '')
   }
+  out(
+    `Kit-only tests (docs/CONCEPTS.md §13): ${args.dryRun ? 'would delete' : 'deleting'} ${kitOnly.length} file(s) — ` +
+      'they assert what only the kit is (its version chain, its release and rename machinery), so a copy never carries them.',
+    ...kitOnly.map(rel => `  - ${rel}`),
+    ...(unwired.length > 0
+      ? ['  unwired the kit-only vitest project:', ...unwired.map(u => `    ${u}`)]
+      : []),
+    ''
+  )
   out('Careful rows (docs/ADAPTING.md §1):', ...report.map(r => `  ${r}`), '')
   out(
     `Preserved as upstream: the rocketflare-dev org and its repos (the kit, plugins, the neon-proxy image, plugin CI), ${KIT.preserved.join(', ')}. Not touched by design: ` +
-      'LICENSE, CONTRIBUTING.md, CODE_OF_CONDUCT.md, SECURITY.md, the two svgs, this tool, its test, ' +
+      'LICENSE, CONTRIBUTING.md, CODE_OF_CONDUCT.md, SECURITY.md, the two svgs, this tool, ' +
       'the rf-adapt skill and .rocketflare.json (it names the kit, and gets an `app` block instead).',
     ''
   )
@@ -355,8 +428,9 @@ function main(argv) {
     writeFileSync(path.join(REPO_ROOT, rel), content)
     written += 1
   }
+  for (const rel of kitOnly) removeWithEmptyParents(rel)
   stampManifest(names)
-  out(`wrote ${written} files.`, '')
+  out(`wrote ${written} files, deleted ${kitOnly.length} kit-only test file(s).`, '')
 
   if (args.skipInstall) {
     out(

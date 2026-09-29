@@ -27,7 +27,7 @@ export interface ResolvedRepoRoot {
 /**
  * Which repository is being released or checked: `--repo-root`, else the git toplevel of `cwd`,
  * else the directory the script lives in. `toplevel` is injected so the decision is testable
- * without a filesystem — `apps/web/tests/config/release-root.test.ts` is what drives it.
+ * without a filesystem — `apps/web/tests/kit-only/release-root.test.ts` is what drives it.
  */
 export function resolveRepoRoot(
   argv?: readonly string[],

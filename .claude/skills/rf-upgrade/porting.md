@@ -21,7 +21,7 @@ steps to work top to bottom, `## Conflicts to expect` is `path → what changed 
 | `deleted` | the kit removed it | decide. It stays unless they say otherwise |
 | `skipped-surface-absent` | belongs to a surface this app deleted | **nothing. Ever.** |
 | `skipped-locally-deleted` | the adopter deleted this file | nothing |
-| `skipped-kit-only` | the kit's own identity: LICENSE, SECURITY.md, install.sh, the rename tool | nothing |
+| `skipped-kit-only` | the kit's own identity (LICENSE, SECURITY.md, install.sh, the rename tool) and the kit's own tests (`kitOnly`: `apps/web/tests/kit-only/**`) | nothing — and delete a kit-only test if one is already here |
 | `skipped-plugin-owned` | a file an installed plugin owns — see below | **nothing here.** `pnpm plugin upgrade <id>`, after this |
 | `migration-derived` | `apps/web/migrations/**` | regenerate — see below |
 | `manual-toml` / `manual-env` | wrangler tomls, `.dev.vars.example`, `.env.test` | see below |

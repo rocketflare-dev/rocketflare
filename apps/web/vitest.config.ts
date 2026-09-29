@@ -37,6 +37,15 @@ const MAX_WORKERS =
   (EPHEMERAL ? 2 : Math.min(6, Math.max(3, (os.availableParallelism?.() ?? 4) - 2)))
 
 const API_TEST_DIR = path.resolve(__dirname, './tests/api')
+
+/**
+ * The kit's OWN tests (`docs/CONCEPTS.md` §13): release notes, the version chain, the release and
+ * rename machinery — true of the kit repository and of nothing made from it. `scripts/rename.mjs`
+ * deletes the directory when a copy is born, so the `kit-only` project exists only while it does,
+ * and a copy's gate has nothing kit-only to run (a stray `--project kit-only` then matches nothing,
+ * which vitest ignores).
+ */
+const KIT_ONLY_DIR = path.resolve(__dirname, './tests/kit-only')
 const PLUGINS_DIR = path.resolve(__dirname, './src/plugins')
 
 /**
@@ -159,6 +168,20 @@ export default defineConfig({
         },
         resolve: { alias },
       },
+      ...(fs.existsSync(KIT_ONLY_DIR)
+        ? [
+            {
+              // No database, like `config` — but only in the kit.
+              extends: true as const,
+              test: {
+                name: 'kit-only',
+                environment: 'node',
+                include: ['tests/kit-only/**/*.{test,spec}.ts'],
+              },
+              resolve: { alias },
+            },
+          ]
+        : []),
       {
         extends: true,
         plugins: [react()],

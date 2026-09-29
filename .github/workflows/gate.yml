@@ -115,6 +115,12 @@ jobs:
       # This renames the checkout as an adopter does, then commits it — the kit's scanners read
       # `git ls-files`, and a copy's gate runs on a committed tree — and creates the renamed test
       # database (`<snake>_test`) in the Postgres service, which `.env.test` now points at.
+      #
+      # It also proves the copy carries none of the kit's OWN tests (`kitOnly`, docs/CONCEPTS.md
+      # §13): the rename deletes `apps/web/tests/kit-only/` and unwires its vitest project, and the
+      # root version is set to an APP release, as every copy's is once it ships. The kit-only suite
+      # asserted the root version IS the kit's, and made every app's gate — and Launch's ship gate —
+      # red; this pass is where that can never come back.
       - name: Rename the checkout to ${{ inputs.rename }}
         if: ${{ inputs.rename != '' }}
         env:
@@ -126,9 +132,22 @@ jobs:
           pnpm install --no-frozen-lockfile
           node scripts/plugin-api-doc.mjs
           pnpm lint:fix
+          if [ -e apps/web/tests/kit-only ]; then
+            echo "::error::the renamed copy still carries apps/web/tests/kit-only/"
+            exit 1
+          fi
+          if grep -n -- '--project kit-only' package.json apps/web/package.json; then
+            echo "::error::the renamed copy still wires the kit-only vitest project"
+            exit 1
+          fi
+          npm pkg set version=1.2.3
           git add -A
           git -c user.name=ci -c user.email=ci@example.com -c commit.gpgsign=false \
             commit --quiet --no-verify -m "Rename to $SLUG"
+          if git ls-files -- apps/web/tests/kit-only | grep .; then
+            echo "::error::the renamed copy's commit still tracks kit-only tests"
+            exit 1
+          fi
           cid=$(docker ps --filter "ancestor=pgvector/pgvector:pg17" --format '{{.ID}}' | head -1)
           docker exec "$cid" createdb -U test "${SLUG//-/_}_test"
 

@@ -1,6 +1,6 @@
 /**
  * Hand-written types for the exports of `release.mjs` that something else drives (the workspace has
- * no `allowJs`). Keep in step with the script; `apps/web/tests/config/release-lib.test.ts` is what
+ * no `allowJs`). Keep in step with the script; `apps/web/tests/kit-only/release-lib.test.ts` is what
  * typechecks against this.
  *
  * Only the two testable seams are declared. `main` is deliberately absent: it is the CLI, guarded

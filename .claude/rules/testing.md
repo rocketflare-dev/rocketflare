@@ -11,12 +11,24 @@ paths:
 # Testing Patterns
 
 Vitest in `apps/web` (all commands below are root scripts that delegate there, or run inside
-`apps/web`), five projects (`apps/web/vitest.config.ts`): `api` + `api-isolated` (Node, **real Postgres** on 5433),
+`apps/web`), six projects (`apps/web/vitest.config.ts`): `api` + `api-isolated` (Node, **real Postgres** on 5433),
 `driver` (D35: `tests/driver/**` — the code that differs between the two database drivers, through
 `openDatabase`, against the real database), `ui` (jsdom + Testing Library), `config` (Node, no
 database: wrangler parity, env schema, pure helpers, the raw-result guard
-`driver-results.test.ts`, and every installed plugin's own `src/plugins/*/tests/config/**`). `pnpm test` is two `vitest run` invocations (`test:shared`, `test:isolated`) because
+`driver-results.test.ts`, and every installed plugin's own `src/plugins/*/tests/config/**`), and
+`kit-only` (Node, no database: `tests/kit-only/**`, the KIT's own tests — see below). `pnpm test` is two `vitest run` invocations (`test:shared`, `test:isolated`) because
 vitest 3 resolves `isolate` per run, not per project.
+
+**Kit-only tests** (`docs/CONCEPTS.md` §13) live in `apps/web/tests/kit-only/` and nowhere else: a
+test belongs there when it is true of the kit repository and of nothing made from it — the porting
+notes and the root version being the kit's (`upgrade-notes`), the release and rename machinery
+(`release-lib`, `release-root`, `rename-lib`, `rename-safe-identifiers`), the maintainer nudge hooks,
+the plugin CI that plugin repositories call from the kit, and the manifest's kit-state claims
+(`kit-only/kit-manifest.test.ts`). `scripts/rename.mjs` deletes the directory when a copy is born
+and unwires `--project kit-only`; the project is registered only while the directory exists;
+`kit:upgrade` never ports one; `tests/config/kit-manifest.test.ts` fails a copy that carries one.
+A test of tooling a copy RUNS (upgrade, plugin, bootstrap, the update-check hook, the manifest
+reader) or of anything the app ships stays in `config` — the copy's gate is where it earns its keep.
 
 ## Tests run under Node, against the real Hono app
 
@@ -248,6 +260,7 @@ test:driver` for the driver project alone; `pnpm test:ephemeral` is a sandbox ga
 gate branch — no Docker) (root: every package, `pnpm -r test`; web tests load
 `apps/web/.env.test` via their own `dotenv` script, so no cwd juggling). Single projects run through
 the web package: `pnpm web test:api` · `pnpm web test:ui` · `pnpm web test:config` ·
+`pnpm web test:kit-only` (the kit only) ·
 `pnpm test:coverage`. `REQUIRE_PROVISIONED=1 pnpm --filter @rocketflare/web test:config` is what CI runs
 before a deploy.
 

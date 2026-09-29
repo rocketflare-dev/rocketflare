@@ -44,7 +44,7 @@ Any list may be written inline (`areas: [api, ui]`) or as a block sequence, one 
 line. Quote an item that contains a comma — `parseNote` is quote-aware, so the comma stays inside
 the string instead of splitting it in two.
 
-The four headings are fixed and must appear in that order; `apps/web/tests/config/upgrade-notes.test.ts`
+The four headings are fixed and must appear in that order; `apps/web/tests/kit-only/upgrade-notes.test.ts`
 enforces every rule above.
 
 ## Writing one

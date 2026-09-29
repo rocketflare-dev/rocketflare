@@ -46,7 +46,8 @@ Cloudflare Worker (`apps/web`), a CLI (`apps/cli`), private zod contracts
   by the bootstrap): drizzle-cube at `/cubejs-api`+`/mcp`, fact tables on the `:15` cron, dashboards
 - **UI**: React 18 + Vite, DaisyUI 5 / Tailwind v4, React Router 6, TanStack Query 5; served as `ASSETS`
 - **CLI**: commander + chalk + open; `tsx` in dev, `tsc` → `dist/cli.js` (bin `rocketflare`)
-- **Tests**: vitest projects `api` · `api-isolated` · `driver` · `ui` · `config` (Postgres :5433; `postgres`
+- **Tests**: vitest projects `api` · `api-isolated` · `driver` · `ui` · `config` · `kit-only` (the kit's own
+  tests, `apps/web/tests/kit-only/`, deleted by the rename — never in a copy) (Postgres :5433; `postgres`
   in the gate, `pnpm test:neon` / CI `test-neon` through the local Neon proxy); cli; the
   eval kit's unit tests (`apps/evals/tests`). Evals themselves are `pnpm eval`, outside the gate
 - **Lint**: Biome 2 at the root (single quotes, `asNeeded` semicolons, 100 cols)

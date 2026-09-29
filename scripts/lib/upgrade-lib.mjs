@@ -60,6 +60,59 @@ export function isKitManifest(manifest) {
   return manifest != null && manifest.app == null
 }
 
+// ---------------------------------------------------------------- kit-only tests
+
+/**
+ * The kit's OWN tests — the ones that are only true of the kit repository: its release notes and
+ * version chain, the release and rename machinery, the maintainer hooks, the plugin CI the plugin
+ * repositories call from here, and the manifest's kit-state invariants (`docs/CONCEPTS.md` §13).
+ *
+ * They live under one directory so that "never in a copy" is a path rule rather than a list of
+ * files: `scripts/rename.mjs` deletes them before the first commit of a copy, `classifyPath` never
+ * ports them, and `kit-manifest.test.ts` fails a copy that carries one. The manifest declares the
+ * list (`kitOnly` in `.rocketflare.json`); this constant is the floor for a copy whose manifest
+ * predates the key — `.rocketflare.json` is never ported, so an older copy's file never gains it.
+ */
+export const KIT_ONLY_PATHS = Object.freeze(['apps/web/tests/kit-only/**'])
+
+/** The vitest project (`apps/web/vitest.config.ts`) that runs them — kit only, like its files. */
+export const KIT_ONLY_PROJECT = 'kit-only'
+
+/** Every kit-only glob: the floor, the manifest's own list, and any extra (the target kit's). */
+export function kitOnlyGlobs(manifest, extra = []) {
+  const declared = Array.isArray(manifest?.kitOnly) ? manifest.kitOnly : []
+  return [...new Set([...KIT_ONLY_PATHS, ...declared, ...(extra ?? [])])]
+}
+
+/**
+ * `apps/web/package.json` with the kit-only project unwired: every `--project kit-only` dropped
+ * from a script, and a script that exists only to run it (`test:kit-only`) removed. Text in, text
+ * out, formatting kept; `removed` and `edited` name the scripts it touched so the caller can say so.
+ */
+export function stripKitOnlyWiring(packageJsonText) {
+  const pkg = JSON.parse(packageJsonText)
+  const scripts = pkg.scripts ?? {}
+  const flag = new RegExp(`\\s+--project[ =]${KIT_ONLY_PROJECT}(?![\\w-])`, 'g')
+  const removed = []
+  const edited = []
+  for (const [name, command] of Object.entries(scripts)) {
+    if (typeof command !== 'string') continue
+    if (name.endsWith(`:${KIT_ONLY_PROJECT}`)) {
+      delete scripts[name]
+      removed.push(name)
+      continue
+    }
+    const next = command.replace(flag, '')
+    if (next !== command) {
+      scripts[name] = next
+      edited.push(name)
+    }
+  }
+  if (removed.length === 0 && edited.length === 0) return { text: packageJsonText, removed, edited }
+  const indent = packageJsonText.match(/^[ \t]+(?=")/m)?.[0] ?? '  '
+  return { text: `${JSON.stringify(pkg, null, indent)}\n`, removed, edited }
+}
+
 /**
  * Every surface whose anchor file is missing from `presentPaths`. These are the parts the adopter
  * deleted on purpose; nothing belonging to them may ever be recreated.
@@ -144,7 +197,19 @@ export function classifyPath(relPath, ctx) {
     existsLocally = false,
     change = 'modified',
     includeKitTooling = false,
+    kitOnly = [],
   } = ctx
+  // The kit's own tests are never in a copy, whatever the kit did to them — added, changed or
+  // deleted, there is nothing here for an app to take. First, so no later rule (not even
+  // `--include-kit-tooling`) can port one. `kitOnly` in the context is the TARGET kit's list, so a
+  // path a later release declares is honoured by a copy whose own manifest has never heard of it.
+  if (matchesAny(relPath, kitOnlyGlobs(manifest, kitOnly))) {
+    return {
+      class: 'skipped-kit-only',
+      translate: false,
+      reason: "a kit-only test — the kit's gate runs it, a copy never carries it",
+    }
+  }
   const surface = manifest.surfaces.find(s => matchesAny(relPath, s.paths))
 
   if (surface && absent.includes(surface.id)) {
