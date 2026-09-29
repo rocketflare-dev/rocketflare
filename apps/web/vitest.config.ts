@@ -19,10 +19,22 @@ const alias = {
   'cloudflare:workers': path.resolve(__dirname, './tests/mocks/cloudflare-workers.ts'),
 }
 
+/**
+ * `pnpm test:ephemeral` (TEST_DATABASE_EPHEMERAL=1): the suite in a coding sandbox against a
+ * throwaway Neon gate branch over the network (tests/helpers/db-safety.ts). Fewer forks, because
+ * the local sizing below assumes the compose Postgres's max_connections=300 and a small Neon
+ * compute allows ~100; longer limits, because every query is a real network round trip (and the
+ * branch's compute may cold-start) — latency no local run has, so the local limits stay the
+ * tripwire for a test that is genuinely slow. `TEST_MAX_WORKERS` tunes the fork count.
+ */
+const EPHEMERAL = process.env.TEST_DATABASE_EPHEMERAL === '1'
+
 // Forks are capped because each holds its own Postgres connections (test DB runs
 // max_connections=300). Floor 3 = what a 2-vCPU CI runner gets; ceiling 6 is where Postgres
 // becomes the bottleneck. See .claude/rules/testing.md.
-const MAX_WORKERS = Math.min(6, Math.max(3, (os.availableParallelism?.() ?? 4) - 2))
+const MAX_WORKERS =
+  Number.parseInt(process.env.TEST_MAX_WORKERS ?? '', 10) ||
+  (EPHEMERAL ? 2 : Math.min(6, Math.max(3, (os.availableParallelism?.() ?? 4) - 2)))
 
 const API_TEST_DIR = path.resolve(__dirname, './tests/api')
 const PLUGINS_DIR = path.resolve(__dirname, './src/plugins')
@@ -70,7 +82,8 @@ export default defineConfig({
         minForks: MAX_WORKERS,
       },
     },
-    teardownTimeout: 5000,
+    teardownTimeout: EPHEMERAL ? 30_000 : 5000,
+    ...(EPHEMERAL ? { hookTimeout: 120_000 } : {}),
     // The neon run (`pnpm test:neon`, CI's `test-neon`) sends every query as an HTTP request to
     // a local proxy that opens a fresh Postgres connection for each (~75 ms on a laptop, 2-3x on
     // a 2-vCPU runner), so a test does several times its `postgres` wall time. A test making a
@@ -78,7 +91,7 @@ export default defineConfig({
     // tenant in the shared test database is latency-bound there and nowhere else, and in a copy
     // with plugins installed it crossed the 5 s default. The `postgres` gate keeps the default,
     // so it is still the tripwire for a test that is genuinely slow.
-    testTimeout: process.env.DATABASE_DRIVER === 'neon' ? 20_000 : 5_000,
+    testTimeout: EPHEMERAL ? 60_000 : process.env.DATABASE_DRIVER === 'neon' ? 20_000 : 5_000,
     coverage: {
       provider: 'v8',
       reporter: ['text', 'html', 'json-summary', 'lcov'],

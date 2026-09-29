@@ -189,7 +189,9 @@ Never hand-edit an applied migration or `apps/web/migrations/meta/`. Custom SQL 
 is a generated file edited before it is applied, journal intact.
 
 Tests migrate a throwaway database on 5433 from `apps/web/tests/setup.ts` — never Neon (under
-`pnpm test:neon` through the local proxy on :4433, still that database).
+`pnpm test:neon` through the local proxy on :4433, still that database). The one exception is
+`pnpm test:ephemeral`: a throwaway Neon GATE branch a sandbox orchestrator names and binds to the
+URL (`docs/CONCEPTS.md` §4, "Ephemeral test database").
 
 ## Plugins (D31) — a plugin's tables
 

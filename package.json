@@ -1,6 +1,6 @@
 {
   "name": "rocketflare",
-  "version": "0.15.6",
+  "version": "0.15.7",
   "private": true,
   "license": "MIT",
   "description": "Rocketflare \u2014 multi-tenant SaaS starter kit \u2014 pnpm workspace: apps/web (Hono API + React UI on Cloudflare Workers), apps/cli, packages/shared",
@@ -24,6 +24,7 @@
     "preflight": "node scripts/bootstrap.mjs --check",
     "test:db:up": "pnpm --filter @rocketflare/web test:db:up",
     "test:neon": "pnpm --filter @rocketflare/web test:neon",
+    "test:ephemeral": "pnpm -r --filter '!@rocketflare/web' test && pnpm --filter @rocketflare/web test:ephemeral",
     "test:db:down": "pnpm --filter @rocketflare/web test:db:down",
     "db:generate": "pnpm --filter @rocketflare/web db:generate",
     "db:migrate": "pnpm --filter @rocketflare/web db:migrate",

@@ -61,8 +61,13 @@ vitest 3 resolves `isolate` per run, not per project.
   migrate → grants → **truncate once** → seed one user/tenant/API key exposed via `provide()`/`inject()`
 - Tests never truncate per file. Create what you need with unique data and let it stay; the schema
   is designed for parallel files. If a test genuinely needs an empty table, it is `// @vitest-isolate`
-- `apps/web/tests/helpers/db.ts` `safetyCheck()` refuses to run unless `NODE_ENV=test` and `DATABASE_URL`
-  is `localhost`. Never point tests at Neon
+- `apps/web/tests/helpers/db.ts` `safetyCheck()` refuses to run unless `NODE_ENV=test` and `DATABASE_URL`'s
+  HOST is local. Never point tests at Neon — except `pnpm test:ephemeral` on a throwaway gate
+  branch, which needs `TEST_DATABASE_BRANCH=gate-<short>-<attempt>` and `TEST_DATABASE_ENDPOINT` =
+  the URL's `ep-…` id (rules and reasons: `tests/helpers/db-safety.ts`, unit-tested in
+  `tests/config/db-safety.test.ts`). That profile runs 2 forks and 60 s / 120 s limits, and a test
+  needing TCP or a superuser skips itself with `isEphemeralTestRun(process.env)` and a stated reason
+  (`db-roles.test.ts`)
 - Per-file `apps/web/tests/api-setup.ts` closes clients after each file (connection budget: forks × pools)
 - **Both drivers (D35).** `.env.test` sets `DATABASE_DRIVER=postgres`, so the gate runs postgres.js.
   `pnpm test:neon` (root or web) starts the test Postgres PLUS the Neon proxy on :4433
@@ -239,7 +244,8 @@ admin+) and that `withEvalScope` tags spans.
 ## Commands
 
 `pnpm test:db:up` once, then `pnpm test` (`pnpm test:neon` for the `neon` half; `pnpm web
-test:driver` for the driver project alone) (root: every package, `pnpm -r test`; web tests load
+test:driver` for the driver project alone; `pnpm test:ephemeral` is a sandbox gate's, against a Neon
+gate branch — no Docker) (root: every package, `pnpm -r test`; web tests load
 `apps/web/.env.test` via their own `dotenv` script, so no cwd juggling). Single projects run through
 the web package: `pnpm web test:api` · `pnpm web test:ui` · `pnpm web test:config` ·
 `pnpm test:coverage`. `REQUIRE_PROVISIONED=1 pnpm --filter @rocketflare/web test:config` is what CI runs

@@ -154,6 +154,22 @@ path); no per-PR previews.
   differs) runs there too, and CI's `test-neon` job runs it plus the whole api suite under `neon`
   through a local Neon proxy (`pnpm test:neon`, ~30 s). Locally `pnpm dev:db:up --neon` runs the
   deployed driver on the local database.
+- **Ephemeral test database** (`pnpm test:ephemeral`): the whole gate's tests where there is no
+  Docker and only 443 out — a coding sandbox, whose orchestrator (Launch) creates a throwaway Neon
+  branch per gate attempt and passes its owner connection string. The script sets
+  `TEST_DATABASE_EPHEMERAL=1`, `DATABASE_DRIVER=neon`, an empty `APP_DATABASE_URL` (the app role
+  stays NOLOGIN) and runs every web project. `safetyCheck()` (`tests/helpers/db-safety.ts`) still
+  refuses any non-local `DATABASE_URL` unless ALL hold: that profile, the `neon` driver, a
+  `*.neon.tech` host, `TEST_DATABASE_BRANCH` matching `^gate-[a-z0-9]+-\d+$`, and
+  `TEST_DATABASE_ENDPOINT` equal to the `ep-…` id in the URL. The branch name is not in a Neon
+  connection string, so the name alone is only a claim; the endpoint id is, and binds the claim to
+  that URL (a stale opt-in in a shell cannot bless another database). The profile runs 2 forks
+  (`TEST_MAX_WORKERS` overrides; a small Neon compute allows ~100 connections, the local sizing
+  assumes 300), a 60 s test and 120 s hook limit (real round trips, a cold-starting compute), and
+  skips `db-roles.test.ts` (postgres.js over TCP, and a superuser to make owner roles). Global setup
+  is unchanged: role → migrate → grants → truncate → seed, as the connecting role. `migrate.ts`,
+  `db-roles.ts` and `seed.ts` `process.exit` when done, as `db:check` does: Cloudflare's container
+  egress interceptor never ends a closed database WebSocket's stream, so Node would never exit.
 - **Conventions**: one file per table, `tenantRef()` + `timestamps()` (`timestamptz`), append-only
   enums, `vector(1024)` (a new dimension means a new table). `migrate.ts` creates the `vector`
   extension first. Detail: `.claude/rules/database.md`.
@@ -181,7 +197,10 @@ plugin's own tests run under `neon` only in a local `pnpm test:neon`; the TEST d
 5433, so two checkouts cannot run `pnpm test` at once (each app has its own Compose project,
 `<slug>-test`, so switching checkouts no longer recreates the other's container). `--db-url` with a loopback URL (a native
 Postgres) still looks like this checkout's Docker database to preflight and `dev:db:*`, and a
-re-run of the bootstrap without the flag checks for Docker again.
+re-run of the bootstrap without the flag checks for Docker again. `pnpm test:ephemeral` is proven
+in the kit only through the local Neon proxy: against a real Neon branch, the owner role's
+`ALTER ROLE`s on an app role someone else created, the connection count and the time limits are
+the caller's to prove.
 
 ## 5. Background work and realtime
 

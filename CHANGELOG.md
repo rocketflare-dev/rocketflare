@@ -6,6 +6,11 @@ copy of the kit forward without recreating anything its owner deleted.
 
 If you are running a copy: `pnpm kit:upgrade` tells you which of these you are missing.
 
+## 0.15.7 — 2026-09-29
+
+`pnpm test:ephemeral` runs the test suite with no Docker against a throwaway Neon gate branch, which `safetyCheck()` accepts only when the caller names the branch and binds it to the URL's endpoint.
+[Porting note](docs/upgrades/0.15.7.md).
+
 ## 0.15.6 — 2026-09-28
 
 Opening a magic link no longer spends its token: `GET /auth/magic-link/verify` redirects to a new `/magic-link/confirm` page whose "Sign in" button posts the token, so mail scanners (Safe Links, Mimecast) cannot break sign-in.
