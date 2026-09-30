@@ -21,7 +21,7 @@ manual: true
 - `driver-results.test.ts` now also fails a hand-read `err.code === '2xxxx'`, and a `SET` / `set_config(…, false)` / session advisory lock / `CREATE TEMP TABLE` outside a transaction, and `LISTEN`.
 - `tests/driver/` is a conformance suite; `driver-conformance.test.ts` fails a skip or a per-driver expectation in it.
 - Test time limits scale by one latency factor (1 / 4 / 12); the two tests that carried `30_000` lower the cap they walk to instead (`maxMs`, `maxInterruptRounds`).
-- `apps/web`'s `build` no longer typechecks; `pnpm plugin add|upgrade --apply` end with `pnpm plugin check` (exit 8 when it fails).
+- `apps/web`'s `build` no longer typechecks; `pnpm plugin add|upgrade --apply` end with `pnpm plugin check` (exit 8 when it fails; the migration still to generate is a `next:` note, not a failure).
 - CI: a copy's `ci.yml` is one job (gitleaks + `pnpm gate`); `gate.yml` and the `test-neon` job are gone; `deploy.yml` runs nothing when there is nothing to deploy.
 - The kit's own checks moved to `kit.yml`, which is `kitOnly` with `plugin-ci.yml` and `notify-plugins.yml`: a copy never carries any of the three.
 

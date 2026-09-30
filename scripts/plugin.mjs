@@ -734,7 +734,7 @@ function auditAfterApply(args) {
   muted = Boolean(args.json)
   let code
   try {
-    code = cmdCheck({ ...args, json: false }, loadHost())
+    code = cmdCheck({ ...args, json: false, pendingMigrations: true }, loadHost())
   } finally {
     muted = false
   }
@@ -1370,7 +1370,14 @@ function cmdCheck(args, host) {
    * retroactively satisfy. Every plugin is checked strictly; `warn` is kept for the findings that
    * are not faults in the plugin at all.
    */
-  const add = (severity, key, d) =>
+  const add = (severity, key, d) => {
+    // Right after `add|upgrade --apply` the host has not generated the migration yet — that is the
+    // plan's NEXT step (`pnpm db:generate`), not a fault in what was just written. So the audit an
+    // apply ends with says it as a note; `pnpm plugin check` on its own stays strict.
+    if (args.pendingMigrations && key.endsWith(':migration')) {
+      notes.push(`next: ${d.fix}`)
+      return
+    }
     findings.push({
       id: key,
       severity,
@@ -1382,6 +1389,7 @@ function cmdCheck(args, host) {
       fix: d.fix,
       message: renderDiagnostic(d),
     })
+  }
   // Things worth SAYING that are not faults — a state the kit itself is legitimately in, or a
   // silence somebody should know about. Printed either way; they never change the exit code.
   const notes = []
