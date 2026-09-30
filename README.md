@@ -57,8 +57,9 @@ bash scripts/bootstrap.sh          # checks Node 24 / pnpm 10 / Docker, generate
 Nothing external is required: no `RESEND_API_KEY` → magic-link URLs are logged by `wrangler dev`; no AI
 key → chat, agents and embeddings run on Workers AI through the `[ai]` binding (billed to your
 Cloudflare account, 10k free neurons/day); no Cloudflare login, or zero-spend wanted → `--offline`.
-Then `pnpm test:db:up && pnpm test` (the full suite against a throwaway Postgres on :5433;
-`pnpm test:neon` runs it again on the Neon driver, as CI does). Before
+Then `pnpm gate` — lint, typecheck, test and build, the same command CI runs; `pnpm test` starts a
+throwaway Postgres on :5433 and the Neon proxy itself, runs the suite, then proves the driver seam
+under the Neon driver. Before
 building your app, rename it: `/rf-adapt` or [`docs/ADAPTING.md`](docs/ADAPTING.md). Later,
 `/rf-upgrade` (or `pnpm kit:upgrade`) reads `.rocketflare.json` and the release notes in
 [`docs/upgrades/`](docs/upgrades/), translates the kit's diff into your names, and skips every part

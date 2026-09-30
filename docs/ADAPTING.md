@@ -79,7 +79,7 @@ or nothing resolves.
 | `LogoMark` | `apps/web/src/ui/components/shared/LogoMark.tsx`, `apps/web/src/ui/public/logo.svg` + favicons | your mark | not touched — reported as (f) |
 | `EMBEDDING_DIM` (1024) | `packages/shared/src/ai/config.ts` (imported by `apps/web/src/db/schema/chunks.ts` and the `openai*` embeddings adapter) — only if you will NOT use the default `@cf/baai/bge-m3`; see §3 "Changing the embedding model or dimension" | before the first migration, never after | not touched — the decision is flagged in (b) |
 
-Then, from the root: `pnpm install && pnpm types && pnpm lint && pnpm typecheck && pnpm test`. The
+Then, from the root: `pnpm install && pnpm gate`. The
 parity test will tell you if the two tomls drifted during the rename; `typecheck` will tell you if
 an `@rocketflare/shared` import was missed. Keep `packages/shared` **private** (`"private": true`, no
 `publishConfig`) whatever you call it.

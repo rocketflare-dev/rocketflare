@@ -55,13 +55,20 @@ It is set in two layers:
   schema>`, so a raw `execute()` is `unknown` and the old `tx as unknown as Database` casts are gone.
   The neon handle is neon-http with its `transaction` delegated to a lazily created `Pool` (max 1)
   that `close()` ends. `rows()` / `affected()` read either result shape; `@/plugins/api` exports
-  them to plugins.
+  them to plugins. The file is the driver SEAM (`apps/web/src/db/CLAUDE.md`): it also parses raw
+  arrays under postgres.js with Neon's own parsers (`ARRAY_PARSERS`) and reads a driver error's
+  SQLSTATE through the cause chain (`pgErrorCode()`, `isUniqueViolation()`).
 - **`loadConfig`** — `DATABASE_DRIVER` (enum, default `postgres`), `NEON_LOCAL_PROXY` (URL);
   `neon` without `DATABASE_URL`/`PREVIEW_DATABASE_URL` is a `ConfigError` at startup.
   `AppBindings = Cloudflare.Env & { HYPERDRIVE?: Hyperdrive }`.
 - **The guard** — `tests/config/driver-results.test.ts` (TypeScript AST over `src/`, plugins
   included): no cast, index or `.rows`/`.rowCount`/`.count`/`.length` on an `execute()` result, no
-  cast to a `{ count | rowCount | rows }` literal, no driver import outside `db/client.ts`.
+  cast to a `{ count | rowCount | rows }` literal, no driver import outside `db/client.ts`, no
+  SQLSTATE read by hand (`err.code === '23505'`, a `case` on a `.code`), and no session state
+  outside a transaction — a statement `SET`, `set_config(…, false)`, `pg_advisory_lock`,
+  `CREATE TEMP TABLE` are allowed only inside a callback to `.transaction(…)` / `transaction(…)` /
+  `withTenantScope(…)`, because neon-http runs every other query on a fresh connection. `LISTEN` /
+  `UNLISTEN` are refused everywhere (neon-http has no notifications).
 - **Scripts** — `apps/web/scripts/lib/sql.ts` (`openScriptSql`: text + `$n` params, `transaction`,
   over postgres.js or a Neon `Pool`) under `migrate.ts` (the `neon-serverless` migrator under
   `neon`), `db-roles.ts`, `test-db-connection.ts` and `provision.ts`. Scripts read the driver from
@@ -76,10 +83,14 @@ It is set in two layers:
 - **Local** — `pnpm dev:db:up --neon|--postgres` (per-checkout proxy port from :4444, writes
   `DATABASE_DRIVER` + `NEON_LOCAL_PROXY`); the bootstrap writes `DATABASE_DRIVER=postgres` when
   absent, `neon` for a `*.neon.tech` `--db-url`, and takes `--driver`.
-- **Tests** — the gate runs `postgres`. A `driver` vitest project (`tests/driver/`) runs the code
-  that differs through `openDatabase`: in the gate under `postgres`, under `neon` in
-  `pnpm test:neon` and CI's required `test-neon` job, which also run the whole api suite. Under
-  `neon` that suite takes ~30 s.
+- **Tests** — the suite runs `postgres`. The `driver` vitest project (`tests/driver/`) is the
+  CONFORMANCE suite for the seam: each test states one equivalence through `openDatabase`, over
+  HTTP and inside a transaction, and passes unchanged under both drivers
+  (`tests/config/driver-conformance.test.ts` fails a skip or a per-driver expectation). `pnpm test`
+  runs it under `postgres` with the suite, then again under `neon` through the proxy — in every
+  gate, a copy's CI included; on a remote Neon gate branch the whole suite runs under `neon`
+  instead. `kit.yml`'s plugins pass runs the whole suite, default plugins installed, under `neon`
+  (`GATE_SUITE_DRIVER=neon`, ~35 s locally).
 
 ## 4. The local Neon proxy
 
@@ -109,24 +120,33 @@ both platforms build without emulation), then pin the new index digest in both c
 
 ## 5. Measured traps
 
-- **Raw arrays** — postgres.js with `fetch_types: false` returns a `text[]` from raw SQL as the
-  literal `"{x,y}"`; Neon parses it. Raw SQL returning a list uses `json_agg` / `to_jsonb`.
-- **Raw timestamps** — a `Date` under postgres.js, a string under neon-http; code reading one wraps
-  it (`asDate`). The query builder maps both.
-- **Raw bigint** — a string under both.
+- **Raw arrays** — postgres.js with `fetch_types: false` skips its array-type lookup and returned
+  a `text[]` from raw SQL as the literal `"{x,y}"`, where Neon parses it. **Normalised**:
+  `client.ts` installs Neon's own parsers for the array OIDs on the postgres.js client
+  (`ARRAY_PARSERS`), so both return `['x','y']` (and `int[]` → numbers, `bigint[]` → strings,
+  `jsonb[]` → objects) and the two cannot drift. The date and interval arrays and `numeric[]` stay
+  text under both: drizzle keeps them unparsed for its column mappers.
+- **Raw timestamps** — Postgres's text (`'2026-01-02 03:04:05.678+00'`) under BOTH drivers:
+  drizzle installs transparent parsers for the date types on each. (This section used to say "a
+  `Date` under postgres.js"; measured, it is not.) Code reading a raw timestamp parses it; the
+  query builder returns `Date`s under both.
+- **Raw bigint and numeric** — strings under both.
+- **Error codes** — each driver hangs `code` on its own error and drizzle wraps it, so a SQLSTATE
+  is read with `pgErrorCode()` / `isUniqueViolation()`, never by hand (the guard).
 
-`tests/driver/driver.test.ts` pins all three, per driver.
+`tests/driver/driver.test.ts` pins every one with a single expectation for both drivers, read over
+HTTP and inside a transaction.
 
 ## 6. Costs and risks (as shipped)
 
 | Risk | Handling |
 |---|---|
-| A fresh copy develops on `postgres` and deploys on `neon` | `test-neon` on every PR; the guard catches driver-specific reads before either; `pnpm test:neon` / `dev:db:up --neon` reproduce locally |
+| A fresh copy develops on `postgres` and deploys on `neon` | the seam: `client.ts` normalises, the guard bans what cannot be normalised, and the `driver` conformance pass runs under `neon` in every `pnpm test` (and so every gate and PR); `GATE_SUITE_DRIVER=neon pnpm gate test` / `dev:db:up --neon` run the rest under `neon` by hand |
 | An upgrading copy picks up the kit's `DATABASE_DRIVER = "neon"` | tomls are never patched as text by `/rf-upgrade`; its porting rules say not to carry the value; if one did, `loadConfig` fails at startup on the missing secret |
 | `neon` has no read cache and a round trip per query | measured per app when it switches (staging p95 against the Hyperdrive baseline); first fix: batch session + membership in one neon-http `batch()` |
 | A WebSocket handshake per transaction under `neon` (every chat retrieval's `SET LOCAL`) | accepted — it sits inside a multi-second model call |
-| A community image in `test-neon` and `dev:db:up --neon` | digest pin, our own start script, the mirror/build fallback (§4); the default dev loop never pulls it |
-| drizzle-cube (analytics) reads results from the handle it is given | drizzle-cube normalises both shapes itself; analytics 3.4.1 passes the handle as drizzle-cube's type. Checked once before release: all four plugins' 241 tests, `cube-isolation` included, pass under both drivers. In CI the plugins pass runs `postgres` only — `test-neon` installs no plugins (known gap) |
+| A community image in every local `pnpm test` and `dev:db:up --neon` | digest pin, our own start script, the mirror/build fallback (§4); `pnpm dev` and the narrow test scripts never pull it |
+| drizzle-cube (analytics) reads results from the handle it is given | drizzle-cube normalises both shapes itself; analytics 3.4.1 passes the handle as drizzle-cube's type. Checked once before release: all four plugins' 241 tests, `cube-isolation` included, pass under both drivers. In CI `kit.yml`'s plugins pass runs the whole suite with the default plugins installed under `neon`, and a copy's gate runs the conformance pass under both |
 
 ## 7. Considered and rejected
 
@@ -135,9 +155,20 @@ both platforms build without emulation), then pin the new index digest in both c
   not have. The draft's objections to two drivers did not survive the code: two driver-specific
   reads in core, helpers needed anyway (plugins 3.4.0 already wrote one), and the `PgDatabase` base
   removed casts rather than adding one.
-- **`neon` through the proxy locally and in the gate** (the second draft). Local would match a
-  fresh copy's deployments, but it puts a community image in every bootstrap and test run for a
-  difference the guard, the `driver` project and `test-neon` already cover.
+- **The whole suite under `neon` in every gate** (the second draft, and again in #49). Local and
+  CI would match a fresh copy's deployments, but only for code a test happens to exercise, at the
+  cost of the proxy's latency on every query of every run. The seam covers the difference instead,
+  including code no test reaches: normalise in `client.ts`, ban in the guard, prove with the
+  `driver` conformance project under both drivers in every `pnpm test`. The proxy image IS now in
+  every local `pnpm test`, for that one project. The whole suite runs under `neon` only in
+  `kit.yml`'s plugins pass — the backstop for a kind of divergence the guard does not know yet —
+  and on demand (`GATE_SUITE_DRIVER=neon`).
+- **Per-test time budgets for the slow-link cases.** Two tests carried `30_000` and still timed out
+  on a real Neon branch (whose default was 60 s — the budget SHRANK it). Time limits now scale with
+  the target by one latency factor in `vitest.config.ts` (1 local `postgres`, 4 through the proxy,
+  12 on a real Neon branch) for test, hook and teardown alike, and a test that is slow only on a
+  slow link lowers the limit it walks to (`runStreamBody`'s `maxMs`,
+  `AgentRunWorkflow.maxInterruptRounds`) rather than raising its own timeout.
 - **`postgres` as the deployed default for fresh copies.** A fresh copy would need Hyperdrive
   before its first deploy and could not deploy from a sandbox.
 - **A missing `DATABASE_DRIVER` meaning `neon`** — upgrading would silently switch every existing

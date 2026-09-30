@@ -7,10 +7,12 @@
  * "localhost" is refused).
  *
  * **A remote one only as a throwaway gate branch** — the one case the kit allows, for a coding
- * sandbox that has no Docker and only 443 out (Launch's ship gate, `pnpm test:ephemeral`). Every
+ * sandbox that has no Docker and only 443 out (Launch's ship gate: `pnpm test` with the variables
+ * below). Every
  * condition must hold, and each one closes a different accident:
  *
- * - `TEST_DATABASE_EPHEMERAL=1` — the run says it is the ephemeral profile (the script sets it).
+ * - `TEST_DATABASE_EPHEMERAL=1` — the run says it is the ephemeral profile (`scripts/test.mjs`
+ *   sets it when `TEST_DATABASE_BRANCH` names a branch).
  * - `DATABASE_DRIVER=neon` — the only driver that reaches Neon over 443.
  * - the host is Neon's (`*.neon.tech`) — no other remote database is ever acceptable.
  * - `TEST_DATABASE_BRANCH` matches `gate-<short>-<attempt>` — the caller names a GATE branch,
@@ -29,7 +31,7 @@ const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]', '::1'])
 
 type Env = { readonly [key: string]: string | undefined }
 
-/** The run is the ephemeral-gate profile (`pnpm test:ephemeral`). Remote access needs more. */
+/** The run is the ephemeral-gate profile (`pnpm test` on a gate branch). Remote access needs more. */
 export function isEphemeralTestRun(env: Env): boolean {
   return env.TEST_DATABASE_EPHEMERAL === '1'
 }
@@ -64,7 +66,7 @@ function fail(message: string): never {
 function ephemeralRefusal(env: Env, url: string, label: string): string | null {
   const hint =
     'Tests run against local Postgres only. A remote database is accepted solely as a throwaway ' +
-    'Neon gate branch: pnpm test:ephemeral with TEST_DATABASE_BRANCH=gate-<short>-<attempt> and ' +
+    'Neon gate branch: pnpm test with TEST_DATABASE_BRANCH=gate-<short>-<attempt> and ' +
     'TEST_DATABASE_ENDPOINT=<the ep-… id in the URL> (docs/CONCEPTS.md, "Ephemeral test database")'
   if (!isEphemeralTestRun(env)) return `${label} must be local Postgres. ${hint}`
   if (env.DATABASE_DRIVER !== 'neon') {

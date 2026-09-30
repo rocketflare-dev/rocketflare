@@ -164,6 +164,5 @@ db:generate --name plugin-<id>-<version>` then `pnpm db:migrate`.
 
 ---
 
-When all six — seven with a plugin installed — are done: `pnpm types && pnpm lint && pnpm typecheck
-&& pnpm test`, commit, then update `docs/ADAPTING.md` §1 (or delete the table) so the next reader
+When all six — seven with a plugin installed — are done: `pnpm gate`, commit, then update `docs/ADAPTING.md` §1 (or delete the table) so the next reader
 knows the rename happened.

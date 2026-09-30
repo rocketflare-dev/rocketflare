@@ -18,9 +18,14 @@ name: Deploy
 # deploy` is executed INSIDE apps/web (via `--filter … exec`) so `wrangler.toml` and its
 # `[assets] directory = "./dist/ui"` resolve.
 #
-# The CI gate it calls is ci.yml, with `deploy: true`: the gate and the plugin audit, not the
-# `test-neon` suite (a PR/push check). In the kit's own repository ci.yml also runs its kit-only
-# passes (default plugins installed, a renamed copy); in a copy those are skipped.
+# The CI gate it calls is ci.yml — the same one job every pull request runs (`pnpm gate`, plus the
+# secrets scan). The kit's own checks live in kit.yml, which is a pull-request check and never a
+# deploy precondition.
+#
+# Nothing to deploy, nothing run: `guard` (`release-check.mjs --deployable`) answers first, and
+# when it says no — the kit repository itself, whose tomls still carry placeholders — `gated`, `ci`
+# and both deploy jobs are skipped and the run's summary says why. Before, the whole gate ran on
+# every tag and then both deploys skipped, a seven-minute run that deployed nothing.
 #
 # Gated ONCE per commit: the `gated` job asks the Actions API whether `github.sha` already has a
 # successful `CI` run from a push or a pull request. If it has, `ci` is skipped and `staging` runs
@@ -100,9 +105,12 @@ jobs:
   # so the fallback is always the gate, never the deploy.
   gated:
     name: Already gated?
+    needs: guard
     if: |
-      (github.event_name == 'push' && github.ref_type == 'tag') ||
-      (github.event_name == 'workflow_dispatch' && inputs.environment == 'staging')
+      needs.guard.outputs.deployable == 'true' && (
+        (github.event_name == 'push' && github.ref_type == 'tag') ||
+        (github.event_name == 'workflow_dispatch' && inputs.environment == 'staging')
+      )
     runs-on: ubuntu-latest
     permissions:
       actions: read
@@ -132,15 +140,14 @@ jobs:
   # unless `gated` found a green CI run on this commit. `!cancelled()` so a FAILED `gated` job
   # (whose output is then empty) still gates rather than skipping everything.
   ci:
-    needs: gated
+    needs: [guard, gated]
     if: |
-      !cancelled() && needs.gated.outputs.gated != 'true' && (
+      !cancelled() && needs.guard.outputs.deployable == 'true' &&
+      needs.gated.outputs.gated != 'true' && (
         (github.event_name == 'push' && github.ref_type == 'tag') ||
         (github.event_name == 'workflow_dispatch' && inputs.environment == 'staging')
       )
     uses: ./.github/workflows/ci.yml
-    with:
-      deploy: true
 
   # `!cancelled()` because a skipped `ci` would otherwise skip this job too. The last clause is
   # the security property: deploy only when `ci` passed HERE, or was skipped BECAUSE `gated`

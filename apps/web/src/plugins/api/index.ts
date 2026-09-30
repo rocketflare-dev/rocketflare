@@ -66,7 +66,7 @@ export {
 export type { AbilityCheck, Actions, MembershipRole, PluginAuth, Subjects, User } from './auth'
 export { hasFeature, isAdminLevel, isGlobalAdmin, isOwnerLevel, requireFeature } from './auth'
 export type { HookCtx, SeedCtx, Tenant } from './db'
-export { affected, rows, transaction } from './db'
+export { affected, isUniqueViolation, pgErrorCode, rows, transaction } from './db'
 export type { ActivityInput, NotifyInput, Realtime } from './events'
 export {
   durableObject,

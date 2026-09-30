@@ -32,7 +32,7 @@ import {
 } from '@rocketflare/shared/ai/agents'
 import { ERROR_CODES } from '@rocketflare/shared/errors'
 import { and, asc, eq, inArray, sql } from 'drizzle-orm'
-import { type Database, rows } from '../../../db/client'
+import { type Database, isUniqueViolation, rows } from '../../../db/client'
 import {
   type AgentRunEventRow,
   type AgentRunRow,
@@ -126,16 +126,6 @@ export function toAgentRunEvent(row: AgentRunEventRow): AgentRunEvent {
  */
 const ACTIVE = ACTIVE_RUN_STATUSES
 const CLAIMABLE = CLAIMABLE_RUN_STATUSES
-
-/** Postgres `unique_violation` anywhere in drizzle's cause chain. */
-function isUniqueViolation(err: unknown): boolean {
-  let current: unknown = err
-  for (let depth = 0; current && depth < 5; depth++) {
-    if ((current as { code?: unknown }).code === '23505') return true
-    current = (current as { cause?: unknown }).cause
-  }
-  return false
-}
 
 export async function getRun(
   db: Database,

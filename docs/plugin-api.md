@@ -1,9 +1,8 @@
 # The plugin API
 
 **Generated. Do not edit.** `node scripts/plugin-api-doc.mjs` writes this file from the source of
-the declared entries, and `.github/workflows/gate.yml` regenerates it and diffs it — beside the
-step that does the same for `apps/web/worker-configuration.d.ts`, and for the same reason: a
-generated artefact that is committed and diff-checked cannot drift from its source. **A diff
+the declared entries, and the kit's CI (`.github/workflows/kit.yml`) regenerates it and diffs
+it: a generated artefact that is committed and diff-checked cannot drift from its source. **A diff
 failure means this file is stale. Run the script and commit what it writes.**
 
 One other failure comes out of the same script and means something different:
@@ -177,6 +176,8 @@ The server surface: the context family, and the types a plugin must be able to n
   `users.isGlobalAdmin` — the platform flag, independent of any tenant role.
 - `function isOwnerLevel(session: RoleView): boolean`
   Irreversible tenant actions: explicit `owner` (or global admin), NOT `manage Tenant`.
+- `function isUniqueViolation(err: unknown): boolean`
+  A unique / primary-key violation (`23505`), under either driver.
 - `function jobCtx(ctx: JobContext): JobCtx`
   Adapt the kit's `JobContext`. The only place a plugin's job half names a kit internal.
 - `interface JobCtx extends PluginContext, BackgroundMethods`
@@ -206,6 +207,8 @@ The server surface: the context family, and the types a plugin must be able to n
 - `async function openSecret(config: PluginConfig, sealed: string): Promise<string>`
   Decrypt what `sealSecret` produced. Throws on a value sealed under another key.
 - `function pageWindow(query: PaginationQuery): { limit: number; offset: number }`
+- `function pgErrorCode(err: unknown): string \| undefined`
+  The Postgres SQLSTATE (`23505`, `40001`…) of a driver error, wherever it hangs: both drivers put `code` on their own error (postgres.js, Neon's `NeonDbError`) and drizzle wraps…
 - `type PluginAgent = AgentDefinition<Input, Output>`
   A plugin's agent, as `ServerPlugin.agents` takes it.
 - `interface PluginAuth`
@@ -1043,6 +1046,7 @@ nothing in the comparison that can throw.
 @/plugins/api :: function :: isAdminLevel :: function isAdminLevel(session: RoleView): boolean
 @/plugins/api :: function :: isGlobalAdmin :: function isGlobalAdmin(session: RoleView): boolean
 @/plugins/api :: function :: isOwnerLevel :: function isOwnerLevel(session: RoleView): boolean
+@/plugins/api :: function :: isUniqueViolation :: function isUniqueViolation(err: unknown): boolean
 @/plugins/api :: function :: jobCtx :: function jobCtx(ctx: JobContext): JobCtx
 @/plugins/api :: interface :: JobCtx :: interface JobCtx extends PluginContext, BackgroundMethods
 @/plugins/api :: type :: JobEnvelope :: type JobEnvelope = z.infer<typeof jobEnvelopeSchema>
@@ -1062,6 +1066,7 @@ nothing in the comparison that can throw.
 @/plugins/api :: function :: nudgeUsers :: function nudgeUsers( rt: Realtime | undefined, userIds: string[], event: RealtimeEvent ): void
 @/plugins/api :: function :: openSecret :: async function openSecret(config: PluginConfig, sealed: string): Promise<string>
 @/plugins/api :: function :: pageWindow :: function pageWindow(query: PaginationQuery): { limit: number; offset: number }
+@/plugins/api :: function :: pgErrorCode :: function pgErrorCode(err: unknown): string | undefined
 @/plugins/api :: type :: PluginAgent :: type PluginAgent = AgentDefinition<Input, Output>
 @/plugins/api :: interface :: PluginAuth :: interface PluginAuth
 @/plugins/api :: member :: PluginAuth.user :: user: User

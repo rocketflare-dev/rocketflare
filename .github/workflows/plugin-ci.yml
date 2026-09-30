@@ -259,18 +259,6 @@ jobs:
         # An `include`-only matrix, because the pairs are not a cross product: each plugin is
         # proved against its OWN floor, and a shared ceiling is normal while a shared floor is not.
         include: ${{ fromJson(needs.versions.outputs.pairs) }}
-    services:
-      postgres:
-        image: pgvector/pgvector:pg17 # migration 0000 runs CREATE EXTENSION vector
-        env:
-          POSTGRES_USER: test
-          POSTGRES_PASSWORD: test
-          POSTGRES_DB: rocketflare_test
-        ports:
-          - 5433:5432
-        options: >-
-          --health-cmd "pg_isready -U test -d rocketflare_test"
-          --health-interval 5s --health-timeout 5s --health-retries 10
     steps:
       - uses: actions/checkout@v4
         with:
@@ -289,7 +277,7 @@ jobs:
           fi
           # --depth 2, not 1: the kit's own suite asserts against its real history
           # (`mirror().isAncestor` in tests/config/upgrade-lib.test.ts resolves HEAD~1), and the
-          # kit's gate.yml hands it `fetch-depth: 0`. A depth-1 clone leaves HEAD~1 unresolvable,
+          # kit's own CI hands it `fetch-depth: 0`. A depth-1 clone leaves HEAD~1 unresolvable,
           # so `pnpm test` below failed for EVERY plugin, at every kit version, with an error that
           # names neither the clone nor the plugin. Two commits is all that assertion needs.
           git clone --depth 2 --branch "${{ matrix.kit }}" --quiet "$url" kit
@@ -311,15 +299,13 @@ jobs:
       - run: pnpm install --frozen-lockfile
         working-directory: kit
 
-      - name: Raise the test database connection limit
-        run: |
-          cid=$(docker ps --filter "ancestor=pgvector/pgvector:pg17" --format '{{.ID}}' | head -1)
-          docker exec "$cid" psql -U test -d rocketflare_test -c "ALTER SYSTEM SET max_connections = 300;"
-          docker restart "$cid"
-          for _ in $(seq 1 30); do
-            docker exec "$cid" pg_isready -U test -d rocketflare_test >/dev/null 2>&1 && break
-            sleep 2
-          done
+      # The test database from the CLONED kit's own compose file — every kit a plugin can name as
+      # its floor ships one (with `max_connections=300`) — so there is no `services:` block to keep
+      # in step with it and no restart hack. The neon profile is started too: a kit with
+      # `pnpm gate` runs its driver conformance pass through the proxy; an older one ignores it.
+      - name: Start the test database
+        working-directory: kit
+        run: docker compose -f apps/web/docker-compose.test.yml --profile neon up -d --wait
 
       # The host — never the plugin — numbers the DDL in its own journal (§16), which is why this is
       # `plugin add` then `db:generate` rather than anything the plugin ships. Installing from a
@@ -376,13 +362,32 @@ jobs:
           DATABASE_URL: postgresql://test:test@localhost:5433/rocketflare_test
         run: pnpm db:migrate:ci
 
-      # The kit's own gate, unchanged — including the plugin's tests, which vitest discovers under
+      # The kit's own gate — including the plugin's tests, which vitest discovers under
       # `src/plugins/*/tests/{api,ui,config}` once the plugin is installed.
-      - run: pnpm lint
+      #
+      # **A capability probe, per kit.** The ceiling is the newest kit, which has `pnpm gate`; the
+      # floor is whatever `minKit` names, which may predate it. So: a root `gate` script means the
+      # gate; otherwise the four commands the kit's gate was before it. Delete the fallback once no
+      # supported plugin declares a `minKit` below the kit release that shipped `pnpm gate`;
+      # `tests/kit-only/plugin-ci.test.ts` pins both branches until then.
+      - name: The kit's gate
         working-directory: kit
-      - run: pnpm typecheck
+        run: |
+          set -euo pipefail
+          if node -e "process.exit(require('./package.json').scripts?.gate ? 0 : 1)"; then
+            pnpm gate
+          else
+            echo "kit ${{ matrix.kit }} predates pnpm gate — running its four commands"
+            pnpm lint
+            pnpm typecheck
+            pnpm test
+            pnpm build
+          fi
+
+      # The plugin's contract with the host — imports only through the declared entries, its
+      # namespace, no table another plugin declares — which neither the compiler nor the tests can
+      # see. `plugin add --apply` already ran it on a kit that has `pnpm gate`; this is the one
+      # place it runs on an older floor, and it is cheap.
+      - name: pnpm plugin check
         working-directory: kit
-      - run: pnpm test
-        working-directory: kit
-      - run: pnpm build
-        working-directory: kit
+        run: node scripts/plugin.mjs check

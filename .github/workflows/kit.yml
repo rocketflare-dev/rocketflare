@@ -1,0 +1,180 @@
+name: Kit
+
+# The KIT's own checks — true of this repository and of nothing made from it, so the file is
+# `kitOnly` (.rocketflare.json): the rename deletes it and `pnpm kit:upgrade` never ports it. A
+# copy's CI is ci.yml's one job; this file proves what only the kit can prove about itself:
+#
+#   kit-checks  the published plugin API is current, the vendored plugin audits clean, a behaviour
+#               change carries its porting note, `defaultPlugins` is well formed — no database;
+#   renamed     the gate on the checkout renamed to a HYPHENATED slug, as every copy is born;
+#   plugins     the gate with every `defaultPlugins` entry installed, and the WHOLE suite under
+#               `neon` — the backstop for the driver seam, which a copy's gate proves through the
+#               conformance pass alone (apps/web/src/db/CLAUDE.md).
+#
+# A required pull-request check through branch protection, never a deploy precondition: the kit
+# does not deploy (deploy.yml's guard says so and skips), and a deploy of a copy must not wait on a
+# plugin installed from another repository.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: kit-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  kit-checks:
+    name: Kit checks
+    runs-on: ubuntu-latest
+    outputs:
+      count: ${{ steps.plugins.outputs.count }}
+      ids: ${{ steps.plugins.outputs.ids }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # the porting-note check diffs against the base
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      # plugin-api-doc.mjs parses the declared entries with the TypeScript compiler.
+      - run: pnpm install --frozen-lockfile
+
+      # A behaviour change with no porting note is invisible to every copy already out there:
+      # `pnpm kit:upgrade` replays a translated diff guided by those notes, so the gap is permanent.
+      - name: A behaviour change carries its porting note
+        env:
+          # A PR diffs against the branch it targets (so a branch of several commits may carry its
+          # note in any one of them), a push to main against the commit before it. The script
+          # skips rather than fails when a range will not resolve.
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before || 'HEAD~1' }}
+        run: node scripts/release-check.mjs --unreleased --base "$BASE"
+
+      # `docs/plugin-api.md` is generated from the source of the declared entries (D31), and it is
+      # the kit's PUBLISHED plugin API: the committed document is the previous snapshot, so a
+      # member that changed or went away fails HERE, naming the member. It protects plugins in
+      # OTHER repositories — "it compiles and the tests pass" only speaks for the ones installed
+      # here — which is why it is the kit's check and not a copy's.
+      - name: docs/plugin-api.md is up to date
+        run: |
+          node scripts/plugin-api-doc.mjs
+          git diff --exit-code -- docs/plugin-api.md
+
+      # The same audit `plugin add|upgrade --apply` ends with, over the vendored reference plugin.
+      - name: pnpm plugin check
+        run: node scripts/plugin.mjs check
+
+      # What does a fresh clone install? `defaultPlugins` is a list of OBJECTS — `{ id, repo, ref?,
+      # subdir? }` — read and validated by ONE reader, which refuses a malformed entry with the
+      # reason. It always says what it found, including "none".
+      - id: plugins
+        name: Default plugins
+        run: node scripts/default-plugins.mjs --github-output
+
+  # Every app starts as a copy renamed by `scripts/rename.mjs`, and a hyphenated slug is where the
+  # rename bites: the bare kit name becomes `my-app` while its snake form becomes `my_app`, so a
+  # value built from the wrong one only fails in a copy (0.15.1's API-key prefix did). It also
+  # proves the copy carries none of the kit's OWN files (`kitOnly`: tests/kit-only/ and the kit's
+  # workflows), with the root version set to an APP release, as every copy's is once it ships.
+  renamed:
+    name: Gate on a renamed copy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Rename the checkout to my-app
+        run: |
+          set -euo pipefail
+          node scripts/rename.mjs my-app --domain example.com --force --skip-install
+          # The rename's own install is frozen on a runner and the workspace names just changed.
+          pnpm install --no-frozen-lockfile
+          node scripts/plugin-api-doc.mjs
+          pnpm lint:fix
+          for path in apps/web/tests/kit-only .github/workflows/kit.yml \
+                      .github/workflows/plugin-ci.yml .github/workflows/notify-plugins.yml; do
+            if [ -e "$path" ]; then
+              echo "::error::the renamed copy still carries $path (kitOnly)"
+              exit 1
+            fi
+          done
+          if grep -n -- '--project kit-only' package.json apps/web/package.json; then
+            echo "::error::the renamed copy still wires the kit-only vitest project"
+            exit 1
+          fi
+          npm pkg set version=1.2.3
+          # Committed, as a copy's gate runs on a committed tree: the kit's scanners read
+          # `git ls-files`.
+          git add -A
+          git -c user.name=ci -c user.email=ci@example.com -c commit.gpgsign=false \
+            commit --quiet --no-verify -m "Rename to my-app"
+      # The renamed compose file names the renamed database (`my_app_test`); `pnpm test` starts it.
+      - run: pnpm gate
+
+  plugins:
+    name: Gate with default plugins, the whole suite under neon
+    needs: kit-checks
+    if: needs.kit-checks.outputs.count != '0'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # `pnpm plugin add` never copies a migration — the HOST numbers the DDL in its own journal
+      # (§16) — so `db:generate` after each install and one `db:migrate:ci` at the end is the whole
+      # of it, exactly what a person does locally. Each `plugin add --apply` ends with
+      # `pnpm plugin check` over the tree it wrote.
+      - name: Install the default plugins
+        run: |
+          set -euo pipefail
+          # db:generate runs `dotenv -e .dev.vars`, so the file has to exist here as it does on a
+          # laptop. Git-ignored, and it holds nothing secret: a throwaway local database URL.
+          printf 'DATABASE_URL=postgresql://test:test@localhost:5433/rocketflare_test\n' > apps/web/.dev.vars
+          node scripts/default-plugins.mjs --tsv > "$RUNNER_TEMP/default-plugins.tsv"
+          while IFS=$'\t' read -r id repo ref subdir; do
+            [ -n "$id" ] || continue
+            spec="$repo"
+            if [ -n "$ref" ]; then spec="$repo@$ref"; fi
+            echo "::group::plugin add $spec"
+            # `--allow-dirty` because the PREVIOUS plugin's `db:generate` left migration files in
+            # the tree; the checkout itself is pristine.
+            if [ -n "$subdir" ]; then
+              pnpm plugin add "$spec" --subdir "$subdir" --apply --allow-dirty
+            else
+              pnpm plugin add "$spec" --apply --allow-dirty
+            fi
+            version=$(node --input-type=module -e "
+              import { readManifest } from './scripts/lib/manifest.mjs'
+              const { manifest } = readManifest()
+              const s = (manifest?.surfaces ?? []).find(s => s.id === '$id')
+              process.stdout.write(s?.source?.version ?? 'unpinned')
+            ")
+            pnpm db:generate --name "plugin-$id-$version"
+            echo "::endgroup::"
+          done < "$RUNNER_TEMP/default-plugins.tsv"
+          # Staged, as an adopter commits an install: the source scanners read `git ls-files`.
+          git add -A
+      - name: Apply the generated migrations
+        env:
+          DATABASE_URL: postgresql://test:test@localhost:5433/rocketflare_test
+        run: |
+          docker compose -f apps/web/docker-compose.test.yml --profile neon up -d --wait
+          pnpm db:migrate:ci
+      # The suite under `neon` through the proxy, the conformance pass under `postgres`.
+      - run: pnpm gate
+        env:
+          GATE_SUITE_DRIVER: neon

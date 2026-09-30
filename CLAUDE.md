@@ -47,9 +47,10 @@ Cloudflare Worker (`apps/web`), a CLI (`apps/cli`), private zod contracts
 - **UI**: React 18 + Vite, DaisyUI 5 / Tailwind v4, React Router 6, TanStack Query 5; served as `ASSETS`
 - **CLI**: commander + chalk + open; `tsx` in dev, `tsc` → `dist/cli.js` (bin `rocketflare`)
 - **Tests**: vitest projects `api` · `api-isolated` · `driver` · `ui` · `config` · `kit-only` (the kit's own
-  tests, `apps/web/tests/kit-only/`, deleted by the rename — never in a copy) (Postgres :5433; `postgres`
-  in the gate, `pnpm test:neon` / CI `test-neon` through the local Neon proxy); cli; the
-  eval kit's unit tests (`apps/evals/tests`). Evals themselves are `pnpm eval`, outside the gate
+  tests, `apps/web/tests/kit-only/`, deleted by the rename — never in a copy) (Postgres :5433; the
+  suite under `postgres`, then `driver` — the seam's conformance suite — under `neon` through the
+  local proxy); cli; the eval kit's unit tests (`apps/evals/tests`). Evals themselves are
+  `pnpm eval`, outside the gate
 - **Lint**: Biome 2 at the root (single quotes, `asNeeded` semicolons, 100 cols)
 
 ## Commands (from the workspace root)
@@ -60,9 +61,10 @@ pnpm dev:db:up && pnpm db:migrate  # Postgres on the first free port from :5432 
 pnpm seed [--demo] && pnpm dev  # tenant/users/key (+ populated workspace); wrangler :3001 + vite :3000 (strict ports)
 pnpm dev:stop · pnpm dev:status · pnpm dev:db:status  # kill this repo's dev tree / port holders / every dev database
 pnpm cli login --server http://localhost:3001  # browser → ~/.rocketflare/config.json, then whoami
-pnpm test:db:up && pnpm test  # every package; web loads .env.test (postgres driver)
-pnpm test:neon · pnpm dev:db:up --neon|--postgres  # D35: the suite / local dev on the neon driver via the proxy
-pnpm test:ephemeral  # a sandbox gate: no Docker, a Neon gate branch (TEST_DATABASE_BRANCH/_ENDPOINT, CONCEPTS §4)
+pnpm gate [step…] · pnpm gate --list [--json]  # THE gate: lint → typecheck → test → build (CI's one job, Launch's ship gate)
+pnpm test  # every package; starts the test DB + Neon proxy; suite under postgres, then driver under neon
+TEST_DATABASE_BRANCH=gate-… pnpm test  # a sandbox gate: no Docker, the whole suite on a Neon gate branch (CONCEPTS §4)
+pnpm dev:db:up --neon|--postgres  # D35: local dev on either driver
 pnpm eval [suite] [--model x] [--compare] · pnpm eval:baseline · pnpm eval:view  # real-model evals (D33, docs/EVALS.md)
 pnpm lint · pnpm typecheck · pnpm build  # workspace-wide
 pnpm web <script>  # any apps/web script (test:api, db:check…)
@@ -141,7 +143,12 @@ code-quality.md · cloudflare.md. Runbooks: `docs/DEPLOY.md` · `docs/RLS.md`
 
 ## Non-Negotiables
 
-- **Gate**: `pnpm lint && pnpm typecheck && pnpm test && pnpm build` pass before every commit
+- **Gate**: `pnpm gate` (lint → typecheck → test → build) passes before every commit — the same
+  command a copy's CI job and Launch's ship gate run
+- **Driver seam**: app code is driver-agnostic; `apps/web/src/db/client.ts` is the only place
+  `postgres` and `neon` differ, the guard in `driver-results.test.ts` bans the rest, and
+  `tests/driver/` proves it under both drivers and is never skipped per driver
+  (`apps/web/src/db/CLAUDE.md`)
 - **Tenant isolation**: every domain query filters by `tenantId` from the auth context; every tenant
   table calls `tenantIsolation()` (RLS inert; `rls-coverage.test.ts` enforces), a plugin's tables
   included — and a plugin adding a query surface of its own (the analytics plugin's cubes) owns the

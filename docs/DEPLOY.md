@@ -77,8 +77,10 @@ none of them is ever the other.
    DATABASE_URL` with the pooled URI). A `postgres` Worker ignores the secret, so this is safe first.
 2. `pnpm provision cloudflare <env> --driver neon` — `DATABASE_DRIVER = "neon"` and no
    `[[hyperdrive]]` block, in both tomls. Commit.
-3. Keep the `test-neon` CI job (§ CI/CD flow) green, deploy staging, check `/api/ready`, compare
-   p95 with the Hyperdrive baseline, then production.
+3. Run the whole suite under `neon` once — `GATE_SUITE_DRIVER=neon pnpm gate test` (every gate
+   already runs the `driver` conformance project under both drivers; this runs the rest too) —
+   then deploy staging, check `/api/ready`, compare p95 with the Hyperdrive baseline, then
+   production.
 4. **Keep the Hyperdrive configs for about a week**: `wrangler rollback` to a `postgres` version
    restores its `HYPERDRIVE` binding and needs the config to still exist. Deleting them is a
    separate cleanup, never part of the switch.
@@ -280,9 +282,10 @@ A `neon` Worker holds nothing else: `loadConfig` fails at startup without `DATAB
   `current_setting('is_superuser') = 'on'` (locally) and relies on `CREATE ROLE`'s defaults on Neon.
   Its post-check still fails the run if `rocketflare_app` ends with `rolsuper` or `rolbypassrls`.
   Before 0.14.0 this step failed on Neon with `permission denied to alter role`.
-- Tests never use Neon (`safetyCheck` requires `localhost`) — the `neon` test run talks to the local
-  proxy in front of the test Postgres (`pnpm test:neon`). `PREVIEW_DATABASE_URL` is an inert hook
-  for per-PR Neon branches if previews are ever reinstated.
+- Tests never use a real Neon database except a throwaway GATE branch the caller names
+  (`TEST_DATABASE_BRANCH`, checked by `tests/helpers/db-safety.ts`); locally the `neon` runs talk to
+  the proxy in front of the test Postgres, which `pnpm test` starts itself. `PREVIEW_DATABASE_URL`
+  is an inert hook for per-PR Neon branches if previews are ever reinstated.
 
 ## CI/CD flow
 
@@ -290,27 +293,28 @@ All steps run at the repository root; the root scripts fan out with `pnpm -r` / 
 `working-directory` is set anywhere.
 
 ```
- push to main ─► ci.yml (root) ─► check      → gate.yml: pnpm install --frozen-lockfile → gitleaks
-                        │                       → porting note → pnpm lint → pnpm typecheck
-                        │                       → git diff --exit-code apps/web/worker-configuration.d.ts
-                        │                       → pnpm test (pg 5433; web + cli)
-                        │                       → pnpm build (web: vite + dry-run wrangler deploy; cli: tsc)
-                        ├─► test-neon       → pnpm web test:neon: test Postgres + the Neon proxy (compose
-                        │                     `--profile neon`), api + api-isolated + driver projects under
-                        │                     DATABASE_DRIVER=neon (D35 — the gate runs `postgres`); not on
-                        │                     the deploy path
-                        ├─► plugin-check    → node scripts/plugin.mjs check (no install, no database)
-                        │   ── kit only (`github.repository == 'rocketflare-dev/rocketflare'`) ──
-                        ├─► renamed         → gate.yml on the checkout renamed to `my-app`
-                        ├─► default-plugins → what .rocketflare.json `defaultPlugins` names (or "none")
-                        └─► plugins         → gate.yml again with `plugins: true`: pnpm plugin add each
-                                              entry at its pinned ref → pnpm db:generate → db:migrate:ci
-                                              → the same gate (D31; skipped when there are none)
-                                                                                                            │
- push tag X.Y.Z ──► deploy.yml ─► gated: does github.sha already have a SUCCESSFUL `CI` run (push or
-                                  │        pull_request; Actions API, `actions: read`)?
-                                  ├─ yes → ci skipped: the commit was gated once already
-                                  └─ no  → ci (workflow_call, same file, `deploy: true`: no test-neon)
+ pull request / push to main ─► ci.yml ─► gate (ONE job): pre-pull the test images (background)
+                                  │         → pnpm install --frozen-lockfile → gitleaks
+                                  │         → pnpm gate: lint → typecheck → test → build
+                                  │           (test: compose Postgres + Neon proxy; every package; the web
+                                  │            suite under postgres, then the `driver` project under neon)
+                                  │
+                                  └─► kit.yml (the kit only — `kitOnly`, so a copy has no such file)
+                                        ├─ kit-checks → porting note → plugin-api.md diff → plugin check
+                                        │               → defaultPlugins (no database)
+                                        ├─ renamed    → rename to `my-app`, commit → pnpm gate
+                                        └─ plugins    → plugin add each `defaultPlugins` entry at its ref
+                                                        → db:generate → db:migrate:ci
+                                                        → GATE_SUITE_DRIVER=neon pnpm gate (the whole
+                                                          suite under neon; skipped with no defaults)
+
+ push tag X.Y.Z ──► deploy.yml ─► guard: anything to deploy? (release-check.mjs --deployable)
+                                  ├─ no  → gated, ci and both deploys skipped; the step summary says why
+                                  │        (the kit itself: placeholders in the tomls — seconds, not a gate)
+                                  └─ yes → gated: does github.sha already have a SUCCESSFUL `CI` run
+                                           (push or pull_request; Actions API, `actions: read`)?
+                                           ├─ yes → ci skipped: the commit was gated once already
+                                           └─ no  → ci (workflow_call: ci.yml, the same one job)
                                   ─► staging job (environment: staging) — only after ci passed, or ci
                                      skipped because `gated` found the green run; never after a failure
                                      tag == ROOT package.json version?
@@ -325,7 +329,7 @@ All steps run at the repository root; the root scripts fan out with `pnpm -r` / 
                                      → build:ui → pnpm --filter @rocketflare/web exec wrangler deploy --var RELEASE_VERSION:X.Y.Z
 
  workflow_dispatch(environment) ──► either job from the dispatched ref (first deploy; emergencies);
-                                    staging goes through `gated` → ci exactly as a tag does
+                                    staging goes through guard → gated → ci exactly as a tag does
 ```
 
 **A commit is gated once.** A copy usually deploys a commit that was pushed to main a minute
@@ -345,11 +349,15 @@ if: |
   )
 ```
 
-**In a copy only `check`, `test-neon` and `plugin-check` run.** `renamed`, `default-plugins` and
-`plugins` prove the KIT — what a rename does to it, what a fresh clone installs — and are guarded on
-the kit's repository name, which `scripts/rename.mjs` keeps verbatim, so the guard is false in every
-copy. A copy's plugins are installed and committed, so `check` already gates them; through 0.15.2
-the second pass re-ran the whole gate and failed at `pnpm plugin add` ("already installed").
+**A copy's CI is one job, and it is the gate.** `ci.yml` adds nothing to `pnpm gate` but the
+secrets scan, so a green PR means exactly what a green `pnpm gate` on a laptop means, and what
+Launch's ship gate runs in a sandbox (`tests/config/ci-workflows.test.ts` holds the file to that:
+no second test job, no `services:` database beside the compose file, no `--skip`). A copy's
+plugins are installed and committed, so the one gate covers them. What proves the KIT — what a
+rename does to it, what a fresh clone installs, whether its published plugin API moved — is
+`kit.yml`, which is `kitOnly`: the rename deletes it and `kit:upgrade` never ports it. It is a
+required pull-request check in the kit and never a deploy precondition; the kit does not deploy,
+and `guard` ends its tag runs in seconds with a summary saying so.
 
 ### Deploying through an external deployer (off by default)
 
@@ -371,10 +379,11 @@ able to do — is **`docs/DEPLOYER.md`** (protocol v1).
 
 ### Default plugins in CI, and the template a plugin repository calls (D31, decision 5)
 
-The gate's steps live in `.github/workflows/gate.yml` and, in the kit's own repository, `ci.yml`
-calls it three times — on the checkout as it is, with every default plugin installed, and renamed to
-a hyphenated slug. A copy runs only the first (see "In a copy" above). One boolean input is the difference,
-because a second copy of those steps would prove nothing about the copy nobody ran.
+The gate's steps live in ONE place, `pnpm gate` (`scripts/lib/gate-lib.mjs`), and every workflow
+runs that command rather than restating it: a copy's `ci.yml` once, and in the kit `kit.yml` twice
+more — renamed to a hyphenated slug, and with every default plugin installed and the whole suite
+under `neon` (`GATE_SUITE_DRIVER=neon`). A second copy of the steps would prove nothing about the
+copy nobody ran.
 
 `defaultPlugins` in `.rocketflare.json` is a list of OBJECTS, and CI is its only strict reader:
 
@@ -388,9 +397,9 @@ because a second copy of those steps would prove nothing about the copy nobody r
 repository required of every plugin manifest); `ref` because CI installs a PINNED version rather
 than whatever the default branch says this morning; `subdir` when the plugin is not the root of its
 repository. A bare string parses as an id with no repo and is reported as such rather than having a
-URL guessed for it. With the list empty the `default-plugins` job still runs in the kit and says so — that is
-the answer worth seeing on a bare kit — and the expensive second gate is skipped, since with nothing
-installed it would re-run the first one verbatim.
+URL guessed for it. With the list empty `kit-checks` still reads it and says so — that is the
+answer worth seeing on a bare kit — and the `plugins` gate is skipped, since with nothing installed
+it would only re-run the renamed one's suite.
 
 **`pnpm kit:release X.Y.Z` refuses a version its default plugins are not ready for**: every entry
 must still resolve at the ref the kit pins (`git ls-remote`), and the `minKit` floor it declares
@@ -403,8 +412,12 @@ run somebody else's tests.
 The mirror image, for a plugin repository, is `.github/workflows/plugin-ci.yml`, which lives in the
 kit so that a change to how compatibility is proved reaches every plugin through one file. It reads
 the plugin's own top-level `minKit` — one bare `X.Y.Z`, a floor with no ceiling — pairs it with the
-kit's NEWEST release tag, and for each clones that kit, installs the plugin from the checkout under
-test, generates and applies the migrations the host owns, and runs the full gate. A plugin whose
+kit's NEWEST release tag, and for each clones that kit, starts the test database from THAT kit's
+own compose file (every kit a `minKit` can name ships one), installs the plugin from the checkout
+under test, generates and applies the migrations the host owns, and runs the full gate — `pnpm
+gate` where the cloned kit has it, the four commands it replaced on an older floor (a capability
+probe on the root `gate` script, pinned by `tests/kit-only/plugin-ci.test.ts`) — then
+`pnpm plugin check`. A plugin whose
 `requires.plugins` names others gets them installed FIRST — each resolved by `id` to a directory in
 the same checkout, dependencies before dependants, a missing id or a cycle failing the resolve job
 by name — and its floor is the highest `minKit` across the plugin and those requirements, because a
@@ -444,11 +457,17 @@ CEILING, the kit has moved under it — port the plugin (`pnpm plugin upgrade` i
 of the same change) and release it. `pnpm plugin check` names the symbols, because compatibility is
 the set difference between what a plugin `uses` and the kit's `## Surface ledger` (D31, §16).
 
-**`test-neon`** is how a fresh copy's DEPLOYED path is tested before it deploys: local development
-and the gate run `postgres`. It runs on every pull request and push to main, not on the deploy path
-(`ci.yml`'s `deploy` input). It is required in the kit; a copy that deploys on `postgres` everywhere
-may delete the job. Under `neon` every query is an HTTP request through a local proxy that opens a
-fresh connection, so its test timeout is 20 s rather than the gate's 5 s (`vitest.config.ts`).
+**The driver seam** is how a fresh copy's DEPLOYED path (`neon`) is tested while local
+development and the gate's suite run `postgres` (D35, `apps/web/src/db/CLAUDE.md`). App code is
+driver-agnostic by construction: `src/db/client.ts` normalises what differs (result shapes, raw
+arrays, error codes), `tests/config/driver-results.test.ts` bans what cannot be normalised (session
+state outside a transaction, `LISTEN`, a SQLSTATE read by hand), and the `driver` conformance
+project runs in every `pnpm test` under BOTH drivers — `neon` through the local proxy on :4433,
+which the runner starts. It stays in a copy that deploys on `postgres` too, so switching drivers
+later is safe. The whole suite runs under `neon` in `kit.yml`'s plugins pass, and on demand with
+`GATE_SUITE_DRIVER=neon pnpm gate test`. Time limits scale with the target by one latency factor
+(`vitest.config.ts`: 1 local postgres, 4 through the proxy, 12 on a real Neon branch); no test
+carries a budget of its own.
 
 **Bundle size.** `pnpm build` (`build:api` = `wrangler deploy --dry-run --outdir dist/api`) produces
 `dist/api/worker.js`; **`gzip -c apps/web/dist/api/worker.js | wc -c` is the size that matters, and

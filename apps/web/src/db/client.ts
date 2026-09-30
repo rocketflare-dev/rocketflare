@@ -10,8 +10,14 @@
  * A client is created per request/invocation and closed with the handle (middleware/database.ts).
  * Code outside this file sees `Database` — the base both drivers share — and reads raw `execute()`
  * results through `rows()` / `affected()`, never a driver's own shape.
+ *
+ * **This file is the driver seam** (src/db/CLAUDE.md, "The driver seam"): the ONLY place the two
+ * drivers differ. Every divergence is either normalised here — a raw result's shape (`rows()`,
+ * `affected()`), a raw array's value (`ARRAY_PARSERS`), a driver error's code (`pgErrorCode()`) —
+ * or banned outside it by `tests/config/driver-results.test.ts`, and `tests/driver/` proves the
+ * result under both drivers in every gate.
  */
-import { Pool as NeonPool, neon, neonConfig } from '@neondatabase/serverless'
+import { Pool as NeonPool, neon, neonConfig, types as neonTypes } from '@neondatabase/serverless'
 import { drizzle as drizzleNeonHttp } from 'drizzle-orm/neon-http'
 import { drizzle as drizzleNeonPool } from 'drizzle-orm/neon-serverless'
 import type { PgDatabase, PgQueryResultHKT } from 'drizzle-orm/pg-core'
@@ -107,15 +113,50 @@ export function createDatabase(url: string, options: CreateDatabaseOptions = {})
     fetch_types: false,
     onnotice: () => {},
   })
+  const db = drizzlePostgres(client, { schema }) as unknown as Database
+  // After drizzle, which installs its own transparent parsers for the date types on the same map.
+  Object.assign(client.options.parsers, ARRAY_PARSERS)
   let closed: Promise<void> | undefined
   return {
-    db: drizzlePostgres(client, { schema }) as unknown as Database,
+    db,
     close: () => {
       closed ??= client.end({ timeout: 5 }).catch(() => {})
       return closed
     },
   }
 }
+
+/**
+ * Raw Postgres arrays, parsed the way the Neon driver parses them — with Neon's OWN parsers, so the
+ * two cannot drift. postgres.js runs with `fetch_types: false` (no startup round trip per
+ * request), which skips its array-type lookup, so without this a raw `text[]` arrived as the
+ * literal `"{x,y}"` under `postgres` and as `['x','y']` under `neon`. The date and interval arrays
+ * (1115, 1182, 1185, 1187) and `numeric[]` (1231) are absent on purpose: drizzle keeps those as
+ * strings under BOTH drivers, and its column mappers expect that.
+ */
+const ARRAY_OIDS = [
+  199, // json[]
+  1000, // bool[]
+  1001, // bytea[]
+  1005, // int2[]
+  1007, // int4[]
+  1009, // text[]
+  1014, // bpchar[]
+  1015, // varchar[]
+  1016, // int8[] (strings, like a scalar bigint)
+  1021, // float4[]
+  1022, // float8[]
+  1028, // oid[]
+  1040, // macaddr[]
+  1041, // inet[]
+  1183, // time[]
+  1270, // timetz[]
+  2951, // uuid[]
+  3807, // jsonb[]
+] as const
+const ARRAY_PARSERS: Record<number, (value: string) => unknown> = Object.fromEntries(
+  ARRAY_OIDS.map(oid => [oid, neonTypes.getTypeParser(oid, 'text')])
+)
 
 export interface CreateNeonDatabaseOptions extends CreateDatabaseOptions {
   /** `NEON_LOCAL_PROXY`: route HTTP and WebSocket through a local proxy instead of Neon. */
@@ -198,6 +239,29 @@ export function affected(result: unknown): number {
   const r = (result ?? {}) as QueryResultLike
   const value = typeof r.rowCount === 'number' ? r.rowCount : r.count
   return typeof value === 'number' ? value : 0
+}
+
+// ---- Reading driver errors -----------------------------------------------------------------
+
+/**
+ * The Postgres SQLSTATE (`23505`, `40001`…) of a driver error, wherever it hangs: both drivers put
+ * `code` on their own error (postgres.js, Neon's `NeonDbError`) and drizzle wraps that, so the
+ * `cause` chain is walked. The only way code outside this file reads one (the config guard
+ * `driver-results.test.ts` enforces it).
+ */
+export function pgErrorCode(err: unknown): string | undefined {
+  let current = err
+  for (let depth = 0; current && depth < 5; depth++) {
+    const code = typeof current === 'object' ? (current as { code?: unknown }).code : undefined
+    if (typeof code === 'string' && /^[0-9A-Z]{5}$/.test(code)) return code
+    current = (current as { cause?: unknown }).cause
+  }
+  return undefined
+}
+
+/** A unique / primary-key violation (`23505`), under either driver. */
+export function isUniqueViolation(err: unknown): boolean {
+  return pgErrorCode(err) === '23505'
 }
 
 // ---- Node-side (scripts/tests) -------------------------------------------------------------

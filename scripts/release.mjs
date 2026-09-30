@@ -555,7 +555,7 @@ function main(argv) {
     '',
     'Verify:',
     `  node scripts/release-check.mjs --tag ${version}`,
-    `  pnpm lint && pnpm typecheck && pnpm test && pnpm build`,
+    `  pnpm gate`,
     '',
     `Then: git commit -am "Release ${version}" && git tag -m "Release ${version}" ${version} && git push origin main ${version}`,
     // The site mirrors the kit's notes as committed data and nothing triggers it (CONTRIBUTING.md).

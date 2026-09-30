@@ -151,7 +151,7 @@ describe('applyReplacements', () => {
    * #37: anything in the `rocketflare-dev` org is upstream — the kit, its plugin repositories, the
    * mirrored neon-proxy image, the reusable plugin CI — and a renamed app still pulls it from
    * there. Only `github.com/rocketflare-dev/rocketflare` used to be preserved, so the rest became
-   * `acme-dev/…`, an org that does not exist, and `pnpm test:neon` could not pull its image.
+   * `acme-dev/…`, an org that does not exist, and the neon test run could not pull its image.
    */
   it('never rewrites the rocketflare-dev org or its repositories, but still moves container names', () => {
     const input = [

@@ -64,6 +64,13 @@ export async function withStepDatabase<T>(
 }
 
 export class AgentRunWorkflow extends WorkflowEntrypoint<AppBindings, AgentRunParams> {
+  /**
+   * The runaway guard's round count. An instance field so the test can lower it: the behaviour
+   * under test is what happens AT the cap, and 32 rounds of real queries is latency-bound on a slow
+   * link (30 s on a real Neon branch). Nothing else sets it.
+   */
+  maxInterruptRounds: number = MAX_INTERRUPT_ROUNDS
+
   async run(event: WorkflowEvent<AgentRunParams>, step: WorkflowStep): Promise<ExecuteOutcome> {
     const params = event.payload
     const env = this.env
@@ -102,7 +109,7 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AppBindings, AgentRunPa
 
       if (outcome.status !== 'awaiting_input') break
 
-      if (round >= MAX_INTERRUPT_ROUNDS) {
+      if (round >= this.maxInterruptRounds) {
         // A correctness guard, not a capacity one: an agent that asks the same question every
         // round would otherwise grow step state without bound inside one instance. The row is
         // parked here, and `finish` reads `status: 'failed'` in this outcome as "abandoned" —
@@ -110,7 +117,7 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AppBindings, AgentRunPa
         outcome = {
           runId: params.runId,
           status: 'failed',
-          error: `The agent asked for input more than ${MAX_INTERRUPT_ROUNDS} times without finishing`,
+          error: `The agent asked for input more than ${this.maxInterruptRounds} times without finishing`,
         }
         break
       }

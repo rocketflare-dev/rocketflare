@@ -416,6 +416,16 @@ function main(argv) {
     if (process.env.GITHUB_OUTPUT) {
       appendFileSync(process.env.GITHUB_OUTPUT, `deployable=${ok}\n`)
     }
+    // And the run page's summary, which is what a person opening a green-but-empty run reads: the
+    // gate is skipped too when there is nothing to deploy, so this line is the whole run.
+    if (process.env.GITHUB_STEP_SUMMARY) {
+      appendFileSync(
+        process.env.GITHUB_STEP_SUMMARY,
+        ok
+          ? `Deploying: ${reason}.\n`
+          : `**Nothing to deploy** — ${reason}. The gate was not run.\n`
+      )
+    }
     out(ok ? `deployable=true — ${reason}` : `::notice::Deploy skipped: ${reason}.`)
     if (!ok) out('deployable=false')
     return 0

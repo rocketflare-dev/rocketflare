@@ -1,9 +1,10 @@
 # Test Postgres on 5433. `max_connections=300` because vitest runs several forks, each with
 # its own pools; at the 100 default the suite flaked ~1 in 8 with "53300 too many clients".
-# Keep in step with the Postgres service in .github/workflows/ci.yml.
+# The ONE definition of the test database: `pnpm test` starts it (with `--profile neon --wait`), and
+# CI, plugin CI and the evals workflow all start it from here rather than a `services:` block.
 #
-# `neon-proxy-test` (profile `neon`, off by default) is the Neon HTTP/WebSocket proxy the `neon`
-# driver talks to (D35): `pnpm test:neon` and CI's `test-neon` job start it; the gate never does.
+# `neon-proxy-test` (profile `neon`) is the Neon HTTP/WebSocket proxy the `neon` driver talks to
+# (D35): `pnpm test` starts it for the driver conformance pass; `pnpm test:db:up` alone does not.
 # Our build on a mirror of a community image packaging Neon's open-source proxy, PINNED BY DIGEST (rules/database.md). It
 # creates a `neon_control_plane` schema in the database it fronts; nothing in the kit reads it.
 #

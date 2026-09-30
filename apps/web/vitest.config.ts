@@ -20,14 +20,25 @@ const alias = {
 }
 
 /**
- * `pnpm test:ephemeral` (TEST_DATABASE_EPHEMERAL=1): the suite in a coding sandbox against a
- * throwaway Neon gate branch over the network (tests/helpers/db-safety.ts). Fewer forks, because
- * the local sizing below assumes the compose Postgres's max_connections=300 and a small Neon
- * compute allows ~100; longer limits, because every query is a real network round trip (and the
- * branch's compute may cold-start) — latency no local run has, so the local limits stay the
- * tripwire for a test that is genuinely slow. `TEST_MAX_WORKERS` tunes the fork count.
+ * A remote target (`pnpm test` with `TEST_DATABASE_BRANCH` set, which sets
+ * TEST_DATABASE_EPHEMERAL=1): the suite in a coding sandbox against a throwaway Neon gate branch
+ * over the network (tests/helpers/db-safety.ts). Fewer forks, because the local sizing below
+ * assumes the compose Postgres's max_connections=300 and a small Neon compute allows ~100.
+ * `TEST_MAX_WORKERS` tunes the fork count.
  */
 const EPHEMERAL = process.env.TEST_DATABASE_EPHEMERAL === '1'
+
+/**
+ * How much slower a query is on this target than on the local Postgres, and so how much every
+ * time limit scales: 1 locally under `postgres`, 4 under `neon` through the local proxy (an HTTP
+ * request and a fresh backend per query, 2-3x worse again on a 2-vCPU runner), 12 on a real Neon
+ * branch (real network round trips, and a compute that may cold-start). ONE factor for the test,
+ * hook and teardown limits, so no test carries a budget of its own: a test that is slow only on a
+ * slow link is walking to a limit query by query, and it lowers that limit (the duration cap in
+ * `agent-run-stream.test.ts`, the round cap in `agent-run-workflow.test.ts`) instead. The local
+ * `postgres` run keeps vitest's 5 s, so it is still the tripwire for a test that is genuinely slow.
+ */
+const LATENCY_FACTOR = EPHEMERAL ? 12 : process.env.DATABASE_DRIVER === 'neon' ? 4 : 1
 
 // Forks are capped because each holds its own Postgres connections (test DB runs
 // max_connections=300). Floor 3 = what a 2-vCPU CI runner gets; ceiling 6 is where Postgres
@@ -91,16 +102,9 @@ export default defineConfig({
         minForks: MAX_WORKERS,
       },
     },
-    teardownTimeout: EPHEMERAL ? 30_000 : 5000,
-    ...(EPHEMERAL ? { hookTimeout: 120_000 } : {}),
-    // The neon run (`pnpm test:neon`, CI's `test-neon`) sends every query as an HTTP request to
-    // a local proxy that opens a fresh Postgres connection for each (~75 ms on a laptop, 2-3x on
-    // a 2-vCPU runner), so a test does several times its `postgres` wall time. A test making a
-    // dozen sign-ins in a row (rate-limit's no-op case) or a plugin's cron task that walks every
-    // tenant in the shared test database is latency-bound there and nowhere else, and in a copy
-    // with plugins installed it crossed the 5 s default. The `postgres` gate keeps the default,
-    // so it is still the tripwire for a test that is genuinely slow.
-    testTimeout: EPHEMERAL ? 60_000 : process.env.DATABASE_DRIVER === 'neon' ? 20_000 : 5_000,
+    testTimeout: 5_000 * LATENCY_FACTOR,
+    hookTimeout: 10_000 * LATENCY_FACTOR,
+    teardownTimeout: 5_000 * LATENCY_FACTOR,
     coverage: {
       provider: 'v8',
       reporter: ['text', 'html', 'json-summary', 'lcov'],
@@ -142,9 +146,8 @@ export default defineConfig({
         resolve: { alias },
       },
       {
-        // D35: the code that differs between the two database drivers, against a real database
-        // under whichever driver the environment selects — `postgres` in the gate, `neon` in
-        // `pnpm test:neon` / CI's `test-neon` job.
+        // D35: the driver seam's conformance suite, against a real database under whichever
+        // driver the environment selects — `pnpm test` runs it under both (tests/driver/CLAUDE.md).
         extends: true,
         test: {
           name: 'driver',

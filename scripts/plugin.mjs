@@ -136,7 +136,10 @@ const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..
 // repositories to read their manifests — one clone, not two that take turns being stale.
 const WORK_DIR = PLUGIN_MIRROR_ROOT
 
+/** Set while a nested audit runs under `--json`, so stdout stays ONE document. */
+let muted = false
 const out = (...lines) => {
+  if (muted) return
   for (const l of lines) process.stdout.write(`${l}\n`)
 }
 const warn = (...lines) => {
@@ -165,7 +168,8 @@ export const USAGE = `usage: node scripts/plugin.mjs <command> [options]
     --archive             first write a --custom migration copying its tables into schema 'archive'
 
   list                    the installed plugins, one line each
-  check                   audit every installed plugin; one line per failure, exit 1 on any
+  check                   audit every installed plugin; one line per failure, exit 1 on any.
+                          add --apply and upgrade --apply run it last, over the tree they wrote
 
   export <id> <dir>       copy a plugin back out into a plugin repository checkout (authoring)
 
@@ -177,7 +181,8 @@ export const USAGE = `usage: node scripts/plugin.mjs <command> [options]
   -h, --help
 
 Exit 0 ok · 1 error · 2 usage · 3 unreachable with no cached mirror · 4 applied with rejects ·
-5 no ${PLUGIN_MANIFEST_FILE} at the source · 6 a requirement is unmet · 7 the target path exists.`
+5 no ${PLUGIN_MANIFEST_FILE} at the source · 6 a requirement is unmet · 7 the target path exists ·
+8 applied, but the tree fails \`plugin check\`.`
 
 export function parseArgs(argv) {
   const args = {
@@ -712,7 +717,35 @@ function cmdAdd(args, host) {
     'Now work the steps above — the schema migration first; nothing else can run until the tables',
     'exist. Each AGENT step names the assertion that proves it; each HUMAN step is a decision.'
   )
-  return 0
+  return auditAfterApply(args)
+}
+
+/**
+ * `plugin check` over the tree an `--apply` just wrote — the last step of `add` and `upgrade`.
+ *
+ * The audit's findings (imports past the declared entries, namespacing, a table two plugins
+ * declare) are invisible to the compiler and to the tests: an undeclared import compiles, and only
+ * breaks at the NEXT upgrade. So they are checked where they can still be acted on — the moment
+ * the plugin lands — rather than in every commit's gate. The files stay written either way: a
+ * failure names the file, the line and the edit, and `pnpm plugin remove` undoes the install.
+ */
+function auditAfterApply(args) {
+  out('', '— pnpm plugin check —')
+  muted = Boolean(args.json)
+  let code
+  try {
+    code = cmdCheck({ ...args, json: false }, loadHost())
+  } finally {
+    muted = false
+  }
+  if (code === 0) return 0
+  warn(
+    '',
+    'error: written, but the tree fails `pnpm plugin check`' +
+      (args.json ? ' — run it for the findings.' : ' (above).') +
+      ' Fix what it names, or `pnpm plugin remove` the plugin.'
+  )
+  return 8
 }
 
 /**
@@ -1148,8 +1181,13 @@ function cmdUpgrade(args, host) {
       ...migrations.map(x => `    ${x}`)
     )
   }
-  out('', 'Verify: pnpm lint && pnpm typecheck && pnpm test && pnpm build')
-  return rejected > 0 ? 4 : 0
+  if (rejected > 0) {
+    out('', 'Verify, once the rejects are resolved: pnpm plugin check && pnpm gate')
+    return 4
+  }
+  const audit = auditAfterApply(args)
+  if (audit === 0) out('', 'Verify: pnpm gate')
+  return audit
 }
 
 // ---------------------------------------------------------------- remove

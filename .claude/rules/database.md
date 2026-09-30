@@ -150,15 +150,27 @@ predicate**, not SQL injection — the app role can `set_config` itself.
 - No `LISTEN/NOTIFY`, advisory locks or `PREPARE` on the request path — neither Hyperdrive nor
   Neon's pooler supports them. Realtime goes through the DO hub; locks go through `RATE_LIMIT_KV`
   `operationLock`
+- **The driver seam** (`apps/web/src/db/CLAUDE.md`): app code is driver-agnostic, `db/client.ts`
+  is the only place `postgres` and `neon` differ, `tests/config/driver-results.test.ts` bans the
+  rest, and `tests/driver/` proves it under both drivers in every `pnpm test`. A test that fails
+  under one driver is a seam bug — fix `client.ts` or the guard, never skip the test
 - **Raw results go through `rows()` / `affected()`** (`@/db/client`, and `@/plugins/api` for a
   plugin). `db.execute(sql\`…\`)` is typed `unknown`: postgres.js returns the rows array (with
   `.count`), Neon `{ rows, rowCount }`. `rows<T>(await db.execute(…))` for the rows,
   `affected(await db.delete(…).where(…))` for an unreturned write's count. Never cast, index or read
-  `.rows`/`.count` off a raw result — `tests/config/driver-results.test.ts` fails it
-- **Raw arrays are not portable**: postgres.js (`fetch_types: false`) returns a `text[]` column from
-  raw SQL as the literal `"{a,b}"`, Neon as an array. Raw SQL returning a list uses `json_agg` /
-  `to_jsonb` (`services/traces.ts`). Raw timestamps are a `Date` under postgres.js and a string
-  under neon-http — wrap them (`asDate` in `sessions.ts` / `traces.ts`). The query builder maps both
+  `.rows`/`.count` off a raw result — the guard fails it
+- **Raw values read the same under both drivers**: a raw array parses to an array (`client.ts`
+  applies Neon's own array parsers to postgres.js), bigint and numeric are strings, and a raw
+  timestamp / date / interval is Postgres's TEXT under both (drizzle keeps them unparsed for its
+  column mappers) — parse it where you read it (`asDate` in `sessions.ts` / `traces.ts`). The
+  query builder returns `Date`s under both
+- **Driver errors through `pgErrorCode()` / `isUniqueViolation()`** (`@/db/client`): never
+  `err.code === '23505'` — drizzle wraps each driver's error differently. The guard fails it
+- **Session state only inside a transaction**: neon-http runs each query on a fresh connection, so
+  a statement `SET`, `set_config(…, false)`, `pg_advisory_lock` or `CREATE TEMP TABLE` outside
+  `db.transaction(…)` / `withTenantScope(…)` works locally and is gone by the next query deployed.
+  Use the transaction-scoped form (`SET LOCAL`, `set_config(…, true)`, `pg_advisory_xact_lock`).
+  The guard fails it
 - Scripts (`apps/web/scripts/lib/sql.ts` `openScriptSql`) and test fixtures (`getScriptDatabase(url,
   process.env)`) read `DATABASE_DRIVER` from the ENVIRONMENT only (`.dev.vars` via dotenv, never the
   toml); under `neon` they use the WebSocket pool for everything (`poolOnly`) — one held connection
@@ -188,10 +200,10 @@ DDL never hits a pooled backend.
 Never hand-edit an applied migration or `apps/web/migrations/meta/`. Custom SQL (an extension, a fact table)
 is a generated file edited before it is applied, journal intact.
 
-Tests migrate a throwaway database on 5433 from `apps/web/tests/setup.ts` — never Neon (under
-`pnpm test:neon` through the local proxy on :4433, still that database). The one exception is
-`pnpm test:ephemeral`: a throwaway Neon GATE branch a sandbox orchestrator names and binds to the
-URL (`docs/CONCEPTS.md` §4, "Ephemeral test database").
+Tests migrate a throwaway database on 5433 from `apps/web/tests/setup.ts` — never Neon (the
+conformance pass under `neon` goes through the local proxy on :4433, still that database). The
+one exception is `pnpm test` with `TEST_DATABASE_BRANCH` set: a throwaway Neon GATE branch a
+sandbox orchestrator names and binds to the URL (`docs/CONCEPTS.md` §4, "Ephemeral test database").
 
 ## Plugins (D31) — a plugin's tables
 

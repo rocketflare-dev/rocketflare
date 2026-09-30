@@ -1001,7 +1001,7 @@ const mkStep = (kind, id, title, command, expected, assertion) => ({
   assert: assertion,
 })
 
-const GATE = 'pnpm lint && pnpm typecheck && pnpm test && pnpm build'
+const GATE = 'pnpm gate'
 
 /** The platform declarations one `pnpm provision cloudflare <env>` run will write, as phrases. */
 function platformSummary(m) {
@@ -1105,14 +1105,7 @@ export function planSteps(m, { fragments = [], clashes = [] } = {}) {
     )
   }
   steps.push(
-    mkStep(
-      'agent',
-      'gate',
-      'Run the gate',
-      GATE,
-      'all four commands exit 0',
-      'the exit code of the last command is 0'
-    )
+    mkStep('agent', 'gate', 'Run the gate', GATE, 'every step passes', 'the exit code is 0')
   )
   return steps
 }
@@ -1197,7 +1190,7 @@ export function removeSteps(m, { archive = false, migrationTag = null } = {}) {
     )
   }
   steps.push(
-    mkStep('agent', 'gate', 'Run the gate', GATE, 'all four commands exit 0', 'the exit code is 0')
+    mkStep('agent', 'gate', 'Run the gate', GATE, 'every step passes', 'the exit code is 0')
   )
   return steps
 }

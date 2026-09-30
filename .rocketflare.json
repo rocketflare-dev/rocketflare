@@ -209,8 +209,13 @@
     "apps/web/src/ui/public/**",
     ".rocketflare.json"
   ],
-  "$kitOnly": "The kit's OWN tests: true of the kit repository and of nothing made from it — its release notes and version chain, the release and rename machinery, the maintainer hooks, the plugin CI plugin repositories call from here, and this file's kit-state invariants (docs/CONCEPTS.md §13). `scripts/rename.mjs` deletes every file under these globs when a copy is born and unwires their vitest project (`kit-only`); `pnpm kit:upgrade` never ports one (it also honours the TARGET kit's list); and `apps/web/tests/config/kit-manifest.test.ts` fails a copy that carries one. `apps/web/tests/kit-only/**` is also the built-in floor (`KIT_ONLY_PATHS` in scripts/lib/upgrade-lib.mjs) for a copy whose manifest predates this key.",
-  "kitOnly": ["apps/web/tests/kit-only/**"],
+  "$kitOnly": "The kit's OWN tests: true of the kit repository and of nothing made from it — its release notes and version chain, the release and rename machinery, the maintainer hooks, the plugin CI plugin repositories call from here, and this file's kit-state invariants (docs/CONCEPTS.md §13) — and the kit's OWN workflows: kit.yml (the renamed-copy and default-plugins gates, the porting-note and plugin-API checks), plugin-ci.yml (what plugin repositories call) and notify-plugins.yml. `scripts/rename.mjs` deletes every file under these globs when a copy is born and unwires their vitest project (`kit-only`); `pnpm kit:upgrade` never ports one (it also honours the TARGET kit's list); and `apps/web/tests/config/kit-manifest.test.ts` fails a copy that carries one. `apps/web/tests/kit-only/**` is also the built-in floor (`KIT_ONLY_PATHS` in scripts/lib/upgrade-lib.mjs) for a copy whose manifest predates this key.",
+  "kitOnly": [
+    "apps/web/tests/kit-only/**",
+    ".github/workflows/kit.yml",
+    ".github/workflows/plugin-ci.yml",
+    ".github/workflows/notify-plugins.yml"
+  ],
   "manual": [
     "README.md",
     ".claude/settings.json",

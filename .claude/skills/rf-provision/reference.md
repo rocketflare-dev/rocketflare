@@ -98,7 +98,8 @@ first) — never through `all`:
    `DATABASE_URL`. A `postgres` Worker ignores it, so this is safe before anything else.
 2. `pnpm provision cloudflare <env> --driver neon` — `DATABASE_DRIVER = "neon"` and no
    `[[hyperdrive]]` block in both tomls. Show the diff, then the user commits it.
-3. The `test-neon` CI job must be green; then `pnpm provision deploy <env>`, check `/api/ready`,
+3. `GATE_SUITE_DRIVER=neon pnpm gate test` must be green (the whole suite under `neon` through
+   the local proxy; CI's gate already proves the driver seam); then `pnpm provision deploy <env>`, check `/api/ready`,
    and have the user compare p95 with the Hyperdrive baseline before production.
 4. **Tell the user to keep the Hyperdrive configs for about a week** — `wrangler rollback` to a
    `postgres` version needs them. Deleting them is their separate cleanup.

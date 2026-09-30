@@ -97,7 +97,7 @@ removed rather than reworded.
 | **Bindings, crons, route prefixes, non-secret `[vars]`** | agent | `pnpm provision cloudflare <env>` per environment | `plugins: <id> → <BINDING>=<app>-<id>-<name>[-staging]`, then `<toml>: plugin declarations written` for BOTH tomls | Nothing by hand. You never type a resource id into a toml and never edit one while a phase runs (`/rf-provision`) |
 | **A `vars` entry marked `secret`** — the KEY | agent | add `KEY=` to `apps/web/.dev.vars.example` | the key in that file and in NEITHER toml | One line. A secret is never a `[vars]` key — not even in staging |
 | **A `vars` entry marked `secret`** — the VALUE | **human** | `pnpm provision secrets <env>` | the key listed by `wrangler secret list` for that environment | Nothing you can derive: ask for the credential |
-| **The gate** | agent | `pnpm lint && pnpm typecheck && pnpm test && pnpm build` | exit 0 | Nothing. A failure here is the install, not the kit — read it before committing |
+| **The gate** | agent | `pnpm gate` | exit 0 | Nothing. A failure here is the install, not the kit — read it before committing |
 
 **`workerExports` is no longer a row here.** A Durable Object or Workflow class reaches
 `apps/web/src/worker.ts` through the sixth barrel, `apps/web/src/plugins/worker-exports.ts`, which

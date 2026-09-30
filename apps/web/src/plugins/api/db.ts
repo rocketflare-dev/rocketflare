@@ -16,13 +16,17 @@ import type { Tenant } from '../../db/schema'
 import type { PluginContext } from './types'
 
 /**
- * Reading a raw `db.execute(sql…)` result (D35). The kit runs on two drivers whose raw results
- * differ — postgres.js returns the rows array, Neon a `{ rows, rowCount }` object — so a plugin
- * never casts or indexes one: `rows<T>(result)` for the rows, `affected(result)` for the count of
- * an insert / update / delete without `.returning()`. The host's `driver-results` config test
- * fails on anything else. A raw Postgres ARRAY differs too: return a list as `json_agg`/`to_jsonb`.
+ * The driver seam, for a plugin (D35, `apps/web/src/db/CLAUDE.md`). The kit runs on two drivers
+ * whose raw results and errors differ — postgres.js returns the rows array, Neon a `{ rows,
+ * rowCount }` object; drizzle wraps each driver's error differently — so a plugin never casts or
+ * indexes a raw result or reads `err.code` by hand: `rows<T>(result)` for the rows,
+ * `affected(result)` for the count of an insert / update / delete without `.returning()`,
+ * `isUniqueViolation(err)` / `pgErrorCode(err)` for a Postgres SQLSTATE. Raw values (arrays,
+ * bigint, timestamps as text) already read the same under both. The host's `driver-results`
+ * config test fails on anything else — including session state (`SET`, `set_config(…, false)`,
+ * session advisory locks) outside `transaction()`.
  */
-export { affected, rows } from '../../db/client'
+export { affected, isUniqueViolation, pgErrorCode, rows } from '../../db/client'
 export type { Tenant } from '../../db/schema'
 export type { Database, DatabaseHandle } from './types'
 

@@ -470,8 +470,8 @@ function main(argv) {
     out('')
   }
   out(
-    'Verify (the gate, no database needed for the first three):',
-    '  pnpm types && pnpm lint && pnpm typecheck && pnpm test',
+    'Verify (the gate — it starts the test database itself):',
+    '  pnpm gate',
     '',
     'Then review the diff (`git diff --stat`), commit, and update docs/ADAPTING.md §1 for your app.'
   )

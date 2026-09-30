@@ -75,10 +75,11 @@ brand; (g) verifies that the rename reached the installed plugins.
 ## 5. Verify
 
 ```
-pnpm types && pnpm lint && pnpm typecheck && pnpm test
+pnpm gate
 ```
 
-`pnpm test` needs the test database: `pnpm test:db:up` first. Expect every step green, including
+`pnpm gate` runs lint, typecheck, test and build, and starts the test database itself (Docker must
+be running). Expect every step green, including
 `tests/config/wrangler-parity.test.ts` (staging suffixes) and `tests/ui/contrast.test.ts` (if the
 colour changed). A failing `typecheck` almost always means an `@<old-scope>/shared` import the
 pass could not see — `grep -rn "@rocketflare/" apps packages --include=*.ts --include=*.tsx`

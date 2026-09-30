@@ -269,12 +269,12 @@ scripts, `ROCKETFLARE_API_KEY` + `ROCKETFLARE_URL` in the environment replace th
 
 ### 1.8 Tests
 ```bash
-pnpm test:db:up       # ephemeral Postgres on :5433 (max_connections=300; apps/web/docker-compose.test.yml)
-pnpm test             # every package: web api + api-isolated + driver (real DB), ui (jsdom), config (no DB); cli
-pnpm test:neon        # optional: the Neon proxy on :4433 + api, api-isolated and driver on the neon driver (CI's test-neon)
-# pnpm test:ephemeral — no Docker: every package against a throwaway Neon GATE branch, for a coding
-# sandbox's gate (DATABASE_URL + TEST_DATABASE_BRANCH=gate-<short>-<n> + TEST_DATABASE_ENDPOINT=ep-…;
-# docs/CONCEPTS.md §4). It refuses any other remote database.
+pnpm test             # starts Postgres on :5433 + the Neon proxy on :4433 (apps/web/docker-compose.test.yml),
+                      # then every package: web api + api-isolated + driver (real DB), ui (jsdom), config (no DB);
+                      # cli — and the driver project again under the neon driver (the seam's conformance pass)
+# No Docker (a coding sandbox's gate): the same command against a throwaway Neon GATE branch —
+# DATABASE_URL + TEST_DATABASE_BRANCH=gate-<short>-<n> + TEST_DATABASE_ENDPOINT=ep-… (docs/CONCEPTS.md
+# §4) — runs the whole suite under neon. It refuses any other remote database.
 ```
 Verify: all projects green — including every installed plugin's own tests, which run in the host's
 projects (`src/plugins/*/tests/{api,ui,config}`). The analytics plugin's `cube-isolation.test.ts`
@@ -285,9 +285,11 @@ placeholder ids still in the tomls — the placeholder check only runs with `REQ
 
 ### 1.9 The gate
 ```bash
-pnpm lint && pnpm typecheck && pnpm test && pnpm build
+pnpm gate
 ```
-Verify: exits 0. This is the pre-commit gate for the whole workspace; `typecheck` regenerates
+Verify: exits 0. This is the pre-commit gate for the whole workspace — lint, typecheck, test,
+build, stopping at the first failure (`--keep-going` runs them all, `pnpm gate --list` shows them)
+— and the one job a copy's CI runs. `typecheck` regenerates
 `apps/web/worker-configuration.d.ts` (commit it if it changed) and `build` produces
 `apps/web/dist/{ui,api}` and `apps/cli/dist/cli.js`. The Worker bundle is large — drizzle-cube's
 adapter carries its MCP transport, `docs/DEPLOY.md` "Bundle size" — and `pnpm install` prints one

@@ -33,18 +33,6 @@ jobs:
     if: ${{ github.event_name == 'workflow_dispatch' || github.event.label.name == 'run-evals' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    services:
-      postgres:
-        image: pgvector/pgvector:pg17
-        env:
-          POSTGRES_USER: test
-          POSTGRES_PASSWORD: test
-          POSTGRES_DB: rocketflare_test
-        ports:
-          - 5433:5432
-        options: >-
-          --health-cmd "pg_isready -U test -d rocketflare_test"
-          --health-interval 5s --health-timeout 5s --health-retries 10
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -53,6 +41,8 @@ jobs:
           node-version-file: .nvmrc
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      # The test database from the compose file every gate uses — one definition, no `services:`.
+      - run: docker compose -f apps/web/docker-compose.test.yml up -d --wait
       - name: pnpm eval --compare
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}

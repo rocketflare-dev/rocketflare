@@ -1,34 +1,25 @@
 name: CI
 
-# The quality gate, in ONE place. It runs on every pull request and every push to main, and
-# deploy.yml calls this same file (`workflow_call`) before deploying a tag to staging, rather than
-# keeping a second copy of the job — a gate that drifts between main and deploy is worse than no
-# gate at all. The gate's STEPS live in `gate.yml`, which this file calls three times: on the
-# checkout as it is, with the `defaultPlugins` installed (D31, decision 5), and renamed to a
-# hyphenated slug as every copy of the kit is. The last two prove the KIT (what a fresh clone
-# installs, what a rename does to it) and run only in the kit's own repository; in a copy the
-# plugins are installed and committed, so the first gate already covers them.
+# The quality gate, in ONE job: the secrets scan, then `pnpm gate` — lint, typecheck, test, build,
+# the same command a person runs before committing and Launch's ship gate runs in a sandbox
+# (docs/CONCEPTS.md §4). The workflow adds no check of its own beyond gitleaks, so what passes
+# here is exactly what passes on a laptop; `tests/config/ci-workflows.test.ts` holds it to that.
 #
-# On the deploy path (`workflow_call` with `deploy: true`) only what shipping needs runs: the gate
-# and the plugin audit. `test-neon` is a PR/push check, and deploy.yml skips this file altogether
-# when the commit already has a green CI run (a push to main or a PR), so a commit is gated once.
+# `pnpm test` (the gate's `test` step) starts the test Postgres and the Neon proxy from
+# `apps/web/docker-compose.test.yml` itself, runs the suite under `postgres`, then the `driver`
+# project under `neon` — the conformance pass that proves the driver seam this app deploys on
+# (apps/web/src/db/CLAUDE.md). No `services:` block, no restart hack: the compose file is the one
+# definition of the test database.
 #
-# `pull_request` is the trigger that matters: a gate that only runs AFTER merge reports problems to
-# someone who has already moved on, and the porting-note check in gate.yml is written as a PR check
-# and can only do its job there. `push` stays on `main` alone, so a PR branch runs this once, not
-# twice.
+# deploy.yml calls this same file (`workflow_call`) before deploying a tag whose commit has no
+# green CI run yet, so a commit is gated once and the gate never drifts between main and deploy.
+# The kit's OWN checks (a renamed copy, the default plugins, the porting note) are kit.yml, which a
+# copy never carries.
 on:
   pull_request:
   push:
     branches: [main]
   workflow_call:
-    inputs:
-      deploy:
-        description: >-
-          Called from deploy.yml: run only what shipping needs. Skips `test-neon`, which already
-          ran on the pull request and the push to main. Unset on `pull_request` and `push`.
-        type: boolean
-        default: false
 
 concurrency:
   # Cancel superseded runs on a PR branch, never when called from the deploy path.
@@ -36,113 +27,35 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  check:
+  gate:
     name: Gate
-    uses: ./.github/workflows/gate.yml
-
-  # The same gate on the checkout renamed by `scripts/rename.mjs` to a HYPHENATED slug, as
-  # every app is before its first commit. The kit's own gate cannot see a rename bug: a value that
-  # should be the snake form (`my_app_`) but is built from the bare name (`my-app`) reads the same
-  # in the kit, where both are `rocketflare`. 0.15.1 shipped one (the API-key prefix), and the
-  # first app renamed from it failed its gate. Kit-only: the rename keeps `rocketflare-dev/…`
-  # references verbatim, so in a copy this condition is false and the job is skipped.
-  renamed:
-    name: Gate on a renamed copy
-    if: github.repository == 'rocketflare-dev/rocketflare'
-    uses: ./.github/workflows/gate.yml
-    with:
-      rename: my-app
-
-  # The api suite again under the `neon` driver (D35). The gate runs `postgres` — local development
-  # does — but a fresh copy DEPLOYS on `neon`, so this job is what tests that path before a deploy.
-  # It uses the compose file rather than a `services:` container so the proxy image is pinned in
-  # one place and the database gets the same `max_connections=300`. Required: a copy that deploys
-  # on `postgres` everywhere may delete it (docs/NEON-DRIVER.md §5). Not on the deploy path: it is
-  # a check on every pull request and push to main, and a deploy does not re-run it.
-  test-neon:
-    name: Tests under the neon driver
-    if: ${{ !inputs.deploy }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history for the gitleaks scan
+      # The two test images, pulled in the background while pnpm installs (~15-20 s a run). Whatever
+      # has not arrived by the time `pnpm test` runs `docker compose up`, that pulls itself.
+      - name: Pre-pull the test database images
+        run: |
+          nohup docker compose -f apps/web/docker-compose.test.yml --profile neon pull --quiet \
+            > "$RUNNER_TEMP/pull.log" 2>&1 &
+      # pnpm version comes from `packageManager` in the root package.json. Must precede setup-node
+      # so `cache: pnpm` can find the store.
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
           node-version-file: .nvmrc
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      # `test:neon` starts the test Postgres + the Neon proxy (`--profile neon`) and runs the api,
-      # api-isolated and driver projects with DATABASE_DRIVER=neon.
-      - run: pnpm web test:neon
 
-  # What does a fresh clone of this kit install? (D31, decisions 2 and 5.)
-  #
-  # `defaultPlugins` in .rocketflare.json is a list of OBJECTS: `{ id, repo, ref?, subdir? }` —
-  # `repo` because a bare id says nothing about where a plugin comes from and decision 13 made a
-  # repository required of every plugin, `ref` because CI installs a PINNED version rather than
-  # whatever the default branch says this morning.
-  #
-  # In the kit this job always runs and always says what it found, including "none" — that answer
-  # is the one worth seeing on a bare kit, and it is also where a malformed entry is caught. The
-  # expensive second gate below is conditional on it, because with no default plugins that gate
-  # would be a verbatim re-run of `check`.
-  #
-  # Kit-only, like `renamed`: proving "the kit plus its defaults" is the kit's concern (decision 5).
-  # A copy has its plugins installed and committed, so `check` already gated them, and a second
-  # gate there was the whole suite again, in sequence, on every PR, push and deploy. The signal is
-  # the repository name, the convention `renamed` set: a job-level `if` costs no runner and no
-  # checkout, and `scripts/rename.mjs` keeps `rocketflare-dev/…` literals verbatim (its
-  # `preservedPattern`), so in every copy this is false. `.rocketflare.json`'s `app` block would
-  # say the same thing, but only after a job had checked the tree out to read it.
-  default-plugins:
-    name: Default plugins
-    if: github.repository == 'rocketflare-dev/rocketflare'
-    runs-on: ubuntu-latest
-    outputs:
-      count: ${{ steps.read.outputs.count }}
-      ids: ${{ steps.read.outputs.ids }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version-file: .nvmrc
-      # One reader, in a file the kit's own rules can reach. This was a `node -e` heredoc here and
-      # another in gate.yml, and they had drifted in what they printed and what they refused —
-      # nothing lints a heredoc, nothing types it, and no test can run it.
-      - id: read
-        run: node scripts/default-plugins.mjs --github-output
+      # Repository hygiene, not an app check, so it is not a gate step: the full history, so a
+      # secret committed and then removed is still caught. The binary directly (the marketplace
+      # action needs a licence for org repos).
+      - name: gitleaks
+        run: |
+          curl -sSL "https://github.com/gitleaks/gitleaks/releases/download/v8.24.3/gitleaks_8.24.3_linux_x64.tar.gz" \
+            | tar -xz -C "$RUNNER_TEMP" gitleaks
+          "$RUNNER_TEMP/gitleaks" git --redact --exit-code 1 --verbose .
 
-  # **The local oracle and the gating oracle must be the same command.** `pnpm plugin check` is
-  # what a person and an agent both run before committing an install, and until now CI ran no part
-  # of it — so a check that passed locally and a gate that failed (or the reverse) were the shape
-  # of both recent CI failures. This runs the identical command over the checkout as it is: plain
-  # Node, no `pnpm install`, no database, seconds. It audits whatever is recorded in
-  # `.rocketflare.json` — in the kit, the vendored reference plugin.
-  #
-  # Warnings and notes never reach the exit code — they are states worth saying rather than faults
-  # (a plugin that declares no `minKit`, or one vendored inside the kit) — so this fails only on a
-  # finding that names a file, a line and an edit. There is no longer a tier a plugin opts into:
-  # compatibility is measured from what it `uses` against the kit's ledger, so every installed
-  # plugin is checked strictly.
-  plugin-check:
-    name: Plugins are well formed
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version-file: .nvmrc
-      - run: node scripts/plugin.mjs check
-
-  # The same gate again, with every default plugin installed and its migrations generated and
-  # applied. This is the kit's half of decision 5's "proof both ways": the other half is each
-  # plugin repository running `.github/workflows/plugin-ci.yml` against its own `minKit` floor and
-  # the kit's newest release. Kit-only, for the reason on `default-plugins` above; the repository
-  # check is repeated here rather than left to the skipped `needs`, so it reads on its own.
-  plugins:
-    name: Gate with default plugins
-    needs: [check, default-plugins]
-    if: github.repository == 'rocketflare-dev/rocketflare' && needs.default-plugins.outputs.count != '0'
-    uses: ./.github/workflows/gate.yml
-    with:
-      plugins: true
+      - run: pnpm gate

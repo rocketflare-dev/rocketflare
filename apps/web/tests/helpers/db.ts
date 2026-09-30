@@ -17,7 +17,7 @@ export function testDatabaseUrl(): string {
 
 /**
  * Refuses unless NODE_ENV=test and the database is local Postgres — or, only under
- * `pnpm test:ephemeral`, a throwaway Neon GATE branch the caller names and binds to the URL
+ * `pnpm test` on a gate branch, a throwaway Neon GATE branch the caller names and binds to the URL
  * (`./db-safety.ts` has the rules and why each exists).
  */
 export function safetyCheck(): void {

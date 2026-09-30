@@ -364,10 +364,10 @@ describe('the loop', () => {
     expect(rec.text).not.toContain('RUN_FINISHED')
   })
 
-  // The fake clock costs nothing, but the LOOP does: reaching the 10-minute duration cap is ~320
-  // adaptive ticks, each a real tail query, plus a real event insert every fifth one. Measured well
-  // under a second locally and 5.004 s on a CI runner — the same shape as the MAX_INTERRUPT_ROUNDS
-  // test, and budgeted the same way rather than globally, so a genuine hang elsewhere still surfaces.
+  // The fake clock costs nothing, but the LOOP does: every tick is a real tail query. Reaching the
+  // real 10-minute cap was ~320 of them — 5 s on a CI runner, 30 s on a real Neon branch — so the
+  // cap is injected at a dozen polls: the behaviour under test is what happens AT the cap, not how
+  // long it is (its relation to the idle cap is asserted below).
   it('closes with NO terminal event at the duration cap', async () => {
     const a = await actor()
     const run = await makeRun(db, a.tenant.id, a.user.id, 'running')
@@ -383,11 +383,13 @@ describe('the loop', () => {
     const outcome = await runStreamBody({ db, tenantId: a.tenant.id, run, afterSeq: 0 }, rec.sink, {
       now: clock.now,
       sleep,
+      maxMs: 12 * RUN_STREAM_POLL_MS,
     })
     expect(outcome).toBe('duration_cap')
+    expect(ticks).toBeGreaterThanOrEqual(5)
     expect(rec.text).not.toContain('RUN_ERROR')
     expect(rec.text).not.toContain('RUN_FINISHED')
-  }, 30_000)
+  })
 
   it('stops as soon as the client goes away, and says nothing about it', async () => {
     const a = await actor()

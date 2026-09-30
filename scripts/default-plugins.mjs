@@ -7,10 +7,10 @@
  *   node scripts/default-plugins.mjs --tsv            id \t repo \t ref \t subdir, one per line
  *   node scripts/default-plugins.mjs --github-output  append `count=` and `ids=` to $GITHUB_OUTPUT
  *
- * `ci.yml` and `gate.yml` carried a `node --input-type=module -e "…"` block apiece doing this, and
+ * The kit's workflows carried a `node --input-type=module -e "…"` block apiece doing this, and
  * they had already drifted in what they printed and what they refused. A shell heredoc is also the
  * one place the kit's own rules cannot reach: nothing lints it, nothing types it, and no test can
- * run it — so the validation moved into `defaultPluginEntryProblems` and both workflows call this.
+ * run it — so the validation moved into `defaultPluginEntryProblems` and kit.yml calls this.
  *
  * `readManifest()` rather than a literal filename, because the provenance file keeps the KIT's name
  * in a renamed copy while a literal here would be rewritten with everything else.

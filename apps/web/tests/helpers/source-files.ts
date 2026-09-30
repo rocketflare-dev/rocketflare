@@ -4,8 +4,8 @@
  *
  * Filtered by `existsSync`, and that is not belt-and-braces: `git ls-files` reads the INDEX, so a
  * file deleted on disk and not yet staged is still listed. `pnpm plugin remove --apply` deletes
- * three directories, and the gate you are told to run next is `lint && typecheck && test && build`
- * — before any `git add`. Without this filter every scanner here died with ENOENT on a file the
+ * three directories, and the gate you are told to run next is `pnpm gate` — before any
+ * `git add`. Without this filter every scanner here died with ENOENT on a file the
  * tool had just, correctly, removed.
  */
 import { execFileSync } from 'node:child_process'

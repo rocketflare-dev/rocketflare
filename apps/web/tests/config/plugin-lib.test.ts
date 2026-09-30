@@ -832,7 +832,7 @@ describe('the install plan', () => {
     expect(text).not.toContain('apps/web/src/worker.ts')
     expect(text).toContain('apps/web/src/plugins/worker-exports.ts')
     expect(text).toContain('paste migrations/install/0001_seed.sql')
-    expect(text).toContain('pnpm lint && pnpm typecheck && pnpm test && pnpm build')
+    expect(text).toContain('pnpm gate')
     // "by hand" is retired: every step says which KIND it is, and carries its own assertion.
     expect(text).not.toContain('by hand')
     expect(text).toContain('Human steps')

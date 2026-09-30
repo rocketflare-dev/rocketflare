@@ -8,6 +8,9 @@
 import { type ApiErrorBody, ERROR_CODES, type ErrorCode } from '@rocketflare/shared/errors'
 import { TenantScopeConflictError } from '../../../db/tenant-scope'
 
+/** A unique / primary-key violation under either driver — read at the driver seam (D35). */
+export { isUniqueViolation } from '../../../db/client'
+
 export class ApiError extends Error {
   constructor(
     public readonly statusCode: number,
@@ -210,18 +213,4 @@ export function mapInfrastructureError(error: unknown): ApiError | null {
     default:
       return null
   }
-}
-
-/**
- * A Postgres unique / primary-key violation, wherever the driver hung the code. Both drivers put
- * it on their error (postgres.js, Neon's `NeonDbError`); drizzle wraps it, so the `cause` chain is
- * walked too.
- */
-export function isUniqueViolation(err: unknown): boolean {
-  let current = err
-  for (let depth = 0; current && depth < 5; depth++) {
-    if (typeof current === 'object' && (current as { code?: string }).code === '23505') return true
-    current = (current as { cause?: unknown }).cause
-  }
-  return false
 }

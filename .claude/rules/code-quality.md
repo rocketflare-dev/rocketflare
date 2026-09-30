@@ -11,17 +11,21 @@ paths:
 ## Pre-commit gate (zero tolerance)
 
 ```bash
-pnpm lint && pnpm typecheck && pnpm test && pnpm build
+pnpm gate
 ```
 
-`typecheck` regenerates `apps/web/worker-configuration.d.ts` (`wrangler types`); commit the regenerated
-file. CI fails on a dirty diff of it — a binding or var changed without the types following.
+Lint, typecheck, test, build — the same command a copy's CI runs as its one job and Launch's ship
+gate runs in a sandbox (`pnpm gate --list` for the steps, `pnpm gate test` for one of them,
+`--keep-going` to see every failure at once). `pnpm test` inside it starts the test database
+itself and runs the driver conformance pass under both drivers (docs/CONCEPTS.md §4).
+`typecheck` regenerates `apps/web/worker-configuration.d.ts` (`wrangler types`); commit the file
+if it changed — it is not a gate check, the compile against the fresh types is.
 
 ## Style (Biome 2, `biome.json`)
 
 - Single quotes, `asNeeded` semicolons, 100 columns, 2-space indent, trailing commas `es5`
 - `import type` / `export type` are errors when violated; unused variables and imports are errors
-- `pnpm lint:fix` before manual fixes; `pnpm lint` (errors only) is what CI runs
+- `pnpm lint:fix` before manual fixes; `pnpm lint` (errors only) is the gate's `lint` step
 - `apps/*/tests/**` and `apps/*/scripts/**` may use `any`; `src/**` in any package may not without a
   `// biome-ignore` line that states why
 
@@ -56,7 +60,7 @@ Changing behaviour changes the doc in the same PR:
 | a binding, a toml key, the release flow | `docs/DEPLOY.md`, both `wrangler*.toml` comments |
 | a convention in a layer | the matching `.claude/rules/*.md` and `apps/web/src/<dir>/CLAUDE.md` / `packages/shared/CLAUDE.md` |
 | a plugin slot, the plugin contract or the reference plugin (D31) | `docs/CONCEPTS.md` §16 + the matching `.claude/rules/*.md` + `apps/web/src/plugins/CLAUDE.md` |
-| a MEMBER of a declared plugin API entry — `@/plugins/api`, `@/db/schema/kit`, `@/plugins/api/ui{,-wiring}`, `@rocketflare/shared/plugins/*`, the CLI entry, `@testkit/*` (D31) | `node scripts/plugin-api-doc.mjs` and commit `docs/plugin-api.md` — the same shape as the `worker-configuration.d.ts` step beside it. There is no version to bump: the file's `## Surface ledger` block IS the contract, and a plugin naming a symbol it no longer carries fails `pnpm plugin check` by name, with its replacement import |
+| a MEMBER of a declared plugin API entry — `@/plugins/api`, `@/db/schema/kit`, `@/plugins/api/ui{,-wiring}`, `@rocketflare/shared/plugins/*`, the CLI entry, `@testkit/*` (D31) | `node scripts/plugin-api-doc.mjs` and commit `docs/plugin-api.md` — the kit's published plugin API, whose freshness `kit.yml` checks (a copy publishes none, so its gate does not). There is no version to bump: the file's `## Surface ledger` block IS the contract, and a plugin naming a symbol it no longer carries fails `pnpm plugin check` by name, with its replacement import |
 | a CLI command, flag or exit code | `docs/CONCEPTS.md` → CLI, `.claude/rules/cli.md` |
 | a rename target | `docs/ADAPTING.md` |
 

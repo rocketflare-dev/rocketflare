@@ -1,9 +1,11 @@
 /**
- * The `driver` project (D35): the code that differs between `postgres` and `neon`, run against a
- * real database under whichever driver `.env.test` (or the environment) selects. The gate runs it
- * under `postgres`; `pnpm test:neon` and CI's `test-neon` job run it under `neon` through the local
- * proxy — so both halves run on every PR. `pnpm test:ephemeral` runs it under `neon` against a
- * REAL Neon gate branch with no proxy (a coding sandbox's ship gate).
+ * The CONFORMANCE suite for the driver seam (D35, tests/driver/CLAUDE.md): every test states one
+ * equivalence between `postgres` and `neon` and passes UNCHANGED under both. `pnpm test` runs this
+ * project twice on a local target — under `postgres`, then under `neon` through the local proxy —
+ * and once, under `neon`, on a real Neon gate branch. A test that fails under one driver is a hole
+ * in `src/db/client.ts` or the guard (`tests/config/driver-results.test.ts`): fix it THERE, never
+ * by skipping or weakening the test (`tests/config/driver-conformance.test.ts` fails a skip or a
+ * per-driver expectation).
  *
  * Everything here goes through `openDatabase`, the Worker's own path (neon-http for queries, the
  * WebSocket pool for transactions), NOT the pool-only handle scripts and fixtures get.
@@ -13,10 +15,13 @@ import { afterAll, describe, expect, it } from 'vitest'
 import { resolveSession } from '@/api/auth/sessions'
 import {
   affected,
+  DATABASE_DRIVERS,
   type DatabaseEnv,
   type DatabaseHandle,
   databaseDriver,
+  isUniqueViolation,
   openDatabase,
+  pgErrorCode,
   rows,
 } from '@/db/client'
 import { aiSpans, featureFlags } from '@/db/schema'
@@ -24,7 +29,6 @@ import { withTenantScope } from '@/db/tenant-scope'
 import { runMigrations } from '../../scripts/migrate'
 import { createTestSession, createTestTenantWithUser } from '../helpers/auth'
 import { setupTestDatabase, testDatabaseUrl } from '../helpers/db'
-import { isEphemeralTestRun, neonEndpointId } from '../helpers/db-safety'
 
 const env: DatabaseEnv = {
   DATABASE_DRIVER: process.env.DATABASE_DRIVER,
@@ -46,51 +50,77 @@ afterAll(async () => {
 
 describe(`database driver: ${driver}`, () => {
   it('runs under the driver the environment selects', () => {
-    expect(['neon', 'postgres']).toContain(driver)
-    if (driver !== 'neon') return
-    if (env.NEON_LOCAL_PROXY) {
-      expect(env.NEON_LOCAL_PROXY).toMatch(/^https?:\/\//)
-    } else {
-      // No proxy: REAL Neon, which safetyCheck() admits only as an ephemeral gate branch
-      // (`pnpm test:ephemeral`, tests/helpers/db-safety.ts) — the sandbox gate's own shape.
-      expect(isEphemeralTestRun(process.env)).toBe(true)
-      expect(neonEndpointId(env.DATABASE_URL ?? '')).toBe(process.env.TEST_DATABASE_ENDPOINT)
-    }
+    expect(DATABASE_DRIVERS).toContain(driver)
   })
 
-  it('rows() reads a raw result: types parse the same way under both drivers', async () => {
+  // One probe, read over HTTP (a plain query) and over the WebSocket pool (inside a transaction),
+  // because under `neon` those are two different clients with their own type handling.
+  const PROBE = sql`
+    SELECT 1::int AS n, 9007199254740993::bigint AS big, 1.5::numeric AS num, 1.5::float8 AS f,
+           true AS b, '{"a":1}'::jsonb AS j, to_jsonb(ARRAY['x','y']) AS json_arr,
+           ARRAY['x','y']::text[] AS text_arr, ARRAY[1,2]::int[] AS int_arr,
+           ARRAY[3]::bigint[] AS big_arr, ARRAY[true,false] AS bool_arr,
+           ARRAY['00000000-0000-4000-8000-000000000001'::uuid] AS uuid_arr,
+           ARRAY['{"a":1}'::jsonb] AS jsonb_arr,
+           '[1,2,3]'::vector AS v, '2026-01-02 03:04:05.678+00'::timestamptz AS tstz,
+           '2026-01-02 03:04:05.678'::timestamp AS ts, '2026-01-02'::date AS d,
+           ARRAY['2026-01-02 03:04:05+00'::timestamptz] AS tstz_arr, '1 day'::interval AS iv,
+           NULL AS nothing`
+  const EXPECTED = {
+    n: 1,
+    // bigint and numeric stay strings — never silently rounded through a JS number.
+    big: '9007199254740993',
+    num: '1.5',
+    f: 1.5,
+    b: true,
+    j: { a: 1 },
+    json_arr: ['x', 'y'],
+    // Raw arrays parse to arrays under both (client.ts `ARRAY_PARSERS`).
+    text_arr: ['x', 'y'],
+    int_arr: [1, 2],
+    big_arr: ['3'],
+    bool_arr: [true, false],
+    uuid_arr: ['00000000-0000-4000-8000-000000000001'],
+    jsonb_arr: [{ a: 1 }],
+    v: '[1,2,3]',
+    // Raw date/time values are Postgres's text under both (drizzle keeps them unparsed so its
+    // column mappers can): code reading one from raw SQL parses it itself.
+    tstz: '2026-01-02 03:04:05.678+00',
+    ts: '2026-01-02 03:04:05.678',
+    d: '2026-01-02',
+    tstz_arr: '{"2026-01-02 03:04:05+00"}',
+    iv: '1 day',
+    nothing: null,
+  }
+
+  it('rows() reads a raw result: every type parses the same way under both drivers', async () => {
     const { db } = open()
-    const [row] = rows<{
-      n: number
-      big: string
-      j: { a: number }
-      arr: string[]
-      raw_arr: unknown
-      v: string
-      ts: string | Date
-      nothing: null
-    }>(
-      await db.execute(sql`
-        SELECT 1::int AS n, 9007199254740993::bigint AS big, '{"a":1}'::jsonb AS j,
-               to_jsonb(ARRAY['x','y']) AS arr, ARRAY['x','y']::text[] AS raw_arr,
-               '[1,2,3]'::vector AS v, now() AS ts, NULL AS nothing`)
-    )
-    expect(row).toBeDefined()
-    expect(row?.n).toBe(1)
-    // bigint stays a string on both — never silently rounded through a JS number.
-    expect(String(row?.big)).toBe('9007199254740993')
-    expect(row?.j).toEqual({ a: 1 })
-    expect(row?.arr).toEqual(['x', 'y'])
-    // THE trap: a raw Postgres array is parsed by Neon but NOT by postgres.js (`fetch_types: false`
-    // skips the array-type lookup, so it arrives as the literal "{x,y}"). Raw SQL returning a list
-    // goes through json (`json_agg`, `to_jsonb`) — `traces.ts` does. rules/database.md says so.
-    expect(row?.raw_arr).toEqual(driver === 'neon' ? ['x', 'y'] : '{x,y}')
-    expect(row?.v).toBe('[1,2,3]')
-    // Timestamps: a Date (postgres.js) or an ISO-ish string (neon-http). Code reading a raw
-    // timestamp must accept both, which is why sessions.ts and traces.ts wrap them in `asDate`.
-    expect(Number.isNaN(new Date(row?.ts as string).getTime())).toBe(false)
-    expect(row?.nothing).toBeNull()
+    expect(rows(await db.execute(PROBE))[0]).toEqual(EXPECTED)
     expect(rows(await db.execute(sql`SELECT 1 WHERE false`))).toEqual([])
+  })
+
+  it('… and the same inside a transaction', async () => {
+    const { db } = open()
+    const inside = await db.transaction(async tx => rows(await tx.execute(PROBE))[0])
+    expect(inside).toEqual(EXPECTED)
+  })
+
+  it('a unique violation reads as one (pgErrorCode / isUniqueViolation), in and out of a transaction', async () => {
+    const { db } = open()
+    // Raised by name, so no table is touched: the SQLSTATE is the thing under test.
+    const violate = sql`DO $$ BEGIN RAISE unique_violation USING MESSAGE = 'driver probe'; END $$`
+    const failure = (run: () => Promise<unknown>) =>
+      run().then(
+        () => null,
+        (error: unknown) => error
+      )
+    const plain = await failure(() => db.execute(violate))
+    const inTx = await failure(() => db.transaction(async tx => tx.execute(violate)))
+    expect(pgErrorCode(plain)).toBe('23505')
+    expect(isUniqueViolation(plain)).toBe(true)
+    expect(pgErrorCode(inTx)).toBe('23505')
+    expect(isUniqueViolation(inTx)).toBe(true)
+    expect(isUniqueViolation(new Error('not a database error'))).toBe(false)
   })
 
   it('affected() counts an insert / delete without .returning()', async () => {

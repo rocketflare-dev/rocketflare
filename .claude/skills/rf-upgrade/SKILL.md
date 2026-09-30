@@ -117,7 +117,7 @@ hand-port anything drizzle cannot derive from schema: data backfills, `CREATE EX
 ## 5. The gate
 
 ```
-pnpm install && pnpm types && pnpm lint && pnpm typecheck && pnpm test && pnpm build
+pnpm install && pnpm gate
 ```
 
 Expect exit 0. Then commit — one commit per kit release, message `Upgrade to kit <version>`, so the

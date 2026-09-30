@@ -136,7 +136,8 @@ path); no per-PR previews.
   `DATABASE_DRIVER` picks Drizzle over the Neon serverless driver (`neon`: neon-http per query, a
   WebSocket `Pool` opened for `db.transaction`) or over `postgres.js` (`postgres`, through
   Hyperdrive — any Postgres). A missing var means `postgres`; the kit's tomls say `neon`;
-  `.dev.vars` says `postgres`, so local work and the gate never need the deployed driver.
+  `.dev.vars` and `.env.test` say `postgres`, so local work and the suite run postgres.js; the seam
+  below is what makes that a safe stand-in for the deployed driver.
   `openDatabase(env)` (`db/client.ts`) is the one resolver — URL `PREVIEW_DATABASE_URL ??
   DATABASE_URL` under `neon`, `?? HYPERDRIVE.connectionString ??` in between under `postgres` — and
   the client is built per request / consumer message / step / cron run and closed in `waitUntil` or
@@ -144,28 +145,59 @@ path); no per-PR previews.
   Why two: Hyperdrive caps an account at 25 configs (a fleet of apps cannot each have one) and
   sandboxes have no TCP out, but Hyperdrive is also how a copy reaches a Postgres that is not Neon.
   Detail and the switch: `docs/DEPLOY.md` § Database driver, `docs/NEON-DRIVER.md`.
-- **Code never sees the driver.** `Database` is drizzle's `PgDatabase` base, so a raw
-  `db.execute()` is `unknown`: its rows are read with `rows()` and an unreturned write's count with
-  `affected()`, because postgres.js returns an array with `.count` and Neon `{ rows, rowCount }`.
-  `tests/config/driver-results.test.ts` fails a cast, an index or a `.rows`/`.count` read on a raw
-  result, and a driver import, anywhere in `src/` (installed plugins included). Raw SQL returning a
-  list uses `json_agg` / `to_jsonb` — postgres.js leaves a raw array as `"{a,b}"`.
-- **Tested both ways.** The gate runs `postgres`; the `driver` vitest project (the code that
-  differs) runs there too, and CI's `test-neon` job runs it plus the whole api suite under `neon`
-  through a local Neon proxy (`pnpm test:neon`, ~30 s). Locally `pnpm dev:db:up --neon` runs the
-  deployed driver on the local database.
-- **Ephemeral test database** (`pnpm test:ephemeral`): the whole gate's tests where there is no
-  Docker and only 443 out — a coding sandbox, whose orchestrator (Launch) creates a throwaway Neon
-  branch per gate attempt and passes its owner connection string. The script sets
-  `TEST_DATABASE_EPHEMERAL=1`, `DATABASE_DRIVER=neon`, an empty `APP_DATABASE_URL` (the app role
-  stays NOLOGIN) and runs every web project. `safetyCheck()` (`tests/helpers/db-safety.ts`) still
+- **The driver seam: code never sees the driver** (`src/db/CLAUDE.md`). `db/client.ts` is the only
+  place the two differ, and every divergence is either normalised there or banned everywhere else.
+  Normalised: a raw `db.execute()` is `unknown` (`Database` is drizzle's `PgDatabase` base) and is
+  read with `rows()` / `affected()`, because postgres.js returns an array with `.count` and Neon
+  `{ rows, rowCount }`; raw arrays parse to arrays under both (Neon's own parsers installed on
+  postgres.js, `ARRAY_PARSERS`); a SQLSTATE is read with `pgErrorCode()` / `isUniqueViolation()`.
+  Raw timestamps are Postgres's text under both. Banned by `tests/config/driver-results.test.ts`
+  (an AST scan over `src/`, installed plugins included): a cast, index or `.rows`/`.count` read on
+  a raw result, a driver import, a SQLSTATE compared by hand, session state (a statement `SET`,
+  `set_config(…, false)`, a session advisory lock, a temp table) outside a transaction callback —
+  neon-http runs every other query on a fresh connection — and `LISTEN` anywhere.
+- **Proved under both drivers.** The `driver` vitest project is the conformance suite for the seam:
+  each test states one equivalence and passes unchanged under both drivers
+  (`tests/config/driver-conformance.test.ts` fails a skip or a per-driver expectation).
+  `pnpm test` runs the suite under `postgres`, then the `driver` project under `neon` through the
+  local proxy — so every gate, a copy's CI included, proves the deployed path. `kit.yml` runs the
+  whole suite under `neon` with the default plugins installed (`GATE_SUITE_DRIVER=neon`); locally
+  `GATE_SUITE_DRIVER=neon pnpm gate test` does the same, and `pnpm dev:db:up --neon` runs the
+  deployed driver on the local database. Time limits scale by one latency factor per target
+  (`vitest.config.ts`: 1 local `postgres`, 4 through the proxy, 12 on a real Neon branch); no test
+  carries a budget of its own.
+- **The gate** (`pnpm gate`, `scripts/lib/gate-lib.mjs`): lint → typecheck → test → build,
+  stopping at the first failure (`--keep-going` runs all; `pnpm gate <step…>` and `--skip` are for
+  iterating locally — no workflow passes `--skip`). It is the pre-commit gate, a copy's one CI job
+  and Launch's ship gate. `pnpm gate --list --json` is the contract a step-by-step runner reads:
+  `{ schema: 1, steps: [{ id, command, database }] }` in run order, validated by
+  `packages/shared/src/gate.ts`; `schema` rises only when an existing field changes meaning, so a
+  reader tolerates a new step or field. There is no generated-files step: `typecheck` regenerates
+  `worker-configuration.d.ts` and compiles against it (commit what changes); the
+  `docs/plugin-api.md` diff is the kit's own check (`kit.yml`), since a copy publishes no plugin
+  API; `pnpm plugin check` runs at the end of `plugin add|upgrade --apply` (exit 8 when the written
+  tree fails it) and in `plugin-ci.yml`.
+- **`pnpm test` picks its target from the environment** (`scripts/lib/test-plan.mjs`), never by
+  probing, and prints it first. **Local** (the default): it starts the compose test Postgres and
+  Neon proxy itself (`docker compose … --profile neon up -d --wait`; Docker down is a failure that
+  names both fixes, never a skip), then every package, the web suite under `postgres`, and the
+  `driver` project under `neon`. The narrow scripts (`pnpm web test:api|ui|config|driver`) are the
+  inner loop: `postgres`, no compose management.
+- **Remote target — an ephemeral test database** (`pnpm test` with `TEST_DATABASE_BRANCH` set): the
+  whole gate's tests where there is no Docker and only 443 out — a coding sandbox, whose
+  orchestrator (Launch) creates a throwaway Neon branch per gate attempt and passes its owner
+  connection string. The runner sets `TEST_DATABASE_EPHEMERAL=1`, `DATABASE_DRIVER=neon`, an empty
+  `APP_DATABASE_URL` (the app role stays NOLOGIN) and runs every web project; the postgres half of
+  the conformance pass is skipped (no TCP) and said so. `TEST_DATABASE_EPHEMERAL=1` without a
+  branch, or `GATE_SUITE_DRIVER=postgres` with one, is refused. `safetyCheck()` (`tests/helpers/db-safety.ts`) still
   refuses any non-local `DATABASE_URL` unless ALL hold: that profile, the `neon` driver, a
   `*.neon.tech` host, `TEST_DATABASE_BRANCH` matching `^gate-[a-z0-9]+-\d+$`, and
   `TEST_DATABASE_ENDPOINT` equal to the `ep-…` id in the URL. The branch name is not in a Neon
   connection string, so the name alone is only a claim; the endpoint id is, and binds the claim to
   that URL (a stale opt-in in a shell cannot bless another database). The profile runs 2 forks
   (`TEST_MAX_WORKERS` overrides; a small Neon compute allows ~100 connections, the local sizing
-  assumes 300), a 60 s test and 120 s hook limit (real round trips, a cold-starting compute), and
+  assumes 300), a 60 s test and 120 s hook limit (the factor of 12: real round trips, a
+  cold-starting compute), and
   skips `db-roles.test.ts` (postgres.js over TCP, and a superuser to make owner roles). Global setup
   is unchanged: role → migrate → grants → truncate → seed, as the connecting role. `migrate.ts`,
   `db-roles.ts` and `seed.ts` `process.exit` when done, as `db:check` does: Cloudflare's container
@@ -192,13 +224,16 @@ path); no per-PR previews.
 **Known gaps:** the RLS spike has not been run; no read replicas; the local Neon proxy is a
 community image, mirrored to `ghcr.io/rocketflare-dev` and rebuilt with our start script (pinned by digest) — Neon's official "Neon Local"
 needs a cloud account; `neon` in deployment has no read cache and pays a round trip per query
-(p95 is measured per app when it switches, not gated); `test-neon` installs no plugins, so a
-plugin's own tests run under `neon` only in a local `pnpm test:neon`; the TEST database is pinned to
+(p95 is measured per app when it switches, not gated); the seam's guard catches only the
+divergences it knows — a new kind (a driver release that parses something differently) surfaces
+in `kit.yml`'s full-neon pass or in production, not in a copy's gate, whose suite runs `postgres`;
+the proxy image is pulled by every local `pnpm test` (the narrow scripts never pull it); the TEST
+database is pinned to
 5433, so two checkouts cannot run `pnpm test` at once (each app has its own Compose project,
 `<slug>-test`, so switching checkouts no longer recreates the other's container). `--db-url` with a loopback URL (a native
 Postgres) still looks like this checkout's Docker database to preflight and `dev:db:*`, and a
-re-run of the bootstrap without the flag checks for Docker again. `pnpm test:ephemeral` is proven
-in the kit only through the local Neon proxy: against a real Neon branch, the owner role's
+re-run of the bootstrap without the flag checks for Docker again. The remote target is proven in
+the kit only through the local Neon proxy: against a real Neon branch, the owner role's
 `ALTER ROLE`s on an app role someone else created, the connection count and the time limits are
 the caller's to prove.
 
@@ -449,10 +484,12 @@ Two standalone tomls (D6) kept identical in everything code can see by `wrangler
 Account-scoped names carry `-staging`. Neon uses one project with a branch and role per
 environment; under `postgres` Hyperdrive points at the direct host, under `neon` the Worker's
 `DATABASE_URL` secret holds the pooled one (D35). Tagging `X.Y.Z` (which must equal the root
-version) deploys staging; publishing the Release deploys production. `ci.yml` (→ `gate.yml`) is the
-single gate, which `deploy.yml` calls (`deploy: true`: no `test-neon`) only when the commit has no
-successful CI run yet — a commit is gated once. Its default-plugins and renamed passes are kit-only
-(guarded on the kit's repository name, which a rename keeps), so a copy runs one gate. `pnpm provision <phase>` / `/rf-provision` automates
+version) deploys staging; publishing the Release deploys production. `ci.yml` is ONE job — the
+secrets scan, then `pnpm gate` (§4) — which `deploy.yml` calls only when there is something to
+deploy (`guard`) and the commit has no successful CI run yet: a commit is gated once, and the kit's
+own tags (nothing to deploy) finish in seconds with a summary saying why. The kit's renamed-copy
+and default-plugins gates, its porting-note and plugin-API checks live in `kit.yml`, which is
+`kitOnly` — a copy has no such file — and is a pull-request check, never a deploy precondition. `pnpm provision <phase>` / `/rf-provision` automates
 accounts → resources → secrets → deploy over REST. Reference: `docs/DEPLOY.md`, `SETUP.md` Part 3.
 
 **External deployer (opt-in).** A Cloudflare token that can deploy a Worker can bind any resource in
@@ -467,7 +504,7 @@ provisioning HTTP calls have not been run end-to-end against live accounts; no a
 Workers-plan check. The kit ships no deployer, only the client and the contract; the job waits for
 approval on a runner (fine for minutes, wasteful for hours — there is no re-dispatch). A deploy
 dispatched while the pushed commit's CI run is still in progress gates again rather than waiting
-for it, and the deploy path does not run `test-neon` (a PR/push check).
+for it.
 
 ## 11. CLI
 
@@ -508,10 +545,12 @@ cycle). Detail: `packages/shared/CLAUDE.md`.
 - **Kit-only tests** (`kitOnly`, `apps/web/tests/kit-only/**`, vitest project `kit-only`): the tests
   true of the kit repository and of nothing made from it — porting notes and the root version being
   the kit's, the release/rename machinery, the maintainer hooks, plugin CI, the manifest's kit-state
-  claims. The kit's gate runs them; `scripts/rename.mjs` deletes them and unwires the project when a
-  copy is born; `classifyPath` never ports one (the TARGET kit's list too, and `KIT_ONLY_PATHS` is the
+  claims. The kit's gate runs them (`pnpm test` names the project only while its directory
+  exists); `scripts/rename.mjs` deletes them when a copy is born, together with the kit's own
+  workflows, also `kitOnly` — `kit.yml`, `plugin-ci.yml`, `notify-plugins.yml`; `classifyPath` never ports one (the TARGET kit's list too, and `KIT_ONLY_PATHS` is the
   floor for a pre-0.15.8 manifest); `tests/config/kit-manifest.test.ts` fails a copy that carries
-  one, and CI's renamed-copy gate asserts none survive and passes at an app version (`1.2.3`).
+  one, and `kit.yml`'s renamed-copy gate asserts none survive and passes at an app version
+  (`1.2.3`).
 - **Porting notes**: one `docs/upgrades/X.Y.Z.md` per release (frontmatter + four headings), with
   `unreleased.md` accumulating. CI fails a PR touching `apps/**`/`packages/**` without an entry,
   and the tag gate refuses a release without one. `pnpm kit:release` writes everything.
@@ -637,7 +676,10 @@ as merging a PR. A plugin repo mirrors the host tree and ships **no migration, n
 - **`plugin check` is an exhaustive oracle**: manifest fields, `minKit`, ledger diff, barrel lines,
   `*.rej`, migration tag, host dependencies, worker exports, a tenant-isolation test for tenant
   tables, `onTenantDeleted` for DOs, table collisions, declared skills. Each finding names file, line and exact edit.
-  Structural checks read comment-free code. CI runs the same command.
+  Structural checks read comment-free code. It runs where a finding can still be acted on: at the
+  end of `plugin add|upgrade --apply` (exit 8 when the tree it wrote fails), in the plugin's own CI
+  (`plugin-ci.yml`) and in `kit.yml` — not in an app's `pnpm gate`, because an undeclared import
+  compiles and passes the tests and only breaks at the next upgrade, where the check stops it first.
 - **Agent tools**: `agentTools(ctx)` may be async and may return `[]`. That is how a tool reaches
   only the tenants that turned it on: the plugin reads its own settings row for `ctx.scope.tenantId`.
   A builder that throws is logged and skipped. `buildAgentTools` is therefore async.

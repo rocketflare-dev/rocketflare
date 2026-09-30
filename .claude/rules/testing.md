@@ -12,12 +12,23 @@ paths:
 
 Vitest in `apps/web` (all commands below are root scripts that delegate there, or run inside
 `apps/web`), six projects (`apps/web/vitest.config.ts`): `api` + `api-isolated` (Node, **real Postgres** on 5433),
-`driver` (D35: `tests/driver/**` — the code that differs between the two database drivers, through
-`openDatabase`, against the real database), `ui` (jsdom + Testing Library), `config` (Node, no
-database: wrangler parity, env schema, pure helpers, the raw-result guard
-`driver-results.test.ts`, and every installed plugin's own `src/plugins/*/tests/config/**`), and
-`kit-only` (Node, no database: `tests/kit-only/**`, the KIT's own tests — see below). `pnpm test` is two `vitest run` invocations (`test:shared`, `test:isolated`) because
-vitest 3 resolves `isolate` per run, not per project.
+`driver` (D35: `tests/driver/**` — the CONFORMANCE suite for the driver seam, through
+`openDatabase`, against the real database, run under both drivers; `tests/driver/CLAUDE.md`),
+`ui` (jsdom + Testing Library), `config` (Node, no database: wrangler parity, env schema, pure
+helpers, the driver guards `driver-results.test.ts` and `driver-conformance.test.ts`, and every
+installed plugin's own `src/plugins/*/tests/config/**`), and `kit-only` (Node, no database:
+`tests/kit-only/**`, the KIT's own tests — see below). The web suite is two `vitest run`
+invocations (`api` with `--no-isolate`, then the rest) because vitest 3 resolves `isolate` per
+run, not per project.
+
+**`pnpm test` is the one full test run** (`scripts/test.mjs`, the plan in
+`scripts/lib/test-plan.mjs`, unit-tested in `tests/config/gate.test.ts`), and the `test` step of
+`pnpm gate`. It prints its target first. On a **local** target (the default) it starts the compose
+test Postgres and Neon proxy itself, runs every package's tests with the web suite under
+`postgres`, then the `driver` project again under `neon` through the proxy. On a **remote** target
+(`TEST_DATABASE_BRANCH` set — see below) it runs the whole web suite under `neon` on that branch,
+with no Docker, and says the postgres conformance half was skipped. `GATE_SUITE_DRIVER=neon` runs
+the local suite under `neon` instead (kit.yml's backstop; a way to chase a seam hole).
 
 **Kit-only tests** (`docs/CONCEPTS.md` §13) live in `apps/web/tests/kit-only/` and nowhere else: a
 test belongs there when it is true of the kit repository and of nothing made from it — the porting
@@ -74,21 +85,26 @@ reader) or of anything the app ships stays in `config` — the copy's gate is wh
 - Tests never truncate per file. Create what you need with unique data and let it stay; the schema
   is designed for parallel files. If a test genuinely needs an empty table, it is `// @vitest-isolate`
 - `apps/web/tests/helpers/db.ts` `safetyCheck()` refuses to run unless `NODE_ENV=test` and `DATABASE_URL`'s
-  HOST is local. Never point tests at Neon — except `pnpm test:ephemeral` on a throwaway gate
-  branch, which needs `TEST_DATABASE_BRANCH=gate-<short>-<attempt>` and `TEST_DATABASE_ENDPOINT` =
-  the URL's `ep-…` id (rules and reasons: `tests/helpers/db-safety.ts`, unit-tested in
-  `tests/config/db-safety.test.ts`). That profile runs 2 forks and 60 s / 120 s limits, and a test
-  needing TCP or a superuser skips itself with `isEphemeralTestRun(process.env)` and a stated reason
-  (`db-roles.test.ts`)
+  HOST is local. Never point tests at Neon — except `pnpm test` on a throwaway gate branch, which
+  needs `TEST_DATABASE_BRANCH=gate-<short>-<attempt>` and `TEST_DATABASE_ENDPOINT` = the URL's
+  `ep-…` id (rules and reasons: `tests/helpers/db-safety.ts`, unit-tested in
+  `tests/config/db-safety.test.ts`). The runner sets `TEST_DATABASE_EPHEMERAL=1` for that target;
+  it runs 2 forks, and a test needing TCP or a superuser skips itself with
+  `isEphemeralTestRun(process.env)` and a stated reason (`db-roles.test.ts`)
+- **Time limits scale with the target, never per test.** `vitest.config.ts` multiplies the test,
+  hook and teardown limits by one latency factor: 1 locally under `postgres` (vitest's 5 s stays
+  the tripwire for a genuinely slow test), 4 under `neon` through the proxy, 12 on a real Neon
+  branch. No test carries a numeric budget of its own: a test that is slow only on a slow link is
+  walking to a limit query by query, so it LOWERS that limit — `runStreamBody`'s injectable
+  `maxMs`, `AgentRunWorkflow.maxInterruptRounds` — and asserts the behaviour at it
 - Per-file `apps/web/tests/api-setup.ts` closes clients after each file (connection budget: forks × pools)
-- **Both drivers (D35).** `.env.test` sets `DATABASE_DRIVER=postgres`, so the gate runs postgres.js.
-  `pnpm test:neon` (root or web) starts the test Postgres PLUS the Neon proxy on :4433
-  (`test:db:up:neon`, compose profile `neon`) and runs `api`, `api-isolated` and `driver` with
-  `DATABASE_DRIVER=neon` — CI's `test-neon` job. Fixture handles (`setupTestDatabase` →
-  `getScriptDatabase(url, process.env)`) follow the same var and use the WebSocket pool under
-  `neon`; the request path is neon-http, as deployed. A raw result is read with `rows()` /
-  `affected()` in tests too. A test that is slow only under `neon` is walking to a limit query by
-  query — lower the limit it drives, never scale a timeout by driver
+- **Both drivers (D35), one seam.** `.env.test` sets `DATABASE_DRIVER=postgres`, so the narrow
+  scripts and the suite run postgres.js; `pnpm test` then runs the `driver` project under `neon`
+  through the proxy on :4433 (compose profile `neon`). App code does not branch on the driver, so
+  the conformance pass is what proves the deployed path (`apps/web/src/db/CLAUDE.md`). Fixture
+  handles (`setupTestDatabase` → `getScriptDatabase(url, process.env)`) follow the same var and
+  use the WebSocket pool under `neon`; the request path is neon-http, as deployed. A raw result is
+  read with `rows()` / `affected()` in tests too
 
 ## The `// @vitest-isolate` marker
 
@@ -255,11 +271,11 @@ admin+) and that `withEvalScope` tags spans.
 
 ## Commands
 
-`pnpm test:db:up` once, then `pnpm test` (`pnpm test:neon` for the `neon` half; `pnpm web
-test:driver` for the driver project alone; `pnpm test:ephemeral` is a sandbox gate's, against a Neon
-gate branch — no Docker) (root: every package, `pnpm -r test`; web tests load
-`apps/web/.env.test` via their own `dotenv` script, so no cwd juggling). Single projects run through
-the web package: `pnpm web test:api` · `pnpm web test:ui` · `pnpm web test:config` ·
+`pnpm test` (every package; it starts the test database itself — see above), or `pnpm gate` for the
+whole pre-commit gate. The inner loop is the narrow scripts, which run under `postgres` and expect
+the database up (`pnpm test:db:up`, or any earlier `pnpm test`): `pnpm web test:driver` for the
+driver project alone, and single projects through the web package: `pnpm web test:api` ·
+`pnpm web test:ui` · `pnpm web test:config` ·
 `pnpm web test:kit-only` (the kit only) ·
 `pnpm test:coverage`. `REQUIRE_PROVISIONED=1 pnpm --filter @rocketflare/web test:config` is what CI runs
 before a deploy.

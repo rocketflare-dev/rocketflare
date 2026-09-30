@@ -108,10 +108,12 @@ async function drive(
   env: TestEnv,
   runId: string,
   tenantId: string,
-  stepOptions: FakeWorkflowStepOptions = {}
+  stepOptions: FakeWorkflowStepOptions = {},
+  maxInterruptRounds?: number
 ) {
   const { step, calls, waits, names } = createFakeWorkflowStep(stepOptions)
   const workflow = new AgentRunWorkflow(createExecutionContext(), env)
+  if (maxInterruptRounds !== undefined) workflow.maxInterruptRounds = maxInterruptRounds
   // The fake covers `do`/`sleep`; the platform type also declares `sleepUntil`/`waitForEvent`.
   const outcome = await workflow.run(
     {
@@ -604,11 +606,14 @@ describe('the suspend/resume loop (issue #17)', () => {
     expect((await listInterrupts(db, tenant.id, run.id)).map(i => i.status)).toEqual(['expired'])
   })
 
-  // 32 rounds of real DB work — the slowest test in the suite BY DESIGN, and the only one that
-  // needs a budget rather than vitest's arbitrary 5 s default. Measured: 1.4 s locally, 5.004 s on
-  // a CI runner during the second gate pass (88 test files instead of 81), where it then failed
-  // twice running. Raised here rather than globally, so a genuine hang elsewhere still surfaces.
+  // The cap is lowered for the test: the behaviour is what happens AT it, and 32 rounds of real
+  // DB work was 5 s on a CI runner and 30 s on a real Neon branch. The real value is asserted
+  // to be what the workflow uses by default.
   it('an agent that never stops asking is abandoned after MAX_INTERRUPT_ROUNDS, cleanly', async () => {
+    const ROUNDS = 3
+    expect(new AgentRunWorkflow(createExecutionContext(), createTestEnv()).maxInterruptRounds).toBe(
+      MAX_INTERRUPT_ROUNDS
+    )
     const env = createTestEnv()
     script([])
     let asked = 0
@@ -621,26 +626,32 @@ describe('the suspend/resume loop (issue #17)', () => {
     })
     const { run, tenant, user } = await queuedRun(env)
 
-    const { outcome, names } = await drive(env, run.id, tenant.id, {
-      onWait: async () => {
-        await answerAndResume(tenant.id, run.id, user.id)
-        return { interruptId: null }
+    const { outcome, names } = await drive(
+      env,
+      run.id,
+      tenant.id,
+      {
+        onWait: async () => {
+          await answerAndResume(tenant.id, run.id, user.id)
+          return { interruptId: null }
+        },
       },
-    })
+      ROUNDS
+    )
 
     // It stopped, rather than looping until the step budget ran out.
     expect(outcome.status).toBe('failed')
-    expect(names.filter(n => n.startsWith('resume#'))).toHaveLength(MAX_INTERRUPT_ROUNDS)
-    expect(names.at(-2)).toBe(`execute#${MAX_INTERRUPT_ROUNDS}`)
+    expect(names.filter(n => n.startsWith('resume#'))).toHaveLength(ROUNDS)
+    expect(names.at(-2)).toBe(`execute#${ROUNDS}`)
     expect(names.at(-1)).toBe('finish')
     expect(new Set(names).size).toBe(names.length)
 
     const row = await getRun(db, tenant.id, run.id)
     expect(row?.status).toBe('failed')
-    expect(row?.error).toContain(String(MAX_INTERRUPT_ROUNDS))
+    expect(row?.error).toContain(String(ROUNDS))
     // And the questions nobody will now answer are closed, not left pending forever.
     expect(await listInterrupts(db, tenant.id, run.id, 'pending')).toEqual([])
-  }, 30_000)
+  })
 
   it('finishStep does not FAIL a parked row (T7) — it expires it', async () => {
     const env = createTestEnv()

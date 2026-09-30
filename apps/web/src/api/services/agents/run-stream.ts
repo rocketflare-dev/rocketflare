@@ -60,15 +60,21 @@ import { listArtifacts, toAgentArtifact } from './artifacts'
 import { listInterrupts, toAgentRunInterrupt } from './interrupts'
 import { getRun, toAgentRun, toAgentRunEvent } from './runs'
 
-/** The clock and the wait, injected so the tests are not timer-bound. */
+/**
+ * The clock, the wait and the duration cap, injected so the tests are not timer-bound — and not
+ * latency-bound either: reaching the real 10-minute cap is ~320 ticks of real queries, which a test
+ * over a slow link cannot afford, so the cap test lowers `maxMs` instead of raising its timeout.
+ */
 export interface RunStreamDeps {
   now: () => number
   sleep: (ms: number) => Promise<void>
+  maxMs: number
 }
 
 const REAL_DEPS: RunStreamDeps = {
   now: () => Date.now(),
   sleep: ms => new Promise(resolve => setTimeout(resolve, ms)),
+  maxMs: RUN_STREAM_MAX_MS,
 }
 
 /** Where the bytes go. `aborted` is polled between ticks, so a closed tab stops the loop. */
@@ -139,7 +145,7 @@ export async function runStreamBody(
   sink: RunStreamSink,
   deps: Partial<RunStreamDeps> = {}
 ): Promise<RunStreamOutcome> {
-  const { now, sleep } = { ...REAL_DEPS, ...deps }
+  const { now, sleep, maxMs } = { ...REAL_DEPS, ...deps }
   const { db, tenantId } = params
   const runId = params.run.id
   const encoder = createAguiEncoder(params.accept)
@@ -168,7 +174,7 @@ export async function runStreamBody(
   let emptyTicks = 0
   let lastRowAt = now()
   let lastHeartbeat = now()
-  const deadline = now() + RUN_STREAM_MAX_MS
+  const deadline = now() + maxMs
 
   // The head belongs to a stream starting from the beginning; a resume must not replay it, or the
   // client gets a second `RUN_STARTED` for a run it is already rendering.

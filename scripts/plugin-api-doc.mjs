@@ -20,8 +20,9 @@
  *    a number, and nothing here can throw.
  *
  * **A diff failure in CI means the document is stale, not that the gate is broken.** Run this
- * script and commit what it writes — the same contract as `apps/web/worker-configuration.d.ts`,
- * and it sits beside that step in `.github/workflows/gate.yml` for that reason.
+ * script and commit what it writes. It is the KIT's check (`.github/workflows/kit.yml`), not a
+ * copy's: the document is the kit's published plugin API, which protects plugins in other
+ * repositories — "it compiles and the tests pass" only speaks for the plugins installed here.
  *
  * Exit codes: 0 ok · 1 error · 2 out of date (`--check`).
  */
@@ -415,9 +416,8 @@ function renderHeader() {
   return `# The plugin API
 
 **Generated. Do not edit.** \`node scripts/plugin-api-doc.mjs\` writes this file from the source of
-the declared entries, and \`.github/workflows/gate.yml\` regenerates it and diffs it — beside the
-step that does the same for \`apps/web/worker-configuration.d.ts\`, and for the same reason: a
-generated artefact that is committed and diff-checked cannot drift from its source. **A diff
+the declared entries, and the kit's CI (\`.github/workflows/kit.yml\`) regenerates it and diffs
+it: a generated artefact that is committed and diff-checked cannot drift from its source. **A diff
 failure means this file is stale. Run the script and commit what it writes.**
 
 One other failure comes out of the same script and means something different:

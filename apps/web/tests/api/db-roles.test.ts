@@ -13,7 +13,7 @@ import { testDatabaseUrl } from '../helpers/db'
 import { isEphemeralTestRun } from '../helpers/db-safety'
 
 /**
- * Skipped under `pnpm test:ephemeral` (a Neon gate branch from a coding sandbox): this file drives
+ * Skipped on a remote target (`pnpm test` on a Neon gate branch from a coding sandbox): this file drives
  * postgres.js over TCP, which the sandbox cannot open (443 only), and needs a SUPERUSER to make
  * and drop throwaway owner roles, which a branch's owner role is not. The local gate and CI run it.
  */

@@ -80,8 +80,8 @@ A pnpm workspace; `CLAUDE.md` is the map and every significant directory has its
 
 The repo's **non-negotiables** are listed in `CLAUDE.md`; the ones contributors hit most:
 
-- **The gate is green**: `pnpm lint && pnpm typecheck && pnpm test && pnpm build` before every
-  commit. `typecheck` regenerates `apps/web/worker-configuration.d.ts` — commit it if it changed.
+- **The gate is green**: `pnpm gate` before every commit (it starts the test database itself).
+  `typecheck` regenerates `apps/web/worker-configuration.d.ts` — commit it if it changed.
 - **A behaviour change adds an entry to `docs/upgrades/unreleased.md`.** People are running copies
   of this kit that were detached and renamed; they absorb your change by running `/rf-upgrade`,
   which is guided by those notes. A change with no note never reaches them. `docs/upgrades/README.md`

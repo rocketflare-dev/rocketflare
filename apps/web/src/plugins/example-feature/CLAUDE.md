@@ -41,4 +41,4 @@ That is the point of it, and it is the check that the seam works. Until `pnpm pl
 4. `pnpm db:generate` — which emits the `DROP TABLE "example_notes"`; read the SQL, then
    `pnpm db:migrate`.
 
-Then `pnpm lint && pnpm typecheck && pnpm test && pnpm build`. Nothing else in the kit names it.
+Then `pnpm gate`. Nothing else in the kit names it.

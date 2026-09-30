@@ -526,7 +526,7 @@ function main(argv) {
 
   out(
     'Verify (the gate):',
-    '  pnpm install && pnpm types && pnpm lint && pnpm typecheck && pnpm test',
+    '  pnpm install && pnpm gate',
     ...(files.some(f => f.class === 'migration-derived')
       ? ["  pnpm db:generate   your OWN migration for the kit schema change — never copy the kit's"]
       : [])

@@ -196,3 +196,26 @@ describe('plugin-ci resolve', () => {
     expect(WORKFLOW).toMatch(/for dep in \$PLUGIN_DEPS; do/)
   })
 })
+
+describe('the gate step (a floor kit may predate `pnpm gate`)', () => {
+  const gateStep = (): string => {
+    const start = WORKFLOW.indexOf("- name: The kit's gate")
+    expect(start, "the kit's gate step").toBeGreaterThan(-1)
+    return WORKFLOW.slice(start, WORKFLOW.indexOf('- name:', start + 1))
+  }
+
+  it('probes for the gate script and falls back to the four commands the gate used to be', () => {
+    const step = gateStep()
+    expect(step).toMatch(/scripts\?\.gate/)
+    expect(step).toContain('pnpm gate')
+    for (const command of ['pnpm lint', 'pnpm typecheck', 'pnpm test', 'pnpm build']) {
+      expect(step).toContain(command)
+    }
+  })
+
+  it("takes the database from the cloned kit's compose file, and audits the plugin either way", () => {
+    expect(WORKFLOW).not.toMatch(/^\s+services:/m)
+    expect(WORKFLOW).toContain('docker compose -f apps/web/docker-compose.test.yml')
+    expect(WORKFLOW).toContain('node scripts/plugin.mjs check')
+  })
+})

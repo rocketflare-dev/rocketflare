@@ -124,8 +124,10 @@ ones their slice touches, and say what enforces each, so the rule is a test and 
   `Cube.measure` strings in jsonb, so a rename silently breaks every saved page), and **a new cube
   is not done until it has a case in `cube-isolation.test.ts`** — that test is the only thing
   enforcing tenant scoping in the cube layer.
-- **The gate** — `pnpm lint && pnpm typecheck && pnpm test && pnpm build` — passes before every
-  commit, and a behaviour change updates `docs/CONCEPTS.md` in the same PR.
+- **The gate** — `pnpm gate` (lint, typecheck, test, build) — passes before every commit, and a
+  behaviour change updates `docs/CONCEPTS.md` in the same PR. Raw SQL goes through the driver
+  seam (`apps/web/src/db/CLAUDE.md`): `rows()`, `isUniqueViolation()`, session state only inside a
+  transaction.
 
 Four more when the answer to step 0 was "plugin", and every one of them is a test rather than
 advice:
