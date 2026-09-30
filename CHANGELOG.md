@@ -6,6 +6,11 @@ copy of the kit forward without recreating anything its owner deleted.
 
 If you are running a copy: `pnpm kit:upgrade` tells you which of these you are missing.
 
+## 0.16.0 — 2026-09-30
+
+`pnpm gate` is now the one definition of an app's checks — lint, typecheck, test, build — run before every commit, as a copy's single CI job and by Launch's ship gate, with the driver seam proved under both drivers.
+[Porting note](docs/upgrades/0.16.0.md).
+
 ## 0.15.8 — 2026-09-29
 
 The kit's own tests now live in `apps/web/tests/kit-only/`, which the rename deletes and the upgrade never ports, so a copy's gate no longer fails on the kit's version chain.

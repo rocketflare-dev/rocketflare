@@ -1,59 +1,31 @@
 ---
 version: unreleased
-previous: 0.15.8
+previous: 0.16.0
 date: null
-breaking: true
+breaking: false
 migrations: []
-areas: [api, db, config, docs]
+areas: []
 touches_surfaces: []
 requires_surfaces: []
-manual: true
+manual: false
 ---
 
 ## What changed
 
-`pnpm gate` is now the one definition of an app's checks — lint, typecheck, test, build — run before every commit, as a copy's single CI job and by Launch's ship gate, with the driver seam proved under both drivers.
-
-- `pnpm gate [step…]` (`scripts/gate.mjs`): stops at the first failure, `--keep-going`, `--skip`, and `--list --json` (contract `@rocketflare/shared/gate`, schema 1). No generated-files step ([CONCEPTS §4](../CONCEPTS.md)).
-- `pnpm test` (`scripts/test.mjs`) is the one full test run: it starts the test Postgres and Neon proxy itself, runs the suite under `postgres`, then the `driver` project under `neon`.
-- `TEST_DATABASE_BRANCH` set: `pnpm test` runs the whole suite on that Neon gate branch, with no Docker. `test:neon` and `test:ephemeral` are removed with no aliases.
-- The driver seam: `db/client.ts` parses raw arrays the same under both drivers; `pgErrorCode()` / `isUniqueViolation()` (also in `@/plugins/api`) read SQLSTATEs; `apps/web/src/db/CLAUDE.md`.
-- `driver-results.test.ts` now also fails a hand-read `err.code === '2xxxx'`, and a `SET` / `set_config(…, false)` / session advisory lock / `CREATE TEMP TABLE` outside a transaction, and `LISTEN`.
-- `tests/driver/` is a conformance suite; `driver-conformance.test.ts` fails a skip or a per-driver expectation in it.
-- Test time limits scale by one latency factor (1 / 4 / 12); the two tests that carried `30_000` lower the cap they walk to instead (`maxMs`, `maxInterruptRounds`).
-- `apps/web`'s `build` no longer typechecks; `pnpm plugin add|upgrade --apply` end with `pnpm plugin check` (exit 8 when it fails; the migration still to generate is a `next:` note, not a failure).
-- CI: a copy's `ci.yml` is one job (gitleaks + `pnpm gate`); `gate.yml` and the `test-neon` job are gone; `deploy.yml` runs nothing when there is nothing to deploy.
-- The kit's own checks moved to `kit.yml`, which is `kitOnly` with `plugin-ci.yml` and `notify-plugins.yml`: a copy never carries any of the three.
+_Nothing yet. Add an entry here in the same pull request as the change. This first paragraph is
+lifted VERBATIM into `CHANGELOG.md`, so make it ONE standalone summary sentence of ≤ 40 words —
+then one bullet per change, one line each, and no `###` sub-headings. Rationale belongs in
+`docs/CONCEPTS.md` and is linked, never restated; see `README.md` beside this file._
 
 ## How to apply
 
-1. Copy `scripts/gate.mjs`, `scripts/test.mjs`, `scripts/lib/gate-lib.{mjs,d.mts}` and `scripts/lib/test-plan.{mjs,d.mts}` from the kit, and `packages/shared/src/gate.ts`.
-2. In the root `package.json` (a manual surface), add `"gate": "node scripts/gate.mjs"`, set `"test": "node scripts/test.mjs"`, and delete the `test:neon` and `test:ephemeral` scripts.
-3. In `apps/web/package.json` (a manual surface), set `"build": "pnpm build:ui && pnpm build:api"` and delete the `test:neon` and `test:ephemeral` scripts.
-4. Port `apps/web/src/db/client.ts` (`ARRAY_PARSERS`, `pgErrorCode`, `isUniqueViolation`), the re-export in `apps/web/src/api/utils/core/errors.ts`, and the `isUniqueViolation`/`pgErrorCode` exports in `apps/web/src/plugins/api/{db,index}.ts`; then run `node scripts/plugin-api-doc.mjs`.
-5. Port `apps/web/tests/driver/driver.test.ts`, `apps/web/tests/driver/CLAUDE.md`, `apps/web/src/db/CLAUDE.md`, `apps/web/tests/config/driver-results.test.ts`, and the new `apps/web/tests/config/{driver-conformance,gate,gate-string}.test.ts`.
-6. Run `pnpm web test:config`. Fix every finding in the app's OWN code by the replacement it names: a raw result through `rows()`, a SQLSTATE through `isUniqueViolation()` / `pgErrorCode()`, session state inside `db.transaction(…)` or in its transaction-scoped form (`SET LOCAL`, `set_config(…, true)`, `pg_advisory_xact_lock`).
-7. Find any code in the app that parsed a raw Postgres array from its literal text (`"{a,b}"`) and delete the parsing: under `postgres` a raw array now arrives as an array, as it always did under `neon`.
-8. Port `apps/web/vitest.config.ts` (`LATENCY_FACTOR`). Delete any numeric per-test timeout the app's own tests carry (`}, 30_000)`, `{ timeout: … }` on `it`/`test`): if a test needs one only on a slow link, lower the limit it walks to instead.
-9. Replace `.github/workflows/ci.yml` with the kit's one-job file, keeping any app-specific job you added. Delete `.github/workflows/gate.yml`.
-10. In `.github/workflows/deploy.yml`, port the `guard` → `gated` → `ci` conditions: `ci` has `needs: [guard, gated]`, requires `needs.guard.outputs.deployable == 'true'`, and no longer passes `with: deploy: true`.
-11. In `.github/workflows/evals.yml`, replace the `services:` block with the `docker compose -f apps/web/docker-compose.test.yml up -d --wait` step.
-12. Delete `.github/workflows/plugin-ci.yml` and `.github/workflows/notify-plugins.yml` if the app carries them. Never port `.github/workflows/kit.yml`.
-13. Replace `pnpm lint && pnpm typecheck && pnpm test && pnpm build` (and any shorter variant) with `pnpm gate` wherever the app's own CLAUDE.md, rules, skills or docs spell it out; `gate-string.test.ts` fails a leftover.
-14. An app deployed on `postgres` (Hyperdrive) needs nothing extra: the suite runs on `postgres`, and the `driver` project also runs under `neon` through the proxy, so switching later stays safe.
-15. A Launch-managed app: Launch's ship gate changes in lockstep (rocketflare-dev/rocketflare-launch#2); nothing to do in the app.
+_Numbered, imperative, each step self-contained — no "these", "them" or "the above" reaching
+outside its own step._
 
 ## Conflicts to expect
 
-- `package.json`, `apps/web/package.json` → test scripts replaced → keep the app's own scripts, apply steps 2–3 by hand.
-- `.github/workflows/ci.yml` → rewritten to one job → take the kit's file, re-add app-specific jobs.
-- `apps/web/tests/config/ci-workflows.test.ts` → rewritten → take the kit's file; adjust only if the app renamed the `gate` job.
-- `apps/web/tests/driver/driver.test.ts` → per-driver expectations removed → take the kit's file.
+_One line each: `path → what changed → what to do`. Or exactly `None.`_
 
 ## Verify
 
-1. `pnpm gate --list --json` prints `lint`, `typecheck`, `test`, `build` with `"schema": 1`.
-2. `pnpm test` prints `test target: local compose …` first and ends with the `driver conformance under neon` step passing.
-3. `pnpm gate` exits 0.
-4. `git ls-files .github/workflows` lists no `gate.yml`, `kit.yml`, `plugin-ci.yml` or `notify-plugins.yml`.
-5. The next pull request's CI shows one job, `Gate`.
+_Numbered checkable commands and assertions only._
