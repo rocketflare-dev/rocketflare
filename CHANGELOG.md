@@ -6,6 +6,11 @@ copy of the kit forward without recreating anything its owner deleted.
 
 If you are running a copy: `pnpm kit:upgrade` tells you which of these you are missing.
 
+## 0.16.2 — 2026-10-04
+
+A copy now numbers its own releases: `scripts/rename.mjs` restarts the root `package.json` version at `0.1.0` and empties `CHANGELOG.md`, so an app no longer carries on from the kit's version; the kit version stays in `.rocketflare.json`.
+[Porting note](docs/upgrades/0.16.2.md).
+
 ## 0.16.1 — 2026-10-04
 
 With `AUTH_OIDC_ONLY=true` the login page no longer redirects to the issuer on its own: it shows one "Continue with <label>" button, so signing in through SSO (Launch, Okta, Keycloak…) is always a click.
