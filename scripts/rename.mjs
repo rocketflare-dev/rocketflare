@@ -22,6 +22,10 @@
  * (`apps/web/tests/kit-only/**`) — and unwires their vitest project from the package.json scripts:
  * they assert what only the kit is, so a copy never carries them (`docs/CONCEPTS.md` §13).
  *
+ * It also detaches the copy's version: the root `package.json` restarts at 0.1.0 and `CHANGELOG.md`
+ * starts empty, while the root version is still the kit's (`restartAppVersion`). The kit version the
+ * copy came from stays in `.rocketflare.json`.
+ *
  * `--dry-run` prints the per-file table and touches nothing (and skips the dirty-tree check).
  * The real run refuses a dirty tree without `--force`, writes, runs `pnpm install` (the lockfile
  * follows the package names), regenerates `docs/plugin-api.md` (its summaries are cut at a fixed
@@ -55,6 +59,7 @@ import {
   REDACTED_KEY_MARGIN,
   readIntConstant,
   readStringConstant,
+  restartAppVersion,
   rewriteIntConstant,
   rewritePrefixComments,
   USAGE,
@@ -94,20 +99,25 @@ function runningContainers() {
 }
 
 /**
+ * `.rocketflare.json`, or null when it is missing or unreadable. Read as plain JSON, like
+ * `stampManifest`: the rename grows no dependency on `manifest.mjs`.
+ */
+function readKitManifest() {
+  const file = path.join(REPO_ROOT, '.rocketflare.json')
+  try {
+    return existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')) : null
+  } catch {
+    return null
+  }
+}
+
+/**
  * The kit's own tests (`kitOnly` in `.rocketflare.json`, `docs/CONCEPTS.md` §13): every file git
  * knows about under one of those globs. They assert things only the kit is — its version chain, its
  * release and rename machinery — so a copy never carries them, and this is where a copy is born.
- * Read as plain JSON, like `stampManifest`: the rename grows no dependency on `manifest.mjs`.
  */
 function kitOnlyFiles() {
-  const file = path.join(REPO_ROOT, '.rocketflare.json')
-  let manifest = null
-  try {
-    manifest = existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')) : null
-  } catch {
-    manifest = null
-  }
-  const globs = kitOnlyGlobs(manifest)
+  const globs = kitOnlyGlobs(readKitManifest())
   return git(['ls-files', '-z', '--cached', '--others', '--exclude-standard'])
     .split('\0')
     .filter(rel => rel && matchesAny(rel, globs) && existsSync(path.join(REPO_ROOT, rel)))
@@ -245,6 +255,16 @@ function main(argv) {
     unwired.push(
       `${rel}: ${[...edited.map(n => `${n} (--project dropped)`), ...removed.map(n => `${n} (removed)`)].join(', ')}`
     )
+  }
+
+  // ------------------------------------------------------------- the app's own version
+  // A copy is its own product: its root version restarts at 0.1.0 and its CHANGELOG starts
+  // empty, instead of carrying on from the kit's number and the kit's releases. The kit version
+  // it came from stays in `.rocketflare.json` `kit.version`, which the pass never touches.
+  const restarted = restartAppVersion(current('package.json'), readKitManifest()?.kit?.version)
+  if (restarted) {
+    edits.set('package.json', restarted.packageJson)
+    edits.set('CHANGELOG.md', restarted.changelog)
   }
 
   // ------------------------------------------------------------- careful rows
@@ -407,6 +427,13 @@ function main(argv) {
     ...(unwired.length > 0
       ? ['  unwired the kit-only vitest project:', ...unwired.map(u => `    ${u}`)]
       : []),
+    ''
+  )
+  out(
+    restarted
+      ? `Version: ${restarted.from} (the kit's) → ${restarted.to}, and CHANGELOG.md starts empty — ` +
+          `the app numbers its own releases; the kit version stays in .rocketflare.json.`
+      : 'Version: left as it is (the root version is not the kit’s, so it is already the app’s own).',
     ''
   )
   out('Careful rows (docs/ADAPTING.md §1):', ...report.map(r => `  ${r}`), '')

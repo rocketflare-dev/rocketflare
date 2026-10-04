@@ -550,6 +550,11 @@ cycle). Detail: `packages/shared/CLAUDE.md`.
   floor for a pre-0.15.8 manifest); `tests/config/kit-manifest.test.ts` fails a copy that carries
   one, and `kit.yml`'s renamed-copy gate asserts none survive and passes at an app version
   (`1.2.3`).
+- **A copy's version is its own**: the rename restarts the root `package.json` version at `0.1.0`
+  and empties `CHANGELOG.md` (`restartAppVersion`, only while the root version is still the kit's),
+  so an app's releases never read as kit releases. Which kit it came from lives in one place,
+  `.rocketflare.json` `kit.version`; the upgrade never ports the root version or `CHANGELOG.md`
+  (`manual` / `neverPort`), so the two numbers never meet again.
 - **Porting notes**: one `docs/upgrades/X.Y.Z.md` per release (frontmatter + four headings), with
   `unreleased.md` accumulating. CI fails a PR touching `apps/**`/`packages/**` without an entry,
   and the tag gate refuses a release without one. `pnpm kit:release` writes everything.

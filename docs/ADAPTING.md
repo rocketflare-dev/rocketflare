@@ -52,7 +52,9 @@ CI — is preserved as upstream) plus `apps/web/.dev.vars` when it exists (git-i
 `biome check --write` (`--skip-install` to defer all three). Exit `0` ok · `1` error · `2` usage. Delete
 `apps/web/.provision.json` (the git-ignored provisioning cache) when re-adapting a copy that was
 already provisioned — the rename never rewrites it (`.dev.vars` is the only git-ignored file it
-opts in), so its cached app name and ids would be the old ones. The table stays the reference — the first block
+opts in), so its cached app name and ids would be the old ones. The rename also restarts the root
+`package.json` version at `0.1.0` and empties `CHANGELOG.md`: the app numbers its own releases, and
+the kit version it came from stays in `.rocketflare.json`. The table stays the reference — the first block
 renames the packages themselves; by hand, do it first and run `pnpm install` before anything else,
 or nothing resolves.
 

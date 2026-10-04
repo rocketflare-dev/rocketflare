@@ -142,9 +142,31 @@ describe('rawFileUrl', () => {
   })
 })
 
+// The kit's CHANGELOG.md as the hook fetches it at a tag. Not this checkout's own file: a renamed
+// copy's CHANGELOG starts empty (`restartAppVersion`), and this test runs in every copy.
+const KIT_CHANGELOG = `# Changelog
+
+Releases of the kit.
+
+## 0.9.0 — 2026-09-18
+
+A plugin's \`agentTools\` may now be async and answer per tenant.
+[Porting note](docs/upgrades/0.9.0.md).
+
+## 0.8.1 — 2026-09-18
+
+Agent context now loads on demand.
+[Porting note](docs/upgrades/0.8.1.md).
+
+## 0.8.0 — 2026-09-18
+
+**Plugin compatibility is OBSERVED rather than declared.**
+[Porting note](docs/upgrades/0.8.0.md).
+`
+
 describe('changelogSummaries', () => {
-  it('takes each release summary between the two versions, newest first — from the real CHANGELOG', () => {
-    const text = readFileSync(path.join(REPO_ROOT, 'CHANGELOG.md'), 'utf8')
+  it('takes each release summary between the two versions, newest first', () => {
+    const text = KIT_CHANGELOG
     const summaries = changelogSummaries(text, '0.8.0', '0.9.0')
     expect(summaries.map(s => s.version)).toEqual(['0.9.0', '0.8.1'])
     expect(summaries[0]?.summary).toMatch(/^A plugin's `agentTools` may now be async/)

@@ -112,6 +112,19 @@ export interface ColourResult {
 }
 export function applyColour(files: { css: string; html: string }, colour: string): ColourResult
 
+export const APP_START_VERSION: string
+export const APP_CHANGELOG: string
+export interface RestartedVersion {
+  packageJson: string
+  from: string
+  to: string
+  changelog: string
+}
+export function restartAppVersion(
+  packageJson: string,
+  kitVersion: string | null | undefined
+): RestartedVersion | null
+
 export const USAGE: string
 export interface ParsedArgs {
   dryRun: boolean

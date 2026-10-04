@@ -110,6 +110,15 @@ jobs:
             echo "::error::the renamed copy still wires the kit-only vitest project"
             exit 1
           fi
+          # A copy numbers its own releases from 0.1.0; the kit version stays in .rocketflare.json.
+          if [ "$(node -p 'require("./package.json").version')" != "0.1.0" ]; then
+            echo "::error::the renamed copy did not restart its root version at 0.1.0"
+            exit 1
+          fi
+          if grep -nE '^## [0-9]+\.[0-9]+\.[0-9]+' CHANGELOG.md; then
+            echo "::error::the renamed copy still carries the kit's releases in CHANGELOG.md"
+            exit 1
+          fi
           npm pkg set version=1.2.3
           # Committed, as a copy's gate runs on a committed tree: the kit's scanners read
           # `git ls-files`.

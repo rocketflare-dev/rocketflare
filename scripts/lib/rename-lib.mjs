@@ -388,6 +388,36 @@ export function applyColour({ css, html }, colour) {
   }
 }
 
+// ---------------------------------------------------------------- the app's own version
+
+/** The root version a renamed copy starts at: its own first release, not the kit's number. */
+export const APP_START_VERSION = '0.1.0'
+
+/** A renamed copy's `CHANGELOG.md`: its own releases from here on. */
+export const APP_CHANGELOG = `# Changelog
+
+Releases of this app. The kit releases it has absorbed are recorded in \`.rocketflare.json\`
+(\`kit\`, \`history\`) and described in \`docs/upgrades/\`.
+
+## Unreleased
+`
+
+/**
+ * Detach a copy's version from the kit's. The root `package.json` arrives carrying the kit's own
+ * number and `CHANGELOG.md` the kit's releases; a copy is its own product, so its version restarts
+ * at `APP_START_VERSION` and its changelog starts empty. Only while the root version still IS the
+ * kit's (`kitVersion`, from `.rocketflare.json`): a re-run never resets an app's own numbering.
+ * Only the top-level `"version"` value is rewritten, so the file's formatting survives.
+ * Returns `null` when there is nothing to do.
+ */
+export function restartAppVersion(packageJson, kitVersion) {
+  const pkg = JSON.parse(packageJson)
+  if (typeof pkg.version !== 'string' || !kitVersion || pkg.version !== kitVersion) return null
+  const text = packageJson.replace(/^(\s*"version"\s*:\s*")[^"]*(")/m, `$1${APP_START_VERSION}$2`)
+  if (JSON.parse(text).version !== APP_START_VERSION) return null
+  return { packageJson: text, from: pkg.version, to: APP_START_VERSION, changelog: APP_CHANGELOG }
+}
+
 // ---------------------------------------------------------------- argv
 
 export const USAGE = `usage: node scripts/rename.mjs [--dry-run] [--force] [--skip-install]

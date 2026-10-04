@@ -4,7 +4,7 @@ previous: 0.16.1
 date: null
 breaking: false
 migrations: []
-areas: []
+areas: [config, docs]
 touches_surfaces: []
 requires_surfaces: []
 manual: false
@@ -12,20 +12,23 @@ manual: false
 
 ## What changed
 
-_Nothing yet. Add an entry here in the same pull request as the change. This first paragraph is
-lifted VERBATIM into `CHANGELOG.md`, so make it ONE standalone summary sentence of ≤ 40 words —
-then one bullet per change, one line each, and no `###` sub-headings. Rationale belongs in
-`docs/CONCEPTS.md` and is linked, never restated; see `README.md` beside this file._
+A copy now numbers its own releases: `scripts/rename.mjs` restarts the root `package.json` version at `0.1.0` and empties `CHANGELOG.md`, so an app no longer carries on from the kit's version; the kit version stays in `.rocketflare.json`.
+
+- `scripts/lib/rename-lib.mjs`: `restartAppVersion(packageJson, kitVersion)`, `APP_START_VERSION`, `APP_CHANGELOG` — only while the root version is still the kit's, so a re-run never resets an app's own numbering.
+- `scripts/rename.mjs`: applies it in the pass and reports the `Version:` row; `.rocketflare.json` is read once through `readKitManifest()`.
+- `apps/web/tests/config/update-check-lib.test.ts`: `changelogSummaries` runs on an inline kit CHANGELOG, not the checkout's own file, which a copy no longer has in the kit's form.
+- `.github/workflows/kit.yml`: the renamed-copy job asserts the copy starts at `0.1.0` with no kit release in its CHANGELOG.
+- Why: see `docs/CONCEPTS.md` §13 ("a copy's version is its own").
 
 ## How to apply
 
-_Numbered, imperative, each step self-contained — no "these", "them" or "the above" reaching
-outside its own step._
+1. In `apps/web/tests/config/update-check-lib.test.ts`, replace the `changelogSummaries` test's `readFileSync(path.join(REPO_ROOT, 'CHANGELOG.md'), 'utf8')` with the kit's inline `KIT_CHANGELOG` fixture.
+2. Leave the copy's root `package.json` version as it is if the copy has already tagged releases under it: restarting below an existing tag breaks release ordering. A copy that has never tagged a release may set it to `0.1.0` and reset `CHANGELOG.md` to the kit's `APP_CHANGELOG` text.
 
 ## Conflicts to expect
 
-_One line each: `path → what changed → what to do`. Or exactly `None.`_
+None.
 
 ## Verify
 
-_Numbered checkable commands and assertions only._
+1. `pnpm --filter @<slug>/web exec vitest run --project config tests/config/update-check-lib.test.ts` passes.

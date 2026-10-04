@@ -25,6 +25,7 @@ import {
   REDACTED_KEY_MARGIN,
   readIntConstant,
   readStringConstant,
+  restartAppVersion,
   rewriteIntConstant,
   rewritePrefixComments,
   validateSlug,
@@ -392,5 +393,44 @@ describe('parseArgs', () => {
       error: expect.stringMatching(/hex/),
     })
     expect(parseArgs(['--help'])).toEqual({ help: true })
+  })
+})
+
+describe('restartAppVersion', () => {
+  const root = readFileSync(path.resolve(__dirname, '../../../../package.json'), 'utf8')
+  const kitVersion = JSON.parse(root).version as string
+
+  it("restarts the kit's own root package.json at 0.1.0 and empties the changelog", () => {
+    const out = restartAppVersion(root, kitVersion)
+    expect(out).not.toBeNull()
+    expect(out?.from).toBe(kitVersion)
+    expect(JSON.parse(out?.packageJson ?? '{}').version).toBe('0.1.0')
+    // Only the version moved: every other line is byte-for-byte the kit's.
+    const before = root.split('\n').filter(l => !/^\s*"version"/.test(l))
+    const after = (out?.packageJson ?? '').split('\n').filter(l => !/^\s*"version"/.test(l))
+    expect(after).toEqual(before)
+    expect(out?.changelog).toMatch(/^# Changelog\n/)
+    expect(out?.changelog).toMatch(/## Unreleased\n$/)
+    expect(out?.changelog).not.toMatch(/## \d+\.\d+\.\d+/)
+  })
+
+  it("leaves an app's own numbering alone", () => {
+    const own = root.replace(/("version"\s*:\s*")[^"]*/, '$12.3.4')
+    expect(restartAppVersion(own, kitVersion)).toBeNull()
+  })
+
+  it('does nothing without a kit version to compare against', () => {
+    expect(restartAppVersion(root, null)).toBeNull()
+    expect(restartAppVersion('{"name":"x"}', kitVersion)).toBeNull()
+  })
+
+  it('rewrites the top-level version, never a nested one', () => {
+    const pkg = `{\n  "name": "x",\n  "version": "1.0.0",\n  "engines": { "version": "1.0.0" }\n}\n`
+    const out = restartAppVersion(pkg, '1.0.0')
+    expect(JSON.parse(out?.packageJson ?? '{}')).toEqual({
+      name: 'x',
+      version: '0.1.0',
+      engines: { version: '1.0.0' },
+    })
   })
 })
