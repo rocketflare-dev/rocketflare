@@ -64,7 +64,8 @@ export const authMethodsSchema = z.object({
   /** Present only when an OIDC issuer is configured: the button text (`OIDC_LABEL`). */
   oidc: z.object({ label: z.string() }).optional(),
   /**
-   * `AUTH_OIDC_ONLY`: the login page goes straight to the issuer and HIDES every other method.
+   * `AUTH_OIDC_ONLY`: the login page shows only the SSO button (a click, never an automatic
+   * redirect) and HIDES every other method.
    * Hides, not disables — the magic-link endpoint stays live for invitations and guests.
    */
   oidcOnly: z.boolean().optional(),

@@ -163,7 +163,8 @@ Components subscribe to query state, never to the socket; `WebSocketStatus` (hea
   `'globalAdmin'` guards, so nothing tenant-scoped is linked)
 - OAuth is a full-page redirect to `/auth/:provider?returnUrl=`; magic link via
   `POST /auth/magic-link/request`; `GET /auth/methods` drives which buttons render. `oidcOnly`
-  auto-redirects to `/auth/oidc` — never on `?signedOut=1` / `?error=` / `?as=`, which would loop
+  shows the one SSO button and hides the rest — never an automatic redirect to `/auth/oidc`:
+  signing in is always a click
 - `/login?as=<email>` signs in through `POST /auth/dev-login` on mount, ONLY when `methods.devLogin`
   is true and the email is in `DEV_ACCOUNTS` (the bootstrap opens it); never widen the allow-list
 

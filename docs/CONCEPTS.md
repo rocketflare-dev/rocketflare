@@ -86,11 +86,10 @@ are always `tenant`; no audit log beyond `activity_events`; no personal API keys
   verified-email linking. The issuer must assert `email_verified: true`: a missing flag is
   unverified (refused as `email_unverified` — no email linking, no admission) unless
   `OIDC_TRUST_EMAIL=true` opts in an issuer that controls the claim (single-tenant Entra); an
-  explicit `false` is always refused. `AUTH_OIDC_ONLY=true` sends the login page straight to the issuer and
-  refuses `/auth/google|microsoft` — it **hides** magic link, it does not disable it (invitations
+  explicit `false` is always refused. `AUTH_OIDC_ONLY=true` leaves the login page one "Continue with <label>" button (never an
+  automatic redirect: a live issuer session must not become a silent login) and refuses `/auth/google|microsoft` — it **hides** magic link, it does not disable it (invitations
   still use it). With an `end_session_endpoint`, `POST /auth/logout` answers
-  `200 { endSessionUrl }` (RP-initiated logout back to `/login?signedOut=1`, which never
-  auto-redirects); otherwise 204. Setup: `SETUP.md` → "Sign in with any OIDC issuer".
+  `200 { endSessionUrl }` (RP-initiated logout back to `/login?signedOut=1`); otherwise 204. Setup: `SETUP.md` → "Sign in with any OIDC issuer".
 - **Hardening (D12)**: random tokens hashed with SHA-256, a required encryption key, CSRF by origin
   allow-list (Bearer is exempt), and a KV sliding-window rate limit on login routes that no-ops
   without `RATE_LIMIT_KV`.

@@ -45,7 +45,7 @@ OBSERVABILITY_SPAN_RETENTION_DAYS = "14"   # Tracing (D32): days of ai_spans the
 #   OIDC_CLIENT_ID = "rocketflare"
 #   OIDC_LABEL = "Acme SSO"                 # button text (default "Single sign-on")
 #   OIDC_SCOPES = "openid email profile"    # default; add "groups" if your issuer needs it
-#   AUTH_OIDC_ONLY = "false"                # "true" = login page goes straight to the issuer, other methods hidden
+#   AUTH_OIDC_ONLY = "false"                # "true" = login page shows only the SSO button, other methods hidden
 #   OIDC_TRUST_EMAIL = "false"              # "true" = a MISSING email_verified counts as verified (single-tenant Entra); explicit false is always refused
 #   The client secret is a SECRET: `wrangler secret put OIDC_CLIENT_SECRET` (omit for a public client)
 # Secrets are NOT here: `wrangler secret put <NAME>` for every non-var in .dev.vars.example

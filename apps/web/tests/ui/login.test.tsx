@@ -179,20 +179,11 @@ describe('Login', () => {
       oidcOnly: true,
     }
 
-    it('goes straight to the issuer, carrying returnUrl', async () => {
-      render('/login?returnUrl=%2Fdocuments', OIDC_ONLY)
-      await waitFor(() =>
-        expect(hardNavigate).toHaveBeenCalledWith('/auth/oidc?returnUrl=%2Fdocuments')
-      )
-      expect(hardNavigate).toHaveBeenCalledTimes(1)
-      expect(screen.getByText(/Redirecting to Acme SSO/)).toBeInTheDocument()
-      expect(screen.queryByLabelText('Email address')).not.toBeInTheDocument()
-    })
-
     it.each([
-      ['after sign-out', '/login?signedOut=1'],
-      ['after a failure', '/login?error=oauth_failed'],
-    ])('does not auto-redirect %s — one SSO button instead (no loop)', async (_label, route) => {
+      ['on a first visit', '/login?returnUrl=%2Fdocuments', '%2Fdocuments'],
+      ['after sign-out', '/login?signedOut=1', '%2F'],
+      ['after a failure', '/login?error=oauth_failed', '%2F'],
+    ])('never auto-redirects %s — one SSO button, a click away', async (_label, route, back) => {
       render(route, OIDC_ONLY)
       const button = await screen.findByRole('button', { name: 'Continue with Acme SSO' })
       expect(hardNavigate).not.toHaveBeenCalled()
@@ -200,7 +191,8 @@ describe('Login', () => {
       expect(screen.queryByLabelText('Email address')).not.toBeInTheDocument()
       expect(screen.getAllByRole('button', { name: /Continue with/ })).toHaveLength(1)
       fireEvent.click(button)
-      expect(hardNavigate).toHaveBeenCalledWith('/auth/oidc?returnUrl=%2F')
+      expect(hardNavigate).toHaveBeenCalledWith(`/auth/oidc?returnUrl=${back}`)
+      expect(hardNavigate).toHaveBeenCalledTimes(1)
     })
 
     it('without oidcOnly the SSO button sits beside the other methods with its label', async () => {

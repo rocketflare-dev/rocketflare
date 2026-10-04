@@ -4,9 +4,9 @@
  * `magicLinkRequestSchema` the server uses), and — only when the server says `devLogin` — the
  * seeded quick-login accounts. Server-side failures arrive as `?error=<code>`.
  *
- * `oidcOnly` (`AUTH_OIDC_ONLY`): the page goes straight to `/auth/oidc` and shows nothing else.
- * It does NOT auto-redirect after sign-out (`?signedOut=1`), after a failure (`?error=`) or for
- * `?as=` — each would loop straight back through the issuer — and shows the one SSO button instead.
+ * `oidcOnly` (`AUTH_OIDC_ONLY`): the page shows the one SSO button and nothing else. It never
+ * redirects to the issuer on its own — signing in is always a click, so an issuer session that is
+ * still live (or a sign-out) never turns into a silent login or a loop.
  * The other methods are hidden, not disabled: the magic-link endpoint stays live for invitations.
  *
  * `?as=<email>` (what `pnpm bootstrap` opens) signs in through the same dev-login call once on
@@ -89,16 +89,8 @@ export default function Login() {
     void devLogin(autoLoginEmail)
   }, [autoLoginEmail, status])
 
-  // OIDC-only: straight to the issuer, once — unless that would loop (see the header comment).
+  // OIDC-only: the one SSO button, never an automatic redirect (see the header comment).
   const oidcOnly = methods?.oidcOnly === true && (methods.providers ?? []).includes('oidc')
-  const signedOut = searchParams.get('signedOut') === '1'
-  const autoOidc = oidcOnly && !signedOut && !errorCode && !asEmail && status === 'unauthenticated'
-  const autoOidcFired = useRef(false)
-  useEffect(() => {
-    if (!autoOidc || autoOidcFired.current) return
-    autoOidcFired.current = true
-    hardNavigate(`/auth/oidc?returnUrl=${encodeURIComponent(returnUrl)}`)
-  }, [autoOidc, returnUrl])
 
   if (status === 'authenticated') return <Navigate to={returnUrl} replace />
 
@@ -135,17 +127,6 @@ export default function Login() {
     return (
       <AuthCard>
         <MagicLinkSentCard email={sentTo} onReset={() => setSentTo(null)} />
-      </AuthCard>
-    )
-  }
-
-  if (autoOidc) {
-    return (
-      <AuthCard>
-        <div className="flex items-center gap-3 text-sm text-secondary">
-          <LoadingIndicator size="sm" />
-          Redirecting to {providerLabel('oidc', methods)}…
-        </div>
       </AuthCard>
     )
   }

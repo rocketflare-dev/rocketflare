@@ -361,8 +361,8 @@ One generic OpenID Connect issuer per deployment, beside or instead of the butto
    `<issuer>/.well-known/openid-configuration` and copy it, trailing slash and all — a mismatch is
    refused), `OIDC_CLIENT_ID`, and `OIDC_CLIENT_SECRET` unless the client is public. Optional:
    `OIDC_LABEL` (button text, default "Single sign-on"), `OIDC_SCOPES` (default
-   `openid email profile`), `AUTH_OIDC_ONLY=true` (the login page goes straight to the issuer and
-   hides every other method; the magic-link endpoint stays live for invitations — it hides, it does
+   `openid email profile`), `AUTH_OIDC_ONLY=true` (the login page shows only the "Continue with <label>"
+   button — signing in is still a click, never an automatic redirect — and hides every other method; the magic-link endpoint stays live for invitations — it hides, it does
    not disable), `OIDC_TRUST_EMAIL=true` (see Entra below). Locally these go in `.dev.vars`; deployed, everything but the secret is a
    `[vars]` entry in **both** tomls (commented templates are there) and `OIDC_CLIENT_SECRET` is a
    Worker secret (3.5)
