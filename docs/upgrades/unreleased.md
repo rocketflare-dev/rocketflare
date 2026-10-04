@@ -1,10 +1,10 @@
 ---
 version: unreleased
-previous: 0.16.0
+previous: 0.16.1
 date: null
 breaking: false
 migrations: []
-areas: [ui, shared, docs]
+areas: []
 touches_surfaces: []
 requires_surfaces: []
 manual: false
@@ -12,25 +12,20 @@ manual: false
 
 ## What changed
 
-With `AUTH_OIDC_ONLY=true` the login page no longer redirects to the issuer on its own: it shows one "Continue with <label>" button, so signing in through SSO (Launch, Okta, Keycloak…) is always a click.
-
-- `apps/web/src/ui/pages/Login.tsx`: the `autoOidc` effect and its "Redirecting to …" card are gone; `oidcOnly` still hides every other method and still renders the single SSO button.
-- `apps/web/tests/ui/login.test.tsx`: the OIDC-only case asserts no `hardNavigate` on a first visit, after sign-out and after a failure, and one on the button click.
-- Docs and comments that said the page goes "straight to the issuer" now say it shows the one button: `docs/CONCEPTS.md` §2, `SETUP.md` 2.3b, `.claude/rules/ui.md`, `apps/web/src/ui/CLAUDE.md`, `packages/shared/src/auth.ts`, both tomls' commented template, `.dev.vars.example`.
-- Why: an issuer session that is still live turned every visit to `/login` into a silent sign-in, with no chance to pick an account or stay signed out. See `docs/CONCEPTS.md` §2.
+_Nothing yet. Add an entry here in the same pull request as the change. This first paragraph is
+lifted VERBATIM into `CHANGELOG.md`, so make it ONE standalone summary sentence of ≤ 40 words —
+then one bullet per change, one line each, and no `###` sub-headings. Rationale belongs in
+`docs/CONCEPTS.md` and is linked, never restated; see `README.md` beside this file._
 
 ## How to apply
 
-1. In `apps/web/src/ui/pages/Login.tsx`, delete the `signedOut`, `autoOidc` and `autoOidcFired` constants, the `useEffect` that calls `hardNavigate('/auth/oidc?returnUrl=…')`, and the `if (autoOidc) { … }` block that renders "Redirecting to …"; keep the `oidcOnly` constant, which still limits `providers` to `['oidc']` and hides the magic-link form.
-2. In `apps/web/src/ui/pages/Login.tsx`, keep `useEffect`, `useRef` and `LoadingIndicator` imported only if the copy still uses them elsewhere in the file (the kit's `?as=` dev login and the buttons still do).
-3. In `apps/web/tests/ui/login.test.tsx`, replace the `AUTH_OIDC_ONLY` test "goes straight to the issuer, carrying returnUrl" and the "does not auto-redirect" `it.each` with the kit's single `it.each` "never auto-redirects %s — one SSO button, a click away".
-4. Copy the reworded sentences into `docs/CONCEPTS.md` §2, `SETUP.md` 2.3b, `.claude/rules/ui.md`, `apps/web/src/ui/CLAUDE.md`, the `oidcOnly` doc comment in `packages/shared/src/auth.ts`, the `AUTH_OIDC_ONLY` comment in both wrangler tomls and in `apps/web/.dev.vars.example`.
+_Numbered, imperative, each step self-contained — no "these", "them" or "the above" reaching
+outside its own step._
 
 ## Conflicts to expect
 
-- `apps/web/src/ui/pages/Login.tsx` → the OIDC-only redirect effect and its loading card removed → if the copy restyled the page, delete the copy's equivalent of the `autoOidc` effect and keep its own styling.
+_One line each: `path → what changed → what to do`. Or exactly `None.`_
 
 ## Verify
 
-1. `pnpm --filter @<slug>/web exec vitest run --project ui tests/ui/login.test.tsx` passes, including "never auto-redirects on a first visit".
-2. With `OIDC_ISSUER`, `OIDC_CLIENT_ID` and `AUTH_OIDC_ONLY=true` in `.dev.vars`, opening `http://localhost:3000/login` shows one "Continue with <OIDC_LABEL>" button and stays on the page until it is clicked.
+_Numbered checkable commands and assertions only._

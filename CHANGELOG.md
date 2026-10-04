@@ -6,6 +6,11 @@ copy of the kit forward without recreating anything its owner deleted.
 
 If you are running a copy: `pnpm kit:upgrade` tells you which of these you are missing.
 
+## 0.16.1 — 2026-10-04
+
+With `AUTH_OIDC_ONLY=true` the login page no longer redirects to the issuer on its own: it shows one "Continue with <label>" button, so signing in through SSO (Launch, Okta, Keycloak…) is always a click.
+[Porting note](docs/upgrades/0.16.1.md).
+
 ## 0.16.0 — 2026-09-30
 
 `pnpm gate` is now the one definition of an app's checks — lint, typecheck, test, build — run before every commit, as a copy's single CI job and by Launch's ship gate, with the driver seam proved under both drivers.
