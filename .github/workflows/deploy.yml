@@ -147,6 +147,12 @@ jobs:
         (github.event_name == 'push' && github.ref_type == 'tag') ||
         (github.event_name == 'workflow_dispatch' && inputs.environment == 'staging')
       )
+    # ci.yml's `verified` job declares these; a called workflow may not ask for more than its caller
+    # grants, so without them the call fails to start (the job itself answers false on a tag).
+    permissions:
+      contents: read
+      checks: read
+      pull-requests: read
     uses: ./.github/workflows/ci.yml
 
   # `!cancelled()` because a skipped `ci` would otherwise skip this job too. The last clause is
