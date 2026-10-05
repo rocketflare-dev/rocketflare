@@ -6,6 +6,11 @@ copy of the kit forward without recreating anything its owner deleted.
 
 If you are running a copy: `pnpm kit:upgrade` tells you which of these you are missing.
 
+## 0.17.1 — 2026-10-05
+
+Plugin dependencies stay in step: `plugin add` keeps declared ranges, `plugin check` accepts narrower ones, `plugin upgrade --apply` installs, re-ranges and removes them; and `kit:upgrade` prints porting-note paths that exist in the copy.
+[Porting note](docs/upgrades/0.17.1.md).
+
 ## 0.17.0 — 2026-10-05
 
 CI and deploy stop repeating work on an already-gated tree: `ci.yml` can reuse Launch's `launch/gate` attestation, a version-only release bump rides its parent's green CI, and production deploys staging's verified bundle instead of rebuilding.
