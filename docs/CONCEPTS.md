@@ -176,6 +176,16 @@ path); no per-PR previews.
   `docs/plugin-api.md` diff is the kit's own check (`kit.yml`), since a copy publishes no plugin
   API; `pnpm plugin check` runs at the end of `plugin add|upgrade --apply` (exit 8 when the written
   tree fails it) and in `plugin-ci.yml`.
+- **Verified once (opt-in, for an app Launch ships).** After a green sandbox gate Launch's GitHub
+  App posts a `launch/gate` check run keyed by the tree (`external_id: tree:<sha>`). With the
+  repository variable `LAUNCH_GATE_APP_ID` set to that App's id, `ci.yml`'s `verified` job
+  (`scripts/gate-verified.mjs`, rules in `scripts/lib/gate-verified-lib.mjs`) looks for one from
+  THAT app, `success`, for the tree CI is about to test — on a pull request the merge commit's tree,
+  found on the PR head (so it holds only while the branch contains main's tip); on a push to main
+  the pushed commit's tree, found on the commit or its PRs' heads. Found, `Gate` runs gitleaks and
+  `pnpm gate build` only; anything else — unset, another app, another tree, an API error — runs the
+  full gate. Unset, no lookup runs at all. Trust is the app id: anyone with `checks: write` can name
+  a check `launch/gate`, only Launch's App can post one under its id.
 - **`pnpm test` picks its target from the environment** (`scripts/lib/test-plan.mjs`), never by
   probing, and prints it first. **Local** (the default): it starts the compose test Postgres and
   Neon proxy itself (`docker compose … --profile neon up -d --wait`; Docker down is a failure that
@@ -483,9 +493,12 @@ Two standalone tomls (D6) kept identical in everything code can see by `wrangler
 Account-scoped names carry `-staging`. Neon uses one project with a branch and role per
 environment; under `postgres` Hyperdrive points at the direct host, under `neon` the Worker's
 `DATABASE_URL` secret holds the pooled one (D35). Tagging `X.Y.Z` (which must equal the root
-version) deploys staging; publishing the Release deploys production. `ci.yml` is ONE job — the
-secrets scan, then `pnpm gate` (§4) — which `deploy.yml` calls only when there is something to
-deploy (`guard`) and the commit has no successful CI run yet: a commit is gated once, and the kit's
+version) deploys staging; publishing the Release deploys production. `ci.yml` is ONE gate job — the
+secrets scan, then `pnpm gate` (§4), narrowed to `pnpm gate build` only on a tree Launch already
+gated when `LAUNCH_GATE_APP_ID` is set (§4, "Verified once") — which `deploy.yml` calls only when there is something to
+deploy (`guard`) and the commit has no successful CI run yet — nor, for a version-only bump (the root
+`package.json` `"version"` and nothing else, `release-check.mjs --version-only`), does its one parent:
+a commit is gated once, and the kit's
 own tags (nothing to deploy) finish in seconds with a summary saying why. The kit's renamed-copy
 and default-plugins gates, its porting-note and plugin-API checks live in `kit.yml`, which is
 `kitOnly` — a copy has no such file — and is a pull-request check, never a deploy precondition. `pnpm provision <phase>` / `/rf-provision` automates
@@ -498,12 +511,24 @@ proves who it is with a GitHub OIDC token and hands the dry-run build to a deplo
 bindings, stores an undeployed version, issues short-lived migration credentials, then activates
 (`scripts/deployer.mjs`; the v1 contract is `docs/DEPLOYER.md`). Unset, the default path is unchanged.
 
+**Build once (deployer path).** Production used to rebuild the tag, so Live never ran the bytes
+Staging validated. Now staging packs its build into `launch-bundle-<tag>.tgz` and attaches it to a
+DRAFT GitHub Release (a draft fires no `release: published`, so nothing promotes early); publishing
+the draft deploys exactly those bytes after `scripts/bundle.mjs` checks the digest, tag, commit and
+tree against the checkout. The bundle is environment-neutral — every binding and var comes from
+the toml the deployer receives — and GitHub Releases stay the external record. No asset → today's
+build (`docs/DEPLOYER.md` → Build once).
+
 **Known gaps:** no release helper beyond `kit:release`; no per-PR previews; no CLI publishing;
 provisioning HTTP calls have not been run end-to-end against live accounts; no automated
 Workers-plan check. The kit ships no deployer, only the client and the contract; the job waits for
 approval on a runner (fine for minutes, wasteful for hours — there is no re-dispatch). A deploy
 dispatched while the pushed commit's CI run is still in progress gates again rather than waiting
-for it.
+for it. Build once covers only the deployer path, and only a promotion that PUBLISHES the staging
+draft: a new release created for the tag instead has no bundle, so production rebuilds. Every
+upload carries its `digest` and `source` (`bundle` | `build`), but comparing production's digest
+with staging's is the deployer's job (Launch refuses a `bundle` upload that differs), not the
+kit's; a staging dispatch from a branch packs nothing.
 
 ## 11. CLI
 

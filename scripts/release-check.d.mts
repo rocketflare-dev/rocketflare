@@ -43,3 +43,47 @@ export function releaseNotes(notesDir?: string, options?: { root?: string }): Re
 export function findPluginManifests(root?: string, options?: { maxDepth?: number }): string[]
 
 export function deployable(root?: string): Deployability
+
+/** The five facts `versionOnlyProblems` decides on — see `versionOnly` for how each is read. */
+export interface VersionOnlyFacts {
+  /** HEAD's parent shas. */
+  parents: string[]
+  /** The named parent, resolved to a sha; null when it does not resolve. */
+  parentSha: string | null
+  /** `git diff --name-only --no-renames <parent> HEAD`. */
+  changed: string[]
+  /** The parent's root `package.json` text; null when it has none. */
+  before: string | null
+  /** HEAD's root `package.json` text; null when it has none. */
+  after: string | null
+}
+
+/** Why HEAD is NOT only a root-`package.json` `"version"` bump over its one parent; empty = it is. */
+export function versionOnlyProblems(facts: VersionOnlyFacts): string[]
+
+export interface VersionOnly {
+  /** The parent's sha, or null when it did not resolve. */
+  parent: string | null
+  problems: string[]
+}
+
+/** `versionOnlyProblems` over the committed HEAD of the checkout at `root`. `git` is injected. */
+export function versionOnly(
+  root: string,
+  parent: string,
+  options?: { git?: (root: string, args: string[]) => string | null }
+): VersionOnly
+
+/** Successful push / pull_request `ci.yml` runs on exactly `sha`, via `gh api`; null on any doubt. */
+export function successfulCiRuns(
+  repo: string,
+  sha: string,
+  options?: { exec?: (cmd: string, args: string[], opts: object) => string }
+): number | null
+
+/** deploy.yml `gated`: `sha`'s own green CI run, or a version-only bump over a green parent. */
+export function gatedDecision(input: {
+  sha: string
+  runs: (sha: string) => number | null
+  versionOnly: () => VersionOnly
+}): { gated: boolean; reason: string }

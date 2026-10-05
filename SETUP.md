@@ -748,7 +748,8 @@ Verify: the host serves the app over HTTPS; the parity test still passes (`route
    cli together.) The deploy refuses a tag whose porting note is missing — that note is how every
    copy of the kit absorbs this release.
 2. `git tag X.Y.Z && git push origin X.Y.Z` → **staging** deploys (`deploy.yml`: CI gate — skipped
-   when that commit already has a green CI run, so a commit is gated once → parity
+   when that commit already has a green CI run, or is a version-only bump over a parent that has
+   one, so a commit is gated once → parity
    with `REQUIRE_PROVISIONED=1` → `pnpm db:migrate:ci` on the staging branch →
    `pnpm --filter @rocketflare/web build:ui` → `pnpm --filter @rocketflare/web exec wrangler deploy -c
    wrangler.staging.toml --var RELEASE_VERSION:X.Y.Z`). The job fails if tag ≠ root version.

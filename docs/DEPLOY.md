@@ -293,11 +293,14 @@ All steps run at the repository root; the root scripts fan out with `pnpm -r` / 
 `working-directory` is set anywhere.
 
 ```
- pull request / push to main ─► ci.yml ─► gate (ONE job): pre-pull the test images (background)
+ pull request / push to main ─► ci.yml ─► verified (only with LAUNCH_GATE_APP_ID set): did Launch's App
+                                  │         post a successful `launch/gate` for this tree? (`checks: read`)
+                                  │       ─► gate (the ONE required job): pre-pull the test images (background)
                                   │         → pnpm install --frozen-lockfile → gitleaks
                                   │         → pnpm gate: lint → typecheck → test → build
                                   │           (test: compose Postgres + Neon proxy; every package; the web
                                   │            suite under postgres, then the `driver` project under neon)
+                                  │           — or, verified, `pnpm gate build` only
                                   │
                                   └─► kit.yml (the kit only — `kitOnly`, so a copy has no such file)
                                         ├─ kit-checks → porting note → plugin-api.md diff → plugin check
@@ -312,8 +315,10 @@ All steps run at the repository root; the root scripts fan out with `pnpm -r` / 
                                   ├─ no  → gated, ci and both deploys skipped; the step summary says why
                                   │        (the kit itself: placeholders in the tomls — seconds, not a gate)
                                   └─ yes → gated: does github.sha already have a SUCCESSFUL `CI` run
-                                           (push or pull_request; Actions API, `actions: read`)?
-                                           ├─ yes → ci skipped: the commit was gated once already
+                                           (push or pull_request; Actions API, `actions: read`)? Or is it
+                                           a version-only bump (release-check.mjs --version-only HEAD^)
+                                           over a parent that has one?
+                                           ├─ yes → ci skipped: the commit (or its tree) was gated already
                                            └─ no  → ci (workflow_call: ci.yml, the same one job)
                                   ─► staging job (environment: staging) — only after ci passed, or ci
                                      skipped because `gated` found the green run; never after a failure
@@ -337,7 +342,23 @@ earlier, so `deploy.yml`'s `gated` job asks the Actions API whether `github.sha`
 completed, successful `CI` run from a `push` or a `pull_request`, and skips `ci` if so. A run still
 in progress does NOT count — the deploy gates anyway rather than polling, which costs a duplicate
 gate only on the first deploy after a push and never waits on a run that may be cancelled. Any
-doubt (the API errors, the answer is not a count) means "gate here". `staging` is
+doubt (the API errors, the answer is not a count) means "gate here".
+
+**A version-only bump rides its parent's run.** `gated` is also true when the commit has exactly
+one parent, `node scripts/release-check.mjs --version-only HEAD^` passes — the diff touches only
+the root `package.json`, and in it only the top-level `"version"` value, byte for byte (a reformat,
+any other key or any other file fails) — and that PARENT has a completed, successful `CI` run on
+its exact sha. That is Launch's release commit (`release: X.Y.Z` straight to main, then the tag):
+its own CI is still running, or skipped (`[skip ci]`), when the tag's deploy asks, and the tree it
+deploys is the parent's plus one version string. The job checks out with `fetch-depth: 2` for the
+diff; a parent whose CI is still running counts as none, so the deploy gates itself. A person's own
+bump commit still gets its CI run as before — this only removes a redundant re-gate, and still
+requires a green parent. The decision is `gatedDecision` in `scripts/release-check.mjs`. One
+caveat for a `[skip ci]` bump: GitHub drops EVERY `push`-triggered run whose head commit carries it,
+tag pushes included, so a tag on that commit never starts this workflow — dispatch it on the tag
+ref instead (`gh workflow run deploy.yml --ref X.Y.Z -f environment=staging`), where `gated`
+applies the same rule. (The kit's own release commit is never version-only: `kit:release` also
+writes the note, the changelog and `.rocketflare.json`.) `staging` is
 `!cancelled()` so a skipped `ci` does not skip it, and its last clause is the security property:
 
 ```yaml
@@ -359,6 +380,29 @@ rename does to it, what a fresh clone installs, whether its published plugin API
 required pull-request check in the kit and never a deploy precondition; the kit does not deploy,
 and `guard` ends its tag runs in seconds with a summary saying so.
 
+**Verified once, for an app Launch ships (off by default).** Launch runs `pnpm gate` in its
+sandbox before it pushes, then its GitHub App posts a `launch/gate` check run on the pushed commit:
+`conclusion: success`, `external_id: tree:<tree sha>`, `output.text` JSON
+`{ tree, sessionId, attempt, steps }`. Set the repository variable **`LAUNCH_GATE_APP_ID`** to that
+App's numeric id and `ci.yml`'s first job, `verified`, looks for it; when it finds one for the tree
+under test, `Gate` runs gitleaks and `pnpm gate build` only. The rule (`scripts/lib/gate-verified-lib.mjs`):
+
+| event | tree compared | where the attestation is looked for |
+|---|---|---|
+| `pull_request` | the checked-out MERGE commit's — what the gate would test | the PR head (what Launch attested), and the merge commit |
+| `push` to main | the pushed commit's | the commit, then the head of every PR `GET /commits/{sha}/pulls` returns |
+| anything else (deploy.yml's `workflow_call` on a tag or dispatch) | — | nothing: `verified=false` |
+
+A pull request whose branch does not contain main's tip has a merge tree Launch never tested, so it
+gets the full gate; so does a push whose tree moved past the PR head. Only a check run whose
+`app.id` is `LAUNCH_GATE_APP_ID` counts — a `launch/gate` from any other app is ignored — and it
+must be `completed`/`success` with that exact `external_id`. Any API error is `verified=false`.
+`Gate` re-reads its own checkout's tree and reuses the verdict only when it matches, and runs on
+`!cancelled()`, so a skipped or failed `verified` still runs the full gate. With the variable unset
+`verified` is skipped (no runner, no API call) and `Gate` is exactly the job above. `verified` asks
+for `contents`, `checks` and `pull-requests: read`, so deploy.yml's `ci` job grants those three — a
+called workflow may not ask for more than its caller grants.
+
 ### Deploying through an external deployer (off by default)
 
 Set the repository variable **`DEPLOYER_URL`** (optionally `DEPLOYER_AUDIENCE`) and both jobs take
@@ -376,6 +420,23 @@ Triggers, the guard, the CI gate, the parity check and the version resolution ar
 paths; with `DEPLOYER_URL` unset the migrate / `wrangler deploy` steps run exactly as above. The
 contract a deployer implements — endpoints, payload, OIDC claims to check, what `migratorUrl` must be
 able to do — is **`docs/DEPLOYER.md`** (protocol v1).
+
+**Build once.** On this path a tag is built ONCE, by staging. The staging job packs the outdir and
+`dist/ui` it uploaded into `launch-bundle-<tag>.tgz` (`scripts/bundle.mjs pack`, a manifest binding
+it to the tag, commit and tree), and the `release-bundle` job — the only one with `contents: write`,
+and it installs nothing — attaches it to a **draft** GitHub Release for the tag. Publishing that
+draft is the promotion: `release: published` starts `production`, which downloads the asset,
+verifies it against its own checkout (`scripts/bundle.mjs fetch`) and deploys those bytes,
+skipping `build:ui` and the dry run (it still installs, for the parity test and the migrations). A
+release without the asset — an older tag, or a release created anew instead of publishing the
+draft — builds from the tag as before; an asset that fails verification fails the job. The plain
+`wrangler deploy` path never packs, attaches or fetches anything.
+
+```
+ push tag ─► staging: build:ui → dry run → pack → start/upload/migrate/activate → artifact
+           ─► release-bundle: verify → draft release X.Y.Z + launch-bundle-X.Y.Z.tgz
+ publish the draft ─► production: fetch + verify → (no build) → start/upload/migrate/activate
+```
 
 ### Default plugins in CI, and the template a plugin repository calls (D31, decision 5)
 
@@ -567,7 +628,7 @@ fail a request; `wrangler tail` is where to look.
 | Situation | Action |
 |---|---|
 | Bad Worker version, schema unchanged | `pnpm --filter @rocketflare/web exec wrangler rollback [-c wrangler.staging.toml]` — previous version, seconds. Or `wrangler rollback <version-id>` from `deployments list` |
-| Need a specific earlier tag | Actions → Deploy → `production` from that tag, or publish a Release on the earlier tag |
+| Need a specific earlier tag | Actions → Deploy → `production` from that tag, or publish a Release on the earlier tag. On the deployer path a tag whose release carries `launch-bundle-<tag>.tgz` redeploys those exact bytes (build once); an older one builds from the tag |
 | Schema migration must be undone | migrations are forward-only: write a compensating migration, tag, and run the dance. `wrangler rollback` does not touch the database |
 | Bad deploy right after switching a deployment to `neon` | `wrangler rollback` to the last `postgres` version — it restores that version's `HYPERDRIVE` binding, which is why the Hyperdrive configs are kept about a week (§ Database driver). Then switch the toml back with `pnpm provision cloudflare <env> --driver postgres` before the next deploy |
 | RLS enforce misbehaving | `TENANT_SCOPE_MODE = "off"` in `[vars]` and redeploy — no migration (docs/RLS.md) |

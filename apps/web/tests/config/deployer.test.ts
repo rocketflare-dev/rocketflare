@@ -8,12 +8,14 @@
  * answers on.
  */
 import { execFile } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { collectEntries, makeManifest } from '../../../../scripts/lib/bundle-lib.mjs'
 
 const SCRIPT = path.resolve(__dirname, '../../../../scripts/deployer.mjs')
 const REQUEST_TOKEN = 'actions-request-token'
@@ -143,6 +145,7 @@ beforeEach(() => {
   writeFileSync(path.join(dir, 'web/dist/deploy/data.bin'), Buffer.from([1, 2, 3]))
   writeFileSync(path.join(dir, 'web/dist/ui/index.html'), '<html></html>')
   writeFileSync(path.join(dir, 'web/dist/ui/assets/app.js'), 'console.log(1)')
+  writeFileSync(path.join(dir, 'web/dist/ui/.assetsignore'), '')
 })
 afterEach(() => rmSync(dir, { recursive: true, force: true }))
 
@@ -181,6 +184,26 @@ function run(command: string, extra: Record<string, string | undefined> = {}) {
       resolve({ code, stdout: String(stdout), stderr: String(stderr) })
     })
   })
+}
+
+/**
+ * The digest a deployer recomputes from the body it received — Launch's `deployArtifactDigest`,
+ * written out independently: `<sha256>  <bundle path>` lines, byte-sorted, sha256 over them.
+ */
+function launchDigest(body: { modules: Record<string, string>; assets: Record<string, string> }) {
+  const sha = (bytes: Buffer | string) => createHash('sha256').update(bytes).digest('hex')
+  const files: [string, string][] = [
+    ...Object.entries(body.modules).map(([rel, b]): [string, string] => [
+      `worker/${rel}`,
+      sha(Buffer.from(b, 'base64')),
+    ]),
+    ...Object.entries(body.assets).map(([p, b]): [string, string] => [
+      `ui/${p.replace(/^\/+/, '')}`,
+      sha(Buffer.from(b, 'base64')),
+    ]),
+  ]
+  files.sort(([a], [b]) => Buffer.compare(Buffer.from(a), Buffer.from(b)))
+  return sha(files.map(([p, d]) => `${d}  ${p}\n`).join(''))
 }
 
 const deployerCalls = () => seen.filter(s => s.url.startsWith('/deployer/'))
@@ -232,8 +255,13 @@ describe('scripts/deployer.mjs', () => {
       toml: string
       modules: Record<string, string>
       assets: Record<string, string>
+      digest: string
+      source: string
     }
     expect(body.protocol).toBe(1)
+    expect(body.source).toBe('build')
+    expect(body.digest).toBe(launchDigest(body))
+    expect(upload.stdout).toContain(`source build, digest ${body.digest}`)
     expect(body.version).toBe('1.2.3')
     expect(body.main).toBe('worker.js')
     expect(body.toml).toBe(readFileSync(path.join(dir, 'web/wrangler.staging.toml'), 'utf8'))
@@ -249,6 +277,53 @@ describe('scripts/deployer.mjs', () => {
       '/assets/app.js': b64('console.log(1)'),
       '/index.html': b64('<html></html>'),
     })
+  })
+
+  it("sends source=bundle from DEPLOYER_SOURCE, and a digest equal to the bundle's bundleSha256", async () => {
+    await run('start')
+    const upload = await run('upload', { DEPLOYER_SOURCE: 'bundle' })
+    expect(upload.code, upload.stderr).toBe(0)
+    const body = deployerCalls().find(s => s.url.endsWith('/upload'))?.body as {
+      modules: Record<string, string>
+      assets: Record<string, string>
+      digest: string
+      source: string
+    }
+    expect(body.source).toBe('bundle')
+    // The bundle `scripts/bundle.mjs pack` would make of the same two build outputs.
+    const read = (rel: string) => readFileSync(path.join(dir, 'web/dist', rel))
+    const worker = Object.fromEntries(
+      [
+        'worker.js',
+        'worker.js.map',
+        'README.md',
+        'chunks/lib.js',
+        'abc123-module.wasm',
+        'data.bin',
+      ].map(rel => [rel, read(`deploy/${rel}`)])
+    )
+    const ui = Object.fromEntries(
+      ['.assetsignore', 'index.html', 'assets/app.js'].map(rel => [rel, read(`ui/${rel}`)])
+    )
+    const entries = collectEntries({ worker, ui })
+    const manifest = makeManifest({
+      tag: '1.2.3',
+      version: '1.2.3',
+      commit: 'c'.repeat(40),
+      treeSha: 't'.repeat(40),
+      toml: readFileSync(path.join(dir, 'web/wrangler.staging.toml'), 'utf8'),
+      entries,
+    })
+    expect(body.digest).toBe(manifest.bundleSha256)
+    expect(body.digest).toBe(launchDigest(body))
+  })
+
+  it('refuses a DEPLOYER_SOURCE it does not know, before uploading', async () => {
+    await run('start')
+    const upload = await run('upload', { DEPLOYER_SOURCE: 'cache' })
+    expect(upload.code).toBe(1)
+    expect(upload.stderr).toMatch(/DEPLOYER_SOURCE is cache; expected build or bundle/)
+    expect(deployerCalls().some(s => s.url.endsWith('/upload'))).toBe(false)
   })
 
   it('masks the migrator credentials and exports MIGRATOR_URL without printing it', async () => {

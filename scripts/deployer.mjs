@@ -19,6 +19,9 @@
 //   DEPLOYER_OUTDIR       the `wrangler deploy --dry-run --outdir` directory; default: dist/deploy
 //                         next to TOML
 //   RELEASE_VERSION       the version the deployer sets as the Worker's RELEASE_VERSION var
+//   DEPLOYER_SOURCE       `bundle` when the job unpacked the staging release bundle
+//                         (`scripts/bundle.mjs fetch` → source=bundle), else `build` (the default);
+//                         sent as the upload's `source`
 //   WAIT_SECONDS          how long `start` waits for approval (default 300)
 //   DEPLOYER_POLL_SECONDS how often `start` asks (default 10)
 //   ACTIONS_ID_TOKEN_REQUEST_URL / ACTIONS_ID_TOKEN_REQUEST_TOKEN — set by GitHub Actions when the
@@ -29,8 +32,12 @@
 import { appendFileSync, existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { isUiAsset, isWorkerModule, payloadDigest } from './lib/bundle-lib.mjs'
 
 export const PROTOCOL = 1
+
+/** Where the uploaded bytes came from (the upload's `source`). */
+export const SOURCES = ['build', 'bundle']
 
 const env = name => {
   const value = process.env[name]
@@ -204,7 +211,8 @@ function files(dir) {
 }
 
 /** The upload body (docs/DEPLOYER.md → Upload payload). */
-export function buildPayload({ tomlPath, outdir, version }) {
+export function buildPayload({ tomlPath, outdir, version, source = 'build' }) {
+  if (!SOURCES.includes(source)) fail(`DEPLOYER_SOURCE is ${source}; expected build or bundle`)
   if (!existsSync(tomlPath)) fail(`TOML not found: ${tomlPath}`)
   const toml = readFileSync(tomlPath, 'utf8')
   const { main, assetsDirectory } = readToml(toml)
@@ -214,10 +222,11 @@ export function buildPayload({ tomlPath, outdir, version }) {
   }
 
   // Every module wrangler wrote (JS chunks, .wasm, .bin, .txt …), never the source maps nor the
-  // README wrangler drops into the outdir.
+  // README wrangler drops into the outdir. The bundle (scripts/lib/bundle-lib.mjs) uses the same
+  // two filters, so a payload unpacked from it carries exactly the bytes staging uploaded.
   const modules = {}
   for (const rel of files(outdir)) {
-    if (rel.endsWith('.map') || rel === 'README.md') continue
+    if (!isWorkerModule(rel)) continue
     modules[rel] = readFileSync(path.join(outdir, rel)).toString('base64')
   }
   const entry = `${path.posix.basename(main).replace(/\.[cm]?[jt]sx?$/, '')}.js`
@@ -230,11 +239,13 @@ export function buildPayload({ tomlPath, outdir, version }) {
     const dir = path.resolve(path.dirname(tomlPath), assetsDirectory)
     if (!existsSync(dir)) fail(`[assets] directory not found: ${dir} — build the UI first`)
     for (const rel of files(dir)) {
-      if (rel === '.assetsignore') continue
+      if (!isUiAsset(rel)) continue
       assets[`/${rel}`] = readFileSync(path.join(dir, rel)).toString('base64')
     }
   }
-  return { protocol: PROTOCOL, version, main: entry, toml, modules, assets }
+  // `digest` and `source` are optional v1 fields: a deployer that predates them ignores them.
+  const digest = payloadDigest({ modules, assets })
+  return { protocol: PROTOCOL, version, main: entry, toml, modules, assets, digest, source }
 }
 
 async function upload() {
@@ -242,11 +253,13 @@ async function upload() {
   const version = env('RELEASE_VERSION') ?? fail('RELEASE_VERSION is not set')
   const outdir = env('DEPLOYER_OUTDIR') ?? path.join(path.dirname(tomlPath), 'dist/deploy')
   const id = ticket()
-  const payload = buildPayload({ tomlPath, outdir, version })
+  const source = env('DEPLOYER_SOURCE') ?? 'build'
+  const payload = buildPayload({ tomlPath, outdir, version, source })
   const bytes = Buffer.byteLength(JSON.stringify(payload))
   console.log(
     `uploading ${Object.keys(payload.modules).length} module(s), ` +
-      `${Object.keys(payload.assets).length} asset(s), ${(bytes / 1024 / 1024).toFixed(1)} MB, version ${version}`
+      `${Object.keys(payload.assets).length} asset(s), ${(bytes / 1024 / 1024).toFixed(1)} MB, version ${version}, ` +
+      `source ${source}, digest ${payload.digest}`
   )
   const res = await call('POST', `/deploy/${id}/upload`, payload)
   if (res.status !== 200) fail(`upload refused: ${explain(res)}`)
