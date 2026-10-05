@@ -58,6 +58,9 @@ import {
   countLines,
   kitOnlyGlobs,
   matchesAny,
+  NOTES_SUBDIR,
+  notePath,
+  noteReportLines,
   parseNote,
   splitDiff,
   stripIndexLines,
@@ -357,6 +360,7 @@ function main(argv) {
 
   // 5/6 — artifacts
   const workRoot = path.join(REPO_ROOT, WORK_DIR, 'work', toVersion ?? to.slice(0, 12))
+  const workDir = path.relative(REPO_ROOT, workRoot).split(path.sep).join('/')
   const artifacts = makeWriter(workRoot)
   const write = artifacts.write
 
@@ -405,7 +409,7 @@ function main(argv) {
         if (f.change !== 'deleted') write(path.join('reference', f.path), kit.show(to, f.path))
       }
     }
-    for (const n of notes) write(path.join('notes', path.basename(n.file)), n.text)
+    for (const n of notes) write(path.join(NOTES_SUBDIR, path.basename(n.file)), n.text)
     write('apply.patch', patches.join(''))
   }
 
@@ -438,7 +442,10 @@ function main(argv) {
     },
     notes: notes.map(n => ({
       version: n.version,
+      // `file` is the note's path in the KIT; `path` is where this run copied it — the one to read,
+      // since a copy has no `docs/upgrades/<to>.md` until `--apply` writes it. Null on a dry run.
       file: n.file,
+      path: args.dryRun ? null : notePath(workDir, n.file),
       applicable: applicableNotes.includes(n),
     })),
     files: files.map(f => ({
@@ -452,7 +459,7 @@ function main(argv) {
     renames,
     counts: byClass,
     warnings,
-    workDir: path.relative(REPO_ROOT, workRoot),
+    workDir,
   }
   if (!args.dryRun) {
     write('plan.json', `${JSON.stringify(plan, null, 2)}\n`)
@@ -524,7 +531,7 @@ function main(argv) {
   }
 
   if (args.json) out(JSON.stringify(plan, null, 2))
-  else out('', ...report(plan, notes, applicableNotes), '')
+  else out('', ...report(plan, notes, applicableNotes, { dryRun: args.dryRun }), '')
 
   out(
     'Verify (the gate):',
@@ -542,7 +549,7 @@ function applyNames(text, names) {
   return applyReplacements(text, names).text
 }
 
-function report(plan, notes, applicable) {
+function report(plan, notes, applicable, { dryRun }) {
   const lines = []
   const bucket = cls => plan.files.filter(f => f.class === cls)
   const skippedSurface = bucket('skipped-surface-absent').length
@@ -610,14 +617,9 @@ function report(plan, notes, applicable) {
     lines.push('', 'Moved in the kit — carry your local edits across:')
     for (const r of plan.renames) lines.push(`  ${r.from} → ${r.to} (${r.similarity}% similar)`)
   }
-  if (notes.length > 0) {
-    lines.push('', 'Release notes:')
-    for (const n of notes) {
-      lines.push(
-        `  ${n.version}  ${n.file}${applicable.includes(n) ? '' : '  (not applicable here)'}`
-      )
-    }
-  }
+  lines.push(
+    ...noteReportLines(notes, applicable, { workDir: plan.workDir, dryRun, toRef: plan.to.ref })
+  )
   for (const w of plan.warnings) lines.push(`  warning: ${w}`)
   return lines
 }
@@ -639,7 +641,16 @@ function renderPlan(plan, notes) {
     '## Release notes',
     '',
   ]
-  for (const n of notes) lines.push(`### ${n.version}`, '', n.text, '')
+  for (const n of notes) {
+    lines.push(
+      `### ${n.version}`,
+      '',
+      `Also at \`${notePath(plan.workDir, n.file)}\`.`,
+      '',
+      n.text,
+      ''
+    )
+  }
   return `${lines.join('\n')}\n`
 }
 

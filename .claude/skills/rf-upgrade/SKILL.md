@@ -8,9 +8,14 @@ argument-hint: "[--to <version>]"
 
 This app was copied from the kit and detached, so there is no upstream to merge. What there is:
 `.rocketflare.json` (where the copy came from, and which replaceable surfaces it still has) and
-`docs/upgrades/X.Y.Z.md` (what each release did and how to port it). `pnpm kit:upgrade` turns those
+the kit's release notes (what each release did and how to port it). `pnpm kit:upgrade` turns those
 into a translated, filtered patch. You apply it, resolve the rejects, and make the calls it
 deliberately refuses to make.
+
+**Where the notes are:** `.upgrade/work/<version>/notes/X.Y.Z.md` (and embedded in that dir's
+`plan.md`) — the path the report's `Release notes` lines print. **Not** this app's
+`docs/upgrades/`: a note newer than the copy is not there until `--apply` writes it, so reading it
+from there before the apply fails with "file does not exist".
 
 **The rule that matters most:** a surface this app deleted is never recreated. The script drops
 those files before you see them. If you find yourself typing out a file the plan called
@@ -49,7 +54,9 @@ No trailer either? Ask which kit version they copied and use that tag. Do not gu
 pnpm kit:upgrade $ARGUMENTS
 ```
 
-Expect six `✔ n/6` lines and a report. Read `.upgrade/work/<version>/plan.md`. Then tell them, in
+Expect six `✔ n/6` lines and a report. Read `.upgrade/work/<version>/plan.md` — it embeds every
+release note in range, and each is also at the `.upgrade/work/<version>/notes/X.Y.Z.md` path the
+report prints. Then tell them, in
 three or four lines: which versions they are crossing, what each release note says it did, how many
 files apply cleanly, and what has been skipped **and why**. A large `skipped-locally-deleted` or
 `skipped-surface-absent` count is the normal, healthy case for an app that followed
@@ -92,7 +99,8 @@ a failure, and the script deliberately does NOT stamp the new version until it i
 A reject means the adopter's copy has diverged there; their version usually wins on anything they
 changed on purpose.
 
-**Work each release note's `## How to apply` as a numbered list of self-contained steps**, top
+**Work each release note's `## How to apply`** (read it from `.upgrade/work/<version>/notes/`)
+**as a numbered list of self-contained steps**, top
 to bottom — a step never depends on a sentence elsewhere in the note, so do exactly what it says
 and do not go hunting for a referent. `## Conflicts to expect` is `path → what changed → what to
 do`, and `## Verify` is what you run at the end.
