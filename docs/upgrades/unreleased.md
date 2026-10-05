@@ -1,10 +1,10 @@
 ---
 version: unreleased
-previous: 0.16.3
+previous: 0.17.0
 date: null
 breaking: false
 migrations: []
-areas: [config, docs]
+areas: []
 touches_surfaces: []
 requires_surfaces: []
 manual: false
@@ -12,72 +12,20 @@ manual: false
 
 ## What changed
 
-CI and deploy stop repeating work on an already-gated tree: `ci.yml` can reuse Launch's `launch/gate` attestation, a version-only release bump rides its parent's green CI, and production deploys staging's verified bundle instead of rebuilding.
-
-- `.github/workflows/ci.yml`: a new first job `verified` (job-level `if: vars.LAUNCH_GATE_APP_ID != ''`, `permissions: contents/checks/pull-requests: read`) runs `node scripts/gate-verified.mjs`; `Gate` gets `needs: verified`, `if: ${{ !cancelled() }}`, a `scope` step that re-reads `HEAD^{tree}`, and runs `pnpm gate build` when reused, otherwise `pnpm gate`.
-- Decision rule: on `pull_request` the checked-out MERGE commit's tree must equal a tree Launch attested on the PR head (true only while the branch contains main's tip); on `push` to main the pushed commit's tree, attested on the commit or on the head of a PR from `GET /commits/{sha}/pulls`; any other event, or any API error, is the full gate.
-- Trust: only a check run named `launch/gate`, `completed`/`success`, `external_id: tree:<tree>`, whose `app.id` equals `LAUNCH_GATE_APP_ID` (and whose `output.text` JSON `tree`, when present, agrees).
-- `scripts/gate-verified.mjs` (new) and `scripts/lib/gate-verified-lib.mjs` + `.d.mts` (new): `planLookup`, `isAttestation`, `findVerified`, `githubApi`.
-- `.github/workflows/deploy.yml`: the `ci` job grants `contents`, `checks` and `pull-requests: read`, because a called workflow cannot ask for more than its caller grants.
-- `apps/web/tests/config/gate-verified.test.ts` (new) and `apps/web/tests/config/ci-workflows.test.ts`: the rule and the workflow shape.
-- Docs: `docs/CONCEPTS.md` §4 "Verified once" and §10, `docs/DEPLOY.md` § CI/CD flow.
-- `scripts/release-check.mjs` (+ `release-check.d.mts`): `--version-only <parent>` exits 0 only when HEAD has exactly one parent, that parent, and the diff touches only the root `package.json` top-level `"version"`, byte for byte. A reformat, any other key or file, an empty diff or a merge fails with what else changed.
-- `scripts/release-check.mjs`: `--gated <sha>` (`gatedDecision`, `successfulCiRuns`, `versionOnly`): the `gated` job's decision, moved out of inline shell. It runs in a copy too, like `--deployable`.
-- `.github/workflows/deploy.yml` `gated`: checks out with `fetch-depth: 2` and runs `node scripts/release-check.mjs --gated "$GITHUB_SHA"`. `guard`, `ci`, `staging` and `production` are unchanged.
-- `apps/web/tests/config/release-version-only.test.ts` (new) and `apps/web/tests/config/ci-workflows.test.ts`: the version-only cases, the three `gated` outcomes against a fake API, and the CLI against a stub `gh` and a scratch repository.
-- Why: Launch's `release: X.Y.Z` commit changes only the version, and its own CI is still running when the tag deploys, so the whole gate ran twice for one tree (`docs/DEPLOY.md`, "A version-only bump rides its parent's run").
-- Outside Launch nothing is lost: a person's own bump commit still gets its CI run, and the new rule still requires a completed, successful run on the parent's exact sha.
-- `[skip ci]` caveat: GitHub suppresses EVERY `push`-triggered workflow whose head commit carries `[skip ci]`, tag pushes included. A tag pushed on a `[skip ci]` commit therefore never starts deploy.yml. Dispatch deploy.yml on the tag ref instead (`gh workflow run deploy.yml --ref X.Y.Z -f environment=staging`); `gated` applies the same rule there.
-- `scripts/bundle.mjs` (new; pure half `scripts/lib/bundle-lib.mjs` + `bundle-lib.d.mts`): `pack`, `verify`, `attach` and `fetch` for `launch-bundle-<tag>.tgz` (worker outdir minus maps and README, `dist/ui`, a manifest with tag, commit, tree and per-file sha256 plus `bundleSha256`).
-- `.github/workflows/deploy.yml`, deployer path only: `staging` packs after the dry run and keeps the bundle as an artifact after `activate`; a new `release-bundle` job (`contents: write`, installs nothing) attaches it to a DRAFT release for the tag; `production` fetches and verifies the published release's bundle and skips `build:ui` and the dry run when it has one.
-- A release with no bundle (an older tag) builds as before; a bundle that fails verification fails the job. The plain `wrangler deploy` path (no `DEPLOYER_URL`) is unchanged, and so is a copy deployed outside Launch.
-- Tests: `apps/web/tests/config/bundle-lib.test.ts`, `apps/web/tests/config/bundle.test.ts`, and a `deploy.yml build once` block in `apps/web/tests/config/ci-workflows.test.ts`.
-- Docs: `docs/DEPLOYER.md` → Build once (the asset format, verification, why a draft and not a prerelease, what a promoter must do), `docs/DEPLOY.md`, `docs/CONCEPTS.md` §10.
-- `scripts/deployer.mjs upload` sends two optional v1 fields: `digest` (`payloadDigest` in `bundle-lib.mjs`: the `bundleSha256` recipe over the payload's own files, modules at `worker/<rel>`, assets at `ui/<rel>`) and `source` (`bundle` | `build`, from `DEPLOYER_SOURCE`, default `build`; anything else fails before uploading).
-- The bundle now leaves out `ui/.assetsignore`, which `upload` never sent, so a bundle deploy's upload `digest` equals its `bundleSha256` and staging's upload `digest`. What is uploaded is unchanged.
-- `.github/workflows/deploy.yml` `production`: the `Hand the build to the deployer` step passes `DEPLOYER_SOURCE: ${{ steps.bundle.outputs.source }}`. A deployer that checks it (Launch) refuses a `bundle` upload whose digest differs from staging's (409) and only warns on `build`.
-- Compatibility: a deployer that predates the fields ignores them (`docs/DEPLOYER.md` → Versioning now says a v1 deployer ignores unknown request fields; Launch's upload schema strips them), so no capability check is needed.
-- Tests: `deployer.test.ts` (both fields, the digest recomputed independently and equal to `bundleSha256`, an unknown `DEPLOYER_SOURCE`), `bundle-lib.test.ts` (`payloadDigest`, no `.assetsignore` in the bundle), `ci-workflows.test.ts` (the production upload's env).
+_Nothing yet. Add an entry here in the same pull request as the change. This first paragraph is
+lifted VERBATIM into `CHANGELOG.md`, so make it ONE standalone summary sentence of ≤ 40 words —
+then one bullet per change, one line each, and no `###` sub-headings. Rationale belongs in
+`docs/CONCEPTS.md` and is linked, never restated; see `README.md` beside this file._
 
 ## How to apply
 
-1. Copy `scripts/gate-verified.mjs`, `scripts/lib/gate-verified-lib.mjs` and `scripts/lib/gate-verified-lib.d.mts` from the kit unchanged; they name nothing of the app.
-2. In `.github/workflows/ci.yml` (a `manual` file, so `pnpm kit:upgrade` does not write it), add the kit's `verified` job above `gate:`, then in the `gate` job add `needs: verified` and `if: ${{ !cancelled() }}`, the `Decide the gate's scope` step right after `actions/checkout`, `if: steps.scope.outputs.reuse != 'true'` on the pre-pull step, and replace the final `- run: pnpm gate` with the kit's two conditional steps (`pnpm gate build` when `reuse == 'true'`, `pnpm gate` otherwise). A copy whose `ci.yml` has diverged keeps its own steps and adds only those pieces.
-3. In `.github/workflows/deploy.yml` (also `manual`), give the `ci` job (the one with `uses: ./.github/workflows/ci.yml`) a `permissions:` block of `contents: read`, `checks: read` and `pull-requests: read`; without the block a tag or staging-dispatch deploy fails to start once `ci.yml` declares the `verified` job.
-4. Copy `apps/web/tests/config/gate-verified.test.ts` and port the `ci.yml` / `deploy.yml` assertions in `apps/web/tests/config/ci-workflows.test.ts` from the kit.
-5. To opt in (an app shipped by Launch), set the repository variable `LAUNCH_GATE_APP_ID` to Launch's GitHub App id; leave the variable unset to keep the full gate on every run. `Gate` stays the required status check under the same name either way.
-6. Apply the patch to `scripts/release-check.mjs`, `scripts/release-check.d.mts` and `.github/workflows/deploy.yml`. In `deploy.yml`, only the `gated` job's `steps:` change: an `actions/checkout@v4` with `fetch-depth: 2`, then the `check` step's `run:` becomes `node scripts/release-check.mjs --gated "$GITHUB_SHA"` (keep `GH_TOKEN: ${{ github.token }}` and `permissions: actions: read`).
-7. Add `apps/web/tests/config/release-version-only.test.ts` and port the `ci-workflows.test.ts` hunks: the "deploy.yml gated step" shell tests are replaced by `gatedDecision`, `successfulCiRuns` and a `for real` block.
-8. Do not put `[skip ci]` on a release bump commit: GitHub then also skips the tag push's `deploy.yml`. If one already carries it, dispatch `deploy.yml` on the tag ref instead (`gh workflow run deploy.yml --ref X.Y.Z -f environment=staging`); `gated` applies the same rule there.
-9. Copy `scripts/bundle.mjs`, `scripts/lib/bundle-lib.mjs` and `scripts/lib/bundle-lib.d.mts` from the kit unchanged; `scripts/bundle.mjs` imports `readToml` from the copy's existing `scripts/deployer.mjs`.
-10. In the copy's `.github/workflows/deploy.yml`, port the `staging` steps `Pack the build for production (build once)` and `Keep the bundle for the release`, the new `release-bundle` job, and the `production` step `Use the staging bundle when the release carries one` plus the new `if:` conditions on the `production` steps `Build UI` and `Build the Worker (dry run, no credentials)`. Keep the `@<slug>/web` filter names the copy already uses.
-11. A copy that promotes by hand, on the deployer path: publish the draft release `deploy.yml` created for the tag (Releases → the draft → Publish) instead of creating a new release; a new release still deploys, but from a rebuild.
-12. A copy without `DEPLOYER_URL` has nothing to change in behaviour: every new step is skipped on the plain `wrangler deploy` path.
-13. Copy `scripts/deployer.mjs` from the kit unchanged, together with step 9's `scripts/lib/bundle-lib.mjs` and `.d.mts`: `deployer.mjs` now imports `isWorkerModule`, `isUiAsset` and `payloadDigest` from it.
-14. In the copy's `.github/workflows/deploy.yml`, add `DEPLOYER_SOURCE: ${{ steps.bundle.outputs.source }}` to the `env:` of the `production` job's `Hand the build to the deployer` step (beside `RELEASE_VERSION`). Leave the `staging` upload step without it.
-15. Port the `deployer.test.ts`, `bundle-lib.test.ts` and `ci-workflows.test.ts` hunks from the kit.
+_Numbered, imperative, each step self-contained — no "these", "them" or "the above" reaching
+outside its own step._
 
 ## Conflicts to expect
 
-- `.github/workflows/ci.yml` → new `verified` job, `Gate` gains `needs`/`if`/scope step → apply by hand per step 2.
-- `.github/workflows/deploy.yml` → `ci` job gains `permissions:` → apply by hand per step 3.
-- `apps/web/tests/config/ci-workflows.test.ts` → the gate job's `if` is now `!cancelled()` and `pnpm gate build` is allowed → take the kit's version, then re-apply any assertion of your own.
-- `.github/workflows/deploy.yml` → the `gated` job's inline `gh api … --jq` shell is gone → take the kit's `steps:` whole; a copy that edited that shell re-applies its change in `gatedDecision`.
-- `apps/web/tests/config/ci-workflows.test.ts` → the "deploy.yml gated step" describe is replaced → take the kit's version.
-- `.github/workflows/deploy.yml` → steps added to `staging` and `production`, a new `release-bundle` job → keep the copy's own job edits and add the kit's steps beside them.
-- `apps/web/tests/config/ci-workflows.test.ts` → a `deploy.yml build once` block appended at the end → append it after the copy's own blocks.
-- `scripts/deployer.mjs` → a copy that edited its upload filters → take the kit's file and move the change into `isWorkerModule` / `isUiAsset` in `scripts/lib/bundle-lib.mjs`, so the bundle and the upload keep the same file set.
+_One line each: `path → what changed → what to do`. Or exactly `None.`_
 
 ## Verify
 
-1. `pnpm --filter @<slug>/web exec vitest run --project config tests/config/gate-verified.test.ts tests/config/ci-workflows.test.ts` passes.
-2. With `LAUNCH_GATE_APP_ID` unset, a pull request's checks show `Verified by Launch?` skipped and `Gate` running `pnpm gate`.
-3. `LAUNCH_GATE_APP_ID= GITHUB_EVENT_NAME=pull_request node scripts/gate-verified.mjs` prints `· not verified: LAUNCH_GATE_APP_ID is not set` and exits 0.
-4. `pnpm --filter @<slug>/web exec vitest run --project config tests/config/release-version-only.test.ts tests/config/ci-workflows.test.ts` passes.
-5. On a commit that bumps only the root version, `node scripts/release-check.mjs --version-only HEAD^` exits 0; on any other commit it exits 1 and names what else changed.
-6. `grep -n 'fetch-depth: 2' .github/workflows/deploy.yml` finds the `gated` job's checkout.
-7. `pnpm --filter @<slug>/web exec vitest run --project config tests/config/bundle-lib.test.ts tests/config/bundle.test.ts tests/config/ci-workflows.test.ts` passes.
-8. With `pnpm --filter @<slug>/web build:ui` and `pnpm --filter @<slug>/web exec wrangler deploy --dry-run --outdir dist/deploy -c wrangler.staging.toml` run, `TOML=apps/web/wrangler.staging.toml BUNDLE_TAG=0.0.0 node scripts/bundle.mjs pack` prints a `bundleSha256`.
-9. `TOML=apps/web/wrangler.toml BUNDLE_TAG=0.0.0 node scripts/bundle.mjs verify apps/web/dist/launch-bundle-0.0.0.tgz` exits 0.
-10. `pnpm --filter @<slug>/web exec vitest run --project config tests/config/deployer.test.ts tests/config/bundle-lib.test.ts` passes.
-11. `grep -n 'DEPLOYER_SOURCE' .github/workflows/deploy.yml` finds it only in the `production` job.
+_Numbered checkable commands and assertions only._

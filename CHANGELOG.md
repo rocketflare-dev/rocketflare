@@ -6,6 +6,11 @@ copy of the kit forward without recreating anything its owner deleted.
 
 If you are running a copy: `pnpm kit:upgrade` tells you which of these you are missing.
 
+## 0.17.0 — 2026-10-05
+
+CI and deploy stop repeating work on an already-gated tree: `ci.yml` can reuse Launch's `launch/gate` attestation, a version-only release bump rides its parent's green CI, and production deploys staging's verified bundle instead of rebuilding.
+[Porting note](docs/upgrades/0.17.0.md).
+
 ## 0.16.3 — 2026-10-05
 
 `pnpm kit:upgrade` and the rename now write `.rocketflare.json` in Biome's layout, so a copy's own `pnpm lint` passes on the stamped file instead of failing on the arrays `JSON.stringify` spread over several lines.
