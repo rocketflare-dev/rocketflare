@@ -485,7 +485,9 @@ environment; under `postgres` Hyperdrive points at the direct host, under `neon`
 `DATABASE_URL` secret holds the pooled one (D35). Tagging `X.Y.Z` (which must equal the root
 version) deploys staging; publishing the Release deploys production. `ci.yml` is ONE job — the
 secrets scan, then `pnpm gate` (§4) — which `deploy.yml` calls only when there is something to
-deploy (`guard`) and the commit has no successful CI run yet: a commit is gated once, and the kit's
+deploy (`guard`) and the commit has no successful CI run yet — nor, for a version-only bump (the root
+`package.json` `"version"` and nothing else, `release-check.mjs --version-only`), does its one parent:
+a commit is gated once, and the kit's
 own tags (nothing to deploy) finish in seconds with a summary saying why. The kit's renamed-copy
 and default-plugins gates, its porting-note and plugin-API checks live in `kit.yml`, which is
 `kitOnly` — a copy has no such file — and is a pull-request check, never a deploy precondition. `pnpm provision <phase>` / `/rf-provision` automates

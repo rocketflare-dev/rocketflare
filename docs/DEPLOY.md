@@ -312,8 +312,10 @@ All steps run at the repository root; the root scripts fan out with `pnpm -r` / 
                                   ├─ no  → gated, ci and both deploys skipped; the step summary says why
                                   │        (the kit itself: placeholders in the tomls — seconds, not a gate)
                                   └─ yes → gated: does github.sha already have a SUCCESSFUL `CI` run
-                                           (push or pull_request; Actions API, `actions: read`)?
-                                           ├─ yes → ci skipped: the commit was gated once already
+                                           (push or pull_request; Actions API, `actions: read`)? Or is it
+                                           a version-only bump (release-check.mjs --version-only HEAD^)
+                                           over a parent that has one?
+                                           ├─ yes → ci skipped: the commit (or its tree) was gated already
                                            └─ no  → ci (workflow_call: ci.yml, the same one job)
                                   ─► staging job (environment: staging) — only after ci passed, or ci
                                      skipped because `gated` found the green run; never after a failure
@@ -337,7 +339,23 @@ earlier, so `deploy.yml`'s `gated` job asks the Actions API whether `github.sha`
 completed, successful `CI` run from a `push` or a `pull_request`, and skips `ci` if so. A run still
 in progress does NOT count — the deploy gates anyway rather than polling, which costs a duplicate
 gate only on the first deploy after a push and never waits on a run that may be cancelled. Any
-doubt (the API errors, the answer is not a count) means "gate here". `staging` is
+doubt (the API errors, the answer is not a count) means "gate here".
+
+**A version-only bump rides its parent's run.** `gated` is also true when the commit has exactly
+one parent, `node scripts/release-check.mjs --version-only HEAD^` passes — the diff touches only
+the root `package.json`, and in it only the top-level `"version"` value, byte for byte (a reformat,
+any other key or any other file fails) — and that PARENT has a completed, successful `CI` run on
+its exact sha. That is Launch's release commit (`release: X.Y.Z` straight to main, then the tag):
+its own CI is still running, or skipped (`[skip ci]`), when the tag's deploy asks, and the tree it
+deploys is the parent's plus one version string. The job checks out with `fetch-depth: 2` for the
+diff; a parent whose CI is still running counts as none, so the deploy gates itself. A person's own
+bump commit still gets its CI run as before — this only removes a redundant re-gate, and still
+requires a green parent. The decision is `gatedDecision` in `scripts/release-check.mjs`. One
+caveat for a `[skip ci]` bump: GitHub drops EVERY `push`-triggered run whose head commit carries it,
+tag pushes included, so a tag on that commit never starts this workflow — dispatch it on the tag
+ref instead (`gh workflow run deploy.yml --ref X.Y.Z -f environment=staging`), where `gated`
+applies the same rule. (The kit's own release commit is never version-only: `kit:release` also
+writes the note, the changelog and `.rocketflare.json`.) `staging` is
 `!cancelled()` so a skipped `ci` does not skip it, and its last clause is the security property:
 
 ```yaml

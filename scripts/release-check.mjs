@@ -5,6 +5,8 @@
  *   node scripts/release-check.mjs --tag <X.Y.Z>      the hard stop, run by deploy.yml at the tag
  *   node scripts/release-check.mjs --unreleased       the PR gate, run by ci.yml
  *   node scripts/release-check.mjs --deployable       "is there anything here to deploy?" (deploy.yml)
+ *   node scripts/release-check.mjs --version-only <parent>   is HEAD only a root-version bump over it?
+ *   node scripts/release-check.mjs --gated <sha>      "has CI already passed this?" (deploy.yml `gated`)
  *
  * `--repo-root <path>` on any of them names the repository to check. Without it the root is the git
  * toplevel of the working directory, and only then the directory this script lives in — see
@@ -14,8 +16,10 @@
  * notes. So a release with no note is a release no adopter can cross, and the gap is permanent —
  * `previous` chains through it. That is worth failing a deploy over.
  *
- * Both modes exit 0 immediately when `.rocketflare.json` has an `app` block: that means this is
+ * `--tag` and `--unreleased` exit 0 immediately when `.rocketflare.json` has an `app` block: that means this is
  * somebody's app, not the kit, and the kit's release discipline is none of its business.
+ * `--deployable`, `--version-only` and `--gated` answer deploy questions, so they run everywhere —
+ * a copy's deploy.yml is where they matter.
  *
  * Exit 0 ok · 1 a check failed · 2 usage.
  */
@@ -46,7 +50,7 @@ const warn = (...lines) => {
 }
 
 export const USAGE = `usage: node scripts/release-check.mjs --tag <X.Y.Z> | --unreleased [--base <ref>] | --deployable
-                            [--repo-root <path>]`
+                            | --version-only <parent> | --gated <sha>   [--repo-root <path>]`
 
 /** `git rev-parse --show-toplevel` as an answer or a null: not a checkout, or no git at all. */
 function gitToplevel(cwd) {
@@ -338,6 +342,207 @@ export function deployable(root = SCRIPT_ROOT) {
   return isDeployable(manifest, tomls)
 }
 
+/**
+ * Is HEAD a version-only bump over `parent` — the shape of Launch's `release: X.Y.Z` commit?
+ * Pure: every fact is read by `versionOnly` below, so each refusal is testable without git.
+ *
+ *   parents     HEAD's parent shas (`git rev-list --parents -n 1 HEAD`, minus HEAD itself)
+ *   parentSha   `parent`, resolved to a commit sha (null when it does not resolve)
+ *   changed     `git diff --name-only --no-renames <parent> HEAD`
+ *   before      the parent's root `package.json` text (null when it has none)
+ *   after       HEAD's root `package.json` text (null when it has none)
+ *
+ * Passes only when HEAD has exactly ONE parent and it is `parent`, the diff touches only the root
+ * `package.json`, and within it only the top-level `"version"` value — byte for byte, so a
+ * reformat, a reordered key or a nested `version` fails too. A diff that changes NOTHING fails:
+ * an empty commit is not a version bump, and the rule this serves (deploy.yml `gated`) only has
+ * to recognise the one shape Launch writes. Returns the problems, empty when it passes.
+ */
+export function versionOnlyProblems({ parents, parentSha, changed, before, after }) {
+  if (parents.length !== 1) {
+    return [
+      `HEAD has ${parents.length} parents — a merge or a root commit is never a version-only bump`,
+    ]
+  }
+  if (!parentSha) return ['the parent does not resolve to a commit']
+  if (parents[0] !== parentSha) {
+    return [`${parentSha.slice(0, 12)} is not HEAD's parent (that is ${parents[0].slice(0, 12)})`]
+  }
+  if (changed.length === 0) {
+    return ['nothing changed between the parent and HEAD — a version-only bump changes the version']
+  }
+  const problems = []
+  const others = changed.filter(f => f !== 'package.json')
+  if (others.length > 0) {
+    const more = others.length > 5 ? ` (+${others.length - 5} more)` : ''
+    problems.push(
+      `files other than the root package.json changed: ${others.slice(0, 5).join(', ')}${more}`
+    )
+  }
+  if (!changed.includes('package.json')) {
+    problems.push('the root package.json did not change')
+    return problems
+  }
+  if (before === null || after === null) {
+    problems.push(
+      `the root package.json is missing ${before === null ? 'in the parent' : 'at HEAD'}`
+    )
+    return problems
+  }
+  let a
+  let b
+  try {
+    a = JSON.parse(before)
+    b = JSON.parse(after)
+  } catch (err) {
+    problems.push(`the root package.json is not valid JSON on one side (${err.message})`)
+    return problems
+  }
+  const { version: from, ...restBefore } = a
+  const { version: to, ...restAfter } = b
+  if (from === to) problems.push(`the version did not change (${String(from)})`)
+  const keys = [...new Set([...Object.keys(restBefore), ...Object.keys(restAfter)])].filter(
+    k => JSON.stringify(restBefore[k]) !== JSON.stringify(restAfter[k])
+  )
+  if (keys.length > 0) {
+    problems.push(`package.json keys other than "version" changed: ${keys.join(', ')}`)
+  } else if (from !== to) {
+    // The values agree; now the bytes must too. Exactly one line differs, and it is the version
+    // line with nothing but the value substituted — anything else is a reformat.
+    const l1 = before.split('\n')
+    const l2 = after.split('\n')
+    const diff = l1.length === l2.length ? l1.flatMap((l, i) => (l === l2[i] ? [] : [i])) : null
+    const line = diff?.length === 1 ? diff[0] : -1
+    const ok =
+      line !== -1 &&
+      /^\s*"version"\s*:/.test(l1[line]) &&
+      l1[line].replace(JSON.stringify(from), JSON.stringify(to)) === l2[line]
+    if (!ok) {
+      problems.push(
+        `package.json was reformatted — more than the "version" value changed (${String(from)} → ${String(to)})`
+      )
+    }
+  }
+  return problems
+}
+
+/** `git <args>` in `root`, trimmed — or null when git fails (an unknown ref, a missing path). */
+function gitOut(root, args) {
+  try {
+    return execFileSync('git', args, {
+      cwd: root,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    })
+  } catch {
+    return null
+  }
+}
+
+/**
+ * The I/O half of `versionOnlyProblems`: read the five facts from git, at the COMMITTED state of
+ * HEAD (never the working tree). Needs `parent` in the clone — `fetch-depth: 2` in a workflow.
+ * `git` is injected for tests.
+ */
+export function versionOnly(root, parent, { git = gitOut } = {}) {
+  const parentSha =
+    git(root, ['rev-parse', '--verify', '--quiet', `${parent}^{commit}`])?.trim() || null
+  const line = git(root, ['rev-list', '--parents', '-n', '1', 'HEAD'])?.trim() ?? ''
+  const parents = line.split(/\s+/).filter(Boolean).slice(1)
+  const changed =
+    parentSha === null
+      ? []
+      : (git(root, ['diff', '--name-only', '--no-renames', parentSha, 'HEAD']) ?? '')
+          .split('\n')
+          .map(f => f.trim())
+          .filter(Boolean)
+  return {
+    parent: parentSha,
+    problems: versionOnlyProblems({
+      parents,
+      parentSha,
+      changed,
+      before: parentSha === null ? null : git(root, ['show', `${parentSha}:package.json`]),
+      after: git(root, ['show', 'HEAD:package.json']),
+    }),
+  }
+}
+
+/**
+ * How many COMPLETED, SUCCESSFUL `ci.yml` runs from a `push` or a `pull_request` exist on exactly
+ * `sha` — through `gh api`, as the `gated` job's shell did. Null on ANY doubt (the API errors, the
+ * answer is not the expected shape), which `gatedDecision` reads as "no proof". `exec` is injected
+ * for tests.
+ */
+export function successfulCiRuns(repo, sha, { exec = execFileSync } = {}) {
+  try {
+    const body = exec(
+      'gh',
+      [
+        'api',
+        `repos/${repo}/actions/workflows/ci.yml/runs?head_sha=${sha}&status=success&per_page=100`,
+      ],
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }
+    )
+    const runs = JSON.parse(body)?.workflow_runs
+    if (!Array.isArray(runs)) return null
+    return runs.filter(
+      r =>
+        (r?.event === 'push' || r?.event === 'pull_request') &&
+        r?.conclusion === 'success' &&
+        r?.head_sha === sha
+    ).length
+  } catch {
+    return null
+  }
+}
+
+/**
+ * deploy.yml's `gated` answer: may this commit deploy on an EARLIER CI verdict instead of running
+ * the gate again? Yes when either
+ *
+ *   (a) `sha` itself has a successful CI run, or
+ *   (b) `sha` is a version-only bump over its one parent (`versionOnly`), and THAT parent has one.
+ *
+ * (b) is Launch's release: it commits `release: X.Y.Z` (the root version, nothing else) over a
+ * commit its ship gate and CI already passed, then tags it — and the bump's own CI is still
+ * running, or skipped, when the tag's deploy asks. A version bump changes no code the gate tests,
+ * so the parent's verdict is the bump's. A run in progress never counts, for either commit; any
+ * doubt answers `gated: false`, so the fallback is always the gate. `runs(sha)` → a count or null,
+ * `versionOnly()` → `{ parent, problems }`, both injected.
+ */
+export function gatedDecision({ sha, runs, versionOnly: check }) {
+  const own = runs(sha)
+  if (own === null) out(`::warning::Could not read CI runs for ${sha}.`)
+  if (own !== null && own > 0) {
+    return { gated: true, reason: `${sha} already has ${own} successful CI run(s)` }
+  }
+  let vo
+  try {
+    vo = check()
+  } catch (err) {
+    vo = { parent: null, problems: [err instanceof Error ? err.message : String(err)] }
+  }
+  if (vo.problems.length > 0 || !vo.parent) {
+    return {
+      gated: false,
+      reason: `${sha} has no successful CI run yet, and is not a version-only bump over a gated parent (${vo.problems.join('; ')})`,
+    }
+  }
+  const parentRuns = runs(vo.parent)
+  if (parentRuns === null) out(`::warning::Could not read CI runs for ${vo.parent}.`)
+  if (parentRuns !== null && parentRuns > 0) {
+    return {
+      gated: true,
+      reason: `${sha} is a version-only bump over ${vo.parent}, which has ${parentRuns} successful CI run(s)`,
+    }
+  }
+  return {
+    gated: false,
+    reason: `${sha} is a version-only bump, but its parent ${vo.parent} has no successful CI run yet`,
+  }
+}
+
 function checkUnreleased(root, base, problems, pluginManifests = []) {
   let changed = []
   try {
@@ -390,10 +595,18 @@ function main(argv) {
   let mode = null
   let tag = null
   let base = null
+  let ref = null
   for (let i = 0; i < rest.length; i++) {
     if (rest[i] === '--tag') {
       mode = 'tag'
       tag = rest[++i]
+    } else if (rest[i] === '--version-only' || rest[i] === '--gated') {
+      mode = rest[i].slice(2)
+      ref = rest[++i]
+      if (ref === undefined || ref.startsWith('-')) {
+        warn(`error: ${rest[i - 1]} needs a commit`, '', USAGE)
+        return 2
+      }
     } else if (rest[i] === '--unreleased') mode = 'unreleased'
     else if (rest[i] === '--deployable') mode = 'deployable'
     else if (rest[i] === '--base') base = rest[++i]
@@ -428,6 +641,36 @@ function main(argv) {
     }
     out(ok ? `deployable=true — ${reason}` : `::notice::Deploy skipped: ${reason}.`)
     if (!ok) out('deployable=false')
+    return 0
+  }
+  if (mode === 'version-only') {
+    const { problems } = versionOnly(root, ref)
+    if (problems.length > 0) {
+      warn(
+        `release-check: HEAD is not a version-only bump over ${ref}:`,
+        ...problems.map(p => `  ${p}`)
+      )
+      return 1
+    }
+    out(`release-check ok — HEAD changes only the root package.json "version" over ${ref}`)
+    return 0
+  }
+  if (mode === 'gated') {
+    // Never fails the job: every doubt is `gated=false`, and the deploy then runs the gate itself.
+    const repo = process.env.GITHUB_REPOSITORY ?? ''
+    const { gated, reason } = gatedDecision({
+      sha: ref,
+      runs: sha => (repo ? successfulCiRuns(repo, sha) : null),
+      versionOnly: () => {
+        const head = gitOut(root, ['rev-parse', 'HEAD'])?.trim()
+        if (head !== ref) {
+          return { parent: null, problems: [`the checkout is at ${head ?? 'nothing'}, not ${ref}`] }
+        }
+        return versionOnly(root, 'HEAD^')
+      },
+    })
+    if (process.env.GITHUB_OUTPUT) appendFileSync(process.env.GITHUB_OUTPUT, `gated=${gated}\n`)
+    out(gated ? `${reason}; the gate is not re-run.` : `${reason}; gating it here.`)
     return 0
   }
   // A PLUGIN repository (D31) has no `.rocketflare.json` and one or more `rocketflare-plugin.json`.

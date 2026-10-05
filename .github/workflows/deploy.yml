@@ -28,10 +28,12 @@ name: Deploy
 # every tag and then both deploys skipped, a seven-minute run that deployed nothing.
 #
 # Gated ONCE per commit: the `gated` job asks the Actions API whether `github.sha` already has a
-# successful `CI` run from a push or a pull request. If it has, `ci` is skipped and `staging` runs
-# on that earlier run's verdict; if it has not (a tag on an unpushed commit, a dispatch from a
-# branch nobody opened a PR for, a run still in progress, the API unreachable), `ci` gates here as
-# before. Nothing deploys a commit that no green CI run has passed.
+# successful `CI` run from a push or a pull request — or is a version-only bump (the root
+# package.json `"version"` and nothing else) over a parent that has one. If so, `ci` is skipped and
+# `staging` runs on that earlier run's verdict; if not (a tag on an unpushed commit, a dispatch
+# from a branch nobody opened a PR for, a run still in progress, the API unreachable), `ci` gates
+# here as before. Nothing deploys a commit that no green CI run has passed — its own, or for a
+# version-only bump, its parent's (the tree minus one version string).
 #
 # Each job: verify tag == root package.json version → CI gate (staging only, and only when the
 # commit has no green CI run yet; production re-ships a validated tag) → parity test with REQUIRE_PROVISIONED=1 (no <PLACEHOLDER> may remain) →
@@ -103,6 +105,13 @@ jobs:
   # cancelled or re-run in-flight run to reason about, and never delays a deploy past its own
   # gate's length. Any doubt — the API errors, the answer is not a number — prints `gated=false`,
   # so the fallback is always the gate, never the deploy.
+  #
+  # Or a VERSION-ONLY bump over a green parent: the commit has exactly one parent, the diff to it
+  # touches only the root package.json `"version"` (`release-check.mjs --version-only HEAD^`), and
+  # the PARENT has a completed, successful CI run on its exact sha. That is Launch's `release: X.Y.Z`
+  # commit, whose own CI is still running (or `[skip ci]`) when the tag deploys; the gate would
+  # re-test code its parent's run already passed. In-progress still does not count, for either.
+  # The decision is `gatedDecision` in scripts/release-check.mjs (tests/config/ci-workflows.test.ts).
   gated:
     name: Already gated?
     needs: guard
@@ -118,23 +127,14 @@ jobs:
     outputs:
       gated: ${{ steps.check.outputs.gated }}
     steps:
+      # Two commits: the one being deployed and its parent, which the version-only rule diffs.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
       - id: check
         env:
           GH_TOKEN: ${{ github.token }}
-        run: |
-          set -uo pipefail
-          count=$(gh api \
-            "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$GITHUB_SHA&status=success&per_page=100" \
-            --jq '[.workflow_runs[] | select((.event == "push" or .event == "pull_request") and .conclusion == "success")] | length' \
-            2>&1) || { echo "::warning::Could not read CI runs for $GITHUB_SHA ($count); gating here."; count=0; }
-          case "$count" in ''|*[!0-9]*) count=0 ;; esac
-          if [ "$count" -gt 0 ]; then
-            echo "gated=true" >> "$GITHUB_OUTPUT"
-            echo "$GITHUB_SHA already has $count successful CI run(s); the gate is not re-run."
-          else
-            echo "gated=false" >> "$GITHUB_OUTPUT"
-            echo "$GITHUB_SHA has no successful CI run yet; gating it here."
-          fi
+        run: node scripts/release-check.mjs --gated "$GITHUB_SHA"
 
   # Step 1 of the dance: a tag has not necessarily been through a PR, so the gate runs here —
   # unless `gated` found a green CI run on this commit. `!cancelled()` so a FAILED `gated` job
