@@ -4,7 +4,9 @@
  * Promises that live only in YAML, where nothing else would notice them regress:
  *   - `ci.yml`'s gate job runs `pnpm gate` and adds nothing of its own but the secrets scan — so
  *     what passes in CI is what passes on a laptop and in Launch's ship gate (docs/CONCEPTS.md §4).
- *     No `test-neon`, no `services:` database beside the compose file, no `--skip`;
+ *     No `test-neon`, no `services:` database beside the compose file, no `--skip`. The one
+ *     narrowing is `pnpm gate build` on a tree Launch already gated, opt-in through
+ *     LAUNCH_GATE_APP_ID (the lookup's rules: `gate-verified.test.ts`);
  *   - nothing is deployed, or gated, when there is nothing to deploy (`guard`);
  *   - a commit is gated ONCE: `deploy.yml` skips `ci` when the commit already has a green CI run,
  *     and `staging` deploys only after a passing `ci` or that proof — never after a failed one.
@@ -25,6 +27,9 @@ const REPO_ROOT = path.resolve(__dirname, '../../../..')
 const read = (f: string) => readFileSync(path.join(REPO_ROOT, '.github/workflows', f), 'utf8')
 const CI = read('ci.yml')
 const DEPLOY = read('deploy.yml')
+
+/** A GitHub Actions expression, `${{ … }}`, as the workflow writes it. */
+const expr = (inner: string) => `\${{ ${inner} }}`
 
 /** The lines of one job: from `  <id>:` to the next two-space key (comments excluded). */
 function job(workflow: string, id: string): string[] {
@@ -70,22 +75,56 @@ function commands(lines: string[]): string[] {
 }
 
 describe('ci.yml', () => {
-  it('has a gate job that runs pnpm gate, last', () => {
+  it('has a gate job that runs pnpm gate, last — and is never skipped', () => {
     const gate = commands(job(CI, 'gate'))
     expect(gate.at(-1)).toBe('pnpm gate')
-    expect(key(job(CI, 'gate'), 'if')).toBeUndefined()
+    // `!cancelled()` and nothing else: a skipped or failed `verified` must still run the gate.
+    expect(key(job(CI, 'gate'), 'if')).toBe(expr('!cancelled()'))
+    expect(key(job(CI, 'gate'), 'needs')).toBe('verified')
   })
 
-  it('adds nothing of substance to the gate but the secrets scan', () => {
+  it('adds nothing of substance to the gate but the secrets scan (and the scope it decides)', () => {
     const substantive = commands(job(CI, 'gate')).filter(
       c =>
         c !== 'pnpm gate' &&
+        c !== 'pnpm gate build' &&
         c !== 'pnpm install --frozen-lockfile' &&
         !c.startsWith('nohup docker compose -f apps/web/docker-compose.test.yml') &&
         !c.startsWith('> "$RUNNER_TEMP/pull.log"') &&
-        !/gitleaks/.test(c)
+        !/gitleaks/.test(c) &&
+        // the `scope` step's shell
+        !/^(if \[ "\$VERIFIED"|echo "reuse=|echo "Launch gated|else|fi)/.test(c)
     )
     expect(substantive).toEqual([])
+  })
+
+  it('runs the full gate unless the scope step proved this tree was gated by Launch', () => {
+    const text = job(CI, 'gate').join('\n')
+    // The full gate is the fallback: any output but `true` (empty, `false`) runs it.
+    expect(text).toMatch(/- if: steps\.scope\.outputs\.reuse != 'true'\n\s+run: pnpm gate\n/)
+    expect(text).toMatch(/if: steps\.scope\.outputs\.reuse == 'true'\n\s+run: pnpm gate build\n/)
+    // gitleaks is never conditional.
+    const gitleaks = text.indexOf('- name: gitleaks')
+    expect(text.slice(gitleaks, text.indexOf('run:', gitleaks))).not.toMatch(/if:/)
+    // reuse needs the verified output AND the same tree, re-read in this job.
+    expect(text).toContain('[ "$VERIFIED" = "true" ]')
+    expect(text).toContain(`[ "$(git rev-parse 'HEAD^{tree}')" = "$TREE" ]`)
+  })
+
+  it('looks up a Launch attestation only when LAUNCH_GATE_APP_ID is set, with read scopes', () => {
+    const verified = job(CI, 'verified')
+    expect(key(verified, 'if')).toBe("vars.LAUNCH_GATE_APP_ID != ''")
+    const text = verified.join('\n')
+    expect(text).toMatch(
+      /permissions:\n\s+contents: read\n\s+checks: read\n\s+pull-requests: read\n/
+    )
+    expect(commands(verified)).toEqual(['node scripts/gate-verified.mjs'])
+    expect(text).toContain(`PR_HEAD_SHA: ${expr('github.event.pull_request.head.sha')}`)
+    // The first job, and the only other one.
+    const jobs = CI.slice(CI.indexOf('\njobs:\n'))
+      .split('\n')
+      .filter(l => /^ {2}[\w-]+:$/.test(l))
+    expect(jobs).toEqual(['  verified:', '  gate:'])
   })
 
   it('has no second test job, no services: database and no skipped step', () => {
@@ -128,6 +167,10 @@ describe('deploy.yml', () => {
     expect(key(ci, 'needs')).toBe('[guard, gated]')
     expect(key(ci, 'uses')).toBe('./.github/workflows/ci.yml')
     expect(ci.join('\n')).not.toMatch(/with:/)
+    // ci.yml's `verified` job asks for these; a called workflow cannot exceed its caller's grant.
+    expect(ci.join('\n')).toMatch(
+      /permissions:\n\s+contents: read\n\s+checks: read\n\s+pull-requests: read\n/
+    )
     expect(key(ci, 'if')).toBe(
       "!cancelled() && needs.guard.outputs.deployable == 'true' && " +
         `needs.gated.outputs.gated != 'true' && ( ${TRIGGER} )`
