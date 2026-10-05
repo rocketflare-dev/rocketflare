@@ -42,6 +42,7 @@ import {
   classifyPluginFile,
   coreEditsByFile,
   declaresProperty,
+  dependenciesToInstall,
   dependencyClashes,
   describeClash,
   hasBarrelLine,
@@ -52,12 +53,14 @@ import {
   nextPluginMigrationTag,
   PLUGIN_MANIFEST_FILE,
   parsePluginRequirement,
+  pinDeclaredRanges,
   planSteps,
   pluginIdProblem,
   pluginManifestProblems,
   pluginMigrationTag,
   pluginPlatformProblems,
   pluginRoots,
+  rangeWithin,
   removeBarrelLine,
   removeSteps,
   renderAddPlan,
@@ -1328,6 +1331,127 @@ describe('the audit', () => {
     expect(
       missingDependencies(manifest, { 'apps/web': { devDependencies: { 'date-fns': '^3.0.0' } } })
     ).toEqual([])
+  })
+
+  /**
+   * **Kit CI went red the minute react-grid-layout 2.3.0 was published (2026-10-05).** The analytics
+   * plugin declares `^2.2.4`; `pnpm add react-grid-layout@^2.2.4` saved `^2.3.0` (the resolved
+   * version behind the save-prefix), and the audit then demanded string equality. A host range
+   * INSIDE the declared one is what "the plugin can live with it" means; wider or disjoint is not.
+   */
+  it('accepts a host range inside the declared one — the ^<resolved> pnpm add leaves behind', () => {
+    const manifest = {
+      id: 'analytics',
+      dependencies: { 'apps/web': { 'react-grid-layout': '^2.2.4', 'drizzle-cube': '0.8.3' } },
+    }
+    const host = (rgl: string, cube = '0.8.3') => ({
+      'apps/web': { dependencies: { 'react-grid-layout': rgl, 'drizzle-cube': cube } },
+    })
+    // The drifted tree every install produced (and every copy already holds): passes.
+    expect(missingDependencies(manifest, host('^2.3.0'))).toEqual([])
+    expect(dependencyClashes(manifest, { packageJsons: host('^2.3.0') })).toEqual([])
+    // An operator's narrower pin passes too.
+    expect(missingDependencies(manifest, host('2.2.5'))).toEqual([])
+    expect(missingDependencies(manifest, host('~2.2.4'))).toEqual([])
+    // Wider, disjoint or older does not.
+    for (const bad of ['^2.0.0', '^3.0.0', '>=2.2.4', '*', '^2.2.3', '1.5.4']) {
+      expect(missingDependencies(manifest, host(bad))).toEqual([
+        { pkg: 'apps/web', name: 'react-grid-layout', range: '^2.2.4', have: bad },
+      ])
+    }
+    // An exact declared version admits nothing but itself.
+    expect(missingDependencies(manifest, host('^2.2.4', '^0.8.3'))).toHaveLength(1)
+  })
+
+  it('models npm ranges conservatively for the subset test', () => {
+    const yes: Array<[string, string]> = [
+      ['^2.3.0', '^2.2.4'],
+      ['2.2.4', '^2.2.4'],
+      ['~2.5.1', '^2.2.4'],
+      ['>=2.3.0 <2.4.0', '^2.2.4'],
+      ['^0.2.5', '^0.2.3'],
+      ['0.0.3', '^0.0.3'],
+      ['2.x', '^2.0.0'],
+      ['^1.2.0 || ^2.1.0', '^1.0.0 || ^2.0.0'],
+      ['1.2.3', '1.2.3'],
+      ['^7.9.0', '>=7'],
+      ['workspace:*', 'workspace:*'],
+    ]
+    const no: Array<[string, string]> = [
+      ['^0.3.0', '^0.2.3'],
+      ['^0.0.4', '^0.0.3'],
+      ['^2.0.0', '~2.2.0'],
+      ['>=2.2.4', '^2.2.4'],
+      ['^1.0.0 || ^3.0.0', '^1.0.0 || ^2.0.0'],
+      ['^2.3.0-beta.1', '^2.2.4'],
+      ['latest', '^2.2.4'],
+      ['2.2.4 - 2.3.0', '^2.2.4'],
+      ['npm:other@^2.3.0', '^2.2.4'],
+    ]
+    for (const [have, range] of yes)
+      expect(rangeWithin(have, range), `${have} in ${range}`).toBe(true)
+    for (const [have, range] of no)
+      expect(rangeWithin(have, range), `${have} in ${range}`).toBe(false)
+  })
+
+  /**
+   * The install half: it writes the DECLARED range, not what the registry resolved that minute, and
+   * it leaves a dependency the host already holds inside the declared range alone.
+   */
+  it("installs only what is unsatisfied, and pins the declared range back over pnpm's ^<resolved>", () => {
+    const manifest = {
+      id: 'analytics',
+      dependencies: {
+        'apps/web': { 'react-grid-layout': '^2.2.4', d3: '^7.9.0', recharts: '^3.10.1' },
+        'apps/cli': {},
+      },
+    }
+    expect(
+      dependenciesToInstall(manifest, {
+        'apps/web': { dependencies: { d3: '^7.9.0', recharts: '^3.11.0' } },
+      })
+    ).toEqual({ 'apps/web': { 'react-grid-layout': '^2.2.4' } })
+    // A disjoint pin is reinstalled (and surfaced as a clash); nothing to do is an empty plan.
+    expect(
+      dependenciesToInstall(manifest, {
+        'apps/web': {
+          dependencies: { 'react-grid-layout': '^1.4.0', d3: '^7.9.0', recharts: '^3.10.1' },
+        },
+      })
+    ).toEqual({ 'apps/web': { 'react-grid-layout': '^2.2.4' } })
+    expect(
+      dependenciesToInstall(manifest, {
+        'apps/web': {
+          dependencies: { 'react-grid-layout': '^2.3.0', d3: '^7.9.0', recharts: '^3.10.1' },
+        },
+      })
+    ).toEqual({})
+
+    // What `pnpm add react-grid-layout@^2.2.4` writes once 2.3.0 is out — a fake resolved-newer
+    // version — and the declared range written back, sections and formatting kept.
+    const afterPnpmAdd = `${JSON.stringify(
+      {
+        name: '@x/web',
+        dependencies: { d3: '^7.9.0', 'react-grid-layout': '^2.3.0' },
+        devDependencies: { recharts: '^3.11.0' },
+      },
+      null,
+      2
+    )}\n`
+    const pinned = pinDeclaredRanges(afterPnpmAdd, manifest.dependencies['apps/web'])
+    expect(JSON.parse(pinned)).toEqual({
+      name: '@x/web',
+      dependencies: { d3: '^7.9.0', 'react-grid-layout': '^2.2.4' },
+      devDependencies: { recharts: '^3.10.1' },
+    })
+    expect(pinned.endsWith('}\n')).toBe(true)
+    expect(pinned).toContain('\n  "dependencies": {\n    "d3"')
+    // Already declared → the very same text (no write, no `pnpm install`), and an absent name is
+    // not invented.
+    expect(pinDeclaredRanges(pinned, manifest.dependencies['apps/web'])).toBe(pinned)
+    expect(JSON.parse(pinDeclaredRanges(pinned, { 'left-pad': '^1.0.0' }))).not.toHaveProperty(
+      'dependencies.left-pad'
+    )
   })
 
   /**

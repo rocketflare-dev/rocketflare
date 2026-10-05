@@ -65,6 +65,7 @@ import {
   classifyPluginFile,
   coreEditsByFile,
   declaresProperty,
+  dependenciesToInstall,
   dependencyClashes,
   describeClash,
   floorOf,
@@ -76,6 +77,7 @@ import {
   nextPluginMigrationTag,
   PLUGIN_MANIFEST_FILE,
   parsePluginRequirement,
+  pinDeclaredRanges,
   pluginIdProblem,
   pluginManifestProblems,
   pluginPlatformProblems,
@@ -783,13 +785,18 @@ function formatWritten(paths) {
  * else has meanwhile started importing is a broken build that re-running the command cannot undo.
  */
 function installDependencies(m, verb) {
-  for (const [pkg, deps] of Object.entries(m.dependencies ?? {})) {
-    const specs = Object.entries(deps ?? {}).map(([n, v]) => (verb === 'add' ? `${n}@${v}` : n))
-    if (specs.length === 0) continue
-    if (verb !== 'add') {
-      out(`  pnpm --dir ${pkg} remove ${specs.join(' ')}`)
-      continue
+  if (verb !== 'add') {
+    for (const [pkg, deps] of Object.entries(m.dependencies ?? {})) {
+      const names = Object.keys(deps ?? {})
+      if (names.length > 0) out(`  pnpm --dir ${pkg} remove ${names.join(' ')}`)
     }
+    return
+  }
+  // Only what the host does not already hold inside the declared range — re-adding the rest would
+  // let `pnpm add` move an operator's pin, and makes a re-run write nothing.
+  const todo = dependenciesToInstall(m, packageJsonsFor(m))
+  for (const [pkg, deps] of Object.entries(todo)) {
+    const specs = Object.entries(deps).map(([n, v]) => `${n}@${v}`)
     out(`  pnpm --dir ${pkg} add ${specs.join(' ')}`)
     const r = spawnSync('pnpm', ['--dir', pkg, 'add', ...specs], {
       cwd: REPO_ROOT,
@@ -797,6 +804,27 @@ function installDependencies(m, verb) {
     })
     if (r.status !== 0)
       stop(1, `error: \`pnpm --dir ${pkg} add\` failed — install it yourself, then re-run`)
+    // `pnpm add name@^2.2.4` saves `^<resolved>` (`^2.3.0` once 2.3.0 is out), not the range the
+    // plugin declared; put the declared one back so the host says what the plugin asked for.
+    const file = abs(path.join(pkg, 'package.json'))
+    const before = readFileSync(file, 'utf8')
+    const after = pinDeclaredRanges(before, deps)
+    if (after === before) continue
+    writeFileSync(file, after)
+    // …and re-key the lockfile to it. `--no-frozen-lockfile` because CI sets frozen by default and
+    // this run is, by definition, the one changing the lockfile; the resolved versions stay.
+    out(
+      `  pnpm install --no-frozen-lockfile   # record the declared range${specs.length > 1 ? 's' : ''} in the lockfile`
+    )
+    const i = spawnSync('pnpm', ['install', '--no-frozen-lockfile'], {
+      cwd: REPO_ROOT,
+      stdio: 'inherit',
+    })
+    if (i.status !== 0)
+      stop(
+        1,
+        '`pnpm install` failed after pinning the declared ranges — run it yourself, then re-run'
+      )
   }
 }
 
@@ -1675,15 +1703,18 @@ function cmdCheck(args, host) {
         })
         continue
       }
-      // A DIFFERENT range is not the same fault: `package.json` is `manual` in `.rocketflare.json`,
-      // so an operator is entitled to have pinned it themselves and no kit upgrade reconciles it.
+      // A range OUTSIDE the declared one is not the same fault: `package.json` is `manual` in
+      // `.rocketflare.json`, so an operator is entitled to have pinned it themselves and no kit
+      // upgrade reconciles it. One inside it (`^2.3.0` for `^2.2.4`) never reaches here. The fix
+      // names the edit, not `pnpm add <name>@<range>`, which writes `^<resolved>` instead.
       add('fail', `${id}:dependency-range:${d.name}`, {
         file: `${d.pkg}/package.json`,
         line: jsonKeyLine(readHostPackageJsonSource(d.pkg), d.name),
-        problem: `pins ${d.name} at ${d.have}, and ${s.anchor} declares ${d.range}`,
+        problem: `pins ${d.name} at ${d.have}, outside the ${d.range} ${s.anchor} declares`,
         fix:
-          `pnpm --dir ${d.pkg} add ${d.name}@${d.range}, or set "dependencies"."${d.pkg}"."${d.name}" ` +
-          `in ${s.anchor} to ${d.have} — whichever range both can live with`,
+          `set "${d.name}": "${d.range}" (or a range inside it) in ${d.pkg}/package.json and run ` +
+          `\`pnpm install\`, or set "dependencies"."${d.pkg}"."${d.name}" in ${s.anchor} to ` +
+          `${d.have} — whichever range both can live with`,
       })
     }
 

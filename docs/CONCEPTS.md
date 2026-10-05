@@ -703,7 +703,8 @@ as merging a PR. A plugin repo mirrors the host tree and ships **no migration, n
   a plugin's bindings (`kv|queue|r2|workflow|durable_object`), crons, prefixes and vars into BOTH
   tomls. DO migration tags `plugin-<id>-vN` are append-only.
 - **`plugin check` is an exhaustive oracle**: manifest fields, `minKit`, ledger diff, barrel lines,
-  `*.rej`, migration tag, host dependencies, worker exports, a tenant-isolation test for tenant
+  `*.rej`, migration tag, host dependencies (present, at a range inside the declared one —
+  `add` writes the declared range, never pnpm's `^<resolved>`), worker exports, a tenant-isolation test for tenant
   tables, `onTenantDeleted` for DOs, table collisions, declared skills. Each finding names file, line and exact edit.
   Structural checks read comment-free code. It runs where a finding can still be acted on: at the
   end of `plugin add|upgrade --apply` (exit 8 when the tree it wrote fails), in the plugin's own CI

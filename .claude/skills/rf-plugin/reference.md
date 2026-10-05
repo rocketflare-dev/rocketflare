@@ -230,6 +230,12 @@ upgrade ever reconciles it for anyone afterwards. It warns rather than refusing:
 often the intended change, and refusing would make an ordinary dependency upgrade impossible
 without editing somebody else's manifest.
 
+A host range INSIDE the declared one is not a clash and passes `plugin check` (`^2.3.0`, or an
+operator's `2.2.5`, for a plugin declaring `^2.2.4`); `add` leaves it alone. A range wider than the
+declared one or disjoint from it fails. `pnpm add name@^2.2.4` saves `^<resolved>`, not the declared
+range, so `add` writes the declared range back into the host `package.json` and runs
+`pnpm install --no-frozen-lockfile` to re-key the lockfile.
+
 ## Where an install is recorded
 
 A `kind: 'plugin'` **surface** carrying `source: { repo, subdir, version, commit }`, `installedAt`,

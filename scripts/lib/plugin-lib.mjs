@@ -1736,15 +1736,164 @@ export function resolveSubdir({ flag = null, manifest = null, source = null } = 
 /** The range a package is pinned at in a host `package.json`, either section, or null. */
 const rangeIn = (json, name) => json?.dependencies?.[name] ?? json?.devDependencies?.[name] ?? null
 
+// ---------------------------------------------------------------- semver ranges (subset only)
+
+const VERSION = /^v?(\d+|[xX*])(?:\.(\d+|[xX*]))?(?:\.(\d+|[xX*]))?$/
+const wild = p => p === undefined || /^[xX*]$/.test(p)
+const cmpV = (a, b) => a[0] - b[0] || a[1] - b[1] || a[2] - b[2]
+/** The version a partial `x.y` / `x` ends just below. */
+const bumpPartial = parts =>
+  wild(parts[1]) ? [+parts[0] + 1, 0, 0] : [+parts[0], +parts[1] + 1, 0]
+
+/** One comparator applied to the interval being narrowed; false for one this does not model. */
+function applyComparator(iv, op, parts) {
+  const raise = (v, inc) => {
+    const c = cmpV(v, iv.lo)
+    if (c > 0 || (c === 0 && !inc)) Object.assign(iv, { lo: v, loInc: inc })
+  }
+  const lower = (v, inc) => {
+    const c = iv.hi === null ? -1 : cmpV(v, iv.hi)
+    if (c < 0 || (c === 0 && !inc)) Object.assign(iv, { hi: v, hiInc: inc })
+  }
+  if (wild(parts[0])) return op !== '<' && op !== '>' // `*`, `x`, `>=*`: no bound at all
+  const firstWild = parts.findIndex(wild)
+  const exact = firstWild === -1
+  const base = parts.map(p => (wild(p) ? 0 : +p))
+  const [maj, min, pat] = base
+  if (op === '^') {
+    raise(base, true)
+    if (maj > 0 || firstWild === 1) lower([maj + 1, 0, 0], false)
+    else if (min > 0 || firstWild === 2) lower([0, min + 1, 0], false)
+    else lower([0, 0, pat + 1], false)
+  } else if (op === '~') {
+    raise(base, true)
+    lower(firstWild === 1 ? [maj + 1, 0, 0] : [maj, min + 1, 0], false)
+  } else if (op === '' || op === '=') {
+    raise(base, true)
+    if (exact) lower(base, true)
+    else lower(bumpPartial(parts), false)
+  } else if (op === '>=') raise(base, true)
+  else if (op === '>') {
+    if (exact) raise(base, false)
+    else raise(bumpPartial(parts), true)
+  } else if (op === '<') lower(base, false)
+  else if (exact)
+    lower(base, true) // `<=`
+  else lower(bumpPartial(parts), false)
+  return true
+}
+
 /**
- * Declared dependencies that are not in the host package's `package.json`, or are at another range.
+ * One npm comparator set (`^1.2.3`, `~1.2`, `1.x`, `>=1.2.3 <2`, `1.2.3`, `*`) as an interval
+ * `{ lo, loInc, hi, hiInc }` (`hi: null` is unbounded), or null for anything this does not model
+ * — a prerelease, a hyphen range, a dist-tag, `workspace:`, `npm:`, a URL. Null makes the caller
+ * fall back to string equality, so an unmodelled range can only ever be judged MORE strictly.
+ */
+function intervalOf(set) {
+  const iv = { lo: [0, 0, 0], loInc: true, hi: null, hiInc: false }
+  const tokens = set
+    .trim()
+    .replace(/(>=|<=|>|<|=|\^|~)\s+/g, '$1')
+    .split(/\s+/)
+    .filter(Boolean)
+  for (const token of tokens) {
+    const [, op = '', rest] = /^(>=|<=|>|<|=|\^|~)?(.*)$/.exec(token)
+    const m = VERSION.exec(rest)
+    if (!m || !applyComparator(iv, op, [m[1], m[2], m[3]])) return null
+  }
+  return iv
+}
+
+/** Every version `inner` admits, `outer` admits too. */
+function intervalWithin(inner, outer) {
+  const lo = cmpV(inner.lo, outer.lo)
+  if (lo < 0 || (lo === 0 && inner.loInc && !outer.loInc)) return false
+  if (outer.hi === null) return true
+  if (inner.hi === null) return false
+  const hi = cmpV(inner.hi, outer.hi)
+  return hi < 0 || (hi === 0 && !(inner.hiInc && !outer.hiInc))
+}
+
+/**
+ * Whether the host's range `have` admits only versions the plugin's declared `range` admits too —
+ * `^2.3.0` within `^2.2.4`, `2.2.5` within `^2.2.4`, but not `^3.0.0`, `*` or `>=2.2.4`.
+ *
+ * **This is what "the host has the dependency at a range the plugin can live with" means**, and
+ * string equality was a stand-in for it that broke the day an upstream released: `pnpm add
+ * name@^2.2.4` saves the RESOLVED version behind the save-prefix (`^2.3.0`), so every install of a
+ * plugin whose dependency had published a minor since the plugin's release failed its own audit
+ * (kit CI, 2026-10-05, react-grid-layout 2.3.0). A NARROWER range is also exactly what an operator
+ * pinning a package themselves writes, which `package.json` being `manual` entitles them to. A
+ * wider or disjoint one stays a failure: that is the host admitting a version the plugin never
+ * claimed to work with.
+ *
+ * Zero dependencies, so a deliberately small model: comparator sets joined by `||` (each inner set
+ * must fit inside one outer set), with prereleases and anything exotic judged by string equality.
+ */
+export function rangeWithin(have, range) {
+  if (typeof have !== 'string' || typeof range !== 'string') return false
+  if (have.trim() === range.trim()) return true
+  const outer = range.split('||').map(intervalOf)
+  const inner = have.split('||').map(intervalOf)
+  if (outer.includes(null) || inner.includes(null)) return false
+  return inner.every(i => outer.some(o => intervalWithin(i, o)))
+}
+
+/**
+ * Per host package, the declared dependencies an install still has to add — the ones the host
+ * lacks, or holds at a range outside the declared one. A dependency the host already holds inside
+ * the declared range is left alone: re-adding it would only let `pnpm add` widen an operator's
+ * pin back out, or move it to whatever happened to be newest that minute.
+ */
+export function dependenciesToInstall(manifest, packageJsons = {}) {
+  const out = {}
+  for (const [pkg, deps] of Object.entries(manifest?.dependencies ?? {})) {
+    const want = Object.entries(deps ?? {}).filter(([name, range]) => {
+      const have = rangeIn(packageJsons[pkg], name)
+      return have === null || !rangeWithin(have, range)
+    })
+    if (want.length > 0) out[pkg] = Object.fromEntries(want)
+  }
+  return out
+}
+
+/**
+ * A host `package.json`'s text with each named dependency set to the range given, in whichever
+ * section holds it; the text unchanged when every range already matches (or the name is absent).
+ *
+ * **Why it exists: `pnpm add name@^2.2.4` does not write `^2.2.4`.** It writes the version it
+ * resolved behind the save-prefix — `^2.3.0` the day 2.3.0 is published — and no pnpm 10 flag
+ * keeps a spec verbatim (`--save-prefix` only swaps the prefix, `--save-exact` drops it). So the
+ * install writes the DECLARED range back here and runs `pnpm install` to re-key the lockfile, which
+ * keeps the resolved version and records the declared specifier: the diff a reviewer reads is what
+ * the plugin asked for, not what the registry looked like at that minute.
+ */
+export function pinDeclaredRanges(source, ranges = {}) {
+  const json = JSON.parse(source)
+  let changed = false
+  for (const [name, range] of Object.entries(ranges)) {
+    const section = ['dependencies', 'devDependencies'].find(s => json[s]?.[name] !== undefined)
+    if (!section || json[section][name] === range) continue
+    json[section][name] = range
+    changed = true
+  }
+  if (!changed) return source
+  const indent = /^[ \t]+(?=")/m.exec(source)?.[0] ?? '  '
+  return `${JSON.stringify(json, null, indent)}${source.endsWith('\n') ? '\n' : ''}`
+}
+
+/**
+ * Declared dependencies that are not in the host package's `package.json`, or are at a range that
+ * is not inside the declared one (`rangeWithin`).
  *
  * **Nothing checked this, and both halves fail silently.** `plugin add --apply` really runs
  * `pnpm --dir <pkg> add <name>@<range>`, so a plugin whose install failed part-way — or whose
  * dependency was dropped later by `remove`, which deliberately only PRINTS `pnpm remove` — reports
  * as perfectly healthy while its imports cannot resolve. `have: null` is the missing case and is a
- * failure; a different range is reported separately, because the host's `package.json` is listed
- * under `manual` in `.rocketflare.json` and an operator is entitled to have pinned it themselves.
+ * failure; a range outside the declared one is reported separately, because the host's
+ * `package.json` is listed under `manual` in `.rocketflare.json` and an operator is entitled to
+ * have pinned it themselves — which is also why a NARROWER range (an operator's pin, or the
+ * `^<resolved>` a `pnpm add` used to leave behind) passes.
  */
 export function missingDependencies(manifest, packageJsons = {}) {
   const out = []
@@ -1752,7 +1901,8 @@ export function missingDependencies(manifest, packageJsons = {}) {
     for (const [name, range] of Object.entries(deps ?? {})) {
       const have = rangeIn(packageJsons[pkg], name)
       if (have === null) out.push({ pkg, name, range, have: null })
-      else if (have !== range) out.push({ pkg, name, range, have })
+      // Inside the declared range is satisfied — `rangeWithin` says why equality was wrong.
+      else if (!rangeWithin(have, range)) out.push({ pkg, name, range, have })
     }
   }
   return out
@@ -1780,7 +1930,8 @@ export function dependencyClashes(manifest, { packageJsons = {}, installed = [] 
   for (const [pkg, deps] of Object.entries(manifest?.dependencies ?? {})) {
     for (const [name, range] of Object.entries(deps ?? {})) {
       const hostRange = rangeIn(packageJsons[pkg], name)
-      if (hostRange && hostRange !== range) {
+      // A host range inside the declared one is not a clash: the install leaves it alone.
+      if (hostRange && !rangeWithin(hostRange, range)) {
         out.push({ pkg, name, range, holder: `${pkg}/package.json`, theirs: hostRange })
       }
       for (const other of installed) {

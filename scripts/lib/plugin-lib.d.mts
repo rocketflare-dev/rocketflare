@@ -317,7 +317,17 @@ export interface HostPackageJson {
   devDependencies?: Record<string, string>
 }
 
-/** A declared dependency the host package does not have, or has at another range. */
+/** `have` admits only versions `range` admits too (`^2.3.0` within `^2.2.4`). */
+export function rangeWithin(have: string, range: string): boolean
+/** Per host package, the declared dependencies the host lacks or holds outside the declared range. */
+export function dependenciesToInstall(
+  manifest: PluginManifest,
+  packageJsons?: Record<string, HostPackageJson | null>
+): Record<string, Record<string, string>>
+/** A `package.json` text with each named dependency set to the given range, where it is listed. */
+export function pinDeclaredRanges(source: string, ranges?: Record<string, string>): string
+
+/** A declared dependency the host package does not have, or has outside the declared range. */
 export interface DependencyIssue {
   pkg: string
   name: string
