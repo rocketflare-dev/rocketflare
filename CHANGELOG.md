@@ -6,6 +6,11 @@ copy of the kit forward without recreating anything its owner deleted.
 
 If you are running a copy: `pnpm kit:upgrade` tells you which of these you are missing.
 
+## 0.16.3 — 2026-10-05
+
+`pnpm kit:upgrade` and the rename now write `.rocketflare.json` in Biome's layout, so a copy's own `pnpm lint` passes on the stamped file instead of failing on the arrays `JSON.stringify` spread over several lines.
+[Porting note](docs/upgrades/0.16.3.md).
+
 ## 0.16.2 — 2026-10-04
 
 A copy now numbers its own releases: `scripts/rename.mjs` restarts the root `package.json` version at `0.1.0` and empties `CHANGELOG.md`, so an app no longer carries on from the kit's version; the kit version stays in `.rocketflare.json`.
