@@ -48,6 +48,7 @@ import {
   makeWriter,
   notesBetween,
 } from './lib/git-lib.mjs'
+import { formatJson } from './lib/json-format.mjs'
 import { MANIFEST_FILE, pluginSurfaces, readManifest } from './lib/manifest.mjs'
 import { unsupportedForKit } from './lib/plugin-lib.mjs'
 import { applyReplacements, deriveNames } from './lib/rename-lib.mjs'
@@ -145,7 +146,8 @@ const { git, quiet: gitQuiet } = makeGit(REPO_ROOT)
 // ---------------------------------------------------------------- main
 
 function writeManifest(manifest) {
-  writeFileSync(path.join(REPO_ROOT, MANIFEST), `${JSON.stringify(manifest, null, 2)}\n`)
+  // In Biome's layout, so the copy's own `pnpm lint` passes on the stamped file (json-format.mjs).
+  writeFileSync(path.join(REPO_ROOT, MANIFEST), formatJson(manifest))
 }
 
 function main(argv) {

@@ -44,6 +44,7 @@ import {
 } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { formatJson } from './lib/json-format.mjs'
 import {
   API_KEY_HANDLE_MARGIN,
   applyColour,
@@ -525,7 +526,7 @@ function stampManifest(names) {
   }
   const manifest = JSON.parse(readFileSync(file, 'utf8'))
   manifest.app = { slug: names.slug, display: names.display, domain: names.domain }
-  writeFileSync(file, `${JSON.stringify(manifest, null, 2)}\n`)
+  writeFileSync(file, formatJson(manifest))
   out(`stamped .rocketflare.json — app ${names.slug}, kit ${manifest.kit.version}.`)
 }
 

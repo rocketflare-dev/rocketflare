@@ -4,7 +4,7 @@ previous: 0.16.2
 date: null
 breaking: false
 migrations: []
-areas: []
+areas: [config]
 touches_surfaces: []
 requires_surfaces: []
 manual: false
@@ -12,20 +12,22 @@ manual: false
 
 ## What changed
 
-_Nothing yet. Add an entry here in the same pull request as the change. This first paragraph is
-lifted VERBATIM into `CHANGELOG.md`, so make it ONE standalone summary sentence of ≤ 40 words —
-then one bullet per change, one line each, and no `###` sub-headings. Rationale belongs in
-`docs/CONCEPTS.md` and is linked, never restated; see `README.md` beside this file._
+`pnpm kit:upgrade` and the rename now write `.rocketflare.json` in Biome's layout, so a copy's own `pnpm lint` passes on the stamped file instead of failing on the arrays `JSON.stringify` spread over several lines.
+
+- `scripts/lib/json-format.mjs` (new, with `json-format.d.mts`): `formatJson(value)` — objects expanded, an array of primitives on one line when it fits in Biome's `lineWidth` (100).
+- `scripts/upgrade.mjs` (`writeManifest`) and `scripts/rename.mjs` (`stampManifest`): write through `formatJson`.
+- `apps/web/tests/config/json-format.test.ts`: the layout rules; `apps/web/tests/kit-only/json-format-manifest.test.ts`: the kit's own manifest round-trips byte for byte.
+- Why: every upgrade left a `.rocketflare.json format` lint error behind, which cost a fix turn in an unattended upgrade (Launch's) and a confusing red gate anywhere else.
 
 ## How to apply
 
-_Numbered, imperative, each step self-contained — no "these", "them" or "the above" reaching
-outside its own step._
+1. After `pnpm kit:upgrade --to 0.16.3 --apply`, run `pnpm exec biome format --write .rocketflare.json`: this upgrade itself still runs the copy's previous `upgrade.mjs`, which stamps the file the old way. Later upgrades format it themselves.
 
 ## Conflicts to expect
 
-_One line each: `path → what changed → what to do`. Or exactly `None.`_
+None.
 
 ## Verify
 
-_Numbered checkable commands and assertions only._
+1. `pnpm exec biome check .rocketflare.json` reports no errors.
+2. `pnpm --filter @<slug>/web exec vitest run --project config tests/config/json-format.test.ts` passes.
