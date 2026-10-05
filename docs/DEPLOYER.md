@@ -35,6 +35,7 @@ build accepted, no credentials and no migration.
 | `DEPLOYER_AUDIENCE` | repository variable, optional | the OIDC audience to request. Default: the origin of `DEPLOYER_URL` |
 | `WAIT_SECONDS` | step env, optional | how long `start` waits for approval (default 300) |
 | `permissions: id-token: write` | both deploy jobs | lets the job mint OIDC tokens |
+| `permissions: contents: write` | `release-bundle` only | attaches the build-once bundle to the tag's draft release (Build once below) |
 
 The GitHub Environments `staging` and `production` still exist (they scope the OIDC `environment`
 claim); on this path they need no secrets.
@@ -152,6 +153,58 @@ never goes live. The client skips the call when `start` never opened a ticket.
 | `finished` | closed by `finish`; credentials revoked. Terminal | — |
 | `failed` | the deployer could not complete a step (e.g. activation). Terminal; production keeps serving the previous version | — |
 
+## Build once (release bundle)
+
+On a **tag**, the staging job builds once and production deploys those bytes: Live runs what
+Staging validated. Nothing in the protocol above changes — production still runs start → upload →
+migrate → activate → finish, with `toml` = its own `wrangler.toml`; only where `modules` and
+`assets` come from changes. The bundle is environment-neutral: the Worker and UI builds are
+byte-identical under either toml, and every binding and var reaches the deployer through `toml`.
+
+| Job | Does |
+|---|---|
+| `staging` | after the dry run, `node scripts/bundle.mjs pack` → `apps/web/dist/launch-bundle-<tag>.tgz`; uploads it as the `launch-bundle` workflow artifact once `activate` succeeded |
+| `release-bundle` | `contents: write`, no install: `node scripts/bundle.mjs attach` verifies the bundle against the checkout and attaches it to the tag's release — creating a **draft** when there is none |
+| `production` | `node scripts/bundle.mjs fetch`: the published release's asset → verify → unpack into `dist/deploy` and `dist/ui`, then skip `build:ui` and the dry run (`source=bundle`). No release or no asset → `source=build`, today's build. Rollback (`workflow_dispatch environment=production` at a tag) takes the same path |
+
+**The asset** `launch-bundle-<tag>.tgz` (ustar + gzip, entries sorted, mtime 0, mode 0644 — the
+same inputs give the same bytes):
+
+```
+manifest.json  { protocol: 1, tag, version, commit, treeSha, main, compatibility_date,
+                 compatibility_flags, wranglerVersion, files: { "<path>": "<sha256>" }, bundleSha256 }
+worker/<rel>   the dry-run outdir minus *.map and README.md (the filter `upload` uses)
+ui/<rel>       the toml's [assets] directory
+```
+
+`bundleSha256` is sha256 over the `sha256sum` lines of `files`, sorted by path in byte order —
+recomputable from an unpacked bundle with
+`LC_ALL=C find worker ui -type f | LC_ALL=C sort | xargs sha256sum | sha256sum`.
+
+**Verification** (`fetch`, and `attach` before it uploads) fails the job — it never falls back to a
+build — when: the protocol is not 1; `tag`, `commit` or `treeSha` differ from the checkout; a
+file's sha256, or `bundleSha256`, does not match; the archive holds a file the manifest does not
+list, or lacks one it does; an entry is not a plain file under `worker/` or `ui/`; or the toml's
+`main` and compatibility settings differ from the build's.
+
+**Why a draft, not a prerelease.** `release: published` fires when ANY release is first published,
+a prerelease included — it is production's trigger, so a staging-created prerelease would start
+production. A draft fires nothing until it is published, and publishing it (`PATCH draft: false`,
+or Publish in the GitHub UI) fires `published` exactly once. Releases stay the external record.
+`attach` replaces the asset on a draft (a staging re-run) and never on a published release.
+
+**What a promoter must do** (Launch, or a person): publish the existing draft for the tag rather
+than create a new release. `GET /repos/{o}/{r}/releases/tags/{tag}` answers 404 for a draft, so:
+
+1. `GET …/releases/tags/{tag}` → 200: already published, nothing to do.
+2. Otherwise list `GET …/releases?per_page=100` (a `contents: write` token sees drafts) and take the
+   draft whose `tag_name` is the tag — the one carrying `launch-bundle-<tag>.tgz` first — and
+   `PATCH …/releases/{id}` with `{ "draft": false, "name", "body" }` (never `tag_name`). That fires
+   `release: published` and production deploys the bundle.
+3. No draft: `POST …/releases` as before; production builds from the tag.
+
+A new release created beside the draft also deploys, but from a rebuild, and leaves the draft behind.
+
 ## Versioning
 
 This is **protocol 1**. The client sends `"protocol": 1` in `start` and `upload`. Within v1 a
@@ -164,4 +217,7 @@ not support the client's version answers `start` with **400** and `supported`.
 
 `apps/web/tests/config/deployer.test.ts` runs `scripts/deployer.mjs` against a fake deployer and a
 fake OIDC endpoint: the whole flow, the payload, the masking, rejection, timeout and `finish` with
-no ticket. It is the executable half of this page.
+no ticket. It is the executable half of this page. Build once: `bundle-lib.test.ts` (pack/unpack,
+the digest, every verification failure, the two workflow decisions) and `bundle.test.ts` (the real
+script against a fake GitHub releases API: draft creation, re-runs, fetch, fallback, tampering, a
+moved tag); `ci-workflows.test.ts` pins the wiring in `deploy.yml`.
