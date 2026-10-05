@@ -42,7 +42,9 @@ import {
   classifyPluginFile,
   coreEditsByFile,
   declaresProperty,
+  dependenciesToInstall,
   dependencyClashes,
+  dependencyDelta,
   describeClash,
   hasBarrelLine,
   isolationEvidence,
@@ -52,15 +54,18 @@ import {
   nextPluginMigrationTag,
   PLUGIN_MANIFEST_FILE,
   parsePluginRequirement,
+  pinDeclaredRanges,
   planSteps,
   pluginIdProblem,
   pluginManifestProblems,
   pluginMigrationTag,
   pluginPlatformProblems,
   pluginRoots,
+  rangeWithin,
   removeBarrelLine,
   removeSteps,
   renderAddPlan,
+  renderDependencyDelta,
   renderDiagnostic,
   renderList,
   renderSteps,
@@ -72,6 +77,7 @@ import {
   tableClashes,
   tupleEntries,
   unsupportedForKit,
+  withoutDependencies,
   workerExportNames,
 } from '../../../../scripts/lib/plugin-lib.mjs'
 import { applyReplacements, deriveNames, KIT } from '../../../../scripts/lib/rename-lib.mjs'
@@ -1331,6 +1337,127 @@ describe('the audit', () => {
   })
 
   /**
+   * **Kit CI went red the minute react-grid-layout 2.3.0 was published (2026-10-05).** The analytics
+   * plugin declares `^2.2.4`; `pnpm add react-grid-layout@^2.2.4` saved `^2.3.0` (the resolved
+   * version behind the save-prefix), and the audit then demanded string equality. A host range
+   * INSIDE the declared one is what "the plugin can live with it" means; wider or disjoint is not.
+   */
+  it('accepts a host range inside the declared one — the ^<resolved> pnpm add leaves behind', () => {
+    const manifest = {
+      id: 'analytics',
+      dependencies: { 'apps/web': { 'react-grid-layout': '^2.2.4', 'drizzle-cube': '0.8.3' } },
+    }
+    const host = (rgl: string, cube = '0.8.3') => ({
+      'apps/web': { dependencies: { 'react-grid-layout': rgl, 'drizzle-cube': cube } },
+    })
+    // The drifted tree every install produced (and every copy already holds): passes.
+    expect(missingDependencies(manifest, host('^2.3.0'))).toEqual([])
+    expect(dependencyClashes(manifest, { packageJsons: host('^2.3.0') })).toEqual([])
+    // An operator's narrower pin passes too.
+    expect(missingDependencies(manifest, host('2.2.5'))).toEqual([])
+    expect(missingDependencies(manifest, host('~2.2.4'))).toEqual([])
+    // Wider, disjoint or older does not.
+    for (const bad of ['^2.0.0', '^3.0.0', '>=2.2.4', '*', '^2.2.3', '1.5.4']) {
+      expect(missingDependencies(manifest, host(bad))).toEqual([
+        { pkg: 'apps/web', name: 'react-grid-layout', range: '^2.2.4', have: bad },
+      ])
+    }
+    // An exact declared version admits nothing but itself.
+    expect(missingDependencies(manifest, host('^2.2.4', '^0.8.3'))).toHaveLength(1)
+  })
+
+  it('models npm ranges conservatively for the subset test', () => {
+    const yes: Array<[string, string]> = [
+      ['^2.3.0', '^2.2.4'],
+      ['2.2.4', '^2.2.4'],
+      ['~2.5.1', '^2.2.4'],
+      ['>=2.3.0 <2.4.0', '^2.2.4'],
+      ['^0.2.5', '^0.2.3'],
+      ['0.0.3', '^0.0.3'],
+      ['2.x', '^2.0.0'],
+      ['^1.2.0 || ^2.1.0', '^1.0.0 || ^2.0.0'],
+      ['1.2.3', '1.2.3'],
+      ['^7.9.0', '>=7'],
+      ['workspace:*', 'workspace:*'],
+    ]
+    const no: Array<[string, string]> = [
+      ['^0.3.0', '^0.2.3'],
+      ['^0.0.4', '^0.0.3'],
+      ['^2.0.0', '~2.2.0'],
+      ['>=2.2.4', '^2.2.4'],
+      ['^1.0.0 || ^3.0.0', '^1.0.0 || ^2.0.0'],
+      ['^2.3.0-beta.1', '^2.2.4'],
+      ['latest', '^2.2.4'],
+      ['2.2.4 - 2.3.0', '^2.2.4'],
+      ['npm:other@^2.3.0', '^2.2.4'],
+    ]
+    for (const [have, range] of yes)
+      expect(rangeWithin(have, range), `${have} in ${range}`).toBe(true)
+    for (const [have, range] of no)
+      expect(rangeWithin(have, range), `${have} in ${range}`).toBe(false)
+  })
+
+  /**
+   * The install half: it writes the DECLARED range, not what the registry resolved that minute, and
+   * it leaves a dependency the host already holds inside the declared range alone.
+   */
+  it("installs only what is unsatisfied, and pins the declared range back over pnpm's ^<resolved>", () => {
+    const manifest = {
+      id: 'analytics',
+      dependencies: {
+        'apps/web': { 'react-grid-layout': '^2.2.4', d3: '^7.9.0', recharts: '^3.10.1' },
+        'apps/cli': {},
+      },
+    }
+    expect(
+      dependenciesToInstall(manifest, {
+        'apps/web': { dependencies: { d3: '^7.9.0', recharts: '^3.11.0' } },
+      })
+    ).toEqual({ 'apps/web': { 'react-grid-layout': '^2.2.4' } })
+    // A disjoint pin is reinstalled (and surfaced as a clash); nothing to do is an empty plan.
+    expect(
+      dependenciesToInstall(manifest, {
+        'apps/web': {
+          dependencies: { 'react-grid-layout': '^1.4.0', d3: '^7.9.0', recharts: '^3.10.1' },
+        },
+      })
+    ).toEqual({ 'apps/web': { 'react-grid-layout': '^2.2.4' } })
+    expect(
+      dependenciesToInstall(manifest, {
+        'apps/web': {
+          dependencies: { 'react-grid-layout': '^2.3.0', d3: '^7.9.0', recharts: '^3.10.1' },
+        },
+      })
+    ).toEqual({})
+
+    // What `pnpm add react-grid-layout@^2.2.4` writes once 2.3.0 is out — a fake resolved-newer
+    // version — and the declared range written back, sections and formatting kept.
+    const afterPnpmAdd = `${JSON.stringify(
+      {
+        name: '@x/web',
+        dependencies: { d3: '^7.9.0', 'react-grid-layout': '^2.3.0' },
+        devDependencies: { recharts: '^3.11.0' },
+      },
+      null,
+      2
+    )}\n`
+    const pinned = pinDeclaredRanges(afterPnpmAdd, manifest.dependencies['apps/web'])
+    expect(JSON.parse(pinned)).toEqual({
+      name: '@x/web',
+      dependencies: { d3: '^7.9.0', 'react-grid-layout': '^2.2.4' },
+      devDependencies: { recharts: '^3.10.1' },
+    })
+    expect(pinned.endsWith('}\n')).toBe(true)
+    expect(pinned).toContain('\n  "dependencies": {\n    "d3"')
+    // Already declared → the very same text (no write, no `pnpm install`), and an absent name is
+    // not invented.
+    expect(pinDeclaredRanges(pinned, manifest.dependencies['apps/web'])).toBe(pinned)
+    expect(JSON.parse(pinDeclaredRanges(pinned, { 'left-pad': '^1.0.0' }))).not.toHaveProperty(
+      'dependencies.left-pad'
+    )
+  })
+
+  /**
    * **`pnpm add` silently overwrites the range in the host's `package.json`**, so two plugins
    * wanting different majors of one package was last-install-wins with nothing said — at the exact
    * moment somebody is approving an install that carries full Worker and database access.
@@ -1357,6 +1484,159 @@ describe('the audit', () => {
         installed: [{ id: 'orders', dependencies: { 'apps/web': { recharts: '^9.0.0' } } }],
       })
     ).toEqual([])
+  })
+
+  /**
+   * `plugin upgrade` and dependencies: what changed between the installed release's declarations
+   * and the new one's, and what the host does about each. A dependency is only removed when it
+   * was demonstrably the plugin's — nobody else declares it and the host holds exactly the range
+   * this plugin declared.
+   */
+  describe('the dependency delta an upgrade applies', () => {
+    const v1 = {
+      id: 'orders',
+      dependencies: {
+        'apps/web': {
+          'left-pad': '^1.0.0',
+          'is-odd': '^2.0.0',
+          shared: '^1.0.0',
+          pinned: '^1.0.0',
+        },
+        'apps/cli': {},
+      },
+    }
+    const host = (deps: Record<string, string>) => ({ 'apps/web': { dependencies: deps } })
+    const installedHost = host({
+      'left-pad': '^1.0.0',
+      'is-odd': '^2.0.0',
+      shared: '^1.0.0',
+      pinned: '1.0.5',
+    })
+
+    it('installs an added dependency and re-ranges a raised one', () => {
+      const v2 = {
+        id: 'orders',
+        dependencies: {
+          'apps/web': { ...v1.dependencies['apps/web'], 'left-pad': '^2.0.0', zod: '^3.0.0' },
+        },
+      }
+      const delta = dependencyDelta(v1, v2, { packageJsons: installedHost })
+      expect(delta.install).toEqual({ 'apps/web': { 'left-pad': '^2.0.0', zod: '^3.0.0' } })
+      expect(delta.remove).toEqual({})
+      expect(delta.clashes).toEqual([])
+      expect(delta.changes.map(c => [c.name, c.change, c.action])).toEqual([
+        ['left-pad', 'changed', 'install'],
+        ['zod', 'added', 'install'],
+      ])
+    })
+
+    it('leaves alone what the host already holds inside the new range', () => {
+      const v2 = {
+        id: 'orders',
+        dependencies: { 'apps/web': { ...v1.dependencies['apps/web'], 'left-pad': '^1.2.0' } },
+      }
+      const delta = dependencyDelta(v1, v2, { packageJsons: host({ 'left-pad': '^1.3.0' }) })
+      expect(delta.install).toEqual({})
+      expect(delta.changes).toEqual([
+        expect.objectContaining({ name: 'left-pad', change: 'changed', action: 'none' }),
+      ])
+    })
+
+    it('removes a dependency only when it was the plugin’s, and says why it keeps the rest', () => {
+      const v2 = { id: 'orders', dependencies: { 'apps/web': { 'left-pad': '^1.0.0' } } }
+      const delta = dependencyDelta(v1, v2, {
+        packageJsons: installedHost,
+        installed: [
+          { id: 'orders', dependencies: v1.dependencies },
+          { id: 'billing', dependencies: { 'apps/web': { shared: '^1.0.0' } } },
+        ],
+      })
+      // Owned: nobody else declares it and the host holds exactly what v1 declared.
+      expect(delta.remove).toEqual({ 'apps/web': ['is-odd'] })
+      const byName = Object.fromEntries(delta.changes.map(c => [c.name, c]))
+      expect(byName['is-odd'].action).toBe('remove')
+      // Shared with another installed plugin.
+      expect(byName.shared.action).toBe('keep')
+      expect(byName.shared.reason).toContain("the 'billing' plugin")
+      // The operator narrowed it (or the kit holds it): not the plugin's to take away.
+      expect(byName.pinned.action).toBe('keep')
+      expect(byName.pinned.reason).toContain('1.0.5')
+      // Already gone from the host: nothing to do.
+      expect(dependencyDelta(v1, v2, { packageJsons: host({}) }).remove).toEqual({})
+      // A plugin is never its own peer.
+      expect(
+        dependencyDelta(v1, v2, {
+          packageJsons: installedHost,
+          installed: [{ id: 'orders', dependencies: v1.dependencies }],
+        }).remove
+      ).toEqual({ 'apps/web': ['is-odd', 'shared'] })
+    })
+
+    it('flags a new range another installed plugin cannot live with, in add’s words', () => {
+      const v2 = {
+        id: 'orders',
+        dependencies: { 'apps/web': { ...v1.dependencies['apps/web'], shared: '^2.0.0' } },
+      }
+      const billing = { id: 'billing', dependencies: { 'apps/web': { shared: '^1.0.0' } } }
+      const delta = dependencyDelta(v1, v2, { packageJsons: installedHost, installed: [billing] })
+      expect(delta.clashes).toEqual([
+        {
+          pkg: 'apps/web',
+          name: 'shared',
+          range: '^2.0.0',
+          holder: "the 'billing' plugin",
+          theirs: '^1.0.0',
+        },
+      ])
+      expect(describeClash(delta.clashes[0])).toBe(
+        "apps/web: shared — this plugin wants ^2.0.0, the 'billing' plugin has ^1.0.0"
+      )
+      // A range INSIDE the peer's is no clash: the peer's `plugin check` still passes.
+      const narrower = {
+        id: 'orders',
+        dependencies: { 'apps/web': { ...v1.dependencies['apps/web'], shared: '^1.4.0' } },
+      }
+      expect(
+        dependencyDelta(v1, narrower, { packageJsons: installedHost, installed: [billing] }).clashes
+      ).toEqual([])
+    })
+
+    it('is empty when nothing changed, and renders as the plan’s Dependencies block', () => {
+      expect(dependencyDelta(v1, v1, { packageJsons: installedHost })).toEqual({
+        changes: [],
+        install: {},
+        remove: {},
+        clashes: [],
+      })
+      expect(renderDependencyDelta(dependencyDelta(v1, v1))).toEqual(['Dependencies  unchanged'])
+      const v2 = {
+        id: 'orders',
+        dependencies: {
+          'apps/web': {
+            'left-pad': '^2.0.0',
+            'is-odd': '^2.0.0',
+            shared: '^1.0.0',
+            pinned: '^1.0.0',
+          },
+        },
+      }
+      expect(
+        renderDependencyDelta(dependencyDelta(v1, v2, { packageJsons: installedHost }))
+      ).toEqual([
+        'Dependencies',
+        '  ~ apps/web  left-pad ^1.0.0 → ^2.0.0  — install (replaces the ^1.0.0 in apps/web/package.json)',
+      ])
+    })
+
+    it('drops a dependency from either section, keeping the formatting, and is a no-op when absent', () => {
+      const source = `${JSON.stringify({ dependencies: { a: '1', b: '2' }, devDependencies: { c: '3' } }, null, 2)}\n`
+      expect(JSON.parse(withoutDependencies(source, ['b', 'c']))).toEqual({
+        dependencies: { a: '1' },
+        devDependencies: {},
+      })
+      expect(withoutDependencies(source, ['b']).endsWith('}\n')).toBe(true)
+      expect(withoutDependencies(source, ['zzz'])).toBe(source)
+    })
   })
 
   it('makes a clash a HUMAN step rather than refusing the install', () => {

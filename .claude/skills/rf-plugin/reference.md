@@ -230,6 +230,32 @@ upgrade ever reconciles it for anyone afterwards. It warns rather than refusing:
 often the intended change, and refusing would make an ordinary dependency upgrade impossible
 without editing somebody else's manifest.
 
+A host range INSIDE the declared one is not a clash and passes `plugin check` (`^2.3.0`, or an
+operator's `2.2.5`, for a plugin declaring `^2.2.4`); `add` leaves it alone. A range wider than the
+declared one or disjoint from it fails. `pnpm add name@^2.2.4` saves `^<resolved>`, not the declared
+range, so `add` writes the declared range back into the host `package.json` and runs
+`pnpm install --no-frozen-lockfile` to re-key the lockfile.
+
+## Dependencies, at `upgrade` time
+
+`plugin upgrade` diffs the plugin's declared `dependencies` at the installed release (read from
+the mirror at `from`) against the new one's, per package dir, and `--apply` acts on each one whose
+declaration changed — after the files are written, before the surface is stamped:
+
+| change | action |
+|---|---|
+| added, or range changed | `install` the way `add` does — skipped (`none`) when the host already holds a range inside the new one |
+| removed, no other plugin declares it, host range **exactly** the old declared one | `remove` it from the host `package.json` |
+| removed, another installed plugin declares it | `keep`, naming that plugin |
+| removed, host pins some other range (the operator's or the kit's) | `keep`, naming the range |
+| removed, not in the host | `none` |
+
+Then one `pnpm install --no-frozen-lockfile` if any file changed. An `install` whose range is not
+inside what another installed plugin declares would fail that plugin's `plugin check`, so it is
+**refused** (exit 6, nothing written) — unlike `add`'s warning. Every row is in the plan, and in
+`--json` as `dependencies` (`{ pkg, name, change, from, to, have, action, reason }`) with the
+refusals as `dependencyClashes`. Re-running at the same version writes nothing.
+
 ## Where an install is recorded
 
 A `kind: 'plugin'` **surface** carrying `source: { repo, subdir, version, commit }`, `installedAt`,

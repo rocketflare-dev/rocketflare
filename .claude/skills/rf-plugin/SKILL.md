@@ -146,6 +146,14 @@ pnpm plugin upgrade <id> [--to <ref>]        # the plan
 pnpm plugin upgrade <id> [--to <ref>] --apply
 ```
 
+The plan ends with a **`Dependencies`** block: each dependency whose declaration the release
+changes, marked `+` added, `~` range changed or `-` removed, with what `--apply` will do — `install`
+(`pnpm add`, then the declared range written back and one `pnpm install --no-frozen-lockfile`),
+`remove`, `keep` (with the reason: another installed plugin declares it, or the host pins a range
+this plugin never declared), or `nothing to do`. `--json` carries it as `dependencies`. Show it to
+the person before applying; a `remove` deletes a package from their `package.json`. A new range
+another installed plugin cannot use is **exit 6 with nothing written** — report the clash it names.
+
 Exit 4 means hunks rejected — **work remaining, not a failure**, and the script deliberately does
 not stamp the new version until the `*.rej` files are gone. A **vendored** plugin (its `source.repo`
 is this kit's own repository with no subdirectory — `example-feature` is one) answers *"upgrade it
