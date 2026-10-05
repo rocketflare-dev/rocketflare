@@ -52,7 +52,7 @@ import type { AppContext } from '../../types'
 import { ConflictError, isUniqueViolation } from '../../utils/core/errors'
 import { streamDatabase, withAuthAndDb } from '../../utils/routes/route-helpers'
 import { accessScopeOf } from '../access'
-import { buildAgentTools, CHAT_GET_DOCUMENT_MAX_CHARS } from '../agents/tools'
+import { buildAgentTools, CHAT_GET_DOCUMENT_MAX_CHARS, recallMemoryTool } from '../agents/tools'
 import { enqueueJob } from '../jobs'
 import { resolvePrompt } from '../prompts'
 import { aguiTextSegmenter, createAguiEncoder, kitCustom } from './agui'
@@ -60,6 +60,7 @@ import { pendingCompaction, selectHistoryWindow, withSummary } from './chat-hist
 import { workersAiStreamsTools } from './client'
 import { AiError, describeAiError, normalizeAiError } from './errors'
 import { runStreamingChat, type Tool } from './kit'
+import { memoryEnabledFor } from './memory/settings'
 import { type ResolvedChat, resolveChat } from './resolve'
 import type { ChatMessage, SystemPrompt } from './types'
 import { recordUsage } from './usage'
@@ -354,6 +355,8 @@ export async function prepareChatTurn(
 ): Promise<ChatTurnParams> {
   const { db, tenantId, user, cfg, auth, defer } = withAuthAndDb(c)
   const scope = accessScopeOf(auth)
+  // D36: the organisation's flag (already on the session) AND the person's own switch.
+  const memory = await memoryEnabledFor(db, cfg, tenantId, user.id, auth.features)
   const resolved =
     options.resolved ?? (await resolveChat(db, cfg, c.env, tenantId, { promptKey: 'chat' }))
   const system = await resolvePrompt(db, tenantId, 'chat', {
@@ -417,6 +420,20 @@ export async function prepareChatTurn(
     userMessage = row
   }
 
+  // D36: learn from this turn in the background. Enqueued for every turn while the ORGANISATION
+  // has memory on — including a person who switched it off, whose job then moves the watermark
+  // past these turns without learning, so switching it back on can never reach into them. The
+  // job reads only the person's own messages; it never waits on the reply.
+  if (auth.features.includes('memory')) {
+    const messageId = userMessage.id
+    defer(() =>
+      enqueueJob(c.env.JOBS_QUEUE, {
+        type: 'memory.retain',
+        payload: { tenantId, conversationId: conversation.id, messageId },
+      })
+    )
+  }
+
   const chatMessages: ChatMessage[] = [
     ...window.map(m => ({ role: m.role as 'user' | 'assistant', content: m.content })),
     { role: 'user', content: turnText },
@@ -444,8 +461,11 @@ export async function prepareChatTurn(
             // turn may not, because the result sits in the same window as the history and every
             // turn after it. The prompt already discourages it — this is the limit.
             maxDocumentChars: CHAT_GET_DOCUMENT_MAX_CHARS,
+            memory,
           })
-      : async () => [],
+      : // `CHAT_KNOWLEDGE_TOOLS` governs the KNOWLEDGE tools; memory (D36) is its own switch.
+        async sdb =>
+          memory ? [recallMemoryTool({ db: sdb, cfg, env: c.env, scope }) as Tool] : [],
     maxTurns: Math.min(cfg.AGENT_MAX_TURNS, CHAT_MAX_TOOL_TURNS),
     isFirstUserTurn,
     lead: options.lead,

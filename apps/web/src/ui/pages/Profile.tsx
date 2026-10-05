@@ -31,8 +31,12 @@ import {
 } from '@/ui/hooks/useProfile'
 import { formatDate, initials } from '@/ui/lib/format'
 import { hardNavigate } from '@/ui/lib/navigation'
+import ProfileMemory from './ProfileMemory'
 
 export default function Profile() {
+  const { session } = useAuth()
+  // D36: the panel exists only where the organisation has memory; its routes 404 otherwise.
+  const features = session?.features ?? []
   return (
     <div className="max-w-2xl space-y-4">
       <PageHeader
@@ -41,6 +45,7 @@ export default function Profile() {
       />
       <ProfileForm />
       <YourGroups />
+      {features.includes('memory') && <ProfileMemory />}
       <SignInMethods />
     </div>
   )

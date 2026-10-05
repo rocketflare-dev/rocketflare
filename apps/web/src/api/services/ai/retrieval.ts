@@ -83,6 +83,39 @@ export function fuseByRank<T>(
     .map((entry, index) => ({ ...entry, rank: index + 1 }))
 }
 
+export interface FusedArms<T, A extends string> {
+  item: T
+  score: number
+  rank: number
+  /** 1-based rank in each arm that found it; an arm that missed it is absent. */
+  ranks: Partial<Record<A, number>>
+}
+
+/**
+ * Reciprocal Rank Fusion over any number of named arms — memory recall (D36) fuses three (dense,
+ * lexical, entity) where knowledge search fuses two. Same constant, same tie-break as `fuseByRank`.
+ * Pure.
+ */
+export function fuseRankedArms<T, A extends string>(
+  arms: Record<A, T[]>,
+  keyOf: (item: T) => string,
+  k = RRF_K
+): FusedArms<T, A>[] {
+  const entries = new Map<string, FusedArms<T, A>>()
+  for (const arm of Object.keys(arms) as A[]) {
+    arms[arm].forEach((item, index) => {
+      const key = keyOf(item)
+      const entry: FusedArms<T, A> = entries.get(key) ?? { item, score: 0, rank: 0, ranks: {} }
+      entry.score += 1 / (k + index + 1)
+      entry.ranks[arm] = index + 1
+      entries.set(key, entry)
+    })
+  }
+  return [...entries.values()]
+    .sort((a, b) => b.score - a.score || keyOf(a.item).localeCompare(keyOf(b.item)))
+    .map((entry, index) => ({ ...entry, rank: index + 1 }))
+}
+
 /** pgvector's text literal for a vector parameter: `[0.1,0.2,…]`. */
 export function vectorLiteral(vector: number[]): string {
   return `[${vector.join(',')}]`

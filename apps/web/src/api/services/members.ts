@@ -7,7 +7,14 @@ import type { PaginationQuery } from '@rocketflare/shared/pagination'
 import type { Member, TenantRole } from '@rocketflare/shared/tenants'
 import { and, asc, eq, sql } from 'drizzle-orm'
 import type { Database } from '../../db/client'
-import { tenantUserSettings, tenantUsers, userSessions, users } from '../../db/schema'
+import {
+  memories,
+  memoryEntities,
+  tenantUserSettings,
+  tenantUsers,
+  userSessions,
+  users,
+} from '../../db/schema'
 import { isOwnerLevel } from '../middleware/permissions'
 import type { AuthContext } from '../types'
 import { ConflictError, ForbiddenError, NotFoundError } from '../utils/core/errors'
@@ -140,6 +147,22 @@ export async function removeMember(
         and(
           eq(tenantUserSettings.tenantId, input.tenantId),
           eq(tenantUserSettings.userId, input.targetUserId)
+        )
+      )
+    // D36: what the assistant learned from this person here is theirs, and they no longer belong
+    // here — it goes with the membership. Nothing else could ever read it (`private` is never
+    // bypassed), so keeping it would only be data held for nobody. Links cascade from both sides.
+    await tx
+      .delete(memories)
+      .where(
+        and(eq(memories.tenantId, input.tenantId), eq(memories.ownerUserId, input.targetUserId))
+      )
+    await tx
+      .delete(memoryEntities)
+      .where(
+        and(
+          eq(memoryEntities.tenantId, input.tenantId),
+          eq(memoryEntities.ownerUserId, input.targetUserId)
         )
       )
     // Sessions pinned to this tenant fall back to another membership on the next request.

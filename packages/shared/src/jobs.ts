@@ -77,6 +77,23 @@ export const chatCompactPayloadSchema = z.object({
 export type ChatCompactPayload = z.infer<typeof chatCompactPayloadSchema>
 
 /**
+ * Learn durable facts from a conversation's newest USER turns into its owner's memory (D36). Ids
+ * only, like `chat.compact`: the handler reads everything after the conversation's
+ * `memory_retained_through_id` watermark, so two deliveries of one message — or one message
+ * enqueued per turn of a fast exchange — retain each turn once.
+ */
+export const memoryRetainPayloadSchema = z.object({
+  tenantId: z.string().uuid(),
+  conversationId: z.string().uuid(),
+  /**
+   * The user turn that triggered this pass. A conversation's FIRST pass starts here rather than at
+   * the top of the thread, so memory switched on in an old conversation learns from now on.
+   */
+  messageId: z.string().uuid().optional(),
+})
+export type MemoryRetainPayload = z.infer<typeof memoryRetainPayloadSchema>
+
+/**
  * Delete what a deleted tenant left OUTSIDE Postgres (R2 objects, a plugin's own out-of-database
  * state). The tenant row is already gone when this is enqueued — the FK cascade took it — so the
  * payload has to carry everything the purge needs: nothing can be looked up afterwards. `tenantSlug`
@@ -100,6 +117,7 @@ export const CORE_JOB_VARIANTS = [
   z.object({ type: z.literal('document.index'), payload: documentIndexPayloadSchema }),
   z.object({ type: z.literal('document.convert'), payload: documentConvertPayloadSchema }),
   z.object({ type: z.literal('chat.compact'), payload: chatCompactPayloadSchema }),
+  z.object({ type: z.literal('memory.retain'), payload: memoryRetainPayloadSchema }),
   z.object({ type: z.literal('tenant.purge'), payload: tenantPurgePayloadSchema }),
 ] as const
 

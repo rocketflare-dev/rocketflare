@@ -28,7 +28,7 @@
  * ability check hands platform staff a surface the deployment does not ship. See `permissions.ts`.
  */
 import { z } from 'zod'
-import { FEATURES, type FeatureName } from './permissions'
+import { type CORE_FEATURES, FEATURES, type FeatureName } from './permissions'
 import { sharedPlugins } from './plugins'
 
 /** Platform state of a flag. `off` and `rollout` at 0% are the same OUTCOME, not the same intent. */
@@ -45,8 +45,8 @@ export type FeatureRolloutUnit = z.infer<typeof featureRolloutUnitSchema>
  * A key the running deployment actually has (D30, D31).
  *
  * **Not `z.enum(FEATURES)`**, and not for style: `FEATURES` is `[...CORE_FEATURES, ...plugins]`,
- * `CORE_FEATURES` is now empty (the kit's own demonstration flag ships as the `example-feature`
- * PLUGIN), and a `z.enum` needs a non-empty TUPLE — an array of strings is a type error there.
+ * `CORE_FEATURES` may be edited down to empty by an app, and a `z.enum` needs a non-empty TUPLE —
+ * an array of strings is a type error there.
  * A refined `z.string()` is the same runtime check and the same output type, and it keeps
  * validating against whatever is installed rather than against what was compiled in.
  */
@@ -73,16 +73,28 @@ export interface FeatureDefinition {
 }
 
 /**
- * Every flag the KIT itself ships — none, deliberately. Keys come from `CORE_FEATURES` in
- * `permissions.ts`, so a typo anywhere that gates on one is a type error rather than a route that
- * 404s for ever.
+ * Every flag the KIT itself ships. Keys come from `CORE_FEATURES` in `permissions.ts`, so a typo
+ * anywhere that gates on one is a type error rather than a route that 404s for ever.
  *
- * The kit's demonstration flag moved into the `example-feature` PLUGIN (D31), which is where both
- * halves of a flag now arrive together: the key, its metadata, the nav item it gates, the mount it
- * gates and the page behind it. An app that wants a flag of its own adds it here and to
- * `CORE_FEATURES` — or, better, ships the whole feature as a plugin.
+ * One: `memory` (D36). It is a flag rather than a `[vars]` switch because remembering what people
+ * say is a decision an ORGANISATION makes — a platform admin rolls it out per tenant, and each
+ * person can still switch it off for themselves. Off by default: a deployment that upgrades gains
+ * the capability, not the behaviour.
+ *
+ * The kit's demonstration flag lives in the `example-feature` PLUGIN (D31), which is where both
+ * halves of a flag arrive together for anything that is not core: the key, its metadata, the nav
+ * item it gates, the mount it gates and the page behind it.
  */
-export const CORE_FEATURE_FLAGS = {} satisfies Record<string, FeatureDefinition>
+export const CORE_FEATURE_FLAGS = {
+  memory: {
+    label: 'Memory',
+    description:
+      'The assistant remembers facts people tell it in chat — private to each person — and recalls them across conversations with the recall_memory tool. People can review, forget or switch it off under Settings → Memory.',
+    defaultState: 'off',
+    defaultRolloutUnit: 'tenant',
+    environmentGated: false,
+  },
+} satisfies Record<(typeof CORE_FEATURES)[number], FeatureDefinition>
 
 /**
  * Core flags plus every installed plugin's (D31). `SharedPlugin.features` is typed against the

@@ -402,6 +402,7 @@ describe('the closed sets a plugin opens', () => {
       | 'document.index'
       | 'document.convert'
       | 'chat.compact'
+      | 'memory.retain'
       | 'tenant.purge'
     >()
     // A plugin may only WIDEN the kit's set — the property the whole "variants are data" change

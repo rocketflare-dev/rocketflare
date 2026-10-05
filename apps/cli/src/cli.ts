@@ -15,6 +15,7 @@ import { runKeysList } from './commands/keys'
 import { runLogin } from './commands/login'
 import { runLogout } from './commands/logout'
 import { runMembersList } from './commands/members'
+import { runMemoryForget, runMemoryList } from './commands/memory'
 import { runStatus } from './commands/status'
 import { runTracesList, runTracesShow } from './commands/traces'
 import { runWhoami } from './commands/whoami'
@@ -201,6 +202,23 @@ feedback
   .option('--page <n>', 'page number', positiveInt('--page'))
   .option('--page-size <n>', 'items per page (max 200)', positiveInt('--page-size'))
   .action(action((ctx, cmd) => runFeedbackList(ctx, cmd.opts())))
+
+const memory = program
+  .command('memory')
+  .description('what the assistant learned from YOUR chats in the active tenant (when enabled)')
+memory
+  .command('list')
+  .description('list your memories, newest first')
+  .option('--q <words>', 'only facts matching these words')
+  .option('--history', 'include facts a later one replaced')
+  .option('--page <n>', 'page number', positiveInt('--page'))
+  .option('--page-size <n>', 'items per page (max 100)', positiveInt('--page-size'))
+  .action(action((ctx, cmd) => runMemoryList(ctx, cmd.opts())))
+memory
+  .command('forget [id]')
+  .description('forget one memory by id, or every memory with --all')
+  .option('--all', 'forget everything the assistant learned from you in this tenant')
+  .action(action((ctx, cmd) => runMemoryForget(ctx, cmd.args[0], cmd.opts())))
 
 const evals = program.command('evals').description('eval datasets (pnpm eval runs them)')
 evals

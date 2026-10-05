@@ -23,6 +23,7 @@ vocabulary in `packages/shared/src/permissions.ts`). Built once per request by t
 | `FeatureFlag` (D30, administering flags) | manage | – | – | – | – |
 | `Trace` (D32) | manage | read | read | read | – |
 | `Feedback` (D33, thumbs on AI answers) | manage | create + read | create + read | create + read | create only (on an answer they can read — `services/feedback.ts` checks the target; reading ratings back is admin+) |
+| `Memory` (D36, facts learned from a person's chats) | manage | manage | manage | manage | manage (OWN only — the routes filter by owner, and a `private` memory is never bypassed, so admin-level is no wider) |
 
 - Actions: `manage` (wildcard) · `create` · `read` · `update` · `delete` · `access` (features only)
 - Roles come from `tenant_users.role`; `support` is minted only from `/admin`. `globalAdmin` is `users.isGlobalAdmin`
