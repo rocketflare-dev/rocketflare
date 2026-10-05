@@ -65,7 +65,9 @@ import {
   classifyPluginFile,
   coreEditsByFile,
   declaresProperty,
+  dependenciesToInstall,
   dependencyClashes,
+  dependencyDelta,
   describeClash,
   floorOf,
   hasBarrelLine,
@@ -76,6 +78,7 @@ import {
   nextPluginMigrationTag,
   PLUGIN_MANIFEST_FILE,
   parsePluginRequirement,
+  pinDeclaredRanges,
   pluginIdProblem,
   pluginManifestProblems,
   pluginPlatformProblems,
@@ -84,6 +87,7 @@ import {
   removeBarrelLine,
   removeSteps,
   renderAddPlan,
+  renderDependencyDelta,
   renderDiagnostic,
   renderList,
   renderSteps,
@@ -96,6 +100,7 @@ import {
   surfaceDirectories,
   tableClashes,
   undeclaredSkillDirs,
+  withoutDependencies,
   workerExportNames,
 } from './lib/plugin-lib.mjs'
 import { applyReplacements, deriveNames, isBinary } from './lib/rename-lib.mjs'
@@ -160,7 +165,8 @@ export const USAGE = `usage: node scripts/plugin.mjs <command> [options]
     --no-fetch            use the cached mirror as-is (offline)
     --allow-dirty         install onto a tree with uncommitted changes
 
-  upgrade <id>            port the plugin's own later releases in, exactly as \`pnpm kit:upgrade\`
+  upgrade <id>            port the plugin's own later releases in, exactly as \`pnpm kit:upgrade\`,
+                          and move the host's dependencies to what the new release declares
     --to <ref> / --from <ref> / --apply / --no-fetch / --allow-dirty
 
   remove <id>             uninstall: delete its directories, its barrel lines and its surface
@@ -173,7 +179,7 @@ export const USAGE = `usage: node scripts/plugin.mjs <command> [options]
 
   export <id> <dir>       copy a plugin back out into a plugin repository checkout (authoring)
 
-  --json                  on add, remove and check: the same facts as DATA rather than prose.
+  --json                  on add, upgrade, remove and check: the same facts as DATA rather than prose.
                           Every step carries its kind — agent (a command plus the assertion that
                           proves it) or human (a decision the tooling stops for) — so a human step
                           is a field rather than a sentence somebody has to notice.
@@ -783,13 +789,43 @@ function formatWritten(paths) {
  * else has meanwhile started importing is a broken build that re-running the command cannot undo.
  */
 function installDependencies(m, verb) {
-  for (const [pkg, deps] of Object.entries(m.dependencies ?? {})) {
-    const specs = Object.entries(deps ?? {}).map(([n, v]) => (verb === 'add' ? `${n}@${v}` : n))
-    if (specs.length === 0) continue
-    if (verb !== 'add') {
-      out(`  pnpm --dir ${pkg} remove ${specs.join(' ')}`)
-      continue
+  if (verb !== 'add') {
+    for (const [pkg, deps] of Object.entries(m.dependencies ?? {})) {
+      const names = Object.keys(deps ?? {})
+      if (names.length > 0) out(`  pnpm --dir ${pkg} remove ${names.join(' ')}`)
     }
+    return
+  }
+  // Only what the host does not already hold inside the declared range — re-adding the rest would
+  // let `pnpm add` move an operator's pin, and makes a re-run write nothing.
+  changeDependencies(dependenciesToInstall(m, packageJsonsFor(m)))
+}
+
+/**
+ * The one place a host `package.json` is changed for a plugin — `add` and `upgrade` both.
+ *
+ * `remove` (per package, names) is dropped by editing the file; `install` (per package, name →
+ * range) goes through `pnpm add` and then has the DECLARED range written back, because `pnpm add
+ * name@^2.2.4` saves `^<resolved>` (`^2.3.0` once 2.3.0 is out), not what the plugin asked for.
+ * Then ONE `pnpm install --no-frozen-lockfile` re-keys the lockfile to what the files now say —
+ * `--no-frozen-lockfile` because CI sets frozen by default and this run is, by definition, the one
+ * changing the lockfile; the resolved versions stay. Nothing to do runs nothing.
+ */
+function changeDependencies(install = {}, remove = {}) {
+  let rekey = false
+  for (const [pkg, names] of Object.entries(remove)) {
+    if (names.length === 0) continue
+    const file = abs(path.join(pkg, 'package.json'))
+    const before = readFileSync(file, 'utf8')
+    const after = withoutDependencies(before, names)
+    if (after === before) continue
+    out(`  ${pkg}/package.json: remove ${names.join(' ')}`)
+    writeFileSync(file, after)
+    rekey = true
+  }
+  for (const [pkg, deps] of Object.entries(install)) {
+    const specs = Object.entries(deps).map(([n, v]) => `${n}@${v}`)
+    if (specs.length === 0) continue
     out(`  pnpm --dir ${pkg} add ${specs.join(' ')}`)
     const r = spawnSync('pnpm', ['--dir', pkg, 'add', ...specs], {
       cwd: REPO_ROOT,
@@ -797,7 +833,21 @@ function installDependencies(m, verb) {
     })
     if (r.status !== 0)
       stop(1, `error: \`pnpm --dir ${pkg} add\` failed — install it yourself, then re-run`)
+    const file = abs(path.join(pkg, 'package.json'))
+    const before = readFileSync(file, 'utf8')
+    const after = pinDeclaredRanges(before, deps)
+    if (after === before) continue
+    writeFileSync(file, after)
+    rekey = true
   }
+  if (!rekey) return
+  out('  pnpm install --no-frozen-lockfile   # the lockfile, in step with the declared ranges')
+  const i = spawnSync('pnpm', ['install', '--no-frozen-lockfile'], {
+    cwd: REPO_ROOT,
+    stdio: 'inherit',
+  })
+  if (i.status !== 0)
+    stop(1, '`pnpm install` failed after changing package.json — run it yourself, then re-run')
 }
 
 // ---------------------------------------------------------------- upgrade
@@ -992,12 +1042,43 @@ function cmdUpgrade(args, host) {
       ...Object.fromEntries(PLUGIN_NOTE_FIELDS.map(k => [k, data[k] ?? null])),
     }
   })
-  artifacts.write(
-    'plan.json',
-    `${JSON.stringify({ id, from: m.commitOf(from), to: { ref: to, commit: m.commitOf(to), version: toVersion }, files, notes: noteFacts, warnings }, null, 2)}\n`
-  )
+  // **Dependencies move with the release.** The plugin's declarations at the version installed —
+  // read from the mirror at `from`, which only moves when the surface is stamped, so a re-run after
+  // rejects (whose anchor may already be patched forward) still diffs from the right baseline —
+  // against the new ones. Without this a release that added, re-ranged or dropped a dependency
+  // left the host failing `plugin check` until somebody edited `package.json` by hand.
+  const shownFrom = m.tryShow(from, pluginManifestPath)
+  let fromManifest = installedManifest
+  if (shownFrom.ok) {
+    try {
+      fromManifest = JSON.parse(shownFrom.out)
+    } catch {
+      // Unreadable at `from`: the installed anchor is the next-best statement of what was declared.
+    }
+  }
+  const deps = targetManifest
+    ? dependencyDelta(fromManifest, targetManifest, {
+        packageJsons: { ...packageJsonsFor(fromManifest), ...packageJsonsFor(targetManifest) },
+        installed: installedDependencyDeclarations(host),
+      })
+    : { changes: [], install: {}, remove: {}, clashes: [] }
 
-  out(
+  const planDoc = {
+    id,
+    from: m.commitOf(from),
+    to: { ref: to, commit: m.commitOf(to), version: toVersion },
+    files,
+    notes: noteFacts,
+    warnings,
+    dependencies: deps.changes,
+    dependencyClashes: deps.clashes,
+  }
+  artifacts.write('plan.json', `${JSON.stringify(planDoc, null, 2)}\n`)
+  if (args.json) out(JSON.stringify(planDoc, null, 2))
+  // Under --json stdout is the ONE document above; the prose plan is the same facts.
+  const say = args.json ? () => {} : out
+
+  say(
     `${id}  ${source.version ?? '?'} → ${toVersion ?? to}`,
     `  source    ${source.repo}${subdir ? `#${subdir}` : ''}`,
     `  files     ${files.length} changed: ${added.length} added, ${patches.length} patched` +
@@ -1005,16 +1086,17 @@ function cmdUpgrade(args, host) {
     `  artifacts ${path.relative(REPO_ROOT, workRoot)}`
   )
   if (notes.length > 0) {
-    out('', 'Release notes:')
+    say('', 'Release notes:')
     for (const n of noteFacts) {
-      out(`  ${n.version}`)
+      say(`  ${n.version}`)
       for (const key of PLUGIN_NOTE_FIELDS) {
         const v = n[key]
         if (v && (!Array.isArray(v) || v.length > 0))
-          out(`    ${key}: ${Array.isArray(v) ? v.join('; ') : v}`)
+          say(`    ${key}: ${Array.isArray(v) ? v.join('; ') : v}`)
       }
     }
   }
+  say('', ...renderDependencyDelta(deps))
   // Two sources for one question: a release may raise its floor in a NOTE, or simply by changing
   // the manifest — and the manifest's is the one that ends up recorded on the surface, so checking
   // only the notes would let an upgrade stamp a range this kit does not satisfy.
@@ -1036,15 +1118,28 @@ function cmdUpgrade(args, host) {
   }
   const touched = [...new Set(noteFacts.flatMap(n => n.touches_registries ?? []))]
   if (touched.length > 0) {
-    out(
+    say(
       '',
       `touches_registries: ${touched.join(', ')} — re-check those barrel lines after applying.`
     )
   }
-  for (const w of warnings) out(`  warning: ${w}`)
+  for (const w of warnings) say(`  warning: ${w}`)
+  // A range another installed plugin cannot live with is REFUSED here, unlike `add`'s warning:
+  // `add` is choosing to bring a plugin in, while an upgrade writing it would quietly turn a
+  // working peer red at its next `plugin check`. Nothing has been written yet.
+  if (deps.clashes.length > 0) {
+    warn(
+      '',
+      `error: ${id} ${toVersion ?? to} declares dependency ranges another installed plugin cannot use:`,
+      ...deps.clashes.map(c => `  ${describeClash(c)}`),
+      '',
+      'Nothing written. Upgrade the other plugin first, or agree a range both declare.'
+    )
+    return 6
+  }
 
   if (!args.apply) {
-    out('', 'Nothing written to your tree. Re-run with --apply.')
+    say('', 'Nothing written to your tree. Re-run with --apply.')
     return 0
   }
 
@@ -1120,12 +1215,23 @@ function cmdUpgrade(args, host) {
     }
   }
 
+  // After the files, so a failed `pnpm add` stops with the plugin's code in place and the surface
+  // unstamped — and a re-run diffs from the same `from`, finding done what is done.
+  changeDependencies(deps.install, deps.remove)
+  const kept = deps.changes.filter(c => c.action === 'keep')
+  const installs = deps.changes.filter(c => c.action === 'install').length
+  const removals = deps.changes.filter(c => c.action === 'remove').length
+
   out(
     '',
     `✔ ${added.length} added, ${patches.length - rejected} patched` +
       (rejected > 0 ? `, ${rejected} with rejects (*.rej beside the file)` : ''),
     ...(coreEditFiles.length > 0 ? [`✔ core edit(s) applied to ${coreEditFiles.join(', ')}`] : []),
-    ...coreEditWarnings.map(w => `  warning: ${w}`)
+    ...coreEditWarnings.map(w => `  warning: ${w}`),
+    ...(installs + removals > 0
+      ? [`✔ dependencies: ${installs} installed or re-ranged, ${removals} removed`]
+      : []),
+    ...kept.map(c => `  kept ${c.pkg} ${c.name} — ${c.reason}`)
   )
   if (rejected === 0) {
     const raw = JSON.parse(
@@ -1675,15 +1781,18 @@ function cmdCheck(args, host) {
         })
         continue
       }
-      // A DIFFERENT range is not the same fault: `package.json` is `manual` in `.rocketflare.json`,
-      // so an operator is entitled to have pinned it themselves and no kit upgrade reconciles it.
+      // A range OUTSIDE the declared one is not the same fault: `package.json` is `manual` in
+      // `.rocketflare.json`, so an operator is entitled to have pinned it themselves and no kit
+      // upgrade reconciles it. One inside it (`^2.3.0` for `^2.2.4`) never reaches here. The fix
+      // names the edit, not `pnpm add <name>@<range>`, which writes `^<resolved>` instead.
       add('fail', `${id}:dependency-range:${d.name}`, {
         file: `${d.pkg}/package.json`,
         line: jsonKeyLine(readHostPackageJsonSource(d.pkg), d.name),
-        problem: `pins ${d.name} at ${d.have}, and ${s.anchor} declares ${d.range}`,
+        problem: `pins ${d.name} at ${d.have}, outside the ${d.range} ${s.anchor} declares`,
         fix:
-          `pnpm --dir ${d.pkg} add ${d.name}@${d.range}, or set "dependencies"."${d.pkg}"."${d.name}" ` +
-          `in ${s.anchor} to ${d.have} — whichever range both can live with`,
+          `set "${d.name}": "${d.range}" (or a range inside it) in ${d.pkg}/package.json and run ` +
+          `\`pnpm install\`, or set "dependencies"."${d.pkg}"."${d.name}" in ${s.anchor} to ` +
+          `${d.have} — whichever range both can live with`,
       })
     }
 

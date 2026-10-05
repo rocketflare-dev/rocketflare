@@ -317,7 +317,17 @@ export interface HostPackageJson {
   devDependencies?: Record<string, string>
 }
 
-/** A declared dependency the host package does not have, or has at another range. */
+/** `have` admits only versions `range` admits too (`^2.3.0` within `^2.2.4`). */
+export function rangeWithin(have: string, range: string): boolean
+/** Per host package, the declared dependencies the host lacks or holds outside the declared range. */
+export function dependenciesToInstall(
+  manifest: PluginManifest,
+  packageJsons?: Record<string, HostPackageJson | null>
+): Record<string, Record<string, string>>
+/** A `package.json` text with each named dependency set to the given range, where it is listed. */
+export function pinDeclaredRanges(source: string, ranges?: Record<string, string>): string
+
+/** A declared dependency the host package does not have, or has outside the declared range. */
 export interface DependencyIssue {
   pkg: string
   name: string
@@ -349,6 +359,43 @@ export function dependencyClashes(
   }
 ): DependencyClash[]
 export function describeClash(clash: DependencyClash): string
+
+/** One declared dependency whose declaration an upgrade changes, and what the upgrade does to it. */
+export interface DependencyChange {
+  pkg: string
+  name: string
+  change: 'added' | 'changed' | 'removed'
+  /** The range the installed version declared, or null (added). */
+  from: string | null
+  /** The range the new version declares, or null (removed). */
+  to: string | null
+  /** What the host `package.json` holds now, or null. */
+  have: string | null
+  /** install (pnpm add + the declared range) · none (already satisfied / absent) · remove · keep. */
+  action: 'install' | 'none' | 'remove' | 'keep'
+  reason: string | null
+}
+export interface DependencyDelta {
+  changes: DependencyChange[]
+  /** Per host package, name → the range to install. */
+  install: Record<string, Record<string, string>>
+  /** Per host package, the names to remove. */
+  remove: Record<string, string[]>
+  /** Installs that would sit outside another installed plugin's declared range: refused. */
+  clashes: DependencyClash[]
+}
+/** The dependency changes between a plugin's installed manifest and the one an upgrade brings. */
+export function dependencyDelta(
+  before: PluginManifest | null | undefined,
+  after: PluginManifest | null | undefined,
+  context?: {
+    packageJsons?: Record<string, HostPackageJson | null>
+    installed?: ReadonlyArray<{ id: string; dependencies?: Record<string, Record<string, string>> }>
+  }
+): DependencyDelta
+export function renderDependencyDelta(delta: DependencyDelta): string[]
+/** A `package.json` text without the named dependencies, in either section. */
+export function withoutDependencies(source: string, names?: readonly string[]): string
 
 /** A table two installed plugins both declare, reported once per plugin involved. */
 export interface TableClash {
