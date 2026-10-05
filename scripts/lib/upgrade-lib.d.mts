@@ -183,6 +183,21 @@ export interface ParsedNote {
   body: string
 }
 export function parseNote(text: string): ParsedNote | null
+
+/** Where a plan run copies each release note in range, relative to its work dir. */
+export const NOTES_SUBDIR: 'notes'
+/**
+ * The repo-relative path a plan run writes a release note to (`<workDir>/notes/X.Y.Z.md`) — the
+ * one a copy can read. `noteFile` is the kit's `docs/upgrades/X.Y.Z.md`, absent in a copy until
+ * `--apply` writes it.
+ */
+export function notePath(workDir: string, noteFile: string): string
+/** The "Release notes" lines of the text report; a dry run names the note at the kit ref. */
+export function noteReportLines<N extends { version: string; file: string }>(
+  notes: readonly N[],
+  applicable: readonly N[],
+  options: { workDir: string; dryRun?: boolean; toRef: string }
+): string[]
 export const NOTE_HEADINGS: readonly string[]
 
 /** What `noteProblems` needs from its caller; see the implementation for why each is optional. */

@@ -415,6 +415,40 @@ export const APPLYABLE = new Set(['modified', 'verbatim'])
 
 // ---------------------------------------------------------------- release notes
 
+/** Where a plan run copies each release note in range, relative to its work dir. */
+export const NOTES_SUBDIR = 'notes'
+
+/**
+ * The path, relative to the repo root, where a plan run puts a release note — the one a copy can
+ * read. The note's own path (`docs/upgrades/X.Y.Z.md`) is the KIT's: in a copy, a note newer than
+ * the copy does not exist there until `--apply` writes it, so an agent that reads the report
+ * before applying got "file does not exist" for every note in range.
+ */
+export function notePath(workDir, noteFile) {
+  const base = noteFile.split('/').pop()
+  return workDir ? `${workDir}/${NOTES_SUBDIR}/${base}` : `${NOTES_SUBDIR}/${base}`
+}
+
+/**
+ * The "Release notes" lines of the text report. A dry run writes nothing, so it names the note at
+ * the kit ref instead (`<ref>:<path>`, what `git show` takes), labelled as such, rather than a
+ * local path that is not there.
+ */
+export function noteReportLines(notes, applicable, { workDir, dryRun = false, toRef }) {
+  if (notes.length === 0) return []
+  const lines = [
+    '',
+    dryRun
+      ? `Release notes (in the kit at ${toRef} — dry run, not copied here; a plan run writes them to ${workDir}/${NOTES_SUBDIR}/):`
+      : `Release notes (read them here — docs/upgrades/ gets them only with --apply):`,
+  ]
+  for (const n of notes) {
+    const where = dryRun ? `${toRef}:${n.file}` : notePath(workDir, n.file)
+    lines.push(`  ${n.version}  ${where}${applicable.includes(n) ? '' : '  (not applicable here)'}`)
+  }
+  return lines
+}
+
 const unquote = s => s.replace(/^["']|["']$/g, '')
 
 /**
