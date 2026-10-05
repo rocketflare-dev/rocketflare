@@ -498,12 +498,23 @@ proves who it is with a GitHub OIDC token and hands the dry-run build to a deplo
 bindings, stores an undeployed version, issues short-lived migration credentials, then activates
 (`scripts/deployer.mjs`; the v1 contract is `docs/DEPLOYER.md`). Unset, the default path is unchanged.
 
+**Build once (deployer path).** Production used to rebuild the tag, so Live never ran the bytes
+Staging validated. Now staging packs its build into `launch-bundle-<tag>.tgz` and attaches it to a
+DRAFT GitHub Release (a draft fires no `release: published`, so nothing promotes early); publishing
+the draft deploys exactly those bytes after `scripts/bundle.mjs` checks the digest, tag, commit and
+tree against the checkout. The bundle is environment-neutral — every binding and var comes from
+the toml the deployer receives — and GitHub Releases stay the external record. No asset → today's
+build (`docs/DEPLOYER.md` → Build once).
+
 **Known gaps:** no release helper beyond `kit:release`; no per-PR previews; no CLI publishing;
 provisioning HTTP calls have not been run end-to-end against live accounts; no automated
 Workers-plan check. The kit ships no deployer, only the client and the contract; the job waits for
 approval on a runner (fine for minutes, wasteful for hours — there is no re-dispatch). A deploy
 dispatched while the pushed commit's CI run is still in progress gates again rather than waiting
-for it.
+for it. Build once covers only the deployer path, and only a promotion that PUBLISHES the staging
+draft: a new release created for the tag instead has no bundle, so production rebuilds. The
+deployer does not yet check that production's upload is the digest staging uploaded; a staging
+dispatch from a branch packs nothing.
 
 ## 11. CLI
 

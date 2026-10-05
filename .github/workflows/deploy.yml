@@ -54,6 +54,14 @@ name: Deploy
 # (`wrangler deploy --dry-run --outdir`, no credentials) → upload (the deployer checks the build and
 # returns short-lived migration credentials) → `pnpm db:migrate:ci` with them → activate → finish
 # (always). With DEPLOYER_URL unset nothing below changes: migrate → build UI → `wrangler deploy`.
+#
+# Build once (deployer path only, docs/DEPLOYER.md → Build once): on a tag, staging packs what it
+# built into `launch-bundle-<tag>.tgz` (`scripts/bundle.mjs pack`) and `release-bundle` attaches it
+# to a DRAFT GitHub Release for the tag. A draft fires no `release: published`, so nothing reaches
+# production until somebody publishes it — and then production verifies the bundle against the
+# checked-out tag and deploys THOSE bytes, skipping `build:ui` and the dry run. A tag whose release
+# carries no bundle (an older tag, or the attach failed) builds as before; a bundle that fails
+# verification fails the job.
 
 on:
   push:
@@ -240,6 +248,16 @@ jobs:
         if: vars.DEPLOYER_URL != ''
         run: pnpm --filter @rocketflare/web exec wrangler deploy --dry-run --outdir dist/deploy -c wrangler.staging.toml
 
+      # Build once: the exact outdir and dist/ui the upload below sends, packed with a manifest
+      # binding them to this tag, commit and tree. Only on a tag — a branch dispatch has no release.
+      - name: Pack the build for production (build once)
+        id: bundle
+        if: vars.DEPLOYER_URL != '' && github.ref_type == 'tag'
+        run: node scripts/bundle.mjs pack
+        env:
+          BUNDLE_TAG: ${{ github.ref_name }}
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+
       # The deployer checks the bindings, stores an undeployed version and only then returns
       # short-lived migration credentials, exported masked as MIGRATOR_URL.
       - name: Hand the build to the deployer
@@ -258,6 +276,16 @@ jobs:
         if: vars.DEPLOYER_URL != ''
         run: node scripts/deployer.mjs activate
 
+      # Only once staging is live on these bytes; `release-bundle` attaches it to the release.
+      - name: Keep the bundle for the release
+        if: vars.DEPLOYER_URL != '' && github.ref_type == 'tag'
+        uses: actions/upload-artifact@v4
+        with:
+          name: launch-bundle
+          path: ${{ steps.bundle.outputs.file }}
+          if-no-files-found: error
+          retention-days: 7
+
       # `--filter … exec` runs wrangler with apps/web as cwd, where wrangler.staging.toml and
       # `[assets] directory = "./dist/ui"` live.
       - name: Deploy with wrangler (no deployer)
@@ -272,6 +300,39 @@ jobs:
       - name: Tell the deployer the deploy is over
         if: always() && vars.DEPLOYER_URL != ''
         run: node scripts/deployer.mjs finish
+
+  # Build once, deployer path: attach the bundle staging deployed to a DRAFT release for the tag.
+  # Its own job so `contents: write` is never held by a job that runs `pnpm install` and builds
+  # third-party code — this one installs nothing. A DRAFT, never a published prerelease: publishing
+  # (even a prerelease) fires `release: published`, which IS production's trigger. A failure here
+  # leaves staging deployed and production building from the tag, as before.
+  release-bundle:
+    name: Attach the staging bundle to the release (draft)
+    needs: staging
+    # `!cancelled()`: staging may run with `ci` skipped (gated), and an implicit `success()` would
+    # then skip this job too.
+    if: |
+      !cancelled() && needs.staging.result == 'success' &&
+      vars.DEPLOYER_URL != '' && github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      TOML: apps/web/wrangler.staging.toml
+      BUNDLE_TAG: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+      - uses: actions/download-artifact@v4
+        with:
+          name: launch-bundle
+          path: bundle
+      - name: Verify and attach the bundle
+        run: node scripts/bundle.mjs attach "bundle/launch-bundle-$BUNDLE_TAG.tgz"
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
 
   # Step 2: publishing the GitHub Release is the promotion gate ("required reviewers" is not
   # available on private repos on the free plan). Ships the release's tag, already validated
@@ -320,6 +381,19 @@ jobs:
         if: github.event_name == 'release'
         run: node scripts/release-check.mjs --tag "${{ steps.version.outputs.version }}"
 
+      # Build once (deployer path): the release's `launch-bundle-<tag>.tgz`, verified against this
+      # checkout (digest, tag, commit, tree, toml), unpacked into dist/deploy and dist/ui —
+      # `source=bundle` skips the two build steps below. No bundle → `source=build`, as before. A
+      # rollback dispatched at a tag takes the same path.
+      - name: Use the staging bundle when the release carries one
+        id: bundle
+        if: vars.DEPLOYER_URL != ''
+        run: node scripts/bundle.mjs fetch
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          BUNDLE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || (github.ref_type == 'tag' && github.ref_name || '') }}
+
+      # Still needed with a bundle: the parity test and the migrations run from the checkout.
       - run: pnpm install --frozen-lockfile
 
       # ONLY the parity test: the whole config project also reads git history
@@ -340,10 +414,11 @@ jobs:
         run: node scripts/deployer.mjs start
 
       - name: Build UI
+        if: vars.DEPLOYER_URL == '' || steps.bundle.outputs.source != 'bundle'
         run: pnpm --filter @rocketflare/web build:ui
 
       - name: Build the Worker (dry run, no credentials)
-        if: vars.DEPLOYER_URL != ''
+        if: vars.DEPLOYER_URL != '' && steps.bundle.outputs.source != 'bundle'
         run: pnpm --filter @rocketflare/web exec wrangler deploy --dry-run --outdir dist/deploy
 
       - name: Hand the build to the deployer

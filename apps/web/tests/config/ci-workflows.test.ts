@@ -211,3 +211,67 @@ describe('deploy.yml `gated` step', () => {
     expect(run('null')).toBe('gated=false')
   })
 })
+
+/**
+ * Build once (deployer path, docs/DEPLOYER.md → Build once). `scripts/bundle.mjs` and its tests
+ * (`bundle.test.ts`, `bundle-lib.test.ts`) hold the logic; these pin the wiring that only YAML has.
+ */
+describe('deploy.yml build once', () => {
+  const step = (lines: string[], name: string) => {
+    const i = lines.findIndex(
+      l => l.trim() === `- name: ${name}` || l.trim() === `- name: "${name}"`
+    )
+    expect(i, name).toBeGreaterThan(-1)
+    const rest = lines.slice(i + 1)
+    const end = rest.findIndex(l => /^ {6}- /.test(l))
+    return [lines[i] ?? '', ...(end === -1 ? rest : rest.slice(0, end))].join('\n')
+  }
+
+  it('promotes on `release: published` only — a draft fires no such event', () => {
+    expect(DEPLOY).toMatch(/\n {2}release:\n {4}types: \[published\]\n/)
+  })
+
+  it('attaches the bundle from its own job: contents: write, nothing installed or built', () => {
+    const attach = job(DEPLOY, 'release-bundle')
+    expect(key(attach, 'needs')).toBe('staging')
+    expect(key(attach, 'if')).toBe(
+      "!cancelled() && needs.staging.result == 'success' && " +
+        "vars.DEPLOYER_URL != '' && github.ref_type == 'tag'"
+    )
+    expect(attach.join('\n')).toMatch(/permissions:\n\s+contents: write/)
+    expect(commands(attach)).toEqual([
+      'node scripts/bundle.mjs attach "bundle/launch-bundle-$BUNDLE_TAG.tgz"',
+    ])
+  })
+
+  it('never gives contents: write to a job that runs pnpm install', () => {
+    for (const id of ['staging', 'production']) {
+      expect(job(DEPLOY, id).join('\n'), id).not.toMatch(/contents: write/)
+    }
+  })
+
+  it('packs on staging only on the deployer path and only for a tag', () => {
+    const staging = job(DEPLOY, 'staging')
+    expect(step(staging, 'Pack the build for production (build once)')).toContain(
+      "if: vars.DEPLOYER_URL != '' && github.ref_type == 'tag'"
+    )
+    expect(step(staging, 'Keep the bundle for the release')).toContain(
+      "if: vars.DEPLOYER_URL != '' && github.ref_type == 'tag'"
+    )
+  })
+
+  it('production skips its builds only for a verified bundle, and the wrangler path always builds', () => {
+    const production = job(DEPLOY, 'production')
+    expect(step(production, 'Use the staging bundle when the release carries one')).toContain(
+      "if: vars.DEPLOYER_URL != ''"
+    )
+    expect(step(production, 'Build UI')).toContain(
+      "if: vars.DEPLOYER_URL == '' || steps.bundle.outputs.source != 'bundle'"
+    )
+    expect(step(production, 'Build the Worker (dry run, no credentials)')).toContain(
+      "if: vars.DEPLOYER_URL != '' && steps.bundle.outputs.source != 'bundle'"
+    )
+    // The parity test and the migrations still need the workspace.
+    expect(commands(production)).toContain('pnpm install --frozen-lockfile')
+  })
+})

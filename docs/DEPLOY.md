@@ -377,6 +377,23 @@ paths; with `DEPLOYER_URL` unset the migrate / `wrangler deploy` steps run exact
 contract a deployer implements — endpoints, payload, OIDC claims to check, what `migratorUrl` must be
 able to do — is **`docs/DEPLOYER.md`** (protocol v1).
 
+**Build once.** On this path a tag is built ONCE, by staging. The staging job packs the outdir and
+`dist/ui` it uploaded into `launch-bundle-<tag>.tgz` (`scripts/bundle.mjs pack`, a manifest binding
+it to the tag, commit and tree), and the `release-bundle` job — the only one with `contents: write`,
+and it installs nothing — attaches it to a **draft** GitHub Release for the tag. Publishing that
+draft is the promotion: `release: published` starts `production`, which downloads the asset,
+verifies it against its own checkout (`scripts/bundle.mjs fetch`) and deploys those bytes,
+skipping `build:ui` and the dry run (it still installs, for the parity test and the migrations). A
+release without the asset — an older tag, or a release created anew instead of publishing the
+draft — builds from the tag as before; an asset that fails verification fails the job. The plain
+`wrangler deploy` path never packs, attaches or fetches anything.
+
+```
+ push tag ─► staging: build:ui → dry run → pack → start/upload/migrate/activate → artifact
+           ─► release-bundle: verify → draft release X.Y.Z + launch-bundle-X.Y.Z.tgz
+ publish the draft ─► production: fetch + verify → (no build) → start/upload/migrate/activate
+```
+
 ### Default plugins in CI, and the template a plugin repository calls (D31, decision 5)
 
 The gate's steps live in ONE place, `pnpm gate` (`scripts/lib/gate-lib.mjs`), and every workflow
@@ -567,7 +584,7 @@ fail a request; `wrangler tail` is where to look.
 | Situation | Action |
 |---|---|
 | Bad Worker version, schema unchanged | `pnpm --filter @rocketflare/web exec wrangler rollback [-c wrangler.staging.toml]` — previous version, seconds. Or `wrangler rollback <version-id>` from `deployments list` |
-| Need a specific earlier tag | Actions → Deploy → `production` from that tag, or publish a Release on the earlier tag |
+| Need a specific earlier tag | Actions → Deploy → `production` from that tag, or publish a Release on the earlier tag. On the deployer path a tag whose release carries `launch-bundle-<tag>.tgz` redeploys those exact bytes (build once); an older one builds from the tag |
 | Schema migration must be undone | migrations are forward-only: write a compensating migration, tag, and run the dance. `wrangler rollback` does not touch the database |
 | Bad deploy right after switching a deployment to `neon` | `wrangler rollback` to the last `postgres` version — it restores that version's `HYPERDRIVE` binding, which is why the Hyperdrive configs are kept about a week (§ Database driver). Then switch the toml back with `pnpm provision cloudflare <env> --driver postgres` before the next deploy |
 | RLS enforce misbehaving | `TENANT_SCOPE_MODE = "off"` in `[vars]` and redeploy — no migration (docs/RLS.md) |
