@@ -1950,6 +1950,128 @@ export function dependencyClashes(manifest, { packageJsons = {}, installed = [] 
 export const describeClash = c =>
   `${c.pkg}: ${c.name} — this plugin wants ${c.range}, ${c.holder} has ${c.theirs}`
 
+// ---------------------------------------------------------------- dependencies across an upgrade
+
+/**
+ * What `plugin upgrade` does to the host's dependencies, from the plugin's declared dependencies at
+ * the version installed (`before`) and the one being installed (`after`). Pure: the host's
+ * `package.json`s and every OTHER installed plugin's declarations are passed in.
+ *
+ * **`upgrade` never touched dependencies before**, so a release that added one, moved its range
+ * (`^2.2.4` → `^3.0.0`) or dropped one left the host failing `plugin check` until somebody edited
+ * `package.json` by hand. The rules, per `(package dir, name)` whose declaration changed — an
+ * unchanged declaration is not this function's business (`plugin check` audits it):
+ *
+ * - **added / changed** → `install`, unless the host already holds a range inside the new one
+ *   (`none`), exactly as `plugin add` decides (`dependenciesToInstall`).
+ * - **removed** → `remove` only when no other installed plugin declares it AND the host holds
+ *   exactly the range this plugin declared — so it was the plugin's. Anything else is `keep` with
+ *   the reason: another plugin's, or a range the operator or the kit chose. Not in the host: `none`.
+ * - **a clash**: an `install` whose range would sit OUTSIDE what another installed plugin declares
+ *   (`rangeWithin`) — writing it would fail that plugin's `plugin check`, so `upgrade` refuses.
+ */
+export function dependencyDelta(before, after, { packageJsons = {}, installed = [] } = {}) {
+  const id = after?.id ?? before?.id ?? null
+  const peers = installed.filter(p => p?.id && p.id !== id)
+  const declared = m => m?.dependencies ?? {}
+  const pkgs = [...new Set([...Object.keys(declared(before)), ...Object.keys(declared(after))])]
+  const changes = []
+  const install = {}
+  const remove = {}
+  const clashes = []
+  for (const pkg of pkgs.sort()) {
+    const was = declared(before)[pkg] ?? {}
+    const now = declared(after)[pkg] ?? {}
+    const names = [...new Set([...Object.keys(was), ...Object.keys(now)])].sort()
+    for (const name of names) {
+      const from = was[name] ?? null
+      const to = now[name] ?? null
+      if (from === to) continue
+      const have = rangeIn(packageJsons[pkg], name)
+      const holders = peers
+        .map(p => ({ id: p.id, range: p.dependencies?.[pkg]?.[name] ?? null }))
+        .filter(p => p.range !== null)
+      const change = from === null ? 'added' : to === null ? 'removed' : 'changed'
+      let action
+      let reason = null
+      if (to !== null) {
+        if (have !== null && rangeWithin(have, to)) {
+          action = 'none'
+          reason = `${pkg}/package.json already holds ${have}`
+        } else {
+          action = 'install'
+          if (have !== null) reason = `replaces the ${have} in ${pkg}/package.json`
+          for (const h of holders) {
+            if (!rangeWithin(to, h.range)) {
+              clashes.push({
+                pkg,
+                name,
+                range: to,
+                holder: `the '${h.id}' plugin`,
+                theirs: h.range,
+              })
+            }
+          }
+          install[pkg] = { ...install[pkg], [name]: to }
+        }
+      } else if (holders.length > 0) {
+        action = 'keep'
+        reason = `also declared by ${holders.map(h => `the '${h.id}' plugin`).join(', ')}`
+      } else if (have === null) {
+        action = 'none'
+        reason = `not in ${pkg}/package.json`
+      } else if (have.trim() === from.trim()) {
+        action = 'remove'
+        remove[pkg] = [...(remove[pkg] ?? []), name]
+      } else {
+        action = 'keep'
+        reason = `${pkg}/package.json pins ${have}, not the ${from} ${id ?? 'the plugin'} declared — not the plugin's to remove`
+      }
+      changes.push({ pkg, name, change, from, to, have, action, reason })
+    }
+  }
+  return { changes, install, remove, clashes }
+}
+
+const DELTA_MARK = { added: '+', changed: '~', removed: '-' }
+const DELTA_ACTION = {
+  install: 'install',
+  none: 'nothing to do',
+  remove: 'remove',
+  keep: 'keep',
+}
+
+/** A dependency delta as the plan's `Dependencies` block. */
+export function renderDependencyDelta(delta) {
+  const changes = delta?.changes ?? []
+  if (changes.length === 0) return ['Dependencies  unchanged']
+  const lines = ['Dependencies']
+  for (const c of changes) {
+    const range = c.change === 'changed' ? `${c.from} → ${c.to}` : (c.to ?? c.from)
+    lines.push(
+      `  ${DELTA_MARK[c.change]} ${c.pkg}  ${c.name} ${range}  — ${DELTA_ACTION[c.action]}` +
+        (c.reason ? ` (${c.reason})` : '')
+    )
+  }
+  return lines
+}
+
+/** A host `package.json`'s text without the named dependencies (either section); unchanged if absent. */
+export function withoutDependencies(source, names = []) {
+  const json = JSON.parse(source)
+  let changed = false
+  for (const name of names) {
+    for (const section of ['dependencies', 'devDependencies']) {
+      if (json[section]?.[name] === undefined) continue
+      delete json[section][name]
+      changed = true
+    }
+  }
+  if (!changed) return source
+  const indent = /^[ \t]+(?=")/m.exec(source)?.[0] ?? '  '
+  return `${JSON.stringify(json, null, indent)}${source.endsWith('\n') ? '\n' : ''}`
+}
+
 /**
  * Tables that two installed plugins both declare.
  *

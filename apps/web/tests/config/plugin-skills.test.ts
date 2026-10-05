@@ -6,6 +6,7 @@
  * LIFECYCLE — add, check, upgrade, remove — runs the real `scripts/plugin.mjs` against a throwaway
  * host: a temp git repository holding a copy of `scripts/` and the handful of files the script
  * reads, so an install can really be applied and undone without touching this checkout. The
+ * same harness, with a fake `pnpm` on PATH, drives `upgrade`'s dependency half at the end. The
  * `config` project: no database.
  */
 import { execFileSync } from 'node:child_process'
@@ -259,6 +260,7 @@ interface PluginFixture {
   version?: string
   skills?: string[]
   files?: Record<string, string>
+  dependencies?: Record<string, Record<string, string>>
 }
 
 /** A plugin repository with nothing but skills — the smallest thing the slot applies to. */
@@ -275,7 +277,17 @@ function writePluginVersion(root: string, fixture: PluginFixture) {
   const version = fixture.version ?? '1.0.0'
   const skills = fixture.skills ?? [id]
   const manifest = `${JSON.stringify(
-    { id, label: id, version, repo: root, subdir: '', minKit: '0.1.0', uses: {}, skills },
+    {
+      id,
+      label: id,
+      version,
+      repo: root,
+      subdir: '',
+      minKit: '0.1.0',
+      uses: {},
+      skills,
+      ...(fixture.dependencies ? { dependencies: fixture.dependencies } : {}),
+    },
     null,
     2
   )}\n`
@@ -291,7 +303,7 @@ function writePluginVersion(root: string, fixture: PluginFixture) {
   git(root, ['tag', '-a', '-m', version, version])
 }
 
-const run = (host: string, args: string[]) => {
+const run = (host: string, args: string[], env?: NodeJS.ProcessEnv) => {
   try {
     return {
       status: 0,
@@ -299,6 +311,7 @@ const run = (host: string, args: string[]) => {
         cwd: host,
         encoding: 'utf8',
         stdio: ['ignore', 'pipe', 'pipe'],
+        ...(env ? { env } : {}),
       }),
     }
   } catch (err) {
@@ -474,5 +487,173 @@ describe('pnpm plugin, with skills, end to end', () => {
     const manifest = JSON.parse(readFileSync(path.join(out, PLUGIN_MANIFEST_FILE), 'utf8'))
     expect(manifest.skills).toEqual(['orders'])
     expect(manifest.paths.some((p: string) => p.startsWith('.claude/'))).toBe(false)
+  })
+})
+
+// ---------------------------------------------------------------- upgrade and dependencies
+
+/**
+ * A `pnpm` on PATH that records every call and does what `add` does to a `package.json` — saving
+ * a resolved-NEWER `^99.0.0` rather than the range asked for, as pnpm 10 really does — so the
+ * dependency half of `upgrade` runs for real without a registry. `install` and `exec` succeed.
+ */
+function fakePnpm(): { env: NodeJS.ProcessEnv; calls: () => string[] } {
+  const dir = mkdtempSync(path.join(tmpdir(), 'rf-fake-pnpm-'))
+  sandboxes.push(dir)
+  const log = path.join(dir, 'calls.log')
+  write(
+    dir,
+    'pnpm',
+    `#!/usr/bin/env node
+const fs = require('node:fs')
+const path = require('node:path')
+const argv = process.argv.slice(2)
+fs.appendFileSync(${JSON.stringify(log)}, argv.join(' ') + '\\n')
+let dir = '.'
+if (argv[0] === '--dir') dir = argv.splice(0, 2)[1]
+if (argv[0] === 'add') {
+  const file = path.join(process.cwd(), dir, 'package.json')
+  const json = JSON.parse(fs.readFileSync(file, 'utf8'))
+  json.dependencies = json.dependencies ?? {}
+  for (const spec of argv.slice(1)) json.dependencies[spec.slice(0, spec.lastIndexOf('@'))] = '^99.0.0'
+  fs.writeFileSync(file, JSON.stringify(json, null, 2) + '\\n')
+}
+`
+  )
+  chmodSync(path.join(dir, 'pnpm'), 0o755)
+  return {
+    env: { ...process.env, PATH: `${dir}${path.delimiter}${process.env.PATH}` },
+    calls: () =>
+      existsSync(log)
+        ? readFileSync(log, 'utf8')
+            .trim()
+            .split('\n')
+            .filter(l => l && !l.startsWith('exec '))
+        : [],
+  }
+}
+
+const webDeps = (host: string) =>
+  (JSON.parse(readFileSync(path.join(host, 'apps/web/package.json'), 'utf8')).dependencies ??
+    {}) as Record<string, string>
+
+describe('pnpm plugin upgrade, with dependencies, end to end', () => {
+  const v1 = {
+    'left-pad': '^1.0.0',
+    'is-odd': '^2.0.0',
+    'rf-shared': '^1.0.0',
+    'rf-pinned': '^1.0.0',
+  }
+
+  /** orders@1.0.0 and billing@1.0.0 installed and committed; billing also declares rf-shared. */
+  function installed(pnpm: ReturnType<typeof fakePnpm>) {
+    const host = makeHost()
+    const orders = makePlugin({ dependencies: { 'apps/web': v1 } })
+    const billing = makePlugin({
+      id: 'billing',
+      dependencies: { 'apps/web': { 'rf-shared': '^1.0.0' } },
+    })
+    for (const p of [orders, billing]) {
+      const r = run(host, ['add', p, '--local', '--apply', '--allow-dirty'], pnpm.env)
+      expect(r.status, r.out).toBe(0)
+    }
+    // The declared ranges, not the fake's ^99.0.0 — and an operator then narrows one themselves.
+    expect(webDeps(host)).toMatchObject(v1)
+    const file = path.join(host, 'apps/web/package.json')
+    writeFileSync(
+      file,
+      readFileSync(file, 'utf8').replace('"rf-pinned": "^1.0.0"', '"rf-pinned": "1.0.5"')
+    )
+    git(host, ['add', '-A'])
+    git(host, ['commit', '-qm', 'installed'])
+    return { host, orders }
+  }
+
+  it('adds, re-ranges and removes what the release changed, keeps what is not its, and re-runs to nothing', () => {
+    const pnpm = fakePnpm()
+    const { host, orders } = installed(pnpm)
+    // 1.1.0 raises left-pad, adds new-dep, and stops declaring the other three.
+    writePluginVersion(orders, {
+      version: '1.1.0',
+      dependencies: { 'apps/web': { 'left-pad': '^2.0.0', 'new-dep': '^0.3.0' } },
+    })
+    const before = readFileSync(path.join(host, 'apps/web/package.json'), 'utf8')
+    const callsBefore = pnpm.calls().length
+
+    const plan = run(host, ['upgrade', 'orders', '--to', '1.1.0'], pnpm.env)
+    expect(plan.status, plan.out).toBe(0)
+    expect(plan.out).toContain('~ apps/web  left-pad ^1.0.0 → ^2.0.0  — install')
+    expect(plan.out).toContain('+ apps/web  new-dep ^0.3.0  — install')
+    expect(plan.out).toContain('- apps/web  is-odd ^2.0.0  — remove')
+    expect(plan.out).toMatch(
+      /- apps\/web {2}rf-shared \^1\.0\.0 {2}— keep \(also declared by the 'billing' plugin\)/
+    )
+    expect(plan.out).toMatch(/- apps\/web {2}rf-pinned \^1\.0\.0 {2}— keep \(.*pins 1\.0\.5/)
+    const json = run(host, ['upgrade', 'orders', '--to', '1.1.0', '--json'], pnpm.env)
+    expect(json.status, json.out).toBe(0)
+    const doc = JSON.parse(json.out) as { dependencies: { name: string; action: string }[] }
+    expect(Object.fromEntries(doc.dependencies.map(d => [d.name, d.action]))).toEqual({
+      'is-odd': 'remove',
+      'left-pad': 'install',
+      'new-dep': 'install',
+      'rf-pinned': 'keep',
+      'rf-shared': 'keep',
+    })
+    // A plan is a plan.
+    expect(readFileSync(path.join(host, 'apps/web/package.json'), 'utf8')).toBe(before)
+    expect(pnpm.calls().length).toBe(callsBefore)
+
+    const up = run(
+      host,
+      ['upgrade', 'orders', '--to', '1.1.0', '--apply', '--allow-dirty'],
+      pnpm.env
+    )
+    expect(up.status, up.out).toBe(0)
+    const deps = webDeps(host)
+    expect(deps).toMatchObject({
+      'left-pad': '^2.0.0',
+      'new-dep': '^0.3.0',
+      'rf-shared': '^1.0.0',
+      'rf-pinned': '1.0.5',
+    })
+    expect(deps).not.toHaveProperty('is-odd')
+    expect(pnpm.calls().slice(callsBefore)).toEqual([
+      '--dir apps/web add left-pad@^2.0.0 new-dep@^0.3.0',
+      'install --no-frozen-lockfile',
+    ])
+    expect(up.out).toContain("kept apps/web rf-shared — also declared by the 'billing' plugin")
+
+    // The same version again writes nothing and runs nothing.
+    git(host, ['add', '-A'])
+    git(host, ['commit', '-qm', 'upgraded'])
+    const after = readFileSync(path.join(host, 'apps/web/package.json'), 'utf8')
+    const callsAfter = pnpm.calls().length
+    const again = run(host, ['upgrade', 'orders', '--to', '1.1.0', '--apply'], pnpm.env)
+    expect(again.status, again.out).toBe(0)
+    expect(readFileSync(path.join(host, 'apps/web/package.json'), 'utf8')).toBe(after)
+    expect(pnpm.calls().length).toBe(callsAfter)
+    expect(git(host, ['status', '--porcelain'])).toBe('')
+  })
+
+  it('refuses, before writing anything, a range another installed plugin cannot use', () => {
+    const pnpm = fakePnpm()
+    const { host, orders } = installed(pnpm)
+    writePluginVersion(orders, {
+      version: '1.1.0',
+      dependencies: { 'apps/web': { ...v1, 'rf-shared': '^2.0.0' } },
+      files: { 'skills/orders/SKILL.md': skillMd('orders', 'v2') },
+    })
+    const callsBefore = pnpm.calls().length
+    const up = run(
+      host,
+      ['upgrade', 'orders', '--to', '1.1.0', '--apply', '--allow-dirty'],
+      pnpm.env
+    )
+    expect(up.status).toBe(6)
+    expect(up.out).toContain(
+      "apps/web: rf-shared — this plugin wants ^2.0.0, the 'billing' plugin has ^1.0.0"
+    )
+    expect(git(host, ['status', '--porcelain'])).toBe('')
+    expect(pnpm.calls().length).toBe(callsBefore)
   })
 })

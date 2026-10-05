@@ -44,6 +44,7 @@ import {
   declaresProperty,
   dependenciesToInstall,
   dependencyClashes,
+  dependencyDelta,
   describeClash,
   hasBarrelLine,
   isolationEvidence,
@@ -64,6 +65,7 @@ import {
   removeBarrelLine,
   removeSteps,
   renderAddPlan,
+  renderDependencyDelta,
   renderDiagnostic,
   renderList,
   renderSteps,
@@ -75,6 +77,7 @@ import {
   tableClashes,
   tupleEntries,
   unsupportedForKit,
+  withoutDependencies,
   workerExportNames,
 } from '../../../../scripts/lib/plugin-lib.mjs'
 import { applyReplacements, deriveNames, KIT } from '../../../../scripts/lib/rename-lib.mjs'
@@ -1481,6 +1484,159 @@ describe('the audit', () => {
         installed: [{ id: 'orders', dependencies: { 'apps/web': { recharts: '^9.0.0' } } }],
       })
     ).toEqual([])
+  })
+
+  /**
+   * `plugin upgrade` and dependencies: what changed between the installed release's declarations
+   * and the new one's, and what the host does about each. A dependency is only removed when it
+   * was demonstrably the plugin's — nobody else declares it and the host holds exactly the range
+   * this plugin declared.
+   */
+  describe('the dependency delta an upgrade applies', () => {
+    const v1 = {
+      id: 'orders',
+      dependencies: {
+        'apps/web': {
+          'left-pad': '^1.0.0',
+          'is-odd': '^2.0.0',
+          shared: '^1.0.0',
+          pinned: '^1.0.0',
+        },
+        'apps/cli': {},
+      },
+    }
+    const host = (deps: Record<string, string>) => ({ 'apps/web': { dependencies: deps } })
+    const installedHost = host({
+      'left-pad': '^1.0.0',
+      'is-odd': '^2.0.0',
+      shared: '^1.0.0',
+      pinned: '1.0.5',
+    })
+
+    it('installs an added dependency and re-ranges a raised one', () => {
+      const v2 = {
+        id: 'orders',
+        dependencies: {
+          'apps/web': { ...v1.dependencies['apps/web'], 'left-pad': '^2.0.0', zod: '^3.0.0' },
+        },
+      }
+      const delta = dependencyDelta(v1, v2, { packageJsons: installedHost })
+      expect(delta.install).toEqual({ 'apps/web': { 'left-pad': '^2.0.0', zod: '^3.0.0' } })
+      expect(delta.remove).toEqual({})
+      expect(delta.clashes).toEqual([])
+      expect(delta.changes.map(c => [c.name, c.change, c.action])).toEqual([
+        ['left-pad', 'changed', 'install'],
+        ['zod', 'added', 'install'],
+      ])
+    })
+
+    it('leaves alone what the host already holds inside the new range', () => {
+      const v2 = {
+        id: 'orders',
+        dependencies: { 'apps/web': { ...v1.dependencies['apps/web'], 'left-pad': '^1.2.0' } },
+      }
+      const delta = dependencyDelta(v1, v2, { packageJsons: host({ 'left-pad': '^1.3.0' }) })
+      expect(delta.install).toEqual({})
+      expect(delta.changes).toEqual([
+        expect.objectContaining({ name: 'left-pad', change: 'changed', action: 'none' }),
+      ])
+    })
+
+    it('removes a dependency only when it was the plugin’s, and says why it keeps the rest', () => {
+      const v2 = { id: 'orders', dependencies: { 'apps/web': { 'left-pad': '^1.0.0' } } }
+      const delta = dependencyDelta(v1, v2, {
+        packageJsons: installedHost,
+        installed: [
+          { id: 'orders', dependencies: v1.dependencies },
+          { id: 'billing', dependencies: { 'apps/web': { shared: '^1.0.0' } } },
+        ],
+      })
+      // Owned: nobody else declares it and the host holds exactly what v1 declared.
+      expect(delta.remove).toEqual({ 'apps/web': ['is-odd'] })
+      const byName = Object.fromEntries(delta.changes.map(c => [c.name, c]))
+      expect(byName['is-odd'].action).toBe('remove')
+      // Shared with another installed plugin.
+      expect(byName.shared.action).toBe('keep')
+      expect(byName.shared.reason).toContain("the 'billing' plugin")
+      // The operator narrowed it (or the kit holds it): not the plugin's to take away.
+      expect(byName.pinned.action).toBe('keep')
+      expect(byName.pinned.reason).toContain('1.0.5')
+      // Already gone from the host: nothing to do.
+      expect(dependencyDelta(v1, v2, { packageJsons: host({}) }).remove).toEqual({})
+      // A plugin is never its own peer.
+      expect(
+        dependencyDelta(v1, v2, {
+          packageJsons: installedHost,
+          installed: [{ id: 'orders', dependencies: v1.dependencies }],
+        }).remove
+      ).toEqual({ 'apps/web': ['is-odd', 'shared'] })
+    })
+
+    it('flags a new range another installed plugin cannot live with, in add’s words', () => {
+      const v2 = {
+        id: 'orders',
+        dependencies: { 'apps/web': { ...v1.dependencies['apps/web'], shared: '^2.0.0' } },
+      }
+      const billing = { id: 'billing', dependencies: { 'apps/web': { shared: '^1.0.0' } } }
+      const delta = dependencyDelta(v1, v2, { packageJsons: installedHost, installed: [billing] })
+      expect(delta.clashes).toEqual([
+        {
+          pkg: 'apps/web',
+          name: 'shared',
+          range: '^2.0.0',
+          holder: "the 'billing' plugin",
+          theirs: '^1.0.0',
+        },
+      ])
+      expect(describeClash(delta.clashes[0])).toBe(
+        "apps/web: shared — this plugin wants ^2.0.0, the 'billing' plugin has ^1.0.0"
+      )
+      // A range INSIDE the peer's is no clash: the peer's `plugin check` still passes.
+      const narrower = {
+        id: 'orders',
+        dependencies: { 'apps/web': { ...v1.dependencies['apps/web'], shared: '^1.4.0' } },
+      }
+      expect(
+        dependencyDelta(v1, narrower, { packageJsons: installedHost, installed: [billing] }).clashes
+      ).toEqual([])
+    })
+
+    it('is empty when nothing changed, and renders as the plan’s Dependencies block', () => {
+      expect(dependencyDelta(v1, v1, { packageJsons: installedHost })).toEqual({
+        changes: [],
+        install: {},
+        remove: {},
+        clashes: [],
+      })
+      expect(renderDependencyDelta(dependencyDelta(v1, v1))).toEqual(['Dependencies  unchanged'])
+      const v2 = {
+        id: 'orders',
+        dependencies: {
+          'apps/web': {
+            'left-pad': '^2.0.0',
+            'is-odd': '^2.0.0',
+            shared: '^1.0.0',
+            pinned: '^1.0.0',
+          },
+        },
+      }
+      expect(
+        renderDependencyDelta(dependencyDelta(v1, v2, { packageJsons: installedHost }))
+      ).toEqual([
+        'Dependencies',
+        '  ~ apps/web  left-pad ^1.0.0 → ^2.0.0  — install (replaces the ^1.0.0 in apps/web/package.json)',
+      ])
+    })
+
+    it('drops a dependency from either section, keeping the formatting, and is a no-op when absent', () => {
+      const source = `${JSON.stringify({ dependencies: { a: '1', b: '2' }, devDependencies: { c: '3' } }, null, 2)}\n`
+      expect(JSON.parse(withoutDependencies(source, ['b', 'c']))).toEqual({
+        dependencies: { a: '1' },
+        devDependencies: {},
+      })
+      expect(withoutDependencies(source, ['b']).endsWith('}\n')).toBe(true)
+      expect(withoutDependencies(source, ['zzz'])).toBe(source)
+    })
   })
 
   it('makes a clash a HUMAN step rather than refusing the install', () => {
