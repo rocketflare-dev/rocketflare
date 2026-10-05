@@ -19,6 +19,7 @@ import {
   type Entries,
   makeManifest,
   packBundle,
+  payloadDigest,
   productionSource,
   type Release,
   readTomlBasics,
@@ -72,9 +73,8 @@ function bundle() {
 }
 
 describe('collectEntries / makeManifest', () => {
-  it('keeps every module but the source maps and README, and the whole UI', () => {
+  it('keeps every module but the source maps and README, and the UI but .assetsignore', () => {
     expect(Object.keys(bundle().entries).sort()).toEqual([
-      'ui/.assetsignore',
       'ui/assets/app-1a2b.js',
       'ui/index.html',
       'worker/abc-module.wasm',
@@ -153,6 +153,47 @@ describe('bundleDigest', () => {
   })
 })
 
+describe('payloadDigest', () => {
+  const b64 = (bytes: Buffer) => bytes.toString('base64')
+  /** The upload body `scripts/deployer.mjs` builds from the same two build outputs. */
+  const payload = () => ({
+    modules: Object.fromEntries(
+      Object.entries(worker())
+        .filter(([rel]) => !rel.endsWith('.map') && rel !== 'README.md')
+        .map(([rel, bytes]) => [rel, b64(bytes)])
+    ),
+    assets: Object.fromEntries(
+      Object.entries(ui())
+        .filter(([rel]) => rel !== '.assetsignore')
+        .map(([rel, bytes]) => [`/${rel}`, b64(bytes)])
+    ),
+  })
+
+  it("equals the bundle's bundleSha256 for the payload of the same build", () => {
+    expect(payloadDigest(payload())).toBe(bundle().manifest.bundleSha256)
+  })
+
+  it('is the bundle recipe over the decoded payload: worker/<rel>, ui/<rel> without the slash', () => {
+    const p = {
+      modules: { 'worker.js': b64(Buffer.from('w')) },
+      assets: { '/a/b.css': b64(Buffer.from('c')) },
+    }
+    expect(payloadDigest(p)).toBe(
+      sha256(`${sha256('c')}  ui/a/b.css\n${sha256('w')}  worker/worker.js\n`)
+    )
+    expect(payloadDigest({ modules: p.modules })).toBe(payloadDigest({ ...p, assets: {} }))
+  })
+
+  it('changes with any byte, and with a file moved between worker and ui', () => {
+    const base = payload()
+    const tampered = { ...base, modules: { ...base.modules, 'worker.js': b64(Buffer.from('x')) } }
+    expect(payloadDigest(tampered)).not.toBe(payloadDigest(base))
+    const moved = { modules: { 'index.html': b64(Buffer.from('h')) }, assets: {} }
+    const asAsset = { modules: {}, assets: { '/index.html': b64(Buffer.from('h')) } }
+    expect(payloadDigest(moved)).not.toBe(payloadDigest(asAsset))
+  })
+})
+
 describe('packBundle / unpackBundle', () => {
   it('round-trips the manifest and every byte', () => {
     const original = bundle()
@@ -180,7 +221,7 @@ describe('packBundle / unpackBundle', () => {
   it('splits back into the wrangler outdir and the assets directory', () => {
     const { worker: w, ui: u } = splitEntries(bundle().entries)
     expect(Object.keys(w).sort()).toEqual(['abc-module.wasm', 'chunks/lib.js', 'worker.js'])
-    expect(Object.keys(u).sort()).toEqual(['.assetsignore', 'assets/app-1a2b.js', 'index.html'])
+    expect(Object.keys(u).sort()).toEqual(['assets/app-1a2b.js', 'index.html'])
   })
 
   it('stores a path longer than 100 bytes through the ustar prefix', () => {

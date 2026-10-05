@@ -33,6 +33,11 @@ CI and deploy stop repeating work on an already-gated tree: `ci.yml` can reuse L
 - A release with no bundle (an older tag) builds as before; a bundle that fails verification fails the job. The plain `wrangler deploy` path (no `DEPLOYER_URL`) is unchanged, and so is a copy deployed outside Launch.
 - Tests: `apps/web/tests/config/bundle-lib.test.ts`, `apps/web/tests/config/bundle.test.ts`, and a `deploy.yml build once` block in `apps/web/tests/config/ci-workflows.test.ts`.
 - Docs: `docs/DEPLOYER.md` → Build once (the asset format, verification, why a draft and not a prerelease, what a promoter must do), `docs/DEPLOY.md`, `docs/CONCEPTS.md` §10.
+- `scripts/deployer.mjs upload` sends two optional v1 fields: `digest` (`payloadDigest` in `bundle-lib.mjs`: the `bundleSha256` recipe over the payload's own files, modules at `worker/<rel>`, assets at `ui/<rel>`) and `source` (`bundle` | `build`, from `DEPLOYER_SOURCE`, default `build`; anything else fails before uploading).
+- The bundle now leaves out `ui/.assetsignore`, which `upload` never sent, so a bundle deploy's upload `digest` equals its `bundleSha256` and staging's upload `digest`. What is uploaded is unchanged.
+- `.github/workflows/deploy.yml` `production`: the `Hand the build to the deployer` step passes `DEPLOYER_SOURCE: ${{ steps.bundle.outputs.source }}`. A deployer that checks it (Launch) refuses a `bundle` upload whose digest differs from staging's (409) and only warns on `build`.
+- Compatibility: a deployer that predates the fields ignores them (`docs/DEPLOYER.md` → Versioning now says a v1 deployer ignores unknown request fields; Launch's upload schema strips them), so no capability check is needed.
+- Tests: `deployer.test.ts` (both fields, the digest recomputed independently and equal to `bundleSha256`, an unknown `DEPLOYER_SOURCE`), `bundle-lib.test.ts` (`payloadDigest`, no `.assetsignore` in the bundle), `ci-workflows.test.ts` (the production upload's env).
 
 ## How to apply
 
@@ -48,6 +53,9 @@ CI and deploy stop repeating work on an already-gated tree: `ci.yml` can reuse L
 10. In the copy's `.github/workflows/deploy.yml`, port the `staging` steps `Pack the build for production (build once)` and `Keep the bundle for the release`, the new `release-bundle` job, and the `production` step `Use the staging bundle when the release carries one` plus the new `if:` conditions on the `production` steps `Build UI` and `Build the Worker (dry run, no credentials)`. Keep the `@<slug>/web` filter names the copy already uses.
 11. A copy that promotes by hand, on the deployer path: publish the draft release `deploy.yml` created for the tag (Releases → the draft → Publish) instead of creating a new release; a new release still deploys, but from a rebuild.
 12. A copy without `DEPLOYER_URL` has nothing to change in behaviour: every new step is skipped on the plain `wrangler deploy` path.
+13. Copy `scripts/deployer.mjs` from the kit unchanged, together with step 9's `scripts/lib/bundle-lib.mjs` and `.d.mts`: `deployer.mjs` now imports `isWorkerModule`, `isUiAsset` and `payloadDigest` from it.
+14. In the copy's `.github/workflows/deploy.yml`, add `DEPLOYER_SOURCE: ${{ steps.bundle.outputs.source }}` to the `env:` of the `production` job's `Hand the build to the deployer` step (beside `RELEASE_VERSION`). Leave the `staging` upload step without it.
+15. Port the `deployer.test.ts`, `bundle-lib.test.ts` and `ci-workflows.test.ts` hunks from the kit.
 
 ## Conflicts to expect
 
@@ -58,6 +66,7 @@ CI and deploy stop repeating work on an already-gated tree: `ci.yml` can reuse L
 - `apps/web/tests/config/ci-workflows.test.ts` → the "deploy.yml gated step" describe is replaced → take the kit's version.
 - `.github/workflows/deploy.yml` → steps added to `staging` and `production`, a new `release-bundle` job → keep the copy's own job edits and add the kit's steps beside them.
 - `apps/web/tests/config/ci-workflows.test.ts` → a `deploy.yml build once` block appended at the end → append it after the copy's own blocks.
+- `scripts/deployer.mjs` → a copy that edited its upload filters → take the kit's file and move the change into `isWorkerModule` / `isUiAsset` in `scripts/lib/bundle-lib.mjs`, so the bundle and the upload keep the same file set.
 
 ## Verify
 
@@ -70,3 +79,5 @@ CI and deploy stop repeating work on an already-gated tree: `ci.yml` can reuse L
 7. `pnpm --filter @<slug>/web exec vitest run --project config tests/config/bundle-lib.test.ts tests/config/bundle.test.ts tests/config/ci-workflows.test.ts` passes.
 8. With `pnpm --filter @<slug>/web build:ui` and `pnpm --filter @<slug>/web exec wrangler deploy --dry-run --outdir dist/deploy -c wrangler.staging.toml` run, `TOML=apps/web/wrangler.staging.toml BUNDLE_TAG=0.0.0 node scripts/bundle.mjs pack` prints a `bundleSha256`.
 9. `TOML=apps/web/wrangler.toml BUNDLE_TAG=0.0.0 node scripts/bundle.mjs verify apps/web/dist/launch-bundle-0.0.0.tgz` exits 0.
+10. `pnpm --filter @<slug>/web exec vitest run --project config tests/config/deployer.test.ts tests/config/bundle-lib.test.ts` passes.
+11. `grep -n 'DEPLOYER_SOURCE' .github/workflows/deploy.yml` finds it only in the `production` job.

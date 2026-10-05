@@ -89,7 +89,9 @@ Allowed only on an `approved` ticket (otherwise **409**). Request:
   "main": "worker.js",
   "toml": "<the wrangler config, verbatim>",
   "modules": { "worker.js": "<base64>", "chunks/lib.js": "<base64>", "abc123.wasm": "<base64>" },
-  "assets": { "/index.html": "<base64>", "/assets/app-3f2a.js": "<base64>" }
+  "assets": { "/index.html": "<base64>", "/assets/app-3f2a.js": "<base64>" },
+  "digest": "<sha256 hex>",
+  "source": "build"
 }
 ```
 
@@ -103,6 +105,17 @@ Allowed only on an `approved` ticket (otherwise **409**). Request:
   data, `.txt`/`.html`/`.sql` text. `main` names the entry module.
 - `assets` is every file under the toml's `[assets] directory` (the built UI), keyed by its
   `/`-rooted path, `.assetsignore` excluded. `{}` when the toml has no `[assets]`.
+- `digest` (optional; the kit's client always sends it) is the artifact digest of `modules` +
+  `assets`: each file at its bundle path — module `<rel>` at `worker/<rel>`, asset `/<rel>` at `ui/<rel>` —
+  hashed (sha256 of the decoded bytes), the `<sha256>  <path>\n` lines sorted by path in byte
+  order, and sha256 over them: the `bundleSha256` recipe (Build once, below), applied to the
+  payload. A deployer should recompute it from what it received and refuse a mismatch; it is a
+  check on the transfer, not a credential.
+- `source` (optional, likewise): `bundle` when the job deploys the staging release bundle
+  (`scripts/bundle.mjs fetch` → `source=bundle`, passed as `DEPLOYER_SOURCE`), `build` when it
+  built the bytes itself — staging always, production with no bundle. A deployer may refuse a
+  `bundle` upload whose `digest` differs from what staging uploaded for the same version (Launch:
+  409); a `build` one can only be compared and warned about.
 - `version` becomes the Worker's `RELEASE_VERSION` var; the deployer sets it, the toml's `[vars]`
   otherwise apply as written. Worker secrets are the deployer's to manage and must survive the
   deploy (Cloudflare: `keep_bindings: ["secret_text"]`).
@@ -174,12 +187,15 @@ same inputs give the same bytes):
 manifest.json  { protocol: 1, tag, version, commit, treeSha, main, compatibility_date,
                  compatibility_flags, wranglerVersion, files: { "<path>": "<sha256>" }, bundleSha256 }
 worker/<rel>   the dry-run outdir minus *.map and README.md (the filter `upload` uses)
-ui/<rel>       the toml's [assets] directory
+ui/<rel>       the toml's [assets] directory minus .assetsignore (likewise)
 ```
 
 `bundleSha256` is sha256 over the `sha256sum` lines of `files`, sorted by path in byte order —
 recomputable from an unpacked bundle with
 `LC_ALL=C find worker ui -type f | LC_ALL=C sort | xargs sha256sum | sha256sum`.
+Because the bundle holds exactly the files `upload` sends, the upload `digest` of a bundle
+deploy equals its `bundleSha256` — and equals staging's upload `digest` for the same tag, since
+staging uploaded the same bytes it packed.
 
 **Verification** (`fetch`, and `attach` before it uploads) fails the job — it never falls back to a
 build — when: the protocol is not 1; `tag`, `commit` or `treeSha` differ from the checkout; a
@@ -209,15 +225,16 @@ A new release created beside the draft also deploys, but from a rebuild, and lea
 
 This is **protocol 1**. The client sends `"protocol": 1` in `start` and `upload`. Within v1 a
 deployer may add response fields and optional request fields; the client ignores what it does not
-know. Anything else — a renamed field, a new required step, a different auth scheme — is protocol 2,
-and a deployer that supports both answers by the `protocol` the client sent. A deployer that does
+know. Likewise a v1 deployer **ignores request fields it does not know**, so a client may add
+optional ones (`digest` and `source` were added that way) without asking first. Anything else — a
+renamed field, a new required step, a different auth scheme — is protocol 2, and a deployer that supports both answers by the `protocol` the client sent. A deployer that does
 not support the client's version answers `start` with **400** and `supported`.
 
 ## Testing
 
 `apps/web/tests/config/deployer.test.ts` runs `scripts/deployer.mjs` against a fake deployer and a
-fake OIDC endpoint: the whole flow, the payload, the masking, rejection, timeout and `finish` with
-no ticket. It is the executable half of this page. Build once: `bundle-lib.test.ts` (pack/unpack,
+fake OIDC endpoint: the whole flow, the payload (its `digest` and `source` included), the masking,
+rejection, timeout and `finish` with no ticket. It is the executable half of this page. Build once: `bundle-lib.test.ts` (pack/unpack,
 the digest, every verification failure, the two workflow decisions) and `bundle.test.ts` (the real
 script against a fake GitHub releases API: draft creation, re-runs, fetch, fallback, tampering, a
 moved tag); `ci-workflows.test.ts` pins the wiring in `deploy.yml`.

@@ -13,7 +13,11 @@
  *                     compatibility_flags, wranglerVersion, files: { path: sha256 }, bundleSha256 }
  *   worker/<rel>    every module `wrangler deploy --dry-run --outdir` wrote, minus `*.map` and
  *                   README.md (the filter `scripts/deployer.mjs` uploads with)
- *   ui/<rel>        every file of the toml's `[assets] directory` (dist/ui)
+ *   ui/<rel>        every file of the toml's `[assets] directory` (dist/ui) but `.assetsignore`
+ *                   (the deployer never uploads it either)
+ *
+ * The same file set is what `scripts/deployer.mjs upload` sends, so the `digest` it sends with the
+ * upload (`payloadDigest`) equals the bundle's `bundleSha256` whenever production deploys a bundle.
  */
 import { createHash } from 'node:crypto'
 import { gunzipSync, gzipSync } from 'node:zlib'
@@ -25,6 +29,9 @@ export const assetName = tag => `launch-bundle-${tag}.tgz`
 
 /** The deployer's upload filter: wrangler's source maps and README never ship. */
 export const isWorkerModule = rel => !rel.endsWith('.map') && rel !== 'README.md'
+
+/** The deployer's assets filter: wrangler's own `.assetsignore` is config, never an asset. */
+export const isUiAsset = rel => rel !== '.assetsignore'
 
 export const sha256 = bytes => createHash('sha256').update(bytes).digest('hex')
 
@@ -42,6 +49,24 @@ export function bundleDigest(files) {
     .map(p => `${files[p]}  ${p}\n`)
     .join('')
   return sha256(lines)
+}
+
+/**
+ * The digest of an upload body (`docs/DEPLOYER.md` → upload `digest`): `bundleDigest` over the
+ * files the payload carries, each at its bundle path — module `rel` at `worker/<rel>`, asset
+ * `/<rel>` at `ui/<rel>` — hashed from the decoded base64. The deployer recomputes it from what it
+ * received, so it is computed over the payload, never read from a manifest; for a payload unpacked
+ * from a bundle it equals that bundle's `bundleSha256` (same file set, same bytes).
+ */
+export function payloadDigest({ modules, assets }) {
+  const files = {}
+  for (const [rel, b64] of Object.entries(modules)) {
+    files[`worker/${rel}`] = sha256(Buffer.from(b64, 'base64'))
+  }
+  for (const [p, b64] of Object.entries(assets ?? {})) {
+    files[`ui/${p.replace(/^\/+/, '')}`] = sha256(Buffer.from(b64, 'base64'))
+  }
+  return bundleDigest(files)
 }
 
 /** `main`, `compatibility_date` and `compatibility_flags` from a wrangler toml's top level. */
@@ -81,7 +106,9 @@ export function collectEntries({ worker, ui }) {
   for (const [rel, bytes] of Object.entries(worker)) {
     if (isWorkerModule(rel)) entries[`worker/${rel}`] = bytes
   }
-  for (const [rel, bytes] of Object.entries(ui ?? {})) entries[`ui/${rel}`] = bytes
+  for (const [rel, bytes] of Object.entries(ui ?? {})) {
+    if (isUiAsset(rel)) entries[`ui/${rel}`] = bytes
+  }
   for (const p of Object.keys(entries)) {
     if (!safePath(p)) throw new Error(`refusing to bundle an unsafe path: ${p}`)
   }

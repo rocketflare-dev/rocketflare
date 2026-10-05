@@ -480,4 +480,13 @@ describe('deploy.yml build once', () => {
     // The parity test and the migrations still need the workspace.
     expect(commands(production)).toContain('pnpm install --frozen-lockfile')
   })
+
+  it("production's upload tells the deployer whether it sends the bundle's bytes", () => {
+    const upload = step(job(DEPLOY, 'production'), 'Hand the build to the deployer')
+    expect(upload).toContain('run: node scripts/deployer.mjs upload')
+    expect(upload).toContain(`DEPLOYER_SOURCE: ${expr('steps.bundle.outputs.source')}`)
+    // Staging always builds: its upload says nothing, so the deployer defaults to `build`.
+    const staging = step(job(DEPLOY, 'staging'), 'Hand the build to the deployer')
+    expect(staging).not.toContain('DEPLOYER_SOURCE')
+  })
 })

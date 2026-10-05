@@ -43,8 +43,13 @@ export interface Release {
 
 export function assetName(tag: string): string
 export function isWorkerModule(rel: string): boolean
+export function isUiAsset(rel: string): boolean
 export function sha256(bytes: Buffer | string): string
 export function bundleDigest(files: Record<string, string>): string
+export function payloadDigest(payload: {
+  modules: Record<string, string>
+  assets?: Record<string, string>
+}): string
 export function readTomlBasics(text: string): {
   main: string | undefined
   compatibility_date: string | undefined

@@ -525,9 +525,10 @@ Workers-plan check. The kit ships no deployer, only the client and the contract;
 approval on a runner (fine for minutes, wasteful for hours — there is no re-dispatch). A deploy
 dispatched while the pushed commit's CI run is still in progress gates again rather than waiting
 for it. Build once covers only the deployer path, and only a promotion that PUBLISHES the staging
-draft: a new release created for the tag instead has no bundle, so production rebuilds. The
-deployer does not yet check that production's upload is the digest staging uploaded; a staging
-dispatch from a branch packs nothing.
+draft: a new release created for the tag instead has no bundle, so production rebuilds. Every
+upload carries its `digest` and `source` (`bundle` | `build`), but comparing production's digest
+with staging's is the deployer's job (Launch refuses a `bundle` upload that differs), not the
+kit's; a staging dispatch from a branch packs nothing.
 
 ## 11. CLI
 

@@ -427,11 +427,14 @@ jobs:
         if: vars.DEPLOYER_URL != '' && steps.bundle.outputs.source != 'bundle'
         run: pnpm --filter @rocketflare/web exec wrangler deploy --dry-run --outdir dist/deploy
 
+      # `DEPLOYER_SOURCE=bundle` tells the deployer these are staging's bytes, so it may refuse a
+      # digest that differs from the staging deploy's (Launch: 409); `build` is only warned about.
       - name: Hand the build to the deployer
         if: vars.DEPLOYER_URL != ''
         run: node scripts/deployer.mjs upload
         env:
           RELEASE_VERSION: ${{ steps.version.outputs.version }}
+          DEPLOYER_SOURCE: ${{ steps.bundle.outputs.source }}
 
       - name: Run database migrations (production, deployer credentials)
         if: vars.DEPLOYER_URL != ''
