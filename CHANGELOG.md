@@ -6,6 +6,11 @@ copy of the kit forward without recreating anything its owner deleted.
 
 If you are running a copy: `pnpm kit:upgrade` tells you which of these you are missing.
 
+## 0.17.2 — 2026-10-06
+
+CI waits for one runner, not two: the Launch attestation lookup becomes `Gate`'s first step. A failed bundle attach no longer turns a live staging deploy red, old bundle drafts are pruned, and `plugin upgrade` removes only packages a plugin added.
+[Porting note](docs/upgrades/0.17.2.md).
+
 ## 0.17.1 — 2026-10-05
 
 Plugin dependencies stay in step: `plugin add` keeps declared ranges, `plugin check` accepts narrower ones, `plugin upgrade --apply` installs, re-ranges and removes them; and `kit:upgrade` prints porting-note paths that exist in the copy.
