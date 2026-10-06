@@ -11,13 +11,19 @@
  * TCP out (a coding sandbox on a Neon branch).
  */
 import { fileURLToPath } from 'node:url'
-import { Pool as NeonPool } from '@neondatabase/serverless'
 import { drizzle as drizzleNeon } from 'drizzle-orm/neon-serverless'
 import { migrate as migrateNeon } from 'drizzle-orm/neon-serverless/migrator'
 import { drizzle as drizzlePostgres } from 'drizzle-orm/postgres-js'
 import { migrate as migratePostgres } from 'drizzle-orm/postgres-js/migrator'
 import postgres from 'postgres'
-import { isNeonUrl, openScriptSql, scriptDriver, toDirectNeonHost } from './lib/sql'
+import { createNeonPool } from '../src/db/client'
+import {
+  isNeonUrl,
+  openScriptSql,
+  scriptDriver,
+  toDirectNeonHost,
+  waitForDatabase,
+} from './lib/sql'
 
 export { isNeonUrl, toDirectNeonHost }
 
@@ -30,29 +36,6 @@ export interface RunMigrationsOptions {
   maxAttempts?: number
   /** Where `DATABASE_DRIVER` / `NEON_LOCAL_PROXY` are read from. Default `process.env`. */
   env?: { readonly [key: string]: string | undefined }
-}
-
-async function waitForDatabase(
-  url: string,
-  env: RunMigrationsOptions['env'],
-  maxAttempts: number,
-  log: (s: string) => void
-) {
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    const sql = openScriptSql(url, env)
-    try {
-      await sql.query('SELECT 1')
-      return
-    } catch (error) {
-      if (attempt === maxAttempts) {
-        throw new Error(`Database not ready after ${maxAttempts} attempts: ${String(error)}`)
-      }
-      if (attempt === 1) log('Waiting for database to be ready...')
-      await new Promise(resolve => setTimeout(resolve, 1000))
-    } finally {
-      await sql.end()
-    }
-  }
 }
 
 /**
@@ -85,7 +68,7 @@ export async function runMigrations(
 
   if (scriptDriver(env) === 'neon') {
     const sql = openScriptSql(url, env) // routes through NEON_LOCAL_PROXY when set
-    const pool = new NeonPool({ connectionString: url, max: 1 })
+    const pool = createNeonPool(url, 1)
     try {
       await sql.query(createVector)
       await migrateNeon(drizzleNeon(pool), { migrationsFolder })

@@ -4,7 +4,7 @@ previous: 0.17.4
 date: null
 breaking: false
 migrations: []
-areas: []
+areas: [db, config]
 touches_surfaces: []
 requires_surfaces: []
 manual: false
@@ -12,20 +12,28 @@ manual: false
 
 ## What changed
 
-_Nothing yet. Add an entry here in the same pull request as the change. This first paragraph is
-lifted VERBATIM into `CHANGELOG.md`, so make it ONE standalone summary sentence of ≤ 40 words —
-then one bullet per change, one line each, and no `###` sub-headings. Rationale belongs in
-`docs/CONCEPTS.md` and is linked, never restated; see `README.md` beside this file._
+A dropped Neon WebSocket connection now rejects its query instead of crashing the process, and `db-roles` waits for the database before its first statement, so a gate branch's first connection is retried like the migrator's.
+
+- `apps/web/src/db/client.ts`: `createNeonPool(url, max)` (new) makes every Neon `Pool` with an `error` listener on the pool and on each client; `createNeonDatabase` uses it.
+- `apps/web/scripts/lib/sql.ts`: `neonSql` uses `createNeonPool`; `waitForDatabase(url, env, maxAttempts, log)` moves here from `scripts/migrate.ts`, exported, and names the driver's message-less `ErrorEvent`.
+- `apps/web/scripts/migrate.ts`: imports `waitForDatabase` and uses `createNeonPool`.
+- `apps/web/scripts/db-roles.ts`: `applyDbRoles` calls `waitForDatabase` (option `maxAttempts`, default 15) before its first statement.
+- Tests: `apps/web/tests/api/neon-pool-errors.test.ts` and `apps/web/tests/helpers/ws-pg-relay.ts` (new).
 
 ## How to apply
 
-_Numbered, imperative, each step self-contained — no "these", "them" or "the above" reaching
-outside its own step._
+1. In `apps/web/src/db/client.ts`, add `createNeonPool` from the kit diff (it imports `type PoolClient` from `@neondatabase/serverless`) and replace `new NeonPool({ connectionString: url, max: options.max ?? 1 })` in `createNeonDatabase` with `createNeonPool(url, options.max ?? 1)`.
+2. In `apps/web/scripts/lib/sql.ts`, take the kit's `neonSql` pool line, the import of `createNeonPool`, and the new `waitForDatabase` and `describeError` functions; remove the `@neondatabase/serverless` import.
+3. In `apps/web/scripts/migrate.ts`, delete the local `waitForDatabase`, import it from `./lib/sql`, and replace `new NeonPool({ connectionString: url, max: 1 })` with `createNeonPool(url, 1)` imported from `../src/db/client`.
+4. In `apps/web/scripts/db-roles.ts`, take the `maxAttempts` option and the `waitForDatabase` call before `openScriptSql` from the kit diff.
+5. Take `apps/web/tests/helpers/ws-pg-relay.ts` and `apps/web/tests/api/neon-pool-errors.test.ts` from the kit diff.
 
 ## Conflicts to expect
 
-_One line each: `path → what changed → what to do`. Or exactly `None.`_
+- `apps/web/src/db/client.ts` → `createNeonDatabase` builds its pool through `createNeonPool` → keep your own pool options and pass them through.
+- `apps/web/scripts/migrate.ts` → `waitForDatabase` moved to `scripts/lib/sql.ts` → delete your copy and import the kit's.
 
 ## Verify
 
-_Numbered checkable commands and assertions only._
+1. `pnpm --filter @<slug>/web exec dotenv -e .env.test -- vitest run --project api-isolated tests/api/neon-pool-errors.test.ts` passes.
+2. `grep -rn "new NeonPool" apps/web/src apps/web/scripts` prints only the line inside `createNeonPool`.

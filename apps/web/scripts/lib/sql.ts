@@ -9,9 +9,13 @@
  *
  * Queries are text + `$n` parameters, identical on both drivers.
  */
-import { Pool as NeonPool } from '@neondatabase/serverless'
 import postgres from 'postgres'
-import { type DatabaseDriver, databaseDriver, routeNeonThroughProxy } from '../../src/db/client'
+import {
+  createNeonPool,
+  type DatabaseDriver,
+  databaseDriver,
+  routeNeonThroughProxy,
+} from '../../src/db/client'
 
 export type Query = <T = Record<string, unknown>>(text: string, params?: unknown[]) => Promise<T[]>
 
@@ -67,7 +71,8 @@ function postgresSql(url: string, options: ScriptSqlOptions): ScriptSql {
 
 function neonSql(url: string, env: DriverEnv): ScriptSql {
   if (env.NEON_LOCAL_PROXY) routeNeonThroughProxy(env.NEON_LOCAL_PROXY)
-  const pool = new NeonPool({ connectionString: url, max: 1 })
+  // A dropped connection rejects its query; it never crashes the script (`createNeonPool`).
+  const pool = createNeonPool(url, 1)
   return {
     driver: 'neon',
     query: async (text, params = []) => (await pool.query(text, params)).rows as never,
@@ -86,6 +91,44 @@ function neonSql(url: string, env: DriverEnv): ScriptSql {
     },
     end: () => pool.end().catch(() => {}),
   }
+}
+
+/**
+ * Wait until `url` answers `SELECT 1`: up to `maxAttempts` tries, 1 s apart, each on a fresh
+ * connection. A Neon branch made seconds ago may still be starting its compute, and a connection
+ * that fails before Postgres answers (a WebSocket the network dropped — Node reports it as an
+ * `ErrorEvent` with no message) is worth another try; the error after the last one is thrown.
+ */
+export async function waitForDatabase(
+  url: string,
+  env: DriverEnv = process.env,
+  maxAttempts = 30,
+  log: (s: string) => void = () => {}
+): Promise<void> {
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const sql = openScriptSql(url, env)
+    try {
+      await sql.query('SELECT 1')
+      return
+    } catch (error) {
+      if (attempt === maxAttempts) {
+        throw new Error(`Database not ready after ${maxAttempts} attempts: ${describeError(error)}`)
+      }
+      if (attempt === 1) log('Waiting for database to be ready...')
+      await new Promise(resolve => setTimeout(resolve, 1000))
+    } finally {
+      await sql.end()
+    }
+  }
+}
+
+/** An error as one line — including the neon driver's message-less WebSocket `ErrorEvent`. */
+function describeError(error: unknown): string {
+  const event = error as { type?: unknown; message?: unknown } | null
+  if (event && event.type === 'error' && !event.message) {
+    return 'the WebSocket failed before Postgres answered (the driver gives no detail)'
+  }
+  return String(error)
 }
 
 /** Neon: DDL and role changes target the direct host, never the `-pooler` one. */
