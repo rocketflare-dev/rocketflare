@@ -656,16 +656,26 @@ describe('parseBootstrapSkip', () => {
 
 describe('bootstrap.mjs with steps skipped', () => {
   const BOOTSTRAP = path.resolve(WEB_DIR, '../../scripts/bootstrap.mjs')
-  const runBootstrap = (args: string[], env: Record<string, string>) =>
-    spawnSync(process.execPath, [BOOTSTRAP, ...args], {
+  // The child allows root: a coding sandbox runs this suite as uid 0 (Launch's ship gate), and
+  // the root refusal is not what these runs are about. The refusal has its own tests below.
+  const runBootstrap = (args: string[], env: Record<string, string>, nodeArgs: string[] = []) =>
+    spawnSync(process.execPath, [...nodeArgs, BOOTSTRAP, ...args], {
       encoding: 'utf8',
-      env: { ...process.env, DEV_VERBOSE: '', ...env },
+      env: { ...process.env, DEV_VERBOSE: '', ROCKETFLARE_ALLOW_ROOT: '1', ...env },
       timeout: 30_000,
     })
+  // Runs bootstrap.mjs as if uid 0, whoever runs the suite: `os.userInfo` reports uid 0.
+  const AS_ROOT = [
+    '--import',
+    `data:text/javascript,${encodeURIComponent(
+      "import os from 'node:os'; const real = os.userInfo; os.userInfo = o => ({ ...real(o), uid: 0 })"
+    )}`,
+  ]
+  const ALL_SKIPPED = ['--no-install', '--no-dev', '--offline', '--yes']
 
   it('every step skipped is a no-op run: each line says skipped, nothing is spawned or written', () => {
     const tomls = ['wrangler.toml', 'wrangler.staging.toml'].map(readWeb)
-    const result = runBootstrap(['--no-install', '--no-dev', '--offline', '--yes'], {
+    const result = runBootstrap(ALL_SKIPPED, {
       ROCKETFLARE_BOOTSTRAP_SKIP: BOOTSTRAP_SKIPPABLE_STEPS.join(','),
     })
     expect(result.status, result.stdout + result.stderr).toBe(0)
@@ -681,5 +691,17 @@ describe('bootstrap.mjs with steps skipped', () => {
     expect(result.status).toBe(2)
     expect(result.stderr).toMatch(/unknown step nope/)
     expect(result.stdout).not.toMatch(/1\/10/)
+  })
+
+  it('as root it refuses before any step unless ROCKETFLARE_ALLOW_ROOT=1', () => {
+    const skip = { ROCKETFLARE_BOOTSTRAP_SKIP: BOOTSTRAP_SKIPPABLE_STEPS.join(',') }
+    const refused = runBootstrap(ALL_SKIPPED, { ...skip, ROCKETFLARE_ALLOW_ROOT: '' }, AS_ROOT)
+    expect(refused.status).toBe(3)
+    expect(refused.stderr).toMatch(/refusing to run as root .*ROCKETFLARE_ALLOW_ROOT=1/)
+    expect(refused.stdout).not.toMatch(/1\/10/)
+
+    const allowed = runBootstrap(ALL_SKIPPED, skip, AS_ROOT)
+    expect(allowed.status, allowed.stdout + allowed.stderr).toBe(0)
+    expect(allowed.stdout).toMatch(/8\/10 cloudflare\s+skipped/)
   })
 })
