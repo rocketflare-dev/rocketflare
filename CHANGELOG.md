@@ -6,6 +6,11 @@ copy of the kit forward without recreating anything its owner deleted.
 
 If you are running a copy: `pnpm kit:upgrade` tells you which of these you are missing.
 
+## 0.17.3 — 2026-10-06
+
+A slow machine can raise every test time limit: `TEST_LATENCY_FACTOR` scales the vitest test, hook and teardown limits up, never down, so a coding sandbox running one test by hand stops timing out at 5 s.
+[Porting note](docs/upgrades/0.17.3.md).
+
 ## 0.17.2 — 2026-10-06
 
 CI waits for one runner, not two: the Launch attestation lookup becomes `Gate`'s first step. A failed bundle attach no longer turns a live staging deploy red, old bundle drafts are pruned, and `plugin upgrade` removes only packages a plugin added.
