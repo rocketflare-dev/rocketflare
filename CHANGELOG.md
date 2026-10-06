@@ -6,6 +6,11 @@ copy of the kit forward without recreating anything its owner deleted.
 
 If you are running a copy: `pnpm kit:upgrade` tells you which of these you are missing.
 
+## 0.17.4 — 2026-10-06
+
+The bootstrap gets cheaper inside a coding sandbox: `--offline` no longer runs `wrangler whoami`, `--no-install` skips step 2, `ROCKETFLARE_BOOTSTRAP_SKIP` leaves out named steps and `ROCKETFLARE_ALLOW_ROOT=1` lifts the root refusal. `pnpm install` stops downloading cloudflared; `pnpm dev:tunnel` installs it the first time it needs it.
+[Porting note](docs/upgrades/0.17.4.md).
+
 ## 0.17.3 — 2026-10-06
 
 A slow machine can raise every test time limit: `TEST_LATENCY_FACTOR` scales the vitest test, hook and teardown limits up, never down, so a coding sandbox running one test by hand stops timing out at 5 s.
