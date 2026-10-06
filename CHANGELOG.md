@@ -6,6 +6,11 @@ copy of the kit forward without recreating anything its owner deleted.
 
 If you are running a copy: `pnpm kit:upgrade` tells you which of these you are missing.
 
+## 0.17.8 — 2026-10-06
+
+Wrangler moves from 4.127 to 4.147: its CLI bundle is about 30% smaller, so `wrangler dev` answers its first request sooner, and it no longer queries GitHub when telemetry is turned off.
+[Porting note](docs/upgrades/0.17.8.md).
+
 ## 0.17.7 — 2026-10-06
 
 `pnpm plugin` checks a plugin's `minKit` against `.rocketflare.json` `kit.version` in a copy, not the root `package.json` version the rename restarts at `0.1.0`, so `pnpm plugin add` in a freshly renamed copy no longer refuses every plugin with exit 6.
