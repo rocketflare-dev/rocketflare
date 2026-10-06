@@ -6,6 +6,11 @@ copy of the kit forward without recreating anything its owner deleted.
 
 If you are running a copy: `pnpm kit:upgrade` tells you which of these you are missing.
 
+## 0.17.5 — 2026-10-06
+
+A dropped Neon WebSocket connection now rejects its query instead of crashing the process, and `db-roles` waits for the database before its first statement, so a gate branch's first connection is retried like the migrator's.
+[Porting note](docs/upgrades/0.17.5.md).
+
 ## 0.17.4 — 2026-10-06
 
 The bootstrap gets cheaper inside a coding sandbox: `--offline` no longer runs `wrangler whoami`, `--no-install` skips step 2, `ROCKETFLARE_BOOTSTRAP_SKIP` leaves out named steps and `ROCKETFLARE_ALLOW_ROOT=1` lifts the root refusal. `pnpm install` stops downloading cloudflared; `pnpm dev:tunnel` installs it the first time it needs it.
