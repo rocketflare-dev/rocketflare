@@ -125,6 +125,11 @@ is sent as `client_secret_basic` only (no `private_key_jwt`).
   outside production CORS/CSRF also allow the loopback twin of `APP_URL` and of the request's own
   loopback origin. `SETUP.md` 1.6.
 
+- **Tunnel**: `pnpm dev:tunnel` runs cfld through `apps/web/scripts/cfld.mjs`. That script
+  downloads cloudflared (pinned in `scripts/lib/cloudflared.mjs`) the first time there is no
+  override, no PATH binary and no managed copy. `pnpm install` never builds the package.
+  `SETUP.md` 1.10.
+
 **Known gaps:** `pnpm dev:tunnel` always targets :3000 (cfld reads `package.json`); `pnpm dev:api`
 alone reads `DEV_API_PORT` from the shell only, not `.dev.vars`; no `/api/ready` smoke step against a preview; no OpenAPI (`@hono/zod-openapi` is the
 path); no per-PR previews.

@@ -305,9 +305,16 @@ adapter carries its MCP transport, `docs/DEPLOY.md` "Bundle size" — and `pnpm 
 ### 1.10 Public URL via tunnel `[ready]` (optional)
 For OAuth callbacks, emailed magic links or webhooks against your laptop:
 ```bash
-pnpm web exec cfld setup   # once: picks a Cloudflare zone, stores apps/web/.cfld.json (git-ignored)
-pnpm dev:tunnel            # cfld → :3000; apps/web/scripts/tunnel-dev.mjs passes the URL to wrangler as APP_URL
+pnpm web cfld setup   # once: picks a Cloudflare zone, stores apps/web/.cfld.json (git-ignored)
+pnpm dev:tunnel       # cfld → :3000; apps/web/scripts/tunnel-dev.mjs passes the URL to wrangler as APP_URL
 ```
+Both go through `apps/web/scripts/cfld.mjs`, which needs a `cloudflared` binary. It uses, in cfld's
+own order, `CFLD_CLOUDFLARED` / `CLOUDFLARED_BIN`, then a `cloudflared` on PATH (`brew install
+cloudflared`), then the copy the `cloudflared` npm package manages. When none exists, the first run
+downloads that copy (~38 MB, cloudflared `2026.9.3`; `CLOUDFLARED_VERSION=<tag|latest>` picks
+another) into `node_modules` and later runs reuse it. `pnpm install` no longer downloads it: the
+package is in `ignoredBuiltDependencies`, not `onlyBuiltDependencies`. Run cfld's other commands
+the same way (`pnpm web cfld doctor`); `pnpm web exec cfld …` skips the install.
 Verify: the printed `https://…` host opens the app; `/auth/methods` there reports the same providers
 as localhost. `.dev.vars` and the tomls are untouched; plain `pnpm dev` still uses localhost. Add
 the tunnel host to each OAuth app's redirect URIs (Part 2) to test those flows. The CLI can log in
