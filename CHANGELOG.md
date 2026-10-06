@@ -6,6 +6,11 @@ copy of the kit forward without recreating anything its owner deleted.
 
 If you are running a copy: `pnpm kit:upgrade` tells you which of these you are missing.
 
+## 0.17.6 — 2026-10-06
+
+Two 0.17.4/0.17.5 tests now pass inside a coding sandbox's ship gate: the bootstrap test runs as root, and the Neon relay test helper negotiates TLS, so it reaches a remote Neon gate branch as well as the local Postgres.
+[Porting note](docs/upgrades/0.17.6.md).
+
 ## 0.17.5 — 2026-10-06
 
 A dropped Neon WebSocket connection now rejects its query instead of crashing the process, and `db-roles` waits for the database before its first statement, so a gate branch's first connection is retried like the migrator's.
