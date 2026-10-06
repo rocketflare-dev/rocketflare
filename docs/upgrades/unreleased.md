@@ -1,10 +1,10 @@
 ---
 version: unreleased
-previous: 0.17.6
+previous: 0.17.7
 date: null
 breaking: false
 migrations: []
-areas: [config]
+areas: []
 touches_surfaces: []
 requires_surfaces: []
 manual: false
@@ -12,25 +12,20 @@ manual: false
 
 ## What changed
 
-`pnpm plugin` checks a plugin's `minKit` against `.rocketflare.json` `kit.version` in a copy, not the root `package.json` version the rename restarts at `0.1.0`, so `pnpm plugin add` in a freshly renamed copy no longer refuses every plugin with exit 6.
-
-- `scripts/lib/manifest.mjs`: new `hostKitVersion(read, packageJsonVersion)` — the root `package.json` version when `isKit`, else `kit.version`, throwing (naming `.rocketflare.json`) when a copy has none; typed in `manifest.d.mts`.
-- `scripts/plugin.mjs`: `loadHost()` reads the kit version through `hostKitVersion`, so `add`, `upgrade` and `check` compare `minKit` with the kit version, and a copy with no `kit.version` stops with exit 1 naming the file.
-- `apps/web/tests/config/plugin-skills.test.ts` and `manifest-lib.test.ts`: a renamed-copy host (package.json `0.1.0`, `kit.version` `0.17.6`) installs a `minKit` `0.13.0` plugin; a copy below the floor is refused naming its kit version; the kit itself still reads `package.json`.
+_Nothing yet. Add an entry here in the same pull request as the change. This first paragraph is
+lifted VERBATIM into `CHANGELOG.md`, so make it ONE standalone summary sentence of ≤ 40 words —
+then one bullet per change, one line each, and no `###` sub-headings. Rationale belongs in
+`docs/CONCEPTS.md` and is linked, never restated; see `README.md` beside this file._
 
 ## How to apply
 
-1. Take `scripts/lib/manifest.mjs` and `scripts/lib/manifest.d.mts` from the kit diff (the new `hostKitVersion` export).
-2. Take `scripts/plugin.mjs` from the kit diff (the `hostKitVersion` import and the `kitVersion` lines in `loadHost()`).
-3. Take `apps/web/tests/config/manifest-lib.test.ts` and `apps/web/tests/config/plugin-skills.test.ts` from the kit diff.
-4. Confirm `.rocketflare.json` has a `kit.version` equal to the kit release this app was made from or last upgraded to; `pnpm kit:upgrade` writes it, so only a hand-edited manifest lacks it.
+_Numbered, imperative, each step self-contained — no "these", "them" or "the above" reaching
+outside its own step._
 
 ## Conflicts to expect
 
-None.
+_One line each: `path → what changed → what to do`. Or exactly `None.`_
 
 ## Verify
 
-1. `node -p "require('./.rocketflare.json').kit.version"` prints a kit release, not the app's own version.
-2. `pnpm plugin check` exits 0.
-3. `pnpm --filter @<slug>/web exec vitest run --project config tests/config/manifest-lib.test.ts tests/config/plugin-skills.test.ts` passes.
+_Numbered checkable commands and assertions only._

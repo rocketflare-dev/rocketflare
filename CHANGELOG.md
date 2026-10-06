@@ -6,6 +6,11 @@ copy of the kit forward without recreating anything its owner deleted.
 
 If you are running a copy: `pnpm kit:upgrade` tells you which of these you are missing.
 
+## 0.17.7 — 2026-10-06
+
+`pnpm plugin` checks a plugin's `minKit` against `.rocketflare.json` `kit.version` in a copy, not the root `package.json` version the rename restarts at `0.1.0`, so `pnpm plugin add` in a freshly renamed copy no longer refuses every plugin with exit 6.
+[Porting note](docs/upgrades/0.17.7.md).
+
 ## 0.17.6 — 2026-10-06
 
 Two 0.17.4/0.17.5 tests now pass inside a coding sandbox's ship gate: the bootstrap test runs as root, and the Neon relay test helper negotiates TLS, so it reaches a remote Neon gate branch as well as the local Postgres.
