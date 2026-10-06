@@ -3,7 +3,10 @@
  * / version parsers, `fillDevVars` (never overwrites a value a person typed), `toggleAiBlock` (the
  * `[ai]` block of BOTH real tomls round-trips byte-identically and, once off, parses with no `ai`
  * table so the parity test stays green), and the two stdout parsers (`pnpm seed`, `wrangler whoami`).
+ * Plus the sandbox opt-outs (`--no-install`, `ROCKETFLARE_BOOTSTRAP_SKIP`, `ROCKETFLARE_ALLOW_ROOT`),
+ * parsed here and run once through `bootstrap.mjs` itself with every step skipped (no side effects).
  */
+import { spawnSync } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -11,6 +14,7 @@ import TOML from '@iarna/toml'
 import { describe, expect, it } from 'vitest'
 import {
   aiBlockState,
+  BOOTSTRAP_SKIPPABLE_STEPS,
   BootstrapUsageError,
   bootstrapStepPlan,
   checkoutTag,
@@ -25,6 +29,7 @@ import {
   isPostgresUrl,
   localDriverFor,
   parseBootstrapArgs,
+  parseBootstrapSkip,
   parseNvmrc,
   parseWhoami,
   planDefaultPlugins,
@@ -463,8 +468,35 @@ describe('parseBootstrapArgs', () => {
       check: false,
       verbose: false,
       help: false,
+      skip: [],
+      allowRoot: false,
     })
     expect(parseBootstrapArgs([], { DEV_VERBOSE: '1' }).verbose).toBe(true)
+  })
+
+  it('--no-install skips step 2 only', () => {
+    expect(parseBootstrapArgs(['--no-install']).skip).toEqual(['install'])
+    expect(
+      parseBootstrapArgs(['--no-install'], { ROCKETFLARE_BOOTSTRAP_SKIP: 'install' }).skip
+    ).toEqual(['install'])
+  })
+
+  it('ROCKETFLARE_BOOTSTRAP_SKIP adds to --no-install, in step order, without duplicates', () => {
+    const env = { ROCKETFLARE_BOOTSTRAP_SKIP: 'seed, migrate,toolchain,,seed' }
+    expect(parseBootstrapArgs([], env).skip).toEqual(['toolchain', 'migrate', 'seed'])
+    expect(parseBootstrapArgs(['--no-install'], env).skip).toEqual([
+      'toolchain',
+      'install',
+      'migrate',
+      'seed',
+    ])
+    expect(parseBootstrapArgs([], { ROCKETFLARE_BOOTSTRAP_SKIP: '' }).skip).toEqual([])
+  })
+
+  it('ROCKETFLARE_ALLOW_ROOT is exactly 1, nothing looser', () => {
+    expect(parseBootstrapArgs([], { ROCKETFLARE_ALLOW_ROOT: '1' }).allowRoot).toBe(true)
+    expect(parseBootstrapArgs([], { ROCKETFLARE_ALLOW_ROOT: 'true' }).allowRoot).toBe(false)
+    expect(parseBootstrapArgs([], { ROCKETFLARE_ALLOW_ROOT: '' }).allowRoot).toBe(false)
   })
 
   it('reads --driver (D35) in both forms and refuses anything else', () => {
@@ -594,5 +626,60 @@ describe('localDriverFor (D35)', () => {
     expect(isNeonDatabaseUrl(NEON)).toBe(true)
     expect(isNeonDatabaseUrl('postgres://u:pw@neon.tech.evil.example/x')).toBe(false)
     expect(isNeonDatabaseUrl('not a url')).toBe(false)
+  })
+})
+
+describe('parseBootstrapSkip', () => {
+  it('names steps 1–8 by their ✔-line names, never cli/run (those are --no-dev)', () => {
+    expect(BOOTSTRAP_SKIPPABLE_STEPS).toEqual([
+      'toolchain',
+      'install',
+      'secrets',
+      'database',
+      'migrate',
+      'plugins',
+      'seed',
+      'cloudflare',
+    ])
+    expect(parseBootstrapSkip(undefined)).toEqual([])
+    expect(parseBootstrapSkip('cloudflare,toolchain')).toEqual(['toolchain', 'cloudflare'])
+  })
+
+  it('is a usage error for an unknown name, so a typo never runs the step it meant to skip', () => {
+    expect(() => parseBootstrapSkip('migrations')).toThrow(BootstrapUsageError)
+    expect(() => parseBootstrapSkip('seed,run')).toThrow(/unknown step run/)
+    expect(() => parseBootstrapArgs([], { ROCKETFLARE_BOOTSTRAP_SKIP: 'db-check' })).toThrow(
+      /ROCKETFLARE_BOOTSTRAP_SKIP/
+    )
+  })
+})
+
+describe('bootstrap.mjs with steps skipped', () => {
+  const BOOTSTRAP = path.resolve(WEB_DIR, '../../scripts/bootstrap.mjs')
+  const runBootstrap = (args: string[], env: Record<string, string>) =>
+    spawnSync(process.execPath, [BOOTSTRAP, ...args], {
+      encoding: 'utf8',
+      env: { ...process.env, DEV_VERBOSE: '', ...env },
+      timeout: 30_000,
+    })
+
+  it('every step skipped is a no-op run: each line says skipped, nothing is spawned or written', () => {
+    const tomls = ['wrangler.toml', 'wrangler.staging.toml'].map(readWeb)
+    const result = runBootstrap(['--no-install', '--no-dev', '--offline', '--yes'], {
+      ROCKETFLARE_BOOTSTRAP_SKIP: BOOTSTRAP_SKIPPABLE_STEPS.join(','),
+    })
+    expect(result.status, result.stdout + result.stderr).toBe(0)
+    expect(result.stdout).toMatch(/1\/10 toolchain\s+skipped \(ROCKETFLARE_BOOTSTRAP_SKIP\)/)
+    expect(result.stdout).toMatch(/2\/10 install\s+skipped \(--no-install\); .*wrangler present/)
+    expect(result.stdout).toMatch(/8\/10 cloudflare\s+skipped \(ROCKETFLARE_BOOTSTRAP_SKIP\)/)
+    // A skipped cloudflare step leaves both tomls alone even under --offline.
+    expect(['wrangler.toml', 'wrangler.staging.toml'].map(readWeb)).toEqual(tomls)
+  })
+
+  it('an unknown step name is exit 2 before any step runs', () => {
+    const result = runBootstrap(['--no-dev'], { ROCKETFLARE_BOOTSTRAP_SKIP: 'nope' })
+    expect(result.status).toBe(2)
+    expect(result.stderr).toMatch(/unknown step nope/)
+    expect(result.stdout).not.toMatch(/1\/10/)
   })
 })

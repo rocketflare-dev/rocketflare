@@ -72,7 +72,7 @@ bash scripts/bootstrap.sh --no-dev $ARGUMENTS
 ```
 
 `--no-dev` means the script does NOT start the servers (you will, in step 3). `--offline` skips
-the Cloudflare login / Workers AI probe; `--no-demo` runs plain `pnpm seed` (tenant, users and key,
+the Cloudflare login / Workers AI probe (no `wrangler whoami` at all); `--no-demo` runs plain `pnpm seed` (tenant, users and key,
 but no populated workspace); `--no-plugins` skips the `plugins` step, which installs the plugins
 `.rocketflare.json` lists in `defaultPlugins` (step 6 below) — use it when the machine is offline or
 when somebody wants the app bare first. `--db-url <postgres-url>` uses a database that already
@@ -170,7 +170,7 @@ prerequisite lines, then hands over to `scripts/bootstrap.mjs` for the ten steps
 | 5 | `migrate` | role → migrations → grants applied; the pgvector extension is installed |
 | 6 | `plugins` | every plugin in `.rocketflare.json`'s `defaultPlugins` is installed, its tables generated and migrated. The kit declares ONE — `analytics`, which is where dashboards, cubes and the fact table live from 0.6.0 (`docs/CONCEPTS.md` §8) — so this step is what makes **Analytics** appear in the nav. Skipped with `--no-plugins`, which is a perfectly good app with no analytics in it and no drizzle-cube in either bundle |
 | 7 | `seed` | demo tenant, owner/admin/member users, one API key (printed once), plus the populated demo workspace unless `--no-demo`. The seed prints `seeding <host>/<db>` first; with `--db-url` it runs with `SEED_ALLOW_REMOTE=1` |
-| 8 | `cloudflare` | wrangler is logged in (Workers AI available) — or `--offline` was chosen |
+| 8 | `cloudflare` | wrangler is logged in (Workers AI available) — or `--offline` was chosen (`[ai] off (--offline; wrangler login not checked)`) |
 | 9 | `cli` | `pnpm cli whoami` with the seeded key — deferred/skipped with `--no-dev` (needs the server) |
 | 10 | `run` | `pnpm dev` started and `/api/health` answered — skipped with `--no-dev` (you do it in step 3) |
 

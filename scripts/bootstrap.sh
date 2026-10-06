@@ -13,7 +13,9 @@ case "$(uname -s)" in
   Darwin|Linux) ok "os $(uname -s)" ;;
   *) fail "unsupported OS $(uname -s)" "macOS or Linux (Windows: WSL2)" ;;
 esac
-[ "${EUID:-$(id -u)}" -ne 0 ] || fail "running as root" "run as your own user (no sudo)"
+# A container whose commands all run as root (a coding sandbox) opts in with ROCKETFLARE_ALLOW_ROOT=1.
+[ "${EUID:-$(id -u)}" -ne 0 ] || [ "${ROCKETFLARE_ALLOW_ROOT:-}" = 1 ] \
+  || fail "running as root" "run as your own user (no sudo); a container: ROCKETFLARE_ALLOW_ROOT=1"
 
 cd "$(dirname "$0")/.."
 NODE_MAJOR="$(sed -n 's/^v\{0,1\}\([0-9][0-9]*\).*/\1/p' .nvmrc | head -1)"

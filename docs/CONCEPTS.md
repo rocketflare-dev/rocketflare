@@ -222,7 +222,10 @@ path); no per-PR previews.
   `*.neon.tech` URL also sets `DATABASE_DRIVER=neon` there (HTTPS + WebSocket only, which is what a
   sandbox allows; `--driver` overrides). An
   off-box `DATABASE_URL` (not loopback) is left alone by `dev-db.mjs` and skips preflight's Docker
-  checks. The seed runs there with `SEED_ALLOW_REMOTE=1`.
+  checks. The seed runs there with `SEED_ALLOW_REMOTE=1`. A sandbox that already installed, made
+  the database and knows it is migrated says so instead of paying for it again: `--no-install`,
+  `ROCKETFLARE_BOOTSTRAP_SKIP=<steps>` (any of steps 1–8 by name) and `ROCKETFLARE_ALLOW_ROOT=1`
+  (its commands run as root; the container is the boundary) — `SETUP.md` Part 1.
 - **Migrations**: `db:generate` → read the SQL → `db:migrate` (role → migrations → grants).
   Migrations are forward-only.
 - **Cross-tenant allow-list**: `tests/config/unscoped-allowlist.test.ts` fails a function that

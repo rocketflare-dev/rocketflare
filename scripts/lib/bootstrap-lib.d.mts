@@ -93,7 +93,23 @@ export interface BootstrapOptions {
   check: boolean
   verbose: boolean
   help: boolean
+  /** Steps left out, in step order: `ROCKETFLARE_BOOTSTRAP_SKIP`, plus `install` for `--no-install`. */
+  skip: BootstrapSkippableStep[]
+  /** `ROCKETFLARE_ALLOW_ROOT=1`: run as uid 0 (a container whose commands all run as root). */
+  allowRoot: boolean
 }
+export const BOOTSTRAP_SKIPPABLE_STEPS: readonly [
+  'toolchain',
+  'install',
+  'secrets',
+  'database',
+  'migrate',
+  'plugins',
+  'seed',
+  'cloudflare',
+]
+export type BootstrapSkippableStep = (typeof BOOTSTRAP_SKIPPABLE_STEPS)[number]
+export function parseBootstrapSkip(value: string | undefined): BootstrapSkippableStep[]
 export function parseBootstrapArgs(
   argv: readonly string[],
   env?: Record<string, string | undefined>

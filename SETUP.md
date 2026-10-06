@@ -36,7 +36,14 @@ Engine and add your user to the `docker` group. Confirm the tool works, then car
 > (restore it), `--no-demo` (plain `pnpm seed`), `--no-plugins` (do not install `defaultPlugins`,
 > §1.4b), `--no-dev` (stop after step 8 and print what to run next), `--no-open`,
 > `--as <email>`, `--yes`, `--verbose`, `--db-url <url>` (an existing Postgres instead of Docker,
-> §1.4); `--check` is `pnpm preflight`.
+> §1.4); `--check` is `pnpm preflight`. `--offline` never runs `wrangler whoami`, so step 8 makes
+> no network call.
+> **A caller that did part of the work itself** (a coding sandbox): `--no-install` skips step 2 (it
+> still checks `wrangler` is installed); `ROCKETFLARE_BOOTSTRAP_SKIP=<steps>` leaves out any of
+> `toolchain,install,secrets,database,migrate,plugins,seed,cloudflare` (each line then reads
+> `skipped (ROCKETFLARE_BOOTSTRAP_SKIP)`; an unknown name is exit `2`; a skipped `cloudflare`
+> leaves both tomls untouched); `ROCKETFLARE_ALLOW_ROOT=1` lets it run as root. None is for a
+> person's own machine.
 > Exit codes: `0` ok · `1` a step failed · `2` usage · `3` prerequisite missing · `4` port/container
 > held by another checkout · `5` Cloudflare login required
 > (`node scripts/bootstrap.mjs --help`).
