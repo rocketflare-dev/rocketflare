@@ -756,6 +756,17 @@ Verify: the host serves the app over HTTPS; the parity test still passes (`route
 3. Check staging: `/api/health`, the version in the nav footer, the flow you changed.
 4. `gh release create X.Y.Z --title X.Y.Z --generate-notes` → **production** deploys the release's
    tag with `wrangler.toml`. Publishing the Release is the promotion gate.
+
+> [!IMPORTANT]
+> **Deploying through a deployer (`DEPLOYER_URL` set)? Publish the draft — never create a release.**
+> On that path staging leaves a **draft** release for the tag carrying `launch-bundle-X.Y.Z.tgz`,
+> the exact bytes staging runs. Step 4 is then `gh release edit X.Y.Z --draft=false` (or Publish on
+> the draft in GitHub's UI), and production deploys that bundle with no build. `gh release create`
+> beside the draft deploys too, but from a fresh build of the tag — so Live no longer runs what
+> Staging validated — and leaves the draft behind. No draft (an older tag, or the attach warned in
+> the staging run): create the release as above; production builds. Launch's Promote already
+> publishes the draft. `docs/DEPLOYER.md` → Build once.
+
 Verify: production `/auth/session` reports `releaseVersion: "X.Y.Z"`; `pnpm cli status` against it
 prints the same version.
 

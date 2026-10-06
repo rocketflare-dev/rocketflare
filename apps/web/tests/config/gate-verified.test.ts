@@ -1,7 +1,8 @@
 /**
- * `ci.yml`'s `verified` job (scripts/lib/gate-verified-lib.mjs): CI skips lint, typecheck and test
- * only for a tree Launch's own GitHub App attested as gated. Every doubt must answer "not verified"
- * — that is the security property — so most of these are the ways an attestation is NOT one.
+ * `ci.yml` `Gate`'s "Verified by Launch?" step (scripts/lib/gate-verified-lib.mjs): CI skips lint,
+ * typecheck and test only for a tree Launch's own GitHub App attested as gated. Every doubt must
+ * answer "not verified" — that is the security property — so most of these are the ways an
+ * attestation is NOT one.
  * The GitHub API is a fake that records every path asked for, so "no API call" is checkable.
  */
 import { spawnSync } from 'node:child_process'

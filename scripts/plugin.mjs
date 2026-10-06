@@ -54,6 +54,7 @@ import {
 import { pluginSurfaces, readManifest } from './lib/manifest.mjs'
 import {
   addBarrelLine,
+  addedByPlugins,
   addPlanJson,
   applyCoreEdits,
   archiveSql,
@@ -75,6 +76,8 @@ import {
   isVendored,
   jsonKeyLine,
   missingDependencies,
+  newlyAddedDependencies,
+  nextAddedDependencies,
   nextPluginMigrationTag,
   PLUGIN_MANIFEST_FILE,
   parsePluginRequirement,
@@ -693,7 +696,7 @@ function cmdAdd(args, host) {
   // Said again at the moment it happens, not only in the plan: `pnpm add` is about to overwrite
   // the range, and stderr is what a log keeps.
   for (const c of clashes) warn(`warning: ${describeClash(c)}`)
-  installDependencies(m, 'add')
+  const addedDependencies = installDependencies(m, 'add')
   const formatted = formatWritten([
     // Skills are markdown for an agent, not code Biome formats.
     ...targets.filter(t => !t.startsWith(SKILLS_ROOT)),
@@ -707,6 +710,7 @@ function cmdAdd(args, host) {
       subdir,
       commit: source.commit,
       at: new Date().toISOString().slice(0, 10),
+      addedDependencies,
     }),
     { local }
   )
@@ -797,8 +801,12 @@ function installDependencies(m, verb) {
     return
   }
   // Only what the host does not already hold inside the declared range — re-adding the rest would
-  // let `pnpm add` move an operator's pin, and makes a re-run write nothing.
-  changeDependencies(dependenciesToInstall(m, packageJsonsFor(m)))
+  // let `pnpm add` move an operator's pin, and makes a re-run write nothing. Returns what the host
+  // did not declare at all before, for the surface's `addedDependencies`.
+  const packageJsons = packageJsonsFor(m)
+  const install = dependenciesToInstall(m, packageJsons)
+  changeDependencies(install)
+  return newlyAddedDependencies(install, packageJsons)
 }
 
 /**
@@ -1018,9 +1026,10 @@ function cmdUpgrade(args, host) {
     try {
       const translated = blocks
         .map(b => {
-          const t = translateBlock(b, host.names ?? deriveNames('rocketflare', 'Rocketflare'), {
-            translate: Boolean(host.names),
-          })
+          // The kit itself (no `app`) has no names to translate into: null leaves every line as
+          // the plugin wrote it. `deriveNames('rocketflare')` used to stand in here and threw
+          // ("the kit's own name"), so every patched file became a warning and nothing applied.
+          const t = translateBlock(b, host.names, { translate: Boolean(host.names) })
           if (countLines(stripIndexLines(b.raw)) !== countLines(t)) {
             throw new Error(`translation changed the line count of ${f.path}`)
           }
@@ -1060,6 +1069,9 @@ function cmdUpgrade(args, host) {
     ? dependencyDelta(fromManifest, targetManifest, {
         packageJsons: { ...packageJsonsFor(fromManifest), ...packageJsonsFor(targetManifest) },
         installed: installedDependencyDeclarations(host),
+        // Only a package a plugin brought in may go: one the host declared first (the kit's own,
+        // at the very range the plugin happened to declare too) is the host's.
+        addedByPlugins: addedByPlugins(host.plugins, id),
       })
     : { changes: [], install: {}, remove: {}, clashes: [] }
 
@@ -1233,11 +1245,17 @@ function cmdUpgrade(args, host) {
       : []),
     ...kept.map(c => `  kept ${c.pkg} ${c.name} — ${c.reason}`)
   )
+  const recordFile = host.sidecarIds.includes(id) ? host.sidecarPath : host.manifestPath
+  const raw = JSON.parse(readFileSync(recordFile, 'utf8'))
+  const entry = raw.surfaces.find(s => s.id === id)
+  // Recorded whether or not rejects remain: `package.json` has already changed, and a re-run finds
+  // those installs satisfied ('none'), so this run is the only one that knows it put them there.
+  // A surface with no record yet starts one here — its older packages stay unrecorded, so kept.
+  const nextAdded = nextAddedDependencies(entry.addedDependencies, deps)
+  const recordChanged =
+    JSON.stringify(nextAdded) !== JSON.stringify(entry.addedDependencies ?? null)
+  entry.addedDependencies = nextAdded
   if (rejected === 0) {
-    const raw = JSON.parse(
-      readFileSync(host.sidecarIds.includes(id) ? host.sidecarPath : host.manifestPath, 'utf8')
-    )
-    const entry = raw.surfaces.find(s => s.id === id)
     entry.history = [
       ...(entry.history ?? []),
       {
@@ -1271,11 +1289,10 @@ function cmdUpgrade(args, host) {
         ]),
       ]
     }
-    writeManifestFile(host.sidecarIds.includes(id) ? host.sidecarPath : host.manifestPath, raw, {
-      format: !host.sidecarIds.includes(id),
-    })
+    writeManifestFile(recordFile, raw, { format: !host.sidecarIds.includes(id) })
     out(`✔ surface '${id}' stamped at ${toVersion ?? m.commitOf(to).slice(0, 12)}`)
   } else {
+    if (recordChanged) writeManifestFile(recordFile, raw, { format: !host.sidecarIds.includes(id) })
     out('The surface is NOT stamped while rejects remain — resolve them and re-run.')
   }
   const migrations = noteFacts.flatMap(n => n.migrations ?? [])

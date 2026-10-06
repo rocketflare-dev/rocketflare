@@ -364,3 +364,56 @@ export function attachPlan(releases, tag) {
   if (release.draft) return { action: 'replace', release, asset }
   return { action: 'keep', release, asset }
 }
+
+/** How many bundle drafts `prune` leaves, the tag just attached included, when nothing says. */
+export const DEFAULT_KEEP_DRAFTS = 5
+
+const VERSION_RE = /^(\d+)\.(\d+)\.(\d+)$/
+
+/** `X.Y.Z` numerically; NaN when either side is not a bare version. */
+function compareTags(a, b) {
+  const x = VERSION_RE.exec(a)
+  const y = VERSION_RE.exec(b)
+  if (!x || !y) return Number.NaN
+  for (let i = 1; i <= 3; i++) {
+    const d = Number(x[i]) - Number(y[i])
+    if (d !== 0) return d
+  }
+  return 0
+}
+
+/**
+ * A draft this script made and nobody has touched since: a bare `X.Y.Z` tag, still a draft, and
+ * carrying exactly one asset — its own `launch-bundle-<tag>.tgz`. A draft with another asset, or
+ * none, is somebody's work in progress and is never deleted.
+ */
+export function isBundleDraft(release) {
+  const assets = release?.assets ?? []
+  return (
+    release?.draft === true &&
+    VERSION_RE.test(String(release.tag_name)) &&
+    assets.length === 1 &&
+    assets[0].name === assetName(release.tag_name)
+  )
+}
+
+/**
+ * The bundle drafts to delete after `tag`'s was attached. Every staging deploy on the deployer
+ * path leaves a draft, and only the promoted ones are ever published, so without this the
+ * releases page fills with drafts for tags nobody will ship.
+ *
+ * Keeps the `keep` newest bundle drafts at or below `tag` (`tag`'s own among them) and deletes the
+ * older rest. A draft for a NEWER tag is never touched — another deploy may be attaching it right
+ * now — and neither is anything `isBundleDraft` does not recognise. `keep` 0 turns pruning off.
+ * Deleting a draft deletes no tag: an older tag can still be promoted, and then builds (no bundle).
+ */
+export function pruneDraftsPlan(releases, { tag, keep = DEFAULT_KEEP_DRAFTS }) {
+  if (!Number.isInteger(keep) || keep < 0)
+    throw new Error(`keep must be a whole number, got ${keep}`)
+  if (keep === 0 || !VERSION_RE.test(String(tag))) return { remove: [], kept: [] }
+  const drafts = releases
+    .filter(isBundleDraft)
+    .filter(r => compareTags(r.tag_name, tag) <= 0)
+    .sort((a, b) => compareTags(b.tag_name, a.tag_name) || b.id - a.id)
+  return { kept: drafts.slice(0, keep), remove: drafts.slice(keep) }
+}

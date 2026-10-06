@@ -808,7 +808,10 @@ export { isVendored }
  * manifest plus the three facts only the host knows — where it fetched it from, at what commit and
  * when — so a surface never carries a field the plugin did not declare.
  */
-export function buildPluginSurface(manifest, { repo, subdir = '', commit = null, at }) {
+export function buildPluginSurface(
+  manifest,
+  { repo, subdir = '', commit = null, at, addedDependencies }
+) {
   const id = manifest.id
   return {
     id,
@@ -842,6 +845,10 @@ export function buildPluginSurface(manifest, { repo, subdir = '', commit = null,
       surfaces: manifest.requires?.surfaces ?? [],
       plugins: manifest.requires?.plugins ?? [],
     },
+    // The fourth host fact: which packages this install brought into the host, as opposed to ones
+    // the host already declared. `plugin upgrade` removes a package a release stops declaring only
+    // when some plugin's record says a plugin put it there (`dependencyDelta`).
+    ...(addedDependencies ? { addedDependencies } : {}),
     history: [],
   }
 }
@@ -1970,7 +1977,11 @@ export const describeClash = c =>
  * - **a clash**: an `install` whose range would sit OUTSIDE what another installed plugin declares
  *   (`rangeWithin`) — writing it would fail that plugin's `plugin check`, so `upgrade` refuses.
  */
-export function dependencyDelta(before, after, { packageJsons = {}, installed = [] } = {}) {
+export function dependencyDelta(
+  before,
+  after,
+  { packageJsons = {}, installed = [], addedByPlugins = null } = {}
+) {
   const id = after?.id ?? before?.id ?? null
   const peers = installed.filter(p => p?.id && p.id !== id)
   const declared = m => m?.dependencies ?? {}
@@ -2020,17 +2031,80 @@ export function dependencyDelta(before, after, { packageJsons = {}, installed = 
       } else if (have === null) {
         action = 'none'
         reason = `not in ${pkg}/package.json`
-      } else if (have.trim() === from.trim()) {
-        action = 'remove'
-        remove[pkg] = [...(remove[pkg] ?? []), name]
-      } else {
+      } else if (have.trim() !== from.trim()) {
         action = 'keep'
         reason = `${pkg}/package.json pins ${have}, not the ${from} ${id ?? 'the plugin'} declared — not the plugin's to remove`
+      } else if (!addedByPlugins) {
+        action = 'keep'
+        reason = `no record of who added it (installed before the kit kept one) — remove it yourself if nothing imports it`
+      } else if (!(addedByPlugins[pkg] ?? []).includes(name)) {
+        action = 'keep'
+        reason = `${pkg}/package.json declared it before a plugin did — not the plugin's to remove`
+      } else {
+        action = 'remove'
+        remove[pkg] = [...(remove[pkg] ?? []), name]
       }
       changes.push({ pkg, name, change, from, to, have, action, reason })
     }
   }
   return { changes, install, remove, clashes }
+}
+
+/**
+ * The `addedDependencies` record after an upgrade's delta is applied: what it installed into a host
+ * that did not declare the package at all joins the record, what it removed leaves it. A package a
+ * release stops declaring stays recorded while it is kept (another plugin still declares it), so
+ * the LAST plugin to drop it can still remove it. Empty lists are dropped; never null.
+ */
+export function nextAddedDependencies(record, delta) {
+  const out = Object.fromEntries(
+    Object.entries(record ?? {}).map(([pkg, names]) => [pkg, [...(names ?? [])]])
+  )
+  for (const c of delta?.changes ?? []) {
+    const names = out[c.pkg] ?? []
+    if (c.action === 'install' && c.have === null && !names.includes(c.name)) names.push(c.name)
+    out[c.pkg] = c.action === 'remove' ? names.filter(n => n !== c.name) : names
+  }
+  return Object.fromEntries(
+    Object.entries(out)
+      .filter(([, names]) => names.length > 0)
+      .map(([pkg, names]) => [pkg, [...names].sort()])
+      .sort(([a], [b]) => a.localeCompare(b))
+  )
+}
+
+/**
+ * Per host package, the names an install is about to bring in that the host does not declare at
+ * all (`install` is `dependenciesToInstall`'s answer) — the record `buildPluginSurface` keeps. A
+ * name the host already holds, at any range, was the host's first and stays the host's.
+ */
+export function newlyAddedDependencies(install = {}, packageJsons = {}) {
+  const out = {}
+  for (const [pkg, deps] of Object.entries(install)) {
+    const names = Object.keys(deps ?? {})
+      .filter(name => rangeIn(packageJsons[pkg], name) === null)
+      .sort()
+    if (names.length > 0) out[pkg] = names
+  }
+  return out
+}
+
+/**
+ * Who brought each package in, for `dependencyDelta`'s `addedByPlugins`: the union of every plugin
+ * surface's `addedDependencies`, so a package one plugin added and another later stopped needing is
+ * still known to be a plugin's. `null` when the plugin being upgraded has no record at all — it was
+ * installed before records were kept, so nothing can be said about its packages and none is removed.
+ */
+export function addedByPlugins(surfaces = [], id) {
+  const self = surfaces.find(s => s?.id === id)
+  if (!self || !self.addedDependencies) return null
+  const out = {}
+  for (const s of surfaces) {
+    for (const [pkg, names] of Object.entries(s?.addedDependencies ?? {})) {
+      out[pkg] = [...new Set([...(out[pkg] ?? []), ...(names ?? [])])].sort()
+    }
+  }
+  return out
 }
 
 const DELTA_MARK = { added: '+', changed: '~', removed: '-' }

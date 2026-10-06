@@ -177,7 +177,7 @@ byte-identical under either toml, and every binding and var reaches the deployer
 | Job | Does |
 |---|---|
 | `staging` | after the dry run, `node scripts/bundle.mjs pack` → `apps/web/dist/launch-bundle-<tag>.tgz`; uploads it as the `launch-bundle` workflow artifact once `activate` succeeded |
-| `release-bundle` | `contents: write`, no install: `node scripts/bundle.mjs attach` verifies the bundle against the checkout and attaches it to the tag's release — creating a **draft** when there is none |
+| `release-bundle` | `contents: write`, no install: `node scripts/bundle.mjs attach` verifies the bundle against the checkout and attaches it to the tag's release — creating a **draft** when there is none — then `node scripts/bundle.mjs prune` deletes old unpromoted bundle drafts. Never fails the run (staging is already live): a failed attach is a warning and a summary line, and production builds from the tag |
 | `production` | `node scripts/bundle.mjs fetch`: the published release's asset → verify → unpack into `dist/deploy` and `dist/ui`, then skip `build:ui` and the dry run (`source=bundle`). No release or no asset → `source=build`, today's build. Rollback (`workflow_dispatch environment=production` at a tag) takes the same path |
 
 **The asset** `launch-bundle-<tag>.tgz` (ustar + gzip, entries sorted, mtime 0, mode 0644 — the
@@ -220,6 +220,16 @@ than create a new release. `GET /repos/{o}/{r}/releases/tags/{tag}` answers 404 
 3. No draft: `POST …/releases` as before; production builds from the tag.
 
 A new release created beside the draft also deploys, but from a rebuild, and leaves the draft behind.
+A person cutting releases by hand on this path does the same: `gh release edit X.Y.Z --draft=false`,
+not `gh release create` (`SETUP.md` 3.7).
+
+**Unpromoted drafts are pruned.** Every staging deploy leaves a draft and only promoted tags are
+published, so after each attach `prune` deletes the bundle drafts older than the newest
+`BUNDLE_KEEP_DRAFTS` (a repository variable; default **5**, the tag just attached included; `0`
+turns pruning off). It deletes only a draft for a bare `X.Y.Z` tag at or below the one deployed
+whose sole asset is its own `launch-bundle-<tag>.tgz` — a draft somebody added files to, a newer
+tag's, and every published release are left alone. No tag is deleted: an older tag can still be
+promoted, and then builds from the tag (step 3).
 
 ## Versioning
 

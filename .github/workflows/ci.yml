@@ -17,12 +17,13 @@ name: CI
 # copy never carries.
 #
 # Verified once (opt-in, for an app shipped by Launch): with the repository variable
-# LAUNCH_GATE_APP_ID set to Launch's GitHub App id, the `verified` job asks whether Launch already
+# LAUNCH_GATE_APP_ID set to Launch's GitHub App id, `Gate`'s FIRST step asks whether Launch already
 # gated the exact tree under test — a `launch/gate` check run from THAT app, `success`, whose
 # `external_id` is `tree:<tree sha>` (scripts/gate-verified.mjs, rules in
 # scripts/lib/gate-verified-lib.mjs). If so `Gate` runs only what the sandbox does not: gitleaks and
-# `pnpm gate build`. Variable unset: `verified` is skipped (no runner, no API call) and `Gate` runs
-# the full `pnpm gate` exactly as before. `Gate` stays the one required check either way.
+# `pnpm gate build`. Variable unset: the step is skipped (no API call) and `Gate` runs the full
+# `pnpm gate` exactly as before. One job, so one runner: the lookup used to be a job of its own,
+# and every run queued for two runners in sequence. `Gate` stays the one required check either way.
 on:
   pull_request:
   push:
@@ -35,65 +36,40 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  # Was this tree already gated by Launch? Skipped outright without LAUNCH_GATE_APP_ID. Which tree is
-  # compared: the CHECKED-OUT commit's — on a pull request GitHub's merge commit, the bytes `Gate`
-  # would test. Launch attests the PR head, so the head's attestation counts only when the merge tree
-  # equals it (the branch already contains main's tip); once main moves on, the trees differ and the
-  # full gate runs. On a push to main: the pushed commit, then the heads of its PRs
-  # (GET /commits/{sha}/pulls) — an up-to-date PR squashed or merged leaves the same tree. Any other
-  # event (deploy.yml's workflow_call on a tag or dispatch) answers false. Any doubt answers false.
-  # deploy.yml's `ci` job grants these three read scopes: a called workflow may not ask for more.
-  verified:
-    name: Verified by Launch?
-    if: vars.LAUNCH_GATE_APP_ID != ''
+  gate:
+    name: Gate
     runs-on: ubuntu-latest
+    # The lookup reads check runs and a commit's pull requests; nothing in this job writes. deploy.yml's
+    # `ci` job grants the same three: a called workflow may not ask for more than its caller grants.
     permissions:
       contents: read
       checks: read
       pull-requests: read
-    outputs:
-      verified: ${{ steps.check.outputs.verified }}
-      tree: ${{ steps.check.outputs.tree }}
     steps:
       - uses: actions/checkout@v4
         with:
-          persist-credentials: false
-      - id: check
+          fetch-depth: 0 # full history for the gitleaks scan
+      # Was this tree already gated by Launch? Skipped outright without LAUNCH_GATE_APP_ID. Which
+      # tree is compared: the CHECKED-OUT commit's — on a pull request GitHub's merge commit, the
+      # bytes this job tests. Launch attests the PR head, so the head's attestation counts only when
+      # the merge tree equals it (the branch already contains main's tip); once main moves on, the
+      # trees differ and the full gate runs. On a push to main: the pushed commit, then the heads of
+      # its PRs (GET /commits/{sha}/pulls) — an up-to-date PR squashed or merged leaves the same
+      # tree. Any other event (deploy.yml's workflow_call on a tag or dispatch) answers false. Any
+      # doubt answers false, and the script always exits 0: an empty or `false` output is the full
+      # gate. It reads the tree from this very checkout, so there is nothing to re-check.
+      - name: Verified by Launch?
+        id: verified
+        if: vars.LAUNCH_GATE_APP_ID != ''
         run: node scripts/gate-verified.mjs
         env:
           LAUNCH_GATE_APP_ID: ${{ vars.LAUNCH_GATE_APP_ID }}
           GITHUB_TOKEN: ${{ github.token }}
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-
-  # `!cancelled()`: a skipped `verified` (no variable) or a failed one must never skip the required
-  # check — an empty output means the full gate.
-  gate:
-    name: Gate
-    needs: verified
-    if: ${{ !cancelled() }}
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0 # full history for the gitleaks scan
-      # Reuse Launch's verdict only for the very tree `verified` checked (both jobs check out
-      # github.sha; this re-reads it rather than assuming so).
-      - name: Decide the gate's scope
-        id: scope
-        env:
-          VERIFIED: ${{ needs.verified.outputs.verified }}
-          TREE: ${{ needs.verified.outputs.tree }}
-        run: |
-          if [ "$VERIFIED" = "true" ] && [ -n "$TREE" ] && [ "$(git rev-parse 'HEAD^{tree}')" = "$TREE" ]; then
-            echo "reuse=true" >> "$GITHUB_OUTPUT"
-            echo "Launch gated tree $TREE: lint, typecheck and test are not re-run."
-          else
-            echo "reuse=false" >> "$GITHUB_OUTPUT"
-          fi
       # The two test images, pulled in the background while pnpm installs (~15-20 s a run). Whatever
       # has not arrived by the time `pnpm test` runs `docker compose up`, that pulls itself.
       - name: Pre-pull the test database images
-        if: steps.scope.outputs.reuse != 'true'
+        if: steps.verified.outputs.verified != 'true'
         run: |
           nohup docker compose -f apps/web/docker-compose.test.yml --profile neon pull --quiet \
             > "$RUNNER_TEMP/pull.log" 2>&1 &
@@ -118,8 +94,8 @@ jobs:
       # Launch's sandbox already passed lint, typecheck and test on this tree; build is the step it
       # does not prove here (the dry-run `wrangler deploy` that catches a Node-only import).
       - name: pnpm gate build (the rest passed in Launch on this tree)
-        if: steps.scope.outputs.reuse == 'true'
+        if: steps.verified.outputs.verified == 'true'
         run: pnpm gate build
 
-      - if: steps.scope.outputs.reuse != 'true'
+      - if: steps.verified.outputs.verified != 'true'
         run: pnpm gate

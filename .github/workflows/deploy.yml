@@ -155,7 +155,7 @@ jobs:
         (github.event_name == 'push' && github.ref_type == 'tag') ||
         (github.event_name == 'workflow_dispatch' && inputs.environment == 'staging')
       )
-    # ci.yml's `verified` job declares these; a called workflow may not ask for more than its caller
+    # ci.yml's `Gate` job declares these; a called workflow may not ask for more than its caller
     # grants, so without them the call fails to start (the job itself answers false on a tag).
     permissions:
       contents: read
@@ -310,8 +310,13 @@ jobs:
   # Build once, deployer path: attach the bundle staging deployed to a DRAFT release for the tag.
   # Its own job so `contents: write` is never held by a job that runs `pnpm install` and builds
   # third-party code — this one installs nothing. A DRAFT, never a published prerelease: publishing
-  # (even a prerelease) fires `release: published`, which IS production's trigger. A failure here
-  # leaves staging deployed and production building from the tag, as before.
+  # (even a prerelease) fires `release: published`, which IS production's trigger.
+  #
+  # Never fails the run: staging is already live when this starts, and a red deploy run for a live
+  # staging reads as "the deploy failed". A failed download or attach is a WARNING on the run and a
+  # line in its summary instead, and production then builds from the tag, as it does for any tag
+  # without a bundle. Then old unpromoted bundle drafts are pruned (`bundle.mjs prune`, keeping the
+  # newest BUNDLE_KEEP_DRAFTS — a repository variable, default 5, 0 for off), also non-fatally.
   release-bundle:
     name: Attach the staging bundle to the release (draft)
     needs: staging
@@ -331,14 +336,35 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version-file: .nvmrc
-      - uses: actions/download-artifact@v4
+      - id: download
+        continue-on-error: true
+        uses: actions/download-artifact@v4
         with:
           name: launch-bundle
           path: bundle
       - name: Verify and attach the bundle
+        id: attach
+        if: steps.download.outcome == 'success'
+        continue-on-error: true
         run: node scripts/bundle.mjs attach "bundle/launch-bundle-$BUNDLE_TAG.tgz"
         env:
           GITHUB_TOKEN: ${{ github.token }}
+      - name: Production will build from the tag (the bundle was not attached)
+        if: steps.attach.outcome != 'success'
+        run: |
+          echo "::warning title=Build once::Staging is live on $BUNDLE_TAG, but its bundle was not attached to the release. Publishing it deploys a fresh build of the tag. Re-run this job to attach it."
+          echo "**Build once:** staging is live, but \`launch-bundle-$BUNDLE_TAG.tgz\` was not attached; publishing the release builds production from the tag. Re-run \`release-bundle\` to attach it." >> "$GITHUB_STEP_SUMMARY"
+      - name: Prune unpromoted bundle drafts
+        id: prune
+        if: steps.attach.outcome == 'success'
+        continue-on-error: true
+        run: node scripts/bundle.mjs prune
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          BUNDLE_KEEP_DRAFTS: ${{ vars.BUNDLE_KEEP_DRAFTS }}
+      - name: Old drafts were not pruned
+        if: steps.prune.outcome == 'failure'
+        run: echo "::warning title=Build once::Could not prune old bundle drafts; they are harmless and the next tag tries again."
 
   # Step 2: publishing the GitHub Release is the promotion gate ("required reviewers" is not
   # available on private repos on the free plan). Ships the release's tag, already validated

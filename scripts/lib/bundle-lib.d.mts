@@ -92,3 +92,12 @@ export type AttachPlan =
   | { action: 'replace'; release: Release; asset: ReleaseAsset }
   | { action: 'keep'; release: Release; asset: ReleaseAsset }
 export function attachPlan(releases: Release[], tag: string): AttachPlan
+
+export const DEFAULT_KEEP_DRAFTS: number
+/** A draft `attach` made and nobody touched: bare X.Y.Z tag, exactly its own bundle asset. */
+export function isBundleDraft(release: Release): boolean
+/** The bundle drafts at or below `tag` beyond the newest `keep`; `keep` 0 prunes nothing. */
+export function pruneDraftsPlan(
+  releases: Release[],
+  options: { tag: string; keep?: number }
+): { kept: Release[]; remove: Release[] }

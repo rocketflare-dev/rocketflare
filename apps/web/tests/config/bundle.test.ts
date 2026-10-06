@@ -91,6 +91,14 @@ async function handle(req: IncomingMessage, res: ServerResponse) {
     releases.push(created)
     return reply(res, 201, publicRelease(created))
   }
+  const releaseRoute = url.pathname.match(/^\/repos\/acme\/app\/releases\/(\d+)$/)
+  if (req.method === 'DELETE' && releaseRoute) {
+    const id = Number(releaseRoute[1])
+    if (!releases.some(r => r.id === id)) return reply(res, 404, {})
+    releases = releases.filter(r => r.id !== id)
+    res.writeHead(204)
+    return res.end()
+  }
   const upload = url.pathname.match(/^\/uploads\/repos\/acme\/app\/releases\/(\d+)\/assets$/)
   if (req.method === 'POST' && upload) {
     const r = releases.find(x => x.id === Number(upload[1]))
@@ -297,6 +305,46 @@ describe('scripts/bundle.mjs', () => {
     await stage()
     expect(releases).toHaveLength(1)
     expect(releases[0].assets.map(a => a.name)).toEqual([ASSET])
+  })
+
+  it('prune deletes unpromoted bundle drafts beyond the newest N, and nothing else', async () => {
+    const draft = (id: number, tag: string, assets = [`launch-bundle-${tag}.tgz`]) => ({
+      id,
+      tag_name: tag,
+      draft: true,
+      created_at: '2026-01-01',
+      assets: assets.map((name, i) => ({
+        id: id * 10 + i,
+        name,
+        size: 1,
+        bytes: Buffer.from('x'),
+      })),
+    })
+    releases.push(
+      draft(1, '1.0.0'),
+      draft(2, '1.1.0'),
+      draft(3, '1.2.0'),
+      draft(4, '1.2.1'),
+      draft(5, '1.2.2', ['launch-bundle-1.2.2.tgz', 'notes.pdf']), // somebody's: two assets
+      { id: 6, tag_name: '0.9.0', draft: false, created_at: '2026-01-01', assets: [] }, // published
+      draft(7, '2.0.0') // newer than the tag deployed: another deploy's
+    )
+    await stage()
+    const pruned = await run(['prune'], { BUNDLE_KEEP_DRAFTS: '2' })
+    expect(pruned.code, pruned.stderr).toBe(0)
+    // Kept: 1.2.3 (just attached) and 1.2.1. Deleted: 1.2.0, 1.1.0, 1.0.0.
+    expect(releases.map(r => r.tag_name).sort()).toEqual(['0.9.0', '1.2.1', '1.2.2', TAG, '2.0.0'])
+    expect(calls).toContain(`DELETE /repos/${REPO}/releases/3`)
+    expect(pruned.stdout).toMatch(/kept 2 bundle draft\(s\), deleted 3/)
+
+    const off = await run(['prune'], { BUNDLE_KEEP_DRAFTS: '0' })
+    expect(off.code, off.stderr).toBe(0)
+    expect(off.stdout).toContain('pruning is off')
+    expect(releases).toHaveLength(5)
+
+    const bad = await run(['prune'], { BUNDLE_KEEP_DRAFTS: 'some' })
+    expect(bad.code).toBe(1)
+    expect(bad.stderr).toContain('BUNDLE_KEEP_DRAFTS must be a whole number')
   })
 
   it('fetch deploys the staging bytes: the same outdir and UI the staging upload read', async () => {

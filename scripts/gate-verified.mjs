@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /**
- * `ci.yml`'s `verified` job: was the tree CI is about to test already gated by Launch? Writes
- * `verified=true|false` and `tree=<sha>` to `$GITHUB_OUTPUT` and always exits 0 — any doubt (an API
- * error included) is `verified=false`, which means the full `pnpm gate`. The rules, and why the
+ * `ci.yml` `Gate`'s first step ("Verified by Launch?"): was the tree CI is about to test already
+ * gated by Launch? Writes `verified=true|false` and `tree=<sha>` to `$GITHUB_OUTPUT` and always
+ * exits 0 — any doubt (an API error included) is `verified=false`, which means the full `pnpm gate`. The rules, and why the
  * merge commit's tree is the one compared on a pull request: `lib/gate-verified-lib.mjs`.
  *
  * Env: LAUNCH_GATE_APP_ID (repo variable; empty → no API call at all), GITHUB_TOKEN,
