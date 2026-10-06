@@ -4,6 +4,7 @@ import path from 'node:path'
 import react from '@vitejs/plugin-react'
 import { defineConfig } from 'vitest/config'
 import { isMarkedIsolated, apiTestFiles as listApiTestFiles } from './tests/helpers/isolation'
+import { latencyFactor } from './tests/helpers/latency'
 
 const alias = {
   '@': path.resolve(__dirname, './src'),
@@ -24,7 +25,8 @@ const alias = {
  * TEST_DATABASE_EPHEMERAL=1): the suite in a coding sandbox against a throwaway Neon gate branch
  * over the network (tests/helpers/db-safety.ts). Fewer forks, because the local sizing below
  * assumes the compose Postgres's max_connections=300 and a small Neon compute allows ~100.
- * `TEST_MAX_WORKERS` tunes the fork count.
+ * `TEST_MAX_WORKERS` tunes the fork count; `TEST_LATENCY_FACTOR` raises every time limit on a slow
+ * machine (a coding sandbox running a test by hand — `tests/helpers/latency.ts`).
  */
 const EPHEMERAL = process.env.TEST_DATABASE_EPHEMERAL === '1'
 
@@ -37,8 +39,9 @@ const EPHEMERAL = process.env.TEST_DATABASE_EPHEMERAL === '1'
  * slow link is walking to a limit query by query, and it lowers that limit (the duration cap in
  * `agent-run-stream.test.ts`, the round cap in `agent-run-workflow.test.ts`) instead. The local
  * `postgres` run keeps vitest's 5 s, so it is still the tripwire for a test that is genuinely slow.
+ * `TEST_LATENCY_FACTOR` raises it (never lowers it) for a slow machine; `tests/helpers/latency.ts`.
  */
-const LATENCY_FACTOR = EPHEMERAL ? 12 : process.env.DATABASE_DRIVER === 'neon' ? 4 : 1
+const LATENCY_FACTOR = latencyFactor(process.env)
 
 // Forks are capped because each holds its own Postgres connections (test DB runs
 // max_connections=300). Floor 3 = what a 2-vCPU CI runner gets; ceiling 6 is where Postgres
