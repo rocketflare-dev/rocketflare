@@ -4,4 +4,7 @@ packages:
 onlyBuiltDependencies:
   - esbuild
   - workerd
+# cloudflared's postinstall downloads its latest release (~38 MB) on every install; only
+# `pnpm dev:tunnel` needs it, and installs it there on first use (apps/web/scripts/cfld.mjs).
+ignoredBuiltDependencies:
   - cloudflared

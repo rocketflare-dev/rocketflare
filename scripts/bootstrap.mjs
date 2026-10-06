@@ -21,6 +21,11 @@
  * sandbox with no Docker): no Docker checks, DATABASE_URL upserted in step 3, step 4 only polls
  * `db:check`, step 7 seeds with SEED_ALLOW_REMOTE=1. Still ten steps. `bootstrapStepPlan` decides.
  *
+ * For a caller that has done part of the work itself (a coding sandbox: its own `pnpm install`, a
+ * database it just made): `--no-install` leaves step 2 out, `ROCKETFLARE_BOOTSTRAP_SKIP` names any
+ * of steps 1–8 to leave out, and `ROCKETFLARE_ALLOW_ROOT=1` lifts the root refusal (a container
+ * whose commands all run as root). None of them is set by a person's normal run.
+ *
  * Exit codes: 0 ok · 1 a step failed · 2 usage · 3 prerequisite missing · 4 a port or the Postgres
  * container is held by another checkout · 5 Cloudflare login required.
  */
@@ -80,11 +85,14 @@ Take a fresh clone to a running, signed-in dev stack in one command. Re-runnable
 
   --yes         never prompt; a missing Cloudflare login is exit 5 instead of a question
   --offline     comment the [ai] block out of both wrangler tomls (no Cloudflare account needed;
-                chat/agents/embeddings then need a key or a tenant provider)
+                chat/agents/embeddings then need a key or a tenant provider); never runs
+                \`wrangler whoami\`, so step 8 makes no network call
   --online      keep/restore the [ai] block; exit 5 if wrangler is not logged in
   --no-dev      stop after step 8 and print the commands to run next
   --no-demo     seed without the demo data (plain \`pnpm seed\`)
   --no-plugins  skip the plugins step (do not install .rocketflare.json's defaultPlugins)
+  --no-install  skip step 2 (\`pnpm install\`) when the caller has just installed; still checks
+                that apps/web/node_modules/.bin/wrangler is there
   --share-db    accepted and ignored: every checkout now gets its own database (pnpm dev:db:status)
   --no-open     do not open the browser once the server answers
   --as <email>  seeded account to sign in as (default owner@example.test)
@@ -102,6 +110,14 @@ Take a fresh clone to a running, signed-in dev stack in one command. Re-runnable
                 dev status; exit 3 when anything is missing
   --verbose     stream every child's output (also DEV_VERBOSE=1)
   --help        this text
+
+Environment (for a caller that has done part of the work itself — a coding sandbox; not --check):
+  ROCKETFLARE_BOOTSTRAP_SKIP=<steps>
+                comma-separated steps to leave out: toolchain, install, secrets, database,
+                migrate, plugins, seed, cloudflare (an unknown name is exit 2). Skipping
+                cloudflare leaves both wrangler tomls untouched
+  ROCKETFLARE_ALLOW_ROOT=1
+                run as root (a container whose commands all run as uid 0)
 
 Exit codes: 0 ok · 1 a step failed · 2 usage · 3 prerequisite missing · 4 port/container held by
 another checkout · 5 Cloudflare login required`
@@ -252,7 +268,18 @@ async function dockerToolchain(plan) {
   return `docker ${docker.output.trim()} · compose ${compose.output.trim()}`
 }
 
-async function stepInstall() {
+/** `skipped` (`--no-install`): the caller just installed; only the wrangler binary is checked. */
+async function stepInstall({ skipped = false } = {}) {
+  const wrangler = path.join(WEB_DIR, 'node_modules/.bin/wrangler')
+  if (skipped) {
+    if (!existsSync(wrangler)) {
+      throw new StepError('apps/web/node_modules/.bin/wrangler missing (install skipped)', {
+        hint: 'pnpm install, or run the bootstrap without --no-install',
+        exitCode: EXIT.prerequisite,
+      })
+    }
+    return { verify: 'skipped (--no-install); apps/web/node_modules/.bin/wrangler present' }
+  }
   const result = await pnpm(['install', '--prefer-offline'])
   if (result.code !== 0) {
     throw new StepError('pnpm install failed', {
@@ -260,7 +287,6 @@ async function stepInstall() {
       output: result.output,
     })
   }
-  const wrangler = path.join(WEB_DIR, 'node_modules/.bin/wrangler')
   if (!existsSync(wrangler)) {
     throw new StepError('apps/web/node_modules/.bin/wrangler missing after install', {
       hint: 'pnpm install --force',
@@ -577,24 +603,26 @@ async function ask(question) {
 }
 
 /**
- * Logged in → `[ai]` stays (or comes back with `--online`; `--offline` still turns it off).
- * Not logged in → `--offline` comments the block out of both tomls; `--online` / `--yes` / a
- * non-TTY stdin exit 5 with the login command; a terminal is asked once.
+ * `--offline` → the block is commented out of both tomls and wrangler is never asked anything:
+ * the result is the same logged in or not, so `wrangler whoami` (a network call) is skipped.
+ * Logged in → `[ai]` stays (or comes back with `--online`).
+ * Not logged in → `--online` / `--yes` / a non-TTY stdin exit 5 with the login command; a
+ * terminal is asked once.
  */
 async function stepCloudflare(opts) {
-  let who = await wranglerWhoami()
-  const notes = []
   const offlineNotes = () => [
     '[ai] commented out in both wrangler tomls — chat, agents and embeddings need an API key or',
     'a tenant provider (SETUP.md §2.5); `pnpm typecheck` regenerates worker-configuration.d.ts',
     'without `AI` — do not commit that diff. `pnpm bootstrap --online` restores the block.',
   ]
+  if (opts.offline) {
+    setAiBlocks('off')
+    return { verify: '[ai] off (--offline; wrangler login not checked)', notes: offlineNotes() }
+  }
+  let who = await wranglerWhoami()
+  const notes = []
   if (who.loggedIn) {
     const identity = [who.email, who.account].filter(Boolean).join(' · ')
-    if (opts.offline) {
-      setAiBlocks('off')
-      return { verify: `logged in as ${identity}; [ai] off (--offline)`, notes: offlineNotes() }
-    }
     if (aiState() === 'off' && opts.online) {
       setAiBlocks('on')
       notes.push('[ai] restored in both wrangler tomls (--online)')
@@ -605,10 +633,6 @@ async function stepCloudflare(opts) {
     return { verify: `logged in as ${identity}; [ai] ${state}`, notes }
   }
 
-  if (opts.offline) {
-    setAiBlocks('off')
-    return { verify: 'not logged in; [ai] off (--offline)', notes: offlineNotes() }
-  }
   const loginRequired = () =>
     new StepError('wrangler is not logged in', {
       hint: 'pnpm web exec wrangler login   (a free account is enough)  — or: pnpm bootstrap --offline',
@@ -748,16 +772,23 @@ async function check() {
 async function bootstrap(opts) {
   say(bold(`Rocketflare bootstrap — ${REPO_ROOT}`))
   const plan = bootstrapStepPlan({ dbUrl: opts.dbUrl })
-  await step(1, 'toolchain', () => stepToolchain(plan))
-  await step(2, 'install', stepInstall)
-  await step(3, 'secrets', () =>
+  const skip = new Set(opts.skip)
+  // A step named in ROCKETFLARE_BOOTSTRAP_SKIP prints its line and does nothing. `install` is the
+  // exception: skipped, it still checks the wrangler binary every later step relies on.
+  const maybe = (n, name, fn) =>
+    skip.has(name)
+      ? step(n, name, () => ({ verify: 'skipped (ROCKETFLARE_BOOTSTRAP_SKIP)' }))
+      : step(n, name, fn)
+  await maybe(1, 'toolchain', () => stepToolchain(plan))
+  await step(2, 'install', () => stepInstall({ skipped: skip.has('install') }))
+  await maybe(3, 'secrets', () =>
     stepSecrets({ write: true, dbUrl: opts.dbUrl, driver: opts.driver })
   )
-  await step(4, 'database', () => stepDatabase(opts, plan))
-  await step(5, 'migrate', stepMigrate)
-  await step(6, 'plugins', () => stepPlugins(opts))
-  const seeded = await step(7, 'seed', () => stepSeed({ demo: opts.demo }, plan))
-  await step(8, 'cloudflare', () => stepCloudflare(opts))
+  await maybe(4, 'database', () => stepDatabase(opts, plan))
+  await maybe(5, 'migrate', stepMigrate)
+  await maybe(6, 'plugins', () => stepPlugins(opts))
+  const seeded = await maybe(7, 'seed', () => stepSeed({ demo: opts.demo }, plan))
+  await maybe(8, 'cloudflare', () => stepCloudflare(opts))
 
   const loginUrl = `${UI_URL}/login?as=${encodeURIComponent(opts.as)}`
   if (!opts.dev) {
@@ -770,6 +801,8 @@ async function bootstrap(opts) {
     return
   }
   if (seeded.key) say(`${dim('·')} ${stepLabel(9, 'cli')} deferred until the server answers`)
+  else if (skip.has('seed'))
+    printOk(9, 'cli', 'skipped (seed skipped) — run `pnpm cli login` once the server is up')
   else printOk(9, 'cli', 'skipped — key already exists; run `pnpm cli login` once the server is up')
 
   // dev-server's preflight, piped, so a foreign port holder is a clear exit 4 rather than a
@@ -851,8 +884,13 @@ if (process.platform !== 'darwin' && process.platform !== 'linux') {
   process.stderr.write('bootstrap: macOS or Linux only (Windows: WSL2)\n')
   process.exit(EXIT.prerequisite)
 }
-if (typeof os.userInfo === 'function' && os.userInfo().uid === 0) {
-  process.stderr.write('bootstrap: refusing to run as root — run as your own user\n')
+// A container whose commands all run as root (a coding sandbox) says so explicitly; the container
+// is its isolation boundary. Everyone else is refused, because root-owned node_modules and
+// .dev.vars break the next run as the person's own user.
+if (!opts.allowRoot && typeof os.userInfo === 'function' && os.userInfo().uid === 0) {
+  process.stderr.write(
+    'bootstrap: refusing to run as root — run as your own user (a container: ROCKETFLARE_ALLOW_ROOT=1)\n'
+  )
   process.exit(EXIT.prerequisite)
 }
 if (opts.check) await check()

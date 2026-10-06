@@ -125,6 +125,11 @@ is sent as `client_secret_basic` only (no `private_key_jwt`).
   outside production CORS/CSRF also allow the loopback twin of `APP_URL` and of the request's own
   loopback origin. `SETUP.md` 1.6.
 
+- **Tunnel**: `pnpm dev:tunnel` runs cfld through `apps/web/scripts/cfld.mjs`. That script
+  downloads cloudflared (pinned in `scripts/lib/cloudflared.mjs`) the first time there is no
+  override, no PATH binary and no managed copy. `pnpm install` never builds the package.
+  `SETUP.md` 1.10.
+
 **Known gaps:** `pnpm dev:tunnel` always targets :3000 (cfld reads `package.json`); `pnpm dev:api`
 alone reads `DEV_API_PORT` from the shell only, not `.dev.vars`; no `/api/ready` smoke step against a preview; no OpenAPI (`@hono/zod-openapi` is the
 path); no per-PR previews.
@@ -222,7 +227,10 @@ path); no per-PR previews.
   `*.neon.tech` URL also sets `DATABASE_DRIVER=neon` there (HTTPS + WebSocket only, which is what a
   sandbox allows; `--driver` overrides). An
   off-box `DATABASE_URL` (not loopback) is left alone by `dev-db.mjs` and skips preflight's Docker
-  checks. The seed runs there with `SEED_ALLOW_REMOTE=1`.
+  checks. The seed runs there with `SEED_ALLOW_REMOTE=1`. A sandbox that already installed, made
+  the database and knows it is migrated says so instead of paying for it again: `--no-install`,
+  `ROCKETFLARE_BOOTSTRAP_SKIP=<steps>` (any of steps 1–8 by name) and `ROCKETFLARE_ALLOW_ROOT=1`
+  (its commands run as root; the container is the boundary) — `SETUP.md` Part 1.
 - **Migrations**: `db:generate` → read the SQL → `db:migrate` (role → migrations → grants).
   Migrations are forward-only.
 - **Cross-tenant allow-list**: `tests/config/unscoped-allowlist.test.ts` fails a function that

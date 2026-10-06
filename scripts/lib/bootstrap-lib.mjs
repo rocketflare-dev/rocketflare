@@ -375,10 +375,48 @@ export function databaseUrlTarget(url) {
 }
 
 /**
+ * The steps `ROCKETFLARE_BOOTSTRAP_SKIP` may name — the names on the `✔ n/10` lines of steps 1–8.
+ * Steps 9 and 10 (`cli`, `run`) are already optional through `--no-dev`.
+ */
+export const BOOTSTRAP_SKIPPABLE_STEPS = [
+  'toolchain',
+  'install',
+  'secrets',
+  'database',
+  'migrate',
+  'plugins',
+  'seed',
+  'cloudflare',
+]
+
+/**
+ * `ROCKETFLARE_BOOTSTRAP_SKIP` (comma-separated step names) → the steps to leave out, in step
+ * order. For a caller that has already done that work itself (a coding sandbox that ran its own
+ * `pnpm install`, made the database and knows it is migrated). An unknown name is a usage error:
+ * a typo must not quietly run the step it meant to skip.
+ */
+export function parseBootstrapSkip(value) {
+  const names = (value ?? '')
+    .split(',')
+    .map(name => name.trim())
+    .filter(Boolean)
+  const unknown = names.filter(name => !BOOTSTRAP_SKIPPABLE_STEPS.includes(name))
+  if (unknown.length > 0) {
+    throw new BootstrapUsageError(
+      `ROCKETFLARE_BOOTSTRAP_SKIP: unknown step ${unknown.join(', ')} ` +
+        `(one of ${BOOTSTRAP_SKIPPABLE_STEPS.join(', ')})`
+    )
+  }
+  return BOOTSTRAP_SKIPPABLE_STEPS.filter(name => names.includes(name))
+}
+
+/**
  * `argv` (without node and the script) → the bootstrap's options. Throws `BootstrapUsageError`
- * for anything it does not understand. `env` supplies `DEV_VERBOSE` only.
+ * for anything it does not understand. `env` supplies `DEV_VERBOSE`, `ROCKETFLARE_BOOTSTRAP_SKIP`
+ * (→ `skip`; `--no-install` adds `install`) and `ROCKETFLARE_ALLOW_ROOT=1` (→ `allowRoot`).
  */
 export function parseBootstrapArgs(argv, env = {}) {
+  const skip = new Set(parseBootstrapSkip(env.ROCKETFLARE_BOOTSTRAP_SKIP))
   const opts = {
     yes: false,
     shareDbIgnored: false,
@@ -394,6 +432,8 @@ export function parseBootstrapArgs(argv, env = {}) {
     check: false,
     verbose: env.DEV_VERBOSE === '1',
     help: false,
+    skip: [],
+    allowRoot: env.ROCKETFLARE_ALLOW_ROOT === '1',
   }
   const takeValue = (flag, i, what) => {
     const value = argv[i + 1]
@@ -420,6 +460,9 @@ export function parseBootstrapArgs(argv, env = {}) {
         break
       case '--no-plugins':
         opts.plugins = false
+        break
+      case '--no-install':
+        skip.add('install')
         break
       // Kept so an older command line (or doc) still runs. Sharing was only ever a workaround
       // for the fixed port; scripts/dev-db.mjs now gives each checkout its own database.
@@ -494,6 +537,7 @@ export function parseBootstrapArgs(argv, env = {}) {
       )
     }
   }
+  opts.skip = BOOTSTRAP_SKIPPABLE_STEPS.filter(name => skip.has(name))
   return opts
 }
 

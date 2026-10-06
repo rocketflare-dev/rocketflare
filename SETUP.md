@@ -36,7 +36,14 @@ Engine and add your user to the `docker` group. Confirm the tool works, then car
 > (restore it), `--no-demo` (plain `pnpm seed`), `--no-plugins` (do not install `defaultPlugins`,
 > §1.4b), `--no-dev` (stop after step 8 and print what to run next), `--no-open`,
 > `--as <email>`, `--yes`, `--verbose`, `--db-url <url>` (an existing Postgres instead of Docker,
-> §1.4); `--check` is `pnpm preflight`.
+> §1.4); `--check` is `pnpm preflight`. `--offline` never runs `wrangler whoami`, so step 8 makes
+> no network call.
+> **A caller that did part of the work itself** (a coding sandbox): `--no-install` skips step 2 (it
+> still checks `wrangler` is installed); `ROCKETFLARE_BOOTSTRAP_SKIP=<steps>` leaves out any of
+> `toolchain,install,secrets,database,migrate,plugins,seed,cloudflare` (each line then reads
+> `skipped (ROCKETFLARE_BOOTSTRAP_SKIP)`; an unknown name is exit `2`; a skipped `cloudflare`
+> leaves both tomls untouched); `ROCKETFLARE_ALLOW_ROOT=1` lets it run as root. None is for a
+> person's own machine.
 > Exit codes: `0` ok · `1` a step failed · `2` usage · `3` prerequisite missing · `4` port/container
 > held by another checkout · `5` Cloudflare login required
 > (`node scripts/bootstrap.mjs --help`).
@@ -298,9 +305,16 @@ adapter carries its MCP transport, `docs/DEPLOY.md` "Bundle size" — and `pnpm 
 ### 1.10 Public URL via tunnel `[ready]` (optional)
 For OAuth callbacks, emailed magic links or webhooks against your laptop:
 ```bash
-pnpm web exec cfld setup   # once: picks a Cloudflare zone, stores apps/web/.cfld.json (git-ignored)
-pnpm dev:tunnel            # cfld → :3000; apps/web/scripts/tunnel-dev.mjs passes the URL to wrangler as APP_URL
+pnpm web cfld setup   # once: picks a Cloudflare zone, stores apps/web/.cfld.json (git-ignored)
+pnpm dev:tunnel       # cfld → :3000; apps/web/scripts/tunnel-dev.mjs passes the URL to wrangler as APP_URL
 ```
+Both go through `apps/web/scripts/cfld.mjs`, which needs a `cloudflared` binary. It uses, in cfld's
+own order, `CFLD_CLOUDFLARED` / `CLOUDFLARED_BIN`, then a `cloudflared` on PATH (`brew install
+cloudflared`), then the copy the `cloudflared` npm package manages. When none exists, the first run
+downloads that copy (~38 MB, cloudflared `2026.9.3`; `CLOUDFLARED_VERSION=<tag|latest>` picks
+another) into `node_modules` and later runs reuse it. `pnpm install` no longer downloads it: the
+package is in `ignoredBuiltDependencies`, not `onlyBuiltDependencies`. Run cfld's other commands
+the same way (`pnpm web cfld doctor`); `pnpm web exec cfld …` skips the install.
 Verify: the printed `https://…` host opens the app; `/auth/methods` there reports the same providers
 as localhost. `.dev.vars` and the tomls are untouched; plain `pnpm dev` still uses localhost. Add
 the tunnel host to each OAuth app's redirect URIs (Part 2) to test those flows. The CLI can log in
