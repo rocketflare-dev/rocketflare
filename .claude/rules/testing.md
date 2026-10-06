@@ -92,9 +92,10 @@ reader) or of anything the app ships stays in `config` — the copy's gate is wh
   it runs 2 forks, and a test needing TCP or a superuser skips itself with
   `isEphemeralTestRun(process.env)` and a stated reason (`db-roles.test.ts`)
 - **Time limits scale with the target, never per test.** `vitest.config.ts` multiplies the test,
-  hook and teardown limits by one latency factor: 1 locally under `postgres` (vitest's 5 s stays
-  the tripwire for a genuinely slow test), 4 under `neon` through the proxy, 12 on a real Neon
-  branch. No test carries a numeric budget of its own: a test that is slow only on a slow link is
+  hook and teardown limits by one latency factor (`tests/helpers/latency.ts`): 1 locally under
+  `postgres` (vitest's 5 s stays the tripwire for a genuinely slow test), 4 under `neon` through
+  the proxy, 12 on a real Neon branch. `TEST_LATENCY_FACTOR` raises it (never lowers it) on a slow
+  machine — a coding sandbox running a test by hand; anything but a positive number throws. No test carries a numeric budget of its own: a test that is slow only on a slow link is
   walking to a limit query by query, so it LOWERS that limit — `runStreamBody`'s injectable
   `maxMs`, `AgentRunWorkflow.maxInterruptRounds` — and asserts the behaviour at it
 - Per-file `apps/web/tests/api-setup.ts` closes clients after each file (connection budget: forks × pools)

@@ -4,7 +4,7 @@ previous: 0.17.2
 date: null
 breaking: false
 migrations: []
-areas: []
+areas: [config, docs]
 touches_surfaces: []
 requires_surfaces: []
 manual: false
@@ -12,20 +12,23 @@ manual: false
 
 ## What changed
 
-_Nothing yet. Add an entry here in the same pull request as the change. This first paragraph is
-lifted VERBATIM into `CHANGELOG.md`, so make it ONE standalone summary sentence of ≤ 40 words —
-then one bullet per change, one line each, and no `###` sub-headings. Rationale belongs in
-`docs/CONCEPTS.md` and is linked, never restated; see `README.md` beside this file._
+A slow machine can raise every test time limit: `TEST_LATENCY_FACTOR` scales the vitest test, hook and teardown limits up, never down, so a coding sandbox running one test by hand stops timing out at 5 s.
+
+- `apps/web/tests/helpers/latency.ts` (new): `latencyFactor(env)` — 1 under `postgres`, 4 under `neon`, 12 with `TEST_DATABASE_EPHEMERAL=1`, raised to `TEST_LATENCY_FACTOR` when that is larger. A value that is not a positive number throws.
+- `apps/web/vitest.config.ts`: `LATENCY_FACTOR = latencyFactor(process.env)`; the header names `TEST_LATENCY_FACTOR` beside `TEST_MAX_WORKERS`.
+- Docs: `.claude/rules/testing.md` (time limits) and `docs/CONCEPTS.md` (ephemeral test database).
+- Tests: `apps/web/tests/config/latency-factor.test.ts` (new).
 
 ## How to apply
 
-_Numbered, imperative, each step self-contained — no "these", "them" or "the above" reaching
-outside its own step._
+1. Take `apps/web/tests/helpers/latency.ts` and `apps/web/tests/config/latency-factor.test.ts` from the kit diff.
+2. In `apps/web/vitest.config.ts`, import `latencyFactor` from `./tests/helpers/latency` and replace the `LATENCY_FACTOR` expression with `latencyFactor(process.env)`.
 
 ## Conflicts to expect
 
-_One line each: `path → what changed → what to do`. Or exactly `None.`_
+- `apps/web/vitest.config.ts` → `LATENCY_FACTOR` now comes from `latencyFactor` → keep any project changes of your own and take the one-line replacement.
 
 ## Verify
 
-_Numbered checkable commands and assertions only._
+1. `pnpm --filter @<slug>/web exec vitest run --project config tests/config/latency-factor.test.ts` passes.
+2. `TEST_LATENCY_FACTOR=fast pnpm --filter @<slug>/web exec vitest run --project config tests/config/latency-factor.test.ts` fails with "TEST_LATENCY_FACTOR must be a positive number".
