@@ -29,6 +29,7 @@ import {
 } from '../../../../scripts/lib/manifest.mjs'
 import {
   addBarrelLine,
+  addedByPlugins,
   addPlanJson,
   applyCoreEdits,
   archiveSql,
@@ -51,6 +52,8 @@ import {
   isVendored,
   jsonKeyLine,
   missingDependencies,
+  newlyAddedDependencies,
+  nextAddedDependencies,
   nextPluginMigrationTag,
   PLUGIN_MANIFEST_FILE,
   parsePluginRequirement,
@@ -743,6 +746,14 @@ describe('the surface an install records', () => {
     expect(surface.paths).toContain('docs/plugins/orders/**')
     expect(surface.registries).toContain('apps/web/src/plugins/server.ts')
     expect(surface.minKit).toBe('0.5.0')
+    // No record unless the install says what it brought in.
+    expect(surface).not.toHaveProperty('addedDependencies')
+    const recorded = buildPluginSurface(fixtureManifest, {
+      repo: fixtureManifest.repo,
+      at: '2026-09-17',
+      addedDependencies: { 'apps/web': ['zod'] },
+    })
+    expect(recorded.addedDependencies).toEqual({ 'apps/web': ['zod'] })
   })
 
   it('records an UNDECLARED floor as null, never as a wildcard', () => {
@@ -1489,8 +1500,8 @@ describe('the audit', () => {
   /**
    * `plugin upgrade` and dependencies: what changed between the installed release's declarations
    * and the new one's, and what the host does about each. A dependency is only removed when it
-   * was demonstrably the plugin's — nobody else declares it and the host holds exactly the range
-   * this plugin declared.
+   * was demonstrably the plugin's — a plugin's `addedDependencies` record says a plugin brought it
+   * in, nobody else declares it, and the host holds exactly the range this plugin declared.
    */
   describe('the dependency delta an upgrade applies', () => {
     const v1 = {
@@ -1542,6 +1553,9 @@ describe('the audit', () => {
       ])
     })
 
+    // Every package v1 could drop was brought in by a plugin.
+    const addedAll = { 'apps/web': ['is-odd', 'pinned', 'shared'] }
+
     it('removes a dependency only when it was the plugin’s, and says why it keeps the rest', () => {
       const v2 = { id: 'orders', dependencies: { 'apps/web': { 'left-pad': '^1.0.0' } } }
       const delta = dependencyDelta(v1, v2, {
@@ -1550,6 +1564,7 @@ describe('the audit', () => {
           { id: 'orders', dependencies: v1.dependencies },
           { id: 'billing', dependencies: { 'apps/web': { shared: '^1.0.0' } } },
         ],
+        addedByPlugins: addedAll,
       })
       // Owned: nobody else declares it and the host holds exactly what v1 declared.
       expect(delta.remove).toEqual({ 'apps/web': ['is-odd'] })
@@ -1562,14 +1577,74 @@ describe('the audit', () => {
       expect(byName.pinned.action).toBe('keep')
       expect(byName.pinned.reason).toContain('1.0.5')
       // Already gone from the host: nothing to do.
-      expect(dependencyDelta(v1, v2, { packageJsons: host({}) }).remove).toEqual({})
+      expect(
+        dependencyDelta(v1, v2, { packageJsons: host({}), addedByPlugins: addedAll }).remove
+      ).toEqual({})
       // A plugin is never its own peer.
       expect(
         dependencyDelta(v1, v2, {
           packageJsons: installedHost,
           installed: [{ id: 'orders', dependencies: v1.dependencies }],
+          addedByPlugins: addedAll,
         }).remove
       ).toEqual({ 'apps/web': ['is-odd', 'shared'] })
+    })
+
+    it('never removes a package the host declared first, even at exactly the plugin’s old range', () => {
+      // The kit itself declares is-odd@^2.0.0; the plugin declared the same range and then dropped
+      // it. Equal strings say nothing about who put it there — only the record does.
+      const v2 = { id: 'orders', dependencies: { 'apps/web': { 'left-pad': '^1.0.0' } } }
+      const delta = dependencyDelta(v1, v2, {
+        packageJsons: installedHost,
+        installed: [{ id: 'orders', dependencies: v1.dependencies }],
+        addedByPlugins: { 'apps/web': ['shared'] },
+      })
+      expect(delta.remove).toEqual({ 'apps/web': ['shared'] })
+      const isOdd = delta.changes.find(c => c.name === 'is-odd')
+      expect(isOdd?.action).toBe('keep')
+      expect(isOdd?.reason).toContain('declared it before a plugin did')
+      // No record at all (a plugin installed before records were kept): nothing is removed.
+      const legacy = dependencyDelta(v1, v2, { packageJsons: installedHost })
+      expect(legacy.remove).toEqual({})
+      expect(legacy.changes.find(c => c.name === 'is-odd')?.reason).toContain('no record')
+    })
+
+    it('keeps the record: installs into a host that lacked the package join, removals leave', () => {
+      expect(
+        newlyAddedDependencies(
+          { 'apps/web': { zod: '^3.0.0', 'left-pad': '^2.0.0' } },
+          installedHost
+        )
+      ).toEqual({ 'apps/web': ['zod'] })
+      const v2 = {
+        id: 'orders',
+        dependencies: { 'apps/web': { 'left-pad': '^2.0.0', zod: '^3.0.0', shared: '^1.0.0' } },
+      }
+      const delta = dependencyDelta(v1, v2, {
+        packageJsons: installedHost,
+        installed: [{ id: 'orders', dependencies: v1.dependencies }],
+        addedByPlugins: { 'apps/web': ['is-odd', 'pinned'] },
+      })
+      // zod is new to the host (recorded); left-pad was already there (re-ranged, not recorded);
+      // is-odd was removed (dropped); pinned was kept (stays recorded for whoever drops it last).
+      expect(nextAddedDependencies({ 'apps/web': ['is-odd', 'pinned'] }, delta)).toEqual({
+        'apps/web': ['pinned', 'zod'],
+      })
+      expect(nextAddedDependencies(undefined, { changes: [] })).toEqual({})
+    })
+
+    it('reads who added what from every plugin surface, or nothing when this one has no record', () => {
+      const surfaces: { id: string; addedDependencies?: Record<string, string[]> }[] = [
+        { id: 'orders', addedDependencies: { 'apps/web': ['is-odd'] } },
+        { id: 'billing', addedDependencies: { 'apps/web': ['shared'], 'apps/cli': ['chalk'] } },
+        { id: 'legacy' },
+      ]
+      expect(addedByPlugins(surfaces, 'orders')).toEqual({
+        'apps/web': ['is-odd', 'shared'],
+        'apps/cli': ['chalk'],
+      })
+      expect(addedByPlugins(surfaces, 'legacy')).toBeNull()
+      expect(addedByPlugins(surfaces, 'missing')).toBeNull()
     })
 
     it('flags a new range another installed plugin cannot live with, in add’s words', () => {

@@ -82,9 +82,10 @@ describe('ci.yml', () => {
   it('has a gate job that runs pnpm gate, last — and is never skipped', () => {
     const gate = commands(job(CI, 'gate'))
     expect(gate.at(-1)).toBe('pnpm gate')
-    // `!cancelled()` and nothing else: a skipped or failed `verified` must still run the gate.
-    expect(key(job(CI, 'gate'), 'if')).toBe(expr('!cancelled()'))
-    expect(key(job(CI, 'gate'), 'needs')).toBe('verified')
+    expect(key(job(CI, 'gate'), 'name')).toBe('Gate')
+    // No job-level condition and nothing to wait for: the one required check always runs, at once.
+    expect(key(job(CI, 'gate'), 'if')).toBeUndefined()
+    expect(key(job(CI, 'gate'), 'needs')).toBeUndefined()
   })
 
   it('adds nothing of substance to the gate but the secrets scan (and the scope it decides)', () => {
@@ -96,39 +97,52 @@ describe('ci.yml', () => {
         !c.startsWith('nohup docker compose -f apps/web/docker-compose.test.yml') &&
         !c.startsWith('> "$RUNNER_TEMP/pull.log"') &&
         !/gitleaks/.test(c) &&
-        // the `scope` step's shell
-        !/^(if \[ "\$VERIFIED"|echo "reuse=|echo "Launch gated|else|fi)/.test(c)
+        // the attestation lookup
+        c !== 'node scripts/gate-verified.mjs'
     )
     expect(substantive).toEqual([])
   })
 
-  it('runs the full gate unless the scope step proved this tree was gated by Launch', () => {
+  it('runs the full gate unless the lookup step proved this tree was gated by Launch', () => {
     const text = job(CI, 'gate').join('\n')
-    // The full gate is the fallback: any output but `true` (empty, `false`) runs it.
-    expect(text).toMatch(/- if: steps\.scope\.outputs\.reuse != 'true'\n\s+run: pnpm gate\n/)
-    expect(text).toMatch(/if: steps\.scope\.outputs\.reuse == 'true'\n\s+run: pnpm gate build\n/)
+    // The full gate is the fallback: any output but `true` (empty, `false`, a skipped step) runs it.
+    expect(text).toMatch(/- if: steps\.verified\.outputs\.verified != 'true'\n\s+run: pnpm gate\n/)
+    expect(text).toMatch(
+      /if: steps\.verified\.outputs\.verified == 'true'\n\s+run: pnpm gate build\n/
+    )
     // gitleaks is never conditional.
     const gitleaks = text.indexOf('- name: gitleaks')
     expect(text.slice(gitleaks, text.indexOf('run:', gitleaks))).not.toMatch(/if:/)
-    // reuse needs the verified output AND the same tree, re-read in this job.
-    expect(text).toContain('[ "$VERIFIED" = "true" ]')
-    expect(text).toContain(`[ "$(git rev-parse 'HEAD^{tree}')" = "$TREE" ]`)
+    // Same job, same checkout: the old cross-job `scope` re-read of the tree has nothing to guard.
+    expect(text).not.toContain('needs.verified')
+    expect(text).not.toContain('steps.scope')
   })
 
-  it('looks up a Launch attestation only when LAUNCH_GATE_APP_ID is set, with read scopes', () => {
-    const verified = job(CI, 'verified')
-    expect(key(verified, 'if')).toBe("vars.LAUNCH_GATE_APP_ID != ''")
-    const text = verified.join('\n')
+  it('looks up a Launch attestation FIRST, in Gate, only when LAUNCH_GATE_APP_ID is set', () => {
+    const gate = job(CI, 'gate')
+    const text = gate.join('\n')
+    // Gate holds the lookup's read scopes — and deploy.yml's `ci` job grants exactly these.
     expect(text).toMatch(
       /permissions:\n\s+contents: read\n\s+checks: read\n\s+pull-requests: read\n/
     )
-    expect(commands(verified)).toEqual(['node scripts/gate-verified.mjs'])
-    expect(text).toContain(`PR_HEAD_SHA: ${expr('github.event.pull_request.head.sha')}`)
-    // The first job, and the only other one.
+    expect(text).not.toMatch(/: write/)
+    // The first step after the checkout, before any install.
+    const steps = gate.filter(l => /^ {6}- /.test(l)).map(l => l.trim())
+    expect(steps[0]).toBe('- uses: actions/checkout@v4')
+    expect(steps[1]).toBe('- name: Verified by Launch?')
+    const at = text.indexOf('- name: Verified by Launch?')
+    const step = text.slice(at, text.indexOf('\n      - ', at + 1))
+    expect(step).toContain('id: verified')
+    expect(step).toContain("if: vars.LAUNCH_GATE_APP_ID != ''")
+    expect(step).toContain('run: node scripts/gate-verified.mjs')
+    expect(step).toContain(`LAUNCH_GATE_APP_ID: ${expr('vars.LAUNCH_GATE_APP_ID')}`)
+    expect(step).toContain(`GITHUB_TOKEN: ${expr('github.token')}`)
+    expect(step).toContain(`PR_HEAD_SHA: ${expr('github.event.pull_request.head.sha')}`)
+    // One job: no second runner to queue for before the gate can start.
     const jobs = CI.slice(CI.indexOf('\njobs:\n'))
       .split('\n')
       .filter(l => /^ {2}[\w-]+:$/.test(l))
-    expect(jobs).toEqual(['  verified:', '  gate:'])
+    expect(jobs).toEqual(['  gate:'])
   })
 
   it('has no second test job, no services: database and no skipped step', () => {
@@ -173,7 +187,7 @@ describe('deploy.yml', () => {
     expect(key(ci, 'needs')).toBe('[guard, gated]')
     expect(key(ci, 'uses')).toBe('./.github/workflows/ci.yml')
     expect(ci.join('\n')).not.toMatch(/with:/)
-    // ci.yml's `verified` job asks for these; a called workflow cannot exceed its caller's grant.
+    // ci.yml's `Gate` job asks for these; a called workflow cannot exceed its caller's grant.
     expect(ci.join('\n')).toMatch(
       /permissions:\n\s+contents: read\n\s+checks: read\n\s+pull-requests: read\n/
     )
@@ -445,9 +459,37 @@ describe('deploy.yml build once', () => {
         "vars.DEPLOYER_URL != '' && github.ref_type == 'tag'"
     )
     expect(attach.join('\n')).toMatch(/permissions:\n\s+contents: write/)
-    expect(commands(attach)).toEqual([
+    const run = commands(attach).filter(c => !c.startsWith('echo '))
+    expect(run).toEqual([
       'node scripts/bundle.mjs attach "bundle/launch-bundle-$BUNDLE_TAG.tgz"',
+      'node scripts/bundle.mjs prune',
     ])
+  })
+
+  it('never turns the run red once staging is live: a failed attach or prune is a warning', () => {
+    const attach = job(DEPLOY, 'release-bundle')
+    // No job-level continue-on-error: the job itself stays green, its failing steps are tolerated.
+    expect(key(attach, 'continue-on-error')).toBeUndefined()
+    const text = attach.join('\n')
+    const download = text.slice(text.indexOf('- id: download'), text.indexOf('- name: Verify'))
+    expect(download).toContain('continue-on-error: true')
+    expect(download).toContain('uses: actions/download-artifact@v4')
+    const verify = step(attach, 'Verify and attach the bundle')
+    expect(verify).toContain("if: steps.download.outcome == 'success'")
+    expect(verify).toContain('continue-on-error: true')
+    // Anything but a successful attach (failed, or skipped after a failed download) is said aloud.
+    const warn = step(attach, 'Production will build from the tag (the bundle was not attached)')
+    expect(warn).toContain("if: steps.attach.outcome != 'success'")
+    expect(warn).toContain('::warning title=Build once::')
+    expect(warn).toContain('$GITHUB_STEP_SUMMARY')
+    // Pruning runs only after an attach, never fails the job, and is configurable.
+    const prune = step(attach, 'Prune unpromoted bundle drafts')
+    expect(prune).toContain("if: steps.attach.outcome == 'success'")
+    expect(prune).toContain('continue-on-error: true')
+    expect(prune).toContain(`BUNDLE_KEEP_DRAFTS: ${expr('vars.BUNDLE_KEEP_DRAFTS')}`)
+    expect(step(attach, 'Old drafts were not pruned')).toContain(
+      "if: steps.prune.outcome == 'failure'"
+    )
   })
 
   it('never gives contents: write to a job that runs pnpm install', () => {

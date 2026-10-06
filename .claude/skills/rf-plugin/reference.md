@@ -245,10 +245,20 @@ declaration changed — after the files are written, before the surface is stamp
 | change | action |
 |---|---|
 | added, or range changed | `install` the way `add` does — skipped (`none`) when the host already holds a range inside the new one |
-| removed, no other plugin declares it, host range **exactly** the old declared one | `remove` it from the host `package.json` |
+| removed, a plugin brought it in (`addedDependencies`), no other plugin declares it, host range **exactly** the old declared one | `remove` it from the host `package.json` |
 | removed, another installed plugin declares it | `keep`, naming that plugin |
 | removed, host pins some other range (the operator's or the kit's) | `keep`, naming the range |
+| removed, the host declared it before any plugin did (the kit's own, even at the same range) | `keep` |
+| removed, the plugin's surface has no `addedDependencies` (installed by kit 0.17.1 or earlier) | `keep` — remove it by hand if nothing imports it |
 | removed, not in the host | `none` |
+
+**Who added a package** is recorded on the plugin's surface as `addedDependencies`
+(`{ "<pkg dir>": ["name", …] }`): `add --apply` records each package the host did not declare at
+all, and `upgrade --apply` adds what it newly installs and drops what it removes (a package kept
+because a peer still declares it stays recorded, so the last plugin to drop it can remove it).
+A removal checks the union of every plugin's record. Equal range strings alone are no evidence:
+the kit may declare a package at exactly the range a plugin did. A surface written before the
+record existed gets one at its next `upgrade --apply`, holding only what that upgrade installs.
 
 Then one `pnpm install --no-frozen-lockfile` if any file changed. An `install` whose range is not
 inside what another installed plugin declares would fail that plugin's `plugin check`, so it is

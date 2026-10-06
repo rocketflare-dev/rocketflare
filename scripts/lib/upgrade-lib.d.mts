@@ -35,6 +35,12 @@ export interface Surface {
     surfaces?: string[]
     plugins?: Array<string | { id: string; minVersion?: string | null }>
   }
+  /**
+   * `kind: 'plugin'` only: per host package, the dependencies this plugin brought into the host
+   * (absent before it). Missing on a plugin installed by kit 0.17.1 or earlier — `plugin upgrade` then removes
+   * none of its packages.
+   */
+  addedDependencies?: Record<string, string[]>
   history?: HistoryEntry[]
 }
 export interface KitBlock {
@@ -150,7 +156,8 @@ export function splitDiff(patchText: string): DiffBlock[]
 export class BinaryPatchError extends Error {}
 export function translateBlock(
   block: DiffBlock,
-  names: Names,
+  /** null: the kit itself — nothing is translated. */
+  names: Names | null,
   options?: { translate?: boolean }
 ): string
 export function countLines(text: string): number

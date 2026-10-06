@@ -16,11 +16,14 @@ import {
   BUNDLE_PROTOCOL,
   bundleDigest,
   collectEntries,
+  DEFAULT_KEEP_DRAFTS,
   type Entries,
+  isBundleDraft,
   makeManifest,
   packBundle,
   payloadDigest,
   productionSource,
+  pruneDraftsPlan,
   type Release,
   readTomlBasics,
   sha256,
@@ -384,5 +387,65 @@ describe('attachPlan', () => {
       action: 'replace',
       release: { id: 4 },
     })
+  })
+})
+
+describe('pruneDraftsPlan', () => {
+  const draft = (
+    id: number,
+    tag: string,
+    assets = [{ id: id * 10, name: assetName(tag), size: 1 }]
+  ) => ({ id, tag_name: tag, draft: true, assets }) as Release
+
+  it('recognises only an untouched bundle draft', () => {
+    expect(isBundleDraft(draft(1, '1.0.0'))).toBe(true)
+    expect(isBundleDraft({ ...draft(1, '1.0.0'), draft: false })).toBe(false)
+    expect(isBundleDraft(draft(1, '1.0.0', []))).toBe(false)
+    expect(isBundleDraft(draft(1, '1.0.0', [{ id: 1, name: 'other.zip', size: 1 }]))).toBe(false)
+    expect(
+      isBundleDraft(
+        draft(1, '1.0.0', [
+          { id: 1, name: assetName('1.0.0'), size: 1 },
+          { id: 2, name: 'notes.pdf', size: 1 },
+        ])
+      )
+    ).toBe(false)
+    expect(isBundleDraft(draft(1, 'v1.0.0', [{ id: 1, name: assetName('v1.0.0'), size: 1 }]))).toBe(
+      false
+    )
+  })
+
+  it('keeps the newest N at or below the tag, by version not by string, and deletes the rest', () => {
+    const all = ['1.9.0', '1.10.0', '1.2.0', '1.10.1', '0.1.0'].map((t, i) => draft(i + 1, t))
+    const plan = pruneDraftsPlan(all, { tag: '1.10.1', keep: 2 })
+    expect(plan.kept.map(r => r.tag_name)).toEqual(['1.10.1', '1.10.0'])
+    expect(plan.remove.map(r => r.tag_name)).toEqual(['1.9.0', '1.2.0', '0.1.0'])
+  })
+
+  it('never touches a newer tag’s draft, a published release, or anything else', () => {
+    const all = [
+      draft(1, '1.0.0'),
+      draft(2, '3.0.0'),
+      { id: 3, tag_name: '0.5.0', draft: false, assets: [] } as Release,
+      draft(4, '0.6.0', []),
+    ]
+    expect(pruneDraftsPlan(all, { tag: '2.0.0', keep: 1 })).toEqual({
+      kept: [all[0]],
+      remove: [],
+    })
+    expect(
+      pruneDraftsPlan([draft(1, '0.1.0'), draft(2, '0.2.0')], { tag: '0.3.0', keep: 1 })
+    ).toEqual({
+      kept: [expect.objectContaining({ id: 2 })],
+      remove: [expect.objectContaining({ id: 1 })],
+    })
+  })
+
+  it('is off at keep 0, defaults to a handful, and refuses a nonsense keep', () => {
+    const all = [draft(1, '1.0.0'), draft(2, '1.1.0')]
+    expect(pruneDraftsPlan(all, { tag: '1.1.0', keep: 0 })).toEqual({ kept: [], remove: [] })
+    expect(DEFAULT_KEEP_DRAFTS).toBeGreaterThan(1)
+    expect(pruneDraftsPlan(all, { tag: '1.1.0' }).remove).toEqual([])
+    expect(() => pruneDraftsPlan(all, { tag: '1.1.0', keep: -1 })).toThrow(/whole number/)
   })
 })

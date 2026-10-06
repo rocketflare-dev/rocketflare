@@ -1,5 +1,5 @@
 /**
- * Was this exact tree already gated by Launch? (docs/CONCEPTS.md §4, `ci.yml`'s `verified` job.)
+ * Was this exact tree already gated by Launch? (docs/CONCEPTS.md §4, `ci.yml` `Gate`'s first step.)
  *
  * After a green sandbox gate, Launch's GitHub App posts a check run on the pushed commit:
  * `name: launch/gate`, `conclusion: success`, `external_id: tree:<tree sha>`, and `output.text`

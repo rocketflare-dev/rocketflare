@@ -202,7 +202,14 @@ export { isVendored } from './upgrade-lib.d.mts'
 
 export function buildPluginSurface(
   manifest: PluginManifest,
-  source: { repo: string; subdir?: string; commit?: string | null; at: string }
+  source: {
+    repo: string
+    subdir?: string
+    commit?: string | null
+    at: string
+    /** Per host package, the names this install brought in (`newlyAddedDependencies`). */
+    addedDependencies?: Record<string, string[]>
+  }
 ): Surface
 export function surfaceDirectories(surface: Surface): string[]
 export function archiveSql(id: string, tables: readonly string[]): string
@@ -391,8 +398,29 @@ export function dependencyDelta(
   context?: {
     packageJsons?: Record<string, HostPackageJson | null>
     installed?: ReadonlyArray<{ id: string; dependencies?: Record<string, Record<string, string>> }>
+    /**
+     * Per host package, the names some plugin brought in (`addedByPlugins`). A removed declaration
+     * is removed from the host only when its name is here; null (the plugin has no record) keeps
+     * every one.
+     */
+    addedByPlugins?: Record<string, string[]> | null
   }
 ): DependencyDelta
+/** The `addedDependencies` record after `delta` is applied: installs into a host that lacked the package join, removals leave. */
+export function nextAddedDependencies(
+  record: Record<string, string[]> | null | undefined,
+  delta: Pick<DependencyDelta, 'changes'> | null | undefined
+): Record<string, string[]>
+/** Per host package, the names in `install` the host does not declare at all. */
+export function newlyAddedDependencies(
+  install?: Record<string, Record<string, string>>,
+  packageJsons?: Record<string, HostPackageJson | null>
+): Record<string, string[]>
+/** The union of every plugin surface's `addedDependencies`; null when `id`'s surface has no record. */
+export function addedByPlugins(
+  surfaces?: ReadonlyArray<{ id: string; addedDependencies?: Record<string, string[]> }>,
+  id?: string
+): Record<string, string[]> | null
 export function renderDependencyDelta(delta: DependencyDelta): string[]
 /** A `package.json` text without the named dependencies, in either section. */
 export function withoutDependencies(source: string, names?: readonly string[]): string

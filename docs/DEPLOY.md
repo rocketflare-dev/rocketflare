@@ -293,9 +293,10 @@ All steps run at the repository root; the root scripts fan out with `pnpm -r` / 
 `working-directory` is set anywhere.
 
 ```
- pull request / push to main ─► ci.yml ─► verified (only with LAUNCH_GATE_APP_ID set): did Launch's App
-                                  │         post a successful `launch/gate` for this tree? (`checks: read`)
-                                  │       ─► gate (the ONE required job): pre-pull the test images (background)
+ pull request / push to main ─► ci.yml ─► gate (the ONE job and required check): first, only with
+                                  │         LAUNCH_GATE_APP_ID set — did Launch's App post a successful
+                                  │         `launch/gate` for this tree? (`checks: read`)
+                                  │         → pre-pull the test images (background)
                                   │         → pnpm install --frozen-lockfile → gitleaks
                                   │         → pnpm gate: lint → typecheck → test → build
                                   │           (test: compose Postgres + Neon proxy; every package; the web
@@ -384,8 +385,8 @@ and `guard` ends its tag runs in seconds with a summary saying so.
 sandbox before it pushes, then its GitHub App posts a `launch/gate` check run on the pushed commit:
 `conclusion: success`, `external_id: tree:<tree sha>`, `output.text` JSON
 `{ tree, sessionId, attempt, steps }`. Set the repository variable **`LAUNCH_GATE_APP_ID`** to that
-App's numeric id and `ci.yml`'s first job, `verified`, looks for it; when it finds one for the tree
-under test, `Gate` runs gitleaks and `pnpm gate build` only. The rule (`scripts/lib/gate-verified-lib.mjs`):
+App's numeric id and the first step of `ci.yml`'s `Gate` job ("Verified by Launch?") looks for it;
+when it finds one for the tree under test, `Gate` runs gitleaks and `pnpm gate build` only. The rule (`scripts/lib/gate-verified-lib.mjs`):
 
 | event | tree compared | where the attestation is looked for |
 |---|---|---|
@@ -397,11 +398,12 @@ A pull request whose branch does not contain main's tip has a merge tree Launch 
 gets the full gate; so does a push whose tree moved past the PR head. Only a check run whose
 `app.id` is `LAUNCH_GATE_APP_ID` counts — a `launch/gate` from any other app is ignored — and it
 must be `completed`/`success` with that exact `external_id`. Any API error is `verified=false`.
-`Gate` re-reads its own checkout's tree and reuses the verdict only when it matches, and runs on
-`!cancelled()`, so a skipped or failed `verified` still runs the full gate. With the variable unset
-`verified` is skipped (no runner, no API call) and `Gate` is exactly the job above. `verified` asks
-for `contents`, `checks` and `pull-requests: read`, so deploy.yml's `ci` job grants those three — a
-called workflow may not ask for more than its caller grants.
+The lookup reads the tree from the same checkout the gate then tests, and only an explicit
+`verified=true` narrows the gate: a skipped step, `false`, or an empty output runs the full gate.
+With the variable unset the step is skipped (no API call) and `Gate` is exactly the job above. It
+was a separate `verified` job through 0.17.1; one job means one runner to queue for, not two in
+sequence. `Gate` holds `contents`, `checks` and `pull-requests: read`, so deploy.yml's `ci` job
+grants those three — a called workflow may not ask for more than its caller grants.
 
 ### Deploying through an external deployer (off by default)
 

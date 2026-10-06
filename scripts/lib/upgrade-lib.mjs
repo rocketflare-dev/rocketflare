@@ -337,12 +337,14 @@ export class BinaryPatchError extends Error {
  *
  * Path lines (`diff --git`, `---`, `+++`, `rename from/to`, `copy from/to`) are always translated;
  * the body only when `translate` is true. Mode lines are left verbatim — that is what preserves
- * the `120000` symlink the kit ships. `index` lines are dropped.
+ * the `120000` symlink the kit ships. `index` lines are dropped. `names` null — the kit itself,
+ * which has no app to translate into (`pnpm plugin upgrade` in the kit repository) — translates
+ * nothing at all, path lines included.
  */
 export function translateBlock(block, names, { translate = true } = {}) {
   const lines = block.raw.split('\n')
   const out = []
-  const sub = s => applyReplacements(s, names).text
+  const sub = s => (names ? applyReplacements(s, names).text : s)
   let inBody = false
   for (const line of lines) {
     if (BINARY_MARK.test(line)) throw new BinaryPatchError(block.header)

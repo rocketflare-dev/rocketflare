@@ -178,8 +178,8 @@ path); no per-PR previews.
   tree fails it) and in `plugin-ci.yml`.
 - **Verified once (opt-in, for an app Launch ships).** After a green sandbox gate Launch's GitHub
   App posts a `launch/gate` check run keyed by the tree (`external_id: tree:<sha>`). With the
-  repository variable `LAUNCH_GATE_APP_ID` set to that App's id, `ci.yml`'s `verified` job
-  (`scripts/gate-verified.mjs`, rules in `scripts/lib/gate-verified-lib.mjs`) looks for one from
+  repository variable `LAUNCH_GATE_APP_ID` set to that App's id, the first step of `ci.yml`'s
+  `Gate` job (`scripts/gate-verified.mjs`, rules in `scripts/lib/gate-verified-lib.mjs`) looks for one from
   THAT app, `success`, for the tree CI is about to test — on a pull request the merge commit's tree,
   found on the PR head (so it holds only while the branch contains main's tip); on a push to main
   the pushed commit's tree, found on the commit or its PRs' heads. Found, `Gate` runs gitleaks and
@@ -528,7 +528,9 @@ for it. Build once covers only the deployer path, and only a promotion that PUBL
 draft: a new release created for the tag instead has no bundle, so production rebuilds. Every
 upload carries its `digest` and `source` (`bundle` | `build`), but comparing production's digest
 with staging's is the deployer's job (Launch refuses a `bundle` upload that differs), not the
-kit's; a staging dispatch from a branch packs nothing.
+kit's; a staging dispatch from a branch packs nothing. A failed attach is a warning on a green run, not a
+red one (staging is live), and leaves that tag to build at promotion; unpromoted bundle drafts are
+pruned to the newest `BUNDLE_KEEP_DRAFTS` (5) after each attach.
 
 ## 11. CLI
 
@@ -705,7 +707,8 @@ as merging a PR. A plugin repo mirrors the host tree and ships **no migration, n
 - **`plugin check` is an exhaustive oracle**: manifest fields, `minKit`, ledger diff, barrel lines,
   `*.rej`, migration tag, host dependencies (present, at a range inside the declared one —
   `add` writes the declared range, never pnpm's `^<resolved>`; `upgrade` installs what a release
-  adds or re-ranges and removes what it drops only when no other plugin declares it and the host
+  adds or re-ranges and removes what it drops only when a plugin brought it in — the surface's
+  `addedDependencies` record, never range equality — no other plugin declares it and the host
   holds exactly the old range — a range a peer plugin cannot use is refused), worker exports, a tenant-isolation test for tenant
   tables, `onTenantDeleted` for DOs, table collisions, declared skills. Each finding names file, line and exact edit.
   Structural checks read comment-free code. It runs where a finding can still be acted on: at the
@@ -791,7 +794,9 @@ chars, and `uses` is only as fresh as the last export; table collisions are caug
 refused at `add`; the isolation check proves a test exists, not that it is right; no database-free
 test of data-touching handlers; one DO per row is unpurgeable (purge-intent ledger not built);
 `plugin-ci.yml` input changes reach callers only via `main`, and nothing tests versions between
-floor and ceiling. Public mounts (D34) get no rate limit of their own and no `@testkit` builder
+floor and ceiling. `addedDependencies` starts after 0.17.1: a plugin installed by 0.17.1 or earlier has its
+older packages kept, never removed, when a release drops them, and a package a plugin added that
+the kit later starts declaring too is still the plugin's to remove. Public mounts (D34) get no rate limit of their own and no `@testkit` builder
 (test them through `request()`); `verifyState` has no replay ledger — a token is reusable until it
 expires, so a plugin whose callback must run once records that itself; an ingested document's
 upsert reads the previous row before writing, so two racing re-ingests of a FILE may leave one

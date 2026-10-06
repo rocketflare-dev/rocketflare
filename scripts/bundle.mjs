@@ -11,6 +11,7 @@
 //   node scripts/bundle.mjs attach FILE    FILE onto the tag's release (a new DRAFT when none exists)
 //   node scripts/bundle.mjs fetch          production: the release's bundle → DEPLOYER_OUTDIR + dist/ui
 //                                          → $GITHUB_OUTPUT source=bundle|build
+//   node scripts/bundle.mjs prune          delete bundle drafts older than the newest BUNDLE_KEEP_DRAFTS
 //
 // Environment:
 //   TOML               the wrangler config of this job (its `[assets] directory` is the UI dir)
@@ -19,6 +20,8 @@
 //   RELEASE_VERSION    recorded in the manifest (pack)
 //   BUNDLE_FILE        the .tgz written by pack; default dist/launch-bundle-<tag>.tgz by TOML
 //   DEPLOYER_URL       fetch builds when unset (the plain wrangler path never runs this script)
+//   BUNDLE_KEEP_DRAFTS prune: how many bundle drafts to keep, BUNDLE_TAG's included (default 5;
+//                      0 turns pruning off)
 //   GITHUB_TOKEN, GITHUB_REPOSITORY, GITHUB_API_URL (default https://api.github.com)
 //   GITHUB_OUTPUT, GITHUB_STEP_SUMMARY — set by GitHub Actions
 //
@@ -41,9 +44,11 @@ import {
   assetName,
   attachPlan,
   collectEntries,
+  DEFAULT_KEEP_DRAFTS,
   makeManifest,
   packBundle,
   productionSource,
+  pruneDraftsPlan,
   splitEntries,
   unpackBundle,
   verifyBundle,
@@ -338,7 +343,34 @@ async function fetchBundle() {
   )
 }
 
-const COMMANDS = { pack, verify, attach, fetch: fetchBundle }
+async function prune() {
+  const tag = requireTag()
+  const raw = env('BUNDLE_KEEP_DRAFTS')
+  const keep = raw === undefined ? DEFAULT_KEEP_DRAFTS : Number(raw)
+  if (!Number.isInteger(keep) || keep < 0) {
+    fail(`BUNDLE_KEEP_DRAFTS must be a whole number (0 turns pruning off), got '${raw}'`)
+  }
+  const plan = pruneDraftsPlan(await allReleases(), { tag, keep })
+  for (const release of plan.remove) {
+    const res = await github('DELETE', `/repos/${repo()}/releases/${release.id}`)
+    if (!res.ok && res.status !== 404) {
+      fail(`deleting the draft release for ${release.tag_name}: ${res.status}`)
+    }
+    await res.body?.cancel().catch(() => {})
+    console.log(`deleted the unpromoted draft release for ${release.tag_name} (${release.id})`)
+  }
+  const removed = plan.remove.map(r => `\`${r.tag_name}\``)
+  console.log(
+    keep === 0
+      ? 'pruning is off (BUNDLE_KEEP_DRAFTS=0)'
+      : `kept ${plan.kept.length} bundle draft(s), deleted ${plan.remove.length}`
+  )
+  if (removed.length > 0) {
+    summary(`Deleted ${removed.length} unpromoted bundle draft(s): ${removed.join(', ')}.`)
+  }
+}
+
+const COMMANDS = { pack, verify, attach, fetch: fetchBundle, prune }
 
 const isMain = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)
 if (isMain) {

@@ -149,8 +149,9 @@ pnpm plugin upgrade <id> [--to <ref>] --apply
 The plan ends with a **`Dependencies`** block: each dependency whose declaration the release
 changes, marked `+` added, `~` range changed or `-` removed, with what `--apply` will do — `install`
 (`pnpm add`, then the declared range written back and one `pnpm install --no-frozen-lockfile`),
-`remove`, `keep` (with the reason: another installed plugin declares it, or the host pins a range
-this plugin never declared), or `nothing to do`. `--json` carries it as `dependencies`. Show it to
+`remove`, `keep` (with the reason: another installed plugin declares it, the host pins a range
+this plugin never declared, the host declared it before any plugin did, or the plugin was installed
+before the kit recorded what it added), or `nothing to do`. `--json` carries it as `dependencies`. Show it to
 the person before applying; a `remove` deletes a package from their `package.json`. A new range
 another installed plugin cannot use is **exit 6 with nothing written** — report the clash it names.
 

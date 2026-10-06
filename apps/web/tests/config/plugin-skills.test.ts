@@ -219,7 +219,7 @@ const write = (root: string, rel: string, text: string) => {
  * app called Acme with no plugin surfaces — a vendored plugin's files are not copied, so recording
  * it would make every `check` fail on its missing anchor.
  */
-function makeHost(): string {
+function makeHost({ kit = false }: { kit?: boolean } = {}): string {
   const root = mkdtempSync(path.join(tmpdir(), 'rf-skills-host-'))
   sandboxes.push(root)
   cpSync(path.join(REPO_ROOT, 'scripts'), path.join(root, 'scripts'), {
@@ -241,7 +241,8 @@ function makeHost(): string {
   manifest.surfaces = manifest.surfaces.filter((s: { kind?: string }) => s.kind !== 'plugin')
   // An APP, which is where a plugin is installed — and `upgrade` translates what it patches into
   // the app's names, which the kit itself (no `app`) has none of.
-  manifest.app = { slug: 'acme', display: 'Acme' }
+  // `kit: true` keeps `app: null` — the kit's own repository, which translates nothing.
+  manifest.app = kit ? null : { slug: 'acme', display: 'Acme' }
   write(root, '.rocketflare.json', `${JSON.stringify(manifest, null, 2)}\n`)
   write(root, '.gitignore', '.rocketflare.local.json\n.upgrade/\nnode_modules/\n')
   // `pnpm exec biome` resolves this before anything on PATH. Formatting is not what is under test,
@@ -474,6 +475,27 @@ describe('pnpm plugin, with skills, end to end', () => {
     expect(checked.status, checked.out).toBe(0)
   })
 
+  it('upgrade patches the plugin’s files in the kit repository itself, which has no app names', () => {
+    // There used to be a `deriveNames('rocketflare')` stand-in here, which throws ("the kit's own
+    // name"): every patched file became a warning and the anchor stayed at the old version.
+    const host = makeHost({ kit: true })
+    const plugin = makePlugin()
+    const added = run(host, ['add', plugin, '--local', '--apply', '--allow-dirty'])
+    expect(added.status, added.out).toBe(0)
+    git(host, ['add', '-A'])
+    git(host, ['commit', '-qm', 'installed'])
+    writePluginVersion(plugin, { version: '1.1.0' })
+
+    const up = run(host, ['upgrade', 'orders', '--to', '1.1.0', '--apply', '--allow-dirty'])
+    expect(up.status, up.out).toBe(0)
+    expect(up.out).not.toContain("kit's own name")
+    expect(up.out).toContain('1 patched')
+    const anchor = JSON.parse(
+      readFileSync(path.join(host, 'apps/web/src/plugins/orders/plugin.json'), 'utf8')
+    )
+    expect(anchor.version).toBe('1.1.0')
+  })
+
   it('exports a skill back to skills/<dir>/, never .claude/', () => {
     const host = makeHost()
     const plugin = makePlugin()
@@ -633,6 +655,44 @@ describe('pnpm plugin upgrade, with dependencies, end to end', () => {
     expect(readFileSync(path.join(host, 'apps/web/package.json'), 'utf8')).toBe(after)
     expect(pnpm.calls().length).toBe(callsAfter)
     expect(git(host, ['status', '--porcelain'])).toBe('')
+  })
+
+  it('records what add brought in, and never removes a package the host declared first', () => {
+    const pnpm = fakePnpm()
+    const host = makeHost()
+    // A package the host (the kit) already declares, at exactly the range the plugin declares too.
+    const [kitDep, kitRange] = Object.entries(webDeps(host))[0] as [string, string]
+    const orders = makePlugin({
+      dependencies: { 'apps/web': { [kitDep]: kitRange, 'left-pad': '^1.0.0' } },
+    })
+    const added = run(host, ['add', orders, '--local', '--apply', '--allow-dirty'], pnpm.env)
+    expect(added.status, added.out).toBe(0)
+    const surface = () =>
+      (
+        sidecar(host).surfaces as unknown as {
+          id: string
+          addedDependencies?: Record<string, string[]>
+        }[]
+      ).find(x => x.id === 'orders')
+    // Only what the host did not declare at all.
+    expect(surface()?.addedDependencies).toEqual({ 'apps/web': ['left-pad'] })
+    git(host, ['add', '-A'])
+    git(host, ['commit', '-qm', 'installed'])
+
+    writePluginVersion(orders, { version: '1.1.0', dependencies: { 'apps/web': {} } })
+    const up = run(
+      host,
+      ['upgrade', 'orders', '--to', '1.1.0', '--apply', '--allow-dirty'],
+      pnpm.env
+    )
+    expect(up.status, up.out).toBe(0)
+    expect(up.out).toContain(
+      `- apps/web  ${kitDep} ${kitRange}  — keep (apps/web/package.json declared it before a plugin did`
+    )
+    expect(up.out).toContain('- apps/web  left-pad ^1.0.0  — remove')
+    expect(webDeps(host)[kitDep]).toBe(kitRange)
+    expect(webDeps(host)).not.toHaveProperty('left-pad')
+    expect(surface()?.addedDependencies).toEqual({})
   })
 
   it('refuses, before writing anything, a range another installed plugin cannot use', () => {
