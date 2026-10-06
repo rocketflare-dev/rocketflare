@@ -3,7 +3,7 @@
  * stdin is not a TTY (wrangler source, packages/wrangler/src/secret/index.ts:
  * `isInteractive ? await prompt(...) : await readFromStdin()`), so a value never appears in an
  * argument list or a shell history. `wrangler secret list` prints JSON by default
- * (`--format json`, verified with `wrangler secret list --help`, wrangler 4.127).
+ * (`--format json`, verified with `wrangler secret list --help`, wrangler 4.147).
  * `wrangler secret bulk` is deliberately NOT used.
  */
 import { randomBytes } from 'node:crypto'
