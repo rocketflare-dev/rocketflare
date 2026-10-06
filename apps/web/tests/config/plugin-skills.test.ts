@@ -219,7 +219,17 @@ const write = (root: string, rel: string, text: string) => {
  * app called Acme with no plugin surfaces — a vendored plugin's files are not copied, so recording
  * it would make every `check` fail on its missing anchor.
  */
-function makeHost({ kit = false }: { kit?: boolean } = {}): string {
+function makeHost({
+  kit = false,
+  appVersion,
+  kitVersion,
+}: {
+  kit?: boolean
+  /** The root `package.json` `version` — a renamed copy's is its own, `0.1.0`. */
+  appVersion?: string
+  /** `.rocketflare.json` `kit.version` — where a copy records the kit it came from. */
+  kitVersion?: string | null
+} = {}): string {
   const root = mkdtempSync(path.join(tmpdir(), 'rf-skills-host-'))
   sandboxes.push(root)
   cpSync(path.join(REPO_ROOT, 'scripts'), path.join(root, 'scripts'), {
@@ -243,6 +253,12 @@ function makeHost({ kit = false }: { kit?: boolean } = {}): string {
   // the app's names, which the kit itself (no `app`) has none of.
   // `kit: true` keeps `app: null` — the kit's own repository, which translates nothing.
   manifest.app = kit ? null : { slug: 'acme', display: 'Acme' }
+  if (kitVersion !== undefined) manifest.kit.version = kitVersion
+  if (appVersion !== undefined) {
+    const pkg = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8'))
+    pkg.version = appVersion
+    write(root, 'package.json', `${JSON.stringify(pkg, null, 2)}\n`)
+  }
   write(root, '.rocketflare.json', `${JSON.stringify(manifest, null, 2)}\n`)
   write(root, '.gitignore', '.rocketflare.local.json\n.upgrade/\nnode_modules/\n')
   // `pnpm exec biome` resolves this before anything on PATH. Formatting is not what is under test,
@@ -259,6 +275,7 @@ function makeHost({ kit = false }: { kit?: boolean } = {}): string {
 interface PluginFixture {
   id?: string
   version?: string
+  minKit?: string
   skills?: string[]
   files?: Record<string, string>
   dependencies?: Record<string, Record<string, string>>
@@ -284,7 +301,7 @@ function writePluginVersion(root: string, fixture: PluginFixture) {
       version,
       repo: root,
       subdir: '',
-      minKit: '0.1.0',
+      minKit: fixture.minKit ?? '0.1.0',
       uses: {},
       skills,
       ...(fixture.dependencies ? { dependencies: fixture.dependencies } : {}),
@@ -337,6 +354,48 @@ const sidecar = (host: string) =>
   JSON.parse(readFileSync(path.join(host, '.rocketflare.local.json'), 'utf8')) as {
     surfaces: { id: string; paths: string[] }[]
   }
+
+// A renamed copy's root package.json is the APP's version (the rename restarts it at 0.1.0); the
+// kit version it came from is `.rocketflare.json` `kit.version`. `minKit` is checked against that.
+describe('pnpm plugin add, the kit version a minKit is checked against', () => {
+  it('is kit.version in a copy, never the app version in its package.json', () => {
+    const host = makeHost({ appVersion: '0.1.0', kitVersion: '0.17.6' })
+    const plugin = makePlugin({ minKit: '0.13.0' })
+    const plan = run(host, ['add', plugin, '--local'])
+    expect(plan.status, plan.out).toBe(0)
+    expect(plan.out).toContain('at kit 0.17.6')
+    expect(plan.out).toContain('kit 0.17.6 is at or above minKit 0.13.0')
+    const added = run(host, ['add', plugin, '--local', '--apply', '--allow-dirty'])
+    expect(added.status, added.out).toBe(0)
+    expect(run(host, ['check']).status).toBe(0)
+  })
+
+  it('refuses a copy whose kit.version is below minKit, naming the kit version', () => {
+    const host = makeHost({ appVersion: '9.9.9', kitVersion: '0.12.0' })
+    const refused = run(host, ['add', makePlugin({ minKit: '0.13.0' }), '--local'])
+    expect(refused.status, refused.out).toBe(6)
+    expect(refused.out).toContain("kit 0.12.0 is older than this plugin's minKit 0.13.0")
+    expect(refused.out).not.toContain('9.9.9 is')
+  })
+
+  it('stops, naming the file, when a copy records no kit.version', () => {
+    const host = makeHost({ appVersion: '0.1.0', kitVersion: null })
+    const stopped = run(host, ['add', makePlugin({ minKit: '0.13.0' }), '--local'])
+    expect(stopped.status).toBe(1)
+    expect(stopped.out).toContain('.rocketflare.json has no kit.version')
+  })
+
+  it('is the root package.json version in the kit itself', () => {
+    const host = makeHost({ kit: true, appVersion: '0.17.6', kitVersion: '0.1.0' })
+    const plan = run(host, ['add', makePlugin({ minKit: '0.13.0' }), '--local'])
+    expect(plan.status, plan.out).toBe(0)
+    expect(plan.out).toContain('at kit 0.17.6')
+    const old = makeHost({ kit: true, appVersion: '0.12.0', kitVersion: '0.17.6' })
+    const refused = run(old, ['add', makePlugin({ minKit: '0.13.0' }), '--local'])
+    expect(refused.status, refused.out).toBe(6)
+    expect(refused.out).toContain("kit 0.12.0 is older than this plugin's minKit 0.13.0")
+  })
+})
 
 describe('pnpm plugin, with skills, end to end', () => {
   it('adds a skill where Claude Code finds it, checks it, and removes it without a trace', () => {

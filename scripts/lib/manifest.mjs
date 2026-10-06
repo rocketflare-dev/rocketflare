@@ -92,3 +92,35 @@ export function readManifest(rootDir = REPO_ROOT) {
     sidecarPath,
   }
 }
+
+/**
+ * The KIT version this checkout is at — what a plugin's `minKit` floor is compared against.
+ *
+ * In the kit itself (`isKit`) that is the root `package.json` `version`: a kit release stamps it
+ * and `kit.version` together. In a COPY it is NOT: `scripts/rename.mjs` restarts the root
+ * `package.json` at the app's own `0.1.0` (`restartAppVersion`), and the kit version the copy was
+ * made from — and later upgraded to — lives only in `.rocketflare.json` `kit.version`. Reading the
+ * root version there compared an app's `0.1.0` with every plugin's `minKit` and refused the install.
+ *
+ * `read` is `readManifest()`'s result; `packageJsonVersion` the root `package.json` `version`, only
+ * consulted for the kit. Throws, naming the file, when the answer is missing — never a guess.
+ */
+export function hostKitVersion(read, packageJsonVersion) {
+  const { manifest, isKit } = read ?? {}
+  if (!manifest) throw new Error(`${MANIFEST_FILE} not found — no kit version to read`)
+  if (isKit) {
+    if (typeof packageJsonVersion !== 'string' || packageJsonVersion === '') {
+      throw new Error('the root package.json has no "version" — the kit version is read from it')
+    }
+    return packageJsonVersion
+  }
+  const version = manifest.kit?.version
+  if (typeof version !== 'string' || version === '') {
+    throw new Error(
+      `${MANIFEST_FILE} has no kit.version — a copy's kit version is recorded there, not in its ` +
+        'own package.json (which carries the app version). Restore kit.version to the kit release ' +
+        'this app was made from or last upgraded to.'
+    )
+  }
+  return version
+}

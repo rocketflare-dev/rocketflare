@@ -27,3 +27,13 @@ export interface ManifestRead {
   sidecarPath: string
 }
 export function readManifest(rootDir?: string): ManifestRead
+
+/**
+ * The kit version a plugin's `minKit` is checked against: the root `package.json` version in the
+ * kit itself, `.rocketflare.json` `kit.version` in a copy (whose root version is the app's own).
+ * Throws when the source it needs is missing.
+ */
+export function hostKitVersion(
+  read: Pick<ManifestRead, 'manifest' | 'isKit'>,
+  packageJsonVersion: string | null | undefined
+): string
