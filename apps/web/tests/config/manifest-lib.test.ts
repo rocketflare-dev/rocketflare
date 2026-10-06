@@ -13,6 +13,7 @@ import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
+  hostKitVersion,
   MANIFEST_FILE,
   mergeSidecar,
   pluginSurfaces,
@@ -137,5 +138,41 @@ describe('the fixed filenames survive a rename', () => {
       expect(renamed).not.toMatch(/'acme-plugin\.json'/)
       expect(renamed).toContain('KIT.slug')
     }
+  })
+})
+
+describe('hostKitVersion', () => {
+  const copy: Manifest = {
+    ...base,
+    app: { slug: 'demo-app', display: 'Demo App', domain: 'x.dev' },
+  }
+
+  it('is the root package.json version in the kit itself', () => {
+    expect(hostKitVersion({ manifest: base, isKit: true }, '0.17.6')).toBe('0.17.6')
+    expect(() => hostKitVersion({ manifest: base, isKit: true }, undefined)).toThrow(
+      /root package\.json has no "version"/
+    )
+  })
+
+  it('is kit.version in a copy, whose package.json carries the app version', () => {
+    const manifest = { ...copy, kit: { ...copy.kit, version: '0.17.6' } }
+    expect(hostKitVersion({ manifest, isKit: false }, '0.1.0')).toBe('0.17.6')
+  })
+
+  it('throws, naming the file, for a copy with no kit.version — never falls back to the app version', () => {
+    const manifest = { ...copy, kit: { ...copy.kit, version: undefined } } as unknown as Manifest
+    expect(() => hostKitVersion({ manifest, isKit: false }, '0.1.0')).toThrow(
+      `${MANIFEST_FILE} has no kit.version`
+    )
+    expect(() => hostKitVersion({ manifest: null, isKit: false }, '0.1.0')).toThrow(/not found/)
+  })
+
+  it('answers from readManifest for this checkout', () => {
+    const read = readManifest()
+    const pkg = JSON.parse(
+      readFileSync(path.resolve(__dirname, '../../../../package.json'), 'utf8')
+    )
+    const expected = read.isKit ? pkg.version : read.manifest?.kit.version
+    expect(hostKitVersion(read, pkg.version)).toBe(expected)
   })
 })

@@ -708,7 +708,10 @@ as merging a PR. A plugin repo mirrors the host tree and ships **no migration, n
 - **Compatibility is OBSERVED (decision 5c)**: the kit emits a `## Surface ledger` in
   `docs/plugin-api.md` (generated, diff-checked). A plugin's `uses` is **derived** from its imports
   by `pnpm plugin export`, and compatibility is the set difference `uses \ ledger`, checked before
-  any file is copied. The one surviving number is a top-level `minKit` floor. `requires.kit` /
+  any file is copied. The one surviving number is a top-level `minKit` floor, compared with the
+  HOST's kit version (`hostKitVersion` in `scripts/lib/manifest.mjs`): `.rocketflare.json`
+  `kit.version` in a copy, whose root `package.json` is the app's own, and the root `package.json`
+  version only in the kit itself. `requires.kit` /
   `requires.pluginApi` are refused by name. CI proves both ends: `ci.yml` runs the gate with
   `defaultPlugins` installed (in the kit's own repository only), and plugin repos call
   `plugin-ci.yml` (floor + newest kit), which installs a plugin's `requires.plugins` from the

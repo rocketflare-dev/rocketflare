@@ -51,7 +51,7 @@ import {
   notesBetween,
   PLUGIN_MIRROR_ROOT,
 } from './lib/git-lib.mjs'
-import { pluginSurfaces, readManifest } from './lib/manifest.mjs'
+import { hostKitVersion, pluginSurfaces, readManifest } from './lib/manifest.mjs'
 import {
   addBarrelLine,
   addedByPlugins,
@@ -255,7 +255,17 @@ function loadHost() {
       'nowhere to record one. Run this from the root of a copy of the kit.'
     )
   }
-  const kitVersion = JSON.parse(readFileSync(abs('package.json'), 'utf8')).version
+  // A copy's root package.json carries the APP's version (the rename restarts it at 0.1.0); the
+  // kit version lives in .rocketflare.json there. `hostKitVersion` is the one place that decides.
+  let kitVersion
+  try {
+    kitVersion = hostKitVersion(
+      { manifest, isKit },
+      JSON.parse(readFileSync(abs('package.json'), 'utf8')).version
+    )
+  } catch (error) {
+    stop(1, `error: ${error.message}`)
+  }
   const names = manifest.app
     ? deriveNames(manifest.app.slug, manifest.app.display, { domain: manifest.app.domain })
     : null
