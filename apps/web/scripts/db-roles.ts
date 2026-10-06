@@ -24,7 +24,7 @@
  */
 import { fileURLToPath } from 'node:url'
 import { APP_ROLE, RLS_REVOKED_TABLES } from '../src/db/schema/rls'
-import { isNeonUrl, openScriptSql, toDirectNeonHost } from './lib/sql'
+import { isNeonUrl, openScriptSql, toDirectNeonHost, waitForDatabase } from './lib/sql'
 
 /** Conservative identifier sanity check before we hand a value to quote_ident. */
 const IDENTIFIER_RE = /^[A-Za-z_][A-Za-z0-9_$]*$/
@@ -40,6 +40,12 @@ export interface ApplyDbRolesOptions {
   quiet?: boolean
   /** Where `DATABASE_DRIVER` / `NEON_LOCAL_PROXY` are read from. Default `process.env`. */
   env?: { readonly [key: string]: string | undefined }
+  /**
+   * `waitForDatabase`'s budget (1 s apart) before the first statement. This is often the FIRST
+   * connection a run makes (tests/setup.ts runs it before the migrator), so a branch still
+   * starting, or one dropped connection, must not fail the whole run.
+   */
+  maxAttempts?: number
 }
 
 export interface ApplyDbRolesResult {
@@ -97,7 +103,10 @@ export async function applyDbRoles(options: ApplyDbRolesOptions = {}): Promise<A
       `login ${appPassword ? 'configured' : 'not configured — APP_DATABASE_URL unset'})`
   )
 
-  const sql = openScriptSql(directHost(databaseUrl), options.env ?? process.env)
+  const url = directHost(databaseUrl)
+  const env = options.env ?? process.env
+  await waitForDatabase(url, env, options.maxAttempts ?? 15, log)
+  const sql = openScriptSql(url, env)
   try {
     // Identifiers and the password literal cannot be bound as parameters; let Postgres quote them.
     const [quoted] = await sql.query<{

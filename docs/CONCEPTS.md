@@ -214,7 +214,13 @@ path); no per-PR previews.
   cold-starting compute; `TEST_LATENCY_FACTOR` raises the factor on any target — a slow sandbox
   machine running a test by hand — and never lowers it, `tests/helpers/latency.ts`), and
   skips `db-roles.test.ts` (postgres.js over TCP, and a superuser to make owner roles). Global setup
-  is unchanged: role → migrate → grants → truncate → seed, as the connecting role. `migrate.ts`,
+  is unchanged: role → migrate → grants → truncate → seed, as the connecting role; its FIRST
+  connection (`db-roles`) waits for the database (`waitForDatabase`, `scripts/lib/sql.ts`) exactly
+  as the migrator does, because the neon driver reports a WebSocket that failed before Postgres
+  answered as an `ErrorEvent` with no message, and one such failure used to fail the whole run.
+  Every Neon `Pool` comes from `createNeonPool` (`db/client.ts`), whose `error` listeners turn a
+  dropped connection into a rejected query rather than an uncaught exception that kills the run.
+  `migrate.ts`,
   `db-roles.ts` and `seed.ts` `process.exit` when done, as `db:check` does: Cloudflare's container
   egress interceptor never ends a closed database WebSocket's stream, so Node would never exit.
 - **Conventions**: one file per table, `tenantRef()` + `timestamps()` (`timestamptz`), append-only
