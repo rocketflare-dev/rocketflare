@@ -254,7 +254,7 @@ describe('extractSeedKey', () => {
 describe('parseWhoami', () => {
   const LOGGED_IN = [
     '',
-    ' ⛅️ wrangler 4.127.1',
+    ' ⛅️ wrangler 4.147.0',
     '────────────────────',
     'Getting User settings...',
     '👋 You are logged in with an OAuth Token, associated with the email dev@example.com.',
@@ -268,7 +268,7 @@ describe('parseWhoami', () => {
     '- account (read)',
   ].join('\n')
   const LOGGED_OUT = [
-    ' ⛅️ wrangler 4.127.1',
+    ' ⛅️ wrangler 4.147.0',
     '────────────────────',
     'Getting User settings...',
     'You are not authenticated. Please run `wrangler login`.',

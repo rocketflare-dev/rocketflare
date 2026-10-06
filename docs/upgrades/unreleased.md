@@ -4,7 +4,7 @@ previous: 0.17.7
 date: null
 breaking: false
 migrations: []
-areas: []
+areas: [config]
 touches_surfaces: []
 requires_surfaces: []
 manual: false
@@ -12,20 +12,25 @@ manual: false
 
 ## What changed
 
-_Nothing yet. Add an entry here in the same pull request as the change. This first paragraph is
-lifted VERBATIM into `CHANGELOG.md`, so make it ONE standalone summary sentence of ≤ 40 words —
-then one bullet per change, one line each, and no `###` sub-headings. Rationale belongs in
-`docs/CONCEPTS.md` and is linked, never restated; see `README.md` beside this file._
+Wrangler moves from 4.127 to 4.147: its CLI bundle is about 30% smaller, so `wrangler dev` answers its first request sooner, and it no longer queries GitHub when telemetry is turned off.
+
+- `apps/web/package.json` → `wrangler` `^4.147.0` (miniflare and workerd follow it to `1.20261001.1` in `pnpm-lock.yaml`).
+- `apps/web/worker-configuration.d.ts` → regenerated runtime types from the new workerd; the `Env` interface is unchanged.
+- No wrangler change between the two versions alters the kit's tomls (`[assets]`, `[ai]`, `[[workflows]]`, queues, Durable Objects, crons) or the `wrangler dev` / `wrangler types` options it passes.
 
 ## How to apply
 
-_Numbered, imperative, each step self-contained — no "these", "them" or "the above" reaching
-outside its own step._
+1. Set `wrangler` to `^4.147.0` in `apps/web/package.json`, then run `pnpm install` from the workspace root to update `pnpm-lock.yaml`.
+2. Run `pnpm typecheck`, which regenerates `apps/web/worker-configuration.d.ts` through `wrangler types`, and commit the regenerated file.
+3. An app with a `[[containers]]` block that read the experimental `env.EXPERIMENTAL_CLOUDFLARE_CONTAINER_IMAGES` binding must read `ctx.container.images` instead (wrangler 4.136, workers-sdk#15699); an app without containers has nothing to change here.
 
 ## Conflicts to expect
 
-_One line each: `path → what changed → what to do`. Or exactly `None.`_
+- `pnpm-lock.yaml` → wrangler, miniflare, workerd, sharp and undici entries moved → take the app's own `pnpm install` result rather than the kit's hunks.
+- `apps/web/worker-configuration.d.ts` → generated file → regenerate with `pnpm typecheck` instead of merging.
 
 ## Verify
 
-_Numbered checkable commands and assertions only._
+1. `pnpm --filter @rocketflare/web exec wrangler --version` prints `4.147.0` or later.
+2. `pnpm lint && pnpm typecheck && pnpm test && pnpm build` pass.
+3. `pnpm dev` starts and `curl -s -o /dev/null -w '%{http_code}' http://localhost:3001/api/health` prints `200`.
