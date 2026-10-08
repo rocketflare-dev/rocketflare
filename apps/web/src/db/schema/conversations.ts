@@ -33,6 +33,11 @@ export const conversations = pgTable(
      * and the id is only ever compared, never joined.
      */
     summarisedThroughId: uuid('summarised_through_id'),
+    /**
+     * D36: the last message the `memory.retain` job has learned from — the same no-FK watermark as
+     * `summarisedThroughId`, moved by compare-and-set so two deliveries retain each turn once.
+     */
+    memoryRetainedThroughId: uuid('memory_retained_through_id'),
     ...timestamps(),
   },
   table => [

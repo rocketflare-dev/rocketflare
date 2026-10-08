@@ -14,6 +14,7 @@ import { corsMiddleware } from './middleware/cors'
 import { csrfProtection } from './middleware/csrf'
 import { databaseMiddleware } from './middleware/database'
 import { errorHandler, notFoundBody, notFoundHandler } from './middleware/error-handler'
+import { requireFeature } from './middleware/feature'
 import { authRateLimit } from './middleware/rate-limit'
 import { requestIdMiddleware, requestLogger } from './middleware/request-logger'
 import { securityHeaders } from './middleware/security-headers'
@@ -41,6 +42,7 @@ import { inviteRouter } from './routes/invite'
 import { keysRouter } from './routes/keys'
 import { meRouter } from './routes/me'
 import { membersRouter } from './routes/members'
+import { memoryRouter } from './routes/memory'
 import { notificationsRouter } from './routes/notifications'
 import { tenantRouter } from './routes/tenant'
 import { tenantsRouter } from './routes/tenants'
@@ -102,7 +104,8 @@ app.route('/ws', wsRouter)
 // A mount may carry a third element: a feature gate (D30). `requireFeature('x')` 404s
 // `feature_disabled` on every route beneath the prefix, so a surface that ships dark is dark as a
 // WHOLE rather than route by route — declared once here, like auth, instead of remembered in each
-// handler. The kit ships no gated mount; an app adds `['/api/thing', thingRouter, requireFeature('thing')]`.
+// handler. The kit's one gated mount is `/api/memory` (D36); an app adds
+// `['/api/thing', thingRouter, requireFeature('thing')]`.
 // Remember the other doors too: a surface with no nav entry (an analytics cube, a dashboard
 // template, a CLI command) leaks independently of this one.
 // D34: a plugin's PUBLIC mounts — consent callbacks and webhooks a third party calls with no
@@ -140,6 +143,8 @@ const mounts: readonly (readonly [string, Hono<AppEnv>, MiddlewareHandler?])[] =
   // D33: thumbs on AI answers (member create; admin+ read) and the eval-case export (admin+).
   ['/api/feedback', feedbackRouter],
   ['/api/evals', evalsRouter],
+  // D36: a person's own memory — dark as a whole until the organisation has the `memory` flag.
+  ['/api/memory', memoryRouter, requireFeature('memory')],
   // D31: installed plugins, last, so a plugin can never shadow a kit prefix — Hono matches in
   // registration order. Each mount gets `authMiddleware` and its own optional gate exactly like a
   // kit mount; the convention is `/api/<plugin id>`, and `tests/config/plugins.test.ts` is what

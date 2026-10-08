@@ -69,6 +69,7 @@ describe('/api/ai/agent-models', () => {
       'chat',
       'chat-compaction',
       'evals-judge',
+      'memory-extraction',
       'research-topic',
       'summarize-text',
     ])

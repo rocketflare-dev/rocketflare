@@ -52,8 +52,12 @@ closes a cycle back through `plugins/schema.ts`.
 | `group_members` | `groups.ts` | `tenant_id` | ✓ | D29: PK `(group_id, user_id)` so an add is `onConflictDoNothing`; **composite FK `(tenant_id, user_id)` → `tenant_users` cascade**, so losing a membership loses the group memberships in the DATABASE, not in service code; index `(tenant_id, user_id)` is the auth-context read |
 | `document_groups` | `document-groups.ts` | `tenant_id` | ✓ | D29: which groups a `visibility: 'groups'` document is shared with. PK on the pair, both FKs cascade. **Grants, never the decision** — `documents.visibility` is |
 | `chunks` | `chunks.ts` | `tenant_id` | ✓ | retrieval units (D17/D18): `documentId` cascade, `seq` (unique per document), `text`, `tokenCount` (char estimate), `embedding vector(1024)` (`EMBEDDING_DIM`; a new dimension is a new table); **HNSW `vector_cosine_ops`** index; lexical half is `to_tsvector('english', text)` at query time (generated tsvector + GIN is the scaling path) |
+| `memories` | `memories.ts` | `tenant_id` | ✓ | D36: facts learned from a person's chats. `ownerUserId` cascade (null = knowledge-owned, none yet), `visibility` `private\|groups\|tenant` (default `private` — **never reached by the D29 admin bypass**), `kind`, `text`, two clocks `mentionedAt` + `occurredStart/End`, `embedding vector(1024)` HNSW, `textSignals` (entity names) folded into a GENERATED `search_vector` tsvector + GIN, `sourceConversationId` cascade, `sourceMessageIds uuid[]`, `invalidatedAt` + `supersededById` (no FK — superseded, never deleted). Indexes `(tenant_id, owner_user_id, mentioned_at DESC)`, `(tenant_id, owner_user_id, occurred_start)`, `(tenant_id, source_conversation_id)` |
+| `memory_entities` | `memory-entities.ts` | `tenant_id` | ✓ | D36: names facts mention, one per `(tenant, owner, normalised_name)` — `UNIQUE NULLS NOT DISTINCT`, the upsert target; `mentionCount`, `firstSeenAt`/`lastSeenAt`. Partitioned by owner so one person's "Sam" never merges with another's |
+| `memory_entity_links` | `memory-entities.ts` | `tenant_id` | ✓ | D36: fact ↔ entity edges, PK on the pair, both FKs cascade; `(tenant_id, entity_id)` is the graph arm's read |
+| `memory_groups` | `memory-groups.ts` | `tenant_id` | ✓ | D29/D36: grants for a `visibility: 'groups'` memory — the `document_groups` shape. **Grants, never the decision.** No rows written in phase 1 |
 
-32 policies (`tenants`, `users` + 30 tenant tables); 4 revoked tables = `RLS_REVOKED_TABLES` =
+36 policies (`tenants`, `users` + 34 tenant tables); 4 revoked tables = `RLS_REVOKED_TABLES` =
 `RLS_EXCLUDED_TABLES`. jsonb columns are `$type<>()`d from `@rocketflare/shared` (type-only imports).
 
 ## Conventions

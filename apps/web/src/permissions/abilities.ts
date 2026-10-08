@@ -55,6 +55,9 @@ const grantAdmin: RoleGrant = can => {
   can('manage', 'Notification')
   can('manage', 'Conversation')
   can('manage', 'AgentRun')
+  // D36: their OWN memory, like everyone's — the route filters by owner, and `private` memory is
+  // never bypassed, so admin-level grants nothing more here.
+  can('manage', 'Memory')
   // D32: traces are written by the platform and only read; nobody manages one.
   can('read', 'Trace')
   // D33: rating answers, and reading everyone's ratings (the promotion queue).
@@ -83,6 +86,7 @@ const grantAdmin: RoleGrant = can => {
  * | Group          | manage      | manage | manage | manage  | read (D29: routes narrow a member's reads to their OWN groups) |
  * | Trace          | manage      | read   | read   | read    | –      (D32: spans hold other people's prompts) |
  * | Feedback       | manage      | create+read | create+read | create+read | create (D33: on answers they can read) |
+ * | Memory         | manage      | manage | manage | manage  | manage (own only — routes filter by owner; never bypassed, D36) |
  * | Feature:<f>    | access all  | by ctx | by ctx | access all | by ctx |
  */
 export const rolePermissions: Record<EffectiveRole, RoleGrant> = {
@@ -117,6 +121,8 @@ export const rolePermissions: Record<EffectiveRole, RoleGrant> = {
     // D33: anyone may rate an answer they can read (the service checks the target); reading the
     // ratings is admin+.
     can('create', 'Feedback')
+    // D36: memory is personal; the route filters by owner, exactly as for conversations.
+    can('manage', 'Memory')
   },
 }
 

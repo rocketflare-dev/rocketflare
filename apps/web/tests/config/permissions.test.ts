@@ -56,6 +56,9 @@ const MATRIX: Record<string, Record<Role, Level>> = {
   Trace: { owner: 'read', admin: 'read', support: 'read', member: 'none' },
   // D33 — anyone rates an answer; reading the ratings (the promotion queue) is admin+.
   Feedback: { owner: 'create', admin: 'create', support: 'create', member: 'createOnly' },
+  // D36 — everyone manages their OWN memory; the route filters by owner and `private` memory is
+  // never bypassed, so admin-level is no wider than member here.
+  Memory: { owner: 'manage', admin: 'manage', support: 'manage', member: 'manage' },
 }
 
 const build = (role: Role | null, features: string[] = [], isGlobalAdmin = false) =>

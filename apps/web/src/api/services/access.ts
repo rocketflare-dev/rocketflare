@@ -18,7 +18,14 @@
 import type { GroupRef, ResourceVisibility } from '@rocketflare/shared/groups'
 import { and, count, eq, inArray, type SQL, sql } from 'drizzle-orm'
 import type { Database } from '../../db/client'
-import { documentGroups, documents, groups, groupTypes } from '../../db/schema'
+import {
+  documentGroups,
+  documents,
+  groups,
+  groupTypes,
+  memories,
+  memoryGroups,
+} from '../../db/schema'
 import { serverPlugins } from '../../plugins/server'
 import { ForbiddenError } from '../utils/core/errors'
 import { type AccessScope, accessScopeOf, sharedWithMyGroups } from './access-sql'
@@ -50,6 +57,25 @@ export function visibleDocuments(scope: AccessScope): SQL | undefined {
   const owned = scope.userId ? sql`${documents.ownerUserId} = ${scope.userId}` : sql`false`
   const shared = sharedWithMyGroups(scope, 'document_groups', 'document_id', sql`${documents.id}`)
   return sql`(${documents.visibility} = 'tenant' or ${owned} or ${shared})`
+}
+
+/**
+ * Which memories this reader may RECALL (D36). Documents' rule, with one deliberate difference:
+ * a `private` memory is its owner's alone and **`bypass` does not reach it**. A document an admin
+ * can open is a document the organisation owns; a memory is what a person said to the assistant,
+ * and an admin's chat recalling it would put that into another person's context window. The
+ * `groups` and `tenant` halves are exactly `visibleDocuments`, admin bypass included.
+ *
+ * Never `undefined`: unlike every other predicate here, there is no scope that sees everything.
+ * Maintenance paths that must (the forget-all of a removed member) name the owner explicitly.
+ */
+export function visibleMemories(scope: AccessScope): SQL {
+  const owned = scope.userId
+    ? sql`(${memories.visibility} = 'private' and ${memories.ownerUserId} = ${scope.userId})`
+    : sql`false`
+  if (scope.bypass) return sql`(${memories.visibility} <> 'private' or ${owned})`
+  const shared = sharedWithMyGroups(scope, 'memory_groups', 'memory_id', sql`${memories.id}`)
+  return sql`(${owned} or ${memories.visibility} = 'tenant' or (${memories.visibility} = 'groups' and ${shared}))`
 }
 
 // ---- The registry of restrictable resources (D29, D31) -----------------------------------------
@@ -147,7 +173,57 @@ const documentVisibility: VisibilityResource = {
   },
 }
 
-export const CORE_VISIBILITY_RESOURCES: readonly VisibilityResource[] = [documentVisibility]
+/**
+ * Memories (D36). Registered so a group's `group_in_use` count and the grant badges include them;
+ * phase 1 writes only `private` rows, so `setGroups` has no caller yet — it is here so the first
+ * knowledge-derived memory needs no new branch anywhere. `predicate` is `visibleMemories`, which
+ * never returns `undefined`: see its comment for why the admin bypass stops at `private`.
+ */
+const memoryVisibility: VisibilityResource = {
+  key: 'memory',
+  noun: 'memory',
+  usageKey: 'memories',
+  predicate: visibleMemories,
+  setGroups: async (tx, tenantId, resourceId, input, groupIds) => {
+    await tx
+      .update(memories)
+      .set({ visibility: input.visibility })
+      .where(and(eq(memories.id, resourceId), eq(memories.tenantId, tenantId)))
+    await tx
+      .delete(memoryGroups)
+      .where(and(eq(memoryGroups.tenantId, tenantId), eq(memoryGroups.memoryId, resourceId)))
+    if (groupIds.length > 0) {
+      await tx
+        .insert(memoryGroups)
+        .values(groupIds.map(groupId => ({ tenantId, memoryId: resourceId, groupId })))
+        .onConflictDoNothing()
+    }
+  },
+  grantRows: (db, tenantId, resourceIds) =>
+    db
+      .select({
+        resourceId: memoryGroups.memoryId,
+        id: groups.id,
+        name: groups.name,
+        typeName: groupTypes.name,
+      })
+      .from(memoryGroups)
+      .innerJoin(groups, eq(groups.id, memoryGroups.groupId))
+      .innerJoin(groupTypes, eq(groupTypes.id, groups.groupTypeId))
+      .where(and(eq(memoryGroups.tenantId, tenantId), inArray(memoryGroups.memoryId, resourceIds))),
+  countGrants: async (db, tenantId, groupIds) => {
+    const [row] = await db
+      .select({ n: count() })
+      .from(memoryGroups)
+      .where(and(eq(memoryGroups.tenantId, tenantId), inArray(memoryGroups.groupId, groupIds)))
+    return row?.n ?? 0
+  },
+}
+
+export const CORE_VISIBILITY_RESOURCES: readonly VisibilityResource[] = [
+  documentVisibility,
+  memoryVisibility,
+]
 
 /**
  * The kit's restrictable resources plus every installed plugin's (D31).

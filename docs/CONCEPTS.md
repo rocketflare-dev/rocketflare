@@ -401,6 +401,44 @@ Server: `api/services/{ai,agents}/**` (read their `CLAUDE.md`), `services/prompt
   index, `0016`); an ingest carrying one is an upsert — one `ON CONFLICT` statement, grants
   replaced, chunks rebuilt, a replaced original removed from R2 — so a connector's re-sync never
   duplicates. Plugins reach it through `ingestDocument` (§16).
+- **Memory (D36)**: atomic facts the assistant learns from a person's own chats and recalls across
+  threads — Hindsight's retain/recall model (vectorize-io/hindsight, MIT), ported to Postgres and to
+  the kit's tenancy. `memories` carries **two clocks** — `mentioned_at` (when it was said) and
+  `occurred_start/end` (when what it describes happened, resolved to absolute dates at extraction)
+  — plus an embedding, a GENERATED `search_vector` (text + entity names, GIN) and provenance
+  (`source_conversation_id`, cascading). `memory_entities` + `memory_entity_links` are the graph:
+  exact-name entities per `(tenant, owner)` partition. **Retain** is the `memory.retain` job,
+  enqueued after each chat turn while the tenant has the `memory` flag: it reads the user turns
+  after `conversations.memory_retained_through_id`, shows the model the person's related facts,
+  takes one `submit_memories` call (`memory-extraction` prompt), drops near-duplicates (cosine ≥
+  0.95), invalidates what a new fact `supersedes` (never deletes — `include_historical` still
+  answers "what was true before") and compare-and-sets the watermark in the same transaction.
+  **Recall** (`services/ai/memory/recall.ts`) fuses three arms by RRF — dense, the stored
+  tsvector, and entity overlap (facts naming an entity the query names) — under one predicate;
+  time is a FILTER the model passes as ISO `from`/`to` (it knows today's date; the Worker parses
+  nothing). `recall_memory` is a tool only for a person with memory on, in chat and in agent runs
+  (the requester's memory, resolved at execute time). `/api/memory` (behind
+  `requireFeature('memory')`), Profile → Memory and `rocketflare memory list|forget` are the
+  person's review, forget and off switch.
+
+  **Security is structural, not prompt-deep**: (1) a `private` memory is its owner's alone and
+  `visibleMemories` gives the D29 admin bypass NO reach into it — an admin's chat must not pull
+  another person's facts into its context; `groups`/`tenant` rows follow documents exactly and are
+  a `VISIBILITY_RESOURCES` entry (`memory_groups`, counted by `group_in_use`), schema-ready for
+  knowledge-derived memory though phase 1 writes none; (2) only the person's own turns reach the
+  extraction call — never assistant replies or tool results — so what the assistant read from a
+  group-restricted document cannot be laundered into memory that outlives the reader's access, and
+  instructions in a document cannot become a "fact"; (3) every write stays in the conversation
+  owner's partition, and a `supersedes` id the model was not shown is dropped; (4) off means never
+  learned — an opted-out turn moves the watermark past itself, and a conversation's first pass
+  starts at the turn that triggered it, never at the top of an old thread; (5) deleting the
+  conversation, forgetting, or leaving the organisation deletes the memories.
+
+  **D36 decisions** (2026-10-05): port the data model and retain/recall, not the Python service ·
+  per-person chat memory first, document-derived tenant memory later · in core, behind a per-tenant
+  flag (off by default) plus a per-person switch · a derived row is visible only to readers who can
+  see ALL its sources, so later consolidation partitions by visibility key · no `dateparser`, no
+  local cross-encoder, no per-bank HNSW DDL, no schema-per-tenant.
 - **Usage**: one `ai_usage` row per call, costed at write time from the one price table
   (`shared/ai/pricing`; an unknown model gets `null` and is counted as unpriced).
 - **Tracing (D32, supersedes D16's Langfuse ingestion client)**: `api/observability/`. Every AI call
@@ -486,7 +524,7 @@ Server: `api/services/{ai,agents}/**` (read their `CLAUDE.md`), `services/prompt
 mitigation); no token-level streaming for runs (would need a per-run DO); char-based history budget
 not derived from the model; sliding window defeats prompt caching on long threads; `enqueueRun`
 does not pre-resolve the client; Workers AI forced tools on off-list models are best-effort; no
-rerank, no generated `tsvector`; no non-exclusive agents; HITL asks cannot be amended, have no
+rerank, no generated `tsvector` on `chunks` (memory has one); no non-exclusive agents; HITL asks cannot be amended, have no
 reminders, and parks are bounded by instance retention (3 days Free / 30 Paid); runs nobody opens
 stay active-looking; no budgets/quotas over `ai_usage` or prompt versioning; the demo seed's
 vectors are deterministic, so dense search over seeded docs is noise. Tracing: no per-tenant
@@ -501,6 +539,13 @@ person scores as a miss (an eval cannot answer it); run faithfulness sees each p
 half of hybrid search; `--provider` knows three vendors (anthropic, fireworks, gemini) and the
 latter two are unpriced; a thumbs vote is a
 zero-length span, not an OTLP span event, and is not traced when the answer's root was pruned.
+Memory (D36, phase 1): per-person chat memory only — no document-derived or group/tenant memory is
+written yet; no consolidation into observations or mental models (Hindsight's reflect); entity
+resolution is exact-name (no pg_trgm fuzzy merge, no aliases); no temporal/semantic/causal link
+tables, so the graph arm is one hop of entity overlap; no rerank; extraction quality is unmeasured
+(no eval suite yet); recall is a tool the model must choose to call — nothing is injected into the
+prompt; one entity table per person, so a colleague's name is a different entity in each person's
+memory.
 
 ## 10. Deployment
 

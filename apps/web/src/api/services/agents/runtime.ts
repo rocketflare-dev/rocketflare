@@ -44,6 +44,7 @@ import {
   StructuredOutputError,
   type ToolApproval,
 } from '../ai/kit'
+import { memoryEnabledFor } from '../ai/memory/settings'
 import { resolveChat } from '../ai/resolve'
 import type { AiEnv } from '../ai/types'
 import { notifyMany } from '../notifications'
@@ -323,7 +324,14 @@ export async function executeRun(
           // D29: built here, at EXECUTE time, from the run's requester — current membership, not
           // a snapshot taken when the run was enqueued. No requester ("system") reads tenant-wide
           // documents only, never an owner's restricted ones.
-          tools: await buildAgentTools({ db, cfg, env, scope: toolScope }),
+          // D36: `recall_memory` reads the REQUESTER's memory, and only when it is on for them.
+          tools: await buildAgentTools({
+            db,
+            cfg,
+            env,
+            scope: toolScope,
+            memory: await memoryEnabledFor(db, cfg, tenantId, run.requestedByUserId),
+          }),
           checkpoint: {
             load: () => loadCheckpoint(db, tenantId, runId),
             save: cp => saveCheckpoint(db, tenantId, runId, cp),

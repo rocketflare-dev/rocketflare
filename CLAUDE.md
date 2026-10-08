@@ -39,7 +39,10 @@ Cloudflare Worker (`apps/web`), a CLI (`apps/cli`), private zod contracts
   (`@ag-ui/core` pinned; SSE or protobuf; `POST /api/agui/run` is the protocol endpoint), chat calls
   the knowledge tools, agents on `AGENT_RUN_WORKFLOW` (projected to AG-UI on read), Workers AI →
   pgvector (uploads: R2 → `AI.toMarkdown` → pgvector), OTLP tracing (D32: GenAI
-  spans → Langfuse/Phoenix/any backend, always also `ai_spans` → `rocketflare traces`); evals (D33:
+  spans → Langfuse/Phoenix/any backend, always also `ai_spans` → `rocketflare traces`); memory (D36:
+  dated facts learned from a person's own chat turns by the `memory.retain` job, recalled by the
+  `recall_memory` tool — dense + tsvector + entity arms; private rows never admin-bypassed; per-tenant
+  `memory` flag + per-person switch); evals (D33:
   `apps/evals`, vitest-evals on vitest 4, `pnpm eval`, never in the gate) + thumbs feedback →
   `rocketflare evals promote`
 - **Analytics**: not core — the `analytics` PLUGIN (D31, the one `defaultPlugins` entry, installed

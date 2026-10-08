@@ -18,11 +18,13 @@ import { loggerFor } from '../../../utils/core/logger'
 import type { Tool } from '../../ai/kit'
 import { getDocumentTool } from './get-document'
 import { listDocumentsTool } from './list-documents'
+import { recallMemoryTool } from './recall-memory'
 import { type AgentToolContext, searchKnowledgeTool } from './search-knowledge'
 
 export * from './event-summary'
 export * from './get-document'
 export * from './list-documents'
+export * from './recall-memory'
 export * from './search-knowledge'
 
 /**
@@ -52,6 +54,8 @@ export async function buildAgentTools(ctx: AgentToolContext): Promise<Tool[]> {
     searchKnowledgeTool(ctx) as Tool,
     getDocumentTool(ctx) as Tool,
     listDocumentsTool(ctx) as Tool,
+    // D36: only for a person with memory on — a run with no requester has no memory to recall.
+    ...(ctx.memory && ctx.scope.userId ? [recallMemoryTool(ctx) as Tool] : []),
     ...pluginTools,
   ]
 }

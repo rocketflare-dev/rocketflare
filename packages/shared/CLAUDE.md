@@ -18,11 +18,12 @@ response with the same schema. `pnpm test:config` covers the pure parts.
 `permissions.ts` actions/subjects/`AppAbility`/packed rules (matrix lives in `apps/web/src/permissions/`) ·
 `api-keys.ts` · `tenant-settings.ts` · `user-settings.ts` · `notifications.ts` · `admin.ts` ·
 `activity.ts` · `errors.ts` envelope + codes · `pagination.ts` ·
-`features.ts` (D30) — the feature-flag registry (`CORE_FEATURE_FLAGS`, now EMPTY — the kit's demo
-flag is the `example-feature` PLUGIN — merged with each plugin's `SharedPlugin.features` into
-`FEATURE_FLAGS`, keyed on `FEATURES`/`FeatureName` from `permissions.ts`, where `CORE_FEATURES` is
-likewise empty; so `featureNameSchema` is a refined `z.string()` over the runtime list rather than a
-`z.enum`, which needs a non-empty tuple), `featureBucket` (**a wire format — changing it reshuffles every live
+`features.ts` (D30) — the feature-flag registry (`CORE_FEATURE_FLAGS` holds ONE kit flag, `memory`
+(D36, off by default) — the kit's demo flag is the `example-feature` PLUGIN — merged with each
+plugin's `SharedPlugin.features` into `FEATURE_FLAGS`, keyed on `FEATURES`/`FeatureName` from
+`permissions.ts`; an app may delete `memory` and leave `CORE_FEATURES` empty, so
+`featureNameSchema` is a refined `z.string()` over the runtime list rather than a `z.enum`, which
+needs a non-empty tuple), `featureBucket` (**a wire format — changing it reshuffles every live
 rollout**), `evaluateFlag`/`evaluateFeatures` (the one implementation of the environment-then-rollout
 precedence), and the admin contracts. A flag is CONFIGURATION, not a permission: nothing here
 touches CASL · `groups.ts` (D29) — `groupTypeSchema`/`groupSchema` (with `typeName` and `memberCount`)/`groupDetailSchema`,
@@ -59,6 +60,12 @@ inline and framable are different properties, `filePath(id)`, `fileSchema`/`uplo
 `hasCredential`, never a key), `upsertAiConfigRequestSchema` (`apiKey` write-only), `testAiConfigRequest/ResponseSchema`,
 `aiReadinessSchema`, `DEFAULT_MODELS`, `PROVIDER_PRESETS`/`presetsFor` (vendors are data, not enum values),
 **`EMBEDDING_DIM = 1024`** (the `chunks.embedding` column width — a change is a migration) ·
+`memory.ts` (D36) — `MEMORY_VISIBILITIES` (`private | groups | tenant`), `MEMORY_KINDS`, the
+limits (`MEMORY_FACTS_PER_RETAIN_MAX`, `MEMORY_RECALL_*`, `MEMORY_RETAIN_MIN_CHARS`),
+`MEMORY_TOOLS`, `memorySchema` (both clocks, `entities`, `invalidatedAt`/`supersededById`),
+`memoryListQuerySchema` / `memoryListResponseSchema`, `memoryEntitySchema`, `memorySettingsSchema`
++ `updateMemorySettingsRequestSchema`, `memoryForgetResponseSchema`, `memoryIdParamSchema`, and
+`memoryOptedOut(preferences)` — the person's switch lives at `preferences.memory.enabled` ·
 `evals.ts` (D33) — `evalCaseSchema` (the dataset line: `id`, `input` string|object, `messages`,
 `context` docs, `expected { output, rubric, tools, toolsMatch, contains }`, `tags`, `source` — a
 promoted case names the message/run, never the tenant, `agentKey`), `EVAL_TRAJECTORY_MODES`,

@@ -140,6 +140,13 @@ const CORE_QUERY_KEYS = {
     passages: (id: string, filters: object = {}) => ['documents', 'passages', id, filters] as const,
     card: (id: string) => ['documents', 'card', id] as const,
   },
+  /** `/api/memory` — MY memory: what the assistant learned from my chats (D36) */
+  memory: {
+    all: ['memory'] as const,
+    list: (filters: object = {}) => ['memory', 'list', filters] as const,
+    entities: ['memory', 'entities'] as const,
+    settings: ['memory', 'settings'] as const,
+  },
   /** `/api/chat/*` — MY conversations (the route filters by user) and their messages (D17) */
   chat: {
     all: ['chat'] as const,

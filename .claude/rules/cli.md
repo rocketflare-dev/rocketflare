@@ -42,6 +42,11 @@ organisation via `GET /api/features`. Administering one is a global-admin act an
 `globalAdminMiddleware` resolves the session cookie only, so a tenant API key cannot reach
 `/api/admin/*` — by design; do not widen that middleware to make a CLI command possible.
 
+Memory (D36): `memory list [--q] [--history]` and `memory forget <id> | --all` act on the KEY
+OWNER's own memory (`/api/memory`, which filters by owner); there is no admin variant, because a
+private memory is not readable by anyone else. An organisation without the flag answers 404
+`feature_disabled`, surfaced as an error (exit 1), never as an empty list.
+
 Evals (D33): `feedback list` reads the thumbs queue (`GET /api/feedback`, admin+) and `evals promote
 <id> --dataset <name>` fetches `GET /api/evals/export` (message id first, run id on a 404, `--run`
 skips the first try) and APPENDS one `EvalCase` line to `apps/evals/datasets/<name>.jsonl`, found by

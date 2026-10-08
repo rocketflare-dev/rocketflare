@@ -136,6 +136,12 @@ export interface AgentToolContext {
    * because there a tool result shares one context window with the whole thread.
    */
   maxDocumentChars?: number
+  /**
+   * D36: whether memory is on for the person this run acts for — the organisation's `memory` flag
+   * AND their own switch, resolved by the CALLER (`memoryEnabledFor`), which already holds what it
+   * needs. Adds `recall_memory`; absent or false leaves the tool out entirely.
+   */
+  memory?: boolean
 }
 
 export function searchKnowledgeTool(ctx: AgentToolContext): Tool<SearchKnowledgeInput> {

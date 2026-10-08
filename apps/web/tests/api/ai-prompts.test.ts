@@ -37,6 +37,7 @@ describe('/api/ai/prompts', () => {
       'chat',
       'summarize-text',
       'chat-compaction',
+      'memory-extraction',
       'research-topic',
       'evals-judge',
     ])

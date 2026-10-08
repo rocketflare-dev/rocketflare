@@ -346,7 +346,9 @@ the whole rule, and it is why neither half duplicates the other.
   checked. `rls-coverage.test.ts` and `unscoped-allowlist.test.ts` union in each plugin's own
   entries, so a plugin table still has to prove its policy
 - **A kit test must not borrow a plugin's keys.** `tests/config/features.test.ts` and
-  `tests/api/feature-flags.test.ts` register their own fixture flag now: the kit ships none,
+  `tests/api/feature-flags.test.ts` register their own fixture flag: the kit ships only `memory`
+  (D36), which `tests/api/memory.test.ts` turns on per TENANT with an override row and never by
+  editing its platform row,
   `feature_flags.key` is platform state with `tenant_feature_overrides` cascading off it, and two
   files resetting one key delete each other's rows across tenants. The API one is
   `// @vitest-isolate` because it mutates the shared registry. For the same reason an assertion that
