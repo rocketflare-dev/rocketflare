@@ -173,7 +173,7 @@ export function validateManifest(input) {
     if (oidc) {
       for (const key of ['issuer', 'clientId', 'clientSecret'])
         field(oidc, key, 'launchProvides.oidc', envName)
-      field(oidc, 'only', 'launchProvides.oidc', envName, { optional: true })
+      for (const key of ['only', 'label']) field(oidc, key, 'launchProvides.oidc', envName, { optional: true })
     }
     field(provides, 'bootstrapAdmins', 'launchProvides', envName, { optional: true })
     field(provides, 'emailApiKey', 'launchProvides', envName, { optional: true })
