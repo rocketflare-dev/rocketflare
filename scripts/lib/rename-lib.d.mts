@@ -65,6 +65,13 @@ export interface ReplacementResult {
 }
 export function applyReplacements(text: string, names: Names): ReplacementResult
 
+/** `launch.kit.json` — the Launch kit contract, kept by every copy. */
+export const KIT_MANIFEST_FILE: string
+/** `[start, end)` of the object value of top-level `key` in a JSON text, or null. */
+export function topLevelObjectSpan(text: string, key: string): [number, number] | null
+/** `applyReplacements` over the manifest, leaving its `kit` block byte for byte. */
+export function renameKitManifest(text: string, names: Names): ReplacementResult
+
 export const EXCLUDED_DIRS: readonly string[]
 export const EXCLUDED_PATHS: readonly string[]
 export const EXCLUDED_PREFIXES: readonly string[]

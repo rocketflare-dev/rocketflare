@@ -44,6 +44,11 @@ export interface Surface {
   history?: HistoryEntry[]
 }
 export interface KitBlock {
+  /**
+   * The kit's id in the Launch kit contract (`launch.kit.json` `kit.id`, D36) — what Launch
+   * reads from a copy's app manifest. Absent from a manifest written before the contract.
+   */
+  id?: string
   name: string
   repo: string
   version: string
