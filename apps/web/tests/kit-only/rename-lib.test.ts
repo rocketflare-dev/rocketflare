@@ -20,14 +20,17 @@ import {
   isBinary,
   isExcluded,
   KIT,
+  KIT_MANIFEST_FILE,
   parseArgs,
   prefixGuard,
   REDACTED_KEY_MARGIN,
   readIntConstant,
   readStringConstant,
+  renameKitManifest,
   restartAppVersion,
   rewriteIntConstant,
   rewritePrefixComments,
+  topLevelObjectSpan,
   validateSlug,
 } from '../../../../scripts/lib/rename-lib.mjs'
 
@@ -432,5 +435,51 @@ describe('restartAppVersion', () => {
       version: '0.1.0',
       engines: { version: '1.0.0' },
     })
+  })
+})
+
+describe('renameKitManifest (launch.kit.json, kept by every copy)', () => {
+  const REPO = path.resolve(__dirname, '../../../..')
+  const text = readFileSync(path.join(REPO, KIT_MANIFEST_FILE), 'utf8')
+  const names = deriveNames('my-app', 'My App', { domain: 'example.com' })
+
+  it('finds the top-level kit block by scanning, past strings that contain braces', () => {
+    const json =
+      '{\n  "a": "{ \\"kit\\": {} }",\n  "kit": { "id": "x", "b": [1, { "c": "}" }] },\n  "z": 1\n}\n'
+    const span = topLevelObjectSpan(json, 'kit')
+    expect(span).not.toBeNull()
+    const [start, end] = span ?? [0, 0]
+    expect(JSON.parse(json.slice(start, end))).toEqual({ id: 'x', b: [1, { c: '}' }] })
+    expect(topLevelObjectSpan('{ "a": { "kit": {} } }', 'kit')).toBeNull()
+    expect(topLevelObjectSpan('{ "kit": "x" }', 'kit')).toBeNull()
+  })
+
+  it("keeps the kit block byte for byte and renames the env names the copy's scripts read", () => {
+    const out = renameKitManifest(text, names)
+    const before = JSON.parse(text)
+    const after = JSON.parse(out.text)
+    expect(after.kit).toEqual(before.kit)
+    expect(after.kit.id).toBe(KIT.slug)
+    expect(after.kit.name).toBe(KIT.display)
+    expect(after.session.env).toEqual({
+      skip: 'MY_APP_BOOTSTRAP_SKIP',
+      allowRoot: 'MY_APP_ALLOW_ROOT',
+    })
+    // The provenance file keeps its name, and upstream references stay upstream.
+    expect(after.scaffold.appManifest).toBe('.rocketflare.json')
+    expect(after.plugins.defaults).toEqual(before.plugins.defaults)
+    expect(out.total).toBe(2)
+    expect(out.counts.env).toBe(2)
+  })
+
+  it('a plain applyReplacements would have renamed the kit — which is why it is special-cased', () => {
+    expect(JSON.parse(applyReplacements(text, names).text).kit.id).toBe('my-app')
+  })
+
+  it('is the identity when nothing outside the kit block names the kit', () => {
+    const plain = '{\n  "kit": { "id": "rocketflare", "name": "Rocketflare" },\n  "x": 1\n}\n'
+    const out = renameKitManifest(plain, names)
+    expect(out.total).toBe(0)
+    expect(out.text).toBe(plain)
   })
 })

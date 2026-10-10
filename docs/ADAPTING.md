@@ -29,6 +29,11 @@ notes in `docs/upgrades/`. So delete freely in §2 below: an upgrade never recre
 
 Keep `.rocketflare.json`. Deleting it is the one thing that costs you the upgrade path.
 
+Keep `launch.kit.json` too: it is the Launch kit contract (D36, `docs/CONCEPTS.md` §13), and Launch
+reads the app's own copy to run its coding sessions, its gate and its releases. The rename rewrites
+it like any other file except its `kit` block, which names the kit the app came from;
+`node scripts/kit-check.mjs` says whether the copy still conforms.
+
 ## 1. Rename (exact find/replace targets)
 
 Pick an app slug (`myapp`, lowercase, digits, hyphens; starts with a letter), a package scope
@@ -66,6 +71,7 @@ or nothing resolves.
 | `rocketflare` (CLI bin) | `apps/cli/package.json` `bin` key; `program.name('rocketflare')` in `apps/cli/src/cli.ts`; the `pnpm cli` examples in `SETUP.md`, `README.md`, `docs/CONCEPTS.md` | `myapp` — users type `myapp login` | automatic (`bare`) |
 | `~/.rocketflare` (CLI config dir) | `apps/cli/src/config.ts` (`ROCKETFLARE_CONFIG_DIR` default); `.claude/rules/cli.md`; `SETUP.md` 1.7 | `~/.myapp` | automatic (`cfgdir`) |
 | `ROCKETFLARE_` (CLI env prefix: `ROCKETFLARE_API_KEY`, `ROCKETFLARE_URL`, `ROCKETFLARE_CONFIG_DIR`, `ROCKETFLARE_DEBUG`) | `apps/cli/src/config.ts`; `apps/cli/tests`; `docs/CONCEPTS.md` → CLI; `.claude/rules/cli.md` | `MYAPP_` | automatic (`env`) |
+| `ROCKETFLARE_BOOTSTRAP_SKIP`, `ROCKETFLARE_ALLOW_ROOT` (the bootstrap's sandbox switches) | `scripts/bootstrap.mjs`, `scripts/lib/bootstrap-lib.mjs`; `launch.kit.json` `session.env` | `MYAPP_BOOTSTRAP_SKIP`, `MYAPP_ALLOW_ROOT` | automatic (`env`); `launch.kit.json` keeps its `kit` block (`id`, `name`, `repo`) — it names the kit, not the app (`renameKitManifest`) |
 | `rocketflare` | `apps/web/package.json` `cfld.name`; `apps/web/wrangler.toml` / `wrangler.staging.toml` `name` (staging keeps `-staging`); `apps/web/scripts/cf-provision.sh`; `.claude/rules/cloudflare.md` examples | `myapp` | automatic (`bare` / `kebab`) |
 | `rocketflare-agent-run` (Workflow — name is account-scoped) | `name = ` in `[[workflows]]` of both tomls (staging `-staging`); no code references — the binding is always `AGENT_RUN_WORKFLOW`, the class `AgentRunWorkflow`; `docs/DEPLOY.md`, `.claude/rules/cloudflare.md`, `apps/web/src/api/workflows/CLAUDE.md` examples | `myapp-agent-run` — nothing to create; `wrangler deploy` registers it | automatic (`kebab`); the `-staging` suffix reported as (d) |
 | `rocketflare-jobs` (queue — name is account-scoped) | `queue = ` in `[[queues.producers]]` AND `[[queues.consumers]]` of both tomls (staging `-staging`; the commented `dead_letter_queue` too); **`JOBS_QUEUE_NAME_PREFIX` in `apps/web/src/api/services/jobs.ts`** — the consumer matches `batch.queue` by this prefix, so the toml and the constant must agree or every batch is `ackAll()`ed as "unknown queue"; the literals in `apps/web/tests/api/{queue-dispatch,jobs-producer,jobs-consumer}.test.ts` | `myapp-jobs` — then `wrangler queues create myapp-jobs[-staging]` per environment | automatic (`kebab`, incl. `JOBS_QUEUE_NAME_PREFIX`); reported as (d) |

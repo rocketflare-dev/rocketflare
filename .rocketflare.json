@@ -2,6 +2,7 @@
   "$purpose": "Provenance for this copy of the Rocketflare starter kit: which kit version and commit it came from, the rename applied to it, and the manifest of replaceable surfaces. `pnpm kit:upgrade` and the /rf-upgrade skill read this file to port later kit improvements forward without recreating anything you deleted.",
   "$doNotDelete": "Deleting or renaming this file breaks upgrades. Recovering it means working out by hand which kit commit you started from and running `node scripts/upgrade.mjs --adopt <ref>`. It holds no secrets and is safe to commit.",
   "kit": {
+    "id": "rocketflare",
     "name": "rocketflare",
     "repo": "https://github.com/rocketflare-dev/rocketflare.git",
     "version": "0.17.8",
@@ -218,6 +219,7 @@
   ],
   "manual": [
     "README.md",
+    "launch.kit.json",
     ".claude/settings.json",
     "package.json",
     "apps/*/package.json",

@@ -102,8 +102,11 @@ scripts/           bootstrap.sh → bootstrap.mjs (9 steps), install.sh (curl on
                    upgrade.mjs (port a kit release into a copy), release{,-check}.mjs, changelog-nudge.mjs +
                    release-site-nudge.mjs (PreToolUse on a commit: missing porting note / version
                    bump → update rocketflare-www),
-                   kit-update-check.mjs (SessionStart: tells a copy about a newer kit release), lib/
+                   kit-update-check.mjs (SessionStart: tells a copy about a newer kit release),
+                   kit-check.mjs (the Launch kit conformance check, shared with the meta-kit), lib/
 .rocketflare.json  kit version + commit, the app's names, the replaceable-surface manifest
+launch.kit.json    the Launch kit contract (D36): how Launch scaffolds, gates, ships and upgrades a
+                   copy — kept by every copy; `node scripts/kit-check.mjs` checks it (CONCEPTS §13)
 docs/upgrades/     one porting note per kit release (+ unreleased.md) — CHANGELOG.md is the index
 .claude/skills/    rf-setup · rf-preflight · rf-adapt (+ checklist.md) · rf-provision (+ reference.md) ·
                    rf-how-do-i (+ example-orders.md) · rf-upgrade (+ porting.md — port later kit releases) ·

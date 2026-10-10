@@ -388,6 +388,73 @@ export function applyColour({ css, html }, colour) {
   }
 }
 
+// ---------------------------------------------------------------- the Launch kit manifest
+
+/** The Launch kit contract's file (D36, `docs/CONCEPTS.md` §13), kept by every copy. */
+export const KIT_MANIFEST_FILE = 'launch.kit.json'
+
+/** Index of the closing quote of the JSON string opening at `i`. */
+function jsonStringEnd(text, i) {
+  for (let j = i + 1; j < text.length; j++) {
+    if (text[j] === '\\') j++
+    else if (text[j] === '"') return j
+  }
+  return text.length - 1
+}
+
+/**
+ * `[start, end)` of the OBJECT value of top-level `key` in a JSON text, or null — found by
+ * scanning, not by parsing, so the bytes around it keep their exact formatting.
+ */
+export function topLevelObjectSpan(text, key) {
+  let depth = 0
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i]
+    if (ch === '"') {
+      const end = jsonStringEnd(text, i)
+      const colon = depth === 1 ? /^\s*:\s*/.exec(text.slice(end + 1)) : null
+      if (colon && JSON.parse(text.slice(i, end + 1)) === key) {
+        const start = end + 1 + colon[0].length
+        if (text[start] !== '{') return null
+        let inner = 0
+        for (let k = start; k < text.length; k++) {
+          const c = text[k]
+          if (c === '"') k = jsonStringEnd(text, k)
+          else if (c === '{' || c === '[') inner++
+          else if ((c === '}' || c === ']') && --inner === 0) return [start, k + 1]
+        }
+        return null
+      }
+      i = end
+    } else if (ch === '{' || ch === '[') depth++
+    else if (ch === '}' || ch === ']') depth--
+  }
+  return null
+}
+
+/**
+ * `launch.kit.json` through the token map, EXCEPT its `kit` block. A copy keeps the manifest —
+ * Launch reads the app's own for its sessions, gate and releases — so every command and env name
+ * follows the rename like the files they point at (`ROCKETFLARE_BOOTSTRAP_SKIP` is read by a
+ * bootstrap the pass renames too). The `kit` block names the KIT the app came from (`kit.id`,
+ * `kit.name`, `kit.repo`), as `.rocketflare.json` `kit` does, so it is left byte for byte.
+ * Same result shape as `applyReplacements`.
+ */
+export function renameKitManifest(text, names) {
+  const span = topLevelObjectSpan(text, 'kit')
+  if (!span) return applyReplacements(text, names)
+  const head = applyReplacements(text.slice(0, span[0]), names)
+  const tail = applyReplacements(text.slice(span[1]), names)
+  const total = head.total + tail.total
+  const counts = Object.fromEntries(CLASS_IDS.map(id => [id, head.counts[id] + tail.counts[id]]))
+  return {
+    text: total === 0 ? text : head.text + text.slice(span[0], span[1]) + tail.text,
+    counts,
+    total,
+    preserved: head.preserved + tail.preserved,
+  }
+}
+
 // ---------------------------------------------------------------- the app's own version
 
 /** The root version a renamed copy starts at: its own first release, not the kit's number. */

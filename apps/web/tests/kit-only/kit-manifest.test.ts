@@ -9,7 +9,7 @@
  * The `kit-only` project: no database, no filesystem beyond `git ls-files`.
  */
 import { execFileSync } from 'node:child_process'
-import { existsSync, statSync } from 'node:fs'
+import { existsSync, readFileSync, statSync } from 'node:fs'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import rawManifest from '../../../../.rocketflare.json'
@@ -18,6 +18,7 @@ import { readManifest } from '../../../../scripts/lib/manifest.mjs'
 import type { Manifest } from '../../../../scripts/lib/upgrade-lib.d.mts'
 import {
   absentSurfaces,
+  classifyPath,
   isKitManifest,
   KIT_ONLY_PATHS,
   kitOnlyGlobs,
@@ -125,5 +126,23 @@ describe('the tooling the kit ships', () => {
     ]) {
       expect(existsSync(path.join(REPO_ROOT, f)), f).toBe(true)
     }
+  })
+})
+
+describe('launch.kit.json in the kit (the Launch kit contract, D36)', () => {
+  const launch = JSON.parse(readFileSync(path.join(REPO_ROOT, 'launch.kit.json'), 'utf8'))
+
+  it('mirrors defaultPlugins, which stays the source of truth (the bootstrap and kit.yml read it)', () => {
+    expect(launch.plugins.defaults).toEqual(committed.defaultPlugins)
+  })
+
+  it('points the upgrade notes at a note every release has', () => {
+    const note = launch.upgrade.notes.replace('{version}', root.version)
+    expect(existsSync(path.join(REPO_ROOT, note)), note).toBe(true)
+    expect(existsSync(path.join(REPO_ROOT, launch.upgrade.skill))).toBe(true)
+  })
+
+  it('is manual for kit:upgrade: its kit block must never go through the token map', () => {
+    expect(classifyPath('launch.kit.json', { manifest, existsLocally: true }).class).toBe('manual')
   })
 })

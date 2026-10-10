@@ -54,12 +54,14 @@ import {
   isBinary,
   isExcluded,
   KIT,
+  KIT_MANIFEST_FILE,
   OPT_IN_IGNORED_PATHS,
   parseArgs,
   prefixGuard,
   REDACTED_KEY_MARGIN,
   readIntConstant,
   readStringConstant,
+  renameKitManifest,
   restartAppVersion,
   rewriteIntConstant,
   rewritePrefixComments,
@@ -240,7 +242,11 @@ function main(argv) {
       continue
     }
     const before = buf.toString('utf8')
-    const result = applyReplacements(before, names)
+    // The Launch kit manifest keeps its `kit` block: it names the kit, not the app.
+    const result =
+      rel === KIT_MANIFEST_FILE
+        ? renameKitManifest(before, names)
+        : applyReplacements(before, names)
     if (result.total === 0) continue
     rows.push({ rel, counts: result.counts, total: result.total })
     edits.set(rel, result.text)

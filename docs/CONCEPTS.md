@@ -577,7 +577,7 @@ cycle). Detail: `packages/shared/CLAUDE.md`.
 
 **A renamed copy with deleted examples still absorbs later kit releases (D27).**
 
-- **`.rocketflare.json`**: kit `{repo, version, commit}`, the app's names (`app === null` means
+- **`.rocketflare.json`**: kit `{id, repo, version, commit}`, the app's names (`app === null` means
   "this is the kit", asked only through `readManifest()`), `history[]`, `retiredSurfaces`
   (never deleted), and the **surface manifest**. Surfaces are `example`, `optional-feature` and
   `plugin`, each with an anchor file whose existence is its presence (delete the anchor to opt
@@ -592,6 +592,24 @@ cycle). Detail: `packages/shared/CLAUDE.md`.
   floor for a pre-0.15.8 manifest); `tests/config/kit-manifest.test.ts` fails a copy that carries
   one, and `kit.yml`'s renamed-copy gate asserts none survive and passes at an app version
   (`1.2.3`).
+- **The Launch kit contract** (`launch.kit.json`, D36): what the kit calls things and how Launch
+  drives an app made from it — the scaffold (`rename.mjs`, `kitOnly`, `postInit`, the app manifest
+  `.rocketflare.json` whose `kit.id` Launch reads), the two tomls and the `{slug}-{suffix}` naming
+  (with `worker.titles`: `RATE_LIMIT_KV` is titled `<slug>-rate-limit`), the vars and secrets Launch
+  provides, the database roles and migrate command, the health routes, the gate (`Gate`,
+  `pnpm gate --list --json`, `LAUNCH_GATE_APP_ID`, `TEST_DATABASE_*`), `deploy.yml` (deployer
+  protocol v1), the session commands (the bootstrap with `--db-url`, the dev server, its ports and
+  sandbox switches), the upgrade command and skill, and `plugins.defaults` — a MIRROR of
+  `defaultPlugins` above, which stays the source the bootstrap and `kit.yml` read (a kit-only test
+  holds them equal). Its shape is Launch's zod schema (`@launch/shared/kit-manifest`), mirrored in
+  plain JS by `scripts/lib/kit-manifest.mjs`. **A copy keeps it**: Launch reads the app's own for
+  its sessions, gate and releases, so the rename rewrites it through the token map EXCEPT its `kit`
+  block (`renameKitManifest`), and `kit:upgrade` treats it as `manual`. `scripts/kit-check.mjs`
+  (`--exec` also runs the gate list; `--provisioned` wants real ids) is the static conformance check
+  Launch applies before a kit can be picked — shared byte for byte with the meta-kit
+  `rocketflare-dev/launch-kit` (one change lands in both) — run by `kit.yml` on the kit and on the
+  renamed `my-app` copy; `tests/config/launch-kit-manifest.test.ts` checks the VALUES against the
+  bootstrap, the dev server, the tomls and the RLS role.
 - **A copy's version is its own**: the rename restarts the root `package.json` version at `0.1.0`
   and empties `CHANGELOG.md` (`restartAppVersion`, only while the root version is still the kit's),
   so an app's releases never read as kit releases. Which kit it came from lives in one place,
@@ -625,7 +643,11 @@ only for a GitHub-hosted kit; tomls and `.dev.vars.example` are diffed, not merg
 predicted; pre-manifest copies need `--adopt`; no partial upgrades; nothing checks the adopter ran
 migrations; lockstep plugin releases bump every plugin in a monorepo; a copy on 0.15.7 or older deletes
 its kit-only tests by hand once (its upgrader predates `kitOnly`); the release and rename SCRIPTS
-still ship to copies (they refuse to run in an app), only their tests are kit-only.
+still ship to copies (they refuse to run in an app), only their tests are kit-only; `kit:upgrade` shows
+`launch.kit.json` as a `manual` diff translated through the token map, so a hunk touching its `kit`
+block reads as renamed (keep the kit's id and name); a copy that predates the contract gets
+`kit.id` only by following that release's porting note; `plugins.add` cannot express an entry
+without a `subdir` (`--subdir` refuses an empty value), which no default plugin has today.
 
 ## 14. Definition of done for the kit
 

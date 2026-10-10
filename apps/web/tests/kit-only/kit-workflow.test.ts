@@ -40,6 +40,15 @@ describe('kit.yml', () => {
     expect(checks).toContain('node scripts/default-plugins.mjs --github-output')
   })
 
+  it('kit-checks and renamed: the Launch kit check, on the kit and on the renamed copy (D36)', () => {
+    expect(job('kit-checks')).toContain('node scripts/kit-check.mjs --exec')
+    const renamed = job('renamed')
+    // After the rename, so it checks the COPY: its names, its manifest's kit block.
+    expect(renamed.indexOf('node scripts/kit-check.mjs --exec')).toBeGreaterThan(
+      renamed.indexOf('node scripts/rename.mjs my-app')
+    )
+  })
+
   it('renamed: renames to a hyphenated slug, proves the kit-only files are gone, runs pnpm gate', () => {
     const renamed = job('renamed')
     expect(renamed).toContain('node scripts/rename.mjs my-app')

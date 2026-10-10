@@ -5,8 +5,10 @@ name: Kit
 # copy's CI is ci.yml's one job; this file proves what only the kit can prove about itself:
 #
 #   kit-checks  the published plugin API is current, the vendored plugin audits clean, a behaviour
-#               change carries its porting note, `defaultPlugins` is well formed — no database;
-#   renamed     the gate on the checkout renamed to a HYPHENATED slug, as every copy is born;
+#               change carries its porting note, `defaultPlugins` is well formed, the kit conforms
+#               to the Launch kit contract (launch.kit.json, D36) — no database;
+#   renamed     the gate on the checkout renamed to a HYPHENATED slug, as every copy is born, and
+#               the copy's own Launch kit check;
 #   plugins     the gate with every `defaultPlugins` entry installed, and the WHOLE suite under
 #               `neon` — the backstop for the driver seam, which a copy's gate proves through the
 #               conformance pass alone (apps/web/src/db/CLAUDE.md).
@@ -41,6 +43,12 @@ jobs:
           cache: pnpm
       # plugin-api-doc.mjs parses the declared entries with the TypeScript compiler.
       - run: pnpm install --frozen-lockfile
+
+      # The Launch kit contract (D36): `launch.kit.json` and the files it names conform — the same
+      # static check Launch runs before the kit can be picked (scripts/kit-check.mjs, shared with
+      # the meta-kit). `--exec` also runs the gate list the manifest names.
+      - name: Launch kit check
+        run: node scripts/kit-check.mjs --exec
 
       # A behaviour change with no porting note is invisible to every copy already out there:
       # `pnpm kit:upgrade` replays a translated diff guided by those notes, so the gap is permanent.
@@ -125,6 +133,10 @@ jobs:
           git add -A
           git -c user.name=ci -c user.email=ci@example.com -c commit.gpgsign=false \
             commit --quiet --no-verify -m "Rename to my-app"
+      # A copy keeps launch.kit.json — Launch drives the APP through its own — so the renamed copy
+      # must conform too: names checked against `my-app`, the kit block still the kit's.
+      - name: The renamed copy conforms to the Launch kit contract
+        run: node scripts/kit-check.mjs --exec
       # The renamed compose file names the renamed database (`my_app_test`); `pnpm test` starts it.
       - run: pnpm gate
 
