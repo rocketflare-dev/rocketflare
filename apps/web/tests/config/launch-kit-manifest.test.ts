@@ -62,7 +62,17 @@ describe('launch.kit.json (the shape Launch parses)', () => {
       pattern: '{slug}-{suffix}',
       stagingSuffix: '-staging',
     })
-    expect(manifest?.declaredConfig).toEqual({ optional: [] })
+    expect(manifest?.declaredConfig).toEqual({ optional: [], plain: [] })
+  })
+
+  it('accepts a base64-32 generated secret and declaredConfig.plain', () => {
+    const raw = own()
+    raw.launchProvides.generated = [{ name: 'X', kind: 'base64-32' }]
+    raw.declaredConfig = { optional: ['A_KEY', 'A_URL'], plain: ['A_URL'] }
+    const { problems: found, manifest } = validateManifest(raw)
+    expect(found).toEqual([])
+    expect(manifest?.launchProvides.generated[0].kind).toBe('base64-32')
+    expect(manifest?.declaredConfig.plain).toEqual(['A_URL'])
   })
 
   it('tolerates unknown fields', () => {
@@ -88,6 +98,13 @@ describe('launch.kit.json (the shape Launch parses)', () => {
       [{ name: 'X', kind: 'uuid' }],
       'launchProvides.generated',
     ],
+    [
+      'a plain name that is not an env name',
+      'declaredConfig.plain',
+      ['a_url'],
+      'declaredConfig.plain',
+    ],
+    ['plain as a string', 'declaredConfig.plain', 'A_URL', 'declaredConfig.plain'],
     ['roles as an array', 'database.roles', ['migrator', 'app'], 'database.roles'],
     ['deployer protocol 2', 'release.deployerProtocol', 2, 'release.deployerProtocol'],
     ['a workflow path', 'release.workflow', '.github/workflows/deploy.yml', 'release.workflow'],
@@ -159,6 +176,11 @@ describe('launch.kit.json says what this kit really does', () => {
       expect(vars).toHaveProperty(m.launchProvides.appUrl)
       expect(vars).toHaveProperty(m.launchProvides.databaseDriver.name)
     }
+  })
+
+  it('declaredConfig: every plain name is an optional name', () => {
+    expect(m.declaredConfig.plain.length).toBeGreaterThan(0)
+    expect(m.declaredConfig.optional).toEqual(expect.arrayContaining(m.declaredConfig.plain))
   })
 
   it('database: the RLS role template names the role the migrations create', () => {

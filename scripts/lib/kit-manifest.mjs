@@ -28,6 +28,9 @@ const WORKFLOW_FILE = /^[\w.-]+\.ya?ml$/
 const EXTENSION = /^[a-z_][a-z0-9_]*$/
 const TITLE_SUFFIX = /^[a-z0-9][a-z0-9-]*$/
 
+/** How Launch writes a generated secret's 32 random bytes: 64 hex characters, or standard base64. */
+export const GENERATED_SECRET_KINDS = ['hex64', 'base64-32']
+
 export function validateManifest(input) {
   const problems = []
   const bad = (path, why) => problems.push(`${path}: ${why}`)
@@ -187,8 +190,8 @@ export function validateManifest(input) {
           ? 'must be an object'
           : envName(v.name)
             ? `name ${envName(v.name)}`
-            : v.kind !== 'hex64'
-              ? 'kind must be "hex64"'
+            : !GENERATED_SECRET_KINDS.includes(v.kind)
+              ? `kind must be one of ${GENERATED_SECRET_KINDS.map(k => `"${k}"`).join(', ')}`
               : null
       ),
       { def: [] }
@@ -212,6 +215,8 @@ export function validateManifest(input) {
   const declared = block(m, 'declaredConfig', '', { def: {} })
   if (declared) {
     field(declared, 'optional', 'declaredConfig', arrayOf(envName), { def: [] })
+    // The names in `optional` that are NOT secrets (shown as plain vars); absent: all secret.
+    field(declared, 'plain', 'declaredConfig', arrayOf(envName), { def: [] })
     field(declared, 'pluginManifests', 'declaredConfig', str(1, 300), { optional: true })
   }
 

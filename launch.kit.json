@@ -42,7 +42,7 @@
     },
     "bootstrapAdmins": "BOOTSTRAP_ADMIN_EMAILS",
     "emailApiKey": "RESEND_API_KEY",
-    "generated": [{ "name": "OAUTH_ENCRYPTION_KEY", "kind": "hex64" }],
+    "generated": [{ "name": "OAUTH_ENCRYPTION_KEY", "kind": "base64-32" }],
     "vars": { "TENANCY_MODE": "single", "SIGNUP_MODE": "open" }
   },
   "declaredConfig": {
@@ -56,6 +56,7 @@
       "OTEL_EXPORTER_OTLP_ENDPOINT",
       "OTEL_EXPORTER_OTLP_HEADERS"
     ],
+    "plain": ["LANGFUSE_PUBLIC_KEY", "OTEL_EXPORTER_OTLP_ENDPOINT"],
     "pluginManifests": "apps/web/src/plugins/*/plugin.json"
   },
   "database": {
