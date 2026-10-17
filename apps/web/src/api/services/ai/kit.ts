@@ -803,74 +803,196 @@ export async function runToolLoop(
     }
   }
 
+  const defaultConcurrency = 4
+  const rawCap = policy?.maxConcurrentToolCalls
+  const maxConcurrentToolCalls =
+    typeof rawCap === 'number' && Number.isInteger(rawCap) && rawCap >= 1
+      ? rawCap
+      : defaultConcurrency
+
+  const executeSingleToolUse = async (
+    block: ToolUseBlock
+  ): Promise<{ text: string; isError: boolean }> => {
+    const tool = byName.get(block.name)
+    const approval = opts.approvals?.get(block.id)
+    if (approval?.status === 'cancelled') {
+      if (approval.onReject === 'cancel_run') {
+        throw new InterruptDeclinedError(approval.interruptId, approval.note)
+      }
+      // `tell_model`: declining is an ANSWER, not a fault, so `isError` is false. An error result
+      // would have the model apologising and retrying the thing it was just refused.
+      return {
+        text: approval.note
+          ? `A person declined this action: ${approval.note}`
+          : 'A person declined this action. Do not try it again; continue another way.',
+        isError: false,
+      }
+    }
+    if (approval) {
+      // An approver may have edited the arguments; the route re-validated them against the tool's
+      // own schema before storing them, and `runHandler` validates once more here.
+      const input = approval.input !== undefined ? approval.input : block.input
+      const run = () => runHandler(tool, block.name, input, block.id)
+      return opts.runApproved
+        ? await opts.runApproved(`tool:${approval.interruptId}`, run)
+        : await run()
+    }
+    return await runHandler(tool, block.name, block.input, block.id)
+  }
+
   /**
    * Run a turn's tool calls and build its `tool_result` blocks. The ONE place the approval rules
    * live — the in-loop path and the resume path both call it.
+   *
+   * Executes via a single bounded worker pool (size = min(maxConcurrentToolCalls, toolUses.length)).
+   * Emits each `tool_result` event progressively as soon as that result and all preceding results
+   * in model-request order are ready, preserving transcript order and live timeline updates.
    */
   const executeToolUses = async (
     toolUses: ToolUseBlock[],
     turn: number,
     denied: ReadonlyMap<string, string | undefined>
   ): Promise<ContentBlock[]> => {
-    const results: ContentBlock[] = []
+    if (toolUses.length === 0) return []
+
     // Calls already answered before this turn, for `maxToolCalls`. Every call in the turn still
     // gets a result — a `tool_use` left unanswered is a 400 on the NEXT request, the salvage's.
     let budget = policy?.maxToolCalls
       ? policy.maxToolCalls - countToolResults(messages, byName).toolCalls
       : Number.POSITIVE_INFINITY
-    for (const block of toolUses) {
-      const tool = byName.get(block.name)
-      const approval = opts.approvals?.get(block.id)
-      let outcome: { text: string; isError: boolean }
-      if (denied.has(block.id)) {
-        const reason = denied.get(block.id)
-        outcome = {
-          text: reason
-            ? `This call was refused by policy: ${reason}`
-            : `This call was refused by policy: ${block.name} may not run here.`,
-          isError: true,
+
+    type TaskOutcome =
+      | { kind: 'result'; outcome: { text: string; isError: boolean } }
+      | { kind: 'error'; error: unknown }
+
+    const outcomes: (TaskOutcome | undefined)[] = new Array(toolUses.length)
+    let nextIndex = 0
+    let stopClaiming = false
+
+    let nextEmitIndex = 0
+    let emitPromise = Promise.resolve()
+    let emitError: unknown = undefined
+
+    const flushEmits = () => {
+      emitPromise = emitPromise
+        .then(async () => {
+          while (nextEmitIndex < toolUses.length) {
+            if (emitError) break
+            const task = outcomes[nextEmitIndex]
+            if (!task || task.kind === 'error') break
+            const index = nextEmitIndex++
+            const block = toolUses[index]
+            const outcome = task.outcome
+            try {
+              await opts.onEvent?.({
+                kind: 'tool_result',
+                turn,
+                toolUseId: block.id,
+                name: block.name,
+                resultText: outcome.text,
+                isError: outcome.isError,
+              })
+            } catch (err) {
+              emitError = err
+              stopClaiming = true
+              break
+            }
+          }
+        })
+        .catch(err => {
+          emitError = err
+          stopClaiming = true
+        })
+      return emitPromise
+    }
+
+    const runWorker = async () => {
+      while (true) {
+        if (stopClaiming || emitError || opts.signal?.aborted) return
+
+        const index = nextIndex++
+        if (index >= toolUses.length) return
+
+        const block = toolUses[index]
+
+        if (denied.has(block.id)) {
+          const reason = denied.get(block.id)
+          outcomes[index] = {
+            kind: 'result',
+            outcome: {
+              text: reason
+                ? `This call was refused by policy: ${reason}`
+                : `This call was refused by policy: ${block.name} may not run here.`,
+              isError: true,
+            },
+          }
+          await flushEmits()
+          continue
         }
-      } else if (budget <= 0) {
-        outcome = { text: 'Not run: this run has used all of its tool calls.', isError: true }
-      } else if (approval?.status === 'cancelled') {
-        if (approval.onReject === 'cancel_run') {
-          throw new InterruptDeclinedError(approval.interruptId, approval.note)
+
+        if (budget <= 0) {
+          outcomes[index] = {
+            kind: 'result',
+            outcome: {
+              text: 'Not run: this run has used all of its tool calls.',
+              isError: true,
+            },
+          }
+          await flushEmits()
+          continue
         }
-        // `tell_model`: declining is an ANSWER, not a fault, so `isError` is false. An error result
-        // would have the model apologising and retrying the thing it was just refused.
-        outcome = {
-          text: approval.note
-            ? `A person declined this action: ${approval.note}`
-            : 'A person declined this action. Do not try it again; continue another way.',
-          isError: false,
+
+        budget -= 1
+
+        try {
+          const outcome = await executeSingleToolUse(block)
+          outcomes[index] = { kind: 'result', outcome }
+          await flushEmits()
+        } catch (err) {
+          outcomes[index] = { kind: 'error', error: err }
+          stopClaiming = true
+          await flushEmits()
+          return
         }
-      } else if (approval) {
-        // An approver may have edited the arguments; the route re-validated them against the tool's
-        // own schema before storing them, and `runHandler` validates once more here.
-        const input = approval.input !== undefined ? approval.input : block.input
-        const run = () => runHandler(tool, block.name, input, block.id)
-        outcome = opts.runApproved
-          ? await opts.runApproved(`tool:${approval.interruptId}`, run)
-          : await run()
-      } else {
-        outcome = await runHandler(tool, block.name, block.input, block.id)
       }
-      if (!denied.has(block.id)) budget -= 1
+    }
+
+    const workerCount = Math.min(maxConcurrentToolCalls, toolUses.length)
+    const workers = Array.from({ length: workerCount }, () => runWorker())
+    await Promise.all(workers)
+
+    await emitPromise
+
+    if (opts.signal?.aborted) {
+      throw new AiError('unavailable', client.provider, 'Agent run cancelled')
+    }
+
+    if (emitError) {
+      throw emitError
+    }
+
+    for (let i = 0; i < toolUses.length; i++) {
+      const task = outcomes[i]
+      if (task?.kind === 'error') {
+        throw task.error
+      }
+    }
+
+    const results: ContentBlock[] = []
+    for (let i = 0; i < toolUses.length; i++) {
+      const block = toolUses[i]
+      const task = outcomes[i]
+      if (!task || task.kind !== 'result') {
+        break
+      }
       results.push({
         type: 'tool_result',
         toolUseId: block.id,
-        content: outcome.text,
-        isError: outcome.isError,
-      })
-      await opts.onEvent?.({
-        kind: 'tool_result',
-        turn,
-        toolUseId: block.id,
-        name: block.name,
-        resultText: outcome.text,
-        isError: outcome.isError,
+        content: task.outcome.text,
+        isError: task.outcome.isError,
       })
     }
+
     return results
   }
 

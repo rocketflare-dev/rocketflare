@@ -109,6 +109,8 @@ export const agentPolicySchema = z.object({
   maxTurns: z.number().int().positive().optional(),
   /** Tool calls executed (the terminal tool's call is the answer, not one of these). */
   maxToolCalls: z.number().int().positive().optional(),
+  /** Maximum number of tool calls to execute concurrently in one turn. Defaults to 4. */
+  maxConcurrentToolCalls: z.number().int().positive().optional(),
   /** Seconds of active loop time. */
   maxDurationSeconds: z.number().positive().optional(),
   /** Consecutive tool calls that came back as errors. A success resets the count. */

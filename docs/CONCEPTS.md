@@ -463,19 +463,20 @@ Server: `api/services/{ai,agents}/**` (read their `CLAUDE.md`), `services/prompt
   cap), starting from every earlier attempt's rows; over → `failed`, event code
   `agent_budget_exceeded`, never retried. Why: "thousands of cases a day" needs many runs, cheap
   fan-out inside one, and a ledger that can say what each run cost.
-- **Policy (D39, issue #1)**: `meta.policy { maxTurns, maxToolCalls, maxDurationSeconds,
-  repeatedFailureLimit, onExhaustion }`, passed to `runToolLoop` as `policy`, is how far one run's
-  loop may go; `AGENT_MAX_TURNS` stays the ceiling. Every limit counts across attempts — turns and
-  ACTIVE time ride the checkpoint (time parked on a person is not counted), tool calls and the
-  failure streak are read back out of the transcript — and every call in the turn that crosses a
-  budget still gets a result, because the next request must not carry an unanswered `tool_use`.
-  Running out is behaviour the loop owns: `'final-answer'` (the default) makes ONE forced call to
-  the loop's single terminal tool over the transcript (`salvaged: true`; what `research-topic`
-  used to do by hand), and a salvage that fails fails the run; `'fail'` throws
-  `ToolLoopExhaustedError` → `failed`, event code `agent_policy_exhausted`, never retried. No
-  policy, no change. **`authorizeTool(call)`** on the same loop is the deny-by-rule half of #3
-  (`requiresApproval` is the ask-a-person half, #17): a refused call is never gated, never run, and
-  the model is told why.
+- **Policy (D39, issue #1)**: `meta.policy { maxTurns, maxToolCalls, maxConcurrentToolCalls,
+  maxDurationSeconds, repeatedFailureLimit, onExhaustion }`, passed to `runToolLoop` as `policy`, is
+  how far one run's loop may go; `AGENT_MAX_TURNS` stays the ceiling. Tool calls execute concurrently
+  up to `maxConcurrentToolCalls` (default 4; cap 1 is sequential) even with no policy configured; the
+  remaining limits are opt-in. Every limit counts across attempts — turns and ACTIVE time ride the
+  checkpoint (time parked on a person is not counted), tool calls and the failure streak are read
+  back out of the transcript — and every call in the turn that crosses a budget still gets a result,
+  because the next request must not carry an unanswered `tool_use`. Running out is behaviour the loop
+  owns: `'final-answer'` (the default) makes ONE forced call to the loop's single terminal tool over
+  the transcript (`salvaged: true`; what `research-topic` used to do by hand), and a salvage that
+  fails fails the run; `'fail'` throws `ToolLoopExhaustedError` → `failed`, event code
+  `agent_policy_exhausted`, never retried. **`authorizeTool(call)`** on the same loop is the
+  deny-by-rule half of #3 (`requiresApproval` is the ask-a-person half, #17): a refused call is never
+  gated, never run, and the model is told why.
 - **Reading runs**: `agent_run_events` is the durable log, and AG-UI is a pure read-time
   projection (`/agui`), also streamed live by tailing `seq` (`/agui/stream`, #7). A read-stream
   failure emits no `RUN_ERROR` (clients reconnect); `id:` goes on the last frame of a row's group,
@@ -589,7 +590,9 @@ call and, under `ctx.map`, by the calls in flight; the daily cap is a UTC day ov
 runs inside one step on one DB client (six in flight is the ceiling, and a tool loop inside a scope
 restarts on a retry — there is no per-scope checkpoint); a budget error raised inside a tool
 handler is reported to the model as a tool error rather than stopping the run; no batch UI, no
-per-batch cancel, and a batch's runs are not grouped on the runs page. Policy (D39): a salvage that
+per-batch cancel, and a batch's runs are not grouped on the runs page. Policy (D39): when a handler
+raises an interrupt under concurrent execution, in-flight sibling results are discarded and run again
+on resume (extending sequential behaviour where subsequent calls have not yet run); a salvage that
 succeeds and then loses its step is paid for again; `maxDurationSeconds` does not count time
 between the last checkpoint and a crash; a policy reaches a loop only when the agent passes it
 (`runToolLoop` has no registry to read); `authorizeTool` is per loop, not a run- or tenant-wide
