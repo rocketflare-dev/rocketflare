@@ -285,7 +285,10 @@ export function pluginManifestProblems(
  * The value names a `worker-exports.ts` exports. `opaque` when it carries an `export *`, whose
  * names cannot be known without resolving the module — both directions are skipped for one.
  */
-export function workerExportNames(source: string): { names: string[]; opaque: boolean }
+export function workerExportNames(
+  source: string,
+  fileName?: string
+): { names: string[]; opaque: boolean }
 
 /** Structural evidence that a test file proves cross-tenant isolation. */
 export interface IsolationEvidence {
@@ -297,7 +300,7 @@ export interface IsolationEvidence {
   tenantsCreated: number
   ok: boolean
 }
-export function isolationEvidence(source: string): IsolationEvidence
+export function isolationEvidence(source: string, fileName?: string): IsolationEvidence
 
 /**
  * Where an install's `subdir` comes from, in precedence order.
@@ -310,7 +313,24 @@ export function isolationEvidence(source: string): IsolationEvidence
  * Whether a source DECLARES `name` as a property or method rather than mentioning it. Comments are
  * stripped first — a doc comment saying a hook is absent otherwise satisfies a substring search.
  */
-export function declaresProperty(source: string, name: string): boolean
+export function declaresProperty(source: string, name: string, fileName?: string): boolean
+
+export interface UnresolvedImportDiagnostic {
+  file: string
+  line: number | null
+  code: number
+  message: string
+}
+
+export function buildPluginProgram(
+  files: string[] | Record<string, string>,
+  options?: { repoRoot?: string; compilerOptions?: Record<string, unknown> }
+): import('typescript').Program
+
+export function unresolvedPluginImports(
+  files: string[] | Record<string, string>,
+  options?: { repoRoot?: string; compilerOptions?: Record<string, unknown> }
+): UnresolvedImportDiagnostic[]
 
 export function resolveSubdir(input: {
   flag?: string | null

@@ -79,6 +79,7 @@ import {
   surfaceDirectories,
   tableClashes,
   tupleEntries,
+  unresolvedPluginImports,
   unsupportedForKit,
   withoutDependencies,
   workerExportNames,
@@ -1302,6 +1303,128 @@ describe('the audit', () => {
     expect(
       declaresProperty("const u = 'https://x.test'\nonTenantDeleted: 1", 'onTenantDeleted')
     ).toBe(true)
+  })
+
+  it('requires worker-export names to be genuine AST code exports, refusing comments and strings', () => {
+    // Valid code fixtures
+    expect(workerExportNames("export { OrdersHub } from './do'").names).toEqual(['OrdersHub'])
+    expect(workerExportNames('export class OrdersSyncWorkflow {}').names).toEqual([
+      'OrdersSyncWorkflow',
+    ])
+    expect(workerExportNames('export const OrdersHub = new OrdersDO()').names).toEqual([
+      'OrdersHub',
+    ])
+
+    // Identifier in comment must fail
+    expect(workerExportNames("// export { OrdersHub } from './do'").names).toEqual([])
+    expect(workerExportNames('/* export class OrdersHub {} */').names).toEqual([])
+
+    // Identifier in string literal must fail
+    expect(workerExportNames('const s = "export { OrdersHub } from \'./do\'"').names).toEqual([])
+    expect(workerExportNames("const s = 'export class OrdersHub {}'").names).toEqual([])
+    expect(workerExportNames('const s = \'export * from "./do"\'').opaque).toBe(false)
+  })
+
+  it('requires declared properties to be genuine AST members, refusing comments and strings', () => {
+    // Valid code fixtures
+    expect(declaresProperty('hooks: { onTenantDeleted: async () => {} }', 'onTenantDeleted')).toBe(
+      true
+    )
+    expect(declaresProperty('async onTenantDeleted(db) {}', 'onTenantDeleted')).toBe(true)
+    expect(
+      declaresProperty(
+        'export class Service { async onTenantDeleted(db: Database) {} }',
+        'onTenantDeleted'
+      )
+    ).toBe(true)
+
+    // Comment must fail
+    expect(declaresProperty('// onTenantDeleted: async () => {}', 'onTenantDeleted')).toBe(false)
+    expect(declaresProperty('/* hooks: { onTenantDeleted: 1 } */', 'onTenantDeleted')).toBe(false)
+    expect(declaresProperty('// declares no onTenantDeleted', 'onTenantDeleted')).toBe(false)
+
+    // String literal must fail
+    expect(declaresProperty('const s = "onTenantDeleted: async () => {}"', 'onTenantDeleted')).toBe(
+      false
+    )
+    expect(declaresProperty('const config = { label: "onTenantDeleted" }', 'onTenantDeleted')).toBe(
+      false
+    )
+    expect(declaresProperty('const s = "async onTenantDeleted(db) {}"', 'onTenantDeleted')).toBe(
+      false
+    )
+  })
+
+  it('requires isolation evidence to be genuine AST calls and identifiers, refusing comments and strings', () => {
+    // Valid code fixture
+    const valid = [
+      "describe('tenant isolation', () => {",
+      '  it("cannot access other organisation\'s data", async () => {',
+      '    const otherTenantId = "t2"',
+      '    createTestTenant(db)',
+      '    createTestTenant(db)',
+      '  })',
+      '})',
+    ].join('\n')
+    expect(isolationEvidence(valid).ok).toBe(true)
+
+    // Identifiers appearing only in comments must fail
+    const commentOnly = [
+      '// describe("tenant isolation", () => {})',
+      '// const otherTenantId = "t2"',
+      '// createTestTenant(db)',
+      '// createTestTenant(db)',
+    ].join('\n')
+    expect(isolationEvidence(commentOnly).ok).toBe(false)
+    expect(isolationEvidence(commentOnly).tenantsCreated).toBe(0)
+    expect(isolationEvidence(commentOnly).named).toBe(false)
+    expect(isolationEvidence(commentOnly).secondTenant).toBe(false)
+
+    // Identifiers appearing only in string literals must fail
+    const stringOnly = [
+      'const d = "describe(\'tenant isolation\', () => {})"',
+      'const id = "otherTenantId"',
+      'const fn1 = "createTestTenant(db)"',
+      'const fn2 = "createTestTenant(db)"',
+    ].join('\n')
+    expect(isolationEvidence(stringOnly).ok).toBe(false)
+    expect(isolationEvidence(stringOnly).tenantsCreated).toBe(0)
+    expect(isolationEvidence(stringOnly).named).toBe(false)
+    expect(isolationEvidence(stringOnly).secondTenant).toBe(false)
+  })
+
+  it('fails closed when TypeScript cannot resolve dependencies (TS2307)', () => {
+    // Unresolved dependency must produce TS2307 diagnostic and fail closed
+    const bad = unresolvedPluginImports({
+      'apps/web/src/plugins/broken-plugin/index.ts': [
+        'import { something } from "completely-nonexistent-package"',
+        'export const a = 1',
+      ].join('\n'),
+    })
+    expect(bad.length).toBeGreaterThan(0)
+    expect(bad.some(d => d.code === 2307)).toBe(true)
+    expect(bad.some(d => d.message.includes('completely-nonexistent-package'))).toBe(true)
+
+    // Valid dependency resolves cleanly
+    const good = unresolvedPluginImports({
+      'apps/web/src/plugins/valid-plugin/index.ts': [
+        'import { z } from "zod"',
+        'import fs from "node:fs"',
+        'import type { WorkflowStep } from "cloudflare:workers"',
+        'import "./style.css"',
+        'export const schema = z.object({ id: z.string() })',
+      ].join('\n'),
+      'apps/web/src/plugins/valid-plugin/style.css': 'body { color: red; }',
+    })
+    expect(good).toEqual([])
+
+    // Non-existent asset import fails with TS2307
+    const missingAsset = unresolvedPluginImports({
+      'apps/web/src/plugins/valid-plugin/index.ts': 'import "./missing-style.css"',
+    })
+    expect(missingAsset.some(d => d.code === 2307 && d.message.includes('missing-style.css'))).toBe(
+      true
+    )
   })
 
   /**
