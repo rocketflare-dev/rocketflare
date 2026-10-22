@@ -22,6 +22,7 @@
  *     content is translated, and their absence makes `git apply --3way` fail loudly rather than
  *     silently merge against the wrong preimage.
  */
+import path from 'node:path'
 import { applyReplacements, isExcluded } from './rename-lib.mjs'
 
 // ---------------------------------------------------------------- globs
@@ -174,6 +175,7 @@ export const CLASSES = Object.freeze([
   'manual-toml',
   'manual-env',
   'manual',
+  'manual (comments applied)',
   'binary',
   'verbatim',
 ])
@@ -414,6 +416,114 @@ export function translatePatch(patchText, names, decide) {
 
 /** The classes that go into `apply.patch`. Everything else is reported, never applied. */
 export const APPLYABLE = new Set(['modified', 'verbatim'])
+
+/**
+ * Comment syntax marker for configuration files that support comment-only upgrades.
+ * Returns '#' for TOML and .dev.vars files; null for JSON, Markdown, and unknown extensions.
+ */
+export function commentSyntaxForPath(relPath) {
+  if (!relPath) return null
+  const norm = relPath.replace(/\\/g, '/')
+  if (norm.endsWith('.toml')) return '#'
+  const base = path.posix.basename(norm)
+  if (base === '.dev.vars' || base.startsWith('.dev.vars.')) return '#'
+  return null
+}
+
+/**
+ * Split a single-file diff block into header lines and individual hunks.
+ */
+export function parseHunks(blockRaw) {
+  const lines = blockRaw.split('\n')
+  const headerLines = []
+  const hunks = []
+  let currentHunk = null
+  let inHunks = false
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]
+    if (line.startsWith('@@')) {
+      inHunks = true
+      if (currentHunk) hunks.push(currentHunk)
+      currentHunk = { header: line, lines: [line] }
+    } else if (inHunks) {
+      if (line !== '' || i < lines.length - 1) {
+        currentHunk.lines.push(line)
+      }
+    } else {
+      headerLines.push(line)
+    }
+  }
+  if (currentHunk) hunks.push(currentHunk)
+
+  return {
+    header: headerLines.join('\n').replace(/\n+$/, '') + '\n',
+    hunks: hunks.map(h => ({
+      header: h.header,
+      lines: h.lines,
+      raw: `${h.lines.join('\n').replace(/\n+$/, '')}\n`,
+    })),
+  }
+}
+
+/**
+ * Returns true if every added and removed line in the hunk is empty or starts with `commentChar`.
+ * Context lines may contain anything. Requires at least one added or removed line.
+ */
+export function isCommentOnlyHunk(hunk, commentChar) {
+  if (!commentChar || !hunk?.lines) return false
+  let hasChanges = false
+  for (const line of hunk.lines) {
+    if (line.startsWith('+') || line.startsWith('-')) {
+      hasChanges = true
+      const content = line.slice(1).trim()
+      if (content !== '' && !content.startsWith(commentChar)) {
+        return false
+      }
+    }
+  }
+  return hasChanges
+}
+
+/**
+ * Separates comment-only hunks from non-comment hunks in a diff block.
+ * When comment-only hunks exist, returns a unified diff patch string containing
+ * only those hunks under the original file header.
+ */
+export function extractCommentHunks(blockRaw, commentChar) {
+  const { header, hunks } = parseHunks(blockRaw)
+  if (hunks.length === 0 || !commentChar) {
+    return {
+      header,
+      commentHunks: [],
+      nonCommentHunks: hunks,
+      allCommentOnly: false,
+      commentPatch: null,
+    }
+  }
+
+  const commentHunks = []
+  const nonCommentHunks = []
+  for (const h of hunks) {
+    if (isCommentOnlyHunk(h, commentChar)) {
+      commentHunks.push(h)
+    } else {
+      nonCommentHunks.push(h)
+    }
+  }
+
+  const allCommentOnly = commentHunks.length > 0 && nonCommentHunks.length === 0
+  const commentPatch =
+    commentHunks.length > 0 ? `${header}${commentHunks.map(h => h.raw).join('')}` : null
+
+  return {
+    header,
+    commentHunks,
+    nonCommentHunks,
+    allCommentOnly,
+    commentPatch,
+  }
+}
 
 // ---------------------------------------------------------------- release notes
 

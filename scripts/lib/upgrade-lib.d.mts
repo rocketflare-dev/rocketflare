@@ -129,6 +129,7 @@ export type FileClass =
   | 'manual-toml'
   | 'manual-env'
   | 'manual'
+  | 'manual (comments applied)'
   | 'binary'
   | 'verbatim'
 export const CLASSES: readonly FileClass[]
@@ -178,6 +179,39 @@ export function translatePatch(
   decide: (header: string) => (Classification & { path?: string }) | undefined
 ): TranslateResult
 export const APPLYABLE: ReadonlySet<FileClass>
+
+export function commentSyntaxForPath(relPath: string): string | null
+
+export interface Hunk {
+  header: string
+  lines: string[]
+  raw: string
+}
+
+export interface ParsedHunks {
+  header: string
+  hunks: Hunk[]
+}
+
+export function parseHunks(blockRaw: string): ParsedHunks
+
+export function isCommentOnlyHunk(
+  hunk: Hunk | { lines: readonly string[] },
+  commentChar: string | null
+): boolean
+
+export interface ExtractedCommentHunks {
+  header: string
+  commentHunks: Hunk[]
+  nonCommentHunks: Hunk[]
+  allCommentOnly: boolean
+  commentPatch: string | null
+}
+
+export function extractCommentHunks(
+  blockRaw: string,
+  commentChar: string | null
+): ExtractedCommentHunks
 
 export interface NoteFrontmatter {
   version: string

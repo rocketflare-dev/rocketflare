@@ -55,7 +55,9 @@ import { applyReplacements, deriveNames } from './lib/rename-lib.mjs'
 import {
   absentSurfaces,
   classifyPath,
+  commentSyntaxForPath,
   countLines,
+  extractCommentHunks,
   kitOnlyGlobs,
   matchesAny,
   NOTES_SUBDIR,
@@ -333,17 +335,22 @@ function main(argv) {
   const localSet = new Set(tracked)
   const changes = collectChanges(kit, from, to)
   const renames = collectRenames(kit, from, to)
-  const files = changes.map(c => ({
-    ...c,
-    ...classifyPath(c.path, {
+  const files = changes.map(c => {
+    const classification = classifyPath(c.path, {
       manifest,
       absent,
       existsLocally: localSet.has(c.path),
       change: c.change,
       includeKitTooling: args.includeKitTooling,
       kitOnly: targetKitOnly,
-    }),
-  }))
+    })
+    return {
+      ...c,
+      ...classification,
+      initialClass: classification.class,
+      initialReason: classification.reason,
+    }
+  })
 
   // A plugin's `registries[]` are the kit's own files (the five barrels), so the kit may change
   // them and this run may apply that change — but the line the plugin owns lives there, so a
@@ -353,6 +360,55 @@ function main(argv) {
       .filter(p => (p.registries ?? []).some(r => r === f.path || matchesAny(f.path, [r])))
       .map(p => p.id)
     if (owners.length > 0) f.touchesPluginRegistry = owners
+  }
+
+  const warnings = []
+
+  // Automatic comment-only hunks in manual files (Issue #51)
+  for (const f of files) {
+    if (!['manual', 'manual-toml', 'manual-env'].includes(f.class) || f.change === 'deleted') {
+      continue
+    }
+    const commentChar = commentSyntaxForPath(f.path)
+    if (!commentChar) continue
+
+    const raw = kit.run(['diff', '--no-renames', from, to, '--', f.path])
+    if (!raw.trim()) continue
+
+    const { allCommentOnly, commentPatch } = extractCommentHunks(raw, commentChar)
+    if (!commentPatch) continue
+
+    let translated
+    try {
+      translated = translateBlock(
+        { header: `diff --git a/${f.path} b/${f.path}`, raw: commentPatch },
+        names,
+        { translate: true }
+      )
+      if (countLines(stripIndexLines(commentPatch)) !== countLines(translated)) {
+        throw new Error(`translation changed the line count of comment patch for ${f.path}`)
+      }
+    } catch (err) {
+      warnings.push(`${f.path}: ${err.message}`)
+      continue
+    }
+
+    const check = gitQuiet(
+      ['-c', 'core.autocrlf=false', 'apply', '--check', '--whitespace=nowarn', '-p1'],
+      { input: translated, stdio: ['pipe', 'pipe', 'pipe'] }
+    )
+
+    if (check.ok) {
+      f.commentPatch = translated
+      if (allCommentOnly) {
+        f.class = 'manual (comments applied)'
+        f.reason = 'comment-only changes applied automatically'
+      }
+    } else {
+      warnings.push(
+        `${f.path}: comment-only hunk could not be applied cleanly; falling back to manual handling`
+      )
+    }
   }
 
   const byClass = {}
@@ -366,7 +422,6 @@ function main(argv) {
 
   const patches = []
   const addedFiles = []
-  const warnings = []
   if (!args.dryRun) {
     artifacts.reset()
     for (const f of files) {
@@ -404,9 +459,13 @@ function main(argv) {
         f.class === 'manual-toml' ||
         f.class === 'manual-env' ||
         f.class === 'manual' ||
+        f.class === 'manual (comments applied)' ||
         f.class === 'binary'
       ) {
         if (f.change !== 'deleted') write(path.join('reference', f.path), kit.show(to, f.path))
+        if (f.commentPatch) {
+          write(path.join('files', `${f.path}.patch`), f.commentPatch)
+        }
       }
     }
     for (const n of notes) write(path.join(NOTES_SUBDIR, path.basename(n.file)), n.text)
@@ -512,6 +571,37 @@ function main(argv) {
         }
       }
     }
+    // Apply comment patches to manual files
+    for (const f of files.filter(x => x.commentPatch)) {
+      const one = path.join(workRoot, 'files', `${f.path}.patch`)
+      if (!existsSync(one)) continue
+      const r = gitQuiet([
+        '-c',
+        'core.autocrlf=false',
+        'apply',
+        '--reject',
+        '--whitespace=nowarn',
+        '-p1',
+        one,
+      ])
+      if (!r.ok) {
+        f.class = f.initialClass
+        f.reason = `${f.initialReason} (comment patch rejected, ${f.path}.rej created)`
+        const planEntry = plan.files.find(x => x.path === f.path)
+        if (planEntry) {
+          planEntry.class = f.class
+          planEntry.reason = f.reason
+        }
+        warnings.push(
+          `${f.path}: comment patch rejected (${f.path}.rej created); left for manual resolution`
+        )
+      }
+    }
+    const commentRejects = files.filter(x => x.commentPatch && x.class === x.initialClass)
+    if (commentRejects.length > 0 && !args.dryRun) {
+      write('plan.json', `${JSON.stringify(plan, null, 2)}\n`)
+      write('plan.md', renderPlan(plan, notes))
+    }
     out(
       `✔ 6/6 apply     ${addedFiles.length} added, ${patches.length - rejected} patched` +
         (rejected > 0 ? `, ${rejected} with rejects (*.rej beside the file)` : '')
@@ -593,6 +683,11 @@ function report(plan, notes, applicable, { dryRun }) {
   if (manual.length > 0) {
     lines.push('', 'Decide these yourself (the kit version is under reference/):')
     for (const f of manual) lines.push(`  ${f.path} — ${f.reason}`)
+  }
+  const commentsApplied = bucket('manual (comments applied)')
+  if (commentsApplied.length > 0) {
+    lines.push('', 'Applied comment-only changes in manual configuration files:')
+    for (const f of commentsApplied) lines.push(`  ${f.path}`)
   }
   const migrations = bucket('migration-derived')
   if (migrations.length > 0) {

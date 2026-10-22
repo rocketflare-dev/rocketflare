@@ -25,6 +25,7 @@ steps to work top to bottom, `## Conflicts to expect` is `path → what changed 
 | `skipped-plugin-owned` | a file an installed plugin owns — see below | **nothing here.** `pnpm plugin upgrade <id>`, after this |
 | `migration-derived` | `apps/web/migrations/**` | regenerate — see below |
 | `manual-toml` / `manual-env` | wrangler tomls, `.dev.vars.example`, `.env.test` | see below |
+| `manual (comments applied)` | manual configuration file whose comment-only hunks applied automatically | nothing; review it |
 | `manual` | README, CI workflows, `package.json` | read the diff in `reference/`, apply what they want |
 | `binary` | not text | copy by hand if wanted |
 
@@ -97,7 +98,8 @@ regenerate — that is a new table and a re-embed (`docs/ADAPTING.md` §3).
 
 `apps/web/wrangler.toml` and `wrangler.staging.toml` carry the adopter's real Hyperdrive and KV ids,
 a live `routes` line, their `APP_URL`, and an `[ai]` block whose comment state
-`pnpm bootstrap --offline` toggles. Never apply a textual patch to them.
+`pnpm bootstrap --offline` toggles. Comment-only hunks are applied automatically by `pnpm kit:upgrade`;
+never apply a textual patch for code or configuration to them.
 
 Read `reference/apps/web/wrangler*.toml` and carry across **only** what code can observe:
 `compatibility_date`, `compatibility_flags`, `[limits]`, `[triggers].crons`, `[[migrations]]`,
@@ -119,8 +121,10 @@ its `-staging` suffix. Verify with `pnpm web test:config`.
 
 ## `.dev.vars.example` and `.env.test`
 
-Key-level only: add the new keys with their comment block and a blank value, under the right
-heading. Do not apply the diff — those files carry the adopter's own database naming.
+Comment-only edits in `.dev.vars` files are applied automatically by `pnpm kit:upgrade` when they
+match cleanly. For configuration changes: key-level only: add the new keys with their comment block
+and a blank value, under the right heading. Do not apply the full diff — those files carry the
+adopter's own database naming.
 `apps/web/src/config.ts` says whether a new key is required or feature-gated; say which in your
 summary, because `.dev.vars` itself is git-ignored and they have to add it by hand.
 
