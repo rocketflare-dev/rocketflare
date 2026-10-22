@@ -319,6 +319,7 @@ export const researchTopicAgent: AgentDefinition<ResearchTopicInput, ResearchTop
       // `researchTopicAgent.meta`, not a `ctx` field: `triage-research` runs this body inline on
       // ITS context, and the policy is this agent's.
       policy: researchTopicAgent.meta.policy,
+      reconciledTools: ctx.reconciledTools,
       onExhausted: reason =>
         ctx.step('answer', 'Writing the answer', 'running', `recovering (${reason})`),
       // The two halves of the HITL gate, and neither is optional once a tool declares
@@ -368,6 +369,7 @@ export const researchTopicAgent: AgentDefinition<ResearchTopicInput, ResearchTop
         if (event.kind === 'text') {
           await ctx.emit({ type: 'text', data: { text: event.text } })
         } else if (event.kind === 'tool_call') {
+          if (ctx.reconciledTools?.has(event.toolUseId)) return
           // The model's own call id travels with the row so the AG-UI projection can pair this
           // start with its end. Pairing by tool NAME alone is wrong the moment one turn makes two
           // `search_knowledge` calls: the second start overwrites the first and both results are
@@ -379,6 +381,7 @@ export const researchTopicAgent: AgentDefinition<ResearchTopicInput, ResearchTop
         } else {
           await ctx.checkCancelled()
           collectDocuments(event.resultText, seen)
+          if (ctx.reconciledTools?.has(event.toolUseId)) return
           await ctx.emit({
             type: 'tool.end',
             data: {

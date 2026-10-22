@@ -331,6 +331,7 @@ export const agentToolEndEventDataSchema = z
     result: z.unknown().optional(),
     isError: z.boolean().optional(),
     toolCallId: z.string().optional(),
+    outcome: z.enum(['success', 'error', 'unknown']).or(z.string()).optional(),
   })
   .passthrough()
 export type AgentToolEndEventData = z.infer<typeof agentToolEndEventDataSchema>

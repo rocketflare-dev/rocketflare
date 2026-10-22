@@ -68,6 +68,7 @@ export interface ToolRow {
   input?: unknown
   result?: unknown
   isError: boolean
+  outcome?: 'unknown' | 'success' | 'error' | string
   /** False while the call has not returned yet (the row spins). */
   done: boolean
   /** The START of the call. Never rewritten by the answer — that is what `endedAt` is for. */
@@ -220,6 +221,7 @@ export function buildTimeline(events: readonly TimelineEvent[]): TimelineRow[] {
   const stepIndex = new Map<string, number>()
   /** Call key (the model's id, else the tool name) → indices of calls still awaiting an answer. */
   const openTools = new Map<string, number[]>()
+  let isSettled = false
 
   for (const event of ordered) {
     switch (event.type) {
@@ -288,10 +290,11 @@ export function buildTimeline(events: readonly TimelineEvent[]): TimelineRow[] {
           name: rawName,
           isError,
           toolCallId,
+          outcome,
           ...rest
         } = parsed.success
           ? parsed.data
-          : { name: 'tool', isError: undefined, toolCallId: undefined }
+          : { name: 'tool', isError: undefined, toolCallId: undefined, outcome: undefined }
         const name = rawName || 'tool'
         const result = toolPayload(rest, 'result')
         const index = openTools.get(toolCallId ?? name)?.shift()
@@ -301,6 +304,7 @@ export function buildTimeline(events: readonly TimelineEvent[]): TimelineRow[] {
             ...call,
             result,
             isError: Boolean(isError),
+            ...(outcome ? { outcome } : {}),
             done: true,
             // `at` is the START. Overwriting it — what the old reducer did — is what made a
             // per-call duration impossible to compute.
@@ -317,6 +321,7 @@ export function buildTimeline(events: readonly TimelineEvent[]): TimelineRow[] {
           name,
           result,
           isError: Boolean(isError),
+          ...(outcome ? { outcome } : {}),
           done: true,
           at: event.at,
           endedAt: event.at,
@@ -335,6 +340,13 @@ export function buildTimeline(events: readonly TimelineEvent[]): TimelineRow[] {
       case 'status': {
         const parsed = agentStatusEventDataSchema.safeParse(event.data)
         if (parsed.success) {
+          if (
+            parsed.data.status === 'succeeded' ||
+            parsed.data.status === 'failed' ||
+            parsed.data.status === 'cancelled'
+          ) {
+            isSettled = true
+          }
           rows.push({
             kind: 'status',
             id: event.id,
@@ -455,6 +467,23 @@ export function buildTimeline(events: readonly TimelineEvent[]): TimelineRow[] {
         break
     }
   }
+
+  if (isSettled) {
+    for (const indices of openTools.values()) {
+      for (const idx of indices) {
+        const row = rows[idx]
+        if (row?.kind === 'tool' && !row.done) {
+          rows[idx] = {
+            ...row,
+            done: true,
+            outcome: 'unknown',
+            result: row.result ?? 'Run settled before tool completion was recorded.',
+          }
+        }
+      }
+    }
+  }
+
   return rows
 }
 

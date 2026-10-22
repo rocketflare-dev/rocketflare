@@ -81,6 +81,7 @@ import {
   loadCheckpoint,
   nudgeRun,
   parkRun,
+  reconcileToolEvents,
   runOnce,
   saveCheckpoint,
 } from './runs'
@@ -289,6 +290,10 @@ export async function executeRun(
     // Answers to this run's gated tool calls, read ONCE per attempt and handed to the agent as
     // `ctx.approvals`. The agent never queries for them, so there is one set of approval rules.
     const approvals: ReadonlyMap<string, ToolApproval> = await approvalsForRun(db, tenantId, runId)
+    const reconciledTools = await reconcileToolEvents(db, tenantId, runId, {
+      realtime,
+      attempt: run.attempt,
+    })
     const interruptExpiresAt = interruptExpiryFrom(cfg.AGENT_INTERRUPT_TIMEOUT)
     const tenant = await db.query.tenants.findFirst({
       columns: { name: true },
@@ -351,6 +356,7 @@ export async function executeRun(
           },
           once: (key, fn) => runOnce(db, tenantId, runId, key, fn),
           approvals,
+          reconciledTools,
           interrupt: async ask => {
             // Create-or-read on `(run_id, key)`: the SECOND time this line runs — a resumed or
             // retried attempt re-entering `run()` from the top — it finds the answer (T2).
@@ -546,12 +552,14 @@ export async function executeRun(
     const details = err instanceof StructuredOutputError ? err.issues : undefined
     if (isRetryableRunError(err) && run.attempt <= EXECUTE_RETRIES) {
       logger.warn({ err, attempt: run.attempt }, 'agent-run: retryable failure, step will retry')
+      await reconcileToolEvents(db, tenantId, runId, { attempt: run.attempt, realtime })
       await emit({ type: 'error', data: { message, attempt: run.attempt, willRetry: true } })
       await settle()
       throw err
     }
     logger.warn({ err, details, attempt: run.attempt }, 'agent-run: failed')
     await failRun(db, tenantId, runId, message)
+    await reconcileToolEvents(db, tenantId, runId, { forceSettled: true, realtime })
     await emit({
       type: 'error',
       data: { message, attempt: run.attempt, willRetry: false, ...(details ? { details } : {}) },
@@ -607,11 +615,13 @@ export async function finishStep(
     const message =
       outcome?.error ?? 'The agent run did not complete (execute step exhausted its retries)'
     row = (await failRun(db, tenantId, runId, message)) ?? row
+    await reconcileToolEvents(db, tenantId, runId, { forceSettled: true, realtime })
     const emit = await createEmitter(db, params, realtime, logger)
     await emit({ type: 'error', data: { message, willRetry: false } })
     await emit({ type: 'status', data: { status: 'failed' } })
   } else if (row && row.status === 'awaiting_input') {
     row = (await cancelRun(db, tenantId, runId)) ?? row
+    await reconcileToolEvents(db, tenantId, runId, { forceSettled: true, realtime })
     const emit = await createEmitter(db, params, realtime, logger)
     await emit({ type: 'status', data: { status: 'cancelled', reason: 'expired' } })
   }

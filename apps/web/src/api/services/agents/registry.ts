@@ -31,6 +31,7 @@ import { researchTopicAgent } from './examples/research-topic'
 import { summarizeTextAgent } from './examples/summarize-text'
 import { triageResearchAgent } from './examples/triage-research'
 import type { MapOptions } from './fanout'
+import type { ReconciledToolOutcome } from './runs'
 
 /** Emitted by the run into `agent_run_events` (and nudged to viewers). */
 export interface AgentEvent {
@@ -173,6 +174,11 @@ export interface AgentContext<Input = unknown> {
    * which is what keeps one set of approval rules in one place.
    */
   approvals: ReadonlyMap<string, ToolApproval>
+  /**
+   * Pre-reconciled tool outcomes for this attempt (issue #5). Built by the runtime;
+   * hand it to `runToolLoop` as `reconciledTools`.
+   */
+  reconciledTools?: ReadonlyMap<string, ReconciledToolOutcome>
   /**
    * Ask typed questions about a state and get probabilities back (D37) — `ctx.decide(key, { state,
    * questions })`, or the shapes `ctx.decide.sift(key, …)` (the same yes/no of every item, one
