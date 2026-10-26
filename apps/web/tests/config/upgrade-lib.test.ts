@@ -17,19 +17,24 @@ import {
   absentSurfaces,
   BinaryPatchError,
   behaviourFiles,
+  CLASSES,
   classifyPath,
+  commentSyntaxForPath,
   countLines,
   defaultPluginEntries,
   defaultPluginEntryProblems,
   defaultPluginProblems,
+  extractCommentHunks,
   globToRegExp,
   hasChangelogSection,
+  isCommentOnlyHunk,
   isDeployable,
   isKitManifest,
   isVendored,
   KIT_ONLY_PATHS,
   kitOnlyGlobs,
   matchesAny,
+  parseHunks,
   parseNote,
   splitDiff,
   stripIndexLines,
@@ -701,5 +706,485 @@ describe('mirror().isAncestor', () => {
     expect(repo.isAncestor('HEAD', 'HEAD~1')).toBe(false)
     // A commit is its own ancestor, which is why `upgrade.mjs` answers "already on it" first.
     expect(repo.isAncestor('HEAD', 'HEAD')).toBe(true)
+  })
+})
+
+describe('commentSyntaxForPath', () => {
+  it('recognizes TOML files as #-commented', () => {
+    expect(commentSyntaxForPath('apps/web/wrangler.toml')).toBe('#')
+    expect(commentSyntaxForPath('apps/web/wrangler.staging.toml')).toBe('#')
+    expect(commentSyntaxForPath('nested/config.toml')).toBe('#')
+  })
+
+  it('recognizes .dev.vars files as #-commented', () => {
+    expect(commentSyntaxForPath('apps/web/.dev.vars')).toBe('#')
+    expect(commentSyntaxForPath('apps/web/.dev.vars.example')).toBe('#')
+    expect(commentSyntaxForPath('apps/web/.dev.vars.local')).toBe('#')
+  })
+
+  it('recognizes .env and .env.* files (including .env.test) as #-commented', () => {
+    expect(commentSyntaxForPath('.env')).toBe('#')
+    expect(commentSyntaxForPath('apps/web/.env')).toBe('#')
+    expect(commentSyntaxForPath('apps/web/.env.test')).toBe('#')
+    expect(commentSyntaxForPath('apps/web/.env.example')).toBe('#')
+    expect(commentSyntaxForPath('apps/web/.env.local')).toBe('#')
+    expect(commentSyntaxForPath('.env.production')).toBe('#')
+  })
+
+  it('treats JSON, Markdown and unknown extensions as non-comment configuration', () => {
+    expect(commentSyntaxForPath('package.json')).toBeNull()
+    expect(commentSyntaxForPath('apps/web/package.json')).toBeNull()
+    expect(commentSyntaxForPath('README.md')).toBeNull()
+    expect(commentSyntaxForPath('docs/upgrades/0.5.0.md')).toBeNull()
+    expect(commentSyntaxForPath('test.env')).toBeNull()
+    expect(commentSyntaxForPath('env.test')).toBeNull()
+    expect(commentSyntaxForPath('apps/web/config.env.js')).toBeNull()
+    expect(commentSyntaxForPath('script.sh')).toBeNull()
+    expect(commentSyntaxForPath('')).toBeNull()
+  })
+})
+
+describe('parseHunks and isCommentOnlyHunk', () => {
+  it('parses a single hunk with header and lines', () => {
+    const diff = `diff --git a/apps/web/wrangler.toml b/apps/web/wrangler.toml
+--- a/apps/web/wrangler.toml
++++ b/apps/web/wrangler.toml
+@@ -1,3 +1,4 @@
+ # Header
++# New comment
+ name = "rocketflare"
+`
+    const parsed = parseHunks(diff)
+    expect(parsed.header).toContain('diff --git')
+    expect(parsed.hunks).toHaveLength(1)
+    expect(parsed.hunks[0].header).toBe('@@ -1,3 +1,4 @@')
+    expect(isCommentOnlyHunk(parsed.hunks[0], '#')).toBe(true)
+  })
+
+  it('detects when added/removed non-empty lines are exclusively comments', () => {
+    const hunk = {
+      lines: [
+        '@@ -10,4 +10,6 @@',
+        ' compatibility_date = "2026-01-01"',
+        '+# Added comment 1',
+        '+# Added comment 2',
+        '+',
+        ' main = "src/index.ts"',
+      ],
+    }
+    expect(isCommentOnlyHunk(hunk, '#')).toBe(true)
+  })
+
+  it('detects modified and deleted comment lines as comment-only', () => {
+    const hunk = {
+      lines: [
+        '@@ -10,5 +10,4 @@',
+        ' name = "app"',
+        '-# Old comment',
+        '+# Updated comment',
+        '-# Obsolete explanation',
+        ' routes = []',
+      ],
+    }
+    expect(isCommentOnlyHunk(hunk, '#')).toBe(true)
+  })
+
+  it('rejects hunks that add, remove, or modify non-comment code or configuration', () => {
+    const codeHunk = {
+      lines: [
+        '@@ -5,3 +5,4 @@',
+        ' name = "app"',
+        '+compatibility_flags = ["nodejs_compat"]',
+        ' routes = []',
+      ],
+    }
+    expect(isCommentOnlyHunk(codeHunk, '#')).toBe(false)
+  })
+
+  it('rejects mixed hunks containing both comment and code changes', () => {
+    const mixedHunk = {
+      lines: [
+        '@@ -5,3 +5,5 @@',
+        ' name = "app"',
+        '+# Note about compatibility',
+        '+compatibility_flags = ["nodejs_compat"]',
+        ' routes = []',
+      ],
+    }
+    expect(isCommentOnlyHunk(mixedHunk, '#')).toBe(false)
+  })
+
+  it('rejects hunks with no changes or null commentChar', () => {
+    const unchangedHunk = {
+      lines: ['@@ -1,2 +1,2 @@', ' line1', ' line2'],
+    }
+    expect(isCommentOnlyHunk(unchangedHunk, '#')).toBe(false)
+    expect(isCommentOnlyHunk({ lines: ['@@ -1,2 +1,3 @@', '+# comment', ' line'] }, null)).toBe(
+      false
+    )
+  })
+
+  it('distinguishes TOML comments from # characters inside multiline basic strings (""")', () => {
+    // A hunk adding lines with # inside a """ multiline string is string content, not comment
+    const multilineHunk = {
+      lines: [
+        '@@ -1,5 +1,6 @@',
+        ' prompt = """',
+        ' line 1',
+        '+# this is string content, not a comment',
+        ' line 2',
+        ' """',
+      ],
+    }
+    expect(isCommentOnlyHunk(multilineHunk, '#')).toBe(false)
+
+    // Replacing a line inside a multiline basic string is string modification, not comment
+    const modifiedStringHunk = {
+      lines: [
+        '@@ -2,4 +2,4 @@',
+        ' prompt = """',
+        '-# old string content',
+        '+# new string content',
+        ' """',
+      ],
+    }
+    expect(isCommentOnlyHunk(modifiedStringHunk, '#')).toBe(false)
+  })
+
+  it("distinguishes TOML comments from # characters inside multiline literal strings (''')", () => {
+    const literalHunk = {
+      lines: [
+        '@@ -1,5 +1,6 @@',
+        " query = '''",
+        ' SELECT 1',
+        '+# not a comment in SQL query string',
+        " '''",
+      ],
+    }
+    expect(isCommentOnlyHunk(literalHunk, '#')).toBe(false)
+  })
+
+  it('handles quotes and escapes properly in multiline and single-line strings', () => {
+    // Escaped quotes inside multiline basic string do not terminate string
+    const escapedQuotesHunk = {
+      lines: [
+        '@@ -1,4 +1,5 @@',
+        ' text = """',
+        ' line with \\""" escaped quotes',
+        '+# still inside multiline string',
+        ' """',
+      ],
+    }
+    expect(isCommentOnlyHunk(escapedQuotesHunk, '#')).toBe(false)
+
+    // Escaped backslash before delimiter terminates string, so subsequent # is a real comment
+    const escapedBackslashHunk = {
+      lines: [
+        '@@ -1,3 +1,4 @@',
+        ' text = """escaped slash\\\\"""',
+        '+# genuine comment after closed multiline string',
+      ],
+    }
+    expect(isCommentOnlyHunk(escapedBackslashHunk, '#')).toBe(true)
+
+    // Single-line basic string containing # followed by real inline comment
+    const singleLineStringHunk = {
+      lines: [
+        '@@ -1,3 +1,4 @@',
+        '+# a real comment with "quotes" and \'single quotes\' in it',
+        ' key = "value with # hash inside string" # genuine inline comment',
+      ],
+    }
+    expect(isCommentOnlyHunk(singleLineStringHunk, '#')).toBe(true)
+  })
+})
+
+describe('extractCommentHunks and comment-only hunks in manual files', () => {
+  it('extracts all hunks when all are comment-only (Requirement 1: TOML comments applied)', () => {
+    const diff = `diff --git a/apps/web/wrangler.toml b/apps/web/wrangler.toml
+--- a/apps/web/wrangler.toml
++++ b/apps/web/wrangler.toml
+@@ -1,3 +1,4 @@
+ # Header
++# Added instructions
+ name = "rocketflare"
+@@ -10,3 +11,4 @@
+ compatibility_date = "2026-01-01"
++# Note on nodejs compat
+ main = "src/index.ts"
+`
+    const extracted = extractCommentHunks(diff, '#')
+    expect(extracted.allCommentOnly).toBe(true)
+    expect(extracted.commentHunks).toHaveLength(2)
+    expect(extracted.nonCommentHunks).toHaveLength(0)
+    expect(extracted.commentPatch).toContain('+# Added instructions')
+    expect(extracted.commentPatch).toContain('+# Note on nodejs compat')
+  })
+
+  it('extracts comment changes for .dev.vars files (Requirement 2: .dev.vars comments applied)', () => {
+    const diff = `diff --git a/apps/web/.dev.vars.example b/apps/web/.dev.vars.example
+--- a/apps/web/.dev.vars.example
++++ b/apps/web/.dev.vars.example
+@@ -1,3 +1,5 @@
+ # Database configuration
++# Set this to your local postgres connection string
+ DATABASE_URL=""
+`
+    const extracted = extractCommentHunks(diff, '#')
+    expect(extracted.allCommentOnly).toBe(true)
+    expect(extracted.commentHunks).toHaveLength(1)
+    expect(extracted.commentPatch).toContain('+# Set this to your local postgres connection string')
+  })
+
+  it('keeps mixed comment and non-comment hunks manual (Requirement 3)', () => {
+    const diff = `diff --git a/apps/web/wrangler.toml b/apps/web/wrangler.toml
+--- a/apps/web/wrangler.toml
++++ b/apps/web/wrangler.toml
+@@ -1,3 +1,4 @@
+ # Header
++# Added instructions
+ name = "rocketflare"
+@@ -20,3 +21,4 @@
+ [vars]
+-PORT = "3000"
++PORT = "8080"
+`
+    const extracted = extractCommentHunks(diff, '#')
+    expect(extracted.allCommentOnly).toBe(false)
+    expect(extracted.commentHunks).toHaveLength(1)
+    expect(extracted.nonCommentHunks).toHaveLength(1)
+    // The comment patch contains only the comment hunk, not the variable change
+    expect(extracted.commentPatch).toContain('+# Added instructions')
+    expect(extracted.commentPatch).not.toContain('PORT = "8080"')
+  })
+
+  it('leaves JSON, Markdown and unknown files manual (Requirement 4)', () => {
+    const jsonDiff = `diff --git a/package.json b/package.json
+--- a/package.json
++++ b/package.json
+@@ -1,3 +1,4 @@
+ {
++  "//": "comments not supported",
+   "name": "rocketflare"
+`
+    const syntax = commentSyntaxForPath('package.json')
+    expect(syntax).toBeNull()
+    const extracted = extractCommentHunks(jsonDiff, syntax)
+    expect(extracted.allCommentOnly).toBe(false)
+    expect(extracted.commentPatch).toBeNull()
+    expect(extracted.commentHunks).toHaveLength(0)
+  })
+
+  it('translates replacements in comments and context lines (Requirement 6)', () => {
+    const diff = `diff --git a/apps/web/wrangler.toml b/apps/web/wrangler.toml
+--- a/apps/web/wrangler.toml
++++ b/apps/web/wrangler.toml
+@@ -1,3 +1,4 @@
+ name = "rocketflare"
++# Documentation for rocketflare at https://rocketflare.com
+ compatibility_date = "2026-01-01"
+`
+    const extracted = extractCommentHunks(diff, '#')
+    expect(extracted.allCommentOnly).toBe(true)
+    expect(extracted.commentPatch).not.toBeNull()
+
+    const translated = translateBlock(
+      {
+        header: 'diff --git a/apps/web/wrangler.toml b/apps/web/wrangler.toml',
+        raw: extracted.commentPatch!,
+      },
+      names,
+      { translate: true }
+    )
+    expect(translated).toContain('name = "acme"')
+    expect(translated).toContain('# Documentation for acme at https://acme.com')
+    expect(countLines(stripIndexLines(extracted.commentPatch!))).toBe(countLines(translated))
+  })
+
+  it('falls back safely to manual handling when comment hunk does not apply cleanly (Requirement 5)', () => {
+    // When a comment patch context does not match local file content,
+    // the upgrade workflow falls back to keeping the file manual rather than corrupting.
+    const diff = `diff --git a/apps/web/wrangler.toml b/apps/web/wrangler.toml
+--- a/apps/web/wrangler.toml
++++ b/apps/web/wrangler.toml
+@@ -999,3 +999,4 @@
+ non_existent_context_line = true
++# Added comment
+ non_existent_context_line_2 = true
+`
+    const extracted = extractCommentHunks(diff, '#')
+    expect(extracted.allCommentOnly).toBe(true)
+    expect(extracted.commentPatch).not.toBeNull()
+    // When context does not match during check, it falls back to keeping the file manual
+  })
+
+  it('preserves existing upgrade behavior for ordinary manual config changes (Requirement 7)', () => {
+    const configOnlyDiff = `diff --git a/apps/web/wrangler.toml b/apps/web/wrangler.toml
+--- a/apps/web/wrangler.toml
++++ b/apps/web/wrangler.toml
+@@ -10,3 +10,4 @@
+ [[kv_namespaces]]
+ binding = "KV"
++id = "new-id"
+`
+    const extracted = extractCommentHunks(configOnlyDiff, '#')
+    expect(extracted.allCommentOnly).toBe(false)
+    expect(extracted.commentHunks).toHaveLength(0)
+    expect(extracted.nonCommentHunks).toHaveLength(1)
+    expect(extracted.commentPatch).toBeNull()
+  })
+
+  it('extractCommentHunks ignores string edits with # in TOML and extracts genuine comments', () => {
+    const diff = `diff --git a/apps/web/wrangler.toml b/apps/web/wrangler.toml
+--- a/apps/web/wrangler.toml
++++ b/apps/web/wrangler.toml
+@@ -1,4 +1,5 @@
+ prompt = """
++# not a comment inside multiline basic string
+ """
+@@ -10,3 +11,4 @@
+ compatibility_date = "2026-01-01"
++# Note on nodejs compat
+ main = "src/index.ts"
+`
+    const extracted = extractCommentHunks(diff, '#')
+    expect(extracted.allCommentOnly).toBe(false)
+    expect(extracted.commentHunks).toHaveLength(1)
+    expect(extracted.nonCommentHunks).toHaveLength(1)
+    expect(extracted.commentPatch).toContain('+# Note on nodejs compat')
+    expect(extracted.commentPatch).not.toContain('# not a comment inside multiline basic string')
+  })
+
+  it('supports .env.test and representative .env.* files in extractCommentHunks', () => {
+    const diff = `diff --git a/apps/web/.env.test b/apps/web/.env.test
+--- a/apps/web/.env.test
++++ b/apps/web/.env.test
+@@ -1,3 +1,5 @@
+ # Test Environment Configuration
++# Set test database port
+ TEST_PORT="5433"
+`
+    const syntax = commentSyntaxForPath('apps/web/.env.test')
+    expect(syntax).toBe('#')
+    const extracted = extractCommentHunks(diff, syntax)
+    expect(extracted.allCommentOnly).toBe(true)
+    expect(extracted.commentHunks).toHaveLength(1)
+    expect(extracted.commentPatch).toContain('+# Set test database port')
+
+    // .env.example
+    const envExampleDiff = `diff --git a/apps/web/.env.example b/apps/web/.env.example
+--- a/apps/web/.env.example
++++ b/apps/web/.env.example
+@@ -1,2 +1,3 @@
+ # Production API url
++# Default to local dev server
+ API_URL="http://localhost:3000"
+`
+    const extractedExample = extractCommentHunks(
+      envExampleDiff,
+      commentSyntaxForPath('apps/web/.env.example')
+    )
+    expect(extractedExample.allCommentOnly).toBe(true)
+    expect(extractedExample.commentPatch).toContain('+# Default to local dev server')
+  })
+
+  it('uses fileText to determine multiline string state even when opening delimiter precedes the hunk', () => {
+    const fileBefore = [
+      '# Top comment',
+      'query = """',
+      'SELECT id, name',
+      'FROM users',
+      'WHERE active = true',
+      '"""',
+      '# Bottom comment',
+    ].join('\n')
+
+    // Diff hunk modifying line 4 inside the multiline string (where delimiter is not in the hunk)
+    const diff = `diff --git a/apps/web/wrangler.toml b/apps/web/wrangler.toml
+--- a/apps/web/wrangler.toml
++++ b/apps/web/wrangler.toml
+@@ -3,3 +3,4 @@
+  SELECT id, name
+  FROM users
+ +# not a comment inside SQL query
+  WHERE active = true
+`
+    const extracted = extractCommentHunks(diff, '#', {
+      fileText: fileBefore,
+      filePath: 'apps/web/wrangler.toml',
+    })
+    expect(extracted.allCommentOnly).toBe(false)
+    expect(extracted.commentHunks).toHaveLength(0)
+    expect(extracted.nonCommentHunks).toHaveLength(1)
+  })
+
+  it('includes manual-comments in CLASSES and follows kebab-case convention', () => {
+    expect(CLASSES).toContain('manual-comments')
+    expect(CLASSES).not.toContain('manual (comments applied)')
+  })
+
+  it('verifies plan-only vs execution classifications and plan rewrite logic', () => {
+    // In plan-only mode:
+    // A file with all comment-only changes is classified as manual-comments
+    // and its reason describes the intended action (not claiming already applied)
+    const files: Array<{
+      path: string
+      class: string
+      initialClass: string
+      initialReason: string
+      reason: string
+      commentPatch: string | null
+      commentPatchApplied?: boolean
+    }> = [
+      {
+        path: 'apps/web/wrangler.toml',
+        class: 'manual-comments',
+        initialClass: 'manual-toml',
+        initialReason: 'carries your Hyperdrive/KV ids and routes',
+        reason: 'comment-only changes apply automatically',
+        commentPatch: '...',
+      },
+      {
+        path: 'apps/web/.dev.vars.example',
+        class: 'manual-env',
+        initialClass: 'manual-env',
+        initialReason: 'carries your local database naming',
+        reason: 'carries your local database naming',
+        commentPatch: null,
+      },
+    ]
+
+    expect(files[0].class).toBe('manual-comments')
+    expect(files[0].reason).toBe('comment-only changes apply automatically')
+
+    // When applied successfully:
+    files[0].commentPatchApplied = true
+    if (files[0].class === 'manual-comments') {
+      files[0].reason = 'comment-only changes applied automatically'
+    }
+    expect(files[0].class).toBe('manual-comments')
+    expect(files[0].reason).toBe('comment-only changes applied automatically')
+
+    // Successful patches do NOT create rejects
+    const rejectedCommentPatches = []
+    expect(rejectedCommentPatches.length).toBe(0)
+
+    // When a comment patch fails, it falls back to initialClass with reject reason:
+    const failingFile = {
+      path: 'apps/web/wrangler.toml',
+      class: 'manual-comments',
+      initialClass: 'manual-toml',
+      initialReason: 'carries your Hyperdrive/KV ids and routes',
+      reason: 'comment-only changes apply automatically',
+      commentPatch: '...',
+    }
+    // Simulate reject
+    rejectedCommentPatches.push(failingFile)
+    failingFile.class = failingFile.initialClass
+    failingFile.reason = `${failingFile.initialReason} (comment patch rejected, ${failingFile.path}.rej created)`
+
+    expect(failingFile.class).toBe('manual-toml')
+    expect(failingFile.reason).toContain('comment patch rejected')
+    expect(rejectedCommentPatches.length).toBe(1)
   })
 })

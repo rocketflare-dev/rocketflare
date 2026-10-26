@@ -129,6 +129,7 @@ export type FileClass =
   | 'manual-toml'
   | 'manual-env'
   | 'manual'
+  | 'manual-comments'
   | 'binary'
   | 'verbatim'
 export const CLASSES: readonly FileClass[]
@@ -178,6 +179,66 @@ export function translatePatch(
   decide: (header: string) => (Classification & { path?: string }) | undefined
 ): TranslateResult
 export const APPLYABLE: ReadonlySet<FileClass>
+
+export function commentSyntaxForPath(relPath: string): string | null
+
+export interface Hunk {
+  header: string
+  lines: string[]
+  raw: string
+}
+
+export interface ParsedHunks {
+  header: string
+  hunks: Hunk[]
+}
+
+export function parseHunks(blockRaw: string): ParsedHunks
+
+export const TOML_STATE_NORMAL: 0
+export const TOML_STATE_SINGLE_BASIC: 1
+export const TOML_STATE_SINGLE_LITERAL: 2
+export const TOML_STATE_MULTI_BASIC: 3
+export const TOML_STATE_MULTI_LITERAL: 4
+
+export interface TomlLineScan {
+  endState: number
+  isCommentOnly: boolean
+  commentStart: number
+}
+
+export function scanTomlLine(line: string, initialState?: number): TomlLineScan
+
+export function isCommentOnlyHunk(
+  hunk: Hunk | { lines: readonly string[] },
+  commentChar: string | null,
+  options?: {
+    format?: string
+    filePath?: string
+    initialState?: number
+    initialOldState?: number
+    initialNewState?: number
+  }
+): boolean
+
+export interface ExtractedCommentHunks {
+  header: string
+  commentHunks: Hunk[]
+  nonCommentHunks: Hunk[]
+  allCommentOnly: boolean
+  commentPatch: string | null
+}
+
+export function extractCommentHunks(
+  blockRaw: string,
+  commentChar: string | null,
+  options?: {
+    format?: string
+    filePath?: string
+    fileText?: string
+    afterText?: string
+  }
+): ExtractedCommentHunks
 
 export interface NoteFrontmatter {
   version: string
