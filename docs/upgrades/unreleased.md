@@ -4,7 +4,7 @@ previous: 0.23.0
 date: null
 breaking: false
 migrations: []
-areas: []
+areas: [plugins]
 touches_surfaces: []
 requires_surfaces: []
 manual: false
@@ -12,20 +12,22 @@ manual: false
 
 ## What changed
 
-_Nothing yet. Add an entry here in the same pull request as the change. This first paragraph is
-lifted VERBATIM into `CHANGELOG.md`, so make it ONE standalone summary sentence of ≤ 40 words —
-then one bullet per change, one line each, and no `###` sub-headings. Rationale belongs in
-`docs/CONCEPTS.md` and is linked, never restated; see `README.md` beside this file._
+Plugin validation now inspects code with TypeScript AST analysis and project-aware module resolution instead of regex string matching.
+
+- `scripts/lib/plugin-lib.mjs`: worker export detection (`workerExports`), config property extraction (`pluginPropertyMap`), and import isolation checks now parse files using the TypeScript compiler AST rather than regular expressions.
+- `loadProjectCompilerOptions` and `findProjectTsconfig` derive compiler options from each file's enclosing project (`apps/web`, `apps/cli`, `packages/shared`) so path aliases and module resolution reflect the target workspace.
+- `unresolvedPluginImports` supports Vite query imports (such as `?raw` and `?url`) without false unresolved errors and returns structured `UnresolvedPluginImport` objects instead of TypeScript diagnostic codes.
 
 ## How to apply
 
-_Numbered, imperative, each step self-contained — no "these", "them" or "the above" reaching
-outside its own step._
+1. Copy `scripts/lib/plugin-lib.mjs` and `scripts/lib/plugin-lib.d.mts` from the kit.
+2. Copy `apps/web/tests/config/plugin-lib.test.ts` from the kit.
 
 ## Conflicts to expect
 
-_One line each: `path → what changed → what to do`. Or exactly `None.`_
+None.
 
 ## Verify
 
-_Numbered checkable commands and assertions only._
+1. `pnpm plugin check` passes.
+2. `pnpm --filter @rocketflare/web exec vitest run --project config tests/config/plugin-lib.test.ts` passes.

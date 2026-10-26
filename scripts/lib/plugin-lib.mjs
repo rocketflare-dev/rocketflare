@@ -13,9 +13,25 @@
  *
  * `plugin-lib.d.mts` beside this file is the hand-written type surface (no `allowJs`).
  */
+import fs from 'node:fs'
+import { createRequire, isBuiltin } from 'node:module'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { KIT } from './rename-lib.mjs'
 import { missingFrom } from './surface.mjs'
 import { compareVersions, isVendored } from './upgrade-lib.mjs'
+
+const require = createRequire(import.meta.url)
+const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
+
+/** @type {import('typescript') | null} */
+let cachedTs = null
+
+/** The TypeScript parser, loaded on first use. */
+function typescript() {
+  if (!cachedTs) cachedTs = require('typescript')
+  return cachedTs
+}
 
 /**
  * A bare `X.Y.Z`, and nothing that resembles a range.
@@ -1649,49 +1665,79 @@ export function pluginManifestProblems(manifest) {
 /**
  * The value names a `worker-exports.ts` exports, and whether they can be known at all.
  *
+ * Parsed with the TypeScript compiler AST, requiring real code declarations or exports rather
+ * than names inside comments or string literals.
+ *
  * `opaque` is an `export * from './x'`, whose names need the module resolved to enumerate. Both
  * directions of the worker-barrel check are skipped for one rather than guessed: reporting
  * "declares OrdersHub and does not export it" against a star re-export that plainly does would
  * teach an author to distrust the whole audit.
  */
-export function workerExportNames(source) {
-  const text = String(source)
+export function workerExportNames(source, fileName = 'worker-exports.ts') {
+  const ts = typescript()
+  const sf = ts.createSourceFile(fileName, String(source), ts.ScriptTarget.Latest, true)
   const names = new Set()
-  for (const m of text.matchAll(/export\s*\{([^}]*)\}/g)) {
-    for (const part of m[1].split(',')) {
-      const spec = part.trim()
-      if (spec === '' || spec.startsWith('type ')) continue
-      const halves = spec.split(/\s+as\s+/)
-      names.add((halves[1] ?? halves[0]).trim())
+  let opaque = false
+
+  function collectFromBinding(pattern) {
+    for (const elem of pattern.elements) {
+      if (ts.isOmittedExpression(elem)) continue
+      if (ts.isIdentifier(elem.name)) {
+        names.add(elem.name.text)
+      } else if (ts.isObjectBindingPattern(elem.name) || ts.isArrayBindingPattern(elem.name)) {
+        collectFromBinding(elem.name)
+      }
     }
   }
-  const declaration =
-    /export\s+(?:default\s+)?(?:abstract\s+)?(?:class|const|let|var|function\*?)\s+([A-Za-z_$][\w$]*)/g
-  for (const m of text.matchAll(declaration)) names.add(m[1])
+
+  for (const node of sf.statements) {
+    if (ts.isExportDeclaration(node)) {
+      if (!node.exportClause) {
+        opaque = true
+      } else if (ts.isNamedExports(node.exportClause)) {
+        if (!node.isTypeOnly) {
+          for (const elem of node.exportClause.elements) {
+            if (!elem.isTypeOnly) {
+              names.add(elem.name.text)
+            }
+          }
+        }
+      }
+    } else if (
+      (ts.canHaveModifiers?.(node) ? ts.getModifiers(node) : node.modifiers)?.some(
+        m => m.kind === ts.SyntaxKind.ExportKeyword
+      )
+    ) {
+      if (ts.isClassDeclaration(node) && node.name) {
+        names.add(node.name.text)
+      } else if (ts.isFunctionDeclaration(node) && node.name) {
+        names.add(node.name.text)
+      } else if (ts.isVariableStatement(node)) {
+        for (const decl of node.declarationList.declarations) {
+          if (ts.isIdentifier(decl.name)) {
+            names.add(decl.name.text)
+          } else if (ts.isObjectBindingPattern(decl.name) || ts.isArrayBindingPattern(decl.name)) {
+            collectFromBinding(decl.name)
+          }
+        }
+      } else if (ts.isEnumDeclaration(node) && node.name) {
+        names.add(node.name.text)
+      }
+    }
+  }
+
   names.delete('')
-  return { names: [...names], opaque: /export\s+\*/.test(text) }
+  return { names: [...names], opaque }
 }
 
-/**
- * A source with its comments removed.
- *
- * **Shared by every check that SCANS source**, because the failure mode is one and it is
- * invisible: a check a comment can talk its way past reports SUCCESS. The fixture written to prove
- * the `onTenantDeleted` rule carried the sentence "declares no `hooks.onTenantDeleted`" in its own
- * doc comment and passed on it; a test file whose header says "tenant isolation" would have
- * satisfied the isolation check the same way. Prose about a rule is not the rule being kept.
- */
-function stripComments(source) {
-  return (
-    String(source)
-      .replace(/\/\*[\s\S]*?\*\//g, ' ')
-      // `[^:]` so a `https://…` inside a string is not mistaken for a line comment.
-      .replace(/(^|[^:])\/\/[^\n]*/g, '$1')
-  )
-}
+const SECOND_TENANT_RE = /\b(?:other|second|another|foreign)[A-Za-z]*[Tt]enant|\btenantB\b/
 
 /**
  * Structural evidence that a test file proves cross-tenant isolation.
+ *
+ * Parsed with the TypeScript compiler AST: requires genuine executable AST evidence (actual
+ * createTestTenant call expressions, describe call expressions with 'isolation' title, and
+ * AST identifier tokens), refusing comments and string literals.
  *
  * **This proves a test EXISTS, not that it is right**, and the diagnostic says so. A structural
  * check cannot read a predicate — but it does not have to be alone: `@testkit`'s builders refuse a
@@ -1700,15 +1746,57 @@ function stripComments(source) {
  * is already hard to write. Two signals together, because either alone is noise: the file must
  * CREATE at least two organisations, and it must NAME the second one or the property.
  */
-export function isolationEvidence(source) {
-  // Comments stripped FIRST: a commented-out `createTestTenant(db)`, or a header paragraph about
-  // tenant isolation, is talk about the test rather than the test.
-  const text = stripComments(source)
-  const named = /describe\(\s*['"`][^'"`]*isolation/i.test(text)
-  // No word boundary AFTER `tenant`: the usual spelling is `otherTenantId` / `otherTenantCookie`,
-  // and a trailing `\b` refuses every one of them.
-  const secondTenant = /\b(?:other|second|another|foreign)[A-Za-z]*[Tt]enant|\btenantB\b/.test(text)
-  const tenantsCreated = [...text.matchAll(/createTestTenant(?:WithUser)?\s*\(/g)].length
+export function isolationEvidence(source, fileName = 'isolation.test.ts') {
+  const ts = typescript()
+  const sf = ts.createSourceFile(fileName, String(source), ts.ScriptTarget.Latest, true)
+  let named = false
+  let secondTenant = false
+  let tenantsCreated = 0
+
+  function isDescribe(expr) {
+    if (ts.isIdentifier(expr)) return expr.text === 'describe'
+    if (ts.isPropertyAccessExpression(expr)) return isDescribe(expr.expression)
+    return false
+  }
+
+  function isTenantCreation(expr) {
+    let name = null
+    if (ts.isIdentifier(expr)) name = expr.text
+    else if (ts.isPropertyAccessExpression(expr)) name = expr.name.text
+    return name === 'createTestTenant' || name === 'createTestTenantWithUser'
+  }
+
+  function checkStringForIsolation(node) {
+    if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) {
+      return /isolation/i.test(node.text)
+    }
+    if (ts.isTemplateExpression(node)) {
+      if (/isolation/i.test(node.head.text)) return true
+      for (const span of node.templateSpans) {
+        if (/isolation/i.test(span.literal.text)) return true
+      }
+    }
+    return false
+  }
+
+  function walk(node) {
+    if (ts.isCallExpression(node)) {
+      if (isTenantCreation(node.expression)) {
+        tenantsCreated++
+      } else if (isDescribe(node.expression) && node.arguments.length > 0) {
+        if (checkStringForIsolation(node.arguments[0])) {
+          named = true
+        }
+      }
+    } else if (ts.isIdentifier(node)) {
+      if (SECOND_TENANT_RE.test(node.text)) {
+        secondTenant = true
+      }
+    }
+    ts.forEachChild(node, walk)
+  }
+
+  walk(sf)
   return { named, secondTenant, tenantsCreated, ok: tenantsCreated >= 2 && (named || secondTenant) }
 }
 
@@ -1716,13 +1804,369 @@ export function isolationEvidence(source) {
  * Whether a TypeScript source really DECLARES `name` as a property or method, rather than merely
  * mentioning it.
  *
- * Comments are stripped first, and that is not belt-and-braces: the fixture written to prove the
- * `onTenantDeleted` check works carried the sentence *"declares no `hooks.onTenantDeleted`"* in its
- * own doc comment, and a substring search was satisfied by it. A check a comment can talk its way
- * past is worse than no check, because it reports success.
+ * Parsed with the TypeScript compiler AST to check for actual property assignments, method
+ * declarations, property declarations, signatures, or labeled statements. Comments and string
+ * literals are ignored by the AST, preventing doc comments or string values from satisfying the check.
  */
-export function declaresProperty(source, name) {
-  return new RegExp(`\\b${escapeRe(name)}\\s*[:(]`).test(stripComments(source))
+export function declaresProperty(source, name, fileName = 'file.ts') {
+  const ts = typescript()
+
+  function checkSf(sf) {
+    let found = false
+    function walk(node) {
+      if (found) return
+      if (
+        (ts.isPropertyAssignment(node) ||
+          ts.isShorthandPropertyAssignment(node) ||
+          ts.isMethodDeclaration(node) ||
+          ts.isPropertyDeclaration(node) ||
+          ts.isMethodSignature(node) ||
+          ts.isPropertySignature(node) ||
+          ts.isGetAccessor(node) ||
+          ts.isSetAccessor(node)) &&
+        node.name &&
+        ((ts.isIdentifier(node.name) && node.name.text === name) ||
+          (ts.isStringLiteral(node.name) && node.name.text === name))
+      ) {
+        found = true
+        return
+      }
+      if (ts.isLabeledStatement(node) && node.label.text === name) {
+        found = true
+        return
+      }
+      ts.forEachChild(node, walk)
+    }
+    walk(sf)
+    return found
+  }
+
+  const sf1 = ts.createSourceFile(fileName, String(source), ts.ScriptTarget.Latest, true)
+  if (checkSf(sf1)) return true
+  // Support object literal fragments like `async onTenantDeleted(db) {}` without surrounding `({ ... })`
+  try {
+    const sf2 = ts.createSourceFile(
+      'fragment.ts',
+      `({\n${source}\n})`,
+      ts.ScriptTarget.Latest,
+      true
+    )
+    return checkSf(sf2)
+  } catch {
+    return false
+  }
+}
+
+const ASSET_SPECIFIER_RE =
+  /\.(css|scss|sass|less|styl|stylus|pcss|sss|svg|png|jpe?g|gif|webp|avif|ico|bmp|wasm)($|\?)/i
+
+const VITE_QUERY_RE = /^[?&](raw|url|worker|inline)($|[?&=])/
+
+const WORKERD_AMBIENT_MODULES = new Set([
+  'cloudflare:workers',
+  'cloudflare:workflows',
+  'cloudflare:durable-objects',
+  'cloudflare:email',
+  'cloudflare:node',
+  'cloudflare:sockets',
+  'cloudflare:pipelines',
+  'cloudflare:test',
+])
+
+/**
+ * Loads and parses TypeScript compiler options from a tsconfig.json file.
+ *
+ * Uses ts.readConfigFile and ts.parseJsonConfigFileContent so inherited settings,
+ * base URLs, path aliases, and module resolution match project configuration.
+ */
+export function loadProjectCompilerOptions(tsconfigPath, options = {}) {
+  const ts = options.ts ?? typescript()
+  const baseDir = options.repoRoot ?? REPO_ROOT
+  const absPath = path.isAbsolute(tsconfigPath)
+    ? tsconfigPath
+    : fs.existsSync(path.resolve(tsconfigPath))
+      ? path.resolve(tsconfigPath)
+      : path.resolve(baseDir, tsconfigPath)
+  const normPath = absPath.replace(/\\/g, '/')
+  if (!fs.existsSync(normPath)) {
+    throw new Error(`TypeScript configuration not found at '${normPath}'`)
+  }
+
+  const readResult = ts.readConfigFile(normPath, ts.sys.readFile)
+  if (readResult.error) {
+    const msg = ts.flattenDiagnosticMessageText
+      ? ts.flattenDiagnosticMessageText(readResult.error.messageText, '\n')
+      : String(readResult.error.messageText ?? readResult.error)
+    throw new Error(`Failed to read TypeScript configuration at '${normPath}': ${msg}`)
+  }
+
+  const parsed = ts.parseJsonConfigFileContent(
+    readResult.config,
+    ts.sys,
+    path.dirname(normPath).replace(/\\/g, '/')
+  )
+  if (parsed.errors && parsed.errors.length > 0) {
+    const fatal = parsed.errors.filter(e => e.category === ts.DiagnosticCategory.Error)
+    if (fatal.length > 0) {
+      const msg = fatal
+        .map(e =>
+          ts.flattenDiagnosticMessageText
+            ? ts.flattenDiagnosticMessageText(e.messageText, '\n')
+            : String(e.messageText ?? e)
+        )
+        .join('; ')
+      throw new Error(`Failed to parse TypeScript configuration at '${normPath}': ${msg}`)
+    }
+  }
+
+  return parsed.options
+}
+
+/**
+ * Determines the appropriate tsconfig.json for a given file by walking up from the
+ * file's directory to the repository root. Defaults to apps/web/tsconfig.json.
+ */
+export function findProjectTsconfig(filePath, repoRoot = REPO_ROOT) {
+  const normFile = path.resolve(repoRoot, filePath).replace(/\\/g, '/')
+  let dir = path.dirname(normFile)
+  const resolvedRepoRoot = path.resolve(repoRoot).replace(/\\/g, '/')
+
+  while (dir.startsWith(resolvedRepoRoot)) {
+    const candidate = path.posix.join(dir, 'tsconfig.json')
+    if (fs.existsSync(candidate)) {
+      return candidate
+    }
+    const parent = path.posix.dirname(dir)
+    if (parent === dir) break
+    dir = parent
+  }
+
+  const webConfig = path.posix.join(resolvedRepoRoot, 'apps/web/tsconfig.json')
+  if (fs.existsSync(webConfig)) return webConfig
+
+  const rootConfig = path.posix.join(resolvedRepoRoot, 'tsconfig.json')
+  if (fs.existsSync(rootConfig)) return rootConfig
+  const baseConfig = path.posix.join(resolvedRepoRoot, 'tsconfig.base.json')
+  if (fs.existsSync(baseConfig)) return baseConfig
+
+  return webConfig
+}
+
+/**
+ * Resolves a module specifier against path aliases defined in compilerOptions.paths.
+ */
+function resolvePathAlias(specifier, compilerOptions) {
+  if (!compilerOptions.paths) return []
+  const baseUrl = compilerOptions.baseUrl ?? '.'
+  const matches = []
+  for (const [pattern, substitutions] of Object.entries(compilerOptions.paths)) {
+    const starIdx = pattern.indexOf('*')
+    if (starIdx === -1) {
+      if (specifier === pattern) {
+        for (const sub of substitutions) {
+          matches.push(path.resolve(baseUrl, sub))
+        }
+      }
+    } else {
+      const prefix = pattern.slice(0, starIdx)
+      const suffix = pattern.slice(starIdx + 1)
+      if (specifier.startsWith(prefix) && specifier.endsWith(suffix)) {
+        const matched = specifier.slice(prefix.length, specifier.length - suffix.length)
+        for (const sub of substitutions) {
+          matches.push(path.resolve(baseUrl, sub.replace('*', matched)))
+        }
+      }
+    }
+  }
+  return matches
+}
+
+function fileOrHostExists(filePath, host, isVirtual, virtualMap) {
+  const norm = path.resolve(filePath)
+  if (isVirtual && virtualMap && virtualMap.has(norm)) return true
+  return (
+    fs.existsSync(norm) || (host && typeof host.fileExists === 'function' && host.fileExists(norm))
+  )
+}
+
+function makeHost(compilerOptions, virtualMap, ts) {
+  const baseHost = ts.createCompilerHost(compilerOptions)
+  if (!virtualMap || virtualMap.size === 0) return baseHost
+
+  return {
+    ...baseHost,
+    getSourceFile: (fileName, languageVersion, onError, shouldCreateNewSourceFile) => {
+      const norm = path.resolve(fileName)
+      if (virtualMap.has(norm)) {
+        return ts.createSourceFile(norm, virtualMap.get(norm), languageVersion, true)
+      }
+      return baseHost.getSourceFile(fileName, languageVersion, onError, shouldCreateNewSourceFile)
+    },
+    fileExists: fileName => {
+      const norm = path.resolve(fileName)
+      if (virtualMap.has(norm)) return true
+      return baseHost.fileExists(fileName)
+    },
+    directoryExists: directoryName => {
+      const norm = path.resolve(directoryName)
+      for (const k of virtualMap.keys()) {
+        if (k.startsWith(norm + path.sep) || k.startsWith(norm + '/')) return true
+      }
+      return typeof baseHost.directoryExists === 'function'
+        ? baseHost.directoryExists(directoryName)
+        : true
+    },
+    readFile: fileName => {
+      const norm = path.resolve(fileName)
+      if (virtualMap.has(norm)) return virtualMap.get(norm)
+      return baseHost.readFile(fileName)
+    },
+  }
+}
+
+/**
+ * Checks for unresolved imports across plugin files.
+ *
+ * When dependencies cannot resolve, TypeScript degrades types to `any`, causing false
+ * passes on type-level checks. This fails closed explicitly when any import cannot resolve.
+ */
+export function unresolvedPluginImports(files, options = {}) {
+  const ts = typescript()
+  const repoRoot = options.repoRoot ?? REPO_ROOT
+
+  if (!fs.existsSync(path.join(repoRoot, 'node_modules'))) {
+    return [
+      {
+        file: 'node_modules',
+        line: null,
+        specifier: 'node_modules',
+        message: 'node_modules is missing — run `pnpm install` first, or every type reads as `any`',
+      },
+    ]
+  }
+
+  const isVirtual = typeof files === 'object' && !Array.isArray(files) && files !== null
+  const virtualMap = new Map()
+
+  if (isVirtual) {
+    for (const [filePath, content] of Object.entries(files)) {
+      const norm = path.resolve(repoRoot, filePath)
+      virtualMap.set(norm, String(content))
+    }
+  }
+
+  const targetFiles = isVirtual ? Object.keys(files) : (files ?? [])
+  const unresolved = []
+
+  const projectConfigCache = new Map()
+  const hostCache = new Map()
+
+  function getProjectEnv(normFile) {
+    const tsconfigPath = options.tsconfigPath ?? findProjectTsconfig(normFile, repoRoot)
+    const normConfig = path.resolve(tsconfigPath).replace(/\\/g, '/')
+    let compilerOptions = projectConfigCache.get(normConfig)
+    if (!compilerOptions) {
+      const loaded = loadProjectCompilerOptions(normConfig, { ts })
+      compilerOptions = { ...loaded, ...(options.compilerOptions ?? {}) }
+      projectConfigCache.set(normConfig, compilerOptions)
+    }
+    let host = hostCache.get(normConfig)
+    if (!host) {
+      host = makeHost(compilerOptions, virtualMap, ts)
+      hostCache.set(normConfig, host)
+    }
+    return { compilerOptions, host }
+  }
+
+  for (const relOrAbs of targetFiles) {
+    const norm = path.resolve(repoRoot, relOrAbs)
+    const content = isVirtual
+      ? virtualMap.get(norm)
+      : fs.existsSync(norm)
+        ? fs.readFileSync(norm, 'utf8')
+        : null
+    if (content === null) continue
+
+    const { compilerOptions, host } = getProjectEnv(norm)
+    const sf = ts.createSourceFile(norm, content, ts.ScriptTarget.Latest, true)
+
+    function checkImport(specifierNode) {
+      if (!specifierNode || !ts.isStringLiteral(specifierNode)) return
+      const specifier = specifierNode.text
+
+      const qIndex = specifier.indexOf('?')
+      const hasQuery = qIndex !== -1
+      const cleanSpecifier = hasQuery ? specifier.slice(0, qIndex) : specifier
+      const queryString = hasQuery ? specifier.slice(qIndex) : ''
+      const isViteQuery = hasQuery && VITE_QUERY_RE.test(queryString)
+
+      if (
+        isBuiltin(cleanSpecifier) ||
+        WORKERD_AMBIENT_MODULES.has(cleanSpecifier) ||
+        cleanSpecifier.startsWith('cloudflare:') ||
+        cleanSpecifier.startsWith('assets:')
+      ) {
+        return
+      }
+
+      if (!hasQuery) {
+        const res = ts.resolveModuleName(specifier, norm, compilerOptions, host)
+        if (res.resolvedModule) return
+      } else if (isViteQuery) {
+        const res = ts.resolveModuleName(cleanSpecifier, norm, compilerOptions, host)
+        if (res.resolvedModule) return
+      }
+
+      const canBeFileOnDisk =
+        isViteQuery || ASSET_SPECIFIER_RE.test(specifier) || ASSET_SPECIFIER_RE.test(cleanSpecifier)
+
+      if (canBeFileOnDisk) {
+        if (cleanSpecifier.startsWith('.') || cleanSpecifier.startsWith('/')) {
+          const targetPath = path.resolve(path.dirname(norm), cleanSpecifier)
+          if (fileOrHostExists(targetPath, host, isVirtual, virtualMap)) {
+            return
+          }
+        } else {
+          const aliasPaths = resolvePathAlias(cleanSpecifier, compilerOptions)
+          for (const p of aliasPaths) {
+            if (fileOrHostExists(p, host, isVirtual, virtualMap)) {
+              return
+            }
+          }
+          if (!isVirtual) {
+            try {
+              createRequire(norm).resolve(cleanSpecifier)
+              return
+            } catch {}
+          }
+        }
+      }
+
+      const line = sf.getLineAndCharacterOfPosition(specifierNode.getStart(sf)).line + 1
+      unresolved.push({
+        file: isVirtual ? relOrAbs : path.relative(repoRoot, norm).replace(/\\/g, '/'),
+        line,
+        specifier,
+        message: `Cannot find module '${specifier}' or its corresponding type declarations.`,
+      })
+    }
+
+    function walk(node) {
+      if ((ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) && node.moduleSpecifier) {
+        checkImport(node.moduleSpecifier)
+      } else if (
+        ts.isCallExpression(node) &&
+        node.expression.kind === ts.SyntaxKind.ImportKeyword &&
+        node.arguments.length > 0
+      ) {
+        checkImport(node.arguments[0])
+      }
+      ts.forEachChild(node, walk)
+    }
+    walk(sf)
+  }
+
+  return unresolved
 }
 
 /**
