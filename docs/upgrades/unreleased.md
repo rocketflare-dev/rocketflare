@@ -4,28 +4,30 @@ previous: 0.23.0
 date: null
 breaking: false
 migrations: []
-areas: []
-touches_surfaces: []
-requires_surfaces: []
+areas: [api, shared]
+touches_surfaces:
+  - feature-agents
+requires_surfaces: [feature-agents]
 manual: false
 ---
 
 ## What changed
 
-_Nothing yet. Add an entry here in the same pull request as the change. This first paragraph is
-lifted VERBATIM into `CHANGELOG.md`, so make it ONE standalone summary sentence of ≤ 40 words —
-then one bullet per change, one line each, and no `###` sub-headings. Rationale belongs in
-`docs/CONCEPTS.md` and is linked, never restated; see `README.md` beside this file._
+Tool calls whose completion events are missing following a crash or retry surface an unknown outcome rather than silently replaying.
+
+- `agentToolEndEventDataSchema` explicitly models `outcome` (`'success' | 'error' | 'unknown'`), and tool event reconciliation pairs `tool.start` and `tool.end` events by `toolCallId`, recording `outcome: 'unknown'` when a process stops before completion is persisted (issue #5).
+- `runToolLoop` accepts pre-reconciled tool outcomes, preventing duplicate side-effect execution across retries while honestly exposing unresolved tool results in the transcript and timeline (issue #5).
 
 ## How to apply
 
-_Numbered, imperative, each step self-contained — no "these", "them" or "the above" reaching
-outside its own step._
+1. Port `outcome` in `packages/shared/src/ai/agents.ts`.
+2. Port reconciled tool handling in `apps/web/src/api/services/ai/kit.ts`.
+3. Port tool event reconciliation in `apps/web/src/api/services/agents/runs.ts` (`reconcileToolEvents`) and `runtime.ts`.
 
 ## Conflicts to expect
 
-_One line each: `path → what changed → what to do`. Or exactly `None.`_
+- `apps/web/src/api/services/agents/runs.ts` → `reconcileToolEvents` reconciles open tool calls before retries and on settled runs.
 
 ## Verify
 
-_Numbered checkable commands and assertions only._
+1. `pnpm gate` passes.

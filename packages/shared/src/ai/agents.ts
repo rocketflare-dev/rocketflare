@@ -331,9 +331,18 @@ export const agentToolEndEventDataSchema = z
     result: z.unknown().optional(),
     isError: z.boolean().optional(),
     toolCallId: z.string().optional(),
+    outcome: z.enum(['success', 'error', 'unknown']).optional(),
   })
   .passthrough()
 export type AgentToolEndEventData = z.infer<typeof agentToolEndEventDataSchema>
+
+export interface ReconciledToolOutcome {
+  toolCallId: string
+  name: string
+  outcome: 'unknown' | 'success' | 'error'
+  text: string
+  isError: boolean
+}
 
 export const agentTextEventDataSchema = z.object({ text: z.string() })
 export type AgentTextEventData = z.infer<typeof agentTextEventDataSchema>

@@ -491,6 +491,12 @@ export interface RunToolLoopOptions {
    * too, so an answer to an old gate cannot slip a call past a rule that changed while it waited.
    */
   authorizeTool?: (call: ToolCallToAuthorize) => ToolAuthorization | Promise<ToolAuthorization>
+  /**
+   * Pre-reconciled tool outcomes from earlier attempts or recovery (issue #5).
+   * Calls in this map are NOT executed again; their recorded text and error status
+   * are returned directly to prevent duplicate side effects.
+   */
+  reconciledTools?: ReadonlyMap<string, { text: string; isError: boolean; outcome?: string }>
 }
 
 /** What {@link RunToolLoopOptions.authorizeTool} is asked about. `input` is the model's, unparsed. */
@@ -871,7 +877,7 @@ export async function runToolLoop(
 
     let nextEmitIndex = 0
     let emitPromise = Promise.resolve()
-    let emitError: unknown = undefined
+    let emitError: unknown
 
     const flushEmits = () => {
       emitPromise = emitPromise
@@ -914,6 +920,19 @@ export async function runToolLoop(
         if (index >= toolUses.length) return
 
         const block = toolUses[index]
+
+        const reconciled = opts.reconciledTools?.get(block.id)
+        if (reconciled) {
+          outcomes[index] = {
+            kind: 'result',
+            outcome: {
+              text: reconciled.text,
+              isError: reconciled.isError,
+            },
+          }
+          await flushEmits()
+          continue
+        }
 
         if (denied.has(block.id)) {
           const reason = denied.get(block.id)
@@ -1104,6 +1123,10 @@ export async function runToolLoop(
     const denied = await authorize(toolUses, turns)
     const gates = collectGates(toolUses, denied)
     if (gates.length > 0) return await raise(gates)
+
+    // Persist the assistant turn containing pending tool uses before any tool handler begins
+    // execution, so crash recovery resumes with tool calls intact instead of re-prompting the model.
+    await checkpoint()
 
     messages.push({ role: 'user', content: await executeToolUses(toolUses, turns, denied) })
     await checkpoint()

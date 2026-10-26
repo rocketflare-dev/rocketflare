@@ -482,6 +482,17 @@ Server: `api/services/{ai,agents}/**` (read their `CLAUDE.md`), `services/prompt
   `agent_policy_exhausted`, never retried. **`authorizeTool(call)`** on the same loop is the
   deny-by-rule half of #3 (`requiresApproval` is the ask-a-person half, #17): a refused call is never
   gated, never run, and the model is told why.
+- **Recovery and tool outcomes (issue #5)**: A tool handler executing external side effects
+  (e.g., payments, outbound webhooks, database writes) can be interrupted by a process crash, isolate
+  eviction, or timeout before its completion event (`tool.end`) is persisted. Because external systems
+  may not support idempotency, blindly replaying an interrupted call risks duplicating side effects,
+  while silently treating it as failed obscures what actually happened. The runtime reconciles
+  tool events at the start of each retry attempt and upon settling: any tool call that emitted
+  `tool.start` without a matching `tool.end` is classified with `outcome: 'unknown'` (unless parked on
+  human approval or explicitly declined). The assistant turn is checkpointed before tool handlers
+  execute, ensuring that resumption presents the honest `unknown` outcome in the conversation transcript
+  to the model, preserving `toolCallId` pairing and leaving operator/model decisions explicit rather
+  than assuming exactly-once execution across non-transactional boundaries.
 - **Reading runs**: `agent_run_events` is the durable log, and AG-UI is a pure read-time
   projection (`/agui`), also streamed live by tailing `seq` (`/agui/stream`, #7). A read-stream
   failure emits no `RUN_ERROR` (clients reconnect); `id:` goes on the last frame of a row's group,

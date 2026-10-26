@@ -99,6 +99,52 @@ describe('buildTimeline', () => {
     expect(rows.map(r => (r.kind === 'tool' ? r.result : null))).toEqual(['A', 'B'])
   })
 
+  it('preserves outcome: "unknown" on tool.end and closes unresolved tools when run settles', () => {
+    const rowsWithExplicitUnknown = buildTimeline([
+      ev(1, 'tool.start', { name: 'search_knowledge', toolCallId: 'a', input: { q: 'a' } }),
+      ev(2, 'tool.end', {
+        name: 'search_knowledge',
+        toolCallId: 'a',
+        outcome: 'unknown',
+        result: 'Crash before completion',
+      }),
+    ])
+    expect(rowsWithExplicitUnknown).toHaveLength(1)
+    const callA = rowsWithExplicitUnknown[0]
+    expect(callA.kind).toBe('tool')
+    if (callA.kind === 'tool') {
+      expect(callA.done).toBe(true)
+      expect(callA.outcome).toBe('unknown')
+      expect(callA.result).toBe('Crash before completion')
+    }
+
+    const rowsWithSettledRun = buildTimeline([
+      ev(1, 'status', { status: 'running' }),
+      ev(2, 'tool.start', {
+        name: 'search_knowledge',
+        toolCallId: 'call_known',
+        input: { q: 'k' },
+      }),
+      ev(3, 'tool.start', {
+        name: 'delete_resource',
+        toolCallId: 'call_crashed',
+        input: { id: 'x' },
+      }),
+      ev(4, 'tool.end', { name: 'search_knowledge', toolCallId: 'call_known', result: 'found' }),
+      ev(5, 'status', { status: 'failed' }),
+    ])
+    expect(rowsWithSettledRun.filter(r => r.kind === 'tool')).toHaveLength(2)
+    const [knownCall, crashedCall] = rowsWithSettledRun.filter(r => r.kind === 'tool')
+    if (knownCall.kind === 'tool' && crashedCall.kind === 'tool') {
+      expect(knownCall.done).toBe(true)
+      expect(knownCall.outcome).toBeUndefined()
+      expect(knownCall.result).toBe('found')
+
+      expect(crashedCall.done).toBe(true)
+      expect(crashedCall.outcome).toBe('unknown')
+    }
+  })
+
   it('reads the new event kinds', () => {
     const rows = buildTimeline([
       ev(1, 'interrupt', {
