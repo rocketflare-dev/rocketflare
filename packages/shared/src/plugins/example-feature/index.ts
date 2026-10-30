@@ -1,11 +1,11 @@
 /**
- * `example-feature` — the kit's reference PLUGIN (D31, decision 3), shared half.
+ * `example-feature` — the reference PLUGIN, shared half.
  *
  * It exists to be deleted, and to be read first. Between the three entries it exercises every slot
  * the seam has: a feature flag, a job type, a CASL subject and grants, a tenant-scoped table with
  * an RLS policy, a CRUD route, an agent tool, `onTenantCreated`, `seedDemo`, a lazy page with a nav
  * item, and two CLI commands. Delete it with `pnpm plugin remove example-feature` (or by hand: its
- * three directories, the five barrel lines and its surface in `.rocketflare.json`) and the kit is
+ * three directories, the five barrel lines and its surface in `.rocketflare.json`) and the app is
  * bare again.
  *
  * **Everything it keys carries the plugin's id**, which is the rule that lets two plugins live in
@@ -29,13 +29,13 @@ import type { SharedPlugin } from '../types'
 export const EXAMPLE_FEATURE_ID = 'example-feature'
 
 /**
- * The flag that gates the nav item, the page and the `/api/example-feature` mount (D30). It is one
+ * The flag that gates the nav item, the page and the `/api/example-feature` mount. It is one
  * key, not one per surface: a feature is a surface, and gating its doors separately is how a nav
  * item and its routes come to disagree.
  */
 export const EXAMPLE_FEATURE_FLAG = 'example-feature'
 
-/** The smoke job's type. `<id>.<verb>`, so it cannot collide with a kit type or another plugin's. */
+/** The smoke job's type. `<id>.<verb>`, so it cannot collide with a core type or another plugin's. */
 export const EXAMPLE_PING_JOB = 'example-feature.ping'
 
 /** The CASL subject the plugin's rows are governed by. */
@@ -84,7 +84,7 @@ export const examplePingResponseSchema = z.object({
 export type ExamplePingResponse = z.infer<typeof examplePingResponseSchema>
 
 /**
- * `POST /api/example-feature/ping-link` (D34) — a signed, expiring URL that anybody holding it can
+ * `POST /api/example-feature/ping-link` — a signed, expiring URL that anybody holding it can
  * open WITHOUT a session, and that pings this organisation's queue. The worked example of a public
  * mount: the shape an admin-consent callback or a webhook takes, with the proof of who is calling
  * carried in the token rather than a cookie.
@@ -119,7 +119,7 @@ export const exampleFeatureShared = {
     [EXAMPLE_FEATURE_FLAG]: {
       label: 'Example feature',
       description:
-        'The kit’s demonstration flag, shipped as a plugin. Gates one nav item, one page and the ' +
+        'A demonstration flag, shipped as a plugin. Gates one nav item, one page and the ' +
         '/api/example-feature mount, so the whole path — environment, rollout, override, session, ' +
         'nav, server — can be seen working. Safe to delete.',
       defaultState: 'off',

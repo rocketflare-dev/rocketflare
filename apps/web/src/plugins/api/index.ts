@@ -1,5 +1,5 @@
 /**
- * The plugin API — the ONE module a plugin's server half imports from the host (D31).
+ * The plugin API — the ONE module a plugin's server half imports from the host.
  *
  * `import { requestCtx, createRouter, validate } from '@/plugins/api'` and that is the whole of it.
  * Everything a plugin needs at RUNTIME arrives through an injected context; everything it needs to

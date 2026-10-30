@@ -1,5 +1,5 @@
 /**
- * CASL on the client (D10). The server packs the active tenant's rules into `/auth/session`
+ * CASL on the client. The server packs the active tenant's rules into `/auth/session`
  * (`permissions`, `packRules`); this unpacks them into a typed `AppAbility`. Only the wire
  * format and `@casl/ability` are used here — the role → grant MATRIX lives in `src/permissions`
  * (server code) and is never imported by the UI.

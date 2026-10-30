@@ -1,5 +1,5 @@
 /**
- * `POST /api/ai/documents/upload` (D18) end to end over the in-memory R2 bucket and the AI stub:
+ * `POST /api/ai/documents/upload` end to end over the in-memory R2 bucket and the AI stub:
  * a Markdown file (declared type empty, as browsers send `.md`) is decoded and indexed inline —
  * object under `tenants/<t>/documents/`, `files` row scope `documents`, `fileId` on the document,
  * chunks present; a PDF returns `pending` with a `document.convert` job on the queue and no

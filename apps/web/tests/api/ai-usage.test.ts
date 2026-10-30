@@ -1,5 +1,5 @@
 /**
- * `ai_usage` (D18): `recordUsage` rows, `tapUsage` reports every generation, `summarizeUsage`
+ * `ai_usage`: `recordUsage` rows, `tapUsage` reports every generation, `summarizeUsage`
  * groups per (provider, model, feature) within a range; `GET /api/ai/usage/summary` is admin+,
  * tenant-scoped, and validates the range.
  */
@@ -51,7 +51,7 @@ describe('usage ledger', () => {
     })
     await recordUsage(db, {
       tenantId: a.tenant.id,
-      feature: 'summarize-text',
+      feature: 'agent-decide',
       provider: 'openai',
       model: 'm2',
       usage: { inputTokens: 100, outputTokens: 50 },
@@ -99,7 +99,7 @@ describe('usage ledger', () => {
       {
         provider: 'openai',
         model: 'm2',
-        feature: 'summarize-text',
+        feature: 'agent-decide',
         calls: 1,
         inputTokens: 100,
         outputTokens: 50,

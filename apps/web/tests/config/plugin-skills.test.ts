@@ -1,5 +1,5 @@
 /**
- * The plugin skills slot (D34 follow-up): a plugin ships agent skills at `skills/<dir>/`, declares
+ * The plugin skills slot: a plugin ships agent skills at `skills/<dir>/`, declares
  * them in `"skills"`, and `pnpm plugin` installs them at `.claude/skills/<dir>/`.
  *
  * Two halves. The RULES are pure functions over strings and are driven with fixtures. The

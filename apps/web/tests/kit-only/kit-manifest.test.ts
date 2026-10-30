@@ -146,3 +146,26 @@ describe('launch.kit.json in the kit (the Launch kit contract, D36)', () => {
     expect(classifyPath('launch.kit.json', { manifest, existsLocally: true }).class).toBe('manual')
   })
 })
+
+/**
+ * The kit classifies every file it ships, so `kit:upgrade` knows what each one is in a copy. Add a
+ * directory the manifest has never heard of and this fails until somebody says what it is. Kit-only:
+ * a copy's own new files (`infra/`, `docs/guides/`) never appear in a kit diff, so an app owes the
+ * manifest nothing for them.
+ */
+describe('coverage', () => {
+  it('classifies every tracked file', () => {
+    const all = [
+      ...manifest.surfaces.flatMap(s => s.paths),
+      ...manifest.neverPort,
+      ...kitOnlyGlobs(manifest),
+      ...manifest.manual,
+      ...manifest.core,
+    ]
+    const unclassified = tracked.filter(f => !matchesAny(f, all))
+    expect(
+      unclassified,
+      'add these to a surface, neverPort, kitOnly, manual or core in .rocketflare.json'
+    ).toEqual([])
+  })
+})

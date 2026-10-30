@@ -21,7 +21,7 @@ function Where() {
 describe('OrgSwitcher', () => {
   afterEach(() => vi.unstubAllGlobals())
 
-  it('is hidden in single-tenant mode even with several memberships (D25)', () => {
+  it('is hidden in single-tenant mode even with several memberships', () => {
     renderWithProviders(<OrgSwitcher />, {
       session: makeSession({ tenancyMode: 'single', tenants: [makeTenant(), beta] }),
     })

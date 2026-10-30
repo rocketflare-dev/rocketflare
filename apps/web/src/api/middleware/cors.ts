@@ -1,12 +1,12 @@
 /**
- * CORS (04 §4): function origin because config is per-isolate, not import-time. In production
+ * CORS: function origin because config is per-isolate, not import-time. In production
  * the SPA is same-origin (ASSETS) so only `APP_URL` is allowed; outside production the default
  * dev origins (:3000 Vite, :3001 `wrangler dev`) are added, plus the loopback twin of `APP_URL`
  * and of the request's own loopback origin — so custom dev ports (`DEV_UI_PORT` / `DEV_API_PORT`,
  * `scripts/lib/dev-ports.mjs`) work with only `APP_URL` following the UI port: the Worker cannot
  * read the shell's environment. A tunnel's origin arrives as `APP_URL` (`--var`). Runs BEFORE
  * csrf so preflights are answered.
- * WebSocket upgrades (`/ws`, D8) bypass it: CORS does not govern the handshake (the route checks
+ * WebSocket upgrades (`/ws`) bypass it: CORS does not govern the handshake (the route checks
  * membership), and the DO's 101 response has immutable headers that `cors()` would try to set.
  */
 import { cors } from 'hono/cors'

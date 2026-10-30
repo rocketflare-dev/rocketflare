@@ -1,7 +1,7 @@
 /**
- * `ai_usage` — one row per model generation (D18): who spent what, on which provider/model, for
+ * `ai_usage` — one row per model generation: who spent what, on which provider/model, for
  * which feature. Written by `services/ai/usage.ts` from the provider's usage tap (chat route,
- * agent runs — ONE row per model call or decision, carrying `agent_run_id` (D39) —, connection
+ * agent runs — ONE row per model call or decision, carrying `agent_run_id` —, connection
  * tests). Append-only, no `updated_at`. `costMicrocents` stays null until an
  * app supplies a pricing table — cheap to record now, impossible to backfill later.
  */
@@ -40,7 +40,7 @@ export const aiUsage = pgTable(
   },
   table => [
     index('ai_usage_tenant_at_idx').on(table.tenantId, table.at.desc()),
-    // D39: a run's spend so far — read before every metered call to enforce its budget.
+    // A run's spend so far — read before every metered call to enforce its budget.
     index('ai_usage_tenant_run_idx')
       .on(table.tenantId, table.agentRunId)
       .where(sql`${table.agentRunId} IS NOT NULL`),

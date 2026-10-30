@@ -1,5 +1,5 @@
 /**
- * `projectRunToAgui` (D7) row by row, and `GET /api/agents/runs/:id/agui` end to end against a real
+ * `projectRunToAgui` row by row, and `GET /api/agents/runs/:id/agui` end to end against a real
  * run. The projection is pure — the event row ids ARE the AG-UI message and tool-call ids — so the
  * mapping is asserted directly and the route only has to prove the ownership rules and the shape.
  */
@@ -24,6 +24,7 @@ import {
   sessionCookieHeader,
 } from '../helpers/auth'
 import { setupTestDatabase } from '../helpers/db'
+import { FIXTURE_AGENT, FIXTURE_AGENT_B } from '../helpers/fixture-agents'
 import { json, request } from '../helpers/request'
 
 const db = setupTestDatabase()
@@ -34,7 +35,7 @@ const TENANT_ID = '88888888-8888-4888-8888-888888888888'
 const run = (over: Partial<AgentRun> = {}): AgentRun => ({
   id: RUN_ID,
   tenantId: TENANT_ID,
-  agentKey: 'research-topic',
+  agentKey: FIXTURE_AGENT_B,
   status: 'succeeded',
   input: { question: 'why' },
   output: { answer: 'because' },
@@ -113,7 +114,7 @@ describe('projectRunToAgui', () => {
       type: 'STATE_SNAPSHOT',
       snapshot: {
         runId: RUN_ID,
-        agentKey: 'research-topic',
+        agentKey: FIXTURE_AGENT_B,
         status: 'queued',
         capabilities: {
           humanInTheLoop: {
@@ -392,7 +393,7 @@ describe('GET /api/agents/runs/:id/agui', () => {
       .insert(agentRuns)
       .values({
         tenantId: tenant.id,
-        agentKey: 'summarize-text',
+        agentKey: FIXTURE_AGENT,
         status,
         input: { text: 'hello' },
         output: status === 'succeeded' ? { summary: 'hi', keyPoints: [] } : null,
@@ -456,7 +457,7 @@ describe('GET /api/agents/runs/:id/agui', () => {
   })
 })
 
-describe('the human-in-the-loop rows (issue #17)', () => {
+describe('the human-in-the-loop rows', () => {
   it('delivers a parked run through the protocol’s OWN interrupt outcome, not a kit event', () => {
     // This is the entire reason a third-party AG-UI client can answer a kit run with no kit code.
     // The discriminator is `'interrupt'`: `'interrupted'` does not throw, it is silently dropped.

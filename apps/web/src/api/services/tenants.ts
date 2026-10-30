@@ -1,5 +1,5 @@
 /**
- * Tenant, tenant settings and per-user preferences (D13, D25). Every function takes the tenant id
+ * Tenant, tenant settings and per-user preferences. Every function takes the tenant id
  * from the auth context — never from the request.
  */
 
@@ -66,8 +66,8 @@ export async function updateTenant(
 /**
  * Cascades through every `tenantRef` FK — one statement removes the organisation's world INSIDE
  * Postgres — then enqueues `tenant.purge` for everything outside it (R2 objects, a plugin's own
- * out-of-database state). The cascade was the whole story until this job existed, which is why a
- * deleted tenant's uploads used to live on in the bucket for ever.
+ * out-of-database state). The cascade alone would leave a deleted tenant's uploads in the
+ * bucket for ever.
  *
  * Two orderings are load-bearing. The queue binding is proved BEFORE the delete, because the purge
  * is the only thing that can ever reach a deleted tenant's state and a misconfigured deployment

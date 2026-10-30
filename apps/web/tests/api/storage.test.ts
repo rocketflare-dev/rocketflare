@@ -1,5 +1,5 @@
 /**
- * Storage seam (D23): key building and filename sanitising are pure; `createR2Storage` is exercised
+ * Storage seam: key building and filename sanitising are pure; `createR2Storage` is exercised
  * over the in-memory R2 bucket the whole api suite uses, so the adapter and the mock agree.
  */
 import { describe, expect, it } from 'vitest'

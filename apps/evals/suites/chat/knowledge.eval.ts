@@ -1,5 +1,5 @@
 /**
- * Knowledge chat (D33): does the built-in assistant search when it should, stay quiet when it
+ * Knowledge chat: does the built-in assistant search when it should, stay quiet when it
  * should not, and answer only from what it retrieved? Each case brings its own documents, so the
  * model can only be right for the right reason.
  *

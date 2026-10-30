@@ -27,7 +27,7 @@ const read = (file: string) => readFileSync(path.join(ASSETS, file), 'utf8')
 /**
  * The source-level half, which runs whether or not there is a build: `components/shared` is the
  * barrel `App.tsx` imports EAGERLY, so one markdown import anywhere under it puts `react-markdown`
- * in the main chunk. `DocumentCard` (D18) is the reason this is worth pinning — it is rendered
+ * in the main chunk. `DocumentCard` is the reason this is worth pinning — it is rendered
  * from Search, from a citation and from inside `Markdown` itself, and the temptation to let it
  * render its own excerpt as markdown is exactly the mistake.
  */
@@ -55,7 +55,7 @@ describe.skipIf(!built)('the UI bundle', () => {
   })
 
   /**
-   * The run workspace (issue #17) carries `Markdown`, the interrupt panel and the timeline. It must
+   * The run workspace carries `Markdown`, the interrupt panel and the timeline. It must
    * be its OWN chunk: the route is reached from a notification by people who may never open any
    * other AI surface, and the shell must not pay for it.
    */

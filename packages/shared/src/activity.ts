@@ -1,5 +1,5 @@
 /**
- * Activity / audit event contracts (D13). The generic per-tenant log every mutation may append to,
+ * Activity / audit event contracts. The generic per-tenant log every mutation may append to,
  * and the example fact table for analytics. `metadata` is typed here so the jsonb column agrees.
  */
 import { z } from 'zod'

@@ -6,7 +6,7 @@
  * (the host, not the whole string: a remote URL whose database or password merely contains
  * "localhost" is refused).
  *
- * **A remote one only as a throwaway gate branch** — the one case the kit allows, for a coding
+ * **A remote one only as a throwaway gate branch** — the one case allowed, for a coding
  * sandbox that has no Docker and only 443 out (Launch's ship gate: `pnpm test` with the variables
  * below). Every
  * condition must hold, and each one closes a different accident:

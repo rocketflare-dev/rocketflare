@@ -1,5 +1,5 @@
 /**
- * The plugin WORKER barrel (D31) — ONE `export *` per installed plugin, written by
+ * The plugin WORKER barrel — ONE `export *` per installed plugin, written by
  * `pnpm plugin add|remove`, never by hand:
  *
  *     export * from './approvals/worker-exports'
@@ -25,7 +25,7 @@
  *
  * **The `[[durable_objects.bindings]]`, `[[workflows]]` and `[[migrations]]` blocks are still the
  * HOST's**, written into BOTH tomls by `pnpm provision cloudflare <env>` from the same
- * `plugin.json` (D31, decision 12). A plugin edits no toml, here as everywhere. DO migration tags
+ * `plugin.json`. A plugin edits no toml, here as everywhere. DO migration tags
  * are append-only and host-owned for the reason SQL migrations are: they are the record of what
  * this Worker has already told Cloudflare, and renumbering one loses a namespace.
  */

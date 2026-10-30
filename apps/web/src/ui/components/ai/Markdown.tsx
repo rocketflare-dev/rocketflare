@@ -1,12 +1,12 @@
 /**
- * Markdown renderer for model output (D17). `react-markdown` + GFM, **sanitised by default**: raw
+ * Markdown renderer for model output. `react-markdown` + GFM, **sanitised by default**: raw
  * HTML in the source is skipped (`skipHtml`), `javascript:` URLs are dropped by react-markdown's
  * default `urlTransform`, and links open in a new tab with `rel="noopener noreferrer"`. Nothing
  * here uses `dangerouslySetInnerHTML`. Memoised: while a reply streams the parent re-renders per
  * delta and re-parsing every settled turn is what makes a long transcript stutter.
  *
  * ONE exception to "a link is an `<a>`": a link to this app's own document viewer
- * (`/documents/<uuid>`) renders as a `DocumentCard` (D18), so `research-topic`'s markdown answer
+ * (`/documents/<uuid>`) renders as a `DocumentCard`, so `research-topic`'s markdown answer
  * cites documents as cards rather than as bare in-app URLs opened in a new tab. The card is fetched
  * by id, degrades to a plain in-app `<Link>` while it loads or if the document has since been
  * deleted, and — being markdown-free itself — lives in the eager `components/shared` barrel.

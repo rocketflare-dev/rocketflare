@@ -1,5 +1,5 @@
 /**
- * Model pricing (D18): the table that turns the token ledger into money. Longest-prefix matching
+ * Model pricing: the table that turns the token ledger into money. Longest-prefix matching
  * (provider model ids carry dates), cache rates falling back to the input rate, and — the property
  * that matters — an unknown model priced `null` rather than guessed at.
  */

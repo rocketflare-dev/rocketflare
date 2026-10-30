@@ -1,5 +1,5 @@
 /**
- * The chat target (D33): one case → one real chat turn, IN-PROCESS, through the same route the UI
+ * The chat target: one case → one real chat turn, IN-PROCESS, through the same route the UI
  * calls (`POST /api/chat/conversations/:id/messages` → `prepareChatTurn` → `streamChatTurn`). Driving
  * the route rather than calling `streamChatTurn` directly is deliberate: `prepareChatTurn` is where
  * the prompt, the history window and the knowledge tools are decided, and an eval that skipped it

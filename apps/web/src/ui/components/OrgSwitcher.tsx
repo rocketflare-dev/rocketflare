@@ -1,5 +1,5 @@
 /**
- * Header organisation switcher (D25). Hidden entirely in `single` mode; in `multi` mode it lists
+ * Header organisation switcher. Hidden entirely in `single` mode; in `multi` mode it lists
  * every membership and offers "Create organisation". `<details>/<summary>` dropdown per ui.md.
  */
 import {

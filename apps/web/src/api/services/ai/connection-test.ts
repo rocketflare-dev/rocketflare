@@ -1,6 +1,6 @@
 /**
- * "Test connection" (D17): one minimal, deliberately cheap call against a provider — a 10-token
- * completion for chat, one embedding for embeddings, one yes/no question for decisions (D37) — resolved EXACTLY the way the runtime does
+ * "Test connection": one minimal, deliberately cheap call against a provider — a 10-token
+ * completion for chat, one embedding for embeddings, one yes/no question for decisions — resolved EXACTLY the way the runtime does
  * (`chatClientFromRow` / `embeddingsClientFromRow`), so a green test cannot mean something
  * different from a green chat. Tests either a saved row (`configId`, tenant-scoped) or an inline
  * candidate the admin has not saved yet. Nothing credential-shaped leaves this module: the verdict

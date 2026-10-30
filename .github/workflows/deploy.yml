@@ -211,13 +211,12 @@ jobs:
       # kit.version agrees, the porting note exists and chains, and CHANGELOG.md has its section.
       # The version comparison used to be a third copy of itself, in shell, in both deploy jobs.
       #
-      # A release with no porting note is a gap every copy of the kit has to step over, permanently:
-      # `docs/upgrades/` is the chain `/rf-upgrade` walks. `pnpm kit:release <version>` writes all of
-      # it. Exits 0 immediately in an adopted copy, so it never gates somebody's own product.
+      # The note and kit.version halves are the KIT's release facts (`pnpm kit:release` writes them
+      # there) and exit 0 immediately in an app, so this gates only the kit's own tags.
       #
       # Only on a real tag: `workflow_dispatch` deploys `<branch>-<sha>`, which is not an X.Y.Z
       # version and has no note of its own.
-      - name: Tag matches the root version and carries its porting note
+      - name: Kit release facts (kit repository only; a no-op in an app)
         if: github.ref_type == 'tag'
         run: node scripts/release-check.mjs --tag "${{ steps.version.outputs.version }}"
 
@@ -409,7 +408,7 @@ jobs:
       # As in the staging job: one script checks the tag against the root version, the manifest's
       # kit.version, the porting note and the changelog section. Only on a real Release — a
       # `workflow_dispatch` ships `<branch>-<sha>`, which is not an X.Y.Z version.
-      - name: Release tag matches the root version and carries its porting note
+      - name: Kit release facts (kit repository only; a no-op in an app)
         if: github.event_name == 'release'
         run: node scripts/release-check.mjs --tag "${{ steps.version.outputs.version }}"
 

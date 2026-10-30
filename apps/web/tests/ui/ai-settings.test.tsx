@@ -1,5 +1,5 @@
 /**
- * Settings → AI (D17): readiness `none` shows the set-up CTA; adding a config validates with the
+ * Settings → AI: readiness `none` shows the set-up CTA; adding a config validates with the
  * shared schema and posts the exact upsert body; preset chips fill base URL + model; a member sees
  * readiness and the list but no write controls; delete confirms then calls DELETE.
  */
@@ -301,7 +301,7 @@ describe('Settings → AI', () => {
         '/api/ai/config/readiness': {
           chat: READY_CHAT,
           embeddings: NONE,
-          // D37: with chat ready and no TypeSafe key, decisions are answered by the chat model.
+          // With chat ready and no TypeSafe key, decisions are answered by the chat model.
           decisions: { ...READY_CHAT, source: 'fallback' },
         },
         '/api/ai/config': { items: [prodConfig] },

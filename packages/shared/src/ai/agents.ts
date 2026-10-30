@@ -1,5 +1,5 @@
 /**
- * Agent runtime contracts (D7, D17): the agent roster, the run lifecycle, the `agent_runs` row the
+ * Agent runtime contracts: the agent roster, the run lifecycle, the `agent_runs` row the
  * API returns, the request/list/event shapes, and the one example agent's input/output schemas.
  * The server's registry (`apps/web/src/api/services/agents/registry.ts`) attaches a `run()` to
  * each `AgentMeta`; the UI only ever needs what is here. "DB is the truth": progress is durable in
@@ -20,14 +20,14 @@ import {
 } from './interrupts'
 import { promptKeySchema } from './prompts'
 
-/** Stable identifier for each agent the KIT ships. Append LAST; an app extends this list. */
+/** Stable identifier for each built-in agent. Append LAST; an app extends this list. */
 export const CORE_AGENT_KEYS = ['summarize-text', 'research-topic', 'triage-research'] as const
 
 type PluginAgentKey = NonNullable<DeclaredBy<(typeof SHARED_PLUGINS)[number], 'agentKeys'>>[number]
 
 /**
- * Core keys plus every installed plugin's (D31). `z.enum` needs a non-empty tuple and gets one
- * because the kit's own keys lead the list; iterate the widened barrel to build the tail (an EMPTY
+ * Core keys plus every installed plugin's. `z.enum` needs a non-empty tuple and gets one
+ * because the core keys lead the list; iterate the widened barrel to build the tail (an EMPTY
  * tuple indexes to `never`, and `never.agentKeys` is a type error), then restore what the tuple
  * says those elements are.
  */
@@ -62,7 +62,7 @@ export interface AgentMeta<Input = unknown, Output = unknown> {
   promptKey: z.infer<typeof promptKeySchema>
   exclusive: boolean
   /**
-   * Who may answer this agent's interrupts (issue #17). `'requester'` (the default) is "whoever
+   * Who may answer this agent's interrupts. `'requester'` (the default) is "whoever
    * may cancel this run may answer it" — the SAME rule `visible()` already implements, so there is
    * one mental model rather than two. `'admin'` is the opt-in for agents that touch money,
    * customers or deletion. It is not a new CASL subject: an app wanting approvals on its own axis
@@ -70,14 +70,14 @@ export interface AgentMeta<Input = unknown, Output = unknown> {
    */
   approvers?: z.infer<typeof agentApproversSchema>
   /**
-   * D39: what ONE run of this agent may spend, overriding `AGENT_RUN_MAX_TOKENS` /
+   * What ONE run of this agent may spend, overriding `AGENT_RUN_MAX_TOKENS` /
    * `AGENT_RUN_MAX_COST_USD`. Checked before every model call and decision the run makes; a run
    * over it fails with event code `agent_budget_exceeded`. Decision engines with no price
    * (TypeSafe) count toward `maxTokens` only.
    */
   budget?: AgentBudget
   /**
-   * D39: how far ONE run's tool loop may go, and what happens when it runs out. Enforced by
+   * How far ONE run's tool loop may go, and what happens when it runs out. Enforced by
    * `runToolLoop` when the agent passes it (`policy: meta.policy`); `AGENT_MAX_TURNS` stays the
    * ceiling a policy cannot raise. Absent, a loop behaves exactly as before: it stops at the turn
    * cap and hands back no answer.
@@ -85,7 +85,7 @@ export interface AgentMeta<Input = unknown, Output = unknown> {
   policy?: AgentPolicy
 }
 
-/** D39: a per-run spending cap. Either side may be absent — the deployment's default applies. */
+/** A per-run spending cap. Either side may be absent — the deployment's default applies. */
 export interface AgentBudget {
   maxTokens?: number
   maxCostUsd?: number
@@ -95,7 +95,7 @@ export const AGENT_EXHAUSTION_MODES = ['final-answer', 'fail'] as const
 export type AgentExhaustionMode = (typeof AGENT_EXHAUSTION_MODES)[number]
 
 /**
- * D39: a tool loop's limits, every one counted across ALL attempts of the run — the turns and
+ * A tool loop's limits, every one counted across ALL attempts of the run — the turns and
  * the active time ride the checkpoint, the tool calls and the failures are read back out of the
  * transcript — so a retried step never gets a fresh allowance. Time spent parked on a person is
  * not active time.
@@ -127,11 +127,11 @@ export const agentInfoSchema = z.object({
   promptKey: promptKeySchema,
   exclusive: z.boolean(),
   approvers: agentApproversSchema.default('requester'),
-  /** D39: the agent's tool-loop policy, when it declares one — the Agents page shows it. */
+  /** The agent's tool-loop policy, when it declares one — the Agents page shows it. */
   policy: agentPolicySchema.optional(),
   /**
    * The agent's `inputSchema` as JSON Schema, produced server-side by `toolInputSchema()`
-   * (`services/ai/kit.ts`). Three reasons it is this and not zod: the conversion already exists;
+   * (`services/ai/agent-loop.ts`). Three reasons it is this and not zod: the conversion already exists;
    * it keeps zod off the client, which is what holds the zod-3/zod-4 boundary; and it is the SAME
    * shape `Interrupt.responseSchema` carries, so ONE renderer serves both the run form and the
    * `form` interrupt kind — which is why that kind costs almost nothing.
@@ -147,9 +147,9 @@ export type AgentListResponse = z.infer<typeof agentListResponseSchema>
 
 /**
  * `queued` = row exists, Workflow instance created, not yet claimed; `running` = claimed by the
- * execute step; `awaiting_input` = parked on a human decision (issue #17), which is a real
+ * execute step; `awaiting_input` = parked on a human decision, which is a real
  * lifecycle state and not a terminal one. Terminal: `succeeded` / `failed` / `cancelled` (a
- * status, never a message — see 09 §4.1 on why a cancel must not be a `failed` row with prose).
+ * status, never a message — a cancel must not be a `failed` row with prose).
  *
  * Appended LAST because it is a `z.enum` mirrored by a text column.
  */
@@ -202,12 +202,12 @@ export const agentRunSchema = z.object({
   cancelRequestedAt: z.coerce.date().nullable(),
   createdAt: z.coerce.date(),
   /**
-   * D39: whether this run held its agent's exclusive slot — copied from `meta.exclusive` at enqueue,
+   * Whether this run held its agent's exclusive slot — copied from `meta.exclusive` at enqueue,
    * so the database predicate does not depend on the code that is deployed today. Defaulted for a
-   * response from a server older than D39.
+   * response from an older server.
    */
   exclusive: z.boolean().default(true),
-  /** D39: the `POST /runs/batch` call that created this run; null for a single enqueue. */
+  /** The `POST /runs/batch` call that created this run; null for a single enqueue. */
   batchId: z.string().uuid().nullable().default(null),
 })
 export type AgentRun = z.infer<typeof agentRunSchema>
@@ -221,7 +221,7 @@ export type CreateAgentRunResponse = z.infer<typeof createAgentRunResponseSchema
 export const agentRunListQuerySchema = paginationQuerySchema.extend({
   agentKey: agentKeySchema.optional(),
   status: agentRunStatusSchema.optional(),
-  /** D39: only the runs one batch created. */
+  /** Only the runs one batch created. */
   batchId: z.string().uuid().optional(),
 })
 export type AgentRunListQuery = z.infer<typeof agentRunListQuerySchema>
@@ -233,7 +233,7 @@ export const createAgentRunRequestSchema = z.object({
 })
 export type CreateAgentRunRequest = z.infer<typeof createAgentRunRequestSchema>
 
-// ---- Batch enqueue (D39) -------------------------------------------------------------------------
+// ---- Batch enqueue -------------------------------------------------------------------------
 
 /** Most inputs one `POST /api/agents/runs/batch` takes — the Workflows `createBatch` ceiling. */
 export const AGENT_RUN_BATCH_MAX = 100
@@ -358,7 +358,7 @@ export const agentErrorEventDataSchema = z
      * produced no call — `{ reason, stopReason, text }` with what the model actually said.
      */
     details: z.unknown().optional(),
-    /** A machine-readable reason, when there is one — `agent_budget_exceeded` (D39). */
+    /** A machine-readable reason, when there is one — `agent_budget_exceeded`. */
     code: z.string().optional(),
   })
   .passthrough()
@@ -400,9 +400,9 @@ export const agentRunWithEventsSchema = agentRunSchema.extend({
   interrupts: z.array(agentRunInterruptSchema).default([]),
   /** What the run produced that a person opens, keyed by `key` and upserted as it is redrafted. */
   artifacts: z.array(agentArtifactSchema).default([]),
-  /** Every typed question the run asked (D37) — answers, probabilities, the engine that gave them. */
+  /** Every typed question the run asked — answers, probabilities, the engine that gave them. */
   decisions: z.array(agentRunDecisionSchema).default([]),
-  /** D39: what the run spent, every attempt included — its `ai_usage` rows, summed. */
+  /** What the run spent, every attempt included — its `ai_usage` rows, summed. */
   usage: z
     .object({
       calls: z.number().int().nonnegative(),
@@ -532,7 +532,7 @@ export const researchTopicOutputSchema = z.object({
 })
 export type ResearchTopicOutput = z.infer<typeof researchTopicOutputSchema>
 
-// ---- The decisions example agent (D37) ----------------------------------------------------------
+// ---- The decisions example agent ----------------------------------------------------------
 
 /** Longest question `triage-research` accepts (characters). */
 export const TRIAGE_RESEARCH_MAX_CHARS = 2_000

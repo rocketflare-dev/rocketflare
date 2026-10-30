@@ -1,5 +1,5 @@
 /**
- * `pnpm db:check` — connect with DATABASE_URL over the `DATABASE_DRIVER` driver (D35), print server
+ * `pnpm db:check` — connect with DATABASE_URL over the `DATABASE_DRIVER` driver, print server
  * version + current role, exit 0/1. First thing to run when `pnpm dev` cannot reach Postgres.
  */
 import { openScriptSql } from './lib/sql'

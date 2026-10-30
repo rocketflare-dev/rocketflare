@@ -1,5 +1,5 @@
 /**
- * Settings → Agent models (D17): every registry prompt key (`GET /api/ai/agent-models`) with what
+ * Settings → Agent models: every registry prompt key (`GET /api/ai/agent-models`) with what
  * would answer it right now — provider, model and a source badge (`assignment | tenant | platform |
  * none`) computed by the server's own planner. "Override" opens a modal: pick an existing chat
  * config (or keep the default one) and/or type a model; `PUT` sends only what is set. "Use default"

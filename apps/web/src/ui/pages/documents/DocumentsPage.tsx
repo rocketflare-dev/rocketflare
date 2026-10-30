@@ -1,5 +1,5 @@
 /**
- * `/documents` (D18, D20): the tenant knowledge base. Two URL tabs (`?tab=text|file`, `URLTabs` like
+ * `/documents`: the tenant knowledge base. Two URL tabs (`?tab=text|file`, `URLTabs` like
  * Settings) below the list — paste text (title, text counted against `INGEST_TEXT_MAX_CHARS`, optional source) →
  * `POST /api/ai/documents/ingest`, or upload a file (type/size checked client-side with the shared
  * allowlist, optional title and source) → `POST /upload` as multipart — either answers 201,
@@ -117,7 +117,7 @@ export default function DocumentsPage() {
 }
 
 /**
- * The groups this person may share with (D29): every group in the tenant for an admin, their own
+ * The groups this person may share with: every group in the tenant for an admin, their own
  * for a member — exactly what `resolveRequestedVisibility` will accept from them, so the picker
  * cannot offer something the save would refuse.
  */
@@ -250,7 +250,7 @@ function IngestForm() {
 const MAX_UPLOAD_MB = Math.round(MAX_UPLOAD_BYTES / (1024 * 1024))
 
 /**
- * Upload a document (D18). The file is checked against the shared allowlist/limit before any
+ * Upload a document. The file is checked against the shared allowlist/limit before any
  * request; the server's 415/413 remain the backstop. Text types come back `indexed`; PDF/Office/
  * HTML come back `pending` and the table polls until the `document.convert` job lands.
  */

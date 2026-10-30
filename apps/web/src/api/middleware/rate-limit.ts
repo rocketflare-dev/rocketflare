@@ -1,5 +1,5 @@
 /**
- * KV sliding-window rate limiting + per-tenant operation lock (D14). Keyed by client IP
+ * KV sliding-window rate limiting + per-tenant operation lock. Keyed by client IP
  * (`cf-connecting-ip`, falling back to `x-forwarded-for`) and route name; a no-op when the
  * `RATE_LIMIT_KV` binding is absent. KV's read-modify-write is not atomic and KV is eventually
  * consistent, so the limit is approximate — right for login throttling, not for billing.

@@ -1,5 +1,5 @@
 /**
- * `document.index` (D7, D18): index a `documents` row too large to embed inline at ingest. The
+ * `document.index`: index a `documents` row too large to embed inline at ingest. The
  * same `indexDocument` the route path uses — it re-reads the text from the row, so the message
  * carries only ids. A provider failure marks the row `failed` and throws, so the consumer retries
  * with backoff; a missing row (deleted meanwhile) is logged and acked.
@@ -25,7 +25,7 @@ export async function handleDocumentIndex(
     ctx.logger.warn({ tenantId, documentId }, 'document.index: document no longer exists')
     return
   }
-  // D32: a `job document.index` span, so each embeddings batch nests under something.
+  // A `job document.index` span, so each embeddings batch nests under something.
   const indexed = await withAgentTrace(
     'document.index',
     {

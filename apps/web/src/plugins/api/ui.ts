@@ -1,36 +1,34 @@
 /**
- * The COMPONENTS half of the UI kit (D31) — for a plugin's PAGES, never for its `ui/index.ts`.
+ * The COMPONENTS half of the UI kit — for a plugin's PAGES, never for its `ui/index.ts`.
  *
  * The split is the whole design. `./ui-wiring` is what the UI entry may import, because that file
  * ships in the main bundle for every reader. This module is what a lazy PAGE imports, because a
  * page ships in its own chunk and only for the people who open it. `uiEntryIssues` in
- * `tests/helpers/plugins.ts` enforces the line, and has since before this module existed.
+ * `tests/helpers/plugins.ts` enforces the line.
  *
- * **Everything the kit's own pages use is here on purpose.** All seventeen exports of
+ * **Everything the core pages use is here on purpose.** All seventeen exports of
  * `components/shared` are re-exported rather than a chosen subset, because the failure mode of a
  * short list is a plugin rebuilding `PaginationControls` or `ConfirmModal` slightly differently —
- * which looks subtly wrong on a page next to a kit one, and is the sort of thing nobody files a
+ * which looks subtly wrong on a page next to a core one, and is the sort of thing nobody files a
  * bug about.
  *
- * `showToast` is exported once, from here. It is reachable in the kit by two public paths
- * (`components/shared` and a re-export from `lib/api-client`) and one plugin took each — which is
- * how two call sites of the same function come to look like two different functions. One path.
+ * `showToast` is exported once, from here. It is reachable in core by two public paths
+ * (`components/shared` and a re-export from `lib/api-client`), and two paths are how two call sites
+ * of the same function come to look like two different functions. One path.
  */
 
 /**
- * The spinner. It sits OUTSIDE `components/shared` in the kit — an accident of ordering rather
- * than a decision, and one every plugin that wanted a loading state had to discover by reading the
- * tree. It is re-exported from the shared barrel now, and from here.
+ * The spinner. It sits OUTSIDE `components/shared`, so it is re-exported from the shared barrel
+ * and from here.
  */
 export { LoadingIndicator } from '../../ui/components/LoadingIndicator'
 /**
- * The kit's sidebar, for a plugin's own nav TEST.
+ * The core sidebar, for a plugin's own nav TEST.
  *
  * It is here rather than in `./ui-wiring` because it RENDERS — the wiring half must stay weightless,
  * and a plugin's `ui/index.ts` has no business importing a component. What needs it is the test that
- * proves a plugin's nav item obeys the kit's guards: an app on this kit wrote that test against a
- * re-implementation of the guard logic, and the re-implementation is precisely what hid the bug it
- * was meant to catch. Driving the real `SideNav` is the whole value; anything that re-derives what
+ * proves a plugin's nav item obeys the core guards: a test written against a re-implementation of
+ * the guard logic hides precisely the bug it is meant to catch. Driving the real `SideNav` is the whole value; anything that re-derives what
  * it does is worthless.
  */
 export { default as SideNav } from '../../ui/components/SideNav'
@@ -87,7 +85,7 @@ export {
   api,
   // A plugin embedding a third-party client with its OWN TanStack Query instance never
   // reaches the app's global QueryCache.onError, so a 401 there would be silent. These two
-  // are how it routes one back into the kit's single sign-out path.
+  // are how it routes one back into the app's single sign-out path.
   notifyUnauthorized,
   setUnauthorizedHandler,
 } from '../../ui/lib/api-client'

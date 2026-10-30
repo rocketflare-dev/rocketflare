@@ -5,6 +5,9 @@
  * tracked — except the porting notes and the changelog, which record history, the files an
  * installed plugin owns, which are its author's to change (a plugin release, not the host's gate),
  * and this file, which builds the string rather than spelling it.
+ *
+ * Kit-only: it guards the kit's own docs and skills. A copy's docs are its own, and an app that
+ * spells out the four commands in its README should not fail its gate for it.
  */
 import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'

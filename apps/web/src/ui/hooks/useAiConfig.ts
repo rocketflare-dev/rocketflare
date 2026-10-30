@@ -1,5 +1,5 @@
 /**
- * Tenant AI providers (D17): `GET /api/ai/config` (sanitised rows — `hasCredential`, never a
+ * Tenant AI providers: `GET /api/ai/config` (sanitised rows — `hasCredential`, never a
  * key), `GET /providers` (the static catalog the form is built from), `GET /readiness` (what
  * chat/embeddings WOULD resolve to), `POST /` upsert on (scope, label), `POST /test` (saved row
  * or inline candidate) and `DELETE /:id`. Members hold `read AiConfig`, admins `manage`.

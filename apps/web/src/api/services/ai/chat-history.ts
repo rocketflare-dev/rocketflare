@@ -1,10 +1,10 @@
 /**
- * How much of a thread a turn replays, and what happens to the rest (D17).
+ * How much of a thread a turn replays, and what happens to the rest.
  *
  * A chat turn cannot resend the whole conversation forever, and a message COUNT is the wrong
  * control: what overflows is the model's context window, which is characters. At the per-message
  * cap (`MAX_MESSAGE_LENGTH`, 32 000) forty stored messages is 1.28M characters — more than any
- * model the kit supports — so a count-only limit produces a thread that fails on every turn with
+ * model the app supports — so a count-only limit produces a thread that fails on every turn with
  * no way out but starting again. The budget here is `CHAT_HISTORY_MAX_CHARS` (a `[vars]` knob,
  * because the right value tracks the model the tenant chose), with the count kept as a backstop.
  *

@@ -1,5 +1,5 @@
 /**
- * Run status as the kit's `.status-badge` (D7, issue #17): the tone comes from `data-status` in
+ * Run status as the shared `.status-badge`: the tone comes from `data-status` in
  * `index.css` (`queued`/`running` info, `succeeded` success, `failed`/`cancelled` error,
  * `awaiting_input` the existing warning tone — parked is neither progress nor failure). Tokens
  * only, never a palette class.

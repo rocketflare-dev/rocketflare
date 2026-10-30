@@ -1,5 +1,5 @@
 /**
- * The kit's built-in agent tools (D7, D18) — what the runtime puts on `ctx.tools`, tenant-scoped to
+ * The built-in agent tools — what the runtime puts on `ctx.tools`, tenant-scoped to
  * the run. Three, and they answer the three questions an agent has about the knowledge base:
  * `list_documents` — what is in it; `search_knowledge` — which passages match these words (whole
  * passages, grouped by document); `get_document` — the full text of one, by window. Each answers
@@ -15,7 +15,7 @@
  */
 import { serverPlugins } from '../../../../plugins/server'
 import { loggerFor } from '../../../utils/core/logger'
-import type { Tool } from '../../ai/kit'
+import type { Tool } from '../../ai/agent-loop'
 import { getDocumentTool } from './get-document'
 import { listDocumentsTool } from './list-documents'
 import { type AgentToolContext, searchKnowledgeTool } from './search-knowledge'
@@ -27,7 +27,7 @@ export * from './search-knowledge'
 
 /**
  * Every built-in tool a run gets on `ctx.tools`, in the order an agent normally needs them —
- * followed by whatever the installed plugins add (D31), which is how a plugin makes its own data
+ * followed by whatever the installed plugins add, which is how a plugin makes its own data
  * answerable without every agent importing it. A plugin tool is built from the same `ctx`, so it
  * is bound to the run's tenant and access scope like the three above.
  *

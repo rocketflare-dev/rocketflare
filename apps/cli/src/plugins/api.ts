@@ -1,7 +1,7 @@
 /**
- * The CLI plugin API (D31) — what a plugin's command module imports from the kit.
+ * The CLI plugin API — what a plugin's command module imports from the CLI.
  *
- * The rule a plugin's CLI half keeps is the one every kit command keeps: **it owns no second copy
+ * The rule a plugin's CLI half keeps is the one every built-in command keeps: **it owns no second copy
  * of the contract.** It calls the plugin's own routes through `requireClient(ctx).request(...)` and
  * parses the response with the same `@rocketflare/shared` schema the server validated with. It
  * builds no envelopes, constructs no URLs by hand, and never calls `fetch`.

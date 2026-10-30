@@ -1,5 +1,5 @@
 /**
- * OTLP/HTTP over plain `fetch` (D32, replacing the Langfuse ingestion client of D16): a span sink
+ * OTLP/HTTP over plain `fetch` (replacing the Langfuse ingestion client): a span sink
  * that serialises a batch to ONE `ExportTraceServiceRequest` and POSTs it to
  * `<endpoint>/v1/traces`. JSON by default (`http/json`, what Langfuse and Cloudflare's own export
  * speak); protobuf (`http/protobuf`, `otlp-protobuf.ts`) for backends that accept nothing else, such

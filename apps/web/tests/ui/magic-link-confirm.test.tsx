@@ -1,5 +1,5 @@
 /**
- * `/magic-link/confirm` (D11): the emailed link lands here without spending the token. The page
+ * `/magic-link/confirm`: the emailed link lands here without spending the token. The page
  * must NOT submit on its own (a script-running mail scanner would spend it); the button posts a
  * native form carrying the token and redirectTo to `POST /auth/magic-link/verify`.
  */

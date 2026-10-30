@@ -12,7 +12,7 @@
  *   app URL, Launch's sign-in vars under a comment, `workers_dev = false`, no `[[hyperdrive]]`
  *   HYPERDRIVE block. It writes no route (Launch owns the hostnames) and no secret.
  *
- * SHARED with the Rocketflare kit (`apps/web/tests/config/fixtures/kit-fixture.mjs` there) and the
+ * SHARED with the Rocketflare kit (`apps/web/tests/kit-only/fixtures/kit-fixture.mjs` there) and the
  * meta-kit (`scripts/tests/fixtures/kit-fixture.mjs`): change both together. Node built-ins only.
  */
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'

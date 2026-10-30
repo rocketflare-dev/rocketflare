@@ -1,4 +1,4 @@
-/** The deterministic scorers (D33): trajectory semantics per agentevals, and the rest. */
+/** The deterministic scorers: trajectory semantics per agentevals, and the rest. */
 import { describe, expect, it } from 'vitest'
 import { z } from 'zod'
 import {
@@ -85,7 +85,7 @@ describe('the other scorers', () => {
   })
 })
 
-describe('decisionScore (D37)', () => {
+describe('decisionScore', () => {
   const recorded = {
     answerable: { answerable: { type: 'noul' as const, label: 'yes', confidence: 0.8, noul: 0.9 } },
     route: {

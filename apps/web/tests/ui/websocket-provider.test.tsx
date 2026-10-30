@@ -1,5 +1,5 @@
 /**
- * `WebSocketProvider` (D8): connects only when authenticated with a tenant, reconnects on tenant
+ * `WebSocketProvider`: connects only when authenticated with a tenant, reconnects on tenant
  * switch, turns events into `queryKeys` invalidations (`notification.created` → `['notifications']`
  * + a toast) and the invalidation table only names real query-key families. Reconnect/backoff
  * mechanics are covered in websocket-client.test.ts.

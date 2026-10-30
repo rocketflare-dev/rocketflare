@@ -1,5 +1,5 @@
 /**
- * `document_groups` (D29) — which groups a `visibility: 'groups'` document is shared with.
+ * `document_groups` — which groups a `visibility: 'groups'` document is shared with.
  *
  * One junction table per resource, with a real FK and cascade, rather than one polymorphic
  * `(content_type, content_id)` table: a polymorphic id cannot be a foreign key, so deleting the

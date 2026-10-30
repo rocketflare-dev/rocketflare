@@ -1,5 +1,5 @@
 /**
- * Navigation outside React Router (D20). `AuthProvider` sits ABOVE `BrowserRouter` (06 §b), so the
+ * Navigation outside React Router. `AuthProvider` sits ABOVE `BrowserRouter`, so the
  * global 401 handler cannot call `useNavigate()`; `<NavigationBridge />` (mounted inside the router)
  * registers the router's `navigate` and current location here. `hardNavigate` wraps
  * `window.location.assign` so tests can stub it (jsdom cannot navigate) and so full-page

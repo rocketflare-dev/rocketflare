@@ -1,5 +1,5 @@
 /**
- * Per-request tracer (D32, step 9 in the middleware order): `c.set('tracer', tracerFor(cfg, …))` —
+ * Per-request tracer (step 9 in the middleware order): `c.set('tracer', tracerFor(cfg, …))` —
  * the span recorder with the OTLP exporter when a backend is configured and the `ai_spans` store
  * whenever a database is (its OWN short-lived client, because the request's is closed in
  * `waitUntil`, possibly before this flush runs) — and a flush in `waitUntil` AFTER the handler so

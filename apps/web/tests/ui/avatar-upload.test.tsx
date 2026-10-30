@@ -1,5 +1,5 @@
 /**
- * Profile → avatar upload (D23): a picked image is POSTed as multipart to `/api/files?scope=avatars`;
+ * Profile → avatar upload: a picked image is POSTed as multipart to `/api/files?scope=avatars`;
  * a wrong type or an oversized file is refused client-side (no request); "Remove" clears the
  * avatar via `PATCH /api/me`.
  */

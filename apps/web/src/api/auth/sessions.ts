@@ -1,8 +1,8 @@
 /**
- * DB-backed cookie sessions (D12): the cookie holds a random token, the row holds its SHA-256.
+ * DB-backed cookie sessions: the cookie holds a random token, the row holds its SHA-256.
  * `resolveSession` is the ONE query behind every cookie-authenticated request — session + user +
  * best membership + tenant + the membership's groups + pending access request through LATERAL
- * joins (the Workers reference app's pattern), so the auth middleware costs one round trip however
+ * joins, so the auth middleware costs one round trip however
  * far the Worker is from Postgres. Sliding 30-day expiry: `touchSession` extends at most hourly (SQL-throttled) and is
  * called through `waitUntil`, never awaited on the response path.
  */
@@ -56,7 +56,7 @@ export interface ResolvedMembership {
   tenantId: string
   role: MembershipRole
   tenant: { id: string; name: string; slug: string; status: TenantStatus }
-  /** The groups this membership belongs to, in the ACTIVE tenant only (D29). */
+  /** The groups this membership belongs to, in the ACTIVE tenant only. */
   groups: GroupRef[]
 }
 
@@ -68,7 +68,7 @@ export interface ResolvedSession {
   /** Latest access request for the user's email, if any. */
   accessRequestStatus: 'pending' | 'approved' | 'rejected' | null
   /**
-   * Feature-flag rollout state for the resolved tenant (D30), read in the same round trip. It is
+   * Feature-flag rollout state for the resolved tenant, read in the same round trip. It is
    * the raw stored state, not the answer: `resolveFeatures` evaluates it, because a percentage
    * rollout is a hash the `config` test project has to be able to exercise without a database.
    */
@@ -100,7 +100,7 @@ interface SessionRow {
   access_request_status: 'pending' | 'approved' | 'rejected' | null
 }
 
-/** Both drivers hand jsonb back parsed (D35); a driver that hands back text must not crash auth. */
+/** Both drivers hand jsonb back parsed; a driver that hands back text must not crash auth. */
 function parseGroups(value: GroupRef[] | string | null): GroupRef[] {
   if (Array.isArray(value)) return value
   if (typeof value !== 'string') return []
@@ -171,7 +171,7 @@ export async function resolveSession(db: Database, token: string): Promise<Resol
       WHERE gm.tenant_id = m.tenant_id AND gm.user_id = u.id
     ) g ON true
     LEFT JOIN LATERAL (
-      -- Feature flags (D30). Joined here rather than fetched separately so the auth path stays ONE
+      -- Feature flags. Joined here rather than fetched separately so the auth path stays ONE
       -- round trip, exactly as the groups lateral above does. It returns the stored STATE, not the
       -- answer: the percentage rollout is evaluated in TypeScript so one frozen hash serves the
       -- server, the admin preview and the config test project, which has no database.

@@ -37,7 +37,7 @@ const TENANT = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
 const AT = new Date('2026-09-16T09:00:00.000Z')
 const EXPIRES = new Date('2026-09-23T09:00:00.000Z')
 
-/** A pending approval, as `agent_run_interrupts` holds it (issue #17). */
+/** A pending approval, as `agent_run_interrupts` holds it. */
 const INTERRUPT_ROW: AgentRunInterrupt = {
   id: INTERRUPT,
   tenantId: TENANT,

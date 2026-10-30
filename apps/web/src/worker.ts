@@ -1,10 +1,10 @@
 /**
- * Cloudflare Worker entry (D5): `export default { fetch, queue, scheduled, email }` plus the in-script
- * Durable Object class (`NotificationsHub`, D8) and the Workflow class (`AgentRunWorkflow`, D7).
+ * Cloudflare Worker entry: `export default { fetch, queue, scheduled, email }` plus the in-script
+ * Durable Object class (`NotificationsHub`) and the Workflow class (`AgentRunWorkflow`).
  * The classes are exported HERE — never from api/index.ts, which must stay importable from Node
  * tests.
  *
- * The third export line is the plugin seam (D31): Cloudflare resolves a binding's `class_name`
+ * The third export line is the plugin seam: Cloudflare resolves a binding's `class_name`
  * against the named exports of THIS module and nowhere else, so a plugin that ships a DO or a
  * Workflow needs a line here. That line is permanent and names no plugin —
  * `plugins/worker-exports.ts` is the sixth barrel, one `export *` per installed plugin, written by

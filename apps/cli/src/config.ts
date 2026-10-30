@@ -1,8 +1,8 @@
 /**
- * CLI config (D26): `~/.rocketflare/config.json` (dir 0700, file 0600) holding the server URL, API key,
+ * CLI config: `~/.rocketflare/config.json` (dir 0700, file 0600) holding the server URL, API key,
  * active tenant and the signed-in user. Env overrides for CI: `ROCKETFLARE_API_KEY`, `ROCKETFLARE_URL`, and
- * `ROCKETFLARE_CONFIG_DIR` to relocate the directory. ADAPTING renames the `ROCKETFLARE_` prefix and `.rocketflare` dir
- * here — these constants are the only place they live.
+ * `ROCKETFLARE_CONFIG_DIR` to relocate the directory. The env prefix and config dir name live only in
+ * these constants.
  */
 import { chmod, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
@@ -12,7 +12,7 @@ import { z } from 'zod'
 export const ENV_PREFIX = 'ROCKETFLARE'
 export const CONFIG_DIR_NAME = '.rocketflare'
 export const CONFIG_FILE_NAME = 'config.json'
-/** The kit's local `wrangler dev` port; a real app sets its production URL here. */
+/** The local `wrangler dev` port; a real app sets its production URL here. */
 export const DEFAULT_SERVER_URL = 'http://localhost:3001'
 
 export const ENV = {

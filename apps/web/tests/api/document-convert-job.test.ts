@@ -1,5 +1,5 @@
 /**
- * `document.convert` job (D7, D18) through the real consumer: a `pending` upload → the original is
+ * `document.convert` job through the real consumer: a `pending` upload → the original is
  * read from R2, handed to `AI.toMarkdown` with its name and type, the text stored on the row,
  * chunks + embeddings written, `indexed`, `ack()`; a `format: 'error'` answer → `failed` with the
  * reason and `ack()` (permanent — no retry); a thrown binding error → `failed` and

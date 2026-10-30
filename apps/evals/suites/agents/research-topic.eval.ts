@@ -1,5 +1,5 @@
 /**
- * The `research-topic` agent (D33): a tool loop over the knowledge base ending in one
+ * The `research-topic` agent: a tool loop over the knowledge base ending in one
  * `submit_answer`. It must search (`Trajectory`), answer in the declared shape (`Schema`), ground
  * every claim in the passages it read (`Faithfulness` — a run's `tool.end` events keep a
  * 600-character preview per passage, which is what the judge sees), and meet the case's rubric.

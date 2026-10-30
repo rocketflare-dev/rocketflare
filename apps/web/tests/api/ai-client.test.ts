@@ -1,5 +1,5 @@
 /**
- * `services/ai/client.ts` (D17) with an INJECTED fetch (no globals mocked): OpenAI-compatible
+ * `services/ai/client.ts` with an INJECTED fetch (no globals mocked): OpenAI-compatible
  * SSE parsing incl. tool-call deltas and usage; error normalisation 401→auth, 429→rate_limit,
  * 404→invalid_request; the Anthropic path through the real SDK against a fake SSE body (bearer
  * `authToken` for compatible vendors, explicit `thinking: disabled`, `reconcileThinking`);

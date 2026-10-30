@@ -1,6 +1,6 @@
 /**
- * The signed-in person (D13): `GET/PATCH /api/me`, per-tenant preferences, linked sign-in
- * providers, and the avatar upload (`POST /api/files?scope=avatars`, D23). Profile edits also
+ * The signed-in person: `GET/PATCH /api/me`, per-tenant preferences, linked sign-in
+ * providers, and the avatar upload (`POST /api/files?scope=avatars`). Profile edits also
  * refresh the session (name/avatar live there too).
  *
  * Contract note: `/api/me` is assumed to return `userSchema` and `/api/me/preferences`
@@ -53,7 +53,7 @@ export function useUpdateProfile() {
   })
 }
 
-// ---- Avatar upload (D23) ------------------------------------------------------------------
+// ---- Avatar upload ------------------------------------------------------------------
 
 export const AVATAR_ACCEPT = AVATAR_MIME_TYPES.join(',')
 

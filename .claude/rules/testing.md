@@ -34,17 +34,21 @@ the local suite under `neon` instead (kit.yml's backstop; a way to chase a seam 
 test belongs there when it is true of the kit repository and of nothing made from it — the porting
 notes and the root version being the kit's (`upgrade-notes`), the release and rename machinery
 (`release-lib`, `release-root`, `rename-lib`, `rename-safe-identifiers`), the maintainer nudge hooks,
-the plugin CI that plugin repositories call from the kit, and the manifest's kit-state claims
-(`kit-only/kit-manifest.test.ts`). `scripts/rename.mjs` deletes the directory when a copy is born
-and unwires `--project kit-only`; the project is registered only while the directory exists;
+the plugin CI that plugin repositories call from the kit, the manifest's kit-state claims
+(`kit-only/kit-manifest.test.ts`), the Launch conformance checker and its parsers (`kit-check`,
+`kit-check-parsers`, `launch-kit-schema` — the kit keeps them in step with the meta-kit), and the
+kit's own doc guards (`gate-string`). `scripts/rename.mjs` deletes the directory — and every other
+`kitOnly` path: the maintainer scripts, their package.json scripts and `.claude/settings.json`
+hooks — when a copy is born and unwires `--project kit-only`; the project is registered only while the directory exists;
 `kit:upgrade` never ports one; `tests/config/kit-manifest.test.ts` fails a copy that carries one.
 A test of tooling a copy RUNS (upgrade, plugin, bootstrap, the update-check hook, the manifest
 reader) or of anything the app ships stays in `config` — the copy's gate is where it earns its keep.
 Such a test never judges the checkout's own state — its tomls, `launch.kit.json`, version or
 provisioning — because a copy's differ by design (renamed, then provisioned by Launch, which
-commits real KV ids). Build a fixture (`tests/config/fixtures/`: `kit-fixture.mjs` makes a whole
-kit, fresh or provisioned like Launch's `write_config`; the toml snapshots feed the patcher's
-tests), and put the claim about THIS checkout in `kit-only`.
+commits real KV ids). Build a fixture (`tests/config/fixtures/`: the toml snapshots feed the
+patcher's tests; `tests/kit-only/fixtures/kit-fixture.mjs` makes a whole kit, fresh or provisioned
+like Launch's `write_config`, for the kit-only conformance tests), and put the claim about THIS
+checkout in `kit-only`.
 
 ## Tests run under Node, against the real Hono app
 
@@ -363,3 +367,13 @@ the whole rule, and it is why neither half duplicates the other.
   `// @vitest-isolate` because it mutates the shared registry. For the same reason an assertion that
   pinned the exact agent-tool list is a PREFIX assertion — a plugin's tools are appended after the
   kit's three
+- **A core test must not borrow an EXAMPLE agent either** (`summarize-text`, `research-topic`,
+  `triage-research` — `kind: "example"` surfaces an app deletes). It uses the fixture agents in
+  `tests/helpers/fixture-agents.ts` (`FIXTURE_AGENT` takes `{ text }`, `FIXTURE_AGENT_B`
+  `{ topic }`), registered through the plugin seam by mocking `@rocketflare/shared/plugins` and
+  `@/plugins/server` (`withFixtureShared` / `withFixtureServer`) — so an api file doing it is
+  `// @vitest-isolate`; a UI or CLI test needs only the shared barrel, and a test storing a key as
+  an opaque string mocks nothing. A test of an example's own behaviour is listed in that surface's
+  `paths`; `tests/kit-only/example-surfaces.test.ts` fails a test outside the surface that names
+  the key or imports one of its files. `tests/api-setup.ts` imports `@/db/client` inside its hook
+  for this reason: a static import there evaluates the barrels before the test's `vi.mock` exists

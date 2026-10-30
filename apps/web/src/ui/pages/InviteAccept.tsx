@@ -1,5 +1,5 @@
 /**
- * `/invite/:token` (D9): look the invitation up, get the reader signed in as the invited address,
+ * `/invite/:token`: look the invitation up, get the reader signed in as the invited address,
  * accept, and land inside the org with the session the server returned. A reader signed in under a
  * different email is told so and offered a switch (sign out → login with this page as returnUrl).
  */

@@ -1,4 +1,4 @@
-/** Config store tests (D26): temp dir, 0700/0600 permissions, env/flag precedence, key redaction. */
+/** Config store tests: temp dir, 0700/0600 permissions, env/flag precedence, key redaction. */
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'

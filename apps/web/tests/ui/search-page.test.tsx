@@ -1,5 +1,5 @@
 /**
- * `/search` (D18): search POSTs `{ query, limit, documentId? }` and renders hits ranked with
+ * `/search`: search POSTs `{ query, limit, documentId? }` and renders hits ranked with
  * dense/lexical badges; `?documentId=` preselects the per-document filter and is sent; an empty
  * knowledge base shows an empty state pointing at `/documents`.
  */

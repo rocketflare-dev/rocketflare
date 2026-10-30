@@ -1,9 +1,9 @@
 /**
- * `Cloudflare.Env`-shaped test bindings (D15): in-memory KV, a 404 ASSETS fetcher, the database
- * for the driver `.env.test` selects (D35 — a HYPERDRIVE stub pointing at the test Postgres under
+ * `Cloudflare.Env`-shaped test bindings: in-memory KV, a 404 ASSETS fetcher, the database
+ * for the driver `.env.test` selects (a HYPERDRIVE stub pointing at the test Postgres under
  * `postgres`; `DATABASE_URL` + `NEON_LOCAL_PROXY` under `neon`), a recording Queue, an in-memory R2 bucket, a recording DO namespace,
  * a recording Workers AI stub, a recording Workflow namespace, and vars from `process.env` (loaded
- * from .env.test by dotenv-cli). The AI stub also answers `toMarkdown` (D18 uploads). Tests may
+ * from .env.test by dotenv-cli). The AI stub also answers `toMarkdown` (uploads). Tests may
  * read `process.env`; `src/` may not.
  *
  * Also `createExecutionContext()` — `waitUntil` collects promises so `waitOnExecutionContext`
@@ -99,7 +99,7 @@ export interface RecordedMessage<T = unknown> {
   options?: unknown
 }
 
-/** Records `send`/`sendBatch` calls so tests can assert what routes enqueued (Phase 2). */
+/** Records `send`/`sendBatch` calls so tests can assert what routes enqueued. */
 export class RecordingQueue<T = unknown> {
   readonly messages: RecordedMessage<T>[] = []
   async send(body: T, options?: unknown): Promise<void> {
@@ -122,7 +122,7 @@ interface R2Entry {
   uploaded: Date
 }
 
-/** Enough of R2Bucket for `services/storage.ts` (Phase 2): put/get/head/delete/list. */
+/** Enough of R2Bucket for `services/storage.ts`: put/get/head/delete/list. */
 export class MemoryR2Bucket {
   readonly objects = new Map<string, R2Entry>()
 
@@ -234,7 +234,7 @@ export interface RecordedBroadcast {
 }
 
 /**
- * Stub `NOTIFICATIONS_HUB` namespace (Phase 2, D8). `idFromName(tenantId).get()` returns a stub whose
+ * Stub `NOTIFICATIONS_HUB` namespace. `idFromName(tenantId).get()` returns a stub whose
  * RPC methods (`broadcast`, `broadcastToUser`, …) record their calls in `broadcasts` so route tests
  * can assert "a nudge was sent to tenant X" without a real Durable Object. `fetch` answers 501.
  */
@@ -296,10 +296,10 @@ export type FakeConversion =
   | { id: string; name: string; mimeType: string; format: 'error'; error: string }
 
 /**
- * Stub `AI` binding (Phase 3, D17): `run()` records the call and answers an embeddings-shaped
+ * Stub `AI` binding: `run()` records the call and answers an embeddings-shaped
  * `{ shape, data }` of deterministic 1024-dim vectors (one per input text) so `resolveEmbeddings`'s
  * `workers_ai` branch is testable without the platform. Override `respond` to shape other models.
- * `toMarkdown()` (D18 uploads) records `{ name, type, size }` in `conversions` and answers markdown
+ * `toMarkdown()` (uploads) records `{ name, type, size }` in `conversions` and answers markdown
  * made of the blob's bytes decoded as text — so a fixture "PDF" is just text typed
  * `application/pdf`; override `convert` for `format: 'error'` or a thrown outage.
  */
@@ -367,7 +367,7 @@ export interface FakeInstanceStatus {
   output?: unknown
 }
 
-/** What `instance.sendEvent()` was called with — the resume nudge of a parked run (issue #17). */
+/** What `instance.sendEvent()` was called with — the resume nudge of a parked run. */
 export interface RecordedWorkflowEvent {
   instanceId: string
   type: string
@@ -375,7 +375,7 @@ export interface RecordedWorkflowEvent {
 }
 
 /**
- * Stub `AGENT_RUN_WORKFLOW` binding (Phase 3b, D7): `create()` records `{ id, params }` and
+ * Stub `AGENT_RUN_WORKFLOW` binding: `create()` records `{ id, params }` and
  * answers an instance whose `status()` is whatever `setStatus(id, …)` said (default `running`);
  * a second `create` with the same id throws like the platform; `get()` throws `instance.not_found`
  * for an id never created unless a status was pre-seeded for it. Nothing runs — tests drive the
@@ -398,7 +398,7 @@ export class RecordingWorkflow {
   /** Make `sendEvent` fail the way a retention-expired or dev-restarted instance does. */
   notFoundOnSendEvent = false
   defaultStatus: FakeInstanceStatus = { status: 'running' }
-  /** The size of every `createBatch()` call that landed, in order (D39). */
+  /** The size of every `createBatch()` call that landed, in order. */
   readonly batches: number[] = []
   /**
    * Fail one instance's creation — consulted by `create()` AND, for every member, by

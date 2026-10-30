@@ -1,4 +1,4 @@
-/** Login handoff tests (D26): real loopback server, simulated browser redirect, stubbed `open`, redaction. */
+/** Login handoff tests: real loopback server, simulated browser redirect, stubbed `open`, redaction. */
 import { afterEach, describe, expect, it } from 'vitest'
 import {
   buildAuthUrl,

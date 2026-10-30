@@ -1,5 +1,5 @@
 /**
- * The judge model (D33), as a vitest-evals `JudgeHarness`. Every LLM judge — ours and vitest-evals'
+ * The judge model, as a vitest-evals `JudgeHarness`. Every LLM judge — ours and vitest-evals'
  * own `FactualityJudge` — calls through here, and here calls through the KIT:
  *
  * - the client comes from `resolveChat(..., { promptKey: 'evals-judge' })`, so Settings → agent

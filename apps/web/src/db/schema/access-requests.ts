@@ -1,5 +1,5 @@
 /**
- * `access_requests` — the gated sign-up queue (D9, `SIGNUP_MODE=approval`). A sign-up that
+ * `access_requests` — the gated sign-up queue (`SIGNUP_MODE=approval`). A sign-up that
  * arrived without an invitation waits here for a global admin, who approves it into an existing
  * tenant or a new one, or rejects it. `userId` is nullable because a request may be lodged from
  * the login page before any user row exists; `requestedTenantId` is a hint, not a membership.

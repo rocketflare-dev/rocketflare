@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "license": "MIT",
-  "description": "Developer-run eval suites for the kit's chat and agents (vitest-evals on vitest 4, in-process targets over apps/web). Run locally with `pnpm eval`; never part of the gate.",
+  "description": "Developer-run eval suites for the app's chat and agents (vitest-evals on vitest 4, in-process targets over apps/web). Run locally with `pnpm eval`; never part of the gate.",
   "type": "module",
   "scripts": {
     "eval": "node scripts/eval.mjs run",

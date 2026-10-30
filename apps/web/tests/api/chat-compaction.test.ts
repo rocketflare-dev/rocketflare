@@ -1,7 +1,7 @@
 // @vitest-isolate
 // Mocks `@/api/services/ai/resolve` (the provider seam), so this file needs its own module registry.
 /**
- * Chat history compaction (D17): the `chat.compact` job folds the messages that no longer fit a
+ * Chat history compaction: the `chat.compact` job folds the messages that no longer fit a
  * conversation's character budget into `conversations.summary`, and the next turn replays that
  * summary instead of the messages.
  *

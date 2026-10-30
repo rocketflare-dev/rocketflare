@@ -1,5 +1,5 @@
 /**
- * Settings → Usage (D18): the 30-day default requests `from`/`to`, renders totals (cost labelled
+ * Settings → Usage: the 30-day default requests `from`/`to`, renders totals (cost labelled
  * an estimate, unpriced calls named, an unpriced row dashed) and the
  * per-(provider, model, feature) rows; switching the preset re-queries a shorter window; an empty
  * period shows the empty state.

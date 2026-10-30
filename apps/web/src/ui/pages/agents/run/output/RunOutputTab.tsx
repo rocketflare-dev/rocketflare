@@ -1,6 +1,6 @@
 /**
- * What the run produced, typed by `outputs/` (issue #17) — the registry that replaced the two
- * hard-coded `agentKey === '…'` branches this panel used to carry. An agent with no entry, or one
+ * What the run produced, typed by `outputs/` — a registry, never hard-coded
+ * `agentKey === '…'` branches in this panel. An agent with no entry, or one
  * whose output no longer matches its schema, falls through to the raw JSON, which is a real answer
  * rather than an apology.
  */
@@ -26,7 +26,7 @@ export function RunOutputTab({
 }) {
   const [raw, setRaw] = useState(false)
   const hasOutput = output !== null && output !== undefined
-  // D33: the run's output is an answer like any chat reply, and a thumbs-down here is a candidate
+  // The run's output is an answer like any chat reply, and a thumbs-down here is a candidate
   // for `rocketflare evals promote`.
   const { data: myVotes } = useMyFeedback('agent_run', hasOutput ? [runId] : [])
   if (output === null || output === undefined) {

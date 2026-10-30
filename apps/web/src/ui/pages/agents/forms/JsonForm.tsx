@@ -1,5 +1,5 @@
 /**
- * Fallback input form (D7): a raw JSON textarea for an agent with no dedicated form. The server
+ * Fallback input form: a raw JSON textarea for an agent with no dedicated form. The server
  * validates the parsed body with the agent's own `inputSchema`.
  */
 import { FieldError, fieldErrorFor } from '@/ui/components/shared'

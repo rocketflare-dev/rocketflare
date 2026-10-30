@@ -1,5 +1,5 @@
 /**
- * `tenant.purge` (D7): the out-of-database half of deleting an organisation. The FK cascade is
+ * `tenant.purge`: the out-of-database half of deleting an organisation. The FK cascade is
  * complete inside Postgres and reaches nothing else, so this covers the seam that closes the gap —
  * the route ENQUEUES, the handler deletes the tenant's R2 objects and nobody else's, a second
  * delivery is a clean no-op, a Worker with no `FILES` binding acks rather than retrying for ever,

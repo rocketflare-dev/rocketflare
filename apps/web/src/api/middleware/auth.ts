@@ -1,11 +1,11 @@
 /**
- * Authentication middleware (D10, D12, D25). Applied PER MOUNT in `index.ts`, never inside a
+ * Authentication middleware. Applied PER MOUNT in `index.ts`, never inside a
  * route file. Two credentials:
  *   - `Authorization: Bearer <api key>` → the key's tenant, acting as the key's creator (its
- *     GROUPS too, re-read per request — D29)
+ *     GROUPS too, re-read per request)
  *   - `__Host-session` cookie → `resolveSession` (one LATERAL query), sliding expiry via waitUntil
  * Builds `AuthContext` (`buildAbility({ role, isGlobalAdmin, features })`, the features resolved by
- * `permissions/features.ts` from `[vars]` plus the tenant's rollout rows — D30) and `c.set('auth')`.
+ * `permissions/features.ts` from `[vars]` plus the tenant's rollout rows) and `c.set('auth')`.
  * Errors are envelopes: 401 `unauthorized`; 403 `blocked` / `tenant_suspended`. A valid session
  * with NO tenant passes with `tenantId: null` — `withAuthAndDb` turns that into 403 `no_tenant` /
  * `pending_approval`, while tenant-free routes (`withAuth`) keep working.
@@ -141,7 +141,7 @@ async function resolveBearerAuth(c: AppContext, plaintext: string): Promise<Auth
     }),
     isGlobalAdmin: result.user.isGlobalAdmin,
     features,
-    // A tenant key carries its CREATOR's groups, re-read on every request (D29): removing someone
+    // A tenant key carries its CREATOR's groups, re-read on every request: removing someone
     // from a group narrows their keys on the next call, with nothing to revoke. Feature flags are
     // re-read the same way, so a rollout reaches API-key callers on their next request too.
     groups,

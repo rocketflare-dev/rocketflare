@@ -1,11 +1,11 @@
 /**
- * The pure rules a well-formed plugin obeys (D31), factored out of `tests/config/plugins.test.ts`
+ * The pure rules a well-formed plugin obeys, factored out of `tests/config/plugins.test.ts`
  * so the suite can both exercise them with fixtures and run them over whatever is installed.
  *
  * They are string functions on purpose: the checks that matter here are structural (what a file
  * imports, how deep a specifier reaches), and a structural rule that cannot be unit-tested with a
  * fixture is one that quietly stops meaning anything the moment no plugin is installed — which is
- * the kit's own default state.
+ * the default state.
  */
 import {
   DECLARED_ENTRIES,
@@ -74,7 +74,7 @@ const UI_ENTRY_ALLOWED = [
 /**
  * The published entries of a plugin: its server API, its UI, its shared contracts and its CLI
  * commands. Everything else in a plugin is private, which is what lets its semver cover a
- * knowable surface (decision 9).
+ * knowable surface.
  */
 export function isPluginEntry(repoPath: string): boolean {
   const p = normaliseModulePath(repoPath)
@@ -136,7 +136,7 @@ export function queryKeyRootIssues(id: string, roots: readonly string[]): string
 }
 
 /**
- * D34: where a plugin may mount a route with NO auth. Only `/api/hooks/<its own id>` and beneath,
+ * Where a plugin may mount a route with NO auth. Only `/api/hooks/<its own id>` and beneath,
  * so the unauthenticated surface is one enumerable prefix per plugin; and no AUTHED mount may sit
  * under `/api/hooks` at all, so a reader can trust that everything there is public by design.
  */
@@ -183,21 +183,21 @@ export function emailHandlerIssues(
   return issues
 }
 
-// ---- the plugin import rule (D31) ----------------------------------------------------------------
+// ---- the plugin import rule --------------------------------------------------------------------
 
 /**
  * **A plugin imports only from declared entries, and receives everything else as injected context.**
  *
  * That sentence is the whole rule, and it is why there is no per-symbol allow-list here and no
  * exceptions list. The measurement this came from found 128 distinct (module, symbol) pairs across
- * 55 kit modules, and the answer to that is not a longer table — a table of 128 exceptions is the
+ * 55 core modules, and the answer to that is not a longer table — a table of 128 exceptions is the
  * sprawl written down rather than fixed. Nearly every one of those symbols already took an
  * execution context as its first argument, so nearly every one became a method on
  * `apps/web/src/plugins/api`.
  *
  * `deepImportIssue` above guards core→plugin and plugin→plugin. This guards the third direction —
  * **plugin→core** — which is the one that actually breaks: it is what makes a plugin's semver
- * meaningless, because the plugin is pinned to kit internals nobody promised to keep.
+ * meaningless, because the plugin is pinned to core internals nobody promised to keep.
  */
 
 /** Packages of the repo a plugin could reach into. Anything else is a third-party dependency. */
@@ -226,7 +226,7 @@ export function isPluginFile(repoPath: string): boolean {
  * One message when a plugin file imports the host from anywhere but a declared entry, else null.
  *
  * Third-party packages (`react`, `zod`, `drizzle-orm`, `commander`) are not the host and are never
- * an issue; the rule is about coupling to kit INTERNALS.
+ * an issue; the rule is about coupling to core INTERNALS.
  */
 export function pluginImportIssue(
   importer: string,
@@ -238,7 +238,7 @@ export function pluginImportIssue(
   // A bare specifier that is not `@/` or `@rocketflare/shared/` — an ordinary dependency.
   if (!target) return null
   // Its own files are always fine; another plugin's are `deepImportIssue`'s to report — and a
-  // PUBLISHED entry of a plugin it requires is allowed (D31), so every plugin path stops here.
+  // PUBLISHED entry of a plugin it requires is allowed, so every plugin path stops here.
   if (pluginIdOfPath(target) !== null) return null
   const normalised = normaliseModulePath(target)
   if (DECLARED_ENTRIES.some(e => normalised === e || normalised.startsWith(`${e}/`))) return null
@@ -255,7 +255,7 @@ export function pluginImportIssue(
  * **Failing, for every plugin — there is no longer a tier to opt into.** It used to key on a
  * plugin declaring `requires.pluginApi`, because the gate's second pass installed `defaultPlugins`
  * at refs that predated the surface and could not retroactively be changed. That tier went with
- * the field: a plugin now declares what it USES, the kit emits what it provides, and the two are
+ * the field: a plugin now declares what it USES, the host emits what it provides, and the two are
  * compared directly — so there is nothing left here a released plugin cannot satisfy by being
  * re-exported.
  *

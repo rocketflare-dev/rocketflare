@@ -1,6 +1,6 @@
 /**
- * Header avatar dropdown: who you are, where to manage yourself, sign out (D10 for which links
- * show — the same `useNavGuard()` the SideNav uses). Theme lives in `ThemeToggle` beside it.
+ * Header avatar dropdown: who you are, where to manage yourself, sign out (which links
+ * show comes from the same `useNavGuard()` the SideNav uses). Theme lives in `ThemeToggle` beside it.
  */
 import {
   ArrowRightStartOnRectangleIcon,

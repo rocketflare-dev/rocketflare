@@ -1,5 +1,5 @@
 /**
- * `rocketflare evals promote <messageId|runId> --dataset <name>` (D33) — turn one real answer into
+ * `rocketflare evals promote <messageId|runId> --dataset <name>` — turn one real answer into
  * a draft eval case and append it to `apps/evals/datasets/<name>.jsonl` for review in a pull
  * request.
  *

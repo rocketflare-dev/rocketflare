@@ -1,5 +1,5 @@
 /**
- * Nightly prune (D12): expired sessions, expired/consumed magic links, expired invitations older
+ * Nightly prune: expired sessions, expired/consumed magic links, expired invitations older
  * than 30 days are removed; live rows stay.
  */
 import { eq, inArray } from 'drizzle-orm'
@@ -133,7 +133,7 @@ describe('pruneExpired', () => {
   })
 })
 
-describe('pruneAiSpans (D32)', () => {
+describe('pruneAiSpans', () => {
   const span = (tenantId: string, spanId: string, startedAt: Date) => ({
     tenantId,
     traceId: 'a'.repeat(32),

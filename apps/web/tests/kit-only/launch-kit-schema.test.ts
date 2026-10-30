@@ -4,10 +4,9 @@
  * `scripts/tests/manifest.test.mjs` is ported here).
  *
  * Judged on the fixture kit's manifest (`./fixtures/kit-fixture.mjs`, shared with the meta-kit),
- * never this checkout's: the test travels into every copy, and a copy's manifest is the app's to
- * change. That THIS kit's manifest is valid and says what the kit really does is
- * `tests/kit-only/launch-kit-manifest.test.ts` (and kit.yml's `Launch kit check`). The `config`
- * project: no database.
+ * never this checkout's. Kit-only: the validator is the kit's to keep in step with Launch, so a copy's
+ * gate does not re-prove it. That THIS kit's manifest is valid and says what the kit really does is
+ * `launch-kit-manifest.test.ts` beside it (and kit.yml's `Launch kit check`). No database.
  */
 import { describe, expect, it } from 'vitest'
 import {

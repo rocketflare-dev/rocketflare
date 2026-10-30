@@ -1,11 +1,11 @@
 /**
- * Which provider a target or the judge runs on (D33). `anthropic` is the platform tier — the
+ * Which provider a target or the judge runs on. `anthropic` is the platform tier — the
  * `ANTHROPIC_API_KEY` the resolver already falls back to, no row needed. Every other provider is a
  * REAL tenant `ai_configs` row, written the way Settings → AI writes one (key encrypted with
  * `OAUTH_ENCRYPTION_KEY`, `isDefault: true`), so an eval on Fireworks or Gemini also exercises the
  * tenant-config tier of the resolver rather than a side door.
  *
- * Fireworks is the kit's own `fireworks` preset (`anthropic_compatible`); Gemini is
+ * Fireworks is the built-in `fireworks` preset (`anthropic_compatible`); Gemini is
  * `openai_compatible` against Google's OpenAI-compatible endpoint (the client appends
  * `/chat/completions`).
  */
@@ -29,7 +29,7 @@ export const EVAL_PROVIDERS = {
   anthropic: { keyEnv: 'ANTHROPIC_API_KEY' },
   fireworks: {
     keyEnv: 'FIREWORKS_API_KEY',
-    // The kit's own Fireworks preset, so an eval proves what Settings → AI would offer a tenant.
+    // The built-in Fireworks preset, so an eval proves what Settings → AI would offer a tenant.
     config: {
       provider: 'anthropic_compatible',
       baseUrl: fireworks?.baseUrl ?? 'https://api.fireworks.ai/inference',

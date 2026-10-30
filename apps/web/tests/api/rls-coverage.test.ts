@@ -1,5 +1,5 @@
 /**
- * RLS coverage, catalog-driven (D1): every table with a `tenant_id` column carries a policy, the
+ * RLS coverage, catalog-driven: every table with a `tenant_id` column carries a policy, the
  * set of policies in Postgres equals the set the schema declares, the unpolicied tables are exactly
  * `RLS_EXCLUDED_TABLES`, and the revoked tables grant NOTHING to the app role. Runs in `off` mode:
  * the policies exist and are inert (owner connection bypasses them); the role cannot bypass RLS.
@@ -93,7 +93,7 @@ describe('row-level security coverage', () => {
   })
 
   /**
-   * The kit's exclusions plus every installed plugin's (D31). The union lives here rather than in
+   * The core exclusions plus every installed plugin's. The union lives here rather than in
    * `rls.ts`, which every schema file imports and which must not read the server barrel — see the
    * note beside `RLS_EXCLUDED_TABLES`.
    */

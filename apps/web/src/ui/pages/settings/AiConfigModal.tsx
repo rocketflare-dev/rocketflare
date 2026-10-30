@@ -1,5 +1,5 @@
 /**
- * Add / edit one AI provider row (D17). Provider → preset chips (`presetsFor`) fill base URL +
+ * Add / edit one AI provider row. Provider → preset chips (`presetsFor`) fill base URL +
  * model; fields follow the catalog's `needsApiKey` / `needsBaseUrl` / `supportsThinking` /
  * `supportsServiceTier`; the API key is write-only ("leave blank to keep"); the body is validated
  * with `upsertAiConfigRequestSchema` plus the three provider rules the schema alone cannot state.

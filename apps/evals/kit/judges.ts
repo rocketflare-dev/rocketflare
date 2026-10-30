@@ -1,5 +1,5 @@
 /**
- * The judge catalogue (D33). Every judge reads the CASE from `ctx.input` — the harness input IS the
+ * The judge catalogue. Every judge reads the CASE from `ctx.input` — the harness input IS the
  * `EvalCase` — so a suite lists its judges once and each case brings its own expectations
  * (`expected.contains`, `expected.tools`, `expected.rubric`, `expected.output`). A judge with
  * nothing to check for a case returns `score: null`: unscored, never a free pass or a false fail.
@@ -112,7 +112,7 @@ export const BudgetJudge = (budget: Budget): EvalJudge =>
   )
 
 /**
- * The run's typed decisions (D37) against `expected.decisions` — read from what the agent target
+ * The run's typed decisions against `expected.decisions` — read from what the agent target
  * attached (`artifacts.decisions`, from `agent_run_decisions`), so no model is called. Accuracy is
  * the score; the Brier score is in the rationale.
  */

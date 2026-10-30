@@ -1,5 +1,5 @@
 /**
- * Auth fixtures (D12, D15): users, tenants, memberships, sessions and API keys inserted the way
+ * Auth fixtures: users, tenants, memberships, sessions and API keys inserted the way
  * production writes them — credentials stored as `hashToken(raw)`, the raw value returned for the
  * request. Every factory suffixes `uniqueId()` so parallel files never collide, and rows are left
  * behind on purpose (see .claude/rules/testing.md — no per-file truncation).

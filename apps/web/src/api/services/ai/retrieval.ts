@@ -1,5 +1,5 @@
 /**
- * Hybrid retrieval over `chunks` (D17, D18): dense cosine (`<=>` on the pgvector HNSW index) +
+ * Hybrid retrieval over `chunks`: dense cosine (`<=>` on the pgvector HNSW index) +
  * Postgres full-text (ANY query term — `anyTermTsquery` — ranked by `ts_rank_cd` over
  * `to_tsvector('english', text)`),
  * fused by Reciprocal Rank Fusion (`RRF_K = 60`). Each signal retrieves a wide candidate pool, the
@@ -116,7 +116,7 @@ interface Candidate {
 }
 
 /**
- * Hybrid search, scoped to what this reader may SEE (D29). `access` carries the tenant, so there
+ * Hybrid search, scoped to what this reader may SEE. `access` carries the tenant, so there
  * is no separate `tenantId` argument to keep in step with it; the visibility predicate is ANDed
  * with the tenant predicate on both halves, never substituted for it.
  *
@@ -137,7 +137,7 @@ export function searchChunks(
   access: AccessScope,
   request: SearchRequest
 ): Promise<SearchHit[]> {
-  // D32: a `retrieval` span under whatever is active (the `search_knowledge` tool span), with the
+  // A `retrieval` span under whatever is active (the `search_knowledge` tool span), with the
   // query embedding nested inside it. The hits are summarised — the passages are the TOOL's output.
   return traceStep(
     {

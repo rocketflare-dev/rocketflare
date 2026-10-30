@@ -1,5 +1,5 @@
 /**
- * `/api/files` (D23) end to end over the in-memory R2 bucket: avatar upload sets `users.avatarUrl`
+ * `/api/files` end to end over the in-memory R2 bucket: avatar upload sets `users.avatarUrl`
  * and stores the object; MIME allowlist (415) and size cap (413); download streams the bytes with
  * Content-Type / Cache-Control / ETag; tenant isolation (404); delete = owner or admin+. Plus the
  * header matrix the document viewer depends on: a PDF is `inline` AND framable (`SAMEORIGIN` +

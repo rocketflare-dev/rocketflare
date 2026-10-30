@@ -1,5 +1,5 @@
 /**
- * `rocketflare traces list|show` — the local AI trace store (`GET /api/traces`, admin+) (D32).
+ * `rocketflare traces list|show` — the local AI trace store (`GET /api/traces`, admin+).
  *
  * `show` is what an agent debugging a run reads: the span tree, indented by parent, with each
  * span's model, tokens, latency and status, and — for tool, retrieval and model spans — the input
@@ -80,7 +80,7 @@ function clip(value: unknown, full: boolean): string {
     : text
 }
 
-/** D33: a thumbs vote on the traced answer, recorded as a zero-length `feedback` span. */
+/** A thumbs vote on the traced answer, recorded as a zero-length `feedback` span. */
 function feedbackOf(span: TraceSpan): 1 | -1 | null {
   const rating = span.attributes['rocketflare.feedback.rating']
   return rating === 1 || rating === -1 ? rating : null

@@ -1,5 +1,5 @@
 /**
- * The primitive an OBSERVED compatibility check is built on (D31): the kit emits a ledger of what
+ * The primitive an OBSERVED compatibility check is built on: the kit emits a ledger of what
  * it provides, a plugin's use is derived from its own imports, and the answer is the set difference
  * between them.
  *

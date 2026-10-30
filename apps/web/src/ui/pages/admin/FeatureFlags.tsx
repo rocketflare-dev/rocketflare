@@ -1,5 +1,5 @@
 /**
- * Admin → Feature flags (D30). The two layers are shown separately on purpose.
+ * Admin → Feature flags. The two layers are shown separately on purpose.
  *
  * `availableInEnvironment` is CONFIG — `FEATURES_ENABLED` in that deployment's `[vars]`, moved by a
  * redeploy. When it is false the flag is off for everyone whatever its rollout says, so the page

@@ -1,5 +1,5 @@
 /**
- * Invitations (D9, D10, D12): create/bulk/resend/revoke inside a tenant, public details by token,
+ * Invitations: create/bulk/resend/revoke inside a tenant, public details by token,
  * and the transactional accept. The URL token is 32 random bytes; only its SHA-256 is stored, so
  * "resend" mints a new token (the old link dies). Accept never demotes an existing higher role.
  */
@@ -110,7 +110,7 @@ export interface InviteInput {
 type InviteLogger = Pick<Logger, 'info' | 'warn' | 'error'>
 
 /**
- * Invitation emails go through `JOBS_QUEUE` (D7): the route answers as soon as the row exists and
+ * Invitation emails go through `JOBS_QUEUE`: the route answers as soon as the row exists and
  * the consumer retries delivery. The magic-link email deliberately stays INLINE
  * (routes/auth/magic-link.ts) — a person is waiting on that one, so its latency matters more than
  * offloading it. A missing binding throws `JobsQueueNotConfiguredError`, never silently drops mail.

@@ -1,7 +1,7 @@
 // @vitest-isolate
 // Stubs the `WebSocketRequestResponsePair` global, so this file needs its own module registry.
 /**
- * `NotificationsHub` DO unit tests (D8, D15): the class under Node with a fake `DurableObjectState`
+ * `NotificationsHub` DO unit tests: the class under Node with a fake `DurableObjectState`
  * (tagged fake sockets with `send` spies). Covers the RPC surface — `broadcast`, `broadcastToUser`,
  * `broadcastToUsers`, `connectionCount` — plus `fetch`'s 400 guards and the keepalive fallback. The
  * 101 upgrade itself cannot run under Node (undici rejects status 101); `wrangler dev` proves it.

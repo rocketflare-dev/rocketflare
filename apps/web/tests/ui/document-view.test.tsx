@@ -1,5 +1,5 @@
 /**
- * `/documents/:documentId` (D18). What is worth pinning here is the dispatch, not the chrome: a
+ * `/documents/:documentId`. What is worth pinning here is the dispatch, not the chrome: a
  * PDF embeds its ORIGINAL while a link that names a passage opens the TEXT (a `charOffset` is an
  * offset into the converted markdown and has no relationship to a PDF page); a document with no
  * text yet says so from the 409 rather than showing an empty window; `?q=` marks its matches as

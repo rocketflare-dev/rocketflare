@@ -1,5 +1,5 @@
 /**
- * `POST /auth/dev-login` (D11): development only — 404 elsewhere; creates/finds the user, bypasses
+ * `POST /auth/dev-login`: development only — 404 elsewhere; creates/finds the user, bypasses
  * gating, sets the cookie, answers with the session response.
  */
 import { and, eq } from 'drizzle-orm'

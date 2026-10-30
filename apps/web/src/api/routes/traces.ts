@@ -1,5 +1,5 @@
 /**
- * `/api/traces` (D32): the local trace store read back — `GET /` lists traces
+ * `/api/traces`: the local trace store read back — `GET /` lists traces
  * (`?runId|conversationId|since|agent|status`, paginated), `GET /:id` returns one trace's spans,
  * where `:id` is a trace id, an agent run id or an assistant message id. Admin+ (`read Trace`): a
  * span carries other people's prompts and tool results, so this is not a member surface even for

@@ -19,9 +19,11 @@ Cloudflare Worker (`apps/web`), a CLI (`apps/cli`), private zod contracts
 > (bootstrap step `6/10 plugins`).
 > **Copies of the kit upgrade.** `.rocketflare.json` records the kit version, the app's names and the
 > manifest of replaceable surfaces; `/rf-upgrade` ports later releases into a copy and never
-> recreates a surface whose anchor file is gone. **A behaviour change here needs an entry in
-> `docs/upgrades/unreleased.md` in the same commit** — CI fails without one, and the tag gate refuses
-> a release with no note. `pnpm kit:release <version>` writes the release assets.
+> recreates a surface whose anchor file is gone. **In the kit repository only** (`.rocketflare.json`
+> `app` is null): a behaviour change needs an entry in `docs/upgrades/unreleased.md` in the same
+> commit — `kit.yml` fails without one — and `pnpm kit:release <version>` cuts the release. **In an
+> app** neither exists (the rename removes them): never write a kit porting note; release by bumping
+> the root `package.json` version and tagging it, and keep your own `CHANGELOG.md`.
 
 ## Stack
 
@@ -71,7 +73,7 @@ pnpm web agent:replay <agent> --tenant <slug> [--candidate f] [--live]  # D38: t
 pnpm lint · pnpm typecheck · pnpm build  # workspace-wide
 pnpm web <script>  # any apps/web script (test:api, db:check…)
 pnpm db:generate · pnpm db:studio · pnpm deploy[:staging] · pnpm provision all  # (or one phase: --help)
-pnpm kit:upgrade [--to X.Y.Z] [--apply] · pnpm kit:release X.Y.Z  # port a kit release into a copy / cut one
+pnpm kit:upgrade [--to X.Y.Z] [--apply]  # port a later kit release into this app (the kit repo also has kit:release)
 ```
 
 `wrangler` lives in `apps/web`: `pnpm --filter @rocketflare/web exec wrangler …`, never at the root. No
@@ -100,16 +102,16 @@ apps/evals/        @rocketflare/evals — vitest-evals suites over apps/web in-p
                    suites/, datasets/*.jsonl, baselines/; `pnpm eval` only, never the gate (docs/EVALS.md)
 packages/shared/   @rocketflare/shared — src/*.ts zod contracts, errors, pagination, permissions,
                    plugins/ (SharedPlugin + the SHARED_PLUGINS barrel + each plugin's contracts) (CLAUDE.md)
-scripts/           bootstrap.sh → bootstrap.mjs (9 steps), install.sh (curl one-liner), rename.mjs,
-                   upgrade.mjs (port a kit release into a copy), release{,-check}.mjs, changelog-nudge.mjs +
-                   release-site-nudge.mjs (PreToolUse on a commit: missing porting note / version
-                   bump → update rocketflare-www),
+scripts/           bootstrap.sh → bootstrap.mjs (9 steps), rename.mjs, upgrade.mjs (port a kit
+                   release into a copy), release-check.mjs (deploy gates),
                    kit-update-check.mjs (SessionStart: tells a copy about a newer kit release),
-                   kit-check.mjs (the Launch kit conformance check, shared with the meta-kit), lib/
+                   kit-check.mjs (the Launch kit conformance check, shared with the meta-kit), lib/;
+                   kit repo only (`kitOnly`, deleted by the rename): install.sh, release.mjs,
+                   changelog-nudge.mjs + release-site-nudge.mjs (maintainer PreToolUse hooks)
 .rocketflare.json  kit version + commit, the app's names, the replaceable-surface manifest
 launch.kit.json    the Launch kit contract (D36): how Launch scaffolds, gates, ships and upgrades a
                    copy — kept by every copy; `node scripts/kit-check.mjs` checks it (CONCEPTS §13)
-docs/upgrades/     one porting note per kit release (+ unreleased.md) — CHANGELOG.md is the index
+docs/upgrades/     one porting note per kit release (+ unreleased.md, kit repo only) — CHANGELOG.md is the index
 .claude/skills/    rf-setup · rf-preflight · rf-adapt (+ checklist.md) · rf-provision (+ reference.md) ·
                    rf-how-do-i (+ example-orders.md) · rf-upgrade (+ porting.md — port later kit releases) ·
                    rf-plugin (+ reference.md — install/upgrade/remove a plugin, D31) ·
@@ -172,9 +174,10 @@ code-quality.md · cloudflare.md. Runbooks: `docs/DEPLOY.md` · `docs/RLS.md`
   credentials; the CLI never prints a full key; `gitleaks` in CI
 - **No `process.env` / Node-only APIs in `apps/web/src/`** (`pg`, `ws`, `node:fs`…); `build:api` catches it
 - **Release = root version**: git tag == root `package.json` `version` (ships web + cli)
-- **Docs in sync**: a behaviour change updates CONCEPTS / SETUP / DEPLOY / rules in the same PR,
-  **and adds an entry to `docs/upgrades/unreleased.md`** — copies of the kit absorb changes by
-  reading those notes, so a change with no note never reaches them (CI and the tag gate enforce it)
+- **Docs in sync**: a behaviour change updates CONCEPTS / SETUP / DEPLOY / rules in the same PR;
+  **in the kit repository** it also adds an entry to `docs/upgrades/unreleased.md` — copies absorb
+  changes by reading those notes, so a change with no note never reaches them (`kit.yml` and the
+  tag gate enforce it). An app writes no porting note
 - **A plugin composes, it never redefines** (D31): it namespaces everything with its id (tables
   prefixed from it — `example-feature` → `example_*`, and `plugin check` fails a collision — job
   types `<id>.x`, query-key roots `<id>:…`, `/api/<id>`, CUSTOM events `<id>.` — **never `kit.`**),

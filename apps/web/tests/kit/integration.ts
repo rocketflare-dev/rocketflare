@@ -1,5 +1,5 @@
 /**
- * `@testkit/integration` — the host's test harness, as a DECLARED entry (D31).
+ * `@testkit/integration` — the host's test harness, as a DECLARED entry.
  *
  * Before this existed, both installed plugins reached the harness through six-level relative climbs
  * (`../../../../../tests/helpers/auth`): five modules and twenty-one symbols, none of them declared,

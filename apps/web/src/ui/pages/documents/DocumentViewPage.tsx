@@ -1,5 +1,5 @@
 /**
- * `/documents/:documentId` (D18): read one knowledge document. Before this, a document was a row
+ * `/documents/:documentId`: read one knowledge document. Before this, a document was a row
  * you only ever saw the edges of — Search could find a passage and never open the thing it came
  * from, and an uploaded PDF was a download link.
  *

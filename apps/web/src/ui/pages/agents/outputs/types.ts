@@ -1,5 +1,5 @@
 /**
- * The per-agent OUTPUT contract, mirroring `forms/` (issue #17). An agent's `output` is validated
+ * The per-agent OUTPUT contract, mirroring `forms/`. An agent's `output` is validated
  * by the runtime against its own `outputSchema`, so each entry ships the SAME shared schema and
  * parses before rendering — a run written by an older build simply falls through to the raw JSON.
  *

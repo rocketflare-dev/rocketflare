@@ -1,5 +1,5 @@
 /**
- * Membership administration (D10): list, role change, removal — with the ownership invariants
+ * Membership administration: list, role change, removal — with the ownership invariants
  * the matrix leaves to routes: assigning or taking away `owner` is owner-only, the last owner can
  * never be demoted or removed, and `support` rows are managed only from /admin.
  */
@@ -38,8 +38,8 @@ export async function listMembers(db: Database, tenantId: string, query: Paginat
       .offset(offset),
     db.select({ count: sql`count(*)` }).from(tenantUsers).where(eq(tenantUsers.tenantId, tenantId)),
   ])
-  // D29: group badges for the WHOLE page in one query — the app this was ported from fetched the
-  // member list once per group, which is N+1 in the number of groups.
+  // Group badges for the WHOLE page in one query — never the member list once per group, which
+  // is N+1 in the number of groups.
   const groups = await groupsForMembers(
     db,
     tenantId,

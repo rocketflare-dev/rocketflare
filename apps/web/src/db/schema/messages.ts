@@ -1,8 +1,8 @@
 /**
- * `messages` — the turns of a conversation (D17). `tenantId` is denormalised from the conversation
+ * `messages` — the turns of a conversation. `tenantId` is denormalised from the conversation
  * so the RLS policy and the tenant predicate apply directly. `toolCalls` records what the assistant
- * called (zero default tools in the kit — the column exists so a tool surface needs no migration);
- * `usage` is the provider's token report for an assistant turn (also written to `ai_usage`, D18),
+ * called (zero default tools — the column exists so a tool surface needs no migration);
+ * `usage` is the provider's token report for an assistant turn (also written to `ai_usage`),
  * and `provider`/`model` record which model produced it — the turn re-resolves its client every
  * time, so this is the only place a mixed-model thread can be priced or explained.
  * The read index is `(conversation_id, created_at)` — a deliberate exception to the tenant-first
@@ -42,7 +42,7 @@ export const messages = pgTable(
      */
     provider: text('provider').$type<AiProvider>(),
     model: text('model'),
-    /** The OTLP trace of the turn that produced this assistant row (D32); null on a user row. */
+    /** The OTLP trace of the turn that produced this assistant row; null on a user row. */
     traceId: text('trace_id'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },

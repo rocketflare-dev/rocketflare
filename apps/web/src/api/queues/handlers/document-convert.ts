@@ -1,5 +1,5 @@
 /**
- * `document.convert` (D7, D18): an uploaded original in R2 → text (Workers AI `toMarkdown`, or a
+ * `document.convert`: an uploaded original in R2 → text (Workers AI `toMarkdown`, or a
  * UTF-8 decode for text types) → the same `indexDocument` every other path uses. The message
  * carries only ids; the row and the `files` row say where the bytes are. A permanent conversion
  * refusal (`ConversionFailedError`) marks the row `failed` and is ACKED — retrying a corrupt PDF
@@ -37,7 +37,7 @@ export async function handleDocumentConvert(
   }
   const storage = createR2Storage(ctx.env.FILES)
   try {
-    // D32: a `job document.convert` span, so each embeddings batch nests under something.
+    // A `job document.convert` span, so each embeddings batch nests under something.
     const indexed = await withAgentTrace(
       'document.convert',
       {

@@ -90,7 +90,7 @@ describe('Admin → Access requests', () => {
     )
   })
 
-  it('single mode: the new_org branch is hidden (D25)', async () => {
+  it('single mode: the new_org branch is hidden', async () => {
     renderAs('single')
     fireEvent.click(await screen.findByRole('button', { name: 'Approve' }))
     expect(screen.queryByRole('tab', { name: 'New organisation' })).not.toBeInTheDocument()

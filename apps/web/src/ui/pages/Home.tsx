@@ -1,5 +1,5 @@
 /**
- * Home (D25): where you are (organisation, your role), where to go next, and — for admins — what
+ * Home: where you are (organisation, your role), where to go next, and — for admins — what
  * just happened. Deliberately generic; apps replace the quick links with their own dashboard.
  */
 import {
@@ -64,9 +64,9 @@ const CORE_QUICK_LINKS: QuickLink[] = [
 ]
 
 /**
- * The kit's links, with every installed plugin's ahead of them (D31). Plugin first because a
- * plugin is what this app ADDED — the kit's own links (account, notifications, settings) are the
- * furniture — and because it reproduces where Analytics sat while it was part of the kit.
+ * The core links, with every installed plugin's ahead of them. Plugin first because a
+ * plugin is what this app ADDED — the core links (account, notifications, settings) are the
+ * furniture.
  */
 const QUICK_LINKS: QuickLink[] = [...uiPlugins.flatMap(p => p.homeLinks ?? []), ...CORE_QUICK_LINKS]
 

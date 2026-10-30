@@ -1,5 +1,5 @@
 /**
- * The D10 ability matrix (02 §10b), cell by cell — no database. If `src/permissions/CLAUDE.md`'s
+ * The ability matrix, cell by cell — no database. If `src/permissions/CLAUDE.md`'s
  * table changes, this file changes with it.
  */
 
@@ -45,23 +45,23 @@ const MATRIX: Record<string, Record<Role, Level>> = {
   Conversation: { owner: 'manage', admin: 'manage', support: 'manage', member: 'manage' },
   AgentRun: { owner: 'manage', admin: 'manage', support: 'manage', member: 'manage' },
   Document: { owner: 'manage', admin: 'manage', support: 'manage', member: 'create' },
-  // D29 — administering groups is admin+; a member's own groups are a route-scoped read.
+  // Administering groups is admin+; a member's own groups are a route-scoped read.
   Group: { owner: 'manage', admin: 'manage', support: 'manage', member: 'read' },
   AccessRequest: { owner: 'none', admin: 'none', support: 'none', member: 'none' },
   User: { owner: 'none', admin: 'none', support: 'none', member: 'none' },
-  // D30 — administering flags is a PLATFORM act (`manage all`), never a tenant role. Using a
+  // Administering flags is a PLATFORM act (`manage all`), never a tenant role. Using a
   // feature is not this subject at all: it is `AuthContext.features`, which no role can override.
   FeatureFlag: { owner: 'none', admin: 'none', support: 'none', member: 'none' },
-  // D32 — traces hold other people's prompts: admin+ read, members nothing, nobody writes one.
+  // Traces hold other people's prompts: admin+ read, members nothing, nobody writes one.
   Trace: { owner: 'read', admin: 'read', support: 'read', member: 'none' },
-  // D33 — anyone rates an answer; reading the ratings (the promotion queue) is admin+.
+  // Anyone rates an answer; reading the ratings (the promotion queue) is admin+.
   Feedback: { owner: 'create', admin: 'create', support: 'create', member: 'createOnly' },
 }
 
 const build = (role: Role | null, features: string[] = [], isGlobalAdmin = false) =>
   buildAbility({ role, isGlobalAdmin, features })
 
-describe('ability matrix (D10)', () => {
+describe('ability matrix', () => {
   it('covers every core subject except `all`', () => {
     expect(Object.keys(MATRIX).sort()).toEqual(CORE_SUBJECTS.filter(s => s !== 'all').sort())
   })
@@ -169,7 +169,7 @@ describe('getEffectiveRole', () => {
   })
 })
 
-describe('pack / unpack round-trip (D13)', () => {
+describe('pack / unpack round-trip', () => {
   for (const role of ROLES) {
     it(`${role} survives the wire`, () => {
       const original = build(role, ['analytics'])

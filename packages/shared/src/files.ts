@@ -1,5 +1,5 @@
 /**
- * File storage contracts (D23): the `files` row the API returns, the upload response, and the
+ * File storage contracts: the `files` row the API returns, the upload response, and the
  * limits the UI checks BEFORE uploading so the server's 413/415 are a backstop, not the UX.
  * Objects live in R2 under `tenants/<tenantId>/<scope>/…`; the browser only ever sees `/api/files/:id`.
  */
@@ -7,7 +7,7 @@ import { z } from 'zod'
 
 /**
  * Where an upload goes and what may be uploaded there. Extend per app. `documents` holds the
- * originals behind the knowledge base (D18): created and deleted through `/api/ai/documents`,
+ * originals behind the knowledge base: created and deleted through `/api/ai/documents`,
  * downloadable at `/api/files/:id`, never deleted directly (409 `owned_by_document`).
  */
 export const FILE_SCOPES = ['avatars', 'uploads', 'documents'] as const

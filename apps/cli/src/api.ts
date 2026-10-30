@@ -1,5 +1,5 @@
 /**
- * HTTP client for the kit's API (D13, D26). Sends `Authorization: Bearer <key>`, turns the error
+ * HTTP client for the app's API. Sends `Authorization: Bearer <key>`, turns the error
  * envelope `{ error, statusCode, code?, details? }` into `CliApiError` (401 → exit 2, 403 → exit 3)
  * and validates success bodies with the zod contract from `@rocketflare/shared`. Network failures are a
  * `CliApiError` with `status: 0` so callers only ever handle one error type.

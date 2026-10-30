@@ -1,5 +1,5 @@
 /**
- * Inbound email dispatcher (D31, `api/email.ts`): a message reaches the plugin handler that owns
+ * Inbound email dispatcher (`api/email.ts`): a message reaches the plugin handler that owns
  * its recipient's local part, a message nobody claims is rejected, and a handler failure is
  * rethrown (a temporary failure the sender retries) rather than turned into a bounce.
  */

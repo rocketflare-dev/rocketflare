@@ -1,5 +1,5 @@
 /**
- * The decisions seam (D37): one interface both engines answer — TypeSafe's Jev (`typesafe.ts`) and
+ * The decisions seam: one interface both engines answer — TypeSafe's Jev (`typesafe.ts`) and
  * the chat-model fallback (`llm.ts`). `ctx.decide` (services/agents) codes against this and never
  * against a vendor, exactly as the tool loop codes against `ChatClient`.
  */

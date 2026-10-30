@@ -485,7 +485,7 @@ URL guessed for it. With the list empty `kit-checks` still reads it and says so 
 answer worth seeing on a bare kit — and the `plugins` gate is skipped, since with nothing installed
 it would only re-run the renamed one's suite.
 
-**`pnpm kit:release X.Y.Z` refuses a version its default plugins are not ready for**: every entry
+**Kit repository only — `pnpm kit:release X.Y.Z` refuses a version its default plugins are not ready for**: every entry
 must still resolve at the ref the kit pins (`git ls-remote`), and the `minKit` floor it declares
 there must be at or below the version being cut. A plugin still carrying the retired `requires.kit`
 is named as such, with the edit, rather than approximated — there is no range machinery left to fall
@@ -572,14 +572,15 @@ was never provisioned. `isDeployable` (`scripts/lib/upgrade-lib.mjs`, unit-teste
 ambiguous case, because a false skip is a release quietly not happening.
 
 **Version rule.** The git tag must equal `version` in the **root** `package.json`; the job fails
-otherwise. It also fails without `docs/upgrades/<tag>.md`, its `CHANGELOG.md` section and a
-matching `.rocketflare.json` `kit.version` (`scripts/release-check.mjs --tag`): a release with no
-porting note is a permanent gap in the chain `/rf-upgrade` walks, and every copy of the kit has to
-step over it. `pnpm kit:release <version>` writes all of that, so the gate passes by construction — and in the
-kit it also refuses a version whose `defaultPlugins` no longer resolve at their pinned ref
-(D31, above).
+otherwise. In an app that is the whole rule: bump the root version, commit, tag.
+*Kit repository only:* the same step (`scripts/release-check.mjs --tag`, a no-op in an app) also
+fails without `docs/upgrades/<tag>.md`, its `CHANGELOG.md` section and a matching
+`.rocketflare.json` `kit.version` — a kit release with no porting note is a permanent gap in the
+chain `/rf-upgrade` walks, and every copy has to step over it. `pnpm kit:release <version>` writes
+all of that, so the gate passes by construction, and refuses a version whose `defaultPlugins` no
+longer resolve at their pinned ref (D31, above).
 **Released history is never rewritten** — a copy pins a kit commit and a force-push orphans it. One tag ships `apps/web` and `apps/cli` together — the `apps/*` and `packages/*` versions
-are informational and are not checked. Bump the root version, commit, tag. The kit itself has one
+are informational and are not checked. The kit itself has one
 more step after the tag, which nothing automates: updating rocketflare.dev's changelog
 (`CONTRIBUTING.md`, "Cutting a release"). A Claude Code `PreToolUse` hook
 (`scripts/release-site-nudge.mjs`) reminds the agent of it on any commit that changes the root

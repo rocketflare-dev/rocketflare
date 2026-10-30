@@ -1,5 +1,5 @@
 /**
- * Promotion from real traffic (D33): turn one assistant message or one agent run into a DRAFT
+ * Promotion from real traffic: turn one assistant message or one agent run into a DRAFT
  * `EvalCase` — `GET /api/evals/export`, read by `rocketflare evals promote`. The draft is honest
  * about what it is:
  *

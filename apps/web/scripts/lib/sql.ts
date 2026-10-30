@@ -1,6 +1,6 @@
 /**
  * Raw SQL for the Node scripts (migrate, db-roles, db:check, provision), over the driver
- * `DATABASE_DRIVER` selects (D35) — the same var the Worker reads, which `.dev.vars` sets locally.
+ * `DATABASE_DRIVER` selects — the same var the Worker reads, which `.dev.vars` sets locally.
  *
  * - `postgres` (missing means this): postgres.js over TCP.
  * - `neon`: a Neon serverless `Pool`, which needs only a WebSocket, so a coding sandbox with no

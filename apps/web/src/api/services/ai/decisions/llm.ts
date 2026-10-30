@@ -1,5 +1,5 @@
 /**
- * The decisions fallback (D37): a chat model answers the same typed questions Jev does, through ONE
+ * The decisions fallback: a chat model answers the same typed questions Jev does, through ONE
  * forced tool call whose schema has a field per question — `p_yes` for a noul, a probability per
  * option for a choice, one per level for a score. The model's numbers are normalised here and the
  * confidence is computed with TypeSafe's published formulas, so the two engines read on one scale.
@@ -23,7 +23,7 @@ import type {
 } from '@rocketflare/shared/ai/decisions'
 import { choiceConfidence, noulConfidence, scoreConfidence } from '@rocketflare/shared/ai/decisions'
 import { z } from 'zod'
-import { callStructuredTool } from '../kit'
+import { callStructuredTool } from '../agent-loop'
 import type { ChatClient, SystemPrompt } from '../types'
 import type { DecisionClient, DecisionResult } from './types'
 

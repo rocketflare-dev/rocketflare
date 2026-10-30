@@ -1,5 +1,5 @@
 /**
- * `/api/ai/config` (D17): a tenant's AI providers. Credentials are encrypted on the way in and
+ * `/api/ai/config`: a tenant's AI providers. Credentials are encrypted on the way in and
  * NEVER come back out (`hasCredential` only). `POST /` upserts on (tenant, scope, label): omitting
  * `apiKey` on a re-save keeps the stored key; `isDefault` swaps the scope's default inside one
  * transaction (clear-others-then-set — the partial unique index rejects the reverse order). The

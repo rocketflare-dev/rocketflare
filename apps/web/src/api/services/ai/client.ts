@@ -1,5 +1,5 @@
 /**
- * Provider adapters (D17) behind the `ChatClient` / `EmbeddingsClient` seam in `types.ts`.
+ * Provider adapters behind the `ChatClient` / `EmbeddingsClient` seam in `types.ts`.
  *   - `anthropic` / `anthropic_compatible` → `@anthropic-ai/sdk` (fetch-based, runs in Workers).
  *     Compatible vendors authenticate with `Authorization: Bearer` (the SDK's `authToken`), NOT
  *     `x-api-key` — passing the key as `apiKey` sends the wrong header and reads as a bad key.
@@ -35,8 +35,8 @@ import {
   openAiLowestEffort,
   openAiModelTraits,
 } from '@rocketflare/shared/ai/models'
+import { cachedSystem, withRollingCacheBreakpoints } from './agent-loop'
 import { AiError, normalizeAiError } from './errors'
-import { cachedSystem, withRollingCacheBreakpoints } from './kit'
 import { DEFAULT_BASE_URLS, WORKERS_AI_TOOL_CHOICE_MODELS } from './providers'
 import type {
   AiEnv,
@@ -374,7 +374,7 @@ function createAnthropicChatClient(opts: ChatClientOptions): ChatClient {
 
   // Each refusal the traits could misjudge is recovered ONCE and remembered for the rest of this
   // client (one resolve, i.e. one turn or run step), so only its first call pays for finding out:
-  // - `omitThinking`: the model refuses the `thinking` we sent. The kit sends `disabled` by default
+  // - `omitThinking`: the model refuses the `thinking` we sent. The adapter sends `disabled` by default
   //   because some vendors' models (Fireworks' GLM/Kimi) reason — and bill for it — unless told
   //   not to, but Fireworks maps it to reasoning effort `none`, which gpt-oss answers with a 400; and
   //   a Claude id `anthropicModelTraits` misreads can refuse `disabled` / `between_tools` / a budget.
@@ -819,7 +819,7 @@ function createOpenAiChatClient(opts: ChatClientOptions): ChatClient {
 /**
  * OpenAI's own endpoint speaks the Responses API, not Chat Completions: Chat Completions cannot call
  * tools on `gpt-6-astra` / `gpt-6.1-sol` at all, and on Luna/Sol only with reasoning switched off,
- * which is every tool loop the kit runs. `store: false` keeps nothing on OpenAI's side; the
+ * which is every tool loop the app runs. `store: false` keeps nothing on OpenAI's side; the
  * reasoning items come back with `encrypted_content` and ride the transcript as opaque
  * `reasoning` blocks, sent back in their original order with the tool results that follow — "all
  * items between the last user message and your function call output … untouched".

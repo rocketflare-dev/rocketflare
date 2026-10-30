@@ -2,10 +2,10 @@
 // Registers a fixture flag in the shared `FEATURE_FLAGS` registry (see below), so it needs its own
 // module registry rather than leaking that key into every later file.
 /**
- * Feature flags (D30) end to end: the admin surface, the two layers composing, and — the assertion
+ * Feature flags end to end: the admin surface, the two layers composing, and — the assertion
  * that matters most — that a GLOBAL ADMIN is dark too.
  *
- * That last one is not hypothetical. An app built on this kit shipped the gate reading the CASL
+ * That last one is not hypothetical. An app built on this codebase shipped the gate reading the CASL
  * ability and had five routes open in production to platform staff, because `manage all` and
  * `access all` are wildcards covering every `Feature:` subject, while the cube and dashboard gates
  * read the features array and stayed dark. Two sources of truth disagreeing. So every assertion
@@ -33,11 +33,11 @@ import { createTestEnv } from '../mocks/bindings'
 const db = setupTestDatabase()
 
 /**
- * A flag this suite REGISTERS, rather than one it borrows (D31).
+ * A flag this suite REGISTERS, rather than one it borrows.
  *
  * Everything below is about the admin surface and the two layers composing, not about any
  * particular feature — but it needs a real registry key, because `evaluateFlag` answers false for
- * one it has never heard of and `isFeatureName` 404s the admin routes. The kit ships no flag of its
+ * one it has never heard of and `isFeatureName` 404s the admin routes. Core ships no flag of its
  * own any more (its demonstration flag is the `example-feature` PLUGIN), and borrowing the
  * plugin's would be worse than a literal: `featureFlags.key` is PLATFORM state and
  * `tenant_feature_overrides` cascades off it, so two files in one project resetting the same key
@@ -246,7 +246,7 @@ describe('the environment layer', () => {
     await resetFlag()
     await setState({ state: 'on' })
     await setOverride(true)
-    // The kit's demo flag is not `environmentGated`, so an empty `FEATURES_ENABLED` changes
+    // The demo flag is not `environmentGated`, so an empty `FEATURES_ENABLED` changes
     // nothing — which is itself the contract: an ordinary rollout flag needs no toml edit.
     const env = createTestEnv({ FEATURES_ENABLED: '' })
     const res = await request('/auth/session', { headers: adminCookie }, { env })

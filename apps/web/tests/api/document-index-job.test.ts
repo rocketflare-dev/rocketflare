@@ -1,5 +1,5 @@
 /**
- * `document.index` job (D7, D18) through the real consumer: a `pending` document with stored
+ * `document.index` job through the real consumer: a `pending` document with stored
  * content → chunks with embeddings + `indexed` + `ack()`; a vanished document → `ack()` (nothing to
  * retry); an embeddings failure → row `failed` with a redacted error and `retry({ delaySeconds })`.
  */

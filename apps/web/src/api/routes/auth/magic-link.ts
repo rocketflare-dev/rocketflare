@@ -1,5 +1,5 @@
 /**
- * Magic-link login (D9, D11, D12). `POST /request` always answers 202 (anti-enumeration) and is
+ * Magic-link login. `POST /request` always answers 202 (anti-enumeration) and is
  * rate-limited at the mount; the email — or, with no `RESEND_API_KEY`, the log line — carries
  * `${APP_URL}/auth/magic-link/verify?token=…`.
  *

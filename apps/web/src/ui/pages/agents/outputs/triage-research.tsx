@@ -1,5 +1,5 @@
 /**
- * `triage-research`'s answer (D37): the Markdown answer, the documents it used, and HOW the run got
+ * `triage-research`'s answer: the Markdown answer, the documents it used, and HOW the run got
  * there — the route its decisions chose and how much of the search the screen kept. The per-passage
  * probabilities are the `Relevance screen` artifact; each decision is a row in the timeline.
  */

@@ -1,11 +1,10 @@
 /**
- * Security headers on every response (04 §4: the Workers app's minimal set, the Node app's post-`next()`
- * placement). Placed early so it also covers 4xx/5xx produced by later middleware. CSP is a
- * constant list — append `connect-src` entries here when the UI talks to a third party. There is
+ * Security headers on every response, set after `next()`. Placed early so it also covers 4xx/5xx
+ * produced by later middleware. CSP is a constant list — append `connect-src` entries here when the UI talks to a third party. There is
  * ONE exception, opt-in per response: a route that has proved its content type may
  * `c.set('embeddable', true)` and get `SAMEORIGIN` + `frame-ancestors 'self'` instead, which is
- * what lets the document viewer frame a PDF (D18). A 101
- * (WebSocket upgrade from the `NotificationsHub` DO, D8) is returned untouched: its headers are
+ * what lets the document viewer frame a PDF. A 101
+ * (WebSocket upgrade from the `NotificationsHub` DO) is returned untouched: its headers are
  * immutable and re-wrapping a 101 `Response` drops the socket.
  */
 import { createMiddleware } from 'hono/factory'

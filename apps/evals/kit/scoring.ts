@@ -1,5 +1,5 @@
 /**
- * The deterministic scorers (D33), as plain functions over plain values so they can be unit-tested,
+ * The deterministic scorers, as plain functions over plain values so they can be unit-tested,
  * borrowed by an app's own judges, and reasoned about without a model in the loop. Every one returns
  * a score in `[0, 1]` and a sentence saying why — the sentence is what `pnpm eval` prints and the
  * `rf-evals` skill reads back to the user.
@@ -136,7 +136,7 @@ export function outputText(output: unknown): string {
   return typeof output === 'string' ? output : JSON.stringify(output, null, 2)
 }
 
-// ---- decisions (D37) ----------------------------------------------------------------------------
+// ---- decisions ----------------------------------------------------------------------------
 
 /** One recorded answer as the agent target reports it: its label and the probabilities behind it. */
 export interface RecordedAnswer {

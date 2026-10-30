@@ -1,5 +1,5 @@
 /**
- * `tenant_users` — membership: which users belong to which tenant, with what role (D10, D25).
+ * `tenant_users` — membership: which users belong to which tenant, with what role.
  * Composite PK `(tenant_id, user_id)`; `tenant_id` first so the PK index doubles as the
  * "members of this tenant" index.
  *

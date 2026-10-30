@@ -1,5 +1,5 @@
 /**
- * Turning what a target DID into a transcript (D33) — pure, so it is unit-tested without a model.
+ * Turning what a target DID into a transcript — pure, so it is unit-tested without a model.
  *
  * A chat turn arrives as the AG-UI events `streamChatTurn` emitted; an agent run as its
  * `agent_run_events` rows. Both become the same shape: the output, the tool calls (name, arguments,

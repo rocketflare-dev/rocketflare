@@ -19,13 +19,13 @@ React 18 + Vite + React Router 6 + TanStack Query 5 + zustand; DaisyUI 5 on Tail
   Guards: `ProtectedRoute` (session + tenant → `noTenantRoute`; a global admin with NO tenant is
   let through to `/admin/*` only — `isAdminPath`), `RequireGuard` (any `NavGuard`),
   `AdminRoute`/`GlobalAdminRoute` (sugar over it). `components/permissions/` — `AbilityProvider`
-  (unpacks `session.permissions`), `Can`, `IfCan`/`IfCannot`. Realtime (D8): `WebSocketProvider`
+  (unpacks `session.permissions`), `Can`, `IfCan`/`IfCannot`. Realtime: `WebSocketProvider`
   (connects the singleton once authenticated with a tenant, `useQueryClient()` →
   `invalidateQueries` per root from `invalidationsFor(event)`, toasts `notification.created`),
   `WebSocketStatus` (header dot), `ConnectionBanner` (after 5 s away from `open`).
   `components/shared/` — generic primitives only (Toast, Modal, SectionPanel, PaginationControls,
-  FieldError…) plus the D29 visibility trio (`AccessPicker`, `AccessBadge`, `VisibilityModal`) —
-  markdown-free by construction, which is what lets them sit in the eager barrel. `components/ai/` (D17) — `Markdown` (react-markdown + GFM, `skipHtml`, links
+  FieldError…) plus the visibility trio (`AccessPicker`, `AccessBadge`, `VisibilityModal`) —
+  markdown-free by construction, which is what lets them sit in the eager barrel. `components/ai/` — `Markdown` (react-markdown + GFM, `skipHtml`, links
   `noopener`) and `ChatBubble`; deliberately NOT in the shared barrel so the markdown dependency
   ships only in the lazy chat chunk.
 - `hooks/` — `useAuth` (session, `status`, `selectTenant`, `logout`, `applySession`,
@@ -34,19 +34,19 @@ React 18 + Vite + React Router 6 + TanStack Query 5 + zustand; DaisyUI 5 on Tail
   (`useMembers`, `useInvitations`, `useApiKeys`, `useNotifications`, `useTenant`, `useProfile`,
   `useActivity`, `useAccessRequests`, `useAdminAccessRequests`, `useAdminTenants`, `useAdminUsers`,
   `useAuthMethods`) exporting `xQueryOptions()` + `useX()` + mutation hooks; `useProfile` also
-  holds the avatar upload (`useUploadAvatar`, `validateAvatarFile`, `AVATAR_ACCEPT` — D23);
+  holds the avatar upload (`useUploadAvatar`, `validateAvatarFile`, `AVATAR_ACCEPT`);
   `useAppInfo`, `useDebounce`, `useModalState`, `useLocalStoragePreference`;
-  `useGroups` (D29: `useGroupTypes`, `useGroups(typeId?)`, `useGroup(id)`, `useMyGroups` — the only
+  `useGroups` (`useGroupTypes`, `useGroups(typeId?)`, `useGroup(id)`, `useMyGroups` — the only
   one a plain member may call — the type/group/member mutations, `useSetMemberGroups`,
   `useSetDocumentVisibility`, `useSetPageVisibility`; one `['groups']` family so a single
   invalidation covers it, which is also the root the server's `entity.changed` and `access.changed`
-  nudges name). AI (D17/D18):
+  nudges name). AI:
   `useAiConfig` (`useAiConfigs/useAiProviders/useAiReadiness`, `useUpsertAiConfig`,
   `useDeleteAiConfig`, `useTestAiConfig`; `providersForScope`, `configsForScope`), `usePrompts`
   (`usePrompts`, `useUpdatePrompt`, `useClearPrompt`), `useAiUsage` (`useAiUsageSummary(days)`,
   keyed on the PRESET, window derived in `queryFn`), `useChat` (`useConversations` paginated,
   `useConversation(id)`, `useCreateConversation`, `useDeleteConversation`, `useSendMessage`).
-  Phase 3b (D7/D18) + issue #17: `useAgents` (`useAgentList`, `useAgentRuns` paginated + filters,
+  `useAgents` (`useAgentList`, `useAgentRuns` paginated + filters,
   `useAgentRun(id)` and `useAgentRunRow(id)` polling `RUN_POLL_MS` while `runOwesAnswer`,
   `useCreateAgentRun`, `useCancelAgentRun`, `useResolveInterrupt(runId)`, `useSendSteering(runId)`,
   `useAwaitingInterruptCount`, `isAgentRunsNotConfigured`, `isInterruptNotPending`,
@@ -57,7 +57,7 @@ React 18 + Vite + React Router 6 + TanStack Query 5 + zustand; DaisyUI 5 on Tail
   An installed PLUGIN's hooks live in its own tree (`src/plugins/<id>/ui/hooks/`) and read its own
   query keys directly rather than the merged `queryKeys` — a plugin must work the same whether it is
   the only one installed or the fifth. The analytics plugin's are `useAnalyticsPages`, `useCubeMeta`
-  and `useDashboardDateFilter` (D19, D31).
+  and `useDashboardDateFilter`.
 - `lib/` — `api-client` (fetch wrapper, `ApiError`, `setUnauthorizedHandler`, `api.upload` for
   multipart — no JSON content-type), `queryClient` (module-level, 401 → handler), `query-keys`
   (factory + `cleanFilters`/`toSearchParams`; the family roots — `['invitations']`,
@@ -76,7 +76,7 @@ React 18 + Vite + React Router 6 + TanStack Query 5 + zustand; DaisyUI 5 on Tail
   `isAiNotConfigured()`),
   An installed plugin may need an alias in `vite.config.ts` pointing at a file in ITS tree (the
   analytics plugin's `@nivo/heatmap` stub) — one of the core lines its install prints, since a
-  plugin edits no core file (D31).
+  plugin edits no core file.
 - `stores/websocketStore.ts` — the one zustand store: `status | connectedAt | disconnectedAt |
   attempt | lastEvent`; written only by `websocketClient`, read by the status dot and the banner.
 - `pages/` — route-level components, lazy in `App.tsx` except Home/Login/NotFound. `Login.tsx`:
@@ -88,10 +88,10 @@ React 18 + Vite + React Router 6 + TanStack Query 5 + zustand; DaisyUI 5 on Tail
   else lands on `/login?signedOut=1`. `settings/`
   is one page with `URLTabs` (`?tab=general|people|groups|api-keys|ai|prompts|agent-models|usage`;
   `groups` only for `manage Group`, `agent-models` and `usage` only for `manage AiConfig`); `admin/` is nested routes under `AdminLayout`; `chat/ChatPage.tsx` is
-  `/chat/:conversationId?` (D17, guard `read Conversation`, lazy — its chunk carries the markdown
+  `/chat/:conversationId?` (guard `read Conversation`, lazy — its chunk carries the markdown
   renderer). `agents/` — `/agents` (`AgentsPage`, the roster + runs table) and `/agents/runs/:runId`
   (`RunPage`, its OWN lazy chunk), both `read AgentRun`; `documents/DocumentsPage.tsx` —
-  `/documents` (D18, guard `read Document`, nav label "Knowledge"). An installed plugin's pages are
+  `/documents` (guard `read Document`, nav label "Knowledge"). An installed plugin's pages are
   NOT here — they are `src/plugins/<id>/ui/pages/`, reached through `UiPlugin.routes` as
   `lazy(() => import(...))` (the analytics plugin's `/analytics`, `/analytics/explore`,
   `/analytics/:pageId`). `public/` — static assets copied as-is.
@@ -123,13 +123,13 @@ React 18 + Vite + React Router 6 + TanStack Query 5 + zustand; DaisyUI 5 on Tail
   wrap with `renderWithProviders(ui, { session })` — `makeSession()` builds a post-parse session
   whose `permissions` come from the real matrix via `packRules(buildAbility(...))`.
 
-## Identity flow (Phase 1)
+## Identity flow
 
 - `useAuth` runs ONE query, `GET /auth/session`; a 401 resolves to `null` (logged out) so the
   query is never removed. Identity changes (`selectTenant`, invite accept, logout, global 401) go
   through `replaceSession()`: `setQueryData` on the session, then `resetQueries`/`removeQueries`
   on everything tenant-scoped. Never `queryClient.clear()` while observers are mounted.
-- Global 401 (D20): the handler only acts when a session WAS cached, drops it, and `navigateTo`s
+- Global 401: the handler only acts when a session WAS cached, drops it, and `navigateTo`s
   `/login?returnUrl=` unless already on a public path. OAuth/dev-login/logout are full-page
   (`hardNavigate`) so the cookie round-trips cleanly.
 - No active tenant → `noTenantRoute(session)`: access request → `/pending`; memberships →
@@ -139,7 +139,7 @@ React 18 + Vite + React Router 6 + TanStack Query 5 + zustand; DaisyUI 5 on Tail
   that state `useNavGuard` allows ONLY `'globalAdmin'` guards (every tenant page hides),
   `OrgSwitcher` reads "No organisation", `NotificationsBell` and the Profile / Notifications
   menu links render nothing, and `WebSocketProvider` never connects (it needs a tenant id).
-- Single-tenant mode (D25) hides: `OrgSwitcher`, `/select-tenant` (redirects home), org
+- Single-tenant mode hides: `OrgSwitcher`, `/select-tenant` (redirects home), org
   create/delete and the slug field, the `new_org` approve branch, and collapses `/admin/tenants`
   to the one detail. Read it via `useTenancyMode()`.
 - Coarse guards are role flags (`'admin'` = owner/admin/support/globalAdmin, `'globalAdmin'`);
@@ -147,7 +147,7 @@ React 18 + Vite + React Router 6 + TanStack Query 5 + zustand; DaisyUI 5 on Tail
   assign/strip owner) check `tenant.role === 'owner'` explicitly — `manage Tenant` is also held
   by support and global admins.
 
-## AI surface (Phase 3a, D17/D18)
+## AI surface
 
 - **Streaming is the one exception to "server data lives only in the cache".** `useSendMessage`
   appends the user bubble optimistically (`setQueryData` on `chat.conversations.detail(id)` with a
@@ -186,7 +186,7 @@ A `CUSTOM kit.notice` renders
   `streamResponse` for arbitrary chunking, `hangingSseResponse` for Stop). Bubbles remount when an
   optimistic id becomes the persisted one, so assert with `waitFor(() => getByText…)`, not `findBy`.
 
-## Agents, agent models, knowledge base (Phase 3b, D7/D18)
+## Agents, agent models, knowledge base
 
 - **Runs are durable rows, never client state.** `POST /api/agents/runs` answers 202 with the row
   and the page navigates to `/agents/runs/:id`; `RunPage` renders `GET /runs/:id` (row + `events` +
@@ -200,7 +200,7 @@ A `CUSTOM kit.notice` renders
   store. Belt and braces: `useAgentRun` polls every `RUN_POLL_MS` (3 s) while **`runOwesAnswer`**,
   and `useAgentRuns` while any listed row does. `runPollInterval(status)` is the pure decision
   (unit-tested); don't fight `refetchInterval` with fake timers.
-  **`runOwesAnswer` (`queued || running`) is NOT `isRunActive`** (issue #17): `isRunActive` includes
+  **`runOwesAnswer` (`queued || running`) is NOT `isRunActive`**: `isRunActive` includes
   `awaiting_input`, because the exclusive index and "is this agent busy?" genuinely do — but a run
   parked on a person changes only when somebody answers, and the server nudges that. Point a poll or
   a pulse at `isRunActive` and a parked run is re-fetched every three seconds, and announced by
@@ -212,8 +212,8 @@ A `CUSTOM kit.notice` renders
   (`selectArtifacts`, `selectPendingInterrupts`, `selectWorkStats`, `defaultExpanded`,
   `windowGroups`). **Everything the right pane shows that is not `run.output` is a selector over
   those same rows — never a second fetch.** Three properties are load-bearing: `at` is the tool
-  call's START (`endedAt`/`durationMs` are separate — overwriting `at` with the answer is why a
-  per-call duration used to be impossible); the reducer is **idempotent under duplicated events**
+  call's START (`endedAt`/`durationMs` are separate — overwriting `at` with the answer would make a
+  per-call duration impossible); the reducer is **idempotent under duplicated events**
   (deduplicated by `event.id`, because a stream and a fetch can both deliver the same row); and a
   step row carries `endedSeq`, because a `done` merges into the row its `running` wrote, so without
   it a settled run's trailing rows get swallowed by the last stage. Grouping: a `running` step opens,
@@ -274,8 +274,8 @@ A `CUSTOM kit.notice` renders
   `outputs/` entry** and no component branches on an agent key. Artifacts come from the table,
   ordered by their event rows, with `outputFor().artifacts?.()` as the fallback for an agent that
   declares none. Usage reports what the ROWS know — including the run's timestamps (requested, by
-  whom, started, finished), which used to be four rows of chrome in the header; only DURATION
-  stayed, because it is the one a person glances at — and **says in words** that model cost is not
+  whom, started, finished), not rows of chrome in the header; only DURATION
+  is there, because it is the one a person glances at — and **says in words** that model cost is not
   attributed per run in this deployment, rather than rendering a `$0.00`.
 - **One field renderer, two callers.** `fields/schemaFields.ts` is pure: `fieldsFromJsonSchema`
   supports a flat object of string / number / boolean / enum and **returns `null` for `$ref`,
@@ -284,7 +284,7 @@ A `CUSTOM kit.notice` renders
   invisible until the run 400s. `fields/FieldInput.tsx` + `FieldSet.tsx` serve both the `form`
   interrupt kind and `formFor`'s middle rung, `schemaForm(agent.inputJsonSchema)`.
   `submittableValues` drops empty optionals: `formValuesSchemaFor` is `.strict()`.
-- **Live run progress (issue #7) is ADDITIVE.** `lib/runAguiStream.ts` (`streamRunAgui` — GET
+- **Live run progress is ADDITIVE.** `lib/runAguiStream.ts` (`streamRunAgui` — GET
   `/api/agents/runs/:id/agui/stream`, `{ lastSeq, received, terminal, aborted }`; **reconnect lives
   in the hook, not the transport**) and `hooks/useRunStream.ts` (`useRunStream(runId, { enabled })`
   → `{ events, isLoading, connected, fallback, lastSeq, terminal }`, plus `streamEnabled(status)` —
@@ -313,7 +313,7 @@ A `CUSTOM kit.notice` renders
   posts `POST …/steering` while the run is active; the note is an event row, so the timeline shows
   it where it happened and the runtime delivers it once. Requested-by is "You" / short id / "system"
   — the row carries only a user id (resolving names is on the to-document list).
-- **Finding what is waiting** (issue #17): the runs table's filters live in `useSearchParams`, so
+- **Finding what is waiting**: the runs table's filters live in `useSearchParams`, so
   `/agents?awaiting=1` is a URL and there is a chip for it, and every row is a real `<Link>` (so
   middle-click and open-in-new-tab work — half the point of a run being a page). The SideNav badge is
   `NavItem.badgeKey`/`badgeTone` resolved by `useNavBadges()` inside `SideNav`: **`navigationConfig`
@@ -384,7 +384,7 @@ A `CUSTOM kit.notice` renders
   and `tests/config/document-helpers.test.ts`. Mount `AgentsPage` inside the same `<Routes>` pair
   App.tsx uses so `navigate('/agents/runs/:id')` really lands on `RunPage`.
 
-## Feature flags (D30)
+## Feature flags
 
 - `lib/feature-guards.ts` is the client-side spelling: one `NavGuard` const per feature plus
   `featureGuard(feature, guard)` to compose the flag with a permission. `useNavGuard` gains a
@@ -398,8 +398,8 @@ A `CUSTOM kit.notice` renders
   `availableInEnvironment` is config a redeploy moves, everything else is a click. Overrides offer
   three states — On / Off / Default — because deleting the row (follow the platform state) is a real
   third answer a checkbox cannot express; the section is absent in single mode, matching the routes.
-- The `Example feature` nav item, its page and its notes CRUD are the `example-feature` PLUGIN
-  (D31), not kit files: they live in `src/plugins/example-feature/ui/` and arrive through
+- The `Example feature` nav item, its page and its notes CRUD are the `example-feature` PLUGIN,
+  not core files: they live in `src/plugins/example-feature/ui/` and arrive through
   `UiPlugin.routes` / `UiPlugin.nav`. Delete the whole plugin (three directories, its barrel lines,
   its surface in `.rocketflare.json`) rather than editing the shell.
 - Tests: `src/plugins/example-feature/tests/ui/feature-flag-nav.test.tsx` — it MOVED into the
@@ -407,7 +407,7 @@ A `CUSTOM kit.notice` renders
   drives the REAL `useNavGuard` — never a re-implementation, which is what hid the ability-wildcard
   bug — and runs every assertion for a global admin as well as an owner.
 
-## Groups and visibility (D29)
+## Groups and visibility
 
 - **Settings → Groups** (`pages/settings/Groups.tsx`, tab `groups`, `manage Group`): group TYPES on
   the left, that type's groups on the right, `GroupMembersModal` for who is in one. The tab does not
@@ -437,7 +437,7 @@ A `CUSTOM kit.notice` renders
 - Tests: `tests/ui/groups.test.tsx` (the tab's list/create flows, the 409 confirm, and the
   `AccessPicker` empty-selection warning).
 
-## Plugins (D31)
+## Plugins
 
 - **An installed plugin contributes UI through `UiPlugin`** (`apps/web/src/plugins/types.ts`), one
   line in `src/plugins/ui.ts`, and its own entry `src/plugins/<id>/ui/index.ts`. `App.tsx` maps

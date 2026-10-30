@@ -1,5 +1,5 @@
 /**
- * `/agents/runs/:runId` — a run as a PAGE (issue #17), not a modal over a list.
+ * `/agents/runs/:runId` — a run as a PAGE, not a modal over a list.
  *
  * A modal is the wrong home for something a person is asked to *act* on, arrives at from a
  * notification, may need to read a document before deciding, and may leave and come back to. So:
@@ -74,10 +74,10 @@ const LAYOUT_COLUMNS: Record<RunLayoutSplit, string> = {
  * layout, which is a different control from a two-state toggle and must not claim to be one.
  *
  * **It is a CHILD of the timeline panel, and rides that panel's own right edge** (`right-0` +
- * `translate-x-1/2`, `top-1` so it tucks just under the corner). It used to be absolutely
- * positioned over the grid at `left-[60%]`, which is wrong and cannot be made right by tuning the
+ * `translate-x-1/2`, `top-1` so it tucks just under the corner). Absolute positioning
+ * over the grid at `left-[60%]` is wrong and cannot be made right by tuning the
  * number: with `grid-cols-[3fr_2fr] gap-8` the panel's border sits at `3/5 × (W − gap)`, so the
- * handle floated `0.6 × gap` to the right of it, and every widening of the gutter made it worse.
+ * handle floats `0.6 × gap` to the right of it, and every widening of the gutter makes it worse.
  * Anchored to the element that OWNS the border, it is correct for any fraction and any gap.
  *
  * Hidden below `lg`, where the columns stack and there is no split to move.

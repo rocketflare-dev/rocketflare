@@ -19,7 +19,7 @@ const id = (value: unknown): string | null =>
 
 export function notificationLink(notification: Pick<Notification, 'type' | 'data'>): string | null {
   switch (notification.type) {
-    // issue #17: an agent parked on a question. The run page is where it is answered, in front of
+    // An agent parked on a question. The run page is where it is answered, in front of
     // the timeline that explains why it is being asked.
     case 'agent_run_awaiting_input': {
       const runId = id(notification.data.runId)

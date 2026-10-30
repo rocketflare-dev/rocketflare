@@ -1,5 +1,5 @@
 /**
- * AI test doubles (D17): `FakeChatClient` implements `ChatClient` from a script of turns — text,
+ * AI test doubles: `FakeChatClient` implements `ChatClient` from a script of turns — text,
  * tool calls, usage — records every call, and streams text in word-sized deltas so SSE assertions
  * see more than one frame. `aguiFrames()` parses an AG-UI stream body back into typed events, and
  * `aguiTypes` / `customEvents` let a test assert the SEQUENCE rather than a dozen literals.

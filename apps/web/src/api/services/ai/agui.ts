@@ -50,7 +50,7 @@ export function createAguiEncoder(accept: string | undefined): AguiEncoder {
   }
 }
 
-/** Build one kit CUSTOM event. The `kit.` namespace is the kit's; an app picks its own prefix. */
+/** Build one `kit.` CUSTOM event. The `kit.` namespace is reserved for core; an app picks its own prefix. */
 export function kitCustom(name: KitCustomEventName, value: unknown): KitAguiEvent {
   return { type: AguiEventType.CUSTOM, name, value }
 }

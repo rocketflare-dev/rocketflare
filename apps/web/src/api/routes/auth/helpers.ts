@@ -1,5 +1,5 @@
 /**
- * Shared login-completion plumbing for every `/auth/*` flow (D9, D12): mint the session for the
+ * Shared login-completion plumbing for every `/auth/*` flow: mint the session for the
  * user's default tenant, set the cookie, and validate redirect targets (same-origin paths only —
  * the open-redirect guard). Error redirects land on `/login?error=<code>`.
  */

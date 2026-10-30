@@ -1,5 +1,5 @@
 /**
- * Feature flags (D30) — the ONE place the stored half is read and written.
+ * Feature flags — the ONE place the stored half is read and written.
  *
  * Two readers with different shapes, deliberately:
  *
@@ -10,7 +10,7 @@
  *     saved, plus how many tenants override each flag.
  *
  * Writes are global-admin only (`globalAdminMiddleware` in `api/index.ts` is the gate; there is no
- * CASL condition here, as everywhere in the kit). Flag KEYS are never written — they come from the
+ * CASL condition here, as everywhere in the app). Flag KEYS are never written — they come from the
  * shared registry, so these functions upsert state onto a known key and nothing can invent one.
  *
  * `listFlagOverrides` reads across tenants ON PURPOSE: "which organisations override this flag" is
@@ -32,7 +32,7 @@ import type { Database } from '../../db/client'
 import { featureFlags, tenantFeatureOverrides, tenants } from '../../db/schema'
 import { resolveFeatures } from '../../permissions/features'
 
-/** Is this key permitted in this deployment at all (D30 layer 1)? */
+/** Is this key permitted in this deployment at all? */
 export function availableInEnvironment(cfg: AppConfig, key: FeatureName): boolean {
   return !FEATURE_FLAGS[key].environmentGated || cfg.FEATURES_ENABLED.includes(key)
 }
@@ -73,7 +73,7 @@ export async function listFeatureFlagRows(
 
 /**
  * The features one organisation has with no request in hand — a queue job, a cron task or a public
- * webhook (D30, D34). No user, so a flag rolled out by USER buckets resolves on the tenant's
+ * webhook. No user, so a flag rolled out by USER buckets resolves on the tenant's
  * override and platform state alone; that is the honest answer for background work, which acts on
  * behalf of the organisation rather than of any one member.
  */
@@ -88,7 +88,7 @@ export async function tenantFeatures(
 
 /**
  * The features a deployment has with no tenant in hand — what a brand-new organisation is seeded
- * with (D30). A flag mid-ROLLOUT resolves false here, because the tenant it would be bucketed on
+ * with. A flag mid-ROLLOUT resolves false here, because the tenant it would be bucketed on
  * does not exist yet; its page then arrives on that tenant's first `GET /api/analytics/pages`
  * through the lazy repair path, which is late but never wrong. The environment layer, which is what
  * must never seed an unreleased surface, is decided correctly.

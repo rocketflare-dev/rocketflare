@@ -1,5 +1,5 @@
 /**
- * `services/ai/kit.ts` (D17), no database: cache breakpoints, `callStructuredTool` parse + one
+ * `services/ai/agent-loop.ts`, no database: cache breakpoints, `callStructuredTool` parse + one
  * retry, `runToolLoop` dispatch / terminal tool / turn cap / abort / checkpoint-and-resume,
  * `runStreamingChat` deltas and tool rounds — all driven by `FakeChatClient`.
  */
@@ -16,7 +16,7 @@ import {
   type ToolLoopCheckpoint,
   toolInputSchema,
   withRollingCacheBreakpoints,
-} from '@/api/services/ai/kit'
+} from '@/api/services/ai/agent-loop'
 import { FakeChatClient } from '../helpers/ai'
 
 describe('prompt caching helpers', () => {

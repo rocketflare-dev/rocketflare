@@ -1,5 +1,5 @@
 /**
- * The provider contract (D11): one generic `/auth/:provider` router drives every entry in the
+ * The provider contract: one generic `/auth/:provider` router drives every entry in the
  * registry, so adding GitHub or Slack is one file here, not a copied route. `emailVerified` is
  * part of the profile on purpose — the router refuses to link when it is explicitly `false`.
  */

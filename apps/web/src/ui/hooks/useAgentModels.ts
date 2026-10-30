@@ -1,5 +1,5 @@
 /**
- * Per-agent model assignment (D17): `GET /api/ai/agent-models` lists EVERY registry prompt key
+ * Per-agent model assignment: `GET /api/ai/agent-models` lists EVERY registry prompt key
  * with its assignment (if any) and what `resolveChat` would pick right now — computed server-side
  * by the same planner the runtime uses, so this page can never disagree with a run. `PUT /:key`
  * pins a chat `ai_configs` row and/or a model; `DELETE /:key` reverts to the default (absence is

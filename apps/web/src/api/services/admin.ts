@@ -1,5 +1,5 @@
 /**
- * Global-admin operations (D9, D10, D25) — the ONLY cross-tenant service module, reached solely
+ * Global-admin operations — the ONLY cross-tenant service module, reached solely
  * through `globalAdminMiddleware`. Access-request decisions, tenant list/detail/suspend, support
  * enter/leave (a REAL `support` membership row, not a hidden bypass), users, global-admin flag
  * (the last one cannot be demoted), block (which deletes every session).
@@ -180,7 +180,7 @@ export async function decideAccessRequest(
       data: { accessRequestId: request.id },
     })
   }
-  // The decision email is queued (D7): the row is already decided, delivery can lag and retry.
+  // The decision email is queued: the row is already decided, delivery can lag and retry.
   const message = accessRequestDecidedEmail(cfg, request.email, {
     approved: input.decision.decision === 'approve',
     tenantName,

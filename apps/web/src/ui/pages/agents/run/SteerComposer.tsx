@@ -1,5 +1,5 @@
 /**
- * Send a note to a run in flight (issue #17, decision 4).
+ * Send a note to a run in flight.
  *
  * It is an `agent_run_events` row, so the note appears in the timeline where it happened and the
  * runtime delivers it exactly once through the `agent_run_effects` ledger — there is nothing to

@@ -1,5 +1,5 @@
 /**
- * `tenant.purge` (D7): delete what a deleted tenant left OUTSIDE Postgres.
+ * `tenant.purge`: delete what a deleted tenant left OUTSIDE Postgres.
  *
  * Inside Postgres the FK cascade from `tenantRef()` is the whole cleanup, and it is complete. It
  * reaches nothing else, though — R2 objects under `tenants/<tenantId>/` sat there for the life of

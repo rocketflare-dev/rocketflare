@@ -1,5 +1,5 @@
 /**
- * What a plugin declares that the CLOUDFLARE account has to know about (D31, Decision 12).
+ * What a plugin declares that the CLOUDFLARE account has to know about.
  *
  * A plugin ships no toml — the two wrangler files are the host's, always (§16) — so everything it
  * needs from the platform is DECLARED in its `plugin.json` and applied by the host. Until this
@@ -33,7 +33,7 @@ import path from 'node:path'
  * registers both from the toml, so there is nothing to create and the block carries a `class_name`
  * instead.
  *
- * **Those two graduated because the sixth barrel exists** (D31). A `class_name` is resolved against
+ * **Those two graduated because the sixth barrel exists**. A `class_name` is resolved against
  * the named exports of the Worker's ENTRY module and nowhere else, so until
  * `apps/web/src/plugins/worker-exports.ts` made a plugin's class reachable from `src/worker.ts`
  * without anybody editing it, writing either block would have produced a toml pointing at a class
@@ -140,7 +140,7 @@ const CLASS_NAME = /^[A-Z][A-Za-z0-9_]*$/
 
 /**
  * `<app>-<id>-<name>[-staging]` for the lowercase, hyphenated resources (queue, R2), and
- * `<APP>_<ID>_<NAME>[_STAGING]` for KV — which is not a whim: the kit's own KV namespace is
+ * `<APP>_<ID>_<NAME>[_STAGING]` for KV — which is not a whim: the app's own KV namespace is
  * `<APP>_RATE_LIMIT[_STAGING]` and a plugin's should read like the rest of the account, not like
  * a different tool made it. The suffix is what the parity test's account-scoping rule checks.
  */
@@ -161,9 +161,9 @@ export function pluginResourceName(
 }
 
 /**
- * The `<PLACEHOLDER>` an unprovisioned KV block carries, in the kit's own spelling
+ * The `<PLACEHOLDER>` an unprovisioned KV block carries, in the app's own spelling
  * (`<KV_RATE_LIMIT_ID>` / `<KV_RATE_LIMIT_STAGING_ID>`), so `tomlPlaceholders` and the
- * `REQUIRE_PROVISIONED=1` parity check see it exactly as they see the kit's.
+ * `REQUIRE_PROVISIONED=1` parity check see it exactly as they see the app's.
  */
 export function pluginKvPlaceholder(pluginId: string, name: string, env: EnvName): string {
   const base = `KV_${[pluginId, name].map(p => p.replace(/-/g, '_').toUpperCase()).join('_')}`
@@ -461,7 +461,7 @@ function list(doc: unknown, dotted: string): string[] {
  * differs per environment.
  *
  * `idKey` is `name` for a Durable Object because that is how the toml spells a DO binding — the
- * kit's own is `name = "NOTIFICATIONS_HUB"` — and `nameKey` is null there because nothing in the
+ * app's own is `name = "NOTIFICATIONS_HUB"` — and `nameKey` is null there because nothing in the
  * block differs between the two files at all.
  */
 const SECTION_OF: Record<
@@ -478,9 +478,9 @@ const SECTION_OF: Record<
 const IS_PLACEHOLDER = /^<[A-Z0-9_]+>$/
 
 /**
- * Everything a plugin declared that the two tomls do not (yet) agree about — the D6 parity rules
+ * Everything a plugin declared that the two tomls do not (yet) agree about — the parity rules
  * applied to plugin resources, as one pure function so `wrangler-parity.test.ts` can run it against
- * FIXTURES as well as against what is installed. With no plugins installed (a bare kit) it returns
+ * FIXTURES as well as against what is installed. With no plugins installed (a bare checkout) it returns
  * `[]` for any pair of documents, so the rule is only meaningful when exercised against a fixture,
  * which is precisely why it is a function and not an inline block of assertions.
  *
@@ -489,8 +489,8 @@ const IS_PLACEHOLDER = /^<[A-Z0-9_]+>$/
  * plugin declares may be absent, while the environment is unprovisioned. None of them may be at
  * deploy time.
  *
- * Crons and prefixes are gated because `pnpm plugin add` deliberately does not touch a toml (D31,
- * decision 12) — `pnpm provision cloudflare <env>` writes them. So a checkout that has installed a
+ * Crons and prefixes are gated because `pnpm plugin add` deliberately does not touch a toml —
+ * `pnpm provision cloudflare <env>` writes them. So a checkout that has installed a
  * plugin and not yet provisioned is a legitimate, documented state, and the ordinary gate must not
  * fail it. The kit's own CI is exactly that state: it installs every `defaultPlugins` entry and has
  * no Cloudflare credentials to provision with. `deploy.yml` runs this same test with

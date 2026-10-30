@@ -1,5 +1,5 @@
 /**
- * `/auth/methods`, `/auth/session`, `/auth/select-tenant`, `/auth/logout` (D9, D11, D25). NOT behind
+ * `/auth/methods`, `/auth/session`, `/auth/select-tenant`, `/auth/logout`. NOT behind
  * `authMiddleware`: `/auth/session` must answer 200 for a valid cookie with NO tenant so the UI can
  * route to /select-tenant or /pending. Cookie only — Bearer keys are an `/api/*` credential.
  */

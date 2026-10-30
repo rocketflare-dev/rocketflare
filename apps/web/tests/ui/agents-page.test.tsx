@@ -1,8 +1,9 @@
 /**
- * `/agents` (D7): the registry renders with the exclusive badge; the run modal validates with the
- * shared input schema and posts the exact `{ agentKey, input }` body; a 202 `deduplicated` answer
+ * `/agents`: the registry renders with the exclusive badge; a 202 `deduplicated` answer
  * toasts and opens the existing run; a 503 `agent_runs_not_configured` renders the explanatory
- * empty state instead of a toast; the runs table shows status, agent and filters.
+ * empty state instead of a toast; the runs table shows status, agent and filters. The agent is the
+ * test fixture (`tests/helpers/fixture-agents.ts`) with a schema-generated form; the example
+ * agent's own hand-written form is tested in that example's own file.
  */
 import { fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { Route, Routes } from 'react-router-dom'
@@ -10,6 +11,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { useToastStore } from '@/ui/components/shared/Toast'
 import AgentsPage from '@/ui/pages/agents/AgentsPage'
 import RunPage from '@/ui/pages/agents/RunPage'
+import { FIXTURE_AGENT } from '../helpers/fixture-agents'
 import {
   errorResponse,
   IDS,
@@ -18,9 +20,12 @@ import {
   paged,
   type RouteTable,
   renderWithProviders,
-  requestBody,
   stubFetch,
 } from './helpers/renderWithProviders'
+
+vi.mock('@rocketflare/shared/plugins', async importOriginal =>
+  (await import('../helpers/fixture-agents')).withFixtureShared(await importOriginal())
+)
 
 const now = '2025-06-01T00:00:00Z'
 const RUN_ID = '99999999-9999-4999-8999-999999999999'
@@ -28,11 +33,16 @@ const RUN_ID = '99999999-9999-4999-8999-999999999999'
 const AGENTS = {
   items: [
     {
-      key: 'summarize-text',
-      title: 'Summarize text',
-      description: 'Summarises a block of text.',
-      promptKey: 'summarize-text',
+      key: FIXTURE_AGENT,
+      title: 'Fixture agent',
+      description: 'A test fixture agent.',
+      promptKey: FIXTURE_AGENT,
       exclusive: true,
+      inputJsonSchema: {
+        type: 'object',
+        properties: { text: { type: 'string', title: 'Fixture text' } },
+        required: ['text'],
+      },
     },
   ],
 }
@@ -40,9 +50,9 @@ const AGENTS = {
 const run = (overrides: Record<string, unknown> = {}) => ({
   id: RUN_ID,
   tenantId: IDS.tenant,
-  agentKey: 'summarize-text',
+  agentKey: FIXTURE_AGENT,
   status: 'queued',
-  input: { text: 'hello', style: 'bullets', index: false },
+  input: { text: 'hello' },
   output: null,
   error: null,
   requestedByUserId: IDS.user,
@@ -73,8 +83,6 @@ function mount(routes: RouteTable = {}, route = '/agents') {
   return fetchMock
 }
 
-const openDialog = () => document.querySelector('dialog[open]') as HTMLElement
-
 describe('Agents page', () => {
   afterEach(() => {
     vi.unstubAllGlobals()
@@ -87,7 +95,7 @@ describe('Agents page', () => {
         run({ status: 'succeeded', startedAt: now, finishedAt: '2025-06-01T00:00:04Z' }),
       ]),
     })
-    expect(await screen.findByText('Summarize text', { selector: 'span' })).toBeInTheDocument()
+    expect(await screen.findByText('Fixture agent', { selector: 'span' })).toBeInTheDocument()
     expect(screen.getByText('exclusive')).toBeInTheDocument()
     const table = await screen.findByRole('table', { name: 'Agent runs' })
     expect(within(table).getByText('Succeeded')).toBeInTheDocument()
@@ -97,52 +105,13 @@ describe('Agents page', () => {
     expect(screen.getByLabelText('Status')).toHaveValue('')
   })
 
-  it('validates with the shared schema and posts the exact run body', async () => {
-    const fetchMock = mount({
-      'POST /api/agents/runs': (init: RequestInit | undefined) => {
-        const body = JSON.parse(String(init?.body)) as { input: unknown }
-        return jsonResponse(run({ input: body.input }), 202)
-      },
-      [`/api/agents/runs/${RUN_ID}`]: { ...run(), events: [], interrupts: [], artifacts: [] },
-    })
-    fireEvent.click(await screen.findByRole('button', { name: 'Run Summarize text' }))
-    const form = document.getElementById('run-agent-form') as HTMLFormElement
-    expect(openDialog()).toBeTruthy()
-
-    // Empty text → a field error, no request
-    fireEvent.submit(form)
-    expect(await screen.findAllByRole('alert')).not.toHaveLength(0)
-    expect(requestBody(fetchMock, 'POST /api/agents/runs')).toBeUndefined()
-
-    fireEvent.change(screen.getByLabelText('Text to summarise'), {
-      target: { value: '  Some long text  ' },
-    })
-    fireEvent.change(screen.getByLabelText('Style'), { target: { value: 'paragraph' } })
-    fireEvent.click(screen.getByLabelText('Index the result for search'))
-    fireEvent.submit(form)
-
-    await waitFor(() =>
-      expect(requestBody(fetchMock, 'POST /api/agents/runs')).toEqual({
-        agentKey: 'summarize-text',
-        // Trimmed by the shared schema; defaults applied
-        input: { text: 'Some long text', style: 'paragraph', index: true },
-      })
-    )
-    // Navigated to the run: the detail drawer loads it
-    await waitFor(() =>
-      expect(
-        fetchMock.mock.calls.some(([input]) => String(input).includes(`/api/agents/runs/${RUN_ID}`))
-      ).toBe(true)
-    )
-  })
-
   it('toasts and opens the existing run when the 202 is deduplicated', async () => {
     const fetchMock = mount({
       'POST /api/agents/runs': () => jsonResponse({ ...run(), deduplicated: true }, 202),
       [`/api/agents/runs/${RUN_ID}`]: { ...run(), events: [], interrupts: [], artifacts: [] },
     })
-    fireEvent.click(await screen.findByRole('button', { name: 'Run Summarize text' }))
-    fireEvent.change(screen.getByLabelText('Text to summarise'), { target: { value: 'hello' } })
+    fireEvent.click(await screen.findByRole('button', { name: 'Run Fixture agent' }))
+    fireEvent.change(screen.getByLabelText(/Fixture text/), { target: { value: 'hello' } })
     fireEvent.submit(document.getElementById('run-agent-form') as HTMLFormElement)
 
     await waitFor(() =>
@@ -162,8 +131,8 @@ describe('Agents page', () => {
       'POST /api/agents/runs': () =>
         errorResponse(503, 'Agent runs are not configured', 'agent_runs_not_configured'),
     })
-    fireEvent.click(await screen.findByRole('button', { name: 'Run Summarize text' }))
-    fireEvent.change(screen.getByLabelText('Text to summarise'), { target: { value: 'hello' } })
+    fireEvent.click(await screen.findByRole('button', { name: 'Run Fixture agent' }))
+    fireEvent.change(screen.getByLabelText(/Fixture text/), { target: { value: 'hello' } })
     fireEvent.submit(document.getElementById('run-agent-form') as HTMLFormElement)
 
     expect(await screen.findByText('Agent runs are not configured')).toBeInTheDocument()

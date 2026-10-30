@@ -1,10 +1,9 @@
 /**
- * `oauth_providers` — a user's linked identity at an external provider (D11, D12). Tokens are
+ * `oauth_providers` — a user's linked identity at an external provider. Tokens are
  * stored AES-GCM encrypted (`*Enc` columns, written only through the token-crypto module), and
  * `(provider, provider_user_id)` is UNIQUE so one external account can never attach to two users.
  *
- * Magic-link tokens are NOT here (the Node reference app overloaded this table for them); they have
- * their own `magic_link_tokens` table. Pre-tenant infrastructure: in `RLS_REVOKED_TABLES`.
+ * Magic-link tokens are NOT here; they have their own `magic_link_tokens` table. Pre-tenant infrastructure: in `RLS_REVOKED_TABLES`.
  */
 import { relations } from 'drizzle-orm'
 import { index, pgTable, text, timestamp, unique, uuid } from 'drizzle-orm/pg-core'

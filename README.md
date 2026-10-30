@@ -161,7 +161,8 @@ then `pnpm provision all` (the deploy orchestrator: Neon, Cloudflare, GitHub, se
 `pnpm web provision:cloudflare <env> --apply` is its Cloudflare-resources half). `wrangler` is a
 devDependency of `apps/web`, so it is `pnpm --filter @rocketflare/web exec wrangler …`, never `pnpm exec
 wrangler` at the root. Root `scripts/` holds the first-run tooling: `bootstrap.sh` / `bootstrap.mjs`,
-`install.sh`, `rename.mjs` (`docs/ADAPTING.md` §1 as one command) and their `lib/`.
+`rename.mjs` (`docs/ADAPTING.md` §1 as one command) and their `lib/` — plus, in the kit repository
+only, `install.sh` and the release and maintainer-hook scripts, which the rename deletes.
 
 ## Not included (by design)
 
@@ -193,7 +194,9 @@ subsystem by subsystem, in [`docs/CONCEPTS.md`](docs/CONCEPTS.md).
 
 ## Contributing
 
-Bug reports, feature requests and pull requests are welcome — see [`CONTRIBUTING.md`](CONTRIBUTING.md)
+To the kit itself (an app made from it loses `CONTRIBUTING.md` and `CODE_OF_CONDUCT.md` at the
+rename, and gets its own `SECURITY.md`): bug reports, feature requests and pull requests are
+welcome — see [`CONTRIBUTING.md`](CONTRIBUTING.md)
 (setup, the pre-commit gate, test shapes, PR guidelines), [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md)
 and [`SECURITY.md`](SECURITY.md) for reporting vulnerabilities privately.
 

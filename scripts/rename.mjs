@@ -18,9 +18,11 @@
  *   (e) `--colour` rewrites the light theme's primary hex; the rest of the palette is yours — reported
  *   (f) `LogoMark` / `logo.svg` / `favicon.svg` are a human choice — reported
  *
- * First it DELETES the kit's own tests — every file under a `kitOnly` glob in `.rocketflare.json`
- * (`apps/web/tests/kit-only/**`) — and unwires their vitest project from the package.json scripts:
- * they assert what only the kit is, so a copy never carries them (`docs/CONCEPTS.md` §13).
+ * First it DELETES what only the kit is — every file under a `kitOnly` glob in `.rocketflare.json`
+ * (the kit's own tests, workflows and maintainer scripts) — unwires their vitest project, and drops
+ * every package.json script and `.claude/settings.json` hook that names one (`docs/CONCEPTS.md` §13).
+ * `SECURITY.md` becomes the app's own (the kit's points reporters at the kit's advisories), and
+ * `.rocketflare.json` loses `retiredSurfaces` (only the kit's own note checks read it).
  *
  * It also detaches the copy's version: the root `package.json` restarts at 0.1.0 and `CHANGELOG.md`
  * starts empty, while the root version is still the kit's (`restartAppVersion`). The kit version the
@@ -67,7 +69,12 @@ import {
   rewritePrefixComments,
   USAGE,
 } from './lib/rename-lib.mjs'
-import { kitOnlyGlobs, matchesAny, stripKitOnlyWiring } from './lib/upgrade-lib.mjs'
+import {
+  kitOnlyGlobs,
+  matchesAny,
+  stripKitOnlyHooks,
+  stripKitOnlyWiring,
+} from './lib/upgrade-lib.mjs'
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const HASH_TS = 'apps/web/src/api/utils/core/hash.ts'
@@ -76,8 +83,11 @@ const INDEX_CSS = 'apps/web/src/ui/index.css'
 const INDEX_HTML = 'apps/web/src/ui/index.html'
 const MIGRATIONS_DIR = 'apps/web/migrations/'
 const DEV_VARS = 'apps/web/.dev.vars'
-// The two package.json files that could wire the kit-only vitest project into a script.
+// The two package.json files that could wire the kit-only vitest project (or a kit-only script).
 const PACKAGE_JSONS = ['package.json', 'apps/web/package.json']
+// Claude Code's project settings: the maintainer nudges are registered here as hooks.
+const CLAUDE_SETTINGS = '.claude/settings.json'
+const SECURITY_MD = 'SECURITY.md'
 
 const out = (...lines) => console.log(lines.join('\n'))
 const warn = (...lines) => console.error(lines.join('\n'))
@@ -229,6 +239,7 @@ function main(argv) {
   // imports them; the only wiring is the `kit-only` vitest project in a package.json script, which
   // is unwired below. `vitest.config.ts` registers that project only while its directory exists.
   const kitOnly = kitOnlyFiles()
+  const kitOnlyGlobList = kitOnlyGlobs(readKitManifest())
 
   // ------------------------------------------------------------- the pass
   const rows = []
@@ -256,13 +267,24 @@ function main(argv) {
   const unwired = []
   for (const rel of PACKAGE_JSONS) {
     if (!existsSync(path.join(REPO_ROOT, rel))) continue
-    const { text, removed, edited } = stripKitOnlyWiring(current(rel))
+    const { text, removed, edited } = stripKitOnlyWiring(current(rel), kitOnlyGlobList)
     if (removed.length === 0 && edited.length === 0) continue
     edits.set(rel, text)
     unwired.push(
       `${rel}: ${[...edited.map(n => `${n} (--project dropped)`), ...removed.map(n => `${n} (removed)`)].join(', ')}`
     )
   }
+
+  if (existsSync(path.join(REPO_ROOT, CLAUDE_SETTINGS))) {
+    const { text, removed } = stripKitOnlyHooks(current(CLAUDE_SETTINGS), kitOnlyGlobList)
+    if (removed.length > 0) {
+      edits.set(CLAUDE_SETTINGS, text)
+      unwired.push(`${CLAUDE_SETTINGS}: ${removed.length} maintainer hook(s) removed`)
+    }
+  }
+
+  // ------------------------------------------------------------- the app's own security policy
+  edits.set(SECURITY_MD, securityPolicy(names))
 
   // ------------------------------------------------------------- the app's own version
   // A copy is its own product: its root version restarts at 0.1.0 and its CHANGELOG starts
@@ -411,6 +433,20 @@ function main(argv) {
       'favicon.svg still carry the kit mark — replace the paths in all three yourself (not touched).'
   )
 
+  // (j) licence
+  report.push(
+    "(j) Licence: LICENSE is the kit's MIT licence, untouched. Keep it, or replace it (and each " +
+      "package.json `license`) with your own — a product's licence is the owner's decision."
+  )
+  // (k) where the copy came from
+  if (!readKitManifest()?.kit?.commit) {
+    report.push(
+      '(k) Kit commit: WARNING — `.rocketflare.json` `kit.commit` is null, so `pnpm kit:upgrade` cannot ' +
+        'tell which kit release this copy started from. `scripts/install.sh` records it; for a hand ' +
+        'clone, set it to the kit commit you cloned (`git rev-parse HEAD` in the kit, before detaching).'
+    )
+  }
+
   // ------------------------------------------------------------- output
   if (args.dryRun) {
     out(renderTable(rows), '')
@@ -428,12 +464,10 @@ function main(argv) {
     out(`skipped ${skippedBinary.length} binary file(s): ${skippedBinary.join(', ')}`, '')
   }
   out(
-    `Kit-only tests (docs/CONCEPTS.md §13): ${args.dryRun ? 'would delete' : 'deleting'} ${kitOnly.length} file(s) — ` +
-      'they assert what only the kit is (its version chain, its release and rename machinery), so a copy never carries them.',
+    `Kit-only files (docs/CONCEPTS.md §13): ${args.dryRun ? 'would delete' : 'deleting'} ${kitOnly.length} file(s) — ` +
+      'the kit’s own tests, workflows and maintainer scripts, so a copy never carries them.',
     ...kitOnly.map(rel => `  - ${rel}`),
-    ...(unwired.length > 0
-      ? ['  unwired the kit-only vitest project:', ...unwired.map(u => `    ${u}`)]
-      : []),
+    ...(unwired.length > 0 ? ['  unwired:', ...unwired.map(u => `    ${u}`)] : []),
     ''
   )
   out(
@@ -446,7 +480,7 @@ function main(argv) {
   out('Careful rows (docs/ADAPTING.md §1):', ...report.map(r => `  ${r}`), '')
   out(
     `Preserved as upstream: the rocketflare-dev org and its repos (the kit, plugins, the neon-proxy image, plugin CI), ${KIT.preserved.join(', ')}. Not touched by design: ` +
-      'LICENSE, CONTRIBUTING.md, CODE_OF_CONDUCT.md, SECURITY.md, the two svgs, this tool, ' +
+      'LICENSE, the two svgs, this tool, ' +
       'the rf-adapt skill and .rocketflare.json (it names the kit, and gets an `app` block instead).',
     ''
   )
@@ -464,7 +498,7 @@ function main(argv) {
   }
   for (const rel of kitOnly) removeWithEmptyParents(rel)
   stampManifest(names)
-  out(`wrote ${written} files, deleted ${kitOnly.length} kit-only test file(s).`, '')
+  out(`wrote ${written} files, deleted ${kitOnly.length} kit-only file(s).`, '')
 
   if (args.skipInstall) {
     out(
@@ -487,7 +521,7 @@ function main(argv) {
       return 1
     }
     // docs/plugin-api.md cuts each summary at a fixed width, so a longer or shorter name moves
-    // the cut, and the gate's "docs/plugin-api.md is up to date" step fails an unregenerated copy.
+    // the cut; regenerated here so the copy's ledger matches its own source from the first commit.
     out('', '$ node scripts/plugin-api-doc.mjs   (summaries are cut at a width the name moves)')
     const doc = spawnSync('node', ['scripts/plugin-api-doc.mjs'], {
       cwd: REPO_ROOT,
@@ -513,6 +547,26 @@ function main(argv) {
 }
 
 /**
+ * The app's own `SECURITY.md`. The kit's sends reporters to the kit's advisories, which is wrong for
+ * a product; this is a short placeholder that names the app and asks for private reporting.
+ */
+function securityPolicy(names) {
+  return `# Security Policy
+
+## Reporting a vulnerability
+
+Please **do not** open a public issue for anything exploitable in ${names.display}. Report it
+privately, through the repository's private vulnerability reporting or to
+\`security@${names.domain}\`, with the affected area, reproduction steps and the impact you
+believe it has. You will get an acknowledgement, and a fix or a reasoned response, before anything
+is made public.
+
+A vulnerability in the starter kit this app was built from (Rocketflare) can also be reported
+upstream: https://github.com/rocketflare-dev/rocketflare/security/advisories/new
+`
+}
+
+/**
  * Record the app's names in `.rocketflare.json`, which the pass itself skips (it names the KIT).
  * That `app` block is what later tells `scripts/upgrade.mjs` how to translate a kit diff into
  * this app's names — and a non-null `app` is also what tells the kit's own release checks that
@@ -532,6 +586,9 @@ function stampManifest(names) {
   }
   const manifest = JSON.parse(readFileSync(file, 'utf8'))
   manifest.app = { slug: names.slug, display: names.display, domain: names.domain }
+  // Ids older kit notes still name — read only by the kit's own note checks, never by a copy.
+  delete manifest.$retiredSurfaces
+  delete manifest.retiredSurfaces
   writeFileSync(file, formatJson(manifest))
   out(`stamped .rocketflare.json — app ${names.slug}, kit ${manifest.kit.version}.`)
 }

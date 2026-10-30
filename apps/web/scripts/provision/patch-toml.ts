@@ -1,6 +1,6 @@
 /**
  * String-level patcher for the two wrangler tomls. `wrangler --update-config` throws on the
- * commented TOML the kit ships, and re-serialising through a TOML library would drop every
+ * commented TOML this repo ships, and re-serialising through a TOML library would drop every
  * comment, so the ids, URLs and the routes line are patched with anchored regexes and every
  * other byte is preserved. Pure: `patchToml(text, patch)` → new text; the CLI wrapper at the
  * bottom (`tsx scripts/provision/patch-toml.ts <file> --hyperdrive-id … --kv-id …`) is what
@@ -10,7 +10,7 @@
  * id throws — an environment's Hyperdrive/KV id is not something to overwrite by accident — unless
  * `force` is set.
  *
- * The database driver (D35) is patched here too: `databaseDriver: 'postgres'` sets
+ * The database driver is patched here too: `databaseDriver: 'postgres'` sets
  * `DATABASE_DRIVER = "postgres"` and adds the `[[hyperdrive]]` block when it is absent;
  * `databaseDriver: 'neon'` sets `"neon"` and REMOVES the block — wrangler refuses to deploy a
  * Hyperdrive binding whose id does not exist, so a Neon Worker cannot carry one.
@@ -28,7 +28,7 @@ export interface HyperdriveBlock {
 }
 
 export interface TomlPatch {
-  /** D35: `[vars] DATABASE_DRIVER`, plus the `[[hyperdrive]]` block it implies (see the header). */
+  /** `[vars] DATABASE_DRIVER`, plus the `[[hyperdrive]]` block it implies (see the header). */
   databaseDriver?: DatabaseDriver
   /** With `databaseDriver: 'postgres'`: the block written when the file has none. */
   hyperdriveBlock?: HyperdriveBlock
@@ -44,7 +44,7 @@ export interface TomlPatch {
   routeHost?: string
   /** Insert a `workers_dev` note after `name = …` when the file has no `workers_dev` line. */
   workersDevComment?: string
-  /** Plugin binding blocks (D31): inserted if absent, updated in place if present. */
+  /** Plugin binding blocks: inserted if absent, updated in place if present. */
   bindings?: BindingBlock[]
   /** `[[migrations]]` entries appended when the tag is absent; an existing tag is never rewritten. */
   migrations?: MigrationBlock[]
@@ -59,7 +59,7 @@ export interface TomlPatch {
 }
 
 /**
- * One binding block a plugin declared (D31, Decision 12). `binding` is the identity — the name the
+ * One binding block a plugin declared. `binding` is the identity — the name the
  * Worker reads off `Cloudflare.Env` — so a block carrying it is UPDATED rather than duplicated, and
  * that is what makes re-running `pnpm provision cloudflare <env>` a no-op.
  */
@@ -98,7 +98,7 @@ export interface MigrationBlock {
 
 const PLACEHOLDER = /^<[A-Z0-9_]+>$/
 
-/** What `wrangler dev` used before D35 — the compose Postgres on :5432. */
+/** The default local connection string — the compose Postgres on :5432. */
 export const DEFAULT_LOCAL_CONNECTION_STRING =
   'postgresql://rocketflare:rocketflare_pass@localhost:5432/rocketflare_dev'
 
@@ -177,11 +177,11 @@ function escapeRe(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
-// ---- plugin blocks and list appends (D31, Decision 12) ------------------------------------
+// ---- plugin blocks and list appends -------------------------------------------------------
 
 /**
  * The byte range of every array-of-tables block with a given header. A block runs from its header
- * line to the first BLANK line or the next `[` at column 0 — which is how the kit's tomls are
+ * line to the first BLANK line or the next `[` at column 0 — which is how these tomls are
  * written, one blank line between blocks, and it is the only structure this patcher needs. Parsing
  * the document properly would mean re-serialising it, which loses every comment (see the header).
  */
@@ -211,8 +211,8 @@ function blockHasKeyValue(text: string, header: string, key: string, value: stri
 
 /**
  * Insert a whole block after the LAST block of the same kind, so plugin bindings gather beside the
- * kit's own rather than at the end of the file. With no block of that kind at all — an app that
- * deleted the kit's R2 bucket, say — the block is appended at the end of the file instead, which is
+ * built-in ones rather than at the end of the file. With no block of that kind at all — an app that
+ * deleted the default R2 bucket, say — the block is appended at the end of the file instead, which is
  * valid TOML and visible in `git diff` either way.
  */
 function insertBlock(text: string, header: string, body: string): string {
@@ -237,7 +237,7 @@ function insertBlock(text: string, header: string, body: string): string {
  * key carries the per-environment value.
  *
  * `idKey` is not always `binding`, and that is a real wrinkle rather than a preference:
- * `[[durable_objects.bindings]]` spells the binding name as `name` (the kit's own
+ * `[[durable_objects.bindings]]` spells the binding name as `name` (the app's own
  * `NOTIFICATIONS_HUB` is `name = "NOTIFICATIONS_HUB"`), so a patcher keyed on `binding` would
  * insert a second block beside an existing one every time it ran.
  *
@@ -313,7 +313,7 @@ function upsertBindingBlock(text: string, block: BindingBlock, force: boolean): 
   if (block.type === 'queue' && block.consumer && value !== undefined) {
     const header = '[[queues.consumers]]'
     if (!blockHasKeyValue(out, header, 'queue', value)) {
-      // The kit's own consumer settings: a plugin that wants different ones edits the block.
+      // The default consumer settings: a plugin that wants different ones edits the block.
       out = insertBlock(
         out,
         header,
@@ -326,7 +326,7 @@ function upsertBindingBlock(text: string, block: BindingBlock, force: boolean): 
 
 /**
  * Append values to a `key = [ … ]` array, skipping any already present. Multi-line arrays (the
- * kit's `crons` and `run_worker_first`) keep their one-entry-per-line shape and its indentation;
+ * default `crons` and `run_worker_first`) keep their one-entry-per-line shape and its indentation;
  * a single-line array stays single-line.
  */
 function appendToArray(text: string, key: string, values: string[]): string {
@@ -356,8 +356,8 @@ function appendToArray(text: string, key: string, values: string[]): string {
 
 /**
  * Append `KEY = "value"` to `[vars]` when the key is absent, placed after the LAST assignment in
- * the table rather than at its end — the kit's `[vars]` closes with a comment about secrets, and a
- * new key belongs above it. An existing key is left exactly as it is: its value is the operator's.
+ * the table rather than at its end — the default `[vars]` closes with a comment about secrets, and
+ * a new key belongs above it. An existing key is left exactly as it is: its value is the operator's.
  */
 function appendVar(text: string, key: string, value: string): string {
   if (new RegExp(`^${escapeRe(key)}\\s*=`, 'm').test(text)) return text
@@ -398,7 +398,7 @@ function appendMigration(text: string, block: MigrationBlock): string {
   return insertBlock(text, header, lines.join('\n'))
 }
 
-// ---- database driver (D35) ----------------------------------------------------------------
+// ---- database driver ----------------------------------------------------------------------
 
 /** The byte ranges of every `[[hyperdrive]]` block that declares `binding = "HYPERDRIVE"`. */
 function hyperdriveBlocks(text: string): Array<{ start: number; end: number }> {
@@ -436,8 +436,9 @@ function removeHyperdriveBlocks(text: string): string {
 }
 
 /**
- * Insert the HYPERDRIVE block where the kit kept it: just above the KV block's leading comment, so
- * the database binding reads first in the bindings section. No KV block → the end of the file.
+ * Insert the HYPERDRIVE block where the default toml keeps it: just above the KV block's leading
+ * comment, so the database binding reads first in the bindings section. No KV block → the end of
+ * the file.
  */
 function insertHyperdriveBlock(text: string, block: HyperdriveBlock): string {
   const body = [
@@ -567,7 +568,7 @@ function main(argv: string[]) {
   }
   if (patch.databaseDriver === 'postgres') {
     // The id arrives through --hyperdrive-id (patched into the new block right after); until then
-    // the block carries the environment's placeholder, exactly as a fresh kit toml used to.
+    // the block carries the environment's placeholder, exactly as a fresh toml does.
     const staging = /staging/.test(file)
     patch.hyperdriveBlock = {
       id: patch.hyperdriveId ?? hyperdrivePlaceholder(staging ? 'staging' : 'production'),

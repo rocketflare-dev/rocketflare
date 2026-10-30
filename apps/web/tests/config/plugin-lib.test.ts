@@ -1,5 +1,5 @@
 /**
- * `scripts/lib/plugin-lib.mjs` and the `scripts/plugin.mjs` round trip (D31, Phase B).
+ * `scripts/lib/plugin-lib.mjs` and the `scripts/plugin.mjs` round trip.
  *
  * Almost everything here is a rule about a plugin THIS checkout does not have installed, so almost
  * everything is exercised against a fixture. The two that are not: the barrel writer is checked
@@ -236,7 +236,7 @@ describe('the barrel writer', () => {
     // …and the marker gives way to the first plugin that arrives, byte for byte.
     expect(addBarrelLine(bare, 'schema', 'orders')).not.toContain('export {}')
     // Putting every installed plugin back has to reproduce the file exactly — all of them, not
-    // just the first: the moment a second plugin was installed (D31, Phase C) a one-id round trip
+    // just the first: the moment a second plugin was installed a one-id round trip
     // stopped being the same file, and a test that only ever saw one would not have noticed.
     // Only the plugins that HAVE a schema half own a line in this barrel.
     const withSchema = installedHere.filter(s => (s.registries ?? []).includes(BARRELS.schema.file))
@@ -833,7 +833,7 @@ describe('the install plan', () => {
     // The schema migration is the host's, always.
     expect(text).toContain('pnpm db:generate --name plugin-orders-1.1.0')
     expect(text).toContain('CREATE TABLE orders_orders, orders_lines')
-    // The platform half is one command per environment (decision 12), not a hand edit of two
+    // The platform half is one command per environment, not a hand edit of two
     // tomls — `pnpm provision cloudflare <env>` reads the same declarations off the surface.
     expect(text).toContain('pnpm provision cloudflare staging')
     expect(text).toContain('kv binding ORDERS_KV')
@@ -1022,7 +1022,7 @@ describe('scripts/plugin.mjs, end to end', () => {
 })
 
 /**
- * The step taxonomy (D31). "By hand" is retired as a phrase because it answers neither question
+ * The step taxonomy. "By hand" is retired as a phrase because it answers neither question
  * that matters to whatever performs the step — and installs are performed by AGENTS as often as by
  * people, for whom prose is not a control.
  *
@@ -1138,7 +1138,7 @@ describe('the plan as JSON', () => {
 })
 
 /**
- * `pnpm plugin check` as the AGENT's oracle (D31).
+ * `pnpm plugin check` as the AGENT's oracle.
  *
  * It was a six-point check that said what was wrong and not how to fix it — right for a person
  * with `reference.md` open, useless to an agent, who has only the line. The two properties under

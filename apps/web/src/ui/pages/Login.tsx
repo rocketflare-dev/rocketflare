@@ -1,5 +1,5 @@
 /**
- * Sign in (D9, D11). Everything is driven by `GET /auth/methods`: OAuth buttons for the configured
+ * Sign in. Everything is driven by `GET /auth/methods`: OAuth buttons for the configured
  * providers (full-page redirect to `/auth/:provider`), a magic-link form (validated with the SAME
  * `magicLinkRequestSchema` the server uses), and — only when the server says `devLogin` — the
  * seeded quick-login accounts. Server-side failures arrive as `?error=<code>`.

@@ -1,5 +1,5 @@
 /**
- * Groups and resource visibility (D29, D20). Administering groups is admin+ (`manage Group`); the
+ * Groups and resource visibility. Administering groups is admin+ (`manage Group`); the
  * only read a plain member makes here is `useMyGroups` (`GET /api/groups/mine`), which is what the
  * profile shows and what the visibility picker offers them.
  *

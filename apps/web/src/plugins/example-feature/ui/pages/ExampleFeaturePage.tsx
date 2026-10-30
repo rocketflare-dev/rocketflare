@@ -1,5 +1,5 @@
 /**
- * The example feature's page (D30, D31). Everything here exists to be deleted.
+ * The example feature's page. Everything here exists to be deleted.
  *
  * It is reachable only while `example-feature` is on for the session's organisation. Note what that
  * means: a global admin, who holds `manage all`, is ALSO kept out — because the guard reads
@@ -10,10 +10,10 @@
  * nor its contracts — reaches the main bundle for the readers who never open it.
  */
 import { useState } from 'react'
-// The COMPONENTS half of the UI kit (D31). A page may import it because a page is lazy and ships in
+// The COMPONENTS half of the UI kit. A page may import it because a page is lazy and ships in
 // its own chunk; the plugin's `ui/index.ts` may not, because that one is in everybody's first
-// download. `showToast` comes from here and only here — it is reachable in the kit by two public
-// paths, and one plugin took each, which is how two call sites of one function come to look like two.
+// download. `showToast` comes from here and only here — it is reachable in core by two public
+// paths, which is how two call sites of one function come to look like two.
 import { EmptyState, SectionPanel, showToast, useAuth, usePermissions } from '@/plugins/api/ui'
 import {
   useCreateExampleNote,
@@ -63,7 +63,7 @@ export default function ExampleFeaturePage() {
             All of it is one plugin: <code>apps/web/src/plugins/example-feature</code>,{' '}
             <code>packages/shared/src/plugins/example-feature</code> and{' '}
             <code>apps/cli/src/plugins/example-feature</code>, wired in by five barrel lines. Remove
-            those and the kit is bare again — including the <code>example_notes</code> table, whose{' '}
+            those and the app is bare again — including the <code>example_notes</code> table, whose{' '}
             <code>DROP</code> the next <code>pnpm db:generate</code> writes for you.
           </p>
           <div>

@@ -1,5 +1,5 @@
 /**
- * `startAgentRun` — how a plugin starts an agent run from somewhere with no HTTP request (D7, D31):
+ * `startAgentRun` — how a plugin starts an agent run from somewhere with no HTTP request:
  * a queue job, a cron task, an inbound email, a public webhook.
  *
  * It is the route's own handoff (`POST /api/agents/runs` → `enqueueRun`), not a second one, so
@@ -52,7 +52,7 @@ export interface StartAgentRunInput {
   /**
    * The user the run is on behalf of — `agent_runs.requested_by_user_id`, and the requester whose
    * CURRENT access the run's tools are scoped to. Omitted, the run is system-triggered (`null`)
-   * and the kit's knowledge tools read tenant-visible documents only.
+   * and the built-in knowledge tools read tenant-visible documents only.
    */
   triggeredBy?: string | null
 }

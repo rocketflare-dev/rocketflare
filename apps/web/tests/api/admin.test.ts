@@ -1,5 +1,5 @@
 /**
- * `/api/admin/*` (D9, D10, D25): tenant-free global admin; access-request decisions; tenant
+ * `/api/admin/*`: tenant-free global admin; access-request decisions; tenant
  * list/detail/suspend; support enter/leave; users; the last global admin guard; block kills sessions.
  */
 import type { SessionResponse } from '@rocketflare/shared/auth'

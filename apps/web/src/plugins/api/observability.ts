@@ -1,5 +1,5 @@
 /**
- * Logging and tracing, as a plugin sees them (D16 → D32, D31).
+ * Logging and tracing, as a plugin sees them.
  *
  * There is deliberately no `createLogger` here. A logger is always INJECTED — `ctx.logger` in every
  * context — because the one a request carries is bound to its request id, the one a job carries to
@@ -7,8 +7,8 @@
  * exported is the TYPE (for a plugin's own service signatures) and the tracing wrappers, which are
  * genuinely callable rather than injectable: they bracket a span, so they take the work.
  *
- * Since D32 handles nest (`trace.span()` returns a child) and a plugin's TOOLS need nothing at all:
- * every tool execution is traced by the kit's tool runner, in chat and agent runs alike.
+ * Handles nest (`trace.span()` returns a child) and a plugin's TOOLS need nothing at all:
+ * every tool execution is traced by the core tool runner, in chat and agent runs alike.
  */
 
 import type { Tracer } from '../../api/observability/tracer'

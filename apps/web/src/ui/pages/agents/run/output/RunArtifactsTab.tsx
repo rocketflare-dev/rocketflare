@@ -1,7 +1,7 @@
 /**
  * The things this run produced that a person opens.
  *
- * Artifacts come from the TABLE (decision 4) — mutable, queryable across runs, outliving the run —
+ * Artifacts come from the TABLE — mutable, queryable across runs, outliving the run —
  * with the event rows supplying only the ORDER they appeared in. `outputFor().artifacts?.(output)`
  * is the zero-server-change fallback — used only when the table has none, so it can never duplicate
  * what an agent recorded for itself — and it is what keeps this tab useful for an agent that never

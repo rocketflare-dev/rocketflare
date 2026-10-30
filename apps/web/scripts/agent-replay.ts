@@ -1,6 +1,6 @@
 /**
  * `pnpm web agent:replay <agentKey> --tenant <id|slug>` — replay an agent's settled runs with the
- * code in this working tree (D38, `src/api/services/agents/replay.ts`), and say what would change.
+ * code in this working tree (`src/api/services/agents/replay.ts`), and say what would change.
  *
  *   --tenant <id|slug>   required; without it, the tenants that have runs of this agent are listed
  *   --since <7d|24h|ISO> only runs created since then          --limit <n>  newest n (default 20)

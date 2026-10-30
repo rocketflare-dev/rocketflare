@@ -1,5 +1,5 @@
 /**
- * Route-level authorisation helpers over the request's CASL ability (D10, D13). Everything reads
+ * Route-level authorisation helpers over the request's CASL ability. Everything reads
  * `c.get('auth')` — set by `authMiddleware` — and THROWS typed errors so `error-handler.ts` renders
  * the shared envelope; nothing here builds a Response. Owner-only decisions use `isOwnerLevel`
  * (explicit role), never `can('manage', 'Tenant')`, which `support` and global admins also hold.

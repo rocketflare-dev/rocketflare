@@ -1,5 +1,5 @@
 /**
- * `/api/files` (D23): upload / download / delete over the `StorageService` seam. Objects live in
+ * `/api/files`: upload / download / delete over the `StorageService` seam. Objects live in
  * R2 under a tenant prefix; the `files` row is the index and the ONLY thing the browser can name
  * (`/api/files/:id`). Every query filters by the auth context's `tenantId` — a file uploaded in
  * one organisation is a 404 in another, including avatars (known gap: the person's `avatarUrl`
@@ -184,7 +184,7 @@ filesRouter.get('/:id', async c => {
     where: and(eq(files.id, id), eq(files.tenantId, tenantId)),
   })
   if (!row) throw new NotFoundError('File not found')
-  // D29: a `documents`-scope object is the ORIGINAL behind a knowledge document, so it inherits
+  // A `documents`-scope object is the ORIGINAL behind a knowledge document, so it inherits
   // that document's visibility. Without this the restriction is one `/api/files/:id` away from
   // being nothing at all — the id is on the document card of anyone who ever could see it.
   if (
@@ -233,7 +233,7 @@ filesRouter.delete('/:id', async c => {
     where: and(eq(files.id, id), eq(files.tenantId, tenantId)),
   })
   if (!row) throw new NotFoundError('File not found')
-  // A knowledge-base original belongs to its `documents` row (D18): delete the document instead.
+  // A knowledge-base original belongs to its `documents` row: delete the document instead.
   if (row.scope === 'documents') {
     throw new ConflictError(
       'This file is the original of a knowledge document; delete the document instead',

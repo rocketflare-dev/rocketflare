@@ -1,5 +1,5 @@
 /**
- * `JOBS_QUEUE` producer (D7): `enqueueJob` validates and stamps the envelope; the invitation routes
+ * `JOBS_QUEUE` producer: `enqueueJob` validates and stamps the envelope; the invitation routes
  * (create / bulk / resend) enqueue `email.send` instead of sending inline; the magic-link request
  * stays inline (a person is waiting) and enqueues nothing. Assertions run against the
  * `RecordingQueue` behind `stubs(env).queue`.

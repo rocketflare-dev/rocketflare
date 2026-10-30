@@ -1,5 +1,5 @@
 /**
- * `runToolLoop`'s human-in-the-loop gate (issue #17), driven with a `FakeChatClient` and no
+ * `runToolLoop`'s human-in-the-loop gate, driven with a `FakeChatClient` and no
  * database — the loop knows nothing about rows.
  *
  * The three properties worth breaking a build over:
@@ -23,7 +23,7 @@ import {
   type Tool,
   type ToolApproval,
   type ToolLoopCheckpoint,
-} from '@/api/services/ai/kit'
+} from '@/api/services/ai/agent-loop'
 import type { ChatMessage } from '@/api/services/ai/types'
 import { FakeChatClient, type FakeScript, type FakeTurn } from '../helpers/ai'
 

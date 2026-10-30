@@ -1,7 +1,7 @@
 /**
- * Request body caps (04 §4). Cloudflare already caps bodies at 100–500 MB; 1 MB of JSON is plenty
- * for every kit route and protects the DB/LLM paths. The upload routes (`/api/files`, D23, and
- * `/api/ai/documents/upload`, D18) are the exceptions: they get `MAX_UPLOAD_BYTES` plus multipart
+ * Request body caps. Cloudflare already caps bodies at 100–500 MB; 1 MB of JSON is plenty
+ * for every core route and protects the DB/LLM paths. The upload routes (`/api/files` and
+ * `/api/ai/documents/upload`) are the exceptions: they get `MAX_UPLOAD_BYTES` plus multipart
  * overhead, and each handler enforces the exact per-file limit. Over-limit → 413 in the shared envelope.
  */
 import { MAX_UPLOAD_BYTES } from '@rocketflare/shared/files'

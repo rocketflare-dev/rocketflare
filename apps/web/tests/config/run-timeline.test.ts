@@ -1,11 +1,11 @@
 /**
- * The pure half of the run workspace (issue #17): the timeline reducer and its grouping, the
+ * The pure half of the run workspace: the timeline reducer and its grouping, the
  * column split, the input summary, the expiry tick chooser, and the JSON-Schema → fields
  * conversion. No database, no DOM — these are data functions, and each of them is guarding a
  * specific way the page could be silently wrong.
  */
 import type { JsonSchema } from '@rocketflare/shared/ai/interrupts'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   fieldsFromJsonSchema,
   initialValuesFor,
@@ -25,6 +25,7 @@ import {
   type TimelineEvent,
   windowGroups,
 } from '@/ui/pages/agents/run/timeline/timelineModel'
+import { FIXTURE_AGENT } from '../helpers/fixture-agents'
 
 const at = (s: number) => new Date(`2025-06-01T00:00:${String(s).padStart(2, '0')}Z`)
 const eid = (n: number) => `${String(n).padStart(8, '0')}-0000-4000-8000-000000000000`
@@ -34,6 +35,22 @@ const ev = (seq: number, type: string, data: unknown): TimelineEvent => ({
   type,
   data,
   at: at(seq),
+})
+
+/** A registered form for the first rung, contributed the way a plugin would (`UiPlugin.agentForms`). */
+const fixtureForm = vi.hoisted(() => ({
+  initial: '',
+  schema: undefined as never,
+  Component: () => null,
+}))
+
+vi.mock('@/plugins/ui', async importOriginal => {
+  const actual = await importOriginal<typeof import('@/plugins/ui')>()
+  const plugins = [
+    ...actual.uiPlugins,
+    { shared: { id: 'fixture', label: 'Fixture' }, agentForms: { 'fixture-agent': fixtureForm } },
+  ]
+  return { ...actual, UI_PLUGINS: plugins, uiPlugins: plugins }
 })
 
 describe('buildTimeline', () => {
@@ -113,7 +130,7 @@ describe('buildTimeline', () => {
     expect(rows.map(r => r.kind)).toEqual(['interrupt', 'steering', 'artifact'])
   })
 
-  it('reads a decision (D37) and counts its questions; a malformed one stays visible as unknown', () => {
+  it('reads a decision and counts its questions; a malformed one stays visible as unknown', () => {
     const rows = buildTimeline([
       ev(1, 'decision', {
         decisionId: eid(7),
@@ -322,12 +339,12 @@ describe('formFor', () => {
       properties: { topic: { type: 'string', maxLength: 2000 } },
       required: ['topic'],
     }
-    const built = formFor({ key: 'research-topic' as never, inputJsonSchema: schema })
+    const built = formFor({ key: 'unregistered-agent' as never, inputJsonSchema: schema })
     expect(built).not.toBe(jsonForm)
     expect(built.initial).toEqual({ topic: '' })
     expect(formFor({ key: 'nope' as never, inputJsonSchema: null })).toBe(jsonForm)
     // A registered form still wins the first rung.
-    expect(formFor({ key: 'summarize-text', inputJsonSchema: schema })).not.toBe(jsonForm)
+    expect(formFor({ key: FIXTURE_AGENT, inputJsonSchema: schema })).toBe(fixtureForm)
   })
 })
 

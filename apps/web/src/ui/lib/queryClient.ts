@@ -1,7 +1,7 @@
 import { MutationCache, QueryCache, QueryClient } from '@tanstack/react-query'
 import { ApiError, notifyUnauthorized } from './api-client'
 
-/** Global 401 → the registered handler (D20). Coalesced inside `notifyUnauthorized`. */
+/** Global 401 → the registered handler. Coalesced inside `notifyUnauthorized`. */
 function onUnauthorized(error: unknown) {
   if (error instanceof ApiError && error.status === 401) notifyUnauthorized(error)
 }

@@ -1,5 +1,5 @@
 /**
- * `rocketflare feedback list` — thumbs on AI answers (`GET /api/feedback`, admin+) (D33).
+ * `rocketflare feedback list` — thumbs on AI answers (`GET /api/feedback`, admin+).
  *
  * The promotion queue: `--rating down` is where eval cases come from. Each row names the rated
  * target (`message` / `agent_run`) and its id, which is exactly what `rocketflare evals promote`

@@ -1,5 +1,5 @@
 /**
- * `/api/groups` (D29) — group types, groups and their membership.
+ * `/api/groups` — group types, groups and their membership.
  *
  *   GET    /types                      manage Group
  *   POST   /types                      manage Group

@@ -1,5 +1,5 @@
 /**
- * `GET /ws?tenantId=` — WebSocket upgrade (D8, D12). Mounted WITHOUT `authMiddleware` (a browser
+ * `GET /ws?tenantId=` — WebSocket upgrade. Mounted WITHOUT `authMiddleware` (a browser
  * cannot set headers on an upgrade) so the route resolves the cookie itself with the same helper
  * the middleware uses: cookie → session → `resolveCookieAuth` (blocked / suspended → 403), then a
  * `tenant_users` membership check for the REQUESTED tenant (`?tenantId`, else the session's) — a

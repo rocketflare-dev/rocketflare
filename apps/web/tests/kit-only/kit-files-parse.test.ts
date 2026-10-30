@@ -2,7 +2,7 @@
  * Kit-only: THIS checkout's two tomls and the workflows a copy carries parse with the
  * dependency-free readers `scripts/kit-check.mjs` uses (`scripts/lib/toml-lite.mjs`,
  * `scripts/lib/yaml-lite.mjs`). A copy's files are the app's to change, so the readers' own tests
- * (`tests/config/kit-check-parsers.test.ts`) use inline documents.
+ * (`tests/kit-only/kit-check-parsers.test.ts`) use inline documents.
  */
 import { readFileSync } from 'node:fs'
 import path from 'node:path'

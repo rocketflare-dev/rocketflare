@@ -85,11 +85,29 @@ export function kitOnlyGlobs(manifest, extra = []) {
 }
 
 /**
- * `apps/web/package.json` with the kit-only project unwired: every `--project kit-only` dropped
- * from a script, and a script that exists only to run it (`test:kit-only`) removed. Text in, text
- * out, formatting kept; `removed` and `edited` name the scripts it touched so the caller can say so.
+ * Does a shell command name a kit-only file? Each whitespace-separated word, unquoted and with a
+ * `$CLAUDE_PROJECT_DIR/` or `./` prefix dropped, is tested against the globs — so
+ * `node scripts/release.mjs` and `node "$CLAUDE_PROJECT_DIR/scripts/changelog-nudge.mjs"` both
+ * match `scripts/release.mjs`-style entries, and `scripts/release-check.mjs` does not.
  */
-export function stripKitOnlyWiring(packageJsonText) {
+export function commandNamesKitOnly(command, globs) {
+  if (typeof command !== 'string' || !globs?.length) return false
+  return command
+    .split(/\s+/)
+    .map(word =>
+      word.replace(/^["']+|["';&|]+$/g, '').replace(/^(\$\{?CLAUDE_PROJECT_DIR\}?\/|\.\/)/, '')
+    )
+    .some(word => word && matchesAny(word, globs))
+}
+
+/**
+ * A package.json with the kit-only wiring removed: every `--project kit-only` dropped from a
+ * script, a script that exists only to run it (`test:kit-only`) removed, and a script whose
+ * command names a kit-only file (`kit:release` → `scripts/release.mjs`, given `globs`) removed.
+ * Text in, text out, formatting kept; `removed` and `edited` name the scripts it touched so the
+ * caller can say so.
+ */
+export function stripKitOnlyWiring(packageJsonText, globs = []) {
   const pkg = JSON.parse(packageJsonText)
   const scripts = pkg.scripts ?? {}
   const flag = new RegExp(`\\s+--project[ =]${KIT_ONLY_PROJECT}(?![\\w-])`, 'g')
@@ -97,7 +115,7 @@ export function stripKitOnlyWiring(packageJsonText) {
   const edited = []
   for (const [name, command] of Object.entries(scripts)) {
     if (typeof command !== 'string') continue
-    if (name.endsWith(`:${KIT_ONLY_PROJECT}`)) {
+    if (name.endsWith(`:${KIT_ONLY_PROJECT}`) || commandNamesKitOnly(command, globs)) {
       delete scripts[name]
       removed.push(name)
       continue
@@ -111,6 +129,36 @@ export function stripKitOnlyWiring(packageJsonText) {
   if (removed.length === 0 && edited.length === 0) return { text: packageJsonText, removed, edited }
   const indent = packageJsonText.match(/^[ \t]+(?=")/m)?.[0] ?? '  '
   return { text: `${JSON.stringify(pkg, null, indent)}\n`, removed, edited }
+}
+
+/**
+ * `.claude/settings.json` with every hook whose command names a kit-only file removed — the
+ * maintainer nudges (`changelog-nudge.mjs`, `release-site-nudge.mjs`) a copy has no use for and
+ * would otherwise spawn on every Bash call. A matcher group left with no hooks goes, and so does
+ * an event left with no groups. `removed` lists the commands dropped.
+ */
+export function stripKitOnlyHooks(settingsText, globs) {
+  const settings = JSON.parse(settingsText)
+  const removed = []
+  const events = settings.hooks ?? {}
+  for (const [event, groups] of Object.entries(events)) {
+    if (!Array.isArray(groups)) continue
+    const kept = []
+    for (const group of groups) {
+      const hooks = Array.isArray(group?.hooks) ? group.hooks : []
+      const keep = hooks.filter(h => {
+        const drop = commandNamesKitOnly(h?.command, globs)
+        if (drop) removed.push(h.command)
+        return !drop
+      })
+      if (keep.length > 0 || hooks.length === 0) kept.push({ ...group, hooks: keep })
+    }
+    if (kept.length > 0) events[event] = kept
+    else delete events[event]
+  }
+  if (removed.length === 0) return { text: settingsText, removed }
+  const indent = settingsText.match(/^[ \t]+(?=")/m)?.[0] ?? '  '
+  return { text: `${JSON.stringify(settings, null, indent)}\n`, removed }
 }
 
 /**
@@ -207,7 +255,8 @@ export function classifyPath(relPath, ctx) {
     return {
       class: 'skipped-kit-only',
       translate: false,
-      reason: "a kit-only test — the kit's gate runs it, a copy never carries it",
+      reason:
+        "kit-only — the kit's own test, workflow or maintainer script; a copy never carries it",
     }
   }
   const surface = manifest.surfaces.find(s => matchesAny(relPath, s.paths))

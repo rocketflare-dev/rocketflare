@@ -1,5 +1,5 @@
 /**
- * Run metering and budgets (D39). Every model call and decision an agent run makes goes through ONE
+ * Run metering and budgets. Every model call and decision an agent run makes goes through ONE
  * meter, which does two things in order:
  *
  *   check   before the call — the run's tokens and cost so far against its budget

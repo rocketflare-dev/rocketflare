@@ -3,10 +3,10 @@
  * (rocketflare-dev/launch-kit, whose `scripts/tests/kit-check.test.mjs` this ports to vitest).
  *
  * Every case runs on a fixture kit built in a temp directory (`./fixtures/kit-fixture.mjs`, shared
- * with the meta-kit), never on this checkout: the test travels into every copy, whose files differ
- * from the kit's by design — renamed, then provisioned by Launch's `write_config`, which commits
- * the real KV ids. Whether THIS checkout conforms is kit.yml's `Launch kit check` step (and the
- * renamed copy's), never a test. The `config` project: no database.
+ * with the meta-kit), never on this checkout. Kit-only: the checker is the kit's to keep in step with
+ * the meta-kit, so a copy (which may still RUN it) does not re-prove it in its own gate. Whether
+ * THIS checkout conforms is kit.yml's `Launch kit check` step (and the renamed copy's), never a
+ * test. No database.
  */
 import { execFileSync } from 'node:child_process'
 import { mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'

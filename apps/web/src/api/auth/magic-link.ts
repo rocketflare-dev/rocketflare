@@ -1,8 +1,8 @@
 /**
- * One-time email login tokens (D11, D12): 32 random bytes in the URL, SHA-256 in
+ * One-time email login tokens: 32 random bytes in the URL, SHA-256 in
  * `magic_link_tokens`, 15-minute expiry, consumed atomically (`UPDATE … WHERE consumed_at IS NULL
  * RETURNING`) so a double-click yields `invalid_token` for the second request. Keyed by email —
- * the user row may not exist yet; `admitUser` decides that at verify time (D9).
+ * the user row may not exist yet; `admitUser` decides that at verify time.
  */
 import { and, eq, isNull, sql } from 'drizzle-orm'
 import type { Database } from '../../db/client'

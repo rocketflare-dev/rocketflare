@@ -1,5 +1,5 @@
 /**
- * Every attribute name the kit writes on a span, in ONE module (D32). Three vocabularies, because
+ * Every attribute name the app writes on a span, in ONE module. Three vocabularies, because
  * three kinds of backend read them:
  *
  * - **OpenTelemetry GenAI semantic conventions** (`gen_ai.*`, Development status) — the neutral
@@ -114,7 +114,7 @@ const LANGFUSE_TYPE: Record<SpanKind, string> = {
   span: 'span',
 }
 
-/** The kit's provider ids → `gen_ai.provider.name` well-known values (unknowns pass through). */
+/** Our provider ids → `gen_ai.provider.name` well-known values (unknowns pass through). */
 export function genAiProvider(provider: string): string {
   switch (provider) {
     case 'anthropic':
@@ -232,7 +232,7 @@ export function toolAttributes(params: { name: string; toolCallId?: string }): S
   }
 }
 
-/** A `ctx.decide` call (D37): which question set, which engine, how sure the least sure answer was. */
+/** A `ctx.decide` call: which question set, which engine, how sure the least sure answer was. */
 export function decisionAttributes(params: {
   key: string
   method?: string

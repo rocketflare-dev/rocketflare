@@ -1,7 +1,7 @@
 // @vitest-isolate
 // Mocks `@/api/services/ai/resolve` (the provider seam), so this file needs its own module registry.
 /**
- * `/api/chat` (D17) against a scripted `FakeChatClient`: create conversation (frozen provider/
+ * `/api/chat` against a scripted `FakeChatClient`: create conversation (frozen provider/
  * model), POST message streams the **AG-UI** sequence (`RUN_STARTED → CUSTOM kit.chat.ids →
  * STATE_SNAPSHOT → TEXT_MESSAGE_* → CUSTOM kit.usage → RUN_FINISHED`), persists both messages + an
  * `ai_usage` row + auto-title; history is sent on the next turn; not configured → 503
@@ -189,7 +189,7 @@ describe('POST /api/chat/conversations/:id/messages (AG-UI stream)', () => {
     const params: ChatParams | undefined = client.calls[0]
     expect(String(params?.system)).toContain(`helping ${a.user.name} at ${a.tenant.name}`)
     // Tools are on by default now (`CHAT_KNOWLEDGE_TOOLS`); `chat-tools.test.ts` covers them.
-    // The kit's three lead; an installed plugin's tools (D31) follow, hence the prefix.
+    // The three built-in tools lead; an installed plugin's tools follow, hence the prefix.
     expect(params?.tools?.map(t => t.name).slice(0, 3)).toEqual([
       'search_knowledge',
       'get_document',

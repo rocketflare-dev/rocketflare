@@ -1,8 +1,8 @@
 /**
- * The reference plugin's own contracts (D31) — pure, no database, no app.
+ * The reference plugin's own contracts — pure, no database, no app.
  *
  * What it pins is the half of a plugin that the HOST cannot check for it: that every key this
- * plugin declares carries its id, that its declarations actually reach the kit's merged registries
+ * plugin declares carries its id, that its declarations actually reach the core merged registries
  * once the barrel line exists, and that its request contracts refuse the bodies its routes rely on
  * being refused. `tests/config/plugins.test.ts` proves the structural rules for every plugin; this
  * proves this one's.
@@ -34,7 +34,7 @@ describe('the plugin namespaces everything it keys', () => {
     expect(EXAMPLE_PING_JOB.startsWith(`${EXAMPLE_FEATURE_ID}.`)).toBe(true)
     expect(EXAMPLE_NOTES_ENTITY.startsWith(pluginNamespace(EXAMPLE_FEATURE_ID))).toBe(true)
     expect(exampleFeatureServer.mounts[0][0]).toBe(`/api/${EXAMPLE_FEATURE_ID}`)
-    // The nudge's `entity` and the query-key family root are the SAME string — the kit's convention,
+    // The nudge's `entity` and the query-key family root are the SAME string — the core convention,
     // and what makes the plugin's realtime wiring zero lines of socket code.
     expect(Object.keys(exampleFeatureUi.queryKeys)).toEqual([EXAMPLE_NOTES_ENTITY])
   })
@@ -44,7 +44,7 @@ describe('the plugin namespaces everything it keys', () => {
   })
 })
 
-describe('it reaches the kit’s merged registries', () => {
+describe('it reaches the core merged registries', () => {
   it('contributes its job variant to the one the consumer parses', () => {
     expect(JOB_TYPES).toContain(EXAMPLE_PING_JOB)
     const parsed = jobInputSchema.safeParse({
@@ -92,7 +92,7 @@ describe('the note contracts', () => {
 })
 
 /**
- * What this plugin contributes to the kit's closed sets, at the TYPE level.
+ * What this plugin contributes to the core closed sets, at the TYPE level.
  *
  * These belong here rather than in `tests/config/plugins.test.ts` because they name
  * `example-feature`, and `expectTypeOf` compiles to nothing — so a host assertion naming this
@@ -100,18 +100,18 @@ describe('the note contracts', () => {
  * this plugin exists for. Here they are deleted along with the directory that makes them true.
  * The host keeps the plugin-agnostic half (core is a subset of the installed union, never wider).
  */
-describe('what this plugin adds to the kit’s closed sets', () => {
+describe('what this plugin adds to the core closed sets', () => {
   it('widens JobType by its own job, with a narrowed payload', () => {
-    // `toMatchTypeOf`, not `toEqualTypeOf`: the union is the KIT's plus every installed plugin's,
+    // `toMatchTypeOf`, not `toEqualTypeOf`: the union is CORE's plus every installed plugin's,
     // so pinning it whole would make this plugin's test fail whenever a SECOND plugin is
-    // installed. What this plugin can honestly assert is that the kit's types survived and that
+    // installed. What this plugin can honestly assert is that the core types survived and that
     // its own arrived — the rest of the union belongs to whoever declared it.
     expectTypeOf<CoreJobType>().toMatchTypeOf<JobType>()
     expectTypeOf<'example-feature.ping'>().toMatchTypeOf<JobType>()
     expectTypeOf<JobOf<'example-feature.ping'>['payload']['tenantId']>().toEqualTypeOf<string>()
   })
 
-  it('unions its CASL subject in beside the kit’s', () => {
+  it('unions its CASL subject in beside the core ones', () => {
     expectTypeOf<'ExampleNote'>().toMatchTypeOf<Subjects>()
   })
 })

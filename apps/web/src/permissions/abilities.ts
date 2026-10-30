@@ -1,12 +1,9 @@
 /**
- * The role → ability matrix (D10, 02 §10b) as CASL rules. Pure: no logger, no DB, no Hono — the
+ * The role → ability matrix as CASL rules. Pure: no logger, no DB, no Hono — the
  * same function runs in the auth middleware (server) and, via `packRules`/`unpackRules`, in the
  * UI's `AbilityProvider`. Owner-ONLY actions (delete tenant, transfer ownership) are NOT here:
  * routes check `role === 'owner'` explicitly (`isOwnerLevel`), because `manage Tenant` is also
  * granted to `support` and to global admins.
- *
- * Skeleton from the Node reference app; typed `AppAbility`, the `access` feature hook with injected
- * `features` from the Workers reference app (its subscription-tier switch is deliberately not ported).
  */
 import { AbilityBuilder, createMongoAbility, type RawRuleOf } from '@casl/ability'
 import { packRules as caslPackRules, unpackRules as caslUnpackRules } from '@casl/ability/extra'
@@ -55,15 +52,15 @@ const grantAdmin: RoleGrant = can => {
   can('manage', 'Notification')
   can('manage', 'Conversation')
   can('manage', 'AgentRun')
-  // D32: traces are written by the platform and only read; nobody manages one.
+  // Traces are written by the platform and only read; nobody manages one.
   can('read', 'Trace')
-  // D33: rating answers, and reading everyone's ratings (the promotion queue).
+  // Rating answers, and reading everyone's ratings (the promotion queue).
   can('create', 'Feedback')
   can('read', 'Feedback')
 }
 
 /**
- * EXACTLY 02 §10b. `AccessRequest` and `User` are platform subjects: only `manage all` reaches them.
+ * `AccessRequest` and `User` are platform subjects: only `manage all` reaches them.
  *
  * | Subject        | globalAdmin | owner  | admin  | support | member |
  * |----------------|-------------|--------|--------|---------|--------|
@@ -77,12 +74,12 @@ const grantAdmin: RoleGrant = can => {
  * | File           | manage      | manage | manage | manage  | create+read (own; delete is the route's owner check) |
  * | AiConfig       | manage      | manage | manage | manage  | read   |
  * | Prompt         | manage      | manage | manage | manage  | read   |
- * | Conversation   | manage      | manage | manage | manage  | manage (own only — the route filters by userId, D17) |
- * | AgentRun       | manage      | manage | manage | manage  | manage (own only — admin+ see every run, D7) |
- * | Document       | manage      | manage | manage | manage  | create+read (own-document delete is the route's owner check, D18) |
- * | Group          | manage      | manage | manage | manage  | read (D29: routes narrow a member's reads to their OWN groups) |
- * | Trace          | manage      | read   | read   | read    | –      (D32: spans hold other people's prompts) |
- * | Feedback       | manage      | create+read | create+read | create+read | create (D33: on answers they can read) |
+ * | Conversation   | manage      | manage | manage | manage  | manage (own only — the route filters by userId) |
+ * | AgentRun       | manage      | manage | manage | manage  | manage (own only — admin+ see every run) |
+ * | Document       | manage      | manage | manage | manage  | create+read (own-document delete is the route's owner check) |
+ * | Group          | manage      | manage | manage | manage  | read (routes narrow a member's reads to their OWN groups) |
+ * | Trace          | manage      | read   | read   | read    | –      (spans hold other people's prompts) |
+ * | Feedback       | manage      | create+read | create+read | create+read | create (on answers they can read) |
  * | Feature:<f>    | access all  | by ctx | by ctx | access all | by ctx |
  */
 export const rolePermissions: Record<EffectiveRole, RoleGrant> = {
@@ -103,18 +100,18 @@ export const rolePermissions: Record<EffectiveRole, RoleGrant> = {
   member: can => {
     can('read', [...MEMBER_READABLE])
     can('manage', 'Notification')
-    // D23: anyone may upload; deleting someone else's file needs `delete File` (admin+). The
+    // Anyone may upload; deleting someone else's file needs `delete File` (admin+). The
     // "own file" delete is an explicit `ownerUserId === user.id` check in routes/files.ts.
     can('create', 'File')
-    // D17: chat is for everyone; ownership is the route's `userId` filter (others' chats are 404).
+    // Chat is for everyone; ownership is the route's `userId` filter (others' chats are 404).
     can('manage', 'Conversation')
-    // D7: anyone may start the example agent; members list/cancel their OWN runs (route filter),
+    // Anyone may start the example agent; members list/cancel their OWN runs (route filter),
     // admin+ (`isAdminLevel`) see and cancel every run in the tenant.
     can('manage', 'AgentRun')
-    // D18: anyone may ingest text and search; deleting someone else's document needs `delete
+    // Anyone may ingest text and search; deleting someone else's document needs `delete
     // Document` (admin+). The own-document delete is an explicit `ownerUserId` check in the route.
     can('create', 'Document')
-    // D33: anyone may rate an answer they can read (the service checks the target); reading the
+    // Anyone may rate an answer they can read (the service checks the target); reading the
     // ratings is admin+.
     can('create', 'Feedback')
   },
@@ -140,8 +137,8 @@ export function buildAbility(ctx: AbilityContext): AppAbility {
   const effective = getEffectiveRole(ctx)
   if (effective) {
     rolePermissions[effective](can, cannot, ctx)
-    // A plugin's rules run AFTER the kit's, over its OWN subjects (D31). Additive only: CASL has
-    // no way to take a rule back except `cannot`, and a plugin that revoked a kit grant would
+    // A plugin's rules run AFTER core's, over its OWN subjects. Additive only: CASL has
+    // no way to take a rule back except `cannot`, and a plugin that revoked a core grant would
     // change what every role may do by being installed.
     for (const plugin of serverPlugins) plugin.grants?.[effective]?.(can, cannot, ctx)
   }
@@ -154,7 +151,7 @@ export function emptyAbility(): AppAbility {
   return createMongoAbility<AppAbility>([])
 }
 
-/** Wire format for `/auth/session.permissions` (D13). */
+/** Wire format for `/auth/session.permissions`. */
 export function packRules(ability: AppAbility): PackedRule[] {
   return caslPackRules(ability.rules as RawRuleOf<AppAbility>[])
 }

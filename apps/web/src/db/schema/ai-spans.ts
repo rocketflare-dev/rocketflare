@@ -1,5 +1,5 @@
 /**
- * `ai_spans` — the local trace store (D32): every span the tracer records, batch-inserted in the
+ * `ai_spans` — the local trace store: every span the tracer records, batch-inserted in the
  * same flush that exports to OTLP, whether or not a backend is configured. It exists so an agent
  * (Claude Code, a developer at a terminal) can read a run's span tree with `rocketflare traces
  * show` — no vendor REST adapter, no credentials, and it works on a laptop with zero config.

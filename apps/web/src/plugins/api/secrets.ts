@@ -1,9 +1,9 @@
 /**
- * A tenant's credentials at rest, as a plugin stores them (D12, D31).
+ * A tenant's credentials at rest, as a plugin stores them.
  *
- * The same AES-256-GCM the kit uses for OAuth tokens and `ai_configs.api_key_enc`, keyed by
+ * The same AES-256-GCM core uses for OAuth tokens and `ai_configs.api_key_enc`, keyed by
  * `OAUTH_ENCRYPTION_KEY` — so a copy that rotates that key rotates every sealed value with it, and
- * a plugin never ships crypto of its own. The rules are the kit's:
+ * a plugin never ships crypto of its own. The rules are core's:
  *
  * - **Store the sealed string, in a `*_enc` column.** Never the plaintext, not even briefly.
  * - **Never return it.** A route answers `hasCredential: row.keyEnc !== null`, and the browser
@@ -43,9 +43,9 @@ export async function openSecret(config: PluginConfig, sealed: string): Promise<
 
 /**
  * A short-lived, tamper-evident token a plugin hands to a third party and gets back — the `state`
- * of an admin-consent round-trip, a webhook's per-subscription secret (D34).
+ * of an admin-consent round-trip, a webhook's per-subscription secret.
  *
- * Why not a cookie, as the kit's own login does: a consent redirect may come back in a different
+ * Why not a cookie, as the core login does: a consent redirect may come back in a different
  * browser from the one that started it (an admin forwarded the link), and a webhook has no browser
  * at all. So the binding (`tenantId`, `userId`, whatever the plugin needs) travels IN the token,
  * and the signature is what makes it trustworthy. It is signed, NOT encrypted — never put a

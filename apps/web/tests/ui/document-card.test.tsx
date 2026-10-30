@@ -1,5 +1,5 @@
 /**
- * `DocumentCard` (D18) — the compact form a document takes wherever it is cited. Two things are
+ * `DocumentCard` — the compact form a document takes wherever it is cited. Two things are
  * worth a test: what it renders (excerpt only when there is one, status only when it is not
  * `indexed`). The constraint that lets it live in the EAGER `components/shared` barrel while
  * `Markdown` may not — no markdown import — is asserted in `tests/config/ui-bundle.test.ts`.

@@ -1,5 +1,5 @@
 /**
- * Settings → Prompts (D17): the registry list with Default/Overridden badges; the editor inserts
+ * Settings → Prompts: the registry list with Default/Overridden badges; the editor inserts
  * `{{variables}}`, counts characters, previews with sample values, saves through `PUT` and resets
  * through `DELETE` after confirmation; a member gets a read-only view.
  */

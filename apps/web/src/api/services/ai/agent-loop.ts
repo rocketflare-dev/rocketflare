@@ -1,11 +1,9 @@
 /**
- * Agent kit (D17) — "how to call the client": prompt-cache breakpoint policy (`cachedSystem`,
+ * The agent loop — "how to call the client": prompt-cache breakpoint policy (`cachedSystem`,
  * `withRollingCacheBreakpoints`), forced structured output (`callStructuredTool`), the agentic
- * tool loop (`runToolLoop`, Phase 3b's engine) and the streaming conversational loop
+ * tool loop (`runToolLoop`, the agent runtime's engine) and the streaming conversational loop
  * (`runStreamingChat`, the chat route's engine). Everything is written against `ChatClient`, so a
  * fake client drives it in tests and every provider adapter benefits from the same policy.
- * Ported from the Node reference app's `agent-kit.ts`, minus its narration-buffering and speech
- * heuristics (the options are gone, not the loop).
  */
 
 import type Anthropic from '@anthropic-ai/sdk'
@@ -97,7 +95,7 @@ export interface Tool<Input = unknown> {
   /** Method syntax on purpose: bivariant params let a `Tool<{ q: string }>` sit in a `Tool[]`. */
   handler?(input: Input): Promise<string>
   /**
-   * Gate this call on a person (issue #17): the loop stops, asks, and runs the handler only on a
+   * Gate this call on a person: the loop stops, asks, and runs the handler only on a
    * `resolved` answer. Enforced by {@link runToolLoop}, never by the handler — a handler that
    * checks for itself is a handler that has already run.
    */
@@ -147,11 +145,11 @@ export function toToolDefinition(tool: Tool): ToolDefinition {
   }
 }
 
-// ---- Interrupts: the human-in-the-loop seam (issue #17) -------------------------------------
+// ---- Interrupts: the human-in-the-loop seam -------------------------------------
 
 /**
  * One question the loop needs answered before it can go on. It is not the row: the row lives in
- * `agent_run_interrupts` and is written by the runtime, because `kit.ts` knows nothing about a
+ * `agent_run_interrupts` and is written by the runtime, because `agent-loop.ts` knows nothing about a
  * database. `key` is what makes the two idempotent — `UNIQUE (run_id, key)` is why a re-entered
  * attempt finds the first ask's ANSWER instead of asking again.
  */
@@ -356,7 +354,7 @@ export interface ToolLoopCheckpoint {
   usage: TokenUsage
   /**
    * Milliseconds of active loop time across all attempts — what `policy.maxDurationSeconds`
-   * counts. Absent in a checkpoint written before D39, which reads as 0.
+   * counts. Absent in an older checkpoint, which reads as 0.
    */
   activeMs?: number
 }
@@ -477,7 +475,7 @@ export interface RunToolLoopOptions {
    */
   beforeTurn?: (turn: number) => Promise<ChatMessage[] | void>
   /**
-   * The run's limits and what running out means (D39, `AgentMeta.policy`) — pass the agent's
+   * The run's limits and what running out means (`AgentMeta.policy`) — pass the agent's
    * `meta.policy`. `maxTurns` above stays the ceiling. Without a policy the loop behaves as it
    * always has: it stops at `maxTurns` or on a turn with no tool call and hands back no answer.
    */
@@ -548,7 +546,7 @@ export interface ToolLoopResult {
 /**
  * Read the policy's two transcript-derived counters back out of a transcript: tool calls answered
  * (the terminal tool's answer is not one) and the run of error results at its end. Derived rather
- * than stored so a checkpoint from before D39 — or any resumed attempt — counts what really
+ * than stored so an older checkpoint — or any resumed attempt — counts what really
  * happened.
  */
 function countToolResults(
@@ -577,7 +575,7 @@ function isAllowed(decision: ToolAuthorization): { allow: boolean; reason?: stri
 
 /**
  * THE tool runner — both loops call it, so it is also where every tool execution becomes an
- * `execute_tool <name>` span (D32) under whatever span is active. Untraced when nothing is.
+ * `execute_tool <name>` span under whatever span is active. Untraced when nothing is.
  */
 function runHandler(
   tool: Tool | undefined,
@@ -622,7 +620,7 @@ type ToolUseBlock = Extract<ContentBlock, { type: 'tool_use' }>
  * Nothing else in the loop can produce this shape: every other path pushes a `user` turn of
  * `tool_result` blocks before it checkpoints. It matters because `runToolLoop`'s `while` opens with
  * `client.complete(messages)`, and sending an unanswered `tool_use` is a 400 on Anthropic and
- * garbage everywhere else — so without this a resumed run could never take its first turn (T1).
+ * garbage everywhere else — so without this a resumed run could never take its first turn.
  */
 function pendingToolUses(messages: ChatMessage[]): ToolUseBlock[] {
   const last = messages[messages.length - 1]
@@ -640,7 +638,7 @@ function pendingToolUses(messages: ChatMessage[]): ToolUseBlock[] {
  * checkpoint back as `resume` continues the same conversation with the turn and token counters
  * intact, so a retried Workflow step costs the turns it still owes rather than all of them again.
  *
- * It is also INTERRUPTIBLE (issue #17): a tool may declare `requiresApproval`, and a turn with an
+ * It is also INTERRUPTIBLE: a tool may declare `requiresApproval`, and a turn with an
  * unanswered gate checkpoints and raises {@link InterruptRequested} rather than running anything.
  * Two properties of that are load-bearing and easy to break:
  *
@@ -871,7 +869,7 @@ export async function runToolLoop(
 
     let nextEmitIndex = 0
     let emitPromise = Promise.resolve()
-    let emitError: unknown = undefined
+    let emitError: unknown
 
     const flushEmits = () => {
       emitPromise = emitPromise
@@ -996,7 +994,7 @@ export async function runToolLoop(
     return results
   }
 
-  // T1 — the resume path. A checkpoint whose last turn is an assistant message with unanswered
+  // The resume path. A checkpoint whose last turn is an assistant message with unanswered
   // tool calls is what parking leaves behind, and it must be answered BEFORE the `while` body ever
   // calls the model again. A gate that is STILL open (a second round, or a partly answered turn)
   // parks again rather than running anything.
@@ -1207,7 +1205,7 @@ export async function runStreamingChat(
     }
     messages.push({ role: 'assistant', content: result.content })
     const results: ContentBlock[] = []
-    // No interrupt gate here, deliberately (T3). Chat has no host that can park a turn — there is
+    // No interrupt gate here, deliberately. Chat has no host that can park a turn — there is
     // no Workflow to unwind and no `agent_runs` row to hold the answer — so a tool raising
     // `InterruptRequested` in a chat is a BUG, and `runHandler` turning it into an `isError` result
     // is what we want to see: a visible wrong answer rather than a stream that never terminates.

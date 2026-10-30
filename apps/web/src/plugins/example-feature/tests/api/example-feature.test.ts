@@ -1,17 +1,16 @@
 /**
- * The reference plugin's server behaviour (D31): the mount is dark until the flag is on, every
+ * The reference plugin's server behaviour: the mount is dark until the flag is on, every
  * query is scoped to one organisation, ownership is the route's own check, the ping route enqueues
  * rather than doing the work, and the agent tool answers the run's tenant.
  *
- * It lives inside the plugin because it tests the plugin — the division of labour the kit settled
- * on is that **a plugin tests its behaviour and the host tests that it is a well-formed plugin**
+ * It lives inside the plugin because it tests the plugin — the division of labour is
+ * that **a plugin tests its behaviour and the host tests that it is a well-formed plugin**
  * (`tests/config/plugins.test.ts`). `vitest.config.ts` discovers this directory, so it runs in the
- * host's `api` project against the host's real Postgres, exactly like a kit test.
+ * host's `api` project against the host's real Postgres, exactly like a core test.
  *
- * **It reaches the harness through `@testkit`, which is a DECLARED entry.** Before that existed
- * these were six-level relative climbs into `apps/web/tests/**` — five modules and twenty-one
- * symbols nobody had promised to keep — so a plugin's tests were the one part of it still pinned to
- * kit internals. They are in scope for the import rule now, like the rest of the plugin.
+ * **It reaches the harness through `@testkit`, which is a DECLARED entry**, never through
+ * relative climbs into `apps/web/tests/**` — symbols nobody has promised to keep. A plugin's
+ * tests are in scope for the import rule, like the rest of the plugin.
  *
  * **The tenant-isolation case below drives the REAL mount through `request(...)` as a second
  * tenant**, and that is deliberate rather than incidental. A context builder from `@testkit/unit`
@@ -47,8 +46,9 @@ import { makeCronCtx, makeJobCtx, makeToolCtx } from '@testkit/unit'
 import { and, eq, inArray } from 'drizzle-orm'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { allTables } from '@/plugins/api/peers'
+import { onTenantCreated } from '../../api/hooks'
 import { exampleNotes } from '../../db/schema'
-import { listExampleNotesTool } from '../../tools/list-example-notes'
+import { exampleAgentTools, listExampleNotesTool } from '../../tools/list-example-notes'
 
 const db = setupTestDatabase()
 
@@ -66,7 +66,7 @@ let memberId: string
  * and it is turned on for THIS FILE'S OWN organisations only, through an override. The platform
  * row exists solely to satisfy the override's foreign key and stays `off`.
  *
- * `feature_flags` is the KIT's table, so it is reached through `allTables()` — the declared way to
+ * `feature_flags` is a core table, so it is reached through `allTables()` — the declared way to
  * name the merged schema — and CALLED rather than read at module scope, because that module reads
  * the plugin barrel and a module-scope call closes the cycle with one side still `undefined`.
  */
@@ -249,7 +249,7 @@ describe('tenant isolation', () => {
 })
 
 describe('onTenantCreated', () => {
-  it('gives a brand-new organisation its welcome note, and only it', async () => {
+  it('writes nothing when the deployment does not ship the feature', async () => {
     const newcomer = await createTestUser(db)
     const cookie = {
       ...sessionCookieHeader(await createTestSession(db, newcomer.id, null)),
@@ -262,7 +262,18 @@ describe('onTenantCreated', () => {
     )
     expect(res.status).toBe(201)
     const { id } = await json<{ id: string }>(res)
+    // The platform flag is `off`, so a new organisation starts without the feature — and a hook
+    // that creates rows must not seed a surface nobody can reach.
     const rows = await db.select().from(exampleNotes).where(eq(exampleNotes.tenantId, id))
+    expect(rows).toHaveLength(0)
+  })
+
+  it('gives an organisation that starts with the feature its welcome note, once', async () => {
+    const tenant = await createTestTenant(db)
+    const ctx = { db, tenant, tenantId: tenant.id, userId: null, features: [EXAMPLE_FEATURE_FLAG] }
+    await onTenantCreated(ctx as never)
+    await onTenantCreated(ctx as never)
+    const rows = await db.select().from(exampleNotes).where(eq(exampleNotes.tenantId, tenant.id))
     // Exactly one, and unowned — the hook runs post-commit with no person attached to it.
     expect(rows).toHaveLength(1)
     expect(rows[0]?.ownerUserId).toBeNull()
@@ -283,7 +294,7 @@ describe('the ping route', () => {
   })
 })
 
-describe('features(tenantId) off-request (D34)', () => {
+describe('features(tenantId) off-request', () => {
   it('answers what the session would, for a tenant named per call, from a job and a cron', async () => {
     const dark = await createTestTenant(db)
     for (const ctx of [makeJobCtx({ db }), makeCronCtx({ db })]) {
@@ -293,7 +304,7 @@ describe('features(tenantId) off-request (D34)', () => {
   })
 })
 
-describe('the public ping link (D34)', () => {
+describe('the public ping link', () => {
   async function mintLink(headers: Record<string, string>) {
     const res = await request(`${BASE}/ping-link`, { method: 'POST', headers })
     expect(res.status).toBe(200)
@@ -337,6 +348,17 @@ describe('the public ping link (D34)', () => {
   it('is not reachable at an unauthenticated path the plugin did not declare', async () => {
     const res = await request('/api/hooks/example-feature/nope')
     expect(res.status).toBe(404)
+  })
+})
+
+describe('agentTools', () => {
+  it('offers the tool only to an organisation with the flag', async () => {
+    const dark = await createTestTenant(db)
+    const names = async (tenant: string) =>
+      (await exampleAgentTools(makeToolCtx({ db, tenantId: tenant }))).map(t => t.name)
+    expect(await names(tenantId)).toEqual(['list_example_notes'])
+    // Dark: no tool, so the prompt of every chat turn and run carries nothing for the feature.
+    expect(await names(dark.id)).toEqual([])
   })
 })
 

@@ -1,7 +1,7 @@
 /**
- * Tenant API keys (D12): `Authorization: Bearer <key>` on `/api/*`. Validation is one query (key →
- * creator → creator's membership in the key's tenant → tenant), then `revokedAt`/`expiresAt`
- * (neither reference app checked expiry), creator blocked, membership gone, tenant suspended.
+ * Tenant API keys: `Authorization: Bearer <key>` on `/api/*`. Validation is one query (key →
+ * creator → creator's membership in the key's tenant → tenant), then `revokedAt`/`expiresAt`,
+ * creator blocked, membership gone, tenant suspended.
  * `lastUsedAt` is stamped at most every 5 minutes, through `waitUntil`.
  */
 import type { MembershipRole, TenantStatus } from '@rocketflare/shared/tenants'

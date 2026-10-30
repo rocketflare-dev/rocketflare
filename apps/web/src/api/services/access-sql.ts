@@ -1,11 +1,11 @@
 /**
- * The pure SQL half of resource visibility (D29) — the part an installed PLUGIN may import.
+ * The pure SQL half of resource visibility — the part an installed PLUGIN may import.
  *
  * `services/access.ts` composes the registry, and to do that it reads the plugin barrel. So a
  * plugin's own visibility resource cannot import a value from it: the barrel imports the plugin,
  * the plugin imports the composer, and the cycle resolves with `serverPlugins` still `undefined`
  * at module evaluation — `VISIBILITY_RESOURCES` then throws on `undefined.flatMap` at import time,
- * which takes the whole Worker down rather than failing one request (D31, measured in Phase C).
+ * which takes the whole Worker down rather than failing one request.
  *
  * This file is therefore a LEAF: drizzle and nothing else. Everything here is re-exported from
  * `./access.ts`, so core code is unchanged and only a plugin has to know the distinction.

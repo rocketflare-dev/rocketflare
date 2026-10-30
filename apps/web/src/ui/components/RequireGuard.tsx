@@ -13,7 +13,7 @@ interface RequireGuardProps {
  * Route-level twin of the SideNav `guard` flag — the same `useNavGuard()` decides both, so a
  * visible link always leads to an openable page. Cosmetic only: the server enforces.
  *
- * Phase 1: `ProtectedRoute` (session + tenant) wraps the whole shell; this wraps sections:
+ * `ProtectedRoute` (session + tenant) wraps the whole shell; this wraps sections:
  *   <Route path="settings/*" element={<RequireGuard guard="admin"><SettingsLayout/></RequireGuard>} />
  */
 export function RequireGuard({ guard, children, redirectTo = '/' }: RequireGuardProps) {

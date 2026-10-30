@@ -1,7 +1,8 @@
 // @vitest-isolate
 // Mocks `@/api/services/ai/resolve` and swaps an entry of the shared `AGENTS` registry, so this file needs its own module registry.
+// Also mocks the plugin barrels to register the fixture agents (tests/helpers/fixture-agents.ts).
 /**
- * Agent volume (D39), one seam per describe:
+ * Agent volume, one seam per describe:
  *   - the exclusive index reads `agent_runs.concurrency_key`: an exclusive agent dedupes, a
  *     non-exclusive one runs side by side, and the two kinds of row never collide;
  *   - the tenant-wide gates: `AGENT_MAX_ACTIVE_RUNS_PER_TENANT` (429 `agent_runs_limit`) and the
@@ -13,7 +14,7 @@
  *     first error stops scheduling, and asks from several items merge into ONE park;
  *   - metering: every model call and decision is one `ai_usage` row carrying the run id, and a
  *     budget trip fails the run with event code `agent_budget_exceeded`;
- *   - replay (D38) over a run whose decisions are scoped by `ctx.map`.
+ *   - replay over a run whose decisions are scoped by `ctx.map`.
  */
 
 import {
@@ -32,8 +33,8 @@ import { AGENTS, type AgentContext, type AnyAgentDefinition } from '@/api/servic
 import { replayRun } from '@/api/services/agents/replay'
 import { enqueueRun, getRun, listEvents, requestCancel } from '@/api/services/agents/runs'
 import { claimStep, executeRun } from '@/api/services/agents/runtime'
+import { runToolLoop, type Tool } from '@/api/services/ai/agent-loop'
 import { AiError } from '@/api/services/ai/errors'
-import { runToolLoop, type Tool } from '@/api/services/ai/kit'
 import type { ChatClient } from '@/api/services/ai/types'
 import type { Logger } from '@/api/utils/core/logger'
 import { loadConfig } from '@/config'
@@ -42,8 +43,16 @@ import { agentRunEffects, agentRuns, aiUsage } from '@/db/schema'
 import { FakeChatClient } from '../helpers/ai'
 import { createTestSession, createTestTenantWithUser, sessionCookieHeader } from '../helpers/auth'
 import { setupTestDatabase } from '../helpers/db'
+import { FIXTURE_AGENT } from '../helpers/fixture-agents'
 import { json, request } from '../helpers/request'
 import { createTestEnv, stubs, type TestEnv } from '../mocks/bindings'
+
+vi.mock('@rocketflare/shared/plugins', async importOriginal =>
+  (await import('../helpers/fixture-agents')).withFixtureShared(await importOriginal())
+)
+vi.mock('@/plugins/server', async importOriginal =>
+  (await import('../helpers/fixture-agents')).withFixtureServer(await importOriginal())
+)
 
 const state: { client: ChatClient | null; asks: number } = { client: null, asks: 0 }
 
@@ -95,9 +104,9 @@ function fakeLogger() {
   return log as unknown as Logger & typeof log
 }
 
-const originalAgent = AGENTS['summarize-text']
+const originalAgent = AGENTS[FIXTURE_AGENT]
 
-/** `summarize-text`'s slot, with any schema, any body and whatever meta the test needs. */
+/** The fixture agent's slot, with any schema, any body and whatever meta the test needs. */
 function installAgent(
   run: (ctx: AgentContext) => Promise<unknown>,
   meta: Partial<AnyAgentDefinition['meta']> = {}
@@ -106,11 +115,11 @@ function installAgent(
     meta: { ...originalAgent.meta, inputSchema: z.any(), outputSchema: z.any(), ...meta },
     run,
   } as AnyAgentDefinition
-  AGENTS['summarize-text'] = agent
+  AGENTS[FIXTURE_AGENT] = agent
   return agent
 }
 
-/** A NON-exclusive agent with a real input schema in `summarize-text`'s slot — what batches take. */
+/** A NON-exclusive agent with a real input schema in the fixture agent's slot — what batches take. */
 const installBatchable = () =>
   installAgent(async () => ({}), {
     exclusive: false,
@@ -134,7 +143,7 @@ async function enqueueAndClaim(
 ) {
   const { run } = await enqueueRun(db, loadConfig(env), env, {
     tenantId,
-    agentKey: 'summarize-text',
+    agentKey: FIXTURE_AGENT,
     input,
     userId,
   })
@@ -169,7 +178,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
-  AGENTS['summarize-text'] = originalAgent
+  AGENTS[FIXTURE_AGENT] = originalAgent
 })
 
 // ---- the index ---------------------------------------------------------------------------------
@@ -178,7 +187,7 @@ describe('exclusive vs non-exclusive', () => {
   it('an exclusive agent dedupes onto its active run; the row says exclusive', async () => {
     const env = createTestEnv()
     const { user, tenant } = await createTestTenantWithUser(db, 'member')
-    const input = { tenantId: tenant.id, agentKey: 'summarize-text' as const, userId: user.id }
+    const input = { tenantId: tenant.id, agentKey: FIXTURE_AGENT, userId: user.id }
     const first = await enqueueRun(db, loadConfig(env), env, { ...input, input: { text: 'one' } })
     const second = await enqueueRun(db, loadConfig(env), env, { ...input, input: { text: 'two' } })
     expect(first.run.concurrencyKey).toBe('')
@@ -189,7 +198,7 @@ describe('exclusive vs non-exclusive', () => {
     const env = createTestEnv()
     installAgent(async () => ({}), { exclusive: false })
     const { user, tenant } = await createTestTenantWithUser(db, 'member')
-    const base = { tenantId: tenant.id, agentKey: 'summarize-text' as const, userId: user.id }
+    const base = { tenantId: tenant.id, agentKey: FIXTURE_AGENT, userId: user.id }
     const a = await enqueueRun(db, loadConfig(env), env, { ...base, input: { n: 1 } })
     const b = await enqueueRun(db, loadConfig(env), env, { ...base, input: { n: 2 } })
     expect(a.deduplicated).toBe(false)
@@ -201,7 +210,7 @@ describe('exclusive vs non-exclusive', () => {
     // may join the two non-exclusive ones for the same agent, and a second one is refused.
     const row = (exclusive: boolean) => ({
       tenantId: tenant.id,
-      agentKey: 'summarize-text' as const,
+      agentKey: FIXTURE_AGENT,
       status: 'queued' as const,
       input: {},
       concurrencyKey: exclusive ? '' : null,
@@ -230,7 +239,7 @@ describe('enqueue gates', () => {
       request(
         '/api/agents/runs',
         { method: 'POST', headers: a.cookie },
-        { env, json: { agentKey: 'summarize-text', input: { question } } }
+        { env, json: { agentKey: FIXTURE_AGENT, input: { question } } }
       )
     expect((await start('one')).status).toBe(202)
     expect((await start('two')).status).toBe(202)
@@ -250,7 +259,7 @@ describe('enqueue gates', () => {
       request(
         '/api/agents/runs',
         { method: 'POST', headers: a.cookie },
-        { env, json: { agentKey: 'summarize-text', input: { text: 'Some text.' } } }
+        { env, json: { agentKey: FIXTURE_AGENT, input: { text: 'Some text.' } } }
       )
     const first = createAgentRunResponseSchema.parse(await json(await start()))
     const again = await start()
@@ -264,7 +273,7 @@ describe('enqueue gates', () => {
     const a = await actor()
     const first = await enqueueRun(db, loadConfig(env), env, {
       tenantId: a.tenant.id,
-      agentKey: 'summarize-text',
+      agentKey: FIXTURE_AGENT,
       input: { question: 'one' },
       userId: a.user.id,
     })
@@ -272,7 +281,7 @@ describe('enqueue gates', () => {
     await db.insert(aiUsage).values({
       tenantId: a.tenant.id,
       agentRunId: first.run.id,
-      feature: 'agent:summarize-text',
+      feature: `agent:${FIXTURE_AGENT}`,
       provider: 'anthropic_compatible',
       model: 'claude-sonnet-4-5',
       costMicrocents: 500_000_000,
@@ -280,7 +289,7 @@ describe('enqueue gates', () => {
     const res = await request(
       '/api/agents/runs',
       { method: 'POST', headers: a.cookie },
-      { env, json: { agentKey: 'summarize-text', input: { question: 'two' } } }
+      { env, json: { agentKey: FIXTURE_AGENT, input: { question: 'two' } } }
     )
     expect(res.status).toBe(429)
     expect(await json(res)).toMatchObject({
@@ -301,12 +310,12 @@ describe('POST /api/agents/runs/batch', () => {
     installBatchable()
     const a = await actor()
     const res = await batch(a.cookie, env, {
-      agentKey: 'summarize-text',
+      agentKey: FIXTURE_AGENT,
       inputs: [{ question: 'first?' }, { question: '' }, { question: 'third?' }],
     })
     expect(res.status).toBe(202)
     const body = createAgentRunBatchResponseSchema.parse(await json(res))
-    expect(body).toMatchObject({ agentKey: 'summarize-text', created: 2, failed: 1 })
+    expect(body).toMatchObject({ agentKey: FIXTURE_AGENT, created: 2, failed: 1 })
     expect(body.items.map(i => i.index)).toEqual([0, 1, 2])
     expect(body.items[1]).toMatchObject({ run: null, error: { code: 'validation_failed' } })
     for (const i of [0, 2]) {
@@ -349,7 +358,7 @@ describe('POST /api/agents/runs/batch', () => {
       return options.id === poisoned
     }
     const res = await batch(a.cookie, env, {
-      agentKey: 'summarize-text',
+      agentKey: FIXTURE_AGENT,
       inputs: [{ question: 'a?' }, { question: 'b?' }, { question: 'c?' }],
     })
     expect(res.status).toBe(202)
@@ -372,7 +381,7 @@ describe('POST /api/agents/runs/batch', () => {
     const env = createTestEnv({ AGENT_MAX_ACTIVE_RUNS_PER_TENANT: '2' })
     const a = await actor()
     const exclusive = await batch(a.cookie, env, {
-      agentKey: 'summarize-text',
+      agentKey: FIXTURE_AGENT,
       inputs: [{ text: 'x' }],
     })
     expect(exclusive.status).toBe(400)
@@ -380,7 +389,7 @@ describe('POST /api/agents/runs/batch', () => {
 
     installBatchable()
     const over = await batch(a.cookie, env, {
-      agentKey: 'summarize-text',
+      agentKey: FIXTURE_AGENT,
       inputs: [{ question: '1' }, { question: '2' }, { question: '3' }],
     })
     expect(over.status).toBe(429)
@@ -391,7 +400,7 @@ describe('POST /api/agents/runs/batch', () => {
     expect(recorder(env).created).toEqual([])
 
     const tooMany = await batch(a.cookie, env, {
-      agentKey: 'summarize-text',
+      agentKey: FIXTURE_AGENT,
       inputs: Array.from({ length: 101 }, (_, i) => ({ question: `${i}` })),
     })
     expect(tooMany.status).toBe(400)
@@ -399,7 +408,7 @@ describe('POST /api/agents/runs/batch', () => {
     const anon = await request(
       '/api/agents/runs/batch',
       { method: 'POST' },
-      { env, json: { agentKey: 'summarize-text', inputs: [{ question: 'x' }] } }
+      { env, json: { agentKey: FIXTURE_AGENT, inputs: [{ question: 'x' }] } }
     )
     expect(anon.status).toBe(401)
   })
@@ -411,7 +420,7 @@ describe('POST /api/agents/runs/batch', () => {
     const b = await actor('owner')
     const body = createAgentRunBatchResponseSchema.parse(
       await json(
-        await batch(a.cookie, env, { agentKey: 'summarize-text', inputs: [{ question: 'x' }] })
+        await batch(a.cookie, env, { agentKey: FIXTURE_AGENT, inputs: [{ question: 'x' }] })
       )
     )
     const listed = paginatedResponse(agentRunSchema).parse(
@@ -601,7 +610,7 @@ describe('usage per run and budgets', () => {
         provider: 'anthropic_compatible',
         model: 'claude-sonnet-4-5',
         usage: { inputTokens: 5, outputTokens: 5 },
-        feature: 'agent:summarize-text:own-client',
+        feature: `agent:${FIXTURE_AGENT}:own-client`,
       })
       return {}
     })
@@ -610,13 +619,15 @@ describe('usage per run and budgets', () => {
     const rows = await db.query.aiUsage.findMany({ where: eq(aiUsage.tenantId, tenant.id) })
     expect(rows.every(r => r.agentRunId === params.runId)).toBe(true)
     expect(rows.map(r => r.feature).sort()).toEqual([
-      'agent:summarize-text',
-      'agent:summarize-text',
-      'agent:summarize-text:decide',
-      'agent:summarize-text:own-client',
+      `agent:${FIXTURE_AGENT}`,
+      `agent:${FIXTURE_AGENT}`,
+      `agent:${FIXTURE_AGENT}:decide`,
+      `agent:${FIXTURE_AGENT}:own-client`,
     ])
     // A priced model has its cost frozen on the row; TypeSafe has none and counts tokens only.
-    expect(rows.find(r => r.feature === 'agent:summarize-text')?.costMicrocents).toBeGreaterThan(0)
+    expect(rows.find(r => r.feature === `agent:${FIXTURE_AGENT}`)?.costMicrocents).toBeGreaterThan(
+      0
+    )
     expect(rows.find(r => r.feature.endsWith(':decide'))?.costMicrocents).toBeNull()
 
     // GET /runs/:id reports the sum.
@@ -692,7 +703,7 @@ describe('usage per run and budgets', () => {
     await db.insert(aiUsage).values({
       tenantId: tenant.id,
       agentRunId: params.runId,
-      feature: 'agent:summarize-text',
+      feature: `agent:${FIXTURE_AGENT}`,
       provider: 'anthropic_compatible',
       model: 'claude-sonnet-4-5',
       costMicrocents: 100_000_000,
@@ -712,7 +723,7 @@ describe('usage per run and budgets', () => {
   })
 })
 
-// ---- policy (issue #1) and usage per turn (issue #2) -------------------------------------------
+// ---- policy and usage per turn -----------------------------------------------------------------
 
 describe('policy and per-turn usage', () => {
   const lookup = {
@@ -784,7 +795,7 @@ describe('policy and per-turn usage', () => {
     expect(rows.map(r => r.inputTokens).sort()).toEqual([10, 20])
   })
 
-  it('a run cancelled mid-loop keeps a usage row for every turn it paid for (issue #2)', async () => {
+  it('a run cancelled mid-loop keeps a usage row for every turn it paid for', async () => {
     const env = createTestEnv()
     const { user, tenant } = await createTestTenantWithUser(db, 'member')
     const turn = {

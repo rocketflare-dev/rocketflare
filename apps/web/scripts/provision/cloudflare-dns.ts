@@ -6,7 +6,7 @@
  *     (…/resources/zones/methods/list/); a token without a Zone scope gets `result: []`, not an
  *     error, so "no zone" and "no zone permission" look alike — `hasAnyZone()` tells them apart
  *   - `GET /zones/{zone}/dns_records?per_page=1` is the cheapest proof the token can READ DNS in
- *     that zone (`assertDnsRead`); `Zone: DNS — Edit` is what the kit asks for, which implies it
+ *     that zone (`assertDnsRead`); `Zone: DNS — Edit` is what provisioning asks for, which implies it
  *   - `GET /zones/{zone}/dns_records?name=&type=&per_page=` and `POST /zones/{zone}/dns_records
  *     { type, name, content, ttl (1 = automatic), proxied, priority (MX), comment }` → `result.id`
  *     (…/resources/dns/subresources/records/methods/create/); `PUT …/dns_records/{id}` overwrites

@@ -1,11 +1,11 @@
 /**
- * API key contracts (D12, D13). The plaintext appears exactly once, in `createApiKeyResponseSchema`;
+ * API key contracts. The plaintext appears exactly once, in `createApiKeyResponseSchema`;
  * every list/read uses `apiKeySchema`, which carries only the prefix.
  */
 import { z } from 'zod'
 import { paginatedResponse } from './pagination'
 
-/** `*` = every scope — minted only by the CLI handoff (`GET /auth/cli`, D26). */
+/** `*` = every scope — minted only by the CLI handoff (`GET /auth/cli`). */
 export const apiKeyScopeSchema = z.enum(['read', 'write', '*'])
 export type ApiKeyScope = z.infer<typeof apiKeyScopeSchema>
 
@@ -36,6 +36,6 @@ export const createApiKeyResponseSchema = apiKeySchema.extend({
 })
 export type CreateApiKeyResponse = z.infer<typeof createApiKeyResponseSchema>
 
-/** `GET /api/keys` — paginated like every list (D13). */
+/** `GET /api/keys` — paginated like every list. */
 export const apiKeysListResponseSchema = paginatedResponse(apiKeySchema)
 export type ApiKeysListResponse = z.infer<typeof apiKeysListResponseSchema>

@@ -29,7 +29,7 @@ export interface NavItem {
   /** Optional count after the label */
   badge?: number
   /**
-   * A live count resolved by `useNavBadges()` (issue #17). Declared here rather than fetched here
+   * A live count resolved by `useNavBadges()`. Declared here rather than fetched here
    * so `navigationConfig` stays plain data and `filterNavConfig` stays a pure function.
    */
   badgeKey?: NavBadgeKey
@@ -45,23 +45,23 @@ export interface NavGroup {
 export type NavConfig = (NavItem | NavGroup)[]
 
 /**
- * The kit's navigation (D10: each `guard` is the SAME flag the route uses). Profile and
+ * The core navigation (each `guard` is the SAME flag the route uses). Profile and
  * Notifications live in the header `UserMenu`; apps add their own groups above "Organisation",
- * and an installed plugin (D31) does the same through `UiPlugin.nav` — see `composeNav` below.
+ * and an installed plugin does the same through `UiPlugin.nav` — see `composeNav` below.
  */
 const CORE_NAVIGATION: NavConfig = [
   {
     items: [
       { to: '/', label: 'Home', icon: HomeIcon },
-      // D17: every role may chat (ownership is the route's userId filter)
+      // Every role may chat (ownership is the route's userId filter)
       {
         to: '/chat',
         label: 'Chat',
         icon: ChatBubbleLeftRightIcon,
         guard: { action: 'read', subject: 'Conversation' },
       },
-      // D7: every role may start the example agent; members see their own runs
-      // The badge counts the asks waiting on THIS person (issue #17) and is fed by a nudge, never
+      // Every role may start the example agent; members see their own runs
+      // The badge counts the asks waiting on THIS person and is fed by a nudge, never
       // a poll. It is warning-toned because a parked agent is blocked until somebody answers.
       {
         to: '/agents',
@@ -71,7 +71,7 @@ const CORE_NAVIGATION: NavConfig = [
         badgeKey: 'agentsAwaiting',
         badgeTone: 'warning',
       },
-      // D18: the knowledge base is tenant-shared; every member may read and search
+      // The knowledge base is tenant-shared; every member may read and search
       {
         to: '/documents',
         label: 'Knowledge',
@@ -103,11 +103,11 @@ function isNavGroup(item: NavItem | NavGroup): item is NavGroup {
   return 'items' in item
 }
 
-/** Where a plugin group lands when it names no anchor: above the kit's "Organisation" group. */
+/** Where a plugin group lands when it names no anchor: above the core "Organisation" group. */
 export const DEFAULT_NAV_ANCHOR = 'Organisation'
 
 /**
- * Splice plugin nav groups into the kit's config (D31). Pure, so it is unit-tested rather than
+ * Splice plugin nav groups into the core config. Pure, so it is unit-tested rather than
  * reasoned about: a group is placed BEFORE the core group whose label it names, and appended when
  * that label is not there — which is what an app that deleted the anchor group gets, rather than a
  * plugin whose pages have no way in. Several groups naming the same anchor keep their declared
@@ -132,7 +132,7 @@ export function composeNav(core: NavConfig, plugins: readonly PluginNavGroup[] =
   return out
 }
 
-/** The kit's nav with every installed plugin's groups spliced in. */
+/** The core nav with every installed plugin's groups spliced in. */
 export const navigationConfig: NavConfig = composeNav(
   CORE_NAVIGATION,
   uiPlugins.flatMap(p => p.nav ?? [])

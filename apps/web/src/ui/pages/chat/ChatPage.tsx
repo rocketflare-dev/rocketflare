@@ -1,5 +1,5 @@
 /**
- * `/chat` and `/chat/:conversationId` (D17): a left rail of MY conversations (new, delete,
+ * `/chat` and `/chat/:conversationId`: a left rail of MY conversations (new, delete,
  * paginated) and the thread pane — `ChatBubble` list, the streaming assistant bubble from
  * `useSendMessage`, and the composer (Enter sends, Shift+Enter newline, Stop aborts). A tenant with
  * no chat provider (readiness `none`, or a 503 `ai_not_configured` from create/send) gets an
@@ -291,7 +291,7 @@ function Transcript({
 }) {
   const bottomRef = useRef<HTMLDivElement>(null)
   const count = messages?.length ?? 0
-  // D33: one query for the page's answers, not one per bubble.
+  // One query for the page's answers, not one per bubble.
   const answerIds = (messages ?? []).filter(m => m.role === 'assistant').map(m => m.id)
   const { data: myVotes } = useMyFeedback('message', answerIds)
 

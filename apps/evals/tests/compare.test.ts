@@ -1,4 +1,4 @@
-/** `pnpm eval`'s pure half (D33): reading a run report, baselines, and the regression compare. */
+/** `pnpm eval`'s pure half: reading a run report, baselines, and the regression compare. */
 import { describe, expect, it } from 'vitest'
 import {
   baselinesFrom,
@@ -44,9 +44,7 @@ const report = (cases: ReturnType<typeof assertion>[]) => ({
 
 describe('reading a run', () => {
   it('keys suites by path under suites/ and reads scores, usage and prompt hashes', () => {
-    expect(suiteId('/x/apps/evals/suites/agents/summarize-text.eval.ts')).toBe(
-      'agents-summarize-text'
-    )
+    expect(suiteId('/x/apps/evals/suites/agents/my-agent.eval.ts')).toBe('agents-my-agent')
     const [c] = extractCases(report([assertion('refund-window', { Rubric: 1, Contains: 0.5 })]))
     expect(c).toMatchObject({
       suite: 'chat-knowledge',

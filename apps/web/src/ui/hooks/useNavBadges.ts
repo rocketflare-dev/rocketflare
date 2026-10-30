@@ -1,5 +1,5 @@
 /**
- * Counts the SideNav renders beside an item (issue #17).
+ * Counts the SideNav renders beside an item.
  *
  * `navigationConfig` stays a plain const consumed by the pure, tested `filterNavConfig` — making it
  * a hook would put a React dependency inside the one piece of navigation that is currently data.

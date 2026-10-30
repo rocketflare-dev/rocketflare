@@ -5,7 +5,7 @@ import { getEnvironmentMarker } from '@/ui/lib/environment'
 
 /**
  * "Dev" / "Staging" badge in the header on non-production deployments, driven by the `env`
- * field of `/api/health` (D4) — not the hostname, since the same bundle is served everywhere.
+ * field of `/api/health` — not the hostname, since the same bundle is served everywhere.
  * Click hides it for the tab's lifetime (clean screenshots); a reload restores it.
  */
 export function EnvironmentBadge({ className = '' }: { className?: string }) {

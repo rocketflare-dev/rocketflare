@@ -1,18 +1,18 @@
 /**
- * The single read seam for "which AI client does this tenant get" (D17). Resolution order:
+ * The single read seam for "which AI client does this tenant get". Resolution order:
  *   chat:       tenant default `ai_configs(scope='chat')` → platform `ANTHROPIC_API_KEY` →
  *               `workers_ai` (`WORKERS_AI_CHAT_MODEL`) if `env.AI` → 503
  *   embeddings: tenant default `ai_configs(scope='embeddings')` → `workers_ai` if `env.AI` →
  *               `EMBEDDINGS_API_KEY` (OpenAI) → 503
  *   decisions:  tenant default `ai_configs(scope='decisions')` (TypeSafe) → platform
- *               `TYPESAFE_API_KEY` → the chat model on prompt key `agent-decide` (D37, the
+ *               `TYPESAFE_API_KEY` → the chat model on prompt key `agent-decide` (the
  *               uncalibrated `llm_self_report` fallback) → 503 from `resolveChat`
  * Credentials are decrypted here and nowhere else. `readiness()` mirrors both orders WITHOUT
  * building a client or throwing (the Home checklist must not turn a page load into a 503).
- * Feature code never queries `ai_configs`; the chat route, connection test and Phase 3b agents
+ * Feature code never queries `ai_configs`; the chat route, connection test and agents
  * all come through here — and tests mock this module (`vi.mock('@/api/services/ai/resolve')`).
  *
- * `promptKey` (D17, Phase 3b) consults `agent_models` FIRST: an assignment for `(tenant, promptKey)`
+ * `promptKey` consults `agent_models` FIRST: an assignment for `(tenant, promptKey)`
  * names a specific chat config (`aiConfigId`, else the tenant default) and/or a model override; the
  * chain is then assignment → tenant default → platform → 503. Only chat is assignable — embeddings
  * feed a different client shape and no agent runs on them.
@@ -221,7 +221,7 @@ export async function decisionsClientFromRow(
 }
 
 /**
- * The client behind `ctx.decide` (D37). `fallbackSystem` is the resolved `agent-decide` prompt —
+ * The client behind `ctx.decide`. `fallbackSystem` is the resolved `agent-decide` prompt —
  * the caller resolves it (prompts are read through `resolvePrompt`, which this module does not
  * import) and it is used only when the chain lands on the chat model.
  */

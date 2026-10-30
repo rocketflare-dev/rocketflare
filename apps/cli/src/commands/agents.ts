@@ -1,5 +1,5 @@
 /**
- * `rocketflare agents list|run|runs list` — start agent runs from a terminal (D39).
+ * `rocketflare agents list|run|runs list` — start agent runs from a terminal.
  *
  * `run <key> --input x.json` is one run (`POST /api/agents/runs`); `run <key> --batch x.jsonl` is
  * one run per line (`POST /api/agents/runs/batch`), sent in chunks of `AGENT_RUN_BATCH_MAX` — so a

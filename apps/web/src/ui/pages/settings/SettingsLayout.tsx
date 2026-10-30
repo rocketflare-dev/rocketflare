@@ -1,9 +1,9 @@
 /**
- * `/settings` (D10, D25): one page, tabs in `?tab=` (URLTabs) so links deep-link. The route is
+ * `/settings`: one page, tabs in `?tab=` (URLTabs) so links deep-link. The route is
  * behind `RequireGuard guard="admin"`; tabs whose content needs more (owner-only slug/delete)
- * gate inside. In single mode the heading reads "Workspace settings". AI tabs (D17, D18): `ai`
+ * gate inside. In single mode the heading reads "Workspace settings". AI tabs: `ai`
  * and `prompts` degrade to read-only inside; `agent-models` and `usage` are `manage AiConfig` only and hidden otherwise.
- * `groups` (D29) is `manage Group` only and hidden otherwise — a picker that 403s on save is worse
+ * `groups` is `manage Group` only and hidden otherwise — a picker that 403s on save is worse
  * than no tab.
  */
 import {
@@ -64,10 +64,10 @@ export default function SettingsLayout() {
         ]
       : []),
   ]
-  // D31: installed plugins add their tabs LAST, so the kit's order never moves under a reader.
+  // Installed plugins add their tabs LAST, so the core order never moves under a reader.
   // Each is handed `can` and decides for itself — a tab that would 403 on save is worse than none.
   // `can` is widened to strings on the way out, the same way a `NavGuard` pair is: a plugin's
-  // subjects are not in the kit's union until it is installed, and the ability takes them anyway.
+  // subjects are not in the core union until it is installed, and the ability takes them anyway.
   const pluginTabs: TabConfig[] = uiPlugins.flatMap(
     p =>
       p.settingsTabs?.({

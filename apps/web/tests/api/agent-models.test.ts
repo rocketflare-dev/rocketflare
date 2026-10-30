@@ -1,5 +1,5 @@
 /**
- * `/api/ai/agent-models` (D17) + the `resolveChat(..., { promptKey })` branch: the list covers every
+ * `/api/ai/agent-models` + the `resolveChat(..., { promptKey })` branch: the list covers every
  * registry prompt key with what the resolver WILL pick; an assignment to a second config and/or a
  * model changes `resolveChat`'s answer for THAT key only (`source: 'agent'`); a model-only
  * assignment keeps the default config; DELETE reverts (idempotent); deleting the assigned config
@@ -70,22 +70,16 @@ describe('/api/ai/agent-models', () => {
     expect(first.isDefault).toBe(true)
 
     let items = (await list(a.cookie)).items
-    // The kit's own prompt keys; an installed plugin's are listed too (D31).
+    // The core prompt keys; an installed plugin's are listed too.
     const core: readonly string[] = Object.keys(CORE_PROMPT_REGISTRY)
     expect(
       items
         .map(i => i.promptKey)
         .filter(key => core.includes(key))
         .sort()
-    ).toEqual([
-      'agent-decide',
-      'chat',
-      'chat-compaction',
-      'evals-judge',
-      'research-topic',
-      'summarize-text',
-      'triage-research',
-    ])
+    ).toEqual([...core].sort())
+    // The core non-example prompts are always there; an example agent's comes and goes with it.
+    expect(core).toEqual(expect.arrayContaining(['agent-decide', 'chat', 'chat-compaction']))
     for (const item of items) {
       expect(item.assignment).toBeNull()
       expect(item.effective).toEqual({
@@ -98,18 +92,18 @@ describe('/api/ai/agent-models', () => {
 
     // Assign the agent to the second config with an explicit model.
     const put = await request(
-      '/api/ai/agent-models/summarize-text',
+      '/api/ai/agent-models/agent-decide',
       { method: 'PUT', headers: a.cookie },
       { env, json: { aiConfigId: second.id, model: 'claude-opus-4-1-20250805' } }
     )
     expect(put.status).toBe(200)
     expect(agentModelAssignmentSchema.parse(await json(put))).toMatchObject({
-      promptKey: 'summarize-text',
+      promptKey: 'agent-decide',
       aiConfigId: second.id,
       model: 'claude-opus-4-1-20250805',
     })
     items = (await list(a.cookie)).items
-    expect(items.find(i => i.promptKey === 'summarize-text')?.effective).toEqual({
+    expect(items.find(i => i.promptKey === 'agent-decide')?.effective).toEqual({
       source: 'assignment',
       provider: 'anthropic',
       model: 'claude-opus-4-1-20250805',
@@ -117,7 +111,7 @@ describe('/api/ai/agent-models', () => {
     })
     expect(items.find(i => i.promptKey === 'chat')?.effective.configId).toBe(first.id)
 
-    const agent = await resolveChat(db, cfg, env, a.tenant.id, { promptKey: 'summarize-text' })
+    const agent = await resolveChat(db, cfg, env, a.tenant.id, { promptKey: 'agent-decide' })
     expect(agent).toMatchObject({
       source: 'agent',
       model: 'claude-opus-4-1-20250805',
@@ -159,7 +153,7 @@ describe('/api/ai/agent-models', () => {
       (await request(`/api/ai/config/${second.id}`, { method: 'DELETE', headers: a.cookie })).status
     ).toBe(204)
     expect(
-      await resolveChat(db, cfg, env, a.tenant.id, { promptKey: 'summarize-text' })
+      await resolveChat(db, cfg, env, a.tenant.id, { promptKey: 'agent-decide' })
     ).toMatchObject({
       source: 'tenant',
       model: 'claude-sonnet-4-5',
@@ -180,21 +174,21 @@ describe('/api/ai/agent-models', () => {
       model: DEFAULT_MODELS.anthropic,
     })
     await request(
-      '/api/ai/agent-models/summarize-text',
+      '/api/ai/agent-models/agent-decide',
       { method: 'PUT', headers: a.cookie },
       { env: platform, json: { model: 'claude-opus-4-1' } }
     )
     items = agentModelsListResponseSchema.parse(
       await json(await request('/api/ai/agent-models', { headers: a.cookie }, { env: platform }))
     ).items
-    expect(items.find(i => i.promptKey === 'summarize-text')?.effective).toEqual({
+    expect(items.find(i => i.promptKey === 'agent-decide')?.effective).toEqual({
       source: 'assignment',
       provider: 'anthropic',
       model: 'claude-opus-4-1',
     })
     expect(
       await resolveChat(db, loadConfig(platform), platform, a.tenant.id, {
-        promptKey: 'summarize-text',
+        promptKey: 'agent-decide',
       })
     ).toMatchObject({ source: 'agent', provider: 'anthropic', model: 'claude-opus-4-1' })
     items = (await list(a.cookie)).items

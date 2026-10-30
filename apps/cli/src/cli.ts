@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * CLI entry point (D26). Wires commander to the thin command modules; the ONE place that maps
+ * CLI entry point. Wires commander to the thin command modules; the ONE place that maps
  * errors to exit codes (0 ok · 1 error · 2 not logged in · 3 forbidden) and prints them. Global
  * `--server <url>` and `--json` apply to every command. The bin name comes from `package.json`.
  */
@@ -255,7 +255,7 @@ config.command('path').description('print the config file path').action(action(r
 
 // ---- plugins -------------------------------------------------------------------------------
 
-// Installed plugins register LAST (D31), so `--help` lists the kit's commands first and a plugin's
+// Installed plugins register LAST, so `--help` lists the built-in commands first and a plugin's
 // under its own id. They get the same `action()` wrapper, and so the same context, error printer
 // and exit-code mapping as everything above.
 for (const plugin of cliPlugins) plugin.register(program, action)

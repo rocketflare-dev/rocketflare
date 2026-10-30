@@ -1,7 +1,7 @@
 // @vitest-isolate
 // Mocks `@/api/services/ai/resolve` (the chat and decisions seams), so this file needs its own module registry.
 /**
- * `triage-research` (D37) end to end over a really-ingested document, with a scripted decisions
+ * `triage-research` end to end over a really-ingested document, with a scripted decisions
  * engine, on all three routes: the screen keeps the passage and the answer cites only kept
  * documents; a screen that keeps nothing answers "not covered" with no model call; an unsure
  * `answerable` escalates to `research-topic`. The `ctx.decide` contract itself is

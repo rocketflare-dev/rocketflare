@@ -1,16 +1,16 @@
 /**
- * The nav side of a feature flag (D30, D31), driven through the REAL `useNavGuard`.
+ * The nav side of a feature flag, driven through the REAL `useNavGuard`.
  *
  * It lives inside the plugin because the item it looks for is the plugin's: the flag, the nav
  * entry, the route and the page all arrive and leave together, and a test that outlived them would
  * be a false failure the day somebody runs `pnpm plugin remove example-feature`. What it exercises
- * is the KIT's guard, through `SideNav`, with this plugin's group spliced in by `composeNav` — so
- * it is also the proof that a plugin's nav item obeys exactly the rules a kit one does.
+ * is the CORE guard, through `SideNav`, with this plugin's group spliced in by `composeNav` — so
+ * it is also the proof that a plugin's nav item obeys exactly the rules a core one does.
  *
- * Driving the real hook is the whole point. An app on this kit wrote this test against a
- * re-implementation of the guard logic, and the re-implementation is precisely what hid the bug it
- * was meant to catch: the server gate read the CASL ability, where a global admin's `manage all`
- * satisfies every `Feature:` subject, so unreleased routes were open to platform staff. Anything
+ * Driving the real hook is the whole point. A test written against a re-implementation of the
+ * guard logic hides precisely the bug it is meant to catch: a gate that reads the CASL ability,
+ * where a global admin's `manage all` satisfies every `Feature:` subject, opens unreleased routes
+ * to platform staff. Anything
  * here that re-derives what the hook does is worthless.
  *
  * So: every assertion runs for an OWNER (who holds every tenant permission) and for a GLOBAL ADMIN
@@ -21,7 +21,7 @@ import { EXAMPLE_FEATURE_FLAG } from '@rocketflare/shared/plugins/example-featur
 import { screen } from '@testing-library/react'
 import { makeSession, makeUser, renderWithProviders, rulesFor } from '@testkit/integration'
 import { describe, expect, it } from 'vitest'
-// The kit's own sidebar and its own guard composer, through the two declared UI entries — the
+// The core sidebar and its own guard composer, through the two declared UI entries — the
 // COMPONENTS half for what renders, the WIRING half for the vocabulary. Driving the real ones is
 // the entire value of this file; see the note below on what a re-implementation hid.
 import { SideNav } from '@/plugins/api/ui'

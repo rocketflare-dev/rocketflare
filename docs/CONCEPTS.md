@@ -374,7 +374,7 @@ Server: `api/services/{ai,agents}/**` (read their `CLAUDE.md`), `services/prompt
   in checkpoints and never in chat history. Each adapter recovers ONCE from a refusal the traits
   misjudged (thinking, sampling, forced tool, effort, a replayed block's signature) and remembers
   it. So an unknown id costs one call, and it is read as the newest generation.
-- **Kit** (`services/ai/kit.ts`): `runStreamingChat`, `runToolLoop`, `callStructuredTool`, prompt
+- **Kit** (`services/ai/agent-loop.ts`): `runStreamingChat`, `runToolLoop`, `callStructuredTool`, prompt
   caching helpers. Prompts are code (`PROMPT_REGISTRY`) with per-tenant override rows.
 - **AG-UI is the wire protocol (D28)**: `@ag-ui/core` is pinned exactly and imported only by
   `shared/src/ai/agui.ts`. The kit emits 15 events plus a `kit.` CUSTOM namespace (apps use their
@@ -705,17 +705,24 @@ cycle). Detail: `packages/shared/CLAUDE.md`.
   "this is the kit", asked only through `readManifest()`), `history[]`, `retiredSurfaces`
   (never deleted), and the **surface manifest**. Surfaces are `example`, `optional-feature` and
   `plugin`, each with an anchor file whose existence is its presence (delete the anchor to opt
-  out). Every other path is `neverPort`, `kitOnly`, `manual` or `core`; `kit-manifest.test.ts`
-  requires 100% coverage.
-- **Kit-only tests** (`kitOnly`, `apps/web/tests/kit-only/**`, vitest project `kit-only`): the tests
-  true of the kit repository and of nothing made from it — porting notes and the root version being
-  the kit's, the release/rename machinery, the maintainer hooks, plugin CI, the manifest's kit-state
-  claims. The kit's gate runs them (`pnpm test` names the project only while its directory
-  exists); `scripts/rename.mjs` deletes them when a copy is born, together with the kit's own
-  workflows, also `kitOnly` — `kit.yml`, `plugin-ci.yml`, `notify-plugins.yml`; `classifyPath` never ports one (the TARGET kit's list too, and `KIT_ONLY_PATHS` is the
+  out). Every other path is `neverPort`, `kitOnly`, `manual` or `core`; the kit's own
+  `tests/kit-only/kit-manifest.test.ts` requires 100% coverage — an app's new paths never appear in
+  a kit diff, so a copy owes the manifest nothing for them.
+- **Kit-only files** (`kitOnly`): what is true of the kit repository and of nothing made from it.
+  Its tests (`apps/web/tests/kit-only/**`, vitest project `kit-only`) — porting notes and the root
+  version being the kit's, the release/rename machinery, the maintainer hooks, plugin CI, the
+  manifest's kit-state claims, the Launch conformance checker's own tests, the kit's doc guards —
+  which the kit's gate runs (`pnpm test` names the project only while its directory exists); its
+  workflows (`kit.yml`, `plugin-ci.yml`, `notify-plugins.yml`); its maintainer scripts
+  (`release.mjs`, the two nudges and `nudge-lib`, `default-plugins.mjs`, `install.sh`); and its
+  project files (`CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, the pending porting notes
+  `docs/upgrades/unreleased.md`). `scripts/rename.mjs` deletes them when a
+  copy is born, and with them every package.json script (`kit:release`) and `.claude/settings.json`
+  hook that names one (`stripKitOnlyWiring`, `stripKitOnlyHooks`); it also writes the app its own
+  `SECURITY.md` and drops `retiredSurfaces`. `classifyPath` never ports one (the TARGET kit's list too, and `KIT_ONLY_PATHS` is the
   floor for a pre-0.15.8 manifest); `tests/config/kit-manifest.test.ts` fails a copy that carries
-  one, and `kit.yml`'s renamed-copy gate asserts none survive and passes at an app version
-  (`1.2.3`).
+  one or a script or hook that calls one, and `kit.yml`'s renamed-copy gate asserts none survive
+  and passes at an app version (`1.2.3`).
 - **The Launch kit contract** (`launch.kit.json`, D36): what the kit calls things and how Launch
   drives an app made from it — the scaffold (`rename.mjs`, `kitOnly`, `postInit`, the app manifest
   `.rocketflare.json` whose `kit.id` Launch reads), the two tomls and the `{slug}-{suffix}` naming
@@ -736,7 +743,7 @@ cycle). Detail: `packages/shared/CLAUDE.md`.
   the real ids Launch's `write_config` commits; `--provisioned` (deploy.yml) wants real ids
   everywhere. **No test judges the checkout it runs in** — config tests travel into every copy,
   which Launch renames and provisions: the checker's and the manifest shape's tests run on a fixture
-  kit (`tests/config/fixtures/kit-fixture.mjs`, shared with the meta-kit, which also provisions it
+  kit (`tests/kit-only/fixtures/kit-fixture.mjs`, shared with the meta-kit, which also provisions it
   the way `write_config` does), the toml patcher's on a snapshot of the shipped tomls; the kit's
   own files are judged by `kit.yml` and `tests/kit-only/` (`launch-kit-manifest.test.ts` checks the
   VALUES against the bootstrap, the dev server, the tomls and the RLS role).
@@ -745,9 +752,12 @@ cycle). Detail: `packages/shared/CLAUDE.md`.
   so an app's releases never read as kit releases. Which kit it came from lives in one place,
   `.rocketflare.json` `kit.version`; the upgrade never ports the root version or `CHANGELOG.md`
   (`manual` / `neverPort`), so the two numbers never meet again.
-- **Porting notes**: one `docs/upgrades/X.Y.Z.md` per release (frontmatter + four headings), with
-  `unreleased.md` accumulating. CI fails a PR touching `apps/**`/`packages/**` without an entry,
-  and the tag gate refuses a release without one. `pnpm kit:release` writes everything.
+- **Porting notes** (kit repository only): one `docs/upgrades/X.Y.Z.md` per release (frontmatter +
+  four headings), with `unreleased.md` accumulating. `kit.yml` fails a PR touching
+  `apps/**`/`packages/**` without an entry, and the tag gate refuses a release without one.
+  `pnpm kit:release` writes everything. An app writes none: `kit:upgrade` reads the notes from the
+  kit's mirror, not from the copy's `docs/upgrades/`, and the copy releases by bumping its root
+  version and tagging.
 - **`scripts/upgrade.mjs`**: a blobless mirror in `.upgrade/`. It classifies paths, drops absent
   surfaces and plugin-owned files, translates through the same `applyReplacements()` as the rename,
   then patches with `--reject` as a fallback. It **never** applies kit migrations (snapshots are
@@ -760,11 +770,12 @@ cycle). Detail: `packages/shared/CLAUDE.md`.
   once per session, with the CHANGELOG summaries and a pointer to `/rf-upgrade`. Copies only, a
   fresh `startup` only, never in CI, `ROCKETFLARE_UPDATE_CHECK=0` to silence; any failure is
   silence.
-- **The kit reminds its own maintainers too**: two `PreToolUse` hooks on `git commit` —
+- **The kit reminds its own maintainers too** (kit repository only — both scripts and their hook
+  entries are `kitOnly`, so a copy never runs them): two `PreToolUse` hooks on `git commit` —
   `changelog-nudge.mjs` (source changed, no `unreleased.md` entry) and `release-site-nudge.mjs`
   (root `package.json` version changed → update rocketflare.dev after tagging). Both answer with
   `hookSpecificOutput.additionalContext`, because a `PreToolUse` hook's plain stdout reaches only
-  the debug log. Silent in a copy.
+  the debug log.
 - **Released history is never rewritten** — every copy pins a commit.
 
 **Known gaps:** a copy pinned before 0.10.1 has no update hook until it upgrades (and
@@ -772,8 +783,11 @@ cycle). Detail: `packages/shared/CLAUDE.md`.
 only for a GitHub-hosted kit; tomls and `.dev.vars.example` are diffed, not merged; the reject rate is not
 predicted; pre-manifest copies need `--adopt`; no partial upgrades; nothing checks the adopter ran
 migrations; lockstep plugin releases bump every plugin in a monorepo; a copy on 0.15.7 or older deletes
-its kit-only tests by hand once (its upgrader predates `kitOnly`); the release and rename SCRIPTS
-still ship to copies (they refuse to run in an app), only their tests are kit-only; `kit:upgrade` shows
+its kit-only tests by hand once (its upgrader predates `kitOnly`); a copy renamed before 0.24.0
+keeps the maintainer scripts, `CONTRIBUTING.md`/`CODE_OF_CONDUCT.md` and the two nudge hooks until
+it deletes them by hand (`kit:upgrade` stops porting a `kitOnly` file but never deletes one — that
+release's note lists them); the rename script itself and `rf-adapt` stay in a copy (`neverPort`),
+because Launch's scaffold runs the rename and nothing is left to rename after it; `kit:upgrade` shows
 `launch.kit.json` as a `manual` diff translated through the token map, so a hunk touching its `kit`
 block reads as renamed (keep the kit's id and name); a copy that predates the contract gets
 `kit.id` only by following that release's porting note; `plugins.add` cannot express an entry
@@ -781,7 +795,7 @@ without a `subdir` (`--subdir` refuses an empty value), which no default plugin 
 
 ## 14. Definition of done for the kit
 
-A fresh agent can clone and run `bash scripts/bootstrap.sh` with zero credentials and land signed in
+Kit repository only — the bar the kit itself is held to before a release. A fresh agent can clone and run `bash scripts/bootstrap.sh` with zero credentials and land signed in
 on a populated demo workspace. From there it must be able to:
 
 - rename the copy (`/rf-adapt`)
@@ -886,8 +900,9 @@ as merging a PR. A plugin repo mirrors the host tree and ships **no migration, n
   (`plugin-ci.yml`) and in `kit.yml` — not in an app's `pnpm gate`, because an undeclared import
   compiles and passes the tests and only breaks at the next upgrade, where the check stops it first.
 - **Agent tools**: `agentTools(ctx)` may be async and may return `[]`. That is how a tool reaches
-  only the tenants that turned it on: the plugin reads its own settings row for `ctx.scope.tenantId`.
-  A builder that throws is logged and skipped. `buildAgentTools` is therefore async.
+  only the tenants that turned it on: the plugin reads its own settings row for `ctx.scope.tenantId`,
+  or its flag through `ToolCtx.features()` (`example-feature` does — a dark feature then costs no
+  prompt tokens). A builder that throws is logged and skipped. `buildAgentTools` is therefore async.
 - **Credentials**: a plugin stores a tenant's key with `sealSecret` / `openSecret` from
   `@/plugins/api`. That is the kit's AES-GCM under `OAUTH_ENCRYPTION_KEY`, with a 503 when the key
   is unset. Store the sealed value in a `*_enc` column and answer `hasCredential`.

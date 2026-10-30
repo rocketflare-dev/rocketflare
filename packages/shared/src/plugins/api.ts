@@ -1,5 +1,5 @@
 /**
- * The shared plugin API (D31) — what a plugin's CONTRACT module imports from the kit.
+ * The shared plugin API — what a plugin's CONTRACT module imports from the host.
  *
  * A plugin's shared entry is the one of its four published files that all three consumers read, so
  * it is also the one with the strictest rule about what IT may read. Two constraints shape this

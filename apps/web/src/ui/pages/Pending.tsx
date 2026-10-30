@@ -1,5 +1,5 @@
 /**
- * `/pending` (D9, approval mode): the holding page for a signed-in person with no organisation.
+ * `/pending` (approval mode): the holding page for a signed-in person with no organisation.
  * Shows the access request's status; lets them lodge one (or add a note) via
  * `POST /api/access-requests` with the shared `createAccessRequestSchema`.
  */

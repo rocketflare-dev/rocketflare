@@ -1,5 +1,5 @@
 /**
- * `/api/feedback` (D33): thumbs on AI answers.
+ * `/api/feedback`: thumbs on AI answers.
  *
  * - `POST /` — rate an assistant message or an agent run (`create Feedback`, every member). The
  *   service proves the caller can READ the target; a foreign id is 404. Voting again replaces the

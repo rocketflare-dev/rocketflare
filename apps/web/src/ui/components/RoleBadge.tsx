@@ -1,4 +1,4 @@
-/** Membership role chip (D10). Classes come from a finite prop → safelisted in index.css. */
+/** Membership role chip. Classes come from a finite prop → safelisted in index.css. */
 import type { MembershipRole } from '@rocketflare/shared/tenants'
 
 const ROLE_CLASS: Record<MembershipRole, string> = {

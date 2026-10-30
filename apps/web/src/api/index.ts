@@ -1,5 +1,5 @@
 /**
- * Hono app assembly (04 §10, D5, D13). Middleware order is load-bearing — see
+ * Hono app assembly. Middleware order is load-bearing — see
  * middleware/CLAUDE.md before reordering. `export { app }` only: the Worker entry
  * (`src/worker.ts`) adds `queue`/`scheduled`, and tests drive `app.request(path, init, env, ctx)`
  * without dragging Worker-only classes into Node.
@@ -59,8 +59,8 @@ app.notFound(notFoundHandler)
 /**
  * The runtime's own namespace, answered BEFORE the logger so it never reaches the app at all.
  * `wrangler dev` sends its reload control to the Worker on `/cdn-cgi/ProxyWorker/pause|play`
- * whenever its internal auth header does not match the ProxyWorker's, and the SPA catch-all used to
- * answer those with `index.html` and a 200 — wrong, and a stream of `GET /cdn-cgi/ProxyWorker/pause
+ * whenever its internal auth header does not match the ProxyWorker's, and the SPA catch-all would
+ * otherwise answer those with `index.html` and a 200 — wrong, and a stream of `GET /cdn-cgi/ProxyWorker/pause
  * 200` lines burying the app's own in the dev log. Cloudflare answers `/cdn-cgi/*` at the edge in
  * production, so nothing legitimate arrives here. Miniflare's own endpoints (`/cdn-cgi/local/…`,
  * the local cron trigger) never reach the Worker — it handles them itself.
@@ -84,7 +84,7 @@ app.use('*', csrfProtection)
 // 8. Per-request DB client — last of the globals because it is the first thing with real cost.
 app.use('*', databaseMiddleware)
 
-// 9. Per-request tracer (D32): OTLP export when a backend is configured + the `ai_spans` store; flushed in
+// 9. Per-request tracer: OTLP export when a backend is configured + the `ai_spans` store; flushed in
 //    `waitUntil` after the handler. Streaming routes flush again before their stream closes.
 app.use('/api/*', tracerMiddleware)
 
@@ -99,13 +99,13 @@ app.use('/api/admin/*', globalAdminMiddleware)
 app.route('/api/admin', adminRouter)
 // WebSocket upgrade resolves the cookie itself (no authMiddleware: browsers can't set headers here).
 app.route('/ws', wsRouter)
-// A mount may carry a third element: a feature gate (D30). `requireFeature('x')` 404s
+// A mount may carry a third element: a feature gate. `requireFeature('x')` 404s
 // `feature_disabled` on every route beneath the prefix, so a surface that ships dark is dark as a
 // WHOLE rather than route by route — declared once here, like auth, instead of remembered in each
-// handler. The kit ships no gated mount; an app adds `['/api/thing', thingRouter, requireFeature('thing')]`.
+// handler. Core ships no gated mount; an app adds `['/api/thing', thingRouter, requireFeature('thing')]`.
 // Remember the other doors too: a surface with no nav entry (an analytics cube, a dashboard
 // template, a CLI command) leaks independently of this one.
-// D34: a plugin's PUBLIC mounts — consent callbacks and webhooks a third party calls with no
+// A plugin's PUBLIC mounts — consent callbacks and webhooks a third party calls with no
 // session. Only under `/api/hooks/<plugin id>` (the config test refuses anything else, and refuses
 // an authed mount there), so this line is the whole of the plugin-owned unauthenticated surface.
 // Before the authed table, which never claims `/api/hooks`, so order is belt and braces.
@@ -132,17 +132,17 @@ const mounts: readonly (readonly [string, Hono<AppEnv>, MiddlewareHandler?])[] =
   ['/api/ai/documents', aiDocumentsRouter],
   ['/api/chat', chatRouter],
   // A protocol surface with its own auth story, mounted beside chat rather than under it: this
-  // list is the enumerable auth surface (D13).
+  // list is the enumerable auth surface.
   ['/api/agui', aguiRouter],
   ['/api/agents', agentsRouter],
-  // D32: the local AI trace store, read by `rocketflare traces` — admin+ (`read Trace`).
+  // The local AI trace store, read by `rocketflare traces` — admin+ (`read Trace`).
   ['/api/traces', tracesRouter],
-  // D33: thumbs on AI answers (member create; admin+ read) and the eval-case export (admin+).
+  // Thumbs on AI answers (member create; admin+ read) and the eval-case export (admin+).
   ['/api/feedback', feedbackRouter],
   ['/api/evals', evalsRouter],
-  // D31: installed plugins, last, so a plugin can never shadow a kit prefix — Hono matches in
+  // Installed plugins, last, so a plugin can never shadow a core prefix — Hono matches in
   // registration order. Each mount gets `authMiddleware` and its own optional gate exactly like a
-  // kit mount; the convention is `/api/<plugin id>`, and `tests/config/plugins.test.ts` is what
+  // core mount; the convention is `/api/<plugin id>`, and `tests/config/plugins.test.ts` is what
   // keeps two plugins from claiming the same one.
   ...serverPlugins.flatMap(p => p.mounts ?? []),
 ]

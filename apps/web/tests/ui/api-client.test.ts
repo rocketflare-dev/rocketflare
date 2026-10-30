@@ -83,7 +83,7 @@ describe('api-client', () => {
     expect(handler.mock.calls[0][0]).toMatchObject({ status: 401, code: 'unauthorized' })
   })
 
-  it('is a no-op on 401 when no handler is registered (Phase 0) and stays usable after', async () => {
+  it('is a no-op on 401 when no handler is registered and stays usable after', async () => {
     stubFetch(() => jsonResponse({ error: 'Unauthorized', statusCode: 401 }, 401))
     await expect(api.get('/api/a')).rejects.toBeInstanceOf(ApiError)
     await new Promise(r => setTimeout(r, 0))

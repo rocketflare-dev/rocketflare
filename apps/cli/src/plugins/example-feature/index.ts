@@ -1,5 +1,5 @@
 /**
- * `rocketflare example-feature …` — the reference plugin's CLI half (D31).
+ * `rocketflare example-feature …` — the reference plugin's CLI half.
  *
  * Two commands, one per pattern an app usually needs:
  *
@@ -23,7 +23,7 @@ import {
   exampleNoteSchema,
   examplePingResponseSchema,
 } from '@rocketflare/shared/plugins/example-feature/index'
-// The CLI plugin API (D31) — one declared entry, rather than three reaches into the kit's internals.
+// The CLI plugin API — one declared entry, rather than three reaches into the CLI's internals.
 import type { CliPlugin, CommandContext } from '../api'
 import { formatDate, formatPagination, renderTable, requireClient } from '../api'
 

@@ -1,5 +1,5 @@
 /**
- * The "well-formed plugin" suite (D31, decisions 8 and 9).
+ * The "well-formed plugin" suite.
  *
  * The division of labour: **a plugin tests its behaviour; the host tests that it is a well-formed
  * plugin.** A plugin's own tests live inside its directory and run in this same suite once it is
@@ -396,7 +396,7 @@ describe('installed plugins', () => {
     expect(
       issues,
       'A plugin imports only from declared entries and receives everything else as injected ' +
-        'context (D31). Each line below carries its replacement.'
+        'context. Each line below carries its replacement.'
     ).toEqual([])
   })
 })
@@ -433,10 +433,8 @@ describe('the closed sets a plugin opens', () => {
     // The envelope narrows per type — what a handler is handed, and the reason `runHandler`'s
     // switch could go: this is the property that switch existed to provide.
     expectTypeOf<JobOf<'chat.compact'>['payload']['conversationId']>().toEqualTypeOf<string>()
-    // The kit's own agent keys, pinned exactly; the installed union may only be wider.
-    expectTypeOf<(typeof CORE_AGENT_KEYS)[number]>().toEqualTypeOf<
-      'summarize-text' | 'research-topic' | 'triage-research'
-    >()
+    // The installed agent-key union may only be wider than the kit's own (which keys those are
+    // is the app's business: each example agent is a removable surface).
     expectTypeOf<(typeof CORE_AGENT_KEYS)[number]>().toMatchTypeOf<AgentKey>()
     // A plugin's subjects union in beside the kit's; naming one is that plugin's own test.
     expectTypeOf<'Document'>().toMatchTypeOf<Subjects>()

@@ -1,11 +1,11 @@
 /**
- * Settings → People (D10): members (role select, remove) and pending invitations (resend, revoke),
+ * Settings → People: members (role select, remove) and pending invitations (resend, revoke),
  * plus the invite modal (one address, or a bulk paste). Who may do what:
  *   - `manage TenantMember` (admin+) → change roles, remove, invite
  *   - explicit `role === 'owner'` (or global admin) → touch owner rows / assign owner
  *   - `support` rows are read-only (not an assignable role)
  * Invitation "copy link" appears only when the server includes a `token` on the row.
- * Groups (D29) come back on the member row itself — one query for the page, never one per group —
+ * Groups come back on the member row itself — one query for the page, never one per group —
  * and "Edit groups" opens `MemberGroupsModal` for `manage Group`.
  */
 
@@ -61,7 +61,7 @@ function MembersPanel({ onInvite }: { onInvite?: () => void }) {
   const [editingGroups, setEditingGroups] = useState<Member | null>(null)
 
   const canManage = can('manage', 'TenantMember')
-  // D29: the Groups column shows for everyone (a badge is not a secret); editing is `manage Group`.
+  // The Groups column shows for everyone (a badge is not a secret); editing is `manage Group`.
   const canManageGroups = can('manage', 'Group')
   const canManageOwners = tenant?.role === 'owner' || isGlobalAdmin
   const members = data?.items ?? []

@@ -1,5 +1,5 @@
 /**
- * Invite people (D9): one address (`inviteMemberRequestSchema`) or a pasted list
+ * Invite people: one address (`inviteMemberRequestSchema`) or a pasted list
  * (`bulkInviteRequestSchema`, ≤ BULK_INVITE_MAX). The owner role is offered only to owners.
  */
 import {

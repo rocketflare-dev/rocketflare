@@ -1,5 +1,5 @@
 /**
- * The chat inspector (D17): `GET /api/chat/conversations/:id/stats` and
+ * The chat inspector: `GET /api/chat/conversations/:id/stats` and
  * `POST /:id/compact`. Three things matter here — the gate (admin+ ON TOP of ownership, so it
  * widens what an owner sees about their own thread and never whose threads are visible), the
  * arithmetic (the panel must agree with the window the next turn will actually send), and the

@@ -1,4 +1,4 @@
-/** Every committed dataset parses with the shared `EvalCase` schema, and bad lines say where (D33). */
+/** Every committed dataset parses with the shared `EvalCase` schema, and bad lines say where. */
 import { readdirSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { DATASETS_DIR, loadDataset, parseDataset } from '../kit/dataset'
@@ -8,13 +8,8 @@ describe('datasets', () => {
     .filter(f => f.endsWith('.jsonl'))
     .map(f => f.replace(/\.jsonl$/, ''))
 
-  it('ships the four starter datasets', () => {
-    expect(names.sort()).toEqual([
-      'knowledge-chat',
-      'research-topic',
-      'summarize-text',
-      'triage-research',
-    ])
+  it('ships the knowledge-chat starter dataset (each example agent ships its own beside it)', () => {
+    expect(names).toContain('knowledge-chat')
   })
 
   for (const name of names) {

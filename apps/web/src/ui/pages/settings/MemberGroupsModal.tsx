@@ -1,5 +1,5 @@
 /**
- * One person's groups, edited from the People page (D29): checkboxes grouped by type, saved as a
+ * One person's groups, edited from the People page: checkboxes grouped by type, saved as a
  * whole set (`PUT /api/members/:userId/groups`). Editing from the person rather than from the
  * group is what makes "this new starter belongs in Finance and EMEA" one dialog.
  */

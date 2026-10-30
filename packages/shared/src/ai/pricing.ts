@@ -1,5 +1,5 @@
 /**
- * Model prices (D18) — the table that turns the token ledger into money.
+ * Model prices — the table that turns the token ledger into money.
  *
  * `ai_usage` records tokens because tokens are a fact; a price is a guess about someone else's
  * rate card. This file is that guess, kept in ONE place so an app can correct it without touching
@@ -36,7 +36,7 @@ export interface ModelPrice {
  */
 export const MODEL_PRICES: Partial<Record<AiProvider, Record<string, ModelPrice>>> = {
   // Claude list prices (platform.claude.com/docs/en/about-claude/pricing). `cacheWrite` is the
-  // 5-minute write, the only cache the kit asks for. The 4.5+ Opus models dropped to $5/$25 while
+  // 5-minute write, the only cache the app asks for. The 4.5+ Opus models dropped to $5/$25 while
   // Opus 4 / 4.1 stayed at $15/$75, so each has its own prefix; longest match wins.
   anthropic: {
     'claude-fable-5-1': { input: 10, output: 50, cacheRead: 0.25, cacheWrite: 12.5 },

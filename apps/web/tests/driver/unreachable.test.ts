@@ -1,5 +1,5 @@
 /**
- * D35: a database that cannot be reached is a 503 `database_unavailable` under EITHER driver, not
+ * A database that cannot be reached is a 503 `database_unavailable` under EITHER driver, not
  * a 500. postgres.js reports a code (`ECONNREFUSED`); Neon hides the transport failure under
  * `NeonDbError.sourceError`, and its WebSocket pool fails a transaction with a bare `ErrorEvent`.
  * Probed against a port nothing listens on, through `openDatabase` as the Worker does.

@@ -1,5 +1,5 @@
 /**
- * Provider catalog (D17) — DATA only, no SDK imports. What each provider can do, what a config row
+ * Provider catalog — DATA only, no SDK imports. What each provider can do, what a config row
  * for it must carry, and its presets. `scopes` is the "an adapter exists" gate: a provider is only
  * offered for a scope `client.ts` can build a client for, so a saveable-but-unusable row can never
  * be created. Read by `routes/ai-config.ts` (validation) and served to the settings form.
@@ -171,7 +171,7 @@ export const PROVIDERS: readonly ProviderInfo[] = [
     },
   },
   {
-    // D37: typed judgments with probabilities, never text — so `decisions` is its ONLY scope, and
+    // Typed judgments with probabilities, never text — so `decisions` is its ONLY scope, and
     // `decisions` has no other provider (the chat-model fallback is implicit, not a row).
     id: 'typesafe',
     name: 'TypeSafe (Jev)',

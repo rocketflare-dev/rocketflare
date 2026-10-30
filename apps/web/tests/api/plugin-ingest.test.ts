@@ -1,5 +1,5 @@
 /**
- * Knowledge ingest on the plugin surface (D34), against real Postgres:
+ * Knowledge ingest on the plugin surface, against real Postgres:
  * `ingestDocument` / `ingestDocumentFile` / `deleteIngestedDocument` with an `externalId` — a second
  * ingest of the same `(tenant, source, externalId)` UPDATES the row (text, owner, grants, chunks,
  * the stored original) instead of adding one; another source or tenant may reuse the id; delete

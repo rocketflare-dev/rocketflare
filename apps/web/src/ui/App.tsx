@@ -1,8 +1,8 @@
 /**
- * Providers + route table (06 §b, D20, D25).
+ * Providers + route table.
  *
  * Provider order: ErrorBoundary → QueryClientProvider → AuthProvider → AbilityProvider →
- * WebSocketProvider (D8: connects once authenticated with a tenant, invalidates queries on events)
+ * WebSocketProvider (connects once authenticated with a tenant, invalidates queries on events)
  * → BrowserRouter (NavigationBridge, ScrollToTop, routes, ToastContainer).
  *
  * Route tiers: public (`/login`, `/magic-link/sent`, `/magic-link/confirm`, `/invite/:token`);
@@ -50,12 +50,12 @@ const Profile = lazy(() => import('@/ui/pages/Profile'))
 const Notifications = lazy(() => import('@/ui/pages/Notifications'))
 const Activity = lazy(() => import('@/ui/pages/Activity'))
 const SettingsLayout = lazy(() => import('@/ui/pages/settings/SettingsLayout'))
-// D17: its own chunk — the markdown renderer must not ride in the main bundle.
+// Its own chunk — the markdown renderer must not ride in the main bundle.
 const ChatPage = lazy(() => import('@/ui/pages/chat/ChatPage'))
-// D7: also carries the markdown renderer (run transcripts) — lazy for the same reason.
+// Also carries the markdown renderer (run transcripts) — lazy for the same reason.
 const AgentsPage = lazy(() => import('@/ui/pages/agents/AgentsPage'))
 const RunPage = lazy(() => import('@/ui/pages/agents/RunPage'))
-// D18: the knowledge base — ingest/upload + list on /documents, hybrid search on /search.
+// The knowledge base — ingest/upload + list on /documents, hybrid search on /search.
 const DocumentsPage = lazy(() => import('@/ui/pages/documents/DocumentsPage'))
 const SearchPage = lazy(() => import('@/ui/pages/documents/SearchPage'))
 // The detail page — no SideNav entry; it is reached from the list, from Search and from a citation.
@@ -80,9 +80,9 @@ const ReactQueryDevtools =
     : null
 
 /**
- * Routes contributed by installed plugins (D31), for one tier. Rendered from the SAME `RequireGuard`
+ * Routes contributed by installed plugins, for one tier. Rendered from the SAME `RequireGuard`
  * the nav item uses, so a plugin link can no more point at a page its reader cannot open than a
- * kit one can. `Component` is always a `lazy()` wrapper — checked in the source by
+ * core one can. `Component` is always a `lazy()` wrapper — checked in the source by
  * `tests/config/plugins.test.ts` — so a plugin's pages never reach the main bundle.
  */
 function pluginRoutes(tier: PluginRouteTier) {
@@ -156,7 +156,7 @@ function ShellRoutes() {
               </RequireGuard>
             }
           />
-          {/* D7 + issue #17: the list and the run are two pages. A run is something a person is
+          {/* The list and the run are two pages. A run is something a person is
               asked to ACT on, arrives at from a notification and comes back to — so it has its own
               route and its own lazy chunk, not a modal over the list. */}
           <Route

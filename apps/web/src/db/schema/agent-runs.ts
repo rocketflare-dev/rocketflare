@@ -1,5 +1,5 @@
 /**
- * `agent_runs` — one row per agent run (D7): the durable claim record behind `AGENT_RUN_WORKFLOW`.
+ * `agent_runs` — one row per agent run: the durable claim record behind `AGENT_RUN_WORKFLOW`.
  * A row is inserted `queued` BEFORE the Workflow instance is created (id = run id); the `claim`
  * step flips it to `running` with `UPDATE … WHERE status IN ('queued','running') RETURNING` — the
  * row IS the idempotency gate, so a retried step re-claims and a settled row is a no-op.
@@ -79,7 +79,7 @@ export const agentRuns = pgTable(
      */
     checkpoint: jsonb('checkpoint'),
     /**
-     * The run's OTLP trace id (D32) — derived from the run id (`traceIdForRun`), so every Workflow
+     * The run's OTLP trace id — derived from the run id (`traceIdForRun`), so every Workflow
      * step lands in one trace without carrying anything; stored so a reader need not know the rule.
      */
     traceId: text('trace_id'),
@@ -89,14 +89,14 @@ export const agentRuns = pgTable(
      * `<caller key>` = one active run per key, NULL = none (runs freely).
      */
     concurrencyKey: text('concurrency_key'),
-    /** D39: the `POST /runs/batch` call that created the row — `GET /runs?batchId=`. */
+    /** The `POST /runs/batch` call that created the row — `GET /runs?batchId=`. */
     batchId: uuid('batch_id'),
     ...timestamps(),
   },
   table => [
     index('agent_runs_tenant_agent_status_idx').on(table.tenantId, table.agentKey, table.status),
     index('agent_runs_tenant_created_idx').on(table.tenantId, table.createdAt.desc()),
-    // The EXCLUSIVE guarantee (D7): at most one active run per (tenant, agent, slot), by the
+    // The EXCLUSIVE guarantee: at most one active run per (tenant, agent, slot), by the
     // database. A row with no slot (NULL `concurrency_key`, a non-exclusive agent — one person's
     // conversation, where two people at once is the normal case) is outside it.
     // The predicate is `ACTIVE_RUN_STATUSES`, which INCLUDES `awaiting_input`: a run parked on a
@@ -108,7 +108,7 @@ export const agentRuns = pgTable(
       .where(
         sql`${table.status} IN (${sql.raw(ACTIVE_STATUS_LITERALS)}) AND ${table.concurrencyKey} IS NOT NULL`
       ),
-    // D39: the per-tenant concurrency cap counts active rows on every enqueue.
+    // The per-tenant concurrency cap counts active rows on every enqueue.
     index('agent_runs_tenant_status_idx').on(table.tenantId, table.status),
     index('agent_runs_tenant_batch_idx')
       .on(table.tenantId, table.batchId)

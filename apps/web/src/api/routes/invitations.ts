@@ -1,5 +1,5 @@
 /**
- * `/api/invitations` (D9, D10): pending list (read), create / bulk / resend / revoke (`manage
+ * `/api/invitations`: pending list (read), create / bulk / resend / revoke (`manage
  * Invitation`), plus the tenant-free `GET /pending` — invitations addressed to MY email across
  * tenants (the login-prologue banner). The public token routes live in `invite.ts`.
  */

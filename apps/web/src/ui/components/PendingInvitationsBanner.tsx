@@ -1,5 +1,5 @@
 /**
- * Invitations waiting for the signed-in email, across tenants (D9) — so a member of one org can
+ * Invitations waiting for the signed-in email, across tenants — so a member of one org can
  * join another without hunting for the email. Renders nothing when there are none. Links to
  * `/invite/<token>` when the server includes the token (see `pendingInvitationSchema`).
  */

@@ -1,5 +1,5 @@
 /**
- * What is actually going on behind a chat thread (D17) — the data the chat inspector renders.
+ * What is actually going on behind a chat thread — the data the chat inspector renders.
  *
  * Everything here is DERIVED: from the stored rows, the live config and the shared price table.
  * Nothing is cached and nothing is written, so there is no second source of truth to drift from the
@@ -27,9 +27,9 @@ import type { ConversationRow, MessageRow } from '../../../db/schema'
 import { fullAccessScope } from '../access'
 import { buildAgentTools } from '../agents/tools'
 import { resolvePrompt } from '../prompts'
+import { toToolDefinition } from './agent-loop'
 import { pendingCompaction, selectHistoryWindow, withSummary } from './chat-history'
 import { CHARS_PER_TOKEN } from './chunking'
-import { toToolDefinition } from './kit'
 import { readiness } from './resolve'
 import type { AiEnv, SystemPrompt } from './types'
 

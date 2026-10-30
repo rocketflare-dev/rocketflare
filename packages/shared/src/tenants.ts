@@ -1,5 +1,5 @@
 /**
- * Tenant, membership and invitation contracts (D9, D10, D13, D25). `tenantRoleSchema` is what an
+ * Tenant, membership and invitation contracts. `tenantRoleSchema` is what an
  * invitation or role change may ASSIGN; `membershipRoleSchema` is what a membership row may HOLD
  * (adds `support`, minted only from /admin). Keep the assignable one on every input schema and the
  * validator refuses `support` for free.
@@ -92,7 +92,7 @@ export const updateTenantRequestSchema = z
   })
 export type UpdateTenantRequest = z.infer<typeof updateTenantRequestSchema>
 
-/** `DELETE /api/tenant` — the caller retypes the slug; owner only (D10, D25). */
+/** `DELETE /api/tenant` — the caller retypes the slug; owner only. */
 export const deleteTenantRequestSchema = z.object({
   confirm: z.string().trim().min(1),
 })
@@ -110,7 +110,7 @@ export const memberSchema = z.object({
   /** NULL = invited but never signed in. */
   lastLoginAt: z.coerce.date().nullable(),
   invitedByUserId: z.string().uuid().nullable(),
-  /** D29 — the member's groups, resolved in the SAME query as the list (never one call per group). */
+  /** The member's groups, resolved in the SAME query as the list (never one call per group). */
   groups: z.array(groupRefSchema),
 })
 export type Member = z.infer<typeof memberSchema>

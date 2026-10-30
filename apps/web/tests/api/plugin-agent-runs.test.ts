@@ -1,7 +1,8 @@
 // @vitest-isolate
 // Swaps an entry of the shared `AGENTS` registry, so this file needs its own module registry.
+// Also mocks the plugin barrels to register the fixture agents (tests/helpers/fixture-agents.ts).
 /**
- * A plugin starting an agent run from a background context (D7, D31) — `ctx.startAgentRun` on
+ * A plugin starting an agent run from a background context — `ctx.startAgentRun` on
  * `JobCtx`, `CronCtx` and `EmailCtx`, through the route's own `enqueueRun`:
  *   - a started run is a `queued` row on the Workflow, nudged, with an activity row; the caller
  *     gets its id; `triggeredBy` is the requester, omitted it is a system run;
@@ -14,9 +15,10 @@
  *   - `storage()` on `ToolCtx` and `AgentCtx` is the `FILES` bucket, 503 without it.
  */
 
+import type { AgentKey } from '@rocketflare/shared/ai/agents'
 import { makeCronCtx, makeEmailCtx, makeJobCtx, makeToolCtx } from '@testkit/unit'
 import { and, eq } from 'drizzle-orm'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
 import { traceIdForRun } from '@/api/observability/trace-ids'
 import { AGENTS, type AgentContext, type AnyAgentDefinition } from '@/api/services/agents/registry'
@@ -26,15 +28,23 @@ import { agentCtx } from '@/plugins/api/ai'
 import type { JobCtx } from '@/plugins/api/jobs'
 import { createTestTenantWithUser } from '../helpers/auth'
 import { setupTestDatabase } from '../helpers/db'
+import { FIXTURE_AGENT, FIXTURE_AGENT_B } from '../helpers/fixture-agents'
 import { createTestEnv, stubs, type TestEnv } from '../mocks/bindings'
+
+vi.mock('@rocketflare/shared/plugins', async importOriginal =>
+  (await import('../helpers/fixture-agents')).withFixtureShared(await importOriginal())
+)
+vi.mock('@/plugins/server', async importOriginal =>
+  (await import('../helpers/fixture-agents')).withFixtureServer(await importOriginal())
+)
 
 const db = setupTestDatabase()
 
-const originalAgent = AGENTS['summarize-text']
+const originalAgent = AGENTS[FIXTURE_AGENT]
 
-/** A non-exclusive agent with a real input schema in `summarize-text`'s slot. */
+/** A non-exclusive agent with a real input schema in the fixture agent's slot. */
 function installAgent(meta: Partial<AnyAgentDefinition['meta']> = {}) {
-  AGENTS['summarize-text'] = {
+  AGENTS[FIXTURE_AGENT] = {
     meta: {
       ...originalAgent.meta,
       exclusive: false,
@@ -47,7 +57,7 @@ function installAgent(meta: Partial<AnyAgentDefinition['meta']> = {}) {
 }
 
 afterEach(() => {
-  AGENTS['summarize-text'] = originalAgent
+  AGENTS[FIXTURE_AGENT] = originalAgent
 })
 
 function recorder(env: TestEnv) {
@@ -62,7 +72,7 @@ const runRow = async (id: string) =>
 /** The shape of the motivating case: a `receipts.prepare` job, once the document's text is ready. */
 async function prepareReceipt(ctx: JobCtx, payload: { tenantId: string; documentId: string }) {
   return ctx.startAgentRun({
-    agentKey: 'summarize-text',
+    agentKey: FIXTURE_AGENT,
     tenantId: payload.tenantId,
     input: { documentId: payload.documentId },
     idempotencyKey: `receipt:${payload.documentId}`,
@@ -83,7 +93,7 @@ describe('ctx.startAgentRun', () => {
     const row = await runRow(started.runId)
     expect(row).toMatchObject({
       tenantId: tenant.id,
-      agentKey: 'summarize-text',
+      agentKey: FIXTURE_AGENT,
       status: 'queued',
       input: { documentId },
       requestedByUserId: null,
@@ -104,7 +114,7 @@ describe('ctx.startAgentRun', () => {
       {
         type: 'agent_run.requested',
         userId: null,
-        metadata: { agentKey: 'summarize-text', via: 'plugin' },
+        metadata: { agentKey: FIXTURE_AGENT, via: 'plugin' },
       },
     ])
     expect(ctx.startedRuns).toEqual([
@@ -120,7 +130,7 @@ describe('ctx.startAgentRun', () => {
     const env = createTestEnv()
     const { tenant, user } = await createTestTenantWithUser(db, 'member')
     const { runId } = await makeJobCtx({ db, env }).startAgentRun({
-      agentKey: 'summarize-text',
+      agentKey: FIXTURE_AGENT,
       tenantId: tenant.id,
       input: { documentId: crypto.randomUUID() },
       triggeredBy: user.id,
@@ -132,7 +142,7 @@ describe('ctx.startAgentRun', () => {
     installAgent()
     const env = createTestEnv()
     const { tenant } = await createTestTenantWithUser(db, 'owner')
-    const input = { agentKey: 'summarize-text' as const, tenantId: tenant.id }
+    const input = { agentKey: FIXTURE_AGENT, tenantId: tenant.id }
     const cron = makeCronCtx({ db, env })
     const email = makeEmailCtx({ db, env })
     const a = await cron.startAgentRun({ ...input, input: { documentId: crypto.randomUUID() } })
@@ -206,11 +216,11 @@ describe('idempotencyKey', () => {
 
   it('derives a stable UUID from (tenant, agent, key)', async () => {
     const t = crypto.randomUUID()
-    const id = await idempotentRunId(t, 'summarize-text', 'k')
+    const id = await idempotentRunId(t, FIXTURE_AGENT, 'k')
     expect(id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-8[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/)
-    expect(await idempotentRunId(t, 'summarize-text', 'k')).toBe(id)
-    expect(await idempotentRunId(t, 'research-topic', 'k')).not.toBe(id)
-    expect(await idempotentRunId(crypto.randomUUID(), 'summarize-text', 'k')).not.toBe(id)
+    expect(await idempotentRunId(t, FIXTURE_AGENT, 'k')).toBe(id)
+    expect(await idempotentRunId(t, FIXTURE_AGENT_B, 'k')).not.toBe(id)
+    expect(await idempotentRunId(crypto.randomUUID(), FIXTURE_AGENT, 'k')).not.toBe(id)
   })
 
   it('a create() failure leaves no row under the derived id, so the retry starts the run', async () => {
@@ -223,11 +233,7 @@ describe('idempotencyKey', () => {
 
     workflow.failCreate = () => true
     await expect(prepareReceipt(ctx, payload)).rejects.toThrow(/could not create/)
-    const runId = await idempotentRunId(
-      tenant.id,
-      'summarize-text',
-      `receipt:${payload.documentId}`
-    )
+    const runId = await idempotentRunId(tenant.id, FIXTURE_AGENT, `receipt:${payload.documentId}`)
     expect(await runRow(runId)).toBeUndefined()
     expect(ctx.startedRuns[0]?.error).toBeInstanceOf(Error)
 
@@ -242,13 +248,13 @@ describe('idempotencyKey', () => {
     const env = createTestEnv()
     const { tenant } = await createTestTenantWithUser(db, 'owner')
     const documentId = crypto.randomUUID()
-    const runId = await idempotentRunId(tenant.id, 'summarize-text', `receipt:${documentId}`)
+    const runId = await idempotentRunId(tenant.id, FIXTURE_AGENT, `receipt:${documentId}`)
     // What a caller that died between the insert and `create()` leaves behind.
     await db.insert(agentRuns).values({
       id: runId,
       traceId: traceIdForRun(runId),
       tenantId: tenant.id,
-      agentKey: 'summarize-text',
+      agentKey: FIXTURE_AGENT,
       status: 'queued',
       input: { documentId },
     })
@@ -271,7 +277,7 @@ describe('the route’s gates apply', () => {
     const { tenant } = await createTestTenantWithUser(db, 'owner')
     await expect(
       makeJobCtx({ db, env }).startAgentRun({
-        agentKey: 'summarize-text',
+        agentKey: FIXTURE_AGENT,
         tenantId: tenant.id,
         input: { documentId: 'not-a-uuid' },
       })
@@ -283,7 +289,7 @@ describe('the route’s gates apply', () => {
     const { tenant } = await createTestTenantWithUser(db, 'owner')
     await expect(
       makeJobCtx({ db }).startAgentRun({
-        agentKey: 'no-such-agent' as 'summarize-text',
+        agentKey: 'no-such-agent' as AgentKey,
         tenantId: tenant.id,
         input: {},
       })
@@ -330,7 +336,7 @@ describe('the route’s gates apply', () => {
     expect(ctx.startedRuns).toEqual([
       {
         input: {
-          agentKey: 'summarize-text',
+          agentKey: FIXTURE_AGENT,
           tenantId,
           input: { documentId },
           idempotencyKey: `receipt:${documentId}`,

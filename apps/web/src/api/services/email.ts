@@ -1,5 +1,5 @@
 /**
- * Transactional email over Resend's REST API via `fetch` (no SDK) — D16 zero-creds rule: when
+ * Transactional email over Resend's REST API via `fetch` (no SDK) — the zero-creds rule: when
  * `RESEND_API_KEY` is absent nothing is sent, the message (and its link) is logged at `info` so
  * every flow still works locally, and the result says `delivered: false`. Templates share one
  * plain, brandable shell driven by `APP_NAME`.

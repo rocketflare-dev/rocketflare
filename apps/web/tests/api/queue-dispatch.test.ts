@@ -1,5 +1,5 @@
 /**
- * The Worker's `queue()` export (D7): routes every environment's jobs queue by prefix
+ * The Worker's `queue()` export: routes every environment's jobs queue by prefix
  * (`rocketflare-jobs`, `rocketflare-jobs-staging`) to the jobs consumer, and acks a batch from
  * any queue it does not know so a stray binding cannot retry forever.
  */

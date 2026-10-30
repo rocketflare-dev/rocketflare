@@ -1,9 +1,9 @@
 // @vitest-isolate
 // Mocks the server plugin barrel, so this file needs its own module registry.
 /**
- * `ServerPlugin.agentTools` (D31) may be async and may answer per tenant — that is how a plugin
+ * `ServerPlugin.agentTools` may be async and may answer per tenant — that is how a plugin
  * offers a tool only to the tenants that turned it on. A builder that throws is logged and left
- * out; the run still gets the kit's three and every other plugin's. And `sealSecret`/`openSecret`,
+ * out; the run still gets the three built-in ones and every other plugin's. And `sealSecret`/`openSecret`,
  * the one way a plugin stores a tenant's credential.
  */
 import { describe, expect, it, vi } from 'vitest'
@@ -40,7 +40,7 @@ vi.mock('@/plugins/server', () => {
 
 const env = createTestEnv()
 const cfg = loadConfig(env)
-// The kit's tools only close over `db`; building the list never queries.
+// The built-in tools only close over `db`; building the list never queries.
 const db = {} as Database
 
 async function toolNames(tenantId: string) {

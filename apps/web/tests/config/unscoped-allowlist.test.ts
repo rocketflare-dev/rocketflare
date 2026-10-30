@@ -1,5 +1,5 @@
 /**
- * The cross-tenant allow-list (D1). The invariant in `.claude/rules/database.md`: every domain query
+ * The cross-tenant allow-list. The invariant in `.claude/rules/database.md`: every domain query
  * filters by `tenantId` from the auth context. This test pins the exceptions, so a new one is a
  * deliberate edit here rather than something that arrives with a feature.
  *
@@ -43,13 +43,13 @@ const CORE_UNSCOPED_ALLOWLIST: Record<string, string> = {
   'src/api/services/invitations.ts':
     'pruneInvitations is the nightly cron: expired invitations are deleted across every tenant, which is the job',
   'src/api/scheduled.ts':
-    'runPruneAiSpans is the nightly trace-store retention: spans past the cutoff are deleted across every tenant in ONE statement, which Postgres answers from the (tenant_id, started_at) index — one DELETE per tenant cost a round trip each under neon (D32, D35)',
+    'runPruneAiSpans is the nightly trace-store retention: spans past the cutoff are deleted across every tenant in ONE statement, which Postgres answers from the (tenant_id, started_at) index — one DELETE per tenant cost a round trip each under neon',
   'src/api/observability/span-store.ts':
-    'insertSpans is an INSERT, never a read: every row carries the tenant_id of the trace that recorded it (a span without one is dropped by toSpanRow), and one flush may hold spans from more than one tenant — D32',
+    'insertSpans is an INSERT, never a read: every row carries the tenant_id of the trace that recorded it (a span without one is dropped by toSpanRow), and one flush may hold spans from more than one tenant',
 }
 
 /**
- * Plus every installed plugin's own exceptions (D31), keyed exactly the same way — a path relative
+ * Plus every installed plugin's own exceptions, keyed exactly the same way — a path relative
  * to `apps/web/` (so `src/plugins/<id>/…`) mapped to the reason it is correct. The scan already
  * walks `src/**`, so a plugin's files are checked like the kit's; what a plugin cannot do is add a
  * line to a kit test file, which is why the reason travels with the plugin instead.

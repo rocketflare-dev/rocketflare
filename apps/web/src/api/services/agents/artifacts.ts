@@ -1,10 +1,10 @@
 /**
- * `agent_run_artifacts` — what a run PRODUCED that a person opens (issue #17): a draft email, the
+ * `agent_run_artifacts` — what a run PRODUCED that a person opens: a draft email, the
  * table of rows it is about to change, the document it wrote.
  *
  * **`key` is an UPSERT key, not an identity.** A redrafted artifact replaces itself under
- * `(run_id, key)`, which is exactly why this is a table and a steering note is an event row
- * (decision 4): an artifact is mutable, queried across runs and outlives the run, and an
+ * `(run_id, key)`, which is exactly why this is a table and a steering note is an event row:
+ * an artifact is mutable, queried across runs and outlives the run, and an
  * append-only positional log expresses none of those.
  *
  * What goes in `agent_run_events` is a THIN `artifact` row — `{ artifactId, key, kind, title }` —

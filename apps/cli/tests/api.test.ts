@@ -1,4 +1,4 @@
-/** API client tests (D26): mocked fetch → envelope → CliApiError exit codes; zod validation of bodies. */
+/** API client tests: mocked fetch → envelope → CliApiError exit codes; zod validation of bodies. */
 import { describe, expect, it } from 'vitest'
 import { z } from 'zod'
 import { buildUrl, CliApiError, createApiClient } from '../src/api'

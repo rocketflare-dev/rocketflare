@@ -1,5 +1,5 @@
 /**
- * `runToolLoop` under an `AgentPolicy` (D39, issue #1) and `authorizeTool` (issue #3). Pure: the
+ * `runToolLoop` under an `AgentPolicy` and `authorizeTool`. Pure: the
  * loop is driven by `FakeChatClient`, so every branch is assertable without Postgres.
  *
  * The properties that matter, and that a first draft of this feature (PR #73) got wrong:
@@ -13,7 +13,6 @@
 
 import { describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
-import { AiError } from '@/api/services/ai/errors'
 import {
   InterruptRequested,
   parseToolLoopCheckpoint,
@@ -22,7 +21,8 @@ import {
   type Tool,
   type ToolLoopCheckpoint,
   ToolLoopExhaustedError,
-} from '@/api/services/ai/kit'
+} from '@/api/services/ai/agent-loop'
+import { AiError } from '@/api/services/ai/errors'
 import type { ChatMessage, ContentBlock } from '@/api/services/ai/types'
 import { FakeChatClient } from '../helpers/ai'
 
@@ -319,7 +319,7 @@ describe('maxDurationSeconds', () => {
   })
 })
 
-describe('authorizeTool (issue #3)', () => {
+describe('authorizeTool', () => {
   it('refuses a call before its handler runs and tells the model why', async () => {
     const handler = vi.fn(async () => 'should not run')
     const client = new FakeChatClient([

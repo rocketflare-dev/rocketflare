@@ -1,5 +1,5 @@
 /**
- * `agent_runs` lifecycle service (D7 — the pg-boss → Workflows handoff, 09 §4.5 / 05 §1.3):
+ * `agent_runs` lifecycle service:
  *   enqueueRun  — validate input → (an active run already holds this run's exclusive SLOT — the
  *                 tenant for an `exclusive` agent, or the caller's `concurrencyKey`? return it,
  *                 `deduplicated`) → the tenant's active-run cap (429 `agent_runs_limit`) and daily
@@ -9,7 +9,7 @@
  *                 `AgentRunsNotConfiguredError` (503) BEFORE any write. An `idempotencyKey` derives
  *                 the run id from (tenant, agent, key), so a second call — a redelivered job —
  *                 answers the run the first one started, whatever its status, `deduplicated`.
- *   enqueueRunBatch — D39: up to `AGENT_RUN_BATCH_MAX` inputs of ONE non-exclusive agent, one
+ *   enqueueRunBatch — up to `AGENT_RUN_BATCH_MAX` inputs of ONE non-exclusive agent, one
  *                 multi-row insert sharing a `batch_id`, one `createBatch()`; when that call fails,
  *                 each instance is created on its own so only the inputs that really cannot start
  *                 are marked failed.
@@ -20,7 +20,7 @@
  *                 is stale → settle it. `not_found` is an ANSWER, not an error; no binding → no-op.
  *                 A caller with the run's log in hand passes `lastEventAt` and a recent row skips
  *                 the subrequest entirely — see RECONCILE_LIVENESS_MS.
- *   appendEvent — durable progress row + `entity.changed { entity: 'agent-run' }` nudge (D8).
+ *   appendEvent — durable progress row + `entity.changed { entity: 'agent-run' }` nudge.
  *   loadCheckpoint / saveCheckpoint — the tool loop's resume point on `agent_runs.checkpoint`, so a
  *                 retried `execute` continues the conversation instead of replaying it. Cleared by
  *                 `settle`; an unparseable value reads as "no checkpoint", never as a failure.
@@ -57,7 +57,7 @@ import {
   ServiceUnavailableError,
   ValidationError,
 } from '../../utils/core/errors'
-import { parseToolLoopCheckpoint, type ToolLoopCheckpoint } from '../ai/kit'
+import { parseToolLoopCheckpoint, type ToolLoopCheckpoint } from '../ai/agent-loop'
 import { nudge, type Realtime, realtimeEvent } from '../realtime'
 import { assertTenantDailyBudget } from './budget'
 import { expireInterrupts, listInterrupts } from './interrupts'
@@ -73,7 +73,7 @@ export interface AgentRunParams {
 export interface AgentRunWorkflowBinding {
   create(options: { id: string; params: AgentRunParams }): Promise<{ id: string }>
   /**
-   * D39: up to 100 instances in one call. All or nothing — an id that already exists fails the
+   * Up to 100 instances in one call. All or nothing — an id that already exists fails the
    * whole call — so `enqueueRunBatch` falls back to `create()` per instance when it throws.
    */
   createBatch?(batch: { id: string; params: AgentRunParams }[]): Promise<{ id: string }[]>
@@ -81,7 +81,7 @@ export interface AgentRunWorkflowBinding {
     status(): Promise<{ status: string; error?: { name: string; message: string } }>
     /** Kills the instance mid-step — the escape hatch behind a forced cancel. */
     terminate(): Promise<void>
-    /** Wakes a parked instance sitting on `step.waitForEvent` (issue #17). */
+    /** Wakes a parked instance sitting on `step.waitForEvent`. */
     sendEvent(event: { type: string; payload?: unknown }): Promise<void>
   }>
 }
@@ -135,7 +135,7 @@ export function toAgentRunEvent(row: AgentRunEventRow): AgentRunEvent {
 }
 
 /**
- * The three status lists diverge on purpose (decision 1), and collapsing them back into one is how
+ * The three status lists diverge on purpose, and collapsing them back into one is how
  * a parked run gets claimed by nobody or failed by the backstop:
  *
  * - `ACTIVE` ({@link ACTIVE_RUN_STATUSES}, incl. `awaiting_input`) — "still owes an answer": the
@@ -270,7 +270,7 @@ export async function countActiveRuns(db: Database, tenantId: string): Promise<n
 }
 
 /**
- * The two tenant-wide gates every enqueue passes (D39): the active-run cap, counting the runs this
+ * The two tenant-wide gates every enqueue passes: the active-run cap, counting the runs this
  * call would ADD, and the daily agent spend. Both are counted then inserted, not locked — a burst
  * of simultaneous requests can overshoot the cap by a few, which is fine for a brake.
  */
@@ -332,7 +332,7 @@ export async function enqueueRun(
     ;[row] = await db
       .insert(agentRuns)
       .values({
-        // Minted here rather than by the column default so the trace id (D32) — derived from it —
+        // Minted here rather than by the column default so the trace id — derived from it —
         // is on the row from the first write.
         id: runId,
         traceId: traceIdForRun(runId),
@@ -444,7 +444,7 @@ export interface EnqueueBatchResult {
 }
 
 /**
- * D39: many runs of ONE non-exclusive agent. The order of the gates is the contract:
+ * Many runs of ONE non-exclusive agent. The order of the gates is the contract:
  *
  * 1. no binding → 503; an exclusive agent → 400 `agent_exclusive` (it can only ever run one)
  * 2. every input is validated against the agent's schema; an invalid one is an item error with no
@@ -622,7 +622,7 @@ export function cancelRun(db: Database, tenantId: string, runId: string) {
 }
 
 /**
- * Park a run on a human decision: `running → awaiting_input` (issue #17).
+ * Park a run on a human decision: `running → awaiting_input`.
  *
  * **This is deliberately NOT `settle()`** — `finishedAt` stays NULL and, above all, **the
  * checkpoint survives**, which is the entire reason a resume is cheap: the resumed `execute` step
@@ -652,8 +652,8 @@ export async function parkRun(
 }
 
 /**
- * Un-park a run: `awaiting_input → running`, compare-and-set. **The answer IS the transition**
- * (decision 2): the resolve route calls this BEFORE it nudges or restarts the instance, which is
+ * Un-park a run: `awaiting_input → running`, compare-and-set. **The answer IS the transition**:
+ * the resolve route calls this BEFORE it nudges or restarts the instance, which is
  * what lets `claimRun` keep its narrow `queued|running` predicate — a restarted instance's `claim`
  * step finds a `running` row because somebody answered, and finds nothing when nobody did.
  *
@@ -758,7 +758,7 @@ async function terminateInstance(env: AgentRunsEnv | undefined, run: AgentRunRow
   }
 }
 
-// ---- Suspend / resume (issue #17) -----------------------------------------------------------
+// ---- Suspend / resume -----------------------------------------------------------
 
 /** Best-effort wake of a parked instance. Returns false when it could not be delivered. */
 async function sendResumeEvent(
@@ -779,7 +779,7 @@ async function sendResumeEvent(
 /**
  * The instance id a restart should take: `<runId>` → `<runId>-r1` → `<runId>-r2`.
  *
- * Hyphen, not colon (T5): a colon is not a documented-legal instance-id character, while a uuid
+ * Hyphen, not colon: a colon is not a documented-legal instance-id character, while a uuid
  * already proves hyphens are, and 36 + 3 is comfortably inside the 64-character limit.
  */
 export function nextInstanceId(runId: string, current: string | null): string {
@@ -789,7 +789,7 @@ export function nextInstanceId(runId: string, current: string | null): string {
 }
 
 /**
- * Wake the parked run, and **create a new instance when the old one is gone** (T4/T5).
+ * Wake the parked run, and **create a new instance when the old one is gone**.
  *
  * `instance.not_found` is an ANSWER, not an error — the same reading `reconcileRun` already takes.
  * An instance disappears for ordinary reasons: a `wrangler dev` restart, or retention expiring
@@ -799,7 +799,7 @@ export function nextInstanceId(runId: string, current: string | null): string {
  *
  * **The coupling to hold in your head:** the new instance's first step is `claim`, and `claimRun`
  * only takes `queued|running`. It succeeds solely because the caller already flipped the row with
- * {@link resumeRun} — *the answer is the transition* (decision 2). Call this AFTER that, never
+ * {@link resumeRun} — *the answer is the transition*. Call this AFTER that, never
  * before.
  *
  * `agent_runs.instanceId` therefore becomes *the latest* instance rather than "the run id"; it
@@ -840,7 +840,7 @@ export async function nudgeOrRestartInstance(
 }
 
 /**
- * The read-path safety net for a park whose instance no longer exists (T6). Lives here, beside
+ * The read-path safety net for a park whose instance no longer exists. Lives here, beside
  * {@link reconcileRun}, because it settles a run — and is called from the same place, on read.
  *
  * A parked run whose asks have **all passed their deadline** settles `cancelled` with `error` NULL:
@@ -963,7 +963,7 @@ export function nudgeRun(realtime: Realtime | undefined, tenantId: string, runId
 }
 
 /**
- * The nudge for the ASKS of a run, distinct from the run's own (issue #17). It exists so a screen
+ * The nudge for the ASKS of a run, distinct from the run's own. It exists so a screen
  * that only watches the inbox — the "3 waiting" badge — refreshes on an answer without subscribing
  * to every progress row the runtime writes, which is most of them.
  */

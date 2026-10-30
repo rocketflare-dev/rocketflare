@@ -1,5 +1,5 @@
 /**
- * `/api/notifications` (D8): list / unread-count / read, scoped to (tenant, user).
+ * `/api/notifications`: list / unread-count / read, scoped to (tenant, user).
  */
 import { describe, expect, it } from 'vitest'
 import { notify } from '@/api/services/notifications'

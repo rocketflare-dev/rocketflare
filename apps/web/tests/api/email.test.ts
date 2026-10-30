@@ -1,7 +1,7 @@
 // @vitest-isolate
 // Spies on the global fetch, so this file needs its own module registry.
 /**
- * Email service (D16 zero-creds): no RESEND_API_KEY → logged (with the link), nothing sent; with a
+ * Email service (zero-creds): no RESEND_API_KEY → logged (with the link), nothing sent; with a
  * key → one POST to Resend with the Bearer header; a Resend error is reported, never thrown.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest'

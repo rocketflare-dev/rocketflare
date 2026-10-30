@@ -1,5 +1,5 @@
 /**
- * Eval and feedback contracts (D33). Three things share this file because they are one loop:
+ * Eval and feedback contracts. Three things share this file because they are one loop:
  *
  * - **`EvalCase`** — one line of a dataset (`apps/evals/datasets/<name>.jsonl`): the input a target
  *   is driven with, the context it may retrieve, and what "good" means (an expected output, a
@@ -44,7 +44,7 @@ export const feedbackSchema = z.object({
   rating: feedbackRatingSchema,
   comment: z.string().nullable(),
   userId: z.string().uuid().nullable(),
-  /** The trace the rated answer recorded (D32), so `rocketflare traces show` can open it. */
+  /** The trace the rated answer recorded, so `rocketflare traces show` can open it. */
   traceId: z.string().nullable(),
   createdAt: z.coerce.date(),
   updatedAt: z.coerce.date(),
@@ -138,7 +138,7 @@ export const evalCaseSchema = z.object({
       /** Substrings the output must contain (case-insensitive) — the cheapest deterministic check. */
       contains: z.array(z.string()).optional(),
       /**
-       * D37: the answers the run's `ctx.decide` calls should give — decision key → question id →
+       * The answers the run's `ctx.decide` calls should give — decision key → question id →
        * label (`yes`/`no` for a noul, the option id for a choice, the level for a score). Scored
        * per question, without a model call, from `agent_run_decisions`.
        */

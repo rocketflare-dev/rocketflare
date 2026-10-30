@@ -1,5 +1,5 @@
 /**
- * The register of database handles the integration harness actually handed out (D31).
+ * The register of database handles the integration harness actually handed out.
  *
  * **This is the whole of the no-fake-`db` rule, and it is deliberately not a shape check.** A
  * structural test ("does it have `.execute`?") is satisfied by `{ execute: vi.fn() }`, which is

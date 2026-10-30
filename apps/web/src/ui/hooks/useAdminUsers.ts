@@ -1,4 +1,4 @@
-/** Global-admin view of people (D10): list, detail, the global-admin flag and blocking. */
+/** Global-admin view of people: list, detail, the global-admin flag and blocking. */
 import {
   type AdminUserListQuery,
   adminUserDetailSchema,

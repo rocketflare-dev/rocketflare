@@ -72,7 +72,7 @@ describe('filterNavConfig', () => {
 })
 
 describe('composeNav', () => {
-  // D31: where a plugin's nav group lands. Pure, so it is tested rather than reasoned about — the
+  // Where a plugin's nav group lands. Pure, so it is tested rather than reasoned about — the
   // failure mode is a plugin whose pages exist and have no way in, which nothing else would catch.
   const item = (to: string) => ({ to, label: to, icon: HomeIcon })
   const plugin = { items: [item('/orders')] }
@@ -119,7 +119,7 @@ describe('composeNav', () => {
     expect(config).toHaveLength(before)
   })
 
-  it('is the identity with no plugins installed — which is the kit today', () => {
+  it('is the identity with no plugins installed — which is the default today', () => {
     expect(composeNav(config)).toEqual(config)
   })
 })
@@ -140,7 +140,7 @@ describe('SideNav', () => {
     guardMock.mockImplementation(() => true)
   })
 
-  it('shows everything when the guard allows all (Phase 0 default)', async () => {
+  it('shows everything when the guard allows all (the default)', async () => {
     vi.stubGlobal('fetch', stubHealthFetch())
     renderWithProviders(<SideNav items={config} />)
 

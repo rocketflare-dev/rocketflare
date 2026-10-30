@@ -1,5 +1,5 @@
 /**
- * ONE generic OAuth router over the provider registry (D11, D12): `GET /auth/:provider` starts,
+ * ONE generic OAuth router over the provider registry: `GET /auth/:provider` starts,
  * `GET /auth/:provider/callback` finishes. State + PKCE verifier + OIDC nonce (+ the return path,
  * link mode) travel in a single `oauth_state` cookie that also names the provider, so a callback
  * for the wrong provider is rejected. The return path is `?returnUrl=` (what the UI sends;

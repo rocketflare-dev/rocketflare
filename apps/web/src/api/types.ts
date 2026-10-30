@@ -1,5 +1,5 @@
 /**
- * Hono typing (04 §2, D13): bindings come from `wrangler types` (`Cloudflare.Env` in
+ * Hono typing: bindings come from `wrangler types` (`Cloudflare.Env` in
  * worker-configuration.d.ts), variables are declared once here, and every `Hono` instance is
  * `Hono<AppEnv>` via `utils/routes/router.ts`. No `declare module 'hono'` augmentation.
  */
@@ -30,7 +30,7 @@ declare global {
 }
 
 /**
- * What `authMiddleware` sets (D10, D25). Read ONLY through `withAuthAndDb` in routes and the
+ * What `authMiddleware` sets. Read ONLY through `withAuthAndDb` in routes and the
  * helpers in `middleware/permissions.ts`. `tenantId`/`tenantUser` are null for a user with no
  * membership (pending approval) — routes that need a tenant get 403 `no_tenant` before they run.
  */
@@ -54,7 +54,7 @@ export interface AuthContext {
   /** Feature flags on for the active tenant → `can('access', 'Feature:<f>')`. */
   features: string[]
   /**
-   * The groups this person belongs to IN THE ACTIVE TENANT (D29) — empty without a membership.
+   * The groups this person belongs to IN THE ACTIVE TENANT — empty without a membership.
    * Read it through `accessScopeOf(auth)` (`services/access.ts`) rather than directly: visibility
    * is a SQL predicate, never a CASL condition.
    */
@@ -63,13 +63,13 @@ export interface AuthContext {
 
 /**
  * The generated `Cloudflare.Env` plus the one binding that exists only under
- * `DATABASE_DRIVER = "postgres"` (D35): the kit's tomls ship without `[[hyperdrive]]`, so
+ * `DATABASE_DRIVER = "postgres"`: the tomls ship without `[[hyperdrive]]`, so
  * `wrangler types` omits it, while a copy on postgres has it. Optional either way.
  */
 export type AppBindings = Cloudflare.Env & { HYPERDRIVE?: Hyperdrive }
 
 export interface AppVariables {
-  /** Validated config — routes read this, never `c.env` (D3). */
+  /** Validated config — routes read this, never `c.env`. */
   config: AppConfig
   /** Per-request drizzle handle (owner connection). */
   db: Database
@@ -77,7 +77,7 @@ export interface AppVariables {
   dbClose?: () => Promise<void>
   logger: PinoLogger
   requestId: string
-  /** Per-request tracer (D16): Langfuse batcher when keys are set, else no-op. Set by `tracerMiddleware`. */
+  /** Per-request tracer: Langfuse batcher when keys are set, else no-op. Set by `tracerMiddleware`. */
   tracer: Tracer
   /** Set by `authMiddleware`; absent on public routes. */
   auth?: AuthContext

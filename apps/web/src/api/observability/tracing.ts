@@ -1,5 +1,5 @@
 /**
- * The tracing seams every AI entry point uses (D32): `withAgentTrace(name, ctx, fn)` brackets one
+ * The tracing seams every AI entry point uses: `withAgentTrace(name, ctx, fn)` brackets one
  * agent run step / chat turn / AI job as a span and makes it ACTIVE (`context.ts`), and
  * `traceChatClient(client, trace, meta)` wraps a `ChatClient` so every `complete`/`stream` is one
  * `chat <model>` child with usage. Tool, retrieval and embeddings spans nest under the active span
@@ -55,8 +55,8 @@ export function observabilityPreset(cfg: AppConfig): ObservabilityPreset {
  * Where, how and with which headers to export — or `null` for "record locally only". The preset
  * fills what the backend needs so a deployment sets as little as possible:
  * - `langfuse`: endpoint defaults to `<LANGFUSE_BASE_URL>/api/public/otel`; Basic auth from the
- *   EXISTING `LANGFUSE_PUBLIC_KEY`/`SECRET_KEY` plus `x-langfuse-ingestion-version: 4`, so a D16
- *   deployment migrates with no new secret. Without both keys there is nothing to authenticate as.
+ *   EXISTING `LANGFUSE_PUBLIC_KEY`/`SECRET_KEY` plus `x-langfuse-ingestion-version: 4`, so an existing
+ *   Langfuse deployment migrates with no new secret. Without both keys there is nothing to authenticate as.
  * - `phoenix`: endpoint required (`http://localhost:6006` for the docker image); protobuf by default.
  * - `generic`: endpoint required; headers exactly as given.
  * Explicit `OTEL_EXPORTER_OTLP_HEADERS` win over preset headers of the same name.
