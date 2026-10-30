@@ -6,6 +6,11 @@ copy of the kit forward without recreating anything its owner deleted.
 
 If you are running a copy: `pnpm kit:upgrade` tells you which of these you are missing.
 
+## 0.24.0 — 2026-10-30
+
+A renamed copy now carries none of the kit's own machinery: its maintainer scripts, hooks, project files and kit-only tests are removed at the rename, and the example plugin's agent tool and welcome note follow its flag.
+[Porting note](docs/upgrades/0.24.0.md).
+
 ## 0.23.0 — 2026-10-24
 
 Plugins can start agent runs from jobs, crons and inbound email with an idempotency key, agents and tools get `storage()`, converted text with NUL bytes now indexes, and unlabelled plugin nav groups share one block.
