@@ -1,10 +1,10 @@
 /**
- * Constants both halves of the plugin need and neither owns (D31).
+ * Constants both halves of the plugin need and neither owns.
  *
  * `EXAMPLE_NOTES_ENTITY` is the one string that has to mean the same thing in three places: the
  * server's `entity.changed` nudge, the UI's query-key family root, and — through
  * `invalidationsFor()` — what `WebSocketProvider` invalidates when that nudge arrives. Writing it
- * once is what makes the kit's convention ("the `entity` of a nudge IS a query-key family root")
+ * once is what makes the core convention ("the `entity` of a nudge IS a query-key family root")
  * true by construction rather than by review.
  */
 
@@ -12,7 +12,7 @@
 export const EXAMPLE_NOTES_ENTITY = 'example-feature:notes'
 
 /**
- * The `signState` purpose of the ping link (D34). Part of the signed body, so a token minted for
+ * The `signState` purpose of the ping link. Part of the signed body, so a token minted for
  * this flow can never be replayed into another one — which is why it names the plugin AND the flow.
  */
 export const EXAMPLE_PING_LINK_PURPOSE = 'example-feature:ping-link'

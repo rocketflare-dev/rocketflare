@@ -1,7 +1,7 @@
 // @vitest-isolate
 // Spies on the global fetch (Resend failure path), so this file needs its own module registry.
 /**
- * `JOBS_QUEUE` consumer (D7) as a plain function over a hand-built `MessageBatch`: valid
+ * `JOBS_QUEUE` consumer as a plain function over a hand-built `MessageBatch`: valid
  * `email.send` → email service ran (dev fallback line) + `ack()`; invalid envelope → `ack()` and no
  * retry (poison never loops); provider failure → `retry({ delaySeconds })` with backoff;
  * `activity.record` → row. Every message gets and closes its own DB handle.

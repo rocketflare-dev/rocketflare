@@ -1,5 +1,5 @@
 /**
- * Realtime nudges (D7, D8): the ONLY module that talks to `NOTIFICATIONS_HUB`. Routes and services
+ * Realtime nudges: the ONLY module that talks to `NOTIFICATIONS_HUB`. Routes and services
  * never touch the DO; they call `nudge*()` with the request's `Realtime` (`{ defer, env }` from
  * `withAuth`), which builds the event and hands the RPC call to `waitUntil` — never awaited on the
  * response path, never allowed to fail the request. "DB is the truth, WebSocket is a nudge."

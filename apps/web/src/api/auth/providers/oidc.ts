@@ -232,7 +232,7 @@ export async function oidcProfile(
  * RP-initiated logout (OIDC RP-Initiated Logout 1.0): the issuer's `end_session_endpoint` with
  * `client_id` and `post_logout_redirect_uri=<APP_URL>/login?signedOut=1`, or null when the issuer
  * advertises none (or discovery fails — logging out locally must never depend on the issuer).
- * No `id_token_hint`: the kit does not keep id_tokens, so the issuer may ask for confirmation.
+ * No `id_token_hint`: the app does not keep id_tokens, so the issuer may ask for confirmation.
  */
 export async function oidcEndSessionUrl(cfg: AppConfig): Promise<string | null> {
   const doc = await discoverOidc(cfg)

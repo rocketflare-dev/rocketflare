@@ -1,5 +1,5 @@
 /**
- * Prompt registry + tenant overrides (D17): `GET /api/ai/prompts` lists every registry entry with
+ * Prompt registry + tenant overrides: `GET /api/ai/prompts` lists every registry entry with
  * its override and effective text; `PUT /:key` sets an override, `DELETE /:key` reverts to the
  * default. Both mutations answer with the refreshed `PromptWithResolved`. Members `read Prompt`,
  * admins `manage`.

@@ -1,12 +1,12 @@
 /**
- * `example_notes` (D31) — the reference plugin's one table, and the proof that a plugin can own
- * tenant data on the same terms as the kit.
+ * `example_notes` — the reference plugin's one table, and the proof that a plugin can own
+ * tenant data on the same terms as core.
  *
- * Everything here is the kit's schema convention, unchanged, because that is the point: `tenantRef()`
+ * Everything here is the core schema convention, unchanged, because that is the point: `tenantRef()`
  * first so the FK and the cascade are spelled once, `timestamps()` for `timestamptz` columns, every
  * index led by `tenant_id`, and `tenantIsolation()` so the RLS policy exists whether or not
  * `TENANT_SCOPE_MODE` is ever flipped to `enforce`. `rls-coverage.test.ts` reads the catalog, so a
- * plugin table with no policy fails the host's suite exactly as a kit one would.
+ * plugin table with no policy fails the host's suite exactly as a core one would.
  *
  * The only plugin-specific rule is the NAME: a prefix derived from the plugin's id — its first
  * hyphen-separated segment, so `example-feature` owns `example_*` — kept distinct from every other
@@ -22,7 +22,7 @@
  */
 import { relations } from 'drizzle-orm'
 import { index, pgTable, text, uuid } from 'drizzle-orm/pg-core'
-// The schema kit (D31): the build-time symbols a table file needs at MODULE scope, which is why
+// The schema kit: the build-time symbols a table file needs at MODULE scope, which is why
 // they are importable at all rather than injected — a `pgTable(...)` runs when the module is
 // evaluated, long before any request exists, and drizzle-kit reads the result statically. Named
 // relatively rather than as `@/db/schema/kit` because drizzle-kit bundles this file itself and

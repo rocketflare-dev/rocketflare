@@ -15,7 +15,18 @@
       "apps/web/tests/kit-only/**",
       ".github/workflows/kit.yml",
       ".github/workflows/plugin-ci.yml",
-      ".github/workflows/notify-plugins.yml"
+      ".github/workflows/notify-plugins.yml",
+      "scripts/release.mjs",
+      "scripts/release.d.mts",
+      "scripts/changelog-nudge.mjs",
+      "scripts/release-site-nudge.mjs",
+      "scripts/lib/nudge-lib.mjs",
+      "scripts/lib/nudge-lib.d.mts",
+      "scripts/default-plugins.mjs",
+      "scripts/install.sh",
+      "CONTRIBUTING.md",
+      "CODE_OF_CONDUCT.md",
+      "docs/upgrades/unreleased.md"
     ],
     "postInit": ["pnpm install --no-frozen-lockfile", "pnpm lint:fix"],
     "appManifest": ".rocketflare.json"

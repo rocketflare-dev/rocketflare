@@ -9,10 +9,10 @@
 
 @source "./index.html";
 @source "./**/*.{ts,tsx}";
-/* Installed plugins (D31) ship their own pages and components under `src/plugins/<id>/ui/`, which
+/* Installed plugins ship their own pages and components under `src/plugins/<id>/ui/`, which
    is OUTSIDE this directory — without this line their classes are simply not generated, and the
    page renders unstyled with nothing in the console to say why. Scoped to `ui/` so a plugin's
-   server code is no more scanned than the kit's is. */
+   server code is no more scanned than core's is. */
 @source "../plugins/**/ui/**/*.{ts,tsx}";
 
 /* Do not `@source` node_modules. A dependency that ships PRE-COMPILED CSS (drizzle-cube's
@@ -37,7 +37,7 @@
      1. `--color-primary` / `--color-primary-content` in BOTH theme blocks (the one accent).
         Keep `--focus-ring`, `--surface-active`, `--tone-primary-*` in step with it.
      2. `--color-accent` (secondary accent, e.g. automation/AI affordances).
-     3. The neutral ramp: `--surface-*`, `--border-*`, `--text-*` per theme. The kit ships a
+     3. The neutral ramp: `--surface-*`, `--border-*`, `--text-*` per theme. The app ships a
         cool grey (zinc) ramp; swap for a warm or tinted ramp of the same LIGHTNESS steps.
      4. `--color-secondary` MUST equal `--text-secondary` — see the note in the light theme.
      5. `--font-sans` / `--font-mono` in `@theme` (system stack by default; add @fontsource

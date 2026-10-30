@@ -768,11 +768,12 @@ the staging file). Wrangler creates the DNS record on the next deploy. Set `[var
 Verify: the host serves the app over HTTPS; the parity test still passes (`routes` may differ).
 
 ### 3.7 The release dance (every subsequent deploy)
-1. `pnpm kit:release X.Y.Z` — folds `docs/upgrades/unreleased.md` into `docs/upgrades/X.Y.Z.md`,
-   bumps the **root** `package.json` and `.rocketflare.json` `kit.version`, and prepends the
-   `CHANGELOG.md` section. Commit. (The `apps/*` versions are informational; one tag ships web and
-   cli together.) The deploy refuses a tag whose porting note is missing — that note is how every
-   copy of the kit absorbs this release.
+1. Bump the **root** `package.json` `version` to `X.Y.Z`, add its section to your `CHANGELOG.md`,
+   commit. (The `apps/*` versions are informational; one tag ships web and cli together.)
+   *Kit repository only:* `pnpm kit:release X.Y.Z` does this step instead — it also folds
+   `docs/upgrades/unreleased.md` into `docs/upgrades/X.Y.Z.md` and stamps `.rocketflare.json`
+   `kit.version`, and the deploy refuses a kit tag whose porting note is missing, because that note
+   is how every copy absorbs the release. An app has neither the command nor the check.
 2. `git tag X.Y.Z && git push origin X.Y.Z` → **staging** deploys (`deploy.yml`: CI gate — skipped
    when that commit already has a green CI run, or is a version-only bump over a parent that has
    one, so a commit is gated once → parity

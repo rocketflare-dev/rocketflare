@@ -1,8 +1,8 @@
 /**
- * Putting text into the knowledge base from a plugin (D18, D31, D34) — how a connector makes a
+ * Putting text into the knowledge base from a plugin — how a connector makes a
  * synced message, event or file something chat and agents can retrieve.
  *
- * These are the kit's own ingest paths (`services/ai/ingest.ts`) behind a plugin-shaped signature:
+ * These are the core ingest paths (`services/ai/ingest.ts`) behind a plugin-shaped signature:
  * a `PluginContext` rather than `(db, cfg, env, …, deps)`, so they work the same from a route, a
  * job, a cron task or a public webhook. Three things they add over a plain insert:
  *
@@ -15,7 +15,7 @@
  *   across tenants.
  * - **Visibility is the caller's decision, and the default is the whole organisation.** Something
  *   synced from ONE person's mailbox must say so: the owner's `userId` + `visibility: 'groups'` +
- *   `groupIds: []` is owner-and-admins-only (D29). Note the "and admins" — an org admin can read
+ *   `groupIds: []` is owner-and-admins-only. Note the "and admins" — an org admin can read
  *   what was synced from anybody's mailbox, and a connector should tell its installer that.
  *
  * This module belongs to the `feature-knowledge` surface: an app that deleted the knowledge base
@@ -52,7 +52,7 @@ interface IngestCommon {
 }
 
 export interface PluginIngestTextInput extends IngestCommon {
-  /** The kit user this belongs to (matched from the upstream owner), or null for the organisation. */
+  /** The app user this belongs to (matched from the upstream owner), or null for the organisation. */
   userId: string | null
   title: string
   text: string

@@ -1,5 +1,5 @@
 /**
- * `chunks` — the retrievable pieces of a document with their embedding (D17, D18): pgvector on
+ * `chunks` — the retrievable pieces of a document with their embedding: pgvector on
  * Postgres, NOT Vectorize, so vectors stay inside the tenant's rows and under RLS. The column is
  * `vector(EMBEDDING_DIM)` (1024, matching `@cf/baai/bge-m3`); changing the dimension is a NEW
  * table, not an `ALTER`. Dense retrieval is cosine (`<=>`) over the HNSW index; the lexical half

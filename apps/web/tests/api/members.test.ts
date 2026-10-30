@@ -1,5 +1,5 @@
 /**
- * `/api/members` permission matrix (D10): owner / admin / member / support × list, role change,
+ * `/api/members` permission matrix: owner / admin / member / support × list, role change,
  * remove; ownership invariants (owner-only owner changes, the last owner stays).
  */
 import type { MembershipRole } from '@rocketflare/shared/tenants'

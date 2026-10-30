@@ -1,12 +1,12 @@
-# The plugin seam (D31)
+# The plugin seam
 
 A plugin is a **separate git repository copied into an app** — never installed from npm, exactly
-like the kit itself — that contributes contracts, schema, routes, jobs, agents, UI and CLI commands.
+like the app itself — that contributes contracts, schema, routes, jobs, agents, UI and CLI commands.
 This directory is the host half: the types, the two web barrels, and every installed plugin's tree.
 `docs/CONCEPTS.md` §16 is the decision record; `example-feature/` is the worked example.
 
 The whole seam is **six barrel lines**. Installing a plugin is writing them; removing it is
-deleting them. Nothing else in the kit ever names a plugin, which is what makes both reversible.
+deleting them. Nothing else in the host ever names a plugin, which is what makes both reversible.
 
 | Barrel | Exports | Read by |
 |---|---|---|
@@ -41,10 +41,10 @@ in the host. Each half is checked where it is written; only the merge is cast.
   the same table name), job types
   `<id>.verb`, CASL subjects, prompt/agent/feature keys, query-key roots `<id>:…`, the API prefix
   `/api/<id>`, the CLI command `<id>`, AG-UI CUSTOM events `<id>.` — **never `kit.`**, which is the
-  kit's namespace and may grow in a later release. The id itself is `^[a-z][a-z0-9-]*$` and never
-  contains `rocketflare`: a plugin is written in KIT vocabulary so `applyReplacements` can translate
-  it into a renamed app on the way in, and an id carrying the kit's name would be rewritten with
-  everything else.
+  core namespace and may grow in a later release. The id itself is `^[a-z][a-z0-9-]*$` and never
+  contains `rocketflare`: a plugin is written in the original `rocketflare` vocabulary so `applyReplacements`
+  can translate it into a renamed app on the way in, and an id carrying that name would be
+  rewritten with everything else.
 - **It has exactly four published entries** — `src/plugins/<id>/index.ts`, `<id>/ui/index.ts`,
   `packages/shared/src/plugins/<id>/index.ts` and `apps/cli/src/plugins/<id>/index.ts`. Everything
   else under it is private, which is what lets its semver cover a knowable surface. **No deep import
@@ -60,7 +60,7 @@ in the host. Each half is checked where it is written; only the merge is cast.
   and are written by `pnpm provision cloudflare <env>` from the same manifest.
 - **It ships no migration.** The HOST generates it once the schema barrel line exists:
   `pnpm db:generate --name plugin-<id>-<version>`, read the SQL, `pnpm db:migrate`. A plugin's own
-  `migrations/` holds plain-SQL DATA fragments (backfills), never DDL — a kit or plugin migration
+  `migrations/` holds plain-SQL DATA fragments (backfills), never DDL — a foreign migration
   copied in replaces drizzle's notion of current state with one that has never heard of the app's
   own tables.
 - **It edits no toml and no `package.json`.** A binding, cron or `[vars]` key it declares in
@@ -78,8 +78,8 @@ in the host. Each half is checked where it is written; only the merge is cast.
   rather than being quietly repaired.
 - **It never renames anything across releases** — expand/contract only. `drizzle-kit`'s rename
   prompt has no non-interactive answer, so a rename stops an unattended install dead.
-- **Its unauthenticated routes live under `/api/hooks/<id>` and nowhere else** (D34,
-  `ServerPlugin.publicMounts`). Mounted before the authed table with no `authMiddleware` and no
+- **Its unauthenticated routes live under `/api/hooks/<id>` and nowhere else**
+  (`ServerPlugin.publicMounts`). Mounted before the authed table with no `authMiddleware` and no
   gate; the handler builds `publicCtx(c)` (no tenant, no auth fields), PROVES the caller —
   `verifyState` over a token it minted, a stored per-subscription secret, the provider's
   signature — and only then names the tenant that proof carried. It re-checks its own flag with
@@ -87,7 +87,7 @@ in the host. Each half is checked where it is written; only the merge is cast.
   here) and answers by enqueueing. `tests/config/plugins.test.ts` refuses a public mount outside
   the plugin's own `/api/hooks/<id>` and any authed mount under `/api/hooks`.
 - **It puts text into the knowledge base through `ingestDocument` / `ingestDocumentFile`**, never
-  by writing `documents` rows (D34). Pass `source: '<id>:<kind>'` and the item's upstream
+  by writing `documents` rows. Pass `source: '<id>:<kind>'` and the item's upstream
   `externalId`, and a re-sync UPDATES the row rather than adding one; `deleteIngestedDocument`
   removes it. Visibility defaults to the whole organisation — a plugin syncing ONE person's data
   passes the owner's `userId` + `visibility: 'groups'` + `groupIds: []` (owner and admins only).
@@ -100,10 +100,10 @@ in the host. Each half is checked where it is written; only the merge is cast.
   the skill drives the steps an agent can take and coaches the ones only a human can.
   `.claude/skills/example-feature/` is the worked example.
 - **It composes, never redefines.** `grants` are additive over its own subjects; hooks are
-  post-commit, idempotent and best-effort; `agentTools` are appended after the kit's (async
+  post-commit, idempotent and best-effort; `agentTools` are appended after the built-in ones (async
   allowed, `[]` for a tenant that has not turned the tool on, a throw is logged and skipped). A
   tenant credential goes through `sealSecret`/`openSecret`, never crypto of its own. A change to
-  the kit's own tables, to auth, to tenancy or to a cross-cutting middleware is a CORE change.
+  the core tables, to auth, to tenancy or to a cross-cutting middleware is a CORE change.
 - **Its shared module imports no composer at runtime** (`ai/agents.ts`, `jobs.ts`,
   `permissions.ts`, `features.ts`, `realtime.ts`). Those five read the shared barrel, so importing
   one back closes a cycle, and two zod modules in a cycle crash at module evaluation rather than
@@ -160,11 +160,11 @@ A file in a plugin's repository that falls outside `apps/web/src/plugins/<id>/`,
 `migrations/`, `docs/upgrades/` or its own root metadata is a **refusal**, not a warning: an
 install has to stay reversible by deleting a directory. The exception is the plugin REPOSITORY's
 own tooling — `.github/`, `.claude/`, `scripts/`, `package.json`, `.gitignore` — which is neither
-copied nor refused, because a plugin repo needs a CI workflow (half of decision 5) and a copy of
+copied nor refused, because a plugin repo needs a CI workflow and a copy of
 `release.mjs` to cut a release with.
 
 `remove` deletes the trees, the six lines and the surface, then `pnpm db:generate` emits the
-`DROP TABLE`s — which is correct here; the kit's warning is about importing a foreign SNAPSHOT, not
+`DROP TABLE`s — which is correct here; the warning against copied migrations is about importing a foreign SNAPSHOT, not
 about your own barrel shrinking. `--archive` first writes a `--custom` migration copying each table
 into schema `archive`. Orphaned tables are not a stable state.
 
@@ -191,23 +191,20 @@ test** when it declares tenant-scoped tables; **`hooks.onTenantDeleted` when it 
 `durable_object`**; and **its skills both ways** — each declared one present with a matching
 `name:` and a `description:`, and no undeclared directory in its namespace.
 
-Two of those deserve their reason stated. The isolation test is the kit's one non-negotiable that
-the kit itself cannot write — `docs/CONCEPTS.md` §16 and `.claude/rules/testing.md` both require
-it *because the kit cannot* — and the check is structural, so it proves such a test EXISTS rather
+Two of those deserve their reason stated. The isolation test is the host's one non-negotiable that
+the host itself cannot write — `docs/CONCEPTS.md` §16 and `.claude/rules/testing.md` both require
+it *because the host cannot* — and the check is structural, so it proves such a test EXISTS rather
 than that it is right, and says so in the message. And a `durable_object` is state the FK cascade
 cannot reach: a deleted tenant's DO state outlives it, and no other check can see that, because
 its tables are gone and everything else reads as clean.
 
-**There is no longer a tier a plugin opts into.** The audit used to warn rather than fail for a
-plugin that declared no `requires.pluginApi`, because a released plugin could not retroactively
-declare one. That field is gone with the prediction it encoded, and nothing left here is a rule a
-released plugin cannot satisfy by being re-exported — so every installed plugin is checked
-strictly. `--json` still carries `failures` and `warnings` as separate lists, because `ok` has to
+**There is no tier a plugin opts into.** Nothing here is a rule a released plugin cannot satisfy
+by being re-exported, so every installed plugin is checked strictly. `--json` still carries `failures` and `warnings` as separate lists, because `ok` has to
 keep meaning "this exits 0". CI runs the same command a person runs, so the local oracle and the
 gating oracle cannot disagree.
 
-**Two checks were DELETED rather than relaxed**, because each failed a plugin whose code was
-correct: the anchor's version against the surface's (the anchor is now written by `plugin add` from
+**Two checks are deliberately ABSENT**, because each would fail a plugin whose code is
+correct: the anchor's version against the surface's (the anchor is written by `plugin add` from
 the source manifest, so they cannot differ), and the installed version against the `defaultPlugins`
 pin (the gate already installs each default plugin at its pinned ref and runs the whole suite on
 the result, which is the real proof).
@@ -225,15 +222,15 @@ the last two are not optional:
 1. The field on the interface, in `plugins/types.ts` (or the shared/CLI one), with a doc comment
    saying what it merges into and what the host does NOT do for it.
 2. The consumer reads the widened list and merges it. If it opens a CLOSED set, follow the one
-   pattern: the kit's literal becomes `CORE_X` and `X = [...CORE_X, ...plugin X]`, so the public
+   pattern: the core literal becomes `CORE_X` and `X = [...CORE_X, ...plugin X]`, so the public
    name never moves and only where you ADD to it does.
-3. A case in `tests/config/plugins.test.ts` (or the kit test that owns that registry) — written as
+3. A case in `tests/config/plugins.test.ts` (or the core test that owns that registry) — written as
    a pure helper exercised with a FIXTURE, because a structural rule that only runs when a plugin is
-   installed means nothing in a kit with none.
+   installed means nothing in an app with none.
 4. `docs/CONCEPTS.md` §16 and the matching `.claude/rules/*.md`, in the same commit.
 
 Slots deliberately NOT on the interface: anything that would let a plugin change what a role may do
 (`cannot`), write a migration, or edit a toml. Cross-plugin registries go through
 `ServerPlugin.extensions` (`Record<string, readonly unknown[]>`) — `unknown[]` at the core boundary
-is the point: the owning plugin narrows with zod and fails loudly, and the kit stays ignorant of
+is the point: the owning plugin narrows with zod and fails loudly, and the host stays ignorant of
 what anyone means by a "cube".

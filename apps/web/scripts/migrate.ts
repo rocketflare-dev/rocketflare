@@ -1,14 +1,13 @@
 /**
- * Apply drizzle migrations (03 §4, D17). Node-only script — run via `pnpm db:migrate` (loads
+ * Apply drizzle migrations. Node-only script — run via `pnpm db:migrate` (loads
  * .dev.vars) or `pnpm db:migrate:ci` (DATABASE_URL from the environment); tests import
  * `runMigrations` directly so they exercise the same path.
  *
- * Ported from the Workers reference app's `scripts/migrate.ts`: Neon `-pooler` host rewritten to
- * the direct host (DDL must never go through a transaction pooler — session state such as a stuck
- * `default_transaction_read_only` on a pooled backend once blocked a production deploy), one
- * connection, wait-for-database retry. The driver follows `DATABASE_DRIVER` (D35,
- * `scripts/lib/sql.ts`): postgres.js over TCP, or a Neon `Pool` over WebSocket where there is no
- * TCP out (a coding sandbox on a Neon branch).
+ * Neon `-pooler` host rewritten to the direct host (DDL must never go through a transaction
+ * pooler — session state such as a stuck `default_transaction_read_only` on a pooled backend once
+ * blocked a production deploy), one connection, wait-for-database retry. The driver follows
+ * `DATABASE_DRIVER` (`scripts/lib/sql.ts`): postgres.js over TCP, or a Neon `Pool` over WebSocket
+ * where there is no TCP out (a coding sandbox on a Neon branch).
  */
 import { fileURLToPath } from 'node:url'
 import { drizzle as drizzleNeon } from 'drizzle-orm/neon-serverless'
@@ -59,7 +58,7 @@ export async function runMigrations(
 
   await waitForDatabase(url, env, options.maxAttempts ?? 30, log)
 
-  // pgvector (D17) is required by the Phase 3 `documents`/`chunks` tables and must exist
+  // pgvector is required by the `documents`/`chunks` tables and must exist
   // before the first migration that references the `vector` type. Idempotent, and valid on
   // both Neon (extension available per branch) and the pgvector/pgvector:pg17 compose image.
   // It lives here rather than in a hand-written 0000 SQL file so the migrations folder stays

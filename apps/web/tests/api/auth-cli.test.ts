@@ -1,5 +1,5 @@
 /**
- * `GET /auth/cli` (D26): loopback-only redirect_uri, login/select-tenant redirects, key minting +
+ * `GET /auth/cli`: loopback-only redirect_uri, login/select-tenant redirects, key minting +
  * hand-off in the redirect query.
  */
 import { eq } from 'drizzle-orm'

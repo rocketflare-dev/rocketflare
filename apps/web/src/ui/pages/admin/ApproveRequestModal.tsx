@@ -1,5 +1,5 @@
 /**
- * Decide an access request (D9, D25). Approve = join an existing organisation (picker from
+ * Decide an access request. Approve = join an existing organisation (picker from
  * `/api/admin/tenants`, role) or create a new one owned by the requester — the latter hidden when
  * `tenancyMode === 'single'`. Reject = optional reason. Both post `decideAccessRequestSchema`.
  */

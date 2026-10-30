@@ -1,7 +1,7 @@
 /**
- * Embeddings / retrieval contracts (D17, D18): the `documents` row the API returns (never the raw
+ * Embeddings / retrieval contracts: the `documents` row the API returns (never the raw
  * text or vectors), the text-ingest request, and the hybrid search request/response. Retrieval
- * ships WITH this ingest path so `searchChunks` is never dead code (00 §1.3). File uploads
+ * ships WITH this ingest path so `searchChunks` is never dead code. File uploads
  * (`POST /upload`, multipart) share the same `documents` row: the allowlist below is what the UI's
  * `<input accept>` offers and what the route answers 415 to.
  */
@@ -27,7 +27,7 @@ export const documentSchema = z.object({
   chunkCount: z.number().int().nonnegative(),
   status: documentStatusSchema,
   error: z.string().nullable(),
-  /** D29: `tenant` = every member; `groups` = only `groups` below, plus the owner and admins. */
+  /** `tenant` = every member; `groups` = only `groups` below, plus the owner and admins. */
   visibility: resourceVisibilitySchema,
   /** The groups it is shared with — empty under `tenant`, and empty under `groups` means private. */
   groups: z.array(groupRefSchema),
@@ -43,7 +43,7 @@ export const ingestTextRequestSchema = z.object({
   title: z.string().trim().min(1).max(200),
   text: z.string().min(1).max(INGEST_TEXT_MAX_CHARS),
   source: z.string().trim().min(1).max(200).optional(),
-  /** D29 — defaults to `tenant`, so an ingest that says nothing is shared with the organisation. */
+  /** Defaults to `tenant`, so an ingest that says nothing is shared with the organisation. */
   visibility: resourceVisibilitySchema.optional(),
   groupIds: z.array(z.string().uuid()).max(200).optional(),
 })
@@ -206,7 +206,7 @@ export const uploadDocumentFieldsSchema = z.object({
   title: z.string().trim().min(1).max(200).optional(),
   /** Defaults to the sanitised filename. */
   source: z.string().trim().min(1).max(200).optional(),
-  /** D29 — a multipart form carries these as text parts; `groupIds` is a JSON array of uuids. */
+  /** A multipart form carries these as text parts; `groupIds` is a JSON array of uuids. */
   visibility: resourceVisibilitySchema.optional(),
   groupIds: z.array(z.string().uuid()).max(200).optional(),
 })
@@ -364,7 +364,7 @@ export function documentCardFromDocument(
   }
 }
 
-// ---- Document cards from a knowledge tool's answer (D18) ---------------------------------------
+// ---- Document cards from a knowledge tool's answer ---------------------------------------
 
 /**
  * The three built-in knowledge tools, named ONCE. The server's tool modules and the chat UI's

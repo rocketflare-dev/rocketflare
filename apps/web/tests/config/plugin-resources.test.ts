@@ -1,6 +1,6 @@
 /**
  * `scripts/provision/plugin-resources.ts` — what a plugin declares that the Cloudflare account has
- * to know about (D31, Decision 12). The `config` project: no database, no network, no wrangler.
+ * to know about. The `config` project: no database, no network, no wrangler.
  *
  * Two things here are worth more than they look. The NAMING rule is a wire format in the same sense
  * `featureBucket` is: rename a resource and provisioning creates a second one beside the live one
@@ -53,7 +53,7 @@ const manifest = () =>
 
 describe('the supported set', () => {
   /**
-   * The two groups PARTITION the supported list, and that is the whole shape of decision 12 now:
+   * The two groups PARTITION the supported list, and that is the whole shape of the split now:
    * `kv`/`queue`/`r2` are CREATED (an account must hold the resource before a deploy), while
    * `workflow`/`durable_object` are DECLARED ONLY (`wrangler deploy` registers them from the block).
    * A type in neither group — or in both — would be one provisioning writes and nobody creates, or

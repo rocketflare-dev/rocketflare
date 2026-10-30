@@ -1,5 +1,5 @@
 /**
- * Groups and resource visibility (D29). A tenant defines GROUP TYPES ("Department", "Region",
+ * Groups and resource visibility. A tenant defines GROUP TYPES ("Department", "Region",
  * "Client"), each holding GROUPS, each holding tenant members. Group membership is part of the
  * auth context and drives who can READ a document or a dashboard.
  *

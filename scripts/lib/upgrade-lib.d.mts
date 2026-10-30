@@ -98,11 +98,19 @@ export function kitOnlyGlobs(
   manifest: Pick<Manifest, 'kitOnly'> | null | undefined,
   extra?: readonly string[] | null
 ): string[]
-export function stripKitOnlyWiring(packageJsonText: string): {
+export function commandNamesKitOnly(command: unknown, globs: readonly string[]): boolean
+export function stripKitOnlyWiring(
+  packageJsonText: string,
+  globs?: readonly string[]
+): {
   text: string
   removed: string[]
   edited: string[]
 }
+export function stripKitOnlyHooks(
+  settingsText: string,
+  globs: readonly string[]
+): { text: string; removed: string[] }
 export function absentSurfaces(manifest: Manifest, presentPaths: readonly string[]): string[]
 
 export interface Deployability {

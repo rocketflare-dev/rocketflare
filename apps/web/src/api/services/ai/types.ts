@@ -1,6 +1,6 @@
 /**
- * The provider seam (D17): a small, provider-neutral chat/embeddings interface that every consumer
- * (chat route, `kit.ts` loops, Phase 3b agents) codes against. Adapters in `client.ts` map it onto
+ * The provider seam: a small, provider-neutral chat/embeddings interface that every consumer
+ * (chat route, `agent-loop.ts` loops, agents) codes against. Adapters in `client.ts` map it onto
  * the Anthropic Messages API (`anthropic`, `anthropic_compatible`) and OpenAI chat completions
  * (`openai`, `openai_compatible`). Content is block-shaped — text, tool_use, tool_result — because
  * that is what a tool loop needs to round-trip; a plain string is accepted as shorthand.
@@ -43,7 +43,7 @@ export type SystemPrompt = string | { stable: string; volatile?: string }
 export interface ToolDefinition {
   name: string
   description: string
-  /** JSON Schema (object) for the tool input — `zodToJsonSchema` in `kit.ts` builds it from zod. */
+  /** JSON Schema (object) for the tool input — `zodToJsonSchema` in `agent-loop.ts` builds it from zod. */
   inputSchema: Record<string, unknown>
 }
 
@@ -93,7 +93,7 @@ export interface ChatClient {
 export interface EmbeddingsClient {
   readonly provider: AiProvider
   readonly model: string
-  /** Every vector `embed` returns has this many components (D18: 1024). */
+  /** Every vector `embed` returns has this many components (1024). */
   readonly dimension: number
   embed(texts: string[]): Promise<number[][]>
 }
@@ -116,8 +116,8 @@ export type MarkdownConversion =
   | { name: string; mimeType: string; format: 'error'; error: string }
 
 /**
- * The narrow slice of the `AI` binding the kit needs (`Ai` in production, `RecordingAi` in tests):
- * `run` for the embeddings/chat adapters, `toMarkdown` for document conversion (D18 uploads).
+ * The narrow slice of the `AI` binding the app needs (`Ai` in production, `RecordingAi` in tests):
+ * `run` for the embeddings/chat adapters, `toMarkdown` for document conversion (uploads).
  */
 export interface WorkersAiBinding {
   run(model: string, inputs: Record<string, unknown>): Promise<unknown>

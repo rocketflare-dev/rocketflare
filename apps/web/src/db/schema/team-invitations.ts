@@ -1,10 +1,10 @@
 /**
- * `team_invitations` — an email invited into a tenant with a role (D9, D10, D12). The invite URL
+ * `team_invitations` — an email invited into a tenant with a role. The invite URL
  * carries a random token; only its SHA-256 is stored. Lifecycle is three nullable timestamps
  * (accepted / revoked / expired-by-clock) rather than a status column that can drift from them.
  *
- * The partial unique index is the "one pending invitation per address per tenant" rule both
- * reference apps enforced with a read-then-insert race.
+ * The partial unique index is the "one pending invitation per address per tenant" rule, enforced
+ * without a read-then-insert race.
  */
 import { relations, sql } from 'drizzle-orm'
 import { index, pgTable, text, timestamp, uniqueIndex, uuid } from 'drizzle-orm/pg-core'

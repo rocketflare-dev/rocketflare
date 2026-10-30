@@ -6,7 +6,7 @@ import {
   type Tool,
   type ToolLoopEvent,
   ToolLoopExhaustedError,
-} from '@/api/services/ai/kit'
+} from '@/api/services/ai/agent-loop'
 import { FakeChatClient } from '../helpers/ai'
 
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))

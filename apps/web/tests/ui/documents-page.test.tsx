@@ -1,5 +1,5 @@
 /**
- * `/documents` (D18): the ingest form counts characters against `INGEST_TEXT_MAX_CHARS`, validates
+ * `/documents`: the ingest form counts characters against `INGEST_TEXT_MAX_CHARS`, validates
  * with the shared schema and POSTs the exact body (then toasts and clears); the upload tab refuses
  * a wrong type or an oversized file before any request and POSTs the chosen file as multipart to
  * `/api/ai/documents/upload` with the optional title; the table shows status badges with the
@@ -57,7 +57,7 @@ const DOCS = paged([
     id: DOC_B,
     ownerUserId: IDS.otherUser,
     title: 'Release notes',
-    source: 'agent:summarize-text',
+    source: 'agent:fixture-agent',
     status: 'failed',
     error: 'Embeddings provider timed out',
     chunkCount: 0,
@@ -109,7 +109,7 @@ describe('Documents page', () => {
       expect(requestBody(fetchMock, 'POST /api/ai/documents/ingest')).toEqual({
         title: 'Handbook',
         text: 'Twelve chars',
-        // D29: the default is tenant-wide, sent explicitly rather than left to the server.
+        // The default is tenant-wide, sent explicitly rather than left to the server.
         visibility: 'tenant',
         groupIds: [],
       })

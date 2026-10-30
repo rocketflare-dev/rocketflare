@@ -1,5 +1,5 @@
 /**
- * Data output (D26). `Output.data(raw, human)` prints the server's raw JSON under `--json` or the
+ * Data output. `Output.data(raw, human)` prints the server's raw JSON under `--json` or the
  * human rendering otherwise — both to STDOUT. Tables are plain text (no box drawing) so they diff
  * and grep well.
  */

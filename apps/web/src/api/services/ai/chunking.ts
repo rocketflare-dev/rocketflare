@@ -1,5 +1,5 @@
 /**
- * Text → retrievable chunks (D18). Pure: text in, texts out; knows nothing about embeddings or the
+ * Text → retrievable chunks. Pure: text in, texts out; knows nothing about embeddings or the
  * database. Paragraph-aware: paragraphs (blank-line separated) are packed into ~800-token windows
  * and the tail of each window (~100 tokens, cut at a word boundary) is carried into the next so a
  * sentence straddling a boundary is retrievable from either side. A paragraph larger than a window

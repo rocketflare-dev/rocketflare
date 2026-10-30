@@ -1,8 +1,8 @@
 /**
- * One chat turn (D17) on DaisyUI's `chat` primitives. User turns render verbatim (pre-wrapped);
+ * One chat turn on DaisyUI's `chat` primitives. User turns render verbatim (pre-wrapped);
  * assistant turns render as Markdown. The trailing streaming bubble passes `streaming` (a dots
  * indicator, `aria-busy`), optional tool one-liners, a strip of `DocumentCard`s for whatever the
- * turn's knowledge tools surfaced (D18), and the `usage` footnote appears once the
+ * turn's knowledge tools surfaced, and the `usage` footnote appears once the
  * `usage` frame (or the persisted message) carries it. Memoised for the same reason `Markdown` is.
  */
 import { CheckCircleIcon } from '@heroicons/react/24/outline'
@@ -22,19 +22,19 @@ export interface ChatBubbleProps {
   model?: string
   /** Reply still arriving. */
   streaming?: boolean
-  /** Tool-call one-liners for this turn (the kit's chat runs zero tools; kept for apps). */
+  /** Tool-call one-liners for this turn (the built-in chat runs zero tools; kept for apps). */
   toolSteps?: readonly ToolStep[]
   /** A `CUSTOM kit.notice` — something the reader should know that is NOT a failure. */
   notice?: string
   /**
-   * Documents this turn's tool calls surfaced (D18) — from `CUSTOM kit.document` while streaming,
+   * Documents this turn's tool calls surfaced — from `CUSTOM kit.document` while streaming,
    * and from `messages.toolCalls` through the same pure mapper once the row is persisted, so a
    * reloaded thread shows the same strip as the live one.
    */
   documents?: readonly DocumentCardData[]
   /** The stream ended on a `RUN_ERROR`. */
   error?: string
-  /** Rendered in the footer after the usage line — the thumbs on a persisted answer (D33). */
+  /** Rendered in the footer after the usage line — the thumbs on a persisted answer. */
   actions?: ReactNode
 }
 

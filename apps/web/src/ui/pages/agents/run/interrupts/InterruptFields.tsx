@@ -3,7 +3,7 @@
  *
  * The switch is **exhaustive over the shared union**, so a fifth interrupt kind is a type error
  * here until it has a branch — which is the whole reason the kinds are a closed set rather than a
- * generic JSON-Schema form generator (decision 7). It renders inputs and reports a draft; the
+ * generic JSON-Schema form generator. It renders inputs and reports a draft; the
  * validating, the posting and the buttons belong to `ActionRequiredPanel`.
  */
 import type { AgentInterruptSpec, ApprovalTool } from '@rocketflare/shared/ai/interrupts'

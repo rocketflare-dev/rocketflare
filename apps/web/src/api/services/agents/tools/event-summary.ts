@@ -1,5 +1,5 @@
 /**
- * Turning a tool's answer into a `tool.end` event payload (D7, D18) — i.e. into the audit trail a
+ * Turning a tool's answer into a `tool.end` event payload — i.e. into the audit trail a
  * person reads in the run drawer when they ask "where did this answer come from?".
  *
  * A tool answers the MODEL with JSON sized for a context window; an event is read by a HUMAN out of

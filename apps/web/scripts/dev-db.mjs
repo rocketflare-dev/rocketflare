@@ -3,7 +3,7 @@
  * The local dev Postgres, addressed by ONE value: `DATABASE_URL` in `apps/web/.dev.vars`.
  *
  * `docker-compose.dev.yml` used to pin port 5432 and a fixed `container_name`, so a second
- * checkout of the kit on the same machine could not start its database at all — it either
+ * checkout of the app on the same machine could not start its database at all — it either
  * collided on the port or silently attached to the other checkout's container (compose derives
  * its project name from the directory, and every checkout's is `apps/web`). This script gives
  * each checkout its own project, container and port, and writes the port it chose into
@@ -11,7 +11,7 @@
  * without being told.
  *
  *   node scripts/dev-db.mjs up     [--json]   start it (idempotent; prints the port)
- *        [--neon | --postgres]                also switch the LOCAL driver (D35): `--neon` starts the
+ *        [--neon | --postgres]                also switch the LOCAL driver: `--neon` starts the
  *                                             Neon proxy in front of it and writes NEON_LOCAL_PROXY +
  *                                             DATABASE_DRIVER=neon; `--postgres` stops the proxy.
  *                                             Neither: keep whatever .dev.vars says (missing = postgres)
@@ -139,7 +139,7 @@ function writeDevVars(values) {
   return true
 }
 
-/** The local driver (D35): the flag if one was passed, else `.dev.vars`, else `postgres`. */
+/** The local driver: the flag if one was passed, else `.dev.vars`, else `postgres`. */
 function localDriver(argv) {
   if (argv.includes('--neon')) return 'neon'
   if (argv.includes('--postgres')) return 'postgres'
@@ -252,7 +252,7 @@ async function down(json) {
   process.exit(result.status ?? 0)
 }
 
-/** Every dev database of this kit on the machine, whichever checkout started it. */
+/** Every dev database of this app on the machine, whichever checkout started it. */
 function allDevDatabases() {
   const ps = sh('docker', [
     'ps',

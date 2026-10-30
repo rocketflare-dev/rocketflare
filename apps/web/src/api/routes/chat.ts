@@ -1,5 +1,5 @@
 /**
- * `/api/chat` (D17): persisted conversations + one streaming route. Ownership is the `userId`
+ * `/api/chat`: persisted conversations + one streaming route. Ownership is the `userId`
  * filter on EVERY query (with the tenant predicate): another member's thread is a 404, admins
  * included.
  *

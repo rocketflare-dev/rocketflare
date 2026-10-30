@@ -1,5 +1,5 @@
 /**
- * The agent runtime — the bodies of the three Workflow steps (D7, D16, D17), kept as plain functions
+ * The agent runtime — the bodies of the three Workflow steps, kept as plain functions
  * over `(db, cfg, env, logger, params)` so tests drive them against Postgres with no platform:
  *   claimStep   — `claimRun` (row is the gate) + a `status: running` event. `false` = nothing to do.
  *   executeRun  — resolve the client for `meta.promptKey` (per-agent model assignment applies),
@@ -13,13 +13,13 @@
  *   finishStep  — two arms, then one last nudge, returning the terminal `{ runId, status }`: a
  *                 `queued|running` row after execute (the step threw past its retries) is marked
  *                 failed; an `awaiting_input` row at the END OF THE WORKFLOW is a park nothing can
- *                 wake any more, and settles `cancelled` with `error` NULL (T7).
+ *                 wake any more, and settles `cancelled` with `error` NULL.
  * Progress events are awaited (a Workflow step has no `waitUntil`) and never fail the run.
  *
  * A retry re-enters `executeRun` from the top, so two pieces of `ctx` exist to make that cheap and
  * safe: `ctx.checkpoint` (the tool loop resumes from `agent_runs.checkpoint` rather than replaying
  * every turn) and `ctx.once` (work with a side effect runs once per run, not once per attempt).
- * The ledger is not the checkpoint's business (D39): every call through `ctx.chat.client` and
+ * The ledger is not the checkpoint's business: every call through `ctx.chat.client` and
  * `ctx.decide` writes its own `ai_usage` row through the run's meter as it returns, so a resumed
  * loop's carried-forward `usage` is a tally for the agent, never a second bill. The meter starts
  * from the rows earlier attempts wrote, which is what makes a budget the RUN's rather than the
@@ -40,18 +40,18 @@ import { traceChatClient, tracerFor, withAgentTrace } from '../../observability/
 import { classifyInfrastructureError } from '../../utils/core/errors'
 import type { Logger } from '../../utils/core/logger'
 import { accessScopeForUser } from '../access'
-import { AiError, describeAiError, redactSecrets } from '../ai/errors'
 import {
   InterruptDeclinedError,
   InterruptRequested,
   StructuredOutputError,
   type ToolApproval,
   ToolLoopExhaustedError,
-} from '../ai/kit'
+} from '../ai/agent-loop'
+import { AiError, describeAiError, redactSecrets } from '../ai/errors'
 import { DECISIONS_FALLBACK_PROMPT_KEY, resolveChat, resolveDecisions } from '../ai/resolve'
 import type { AiEnv } from '../ai/types'
 import { notifyMany } from '../notifications'
-import { resolvePrompt } from '../prompts'
+import { type RegistryPromptKey, resolvePrompt } from '../prompts'
 import type { HubEnv, Realtime } from '../realtime'
 import { toAgentArtifact, upsertArtifact } from './artifacts'
 import { AgentBudgetExceededError, budgetFor, createRunMeter, meterChatClient } from './budget'
@@ -161,7 +161,7 @@ export async function claimStep(
 export function isRetryableRunError(err: unknown): boolean {
   if (err instanceof AiError) return err.code === 'unavailable' || err.code === 'rate_limit'
   if (err instanceof StructuredOutputError || err instanceof AgentCancelledError) return false
-  // A budget is spent, not unavailable: a retry would only spend more (D39).
+  // A budget is spent, not unavailable: a retry would only spend more.
   if (err instanceof AgentBudgetExceededError) return false
   // A policy that ran out would run out again: the retry resumes the same transcript.
   if (err instanceof ToolLoopExhaustedError) return false
@@ -181,7 +181,7 @@ export function describeRunError(err: unknown): string {
 /**
  * Steering notes this run has not been handed yet, in the order they were sent, marked delivered as
  * they are read. The cursor is the EXISTING `agent_run_effects` ledger keyed `steering:<eventId>`,
- * which is why steering needs no table of its own (decision 4): the note is an `agent_run_events`
+ * which is why steering needs no table of its own: the note is an `agent_run_events`
  * row, and "has it been delivered?" is a decision, not a result — `claimEffect`, not `runOnce`.
  *
  * A note whose `data` no longer parses is CLAIMED and skipped rather than retried forever.
@@ -275,7 +275,7 @@ export async function executeRun(
   const agent = getAgent(run.agentKey)
   const { realtime, settle } = createStepRealtime(env, logger)
   const emit = await createEmitter(db, params, realtime, logger)
-  // D32: flushed in `finally`, while this step's client is still open — no `waitUntil` in a step.
+  // Flushed in `finally`, while this step's client is still open — no `waitUntil` in a step.
   const tracer = tracerFor(cfg, { logger, store: databaseSpanStore(db) })
   const checkCancelled = async () => {
     if (await isCancelRequested(db, tenantId, runId)) throw new AgentCancelledError()
@@ -294,7 +294,7 @@ export async function executeRun(
       columns: { name: true },
       where: eq(tenants.id, tenantId),
     })
-    // D39: every model call and decision of this attempt goes through ONE meter, which starts from
+    // Every model call and decision of this attempt goes through ONE meter, which starts from
     // what earlier attempts already spent — the budget is the run's, not the attempt's.
     const meter = await createRunMeter({
       db,
@@ -315,7 +315,7 @@ export async function executeRun(
         tags: ['agent', agent.meta.key],
         metadata: { attempt: run.attempt, model: resolved.model },
         input,
-        // D32: every step of the run joins ONE trace derived from the run id; this span is the
+        // Every step of the run joins ONE trace derived from the run id; this span is the
         // step, a child of the root `finishStep` records once the run has settled.
         traceId: traceIdForRun(runId),
         parentSpanId: rootSpanIdForRun(runId),
@@ -341,7 +341,7 @@ export async function executeRun(
           emit,
           checkCancelled,
           chat: { client, model: resolved.model, maxOutputTokens: resolved.maxOutputTokens },
-          // D29: built here, at EXECUTE time, from the run's requester — current membership, not
+          // Built here, at EXECUTE time, from the run's requester — current membership, not
           // a snapshot taken when the run was enqueued. No requester ("system") reads tenant-wide
           // documents only, never an owner's restricted ones.
           tools: await buildAgentTools({ db, cfg, env, scope: toolScope }),
@@ -353,7 +353,7 @@ export async function executeRun(
           approvals,
           interrupt: async ask => {
             // Create-or-read on `(run_id, key)`: the SECOND time this line runs — a resumed or
-            // retried attempt re-entering `run()` from the top — it finds the answer (T2).
+            // retried attempt re-entering `run()` from the top — it finds the answer.
             const row = await requestInterrupt(db, {
               tenantId,
               runId,
@@ -421,7 +421,7 @@ export async function executeRun(
             return toAgentArtifact(row)
           },
           prompt: (vars, promptKey) =>
-            resolvePrompt(db, tenantId, promptKey ?? (agent.meta.promptKey as 'summarize-text'), {
+            resolvePrompt(db, tenantId, promptKey ?? (agent.meta.promptKey as RegistryPromptKey), {
               appName: cfg.APP_NAME,
               tenantName: tenant?.name ?? '',
               ...vars,
@@ -445,7 +445,7 @@ export async function executeRun(
       await emit({ type: 'status', data: { status: 'cancelled' } })
       return { runId, status: 'cancelled' }
     }
-    // Park (issue #17). **The order below is the safety property**: a row with no parked run
+    // Park. **The order below is the safety property**: a row with no parked run
     // simply re-asks on the next attempt, while a parked run with no row is a hang — nothing for
     // anybody to answer and a seven-day `waitForEvent` to sit through. So the rows go first.
     if (err instanceof InterruptRequested) {
@@ -463,7 +463,7 @@ export async function executeRun(
         )
       }
       // NOT `settle()`: `finishedAt` stays NULL and the checkpoint survives, which is what makes
-      // the resumed attempt cheap (T7).
+      // the resumed attempt cheap.
       const parked = await parkRun(db, tenantId, runId)
       if (!parked) {
         // Settled underneath us — cancelled from outside while the gate was being raised. The row
@@ -567,7 +567,7 @@ export async function executeRun(
 /**
  * The last step: settle anything the loop left unsettled, and nudge one last time.
  *
- * **Two arms, and the difference between them is T7.** The backstop predicate stays
+ * **Two arms, and the difference between them matters.** The backstop predicate stays
  * `queued | running` — widening it to `ACTIVE_RUN_STATUSES` would turn every legitimately
  * parked run into a `failed` row. A row that is `awaiting_input` when the WORKFLOW IS ENDING is a
  * different fact: the instance that would have woken it is finishing, so nobody can ever resume it.
@@ -587,7 +587,7 @@ export async function finishStep(
   params: AgentRunParams,
   outcome?: ExecuteOutcome,
   /**
-   * D32: given ONLY by the workflow's final `finish` step, which records the run's root span
+   * Given ONLY by the workflow's final `finish` step, which records the run's root span
    * (`invoke_agent <key>`) — the expiry arm calls this too, and one root per run is the point.
    */
   trace?: { cfg: AppConfig }
@@ -600,9 +600,9 @@ export async function finishStep(
   if (row?.status === 'awaiting_input') await expireInterrupts(db, tenantId, runId)
   // The one case where a parked row is a FAILURE rather than an expiry: the loop gave up on an
   // agent that kept asking (`MAX_INTERRUPT_ROUNDS`) and said so in the outcome. It is the outcome
-  // that decides, never the row's status — widening the predicate below is T7.
+  // that decides, never the row's status — never widen the predicate below.
   const abandoned = row?.status === 'awaiting_input' && outcome?.status === 'failed'
-  // T7: NOT `ACTIVE_RUN_STATUSES`. A parked run is not a failure, and this list must never grow.
+  // NOT `ACTIVE_RUN_STATUSES`. A parked run is not a failure, and this list must never grow.
   if (row && (row.status === 'queued' || row.status === 'running' || abandoned)) {
     const message =
       outcome?.error ?? 'The agent run did not complete (execute step exhausted its retries)'
@@ -626,7 +626,7 @@ export async function finishStep(
 }
 
 /**
- * The run's root span (D32): `invoke_agent <key>` from the first claim to now, with the run's
+ * The run's root span: `invoke_agent <key>` from the first claim to now, with the run's
  * input and output, an error status when it failed, and the settled status as an attribute. Its id
  * is derived from the run id, so the `execute#N` spans every earlier step recorded — each in its
  * own Worker invocation — already point at it. Never throws: a trace is not worth a failed step.

@@ -1,5 +1,5 @@
 /**
- * `/select-tenant` (D25, multi mode only): pick which organisation to work in, or create a new one
+ * `/select-tenant` (multi mode only): pick which organisation to work in, or create a new one
  * (`createTenantRequestSchema`; slug derived with the shared `slugify`). Disabled in single mode.
  */
 

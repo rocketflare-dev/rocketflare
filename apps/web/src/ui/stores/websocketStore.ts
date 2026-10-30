@@ -1,5 +1,5 @@
 /**
- * The one zustand store (D8): websocket connection state and the last event seen. TanStack Query
+ * The one zustand store: websocket connection state and the last event seen. TanStack Query
  * owns server state — this store never holds rows. `WebSocketStatus` and `ConnectionBanner` read
  * `status`/`disconnectedAt`; feature hooks may watch `lastEvent` for a specific `type`. Written only
  * by `lib/websocketClient.ts`.

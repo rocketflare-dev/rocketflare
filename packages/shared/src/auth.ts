@@ -1,5 +1,5 @@
 /**
- * Auth contracts (D9, D11, D13, D25): the public user, `/auth/session`'s response (the UI's whole
+ * Auth contracts: the public user, `/auth/session`'s response (the UI's whole
  * bootstrap — who am I, which org, what may I do, which features are on, which modes the server
  * runs), `/auth/methods`, and the login/tenant-switch request bodies.
  */
@@ -96,7 +96,7 @@ export const selectTenantRequestSchema = z.object({
 })
 export type SelectTenantRequest = z.infer<typeof selectTenantRequestSchema>
 
-/** Dev-only login without email; the server refuses it in production (D11). */
+/** Dev-only login without email; the server refuses it in production. */
 export const devLoginRequestSchema = z.object({
   email: z.string().trim().toLowerCase().email(),
   name: z.string().trim().min(1).max(100).optional(),

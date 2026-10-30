@@ -1,5 +1,5 @@
 /**
- * Pure retrieval helpers (D18), no database: `chunkText` (paragraph-aware windows with a word-boundary
+ * Pure retrieval helpers, no database: `chunkText` (paragraph-aware windows with a word-boundary
  * overlap, hard split of an oversized paragraph, sequential `seq`, character-based token estimate)
  * and `fuseByRank` (Reciprocal Rank Fusion: an item in both lists outranks a single-signal top hit,
  * ranks are carried, ties break deterministically).

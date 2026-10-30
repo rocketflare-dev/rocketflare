@@ -1,5 +1,5 @@
 /**
- * `GET /ws` upgrade auth (D8, D12): 426 without `Upgrade: websocket`, 401 without a cookie, 403 for
+ * `GET /ws` upgrade auth: 426 without `Upgrade: websocket`, 401 without a cookie, 403 for
  * a tenant the user is not a member of, and the happy path forwards the upgrade to the per-tenant
  * DO stub with the identity headers (the stub's `fetch` answers 501, which passes straight through).
  */

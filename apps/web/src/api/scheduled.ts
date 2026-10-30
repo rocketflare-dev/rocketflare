@@ -1,8 +1,8 @@
 /**
- * Cron dispatcher (D7): tasks are registered per cron EXPRESSION and looked up by `event.cron`,
+ * Cron dispatcher: tasks are registered per cron EXPRESSION and looked up by `event.cron`,
  * so adding a schedule is one entry in `[triggers] crons` (wrangler.toml — both files) and one
  * entry here. Every task is try/caught and logged individually; one failing task never blocks
- * the others. Config is validated the same way `fetch` does (D3).
+ * the others. Config is validated the same way `fetch` does.
  *
  * Local testing against `wrangler dev` (port 3001):
  *   curl "http://localhost:3001/cdn-cgi/local/scheduled?cron=0+4+*+*+*"
@@ -53,7 +53,7 @@ export async function runPruneExpired(db: Database) {
   return { sessions, magicLinks, invitations }
 }
 
-/** Nightly prune of expired rows (D12): counts are logged so the run is auditable. */
+/** Nightly prune of expired rows: counts are logged so the run is auditable. */
 export const pruneExpired: ScheduledTask = {
   name: 'pruneExpired',
   async run({ db, logger }) {
@@ -63,17 +63,16 @@ export const pruneExpired: ScheduledTask = {
 }
 
 /**
- * Drop `ai_spans` older than `OBSERVABILITY_SPAN_RETENTION_DAYS` (D32). The local trace store is
+ * Drop `ai_spans` older than `OBSERVABILITY_SPAN_RETENTION_DAYS`. The local trace store is
  * written on every traced request whether or not a backend is configured, so without this it grows
  * for ever.
  *
- * ONE statement for every tenant. It used to be one DELETE per tenant, ten at a time, on the belief
- * that a cross-tenant cutoff would read the whole table; it does not — Postgres answers
+ * ONE statement for every tenant, not one DELETE per tenant: a cross-tenant cutoff does not read
+ * the whole table — Postgres answers
  * `started_at < $1` from the `(tenant_id, started_at)` index with a bitmap scan when the cutoff is
- * selective, and a sequential scan only when most rows are going anyway. Per tenant it cost
- * `tenants / 10` round trips, each its own HTTP request under `neon` (D35): minutes for a large
- * fleet, and in the neon test run, where every api file's tenants share one database, a cron test
- * whose time grew with the size of the suite until it timed out.
+ * selective, and a sequential scan only when most rows are going anyway. Per tenant would cost
+ * `tenants / 10` round trips, each its own HTTP request under `neon`: minutes for a large
+ * fleet.
  */
 export async function runPruneAiSpans(db: Database, retentionDays: number, now = new Date()) {
   const cutoff = new Date(now.getTime() - retentionDays * 24 * 60 * 60 * 1000)
@@ -83,7 +82,7 @@ export async function runPruneAiSpans(db: Database, retentionDays: number, now =
   return { spans, cutoff: cutoff.toISOString() }
 }
 
-/** Nightly retention for the local trace store (D32). */
+/** Nightly retention for the local trace store. */
 export const pruneAiSpans: ScheduledTask = {
   name: 'pruneAiSpans',
   async run({ db, config, logger }) {
@@ -98,8 +97,8 @@ const CORE_SCHEDULED_TASKS: Record<string, ScheduledTask[]> = {
 }
 
 /**
- * Core tasks plus every installed plugin's (D31). A plugin naming a cron the kit already runs
- * APPENDS to it — each task is try/caught on its own, so a plugin's failure cannot stop the kit's
+ * Core tasks plus every installed plugin's. A plugin naming a cron core already runs
+ * APPENDS to it — each task is try/caught on its own, so a plugin's failure cannot stop core's
  * prune — and a plugin naming a new cron expression must also add it to `[triggers]` in BOTH
  * tomls; nothing here can do that, and the parity test is what catches a forgotten one.
  */

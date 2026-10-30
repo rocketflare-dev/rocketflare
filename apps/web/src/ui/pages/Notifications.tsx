@@ -1,4 +1,4 @@
-/** `/notifications` (D13): the full list, unread filter, mark one / mark all read, paginated. */
+/** `/notifications`: the full list, unread filter, mark one / mark all read, paginated. */
 import { BellSlashIcon } from '@heroicons/react/24/outline'
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
@@ -87,7 +87,7 @@ export default function Notifications() {
                 />
                 <div className="flex-1 min-w-0">
                   {/* The same `notificationLink` the bell uses, so a row means the same thing in
-                      both places (issue #17). */}
+                      both places. */}
                   <div className="text-sm font-medium">
                     {notificationLink(n) ? (
                       <Link

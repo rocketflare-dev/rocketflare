@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "license": "MIT",
-  "description": "Rocketflare kit command-line interface (login via browser → API key, whoami, tenant-scoped commands)",
+  "description": "Rocketflare command-line interface (login via browser → API key, whoami, tenant-scoped commands)",
   "type": "module",
   "bin": {
     "rocketflare": "./dist/cli.js"

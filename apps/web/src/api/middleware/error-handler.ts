@@ -1,5 +1,5 @@
 /**
- * `app.onError` + `app.notFound` (D13): the ONLY place errors become responses, always in the
+ * `app.onError` + `app.notFound`: the ONLY place errors become responses, always in the
  * shared envelope `{ error, statusCode, code?, details? }`. Mapping:
  *   ApiError → its own status/body · HTTPException (Hono built-ins) → status + message ·
  *   ZodError → 400 validation_failed with issues · infrastructure faults (42501, connection)

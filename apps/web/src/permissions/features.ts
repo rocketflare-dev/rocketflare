@@ -1,7 +1,5 @@
 /**
- * Where a feature flag comes from (D30). The kit shipped `AbilityContext.features` as a live seam
- * with no source — `middleware/auth.ts` passed `[]` — and `docs/CONCEPTS.md` §1 recorded
- * "feature-flag source for `access` is undecided" as a known gap. This file is that decision.
+ * Where a feature flag comes from.
  *
  * There are two sources, and they answer different questions:
  *

@@ -1,5 +1,5 @@
 /**
- * Singleton WebSocket client (D8), outside the React lifecycle. Same-origin `/ws?tenantId=` so the
+ * Singleton WebSocket client, outside the React lifecycle. Same-origin `/ws?tenantId=` so the
  * Vite proxy forwards it in dev and the Worker serves it deployed. Reconnects with exponential
  * backoff + full jitter (1 s → 30 s cap) so a fleet of tabs recovering from one drop does not
  * stampede the hub; a close with code 1001/1012 or an "upgraded"/"new version" reason means the

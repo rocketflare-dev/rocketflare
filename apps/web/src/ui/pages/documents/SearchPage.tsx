@@ -1,5 +1,5 @@
 /**
- * `/search` (D18, D20): hybrid search over the tenant knowledge base — `POST /api/ai/documents/search`
+ * `/search`: hybrid search over the tenant knowledge base — `POST /api/ai/documents/search`
  * with `{ query, limit, documentId? }`, rendering hits with rank, where the passage sits in its
  * document (`seq`/`documentPassages`), fused score, dense/lexical rank
  * badges and snippet, GROUPED under a `DocumentCard` header built client-side from the documents

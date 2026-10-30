@@ -125,7 +125,7 @@ function RowBody({ row }: { row: Row }) {
 const DECISION_INLINE_ANSWERS = 4
 
 /**
- * A `ctx.decide` call (D37): the question set's key, each answer with its confidence, and whether
+ * A `ctx.decide` call: the question set's key, each answer with its confidence, and whether
  * the numbers are calibrated — a self-reported probability must never read like Jev's.
  */
 function DecisionBody({ row }: { row: Extract<Row, { kind: 'decision' }> }) {

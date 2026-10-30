@@ -1,8 +1,8 @@
 /**
- * `search_knowledge` (D7, D18) — every agent's read access to the tenant's knowledge base: the same
+ * `search_knowledge` — every agent's read access to the tenant's knowledge base: the same
  * hybrid `searchChunks` the `/search` page uses, bound to the run's `AccessScope` — the run's
  * tenant AND the requesting person's group visibility, never a model-supplied one. A document the
- * requester may not read is not in the corpus this tool searches (D29).
+ * requester may not read is not in the corpus this tool searches.
  *
  * The shape of the answer is the whole design here — a model can only reason about what the tool
  * hands back, so:
@@ -32,8 +32,8 @@ import { z } from 'zod'
 import type { AppConfig } from '../../../../config'
 import type { Database } from '../../../../db/client'
 import type { AccessScope } from '../../access'
+import type { Tool } from '../../ai/agent-loop'
 import { AiNotConfiguredError } from '../../ai/errors'
-import type { Tool } from '../../ai/kit'
 import { searchChunks } from '../../ai/retrieval'
 import type { AiEnv } from '../../ai/types'
 import { type KnowledgeBaseEntry, listKnowledgeDocuments } from './list-documents'
@@ -42,7 +42,7 @@ export const SEARCH_KNOWLEDGE_TOOL = KNOWLEDGE_TOOLS.search
 /**
  * Per passage: a whole ~3 200-char chunk fits, but no more. The budgets below are the compromise
  * between "the model can actually read the material" and "the transcript stays inside a small
- * model's context": the kit's zero-key floor is Workers AI Mistral Small, and a tool result of
+ * model's context": the zero-key floor is Workers AI Mistral Small, and a tool result of
  * ~4 000 tokens per turn compounds over a loop until the next call stalls. Raise them for a
  * long-context provider; do not raise them and keep the Workers AI floor.
  */
@@ -124,7 +124,7 @@ export interface AgentToolContext {
   cfg: AppConfig
   env: AiEnv
   /**
-   * What this run may READ (D29) — the tenant AND the requesting person's groups. Built at EXECUTE
+   * What this run may READ — the tenant AND the requesting person's groups. Built at EXECUTE
    * time from `agent_runs.requestedByUserId`, not snapshotted at enqueue, so a run started before
    * someone left a group does not read on their old access. A run with no requesting user
    * ("system") gets tenant-visible documents only.

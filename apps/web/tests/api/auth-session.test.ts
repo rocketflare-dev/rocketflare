@@ -1,5 +1,5 @@
 /**
- * Cookie + Bearer authentication (D12): `/auth/session`, `authMiddleware` codes, sliding expiry,
+ * Cookie + Bearer authentication: `/auth/session`, `authMiddleware` codes, sliding expiry,
  * logout, select-tenant.
  */
 import type { SessionResponse } from '@rocketflare/shared/auth'
@@ -47,7 +47,7 @@ describe('GET /auth/session', () => {
     expect(body.tenants.map(t => t.id)).toContain(seed.tenant.id)
     expect(body.permissions.length).toBeGreaterThan(0)
     // A fresh database is every flag at its registry default — so an installed plugin whose flag
-    // defaults ON is on here, and a bare kit has none.
+    // defaults ON is on here, and a bare checkout has none.
     expect(body.features).toEqual(
       FEATURE_KEYS.filter(
         k => FEATURE_FLAGS[k].defaultState === 'on' && !FEATURE_FLAGS[k].environmentGated

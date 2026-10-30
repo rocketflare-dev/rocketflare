@@ -4,11 +4,9 @@
  * classification to decide, per file, whether a kit change may be applied — and the one outcome
  * that breaks somebody's app is recreating a surface they deleted.
  *
- * So the manifest has to stay true as the kit grows. The coverage assertion below is the check
- * that does it: every tracked file must be claimed by a surface, the never-port list, the kit-only
- * list, the manual list or a core prefix. Add a directory the manifest has never heard of and this
- * test fails until somebody says what it is. Same spirit as `rls-coverage.test.ts` and
- * `cube-isolation.test.ts`.
+ * So the manifest has to stay true as the kit grows. That every tracked file is classified is a
+ * kit-only claim (`tests/kit-only/kit-manifest.test.ts`): a copy's own new files never appear in a
+ * kit diff.
  *
  * This suite travels into every copy, so everything here is true of ANY manifest — the kit's and
  * an app's alike. The claims that hold only of the KIT (its disk state, its version pin, the
@@ -27,6 +25,7 @@ import { KIT } from '../../../../scripts/lib/rename-lib.mjs'
 import type { Manifest } from '../../../../scripts/lib/upgrade-lib.d.mts'
 import {
   classifyPath,
+  commandNamesKitOnly,
   isKitManifest,
   KIT_ONLY_PROJECT,
   kitOnlyGlobs,
@@ -39,9 +38,9 @@ const committed = rawManifest as unknown as Manifest
 
 /**
  * What the tooling actually sees: the committed manifest with the git-ignored
- * `.rocketflare.local.json` sidecar folded in (D31). In the kit that is where a plugin installed
+ * `.rocketflare.local.json` sidecar folded in. In the kit that is where a plugin installed
  * with `--local` is recorded, so a developer with one installed must not fail this suite — and its
- * files must still be classified, which is exactly what the coverage assertion below then proves.
+ * files must still be classified, which the kit-only coverage check (`tests/kit-only`) proves.
  */
 const manifest = (readManifest().manifest ?? committed) as Manifest
 const { isKit } = readManifest()
@@ -85,7 +84,7 @@ describe('surfaces', () => {
   })
 
   it('every plugin surface says where it came from', () => {
-    // D31: `source.repo` is never null. An installed plugin whose origin is unknown cannot be
+    // `source.repo` is never null. An installed plugin whose origin is unknown cannot be
     // upgraded, cannot be checked against its `requires.kit` range, and cannot be re-fetched — so
     // it would be a directory nobody can maintain, recorded as though somebody could.
     for (const s of manifest.surfaces.filter(x => x.kind === 'plugin')) {
@@ -102,7 +101,7 @@ describe('surfaces', () => {
       ? readdirSync(dir, { withFileTypes: true })
           .filter(e => e.isDirectory())
           // `plugins/api/**` is the host's plugin API, not an installed plugin — the same reserved
-          // set that stops anybody taking `api` as a plugin id (D31).
+          // set that stops anybody taking `api` as a plugin id.
           .filter(e => !RESERVED_PLUGIN_IDS.has(e.name))
           .map(e => e.name)
       : []
@@ -158,21 +157,32 @@ describe('kit-only tests', () => {
   it(isKit ? 'are run by the kit’s gate' : 'are not wired into this copy’s gate', () => {
     expect(wired, `a \`--project ${KIT_ONLY_PROJECT}\` in apps/web/package.json`).toBe(isKit)
   })
-})
 
-describe('coverage', () => {
-  it('classifies every tracked file', () => {
-    const all = [
-      ...manifest.surfaces.flatMap(s => s.paths),
-      ...manifest.neverPort,
-      ...kitOnlyGlobs(manifest),
-      ...manifest.manual,
-      ...manifest.core,
-    ]
-    const unclassified = tracked.filter(f => !matchesAny(f, all))
-    expect(
-      unclassified,
-      'add these to a surface, neverPort, kitOnly, manual or core in .rocketflare.json'
-    ).toEqual([])
-  })
+  // The maintainer scripts are kit-only too, and so is what calls them: a root package.json script
+  // (`kit:release`) and the Claude Code hooks (the porting-note and release-site nudges).
+  const rootPackage = JSON.parse(readFileSync(path.join(REPO_ROOT, 'package.json'), 'utf8')) as {
+    scripts?: Record<string, string>
+  }
+  const settingsFile = path.join(REPO_ROOT, '.claude/settings.json')
+  const hookCommands: string[] = existsSync(settingsFile)
+    ? Object.values(
+        (
+          JSON.parse(readFileSync(settingsFile, 'utf8')) as {
+            hooks?: Record<string, { hooks?: { command?: string }[] }[]>
+          }
+        ).hooks ?? {}
+      ).flatMap(groups => groups.flatMap(g => (g.hooks ?? []).map(h => h.command ?? '')))
+    : []
+  const callers = [
+    ...Object.values(rootPackage.scripts ?? {}),
+    ...Object.values(webPackage.scripts ?? {}),
+    ...hookCommands,
+  ].filter(command => commandNamesKitOnly(command, globs))
+
+  it(
+    isKit ? 'are called by the kit’s scripts and hooks' : 'are called by nothing in this copy',
+    () => {
+      expect(callers.length > 0, callers.join(', ') || 'no script or hook names one').toBe(isKit)
+    }
+  )
 })

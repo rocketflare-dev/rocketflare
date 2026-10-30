@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Provision the Cloudflare resources one environment of this kit needs. Idempotent: existing
+# Provision the Cloudflare resources one environment of this app needs. Idempotent: existing
 # resources are detected by name and reused rather than duplicated. Prints the ids to paste into
 # the matching wrangler toml, or patches them in itself with `--apply`.
 #
@@ -25,20 +25,20 @@
 # under DATABASE_DRIVER=postgres — NEON_DATABASE_URL, the DIRECT (non `-pooler`) host of that
 # environment's Postgres. Hyperdrive pools itself; see docs/DEPLOY.md → Database driver.
 #
-# DATABASE_DRIVER (D35) comes from the environment (`pnpm provision cloudflare <env> --driver …`
+# DATABASE_DRIVER comes from the environment (`pnpm provision cloudflare <env> --driver …`
 # passes it), else the toml's `[vars] DATABASE_DRIVER`, missing meaning postgres:
 #   neon       no Hyperdrive — the Worker reads the DATABASE_URL secret (`pnpm provision secrets`);
 #              with --apply the toml gets DATABASE_DRIVER = "neon" and loses any [[hyperdrive]] block
 #   postgres   the Hyperdrive config below; with --apply the toml gets DATABASE_DRIVER = "postgres"
 #              and the [[hyperdrive]] block (localConnectionString from .dev.vars DATABASE_URL)
 #
-# Creates a RESOURCE LIST, idempotently. The kit’s own are the default list:
+# Creates a RESOURCE LIST, idempotently. The app’s own are the default list:
 #   Hyperdrive config   <app>-<env>                 → [[hyperdrive]] id            (postgres only)
 #   KV namespace        <APP>_RATE_LIMIT[_STAGING]  → [[kv_namespaces]] id         (patched / printed)
 #   Queue               <app>-jobs[-staging]        → [[queues.*]] queue           (name-referenced)
 #   R2 bucket           <app>-files[-staging]       → [[r2_buckets]] bucket_name   (name-referenced)
 #
-# PLUGIN_RESOURCES (D31, Decision 12) appends to that list: a JSON array of
+# PLUGIN_RESOURCES appends to that list: a JSON array of
 # `{ "type": "kv"|"queue"|"r2", "name": "<already env-suffixed>", "binding": "APPROVALS_CACHE" }`,
 # built by `pnpm provision cloudflare <env>` from each installed plugin’s `plugin.json` through
 # scripts/provision/plugin-resources.ts (which owns the `<app>-<id>-<name>[-staging]` naming rule,
@@ -127,7 +127,7 @@ echo "== ${APP} / ${ENV_NAME} → ${TOML} (DATABASE_DRIVER=${DRIVER})"
 echo
 
 # ---- the resource list --------------------------------------------------------------------
-# TYPE<TAB>NAME<TAB>BINDING per line: the kit’s own (Hyperdrive only under postgres), then
+# TYPE<TAB>NAME<TAB>BINDING per line: the app’s own (Hyperdrive only under postgres), then
 # whatever PLUGIN_RESOURCES declares.
 RESOURCE_LIST="$(printf '%s\t%s\t%s\n' \
   kv         "$KV_NAME"         RATE_LIMIT_KV \

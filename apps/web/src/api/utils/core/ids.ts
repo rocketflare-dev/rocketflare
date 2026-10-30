@@ -1,5 +1,5 @@
 /**
- * Identifiers and random tokens via WebCrypto only (D12: no `node:crypto`). Works identically
+ * Identifiers and random tokens via WebCrypto only (no `node:crypto`). Works identically
  * in workerd, Node 24 and the browser bundle.
  */
 
@@ -24,7 +24,7 @@ export function toBase64Url(bytes: Uint8Array): string {
 
 /**
  * An opaque URL-safe token: `bytes` of entropy (default 32 = 256 bits) as base64url. Used for
- * session ids, magic-link and invitation tokens, API keys (Phase 1).
+ * session ids, magic-link and invitation tokens, API keys.
  */
 export function randomToken(bytes = 32): string {
   return toBase64Url(randomBytes(bytes))

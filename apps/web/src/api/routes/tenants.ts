@@ -1,5 +1,5 @@
 /**
- * `/api/tenants` (D9, D25): `GET` = the caller's tenant summaries (the org switcher), `POST` =
+ * `/api/tenants`: `GET` = the caller's tenant summaries (the org switcher), `POST` =
  * create an organisation with the caller as owner and select it — 404 `tenancy_mode_single` in
  * single mode. Tenant-free: a user with no membership must be able to create their first org.
  */

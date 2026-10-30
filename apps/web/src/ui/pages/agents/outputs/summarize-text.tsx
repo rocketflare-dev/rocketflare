@@ -1,5 +1,5 @@
 /**
- * `summarize-text`'s answer (D7, D17, D18): the summary as Markdown, its key points, and a link to
+ * `summarize-text`'s answer: the summary as Markdown, its key points, and a link to
  * the indexed document when the run was asked to store it. Parsed with the SAME
  * `summarizeTextOutputSchema` the runtime validated the output against.
  */

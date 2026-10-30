@@ -1,13 +1,13 @@
 /**
- * The server plugin barrel (D31) — ONE line per installed plugin, written by
+ * The server plugin barrel — ONE line per installed plugin, written by
  * `pnpm plugin add|remove`, never by hand:
  *
  *     import { approvalsServer } from './approvals'
  *     export const SERVER_PLUGINS = [approvalsServer] as const satisfies readonly AnyServerPlugin[]
  *
  * Read by `api/index.ts` (mounts), `utils/routes/api-prefixes.ts`, `utils/db/tenant-helpers.ts`,
- * `services/access.ts`, `services/groups.ts` and `scripts/seed.ts` — and, once A2 lands, by the
- * jobs, agents, prompts, permissions and scheduled registries too.
+ * `services/access.ts`, `services/groups.ts`, `scripts/seed.ts`, and the jobs, agents, prompts,
+ * permissions and scheduled registries.
  *
  * `SERVER_PLUGINS` is an `as const` TUPLE so those type-level derivations can read it; an EMPTY
  * tuple indexes to `never`, and `never.mounts` is a type error, so everything that only iterates

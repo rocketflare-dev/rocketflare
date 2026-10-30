@@ -1,5 +1,5 @@
 /**
- * The middle rung of `formFor` (issue #17): a form built from the agent's own `inputJsonSchema`,
+ * The middle rung of `formFor`: a form built from the agent's own `inputJsonSchema`,
  * for an agent that has no hand-written entry but whose input IS one flat object of the five field
  * types. Below a registered form, above the JSON textarea.
  *

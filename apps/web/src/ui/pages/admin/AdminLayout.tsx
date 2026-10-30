@@ -1,5 +1,5 @@
 /**
- * `/admin/*` (D10, D25): the cross-tenant area, gated by `RequireGuard guard="globalAdmin"` on
+ * `/admin/*`: the cross-tenant area, gated by `RequireGuard guard="globalAdmin"` on
  * the route (server: global-admin middleware). Sub-navigation as tabs with a pending-requests
  * count; in single mode "Organisations" collapses to the one tenant (see TenantList).
  */

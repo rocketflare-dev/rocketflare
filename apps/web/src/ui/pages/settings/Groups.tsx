@@ -1,5 +1,5 @@
 /**
- * Settings → Groups (D29). Group TYPES on the left, that type's groups on the right, and a modal
+ * Settings → Groups. Group TYPES on the left, that type's groups on the right, and a modal
  * for who is in a group. `manage Group` (admin+) throughout — the tab does not render at all
  * otherwise, because a picker or a table you cannot save from is worse than no tab.
  *
@@ -30,9 +30,9 @@ import { GroupMembersModal } from './GroupMembersModal'
 
 /**
  * The 409 body: how much content the delete is about to narrow, one count per restrictable
- * resource. The KEYS are whatever `VISIBILITY_RESOURCES` holds on the server — the kit's own
+ * resource. The KEYS are whatever `VISIBILITY_RESOURCES` holds on the server — the core
  * `documents`, plus one per installed plugin (the analytics plugin's `dashboards`) — so this is
- * read generically rather than as a fixed pair (D31). Zeroes are included by the server on
+ * read generically rather than as a fixed pair. Zeroes are included by the server on
  * purpose: the sentence says what the whole organisation would lose, not only the non-empty parts.
  */
 type InUse = Record<string, number>

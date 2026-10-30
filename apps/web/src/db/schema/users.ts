@@ -1,11 +1,10 @@
 /**
- * `users` — one row per PERSON, global across tenants (D1, D9, D25). Membership of a tenant is a
+ * `users` — one row per PERSON, global across tenants. Membership of a tenant is a
  * `tenant_users` row; there is no `tenant_id` here, so the table is RLS-scoped by
  * `membershipIsolation()` instead of `tenantIsolation()`.
  *
- * Ported from the Node reference app's `users.ts` minus `username`; `isBlocked` became
- * `blockedAt` (a timestamp says WHEN) and `emailVerifiedAt` was added because D11 requires a
- * verified email before `BOOTSTRAP_ADMIN_EMAILS` promotion.
+ * `blockedAt` is a timestamp because it says WHEN; `emailVerifiedAt` exists because a
+ * verified email is required before `BOOTSTRAP_ADMIN_EMAILS` promotion.
  */
 import { sql } from 'drizzle-orm'
 import { boolean, pgTable, text, timestamp, uniqueIndex, uuid } from 'drizzle-orm/pg-core'
@@ -20,7 +19,7 @@ export const users = pgTable(
     email: text('email').notNull(),
     name: text('name').notNull(),
     avatarUrl: text('avatar_url'),
-    /** Platform flag (D10): `manage all` and access to `/api/admin/*`. Not a tenant role. */
+    /** Platform flag: `manage all` and access to `/api/admin/*`. Not a tenant role. */
     isGlobalAdmin: boolean('is_global_admin').notNull().default(false),
     /** Set when a login proved ownership of `email` (magic link, or a provider asserting verified). */
     emailVerifiedAt: timestamp('email_verified_at', { withTimezone: true }),

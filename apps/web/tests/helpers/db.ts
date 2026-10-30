@@ -1,8 +1,9 @@
 /**
- * Test database harness (D15): the same `runMigrations` the deploy script uses, a shared pooled
+ * Test database harness: the same `runMigrations` the deploy script uses, a shared pooled
  * handle via `getScriptDatabase`, and `cleanDatabase` that truncates every public table
- * (tolerating zero — Phase 0 has none). Guarded by `safetyCheck()` so it can never run against
- * anything but a localhost database under NODE_ENV=test (or an opted-in Neon gate branch).
+ * (tolerating zero — an unmigrated database has none). Guarded by `safetyCheck()` so it can
+ * never run against anything but a localhost database under NODE_ENV=test (or an opted-in Neon
+ * gate branch).
  */
 import { sql } from 'drizzle-orm'
 import { closeAllDatabases, type Database, getScriptDatabase, rows } from '@/db/client'
@@ -28,8 +29,8 @@ export function safetyCheck(): void {
  * Shared pooled handle for fixtures/assertions (max 5 connections per fork).
  *
  * `rememberRealDatabase` is what makes the `@testkit/unit` builders able to refuse a handle nobody
- * handed out (D31). It is registered HERE rather than in the test kit's own entry so that the
- * blessing follows the HANDLE, whichever import path a test reached this function through — a kit
+ * handed out. It is registered HERE rather than in the test kit's own entry so that the
+ * blessing follows the HANDLE, whichever import path a test reached this function through — a core
  * test importing `../helpers/db` and a plugin importing `@testkit/integration` get the same object
  * and the same answer.
  */

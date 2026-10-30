@@ -1,5 +1,5 @@
 /**
- * Input form for the `research-topic` agent (D7, D18): one question, counted against
+ * Input form for the `research-topic` agent: one question, counted against
  * `RESEARCH_TOPIC_MAX_CHARS`. The agent decides how many searches it needs, so there is nothing
  * else to set; validated with the SAME `researchTopicInputSchema` the route and the runtime apply.
  */

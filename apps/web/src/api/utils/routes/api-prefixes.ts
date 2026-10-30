@@ -12,9 +12,9 @@
  *    directly and never goes near the asset router, so `wrangler-parity.test.ts` asserts the tomls
  *    mirror this list instead.
  *
- * `/ws` is the realtime upgrade (Phase 2). The analytics plugin adds `/cubejs-api` and `/mcp`.
+ * `/ws` is the realtime upgrade. The analytics plugin adds `/cubejs-api` and `/mcp`.
  *
- * A plugin (D31) may own a prefix OUTSIDE `/api` — a protocol endpoint, say. Those are unioned in
+ * A plugin may own a prefix OUTSIDE `/api` — a protocol endpoint, say. Those are unioned in
  * from the server barrel, which means installing such a plugin also means adding its patterns to
  * `run_worker_first` in BOTH tomls by hand: the parity test reads this list, so a forgotten one
  * fails the gate rather than silently serving the app shell.

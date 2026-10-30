@@ -1,6 +1,6 @@
 /**
- * Your account (D13): name/avatar (`updateProfileRequestSchema` → `PATCH /api/me`), an avatar
- * upload (`POST /api/files?scope=avatars`, D23 — type/size checked client-side first) and the
+ * Your account: name/avatar (`updateProfileRequestSchema` → `PATCH /api/me`), an avatar
+ * upload (`POST /api/files?scope=avatars` — type/size checked client-side first) and the
  * sign-in methods linked to it. Connecting a provider is a full-page OAuth round trip in LINK
  * mode (`?link=1&returnUrl=/profile`, so the identity attaches to THIS user instead of signing
  * in as whoever it matches); disconnecting is refused when it would leave no way to sign in.
@@ -47,7 +47,7 @@ export default function Profile() {
 }
 
 /**
- * Read-only (D29): group membership is administered under Settings → Groups, but a person should
+ * Read-only: group membership is administered under Settings → Groups, but a person should
  * be able to see what they are in without asking — it is what decides which documents and
  * dashboards they can open. The panel hides itself when they are in none, so an organisation that
  * does not use groups never sees it.
@@ -204,7 +204,7 @@ function Avatar({
 }
 
 /**
- * Upload a photo (D23). The file is checked against the shared allowlist/limit before any
+ * Upload a photo. The file is checked against the shared allowlist/limit before any
  * request; the server's 415/413 remain the backstop. "Remove" clears `avatarUrl` via PATCH — the
  * stored object stays until its file is deleted (see CONCEPTS: storage).
  */

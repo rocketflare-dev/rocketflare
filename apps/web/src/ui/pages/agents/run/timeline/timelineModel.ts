@@ -1,5 +1,5 @@
 /**
- * The run timeline, as two pure stages and a handful of selectors (issue #17).
+ * The run timeline, as two pure stages and a handful of selectors.
  *
  * `buildTimeline(events)` folds the durable `agent_run_events` rows into ROWS a person reads — a
  * `tool.start`/`tool.end` pair is ONE row, a `step` row is updated in place by its `done` — and
@@ -186,7 +186,7 @@ export interface TimelineGroup {
 }
 
 /**
- * The payload an agent emits beside the tool name. The kit's agents send `{ input }` on the call
+ * The payload an agent emits beside the tool name. The built-in agents send `{ input }` on the call
  * and `{ result }` on the answer; anything else is shown as-is. Unwrapping the known key keeps the
  * details panel from reading `{"input": {"input": {…}}}`.
  */
@@ -543,7 +543,7 @@ export function groupTimeline(rows: readonly TimelineRow[]): TimelineGroup[] {
 // never a second fetch.
 
 /**
- * Artifacts in the order the run produced them. The TABLE is the store (decision 4), so the event
+ * Artifacts in the order the run produced them. The TABLE is the store, so the event
  * rows only supply the ORDER; an artifact with no event row still appears, at the end.
  */
 export function selectArtifacts(
@@ -589,7 +589,7 @@ export interface RunWorkStats {
   asks: number
   steeringNotes: number
   artifacts: number
-  /** `ctx.decide` calls (D37) and the questions they asked. */
+  /** `ctx.decide` calls and the questions they asked. */
   decisions: number
   questions: number
   /** Per-tool totals, busiest first. */

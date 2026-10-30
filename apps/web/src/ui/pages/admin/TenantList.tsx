@@ -1,5 +1,5 @@
 /**
- * Admin → Organisations (D25): search + status filter over `/api/admin/tenants`. In single mode
+ * Admin → Organisations: search + status filter over `/api/admin/tenants`. In single mode
  * there is exactly one, so the list collapses straight into its detail.
  */
 

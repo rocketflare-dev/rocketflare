@@ -1,5 +1,5 @@
 /**
- * Per-request database client (D35): `openDatabase({ ...config, HYPERDRIVE })`, `c.set('db')`,
+ * Per-request database client: `openDatabase({ ...config, HYPERDRIVE })`, `c.set('db')`,
  * and the client is ended in `executionCtx.waitUntil` AFTER the response — Hyperdrive or Neon is
  * the pool, so nothing is kept across requests. `finally`, not post-`next()`: a throwing handler
  * must not leak a socket.

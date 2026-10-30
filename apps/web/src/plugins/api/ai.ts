@@ -1,12 +1,12 @@
 /**
- * Agent tools and agents, as a plugin writes them (D7, D17, D31).
+ * Agent tools and agents, as a plugin writes them.
  *
- * `AgentCtx` is derived from the kit's own `AgentContext` (`services/agents/registry.ts`) and from
+ * `AgentCtx` is derived from the core `AgentContext` (`services/agents/registry.ts`) and from
  * what agents demonstrably use, and nothing speculative is added beyond that. It was first widened
  * for a plugin that holds a conversation with a person (`interrupt`, `chatModel`): widen it again
  * when a plugin exists to widen it for.
  *
- * Two rules carry over from the kit and matter more inside a plugin, because a plugin's author is
+ * Two core rules carry over and matter more inside a plugin, because a plugin's author is
  * further from the runtime that enforces them:
  *
  * - **A tool is bound to the RUN, never to the model.** The tenant comes from `ctx.scope`, which
@@ -16,7 +16,7 @@
  * - **A dead end is still information.** A tool that answers only "nothing found" makes a model
  *   invent. Answer with an `error`/`hint` it can act on, and where it helps, what DOES exist.
  *
- * This module names `services/agents/**` and `services/ai/kit`, which live inside the deletable
+ * This module names `services/agents/**` and `services/ai/agent-loop`, which live inside the deletable
  * `feature-agents` surface — the same dependency `plugins/types.ts` already carries and for the
  * same reason: the real types are what make a registration an exhaustiveness check rather than a
  * shape a plugin can get subtly wrong.
@@ -32,15 +32,16 @@ import type {
   AgentInterruptAsk,
 } from '../../api/services/agents/registry'
 import type { AgentToolContext } from '../../api/services/agents/tools'
-import { AiNotConfiguredError } from '../../api/services/ai/errors'
 import type {
   CallStructuredToolOptions,
   RunToolLoopOptions,
   Tool,
   ToolLoopResult,
-} from '../../api/services/ai/kit'
-import { callStructuredTool, runToolLoop, toolInputSchema } from '../../api/services/ai/kit'
+} from '../../api/services/ai/agent-loop'
+import { callStructuredTool, runToolLoop, toolInputSchema } from '../../api/services/ai/agent-loop'
+import { AiNotConfiguredError } from '../../api/services/ai/errors'
 import { recordUsage } from '../../api/services/ai/usage'
+import { tenantFeatures } from '../../api/services/features'
 import type { StorageService } from '../../api/services/storage'
 import { filesStorage } from './storage'
 import type { Database, PluginBindings, PluginConfig } from './types'
@@ -65,7 +66,7 @@ export type {
   ToolApproval,
   ToolLoopCheckpoint,
   ToolLoopResult,
-} from '../../api/services/ai/kit'
+} from '../../api/services/ai/agent-loop'
 /** A tool whose input schema failed to convert is a tool the model cannot see — fail loudly. */
 /** Ledger one model call (`ai_usage`). `feature` is `<plugin id>:<what>` or `agent:<key>`. */
 /** 503 `ai_not_configured` — throw it BEFORE any row is written or any stream opens. */
@@ -76,7 +77,7 @@ export { AiNotConfiguredError, recordUsage, toolInputSchema }
  * runtime's internal shape.
  *
  * `scope` and not `tenantId`: the scope carries the tenant AND what this particular requester may
- * read (D29). Passing it to a query is how a plugin's tool answers the same rows the person who
+ * read. Passing it to a query is how a plugin's tool answers the same rows the person who
  * started the run would see, rather than everything in the organisation.
  */
 export interface ToolCtx {
@@ -94,9 +95,15 @@ export interface ToolCtx {
    * the tenant is the RUN's, never one the model named.
    */
   storage(): StorageService
+  /**
+   * The feature keys the run's organisation has — what `ctx.features(tenantId)` answers in a job.
+   * A plugin whose tool belongs to a flagged surface returns `[]` when the flag is off, so a dark
+   * feature costs no prompt tokens and the model never sees a tool it could only fail with.
+   */
+  features(): Promise<readonly string[]>
 }
 
-/** Adapt the runtime's tool context. The only place a plugin's tools name a kit internal. */
+/** Adapt the runtime's tool context. The only place a plugin's tools name a core internal. */
 export function toolCtx(ctx: AgentToolContext): ToolCtx {
   return {
     db: ctx.db,
@@ -106,12 +113,13 @@ export function toolCtx(ctx: AgentToolContext): ToolCtx {
     tenantId: ctx.scope.tenantId,
     ...(ctx.maxDocumentChars !== undefined && { maxDocumentChars: ctx.maxDocumentChars }),
     storage: () => filesStorage(ctx.env as PluginBindings),
+    features: () => tenantFeatures(ctx.db, ctx.cfg, ctx.scope.tenantId),
   }
 }
 
 /**
  * Declare a tool. A thin helper, and its only job is to be the thing a plugin imports instead of
- * the `Tool` type from a kit path — but it is also where the two rules in this file's header can
+ * the `Tool` type from a core path — but it is also where the two rules in this file's header can
  * be stated where somebody is looking.
  *
  * A tool with **no handler is TERMINAL**: its validated input is the agent's answer, and the loop
@@ -142,7 +150,7 @@ export interface AgentCtx<Input = unknown> {
   userId: string | null
   /** Already validated against the agent's own `inputSchema`, twice: at enqueue and before `run()`. */
   input: Input
-  /** The kit's knowledge tools plus every installed plugin's, bound to this run's scope. */
+  /** The built-in knowledge tools plus every installed plugin's, bound to this run's scope. */
   tools: Tool[]
   /**
    * R2 (the `FILES` bucket), or a 503 `storage_not_configured` — the same service every other
@@ -177,14 +185,14 @@ export interface AgentCtx<Input = unknown> {
   /** One forced tool call, zod-validated, one retry with the issues fed back. */
   structured<T>(options: PluginStructuredOptions<T>): Promise<T>
   /**
-   * Typed questions answered with probabilities (D37): `decide(key, { state, questions })`,
+   * Typed questions answered with probabilities: `decide(key, { state, questions })`,
    * `decide.sift(key, …)`, `decide.pick(key, …)`. The tenant's decisions engine answers —
    * TypeSafe's Jev, or the chat model's uncalibrated fallback — and every call is recorded once per
    * `key`, so `key` must be stable across attempts, exactly like `once`.
    */
   decide: AgentDecide
   /**
-   * Ask the person a question and park the run until they answer (issue #17) — `approval`,
+   * Ask the person a question and park the run until they answer — `approval`,
    * `choice`, `input` or `form`. The SECOND time this line runs (the run resumed after the answer,
    * re-entering `run()` from the top) it returns the answer instead of asking again, which is why
    * **`key` must be stable across attempts**: derive it from a step or a round number your code

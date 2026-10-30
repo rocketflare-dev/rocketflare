@@ -1,5 +1,5 @@
 /**
- * Microsoft Entra ID (D11): arctic `MicrosoftEntraId('common', …)` so personal and work/school
+ * Microsoft Entra ID: arctic `MicrosoftEntraId('common', …)` so personal and work/school
  * accounts both sign in; profile from Graph `/me`. Graph does not expose a verified flag, so
  * `emailVerified` is left undefined (Entra only issues `mail`/`userPrincipalName` it controls).
  */

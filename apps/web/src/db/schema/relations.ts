@@ -1,5 +1,5 @@
 /**
- * The `many()` side of every relation, kept OUT of `users.ts` / `tenants.ts` (D1): those two are
+ * The `many()` side of every relation, kept OUT of `users.ts` / `tenants.ts`: those two are
  * imported by every other table file, and `tenantRef(tenants)` evaluates its argument at module
  * load, so a hub table importing its dependents would be a circular-import TDZ error. The `one()`
  * sides live next to their tables.

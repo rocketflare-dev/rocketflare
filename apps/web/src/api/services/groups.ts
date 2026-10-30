@@ -1,5 +1,5 @@
 /**
- * Groups (D29) — group types, groups and membership, plus the two queries the rest of the app
+ * Groups — group types, groups and membership, plus the two queries the rest of the app
  * needs from them: `listUserGroups` (what the auth context carries) and `groupsForMembers` (the
  * People list's badges, in ONE query rather than one per group).
  *
@@ -225,7 +225,7 @@ export async function updateGroup(
 // ---- Deleting, and what it costs --------------------------------------------------------------
 
 // `countGroupGrants` — what a group still grants, and the 409 the delete route quotes — lives in
-// `services/access.ts`, beside the visibility registry that answers it (D29, D31). Importing it
+// `services/access.ts`, beside the visibility registry that answers it. Importing it
 // here instead would close a module cycle: access.ts already imports this file.
 
 export async function groupIdsOfType(
@@ -394,8 +394,8 @@ export async function listUserGroups(
 }
 
 /**
- * Groups for MANY members in one query — what the People list renders. The app this was ported
- * from fetched the member list once per group, which is N+1 in the number of groups.
+ * Groups for MANY members in one query — what the People list renders. Never the member list
+ * once per group, which is N+1 in the number of groups.
  */
 export async function groupsForMembers(
   db: Database,

@@ -1,13 +1,13 @@
 /**
- * Who is asking, and what they may do (D10, D29, D30, D31).
+ * Who is asking, and what they may do.
  *
- * Three different questions live here and the kit keeps them apart on purpose. Conflating any two
+ * Three different questions live here and the host keeps them apart on purpose. Conflating any two
  * of them is the bug this file exists to make hard:
  *
  * 1. **May this ROLE do this KIND of thing?** — `guard` / `can`, over CASL. A plugin declares its
  *    subject in `SharedPlugin.subjects` and grants it in `ServerPlugin.grants`.
  * 2. **Is this ROW theirs?** — never CASL. It is the route's own `ownerUserId` check, or a SQL
- *    predicate (`./access.ts`). The kit uses no CASL conditions anywhere.
+ *    predicate (`./access.ts`). The app uses no CASL conditions anywhere.
  * 3. **Does this deployment SHIP this surface?** — a feature flag, and it is configuration rather
  *    than a permission. `hasFeature(...)`, never `can('access', 'Feature:x')`: `globalAdmin` is
  *    `manage all`, which in CASL covers `access` on every `Feature:` subject, so the ability form
@@ -25,7 +25,7 @@ export type { Actions, Subjects } from '@rocketflare/shared/permissions'
 export type { MembershipRole } from '@rocketflare/shared/tenants'
 export type { User } from '../../db/schema'
 /**
- * The gate a plugin puts on its MOUNT, never on each route (D30).
+ * The gate a plugin puts on its MOUNT, never on each route.
  *
  * One middleware beneath the whole prefix means a surface that ships dark is dark as a whole,
  * declared once like auth. It answers **404 `feature_disabled`, not 403**: a 403 confirms the
@@ -43,9 +43,9 @@ export { isAdminLevel, isGlobalAdmin, isOwnerLevel, requireFeature }
 /**
  * Who is asking, flattened — the half of the auth context a plugin has any business reading.
  *
- * Deliberately NOT the kit's `AuthContext`: that carries `ability`, `session` and
+ * Deliberately NOT the core `AuthContext`: that carries `ability`, `session` and
  * `accessRequestStatus`, none of which a plugin should be reasoning about, and all of which are
- * things the kit wants to be free to change. What is here is what the measurement found plugins
+ * things core wants to be free to change. What is here is what the measurement found plugins
  * actually using.
  */
 export interface PluginAuth {

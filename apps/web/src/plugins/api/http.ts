@@ -1,13 +1,13 @@
 /**
- * `RequestCtx` (D13, D31) — everything a plugin's route handler needs, as one injected object.
+ * `RequestCtx` — everything a plugin's route handler needs, as one injected object.
  *
- * A plugin route is a kit route in every respect: `createRouter()`, `validate()` with a contract
+ * A plugin route is a core route in every respect: `createRouter()`, `validate()` with a contract
  * from the plugin's own shared entry, an authorisation check, a tenant predicate on every query,
  * typed errors. What differs is only where it is REGISTERED (`ServerPlugin.mounts`) and how it
- * reaches the kit — through this context rather than through nine imports.
+ * reaches the host — through this context rather than through nine imports.
  *
- * **The adapter is the seam.** `requestCtx(c)` reads the kit's `RouteContext` and nothing else
- * reads it, which is why `cfg` can stay `cfg` inside the kit while every plugin says `config`.
+ * **The adapter is the seam.** `requestCtx(c)` reads the core `RouteContext` and nothing else
+ * reads it, which is why `cfg` can stay `cfg` inside core while every plugin says `config`.
  *
  * The error helpers return `never` and THROW rather than returning an error to throw, so that
  * `if (!row) ctx.notFound('Note not found')` leaves `row` non-null on the next line —
@@ -65,11 +65,11 @@ export type { PluginMount, PluginPublicMount } from '../types'
 export { createRouter, pageWindow, validate }
 
 /**
- * Reading and writing who may see one of a plugin's own rows (D29, D31).
+ * Reading and writing who may see one of a plugin's own rows.
  *
  * A plugin DECLARES a restrictable resource through `ServerPlugin.visibilityResources`, and the
- * kit reads that declaration for the predicate and for the 409 `group_in_use` count. These three
- * are the other half — what the kit's own routes do around that declaration, and what a plugin
+ * host reads that declaration for the predicate and for the 409 `group_in_use` count. These three
+ * are the other half — what the core routes do around that declaration, and what a plugin
  * had to reimplement without them. They dispatch through the registry, so they work for the
  * plugin's own `key` exactly as they do for `document`.
  *
@@ -79,7 +79,7 @@ export { createRouter, pageWindow, validate }
  * plugins/api`, which with a SECOND plugin installed throws `createRouter is not a function` at
  * import (`services/access-sql.ts` carries the measurement). `accessScopeOf` escaped by moving to
  * a leaf; these cannot, because composition is their entire purpose. So they are injected, which
- * is the kit's own rule for exactly this case.
+ * is the core rule for exactly this case.
  *
  * Two behaviours they carry that are easy to lose in a reimplementation, and both are security
  * properties rather than conveniences:
@@ -119,7 +119,7 @@ export interface RequestVisibility {
  * `tenantId` parameter arriving from a client is therefore always a bug rather than sometimes one.
  */
 export interface RequestCtx extends PluginContext, PluginAuth {
-  /** Tenant-wide visibility scope (D29) — hand it to a predicate, never to a query as a tenant id. */
+  /** Tenant-wide visibility scope — hand it to a predicate, never to a query as a tenant id. */
   readonly scope: AccessScope
   /**
    * The reader's groups in this organisation, each with the name of the TYPE it belongs to.
@@ -130,7 +130,7 @@ export interface RequestCtx extends PluginContext, PluginAuth {
    * where re-resolving them is a query per request for rows the caller has already been handed.
    */
   readonly groups: readonly GroupRef[]
-  /** Read and write who may see one of this plugin's own rows (D29) — see `RequestVisibility`. */
+  /** Read and write who may see one of this plugin's own rows — see `RequestVisibility`. */
   readonly visibility: RequestVisibility
 
   // ---- authorisation --------------------------------------------------------------------------
@@ -139,7 +139,7 @@ export interface RequestCtx extends PluginContext, PluginAuth {
   guard(action: Actions, subject: Subjects): void
   /** The same question without throwing — for branching, e.g. "may they also see the archived ones". */
   can(action: Actions, subject: Subjects): boolean
-  /** `true` when this deployment ships the feature AND this organisation has it (D30). */
+  /** `true` when this deployment ships the feature AND this organisation has it. */
   hasFeature(name: string): boolean
 
   // ---- reading the request ---------------------------------------------------------------------
@@ -178,7 +178,7 @@ export interface RequestCtx extends PluginContext, PluginAuth {
   enqueueMany(inputs: readonly JobInput[], options?: { delaySeconds?: number }): Promise<void>
   /**
    * Tell this organisation's open tabs that a family of rows moved. `entity` IS the query-key
-   * family root, so declaring it once covers the socket wiring (D8).
+   * family root, so declaring it once covers the socket wiring.
    */
   nudge(entity: string, id?: string): void
   /** R2, or a 503 `storage_not_configured` — loud, because a silently absent bucket loses bytes. */
@@ -201,7 +201,7 @@ export interface RequestCtx extends PluginContext, PluginAuth {
   // ---- escaping ------------------------------------------------------------------------------
 
   /**
-   * A snapshot of this context that outlives the handler (D31).
+   * A snapshot of this context that outlives the handler.
    *
    * There is exactly one situation this is for: a plugin hands a CALLBACK to a library, and the
    * library calls it somewhere no Hono context exists. The analytics plugin's cube security
@@ -213,7 +213,7 @@ export interface RequestCtx extends PluginContext, PluginAuth {
    * context that silently half-works is worse than one that is a different type.
    */
   detached(): DetachedCtx
-  /** The realtime handle, for a plugin service that takes `realtime?` the way the kit's do. */
+  /** The realtime handle, for a plugin service that takes `realtime?` the way core services do. */
   readonly realtime: Realtime
 }
 
@@ -236,7 +236,7 @@ export interface DetachedCtx extends PluginContext {
 }
 
 /**
- * Build a plugin's request context from the kit's.
+ * Build a plugin's request context from the core one.
  *
  * This is the ONLY function in the plugin surface that names `withAuthAndDb`, `c.get(...)` or
  * `cfg` — which is what makes "a plugin receives everything as injected context" a rule a source

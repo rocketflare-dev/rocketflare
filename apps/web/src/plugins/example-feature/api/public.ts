@@ -1,5 +1,5 @@
 /**
- * `/api/hooks/example-feature` (D34) — the reference plugin's PUBLIC mount.
+ * `/api/hooks/example-feature` — the reference plugin's PUBLIC mount.
  *
  *   GET    /ping?state=…            no session — verify the signed link, enqueue the smoke job, 202
  *

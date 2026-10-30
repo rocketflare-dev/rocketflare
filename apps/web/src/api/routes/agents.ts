@@ -1,8 +1,8 @@
 /**
- * `/api/agents` (D7): the registry and its runs. `POST /runs` is the handoff — validate → insert
+ * `/api/agents`: the registry and its runs. `POST /runs` is the handoff — validate → insert
  * `queued` → create the Workflow instance → 202 with the row (the route never runs the agent). An
  * exclusive agent with an active run answers THAT run with `deduplicated: true` (409
- * `agent_run_active` only with `?strict=1`). `POST /runs/batch` (D39) is the same handoff for up to
+ * `agent_run_active` only with `?strict=1`). `POST /runs/batch` is the same handoff for up to
  * 100 inputs of one NON-exclusive agent (400 `agent_exclusive` otherwise), with per-input errors;
  * both answer 429 `agent_runs_limit` over `AGENT_MAX_ACTIVE_RUNS_PER_TENANT` and 429
  * `ai_budget_exceeded` once the tenant's agent spend today reaches its cap.
@@ -15,8 +15,8 @@
  * run, which is a screen nobody can act on.
  *
  * Beyond the run itself: `GET /runs/:id/agui` projects it to AG-UI, `GET /runs/:id/agui/stream` is
- * the live read-stream (issue #7), `POST /runs/:id/interrupts/:interruptId` is the answer (issue
- * #17 — `update AgentRun` plus the agent's `approvers` policy; a compare-and-set on `pending` is
+ * the live read-stream, `POST /runs/:id/interrupts/:interruptId` is the answer
+ * (`update AgentRun` plus the agent's `approvers` policy; a compare-and-set on `pending` is
  * what makes one 200 and one 409 `interrupt_not_pending` true when two people answer at once),
  * `POST /runs/:id/steering` adds a note to a live run, and `GET /api/agents/interrupts` is the
  * tenant-wide inbox. Members see, cancel and steer their OWN runs; admin+ (`isAdminLevel`) every
@@ -94,7 +94,7 @@ function approversFor(agentKey: string): AgentApprovers {
 }
 
 /**
- * Who may ANSWER this run's asks. **No new CASL action and no new subject** (issue #17): it is the
+ * Who may ANSWER this run's asks. **No new CASL action and no new subject**: it is the
  * `update AgentRun` the route already guards, plus the agent's own `approvers` policy.
  *
  * `'requester'` is deliberately the same predicate as {@link visible} — "whoever may cancel this
@@ -129,7 +129,7 @@ async function requireRun(c: AppContext, runId: string): Promise<AgentRunRow> {
  * The second half of the read path: settle a stale active row against the runtime.
  * `expireParkedRun` sits beside `reconcileRun` because they answer the same question for the two
  * halves of "active" — `reconcileRun` settles a `queued`/`running` row whose instance is gone, and
- * `expireParkedRun` settles an `awaiting_input` row whose asks have all passed their deadline (T6).
+ * `expireParkedRun` settles an `awaiting_input` row whose asks have all passed their deadline.
  * Without it a park whose instance died holds the exclusive slot forever.
  *
  * `lastEventAt` is passed by every caller that has the run's events in hand, and it is why this is
@@ -222,7 +222,7 @@ agentsRouter.post('/runs', validate('json', createAgentRunRequestSchema), async 
 // ---- POST /api/agents/runs/batch ------------------------------------------------------------------
 
 /**
- * D39: up to `AGENT_RUN_BATCH_MAX` runs of one non-exclusive agent. 202 even when some inputs
+ * Up to `AGENT_RUN_BATCH_MAX` runs of one non-exclusive agent. 202 even when some inputs
  * failed — the items say which, by index — because the rest are already running and a 4xx would
  * read as "nothing happened". A whole-batch refusal (exclusive agent, cap, budget) is still a 4xx
  * and writes nothing. One activity row for the batch, not one per run.
@@ -303,7 +303,7 @@ agentsRouter.get('/runs/:id', async c => {
 // ---- GET /api/agents/runs/:id/agui ----------------------------------------------------------------
 
 /**
- * The same run as `GET /runs/:id`, projected into AG-UI (D7). Plain JSON, not a stream: a run
+ * The same run as `GET /runs/:id`, projected into AG-UI. Plain JSON, not a stream: a run
  * executes in a Workflow, in a different isolate from any request, so live streaming is a feature
  * rather than a mapping — the WS nudge plus the poll already gives sub-second updates.
  */
@@ -333,15 +333,15 @@ agentsRouter.get('/runs/:id/agui', async c => {
 // ---- GET /api/agents/runs/:id/agui/stream ---------------------------------------------------------
 
 /**
- * The same projection, live (issue #7). GET rather than POST on purpose: `csrf.ts` passes GET, and
+ * The same projection, live. GET rather than POST on purpose: `csrf.ts` passes GET, and
  * a third-party AG-UI client can then open it with a bare `EventSource` — which is the only reason
- * `Last-Event-ID` is honoured at all. **`?afterSeq=` wins when both are present**: the kit's own
+ * `Last-Event-ID` is honoured at all. **`?afterSeq=` wins when both are present**: the app's own
  * client is explicit, and a stale browser value must never override it.
  *
  * Everything that can fail is JSON and happens HERE, above `streamRunAgui` — the ability, the uuid,
  * the 404 for a run this caller cannot see, `reconcileRun` (via `loadRun`, **exactly once, never in
  * the loop**: it is a Workflow subrequest per call) and a garbage cursor. After the first frame the
- * only thing left to say is nothing at all (decision 6).
+ * only thing left to say is nothing at all.
  */
 agentsRouter.get('/runs/:id/agui/stream', async c => {
   withAuthAndDb(c)
@@ -397,7 +397,7 @@ agentsRouter.post('/runs/:id/cancel', async c => {
 // ---- POST /api/agents/runs/:id/interrupts/:interruptId ---------------------------------------------
 
 /**
- * Answer one of a run's asks (issue #17). **Eight steps, and each is a precondition for the next**
+ * Answer one of a run's asks. **Eight steps, and each is a precondition for the next**
  * — the order is the design, not an accident of writing:
  *
  *  1. the run must exist and be visible → 404 (another tenant's, or another member's, never exists)
@@ -413,7 +413,7 @@ agentsRouter.post('/runs/:id/cancel', async c => {
  *     with unanswered asks
  *  8. activity + nudge + 200
  *
- * Step 7 is also where **the answer IS the transition** (decision 2, T4) lives: `resumeRun` flips
+ * Step 7 is also where **the answer IS the transition** lives: `resumeRun` flips
  * `awaiting_input → running` BEFORE `nudgeOrRestartInstance`, which is the only reason a restarted
  * instance's `claim` step — whose predicate is the narrow `queued|running` — finds anything at all.
  *
@@ -474,7 +474,7 @@ agentsRouter.post(
       const resumedRow = await resumeRun(db, tenantId, runId)
       // Null means the row was not parked — the answer beat the park, or the run was cancelled
       // underneath it. Either way there is no instance of ours to wake: the execute step that is
-      // still running will read this answer as a row, which is the whole point of decision 3.
+      // still running will read this answer as a row, which is the whole point.
       if (resumedRow) await nudgeOrRestartInstance(db, c.env, resumedRow, { interruptId })
     }
 
@@ -525,7 +525,7 @@ function validateAnswer(
 // ---- POST /api/agents/runs/:id/steering ------------------------------------------------------------
 
 /**
- * Send a note to a run in flight (issue #17, decision 4). It is an `agent_run_events` row rather
+ * Send a note to a run in flight. It is an `agent_run_events` row rather
  * than a table because a note is immutable, positional and per-run — exactly what an append-only
  * log is for — and the runtime's once-only delivery cursor is the existing `agent_run_effects`
  * ledger, so there is nothing else to store.

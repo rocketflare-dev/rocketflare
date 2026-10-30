@@ -1,5 +1,5 @@
 /**
- * Settings → API keys (D12): list (prefix only), create (`createApiKeyRequestSchema`) — the
+ * Settings → API keys: list (prefix only), create (`createApiKeyRequestSchema`) — the
  * plaintext is shown ONCE in the modal with a copy button and never again — and revoke.
  */
 

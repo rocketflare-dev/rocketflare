@@ -1,11 +1,11 @@
 /**
- * Application configuration (D3, D4, D9, D25): one zod schema over the Worker `env` object,
+ * Application configuration: one zod schema over the Worker `env` object,
  * validated lazily and memoised per isolate by env identity. Called from `fetch` (via
  * `configMiddleware`), `queue` and `scheduled` so all three entry points fail identically.
  *
  * Only vars/secrets live here; bindings (HYPERDRIVE, RATE_LIMIT_KV, ASSETS, ...) stay on
- * `c.env`. Nothing in `src/` reads `process.env` — the validation style is the Node reference app's
- * `src/config.ts`, the source is the env object Cloudflare hands us.
+ * `c.env`. Nothing in `src/` reads `process.env` — the source is the env object Cloudflare
+ * hands us.
  */
 import { sharedPlugins } from '@rocketflare/shared/plugins'
 import { z } from 'zod'
@@ -37,7 +37,7 @@ const optionalPositiveInt = (fallback: number) =>
     z.coerce.number().int().positive()
   )
 
-/** A cap that is OFF unless set: blank or absent → undefined, never 0 (D39 budgets). */
+/** A cap that is OFF unless set: blank or absent → undefined, never 0 (budgets). */
 const optionalCap = (kind: 'int' | 'number') =>
   z.preprocess(
     value =>
@@ -91,14 +91,14 @@ const coreConfigSchema = z.object({
   RELEASE_VERSION: z.string().min(1).default('dev'),
   LOG_LEVEL: z.enum(LOG_LEVELS).default('info'),
   EMAIL_FROM: z.string().min(1).default('Rocketflare <noreply@example.com>'),
-  /** D25: schema is identical in both modes; `single` disables the multi-org surface. */
+  /** Schema is identical in both modes; `single` disables the multi-org surface. */
   TENANCY_MODE: z.enum(['multi', 'single']).default('multi'),
-  /** D9: who may create an account. */
+  /** Who may create an account. */
   SIGNUP_MODE: z.enum(['open', 'invite_only', 'approval']).default('invite_only'),
-  /** D1: `enforce` wraps tenant-scoped work in a transaction with `set_config(..., true)`. */
+  /** `enforce` wraps tenant-scoped work in a transaction with `set_config(..., true)`. */
   TENANT_SCOPE_MODE: z.enum(['off', 'enforce']).default('off'),
   /**
-   * D35: `neon` (Neon serverless: HTTP queries, a WebSocket pool for transactions, needs the
+   * `neon` (Neon serverless: HTTP queries, a WebSocket pool for transactions, needs the
    * `DATABASE_URL` secret) or `postgres` (postgres.js via the `HYPERDRIVE` binding, any Postgres).
    * Missing means `postgres`, so a copy that never set it is unchanged. `.dev.vars` overrides the
    * toml locally — the bootstrap writes `postgres` there.
@@ -108,14 +108,14 @@ const coreConfigSchema = z.object({
     z.enum(['neon', 'postgres']).default('postgres')
   ),
   /**
-   * D32: where the langfuse preset sends spans when `OTEL_EXPORTER_OTLP_ENDPOINT` is unset —
+   * Where the langfuse preset sends spans when `OTEL_EXPORTER_OTLP_ENDPOINT` is unset —
    * `<base>/api/public/otel`.
    */
   LANGFUSE_BASE_URL: z.string().url().default('https://cloud.langfuse.com'),
-  /** `deployment.environment.name` on every exported span; defaults to `APP_ENV` (D32). */
+  /** `deployment.environment.name` on every exported span; defaults to `APP_ENV`. */
   LANGFUSE_TRACING_ENVIRONMENT: optionalString,
   /**
-   * D32: the OTLP/HTTP base URL spans are POSTed to (`/v1/traces` is appended). Unset + Langfuse
+   * The OTLP/HTTP base URL spans are POSTed to (`/v1/traces` is appended). Unset + Langfuse
    * keys → Langfuse Cloud; unset otherwise → no export (the local `ai_spans` store still records).
    */
   OTEL_EXPORTER_OTLP_ENDPOINT: z.preprocess(
@@ -125,40 +125,40 @@ const coreConfigSchema = z.object({
   /** `http/json` (default) or `http/protobuf` (the phoenix preset's default — Phoenix takes nothing else). */
   OTEL_EXPORTER_OTLP_PROTOCOL: optionalEnum(['http/json', 'http/protobuf']),
   /**
-   * D32: which backend's auth and headers to fill in. Unset → `langfuse` when both Langfuse keys
+   * Which backend's auth and headers to fill in. Unset → `langfuse` when both Langfuse keys
    * are set (existing deployments migrate with no new secret), else `generic`.
    */
   OBSERVABILITY_PRESET: optionalEnum(['langfuse', 'phoenix', 'generic']),
-  /** D32: `false` strips prompts, completions and tool I/O from the export AND from `ai_spans`. */
+  /** `false` strips prompts, completions and tool I/O from the export AND from `ai_spans`. */
   OBSERVABILITY_CAPTURE_CONTENT: optionalBoolean(true),
-  /** D32: link-out template, `{traceId}` substituted — e.g. `https://cloud.langfuse.com/project/<id>/traces/{traceId}`. */
+  /** Link-out template, `{traceId}` substituted — e.g. `https://cloud.langfuse.com/project/<id>/traces/{traceId}`. */
   OBSERVABILITY_TRACE_URL: optionalString,
-  /** D32: days of `ai_spans` the nightly prune keeps. */
+  /** Days of `ai_spans` the nightly prune keeps. */
   OBSERVABILITY_SPAN_RETENTION_DAYS: optionalPositiveInt(14),
-  /** D17: per-call `max_tokens` when a tenant config sets none; and the tool-loop turn cap. */
+  /** Per-call `max_tokens` when a tenant config sets none; and the tool-loop turn cap. */
   AGENT_MAX_OUTPUT_TOKENS: optionalPositiveInt(16384),
   AGENT_MAX_TURNS: optionalPositiveInt(30),
   /**
-   * D39: runs one tenant may have queued, running or parked at once, across every agent. The
+   * Runs one tenant may have queued, running or parked at once, across every agent. The
    * 51st enqueue is a 429 `agent_runs_limit`. A soft cap — counted, then inserted — so a burst of
    * simultaneous requests can overshoot it by a few; it exists to stop a runaway loop or a
    * mistaken batch, not to meter.
    */
   AGENT_MAX_ACTIVE_RUNS_PER_TENANT: optionalPositiveInt(50),
   /**
-   * D39: what one run may spend — tokens (input + output, every call and decision) and USD (priced
+   * What one run may spend — tokens (input + output, every call and decision) and USD (priced
    * calls only). Unset = no cap. An agent's `meta.budget` overrides either. Checked before every
    * metered call; a run over it fails with event code `agent_budget_exceeded`.
    */
   AGENT_RUN_MAX_TOKENS: optionalCap('int'),
   AGENT_RUN_MAX_COST_USD: optionalCap('number'),
   /**
-   * D39: what one tenant's agent runs may spend per UTC day, in USD. Unset = no cap. Checked at
+   * What one tenant's agent runs may spend per UTC day, in USD. Unset = no cap. Checked at
    * enqueue (429 `ai_budget_exceeded`) and before every metered call of a run already going.
    */
   AGENT_TENANT_DAILY_COST_USD: optionalCap('number'),
   /**
-   * D18: give the chat box the knowledge tools (`search_knowledge`, `get_document`,
+   * Give the chat box the knowledge tools (`search_knowledge`, `get_document`,
    * `list_documents`), so it answers from the workspace's own material. It costs more tokens per
    * turn and, on Workers AI — which has no tool-call event stream — the reply stops arriving token
    * by token. `false` is the operator's way back to a tool-free chat.
@@ -177,7 +177,7 @@ const coreConfigSchema = z.object({
    */
   AGENT_INTERRUPT_TIMEOUT: z.string().min(1).default('168 hours'),
   /**
-   * D17: characters of stored history a chat turn may replay. The real constraint is the model's
+   * Characters of stored history a chat turn may replay. The real constraint is the model's
    * context window and the tenant picks the model, so this is the knob rather than a message count
    * — 24 000 chars is roughly 6 000 tokens, which leaves room on the 24k-token Workers AI floor.
    * Raise it for a long-context provider. Anything older is trimmed and folded into the thread's
@@ -185,7 +185,7 @@ const coreConfigSchema = z.object({
    */
   CHAT_HISTORY_MAX_CHARS: optionalPositiveInt(24_000),
   /**
-   * D30, layer 1: the feature keys this deployment ships AT ALL. Only consulted for a flag whose
+   * Layer 1: the feature keys this deployment ships AT ALL. Only consulted for a flag whose
    * registry entry sets `environmentGated` — everything else is decided by the rollout state in the
    * database, so an ordinary flag needs no toml edit.
    *
@@ -193,7 +193,7 @@ const coreConfigSchema = z.object({
    * an unreleased surface appearing in production, so an environment that forgets the var stays
    * dark. Note `wrangler dev` reads `[vars]` from `wrangler.toml`, so a key listed only in staging
    * is absent on every developer's laptop unless `.dev.vars` overrides it — which is why
-   * `.dev.vars.example` lists the kit's gated keys.
+   * `.dev.vars.example` lists the built-in gated keys.
    */
   FEATURES_ENABLED: csvKeys,
   /**
@@ -240,17 +240,17 @@ const coreConfigSchema = z.object({
   /** Per-PR Neon branch; when set it wins over HYPERDRIVE and DATABASE_URL (see db/client.ts). */
   PREVIEW_DATABASE_URL: optionalString,
   /**
-   * D35, local only: the Neon proxy in front of the compose Postgres (`http://localhost:4444`),
+   * Local only: the Neon proxy in front of the compose Postgres (`http://localhost:4444`),
    * written by `pnpm dev:db:up --neon`. Never set in a deployed environment.
    */
   NEON_LOCAL_PROXY: z.preprocess(
     value => (typeof value === 'string' && value.trim() === '' ? undefined : value),
     z.string().url().optional()
   ),
-  /** AES-GCM key for OAuth tokens at rest (D12). */
+  /** AES-GCM key for OAuth tokens at rest. */
   OAUTH_ENCRYPTION_KEY: optionalSecret(32),
   RESEND_API_KEY: optionalString,
-  /** Comma-separated emails promoted to global admin on first VERIFIED login (D9). */
+  /** Comma-separated emails promoted to global admin on first VERIFIED login. */
   BOOTSTRAP_ADMIN_EMAILS: csvList,
   GOOGLE_CLIENT_ID: optionalString,
   GOOGLE_CLIENT_SECRET: optionalString,
@@ -260,22 +260,22 @@ const coreConfigSchema = z.object({
   OIDC_CLIENT_SECRET: optionalString,
   ANTHROPIC_API_KEY: optionalString,
   EMBEDDINGS_API_KEY: optionalString,
-  /** D37: platform TypeSafe (Jev) key for `ctx.decide`; tenants may set their own in Settings → AI. */
+  /** Platform TypeSafe (Jev) key for `ctx.decide`; tenants may set their own in Settings → AI. */
   TYPESAFE_API_KEY: optionalString,
   LANGFUSE_PUBLIC_KEY: optionalString,
   LANGFUSE_SECRET_KEY: optionalString,
-  /** D32: extra OTLP request headers, `k=v,k=v` (values URL-encoded, per the OTel spec). A secret. */
+  /** Extra OTLP request headers, `k=v,k=v` (values URL-encoded, per the OTel spec). A secret. */
   OTEL_EXPORTER_OTLP_HEADERS: optionalString,
 })
 
 /**
- * `[vars]` and secrets contributed by installed plugins (D31), validated with everything else so a
+ * `[vars]` and secrets contributed by installed plugins, validated with everything else so a
  * plugin with a missing var fails at `loadConfig` rather than at its first request.
  *
  * `AppConfig` stays the CORE type on purpose, and the cast is what holds that line: `extend()` over
- * a `ZodRawShape` collapses the inferred shape to an index signature, which would turn every kit
+ * a `ZodRawShape` collapses the inferred shape to an index signature, which would turn every core
  * key into `any`. A plugin reads its own keys through its own narrowing helper — one plugin's vars
- * can never widen, or weaken, the type the kit is checked against.
+ * can never widen, or weaken, the type core is checked against.
  */
 const pluginConfigShape: z.ZodRawShape = Object.assign(
   {},
@@ -337,7 +337,7 @@ export function loadConfig(env: unknown): AppConfig {
 export const isProduction = (cfg: AppConfig): boolean => cfg.APP_ENV === 'production'
 export const isDevelopment = (cfg: AppConfig): boolean => cfg.APP_ENV === 'development'
 
-/** `{APP_URL}/auth/{provider}/callback` — never configured per provider (D11). */
+/** `{APP_URL}/auth/{provider}/callback` — never configured per provider. */
 export function oauthRedirectUri(cfg: AppConfig, provider: OAuthProviderName): string {
   return new URL(`/auth/${provider}/callback`, cfg.APP_URL).toString()
 }

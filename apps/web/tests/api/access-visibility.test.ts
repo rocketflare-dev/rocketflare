@@ -1,6 +1,6 @@
 /**
- * The visibility matrix (D29). Groups are only worth having if EVERY read path agrees about them,
- * so this file walks one restricted document past every way the kit can hand content to a person
+ * The visibility matrix. Groups are only worth having if EVERY read path agrees about them,
+ * so this file walks one restricted document past every way the app can hand content to a person
  * or to a model:
  *
  *   documents list · get · content · passages · card · delete · hybrid search ·
@@ -8,7 +8,7 @@
  *
  * An installed PLUGIN whose rows carry `visibility` owns the same matrix for its own resource —
  * the analytics plugin's dashboards used to be a second half of this file and are now
- * `src/plugins/analytics/tests/api/dashboard-visibility.test.ts` (D31).
+ * `src/plugins/analytics/tests/api/dashboard-visibility.test.ts`.
  *
  * Readers: the owner, somebody in the group, somebody who is not, an admin, and support. The two
  * shapes that matter most are at the bottom: an EMPTY grant list (what a force-deleted group
@@ -380,10 +380,10 @@ describe('retrieval recall under a restrictive scope', () => {
 })
 
 /**
- * The same rules, reached the way a PLUGIN reaches them (D31).
+ * The same rules, reached the way a PLUGIN reaches them.
  *
- * A plugin declares a restrictable resource and the kit reads the declaration — but the three
- * helpers the kit's own routes use around it (`resolve`, `set`, `grantsFor`) live in the module
+ * A plugin declares a restrictable resource and the host reads the declaration — but the three
+ * helpers the core routes use around it (`resolve`, `set`, `grantsFor`) live in the module
  * that COMPOSES the registry, which a plugin cannot import without closing a cycle through the
  * plugin barrel. So they are injected as `ctx.visibility`, and this block drives the published
  * surface over the same fixtures the rest of the file proves the predicate with: whatever holds

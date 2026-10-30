@@ -12,7 +12,7 @@
  *                                   verify + mint the per-env sending key into RESEND_API_KEY
  *   neon                            project + `staging` branch, direct hosts, SELECT 1 per branch
  *   cloudflare <env> [--driver d]   scripts/cf-provision.sh <env> --apply (KV/Queue/R2 → toml ids; Hyperdrive
- *                                   only under DATABASE_DRIVER=postgres). `--driver` switches BOTH tomls (D35)
+ *                                   only under DATABASE_DRIVER=postgres). `--driver` switches BOTH tomls
  *   migrate <env>                   DATABASE_URL=<branch> pnpm db:migrate:ci, count == journal entries
  *   github <env>                    GitHub Environment + DATABASE_URL / CLOUDFLARE_* secrets (stdin)
  *   urls                            APP_URL + routes (custom host) or workers.dev per toml
@@ -33,7 +33,7 @@
  * `wrangler hyperdrive create --connection-string=…` (a process-local argv, redacted in output).
  * Under `neon` it goes to the Worker as the `DATABASE_URL` secret, over stdin like every secret.
  *
- * The database driver (D35): `--driver neon|postgres`, else what the toml's `[vars]
+ * The database driver: `--driver neon|postgres`, else what the toml's `[vars]
  * DATABASE_DRIVER` says (missing = postgres). `neon` → no Hyperdrive, the Worker holds the pooled
  * URI; `postgres` → Hyperdrive, any Postgres. `cloudflare <env> --driver x` writes the choice into
  * BOTH tomls (the parity test wants a [[hyperdrive]] block in both or neither).
@@ -127,7 +127,7 @@ interface Flags {
   stagingHost?: string
   productionHost?: string
   adminEmail?: string
-  /** D35: `neon | postgres`; unset → what the toml says. */
+  /** `neon | postgres`; unset → what the toml says. */
   driver?: DatabaseDriver
 }
 
@@ -611,7 +611,7 @@ async function emailVerify(env: EnvName, flags: Flags): Promise<void> {
   )
 }
 
-// ---- database driver (D35) ----------------------------------------------------------------
+// ---- database driver ----------------------------------------------------------------------
 
 /** `--driver`, else the environment's toml (`[vars] DATABASE_DRIVER`, missing = postgres). */
 function driverFor(env: EnvName, flags: Flags): DatabaseDriver {
@@ -847,7 +847,7 @@ async function parityTest(provisioned: boolean): Promise<void> {
 }
 
 /**
- * What every installed plugin declares that this account has to know about (D31, Decision 12).
+ * What every installed plugin declares that this account has to know about.
  * Read once per phase; a checkout with no plugins returns `[]` and every branch below is a no-op,
  * which is why none of them is conditional on "is this the kit".
  */
@@ -864,7 +864,7 @@ function installedPluginResources(): PluginResources[] {
  * only the environment being provisioned would leave the ordinary gate red until somebody
  * remembered to run the other one. Before, because `cf-provision.sh --apply` patches an id INTO an
  * existing block: the block has to be there first, carrying the `<PLACEHOLDER>` that
- * `REQUIRE_PROVISIONED=1` then refuses until both environments are done — exactly how the kit's own
+ * `REQUIRE_PROVISIONED=1` then refuses until both environments are done — exactly how the app's own
  * `<HYPERDRIVE_ID>` behaves.
  */
 function applyPluginDeclarations(app: string, plugins: PluginResources[]): void {
@@ -1128,7 +1128,7 @@ async function secretsPhase(env: EnvName, flags: Flags): Promise<void> {
     set.push('OAUTH_ENCRYPTION_KEY')
   } else log('OAUTH_ENCRYPTION_KEY already set (pass --rotate to regenerate)')
 
-  // D35: a `neon` Worker's database connection IS a secret (the pooled Neon URI); a `postgres`
+  // A `neon` Worker's database connection IS a secret (the pooled Neon URI); a `postgres`
   // Worker reads the HYPERDRIVE binding and never holds DATABASE_URL.
   if (driverFor(env, flags) === 'neon') {
     const info = await resolveNeon(flags, { quiet: true })
@@ -1150,8 +1150,8 @@ async function secretsPhase(env: EnvName, flags: Flags): Promise<void> {
     set.push(name)
   }
 
-  // Plugin vars marked `secret` (D31, Decision 12) are Worker secrets, not `[vars]` keys, so they
-  // are offered here from the same two places as the kit's own: an exported variable first, then
+  // Plugin vars marked `secret` are Worker secrets, not `[vars]` keys, so they
+  // are offered here from the same two places as the app's own: an exported variable first, then
   // apps/web/.provision.env. An unset one is SKIPPED rather than written blank — a plugin that
   // needs it should 503 loudly at runtime, not read an empty string as a configured value.
   for (const v of pluginDeclarations(installedPluginResources()).vars) {

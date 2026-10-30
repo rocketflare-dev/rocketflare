@@ -15,7 +15,7 @@ APP_URL=http://localhost:3000
 # DEV_API_PORT=3001
 # Extra hostnames Vite answers for, comma-separated (a sandbox preview URL's host).
 # DEV_ALLOWED_HOSTS=
-# Database driver (D35): overrides the toml's DATABASE_DRIVER (the DEPLOYED driver, "neon" in a
+# Database driver: overrides the toml's DATABASE_DRIVER (the DEPLOYED driver, "neon" in a
 # fresh copy) for wrangler dev, the db:*/seed scripts and drizzle-kit. `postgres` = postgres.js over
 # TCP to the compose Postgres, no proxy. `pnpm dev:db:up --neon` switches to `neon` through the local
 # proxy (and writes NEON_LOCAL_PROXY); `--postgres` switches back. The bootstrap writes this line.
@@ -28,18 +28,18 @@ DATABASE_URL=postgresql://rocketflare:rocketflare_pass@localhost:5432/rocketflar
 NEON_LOCAL_PROXY=
 # AES-GCM key for OAuth tokens stored at rest. Generate: openssl rand -hex 32
 OAUTH_ENCRYPTION_KEY=
-# Feature flags, layer 1 (D30): comma-separated keys this machine ships AT ALL. Only consulted for
+# Feature flags, layer 1: comma-separated keys this machine ships AT ALL. Only consulted for
 # a flag whose registry entry sets `environmentGated`; an ordinary rollout flag ignores it.
 # Listed here because `wrangler dev` reads [vars] from wrangler.toml, which holds the PRODUCTION
 # value — so a key you ship dark in production is dark on every developer's laptop without this.
 FEATURES_ENABLED=
-# Agent human-in-the-loop (#17): how long a run parked on a person waits before it expires. Passed
+# Agent human-in-the-loop: how long a run parked on a person waits before it expires. Passed
 # verbatim to `step.waitForEvent`, so it must be a Workflows duration string ("168 hours", "7 days").
 # Workflows keeps a waiting instance for 30 days on Workers Paid but only 3 days on Free — past
 # retention the instance is gone and the resume event can never arrive, so keep this under 3 days
 # if you are not on Paid.
 AGENT_INTERRUPT_TIMEOUT=168 hours
-# Agent budgets (D39). Blank = no cap. Per run: tokens across every call and decision, and USD
+# Agent budgets. Blank = no cap. Per run: tokens across every call and decision, and USD
 # across priced calls (an agent's `meta.budget` overrides both). Per tenant: USD per UTC day,
 # checked at enqueue (429 ai_budget_exceeded) and before every call of a running run.
 AGENT_RUN_MAX_TOKENS=
@@ -72,19 +72,19 @@ AUTH_OIDC_ONLY=
 # true = trust the issuer's email when it omits `email_verified` (single-tenant Entra does). Default
 # false: such a sign-in is refused. An explicit `email_verified: false` is refused either way.
 OIDC_TRUST_EMAIL=
-# AI layer (Phase 3): platform default key; tenants may override in Settings → AI. Optional — without
+# AI layer: platform default key; tenants may override in Settings → AI. Optional — without
 # it chat falls back to Workers AI through the [ai] binding (zero key, billed to the Cloudflare account).
 ANTHROPIC_API_KEY=
 EMBEDDINGS_API_KEY=
-# Decisions (D37): TypeSafe's Jev answers `ctx.decide` with calibrated probabilities. Optional —
+# Decisions: TypeSafe's Jev answers `ctx.decide` with calibrated probabilities. Optional —
 # without it (and without a tenant Decisions row in Settings → AI) decisions fall back to the chat
 # model's self-reported probabilities, recorded as `llm_self_report` (uncalibrated).
 TYPESAFE_API_KEY=
-# Evals only (D33, docs/EVALS.md): `pnpm eval --provider fireworks|gemini` (and `--judge-provider`)
+# Evals only (docs/EVALS.md): `pnpm eval --provider fireworks|gemini` (and `--judge-provider`)
 # read these; the Worker never does, which is why they are comments here and not bindings.
 # FIREWORKS_API_KEY=
 # GEMINI_API_KEY=
-# AI tracing (D32). Spans ALWAYS land in the local `ai_spans` table (`pnpm cli traces list`);
+# AI tracing. Spans ALWAYS land in the local `ai_spans` table (`pnpm cli traces list`);
 # these only add an OTLP backend. Langfuse: both keys are enough (preset auto-selected, Langfuse
 # Cloud unless OTEL_EXPORTER_OTLP_ENDPOINT points elsewhere). Phoenix locally:
 #   docker run -p 6006:6006 arizephoenix/phoenix  →  OBSERVABILITY_PRESET=phoenix,

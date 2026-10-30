@@ -1,5 +1,5 @@
 /**
- * `list_documents` (D7, D18) — what is actually IN the knowledge base. Search answers "which
+ * `list_documents` — what is actually IN the knowledge base. Search answers "which
  * passages match these words"; this answers "what material exists at all", which is what a model
  * needs before it can pick good search terms, and what it needs to say honestly that a topic is not
  * covered. `search_knowledge` reuses `listKnowledgeDocuments` to attach the same view to an empty
@@ -7,7 +7,7 @@
  *
  * Only indexed documents are listed: a `pending` upload is still converting and its text cannot be
  * searched or read yet, so offering it would only produce a failed follow-up call. And only
- * documents the RUN's requester may read (D29) — this is the tool a model reaches for when a search
+ * documents the RUN's requester may read — this is the tool a model reaches for when a search
  * comes back empty, so an unfiltered list here would leak every restricted title in the tenant.
  */
 import { KNOWLEDGE_TOOLS } from '@rocketflare/shared/ai/embeddings'
@@ -15,7 +15,7 @@ import { and, desc, eq } from 'drizzle-orm'
 import { z } from 'zod'
 import { documents } from '../../../../db/schema'
 import { visibleDocuments } from '../../access'
-import type { Tool } from '../../ai/kit'
+import type { Tool } from '../../ai/agent-loop'
 import type { AgentToolContext } from './search-knowledge'
 
 export const LIST_DOCUMENTS_TOOL = KNOWLEDGE_TOOLS.list

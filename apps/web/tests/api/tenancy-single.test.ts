@@ -1,5 +1,5 @@
 /**
- * TENANCY_MODE=single (D25): the multi-org surface answers 404 `tenancy_mode_single`; every admitted
+ * TENANCY_MODE=single: the multi-org surface answers 404 `tenancy_mode_single`; every admitted
  * user is auto-joined to the single tenant as member; the session reports the mode; the schema is
  * untouched (the same routes work for members/invitations/settings).
  */

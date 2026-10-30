@@ -1,5 +1,5 @@
 /**
- * Tracing (D32), no database, injected fetch: `tracerFor` picks sinks from config (no-op with
+ * Tracing, no database, injected fetch: `tracerFor` picks sinks from config (no-op with
  * none; the langfuse preset from the existing keys, phoenix defaulting to protobuf); the OTLP JSON
  * request matches a fixture; handles nest (a tool call's span under the agent span, retrieval under
  * the tool); a run's trace and root ids are derived from the run id; capture-off strips content
@@ -20,9 +20,10 @@ import {
   tracerFor,
   withAgentTrace,
 } from '@/api/observability/tracing'
-import { runToolLoop, type Tool } from '@/api/services/ai/kit'
+import { runToolLoop, type Tool } from '@/api/services/ai/agent-loop'
 import { loadConfig } from '@/config'
 import { FakeChatClient } from '../helpers/ai'
+import { FIXTURE_AGENT_B } from '../helpers/fixture-agents'
 import { createTestEnv } from '../mocks/bindings'
 
 function recordingFetch(status = 200) {
@@ -252,7 +253,7 @@ describe('nesting', () => {
       { toolUses: [{ id: 'call_1', name: 'lookup', input: { q: 'x' } }] },
       { toolUses: [{ name: 'submit', input: { answer: 'done' } }] },
     ])
-    await withAgentTrace('research-topic', { tracer, tenantId: 't', runId: 'r' }, trace =>
+    await withAgentTrace(FIXTURE_AGENT_B, { tracer, tenantId: 't', runId: 'r' }, trace =>
       runToolLoop(traceChatClient(fake, trace, { provider: 'anthropic' }, tracer), {
         model: 'm',
         system: 's',
@@ -266,7 +267,7 @@ describe('nesting', () => {
     const tool = spans.find(s => s.kind === 'tool')
     const retrieval = spans.find(s => s.kind === 'retrieval')
     const llm = spans.filter(s => s.kind === 'llm')
-    expect(root?.name).toBe('invoke_agent research-topic')
+    expect(root?.name).toBe(`invoke_agent ${FIXTURE_AGENT_B}`)
     expect(llm.map(s => s.name)).toEqual(['chat m', 'chat m'])
     expect(llm.every(s => s.parentSpanId === root?.spanId)).toBe(true)
     expect(tool).toMatchObject({
@@ -354,7 +355,7 @@ describe('workflow trace continuity', () => {
     const second = collectingTracer()
     for (const [round, { tracer }] of [first, second].entries()) {
       await withAgentTrace(
-        'research-topic',
+        FIXTURE_AGENT_B,
         {
           tracer,
           tenantId: 't',

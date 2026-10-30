@@ -1,7 +1,7 @@
 /**
- * Input form for the `summarize-text` example agent (D7, D17): the text (counted against
+ * Input form for the `summarize-text` example agent: the text (counted against
  * `SUMMARIZE_TEXT_MAX_CHARS`), the style, and the "index the result" toggle that also stores the
- * summary as a searchable document (D18). Validated with the SAME `summarizeTextInputSchema` the
+ * summary as a searchable document. Validated with the SAME `summarizeTextInputSchema` the
  * route and the runtime apply, so a 400 is a backstop, not the UX.
  */
 import {

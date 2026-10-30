@@ -1,5 +1,5 @@
 /**
- * A run's durable event stream, grouped by stage (issue #17).
+ * A run's durable event stream, grouped by stage.
  *
  * Everything decided here is decided in `timelineModel.ts`, which is pure; this file is scrolling,
  * expansion and keys. Three behaviours worth knowing:

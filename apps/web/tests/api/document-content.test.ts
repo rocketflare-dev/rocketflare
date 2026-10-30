@@ -1,5 +1,5 @@
 /**
- * Reading a document (D18): `GET /api/ai/documents/:id/{content,passages,card}`. The windows are
+ * Reading a document: `GET /api/ai/documents/:id/{content,passages,card}`. The windows are
  * cut in Postgres, so the arithmetic is asserted against real rows rather than a JS slice:
  * offsets, `hasMore`/`nextOffset`, a clamped over-ask, the last window. Then the properties that
  * are security rather than behaviour — an unknown id and another tenant's id answer with the SAME

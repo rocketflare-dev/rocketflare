@@ -1,5 +1,5 @@
 /**
- * Query-key factory (D13, D20). Every `useQuery`/`invalidateQueries` uses a key from here — never
+ * Query-key factory. Every `useQuery`/`invalidateQueries` uses a key from here — never
  * an inline array — so one invalidation reliably covers a family (`all` is the prefix of everything
  * beneath it). Filters are spread into the key as a plain object (TanStack hashes them stably).
  *
@@ -73,7 +73,7 @@ const CORE_QUERY_KEYS = {
     all: ['activity'] as const,
     list: (filters: object = {}) => ['activity', 'list', filters] as const,
   },
-  /** `/api/ai/*` — providers, readiness, prompt registry and usage (D17, D18) */
+  /** `/api/ai/*` — providers, readiness, prompt registry and usage */
   ai: {
     all: ['ai'] as const,
     configs: ['ai', 'configs'] as const,
@@ -84,22 +84,22 @@ const CORE_QUERY_KEYS = {
       all: ['ai', 'usage'] as const,
       summary: (filters: object = {}) => ['ai', 'usage', 'summary', filters] as const,
     },
-    /** `/api/ai/agent-models` — every prompt key with its assignment + effective model (D17) */
+    /** `/api/ai/agent-models` — every prompt key with its assignment + effective model */
     agentModels: ['ai', 'agent-models'] as const,
-    /** `/api/feedback/mine` — the caller's own thumbs on a set of answers (D33) */
+    /** `/api/feedback/mine` — the caller's own thumbs on a set of answers */
     feedback: {
       all: ['ai', 'feedback'] as const,
       mine: (target = '', ids: readonly string[] = []) =>
         ['ai', 'feedback', 'mine', target, [...ids].sort().join(',')] as const,
     },
   },
-  /** `/api/agents` — the registered agent roster (code: changes with a deploy) (D7) */
+  /** `/api/agents` — the registered agent roster (code: changes with a deploy) */
   agents: {
     all: ['agents'] as const,
     list: ['agents', 'list'] as const,
   },
   /**
-   * `/api/agents/runs` (D7, D8). The root is `agent-run` ON PURPOSE: the server's progress nudge is
+   * `/api/agents/runs`. The root is `agent-run` ON PURPOSE: the server's progress nudge is
    * `entity.changed { entity: 'agent-run', id }` and `invalidationsFor()` resolves that payload's
    * `entity` to a query-key root, so `WebSocketProvider` refreshes the runs list and the open run
    * with zero hook-side socket code. Its own family (not under `agents`) so a run event never
@@ -112,7 +112,7 @@ const CORE_QUERY_KEYS = {
     /** `GET /runs/:id?events=0` — the bare row, one indexed read, refreshed by the nudge. */
     row: (id: string) => ['agent-run', 'row', id] as const,
     /**
-     * `GET /interrupts?status=pending&pageSize=1` — the "n waiting" SideNav badge (issue #17).
+     * `GET /interrupts?status=pending&pageSize=1` — the "n waiting" SideNav badge.
      * Under `['agent-run']` so BOTH server nudges already cover it: a park writes an `interrupt`
      * event row (`entity: 'agent-run'`) and an answer additionally nudges `agent-interrupt`.
      * **Never polled** — a badge that polls is a request every few seconds on every page.
@@ -120,8 +120,8 @@ const CORE_QUERY_KEYS = {
     awaiting: ['agent-run', 'awaiting'] as const,
   },
   /**
-   * The run's AG-UI timeline (issue #7) — **its own root on purpose, and it must stay out of
-   * `REALTIME_INVALIDATIONS`.** The kit's convention is that an `entity.changed` entity string IS
+   * The run's AG-UI timeline — **its own root on purpose, and it must stay out of
+   * `REALTIME_INVALIDATIONS`.** The convention is that an `entity.changed` entity string IS
    * a query-key root, and the runtime nudges `entity: 'agent-run'` on EVERY durable row it writes.
    * Park this list under `['agent-run']` and each of those nudges throws away the list the stream
    * just built and re-fetches the whole run — turning the stream into a more expensive poll.
@@ -130,17 +130,17 @@ const CORE_QUERY_KEYS = {
     all: ['agent-run-agui'] as const,
     detail: (id: string) => ['agent-run-agui', id] as const,
   },
-  /** `/api/ai/documents` — the tenant knowledge base and its search (D18) */
+  /** `/api/ai/documents` — the tenant knowledge base and its search */
   documents: {
     all: ['documents'] as const,
     list: (filters: object = {}) => ['documents', 'list', filters] as const,
     detail: (id: string) => ['documents', 'detail', id] as const,
-    /** One window of the text — keyed by offset so paging keeps each window cached (D18). */
+    /** One window of the text — keyed by offset so paging keeps each window cached. */
     content: (id: string, offset: number) => ['documents', 'content', id, offset] as const,
     passages: (id: string, filters: object = {}) => ['documents', 'passages', id, filters] as const,
     card: (id: string) => ['documents', 'card', id] as const,
   },
-  /** `/api/chat/*` — MY conversations (the route filters by user) and their messages (D17) */
+  /** `/api/chat/*` — MY conversations (the route filters by user) and their messages */
   chat: {
     all: ['chat'] as const,
     conversations: {
@@ -152,7 +152,7 @@ const CORE_QUERY_KEYS = {
     },
   },
   /**
-   * `/api/groups` (D29). The root is `groups` because the server nudges
+   * `/api/groups`. The root is `groups` because the server nudges
    * `entity.changed { entity: 'groups' }` from every group mutation, and `access.changed` names it
    * too — so the admin UI and a person's own group list both refresh with no socket code here.
    */
@@ -164,7 +164,7 @@ const CORE_QUERY_KEYS = {
     mine: ['groups', 'mine'] as const,
   },
   /**
-   * `/api/features` (D30). The root is `features` because the server's `features.changed` nudge
+   * `/api/features`. The root is `features` because the server's `features.changed` nudge
    * names it alongside `auth` — flags ride the session, so both have to be re-fetched when one moves.
    */
   features: {
@@ -195,11 +195,11 @@ const CORE_QUERY_KEYS = {
 } as const
 
 /**
- * Families contributed by installed plugins (D31), merged in. Every root a plugin declares starts
+ * Families contributed by installed plugins, merged in. Every root a plugin declares starts
  * with `<id>:` — `tests/config/plugins.test.ts` is the check — so a plugin can no more collide with
- * a kit family, or with another plugin's, than two plugins can share a table name.
+ * a core family, or with another plugin's, than two plugins can share a table name.
  *
- * The cast is the price of merging objects the kit cannot know the shape of: at runtime this is
+ * The cast is the price of merging objects core cannot know the shape of: at runtime this is
  * one spread, and at compile time it is the intersection of everything the barrel declares, which
  * is exactly what a plugin's own hooks need to see when they read `queryKeys`.
  */

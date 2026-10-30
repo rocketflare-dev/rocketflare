@@ -46,7 +46,7 @@ describe('buildConnectionUrl', () => {
   })
 })
 
-describe('toPooledNeonUrl (D35: the neon Worker secret)', () => {
+describe('toPooledNeonUrl (the neon Worker secret)', () => {
   const direct = buildConnectionUrl({
     role: 'r',
     password: 'p@ss/w:rd',

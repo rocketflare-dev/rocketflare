@@ -1,9 +1,9 @@
 /**
- * Prompt registry + overrides (D17). `PROMPT_REGISTRY` is the code-level source of truth for every
+ * Prompt registry + overrides. `PROMPT_REGISTRY` is the code-level source of truth for every
  * system prompt that talks to a model — one entry per agent/surface, `{{variable}}` placeholders
  * for context. A tenant may override an entry's text (`prompt_overrides`); absence = default,
  * revert = delete. `resolvePrompt` is the ONLY runtime read. Adding a prompt = adding an entry
- * here (no migration); Phase 3b's `agent_models` keys on the same registry.
+ * here (no migration); `agent_models` keys on the same registry.
  */
 import {
   interpolatePrompt,
@@ -174,7 +174,7 @@ export const CORE_PROMPT_REGISTRY = {
 } as const satisfies PromptRegistry
 
 /**
- * Core prompts plus every installed plugin's (D31). A plugin's entries are checked against the
+ * Core prompts plus every installed plugin's. A plugin's entries are checked against the
  * prompt keys IT declared (`SharedPlugin.promptKeys`), so a prompt with no key — or a key with no
  * prompt — is a type error in the plugin.
  *

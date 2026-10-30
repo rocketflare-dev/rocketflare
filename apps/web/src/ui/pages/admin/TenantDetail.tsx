@@ -1,5 +1,5 @@
 /**
- * Admin → one organisation (D10, D25): members, suspend/reinstate, and "enter as support" — which
+ * Admin → one organisation: members, suspend/reinstate, and "enter as support" — which
  * adds a real `support` membership its owners can see in Settings → People, then switches in.
  */
 import { ArrowLeftIcon, BuildingOffice2Icon } from '@heroicons/react/24/outline'

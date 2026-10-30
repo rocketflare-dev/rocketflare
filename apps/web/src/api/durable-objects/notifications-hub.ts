@@ -1,5 +1,5 @@
 /**
- * `NotificationsHub` Durable Object (D5, D8): one instance per tenant (`idFromName(tenantId)`),
+ * `NotificationsHub` Durable Object: one instance per tenant (`idFromName(tenantId)`),
  * exported from `src/worker.ts`. Hibernation API — sockets are accepted with `tenant:`/`user:`
  * tags, per-socket metadata lives in the attachment, and `setWebSocketAutoResponse` answers
  * `{"type":"ping"}` without waking the object. Stateless: no `ctx.storage`, so migrations are free.

@@ -1,10 +1,10 @@
 /**
- * Output registry keyed by `agentKey` (issue #17), the twin of `forms/`.
+ * Output registry keyed by `agentKey`, the twin of `forms/`.
  *
- * **An agent in this kit is one shared input schema + one `forms/` entry + one `outputs/` entry.**
- * Before this, the run surface hard-coded `agentKey === 'summarize-text'` and
- * `agentKey === 'research-topic'` inside one component, which is exactly the shape that makes an
- * app's third agent a diff against kit code rather than a new file beside it.
+ * **An agent is one shared input schema + one `forms/` entry + one `outputs/` entry.**
+ * Hard-coding `agentKey === 'summarize-text'` and `agentKey === 'research-topic'` inside one
+ * component is exactly the shape that makes an app's third agent a diff against core code rather
+ * than a new file beside it.
  *
  * An agent with no entry gets the raw JSON view, which is a real answer rather than an apology: the
  * output is a validated object and reading it is sometimes the whole point.

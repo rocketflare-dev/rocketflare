@@ -1,5 +1,5 @@
 /**
- * Replay (D38): run an agent's CURRENT code over a run it already did, answering every recorded
+ * Replay: run an agent's CURRENT code over a run it already did, answering every recorded
  * question from the record, and report what would change — without a model call (`strict`) or with
  * only the calls the record cannot answer (`live`). The point is the change you are about to make:
  * a new threshold, a reworded decision, a decomposed `run()` — checked against a thousand past
@@ -15,7 +15,7 @@
  *   `ctx.once`       `agent_run_effects.result` by key. A missing key is a miss in both modes — `fn`
  *                    may have a side effect — unless the call is marked `{ replay: 'rerun' }`, which
  *                    live mode runs again (a pure model call whose prompt may have changed). A
- *                    `ctx.map` item (`{ replay: 'inner' }`, D39) is run again in BOTH modes: its
+ *                    `ctx.map` item (`{ replay: 'inner' }`) is run again in BOTH modes: its
  *                    result is a cache, and what it asks inside its scope is answered from the
  *                    record by the scoped key (`items[3]/relevant`), like any other call.
  *   `ctx.interrupt`  `agent_run_interrupts` by key, with the runtime's own rejection semantics. No
@@ -64,8 +64,8 @@ import {
 import { noopTracer } from '../../observability/tracer'
 import type { Logger } from '../../utils/core/logger'
 import { accessScopeForUser } from '../access'
+import { InterruptDeclinedError, InterruptRequested, type Tool } from '../ai/agent-loop'
 import { AiNotConfiguredError } from '../ai/errors'
-import { InterruptDeclinedError, InterruptRequested, type Tool } from '../ai/kit'
 import {
   DECISIONS_FALLBACK_PROMPT_KEY,
   resolveChat,
@@ -73,7 +73,7 @@ import {
   resolveEmbeddings,
 } from '../ai/resolve'
 import { addUsage, type ChatClient, ZERO_USAGE } from '../ai/types'
-import { resolvePrompt } from '../prompts'
+import { type RegistryPromptKey, resolvePrompt } from '../prompts'
 import { type Decision, decideWithShapes, questionsHash, toDecision } from './decisions'
 import { withFanout } from './fanout'
 import { approvalsForRun } from './interrupts'
@@ -398,7 +398,7 @@ async function replayInside(
     checkpoint: { load: async () => null, save: async () => {} },
     once: async (key, fn, onceOptions) => {
       const recorded = record.effects.get(key)
-      // A `ctx.map` item (D39): run it again, so what it asks is answered from the record and a
+      // A `ctx.map` item: run it again, so what it asks is answered from the record and a
       // change to the item's code shows. Its own recorded result is only a cache.
       if (onceOptions?.replay === 'inner') return fn()
       if (live && onceOptions?.replay === 'rerun') {
@@ -440,7 +440,7 @@ async function replayInside(
       return artifact
     },
     prompt: (vars, promptKey) =>
-      resolvePrompt(db, tenantId, promptKey ?? (agent.meta.promptKey as 'summarize-text'), {
+      resolvePrompt(db, tenantId, promptKey ?? (agent.meta.promptKey as RegistryPromptKey), {
         appName: cfg.APP_NAME,
         tenantName: tenant?.name ?? '',
         ...vars,

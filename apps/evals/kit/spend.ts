@@ -1,6 +1,6 @@
 /**
- * What a case cost (D33), read from the ledger rather than from the stream: every model call the
- * kit makes is an `ai_usage` row (`recordUsage`), priced at write time from the shared price table.
+ * What a case cost, read from the ledger rather than from the stream: every model call the
+ * app makes is an `ai_usage` row (`recordUsage`), priced at write time from the shared price table.
  * A case runs in its own tenant, so "every row in the tenant except the judge's" is exactly the
  * target's spend — chat turn, agent tool loop and anything they triggered.
  */

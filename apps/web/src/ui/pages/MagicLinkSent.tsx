@@ -1,5 +1,5 @@
 /**
- * "Check your email" (D11). Rendered inline by Login after a successful request and at
+ * "Check your email". Rendered inline by Login after a successful request and at
  * `/magic-link/sent?email=` for deep links. The emailed link lands on `/magic-link/confirm`.
  */
 import { CheckCircleIcon } from '@heroicons/react/24/outline'

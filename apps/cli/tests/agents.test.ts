@@ -1,7 +1,11 @@
 /**
- * `agents list|run|runs list` (D39): one run from a JSON file, a JSONL batch split into chunks of
+ * `agents list|run|runs list`: one run from a JSON file, a JSONL batch split into chunks of
  * `AGENT_RUN_BATCH_MAX` with failed lines reported by line number and exit 1, the `--batch` filter,
  * and the argument errors that never reach the server.
+ *
+ * The agents are fixtures registered the way a plugin registers its own (`SharedPlugin.agentKeys`),
+ * because the CLI parses `agentKey` with the shared enum and no test may borrow an example agent:
+ * an app deletes those.
  */
 import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -9,7 +13,7 @@ import {
   AGENT_RUN_BATCH_MAX,
   createAgentRunBatchResponseSchema,
 } from '@rocketflare/shared/ai/agents'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { runAgentRunsList, runAgentsList, runAgentsRun } from '../src/commands/agents'
 import { EXIT_ERROR, exitCodeFor } from '../src/errors'
 import {
@@ -22,6 +26,17 @@ import {
   testContext,
   USER_ID,
 } from './helpers'
+
+vi.mock('@rocketflare/shared/plugins', async importOriginal => {
+  const actual = await importOriginal<typeof import('@rocketflare/shared/plugins')>()
+  const fixture = {
+    id: 'fixture',
+    label: 'Fixture agents (tests)',
+    agentKeys: ['fixture-agent', 'fixture-batchable'],
+  }
+  const plugins = [...actual.sharedPlugins, fixture]
+  return { ...actual, SHARED_PLUGINS: plugins, sharedPlugins: plugins }
+})
 
 const SERVER = 'http://server.test'
 const BATCH = '7b0f3c1a-2d4e-4f6a-8b9c-0d1e2f3a4b5c'
@@ -43,7 +58,7 @@ const run = (over: Record<string, unknown> = {}) => {
   return {
     id: `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`,
     tenantId: TENANT_ID,
-    agentKey: 'triage-research',
+    agentKey: 'fixture-batchable',
     status: 'queued',
     input: {},
     output: null,
@@ -92,17 +107,17 @@ describe('agents list', () => {
         jsonResponse({
           items: [
             {
-              key: 'summarize-text',
-              title: 'Summarize text',
+              key: 'fixture-agent',
+              title: 'Fixture agent',
               description: '',
-              promptKey: 'summarize-text',
+              promptKey: 'fixture-agent',
               exclusive: true,
             },
             {
-              key: 'triage-research',
-              title: 'Triage research',
+              key: 'fixture-batchable',
+              title: 'Fixture batchable',
               description: '',
-              promptKey: 'triage-research',
+              promptKey: 'fixture-batchable',
               exclusive: false,
             },
           ],
@@ -110,8 +125,8 @@ describe('agents list', () => {
     })
     const { ctx, out } = await testContext({ store, fetch })
     await runAgentsList(ctx)
-    expect(out.content()).toMatch(/summarize-text.*exclusive/)
-    expect(out.content()).toMatch(/triage-research.*yes/)
+    expect(out.content()).toMatch(/fixture-agent.*exclusive/)
+    expect(out.content()).toMatch(/fixture-batchable.*yes/)
   })
 })
 
@@ -124,13 +139,13 @@ describe('agents run', () => {
       '/api/agents/runs': () => jsonResponse({ ...run(), deduplicated: false }, 202),
     })
     const { ctx, out } = await testContext({ store, fetch, json: true })
-    await runAgentsRun(ctx, 'triage-research', { input: file })
+    await runAgentsRun(ctx, 'fixture-batchable', { input: file })
     expect(JSON.parse(String(calls[0]?.init.body))).toEqual({
-      agentKey: 'triage-research',
+      agentKey: 'fixture-batchable',
       input: { question: 'Who approves access?' },
     })
     expect(JSON.parse(out.content())).toMatchObject({
-      agentKey: 'triage-research',
+      agentKey: 'fixture-batchable',
       status: 'queued',
     })
   })
@@ -143,7 +158,7 @@ describe('agents run', () => {
     await writeFile(file, `${lines.slice(0, 3).join('\n')}\n\n${lines.slice(3).join('\n')}\n`)
     const { fetch, calls } = batchServer()
     const { ctx, out } = await testContext({ store, fetch, json: true })
-    await runAgentsRun(ctx, 'triage-research', { batch: file })
+    await runAgentsRun(ctx, 'fixture-batchable', { batch: file })
     expect(calls.map(c => JSON.parse(String(c.init.body)).inputs.length)).toEqual([
       AGENT_RUN_BATCH_MAX,
       5,
@@ -159,7 +174,7 @@ describe('agents run', () => {
     await writeFile(file, ['{"question":"a"}', '{"bad":true}', '{"question":"c"}'].join('\n'))
     const { fetch } = batchServer()
     const { ctx, out } = await testContext({ store, fetch })
-    const error = await captureError(runAgentsRun(ctx, 'triage-research', { batch: file }))
+    const error = await captureError(runAgentsRun(ctx, 'fixture-batchable', { batch: file }))
     expect(error.message).toBe('1 of 3 inputs did not start')
     expect(error.hint).toMatch(/^Lines 2: Invalid agent input/)
     expect(exitCodeFor(error)).toBe(EXIT_ERROR)
@@ -197,9 +212,9 @@ describe('agents runs list', () => {
         }),
     })
     const { ctx, out } = await testContext({ store, fetch })
-    await runAgentRunsList(ctx, { batch: BATCH, agent: 'triage-research' })
+    await runAgentRunsList(ctx, { batch: BATCH, agent: 'fixture-batchable' })
     expect(calls[0]?.url.searchParams.get('batchId')).toBe(BATCH)
-    expect(calls[0]?.url.searchParams.get('agentKey')).toBe('triage-research')
+    expect(calls[0]?.url.searchParams.get('agentKey')).toBe('fixture-batchable')
     expect(out.content()).toContain('Could not start the workflow')
   })
 })

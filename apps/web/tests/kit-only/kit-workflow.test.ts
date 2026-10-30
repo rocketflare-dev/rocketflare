@@ -52,9 +52,14 @@ describe('kit.yml', () => {
   it('renamed: renames to a hyphenated slug, proves the kit-only files are gone, runs pnpm gate', () => {
     const renamed = job('renamed')
     expect(renamed).toContain('node scripts/rename.mjs my-app')
-    for (const file of ['kit.yml', 'plugin-ci.yml', 'notify-plugins.yml']) {
-      expect(renamed).toContain(`.github/workflows/${file}`)
-    }
+    // Every kitOnly path, read from the manifest in the job itself, plus the wiring that calls one.
+    expect(renamed).toContain('require("./.rocketflare.json").kitOnly')
+    expect(renamed).toMatch(/changelog-nudge\|release-site-nudge/)
+    expect(renamed).toContain('scripts["kit:release"]')
+    // The Launch fixture is copied out first: the rename deletes tests/kit-only/.
+    expect(renamed.indexOf('kit-fixture.mjs "$RUNNER_TEMP')).toBeLessThan(
+      renamed.indexOf('node scripts/rename.mjs')
+    )
     expect(renamed).toMatch(/- run: pnpm gate\s*$/)
   })
 

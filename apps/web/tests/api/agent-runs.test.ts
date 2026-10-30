@@ -1,5 +1,5 @@
 /**
- * `/api/agents` (D7): the enqueue handoff — 202 + a `queued` row + a Workflow instance recorded on
+ * `/api/agents`: the enqueue handoff — 202 + a `queued` row + a Workflow instance recorded on
  * the stub binding (id = run id, params `{ runId, tenantId }`); exclusive dedupe (same run back with
  * `deduplicated: true`, 409 `agent_run_active` only with `?strict=1`); input validated against the
  * agent's schema (400) BEFORE any row; members see only their own runs (others' are 404, admins see
@@ -64,28 +64,19 @@ describe('GET /api/agents', () => {
     const body = agentListResponseSchema.parse(
       await json(await request('/api/agents', { headers: a.cookie }))
     )
-    // The kit's own agents, in order; an installed plugin's agents follow them (D31).
+    // The core agents, in order; an installed plugin's agents follow them. Which core
+    // agents there are is the app's business (each example is a removable surface), so only this
+    // file's own example is pinned by name.
     const core: readonly string[] = CORE_AGENT_KEYS
-    expect(body.items.filter(item => core.includes(item.key))).toEqual([
+    expect(body.items.map(i => i.key).filter(key => core.includes(key))).toEqual([...core])
+    expect(body.items.find(i => i.key === 'summarize-text')).toEqual(
       expect.objectContaining({
         key: 'summarize-text',
         promptKey: 'summarize-text',
         exclusive: true,
         title: expect.any(String),
-      }),
-      expect.objectContaining({
-        key: 'research-topic',
-        promptKey: 'research-topic',
-        exclusive: true,
-        title: expect.any(String),
-      }),
-      expect.objectContaining({
-        key: 'triage-research',
-        promptKey: 'triage-research',
-        exclusive: false,
-        title: expect.any(String),
-      }),
-    ])
+      })
+    )
     expect((await request('/api/agents')).status).toBe(401)
   })
 
@@ -112,10 +103,10 @@ describe('GET /api/agents', () => {
       ).not.toBeNull()
       expect(fields?.length).toBeGreaterThan(0)
     }
-    const research = body.items.find(i => i.key === 'research-topic')
-    expect(fieldsFromJsonSchema(research?.inputJsonSchema)).toEqual([
-      expect.objectContaining({ name: 'topic', label: 'Topic', type: 'textarea', required: true }),
-    ])
+    const summarize = body.items.find(i => i.key === 'summarize-text')
+    expect(fieldsFromJsonSchema(summarize?.inputJsonSchema)).toEqual(
+      expect.arrayContaining([expect.objectContaining({ name: 'text', required: true })])
+    )
   })
 })
 

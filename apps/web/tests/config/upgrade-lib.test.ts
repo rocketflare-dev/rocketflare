@@ -8,6 +8,7 @@
  * stripped (so `git apply --3way` cannot silently merge against a preimage that no longer
  * describes anything).
  */
+import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import rawManifest from '../../../../.rocketflare.json'
@@ -16,14 +17,12 @@ import type { Manifest } from '../../../../scripts/lib/upgrade-lib.d.mts'
 import {
   absentSurfaces,
   BinaryPatchError,
-  behaviourFiles,
   classifyPath,
   countLines,
   defaultPluginEntries,
   defaultPluginEntryProblems,
   defaultPluginProblems,
   globToRegExp,
-  hasChangelogSection,
   isDeployable,
   isKitManifest,
   isVendored,
@@ -33,6 +32,7 @@ import {
   parseNote,
   splitDiff,
   stripIndexLines,
+  stripKitOnlyHooks,
   stripKitOnlyWiring,
   translateBlock,
 } from '../../../../scripts/lib/upgrade-lib.mjs'
@@ -40,6 +40,7 @@ import {
 // A JSON import widens every literal to `string`; the manifest's shape is the lib's contract.
 const manifest = rawManifest as unknown as Manifest
 
+const REPO_ROOT = path.resolve(__dirname, '../../../..')
 const names = deriveNames('acme', 'Acme Logistics', { domain: 'acme.io' })
 
 describe('globs', () => {
@@ -61,7 +62,7 @@ describe('the manifest predicate', () => {
     // The predicate, both ways, on values rather than on whichever checkout is running this —
     // `app === null` IS the question, so a renamed copy answers `false` and is RIGHT to. Asserting
     // `isKitManifest(manifest) === true` against the repo's own file made every adopted copy's
-    // `pnpm test` red on its first run, which is the opposite of what D27 promises.
+    // `pnpm test` red on its first run, which is the opposite of what adopting a copy promises.
     expect(isKitManifest({ ...manifest, app: null })).toBe(true)
     expect(
       isKitManifest({ ...manifest, app: { slug: 'acme', display: 'Acme', domain: 'acme.io' } })
@@ -72,7 +73,7 @@ describe('the manifest predicate', () => {
 
   it('finds the surfaces whose anchor is gone', () => {
     const withoutAgent = ['README.md']
-    expect(absentSurfaces(manifest, withoutAgent)).toContain('example-agent-summarize-text')
+    expect(absentSurfaces(manifest, withoutAgent)).toContain(manifest.surfaces[0]?.id)
     expect(absentSurfaces(manifest, withoutAgent).length).toBe(manifest.surfaces.length)
   })
 })
@@ -81,17 +82,17 @@ describe('classifyPath', () => {
   const base = { manifest, existsLocally: true, change: 'modified' as const }
 
   it('drops anything under a surface this app deleted — the rule that matters most', () => {
-    const c = classifyPath('apps/web/src/api/services/agents/examples/summarize-text.ts', {
-      ...base,
-      absent: ['example-agent-summarize-text'],
-    })
+    // Whichever surface this checkout lists first — an app may have deleted any one of them.
+    const surface = manifest.surfaces[0]
+    if (!surface) throw new Error('the manifest lists no surfaces')
+    const c = classifyPath(surface.anchor, { ...base, absent: [surface.id] })
     expect(c.class).toBe('skipped-surface-absent')
-    expect(c.surface).toBe('example-agent-summarize-text')
+    expect(c.surface).toBe(surface.id)
     expect(c.translate).toBe(false)
   })
 
   it('never touches a file an installed plugin owns, even though the kit shipped it', () => {
-    // D31: a plugin has its own repository and its own release chain. A kit diff that rewrote its
+    // A plugin has its own repository and its own release chain. A kit diff that rewrote its
     // files would be porting one version of a plugin over another, with neither side told.
     const withPlugin = {
       ...manifest,
@@ -308,6 +309,67 @@ describe('kit-only wiring', () => {
     const pkg = '{\n  "scripts": { "test": "vitest run" }\n}\n'
     expect(stripKitOnlyWiring(pkg)).toEqual({ text: pkg, removed: [], edited: [] })
   })
+
+  it('removes a script that runs a kit-only file, and keeps its look-alike', () => {
+    const pkg = `${JSON.stringify(
+      {
+        scripts: {
+          'kit:release': 'node scripts/release.mjs',
+          'release:check': 'node scripts/release-check.mjs --deployable',
+          'kit:upgrade': 'node scripts/upgrade.mjs',
+        },
+      },
+      null,
+      2
+    )}\n`
+    const { text, removed } = stripKitOnlyWiring(pkg, ['scripts/release.mjs'])
+    expect(removed).toEqual(['kit:release'])
+    expect(Object.keys(JSON.parse(text).scripts)).toEqual(['release:check', 'kit:upgrade'])
+  })
+})
+
+describe('stripKitOnlyHooks', () => {
+  const hook = (script: string) => ({
+    type: 'command',
+    command: `node "$CLAUDE_PROJECT_DIR/scripts/${script}"`,
+    timeout: 10,
+  })
+  const settings = `${JSON.stringify(
+    {
+      hooks: {
+        PreToolUse: [
+          { matcher: 'Bash', hooks: [hook('changelog-nudge.mjs'), hook('release-site-nudge.mjs')] },
+        ],
+        SessionStart: [{ hooks: [hook('kit-update-check.mjs')] }],
+      },
+    },
+    null,
+    2
+  )}\n`
+  const globs = ['scripts/changelog-nudge.mjs', 'scripts/release-site-nudge.mjs']
+
+  it('drops the maintainer nudges, the emptied group and the emptied event', () => {
+    const { text, removed } = stripKitOnlyHooks(settings, globs)
+    expect(removed).toHaveLength(2)
+    expect(JSON.parse(text).hooks).toEqual({
+      SessionStart: [{ hooks: [hook('kit-update-check.mjs')] }],
+    })
+  })
+
+  it('returns the text untouched when no hook names a kit-only file', () => {
+    expect(stripKitOnlyHooks(settings, ['scripts/release.mjs'])).toEqual({
+      text: settings,
+      removed: [],
+    })
+  })
+
+  it("strips exactly what the kit's own settings and manifest name", () => {
+    const own = readFileSync(path.join(REPO_ROOT, '.claude/settings.json'), 'utf8')
+    const { text } = stripKitOnlyHooks(own, kitOnlyGlobs(manifest))
+    const commands = JSON.stringify(JSON.parse(text))
+    expect(commands).not.toMatch(/nudge/)
+    expect(commands).toContain('kit-update-check.mjs')
+  })
 })
 
 describe('isVendored', () => {
@@ -337,7 +399,7 @@ describe('isVendored', () => {
 
 describe('default plugins', () => {
   // `defaultPlugins` is what a fresh clone installs and what `kit:release` refuses to ship past
-  // (D31, decision 5). The entries are OBJECTS because a bare id says nothing about where the
+  //. The entries are OBJECTS because a bare id says nothing about where the
   // plugin comes from; a string still parses, and is then reported as having no repo rather than
   // having a URL guessed for it.
   const KIT = 'https://github.com/rocketflare-dev/rocketflare.git'
@@ -476,45 +538,6 @@ describe('defaultPluginEntryProblems', () => {
     expect(defaultPluginEntryProblems(entries(['analytics']))[0]).toMatch(
       /'analytics' has no "repo"/
     )
-  })
-})
-
-describe('behaviourFiles', () => {
-  // The porting-note predicate, shared by the CI gate (`release-check --unreleased`) and the
-  // pre-commit hook (`changelog-nudge.mjs`). They were two copies of one regex pair, and a hook
-  // that disagrees with the gate is a hook people learn to ignore.
-  it('is source under apps/ or packages/, tests and markdown excluded', () => {
-    expect(
-      behaviourFiles([
-        'apps/web/src/api/index.ts',
-        'packages/shared/src/jobs.ts',
-        'apps/web/tests/api/chat.test.ts',
-        'apps/web/src/api/thing.test.ts',
-        'apps/web/src/ui/CLAUDE.md',
-        'docs/CONCEPTS.md',
-        'scripts/release.mjs',
-        '.github/workflows/ci.yml',
-      ])
-    ).toEqual(['apps/web/src/api/index.ts', 'packages/shared/src/jobs.ts'])
-    expect(behaviourFiles([])).toEqual([])
-    expect(behaviourFiles(undefined)).toEqual([])
-  })
-})
-
-describe('hasChangelogSection', () => {
-  const changelog = '# Changelog\n\n## 0.6.10 — 2026-01-02\n\nx\n\n## 0.6.1 — 2026-01-01\n\ny\n'
-
-  it('does not accept 0.6.10 as 0.6.1 — the bug a two-digit patch would have found', () => {
-    // `changelog.includes('## 0.6.1')` is true of `## 0.6.10`, so the tag gate would have passed
-    // on another release's section, in the direction that lets a release through.
-    expect(hasChangelogSection('# Changelog\n\n## 0.6.10 — 2026-01-02\n', '0.6.1')).toBe(false)
-    expect(hasChangelogSection(changelog, '0.6.1')).toBe(true)
-    expect(hasChangelogSection(changelog, '0.6.10')).toBe(true)
-    expect(hasChangelogSection(changelog, '0.7.0')).toBe(false)
-  })
-
-  it('anchors to the start of a line, so a mention in prose is not a section', () => {
-    expect(hasChangelogSection('see ## 0.6.1 below\n', '0.6.1')).toBe(false)
   })
 })
 
@@ -690,16 +713,29 @@ areas: [api]
  *
  * The failure it guards against is not a crash: with an untagged branch head as `--from`,
  * `latestTag()` picks an OLDER release as `--to` and the report says "the kit deleted 22 file(s)",
- * listing whole subsystems. Exercised against this repository's own history, which always has at
- * least two commits.
+ * listing whole subsystems. Exercised against a two-commit repository of its own, so it holds in a
+ * shallow CI checkout and in a copy whose history is one commit.
  */
 describe('mirror().isAncestor', () => {
   it('knows which way round two commits are', async () => {
+    const { execFileSync } = await import('node:child_process')
+    const { mkdtempSync, rmSync } = await import('node:fs')
+    const { tmpdir } = await import('node:os')
     const { mirror } = await import('../../../../scripts/lib/git-lib.mjs')
-    const repo = mirror(path.resolve(__dirname, '../../../..'))
-    expect(repo.isAncestor('HEAD~1', 'HEAD')).toBe(true)
-    expect(repo.isAncestor('HEAD', 'HEAD~1')).toBe(false)
-    // A commit is its own ancestor, which is why `upgrade.mjs` answers "already on it" first.
-    expect(repo.isAncestor('HEAD', 'HEAD')).toBe(true)
+    const dir = mkdtempSync(path.join(tmpdir(), 'ancestor-'))
+    const git = (...args: string[]) =>
+      execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { cwd: dir })
+    try {
+      git('init', '-q')
+      git('commit', '-q', '--allow-empty', '-m', 'one')
+      git('commit', '-q', '--allow-empty', '-m', 'two')
+      const repo = mirror(dir)
+      expect(repo.isAncestor('HEAD~1', 'HEAD')).toBe(true)
+      expect(repo.isAncestor('HEAD', 'HEAD~1')).toBe(false)
+      // A commit is its own ancestor, which is why `upgrade.mjs` answers "already on it" first.
+      expect(repo.isAncestor('HEAD', 'HEAD')).toBe(true)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 })

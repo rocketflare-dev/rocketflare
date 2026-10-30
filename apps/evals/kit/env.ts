@@ -1,9 +1,9 @@
 /**
- * What an eval run is configured with (D33). `scripts/eval.mjs` loads `apps/web/.env.test` (the
+ * What an eval run is configured with. `scripts/eval.mjs` loads `apps/web/.env.test` (the
  * test database on :5433) and the AI keys from `apps/web/.dev.vars` into `process.env`, plus the
  * flags as `EVAL_*`; this module reads them once.
  *
- * Models resolve through the kit's own resolver, so a suite exercises the same chain production
+ * Models resolve through the app's own resolver, so a suite exercises the same chain production
  * does: the platform `ANTHROPIC_API_KEY`, pinned per prompt key through `agent_models` when
  * `--model` is given. Without a key there is nothing to evaluate, and every suite SKIPS with the
  * reason instead of failing — `createTestEnv` would otherwise hand the resolver the test `AI` stub,
@@ -47,7 +47,7 @@ export function skipEvals(): boolean {
  * The Worker env a target runs against: the test bindings, with the real keys `createTestEnv`
  * copies from `process.env`. With `EMBEDDINGS_API_KEY` the `AI` stub is dropped so retrieval embeds
  * for real; without it the stub's deterministic vectors apply and retrieval leans on the lexical
- * half of hybrid search — fine for the kit's starter cases, noted in docs/EVALS.md.
+ * half of hybrid search — fine for the starter cases, noted in docs/EVALS.md.
  */
 export function evalWorkerEnv(): TestEnv {
   return createTestEnv(process.env.EMBEDDINGS_API_KEY ? { AI: undefined } : {})

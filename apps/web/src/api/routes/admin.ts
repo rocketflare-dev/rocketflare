@@ -1,5 +1,5 @@
 /**
- * `/api/admin/*` (D9, D10, D25) behind `globalAdminMiddleware` — the only cross-tenant surface.
+ * `/api/admin/*` behind `globalAdminMiddleware` — the only cross-tenant surface.
  * Thin: every operation lives in services/admin.ts. `GET /tenants` (the list) is 404
  * `tenancy_mode_single` in single mode; detail, suspend and support enter/leave still work.
  */
@@ -155,7 +155,7 @@ adminRouter.post('/users/:id/block', validate('json', blockUserRequestSchema), a
   return c.json({ id: updated.id, blockedAt: updated.blockedAt })
 })
 
-// ---- Feature flags (D30) ----------------------------------------------------------------------
+// ---- Feature flags ----------------------------------------------------------------------
 
 /**
  * Keys come from the shared registry, never from the request: a flag that no code reads does

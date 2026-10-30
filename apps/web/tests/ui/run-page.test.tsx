@@ -1,5 +1,5 @@
 /**
- * The run workspace (issue #17). It is a PAGE — no `role="dialog"`, a breadcrumb back to `/agents`,
+ * The run workspace. It is a PAGE — no `role="dialog"`, a breadcrumb back to `/agents`,
  * its own route — and the things it is arranged to get right are all here:
  *
  * - the action panel is pinned above the timeline and posts the right payload per kind;
@@ -24,6 +24,7 @@ import { queryKeys } from '@/ui/lib/query-keys'
 import { websocketClient } from '@/ui/lib/websocketClient'
 import RunPage from '@/ui/pages/agents/RunPage'
 import { useWebSocketStore } from '@/ui/stores/websocketStore'
+import { FIXTURE_AGENT } from '../helpers/fixture-agents'
 import {
   errorResponse,
   IDS,
@@ -34,6 +35,10 @@ import {
   requestBody,
   stubFetch,
 } from './helpers/renderWithProviders'
+
+vi.mock('@rocketflare/shared/plugins', async importOriginal =>
+  (await import('../helpers/fixture-agents')).withFixtureShared(await importOriginal())
+)
 
 const RUN_ID = '99999999-9999-4999-8999-999999999999'
 const ASK_ID = '77777777-7777-4777-8777-777777777777'
@@ -73,7 +78,7 @@ const EVENTS = [
 const run = (overrides: Record<string, unknown> = {}) => ({
   id: RUN_ID,
   tenantId: IDS.tenant,
-  agentKey: 'summarize-text',
+  agentKey: FIXTURE_AGENT,
   status: 'running',
   input: { text: 'hello', style: 'bullets', index: false },
   output: null,
@@ -125,10 +130,10 @@ const INPUT_SCHEMA = {
 const agents = (overrides: Record<string, unknown> = {}) => ({
   items: [
     {
-      key: 'summarize-text',
+      key: FIXTURE_AGENT,
       title: 'Summarize text',
       description: 'Summarises a block of text.',
-      promptKey: 'summarize-text',
+      promptKey: FIXTURE_AGENT,
       exclusive: true,
       approvers: 'requester',
       inputJsonSchema: INPUT_SCHEMA,
@@ -320,24 +325,24 @@ describe('RunPage', () => {
     expect(header).toHaveAttribute('aria-expanded', 'true')
   })
 
-  it('shows the typed output through the outputs registry once settled', async () => {
+  it('shows the output as JSON once settled when the agent registers no typed view', async () => {
     mount({
       [`/api/agents/runs/${RUN_ID}`]: run({
         status: 'succeeded',
         finishedAt: t(4),
-        output: {
-          summary: 'Short summary',
-          keyPoints: ['One', 'Two'],
-          documentId: '55555555-5555-4555-8555-555555555555',
-        },
+        output: { answer: 'Short answer' },
       }),
     })
-    expect(await screen.findByText('Short summary')).toBeInTheDocument()
-    expect(screen.getByText('One')).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: /Open the indexed document/ })).toHaveAttribute(
-      'href',
-      '/documents/55555555-5555-4555-8555-555555555555'
+    // A typed view comes from the outputs registry (an example's own test covers one); the
+    // fixture agent has none, so the output is the JSON whole.
+    await waitFor(() =>
+      expect(
+        [...document.querySelectorAll('pre')].some(pre =>
+          pre.textContent?.includes('"answer": "Short answer"')
+        )
+      ).toBe(true)
     )
+    expect(screen.queryByRole('button', { name: 'Raw JSON' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Cancel run' })).not.toBeInTheDocument()
   })
 

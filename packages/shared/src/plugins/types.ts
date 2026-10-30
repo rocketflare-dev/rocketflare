@@ -1,8 +1,8 @@
 /**
- * The shared half of a plugin (D31).
+ * The shared half of a plugin.
  *
  * A plugin is a separate git repository COPIED into an app — never installed from npm, exactly
- * like the kit itself — that contributes contracts, routes, schema, UI and CLI commands through
+ * like the app itself — that contributes contracts, routes, schema, UI and CLI commands through
  * five barrels. `SharedPlugin` is the part all three consumers see: the zod contracts, the keys it
  * owns, and the `[vars]` it needs.
  *
@@ -31,9 +31,8 @@ import type { TypeOf, ZodDiscriminatedUnionOption, ZodRawShape } from 'zod'
 import type { FeatureDefinition } from '../features'
 
 /**
- * `^[a-z][a-z0-9-]*$` and never containing `rocketflare`: a plugin is written in the kit's
- * vocabulary so `scripts/rename.mjs` can translate it into a renamed app on the way in, and an id
- * carrying the kit's name would be rewritten with everything else.
+ * `^[a-z][a-z0-9-]*$` and never containing `rocketflare`: an id carrying the app's
+ * original name would be rewritten with everything else when the app is renamed.
  */
 export const PLUGIN_ID_RE = /^[a-z][a-z0-9-]*$/
 
@@ -72,7 +71,7 @@ export interface SharedPlugin {
   /**
    * Job envelope variants as DATA: `jobInputSchema` is a discriminated union over
    * `[...CORE_JOB_VARIANTS, ...plugin variants]`. Namespace every `type` with the plugin's id
-   * (`orders.sync`), and remember the kit's own rule — the `type` string is the version seam, so a
+   * (`orders.sync`), and remember the core rule — the `type` string is the version seam, so a
    * breaking payload change is a new variant, never an edited one.
    */
   readonly jobs?: readonly JobVariant[]
@@ -82,17 +81,17 @@ export interface SharedPlugin {
    */
   readonly subjects?: readonly string[]
   /**
-   * Feature-flag definitions keyed by flag key (D30), merged into `FEATURE_FLAGS`. A flag is
+   * Feature-flag definitions keyed by flag key, merged into `FEATURE_FLAGS`. A flag is
    * configuration, not a permission: gate with `hasFeature(auth.features, …)`, never with CASL.
    */
   readonly features?: Readonly<Record<string, FeatureDefinition>>
   /**
    * Extra `[vars]` / secrets, merged into the Worker's config schema (`apps/web/src/config.ts`).
-   * A zod raw shape rather than a whole object so the kit's schema stays one schema.
+   * A zod raw shape rather than a whole object so the core schema stays one schema.
    */
   readonly config?: ZodRawShape
   /**
-   * Query-key roots that `access.changed` should invalidate (D29): a plugin whose rows carry
+   * Query-key roots that `access.changed` should invalidate: a plugin whose rows carry
    * `visibility` has to be re-fetched when somebody's group membership moves under them.
    */
   readonly realtimeRoots?: readonly string[]

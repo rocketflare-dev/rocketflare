@@ -1,5 +1,5 @@
 /**
- * The ONLY sanctioned way to read auth in a route (02 §4, D10, D25).
+ * The ONLY sanctioned way to read auth in a route.
  *   `const { db, tenantId, user } = withAuthAndDb(c)`  — tenant required: 403 `no_tenant` /
  *                                                        `pending_approval` when there is none
  *   `const { db, user } = withAuth(c)`                  — tenant-free (invite accept, pending
@@ -7,8 +7,8 @@
  * Never `c.get('auth' | 'db')` by hand in a route. `defer(fn)` runs a side effect through
  * `waitUntil` (awaited inline when there is no ExecutionContext — tests, Node tooling) and logs
  * instead of throwing, so an email or activity write can never fail the response. `realtime`
- * bundles that `defer` with the hub binding for `services/realtime.ts` nudges (D8) — routes pass
- * it to services, never touch `NOTIFICATIONS_HUB` themselves. `tracer` (D16) is the request's
+ * bundles that `defer` with the hub binding for `services/realtime.ts` nudges — routes pass
+ * it to services, never touch `NOTIFICATIONS_HUB` themselves. `tracer` is the request's
  * Langfuse batcher (or the no-op) for `withAgentTrace` / `traceChatClient`.
  */
 import { ERROR_CODES } from '@rocketflare/shared/errors'
@@ -35,7 +35,7 @@ export interface TenantFreeRouteContext {
   logger: PinoLogger
   defer: Defer
   realtime: Realtime
-  /** D16: per-request tracer; flushed by `tracerMiddleware` after the handler (streams flush themselves). */
+  /** Per-request tracer; flushed by `tracerMiddleware` after the handler (streams flush themselves). */
   tracer: Tracer
 }
 
@@ -92,7 +92,7 @@ export function withAuthAndDb(c: AppContext): RouteContext {
   return { ...ctx, tenantId: ctx.tenantId }
 }
 
-/** D25: routes that only make sense multi-tenant answer 404 `tenancy_mode_single` in `single`. */
+/** Routes that only make sense multi-tenant answer 404 `tenancy_mode_single` in `single`. */
 export function requireMultiTenant(cfg: AppConfig): void {
   if (cfg.TENANCY_MODE === 'single') {
     throw new NotFoundError('Not available in single-tenant mode', ERROR_CODES.tenancyModeSingle)
@@ -112,7 +112,7 @@ export function uuidParam(c: AppContext, name: string): string {
  * A SECOND database client for a streaming response (SSE). `databaseMiddleware` ends the request's
  * client in `waitUntil` as soon as the handler returns the Response — which for `streamSSE` is
  * before the stream body runs — so writes made while streaming need their own handle, closed in the
- * stream's `finally`. Same driver and URL as the middleware (D35).
+ * stream's `finally`. Same driver and URL as the middleware.
  */
 export function streamDatabase(c: AppContext): DatabaseHandle {
   const cfg = c.get('config')

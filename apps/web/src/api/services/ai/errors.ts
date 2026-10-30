@@ -1,5 +1,5 @@
 /**
- * AI error normalisation (D17): every provider failure becomes one `AiError` with a small, stable
+ * AI error normalisation: every provider failure becomes one `AiError` with a small, stable
  * `code` the routes/UI branch on, a redacted message (a vendor body can echo the request headers —
  * including the key that was just rejected), and `describeAiError` for the sentence a person sees.
  * `AiNotConfiguredError` is the 503 `ai_not_configured` envelope the resolver throws BEFORE any

@@ -1,5 +1,5 @@
 /**
- * Background job contracts for `JOBS_QUEUE` (D7). One discriminated union on `type`; the producer
+ * Background job contracts for `JOBS_QUEUE`. One discriminated union on `type`; the producer
  * (`apps/web/src/api/services/jobs.ts`) validates a `JobInput` and stamps the envelope, the consumer
  * (`apps/web/src/api/queues/jobs.ts`) parses `jobEnvelopeSchema` from `message.body` and rejects
  * anything that does not match (acked, never retried — a poison message cannot loop).
@@ -8,7 +8,7 @@
  * (`email.send.v2`) with its own handler while the old one keeps draining in-flight messages; the
  * old type is removed once the queue is empty of it.
  *
- * The variants are DATA (D31): `CORE_JOB_VARIANTS` below plus whatever the installed plugins
+ * The variants are DATA: `CORE_JOB_VARIANTS` below plus whatever the installed plugins
  * declare, so `jobInputSchema`, `jobEnvelopeSchema`, `JobType` and `JOB_TYPES` are all DERIVED from
  * one list rather than four hand-kept ones that can disagree about what a job is.
  */
@@ -42,14 +42,14 @@ export const activityRecordPayloadSchema = z.object({
 })
 export type ActivityRecordPayload = z.infer<typeof activityRecordPayloadSchema>
 
-/** Index (chunk + embed) a `documents` row too large to do inline at ingest (D18). */
+/** Index (chunk + embed) a `documents` row too large to do inline at ingest. */
 export const documentIndexPayloadSchema = z.object({
   tenantId: z.string().uuid(),
   documentId: z.string().uuid(),
 })
 export type DocumentIndexPayload = z.infer<typeof documentIndexPayloadSchema>
 
-/** Convert an uploaded file (R2 original → text via Workers AI `toMarkdown`) then index it (D18). */
+/** Convert an uploaded file (R2 original → text via Workers AI `toMarkdown`) then index it. */
 export const documentConvertPayloadSchema = z.object({
   tenantId: z.string().uuid(),
   documentId: z.string().uuid(),
@@ -57,7 +57,7 @@ export const documentConvertPayloadSchema = z.object({
 export type DocumentConvertPayload = z.infer<typeof documentConvertPayloadSchema>
 
 /**
- * Fold a conversation's trimmed-off prefix into its rolling summary (D17). The payload carries ids
+ * Fold a conversation's trimmed-off prefix into its rolling summary. The payload carries ids
  * only: the handler recomputes the window from the database, so a message enqueued two turns ago
  * still summarises the right thing.
  */
@@ -91,8 +91,8 @@ export type TenantPurgePayload = z.infer<typeof tenantPurgePayloadSchema>
 // ---- Envelope ------------------------------------------------------------------------------
 
 /**
- * The kit's own variants. A plugin adds its own through `SharedPlugin.jobs`, so this list stays
- * the KIT's and an app that deletes a feature deletes its line here and nothing else.
+ * The core variants. A plugin adds its own through `SharedPlugin.jobs`, so this list stays
+ * CORE and an app that deletes a feature deletes its line here and nothing else.
  */
 export const CORE_JOB_VARIANTS = [
   z.object({ type: z.literal('email.send'), payload: emailSendPayloadSchema }),
@@ -110,8 +110,8 @@ type PluginJobVariant = NonNullable<DeclaredBy<(typeof SHARED_PLUGINS)[number], 
  *
  * The spread of an array into a tuple literal is what keeps `z.discriminatedUnion` happy: the type
  * is `[core…, ...PluginVariant[]]`, still non-empty in the type system however many plugins are
- * installed, because the kit's own five lead it. With no plugins the tail is `never[]` and this is
- * exactly the list the kit had before.
+ * installed, because the core variants lead it. With no plugins the tail is `never[]` and this is
+ * exactly the core list.
  */
 export const JOB_VARIANTS = [
   ...CORE_JOB_VARIANTS,
@@ -159,7 +159,7 @@ export type JobEnvelope = z.infer<typeof jobEnvelopeSchema>
 /** Every job type this app knows, derived from the variants rather than kept beside them. */
 export type JobType = JobEnvelope['type']
 
-/** The kit's own types, without any plugin's — what the core handler table is checked against. */
+/** The core types, without any plugin's — what the core handler table is checked against. */
 export type CoreJobType = z.infer<(typeof CORE_JOB_VARIANTS)[number]>['type']
 
 /** The same list at runtime, in declaration order. */

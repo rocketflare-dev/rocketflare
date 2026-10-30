@@ -1,5 +1,5 @@
 /**
- * `/api/ai/prompts` (D17): the prompt registry with this tenant's overrides. `GET /` lists every
+ * `/api/ai/prompts`: the prompt registry with this tenant's overrides. `GET /` lists every
  * registry entry + override + effective text (members may read — the prompt shapes what answers
  * them); `PUT /:key` sets an override and `DELETE /:key` reverts to the default (`manage Prompt`,
  * admin+). Unknown keys are 404: the registry is code, not a table.

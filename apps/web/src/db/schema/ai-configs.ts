@@ -1,5 +1,5 @@
 /**
- * `ai_configs` — a tenant's AI providers (D17). One row per (tenant, scope, label); the credential
+ * `ai_configs` — a tenant's AI providers. One row per (tenant, scope, label); the credential
  * is AES-GCM encrypted with `OAUTH_ENCRYPTION_KEY` (`api/auth/oauth-encryption.ts`) and NEVER
  * leaves the server. Exactly one row per (tenant, scope) carries `isDefault` — enforced by a
  * partial unique index so "two defaults" is unrepresentable; `routes/ai-config.ts` clears the old
@@ -52,7 +52,7 @@ export const aiConfigs = pgTable(
     /** Encrypted API key / bearer token; null for `workers_ai` (binding, no key). */
     apiKeyEnc: text('api_key_enc'),
     isDefault: boolean('is_default').notNull().default(false),
-    /** `{ enabled, budgetTokens? }` — off by default and sent explicitly (cost, D17). */
+    /** `{ enabled, budgetTokens? }` — off by default and sent explicitly (cost). */
     thinking: jsonb('thinking').$type<ThinkingSetting>().notNull().default({ enabled: false }),
     /** Provider service tier, verbatim; null = omit the field. */
     serviceTier: text('service_tier'),

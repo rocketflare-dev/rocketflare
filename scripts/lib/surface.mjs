@@ -247,6 +247,10 @@ export const SUGGESTED_ENTRY = [
     "import { sharedWithMyGroups } from '@/plugins/api'; the scope is ctx.scope",
   ],
   [
+    'apps/web/src/api/services/ai/agent-loop',
+    "import { defineTool } from '@/plugins/api'; the loop is ctx.toolLoop(…)",
+  ],
+  [
     'apps/web/src/api/services/ai/kit',
     "import { defineTool } from '@/plugins/api'; the loop is ctx.toolLoop(…)",
   ],

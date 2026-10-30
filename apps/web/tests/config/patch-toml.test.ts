@@ -25,7 +25,7 @@ import {
 const FIXTURES = path.resolve(__dirname, 'fixtures')
 
 /**
- * The kit's own placeholders. A copy with a plugin installed (D31) carries that plugin's KV
+ * The kit's own placeholders. A copy with a plugin installed carries that plugin's KV
  * placeholder too, so the assertions below name what they are about instead of demanding the
  * document hold nothing else.
  */
@@ -37,7 +37,7 @@ const shippedStaging = fs.readFileSync(path.join(FIXTURES, 'wrangler.staging.tom
 const shippedProd = fs.readFileSync(path.join(FIXTURES, 'wrangler.toml'), 'utf8')
 
 /**
- * The same files under `DATABASE_DRIVER = "postgres"` (D35) — what `pnpm provision cloudflare <env>
+ * The same files under `DATABASE_DRIVER = "postgres"` — what `pnpm provision cloudflare <env>
  * --driver postgres` writes before it creates the Hyperdrive config. The id tests below run on
  * this shape, since only it has a HYPERDRIVE block; a copy already on postgres is unchanged by it.
  */
@@ -194,7 +194,7 @@ describe('patch-toml: the patched pair satisfies the parity test invariants', ()
   })
 })
 
-// ---- database driver (D35) ----------------------------------------------------------------
+// ---- database driver ----------------------------------------------------------------------
 
 describe('patch-toml: DATABASE_DRIVER and the [[hyperdrive]] block', () => {
   const block = (env: 'staging' | 'production') => ({
@@ -281,7 +281,7 @@ describe('patch-toml: DATABASE_DRIVER and the [[hyperdrive]] block', () => {
   })
 })
 
-// ---- plugin blocks and list appends (D31, Decision 12) ------------------------------------
+// ---- plugin blocks and list appends -------------------------------------------------------
 
 /**
  * These four ops are what `pnpm provision cloudflare <env>` uses to write a plugin's `plugin.json`
@@ -416,7 +416,7 @@ describe('plugin crons, vars and run_worker_first', () => {
 })
 
 /**
- * Class bindings (D31). A `workflow` and a `durable_object` need no resource created — the block
+ * Class bindings. A `workflow` and a `durable_object` need no resource created — the block
  * IS the registration and `wrangler deploy` does the rest — so what matters here is that the
  * blocks are spelled the way Cloudflare reads them, and that re-running provisioning is a no-op.
  */

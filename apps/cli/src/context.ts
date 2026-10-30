@@ -1,5 +1,5 @@
 /**
- * Per-invocation command context (D26): resolved config, logger (stderr), output (stdout) and the
+ * Per-invocation command context: resolved config, logger (stderr), output (stdout) and the
  * injectable `fetch`/`open` seams tests use. Commands receive a context and return; they never
  * touch `process` directly.
  */

@@ -1,5 +1,5 @@
 /**
- * Who is in one group (D29). Two columns, because the task is a comparison: everyone in the
+ * Who is in one group. Two columns, because the task is a comparison: everyone in the
  * organisation on the left with a search and a checkbox, the group's current members on the right.
  * The single stacked list this replaced made "who is NOT in this group yet" something you worked
  * out by scrolling between two lists that looked the same.

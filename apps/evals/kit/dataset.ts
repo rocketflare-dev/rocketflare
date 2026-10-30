@@ -1,5 +1,5 @@
 /**
- * Datasets are code (D33): `apps/evals/datasets/<name>.jsonl`, one `EvalCase` per line, parsed with
+ * Datasets are code: `apps/evals/datasets/<name>.jsonl`, one `EvalCase` per line, parsed with
  * the shared schema so a promoted case (`rocketflare evals promote`) and a hand-written one are the
  * same thing. A malformed line fails the suite at collection time with its line number — a dataset
  * that silently drops a case is a regression suite that silently stops checking it.

@@ -61,7 +61,7 @@ describe('parseNvmrc / versionAtLeast', () => {
   })
 })
 
-describe('describeTracing (preflight, D32)', () => {
+describe('describeTracing (preflight)', () => {
   it('reports local-only, the langfuse preset from the keys, and phoenix/generic endpoints — never a secret', () => {
     expect(describeTracing({})).toBe(
       'local ai_spans on; export off (local only — no OTEL_EXPORTER_OTLP_ENDPOINT)'
@@ -499,7 +499,7 @@ describe('parseBootstrapArgs', () => {
     expect(parseBootstrapArgs([], { ROCKETFLARE_ALLOW_ROOT: '' }).allowRoot).toBe(false)
   })
 
-  it('reads --driver (D35) in both forms and refuses anything else', () => {
+  it('reads --driver in both forms and refuses anything else', () => {
     expect(parseBootstrapArgs(['--driver', 'neon']).driver).toBe('neon')
     expect(parseBootstrapArgs(['--driver=postgres']).driver).toBe('postgres')
     expect(() => parseBootstrapArgs(['--driver', 'pg'])).toThrow(/neon or postgres/)
@@ -604,7 +604,7 @@ describe('bootstrapStepPlan', () => {
   })
 })
 
-describe('localDriverFor (D35)', () => {
+describe('localDriverFor', () => {
   const NEON = 'postgresql://u:pw@ep-x-123-pooler.eu-central-1.aws.neon.tech/neondb?sslmode=require'
   it('defaults to postgres — the Docker database over TCP, no proxy', () => {
     expect(localDriverFor({})).toBe('postgres')

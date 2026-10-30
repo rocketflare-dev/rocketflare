@@ -1,7 +1,7 @@
 /**
- * `tenant_user_settings` — a user's preferences WITHIN one tenant (D1, D25): favourites, sidebar
- * state, per-workspace defaults. Shape from the Workers reference app with `favorites` generalised
- * to `preferences` jsonb (typed by `userPreferencesSchema` in src/shared). Composite PK, tenant
+ * `tenant_user_settings` — a user's preferences WITHIN one tenant: favourites, sidebar
+ * state, per-workspace defaults, in `preferences` jsonb
+ * (typed by `userPreferencesSchema` in src/shared). Composite PK, tenant
  * first. Profile fields that belong to the person (name, avatar) stay on `users`.
  */
 import type { UserPreferences } from '@rocketflare/shared/user-settings'

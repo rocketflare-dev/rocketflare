@@ -1,5 +1,5 @@
 /**
- * Global-admin (`/api/admin/*`) contracts (D9, D10, D13, D25). Cross-tenant by design — the only
+ * Global-admin (`/api/admin/*`) contracts. Cross-tenant by design — the only
  * surface that is. List items are deliberately flatter than the tenant-scoped schemas.
  */
 import { z } from 'zod'

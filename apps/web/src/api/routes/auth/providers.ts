@@ -1,5 +1,5 @@
 /**
- * Linked OAuth identities for the signed-in user (D11): `GET /auth/providers`,
+ * Linked OAuth identities for the signed-in user: `GET /auth/providers`,
  * `DELETE /auth/providers/:provider`. Cookie session required. Linking happens through
  * `GET /auth/:provider?link=1` (oauth.ts).
  */

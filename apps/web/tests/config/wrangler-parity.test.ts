@@ -1,7 +1,7 @@
 /**
  * wrangler.toml ⇄ wrangler.staging.toml parity.
  *
- * The kit deploys two standalone Worker configs (D6): `[env.*]` does not inherit bindings, so the
+ * The app deploys two standalone Worker configs: `[env.*]` does not inherit bindings, so the
  * two files are copies that must differ ONLY in name, routes, `[vars]` values and resource ids.
  * Everything application code can observe — binding names, DO class names, compatibility date
  * and flags, `[limits]`, crons, `[assets]` — must be identical, or a Worker behaves differently
@@ -9,7 +9,7 @@
  * `bucket_name`) must additionally DIFFER, because the last deployer of a shared Workflow name
  * owns it and runs the other environment's instances under its own bindings.
  *
- * Placeholder check: `<HYPERDRIVE_ID>`-style tokens are allowed while the kit is unprovisioned, so
+ * Placeholder check: `<HYPERDRIVE_ID>`-style tokens are allowed while the app is unprovisioned, so
  * PR CI (`ci.yml`) stays green on a fresh copy. The deploy workflow sets `REQUIRE_PROVISIONED=1`
  * before its test step and the placeholder `describe` runs only then. See docs/DEPLOY.md.
  */
@@ -179,7 +179,7 @@ describe('wrangler parity: must match', () => {
       expect(get(config, 'assets.not_found_handling'), label).toBe('single-page-application')
       // Equality, not a subset — but over the prefixes the KIT owns. WORKER_FIRST_PATTERNS is
       // built from the server barrel, so an installed plugin inflates it while the toml stays bare
-      // until `provision cloudflare` writes them (D31, decision 12). Subtracting the plugin's
+      // until `provision cloudflare` writes them. Subtracting the plugin's
       // patterns from both sides keeps this exact where it protects something, and silent where
       // provisioning rather than the kit fills the gap; `pluginParityIssues` under
       // REQUIRE_PROVISIONED=1 is what demands the plugin half.
@@ -198,7 +198,7 @@ describe('wrangler parity: must match', () => {
   })
 })
 
-// ---- the database driver (D35) -------------------------------------------------------------
+// ---- the database driver ----------------------------------------------------------------
 
 describe('wrangler parity: database driver', () => {
   const driverOf = (config: Record<string, unknown>) =>
@@ -284,7 +284,7 @@ describe.runIf(process.env.REQUIRE_PROVISIONED === '1')(
   }
 )
 
-// ---- plugin resources (D31, Decision 12) --------------------------------------------------
+// ---- plugin resources -------------------------------------------------------------------
 
 /**
  * A plugin ships no toml — the two files are the host's, always — so everything it needs from the
@@ -310,7 +310,7 @@ describe('wrangler parity: plugin resources', () => {
         { type: 'kv', binding: 'PARITY_FIXTURE_CACHE', name: 'cache' },
         { type: 'queue', binding: 'PARITY_FIXTURE_QUEUE', name: 'jobs', consumer: true },
         { type: 'r2', binding: 'PARITY_FIXTURE_FILES', name: 'files' },
-        // The two that graduated with the sixth barrel (D31): a Workflow whose `name` is
+        // The two that graduated with the sixth barrel: a Workflow whose `name` is
         // ACCOUNT-scoped, and a Durable Object whose block is identical in both files but which
         // drags a `[[migrations]]` tag along with it.
         {
@@ -365,7 +365,7 @@ describe('wrangler parity: plugin resources', () => {
   it('unpatched tomls fail every rule `plugin add` is answerable for, in both environments', () => {
     // 5 bindings + 1 non-secret var + the Durable Object's migration tag, each in both files. The
     // cron and the two run_worker_first patterns are deliberately NOT here: `plugin add` never
-    // writes a toml (D31, decision 12), so a plugin installed and not yet provisioned is a
+    // writes a toml, so a plugin installed and not yet provisioned is a
     // documented state the ordinary gate must pass. The migration tag IS here, with the blocks,
     // because the same `provision cloudflare` call writes both and `wrangler deploy` refuses the
     // whole script for a DO class with no migration creating it.

@@ -1,8 +1,8 @@
 /**
- * AI usage ledger (D18): `recordUsage` writes one `ai_usage` row from a provider's usage report,
+ * AI usage ledger: `recordUsage` writes one `ai_usage` row from a provider's usage report,
  * `tapUsage` wraps a `ChatClient` so every generation reports through one callback (the chat
  * route records), and `summarizeUsage` answers `GET /api/ai/usage/summary`. An agent run meters
- * its own client instead (`services/agents/budget.ts`, D39): one row per call, carrying the run
+ * its own client instead (`services/agents/budget.ts`): one row per call, carrying the run
  * id, awaited — because the next call's budget check has to see it. `runSpend` and
  * `tenantAgentSpendToday` are the two reads that check runs on.
  *
@@ -30,7 +30,7 @@ export interface UsageInput {
   model: string
   usage: TokenUsage
   costMicrocents?: number | null
-  /** D39: the agent run this call was billed to — set by the run's meter, never by an agent. */
+  /** The agent run this call was billed to — set by the run's meter, never by an agent. */
   agentRunId?: string | null
 }
 
@@ -54,7 +54,7 @@ export async function recordUsage(db: Database, input: UsageInput): Promise<numb
   return cost
 }
 
-/** What a run has spent so far, over every attempt — one row per metered call (D39). */
+/** What a run has spent so far, over every attempt — one row per metered call. */
 export interface RunSpend {
   calls: number
   inputTokens: number
@@ -83,7 +83,7 @@ export async function runSpend(db: Database, tenantId: string, runId: string): P
 
 /**
  * What a tenant's agent runs have spent since the start of the UTC day `now` falls in, in
- * microcents (D39, `AGENT_TENANT_DAILY_COST_USD`). Agent rows only — chat has its own surface — and
+ * microcents (`AGENT_TENANT_DAILY_COST_USD`). Agent rows only — chat has its own surface — and
  * priced rows only, so an unpriced model never trips the cap.
  */
 export async function tenantAgentSpendToday(

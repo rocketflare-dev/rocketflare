@@ -1,6 +1,6 @@
 /**
- * CSRF protection for cookie-authenticated unsafe requests (ported from the Node reference app
- * `src/api/middleware/csrf.ts`; origins from config instead of hardcoded ports). Pure Web API,
+ * CSRF protection for cookie-authenticated unsafe requests (origins from config, never hardcoded
+ * ports). Pure Web API,
  * no DB, runs before auth using only the raw cookie header.
  *
  * Contract:
@@ -19,7 +19,7 @@ import type { AppEnv } from '../types'
 import { ForbiddenError } from '../utils/core/errors'
 import { allowedOrigins } from './cors'
 
-/** D12: `__Host-` prefix = Secure, Path=/, no Domain — defined once in auth/cookies.ts. */
+/** `__Host-` prefix = Secure, Path=/, no Domain — defined once in auth/cookies.ts. */
 export { SESSION_COOKIE_NAME }
 
 const SAME_SITE_FETCH_VALUES = new Set(['same-origin', 'same-site', 'none'])

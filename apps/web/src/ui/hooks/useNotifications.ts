@@ -1,7 +1,7 @@
 /**
- * In-app notifications (D13): list, unread count for the bell, mark read. The list query uses the
- * `unreadOnly=true` parameter from `notificationListQuerySchema`. Phase 2's websocket store
- * invalidates `queryKeys.notifications.all`; until then the count polls quietly.
+ * In-app notifications: list, unread count for the bell, mark read. The list query uses the
+ * `unreadOnly=true` parameter from `notificationListQuerySchema`. The websocket store
+ * invalidates `queryKeys.notifications.all`; the count also polls quietly.
  */
 import {
   type MarkNotificationsReadRequest,

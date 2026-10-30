@@ -1,13 +1,13 @@
 /**
- * `AgentRunWorkflow` (D5, D7) — the ONE Workflow class, bound as `AGENT_RUN_WORKFLOW`; the agent
+ * `AgentRunWorkflow` — the ONE Workflow class, bound as `AGENT_RUN_WORKFLOW`; the agent
  * runtime IS the example workflow. The instance id starts as the run id (`enqueueRun` creates it
  * after the `agent_runs` row exists) and becomes `<runId>-r1`, `-r2`… if a park has to be restarted
- * on a lost instance (`nudgeOrRestartInstance`, T5). The steps — Workflows checkpoint between them:
+ * on a lost instance (`nudgeOrRestartInstance`). The steps — Workflows checkpoint between them:
  *   claim       → `claimRun` (row is the gate; a cancelled-while-queued run exits here)
  *   execute#N   → the whole tool loop INSIDE one step (`retries: 2`, `timeout: 10 minutes`); the
  *                 runtime rethrows only faults a retry can fix, and the retry re-claims through the
  *                 same row. `awaiting_input` back means a person now owes the run an answer
- *   resume#N    → `step.waitForEvent(AGENT_RESUME_EVENT)` — the durable park (issue #17). The
+ *   resume#N    → `step.waitForEvent(AGENT_RESUME_EVENT)` — the durable park. The
  *                 resolve route flips the row `awaiting_input → running` and THEN wakes us, so the
  *                 next `execute#N+1` re-enters `run()` from the top and finds the answer as a row
  *   expire#N    → nobody answered inside `AGENT_INTERRUPT_TIMEOUT`: settle `cancelled`, `error` NULL
@@ -24,7 +24,7 @@
  * per step is UNLIMITED (the 10 minutes below is our policy, raise it if a run needs longer), CPU
  * per step excludes I/O and goes to 300 s via `[limits] cpu_ms`, and resuming a retry at turn N is
  * what `agent_runs.checkpoint` already does.
- * Each step opens its OWN DB client (`openDatabase`, either driver — D35) and closes it in
+ * Each step opens its OWN DB client (`openDatabase`, either driver) and closes it in
  * `finally`; Hyperdrive or Neon is the pool.
  * Exported from `src/worker.ts`, never from `api/index.ts`.
  */
@@ -124,9 +124,9 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AppBindings, AgentRunPa
 
       try {
         // The payload is ignored on purpose: the answer is already a row, written by the resolve
-        // route before it woke us, and re-entering `execute` reads it (decision 2). The event is
+        // route before it woke us, and re-entering `execute` reads it. The event is
         // a nudge. `AGENT_RESUME_EVENT` is a constant because a `.` in the type is rejected by
-        // the platform with `workflow.invalid_event_type` (T8).
+        // the platform with `workflow.invalid_event_type`.
         await step.waitForEvent(`resume#${round}`, {
           type: AGENT_RESUME_EVENT,
           // `[vars]`, so a string: the platform parses it, and `WorkflowSleepDuration` is a

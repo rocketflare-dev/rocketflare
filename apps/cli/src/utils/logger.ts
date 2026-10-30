@@ -1,6 +1,6 @@
 /**
- * Status logger (D26). Everything here goes to STDERR so `--json` stdout stays pipe-clean.
- * `debug` lines appear only when `ROCKETFLARE_DEBUG` is set (ADAPTING renames the prefix).
+ * Status logger. Everything here goes to STDERR so `--json` stdout stays pipe-clean.
+ * `debug` lines appear only when `ROCKETFLARE_DEBUG` is set.
  */
 import chalk from 'chalk'
 import { PREFIX } from './brand'

@@ -1,7 +1,7 @@
 /**
- * Chat (D17): MY conversations (`GET/POST /api/chat/conversations`, paginated), one thread with
+ * Chat: MY conversations (`GET/POST /api/chat/conversations`, paginated), one thread with
  * its messages (`GET /:id`), delete, and the streaming turn, which speaks **AG-UI**.
- * `useSendMessage` is the only hook in the kit that writes to the cache mid-flight: the user bubble
+ * `useSendMessage` is the only hook in the app that writes to the cache mid-flight: the user bubble
  * lands optimistically, `CUSTOM kit.chat.ids` swaps its id for the persisted one, the assistant
  * reply accumulates in LOCAL state from `TEXT_MESSAGE_CONTENT` deltas (it is not server truth until
  * `RUN_FINISHED`, and deltas are accumulated across every message id the run opens — one per model
@@ -328,7 +328,7 @@ export function useSendMessage(conversationId: string | undefined) {
  * would get a 403 toast for a panel they cannot see.
  *
  * It polls only while the server still owes an answer — a queued summary — and stops the moment
- * nothing is pending, which is the kit's polling rule (`.claude/rules/ui.md`).
+ * nothing is pending, which is the polling rule (`.claude/rules/ui.md`).
  */
 export const STATS_POLL_MS = 3_000
 

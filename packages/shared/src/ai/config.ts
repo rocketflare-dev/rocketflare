@@ -1,5 +1,5 @@
 /**
- * Tenant AI configuration contracts (D17): the provider enum, the sanitised `ai_configs` row the
+ * Tenant AI configuration contracts: the provider enum, the sanitised `ai_configs` row the
  * API returns (`hasCredential`, never the key), the write-only upsert body, the connection test
  * and the readiness summary the Home checklist / settings page render. `PROVIDER_PRESETS` and
  * `DEFAULT_MODELS` are data both the settings form and `services/ai/providers.ts` read, so the
@@ -11,7 +11,7 @@ import { z } from 'zod'
  * v1 provider set. `anthropic_compatible` = Anthropic wire format behind a bearer token
  * (Fireworks, Moonshot presets); `openai_compatible` = `/v1/chat/completions` + `/v1/embeddings`
  * behind a bearer token (any vLLM/Ollama/proxy). `workers_ai` is the zero-key binding — embeddings
- * AND chat, the floor every workspace can fall back to. `typesafe` is TypeSafe's Jev (D37): typed
+ * AND chat, the floor every workspace can fall back to. `typesafe` is TypeSafe's Jev: typed
  * judgments with probabilities, never text — it serves the `decisions` scope and nothing else.
  * Append values LAST — a Postgres enum cannot use a value in the migration that adds it.
  */
@@ -28,7 +28,7 @@ export type AiProvider = z.infer<typeof aiProviderSchema>
 
 /**
  * Which client a config feeds: the chat/completion client, the embeddings client, or the
- * decisions client behind `ctx.decide` (D37 — typed questions answered with probabilities).
+ * decisions client behind `ctx.decide` (typed questions answered with probabilities).
  */
 export const AI_SCOPES = ['chat', 'embeddings', 'decisions'] as const
 export const aiScopeSchema = z.enum(AI_SCOPES)
@@ -197,7 +197,7 @@ export const DEFAULT_CHAT_MODELS: Partial<Record<AiProvider, string>> = {
 export const defaultModelFor = (provider: AiProvider, scope: AiScope): string =>
   (scope === 'chat' ? DEFAULT_CHAT_MODELS[provider] : undefined) ?? DEFAULT_MODELS[provider]
 
-/** Embedding dimension every provider is reduced to (D18); `bge-m3` is natively 1024. */
+/** Embedding dimension every provider is reduced to; `bge-m3` is natively 1024. */
 export const EMBEDDING_DIM = 1024
 
 export interface ProviderPreset {

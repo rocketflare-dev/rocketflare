@@ -1,5 +1,5 @@
 /**
- * Settings → General (D10, D25): organisation name (admin), slug (owner-only), tenant settings
+ * Settings → General: organisation name (admin), slug (owner-only), tenant settings
  * (timezone, notifications), and the danger zone — delete the organisation, owner-only, hidden
  * entirely in single mode. Forms validate with the shared request schemas before submitting.
  */
@@ -55,7 +55,7 @@ function OrganisationPanel() {
 
   if (isLoading || !tenant) return <SectionPanelSkeleton rows={2} />
 
-  // Explicit owner check (D10): `manage Tenant` is also held by support and global admins
+  // Explicit owner check: `manage Tenant` is also held by support and global admins
   const canEditSlug = (sessionTenant?.role === 'owner' || isGlobalAdmin) && tenancyMode === 'multi'
   const dirty = name !== tenant.name || (canEditSlug && slug !== tenant.slug)
 
@@ -171,7 +171,7 @@ function PreferencesPanel() {
   )
 }
 
-/** Owner ONLY (explicit role, D10) and multi mode ONLY (D25). */
+/** Owner ONLY (explicit role) and multi mode ONLY. */
 function DangerZone() {
   const { tenant, tenancyMode } = useAuth()
   const remove = useDeleteTenant()

@@ -68,7 +68,7 @@ export function aguiRun(options: AguiRunOptions): KitAguiEvent[] {
       }
     )
     // Mirror the server: `CUSTOM kit.document` follows the result it was derived from, through the
-    // same pure mapper, so a UI test asserting cards is asserting the real framing (D18).
+    // same pure mapper, so a UI test asserting cards is asserting the real framing.
     for (const card of documentCardsFromToolResult(tool.name, tool.result ?? '{}')) {
       events.push({
         type: AguiEventType.CUSTOM,

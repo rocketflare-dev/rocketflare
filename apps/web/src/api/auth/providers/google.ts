@@ -1,5 +1,5 @@
 /**
- * Google (D11): arctic `Google` with PKCE; profile from the OIDC userinfo endpoint, which
+ * Google: arctic `Google` with PKCE; profile from the OIDC userinfo endpoint, which
  * carries `email_verified`.
  */
 import { Google } from 'arctic'

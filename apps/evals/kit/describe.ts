@@ -1,5 +1,5 @@
 /**
- * `describeCases(name, { harness, judges, cases })` (D33) — `describeEval` once per case, each with
+ * `describeCases(name, { harness, judges, cases })` — `describeEval` once per case, each with
  * only the judges that case gives something to check (`EvalJudge.appliesTo`). vitest-evals averages
  * a `null` score as 0, so a suite-wide judge list would fail a greeting for having no
  * `expected.contains`; attaching per case keeps every average honest. Every block shares the suite

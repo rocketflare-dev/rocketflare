@@ -64,7 +64,7 @@ export interface ChatTurnResult {
   /** The `RUN_ERROR` event, if the stream ended on one. */
   error?: { message: string; code: string }
   /**
-   * Documents the turn's tool calls surfaced, from `CUSTOM kit.document` (D18), de-duplicated and
+   * Documents the turn's tool calls surfaced, from `CUSTOM kit.document`, de-duplicated and
    * in arrival order. Empty for a turn that called no knowledge tool.
    */
   documents: DocumentCard[]

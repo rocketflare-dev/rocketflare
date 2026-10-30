@@ -1,5 +1,5 @@
 /**
- * Per-agent model assignment contracts (D17): point one registry prompt key at a specific tenant
+ * Per-agent model assignment contracts: point one registry prompt key at a specific tenant
  * `ai_configs` row and/or model. Absence of a row = the tenant default (and its model); a row with
  * `aiConfigId: null` keeps the default config and overrides only the model. Reverting is a
  * `DELETE`, never a sentinel. `resolveChat(..., { promptKey })` is the ONLY runtime reader.

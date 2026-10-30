@@ -1,5 +1,5 @@
 /**
- * The `summarize-text` agent (D33): one forced `submit_summary` call. The structured output must
+ * The `summarize-text` agent: one forced `submit_summary` call. The structured output must
  * parse (`Schema`), keep the facts that matter (`Contains`), follow the requested style and add
  * nothing (`Rubric`), and stay cheap (`Budget` — it is a single model call).
  */

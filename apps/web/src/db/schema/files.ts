@@ -1,8 +1,8 @@
 /**
- * `files` — the index of objects stored in the `FILES` R2 bucket (D23). R2 holds the bytes under
+ * `files` — the index of objects stored in the `FILES` R2 bucket. R2 holds the bytes under
  * `key`; this row holds who owns them, in which tenant, and what to serve them as. Rows are
  * immutable (upload = insert, replace = new row), so there is no `updated_at`. `scope` groups
- * uploads by purpose (`avatars` is the kit's example; `documents` holds knowledge-base originals
+ * uploads by purpose (`avatars` is the built-in example; `documents` holds knowledge-base originals
  * owned by a `documents` row); `key` is unique because it embeds a UUID.
  */
 import { relations } from 'drizzle-orm'

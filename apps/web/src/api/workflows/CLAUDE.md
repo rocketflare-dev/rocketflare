@@ -1,4 +1,4 @@
-# Workflows (D5, D7)
+# Workflows
 
 `agent-run.ts` — `AgentRunWorkflow extends WorkflowEntrypoint<AppBindings, { runId, tenantId }>`,
 bound as `AGENT_RUN_WORKFLOW` in BOTH tomls (`name` is account-scoped: `rocketflare-agent-run` /
@@ -11,7 +11,7 @@ Shape: `step.do('claim')` → a LOOP of `step.do('execute#N', { retries: { limit
 cfg.AGENT_INTERRUPT_TIMEOUT })` → `step.do('finish')`. The bodies are plain functions in
 `../services/agents/runtime.ts` (tests call them with `{ db, env }`); the class only wires steps and
 opens/closes ONE DB client per step (`withStepDatabase`, awaited `close()` in `finally`). Step return
-values are small serialisable objects (ids + status), never rows. Tracing (D32): `execute#N`
+values are small serialisable objects (ids + status), never rows. Tracing: `execute#N`
 passes `{ round }` so the attempt's span is named for its step, and only `finish` passes `{ cfg }`
 to `finishStep`, which records the run's root span — one root per run, so the `expire#N` call
 must not.
@@ -26,10 +26,10 @@ Three more things the loop holds:
 
 - **The resume payload is ignored on purpose.** The answer is already an `agent_run_interrupts` row,
   written by the resolve route, which also flips `awaiting_input → running` BEFORE it wakes the
-  instance (decision 2). `execute#N+1` re-enters `run()` from the top and reads it. That is what
+  instance. `execute#N+1` re-enters `run()` from the top and reads it. That is what
   lets `nudgeOrRestartInstance` create a fresh instance when the old one is gone — a new instance
   has no event to replay and needs none. `AGENT_RESUME_EVENT` is a constant because a `.` in the
-  type is `workflow.invalid_event_type` (T8).
+  type is `workflow.invalid_event_type`.
 - **The `try/catch` around `execute` lives inside the loop and clears `outcome`** — a previous
   round's `awaiting_input` falling through to `finish` would say the run is parked when it is not.
 - **`MAX_INTERRUPT_ROUNDS` (32)** ends a runaway agent `failed`. A correctness guard, not a capacity

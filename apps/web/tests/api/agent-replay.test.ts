@@ -1,7 +1,7 @@
 // @vitest-isolate
 // Mocks `@/api/services/ai/resolve` (the chat and decisions seams), so this file needs its own module registry.
 /**
- * Replay (D38): a `triage-research` run recorded through the real runtime, then replayed with the
+ * Replay: a `triage-research` run recorded through the real runtime, then replayed with the
  * current code — and with candidates that change one thing each — inside a read-only transaction.
  * The contract: a faithful replay matches and writes nothing; a reworded decision is `drift`; a new
  * one is a `decide` miss; a model call nothing recorded is a `chat` miss; a refused write is listed;
@@ -180,7 +180,7 @@ beforeEach(() => {
   state.asks = 0
 })
 
-describe('replay (D38)', () => {
+describe('replay', () => {
   it('strict: the current code over its own record matches and writes nothing', async () => {
     const env = createTestEnv()
     const { row, tenantId } = await recordedRun(env)
@@ -361,7 +361,7 @@ describe('replay (D38)', () => {
     ])
     expect(result.verdict).toBe('differs')
     expect(result.liveUsage?.inputTokens).toBe(100)
-    // No write was even attempted: the ledger is the runtime's meter (D39), which a replay has not.
+    // No write was even attempted: the ledger is the runtime's meter, which a replay has not.
     expect(result.writes).toEqual([])
   })
 })

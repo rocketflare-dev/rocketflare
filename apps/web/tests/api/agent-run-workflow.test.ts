@@ -1,7 +1,7 @@
 // @vitest-isolate
 // Mocks `@/api/services/ai/resolve` (the chat provider seam), so this file needs its own module registry.
 /**
- * `AgentRunWorkflow` (D7) driven end to end under Node: the class with a fake `step` (runs callbacks
+ * `AgentRunWorkflow` driven end to end under Node: the class with a fake `step` (runs callbacks
  * inline, records names/config) and test bindings against the real database. claim → execute
  * `summarize-text` with a `FakeChatClient` answering the `submit_summary` tool call → events in order
  * → row `succeeded` with the output → `ai_usage` row → nudges. Also: cancellation between turns →
@@ -10,7 +10,7 @@
  * cancelled while queued is skipped at claim; `index: true` stores the summary through `ingestText`
  * and `searchChunks` finds it (retrieval is exercised, 00 §1.3); each step closes its DB client.
  *
- * Plus the suspend/resume loop (issue #17): `execute#N` / `resume#N` / `expire#N`, whose step names
+ * Plus the suspend/resume loop: `execute#N` / `resume#N` / `expire#N`, whose step names
  * must be DISTINCT per round — the platform treats a step name as its identity and replays a
  * repeated one's earlier result, which would read as "the agent ignored my approval".
  */
@@ -130,7 +130,7 @@ async function drive(
 const originalAgent = AGENTS['summarize-text']
 
 /**
- * Swap `summarize-text` for an agent written for this test. The kit's own agents do not interrupt
+ * Swap `summarize-text` for an agent written for this test. The built-in agents do not interrupt
  * until phase 8 and the registry is keyed by `AgentKey`, so there is no third key to borrow; the
  * swap is undone after every test and the file is `@vitest-isolate` for it.
  */
@@ -255,7 +255,7 @@ describe('AgentRunWorkflow', () => {
         payload: { entity: 'agent-run', id: run.id },
       })
 
-    // D32: one trace per run, derived from its id — `execute#0` (written on the step's own client,
+    // One trace per run, derived from its id — `execute#0` (written on the step's own client,
     // hence still three clients above) under the root that `finish` recorded once the run settled.
     expect(row?.traceId).toBe(traceIdForRun(run.id))
     const spans = await db
@@ -533,7 +533,7 @@ describe('AgentRunWorkflow', () => {
   })
 })
 
-describe('the suspend/resume loop (issue #17)', () => {
+describe('the suspend/resume loop', () => {
   it('parks, resumes and completes — with a distinct step name per round', async () => {
     const env = createTestEnv()
     script([])
@@ -547,7 +547,7 @@ describe('the suspend/resume loop (issue #17)', () => {
 
     const { outcome, names, waits } = await drive(env, run.id, tenant.id, {
       // The resolve route's two halves, in the order that matters: the answer is written, and the
-      // row is flipped `awaiting_input → running`, BEFORE the instance is woken (decision 2).
+      // row is flipped `awaiting_input → running`, BEFORE the instance is woken.
       onWait: async () => {
         await answerAndResume(tenant.id, run.id, user.id)
         return { interruptId: null }

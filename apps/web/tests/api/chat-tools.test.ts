@@ -1,7 +1,7 @@
 // @vitest-isolate
 // Mocks `@/api/services/ai/resolve` (the provider seam), so this file needs its own module registry.
 /**
- * Chat with the knowledge tools (D18). The one that matters is the FIRST test: the tools are built
+ * Chat with the knowledge tools. The one that matters is the FIRST test: the tools are built
  * from the STREAM's database client, not the request's. The request's client is closed in
  * `waitUntil` the moment the Response is returned — before the stream body runs — so building them
  * from it makes every `search_knowledge` fail after the first frame, as an error frame,
@@ -131,7 +131,7 @@ describe('chat with the knowledge tools', () => {
       'TOOL_CALL_ARGS',
       'TOOL_CALL_END',
       'TOOL_CALL_RESULT',
-      // `CUSTOM kit.document` follows the result it was derived from (D18).
+      // `CUSTOM kit.document` follows the result it was derived from.
       'CUSTOM',
       'TEXT_MESSAGE_START',
       'TEXT_MESSAGE_CONTENT',
@@ -176,8 +176,8 @@ describe('chat with the knowledge tools', () => {
       },
     })
 
-    // The tool definitions and the chat turn cap reached the model. The kit's three lead and an
-    // installed plugin's tools (D31) follow, so this is a prefix rather than the whole list.
+    // The tool definitions and the chat turn cap reached the model. The three built-in tools lead and an
+    // installed plugin's tools follow, so this is a prefix rather than the whole list.
     expect(client.calls[0]?.tools?.map(t => t.name).slice(0, 3)).toEqual([
       SEARCH_KNOWLEDGE_TOOL,
       'get_document',
@@ -194,7 +194,7 @@ describe('chat with the knowledge tools', () => {
       isError: false,
     })
 
-    // D32: the turn is one trace in `ai_spans`, written by the stream's flush on its OWN client
+    // The turn is one trace in `ai_spans`, written by the stream's flush on its OWN client
     // (the request's and the stream's are both closed by then), and the assistant row points at it.
     expect(assistant?.traceId).toMatch(/^[0-9a-f]{32}$/)
     const spans = await db

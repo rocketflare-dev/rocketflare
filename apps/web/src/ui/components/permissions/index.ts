@@ -1,4 +1,4 @@
-/** Permission primitives for pages (D10): provider, `Can`, `IfCan`/`IfCannot`, `usePermissions`. */
+/** Permission primitives for pages: provider, `Can`, `IfCan`/`IfCannot`, `usePermissions`. */
 
 export { usePermissions } from '@/ui/hooks/usePermissions'
 export {

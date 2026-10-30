@@ -1,5 +1,5 @@
 /**
- * `GET /api/agents/runs/:id/agui/stream` (issue #7) — the live tail of a run's timeline.
+ * `GET /api/agents/runs/:id/agui/stream` — the live tail of a run's timeline.
  *
  * Split in two on purpose. The ROUTE is driven through the real Hono app for everything that
  * happens before the first frame (403 / 404 / 400) and for runs that close at once (settled,
@@ -36,6 +36,7 @@ import {
   sessionCookieHeader,
 } from '../helpers/auth'
 import { setupTestDatabase } from '../helpers/db'
+import { FIXTURE_AGENT_B } from '../helpers/fixture-agents'
 import { request } from '../helpers/request'
 import { createTestEnv, stubs } from '../mocks/bindings'
 
@@ -62,7 +63,7 @@ async function makeRun(
     .insert(agentRuns)
     .values({
       tenantId,
-      agentKey: 'research-topic',
+      agentKey: FIXTURE_AGENT_B,
       status,
       input: { question: 'why' },
       requestedByUserId: userId,
@@ -407,7 +408,7 @@ describe('the loop', () => {
     expect(rec.text).not.toContain('RUN_ERROR')
   })
 
-  it('emits NO RUN_ERROR when the body itself fails — decision 6', async () => {
+  it('emits NO RUN_ERROR when the body itself fails', async () => {
     // A read-stream failure is not a run failure: the run is a durable Workflow in another isolate
     // and is almost certainly fine. Closing with no terminal event already means "reconnect".
     const a = await actor()

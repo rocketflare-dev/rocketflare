@@ -103,18 +103,33 @@ jobs:
       - name: Rename the checkout to my-app
         run: |
           set -euo pipefail
+          # The Launch fixture lives in tests/kit-only/, which the rename deletes; the provisioning
+          # step below still needs it, so it is kept outside the tree.
+          cp apps/web/tests/kit-only/fixtures/kit-fixture.mjs "$RUNNER_TEMP/kit-fixture.mjs"
           node scripts/rename.mjs my-app --domain example.com --force --skip-install
           # The rename's own install is frozen on a runner and the workspace names just changed.
           pnpm install --no-frozen-lockfile
           node scripts/plugin-api-doc.mjs
           pnpm lint:fix
-          for path in apps/web/tests/kit-only .github/workflows/kit.yml \
-                      .github/workflows/plugin-ci.yml .github/workflows/notify-plugins.yml; do
+          # Every kitOnly path, read from the manifest rather than listed twice.
+          for path in $(node -p 'require("./.rocketflare.json").kitOnly.map(g => g.replace(/\/\*\*$/, "")).join(" ")'); do
             if [ -e "$path" ]; then
               echo "::error::the renamed copy still carries $path (kitOnly)"
               exit 1
             fi
           done
+          if grep -nE 'changelog-nudge|release-site-nudge' .claude/settings.json; then
+            echo "::error::the renamed copy still registers the kit's maintainer hooks"
+            exit 1
+          fi
+          if node -e 'process.exit(require("./package.json").scripts["kit:release"] ? 0 : 1)'; then
+            echo "::error::the renamed copy still has the kit:release script"
+            exit 1
+          fi
+          if node -e 'process.exit("retiredSurfaces" in require("./.rocketflare.json") ? 0 : 1)'; then
+            echo "::error::the renamed copy still carries retiredSurfaces"
+            exit 1
+          fi
           if grep -n -- '--project kit-only' package.json apps/web/package.json; then
             echo "::error::the renamed copy still wires the kit-only vitest project"
             exit 1
@@ -145,7 +160,7 @@ jobs:
         run: |
           set -euo pipefail
           node --input-type=module -e \
-            "const m = await import('./apps/web/tests/config/fixtures/kit-fixture.mjs'); console.log(m.provisionLikeLaunch('.'))"
+            "const m = await import(process.env.RUNNER_TEMP + '/kit-fixture.mjs'); console.log(m.provisionLikeLaunch('.'))"
           git diff --stat
           git add -A
           git -c user.name=ci -c user.email=ci@example.com -c commit.gpgsign=false \

@@ -1,5 +1,5 @@
 /**
- * `GET /auth/cli?redirect_uri=` (D26): the browser-based CLI login. `redirect_uri` MUST be a
+ * `GET /auth/cli?redirect_uri=`: the browser-based CLI login. `redirect_uri` MUST be a
  * loopback `http://127.0.0.1:<port>/callback` or `http://localhost:<port>/callback` — that
  * allowlist is what makes handing the key over in a query string acceptable. No session → the
  * login page with a `returnUrl` back here; session but no tenant → `/select-tenant`; otherwise

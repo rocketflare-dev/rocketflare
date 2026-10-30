@@ -1,5 +1,5 @@
 /**
- * Tenant creation (D9, D25) — the single place an organisation comes into existence:
+ * Tenant creation — the single place an organisation comes into existence:
  * `createTenantForUser` is transactional (tenant + membership + settings row + activity) and is
  * called by `POST /api/tenants`, `onNoTenant` (open sign-up / single-tenant bootstrap), the
  * admin `new_org` approval and the seed script. `getSingleTenant` is the `TENANCY_MODE=single`
@@ -46,7 +46,7 @@ export interface CreateTenantForUserInput {
   role?: MembershipRole
   invitedByUserId?: string | null
   /**
-   * The features this deployment ships (D30), so the new tenant is seeded with the template
+   * The features this deployment ships, so the new tenant is seeded with the template
    * dashboards its environment actually has. Omitted, only unconditional templates are copied and a
    * gated feature's page arrives on the tenant's first `GET /api/analytics/pages` instead — the lazy
    * repair path that already exists, so forgetting this is late, never wrong.
@@ -92,10 +92,10 @@ export async function createTenantForUser(
  * Post-commit hooks for a new organisation. Best-effort and OUTSIDE the transaction — nothing here
  * may break sign-up or invite accept.
  *
- * The kit itself contributes none since analytics became a plugin (D31): every hook is an
+ * Core contributes none: every hook is an
  * installed plugin's, each in its OWN try/catch, so one plugin's bad hook costs neither the next
- * plugin its rows nor anybody a sign-up. The contract each must keep is the one the kit's own
- * dashboards hook kept: post-commit, idempotent, and with a lazy repair path of its own (the
+ * plugin its rows nor anybody a sign-up. The contract each must keep:
+ * post-commit, idempotent, and with a lazy repair path of its own (the
  * analytics plugin's is `ensureDefaultDashboards` on every `GET /api/analytics/pages`), because a
  * swallowed failure here is a tenant that quietly starts life half-seeded.
  */
@@ -109,17 +109,17 @@ async function onTenantCreated(
     try {
       await plugin.hooks?.onTenantCreated?.(db, tenant, userId, features)
     } catch {
-      // Best-effort, exactly like the kit's own: the plugin owns its repair path.
+      // Best-effort: the plugin owns its repair path.
     }
   }
 }
 
 /**
- * Post-delete hooks for an organisation that is gone (D7 `tenant.purge`). The mirror of
+ * Post-delete hooks for an organisation that is gone (`tenant.purge`). The mirror of
  * `onTenantCreated` and the same contract — best-effort, idempotent, each plugin in its own
  * try/catch — with one difference that matters: this runs from a QUEUE consumer, so a failure here
  * is logged rather than swallowed silently, and the job still acks. A plugin whose hook throws must
- * not make the purge retry for ever, because every retry re-runs the kit's own deletion too.
+ * not make the purge retry for ever, because every retry re-runs core's own deletion too.
  *
  * `plugins` is injectable so the hook contract can be tested against fixtures rather than against
  * whatever happens to be installed.

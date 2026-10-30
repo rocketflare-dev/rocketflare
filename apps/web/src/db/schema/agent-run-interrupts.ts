@@ -1,5 +1,5 @@
 /**
- * `agent_run_interrupts` — one row per question an agent run asked a person (issue #17). The run
+ * `agent_run_interrupts` — one row per question an agent run asked a person. The run
  * parks (`agent_runs.status = 'awaiting_input'`, the Workflow instance on `step.waitForEvent`) and
  * resumes when somebody answers.
  *
@@ -52,7 +52,7 @@ export const agentRunInterrupts = pgTable(
     message: text('message'),
     /** The tool call this ask gates, when it gates one. */
     toolCallId: text('tool_call_id'),
-    /** JSON Schema an answer must satisfy — for a client that carries no kit code. */
+    /** JSON Schema an answer must satisfy — for a client that carries no app-specific code. */
     responseSchema: jsonb('response_schema').$type<JsonSchema>(),
     /** What was asked, in the shape the panel needs to draw it. Typed, and named `spec` not `metadata`. */
     spec: jsonb('spec').$type<AgentInterruptSpec>().notNull(),

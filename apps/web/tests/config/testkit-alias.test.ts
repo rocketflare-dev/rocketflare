@@ -1,5 +1,5 @@
 /**
- * `@testkit` is registered in exactly two places, and the third absence is the point (D31).
+ * `@testkit` is registered in exactly two places, and the third absence is the point.
  *
  * `tsconfig.json` makes it typecheck; `vitest.config.ts` makes it resolve when tests run;
  * `vite.config.ts` deliberately does NOT.

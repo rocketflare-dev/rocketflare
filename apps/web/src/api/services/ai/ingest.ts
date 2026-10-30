@@ -1,5 +1,5 @@
 /**
- * The ingest paths (D18, 00 §1.3 — retrieval must ship with a way to put text in). Two entry
+ * The ingest paths (retrieval must ship with a way to put text in). Two entry
  * points, one insertion + indexing path:
  *
  * - `ingestText` — pasted text: write a `documents` row (`pending`, raw `content`), chunk it, then
@@ -17,7 +17,7 @@
  * paths re-read the text from the row, never from a message. Everything that can 503 (no
  * embeddings provider, no converter for a binary type) is checked BEFORE any byte or row is
  * written — no orphans. A missing `JOBS_QUEUE` throws `JobsQueueNotConfiguredError` — never a
- * silent inline fallback (D7).
+ * silent inline fallback.
  */
 import {
   type Document,
@@ -53,14 +53,14 @@ export interface IngestTextInput {
   source?: string | null
   contentType?: string
   /**
-   * D29 — who may read it. Defaults to `tenant`: a document an AGENT writes, or an ingest that
+   * Who may read it. Defaults to `tenant`: a document an AGENT writes, or an ingest that
    * says nothing, belongs to the organisation rather than inheriting anything. `groupIds` must
    * already have been validated against the tenant (`resolveRequestedVisibility` at the route).
    */
   visibility?: ResourceVisibility
   groupIds?: readonly string[]
   /**
-   * D34: the item's id in `source`. With one, an existing row for `(tenantId, source, externalId)`
+   * The item's id in `source`. With one, an existing row for `(tenantId, source, externalId)`
    * is UPDATED and re-indexed rather than a second row added — how a connector re-syncs an edited
    * message or file. Requires `source`.
    */
@@ -70,7 +70,7 @@ export interface IngestTextInput {
 export interface IngestDeps {
   /** `env.JOBS_QUEUE` — required only when the text exceeds the inline limit. */
   jobs?: JobsQueue | null
-  /** R2 — only to remove an original that an external-id re-ingest replaced (D34). */
+  /** R2 — only to remove an original that an external-id re-ingest replaced. */
   storage?: StorageService | null
 }
 
@@ -160,7 +160,7 @@ export async function indexDocument(
   try {
     const embeddings = options.embeddings ?? (await resolveEmbeddings(db, cfg, env, tenantId))
     const vectors = await embedInBatches(
-      // D32: one `embeddings <model>` span per batch, under the active span (an agent run, the
+      // One `embeddings <model>` span per batch, under the active span (an agent run, the
       // `document.index` job) — untraced where nothing is active.
       texts => traceEmbed(embeddings, texts, () => embeddings.client.embed(texts)),
       pieces.map(p => p.text)
@@ -312,7 +312,7 @@ export async function ingestText(
   return indexOrEnqueue(db, cfg, env, row, pieces, embeddings, deps)
 }
 
-// ---- External ids (D34) ----------------------------------------------------------------------
+// ---- External ids ----------------------------------------------------------------------
 
 interface ExternalKey {
   source: string
@@ -417,10 +417,10 @@ export interface IngestFileInput {
   type: DocumentUploadType
   title?: string | null
   source?: string | null
-  /** D29 — as `IngestTextInput`: validated at the route, defaults to tenant-wide. */
+  /** As `IngestTextInput`: validated at the route, defaults to tenant-wide. */
   visibility?: ResourceVisibility
   groupIds?: readonly string[]
-  /** D34 — as `IngestTextInput`; the replaced original is removed from storage. */
+  /** As `IngestTextInput`; the replaced original is removed from storage. */
   externalId?: string | null
 }
 

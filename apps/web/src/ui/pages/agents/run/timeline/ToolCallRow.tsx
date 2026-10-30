@@ -1,5 +1,5 @@
 /**
- * One tool call and its answer, as ONE row (D7): a call and its result are one thing that happened,
+ * One tool call and its answer, as ONE row: a call and its result are one thing that happened,
  * so the input and the result share a disclosure and the row spins until it returns. A knowledge
  * tool additionally renders the documents it found as a card strip.
  */

@@ -1,5 +1,5 @@
 /**
- * Thumbs on an AI answer (D33): the first press POSTs the vote, the other thumb replaces it, and
+ * Thumbs on an AI answer: the first press POSTs the vote, the other thumb replaces it, and
  * pressing the pressed thumb again withdraws it with a DELETE. The state is drawn from the prop
  * (the parent's one `/api/feedback/mine` query), and `aria-pressed` says which one is set.
  */

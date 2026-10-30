@@ -1,5 +1,5 @@
 /**
- * Session gate for the app shell (D9, D20). Unauthenticated → `/login?returnUrl=`; signed in but
+ * Session gate for the app shell. Unauthenticated → `/login?returnUrl=`; signed in but
  * in no organisation → the `noTenantRoute` rule (pending / select-tenant / no-access). Pages that
  * must render WITHOUT a tenant (those three) pass `requireTenant={false}`. One exemption: a global
  * admin may open `/admin/*` with no membership at all (`isAdminPath`) — otherwise the bootstrap

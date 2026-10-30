@@ -1,5 +1,5 @@
 /**
- * `POST /api/access-requests` (D9): a signed-in user with no organisation asks to be let in.
+ * `POST /api/access-requests`: a signed-in user with no organisation asks to be let in.
  * Tenant-free; the email is always the session user's (the body's is ignored when signed in).
  * Creates or updates the ONE pending request for that address.
  */

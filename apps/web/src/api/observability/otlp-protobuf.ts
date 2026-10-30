@@ -1,8 +1,8 @@
 /**
- * `ExportTraceServiceRequest` as protobuf, hand-encoded (D32). Needed because the OTLP/HTTP spec
+ * `ExportTraceServiceRequest` as protobuf, hand-encoded. Needed because the OTLP/HTTP spec
  * makes JSON optional and some backends — Arize Phoenix among them — accept only
  * `application/x-protobuf`. The request is the SAME model the JSON path serialises, so the two
- * cannot drift; only the fields the kit writes are encoded. Field numbers are from
+ * cannot drift; only the fields the app writes are encoded. Field numbers are from
  * `opentelemetry/proto/{collector/trace,trace,resource,common}/v1/*.proto` and are a wire format.
  */
 import type { OtlpAnyValue, OtlpExportRequest, OtlpKeyValue, OtlpSpan } from './otlp-fetch'

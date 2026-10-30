@@ -1,7 +1,7 @@
 /**
- * Header bell (D13): unread count from `/api/notifications/unread-count`, the five newest unread
+ * Header bell: unread count from `/api/notifications/unread-count`, the five newest unread
  * in a dropdown, mark-all-read, and a link to the full page. Subscribes to query state only;
- * Phase 2's websocket store invalidates the keys. Notifications are tenant-scoped (403 `no_tenant`
+ * the websocket store invalidates the keys. Notifications are tenant-scoped (403 `no_tenant`
  * without one), so the bell renders nothing for a global admin browsing `/admin` with no membership.
  */
 import { BellIcon } from '@heroicons/react/24/outline'
@@ -61,7 +61,7 @@ function TenantNotificationsBell() {
         ) : (
           <ul className="max-h-80 overflow-y-auto">
             {items.map(n => {
-              // `data` is the deep link (issue #17): an agent parked on a question is answered on
+              // `data` is the deep link: an agent parked on a question is answered on
               // the run page, not on a list of notifications about it.
               const to = notificationLink(n)
               const body = (

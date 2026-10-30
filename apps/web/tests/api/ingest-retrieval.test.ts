@@ -1,5 +1,5 @@
 /**
- * Ingest + retrieval (D18, 00 §1.3) with a deterministic fake embedder (the `AI` stub answers
+ * Ingest + retrieval with a deterministic fake embedder (the `AI` stub answers
  * keyword-keyed unit vectors): `POST /api/ai/documents/ingest` → `indexed` with chunks carrying
  * embeddings; `POST /search` returns the matching chunk first with dense + lexical ranks; a
  * `documentId` filter narrows; another tenant's search finds nothing and its reads are 404; > 50

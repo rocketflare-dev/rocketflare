@@ -1,6 +1,6 @@
 # Shared Contracts (`packages/shared` — `@rocketflare/shared`, private)
 
-Zod schemas + inferred types used by BOTH the API and the UI (D13). Contracts first: a new or
+Zod schemas + inferred types used by BOTH the API and the UI. Contracts first: a new or
 changed API surface starts here, then the route `validate()`s with it, then the UI parses the
 response with the same schema. `pnpm test:config` covers the pure parts.
 
@@ -18,23 +18,23 @@ response with the same schema. `pnpm test:config` covers the pure parts.
 `permissions.ts` actions/subjects/`AppAbility`/packed rules (matrix lives in `apps/web/src/permissions/`) ·
 `api-keys.ts` · `tenant-settings.ts` · `user-settings.ts` · `notifications.ts` · `admin.ts` ·
 `activity.ts` · `errors.ts` envelope + codes · `pagination.ts` ·
-`features.ts` (D30) — the feature-flag registry (`CORE_FEATURE_FLAGS`, now EMPTY — the kit's demo
+`features.ts` — the feature-flag registry (`CORE_FEATURE_FLAGS`, EMPTY — the demo
 flag is the `example-feature` PLUGIN — merged with each plugin's `SharedPlugin.features` into
 `FEATURE_FLAGS`, keyed on `FEATURES`/`FeatureName` from `permissions.ts`, where `CORE_FEATURES` is
 likewise empty; so `featureNameSchema` is a refined `z.string()` over the runtime list rather than a
 `z.enum`, which needs a non-empty tuple), `featureBucket` (**a wire format — changing it reshuffles every live
 rollout**), `evaluateFlag`/`evaluateFeatures` (the one implementation of the environment-then-rollout
 precedence), and the admin contracts. A flag is CONFIGURATION, not a permission: nothing here
-touches CASL · `groups.ts` (D29) — `groupTypeSchema`/`groupSchema` (with `typeName` and `memberCount`)/`groupDetailSchema`,
+touches CASL · `groups.ts` — `groupTypeSchema`/`groupSchema` (with `typeName` and `memberCount`)/`groupDetailSchema`,
 `groupRefSchema` (what the auth context, a member row and a restricted resource all carry),
 `myGroupsSchema`, the create/update/`addGroupMembers`/`setMemberGroups` request schemas,
 `resourceVisibilitySchema` (`tenant | groups`), `setVisibilityRequestSchema`, `resourceAccessSchema`
 and `isPrivateSelection()` (a `groups` selection with nothing in it means owner-and-admins only — the
-UI warns, it does not block) · Phase 2 (server ⇄ UI, no HTTP):
+UI warns, it does not block) · server ⇄ UI, no HTTP:
 `realtime.ts` — `realtimeEventSchema` `{ type, tenantId, at, payload? }`, `realtimeEventTypeSchema`,
-`REALTIME_INVALIDATIONS` (event type → TanStack query-key roots) + `invalidationsFor()` (D8; it is
+`REALTIME_INVALIDATIONS` (event type → TanStack query-key roots) + `invalidationsFor()` (it is
 one of the five composers — it unions each plugin's `realtimeRoots` into `access.changed`) ·
-`plugins/types.ts` + `plugins/index.ts` (D31) — `SharedPlugin`, `PLUGIN_ID_RE`/`isPluginId`, the
+`plugins/types.ts` + `plugins/index.ts` — `SharedPlugin`, `PLUGIN_ID_RE`/`isPluginId`, the
 `SHARED_PLUGINS` barrel one line per installed plugin is written into, and the per-plugin
 derivations the composers read — `DeclaredBy<P, K>` first, which narrows the barrel union to the
 plugins that actually DECLARE an optional field (indexing `as const` literals directly is a compile
@@ -44,16 +44,16 @@ error for a plugin that omits one, and `never` is exactly the empty contribution
 `plugins/<id>/index.ts`, which is its ONE published shared surface — nothing outside the plugin may
 import a deeper path, and `tests/config/plugins.test.ts` is the check ·
 `jobs.ts` — per-type payload schemas and `CORE_JOB_VARIANTS`, the ONE list everything else is
-DERIVED from (D31): `JOB_VARIANTS` = core + every plugin's, `jobInputSchema` (what `enqueueJob`
+DERIVED from: `JOB_VARIANTS` = core + every plugin's, `jobInputSchema` (what `enqueueJob`
 takes), `jobEnvelopeSchema` (`+ id, enqueuedAt, attempt?`, what the consumer parses), `JobType` /
-`CoreJobType` / `JOB_TYPES`, `JobOf<T>` (D7) ·
+`CoreJobType` / `JOB_TYPES`, `JobOf<T>` ·
 `files.ts` — `FILE_SCOPES`/`fileScopeSchema`, `MAX_UPLOAD_BYTES`, `AVATAR_MIME_TYPES`/`isAvatarMimeType`,
 `INLINE_MIME_TYPES`/`isInlineMimeType` (served `Content-Disposition: inline`) and
 `EMBEDDABLE_MIME_TYPES`/`isEmbeddableMimeType` (may ALSO be framed) — two lists on purpose, because
 inline and framable are different properties, `filePath(id)`, `fileSchema`/`uploadResponseSchema`,
-`uploadQuerySchema` (D23) ·
-`jobs.ts` also carries `document.index` (`{ tenantId, documentId }` — re-index a `documents` row, D18) ·
-**`ai/`** (Phase 3, D17/D18/D32; barrel `ai/index.ts`, deep imports `@rocketflare/shared/ai/<file>` equally valid):
+`uploadQuerySchema` ·
+`jobs.ts` also carries `document.index` (`{ tenantId, documentId }` — re-index a `documents` row) ·
+**`ai/`** (barrel `ai/index.ts`, deep imports `@rocketflare/shared/ai/<file>` equally valid):
 `config.ts` — `AI_PROVIDERS`/`aiProviderSchema` (append LAST: the DB column is a text enum; `typesafe`
 serves `decisions` only), `AI_SCOPES` (`chat | embeddings | decisions`), readiness `source`
 `tenant | platform | fallback | none` (`fallback` = decisions answered by the chat model),
@@ -61,16 +61,16 @@ serves `decisions` only), `AI_SCOPES` (`chat | embeddings | decisions`), readine
 `hasCredential`, never a key), `upsertAiConfigRequestSchema` (`apiKey` write-only), `testAiConfigRequest/ResponseSchema`,
 `aiReadinessSchema`, `DEFAULT_MODELS`, `ADAPTIVE_THINKING_MIN_MAX_TOKENS`, `PROVIDER_PRESETS`/`presetsFor` (vendors are data, not enum values),
 **`EMBEDDING_DIM = 1024`** (the `chunks.embedding` column width — a change is a migration) ·
-`models.ts` — per-MODEL request rules: `modelTraits(provider, model)` → `{ thinking: none|extended|adaptive|effort, thinkingOff, thinksAnyway, forcedToolChoice, sampling }`, `parseClaudeModel`, `anthropicModelTraits`, `openAiModelTraits`, `openAiLowestEffort`, `MODEL_TRAITS_CHECKED`; an unrecognised id gets the NEWEST generation's rules; read by the adapters, the upsert route and the settings form · `evals.ts` (D33) — `evalCaseSchema` (the dataset line: `id`, `input` string|object, `messages`,
+`models.ts` — per-MODEL request rules: `modelTraits(provider, model)` → `{ thinking: none|extended|adaptive|effort, thinkingOff, thinksAnyway, forcedToolChoice, sampling }`, `parseClaudeModel`, `anthropicModelTraits`, `openAiModelTraits`, `openAiLowestEffort`, `MODEL_TRAITS_CHECKED`; an unrecognised id gets the NEWEST generation's rules; read by the adapters, the upsert route and the settings form · `evals.ts` — `evalCaseSchema` (the dataset line: `id`, `input` string|object, `messages`,
 `context` docs, `expected { output, rubric, tools, toolsMatch, contains, decisions }` (`decisions`
-= decision key → question id → label, D37), `tags`, `source` — a
+= decision key → question id → label), `tags`, `source` — a
 promoted case names the message/run, never the tenant, `agentKey`), `EVAL_TRAJECTORY_MODES`,
 feedback (`FEEDBACK_TARGETS` `message|agent_run`, `feedbackRatingSchema` `1|-1`,
 `createFeedbackRequestSchema`, `feedbackSchema`, list/mine queries and responses,
 `feedbackTargetParamSchema`) and `evalExportQuerySchema` (exactly one of `messageId`/`runId`) /
 `evalExportResponseSchema` (`containsTenantData: true`) — `/api/feedback`, `/api/evals`, the CLI and
 `apps/evals` ·
-`traces.ts` (D32) — `TRACE_SPAN_KINDS` (`agent|llm|tool|retrieval|embedding|job|span`), `traceIdSchema` (32 hex), `traceSpanSchema`, `traceSummarySchema`, `traceListQuerySchema` / `traceListResponseSchema`, `traceDetailSchema`, `traceLookupParamSchema` (trace id OR uuid) — `GET /api/traces` and the CLI ·
+`traces.ts` — `TRACE_SPAN_KINDS` (`agent|llm|tool|retrieval|embedding|job|span`), `traceIdSchema` (32 hex), `traceSpanSchema`, `traceSummarySchema`, `traceListQuerySchema` / `traceListResponseSchema`, `traceDetailSchema`, `traceLookupParamSchema` (trace id OR uuid) — `GET /api/traces` and the CLI ·
 `prompts.ts` — `promptKeySchema` (kebab-case), `PROMPT_MAX_LENGTH`, `promptDefinitionSchema`, `promptOverrideSchema`,
 `updatePromptRequestSchema`, `promptWithResolvedSchema`, `interpolatePrompt()` (`{{var}}`, unknown left visible) ·
 `chat.ts` — `conversationSchema`, `messageSchema`, `tokenUsageSchema`, `toolCallRecordSchema`, request bodies,
@@ -89,7 +89,7 @@ claimable — the resolve route flips it back to `running` first), `AGENT_RESUME
 `WORKFLOW_EVENT_TYPE_PATTERN` (Workflows event names allow only letters, digits, `-`, `_`; a `.` is
 `workflow.invalid_event_type`, which no Node test would catch), `MAX_INTERRUPT_ROUNDS`, the
 `RUN_STREAM_*` cadence constants, the example's `summarizeTextInput/OutputSchema` ·
-`interrupts.ts` — human-in-the-loop (issue #17): `AGENT_INTERRUPT_KINDS` (`approval · choice · input ·
+`interrupts.ts` — human-in-the-loop: `AGENT_INTERRUPT_KINDS` (`approval · choice · input ·
 form`, closed), `agentInterruptSpecSchema` (the TYPED `spec` column — an untyped jsonb blob called
 `metadata` is where render bugs live), the four payload schemas + `interruptPayloadSchema(spec)` and
 `formValuesSchemaFor(fields)` (the ONE validator the route and the UI both call),
@@ -101,7 +101,7 @@ deliberately no second `approved` boolean), the inbox contracts, steering, and t
 `interrupt.resolved` event payloads. **It must not import `@ag-ui/core`** (that is `agui.ts` alone,
 where `toAguiInterrupt` lives) **and must not import `./agents`**, which imports IT — two zod modules
 in a cycle crash at module evaluation, not at compile time ·
-`decisions.ts` (D37) — `ctx.decide`'s contract in TypeSafe's vocabulary: `noul`/`choice`/`score`
+`decisions.ts` — `ctx.decide`'s contract in TypeSafe's vocabulary: `noul`/`choice`/`score`
 question schemas (`instructions`, `criteria`; ids `[A-Za-z0-9_.-]{1,64}` so every provider accepts
 them as tool-schema properties), `decisionRequestSchema` (≤ 100 questions), `decisionAnswerSchema`,
 `DECISION_METHODS` (`typesafe | llm_self_report`), `agentRunDecisionSchema` (the row, on
@@ -113,11 +113,11 @@ is unpublished) + `decisionAnswerLabel` — the one place both engines and the U
 is the upsert key), the thin `artifact` event payload. A table rather than an event type because an
 artifact is mutable, queried across runs and outlives the run; size caps live here, not in the column ·
 `agui.ts` — the AG-UI wire protocol (`@ag-ui/core` schemas, the ONE file allowed to import it):
-`kitAguiEventSchema` (a discriminated union over exactly the events the kit emits, never the full
+`kitAguiEventSchema` (a discriminated union over exactly the events the server emits, never the full
 `@ag-ui/core` set), `KIT_AGUI_EVENT_TYPES`, `KIT_CUSTOM_EVENTS` + `kitCustomPayloadSchema` +
 `parseKitCustom` (the `kit.` CUSTOM namespace where every kit-specific semantic lives, including
 `kit.document` — a `documentCardSchema` for a document a knowledge tool surfaced),
-`chatRunResultSchema` (`RUN_FINISHED.result` for a chat turn), `toAguiInterrupt(row)` (the kit row is
+`chatRunResultSchema` (`RUN_FINISHED.result` for a chat turn), `toAguiInterrupt(row)` (the row is
 the truth, the protocol shape is a projection of it — and the HITL pause/answer need NO new event:
 `RunFinishedEventSchema` already validates an `outcome` and `RunAgentInputSchema` already carries
 `resume[]`), `kitRunAgentInputSchema` +
@@ -126,7 +126,7 @@ the truth, the protocol shape is a projection of it — and the HITL pause/answe
 `aiConfigId`/`model`), `agentModelEntrySchema` (`effective.source: assignment | tenant | platform | none`) ·
 `embeddings.ts` — `documentSchema` (never the text or vectors), `INGEST_TEXT_MAX_CHARS`, `ingestTextRequestSchema`,
 `documentListQuerySchema`, `searchRequestSchema` (`SEARCH_MAX_LIMIT`), `searchHitSchema` (RRF `score`, `rank`,
-`denseRank`/`lexicalRank`), `searchResponseSchema`, and the read side (D18): `documentContentSchema` + `documentContentQuerySchema`
+`denseRank`/`lexicalRank`), `searchResponseSchema`, and the read side: `documentContentSchema` + `documentContentQuerySchema`
 (`DOCUMENT_WINDOW_CHARS` 20 000, `DOCUMENT_WINDOW_MAX_CHARS` 50 000) + `windowStart()` (snap an offset
 down to a window boundary so a deep link and the reader's paging share one cache entry),
 `documentPassageSchema`, `documentCardSchema` + `DOCUMENT_EXCERPT_CHARS` + `documentPath()` (the ONE
@@ -139,7 +139,7 @@ rendering all share · `usage.ts` — `aiUsageSchema`, `aiUsageSummarySchema`,
 `estimateCostMicrocents`; the ONE place to correct rates, unknown model → null, never a guess. `errors.ts` codes added: `ai_not_configured`,
 `agent_runs_not_configured`, `agent_run_active`; `permissions.ts` subjects added: `AiConfig`, `Prompt`,
 `Conversation`, `AgentRun`, `Document` — plus whatever an installed PLUGIN declares in
-`SharedPlugin.subjects` (the analytics plugin's `Dashboard` and `Analytics`, D19 + D31, which is
+`SharedPlugin.subjects` (the analytics plugin's `Dashboard` and `Analytics`, which is
 where its contracts live too: `@rocketflare/shared/plugins/analytics/index`). Known gap:
 `GET /api/ai/config/providers` has no schema here (the catalog is server data in
 `apps/web/src/api/services/ai/providers.ts`; the UI keeps a permissive one).
@@ -152,7 +152,7 @@ type lists follow from it) + an entry in `coreHandlers` (`apps/web/src/api/queue
 is no `runHandler` switch to keep in step, because the handler table's mapped type is the check. Adding an
 agent: the key in `CORE_AGENT_KEYS` + its input/output schemas in `ai/agents.ts` (then the prompt, the
 definition and the `CORE_AGENTS` entry server-side — `docs/ADAPTING.md` §3). **Each of those is a
-PLUGIN slot too** (D31): a job type is `SharedPlugin.jobs` + `ServerPlugin.jobHandlers`, an agent
+PLUGIN slot too**: a job type is `SharedPlugin.jobs` + `ServerPlugin.jobHandlers`, an agent
 `SharedPlugin.agentKeys` + `ServerPlugin.agents`, a flag `SharedPlugin.features`, a subject
 `SharedPlugin.subjects` — declared in `packages/shared/src/plugins/<id>/index.ts` and merged in by
 the composer, so a plugin never edits one of these literals. Adding an AI provider: the
@@ -163,7 +163,7 @@ cannot parse, so the server may lead. A breaking
 payload change is a NEW type (`email.send.v2`) — the `type` string is the version seam. Adding a
 realtime event type: the enum + its roots in `REALTIME_INVALIDATIONS` (a ui test checks every root
 is a `queryKeys` family). Adding a file scope: `FILE_SCOPES` here AND the mirrored enum in
-`apps/web/src/db/schema/files.ts`. Making a NEW resource restrictable (D29): add `visibility` +
+`apps/web/src/db/schema/files.ts`. Making a NEW resource restrictable: add `visibility` +
 `groups: z.array(groupRefSchema)` to its schema here, a `visibility` column plus a junction table
 server-side, and a `visible<Resource>(scope)` predicate registered as a `VISIBILITY_RESOURCES`
 entry in `api/services/access.ts` — never infer "restricted" from the presence of grant rows.
@@ -178,7 +178,7 @@ entry in `api/services/access.ts` — never infer "restricted" from the presence
   where nothing needs to validate a `DashboardConfig`) would mean two sources of truth. A fifth
   dependency needs the same written justification here and in the root `CLAUDE.md`;
   `apps/web/tests/config/shared-imports.test.ts` is the check
-- **`plugins/**` never imports one of the five composers AT RUNTIME (D31).** The five are
+- **`plugins/**` never imports one of the five composers AT RUNTIME.** The five are
   `ai/agents.ts`, `jobs.ts`, `permissions.ts`, `features.ts` and `realtime.ts`; each reads the
   plugin barrel to open a closed set (agent keys, job variants, subjects, feature keys, the
   `access.changed` roots), so a plugin module importing one back closes a cycle through

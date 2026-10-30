@@ -1,5 +1,5 @@
 /**
- * `/api/keys` (D12): admin+ list/create/revoke; plaintext once; soft revoke; tenant isolation.
+ * `/api/keys`: admin+ list/create/revoke; plaintext once; soft revoke; tenant isolation.
  */
 import { eq } from 'drizzle-orm'
 import { describe, expect, it } from 'vitest'

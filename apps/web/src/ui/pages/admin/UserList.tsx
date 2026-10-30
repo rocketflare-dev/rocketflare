@@ -1,4 +1,4 @@
-/** Admin → Users (D10): search + filter over `/api/admin/users` (`adminUserListQuerySchema`). */
+/** Admin → Users: search + filter over `/api/admin/users` (`adminUserListQuerySchema`). */
 
 import { ChevronRightIcon, UsersIcon } from '@heroicons/react/24/outline'
 import type { AdminUserListQuery } from '@rocketflare/shared/admin'

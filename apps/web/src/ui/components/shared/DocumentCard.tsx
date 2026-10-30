@@ -1,6 +1,6 @@
 /**
  * The compact form one knowledge document takes wherever it is cited — a Search result header, an
- * agent run's sources, a chat answer (D18). **Markdown-free by construction**: heroicons,
+ * agent run's sources, a chat answer. **Markdown-free by construction**: heroicons,
  * `react-router-dom`, the shared schemas and `lib/format` only. That is what lets it live in the
  * `components/shared` barrel `App.tsx` imports eagerly — `components/ai/Markdown` must stay in the
  * lazy chat and agents chunks, so a card that rendered markdown could never be used from Search.

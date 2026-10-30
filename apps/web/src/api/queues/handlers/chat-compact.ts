@@ -1,5 +1,5 @@
 /**
- * `chat.compact` (D17) — fold the messages that no longer fit a conversation's context budget into
+ * `chat.compact` — fold the messages that no longer fit a conversation's context budget into
  * its rolling summary, so a long thread forgets gracefully instead of either overflowing the model
  * or silently losing its beginning.
  *
@@ -24,9 +24,9 @@ import { z } from 'zod'
 import { conversations, messages } from '../../../db/schema'
 import { noopTracer } from '../../observability/tracer'
 import { traceChatClient, withAgentTrace } from '../../observability/tracing'
+import { callStructuredTool } from '../../services/ai/agent-loop'
 import { pendingCompaction, selectHistoryWindow } from '../../services/ai/chat-history'
 import { AiNotConfiguredError } from '../../services/ai/errors'
-import { callStructuredTool } from '../../services/ai/kit'
 import { resolveChat } from '../../services/ai/resolve'
 import { recordUsage } from '../../services/ai/usage'
 import { resolvePrompt } from '../../services/prompts'
@@ -97,7 +97,7 @@ export async function handleChatCompact(
   })
   const previous = conversation.summary?.trim()
   const tracer = ctx.tracer ?? noopTracer
-  // D32: the compaction call is traced as its own job trace, in the thread's session.
+  // The compaction call is traced as its own job trace, in the thread's session.
   const result = await withAgentTrace(
     'chat.compact',
     {

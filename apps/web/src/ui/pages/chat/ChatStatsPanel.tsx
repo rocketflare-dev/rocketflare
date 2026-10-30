@@ -1,5 +1,5 @@
 /**
- * The chat inspector (D17) — what is actually going on behind a thread: which model will answer
+ * The chat inspector — what is actually going on behind a thread: which model will answer
  * next and which have answered, how much of the history budget the next turn will spend, how close
  * the thread is to trimming and then to a summary, and what it has cost.
  *
@@ -184,7 +184,7 @@ function StatsBody({
         <Row
           label="≈ tokens sent"
           value={n(contextTokens)}
-          hint={`Estimated at ${stats.context.charsPerToken} characters per token — the kit's assumption everywhere, not the provider's tokeniser`}
+          hint={`Estimated at ${stats.context.charsPerToken} characters per token — the app's assumption everywhere, not the provider's tokeniser`}
         />
       </Section>
 

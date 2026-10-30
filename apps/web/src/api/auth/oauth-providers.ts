@@ -1,5 +1,5 @@
 /**
- * `oauth_providers` writes (D11, D12): link a provider identity to a user, list and unlink.
+ * `oauth_providers` writes: link a provider identity to a user, list and unlink.
  * Tokens are encrypted before every write. `(provider, provider_user_id)` is UNIQUE, so one
  * external account can never attach to two users; `linkProvider` surfaces that as a conflict.
  */

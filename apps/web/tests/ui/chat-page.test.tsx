@@ -1,5 +1,5 @@
 /**
- * `/chat/:conversationId` (D17): send → AG-UI frames → the assistant bubble accumulates deltas and
+ * `/chat/:conversationId`: send → AG-UI frames → the assistant bubble accumulates deltas and
  * shows the usage footnote; Shift+Enter does not send; Stop aborts the stream (a cancelled run
  * emits NO terminal event, and that must not read as an error); a 503 `ai_not_configured` renders
  * the configure call to action (admins) or the "ask an admin" copy.

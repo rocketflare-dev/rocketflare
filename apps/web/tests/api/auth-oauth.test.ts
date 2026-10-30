@@ -1,7 +1,7 @@
 // @vitest-isolate
 // Mocks the `arctic` module and the global fetch, so this file needs its own registry.
 /**
- * Generic OAuth router (D11, D12): start sets the single `oauth_state` cookie and redirects to the
+ * Generic OAuth router: start sets the single `oauth_state` cookie and redirects to the
  * provider; the callback validates state, exchanges the code (stubbed arctic), fetches the profile
  * (stubbed fetch), links/creates the user under sign-up gating and sets the session cookie.
  */

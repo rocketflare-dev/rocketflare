@@ -1,5 +1,5 @@
 /**
- * Settings → AI (D17): readiness for `chat`, `embeddings` and `decisions` (D37 — TypeSafe's Jev
+ * Settings → AI: readiness for `chat`, `embeddings` and `decisions` (TypeSafe's Jev
  * behind `ctx.decide`; without one the chat model answers, uncalibrated) — what the resolver WOULD pick, with
  * its source), then one table per scope — label, provider, model, default and credential badges,
  * and for `manage AiConfig` holders: set default, test, edit, delete. Members (`read`) see the

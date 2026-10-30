@@ -1,11 +1,11 @@
 /**
- * `signState` / `verifyState` on the plugin surface (D34): round-trip, and `null` for a tampered
+ * `signState` / `verifyState` on the plugin surface: round-trip, and `null` for a tampered
  * body or signature, the wrong purpose, an expired token or garbage; a missing
  * `OAUTH_ENCRYPTION_KEY` is a 503 on both sides, never a token signed with nothing. No database.
  *
  * The public MOUNT that consumes them, and `features(tenantId)` on the background contexts, are
  * exercised through the reference plugin (`plugins/example-feature/tests/api`) — both need a flag,
- * and a kit test must not borrow a plugin's — and the prefix rule by `tests/config/plugins.test.ts`.
+ * and a core test must not borrow a plugin's — and the prefix rule by `tests/config/plugins.test.ts`.
  */
 import { describe, expect, it } from 'vitest'
 import { loadConfig } from '@/config'

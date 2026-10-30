@@ -1,5 +1,5 @@
 /**
- * Global test setup (D15) — runs once per vitest project before the api suites:
+ * Global test setup — runs once per vitest project before the api suites:
  * roles (phase=role) → migrations → roles (phase=grants) → clean → seed one owner/tenant/API
  * key/session, exposed to tests as `inject('seed')` (`TestSeed` in helpers/auth.ts).
  *

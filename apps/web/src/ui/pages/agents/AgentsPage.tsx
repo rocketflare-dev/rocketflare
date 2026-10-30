@@ -1,5 +1,5 @@
 /**
- * `/agents` (D7, D8, D17, D20, issue #17): the registered agents on the left (title, description,
+ * `/agents`: the registered agents on the left (title, description,
  * exclusive badge, Run → `RunAgentModal`), the runs table on the right (status with a live dot,
  * agent, requested by, started/finished, duration; agent + status filters and an "awaiting input"
  * chip; paginated). The list refreshes on the `agent-run` nudge and polls while any row still owes

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * `pnpm eval` (D33) — run the eval suites locally, outside the gate.
+ * `pnpm eval` — run the eval suites locally, outside the gate.
  *
  *   pnpm eval [suite…] [--provider anthropic|fireworks|gemini] [--model x] [--judge-provider p]
  *             [--judge-model y] [--case id,id] [--compare [baseline|<run.json>]]

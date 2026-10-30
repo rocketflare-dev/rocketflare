@@ -1,7 +1,7 @@
 /**
- * `user_sessions` — DB-backed cookie sessions (D12). The cookie carries a random token; only its
+ * `user_sessions` — DB-backed cookie sessions. The cookie carries a random token; only its
  * SHA-256 (`tokenHash`) is stored, so a database read never yields a usable credential.
- * `selectedTenantId` IS the current-tenant mechanism (02 §1): the auth middleware resolves the
+ * `selectedTenantId` IS the current-tenant mechanism: the auth middleware resolves the
  * membership for it, falling back to the oldest membership when it is stale.
  *
  * Pre-tenant infrastructure: in `RLS_REVOKED_TABLES` (no policy, app role has no grants).

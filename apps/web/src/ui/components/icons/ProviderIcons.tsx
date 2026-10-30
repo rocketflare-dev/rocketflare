@@ -1,5 +1,5 @@
 /**
- * OAuth provider marks (D11), drawn in `currentColor` so they follow the theme like every other
+ * OAuth provider marks, drawn in `currentColor` so they follow the theme like every other
  * icon — no brand hex in the UI (ui.md "tokens, not raw colours").
  */
 import { KeyIcon } from '@heroicons/react/24/outline'

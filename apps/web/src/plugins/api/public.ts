@@ -1,5 +1,5 @@
 /**
- * `PublicCtx` (D31, D34) — what a plugin's PUBLIC route handler is handed: an admin-consent
+ * `PublicCtx` — what a plugin's PUBLIC route handler is handed: an admin-consent
  * callback, a webhook, a push endpoint. Anything a third party calls, which carries no session and
  * no API key.
  *
@@ -19,7 +19,7 @@
  *
  * Answer fast. A provider that sends webhooks usually wants a 2xx inside a few seconds and treats
  * a slow endpoint as a failing one (Microsoft Graph: 3 s), so the shape is verify → `enqueue` →
- * 202, with the real work in a job. That is the kit's own rule — routes enqueue, never run.
+ * 202, with the real work in a job. That is the core rule — routes enqueue, never run.
  */
 
 import { ERROR_CODES } from '@rocketflare/shared/errors'

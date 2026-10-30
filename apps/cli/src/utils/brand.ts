@@ -1,6 +1,6 @@
 /**
- * Branding for human output (D26): a coloured prefix derived from the package's bin name, so a
- * renamed kit gets a renamed prompt for free. Data never goes through here — only status lines.
+ * Branding for human output: a coloured prefix derived from the package's bin name, so a
+ * renamed app gets a renamed prompt for free. Data never goes through here — only status lines.
  */
 import chalk from 'chalk'
 import { BIN_NAME } from '../package-info'

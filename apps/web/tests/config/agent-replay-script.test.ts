@@ -1,5 +1,5 @@
 /**
- * `pnpm web agent:replay` (D38) runs the agent registry under plain Node through tsx — so nothing
+ * `pnpm web agent:replay` runs the agent registry under plain Node through tsx — so nothing
  * the registry imports may reach `cloudflare:workers` (the Workflow class, the Durable Object),
  * which exists only inside workerd. That is an import-graph property no type check sees; loading
  * the script is the proof. `--help` exits before any database is touched.

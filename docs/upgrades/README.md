@@ -1,7 +1,7 @@
 # Release notes, written for an agent
 
-One file per kit release, `X.Y.Z.md`, plus `unreleased.md` which accumulates entries between
-releases. `CHANGELOG.md` at the repository root is the human index; these are the porting
+One file per kit release, `X.Y.Z.md`, plus — in the kit repository only — `unreleased.md`, which accumulates entries between
+releases (it is `kitOnly`: an app never has one, and writes no porting note). `CHANGELOG.md` at the repository root is the human index; these are the porting
 instructions, and `scripts/upgrade.mjs` reads their frontmatter.
 
 They exist because a copy of the kit is detached and renamed, so it can never merge from upstream.
@@ -47,7 +47,7 @@ the string instead of splitting it in two.
 The four headings are fixed and must appear in that order; `apps/web/tests/kit-only/upgrade-notes.test.ts`
 enforces every rule above.
 
-## Writing one
+## Writing one (kit repository only)
 
 Add to `unreleased.md` in the same pull request as the change — `.claude/rules/code-quality.md`
 lists it in the "Docs in sync" table, CI fails a PR that touches `apps/**` or `packages/**` without

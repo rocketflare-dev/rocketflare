@@ -1,5 +1,5 @@
 /**
- * Realtime nudges (D7, D8): mutations reach `NOTIFICATIONS_HUB` through `services/realtime.ts`
+ * Realtime nudges: mutations reach `NOTIFICATIONS_HUB` through `services/realtime.ts`
  * as deferred RPC calls — asserted on the recording namespace (`stubs(env).hub.broadcasts`), the
  * way queue producers are asserted on `RecordingQueue`. The event names WHAT changed; the client
  * re-queries. Nudges are a no-op without the binding and never fail the request.
@@ -141,7 +141,7 @@ describe('realtime nudges', () => {
     expect(recorded(env, tenant.id)).toHaveLength(1)
   })
 
-  it('group membership changes nudge access.changed to the AFFECTED people only (D29)', async () => {
+  it('group membership changes nudge access.changed to the AFFECTED people only', async () => {
     const { owner, tenant, cookie } = await ownerWithCookie()
     const env = createTestEnv()
     const moved = await createTestUser(db)

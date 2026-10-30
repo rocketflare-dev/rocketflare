@@ -1,7 +1,7 @@
 /**
- * Gated sign-up contracts (D9, D13): a request lodged by an uninvited person and the global
+ * Gated sign-up contracts: a request lodged by an uninvited person and the global
  * admin's decision. Approving is the ONLY path that creates an organisation outside `create-org`;
- * the `new_org` branch is refused with 404 `tenancy_mode_single` under `TENANCY_MODE=single` (D25).
+ * the `new_org` branch is refused with 404 `tenancy_mode_single` under `TENANCY_MODE=single`.
  */
 import { z } from 'zod'
 import { paginationQuerySchema } from './pagination'

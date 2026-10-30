@@ -1,8 +1,9 @@
 // @vitest-isolate
 // Mocks `@/api/services/ai/resolve` and swaps an entry of the `AGENTS` registry, so this file
 // needs its own module registry.
+// Also mocks the plugin barrels to register the fixture agents (tests/helpers/fixture-agents.ts).
 /**
- * The runtime half of human-in-the-loop (issue #17), against the real database: `ctx.interrupt`,
+ * The runtime half of human-in-the-loop, against the real database: `ctx.interrupt`,
  * `executeRun`'s park and decline arms, steering delivery, artifacts, and the two lifecycle
  * transitions a park needs — `parkRun` / `resumeRun` — plus the restart fallback for a park whose
  * Workflow instance is gone.
@@ -18,6 +19,7 @@
  * - **Rows before the park**: a row with no parked run re-asks on the next attempt; a parked run
  *   with no row hangs with nothing for anybody to answer.
  */
+
 import type { AgentInterruptSpec } from '@rocketflare/shared/ai/interrupts'
 import { eq } from 'drizzle-orm'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -49,8 +51,8 @@ import {
   resumeRun,
 } from '@/api/services/agents/runs'
 import { executeRun, isRetryableRunError } from '@/api/services/agents/runtime'
+import { InterruptDeclinedError, InterruptRequested, type Tool } from '@/api/services/ai/agent-loop'
 import { AiError } from '@/api/services/ai/errors'
-import { InterruptDeclinedError, InterruptRequested, type Tool } from '@/api/services/ai/kit'
 import type { ChatClient } from '@/api/services/ai/types'
 import type { Logger } from '@/api/utils/core/logger'
 import { loadConfig } from '@/config'
@@ -58,7 +60,15 @@ import { agentRuns, notifications } from '@/db/schema'
 import { FakeChatClient } from '../helpers/ai'
 import { createTestTenantWithUser } from '../helpers/auth'
 import { setupTestDatabase } from '../helpers/db'
+import { FIXTURE_AGENT } from '../helpers/fixture-agents'
 import { createTestEnv, stubs, type TestEnv } from '../mocks/bindings'
+
+vi.mock('@rocketflare/shared/plugins', async importOriginal =>
+  (await import('../helpers/fixture-agents')).withFixtureShared(await importOriginal())
+)
+vi.mock('@/plugins/server', async importOriginal =>
+  (await import('../helpers/fixture-agents')).withFixtureServer(await importOriginal())
+)
 
 const state: { client: ChatClient | null } = { client: null }
 
@@ -90,18 +100,17 @@ function fakeLogger() {
   return log as unknown as Logger & typeof log
 }
 
-const original = AGENTS['summarize-text']
+const original = AGENTS[FIXTURE_AGENT]
 
 /**
- * Swap `summarize-text`'s definition for the run under test. The kit's own agents do not use
- * interrupts until phase 8, and the registry is keyed by `AgentKey`, so there is no third key to
- * borrow — the swap is undone after every test and the file is `@vitest-isolate` for it.
+ * Swap the fixture agent's definition for the run under test (`tests/helpers/fixture-agents.ts`,
+ * registered through mocked plugin barrels, so no example agent is borrowed) — the swap is undone after every test and the file is `@vitest-isolate` for it.
  */
 function installAgent(
   run: (ctx: AgentContext) => Promise<unknown>,
   meta: Partial<AnyAgentDefinition['meta']> = {}
 ): void {
-  AGENTS['summarize-text'] = {
+  AGENTS[FIXTURE_AGENT] = {
     meta: {
       ...original.meta,
       inputSchema: z.any(),
@@ -113,7 +122,7 @@ function installAgent(
 }
 
 afterEach(() => {
-  AGENTS['summarize-text'] = original
+  AGENTS[FIXTURE_AGENT] = original
   state.client = null
 })
 
@@ -138,7 +147,7 @@ async function claimedRun(env: TestEnv, role: 'owner' | 'member' = 'member') {
   const { user, tenant } = await createTestTenantWithUser(db, role)
   const { run } = await enqueueRun(db, loadConfig(env), env, {
     tenantId: tenant.id,
-    agentKey: 'summarize-text',
+    agentKey: FIXTURE_AGENT,
     input: { text: 'anything' },
     userId: user.id,
   })
@@ -250,7 +259,7 @@ describe('ctx.interrupt parks the run', () => {
       })
     ).toBeNull()
 
-    // The answer IS the transition (decision 2) — the route flips the row before it nudges.
+    // The answer IS the transition — the route flips the row before it nudges.
     expect((await resumeRun(db, tenant.id, run.id))?.status).toBe('running')
     const outcome = await execute(env, run.id, tenant.id)
 
@@ -350,7 +359,7 @@ describe('T3: an interrupt raised inside a tool handler parks the run', () => {
           return 'answered'
         },
       }
-      const { runToolLoop } = await import('@/api/services/ai/kit')
+      const { runToolLoop } = await import('@/api/services/ai/agent-loop')
       await runToolLoop(ctx.chat.client, {
         model: ctx.chat.model,
         system: 'pick one',
@@ -449,7 +458,7 @@ describe('the lifecycle around a park', () => {
     await parkRun(db, tenant.id, run.id)
     const second = await enqueueRun(db, loadConfig(env), env, {
       tenantId: tenant.id,
-      agentKey: 'summarize-text',
+      agentKey: FIXTURE_AGENT,
       input: { text: 'again' },
       userId: user.id,
     })

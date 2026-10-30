@@ -1,5 +1,5 @@
 /**
- * Live run progress (issue #7): the run's AG-UI timeline, filling in ~500 ms instead of 3-second
+ * Live run progress: the run's AG-UI timeline, filling in ~500 ms instead of 3-second
  * poll lumps.
  *
  * **Additive by construction.** The run page is built against the poll path; this hook is the
@@ -21,7 +21,7 @@
  * Reconnection lives here rather than in the transport, because "the stream closed with no
  * terminal event" means *reconnect* and only a component knows whether it still wants to be
  * connected. A closed stream is never an error to the user: a redeploy, the server's idle cap, its
- * 10-minute duration cap and a dropped connection are all the same event (decision 6).
+ * 10-minute duration cap and a dropped connection are all the same event.
  */
 import {
   type AgentRunStatus,

@@ -1,4 +1,4 @@
-/** Tenant API keys (D12, D13). The plaintext exists only in the create response — show it once. */
+/** Tenant API keys. The plaintext exists only in the create response — show it once. */
 import {
   apiKeySchema,
   type CreateApiKeyRequest,

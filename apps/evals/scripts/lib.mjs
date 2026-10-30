@@ -1,5 +1,5 @@
 /**
- * The pure half of `pnpm eval` (D33): read a vitest JSON report (with vitest-evals' task meta) into
+ * The pure half of `pnpm eval`: read a vitest JSON report (with vitest-evals' task meta) into
  * per-case scores, write/read baselines, compare two score sets, and render the summaries. No
  * filesystem, no process — `tests/compare.test.ts` exercises all of it on fixtures.
  */

@@ -1,11 +1,11 @@
 /**
- * The shared plugin barrel (D31) — ONE line per installed plugin, written by
+ * The shared plugin barrel — ONE line per installed plugin, written by
  * `pnpm plugin add|remove`, never by hand:
  *
  *     import { approvalsShared } from './approvals'
  *     export const SHARED_PLUGINS = [approvalsShared] as const satisfies readonly SharedPlugin[]
  *
- * `SHARED_PLUGINS` is an `as const` TUPLE because the composers derive types from it (A2: the job
+ * `SHARED_PLUGINS` is an `as const` TUPLE because the composers derive types from it (the job
  * variant union, the agent-key enum, the subject union). `sharedPlugins` beside it is the same
  * list widened for iteration — an EMPTY tuple indexes to `never`, and `never.id` is a type error,
  * so every consumer that only wants to loop reads the widened one.

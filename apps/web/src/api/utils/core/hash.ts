@@ -1,5 +1,5 @@
 /**
- * One-way hashing for credentials at rest (D12): session cookies, magic-link and invitation
+ * One-way hashing for credentials at rest: session cookies, magic-link and invitation
  * tokens, API keys are all stored as SHA-256 hex of a random token, so a database read never
  * yields something usable. WebCrypto only — identical in workerd, Node 24 and the browser bundle.
  */
@@ -25,7 +25,7 @@ export function safeEqual(a: string, b: string): boolean {
 }
 
 /**
- * Default API-key prefix, separator included; parameterised, never from env (01 §6). It carries
+ * Default API-key prefix, separator included; parameterised, never from env. It carries
  * its `_` so `scripts/rename.mjs` renames it as the snake form (`my_app_`); the bare kit name
  * would become the hyphenated slug (`my-app`), while every reader expects `<snake>_`.
  */

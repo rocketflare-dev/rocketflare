@@ -1,6 +1,6 @@
 /**
  * The CURRENT tenant: `/api/tenant` (read admin+/owner writes, owner-only delete with slug
- * confirmation — 404 `tenancy_mode_single` in single mode) and `/api/tenant/settings` (D10, D25).
+ * confirmation — 404 `tenancy_mode_single` in single mode) and `/api/tenant/settings`.
  */
 import { updateTenantSettingsRequestSchema } from '@rocketflare/shared/tenant-settings'
 import { deleteTenantRequestSchema, updateTenantRequestSchema } from '@rocketflare/shared/tenants'

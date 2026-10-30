@@ -1,5 +1,5 @@
 /**
- * Knowledge base (D18, D20): documents paginated (`GET /api/ai/documents`), one row (`GET /:id`),
+ * Knowledge base: documents paginated (`GET /api/ai/documents`), one row (`GET /:id`),
  * text ingest (`POST /ingest` → 201, `indexed` inline for small texts or `pending` until the
  * `document.index` job lands), file upload (`POST /upload`, multipart — text types index like
  * pasted text, PDF/Office/HTML return `pending` until the `document.convert` job lands), delete

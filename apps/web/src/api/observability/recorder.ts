@@ -1,5 +1,5 @@
 /**
- * The span recorder behind `Tracer` (D32): handles open and nest in memory, a span is appended to
+ * The span recorder behind `Tracer`: handles open and nest in memory, a span is appended to
  * the batch when it ENDS, and `flush()` hands the batch to every sink — the OTLP exporter and the
  * `ai_spans` store — in parallel. Called in `waitUntil` by the middleware, awaited at the end of a
  * stream, a Workflow step or a job; never on the response path, and a sink that fails is logged,

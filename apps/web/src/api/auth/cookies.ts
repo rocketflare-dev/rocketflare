@@ -1,5 +1,5 @@
 /**
- * Every cookie the auth surface sets (D12): the `__Host-session` login cookie and the short-lived
+ * Every cookie the auth surface sets: the `__Host-session` login cookie and the short-lived
  * flow cookies (OAuth state, CLI hand-off). One helper, driven by config, so no route hand-rolls a
  * `Set-Cookie` string. `__Host-` REQUIRES `Secure` + `Path=/` + no `Domain` (browsers drop it
  * otherwise, and hono's serializer throws), so the session cookie is Secure in every environment —

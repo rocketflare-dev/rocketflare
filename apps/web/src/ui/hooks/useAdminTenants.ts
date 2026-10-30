@@ -1,5 +1,5 @@
 /**
- * Global-admin view of organisations (D10, D25): list, detail, suspend, and "enter as support"
+ * Global-admin view of organisations: list, detail, suspend, and "enter as support"
  * (a real `support` membership the org's owners can see). Contract note: the enter/leave
  * responses are unspecified; a session response is applied directly, anything else falls back to
  * an explicit select-tenant / session refresh.

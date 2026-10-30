@@ -1,5 +1,5 @@
 /**
- * In-app notification contracts (D13). Addressed to one user in one tenant; `data` carries the
+ * In-app notification contracts. Addressed to one user in one tenant; `data` carries the
  * type-specific payload (deep links, actor), typed here so the jsonb column and the API agree.
  */
 import { z } from 'zod'

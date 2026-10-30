@@ -1,5 +1,5 @@
 /**
- * One isolated world per case (D33): a fresh tenant and owner, a session cookie, the case's context
+ * One isolated world per case: a fresh tenant and owner, a session cookie, the case's context
  * documents ingested through the real `ingestText`, the `--provider`'s `ai_configs` row when it is
  * not the platform tier, and — with `--model` — an `agent_models` row pinning the prompt keys the
  * target uses. A tenant per case is what makes retrieval honest: the

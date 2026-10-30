@@ -10,15 +10,15 @@ import ThemeToggle from './ThemeToggle'
 export interface LayoutProps {
   children: ReactNode
   /**
-   * Left side of the top bar, after the hamburger. Phase 1: `<OrgSwitcher />`
-   * (hidden when `TENANCY_MODE=single`, D25).
+   * Left side of the top bar, after the hamburger: `<OrgSwitcher />`
+   * (hidden when `TENANCY_MODE=single`).
    */
   headerStart?: ReactNode
-  /** Middle of the top bar — a documented slot, deliberately empty in the kit. */
+  /** Middle of the top bar — a documented slot, deliberately empty by default. */
   headerCenter?: ReactNode
   /**
-   * Right side of the top bar, before the theme toggle. Phase 1: `<NotificationsBell />`,
-   * user dropdown (`<details>/<summary>` avatar → Profile / Settings / Sign out); Phase 2:
+   * Right side of the top bar, before the theme toggle: `<NotificationsBell />`,
+   * user dropdown (`<details>/<summary>` avatar → Profile / Settings / Sign out),
    * `<WebSocketStatus />`.
    */
   headerEnd?: ReactNode

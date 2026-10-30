@@ -1,7 +1,7 @@
 /**
- * JSON Schema → the kit's closed set of form fields, or **nothing at all**.
+ * JSON Schema → the closed set of form fields, or **nothing at all**.
  *
- * One renderer serves two callers (issue #17): the run form for an agent with no hand-written
+ * One renderer serves two callers: the run form for an agent with no hand-written
  * `forms/` entry (`agentInfoSchema.inputJsonSchema`, produced server-side by `toolInputSchema()`)
  * and the `form` interrupt kind (`Interrupt.responseSchema`). They carry the same shape, which is
  * why the fourth interrupt kind cost almost nothing.
@@ -52,7 +52,7 @@ function enumOptions(values: unknown): FormField['options'] | null {
 }
 
 /**
- * The label when the schema declares no `title` — which is EVERY field the kit's own agents emit,
+ * The label when the schema declares no `title` — which is EVERY field the built-in agents emit,
  * because `zodToJsonSchema` has no zod construct to read a title from. A raw property name read as
  * `topic` where a person expects `Topic`, so the fallback is the name made presentable: split on
  * `_`/`-`/camel humps, capitalise the first word. It invents nothing — an agent that wants better
@@ -102,7 +102,7 @@ function fieldFrom(name: string, raw: unknown, required: boolean): FieldSpec | n
   }
   if (type === 'string') {
     const maxLength = asNumber(schema.maxLength)
-    // Anything that could hold a paragraph gets the bigger box; the kit's own agents lean on it.
+    // Anything that could hold a paragraph gets the bigger box; the built-in agents lean on it.
     const long = maxLength === undefined || maxLength > 200
     return {
       ...base,

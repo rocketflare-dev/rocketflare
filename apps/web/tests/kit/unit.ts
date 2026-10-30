@@ -1,5 +1,5 @@
 /**
- * `@testkit/unit` — builders for the plugin context family (D31).
+ * `@testkit/unit` — builders for the plugin context family.
  *
  * Every execution context a plugin is handed (`RequestCtx`, `JobCtx`, `CronCtx`, `WorkflowCtx`,
  * `ToolCtx`) is built here from plain options, so a test can exercise a handler's BRANCHING without
@@ -98,9 +98,9 @@ export interface RequestCtxOptions extends BaseOptions {
   user?: User
   role?: MembershipRole | null
   isGlobalAdmin?: boolean
-  /** Flags ON for this organisation — what `ctx.hasFeature` reads, never the ability (D30). */
+  /** Flags ON for this organisation — what `ctx.hasFeature` reads, never the ability. */
   features?: readonly string[]
-  /** Group memberships, for a visibility predicate (D29). */
+  /** Group memberships, for a visibility predicate. */
   groupIds?: string[]
   /**
    * The same memberships WITH their type names — what `ctx.groups` answers, and what anything
@@ -479,7 +479,7 @@ export interface ToolCtxOptions extends BaseOptions {
   /** Who the run is FOR. A tool reads what its requester may read, never a tenant it chose itself. */
   userId?: string | null
   groupIds?: string[]
-  /** Admin-level requesters are not narrowed by visibility (D29). Defaults to `true`, as a system run. */
+  /** Admin-level requesters are not narrowed by visibility. Defaults to `true`, as a system run. */
   bypass?: boolean
   /** The CALLER's budget for one document window — an agent run's is far larger than a chat turn's. */
   maxDocumentChars?: number

@@ -1,5 +1,5 @@
 /**
- * `ctx.decide` (D37) — typed questions an agent asks about a state, answered with probabilities by
+ * `ctx.decide` — typed questions an agent asks about a state, answered with probabilities by
  * the tenant's decisions engine (TypeSafe's Jev, or the chat-model fallback) and recorded in
  * `agent_run_decisions`.
  *
@@ -111,7 +111,7 @@ export interface DecideDeps {
   /** Resolved on first use, not per attempt — an agent that never decides never resolves. */
   resolve: () => Promise<ResolvedDecisions>
   /**
-   * The run's meter (D39): checked before every FRESH ask (a replayed answer costs nothing) and
+   * The run's meter: checked before every FRESH ask (a replayed answer costs nothing) and
    * written after it — one `ai_usage` row, `agent:<key>:decide`, carrying the run id.
    */
   meter: RunMeter
@@ -212,7 +212,7 @@ export function createDecide(deps: DecideDeps): AgentDecide {
 }
 
 /**
- * `sift` and `pick` on top of any raw decide — the runtime's, or replay's (D38), which serves
+ * `sift` and `pick` on top of any raw decide — the runtime's, or replay's, which serves
  * recorded answers. One implementation of the shapes is what lets a replay rebuild the SAME
  * request, and so the same `questions_hash`, that the run asked.
  */

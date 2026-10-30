@@ -1,5 +1,5 @@
 /**
- * The eval kit (D33) — everything a suite imports. See docs/EVALS.md for the how-to and the
+ * The eval kit — everything a suite imports. See docs/EVALS.md for the how-to and the
  * `rf-evals` skill's `reference.md` for the judge catalogue.
  */
 export { agentHarness } from './agent-target'

@@ -1,5 +1,5 @@
 /**
- * Human-in-the-loop interrupts for agent runs (issue #17). An agent may suspend mid-run and wait
+ * Human-in-the-loop interrupts for agent runs. An agent may suspend mid-run and wait
  * for a person: "send this email?", "which of these three customers?", "what should the subject
  * line be?". The run parks durably (`agent_runs.status = 'awaiting_input'`, the Workflow instance
  * on `step.waitForEvent`) and resumes when somebody answers.
@@ -17,7 +17,7 @@
  *   `choice` with these options, not "some object".
  *
  * **This file must not import `@ag-ui/core`** — `apps/web/tests/config/shared-imports.test.ts`
- * confines that dependency to `ai/agui.ts`, which is where `toAguiInterrupt` lives. The kit's row
+ * confines that dependency to `ai/agui.ts`, which is where `toAguiInterrupt` lives. The row
  * shape is zod-native here; the AG-UI `Interrupt` is a projection of it.
  *
  * It must also not import `./agents`, even though an inbox row would read better with
@@ -29,9 +29,9 @@ import { paginationQuerySchema } from '../pagination'
 
 /**
  * A JSON Schema object as it travels on the wire. Loose on purpose: it is produced server-side by
- * `toolInputSchema()` (`services/ai/kit.ts`) and consumed by a renderer that falls back to a JSON
+ * `toolInputSchema()` (`services/ai/agent-loop.ts`) and consumed by a renderer that falls back to a JSON
  * textarea for anything it does not understand, so validating its internals here would buy nothing
- * and would pin the kit to one JSON Schema draft.
+ * and would pin the app to one JSON Schema draft.
  *
  * It is also what keeps zod off the client: the zod schema stays on the server, the DERIVED JSON
  * Schema is the contract — which is what holds the zod-3/zod-4 boundary.
@@ -361,7 +361,7 @@ export const agentRunInterruptSchema = z.object({
   reason: z.string(),
   message: z.string().nullable(),
   toolCallId: z.string().nullable(),
-  /** The JSON Schema an answer's payload must satisfy, for a client that has no kit code. */
+  /** The JSON Schema an answer's payload must satisfy, for a client that has no app-specific code. */
   responseSchema: jsonSchemaSchema.nullable(),
   spec: agentInterruptSpecSchema,
   status: agentInterruptStatusSchema,
@@ -378,7 +378,7 @@ export type AgentRunInterrupt = z.infer<typeof agentRunInterruptSchema>
 /**
  * `POST /api/agents/runs/:id/interrupts/:interruptId`. `status` is the decision and `payload` is
  * the answer — the same two fields AG-UI's own `ResumeEntry` carries, so a third-party client
- * answering a kit run needs no kit-specific vocabulary.
+ * answering a run needs no app-specific vocabulary.
  */
 export const resolveInterruptRequestSchema = z.object({
   status: z.enum(['resolved', 'cancelled']),
@@ -429,7 +429,7 @@ export type CreateSteeringNoteRequest = z.infer<typeof createSteeringNoteRequest
 
 /**
  * The `data` of a `steering` event row. It is an `agent_run_events` row and not a table, because a
- * note is immutable, positional and per-run — exactly what an append-only log is for (decision 4).
+ * note is immutable, positional and per-run — exactly what an append-only log is for.
  */
 export const steeringNoteDataSchema = z.object({
   text: z.string().min(1).max(STEERING_MAX_CHARS),

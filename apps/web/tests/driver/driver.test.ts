@@ -1,5 +1,5 @@
 /**
- * The CONFORMANCE suite for the driver seam (D35, tests/driver/CLAUDE.md): every test states one
+ * The CONFORMANCE suite for the driver seam (tests/driver/CLAUDE.md): every test states one
  * equivalence between `postgres` and `neon` and passes UNCHANGED under both. `pnpm test` runs this
  * project twice on a local target — under `postgres`, then under `neon` through the local proxy —
  * and once, under `neon`, on a real Neon gate branch. A test that fails under one driver is a hole

@@ -1,5 +1,5 @@
 /**
- * `POST /auth/dev-login` (D11): password-less login for local development ONLY — 404 unless
+ * `POST /auth/dev-login`: password-less login for local development ONLY — 404 unless
  * `APP_ENV === 'development'`. Creates or finds the user, bypasses sign-up gating (but not a
  * block), runs `onNoTenant` for a member-less user so single-tenant / open modes behave as a real
  * login would, and answers with the session response + cookie.

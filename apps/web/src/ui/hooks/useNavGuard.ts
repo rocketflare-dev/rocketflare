@@ -1,5 +1,5 @@
 /**
- * The ONE place nav visibility and route access are decided (D10). SideNav items and
+ * The ONE place nav visibility and route access are decided. SideNav items and
  * `RequireGuard` share the type and the hook, so a link never points at a page its reader may
  * not open. Cosmetic — the server enforces on every request.
  */
@@ -19,7 +19,7 @@ export type NavGuard =
   | 'globalAdmin'
   | { action: string; subject: string }
   /**
-   * A feature flag (D30): satisfied by `session.features`, NEVER by the ability. A global admin
+   * A feature flag: satisfied by `session.features`, NEVER by the ability. A global admin
    * holds `manage all`, which in CASL covers `access` on every `Feature:` subject, so an ability
    * check would show them a surface the deployment does not ship — and the server, which reads the
    * same array, would 404 the routes underneath it. See `src/permissions/features.ts`.

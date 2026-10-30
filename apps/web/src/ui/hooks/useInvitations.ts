@@ -1,5 +1,5 @@
 /**
- * Invitations (D9, D13): the tenant's outgoing list (admin), the public accept flow keyed by
+ * Invitations: the tenant's outgoing list (admin), the public accept flow keyed by
  * token, and MY pending invitations across tenants (banner).
  *
  * Contract note: `invitationSchema` carries neither the accept `token` nor the tenant's name, both

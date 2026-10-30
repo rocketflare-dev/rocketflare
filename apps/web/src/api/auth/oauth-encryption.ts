@@ -1,7 +1,7 @@
 /**
- * AES-256-GCM for OAuth tokens at rest (D12). Format `base64(iv ‖ ciphertext ‖ tag)`, 12-byte IV.
- * `OAUTH_ENCRYPTION_KEY` is REQUIRED for any write — there is no plaintext pass-through (the Node
- * reference app had one; it is exactly the kind of "dev convenience" that ships). The key may be a
+ * AES-256-GCM for OAuth tokens at rest. Format `base64(iv ‖ ciphertext ‖ tag)`, 12-byte IV.
+ * `OAUTH_ENCRYPTION_KEY` is REQUIRED for any write — there is no plaintext pass-through (it is
+ * exactly the kind of "dev convenience" that ships). The key may be a
  * base64 32-byte value or any ≥32-char string (SHA-256-derived), so `openssl rand -hex 32` works.
  * Web Crypto only.
  */
@@ -61,7 +61,7 @@ export async function decrypt(encrypted: string, key: string): Promise<string> {
   return new TextDecoder().decode(plain)
 }
 
-/** The configured key, or a 503 `oauth_encryption_key_missing` — checked at USE time (D3). */
+/** The configured key, or a 503 `oauth_encryption_key_missing` — checked at USE time. */
 export function requireEncryptionKey(cfg: AppConfig): string {
   if (!cfg.OAUTH_ENCRYPTION_KEY) {
     throw new ServiceUnavailableError(

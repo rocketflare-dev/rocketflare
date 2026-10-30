@@ -1,5 +1,5 @@
 /**
- * Schema invariants the migration must carry (D1, D12): the uniqueness rules auth depends on, and
+ * Schema invariants the migration must carry: the uniqueness rules auth depends on, and
  * `timestamptz` for every `*_at` column (a naive `timestamp` here is a bug the helper exists to
  * prevent). Catalog-driven so a hand-edited migration cannot drift from the schema silently.
  */
@@ -16,7 +16,7 @@ async function rows<T>(query: ReturnType<typeof sql>): Promise<T[]> {
 }
 
 describe('schema invariants', () => {
-  it('oauth_providers is UNIQUE on (provider, provider_user_id) — D12', async () => {
+  it('oauth_providers is UNIQUE on (provider, provider_user_id)', async () => {
     const constraints = await rows<{ def: string }>(sql`
       SELECT pg_get_constraintdef(oid) AS def FROM pg_constraint
       WHERE conrelid = 'public.oauth_providers'::regclass AND contype = 'u'`)

@@ -54,7 +54,7 @@ export function Modal({
       onClose={onClose}
     >
       {/* Column layout with a bounded height: the BODY scrolls, the title and actions stay put —
-          a long run timeline or a big output used to grow the box past the viewport. */}
+          otherwise a long run timeline or a big output grows the box past the viewport. */}
       <div className={`modal-box popover-surface p-0 flex flex-col max-h-[85vh] ${className}`}>
         {(title || closeButton) && (
           <div className="flex items-start justify-between gap-4 px-5 pt-5 shrink-0">

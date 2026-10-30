@@ -1,5 +1,5 @@
 /**
- * Development seed (D9, D25) — idempotent, run as `pnpm seed` (loads .dev.vars). Multi-tenant:
+ * Development seed — idempotent, run as `pnpm seed` (loads .dev.vars). Multi-tenant:
  * tenant `Acme` (`acme`) with owner/admin/member `*@example.test` (verified), a pending invitation
  * for `invited@example.test`, one API key printed ONCE (only its hash is stored) and a global
  * admin `admin@rocketflare.local`. `TENANCY_MODE=single`: the single tenant is named after `APP_NAME`
@@ -1092,7 +1092,7 @@ async function seedDemo(
     }
   }
 
-  // -- Groups (D29) ------------------------------------------------------------------------------
+  // -- Groups ------------------------------------------------------------------------------------
   // One type and two groups, with a document restricted to Finance — so the demo shows the feature
   // working rather than just existing: `member@example.test` is in Operations and cannot see it,
   // while `owner@` and `admin@` can. The analytics plugin's own `seedDemo` restricts a dashboard to
@@ -1788,8 +1788,8 @@ Before release, the export coordinator runs the pre-departure checklist — a ve
     `  usage   ${usageRows.length} ai_usage rows (≈ $${(costTotal / 100_000_000).toFixed(4)} estimated)`
   )
 
-  // -- Installed plugins (D31) -------------------------------------------------------------------
-  // After the kit's own blocks, so a plugin can reference the demo tenant, its people and its
+  // -- Installed plugins -------------------------------------------------------------------------
+  // After the built-in blocks, so a plugin can reference the demo tenant, its people and its
   // content. Same contract as everything above: fixed ids (`demoId` arrives already namespaced
   // with the plugin's id) and `onConflictDoNothing`, so re-running adds nothing. One plugin's
   // failure is reported and the rest still run — a half-seeded demo beats no demo.

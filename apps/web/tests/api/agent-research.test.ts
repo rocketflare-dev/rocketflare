@@ -1,11 +1,11 @@
 // @vitest-isolate
 // Mocks `@/api/services/ai/resolve` (the chat provider seam), so this file needs its own module registry.
 /**
- * `research-topic` (D7, D18) — the agentic agent, driven through the real runtime against Postgres
+ * `research-topic` — the agentic agent, driven through the real runtime against Postgres
  * with a `FakeChatClient` scripting the turns and a really-ingested document behind
  * `search_knowledge`: the loop searches, then calls the terminal `submit_answer`; the run succeeds
  * with the answer, the citation resolved to the real document, one `ai_usage` row per turn carrying
- * the run id (D39 — the runtime's meter, not the agent, writes them)
+ * the run id (the runtime's meter, not the agent, writes them)
  * and the tool events persisted. Also the two decisions in the agent's header: a citation naming a
  * document search never returned is DROPPED, and a loop that ends in prose is salvaged by one
  * forced `submit_answer` call instead of failing.
@@ -15,7 +15,7 @@
  * including the documents the first attempt's searches found, which are folded back out of the
  * stored transcript so their citations are not dropped as hallucinations.
  *
- * And the two human-in-the-loop shapes this agent exists to demonstrate (issue #17): `ask_human`
+ * And the two human-in-the-loop shapes this agent exists to demonstrate: `ask_human`
  * raising a `choice` interrupt from INSIDE a tool handler, and `index_finding` gated by
  * `Tool.requiresApproval` — where the point of the second is that the gate raises before the
  * handler ever runs, so a parked run has written nothing.
@@ -27,9 +27,9 @@ import { listArtifacts } from '@/api/services/agents/artifacts'
 import { listInterrupts, resolveInterrupt } from '@/api/services/agents/interrupts'
 import { enqueueRun, getRun, listEvents, resumeRun } from '@/api/services/agents/runs'
 import { claimStep, executeRun } from '@/api/services/agents/runtime'
+import { parseToolLoopCheckpoint } from '@/api/services/ai/agent-loop'
 import { AiError } from '@/api/services/ai/errors'
 import { ingestText } from '@/api/services/ai/ingest'
-import { parseToolLoopCheckpoint } from '@/api/services/ai/kit'
 import type { ChatClient } from '@/api/services/ai/types'
 import type { Logger } from '@/api/utils/core/logger'
 import { loadConfig } from '@/config'
@@ -167,7 +167,7 @@ describe('research-topic agent', () => {
     expect(output.turns).toBe(2)
 
     // The search really ran: the model was given the built-in tools and got hits back. An
-    // installed plugin's tools (D31) arrive on `ctx.tools` too, between the kit's three and the
+    // installed plugin's tools arrive on `ctx.tools` too, between the three built-in ones and the
     // agent's own, so the assertion is "these, in this order, all present" rather than equality.
     const offered = client.calls[0]?.tools?.map(t => t.name) ?? []
     expect(offered.slice(0, 3)).toEqual(['search_knowledge', 'get_document', 'list_documents'])
@@ -181,7 +181,7 @@ describe('research-topic agent', () => {
     expect(toolNames).toEqual(['search_knowledge', 'search_knowledge'])
     expect(events.some(e => e.type === 'text')).toBe(false)
 
-    // One row per turn (D39), each billed to the run under the agent's feature key.
+    // One row per turn, each billed to the run under the agent's feature key.
     const usage = await db.query.aiUsage.findMany({ where: eq(aiUsage.tenantId, tenant.id) })
     expect(usage).toHaveLength(2)
     expect(usage.every(u => u.feature === 'agent:research-topic' && u.agentRunId === runId)).toBe(
@@ -315,7 +315,7 @@ describe('research-topic agent', () => {
     // document found before the retry is not mistaken for a hallucination.
     expect(output.citations).toEqual([{ documentId: document.id, title: 'Onboarding handbook' }])
 
-    // One row per call that RETURNED, across both attempts (D39): attempt 1's turn was ledgered
+    // One row per call that RETURNED, across both attempts: attempt 1's turn was ledgered
     // the moment it came back, the failed call cost nothing, and the resumed attempt's turn is the
     // second row — the carried-forward checkpoint usage is never written again.
     const usage = await db.query.aiUsage.findMany({ where: eq(aiUsage.tenantId, tenant.id) })

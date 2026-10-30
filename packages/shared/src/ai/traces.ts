@@ -1,5 +1,5 @@
 /**
- * AI trace contracts (D32): the local span store (`ai_spans`) read back as traces, for
+ * AI trace contracts: the local span store (`ai_spans`) read back as traces, for
  * `GET /api/traces` (list) and `GET /api/traces/:id` (one trace's spans, parent-linked) and the
  * CLI's `rocketflare traces list|show`. A span is one unit of AI work — the agent/chat root, each
  * model call, each tool execution, retrieval and embeddings — with the GenAI attributes it was

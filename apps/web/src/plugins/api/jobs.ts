@@ -1,7 +1,7 @@
 /**
- * Background work: `JobCtx` for a queue handler, `CronCtx` for a scheduled task (D7, D31).
+ * Background work: `JobCtx` for a queue handler, `CronCtx` for a scheduled task.
  *
- * Both are the kit's own contexts with methods bolted on, and both keep the kit's two hard rules:
+ * Both are the core contexts with methods bolted on, and both keep the two hard core rules:
  *
  * - **Await everything. There is no `waitUntil` in a queue consumer.** A handler that defers work
  *   and returns has told the platform the message succeeded while the work is still running — and
@@ -55,7 +55,7 @@ export interface BackgroundMethods {
     key?: string
   ): DurableObjectStub<T>
   /**
-   * The feature keys one organisation has (D30) — what `auth.features` is on a request, resolved
+   * The feature keys one organisation has — what `auth.features` is on a request, resolved
    * here for a tenant named per call. A cron that fans out across every organisation reads this to
    * skip the ones whose flag is off; there is no user, so a user-bucketed rollout answers on the
    * tenant's override and the platform state alone.
@@ -111,7 +111,7 @@ export function backgroundMethods(ctx: PluginContext): BackgroundMethods {
   }
 }
 
-/** Adapt the kit's `JobContext`. The only place a plugin's job half names a kit internal. */
+/** Adapt the core `JobContext`. The only place a plugin's job half names a core internal. */
 export function jobCtx(ctx: JobContext): JobCtx {
   return {
     db: ctx.db,
@@ -122,7 +122,7 @@ export function jobCtx(ctx: JobContext): JobCtx {
   }
 }
 
-/** Adapt the kit's `TaskContext`. */
+/** Adapt the core `TaskContext`. */
 export function cronCtx(ctx: TaskContext): CronCtx {
   return {
     db: ctx.db,

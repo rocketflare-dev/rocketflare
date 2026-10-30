@@ -1,5 +1,5 @@
 /**
- * Magic-link login + sign-up gating (D9, D11, D12): request is always 202, opening the link
+ * Magic-link login + sign-up gating: request is always 202, opening the link
  * (GET) consumes nothing and lands on the confirm page, the confirm POST sets the cookie and
  * redirects, expired/invalid/consumed tokens redirect with an error code, SIGNUP_MODE decides new
  * users, BOOTSTRAP_ADMIN_EMAILS promotes on verified login.
