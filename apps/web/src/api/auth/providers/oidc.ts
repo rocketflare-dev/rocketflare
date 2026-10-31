@@ -233,15 +233,16 @@ export async function oidcProfile(
  * `client_id` and `post_logout_redirect_uri=<APP_URL>/login?signedOut=1`, or null when the issuer
  * advertises none (or discovery fails — logging out locally must never depend on the issuer).
  * No `id_token_hint`: the app does not keep id_tokens, so the issuer may ask for confirmation.
+ * The same URL also goes as `logout_uri`, which Amazon Cognito's `/logout` needs to return to the
+ * app (it ignores `post_logout_redirect_uri` and shows an error); other issuers ignore it.
  */
 export async function oidcEndSessionUrl(cfg: AppConfig): Promise<string | null> {
   const doc = await discoverOidc(cfg)
   if (!doc.end_session_endpoint) return null
   const url = new URL(doc.end_session_endpoint)
+  const returnTo = new URL('/login?signedOut=1', cfg.APP_URL).toString()
   url.searchParams.set('client_id', cfg.OIDC_CLIENT_ID ?? '')
-  url.searchParams.set(
-    'post_logout_redirect_uri',
-    new URL('/login?signedOut=1', cfg.APP_URL).toString()
-  )
+  url.searchParams.set('post_logout_redirect_uri', returnTo)
+  url.searchParams.set('logout_uri', returnTo)
   return url.toString()
 }
