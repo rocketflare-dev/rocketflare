@@ -286,7 +286,7 @@ describe('fieldsFromJsonSchema', () => {
     ])
     expect(fields?.[0].required).toBe(true)
     // A declared `title` wins; without one the property name is made presentable, because
-    // `zodToJsonSchema` emits no title and `topic` is not a label anybody wrote.
+    // `z.toJSONSchema` emits no title and `topic` is not a label anybody wrote.
     expect(fields?.map(f => f.label)).toEqual(['Topic', 'Notes', 'Count', 'Urgent', 'Style'])
     expect(fields?.[2]).toMatchObject({ min: 1, max: 9 })
     expect(fields?.[4].options?.map(o => o.value)).toEqual(['bullets', 'paragraph'])

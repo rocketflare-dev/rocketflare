@@ -9,22 +9,19 @@
  * the type lives inside the JSON — which is why this uses hono's generic `stream()` rather than
  * `streamSSE()` (whose `writeSSE` imposes its own framing and content type).
  *
- * **The protobuf schema of `@ag-ui/proto@0.0.59` is narrower than the event set**: it has no
- * message for `TOOL_CALL_RESULT`, and its encoder answers an EMPTY frame for one rather than
- * failing — which no client can decode. So {@link createAguiEncoder} drops an event the negotiated
- * transport cannot carry: a fidelity loss of the protobuf transport, pinned by a round-trip in
- * `tests/config/agui-contract.test.ts` so the day upstream gains the message, the list shrinks
- * deliberately.
+ * **The protobuf schema can lag the event set**: an `@ag-ui/proto` with no message for an event
+ * answers an EMPTY frame for it rather than failing — which no client can decode. So
+ * {@link createAguiEncoder} drops an event the negotiated transport cannot carry, listed in
+ * {@link PROTO_UNSUPPORTED_EVENTS} and pinned by a round-trip in `tests/config/agui-contract.test.ts`.
+ * `@ag-ui/proto@1.0.3` carries every event the kit emits, so the list is empty.
  */
 
 import { EventEncoder } from '@ag-ui/encoder'
 import type { KitAguiEvent, KitCustomEventName } from '@rocketflare/shared/ai/agui'
 import { AguiEventType } from '@rocketflare/shared/ai/agui'
 
-/** AG-UI events `@ag-ui/proto@0.0.59` has no message for; they are dropped on the protobuf wire. */
-export const PROTO_UNSUPPORTED_EVENTS: readonly KitAguiEvent['type'][] = [
-  AguiEventType.TOOL_CALL_RESULT,
-]
+/** AG-UI events the installed `@ag-ui/proto` has no message for; dropped on the protobuf wire. */
+export const PROTO_UNSUPPORTED_EVENTS: readonly KitAguiEvent['type'][] = []
 
 export interface AguiEncoder {
   /** What to answer `Content-Type` with — `text/event-stream` or the AG-UI protobuf media type. */

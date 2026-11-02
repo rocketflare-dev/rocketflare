@@ -12,7 +12,6 @@ import { type TokenUsage, tokenUsageSchema } from '@rocketflare/shared/ai/chat'
 import { aiProviderSchema } from '@rocketflare/shared/ai/config'
 import type { AgentInterruptSpec, JsonSchema } from '@rocketflare/shared/ai/interrupts'
 import { type ZodType, z } from 'zod'
-import { zodToJsonSchema } from 'zod-to-json-schema'
 import { traceToolCall } from '../../observability/context'
 import { AiError } from './errors'
 import {
@@ -130,10 +129,11 @@ export interface Tool<Input = unknown> {
  * without a cast. Both are `Record<string, unknown>`; naming it says which one it is.
  */
 export function toolInputSchema(schema: ZodType): JsonSchema {
-  const { $schema: _drop, ...json } = zodToJsonSchema(schema, { target: 'jsonSchema7' }) as Record<
-    string,
-    unknown
-  >
+  const { $schema: _drop, ...json } = z.toJSONSchema(schema, {
+    target: 'draft-7',
+    io: 'input',
+    unrepresentable: 'any',
+  }) as Record<string, unknown>
   return json
 }
 

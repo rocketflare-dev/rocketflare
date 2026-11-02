@@ -17,6 +17,6 @@ export interface AgentFormProps<Draft = unknown> {
 export interface AgentForm<Draft = unknown> {
   initial: Draft
   /** The shared input schema; its OUTPUT is what gets posted as `input`. */
-  schema: z.ZodType<unknown, z.ZodTypeDef, unknown>
+  schema: z.ZodType<unknown, unknown>
   Component: ComponentType<AgentFormProps<Draft>>
 }

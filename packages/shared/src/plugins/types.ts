@@ -20,14 +20,14 @@
  * `apps/web/tests/config/shared-imports.test.ts` checks all three spellings.
  *
  * `JobVariant` is spelled locally, and not because of that rule: zod's own
- * `ZodDiscriminatedUnionOption<'type'>` IS the constraint `jobInputSchema` puts on a variant, so
+ * `ZodObject<{ type: ZodTypeAny } & ZodRawShape>` IS the constraint `jobInputSchema` puts on a variant, so
  * naming it here rejects a malformed one where the plugin author is looking.
  *
  * Everything a plugin keys is namespaced with its `id` (tables `<id>_*`, job types `<id>.x`,
  * subjects, prompt/agent/feature keys, query-key roots `<id>:…`, the API prefix `/api/<id>`), so
  * two plugins installed in one app cannot collide and the host can always say which one owns a row.
  */
-import type { TypeOf, ZodDiscriminatedUnionOption, ZodRawShape } from 'zod'
+import type { TypeOf, ZodObject, ZodRawShape, ZodTypeAny } from 'zod'
 import type { FeatureDefinition } from '../features'
 
 /**
@@ -50,7 +50,7 @@ export function pluginNamespace(id: string): string {
  * discriminated-union option type, so a variant that would not compose into `jobInputSchema` is
  * rejected here, where the plugin author is looking.
  */
-export type JobVariant = ZodDiscriminatedUnionOption<'type'>
+export type JobVariant = ZodObject<{ type: ZodTypeAny } & ZodRawShape>
 
 export interface SharedPlugin {
   /** Matches `PLUGIN_ID_RE`; the namespace for everything below. */
@@ -141,5 +141,5 @@ export type FeatureKeyOf<S extends SharedPlugin> = Extract<
 
 /** The job types one plugin declares — what its `ServerPlugin.jobHandlers` must cover. */
 export type JobTypeOf<S extends SharedPlugin> = TypeOf<
-  NonNullable<DeclaredBy<S, 'jobs'>>[number]
->['type']
+  NonNullable<DeclaredBy<S, 'jobs'>>[number]['shape']['type']
+>

@@ -584,9 +584,9 @@ from the Models API; no `effort` setting (thinking is on/off — on means the mo
 5.5's > 100k-token price tier is not modelled (`pricing.ts` uses the ≤ 100k rate); OpenAI tools are
 sent non-strict; an assistant message's `phase` is not replayed to the Responses API;
 no document summary or thumbnail (the card is an excerpt; Workers cannot rasterise);
-`charOffset` does not map to PDF pages; no frontend tools in chat, no `STATE_DELTA`; protobuf drops
-`TOOL_CALL_RESULT` and has no stream cursor; `@ag-ui/core` is 0.0.x (pin + contract test are the
-mitigation); no token-level streaming for runs (would need a per-run DO); char-based history budget
+`charOffset` does not map to PDF pages; no frontend tools in chat, no `STATE_DELTA`; protobuf has no
+stream cursor; a cancelled run emits nothing rather than AG-UI 1.0's `RUN_FINISHED` `cancelled`
+outcome; no token-level streaming for runs (would need a per-run DO); char-based history budget
 not derived from the model; sliding window defeats prompt caching on long threads; `enqueueRun`
 does not pre-resolve the client; Workers AI forced tools on off-list models are best-effort; no
 rerank, no generated `tsvector`; HITL asks cannot be amended, have no

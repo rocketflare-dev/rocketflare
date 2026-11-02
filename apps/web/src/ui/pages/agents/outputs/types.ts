@@ -18,7 +18,7 @@ export interface AgentOutputProps<Output = unknown> {
 }
 
 export interface AgentOutput<Output = unknown> {
-  schema: z.ZodType<Output, z.ZodTypeDef, unknown>
+  schema: z.ZodType<Output, unknown>
   Component: ComponentType<AgentOutputProps<Output>>
   /**
    * Artifacts derived from the output for an agent that declares none of its own. They are shaped

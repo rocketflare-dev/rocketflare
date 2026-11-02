@@ -189,7 +189,9 @@ describe('projectRunToAgui', () => {
     const result = out.find(e => e.type === 'TOOL_CALL_RESULT')
     // The result refers back to the CALL's id, not its own row.
     expect(result?.type === 'TOOL_CALL_RESULT' && result.toolCallId).toBe(start.id)
-    expect(JSON.parse(result?.type === 'TOOL_CALL_RESULT' ? result.content : '{}')).toMatchObject({
+    const content = result?.type === 'TOOL_CALL_RESULT' ? result.content : '{}'
+    expect(typeof content).toBe('string')
+    expect(JSON.parse(content as string)).toMatchObject({
       isError: false,
       result: { hits: 2 },
     })

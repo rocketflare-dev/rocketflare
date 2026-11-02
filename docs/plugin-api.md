@@ -828,7 +828,7 @@ What a plugin's CONTRACT module imports: the error envelope, pagination, `Shared
 - `type AgentKeyOf = NonNullable<DeclaredBy<S, 'agentKeys'>>[number]`
   The agent keys one plugin declares — what its `ServerPlugin.agents` must cover, exhaustively.
 - `type ApiErrorBody = z.infer<typeof apiErrorSchema>`
-- `const apiErrorSchema: z.ZodObject<{ error: z.ZodString; statusCode: z.ZodNumber; code: z.ZodOptional<z.ZodString>; details: z.ZodOptional<z.ZodUnknown>; }, "strip", z.ZodTypeAny, { error: string; statusCode: number; code?: string \| undefined; details?: unknown; }, { error: string; statusCode: number; code?: string \| unde… (truncated)`
+- `const apiErrorSchema: z.ZodObject<{ error: z.ZodString; statusCode: z.ZodNumber; code: z.ZodOptional<z.ZodString>; details: z.ZodOptional<z.ZodUnknown>; }, z.core.$strip>`
   The ONE error envelope every API response uses — from `app.onError`, `notFound`, the zValidator hook, and `ApiError` thrown in routes. The UI's `api-client.ts` parses this into…
 - `type DeclaredBy = Extract<P, Record<K, unknown>> extends infer Declaring ? Declaring extends Record<K, unknown> ? Declaring[K] : never : never`
   The value of an OPTIONAL `SharedPlugin` field across the whole barrel, skipping the plugins that do not declare it.
@@ -847,18 +847,18 @@ What a plugin's CONTRACT module imports: the error envelope, pagination, `Shared
   The envelope narrowed to one `type` — what a handler receives.
 - `type JobType = JobEnvelope['type']`
   Every job type this app knows, derived from the variants rather than kept beside them.
-- `type JobTypeOf = TypeOf< NonNullable<DeclaredBy<S, 'jobs'>>[number] >['type']`
+- `type JobTypeOf = TypeOf< NonNullable<DeclaredBy<S, 'jobs'>>[number]['shape']['type'] >`
   The job types one plugin declares — what its `ServerPlugin.jobHandlers` must cover.
-- `type JobVariant = ZodDiscriminatedUnionOption<'type'>`
+- `type JobVariant = ZodObject<{ type: ZodTypeAny } & ZodRawShape>`
   One job envelope variant: a zod object whose `type` is the discriminant. Spelled as zod's own discriminated-union option type, so a variant that would not compose into…
 - `type MembershipRole = z.infer<typeof membershipRoleSchema>`
 - `function paginatedResponse<T extends z.ZodTypeAny>(item: T)`
   `paginatedResponse(itemSchema)` → `{ items: Item[], pagination: PaginationMeta }`
 - `function paginationMeta(page: number, pageSize: number, total: number): PaginationMeta`
 - `type PaginationMeta = z.infer<typeof paginationMetaSchema>`
-- `const paginationMetaSchema: z.ZodObject<{ page: z.ZodNumber; pageSize: z.ZodNumber; total: z.ZodNumber; totalPages: z.ZodNumber; }, "strip", z.ZodTypeAny, { page: number; pageSize: number; total: number; totalPages: number; }, { page: number; pageSize: number; total: number; totalPages: number; }>`
+- `const paginationMetaSchema: z.ZodObject<{ page: z.ZodNumber; pageSize: z.ZodNumber; total: z.ZodNumber; totalPages: z.ZodNumber; }, z.core.$strip>`
 - `type PaginationQuery = z.infer<typeof paginationQuerySchema>`
-- `const paginationQuerySchema: z.ZodObject<{ page: z.ZodDefault<z.ZodNumber>; pageSize: z.ZodDefault<z.ZodNumber>; }, "strip", z.ZodTypeAny, { page: number; pageSize: number; }, { page?: number \| undefined; pageSize?: number \| undefined; }>`
+- `const paginationQuerySchema: z.ZodObject<{ page: z.ZodDefault<z.ZodCoercedNumber<unknown>>; pageSize: z.ZodDefault<z.ZodCoercedNumber<unknown>>; }, z.core.$strip>`
   Page-based pagination (page-based). Query: `?page=1&pageSize=25`.
 - `const PLUGIN_ID_RE: RegExp`
   `^[a-z][a-z0-9-]*$` and never containing `rocketflare`: an id carrying the app's original name would be rewritten with everything else when the app is renamed.
@@ -1515,7 +1515,7 @@ nothing in the comparison that can throw.
 @rocketflare/shared/plugins/api :: type :: Actions :: type Actions = (typeof ACTIONS)[number]
 @rocketflare/shared/plugins/api :: type :: AgentKeyOf :: type AgentKeyOf = NonNullable<DeclaredBy<S, 'agentKeys'>>[number]
 @rocketflare/shared/plugins/api :: type :: ApiErrorBody :: type ApiErrorBody = z.infer<typeof apiErrorSchema>
-@rocketflare/shared/plugins/api :: const :: apiErrorSchema :: const apiErrorSchema: z.ZodObject<{ error: z.ZodString; statusCode: z.ZodNumber; code: z.ZodOptional<z.ZodString>; details: z.ZodOptional<z.ZodUnknown>; }, "strip", z.ZodTypeAny, { error: string; statusCode: number; code?: string | undefined; details?: unknown; }, { error: string; statusCode: number; code?: string | unde… (truncated)
+@rocketflare/shared/plugins/api :: const :: apiErrorSchema :: const apiErrorSchema: z.ZodObject<{ error: z.ZodString; statusCode: z.ZodNumber; code: z.ZodOptional<z.ZodString>; details: z.ZodOptional<z.ZodUnknown>; }, z.core.$strip>
 @rocketflare/shared/plugins/api :: type :: DeclaredBy :: type DeclaredBy = Extract<P, Record<K, unknown>> extends infer Declaring ? Declaring extends Record<K, unknown> ? Declaring[K] : never : never
 @rocketflare/shared/plugins/api :: const :: ERROR_CODES :: const ERROR_CODES: { readonly validationFailed: "validation_failed"; readonly unauthorized: "unauthorized"; readonly sessionExpired: "session_expired"; readonly forbidden: "forbidden"; readonly notFound: "not_found"; readonly conflict: "conflict"; readonly rateLimited: "rate_limited"; readonly pendingApproval: "pendin… (truncated)
 @rocketflare/shared/plugins/api :: type :: ErrorCode :: type ErrorCode = (typeof ERROR_CODES)[keyof typeof ERROR_CODES]
@@ -1528,15 +1528,15 @@ nothing in the comparison that can throw.
 @rocketflare/shared/plugins/api :: type :: JobInput :: type JobInput = z.infer<typeof jobInputSchema>
 @rocketflare/shared/plugins/api :: type :: JobOf :: type JobOf = Extract<JobEnvelope, { type: T }>
 @rocketflare/shared/plugins/api :: type :: JobType :: type JobType = JobEnvelope['type']
-@rocketflare/shared/plugins/api :: type :: JobTypeOf :: type JobTypeOf = TypeOf< NonNullable<DeclaredBy<S, 'jobs'>>[number] >['type']
-@rocketflare/shared/plugins/api :: type :: JobVariant :: type JobVariant = ZodDiscriminatedUnionOption<'type'>
+@rocketflare/shared/plugins/api :: type :: JobTypeOf :: type JobTypeOf = TypeOf< NonNullable<DeclaredBy<S, 'jobs'>>[number]['shape']['type'] >
+@rocketflare/shared/plugins/api :: type :: JobVariant :: type JobVariant = ZodObject<{ type: ZodTypeAny } & ZodRawShape>
 @rocketflare/shared/plugins/api :: type :: MembershipRole :: type MembershipRole = z.infer<typeof membershipRoleSchema>
 @rocketflare/shared/plugins/api :: function :: paginatedResponse :: function paginatedResponse<T extends z.ZodTypeAny>(item: T)
 @rocketflare/shared/plugins/api :: function :: paginationMeta :: function paginationMeta(page: number, pageSize: number, total: number): PaginationMeta
 @rocketflare/shared/plugins/api :: type :: PaginationMeta :: type PaginationMeta = z.infer<typeof paginationMetaSchema>
-@rocketflare/shared/plugins/api :: const :: paginationMetaSchema :: const paginationMetaSchema: z.ZodObject<{ page: z.ZodNumber; pageSize: z.ZodNumber; total: z.ZodNumber; totalPages: z.ZodNumber; }, "strip", z.ZodTypeAny, { page: number; pageSize: number; total: number; totalPages: number; }, { page: number; pageSize: number; total: number; totalPages: number; }>
+@rocketflare/shared/plugins/api :: const :: paginationMetaSchema :: const paginationMetaSchema: z.ZodObject<{ page: z.ZodNumber; pageSize: z.ZodNumber; total: z.ZodNumber; totalPages: z.ZodNumber; }, z.core.$strip>
 @rocketflare/shared/plugins/api :: type :: PaginationQuery :: type PaginationQuery = z.infer<typeof paginationQuerySchema>
-@rocketflare/shared/plugins/api :: const :: paginationQuerySchema :: const paginationQuerySchema: z.ZodObject<{ page: z.ZodDefault<z.ZodNumber>; pageSize: z.ZodDefault<z.ZodNumber>; }, "strip", z.ZodTypeAny, { page: number; pageSize: number; }, { page?: number | undefined; pageSize?: number | undefined; }>
+@rocketflare/shared/plugins/api :: const :: paginationQuerySchema :: const paginationQuerySchema: z.ZodObject<{ page: z.ZodDefault<z.ZodCoercedNumber<unknown>>; pageSize: z.ZodDefault<z.ZodCoercedNumber<unknown>>; }, z.core.$strip>
 @rocketflare/shared/plugins/api :: const :: PLUGIN_ID_RE :: const PLUGIN_ID_RE: RegExp
 @rocketflare/shared/plugins/api :: function :: pluginNamespace :: function pluginNamespace(id: string): string
 @rocketflare/shared/plugins/api :: type :: PromptKeyOf :: type PromptKeyOf = NonNullable<DeclaredBy<S, 'promptKeys'>>[number]

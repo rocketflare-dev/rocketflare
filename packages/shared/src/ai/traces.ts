@@ -43,7 +43,7 @@ export const traceSpanSchema = z.object({
   inputTokens: z.number().int().nullable(),
   outputTokens: z.number().int().nullable(),
   toolName: z.string().nullable(),
-  attributes: z.record(z.unknown()),
+  attributes: z.record(z.string(), z.unknown()),
   content: z.object({ input: z.unknown().optional(), output: z.unknown().optional() }).nullable(),
 })
 export type TraceSpan = z.infer<typeof traceSpanSchema>

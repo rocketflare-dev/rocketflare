@@ -70,8 +70,12 @@ export const createExampleNoteRequestSchema = z.object({
 })
 export type CreateExampleNoteRequest = z.infer<typeof createExampleNoteRequestSchema>
 
-export const updateExampleNoteRequestSchema = createExampleNoteRequestSchema
-  .partial()
+// Not `.partial()` of the create schema: zod 4 still applies `body`'s default to an omitted field.
+export const updateExampleNoteRequestSchema = z
+  .object({
+    title: createExampleNoteRequestSchema.shape.title.optional(),
+    body: createExampleNoteRequestSchema.shape.body.unwrap().optional(),
+  })
   .refine(body => Object.keys(body).length > 0, { message: 'Nothing to update' })
 export type UpdateExampleNoteRequest = z.infer<typeof updateExampleNoteRequestSchema>
 

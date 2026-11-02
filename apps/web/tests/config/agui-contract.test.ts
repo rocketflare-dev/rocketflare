@@ -284,9 +284,9 @@ describe('a parked run’s interrupt outcome', () => {
 
 describe('the protobuf transport', () => {
   it('round-trips every emitted event except the ones declared unsupported', () => {
-    // A round trip, not "does `encode` throw": `@ag-ui/proto@0.0.59` has no message for
-    // TOOL_CALL_RESULT, and its encoder answers an EMPTY frame for it rather than failing — which
-    // no client can decode. That is why the encoder drops those events instead of writing them.
+    // A round trip, not "does `encode` throw": a `@ag-ui/proto` with no message for an event
+    // answers an EMPTY frame for it rather than failing — which no client can decode. That is why
+    // the encoder drops those events instead of writing them.
     const unsupported = Object.entries(SAMPLES)
       .filter(([, sample]) => {
         try {
@@ -299,6 +299,12 @@ describe('the protobuf transport', () => {
       .map(([type]) => type)
     // When upstream gains the missing message, this fails and the list shrinks deliberately.
     expect(unsupported.sort()).toEqual([...PROTO_UNSUPPORTED_EVENTS].sort())
+  })
+
+  it('carries a TOOL_CALL_RESULT whole, now that protobuf writes it', () => {
+    expect(decodeProto(encodeProto(SAMPLES.TOOL_CALL_RESULT as never))).toMatchObject(
+      SAMPLES.TOOL_CALL_RESULT as object
+    )
   })
 })
 
