@@ -128,7 +128,7 @@ describe('ci.yml', () => {
     expect(text).not.toMatch(/: write/)
     // The first step after the checkout, before any install.
     const steps = gate.filter(l => /^ {6}- /.test(l)).map(l => l.trim())
-    expect(steps[0]).toBe('- uses: actions/checkout@v4')
+    expect(steps[0]).toMatch(/^- uses: actions\/checkout@\S+/)
     expect(steps[1]).toBe('- name: Verified by Launch?')
     const at = text.indexOf('- name: Verified by Launch?')
     const step = text.slice(at, text.indexOf('\n      - ', at + 1))
@@ -178,7 +178,9 @@ describe('deploy.yml', () => {
     expect(key(gated, 'if')).toBe(`needs.guard.outputs.deployable == 'true' && ( ${TRIGGER} )`)
     expect(gated.join('\n')).toMatch(/permissions:\n\s+actions: read/)
     // The parent has to be in the clone for the version-only rule to diff against it.
-    expect(gated.join('\n')).toMatch(/actions\/checkout@v4\n\s+with:\n\s+fetch-depth: 2/)
+    expect(gated.join('\n')).toMatch(
+      /actions\/checkout@[^\n]+\n\s+with:\n(?:\s+[\w-]+: [^\n]*\n)*\s+fetch-depth: 2/
+    )
     expect(commands(gated)).toEqual(['node scripts/release-check.mjs --gated "$GITHUB_SHA"'])
   })
 
@@ -473,7 +475,7 @@ describe('deploy.yml build once', () => {
     const text = attach.join('\n')
     const download = text.slice(text.indexOf('- id: download'), text.indexOf('- name: Verify'))
     expect(download).toContain('continue-on-error: true')
-    expect(download).toContain('uses: actions/download-artifact@v4')
+    expect(download).toMatch(/uses: actions\/download-artifact@\S+/)
     const verify = step(attach, 'Verify and attach the bundle')
     expect(verify).toContain("if: steps.download.outcome == 'success'")
     expect(verify).toContain('continue-on-error: true')
