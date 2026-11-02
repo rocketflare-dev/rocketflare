@@ -7,7 +7,7 @@
   "type": "module",
   "packageManager": "pnpm@10.34.9",
   "engines": {
-    "node": ">=24"
+    "node": ">=26"
   },
   "scripts": {
     "dev": "pnpm --silent --filter @rocketflare/web dev",

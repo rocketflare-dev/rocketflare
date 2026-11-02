@@ -368,9 +368,9 @@ async function preflight(flags: Flags): Promise<void> {
   log(`app: ${app} (${appUpper}_RATE_LIMIT, ${app}-jobs, ${app}-files, ${app}-agent-run)`)
 
   const major = Number(process.versions.node.split('.')[0])
-  if (major < 24)
+  if (major < 26)
     throw new ProvisionError(
-      `node ${process.versions.node} — the kit needs Node 24 (nvm install reads .nvmrc)`
+      `node ${process.versions.node} — the kit needs Node 26 (nvm install reads .nvmrc)`
     )
   log(`node: v${process.versions.node}`)
 
