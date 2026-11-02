@@ -153,6 +153,7 @@ export async function chatClientFromRow(
     provider: row.provider,
     apiKey: await credentialOf(row, cfg),
     baseUrl: row.baseUrl,
+    apiVersion: row.apiVersion,
     defaults: { serviceTier: row.serviceTier, thinking: row.thinking },
     ai: env.AI,
     fetch: fetchImpl,

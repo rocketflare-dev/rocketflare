@@ -16,7 +16,7 @@ import { createChatClient, createEmbeddingsClient, type FetchLike } from './clie
 import type { DecisionClient } from './decisions/types'
 import { createTypesafeClient } from './decisions/typesafe'
 import { AiError, describeAiError, normalizeAiError } from './errors'
-import { providerSupportsScope } from './providers'
+import { providerInfo, providerSupportsScope } from './providers'
 import { chatClientFromRow, decisionsClientFromRow, embeddingsClientFromRow } from './resolve'
 import type { AiEnv, ChatClient, EmbeddingsClient } from './types'
 
@@ -82,6 +82,12 @@ async function candidateFor(
       'provider_scope_unsupported'
     )
   }
+  if (input.apiVersion && !providerInfo(input.provider).supportsApiVersion) {
+    throw new BadRequestError(
+      `${input.provider} takes no anthropic-version override`,
+      'api_version_unsupported'
+    )
+  }
   const common = {
     provider: input.provider,
     apiKey: input.apiKey,
@@ -108,7 +114,7 @@ async function candidateFor(
         scope: 'chat',
         provider: input.provider,
         model: input.model,
-        chat: createChatClient({ ...common, ai: env.AI }),
+        chat: createChatClient({ ...common, apiVersion: input.apiVersion, ai: env.AI }),
       }
     : {
         scope: 'embeddings',

@@ -177,8 +177,10 @@ A `CUSTOM kit.notice` renders
   one. `PROVIDER_PRESETS`/`presetsFor`, `DEFAULT_MODELS`, `THINKING_*` come from
   `@rocketflare/shared/ai/config`. The label is the upsert key `(tenant, scope, label)` — read-only on
   edit (renaming would create a second row). `apiKey` is write-only: blank on edit keeps the stored
-  key (`hasCredential`); switching provider on edit requires a new key. `serviceTier: ''` clears.
-  "Set default" re-posts the row with `isDefault: true` and no `apiKey`.
+  key (`hasCredential`); switching provider on edit requires a new key. `serviceTier: ''` and
+  `apiVersion: ''` clear (the API version select is shown for `supportsApiVersion` only).
+  "Set default" re-posts the row with `isDefault: true` and no `apiKey`, so it must carry every
+  stored field a save would otherwise clear.
 - `/settings` is behind `RequireGuard guard="admin"`, so the member (`read AiConfig` /
   `read Prompt`) read-only rendering of the AI and Prompts tabs is exercised component-level in
   tests only; a member has no nav path to it.

@@ -1,7 +1,8 @@
 /**
  * Settings → AI: readiness `none` shows the set-up CTA; adding a config validates with the
  * shared schema and posts the exact upsert body; preset chips fill base URL + model; a member sees
- * readiness and the list but no write controls; delete confirms then calls DELETE.
+ * readiness and the list but no write controls; delete confirms then calls DELETE; a compatible
+ * vendor's API version is posted, and kept when its row is made the default.
  */
 import { fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -29,6 +30,7 @@ const PROVIDERS = [
     needsBaseUrl: false,
     supportsThinking: true,
     supportsServiceTier: true,
+    supportsApiVersion: false,
     defaultModel: 'claude-haiku-5-5',
     presets: [],
     suggestedModels: { chat: ['claude-haiku-5-5', 'claude-sonnet-5-5'], embeddings: [] },
@@ -41,6 +43,7 @@ const PROVIDERS = [
     needsBaseUrl: true,
     supportsThinking: true,
     supportsServiceTier: true,
+    supportsApiVersion: true,
     defaultModel: 'accounts/fireworks/models/gpt-oss-120b',
     presets: [],
     suggestedModels: { chat: [], embeddings: [] },
@@ -53,6 +56,7 @@ const PROVIDERS = [
     needsBaseUrl: false,
     supportsThinking: false,
     supportsServiceTier: false,
+    supportsApiVersion: false,
     defaultModel: '@cf/baai/bge-m3',
     presets: [],
     suggestedModels: { chat: [], embeddings: ['@cf/baai/bge-m3'] },
@@ -79,6 +83,7 @@ const prodConfig = {
   hasCredential: true,
   thinking: { enabled: false },
   serviceTier: null,
+  apiVersion: null,
   createdAt: now,
   updatedAt: now,
 }
@@ -163,6 +168,56 @@ describe('Settings → AI', () => {
     // An empty label takes the preset's name
     expect(screen.getByLabelText('Label')).toHaveValue('Fireworks AI')
     expect(screen.getByText(/fully qualified/)).toBeInTheDocument()
+  })
+
+  it('offers an API version for a compatible vendor only, and posts the one chosen', async () => {
+    const fetchMock = mount({ 'POST /api/ai/config': { ...prodConfig } })
+    fireEvent.click(await screen.findByRole('button', { name: 'Add chat provider' }))
+    expect(screen.queryByLabelText('API version')).not.toBeInTheDocument()
+
+    fireEvent.change(screen.getByLabelText('Provider'), {
+      target: { value: 'anthropic_compatible' },
+    })
+    expect(screen.getByLabelText('API version')).toHaveValue('')
+    fireEvent.change(screen.getByLabelText('API version'), { target: { value: '2023-06-01' } })
+    fireEvent.change(screen.getByLabelText('Label'), { target: { value: 'Vendor' } })
+    fireEvent.change(screen.getByLabelText('Base URL'), {
+      target: { value: 'https://compat.test/inference' },
+    })
+    fireEvent.change(screen.getByLabelText(/API key/), { target: { value: 'fw-token' } })
+    fireEvent.submit(document.getElementById('ai-config-form') as HTMLFormElement)
+
+    await waitFor(() =>
+      expect(requestBody(fetchMock, 'POST /api/ai/config')).toMatchObject({
+        provider: 'anthropic_compatible',
+        apiVersion: '2023-06-01',
+      })
+    )
+  })
+
+  it('making a compatible row the default keeps its API version', async () => {
+    const vendor = {
+      ...prodConfig,
+      provider: 'anthropic_compatible',
+      label: 'Vendor',
+      baseUrl: 'https://compat.test/inference',
+      model: 'accounts/x/models/y',
+      isDefault: false,
+      apiVersion: '2023-06-01',
+    }
+    const fetchMock = mount({
+      '/api/ai/config': { items: [prodConfig, vendor] },
+      'POST /api/ai/config': { ...vendor, isDefault: true },
+    })
+    expect(await screen.findByText('Vendor')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Set default' }))
+    await waitFor(() =>
+      expect(requestBody(fetchMock, 'POST /api/ai/config')).toMatchObject({
+        label: 'Vendor',
+        isDefault: true,
+        apiVersion: '2023-06-01',
+      })
+    )
   })
 
   it("offers a provider's models as a dropdown, closed for Workers AI and open elsewhere", async () => {

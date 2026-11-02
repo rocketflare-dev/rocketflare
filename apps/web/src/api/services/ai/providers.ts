@@ -27,6 +27,8 @@ export interface ProviderInfo {
   supportsThinking: boolean
   /** Accepts `service_tier`. */
   supportsServiceTier: boolean
+  /** Takes an `anthropic-version` override (`ANTHROPIC_API_VERSIONS`). */
+  supportsApiVersion: boolean
   defaultModel: string
   presets: readonly ProviderPreset[]
   /**
@@ -89,6 +91,7 @@ export const PROVIDERS: readonly ProviderInfo[] = [
     needsBaseUrl: false,
     supportsThinking: true,
     supportsServiceTier: true,
+    supportsApiVersion: false,
     defaultModel: DEFAULT_MODELS.anthropic,
     presets: [],
     suggestedModels: {
@@ -107,6 +110,7 @@ export const PROVIDERS: readonly ProviderInfo[] = [
     // Fireworks' GLM/Kimi models reason unless told not to — the disabled default is real money.
     supportsThinking: true,
     supportsServiceTier: true,
+    supportsApiVersion: true,
     defaultModel: DEFAULT_MODELS.anthropic_compatible,
     presets: presetsFor('anthropic_compatible'),
     suggestedModels: {
@@ -128,6 +132,7 @@ export const PROVIDERS: readonly ProviderInfo[] = [
     // Off = the model's lowest `reasoning.effort`; on = its default. Older models take neither.
     supportsThinking: true,
     supportsServiceTier: false,
+    supportsApiVersion: false,
     defaultModel: DEFAULT_MODELS.openai,
     presets: [],
     suggestedModels: {
@@ -146,6 +151,7 @@ export const PROVIDERS: readonly ProviderInfo[] = [
     needsBaseUrl: true,
     supportsThinking: false,
     supportsServiceTier: false,
+    supportsApiVersion: false,
     defaultModel: DEFAULT_MODELS.openai_compatible,
     presets: presetsFor('openai_compatible'),
     suggestedModels: { chat: [], embeddings: [], decisions: [] },
@@ -158,6 +164,7 @@ export const PROVIDERS: readonly ProviderInfo[] = [
     needsBaseUrl: false,
     supportsThinking: false,
     supportsServiceTier: false,
+    supportsApiVersion: false,
     defaultModel: DEFAULT_MODELS.workers_ai,
     presets: [],
     // Workers AI ids are a closed catalog, so the picker offers the list and nothing else — unlike
@@ -180,6 +187,7 @@ export const PROVIDERS: readonly ProviderInfo[] = [
     needsBaseUrl: false,
     supportsThinking: false,
     supportsServiceTier: false,
+    supportsApiVersion: false,
     defaultModel: DEFAULT_MODELS.typesafe,
     presets: [],
     suggestedModels: { chat: [], embeddings: [], decisions: ['jev-latest'] },

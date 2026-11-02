@@ -6,7 +6,12 @@
  * default before setting the new one inside a transaction. `services/ai/resolve.ts` is the ONLY
  * runtime reader; feature code never queries this table.
  */
-import type { AiProvider, AiScope, ThinkingSetting } from '@rocketflare/shared/ai/config'
+import type {
+  AiProvider,
+  AiScope,
+  AnthropicApiVersion,
+  ThinkingSetting,
+} from '@rocketflare/shared/ai/config'
 import { relations, sql } from 'drizzle-orm'
 import {
   boolean,
@@ -37,6 +42,11 @@ export const AI_SCOPE_VALUES = [
   'decisions',
 ] as const satisfies readonly AiScope[]
 
+/** Mirrors `ANTHROPIC_API_VERSIONS` in `@rocketflare/shared/ai/config`. */
+export const ANTHROPIC_API_VERSION_VALUES = [
+  '2023-06-01',
+] as const satisfies readonly AnthropicApiVersion[]
+
 export const aiConfigs = pgTable(
   'ai_configs',
   {
@@ -56,6 +66,8 @@ export const aiConfigs = pgTable(
     thinking: jsonb('thinking').$type<ThinkingSetting>().notNull().default({ enabled: false }),
     /** Provider service tier, verbatim; null = omit the field. */
     serviceTier: text('service_tier'),
+    /** `anthropic-version` override for an `anthropic_compatible` vendor; null = the SDK's. */
+    apiVersion: text('api_version', { enum: ANTHROPIC_API_VERSION_VALUES }),
     ...timestamps(),
   },
   table => [

@@ -49,6 +49,7 @@ export function toAiConfig(row: AiConfigRow): AiConfig {
     hasCredential: row.apiKeyEnc !== null,
     thinking: row.thinking,
     serviceTier: row.serviceTier,
+    apiVersion: row.apiVersion,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   }
@@ -91,6 +92,12 @@ function validateUpsert(body: UpsertAiConfigRequest, existing: AiConfigRow | und
     throw new BadRequestError(
       `${info.name} does not offer service tiers`,
       'service_tier_unsupported'
+    )
+  }
+  if (body.apiVersion && !info.supportsApiVersion) {
+    throw new BadRequestError(
+      `${info.name} takes no anthropic-version override`,
+      'api_version_unsupported'
     )
   }
 }
@@ -192,6 +199,7 @@ aiConfigRouter.post('/', validate('json', upsertAiConfigRequestSchema), async c 
     model: body.model,
     thinking: body.thinking ?? { enabled: false },
     serviceTier: body.serviceTier ? body.serviceTier : null,
+    apiVersion: body.apiVersion ? body.apiVersion : null,
     ...(apiKeyEnc !== undefined ? { apiKeyEnc } : dropKey ? { apiKeyEnc: null } : {}),
   }
 

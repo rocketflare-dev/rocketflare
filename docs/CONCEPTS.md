@@ -366,6 +366,8 @@ Server: `api/services/{ai,agents}/**` (read their `CLAUDE.md`), `services/prompt
   earlier take a thinking budget. 4.6+ take `adaptive`. "Off" is `disabled`, Sonnet 5.5's
   `between_tools`, or no field on models that always think (Opus 5.5, Fable). The Claude API takes
   no `temperature` (API version `2026-10-21`); an `anthropic_compatible` vendor still gets it.
+  Both get the SDK's `anthropic-version: 2026-10-21`; a compatible config's `apiVersion` sends
+  `2023-06-01` instead, for a vendor that answers only on the original version.
   Opus/Sonnet 5.5 and Fable 5.1 refuse a forced tool, so a forced tool becomes a prompt instruction.
   First-party `openai` speaks the **Responses API** (`store: false`), because
   Chat Completions cannot call tools on GPT-6 Astra/6.1 Sol, nor on Luna while it reasons.

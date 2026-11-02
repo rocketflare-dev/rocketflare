@@ -3,7 +3,7 @@ version: unreleased
 previous: 0.24.0
 date: null
 breaking: true
-migrations: []
+migrations: ["api_version column on ai_configs"]
 areas: [cli, ci, config, scripts, docs, ui, shared, api, db]
 touches_surfaces: []
 requires_surfaces: []
@@ -12,7 +12,7 @@ manual: true
 
 ## What changed
 
-The kit runs on Node 26 with vitest 5, jsdom 30, zod 4, AG-UI 1.0, postgres.js 4 and Anthropic API version 2026-10-21; every dependency is current within its range; and the workflows pin Actions by SHA.
+The kit runs on Node 26 with vitest 5, jsdom 30, zod 4, AG-UI 1.0, postgres.js 4 and Anthropic API version 2026-10-21, which a compatible vendor may override; dependencies are current within range; workflows pin Actions by SHA.
 
 - `apps/cli/src/auth.ts`: the callback server's 404 now sends `Connection: close` like its other responses. A kept-alive socket stayed in `fetch`'s pool after `close()`, so the next server on the same port got `ECONNRESET` (deterministic on Node 26's undici 8, a race on Node 24).
 - `actions/checkout` v4 → v7.0.1, `actions/setup-node` v4 → v7.1.0, `pnpm/action-setup` v4 → v6.1.0, `actions/upload-artifact` v4 → v7.0.2, `actions/download-artifact` v4 → v8.0.2, each written as `owner/repo@<sha> # vX.Y.Z`. None of the majors changes an input the workflows use: artifacts are downloaded by name, uploads stay zipped, and `setup-node` keeps its explicit `cache: pnpm` (the hardening below then removes it from the two deploy jobs).
@@ -46,7 +46,8 @@ The kit runs on Node 26 with vitest 5, jsdom 30, zod 4, AG-UI 1.0, postgres.js 4
 - The Claude API rejects `temperature`, `top_p` and `top_k` on every model from `2026-10-21`, so the `anthropic` adapter (`services/ai/client.ts`) never sends `temperature`; `ChatParams.temperature` stays for `anthropic_compatible`, `openai`, `openai_compatible` and Workers AI, which still take it. The one non-default caller, the evals judge (`temperature: 0`), now samples at the default on a pre-4.7 Claude judge model; on Claude 4.7+ nothing changes.
 - SDK 1.x sends the key as `Authorization: Bearer` (was `X-Api-Key`) for both `anthropic` and `anthropic_compatible`, so the two share one client constructor. A tenant whose `anthropic` provider has a `baseUrl` pointing at a proxy that reads `X-Api-Key` must change the proxy to read `Authorization`.
 - `Anthropic.MessageParam` is a union of per-role types in 1.x; `withRollingCacheBreakpoints` (`services/ai/agent-loop.ts`) leaves a `system` message's content alone.
-- `anthropic_compatible` vendors also receive `anthropic-version: 2026-10-21` now; the kit's tests stub the vendor, so check yours answers on the new version.
+- `anthropic_compatible` vendors also receive `anthropic-version: 2026-10-21` now; the kit's tests stub the vendor, so check yours answers on the new version, and set that config's `apiVersion` to `2023-06-01` if it does not.
+- An `anthropic_compatible` AI config takes an optional `apiVersion` (`2023-06-01`, the only value allowed; unset = the SDK's `2026-10-21`), sent as `anthropic-version` in place of the SDK's: a nullable `api_version` column on `ai_configs`, the `apiVersion` field on the config contracts (an empty string or an omitted field clears it), an **API version** select in Settings → AI, and the connection test. Any other provider answers 400 `api_version_unsupported`.
 
 ## How to apply
 
@@ -91,6 +92,13 @@ The kit runs on Node 26 with vitest 5, jsdom 30, zod 4, AG-UI 1.0, postgres.js 4
 39. In `apps/web/src/api/services/ai/agent-loop.ts` `withRollingCacheBreakpoints`, skip a message whose `role` is `'system'` before spreading it with new `content`.
 40. If your own code sends `temperature`, `top_p` or `top_k` to Claude, or builds a `document` block into an `assistant` message, or sends `citations` on a `text` block in a `user` message, remove it: each is a 400 on `2026-10-21`. If it relied on a non-default `temperature`, decide whether the default output is acceptable (the migration guide lists the alternatives).
 41. If a proxy or gateway in front of the Claude API reads `X-Api-Key`, change it to read `Authorization: Bearer`.
+42. In `packages/shared/src/ai/config.ts`, add `export const ANTHROPIC_API_VERSIONS = ['2023-06-01'] as const`, `anthropicApiVersionSchema = z.enum(ANTHROPIC_API_VERSIONS)` and `type AnthropicApiVersion`. Then add `apiVersion: anthropicApiVersionSchema.nullable()` to `aiConfigSchema`, `apiVersion: z.union([anthropicApiVersionSchema, z.literal('')]).optional()` to `upsertAiConfigRequestSchema`, and `apiVersion: anthropicApiVersionSchema.optional()` to the inline (non-`configId`) branch of `testAiConfigRequestSchema`.
+43. In `apps/web/src/db/schema/ai-configs.ts`, add `export const ANTHROPIC_API_VERSION_VALUES = ['2023-06-01'] as const satisfies readonly AnthropicApiVersion[]` and the column `apiVersion: text('api_version', { enum: ANTHROPIC_API_VERSION_VALUES })`. Then run `pnpm db:generate --name ai-config-api-version` and `pnpm db:migrate`; don't copy the kit's migration file.
+44. In `apps/web/src/api/services/ai/providers.ts`, add `supportsApiVersion: boolean` to `ProviderInfo`, set it `true` on `anthropic_compatible` and `false` on every other provider, your own included. In `apps/web/src/ui/hooks/useAiConfig.ts`, add `supportsApiVersion: z.boolean()` to `aiProviderInfoSchema`.
+45. In `apps/web/src/api/routes/ai-config.ts`, make `toAiConfig` return `apiVersion: row.apiVersion`; have `validateUpsert` throw `BadRequestError(…, 'api_version_unsupported')` when `body.apiVersion` is set and `!info.supportsApiVersion`; and set `apiVersion: body.apiVersion ? body.apiVersion : null` in the upsert `values`.
+46. In `apps/web/src/api/services/ai/client.ts`, add `apiVersion?: AnthropicApiVersion | null` to `ChatClientOptions`. Pass `defaultHeaders: opts.apiVersion ? { 'anthropic-version': opts.apiVersion } : undefined` to `new Anthropic(…)` in `createAnthropicChatClient`. In `resolve.ts` `chatClientFromRow`, pass `apiVersion: row.apiVersion`.
+47. In `apps/web/src/api/services/ai/connection-test.ts` `candidateFor`, after the scope check, throw `BadRequestError(…, 'api_version_unsupported')` when `input.apiVersion` is set and `!providerInfo(input.provider).supportsApiVersion`; then pass `apiVersion: input.apiVersion` to the inline chat `createChatClient`.
+48. In `apps/web/src/ui/pages/settings/AiConfigModal.tsx`, hold `apiVersion` state (initial value `editing?.apiVersion ?? ''`, reset to `''` when the provider changes). When `isChat && info?.supportsApiVersion`, render a select labelled `API version` offering `''` ("2026-10-21 (SDK default)") and each `ANTHROPIC_API_VERSIONS` value, set `body.apiVersion = apiVersion`, and add `apiVersion: (info?.supportsApiVersion && apiVersion) || undefined` to the inline test request. In `pages/settings/AI.tsx` `setDefault`, add `apiVersion: row.apiVersion ?? ''`: "Set default" re-posts the whole row, so a missing field is cleared. Add `apiVersion: null` to every `AiConfig` test fixture and `supportsApiVersion` to every provider fixture.
 
 ## Conflicts to expect
 
@@ -108,6 +116,8 @@ The kit runs on Node 26 with vitest 5, jsdom 30, zod 4, AG-UI 1.0, postgres.js 4
 - Every `package.json` and `pnpm-lock.yaml` → zod and AG-UI majors changed → apply steps 27, 28 and 30 instead of the hunks.
 - `apps/web/package.json`, `apps/evals/package.json`, `pnpm-lock.yaml` → `postgres` major changed → apply step 35 instead of the hunks.
 - `apps/web/src/api/services/ai/client.ts` → the Anthropic client constructor is one call and `temperature` is compatible-only → apply step 38 by hand if you edited the adapter.
+- `apps/web/migrations/**` → the kit adds `0020_kit-ai-config-api-version.sql` → don't take it; step 43 generates your own.
+- `apps/web/src/ui/pages/settings/AiConfigModal.tsx`, `AI.tsx` → API version select and `setDefault` field → apply step 48 by hand if you edited the form.
 
 ## Verify
 
@@ -129,4 +139,5 @@ The kit runs on Node 26 with vitest 5, jsdom 30, zod 4, AG-UI 1.0, postgres.js 4
 16. `pnpm --filter <scope>/web exec node -p "require('postgres/package.json').version"` prints `4.`.
 17. `pnpm test` passes, including the driver conformance pass under `neon`.
 18. `pnpm --filter <scope>/web exec node -p "require('@anthropic-ai/sdk/package.json').version"` prints `1.`.
-19. `rg -n -i 'anthropic[-_]version' apps packages` finds no override in source.
+19. `rg -n "'anthropic-version'" apps/web/src` finds only the `defaultHeaders` line in `services/ai/client.ts`.
+20. In Settings → AI, an Anthropic-compatible config shows an **API version** select; save it with `2023-06-01`, reopen it, and it still shows `2023-06-01`; **Test connection** answers as before.

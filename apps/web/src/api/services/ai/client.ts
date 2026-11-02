@@ -1,7 +1,8 @@
 /**
  * Provider adapters behind the `ChatClient` / `EmbeddingsClient` seam in `types.ts`.
  *   - `anthropic` / `anthropic_compatible` → `@anthropic-ai/sdk` (fetch-based, runs in Workers).
- *     The SDK sends the key as `Authorization: Bearer` and API version `2026-10-21` to both.
+ *     The SDK sends the key as `Authorization: Bearer` and API version `2026-10-21` to both; a
+ *     compatible config may name `2023-06-01` instead (`apiVersion`).
  *   - `openai` → a small fetch client for the Responses API (`/v1/responses`, SSE, `store: false`);
  *     `openai_compatible` → the same for `/v1/chat/completions`. Both use `/v1/embeddings`. Base
  *     URLs include `/v1`.
@@ -25,6 +26,7 @@ import type { TokenUsage } from '@rocketflare/shared/ai/chat'
 import {
   ADAPTIVE_THINKING_MIN_MAX_TOKENS,
   type AiProvider,
+  type AnthropicApiVersion,
   EMBEDDING_DIM,
   THINKING_ANSWER_HEADROOM,
 } from '@rocketflare/shared/ai/config'
@@ -58,6 +60,8 @@ export interface ChatClientOptions {
   provider: AiProvider
   apiKey?: string | null
   baseUrl?: string | null
+  /** `anthropic-version` in place of the SDK's; allowed on `anthropic_compatible` only. */
+  apiVersion?: AnthropicApiVersion | null
   defaults?: RequestDefaults
   /** The `AI` binding, for `workers_ai`. */
   ai?: AiEnv['AI']
@@ -364,6 +368,7 @@ function createAnthropicChatClient(opts: ChatClientOptions): ChatClient {
     baseURL: opts.baseUrl || undefined,
     fetch: opts.fetch,
     maxRetries: 2,
+    defaultHeaders: opts.apiVersion ? { 'anthropic-version': opts.apiVersion } : undefined,
   })
 
   // Each refusal the traits could misjudge is recovered ONCE and remembered for the rest of this

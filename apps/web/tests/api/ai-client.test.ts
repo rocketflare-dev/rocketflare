@@ -2,10 +2,11 @@
  * `services/ai/client.ts` with an INJECTED fetch (no globals mocked): OpenAI-compatible
  * SSE parsing incl. tool-call deltas and usage; error normalisation 401→auth, 429→rate_limit,
  * 404→invalid_request; the Anthropic path through the real SDK against a fake SSE body (bearer
- * `authToken` for compatible vendors, explicit `thinking: disabled`, `reconcileThinking`);
- * embeddings over OpenAI-shaped `/embeddings` and the Workers AI binding; Workers AI CHAT over the
- * binding (non-streamed `{ response, tool_calls, usage }`, an SSE `ReadableStream`, the forced-tool
- * instruction that stands in for `tool_choice`, and the non-streamed replay when tools are present).
+ * key, a compatible vendor's `anthropic-version` override, explicit `thinking: disabled`,
+ * `reconcileThinking`); embeddings over OpenAI-shaped `/embeddings` and the Workers AI binding;
+ * Workers AI CHAT over the binding (non-streamed `{ response, tool_calls, usage }`, an SSE
+ * `ReadableStream`, the forced-tool instruction that stands in for `tool_choice`, and the
+ * non-streamed replay when tools are present).
  */
 
 import { ADAPTIVE_THINKING_MIN_MAX_TOKENS, defaultModelFor } from '@rocketflare/shared/ai/config'
@@ -311,6 +312,7 @@ describe('Anthropic chat client (real SDK, fake transport)', () => {
     expect(req?.url).toBe('https://compat.test/inference/v1/messages')
     expect(req?.headers.authorization).toBe('Bearer fw-token')
     expect(req?.headers['x-api-key']).toBeUndefined()
+    expect(req?.headers['anthropic-version']).toBe('2026-10-21')
     expect(req?.body).toMatchObject({
       model: 'accounts/x/models/y',
       max_tokens: 64,
@@ -325,6 +327,26 @@ describe('Anthropic chat client (real SDK, fake transport)', () => {
       ],
       tools: [{ name: 'search' }],
     })
+  })
+
+  it('anthropic_compatible sends the API version its config names in place of the SDK default', async () => {
+    const { fetch, calls } = fakeFetch(() => sseResponse(anthropicStream('ok')))
+    const client = createChatClient({
+      provider: 'anthropic_compatible',
+      apiKey: 'fw-token',
+      baseUrl: 'https://compat.test/inference',
+      apiVersion: '2023-06-01',
+      fetch,
+    })
+    await collect(
+      client.stream({
+        model: 'accounts/x/models/y',
+        maxTokens: 8,
+        messages: [{ role: 'user', content: 'hello' }],
+      })
+    )
+    expect(calls[0]?.headers['anthropic-version']).toBe('2023-06-01')
+    expect(calls[0]?.headers.authorization).toBe('Bearer fw-token')
   })
 
   it('anthropic_compatible retries once without thinking when the vendor rejects `disabled`, and remembers', async () => {

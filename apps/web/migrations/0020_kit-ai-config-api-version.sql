@@ -1,0 +1,1 @@
+ALTER TABLE "ai_configs" ADD COLUMN "api_version" text;

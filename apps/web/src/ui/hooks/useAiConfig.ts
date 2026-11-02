@@ -34,6 +34,7 @@ export const aiProviderInfoSchema = z
     needsBaseUrl: z.boolean(),
     supportsThinking: z.boolean(),
     supportsServiceTier: z.boolean(),
+    supportsApiVersion: z.boolean(),
     defaultModel: z.string(),
     suggestedModels: z.record(z.string(), z.array(z.string())).default({}),
     /** The suggested list is the whole catalog — the form offers it and no free text. */

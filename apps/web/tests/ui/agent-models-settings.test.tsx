@@ -32,6 +32,7 @@ const config = (id: string, label: string, model: string, isDefault: boolean) =>
   hasCredential: true,
   thinking: { enabled: false },
   serviceTier: null,
+  apiVersion: null,
   createdAt: now,
   updatedAt: now,
 })

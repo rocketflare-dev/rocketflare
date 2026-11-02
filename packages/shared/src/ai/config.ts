@@ -68,6 +68,14 @@ export const THINKING_DISABLED: ThinkingSetting = { enabled: false }
  */
 export const serviceTierSchema = z.string().min(1).max(32)
 
+/**
+ * `anthropic-version` an `anthropic_compatible` config sends in place of the SDK's (`2026-10-21`),
+ * for a vendor that answers only on the original version; null = the SDK's.
+ */
+export const ANTHROPIC_API_VERSIONS = ['2023-06-01'] as const
+export const anthropicApiVersionSchema = z.enum(ANTHROPIC_API_VERSIONS)
+export type AnthropicApiVersion = z.infer<typeof anthropicApiVersionSchema>
+
 /** Sanitised config row — credentials NEVER leave the server, only `hasCredential`. */
 export const aiConfigSchema = z.object({
   id: z.string().uuid(),
@@ -83,6 +91,7 @@ export const aiConfigSchema = z.object({
   hasCredential: z.boolean(),
   thinking: thinkingSchema,
   serviceTier: serviceTierSchema.nullable(),
+  apiVersion: anthropicApiVersionSchema.nullable(),
   createdAt: z.coerce.date(),
   updatedAt: z.coerce.date(),
 })
@@ -108,6 +117,8 @@ export const upsertAiConfigRequestSchema = z.object({
   thinking: thinkingSchema.optional(),
   /** Empty string clears the tier (a `<select>` needs a way to say "none"). */
   serviceTier: z.union([serviceTierSchema, z.literal('')]).optional(),
+  /** Empty string or omitted = the SDK's version. */
+  apiVersion: z.union([anthropicApiVersionSchema, z.literal('')]).optional(),
 })
 export type UpsertAiConfigRequest = z.infer<typeof upsertAiConfigRequestSchema>
 
@@ -123,6 +134,7 @@ export const testAiConfigRequestSchema = z.union([
     baseUrl: z.string().url().max(500).optional(),
     model: z.string().trim().min(1).max(255),
     apiKey: z.string().min(1).max(4000).optional(),
+    apiVersion: anthropicApiVersionSchema.optional(),
   }),
 ])
 export type TestAiConfigRequest = z.infer<typeof testAiConfigRequestSchema>

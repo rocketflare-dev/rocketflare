@@ -235,6 +235,7 @@ function ScopeSection({
       isDefault: true,
       thinking: row.thinking,
       serviceTier: row.serviceTier ?? '',
+      apiVersion: row.apiVersion ?? '',
     })
 
   const runTest = (row: AiConfig) => {

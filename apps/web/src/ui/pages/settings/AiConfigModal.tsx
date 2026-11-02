@@ -1,8 +1,9 @@
 /**
  * Add / edit one AI provider row. Provider → preset chips (`presetsFor`) fill base URL +
  * model; fields follow the catalog's `needsApiKey` / `needsBaseUrl` / `supportsThinking` /
- * `supportsServiceTier`; the API key is write-only ("leave blank to keep"); the body is validated
- * with `upsertAiConfigRequestSchema` plus the three provider rules the schema alone cannot state.
+ * `supportsServiceTier` / `supportsApiVersion`; the API key is write-only ("leave blank to
+ * keep"); the body is validated with `upsertAiConfigRequestSchema` plus the three provider rules
+ * the schema alone cannot state.
  * "Test connection" posts the inline candidate (or the saved row when the key is kept) so a wrong
  * key is caught while the admin is still looking at the field.
  *
@@ -13,6 +14,8 @@ import {
   type AiConfig,
   type AiProvider,
   type AiScope,
+  ANTHROPIC_API_VERSIONS,
+  type AnthropicApiVersion,
   defaultModelFor,
   type ProviderPreset,
   presetsFor,
@@ -113,6 +116,7 @@ function AiConfigForm({
     editing?.thinking.budgetTokens ? String(editing.thinking.budgetTokens) : ''
   )
   const [serviceTier, setServiceTier] = useState(editing?.serviceTier ?? '')
+  const [apiVersion, setApiVersion] = useState<AnthropicApiVersion | ''>(editing?.apiVersion ?? '')
   const [preset, setPreset] = useState<ProviderPreset | null>(null)
   const [issues, setIssues] = useState<Issue[]>()
   const [verdict, setVerdict] = useState<TestAiConfigResponse | null>(null)
@@ -156,6 +160,7 @@ function AiConfigForm({
     setModel(defaultModelFor(next, scope))
     // Tiers and budgets are not portable between vendors: back to the safe defaults.
     setServiceTier('')
+    setApiVersion('')
     setThinkingEnabled(false)
     setThinkingBudget('')
     setVerdict(null)
@@ -189,6 +194,7 @@ function AiConfigForm({
     }
     // Always sent when the provider has tiers, '' included — that is how an edit CLEARS one.
     if (isChat && info?.supportsServiceTier) body.serviceTier = serviceTier.trim()
+    if (isChat && info?.supportsApiVersion) body.apiVersion = apiVersion
     return body
   }
 
@@ -234,6 +240,7 @@ function AiConfigForm({
         baseUrl: baseUrl.trim() || undefined,
         model: model.trim(),
         apiKey: apiKey || undefined,
+        apiVersion: (info?.supportsApiVersion && apiVersion) || undefined,
       }
     }
     if (editing && keepsKey) return { configId: editing.id }
@@ -499,6 +506,31 @@ function AiConfigForm({
               provider decide.
             </p>
             <FieldError message={err('serviceTier')} />
+          </div>
+        )}
+
+        {isChat && info?.supportsApiVersion && (
+          <div>
+            <label htmlFor="ai-api-version" className="label text-sm font-medium">
+              API version
+            </label>
+            <select
+              id="ai-api-version"
+              className="select select-sm w-full font-mono"
+              value={apiVersion}
+              onChange={e => setApiVersion(e.target.value as AnthropicApiVersion | '')}
+            >
+              <option value="">2026-10-21 (SDK default)</option>
+              {ANTHROPIC_API_VERSIONS.map(v => (
+                <option key={v} value={v}>
+                  {v}
+                </option>
+              ))}
+            </select>
+            <p className="text-xs text-muted mt-1">
+              Sent as <span className="font-mono">anthropic-version</span>; pick the original
+              version for a vendor that rejects the SDK's.
+            </p>
           </div>
         )}
 

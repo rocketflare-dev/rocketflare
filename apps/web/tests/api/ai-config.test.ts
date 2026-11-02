@@ -2,7 +2,8 @@
  * `/api/ai/config`: upsert encrypts the key and answers `hasCredential` (never the key);
  * re-save without `apiKey` keeps the stored credential; the first row is default, `isDefault` swaps
  * it inside the scope; delete; list never leaks a key; member 403 on writes / 200 on reads; 401
- * unauthenticated; tenant isolation; readiness tenant / platform / none; provider validation 400s.
+ * unauthenticated; tenant isolation; readiness tenant / platform / none; provider validation 400s;
+ * a compatible vendor's `apiVersion` override reaches the wire and an omitted one clears it.
  */
 import {
   aiConfigSchema,
@@ -13,7 +14,8 @@ import {
 import { and, eq } from 'drizzle-orm'
 import { describe, expect, it } from 'vitest'
 import { decrypt } from '@/api/auth/oauth-encryption'
-import { resolveDecisions } from '@/api/services/ai/resolve'
+import { testConfig } from '@/api/services/ai/connection-test'
+import { chatClientFromRow, resolveDecisions } from '@/api/services/ai/resolve'
 import { loadConfig } from '@/config'
 import { aiConfigs } from '@/db/schema'
 import {
@@ -74,6 +76,7 @@ describe('POST /api/ai/config', () => {
       hasCredential: true,
       thinking: { enabled: false },
       serviceTier: null,
+      apiVersion: null,
     })
     expect(body).not.toHaveProperty('apiKey')
     expect(body).not.toHaveProperty('apiKeyEnc')
@@ -171,6 +174,53 @@ describe('POST /api/ai/config', () => {
     expect(emb).toMatchObject({ scope: 'embeddings', isDefault: true, hasCredential: false })
   })
 
+  it('a compatible vendor keeps the API version it was saved with until a save omits it', async () => {
+    const a = await actor()
+    const compatible = (extra: Record<string, unknown>) => ({
+      label: 'Vendor',
+      provider: 'anthropic_compatible',
+      baseUrl: 'https://compat.test/inference',
+      model: 'accounts/x/models/y',
+      apiKey: 'fw-token-0123456789',
+      ...extra,
+    })
+    const save = (body: Record<string, unknown>) =>
+      request('/api/ai/config', { method: 'POST', headers: a.cookie }, { json: body })
+
+    const pinned = aiConfigSchema.parse(
+      await json(await save(compatible({ apiVersion: '2023-06-01' })))
+    )
+    expect(pinned.apiVersion).toBe('2023-06-01')
+
+    const versions: (string | null)[] = []
+    const fetchImpl: typeof fetch = async (_input, init) => {
+      versions.push(new Headers(init?.headers).get('anthropic-version'))
+      return new Response(JSON.stringify({ type: 'error', error: { type: 'x', message: 'x' } }), {
+        status: 401,
+      })
+    }
+    const env = createTestEnv()
+    const params = { model: 'accounts/x/models/y', maxTokens: 5, messages: [], cache: false }
+    const rowOf = async () =>
+      (await db.select().from(aiConfigs).where(eq(aiConfigs.id, pinned.id)))[0]
+    const pinnedRow = await rowOf()
+    if (!pinnedRow) throw new Error('saved row missing')
+    const pinnedClient = await chatClientFromRow(pinnedRow, loadConfig(env), env, fetchImpl)
+    await pinnedClient.complete(params).catch(() => undefined)
+
+    const cleared = aiConfigSchema.parse(await json(await save(compatible({}))))
+    expect(cleared.apiVersion).toBeNull()
+    const clearedRow = await rowOf()
+    if (!clearedRow) throw new Error('saved row missing')
+    const defaultClient = await chatClientFromRow(clearedRow, loadConfig(env), env, fetchImpl)
+    await defaultClient.complete(params).catch(() => undefined)
+
+    expect(versions).toEqual(['2023-06-01', '2026-10-21'])
+    const unknown = await save(compatible({ apiVersion: '2024-01-01' }))
+    expect(unknown.status).toBe(400)
+    expect(await json(unknown)).toMatchObject({ code: 'validation_failed' })
+  })
+
   it('typesafe serves the decisions scope only, and decisions takes nothing else', async () => {
     const a = await actor()
     const post = (body: Record<string, unknown>) =>
@@ -243,6 +293,7 @@ describe('POST /api/ai/config', () => {
         { label: 'x', provider: 'openai', model: 'm', apiKey: 'k', serviceTier: 'priority' },
         'service_tier_unsupported',
       ],
+      [anthropic('x', { apiVersion: '2023-06-01' }), 'api_version_unsupported'],
     ]
     for (const [body, code] of cases) {
       const res = await request(
@@ -524,6 +575,43 @@ describe('POST /api/ai/config/test', () => {
         )
       ).status
     ).toBe(403)
+  })
+
+  it('an inline compatible candidate is probed on the API version it names; other providers 400', async () => {
+    const a = await actor()
+    const versions: (string | null)[] = []
+    const fetchImpl: typeof fetch = async (_input, init) => {
+      versions.push(new Headers(init?.headers).get('anthropic-version'))
+      return new Response(JSON.stringify({ type: 'error', error: { type: 'x', message: 'x' } }), {
+        status: 401,
+      })
+    }
+    const env = createTestEnv()
+    const verdict = await testConfig(
+      db,
+      loadConfig(env),
+      env,
+      a.tenant.id,
+      {
+        scope: 'chat',
+        provider: 'anthropic_compatible',
+        baseUrl: 'https://compat.test/inference',
+        model: 'accounts/x/models/y',
+        apiKey: 'fw-token-0123456789',
+        apiVersion: '2023-06-01',
+      },
+      { fetch: fetchImpl }
+    )
+    expect(verdict).toMatchObject({ ok: false, code: 'auth' })
+    expect(versions).toEqual(['2023-06-01'])
+
+    const res = await request(
+      '/api/ai/config/test',
+      { method: 'POST', headers: a.cookie },
+      { json: { ...anthropic('x'), apiVersion: '2023-06-01' } }
+    )
+    expect(res.status).toBe(400)
+    expect(await json(res)).toMatchObject({ code: 'api_version_unsupported' })
   })
 })
 
