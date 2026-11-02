@@ -26,13 +26,16 @@ concurrency:
   group: kit-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+permissions:
+  contents: read
+
 jobs:
   kit-checks:
     name: Kit checks
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     outputs:
       count: ${{ steps.plugins.outputs.count }}
-      ids: ${{ steps.plugins.outputs.ids }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -91,6 +94,7 @@ jobs:
   renamed:
     name: Gate on a renamed copy
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -102,8 +106,9 @@ jobs:
           node-version-file: .nvmrc
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      # The rename rewrites the workspace package names, so the lockfile has to change here.
       - name: Rename the checkout to my-app
-        run: |
+        run: | # jactionlint ignore=unlocked-install
           set -euo pipefail
           # The Launch fixture lives in tests/kit-only/, which the rename deletes; the provisioning
           # step below still needs it, so it is kept outside the tree.
@@ -177,6 +182,7 @@ jobs:
     needs: kit-checks
     if: needs.kit-checks.outputs.count != '0'
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

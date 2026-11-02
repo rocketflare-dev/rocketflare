@@ -12,10 +12,10 @@ manual: true
 
 ## What changed
 
-The kit runs on Node 26: `.nvmrc` and `engines` move to 26, the suites test on vitest 5 and jsdom 30, Actions are pinned by SHA, and every dependency is current within its range.
+The kit runs on Node 26 with vitest 5 and jsdom 30, every dependency is current within its range, and the workflows pin Actions by SHA, drop checkout tokens, and set timeouts and least-privilege permissions.
 
 - `apps/cli/src/auth.ts`: the callback server's 404 now sends `Connection: close` like its other responses. A kept-alive socket stayed in `fetch`'s pool after `close()`, so the next server on the same port got `ECONNRESET` (deterministic on Node 26's undici 8, a race on Node 24).
-- `actions/checkout` v4 → v7.0.1, `actions/setup-node` v4 → v7.1.0, `pnpm/action-setup` v4 → v6.1.0, `actions/upload-artifact` v4 → v7.0.2, `actions/download-artifact` v4 → v8.0.2, each written as `owner/repo@<sha> # vX.Y.Z`. None of the majors changes an input the workflows use: artifacts are downloaded by name, uploads stay zipped, and `setup-node` keeps its explicit `cache: pnpm`.
+- `actions/checkout` v4 → v7.0.1, `actions/setup-node` v4 → v7.1.0, `pnpm/action-setup` v4 → v6.1.0, `actions/upload-artifact` v4 → v7.0.2, `actions/download-artifact` v4 → v8.0.2, each written as `owner/repo@<sha> # vX.Y.Z`. None of the majors changes an input the workflows use: artifacts are downloaded by name, uploads stay zipped, and `setup-node` keeps its explicit `cache: pnpm` (the hardening below then removes it from the two deploy jobs).
 - Every `actions/checkout` sets `persist-credentials: false`, so a later step (an artifact upload) cannot publish the `GITHUB_TOKEN` left in `.git/config`. No step pushes or fetches with that token.
 - `apps/web/tests/config/ci-workflows.test.ts` asserts the action and its inputs, not the `@v4` tag.
 - `apps/web` (`vitest`, `@vitest/coverage-v8`) and `apps/cli` (`vitest`) move from `^3.2.7` to `^5.0.5`. On Node 25+ a stub `localStorage` global shadowed jsdom's and failed every UI test that touched storage; vitest 5's jsdom environment overrides it (3.x and 4.x have no backport). `apps/evals` stays on vitest 4, which `vitest-evals` requires.
@@ -28,6 +28,12 @@ The kit runs on Node 26: `.nvmrc` and `engines` move to 26, the suites test on v
 - **Node 26 is the kit's runtime**: `.nvmrc` is `26` and the root `engines.node` is `>=26`, so CI, `nvm install`/`fnm use` and the bootstrap's toolchain check all require it. The deployed Worker is unaffected (workerd ships its own runtime). `@types/node` moves to `^26.6.6` in `apps/web`, `apps/cli` and `apps/evals`.
 - `apps/web`'s `jsdom` moves from `^26.1.0` to `^30.1.3` (its floor on the 24 line is 24.15; none of its four majors needed a test change).
 - Docs and skills that named Node 24 now name Node 26 (`CLAUDE.md`, `README.md`, both places in `SETUP.md`, `CONTRIBUTING.md`, the `rf-setup` and `rf-preflight` skills), and `apps/web/scripts/provision.ts` refuses Node below 26 instead of 24.
+- Every job sets `timeout-minutes` (about 3–5× its slowest observed run: `ci.yml`'s Gate 15; `deploy.yml` 5 for `guard`/`gated`, 20 for `staging`/`production`, 10 for `release-bundle`), so a hung job stops in minutes rather than after GitHub's 6-hour default.
+- `evals.yml` (and the kit's own `kit.yml` and `notify-plugins.yml`) set `permissions: contents: read`; none of them writes with `GITHUB_TOKEN`.
+- `deploy.yml`'s `staging` and `production` jobs drop `cache: pnpm`: they run on tags and releases and ship what they build, so a poisoned cache entry would reach a deployed bundle. CI keeps its cache.
+- `deploy.yml`'s production "Resolve release version" step reads `github.event.release.tag_name` through `env:` instead of splicing it into the script.
+- `ci.yml`'s gitleaks step runs under `shell: bash` (pipefail), downloads with `curl -f` and checks the tarball's SHA-256 before extracting it.
+- `evals.yml` quotes the suite filter (`${SUITE:+"$SUITE"}`).
 
 ## How to apply
 
@@ -52,10 +58,15 @@ The kit runs on Node 26: `.nvmrc` and `engines` move to 26, the suites test on v
 19. Run `pnpm --filter @rocketflare/web add -D jsdom@^30.1.3 @types/node@^26.6.6`, `pnpm --filter @rocketflare/cli add -D @types/node@^26.6.6` and `pnpm --filter @rocketflare/evals add -D @types/node@^26.6.6`, substituting your renamed package scope for `@rocketflare`.
 20. If your own tests assert the `.nvmrc` major (the kit's `tests/config/bootstrap-lib.test.ts` does), change the expected value to `26`.
 21. In `apps/web/scripts/provision.ts`, change the Node check from `major < 24` to `major < 26` and its message from `Node 24` to `Node 26`.
+22. In `.github/workflows/ci.yml`, `deploy.yml` and `evals.yml`, add `timeout-minutes:` under each job's `runs-on:` — the kit uses 15 for `ci.yml`'s `gate`, 5 for `deploy.yml`'s `guard` and `gated`, 20 for `staging` and `production`, 10 for `release-bundle`; size your own jobs from their run history.
+23. In `.github/workflows/evals.yml`, add a top-level `permissions:` block with `contents: read`, and change `pnpm eval $SUITE` to `pnpm eval ${SUITE:+"$SUITE"}`.
+24. In `.github/workflows/deploy.yml`, delete `cache: pnpm` from the `actions/setup-node` step of the `staging` job and of the `production` job.
+25. In `.github/workflows/deploy.yml`'s `production` job, give the "Resolve release version" step `env: { EVENT_NAME: ${{ github.event_name }}, RELEASE_TAG: ${{ github.event.release.tag_name }} }` and use `"$EVENT_NAME"` and `"$RELEASE_TAG"` in its script instead of the two `${{ }}` expressions.
+26. In `.github/workflows/ci.yml`, replace the gitleaks step's `curl … | tar` with: `shell: bash`, `env: GITLEAKS_SHA256: 9991e0b2903da4c8f6122b5c3186448b927a5da4deef1fe45271c3793f4ee29c`, a `curl -sSfL -o "$RUNNER_TEMP/gitleaks.tar.gz"` download, `echo "$GITLEAKS_SHA256  $RUNNER_TEMP/gitleaks.tar.gz" | sha256sum --check --strict`, then `tar -xzf` of that file. Keep the word `gitleaks` on every script line: `ci-workflows.test.ts` recognises the scan's commands by it.
 
 ## Conflicts to expect
 
-- `.github/workflows/**` → `manual`; the patch is not applied → follow steps 3–8 by hand.
+- `.github/workflows/**` → `manual`; the patch is not applied → follow steps 3–8 and 22–26 by hand.
 - `apps/web/tests/config/ci-workflows.test.ts` → three version assertions loosened → keep your edits and apply step 9.
 - `apps/web/package.json`, `apps/cli/package.json`, `pnpm-lock.yaml` → vitest versions changed → apply step 10 instead of the hunks.
 - `apps/web/vitest.config.ts` → pool and coverage options changed → apply step 11 by hand if you edited the file.
@@ -77,3 +88,5 @@ The kit runs on Node 26: `.nvmrc` and `engines` move to 26, the suites test on v
 8. `pnpm -v` prints `10.34.9`.
 9. `pnpm lint` reports no errors.
 10. `cat .nvmrc` prints `26`.
+11. `rg -c 'timeout-minutes' .github/workflows/ci.yml .github/workflows/deploy.yml .github/workflows/evals.yml` counts one per job.
+12. `rg -n 'cache: pnpm' .github/workflows/deploy.yml` prints nothing.

@@ -28,6 +28,9 @@ concurrency:
   group: evals-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
   evals:
     if: ${{ github.event_name == 'workflow_dispatch' || github.event.label.name == 'run-evals' }}
@@ -50,7 +53,7 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           SUITE: ${{ inputs.suite }}
           MODEL: ${{ inputs.model }}
-        run: pnpm eval $SUITE ${MODEL:+--model "$MODEL"} --compare
+        run: pnpm eval ${SUITE:+"$SUITE"} ${MODEL:+--model "$MODEL"} --compare
       - name: Upload the run
         if: ${{ always() }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

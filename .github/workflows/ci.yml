@@ -39,6 +39,7 @@ jobs:
   gate:
     name: Gate
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     # The lookup reads check runs and a commit's pull requests; nothing in this job writes. deploy.yml's
     # `ci` job grants the same three: a called workflow may not ask for more than its caller grants.
     permissions:
@@ -87,9 +88,15 @@ jobs:
       # secret committed and then removed is still caught. The binary directly (the marketplace
       # action needs a licence for org repos).
       - name: gitleaks
+        shell: bash
+        env:
+          GITLEAKS_SHA256: 9991e0b2903da4c8f6122b5c3186448b927a5da4deef1fe45271c3793f4ee29c
         run: |
-          curl -sSL "https://github.com/gitleaks/gitleaks/releases/download/v8.24.3/gitleaks_8.24.3_linux_x64.tar.gz" \
-            | tar -xz -C "$RUNNER_TEMP" gitleaks
+          gitleaks_tgz="$RUNNER_TEMP/gitleaks.tar.gz"
+          curl -sSfL -o "$gitleaks_tgz" \
+            "https://github.com/gitleaks/gitleaks/releases/download/v8.24.3/gitleaks_8.24.3_linux_x64.tar.gz"
+          echo "$GITLEAKS_SHA256  $gitleaks_tgz" | sha256sum --check --strict
+          tar -xzf "$gitleaks_tgz" -C "$RUNNER_TEMP" gitleaks
           "$RUNNER_TEMP/gitleaks" git --redact --exit-code 1 --verbose .
 
       # Launch's sandbox already passed lint, typecheck and test on this tree; build is the step it
