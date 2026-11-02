@@ -21,6 +21,7 @@
     "@neondatabase/serverless": "^1.2.0",
     "@types/node": "^26.6.6",
     "dotenv": "^17.4.2",
+    "postgres": "^4.0.0",
     "tsx": "^4.23.15",
     "typescript": "^5.9.3",
     "vitest": "^4.1.12",
