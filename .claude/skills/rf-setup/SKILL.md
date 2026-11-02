@@ -97,7 +97,7 @@ keeps whatever `.dev.vars` already says. Switch later with `pnpm dev:db:up --neo
 | 0 | every step passed | go to step 3 |
 | 1 | a step failed | show the tail of the output, fix the cause, re-run the same command (idempotent). A failing `6/10 plugins` is the one worth reading closely: re-run with `--no-plugins` to get a working app, then install the plugin with `/rf-plugin`, where the plan is shown before anything is written |
 | 2 | usage error | check `$ARGUMENTS` against the hint above and re-run |
-| 3 | a prerequisite is missing | install it, then re-run: Node 24 via `nvm install` (reads `.nvmrc`) or `fnm use`; pnpm via `corepack enable`; Docker via Docker Desktop, or `brew install colima docker && colima start` on macOS, or Docker Engine + the `docker` group on Linux. If Docker can't run here (a sandbox), ask the user for a Postgres URL (a Neon branch) and re-run with `--db-url` |
+| 3 | a prerequisite is missing | install it, then re-run: Node 26 via `nvm install` (reads `.nvmrc`) or `fnm use`; pnpm via `corepack enable`; Docker via Docker Desktop, or `brew install colima docker && colima start` on macOS, or Docker Engine + the `docker` group on Linux. If Docker can't run here (a sandbox), ask the user for a Postgres URL (a Neon branch) and re-run with `--db-url` |
 | 4 | a dev port is held by another checkout | the DATABASE port is chosen automatically (`scripts/dev-db.mjs` takes the next free one), so this is :3000/:3001 (or `DEV_UI_PORT`/`DEV_API_PORT`): run `pnpm dev:status` and `pnpm dev:db:status`, show the user the other path/pid, and let THEM decide — stop it there, or move this checkout with `DEV_UI_PORT`/`DEV_API_PORT` in `apps/web/.dev.vars` plus `APP_URL` on the new UI port (SETUP.md 1.6) — never kill another checkout's processes |
 | 5 | Cloudflare login required | see below |
 
@@ -163,7 +163,7 @@ prerequisite lines, then hands over to `scripts/bootstrap.mjs` for the ten steps
 
 | Step | Name | What it proved |
 |---|---|---|
-| 1 | `toolchain` | Node 24, pnpm 10, Docker daemon and `docker compose` reachable. With `--db-url` it reads `docker skipped (external database <host>/<db>)` |
+| 1 | `toolchain` | Node 26, pnpm 10, Docker daemon and `docker compose` reachable. With `--db-url` it reads `docker skipped (external database <host>/<db>)` |
 | 2 | `install` | `pnpm install` done; `wrangler` resolves in `apps/web` |
 | 3 | `secrets` | `apps/web/.dev.vars` exists with `DATABASE_URL`, `OAUTH_ENCRYPTION_KEY` (generated, git-ignored) and `DATABASE_DRIVER` (the LOCAL driver, D35: `postgres` unless `--driver`, a Neon `--db-url`, or a value already there says otherwise — a note names it when it changes). With `--db-url` it notes `DATABASE_URL set from --db-url` |
 | 4 | `database` | this checkout's Postgres container is up and healthy on the port it chose (5432 unless taken; the step says so and writes it to `.dev.vars`); the `Connected to … (<driver> driver)` part names the local driver. Under `neon` the Neon proxy container is up too (`local driver neon: Neon proxy at http://localhost:<port>`). With `--db-url` there is no container: the line reads `external <host>/<db> · Connected to …` once `db:check` answers |

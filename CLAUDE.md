@@ -28,7 +28,7 @@ Cloudflare Worker (`apps/web`), a CLI (`apps/cli`), private zod contracts
 ## Stack
 
 - **Runtime**: Cloudflare Workers (`nodejs_compat`); one Worker exports `fetch`+`queue`+`scheduled`
-  + DO/Workflow classes (`src/worker.ts`). Node 24, pnpm 10
+  + DO/Workflow classes (`src/worker.ts`). Node 26, pnpm 10
 - **API**: Hono 4, zod contracts from `@rocketflare/shared`, CASL. **DB**: Postgres 17 + pgvector —
   Docker locally; deployed, `DATABASE_DRIVER` (D35) picks Drizzle over the Neon serverless driver
   (`neon`, HTTP + a WS pool for transactions — the kit's tomls) or `postgres.js` via Hyperdrive

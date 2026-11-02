@@ -1,6 +1,6 @@
 /**
  * Identifiers and random tokens via WebCrypto only (no `node:crypto`). Works identically
- * in workerd, Node 24 and the browser bundle.
+ * in workerd, Node and the browser bundle.
  */
 
 /** A v4 UUID — the same shape Postgres `gen_random_uuid()` produces for primary keys. */

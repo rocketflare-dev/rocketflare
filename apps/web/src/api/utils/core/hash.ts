@@ -1,7 +1,7 @@
 /**
  * One-way hashing for credentials at rest: session cookies, magic-link and invitation
  * tokens, API keys are all stored as SHA-256 hex of a random token, so a database read never
- * yields something usable. WebCrypto only — identical in workerd, Node 24 and the browser bundle.
+ * yields something usable. WebCrypto only — identical in workerd, Node and the browser bundle.
  */
 import { randomToken } from './ids'
 

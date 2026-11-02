@@ -3,11 +3,11 @@
   "version": "0.24.0",
   "private": true,
   "license": "MIT",
-  "description": "Rocketflare \u2014 multi-tenant SaaS for internal tools and B2B products \u2014 pnpm workspace: apps/web (Hono API + React UI on Cloudflare Workers), apps/cli, packages/shared",
+  "description": "Rocketflare — multi-tenant SaaS for internal tools and B2B products — pnpm workspace: apps/web (Hono API + React UI on Cloudflare Workers), apps/cli, packages/shared",
   "type": "module",
-  "packageManager": "pnpm@10.18.0",
+  "packageManager": "pnpm@10.34.9",
   "engines": {
-    "node": ">=24"
+    "node": ">=26"
   },
   "scripts": {
     "dev": "pnpm --silent --filter @rocketflare/web dev",
@@ -51,8 +51,8 @@
     "provision": "pnpm --filter @rocketflare/web provision"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.5.11",
-    "tsx": "^4.23.13",
+    "@biomejs/biome": "^2.6.4",
+    "tsx": "^4.23.15",
     "typescript": "^5.9.3"
   }
 }
