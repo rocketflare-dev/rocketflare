@@ -6,7 +6,6 @@
  */
 import { createMongoAbility } from '@casl/ability'
 import { unpackRules } from '@casl/ability/extra'
-import { createContextualCan } from '@casl/react'
 import type { AppAbility, PackedRule, PackedRules } from '@rocketflare/shared/permissions'
 import { createContext, type ReactNode, useContext, useMemo } from 'react'
 import { useAuth } from '@/ui/hooks/useAuth'
@@ -24,10 +23,7 @@ export function emptyAbility(): AppAbility {
 }
 
 /** Defaults to an ability that permits nothing, so a stray render outside the provider hides. */
-export const AbilityContext = createContext<AppAbility>(emptyAbility())
-
-/** `<Can I="manage" a="Tenant">…</Can>` — CASL React's contextual component. */
-export const Can = createContextualCan(AbilityContext.Consumer)
+const AbilityContext = createContext<AppAbility>(emptyAbility())
 
 export function useAbility(): AppAbility {
   return useContext(AbilityContext)

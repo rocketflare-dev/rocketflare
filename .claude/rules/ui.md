@@ -157,7 +157,7 @@ Components subscribe to query state, never to the socket; `WebSocketStatus` (hea
   single-tenant deployments hide `OrgSwitcher`, `/select-tenant` and org create/delete (D25)
 - One guard primitive, `RequireGuard` (`components/RequireGuard.tsx`), composed into coarse role
   guards (authenticated, owner/admin, global admin) and fine ability guards (`RequireAbility`,
-  `<Can I="manage" a="Tenant">` from `components/permissions/`). `SideNav` item flags use the SAME
+  `<IfCan action="manage" subject="Tenant">` / `<IfCannot>` from `components/permissions/`). `SideNav` item flags use the SAME
   guard as the page they open; `ProtectedRoute` requires a tenant for the whole shell EXCEPT
   `/admin/*` for a global admin (no membership needed — `useNavGuard` then passes only
   `'globalAdmin'` guards, so nothing tenant-scoped is linked)
