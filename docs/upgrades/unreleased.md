@@ -4,7 +4,7 @@ previous: 0.24.0
 date: null
 breaking: true
 migrations: []
-areas: [cli, ci, config, scripts, docs, ui, shared, api]
+areas: [cli, ci, config, scripts, docs, ui, shared, api, db]
 touches_surfaces: []
 requires_surfaces: []
 manual: true
@@ -12,7 +12,7 @@ manual: true
 
 ## What changed
 
-The kit runs on Node 26 with vitest 5, jsdom 30, zod 4 and AG-UI 1.0; every dependency is current within its range; and the workflows pin Actions by SHA, with timeouts and least-privilege permissions.
+The kit runs on Node 26 with vitest 5, jsdom 30, zod 4, AG-UI 1.0 and postgres.js 4; every dependency is current within its range; and the workflows pin Actions by SHA, with timeouts and least-privilege permissions.
 
 - `apps/cli/src/auth.ts`: the callback server's 404 now sends `Connection: close` like its other responses. A kept-alive socket stayed in `fetch`'s pool after `close()`, so the next server on the same port got `ECONNRESET` (deterministic on Node 26's undici 8, a race on Node 24).
 - `actions/checkout` v4 → v7.0.1, `actions/setup-node` v4 → v7.1.0, `pnpm/action-setup` v4 → v6.1.0, `actions/upload-artifact` v4 → v7.0.2, `actions/download-artifact` v4 → v8.0.2, each written as `owner/repo@<sha> # vX.Y.Z`. None of the majors changes an input the workflows use: artifacts are downloaded by name, uploads stay zipped, and `setup-node` keeps its explicit `cache: pnpm` (the hardening below then removes it from the two deploy jobs).
@@ -41,6 +41,7 @@ The kit runs on Node 26 with vitest 5, jsdom 30, zod 4 and AG-UI 1.0; every depe
 - zod 4 applies a field's `.default()` even under `.partial()`, so `example-feature`'s `updateExampleNoteRequestSchema` (a `.partial()` of the create schema) turned `PATCH { title }` into `{ title, body: '' }` and would have wiped the body. It is now built from the create schema's fields with the default unwrapped, and a test pins that an omitted field stays out. No kit schema had the same shape.
 - Plugin API (`docs/plugin-api.md`): `JobVariant` is `ZodObject<{ type: ZodTypeAny } & ZodRawShape>` (zod 4 has no `ZodDiscriminatedUnionOption`) and `JobTypeOf` reads the variant's `shape.type`; exported schema types now print with zod 4's names. The analytics plugin 3.4.2 installs and passes the whole suite unchanged.
 - Type-level zod 4 changes the kit absorbed: `ZodTypeDef` is gone (`z.ZodType<Output, Input>`), `z.record()` needs a key schema, `invalid_type_error` is `error`, and `ZodObject` takes `<Shape, Config>`.
+- `postgres` (postgres.js, the `postgres` driver behind `openDatabase`) moves from `^3.4.9` to `^4.0.0` in `apps/web`, and `apps/evals` now declares it too, so pnpm resolves one `drizzle-orm` (its peer) for both packages instead of two copies whose types do not mix. v4 rewrites the pool and protocol below an unchanged API; on Workers it uses `cloudflare:sockets` (the API bundle grows ~23 KiB gzip). Its one data-facing change — the server now types every parameter, so a `Date` meets a `timestamp`/`date` column as UTC — does not reach the kit: all 42 timestamp columns are `withTimezone: true` and no query passes an untyped `Date`.
 
 ## How to apply
 
@@ -78,6 +79,8 @@ The kit runs on Node 26 with vitest 5, jsdom 30, zod 4 and AG-UI 1.0; every depe
 32. In `packages/shared/src/plugins/types.ts`, set `JobVariant` to `ZodObject<{ type: ZodTypeAny } & ZodRawShape>` and `JobTypeOf<S>` to `TypeOf<NonNullable<DeclaredBy<S, 'jobs'>>[number]['shape']['type']>`, importing `ZodObject`, `ZodRawShape` and `ZodTypeAny` from `zod`.
 33. Search your own schemas for `.partial()` over an object with a `.default(` field (`rg -n '\.partial\(' packages apps`): under zod 4 the default fills an omitted field, so a PATCH overwrites it. Rebuild each such update schema from the create schema's fields with `.unwrap().optional()` on the defaulted ones, as `example-feature`'s `updateExampleNoteRequestSchema` now is.
 34. Run `pnpm typecheck` and fix what zod 4 reports in your own code: replace `z.ZodType<T, z.ZodTypeDef, unknown>` with `z.ZodType<T, unknown>`, give `z.record(v)` a key schema (`z.record(z.string(), v)`), rename `invalid_type_error`/`required_error` to `error`, and narrow `TOOL_CALL_RESULT.content` with `typeof content === 'string'` where you read it as a string.
+35. Run `pnpm --filter <scope>/web add postgres@^4.0.0` and `pnpm --filter <scope>/evals add -D postgres@^4.0.0`, substituting your package scope for `<scope>`, and check `pnpm-lock.yaml` names a single `drizzle-orm@…(postgres@4.0.0)`.
+36. If your own schema has a `timestamp()` or `date()` column without `withTimezone: true`, or a raw `sql` template passes a `Date` where the query does not fix its type (`date_trunc('day', ${d})`), cast it (`${d}::timestamptz`) or read postgres.js's v4 upgrade guide: v4 sends such a `Date` as UTC. If your code calls `sql.array()`, pass the array with a cast (`${ids}::int[]`) — v4 removed it.
 
 ## Conflicts to expect
 
@@ -93,6 +96,7 @@ The kit runs on Node 26 with vitest 5, jsdom 30, zod 4 and AG-UI 1.0; every depe
 - `packages/shared/src/ai/agui.ts` → the `@ag-ui/core` import is split in two → apply step 29 by hand if you edited the imports.
 - `packages/shared/src/plugins/types.ts` → `JobVariant` and `JobTypeOf` rewritten → take the kit's two declarations from step 32.
 - Every `package.json` and `pnpm-lock.yaml` → zod and AG-UI majors changed → apply steps 27, 28 and 30 instead of the hunks.
+- `apps/web/package.json`, `apps/evals/package.json`, `pnpm-lock.yaml` → `postgres` major changed → apply step 35 instead of the hunks.
 
 ## Verify
 
@@ -111,3 +115,5 @@ The kit runs on Node 26 with vitest 5, jsdom 30, zod 4 and AG-UI 1.0; every depe
 13. `pnpm --filter <scope>/web exec node -p "require('zod/package.json').version"` prints `4.`.
 14. `rg -n 'zod-to-json-schema' apps packages` prints nothing.
 15. `pnpm web test:config` passes, including `tests/config/agui-contract.test.ts`'s protobuf round-trip.
+16. `pnpm --filter <scope>/web exec node -p "require('postgres/package.json').version"` prints `4.`.
+17. `pnpm test` passes, including the driver conformance pass under `neon`.
