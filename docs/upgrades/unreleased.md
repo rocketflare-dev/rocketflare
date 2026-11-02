@@ -12,8 +12,9 @@ manual: false
 
 ## What changed
 
-`apps/web` and `apps/cli` test on vitest 5, so the UI suite passes on Node 26 as well as Node 24, and every dependency is at the newest release its range allows, on pnpm 10.34.9 and Biome 2.6.
+`apps/web` and `apps/cli` test on vitest 5, so the UI suite passes on Node 26 as well as Node 24, the CLI login callback closes every connection, and every dependency is at the newest release its range allows.
 
+- `apps/cli/src/auth.ts`: the callback server's 404 now sends `Connection: close` like its other responses. A kept-alive socket stayed in `fetch`'s pool after `close()`, so the next server on the same port got `ECONNRESET` (deterministic on Node 26's undici 8, a race on Node 24).
 - `apps/web` (`vitest`, `@vitest/coverage-v8`) and `apps/cli` (`vitest`) move from `^3.2.7` to `^5.0.5`. On Node 25+ a stub `localStorage` global shadowed jsdom's and failed every UI test that touched storage; vitest 5's jsdom environment overrides it (3.x and 4.x have no backport). `apps/evals` stays on vitest 4, which `vitest-evals` requires.
 - `apps/web/vitest.config.ts`: `poolOptions.forks.{maxForks,minForks}` becomes top-level `maxWorkers` (vitest 4 removed `poolOptions`; the `minForks` pin worked around a vitest 3 bug fixed in 4), and `coverage.all` is gone (removed in vitest 4; `coverage.include` now reports uncovered files on its own).
 - Comments and docs that named vitest 3 now name vitest 5 (`docs/EVALS.md`, `docs/CONCEPTS.md` §9, `.claude/rules/testing.md`, `apps/evals/vitest.config.ts`, `apps/web/tests/ui/{setup.ts,jest-dom-vitest.d.ts}`, `scripts/lib/test-plan.mjs`).
@@ -24,21 +25,23 @@ manual: false
 
 ## How to apply
 
-1. Run `pnpm --filter @rocketflare/web add -D vitest@^5.0.5 @vitest/coverage-v8@^5.0.5` and `pnpm --filter @rocketflare/cli add -D vitest@^5.0.5`, substituting your renamed package scope for `@rocketflare`. Leave `apps/evals` on vitest 4.
-2. In `apps/web/vitest.config.ts`, replace the `poolOptions: { forks: { maxForks, minForks } }` block with a top-level `maxWorkers: MAX_WORKERS`, and delete `all: true` from `coverage`.
-3. In the root `package.json`, set `"packageManager": "pnpm@10.34.9"`, then run `pnpm update -r --config.minimum-release-age=1440` to take every dependency to the newest release its range allows.
-4. Run `pnpm --filter @rocketflare/web add -D @testing-library/jest-dom@^7.0.1`, substituting your renamed package scope for `@rocketflare`.
-5. Run `pnpm exec biome migrate --write`, then in `biome.json` add an `overrides` entry for `apps/*/tests/**/*.ts`, `apps/*/tests/**/*.tsx` and `apps/web/src/plugins/*/tests/**` that sets `linter.rules.correctness.noComponentHookFactories` to `"off"`.
-6. Run `pnpm lint`; where it reports `noComponentHookFactories` in `src/`, either hoist the component out of the function or, when the factory's result is created once (as `schemaForm`'s is), add a `// biome-ignore lint/correctness/noComponentHookFactories: <why>` line above it.
-7. Run `pnpm typecheck` and commit the regenerated `apps/web/worker-configuration.d.ts`.
-8. Run your own test files on vitest 5 and fix what its behaviour changes break: `clearMocks` defaults to `true` (a mock's call history is cleared before every test), an unawaited `expect(...).resolves`/`.rejects` fails the test, and `-t` matches the `>`-joined full test name. The kit's own suites needed no change.
+1. In `apps/cli/src/auth.ts` `handleCallback`, add `Connection: 'close'` to the headers of the 404 `res.writeHead(...)` call.
+2. In `apps/cli/tests/login.test.ts`, in the test "rejects on ?error= and on missing key/tenant_id, 404s other paths", assert that the `/other` response's `connection` header is `close`.
+3. Run `pnpm --filter @rocketflare/web add -D vitest@^5.0.5 @vitest/coverage-v8@^5.0.5` and `pnpm --filter @rocketflare/cli add -D vitest@^5.0.5`, substituting your renamed package scope for `@rocketflare`. Leave `apps/evals` on vitest 4.
+4. In `apps/web/vitest.config.ts`, replace the `poolOptions: { forks: { maxForks, minForks } }` block with a top-level `maxWorkers: MAX_WORKERS`, and delete `all: true` from `coverage`.
+5. In the root `package.json`, set `"packageManager": "pnpm@10.34.9"`, then run `pnpm update -r --config.minimum-release-age=1440` to take every dependency to the newest release its range allows.
+6. Run `pnpm --filter @rocketflare/web add -D @testing-library/jest-dom@^7.0.1`, substituting your renamed package scope for `@rocketflare`.
+7. Run `pnpm exec biome migrate --write`, then in `biome.json` add an `overrides` entry for `apps/*/tests/**/*.ts`, `apps/*/tests/**/*.tsx` and `apps/web/src/plugins/*/tests/**` that sets `linter.rules.correctness.noComponentHookFactories` to `"off"`.
+8. Run `pnpm lint`; where it reports `noComponentHookFactories` in `src/`, either hoist the component out of the function or, when the factory's result is created once (as `schemaForm`'s is), add a `// biome-ignore lint/correctness/noComponentHookFactories: <why>` line above it.
+9. Run `pnpm typecheck` and commit the regenerated `apps/web/worker-configuration.d.ts`.
+10. Run your own test files on vitest 5 and fix what its behaviour changes break: `clearMocks` defaults to `true` (a mock's call history is cleared before every test), an unawaited `expect(...).resolves`/`.rejects` fails the test, and `-t` matches the `>`-joined full test name. The kit's own suites needed no change.
 
 ## Conflicts to expect
 
-- Every `package.json` and `pnpm-lock.yaml` → dependency versions changed → apply steps 1, 3 and 4 instead of the hunks.
-- `apps/web/vitest.config.ts` → pool and coverage options changed → apply step 2 by hand if you edited the file.
-- `biome.json` → schema migrated and a test override added → apply step 5 by hand if you edited the file.
-- `apps/web/worker-configuration.d.ts` → regenerated → take yours and re-run step 7.
+- Every `package.json` and `pnpm-lock.yaml` → dependency versions changed → apply steps 3, 5 and 6 instead of the hunks.
+- `apps/web/vitest.config.ts` → pool and coverage options changed → apply step 4 by hand if you edited the file.
+- `biome.json` → schema migrated and a test override added → apply step 7 by hand if you edited the file.
+- `apps/web/worker-configuration.d.ts` → regenerated → take yours and re-run step 9.
 
 ## Verify
 
@@ -47,3 +50,4 @@ manual: false
 3. `pnpm --filter @rocketflare/web exec vitest --version` prints `vitest/5.`.
 4. `pnpm -v` prints `10.34.9`.
 5. `pnpm lint` reports no errors.
+6. `pnpm --filter @rocketflare/cli test` passes.
