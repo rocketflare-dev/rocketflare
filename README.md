@@ -46,7 +46,7 @@ git clone https://github.com/rocketflare-dev/rocketflare.git myapp && cd myapp
 rm -rf .git && git init && git add -A && git commit -m "Start from Rocketflare"   # your history starts here
 git remote add origin git@github.com:<you>/myapp.git                              # your own repo, when ready
 
-bash scripts/bootstrap.sh          # checks Node 24 / pnpm 10 / Docker, generates the local secret, starts
+bash scripts/bootstrap.sh          # checks Node 26 / pnpm 10 / Docker, generates the local secret, starts
                                    # Postgres, migrates, seeds demo data, starts the app and opens the
                                    # browser signed in as the demo owner. Re-runnable.
                                    #   --offline  skip the Cloudflare login by disabling Workers AI ([ai] off in both tomls)

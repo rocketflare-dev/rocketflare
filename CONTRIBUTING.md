@@ -43,7 +43,7 @@ deliberate omissions with a reason).
 
 ### <a name="setup"></a> Setup
 
-Node 24 (`.nvmrc`), pnpm 10 (`corepack enable` reads `packageManager`), Docker; macOS or Linux
+Node 26 (`.nvmrc`), pnpm 10 (`corepack enable` reads `packageManager`), Docker; macOS or Linux
 (Windows: WSL2). Then:
 
 ```bash

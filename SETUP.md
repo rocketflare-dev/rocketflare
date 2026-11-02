@@ -18,7 +18,7 @@ code conventions are in `.claude/rules/`. If this is a freshly copied kit, do
 Legend: `[ready]` works out of the box · `[config]` needs your configuration
 
 **Fix missing prerequisites proactively rather than reporting them.** If Node is missing or too
-old, install 24 (`nvm install` reads `.nvmrc`, or `fnm use`, or the system package manager). If
+old, install 26 (`nvm install` reads `.nvmrc`, or `fnm use`, or the system package manager). If
 pnpm is missing, `corepack enable` (it reads `packageManager` from the root `package.json`). If
 Docker is unavailable on macOS, `brew install colima docker && colima start`; on Linux install Docker
 Engine and add your user to the `docker` group. Confirm the tool works, then carry on.
@@ -51,11 +51,11 @@ Engine and add your user to the `docker` group. Confirm the tool works, then car
 
 ### 1.1 Toolchain
 ```bash
-node -v            # v24.x — from .nvmrc
+node -v            # v26.x — from .nvmrc
 corepack enable && pnpm -v   # 10.x — from package.json packageManager
 docker info >/dev/null && echo docker-ok
 ```
-Verify: three lines — `v24.*`, `10.*`, `docker-ok`. `pnpm preflight` is the same check as one
+Verify: three lines — `v26.*`, `10.*`, `docker-ok`. `pnpm preflight` is the same check as one
 read-only command (toolchain, `.dev.vars`, Postgres, Cloudflare login, `pnpm dev:status`; exit 3
 when anything is missing) — `bash scripts/bootstrap.sh` installs Node through an fnm/nvm that is
 already present and pnpm through corepack, and never pipes a URL into a shell.
