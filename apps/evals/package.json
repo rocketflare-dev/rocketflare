@@ -19,7 +19,7 @@
   },
   "devDependencies": {
     "@neondatabase/serverless": "^1.2.0",
-    "@types/node": "^24.19.2",
+    "@types/node": "^26.6.6",
     "dotenv": "^17.4.2",
     "tsx": "^4.23.15",
     "typescript": "^5.9.3",

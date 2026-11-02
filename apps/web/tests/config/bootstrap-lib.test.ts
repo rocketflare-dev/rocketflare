@@ -49,7 +49,7 @@ describe('parseNvmrc / versionAtLeast', () => {
     expect(parseNvmrc('24\n')).toBe(24)
     expect(parseNvmrc('v24.1.0')).toBe(24)
     expect(parseNvmrc('lts/*')).toBeNaN()
-    expect(parseNvmrc(readWeb('../../.nvmrc'))).toBe(24)
+    expect(parseNvmrc(readWeb('../../.nvmrc'))).toBe(26)
   })
 
   it('compares majors, tolerating a v prefix and junk', () => {
