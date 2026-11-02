@@ -121,7 +121,6 @@ export function planTests(env, tree) {
       command: ['pnpm', '-r', '--filter', `!./${WEB_DIR}`, 'test'],
       env: {},
     },
-    // Two invocations because vitest 3 resolves `isolate` per run, not per project.
     {
       label: `web: api (shared registry) under ${suiteDriver}`,
       cwd: WEB_DIR,

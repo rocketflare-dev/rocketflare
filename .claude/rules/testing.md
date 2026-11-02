@@ -18,8 +18,7 @@ Vitest in `apps/web` (all commands below are root scripts that delegate there, o
 helpers, the driver guards `driver-results.test.ts` and `driver-conformance.test.ts`, and every
 installed plugin's own `src/plugins/*/tests/config/**`), and `kit-only` (Node, no database:
 `tests/kit-only/**`, the KIT's own tests — see below). The web suite is two `vitest run`
-invocations (`api` with `--no-isolate`, then the rest) because vitest 3 resolves `isolate` per
-run, not per project.
+invocations (`api` with `--no-isolate`, then the rest).
 
 **`pnpm test` is the one full test run** (`scripts/test.mjs`, the plan in
 `scripts/lib/test-plan.mjs`, unit-tested in `tests/config/gate.test.ts`), and the `test` step of
