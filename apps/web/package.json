@@ -56,9 +56,9 @@
     "provision:cloudflare": "bash scripts/cf-provision.sh"
   },
   "dependencies": {
-    "@ag-ui/core": "0.0.59",
-    "@ag-ui/encoder": "0.0.59",
-    "@ag-ui/proto": "0.0.59",
+    "@ag-ui/core": "1.0.3",
+    "@ag-ui/encoder": "1.0.3",
+    "@ag-ui/proto": "1.0.3",
     "@anthropic-ai/sdk": "^0.122.0",
     "@casl/ability": "^6.8.3",
     "@casl/react": "^5.0.1",
@@ -80,8 +80,7 @@
     "react-markdown": "^10.1.0",
     "react-router-dom": "^6.30.6",
     "remark-gfm": "^4.0.1",
-    "zod": "^3.25.76",
-    "zod-to-json-schema": "^3.25.2",
+    "zod": "^4.6.7",
     "zustand": "^5.0.16"
   },
   "devDependencies": {

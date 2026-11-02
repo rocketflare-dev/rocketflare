@@ -4,7 +4,7 @@ previous: 0.24.0
 date: null
 breaking: true
 migrations: []
-areas: [cli, ci, config, scripts, docs, ui]
+areas: [cli, ci, config, scripts, docs, ui, shared, api]
 touches_surfaces: []
 requires_surfaces: []
 manual: true
@@ -12,7 +12,7 @@ manual: true
 
 ## What changed
 
-The kit runs on Node 26 with vitest 5 and jsdom 30, every dependency is current within its range, and the workflows pin Actions by SHA, drop checkout tokens, and set timeouts and least-privilege permissions.
+The kit runs on Node 26 with vitest 5, jsdom 30, zod 4 and AG-UI 1.0; every dependency is current within its range; and the workflows pin Actions by SHA, with timeouts and least-privilege permissions.
 
 - `apps/cli/src/auth.ts`: the callback server's 404 now sends `Connection: close` like its other responses. A kept-alive socket stayed in `fetch`'s pool after `close()`, so the next server on the same port got `ECONNRESET` (deterministic on Node 26's undici 8, a race on Node 24).
 - `actions/checkout` v4 → v7.0.1, `actions/setup-node` v4 → v7.1.0, `pnpm/action-setup` v4 → v6.1.0, `actions/upload-artifact` v4 → v7.0.2, `actions/download-artifact` v4 → v8.0.2, each written as `owner/repo@<sha> # vX.Y.Z`. None of the majors changes an input the workflows use: artifacts are downloaded by name, uploads stay zipped, and `setup-node` keeps its explicit `cache: pnpm` (the hardening below then removes it from the two deploy jobs).
@@ -34,6 +34,13 @@ The kit runs on Node 26 with vitest 5 and jsdom 30, every dependency is current 
 - `deploy.yml`'s production "Resolve release version" step reads `github.event.release.tag_name` through `env:` instead of splicing it into the script.
 - `ci.yml`'s gitleaks step runs under `shell: bash` (pipefail), downloads with `curl -f` and checks the tarball's SHA-256 before extracting it.
 - `evals.yml` quotes the suite filter (`${SUITE:+"$SUITE"}`).
+- `zod` moves from `^3.25.76` to `^4.6.7` in `packages/shared`, `apps/web`, `apps/cli` and `apps/evals`. It travels with AG-UI 1.0 because each needs the other: AG-UI 1.0's validators are zod 4 schemas, and `kitAguiEventSchema` is a `z.discriminatedUnion` over them.
+- `@ag-ui/core`, `@ag-ui/encoder` and `@ag-ui/proto` move from `0.0.59` to `1.0.3` (exact pins). The validators now come from `@ag-ui/core/schemas` (the main entry is types only), and zod is a peer, so AG-UI validates with the host's zod. `TOOL_CALL_RESULT.content` is typed `string | ContentPart[]`; the kit still emits strings.
+- The protobuf transport now carries `TOOL_CALL_RESULT` (`@ag-ui/proto@1.0.3` has the message), so `PROTO_UNSUPPORTED_EVENTS` is empty and `tests/config/agui-contract.test.ts` round-trips the whole event.
+- `zod-to-json-schema` is removed; `toolInputSchema()` (`services/ai/agent-loop.ts`) uses zod 4's `z.toJSONSchema(schema, { target: 'draft-7', io: 'input', unrepresentable: 'any' })`.
+- zod 4 applies a field's `.default()` even under `.partial()`, so `example-feature`'s `updateExampleNoteRequestSchema` (a `.partial()` of the create schema) turned `PATCH { title }` into `{ title, body: '' }` and would have wiped the body. It is now built from the create schema's fields with the default unwrapped, and a test pins that an omitted field stays out. No kit schema had the same shape.
+- Plugin API (`docs/plugin-api.md`): `JobVariant` is `ZodObject<{ type: ZodTypeAny } & ZodRawShape>` (zod 4 has no `ZodDiscriminatedUnionOption`) and `JobTypeOf` reads the variant's `shape.type`; exported schema types now print with zod 4's names. The analytics plugin 3.4.2 installs and passes the whole suite unchanged.
+- Type-level zod 4 changes the kit absorbed: `ZodTypeDef` is gone (`z.ZodType<Output, Input>`), `z.record()` needs a key schema, `invalid_type_error` is `error`, and `ZodObject` takes `<Shape, Config>`.
 
 ## How to apply
 
@@ -63,6 +70,14 @@ The kit runs on Node 26 with vitest 5 and jsdom 30, every dependency is current 
 24. In `.github/workflows/deploy.yml`, delete `cache: pnpm` from the `actions/setup-node` step of the `staging` job and of the `production` job.
 25. In `.github/workflows/deploy.yml`'s `production` job, give the "Resolve release version" step `env: { EVENT_NAME: ${{ github.event_name }}, RELEASE_TAG: ${{ github.event.release.tag_name }} }` and use `"$EVENT_NAME"` and `"$RELEASE_TAG"` in its script instead of the two `${{ }}` expressions.
 26. In `.github/workflows/ci.yml`, replace the gitleaks step's `curl … | tar` with: `shell: bash`, `env: GITLEAKS_SHA256: 9991e0b2903da4c8f6122b5c3186448b927a5da4deef1fe45271c3793f4ee29c`, a `curl -sSfL -o "$RUNNER_TEMP/gitleaks.tar.gz"` download, `echo "$GITLEAKS_SHA256  $RUNNER_TEMP/gitleaks.tar.gz" | sha256sum --check --strict`, then `tar -xzf` of that file. Keep the word `gitleaks` on every script line: `ci-workflows.test.ts` recognises the scan's commands by it.
+27. Run `pnpm --filter <scope>/shared add zod@^4.6.7`, then the same for `<scope>/web`, `<scope>/cli` and `<scope>/evals`, substituting your package scope for `<scope>`.
+28. Run `pnpm --filter <scope>/shared add @ag-ui/core@1.0.3 --save-exact` and `pnpm --filter <scope>/web add @ag-ui/core@1.0.3 @ag-ui/encoder@1.0.3 @ag-ui/proto@1.0.3 --save-exact`.
+29. In `packages/shared/src/ai/agui.ts`, import `EventType` and the `Interrupt` type from `@ag-ui/core`, and every `*Schema` from `@ag-ui/core/schemas`.
+30. Run `pnpm --filter <scope>/web remove zod-to-json-schema`, and in `apps/web/src/api/services/ai/agent-loop.ts` replace `zodToJsonSchema(schema, { target: 'jsonSchema7' })` with `z.toJSONSchema(schema, { target: 'draft-7', io: 'input', unrepresentable: 'any' })`.
+31. In `apps/web/src/api/services/ai/agui.ts`, set `PROTO_UNSUPPORTED_EVENTS` to `[]`.
+32. In `packages/shared/src/plugins/types.ts`, set `JobVariant` to `ZodObject<{ type: ZodTypeAny } & ZodRawShape>` and `JobTypeOf<S>` to `TypeOf<NonNullable<DeclaredBy<S, 'jobs'>>[number]['shape']['type']>`, importing `ZodObject`, `ZodRawShape` and `ZodTypeAny` from `zod`.
+33. Search your own schemas for `.partial()` over an object with a `.default(` field (`rg -n '\.partial\(' packages apps`): under zod 4 the default fills an omitted field, so a PATCH overwrites it. Rebuild each such update schema from the create schema's fields with `.unwrap().optional()` on the defaulted ones, as `example-feature`'s `updateExampleNoteRequestSchema` now is.
+34. Run `pnpm typecheck` and fix what zod 4 reports in your own code: replace `z.ZodType<T, z.ZodTypeDef, unknown>` with `z.ZodType<T, unknown>`, give `z.record(v)` a key schema (`z.record(z.string(), v)`), rename `invalid_type_error`/`required_error` to `error`, and narrow `TOOL_CALL_RESULT.content` with `typeof content === 'string'` where you read it as a string.
 
 ## Conflicts to expect
 
@@ -75,6 +90,9 @@ The kit runs on Node 26 with vitest 5 and jsdom 30, every dependency is current 
 - `apps/web/worker-configuration.d.ts` → regenerated → take yours and re-run step 17.
 - `.nvmrc` → `24` → `26` → take `26` unless your app deliberately pins another Node.
 - `apps/web/package.json`, `apps/cli/package.json`, `apps/evals/package.json` → `jsdom` and `@types/node` majors changed → apply step 19 instead of the hunks.
+- `packages/shared/src/ai/agui.ts` → the `@ag-ui/core` import is split in two → apply step 29 by hand if you edited the imports.
+- `packages/shared/src/plugins/types.ts` → `JobVariant` and `JobTypeOf` rewritten → take the kit's two declarations from step 32.
+- Every `package.json` and `pnpm-lock.yaml` → zod and AG-UI majors changed → apply steps 27, 28 and 30 instead of the hunks.
 
 ## Verify
 
@@ -90,3 +108,6 @@ The kit runs on Node 26 with vitest 5 and jsdom 30, every dependency is current 
 10. `cat .nvmrc` prints `26`.
 11. `rg -c 'timeout-minutes' .github/workflows/ci.yml .github/workflows/deploy.yml .github/workflows/evals.yml` counts one per job.
 12. `rg -n 'cache: pnpm' .github/workflows/deploy.yml` prints nothing.
+13. `pnpm --filter <scope>/web exec node -p "require('zod/package.json').version"` prints `4.`.
+14. `rg -n 'zod-to-json-schema' apps packages` prints nothing.
+15. `pnpm web test:config` passes, including `tests/config/agui-contract.test.ts`'s protobuf round-trip.

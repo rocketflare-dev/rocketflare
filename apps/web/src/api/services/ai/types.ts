@@ -43,7 +43,7 @@ export type SystemPrompt = string | { stable: string; volatile?: string }
 export interface ToolDefinition {
   name: string
   description: string
-  /** JSON Schema (object) for the tool input — `zodToJsonSchema` in `agent-loop.ts` builds it from zod. */
+  /** JSON Schema (object) for the tool input — `z.toJSONSchema` in `agent-loop.ts` builds it from zod. */
   inputSchema: Record<string, unknown>
 }
 

@@ -92,7 +92,8 @@ export function transcriptFromAgui(events: KitAguiEvent[], question: string): Tr
       case 'TOOL_CALL_RESULT': {
         const call = calls.get(event.toolCallId)
         if (!call) break
-        call.result = event.content
+        call.result =
+          typeof event.content === 'string' ? event.content : JSON.stringify(event.content)
         out.push({ type: 'tool_call', id: call.id, name: call.name, arguments: call.arguments })
         out.push({
           type: 'tool_result',

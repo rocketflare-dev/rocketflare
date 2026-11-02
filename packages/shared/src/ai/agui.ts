@@ -18,10 +18,9 @@
  * protocol bump. `apps/web/tests/config/agui-contract.test.ts` round-trips every emitted event
  * through the installed schemas, which is what turns the pin into a gate.
  */
+import { EventType, type Interrupt } from '@ag-ui/core'
 import {
   CustomEventSchema,
-  EventType,
-  type Interrupt,
   InterruptSchema,
   MessagesSnapshotEventSchema,
   RunAgentInputSchema,
@@ -38,7 +37,7 @@ import {
   ToolCallEndEventSchema,
   ToolCallResultEventSchema,
   ToolCallStartEventSchema,
-} from '@ag-ui/core'
+} from '@ag-ui/core/schemas'
 import { z } from 'zod'
 import { agentArtifactSchema } from './artifacts'
 import { MAX_MESSAGE_LENGTH, tokenUsageSchema } from './chat'

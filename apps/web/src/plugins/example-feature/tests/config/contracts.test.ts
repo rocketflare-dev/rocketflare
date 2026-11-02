@@ -89,6 +89,10 @@ describe('the note contracts', () => {
     expect(updateExampleNoteRequestSchema.safeParse({}).success).toBe(false)
     expect(updateExampleNoteRequestSchema.safeParse({ title: 'x' }).success).toBe(true)
   })
+
+  it('leave an omitted field out of a PATCH instead of filling the create default', () => {
+    expect(updateExampleNoteRequestSchema.parse({ title: 'x' })).toEqual({ title: 'x' })
+  })
 })
 
 /**

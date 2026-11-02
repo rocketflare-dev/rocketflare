@@ -136,8 +136,8 @@ type EnvelopeFields = typeof envelopeFields
 
 /** One variant with the envelope fields folded in — what `.extend(envelopeFields)` returns. */
 type WithEnvelope<T> =
-  T extends z.ZodObject<infer Shape, infer Unknown, infer Catchall>
-    ? z.ZodObject<Shape & EnvelopeFields, Unknown, Catchall>
+  T extends z.ZodObject<infer Shape, infer Config>
+    ? z.ZodObject<Shape & EnvelopeFields, Config>
     : never
 
 /**

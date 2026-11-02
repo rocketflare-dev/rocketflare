@@ -53,7 +53,7 @@ function enumOptions(values: unknown): FormField['options'] | null {
 
 /**
  * The label when the schema declares no `title` — which is EVERY field the built-in agents emit,
- * because `zodToJsonSchema` has no zod construct to read a title from. A raw property name read as
+ * because `z.toJSONSchema` has no zod construct to read a title from. A raw property name read as
  * `topic` where a person expects `Topic`, so the fallback is the name made presentable: split on
  * `_`/`-`/camel humps, capitalise the first word. It invents nothing — an agent that wants better
  * words gives its schema a `title`.

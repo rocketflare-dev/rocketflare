@@ -56,8 +56,8 @@ export interface AgentMeta<Input = unknown, Output = unknown> {
   title: string
   description: string
   /** Output type `Input` — the raw (`unknown`) side may carry defaults/coercions. */
-  inputSchema: z.ZodType<Input, z.ZodTypeDef, unknown>
-  outputSchema: z.ZodType<Output, z.ZodTypeDef, unknown>
+  inputSchema: z.ZodType<Input, unknown>
+  outputSchema: z.ZodType<Output, unknown>
   /** Registry prompt (and `agent_models` assignment key) the agent runs with. */
   promptKey: z.infer<typeof promptKeySchema>
   exclusive: boolean

@@ -100,7 +100,7 @@ export interface ApiRequestOptions<T = unknown> extends Omit<RequestInit, 'body'
    * Zod schema to validate the response against; throws a descriptive Error on mismatch.
    * Input is `unknown` so schemas with `.transform()`/`.default()` still infer `T`.
    */
-  schema?: z.ZodType<T, z.ZodTypeDef, unknown>
+  schema?: z.ZodType<T, unknown>
 }
 
 /**

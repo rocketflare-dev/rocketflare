@@ -157,7 +157,7 @@ export function formValuesSchemaFor(fields: readonly FormField[]): z.ZodTypeAny 
         value =
           values.length > 0
             ? z.enum(values as [string, ...string[]])
-            : z.never({ invalid_type_error: 'this field has no options to choose from' })
+            : z.never({ error: 'this field has no options to choose from' })
         break
       }
       case 'boolean':

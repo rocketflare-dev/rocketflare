@@ -154,7 +154,9 @@ describe('chat with the knowledge tools', () => {
     // The result is the tool's own JSON, and it contains REAL rows — the proof the tools are
     // bound to a live client rather than the request's, which is already closed by now.
     const result = frames.find(f => f.type === 'TOOL_CALL_RESULT')
-    const payload = JSON.parse(result?.type === 'TOOL_CALL_RESULT' ? result.content : '{}')
+    const content = result?.type === 'TOOL_CALL_RESULT' ? result.content : '{}'
+    expect(typeof content).toBe('string')
+    const payload = JSON.parse(content as string)
     expect(payload.error).toBeUndefined()
     expect(payload.documents?.[0]).toMatchObject({ title: 'Volcanoes' })
     expect(payload.documents[0].passages[0].text).toContain('volcano')

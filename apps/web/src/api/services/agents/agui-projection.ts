@@ -14,8 +14,8 @@
  * - **No `kit.usage`.** Every `ai_usage` row of a run carries its id, and `GET /runs/:id`
  *   returns the sum as `usage`; the projection stays a pure fold over `(run, events)` and does not
  *   read the ledger. A `kit.usage` CUSTOM event is the place to add it if an AG-UI client needs it.
- * - **An errored tool result keeps its JSON.** `ToolCallResultEvent` has no error flag in
- *   `@ag-ui/core@0.0.59`; add `kit.tool.error` to the CUSTOM union only if a screen needs the red
+ * - **An errored tool result keeps its JSON.** `ToolCallResultEvent` has no error flag in AG-UI
+ *   1.0; add `kit.tool.error` to the CUSTOM union only if a screen needs the red
  *   state.
  */
 import type { AgentRun, AgentRunEvent } from '@rocketflare/shared/ai/agents'

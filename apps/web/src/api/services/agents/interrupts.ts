@@ -75,7 +75,7 @@ function responseSchemaFor(spec: AgentInterruptSpec): Record<string, unknown> | 
   try {
     return toolInputSchema(interruptPayloadSchema(spec))
   } catch {
-    // A schema shape `zod-to-json-schema` cannot render is a missing convenience, never a failed
+    // A schema shape `z.toJSONSchema` cannot render is a missing convenience, never a failed
     // ask: the app's own UI validates with the zod schema, and the column is nullable for this.
     return null
   }
