@@ -36,7 +36,7 @@ apps/evals/
   tests/          the kit's own unit tests — in the gate
 ```
 
-It is its own workspace package because vitest-evals needs vitest 4 while `apps/web` is on vitest 3.
+It is its own workspace package because vitest-evals needs vitest 4 while `apps/web` is on vitest 5.
 The targets import `apps/web` source in-process through the same `@/` alias.
 
 ## Write a suite

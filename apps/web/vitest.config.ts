@@ -106,14 +106,7 @@ export default defineConfig({
     globals: true,
     watch: false,
     pool: 'forks',
-    poolOptions: {
-      forks: {
-        maxForks: MAX_WORKERS,
-        // Pinned EQUAL to maxForks: with `isolate: false` vitest 3 may terminate an idle
-        // worker mid-promise ("Terminating worker thread", vitest-dev/vitest#8564).
-        minForks: MAX_WORKERS,
-      },
-    },
+    maxWorkers: MAX_WORKERS,
     testTimeout: 5_000 * LATENCY_FACTOR,
     hookTimeout: 10_000 * LATENCY_FACTOR,
     teardownTimeout: 5_000 * LATENCY_FACTOR,
@@ -127,14 +120,13 @@ export default defineConfig({
         'src/db/**/*.ts',
       ],
       exclude: ['src/ui/**', '**/*.test.ts', '**/types.ts', '**/schema/**'],
-      all: true,
       clean: true,
       reportsDirectory: './coverage',
     },
     projects: [
       {
         // Shared module registry. Isolation is turned off on the command line
-        // (`vitest run --project api --no-isolate`) — vitest 3 ignores a per-project `isolate`.
+        // (`vitest run --project api --no-isolate`).
         extends: true,
         test: {
           name: 'api',

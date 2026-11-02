@@ -528,7 +528,7 @@ Server: `api/services/{ai,agents}/**` (read their `CLAUDE.md`), `services/prompt
   content capture is on by default, with a flag to disable · agent context comes from the CLI
   reading our own Postgres, not a backend REST adapter.
 - **Evals (D33)**: `apps/evals`, its own workspace package because vitest-evals needs vitest 4 and
-  the kit's suites are on vitest 3. `pnpm eval [suite] [--model x] [--judge-model y] [--compare]`
+  the kit's suites are on vitest 5. `pnpm eval [suite] [--model x] [--judge-model y] [--compare]`
   runs `suites/**/*.eval.ts` against the TEST database with real models (the platform
   `ANTHROPIC_API_KEY` from `.dev.vars`; no key → every suite skips and says why). **Targets are
   in-process and go through the product's own code**: the chat target drives the real
