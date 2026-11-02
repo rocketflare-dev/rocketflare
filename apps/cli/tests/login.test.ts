@@ -80,7 +80,10 @@ describe('callback server', () => {
   it('rejects on ?error= and on missing key/tenant_id, 404s other paths', async () => {
     const cb = await startCallbackServer(5_000)
     try {
-      expect((await fetch(`http://127.0.0.1:${cb.port}/other`)).status).toBe(404)
+      const notFound = await fetch(`http://127.0.0.1:${cb.port}/other`)
+      expect(notFound.status).toBe(404)
+      // A pooled keep-alive socket outlives close(); the next server on this port gets ECONNRESET.
+      expect(notFound.headers.get('connection')).toBe('close')
       const res = await fetch(`${cb.url}?key=${TEST_KEY}`)
       expect(res.status).toBe(400)
       await expect(cb.result).rejects.toThrow(/missing required parameter\(s\): tenant_id/)

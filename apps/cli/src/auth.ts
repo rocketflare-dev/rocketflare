@@ -191,7 +191,7 @@ function handleCallback(
 ): void {
   const url = new URL(req.url ?? '/', `http://127.0.0.1:${port}`)
   if (url.pathname !== CALLBACK_PATH) {
-    res.writeHead(404, { 'Content-Type': 'text/plain' }).end('Not found')
+    res.writeHead(404, { 'Content-Type': 'text/plain', Connection: 'close' }).end('Not found')
     return
   }
   const error = url.searchParams.get('error')
