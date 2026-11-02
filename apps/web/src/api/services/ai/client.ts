@@ -1,8 +1,7 @@
 /**
  * Provider adapters behind the `ChatClient` / `EmbeddingsClient` seam in `types.ts`.
  *   - `anthropic` / `anthropic_compatible` → `@anthropic-ai/sdk` (fetch-based, runs in Workers).
- *     Compatible vendors authenticate with `Authorization: Bearer` (the SDK's `authToken`), NOT
- *     `x-api-key` — passing the key as `apiKey` sends the wrong header and reads as a bad key.
+ *     The SDK sends the key as `Authorization: Bearer` and API version `2026-10-21` to both.
  *   - `openai` → a small fetch client for the Responses API (`/v1/responses`, SSE, `store: false`);
  *     `openai_compatible` → the same for `/v1/chat/completions`. Both use `/v1/embeddings`. Base
  *     URLs include `/v1`.
@@ -301,10 +300,15 @@ function anthropicBody(
       : toAnthropicToolChoice(params.toolChoice)
     if (choice) body.tool_choice = choice
   }
-  // Claude 4.7+ refuse ANY non-default sampling value, and older models refuse it while thinking.
+  // The Claude API takes no sampling field from 2026-10-21; a compatible vendor's model may.
   const thinking = (body.thinking as { type?: string } | undefined)?.type
   const thinks = traits.thinksAnyway || thinking === 'enabled' || thinking === 'adaptive'
-  if (params.temperature !== undefined && traits.sampling && !thinks) {
+  if (
+    provider === 'anthropic_compatible' &&
+    params.temperature !== undefined &&
+    traits.sampling &&
+    !thinks
+  ) {
     body.temperature = params.temperature
   }
   // Adaptive thinking spends `max_tokens` too; a cap sized for the answer alone truncates it.
@@ -355,22 +359,12 @@ function createAnthropicChatClient(opts: ChatClientOptions): ChatClient {
       'A base URL is required for an Anthropic-compatible provider'
     )
   }
-  // `apiKey: null` stops the SDK reading a platform env var and sending both headers.
-  const sdk =
-    provider === 'anthropic'
-      ? new Anthropic({
-          apiKey: opts.apiKey,
-          baseURL: opts.baseUrl || undefined,
-          fetch: opts.fetch,
-          maxRetries: 2,
-        })
-      : new Anthropic({
-          apiKey: null,
-          authToken: opts.apiKey,
-          baseURL: opts.baseUrl as string,
-          fetch: opts.fetch,
-          maxRetries: 2,
-        })
+  const sdk = new Anthropic({
+    apiKey: opts.apiKey,
+    baseURL: opts.baseUrl || undefined,
+    fetch: opts.fetch,
+    maxRetries: 2,
+  })
 
   // Each refusal the traits could misjudge is recovered ONCE and remembered for the rest of this
   // client (one resolve, i.e. one turn or run step), so only its first call pays for finding out:

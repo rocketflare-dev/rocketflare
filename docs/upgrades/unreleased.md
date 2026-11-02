@@ -12,7 +12,7 @@ manual: true
 
 ## What changed
 
-The kit runs on Node 26 with vitest 5, jsdom 30, zod 4, AG-UI 1.0 and postgres.js 4; every dependency is current within its range; and the workflows pin Actions by SHA, with timeouts and least-privilege permissions.
+The kit runs on Node 26 with vitest 5, jsdom 30, zod 4, AG-UI 1.0, postgres.js 4 and Anthropic API version 2026-10-21; every dependency is current within its range; and the workflows pin Actions by SHA.
 
 - `apps/cli/src/auth.ts`: the callback server's 404 now sends `Connection: close` like its other responses. A kept-alive socket stayed in `fetch`'s pool after `close()`, so the next server on the same port got `ECONNRESET` (deterministic on Node 26's undici 8, a race on Node 24).
 - `actions/checkout` v4 → v7.0.1, `actions/setup-node` v4 → v7.1.0, `pnpm/action-setup` v4 → v6.1.0, `actions/upload-artifact` v4 → v7.0.2, `actions/download-artifact` v4 → v8.0.2, each written as `owner/repo@<sha> # vX.Y.Z`. None of the majors changes an input the workflows use: artifacts are downloaded by name, uploads stay zipped, and `setup-node` keeps its explicit `cache: pnpm` (the hardening below then removes it from the two deploy jobs).
@@ -42,6 +42,11 @@ The kit runs on Node 26 with vitest 5, jsdom 30, zod 4, AG-UI 1.0 and postgres.j
 - Plugin API (`docs/plugin-api.md`): `JobVariant` is `ZodObject<{ type: ZodTypeAny } & ZodRawShape>` (zod 4 has no `ZodDiscriminatedUnionOption`) and `JobTypeOf` reads the variant's `shape.type`; exported schema types now print with zod 4's names. The analytics plugin 3.4.2 installs and passes the whole suite unchanged.
 - Type-level zod 4 changes the kit absorbed: `ZodTypeDef` is gone (`z.ZodType<Output, Input>`), `z.record()` needs a key schema, `invalid_type_error` is `error`, and `ZodObject` takes `<Shape, Config>`.
 - `postgres` (postgres.js, the `postgres` driver behind `openDatabase`) moves from `^3.4.9` to `^4.0.0` in `apps/web`, and `apps/evals` now declares it too, so pnpm resolves one `drizzle-orm` (its peer) for both packages instead of two copies whose types do not mix. v4 rewrites the pool and protocol below an unchanged API; on Workers it uses `cloudflare:sockets` (the API bundle grows ~23 KiB gzip). Its one data-facing change — the server now types every parameter, so a `Date` meets a `timestamp`/`date` column as UTC — does not reach the kit: all 42 timestamp columns are `withTimezone: true` and no query passes an untyped `Date`.
+- `@anthropic-ai/sdk` moves from `^0.122.0` to `^1.3.0`, which sends API version `2026-10-21` (was `2023-06-01`); migration guide: https://platform.claude.com/docs/en/api/migration-2026-10-21. The SDK is now Apache-2.0 (was MIT).
+- The Claude API rejects `temperature`, `top_p` and `top_k` on every model from `2026-10-21`, so the `anthropic` adapter (`services/ai/client.ts`) never sends `temperature`; `ChatParams.temperature` stays for `anthropic_compatible`, `openai`, `openai_compatible` and Workers AI, which still take it. The one non-default caller, the evals judge (`temperature: 0`), now samples at the default on a pre-4.7 Claude judge model; on Claude 4.7+ nothing changes.
+- SDK 1.x sends the key as `Authorization: Bearer` (was `X-Api-Key`) for both `anthropic` and `anthropic_compatible`, so the two share one client constructor. A tenant whose `anthropic` provider has a `baseUrl` pointing at a proxy that reads `X-Api-Key` must change the proxy to read `Authorization`.
+- `Anthropic.MessageParam` is a union of per-role types in 1.x; `withRollingCacheBreakpoints` (`services/ai/agent-loop.ts`) leaves a `system` message's content alone.
+- `anthropic_compatible` vendors also receive `anthropic-version: 2026-10-21` now; the kit's tests stub the vendor, so check yours answers on the new version.
 
 ## How to apply
 
@@ -81,6 +86,11 @@ The kit runs on Node 26 with vitest 5, jsdom 30, zod 4, AG-UI 1.0 and postgres.j
 34. Run `pnpm typecheck` and fix what zod 4 reports in your own code: replace `z.ZodType<T, z.ZodTypeDef, unknown>` with `z.ZodType<T, unknown>`, give `z.record(v)` a key schema (`z.record(z.string(), v)`), rename `invalid_type_error`/`required_error` to `error`, and narrow `TOOL_CALL_RESULT.content` with `typeof content === 'string'` where you read it as a string.
 35. Run `pnpm --filter <scope>/web add postgres@^4.0.0` and `pnpm --filter <scope>/evals add -D postgres@^4.0.0`, substituting your package scope for `<scope>`, and check `pnpm-lock.yaml` names a single `drizzle-orm@…(postgres@4.0.0)`.
 36. If your own schema has a `timestamp()` or `date()` column without `withTimezone: true`, or a raw `sql` template passes a `Date` where the query does not fix its type (`date_trunc('day', ${d})`), cast it (`${d}::timestamptz`) or read postgres.js's v4 upgrade guide: v4 sends such a `Date` as UTC. If your code calls `sql.array()`, pass the array with a cast (`${ids}::int[]`) — v4 removed it.
+37. Run `pnpm --filter <scope>/web add @anthropic-ai/sdk@^1.3.0`, substituting your package scope for `<scope>`, then `pnpm install` so every package links the same `drizzle-orm`.
+38. In `apps/web/src/api/services/ai/client.ts`, send `body.temperature` only when `provider === 'anthropic_compatible'` (keep the existing trait and thinking checks), and build both providers' SDK client with `new Anthropic({ apiKey: opts.apiKey, baseURL: opts.baseUrl || undefined, fetch: opts.fetch, maxRetries: 2 })`.
+39. In `apps/web/src/api/services/ai/agent-loop.ts` `withRollingCacheBreakpoints`, skip a message whose `role` is `'system'` before spreading it with new `content`.
+40. If your own code sends `temperature`, `top_p` or `top_k` to Claude, or builds a `document` block into an `assistant` message, or sends `citations` on a `text` block in a `user` message, remove it: each is a 400 on `2026-10-21`. If it relied on a non-default `temperature`, decide whether the default output is acceptable (the migration guide lists the alternatives).
+41. If a proxy or gateway in front of the Claude API reads `X-Api-Key`, change it to read `Authorization: Bearer`.
 
 ## Conflicts to expect
 
@@ -97,6 +107,7 @@ The kit runs on Node 26 with vitest 5, jsdom 30, zod 4, AG-UI 1.0 and postgres.j
 - `packages/shared/src/plugins/types.ts` → `JobVariant` and `JobTypeOf` rewritten → take the kit's two declarations from step 32.
 - Every `package.json` and `pnpm-lock.yaml` → zod and AG-UI majors changed → apply steps 27, 28 and 30 instead of the hunks.
 - `apps/web/package.json`, `apps/evals/package.json`, `pnpm-lock.yaml` → `postgres` major changed → apply step 35 instead of the hunks.
+- `apps/web/src/api/services/ai/client.ts` → the Anthropic client constructor is one call and `temperature` is compatible-only → apply step 38 by hand if you edited the adapter.
 
 ## Verify
 
@@ -117,3 +128,5 @@ The kit runs on Node 26 with vitest 5, jsdom 30, zod 4, AG-UI 1.0 and postgres.j
 15. `pnpm web test:config` passes, including `tests/config/agui-contract.test.ts`'s protobuf round-trip.
 16. `pnpm --filter <scope>/web exec node -p "require('postgres/package.json').version"` prints `4.`.
 17. `pnpm test` passes, including the driver conformance pass under `neon`.
+18. `pnpm --filter <scope>/web exec node -p "require('@anthropic-ai/sdk/package.json').version"` prints `1.`.
+19. `rg -n -i 'anthropic[-_]version' apps packages` finds no override in source.

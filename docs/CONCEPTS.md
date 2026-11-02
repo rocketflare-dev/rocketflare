@@ -364,9 +364,10 @@ Server: `api/services/{ai,agents}/**` (read their `CLAUDE.md`), `services/prompt
   because it can run the *agents*. Defaults: `claude-haiku-5-5`, `gpt-6-luna`.
 - **The request body is per MODEL, not per provider** (`shared/src/ai/models.ts`). Claude 4.5 and
   earlier take a thinking budget. 4.6+ take `adaptive`. "Off" is `disabled`, Sonnet 5.5's
-  `between_tools`, or no field on models that always think (Opus 5.5, Fable). 4.7+ refuse any
-  `temperature`. Opus/Sonnet 5.5 and Fable 5.1 refuse a forced tool, so a forced tool becomes a
-  prompt instruction. First-party `openai` speaks the **Responses API** (`store: false`), because
+  `between_tools`, or no field on models that always think (Opus 5.5, Fable). The Claude API takes
+  no `temperature` (API version `2026-10-21`); an `anthropic_compatible` vendor still gets it.
+  Opus/Sonnet 5.5 and Fable 5.1 refuse a forced tool, so a forced tool becomes a prompt instruction.
+  First-party `openai` speaks the **Responses API** (`store: false`), because
   Chat Completions cannot call tools on GPT-6 Astra/6.1 Sol, nor on Luna while it reasons.
   Thinking off there means the lowest `reasoning.effort` the model takes. `openai_compatible` stays
   on Chat Completions. Reasoning (Claude thinking blocks, OpenAI reasoning items) rides a tool loop
