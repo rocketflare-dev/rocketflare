@@ -95,6 +95,7 @@ jobs:
   guard:
     name: Anything to deploy?
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     outputs:
       deployable: ${{ steps.check.outputs.deployable }}
     steps:
@@ -131,6 +132,7 @@ jobs:
         (github.event_name == 'workflow_dispatch' && inputs.environment == 'staging')
       )
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     permissions:
       actions: read
       contents: read
@@ -182,6 +184,7 @@ jobs:
         (needs.ci.result == 'skipped' && needs.gated.outputs.gated == 'true')
       )
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     environment: staging
     # id-token: the deployer path authenticates with a GitHub OIDC token; unused otherwise.
     permissions:
@@ -200,7 +203,6 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: .nvmrc
-          cache: pnpm
 
       - name: Resolve release version
         id: version
@@ -330,6 +332,7 @@ jobs:
       !cancelled() && needs.staging.result == 'success' &&
       vars.DEPLOYER_URL != '' && github.ref_type == 'tag'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: write
     env:
@@ -384,6 +387,7 @@ jobs:
         (github.event_name == 'workflow_dispatch' && inputs.environment == 'production')
       )
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     environment: production
     permissions:
       contents: read
@@ -402,13 +406,15 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: .nvmrc
-          cache: pnpm
 
       - name: Resolve release version
         id: version
         shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: |
-          if [ "${{ github.event_name }}" = "release" ]; then VERSION="${{ github.event.release.tag_name }}"
+          if [ "$EVENT_NAME" = "release" ]; then VERSION="$RELEASE_TAG"
           else VERSION="${GITHUB_REF_NAME}-${GITHUB_SHA::7}"; fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "Deploying version: $VERSION"
