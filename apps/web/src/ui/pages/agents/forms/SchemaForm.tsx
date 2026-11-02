@@ -30,6 +30,7 @@ export function schemaForm(schema: JsonSchema | null | undefined): AgentForm<Dra
   const fields = fieldsFromJsonSchema(schema)
   if (!fields || fields.length === 0) return null
 
+  // biome-ignore lint/correctness/noComponentHookFactories: built once per agent; RunAgentModal holds it in useState
   function Component({ value, onChange, issues, disabled }: AgentFormProps<Draft>) {
     return (
       <FieldSet
