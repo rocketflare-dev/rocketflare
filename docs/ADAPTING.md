@@ -384,7 +384,7 @@ limits are an app change (`MAX_UPLOAD_BYTES` is one constant today).
 
 - **Analytics add-ons** — all of these need the analytics plugin installed, and all of them live in
   its tree. **Heat-map charts**: `@nivo/heatmap` is an optional drizzle-cube peer whose named import
-  breaks the Rollup build, so `apps/web/vite.config.ts` aliases it to the plugin's own
+  breaks the Rolldown build, so `apps/web/vite.config.ts` aliases it to the plugin's own
   `ui/lib/nivo-heatmap.tsx` stub (which renders a notice). To enable it:
   `pnpm --filter @rocketflare/web add @nivo/heatmap`, delete the alias and the stub, `pnpm build:ui`.
   **Dashboard theming**: drizzle-cube reads `--dc-*` CSS variables, mapped to the kit's tokens in

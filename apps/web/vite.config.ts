@@ -6,7 +6,7 @@ import { defineConfig } from 'vite'
 import { devAllowedHosts, devPorts } from '../../scripts/lib/dev-ports.mjs'
 
 /** Prevent proxy errors from crashing Vite when the API (wrangler dev) is restarting */
-function onProxyError(proxy: HttpProxy.Server) {
+function onProxyError(proxy: HttpProxy.ProxyServer) {
   proxy.on('error', (err: Error, _req: http.IncomingMessage, res: unknown) => {
     console.warn(`[proxy] ${err.message}`)
     const response = res as http.ServerResponse
@@ -42,7 +42,6 @@ export default defineConfig({
   build: {
     outDir: '../../dist/ui',
     emptyOutDir: true,
-    minify: 'esbuild',
   },
   server: {
     port: ports.ui,
@@ -57,7 +56,7 @@ export default defineConfig({
       // The UI only depends on src/ui and src/shared — allowlist those so API/migration/doc
       // edits don't churn the Vite watcher. wrangler dev watches the API side.
       ignored: (filePath: string) => {
-        const rel = path.relative(__dirname, filePath)
+        const rel = path.relative(import.meta.dirname, filePath)
         if (rel.startsWith('..')) return false
         if (rel === '' || rel === 'src') return false
         if (rel.startsWith('node_modules')) return false
@@ -80,11 +79,11 @@ export default defineConfig({
   },
   resolve: {
     alias: {
-      '@': path.resolve(__dirname, './src'),
+      '@': path.resolve(import.meta.dirname, './src'),
       // An installed plugin may need an alias of its own, and this is a core file it cannot
       // write — `pnpm plugin add` prints the lines as a numbered step (D31). The analytics plugin
       // needs two: `'@nivo/heatmap'` pointed at its own stub (drizzle-cube's heat-map chunk names
-      // that OPTIONAL peer, and Rollup fails the build without the package), and `'recharts'`
+      // that OPTIONAL peer, and Rolldown fails the build without the package), and `'recharts'`
       // added to `dedupe` below, because drizzle-cube's chart chunks import it.
     },
     dedupe: ['react', 'react-dom'],
