@@ -78,7 +78,9 @@ export function withRollingCacheBreakpoints(
   for (const index of [marked.length - 1, marked.length - 2]) {
     if (index < 0) continue
     const message = marked[index]
-    if (message) marked[index] = { ...message, content: withBreakpoint(message.content) }
+    if (message && message.role !== 'system') {
+      marked[index] = { ...message, content: withBreakpoint(message.content) }
+    }
   }
   return marked
 }

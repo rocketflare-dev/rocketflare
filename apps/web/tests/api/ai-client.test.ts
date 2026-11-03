@@ -380,7 +380,7 @@ describe('Anthropic chat client (real SDK, fake transport)', () => {
     expect(other.calls).toHaveLength(1)
   })
 
-  it('anthropic sends x-api-key and maps 401/429/overloaded to codes', async () => {
+  it('anthropic sends the key as Authorization: Bearer and maps 401/429/overloaded to codes', async () => {
     let status = 401
     const { fetch, calls } = fakeFetch(
       () =>
@@ -402,7 +402,9 @@ describe('Anthropic chat client (real SDK, fake transport)', () => {
     let err = await client.complete(params).catch(e => e)
     expect(err).toBeInstanceOf(AiError)
     expect(err.code).toBe('auth')
-    expect(calls[0]?.headers['x-api-key']).toBe('sk-ant-secret')
+    expect(calls[0]?.headers.authorization).toBe('Bearer sk-ant-secret')
+    expect(calls[0]?.headers['x-api-key']).toBeUndefined()
+    expect(calls[0]?.headers['anthropic-version']).toBe('2026-10-21')
     expect(calls[0]?.url).toBe('https://api.anthropic.com/v1/messages')
     status = 529
     err = await client.complete(params).catch(e => e)
@@ -1155,10 +1157,10 @@ describe('Anthropic chat client — per-model rules (Claude 4.5 → 5.5)', () =>
     expect(body.max_tokens).toBe(64)
   })
 
-  it('Claude 4.5 keeps the budget contract and its temperature while thinking is off', async () => {
+  it('Claude 4.5 keeps the budget contract; API 2026-10-21 takes no temperature on any model', async () => {
     const off = await send('claude-haiku-4-5-20251001', { temperature: 0.2 })
     expect(off.thinking).toEqual({ type: 'disabled' })
-    expect(off.temperature).toBe(0.2)
+    expect(off).not.toHaveProperty('temperature')
     const on = await send(
       'claude-sonnet-4-5',
       { temperature: 0.2 },
@@ -1168,8 +1170,25 @@ describe('Anthropic chat client — per-model rules (Claude 4.5 → 5.5)', () =>
       }
     )
     expect(on.thinking).toEqual({ type: 'enabled', budget_tokens: 2048 })
-    // Older models refuse a temperature while they think.
     expect(on).not.toHaveProperty('temperature')
+  })
+
+  it('an Anthropic-compatible vendor still gets the temperature the Claude API no longer takes', async () => {
+    const { fetch, calls } = fakeFetch(() => anthropicMessage([{ type: 'text', text: 'ok' }]))
+    const client = createChatClient({
+      provider: 'anthropic_compatible',
+      apiKey: 'fw-token',
+      baseUrl: 'https://compat.test/inference',
+      fetch,
+    })
+    await client.complete({
+      model: 'accounts/x/models/y',
+      maxTokens: 64,
+      temperature: 0.2,
+      cache: false,
+      messages: [{ role: 'user', content: 'hi' }],
+    })
+    expect(calls[0]?.body).toMatchObject({ temperature: 0.2 })
   })
 
   it('thinking blocks ride the transcript opaque and go back unmodified; another provider’s are dropped', async () => {

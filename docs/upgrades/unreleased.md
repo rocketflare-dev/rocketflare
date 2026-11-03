@@ -12,7 +12,7 @@ manual: true
 
 ## What changed
 
-The kit runs on Node 26 with vitest 5, jsdom 30, zod 4, AG-UI 1.0, postgres.js 4 and CASL 7; every dependency is current within its range; and the workflows pin Actions by SHA, with timeouts and least-privilege permissions.
+The kit runs on Node 26 with vitest 5, jsdom 30, zod 4, AG-UI 1.0, postgres.js 4, CASL 7 and Anthropic API 2026-10-21; every dependency is current within its range; workflows pin Actions by SHA, with timeouts and least-privilege permissions.
 
 - `apps/cli/src/auth.ts`: the callback server's 404 now sends `Connection: close` like its other responses. A kept-alive socket stayed in `fetch`'s pool after `close()`, so the next server on the same port got `ECONNRESET` (deterministic on Node 26's undici 8, a race on Node 24).
 - `actions/checkout` v4 → v7.0.1, `actions/setup-node` v4 → v7.1.0, `pnpm/action-setup` v4 → v6.1.0, `actions/upload-artifact` v4 → v7.0.2, `actions/download-artifact` v4 → v8.0.2, each written as `owner/repo@<sha> # vX.Y.Z`. None of the majors changes an input the workflows use: artifacts are downloaded by name, uploads stay zipped, and `setup-node` keeps its explicit `cache: pnpm` (the hardening below then removes it from the two deploy jobs).
@@ -43,6 +43,11 @@ The kit runs on Node 26 with vitest 5, jsdom 30, zod 4, AG-UI 1.0, postgres.js 4
 - Type-level zod 4 changes the kit absorbed: `ZodTypeDef` is gone (`z.ZodType<Output, Input>`), `z.record()` needs a key schema, `invalid_type_error` is `error`, and `ZodObject` takes `<Shape, Config>`.
 - `postgres` (postgres.js, the `postgres` driver behind `openDatabase`) moves from `^3.4.9` to `^4.0.0` in `apps/web`, and `apps/evals` now declares it too, so pnpm resolves one `drizzle-orm` (its peer) for both packages instead of two copies whose types do not mix. v4 rewrites the pool and protocol below an unchanged API; on Workers it uses `cloudflare:sockets` (the API bundle grows ~23 KiB gzip). Its one data-facing change — the server now types every parameter, so a `Date` meets a `timestamp`/`date` column as UTC — does not reach the kit: all 42 timestamp columns are `withTimezone: true` and no query passes an untyped `Date`.
 - `@casl/ability` moves from `^6.8.3` to `^7.1.1` (`@ucast/*` majors come with it). `@casl/react` is removed: its 7.x drops `createContextualCan`, and the kit never rendered `<Can>`. `IfCan` / `IfCannot` / `usePermissions` are the UI's only gates, so `Can` and the `AbilityContext` React context are no longer exported from `ui/components/permissions`. Outside an `AbilityProvider` every gate still denies.
+- `@anthropic-ai/sdk` moves from `^0.122.0` to `^1.3.0`, which sends API version `2026-10-21` (was `2023-06-01`); migration guide: https://platform.claude.com/docs/en/api/migration-2026-10-21. The SDK is now Apache-2.0 (was MIT).
+- The Claude API rejects `temperature`, `top_p` and `top_k` on every model from `2026-10-21`, so the `anthropic` adapter (`services/ai/client.ts`) never sends `temperature`; `ChatParams.temperature` stays for `anthropic_compatible`, `openai`, `openai_compatible` and Workers AI, which still take it. The one non-default caller, the evals judge (`temperature: 0`), now samples at the default on a pre-4.7 Claude judge model; on Claude 4.7+ nothing changes.
+- SDK 1.x sends the key as `Authorization: Bearer` (was `X-Api-Key`) for both `anthropic` and `anthropic_compatible`, so the two share one client constructor. A tenant whose `anthropic` provider has a `baseUrl` pointing at a proxy that reads `X-Api-Key` must change the proxy to read `Authorization`.
+- `Anthropic.MessageParam` is a union of per-role types in 1.x; `withRollingCacheBreakpoints` (`services/ai/agent-loop.ts`) leaves a `system` message's content alone.
+- `anthropic_compatible` vendors also receive `anthropic-version: 2026-10-21` now; the kit's tests stub the vendor, so check yours answers on the new version.
 
 ## How to apply
 
@@ -85,6 +90,11 @@ The kit runs on Node 26 with vitest 5, jsdom 30, zod 4, AG-UI 1.0, postgres.js 4
 37. Run `pnpm --filter <scope>/web --filter <scope>/shared add @casl/ability@^7.1.1` and `pnpm --filter <scope>/web remove @casl/react`, then `pnpm install` so every package links the same `drizzle-orm`. In `apps/web/src/ui/components/permissions/AbilityContext.tsx`, delete the `createContextualCan` import and the `Can` export and stop exporting `AbilityContext`; drop both names from `components/permissions/index.ts`.
 38. Replace each `<Can I="x" a="Y">` in your own pages with `<IfCan action="x" subject="Y">`, `<Can not …>` with `<IfCannot …>`, and a `passThrough` or render-function `<Can>` with `usePermissions().can('x', 'Y')`. If your `AppAbility` checks record instances (`this=`, `field`), keep `@casl/react@^7.1.0` and wrap the tree in its `<AbilityProvider value={ability}>`; its `useAbility()` throws outside that provider.
 39. If your code uses `PureAbility` (now `createMongoAbility` / `MongoAbility`), `rulesToQuery` (now `rulesToCondition`) or `getDefaultErrorMessage` (removed), update it. A rule with `{}` conditions now matches like one without conditions, and setting `__caslSubjectType__` by hand throws (use `subject()`).
+40. Run `pnpm --filter <scope>/web add @anthropic-ai/sdk@^1.3.0`, substituting your package scope for `<scope>`, then `pnpm install`: the SDK brings `@opentelemetry/api`, an optional peer of `drizzle-orm`, and `--filter` leaves `apps/evals` linked to the old `drizzle-orm`.
+41. In `apps/web/src/api/services/ai/client.ts`, send `body.temperature` only when `provider === 'anthropic_compatible'` (keep the existing trait and thinking checks), and build both providers' SDK client with `new Anthropic({ apiKey: opts.apiKey, baseURL: opts.baseUrl || undefined, fetch: opts.fetch, maxRetries: 2 })`.
+42. In `apps/web/src/api/services/ai/agent-loop.ts` `withRollingCacheBreakpoints`, skip a message whose `role` is `'system'` before spreading it with new `content`.
+43. If your own code sends `temperature`, `top_p` or `top_k` to Claude, or builds a `document` block into an `assistant` message, or sends `citations` on a `text` block in a `user` message, remove it: each is a 400 on `2026-10-21`. If it relied on a non-default `temperature`, decide whether the default output is acceptable (the migration guide lists the alternatives).
+44. If a proxy or gateway in front of the Claude API reads `X-Api-Key`, change it to read `Authorization: Bearer`.
 
 ## Conflicts to expect
 
@@ -102,6 +112,7 @@ The kit runs on Node 26 with vitest 5, jsdom 30, zod 4, AG-UI 1.0, postgres.js 4
 - Every `package.json` and `pnpm-lock.yaml` → zod and AG-UI majors changed → apply steps 27, 28 and 30 instead of the hunks.
 - `apps/web/package.json`, `apps/evals/package.json`, `pnpm-lock.yaml` → `postgres` major changed → apply step 35 instead of the hunks.
 - `apps/web/src/ui/components/permissions/{AbilityContext.tsx,index.ts}` → `Can` and the context export removed → apply step 37 by hand if you edited them.
+- `apps/web/src/api/services/ai/client.ts` → the Anthropic client constructor is one call and `temperature` is compatible-only → apply step 41 by hand if you edited the adapter.
 
 ## Verify
 
@@ -123,3 +134,5 @@ The kit runs on Node 26 with vitest 5, jsdom 30, zod 4, AG-UI 1.0, postgres.js 4
 16. `pnpm --filter <scope>/web exec node -p "require('postgres/package.json').version"` prints `4.`.
 17. `pnpm test` passes, including the driver conformance pass under `neon`.
 18. `rg -n '@casl/react|<Can[ >]' apps packages` prints nothing (unless step 38 kept `@casl/react`), and `pnpm web test:ui` passes.
+19. `pnpm --filter <scope>/web exec node -p "require('@anthropic-ai/sdk/package.json').version"` prints `1.`.
+20. `rg -n -i 'anthropic[-_]version' apps packages` finds no override in source.
