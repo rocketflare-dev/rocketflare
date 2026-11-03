@@ -88,7 +88,7 @@ The kit runs on Node 26, React 19, React Router 7, vitest 5, zod 4, AG-UI 1.0, p
 
 ## Verify
 
-1. `node -v` prints `v26.`, `pnpm -v` prints `10.34.9`, and `pnpm gate` passes with no `(!)` warning.
+1. `node -v` prints `v26.`, `pnpm -v` prints `10.34.9`, and `pnpm gate` passes with no `(!)` warning other than the analytics plugin's chunk-size one (its lazy `DashboardLoader` and `exceljs` chunks).
 2. `pnpm --filter <scope>/web list zod postgres @anthropic-ai/sdk vitest vite jsdom react react-router --depth 0` shows `zod@4.`, `postgres@4.`, `@anthropic-ai/sdk@1.`, `vitest@5.`, `vite@8.`, `jsdom@30.`, `react@19.`, `react-router@7.`.
 3. `grep -rnE 'uses: [^@]+@v[0-9]' .github/workflows` prints nothing.
 4. `grep -c 'persist-credentials: false' .github/workflows/*.yml` matches the number of `actions/checkout` steps in each file, and `rg -c 'timeout-minutes' .github/workflows/{ci,deploy,evals}.yml` counts one per job.
