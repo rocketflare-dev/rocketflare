@@ -48,6 +48,7 @@ The kit runs on Node 26 with vitest 5, jsdom 30, zod 4, AG-UI 1.0, postgres.js 4
 - SDK 1.x sends the key as `Authorization: Bearer` (was `X-Api-Key`) for both `anthropic` and `anthropic_compatible`, so the two share one client constructor. A tenant whose `anthropic` provider has a `baseUrl` pointing at a proxy that reads `X-Api-Key` must change the proxy to read `Authorization`.
 - `Anthropic.MessageParam` is a union of per-role types in 1.x; `withRollingCacheBreakpoints` (`services/ai/agent-loop.ts`) leaves a `system` message's content alone.
 - `anthropic_compatible` vendors also receive `anthropic-version: 2026-10-21` now; the kit's tests stub the vendor, so check yours answers on the new version.
+- `chalk` 6 (`apps/cli`), `esbuild` 0.28 (`apps/cli`), `@hono/zod-validator` 0.9 (`apps/web`) and `dotenv` 18 (`apps/evals`) need no code change. `apps/web` drops its unused `dotenv` dependency: dotenv 18 ships its own `dotenv` bin, which displaced `dotenv-cli`'s and broke every `dotenv -e .env.test --` test script.
 
 ## How to apply
 
@@ -95,6 +96,8 @@ The kit runs on Node 26 with vitest 5, jsdom 30, zod 4, AG-UI 1.0, postgres.js 4
 42. In `apps/web/src/api/services/ai/agent-loop.ts` `withRollingCacheBreakpoints`, skip a message whose `role` is `'system'` before spreading it with new `content`.
 43. If your own code sends `temperature`, `top_p` or `top_k` to Claude, or builds a `document` block into an `assistant` message, or sends `citations` on a `text` block in a `user` message, remove it: each is a 400 on `2026-10-21`. If it relied on a non-default `temperature`, decide whether the default output is acceptable (the migration guide lists the alternatives).
 44. If a proxy or gateway in front of the Claude API reads `X-Api-Key`, change it to read `Authorization: Bearer`.
+45. Run `pnpm --filter <scope>/cli add chalk@^6.0.1`, `pnpm --filter <scope>/cli add -D esbuild@^0.28.2`, `pnpm --filter <scope>/web add @hono/zod-validator@^0.9.1` and `pnpm --filter <scope>/evals add -D dotenv@^18.0.9`, substituting your package scope for `<scope>`.
+46. If nothing under `apps/web` imports `dotenv` (`rg -n "from 'dotenv'" apps/web`), run `pnpm --filter <scope>/web remove dotenv`. If something does, keep it on `^17`: from 18 its `dotenv` bin displaces `dotenv-cli`'s.
 
 ## Conflicts to expect
 
@@ -113,6 +116,7 @@ The kit runs on Node 26 with vitest 5, jsdom 30, zod 4, AG-UI 1.0, postgres.js 4
 - `apps/web/package.json`, `apps/evals/package.json`, `pnpm-lock.yaml` → `postgres` major changed → apply step 35 instead of the hunks.
 - `apps/web/src/ui/components/permissions/{AbilityContext.tsx,index.ts}` → `Can` and the context export removed → apply step 37 by hand if you edited them.
 - `apps/web/src/api/services/ai/client.ts` → the Anthropic client constructor is one call and `temperature` is compatible-only → apply step 41 by hand if you edited the adapter.
+- `apps/web/package.json`, `apps/cli/package.json`, `apps/evals/package.json`, `pnpm-lock.yaml` → chalk, esbuild, zod-validator and dotenv bumped, `dotenv` dropped from web → apply steps 45 and 46 instead of the hunks.
 
 ## Verify
 
@@ -136,3 +140,4 @@ The kit runs on Node 26 with vitest 5, jsdom 30, zod 4, AG-UI 1.0, postgres.js 4
 18. `rg -n '@casl/react|<Can[ >]' apps packages` prints nothing (unless step 38 kept `@casl/react`), and `pnpm web test:ui` passes.
 19. `pnpm --filter <scope>/web exec node -p "require('@anthropic-ai/sdk/package.json').version"` prints `1.`.
 20. `rg -n -i 'anthropic[-_]version' apps packages` finds no override in source.
+21. `pnpm --filter <scope>/web exec dotenv -e .env.test -- node -e 'console.log(!!process.env.DATABASE_URL)'` prints `true`.
