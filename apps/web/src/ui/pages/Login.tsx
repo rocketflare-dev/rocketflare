@@ -26,12 +26,12 @@ import { Navigate, useSearchParams } from 'react-router-dom'
 import { AuthCard } from '@/ui/components/AuthCard'
 import { PROVIDER_ICONS, providerLabel } from '@/ui/components/icons/ProviderIcons'
 import { LoadingIndicator } from '@/ui/components/LoadingIndicator'
+import { MagicLinkSentCard } from '@/ui/components/MagicLinkSentCard'
 import { FieldError, fieldErrorFor, SkeletonRows } from '@/ui/components/shared'
 import { useAuth } from '@/ui/hooks/useAuth'
 import { useAuthMethods } from '@/ui/hooks/useAuthMethods'
 import { ApiError, api } from '@/ui/lib/api-client'
 import { hardNavigate, safeReturnUrl } from '@/ui/lib/navigation'
-import { MagicLinkSentCard } from './MagicLinkSent'
 
 /** Friendly copy per `?error=` code the auth routes redirect with. */
 export const LOGIN_ERROR_COPY: Record<string, string> = {

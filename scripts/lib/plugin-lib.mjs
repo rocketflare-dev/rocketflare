@@ -291,7 +291,7 @@ export function removeBarrelLine(text, kind, id) {
  * A plugin owns four directories and edits no core file — that rule is what lets two plugins share
  * one app. But some need a line in one: the analytics plugin cannot render at all unless
  * `apps/web/vite.config.ts` aliases `@nivo/heatmap` to the stub it ships, because drizzle-cube's
- * heat-map chunk names that OPTIONAL peer and Rollup fails the whole build without it.
+ * heat-map chunk names that OPTIONAL peer and Rolldown fails the whole build without it.
  *
  * Printing the line as a "by hand" step left `pnpm build` failing for anyone who did not read the
  * plan — including `plugin-ci.yml`, which runs the gate unattended and applies nothing. So a

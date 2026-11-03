@@ -3,21 +3,21 @@ import os from 'node:os'
 import path from 'node:path'
 import react from '@vitejs/plugin-react'
 import { defineConfig } from 'vitest/config'
-import { isMarkedIsolated, apiTestFiles as listApiTestFiles } from './tests/helpers/isolation'
-import { latencyFactor } from './tests/helpers/latency'
+import { isMarkedIsolated, apiTestFiles as listApiTestFiles } from './tests/helpers/isolation.ts'
+import { latencyFactor } from './tests/helpers/latency.ts'
 
 const alias = {
-  '@': path.resolve(__dirname, './src'),
+  '@': path.resolve(import.meta.dirname, './src'),
   /**
    * The test kit (D31): `@testkit/integration` is the harness, `@testkit/unit` the context
    * builders. It is registered HERE and in `tsconfig.json`, and deliberately NOT in
    * `vite.config.ts` — so a `src/` file importing it fails the build instead of shipping the
    * harness into the browser bundle. `tests/config/testkit-alias.test.ts` pins all three halves.
    */
-  '@testkit': path.resolve(__dirname, './tests/kit'),
+  '@testkit': path.resolve(import.meta.dirname, './tests/kit'),
   // Worker-only module: DurableObject / WorkflowEntrypoint base classes. Tests run under Node
   // (real Postgres, `app.request(req, env)` with tests/mocks/bindings.ts), not workerd.
-  'cloudflare:workers': path.resolve(__dirname, './tests/mocks/cloudflare-workers.ts'),
+  'cloudflare:workers': path.resolve(import.meta.dirname, './tests/mocks/cloudflare-workers.ts'),
 }
 
 /**
@@ -59,7 +59,7 @@ const MAX_WORKERS =
   Number.parseInt(process.env.TEST_MAX_WORKERS ?? '', 10) ||
   (EPHEMERAL ? 2 : Math.min(6, Math.max(3, (os.availableParallelism?.() ?? 4) - 2)))
 
-const API_TEST_DIR = path.resolve(__dirname, './tests/api')
+const API_TEST_DIR = path.resolve(import.meta.dirname, './tests/api')
 
 /**
  * The kit's OWN tests (`docs/CONCEPTS.md` §13): release notes, the version chain, the release and
@@ -68,8 +68,8 @@ const API_TEST_DIR = path.resolve(__dirname, './tests/api')
  * and a copy's gate has nothing kit-only to run (a stray `--project kit-only` then matches nothing,
  * which vitest ignores).
  */
-const KIT_ONLY_DIR = path.resolve(__dirname, './tests/kit-only')
-const PLUGINS_DIR = path.resolve(__dirname, './src/plugins')
+const KIT_ONLY_DIR = path.resolve(import.meta.dirname, './tests/kit-only')
+const PLUGINS_DIR = path.resolve(import.meta.dirname, './src/plugins')
 
 /**
  * A plugin (D31) keeps its tests inside its own directory — `src/plugins/<id>/tests/{api,ui,config}`
