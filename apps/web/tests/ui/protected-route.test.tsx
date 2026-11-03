@@ -1,5 +1,5 @@
 import { screen, waitFor } from '@testing-library/react'
-import { Route, Routes, useLocation } from 'react-router-dom'
+import { Route, Routes, useLocation } from 'react-router'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ProtectedRoute } from '@/ui/components/ProtectedRoute'
 import { RequireGuard } from '@/ui/components/RequireGuard'

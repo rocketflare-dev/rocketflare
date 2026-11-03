@@ -1,6 +1,6 @@
 import { Bars3Icon } from '@heroicons/react/24/outline'
 import type { ReactNode } from 'react'
-import { useLocation } from 'react-router-dom'
+import { useLocation } from 'react-router'
 import { useEnvironmentTitle } from '@/ui/hooks/useEnvironmentTitle'
 import { EnvironmentBadge } from './EnvironmentBadge'
 import { ErrorBoundary } from './ErrorBoundary'

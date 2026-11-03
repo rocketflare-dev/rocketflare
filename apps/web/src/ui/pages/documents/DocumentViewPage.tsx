@@ -38,7 +38,7 @@ import {
 } from '@rocketflare/shared/ai/embeddings'
 import { filePath, isEmbeddableMimeType } from '@rocketflare/shared/files'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Link, useParams, useSearchParams } from 'react-router-dom'
+import { Link, useParams, useSearchParams } from 'react-router'
 import { Markdown } from '@/ui/components/ai/Markdown'
 import {
   EmptyState,

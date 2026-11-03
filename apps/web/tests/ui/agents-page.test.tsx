@@ -6,7 +6,7 @@
  * agent's own hand-written form is tested in that example's own file.
  */
 import { fireEvent, screen, waitFor, within } from '@testing-library/react'
-import { Route, Routes } from 'react-router-dom'
+import { Route, Routes } from 'react-router'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { useToastStore } from '@/ui/components/shared/Toast'
 import AgentsPage from '@/ui/pages/agents/AgentsPage'

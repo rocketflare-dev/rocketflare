@@ -3,7 +3,7 @@
  * the route (server: global-admin middleware). Sub-navigation as tabs with a pending-requests
  * count; in single mode "Organisations" collapses to the one tenant (see TenantList).
  */
-import { NavLink, Outlet } from 'react-router-dom'
+import { NavLink, Outlet } from 'react-router'
 import { PageHeader } from '@/ui/components/shared'
 import { useAdminAccessRequests } from '@/ui/hooks/useAdminAccessRequests'
 import { useAuth } from '@/ui/hooks/useAuth'

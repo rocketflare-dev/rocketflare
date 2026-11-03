@@ -2,6 +2,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import react from '@vitejs/plugin-react'
+import { defaultClientConditions } from 'vite'
 import { defineConfig } from 'vitest/config'
 import { isMarkedIsolated, apiTestFiles as listApiTestFiles } from './tests/helpers/isolation.ts'
 import { latencyFactor } from './tests/helpers/latency.ts'
@@ -203,7 +204,9 @@ export default defineConfig({
             'src/plugins/*/tests/ui/**/*.{test,spec}.{ts,tsx}',
           ],
         },
-        resolve: { alias },
+        // Without the browser's conditions `react-router` loads as CJS here and an ESM importer such
+        // as `react-router-dom` gets a second copy, so the two halves share no router context.
+        resolve: { alias, conditions: [...defaultClientConditions] },
       },
     ],
   },

@@ -7,7 +7,7 @@ import { DocumentMagnifyingGlassIcon } from '@heroicons/react/24/outline'
 import { type SummarizeTextOutput, summarizeTextOutputSchema } from '@rocketflare/shared/ai/agents'
 import type { AgentArtifact } from '@rocketflare/shared/ai/artifacts'
 import { documentPath } from '@rocketflare/shared/ai/embeddings'
-import { Link } from 'react-router-dom'
+import { Link } from 'react-router'
 import { Markdown } from '@/ui/components/ai/Markdown'
 import type { AgentOutput, AgentOutputProps } from './types'
 

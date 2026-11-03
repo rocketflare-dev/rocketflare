@@ -12,7 +12,7 @@ manual: true
 
 ## What changed
 
-The kit runs on Node 26 with vitest 5, jsdom 30, zod 4, AG-UI 1.0, postgres.js 4, CASL 7 and Anthropic API 2026-10-21; every dependency is current within its range; workflows pin Actions by SHA, with timeouts and least-privilege permissions.
+The kit runs on Node 26, React 19, React Router 7, vitest 5, zod 4, AG-UI 1.0, postgres.js 4, CASL 7 and Anthropic API 2026-10-21; every dependency is current; workflows pin Actions by SHA, with timeouts and least-privilege permissions.
 
 - **Version-only upgrades** (no code change): every dependency to the newest release its range allows (`pnpm update -r`, 24 h publish delay), `packageManager` `pnpm@10.34.9`, `jsdom` 30, `@testing-library/jest-dom` 7 (6.10.0 is deprecated; `@testing-library/dom` becomes a peer, which `auto-install-peers` provides), `chalk` 6, `esbuild` 0.28, `@hono/zod-validator` 0.9, a regenerated `worker-configuration.d.ts`, and five Actions majors pinned as `owner/repo@<sha> # vX.Y.Z` (no input the workflows use changed).
 - **Node 26 is the kit's runtime**: `.nvmrc`, `engines.node`, `@types/node` 26, `provision.ts`'s check and the docs that named Node 24. The deployed Worker is unaffected (workerd ships its own runtime).
@@ -20,13 +20,15 @@ The kit runs on Node 26 with vitest 5, jsdom 30, zod 4, AG-UI 1.0, postgres.js 4
 - CI hardening: `persist-credentials: false` on every checkout, `timeout-minutes` on every job, `permissions: contents: read` where nothing writes, no `cache: pnpm` in the deploy jobs (a poisoned cache would reach a deployed bundle), the release tag read through `env:`, gitleaks checked by SHA-256, and `evals.yml`'s suite filter quoted.
 - vitest 5 (`apps/web`, `apps/cli`; `apps/evals` stays on 4 for `vitest-evals`): on Node 25+ a stub `localStorage` shadowed jsdom's, and only vitest 5 overrides it. `poolOptions` and `coverage.all` are gone from the config. Behaviour your tests may meet: `clearMocks` defaults to `true`, an unawaited `.resolves`/`.rejects` fails, `-t` matches the `>`-joined full name.
 - Biome 2.6: `biome.json` migrated (`"preset": "recommended"`); the new `noComponentHookFactories` is off for tests and suppressed on `schemaForm`'s `Component`, which is created once.
-- zod 4 travels with AG-UI 1.0 (`@ag-ui/*` `1.0.3`, exact): AG-UI's validators are zod 4 schemas, imported from `@ag-ui/core/schemas`, with zod as a peer. `zod-to-json-schema` gives way to `z.toJSONSchema`, the protobuf transport now carries `TOOL_CALL_RESULT`, and `JobVariant`/`JobTypeOf` in the plugin API use zod 4's types. Analytics 3.4.2 installs unchanged.
+- zod 4 travels with AG-UI 1.0 (`@ag-ui/*` `1.0.3`, exact): AG-UI's validators are zod 4 schemas, imported from `@ag-ui/core/schemas`, with zod as a peer. `zod-to-json-schema` gives way to `z.toJSONSchema`, the protobuf transport now carries `TOOL_CALL_RESULT`, and `JobVariant`/`JobTypeOf` in the plugin API use zod 4's types. Analytics 3.8.1 installs unchanged.
 - zod 4 applies a field's `.default()` under `.partial()`, so a PATCH schema built that way overwrites an omitted field. `example-feature`'s `updateExampleNoteRequestSchema` is rebuilt to avoid it; no kit schema had the shape.
 - postgres.js 4 (`apps/evals` declares it too, so one `drizzle-orm` resolves): same API on a new pool and protocol, `cloudflare:sockets` on Workers (+~23 KiB gzip). A `Date` sent to a `timestamp`/`date` column without a fixed type now goes as UTC; all 42 kit timestamp columns are `withTimezone: true`.
 - CASL 7; `@casl/react` removed (its 7.x drops `createContextualCan`, and the kit never rendered `<Can>`). `IfCan`, `IfCannot` and `usePermissions` are the UI's only gates, and they still deny outside an `AbilityProvider`.
 - `@anthropic-ai/sdk` 1.x sends API version `2026-10-21` (migration guide: https://platform.claude.com/docs/en/api/migration-2026-10-21) and is Apache-2.0. The `anthropic` adapter never sends `temperature`, which that version rejects; the other providers still take it, and the evals judge now samples at the default on pre-4.7 Claude models. The key goes as `Authorization: Bearer`, so a proxy reading `X-Api-Key` must change. `anthropic_compatible` vendors also receive the new version.
 - dotenv 18 (`apps/evals`) ships its own `dotenv` bin, which displaced `dotenv-cli`'s and broke `dotenv -e .env.test --` scripts, so `apps/web` drops its unused `dotenv`.
-- Vite 8 and `@vitejs/plugin-react` 6: Rolldown builds and Oxc minifies (`build.minify: 'esbuild'` dropped). The Vite and vitest configs use `import.meta.dirname` and extensioned imports (Vite 8 warns on both), and `HttpProxy.ProxyServer` (http-proxy-3). `MagicLinkSentCard` moves to `ui/components/`, so `/magic-link/sent` actually splits. The analytics plugin's `@nivo/heatmap` alias line still warns until its next release.
+- Vite 8 and `@vitejs/plugin-react` 6: Rolldown builds and Oxc minifies (`build.minify: 'esbuild'` dropped). The Vite and vitest configs use `import.meta.dirname` and extensioned imports (Vite 8 warns on both), and `HttpProxy.ProxyServer` (http-proxy-3). `MagicLinkSentCard` moves to `ui/components/`, so `/magic-link/sent` actually splits. Analytics 3.8.1's `@nivo/heatmap` alias line uses `import.meta.dirname` too.
+- React 19 and React Router 7. The kit imports `react-router`; `react-router-dom` 7 stays installed because installed plugins still import it until their 4.0.0. Router 7 has no `future` prop, so `App.tsx` and `renderWithProviders` drop it, and `tests/ui/setup.ts` no longer filters Router's future-flag warnings. vitest's `ui` project now resolves with Vite's browser conditions: without them `react-router` loaded as CommonJS there, `react-router-dom` got a second copy, and a plugin's `<Routes>` found no router. React 19's types make `useRef<T>(null)` a `RefObject<T | null>` and drop the global `JSX` namespace.
+- `defaultPlugins` installs analytics 3.8.1: drizzle-cube 0.12.2, React 19 types, and `GET /api/analytics/facts/status` scoped to the caller's organisation (its own `docs/upgrades/3.8.1.md`).
 
 ## How to apply
 
@@ -43,6 +45,7 @@ The kit runs on Node 26 with vitest 5, jsdom 30, zod 4, AG-UI 1.0, postgres.js 4
     - `pnpm --filter <scope>/shared add zod@^4.6.7 @casl/ability@^7.1.1` and `pnpm --filter <scope>/shared add @ag-ui/core@1.0.3 --save-exact`
     - `pnpm --filter <scope>/web add zod@^4.6.7 postgres@^4.0.0 @casl/ability@^7.1.1 @anthropic-ai/sdk@^1.3.0 @hono/zod-validator@^0.9.1` and `pnpm --filter <scope>/web add @ag-ui/core@1.0.3 @ag-ui/encoder@1.0.3 @ag-ui/proto@1.0.3 --save-exact`
     - `pnpm --filter <scope>/web add -D vitest@^5.0.5 @vitest/coverage-v8@^5.0.5 @testing-library/jest-dom@^7.0.1 jsdom@^30.1.3 @types/node@^26.6.6 vite@^8.3.5 @vitejs/plugin-react@^6.2.1`
+    - `pnpm --filter <scope>/web add react@^19.3.1 react-dom@^19.3.1 react-router@^7.18.5 react-router-dom@^7.18.5` and `pnpm --filter <scope>/web add -D @types/react@^19.3.0 @types/react-dom@^19.3.0`
     - `pnpm --filter <scope>/web remove zod-to-json-schema @casl/react`
     - `pnpm --filter <scope>/cli add zod@^4.6.7 chalk@^6.0.1` and `pnpm --filter <scope>/cli add -D vitest@^5.0.5 esbuild@^0.28.2 @types/node@^26.6.6`
     - `pnpm --filter <scope>/evals add zod@^4.6.7` and `pnpm --filter <scope>/evals add -D postgres@^4.0.0 dotenv@^18.0.9 @types/node@^26.6.6` (leave its vitest on 4)
@@ -61,6 +64,10 @@ The kit runs on Node 26 with vitest 5, jsdom 30, zod 4, AG-UI 1.0, postgres.js 4
 23. If your own code sends `temperature`, `top_p` or `top_k` to Claude, builds a `document` block into an `assistant` message, or sends `citations` on a `text` block in a `user` message, remove it: each is a 400 on `2026-10-21`. If it relied on a non-default `temperature`, decide whether the default output is acceptable (the migration guide lists the alternatives). If a proxy or gateway in front of the Claude API reads `X-Api-Key`, change it to read `Authorization: Bearer`.
 24. If your own Vite config sets `build.rollupOptions`, rename it `build.rolldownOptions`. In `apps/web/vite.config.ts`, delete `minify: 'esbuild'` and type `onProxyError`'s parameter `HttpProxy.ProxyServer`. Replace every `__dirname` with `import.meta.dirname` there and in `apps/web/vitest.config.ts`, `apps/evals/vitest.config.ts` and `apps/evals/vitest.unit.config.ts`, and add `.ts` to `apps/web/vitest.config.ts`'s two `./tests/helpers/` imports.
 25. Move `MagicLinkSentCard` from `ui/pages/MagicLinkSent.tsx` to `ui/components/MagicLinkSentCard.tsx` and import it from there in `Login.tsx` and `MagicLinkSent.tsx`.
+26. Run `pnpm plugin upgrade analytics --to 3.8.1 --apply` (it needs React 19 and Router 7 from step 10), and if `.rocketflare.json` lists analytics in `defaultPlugins`, set its `ref` to `3.8.1` there and in `launch.kit.json`'s `plugins.defaults`.
+27. In every file under `apps/web` that imports `'react-router-dom'`, import `'react-router'` instead, except in the tree of a plugin installed from a repository: its own release changes it.
+28. Delete the `future={{ v7_startTransition: true, v7_relativeSplatPath: true }}` prop from the `BrowserRouter` in `ui/App.tsx`, the `MemoryRouter` in `tests/ui/helpers/renderWithProviders.tsx` and any router your own tests render, then delete the `React Router Future Flag Warning` filter from `tests/ui/setup.ts`. In `apps/web/vitest.config.ts`, import `defaultClientConditions` from `vite` and give the `ui` project `resolve: { alias, conditions: [...defaultClientConditions] }`, then copy the kit's `tests/ui/router-instance.test.tsx`.
+29. Run `pnpm typecheck` and fix what React 19's types report in your own code: give `useRef` an argument (`useRef<T>(null)`), widen a prop that receives it to `RefObject<T | null>`, and write `React.JSX.Element` for a bare `JSX.Element`.
 
 ## Conflicts to expect
 
@@ -69,18 +76,20 @@ The kit runs on Node 26 with vitest 5, jsdom 30, zod 4, AG-UI 1.0, postgres.js 4
 - `.nvmrc` → `24` → `26` → take `26` unless your app deliberately pins another Node.
 - `apps/web/worker-configuration.d.ts` → regenerated → take yours and re-run step 18.
 - `apps/web/tests/config/ci-workflows.test.ts` → three version assertions loosened → keep your edits and apply step 4.
-- `apps/web/vitest.config.ts`, `apps/evals/vitest*.config.ts` → pool, coverage, `__dirname` and imports changed → apply steps 12 and 24 by hand if you edited them.
+- `apps/web/vitest.config.ts`, `apps/evals/vitest*.config.ts` → pool, coverage, `__dirname`, imports and the `ui` project's conditions changed → apply steps 12, 24 and 28 by hand if you edited them.
 - `biome.json` → schema migrated and a test override added → apply step 13 by hand if you edited the file.
 - `packages/shared/src/ai/agui.ts` → the `@ag-ui/core` import is split in two → apply step 14 by hand if you edited the imports.
 - `packages/shared/src/plugins/types.ts` → `JobVariant` and `JobTypeOf` rewritten → take the kit's two declarations from step 16.
 - `apps/web/src/ui/components/permissions/{AbilityContext.tsx,index.ts}` → `Can` and the context export removed → apply step 20 by hand if you edited them.
 - `apps/web/src/api/services/ai/client.ts` → one Anthropic client constructor, `temperature` compatible-only → apply step 22 by hand if you edited the adapter.
 - `apps/web/vite.config.ts` → minify, `__dirname` and the proxy type changed → apply step 24 by hand if you edited the file.
+- `.rocketflare.json`, `launch.kit.json` → the analytics `ref` changed → take `3.8.1` as in step 26.
+- `apps/web/src/ui/App.tsx`, `tests/ui/helpers/renderWithProviders.tsx`, `tests/ui/setup.ts` and every file importing the router → the import and the `future` prop changed → apply steps 27 and 28 by hand if you edited them.
 
 ## Verify
 
-1. `node -v` prints `v26.`, `pnpm -v` prints `10.34.9`, and `pnpm gate` passes with no `(!)` warning (the analytics plugin's `__dirname` aside).
-2. `pnpm --filter <scope>/web list zod postgres @anthropic-ai/sdk vitest vite jsdom --depth 0` shows `zod@4.`, `postgres@4.`, `@anthropic-ai/sdk@1.`, `vitest@5.`, `vite@8.`, `jsdom@30.`.
+1. `node -v` prints `v26.`, `pnpm -v` prints `10.34.9`, and `pnpm gate` passes with no `(!)` warning other than the analytics plugin's chunk-size one (its lazy `DashboardLoader` and `exceljs` chunks).
+2. `pnpm --filter <scope>/web list zod postgres @anthropic-ai/sdk vitest vite jsdom react react-router --depth 0` shows `zod@4.`, `postgres@4.`, `@anthropic-ai/sdk@1.`, `vitest@5.`, `vite@8.`, `jsdom@30.`, `react@19.`, `react-router@7.`.
 3. `grep -rnE 'uses: [^@]+@v[0-9]' .github/workflows` prints nothing.
 4. `grep -c 'persist-credentials: false' .github/workflows/*.yml` matches the number of `actions/checkout` steps in each file, and `rg -c 'timeout-minutes' .github/workflows/{ci,deploy,evals}.yml` counts one per job.
 5. `rg -n 'cache: pnpm' .github/workflows/deploy.yml` prints nothing.
@@ -89,3 +98,4 @@ The kit runs on Node 26 with vitest 5, jsdom 30, zod 4, AG-UI 1.0, postgres.js 4
 8. `rg -n 'zod-to-json-schema' apps packages` prints nothing, and `rg -n '@casl/react|<Can[ >]' apps packages` prints nothing (unless step 20 kept `@casl/react`).
 9. `rg -n -i 'anthropic[-_]version' apps/*/src packages/*/src` prints nothing (no override of the SDK's version).
 10. `pnpm --filter <scope>/web exec dotenv -e .env.test -- node -e 'console.log(!!process.env.DATABASE_URL)'` prints `true`.
+11. `rg -n 'future=\{\{' apps/web` prints nothing, and `pnpm plugin list` shows analytics at `3.8.1`.

@@ -22,7 +22,7 @@ import {
   searchRequestSchema,
 } from '@rocketflare/shared/ai/embeddings'
 import { type FormEvent, useEffect, useRef, useState } from 'react'
-import { Link, useSearchParams } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router'
 import {
   DocumentCard,
   EmptyState,

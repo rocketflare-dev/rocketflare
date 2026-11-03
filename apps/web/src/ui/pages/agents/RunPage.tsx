@@ -31,7 +31,7 @@ import { ChevronLeftIcon, ChevronRightIcon, CpuChipIcon } from '@heroicons/react
 import type { AgentInfo, AgentRunWithEvents } from '@rocketflare/shared/ai/agents'
 import { isRunActive } from '@rocketflare/shared/ai/agents'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useParams } from 'react-router'
 import { EmptyState, PageHeader, SectionPanel, SkeletonRows, URLTabs } from '@/ui/components/shared'
 import { useAgentList, useAgentRun } from '@/ui/hooks/useAgents'
 import { useAuth } from '@/ui/hooks/useAuth'

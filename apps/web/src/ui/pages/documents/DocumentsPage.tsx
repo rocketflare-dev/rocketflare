@@ -32,7 +32,7 @@ import {
 import { filePath, MAX_UPLOAD_BYTES } from '@rocketflare/shared/files'
 import type { ResourceVisibility } from '@rocketflare/shared/groups'
 import { type FormEvent, useRef, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link } from 'react-router'
 import {
   AccessBadge,
   AccessPicker,

@@ -22,7 +22,7 @@ import {
   type OAuthProviderName,
 } from '@rocketflare/shared/auth'
 import { useEffect, useRef, useState } from 'react'
-import { Navigate, useSearchParams } from 'react-router-dom'
+import { Navigate, useSearchParams } from 'react-router'
 import { AuthCard } from '@/ui/components/AuthCard'
 import { PROVIDER_ICONS, providerLabel } from '@/ui/components/icons/ProviderIcons'
 import { LoadingIndicator } from '@/ui/components/LoadingIndicator'

@@ -22,7 +22,7 @@ import {
   agentRunStatusSchema,
 } from '@rocketflare/shared/ai/agents'
 import { useState } from 'react'
-import { Link, useNavigate, useSearchParams } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams } from 'react-router'
 import {
   EmptyState,
   PageHeader,

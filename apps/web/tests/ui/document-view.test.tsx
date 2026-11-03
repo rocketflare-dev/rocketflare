@@ -6,7 +6,7 @@
  * `<mark>` nodes; and paging is one query per snapped offset with no accumulating state.
  */
 import { screen, waitFor, within } from '@testing-library/react'
-import { Route, Routes } from 'react-router-dom'
+import { Route, Routes } from 'react-router'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import DocumentViewPage from '@/ui/pages/documents/DocumentViewPage'
 import {

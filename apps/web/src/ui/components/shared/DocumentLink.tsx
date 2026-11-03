@@ -6,7 +6,7 @@
  * result cites four documents, and four cards push the next stage off the screen. This is the same
  * data rendered as what it is in that context — a link.
  *
- * **Markdown-free by construction**, like `DocumentCard` beside it: heroicons, `react-router-dom`
+ * **Markdown-free by construction**, like `DocumentCard` beside it: heroicons, `react-router`
  * and the shared types only, because it lives in the barrel `App.tsx` imports eagerly.
  *
  * It takes primitives rather than a `DocumentCard` object so a CITATION (`{ documentId, title }` —
@@ -15,7 +15,7 @@
  */
 import { DocumentTextIcon } from '@heroicons/react/24/outline'
 import type { DocumentCard as DocumentCardData } from '@rocketflare/shared/ai/embeddings'
-import { Link } from 'react-router-dom'
+import { Link } from 'react-router'
 
 const STATUS_LABELS: Record<DocumentCardData['status'], string> = {
   pending: 'Indexing',

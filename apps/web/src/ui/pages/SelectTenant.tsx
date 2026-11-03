@@ -10,7 +10,7 @@ import {
   slugify,
 } from '@rocketflare/shared/tenants'
 import { useState } from 'react'
-import { Navigate, useNavigate, useSearchParams } from 'react-router-dom'
+import { Navigate, useNavigate, useSearchParams } from 'react-router'
 import { AuthCard, SignedInAs } from '@/ui/components/AuthCard'
 import { RoleBadge } from '@/ui/components/RoleBadge'
 import { EmptyState, FieldError, fieldErrorFor } from '@/ui/components/shared'

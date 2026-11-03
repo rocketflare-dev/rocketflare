@@ -5,7 +5,7 @@
  * without one), so the bell renders nothing for a global admin browsing `/admin` with no membership.
  */
 import { BellIcon } from '@heroicons/react/24/outline'
-import { Link } from 'react-router-dom'
+import { Link } from 'react-router'
 import { useAuth } from '@/ui/hooks/useAuth'
 import {
   useMarkNotificationsRead,

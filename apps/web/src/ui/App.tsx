@@ -12,7 +12,7 @@
  */
 import { QueryClientProvider } from '@tanstack/react-query'
 import { lazy, Suspense } from 'react'
-import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
+import { BrowserRouter, Navigate, Route, Routes } from 'react-router'
 import type { PluginRouteTier } from '@/plugins/types'
 import { uiPlugins } from '@/plugins/ui'
 import { ConnectionBanner } from '@/ui/components/ConnectionBanner'
@@ -325,7 +325,7 @@ export default function App() {
         <AuthProvider>
           <AbilityProvider>
             <WebSocketProvider>
-              <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+              <BrowserRouter>
                 <NavigationBridge />
                 <ScrollToTop />
                 <AppRoutes />

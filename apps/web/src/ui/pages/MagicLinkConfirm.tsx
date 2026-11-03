@@ -8,7 +8,7 @@
  */
 import { EnvelopeOpenIcon } from '@heroicons/react/24/outline'
 import { useState } from 'react'
-import { Navigate, useSearchParams } from 'react-router-dom'
+import { Navigate, useSearchParams } from 'react-router'
 import { AuthCard } from '@/ui/components/AuthCard'
 
 export default function MagicLinkConfirm() {

@@ -3,7 +3,7 @@
 import { ChevronRightIcon, UsersIcon } from '@heroicons/react/24/outline'
 import type { AdminUserListQuery } from '@rocketflare/shared/admin'
 import { useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link } from 'react-router'
 import {
   EmptyState,
   PaginationControls,

@@ -6,7 +6,7 @@
 import { CheckCircleIcon, ClockIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline'
 import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
-import { Link, Navigate, useNavigate, useParams } from 'react-router-dom'
+import { Link, Navigate, useNavigate, useParams } from 'react-router'
 import { AuthCard, SignedInAs } from '@/ui/components/AuthCard'
 import { LoadingIndicator } from '@/ui/components/LoadingIndicator'
 import { RoleBadge } from '@/ui/components/RoleBadge'

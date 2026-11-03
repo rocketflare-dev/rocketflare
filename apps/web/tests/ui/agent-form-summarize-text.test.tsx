@@ -5,7 +5,7 @@
  * deletes this file; the page itself is `agents-page.test.tsx`.
  */
 import { fireEvent, screen, waitFor } from '@testing-library/react'
-import { Route, Routes } from 'react-router-dom'
+import { Route, Routes } from 'react-router'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { useToastStore } from '@/ui/components/shared/Toast'
 import AgentsPage from '@/ui/pages/agents/AgentsPage'

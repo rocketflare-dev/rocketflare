@@ -7,7 +7,7 @@
 import { AguiEventType, KIT_CUSTOM_EVENTS } from '@rocketflare/shared/ai/agui'
 import type { Message } from '@rocketflare/shared/ai/chat'
 import { fireEvent, screen, waitFor } from '@testing-library/react'
-import { Route, Routes } from 'react-router-dom'
+import { Route, Routes } from 'react-router'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import ChatPage from '@/ui/pages/chat/ChatPage'
 import {
