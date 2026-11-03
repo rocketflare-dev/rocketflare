@@ -10,7 +10,7 @@ import {
   UserCircleIcon,
 } from '@heroicons/react/24/outline'
 import { useRef } from 'react'
-import { Link } from 'react-router-dom'
+import { Link } from 'react-router'
 import { useAuth } from '@/ui/hooks/useAuth'
 import { useNavGuard } from '@/ui/hooks/useNavGuard'
 import { initials } from '@/ui/lib/format'

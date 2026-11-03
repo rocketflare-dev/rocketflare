@@ -10,7 +10,7 @@ import { ArrowDownTrayIcon, DocumentMagnifyingGlassIcon } from '@heroicons/react
 import type { AgentArtifact } from '@rocketflare/shared/ai/artifacts'
 import { documentPath } from '@rocketflare/shared/ai/embeddings'
 import { filePath } from '@rocketflare/shared/files'
-import { Link } from 'react-router-dom'
+import { Link } from 'react-router'
 import { Markdown } from '@/ui/components/ai/Markdown'
 import { formatBytes } from '@/ui/lib/format'
 import { JsonDisclosure, pretty, truncate } from '../timeline/toolResults'

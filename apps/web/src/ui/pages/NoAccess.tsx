@@ -3,7 +3,7 @@
  * Any pending invitations for this email are surfaced so the reader can accept one right here.
  */
 import { LockClosedIcon } from '@heroicons/react/24/outline'
-import { Navigate } from 'react-router-dom'
+import { Navigate } from 'react-router'
 import { AdminAreaLink, AuthCard, SignedInAs } from '@/ui/components/AuthCard'
 import { PendingInvitationsBanner } from '@/ui/components/PendingInvitationsBanner'
 import { useAuth } from '@/ui/hooks/useAuth'

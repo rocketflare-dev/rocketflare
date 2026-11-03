@@ -11,7 +11,7 @@ import {
   ShieldCheckIcon,
 } from '@heroicons/react/24/outline'
 import type { ComponentType, ReactNode } from 'react'
-import { Link, NavLink, useLocation } from 'react-router-dom'
+import { Link, NavLink, useLocation } from 'react-router'
 import type { PluginNavGroup } from '@/plugins/types'
 import { uiPlugins } from '@/plugins/ui'
 import { useAppInfo } from '@/ui/hooks/useAppInfo'

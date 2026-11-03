@@ -4,7 +4,7 @@
  */
 import { ArrowLeftIcon, UserIcon } from '@heroicons/react/24/outline'
 import { useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useParams } from 'react-router'
 import { RoleBadge } from '@/ui/components/RoleBadge'
 import {
   ConfirmModal,

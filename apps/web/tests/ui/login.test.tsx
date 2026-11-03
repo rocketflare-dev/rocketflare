@@ -1,5 +1,5 @@
 import { fireEvent, screen, waitFor } from '@testing-library/react'
-import { Route, Routes, useLocation } from 'react-router-dom'
+import { Route, Routes, useLocation } from 'react-router'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { hardNavigate } from '@/ui/lib/navigation'
 import Login, { LOGIN_ERROR_COPY } from '@/ui/pages/Login'

@@ -75,7 +75,7 @@ you removed. [`CHANGELOG.md`](CHANGELOG.md) is what you would be catching up on.
 | Runtime | Cloudflare Workers (`nodejs_compat`): one Worker exports `fetch` + `queue` + `scheduled`, a Durable Object and a Workflow |
 | API | Hono 4, zod contracts, CASL abilities, JSON error envelope everywhere |
 | Database | Postgres 17 + pgvector — Docker locally; deployed, Neon over its serverless driver (a fresh copy's default) or any Postgres through Hyperdrive and `postgres.js` (`DATABASE_DRIVER`, D35); Drizzle, one client per request |
-| UI | React 18 + Vite, DaisyUI 5 on Tailwind v4, React Router 6, TanStack Query 5; served as Workers Static Assets |
+| UI | React 19 + Vite, DaisyUI 5 on Tailwind v4, React Router 7, TanStack Query 5; served as Workers Static Assets |
 | CLI | commander + chalk; browser login → tenant API key; `--json` on every list command |
 | Async / realtime | Queues, Workflows, a per-tenant Durable Object over WebSockets, cron triggers, R2 |
 | AI | Anthropic / OpenAI-compatible / Workers AI chat over SSE, agents on Workflows, Workers AI embeddings → pgvector, OTLP tracing (Langfuse, Phoenix, any backend), evals (vitest-evals) with thumbs feedback |

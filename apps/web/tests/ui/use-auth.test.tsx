@@ -1,5 +1,5 @@
 import { fireEvent, screen, waitFor } from '@testing-library/react'
-import { useLocation } from 'react-router-dom'
+import { useLocation } from 'react-router'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { noTenantRoute, useAuth } from '@/ui/hooks/useAuth'
 import { api } from '@/ui/lib/api-client'

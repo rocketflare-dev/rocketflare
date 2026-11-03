@@ -9,7 +9,7 @@ import {
   PlusIcon,
 } from '@heroicons/react/24/outline'
 import { useRef, useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router'
 import { useAuth } from '@/ui/hooks/useAuth'
 import { showToast } from '@/ui/lib/api-client'
 import { RoleBadge } from './RoleBadge'

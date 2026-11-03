@@ -15,7 +15,7 @@ import {
 } from '@rocketflare/shared/ai/agent-models'
 import { type AiConfig, shortModelName } from '@rocketflare/shared/ai/config'
 import { type FormEvent, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link } from 'react-router'
 import {
   EmptyState,
   FieldError,

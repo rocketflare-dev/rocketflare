@@ -16,7 +16,7 @@
  */
 import { memo } from 'react'
 import ReactMarkdown, { type Components } from 'react-markdown'
-import { Link } from 'react-router-dom'
+import { Link } from 'react-router'
 import remarkGfm from 'remark-gfm'
 import { DocumentCard } from '@/ui/components/shared'
 import { useDocumentCard } from '@/ui/hooks/useDocuments'

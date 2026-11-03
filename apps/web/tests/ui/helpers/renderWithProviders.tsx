@@ -9,7 +9,7 @@ import type { MembershipRole } from '@rocketflare/shared/tenants'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { type RenderOptions, render } from '@testing-library/react'
 import type { ReactElement, ReactNode } from 'react'
-import { MemoryRouter } from 'react-router-dom'
+import { MemoryRouter } from 'react-router'
 import { vi } from 'vitest'
 import { buildAbility, packRules } from '@/permissions'
 import { AbilityProvider } from '@/ui/components/permissions/AbilityContext'
@@ -50,10 +50,7 @@ export function renderWithProviders(
       <QueryClientProvider client={queryClient}>
         <AuthProvider>
           <AbilityProvider>
-            <MemoryRouter
-              initialEntries={[route]}
-              future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
-            >
+            <MemoryRouter initialEntries={[route]}>
               <NavigationBridge />
               {children}
             </MemoryRouter>

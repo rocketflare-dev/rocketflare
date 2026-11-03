@@ -1,6 +1,6 @@
 /** "Check your email": inline in Login after a request, and the `/magic-link/sent` page's body. */
 import { CheckCircleIcon } from '@heroicons/react/24/outline'
-import { Link } from 'react-router-dom'
+import { Link } from 'react-router'
 
 export function MagicLinkSentCard({
   email,

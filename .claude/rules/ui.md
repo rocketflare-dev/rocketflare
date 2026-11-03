@@ -7,7 +7,7 @@ paths:
 
 # UI Patterns
 
-React 18 + Vite, DaisyUI 5 on Tailwind v4, React Router v6, TanStack Query 5, zustand only for the
+React 19 + Vite, DaisyUI 5 on Tailwind v4, React Router 7, TanStack Query 5, zustand only for the
 websocket store. Served as Workers Static Assets from the same Worker as the API (SPA fallback).
 Dev: Vite on :3000 proxies `/api`, `/auth`, `/ws` — plus every prefix an installed plugin declares
 (the analytics plugin's `/cubejs-api` and `/mcp`, added by hand on install) — to `wrangler dev` on :3001.

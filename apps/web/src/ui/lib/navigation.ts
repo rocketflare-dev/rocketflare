@@ -6,7 +6,7 @@
  * transitions — OAuth, dev-login — are greppable.
  */
 import { useEffect } from 'react'
-import { type NavigateFunction, useLocation, useNavigate } from 'react-router-dom'
+import { type NavigateFunction, useLocation, useNavigate } from 'react-router'
 
 let routerNavigate: NavigateFunction | null = null
 let routerPath: string | null = null

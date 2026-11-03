@@ -4,7 +4,7 @@
  * native form carrying the token and redirectTo to `POST /auth/magic-link/verify`.
  */
 import { screen } from '@testing-library/react'
-import { Route, Routes } from 'react-router-dom'
+import { Route, Routes } from 'react-router'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import MagicLinkConfirm from '@/ui/pages/MagicLinkConfirm'
 import { renderWithProviders, stubFetch } from './helpers/renderWithProviders'

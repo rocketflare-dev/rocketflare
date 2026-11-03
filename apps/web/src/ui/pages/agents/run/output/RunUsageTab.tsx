@@ -13,7 +13,7 @@
  * this run actually do", so they belong in the same list rather than in a second one nobody reads.
  */
 import type { AgentRun } from '@rocketflare/shared/ai/agents'
-import { Link } from 'react-router-dom'
+import { Link } from 'react-router'
 import { Row, Section } from '@/ui/components/ai/StatRows'
 import { formatDateTime, formatDuration, runDuration } from '@/ui/lib/format'
 import { humaniseToolName, type RunWorkStats } from '../timeline/timelineModel'

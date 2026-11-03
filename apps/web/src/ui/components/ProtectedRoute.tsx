@@ -8,7 +8,7 @@
  */
 import { ArrowPathIcon } from '@heroicons/react/24/outline'
 import type { ReactNode } from 'react'
-import { Navigate, useLocation } from 'react-router-dom'
+import { Navigate, useLocation } from 'react-router'
 import { noTenantRoute, useAuth } from '@/ui/hooks/useAuth'
 import { loginUrl } from '@/ui/lib/navigation'
 import { LoadingIndicator } from './LoadingIndicator'
