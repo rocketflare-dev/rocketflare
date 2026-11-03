@@ -27,7 +27,7 @@ The kit runs on Node 26, React 19, React Router 7, vitest 5, zod 4, AG-UI 1.0, p
 - `@anthropic-ai/sdk` 1.x sends API version `2026-10-21` (migration guide: https://platform.claude.com/docs/en/api/migration-2026-10-21) and is Apache-2.0. The `anthropic` adapter never sends `temperature`, which that version rejects; the other providers still take it, and the evals judge now samples at the default on pre-4.7 Claude models. The key goes as `Authorization: Bearer`, so a proxy reading `X-Api-Key` must change. `anthropic_compatible` vendors also receive the new version.
 - dotenv 18 (`apps/evals`) ships its own `dotenv` bin, which displaced `dotenv-cli`'s and broke `dotenv -e .env.test --` scripts, so `apps/web` drops its unused `dotenv`.
 - Vite 8 and `@vitejs/plugin-react` 6: Rolldown builds and Oxc minifies (`build.minify: 'esbuild'` dropped). The Vite and vitest configs use `import.meta.dirname` and extensioned imports (Vite 8 warns on both), and `HttpProxy.ProxyServer` (http-proxy-3). `MagicLinkSentCard` moves to `ui/components/`, so `/magic-link/sent` actually splits. Analytics 3.8.1's `@nivo/heatmap` alias line uses `import.meta.dirname` too.
-- React 19 and React Router 7. The kit imports `react-router`; `react-router-dom` 7 stays installed because installed plugins still import it until their 4.0.0. Router 7 has no `future` prop, so `App.tsx` and `renderWithProviders` drop it, and `tests/ui/setup.ts` no longer filters Router's future-flag warnings. React 19's types make `useRef<T>(null)` a `RefObject<T | null>` and drop the global `JSX` namespace.
+- React 19 and React Router 7. The kit imports `react-router`; `react-router-dom` 7 stays installed because installed plugins still import it until their 4.0.0. Router 7 has no `future` prop, so `App.tsx` and `renderWithProviders` drop it, and `tests/ui/setup.ts` no longer filters Router's future-flag warnings. vitest's `ui` project now resolves with Vite's browser conditions: without them `react-router` loaded as CommonJS there, `react-router-dom` got a second copy, and a plugin's `<Routes>` found no router. React 19's types make `useRef<T>(null)` a `RefObject<T | null>` and drop the global `JSX` namespace.
 - `defaultPlugins` installs analytics 3.8.1: drizzle-cube 0.12.2, React 19 types, and `GET /api/analytics/facts/status` scoped to the caller's organisation (its own `docs/upgrades/3.8.1.md`).
 
 ## How to apply
@@ -66,7 +66,7 @@ The kit runs on Node 26, React 19, React Router 7, vitest 5, zod 4, AG-UI 1.0, p
 25. Move `MagicLinkSentCard` from `ui/pages/MagicLinkSent.tsx` to `ui/components/MagicLinkSentCard.tsx` and import it from there in `Login.tsx` and `MagicLinkSent.tsx`.
 26. Run `pnpm plugin upgrade analytics --to 3.8.1 --apply` (it needs React 19 and Router 7 from step 10), and if `.rocketflare.json` lists analytics in `defaultPlugins`, set its `ref` to `3.8.1` there and in `launch.kit.json`'s `plugins.defaults`.
 27. In every file under `apps/web` that imports `'react-router-dom'`, import `'react-router'` instead, except in the tree of a plugin installed from a repository: its own release changes it.
-28. Delete the `future={{ v7_startTransition: true, v7_relativeSplatPath: true }}` prop from the `BrowserRouter` in `ui/App.tsx`, the `MemoryRouter` in `tests/ui/helpers/renderWithProviders.tsx` and any router your own tests render, then delete the `React Router Future Flag Warning` filter from `tests/ui/setup.ts`.
+28. Delete the `future={{ v7_startTransition: true, v7_relativeSplatPath: true }}` prop from the `BrowserRouter` in `ui/App.tsx`, the `MemoryRouter` in `tests/ui/helpers/renderWithProviders.tsx` and any router your own tests render, then delete the `React Router Future Flag Warning` filter from `tests/ui/setup.ts`. In `apps/web/vitest.config.ts`, import `defaultClientConditions` from `vite` and give the `ui` project `resolve: { alias, conditions: [...defaultClientConditions] }`, then copy the kit's `tests/ui/router-instance.test.tsx`.
 29. Run `pnpm typecheck` and fix what React 19's types report in your own code: give `useRef` an argument (`useRef<T>(null)`), widen a prop that receives it to `RefObject<T | null>`, and write `React.JSX.Element` for a bare `JSX.Element`.
 
 ## Conflicts to expect
@@ -76,7 +76,7 @@ The kit runs on Node 26, React 19, React Router 7, vitest 5, zod 4, AG-UI 1.0, p
 - `.nvmrc` → `24` → `26` → take `26` unless your app deliberately pins another Node.
 - `apps/web/worker-configuration.d.ts` → regenerated → take yours and re-run step 18.
 - `apps/web/tests/config/ci-workflows.test.ts` → three version assertions loosened → keep your edits and apply step 4.
-- `apps/web/vitest.config.ts`, `apps/evals/vitest*.config.ts` → pool, coverage, `__dirname` and imports changed → apply steps 12 and 24 by hand if you edited them.
+- `apps/web/vitest.config.ts`, `apps/evals/vitest*.config.ts` → pool, coverage, `__dirname`, imports and the `ui` project's conditions changed → apply steps 12, 24 and 28 by hand if you edited them.
 - `biome.json` → schema migrated and a test override added → apply step 13 by hand if you edited the file.
 - `packages/shared/src/ai/agui.ts` → the `@ag-ui/core` import is split in two → apply step 14 by hand if you edited the imports.
 - `packages/shared/src/plugins/types.ts` → `JobVariant` and `JobTypeOf` rewritten → take the kit's two declarations from step 16.

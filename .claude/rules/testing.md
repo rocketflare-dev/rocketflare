@@ -256,6 +256,7 @@ a fake `WebSocket` factory left set) is on you.
 ## UI tests
 
 `apps/web/tests/ui/setup.ts` (jest-dom). `renderWithProviders()` gives QueryClient + Auth + Ability + Router.
+The `ui` project resolves with Vite's `defaultClientConditions`, as the browser bundle does: without them `react-router` loads as CommonJS and an ESM importer (`react-router-dom`, which plugins still use) gets a second copy with its own context — `router-instance.test.tsx` holds it.
 Shallow component tests; mock `fetch` where needed, no MSW. `contrast.test.ts` gates the design tokens.
 Polling hooks (`agents-page`, `run-page`, `documents-page`): test the pure decision
 (`runPollInterval(status)` over `runOwesAnswer`, so a parked run polls NEVER), not `refetchInterval`
