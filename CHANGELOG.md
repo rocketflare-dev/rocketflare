@@ -6,6 +6,11 @@ copy of the kit forward without recreating anything its owner deleted.
 
 If you are running a copy: `pnpm kit:upgrade` tells you which of these you are missing.
 
+## 0.25.0 — 2026-11-03
+
+The kit runs on Node 26, React 19, React Router 7, vitest 5, zod 4, AG-UI 1.0, postgres.js 4, CASL 7 and Anthropic API 2026-10-21; every dependency is current; workflows pin Actions by SHA, with timeouts and least-privilege permissions.
+[Porting note](docs/upgrades/0.25.0.md).
+
 ## 0.24.0 — 2026-10-30
 
 A renamed copy now carries none of the kit's own machinery: its maintainer scripts, hooks, project files and kit-only tests are removed at the rename, and the example plugin's agent tool and welcome note follow its flag.
