@@ -1,12 +1,10 @@
-/** Permission primitives for pages: provider, `Can`, `IfCan`/`IfCannot`, `usePermissions`. */
+/** Permission primitives for pages: provider, `IfCan`/`IfCannot`, `usePermissions`. */
 
 export { usePermissions } from '@/ui/hooks/usePermissions'
 export {
-  AbilityContext,
   AbilityProvider,
   type AppAbility,
   abilityFromPackedRules,
-  Can,
   emptyAbility,
   useAbility,
 } from './AbilityContext'

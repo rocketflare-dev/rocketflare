@@ -40,7 +40,7 @@ vocabulary in `packages/shared/src/permissions.ts`). Built once per request by t
 ## Usage
 
 Server: `guardPermission(c, 'manage', 'TenantMember')` throws 401/403; `can(c, …)` for branching.
-UI: `AbilityProvider` rebuilds with `abilityFromPackedRules(session.permissions)`; `<Can I="read" a="ApiKey">`.
+UI: `AbilityProvider` rebuilds with `abilityFromPackedRules(session.permissions)`; `<IfCan action="read" subject="ApiKey">`.
 Tests: `tests/config/permissions.test.ts` asserts every cell above — change the table and the test together.
 
 ## Adding a subject
