@@ -103,6 +103,7 @@ import {
   surfaceDirectories,
   tableClashes,
   undeclaredSkillDirs,
+  unresolvedPluginImports,
   withoutDependencies,
   workerExportNames,
 } from './lib/plugin-lib.mjs'
@@ -1821,6 +1822,24 @@ function cmdCheck(args, host) {
           `\`pnpm install\`, or set "dependencies"."${d.pkg}"."${d.name}" in ${s.anchor} to ` +
           `${d.have} — whichever range both can live with`,
       })
+    }
+
+    // **Plugin imports resolve without error.** When a plugin imports a dependency that is not
+    // installed or resolvable, TypeScript degrades types to `any`, creating false passes on
+    // type-level audits. Fail closed explicitly on TS2307.
+    const pluginSourceFiles = surfaceDirectories(s)
+      .filter(d => existsSync(abs(d)))
+      .flatMap(d => walk(abs(d)).map(f => `${d}/${f}`))
+      .filter(f => /\.[cm]?[jt]sx?$/.test(f))
+    if (pluginSourceFiles.length > 0) {
+      for (const d of unresolvedPluginImports(pluginSourceFiles, { repoRoot: REPO_ROOT })) {
+        add('fail', `${id}:unresolved-dependency:${d.file}`, {
+          file: d.file,
+          line: d.line,
+          problem: d.message,
+          fix: `install the missing module with \`pnpm add\` or update the import in ${d.file}`,
+        })
+      }
     }
 
     // **The tenant-isolation test the kit cannot write for you.** A plugin's tables are

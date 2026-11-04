@@ -47,10 +47,12 @@ import {
   dependencyClashes,
   dependencyDelta,
   describeClash,
+  findProjectTsconfig,
   hasBarrelLine,
   isolationEvidence,
   isVendored,
   jsonKeyLine,
+  loadProjectCompilerOptions,
   missingDependencies,
   newlyAddedDependencies,
   nextAddedDependencies,
@@ -79,6 +81,7 @@ import {
   surfaceDirectories,
   tableClashes,
   tupleEntries,
+  unresolvedPluginImports,
   unsupportedForKit,
   withoutDependencies,
   workerExportNames,
@@ -1302,6 +1305,245 @@ describe('the audit', () => {
     expect(
       declaresProperty("const u = 'https://x.test'\nonTenantDeleted: 1", 'onTenantDeleted')
     ).toBe(true)
+  })
+
+  it('requires worker-export names to be genuine AST code exports, refusing comments and strings', () => {
+    // Valid code fixtures
+    expect(workerExportNames("export { OrdersHub } from './do'").names).toEqual(['OrdersHub'])
+    expect(workerExportNames('export class OrdersSyncWorkflow {}').names).toEqual([
+      'OrdersSyncWorkflow',
+    ])
+    expect(workerExportNames('export const OrdersHub = new OrdersDO()').names).toEqual([
+      'OrdersHub',
+    ])
+
+    // Identifier in comment must fail
+    expect(workerExportNames("// export { OrdersHub } from './do'").names).toEqual([])
+    expect(workerExportNames('/* export class OrdersHub {} */').names).toEqual([])
+
+    // Identifier in string literal must fail
+    expect(workerExportNames('const s = "export { OrdersHub } from \'./do\'"').names).toEqual([])
+    expect(workerExportNames("const s = 'export class OrdersHub {}'").names).toEqual([])
+    expect(workerExportNames('const s = \'export * from "./do"\'').opaque).toBe(false)
+  })
+
+  it('requires declared properties to be genuine AST members, refusing comments and strings', () => {
+    // Valid code fixtures
+    expect(declaresProperty('hooks: { onTenantDeleted: async () => {} }', 'onTenantDeleted')).toBe(
+      true
+    )
+    expect(declaresProperty('async onTenantDeleted(db) {}', 'onTenantDeleted')).toBe(true)
+    expect(
+      declaresProperty(
+        'export class Service { async onTenantDeleted(db: Database) {} }',
+        'onTenantDeleted'
+      )
+    ).toBe(true)
+
+    // Comment must fail
+    expect(declaresProperty('// onTenantDeleted: async () => {}', 'onTenantDeleted')).toBe(false)
+    expect(declaresProperty('/* hooks: { onTenantDeleted: 1 } */', 'onTenantDeleted')).toBe(false)
+    expect(declaresProperty('// declares no onTenantDeleted', 'onTenantDeleted')).toBe(false)
+
+    // String literal must fail
+    expect(declaresProperty('const s = "onTenantDeleted: async () => {}"', 'onTenantDeleted')).toBe(
+      false
+    )
+    expect(declaresProperty('const config = { label: "onTenantDeleted" }', 'onTenantDeleted')).toBe(
+      false
+    )
+    expect(declaresProperty('const s = "async onTenantDeleted(db) {}"', 'onTenantDeleted')).toBe(
+      false
+    )
+  })
+
+  it('requires isolation evidence to be genuine AST calls and identifiers, refusing comments and strings', () => {
+    // Valid code fixture
+    const valid = [
+      "describe('tenant isolation', () => {",
+      '  it("cannot access other organisation\'s data", async () => {',
+      '    const otherTenantId = "t2"',
+      '    createTestTenant(db)',
+      '    createTestTenant(db)',
+      '  })',
+      '})',
+    ].join('\n')
+    expect(isolationEvidence(valid).ok).toBe(true)
+
+    // Identifiers appearing only in comments must fail
+    const commentOnly = [
+      '// describe("tenant isolation", () => {})',
+      '// const otherTenantId = "t2"',
+      '// createTestTenant(db)',
+      '// createTestTenant(db)',
+    ].join('\n')
+    expect(isolationEvidence(commentOnly).ok).toBe(false)
+    expect(isolationEvidence(commentOnly).tenantsCreated).toBe(0)
+    expect(isolationEvidence(commentOnly).named).toBe(false)
+    expect(isolationEvidence(commentOnly).secondTenant).toBe(false)
+
+    // Identifiers appearing only in string literals must fail
+    const stringOnly = [
+      'const d = "describe(\'tenant isolation\', () => {})"',
+      'const id = "otherTenantId"',
+      'const fn1 = "createTestTenant(db)"',
+      'const fn2 = "createTestTenant(db)"',
+    ].join('\n')
+    expect(isolationEvidence(stringOnly).ok).toBe(false)
+    expect(isolationEvidence(stringOnly).tenantsCreated).toBe(0)
+    expect(isolationEvidence(stringOnly).named).toBe(false)
+    expect(isolationEvidence(stringOnly).secondTenant).toBe(false)
+  })
+
+  it('fails closed when TypeScript cannot resolve dependencies', () => {
+    // Unresolved dependency must produce unresolved import results and fail closed
+    const bad = unresolvedPluginImports({
+      'apps/web/src/plugins/broken-plugin/index.ts': [
+        'import { something } from "completely-nonexistent-package"',
+        'export const a = 1',
+      ].join('\n'),
+    })
+    expect(bad.length).toBeGreaterThan(0)
+    expect(bad[0].specifier).toBe('completely-nonexistent-package')
+    expect(bad[0].line).toBe(1)
+    expect(bad[0].file).toBe('apps/web/src/plugins/broken-plugin/index.ts')
+    expect(bad[0].message).toContain('completely-nonexistent-package')
+    // Must not be labelled as a genuine TS2307 diagnostic
+    expect((bad[0] as unknown as Record<string, unknown>).code).toBeUndefined()
+
+    // Valid dependency resolves cleanly
+    const good = unresolvedPluginImports({
+      'apps/web/src/plugins/valid-plugin/index.ts': [
+        'import { z } from "zod"',
+        'import fs from "node:fs"',
+        'import type { WorkflowStep } from "cloudflare:workers"',
+        'import "./style.css"',
+        'export const schema = z.object({ id: z.string() })',
+      ].join('\n'),
+      'apps/web/src/plugins/valid-plugin/style.css': 'body { color: red; }',
+    })
+    expect(good).toEqual([])
+
+    // Non-existent asset import fails
+    const missingAsset = unresolvedPluginImports({
+      'apps/web/src/plugins/valid-plugin/index.ts': 'import "./missing-style.css"',
+    })
+    expect(
+      missingAsset.some(
+        d => d.specifier === './missing-style.css' && d.message.includes('missing-style.css')
+      )
+    ).toBe(true)
+  })
+
+  it('supports Vite query imports like ?raw and ?url when target files exist, and fails when missing', () => {
+    const validWithQueries = unresolvedPluginImports({
+      'apps/web/src/plugins/query-plugin/index.ts': [
+        'import text from "./prompt.txt?raw"',
+        'import url from "./icon.svg?url"',
+        'import worker from "./task.ts?worker"',
+        'export const prompt = text',
+      ].join('\n'),
+      'apps/web/src/plugins/query-plugin/prompt.txt': 'You are a helpful assistant.',
+      'apps/web/src/plugins/query-plugin/icon.svg': '<svg></svg>',
+      'apps/web/src/plugins/query-plugin/task.ts': 'export const run = () => {};',
+    })
+    expect(validWithQueries).toEqual([])
+
+    // Truly missing Vite query imports must still fail
+    const missingRaw = unresolvedPluginImports({
+      'apps/web/src/plugins/query-plugin/index.ts': 'import text from "./missing-prompt.txt?raw"',
+    })
+    expect(missingRaw.some(d => d.specifier === './missing-prompt.txt?raw')).toBe(true)
+
+    const missingUrl = unresolvedPluginImports({
+      'apps/web/src/plugins/query-plugin/index.ts': 'import url from "./missing-icon.svg?url"',
+    })
+    expect(missingUrl.some(d => d.specifier === './missing-icon.svg?url')).toBe(true)
+
+    const missingPkgRaw = unresolvedPluginImports({
+      'apps/web/src/plugins/query-plugin/index.ts':
+        'import text from "completely-nonexistent-package?raw"',
+    })
+    expect(missingPkgRaw.some(d => d.specifier === 'completely-nonexistent-package?raw')).toBe(true)
+  })
+
+  it('determines project configuration and resolves imports per project (web, cli, shared)', () => {
+    // findProjectTsconfig maps files to their containing project's tsconfig
+    expect(findProjectTsconfig('apps/web/src/plugins/foo/index.ts')).toMatch(
+      /apps[/\\]web[/\\]tsconfig\.json$/
+    )
+    expect(findProjectTsconfig('apps/cli/src/plugins/foo/index.ts')).toMatch(
+      /apps[/\\]cli[/\\]tsconfig\.json$/
+    )
+    expect(findProjectTsconfig('packages/shared/src/plugins/foo/index.ts')).toMatch(
+      /packages[/\\]shared[/\\]tsconfig\.json$/
+    )
+
+    // loadProjectCompilerOptions loads resolved tsconfig options with baseUrl and path aliases
+    const webOpts = loadProjectCompilerOptions('apps/web/tsconfig.json')
+    expect(webOpts.paths).toBeDefined()
+    expect(webOpts.paths?.['@/*']).toEqual(['src/*'])
+    expect(webOpts.baseUrl).toMatch(/apps[/\\]web$/)
+
+    // Relative imports resolve in their respective project contexts
+    const validCliAndShared = unresolvedPluginImports({
+      'apps/cli/src/plugins/my-cli/index.ts': [
+        'import { helper } from "./helper"',
+        'export const run = helper()',
+      ].join('\n'),
+      'apps/cli/src/plugins/my-cli/helper.ts': 'export const helper = () => "ok";',
+      'packages/shared/src/plugins/my-shared/index.ts': [
+        'import { sharedUtil } from "./util"',
+        'export const val = sharedUtil',
+      ].join('\n'),
+      'packages/shared/src/plugins/my-shared/util.ts': 'export const sharedUtil = 42;',
+    })
+    expect(validCliAndShared).toEqual([])
+
+    // apps/cli does not have @/* alias configured; web alias must not leak to cli
+    const invalidCliAlias = unresolvedPluginImports({
+      'apps/cli/src/plugins/my-cli/index.ts': 'import { something } from "@/some-web-module"',
+    })
+    expect(invalidCliAlias.some(d => d.specifier === '@/some-web-module')).toBe(true)
+
+    // packages/shared does not have @/* alias configured
+    const invalidSharedAlias = unresolvedPluginImports({
+      'packages/shared/src/plugins/my-shared/index.ts':
+        'import { something } from "@/some-web-module"',
+    })
+    expect(invalidSharedAlias.some(d => d.specifier === '@/some-web-module')).toBe(true)
+  })
+
+  it('handles configuration-reading and parsing errors clearly', () => {
+    // Non-existent tsconfig throws clear error
+    expect(() => loadProjectCompilerOptions('nonexistent-path/tsconfig.json')).toThrow(
+      /TypeScript configuration not found/
+    )
+
+    // Malformed JSON tsconfig throws clear error
+    const tmpBad = path.resolve('bad-syntax-tsconfig.json').replace(/\\/g, '/')
+    writeFileSync(tmpBad, '{ invalid json')
+    try {
+      expect(() => loadProjectCompilerOptions(tmpBad)).toThrow(
+        /Failed to read TypeScript configuration/
+      )
+    } finally {
+      rmSync(tmpBad, { force: true })
+    }
+
+    // Invalid compiler options throw clear error
+    const tmpBadOptions = path.resolve('bad-options-tsconfig.json').replace(/\\/g, '/')
+    writeFileSync(
+      tmpBadOptions,
+      JSON.stringify({ compilerOptions: { target: 'invalid-target-value' } })
+    )
+    try {
+      expect(() => loadProjectCompilerOptions(tmpBadOptions)).toThrow(
+        /Failed to parse TypeScript configuration/
+      )
+    } finally {
+      rmSync(tmpBadOptions, { force: true })
+    }
   })
 
   /**
