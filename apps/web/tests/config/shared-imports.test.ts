@@ -29,8 +29,9 @@
 import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
-import ts from 'typescript'
+import * as ts from 'typescript/ast'
 import { describe, expect, it } from 'vitest'
+import { parseSource } from '../../../../scripts/lib/parse-source.mjs'
 
 const SHARED_ROOT = path.resolve(__dirname, '../../../../packages/shared')
 
@@ -85,12 +86,7 @@ function packageOf(specifier: string): string {
 function specifiers(): Specifier[] {
   const found: Specifier[] = []
   for (const file of sharedSources()) {
-    const source = ts.createSourceFile(
-      file,
-      readFileSync(path.join(SHARED_ROOT, file), 'utf8'),
-      ts.ScriptTarget.Latest,
-      true
-    )
+    const source = parseSource(file, readFileSync(path.join(SHARED_ROOT, file), 'utf8'))
     const visit = (node: ts.Node) => {
       if (
         (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) &&
@@ -100,12 +96,12 @@ function specifiers(): Specifier[] {
         const module = node.moduleSpecifier.text
         if (!module.startsWith('.')) {
           const typeOnly = ts.isImportDeclaration(node)
-            ? Boolean(node.importClause?.isTypeOnly)
+            ? node.importClause?.phaseModifier === ts.SyntaxKind.TypeKeyword
             : node.isTypeOnly
           found.push({ file, module: packageOf(module), typeOnly })
         }
       }
-      ts.forEachChild(node, visit)
+      node.forEachChild(visit)
     }
     visit(source)
     found.push(
@@ -164,7 +160,7 @@ interface RelativeImport {
 
 /** Every relative import in one source text, resolved to a path relative to `packages/shared`. */
 function relativeImports(file: string, text: string): RelativeImport[] {
-  const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true)
+  const source = parseSource(file, text)
   const found: RelativeImport[] = []
   const visit = (node: ts.Node) => {
     if (
@@ -178,11 +174,11 @@ function relativeImports(file: string, text: string): RelativeImport[] {
           path.posix.join(path.posix.dirname(file), node.moduleSpecifier.text)
         ),
         typeOnly: ts.isImportDeclaration(node)
-          ? Boolean(node.importClause?.isTypeOnly)
+          ? node.importClause?.phaseModifier === ts.SyntaxKind.TypeKeyword
           : node.isTypeOnly,
       })
     }
-    ts.forEachChild(node, visit)
+    node.forEachChild(visit)
   }
   visit(source)
   return found

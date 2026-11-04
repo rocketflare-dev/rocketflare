@@ -34,8 +34,9 @@
  */
 import { readdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
-import ts from 'typescript'
+import * as ts from 'typescript/ast'
 import { describe, expect, it } from 'vitest'
+import { parseSource } from '../../../../scripts/lib/parse-source.mjs'
 
 const SRC = path.resolve(__dirname, '../../src')
 const EXEMPT = new Set([path.join(SRC, 'db/client.ts')])
@@ -90,7 +91,7 @@ function isCodeAccess(node: ts.Node): boolean {
 }
 
 function isSqlstateLiteral(node: ts.Node): boolean {
-  return ts.isStringLiteralLike(node) && SQLSTATE.test(node.text)
+  return ts.isStringLiteralLikeNode(node) && SQLSTATE.test(node.text)
 }
 
 /** The static text of a `sql\`…\`` template or a `sql.raw('…')` call, placeholders as `$`. */
@@ -107,7 +108,7 @@ function sqlText(node: ts.Node): string | null {
     node.expression.expression.text === 'sql' &&
     node.expression.name.text === 'raw' &&
     node.arguments[0] &&
-    ts.isStringLiteralLike(node.arguments[0])
+    ts.isStringLiteralLikeNode(node.arguments[0])
   ) {
     return node.arguments[0].text
   }
@@ -134,7 +135,7 @@ function insideTransaction(node: ts.Node): boolean {
 }
 
 function findViolations(file: string, text: string): string[] {
-  const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true)
+  const source = parseSource(file, text)
   const found: string[] = []
   const at = (node: ts.Node, message: string) => {
     const { line } = source.getLineAndCharacterOfPosition(node.getStart(source))
@@ -151,13 +152,14 @@ function findViolations(file: string, text: string): string[] {
       }
     }
     if (ts.isAsExpression(node) && ts.isTypeLiteralNode(node.type)) {
-      const member = node.type.members.find(
-        m =>
-          ts.isPropertySignature(m) &&
-          ts.isIdentifier(m.name) &&
-          ['count', 'rowCount', 'rows'].includes(m.name.text) &&
-          m.type?.kind !== ts.SyntaxKind.UnknownKeyword
-      )
+      const member = node.type.members
+        .filter(ts.isPropertySignatureDeclaration)
+        .find(
+          m =>
+            ts.isIdentifier(m.name) &&
+            ['count', 'rowCount', 'rows'].includes(m.name.text) &&
+            m.type?.kind !== ts.SyntaxKind.UnknownKeyword
+        )
       if (member?.name && ts.isIdentifier(member.name)) {
         at(node, `cast to { ${member.name.text} } — a query result read by hand, use affected()`)
       }
@@ -182,6 +184,7 @@ function findViolations(file: string, text: string): string[] {
     if (
       ts.isCaseClause(node) &&
       isSqlstateLiteral(node.expression) &&
+      ts.isSwitchStatement(node.parent.parent) &&
       isCodeAccess(node.parent.parent.expression)
     ) {
       at(node, 'SQLSTATE read by hand — switch on pgErrorCode(err)')
@@ -203,7 +206,7 @@ function findViolations(file: string, text: string): string[] {
         )
       }
     }
-    ts.forEachChild(node, visit)
+    node.forEachChild(visit)
   }
   visit(source)
   return found

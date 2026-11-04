@@ -40,6 +40,10 @@ if it changed — it is not a gate check, the compile against the fresh types is
   imports `apps/web`
 - Bindings are typed by the generated `Cloudflare.Env`; do not hand-write an `Env` interface
 - Infer types from zod schemas (`z.infer`) rather than duplicating interfaces
+- TypeScript 7: `import 'typescript'` is only the version. A script or test that reads source parses
+  it with `parseSource` (`scripts/lib/parse-source.mjs`) and walks it with `typescript/ast`; one
+  that needs the checker uses `typescript/sync` (`scripts/plugin-api-doc.mjs` is the example).
+  `tsconfig` has no `baseUrl`, and every `paths` target starts with `./`
 
 ## Contracts first
 

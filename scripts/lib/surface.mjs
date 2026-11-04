@@ -36,12 +36,12 @@ import path from 'node:path'
 
 const require = createRequire(import.meta.url)
 
-/** @type {import('typescript') | null} */
+/** @type {(typeof import('typescript/ast') & typeof import('./parse-source.mjs')) | null} */
 let cachedTs = null
 
 /** The TypeScript parser, loaded on first use. See the module header for why this is not a top import. */
 function typescript() {
-  if (!cachedTs) cachedTs = require('typescript')
+  if (!cachedTs) cachedTs = { ...require('typescript/ast'), ...require('./parse-source.mjs') }
   return cachedTs
 }
 
@@ -342,7 +342,7 @@ export function suggestionFor(target) {
  */
 export function moduleImports(source, fileName = 'x.ts') {
   const ts = typescript()
-  const file = ts.createSourceFile(fileName, source, ts.ScriptTarget.Latest, true)
+  const file = ts.parseSource(fileName, source)
   const out = []
   const visit = node => {
     if (
@@ -352,7 +352,9 @@ export function moduleImports(source, fileName = 'x.ts') {
     ) {
       const isImport = ts.isImportDeclaration(node)
       const clause = isImport ? node.importClause : null
-      const typeOnly = isImport ? Boolean(clause?.isTypeOnly) : node.isTypeOnly
+      const typeOnly = isImport
+        ? clause?.phaseModifier === ts.SyntaxKind.TypeKeyword
+        : node.isTypeOnly
       const bindings = isImport ? clause?.namedBindings : node.exportClause
       const names = []
       let namespace = false
@@ -365,7 +367,7 @@ export function moduleImports(source, fileName = 'x.ts') {
       const { line } = file.getLineAndCharacterOfPosition(node.getStart(file))
       out.push({ specifier: node.moduleSpecifier.text, names, namespace, typeOnly, line: line + 1 })
     }
-    ts.forEachChild(node, visit)
+    node.forEachChild(visit)
   }
   visit(file)
   return out
