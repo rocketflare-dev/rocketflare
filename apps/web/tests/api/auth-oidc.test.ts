@@ -558,6 +558,8 @@ describe('POST /auth/logout with an issuer', () => {
     expect(url.searchParams.get('post_logout_redirect_uri')).toBe(
       'http://localhost:3001/login?signedOut=1'
     )
+    // Amazon Cognito returns to the app only with logout_uri
+    expect(url.searchParams.get('logout_uri')).toBe('http://localhost:3001/login?signedOut=1')
     expect(url.searchParams.has('id_token_hint')).toBe(false)
     expect(
       (await request('/auth/session', { headers: sessionCookieHeader(token) }, { env })).status
