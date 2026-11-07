@@ -45,7 +45,8 @@ jobs:
             echo "::notice::Contents: read + Metadata: read on the plugin repositories to enable this."
             exit 0
           fi
-          for repo in rocketflare-dev/rocketflare-plugins; do
+          # The commercial repository is private: the token needs access to it too, or this warns.
+          for repo in rocketflare-dev/rocketflare-plugins rocketflare-dev/rocketflare-commercial-plugins; do
             echo "::group::dispatch → $repo"
             gh api "repos/$repo/dispatches" \
               -f event_type=kit-released \
