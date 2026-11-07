@@ -6,6 +6,11 @@ copy of the kit forward without recreating anything its owner deleted.
 
 If you are running a copy: `pnpm kit:upgrade` tells you which of these you are missing.
 
+## 0.26.0 — 2026-11-07
+
+IdP-managed tenancy (`OIDC_MANAGED_TENANCY`) with Cognito fixes, and an identity seam for plugins — sign-in, provisioning, login methods, SSO required per domain and limited public mounts — that works in both tenancy modes.
+[Porting note](docs/upgrades/0.26.0.md).
+
 ## 0.25.0 — 2026-11-03
 
 The kit runs on Node 26, React 19, React Router 7, vitest 5, zod 4, AG-UI 1.0, postgres.js 4, CASL 7 and Anthropic API 2026-10-21; every dependency is current; workflows pin Actions by SHA, with timeouts and least-privilege permissions.
