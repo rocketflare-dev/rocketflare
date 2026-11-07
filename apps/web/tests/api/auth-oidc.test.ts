@@ -604,7 +604,10 @@ describe('AUTH_OIDC_ONLY', () => {
 describe('GET /auth/methods with an issuer', () => {
   it('adds oidc to the providers with its configured label; oidcOnly false', async () => {
     const env = oidcEnv({ OIDC_LABEL: 'Acme SSO', APP_ENV: 'staging' })
-    expect(await json(await request('/auth/methods', {}, { env }))).toEqual({
+    const { pluginMethods: _plugins, ...body } = await json<Record<string, unknown>>(
+      await request('/auth/methods', {}, { env })
+    )
+    expect(body).toEqual({
       magicLink: true,
       providers: ['google', 'microsoft', 'oidc'],
       devLogin: false,

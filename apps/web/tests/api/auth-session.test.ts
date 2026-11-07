@@ -281,6 +281,7 @@ describe('GET /auth/methods', () => {
         }),
       }
     )
-    expect(await json(res)).toEqual({ magicLink: true, providers: ['microsoft'], devLogin: false })
+    const { pluginMethods: _plugins, ...body } = await json<Record<string, unknown>>(res)
+    expect(body).toEqual({ magicLink: true, providers: ['microsoft'], devLogin: false })
   })
 })
