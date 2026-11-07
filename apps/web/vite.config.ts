@@ -53,8 +53,10 @@ export default defineConfig({
     ...(allowedHosts.length > 0 ? { allowedHosts } : {}),
     ...(tunnelHost ? { hmr: { protocol: 'wss', host: tunnelHost, clientPort: 443 } } : {}),
     watch: {
-      // The UI only depends on src/ui and src/shared — allowlist those so API/migration/doc
-      // edits don't churn the Vite watcher. wrangler dev watches the API side.
+      // The UI only depends on src/ui, src/shared and the plugins' UI halves (src/plugins/*/ui,
+      // reached through the src/plugins/ui.ts barrel) — allowlist those so API/migration/doc edits
+      // don't churn the Vite watcher. wrangler dev watches the API side. Leaving src/plugins out
+      // meant a plugin's UI edits never hot-reloaded: the browser kept the module it had.
       ignored: (filePath: string) => {
         const rel = path.relative(import.meta.dirname, filePath)
         if (rel.startsWith('..')) return false
@@ -64,7 +66,8 @@ export default defineConfig({
           rel === 'vite.config.ts' ||
           rel === 'postcss.config.js' ||
           rel.startsWith('src/ui') ||
-          rel.startsWith('src/shared')
+          rel.startsWith('src/shared') ||
+          rel.startsWith('src/plugins')
         )
       },
     },

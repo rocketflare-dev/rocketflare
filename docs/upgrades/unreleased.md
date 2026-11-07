@@ -34,10 +34,9 @@ IdP-managed tenancy (`OIDC_MANAGED_TENANCY`) with Cognito fixes, and an identity
 - `provisionFor(ctx, id).deprovision({ tenantId, userId })` → `{ removed, sessionsEnded, retained }` handles a leaver (SCIM `active: false`): removes the `idp` membership and deletes the sessions pinned to that tenant, never blocks, leaves other tenants alone; `tests/driver/identity.test.ts` runs the seam under both drivers.
 - `ServerPlugin.ssoPolicy(db, email)`: a plugin may require single sign-on for the domains its connections own; the kit then refuses those addresses magic link, Google, Microsoft, OIDC, dev login and other plugins' `signIn`, sending them to `/login?error=sso_required&method=`. A throwing policy fails closed; `BOOTSTRAP_ADMIN_EMAILS` are exempt (break-glass).
 - `TENANCY_MODE=single`: `deprovision` also blocks the leaver (`users.blocked_source = 'plugin:<id>'`, every session ended, `blocked: true`) — only the same plugin's `setMembership` lifts it, admin blocks are `manual`; the seam accepts only the one tenant's id; `PUT /api/admin/tenants/:id/external-org` answers 404 `tenancy_mode_single`.
-- `services/idp-tenancy.ts` exports `upsertIdpMembership(db, { tenantId, userId, role, syncedAt? })` and `removeIdpMembership(db, { tenantId, userId, syncedAt? })`, which the reconcile and identity events now call.
-- `auth/oauth-providers.ts`: `ProviderKey` (`plugin:<id>` beside the kit's providers) and `linkPluginIdentity`.
+- `services/idp-tenancy.ts` exports `upsertIdpMembership` and `removeIdpMembership` (the reconcile and identity events call them); `auth/oauth-providers.ts` gains `ProviderKey` (`plugin:<id>`) and `linkPluginIdentity`.
 - `ServerPlugin.loginMethods(cfg)` → `GET /auth/methods` `pluginMethods` (`pluginLoginMethodSchema` in `@rocketflare/shared/auth`); `Login.tsx` renders each, with an email field when `askEmail`; a `startPath` outside `/api/hooks/<id>/` is dropped and fails `tests/config/plugins.test.ts`.
-- `example-feature`: a development-only example SSO at `/api/hooks/example-feature/sso/*` and its login button, with `tests/api/identity.test.ts`.
+- `example-feature`: a development-only example SSO at `/api/hooks/example-feature/sso/*` and its login button, with `tests/api/identity.test.ts`; `vite.config.ts` now watches `src/plugins`, so a plugin's UI edits hot-reload in `pnpm dev`.
 - Plugin public mounts (`/api/hooks/<id>`) are rate-limited per IP by the host (120 / 60 s per prefix by default) and may set their own body cap up to 10 MB: an optional third tuple element `{ rateLimit?: { max, windowSeconds } | false; bodyLimitBytes? }` (`api/middleware/public-mounts.ts`).
 
 ## How to apply
@@ -127,6 +126,7 @@ IdP-managed tenancy (`OIDC_MANAGED_TENANCY`) with Cognito fixes, and an identity
     and `liftIdpBlock` (`services/idp-tenancy.ts`), and port `setUserBlocked`/`toAdminUser`
     (`services/admin.ts`, writes `manual`), `blockedSource` in `packages/shared/src/admin.ts` and
     `resolveSession`, and the `UserDetail.tsx` badge.
+20. In `apps/web/vite.config.ts`'s `watch.ignored` allowlist, add `rel.startsWith('src/plugins')`.
 
 ## Conflicts to expect
 
