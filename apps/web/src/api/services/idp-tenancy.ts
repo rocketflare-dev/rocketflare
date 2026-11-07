@@ -152,7 +152,12 @@ export async function reconcileIdpClaims(
     if (seen.has(org.id)) continue
     seen.add(org.id)
     const tenant = await ensureOrgTenant(db, user, org, features, logger, at)
-    await upsertIdpMembership(db, tenant.id, user.id, org.appRole, at)
+    await upsertIdpMembership(db, {
+      tenantId: tenant.id,
+      userId: user.id,
+      role: org.appRole,
+      syncedAt: at,
+    })
     tenantIds.push(tenant.id)
   }
 
@@ -276,17 +281,19 @@ async function findOrgTenant(db: Database, externalOrgId: string): Promise<Tenan
 
 /**
  * Insert or update the `idp` row; an `owner` or `support` row is the app's and stays as is. Each
- * write applies only to the row as read and never over an event newer than the token, so an owner
- * promotion or an identity event in between wins; a row removed in between is inserted again,
- * since the claims grant it.
+ * write applies only to the row as read and never over a stamp newer than `syncedAt` (default:
+ * now), so an owner promotion or an identity event in between wins; a row removed in between is
+ * inserted again, since the caller grants it.
+ *
+ * Tenant-explicit and trusting: the CALLER has proved the issuer's right to name this tenant (the
+ * OIDC reconcile from verified claims, a plugin from its own connection — `plugins/api/identity.ts`).
  */
-async function upsertIdpMembership(
+export async function upsertIdpMembership(
   db: Database,
-  tenantId: string,
-  userId: string,
-  role: IdpAppRole,
-  at: Date
+  input: { tenantId: string; userId: string; role: IdpAppRole; syncedAt?: Date }
 ): Promise<void> {
+  const { tenantId, userId, role } = input
+  const at = input.syncedAt ?? new Date()
   const row = and(eq(tenantUsers.tenantId, tenantId), eq(tenantUsers.userId, userId))
   for (let attempt = 0; attempt < 2; attempt++) {
     const current = await db.query.tenantUsers.findFirst({ where: row })
@@ -341,6 +348,24 @@ async function upsertIdpMembership(
 /** The row has not heard from the issuer since `at` (or `at` is absent: a sign-in decides). */
 function staleBefore(at: Date | undefined) {
   return at ? or(isNull(tenantUsers.idpSyncedAt), lt(tenantUsers.idpSyncedAt, at)) : undefined
+}
+
+/**
+ * Remove one person's `idp` membership of one tenant (never a `manual`, `owner` or `support`
+ * row), with their per-tenant settings, and unpin their sessions selected to it. `syncedAt` spares
+ * a row stamped after it (an event's `occurredAt`); absent, the row goes whatever its stamp.
+ * Returns whether a row was removed. Same trust contract as `upsertIdpMembership`.
+ */
+export async function removeIdpMembership(
+  db: Database,
+  input: { tenantId: string; userId: string; syncedAt?: Date }
+): Promise<boolean> {
+  const removed = await removeIdpMemberships(db, {
+    tenantId: input.tenantId,
+    userId: input.userId,
+    before: input.syncedAt,
+  })
+  return removed.length > 0
 }
 
 /**
@@ -495,12 +520,12 @@ export async function applyIdentityEvent(
       ])
       if (!user) return 'unknown_person'
       if (!tenant) return 'unknown_org'
-      const removed = await removeIdpMemberships(db, {
+      const removed = await removeIdpMembership(db, {
         userId: user.id,
         tenantId: tenant.id,
-        before: at,
+        syncedAt: at,
       })
-      return removed.length > 0 ? 'applied' : 'stale'
+      return removed ? 'applied' : 'stale'
     }
     case 'membership.role_changed': {
       const [user, tenant] = await Promise.all([
@@ -512,12 +537,12 @@ export async function applyIdentityEvent(
       const role = cfg.OIDC_ROLE_MAP[event.data.role]
       // A role the map doesn't know is an org the next sign-in would skip.
       if (!role) {
-        const removed = await removeIdpMemberships(db, {
+        const removed = await removeIdpMembership(db, {
           userId: user.id,
           tenantId: tenant.id,
-          before: at,
+          syncedAt: at,
         })
-        return removed.length > 0 ? 'applied' : 'stale'
+        return removed ? 'applied' : 'stale'
       }
       // Changes a membership that exists; the sign-in that grants the org creates it.
       const [before] = await db

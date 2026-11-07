@@ -12,9 +12,11 @@
       "Database",
       "defineTool",
       "HookCtx",
+      "identityFor",
       "jobCtx",
       "JobCtx",
       "JobHandler",
+      "provisionFor",
       "PUBLIC_MOUNT_ROOT",
       "publicCtx",
       "PublicCtx",
@@ -64,7 +66,8 @@
       "rulesFor",
       "sessionCookieHeader",
       "setupTestDatabase",
-      "stubs"
+      "stubs",
+      "uniqueId"
     ],
     "@testkit/unit": ["makeCronCtx", "makeJobCtx", "makeToolCtx"],
     "@rocketflare/shared/features": ["FEATURE_FLAGS", "FEATURE_KEYS", "FeatureDefinition"],

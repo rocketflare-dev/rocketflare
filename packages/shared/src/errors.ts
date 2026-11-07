@@ -82,6 +82,11 @@ export const ERROR_CODES = {
   idpManaged: 'idp_managed',
   /** 409: another tenant is already linked to that OIDC issuer org (`tenants.external_org_id`). */
   externalOrgTaken: 'external_org_taken',
+  /**
+   * 409: a plugin's identity provider asserted the email of an existing account it has not proved
+   * it may claim (no `linkByEmail`) — linking it would let one tenant's IdP take over that account.
+   */
+  accountExists: 'account_exists',
 } as const
 
 export type ErrorCode = (typeof ERROR_CODES)[keyof typeof ERROR_CODES]

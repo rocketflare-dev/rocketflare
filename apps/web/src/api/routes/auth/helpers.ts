@@ -24,6 +24,8 @@ export type LoginErrorCode =
   | 'oidc_only'
   /** The issuer refused to mint tokens for this person (its pre-token hook denied them). */
   | 'no_access'
+  /** A plugin IdP asserted the email of an account it may not claim (`identityFor().signIn`). */
+  | 'account_exists'
 
 /** A relative same-origin path, else `fallback`. Never `/login` (redirect loop). */
 export function safeRedirectPath(value: string | null | undefined, fallback = '/'): string {

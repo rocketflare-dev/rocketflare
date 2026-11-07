@@ -152,6 +152,22 @@ are always `tenant`; no audit log beyond `activity_events`; no personal API keys
   the row's `idp_synced_at` is stale and skipped, and a role change never creates a membership.
   204 for applied, stale, unknown person or org, and unknown type; 400 for a malformed known type;
   401 for a bad signature; 404 when not configured.
+- **Plugin sign-in (the identity seam, §16)**: a plugin that proves a person itself — a SAML
+  assertion, a per-tenant OIDC connection — finishes with `identityFor(c, id).signIn({ subject,
+  email, emailVerified, name, tenantId?, role? })` (`plugins/api/identity.ts`), never by writing
+  a session. The kit links the identity in `oauth_providers` under provider `plugin:<id>` (the
+  plugin namespaces `subject`, e.g. `<connection>|<nameId>`), else finds the person by email, else
+  `admitUser`s them — by `SIGNUP_MODE`, or as an IdP admission (`admittedBy: 'idp'`) when
+  `tenantId` + `role` are asserted, which also upserts an `idp` membership through the same
+  primitive the OIDC reconcile uses. Then `completeLogin` pins that tenant and sets the cookie.
+  `emailVerified: false`, a blocked person, a stale tenant and a subject linked elsewhere are the
+  usual `/login?error=` redirects. `ServerPlugin.loginMethods(cfg)` adds buttons to the login page
+  (`GET /auth/methods` → `pluginMethods`, `<plugin id>:<method id>`), each a full-page navigation
+  to a `startPath` under the plugin's own `/api/hooks/<id>/`, optionally behind an email field
+  (`askEmail` → `?email=`, home-realm discovery). They show under `AUTH_OIDC_ONLY` too: they are
+  SSO, and `oidcOnly` hides the kit's non-SSO methods. A plugin link is not listed on the profile's
+  sign-in methods and cannot be unlinked there (`DELETE /auth/providers/:provider` knows only the
+  kit's providers).
 - **Hardening (D12)**: random tokens hashed with SHA-256, a required encryption key, CSRF by origin
   allow-list (Bearer is exempt), and a KV sliding-window rate limit on login routes that no-ops
   without `RATE_LIMIT_KV`.
@@ -175,6 +191,11 @@ sign-in or the session's end; one orgs claim, one role map and no per-org role
 overrides; the app writes nothing back to the issuer; the slug is taken from the claim once and
 never follows a later rename; `person.suspended` revokes no API keys: a key acts as its creator,
 so the keys in the tenants they lost stop working, and those in their manual tenants do not.
+Plugin sign-in: the kit trusts the plugin's word on `subject`, `email`, `emailVerified` and the
+tenant entirely (proving them is the plugin's job); one plugin may not name another's id, but
+nothing enforces that the id passed to `identityFor` is the caller's own; no "SSO only" per email
+domain yet (`AUTH_OIDC_ONLY` is deployment-wide), no provisioned-user deactivation (block + end
+sessions) in the seam, and a plugin link is invisible on the profile page.
 
 ## 3. API shell
 
@@ -986,7 +1007,34 @@ as merging a PR. A plugin repo mirrors the host tree and ships **no migration, n
   proves the caller before naming a tenant. `signState` / `verifyState` are the proof for a
   round-trip the plugin started: HMAC-SHA256 under a key HKDF-derived from
   `OAUTH_ENCRYPTION_KEY`, a `purpose` that is part of the signed body, an absolute expiry
-  (default 10 min), `null` for every failure. Signed, not encrypted.
+  (default 10 min), `null` for every failure. Signed, not encrypted. The host guards every
+  public mount before its router runs (`api/middleware/public-mounts.ts`): a per-IP KV sliding
+  window in a bucket named after the prefix — default 120 / 60 s, `rateLimit: false` to opt out
+  (a webhook sender with fixed IPs that batches), a no-op without `RATE_LIMIT_KV` like every kit
+  limit — and the body cap, chosen at middleware step 5 before any parsing: 1 MB unless the
+  mount declares `bodyLimitBytes` (≤ 10 MB; the config test refuses more), which then replaces
+  it beneath that prefix for every content type, so a ~200 KB SAML form POST or a SCIM bulk body
+  is neither refused nor unbounded. Both are the optional third tuple element,
+  `[prefix, router, { rateLimit?, bodyLimitBytes? }]`; a path is throttled by the longest public
+  prefix it falls under only.
+- **Identity (the identity seam)**: a public handler that has proved a person signs them in with
+  `identityFor(c, id).signIn(...)` — the kit links, admits, applies an `idp` membership and mints
+  the session (§2) and the plugin returns the redirect it answers; it never touches
+  `user_sessions`, cookies or `tenant_users`. **Linking by email is opt-in — decided:** a sign-in
+  (or `upsertUser`) whose email belongs to an account with no link from this plugin is refused
+  (`account_exists`) unless it passes `linkByEmail: true`, which a plugin sets only when it has
+  proved its IdP owns the email's domain (a DNS-verified domain on the connection) — a per-tenant
+  IdP can assert any address, so linking by email alone would let one customer's IdP sign in as
+  anyone. `provisionFor(ctx, id)` is the cookie-free half, from
+  any `PluginContext` (SCIM, a directory sync): `findUser`, `upsertUser` (creates with a link and
+  no session; a block stays; an unverified email never links to an existing account),
+  `setMembership` / `removeMembership` (`source = 'idp'` only, so read-only in the app — 409
+  `idp_managed` — and never an owner, support or manual row) and `listMembers`. Every
+  tenant-taking method 404s a missing tenant; the CALLER must have proved its right to that tenant,
+  the `PublicCtx` contract. `loginMethods(cfg)` contributes login-page buttons whose `startPath`
+  must sit under `/api/hooks/<id>/` — `plugins.test.ts` fails a stray one, and `GET /auth/methods`
+  drops it with a log. `example-feature`'s dev-only `/api/hooks/example-feature/sso/*` is the
+  worked example.
 - **Inbound email**: `emailHandlers` route Cloudflare Email Routing mail ("Send to a Worker") to
   a plugin by the recipient's LOCAL PART — `receipts` takes `receipts@…` and `receipts+tag@…`, `*`
   is the catch-all — through the Worker's `email` export (`api/email.ts`). The host validates
@@ -1064,6 +1112,7 @@ as merging a PR. A plugin repo mirrors the host tree and ships **no migration, n
 | 23 | A plugin ships agent skills: `skills/<dir>/` → `.claude/skills/<dir>/`, namespaced by id, replaced on upgrade |
 | 24 | Inbound email is a slot keyed by local part; the host dispatches and rejects, the plugin parses, authenticates and stores |
 | 25 | A background context starts an agent run through the route's own `enqueueRun`; idempotency is a derived run id, not a new column |
+| 26 | Plugin identity is `identityFor(c, id)` / `provisionFor(ctx, id)`, links under `plugin:<id>`, memberships through the core `idp` primitives; login buttons are declared, never rendered by the plugin |
 
 **Known gaps:** no sandbox, review or signing; no rename migrations (expand/contract only); no
 cross-plugin FK tooling or `many()` onto core tables; `grants` is additive by convention only;
@@ -1075,8 +1124,9 @@ test of data-touching handlers; one DO per row is unpurgeable (purge-intent ledg
 `plugin-ci.yml` input changes reach callers only via `main`, and nothing tests versions between
 floor and ceiling. `addedDependencies` starts after 0.17.1: a plugin installed by 0.17.1 or earlier has its
 older packages kept, never removed, when a release drops them, and a package a plugin added that
-the kit later starts declaring too is still the plugin's to remove. Public mounts (D34) get no rate limit of their own and no `@testkit` builder
-(test them through `request()`); `verifyState` has no replay ledger — a token is reusable until it
+the kit later starts declaring too is still the plugin's to remove. Public mounts (D34) have no `@testkit` builder
+(test them through `request()`), and their rate limit is the kit's approximate KV window, keyed
+on the client IP — a sender behind a shared egress shares one bucket; `verifyState` has no replay ledger — a token is reusable until it
 expires, so a plugin whose callback must run once records that itself; an ingested document's
 upsert reads the previous row before writing, so two racing re-ingests of a FILE may leave one
 replaced original behind in R2; a plugin skill edited in place is overwritten by the next

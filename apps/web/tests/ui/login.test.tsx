@@ -207,4 +207,43 @@ describe('Login', () => {
       expect(hardNavigate).not.toHaveBeenCalled()
     })
   })
+
+  describe('plugin methods', () => {
+    const PLUGIN_METHODS = {
+      magicLink: false,
+      providers: ['oidc'],
+      devLogin: false,
+      oidc: { label: 'Acme SSO' },
+      oidcOnly: true,
+      pluginMethods: [
+        { id: 'sso:saml', label: 'Sign in with SAML', startPath: '/api/hooks/sso/start' },
+        {
+          id: 'sso:discover',
+          label: 'Find my SSO',
+          startPath: '/api/hooks/sso/discover',
+          askEmail: true,
+        },
+      ],
+    }
+
+    it('render under oidcOnly too, and navigate to startPath with returnUrl', async () => {
+      render('/login?returnUrl=%2Fdocuments', PLUGIN_METHODS)
+      fireEvent.click(await screen.findByRole('button', { name: 'Sign in with SAML' }))
+      expect(hardNavigate).toHaveBeenCalledWith('/api/hooks/sso/start?returnUrl=%2Fdocuments')
+      expect(screen.getByRole('button', { name: 'Continue with Acme SSO' })).toBeInTheDocument()
+    })
+
+    it('askEmail validates the address, then sends it as ?email=', async () => {
+      render('/login', PLUGIN_METHODS)
+      const input = await screen.findByLabelText('Work email for Find my SSO')
+      fireEvent.click(screen.getByRole('button', { name: 'Find my SSO' }))
+      expect(hardNavigate).not.toHaveBeenCalled()
+      expect(await screen.findByText('Enter a valid email address')).toBeInTheDocument()
+      fireEvent.change(input, { target: { value: ' Jane@Acme.test ' } })
+      fireEvent.click(screen.getByRole('button', { name: 'Find my SSO' }))
+      expect(hardNavigate).toHaveBeenCalledWith(
+        '/api/hooks/sso/discover?returnUrl=%2F&email=jane%40acme.test'
+      )
+    })
+  })
 })

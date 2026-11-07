@@ -521,7 +521,11 @@ describe('AUTH_OIDC_ONLY', () => {
       expect(location(res).searchParams.get('error')).toBe('oidc_only')
     }
     expect((await request('/auth/oidc', {}, { env })).status).toBe(302)
-    expect(await json(await request('/auth/methods', {}, { env }))).toEqual({
+    // A plugin's methods (the example plugin's, in development) are not the kit's to pin here.
+    const { pluginMethods: _plugins, ...methods } = await json<Record<string, unknown>>(
+      await request('/auth/methods', {}, { env })
+    )
+    expect(methods).toEqual({
       magicLink: true,
       providers: ['oidc'],
       devLogin: true,

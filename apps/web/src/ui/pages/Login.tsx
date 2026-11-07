@@ -9,6 +9,10 @@
  * still live (or a sign-out) never turns into a silent login or a loop.
  * The other methods are hidden, not disabled: the magic-link endpoint stays live for invitations.
  *
+ * `pluginMethods` (an installed plugin's SSO, `ServerPlugin.loginMethods`) render as buttons that
+ * navigate (full page) to the method's `startPath` with `?returnUrl=`, behind an email field sent
+ * as `&email=` when the method `askEmail`s. Shown under `oidcOnly` too — they are single sign-on.
+ *
  * `?as=<email>` (what `pnpm bootstrap` opens) signs in through the same dev-login call once on
  * mount. Threat model: this is login-CSRF against a dev-only route that already 404s outside
  * `APP_ENV=development`; the page honours it ONLY when the server reports `devLogin` AND the email
@@ -20,6 +24,7 @@ import {
   type MagicLinkRequest,
   magicLinkRequestSchema,
   type OAuthProviderName,
+  type PluginLoginMethod,
 } from '@rocketflare/shared/auth'
 import { useEffect, useRef, useState } from 'react'
 import { Navigate, useSearchParams } from 'react-router'
@@ -42,6 +47,8 @@ export const LOGIN_ERROR_COPY: Record<string, string> = {
   oidc_only: 'This organisation signs in through single sign-on only.',
   no_access:
     "You don't have access to this app. Ask your organisation's administrator to grant it, then sign in again.",
+  account_exists:
+    'An account with this email already exists. Sign in the way you usually do, or ask an administrator to connect single sign-on to it.',
 }
 const GENERIC_LOGIN_ERROR = 'Sign in failed. Please try again.'
 
@@ -135,8 +142,13 @@ export default function Login() {
 
   const providers: OAuthProviderName[] = oidcOnly ? ['oidc'] : (methods?.providers ?? [])
   const showMagicLink = Boolean(methods?.magicLink) && !oidcOnly
+  const pluginMethods = methods?.pluginMethods ?? []
   const nothingConfigured =
-    methods && !methods.magicLink && providers.length === 0 && !methods.devLogin
+    methods &&
+    !methods.magicLink &&
+    providers.length === 0 &&
+    pluginMethods.length === 0 &&
+    !methods.devLogin
 
   return (
     <AuthCard>
@@ -186,9 +198,26 @@ export default function Login() {
         </div>
       )}
 
+      {pluginMethods.length > 0 && (
+        <div className={`space-y-3${providers.length > 0 ? ' mt-3' : ''}`}>
+          {pluginMethods.map(method => (
+            <PluginMethodButton
+              key={method.id}
+              method={method}
+              returnUrl={returnUrl}
+              disabled={busy !== null}
+              busy={busy === `plugin:${method.id}`}
+              onStart={() => setBusy(`plugin:${method.id}`)}
+            />
+          ))}
+        </div>
+      )}
+
       {showMagicLink && (
         <>
-          {providers.length > 0 && <div className="divider text-xs text-muted">or</div>}
+          {providers.length + pluginMethods.length > 0 && (
+            <div className="divider text-xs text-muted">or</div>
+          )}
           <form onSubmit={requestMagicLink} className="space-y-3" noValidate>
             <div>
               <label htmlFor="login-email" className="label text-sm">
@@ -249,5 +278,74 @@ export default function Login() {
         </div>
       )}
     </AuthCard>
+  )
+}
+
+/** One plugin-contributed method: a button, behind an email field when it `askEmail`s. */
+function PluginMethodButton({
+  method,
+  returnUrl,
+  disabled,
+  busy,
+  onStart,
+}: {
+  method: PluginLoginMethod
+  returnUrl: string
+  disabled: boolean
+  busy: boolean
+  onStart: () => void
+}) {
+  const [email, setEmail] = useState('')
+  const [error, setError] = useState<string | undefined>()
+  const inputId = `login-plugin-${method.id.replace(/[^a-z0-9-]/g, '-')}`
+
+  const start = (e?: React.FormEvent) => {
+    e?.preventDefault()
+    const params = new URLSearchParams({ returnUrl })
+    if (method.askEmail) {
+      const parsed = magicLinkRequestSchema.shape.email.safeParse(email)
+      if (!parsed.success) {
+        setError('Enter a valid email address')
+        return
+      }
+      params.set('email', parsed.data)
+    }
+    setError(undefined)
+    onStart()
+    hardNavigate(`${method.startPath}?${params.toString()}`)
+  }
+
+  const button = (
+    <button
+      type={method.askEmail ? 'submit' : 'button'}
+      className="btn btn-outline w-full justify-start gap-3 font-normal"
+      disabled={disabled}
+      onClick={method.askEmail ? undefined : () => start()}
+    >
+      {busy && <LoadingIndicator size="sm" />}
+      {method.label}
+    </button>
+  )
+  if (!method.askEmail) return button
+  return (
+    <form onSubmit={start} className="space-y-2" noValidate>
+      <label htmlFor={inputId} className="label text-sm">
+        Work email for {method.label}
+      </label>
+      <input
+        id={inputId}
+        type="email"
+        className="input w-full"
+        placeholder="you@company.com"
+        autoComplete="email"
+        value={email}
+        onChange={e => setEmail(e.target.value)}
+        disabled={disabled}
+        aria-invalid={error ? true : undefined}
+        aria-describedby={error ? `${inputId}-error` : undefined}
+      />
+      <FieldError id={`${inputId}-error`} message={error} />
+      {button}
+    </form>
   )
 }

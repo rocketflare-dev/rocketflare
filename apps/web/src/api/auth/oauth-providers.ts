@@ -6,15 +6,23 @@
 import type { OAuthProviderName } from '@rocketflare/shared/auth'
 import { and, eq } from 'drizzle-orm'
 import type { AppConfig } from '../../config'
-import type { Database } from '../../db/client'
+import { type Database, isUniqueViolation } from '../../db/client'
 import { oauthProviders } from '../../db/schema'
 import { ConflictError } from '../utils/core/errors'
 import { encryptToken } from './oauth-encryption'
 import type { OAuthProfile, OAuthTokenSet } from './providers/types'
 
+/**
+ * A plugin's identities are stored beside the built-in providers' under `plugin:<id>`
+ * (`plugins/api/identity.ts`), so `(provider, provider_user_id)` stays the one uniqueness rule and
+ * no plugin can collide with `google`, `oidc` or another plugin.
+ */
+export type PluginProviderKey = `plugin:${string}`
+export type ProviderKey = OAuthProviderName | PluginProviderKey
+
 export async function findProviderLink(
   db: Database,
-  provider: OAuthProviderName,
+  provider: ProviderKey,
   providerUserId: string
 ) {
   return db.query.oauthProviders.findFirst({
@@ -56,6 +64,46 @@ export async function upsertProviderLink(
   await db
     .insert(oauthProviders)
     .values({ userId, provider, providerUserId: profile.providerUserId, ...values })
+}
+
+/**
+ * Link a plugin-asserted identity (no tokens: the plugin's IdP proved the person, nothing is
+ * called on their behalf afterwards). Idempotent for the same user, refreshing the asserted email;
+ * 409 `provider_linked_elsewhere` when the subject already belongs to someone else — including a
+ * concurrent insert losing the unique race.
+ */
+export async function linkPluginIdentity(
+  db: Database,
+  input: { userId: string; provider: PluginProviderKey; providerUserId: string; email: string }
+): Promise<void> {
+  const elsewhere = () =>
+    new ConflictError(
+      'This account is already linked to a different user',
+      'provider_linked_elsewhere'
+    )
+  const existing = await findProviderLink(db, input.provider, input.providerUserId)
+  if (existing && existing.userId !== input.userId) throw elsewhere()
+  if (existing) {
+    if (existing.email !== input.email) {
+      await db
+        .update(oauthProviders)
+        .set({ email: input.email })
+        .where(eq(oauthProviders.id, existing.id))
+    }
+    return
+  }
+  try {
+    await db.insert(oauthProviders).values({
+      userId: input.userId,
+      provider: input.provider,
+      providerUserId: input.providerUserId,
+      email: input.email,
+    })
+  } catch (err) {
+    if (!isUniqueViolation(err)) throw err
+    const winner = await findProviderLink(db, input.provider, input.providerUserId)
+    if (winner?.userId !== input.userId) throw elsewhere()
+  }
 }
 
 export interface LinkedProvider {

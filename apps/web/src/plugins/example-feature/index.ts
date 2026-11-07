@@ -29,6 +29,7 @@ import { requireFeature, toolCtx } from '@/plugins/api'
 import { onTenantCreated, seedDemo } from './api/hooks'
 import { exampleFeaturePublicRouter } from './api/public'
 import { exampleFeatureRouter } from './api/routes'
+import { EXAMPLE_SSO_START_PATH } from './api/sso'
 import { handleExamplePing } from './jobs/ping'
 import { exampleAgentTools } from './tools/list-example-notes'
 
@@ -49,6 +50,23 @@ export const exampleFeatureServer = {
    * exist without a session.
    */
   publicMounts: [['/api/hooks/example-feature', exampleFeaturePublicRouter]],
+  /**
+   * **A sign-in method on the kit's login page**, read per request so `cfg` decides — here,
+   * development only, because the example SSO behind it vouches for any email (`api/sso.ts`).
+   * The button navigates to `startPath`, which must be under this plugin's `/api/hooks/<id>/`;
+   * `askEmail` puts an email field in front of it (home-realm discovery, for a real plugin).
+   */
+  loginMethods: cfg =>
+    cfg.APP_ENV === 'development'
+      ? [
+          {
+            id: 'demo-sso',
+            label: 'Example SSO (development only)',
+            startPath: EXAMPLE_SSO_START_PATH,
+            askEmail: true,
+          },
+        ]
+      : [],
   jobHandlers: { [EXAMPLE_PING_JOB]: handleExamplePing },
   /**
    * The tool is written against `ToolCtx`; `toolCtx` adapts the runtime's context at this one

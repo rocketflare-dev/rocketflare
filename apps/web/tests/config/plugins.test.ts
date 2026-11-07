@@ -34,6 +34,9 @@ import {
 } from '@rocketflare/shared/plugins'
 import { describe, expect, expectTypeOf, it } from 'vitest'
 import { z } from 'zod'
+import { loginMethodIssue, pluginLoginMethods } from '@/api/auth/plugin-login-methods'
+import { MAX_PUBLIC_MOUNT_BODY_BYTES } from '@/api/middleware/body-limit'
+import { loadConfig } from '@/config'
 import { SERVER_PLUGINS, serverPlugins } from '@/plugins/server'
 import { UI_PLUGINS, uiPlugins } from '@/plugins/ui'
 import { queryKeys } from '@/ui/lib/query-keys'
@@ -47,11 +50,13 @@ import {
   pluginIdOfPath,
   pluginImportIssue,
   publicMountIssues,
+  publicMountOptionIssues,
   queryKeyRootIssues,
   RESERVED_PLUGIN_IDS,
   staticImports,
   uiEntryIssues,
 } from '../helpers/plugins'
+import { createTestEnv } from '../mocks/bindings'
 
 const REPO_ROOT = path.resolve(__dirname, '../../../..')
 
@@ -93,6 +98,80 @@ describe('public mounts', () => {
       /public by definition/
     )
     expect(publicMountIssues('orders', [], ['/api/hooks'])).toHaveLength(1)
+  })
+
+  it('declare guards the host can enforce, and never an unbounded body', () => {
+    const at = '/api/hooks/orders'
+    expect(publicMountOptionIssues('orders', at, undefined)).toEqual([])
+    expect(publicMountOptionIssues('orders', at, { rateLimit: false })).toEqual([])
+    expect(
+      publicMountOptionIssues('orders', at, {
+        rateLimit: { max: 600, windowSeconds: 60 },
+        bodyLimitBytes: MAX_PUBLIC_MOUNT_BODY_BYTES,
+      })
+    ).toEqual([])
+    expect(
+      publicMountOptionIssues('orders', at, { rateLimit: { max: 0, windowSeconds: 60 } })
+    ).toHaveLength(1)
+    expect(
+      publicMountOptionIssues('orders', at, { rateLimit: { max: 10, windowSeconds: 0.5 } })
+    ).toHaveLength(1)
+    expect(
+      publicMountOptionIssues('orders', at, { bodyLimitBytes: MAX_PUBLIC_MOUNT_BODY_BYTES + 1 })[0]
+    ).toMatch(/exceeds/)
+    expect(publicMountOptionIssues('orders', at, { bodyLimitBytes: 0 })).toHaveLength(1)
+    expect(publicMountOptionIssues('orders', at, { bodyLimitBytes: 1.5 })).toHaveLength(1)
+  })
+})
+
+describe('login methods', () => {
+  const method = (startPath: string, id = 'sso') => ({ id, label: 'SSO', startPath })
+
+  it('start under the plugin’s own /api/hooks/<id>/ and nowhere else', () => {
+    expect(loginMethodIssue('orders', method('/api/hooks/orders/sso/start'))).toBeNull()
+    for (const bad of [
+      '/auth/oidc',
+      '/api/orders/sso',
+      '/api/hooks/billing/sso',
+      '/api/hooks/orders-x/sso',
+      '/api/hooks/orders/',
+      '/api/hooks/orders',
+      '/api/hooks/orders/../billing/x',
+      '/api/hooks/orders/sso?next=/x',
+      'https://evil.example/api/hooks/orders/sso',
+    ]) {
+      expect(loginMethodIssue('orders', method(bad)), bad).not.toBeNull()
+    }
+    expect(loginMethodIssue('orders', method('/api/hooks/orders/sso', 'Bad Id'))).not.toBeNull()
+  })
+
+  it('are dropped at runtime when stray, and namespaced on the wire', () => {
+    const cfg = loadConfig(createTestEnv())
+    const fixture = [
+      {
+        shared: { id: 'orders' },
+        loginMethods: () => [method('/api/hooks/orders/sso'), method('/auth/oidc', 'stray')],
+      },
+      {
+        shared: { id: 'broken' },
+        loginMethods: () => {
+          throw new Error('boom')
+        },
+      },
+    ]
+    expect(pluginLoginMethods(fixture, cfg)).toEqual([
+      { id: 'orders:sso', label: 'SSO', startPath: '/api/hooks/orders/sso' },
+    ])
+  })
+
+  it('every installed plugin’s, in every APP_ENV, start under its own hooks prefix', () => {
+    const issues = (['development', 'staging', 'production'] as const).flatMap(APP_ENV => {
+      const cfg = loadConfig(createTestEnv({ APP_ENV }))
+      return serverPlugins.flatMap(p =>
+        (p.loginMethods?.(cfg) ?? []).map(m => loginMethodIssue(p.shared.id, m)).filter(Boolean)
+      )
+    })
+    expect(issues).toEqual([])
   })
 })
 
@@ -311,6 +390,15 @@ describe('installed plugins', () => {
         p.shared.id,
         (p.publicMounts ?? []).map(m => m[0]),
         (p.mounts ?? []).map(m => m[0])
+      )
+    )
+    expect(issues).toEqual([])
+  })
+
+  it('declares public-mount guards within the host ceilings', () => {
+    const issues = serverPlugins.flatMap(p =>
+      (p.publicMounts ?? []).flatMap(([prefix, , options]) =>
+        publicMountOptionIssues(p.shared.id, prefix, options)
       )
     )
     expect(issues).toEqual([])

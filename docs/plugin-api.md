@@ -209,6 +209,9 @@ The server surface: the context family, and the types a plugin must be able to n
     Who caused it — the signing-up user, the approving admin. Null for a system path.
   - `features: readonly string[]`
     The features this DEPLOYMENT ships. A hook that CREATES rows is the sharpest feature door there is, because it has no nav entry to hide behind: seed nothing for a surface this…
+- `function identityFor(c: AppContext, pluginId: string): PluginIdentity`
+  Both halves, bound to this request and this plugin's namespace.
+- `type IdpAppRole = z.infer<typeof idpAppRoleSchema>`
 - `async function ingestDocument( ctx: PluginContext, input: PluginIngestTextInput ): Promise<PluginIngestResult>`
   Index text. Small texts are indexed before this returns; larger ones return `queued`. No embeddings provider → 503 `ai_not_configured`, checked before anything is written.
 - `async function ingestDocumentFile( ctx: PluginContext, input: PluginIngestFileInput ): Promise<PluginIngestResult>`
@@ -281,12 +284,20 @@ The server surface: the context family, and the types a plugin must be able to n
   - `logger: PluginLogger`
   - `env: PluginBindings`
     The Worker bindings. A plugin reads the ones its own `plugin.json` declares; reaching for a core binding directly is usually the sign that a method is missing from this surface.
+- `interface PluginIdentity`
+  `identityFor(c, pluginId)`: sign a person in, or provision them.
+- `interface PluginIdentityUser`
+  A person as this module answers them: plain fields, never the row.
 - `interface PluginIngestFileInput extends IngestCommon`
 - `interface PluginIngestResult`
   What an ingest answers. `queued` means a `document.index` / `document.convert` job finishes it.
 - `interface PluginIngestTextInput extends IngestCommon`
 - `type PluginLogger = Pick<Logger, 'debug' \| 'info' \| 'warn' \| 'error'>`
   The four level methods, and deliberately no more.
+- `interface PluginLoginMethodDeclaration`
+  What a plugin declares; the host namespaces `id` as `<plugin id>:<id>` on the wire.
+- `interface PluginMember`
+  One row of `listMembers`: the membership and the person, plain fields.
 - `type PluginMount = readonly [string, Hono<AppEnv>, MiddlewareHandler?]`
   One entry of the mount table in `api/index.ts`: prefix, router, optional gate.
 - `interface PluginNavGroup`
@@ -295,8 +306,12 @@ The server surface: the context family, and the types a plugin must be able to n
   - `before?: string`
     Insert before the core group with this label; appended when the label is not found.
   - `items: NavItem[]`
-- `type PluginPublicMount = readonly [string, Hono<AppEnv>]`
-  One UNAUTHENTICATED mount: prefix and router, no gate — a feature gate reads `auth.features`, and there is no auth here. The prefix must be `/api/hooks/<plugin id>` or beneath it;…
+- `interface PluginProvision`
+  Tenant-explicit user and membership writes with no session: SCIM, a directory sync.
+- `type PluginPublicMount = readonly [string, Hono<AppEnv>, PluginPublicMountOptions?]`
+  One UNAUTHENTICATED mount: prefix, router and optional guards — no gate, because a feature gate reads `auth.features` and there is no auth here. The prefix must be…
+- `interface PluginPublicMountOptions`
+  How the host guards one public mount before its router runs. Both are applied by the HOST (`api/index.ts`), never by the plugin's handlers, so every unauthenticated prefix is…
 - `interface PluginRequires`
   What `pnpm plugin check` verifies before an install, mirrored from the plugin's manifest.
 - `interface PluginRoute`
@@ -311,10 +326,14 @@ The server surface: the context family, and the types a plugin must be able to n
 - `type PluginRouteTier = 'shell' \| 'noTenant' \| 'public'`
 - `interface PluginSeedContext`
   Everything a plugin's `seedDemo` hook is given (`pnpm seed --demo`).
+- `interface PluginSignInInput`
+  What a plugin's IdP proved about the person, handed to `signIn`.
 - `type PluginStructuredOptions = Omit< CallStructuredToolOptions<T>, 'model' \| 'maxTokens' > & { maxTokens?: number }`
   `callStructuredTool` minus what the runtime supplies.
 - `type PluginToolLoopOptions = Omit< RunToolLoopOptions, 'model' \| 'maxTokens' \| 'approvals' \| 'runApproved' > & { maxTokens?: number }`
   `runToolLoop` minus what the runtime supplies.
+- `function provisionFor(ctx: PluginContext, pluginId: string): PluginProvision`
+  The cookie-free half: usable from any `PluginContext` — a public handler, a job, a cron.
 - `const PUBLIC_MOUNT_ROOT: "/api/hooks"`
   The prefix every public mount lives under; the plugin's id is the next segment.
 - `function publicCtx(c: AppContext): PublicCtx`
@@ -406,6 +425,8 @@ The server surface: the context family, and the types a plugin must be able to n
     Spread into the mount table of `api/index.ts`; the prefix is `/api/<id>` by convention.
   - `publicMounts?: readonly PluginPublicMount[]`
     Routes a third party calls with no session or key — an admin-consent callback, a webhook. Mounted BEFORE the authed mounts and without `authMiddleware`, under `/api/hooks/<id>`…
+  - `loginMethods?: (cfg: AppConfig) => readonly PluginLoginMethodDeclaration[]`
+    Sign-in methods for the login page, read per request by `GET /auth/methods` (so `cfg` may decide: a dev-only method, one per configured connection). Each button navigates to its…
   - `apiPrefixes?: readonly string[]`
     Extra path prefixes the Worker owns, unioned into `API_PREFIXES` — so an unmatched path under one is a JSON 404 rather than `index.html`. Adding one ALSO means adding it to…
   - `jobHandlers?: { [T in JobTypeOf<S> & string]: JobHandler<Extract<T, JobType>> }`
@@ -733,8 +754,10 @@ Components and hooks, for a lazy PAGE. Never for the UI entry.
   - `before?: string`
     Insert before the core group with this label; appended when the label is not found.
   - `items: NavItem[]`
-- `type PluginPublicMount = readonly [string, Hono<AppEnv>]`
-  One UNAUTHENTICATED mount: prefix and router, no gate — a feature gate reads `auth.features`, and there is no auth here. The prefix must be `/api/hooks/<plugin id>` or beneath it;…
+- `type PluginPublicMount = readonly [string, Hono<AppEnv>, PluginPublicMountOptions?]`
+  One UNAUTHENTICATED mount: prefix, router and optional guards — no gate, because a feature gate reads `auth.features` and there is no auth here. The prefix must be…
+- `interface PluginPublicMountOptions`
+  How the host guards one public mount before its router runs. Both are applied by the HOST (`api/index.ts`), never by the plugin's handlers, so every unauthenticated prefix is…
 - `interface PluginRequires`
   What `pnpm plugin check` verifies before an install, mirrored from the plugin's manifest.
 - `interface PluginRoute`
@@ -756,6 +779,8 @@ Components and hooks, for a lazy PAGE. Never for the UI entry.
     Spread into the mount table of `api/index.ts`; the prefix is `/api/<id>` by convention.
   - `publicMounts?: readonly PluginPublicMount[]`
     Routes a third party calls with no session or key — an admin-consent callback, a webhook. Mounted BEFORE the authed mounts and without `authMiddleware`, under `/api/hooks/<id>`…
+  - `loginMethods?: (cfg: AppConfig) => readonly PluginLoginMethodDeclaration[]`
+    Sign-in methods for the login page, read per request by `GET /auth/methods` (so `cfg` may decide: a dev-only method, one per configured connection). Each button navigates to its…
   - `apiPrefixes?: readonly string[]`
     Extra path prefixes the Worker owns, unioned into `API_PREFIXES` — so an unmatched path under one is a JSON 404 rather than `index.html`. Adding one ALSO means adding it to…
   - `jobHandlers?: { [T in JobTypeOf<S> & string]: JobHandler<Extract<T, JobType>> }`
@@ -1154,6 +1179,8 @@ nothing in the comparison that can throw.
 @/plugins/api :: member :: HookCtx.tenantId :: tenantId: string
 @/plugins/api :: member :: HookCtx.userId :: userId: string | null
 @/plugins/api :: member :: HookCtx.features :: features: readonly string[]
+@/plugins/api :: function :: identityFor :: function identityFor(c: AppContext, pluginId: string): PluginIdentity
+@/plugins/api :: type :: IdpAppRole :: type IdpAppRole = z.infer<typeof idpAppRoleSchema>
 @/plugins/api :: function :: ingestDocument :: async function ingestDocument( ctx: PluginContext, input: PluginIngestTextInput ): Promise<PluginIngestResult>
 @/plugins/api :: function :: ingestDocumentFile :: async function ingestDocumentFile( ctx: PluginContext, input: PluginIngestFileInput ): Promise<PluginIngestResult>
 @/plugins/api :: function :: isAdminLevel :: function isAdminLevel(session: RoleView): boolean
@@ -1199,16 +1226,22 @@ nothing in the comparison that can throw.
 @/plugins/api :: member :: PluginContext.config :: config: PluginConfig
 @/plugins/api :: member :: PluginContext.logger :: logger: PluginLogger
 @/plugins/api :: member :: PluginContext.env :: env: PluginBindings
+@/plugins/api :: interface :: PluginIdentity :: interface PluginIdentity
+@/plugins/api :: interface :: PluginIdentityUser :: interface PluginIdentityUser
 @/plugins/api :: interface :: PluginIngestFileInput :: interface PluginIngestFileInput extends IngestCommon
 @/plugins/api :: interface :: PluginIngestResult :: interface PluginIngestResult
 @/plugins/api :: interface :: PluginIngestTextInput :: interface PluginIngestTextInput extends IngestCommon
 @/plugins/api :: type :: PluginLogger :: type PluginLogger = Pick<Logger, 'debug' | 'info' | 'warn' | 'error'>
+@/plugins/api :: interface :: PluginLoginMethodDeclaration :: interface PluginLoginMethodDeclaration
+@/plugins/api :: interface :: PluginMember :: interface PluginMember
 @/plugins/api :: type :: PluginMount :: type PluginMount = readonly [string, Hono<AppEnv>, MiddlewareHandler?]
 @/plugins/api :: interface :: PluginNavGroup :: interface PluginNavGroup
 @/plugins/api :: member :: PluginNavGroup.label :: label?: string
 @/plugins/api :: member :: PluginNavGroup.before :: before?: string
 @/plugins/api :: member :: PluginNavGroup.items :: items: NavItem[]
-@/plugins/api :: type :: PluginPublicMount :: type PluginPublicMount = readonly [string, Hono<AppEnv>]
+@/plugins/api :: interface :: PluginProvision :: interface PluginProvision
+@/plugins/api :: type :: PluginPublicMount :: type PluginPublicMount = readonly [string, Hono<AppEnv>, PluginPublicMountOptions?]
+@/plugins/api :: interface :: PluginPublicMountOptions :: interface PluginPublicMountOptions
 @/plugins/api :: interface :: PluginRequires :: interface PluginRequires
 @/plugins/api :: interface :: PluginRoute :: interface PluginRoute
 @/plugins/api :: member :: PluginRoute.path :: path: string
@@ -1217,8 +1250,10 @@ nothing in the comparison that can throw.
 @/plugins/api :: member :: PluginRoute.tier :: tier?: PluginRouteTier
 @/plugins/api :: type :: PluginRouteTier :: type PluginRouteTier = 'shell' | 'noTenant' | 'public'
 @/plugins/api :: interface :: PluginSeedContext :: interface PluginSeedContext
+@/plugins/api :: interface :: PluginSignInInput :: interface PluginSignInInput
 @/plugins/api :: type :: PluginStructuredOptions :: type PluginStructuredOptions = Omit< CallStructuredToolOptions<T>, 'model' | 'maxTokens' > & { maxTokens?: number }
 @/plugins/api :: type :: PluginToolLoopOptions :: type PluginToolLoopOptions = Omit< RunToolLoopOptions, 'model' | 'maxTokens' | 'approvals' | 'runApproved' > & { maxTokens?: number }
+@/plugins/api :: function :: provisionFor :: function provisionFor(ctx: PluginContext, pluginId: string): PluginProvision
 @/plugins/api :: const :: PUBLIC_MOUNT_ROOT :: const PUBLIC_MOUNT_ROOT: "/api/hooks"
 @/plugins/api :: function :: publicCtx :: function publicCtx(c: AppContext): PublicCtx
 @/plugins/api :: interface :: PublicCtx :: interface PublicCtx extends PluginContext, BackgroundMethods
@@ -1276,6 +1311,7 @@ nothing in the comparison that can throw.
 @/plugins/api :: member :: ServerPlugin.requires :: requires?: PluginRequires
 @/plugins/api :: member :: ServerPlugin.mounts :: mounts?: readonly PluginMount[]
 @/plugins/api :: member :: ServerPlugin.publicMounts :: publicMounts?: readonly PluginPublicMount[]
+@/plugins/api :: member :: ServerPlugin.loginMethods :: loginMethods?: (cfg: AppConfig) => readonly PluginLoginMethodDeclaration[]
 @/plugins/api :: member :: ServerPlugin.apiPrefixes :: apiPrefixes?: readonly string[]
 @/plugins/api :: member :: ServerPlugin.jobHandlers :: jobHandlers?: { [T in JobTypeOf<S> & string]: JobHandler<Extract<T, JobType>> }
 @/plugins/api :: member :: ServerPlugin.agents :: agents?: { [K in AgentKeyOf<S> & string]: AnyAgentDefinition }
@@ -1465,7 +1501,8 @@ nothing in the comparison that can throw.
 @/plugins/types :: member :: PluginNavGroup.label :: label?: string
 @/plugins/types :: member :: PluginNavGroup.before :: before?: string
 @/plugins/types :: member :: PluginNavGroup.items :: items: NavItem[]
-@/plugins/types :: type :: PluginPublicMount :: type PluginPublicMount = readonly [string, Hono<AppEnv>]
+@/plugins/types :: type :: PluginPublicMount :: type PluginPublicMount = readonly [string, Hono<AppEnv>, PluginPublicMountOptions?]
+@/plugins/types :: interface :: PluginPublicMountOptions :: interface PluginPublicMountOptions
 @/plugins/types :: interface :: PluginRequires :: interface PluginRequires
 @/plugins/types :: interface :: PluginRoute :: interface PluginRoute
 @/plugins/types :: member :: PluginRoute.path :: path: string
@@ -1479,6 +1516,7 @@ nothing in the comparison that can throw.
 @/plugins/types :: member :: ServerPlugin.requires :: requires?: PluginRequires
 @/plugins/types :: member :: ServerPlugin.mounts :: mounts?: readonly PluginMount[]
 @/plugins/types :: member :: ServerPlugin.publicMounts :: publicMounts?: readonly PluginPublicMount[]
+@/plugins/types :: member :: ServerPlugin.loginMethods :: loginMethods?: (cfg: AppConfig) => readonly PluginLoginMethodDeclaration[]
 @/plugins/types :: member :: ServerPlugin.apiPrefixes :: apiPrefixes?: readonly string[]
 @/plugins/types :: member :: ServerPlugin.jobHandlers :: jobHandlers?: { [T in JobTypeOf<S> & string]: JobHandler<Extract<T, JobType>> }
 @/plugins/types :: member :: ServerPlugin.agents :: agents?: { [K in AgentKeyOf<S> & string]: AnyAgentDefinition }
