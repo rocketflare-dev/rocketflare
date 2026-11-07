@@ -4,7 +4,11 @@ import { createExecutionContext, createTestEnv, waitOnExecutionContext } from '.
 
 describe('scheduled dispatcher', () => {
   it('registers pruneExpired and the trace-store retention on the nightly cron', () => {
-    expect(SCHEDULED_TASKS['0 4 * * *']?.map(t => t.name)).toEqual(['pruneExpired', 'pruneAiSpans'])
+    // Core first; an installed plugin may append its own tasks to a core cron.
+    expect(SCHEDULED_TASKS['0 4 * * *']?.map(t => t.name).slice(0, 2)).toEqual([
+      'pruneExpired',
+      'pruneAiSpans',
+    ])
   })
 
   it('runs the tasks registered for event.cron and reports each', async () => {
@@ -12,7 +16,7 @@ describe('scheduled dispatcher', () => {
     const ctx = createExecutionContext()
     const reports = await dispatchScheduled('0 4 * * *', env, ctx)
     await waitOnExecutionContext(ctx)
-    expect(reports).toEqual([
+    expect(reports.slice(0, 2)).toEqual([
       expect.objectContaining({ cron: '0 4 * * *', task: 'pruneExpired', status: 'ok' }),
       expect.objectContaining({ cron: '0 4 * * *', task: 'pruneAiSpans', status: 'ok' }),
     ])
