@@ -425,6 +425,7 @@ function toAdminUser(row: User, tenantCount: number): AdminUserListItem {
     emailVerifiedAt: row.emailVerifiedAt,
     lastLoginAt: row.lastLoginAt,
     blockedAt: row.blockedAt,
+    blockedSource: row.blockedAt ? (row.blockedSource ?? 'manual') : null,
     tenantCount,
     createdAt: row.createdAt,
   }
@@ -521,11 +522,19 @@ export async function setGlobalAdmin(
   return updated ?? target
 }
 
-/** Blocking deletes every session — the account is out immediately, not at the next expiry. */
+/**
+ * Blocking deletes every session — the account is out immediately, not at the next expiry. A block
+ * set here is `manual`, so an identity provider's reactivation (`provisionFor().setMembership`)
+ * never lifts it; it also turns an IdP's block into a manual one. Unblocking clears either.
+ */
 export async function setUserBlocked(db: Database, input: { userId: string; blocked: boolean }) {
   const [updated] = await db
     .update(users)
-    .set({ blockedAt: input.blocked ? new Date() : null })
+    .set(
+      input.blocked
+        ? { blockedAt: new Date(), blockedSource: 'manual' }
+        : { blockedAt: null, blockedSource: null }
+    )
     .where(eq(users.id, input.userId))
     .returning()
   if (!updated) throw new NotFoundError('User not found')

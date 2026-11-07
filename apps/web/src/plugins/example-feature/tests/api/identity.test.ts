@@ -397,6 +397,7 @@ describe('provisionFor', () => {
       removed: true,
       sessionsEnded: 1,
       retained: null,
+      blocked: false,
     })
 
     expect(await membership(person.id)).toBeUndefined()
@@ -424,6 +425,7 @@ describe('provisionFor', () => {
       removed: false,
       sessionsEnded: 0,
       retained: null,
+      blocked: false,
     })
   })
 
@@ -435,6 +437,7 @@ describe('provisionFor', () => {
       removed: false,
       sessionsEnded: 0,
       retained: { role: 'admin', source: 'manual' },
+      blocked: false,
     })
     expect(await membership(manual.id)).toMatchObject({ role: 'admin', source: 'manual' })
     const { userSessions } = allTables()
@@ -444,6 +447,34 @@ describe('provisionFor', () => {
     await expect(
       provision().deprovision({ tenantId: crypto.randomUUID(), userId: manual.id })
     ).rejects.toMatchObject({ statusCode: 404 })
+  })
+
+  it('single-tenant mode: a leaver is BLOCKED, so the example SSO cannot sign them back in', async () => {
+    const singleEnv = createTestEnv({ TENANCY_MODE: 'single' })
+    const single = provisionFor(makeJobCtx({ db, env: singleEnv }), 'example-feature')
+    const { tenants } = allTables()
+    // THE tenant of single-tenant mode is the oldest row; any other id is refused.
+    const [anchor] = await db.select().from(tenants).orderBy(tenants.createdAt).limit(1)
+    const theTenant = anchor?.id ?? ''
+    await expect(single.listMembers({ tenantId })).rejects.toMatchObject({ statusCode: 404 })
+
+    const email = newEmail()
+    const person = await single.upsertUser({ subject: `demo|${email}`, email, emailVerified: true })
+    await single.setMembership({ tenantId: theTenant, userId: person.id, role: 'member' })
+    await createTestSession(db, person.id, null)
+    expect(await single.deprovision({ tenantId: theTenant, userId: person.id })).toEqual({
+      removed: true,
+      sessionsEnded: 1,
+      retained: null,
+      blocked: true,
+    })
+    const refused = await ssoSignIn({ email }, singleEnv)
+    expect(location(refused).searchParams.get('error')).toBe('blocked')
+
+    // The IdP reactivating them (a role again) lifts the block it set.
+    await single.setMembership({ tenantId: theTenant, userId: person.id, role: 'member' })
+    expect(await single.findUser({ email })).toMatchObject({ blocked: false })
+    expect(location(await ssoSignIn({ email }, singleEnv)).pathname).toBe('/')
   })
 
   it('refuses a tenant or a person that does not exist', async () => {

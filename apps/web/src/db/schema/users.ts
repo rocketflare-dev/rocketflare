@@ -14,6 +14,14 @@ import { membershipIsolation } from './rls'
 export const GLOBAL_ADMIN_SOURCES = ['manual', 'idp'] as const
 export type GlobalAdminSource = (typeof GLOBAL_ADMIN_SOURCES)[number]
 
+/**
+ * Who set `blockedAt`: `manual` (the admin console) or `plugin:<id>` — that plugin's identity
+ * provider deprovisioned the person in `TENANCY_MODE=single`, where the one tenant is the whole
+ * deployment (`provisionFor(ctx, id).deprovision`). Only the SAME plugin's `setMembership` lifts a
+ * `plugin:<id>` block; nothing but an admin lifts a `manual` one.
+ */
+export type BlockedSource = 'manual' | `plugin:${string}`
+
 export const users = pgTable(
   'users',
   {
@@ -35,8 +43,13 @@ export const users = pgTable(
     emailVerifiedAt: timestamp('email_verified_at', { withTimezone: true }),
     /** Stamped on every login. NULL = invited but never signed in. */
     lastLoginAt: timestamp('last_login_at', { withTimezone: true }),
-    /** Non-null = blocked by a global admin; the auth middleware rejects the session. */
+    /** Non-null = blocked; every sign-in, session and API key of the person is refused. */
     blockedAt: timestamp('blocked_at', { withTimezone: true }),
+    /**
+     * Who blocked them (`BlockedSource`). NULL with `blockedAt` set (a block from before the
+     * column, the seed) is treated as `manual`: never lifted by an identity provider.
+     */
+    blockedSource: text('blocked_source').$type<BlockedSource>(),
     ...timestamps(),
   },
   table => [

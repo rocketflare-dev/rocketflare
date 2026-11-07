@@ -102,7 +102,7 @@ export default function TenantDetail() {
         }
       />
 
-      {(tenant.idpManaged || tenant.externalOrgId) && (
+      {tenancyMode === 'multi' && (tenant.idpManaged || tenant.externalOrgId) && (
         <IssuerOrgPanel tenantId={tenant.id} externalOrgId={tenant.externalOrgId} />
       )}
 

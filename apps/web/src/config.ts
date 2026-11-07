@@ -387,7 +387,8 @@ const configSchema = coreConfigSchema.extend(pluginConfigShape).superRefine((cfg
       code: z.ZodIssueCode.custom,
       path: ['OIDC_MANAGED_TENANCY'],
       message:
-        'OIDC_MANAGED_TENANCY=true needs TENANCY_MODE=multi (it creates one tenant per issuer org)',
+        'OIDC_MANAGED_TENANCY=true needs TENANCY_MODE=multi (it creates one tenant per issuer org); ' +
+        'single-tenant mode signs OIDC users into its one tenant without it — unset it',
     })
   }
 }) as unknown as typeof coreConfigSchema

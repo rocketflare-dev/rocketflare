@@ -623,6 +623,15 @@ origin or a deployed host. It is an ordinary Bearer key: every query it makes is
 tenant by the cubes and it is revoked in the same place. Verify: the CLI's `meta` lists
 `ActivityEvents`, `TenantActivityDaily`, `TenantUsers`, `Users`.
 
+**An SSO / SCIM plugin under `TENANCY_MODE=single`** (the identity seam, `docs/CONCEPTS.md` §16):
+the one organisation is the whole deployment, so a person the plugin's directory deactivates is
+**blocked**, not just removed — every session ends, API keys answer 403, and no other sign-in
+method lets them back in. Admin → Users shows them as "blocked by identity provider";
+reactivating them in the directory lifts it, and so does Unblock. A block you set by hand is
+yours: no directory sync lifts it. Under `multi` a deactivation only removes that organisation's
+membership. Verify (single mode): deactivate a test person in the directory → their next request
+answers 401 and a magic link lands on `/login?error=blocked`.
+
 Writing one of your own: `/rf-plugin`, or `apps/web/src/plugins/CLAUDE.md` and
 `apps/web/src/plugins/example-feature/` — the vendored reference plugin, which exists to be read
 and then deleted.

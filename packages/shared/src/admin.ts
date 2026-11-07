@@ -73,6 +73,12 @@ export const adminUserListItemSchema = z.object({
   emailVerifiedAt: z.coerce.date().nullable(),
   lastLoginAt: z.coerce.date().nullable(),
   blockedAt: z.coerce.date().nullable(),
+  /**
+   * Who blocked them: `manual` (this console), `plugin:<id>` (that plugin's identity provider
+   * deprovisioned them, single-tenant mode — its reactivation lifts it), null when not blocked or
+   * blocked before the source was recorded (treated as manual).
+   */
+  blockedSource: z.string().nullable(),
   tenantCount: z.number().int(),
   createdAt: z.coerce.date(),
 })

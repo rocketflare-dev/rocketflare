@@ -849,7 +849,7 @@ The build-time schema symbols. A `pgTable(...)` runs at module scope, so these c
 - `const tenantUsers: table "tenant_users" { tenantId, userId, role, source, idpSyncedAt, joinedAt, invitedByUserId }`
 - `function timestamps()`
   `created_at` / `updated_at` as `timestamptz`, both defaulting to now(). Spread into a table.
-- `const users: table "users" { createdAt, updatedAt, id, email, name, avatarUrl, isGlobalAdmin, globalAdminSource, emailVerifiedAt, lastLoginAt, blockedAt }`
+- `const users: table "users" { createdAt, updatedAt, id, email, name, avatarUrl, isGlobalAdmin, globalAdminSource, emailVerifiedAt, lastLoginAt, blockedAt, blockedSource }`
 
 ### `@rocketflare/shared/plugins/api`
 
@@ -1561,7 +1561,7 @@ nothing in the comparison that can throw.
 @/db/schema/kit :: const :: tenants :: const tenants: table "tenants" { createdAt, updatedAt, id, name, slug, status, externalOrgId, idpSyncedAt, seedDataCreated, lastAccessedAt }
 @/db/schema/kit :: const :: tenantUsers :: const tenantUsers: table "tenant_users" { tenantId, userId, role, source, idpSyncedAt, joinedAt, invitedByUserId }
 @/db/schema/kit :: function :: timestamps :: function timestamps()
-@/db/schema/kit :: const :: users :: const users: table "users" { createdAt, updatedAt, id, email, name, avatarUrl, isGlobalAdmin, globalAdminSource, emailVerifiedAt, lastLoginAt, blockedAt }
+@/db/schema/kit :: const :: users :: const users: table "users" { createdAt, updatedAt, id, email, name, avatarUrl, isGlobalAdmin, globalAdminSource, emailVerifiedAt, lastLoginAt, blockedAt, blockedSource }
 @rocketflare/shared/plugins/api :: type :: Actions :: type Actions = (typeof ACTIONS)[number]
 @rocketflare/shared/plugins/api :: type :: AgentKeyOf :: type AgentKeyOf = NonNullable<DeclaredBy<S, 'agentKeys'>>[number]
 @rocketflare/shared/plugins/api :: type :: ApiErrorBody :: type ApiErrorBody = z.infer<typeof apiErrorSchema>

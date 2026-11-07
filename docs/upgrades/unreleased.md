@@ -18,7 +18,7 @@ manual: true
 
 ## What changed
 
-IdP-managed tenancy (`OIDC_MANAGED_TENANCY`) lets the OIDC issuer decide tenants and roles, with Cognito fixes; plugins gain an identity seam (`identityFor`, `provisionFor`, `loginMethods`) and rate- and body-limited public mounts.
+IdP-managed tenancy (`OIDC_MANAGED_TENANCY`) with Cognito fixes, and an identity seam for plugins — sign-in, provisioning, login methods, SSO required per domain and limited public mounts — that works in both tenancy modes.
 
 - `config.ts`: `OIDC_MANAGED_TENANCY`, `OIDC_ORGS_CLAIM` (default `orgs`), `OIDC_ROLE_MAP`, `OIDC_ADMIT_CLAIM`, `OIDC_GLOBAL_ADMIN_CLAIM`, `OIDC_SESSION_MAX_AGE_DAYS` (default 7, at most 30), secret `IDENTITY_WEBHOOK_SECRET`; needs an issuer and `TENANCY_MODE=multi`; `isIdpManaged(cfg)`.
 - `packages/shared/src/idp.ts`: the orgs-claim schema and the identity-event schemas.
@@ -33,6 +33,7 @@ IdP-managed tenancy (`OIDC_MANAGED_TENANCY`) lets the OIDC issuer decide tenants
 - `@/plugins/api` gains the identity seam (`plugins/api/identity.ts`): `identityFor(c, id).signIn(...)` signs a person a plugin proved in, `provisionFor(ctx, id)` provisions users and `idp` memberships (`docs/CONCEPTS.md` §2, §16). An existing account is linked by email only with `linkByEmail: true` (else `account_exists`).
 - `provisionFor(ctx, id).deprovision({ tenantId, userId })` → `{ removed, sessionsEnded, retained }` handles a leaver (SCIM `active: false`): removes the `idp` membership and deletes the sessions pinned to that tenant, never blocks, leaves other tenants alone; `tests/driver/identity.test.ts` runs the seam under both drivers.
 - `ServerPlugin.ssoPolicy(db, email)`: a plugin may require single sign-on for the domains its connections own; the kit then refuses those addresses magic link, Google, Microsoft, OIDC, dev login and other plugins' `signIn`, sending them to `/login?error=sso_required&method=`. A throwing policy fails closed; `BOOTSTRAP_ADMIN_EMAILS` are exempt (break-glass).
+- `TENANCY_MODE=single`: `deprovision` also blocks the leaver (`users.blocked_source = 'plugin:<id>'`, every session ended, `blocked: true`) — only the same plugin's `setMembership` lifts it, admin blocks are `manual`; the seam accepts only the one tenant's id; `PUT /api/admin/tenants/:id/external-org` answers 404 `tenancy_mode_single`.
 - `services/idp-tenancy.ts` exports `upsertIdpMembership(db, { tenantId, userId, role, syncedAt? })` and `removeIdpMembership(db, { tenantId, userId, syncedAt? })`, which the reconcile and identity events now call.
 - `auth/oauth-providers.ts`: `ProviderKey` (`plugin:<id>` beside the kit's providers) and `linkPluginIdentity`.
 - `ServerPlugin.loginMethods(cfg)` → `GET /auth/methods` `pluginMethods` (`pluginLoginMethodSchema` in `@rocketflare/shared/auth`); `Login.tsx` renders each, with an email field when `askEmail`; a `startPath` outside `/api/hooks/<id>/` is dropped and fails `tests/config/plugins.test.ts`.
@@ -98,36 +99,34 @@ IdP-managed tenancy (`OIDC_MANAGED_TENANCY`) lets the OIDC issuer decide tenants
 14. Port the tests (the `OIDC_MANAGED_TENANCY` block of `tests/api/auth-oidc.test.ts`, the new cases
     in `tests/config/env-schema.test.ts` and `tests/api/admin.test.ts`) and the docs
     (`docs/CONCEPTS.md` §1 and §2, `SETUP.md` 2.3c, the config line in `CLAUDE.md`).
-15. In `apps/web/src/api/auth/oauth-providers.ts` add the `PluginProviderKey` and `ProviderKey`
-    types, widen `findProviderLink`'s `provider` to `ProviderKey`, and copy `linkPluginIdentity`.
-16. Copy `apps/web/src/api/auth/plugin-login-methods.ts` and `apps/web/src/plugins/api/identity.ts`
-    from the kit; export `identityFor`, `provisionFor` and the identity types from
-    `apps/web/src/plugins/api/index.ts`; add `loginMethods?` to `ServerPlugin` (`plugins/types.ts`),
-    `account_exists` to `ERROR_CODES`, `LoginErrorCode` and `LOGIN_ERROR_COPY` (`pages/Login.tsx`),
-    and `deleteUserSessionsInTenant` to `apps/web/src/api/auth/sessions.ts`.
-17. In `packages/shared/src/auth.ts` add `pluginLoginMethodSchema` and an optional
-    `pluginMethods` array on `authMethodsSchema`. In `apps/web/src/api/routes/auth/session.ts` set
-    `methods.pluginMethods` from `pluginLoginMethods(serverPlugins, cfg, logger)` when non-empty.
-    In `apps/web/src/ui/pages/Login.tsx` render `methods.pluginMethods` (copy
-    `PluginMethodButton`), also under `oidcOnly`.
-18. Port the tests and docs: the `login methods` and `sso policy` blocks of
-    `tests/config/plugins.test.ts`, the development `GET /auth/methods` comparison without
-    `pluginMethods` in `tests/api/auth-session.test.ts` and `auth-oidc.test.ts`, `docs/CONCEPTS.md`
-    §2 and §16 and the identity bullet of `apps/web/src/plugins/CLAUDE.md`; then run
+15. Copy `apps/web/src/api/auth/plugin-login-methods.ts`, `apps/web/src/plugins/api/identity.ts`
+    and `linkPluginIdentity` + the `ProviderKey` types (`api/auth/oauth-providers.ts`); export the
+    identity API from `plugins/api/index.ts`; add `loginMethods?` to `ServerPlugin`,
+    `pluginLoginMethodSchema` + optional `pluginMethods` to `authMethodsSchema` (set in
+    `routes/auth/session.ts`, rendered by `Login.tsx` even under `oidcOnly`), `account_exists` to
+    `ERROR_CODES`, `LoginErrorCode` and `LOGIN_ERROR_COPY`, and `deleteUserSessionsInTenant`.
+16. Port the tests and docs: the `login methods` and `sso policy` blocks of
+    `tests/config/plugins.test.ts`, `/auth/methods` assertions that ignore `pluginMethods`,
+    `docs/CONCEPTS.md` §1, §2 and §16 and `apps/web/src/plugins/CLAUDE.md`; run
     `node scripts/plugin-api-doc.mjs`. If the app still carries `example-feature`, copy its
     `api/sso.ts`, `api/sso-policy.ts`, the `loginMethods` and `ssoPolicy` entries in `index.ts`,
     the `EXAMPLE_SSO_*` constants, the `/sso` route line in `api/public.ts` and its tests.
-19. Copy `apps/web/src/api/auth/sso-policy.ts` and `apps/web/src/api/routes/auth/sso.ts`, add
+17. Copy `apps/web/src/api/auth/sso-policy.ts` and `apps/web/src/api/routes/auth/sso.ts`, add
     `ssoPolicy?` to `ServerPlugin`, `sso_required` to `ERROR_CODES` and `LoginErrorCode`, and
     the `ssoDecisionFor` + `ssoAllows` check to every sign-in route the app added itself, before
     it admits anyone (the kit's own routes come with the files above).
-20. Copy `apps/web/src/api/middleware/public-mounts.ts`, the `apiBodyLimit` /
+18. Copy `apps/web/src/api/middleware/public-mounts.ts`, the `apiBodyLimit` /
     `MAX_PUBLIC_MOUNT_BODY_BYTES` additions in `apps/web/src/api/middleware/body-limit.ts` and
     `PluginPublicMountOptions` in `apps/web/src/plugins/types.ts`. In `apps/web/src/api/index.ts`
     replace the step-5 `isUploadPath` ternary with
     `app.use('/api/*', apiBodyLimit(publicBodyLimitOverrides(publicMounts)))` and the public-mount
-    `for` loop with `mountPublicRoutes(app, publicMounts)`. Add `{ rateLimit: false }` to any
-    existing public mount whose sender batches from fixed IPs.
+    `for` loop with `mountPublicRoutes(app, publicMounts)` (`rateLimit: false` for a batching
+    sender).
+19. Add `users.blockedSource` (`text('blocked_source')`) to `apps/web/src/db/schema/users.ts`, run
+    `pnpm db:generate --name kit-idp-blocked-source` and `pnpm db:migrate`; copy `blockDeprovisioned`
+    and `liftIdpBlock` (`services/idp-tenancy.ts`), and port `setUserBlocked`/`toAdminUser`
+    (`services/admin.ts`, writes `manual`), `blockedSource` in `packages/shared/src/admin.ts` and
+    `resolveSession`, and the `UserDetail.tsx` badge.
 
 ## Conflicts to expect
 
@@ -138,7 +137,7 @@ IdP-managed tenancy (`OIDC_MANAGED_TENANCY`) lets the OIDC issuer decide tenants
 
 ## Verify
 
-1. `pnpm gate` is green, and `pnpm db:migrate` on a dev database adds the six columns above.
+1. `pnpm gate` is green; `pnpm db:migrate` adds the six columns above and `users.blocked_source`.
 2. With `OIDC_MANAGED_TENANCY=true` and no `OIDC_ISSUER`, the Worker refuses to boot naming `OIDC_MANAGED_TENANCY`.
 3. `POST /auth/logout` with an issuer advertising `end_session_endpoint` returns an `endSessionUrl` carrying both `post_logout_redirect_uri` and `logout_uri`.
 4. A managed sign-in for a person with one org lands in that org's tenant, `PATCH /api/members/<their id>` answers 409 `idp_managed`, and their `user_sessions` row has `max_expires_at` seven days out.
@@ -148,3 +147,4 @@ IdP-managed tenancy (`OIDC_MANAGED_TENANCY`) lets the OIDC issuer decide tenants
 8. `GET /api/hooks/example-feature/sso/start?email=new@example.test&tenantId=<id>&role=member` (flag on for that tenant) redirects to `/sso/callback`, which sets `__Host-session` and leaves a `source = 'idp'` row in `tenant_users`.
 9. `pnpm web test:config` passes `tests/config/public-mounts.test.ts`; on a deployment with `RATE_LIMIT_KV`, the 121st request in a minute from one IP to `/api/hooks/<id>/…` answers 429 `rate_limited`.
 10. In development `POST /auth/dev-login` with `{"email":"a@sso-required.example.test"}` answers 403 `sso_required` with `details.method: "example-feature:demo-sso"`.
+11. Under `TENANCY_MODE=single` a deprovisioned person's magic link lands on `/login?error=blocked`, and `setMembership` from the same plugin lets them in again.

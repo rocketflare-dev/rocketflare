@@ -101,8 +101,12 @@ in the host. Each half is checked where it is written; only the merge is cast.
   redirect, refusals included. `provisionFor(ctx, '<id>')` is the cookie-free half for SCIM or a
   sync job (`findUser`, `upsertUser`, `setMembership`, `removeMembership`, `deprovision`,
   `listMembers`). `removeMembership` drops the `idp` row and unpins sessions; `deprovision` is a
-  LEAVER (SCIM `active: false`) — the same plus deleting the sessions pinned to that tenant, and
-  never a block: their other tenants, sessions and keys survive. Both
+  LEAVER (SCIM `active: false`) — the same plus deleting the sessions pinned to that tenant; in
+  `multi` never a block (their other tenants, sessions and keys survive). Under
+  `TENANCY_MODE=single` the one tenant is the deployment: every method takes only ITS id (another
+  is a missing tenant), and `deprovision` BLOCKS the leaver (`blocked: true`, `blocked_source =
+  'plugin:<id>'`, every session ended) — reactivate with `setMembership`, the only call that lifts
+  YOUR block (never an admin's); `upsertUser` and `signIn` do not. Both
   trust the caller about the tenant, exactly as `PublicCtx` does — prove it first.
   An existing account with the same email is attached only with `linkByEmail: true` (else
   `account_exists`) — set it ONLY for a domain the connection proved it owns, or one tenant's IdP

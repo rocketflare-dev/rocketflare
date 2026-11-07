@@ -95,6 +95,7 @@ interface SessionRow {
   email_verified_at: Date | string | null
   last_login_at: Date | string | null
   blocked_at: Date | string | null
+  blocked_source: User['blockedSource']
   user_created_at: Date | string
   user_updated_at: Date | string
   membership_tenant_id: string | null
@@ -145,7 +146,7 @@ export async function resolveSession(db: Database, token: string): Promise<Resol
       us.selected_tenant_id,
       u.id                     AS user_id,
       u.email, u.name, u.avatar_url, u.is_global_admin, u.global_admin_source,
-      u.email_verified_at, u.last_login_at, u.blocked_at,
+      u.email_verified_at, u.last_login_at, u.blocked_at, u.blocked_source,
       u.created_at             AS user_created_at,
       u.updated_at             AS user_updated_at,
       m.tenant_id              AS membership_tenant_id,
@@ -219,6 +220,7 @@ export async function resolveSession(db: Database, token: string): Promise<Resol
     emailVerifiedAt: asDateOrNull(row.email_verified_at),
     lastLoginAt: asDateOrNull(row.last_login_at),
     blockedAt: asDateOrNull(row.blocked_at),
+    blockedSource: row.blocked_source,
     createdAt: asDate(row.user_created_at),
     updatedAt: asDate(row.user_updated_at),
   }

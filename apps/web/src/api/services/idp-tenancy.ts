@@ -55,7 +55,7 @@ import {
   users,
 } from '../../db/schema'
 import { findProviderLink } from '../auth/oauth-providers'
-import { deleteUserSessionsInTenant } from '../auth/sessions'
+import { deleteUserSessions, deleteUserSessionsInTenant } from '../auth/sessions'
 import { ConflictError } from '../utils/core/errors'
 import type { Logger } from '../utils/core/logger'
 import { createTenantForUser, uniqueSlug } from '../utils/db/tenant-helpers'
@@ -388,6 +388,8 @@ export interface IdpDeprovisionResult {
  * membership there AND end their sessions pinned to it. Nothing global — no `blocked_at`, no
  * other tenant's sessions or memberships — because a tenant's IdP speaks for that tenant only.
  * Their API keys in the tenant stop working with the membership (`validateApiKey` joins it).
+ * (`TENANCY_MODE=single` adds a block on top — `blockDeprovisioned`, decided by the caller,
+ * `provisionFor().deprovision`.)
  *
  * A membership the IdP does not own (`manual`, `owner`, `support`) is left with its sessions,
  * and reported in `retained`. Idempotent: a repeat finds nothing to remove and nothing pinned.
@@ -409,6 +411,40 @@ export async function deprovisionIdpMember(
   const sessionsEnded = await deleteUserSessionsInTenant(db, userId, tenantId)
   const removed = row ? await removeIdpMembership(db, { tenantId, userId }) : false
   return { removed, sessionsEnded, retained: null }
+}
+
+/**
+ * `TENANCY_MODE=single`: the one tenant IS the deployment, so a leaver the IdP deprovisions there
+ * is BLOCKED, with `blocked_source = source` (`plugin:<id>`), and every session of theirs ends —
+ * otherwise any other sign-in method would let them straight back in. A person already blocked
+ * keeps the block they have (an admin's `manual` one stays manual). Answers the sessions ended.
+ * The caller decides whether the IdP speaks for the person (`provisionFor().deprovision`).
+ */
+export async function blockDeprovisioned(
+  db: Database,
+  input: { userId: string; source: `plugin:${string}` }
+): Promise<number> {
+  await db
+    .update(users)
+    .set({ blockedAt: new Date(), blockedSource: input.source, updatedAt: new Date() })
+    .where(and(eq(users.id, input.userId), isNull(users.blockedAt)))
+  return deleteUserSessions(db, input.userId)
+}
+
+/**
+ * The IdP reactivated the person (`provisionFor().setMembership`): lift a block THIS source set,
+ * and nothing else — a `manual` block, or another plugin's, stays. `true` when one was lifted.
+ */
+export async function liftIdpBlock(
+  db: Database,
+  input: { userId: string; source: `plugin:${string}` }
+): Promise<boolean> {
+  const lifted = await db
+    .update(users)
+    .set({ blockedAt: null, blockedSource: null, updatedAt: new Date() })
+    .where(and(eq(users.id, input.userId), eq(users.blockedSource, input.source)))
+    .returning({ id: users.id })
+  return lifted.length > 0
 }
 
 /**

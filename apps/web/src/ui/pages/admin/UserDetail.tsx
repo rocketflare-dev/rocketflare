@@ -41,7 +41,20 @@ export default function UserDetail() {
         badge={
           <>
             {user.isGlobalAdmin && <span className="badge badge-sm badge-info">global admin</span>}
-            {blocked && <span className="badge badge-sm badge-error">blocked</span>}
+            {blocked && (
+              <span
+                className="badge badge-sm badge-error"
+                title={
+                  user.blockedSource?.startsWith('plugin:')
+                    ? 'Deprovisioned by the identity provider: reactivating them there lifts this block, and so does Unblock'
+                    : undefined
+                }
+              >
+                {user.blockedSource?.startsWith('plugin:')
+                  ? 'blocked by identity provider'
+                  : 'blocked'}
+              </span>
+            )}
           </>
         }
         description={

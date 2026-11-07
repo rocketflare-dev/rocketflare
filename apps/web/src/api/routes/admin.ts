@@ -107,7 +107,9 @@ adminRouter.put(
   '/tenants/:id/external-org',
   validate('json', setTenantExternalOrgRequestSchema),
   async c => {
-    const { db, user } = withAuth(c)
+    const { db, cfg, user } = withAuth(c)
+    // The issuer-org link only means something under IdP-managed tenancy, which needs multi mode.
+    requireMultiTenant(cfg)
     const { externalOrgId } = c.req.valid('json')
     const row = await setTenantExternalOrg(db, uuidParam(c, 'id'), externalOrgId, user)
     return c.json({ id: row.id, externalOrgId: row.externalOrgId })

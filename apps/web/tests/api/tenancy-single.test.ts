@@ -6,7 +6,7 @@
 import { and, eq } from 'drizzle-orm'
 import { describe, expect, it } from 'vitest'
 import { getSingleTenant } from '@/api/utils/db/tenant-helpers'
-import { tenantUsers, users } from '@/db/schema'
+import { tenants, tenantUsers, users } from '@/db/schema'
 import {
   createTestGlobalAdmin,
   createTestSession,
@@ -20,6 +20,7 @@ import { createTestEnv } from '../mocks/bindings'
 
 const db = setupTestDatabase()
 const env = createTestEnv({ TENANCY_MODE: 'single' })
+const getTenantRow = (id: string) => db.query.tenants.findFirst({ where: eq(tenants.id, id) })
 
 describe('single-tenant mode', () => {
   it('disabled routes → 404 tenancy_mode_single', async () => {
@@ -32,12 +33,25 @@ describe('single-tenant mode', () => {
       ['/api/tenant', { method: 'DELETE', headers: cookie }, { confirm: tenant.slug }],
       ['/auth/select-tenant', { method: 'POST', headers: cookie }, { tenantId: tenant.id }],
       ['/api/admin/tenants', { headers: adminCookie }, undefined],
+      // The issuer-org link is IdP-managed tenancy's, which refuses single mode; and the one
+      // tenant is the deployment, so a global admin cannot delete it either.
+      [
+        `/api/admin/tenants/${tenant.id}/external-org`,
+        { method: 'PUT', headers: adminCookie },
+        { externalOrgId: 'org_1' },
+      ],
+      [
+        `/api/admin/tenants/${tenant.id}`,
+        { method: 'DELETE', headers: adminCookie },
+        { confirm: tenant.slug },
+      ],
     ]
     for (const [path, init, body] of cases) {
       const res = await request(path, init, { env, json: body })
       expect(res.status, path).toBe(404)
       expect(await json(res), path).toMatchObject({ statusCode: 404, code: 'tenancy_mode_single' })
     }
+    expect((await getTenantRow(tenant.id))?.externalOrgId ?? null).toBeNull()
   })
 
   it('kept routes still work and /auth/session reports tenancyMode: single', async () => {

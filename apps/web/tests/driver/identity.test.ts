@@ -2,8 +2,9 @@
  * The plugin identity seam's multi-step writes (`plugins/api/identity.ts`), under the driver the
  * environment selects — `pnpm test` runs this under both (tests/driver/CLAUDE.md). A sign-in is a
  * user, a provider link, an `idp` membership and a session; a deprovision deletes sessions and then
- * removes the membership inside `db.transaction(…)` (the WebSocket pool under `neon`). Each must
- * leave the same rows under `postgres` and `neon`.
+ * removes the membership inside `db.transaction(…)` (the WebSocket pool under `neon`) — and, in
+ * single-tenant mode, blocks the person and ends every session, which `setMembership` lifts again.
+ * Each must leave the same rows under `postgres` and `neon`.
  *
  * Everything goes through `openDatabase`, the Worker's own path. The plugin id is a probe of this
  * file's own, not an installed plugin's: the seam takes any well-formed id, and this suite ships
@@ -15,9 +16,10 @@ import { PinoLogger } from 'hono-pino'
 import { afterAll, describe, expect, it } from 'vitest'
 import type { AppEnv } from '@/api/types'
 import { createLogger } from '@/api/utils/core/logger'
+import { getSingleTenant } from '@/api/utils/db/tenant-helpers'
 import { loadConfig } from '@/config'
 import { type DatabaseEnv, type DatabaseHandle, databaseDriver, openDatabase } from '@/db/client'
-import { oauthProviders, tenantUsers, userSessions } from '@/db/schema'
+import { oauthProviders, tenantUsers, userSessions, users } from '@/db/schema'
 import { identityFor, type PluginSignInInput, provisionFor } from '@/plugins/api/identity'
 import { createTestSession, createTestTenant, uniqueId } from '../helpers/auth'
 import { setupTestDatabase, testDatabaseUrl } from '../helpers/db'
@@ -131,11 +133,13 @@ describe(`identity seam: ${driver}`, () => {
       removed: true,
       sessionsEnded: 1,
       retained: null,
+      blocked: false,
     })
     expect(await provision.deprovision({ tenantId: here.id, userId: person.id })).toEqual({
       removed: false,
       sessionsEnded: 0,
       retained: null,
+      blocked: false,
     })
     expect(
       await db
@@ -150,5 +154,50 @@ describe(`identity seam: ${driver}`, () => {
         .where(eq(userSessions.userId, person.id))
     ).toEqual([{ selected: there.id }])
     expect(await provision.findUser({ email: address })).toMatchObject({ blocked: false })
+  })
+  it('single mode: deprovision blocks and ends every session; setMembership lifts the block', async () => {
+    const { db } = open()
+    const single = (await getSingleTenant(fixtures)) ?? (await createTestTenant(fixtures))
+    const singleConfig = loadConfig(createTestEnv({ TENANCY_MODE: 'single' }))
+    const provision = provisionFor({ db, config: singleConfig, logger, env: workerEnv }, PLUGIN)
+    const address = email()
+    const person = await provision.upsertUser({
+      subject: `probe|${address}`,
+      email: address,
+      emailVerified: true,
+    })
+    await provision.setMembership({ tenantId: single.id, userId: person.id, role: 'member' })
+    await createTestSession(fixtures, person.id, single.id)
+    await createTestSession(fixtures, person.id, null)
+
+    expect(await provision.deprovision({ tenantId: single.id, userId: person.id })).toEqual({
+      removed: true,
+      sessionsEnded: 2,
+      retained: null,
+      blocked: true,
+    })
+    const blockedRow = async () =>
+      (
+        await db
+          .select({ blockedAt: users.blockedAt, source: users.blockedSource })
+          .from(users)
+          .where(eq(users.id, person.id))
+      )[0]
+    expect(await blockedRow()).toMatchObject({ source: `plugin:${PLUGIN}` })
+    expect((await blockedRow())?.blockedAt).toBeInstanceOf(Date)
+    expect(
+      await db.select().from(userSessions).where(eq(userSessions.userId, person.id))
+    ).toHaveLength(0)
+    expect(await provision.deprovision({ tenantId: single.id, userId: person.id })).toEqual({
+      removed: false,
+      sessionsEnded: 0,
+      retained: null,
+      blocked: true,
+    })
+
+    expect(
+      await provision.setMembership({ tenantId: single.id, userId: person.id, role: 'member' })
+    ).toEqual({ role: 'member', source: 'idp' })
+    expect(await blockedRow()).toEqual({ blockedAt: null, source: null })
   })
 })

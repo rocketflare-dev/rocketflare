@@ -32,6 +32,13 @@ suites on vitest 4, §9 — never part of the gate).
   tenants via `tenant_users`, the session carries the current one. `single`: one tenant, every
   admitted user auto-joins as `member`; multi-only surface is 404 `tenancy_mode_single`
   (`requireMultiTenant`) and hidden via `useTenancyMode()`. Switching to `multi` needs no migration.
+  The auto-join (`onNoTenant`) runs for a NEW person `SIGNUP_MODE` admits, for dev login and for a
+  `BOOTSTRAP_ADMIN_EMAILS` admin (who creates the tenant on an empty database); a returning person
+  with no membership gets a tenant-less session instead. Enterprise identity in single mode: the
+  one tenant IS the deployment, so the identity seam takes only its id (another is a tenant that
+  does not exist), a plugin's `deprovision` BLOCKS the leaver (§16), `OIDC_MANAGED_TENANCY` refuses
+  to load (it creates one tenant per issuer org), and the admin console's issuer-org link and
+  organisation delete answer 404 `tenancy_mode_single`.
 - **`SIGNUP_MODE = open | invite_only | approval` (D9)**, default `invite_only`. Uninvited logins
   land on `/pending`; `approval` also files an `access_requests` row at *verify* time;
   `open` gives a personal tenant through `onNoTenant`. Invitations are handled first on every login
@@ -218,10 +225,13 @@ never follows a later rename; `person.suspended` revokes no API keys: a key acts
 so the keys in the tenants they lost stop working, and those in their manual tenants do not.
 Plugin sign-in: the kit trusts the plugin's word on `subject`, `email`, `emailVerified` and the
 tenant entirely (proving them is the plugin's job); one plugin may not name another's id, but
-nothing enforces that the id passed to `identityFor` is the caller's own; `deprovision` is per
-tenant by design and never blocks — a person a tenant's IdP deactivates keeps their other tenants,
-the sessions selected to them and their keys there, and a session with NO pinned tenant is not
-ended (it re-resolves to another membership, or to none); and a plugin link is invisible on the
+nothing enforces that the id passed to `identityFor` is the caller's own; in multi mode
+`deprovision` is per tenant by design and never blocks — a person a tenant's IdP deactivates keeps
+their other tenants, the sessions selected to them and their keys there, and a session with NO
+pinned tenant is not ended (it re-resolves to another membership, or to none); in single mode it
+blocks (§16), but `removeMembership` alone leaves a signed-in person with no tenant, who can file
+an access request; an IdP block is lifted only by `setMembership`, so a plugin that reactivates
+without one leaves the person blocked; and a plugin link is invisible on the
 profile page. SSO required: sessions that already exist when a domain turns it on are not ended
 (they run to their TTL), API keys are untouched, a throwing policy locks that email's non-SSO
 sign-in until it recovers (only the bootstrap admins are exempt), linking a provider to a
@@ -1064,12 +1074,27 @@ as merging a PR. A plugin repo mirrors the host tree and ships **no migration, n
   are UNPINNED and fall back to another membership); **`deprovision` is a leaver** (SCIM
   `active: false`): the same removal plus DELETING the sessions pinned to that tenant, answering
   `{ removed, sessionsEnded, retained }` — `retained` is a manual/owner/support row it left, with
-  its sessions. **Decided: never global** — no `blocked_at`, no other tenant's sessions or
-  memberships, because a tenant's IdP speaks for that tenant only; the person's API keys in that
-  tenant stop authenticating because `validateApiKey` joins the creator's membership there (401).
-  `tests/driver/identity.test.ts` runs sign-in and provisioning under both drivers. Every
-  tenant-taking method 404s a missing tenant; the CALLER must have proved its right to that tenant,
-  the `PublicCtx` contract. `loginMethods(cfg)` contributes login-page buttons whose `startPath`
+  its sessions — and `blocked`. **Decided: never global in multi mode** — no `blocked_at`, no
+  other tenant's sessions or memberships, because a tenant's IdP speaks for that tenant only; the
+  person's API keys in that tenant stop authenticating because `validateApiKey` joins the
+  creator's membership there (401). **Decided: in single mode `deprovision` BLOCKS** — the one
+  tenant is the deployment, so the multi-mode reason (the person's other tenants) does not exist,
+  and without a block a magic link, Google, another plugin's sign-in, dev login's `onNoTenant` or
+  the session left with no pinned tenant would let the leaver straight back in. It sets
+  `users.blocked_at` with `blocked_source = 'plugin:<id>'` and deletes EVERY session (keys answer
+  403 `blocked`), answering `blocked: true` — only for a person the IdP speaks for (it just
+  removed their `idp` row, or they carry this plugin's link), never with a `retained` row, and
+  never a global or bootstrap admin (logged: no IdP locks the operator out). The block has a
+  source so reactivation cannot undo an operator: the SAME plugin's `setMembership` (SCIM
+  `active: true`, a role again) lifts a `plugin:<id>` block and nothing else; the admin console's
+  Block writes `manual` (and takes over an IdP block), Unblock clears either, NULL means manual;
+  `upsertUser` and `signIn` never lift one. A tombstone `onNoTenant` checks was rejected: it would
+  close one door of six, where `blocked_at` is already checked by every sign-in, the session
+  middleware and API keys. In single mode every tenant-taking method also accepts only THE tenant
+  (`getSingleTenant`), `tests/api/tenancy-single-identity.test.ts` proves the mode end to end.
+  `tests/driver/identity.test.ts` runs sign-in, provisioning and the single-mode block under both
+  drivers. Every tenant-taking method 404s a missing tenant; the CALLER must have proved its right
+  to that tenant, the `PublicCtx` contract. `loginMethods(cfg)` contributes login-page buttons whose `startPath`
   must sit under `/api/hooks/<id>/` — `plugins.test.ts` fails a stray one, and `GET /auth/methods`
   drops it with a log. `example-feature`'s dev-only `/api/hooks/example-feature/sso/*` is the
   worked example.
