@@ -17,9 +17,10 @@ import type {
   AdminUserListItem,
   AdminUserListQuery,
 } from '@rocketflare/shared/admin'
+import { ERROR_CODES } from '@rocketflare/shared/errors'
 import { NON_MEMBER_ROLES } from '@rocketflare/shared/tenants'
 import { and, asc, desc, eq, ilike, inArray, isNotNull, or, sql } from 'drizzle-orm'
-import type { AppConfig } from '../../config'
+import { type AppConfig, isIdpManaged } from '../../config'
 import type { Database } from '../../db/client'
 import {
   accessRequests,
@@ -31,7 +32,7 @@ import {
   users,
 } from '../../db/schema'
 import { deleteUserSessions, updateSelectedTenant } from '../auth/sessions'
-import { ConflictError, NotFoundError } from '../utils/core/errors'
+import { ConflictError, isUniqueViolation, NotFoundError } from '../utils/core/errors'
 import type { Logger } from '../utils/core/logger'
 import { createTenantForUser } from '../utils/db/tenant-helpers'
 import { asCount, pageWindow } from '../utils/routes/pagination'
@@ -222,6 +223,7 @@ function toAdminTenant(row: typeof tenants.$inferSelect, memberCount: number): A
     seedDataCreated: row.seedDataCreated,
     lastAccessedAt: row.lastAccessedAt,
     createdAt: row.createdAt,
+    externalOrgId: row.externalOrgId,
   }
 }
 
@@ -251,6 +253,7 @@ export async function listAdminTenants(db: Database, query: AdminTenantListQuery
 
 export async function getAdminTenant(
   db: Database,
+  cfg: AppConfig,
   tenantId: string,
   adminUserId: string
 ): Promise<AdminTenantDetail> {
@@ -278,7 +281,63 @@ export async function getAdminTenant(
     ...toAdminTenant(row.tenant, Number(row.memberCount)),
     members,
     supportAccess: members.some(m => m.userId === adminUserId && m.role === 'support'),
+    idpManaged: isIdpManaged(cfg),
   }
+}
+
+/**
+ * Link a tenant to the OIDC issuer's org, or unlink it (null). Linking is how a tenant made in the
+ * app before IdP-managed tenancy (or by hand) becomes the one that org's sign-ins reconcile into;
+ * left unlinked, the first sign-in with that org creates a second tenant. The next sign-in adopts
+ * its `manual` admin and member rows; unlinking leaves the `idp` rows for the next sign-in to
+ * remove. 409 `external_org_taken` when another tenant holds the org.
+ */
+export async function setTenantExternalOrg(
+  db: Database,
+  tenantId: string,
+  externalOrgId: string | null,
+  admin: User
+) {
+  const holder = externalOrgId
+    ? await db.query.tenants.findFirst({ where: eq(tenants.externalOrgId, externalOrgId) })
+    : undefined
+  if (holder && holder.id !== tenantId) throw externalOrgTaken(holder)
+  const before = await db.query.tenants.findFirst({ where: eq(tenants.id, tenantId) })
+  if (!before) throw new NotFoundError('Organisation not found')
+  if (before.externalOrgId === externalOrgId) return before
+  let row: typeof tenants.$inferSelect | undefined
+  try {
+    ;[row] = await db
+      .update(tenants)
+      .set({ externalOrgId })
+      .where(eq(tenants.id, tenantId))
+      .returning()
+  } catch (err) {
+    if (!isUniqueViolation(err) || !externalOrgId) throw err
+    const taken = await db.query.tenants.findFirst({
+      where: eq(tenants.externalOrgId, externalOrgId),
+    })
+    throw externalOrgTaken(taken)
+  }
+  if (!row) throw new NotFoundError('Organisation not found')
+  await recordActivity(db, {
+    tenantId,
+    userId: admin.id,
+    type: externalOrgId ? 'tenant.idp_linked' : 'tenant.idp_unlinked',
+    subjectType: 'Tenant',
+    subjectId: tenantId,
+    metadata: { from: before.externalOrgId, to: externalOrgId },
+  })
+  return row
+}
+
+function externalOrgTaken(holder: { name: string; slug: string } | undefined) {
+  return new ConflictError(
+    holder
+      ? `${holder.name} (@${holder.slug}) is already linked to that org; unlink it first`
+      : 'Another organisation is already linked to that org',
+    ERROR_CODES.externalOrgTaken
+  )
 }
 
 export async function setTenantSuspended(
@@ -448,9 +507,15 @@ export async function setGlobalAdmin(
       throw new ConflictError('At least one global admin must remain', 'last_global_admin')
     }
   }
+  if (target.isGlobalAdmin === input.isGlobalAdmin) return target
+  // A grant made here is `manual`, so a sign-in without the issuer's global-admin claim never
+  // clears it.
   const [updated] = await db
     .update(users)
-    .set({ isGlobalAdmin: input.isGlobalAdmin })
+    .set({
+      isGlobalAdmin: input.isGlobalAdmin,
+      globalAdminSource: input.isGlobalAdmin ? 'manual' : null,
+    })
     .where(eq(users.id, input.userId))
     .returning()
   return updated ?? target

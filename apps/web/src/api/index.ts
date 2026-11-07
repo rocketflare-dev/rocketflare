@@ -36,6 +36,7 @@ import { feedbackRouter } from './routes/feedback'
 import { filesRouter } from './routes/files'
 import { groupsRouter } from './routes/groups'
 import { healthRouter } from './routes/health'
+import { identityEventsRouter } from './routes/identity-events'
 import { invitationsRouter } from './routes/invitations'
 import { inviteRouter } from './routes/invite'
 import { keysRouter } from './routes/keys'
@@ -89,10 +90,13 @@ app.use('*', databaseMiddleware)
 app.use('/api/*', tracerMiddleware)
 
 // 10. Mounts — auth is applied PER MOUNT so the public surface is enumerable: health, /auth/*,
-//    /api/invite/:token (details; accept resolves the cookie itself). `/api/admin/*` is the only
-//    tenant-free cross-tenant path (globalAdminMiddleware); everything else is `authMiddleware`.
+//    /api/invite/:token (details; accept resolves the cookie itself), /api/identity/events
+//    (signed by the OIDC issuer). `/api/admin/*` is the only tenant-free cross-tenant path
+//    (globalAdminMiddleware); everything else is `authMiddleware`.
 app.route('/api', healthRouter)
 app.route('/auth', authRouter)
+// The OIDC issuer's signed identity events; the signature is the authentication.
+app.route('/api/identity', identityEventsRouter)
 app.use('/api/invite/:token/accept', authRateLimit)
 app.route('/api/invite', inviteRouter)
 app.use('/api/admin/*', globalAdminMiddleware)

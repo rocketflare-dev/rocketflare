@@ -56,6 +56,27 @@ suites on vitest 4, §9 — never part of the gate).
   tenant predicate, never substituted for it**. Admin-level roles bypass it. Groups grant READ only.
   Deleting a group that still grants something is 409 `group_in_use` (`?force=1` narrows).
   `access.changed` nudges the affected users.
+- **Tenants managed by the OIDC issuer (IdP-managed tenancy, `OIDC_MANAGED_TENANCY`, §2).**
+  `tenants.external_org_id` (unique, NULL for every tenant the app made) ties a tenant to an org at
+  the issuer, and `tenant_users.source` (`manual | idp`) says who manages a membership. The
+  sign-in reconcile creates a tenant per org in the claims, keeps its name in step, and adds or
+  removes the person's `idp` rows; identity events change them between sign-ins.
+  **A tenant made in the app is linked by slug — decided:** on an org's first sign-in, an
+  unlinked tenant whose slug is the claim's `slug` becomes that org's tenant, so a tenant made by
+  hand (or before managed tenancy) is not duplicated. The issuer's slug is trusted to name it; a
+  tenant already linked to another org is never taken. When the slugs differ, a global admin links
+  it (Admin → the organisation → Identity provider org; `PUT /api/admin/tenants/:id/external-org`,
+  409 `external_org_taken` when another tenant holds the org), and can delete a duplicate the
+  org's first sign-in made (`DELETE /api/admin/tenants/:id`, the owner's delete with its slug
+  confirmation), which frees the org for the link.
+  `idp_synced_at` on both tables records when the issuer last spoke about the row, so a stale event
+  is skipped. **A tenant created this way has no owner — decided:** managed tenancy never writes
+  `owner` (or `support`), so the last-owner guard only ever counts owners a person chose, and
+  losing an org at the issuer can never delete a tenant's last owner. Ownerless is a state the kit
+  already allows: owner-only actions stay open to global admins (`isOwnerLevel`), and an owner can
+  be made later from a MANUAL membership. An `idp` row is read-only in the app — role change and
+  removal answer 409 `idp_managed` (People shows a "Managed" badge instead of controls); manual
+  rows in the same tenant work as ever.
 - **Isolation = predicates + inert RLS (D1)** — §4, `docs/RLS.md`.
 
 **Known gaps:** no IdP group sync (SCIM/SAML claims); no group hierarchy or per-group roles;
@@ -64,7 +85,9 @@ are always `tenant`; no audit log beyond `activity_events`; no personal API keys
 
 ## 2. Auth
 
-- **Sessions are rows**: `user_sessions`, 30-day sliding TTL (`SESSION_TTL_MS`), cookie `__Host-session` (`HttpOnly`,
+- **Sessions are rows**: `user_sessions`, 30-day sliding TTL (`SESSION_TTL_MS`), never past the
+  row's own `max_expires_at` when it has one (any sign-in under IdP-managed tenancy: sign-in +
+  `OIDC_SESSION_MAX_AGE_DAYS`, at most 30 days, the cookie ending with it), cookie `__Host-session` (`HttpOnly`,
   `SameSite=Lax`, `Secure` outside development). `authMiddleware` resolves session → user →
   membership → groups → features in one query. The second strategy is a Bearer tenant API key
   (hashed, expiry, soft revoke).
@@ -89,7 +112,46 @@ are always `tenant`; no audit log beyond `activity_events`; no personal API keys
   explicit `false` is always refused. `AUTH_OIDC_ONLY=true` leaves the login page one "Continue with <label>" button (never an
   automatic redirect: a live issuer session must not become a silent login) and refuses `/auth/google|microsoft` — it **hides** magic link, it does not disable it (invitations
   still use it). With an `end_session_endpoint`, `POST /auth/logout` answers
-  `200 { endSessionUrl }` (RP-initiated logout back to `/login?signedOut=1`); otherwise 204. Setup: `SETUP.md` → "Sign in with any OIDC issuer".
+  `200 { endSessionUrl }` (RP-initiated logout back to `/login?signedOut=1`, sent as both
+  `post_logout_redirect_uri` and `logout_uri` — Amazon Cognito returns only on the latter); otherwise
+  204. A token exchange the issuer refuses with HTTP 400 `UserLambdaValidationException` (a Cognito
+  Pre Token Lambda denying the person) lands on `/login?error=no_access` — "You don't have access to
+  this app" — not the generic error. Setup: `SETUP.md` → "Sign in with any OIDC issuer".
+- **IdP-managed tenancy (`OIDC_MANAGED_TENANCY=true`)**: the issuer, not the app, says which of
+  its orgs the person may use the app in. Its id_token carries them under `OIDC_ORGS_CLAIM`
+  (default `orgs`): `[{ id, name, slug?, role }]`. The callback reads them from the payload
+  `oidc.ts` already verified (zod, `@rocketflare/shared/idp`; missing or malformed → ignored and
+  logged, the sign-in is plain OIDC) and runs `reconcileIdpClaims` (`services/idp-tenancy.ts`) on
+  **every** sign-in, before `completeLogin` — linked users never reach `admitUser`, so it cannot
+  live there. Roles map through `OIDC_ROLE_MAP` (`issuerRole:admin|member` pairs; an unmapped role
+  skips the org); an existing manual admin/member row is adopted as `idp`, an `owner` or `support`
+  row is left alone. An org gone from the claims deletes its `idp` row (with the member's tenant
+  settings) and unpins sessions pinned to it. Admission comes from the claims, not `SIGNUP_MODE`:
+  a person with an org, `OIDC_ADMIT_CLAIM` true or `OIDC_GLOBAL_ADMIN_CLAIM` true is created if
+  new and never given an access request (any pending one is closed once they hold a tenant). The
+  global-admin claim sets `is_global_admin` with `global_admin_source = 'idp'`; the claim going
+  clears it only when that source is `idp` (the admin console writes `manual`). A person admitted
+  with no org gets the normal no-tenant pages. Every session, a magic link's or a dev login's as
+  much as an OIDC one, ends `OIDC_SESSION_MAX_AGE_DAYS` (default 7, at most 30) after sign-in
+  however active it is, so everyone is reconciled from fresh claims at least that often. Writes
+  never overwrite a newer change: a sign-in stamps what it writes with the token's `iat`, never
+  over a row an event stamped later, and updates a membership only as it read it (an owner
+  promotion in between wins; a row removed in between is inserted again, since the claims grant
+  it); a removal deletes a row only if nothing has stamped it since the event. A first sign-in
+  whose new tenant's slug clashes picks again, up to five times. Tenancy is §1.
+- **Identity events (`POST /api/identity/events`)**: between sign-ins the issuer posts signed
+  events (Standard Webhooks: `webhook-id`, `webhook-timestamp`, `webhook-signature`, verified
+  against `IDENTITY_WEBHOOK_SECRET` over the raw body, five minutes' tolerance, two signatures
+  during a rotation — `auth/standard-webhooks.ts`). `person.suspended`, `membership.removed`,
+  `membership.role_changed`, `grant.revoked` (org-wide, or one person) and `org.suspended` remove
+  or change `idp` memberships; `person.suspended` also ends the person's sessions; `org.renamed`
+  renames the tenant. Each does what the next sign-in's reconcile would, so nothing outlasts a
+  sign-in that says otherwise (a suspended org's members are back when the issuer lets them sign
+  in). The person is found by the OIDC link (`<issuer>|<sub>`), else by email; the org by
+  `external_org_id`. Applied before answering, idempotently and in any order: an event older than
+  the row's `idp_synced_at` is stale and skipped, and a role change never creates a membership.
+  204 for applied, stale, unknown person or org, and unknown type; 400 for a malformed known type;
+  401 for a bad signature; 404 when not configured.
 - **Hardening (D12)**: random tokens hashed with SHA-256, a required encryption key, CSRF by origin
   allow-list (Bearer is exempt), and a KV sliding-window rate limit on login routes that no-ops
   without `RATE_LIMIT_KV`.
@@ -103,7 +165,16 @@ deployment; the `groups` claim is read into the profile but **not stored or mapp
 or roles; no `id_token_hint` on logout (id_tokens are not kept, so the issuer may ask to confirm);
 no back-channel or front-channel logout; `OIDC_TRUST_EMAIL=true` trusts every email the issuer
 sends (no per-domain rule) — set it only for an issuer that controls the `email` claim; the client secret
-is sent as `client_secret_basic` only (no `private_key_jwt`).
+is sent as `client_secret_basic` only (no `private_key_jwt`). IdP-managed tenancy: without
+`IDENTITY_WEBHOOK_SECRET` claims are as fresh as the last sign-in, so a removal waits for the next
+sign-in or the session's end; an identity event the issuer gives up on is healed only then too;
+events are applied in the request, not queued; a removal is not remembered once applied (the row
+goes), so a sign-in whose id_token was issued in the second or two before a removal event, or
+before a concurrent sign-in that cleared global admin, can restore what that removed until the next
+sign-in or the session's end; one orgs claim, one role map and no per-org role
+overrides; the app writes nothing back to the issuer; the slug is taken from the claim once and
+never follows a later rename; `person.suspended` revokes no API keys: a key acts as its creator,
+so the keys in the tenants they lost stop working, and those in their manual tenants do not.
 
 ## 3. API shell
 

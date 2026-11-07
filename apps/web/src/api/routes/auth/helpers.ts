@@ -4,7 +4,7 @@
  * the open-redirect guard). Error redirects land on `/login?error=<code>`.
  */
 import { redirectToSchema } from '@rocketflare/shared/auth'
-import type { AppConfig } from '../../../config'
+import { type AppConfig, isIdpManaged } from '../../../config'
 import type { Database } from '../../../db/client'
 import type { User } from '../../../db/schema'
 import { setSessionCookie } from '../../auth/cookies'
@@ -22,6 +22,8 @@ export type LoginErrorCode =
   | 'oauth_state_mismatch'
   | 'provider_linked_elsewhere'
   | 'oidc_only'
+  /** The issuer refused to mint tokens for this person (its pre-token hook denied them). */
+  | 'no_access'
 
 /** A relative same-origin path, else `fallback`. Never `/login` (redirect loop). */
 export function safeRedirectPath(value: string | null | undefined, fallback = '/'): string {
@@ -36,6 +38,8 @@ export function loginErrorRedirect(c: AppContext, code: LoginErrorCode): Respons
   return c.redirect(`/login?error=${code}`, 302)
 }
 
+const DAY_MS = 24 * 60 * 60 * 1000
+
 export function clientIpOf(c: AppContext): string | null {
   return (
     c.req.header('cf-connecting-ip') ??
@@ -44,11 +48,16 @@ export function clientIpOf(c: AppContext): string | null {
   )
 }
 
-/** Session for the user's oldest membership (or none), cookie set. Returns the session id. */
+/**
+ * Session for the user's oldest membership (or none), cookie set. Returns the session id.
+ * Under IdP-managed tenancy every session, however it signed in, ends `OIDC_SESSION_MAX_AGE_DAYS`
+ * after sign-in however active it is, so nobody outlasts the issuer's last word on them; the cookie
+ * ends then too.
+ */
 export async function completeLogin(
   c: AppContext,
   db: Database,
-  _cfg: AppConfig,
+  cfg: AppConfig,
   user: User,
   selectedTenantId?: string | null
 ): Promise<{ sessionId: string; tenantId: string | null; token: string }> {
@@ -58,6 +67,7 @@ export async function completeLogin(
     selectedTenantId: tenantId,
     ip: clientIpOf(c),
     userAgent: c.req.header('user-agent') ?? null,
+    maxAgeMs: isIdpManaged(cfg) ? cfg.OIDC_SESSION_MAX_AGE_DAYS * DAY_MS : undefined,
   })
   setSessionCookie(c, session.token, session.expiresAt)
   return { sessionId: session.id, tenantId, token: session.token }

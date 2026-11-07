@@ -31,6 +31,7 @@ const org = (id: string, name: string, slug: string) => ({
   status: 'active',
   memberCount: 3,
   seedDataCreated: false,
+  externalOrgId: null,
   lastAccessedAt: null,
   createdAt: '2025-01-01T00:00:00Z',
 })

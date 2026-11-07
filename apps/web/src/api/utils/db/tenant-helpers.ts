@@ -5,7 +5,7 @@
  * admin `new_org` approval and the seed script. `getSingleTenant` is the `TENANCY_MODE=single`
  * anchor: the first tenant row.
  */
-import type { MembershipRole } from '@rocketflare/shared/tenants'
+import type { MembershipRole, MembershipSource } from '@rocketflare/shared/tenants'
 import { slugify } from '@rocketflare/shared/tenants'
 import { asc, eq, like } from 'drizzle-orm'
 import type { Database } from '../../../db/client'
@@ -44,6 +44,12 @@ export interface CreateTenantForUserInput {
   slug?: string
   userId: string
   role?: MembershipRole
+  /** The founding membership's source (`manual` unless IdP-managed tenancy creates the tenant). */
+  source?: MembershipSource
+  /** The issuer's org id (`tenants.external_org_id`, IdP-managed tenancy). */
+  externalOrgId?: string | null
+  /** When the issuer last spoke about the tenant and this membership (`idp_synced_at`). */
+  idpSyncedAt?: Date | null
   invitedByUserId?: string | null
   /**
    * The features this deployment ships, so the new tenant is seeded with the template
@@ -65,12 +71,22 @@ export async function createTenantForUser(
   }
   const role = input.role ?? 'owner'
   const tenant = await db.transaction(async tx => {
-    const [tenant] = await tx.insert(tenants).values({ name: input.name, slug }).returning()
+    const [tenant] = await tx
+      .insert(tenants)
+      .values({
+        name: input.name,
+        slug,
+        externalOrgId: input.externalOrgId ?? null,
+        idpSyncedAt: input.idpSyncedAt ?? null,
+      })
+      .returning()
     if (!tenant) throw new Error('createTenantForUser: insert returned no row')
     await tx.insert(tenantUsers).values({
       tenantId: tenant.id,
       userId: input.userId,
       role,
+      source: input.source ?? 'manual',
+      idpSyncedAt: input.idpSyncedAt ?? null,
       invitedByUserId: input.invitedByUserId ?? null,
     })
     await tx.insert(tenantSettings).values({ tenantId: tenant.id }).onConflictDoNothing()

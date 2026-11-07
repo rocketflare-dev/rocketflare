@@ -812,11 +812,11 @@ The build-time schema symbols. A `pgTable(...)` runs at module scope, so these c
   ONE policy predicate, shared by every table. Do not inline a copy per table: drizzle-kit diffs the rendered SQL text, so a stray space shows up as N spurious `ALTER POLICY`…
 - `function tenantRef(tenants: { id: AnyPgColumn })`
   `tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE`.
-- `const tenants: table "tenants" { createdAt, updatedAt, id, name, slug, status, seedDataCreated, lastAccessedAt }`
-- `const tenantUsers: table "tenant_users" { tenantId, userId, role, joinedAt, invitedByUserId }`
+- `const tenants: table "tenants" { createdAt, updatedAt, id, name, slug, status, externalOrgId, idpSyncedAt, seedDataCreated, lastAccessedAt }`
+- `const tenantUsers: table "tenant_users" { tenantId, userId, role, source, idpSyncedAt, joinedAt, invitedByUserId }`
 - `function timestamps()`
   `created_at` / `updated_at` as `timestamptz`, both defaulting to now(). Spread into a table.
-- `const users: table "users" { createdAt, updatedAt, id, email, name, avatarUrl, isGlobalAdmin, emailVerifiedAt, lastLoginAt, blockedAt }`
+- `const users: table "users" { createdAt, updatedAt, id, email, name, avatarUrl, isGlobalAdmin, globalAdminSource, emailVerifiedAt, lastLoginAt, blockedAt }`
 
 ### `@rocketflare/shared/plugins/api`
 
@@ -1508,10 +1508,10 @@ nothing in the comparison that can throw.
 @/db/schema/kit :: const :: RESOURCE_VISIBILITY_VALUES :: const RESOURCE_VISIBILITY_VALUES: readonly ["tenant", "groups"]
 @/db/schema/kit :: function :: tenantIsolation :: function tenantIsolation(table: string, column = sql`tenant_id`)
 @/db/schema/kit :: function :: tenantRef :: function tenantRef(tenants: { id: AnyPgColumn })
-@/db/schema/kit :: const :: tenants :: const tenants: table "tenants" { createdAt, updatedAt, id, name, slug, status, seedDataCreated, lastAccessedAt }
-@/db/schema/kit :: const :: tenantUsers :: const tenantUsers: table "tenant_users" { tenantId, userId, role, joinedAt, invitedByUserId }
+@/db/schema/kit :: const :: tenants :: const tenants: table "tenants" { createdAt, updatedAt, id, name, slug, status, externalOrgId, idpSyncedAt, seedDataCreated, lastAccessedAt }
+@/db/schema/kit :: const :: tenantUsers :: const tenantUsers: table "tenant_users" { tenantId, userId, role, source, idpSyncedAt, joinedAt, invitedByUserId }
 @/db/schema/kit :: function :: timestamps :: function timestamps()
-@/db/schema/kit :: const :: users :: const users: table "users" { createdAt, updatedAt, id, email, name, avatarUrl, isGlobalAdmin, emailVerifiedAt, lastLoginAt, blockedAt }
+@/db/schema/kit :: const :: users :: const users: table "users" { createdAt, updatedAt, id, email, name, avatarUrl, isGlobalAdmin, globalAdminSource, emailVerifiedAt, lastLoginAt, blockedAt }
 @rocketflare/shared/plugins/api :: type :: Actions :: type Actions = (typeof ACTIONS)[number]
 @rocketflare/shared/plugins/api :: type :: AgentKeyOf :: type AgentKeyOf = NonNullable<DeclaredBy<S, 'agentKeys'>>[number]
 @rocketflare/shared/plugins/api :: type :: ApiErrorBody :: type ApiErrorBody = z.infer<typeof apiErrorSchema>

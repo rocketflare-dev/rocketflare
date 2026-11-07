@@ -40,6 +40,8 @@ export const LOGIN_ERROR_COPY: Record<string, string> = {
   not_invited: "There's no invitation for that email address. Ask an administrator to invite you.",
   blocked: 'This account has been blocked. Contact an administrator.',
   oidc_only: 'This organisation signs in through single sign-on only.',
+  no_access:
+    "You don't have access to this app. Ask your organisation's administrator to grant it, then sign in again.",
 }
 const GENERIC_LOGIN_ERROR = 'Sign in failed. Please try again.'
 

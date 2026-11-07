@@ -8,7 +8,14 @@ import { describe, expect, it } from 'vitest'
 import { setGlobalAdmin } from '@/api/services/admin'
 import { ensureAccessRequest } from '@/api/services/auth'
 import type { Database } from '@/db/client'
-import { notifications, tenants, tenantUsers, userSessions, users } from '@/db/schema'
+import {
+  activityEvents,
+  notifications,
+  tenants,
+  tenantUsers,
+  userSessions,
+  users,
+} from '@/db/schema'
 import {
   createTestGlobalAdmin,
   createTestSession,
@@ -194,6 +201,68 @@ describe('tenants', () => {
       { json: { suspended: false } }
     )
     expect((await request('/api/members', { headers: cookie })).status).toBe(200)
+  })
+
+  it('links a tenant to an issuer org, refuses an org linked elsewhere, and unlinks', async () => {
+    const a = await admin()
+    const made = await createTestTenant(db)
+    const other = await createTestTenant(db)
+    const orgId = `org-${uniqueId()}`
+    const put = (id: string, externalOrgId: string | null) =>
+      request(
+        `/api/admin/tenants/${id}/external-org`,
+        { method: 'PUT', headers: a.cookie },
+        { json: { externalOrgId } }
+      )
+    const linked = await put(made.id, orgId)
+    expect(linked.status).toBe(200)
+    expect(await json(linked)).toEqual({ id: made.id, externalOrgId: orgId })
+    const detail = await json<{ externalOrgId: string | null; idpManaged: boolean }>(
+      await request(`/api/admin/tenants/${made.id}`, { headers: a.cookie })
+    )
+    expect(detail).toMatchObject({ externalOrgId: orgId, idpManaged: false })
+
+    const taken = await put(other.id, orgId)
+    expect(taken.status).toBe(409)
+    expect(await json(taken)).toMatchObject({ code: 'external_org_taken' })
+
+    expect((await put(made.id, null)).status).toBe(200)
+    expect((await put(other.id, orgId)).status).toBe(200)
+    const [row] = await db.select().from(tenants).where(eq(tenants.id, made.id))
+    expect(row?.externalOrgId).toBeNull()
+    const types = await db
+      .select({ type: activityEvents.type })
+      .from(activityEvents)
+      .where(eq(activityEvents.tenantId, made.id))
+    expect(types.map(t => t.type).sort()).toEqual(['tenant.idp_linked', 'tenant.idp_unlinked'])
+  })
+
+  it('deletes an organisation with no owner once its slug is typed', async () => {
+    const a = await admin()
+    const tenant = await createTestTenant(db)
+    const del = (confirm: string) =>
+      request(
+        `/api/admin/tenants/${tenant.id}`,
+        { method: 'DELETE', headers: a.cookie },
+        { json: { confirm } }
+      )
+    const wrong = await del('not-the-slug')
+    expect(wrong.status).toBe(400)
+    expect(await json(wrong)).toMatchObject({ code: 'confirmation_mismatch' })
+    expect((await del(tenant.slug)).status).toBe(204)
+    expect(await db.select().from(tenants).where(eq(tenants.id, tenant.id))).toEqual([])
+    expect((await del(tenant.slug)).status).toBe(404)
+  })
+
+  it('linking is for global admins only', async () => {
+    const { user, tenant } = await createTestTenantWithUser(db, 'owner')
+    const cookie = sessionCookieHeader(await createTestSession(db, user.id, tenant.id))
+    const res = await request(
+      `/api/admin/tenants/${tenant.id}/external-org`,
+      { method: 'PUT', headers: cookie },
+      { json: { externalOrgId: 'org-x' } }
+    )
+    expect(res.status).toBe(403)
   })
 
   it('support enter mints a support membership + selects it; leave removes it', async () => {

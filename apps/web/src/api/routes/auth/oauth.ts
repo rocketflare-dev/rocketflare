@@ -7,11 +7,19 @@
  * `email_verified === false` is refused; an existing link wins, then email-based linking to an
  * existing user, else `admitUser`. Tokens are AES-GCM encrypted at rest — `OAUTH_ENCRYPTION_KEY`
  * is checked before the redirect. Unknown or unconfigured provider → 404 envelope; under
- * `AUTH_OIDC_ONLY` every provider but `oidc` → `/login?error=oidc_only`.
+ * `AUTH_OIDC_ONLY` every provider but `oidc` → `/login?error=oidc_only`. A token exchange the
+ * issuer refuses because its pre-token hook denied the person (Cognito's 400
+ * `UserLambdaValidationException`) → `/login?error=no_access`.
+ *
+ * `OIDC_MANAGED_TENANCY` (`services/idp-tenancy.ts`): after the identity is resolved and BEFORE
+ * `completeLogin`, every `oidc` sign-in reconciles tenants, memberships and global admin from the
+ * verified id_token's claims — here, not in `admitUser`, because a linked user never reaches
+ * `admitUser`. A new person the claims admit is created whatever `SIGNUP_MODE` says, and the
+ * session ends `OIDC_SESSION_MAX_AGE_DAYS` after sign-in.
  */
 import { ERROR_CODES } from '@rocketflare/shared/errors'
 import { generateCodeVerifier, generateState } from 'arctic'
-import { isOidcOnly, oauthRedirectUri } from '../../../config'
+import { isIdpManaged, isOidcOnly, oauthRedirectUri } from '../../../config'
 import {
   clearFlowCookie,
   OAUTH_STATE_COOKIE_NAME,
@@ -21,8 +29,11 @@ import {
 import { requireEncryptionKey } from '../../auth/oauth-encryption'
 import { findProviderLink, upsertProviderLink } from '../../auth/oauth-providers'
 import { getProvider, type ProviderDefinition, scopesOf } from '../../auth/providers'
+import { isAccessDeniedAtTokenExchange } from '../../auth/providers/oidc'
 import { resolveCookieAuth } from '../../middleware/auth'
 import { admitUser, findUserByEmail } from '../../services/auth'
+import { platformFeatures } from '../../services/features'
+import { idpClaimsAdmit, readIdpClaims, reconcileIdpClaims } from '../../services/idp-tenancy'
 import type { AppContext } from '../../types'
 import { ConflictError, NotFoundError, UnauthorizedError } from '../../utils/core/errors'
 import { createRouter } from '../../utils/routes/router'
@@ -150,6 +161,10 @@ oauthRouter.get('/:provider/callback', async c => {
     tokens = await client.validateAuthorizationCode(code, flow.verifier)
     profile = await def.fetchProfile(tokens, { cfg, nonce: flow.nonce })
   } catch (err) {
+    if (def.id === 'oidc' && isAccessDeniedAtTokenExchange(err)) {
+      logger.info({ provider: def.id }, 'OIDC issuer denied the token exchange: no access')
+      return loginErrorRedirect(c, 'no_access')
+    }
     logger.warn({ err, provider: def.id }, 'OAuth code exchange or profile fetch failed')
     return loginErrorRedirect(c, 'oauth_failed')
   }
@@ -179,12 +194,23 @@ oauthRouter.get('/:provider/callback', async c => {
     : undefined
   if (user?.blockedAt) return loginErrorRedirect(c, 'blocked')
 
-  // 2. Else by verified email (existing user is linked; a new one goes through sign-up gating).
+  // IdP-managed tenancy: verified claims, or null (absent/malformed → ignored, logged).
+  const managed = def.id === 'oidc' && isIdpManaged(cfg)
+  const claims = managed ? readIdpClaims(cfg, profile.idTokenClaims, logger) : null
+
+  // 2. Else by verified email (existing user is linked; a new one goes through sign-up gating —
+  //    or, under IdP-managed tenancy, is admitted by the claims).
   if (!user) {
     const admitted = await admitUser(
       db,
       cfg,
-      { email, name: profile.name, verified: true, avatarUrl: profile.avatarUrl },
+      {
+        email,
+        name: profile.name,
+        verified: true,
+        avatarUrl: profile.avatarUrl,
+        admittedBy: claims && idpClaimsAdmit(claims) ? 'idp' : undefined,
+      },
       logger
     )
     if (!admitted.ok) return loginErrorRedirect(c, admitted.reason as LoginErrorCode)
@@ -200,6 +226,23 @@ oauthRouter.get('/:provider/callback', async c => {
     throw err
   }
 
-  await completeLogin(c, db, cfg, user)
+  if (claims) {
+    try {
+      const reconciled = await reconcileIdpClaims(
+        db,
+        user,
+        claims,
+        logger,
+        await platformFeatures(db, cfg)
+      )
+      user = reconciled.user
+    } catch (err) {
+      // Never sign someone in on memberships the claims were about to change.
+      logger.error({ err, userId: user.id }, 'IdP-managed tenancy: reconcile failed')
+      return loginErrorRedirect(c, 'oauth_failed')
+    }
+  }
+
+  await completeLogin(c, db, cfg, user, null)
   return c.redirect(flow.redirectTo, 302)
 })

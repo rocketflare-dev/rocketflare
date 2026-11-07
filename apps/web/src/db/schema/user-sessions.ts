@@ -25,6 +25,12 @@ export const userSessions = pgTable(
     }),
     expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
     lastSeenAt: timestamp('last_seen_at', { withTimezone: true }).notNull().defaultNow(),
+    /**
+     * The latest `expiresAt` may slide to, however active the session. NULL = no cap; an OIDC
+     * sign-in under `OIDC_MANAGED_TENANCY` stores sign-in + `OIDC_SESSION_MAX_AGE_DAYS`, so the
+     * person signs in again and is reconciled from fresh claims.
+     */
+    maxExpiresAt: timestamp('max_expires_at', { withTimezone: true }),
     ip: text('ip'),
     userAgent: text('user_agent'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),

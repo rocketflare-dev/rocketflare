@@ -1,8 +1,11 @@
 /**
  * Membership administration: list, role change, removal — with the ownership invariants
  * the matrix leaves to routes: assigning or taking away `owner` is owner-only, the last owner can
- * never be demoted or removed, and `support` rows are managed only from /admin.
+ * never be demoted or removed, `support` rows are managed only from /admin, and `idp` rows
+ * (`source = 'idp'`, IdP-managed tenancy) are managed only by the OIDC issuer — 409 `idp_managed`
+ * on both role change and removal.
  */
+import { ERROR_CODES } from '@rocketflare/shared/errors'
 import type { PaginationQuery } from '@rocketflare/shared/pagination'
 import type { Member, TenantRole } from '@rocketflare/shared/tenants'
 import { and, asc, eq, sql } from 'drizzle-orm'
@@ -26,6 +29,7 @@ export async function listMembers(db: Database, tenantId: string, query: Paginat
         name: users.name,
         avatarUrl: users.avatarUrl,
         role: tenantUsers.role,
+        source: tenantUsers.source,
         joinedAt: tenantUsers.joinedAt,
         lastLoginAt: users.lastLoginAt,
         invitedByUserId: tenantUsers.invitedByUserId,
@@ -65,6 +69,16 @@ async function getMembership(db: Database, tenantId: string, userId: string) {
   return row
 }
 
+/** An `idp` membership follows the issuer's claims and events; the app may not change it. */
+function assertNotIdpManaged(target: { source: string }) {
+  if (target.source === 'idp') {
+    throw new ConflictError(
+      'This membership is managed by your identity provider. Change it there.',
+      ERROR_CODES.idpManaged
+    )
+  }
+}
+
 export async function changeMemberRole(
   db: Database,
   input: {
@@ -82,6 +96,7 @@ export async function changeMemberRole(
       'support_role_locked'
     )
   }
+  assertNotIdpManaged(target)
   const touchesOwner = target.role === 'owner' || input.role === 'owner'
   if (touchesOwner && !isOwnerLevel(input.actor)) {
     throw new ForbiddenError('Only an owner can assign or remove the owner role')
@@ -122,6 +137,7 @@ export async function removeMember(
       'support_role_locked'
     )
   }
+  assertNotIdpManaged(target)
   if (target.role === 'owner') {
     if (!isOwnerLevel(input.actor)) throw new ForbiddenError('Only an owner can remove an owner')
     if ((await countOwners(db, input.tenantId)) <= 1) {

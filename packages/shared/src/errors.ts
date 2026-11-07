@@ -74,6 +74,14 @@ export const ERROR_CODES = {
   interruptNotPending: 'interrupt_not_pending',
   /** 409: the run is not parked, so there is nothing to resume. */
   runNotAwaitingInput: 'run_not_awaiting_input',
+  /**
+   * 409: the membership is managed by the OIDC issuer (`tenant_users.source = 'idp'`,
+   * `OIDC_MANAGED_TENANCY`) — its role and its existence follow the issuer's claims and events, so
+   * the app may neither edit nor remove it. Change it at the issuer.
+   */
+  idpManaged: 'idp_managed',
+  /** 409: another tenant is already linked to that OIDC issuer org (`tenants.external_org_id`). */
+  externalOrgTaken: 'external_org_taken',
 } as const
 
 export type ErrorCode = (typeof ERROR_CODES)[keyof typeof ERROR_CODES]

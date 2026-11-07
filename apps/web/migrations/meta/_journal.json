@@ -141,6 +141,13 @@
       "when": 1792179400737,
       "tag": "0019_kit-agent-volume",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1794024503900,
+      "tag": "0020_kit-idp-managed-tenancy",
+      "breakpoints": true
     }
   ]
 }
