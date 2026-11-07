@@ -35,7 +35,7 @@ IdP-managed tenancy (`OIDC_MANAGED_TENANCY`) with Cognito fixes, and an identity
 - `ServerPlugin.ssoPolicy(db, email)`: a plugin may require single sign-on for the domains its connections own; the kit then refuses those addresses magic link, Google, Microsoft, OIDC, dev login and other plugins' `signIn`, sending them to `/login?error=sso_required&method=`. A throwing policy fails closed; `BOOTSTRAP_ADMIN_EMAILS` are exempt (break-glass).
 - `TENANCY_MODE=single`: `deprovision` also blocks the leaver (`users.blocked_source = 'plugin:<id>'`, every session ended, `blocked: true`) — only the same plugin's `setMembership` lifts it, admin blocks are `manual`; the seam accepts only the one tenant's id; `PUT /api/admin/tenants/:id/external-org` answers 404 `tenancy_mode_single`.
 - `services/idp-tenancy.ts` exports `upsertIdpMembership` and `removeIdpMembership` (the reconcile and identity events call them); `auth/oauth-providers.ts` gains `ProviderKey` (`plugin:<id>`) and `linkPluginIdentity`.
-- `ServerPlugin.loginMethods(cfg)` → `GET /auth/methods` `pluginMethods` (`pluginLoginMethodSchema` in `@rocketflare/shared/auth`); `Login.tsx` renders each, with an email field when `askEmail`; a `startPath` outside `/api/hooks/<id>/` is dropped and fails `tests/config/plugins.test.ts`.
+- `ServerPlugin.loginMethods(cfg)` → `GET /auth/methods` `pluginMethods` (`pluginLoginMethodSchema` in `@rocketflare/shared/auth`); `Login.tsx` renders each, with an email field when `askEmail`; a `startPath` outside `/api/hooks/<id>/` is dropped and fails `tests/config/plugins.test.ts`; a method's `errors` is login-page copy for its own `?error=<id>.<name>` codes (any other key drops it), and `?email=` refills its field.
 - `example-feature`: a development-only example SSO at `/api/hooks/example-feature/sso/*` and its login button, with `tests/api/identity.test.ts`; `vite.config.ts` now watches `src/plugins`, so a plugin's UI edits hot-reload in `pnpm dev`.
 - Plugin public mounts (`/api/hooks/<id>`) are rate-limited per IP by the host (120 / 60 s per prefix by default) and may set their own body cap up to 10 MB: an optional third tuple element `{ rateLimit?: { max, windowSeconds } | false; bodyLimitBytes? }` (`api/middleware/public-mounts.ts`).
 
@@ -101,8 +101,8 @@ IdP-managed tenancy (`OIDC_MANAGED_TENANCY`) with Cognito fixes, and an identity
 15. Copy `apps/web/src/api/auth/plugin-login-methods.ts`, `apps/web/src/plugins/api/identity.ts`
     and `linkPluginIdentity` + the `ProviderKey` types (`api/auth/oauth-providers.ts`); export the
     identity API from `plugins/api/index.ts`; add `loginMethods?` to `ServerPlugin`,
-    `pluginLoginMethodSchema` + optional `pluginMethods` to `authMethodsSchema` (set in
-    `routes/auth/session.ts`, rendered by `Login.tsx` even under `oidcOnly`), `account_exists` to
+    `pluginLoginMethodSchema` (with `errors`) + optional `pluginMethods` to `authMethodsSchema` (set
+    in `routes/auth/session.ts`, rendered by `Login.tsx` even under `oidcOnly`, with its `errorCopy`), `account_exists` to
     `ERROR_CODES`, `LoginErrorCode` and `LOGIN_ERROR_COPY`, and `deleteUserSessionsInTenant`.
 16. Port the tests and docs: the `login methods` and `sso policy` blocks of
     `tests/config/plugins.test.ts`, `/auth/methods` assertions that ignore `pluginMethods`,

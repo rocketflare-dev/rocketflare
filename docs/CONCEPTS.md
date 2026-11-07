@@ -171,7 +171,10 @@ are always `tenant`; no audit log beyond `activity_events`; no personal API keys
   usual `/login?error=` redirects. `ServerPlugin.loginMethods(cfg)` adds buttons to the login page
   (`GET /auth/methods` → `pluginMethods`, `<plugin id>:<method id>`), each a full-page navigation
   to a `startPath` under the plugin's own `/api/hooks/<id>/`, optionally behind an email field
-  (`askEmail` → `?email=`, home-realm discovery). They show under `AUTH_OIDC_ONLY` too: they are
+  (`askEmail` → `?email=`, home-realm discovery). A method may carry `errors`, copy for its own
+  `?error=<plugin id>.<name>` codes: its routes redirect a failed navigation to `/login` with one
+  (and `?email=`, which refills that method's field), and the page shows the server-sent copy,
+  never URL text; a code outside its namespace drops the method. They show under `AUTH_OIDC_ONLY` too: they are
   SSO, and `oidcOnly` hides the kit's non-SSO methods. A plugin link is not listed on the profile's
   sign-in methods and cannot be unlinked there (`DELETE /auth/providers/:provider` knows only the
   kit's providers).
@@ -1095,8 +1098,8 @@ as merging a PR. A plugin repo mirrors the host tree and ships **no migration, n
   `tests/driver/identity.test.ts` runs sign-in, provisioning and the single-mode block under both
   drivers. Every tenant-taking method 404s a missing tenant; the CALLER must have proved its right
   to that tenant, the `PublicCtx` contract. `loginMethods(cfg)` contributes login-page buttons whose `startPath`
-  must sit under `/api/hooks/<id>/` — `plugins.test.ts` fails a stray one, and `GET /auth/methods`
-  drops it with a log. `example-feature`'s dev-only `/api/hooks/example-feature/sso/*` is the
+  must sit under `/api/hooks/<id>/`, and whose `errors` copy is keyed `<id>.<name>` —
+  `plugins.test.ts` fails a stray one, and `GET /auth/methods` drops it with a log. `example-feature`'s dev-only `/api/hooks/example-feature/sso/*` is the
   worked example.
 - **SSO required (`ssoPolicy`)**: `(db, email, { config }) => Promise<{ required: true; methodId;
   label? } | null>` — "my connection claims this email's domain; send them to my login method

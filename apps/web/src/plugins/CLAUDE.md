@@ -112,7 +112,9 @@ in the host. Each half is checked where it is written; only the merge is cast.
   `account_exists`) — set it ONLY for a domain the connection proved it owns, or one tenant's IdP
   can sign in as anyone.
   `ServerPlugin.loginMethods(cfg)` puts a button on the login page whose `startPath` must be under
-  `/api/hooks/<id>/` (`tests/config/plugins.test.ts`). `example-feature/api/sso.ts` is the
+  `/api/hooks/<id>/` (`tests/config/plugins.test.ts`). Its `errors` give the login page copy for
+  your own `?error=<id>.<name>` codes — redirect a failed sign-in navigation to
+  `/login?error=<id>.x&email=` rather than answering JSON to a browser. `example-feature/api/sso.ts` is the
   dev-only worked example.
   **SSO required is `ServerPlugin.ssoPolicy(db, email, { config })`**: answer `{ required: true,
   methodId }` (one of YOUR `loginMethods` ids) for an address whose domain your connection proved

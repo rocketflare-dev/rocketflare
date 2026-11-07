@@ -69,6 +69,12 @@ export const pluginLoginMethodSchema = z.object({
   label: z.string().min(1).max(80),
   startPath: z.string().regex(/^\/api\/hooks\/[a-z][a-z0-9-]*\/[^?#]*$/),
   askEmail: z.boolean().optional(),
+  /**
+   * The login page's copy for the `?error=<code>` codes this method's routes redirect with. Every
+   * code is `<plugin id>.<name>` (the host drops a method declaring any other), so a plugin can
+   * never restyle a kit code; the page shows this server-sent text, never text from the URL.
+   */
+  errors: z.record(z.string(), z.string().min(1).max(300)).optional(),
 })
 export type PluginLoginMethod = z.infer<typeof pluginLoginMethodSchema>
 

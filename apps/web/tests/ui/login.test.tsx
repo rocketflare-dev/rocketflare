@@ -74,8 +74,9 @@ describe('Login', () => {
       expect(screen.getByRole('alert')).toHaveTextContent(LOGIN_ERROR_COPY[code])
       unmount()
     }
+    // An unknown code may be a plugin's: the generic line waits for /auth/methods.
     render('/login?error=something_else')
-    expect(screen.getByRole('alert')).toHaveTextContent('Sign in failed')
+    expect(await screen.findByRole('alert')).toHaveTextContent('Sign in failed')
   })
 
   it('OAuth is a full-page redirect carrying returnUrl', async () => {
@@ -244,6 +245,35 @@ describe('Login', () => {
       expect(hardNavigate).toHaveBeenCalledWith(
         '/api/hooks/sso/discover?returnUrl=%2F&email=jane%40acme.test'
       )
+    })
+  })
+
+  describe('a plugin’s own error codes', () => {
+    const METHODS = {
+      ...ALL_METHODS,
+      pluginMethods: [
+        {
+          id: 'sso:sso',
+          label: 'Sign in with SSO',
+          startPath: '/api/hooks/sso/start',
+          askEmail: true,
+          errors: { 'sso.not_ready': 'Single sign-on for this domain is not set up yet.' },
+        },
+      ],
+    }
+
+    it('shows the method’s copy for its code and gives it the email back', async () => {
+      render('/login?error=sso.not_ready&email=jane%40acme.test', METHODS)
+      expect(
+        await screen.findByText('Single sign-on for this domain is not set up yet.')
+      ).toBeInTheDocument()
+      expect(screen.getByLabelText('Work email for Sign in with SSO')).toHaveValue('jane@acme.test')
+    })
+
+    it('an undeclared plugin code shows the generic line and prefills nothing', async () => {
+      render('/login?error=sso.made_up&email=jane%40acme.test', METHODS)
+      expect(await screen.findByLabelText('Work email for Sign in with SSO')).toHaveValue('')
+      expect(screen.getByText('Sign in failed. Please try again.')).toBeInTheDocument()
     })
   })
 

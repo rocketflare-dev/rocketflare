@@ -3,10 +3,12 @@
  * `GET /auth/methods` answers them. Pure over the plugin list, so the route passes the barrel and
  * `tests/config/plugins.test.ts` passes a fixture.
  *
- * One rule, checked twice: a method's `startPath` is under the plugin's OWN public mount
- * (`/api/hooks/<id>/…`). The login page navigates a signed-out browser there, so a path anywhere
- * else would make the kit's login page a door into a route the plugin does not own. The test
- * fails such a plugin; at runtime the method is dropped and logged, never rendered.
+ * Two rules, each checked twice: a method's `startPath` is under the plugin's OWN public mount
+ * (`/api/hooks/<id>/…`) — the login page navigates a signed-out browser there, so a path anywhere
+ * else would make the kit's login page a door into a route the plugin does not own — and every
+ * `errors` code it declares copy for is `<id>.<name>`, so no plugin can reword a kit code or another
+ * plugin's. The test fails such a plugin; at runtime the method is dropped and logged, never
+ * rendered.
  */
 import type { PluginLoginMethod } from '@rocketflare/shared/auth'
 import type { AppConfig } from '../../config'
@@ -22,6 +24,12 @@ export interface PluginLoginMethodDeclaration {
   startPath: string
   /** Ask for the email first and send it as `?email=` (home-realm discovery). */
   askEmail?: boolean
+  /**
+   * Login-page copy for the `?error=` codes this method's routes redirect to `/login` with, keyed
+   * `<plugin id>.<name>` (lower-case, digits, `_`): `{ 'sso.not_ready': 'Single sign-on for this
+   * domain is not set up yet…' }`. A `?email=` beside such an error prefills this method's field.
+   */
+  errors?: Readonly<Record<string, string>>
 }
 
 interface LoginMethodSource {
@@ -43,6 +51,14 @@ export function loginMethodIssue(
   }
   if (!/^[a-z0-9][a-z0-9-]*$/.test(method.id)) {
     return `${pluginId}: login method id '${method.id}' must be lower-case letters, digits, '-'`
+  }
+  for (const [code, copy] of Object.entries(method.errors ?? {})) {
+    if (!code.startsWith(`${pluginId}.`) || !/^[a-z0-9_]+$/.test(code.slice(pluginId.length + 1))) {
+      return `${pluginId}: login method '${method.id}' error code '${code}' must be '${pluginId}.<lower_case_name>'`
+    }
+    if (copy.length === 0 || copy.length > 300) {
+      return `${pluginId}: login method '${method.id}' copy for '${code}' must be 1–300 characters`
+    }
   }
   return null
 }
@@ -73,6 +89,9 @@ export function pluginLoginMethods(
         label: method.label,
         startPath: method.startPath,
         ...(method.askEmail ? { askEmail: true } : {}),
+        ...(method.errors && Object.keys(method.errors).length > 0
+          ? { errors: { ...method.errors } }
+          : {}),
       })
     }
   }

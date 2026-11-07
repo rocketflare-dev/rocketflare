@@ -34,7 +34,11 @@ import {
 } from '@rocketflare/shared/plugins'
 import { describe, expect, expectTypeOf, it } from 'vitest'
 import { z } from 'zod'
-import { loginMethodIssue, pluginLoginMethods } from '@/api/auth/plugin-login-methods'
+import {
+  loginMethodIssue,
+  type PluginLoginMethodDeclaration,
+  pluginLoginMethods,
+} from '@/api/auth/plugin-login-methods'
 import {
   evaluateSsoPolicy,
   evaluateSsoPolicyForAll,
@@ -152,12 +156,35 @@ describe('login methods', () => {
     expect(loginMethodIssue('orders', method('/api/hooks/orders/sso', 'Bad Id'))).not.toBeNull()
   })
 
+  it('declare error copy only for their own <id>.<name> codes', () => {
+    const at = '/api/hooks/orders/sso'
+    const withErrors = (errors: Record<string, string>) => ({ ...method(at), errors })
+    expect(loginMethodIssue('orders', withErrors({ 'orders.not_ready': 'Not yet.' }))).toBeNull()
+    for (const code of [
+      'not_ready',
+      'sso_required',
+      'billing.not_ready',
+      'orders-x.not_ready',
+      'orders.',
+      'orders.Not-Ready',
+      'orders.a.b',
+    ]) {
+      expect(loginMethodIssue('orders', withErrors({ [code]: 'x' })), code).not.toBeNull()
+    }
+    expect(loginMethodIssue('orders', withErrors({ 'orders.x': '' }))).not.toBeNull()
+    expect(loginMethodIssue('orders', withErrors({ 'orders.x': 'y'.repeat(301) }))).not.toBeNull()
+  })
+
   it('are dropped at runtime when stray, and namespaced on the wire', () => {
     const cfg = loadConfig(createTestEnv())
     const fixture = [
       {
         shared: { id: 'orders' },
-        loginMethods: () => [method('/api/hooks/orders/sso'), method('/auth/oidc', 'stray')],
+        loginMethods: (): PluginLoginMethodDeclaration[] => [
+          { ...method('/api/hooks/orders/sso'), errors: { 'orders.not_ready': 'Not yet.' } },
+          method('/auth/oidc', 'stray'),
+          { ...method('/api/hooks/orders/x', 'kit-copy'), errors: { sso_required: 'Reworded.' } },
+        ],
       },
       {
         shared: { id: 'broken' },
@@ -167,7 +194,12 @@ describe('login methods', () => {
       },
     ]
     expect(pluginLoginMethods(fixture, cfg)).toEqual([
-      { id: 'orders:sso', label: 'SSO', startPath: '/api/hooks/orders/sso' },
+      {
+        id: 'orders:sso',
+        label: 'SSO',
+        startPath: '/api/hooks/orders/sso',
+        errors: { 'orders.not_ready': 'Not yet.' },
+      },
     ])
   })
 

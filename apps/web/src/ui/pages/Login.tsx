@@ -20,6 +20,10 @@
  * `/auth/methods` gives, never text from the URL. Dev login answering 403 `sso_required` lands on
  * the same screen.
  *
+ * `?error=<plugin id>.<name>` (a plugin's own failure — its sign-in route redirecting here): the copy
+ * is the method's `errors[code]` from `/auth/methods`, and `?email=` prefills THAT method's field,
+ * so "fix it and try again" is one click. An unknown code shows the generic line.
+ *
  * `?as=<email>` (what `pnpm bootstrap` opens) signs in through the same dev-login call once on
  * mount. Threat model: this is login-CSRF against a dev-only route that already 404s outside
  * `APP_ENV=development`; the page honours it ONLY when the server reports `devLogin` AND the email
@@ -164,6 +168,16 @@ export default function Login() {
     errorCode === ERROR_CODES.ssoRequired
       ? pluginMethods.find(method => method.id === searchParams.get('method'))
       : undefined
+  // A plugin's own error code: its method supplies the copy and gets the email back.
+  const errorOwner = errorCode
+    ? pluginMethods.find(method => method.errors?.[errorCode] !== undefined)
+    : undefined
+  // A code only a plugin knows waits for /auth/methods, so its copy never flashes the generic line.
+  const errorCopy = errorCode
+    ? (LOGIN_ERROR_COPY[errorCode] ??
+      errorOwner?.errors?.[errorCode] ??
+      (methodsLoading ? null : GENERIC_LOGIN_ERROR))
+    : null
   // The method offered under the message is not repeated in the list (one email field per method).
   const otherPluginMethods = pluginMethods.filter(method => method !== ssoMethod)
   const nothingConfigured =
@@ -182,10 +196,10 @@ export default function Login() {
           : 'Use your work account to continue.'}
       </p>
 
-      {errorCode && (
+      {errorCopy && (
         <div className="alert alert-error mb-4 text-sm" role="alert">
           <ExclamationTriangleIcon className="w-5 h-5 shrink-0" />
-          <span>{LOGIN_ERROR_COPY[errorCode] ?? GENERIC_LOGIN_ERROR}</span>
+          <span>{errorCopy}</span>
         </div>
       )}
 
@@ -242,6 +256,7 @@ export default function Login() {
               key={method.id}
               method={method}
               returnUrl={returnUrl}
+              initialEmail={method === errorOwner ? (searchParams.get('email') ?? '') : undefined}
               disabled={busy !== null}
               busy={busy === `plugin:${method.id}`}
               onStart={() => setBusy(`plugin:${method.id}`)}
