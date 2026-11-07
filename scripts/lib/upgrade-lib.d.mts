@@ -239,6 +239,9 @@ export interface NoteCheckOptions {
  * Everything wrong with one porting note, as sentences — the ONE statement of the note schema,
  * read by `release-check.mjs` and by `upgrade-notes.test.ts`.
  */
+/** A note's length guide: past it the tools warn, they never fail. */
+export const NOTE_LINES_GUIDE: number
+export function noteLengthWarning(text: string, file?: string): string | null
 export function noteProblems(text: string, options?: NoteCheckOptions): string[]
 export function compareVersions(a: string, b: string): -1 | 0 | 1
 export const VERSION_RE: RegExp
