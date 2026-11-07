@@ -429,6 +429,8 @@ The server surface: the context family, and the types a plugin must be able to n
     Routes a third party calls with no session or key — an admin-consent callback, a webhook. Mounted BEFORE the authed mounts and without `authMiddleware`, under `/api/hooks/<id>`…
   - `loginMethods?: (cfg: AppConfig) => readonly PluginLoginMethodDeclaration[]`
     Sign-in methods for the login page, read per request by `GET /auth/methods` (so `cfg` may decide: a dev-only method, one per configured connection). Each button navigates to its…
+  - `ssoPolicy?: SsoPolicy`
+    "SSO required" for the emails one of this plugin's connections claims (a DNS-verified domain): answer `{ required: true, methodId }` — `methodId` one of THIS plugin's…
   - `apiPrefixes?: readonly string[]`
     Extra path prefixes the Worker owns, unioned into `API_PREFIXES` — so an unmatched path under one is a JSON 404 rather than `index.html`. Adding one ALSO means adding it to…
   - `jobHandlers?: { [T in JobTypeOf<S> & string]: JobHandler<Extract<T, JobType>> }`
@@ -464,6 +466,8 @@ The server surface: the context family, and the types a plugin must be able to n
 - `type SpanKind = 'agent' \| 'llm' \| 'tool' \| 'retrieval' \| 'embedding' \| 'job' \| 'span'`
   What a span IS — it picks the GenAI operation name and the backend's observation type.
 - `interface SpanParams`
+- `interface SsoRequirement`
+  What a plugin's `ssoPolicy` answers for an email whose domain one of its connections claims.
 - `type StartAgentRun = (input: StartAgentRunInput) => Promise<StartedAgentRun>`
 - `interface StartAgentRunInput`
   - `agentKey: AgentKey`
@@ -783,6 +787,8 @@ Components and hooks, for a lazy PAGE. Never for the UI entry.
     Routes a third party calls with no session or key — an admin-consent callback, a webhook. Mounted BEFORE the authed mounts and without `authMiddleware`, under `/api/hooks/<id>`…
   - `loginMethods?: (cfg: AppConfig) => readonly PluginLoginMethodDeclaration[]`
     Sign-in methods for the login page, read per request by `GET /auth/methods` (so `cfg` may decide: a dev-only method, one per configured connection). Each button navigates to its…
+  - `ssoPolicy?: SsoPolicy`
+    "SSO required" for the emails one of this plugin's connections claims (a DNS-verified domain): answer `{ required: true, methodId }` — `methodId` one of THIS plugin's…
   - `apiPrefixes?: readonly string[]`
     Extra path prefixes the Worker owns, unioned into `API_PREFIXES` — so an unmatched path under one is a JSON 404 rather than `index.html`. Adding one ALSO means adding it to…
   - `jobHandlers?: { [T in JobTypeOf<S> & string]: JobHandler<Extract<T, JobType>> }`
@@ -1315,6 +1321,7 @@ nothing in the comparison that can throw.
 @/plugins/api :: member :: ServerPlugin.mounts :: mounts?: readonly PluginMount[]
 @/plugins/api :: member :: ServerPlugin.publicMounts :: publicMounts?: readonly PluginPublicMount[]
 @/plugins/api :: member :: ServerPlugin.loginMethods :: loginMethods?: (cfg: AppConfig) => readonly PluginLoginMethodDeclaration[]
+@/plugins/api :: member :: ServerPlugin.ssoPolicy :: ssoPolicy?: SsoPolicy
 @/plugins/api :: member :: ServerPlugin.apiPrefixes :: apiPrefixes?: readonly string[]
 @/plugins/api :: member :: ServerPlugin.jobHandlers :: jobHandlers?: { [T in JobTypeOf<S> & string]: JobHandler<Extract<T, JobType>> }
 @/plugins/api :: member :: ServerPlugin.agents :: agents?: { [K in AgentKeyOf<S> & string]: AnyAgentDefinition }
@@ -1335,6 +1342,7 @@ nothing in the comparison that can throw.
 @/plugins/api :: function :: signState :: async function signState( config: PluginConfig, purpose: string, payload: Record<string, unknown>, opts: { ttlSeconds?: number } = {} ): Promise<string>
 @/plugins/api :: type :: SpanKind :: type SpanKind = 'agent' | 'llm' | 'tool' | 'retrieval' | 'embedding' | 'job' | 'span'
 @/plugins/api :: interface :: SpanParams :: interface SpanParams
+@/plugins/api :: interface :: SsoRequirement :: interface SsoRequirement
 @/plugins/api :: type :: StartAgentRun :: type StartAgentRun = (input: StartAgentRunInput) => Promise<StartedAgentRun>
 @/plugins/api :: interface :: StartAgentRunInput :: interface StartAgentRunInput
 @/plugins/api :: member :: StartAgentRunInput.agentKey :: agentKey: AgentKey
@@ -1520,6 +1528,7 @@ nothing in the comparison that can throw.
 @/plugins/types :: member :: ServerPlugin.mounts :: mounts?: readonly PluginMount[]
 @/plugins/types :: member :: ServerPlugin.publicMounts :: publicMounts?: readonly PluginPublicMount[]
 @/plugins/types :: member :: ServerPlugin.loginMethods :: loginMethods?: (cfg: AppConfig) => readonly PluginLoginMethodDeclaration[]
+@/plugins/types :: member :: ServerPlugin.ssoPolicy :: ssoPolicy?: SsoPolicy
 @/plugins/types :: member :: ServerPlugin.apiPrefixes :: apiPrefixes?: readonly string[]
 @/plugins/types :: member :: ServerPlugin.jobHandlers :: jobHandlers?: { [T in JobTypeOf<S> & string]: JobHandler<Extract<T, JobType>> }
 @/plugins/types :: member :: ServerPlugin.agents :: agents?: { [K in AgentKeyOf<S> & string]: AnyAgentDefinition }

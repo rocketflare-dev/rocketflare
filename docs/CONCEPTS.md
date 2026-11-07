@@ -168,6 +168,31 @@ are always `tenant`; no audit log beyond `activity_events`; no personal API keys
   SSO, and `oidcOnly` hides the kit's non-SSO methods. A plugin link is not listed on the profile's
   sign-in methods and cannot be unlinked there (`DELETE /auth/providers/:provider` knows only the
   kit's providers).
+- **SSO required per email domain (`ServerPlugin.ssoPolicy`, `api/auth/sso-policy.ts`)**: once an
+  organisation turns SSO on, its people may sign in ONLY through it. Core cannot know which
+  domains are theirs — the connections and their DNS-verified domains live in a plugin — so it
+  ASKS every installed plugin, in parallel, once per sign-in ATTEMPT (never per request: a minted
+  session is trusted until it ends): `{ required: true, methodId }` names one of that plugin's own
+  `loginMethods`, or `null`. Enforced server-side at: the magic-link request (no token is minted;
+  a token-free "use single sign-on" email links to the login page instead — still 202 with the
+  same body, so nothing leaks to the requester, and the real person learns where to go rather than
+  waiting for a link that never comes), magic-link verify (a link minted before the policy
+  existed is spent and refused), the Google / Microsoft / OIDC callback (the asserted email AND a
+  linked account's own, checked before anyone is admitted or linked), dev login (403
+  `sso_required` + `details.method`, so development shows what production does) and every
+  plugin's `identityFor().signIn` — which passes only for a plugin that CLAIMED the address, so a
+  second tenant's connection cannot sidestep the first's. `/auth/cli` and invitation acceptance
+  need a session, so they inherit it; an invitee's magic-link request gets the SSO email with the
+  invite as `returnUrl`. Refusals land on `/login?error=sso_required&method=<plugin id>:<method id>`
+  and the login page offers that method directly (email prefilled from the SSO email's link),
+  using the label `/auth/methods` gives — never text from the URL. **Decided:** a policy that
+  THROWS (or answers garbage) **fails closed** for that email, logged at `error` — failing open
+  would hand the magic-link door to anyone who can make the lookup fail; the claim is attributed to
+  the throwing plugin, so its own sign-in still works. **Break-glass:** `BOOTSTRAP_ADMIN_EMAILS`
+  are exempt (logged at `warn` when a claim is bypassed) — they live in deployment config only an
+  operator can change, so a broken connection can never lock out the console that would fix it;
+  `is_global_admin` alone is not exempt (it is a database flag). A `methodId` the plugin does not
+  offer keeps the requirement and drops the hint.
 - **Hardening (D12)**: random tokens hashed with SHA-256, a required encryption key, CSRF by origin
   allow-list (Bearer is exempt), and a KV sliding-window rate limit on login routes that no-ops
   without `RATE_LIMIT_KV`.
@@ -193,11 +218,14 @@ never follows a later rename; `person.suspended` revokes no API keys: a key acts
 so the keys in the tenants they lost stop working, and those in their manual tenants do not.
 Plugin sign-in: the kit trusts the plugin's word on `subject`, `email`, `emailVerified` and the
 tenant entirely (proving them is the plugin's job); one plugin may not name another's id, but
-nothing enforces that the id passed to `identityFor` is the caller's own; no "SSO only" per email
-domain yet (`AUTH_OIDC_ONLY` is deployment-wide); `deprovision` is per tenant by design and never
-blocks — a person a tenant's IdP deactivates keeps their other tenants, the sessions selected to
-them and their keys there, and a session with NO pinned tenant is not ended (it re-resolves to
-another membership, or to none); and a plugin link is invisible on the profile page.
+nothing enforces that the id passed to `identityFor` is the caller's own; `deprovision` is per
+tenant by design and never blocks — a person a tenant's IdP deactivates keeps their other tenants,
+the sessions selected to them and their keys there, and a session with NO pinned tenant is not
+ended (it re-resolves to another membership, or to none); and a plugin link is invisible on the
+profile page. SSO required: sessions that already exist when a domain turns it on are not ended
+(they run to their TTL), API keys are untouched, a throwing policy locks that email's non-SSO
+sign-in until it recovers (only the bootstrap admins are exempt), linking a provider to a
+signed-in account is not checked, and the host trusts the plugin's word that it owns the domain.
 
 ## 3. API shell
 
@@ -1045,6 +1073,15 @@ as merging a PR. A plugin repo mirrors the host tree and ships **no migration, n
   must sit under `/api/hooks/<id>/` — `plugins.test.ts` fails a stray one, and `GET /auth/methods`
   drops it with a log. `example-feature`'s dev-only `/api/hooks/example-feature/sso/*` is the
   worked example.
+- **SSO required (`ssoPolicy`)**: `(db, email, { config }) => Promise<{ required: true; methodId;
+  label? } | null>` — "my connection claims this email's domain; send them to my login method
+  `methodId`". The host asks every plugin once per sign-in attempt and enforces the answer on all
+  of its own methods and on every OTHER plugin's `signIn` (§2); `evaluateSsoPolicy` is pure over
+  the plugin list and `plugins.test.ts` drives it with fixtures (claim, other plugin, throw,
+  malformed answer, undeclared method, break-glass). Keep it to one indexed lookup on the domain,
+  answer `null` for a domain no connection claims, and let a real failure throw (the host fails
+  closed). The host does not verify the domain, end existing sessions or check `provisionFor`.
+  `example-feature/api/sso-policy.ts` claims `@sso-required.example.test`, development only.
 - **Inbound email**: `emailHandlers` route Cloudflare Email Routing mail ("Send to a Worker") to
   a plugin by the recipient's LOCAL PART — `receipts` takes `receipts@…` and `receipts+tag@…`, `*`
   is the catch-all — through the Worker's `email` export (`api/email.ts`). The host validates

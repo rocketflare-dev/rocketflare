@@ -128,6 +128,32 @@ ${button(verifyUrl, `Sign in to ${cfg.APP_NAME}`)}
   }
 }
 
+/**
+ * Sent INSTEAD of a magic link when the address's domain requires single sign-on
+ * (`ServerPlugin.ssoPolicy`). It carries no token — only a link to the login page with the SSO
+ * method preselected — so it is worth nothing to anybody who intercepts it.
+ */
+export function ssoRequiredEmail(
+  cfg: AppConfig,
+  to: string,
+  loginUrl: string,
+  connectionLabel?: string
+): EmailMessage {
+  const subject = `Sign in to ${cfg.APP_NAME} with single sign-on`
+  const via = connectionLabel ? ` through ${connectionLabel}` : ''
+  const body = `<h1 style="margin:0 0 16px;font-size:22px;">Use single sign-on</h1>
+<p>Your organisation requires you to sign in to ${escapeHtml(cfg.APP_NAME)} with single sign-on${escapeHtml(via)}, so we did not send a sign-in link.</p>
+${button(loginUrl, 'Sign in with single sign-on')}
+<p style="font-size:13px;color:${palette.muted};">If you did not request this email you can ignore it.</p>`
+  return {
+    to,
+    subject,
+    html: emailShell(cfg, subject, body),
+    text: `Your organisation requires you to sign in to ${cfg.APP_NAME} with single sign-on${via}, so we did not send a sign-in link.\n\nSign in: ${loginUrl}\n\nIf you did not request this email, ignore it.`,
+    link: loginUrl,
+  }
+}
+
 export function invitationEmail(
   cfg: AppConfig,
   to: string,

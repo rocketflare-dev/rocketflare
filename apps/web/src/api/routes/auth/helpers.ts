@@ -9,6 +9,7 @@ import type { Database } from '../../../db/client'
 import type { User } from '../../../db/schema'
 import { setSessionCookie } from '../../auth/cookies'
 import { createSession } from '../../auth/sessions'
+import { type SsoDecision, ssoRequiredLoginPath } from '../../auth/sso-policy'
 import { defaultTenantFor } from '../../services/auth'
 import type { AppContext } from '../../types'
 
@@ -26,6 +27,11 @@ export type LoginErrorCode =
   | 'no_access'
   /** A plugin IdP asserted the email of an account it may not claim (`identityFor().signIn`). */
   | 'account_exists'
+  /**
+   * A plugin's connection claims this email's domain and requires single sign-on
+   * (`ServerPlugin.ssoPolicy`); `ssoRequiredRedirect` adds `&method=<plugin id>:<method id>`.
+   */
+  | 'sso_required'
 
 /** A relative same-origin path, else `fallback`. Never `/login` (redirect loop). */
 export function safeRedirectPath(value: string | null | undefined, fallback = '/'): string {
@@ -38,6 +44,15 @@ export function safeRedirectPath(value: string | null | undefined, fallback = '/
 
 export function loginErrorRedirect(c: AppContext, code: LoginErrorCode): Response {
   return c.redirect(`/login?error=${code}`, 302)
+}
+
+/** `/login?error=sso_required&method=…` — the login page offers that plugin's method directly. */
+export function ssoRequiredRedirect(
+  c: AppContext,
+  decision: SsoDecision,
+  extra: { returnUrl?: string | null } = {}
+): Response {
+  return c.redirect(ssoRequiredLoginPath(decision, extra), 302)
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000

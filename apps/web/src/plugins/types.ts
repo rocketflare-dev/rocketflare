@@ -24,6 +24,7 @@ import type { AgentKeyOf, JobTypeOf, PromptKeyOf, SharedPlugin } from '@rocketfl
 import type { Hono, MiddlewareHandler } from 'hono'
 import type { ComponentType, LazyExoticComponent } from 'react'
 import type { PluginLoginMethodDeclaration } from '../api/auth/plugin-login-methods'
+import type { SsoPolicy } from '../api/auth/sso-policy'
 import type { EmailHandler } from '../api/email'
 import type { JobHandler } from '../api/queues/jobs'
 import type { ScheduledTask } from '../api/scheduled'
@@ -115,6 +116,21 @@ export interface ServerPlugin<S extends SharedPlugin = SharedPlugin> {
    * flow — the plugin's public route does, and finishes it with `identityFor(c, id).signIn(...)`.
    */
   loginMethods?: (cfg: AppConfig) => readonly PluginLoginMethodDeclaration[]
+  /**
+   * "SSO required" for the emails one of this plugin's connections claims (a DNS-verified domain):
+   * answer `{ required: true, methodId }` — `methodId` one of THIS plugin's `loginMethods(cfg)` ids,
+   * where the login page sends the person — or `null` for an address it does not claim. Asked once
+   * per sign-in attempt (`api/auth/sso-policy.ts`), never per request, with every installed
+   * plugin's policy in parallel: keep it to one indexed lookup on the email's domain.
+   *
+   * The HOST enforces it on every kit method — the magic-link request (a token-free "use single
+   * sign-on" email instead of a link, still 202) and verify, the Google / Microsoft / OIDC callback,
+   * dev login — and on every OTHER plugin's `identityFor().signIn`; a claiming plugin's own `signIn`
+   * passes. A THROW fails closed for that email (logged), and `BOOTSTRAP_ADMIN_EMAILS` are exempt
+   * (break-glass). The host does NOT verify the domain (that is the plugin's proof), revoke sessions
+   * that already exist, or apply it to `provisionFor` (SCIM mints no session).
+   */
+  ssoPolicy?: SsoPolicy
   /**
    * Extra path prefixes the Worker owns, unioned into `API_PREFIXES` — so an unmatched path under
    * one is a JSON 404 rather than `index.html`. Adding one ALSO means adding it to

@@ -33,6 +33,29 @@ import { setupTestDatabase } from '../helpers/db'
 import { json, request } from '../helpers/request'
 import { createTestEnv } from '../mocks/bindings'
 
+/**
+ * A fixture SSO policy (`ServerPlugin.ssoPolicy`): plugin `acme` claims `@acme-sso.test` and
+ * routes it to its `sso` method. Every other address is unclaimed, so the rest of the file runs
+ * exactly as without it.
+ */
+vi.mock('@/api/routes/auth/sso', async () => {
+  const { evaluateSsoPolicyForAll } = await import('@/api/auth/sso-policy')
+  const fixtures = [
+    {
+      shared: { id: 'acme' },
+      loginMethods: () => [{ id: 'sso', label: 'Acme SSO', startPath: '/api/hooks/acme/sso' }],
+      ssoPolicy: async (_db: unknown, email: string) =>
+        email.endsWith('@acme-sso.test') ? { required: true as const, methodId: 'sso' } : null,
+    },
+  ]
+  return {
+    // biome-ignore lint/suspicious/noExplicitAny: the mock forwards the real signature untouched
+    ssoDecisionFor: (db: any, cfg: any, emails: any, logger: any) =>
+      // biome-ignore lint/suspicious/noExplicitAny: fixtures are structurally ServerPlugins
+      evaluateSsoPolicyForAll(fixtures as any, db, cfg, emails, logger),
+  }
+})
+
 const db = setupTestDatabase()
 
 const ISSUER = 'https://idp.test/realms/acme'
@@ -278,6 +301,39 @@ describe('GET /auth/oidc', () => {
 })
 
 describe('GET /auth/oidc/callback', () => {
+  it('SSO required: a claimed domain is refused before anyone is admitted, linked or signed in', async () => {
+    const email = `sso_${uniqueId().toLowerCase()}@acme-sso.test`
+    const sub = `sub_${uniqueId()}`
+    idp.claims = { sub, email, email_verified: true }
+    const env = oidcEnv({ SIGNUP_MODE: 'open' })
+    const res = await signIn(env, `?returnUrl=${encodeURIComponent('/documents')}`)
+    expect(res.status).toBe(302)
+    expect(location(res).pathname).toBe('/login')
+    expect(location(res).searchParams.get('error')).toBe('sso_required')
+    expect(location(res).searchParams.get('method')).toBe('acme:sso')
+    expect(location(res).searchParams.get('returnUrl')).toBe('/documents')
+    expect(cookieValue(res, SESSION_COOKIE_NAME)).toBeFalsy()
+    expect(await db.select().from(users).where(eq(users.email, email))).toHaveLength(0)
+    expect(await linkFor(sub)).toHaveLength(0)
+  })
+
+  it('SSO required: a LINKED account on a claimed domain is refused whatever the issuer asserts', async () => {
+    const user = await createTestUser(db, {
+      email: `linked_${uniqueId().toLowerCase()}@acme-sso.test`,
+    })
+    const sub = `sub_${uniqueId()}`
+    await db.insert(oauthProviders).values({
+      userId: user.id,
+      provider: 'oidc',
+      providerUserId: `${ISSUER}|${sub}`,
+      email: 'personal@example.test',
+    })
+    idp.claims = { sub, email: 'personal@example.test', email_verified: true }
+    const res = await signIn(oidcEnv())
+    expect(location(res).searchParams.get('error')).toBe('sso_required')
+    expect(cookieValue(res, SESSION_COOKIE_NAME)).toBeFalsy()
+  })
+
   it('links an existing user by verified email; the identity key is issuer|sub', async () => {
     const { user, tenant } = await createTestTenantWithUser(db, 'member')
     const sub = `sub_${uniqueId()}`

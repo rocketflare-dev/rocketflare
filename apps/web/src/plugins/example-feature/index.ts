@@ -30,6 +30,7 @@ import { onTenantCreated, seedDemo } from './api/hooks'
 import { exampleFeaturePublicRouter } from './api/public'
 import { exampleFeatureRouter } from './api/routes'
 import { EXAMPLE_SSO_START_PATH } from './api/sso'
+import { EXAMPLE_SSO_METHOD_ID, exampleSsoPolicy } from './api/sso-policy'
 import { handleExamplePing } from './jobs/ping'
 import { exampleAgentTools } from './tools/list-example-notes'
 
@@ -60,13 +61,19 @@ export const exampleFeatureServer = {
     cfg.APP_ENV === 'development'
       ? [
           {
-            id: 'demo-sso',
+            id: EXAMPLE_SSO_METHOD_ID,
             label: 'Example SSO (development only)',
             startPath: EXAMPLE_SSO_START_PATH,
             askEmail: true,
           },
         ]
       : [],
+  /**
+   * **"SSO required" for the domains a connection owns.** Asked once per sign-in attempt; the kit
+   * then refuses every other method for that address and routes the person to `methodId` — one of
+   * this plugin's own `loginMethods` ids. Here: `@sso-required.example.test`, development only.
+   */
+  ssoPolicy: (_db, email, { config }) => exampleSsoPolicy(email, config),
   jobHandlers: { [EXAMPLE_PING_JOB]: handleExamplePing },
   /**
    * The tool is written against `ToolCtx`; `toolCtx` adapts the runtime's context at this one

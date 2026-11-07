@@ -3,10 +3,16 @@
  * `APP_ENV === 'development'`. Creates or finds the user, bypasses sign-up gating (but not a
  * block), runs `onNoTenant` for a member-less user so single-tenant / open modes behave as a real
  * login would, and answers with the session response + cookie.
+ *
+ * The SSO-required policy (`ServerPlugin.ssoPolicy`) applies here too, so development shows what
+ * production does: 403 `sso_required` with `details.method`, which the login page turns into the
+ * same `?error=sso_required&method=` screen every other method lands on.
  */
 import { devLoginRequestSchema } from '@rocketflare/shared/auth'
+import { ERROR_CODES } from '@rocketflare/shared/errors'
 import { eq } from 'drizzle-orm'
 import { users } from '../../../db/schema'
+import { ssoAllows } from '../../auth/sso-policy'
 import { resolveCookieAuth } from '../../middleware/auth'
 import {
   buildSessionResponse,
@@ -19,6 +25,7 @@ import { ForbiddenError, NotFoundError, UnauthorizedError } from '../../utils/co
 import { createRouter } from '../../utils/routes/router'
 import { validate } from '../../utils/routes/validate'
 import { completeLogin } from './helpers'
+import { ssoDecisionFor } from './sso'
 
 export const devLoginRouter = createRouter()
 
@@ -31,6 +38,14 @@ devLoginRouter.post('/dev-login', validate('json', devLoginRequestSchema), async
 
   let user = await findUserByEmail(db, email)
   if (user?.blockedAt) throw new ForbiddenError('Account is blocked', 'blocked')
+  const sso = await ssoDecisionFor(db, cfg, [email], logger)
+  if (!ssoAllows(sso, 'core')) {
+    throw new ForbiddenError(
+      'This organisation requires single sign-on',
+      ERROR_CODES.ssoRequired,
+      sso.required && sso.method ? { method: sso.method } : undefined
+    )
+  }
   if (!user) {
     const [created] = await db
       .insert(users)

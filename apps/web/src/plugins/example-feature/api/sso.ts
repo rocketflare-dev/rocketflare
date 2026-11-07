@@ -22,6 +22,9 @@
  *    a cookie, a user row or a membership; refusals (an unverified email, a blocked person) come
  *    back as the kit's own `/login?error=` redirects.
  *
+ * **SSO required** (`ServerPlugin.ssoPolicy`) is `./sso-policy.ts`: `@sso-required.example.test`
+ * may sign in only through this method.
+ *
  * `subject` is namespaced by the plugin: `demo|<email>`. A plugin with several connections makes it
  * `<connectionId>|<nameId>`, because two identity providers may both call somebody `jane`.
  */

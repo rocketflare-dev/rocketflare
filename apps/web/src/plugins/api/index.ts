@@ -108,6 +108,7 @@ export type {
   PluginMember,
   PluginProvision,
   PluginSignInInput,
+  SsoRequirement,
 } from './identity'
 export { identityFor, provisionFor } from './identity'
 export type {

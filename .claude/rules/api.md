@@ -212,6 +212,13 @@ A plugin is a separate git repository copied into the app that contributes throu
   proves the tenant, as for `PublicCtx`. `ServerPlugin.loginMethods(cfg)` feeds
   `GET /auth/methods` `pluginMethods`; a `startPath` outside `/api/hooks/<id>/` is dropped and
   logged at runtime and fails `tests/config/plugins.test.ts`
+- **A sign-in path asks the SSO policy before it admits anyone** (`ServerPlugin.ssoPolicy`):
+  `ssoDecisionFor(db, cfg, emails, logger)` (`routes/auth/sso.ts`, the barrel bound into the pure
+  `evaluateSsoPolicyForAll`) then `ssoAllows(decision, 'core' | { pluginId })`, and a refusal is
+  `ssoRequiredRedirect(c, decision, { returnUrl })` — or 403 `sso_required` + `details.method` for a
+  JSON route. Pass every address the sign-in involves (asserted and account). A NEW sign-in path
+  that skips it is a hole in every customer's SSO requirement. Never import `routes/auth/sso` from
+  `plugins/api/**` statically — it reads the barrel (`identity.ts` uses `await import`)
 - **A plugin starts an agent run from the background with `ctx.startAgentRun`** (`JobCtx`,
   `CronCtx`, `EmailCtx`, `PublicCtx`): `{ agentKey, tenantId, input, idempotencyKey?,
   concurrencyKey?, triggeredBy? }` → `{ runId, status, deduplicated }`, through the route's own

@@ -246,4 +246,56 @@ describe('Login', () => {
       )
     })
   })
+
+  describe('sso_required', () => {
+    const METHODS = {
+      ...ALL_METHODS,
+      pluginMethods: [
+        {
+          id: 'sso:discover',
+          label: 'Find my SSO',
+          startPath: '/api/hooks/sso/discover',
+          askEmail: true,
+        },
+      ],
+    }
+
+    it('offers the named plugin method directly, email prefilled, label from /auth/methods', async () => {
+      render(
+        '/login?error=sso_required&method=sso%3Adiscover&email=jane%40acme.test&returnUrl=%2Finvite%2Fabc',
+        METHODS
+      )
+      expect(await screen.findByText(LOGIN_ERROR_COPY.sso_required as string)).toBeInTheDocument()
+      const offered = await screen.findByTestId('sso-required-method')
+      expect(offered).toHaveTextContent('Find my SSO')
+      expect(screen.getAllByLabelText('Work email for Find my SSO')).toHaveLength(1)
+      expect(screen.getByLabelText('Work email for Find my SSO')).toHaveValue('jane@acme.test')
+      fireEvent.click(screen.getByRole('button', { name: 'Find my SSO' }))
+      expect(hardNavigate).toHaveBeenCalledWith(
+        '/api/hooks/sso/discover?returnUrl=%2Finvite%2Fabc&email=jane%40acme.test'
+      )
+    })
+
+    it('an unknown method shows the message and no direct button', async () => {
+      render('/login?error=sso_required&method=evil%3Ax', METHODS)
+      expect(await screen.findByText(LOGIN_ERROR_COPY.sso_required as string)).toBeInTheDocument()
+      expect(screen.queryByTestId('sso-required-method')).not.toBeInTheDocument()
+    })
+
+    it('dev login refused with 403 sso_required lands on the same screen', async () => {
+      const devLoginRefusal = new Response(
+        JSON.stringify({
+          error: 'This organisation requires single sign-on',
+          statusCode: 403,
+          code: 'sso_required',
+          details: { method: 'sso:discover' },
+        }),
+        { status: 403, headers: { 'Content-Type': 'application/json' } }
+      )
+      render('/login', METHODS, { 'POST /auth/dev-login': devLoginRefusal })
+      fireEvent.click(await screen.findByRole('button', { name: 'Owner' }))
+      expect(await screen.findByTestId('sso-required-method')).toHaveTextContent('Find my SSO')
+      expect(hardNavigate).not.toHaveBeenCalled()
+    })
+  })
 })

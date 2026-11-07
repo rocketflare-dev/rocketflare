@@ -13,6 +13,13 @@
  * navigate (full page) to the method's `startPath` with `?returnUrl=`, behind an email field sent
  * as `&email=` when the method `askEmail`s. Shown under `oidcOnly` too — they are single sign-on.
  *
+ * `?error=sso_required&method=<plugin id>:<method id>` (the address's domain requires single
+ * sign-on — `ServerPlugin.ssoPolicy`): the method named, when `pluginMethods` has it, is offered
+ * directly under the message, its email field prefilled from `?email=` (only the "use single
+ * sign-on" email carries that, and it goes to the address itself). The label shown is the one
+ * `/auth/methods` gives, never text from the URL. Dev login answering 403 `sso_required` lands on
+ * the same screen.
+ *
  * `?as=<email>` (what `pnpm bootstrap` opens) signs in through the same dev-login call once on
  * mount. Threat model: this is login-CSRF against a dev-only route that already 404s outside
  * `APP_ENV=development`; the page honours it ONLY when the server reports `devLogin` AND the email
@@ -26,6 +33,7 @@ import {
   type OAuthProviderName,
   type PluginLoginMethod,
 } from '@rocketflare/shared/auth'
+import { ERROR_CODES } from '@rocketflare/shared/errors'
 import { useEffect, useRef, useState } from 'react'
 import { Navigate, useSearchParams } from 'react-router'
 import { AuthCard } from '@/ui/components/AuthCard'
@@ -49,6 +57,8 @@ export const LOGIN_ERROR_COPY: Record<string, string> = {
     "You don't have access to this app. Ask your organisation's administrator to grant it, then sign in again.",
   account_exists:
     'An account with this email already exists. Sign in the way you usually do, or ask an administrator to connect single sign-on to it.',
+  sso_required:
+    'Your organisation requires single sign-on for this email address. Sign in with it to continue.',
 }
 const GENERIC_LOGIN_ERROR = 'Sign in failed. Please try again.'
 
@@ -61,7 +71,7 @@ export const DEV_ACCOUNTS = [
 ] as const
 
 export default function Login() {
-  const [searchParams] = useSearchParams()
+  const [searchParams, setSearchParams] = useSearchParams()
   const returnUrl = safeReturnUrl(searchParams.get('returnUrl'))
   const errorCode = searchParams.get('error')
   const { status } = useAuth()
@@ -80,8 +90,15 @@ export default function Login() {
     try {
       await api.post('/auth/dev-login', { email: devEmail, redirectTo })
       hardNavigate(returnUrl)
-    } catch {
+    } catch (error) {
       setBusy(null)
+      if (error instanceof ApiError && error.code === ERROR_CODES.ssoRequired) {
+        const method = (error.details as { method?: unknown } | undefined)?.method
+        const next = new URLSearchParams({ error: ERROR_CODES.ssoRequired })
+        if (typeof method === 'string') next.set('method', method)
+        if (redirectTo) next.set('returnUrl', redirectTo)
+        setSearchParams(next, { replace: true })
+      }
     }
   }
 
@@ -143,6 +160,12 @@ export default function Login() {
   const providers: OAuthProviderName[] = oidcOnly ? ['oidc'] : (methods?.providers ?? [])
   const showMagicLink = Boolean(methods?.magicLink) && !oidcOnly
   const pluginMethods = methods?.pluginMethods ?? []
+  const ssoMethod =
+    errorCode === ERROR_CODES.ssoRequired
+      ? pluginMethods.find(method => method.id === searchParams.get('method'))
+      : undefined
+  // The method offered under the message is not repeated in the list (one email field per method).
+  const otherPluginMethods = pluginMethods.filter(method => method !== ssoMethod)
   const nothingConfigured =
     methods &&
     !methods.magicLink &&
@@ -163,6 +186,20 @@ export default function Login() {
         <div className="alert alert-error mb-4 text-sm" role="alert">
           <ExclamationTriangleIcon className="w-5 h-5 shrink-0" />
           <span>{LOGIN_ERROR_COPY[errorCode] ?? GENERIC_LOGIN_ERROR}</span>
+        </div>
+      )}
+
+      {ssoMethod && (
+        <div className="mb-5 space-y-3" data-testid="sso-required-method">
+          <PluginMethodButton
+            method={ssoMethod}
+            returnUrl={returnUrl}
+            initialEmail={searchParams.get('email') ?? ''}
+            disabled={busy !== null}
+            busy={busy === `sso:${ssoMethod.id}`}
+            onStart={() => setBusy(`sso:${ssoMethod.id}`)}
+          />
+          <div className="divider text-xs text-muted">or another account</div>
         </div>
       )}
 
@@ -198,9 +235,9 @@ export default function Login() {
         </div>
       )}
 
-      {pluginMethods.length > 0 && (
+      {otherPluginMethods.length > 0 && (
         <div className={`space-y-3${providers.length > 0 ? ' mt-3' : ''}`}>
-          {pluginMethods.map(method => (
+          {otherPluginMethods.map(method => (
             <PluginMethodButton
               key={method.id}
               method={method}
@@ -215,7 +252,7 @@ export default function Login() {
 
       {showMagicLink && (
         <>
-          {providers.length + pluginMethods.length > 0 && (
+          {providers.length + otherPluginMethods.length > 0 && (
             <div className="divider text-xs text-muted">or</div>
           )}
           <form onSubmit={requestMagicLink} className="space-y-3" noValidate>
@@ -285,17 +322,19 @@ export default function Login() {
 function PluginMethodButton({
   method,
   returnUrl,
+  initialEmail = '',
   disabled,
   busy,
   onStart,
 }: {
   method: PluginLoginMethod
   returnUrl: string
+  initialEmail?: string
   disabled: boolean
   busy: boolean
   onStart: () => void
 }) {
-  const [email, setEmail] = useState('')
+  const [email, setEmail] = useState(initialEmail)
   const [error, setError] = useState<string | undefined>()
   const inputId = `login-plugin-${method.id.replace(/[^a-z0-9-]/g, '-')}`
 

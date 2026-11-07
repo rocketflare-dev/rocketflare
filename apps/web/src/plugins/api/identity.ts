@@ -29,6 +29,11 @@
  * **`subject` is the plugin's to namespace.** It is stored verbatim as `provider_user_id`, unique
  * per plugin: a plugin with several connections makes it unique across them itself, e.g.
  * `<connectionId>|<nameId>` — two IdPs may both call somebody `jane`.
+ *
+ * **SSO required applies here as well** (`ServerPlugin.ssoPolicy`, `api/auth/sso-policy.ts`):
+ * `signIn` for an address some plugin's connection claims passes only when THIS plugin is one of
+ * the claimers; another plugin's IdP asserting it is refused with `sso_required`, exactly like the
+ * kit's own methods. `provisionFor` mints no session and is not checked.
  */
 
 import { ERROR_CODES } from '@rocketflare/shared/errors'
@@ -41,11 +46,13 @@ import {
   linkPluginIdentity,
   type PluginProviderKey,
 } from '../../api/auth/oauth-providers'
+import { ssoAllows } from '../../api/auth/sso-policy'
 import {
   completeLogin,
   type LoginErrorCode,
   loginErrorRedirect,
   safeRedirectPath,
+  ssoRequiredRedirect,
 } from '../../api/routes/auth/helpers'
 import { admitUser, findUserByEmail } from '../../api/services/auth'
 import {
@@ -61,6 +68,7 @@ import type { PluginContext } from './types'
 
 export type { IdpAppRole } from '@rocketflare/shared/idp'
 export type { PluginLoginMethodDeclaration } from '../../api/auth/plugin-login-methods'
+export type { SsoRequirement } from '../../api/auth/sso-policy'
 
 /** A person as this module answers them: plain fields, never the row. */
 export interface PluginIdentityUser {
@@ -386,6 +394,14 @@ export function identityFor(c: AppContext, pluginId: string): PluginIdentity {
       // 1. The link wins; 2. else the verified email; 3. else admission.
       let user = await userBySubject(db, provider, input.subject)
       if (user?.blockedAt) return refuse('blocked')
+      // SSO required: only a plugin that claims the address may sign it in. Function-scope import:
+      // `routes/auth/sso` reads the plugin barrel, which imports this module (see that file).
+      const { ssoDecisionFor } = await import('../../api/routes/auth/sso')
+      const sso = await ssoDecisionFor(db, config, [input.email, user?.email], logger)
+      if (!ssoAllows(sso, { pluginId })) {
+        logger.warn({ plugin: pluginId }, 'identity.signIn: another plugin requires SSO here')
+        return ssoRequiredRedirect(c, sso, { returnUrl: safeRedirectPath(input.redirectTo) })
+      }
       if (!user && !input.linkByEmail && (await findUserByEmail(db, input.email))) {
         // `admitUser` would hand back the existing account; a per-tenant IdP may assert any
         // address, so without a proved domain that is a takeover, not a sign-in.

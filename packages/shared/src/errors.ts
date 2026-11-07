@@ -30,6 +30,12 @@ export const ERROR_CODES = {
   noTenant: 'no_tenant',
   tenantSuspended: 'tenant_suspended',
   blocked: 'blocked',
+  /**
+   * 403 (dev login) / `/login?error=` (every redirecting sign-in): a plugin's connection claims the
+   * email's domain and requires single sign-on (`ServerPlugin.ssoPolicy`). `details.method`, when
+   * known, is the `GET /auth/methods` `pluginMethods` id to send the person to.
+   */
+  ssoRequired: 'sso_required',
   tenancyModeSingle: 'tenancy_mode_single',
   csrf: 'csrf_failed',
   /** 503: no chat/embeddings provider resolves for the tenant. */

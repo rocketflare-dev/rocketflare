@@ -16,6 +16,12 @@
  * verified id_token's claims — here, not in `admitUser`, because a linked user never reaches
  * `admitUser`. A new person the claims admit is created whatever `SIGNUP_MODE` says, and the
  * session ends `OIDC_SESSION_MAX_AGE_DAYS` after sign-in.
+ *
+ * SSO required (`ServerPlugin.ssoPolicy`): once the email is known — the verified one the provider
+ * asserted AND, for a linked person, their account's — and before anyone is admitted, linked or
+ * signed in, a plugin claiming either address sends the browser to
+ * `/login?error=sso_required&method=<plugin id>:<method id>`. Link mode (attaching a provider to
+ * the signed-in account) is not a sign-in and is not checked.
  */
 import { ERROR_CODES } from '@rocketflare/shared/errors'
 import { generateCodeVerifier, generateState } from 'arctic'
@@ -30,6 +36,7 @@ import { requireEncryptionKey } from '../../auth/oauth-encryption'
 import { findProviderLink, upsertProviderLink } from '../../auth/oauth-providers'
 import { getProvider, type ProviderDefinition, scopesOf } from '../../auth/providers'
 import { isAccessDeniedAtTokenExchange } from '../../auth/providers/oidc'
+import { ssoAllows } from '../../auth/sso-policy'
 import { resolveCookieAuth } from '../../middleware/auth'
 import { admitUser, findUserByEmail } from '../../services/auth'
 import { platformFeatures } from '../../services/features'
@@ -37,7 +44,14 @@ import { idpClaimsAdmit, readIdpClaims, reconcileIdpClaims } from '../../service
 import type { AppContext } from '../../types'
 import { ConflictError, NotFoundError, UnauthorizedError } from '../../utils/core/errors'
 import { createRouter } from '../../utils/routes/router'
-import { completeLogin, type LoginErrorCode, loginErrorRedirect, safeRedirectPath } from './helpers'
+import {
+  completeLogin,
+  type LoginErrorCode,
+  loginErrorRedirect,
+  safeRedirectPath,
+  ssoRequiredRedirect,
+} from './helpers'
+import { ssoDecisionFor } from './sso'
 
 export const oauthRouter = createRouter()
 
@@ -193,6 +207,10 @@ oauthRouter.get('/:provider/callback', async c => {
     ? await db.query.users.findFirst({ where: (u, { eq }) => eq(u.id, link.userId) })
     : undefined
   if (user?.blockedAt) return loginErrorRedirect(c, 'blocked')
+
+  // SSO required: before admitUser, so a refused person leaves no row and no access request.
+  const sso = await ssoDecisionFor(db, cfg, [email, user?.email], logger)
+  if (!ssoAllows(sso, 'core')) return ssoRequiredRedirect(c, sso, { returnUrl: flow.redirectTo })
 
   // IdP-managed tenancy: verified claims, or null (absent/malformed → ignored, logged).
   const managed = def.id === 'oidc' && isIdpManaged(cfg)

@@ -11,7 +11,7 @@ deleting them. Nothing else in the host ever names a plugin, which is what makes
 | Barrel | Exports | Read by |
 |---|---|---|
 | `packages/shared/src/plugins/index.ts` | `SHARED_PLUGINS` / `sharedPlugins` | the five composers: `ai/agents.ts`, `jobs.ts`, `permissions.ts`, `features.ts`, `realtime.ts` — plus `apps/web/src/config.ts` |
-| `server.ts` | `SERVER_PLUGINS` / `serverPlugins` | `api/index.ts`, `utils/routes/api-prefixes.ts`, `queues/jobs.ts`, `scheduled.ts`, `agents/registry.ts`, `agents/tools/index.ts`, `prompts.ts`, `permissions/abilities.ts`, `utils/db/tenant-helpers.ts`, `services/access.ts`, `routes/auth/session.ts` (`loginMethods`), `scripts/seed.ts`, the `rls-coverage` and unscoped-allowlist tests (never `db/schema/rls.ts` — a cycle) |
+| `server.ts` | `SERVER_PLUGINS` / `serverPlugins` | `api/index.ts`, `utils/routes/api-prefixes.ts`, `queues/jobs.ts`, `scheduled.ts`, `agents/registry.ts`, `agents/tools/index.ts`, `prompts.ts`, `permissions/abilities.ts`, `utils/db/tenant-helpers.ts`, `services/access.ts`, `routes/auth/session.ts` (`loginMethods`), `routes/auth/sso.ts` (`ssoPolicy`), `scripts/seed.ts`, the `rls-coverage` and unscoped-allowlist tests (never `db/schema/rls.ts` — a cycle) |
 | `ui.ts` | `UI_PLUGINS` / `uiPlugins` | `App.tsx`, `SideNav.tsx`, `SettingsLayout.tsx`, `lib/query-keys.ts`, `pages/agents/forms/index.ts` |
 | `schema.ts` | one `export *` per plugin | one `export *` line in `db/schema/index.ts` (position irrelevant — a duplicated name is TS2308) |
 | `worker-exports.ts` | one `export *` per plugin | one `export *` line in `src/worker.ts` — the Worker's ENTRY module, which is the only place Cloudflare resolves a binding's `class_name` from |
@@ -110,6 +110,12 @@ in the host. Each half is checked where it is written; only the merge is cast.
   `ServerPlugin.loginMethods(cfg)` puts a button on the login page whose `startPath` must be under
   `/api/hooks/<id>/` (`tests/config/plugins.test.ts`). `example-feature/api/sso.ts` is the
   dev-only worked example.
+  **SSO required is `ServerPlugin.ssoPolicy(db, email, { config })`**: answer `{ required: true,
+  methodId }` (one of YOUR `loginMethods` ids) for an address whose domain your connection proved
+  it owns, else `null`. The kit then refuses that address a magic link, Google, Microsoft, OIDC,
+  dev login and every other plugin's `signIn`, and routes the person to your method; your own
+  `signIn` passes. Asked once per sign-in attempt — one indexed lookup. A throw fails CLOSED for
+  that email; `BOOTSTRAP_ADMIN_EMAILS` are exempt (break-glass). `example-feature/api/sso-policy.ts`.
 - **It puts text into the knowledge base through `ingestDocument` / `ingestDocumentFile`**, never
   by writing `documents` rows. Pass `source: '<id>:<kind>'` and the item's upstream
   `externalId`, and a re-sync UPDATES the row rather than adding one; `deleteIngestedDocument`
