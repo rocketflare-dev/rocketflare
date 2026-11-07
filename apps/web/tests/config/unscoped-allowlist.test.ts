@@ -23,10 +23,11 @@
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { getTableConfig, PgTable } from 'drizzle-orm/pg-core'
-import ts from 'typescript'
+import * as ts from 'typescript/ast'
 import { describe, expect, it } from 'vitest'
 import * as schema from '@/db/schema'
 import { serverPlugins } from '@/plugins/server'
+import { parseSource } from '../../../../scripts/lib/parse-source.mjs'
 import { sourceFiles, WEB_ROOT } from '../helpers/source-files'
 
 /**
@@ -83,7 +84,7 @@ function unscopedQueries(tables: Set<string>): Finding[] {
   const found: Finding[] = []
   for (const rel of sourceFiles()) {
     const text = readFileSync(path.join(WEB_ROOT, rel), 'utf8')
-    const sf = ts.createSourceFile(rel, text, ts.ScriptTarget.Latest, true)
+    const sf = parseSource(rel, text)
 
     const visit = (node: ts.Node): void => {
       const table = queriedTable(node, tables)
@@ -96,7 +97,7 @@ function unscopedQueries(tables: Set<string>): Finding[] {
           })
         }
       }
-      ts.forEachChild(node, visit)
+      node.forEachChild(visit)
     }
     visit(sf)
   }

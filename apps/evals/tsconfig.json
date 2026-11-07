@@ -3,10 +3,9 @@
   "compilerOptions": {
     "jsx": "react-jsx",
     "types": ["node"],
-    "baseUrl": ".",
     "paths": {
       "@/*": ["../web/src/*"],
-      "vitest": ["node_modules/vitest"]
+      "vitest": ["./node_modules/vitest"]
     },
     "allowJs": true
   },

@@ -53,6 +53,6 @@
   "devDependencies": {
     "@biomejs/biome": "^2.6.4",
     "tsx": "^4.23.15",
-    "typescript": "^5.9.3"
+    "typescript": "7.1.0-beta"
   }
 }

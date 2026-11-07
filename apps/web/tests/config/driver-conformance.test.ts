@@ -16,8 +16,9 @@
  */
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
-import ts from 'typescript'
+import * as ts from 'typescript/ast'
 import { describe, expect, it } from 'vitest'
+import { parseSource } from '../../../../scripts/lib/parse-source.mjs'
 
 const DRIVER_DIR = path.resolve(__dirname, '../driver')
 const REPO = path.resolve(__dirname, '../../../..')
@@ -30,7 +31,7 @@ function namesTheDriver(node: ts.Node): boolean {
     if (ts.isIdentifier(n) && ['driver', 'databaseDriver', 'DATABASE_DRIVER'].includes(n.text)) {
       found = true
     }
-    if (!found) ts.forEachChild(n, visit)
+    if (!found) n.forEachChild(visit)
   }
   visit(node)
   return found
@@ -67,7 +68,7 @@ function conditionOf(node: ts.Node): ts.Node | null {
 }
 
 function findConformanceViolations(file: string, text: string): string[] {
-  const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true)
+  const source = parseSource(file, text)
   const found: string[] = []
   const at = (node: ts.Node, message: string) => {
     const { line } = source.getLineAndCharacterOfPosition(node.getStart(source))
@@ -86,7 +87,7 @@ function findConformanceViolations(file: string, text: string): string[] {
     if (condition && namesTheDriver(condition) && insideATest(node)) {
       at(node, 'a test branches on the driver — an equivalence holds under both, unchanged')
     }
-    ts.forEachChild(node, visit)
+    node.forEachChild(visit)
   }
   visit(source)
   return found

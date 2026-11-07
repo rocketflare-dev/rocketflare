@@ -168,7 +168,7 @@ for (const [prefix, router, gate] of mounts) {
 // 11. SPA via Workers Static Assets. Hashed files are served by the assets layer before the
 //     Worker runs; only navigations reach here. `not_found_handling = "single-page-application"`
 //     makes ASSETS return index.html for client routes. API-shaped paths must 404 as JSON.
-app.all('*', c => {
+app.all('*', async c => {
   const { pathname } = new URL(c.req.url)
   if (isApiPath(pathname)) return c.json(notFoundBody(pathname), 404)
   if (c.env.ASSETS) return c.env.ASSETS.fetch(c.req.raw)
