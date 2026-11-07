@@ -7,6 +7,13 @@
  * by a global admin entering an org from `/admin` — admin-equivalent, a REAL visible membership
  * row rather than a hidden bypass, and excluded from member counts (`NON_MEMBER_ROLES`).
  * Stored as text with a TypeScript enum (not a pg enum) so adding a role is a code change.
+ *
+ * `source`: `manual` (every kit path) or `idp` — managed by the OIDC issuer under
+ * `OIDC_MANAGED_TENANCY` (`api/services/idp-tenancy.ts`): reconciled from its claims on each
+ * sign-in and changed by its identity events. An `idp` row is read-only in the app (409
+ * `idp_managed`) and is deleted when its org leaves the claims. Text + TS enum, like `role`.
+ * `idpSyncedAt` is when the issuer last spoke about the row (sign-in or event `occurredAt`); an
+ * older event is skipped, so events apply in any order.
  */
 import { relations } from 'drizzle-orm'
 import { index, pgTable, primaryKey, text, timestamp, uuid } from 'drizzle-orm/pg-core'
@@ -17,6 +24,8 @@ import { users } from './users'
 
 export const MEMBERSHIP_ROLES = ['owner', 'admin', 'member', 'support'] as const
 export type MembershipRole = (typeof MEMBERSHIP_ROLES)[number]
+export const MEMBERSHIP_SOURCES = ['manual', 'idp'] as const
+export type MembershipSource = (typeof MEMBERSHIP_SOURCES)[number]
 
 export const tenantUsers = pgTable(
   'tenant_users',
@@ -26,6 +35,8 @@ export const tenantUsers = pgTable(
       .notNull()
       .references(() => users.id, { onDelete: 'cascade' }),
     role: text('role', { enum: MEMBERSHIP_ROLES }).notNull().default('member'),
+    source: text('source', { enum: MEMBERSHIP_SOURCES }).notNull().default('manual'),
+    idpSyncedAt: timestamp('idp_synced_at', { withTimezone: true }),
     joinedAt: timestamp('joined_at', { withTimezone: true }).notNull().defaultNow(),
     /** Who invited / added this member; NULL for the founding owner and auto-joins. */
     invitedByUserId: uuid('invited_by_user_id').references(() => users.id, {

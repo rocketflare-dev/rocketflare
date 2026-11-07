@@ -55,7 +55,9 @@ one, and `pnpm kit:release <version>` folds it into `X.Y.Z.md` at release time.
 
 **A note is instructions, not an essay.** An agent ports a release by following it top to bottom.
 Rationale lives in `docs/CONCEPTS.md` — the decision record — and is LINKED from here, never
-restated; one sentence of "why" per change is all a note carries. Target **≤ 150 lines**.
+restated; one sentence of "why" per change is all a note carries. Aim for **≤ 150 lines**: a
+longer note still passes, but `release-check --unreleased` (CI) and `pnpm kit:release` print a
+warning above it — a note that keeps growing is a release that is due.
 `0.6.1.md` is the model.
 
 Exactly the four headings above, exact text, in that order, and then:

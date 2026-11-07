@@ -11,6 +11,17 @@ import { boolean, pgTable, text, timestamp, uniqueIndex, uuid } from 'drizzle-or
 import { timestamps } from './_helpers'
 import { membershipIsolation } from './rls'
 
+export const GLOBAL_ADMIN_SOURCES = ['manual', 'idp'] as const
+export type GlobalAdminSource = (typeof GLOBAL_ADMIN_SOURCES)[number]
+
+/**
+ * Who set `blockedAt`: `manual` (the admin console) or `plugin:<id>` — that plugin's identity
+ * provider deprovisioned the person in `TENANCY_MODE=single`, where the one tenant is the whole
+ * deployment (`provisionFor(ctx, id).deprovision`). Only the SAME plugin's `setMembership` lifts a
+ * `plugin:<id>` block; nothing but an admin lifts a `manual` one.
+ */
+export type BlockedSource = 'manual' | `plugin:${string}`
+
 export const users = pgTable(
   'users',
   {
@@ -21,12 +32,24 @@ export const users = pgTable(
     avatarUrl: text('avatar_url'),
     /** Platform flag: `manage all` and access to `/api/admin/*`. Not a tenant role. */
     isGlobalAdmin: boolean('is_global_admin').notNull().default(false),
+    /**
+     * Who granted `isGlobalAdmin`: `idp` = the issuer's `OIDC_GLOBAL_ADMIN_CLAIM` (cleared again
+     * when the claim goes), `manual` = the admin console; NULL = not a global admin, or granted
+     * without a source (`BOOTSTRAP_ADMIN_EMAILS`, the seed) — treated as manual, never cleared by a
+     * sign-in.
+     */
+    globalAdminSource: text('global_admin_source', { enum: GLOBAL_ADMIN_SOURCES }),
     /** Set when a login proved ownership of `email` (magic link, or a provider asserting verified). */
     emailVerifiedAt: timestamp('email_verified_at', { withTimezone: true }),
     /** Stamped on every login. NULL = invited but never signed in. */
     lastLoginAt: timestamp('last_login_at', { withTimezone: true }),
-    /** Non-null = blocked by a global admin; the auth middleware rejects the session. */
+    /** Non-null = blocked; every sign-in, session and API key of the person is refused. */
     blockedAt: timestamp('blocked_at', { withTimezone: true }),
+    /**
+     * Who blocked them (`BlockedSource`). NULL with `blockedAt` set (a block from before the
+     * column, the seed) is treated as `manual`: never lifted by an identity provider.
+     */
+    blockedSource: text('blocked_source').$type<BlockedSource>(),
     ...timestamps(),
   },
   table => [

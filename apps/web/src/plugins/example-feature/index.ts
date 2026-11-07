@@ -29,6 +29,8 @@ import { requireFeature, toolCtx } from '@/plugins/api'
 import { onTenantCreated, seedDemo } from './api/hooks'
 import { exampleFeaturePublicRouter } from './api/public'
 import { exampleFeatureRouter } from './api/routes'
+import { EXAMPLE_SSO_START_PATH } from './api/sso'
+import { EXAMPLE_SSO_METHOD_ID, exampleSsoPolicy } from './api/sso-policy'
 import { handleExamplePing } from './jobs/ping'
 import { exampleAgentTools } from './tools/list-example-notes'
 
@@ -49,6 +51,29 @@ export const exampleFeatureServer = {
    * exist without a session.
    */
   publicMounts: [['/api/hooks/example-feature', exampleFeaturePublicRouter]],
+  /**
+   * **A sign-in method on the kit's login page**, read per request so `cfg` decides — here,
+   * development only, because the example SSO behind it vouches for any email (`api/sso.ts`).
+   * The button navigates to `startPath`, which must be under this plugin's `/api/hooks/<id>/`;
+   * `askEmail` puts an email field in front of it (home-realm discovery, for a real plugin).
+   */
+  loginMethods: cfg =>
+    cfg.APP_ENV === 'development'
+      ? [
+          {
+            id: EXAMPLE_SSO_METHOD_ID,
+            label: 'Example SSO (development only)',
+            startPath: EXAMPLE_SSO_START_PATH,
+            askEmail: true,
+          },
+        ]
+      : [],
+  /**
+   * **"SSO required" for the domains a connection owns.** Asked once per sign-in attempt; the kit
+   * then refuses every other method for that address and routes the person to `methodId` — one of
+   * this plugin's own `loginMethods` ids. Here: `@sso-required.example.test`, development only.
+   */
+  ssoPolicy: (_db, email, { config }) => exampleSsoPolicy(email, config),
   jobHandlers: { [EXAMPLE_PING_JOB]: handleExamplePing },
   /**
    * The tool is written against `ToolCtx`; `toolCtx` adapts the runtime's context at this one

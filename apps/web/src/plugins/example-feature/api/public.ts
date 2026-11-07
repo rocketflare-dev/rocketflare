@@ -2,6 +2,7 @@
  * `/api/hooks/example-feature` — the reference plugin's PUBLIC mount.
  *
  *   GET    /ping?state=…            no session — verify the signed link, enqueue the smoke job, 202
+ *   GET    /sso/start · /sso/callback  development only — the example sign-in (`./sso.ts`)
  *
  * The shape every consent callback and webhook takes, small enough to read in one go:
  *
@@ -24,11 +25,14 @@ import { z } from 'zod'
 import type { PublicCtx } from '@/plugins/api'
 import { createRouter, publicCtx, verifyState } from '@/plugins/api'
 import { EXAMPLE_PING_LINK_PURPOSE } from '../shared'
+import { exampleSsoRouter } from './sso'
 
 /** What the link's state carries. Parsed even though it is signed: a signature proves the writer, not the shape. */
 const pingLinkStateSchema = z.object({ tenantId: z.string().uuid(), userId: z.string().uuid() })
 
 export const exampleFeaturePublicRouter = createRouter()
+
+exampleFeaturePublicRouter.route('/sso', exampleSsoRouter)
 
 exampleFeaturePublicRouter.get('/ping', async c => {
   const ctx: PublicCtx = publicCtx(c)

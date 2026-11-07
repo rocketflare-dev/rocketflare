@@ -7,6 +7,7 @@
 import {
   adminTenantDetailSchema,
   adminTenantListItemSchema,
+  type SetTenantExternalOrgRequest,
   type SuspendTenantRequest,
 } from '@rocketflare/shared/admin'
 import { sessionResponseSchema } from '@rocketflare/shared/auth'
@@ -71,6 +72,31 @@ export function useSuspendTenant(id: string) {
         showSuccessToast: true,
         successMessage: suspended ? 'Organisation suspended' : 'Organisation reinstated',
       }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.admin.tenants.all }),
+  })
+}
+
+export function useAdminDeleteTenant(id: string) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (confirm: string) =>
+      api.delete(`/api/admin/tenants/${id}`, { confirm }, { showErrorToast: true }),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: queryKeys.admin.tenants.all })
+      navigateTo('/admin/tenants', { replace: true })
+    },
+  })
+}
+
+export function useSetTenantExternalOrg(id: string) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (externalOrgId: string | null) =>
+      api.put(
+        `/api/admin/tenants/${id}/external-org`,
+        { externalOrgId } satisfies SetTenantExternalOrgRequest,
+        { showErrorToast: true }
+      ),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.admin.tenants.all }),
   })
 }

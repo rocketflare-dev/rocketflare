@@ -35,6 +35,7 @@ import {
   hasChangelogSection,
   isDeployable,
   isKitManifest,
+  noteLengthWarning,
   noteProblems,
   VERSION_RE,
 } from './lib/upgrade-lib.mjs'
@@ -574,7 +575,14 @@ function checkUnreleased(root, base, problems, pluginManifests = []) {
     const where = within === '' ? 'apps/ or packages/' : `${within}/`
     const notePath =
       within === '' ? 'docs/upgrades/unreleased.md' : `${within}/docs/upgrades/unreleased.md`
-    if (changed.includes(notePath)) continue
+    if (changed.includes(notePath)) {
+      // Never a failure: a long note is a release that is due, not a broken one.
+      const warning = existsSync(path.join(root, notePath))
+        ? noteLengthWarning(read(root, notePath), notePath)
+        : null
+      if (warning) out(`release-check: ${warning}`)
+      continue
+    }
     problems.push(
       `${behaviour.length} file(s) under ${where} changed without an entry in ${notePath}.`,
       'An adopter ports this change by reading that note; without it the change is invisible to every copy.',

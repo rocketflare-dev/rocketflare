@@ -34,6 +34,20 @@ import {
 } from '@rocketflare/shared/plugins'
 import { describe, expect, expectTypeOf, it } from 'vitest'
 import { z } from 'zod'
+import {
+  loginMethodIssue,
+  type PluginLoginMethodDeclaration,
+  pluginLoginMethods,
+} from '@/api/auth/plugin-login-methods'
+import {
+  evaluateSsoPolicy,
+  evaluateSsoPolicyForAll,
+  ssoAllows,
+  ssoRequiredLoginPath,
+} from '@/api/auth/sso-policy'
+import { MAX_PUBLIC_MOUNT_BODY_BYTES } from '@/api/middleware/body-limit'
+import { loadConfig } from '@/config'
+import type { Database } from '@/db/client'
 import { SERVER_PLUGINS, serverPlugins } from '@/plugins/server'
 import { UI_PLUGINS, uiPlugins } from '@/plugins/ui'
 import { queryKeys } from '@/ui/lib/query-keys'
@@ -47,11 +61,13 @@ import {
   pluginIdOfPath,
   pluginImportIssue,
   publicMountIssues,
+  publicMountOptionIssues,
   queryKeyRootIssues,
   RESERVED_PLUGIN_IDS,
   staticImports,
   uiEntryIssues,
 } from '../helpers/plugins'
+import { createTestEnv } from '../mocks/bindings'
 
 const REPO_ROOT = path.resolve(__dirname, '../../../..')
 
@@ -93,6 +109,235 @@ describe('public mounts', () => {
       /public by definition/
     )
     expect(publicMountIssues('orders', [], ['/api/hooks'])).toHaveLength(1)
+  })
+
+  it('declare guards the host can enforce, and never an unbounded body', () => {
+    const at = '/api/hooks/orders'
+    expect(publicMountOptionIssues('orders', at, undefined)).toEqual([])
+    expect(publicMountOptionIssues('orders', at, { rateLimit: false })).toEqual([])
+    expect(
+      publicMountOptionIssues('orders', at, {
+        rateLimit: { max: 600, windowSeconds: 60 },
+        bodyLimitBytes: MAX_PUBLIC_MOUNT_BODY_BYTES,
+      })
+    ).toEqual([])
+    expect(
+      publicMountOptionIssues('orders', at, { rateLimit: { max: 0, windowSeconds: 60 } })
+    ).toHaveLength(1)
+    expect(
+      publicMountOptionIssues('orders', at, { rateLimit: { max: 10, windowSeconds: 0.5 } })
+    ).toHaveLength(1)
+    expect(
+      publicMountOptionIssues('orders', at, { bodyLimitBytes: MAX_PUBLIC_MOUNT_BODY_BYTES + 1 })[0]
+    ).toMatch(/exceeds/)
+    expect(publicMountOptionIssues('orders', at, { bodyLimitBytes: 0 })).toHaveLength(1)
+    expect(publicMountOptionIssues('orders', at, { bodyLimitBytes: 1.5 })).toHaveLength(1)
+  })
+})
+
+describe('login methods', () => {
+  const method = (startPath: string, id = 'sso') => ({ id, label: 'SSO', startPath })
+
+  it('start under the plugin’s own /api/hooks/<id>/ and nowhere else', () => {
+    expect(loginMethodIssue('orders', method('/api/hooks/orders/sso/start'))).toBeNull()
+    for (const bad of [
+      '/auth/oidc',
+      '/api/orders/sso',
+      '/api/hooks/billing/sso',
+      '/api/hooks/orders-x/sso',
+      '/api/hooks/orders/',
+      '/api/hooks/orders',
+      '/api/hooks/orders/../billing/x',
+      '/api/hooks/orders/sso?next=/x',
+      'https://evil.example/api/hooks/orders/sso',
+    ]) {
+      expect(loginMethodIssue('orders', method(bad)), bad).not.toBeNull()
+    }
+    expect(loginMethodIssue('orders', method('/api/hooks/orders/sso', 'Bad Id'))).not.toBeNull()
+  })
+
+  it('declare error copy only for their own <id>.<name> codes', () => {
+    const at = '/api/hooks/orders/sso'
+    const withErrors = (errors: Record<string, string>) => ({ ...method(at), errors })
+    expect(loginMethodIssue('orders', withErrors({ 'orders.not_ready': 'Not yet.' }))).toBeNull()
+    for (const code of [
+      'not_ready',
+      'sso_required',
+      'billing.not_ready',
+      'orders-x.not_ready',
+      'orders.',
+      'orders.Not-Ready',
+      'orders.a.b',
+    ]) {
+      expect(loginMethodIssue('orders', withErrors({ [code]: 'x' })), code).not.toBeNull()
+    }
+    expect(loginMethodIssue('orders', withErrors({ 'orders.x': '' }))).not.toBeNull()
+    expect(loginMethodIssue('orders', withErrors({ 'orders.x': 'y'.repeat(301) }))).not.toBeNull()
+  })
+
+  it('are dropped at runtime when stray, and namespaced on the wire', () => {
+    const cfg = loadConfig(createTestEnv())
+    const fixture = [
+      {
+        shared: { id: 'orders' },
+        loginMethods: (): PluginLoginMethodDeclaration[] => [
+          { ...method('/api/hooks/orders/sso'), errors: { 'orders.not_ready': 'Not yet.' } },
+          method('/auth/oidc', 'stray'),
+          { ...method('/api/hooks/orders/x', 'kit-copy'), errors: { sso_required: 'Reworded.' } },
+        ],
+      },
+      {
+        shared: { id: 'broken' },
+        loginMethods: () => {
+          throw new Error('boom')
+        },
+      },
+    ]
+    expect(pluginLoginMethods(fixture, cfg)).toEqual([
+      {
+        id: 'orders:sso',
+        label: 'SSO',
+        startPath: '/api/hooks/orders/sso',
+        errors: { 'orders.not_ready': 'Not yet.' },
+      },
+    ])
+  })
+
+  it('every installed plugin’s, in every APP_ENV, start under its own hooks prefix', () => {
+    const issues = (['development', 'staging', 'production'] as const).flatMap(APP_ENV => {
+      const cfg = loadConfig(createTestEnv({ APP_ENV }))
+      return serverPlugins.flatMap(p =>
+        (p.loginMethods?.(cfg) ?? []).map(m => loginMethodIssue(p.shared.id, m)).filter(Boolean)
+      )
+    })
+    expect(issues).toEqual([])
+  })
+})
+
+describe('sso policy', () => {
+  // The policy receives the db opaquely; these fixtures never touch it.
+  const db = {} as Database
+  const cfg = loadConfig(createTestEnv({ BOOTSTRAP_ADMIN_EMAILS: 'root@acme.test' }))
+  const sso = { id: 'sso', label: 'Acme SSO', startPath: '/api/hooks/acme/sso' }
+  const silent = { warn: () => {}, error: () => {} }
+  const claims = (domain: string, methodId = 'sso') => ({
+    shared: { id: 'acme' },
+    loginMethods: () => [sso],
+    ssoPolicy: async (_db: Database, email: string) =>
+      email.endsWith(`@${domain}`) ? { required: true as const, methodId, label: 'Acme' } : null,
+  })
+  const other = { shared: { id: 'other' }, ssoPolicy: async () => null }
+  const throws = {
+    shared: { id: 'broken' },
+    ssoPolicy: async () => {
+      throw new Error('connection table missing')
+    },
+  }
+
+  it('a claimed domain is required, routed to the namespaced method; anything else is not', async () => {
+    const plugins = [other, claims('acme.test')]
+    const decision = await evaluateSsoPolicy(plugins, db, cfg, 'Jane@ACME.test', silent)
+    expect(decision).toEqual({
+      required: true,
+      claims: [{ pluginId: 'acme', method: 'acme:sso', label: 'Acme' }],
+      method: 'acme:sso',
+      label: 'Acme',
+    })
+    expect(await evaluateSsoPolicy(plugins, db, cfg, 'jane@elsewhere.test', silent)).toEqual({
+      required: false,
+    })
+    expect(await evaluateSsoPolicy([], db, cfg, 'jane@acme.test')).toEqual({ required: false })
+  })
+
+  it('refuses every kit method and every OTHER plugin; lets the claiming plugin through', async () => {
+    const decision = await evaluateSsoPolicy([claims('acme.test')], db, cfg, 'j@acme.test')
+    expect(ssoAllows(decision, 'core')).toBe(false)
+    expect(ssoAllows(decision, { pluginId: 'other' })).toBe(false)
+    expect(ssoAllows(decision, { pluginId: 'acme' })).toBe(true)
+    const open = await evaluateSsoPolicy([claims('acme.test')], db, cfg, 'j@x.test')
+    expect(ssoAllows(open, 'core')).toBe(true)
+  })
+
+  it('a policy that throws fails closed for that email, attributed to the plugin that threw', async () => {
+    const errors: unknown[] = []
+    const decision = await evaluateSsoPolicy([throws], db, cfg, 'j@x.test', {
+      warn: () => {},
+      error: (...args: unknown[]) => errors.push(args),
+    })
+    expect(decision).toEqual({
+      required: true,
+      claims: [{ pluginId: 'broken', method: null, failed: true }],
+      method: null,
+    })
+    expect(errors).toHaveLength(1)
+    expect(ssoAllows(decision, 'core')).toBe(false)
+    expect(ssoAllows(decision, { pluginId: 'acme' })).toBe(false)
+    // A plugin's own IdP is not blocked by its own failure to answer.
+    expect(ssoAllows(decision, { pluginId: 'broken' })).toBe(true)
+  })
+
+  it('a malformed answer also fails closed; an undeclared method keeps the rule and drops the hint', async () => {
+    const malformed = { shared: { id: 'odd' }, ssoPolicy: async () => ({ required: 'yes' }) }
+    // biome-ignore lint/suspicious/noExplicitAny: a plugin answering outside its type is the case
+    const bad = await evaluateSsoPolicy([malformed as any], db, cfg, 'j@x.test', silent)
+    expect(bad).toMatchObject({ required: true, method: null })
+    const undeclared = await evaluateSsoPolicy(
+      [claims('acme.test', 'nope')],
+      db,
+      cfg,
+      'j@acme.test',
+      silent
+    )
+    expect(undeclared).toMatchObject({ required: true, method: null })
+  })
+
+  it('BOOTSTRAP_ADMIN_EMAILS are exempt (break-glass), even from a throwing policy', async () => {
+    const plugins = [claims('acme.test'), throws]
+    expect(await evaluateSsoPolicy(plugins, db, cfg, 'ROOT@acme.test', silent)).toEqual({
+      required: false,
+      bypassed: 'bootstrap_admin',
+    })
+  })
+
+  it('checks every distinct address of a sign-in once each', async () => {
+    let calls = 0
+    const counting = {
+      ...claims('acme.test'),
+      ssoPolicy: async (d: Database, e: string) => {
+        calls++
+        return claims('acme.test').ssoPolicy(d, e)
+      },
+    }
+    const linked = await evaluateSsoPolicyForAll(
+      [counting],
+      db,
+      cfg,
+      ['jane@gmail.test', 'JANE@acme.test', null, 'jane@gmail.test'],
+      silent
+    )
+    expect(calls).toBe(2)
+    expect(linked).toMatchObject({ required: true, method: 'acme:sso' })
+  })
+
+  it('redirects to /login with the method and never the label', async () => {
+    const decision = await evaluateSsoPolicy([claims('acme.test')], db, cfg, 'j@acme.test')
+    expect(ssoRequiredLoginPath(decision, { returnUrl: '/invite/abc' })).toBe(
+      '/login?error=sso_required&method=acme%3Asso&returnUrl=%2Finvite%2Fabc'
+    )
+    expect(ssoRequiredLoginPath({ required: false }, { returnUrl: '/' })).toBe(
+      '/login?error=sso_required'
+    )
+  })
+
+  it('every installed plugin’s policy names one of its own login methods, in development', async () => {
+    const dev = loadConfig(createTestEnv({ APP_ENV: 'development' }))
+    for (const plugin of serverPlugins) {
+      if (!plugin.ssoPolicy) continue
+      const declared = new Set((plugin.loginMethods?.(dev) ?? []).map(m => m.id))
+      // The reference plugin's probe address; a real plugin's policy answers null for it.
+      const answer = await plugin.ssoPolicy(db, 'probe@sso-required.example.test', { config: dev })
+      if (answer) expect(declared, plugin.shared.id).toContain(answer.methodId)
+    }
   })
 })
 
@@ -311,6 +556,15 @@ describe('installed plugins', () => {
         p.shared.id,
         (p.publicMounts ?? []).map(m => m[0]),
         (p.mounts ?? []).map(m => m[0])
+      )
+    )
+    expect(issues).toEqual([])
+  })
+
+  it('declares public-mount guards within the host ceilings', () => {
+    const issues = serverPlugins.flatMap(p =>
+      (p.publicMounts ?? []).flatMap(([prefix, , options]) =>
+        publicMountOptionIssues(p.shared.id, prefix, options)
       )
     )
     expect(issues).toEqual([])

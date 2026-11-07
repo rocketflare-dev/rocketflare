@@ -229,6 +229,69 @@ const coreConfigSchema = z.object({
    * `email_verified: false` is refused either way.
    */
   OIDC_TRUST_EMAIL: optionalBoolean(false),
+  /**
+   * `true` → the OIDC issuer manages tenancy (IdP-managed tenancy, `api/services/idp-tenancy.ts`,
+   * docs/CONCEPTS.md §2): every OIDC sign-in reconciles tenants, memberships and the global-admin
+   * flag from the verified id_token, admission comes from those claims rather than `SIGNUP_MODE`,
+   * an OIDC session ends `OIDC_SESSION_MAX_AGE_DAYS` after sign-in however active it is, and the
+   * issuer's identity events are applied between sign-ins (`IDENTITY_WEBHOOK_SECRET`). Requires
+   * `OIDC_ISSUER` + `OIDC_CLIENT_ID` and `TENANCY_MODE=multi`.
+   */
+  OIDC_MANAGED_TENANCY: optionalBoolean(false),
+  /** The id_token claim holding the person's orgs: `[{ id, name, slug?, role }]`. */
+  OIDC_ORGS_CLAIM: z.preprocess(
+    value => (typeof value === 'string' && value.trim() === '' ? undefined : value),
+    z.string().min(1).default('orgs')
+  ),
+  /**
+   * Issuer role → app role, as `issuerRole:appRole` pairs separated by commas; the app role is
+   * `admin` or `member`. An org whose role is not listed is skipped (and logged). Default: the
+   * issuer's `admin` and `member` mean the same here.
+   */
+  OIDC_ROLE_MAP: z.preprocess(
+    value => (typeof value === 'string' && value.trim() === '' ? undefined : value),
+    z
+      .string()
+      .default('admin:admin,member:member')
+      .transform((text, ctx) => {
+        const map: Record<string, 'admin' | 'member'> = {}
+        for (const pair of text
+          .split(',')
+          .map(p => p.trim())
+          .filter(Boolean)) {
+          const [from, to, ...rest] = pair.split(':').map(p => p.trim())
+          if (!from || (to !== 'admin' && to !== 'member') || rest.length > 0) {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              message: `"${pair}" is not issuerRole:admin or issuerRole:member`,
+            })
+            return z.NEVER
+          }
+          map[from] = to
+        }
+        return map
+      })
+  ),
+  /**
+   * A boolean id_token claim that admits the person even with no orgs (staff who may use every
+   * app, say). Unset → only a person with an org, or a global admin, is admitted by the claims.
+   */
+  OIDC_ADMIT_CLAIM: optionalString,
+  /**
+   * A boolean id_token claim that makes the person a global admin while it is true. Unset → the
+   * claims never grant global admin.
+   */
+  OIDC_GLOBAL_ADMIN_CLAIM: optionalString,
+  /**
+   * Under `OIDC_MANAGED_TENANCY`, an OIDC session ends this many days after sign-in, however active
+   * the person is, so everyone is reconciled from fresh claims at least this often. Keep it no
+   * longer than the issuer keeps undelivered identity events. At most 30, the cookie's own life: the
+   * cookie is set once, at sign-in.
+   */
+  OIDC_SESSION_MAX_AGE_DAYS: z.preprocess(
+    value => (value === undefined || value === null || String(value).trim() === '' ? 7 : value),
+    z.coerce.number().int().positive().max(30)
+  ),
 
   // ---- Secrets (.dev.vars locally, `wrangler secret put` deployed) — all optional here;
   //      features gate on presence (zero-creds first run) or demand them at use time. -------
@@ -249,6 +312,18 @@ const coreConfigSchema = z.object({
   ),
   /** AES-GCM key for OAuth tokens at rest. */
   OAUTH_ENCRYPTION_KEY: optionalSecret(32),
+  /**
+   * The issuer's identity-event signing secret (Standard Webhooks, `whsec_…`). Set under
+   * `OIDC_MANAGED_TENANCY` → `POST /api/identity/events` accepts events signed with it; unset → that
+   * route answers 404.
+   */
+  IDENTITY_WEBHOOK_SECRET: z.preprocess(
+    value => (typeof value === 'string' && value.trim() === '' ? undefined : value),
+    z
+      .string()
+      .regex(/^whsec_[A-Za-z0-9+/]{32,}={0,2}$/, 'a Standard Webhooks secret: whsec_ and base64')
+      .optional()
+  ),
   RESEND_API_KEY: optionalString,
   /** Comma-separated emails promoted to global admin on first VERIFIED login. */
   BOOTSTRAP_ADMIN_EMAILS: csvList,
@@ -296,6 +371,24 @@ const configSchema = coreConfigSchema.extend(pluginConfigShape).superRefine((cfg
       code: z.ZodIssueCode.custom,
       path: ['DATABASE_URL'],
       message: 'DATABASE_DRIVER=neon needs the DATABASE_URL secret (the pooled Neon URI)',
+    })
+  }
+  // Managed tenancy reads the issuer's id_token — without an issuer it reads nothing.
+  if (cfg.OIDC_MANAGED_TENANCY && !(cfg.OIDC_ISSUER && cfg.OIDC_CLIENT_ID)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['OIDC_MANAGED_TENANCY'],
+      message: 'OIDC_MANAGED_TENANCY=true needs OIDC_ISSUER and OIDC_CLIENT_ID',
+    })
+  }
+  // One tenant per issuer org: single-tenant mode has exactly one, so the two cannot both hold.
+  if (cfg.OIDC_MANAGED_TENANCY && cfg.TENANCY_MODE === 'single') {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['OIDC_MANAGED_TENANCY'],
+      message:
+        'OIDC_MANAGED_TENANCY=true needs TENANCY_MODE=multi (it creates one tenant per issuer org); ' +
+        'single-tenant mode signs OIDC users into its one tenant without it — unset it',
     })
   }
 }) as unknown as typeof coreConfigSchema
@@ -356,6 +449,9 @@ export function configuredOAuthProviders(cfg: AppConfig): OAuthProviderName[] {
 
 /** An OIDC issuer is configured — issuer + client id (the secret is optional: public clients). */
 export const hasOidc = (cfg: AppConfig): boolean => Boolean(cfg.OIDC_ISSUER && cfg.OIDC_CLIENT_ID)
+
+/** IdP-managed tenancy in force (loadConfig has already refused it without an issuer). */
+export const isIdpManaged = (cfg: AppConfig): boolean => cfg.OIDC_MANAGED_TENANCY && hasOidc(cfg)
 
 /** `AUTH_OIDC_ONLY` in force (loadConfig has already refused it without an issuer). */
 export const isOidcOnly = (cfg: AppConfig): boolean => cfg.AUTH_OIDC_ONLY && hasOidc(cfg)

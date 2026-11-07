@@ -55,6 +55,29 @@ export type SessionResponse = z.infer<typeof sessionResponseSchema>
 export const oauthProviderNameSchema = z.enum(['google', 'microsoft', 'oidc'])
 export type OAuthProviderName = z.infer<typeof oauthProviderNameSchema>
 
+/**
+ * A sign-in method an installed plugin contributes (`ServerPlugin.loginMethods`) — an SSO
+ * connection the kit knows nothing about. The login page renders a button that NAVIGATES (full
+ * page) to `startPath`, which is always under `/api/hooks/<plugin id>/`: the plugin's own public
+ * route starts its flow and finishes it with `identity.signIn`. `askEmail` puts an email field in
+ * front of the button and sends it as `?email=` (home-realm discovery: the plugin picks the
+ * connection from the domain).
+ */
+export const pluginLoginMethodSchema = z.object({
+  /** `<plugin id>:<method id>` on the wire, so two plugins' methods never share a key. */
+  id: z.string().min(1).max(120),
+  label: z.string().min(1).max(80),
+  startPath: z.string().regex(/^\/api\/hooks\/[a-z][a-z0-9-]*\/[^?#]*$/),
+  askEmail: z.boolean().optional(),
+  /**
+   * The login page's copy for the `?error=<code>` codes this method's routes redirect with. Every
+   * code is `<plugin id>.<name>` (the host drops a method declaring any other), so a plugin can
+   * never restyle a kit code; the page shows this server-sent text, never text from the URL.
+   */
+  errors: z.record(z.string(), z.string().min(1).max(300)).optional(),
+})
+export type PluginLoginMethod = z.infer<typeof pluginLoginMethodSchema>
+
 /** Which login methods the server has configured — drives the login page. */
 export const authMethodsSchema = z.object({
   magicLink: z.boolean(),
@@ -69,6 +92,11 @@ export const authMethodsSchema = z.object({
    * Hides, not disables — the magic-link endpoint stays live for invitations and guests.
    */
   oidcOnly: z.boolean().optional(),
+  /**
+   * Present only when an installed plugin contributes a method. Shown even under `oidcOnly`: a
+   * plugin's method is single sign-on too, and `AUTH_OIDC_ONLY` hides the kit's NON-SSO methods.
+   */
+  pluginMethods: z.array(pluginLoginMethodSchema).optional(),
 })
 export type AuthMethods = z.infer<typeof authMethodsSchema>
 

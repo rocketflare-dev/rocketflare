@@ -53,6 +53,14 @@ OBSERVABILITY_SPAN_RETENTION_DAYS = "14"   # Tracing (D32): days of ai_spans the
 #   AUTH_OIDC_ONLY = "false"                # "true" = login page shows only the SSO button, other methods hidden
 #   OIDC_TRUST_EMAIL = "false"              # "true" = a MISSING email_verified counts as verified (single-tenant Entra); explicit false is always refused
 #   The client secret is a SECRET: `wrangler secret put OIDC_CLIENT_SECRET` (omit for a public client)
+#   IdP-managed tenancy (SETUP.md 2.3c) — tenants and roles from the id_token; needs TENANCY_MODE = "multi":
+#   OIDC_MANAGED_TENANCY = "true"
+#   OIDC_ORGS_CLAIM = "orgs"                # claim holding [{ id, name, slug?, role }]
+#   OIDC_ROLE_MAP = "admin:admin,member:member"   # issuerRole:admin|member pairs
+#   OIDC_ADMIT_CLAIM = ""                   # optional boolean claim admitting a person with no orgs
+#   OIDC_GLOBAL_ADMIN_CLAIM = ""            # optional boolean claim granting global admin
+#   OIDC_SESSION_MAX_AGE_DAYS = "7"         # every session's hard cap (at most 30)
+#   Identity events: `wrangler secret put IDENTITY_WEBHOOK_SECRET` (whsec_…) enables POST /api/identity/events
 # Secrets are NOT here: `wrangler secret put <NAME>` for every non-var in .dev.vars.example
 
 [placement]

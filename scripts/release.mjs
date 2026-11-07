@@ -48,6 +48,7 @@ import {
   defaultPluginEntries,
   defaultPluginProblems,
   isKitManifest,
+  noteLengthWarning,
   parseNote,
   prependChangelogSection,
   VERSION_RE,
@@ -454,6 +455,9 @@ function main(argv) {
       )
       return 1
     }
+    // Released anyway — a guide, not a gate — but said, so the next one is cut sooner.
+    const tooLong = noteLengthWarning(unreleased, unreleasedPath)
+    if (tooLong) out(tooLong)
     const notes = releaseNotes(target.notesDir, { root: repoRoot })
     const previous = notes.length > 0 ? notes[notes.length - 1].version : null
     jobs.push({

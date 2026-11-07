@@ -74,8 +74,9 @@ describe('Login', () => {
       expect(screen.getByRole('alert')).toHaveTextContent(LOGIN_ERROR_COPY[code])
       unmount()
     }
+    // An unknown code may be a plugin's: the generic line waits for /auth/methods.
     render('/login?error=something_else')
-    expect(screen.getByRole('alert')).toHaveTextContent('Sign in failed')
+    expect(await screen.findByRole('alert')).toHaveTextContent('Sign in failed')
   })
 
   it('OAuth is a full-page redirect carrying returnUrl', async () => {
@@ -204,6 +205,126 @@ describe('Login', () => {
       await screen.findByRole('button', { name: 'Continue with Acme SSO' })
       expect(screen.getByRole('button', { name: /Continue with Google/ })).toBeInTheDocument()
       expect(screen.getByLabelText('Email address')).toBeInTheDocument()
+      expect(hardNavigate).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('plugin methods', () => {
+    const PLUGIN_METHODS = {
+      magicLink: false,
+      providers: ['oidc'],
+      devLogin: false,
+      oidc: { label: 'Acme SSO' },
+      oidcOnly: true,
+      pluginMethods: [
+        { id: 'sso:saml', label: 'Sign in with SAML', startPath: '/api/hooks/sso/start' },
+        {
+          id: 'sso:discover',
+          label: 'Find my SSO',
+          startPath: '/api/hooks/sso/discover',
+          askEmail: true,
+        },
+      ],
+    }
+
+    it('render under oidcOnly too, and navigate to startPath with returnUrl', async () => {
+      render('/login?returnUrl=%2Fdocuments', PLUGIN_METHODS)
+      fireEvent.click(await screen.findByRole('button', { name: 'Sign in with SAML' }))
+      expect(hardNavigate).toHaveBeenCalledWith('/api/hooks/sso/start?returnUrl=%2Fdocuments')
+      expect(screen.getByRole('button', { name: 'Continue with Acme SSO' })).toBeInTheDocument()
+    })
+
+    it('askEmail validates the address, then sends it as ?email=', async () => {
+      render('/login', PLUGIN_METHODS)
+      const input = await screen.findByLabelText('Work email for Find my SSO')
+      fireEvent.click(screen.getByRole('button', { name: 'Find my SSO' }))
+      expect(hardNavigate).not.toHaveBeenCalled()
+      expect(await screen.findByText('Enter a valid email address')).toBeInTheDocument()
+      fireEvent.change(input, { target: { value: ' Jane@Acme.test ' } })
+      fireEvent.click(screen.getByRole('button', { name: 'Find my SSO' }))
+      expect(hardNavigate).toHaveBeenCalledWith(
+        '/api/hooks/sso/discover?returnUrl=%2F&email=jane%40acme.test'
+      )
+    })
+  })
+
+  describe('a plugin’s own error codes', () => {
+    const METHODS = {
+      ...ALL_METHODS,
+      pluginMethods: [
+        {
+          id: 'sso:sso',
+          label: 'Sign in with SSO',
+          startPath: '/api/hooks/sso/start',
+          askEmail: true,
+          errors: { 'sso.not_ready': 'Single sign-on for this domain is not set up yet.' },
+        },
+      ],
+    }
+
+    it('shows the method’s copy for its code and gives it the email back', async () => {
+      render('/login?error=sso.not_ready&email=jane%40acme.test', METHODS)
+      expect(
+        await screen.findByText('Single sign-on for this domain is not set up yet.')
+      ).toBeInTheDocument()
+      expect(screen.getByLabelText('Work email for Sign in with SSO')).toHaveValue('jane@acme.test')
+    })
+
+    it('an undeclared plugin code shows the generic line and prefills nothing', async () => {
+      render('/login?error=sso.made_up&email=jane%40acme.test', METHODS)
+      expect(await screen.findByLabelText('Work email for Sign in with SSO')).toHaveValue('')
+      expect(screen.getByText('Sign in failed. Please try again.')).toBeInTheDocument()
+    })
+  })
+
+  describe('sso_required', () => {
+    const METHODS = {
+      ...ALL_METHODS,
+      pluginMethods: [
+        {
+          id: 'sso:discover',
+          label: 'Find my SSO',
+          startPath: '/api/hooks/sso/discover',
+          askEmail: true,
+        },
+      ],
+    }
+
+    it('offers the named plugin method directly, email prefilled, label from /auth/methods', async () => {
+      render(
+        '/login?error=sso_required&method=sso%3Adiscover&email=jane%40acme.test&returnUrl=%2Finvite%2Fabc',
+        METHODS
+      )
+      expect(await screen.findByText(LOGIN_ERROR_COPY.sso_required as string)).toBeInTheDocument()
+      const offered = await screen.findByTestId('sso-required-method')
+      expect(offered).toHaveTextContent('Find my SSO')
+      expect(screen.getAllByLabelText('Work email for Find my SSO')).toHaveLength(1)
+      expect(screen.getByLabelText('Work email for Find my SSO')).toHaveValue('jane@acme.test')
+      fireEvent.click(screen.getByRole('button', { name: 'Find my SSO' }))
+      expect(hardNavigate).toHaveBeenCalledWith(
+        '/api/hooks/sso/discover?returnUrl=%2Finvite%2Fabc&email=jane%40acme.test'
+      )
+    })
+
+    it('an unknown method shows the message and no direct button', async () => {
+      render('/login?error=sso_required&method=evil%3Ax', METHODS)
+      expect(await screen.findByText(LOGIN_ERROR_COPY.sso_required as string)).toBeInTheDocument()
+      expect(screen.queryByTestId('sso-required-method')).not.toBeInTheDocument()
+    })
+
+    it('dev login refused with 403 sso_required lands on the same screen', async () => {
+      const devLoginRefusal = new Response(
+        JSON.stringify({
+          error: 'This organisation requires single sign-on',
+          statusCode: 403,
+          code: 'sso_required',
+          details: { method: 'sso:discover' },
+        }),
+        { status: 403, headers: { 'Content-Type': 'application/json' } }
+      )
+      render('/login', METHODS, { 'POST /auth/dev-login': devLoginRefusal })
+      fireEvent.click(await screen.findByRole('button', { name: 'Owner' }))
+      expect(await screen.findByTestId('sso-required-method')).toHaveTextContent('Find my SSO')
       expect(hardNavigate).not.toHaveBeenCalled()
     })
   })

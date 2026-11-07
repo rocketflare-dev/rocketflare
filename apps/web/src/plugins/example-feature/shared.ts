@@ -19,3 +19,9 @@ export const EXAMPLE_PING_LINK_PURPOSE = 'example-feature:ping-link'
 
 /** How long a ping link stays valid. Short: it is a capability, and anybody holding it may use it. */
 export const EXAMPLE_PING_LINK_TTL_SECONDS = 600
+
+/** The `signState` purpose of the example SSO's pretend assertion (`api/sso.ts`). */
+export const EXAMPLE_SSO_PURPOSE = 'example-feature:sso-assertion'
+
+/** How long that assertion is good for: a real IdP's are minutes, and replay is the threat. */
+export const EXAMPLE_SSO_TTL_SECONDS = 300

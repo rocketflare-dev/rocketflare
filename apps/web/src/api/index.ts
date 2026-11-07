@@ -8,12 +8,13 @@
 import type { Hono, MiddlewareHandler } from 'hono'
 import { serverPlugins } from '../plugins/server'
 import { authMiddleware, globalAdminMiddleware } from './middleware/auth'
-import { isUploadPath, jsonBodyLimit } from './middleware/body-limit'
+import { apiBodyLimit, jsonBodyLimit } from './middleware/body-limit'
 import { configMiddleware } from './middleware/config'
 import { corsMiddleware } from './middleware/cors'
 import { csrfProtection } from './middleware/csrf'
 import { databaseMiddleware } from './middleware/database'
 import { errorHandler, notFoundBody, notFoundHandler } from './middleware/error-handler'
+import { mountPublicRoutes, publicBodyLimitOverrides } from './middleware/public-mounts'
 import { authRateLimit } from './middleware/rate-limit'
 import { requestIdMiddleware, requestLogger } from './middleware/request-logger'
 import { securityHeaders } from './middleware/security-headers'
@@ -36,6 +37,7 @@ import { feedbackRouter } from './routes/feedback'
 import { filesRouter } from './routes/files'
 import { groupsRouter } from './routes/groups'
 import { healthRouter } from './routes/health'
+import { identityEventsRouter } from './routes/identity-events'
 import { invitationsRouter } from './routes/invitations'
 import { inviteRouter } from './routes/invite'
 import { keysRouter } from './routes/keys'
@@ -51,6 +53,9 @@ import { isApiPath } from './utils/routes/api-prefixes'
 import { createRouter } from './utils/routes/router'
 
 const app = createRouter()
+
+/** Every installed plugin's unauthenticated mounts — read twice below (body cap, then routes). */
+const publicMounts = serverPlugins.flatMap(p => p.publicMounts ?? [])
 
 // 1. Error envelope first so every later failure (including config validation) uses it.
 app.onError(errorHandler)
@@ -72,9 +77,10 @@ app.use('*', requestIdMiddleware, requestLogger)
 app.use('*', configMiddleware)
 app.use('*', securityHeaders)
 
-// 5. Reject oversized bodies before any parsing or DB work. The upload route mounts its own
-//    (larger) limit — see middleware/body-limit.ts.
-app.use('/api/*', (c, next) => (isUploadPath(c.req.path) ? next() : jsonBodyLimit(c, next)))
+// 5. Reject oversized bodies before any parsing or DB work. The upload routes mount their own
+//    (larger) limit, and a public mount's `bodyLimitBytes` replaces the 1 MB cap beneath its
+//    prefix — see middleware/body-limit.ts.
+app.use('/api/*', apiBodyLimit(publicBodyLimitOverrides(publicMounts)))
 app.use('/auth/*', jsonBodyLimit)
 
 // 6–7. CORS answers preflights before CSRF can reject them; CSRF is cookie-only, no DB.
@@ -89,10 +95,13 @@ app.use('*', databaseMiddleware)
 app.use('/api/*', tracerMiddleware)
 
 // 10. Mounts — auth is applied PER MOUNT so the public surface is enumerable: health, /auth/*,
-//    /api/invite/:token (details; accept resolves the cookie itself). `/api/admin/*` is the only
-//    tenant-free cross-tenant path (globalAdminMiddleware); everything else is `authMiddleware`.
+//    /api/invite/:token (details; accept resolves the cookie itself), /api/identity/events
+//    (signed by the OIDC issuer). `/api/admin/*` is the only tenant-free cross-tenant path
+//    (globalAdminMiddleware); everything else is `authMiddleware`.
 app.route('/api', healthRouter)
 app.route('/auth', authRouter)
+// The OIDC issuer's signed identity events; the signature is the authentication.
+app.route('/api/identity', identityEventsRouter)
 app.use('/api/invite/:token/accept', authRateLimit)
 app.route('/api/invite', inviteRouter)
 app.use('/api/admin/*', globalAdminMiddleware)
@@ -108,10 +117,9 @@ app.route('/ws', wsRouter)
 // A plugin's PUBLIC mounts — consent callbacks and webhooks a third party calls with no
 // session. Only under `/api/hooks/<plugin id>` (the config test refuses anything else, and refuses
 // an authed mount there), so this line is the whole of the plugin-owned unauthenticated surface.
-// Before the authed table, which never claims `/api/hooks`, so order is belt and braces.
-for (const [prefix, router] of serverPlugins.flatMap(p => p.publicMounts ?? [])) {
-  app.route(prefix, router)
-}
+// Before the authed table, which never claims `/api/hooks`, so order is belt and braces. Each is
+// rate-limited per IP in its own bucket unless it opts out (`middleware/public-mounts.ts`).
+mountPublicRoutes(app, publicMounts)
 const mounts: readonly (readonly [string, Hono<AppEnv>, MiddlewareHandler?])[] = [
   ['/api/me', meRouter],
   ['/api/tenant', tenantRouter],

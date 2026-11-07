@@ -10,7 +10,7 @@
  * The exports below are grouped by the file they come from and sorted by the formatter, so read
  * them there: `./http` is a request, `./jobs` is background work, `./ai` is agents and tools,
  * `./access` is row visibility, `./events` is nudges and notifications, `./secrets` is a tenant's
- * credentials at rest.
+ * credentials at rest, `./identity` is signing a person in and provisioning their memberships.
  *
  * **Three things are deliberately NOT here.**
  *
@@ -94,10 +94,23 @@ export type {
   DetachedCtx,
   PluginMount,
   PluginPublicMount,
+  PluginPublicMountOptions,
   RequestCtx,
   RequestVisibility,
 } from './http'
 export { createRouter, pageWindow, requestCtx, validate } from './http'
+export type {
+  IdpAppRole,
+  PluginDeprovisionResult,
+  PluginIdentity,
+  PluginIdentityUser,
+  PluginLoginMethodDeclaration,
+  PluginMember,
+  PluginProvision,
+  PluginSignInInput,
+  SsoRequirement,
+} from './identity'
+export { identityFor, provisionFor } from './identity'
 export type {
   BackgroundMethods,
   CronCtx,

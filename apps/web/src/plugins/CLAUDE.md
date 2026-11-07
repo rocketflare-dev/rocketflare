@@ -11,7 +11,7 @@ deleting them. Nothing else in the host ever names a plugin, which is what makes
 | Barrel | Exports | Read by |
 |---|---|---|
 | `packages/shared/src/plugins/index.ts` | `SHARED_PLUGINS` / `sharedPlugins` | the five composers: `ai/agents.ts`, `jobs.ts`, `permissions.ts`, `features.ts`, `realtime.ts` — plus `apps/web/src/config.ts` |
-| `server.ts` | `SERVER_PLUGINS` / `serverPlugins` | `api/index.ts`, `utils/routes/api-prefixes.ts`, `queues/jobs.ts`, `scheduled.ts`, `agents/registry.ts`, `agents/tools/index.ts`, `prompts.ts`, `permissions/abilities.ts`, `utils/db/tenant-helpers.ts`, `services/access.ts`, `scripts/seed.ts`, the `rls-coverage` and unscoped-allowlist tests (never `db/schema/rls.ts` — a cycle) |
+| `server.ts` | `SERVER_PLUGINS` / `serverPlugins` | `api/index.ts`, `utils/routes/api-prefixes.ts`, `queues/jobs.ts`, `scheduled.ts`, `agents/registry.ts`, `agents/tools/index.ts`, `prompts.ts`, `permissions/abilities.ts`, `utils/db/tenant-helpers.ts`, `services/access.ts`, `routes/auth/session.ts` (`loginMethods`), `routes/auth/sso.ts` (`ssoPolicy`), `scripts/seed.ts`, the `rls-coverage` and unscoped-allowlist tests (never `db/schema/rls.ts` — a cycle) |
 | `ui.ts` | `UI_PLUGINS` / `uiPlugins` | `App.tsx`, `SideNav.tsx`, `SettingsLayout.tsx`, `lib/query-keys.ts`, `pages/agents/forms/index.ts` |
 | `schema.ts` | one `export *` per plugin | one `export *` line in `db/schema/index.ts` (position irrelevant — a duplicated name is TS2308) |
 | `worker-exports.ts` | one `export *` per plugin | one `export *` line in `src/worker.ts` — the Worker's ENTRY module, which is the only place Cloudflare resolves a binding's `class_name` from |
@@ -86,6 +86,42 @@ in the host. Each half is checked where it is written; only the merge is cast.
   `ctx.features(tenantId)` (a `requireFeature` gate reads `auth.features`, which does not exist
   here) and answers by enqueueing. `tests/config/plugins.test.ts` refuses a public mount outside
   the plugin's own `/api/hooks/<id>` and any authed mount under `/api/hooks`.
+  The HOST guards each one (`api/middleware/public-mounts.ts`): a per-IP KV rate limit in a
+  bucket named after the prefix (default 120 / 60 s; a no-op without `RATE_LIMIT_KV`) and the
+  1 MB body cap. The optional third tuple element changes either —
+  `['/api/hooks/<id>/scim', router, { rateLimit: { max, windowSeconds } | false, bodyLimitBytes }]`.
+  `false` is for a sender with fixed IPs that batches, whose signature is the gate;
+  `bodyLimitBytes` (≤ 10 MB, the config test refuses more) REPLACES the 1 MB cap beneath the
+  prefix for every content type — JSON, form-encoded (a SAML POST), `application/scim+json`.
+- **It signs people in through `identityFor(c, id)`, never by writing a session.** A public
+  handler that has PROVED a person (a verified SAML assertion, an id_token) returns
+  `identityFor(c, '<id>').signIn({ subject, email, emailVerified, name, tenantId?, role? })` — the
+  kit links the identity under provider `plugin:<id>` (the plugin namespaces `subject` itself,
+  `<connection>|<nameId>`), admits, upserts an `idp` membership, mints the session and answers the
+  redirect, refusals included. `provisionFor(ctx, '<id>')` is the cookie-free half for SCIM or a
+  sync job (`findUser`, `upsertUser`, `setMembership`, `removeMembership`, `deprovision`,
+  `listMembers`). `removeMembership` drops the `idp` row and unpins sessions; `deprovision` is a
+  LEAVER (SCIM `active: false`) — the same plus deleting the sessions pinned to that tenant; in
+  `multi` never a block (their other tenants, sessions and keys survive). Under
+  `TENANCY_MODE=single` the one tenant is the deployment: every method takes only ITS id (another
+  is a missing tenant), and `deprovision` BLOCKS the leaver (`blocked: true`, `blocked_source =
+  'plugin:<id>'`, every session ended) — reactivate with `setMembership`, the only call that lifts
+  YOUR block (never an admin's); `upsertUser` and `signIn` do not. Both
+  trust the caller about the tenant, exactly as `PublicCtx` does — prove it first.
+  An existing account with the same email is attached only with `linkByEmail: true` (else
+  `account_exists`) — set it ONLY for a domain the connection proved it owns, or one tenant's IdP
+  can sign in as anyone.
+  `ServerPlugin.loginMethods(cfg)` puts a button on the login page whose `startPath` must be under
+  `/api/hooks/<id>/` (`tests/config/plugins.test.ts`). Its `errors` give the login page copy for
+  your own `?error=<id>.<name>` codes — redirect a failed sign-in navigation to
+  `/login?error=<id>.x&email=` rather than answering JSON to a browser. `example-feature/api/sso.ts` is the
+  dev-only worked example.
+  **SSO required is `ServerPlugin.ssoPolicy(db, email, { config })`**: answer `{ required: true,
+  methodId }` (one of YOUR `loginMethods` ids) for an address whose domain your connection proved
+  it owns, else `null`. The kit then refuses that address a magic link, Google, Microsoft, OIDC,
+  dev login and every other plugin's `signIn`, and routes the person to your method; your own
+  `signIn` passes. Asked once per sign-in attempt — one indexed lookup. A throw fails CLOSED for
+  that email; `BOOTSTRAP_ADMIN_EMAILS` are exempt (break-glass). `example-feature/api/sso-policy.ts`.
 - **It puts text into the knowledge base through `ingestDocument` / `ingestDocumentFile`**, never
   by writing `documents` rows. Pass `source: '<id>:<kind>'` and the item's upstream
   `externalId`, and a re-sync UPDATES the row rather than adding one; `deleteIngestedDocument`

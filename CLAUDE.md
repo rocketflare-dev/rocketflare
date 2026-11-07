@@ -146,7 +146,10 @@ mints a tenant API key `cli:<host>` → `?key=&tenant_id=&tenant_name=`; stored 
 consulted only for a flag marked `environmentGated`; the rollout state itself lives in Postgres) ·
 `OIDC_ISSUER`/`OIDC_CLIENT_ID`/`OIDC_LABEL`/`OIDC_SCOPES`/`AUTH_OIDC_ONLY`/`OIDC_TRUST_EMAIL`
 (optional SSO through any OIDC issuer, declared only when used — `SETUP.md` 2.3b; secret
-`OIDC_CLIENT_SECRET`).
+`OIDC_CLIENT_SECRET`) · `OIDC_MANAGED_TENANCY` +
+`OIDC_ORGS_CLAIM`/`OIDC_ROLE_MAP`/`OIDC_ADMIT_CLAIM`/`OIDC_GLOBAL_ADMIN_CLAIM`/`OIDC_SESSION_MAX_AGE_DAYS`
+(IdP-managed tenancy: tenants and roles from the id_token, `SETUP.md` 2.3c; secret
+`IDENTITY_WEBHOOK_SECRET` for its identity events).
 
 Rules (auto-loaded by path): `.claude/rules/api.md` · database.md · ui.md · cli.md · testing.md ·
 code-quality.md · cloudflare.md. Runbooks: `docs/DEPLOY.md` · `docs/RLS.md`

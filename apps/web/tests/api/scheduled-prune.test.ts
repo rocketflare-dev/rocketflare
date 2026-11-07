@@ -126,7 +126,8 @@ describe('pruneExpired', () => {
     const ctx = createExecutionContext()
     const reports = await dispatchScheduled('0 4 * * *', createTestEnv(), ctx)
     await waitOnExecutionContext(ctx)
-    expect(reports).toEqual([
+    // Core first; an installed plugin may append its own tasks to a core cron.
+    expect(reports.slice(0, 2)).toEqual([
       expect.objectContaining({ task: 'pruneExpired', status: 'ok' }),
       expect.objectContaining({ task: 'pruneAiSpans', status: 'ok' }),
     ])

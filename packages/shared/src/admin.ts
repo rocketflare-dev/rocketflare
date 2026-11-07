@@ -18,6 +18,8 @@ export const adminTenantListItemSchema = z.object({
   seedDataCreated: z.boolean(),
   lastAccessedAt: z.coerce.date().nullable(),
   createdAt: z.coerce.date(),
+  /** The OIDC issuer's org this tenant mirrors (`tenants.external_org_id`); null: none. */
+  externalOrgId: z.string().nullable(),
 })
 export type AdminTenantListItem = z.infer<typeof adminTenantListItemSchema>
 
@@ -41,8 +43,19 @@ export const adminTenantDetailSchema = adminTenantListItemSchema.extend({
   members: z.array(adminTenantMemberSchema),
   /** Whether the calling admin currently holds a `support` membership here. */
   supportAccess: z.boolean(),
+  /** Whether tenants follow the OIDC issuer's orgs (`OIDC_MANAGED_TENANCY`). */
+  idpManaged: z.boolean(),
 })
 export type AdminTenantDetail = z.infer<typeof adminTenantDetailSchema>
+
+/**
+ * Link a tenant to the OIDC issuer's org (or unlink it with null), so sign-ins with that org land
+ * in this tenant rather than creating one. An org id is linked to at most one tenant.
+ */
+export const setTenantExternalOrgRequestSchema = z.object({
+  externalOrgId: z.string().trim().min(1).max(200).nullable(),
+})
+export type SetTenantExternalOrgRequest = z.infer<typeof setTenantExternalOrgRequestSchema>
 
 export const suspendTenantRequestSchema = z.object({
   suspended: z.boolean(),
@@ -60,6 +73,12 @@ export const adminUserListItemSchema = z.object({
   emailVerifiedAt: z.coerce.date().nullable(),
   lastLoginAt: z.coerce.date().nullable(),
   blockedAt: z.coerce.date().nullable(),
+  /**
+   * Who blocked them: `manual` (this console), `plugin:<id>` (that plugin's identity provider
+   * deprovisioned them, single-tenant mode — its reactivation lifts it), null when not blocked or
+   * blocked before the source was recorded (treated as manual).
+   */
+  blockedSource: z.string().nullable(),
   tenantCount: z.number().int(),
   createdAt: z.coerce.date(),
 })

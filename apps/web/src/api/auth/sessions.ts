@@ -2,9 +2,10 @@
  * DB-backed cookie sessions: the cookie holds a random token, the row holds its SHA-256.
  * `resolveSession` is the ONE query behind every cookie-authenticated request — session + user +
  * best membership + tenant + the membership's groups + pending access request through LATERAL
- * joins, so the auth middleware costs one round trip however
- * far the Worker is from Postgres. Sliding 30-day expiry: `touchSession` extends at most hourly (SQL-throttled) and is
- * called through `waitUntil`, never awaited on the response path.
+ * joins, so the auth middleware costs one round trip however far the Worker is from Postgres.
+ * Sliding 30-day expiry, never past the session's own `max_expires_at` when it has one (an OIDC
+ * sign-in under `OIDC_MANAGED_TENANCY`): `touchSession` extends at most hourly (SQL-throttled) and
+ * is called through `waitUntil`, never awaited on the response path.
  */
 import type { FeatureFlagEvaluation } from '@rocketflare/shared/features'
 import type { GroupRef } from '@rocketflare/shared/groups'
@@ -21,6 +22,8 @@ export interface CreateSessionInput {
   selectedTenantId?: string | null
   ip?: string | null
   userAgent?: string | null
+  /** How long after sign-in the session ends however active it is (stored as `max_expires_at`). */
+  maxAgeMs?: number
 }
 
 export interface CreatedSession {
@@ -35,7 +38,9 @@ export async function createSession(
   input: CreateSessionInput
 ): Promise<CreatedSession> {
   const token = randomToken(32)
-  const expiresAt = new Date(Date.now() + SESSION_TTL_MS)
+  const now = Date.now()
+  const maxExpiresAt = input.maxAgeMs === undefined ? null : new Date(now + input.maxAgeMs)
+  const expiresAt = new Date(Math.min(now + SESSION_TTL_MS, maxExpiresAt?.getTime() ?? Infinity))
   const [row] = await db
     .insert(userSessions)
     .values({
@@ -43,6 +48,7 @@ export async function createSession(
       tokenHash: await hashToken(token),
       selectedTenantId: input.selectedTenantId ?? null,
       expiresAt,
+      maxExpiresAt,
       ip: input.ip ?? null,
       userAgent: input.userAgent?.slice(0, 512) ?? null,
     })
@@ -85,9 +91,11 @@ interface SessionRow {
   name: string
   avatar_url: string | null
   is_global_admin: boolean
+  global_admin_source: User['globalAdminSource']
   email_verified_at: Date | string | null
   last_login_at: Date | string | null
   blocked_at: Date | string | null
+  blocked_source: User['blockedSource']
   user_created_at: Date | string
   user_updated_at: Date | string
   membership_tenant_id: string | null
@@ -137,8 +145,8 @@ export async function resolveSession(db: Database, token: string): Promise<Resol
       us.last_seen_at,
       us.selected_tenant_id,
       u.id                     AS user_id,
-      u.email, u.name, u.avatar_url, u.is_global_admin, u.email_verified_at, u.last_login_at,
-      u.blocked_at,
+      u.email, u.name, u.avatar_url, u.is_global_admin, u.global_admin_source,
+      u.email_verified_at, u.last_login_at, u.blocked_at, u.blocked_source,
       u.created_at             AS user_created_at,
       u.updated_at             AS user_updated_at,
       m.tenant_id              AS membership_tenant_id,
@@ -208,9 +216,11 @@ export async function resolveSession(db: Database, token: string): Promise<Resol
     name: row.name,
     avatarUrl: row.avatar_url,
     isGlobalAdmin: row.is_global_admin,
+    globalAdminSource: row.global_admin_source,
     emailVerifiedAt: asDateOrNull(row.email_verified_at),
     lastLoginAt: asDateOrNull(row.last_login_at),
     blockedAt: asDateOrNull(row.blocked_at),
+    blockedSource: row.blocked_source,
     createdAt: asDate(row.user_created_at),
     updatedAt: asDate(row.user_updated_at),
   }
@@ -242,11 +252,18 @@ export async function resolveSession(db: Database, token: string): Promise<Resol
   }
 }
 
-/** Slide the expiry; the SQL predicate makes it a no-op unless the last touch is > 1 hour old. */
+/**
+ * Slide the expiry by `SESSION_TTL_MS`, capped at `max_expires_at`; the SQL predicate makes it a
+ * no-op unless the last touch is > 1 hour old.
+ */
 export async function touchSession(db: Database, sessionId: string): Promise<void> {
+  const slideTo = new Date(Date.now() + SESSION_TTL_MS)
   await db
     .update(userSessions)
-    .set({ lastSeenAt: new Date(), expiresAt: new Date(Date.now() + SESSION_TTL_MS) })
+    .set({
+      lastSeenAt: new Date(),
+      expiresAt: sql`least(${slideTo.toISOString()}::timestamptz, coalesce(${userSessions.maxExpiresAt}, 'infinity'::timestamptz))`,
+    })
     .where(
       and(
         eq(userSessions.id, sessionId),
@@ -293,4 +310,21 @@ export async function deleteUserSessions(db: Database, userId: string): Promise<
     .where(eq(userSessions.userId, userId))
     .returning({ id: userSessions.id })
   return rows.length
+}
+
+/**
+ * Deprovisioning from ONE tenant: every session of one user that is pinned to (selects) that
+ * tenant. Sessions selected to another tenant, or to none, are left alone — `resolveSession`
+ * re-resolves membership on every request, so they never act in a tenant the person has left.
+ */
+export async function deleteUserSessionsInTenant(
+  db: Database,
+  userId: string,
+  tenantId: string
+): Promise<number> {
+  const ended = await db
+    .delete(userSessions)
+    .where(and(eq(userSessions.userId, userId), eq(userSessions.selectedTenantId, tenantId)))
+    .returning({ id: userSessions.id })
+  return ended.length
 }

@@ -12,6 +12,7 @@ import {
   adminUserListQuerySchema,
   blockUserRequestSchema,
   setGlobalAdminRequestSchema,
+  setTenantExternalOrgRequestSchema,
   suspendTenantRequestSchema,
 } from '@rocketflare/shared/admin'
 import {
@@ -20,7 +21,9 @@ import {
   updateFeatureFlagRequestSchema,
 } from '@rocketflare/shared/features'
 import type { FeatureName } from '@rocketflare/shared/permissions'
+import { deleteTenantRequestSchema } from '@rocketflare/shared/tenants'
 import { resolveCookieAuth } from '../middleware/auth'
+import { operationLock } from '../middleware/rate-limit'
 import {
   decideAccessRequest,
   enterSupport,
@@ -31,6 +34,7 @@ import {
   listAdminTenants,
   listAdminUsers,
   setGlobalAdmin,
+  setTenantExternalOrg,
   setTenantSuspended,
   setUserBlocked,
 } from '../services/admin'
@@ -43,7 +47,9 @@ import {
   updateFeatureFlag,
 } from '../services/features'
 import { nudge, realtimeEvent } from '../services/realtime'
+import { deleteTenant, getTenant } from '../services/tenants'
 import {
+  BadRequestError,
   ForbiddenError,
   NotFoundError,
   UnauthorizedError,
@@ -93,8 +99,48 @@ adminRouter.get('/tenants', validate('query', adminTenantListQuerySchema), async
 })
 
 adminRouter.get('/tenants/:id', async c => {
-  const { db, user } = withAuth(c)
-  return c.json(await getAdminTenant(db, uuidParam(c, 'id'), user.id))
+  const { db, cfg, user } = withAuth(c)
+  return c.json(await getAdminTenant(db, cfg, uuidParam(c, 'id'), user.id))
+})
+
+adminRouter.put(
+  '/tenants/:id/external-org',
+  validate('json', setTenantExternalOrgRequestSchema),
+  async c => {
+    const { db, cfg, user } = withAuth(c)
+    // The issuer-org link only means something under IdP-managed tenancy, which needs multi mode.
+    requireMultiTenant(cfg)
+    const { externalOrgId } = c.req.valid('json')
+    const row = await setTenantExternalOrg(db, uuidParam(c, 'id'), externalOrgId, user)
+    return c.json({ id: row.id, externalOrgId: row.externalOrgId })
+  }
+)
+
+/**
+ * Delete an organisation, as its owner could (`DELETE /api/tenant`: the cascade, then
+ * `tenant.purge`), typing its slug to confirm. For a tenant no owner can reach — one IdP-managed
+ * tenancy created, which never has an owner — this is the only way to remove it. Its activity log
+ * goes with it, so the deletion is logged here.
+ */
+adminRouter.delete('/tenants/:id', validate('json', deleteTenantRequestSchema), async c => {
+  const { db, cfg, logger, user, realtime } = withAuth(c)
+  requireMultiTenant(cfg)
+  const tenantId = uuidParam(c, 'id')
+  const tenant = await getTenant(db, tenantId)
+  if (c.req.valid('json').confirm !== tenant.slug) {
+    throw new BadRequestError(
+      'Type the organisation slug to confirm deletion',
+      'confirmation_mismatch'
+    )
+  }
+  await operationLock(c.env.RATE_LIMIT_KV, `tenant:delete:${tenantId}`, () =>
+    deleteTenant(db, tenantId, c.env.JOBS_QUEUE, realtime)
+  )
+  logger.info(
+    { tenantId, tenantSlug: tenant.slug, adminUserId: user.id },
+    'organisation deleted by a global admin'
+  )
+  return c.body(null, 204)
 })
 
 adminRouter.post('/tenants/:id/suspend', validate('json', suspendTenantRequestSchema), async c => {

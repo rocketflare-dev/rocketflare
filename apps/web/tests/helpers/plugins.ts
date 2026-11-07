@@ -7,6 +7,9 @@
  * fixture is one that quietly stops meaning anything the moment no plugin is installed — which is
  * the default state.
  */
+
+import { MAX_PUBLIC_MOUNT_BODY_BYTES } from '@/api/middleware/body-limit'
+import type { PluginPublicMountOptions } from '@/plugins/types'
 import {
   DECLARED_ENTRIES,
   normaliseModulePath,
@@ -152,6 +155,40 @@ export function publicMountIssues(
   for (const p of authedPrefixes) {
     if (p === '/api/hooks' || p.startsWith('/api/hooks/')) {
       issues.push(`${id}: authed mount '${p}' is under /api/hooks, which is public by definition`)
+    }
+  }
+  return issues
+}
+
+/**
+ * The guards a public mount may declare (`PluginPublicMount`'s third element). `rateLimit` is
+ * `false` or two positive integers — a zero `max` would refuse everything, and a fractional one
+ * reads as a limit it does not enforce; `bodyLimitBytes` is a positive integer no larger than
+ * `MAX_PUBLIC_MOUNT_BODY_BYTES`, so no plugin can make an unauthenticated prefix unbounded.
+ */
+export function publicMountOptionIssues(
+  id: string,
+  prefix: string,
+  options: PluginPublicMountOptions | undefined
+): string[] {
+  if (options === undefined) return []
+  const at = `${id}: public mount '${prefix}'`
+  const issues: string[] = []
+  const positiveInt = (n: unknown) => typeof n === 'number' && Number.isInteger(n) && n > 0
+  const { rateLimit, bodyLimitBytes } = options
+  if (rateLimit !== undefined && rateLimit !== false) {
+    if (!positiveInt(rateLimit.max)) issues.push(`${at}: rateLimit.max must be a positive integer`)
+    if (!positiveInt(rateLimit.windowSeconds)) {
+      issues.push(`${at}: rateLimit.windowSeconds must be a positive integer`)
+    }
+  }
+  if (bodyLimitBytes !== undefined) {
+    if (!positiveInt(bodyLimitBytes)) {
+      issues.push(`${at}: bodyLimitBytes must be a positive integer`)
+    } else if (bodyLimitBytes > MAX_PUBLIC_MOUNT_BODY_BYTES) {
+      issues.push(
+        `${at}: bodyLimitBytes ${bodyLimitBytes} exceeds the ${MAX_PUBLIC_MOUNT_BODY_BYTES}-byte ceiling`
+      )
     }
   }
   return issues

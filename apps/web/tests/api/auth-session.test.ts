@@ -259,7 +259,10 @@ describe('GET /auth/methods', () => {
   it('lists magic link, configured providers and devLogin in development', async () => {
     const res = await request('/auth/methods')
     expect(res.status).toBe(200)
-    expect(await json(res)).toEqual({
+    // An installed plugin may add `pluginMethods` (the example plugin does, in development); the
+    // kit's own answer is the rest, and is pinned exactly.
+    const { pluginMethods: _plugins, ...body } = await json<Record<string, unknown>>(res)
+    expect(body).toEqual({
       magicLink: true,
       providers: ['google', 'microsoft'],
       devLogin: true,
@@ -278,6 +281,7 @@ describe('GET /auth/methods', () => {
         }),
       }
     )
-    expect(await json(res)).toEqual({ magicLink: true, providers: ['microsoft'], devLogin: false })
+    const { pluginMethods: _plugins, ...body } = await json<Record<string, unknown>>(res)
+    expect(body).toEqual({ magicLink: true, providers: ['microsoft'], devLogin: false })
   })
 })

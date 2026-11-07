@@ -15,6 +15,8 @@ export const SESSION_COOKIE_NAME = '__Host-session'
 export const OAUTH_STATE_COOKIE_NAME = 'oauth_state'
 
 export const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000
+/** `OIDC_SESSION_MAX_AGE_DAYS` when unset: how long an IdP-managed sign-in lasts. */
+export const IDP_SESSION_MAX_AGE_DEFAULT_DAYS = 7
 const FLOW_COOKIE_TTL_S = 10 * 60
 
 /** `Secure` for the non-`__Host-` flow cookies: on everywhere but plain-http development. */

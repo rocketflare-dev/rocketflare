@@ -23,6 +23,8 @@ import type { EffectiveRole } from '@rocketflare/shared/permissions'
 import type { AgentKeyOf, JobTypeOf, PromptKeyOf, SharedPlugin } from '@rocketflare/shared/plugins'
 import type { Hono, MiddlewareHandler } from 'hono'
 import type { ComponentType, LazyExoticComponent } from 'react'
+import type { PluginLoginMethodDeclaration } from '../api/auth/plugin-login-methods'
+import type { SsoPolicy } from '../api/auth/sso-policy'
 import type { EmailHandler } from '../api/email'
 import type { JobHandler } from '../api/queues/jobs'
 import type { ScheduledTask } from '../api/scheduled'
@@ -31,6 +33,7 @@ import type { AnyAgentDefinition } from '../api/services/agents/registry'
 import type { AgentToolContext } from '../api/services/agents/tools'
 import type { Tool } from '../api/services/ai/agent-loop'
 import type { AppBindings, AppEnv } from '../api/types'
+import type { AppConfig } from '../config'
 import type { Database } from '../db/client'
 import type { Tenant } from '../db/schema'
 import type { RoleGrant } from '../permissions/abilities'
@@ -44,11 +47,32 @@ import type { QuickLink } from '../ui/pages/Home'
 export type PluginMount = readonly [string, Hono<AppEnv>, MiddlewareHandler?]
 
 /**
- * One UNAUTHENTICATED mount: prefix and router, no gate — a feature gate reads
- * `auth.features`, and there is no auth here. The prefix must be `/api/hooks/<plugin id>` or
+ * How the host guards one public mount before its router runs. Both are applied by the HOST
+ * (`api/index.ts`), never by the plugin's handlers, so every unauthenticated prefix is throttled
+ * and size-capped by default.
+ */
+export interface PluginPublicMountOptions {
+  /**
+   * Per-IP KV sliding window, its bucket named after the prefix (no two mounts share one).
+   * Omitted → `PUBLIC_MOUNT_RATE_LIMIT` (120 / 60 s / IP). `false` turns it off — for a webhook
+   * sender with fixed IPs that batches, where the handler's proof of the caller is the gate.
+   * A no-op without the `RATE_LIMIT_KV` binding, like every kit rate limit.
+   */
+  rateLimit?: { max: number; windowSeconds: number } | false
+  /**
+   * Replaces the global 1 MB body cap for everything beneath this prefix, whatever the content
+   * type (JSON, `application/x-www-form-urlencoded`, `application/scim+json`…). At most
+   * `MAX_PUBLIC_MOUNT_BODY_BYTES` (10 MB) — the config test refuses more, the host clamps.
+   */
+  bodyLimitBytes?: number
+}
+
+/**
+ * One UNAUTHENTICATED mount: prefix, router and optional guards — no gate, because a feature gate
+ * reads `auth.features` and there is no auth here. The prefix must be `/api/hooks/<plugin id>` or
  * beneath it; handlers build `publicCtx(c)` and prove who is calling before they touch a row.
  */
-export type PluginPublicMount = readonly [string, Hono<AppEnv>]
+export type PluginPublicMount = readonly [string, Hono<AppEnv>, PluginPublicMountOptions?]
 
 /** What `pnpm plugin check` verifies before an install, mirrored from the plugin's manifest. */
 export interface PluginRequires {
@@ -84,6 +108,29 @@ export interface ServerPlugin<S extends SharedPlugin = SharedPlugin> {
    * surface stays enumerable. Already under `/api`, so no `apiPrefixes` or toml edit is needed.
    */
   publicMounts?: readonly PluginPublicMount[]
+  /**
+   * Sign-in methods for the login page, read per request by `GET /auth/methods` (so `cfg` may
+   * decide: a dev-only method, one per configured connection). Each button navigates to its
+   * `startPath`, which MUST be under this plugin's `/api/hooks/<id>/` (`tests/config/plugins.test.ts`;
+   * a stray one is dropped at runtime). The host renders and namespaces them; it does NOT run the
+   * flow — the plugin's public route does, and finishes it with `identityFor(c, id).signIn(...)`.
+   */
+  loginMethods?: (cfg: AppConfig) => readonly PluginLoginMethodDeclaration[]
+  /**
+   * "SSO required" for the emails one of this plugin's connections claims (a DNS-verified domain):
+   * answer `{ required: true, methodId }` — `methodId` one of THIS plugin's `loginMethods(cfg)` ids,
+   * where the login page sends the person — or `null` for an address it does not claim. Asked once
+   * per sign-in attempt (`api/auth/sso-policy.ts`), never per request, with every installed
+   * plugin's policy in parallel: keep it to one indexed lookup on the email's domain.
+   *
+   * The HOST enforces it on every kit method — the magic-link request (a token-free "use single
+   * sign-on" email instead of a link, still 202) and verify, the Google / Microsoft / OIDC callback,
+   * dev login — and on every OTHER plugin's `identityFor().signIn`; a claiming plugin's own `signIn`
+   * passes. A THROW fails closed for that email (logged), and `BOOTSTRAP_ADMIN_EMAILS` are exempt
+   * (break-glass). The host does NOT verify the domain (that is the plugin's proof), revoke sessions
+   * that already exist, or apply it to `provisionFor` (SCIM mints no session).
+   */
+  ssoPolicy?: SsoPolicy
   /**
    * Extra path prefixes the Worker owns, unioned into `API_PREFIXES` — so an unmatched path under
    * one is a JSON 404 rather than `index.html`. Adding one ALSO means adding it to

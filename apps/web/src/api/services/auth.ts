@@ -30,6 +30,13 @@ export interface AdmitInput {
   /** The login proved ownership of the address (magic link; provider said verified). */
   verified: boolean
   avatarUrl?: string | null
+  /**
+   * The issuer already decided this person may use the app (`OIDC_MANAGED_TENANCY`: the verified
+   * claims carry an org, the admit claim or the global-admin claim). A new user is created whatever
+   * `SIGNUP_MODE` says, with no access request and no `onNoTenant` — the claims reconcile the
+   * tenants right after.
+   */
+  admittedBy?: 'idp'
 }
 
 export type AdmitResult =
@@ -144,6 +151,12 @@ export async function admitUser(
       'BOOTSTRAP_ADMIN_EMAILS: created the first GLOBAL ADMIN on verified login'
     )
     await onNoTenant(db, cfg, user, logger)
+    return { ok: true, user, created: true }
+  }
+
+  if (input.admittedBy === 'idp') {
+    const user = await createUser(db, { ...input, email }, { isGlobalAdmin: false })
+    logger.info({ userId: user.id }, 'IdP-managed tenancy: admitted by the token claims')
     return { ok: true, user, created: true }
   }
 

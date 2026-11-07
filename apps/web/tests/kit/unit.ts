@@ -145,6 +145,7 @@ function fakeUser(userId: string, isGlobalAdmin: boolean): User {
     emailVerifiedAt: now,
     lastLoginAt: null,
     blockedAt: null,
+    blockedSource: null,
     createdAt: now,
     updatedAt: now,
   } as User
