@@ -99,7 +99,10 @@ in the host. Each half is checked where it is written; only the merge is cast.
   kit links the identity under provider `plugin:<id>` (the plugin namespaces `subject` itself,
   `<connection>|<nameId>`), admits, upserts an `idp` membership, mints the session and answers the
   redirect, refusals included. `provisionFor(ctx, '<id>')` is the cookie-free half for SCIM or a
-  sync job (`findUser`, `upsertUser`, `setMembership`, `removeMembership`, `listMembers`). Both
+  sync job (`findUser`, `upsertUser`, `setMembership`, `removeMembership`, `deprovision`,
+  `listMembers`). `removeMembership` drops the `idp` row and unpins sessions; `deprovision` is a
+  LEAVER (SCIM `active: false`) — the same plus deleting the sessions pinned to that tenant, and
+  never a block: their other tenants, sessions and keys survive. Both
   trust the caller about the tenant, exactly as `PublicCtx` does — prove it first.
   An existing account with the same email is attached only with `linkByEmail: true` (else
   `account_exists`) — set it ONLY for a domain the connection proved it owns, or one tenant's IdP

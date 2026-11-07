@@ -40,6 +40,7 @@ import {
   type IdpOrgClaim,
   idpOrgsClaimSchema,
 } from '@rocketflare/shared/idp'
+import type { MembershipRole, MembershipSource } from '@rocketflare/shared/tenants'
 import { and, eq, isNull, lt, lte, notInArray, or, sql } from 'drizzle-orm'
 import type { AppConfig } from '../../config'
 import { type Database, isUniqueViolation } from '../../db/client'
@@ -54,6 +55,7 @@ import {
   users,
 } from '../../db/schema'
 import { findProviderLink } from '../auth/oauth-providers'
+import { deleteUserSessionsInTenant } from '../auth/sessions'
 import { ConflictError } from '../utils/core/errors'
 import type { Logger } from '../utils/core/logger'
 import { createTenantForUser, uniqueSlug } from '../utils/db/tenant-helpers'
@@ -366,6 +368,47 @@ export async function removeIdpMembership(
     before: input.syncedAt,
   })
   return removed.length > 0
+}
+
+/** What `deprovisionIdpMember` did. */
+export interface IdpDeprovisionResult {
+  /** An `idp` membership was removed by this call. */
+  removed: boolean
+  /** Sessions pinned to the tenant that were deleted. */
+  sessionsEnded: number
+  /**
+   * The membership the IdP does not speak for and that was therefore left as is — a `manual`
+   * row, or an `owner` / `support` one — else null (no row, or the `idp` row just removed).
+   */
+  retained: { role: MembershipRole; source: MembershipSource } | null
+}
+
+/**
+ * A leaver, for ONE tenant (SCIM `active: false`, a directory sync): remove their `idp`
+ * membership there AND end their sessions pinned to it. Nothing global — no `blocked_at`, no
+ * other tenant's sessions or memberships — because a tenant's IdP speaks for that tenant only.
+ * Their API keys in the tenant stop working with the membership (`validateApiKey` joins it).
+ *
+ * A membership the IdP does not own (`manual`, `owner`, `support`) is left with its sessions,
+ * and reported in `retained`. Idempotent: a repeat finds nothing to remove and nothing pinned.
+ * Sessions go FIRST — removing the row unpins them, after which they could not be told apart.
+ * Same trust contract as `upsertIdpMembership`.
+ */
+export async function deprovisionIdpMember(
+  db: Database,
+  input: { tenantId: string; userId: string }
+): Promise<IdpDeprovisionResult> {
+  const { tenantId, userId } = input
+  const row = await db.query.tenantUsers.findFirst({
+    columns: { role: true, source: true },
+    where: and(eq(tenantUsers.tenantId, tenantId), eq(tenantUsers.userId, userId)),
+  })
+  if (row && (row.source !== 'idp' || row.role === 'owner' || row.role === 'support')) {
+    return { removed: false, sessionsEnded: 0, retained: row }
+  }
+  const sessionsEnded = await deleteUserSessionsInTenant(db, userId, tenantId)
+  const removed = row ? await removeIdpMembership(db, { tenantId, userId }) : false
+  return { removed, sessionsEnded, retained: null }
 }
 
 /**

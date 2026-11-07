@@ -101,6 +101,7 @@ export type {
 export { createRouter, pageWindow, requestCtx, validate } from './http'
 export type {
   IdpAppRole,
+  PluginDeprovisionResult,
   PluginIdentity,
   PluginIdentityUser,
   PluginLoginMethodDeclaration,

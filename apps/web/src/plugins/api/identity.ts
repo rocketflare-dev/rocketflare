@@ -23,7 +23,8 @@
  * calls. What this module DOES enforce: the tenant exists, a blocked person is refused, an
  * unverified email is never signed in or linked to an existing account, a membership it writes is
  * `source = 'idp'` (read-only in the app — 409 `idp_managed`), and `owner`/`support`/`manual` rows
- * are never removed by it.
+ * are never removed by it, and nothing it does is global: `deprovision` ends a person's presence in
+ * ONE tenant and never blocks them, because a tenant's IdP does not speak for their other tenants.
  *
  * **`subject` is the plugin's to namespace.** It is stored verbatim as `provider_user_id`, unique
  * per plugin: a plugin with several connections makes it unique across them itself, e.g.
@@ -47,7 +48,11 @@ import {
   safeRedirectPath,
 } from '../../api/routes/auth/helpers'
 import { admitUser, findUserByEmail } from '../../api/services/auth'
-import { removeIdpMembership, upsertIdpMembership } from '../../api/services/idp-tenancy'
+import {
+  deprovisionIdpMember,
+  removeIdpMembership,
+  upsertIdpMembership,
+} from '../../api/services/idp-tenancy'
 import type { AppContext } from '../../api/types'
 import { ConflictError, NotFoundError } from '../../api/utils/core/errors'
 import { tenants, tenantUsers, type User, users } from '../../db/schema'
@@ -105,6 +110,16 @@ export interface PluginMember {
   blocked: boolean
 }
 
+/** What `provision.deprovision` did in the tenant. */
+export interface PluginDeprovisionResult {
+  /** An `idp` membership was removed by this call (`false` on a repeat). */
+  removed: boolean
+  /** Sessions pinned to the tenant that were deleted. */
+  sessionsEnded: number
+  /** A `manual` / `owner` / `support` membership the IdP does not own, left as is; else null. */
+  retained: { role: MembershipRole; source: MembershipSource } | null
+}
+
 /** Tenant-explicit user and membership writes with no session: SCIM, a directory sync. */
 export interface PluginProvision {
   /** By the plugin's own subject, or by email (case-insensitive). */
@@ -134,11 +149,23 @@ export interface PluginProvision {
     role: IdpAppRole
   }): Promise<{ role: MembershipRole; source: MembershipSource }>
   /**
-   * Remove the person's `idp` membership (never a `manual`, `owner` or `support` one), with their
-   * per-tenant settings, and unpin their sessions selected to that tenant. `false` when there was
-   * no `idp` row to remove. 404 when the tenant does not exist.
+   * The MEMBERSHIP only — the IdP no longer grants this tenant (a role mapping or group change):
+   * remove the person's `idp` row (never a `manual`, `owner` or `support` one) with their
+   * per-tenant settings, and UNPIN their sessions selected to that tenant, which stay signed in
+   * and fall back to another membership. `false` when there was no `idp` row to remove. 404 when
+   * the tenant does not exist. For a leaver, `deprovision`.
    */
   removeMembership(input: { tenantId: string; userId: string }): Promise<boolean>
+  /**
+   * A leaver (SCIM `active: false`, gone from the directory): remove the `idp` membership as
+   * `removeMembership` does AND END (delete) the sessions pinned to that tenant. Never global: no
+   * block, and sessions selected to another tenant — and every other membership — survive, since
+   * this IdP speaks for this tenant only. API keys they created in the tenant stop authenticating
+   * with the membership. A `manual`, `owner` or `support` row is not the IdP's: it is left, with
+   * its sessions, and comes back as `retained` (`removed: false`). Idempotent; 404 when the
+   * tenant does not exist.
+   */
+  deprovision(input: { tenantId: string; userId: string }): Promise<PluginDeprovisionResult>
   /** Every member of the tenant, oldest first, with `source` — what a SCIM `GET /Users` lists. */
   listMembers(input: { tenantId: string }): Promise<PluginMember[]>
 }
@@ -296,6 +323,14 @@ export function provisionFor(ctx: PluginContext, pluginId: string): PluginProvis
       await requireTenant(db, tenantId)
       if (!z.string().uuid().safeParse(userId).success) return false
       return removeIdpMembership(db, { tenantId, userId })
+    },
+
+    async deprovision({ tenantId, userId }) {
+      await requireTenant(db, tenantId)
+      if (!z.string().uuid().safeParse(userId).success) {
+        return { removed: false, sessionsEnded: 0, retained: null }
+      }
+      return deprovisionIdpMember(db, { tenantId, userId })
     },
 
     async listMembers({ tenantId }) {

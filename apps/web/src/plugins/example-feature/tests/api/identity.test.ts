@@ -11,6 +11,8 @@
  */
 import { EXAMPLE_FEATURE_FLAG } from '@rocketflare/shared/plugins/example-feature/index'
 import {
+  bearerHeader,
+  createTestApiKey,
   createTestEnv,
   createTestSession,
   createTestTenant,
@@ -371,6 +373,77 @@ describe('provisionFor', () => {
         source: 'manual',
       }
     )
+  })
+
+  it('deprovisions a leaver from ONE tenant: membership, pinned sessions and keys there go', async () => {
+    const email = newEmail()
+    const person = await provision().upsertUser({
+      subject: `scim|${email}`,
+      email,
+      emailVerified: true,
+    })
+    await provision().setMembership({ tenantId, userId: person.id, role: 'member' })
+    // Their other tenant is the app's own (a manual row), with a session of its own.
+    const other = await createTestTenant(db)
+    await linkUserToTenant(db, person.id, other.id, 'member')
+    const here = sessionCookieHeader(await createTestSession(db, person.id, tenantId))
+    const there = sessionCookieHeader(await createTestSession(db, person.id, other.id))
+    const { key } = await createTestApiKey(db, tenantId, person.id)
+    const otherKey = (await createTestApiKey(db, other.id, person.id)).key
+    expect((await request('/api/tenant', { headers: bearerHeader(key) })).status).toBe(200)
+    expect((await request('/api/tenant', { headers: here })).status).toBe(200)
+
+    expect(await provision().deprovision({ tenantId, userId: person.id })).toEqual({
+      removed: true,
+      sessionsEnded: 1,
+      retained: null,
+    })
+
+    expect(await membership(person.id)).toBeUndefined()
+    expect(await membership(person.id, other.id)).toMatchObject({ source: 'manual' })
+    const { userSessions } = allTables()
+    const left = await db
+      .select({ selected: userSessions.selectedTenantId })
+      .from(userSessions)
+      .where(eq(userSessions.userId, person.id))
+    expect(left).toEqual([{ selected: other.id }])
+    // Nothing global: not blocked, and the other tenant still works by cookie and by key.
+    expect((await userByEmail(email))?.blockedAt).toBeNull()
+    const stillThere = await request('/api/tenant', { headers: there })
+    expect(stillThere.status).toBe(200)
+    expect(await json(stillThere)).toMatchObject({ id: other.id })
+    expect((await request('/api/tenant', { headers: bearerHeader(otherKey) })).status).toBe(200)
+    // The ended session and the key in the tenant they left no longer authenticate.
+    expect((await request('/api/tenant', { headers: here })).status).toBe(401)
+    const keyRes = await request('/api/tenant', { headers: bearerHeader(key) })
+    expect(keyRes.status).toBe(401)
+    expect(await json(keyRes)).toMatchObject({ statusCode: 401 })
+
+    // Idempotent: a SCIM retry finds nothing to remove and nothing pinned.
+    expect(await provision().deprovision({ tenantId, userId: person.id })).toEqual({
+      removed: false,
+      sessionsEnded: 0,
+      retained: null,
+    })
+  })
+
+  it('deprovision leaves a membership the IdP does not own, with its sessions', async () => {
+    const manual = await createTestUser(db)
+    await linkUserToTenant(db, manual.id, tenantId, 'admin')
+    await createTestSession(db, manual.id, tenantId)
+    expect(await provision().deprovision({ tenantId, userId: manual.id })).toEqual({
+      removed: false,
+      sessionsEnded: 0,
+      retained: { role: 'admin', source: 'manual' },
+    })
+    expect(await membership(manual.id)).toMatchObject({ role: 'admin', source: 'manual' })
+    const { userSessions } = allTables()
+    const sessions = await db.select().from(userSessions).where(eq(userSessions.userId, manual.id))
+    expect(sessions).toHaveLength(1)
+
+    await expect(
+      provision().deprovision({ tenantId: crypto.randomUUID(), userId: manual.id })
+    ).rejects.toMatchObject({ statusCode: 404 })
   })
 
   it('refuses a tenant or a person that does not exist', async () => {

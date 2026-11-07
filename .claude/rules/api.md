@@ -206,7 +206,9 @@ A plugin is a separate git repository copied into the app that contributes throu
   `provisionFor(ctx, '<id>')`** (`plugins/api/identity.ts`) — never a `user_sessions` row, a
   cookie, `admitUser` or a `tenant_users` write of its own. Links live under provider
   `plugin:<id>`; memberships are `source = 'idp'` through `upsertIdpMembership` /
-  `removeIdpMembership` (`services/idp-tenancy.ts`, shared with the OIDC reconcile). The caller
+  `removeIdpMembership` (`services/idp-tenancy.ts`, shared with the OIDC reconcile), and a leaver
+  is `provision.deprovision` (`deprovisionIdpMember`: that membership plus the sessions pinned to
+  that tenant — never a block, never another tenant). The caller
   proves the tenant, as for `PublicCtx`. `ServerPlugin.loginMethods(cfg)` feeds
   `GET /auth/methods` `pluginMethods`; a `startPath` outside `/api/hooks/<id>/` is dropped and
   logged at runtime and fails `tests/config/plugins.test.ts`

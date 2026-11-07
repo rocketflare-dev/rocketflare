@@ -284,6 +284,8 @@ The server surface: the context family, and the types a plugin must be able to n
   - `logger: PluginLogger`
   - `env: PluginBindings`
     The Worker bindings. A plugin reads the ones its own `plugin.json` declares; reaching for a core binding directly is usually the sign that a method is missing from this surface.
+- `interface PluginDeprovisionResult`
+  What `provision.deprovision` did in the tenant.
 - `interface PluginIdentity`
   `identityFor(c, pluginId)`: sign a person in, or provision them.
 - `interface PluginIdentityUser`
@@ -1226,6 +1228,7 @@ nothing in the comparison that can throw.
 @/plugins/api :: member :: PluginContext.config :: config: PluginConfig
 @/plugins/api :: member :: PluginContext.logger :: logger: PluginLogger
 @/plugins/api :: member :: PluginContext.env :: env: PluginBindings
+@/plugins/api :: interface :: PluginDeprovisionResult :: interface PluginDeprovisionResult
 @/plugins/api :: interface :: PluginIdentity :: interface PluginIdentity
 @/plugins/api :: interface :: PluginIdentityUser :: interface PluginIdentityUser
 @/plugins/api :: interface :: PluginIngestFileInput :: interface PluginIngestFileInput extends IngestCommon

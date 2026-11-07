@@ -31,6 +31,7 @@ IdP-managed tenancy (`OIDC_MANAGED_TENANCY`) lets the OIDC issuer decide tenants
 - Admin: `PUT /api/admin/tenants/:id/external-org` links a tenant to an issuer org (409 `external_org_taken`); `DELETE /api/admin/tenants/:id` deletes an organisation (a managed tenant has no owner — `docs/CONCEPTS.md` §1).
 - UI: `no_access` copy on `Login.tsx`; a "Managed" badge and no controls on `idp` rows in `People.tsx`; the Identity provider org panel and a danger zone in `admin/TenantDetail.tsx`.
 - `@/plugins/api` gains the identity seam (`plugins/api/identity.ts`): `identityFor(c, id).signIn(...)` signs a person a plugin proved in, `provisionFor(ctx, id)` provisions users and `idp` memberships (`docs/CONCEPTS.md` §2, §16). An existing account is linked by email only with `linkByEmail: true` (else `account_exists`).
+- `provisionFor(ctx, id).deprovision({ tenantId, userId })` → `{ removed, sessionsEnded, retained }` handles a leaver (SCIM `active: false`): removes the `idp` membership and deletes the sessions pinned to that tenant, never blocks, leaves other tenants alone; `tests/driver/identity.test.ts` runs the seam under both drivers.
 - `services/idp-tenancy.ts` exports `upsertIdpMembership(db, { tenantId, userId, role, syncedAt? })` and `removeIdpMembership(db, { tenantId, userId, syncedAt? })`, which the reconcile and identity events now call.
 - `auth/oauth-providers.ts`: `ProviderKey` (`plugin:<id>` beside the kit's providers) and `linkPluginIdentity`.
 - `ServerPlugin.loginMethods(cfg)` → `GET /auth/methods` `pluginMethods` (`pluginLoginMethodSchema` in `@rocketflare/shared/auth`); `Login.tsx` renders each, with an email field when `askEmail`; a `startPath` outside `/api/hooks/<id>/` is dropped and fails `tests/config/plugins.test.ts`.
@@ -107,7 +108,8 @@ IdP-managed tenancy (`OIDC_MANAGED_TENANCY`) lets the OIDC issuer decide tenants
 18. Copy `apps/web/src/api/auth/plugin-login-methods.ts` and `apps/web/src/plugins/api/identity.ts`
     from the kit; export `identityFor`, `provisionFor` and the identity types from
     `apps/web/src/plugins/api/index.ts`; add `loginMethods?` to `ServerPlugin` (`plugins/types.ts`),
-    `account_exists` to `ERROR_CODES`, `LoginErrorCode` and `LOGIN_ERROR_COPY` (`pages/Login.tsx`).
+    `account_exists` to `ERROR_CODES`, `LoginErrorCode` and `LOGIN_ERROR_COPY` (`pages/Login.tsx`),
+    and `deleteUserSessionsInTenant` to `apps/web/src/api/auth/sessions.ts`.
 19. In `packages/shared/src/auth.ts` add `pluginLoginMethodSchema` and an optional
     `pluginMethods` array on `authMethodsSchema`. In `apps/web/src/api/routes/auth/session.ts` set
     `methods.pluginMethods` from `pluginLoginMethods(serverPlugins, cfg, logger)` when non-empty.

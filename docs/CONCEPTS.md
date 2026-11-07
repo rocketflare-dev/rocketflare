@@ -194,8 +194,10 @@ so the keys in the tenants they lost stop working, and those in their manual ten
 Plugin sign-in: the kit trusts the plugin's word on `subject`, `email`, `emailVerified` and the
 tenant entirely (proving them is the plugin's job); one plugin may not name another's id, but
 nothing enforces that the id passed to `identityFor` is the caller's own; no "SSO only" per email
-domain yet (`AUTH_OIDC_ONLY` is deployment-wide), no provisioned-user deactivation (block + end
-sessions) in the seam, and a plugin link is invisible on the profile page.
+domain yet (`AUTH_OIDC_ONLY` is deployment-wide); `deprovision` is per tenant by design and never
+blocks — a person a tenant's IdP deactivates keeps their other tenants, the sessions selected to
+them and their keys there, and a session with NO pinned tenant is not ended (it re-resolves to
+another membership, or to none); and a plugin link is invisible on the profile page.
 
 ## 3. API shell
 
@@ -1029,7 +1031,15 @@ as merging a PR. A plugin repo mirrors the host tree and ships **no migration, n
   any `PluginContext` (SCIM, a directory sync): `findUser`, `upsertUser` (creates with a link and
   no session; a block stays; an unverified email never links to an existing account),
   `setMembership` / `removeMembership` (`source = 'idp'` only, so read-only in the app — 409
-  `idp_managed` — and never an owner, support or manual row) and `listMembers`. Every
+  `idp_managed` — and never an owner, support or manual row), `deprovision` and `listMembers`.
+  **`removeMembership` is the membership only** (the IdP stopped granting the tenant: its sessions
+  are UNPINNED and fall back to another membership); **`deprovision` is a leaver** (SCIM
+  `active: false`): the same removal plus DELETING the sessions pinned to that tenant, answering
+  `{ removed, sessionsEnded, retained }` — `retained` is a manual/owner/support row it left, with
+  its sessions. **Decided: never global** — no `blocked_at`, no other tenant's sessions or
+  memberships, because a tenant's IdP speaks for that tenant only; the person's API keys in that
+  tenant stop authenticating because `validateApiKey` joins the creator's membership there (401).
+  `tests/driver/identity.test.ts` runs sign-in and provisioning under both drivers. Every
   tenant-taking method 404s a missing tenant; the CALLER must have proved its right to that tenant,
   the `PublicCtx` contract. `loginMethods(cfg)` contributes login-page buttons whose `startPath`
   must sit under `/api/hooks/<id>/` — `plugins.test.ts` fails a stray one, and `GET /auth/methods`

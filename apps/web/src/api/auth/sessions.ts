@@ -309,3 +309,20 @@ export async function deleteUserSessions(db: Database, userId: string): Promise<
     .returning({ id: userSessions.id })
   return rows.length
 }
+
+/**
+ * Deprovisioning from ONE tenant: every session of one user that is pinned to (selects) that
+ * tenant. Sessions selected to another tenant, or to none, are left alone — `resolveSession`
+ * re-resolves membership on every request, so they never act in a tenant the person has left.
+ */
+export async function deleteUserSessionsInTenant(
+  db: Database,
+  userId: string,
+  tenantId: string
+): Promise<number> {
+  const ended = await db
+    .delete(userSessions)
+    .where(and(eq(userSessions.userId, userId), eq(userSessions.selectedTenantId, tenantId)))
+    .returning({ id: userSessions.id })
+  return ended.length
+}
