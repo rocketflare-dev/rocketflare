@@ -6,6 +6,11 @@ copy of the kit forward without recreating anything its owner deleted.
 
 If you are running a copy: `pnpm kit:upgrade` tells you which of these you are missing.
 
+## 0.27.0 — 2026-11-08
+
+A new `/rf-agent-docs` skill audits and fixes the docs an agent loads, and the WCAG contrast gate those docs always promised now exists — two theme tokens that failed it were adjusted.
+[Porting note](docs/upgrades/0.27.0.md).
+
 ## 0.26.0 — 2026-11-07
 
 IdP-managed tenancy (`OIDC_MANAGED_TENANCY`) with Cognito fixes, and an identity seam for plugins — sign-in, provisioning, login methods, SSO required per domain and limited public mounts — that works in both tenancy modes.
