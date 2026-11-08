@@ -54,6 +54,9 @@ export function pluginIdProblem(id) {
   // along with everything else, and the plugin would arrive under a name nothing imports.
   if (id.includes(KIT.slug)) return `'${id}' must not contain the kit's name`
   if (RESERVED_PLUGIN_IDS.includes(id)) return `'${id}' is a barrel filename`
+  // `plugins/api/**` is the host's plugin API (surface.mjs reserves it too): a plugin there would
+  // install into the directory every plugin imports its context from.
+  if (id === 'api') return `'api' is the host's plugin API directory (apps/web/src/plugins/api)`
   return null
 }
 

@@ -122,7 +122,7 @@ through them:
 
 ## Manual path
 
-`SETUP.md` Part 3 is the same sequence by hand (`pnpm provision:cloudflare <env>` is the shell half:
+`SETUP.md` Part 3 is the same sequence by hand (`pnpm web provision:cloudflare <env>` is the shell half:
 `NEON_DATABASE_URL=… bash apps/web/scripts/cf-provision.sh <env> [--apply]`), and `docs/DEPLOY.md`
 is the topology reference (two tomls, account-scoped names, the release dance, rollback).
 

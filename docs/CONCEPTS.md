@@ -1001,7 +1001,13 @@ as merging a PR. A plugin repo mirrors the host tree and ships **no migration, n
   tuple plus a widened list, so an empty kit still typechecks. **Opening a closed set** always
   follows one pattern: `X = [...CORE_X, ...plugins]`. `ServerPlugin<S>` checks handlers, agents and
   prompts exhaustively against the plugin's own keys.
-- **Namespacing**: the id is `^[a-z][a-z0-9-]*$` and namespaces jobs (`<id>.x`), query keys
+- **Core edits**: a line a plugin needs in a core file outside the barrels (a Vite dev proxy
+  prefix, a resolve alias) is a `coreEdits` entry in its manifest (`{ file, after, lines[] }`) —
+  `add` inserts it after the anchor, `remove` reverts it byte for byte, `upgrade` applies the new
+  release's list. Never a hand edit. Crons go in `plugin.json` `crons`, written into both tomls by
+  `pnpm provision cloudflare <env>`.
+- **Namespacing**: the id is `^[a-z][a-z0-9-]*$` (never a reserved barrel or host directory name —
+  `api` included) and `^[a-z][a-z0-9-]*$` and namespaces jobs (`<id>.x`), query keys
   (`<id>:`), `/api/<id>`, CLI commands and CUSTOM events. Never `kit.`. Table prefixes are a human
   convention; **two plugins declaring the same table is a `plugin check` failure**.
 - **Record**: a `kind: 'plugin'` surface (`source: {repo, subdir, version, commit}`). In the kit or

@@ -4,7 +4,7 @@ previous: 0.26.0
 date: null
 breaking: false
 migrations: []
-areas: []
+areas: [skills, ui]
 touches_surfaces: []
 requires_surfaces: []
 manual: false
@@ -12,20 +12,30 @@ manual: false
 
 ## What changed
 
-_Nothing yet. Add an entry here in the same pull request as the change. This first paragraph is
-lifted VERBATIM into `CHANGELOG.md`, so make it ONE standalone summary sentence of ≤ 40 words —
-then one bullet per change, one line each, and no `###` sub-headings. Rationale belongs in
-`docs/CONCEPTS.md` and is linked, never restated; see `README.md` beside this file._
+A new `/rf-agent-docs` skill audits and fixes the docs an agent loads, and the WCAG contrast gate those docs always promised now exists — two theme tokens that failed it were adjusted.
+
+- New `.claude/skills/rf-agent-docs/` — `SKILL.md` (judgement checklist, report, fix) and `check.mjs` (zero-dependency mechanical check, exit 1 on a defect).
+- New `apps/web/tests/ui/contrast.test.ts` asserts the floors `src/ui/index.css` states (text 4.5:1 on every surface, fills vs `-content`, controls and focus ring 3:1) over both themes.
+- `src/ui/index.css`: light `--tone-primary-surface` `#dbeafe` → `#eff6ff` (primary label was 4.2:1); dark `--text-muted` `#a1a1aa` → `#acacb4` (was 4.1:1 on raised and hover surfaces).
+- `pnpm plugin add` refuses the plugin id `api` (`pluginIdProblem`), which `surface.mjs` already reserved: it would install into the host's `apps/web/src/plugins/api/`.
+- The per-directory agent docs are reorganised: `.claude/rules/api.md` and `apps/web/src/ui/CLAUDE.md` split into nested `CLAUDE.md` files (`api/services/`, `api/queues/`, `ui/pages/{agents,documents,chat,settings}/`, `ui/lib/`), and `apps/web/src/plugins/CLAUDE.md` owns every plugin rule.
+- `.claude/skills/rf-how-do-i/example-orders.md` carries an `agent-docs-check: hypothetical` marker so its not-yet-created paths are not reported.
 
 ## How to apply
 
-_Numbered, imperative, each step self-contained — no "these", "them" or "the above" reaching
-outside its own step._
+1. Copy `.claude/skills/rf-agent-docs/` (both files) from the kit into the same path.
+2. Add `<!-- agent-docs-check: hypothetical -->` under the title of `.claude/skills/rf-how-do-i/example-orders.md` if your copy still has that file.
+3. Copy `apps/web/tests/ui/contrast.test.ts` from the kit into the same path.
+4. In `apps/web/src/ui/index.css`, if you kept the kit's palette, set the light theme's `--tone-primary-surface` to `#eff6ff` and the dark theme's `--text-muted` to `#acacb4`; if you recoloured, run `pnpm web test:ui` and fix the pairs it names.
+5. In `scripts/lib/plugin-lib.mjs` `pluginIdProblem`, after the barrel-filename check, return a problem for `id === 'api'`.
+6. Take the kit's versions of `.claude/rules/api.md`, `.claude/rules/ui.md` and every `CLAUDE.md` under `apps/web/src/` for any you have not edited; for one you have, keep yours and run `/rf-agent-docs` on it.
+7. Add `rf-agent-docs` to the `.claude/skills/` list and to the "you may run yourself" list in root `CLAUDE.md`, and to the skills row in `README.md`.
 
 ## Conflicts to expect
 
-_One line each: `path → what changed → what to do`. Or exactly `None.`_
+- `apps/web/src/ui/index.css` → two token values changed → keep your own palette's values and let the contrast test judge them.
 
 ## Verify
 
-_Numbered checkable commands and assertions only._
+1. `node .claude/skills/rf-agent-docs/check.mjs` prints a summary line ending `agent docs ok` or listing `✖` findings, and exits 1 only when it lists a `✖`.
+2. `pnpm web test:ui` passes, including `tests/ui/contrast.test.ts`.

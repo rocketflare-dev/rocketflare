@@ -169,7 +169,7 @@
 
   /* Status tints: explicit tones (100 surface / 300 border), not `color-mix(<semantic> 12%)`,
      which tints towards the surface and pushes the label under the floor in dark mode. */
-  --tone-primary-surface: #dbeafe; /* blue-100 */
+  --tone-primary-surface: #eff6ff; /* blue-50 — primary is a 600, so blue-100 under it is 4.2:1 */
   --tone-primary-border: #93c5fd; /* blue-300 */
   --tone-info-surface: #e0f2fe; /* sky-100 */
   --tone-info-border: #7dd3fc; /* sky-300 */
@@ -201,7 +201,7 @@
 
   --text-primary: #fafafa; /* zinc-50 */
   --text-secondary: #d4d4d8; /* zinc-300 */
-  --text-muted: #a1a1aa; /* zinc-400 — ≥5:1 on the panel */
+  --text-muted: #acacb4; /* just above zinc-400: 4.6:1 on raised/hover (zinc-400 is 4.1:1) */
 
   --focus-ring: #60a5fa;
   --overlay: color-mix(in srgb, #09090b 65%, transparent);

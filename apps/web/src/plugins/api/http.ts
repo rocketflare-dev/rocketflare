@@ -273,7 +273,7 @@ export function requestCtx(c: AppContext): RequestCtx {
      * Every method here reaches `services/access` through a FUNCTION-SCOPE `await import(...)`, and
      * that is the whole reason these can be published at all.
      *
-     * That module composes `VISIBILITY_RESOURCES` by reading the plugin barrel, so naming it in an
+     * That module composes `visibilityResources()` by reading the plugin barrel, so naming it in an
      * import statement at the top of this file closes the cycle `plugins/api → http → access →
      * plugins/server → <plugin>/index → plugins/api`. With a SECOND plugin installed the plugin's
      * routes then evaluate while this module is still executing, and `createRouter` is `undefined`
