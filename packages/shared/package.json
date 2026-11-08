@@ -34,7 +34,7 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@ag-ui/core": "1.0.3",
+    "@ag-ui/core": "1.0.4",
     "@casl/ability": "^7.1.1",
     "zod": "^4.6.7"
   },
