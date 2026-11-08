@@ -1,7 +1,7 @@
 name: Notify plugins
 
 # **A kit release used to notify nothing.** There was no `schedule` and no `repository_dispatch`
-# anywhere in this repository, so a plugin outside `defaultPlugins` got no signal that the kit it
+# anywhere in this repository, so a plugin outside the kit's CI plugins got no signal that the kit it
 # declares a `minKit` floor against had moved — its CI would first discover a break whenever
 # someone next happened to push to it, which for a stable plugin can be months.
 #

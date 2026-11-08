@@ -113,8 +113,8 @@ tell it. That is what makes deleting safe.
   (see `apps/web/src/ui/CLAUDE.md`). `RunPage` itself is the runtime's, not the example's. `AGENT_KEYS` must not be empty (it is a `z.enum`, and `CORE_AGENT_KEYS` leads it):
   `agentKeySchema` is a `z.enum`. Rows in `agent_runs` / `agent_run_events` / `prompt_overrides` /
   `agent_models` for the old key are inert data — delete them or leave them
-- **Analytics** — it is a PLUGIN (D31, `docs/CONCEPTS.md` §8), so removing it is one command
-  rather than a list of files:
+- **Analytics** — it is an opt-in PLUGIN (D31, `docs/CONCEPTS.md` §8); if this copy added it,
+  removing it is one command rather than a list of files:
 
   ```bash
   pnpm plugin remove analytics --apply    # three directories, five barrel lines, the surface

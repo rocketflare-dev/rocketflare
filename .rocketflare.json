@@ -9,15 +9,8 @@
     "commit": null
   },
   "app": null,
-  "$defaultPlugins": "The plugins a FRESH clone installs before the app is first run (D31, docs/CONCEPTS.md §16). `scripts/bootstrap.mjs`'s `plugins` step reads it, skips every id already recorded as a surface, runs `pnpm plugin add <repo>[@ref] --apply` for the rest and then generates and applies their migration; `pnpm bootstrap --no-plugins` skips it. Each entry is { \"id\", \"repo\", \"ref\"?, \"subdir\"? } — the id is what answers \"is this one already here?\" without fetching anything. Analytics is here because the kit is bare from 0.6.0: a fresh clone still gets dashboards, cubes and the drizzle-cube API, but as an installed plugin rather than as core.",
-  "defaultPlugins": [
-    {
-      "id": "analytics",
-      "repo": "https://github.com/rocketflare-dev/rocketflare-plugins.git",
-      "ref": "3.8.1",
-      "subdir": "plugins/analytics"
-    }
-  ],
+  "$defaultPlugins": "The plugins a FRESH clone installs before the app is first run (D31, docs/CONCEPTS.md §16). `scripts/bootstrap.mjs`'s `plugins` step reads it, skips every id already recorded as a surface, runs `pnpm plugin add <repo>[@ref] --apply` for the rest and then generates and applies their migration; `pnpm bootstrap --no-plugins` skips it. Each entry is { \"id\", \"repo\", \"ref\"?, \"subdir\"? } — the id is what answers \"is this one already here?\" without fetching anything. The kit ships it EMPTY: analytics is opt-in (`/rf-plugin add analytics`). An app may list the plugins its own fresh clones should get.",
+  "defaultPlugins": [],
   "$retiredSurfaces": "Surfaces a LATER release removed, and the release that removed each one (§13). A released porting note is never rewritten — every copy of the kit pins a commit, so editing history orphans them — which is why `docs/upgrades/0.2.0.md` still names `feature-analytics` after 0.6.0 moved analytics out into a plugin. Both readers of a note's `touches_surfaces` / `requires_surfaces` (`scripts/release-check.mjs` and `apps/web/tests/kit-only/upgrade-notes.test.ts`, through one `noteProblems()`) accept an id listed here, so the typo check stays meaningful for the note somebody is writing TODAY — the only note it can still protect. Add an entry in the same commit that deletes the surface; never delete one, or the kit stops being able to re-verify its own released tags.",
   "retiredSurfaces": {
     "feature-analytics": "0.6.0",
@@ -266,6 +259,8 @@
     "scripts/lib/nudge-lib.mjs",
     "scripts/lib/nudge-lib.d.mts",
     "scripts/default-plugins.mjs",
+    "scripts/default-plugins.d.mts",
+    ".github/ci-plugins.json",
     "scripts/install.sh",
     "CONTRIBUTING.md",
     "CODE_OF_CONDUCT.md",

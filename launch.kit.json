@@ -23,6 +23,8 @@
       "scripts/lib/nudge-lib.mjs",
       "scripts/lib/nudge-lib.d.mts",
       "scripts/default-plugins.mjs",
+      "scripts/default-plugins.d.mts",
+      ".github/ci-plugins.json",
       "scripts/install.sh",
       "CONTRIBUTING.md",
       "CODE_OF_CONDUCT.md",
@@ -103,14 +105,7 @@
   },
   "plugins": {
     "$defaults": "A mirror of .rocketflare.json `defaultPlugins`, which stays the source of truth: the bootstrap and kit.yml install from that list, and a kit-only test holds the two equal.",
-    "defaults": [
-      {
-        "id": "analytics",
-        "repo": "https://github.com/rocketflare-dev/rocketflare-plugins.git",
-        "ref": "3.8.1",
-        "subdir": "plugins/analytics"
-      }
-    ],
+    "defaults": [],
     "add": "pnpm plugin add {repo}@{ref} --subdir {subdir} --apply --allow-dirty"
   }
 }

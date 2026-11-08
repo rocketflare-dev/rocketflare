@@ -15,8 +15,8 @@ Cloudflare Worker (`apps/web`), a CLI (`apps/cli`), private zod contracts
 > **Plugins** (D31, `docs/CONCEPTS.md` §16): a plugin is a git repository copied in, wired through six
 > barrels — `pnpm plugin add|upgrade|remove|list|check`, driven by `/rf-plugin`, which always shows the
 > plan before `--apply`. It imports the host only through the DECLARED entries (`docs/plugin-api.md`,
-> generated and diff-checked) and receives everything else as injected context. `.rocketflare.json`'s `defaultPlugins` is what a fresh clone installs
-> (bootstrap step `6/10 plugins`).
+> generated and diff-checked) and receives everything else as injected context. `defaultPlugins` in
+> `.rocketflare.json` is what a fresh clone installs (bootstrap step `6/10 plugins`; kit: `[]`).
 > **Copies of the kit upgrade.** `.rocketflare.json` records the kit version, the app's names and the
 > manifest of replaceable surfaces; `/rf-upgrade` ports later releases into a copy and never
 > recreates a surface whose anchor file is gone. **In the kit repository only** (`.rocketflare.json`
@@ -45,8 +45,8 @@ Cloudflare Worker (`apps/web`), a CLI (`apps/cli`), private zod contracts
   spans → Langfuse/Phoenix/any backend, always also `ai_spans` → `rocketflare traces`); evals (D33:
   `apps/evals`, vitest-evals on vitest 4, `pnpm eval`, never in the gate) + thumbs feedback →
   `rocketflare evals promote`
-- **Analytics**: not core — the `analytics` PLUGIN (D31, the one `defaultPlugins` entry, installed
-  by the bootstrap): drizzle-cube at `/cubejs-api`+`/mcp`, fact tables on the `:15` cron, dashboards
+- **Analytics**: not core — the opt-in `analytics` PLUGIN (D31, `/rf-plugin add analytics`; the
+  bootstrap skips it): drizzle-cube at `/cubejs-api`+`/mcp`, `:15`-cron fact tables, dashboards
 - **UI**: React 19 + Vite, DaisyUI 5 / Tailwind v4, React Router 7, TanStack Query 5; served as `ASSETS`
 - **CLI**: commander + chalk + open; `tsx` in dev, `tsc` → `dist/cli.js` (bin `rocketflare`)
 - **Tests**: vitest projects `api` · `api-isolated` · `driver` · `ui` · `config` · `kit-only` (the kit's own
@@ -94,7 +94,7 @@ apps/web/          @rocketflare/web — wrangler*.toml, worker-configuration.d.t
 │  src/plugins/    D31 seam: types.ts, api/ (the context family a plugin imports) + the
 │                  server/ui/schema/worker-exports barrels (one line per installed plugin)
 │                  + each plugin's tree — `example-feature/` vendored as the reference one, and
-│                  `analytics/` (cubes, dashboards, fact tables) once the default set is installed
+│                  `analytics/` (cubes, dashboards, fact tables) once you opt in to it
 │                  (per-dir CLAUDE.md: permissions, db/schema, api/*, ui, plugins, plugins/<id>)
 apps/cli/          @rocketflare/cli — src/cli.ts, commands/*, api.ts (only fetch site), config.ts, login.ts,
                    plugins/ (CLI_PLUGINS barrel + each plugin's commands)

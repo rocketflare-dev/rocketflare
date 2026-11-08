@@ -68,7 +68,7 @@ describe('schema invariants', () => {
 
   it('every tenant-owned table cascades from tenants and has uuid ids', async () => {
     // pg_catalog, not information_schema: the information_schema join on constraint_name is slow
-    // enough (seconds once the default plugins add their tables) to time the test out in CI.
+    // enough (seconds once installed plugins add their tables) to time the test out in CI.
     // confdeltype 'c' = ON DELETE CASCADE.
     const fks = await rows<{ table_name: string; delete_rule: string }>(sql`
       SELECT c.conrelid::regclass::text AS table_name,

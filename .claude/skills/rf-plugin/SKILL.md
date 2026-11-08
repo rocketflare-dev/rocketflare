@@ -1,7 +1,7 @@
 ---
 name: rf-plugin
 description: Install, upgrade, remove and audit Rocketflare plugins — a plugin is a git repository copied into this app, not an npm package. Use when someone asks to add a plugin, pull in a plugin's later releases, uninstall one, check the installed set, or author a plugin of their own.
-argument-hint: "[add <repo|path> | upgrade <id> | remove <id> | list | check]"
+argument-hint: "[add <id|repo|path> | upgrade <id> | remove <id> | list | check]"
 ---
 
 # /rf-plugin — the capabilities this app installs
@@ -42,6 +42,12 @@ and is for people who know why they are using it) because the install should be 
 ```
 pnpm plugin add <repo|path>[@ref] [--subdir <dir>]
 ```
+
+**A bare id** (`/rf-plugin add analytics`) is a first-party plugin: repo
+`https://github.com/rocketflare-dev/rocketflare-plugins.git`, `--subdir plugins/<id>`, `@` its
+newest release tag (`git ls-remote --tags --refs <repo> | sed 's#.*/##' | sort -V | tail -1`) —
+never the default branch, which can be ahead of every release. An id with no `plugins/<id>` there
+is not first-party: ask for the repository.
 
 A **repo URL** is mirrored under `.upgrade/plugins/` (`--no-fetch` reuses the cache offline); a
 **local path** is read directly, which is the authoring loop (step 6). Expect a plan with these

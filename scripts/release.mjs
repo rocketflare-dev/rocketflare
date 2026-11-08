@@ -29,9 +29,9 @@
  * which cannot resolve a bare SHA, and `latestTag()` is how `--to` and `openSource` default. The
  * accepted cost of that lockstep: a fix to one plugin bumps every plugin's version.
  *
- * In the KIT it additionally refuses a version its `defaultPlugins` are not ready for (D31,
- * decision 5): every entry must still resolve at the ref the kit pins, and the version being cut
- * must be at or above the `minKit` floor that entry declares. `--skip-plugin-check` is the escape
+ * In the KIT it additionally refuses a version its CI plugins (`defaultPlugins` plus
+ * `.github/ci-plugins.json`) are not ready for (D31, decision 5): every entry must still resolve
+ * at the ref the kit pins, and the version being cut must be at or above the `minKit` floor that entry declares. `--skip-plugin-check` is the escape
  * hatch, and it says so loudly.
  *
  * Exit 0 ok · 1 error · 2 usage.
@@ -40,12 +40,12 @@ import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { ciPluginEntries, readCiPlugins } from './default-plugins.mjs'
 import { ensureMirror, mirrorDirFor, PLUGIN_MIRROR_ROOT } from './lib/git-lib.mjs'
 import { MANIFEST_FILE, readManifest } from './lib/manifest.mjs'
 import { PLUGIN_MANIFEST_FILE } from './lib/plugin-lib.mjs'
 import {
   changelogSection,
-  defaultPluginEntries,
   defaultPluginProblems,
   isKitManifest,
   noteLengthWarning,
@@ -252,7 +252,8 @@ export function resolveDefaultPlugin(
  */
 function checkDefaultPlugins(version, root) {
   const { manifest } = readManifest(root)
-  const entries = defaultPluginEntries(manifest)
+  // The CI canaries too: a release whose CI plugin cannot install is one kit.yml goes red on.
+  const entries = ciPluginEntries(manifest, readCiPlugins(root))
   if (entries.length === 0) return { entries, problems: [] }
   return {
     entries,
@@ -403,15 +404,16 @@ function main(argv) {
   }
   const ctx = targets[0].ctx
 
-  // A kit release ships a `defaultPlugins` set with it: a fresh clone installs those plugins, so a
-  // version whose default plugins cannot be fetched at their pin — or that falls below a floor
-  // one of them declares — is a version that does not bootstrap. What this can and cannot prove is
-  // written out on `defaultPluginProblems`; the CI job is what proves them GREEN.
+  // A kit release ships a `defaultPlugins` set (what a fresh clone installs) and a CI set
+  // (`.github/ci-plugins.json`, what kit.yml installs): a version one of them cannot be fetched at
+  // its pin for — or that falls below a floor one declares — is a version that does not bootstrap,
+  // or whose CI is red. What this can and cannot prove is written out on `defaultPluginProblems`;
+  // the CI job is what proves them GREEN.
   if (ctx.kind === 'kit' && !skipPluginCheck) {
     const { entries, problems } = checkDefaultPlugins(version, repoRoot)
     if (problems.length > 0) {
       warn(
-        `error: ${version} cannot be released — its default plugins are not ready:`,
+        `error: ${version} cannot be released — its default / CI plugins are not ready:`,
         ...problems.map(p => `  ${p}`),
         '',
         'Fix the pin (or the plugin), or pass --skip-plugin-check if you know why this is fine.'
@@ -419,7 +421,7 @@ function main(argv) {
       return 1
     }
     if (entries.length > 0) {
-      out(`✔ default plugins            ${entries.map(e => e.id).join(', ')} resolve at ${version}`)
+      out(`✔ default + CI plugins       ${entries.map(e => e.id).join(', ')} resolve at ${version}`)
     }
   } else if (skipPluginCheck) {
     warn(

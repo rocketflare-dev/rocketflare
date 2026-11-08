@@ -306,13 +306,17 @@ chooses, and `readManifest()` (`scripts/lib/manifest.mjs`) is the one kit-vs-app
 `.rocketflare.json` carries a top-level `defaultPlugins` array — the plugins a **fresh clone**
 installs before the app is first run. `scripts/bootstrap.mjs`'s `plugins` step reads it, skips every
 id already installed, runs `pnpm plugin add <repo> --apply` for the rest, then `pnpm db:generate`
-and `pnpm db:migrate` once. `pnpm bootstrap --no-plugins` skips the step. The kit's own list names
-`analytics` — extracted into a plugin in 0.6.0 — at a PINNED ref. **`check` no longer compares the
-installed version against that pin**: a released kit pins whichever plugin version was current when
-it shipped, so the comparison failed every plugin release that had moved past it, by construction,
-until a kit shipped pinning the new one — which cannot happen before the plugin is released. In the
-kit itself the entry is ordinarily *declared and not installed*, which is exactly the state
-`bash scripts/bootstrap.sh` resolves on a fresh clone.
+and `pnpm db:migrate` once. `pnpm bootstrap --no-plugins` skips the step. The kit's own list is
+EMPTY — analytics is opt-in (`/rf-plugin add analytics`) — and an app lists the plugins its own
+fresh clones should get, each at a PINNED ref. **`check` does not compare the installed version
+against that pin**: a released app or kit pins whichever plugin version was current when it shipped,
+so the comparison would fail every plugin release that had moved past it, by construction, until a
+release pinning the new one — which cannot happen before the plugin is released.
+
+In the kit repository only, `.github/ci-plugins.json` lists CI-only canaries (analytics, at a
+pinned ref) that `kit.yml`'s `plugins` job installs on every kit pull request on top of
+`defaultPlugins`, and `kit:release` checks both lists. A fresh clone never installs them; the
+rename deletes the file.
 
 ## Public mounts — the host's guard
 

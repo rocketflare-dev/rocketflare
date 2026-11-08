@@ -485,8 +485,8 @@ async function stepMigrate() {
 }
 
 /**
- * Install `.rocketflare.json`'s `defaultPlugins` (D31) — what makes a fresh clone of a kit whose
- * features live in plugins come up with those features already there.
+ * Install `.rocketflare.json`'s `defaultPlugins` (D31) — what makes a fresh clone of an app come
+ * up with the plugins it lists already there. The kit lists none: analytics is opt-in.
  *
  * It runs BEFORE the seed on purpose: a plugin contributes a `hooks.seedDemo`, so installing one
  * after `pnpm seed` would leave the demo workspace missing exactly the rows the plugin exists to

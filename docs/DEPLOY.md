@@ -326,12 +326,13 @@ All steps run at the repository root; the root scripts fan out with `pnpm -r` / 
                                   │
                                   └─► kit.yml (the kit only — `kitOnly`, so a copy has no such file)
                                         ├─ kit-checks → porting note → plugin-api.md diff → plugin check
-                                        │               → defaultPlugins (no database)
+                                        │               → CI plugin list (no database)
                                         ├─ renamed    → rename to `my-app`, commit → pnpm gate
-                                        └─ plugins    → plugin add each `defaultPlugins` entry at its ref
+                                        └─ plugins    → plugin add each `defaultPlugins` +
+                                                          `.github/ci-plugins.json` entry at its ref
                                                         → db:generate → db:migrate:ci
                                                         → GATE_SUITE_DRIVER=neon pnpm gate (the whole
-                                                          suite under neon; skipped with no defaults)
+                                                          suite under neon; skipped with none)
 
  push tag X.Y.Z ──► deploy.yml ─► guard: anything to deploy? (release-check.mjs --deployable)
                                   ├─ no  → gated, ci and both deploys skipped; the step summary says why
@@ -461,19 +462,24 @@ draft — builds from the tag as before; an asset that fails verification fails 
  publish the draft ─► production: fetch + verify → (no build) → start/upload/migrate/activate
 ```
 
-### Default plugins in CI, and the template a plugin repository calls (D31, decision 5)
+### Plugins in CI, and the template a plugin repository calls (D31, decision 5)
 
 The gate's steps live in ONE place, `pnpm gate` (`scripts/lib/gate-lib.mjs`), and every workflow
 runs that command rather than restating it: a copy's `ci.yml` once, and in the kit `kit.yml` twice
-more — renamed to a hyphenated slug, and with every default plugin installed and the whole suite
-under `neon` (`GATE_SUITE_DRIVER=neon`). A second copy of the steps would prove nothing about the
+more — renamed to a hyphenated slug, and with every CI plugin installed and the whole suite
+under `neon` (`GATE_SUITE_DRIVER=neon`). The CI plugins are `defaultPlugins` (what a fresh clone
+installs — empty in the kit, where analytics is opt-in) plus the kit-only `.github/ci-plugins.json`
+(analytics, as a canary: the plugin with the most tables, cubes, crons and UI, so a kit change that
+breaks an installed plugin fails on the kit's pull request). A second copy of the steps would prove nothing about the
 copy nobody ran.
 
-`defaultPlugins` in `.rocketflare.json` is a list of OBJECTS, and CI is its only strict reader:
+`defaultPlugins` in `.rocketflare.json` and `plugins` in `.github/ci-plugins.json` are lists of
+OBJECTS, and CI is their only strict reader (`scripts/default-plugins.mjs`; `--ci` adds the second):
 
 ```json
-"defaultPlugins": [
-  { "id": "analytics", "repo": "https://github.com/rocketflare-dev/rocketflare-plugin-analytics.git", "ref": "1.0.2" }
+"plugins": [
+  { "id": "analytics", "repo": "https://github.com/rocketflare-dev/rocketflare-plugins.git",
+    "ref": "3.8.2", "subdir": "plugins/analytics" }
 ]
 ```
 
@@ -481,11 +487,11 @@ copy nobody ran.
 repository required of every plugin manifest); `ref` because CI installs a PINNED version rather
 than whatever the default branch says this morning; `subdir` when the plugin is not the root of its
 repository. A bare string parses as an id with no repo and is reported as such rather than having a
-URL guessed for it. With the list empty `kit-checks` still reads it and says so — that is the
-answer worth seeing on a bare kit — and the `plugins` gate is skipped, since with nothing installed
-it would only re-run the renamed one's suite.
+URL guessed for it. With both lists empty `kit-checks` still reads them and says so, and the
+`plugins` gate is skipped, since with nothing installed it would only re-run the renamed one's
+suite.
 
-**Kit repository only — `pnpm kit:release X.Y.Z` refuses a version its default plugins are not ready for**: every entry
+**Kit repository only — `pnpm kit:release X.Y.Z` refuses a version its CI plugins are not ready for**: every entry
 must still resolve at the ref the kit pins (`git ls-remote`), and the `minKit` floor it declares
 there must be at or below the version being cut. A plugin still carrying the retired `requires.kit`
 is named as such, with the edit, rather than approximated — there is no range machinery left to fall
@@ -577,8 +583,8 @@ otherwise. In an app that is the whole rule: bump the root version, commit, tag.
 fails without `docs/upgrades/<tag>.md`, its `CHANGELOG.md` section and a matching
 `.rocketflare.json` `kit.version` — a kit release with no porting note is a permanent gap in the
 chain `/rf-upgrade` walks, and every copy has to step over it. `pnpm kit:release <version>` writes
-all of that, so the gate passes by construction, and refuses a version whose `defaultPlugins` no
-longer resolve at their pinned ref (D31, above).
+all of that, so the gate passes by construction, and refuses a version whose `defaultPlugins` or
+`.github/ci-plugins.json` entries no longer resolve at their pinned ref (D31, above).
 **Released history is never rewritten** — a copy pins a kit commit and a force-push orphans it. One tag ships `apps/web` and `apps/cli` together — the `apps/*` and `packages/*` versions
 are informational and are not checked. The kit itself has one
 more step after the tag, which nothing automates: updating rocketflare.dev's changelog

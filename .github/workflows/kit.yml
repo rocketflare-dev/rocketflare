@@ -5,14 +5,15 @@ name: Kit
 # copy's CI is ci.yml's one job; this file proves what only the kit can prove about itself:
 #
 #   kit-checks  the published plugin API is current, the vendored plugin audits clean, a behaviour
-#               change carries its porting note, `defaultPlugins` is well formed, the kit conforms
+#               change carries its porting note, the plugin lists are well formed, the kit conforms
 #               to the Launch kit contract (launch.kit.json, D36) — no database;
 #   renamed     the gate on the checkout renamed to a HYPHENATED slug, as every copy is born, and
 #               then provisioned as Launch's write_config does it, with the copy's own Launch kit
 #               check in both states;
-#   plugins     the gate with every `defaultPlugins` entry installed, and the WHOLE suite under
-#               `neon` — the backstop for the driver seam, which a copy's gate proves through the
-#               conformance pass alone (apps/web/src/db/CLAUDE.md).
+#   plugins     the gate with every CI plugin installed — `defaultPlugins` (empty) plus the
+#               canaries in .github/ci-plugins.json (analytics, opt-in for a clone) — and the WHOLE
+#               suite under `neon`, the backstop for the driver seam, which a copy's gate proves
+#               through the conformance pass alone (apps/web/src/db/CLAUDE.md).
 #
 # A required pull-request check through branch protection, never a deploy precondition: the kit
 # does not deploy (deploy.yml's guard says so and skips), and a deploy of a copy must not wait on a
@@ -79,12 +80,12 @@ jobs:
       - name: pnpm plugin check
         run: node scripts/plugin.mjs check
 
-      # What does a fresh clone install? `defaultPlugins` is a list of OBJECTS — `{ id, repo, ref?,
-      # subdir? }` — read and validated by ONE reader, which refuses a malformed entry with the
-      # reason. It always says what it found, including "none".
+      # What does CI install? `defaultPlugins` (what a fresh clone gets — empty) plus the canaries
+      # in .github/ci-plugins.json, each `{ id, repo, ref?, subdir? }`, read and validated by ONE
+      # reader, which refuses a malformed entry with the reason and always says what it found.
       - id: plugins
-        name: Default plugins
-        run: node scripts/default-plugins.mjs --github-output
+        name: CI plugins
+        run: node scripts/default-plugins.mjs --ci --github-output
 
   # Every app starts as a copy renamed by `scripts/rename.mjs`, and a hyphenated slug is where the
   # rename bites: the bare kit name becomes `my-app` while its snake form becomes `my_app`, so a
@@ -178,7 +179,7 @@ jobs:
       - run: pnpm gate
 
   plugins:
-    name: Gate with default plugins, the whole suite under neon
+    name: Gate with the CI plugins, the whole suite under neon
     needs: kit-checks
     if: needs.kit-checks.outputs.count != '0'
     runs-on: ubuntu-latest
@@ -198,13 +199,13 @@ jobs:
       # (§16) — so `db:generate` after each install and one `db:migrate:ci` at the end is the whole
       # of it, exactly what a person does locally. Each `plugin add --apply` ends with
       # `pnpm plugin check` over the tree it wrote.
-      - name: Install the default plugins
+      - name: Install the CI plugins
         run: |
           set -euo pipefail
           # db:generate runs `dotenv -e .dev.vars`, so the file has to exist here as it does on a
           # laptop. Git-ignored, and it holds nothing secret: a throwaway local database URL.
           printf 'DATABASE_URL=postgresql://test:test@localhost:5433/rocketflare_test\n' > apps/web/.dev.vars
-          node scripts/default-plugins.mjs --tsv > "$RUNNER_TEMP/default-plugins.tsv"
+          node scripts/default-plugins.mjs --ci --tsv > "$RUNNER_TEMP/ci-plugins.tsv"
           while IFS=$'\t' read -r id repo ref subdir; do
             [ -n "$id" ] || continue
             spec="$repo"
@@ -225,7 +226,7 @@ jobs:
             ")
             pnpm db:generate --name "plugin-$id-$version"
             echo "::endgroup::"
-          done < "$RUNNER_TEMP/default-plugins.tsv"
+          done < "$RUNNER_TEMP/ci-plugins.tsv"
           # Staged, as an adopter commits an install: the source scanners read `git ls-files`.
           git add -A
       - name: Apply the generated migrations

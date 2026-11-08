@@ -831,8 +831,8 @@ export function isVendored(source, kitRepo) {
  * every default plugin is still FETCHABLE at the ref the kit pins, and that the version being cut
  * is at or above the `minKit` floor it declares — one integer comparison, no range language. It
  * does not prove that plugin's tests pass against it, and nothing a release script can do proves
- * that. The kit's own CI installs every default plugin and runs the full gate on the release
- * commit (`.github/workflows/ci.yml`), and each plugin repository runs the mirrored check against
+ * that. The kit's own CI installs every CI plugin and runs the full gate on the release
+ * commit (`.github/workflows/kit.yml`), and each plugin repository runs the mirrored check against
  * the kit (`.github/workflows/plugin-ci.yml`). Those two are the compatibility proof; this is the
  * stop that catches a pin nobody updated.
  *
