@@ -6,6 +6,11 @@ copy of the kit forward without recreating anything its owner deleted.
 
 If you are running a copy: `pnpm kit:upgrade` tells you which of these you are missing.
 
+## 0.28.0 — 2026-11-08
+
+The analytics plugin is opt-in: a fresh clone of the kit installs no plugin, and `/rf-plugin add analytics` adds dashboards, cubes and fact tables when an app wants them.
+[Porting note](docs/upgrades/0.28.0.md).
+
 ## 0.27.0 — 2026-11-08
 
 A new `/rf-agent-docs` skill audits and fixes the docs an agent loads, and the WCAG contrast gate those docs always promised now exists — two theme tokens that failed it were adjusted.
