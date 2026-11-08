@@ -13,7 +13,7 @@ name: CI
 #
 # deploy.yml calls this same file (`workflow_call`) before deploying a tag whose commit has no
 # green CI run yet, so a commit is gated once and the gate never drifts between main and deploy.
-# The kit's OWN checks (a renamed copy, the default plugins, the porting note) are kit.yml, which a
+# The kit's OWN checks (a renamed copy, the CI plugins, the porting note) are kit.yml, which a
 # copy never carries.
 #
 # Verified once (opt-in, for an app shipped by Launch): with the repository variable

@@ -290,7 +290,7 @@ export function pluginImportIssue(
  * Whether the rule FAILS the suite or only reports.
  *
  * **Failing, for every plugin — there is no longer a tier to opt into.** It used to key on a
- * plugin declaring `requires.pluginApi`, because the gate's second pass installed `defaultPlugins`
+ * plugin declaring `requires.pluginApi`, because the gate's second pass installed the CI plugins
  * at refs that predated the surface and could not retroactively be changed. That tier went with
  * the field: a plugin now declares what it USES, the host emits what it provides, and the two are
  * compared directly — so there is nothing left here a released plugin cannot satisfy by being

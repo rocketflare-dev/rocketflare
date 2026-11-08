@@ -2,7 +2,7 @@ name: Plugin CI
 
 # **The other half of decision 5's compatibility proof** (D31, docs/CONCEPTS.md §16).
 #
-# The kit's own CI installs its `defaultPlugins` and runs the gate (ci.yml). This file is the
+# The kit's own CI installs its CI plugins and runs the gate (kit.yml `plugins`). This file is the
 # mirror, and it lives HERE rather than in each plugin so that a change to how a plugin is proved
 # compatible reaches every plugin through one file: a plugin repository calls it with
 #

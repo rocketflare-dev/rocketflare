@@ -300,7 +300,7 @@ path); no per-PR previews.
   (`tests/config/driver-conformance.test.ts` fails a skip or a per-driver expectation).
   `pnpm test` runs the suite under `postgres`, then the `driver` project under `neon` through the
   local proxy — so every gate, a copy's CI included, proves the deployed path. `kit.yml` runs the
-  whole suite under `neon` with the default plugins installed (`GATE_SUITE_DRIVER=neon`); locally
+  whole suite under `neon` with the CI plugins installed (`GATE_SUITE_DRIVER=neon`); locally
   `GATE_SUITE_DRIVER=neon pnpm gate test` does the same, and `pnpm dev:db:up --neon` runs the
   deployed driver on the local database. Time limits scale by one latency factor per target
   (`vitest.config.ts`: 1 local `postgres`, 4 through the proxy, 12 on a real Neon branch); no test
@@ -466,18 +466,21 @@ is hard-coded.
 
 ## 8. Analytics
 
-**The `analytics` PLUGIN, the one `defaultPlugins` entry (D31, since 0.6.0).** Repository
-`rocketflare-dev/rocketflare-plugin-analytics`. Once installed, its docs are its own `CLAUDE.md`
-files. drizzle-cube cubes scope every `sql()` by tenant, dashboards are jsonb `DashboardConfig`s
+**The `analytics` PLUGIN, opt-in (D31).** `plugins/analytics` in
+`rocketflare-dev/rocketflare-plugins`; `defaultPlugins` is empty, so a fresh clone has no
+dashboards until `/rf-plugin add analytics` (SETUP.md §2.7). Once installed, its docs are its own
+`CLAUDE.md` files. drizzle-cube cubes scope every `sql()` by tenant, dashboards are jsonb `DashboardConfig`s
 restrictable to groups, fact tables rebuild on the `:15` cron, and its cube-isolation test is
 mandatory. The kit core knows nothing about drizzle-cube, and other plugins extend it through
-`analyticsExtensions({...})`. `bootstrap --no-plugins` gives a kit without it.
+`analyticsExtensions({...})`. The kit's CI installs it as a canary (`.github/ci-plugins.json`), so a
+kit change that breaks it fails on the kit's pull request.
 
 The kit still owns `activity_events`, the catch-all/`run_worker_first`/Vite-proxy files its
 prefixes must be added to, and the visibility registry it registers into.
 
 **Known gaps (kit side):** `activity_events` has no retention; nothing proves a plugin's cron reached
-the tomls beyond parity between the two files; fact refresh/check need a running server and CLI.
+the tomls beyond parity between the two files; fact refresh/check need a running server and CLI;
+opting in is a manual `plugin add` — the bootstrap has no flag for it.
 
 ## 9. AI layer
 
@@ -944,7 +947,7 @@ on a populated demo workspace. From there it must be able to:
   indexed exactly once
 - ingest, upload a PDF and search it
 - restrict content by group and watch it disappear and reappear live
-- see analytics installed by default, removable cleanly with `--no-plugins` or `plugin remove`
+- add the analytics plugin (`/rf-plugin add analytics`) and remove it cleanly with `plugin remove`
 - port a later kit release skipping deleted examples
 - toggle the `example-feature` plugin's flag
 - provision and deploy to staging
@@ -1020,10 +1023,11 @@ as merging a PR. A plugin repo mirrors the host tree and ships **no migration, n
   HOST's kit version (`hostKitVersion` in `scripts/lib/manifest.mjs`): `.rocketflare.json`
   `kit.version` in a copy, whose root `package.json` is the app's own, and the root `package.json`
   version only in the kit itself. `requires.kit` /
-  `requires.pluginApi` are refused by name. CI proves both ends: `ci.yml` runs the gate with
-  `defaultPlugins` installed (in the kit's own repository only), and plugin repos call
-  `plugin-ci.yml` (floor + newest kit), which installs a plugin's `requires.plugins` from the
-  same checkout first and takes the highest `minKit` across the set as the floor.
+  `requires.pluginApi` are refused by name. CI proves both ends: `kit.yml` runs the gate with
+  `defaultPlugins` plus `.github/ci-plugins.json` installed (in the kit's own repository only),
+  and plugin repos call `plugin-ci.yml` (floor + newest kit), which installs a plugin's
+  `requires.plugins` from the same checkout first and takes the highest `minKit` across the set
+  as the floor.
 - **Lifecycle** (`scripts/plugin.mjs`): `add` (plan, then `--apply`), `upgrade`, `remove`
   (`--archive`), `list`, `check`, `export`. Every plan step is **declarative, agent (with its
   assertion) or human** — a printed instruction is not a mechanism. The host generates the
@@ -1167,10 +1171,10 @@ as merging a PR. A plugin repo mirrors the host tree and ships **no migration, n
 | # | Choice |
 |---|---|
 | 1 | First-party only; the install plan waits for a human |
-| 2 | The kit is bare; `defaultPlugins` + a bootstrap step keep a fresh clone unchanged |
+| 2 | The kit is bare; `defaultPlugins` + a bootstrap step install an app's own set on its fresh clones (empty in the kit: analytics is opt-in) |
 | 3 | `example-feature` is the reference plugin |
 | 4 | A plugin is recorded as a `kind: 'plugin'` surface; `readManifest()` is the one kit-vs-app predicate |
-| 5 | Compatibility is proved in CI from both ends (`ci.yml` with defaults installed; `plugin-ci.yml`; `kit:release` refusal) |
+| 5 | Compatibility is proved in CI from both ends (`kit.yml` with `defaultPlugins` + `ci-plugins.json` installed; `plugin-ci.yml`; `kit:release` refusal) |
 | 5b | *(reversed)* a `PLUGIN_API` integer beside `requires.kit` |
 | 5c | Compatibility is observed: derived `uses` against the emitted ledger, plus a `minKit` floor |
 | 6 | Cubes/fact tables/dashboards are plugin-owned registries via `extensions`, narrowed by the owner |

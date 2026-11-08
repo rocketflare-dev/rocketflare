@@ -117,7 +117,8 @@ ones their slice touches, and say what enforces each, so the rule is a test and 
 - **The realtime `entity` string IS the query-key family root.** `entity.changed { entity: 'order' }`
   invalidates `queryKeys.orders` only if that family is named `['order']`. Pick the string once and
   use it in the service nudge and in `lib/query-keys.ts`.
-- **Analytics is a PLUGIN** (D31), so "and a dashboard" means the analytics plugin is installed —
+- **Analytics is an opt-in PLUGIN** (D31), so "and a dashboard" means the analytics plugin is
+  installed (`/rf-plugin add analytics` if `pnpm plugin list` lacks it) —
   and where the cube goes depends on whose feature it is: inside the plugin's tree for an app that
   owns its copy, or through `analyticsExtensions({ cubes, cubeIsolationCases })` for a second
   plugin. Two rules survive the move unchanged: **cube member names are frozen** (dashboards store

@@ -222,9 +222,9 @@ press **Sign in** on the confirm page, land on Home. Shortcut (dev only): `http:
 through `/auth/dev-login` on load — honoured only when the server reports `devLogin`
 (`APP_ENV=development`) and for the four seeded accounts, so an arbitrary address does nothing.
 
-**Analytics check** (still in 1.6 — same terminal pair). Analytics is a PLUGIN from 0.6.0
-(`docs/CONCEPTS.md` §8, §16) and the bootstrap's `plugins` step installs it, so this works on a
-fresh clone unless you ran `--no-plugins`:
+**Analytics check** (still in 1.6 — same terminal pair). Analytics is an opt-in PLUGIN
+(`docs/CONCEPTS.md` §8, §16) that the bootstrap does not install, so this applies only once you
+have added it (§2.7):
 ```bash
 pnpm cli analytics check-facts       # fact-table freshness; exits 1 when any table is stale
 pnpm cli analytics refresh-facts     # enqueue a rebuild for this organisation
@@ -241,10 +241,9 @@ activity numbers. By hand, `curl -b <cookie> localhost:3001/api/analytics/pages`
 is a JSON 401, never HTML. `GET /api/analytics/facts/status` (owner/admin) shows the same freshness
 as the CLI.
 
-**With `--no-plugins` there is no analytics at all** — no nav item, no `/api/analytics`, no
+**Without the plugin there is no analytics at all** — no nav item, no `/api/analytics`, no
 `/cubejs-api`, no `/mcp`, and no drizzle-cube in either bundle. That is the kit's bare shape, and
-`pnpm plugin add https://github.com/rocketflare-dev/rocketflare-plugin-analytics.git@1.0.2 --apply`
-(then `pnpm db:generate --name plugin-analytics-1.0.2 && pnpm db:migrate`) is how it comes back.
+`/rf-plugin add analytics` (by hand: §2.7) is how you add it.
 
 > **Cookie note.** The session cookie is `__Host-session`, and the `__Host-` prefix *requires* the
 > `Secure` flag even in development. Chrome and Firefox treat `http://localhost` as a secure context so
@@ -284,7 +283,7 @@ pnpm test             # starts Postgres on :5433 + the Neon proxy on :4433 (apps
 # §4) — runs the whole suite under neon. It refuses any other remote database.
 ```
 Verify: all projects green — including every installed plugin's own tests, which run in the host's
-projects (`src/plugins/*/tests/{api,ui,config}`). The analytics plugin's `cube-isolation.test.ts`
+projects (`src/plugins/*/tests/{api,ui,config}`). With analytics added, its `cube-isolation.test.ts`
 is the one to watch: two tenants, every cube, disjoint rows.
 `apps/web/tests/config/wrangler-parity.test.ts` passes with the
 placeholder ids still in the tomls — the placeholder check only runs with `REQUIRE_PROVISIONED=1`
@@ -598,9 +597,18 @@ turns a bad answer into a case. Everything else — suites, judges, baselines, C
 
 ### 2.7 Plugins `[ready]` (D31)
 
-Analytics is not part of the kit; it is the `analytics` PLUGIN, and it is the one entry in
-`.rocketflare.json` `defaultPlugins`, so `bash scripts/bootstrap.sh` installs it in its `plugins`
-step and a fresh clone has dashboards without you doing anything. Nothing to configure.
+Analytics is not part of the kit; it is the opt-in `analytics` PLUGIN (dashboards, cubes, the
+drizzle-cube API). `.rocketflare.json` `defaultPlugins` is empty, so the bootstrap installs nothing
+and a fresh clone has no dashboards until you add it — `/rf-plugin add analytics`, or by hand:
+
+```bash
+pnpm plugin add https://github.com/rocketflare-dev/rocketflare-plugins.git@3.8.2 \
+  --subdir plugins/analytics                       # read the plan; re-run with --apply
+pnpm db:generate --name plugin-analytics-3.8.2 && pnpm db:migrate   # the host's migration
+```
+
+Then run the plan's numbered steps (below). An app that wants it on every fresh clone lists it in
+its own `defaultPlugins` (§1.4b).
 
 ```bash
 pnpm plugin list                                   # what is installed, and from where

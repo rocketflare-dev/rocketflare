@@ -1,0 +1,11 @@
+{
+  "$purpose": "Plugins the kit's OWN CI installs on every pull request (kit.yml's `plugins` job), on top of `.rocketflare.json` `defaultPlugins` — which is what a fresh clone installs, and is empty: analytics is opt-in. A plugin here is a canary, not a default: analytics has the most tables, cubes, crons and UI of any plugin, so a kit change that breaks an installed plugin fails here, on the kit PR, rather than at the plugins repo's next unrelated pull request. `kit:release` refuses a version an entry is not ready for, exactly as it does for a default plugin. Kit-only: the rename deletes this file.",
+  "plugins": [
+    {
+      "id": "analytics",
+      "repo": "https://github.com/rocketflare-dev/rocketflare-plugins.git",
+      "ref": "3.8.2",
+      "subdir": "plugins/analytics"
+    }
+  ]
+}
