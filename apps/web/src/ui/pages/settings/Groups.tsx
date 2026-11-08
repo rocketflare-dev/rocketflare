@@ -30,7 +30,7 @@ import { GroupMembersModal } from './GroupMembersModal'
 
 /**
  * The 409 body: how much content the delete is about to narrow, one count per restrictable
- * resource. The KEYS are whatever `VISIBILITY_RESOURCES` holds on the server — the core
+ * resource. The KEYS are whatever `visibilityResources()` returns on the server — the core
  * `documents`, plus one per installed plugin (the analytics plugin's `dashboards`) — so this is
  * read generically rather than as a fixed pair. Zeroes are included by the server on
  * purpose: the sentence says what the whole organisation would lose, not only the non-empty parts.

@@ -8,8 +8,8 @@ Cloudflare Worker (`apps/web`), a CLI (`apps/cli`), private zod contracts
 > before assuming a capability exists; update it when you change one.**
 > **Setup**: asked for setup help → run `/rf-setup` (it drives `scripts/bootstrap.sh --no-dev`, then
 > starts the server): show each `✔ n/10` line, stop on failure. By hand: `SETUP.md` Part 1.
-> **Fresh copy?** `/rf-adapt <slug>`, then `docs/ADAPTING.md`. `/rf-setup`, `/rf-adapt`, `/rf-preflight`,
-> `/rf-traces`, `/rf-evals`, `/rf-agent-replay` and `/rf-plugin` you
+> **Fresh copy?** `/rf-adapt <slug>`, then `docs/ADAPTING.md`. `/rf-setup`, `/rf-adapt`, `/rf-preflight`, `/rf-how-do-i`,
+> `/rf-upgrade`, `/rf-traces`, `/rf-evals`, `/rf-agent-replay`, `/rf-agent-docs` and `/rf-plugin` you
 > may run yourself; **`/rf-provision` is user-invoked only** (it creates paid resources and prompts for
 > tokens on a TTY) — asked to deploy, tell the user to run `/rf-provision`.
 > **Plugins** (D31, `docs/CONCEPTS.md` §16): a plugin is a git repository copied in, wired through six
@@ -102,7 +102,7 @@ apps/evals/        @rocketflare/evals — vitest-evals suites over apps/web in-p
                    suites/, datasets/*.jsonl, baselines/; `pnpm eval` only, never the gate (docs/EVALS.md)
 packages/shared/   @rocketflare/shared — src/*.ts zod contracts, errors, pagination, permissions,
                    plugins/ (SharedPlugin + the SHARED_PLUGINS barrel + each plugin's contracts) (CLAUDE.md)
-scripts/           bootstrap.sh → bootstrap.mjs (9 steps), rename.mjs, upgrade.mjs (port a kit
+scripts/           bootstrap.sh → bootstrap.mjs (10 steps), rename.mjs, upgrade.mjs (port a kit
                    release into a copy), release-check.mjs (deploy gates),
                    kit-update-check.mjs (SessionStart: tells a copy about a newer kit release),
                    kit-check.mjs (the Launch kit conformance check, shared with the meta-kit), lib/;
@@ -117,7 +117,8 @@ docs/upgrades/     one porting note per kit release (+ unreleased.md, kit repo o
                    rf-plugin (+ reference.md — install/upgrade/remove a plugin, D31) ·
                    rf-traces (debug a run from its span tree; pick a tracing backend, D32) ·
                    rf-evals (+ reference.md — author, run, compare, harvest, baseline, improve; D33) ·
-                   rf-agent-replay (replay an agent's past runs with today's code, no model calls; D38)
+                   rf-agent-replay (replay an agent's past runs with today's code, no model calls; D38) ·
+                   rf-agent-docs (+ check.mjs — audit and fix CLAUDE.md, rules and skills)
 ```
 
 **`packages/shared`.** Private, no build: `@rocketflare/shared/<module>` → `./src/<module>.ts` (incl. `ai/*`,

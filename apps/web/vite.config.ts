@@ -72,8 +72,9 @@ export default defineConfig({
       },
     },
     // Everything the Worker serves in production is proxied to `wrangler dev` here.
-    // An installed plugin's own prefixes are added here by hand on install — this file is core,
-    // and a plugin edits no core file (D31). The analytics plugin's are `/cubejs-api` and `/mcp`.
+    // An installed plugin's own prefixes land here as `coreEdits` its manifest declares — `pnpm
+    // plugin add` writes them and `remove` reverts them. The analytics plugin's are `/cubejs-api`
+    // and `/mcp`.
     proxy: {
       '/api': proxyTo(),
       '/auth': proxyTo(),
@@ -83,8 +84,8 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': path.resolve(import.meta.dirname, './src'),
-      // An installed plugin may need an alias of its own, and this is a core file it cannot
-      // write — `pnpm plugin add` prints the lines as a numbered step (D31). The analytics plugin
+      // An installed plugin may need an alias of its own: a `coreEdits` entry in its manifest,
+      // which `pnpm plugin add` writes here and `remove` reverts. The analytics plugin
       // needs two: `'@nivo/heatmap'` pointed at its own stub (drizzle-cube's heat-map chunk names
       // that OPTIONAL peer, and Rolldown fails the build without the package), and `'recharts'`
       // added to `dedupe` below, because drizzle-cube's chart chunks import it.

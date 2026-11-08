@@ -4,8 +4,9 @@
  * `services/access.ts` composes the registry, and to do that it reads the plugin barrel. So a
  * plugin's own visibility resource cannot import a value from it: the barrel imports the plugin,
  * the plugin imports the composer, and the cycle resolves with `serverPlugins` still `undefined`
- * at module evaluation — `VISIBILITY_RESOURCES` then throws on `undefined.flatMap` at import time,
- * which takes the whole Worker down rather than failing one request.
+ * at module evaluation — a registry composed at import time would throw on `undefined.flatMap`,
+ * taking the whole Worker down rather than failing one request (so `visibilityResources()` is a
+ * function, composed on first call).
  *
  * This file is therefore a LEAF: drizzle and nothing else. Everything here is re-exported from
  * `./access.ts`, so core code is unchanged and only a plugin has to know the distinction.
@@ -54,7 +55,7 @@ export function sharedWithMyGroups(
  * ones.
  *
  * **It lives in this LEAF, not in `access.ts`, and that placement is load-bearing.** `access.ts`
- * reads the plugin barrel to compose `VISIBILITY_RESOURCES`, so anything importing it is downstream
+ * reads the plugin barrel to compose `visibilityResources()`, so anything importing it is downstream
  * of every installed plugin. `plugins/api/http.ts` needs this one function, and importing it from
  * `access.ts` closed the cycle `plugins/api → http → access → plugins/server → <plugin>/index →
  * plugins/api`: with a SECOND plugin installed, the plugin's routes evaluated while `http.ts` was

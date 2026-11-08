@@ -7,288 +7,144 @@ paths:
 
 # UI Patterns
 
-React 19 + Vite, DaisyUI 5 on Tailwind v4, React Router 7, TanStack Query 5, zustand only for the
-websocket store. Served as Workers Static Assets from the same Worker as the API (SPA fallback).
-Dev: Vite on :3000 proxies `/api`, `/auth`, `/ws` — plus every prefix an installed plugin declares
-(the analytics plugin's `/cubejs-api` and `/mcp`, added by hand on install) — to `wrangler dev` on :3001.
-Either port moves with `DEV_UI_PORT` / `DEV_API_PORT` (`scripts/lib/dev-ports.mjs`, shell or
-`.dev.vars`); `DEV_ALLOWED_HOSTS` adds hostnames Vite answers for.
+React 19 + Vite, DaisyUI 5 on Tailwind v4, React Router 7, TanStack Query 5; served as Workers
+Static Assets (SPA fallback). Dev: Vite :3000 proxies `/api`, `/auth`, `/ws` (+ each installed
+plugin's prefixes, written by `pnpm plugin add` from its `coreEdits`) to `wrangler dev` :3001;
+`DEV_UI_PORT` / `DEV_API_PORT` / `DEV_ALLOWED_HOSTS` (`scripts/lib/dev-ports.mjs`). Map,
+providers, identity flow: `apps/web/src/ui/CLAUDE.md`.
 
 ## Design tokens, not raw colours
 
-- Themes are two `@plugin "daisyui/theme"` blocks in `apps/web/src/ui/index.css` (`rocketflare-light` default,
-  `rocketflare-dark` prefersdark). The brand variables at the top of that file are the ONLY place a hex
-  appears. Components use DaisyUI semantic classes (`bg-base-200`, `text-primary`) or the kit's
-  surface/border/text tokens (`--surface-panel`, `--border-subtle`, `.text-muted`); **never
+- Themes are two `@plugin "daisyui/theme"` blocks in `apps/web/src/ui/index.css`
+  (`rocketflare-light` default, `rocketflare-dark` prefersdark); its brand variables are the ONLY
+  place a hex appears (rebrand steps: its header comment). Use DaisyUI semantic classes
+  (`bg-base-200`, `badge-warning`) or the kit's tokens (`--surface-*`, `--border-*`, `--text-*`,
+  `--tone-*`; `.surface-panel`, `.data-table`, `.status-badge`, `.text-muted`); **never
   `bg-blue-50`-style palette utilities**
 - `apps/web/tests/ui/contrast.test.ts` gates the emitted tokens (WCAG); if you change a colour, run it
-- `ThemeToggle` sets `data-theme` on `<html>`; the DOM attribute is the state, mirrored to
-  `localStorage['theme']` and validated on read (`index.html` pre-hydration script)
-- Tailwind v4 content scanning: `index.css` starts with `@import "tailwindcss" source(none)` and then
-  explicit `@source "./index.html"` / `@source "./**/*.{ts,tsx}"` — scoped to `apps/web/src/ui`.
-  **Lesson**: without `source(none)` v4 auto-detects sources from the package root and scans the whole
-  repo — docs, API code, tests, migrations — and DaisyUI emits a component for every stray word that
-  looks like a class (`card`, `table`, `menu` in a comment). Keep the scan scoped. A dependency that
-  ships pre-built JSX **and uncompiled Tailwind classes** is an explicit `@source` line pointing at
-  its dist. drizzle-cube (the analytics plugin's) is NOT such a dependency: its styles are
-  precompiled and `dc:`-prefixed in `drizzle-cube/client/styles.css`, loaded by that plugin's lazy
-  chunk, so scanning its dist generated zero of its classes and a pile of stray DaisyUI components —
-  pure cost, measured, then removed. An installed plugin's own pages DO need a line, and there is
-  one: `@source "../plugins/**/ui/**/*.{ts,tsx}"` — without it a plugin page renders unstyled with
-  nothing in the console to say why. Never
-  `@source` node_modules without measuring the output first. Safelist (`@source inline(...)`) only classes built from
-  props (`alert-*`, `btn-*`), never from data or from a dependency
-- Fonts self-hosted via `@fontsource` imports in `main.tsx`
-
-## Providers (06 §b)
-
-`ErrorBoundary` → `QueryClientProvider` → `AuthProvider` → `AbilityProvider` → `WebSocketProvider` →
-`BrowserRouter` → routes. `Layout` is mounted once under `/*`; a second `ErrorBoundary` wraps each
-`<main>`. Dev-only `ReactQueryDevtools` in a `Suspense`.
+- Theme state is `data-theme` on `<html>` (`ThemeToggle`), mirrored to `localStorage['theme']`
+- Tailwind scanning is scoped (`source(none)` + explicit `@source` lines in `index.css`, including
+  `../plugins/**/ui/**`, without which a plugin page renders unstyled); unscoped, v4 scans the whole
+  repo and DaisyUI emits a component per stray class-like word. Never `@source` node_modules without
+  measuring. Safelist (`@source inline(...)`) only prop-built classes, never data or a dependency
+- Heroicons only (`components/icons` marks use `currentColor`); `<details>/<summary>` dropdowns;
+  `<dialog>` `Modal` capped at `max-h-[85vh]` — the BODY scrolls, title and actions stay. No new
+  UI library without a stated reason in the PR
 
 ## Data layer
 
-- All HTTP via `lib/api-client.ts` (`api.get/post/patch/delete/upload`): `credentials: 'include'`, typed
-  `ApiError` from the shared envelope, `schema` option zod-parses the response with the same
-  `@rocketflare/shared/<module>` schema the server validates with (import from `@rocketflare/shared/...`, never a
-  relative path into `packages/`). No `hono/client` RPC (D13)
+- Imports: `@/ui/...` and `@rocketflare/shared/...` (never a relative path into `packages/`); never
+  import from `src/api`, `src/db` or `src/permissions` — the ability MATRIX is server code, the UI
+  only unpacks rules
+- All HTTP via `lib/api-client.ts` (`api.get/post/put/patch/delete/upload`): cookie credentials,
+  typed `ApiError` from the shared envelope, a `schema` option that zod-parses the response with
+  the same `@rocketflare/shared/<module>` schema the server uses. No `hono/client` RPC (D13)
+- Server data lives ONLY in the query cache. One hook file per resource, `hooks/use<Resource>.ts`,
+  exporting `xQueryOptions()` factories + `useX()` + mutation hooks; keys from the `queryKeys`
+  factory in `lib/query-keys.ts` — never inline key arrays. `lib/queryClient.ts` is the
+  module-level client
+- Mutations live in the resource hook and invalidate via `queryKeys`. Write methods toast errors by
+  default (`showErrorToast`); success toasts are opt-in (`showSuccessToast` + `successMessage`)
+- **Polling rules**: poll only while the server still owes an answer, the decision a pure function
+  on the cached row — `refetchInterval: q => runPollInterval(q.state.data?.status)` (`RUN_POLL_MS`
+  while **`runOwesAnswer`** = `queued || running`, deliberately NOT `isRunActive`, which includes
+  `awaiting_input`; lists while any row owes one); documents `DOCUMENT_POLL_MS` while a row is
+  `pending`. A nudged resource still polls (the socket may be down). Never poll a settled row or
+  unconditionally; never fight `refetchInterval` with timers in tests
+- Pagination meta is `{ page, pageSize, total, totalPages }`; every list renders
+  `PaginationControls` (hides itself at one page). Forms: controlled inputs validated with the
+  server's `@rocketflare/shared` schema, `FieldError` per field
 - Files (D23): `api.upload(url, formData, { schema })` posts multipart **without** a JSON
-  `Content-Type` (the browser sets the boundary). Check `isAvatarMimeType` / `MAX_UPLOAD_BYTES` from
-  `@rocketflare/shared/files` client-side first (`validateAvatarFile` in `hooks/useProfile.ts`) so the
-  server's 413/415 are a backstop, not the UX; `useUploadAvatar()` → `POST /api/files?scope=avatars`
-  then invalidates `me` + `auth` and refreshes the session. Render `<img src={user.avatarUrl}>` with
-  an `onError` fallback to initials — the object is tenant-scoped, the URL is not
-- One hook file per resource in `hooks/use<Resource>.ts`; query keys from the central `queryKeys`
-  factory in `lib/query-keys.ts` — never inline key arrays. `lib/queryClient.ts` holds the client
-  and its global `QueryCache.onError`
-- `queryOptions()` factories in `lib/query-options.ts` for anything used by more than one component
-- Mutations invalidate via `queryKeys`; error toast on by default (`showToast`)
-- **Polling rules** (Phase 3b): poll only while the server still owes an answer, with the decision as a
-  pure function on the cached row — `refetchInterval: q => runPollInterval(q.state.data?.status)`
-  (`RUN_POLL_MS` 3 s while **`runOwesAnswer`**, which is `queued || running` and deliberately NOT
-  `isRunActive` — that includes `awaiting_input`, and a run parked on a person would otherwise be
-  re-fetched every three seconds for the length of `AGENT_INTERRUPT_TIMEOUT`, by every open tab;
-  lists poll while any listed row owes an answer); documents 5 s
-  (`DOCUMENT_POLL_MS`) while a row is `pending`. Polling is the belt to the nudge's braces — a resource
-  that has a server nudge still polls (the socket may be down); a resource without one (documents) polls
-  only. Never poll a settled row, never poll unconditionally, never fight `refetchInterval` with timers in tests
-- Global 401: `QueryCache.onError` clears the client and redirects to `/login?returnUrl=` (D20)
-- Pagination meta is `{ page, pageSize, total, totalPages }`; `PaginationControls` consumes it
+  `Content-Type`. Check type/size with `@rocketflare/shared/files` first (`validateAvatarFile`) so
+  413/415 are a backstop. `<img src={user.avatarUrl}>` needs an `onError` fallback to initials —
+  the object is tenant-scoped, the URL is not
+- **A third-party provider with its own TanStack Query** escapes the global `onError`: give it a
+  `QueryClient` mapping 401 → `notifyUnauthorized`, and pass `credentials` + `X-Requested-With`
 
 ## State
 
-TanStack Query owns server state. zustand owns exactly one thing: the websocket connection state
-(`stores/websocketStore.ts`: `status: 'connecting' | 'open' | 'closed'`, `connectedAt`,
-`disconnectedAt` — kept at the FIRST drop so the banner measures the whole outage — `attempt`,
-`lastEvent`; written only by `lib/websocketClient.ts`). Component-local UI state is `useState`;
-theme and density are DOM attributes. Do not add a store for server data.
+TanStack Query owns server state — never add a store for it. zustand owns only
+`stores/websocketStore.ts` (written by `lib/websocketClient.ts`); theme/density are DOM attributes.
 
-## Realtime (D8)
+## Realtime (D8) — DB is the truth, the WebSocket is a nudge
 
-`lib/websocketClient.ts` singleton (outside React) connects to `/ws?tenantId=` (same origin — the
-Vite proxy forwards it in dev); reconnects with exponential backoff (base `min(1 s · 2^attempt,
-30 s)`, jittered in `[base/2, base]`), and a close with code 1001/1012 or reason "upgraded"/"new
-version" (Worker redeployed) reconnects in 100 ms without counting as a failure; sends
-`{"type":"ping"}` every 30 s. Events are parsed with `realtimeEventSchema`; the event type → query-key
-root map is **`REALTIME_INVALIDATIONS` / `invalidationsFor()` in `@rocketflare/shared/realtime`**, not in
-the UI — a new server event type adds its roots there, and `tests/ui` asserts every root is a real
-`queryKeys` family (`['invitations']`, `['pending-invitations']`, `['members']`, `['tenant']`…).
-**Convention: the `entity` string of an `entity.changed { entity, id }` nudge IS the query-key family
-root** — `invalidationsFor()` returns `[[entity]]`, so a resource whose server nudges
-`entity: 'agent-run'` names its family `['agent-run']` (`queryKeys.agentRuns.all`) and gets live
-refresh with zero hook-side socket code. When you add a resource: pick the root first, use the same
-string in the service's nudge and in `query-keys.ts`, and never subscribe to the socket from a hook.
-`components/WebSocketProvider.tsx` (after `AbilityProvider`) connects once `useAuth()` is
-authenticated with a tenant, reconnects on tenant switch, disconnects on sign-out, and uses
-`useQueryClient()` to `invalidateQueries({ queryKey })` per root, toasting `notification.created`.
-Components subscribe to query state, never to the socket; `WebSocketStatus` (header dot) and
-`ConnectionBanner` (after 5 s degraded) read the store only. Tests inject a fake socket with
-`websocketClient.setFactory()` — reset it in `afterEach`.
+- Realtime events never become state: `WebSocketProvider` invalidates query roots and the hooks
+  re-fetch. The event → root map is **`REALTIME_INVALIDATIONS` / `invalidationsFor()` in
+  `@rocketflare/shared/realtime`**; a new event type adds its roots there
+  (`tests/ui/websocket-provider.test.tsx` asserts each is a real `queryKeys` family)
+- **Convention: the `entity` string of an `entity.changed { entity, id }` nudge IS the query-key
+  family root** (`entity: 'agent-run'` → `queryKeys.agentRuns.all` = `['agent-run']`). Adding a
+  resource: pick the root first, use the same string in the service's nudge and `query-keys.ts`,
+  and never subscribe to the socket from a hook. Components read query state, never the socket
 
 ## Streaming (AG-UI over SSE, D17)
 
-- SSE is consumed with **`fetch`, never `EventSource`** (GET-only, cannot carry the CSRF header): `lib/aguiStream.ts`
-  POSTs with `credentials: 'include'` + `X-Requested-With` and reads the body through `lib/sse.ts`
-  (`readSse(response, parse, onEvent, { signal })`, `SseFrameBuffer` survives frames split across
-  chunks, each `data` goes through the parser the CALLER passes — `kitAguiEventSchema.safeParse` —
-  and unknown frames are dropped, never thrown). **Spec AG-UI frames carry no `event:` line**; the
-  type is inside the JSON, so nothing may key on the SSE event field. `lib/sse.ts` imports no
-  schema, which is what keeps `@ag-ui/core` out of the eager shell. The run READ-stream
-  (`lib/runAguiStream.ts` → `hooks/useRunStream.ts`) is the one GET — deliberately, so a third-party
-  client can point a bare `EventSource` at it — resuming with `?afterSeq=`, which beats an inbound
-  `Last-Event-ID` when both arrive. Reconnection lives in the HOOK, not the transport.
-- **A read-stream that carries DURABLE rows writes them into the cache; only chat's in-flight text
-  is local state.** `useRunStream` is the ONLY writer of `['agent-run-agui', id]`, and that key must
-  stay out of `REALTIME_INVALIDATIONS` — a nudge that invalidated it would wipe a live timeline with
-  the very message telling it to refresh. Merge purely (the timeline model is idempotent under
-  duplicated events), never append blindly.
-- **A read-stream closing with no terminal event means RECONNECT, not error** — redeploy, idle cap,
-  duration cap, transport error, abort all look the same, deliberately. That is the inverse of the
-  chat write-stream, where the stream IS the run and a failure is a `RUN_ERROR`.
-  It does not go through `api-client`'s `request()` (JSON only) but reuses `parseErrorBody`: a pre-stream
-  non-2xx is the shared envelope — 503 `ai_not_configured` becomes `AiNotConfiguredError` so the page
-  renders a "configure AI" call to action instead of a toast
-- **Streaming text is the one exception to "server data lives only in the cache"**: `useSendMessage`
-  appends the user bubble optimistically, accumulates the assistant reply in LOCAL state from
-  `TEXT_MESSAGE_CONTENT` deltas — across every message id the run opens, one per model turn (not
-  truth until `RUN_FINISHED`) — then writes the finished message into the cache (the server persisted
-  it BEFORE that frame) and invalidates the `chat.conversations` family. Stop =
-  `AbortController.abort()` — **a cancelled run emits NO terminal event**, which is the protocol's
-  way of saying the client went away: a normal end, no toast, no error bubble; a pre-stream failure
-  takes the optimistic bubble back; a `RUN_ERROR` leaves the turn in `error` status until the next send
-- Frame order the UI relies on: `RUN_STARTED` → `CUSTOM kit.chat.ids` (swap the optimistic user id
-  for `userMessageId`) → `STATE_SNAPSHOT` → per model turn `TEXT_MESSAGE_START → CONTENT* → END`
-  and `TOOL_CALL_START → ARGS → END → RESULT` → `CUSTOM kit.usage` → `RUN_FINISHED`. Tool calls
-  render as one-liners through `toolLabel(name)`. A new event is an AG-UI type added to
-  `kitAguiEventSchema`, or a member of the kit's CUSTOM namespace, in
-  `@rocketflare/shared/ai/agui` first — an APP adds its own CUSTOM events under its own prefix,
+- SSE is consumed with **`fetch`, never `EventSource`** (GET-only, cannot carry the CSRF header),
+  through `lib/sse.ts`, never `api-client`'s `request()`. Transports, socket client, frame order:
+  `lib/CLAUDE.md`
+- **Spec AG-UI frames carry no `event:` line**; the type is inside the JSON, so nothing may key on
+  the SSE event field. A new event is an AG-UI type added to `kitAguiEventSchema`, or a CUSTOM
+  member, in `@rocketflare/shared/ai/agui` first — an APP's CUSTOM events use its own prefix,
   never `kit.`
-- Guards: `/chat/:conversationId?` is `read Conversation` (every role; ownership is server-side);
-  `/settings` (`?tab=ai|prompts|agent-models|usage`) is `guard="admin"`, the last two additionally
-  `manage AiConfig`. Agent runs (`/agents`, `/agents/runs/:runId`, `AgentRun`), documents
-  (`/documents`, `Document`) and the agent-models tab follow the same contracts
-  (`@rocketflare/shared/ai/{agents,embeddings,agent-models,interrupts,artifacts}`). Documents
-  poll/nudge; **a run STREAMS** (below) and `entity.changed { entity: 'agent-run' }` invalidates the
-  run query — but never `['agent-run-agui']`. Page specifics: `apps/web/src/ui/CLAUDE.md`
+- **A read-stream carrying DURABLE rows writes them into the cache; only chat's in-flight text is
+  local state** (`pages/chat/CLAUDE.md`). `useRunStream` is the ONLY writer of
+  `['agent-run-agui', id]`, which must stay out of `REALTIME_INVALIDATIONS` (a nudge would wipe
+  the live timeline). Merge purely, never append blindly
+- **A read-stream closing with no terminal event means RECONNECT, not error** — the inverse of the
+  chat write-stream, where the stream IS the run and a failure is a `RUN_ERROR`
 
-## Auth and guards
+## Guards
 
-- `hooks/useAuth.tsx` wraps `GET /auth/session` (zod-parsed) and exposes `useTenancyMode()` so
-  single-tenant deployments hide `OrgSwitcher`, `/select-tenant` and org create/delete (D25)
-- One guard primitive, `RequireGuard` (`components/RequireGuard.tsx`), composed into coarse role
-  guards (authenticated, owner/admin, global admin) and fine ability guards (`RequireAbility`,
-  `<IfCan action="manage" subject="Tenant">` / `<IfCannot>` from `components/permissions/`). `SideNav` item flags use the SAME
-  guard as the page they open; `ProtectedRoute` requires a tenant for the whole shell EXCEPT
-  `/admin/*` for a global admin (no membership needed — `useNavGuard` then passes only
-  `'globalAdmin'` guards, so nothing tenant-scoped is linked)
-- OAuth is a full-page redirect to `/auth/:provider?returnUrl=`; magic link via
-  `POST /auth/magic-link/request`; `GET /auth/methods` drives which buttons render. `oidcOnly`
-  shows the one SSO button and hides the rest — never an automatic redirect to `/auth/oidc`:
-  signing in is always a click
-- `/login?as=<email>` signs in through `POST /auth/dev-login` on mount, ONLY when `methods.devLogin`
-  is true and the email is in `DEV_ACCOUNTS` (the bootstrap opens it); never widen the allow-list
+- One guard primitive, `RequireGuard`, decided in ONE place, `useNavGuard` (`AdminRoute` /
+  `GlobalAdminRoute` are sugar). Coarse guards are role flags (`'admin'` =
+  owner/admin/support/globalAdmin, `'globalAdmin'`); fine gates are abilities
+  (`{ action, subject }`, `<IfCan>` / `<IfCannot>`). Owner-ONLY actions (delete org, assign/strip
+  owner) check `tenant.role === 'owner'` — `manage Tenant` is also held by support and global
+  admins. A `SideNav` item uses the SAME guard as its page. All cosmetic; the server enforces
+- **Feature flags (D30)**: gate with `{ feature: 'x' }` as a `NavGuard` or `useFeature('x')`, both
+  reading `session.features`. **Never `{ action: 'access', subject: 'Feature:x' }`**: a global
+  admin's `manage all` satisfies it, so they would see a nav item whose routes the server 404s. A
+  `NavGuard` LIST means AND — `featureGuard(MY_FEATURE, { action: 'read', subject: 'Thing' })`.
+  One const per feature, in `lib/feature-guards.ts` for an app's own flag (core ships none), beside
+  the route for a plugin's. Tests drive the REAL `useNavGuard`, for a global admin and an owner
 
 ## Conventions
 
-- Pages in `pages/` (lazy in `App.tsx`), reusable primitives in `components/shared/` — check there
-  before writing a modal, empty state, toast, pagination control or section panel
-- **A surface somebody is asked to ACT on is a page, not a modal.** A run
-  (`/agents/runs/:runId`, issue #17) is arrived at from a notification, may need a document read
-  before deciding, and is left and returned to — so it has its own route, its own lazy chunk, a
-  breadcrumb, and no `role="dialog"`. The decision panel is pinned ABOVE the content, **focus lands
-  on its heading and never on the destructive button**, and a non-approver sees one sentence rather
-  than a disabled control with a tooltip. A conflict (409) is rendered as `alert-info` plus a
-  refetch — *information, not an error*: no toast and no red for "somebody else got there first"
-- **A countdown chooses its own tick rate from a pure function.** `expiryState(expiresAt, now) →
-  { tickMs }` — a second under an hour, a minute under a day, `null` beyond. A naive one-second
-  interval on a seven-day deadline is ~600 000 re-renders of a panel nobody is watching
-- **A growing list windows; it does not virtualise.** Render the last N groups plus one "show
-  earlier" button. Virtualising needs measurement, and measurement fights both auto-scroll and
-  collapsible rows. Auto-scroll fires only when the reader is at the bottom AND the last row's **id**
-  changed — keying on height yanks them down whenever they expand something old
+- Check `components/shared/` before writing a modal, empty state, toast, pagination control or
+  section panel
+- **A surface somebody is asked to ACT on is a page, not a modal** (own route and lazy chunk, no
+  `role="dialog"`): the decision panel pinned ABOVE the content, **focus lands on its heading and
+  never on the destructive button**, a non-approver sees one sentence rather than a disabled
+  control, and a 409 is `alert-info` plus a refetch — no toast, no red
+- **A countdown chooses its own tick rate from a pure function** (`expiryState` → 1 s under an
+  hour, 1 min under a day, `null` beyond). **A growing list windows; it does not virtualise**, and
+  auto-scroll fires only when the reader is at the bottom AND the last row's **id** changed
 - **A live count in the nav is `NavItem.badgeKey` resolved in `SideNav`**, never a hook inside
-  `navigationConfig`: that const is plain data consumed by the pure, tested `filterNavConfig`. Feed
-  it from a query-key root the server already nudges — **never a poll** — and **render a dot on the
-  icon when the nav is collapsed**, or the badge is invisible to everyone who collapsed the sidebar
-- **A notification's `data` is its deep link.** One `notificationLink(notification)` helper mapping
-  `type` + `data` → a path (unknown → `null`), used by the bell AND the list, so a row means the
-  same thing in both places
-- `components/ai/` (`Markdown`, `ChatBubble`) is deliberately NOT exported from the
-  `components/shared` barrel that `App.tsx` imports eagerly: `react-markdown` + `remark-gfm` must ship
-  only in the lazy chat / agents / documents chunks, never the main bundle. Import them by path from
-  lazy pages ONLY — `pages/chat/**`, `pages/agents/**` and `pages/documents/DocumentViewPage.tsx`:
-  `DocumentsPage` and `SearchPage` live in that folder too and must NOT import it. The converse rule
-  holds for `components/shared`, nothing under which may import a markdown renderer — which is why
-  `DocumentCard` renders its excerpt as plain text (`tests/config/ui-bundle.test.ts` asserts both
-  halves);
-  render model output through `Markdown` (`skipHtml`, links `noopener`), never
-  `dangerouslySetInnerHTML`; user text renders verbatim (`whitespace-pre-wrap`). `pages/agents/**`
-  imports `Markdown` too and is lazy for the same reason (Vite emits one shared `Markdown-*.js`)
-- **A plugin's heavy dependencies stay in its own lazy chunk (D19, D31)**: the analytics plugin's
-  `drizzle-cube/client`, `recharts`, `d3`, `react-grid-layout` and `react-is` are reached only from
-  its own pages and components, never from the `components/shared` barrel, `App.tsx`, `SideNav` or a
-  hook the shell loads eagerly. Its `ui/index.ts` ships in the MAIN bundle — every page is
-  `lazy(() => import(...))` and `tests/config/plugins.test.ts` reads that file's SOURCE to prove it.
-  Two more boundaries the same rule implies: a registry the browser reads must be a separate file
-  from the one that composes other plugins' contributions (importing the composing one drags
-  `postgres` into the UI bundle — measured), and a plugin's own CSS is imported beside the library's
-  in its lazy component, never added to `index.css`. When you touch an import, compare
-  `pnpm web build:ui` output before and after — the delta is the check, not any figure a doc could
-  quote — and `grep recharts dist/ui/assets/index-*.js` must stay at 0
-- **Third-party providers with their own TanStack Query** (drizzle-cube does this): the app's global
-  `QueryCache.onError` never sees their failures. Wrap them (the analytics plugin's `CubeClientProvider`)
-  with a dedicated `QueryClient` whose `onError` maps 401 → `notifyUnauthorized`, and pass cookie auth
-  explicitly (`credentials: 'include'`, `X-Requested-With`). Kit hooks rendered inside still resolve the
-  app's client.
-- **Dashboards** (the analytics plugin's, D31): edit mode autosaves the whole config (debounced 1.5 s PATCH); there is no router-level
-  unsaved-changes blocker — `beforeunload` while dirty plus a flush when leaving edit mode/unmount.
-  `useFactTableStatus({ enabled })` MUST be gated on `manage Dashboard` (admin-only endpoint).
-  `syncDarkClass` mirrors `data-theme="rocketflare-dark"` into a `dark` class only while an analytics surface is
-  mounted (drizzle-cube detects `.dark`); kit CSS never reads `.dark`. `@nivo/heatmap` is aliased in
-  `vite.config.ts` to a stub the PLUGIN ships — one of the two core lines its install prints, since
-  a plugin edits no core file — see `docs/ADAPTING.md` §3b to enable heat maps.
-- **Visibility (D29)**: `AccessPicker` / `AccessBadge` / `VisibilityModal` in `components/shared` are
-  the ONE wording of "who can see this" — they are markdown-free by construction, which is what lets
-  them live in the eager barrel. Render them only where the save would succeed (owner or
-  `manage Document`; `manage Dashboard`), and offer an admin every group and a member only their own
-  (`useMyGroups`) — the same rule `resolveRequestedVisibility` applies, so the picker cannot offer
-  what the API would refuse. An EMPTY selection is WARNED about, never blocked: "only me and admins"
-  is a real answer and the state a deleted group leaves behind
-- **Feature flags (D30)**: gate with `{ feature: 'x' }` as a `NavGuard`, or `useFeature('x')` — both
-  read `session.features`. **Never `{ action: 'access', subject: 'Feature:x' }`**: a global admin's
-  `manage all` satisfies the CASL form, so they would see a nav item whose routes the server 404s.
-  A `NavGuard` may be a LIST meaning AND, which is how a flag composes with a permission
-  (`featureGuard(MY_FEATURE, { action: 'read', subject: 'Thing' })`) — the flag and the permission
-  stay two readable facts instead of one conflated subject. One const per feature, so the nav, the
-  routes and the settings tabs cannot drift — in `lib/feature-guards.ts` for an app's own flag
-  (the kit ships none there now; that file exports only `featureGuard`), and beside the route and
-  nav item it gates for a plugin's (D31). All of it is cosmetic: the gated code still ships in the
-  bundle, and the server is the protection
-- Forms validate with the `@rocketflare/shared` schema the server uses; show `FieldError` per field
-- Icons: `@heroicons/react`. No new UI library without a stated reason in the PR
-- `EnvironmentBadge` + `useEnvironmentTitle` read `APP_ENV`/`RELEASE_VERSION` from `/auth/session`;
-  staging must look different from production
+  `navigationConfig` (plain data for the pure, tested `filterNavConfig`); fed from a root the
+  server already nudges — **never a poll** — with **a dot on the icon when the nav is
+  collapsed**
+- **A notification's `data` is its deep link** (`lib/notificationLink.ts`, unknown → `null`),
+  shared by the bell AND the list
+- `components/ai/` (`Markdown`, `ChatBubble`, `StatRows`) is NOT in the eager `components/shared`
+  barrel. Import it by path ONLY from `pages/chat/**`, `pages/agents/**` and
+  `pages/documents/DocumentViewPage.tsx`; nothing under `components/shared` may import a markdown
+  renderer (`tests/config/ui-bundle.test.ts` asserts both). Model output renders through `Markdown`
+  (`skipHtml`, links `noopener`), never `dangerouslySetInnerHTML`; user text verbatim
+  (`whitespace-pre-wrap`)
+- Heavy dependencies stay in a lazy chunk, never reached from the shared barrel, `App.tsx`,
+  `SideNav` or an eager hook; when you touch an import, compare `pnpm web build:ui` before/after
+- **Visibility (D29)**: `AccessPicker` / `AccessBadge` / `VisibilityModal` are the ONE wording of
+  "who can see this". Render them only where the save would succeed; offer an admin every group, a
+  member only `useMyGroups()` (what `resolveRequestedVisibility` accepts). An EMPTY selection is
+  WARNED about, never blocked
 
-## Plugins (D31) — `UiPlugin`, `src/plugins/ui.ts`
+## Tests
 
-A plugin's UI half is `apps/web/src/plugins/<id>/ui/index.ts`, and that file is the whole of what
-the eager shell sees. The rules follow from that one fact:
+`tests/ui/` (jsdom + Testing Library; `fetch` via `stubFetch()` route tables, no MSW) — run with
+`pnpm web test:ui`. Wrap with `renderWithProviders(ui, { session })`; `makeSession()` builds a
+post-parse session whose `permissions` come from the real matrix via `packRules(buildAbility(...))`.
 
-- **The UI kit is two modules, and which one you may import depends on where you are.**
-  `@/plugins/api/ui-wiring` is the WIRING half — `NavItem`, `NavGroup`, `NavGuard`, `TabConfig`,
-  `QuickLink`, `useNavGuard`, `featureGuard` — and is the only host module a plugin's `ui/index.ts`
-  may import, because that file ships in the MAIN bundle for every reader including the ones who
-  never open the plugin. `@/plugins/api/ui` is the COMPONENTS half, for a lazy PAGE: all of
-  `components/shared`, `LoadingIndicator`, `showToast` (exported once, from here — the kit reaches
-  it by two public paths and one plugin took each, which is how two call sites of one function come
-  to look like two functions) and `SideNav` itself, for the test that drives the REAL nav rather
-  than a re-implementation of its guards. This is not new policy: `uiEntryIssues` always drew this
-  line, and now there is a module on each side of it
-- **`routes` are per tier** (`shell` — the default, inside `Layout` with a tenant — `noTenant`,
-  `public`) and every `Component` is `lazy(() => import('./pages/X'))`. A statically imported page
-  puts the plugin in the main bundle for readers who never open it; `tests/config/plugins.test.ts`
-  reads the SOURCE of the UI entry and enforces both halves — an import allowlist (`react`, the
-  heroicons set, `@rocketflare/shared/*`, `@/plugins/types`, `@/plugins/api/ui-wiring`,
-  `@/ui/components/SideNav`,
-  `@/ui/hooks/useNavGuard`, `@/ui/lib/feature-guards`; type-only imports are unrestricted because
-  they are erased) and "every dynamic `import()` is inside `lazy(() => …)`"
-- **The route's guard and its nav item's guard are the SAME object**, declared once beside them, so
-  a link can never point at a page its reader cannot open — `EXAMPLE_FEATURE_GUARD` is the pattern
-- **`nav` is a list of GROUPS**, spliced by `composeNav(CORE_NAVIGATION, …)`: `before: '<label>'`
-  inserts before that core group (the kit's own default is "Organisation"), and a group with no
-  `before` lands above it, which is where an app's own features go. A label that is not found
-  appends. The kit's nav literal is `CORE_NAVIGATION`; `navigationConfig` is the composed result,
-  and `filterNavConfig` is unchanged — plugin items obey the same guards
-- `settingsTabs(ctx)` appends tabs after the kit's (`ctx.can` is the caller's ability);
-  `agentForms` is the plugin's half of `AGENT_FORMS`
-- **`queryKeys` roots must start with `<id>:`** (checked by `plugins.test.ts`), so one plugin's
-  invalidation can never reach another's cache. The `entity.changed` convention is unchanged and is
-  what makes the socket wiring free: **the `entity` string of a nudge IS a query-key family root**,
-  so declare it once — `example-feature`'s `EXAMPLE_NOTES_ENTITY` is both the server's nudge entity
-  and the UI's family root — and `invalidationsFor()` covers it with no hook-side socket code
-- A plugin's own hooks read its `query-keys.ts` directly rather than the merged `queryKeys`: the
-  merge is for the HOST's benefit, and a plugin must behave the same whether it is the only one
-  installed or the fifth
-- **The demo `Example feature` nav item, its page and its notes CRUD are the `example-feature`
-  PLUGIN**, not kit files: `src/plugins/example-feature/ui/`. There is no `pages/ExampleFeature.tsx`
-  and no `EXAMPLE_FEATURE` const in `lib/feature-guards.ts` any more
+## Plugins (D31)
+
+A plugin's UI (`UiPlugin`, `src/plugins/<id>/ui/`; there is no `pages/ExampleFeature.tsx`) and
+its eager-entry import allowlist: `apps/web/src/plugins/CLAUDE.md`.

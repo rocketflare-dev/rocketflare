@@ -20,41 +20,85 @@ through `agent-loop.ts`.
 
 Rules:
 
-- **Resolve before you stream.** A route calls `resolveChat` (and anything else that can 4xx/5xx)
-  BEFORE `streamSSE`, so a missing provider is a JSON 503, not a broken stream.
+- **One resolve seam.** `resolveChat(db, cfg, env, tenantId, { promptKey? })` / `resolveEmbeddings`
+  / `resolveDecisions` are the ONLY readers of `ai_configs` / `agent_models` and the only decrypt;
+  the platform tier is `platformChat(cfg, env)` — never re-derive the chain in a route. Callers go
+  through `agent-loop.ts` (`runStreamingChat`, `runToolLoop`, `callStructuredTool`). No client →
+  `AiNotConfiguredError` thrown before any row is written or any stream opens. Tests
+  `vi.mock('@/api/services/ai/resolve')` (`// @vitest-isolate`) and hand in `FakeChatClient`
+- **Credentials never leave the server.** Rows leave as `hasCredential`; every provider failure
+  goes through `normalizeAiError` → `AiError { code }` with a `redactSecrets`'d message; the user
+  sees `describeAiError(err)`, never the vendor body. Encrypt at the route with
+  `encrypt(key, requireEncryptionKey(cfg))` (`auth/oauth-encryption.ts`)
 - **Per-tenant request defaults live in the adapter**, never at call sites. Thinking is OFF unless
   a config turns it on; `reconcileThinking` drops a BUDGET on forced tool choice and lifts
-  `max_tokens`. What on/off means per model is `modelTraits` — never test a model id here.
+  `max_tokens`. What a MODEL accepts is `modelTraits(provider, model)`
+  (`@rocketflare/shared/ai/models`) — never branch on a model id anywhere else; a new model is a
+  row in the traits test.
 - **Reasoning stays in the loop.** A `reasoning` block is replayed verbatim within a tool loop and
-  kept in checkpoints, never written to chat history; anything that rebuilds or edits an earlier
-  assistant turn invalidates its signature (the adapter then strips and retries, losing the
-  reasoning), so transcripts are append-only.
-- **Wrap, don't fork.** Tracing (`observability/tracing.ts` `traceChatClient`) and usage
-  (`tapUsage`) are client wrappers; a new cross-cutting concern is another wrapper. The other tracing
-  hooks are one line each and in ONE place: `agent-loop.ts`'s `runHandler` (the single tool runner both
-  loops call) wraps every tool in `traceToolCall`, `retrieval.ts` wraps `searchChunks` in a
-  `retrieval` span and its query embedding in `traceEmbed`, `ingest.ts` wraps each embeddings batch.
-  All nest under the ACTIVE span (`observability/context.ts`) and are no-ops without one — never
-  add a `trace` parameter to a service to get nesting.
-- **Credentials never leave the server.** Routes answer `hasCredential`; errors pass `redactSecrets`.
-- **A streaming route needs its own DB client** (`streamDatabase(c)` in `utils/routes/route-helpers.ts`):
-  the request's client is closed in `waitUntil` the moment the Response is returned.
+  kept in checkpoints, never written to chat history; editing an earlier assistant turn invalidates
+  its signature, so transcripts are append-only.
+- **`recordUsage(db, …)` on every model call**: `feature` is the prompt key or `agent:<key>`, cost
+  filled from `@rocketflare/shared/ai/pricing` at write time (pass `costMicrocents` only to
+  override; an unknown model stays null). Chat records after the stream, on the stream's client.
+  An agent records nothing itself — the run's meter does (`../agents/CLAUDE.md`)
+- **Trace every LLM call**: `withAgentTrace(name, { tracer, tenantId, userId, conversationId |
+  runId, … }, trace => traceChatClient(client, trace, { provider }, tracer))`. Its span is ACTIVE
+  (`observability/context.ts`), so tool spans (`runHandler`'s `traceToolCall` — never trace a tool
+  yourself), `searchChunks`' `retrieval` span and `traceEmbed` batches nest with no extra
+  parameter; `traceStep` nests anything else. Never add a `trace` parameter to a service. `tracer`
+  is `withAuth`'s in a route, `ctx.tracer ?? noopTracer` in a job, and in a Workflow step
+  `tracerFor(cfg, { store: databaseSpanStore(db) })`, flushed BEFORE the step's client closes.
+  Attribute names only in `genai-attributes.ts`
+- **Wrap, don't fork.** Tracing (`traceChatClient`) and usage (`tapUsage`) are client wrappers; a
+  new cross-cutting concern is another wrapper, never a fork of the adapter.
+- **Streaming (`chat-turn.ts` is the ONE implementation; `routes/chat.ts` and `routes/agui.ts` wrap
+  it).** Resolve, authorise, validate and write anything that can fail as JSON BEFORE the stream
+  opens — after the first frame a failure can only be a `RUN_ERROR`. Transport is hono's
+  `stream(c, cb)` + `createAguiEncoder(c.req.header('Accept'))` — **never `streamSSE`** (its
+  `writeSSE` adds an `event:` line and pins the content type; AG-UI frames are `data:` only);
+  `encodeBinary` covers SSE and protobuf. Inside, `streamDatabase(c)` for every write, closed in
+  `finally`; await every write and the tracer flush (no `defer` after the Response). A cancelled
+  run emits NOTHING — neither `RUN_FINISHED` nor `RUN_ERROR` IS the signal
 - Adding a provider: enum value in `@rocketflare/shared/ai/config` (append last) → `PROVIDERS` entry →
-  adapter branch in `client.ts` → `ai-client.test.ts` case. Adding a prompt: `CORE_PROMPT_REGISTRY` in
-  `../prompts.ts` (no migration). Per-agent model assignment (`agent_models`) is
-  `resolveChat`'s `promptKey` branch (`planChat` — shared with `routes/ai-agent-models.ts`).
-- `chunking.ts` (pure paragraph-aware chunker, ~800 tokens / 100 overlap, 4 chars per token),
-  `ingest.ts` (`ingestText` and `ingestFile` — inline ≤ 50 chunks else the `document.index` job, or
-  `document.convert` for a binary upload; `indexDocument` is shared with
-  `queues/handlers/document-index.ts`, `convertAndIndexDocument` with `document-convert.ts`),
-  `convert.ts` (`needsConversion` / `canConvert` / `decodeText` / `convertToText` over
-  `env.AI.toMarkdown`; `ConversionFailedError` is the permanent case), `retrieval.ts` (`searchChunks(db, cfg, env, scope, request)` — dense `<=>` +
-  lexical over ANY query word (`anyTermTsquery`: the distinct `\p{L}\p{N}` words OR-ed — never `websearch_to_tsquery`, which ANDs a sentence's filler words into zero hits) ranked by `ts_rank_cd`, RRF `k = 60`; `RerankFn` is the documented, unbuilt seam) complete the retrieval half.
-- **Reading a document takes an `AccessScope`, not a tenant id**: `searchChunks` and the three
-  `document-content.ts` readers ALL take one, so a restricted document is absent from search, from
-  `get_document` and from the viewer by the same predicate. The scope carries the tenant, which is
-  why there is no separate `tenantId` argument to keep in step with it. `fullAccessScope(tenantId)`
-  is for maintenance paths only. The dense half additionally sets
-  `hnsw.iterative_scan = relaxed_order` `SET LOCAL` inside a transaction WHEN a visibility predicate
-  is in play — an approximate index can otherwise exhaust its candidate list before filling the pool
-  and hand back an empty dense half to a reader who may see very little.
+  adapter branch in `client.ts` → `ai-client.test.ts` case. Per-agent model assignment
+  (`agent_models`) is `resolveChat`'s `promptKey` branch (`planChat` — shared with
+  `routes/ai-agent-models.ts`).
+- **Prompts are code**: a `CORE_PROMPT_REGISTRY` entry in `../prompts.ts` (title, description,
+  `variables`, `defaultText`), read through `resolvePrompt(db, tenantId, key, vars)` — never a
+  hard-coded string in a route or agent; no migration.
+- **Evals drive the real code in-process**: `apps/evals` calls the chat route and the agent step
+  bodies inside `withEvalScope` (marks traces `rocketflare.eval=true`). Nothing in the Worker
+  enters that scope — never add a request flag for it. The judge is the `evals-judge` prompt; its
+  spend is `ai_usage` feature `evals.judge`
+- **Ingest**: `chunking.ts` (paragraph-aware, ~800 tokens / 100 overlap, 4 chars per token);
+  `ingest.ts` — `ingestText(db, cfg, env, input, { jobs })` and `ingestFile(db, cfg, env, input, {
+  jobs, storage })` (original to R2 as a `files` row scope `documents`, `fileId` on the document).
+  Text-like types index inline ≤ 50 chunks else a `document.index` job; PDF/Office/HTML enqueue
+  `document.convert` (`convertAndIndexDocument`). `indexDocument` is shared with the handlers.
+  Everything that can 503 (`resolveEmbeddings`, `canConvert`) runs BEFORE any write; the upload
+  route maps `ConversionNotConfiguredError` → 503 `conversion_not_configured`;
+  `ConversionFailedError` is the permanent case
+- **Strip NULs before storing**: every stored text — `documents.content`, `chunks.text`, every
+  `ai_spans` string — goes through `stripControlChars` / `stripControlCharsDeep`
+  (`utils/core/text.ts`); Postgres refuses a NUL in `text` (22021) and `jsonb` (22P05), and
+  converted PDFs carry them
+- **An `externalId` makes ingest an upsert**: the same `(tenant, source, externalId)` updates the row
+  in one `ON CONFLICT` (partial unique index), replaces its grants, rebuilds its chunks and drops a
+  replaced R2 original; `deleteExternalDocument` is the delete. Plugins reach both only through
+  `@/plugins/api` (`ingestDocument`, `deleteIngestedDocument`)
+- **Retrieval only through `searchChunks(db, cfg, env, scope, request)`** (`retrieval.ts`): dense
+  `<=>` + lexical over ANY query word (`anyTermTsquery` — never `websearch_to_tsquery`, which ANDs
+  filler words into zero hits) ranked by `ts_rank_cd`, RRF `k = 60`; `RerankFn` is the documented,
+  unbuilt seam. **A document's TEXT only through `document-content.ts`** (`readDocumentWindow` /
+  `listDocumentPassages` / `readDocumentCard`), which `get_document` and `GET
+  /api/ai/documents/:id/{content,passages,card}` both call — never a second slice in JS, never a
+  `select()` over `chunks` that could widen onto `embedding`
+- **Reading takes an `AccessScope`, not a tenant id**: `searchChunks` and the three readers all take
+  one (built at EXECUTE time for an agent run, from `requestedByUserId`), so a restricted document
+  is absent from search, `get_document` and the viewer alike; `documentId` narrows the tenant
+  predicate, never replaces it. `fullAccessScope(tenantId)` is for maintenance paths only. The dense
+  half sets `hnsw.iterative_scan = relaxed_order` (`SET LOCAL`, in a transaction) WHEN a visibility
+  predicate is in play — otherwise the index can exhaust its candidates and return nothing
+- `DELETE /api/ai/documents/:id` deletes the R2 original too (`deleteStoredFile`); `/api/files`
+  refuses a `documents`-scope delete with 409 `owned_by_document`

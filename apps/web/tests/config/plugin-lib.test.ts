@@ -121,6 +121,10 @@ describe('plugin ids', () => {
     }
   })
 
+  it("refuses 'api', the host's plugin API directory", () => {
+    expect(pluginIdProblem('api')).toMatch(/plugin API directory/)
+  })
+
   it('camelises an id into the stem of every export name', () => {
     expect(camelId('example-feature')).toBe('exampleFeature')
     expect(camelId('a-b-c')).toBe('aBC')

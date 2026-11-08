@@ -157,8 +157,9 @@ export interface ServerPlugin<S extends SharedPlugin = SharedPlugin> {
   agentTools?: (ctx: AgentToolContext) => Tool[] | Promise<Tool[]>
   /**
    * Cron expression → tasks, merged into `SCHEDULED_TASKS` (tasks on a cron core already runs
-   * are appended after core's). A cron core does NOT run must also be added to `[triggers]`
-   * in BOTH tomls by hand — the parity test is what catches a forgotten one.
+   * are appended after core's). A cron core does NOT run is declared in `plugin.json`
+   * `crons`; `pnpm provision cloudflare <env>` writes it into both tomls' `[triggers]`, and the
+   * parity check fails a deploy that lacks it.
    */
   scheduledTasks?: Readonly<Record<string, ScheduledTask[]>>
   /**

@@ -195,7 +195,7 @@ turn was investigated and rejected (`docs/CONCEPTS.md` §9 Known gaps): steps do
 
 ## Bundle size (the analytics plugin's caveat)
 
-`pnpm build:api` (`wrangler deploy --dry-run --outdir dist/api`) is where the Worker's size shows;
+`pnpm web build:api` (`wrangler deploy --dry-run --outdir dist/api`) is where the Worker's size shows;
 `gzip -c dist/api/worker.js | wc -c` is the number. **No figure is written down here or in any other
 doc, deliberately** — it moves with every dependency bump, so a quoted one is wrong almost
 immediately and reads as a budget nobody is holding. Measure it when you need it.
@@ -259,12 +259,12 @@ meaning loses a namespace and everything stored in it.
 Allowed and used: `Buffer`, `AsyncLocalStorage`, `node:crypto` hashing, `process.env` **inside
 dependencies only**. Banned in `apps/web/src/`: `pg`, `pg-boss`, `ws`, `node:fs`, `node:child_process`,
 `node:http`, `@hono/node-server`, `@opentelemetry/sdk-node`, any `setInterval` at module scope,
-`process.env` (read config via `loadConfig(env)`). `pnpm build:api` (dry-run `wrangler deploy`) is
+`process.env` (read config via `loadConfig(env)`). `pnpm web build:api` (dry-run `wrangler deploy`) is
 the check `tsc` cannot do — run it before pushing a new dependency.
 
 ## Local testing of the non-HTTP entry points
 
-`wrangler dev` (`pnpm dev:api`, :3001) emulates KV, Queues, DO, R2 and Workflows locally and reads
+`wrangler dev` (`pnpm web dev:api`, :3001) emulates KV, Queues, DO, R2 and Workflows locally and reads
 the database from `.dev.vars` (`DATABASE_DRIVER=postgres` + `DATABASE_URL`, or `neon` +
 `NEON_LOCAL_PROXY` after `pnpm dev:db:up --neon`; a copy with a `[[hyperdrive]]` block also gets its
 `localConnectionString`). **Start and stop the stack through the scripts, never by
@@ -279,7 +279,7 @@ process is a tree that can be killed, and it lets the script own the output) —
 they boot, then ONE ready line with the Vite URL, then only app logs, warnings and errors
 (wrangler's twice-printed bindings table, its Local-Explorer banner and its copies of requests the
 app already logged are filtered; `DEV_VERBOSE=1` or `--verbose` prints every raw line, and
-`pnpm dev:api` / `pnpm dev:ui` run either server unfiltered). Ctrl-C, SIGTERM and a child that
+`pnpm web dev:api` / `pnpm web dev:ui` run either server unfiltered). Ctrl-C, SIGTERM and a child that
 dies during boot all go through one `shutdown` — children signalled, then the repo swept, so no
 `workerd` is orphaned; a child that dies AFTER ready restarts in 2 s. `pnpm dev:stop` kills the
 tree supervisor-FIRST and loops (SIGTERM pass, then SIGKILL passes) until the repo is quiet — a

@@ -22,24 +22,13 @@ host depends on it. `../CLAUDE.md` is the seam it plugs into.
 | `"skills"` | `example-feature` → `.claude/skills/example-feature/SKILL.md`: how to exercise this plugin (flag, notes, ping, public link). Vendored, so it lives in the host's tree at its installed path; a plugin REPOSITORY ships it at `skills/example-feature/` |
 | its own tests | `tests/{api,ui,config}/`, discovered by the host's projects; the api one pins that tenant B can neither list, read nor delete tenant A's notes |
 
-Two details worth copying rather than re-deriving. **`ctx.interrupt` is not demonstrated here** and
-the built-in agent examples cover it instead; this plugin is about the seam, not the agent
-runtime. And **`api/hooks.ts` imports `db/schema/feature-flags` directly**, not `db/schema` — that
-barrel re-exports `plugins/schema.ts`, which re-exports this plugin, so the barrel would be a cycle.
+**`ctx.interrupt` is not demonstrated here** — the built-in agent examples cover it. **`api/hooks.ts`
+imports `db/schema/feature-flags` directly**, not `db/schema` (that barrel re-exports this plugin:
+a cycle).
 
 ## Deleting it
 
-That is the point of it, and it is the check that the seam works. `pnpm plugin remove example-feature` does it; by
-hand it is four things:
-
-1. Its three directories — `apps/web/src/plugins/example-feature/`,
-   `packages/shared/src/plugins/example-feature/`, `apps/cli/src/plugins/example-feature/` — and
-   its skill, `.claude/skills/example-feature/`.
-2. The five barrel lines that name them (import + list entry in `plugins/{server,ui}.ts`,
-   `packages/shared/src/plugins/index.ts`, `apps/cli/src/plugins/index.ts`; the `export *` in
-   `plugins/schema.ts`).
-3. Its surface in `.rocketflare.json`.
-4. `pnpm db:generate` — which emits the `DROP TABLE "example_notes"`; read the SQL, then
-   `pnpm db:migrate`.
-
-Then `pnpm gate`. Nothing else in the host names it.
+That is the point of it, and it is the check that the seam works: `pnpm plugin remove
+example-feature` (plan, then `--apply` — `/rf-plugin` §5), then `pnpm db:generate` (emits `DROP
+TABLE "example_notes"`; read it, then `pnpm db:migrate`), then `pnpm gate`. Nothing else in the host
+names it.
