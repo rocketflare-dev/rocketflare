@@ -2,8 +2,11 @@
  * The CURRENT tenant: `/api/tenant` (read admin+/owner writes, owner-only delete with slug
  * confirmation — 404 `tenancy_mode_single` in single mode) and `/api/tenant/settings`.
  */
+
+import { ERROR_CODES } from '@rocketflare/shared/errors'
 import { updateTenantSettingsRequestSchema } from '@rocketflare/shared/tenant-settings'
 import { deleteTenantRequestSchema, updateTenantRequestSchema } from '@rocketflare/shared/tenants'
+import { isIdpManaged } from '../../config'
 import { guardOwner, guardPermission, isAdminLevel } from '../middleware/permissions'
 import { operationLock } from '../middleware/rate-limit'
 import { recordActivity } from '../services/activity'
@@ -14,7 +17,7 @@ import {
   updateTenant,
   updateTenantSettings,
 } from '../services/tenants'
-import { BadRequestError, ForbiddenError } from '../utils/core/errors'
+import { BadRequestError, ConflictError, ForbiddenError } from '../utils/core/errors'
 import { requireMultiTenant, withAuthAndDb } from '../utils/routes/route-helpers'
 import { createRouter } from '../utils/routes/router'
 import { validate } from '../utils/routes/validate'
@@ -28,10 +31,17 @@ tenantRouter.get('/', async c => {
 })
 
 tenantRouter.patch('/', validate('json', updateTenantRequestSchema), async c => {
-  const { db, tenantId, auth, user, defer, realtime } = withAuthAndDb(c)
+  const { db, cfg, tenantId, auth, user, defer, realtime } = withAuthAndDb(c)
   const patch = c.req.valid('json')
   if (!isAdminLevel(auth)) throw new ForbiddenError('Only admins can update the organisation')
   if (patch.slug !== undefined) guardOwner(c)
+  // The issuer's slug names the tenant it links, so under managed tenancy a slug is not self-service.
+  if (patch.slug !== undefined && isIdpManaged(cfg) && patch.slug !== auth.tenant?.slug) {
+    throw new ConflictError(
+      'The organisation slug is managed by your identity provider.',
+      ERROR_CODES.idpManaged
+    )
+  }
   const tenant = await updateTenant(db, tenantId, patch, realtime)
   defer(() =>
     recordActivity(db, {

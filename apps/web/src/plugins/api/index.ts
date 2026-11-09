@@ -148,7 +148,7 @@ export {
   withAgentTrace,
 } from './observability'
 export type { PublicCtx } from './public'
-export { PUBLIC_MOUNT_ROOT, publicCtx } from './public'
+export { memberCan, PUBLIC_MOUNT_ROOT, publicCtx } from './public'
 export type { StepRealtime } from './realtime-step'
 export { createStepRealtimeFor } from './realtime-step'
 export { openSecret, sealSecret, signState, verifyState } from './secrets'

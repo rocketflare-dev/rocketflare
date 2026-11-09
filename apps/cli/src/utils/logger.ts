@@ -4,6 +4,7 @@
  */
 import chalk from 'chalk'
 import { PREFIX } from './brand'
+import { neutralise } from './output'
 
 export interface Logger {
   info(message: string): void
@@ -23,14 +24,15 @@ export interface LoggerOptions {
 export function createLogger(options: LoggerOptions = {}): Logger {
   const write = options.write ?? ((line: string) => process.stderr.write(`${line}\n`))
   const debugEnabled = options.debug ?? false
+  const inert = neutralise
   return {
-    info: message => write(`${PREFIX} ${message}`),
-    success: message => write(`${PREFIX} ${chalk.green('✓')} ${message}`),
-    warn: message => write(`${PREFIX} ${chalk.yellow('!')} ${message}`),
-    error: message => write(`${PREFIX} ${chalk.red('✗')} ${message}`),
-    hint: message => write(chalk.dim(`  ${message}`)),
+    info: message => write(`${PREFIX} ${inert(message)}`),
+    success: message => write(`${PREFIX} ${chalk.green('✓')} ${inert(message)}`),
+    warn: message => write(`${PREFIX} ${chalk.yellow('!')} ${inert(message)}`),
+    error: message => write(`${PREFIX} ${chalk.red('✗')} ${inert(message)}`),
+    hint: message => write(chalk.dim(`  ${inert(message)}`)),
     debug: message => {
-      if (debugEnabled) write(chalk.dim(`[debug] ${message}`))
+      if (debugEnabled) write(chalk.dim(`[debug] ${inert(message)}`))
     },
   }
 }

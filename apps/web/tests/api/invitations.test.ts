@@ -155,8 +155,13 @@ describe('bulk / resend / revoke', () => {
       email: newEmail(),
       role: 'member',
       inviter: owner,
+      actor: { isGlobalAdmin: false, tenantUser: { role: 'owner' } },
     })
     expect((await request(`/api/invite/${token}`)).status).toBe(200)
+    await db
+      .update(teamInvitations)
+      .set({ lastSentAt: new Date(Date.now() - 3_600_000) })
+      .where(eq(teamInvitations.id, invitation.id))
     const resent = await request(`/api/invitations/${invitation.id}/resend`, {
       method: 'POST',
       headers: cookie,
@@ -202,6 +207,7 @@ describe('public GET /api/invite/:token', () => {
       email,
       role: 'admin',
       inviter: owner,
+      actor: { isGlobalAdmin: false, tenantUser: { role: 'owner' } },
     })
     const res = await request(`/api/invite/${token}`)
     expect(res.status).toBe(200)
@@ -225,6 +231,7 @@ describe('public GET /api/invite/:token', () => {
       email: newEmail(),
       role: 'member',
       inviter: owner,
+      actor: { isGlobalAdmin: false, tenantUser: { role: 'owner' } },
     })
     await db
       .update(teamInvitations)
@@ -244,6 +251,7 @@ describe('POST /api/invite/:token/accept', () => {
       email: newEmail(),
       role: 'member',
       inviter: owner,
+      actor: { isGlobalAdmin: false, tenantUser: { role: 'owner' } },
     })
     expect((await request(`/api/invite/${token}/accept`, { method: 'POST' })).status).toBe(401)
   })
@@ -256,6 +264,7 @@ describe('POST /api/invite/:token/accept', () => {
       email,
       role: 'admin',
       inviter: owner,
+      actor: { isGlobalAdmin: false, tenantUser: { role: 'owner' } },
     })
     const invitee = await createTestUser(db, { email })
     const cookie = sessionCookieHeader(await createTestSession(db, invitee.id))
@@ -286,6 +295,7 @@ describe('POST /api/invite/:token/accept', () => {
       email: newEmail(),
       role: 'member',
       inviter: owner,
+      actor: { isGlobalAdmin: false, tenantUser: { role: 'owner' } },
     })
     const stranger = await createTestUser(db)
     const res = await request(`/api/invite/${token}/accept`, {
@@ -333,6 +343,7 @@ describe('POST /api/invite/:token/accept', () => {
       email,
       role: 'member',
       inviter: owner,
+      actor: { isGlobalAdmin: false, tenantUser: { role: 'owner' } },
     })
     const { verifyUrl } = await requestMagicLink(db, cfg, logger, {
       email,
@@ -381,12 +392,14 @@ describe('GET /api/invitations/pending', () => {
       email,
       role: 'member',
       inviter: a.owner,
+      actor: { isGlobalAdmin: false, tenantUser: { role: 'owner' } },
     })
     await createInvitation(db, cfg, logger, jobs, {
       tenantId: b.tenant.id,
       email,
       role: 'admin',
       inviter: b.owner,
+      actor: { isGlobalAdmin: false, tenantUser: { role: 'owner' } },
     })
     const me = await createTestUser(db, { email })
     const res = await request('/api/invitations/pending', {

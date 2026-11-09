@@ -265,6 +265,7 @@ describe('provisionFor', () => {
       email,
       name: 'Pat Provisioned',
       emailVerified: true,
+      linkByEmail: true,
     })
     expect(created).toMatchObject({ email, name: 'Pat Provisioned', blocked: false })
     expect(await provision().findUser({ subject: `scim|${email}` })).toEqual(created)
@@ -279,6 +280,7 @@ describe('provisionFor', () => {
       email,
       name: 'Pat Renamed',
       emailVerified: true,
+      linkByEmail: true,
     })
     expect(renamed).toMatchObject({ id: created.id, name: 'Pat Renamed' })
   })
@@ -290,6 +292,7 @@ describe('provisionFor', () => {
         subject: `scim|${existing.email}`,
         email: existing.email,
         emailVerified: false,
+        linkByEmail: true,
       })
     ).rejects.toMatchObject({ code: 'email_unverified' })
     expect(await linksOf(existing.id)).toHaveLength(0)
@@ -333,6 +336,7 @@ describe('provisionFor', () => {
       subject: `scim|${email}`,
       email,
       emailVerified: true,
+      linkByEmail: true,
     })
     expect(
       await provision().setMembership({ tenantId, userId: person.id, role: 'member' })
@@ -381,6 +385,7 @@ describe('provisionFor', () => {
       subject: `scim|${email}`,
       email,
       emailVerified: true,
+      linkByEmail: true,
     })
     await provision().setMembership({ tenantId, userId: person.id, role: 'member' })
     // Their other tenant is the app's own (a manual row), with a session of its own.
@@ -459,7 +464,12 @@ describe('provisionFor', () => {
     await expect(single.listMembers({ tenantId })).rejects.toMatchObject({ statusCode: 404 })
 
     const email = newEmail()
-    const person = await single.upsertUser({ subject: `demo|${email}`, email, emailVerified: true })
+    const person = await single.upsertUser({
+      subject: `demo|${email}`,
+      email,
+      emailVerified: true,
+      linkByEmail: true,
+    })
     await single.setMembership({ tenantId: theTenant, userId: person.id, role: 'member' })
     await createTestSession(db, person.id, null)
     expect(await single.deprovision({ tenantId: theTenant, userId: person.id })).toEqual({

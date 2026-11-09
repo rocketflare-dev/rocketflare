@@ -7,7 +7,8 @@
  * `oidcOnly` (`AUTH_OIDC_ONLY`): the page shows the one SSO button and nothing else. It never
  * redirects to the issuer on its own — signing in is always a click, so an issuer session that is
  * still live (or a sign-out) never turns into a silent login or a loop.
- * The other methods are hidden, not disabled: the magic-link endpoint stays live for invitations.
+ * The other methods are refused by the server under this flag, so nothing is hidden here that
+ * still works: `/auth/methods` answers `magicLink: false`.
  *
  * `pluginMethods` (an installed plugin's SSO, `ServerPlugin.loginMethods`) render as buttons that
  * navigate (full page) to the method's `startPath` with `?returnUrl=`, behind an email field sent

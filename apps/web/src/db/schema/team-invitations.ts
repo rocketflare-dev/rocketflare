@@ -33,6 +33,8 @@ export const teamInvitations = pgTable(
     acceptedAt: timestamp('accepted_at', { withTimezone: true }),
     revokedAt: timestamp('revoked_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    /** When the invitation email last went out: the resend cooldown is measured from here. */
+    lastSentAt: timestamp('last_sent_at', { withTimezone: true }).notNull().defaultNow(),
   },
   table => [
     uniqueIndex('team_invitations_pending_email_idx')

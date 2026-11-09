@@ -25,7 +25,7 @@ import {
 } from '@rocketflare/shared/plugins/example-feature/index'
 // The CLI plugin API — one declared entry, rather than three reaches into the CLI's internals.
 import type { CliPlugin, CommandContext } from '../api'
-import { formatDate, formatPagination, renderTable, requireClient } from '../api'
+import { formatDate, formatPagination, neutralise, renderTable, requireClient } from '../api'
 
 const notesListSchema = paginatedResponse(exampleNoteSchema)
 
@@ -39,7 +39,7 @@ export async function runExamplePing(ctx: CommandContext): Promise<void> {
   const { data, raw } = await requireClient(ctx).request('POST', '/api/example-feature/ping', {
     schema: examplePingResponseSchema,
   })
-  ctx.out.data(raw, () => `Queued ${data.type} (${data.jobId}) at ${data.enqueuedAt}`)
+  ctx.out.data(raw, () => neutralise(`Queued ${data.type} (${data.jobId}) at ${data.enqueuedAt}`))
 }
 
 export async function runExampleNotesList(

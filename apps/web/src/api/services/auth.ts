@@ -37,6 +37,12 @@ export interface AdmitInput {
    * tenants right after.
    */
   admittedBy?: 'idp'
+  /**
+   * Who proved the address. `kit` is the kit's own login — a magic link, Google, Microsoft, the
+   * deployment's OIDC issuer — and the only proof that earns `BOOTSTRAP_ADMIN_EMAILS`; `plugin`
+   * is a plugin's identity provider, which speaks for one tenant and never for the platform.
+   */
+  proof: 'kit' | 'plugin'
 }
 
 export type AdmitResult =
@@ -114,7 +120,8 @@ export async function admitUser(
   logger: AdmitLogger
 ): Promise<AdmitResult> {
   const email = input.email.toLowerCase()
-  const bootstrap = input.verified && isBootstrapAdmin(cfg, email)
+  // Only the kit's own login earns the platform role: a plugin's IdP may assert any address.
+  const bootstrap = input.proof === 'kit' && input.verified && isBootstrapAdmin(cfg, email)
 
   const existing = await findUserByEmail(db, email)
   if (existing) {

@@ -3,7 +3,7 @@
  * the batch when it ENDS, and `flush()` hands the batch to every sink — the OTLP exporter and the
  * `ai_spans` store — in parallel. Called in `waitUntil` by the middleware, awaited at the end of a
  * stream, a Workflow step or a job; never on the response path, and a sink that fails is logged,
- * never thrown. Content is dropped HERE when `OBSERVABILITY_CAPTURE_CONTENT=false`, so no sink can
+ * never thrown. Content is dropped HERE unless `OBSERVABILITY_CAPTURE_CONTENT=true`, so no sink can
  * leak what was never kept.
  */
 import type { Logger } from '../utils/core/logger'

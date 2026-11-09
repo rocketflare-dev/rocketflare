@@ -72,8 +72,9 @@ export interface AgentMeta<Input = unknown, Output = unknown> {
   /**
    * What ONE run of this agent may spend, overriding `AGENT_RUN_MAX_TOKENS` /
    * `AGENT_RUN_MAX_COST_USD`. Checked before every model call and decision the run makes; a run
-   * over it fails with event code `agent_budget_exceeded`. Decision engines with no price
-   * (TypeSafe) count toward `maxTokens` only.
+   * over it fails with event code `agent_budget_exceeded`. Tokens include prompt-cache reads and
+   * writes. Decision engines with no price (TypeSafe) count toward `maxTokens` only; a chat model
+   * with no known price is refused while a cost cap applies.
    */
   budget?: AgentBudget
   /**

@@ -59,6 +59,8 @@ export interface RunSpend {
   calls: number
   inputTokens: number
   outputTokens: number
+  cacheReadTokens: number
+  cacheWriteTokens: number
   /** Priced calls only; an unpriced call (a TypeSafe decision) counts in the tokens alone. */
   costMicrocents: number
 }
@@ -69,6 +71,8 @@ export async function runSpend(db: Database, tenantId: string, runId: string): P
       calls: sql<number>`count(*)::int`,
       inputTokens: sql<number>`coalesce(sum(${aiUsage.inputTokens}), 0)::bigint`,
       outputTokens: sql<number>`coalesce(sum(${aiUsage.outputTokens}), 0)::bigint`,
+      cacheReadTokens: sql<number>`coalesce(sum(${aiUsage.cacheReadTokens}), 0)::bigint`,
+      cacheWriteTokens: sql<number>`coalesce(sum(${aiUsage.cacheWriteTokens}), 0)::bigint`,
       costMicrocents: sql<number>`coalesce(sum(${aiUsage.costMicrocents}), 0)::bigint`,
     })
     .from(aiUsage)
@@ -77,6 +81,8 @@ export async function runSpend(db: Database, tenantId: string, runId: string): P
     calls: Number(row?.calls ?? 0),
     inputTokens: Number(row?.inputTokens ?? 0),
     outputTokens: Number(row?.outputTokens ?? 0),
+    cacheReadTokens: Number(row?.cacheReadTokens ?? 0),
+    cacheWriteTokens: Number(row?.cacheWriteTokens ?? 0),
     costMicrocents: Number(row?.costMicrocents ?? 0),
   }
 }

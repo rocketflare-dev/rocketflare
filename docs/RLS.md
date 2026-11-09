@@ -21,7 +21,7 @@ cache is also undocumented for reads after `SET`. Nobody flips this without meas
 | `apps/web/tests/api/rls-coverage.test.ts` | catalog-driven | fails CI if a tenant table lacks a policy or an untenanted table lacks an exclusion |
 | `apps/web/scripts/db-roles.ts --phase=role\|grants` | wrapped by `pnpm db:migrate` | creates `rocketflare_app` via SQL — `NOLOGIN`, `NOSUPERUSER`, `NOBYPASSRLS` (not a `neon_superuser`; set explicitly only when the owner is a superuser, verified after on every host); grants DML; REVOKEs auth-infrastructure tables |
 | `withTenantScope(db, tenantId, fn)` | `apps/web/src/db/tenant-scope.ts` | `off` → `fn(db)`. `enforce` → `db.transaction(tx => set_config('app.tenant_id', $1, true); fn(tx))` on an app-role client — not wired yet: `HYPERDRIVE_APP` under `postgres`, an `APP_DATABASE_URL` Worker secret under `neon` |
-| `apps/web/tests/api/rls.test.ts` | skipped unless `enforce` | the enforcement properties (zero rows on a missing predicate, `42501` on a cross-tenant write) |
+| Enforcement test | not written yet; part of the `enforce` spike | will prove the enforcement properties (zero rows on a missing predicate, `42501` on a cross-tenant write). `rls-coverage.test.ts` above proves only that policies exist |
 
 Threat model, stated honestly: RLS defends against a **forgotten predicate**, not SQL injection —
 the app role can call `set_config` itself.

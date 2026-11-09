@@ -21,9 +21,11 @@
  * believes the caller may speak for that tenant. The CALLER must have proved both — a verified
  * signature over the assertion, the connection row that maps this IdP to this tenant — before it
  * calls. What this module DOES enforce: the tenant exists, a blocked person is refused, an
- * unverified email is never signed in or linked to an existing account, a membership it writes is
- * `source = 'idp'` (read-only in the app — 409 `idp_managed`), and `owner`/`support`/`manual` rows
- * are never removed by it, and in `TENANCY_MODE=multi` nothing it does is global: `deprovision`
+ * unverified email is never signed in or linked to an existing account, an address whose domain
+ * the plugin has not proved (`linkByEmail`) is never claimed or created, a `BOOTSTRAP_ADMIN_EMAILS`
+ * address is never claimed or created at all, a suspended tenant is refused, a membership it writes
+ * is `source = 'idp'` (read-only in the app — 409 `idp_managed`), and `owner`/`support`/`manual`
+ * rows are never removed by it, and in `TENANCY_MODE=multi` nothing it does is global: `deprovision`
  * ends a person's presence in ONE tenant and never blocks them, because a tenant's IdP does not
  * speak for their other tenants.
  *
@@ -72,8 +74,9 @@ import {
   removeIdpMembership,
   upsertIdpMembership,
 } from '../../api/services/idp-tenancy'
+import { collectingRealtime } from '../../api/services/realtime'
 import type { AppContext } from '../../api/types'
-import { ConflictError, NotFoundError } from '../../api/utils/core/errors'
+import { ConflictError, ForbiddenError, NotFoundError } from '../../api/utils/core/errors'
 import { getSingleTenant } from '../../api/utils/db/tenant-helpers'
 import { oauthProviders, tenants, tenantUsers, type User, users } from '../../db/schema'
 import type { MembershipRole } from './auth'
@@ -100,13 +103,18 @@ export interface PluginSignInInput {
   /** `false` is refused (`/login?error=email_unverified`). Pass `true` only when the IdP says so. */
   emailVerified: boolean
   /**
-   * May this sign-in attach to an EXISTING account that has the same email but no link from this
-   * plugin yet? Default `false`: such a sign-in is refused (`/login?error=account_exists`), because
-   * a per-tenant IdP can assert any address — linking by email would let one customer's IdP sign in
-   * as anyone. Pass `true` only when the plugin has proved this IdP speaks for the email's domain
-   * (a DNS-verified domain on the connection).
+   * Has the plugin proved this IdP speaks for the email's domain (a DNS-verified domain on the
+   * connection)? Needed for any sign-in that is not already linked, and it is what lets one attach
+   * to an EXISTING account with that email or create a NEW one. Absent: `/login?error=account_exists`
+   * in both cases, whether or not the account exists — a per-tenant IdP can assert any address, so
+   * it may neither sign in as anyone nor reserve an address the owner has not claimed yet.
    */
   linkByEmail?: boolean
+  /**
+   * The connection this assertion came through. Needed when the plugin's `ssoPolicy` names one
+   * (`SsoRequirement.connectionId`): only the claiming connection satisfies that claim.
+   */
+  connectionId?: string
   name?: string | null
   avatarUrl?: string | null
   /**
@@ -159,9 +167,11 @@ export interface PluginProvision {
    * Create the person (with a link, without a session) or refresh their name and link. Creation is
    * an IdP admission — no `SIGNUP_MODE` gate, no personal workspace. A blocked person stays
    * blocked (`blocked: true` comes back) — a block this plugin's own `deprovision` set as well:
-   * a profile refresh is not a reactivation, `setMembership` is. An EXISTING account with that email and no link from
-   * this plugin is linked only with `linkByEmail: true` (the plugin proved the IdP owns the email's
-   * domain), else 409 `account_exists`; an unverified email never links: 409 `email_unverified`. A subject already linked to somebody else: 409
+   * a profile refresh is not a reactivation, `setMembership` is. A subject with no link from this
+   * plugin needs `linkByEmail: true` (the plugin proved the IdP owns the email's domain), whether
+   * the account exists or not: else 409 `account_exists`, answered identically in both cases, and
+   * always for a `BOOTSTRAP_ADMIN_EMAILS` address. An unverified email never links to an existing
+   * account: 409 `email_unverified`. A subject already linked to somebody else: 409
    * `provider_linked_elsewhere`.
    */
   upsertUser(input: {
@@ -173,7 +183,8 @@ export interface PluginProvision {
   }): Promise<PluginIdentityUser>
   /**
    * Give the person an `idp` membership with `role`; an `owner` or `support` row is left as is.
-   * Answers the row as it now stands. 404 when the tenant or the person does not exist. This is
+   * Answers the row as it now stands. 404 when the tenant or the person does not exist, 403
+   * `tenant_suspended` when the tenant is suspended (every tenant-taking method here). This is
    * the IdP (re)admitting them, so it also lifts a block THIS plugin's `deprovision` set
    * (single-tenant mode) — never an admin's or another plugin's.
    */
@@ -212,16 +223,18 @@ export interface PluginProvision {
 /** `identityFor(c, pluginId)`: sign a person in, or provision them. */
 export interface PluginIdentity {
   /**
-   * Finish a sign-in the plugin's IdP proved: find the person by their link (else by verified
-   * email, else admit them), link them, apply `tenantId` + `role`, mint the session (cookie set,
+   * Finish a sign-in the plugin's IdP proved: find the person by their link (else, with
+   * `linkByEmail`, by verified email or by admitting them), link them, apply `tenantId` + `role`,
+   * mint the session (cookie set,
    * the `OIDC_SESSION_MAX_AGE_DAYS` cap under managed tenancy) and answer the redirect. Without
    * `tenantId` + `role` a NEW person is admitted by `SIGNUP_MODE` like any sign-in (single-tenant
    * mode, `open`: auto-joined as `member`). A block — including one this plugin's `deprovision`
    * set — is refused, never lifted, by a sign-in: an IdP still asserting a deactivated person is
    * out of step with its own directory. Every
    * refusal is a redirect to `/login?error=<code>` — `email_unverified`, `blocked`,
-   * `not_invited`, `provider_linked_elsewhere`, `no_access` (the tenant does not exist — in
-   * single-tenant mode, is not THE tenant),
+   * `not_invited`, `provider_linked_elsewhere`, `account_exists` (no `linkByEmail` for an address
+   * with no link from this plugin, or a `BOOTSTRAP_ADMIN_EMAILS` address), `no_access` (the tenant
+   * does not exist or is suspended — in single-tenant mode, is not THE tenant),
    * `oauth_failed` (input that would not parse) — so the handler just returns what this returns.
    */
   signIn(input: PluginSignInInput): Promise<Response>
@@ -243,6 +256,7 @@ const signInSchema = z.object({
   email: emailSchema,
   emailVerified: z.boolean(),
   linkByEmail: z.boolean().optional(),
+  connectionId: z.string().min(1).max(200).optional(),
   name: z.string().trim().max(200).nullish(),
   avatarUrl: z.string().url().max(2048).nullish(),
   tenantId: z.string().uuid().optional(),
@@ -261,27 +275,49 @@ function toIdentityUser(user: User): PluginIdentityUser {
 }
 
 /**
- * The tenant exists — and in `TENANCY_MODE=single` is THE tenant (`getSingleTenant`): any other
- * row is a leftover nobody can reach, so seating somebody there would be a second organisation.
+ * The tenant as a provider may act on it: `missing` when it does not exist — in
+ * `TENANCY_MODE=single`, when it is not THE tenant (`getSingleTenant`): any other row is a leftover
+ * nobody can reach, so seating somebody there would be a second organisation — and `suspended`,
+ * which this path never reaches through the auth middleware.
  */
-async function tenantExists(
+async function tenantState(
   db: PluginContext['db'],
   config: PluginContext['config'],
   tenantId: string
-): Promise<boolean> {
-  if (!z.string().uuid().safeParse(tenantId).success) return false
-  if (config.TENANCY_MODE === 'single') return (await getSingleTenant(db))?.id === tenantId
+): Promise<'active' | 'suspended' | 'missing'> {
+  if (!z.string().uuid().safeParse(tenantId).success) return 'missing'
+  if (config.TENANCY_MODE === 'single') {
+    const only = await getSingleTenant(db)
+    return only?.id === tenantId ? only.status : 'missing'
+  }
   const row = await db.query.tenants.findFirst({
-    columns: { id: true },
+    columns: { status: true },
     where: eq(tenants.id, tenantId),
   })
-  return Boolean(row)
+  return row?.status ?? 'missing'
 }
 
 async function requireTenant(ctx: PluginContext, tenantId: string): Promise<void> {
-  if (!(await tenantExists(ctx.db, ctx.config, tenantId))) {
-    throw new NotFoundError('Tenant not found')
+  const state = await tenantState(ctx.db, ctx.config, tenantId)
+  if (state === 'missing') throw new NotFoundError('Tenant not found')
+  if (state === 'suspended') {
+    throw new ForbiddenError('Organisation is suspended', ERROR_CODES.tenantSuspended)
   }
+}
+
+/**
+ * May this provider claim `email` for a subject it has no link for? Only with a proved domain:
+ * a per-tenant IdP can assert any address, so without one it could sign in as an existing account
+ * or reserve the address before its owner arrives. A `BOOTSTRAP_ADMIN_EMAILS` address is never
+ * claimable: the link would outlive a later verified login that promotes the account to global
+ * admin.
+ */
+function mayClaimEmail(
+  config: PluginContext['config'],
+  email: string,
+  linkByEmail: boolean | undefined
+): boolean {
+  return Boolean(linkByEmail) && !isBootstrapAdmin(config, email)
 }
 
 async function linkedTo(
@@ -314,6 +350,8 @@ async function userBySubject(
 export function provisionFor(ctx: PluginContext, pluginId: string): PluginProvision {
   const provider = providerKeyOf(pluginId)
   const { db } = ctx
+  // No `waitUntil` on this surface (a queue consumer can call it): the socket closes are awaited.
+  const realtime = collectingRealtime(ctx.env)
   return {
     async findUser(by) {
       const user =
@@ -329,6 +367,13 @@ export function provisionFor(ctx: PluginContext, pluginId: string): PluginProvis
       const name = input.name?.trim() || null
       let user = await userBySubject(db, provider, subject)
       if (!user) {
+        // One answer whether or not the account exists: the IdP's operator learns nothing from it.
+        if (!mayClaimEmail(ctx.config, email, input.linkByEmail)) {
+          throw new ConflictError(
+            'This identity provider may not claim that email address',
+            ERROR_CODES.accountExists
+          )
+        }
         const byEmail = await findUserByEmail(db, email)
         if (byEmail) {
           // Linking an address nobody proved to an existing account would hand that account over.
@@ -338,13 +383,6 @@ export function provisionFor(ctx: PluginContext, pluginId: string): PluginProvis
               'email_unverified'
             )
           }
-          // A per-tenant IdP may assert any address: only a proved domain links by email.
-          if (!input.linkByEmail) {
-            throw new ConflictError(
-              'An account with that email exists and this identity provider may not claim it',
-              ERROR_CODES.accountExists
-            )
-          }
           user = byEmail
         }
       }
@@ -352,7 +390,7 @@ export function provisionFor(ctx: PluginContext, pluginId: string): PluginProvis
         const admitted = await admitUser(
           db,
           ctx.config,
-          { email, name, verified: input.emailVerified, admittedBy: 'idp' },
+          { email, name, verified: input.emailVerified, admittedBy: 'idp', proof: 'plugin' },
           ctx.logger
         )
         // An IdP admission is refused only for a blocked existing row, which was looked up above.
@@ -393,14 +431,17 @@ export function provisionFor(ctx: PluginContext, pluginId: string): PluginProvis
     async removeMembership({ tenantId, userId }) {
       await requireTenant(ctx, tenantId)
       if (!z.string().uuid().safeParse(userId).success) return false
-      return removeIdpMembership(db, { tenantId, userId })
+      const removed = await removeIdpMembership(db, { tenantId, userId }, realtime)
+      await realtime.flush()
+      return removed
     },
 
     async deprovision({ tenantId, userId }) {
       await requireTenant(ctx, tenantId)
       const user = await userById(db, userId)
       if (!user) return { removed: false, sessionsEnded: 0, retained: null, blocked: false }
-      const result = await deprovisionIdpMember(db, { tenantId, userId })
+      const result = await deprovisionIdpMember(db, { tenantId, userId }, realtime)
+      await realtime.flush()
       const blocked = user.blockedAt !== null
       // Multi mode: one tenant's IdP never speaks for the person's others — nothing global.
       if (ctx.config.TENANCY_MODE !== 'single' || result.retained) return { ...result, blocked }
@@ -415,7 +456,8 @@ export function provisionFor(ctx: PluginContext, pluginId: string): PluginProvis
         )
         return { ...result, blocked }
       }
-      const ended = await blockDeprovisioned(db, { userId, source: provider })
+      const ended = await blockDeprovisioned(db, { userId, source: provider }, realtime)
+      await realtime.flush()
       if (!blocked) {
         ctx.logger.info({ plugin: pluginId, userId }, 'identity.deprovision: blocked (single)')
       }
@@ -465,8 +507,11 @@ export function identityFor(c: AppContext, pluginId: string): PluginIdentity {
         return refuse('oauth_failed')
       }
       const input = parsed.data
-      if (input.tenantId && !(await tenantExists(db, config, input.tenantId))) {
-        logger.warn({ plugin: pluginId, tenantId: input.tenantId }, 'identity.signIn: no tenant')
+      if (input.tenantId && (await tenantState(db, config, input.tenantId)) !== 'active') {
+        logger.warn(
+          { plugin: pluginId, tenantId: input.tenantId },
+          'identity.signIn: tenant missing or suspended'
+        )
         return refuse('no_access')
       }
       const grants =
@@ -479,14 +524,14 @@ export function identityFor(c: AppContext, pluginId: string): PluginIdentity {
       // `routes/auth/sso` reads the plugin barrel, which imports this module (see that file).
       const { ssoDecisionFor } = await import('../../api/routes/auth/sso')
       const sso = await ssoDecisionFor(db, config, [input.email, user?.email], logger)
-      if (!ssoAllows(sso, { pluginId })) {
-        logger.warn({ plugin: pluginId }, 'identity.signIn: another plugin requires SSO here')
+      if (!ssoAllows(sso, { pluginId, connectionId: input.connectionId })) {
+        logger.warn({ plugin: pluginId }, 'identity.signIn: another connection requires SSO here')
         return ssoRequiredRedirect(c, sso, { returnUrl: safeRedirectPath(input.redirectTo) })
       }
-      if (!user && !input.linkByEmail && (await findUserByEmail(db, input.email))) {
-        // `admitUser` would hand back the existing account; a per-tenant IdP may assert any
-        // address, so without a proved domain that is a takeover, not a sign-in.
-        logger.warn({ plugin: pluginId }, 'identity.signIn: email belongs to an unlinked account')
+      if (!user && !mayClaimEmail(config, input.email, input.linkByEmail)) {
+        // No link yet and no right to claim the address: `admitUser` would hand back or create
+        // the account. One answer whether or not it exists.
+        logger.warn({ plugin: pluginId }, 'identity.signIn: this IdP may not claim that email')
         return refuse('account_exists')
       }
       if (!user) {
@@ -499,6 +544,7 @@ export function identityFor(c: AppContext, pluginId: string): PluginIdentity {
             verified: true,
             avatarUrl: input.avatarUrl,
             admittedBy: grants ? 'idp' : undefined,
+            proof: 'plugin',
           },
           logger
         )

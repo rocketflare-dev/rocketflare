@@ -9,12 +9,14 @@ import type {
   Invitation,
   InvitationDetails,
   InvitationStatus,
+  MembershipRole,
   TenantRole,
 } from '@rocketflare/shared/tenants'
-import { and, desc, eq, isNull, sql } from 'drizzle-orm'
+import { and, desc, eq, isNull, lte, sql } from 'drizzle-orm'
 import type { AppConfig } from '../../config'
 import type { Database } from '../../db/client'
 import {
+  invitationSendCounters,
   type TeamInvitation,
   teamInvitations,
   tenants,
@@ -23,7 +25,14 @@ import {
   userSessions,
   users,
 } from '../../db/schema'
-import { ApiError, ConflictError, ForbiddenError, NotFoundError } from '../utils/core/errors'
+import { isOwnerLevel, type RoleView } from '../middleware/permissions'
+import {
+  ApiError,
+  ConflictError,
+  ForbiddenError,
+  NotFoundError,
+  RateLimitedError,
+} from '../utils/core/errors'
 import { hashToken } from '../utils/core/hash'
 import { randomToken } from '../utils/core/ids'
 import type { Logger } from '../utils/core/logger'
@@ -35,6 +44,9 @@ import { notify, notifyMany } from './notifications'
 import { nudge, type Realtime, realtimeEvent } from './realtime'
 
 export const INVITATION_TTL_MS = 7 * 24 * 60 * 60 * 1000
+
+/** How long after an invitation email another can be sent for the same invitation. */
+export const INVITATION_RESEND_COOLDOWN_SECONDS = 300
 
 const ROLE_RANK: Record<string, number> = { member: 1, support: 2, admin: 2, owner: 3 }
 
@@ -104,7 +116,65 @@ export interface InviteInput {
   email: string
   role: TenantRole
   inviter: User
+  /** Whose authority the invitation is issued under; only owner-level may issue `owner`. */
+  actor: RoleView
   realtime?: Realtime
+}
+
+/** `owner` is assigned only by an owner-level actor, the same rule as a role change. */
+function assertMayIssueRole(actor: RoleView, role: string): void {
+  if (role === 'owner' && !isOwnerLevel(actor)) {
+    throw new ForbiddenError('Only an owner can invite an owner')
+  }
+}
+
+/** Seconds until the next UTC day, when the send counters start again. */
+function secondsToNextUtcDay(): number {
+  const now = Date.now()
+  return Math.max(1, Math.ceil((86_400_000 - (now % 86_400_000)) / 1000))
+}
+
+/**
+ * Count one invitation email against the sender and the tenant, or refuse it with a 429. An upsert
+ * per scope is the atomic claim: the conditional update takes the row lock, so simultaneous sends
+ * cannot pass the limit. Runs inside the caller's transaction, so a refused or failed send leaves
+ * both counters where they were.
+ */
+async function chargeInvitationEmail(
+  tx: Database,
+  cfg: AppConfig,
+  input: { tenantId: string; userId: string }
+): Promise<void> {
+  const scopes = [
+    { scope: `user:${input.userId}`, limit: cfg.INVITATION_EMAILS_PER_USER_PER_DAY },
+    { scope: `tenant:${input.tenantId}`, limit: cfg.INVITATION_EMAILS_PER_TENANT_PER_DAY },
+  ]
+  for (const { scope, limit } of scopes) {
+    const [counted] = await tx
+      .insert(invitationSendCounters)
+      .values({ scope, sent: 1 })
+      .onConflictDoUpdate({
+        target: [invitationSendCounters.scope, invitationSendCounters.day],
+        set: { sent: sql`${invitationSendCounters.sent} + 1` },
+        setWhere: sql`${invitationSendCounters.sent} < ${limit}`,
+      })
+      .returning({ sent: invitationSendCounters.sent })
+    if (!counted) {
+      throw new RateLimitedError(
+        'The daily limit on invitation emails has been reached',
+        secondsToNextUtcDay()
+      )
+    }
+  }
+}
+
+/** Nightly prune: counters from before yesterday can no longer limit anything. */
+export async function pruneInvitationSendCounters(db: Database): Promise<number> {
+  const rows = await db
+    .delete(invitationSendCounters)
+    .where(sql`${invitationSendCounters.day} < (now() at time zone 'utc')::date - 1`)
+    .returning({ scope: invitationSendCounters.scope })
+  return rows.length
 }
 
 type InviteLogger = Pick<Logger, 'info' | 'warn' | 'error'>
@@ -163,6 +233,7 @@ export async function createInvitation(
   jobs: JobsQueue,
   input: InviteInput
 ): Promise<{ invitation: Invitation; token: string }> {
+  assertMayIssueRole(input.actor, input.role)
   const email = input.email.toLowerCase()
   const member = await db
     .select({ userId: tenantUsers.userId })
@@ -179,32 +250,39 @@ export async function createInvitation(
   if (pending)
     throw new ConflictError('An invitation is already pending for this address', 'already_invited')
 
-  // A stale (expired) pending row would violate the partial unique index; revoke it first.
-  await db
-    .update(teamInvitations)
-    .set({ revokedAt: new Date() })
-    .where(
-      and(
-        eq(teamInvitations.tenantId, input.tenantId),
-        sql`lower(${teamInvitations.email}) = ${email}`,
-        isNull(teamInvitations.acceptedAt),
-        isNull(teamInvitations.revokedAt)
-      )
-    )
-
   const token = randomToken(32)
-  const [row] = await db
-    .insert(teamInvitations)
-    .values({
+  const tokenHash = await hashToken(token)
+  const row = await db.transaction(async tx => {
+    await chargeInvitationEmail(tx as unknown as Database, cfg, {
       tenantId: input.tenantId,
-      email,
-      role: input.role,
-      tokenHash: await hashToken(token),
-      invitedByUserId: input.inviter.id,
-      expiresAt: new Date(Date.now() + INVITATION_TTL_MS),
+      userId: input.inviter.id,
     })
-    .returning()
-  if (!row) throw new Error('createInvitation: insert returned no row')
+    // A stale (expired) pending row would violate the partial unique index; revoke it first.
+    await tx
+      .update(teamInvitations)
+      .set({ revokedAt: new Date() })
+      .where(
+        and(
+          eq(teamInvitations.tenantId, input.tenantId),
+          sql`lower(${teamInvitations.email}) = ${email}`,
+          isNull(teamInvitations.acceptedAt),
+          isNull(teamInvitations.revokedAt)
+        )
+      )
+    const [row] = await tx
+      .insert(teamInvitations)
+      .values({
+        tenantId: input.tenantId,
+        email,
+        role: input.role,
+        tokenHash,
+        invitedByUserId: input.inviter.id,
+        expiresAt: new Date(Date.now() + INVITATION_TTL_MS),
+      })
+      .returning()
+    if (!row) throw new Error('createInvitation: insert returned no row')
+    return row
+  })
 
   await queueInvitationEmail(jobs, cfg, {
     to: email,
@@ -230,12 +308,18 @@ export async function bulkInvite(
   cfg: AppConfig,
   logger: InviteLogger,
   jobs: JobsQueue,
-  input: { tenantId: string; emails: string[]; role: TenantRole; inviter: User }
+  input: { tenantId: string; emails: string[]; role: TenantRole; inviter: User; actor: RoleView }
 ): Promise<BulkInviteOutcome[]> {
+  assertMayIssueRole(input.actor, input.role)
   const results: BulkInviteOutcome[] = []
   const seen = new Set<string>()
+  let stopped = false
   for (const raw of input.emails) {
     const email = raw.toLowerCase()
+    if (stopped) {
+      results.push({ email, status: 'failed', reason: 'send_limit' })
+      continue
+    }
     if (seen.has(email)) {
       results.push({ email, status: 'skipped', reason: 'duplicate' })
       continue
@@ -247,6 +331,11 @@ export async function bulkInvite(
     } catch (err) {
       if (err instanceof ConflictError) {
         results.push({ email, status: 'skipped', reason: err.code ?? 'conflict' })
+      } else if (err instanceof RateLimitedError) {
+        // Nothing queued at all is the refusal; otherwise report what went out and what did not.
+        if (!results.some(r => r.status === 'invited')) throw err
+        results.push({ email, status: 'failed', reason: 'send_limit' })
+        stopped = true
       } else {
         logger.error({ err, email }, 'bulk invite failed for one address')
         results.push({ email, status: 'failed', reason: 'error' })
@@ -262,7 +351,7 @@ export async function resendInvitation(
   cfg: AppConfig,
   logger: InviteLogger,
   jobs: JobsQueue,
-  input: { tenantId: string; id: string; inviter: User }
+  input: { tenantId: string; id: string; inviter: User; actor: RoleView }
 ): Promise<Invitation> {
   const existing = await db.query.teamInvitations.findFirst({
     where: and(eq(teamInvitations.id, input.id), eq(teamInvitations.tenantId, input.tenantId)),
@@ -271,13 +360,41 @@ export async function resendInvitation(
   if (existing.acceptedAt || existing.revokedAt) {
     throw new ConflictError('Only pending invitations can be resent', 'invitation_not_pending')
   }
+  assertMayIssueRole(input.actor, existing.role)
   const token = randomToken(32)
-  const [row] = await db
-    .update(teamInvitations)
-    .set({ tokenHash: await hashToken(token), expiresAt: new Date(Date.now() + INVITATION_TTL_MS) })
-    .where(eq(teamInvitations.id, existing.id))
-    .returning()
-  if (!row) throw new NotFoundError('Invitation not found')
+  const tokenHash = await hashToken(token)
+  const row = await db.transaction(async tx => {
+    // The conditional update is the claim: of simultaneous resends exactly one matches.
+    const [row] = await tx
+      .update(teamInvitations)
+      .set({
+        tokenHash,
+        expiresAt: new Date(Date.now() + INVITATION_TTL_MS),
+        lastSentAt: new Date(),
+      })
+      .where(
+        and(
+          eq(teamInvitations.id, existing.id),
+          lte(
+            teamInvitations.lastSentAt,
+            new Date(Date.now() - INVITATION_RESEND_COOLDOWN_SECONDS * 1000)
+          )
+        )
+      )
+      .returning()
+    if (!row) {
+      const elapsedSeconds = Math.floor((Date.now() - existing.lastSentAt.getTime()) / 1000)
+      throw new RateLimitedError(
+        'This invitation was sent a moment ago. Try again shortly.',
+        Math.max(1, INVITATION_RESEND_COOLDOWN_SECONDS - elapsedSeconds)
+      )
+    }
+    await chargeInvitationEmail(tx as unknown as Database, cfg, {
+      tenantId: input.tenantId,
+      userId: input.inviter.id,
+    })
+    return row
+  })
   await queueInvitationEmail(jobs, cfg, {
     to: row.email,
     tenantId: input.tenantId,
@@ -298,6 +415,31 @@ export async function revokeInvitation(
   const row = await revokeRow(db, tenantId, id)
   nudge(realtime, realtimeEvent('invitation.changed', tenantId, { id }))
   return row
+}
+
+/**
+ * A person whose membership has ended takes their pending invitations in this tenant with them, in
+ * the caller's transaction. A global admin's stay: their authority is the platform flag, which the
+ * membership never held. Returns the ids revoked, for the caller's nudge after commit.
+ */
+export async function revokeInvitationsIssuedBy(
+  tx: Database,
+  input: { tenantId: string; userId: string }
+): Promise<string[]> {
+  const revoked = await tx
+    .update(teamInvitations)
+    .set({ revokedAt: new Date() })
+    .where(
+      and(
+        eq(teamInvitations.tenantId, input.tenantId),
+        eq(teamInvitations.invitedByUserId, input.userId),
+        isNull(teamInvitations.acceptedAt),
+        isNull(teamInvitations.revokedAt),
+        sql`NOT EXISTS (SELECT 1 FROM ${users} WHERE ${users.id} = ${input.userId} AND ${users.isGlobalAdmin})`
+      )
+    )
+    .returning({ id: teamInvitations.id })
+  return revoked.map(row => row.id)
 }
 
 async function revokeRow(db: Database, tenantId: string, id: string): Promise<Invitation> {
@@ -361,7 +503,7 @@ export async function acceptInvitation(
 ): Promise<{
   tenantId: string
   tenantName: string
-  role: TenantRole
+  role: MembershipRole
   invitation: TeamInvitation
   joined: boolean
 }> {
@@ -384,6 +526,8 @@ export async function acceptInvitation(
       where: and(eq(tenantUsers.tenantId, inv.tenantId), eq(tenantUsers.userId, input.user.id)),
     })
     let joined = false
+    // An `idp` row follows the issuer; the invitation is accepted and the row stays as it is.
+    const role = existing?.source === 'idp' ? existing.role : inv.role
     if (!existing) {
       await tx.insert(tenantUsers).values({
         tenantId: inv.tenantId,
@@ -392,7 +536,10 @@ export async function acceptInvitation(
         invitedByUserId: inv.invitedByUserId,
       })
       joined = true
-    } else if ((ROLE_RANK[inv.role] ?? 0) > (ROLE_RANK[existing.role] ?? 0)) {
+    } else if (
+      existing.source !== 'idp' &&
+      (ROLE_RANK[inv.role] ?? 0) > (ROLE_RANK[existing.role] ?? 0)
+    ) {
       await tx
         .update(tenantUsers)
         .set({ role: inv.role })
@@ -415,7 +562,7 @@ export async function acceptInvitation(
       type: 'member.joined',
       subjectType: 'TenantMember',
       subjectId: input.user.id,
-      metadata: { via: 'invitation', invitationId: inv.id, role: inv.role },
+      metadata: { via: 'invitation', invitationId: inv.id, role },
     })
     if (joined) {
       await notify(
@@ -457,7 +604,7 @@ export async function acceptInvitation(
     return {
       tenantId: inv.tenantId,
       tenantName: row.tenant.name,
-      role: inv.role,
+      role,
       invitation: inv,
       joined,
     }

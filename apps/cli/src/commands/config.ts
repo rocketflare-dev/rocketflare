@@ -2,7 +2,7 @@
 import { CONFIG_KEYS, type ConfigKey, redactConfig, redactKey } from '../config'
 import type { CommandContext } from '../context'
 import { CliError } from '../errors'
-import { formatJson } from '../utils/output'
+import { formatJson, neutralise } from '../utils/output'
 
 function assertKey(key: string): ConfigKey {
   if ((CONFIG_KEYS as readonly string[]).includes(key)) return key as ConfigKey
@@ -18,7 +18,9 @@ export async function runConfigGet(ctx: CommandContext, key?: string): Promise<v
     return
   }
   const value = config[assertKey(key)]
-  ctx.out.data({ [key]: value ?? null }, () => (value === undefined ? '' : String(value)))
+  ctx.out.data({ [key]: value ?? null }, () =>
+    value === undefined ? '' : neutralise(String(value))
+  )
 }
 
 export async function runConfigSet(ctx: CommandContext, key: string, value: string): Promise<void> {

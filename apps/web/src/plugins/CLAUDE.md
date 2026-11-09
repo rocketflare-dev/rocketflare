@@ -94,15 +94,20 @@ the CLI command `<id>`; skills `<id>` / `<id>-<what>`; AG-UI CUSTOM events `<id>
   caller — `verifyState` over a token it minted with `signState`, a stored per-subscription secret,
   the provider's signature; every failure the same 401 — then uses only the tenant that proof
   carried, re-checks its flag with `ctx.features(tenantId)` (no `requireFeature` without auth) and
-  answers by `ctx.enqueue`. Rate-limit / body-cap overrides: `/rf-plugin` reference.
+  answers by `ctx.enqueue`. A callback completing a flow an admin started re-checks them with
+  `memberCan(ctx, { tenantId, userId }, action, subject)` — membership, role, block and tenant
+  status as of now — right after `verifyState`, because a signed state outlives a demotion. Rate-limit / body-cap overrides: `/rf-plugin` reference.
 - **It signs people in through `identityFor(c, '<id>').signIn(...)` and provisions through
   `provisionFor(ctx, '<id>')`, never by writing a session** — no `user_sessions` row, cookie,
   `admitUser` or `tenant_users` write of its own. Both trust the caller about the tenant — prove it
   first. `linkByEmail: true` ONLY for a domain the connection proved it owns, or one tenant's IdP
-  can sign in as anyone. `loginMethods` `startPath` must be under `/api/hooks/<id>/`. Semantics
+  can sign in as anyone; without it the seam refuses to claim or CREATE any address no link
+  covers (`account_exists`), and a `BOOTSTRAP_ADMIN_EMAILS` address is refused always. A
+  suspended tenant answers 403 `tenant_suspended` from every tenant-taking method. `loginMethods` `startPath` must be under `/api/hooks/<id>/`. Semantics
   (leaver vs block, `single` mode, error codes): `rf-plugin/reference.md` § Identity and SSO.
 - **`ssoPolicy`** answers `{ required: true, methodId }` only for a domain your connection proved; a
-  throw fails CLOSED. Host side: **every sign-in path asks the policy before it admits** — a new
+  throw fails CLOSED. A plugin with several tenants' connections sets `connectionId` on the answer
+  and passes the same id to `signIn`, or another tenant's connection satisfies the claim. Host side: **every sign-in path asks the policy before it admits** — a new
   path that skips it is a hole in every customer's SSO requirement. Never import `routes/auth/sso`
   statically from `plugins/api/**` (it reads the barrel; use `await import`). Worked examples:
   `example-feature/api/sso.ts`, `sso-policy.ts`.
@@ -125,7 +130,8 @@ the CLI command `<id>`; skills `<id>` / `<id>-<what>`; AG-UI CUSTOM events `<id>
 - **`jobHandlers`** keep the kit's handler contract (own DB client, await everything, throw to
   retry).
 - **`agentTools(ctx)`** is bound to the run's `AgentToolContext` (its `AccessScope`: read what the
-  REQUESTER may read, never a `tenantId` it chose). Appended after the kit's three knowledge tools;
+  REQUESTER may read, never a `tenantId` it chose). A tool that writes is offered on
+  `ToolCtx.can('manage', YOUR_SUBJECT)`, never on `scope.bypass`, which is row visibility. Appended after the kit's three knowledge tools;
   `[]` for a tenant without it; a throw is logged and skipped. A test pinning the tool list must be
   a prefix assertion.
 - **`grants` are ADDITIVE over its OWN subjects** (declared in `SharedPlugin.subjects`), applied

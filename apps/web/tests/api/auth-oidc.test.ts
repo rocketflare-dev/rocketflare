@@ -611,7 +611,7 @@ describe('AUTH_OIDC_ONLY', () => {
       await request('/auth/methods', {}, { env })
     )
     expect(methods).toEqual({
-      magicLink: true,
+      magicLink: false,
       providers: ['oidc'],
       devLogin: true,
       oidc: { label: 'Single sign-on' },

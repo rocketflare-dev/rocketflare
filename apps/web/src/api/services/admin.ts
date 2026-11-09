@@ -31,7 +31,7 @@ import {
   userSessions,
   users,
 } from '../../db/schema'
-import { deleteUserSessions, updateSelectedTenant } from '../auth/sessions'
+import { deleteUserSessions, updateSelectedTenant, userTenantIds } from '../auth/sessions'
 import { ConflictError, isUniqueViolation, NotFoundError } from '../utils/core/errors'
 import type { Logger } from '../utils/core/logger'
 import { createTenantForUser } from '../utils/db/tenant-helpers'
@@ -41,7 +41,9 @@ import { nameFromEmail } from './auth'
 import { accessRequestDecidedEmail } from './email'
 import { platformFeatures } from './features'
 import { enqueueJob, type JobsQueue } from './jobs'
+import { endSupportMemberships } from './members'
 import { notify } from './notifications'
+import { closeTenantSockets, closeUserSockets, type Realtime } from './realtime'
 
 type AdminLogger = Pick<Logger, 'info' | 'warn' | 'error'>
 
@@ -344,7 +346,8 @@ export async function setTenantSuspended(
   db: Database,
   tenantId: string,
   suspended: boolean,
-  admin: User
+  admin: User,
+  realtime?: Realtime
 ) {
   const [row] = await db
     .update(tenants)
@@ -352,6 +355,7 @@ export async function setTenantSuspended(
     .where(eq(tenants.id, tenantId))
     .returning()
   if (!row) throw new NotFoundError('Organisation not found')
+  if (suspended) closeTenantSockets(realtime, tenantId)
   await recordActivity(db, {
     tenantId,
     userId: admin.id,
@@ -384,7 +388,13 @@ export async function enterSupport(db: Database, tenantId: string, admin: User, 
 }
 
 /** Remove the `support` row (a real membership is left alone) and unpin the session. */
-export async function leaveSupport(db: Database, tenantId: string, admin: User, sessionId: string) {
+export async function leaveSupport(
+  db: Database,
+  tenantId: string,
+  admin: User,
+  sessionId: string,
+  realtime?: Realtime
+) {
   const removed = await db
     .delete(tenantUsers)
     .where(
@@ -403,6 +413,7 @@ export async function leaveSupport(db: Database, tenantId: string, admin: User, 
       subjectType: 'TenantMember',
       subjectId: admin.id,
     })
+    closeUserSockets(realtime, tenantId, admin.id)
   }
   await db
     .update(userSessions)
@@ -495,7 +506,7 @@ export async function getAdminUser(db: Database, userId: string): Promise<AdminU
 
 export async function setGlobalAdmin(
   db: Database,
-  input: { userId: string; isGlobalAdmin: boolean; actor: User }
+  input: { userId: string; isGlobalAdmin: boolean; actor: User; realtime?: Realtime }
 ) {
   const target = await db.query.users.findFirst({ where: eq(users.id, input.userId) })
   if (!target) throw new NotFoundError('User not found')
@@ -511,14 +522,24 @@ export async function setGlobalAdmin(
   if (target.isGlobalAdmin === input.isGlobalAdmin) return target
   // A grant made here is `manual`, so a sign-in without the issuer's global-admin claim never
   // clears it.
-  const [updated] = await db
-    .update(users)
-    .set({
-      isGlobalAdmin: input.isGlobalAdmin,
-      globalAdminSource: input.isGlobalAdmin ? 'manual' : null,
-    })
-    .where(eq(users.id, input.userId))
-    .returning()
+  const { updated, endedTenantIds } = await db.transaction(async tx => {
+    const [row] = await tx
+      .update(users)
+      .set({
+        isGlobalAdmin: input.isGlobalAdmin,
+        globalAdminSource: input.isGlobalAdmin ? 'manual' : null,
+      })
+      .where(eq(users.id, input.userId))
+      .returning()
+    const ended = input.isGlobalAdmin
+      ? []
+      : await endSupportMemberships(tx as unknown as Database, {
+          userId: input.userId,
+          actorUserId: input.actor.id,
+        })
+    return { updated: row, endedTenantIds: ended }
+  })
+  closeUserSockets(input.realtime, endedTenantIds, input.userId)
   return updated ?? target
 }
 
@@ -527,7 +548,10 @@ export async function setGlobalAdmin(
  * set here is `manual`, so an identity provider's reactivation (`provisionFor().setMembership`)
  * never lifts it; it also turns an IdP's block into a manual one. Unblocking clears either.
  */
-export async function setUserBlocked(db: Database, input: { userId: string; blocked: boolean }) {
+export async function setUserBlocked(
+  db: Database,
+  input: { userId: string; blocked: boolean; realtime?: Realtime }
+) {
   const [updated] = await db
     .update(users)
     .set(
@@ -538,6 +562,9 @@ export async function setUserBlocked(db: Database, input: { userId: string; bloc
     .where(eq(users.id, input.userId))
     .returning()
   if (!updated) throw new NotFoundError('User not found')
-  if (input.blocked) await deleteUserSessions(db, input.userId)
+  if (input.blocked) {
+    await deleteUserSessions(db, input.userId)
+    closeUserSockets(input.realtime, await userTenantIds(db, input.userId), input.userId)
+  }
   return updated
 }

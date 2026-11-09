@@ -482,6 +482,8 @@ export interface ToolCtxOptions extends BaseOptions {
   groupIds?: string[]
   /** Admin-level requesters are not narrowed by visibility. Defaults to `true`, as a system run. */
   bypass?: boolean
+  /** The requester's CASL grant, for a tool gated on one. Omitted: every check is `false`. */
+  can?: AgentToolContext['can']
   /** The CALLER's budget for one document window — an agent run's is far larger than a chat turn's. */
   maxDocumentChars?: number
 }
@@ -505,6 +507,7 @@ export function makeToolCtx(options: ToolCtxOptions): ToolCtx {
       groupIds: options.groupIds ?? [],
       bypass: options.bypass ?? true,
     },
+    ...(options.can && { can: options.can }),
     ...(options.maxDocumentChars !== undefined && { maxDocumentChars: options.maxDocumentChars }),
   }
   return toolCtx(agentToolContext)

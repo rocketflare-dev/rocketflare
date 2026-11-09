@@ -25,7 +25,11 @@
  * - **Only a CLAIMING plugin's sign-in is exempt.** `identityFor(c, id).signIn` passes when `id`
  *   is one of the plugins that claimed the email; a different plugin's IdP asserting the same
  *   address is refused like the kit's own methods, so a second tenant's connection cannot
- *   sidestep the first's requirement.
+ *   sidestep the first's requirement. A plugin holding several tenants' connections has its
+ *   `ssoPolicy` name the one that claims the address (`connectionId`), and `signIn` must then come
+ *   through that connection too, so the plugin boundary is not the only boundary between tenants.
+ *   When the sign-in involves several addresses (asserted, account), each must be claimed by the
+ *   signing-in connection: one claimed address does not cover another's requirement.
  * - **`methodId` is checked** against the claiming plugin's own `loginMethods(cfg)`; one it does
  *   not declare keeps the requirement and drops the hint (logged), so the login page never routes
  *   a person to a button that does not exist.
@@ -43,6 +47,11 @@ export interface SsoRequirement {
   methodId: string
   /** The connection's display name ("Acme SSO") — used in the "use single sign-on" email and logs. */
   label?: string
+  /**
+   * WHICH connection claims the address, for a plugin holding several. When set, only an
+   * `identityFor(c, id).signIn` passing the same `connectionId` satisfies the requirement.
+   */
+  connectionId?: string
 }
 
 export type SsoPolicy = (
@@ -63,6 +72,10 @@ export interface SsoClaim {
   /** `<plugin id>:<method id>` as `GET /auth/methods` names it, or null when unknown. */
   method: string | null
   label?: string
+  /** The claiming connection, when the plugin named one (`SsoRequirement.connectionId`). */
+  connectionId?: string
+  /** The address this claim is on, when the sign-in involved several (`evaluateSsoPolicyForAll`). */
+  address?: string
   /** The policy threw (or answered something malformed): fail-closed, not a real answer. */
   failed?: true
 }
@@ -80,7 +93,8 @@ function isRequirement(value: unknown): value is SsoRequirement {
     typeof value === 'object' &&
     value !== null &&
     (value as { required?: unknown }).required === true &&
-    typeof (value as { methodId?: unknown }).methodId === 'string'
+    typeof (value as { methodId?: unknown }).methodId === 'string' &&
+    ['string', 'undefined'].includes(typeof (value as { connectionId?: unknown }).connectionId)
   )
 }
 
@@ -116,6 +130,7 @@ async function claimOf(
     pluginId,
     method: offered ? method : null,
     ...(answer.label ? { label: answer.label } : {}),
+    ...(answer.connectionId ? { connectionId: answer.connectionId } : {}),
   }
 }
 
@@ -169,8 +184,8 @@ export async function evaluateSsoPolicyForAll(
   const decisions = await Promise.all(
     distinct.map(e => evaluateSsoPolicy(plugins, db, cfg, e, logger))
   )
-  const required = decisions.filter(
-    (d): d is Extract<SsoDecision, { required: true }> => d.required
+  const required = decisions.flatMap((d, i) =>
+    d.required ? [{ ...d, claims: d.claims.map(c => ({ ...c, address: distinct[i] })) }] : []
   )
   if (required.length === 0) return decisions[0] ?? NOT_REQUIRED
   const claims = required.flatMap(d => d.claims)
@@ -185,13 +200,20 @@ export async function evaluateSsoPolicyForAll(
 
 /**
  * May this sign-in proceed? `core` is every kit method (magic link, Google, Microsoft, OIDC, dev
- * login); `{ pluginId }` is that plugin's `identityFor().signIn`, which passes only when that
- * plugin is one of the claimers.
+ * login); `{ pluginId, connectionId }` is that plugin's `identityFor().signIn`. It passes only when
+ * every address the sign-in involves is claimed by that plugin AND, for a claim that names a
+ * connection, by that connection; a claim with no connection is any of the plugin's.
  */
-export function ssoAllows(decision: SsoDecision, via: 'core' | { pluginId: string }): boolean {
+export function ssoAllows(
+  decision: SsoDecision,
+  via: 'core' | { pluginId: string; connectionId?: string }
+): boolean {
   if (!decision.required) return true
   if (via === 'core') return false
-  return decision.claims.some(c => c.pluginId === via.pluginId)
+  const held = (c: SsoClaim) =>
+    c.pluginId === via.pluginId && (!c.connectionId || c.connectionId === via.connectionId)
+  const addresses = new Set(decision.claims.map(c => c.address))
+  return [...addresses].every(a => decision.claims.some(c => c.address === a && held(c)))
 }
 
 /**

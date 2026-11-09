@@ -1,7 +1,8 @@
 /**
  * Transactional email over Resend's REST API via `fetch` (no SDK) — the zero-creds rule: when
- * `RESEND_API_KEY` is absent nothing is sent, the message (and its link) is logged at `info` so
- * every flow still works locally, and the result says `delivered: false`. Templates share one
+ * `RESEND_API_KEY` is absent nothing is sent, the message (and, except when `APP_ENV` is
+ * `production`, its link) is logged at `info` so every flow still works locally, and the result
+ * says `delivered: false`. Templates share one
  * plain, brandable shell driven by `APP_NAME`.
  */
 import type { AppConfig } from '../../config'
@@ -32,18 +33,19 @@ export async function sendEmail(
   message: EmailMessage
 ): Promise<EmailResult> {
   if (!cfg.RESEND_API_KEY) {
+    const link = cfg.APP_ENV === 'production' ? undefined : message.link
     logger.info(
-      { to: message.to, subject: message.subject, link: message.link },
-      `[email:dev] To: ${message.to} Subject: ${message.subject}${message.link ? ` Link: ${message.link}` : ''}`
+      { to: message.to, subject: message.subject, link },
+      `[email:dev] To: ${message.to} Subject: ${message.subject}${link ? ` Link: ${link}` : ''}`
     )
-    if (message.link) {
+    if (link) {
       // Deliberately loud: this is how a developer without an email provider signs in.
       logger.info(
-        `\n==================== [email:dev] ${message.subject} ====================\n${message.link}\n=========================================================================\n`
+        `\n==================== [email:dev] ${message.subject} ====================\n${link}\n=========================================================================\n`
       )
     }
     if (cfg.APP_ENV === 'production') {
-      logger.warn('RESEND_API_KEY is not set — emails are logged, not delivered')
+      logger.warn('RESEND_API_KEY is not set — emails are not delivered')
     }
     return { delivered: false }
   }

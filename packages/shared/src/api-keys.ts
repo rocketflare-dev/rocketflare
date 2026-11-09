@@ -5,7 +5,7 @@
 import { z } from 'zod'
 import { paginatedResponse } from './pagination'
 
-/** `*` = every scope — minted only by the CLI handoff (`GET /auth/cli`). */
+/** `*` = every scope — minted only by the CLI handoff (`POST /auth/cli/confirm`). */
 export const apiKeyScopeSchema = z.enum(['read', 'write', '*'])
 export type ApiKeyScope = z.infer<typeof apiKeyScopeSchema>
 

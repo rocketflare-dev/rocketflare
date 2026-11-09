@@ -9,6 +9,7 @@ export { DocumentLink, type DocumentLinkProps, documentLinkProps } from './Docum
 export { EmptyState, EmptyStateCard } from './EmptyState'
 export { FieldError, fieldErrorFor } from './FieldError'
 export { LogoMark } from './LogoMark'
+export { MarkdownImageLink } from './MarkdownImageLink'
 export { Modal, type ModalProps } from './Modal'
 export { type Breadcrumb, PageHeader } from './PageHeader'
 export { PaginationControls } from './PaginationControls'

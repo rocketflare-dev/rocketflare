@@ -72,6 +72,7 @@ describe(`identity seam: ${driver}`, () => {
       subject: `probe|${address}`,
       email: address,
       emailVerified: true,
+      linkByEmail: true,
       tenantId: tenant.id,
       role: 'member',
       redirectTo: '/settings',
@@ -118,6 +119,7 @@ describe(`identity seam: ${driver}`, () => {
       email: address,
       name: 'Driver Probe',
       emailVerified: true,
+      linkByEmail: true,
     })
     expect(person).toMatchObject({ email: address, name: 'Driver Probe', blocked: false })
     expect(
@@ -165,6 +167,7 @@ describe(`identity seam: ${driver}`, () => {
       subject: `probe|${address}`,
       email: address,
       emailVerified: true,
+      linkByEmail: true,
     })
     await provision.setMembership({ tenantId: single.id, userId: person.id, role: 'member' })
     await createTestSession(fixtures, person.id, single.id)

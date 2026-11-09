@@ -57,10 +57,12 @@ Precedence: `--server` flag > `ROCKETFLARE_URL` > config `serverUrl` > `DEFAULT_
 
 1. `rocketflare login` starts a loopback HTTP server on `127.0.0.1`, first free port in **8765–8770**, and
    listens on `/callback`.
-2. It opens the browser at `${serverUrl}/auth/cli?redirect_uri=http%3A%2F%2F127.0.0.1%3A<port>%2Fcallback`.
-3. The server has the user sign in and pick a tenant, mints a tenant API key (named `cli:<hostname>`
-   server-side) and redirects to the callback with
-   `?key=<api key>&tenant_id=<uuid>&tenant_name=<name>` — or `?error=<code>` on failure.
+2. It opens the browser at `${serverUrl}/auth/cli?redirect_uri=http%3A%2F%2F127.0.0.1%3A<port>%2Fcallback&state=<random>`.
+3. The server has the user sign in, pick a tenant and confirm on a page naming the port and the
+   organisation, mints a tenant API key (named `cli:<hostname>` server-side) and sends the browser
+   to the callback with `?key=<api key>&tenant_id=<uuid>&tenant_name=<name>&state=<random>` — or
+   `?error=<code>&state=<random>` on failure. A request without this login's `state` gets a `400`
+   and is otherwise ignored.
 4. The callback page replies with a tiny self-closing "You can return to the terminal" HTML page
    (`400` for errors or missing `key`/`tenant_id`, `404` for other paths).
 5. The CLI calls `GET /api/me` with `Authorization: Bearer <key>` to learn the user's email/name

@@ -16,6 +16,7 @@ import {
   defaultModelFor,
   type ProviderPreset,
   presetsFor,
+  sameAiEndpoint,
   type TestAiConfigRequest,
   type TestAiConfigResponse,
   THINKING_ANSWER_HEADROOM,
@@ -121,7 +122,8 @@ function AiConfigForm({
   const presets = presetsFor(provider)
   const isChat = scope === 'chat'
   const providerSwitched = editing !== null && editing.provider !== provider
-  const keepsKey = Boolean(editing?.hasCredential) && !providerSwitched
+  const endpointChanged = editing !== null && !sameAiEndpoint(editing.baseUrl, baseUrl.trim())
+  const keepsKey = Boolean(editing?.hasCredential) && !providerSwitched && !endpointChanged
   // By scope: a chat config must not offer an embeddings model, or the other way round.
   const suggestions = info?.suggestedModels?.[scope] ?? []
   const defaultModel = defaultModelFor(provider, scope)
@@ -203,7 +205,9 @@ function AiConfigForm({
         path: ['apiKey'],
         message: providerSwitched
           ? `The stored key belongs to ${editing?.provider}; enter one for ${info.name}`
-          : 'An API key is required',
+          : endpointChanged
+            ? 'The stored key was entered for another base URL; enter it again for this one'
+            : 'An API key is required',
       })
     }
     if (isChat && thinkingEnabled && !(Number.parseInt(thinkingBudget, 10) > 0)) {

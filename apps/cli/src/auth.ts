@@ -1,11 +1,13 @@
 /**
  * Login handoff. The CLI listens on the first free port in 8765–8770 at
- * `http://127.0.0.1:<port>/callback`, opens `${serverUrl}/auth/cli?redirect_uri=<callback>` in the
- * browser, and the server — after login + tenant selection — redirects back with
- * `?key=<api key>&tenant_id=<uuid>&tenant_name=<name>` (or `?error=<code>`). The callback answers
- * a tiny self-closing page, the CLI fetches `/api/me` with the new key to learn who signed in, and
+ * `http://127.0.0.1:<port>/callback`, opens `${serverUrl}/auth/cli?redirect_uri=<callback>&state=<random>` in the
+ * browser, and the server — after login, tenant selection and the person's confirmation — sends the
+ * browser back with `?key=<api key>&tenant_id=<uuid>&tenant_name=<name>&state=<random>` (or
+ * `?error=<code>`). A request whose `state` is not this login's is answered 400 and ignored, so
+ * only the login this process started can complete it. The callback answers a tiny self-closing page, the CLI fetches `/api/me` with the new key to learn who signed in, and
  * writes the config. Five-minute timeout. The key is never printed in full — prefix only.
  */
+import { randomBytes } from 'node:crypto'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import { tenantSchema } from '@rocketflare/shared/tenants'
 import { meResponseSchema as sharedMeResponseSchema } from '@rocketflare/shared/user-settings'
@@ -57,7 +59,7 @@ export async function loginFlow(options: LoginOptions): Promise<LoginResult> {
   const { serverUrl, store, log } = options
   const callback = await startCallbackServer(options.timeoutMs ?? LOGIN_TIMEOUT_MS)
   try {
-    const authUrl = buildAuthUrl(serverUrl, callback.url)
+    const authUrl = buildAuthUrl(serverUrl, callback.url, callback.state)
     log.info(`Opening your browser to sign in at ${serverUrl}`)
     log.hint(`If it does not open, visit: ${authUrl}`)
     try {
@@ -123,9 +125,10 @@ export async function whoAmI(client: ApiClient): Promise<{
   return { user: me.data, tenant, raw: { me: me.raw, tenant: tenantRaw } }
 }
 
-export function buildAuthUrl(serverUrl: string, callbackUrl: string): string {
+export function buildAuthUrl(serverUrl: string, callbackUrl: string, state: string): string {
   const url = new URL(AUTH_CLI_PATH, `${serverUrl.replace(/\/+$/, '')}/`)
   url.searchParams.set('redirect_uri', callbackUrl)
+  url.searchParams.set('state', state)
   return url.toString()
 }
 
@@ -146,6 +149,8 @@ async function fetchUser(client: ApiClient, log: Logger): Promise<CliConfig['use
 export interface CallbackServer {
   port: number
   url: string
+  /** Random per login; the callback must echo it. */
+  state: string
   /** Resolves with the handoff data, rejects on `?error=`, bad params or timeout. */
   result: Promise<CallbackData>
   close(): void
@@ -160,7 +165,8 @@ export async function startCallbackServer(timeoutMs = LOGIN_TIMEOUT_MS): Promise
   // Mark handled: the browser may hit the callback before the caller awaits `result`.
   result.catch(() => {})
 
-  const server = createServer((req, res) => handleCallback(req, res, port, settle))
+  const state = randomBytes(24).toString('base64url')
+  const server = createServer((req, res) => handleCallback(req, res, port, state, settle))
   const port = await listenOnFreePort(server)
   timer = setTimeout(() => {
     settle?.reject(
@@ -174,6 +180,7 @@ export async function startCallbackServer(timeoutMs = LOGIN_TIMEOUT_MS): Promise
   return {
     port,
     url: `http://127.0.0.1:${port}${CALLBACK_PATH}`,
+    state,
     result,
     close: () => {
       clearTimeout(timer)
@@ -187,11 +194,17 @@ function handleCallback(
   req: IncomingMessage,
   res: ServerResponse,
   port: number,
+  state: string,
   settle: { resolve: (d: CallbackData) => void; reject: (e: Error) => void } | undefined
 ): void {
   const url = new URL(req.url ?? '/', `http://127.0.0.1:${port}`)
   if (url.pathname !== CALLBACK_PATH) {
     res.writeHead(404, { 'Content-Type': 'text/plain', Connection: 'close' }).end('Not found')
+    return
+  }
+  // A callback that is not this login's: answer it and keep waiting for the real one.
+  if (url.searchParams.get('state') !== state) {
+    respondHtml(res, 400, 'Sign-in failed', 'This sign-in was not started by this terminal.')
     return
   }
   const error = url.searchParams.get('error')

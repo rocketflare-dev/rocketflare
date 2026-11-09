@@ -8,7 +8,7 @@
 import type { Hono, MiddlewareHandler } from 'hono'
 import { serverPlugins } from '../plugins/server'
 import { authMiddleware, globalAdminMiddleware } from './middleware/auth'
-import { apiBodyLimit, jsonBodyLimit } from './middleware/body-limit'
+import { apiBodyLimit, isUnderPrefix, jsonBodyLimit } from './middleware/body-limit'
 import { configMiddleware } from './middleware/config'
 import { corsMiddleware } from './middleware/cors'
 import { csrfProtection } from './middleware/csrf'
@@ -81,6 +81,10 @@ app.use('*', securityHeaders)
 //    (larger) limit, and a public mount's `bodyLimitBytes` replaces the 1 MB cap beneath its
 //    prefix — see middleware/body-limit.ts.
 app.use('/api/*', apiBodyLimit(publicBodyLimitOverrides(publicMounts)))
+// A plugin may own a prefix outside `/api` (a protocol endpoint); it gets the JSON cap too.
+for (const prefix of serverPlugins.flatMap(p => p.apiPrefixes ?? [])) {
+  if (!isUnderPrefix(prefix, '/api')) app.use(`${prefix}/*`, jsonBodyLimit)
+}
 app.use('/auth/*', jsonBodyLimit)
 
 // 6–7. CORS answers preflights before CSRF can reject them; CSRF is cookie-only, no DB.

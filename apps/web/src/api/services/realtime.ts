@@ -59,6 +59,51 @@ export function nudgeUser(rt: Realtime | undefined, userId: string, event: Realt
   rt.defer(() => createHubBroadcaster(rt.env).toUser(event.tenantId, userId, event))
 }
 
+/** Where a closing RPC cannot wait for `waitUntil`: run it and let the caller await `flush`. */
+export function collectingRealtime(env: HubEnv): Realtime & { flush(): Promise<void> } {
+  const pending: Promise<unknown>[] = []
+  return {
+    env,
+    defer: work => pending.push(work()),
+    flush: async () => {
+      await Promise.allSettled(pending)
+    },
+  }
+}
+
+/**
+ * Close a person's sockets in the listed tenants. Call after the change has committed: the
+ * database has already refused them, and a socket is the only thing still open.
+ */
+export function closeUserSockets(
+  rt: Realtime | undefined,
+  tenantIds: string | readonly string[],
+  userId: string
+): void {
+  if (!rt?.env.NOTIFICATIONS_HUB) return
+  for (const tenantId of typeof tenantIds === 'string' ? [tenantIds] : tenantIds) {
+    rt.defer(() => hubStub(rt.env, tenantId).closeUser(userId))
+  }
+}
+
+/** Close the sockets of one session, which may have connected to any of the person's tenants. */
+export function closeSessionSockets(
+  rt: Realtime | undefined,
+  tenantIds: readonly string[],
+  sessionId: string
+): void {
+  if (!rt?.env.NOTIFICATIONS_HUB) return
+  for (const tenantId of tenantIds) {
+    rt.defer(() => hubStub(rt.env, tenantId).closeSession(sessionId))
+  }
+}
+
+/** Close every socket in a tenant's hub. */
+export function closeTenantSockets(rt: Realtime | undefined, tenantId: string): void {
+  if (!rt?.env.NOTIFICATIONS_HUB) return
+  rt.defer(() => hubStub(rt.env, tenantId).closeAll())
+}
+
 export function nudgeUsers(
   rt: Realtime | undefined,
   userIds: string[],

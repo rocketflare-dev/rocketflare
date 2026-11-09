@@ -46,6 +46,7 @@ import type { AppConfig } from '../../config'
 import { type Database, isUniqueViolation } from '../../db/client'
 import {
   accessRequests,
+  oauthProviders,
   type Tenant,
   tenants,
   tenantUserSettings,
@@ -55,12 +56,15 @@ import {
   users,
 } from '../../db/schema'
 import { findProviderLink } from '../auth/oauth-providers'
-import { deleteUserSessions, deleteUserSessionsInTenant } from '../auth/sessions'
+import { deleteUserSessions, deleteUserSessionsInTenant, userTenantIds } from '../auth/sessions'
 import { ConflictError } from '../utils/core/errors'
 import type { Logger } from '../utils/core/logger'
 import { createTenantForUser, uniqueSlug } from '../utils/db/tenant-helpers'
 import { recordActivity } from './activity'
 import { findUserByEmail } from './auth'
+import { revokeInvitationsIssuedBy } from './invitations'
+import { endSupportMemberships } from './members'
+import { closeUserSockets, type Realtime } from './realtime'
 
 export type IdpLogger = Pick<Logger, 'info' | 'warn'>
 
@@ -145,7 +149,8 @@ export async function reconcileIdpClaims(
   user: User,
   claims: IdpClaims,
   logger: IdpLogger,
-  features: readonly string[] = []
+  features: readonly string[] = [],
+  realtime?: Realtime
 ): Promise<IdpReconcileResult> {
   const at = claims.issuedAt
   const tenantIds: string[] = []
@@ -163,11 +168,12 @@ export async function reconcileIdpClaims(
     tenantIds.push(tenant.id)
   }
 
-  const removedTenantIds = await removeIdpMemberships(db, {
-    userId: user.id,
-    exceptTenantIds: tenantIds,
-  })
-  const updated = await reconcileGlobalAdmin(db, user, claims.globalAdmin, logger)
+  const removedTenantIds = await removeIdpMemberships(
+    db,
+    { userId: user.id, exceptTenantIds: tenantIds },
+    realtime
+  )
+  const updated = await reconcileGlobalAdmin(db, user, claims.globalAdmin, logger, realtime)
   if (tenantIds.length > 0) await closePendingAccessRequests(db, user.email)
   return { user: updated, tenantIds, removedTenantIds }
 }
@@ -360,13 +366,14 @@ function staleBefore(at: Date | undefined) {
  */
 export async function removeIdpMembership(
   db: Database,
-  input: { tenantId: string; userId: string; syncedAt?: Date }
+  input: { tenantId: string; userId: string; syncedAt?: Date },
+  realtime?: Realtime
 ): Promise<boolean> {
-  const removed = await removeIdpMemberships(db, {
-    tenantId: input.tenantId,
-    userId: input.userId,
-    before: input.syncedAt,
-  })
+  const removed = await removeIdpMemberships(
+    db,
+    { tenantId: input.tenantId, userId: input.userId, before: input.syncedAt },
+    realtime
+  )
   return removed.length > 0
 }
 
@@ -398,7 +405,8 @@ export interface IdpDeprovisionResult {
  */
 export async function deprovisionIdpMember(
   db: Database,
-  input: { tenantId: string; userId: string }
+  input: { tenantId: string; userId: string },
+  realtime?: Realtime
 ): Promise<IdpDeprovisionResult> {
   const { tenantId, userId } = input
   const row = await db.query.tenantUsers.findFirst({
@@ -410,6 +418,7 @@ export async function deprovisionIdpMember(
   }
   const sessionsEnded = await deleteUserSessionsInTenant(db, userId, tenantId)
   const removed = row ? await removeIdpMembership(db, { tenantId, userId }) : false
+  if (removed || sessionsEnded > 0) closeUserSockets(realtime, tenantId, userId)
   return { removed, sessionsEnded, retained: null }
 }
 
@@ -422,13 +431,16 @@ export async function deprovisionIdpMember(
  */
 export async function blockDeprovisioned(
   db: Database,
-  input: { userId: string; source: `plugin:${string}` }
+  input: { userId: string; source: `plugin:${string}` },
+  realtime?: Realtime
 ): Promise<number> {
   await db
     .update(users)
     .set({ blockedAt: new Date(), blockedSource: input.source, updatedAt: new Date() })
     .where(and(eq(users.id, input.userId), isNull(users.blockedAt)))
-  return deleteUserSessions(db, input.userId)
+  const ended = await deleteUserSessions(db, input.userId)
+  closeUserSockets(realtime, await userTenantIds(db, input.userId), input.userId)
+  return ended
 }
 
 /**
@@ -454,7 +466,8 @@ export async function liftIdpBlock(
  */
 async function removeIdpMemberships(
   db: Database,
-  filter: { userId?: string; tenantId?: string; exceptTenantIds?: string[]; before?: Date }
+  filter: { userId?: string; tenantId?: string; exceptTenantIds?: string[]; before?: Date },
+  realtime?: Realtime
 ): Promise<string[]> {
   const stale = await db
     .select({ tenantId: tenantUsers.tenantId, userId: tenantUsers.userId })
@@ -492,9 +505,11 @@ async function removeIdpMemberships(
         .update(userSessions)
         .set({ selectedTenantId: null })
         .where(and(eq(userSessions.userId, userId), eq(userSessions.selectedTenantId, tenantId)))
+      await revokeInvitationsIssuedBy(tx as unknown as Database, { tenantId, userId })
     }
   })
   for (const { tenantId, userId } of removed) {
+    closeUserSockets(realtime, tenantId, userId)
     await recordActivity(db, {
       tenantId,
       userId,
@@ -512,22 +527,50 @@ async function reconcileGlobalAdmin(
   db: Database,
   user: User,
   globalAdmin: boolean,
-  logger: IdpLogger
+  logger: IdpLogger,
+  realtime?: Realtime
 ): Promise<User> {
   let patch: Partial<Pick<User, 'isGlobalAdmin' | 'globalAdminSource'>> | null = null
   if (globalAdmin && !user.isGlobalAdmin) {
     patch = { isGlobalAdmin: true, globalAdminSource: 'idp' }
     logger.warn({ userId: user.id }, 'IdP-managed tenancy: the global-admin claim → GLOBAL ADMIN')
   } else if (!globalAdmin && user.isGlobalAdmin && user.globalAdminSource === 'idp') {
-    patch = { isGlobalAdmin: false, globalAdminSource: null }
     logger.warn(
       { userId: user.id },
       'IdP-managed tenancy: the global-admin claim is gone → not global admin'
     )
+    return (await clearIdpGlobalAdmin(db, user.id, realtime)) ?? user
   }
   if (!patch) return user
   const [updated] = await db.update(users).set(patch).where(eq(users.id, user.id)).returning()
   return updated ?? { ...user, ...patch }
+}
+
+/**
+ * End the global-admin role the issuer granted (a `manual` grant is never this function's), and
+ * the support memberships it minted. Returns the updated user, or undefined when there was
+ * nothing issuer-granted to end.
+ */
+async function clearIdpGlobalAdmin(
+  db: Database,
+  userId: string,
+  realtime?: Realtime
+): Promise<User | undefined> {
+  const { updated, endedTenantIds } = await db.transaction(async tx => {
+    const [row] = await tx
+      .update(users)
+      .set({ isGlobalAdmin: false, globalAdminSource: null })
+      .where(
+        and(eq(users.id, userId), eq(users.isGlobalAdmin, true), eq(users.globalAdminSource, 'idp'))
+      )
+      .returning()
+    const ended = row
+      ? await endSupportMemberships(tx as unknown as Database, { userId, actorUserId: userId })
+      : []
+    return { updated: row, endedTenantIds: ended }
+  })
+  closeUserSockets(realtime, endedTenantIds, userId)
+  return updated
 }
 
 /** A person the claims seat in a tenant is not waiting for anyone. */
@@ -553,7 +596,10 @@ export type IdentityEventOutcome = 'applied' | 'stale' | 'unknown_person' | 'unk
 
 /**
  * The user an event's person ref names: the OIDC provider link by `sub` (stored as
- * `<issuer>|<sub>`, `auth/providers/oidc.ts`), else the email.
+ * `<issuer>|<sub>`, `auth/providers/oidc.ts`), else the email. An event carrying a `sub` that no
+ * link matches can still reach an account by email, but only one this issuer has never signed in
+ * under a subject: an account linked to another subject is someone else. An event with no `sub`
+ * has only the email to go on, which is how an issuer names a person before their first sign-in.
  */
 async function findPerson(
   db: Database,
@@ -564,7 +610,17 @@ async function findPerson(
     const link = await findProviderLink(db, 'oidc', `${cfg.OIDC_ISSUER}|${person.sub}`)
     if (link) return db.query.users.findFirst({ where: eq(users.id, link.userId) })
   }
-  return findUserByEmail(db, person.email)
+  const byEmail = await findUserByEmail(db, person.email)
+  if (!byEmail || !person.sub || !cfg.OIDC_ISSUER) return byEmail
+  const other = await db.query.oauthProviders.findFirst({
+    columns: { id: true },
+    where: and(
+      eq(oauthProviders.userId, byEmail.id),
+      eq(oauthProviders.provider, 'oidc'),
+      sql`starts_with(${oauthProviders.providerUserId}, ${`${cfg.OIDC_ISSUER}|`})`
+    ),
+  })
+  return other ? undefined : byEmail
 }
 
 /**
@@ -575,7 +631,8 @@ async function findPerson(
 export async function applyIdentityEvent(
   db: Database,
   cfg: IdpTenancyConfig,
-  event: IdentityEvent
+  event: IdentityEvent,
+  realtime?: Realtime
 ): Promise<IdentityEventOutcome> {
   const at = new Date(event.occurredAt)
   switch (event.type) {
@@ -585,12 +642,16 @@ export async function applyIdentityEvent(
       // A session started well after the suspension came from a sign-in the issuer allowed again;
       // CLOCK_SKEW_MS covers the issuer's clock and this database's disagreeing.
       const cutoff = new Date(at.getTime() + CLOCK_SKEW_MS)
+      const memberOf = await userTenantIds(db, user.id)
       const ended = await db
         .delete(userSessions)
         .where(and(eq(userSessions.userId, user.id), lt(userSessions.createdAt, cutoff)))
         .returning({ id: userSessions.id })
-      const removed = await removeIdpMemberships(db, { userId: user.id, before: at })
-      return ended.length + removed.length > 0 ? 'applied' : 'stale'
+      const removed = await removeIdpMemberships(db, { userId: user.id, before: at }, realtime)
+      // Issuer-granted platform access goes with the suspension; a `manual` grant stays.
+      const demoted = await clearIdpGlobalAdmin(db, user.id, realtime)
+      if (ended.length > 0) closeUserSockets(realtime, memberOf, user.id)
+      return ended.length + removed.length > 0 || demoted ? 'applied' : 'stale'
     }
     case 'membership.removed': {
       const [user, tenant] = await Promise.all([
@@ -599,11 +660,11 @@ export async function applyIdentityEvent(
       ])
       if (!user) return 'unknown_person'
       if (!tenant) return 'unknown_org'
-      const removed = await removeIdpMembership(db, {
-        userId: user.id,
-        tenantId: tenant.id,
-        syncedAt: at,
-      })
+      const removed = await removeIdpMembership(
+        db,
+        { userId: user.id, tenantId: tenant.id, syncedAt: at },
+        realtime
+      )
       return removed ? 'applied' : 'stale'
     }
     case 'membership.role_changed': {
@@ -616,11 +677,11 @@ export async function applyIdentityEvent(
       const role = cfg.OIDC_ROLE_MAP[event.data.role]
       // A role the map doesn't know is an org the next sign-in would skip.
       if (!role) {
-        const removed = await removeIdpMembership(db, {
-          userId: user.id,
-          tenantId: tenant.id,
-          syncedAt: at,
-        })
+        const removed = await removeIdpMembership(
+          db,
+          { userId: user.id, tenantId: tenant.id, syncedAt: at },
+          realtime
+        )
         return removed ? 'applied' : 'stale'
       }
       // Changes a membership that exists; the sign-in that grants the org creates it.
@@ -666,11 +727,11 @@ export async function applyIdentityEvent(
       const person = event.type === 'grant.revoked' ? event.data.person : undefined
       const user = person ? await findPerson(db, cfg, person) : undefined
       if (person && !user) return 'unknown_person'
-      const removed = await removeIdpMemberships(db, {
-        tenantId: tenant.id,
-        userId: user?.id,
-        before: at,
-      })
+      const removed = await removeIdpMemberships(
+        db,
+        { tenantId: tenant.id, userId: user?.id, before: at },
+        realtime
+      )
       return removed.length > 0 ? 'applied' : 'stale'
     }
     case 'org.renamed': {

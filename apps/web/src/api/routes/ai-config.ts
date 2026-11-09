@@ -11,6 +11,7 @@ import {
   type AiConfig,
   type AiScope,
   aiReadinessSchema,
+  sameAiEndpoint,
   testAiConfigRequestSchema,
   type UpsertAiConfigRequest,
   upsertAiConfigRequestSchema,
@@ -54,6 +55,15 @@ export function toAiConfig(row: AiConfigRow): AiConfig {
   }
 }
 
+/**
+ * A stored credential belongs to the provider and the endpoint it was entered for: it is never sent
+ * anywhere the person who entered it did not choose, so changing either needs the key again.
+ */
+function keepsStoredKey(existing: AiConfigRow | undefined, body: UpsertAiConfigRequest): boolean {
+  if (!existing?.apiKeyEnc) return false
+  return existing.provider === body.provider && sameAiEndpoint(existing.baseUrl, body.baseUrl)
+}
+
 /** Provider × scope × field rules the contract alone cannot express. */
 function validateUpsert(body: UpsertAiConfigRequest, existing: AiConfigRow | undefined): void {
   const info = providerInfo(body.provider)
@@ -66,10 +76,8 @@ function validateUpsert(body: UpsertAiConfigRequest, existing: AiConfigRow | und
   if (info.needsBaseUrl && !body.baseUrl) {
     throw new BadRequestError(`${info.name} requires a base URL`, 'base_url_required')
   }
-  // A key is required unless the row already holds one FOR THE SAME PROVIDER (a stored credential
-  // belongs to the provider it was entered for and will not authenticate elsewhere).
-  const keepsKey = existing?.apiKeyEnc && existing.provider === body.provider
-  if (info.needsApiKey && !body.apiKey && !keepsKey) {
+  // A key is required unless the row already holds one for this provider and endpoint.
+  if (info.needsApiKey && !body.apiKey && !keepsStoredKey(existing, body)) {
     throw new BadRequestError(`${info.name} requires an API key`, 'api_key_required')
   }
   // What thinking means is per MODEL (`@rocketflare/shared/ai/models`): a budget only where the
@@ -180,8 +188,8 @@ aiConfigRouter.post('/', validate('json', upsertAiConfigRequestSchema), async c 
   })
   validateUpsert(body, existing)
   const apiKeyEnc = body.apiKey ? await encrypt(body.apiKey, requireEncryptionKey(cfg)) : undefined
-  // A provider change without a new key must not carry the old provider's credential along.
-  const dropKey = !body.apiKey && existing && existing.provider !== body.provider
+  // A provider or endpoint change without a new key must not carry the old credential along.
+  const dropKey = !body.apiKey && existing && !keepsStoredKey(existing, body)
 
   const values = {
     tenantId,

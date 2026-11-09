@@ -97,6 +97,22 @@ export type AiConfigListResponse = z.infer<typeof aiConfigListResponseSchema>
  * scope's default (the previous default is cleared in the same transaction); the first row in a
  * scope is always made default.
  */
+/** The endpoint a base URL names: host case and trailing slashes aside, absent stays absent. */
+function normalizedBaseUrl(baseUrl: string | null | undefined): string | null {
+  if (!baseUrl) return null
+  if (!URL.canParse(baseUrl)) return baseUrl
+  const url = new URL(baseUrl)
+  return `${url.origin}${url.pathname.replace(/\/+$/, '')}${url.search}`
+}
+
+/** Do two base URLs name the same endpoint? A stored key is kept only while this holds. */
+export function sameAiEndpoint(
+  a: string | null | undefined,
+  b: string | null | undefined
+): boolean {
+  return normalizedBaseUrl(a) === normalizedBaseUrl(b)
+}
+
 export const upsertAiConfigRequestSchema = z.object({
   scope: aiScopeSchema.default('chat'),
   label: z.string().trim().min(1).max(80),

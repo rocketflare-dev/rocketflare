@@ -28,9 +28,10 @@ The package is **private**; publishing it is an app decision (docs/DEPLOY.md).
   dir): directory `0700`, file `0600`, re-tightened on every write. Env overrides win over the file:
   `ROCKETFLARE_API_KEY`, `ROCKETFLARE_URL` (for CI — no browser); `ROCKETFLARE_DEBUG` enables debug lines
 - `apps/cli/src/auth.ts` — the browser handoff: loopback `http.Server` on the first free port in
-  `127.0.0.1:8765–8770`, `open(<server>/auth/cli?redirect_uri=http://127.0.0.1:<port>/callback)`,
-  (plus `&hostname=<os.hostname()>` so the server can name the key `cli:<hostname>`), receive
-  `?key=&tenant_id=&tenant_name=` once (an `?error=` query is handled defensively), answer a
+  `127.0.0.1:8765–8770`, `open(<server>/auth/cli?redirect_uri=http://127.0.0.1:<port>/callback&state=<random>)`,
+  (plus `&hostname=<os.hostname()>` so the server can name the key `cli:<hostname>`), the person
+  confirms in the browser, receive `?key=&tenant_id=&tenant_name=&state=` once — a request with the
+  wrong `state` gets a `400` and leaves the login waiting (an `?error=` query is handled defensively), answer a
   self-closing page, verify the key against `/api/me`, save, shut down. Five-minute timeout. Never
   log the key
 - `apps/cli/src/utils/output.ts` — tables (`renderTable`), `formatJson`, pagination footer; `--json`
@@ -63,6 +64,10 @@ narrows access has no honest one-line equivalent in a CLI.
 - Human output goes to stdout via `chalk`; diagnostics and progress to stderr. `--json` on **every
   list/read command** prints the parsed response as JSON only (no colour, no extra lines) so it pipes
   into `jq`
+- **Server text is inert in a terminal.** `renderTable` neutralises every cell and the logger every
+  message; a command that prints free text runs each server value through `neutralise`. Colour goes
+  in a column's `style` (or around already-neutralised text), never in `value`, because chalk's codes
+  start with the same ESC. `--json` prints the server's bytes unchanged
 - **Never print a full API key.** Show `rocketflare_ab12…` (prefix + 4) in `whoami`/`status`/`keys list`;
   `login` says where the key was stored, not what it is
 - Errors: one line `error: <message>` on stderr (+ `code` when the envelope has one). With `--json`,

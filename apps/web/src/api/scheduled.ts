@@ -14,7 +14,7 @@ import { affected, type Database, openDatabase } from '../db/client'
 import { aiSpans, userSessions } from '../db/schema'
 import { serverPlugins } from '../plugins/server'
 import { pruneMagicLinkTokens } from './auth/magic-link'
-import { pruneInvitations } from './services/invitations'
+import { pruneInvitationSendCounters, pruneInvitations } from './services/invitations'
 import type { AppBindings } from './types'
 import { type Logger, loggerFor } from './utils/core/logger'
 
@@ -50,7 +50,8 @@ export async function runPruneExpired(db: Database) {
   ).length
   const magicLinks = await pruneMagicLinkTokens(db)
   const invitations = await pruneInvitations(db)
-  return { sessions, magicLinks, invitations }
+  const invitationSendCounters = await pruneInvitationSendCounters(db)
+  return { sessions, magicLinks, invitations, invitationSendCounters }
 }
 
 /** Nightly prune of expired rows: counts are logged so the run is auditable. */

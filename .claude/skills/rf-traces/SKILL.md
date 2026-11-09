@@ -50,9 +50,10 @@ invoke_agent research-topic   ERROR …            ← root: the run / turn / jo
   flight** (or parked on a person) — not a bug. Several `execute#N` under one root are retries or
   resumes; the trace's status is the ROOT's, so a tool error inside a run that recovered is not a
   failed run.
-- `content` absent everywhere (no `in:` / `out:` lines) means the deployment runs with
-  `OBSERVABILITY_CAPTURE_CONTENT=false`: names, timings, tokens and statuses survive, prompts and tool
-  I/O do not. Say so rather than guessing what was sent.
+- `content` absent everywhere (no `in:` / `out:` lines) is the default: content capture is off
+  unless the deployment sets `OBSERVABILITY_CAPTURE_CONTENT=true`. Names, timings, tokens and statuses
+  are there, prompts and tool I/O are not. Say so rather than guessing what was sent; to see them
+  locally, set it to `true` in `apps/web/.dev.vars` and reproduce the run.
 
 ## 3. Triage, in this order
 
@@ -97,8 +98,9 @@ in `[vars]` of **both** tomls (parity test) and the secrets through `wrangler se
 | **Phoenix** | `OBSERVABILITY_PRESET=phoenix`, `OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:6006` | locally: `docker run -p 6006:6006 arizephoenix/phoenix`, UI on :6006. Protobuf by default — Phoenix accepts only `application/x-protobuf`. Phoenix Cloud: its URL as the endpoint, and the auth header its docs give in `OTEL_EXPORTER_OTLP_HEADERS` |
 | **Any OTLP/HTTP backend** | `OTEL_EXPORTER_OTLP_ENDPOINT` (+ secret `OTEL_EXPORTER_OTLP_HEADERS=k=v,k=v`, values URL-encoded) | JSON by default; `OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf` if it needs it. `/v1/traces` is appended |
 
-- `OBSERVABILITY_CAPTURE_CONTENT=false` strips prompts, completions and tool I/O from the export
-  **and** from `ai_spans` — the choice for tenants whose data must not leave the database or be kept.
+- `OBSERVABILITY_CAPTURE_CONTENT=true` records prompts, completions and tool I/O in the export
+  **and** in `ai_spans`. It is off by default: turn it on only where tenants' data may leave the
+  database and be kept.
 - The backend is platform-wide; per-tenant backends are not built (`docs/CONCEPTS.md` §9 Known gaps).
 - A backend that rejects spans never breaks a request: the export is swallowed and logged as
   `tracing: OTLP export returned a non-OK status` in the wrangler console — look there first when

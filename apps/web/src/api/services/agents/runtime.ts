@@ -50,6 +50,7 @@ import {
 import { AiError, describeAiError, redactSecrets } from '../ai/errors'
 import { DECISIONS_FALLBACK_PROMPT_KEY, resolveChat, resolveDecisions } from '../ai/resolve'
 import type { AiEnv } from '../ai/types'
+import { requesterCan } from '../member-ability'
 import { notifyMany } from '../notifications'
 import { type RegistryPromptKey, resolvePrompt } from '../prompts'
 import type { HubEnv, Realtime } from '../realtime'
@@ -303,6 +304,7 @@ export async function executeRun(
       userId: run.requestedByUserId,
       agentKey: agent.meta.key,
       budget: budgetFor(cfg, agent.meta.budget),
+      billedToPlatform: resolved.billedToPlatform,
       logger,
     })
     const output = await withAgentTrace(
@@ -344,7 +346,13 @@ export async function executeRun(
           // Built here, at EXECUTE time, from the run's requester — current membership, not
           // a snapshot taken when the run was enqueued. No requester ("system") reads tenant-wide
           // documents only, never an owner's restricted ones.
-          tools: await buildAgentTools({ db, cfg, env, scope: toolScope }),
+          tools: await buildAgentTools({
+            db,
+            cfg,
+            env,
+            scope: toolScope,
+            can: await requesterCan(db, cfg, tenantId, run.requestedByUserId),
+          }),
           checkpoint: {
             load: () => loadCheckpoint(db, tenantId, runId),
             save: cp => saveCheckpoint(db, tenantId, runId, cp),

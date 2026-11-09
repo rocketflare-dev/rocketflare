@@ -31,8 +31,9 @@ Keep the classes out of `api/index.ts` — it lets tests drive `app.request(req,
    `c.env` for config**
 4. `securityHeaders` — **returns a 101 untouched**; the `embeddable` opt-in is for a route that has
    PROVED the content type, never a path allowlist
-5. `apiBodyLimit` (1 MB) on `/api/*`, `jsonBodyLimit` on `/auth/*` — skipped for `UPLOAD_PATHS`,
-   which cap per route; a plugin public mount's `bodyLimitBytes` replaces it beneath its prefix
+5. `apiBodyLimit` (1 MB) on `/api/*`, `jsonBodyLimit` on `/auth/*` and each plugin `apiPrefixes`
+   entry outside `/api` — skipped for `UPLOAD_PATHS`, which cap per route; a plugin public mount's
+   `bodyLimitBytes` replaces it beneath its prefix
 6. `cors` (before CSRF so preflights are answered; **bypassed for `Upgrade: websocket`**) → `csrf`
    (cookie-only, no DB)
 7. `databaseMiddleware` — one client per request from `openDatabase`, closed in `waitUntil`

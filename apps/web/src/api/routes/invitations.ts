@@ -37,7 +37,7 @@ invitationsRouter.get('/', validate('query', paginationQuerySchema), async c => 
 })
 
 invitationsRouter.post('/', validate('json', inviteMemberRequestSchema), async c => {
-  const { db, cfg, logger, tenantId, user, defer, realtime } = withAuthAndDb(c)
+  const { db, cfg, logger, tenantId, user, auth, defer, realtime } = withAuthAndDb(c)
   guardPermission(c, 'manage', 'Invitation')
   const { email, role } = c.req.valid('json')
   const { invitation } = await createInvitation(db, cfg, logger, c.env.JOBS_QUEUE, {
@@ -45,6 +45,7 @@ invitationsRouter.post('/', validate('json', inviteMemberRequestSchema), async c
     email,
     role,
     inviter: user,
+    actor: auth,
     realtime,
   })
   defer(() =>
@@ -61,7 +62,7 @@ invitationsRouter.post('/', validate('json', inviteMemberRequestSchema), async c
 })
 
 invitationsRouter.post('/bulk', validate('json', bulkInviteRequestSchema), async c => {
-  const { db, cfg, logger, tenantId, user, defer } = withAuthAndDb(c)
+  const { db, cfg, logger, tenantId, user, auth, defer } = withAuthAndDb(c)
   guardPermission(c, 'manage', 'Invitation')
   const { emails, role } = c.req.valid('json')
   const results = await bulkInvite(db, cfg, logger, c.env.JOBS_QUEUE, {
@@ -69,6 +70,7 @@ invitationsRouter.post('/bulk', validate('json', bulkInviteRequestSchema), async
     emails,
     role,
     inviter: user,
+    actor: auth,
   })
   defer(() =>
     recordActivity(db, {
@@ -87,13 +89,14 @@ invitationsRouter.post('/bulk', validate('json', bulkInviteRequestSchema), async
 })
 
 invitationsRouter.post('/:id/resend', async c => {
-  const { db, cfg, logger, tenantId, user, defer } = withAuthAndDb(c)
+  const { db, cfg, logger, tenantId, user, auth, defer } = withAuthAndDb(c)
   guardPermission(c, 'manage', 'Invitation')
   const id = uuidParam(c, 'id')
   const invitation = await resendInvitation(db, cfg, logger, c.env.JOBS_QUEUE, {
     tenantId,
     id,
     inviter: user,
+    actor: auth,
   })
   defer(() =>
     recordActivity(db, {

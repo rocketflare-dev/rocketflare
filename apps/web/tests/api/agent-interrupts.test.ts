@@ -656,6 +656,7 @@ describe('the plumbing underneath', () => {
       input: { to: 'edited@example.test' },
       note: 'fixed the address',
       onReject: 'cancel_run',
+      approvedCall: null,
     })
     // A pending ask is not an answer.
     expect(approvals.has('call_c')).toBe(false)

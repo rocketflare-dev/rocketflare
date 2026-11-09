@@ -14,6 +14,7 @@
  * `plugin-lib.d.mts` beside this file is the hand-written type surface (no `allowJs`).
  */
 import { KIT } from './rename-lib.mjs'
+import { repoPathProblem } from './repo-paths.mjs'
 import { missingFrom } from './surface.mjs'
 import { compareVersions, isVendored } from './upgrade-lib.mjs'
 
@@ -526,6 +527,10 @@ const REPO_ONLY_DIRS = ['.github/', '.git/', 'node_modules/', '.claude/', 'scrip
  * `api/index.ts` on the way in and an install nobody can reverse by deleting a directory.
  */
 export function classifyPluginFile(relPath, id, { skills = [] } = {}) {
+  // Stated on the path itself, before any prefix test below can be fooled by a `..` segment. The
+  // repository's own top-level `.git/` is excepted: it is never copied, and a local source has one.
+  const pathProblem = relPath.startsWith('.git/') ? null : repoPathProblem(relPath)
+  if (pathProblem) return { role: 'refused', reason: `the path ${pathProblem}` }
   if (relPath === PLUGIN_MANIFEST_FILE) return { role: 'meta', reason: "the plugin's manifest" }
   // A skill is copied OUT of the plugin's roots, into `.claude/skills/<dir>/` — the one place
   // outside them a plugin may write, and only for a directory its manifest names. An undeclared
@@ -820,7 +825,7 @@ export function buildPluginSurface(
     id,
     kind: 'plugin',
     label: manifest.label ?? id,
-    anchor: manifest.anchor ?? `apps/web/src/plugins/${id}/plugin.json`,
+    anchor: pluginAnchor({ ...manifest, id }),
     // `docs/plugins/<id>/**` is always included, declared or not: `add` copies the plugin's release
     // notes there, and if the surface did not name them `kit-manifest.test.ts` would report them as
     // unclassified files and `remove` would leave them behind. A plugin's own `paths` name its CODE
@@ -861,6 +866,62 @@ export function surfaceDirectories(surface) {
   return (surface.paths ?? [])
     .map(g => g.replace(/\/?\*\*.*$/, ''))
     .filter(p => p !== '' && !p.includes('*'))
+}
+
+/** Where a plugin's manifest copy lands in a host. */
+export function pluginAnchor(manifest) {
+  return manifest.anchor ?? `apps/web/src/plugins/${manifest.id}/plugin.json`
+}
+
+/**
+ * Every path a manifest can steer, checked before any of them is used.
+ *
+ * `anchor` and `paths` must stay inside the plugin's own roots (a declared skill directory counts,
+ * by its name, for `paths` — `remove` deletes those directories). `coreEdits[].file` and the
+ * workspace directories named by `dependencies` must be plain paths inside the repository. Pure:
+ * each entry is `{ field, path, problem }`, and a symlink on disk is the caller's half.
+ */
+export function manifestPathProblems(manifest, id = manifest?.id) {
+  const out = []
+  const m = manifest ?? {}
+  const refuse = (field, value, problem) => out.push({ field, path: String(value), problem })
+  const owned = rel => {
+    if (pluginRoots(id).some(root => rel === root.slice(0, -1) || rel.startsWith(root))) return true
+    if (!rel.startsWith(SKILLS_ROOT)) return false
+    return skillDirProblem(id, rel.slice(SKILLS_ROOT.length).split('/')[0]) === null
+  }
+  const OUTSIDE = `is outside the plugin's own roots (${pluginRoots(id).join(', ')})`
+
+  if (m.anchor !== undefined) {
+    const problem = repoPathProblem(m.anchor)
+    if (problem) refuse('anchor', m.anchor, problem)
+    else if (!owned(m.anchor) || m.anchor.startsWith(SKILLS_ROOT))
+      refuse('anchor', m.anchor, OUTSIDE)
+  }
+  for (const edit of Array.isArray(m.coreEdits) ? m.coreEdits : []) {
+    const problem = repoPathProblem(edit?.file)
+    if (problem) refuse('coreEdits', edit?.file, problem)
+  }
+  for (const pkg of isObj(m.dependencies) ? Object.keys(m.dependencies) : []) {
+    const problem = repoPathProblem(pkg)
+    if (problem) refuse('dependencies', pkg, problem)
+  }
+  for (const glob of Array.isArray(m.paths) ? m.paths : []) {
+    if (typeof glob !== 'string') {
+      refuse('paths', glob, 'is not a repository-relative path')
+      continue
+    }
+    if (glob.split('/').includes('..')) {
+      refuse('paths', glob, "has a '..' path segment")
+      continue
+    }
+    for (const dir of surfaceDirectories({ paths: [glob] })) {
+      const problem = repoPathProblem(dir)
+      if (problem) refuse('paths', glob, problem)
+      else if (!owned(dir)) refuse('paths', glob, OUTSIDE)
+    }
+  }
+  return out
 }
 
 /**
@@ -932,6 +993,8 @@ export function renderAddPlan(plan) {
   if (fragments.length > 0) {
     lines.push(`  ${pad('(not copied) migrations/', 44)}${fragments.length} install fragment(s)`)
   }
+
+  lines.push('', 'Manifest copy (the anchor `plugin check` reads)', `  ${pluginAnchor(m)}`)
 
   const skills = pluginSkillDirs(m)
   if (skills.length > 0) {
@@ -1249,6 +1312,7 @@ export function addPlanJson(plan) {
       fragments,
       refused: plan.files.filter(f => f.role === 'refused').map(f => f.path),
     },
+    anchor: pluginAnchor(m),
     skills: pluginSkillDirs(m).map(dir => ({ name: dir, target: skillTarget(dir) })),
     barrels: plan.barrels.map(kind => ({
       kind,
@@ -1629,6 +1693,16 @@ export function pluginManifestProblems(manifest) {
           `set "schema"."${field}" to []`
         )
       }
+    }
+  }
+
+  if (isStr(m.id)) {
+    for (const p of manifestPathProblems(m)) {
+      bad(
+        p.field,
+        `declares ${p.path}, which ${p.problem}`,
+        'keep it inside the repository, and "anchor" and "paths" inside the plugin\'s own roots'
+      )
     }
   }
 

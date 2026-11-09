@@ -41,6 +41,7 @@ import NotFound from '@/ui/pages/NotFound'
 // Public / no-tenant pages
 const MagicLinkSent = lazy(() => import('@/ui/pages/MagicLinkSent'))
 const MagicLinkConfirm = lazy(() => import('@/ui/pages/MagicLinkConfirm'))
+const CliConfirm = lazy(() => import('@/ui/pages/CliConfirm'))
 const InviteAccept = lazy(() => import('@/ui/pages/InviteAccept'))
 const SelectTenant = lazy(() => import('@/ui/pages/SelectTenant'))
 const Pending = lazy(() => import('@/ui/pages/Pending'))
@@ -278,6 +279,16 @@ function AppRoutes() {
           <Suspense fallback={<LoadingIndicator size="lg" centered />}>
             <InviteAccept />
           </Suspense>
+        }
+      />
+      <Route
+        path="/cli/confirm"
+        element={
+          <ProtectedRoute>
+            <Suspense fallback={<LoadingIndicator size="lg" centered />}>
+              <CliConfirm />
+            </Suspense>
+          </ProtectedRoute>
         }
       />
       <Route

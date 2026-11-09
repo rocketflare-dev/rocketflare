@@ -212,6 +212,11 @@ export function buildPluginSurface(
   }
 ): Surface
 export function surfaceDirectories(surface: Surface): string[]
+export function pluginAnchor(manifest: { id: string; anchor?: string }): string
+export function manifestPathProblems(
+  manifest: object | null | undefined,
+  id?: string
+): { field: string; path: string; problem: string }[]
 export function archiveSql(id: string, tables: readonly string[]): string
 
 export interface AddPlan {

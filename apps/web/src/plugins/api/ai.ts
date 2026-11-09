@@ -43,6 +43,7 @@ import { AiNotConfiguredError } from '../../api/services/ai/errors'
 import { recordUsage } from '../../api/services/ai/usage'
 import { tenantFeatures } from '../../api/services/features'
 import type { StorageService } from '../../api/services/storage'
+import type { AbilityCheck } from './auth'
 import { filesStorage } from './storage'
 import type { Database, PluginBindings, PluginConfig } from './types'
 
@@ -87,6 +88,13 @@ export interface ToolCtx {
   scope: AccessScope
   /** The run's tenant — `scope.tenantId`, surfaced because every query needs it. */
   tenantId: string
+  /**
+   * Does the requester hold this CASL grant now? Offer a tool that writes only when they hold your
+   * subject's manage (`ctx.can('manage', MY_SUBJECT)`) — never decide that from `scope.bypass`,
+   * which is the row-visibility flag and is true for roles your grants treat as read-only. A run
+   * with no requester holds nothing.
+   */
+  can: AbilityCheck
   /** The CALLER's budget for one document window, in characters. An agent run's is far larger than a chat turn's. */
   maxDocumentChars?: number
   /**
@@ -111,6 +119,7 @@ export function toolCtx(ctx: AgentToolContext): ToolCtx {
     env: ctx.env as PluginBindings,
     scope: ctx.scope,
     tenantId: ctx.scope.tenantId,
+    can: ctx.can ?? (() => false),
     ...(ctx.maxDocumentChars !== undefined && { maxDocumentChars: ctx.maxDocumentChars }),
     storage: () => filesStorage(ctx.env as PluginBindings),
     features: () => tenantFeatures(ctx.db, ctx.cfg, ctx.scope.tenantId),

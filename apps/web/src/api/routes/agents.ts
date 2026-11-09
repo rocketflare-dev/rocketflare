@@ -186,7 +186,7 @@ agentsRouter.get('/runs', validate('query', agentRunListQuerySchema), async c =>
 // ---- POST /api/agents/runs ------------------------------------------------------------------------
 
 agentsRouter.post('/runs', validate('json', createAgentRunRequestSchema), async c => {
-  const { db, cfg, tenantId, user, defer, realtime } = withAuthAndDb(c)
+  const { db, cfg, tenantId, user, auth, defer, realtime } = withAuthAndDb(c)
   guardPermission(c, 'create', 'AgentRun')
   const { agentKey, input } = c.req.valid('json')
   const strict = c.req.query('strict') === '1'
@@ -197,6 +197,13 @@ agentsRouter.post('/runs', validate('json', createAgentRunRequestSchema), async 
     userId: user.id,
     realtime,
   })
+  if (deduplicated && !visible(auth, run)) {
+    // Another member holds the exclusive slot: it is busy, and which run that is stays theirs.
+    throw new ConflictError(
+      `A ${agentKey} run is already queued or running for this organisation`,
+      ERROR_CODES.agentRunActive
+    )
+  }
   if (deduplicated && strict) {
     throw new ConflictError(
       `A ${agentKey} run is already queued or running for this organisation`,

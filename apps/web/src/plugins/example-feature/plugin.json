@@ -51,6 +51,7 @@
       "CommandContext",
       "formatDate",
       "formatPagination",
+      "neutralise",
       "renderTable",
       "requireClient"
     ],
