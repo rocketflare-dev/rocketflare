@@ -326,8 +326,8 @@ The server surface: the context family, and the types a plugin must be able to n
   - `guard?: NavGuard`
     The SAME guard its nav item uses, so a link never points at a page its reader cannot open.
   - `tier?: PluginRouteTier`
-    Default `shell` — inside `Layout`, signed in with a tenant.
-- `type PluginRouteTier = 'shell' \| 'noTenant' \| 'public' \| 'fullscreen'`
+    Default `shell` — inside `Layout`, signed in with a tenant. `workspace` is the same, for a page that wants the whole space: the nav collapses to its icon rail, `<main>` has no…
+- `type PluginRouteTier = 'shell' \| 'noTenant' \| 'public' \| 'workspace'`
 - `interface PluginSeedContext`
   Everything a plugin's `seedDemo` hook is given (`pnpm seed --demo`).
 - `interface PluginSignInInput`
@@ -340,6 +340,8 @@ The server surface: the context family, and the types a plugin must be able to n
   The cookie-free half: usable from any `PluginContext` — a public handler, a job, a cron.
 - `const PUBLIC_MOUNT_ROOT: "/api/hooks"`
   The prefix every public mount lives under; the plugin's id is the next segment.
+- `const PUBLIC_SITE_PAGE_CSP_HEADER: "x-public-site-page-csp"`
+  A router's per-page additions to the public CSP (JSON, `PublicSiteCsp` shape): the CSP sources of a page that embeds something, without opening them on every other page of the…
 - `function publicCtx(c: AppContext): PublicCtx`
   Build a public handler's context. The only function here that reads the Hono context.
 - `interface PublicCtx extends PluginContext, BackgroundMethods`
@@ -643,8 +645,8 @@ The only host module a plugin's `ui/index.ts` may import — it ships in the mai
   - `guard?: NavGuard`
     The SAME guard its nav item uses, so a link never points at a page its reader cannot open.
   - `tier?: PluginRouteTier`
-    Default `shell` — inside `Layout`, signed in with a tenant.
-- `type PluginRouteTier = 'shell' \| 'noTenant' \| 'public' \| 'fullscreen'`
+    Default `shell` — inside `Layout`, signed in with a tenant. `workspace` is the same, for a page that wants the whole space: the nav collapses to its icon rail, `<main>` has no…
+- `type PluginRouteTier = 'shell' \| 'noTenant' \| 'public' \| 'workspace'`
 - `interface QuickLink`
 - `interface TabConfig`
 - `interface UiPlugin<S extends SharedPlugin = SharedPlugin>`
@@ -679,6 +681,8 @@ Components and hooks, for a lazy PAGE. Never for the UI entry.
   Thrown for every non-2xx response. `body` is the parsed error envelope.
 - `interface ApiRequestOptions<T = unknown> extends Omit<RequestInit, 'body'>`
 - `interface Breadcrumb`
+- `function Breadcrumbs({ items, className = '', }: { items: Breadcrumb[] className?: string })`
+  The trail above a page title, on its own for a surface with no `PageHeader` (an editor toolbar).
 - `function ConfirmModal({ isOpen, title, message, confirmText = 'Confirm', cancelText = 'Cancel', confirmButtonClass = 'btn-primary', isLoading = false, onCancel, onConfirm, }: ConfirmModalProps)`
   Two-button confirmation on the `<dialog>` Modal.
 - `function DocumentCard({ card, to, dense = false, footer }: DocumentCardProps)`
@@ -735,7 +739,7 @@ Components and hooks, for a lazy PAGE. Never for the UI entry.
   Register the global 401 handler. One handler; the last registration wins. Pass `null` to remove it. `AuthProvider` calls this with the redirect-to-login behaviour.
 - `function showToast(message: string, type: ToastType, duration?: number): void`
   Show a toast from anywhere, inside or outside React.
-- `default function SideNav({ items = navigationConfig, footer }: SideNavProps)`
+- `default function SideNav({ items = navigationConfig, footer, forceCollapsed, }: SideNavProps)`
 - `function SkeletonRows({ rows = 4, className = '' }: { rows?: number; className?: string })`
   Placeholder lines on their own, for panels that stay mounted while loading.
 - `interface TabConfig`
@@ -792,8 +796,8 @@ Components and hooks, for a lazy PAGE. Never for the UI entry.
   - `guard?: NavGuard`
     The SAME guard its nav item uses, so a link never points at a page its reader cannot open.
   - `tier?: PluginRouteTier`
-    Default `shell` — inside `Layout`, signed in with a tenant.
-- `type PluginRouteTier = 'shell' \| 'noTenant' \| 'public' \| 'fullscreen'`
+    Default `shell` — inside `Layout`, signed in with a tenant. `workspace` is the same, for a page that wants the whole space: the nav collapses to its icon rail, `<main>` has no…
+- `type PluginRouteTier = 'shell' \| 'noTenant' \| 'public' \| 'workspace'`
 - `interface PluginSeedContext`
   Everything a plugin's `seedDemo` hook is given (`pnpm seed --demo`).
 - `interface PublicSiteCsp`
@@ -1291,13 +1295,14 @@ nothing in the comparison that can throw.
 @/plugins/api :: member :: PluginRoute.Component :: Component: LazyExoticComponent<ComponentType>
 @/plugins/api :: member :: PluginRoute.guard :: guard?: NavGuard
 @/plugins/api :: member :: PluginRoute.tier :: tier?: PluginRouteTier
-@/plugins/api :: type :: PluginRouteTier :: type PluginRouteTier = 'shell' | 'noTenant' | 'public' | 'fullscreen'
+@/plugins/api :: type :: PluginRouteTier :: type PluginRouteTier = 'shell' | 'noTenant' | 'public' | 'workspace'
 @/plugins/api :: interface :: PluginSeedContext :: interface PluginSeedContext
 @/plugins/api :: interface :: PluginSignInInput :: interface PluginSignInInput
 @/plugins/api :: type :: PluginStructuredOptions :: type PluginStructuredOptions = Omit< CallStructuredToolOptions<T>, 'model' | 'maxTokens' > & { maxTokens?: number }
 @/plugins/api :: type :: PluginToolLoopOptions :: type PluginToolLoopOptions = Omit< RunToolLoopOptions, 'model' | 'maxTokens' | 'approvals' | 'runApproved' > & { maxTokens?: number }
 @/plugins/api :: function :: provisionFor :: function provisionFor(ctx: PluginContext, pluginId: string): PluginProvision
 @/plugins/api :: const :: PUBLIC_MOUNT_ROOT :: const PUBLIC_MOUNT_ROOT: "/api/hooks"
+@/plugins/api :: const :: PUBLIC_SITE_PAGE_CSP_HEADER :: const PUBLIC_SITE_PAGE_CSP_HEADER: "x-public-site-page-csp"
 @/plugins/api :: function :: publicCtx :: function publicCtx(c: AppContext): PublicCtx
 @/plugins/api :: interface :: PublicCtx :: interface PublicCtx extends PluginContext, BackgroundMethods
 @/plugins/api :: member :: PublicCtx.appUrl :: readonly appUrl: string
@@ -1478,7 +1483,7 @@ nothing in the comparison that can throw.
 @/plugins/api/ui-wiring :: member :: PluginRoute.Component :: Component: LazyExoticComponent<ComponentType>
 @/plugins/api/ui-wiring :: member :: PluginRoute.guard :: guard?: NavGuard
 @/plugins/api/ui-wiring :: member :: PluginRoute.tier :: tier?: PluginRouteTier
-@/plugins/api/ui-wiring :: type :: PluginRouteTier :: type PluginRouteTier = 'shell' | 'noTenant' | 'public' | 'fullscreen'
+@/plugins/api/ui-wiring :: type :: PluginRouteTier :: type PluginRouteTier = 'shell' | 'noTenant' | 'public' | 'workspace'
 @/plugins/api/ui-wiring :: interface :: QuickLink :: interface QuickLink
 @/plugins/api/ui-wiring :: interface :: TabConfig :: interface TabConfig
 @/plugins/api/ui-wiring :: interface :: UiPlugin :: interface UiPlugin<S extends SharedPlugin = SharedPlugin>
@@ -1498,6 +1503,7 @@ nothing in the comparison that can throw.
 @/plugins/api/ui :: class :: ApiError :: class ApiError extends Error
 @/plugins/api/ui :: interface :: ApiRequestOptions :: interface ApiRequestOptions<T = unknown> extends Omit<RequestInit, 'body'>
 @/plugins/api/ui :: interface :: Breadcrumb :: interface Breadcrumb
+@/plugins/api/ui :: function :: Breadcrumbs :: function Breadcrumbs({ items, className = '', }: { items: Breadcrumb[] className?: string })
 @/plugins/api/ui :: function :: ConfirmModal :: function ConfirmModal({ isOpen, title, message, confirmText = 'Confirm', cancelText = 'Cancel', confirmButtonClass = 'btn-primary', isLoading = false, onCancel, onConfirm, }: ConfirmModalProps)
 @/plugins/api/ui :: function :: DocumentCard :: function DocumentCard({ card, to, dense = false, footer }: DocumentCardProps)
 @/plugins/api/ui :: interface :: DocumentCardProps :: interface DocumentCardProps
@@ -1530,7 +1536,7 @@ nothing in the comparison that can throw.
 @/plugins/api/ui :: function :: SettingToggle :: function SettingToggle({ id, label, description, checked, onChange, disabled, }: SettingToggleProps)
 @/plugins/api/ui :: function :: setUnauthorizedHandler :: function setUnauthorizedHandler(handler: UnauthorizedHandler | null): void
 @/plugins/api/ui :: function :: showToast :: function showToast(message: string, type: ToastType, duration?: number): void
-@/plugins/api/ui :: function :: SideNav :: default function SideNav({ items = navigationConfig, footer }: SideNavProps)
+@/plugins/api/ui :: function :: SideNav :: default function SideNav({ items = navigationConfig, footer, forceCollapsed, }: SideNavProps)
 @/plugins/api/ui :: function :: SkeletonRows :: function SkeletonRows({ rows = 4, className = '' }: { rows?: number; className?: string })
 @/plugins/api/ui :: interface :: TabConfig :: interface TabConfig
 @/plugins/api/ui :: function :: timeAgo :: function timeAgo(value: Date | null | undefined, fallback = 'never'): string
@@ -1563,7 +1569,7 @@ nothing in the comparison that can throw.
 @/plugins/types :: member :: PluginRoute.Component :: Component: LazyExoticComponent<ComponentType>
 @/plugins/types :: member :: PluginRoute.guard :: guard?: NavGuard
 @/plugins/types :: member :: PluginRoute.tier :: tier?: PluginRouteTier
-@/plugins/types :: type :: PluginRouteTier :: type PluginRouteTier = 'shell' | 'noTenant' | 'public' | 'fullscreen'
+@/plugins/types :: type :: PluginRouteTier :: type PluginRouteTier = 'shell' | 'noTenant' | 'public' | 'workspace'
 @/plugins/types :: interface :: PluginSeedContext :: interface PluginSeedContext
 @/plugins/types :: interface :: PublicSiteCsp :: interface PublicSiteCsp
 @/plugins/types :: interface :: PublicSiteFormPath :: interface PublicSiteFormPath

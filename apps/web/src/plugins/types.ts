@@ -89,6 +89,7 @@ export interface PublicSiteCsp {
   frameSrc?: readonly string[]
   imgSrc?: readonly string[]
   connectSrc?: readonly string[]
+  /** An origin, or a path of this site (`/submit`), which is pinned to the request's origin. */
   formAction?: readonly string[]
 }
 
@@ -109,11 +110,12 @@ export interface PublicSitesDeclaration {
    * shared by every visitor to that path, so it must not depend on anything one of them sent.
    */
   router: Hono<AppEnv>
-  /** CSP additions for a host. Synchronous: it runs on cache hits too. */
+  /**
+   * CSP additions for a host. Synchronous: it runs on cache hits too. A single page that needs
+   * more sets `PUBLIC_SITE_PAGE_CSP_HEADER` on its own response instead.
+   */
   csp?: (host: string, config: AppConfig) => PublicSiteCsp
   forms?: readonly PublicSiteFormPath[]
-  /** Applied on cache MISSES only. Default `PUBLIC_MOUNT_RATE_LIMIT`. */
-  rateLimit?: { max: number; windowSeconds: number } | false
   /** Omitted = no caching. `generation` must not touch Postgres; null = do not cache this request. */
   cache?: {
     generation: (env: AppBindings, config: AppConfig) => Promise<string | null>
@@ -312,7 +314,7 @@ export interface ServerPlugin<S extends SharedPlugin = SharedPlugin> {
   extensions?: Readonly<Record<string, readonly unknown[]>>
 }
 
-export type PluginRouteTier = 'shell' | 'noTenant' | 'public' | 'fullscreen'
+export type PluginRouteTier = 'shell' | 'noTenant' | 'public' | 'workspace'
 
 export interface PluginRoute {
   /** A path under the tier's router — `/approvals`, `/approvals/:id`. */
@@ -324,7 +326,11 @@ export interface PluginRoute {
   Component: LazyExoticComponent<ComponentType>
   /** The SAME guard its nav item uses, so a link never points at a page its reader cannot open. */
   guard?: NavGuard
-  /** Default `shell` — inside `Layout`, signed in with a tenant. */
+  /**
+   * Default `shell` — inside `Layout`, signed in with a tenant. `workspace` is the same, for a
+   * page that wants the whole space: the nav collapses to its icon rail, `<main>` has no padding
+   * and the page fills the viewport under the header (`h-full`), scrolling only its own panes.
+   */
   tier?: PluginRouteTier
 }
 

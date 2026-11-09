@@ -21,7 +21,6 @@ import type {
   PluginPublicMountOptions,
   PublicSiteCsp,
   PublicSiteFormPath,
-  PublicSitesDeclaration,
 } from '@/plugins/types'
 import {
   DECLARED_ENTRIES,
@@ -247,7 +246,6 @@ export interface PublicSiteClaim {
   /** `null` is the dormant answer: a config problem, not a malformed declaration. */
   hosts: readonly string[] | null
   forms?: readonly PublicSiteFormPath[]
-  rateLimit?: PublicSitesDeclaration['rateLimit']
   /** What `csp(host, config)` returned, for each claimed host. */
   csp?: readonly PublicSiteCsp[]
 }
@@ -267,7 +265,6 @@ export function publicSiteClaims(
         id: plugin.shared.id,
         hosts,
         forms: site.forms,
-        rateLimit: site.rateLimit,
         csp: csp ? (hosts ?? []).map(host => csp(host, config)) : [],
       },
     ]
@@ -282,7 +279,7 @@ export function publicSiteClaims(
 export function publicSiteIssues(claims: readonly PublicSiteClaim[], appHost?: string): string[] {
   const issues: string[] = []
   const owner = new Map<string, string>()
-  for (const { id, hosts, forms, rateLimit, csp } of claims) {
+  for (const { id, hosts, forms, csp } of claims) {
     for (const host of hosts ?? []) {
       if (!PUBLIC_SITE_HOST.test(host)) {
         issues.push(`${id}: public site host '${host}' must be lowercase with no scheme or port`)
@@ -292,7 +289,6 @@ export function publicSiteIssues(claims: readonly PublicSiteClaim[], appHost?: s
       if (prior) issues.push(`${id}: public site host '${host}' is already claimed by ${prior}`)
       else owner.set(host, id)
     }
-    issues.push(...publicMountOptionIssues(id, 'publicSites', { rateLimit }))
     for (const form of forms ?? []) {
       if (!/^\/(?!\/)[^?#*:\s]*$/.test(form.path)) {
         issues.push(`${id}: public site form path '${form.path}' must be an exact absolute path`)

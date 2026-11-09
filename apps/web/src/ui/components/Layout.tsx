@@ -24,6 +24,11 @@ export interface LayoutProps {
   headerEnd?: ReactNode
   /** Rendered above the collapse toggle in the sidebar (e.g. tenant name, support banner). */
   sidebarFooter?: ReactNode
+  /**
+   * A plugin `workspace` route: the sidebar collapses to its icon rail, `<main>` has no padding
+   * and the page exactly fills the viewport under the header, scrolling only its own panes.
+   */
+  workspace?: boolean
 }
 
 /**
@@ -36,15 +41,18 @@ export default function Layout({
   headerCenter,
   headerEnd,
   sidebarFooter,
+  workspace = false,
 }: LayoutProps) {
   const { pathname } = useLocation()
   useEnvironmentTitle()
+  // Workspace pages size to the viewport; every other page grows it and the document scrolls.
+  const height = workspace ? 'h-dvh' : 'min-h-screen'
 
   return (
-    <div className="drawer lg:drawer-open min-h-screen app-canvas">
+    <div className={`drawer lg:drawer-open app-canvas ${height}`}>
       <input id="drawer-toggle" type="checkbox" className="drawer-toggle" />
 
-      <div className="drawer-content flex flex-col min-h-screen">
+      <div className={`drawer-content flex flex-col ${height}`}>
         <header className="app-header sticky top-0 z-30 flex items-center border-b px-3 gap-2 h-14">
           <label
             htmlFor="drawer-toggle"
@@ -65,14 +73,16 @@ export default function Layout({
           </div>
         </header>
 
-        <main className="flex-1 p-4 md:p-8">
+        <main
+          className={workspace ? 'flex min-h-0 flex-1 flex-col overflow-clip' : 'flex-1 p-4 md:p-8'}
+        >
           <ErrorBoundary resetKeys={[pathname]}>{children}</ErrorBoundary>
         </main>
       </div>
 
       <div className="drawer-side z-40">
         <label htmlFor="drawer-toggle" aria-label="Close navigation" className="drawer-overlay" />
-        <SideNav footer={sidebarFooter} />
+        <SideNav footer={sidebarFooter} forceCollapsed={workspace} />
       </div>
     </div>
   )

@@ -114,3 +114,29 @@ describe('createApiClient', () => {
     expect(res.data.at).toBeInstanceOf(Date)
   })
 })
+
+describe('raw transfers', () => {
+  const client = (routes: Parameters<typeof mockFetch>[0]) => {
+    const { fetch, calls } = mockFetch(routes)
+    return {
+      calls,
+      api: createApiClient({ serverUrl: 'http://test.local', apiKey: 'k', fetch }),
+    }
+  }
+
+  it('reads bytes with the API key and reports a failure as a CliApiError', async () => {
+    const { api, calls } = client({ '/file': () => new Response(new Uint8Array([1, 2])) })
+    expect([...(await api.getBytes('/file'))]).toEqual([1, 2])
+    expect(new Headers(calls[0].init.headers).get('authorization')).toBe('Bearer k')
+    await expect(api.getBytes('/missing')).rejects.toMatchObject({ status: 404 })
+  })
+
+  it('posts a form without setting a content type of its own', async () => {
+    const { api, calls } = client({ '/upload': () => jsonResponse({ ok: true }) })
+    const form = new FormData()
+    form.set('name', 'a')
+    expect(await api.postForm('/upload', form)).toEqual({ ok: true })
+    expect(calls[0].init.body).toBe(form)
+    expect(new Headers(calls[0].init.headers).has('content-type')).toBe(false)
+  })
+})

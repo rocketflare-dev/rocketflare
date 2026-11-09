@@ -38,6 +38,9 @@ import type { PluginContext } from './types'
 /** The prefix every public mount lives under; the plugin's id is the next segment. */
 export const PUBLIC_MOUNT_ROOT = '/api/hooks'
 
+/** See `api/middleware/public-sites.ts`: a page's own additions to the public CSP. */
+export { PUBLIC_SITE_PAGE_CSP_HEADER } from '../../api/middleware/public-sites'
+
 export interface PublicCtx extends PluginContext, BackgroundMethods {
   /** `APP_URL` — the origin a third party is told to call back, and to redirect a browser to. */
   readonly appUrl: string

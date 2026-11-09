@@ -10,7 +10,7 @@ import {
   MagnifyingGlassIcon,
   ShieldCheckIcon,
 } from '@heroicons/react/24/outline'
-import type { ComponentType, ReactNode } from 'react'
+import { type ComponentType, type ReactNode, useSyncExternalStore } from 'react'
 import { Link, NavLink, useLocation } from 'react-router'
 import type { PluginNavGroup } from '@/plugins/types'
 import { uiPlugins } from '@/plugins/ui'
@@ -167,6 +167,12 @@ interface SideNavProps {
   items?: NavConfig
   /** Rendered above the collapse toggle */
   footer?: ReactNode
+  /**
+   * Render the icon rail from the `lg` breakpoint up, whatever the reader saved (a plugin
+   * `workspace` route). The saved preference is left alone and returns on leaving; below `lg` the
+   * drawer is unchanged. The collapse toggle is hidden, since it could not take effect.
+   */
+  forceCollapsed?: boolean
 }
 
 /** The count an item shows: its live `badgeKey` first, then whatever it declared statically. */
@@ -178,12 +184,34 @@ export function badgeValueFor(item: NavItem, badges: NavBadges): number | undefi
   return item.badge
 }
 
-export default function SideNav({ items = navigationConfig, footer }: SideNavProps) {
+const LG_QUERY = '(min-width: 1024px)'
+
+function subscribeLg(onChange: () => void) {
+  if (typeof window.matchMedia !== 'function') return () => {}
+  const query = window.matchMedia(LG_QUERY)
+  query.addEventListener('change', onChange)
+  return () => query.removeEventListener('change', onChange)
+}
+
+/** The drawer's own `lg:drawer-open` breakpoint, in JS because the rail's markup depends on it. */
+function useIsLg() {
+  return useSyncExternalStore(subscribeLg, () =>
+    typeof window.matchMedia === 'function' ? window.matchMedia(LG_QUERY).matches : true
+  )
+}
+
+export default function SideNav({
+  items = navigationConfig,
+  footer,
+  forceCollapsed,
+}: SideNavProps) {
   const { pathname } = useLocation()
   const canAccess = useNavGuard()
   const { name, version } = useAppInfo()
   const badges = useNavBadges()
-  const [isCollapsed, setIsCollapsed] = useBooleanPreference('sideNavCollapsed', false)
+  const [savedCollapsed, setSavedCollapsed] = useBooleanPreference('sideNavCollapsed', false)
+  const isLg = useIsLg()
+  const isCollapsed = savedCollapsed || (forceCollapsed === true && isLg)
 
   const visible = filterNavConfig(items, canAccess)
 
@@ -196,6 +224,7 @@ export default function SideNav({ items = navigationConfig, footer }: SideNavPro
           to={item.to}
           onClick={closeMobileDrawer}
           data-active={isPathActive(pathname, item.to)}
+          title={isCollapsed ? item.label : undefined}
           className={`nav-item flex items-center gap-2.5 ${
             isCollapsed ? 'justify-center px-3 py-2.5' : 'px-2.5 py-1.5'
           }`}
@@ -285,28 +314,30 @@ export default function SideNav({ items = navigationConfig, footer }: SideNavPro
         )}
       </nav>
 
-      {footer && (
+      {footer && !(forceCollapsed && isLg) && (
         <div className="px-3 py-2 border-t border-[color:var(--border-subtle)]">{footer}</div>
       )}
 
-      <div className="p-3 hidden lg:block border-t border-[color:var(--border-subtle)]">
-        <button
-          type="button"
-          onClick={() => setIsCollapsed(c => !c)}
-          className={`btn btn-ghost btn-sm w-full ${isCollapsed ? 'btn-square' : 'justify-start gap-2'}`}
-          title={isCollapsed ? 'Expand navigation' : 'Collapse navigation'}
-          aria-label={isCollapsed ? 'Expand navigation' : 'Collapse navigation'}
-        >
-          {isCollapsed ? (
-            <ChevronRightIcon className="w-4 h-4" />
-          ) : (
-            <>
-              <ChevronLeftIcon className="w-4 h-4" />
-              <span>Collapse</span>
-            </>
-          )}
-        </button>
-      </div>
+      {!forceCollapsed && (
+        <div className="p-3 hidden lg:block border-t border-[color:var(--border-subtle)]">
+          <button
+            type="button"
+            onClick={() => setSavedCollapsed(c => !c)}
+            className={`btn btn-ghost btn-sm w-full ${isCollapsed ? 'btn-square' : 'justify-start gap-2'}`}
+            title={isCollapsed ? 'Expand navigation' : 'Collapse navigation'}
+            aria-label={isCollapsed ? 'Expand navigation' : 'Collapse navigation'}
+          >
+            {isCollapsed ? (
+              <ChevronRightIcon className="w-4 h-4" />
+            ) : (
+              <>
+                <ChevronLeftIcon className="w-4 h-4" />
+                <span>Collapse</span>
+              </>
+            )}
+          </button>
+        </div>
+      )}
     </aside>
   )
 }

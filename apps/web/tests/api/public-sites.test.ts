@@ -21,7 +21,6 @@ const state = vi.hoisted(() => ({
   routerCalls: 0,
   queries: [] as (string | undefined)[],
   dbTouches: 0,
-  rateLimit: undefined as { max: number; windowSeconds: number } | false | undefined,
 }))
 
 vi.mock('@/db/client', async importOriginal => {
@@ -56,6 +55,14 @@ vi.mock('@/plugins/server', async importOriginal => {
     c.text('browser-cached', 200, { 'Cache-Control': 'max-age=60' })
   )
   router.get('/long', c => c.text('long'))
+  router.get('/embeds', c =>
+    c.html('<h1>Embed</h1>', 200, {
+      'x-public-site-page-csp': JSON.stringify({
+        scriptSrc: ['https://widget.example', "'unsafe-inline'"],
+        frameSrc: ['https://widget.example'],
+      }),
+    })
+  )
   router.get('/negotiated', c => c.text(`for ${c.req.header('accept')}`, 200, { Vary: 'Accept' }))
   router.get('/credentials', c =>
     c.text(
@@ -88,9 +95,6 @@ vi.mock('@/plugins/server', async importOriginal => {
         { path: '/forms/contact', bodyLimitBytes: 16 },
         { path: '/forms/limited', rateLimit: { max: 1, windowSeconds: 60 } },
       ],
-      get rateLimit() {
-        return state.rateLimit
-      },
       cache: {
         generation: async () => state.generation,
         ttlSeconds: (path: string) => (path.startsWith('/long') ? 9000 : 300),
@@ -134,7 +138,6 @@ beforeEach(() => {
     routerCalls: 0,
     queries: [],
     dbTouches: 0,
-    rateLimit: undefined,
   })
 })
 
@@ -429,30 +432,57 @@ describe('the cache', () => {
   })
 })
 
-describe('the rate limit', () => {
-  it('fires on misses and leaves hits alone', async () => {
-    state.rateLimit = { max: 2, windowSeconds: 60 }
+describe('a page that adds to the CSP for itself', () => {
+  it('applies on a miss and a hit, drops weakening sources and hides the header', async () => {
     const env = createTestEnv()
-    await request(`${SITE}/about`, {}, { env })
-    for (let i = 0; i < 5; i++) {
-      expect((await request(`${SITE}/about`, {}, { env })).status).toBe(200)
+    const check = async (response: Response) => {
+      const csp = response.headers.get('content-security-policy') ?? ''
+      expect(csp).toContain(`script-src ${SITE_ASSETS} https://plausible.io https://widget.example`)
+      expect(csp).not.toContain("'unsafe-inline'")
+      expect(csp).toContain('frame-src https://widget.example')
+      expect(response.headers.has('x-public-site-page-csp')).toBe(false)
     }
+    await check(await request(`${SITE}/embeds`, {}, { env }))
+    await check(await request(`${SITE}/embeds`, {}, { env }))
     expect(state.routerCalls).toBe(1)
-
-    expect((await request(`${SITE}/gone`, {}, { env })).status).toBe(410)
-    const limited = await request(`${SITE}/gone`, {}, { env })
-    expect(limited.status).toBe(429)
-    expect(limited.headers.get('content-security-policy')).toBe(STRICT_WITH_SCRIPT)
-    expect(state.routerCalls).toBe(2)
+    const other = await request(`${SITE}/about`, {}, { env })
+    expect(other.headers.get('content-security-policy')).toBe(STRICT_WITH_SCRIPT)
   })
 
-  it('can be turned off', async () => {
-    state.rateLimit = false
+  it('pins a form-action path to the request origin', () => {
+    const csp = publicSiteCsp('https://www.example.test', { formAction: ['/submit'] })
+    expect(csp).toContain('form-action https://www.example.test/submit;')
+  })
+})
+
+describe('page requests', () => {
+  it('are never rate limited, on a hit or a miss', async () => {
     const env = createTestEnv()
-    state.generation = null
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i < 200; i++) {
       expect((await request(`${SITE}/gone`, {}, { env })).status).toBe(410)
     }
+    expect(state.routerCalls).toBe(200)
+  })
+})
+
+describe('HSTS', () => {
+  const deployed = () => createTestEnv({ APP_ENV: 'staging' })
+
+  it('never speaks for the subdomains of a public site', async () => {
+    const res = await request(`${SITE}/about`, {}, { env: deployed() })
+    expect(res.headers.get('strict-transport-security')).toBe('max-age=31536000')
+  })
+
+  it('does so on the app host', async () => {
+    const res = await request('http://localhost:3001/health', {}, { env: deployed() })
+    expect(res.headers.get('strict-transport-security')).toBe('max-age=31536000; includeSubDomains')
+  })
+
+  it('leaves a claimed host out of it while the plugin is dormant', async () => {
+    state.hosts = null
+    const res = await request(`${SITE}/about`, {}, { env: deployed() })
+    expect(res.status).toBe(503)
+    expect(res.headers.get('strict-transport-security')).toBe('max-age=31536000')
   })
 })
 

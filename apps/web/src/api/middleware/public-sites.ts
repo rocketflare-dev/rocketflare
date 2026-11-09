@@ -41,6 +41,15 @@ export const DEFAULT_PUBLIC_FORM_BODY_BYTES = 64 * 1024
 
 const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]'])
 
+/**
+ * A router's per-page additions to the public CSP (JSON, `PublicSiteCsp` shape): the CSP sources of
+ * a page that embeds something, without opening them on every other page of the site. It rides the
+ * response into the cache and back out, is applied on hits and misses alike, and the middleware
+ * removes it before the browser sees anything. `publicSiteCsp` drops any source that would weaken
+ * the policy, as it does for what `csp` declared.
+ */
+export const PUBLIC_SITE_PAGE_CSP_HEADER = 'x-public-site-page-csp'
+
 /** A stored entry's `Cache-Control` drives the edge; the router's own value rides beside it. */
 const ROUTER_CACHE_CONTROL = 'x-public-site-cache-control'
 
@@ -130,16 +139,42 @@ function runRouter(c: AppContext, site: Site, request: Request): Promise<Respons
   return Promise.resolve(site.dispatcher.fetch(request, c.env, ctx))
 }
 
-type RateLimit = { max: number; windowSeconds: number } | false
+const CSP_LIST_KEYS = ['scriptSrc', 'frameSrc', 'imgSrc', 'connectSrc', 'formAction'] as const
 
-async function throttled(
+/** What the router's own header adds, or nothing if it is malformed; a list of strings or absent. */
+function pageCsp(c: AppContext, raw: string): PublicSiteCsp {
+  try {
+    const value = JSON.parse(raw) as Partial<Record<(typeof CSP_LIST_KEYS)[number], unknown>>
+    const parsed: PublicSiteCsp = {}
+    for (const key of CSP_LIST_KEYS) {
+      const list = value[key]
+      if (Array.isArray(list) && list.every(item => typeof item === 'string')) parsed[key] = list
+    }
+    return parsed
+  } catch {
+    c.get('logger').warn('public site page CSP header could not be read')
+    return {}
+  }
+}
+
+/** Apply a page's own CSP additions and take the private header off the response. */
+function applyPageCsp(
   c: AppContext,
-  name: string,
-  limit: RateLimit,
-  work: () => Promise<void>
-): Promise<void> {
-  if (limit === false) return work()
-  await rateLimit({ name, max: limit.max, windowSeconds: limit.windowSeconds })(c, work)
+  response: Response,
+  declared: PublicSiteCsp,
+  origin: string
+): Response {
+  const raw = response.headers.get(PUBLIC_SITE_PAGE_CSP_HEADER)
+  if (raw === null) return response
+  const page = pageCsp(c, raw)
+  const merged: PublicSiteCsp = { ...declared }
+  for (const key of CSP_LIST_KEYS) {
+    if (page[key]) merged[key] = [...(declared[key] ?? []), ...page[key]]
+  }
+  c.set('publicSiteCsp', publicSiteCsp(origin, merged))
+  const stripped = new Response(response.body, response)
+  stripped.headers.delete(PUBLIC_SITE_PAGE_CSP_HEADER)
+  return stripped
 }
 
 const methodNotAllowed = (c: AppContext, allow: string) =>
@@ -159,17 +194,13 @@ async function answerForm(
     onError: tooLarge => tooLarge.text('Payload Too Large', 413),
   })
   let response: Response | undefined
-  await throttled(
-    c,
-    `site-form:${host}:${form.path}`,
-    form.rateLimit ?? PUBLIC_MOUNT_RATE_LIMIT,
-    async () => {
-      const refused = await limit(c, async () => {
-        response = await runRouter(c, site, c.req.raw)
-      })
-      if (refused) response = refused
-    }
-  )
+  const { max, windowSeconds } = form.rateLimit ?? PUBLIC_MOUNT_RATE_LIMIT
+  await rateLimit({ name: `site-form:${host}:${form.path}`, max, windowSeconds })(c, async () => {
+    const refused = await limit(c, async () => {
+      response = await runRouter(c, site, c.req.raw)
+    })
+    if (refused) response = refused
+  })
   return response as Response
 }
 
@@ -295,13 +326,8 @@ async function answerPage(
       })
     : c.req.raw
 
-  let response: Response | undefined
-  await throttled(c, `site:${host}`, declaration.rateLimit ?? PUBLIC_MOUNT_RATE_LIMIT, async () => {
-    response = await runRouter(c, site, request)
-  })
-  const answered = key
-    ? withOriginalQuery(response as Response, url.search)
-    : (response as Response)
+  const response = await runRouter(c, site, request)
+  const answered = key ? withOriginalQuery(response, url.search) : response
 
   const coveredVary = variantSuffix ? (declaration.cache?.variantHeaders ?? []) : []
   if (cache && key && declaration.cache && isStorable(answered, coveredVary)) {
@@ -355,14 +381,14 @@ export function publicSitesMiddleware(
       return next()
     }
 
-    c.set(
-      'publicSiteCsp',
-      publicSiteCsp(new URL(c.req.url).origin, declaredCsp(site, c, host, config))
-    )
+    const declared = declaredCsp(site, c, host, config)
+    c.set('publicSiteCsp', publicSiteCsp(url.origin, declared))
 
     // Plain text, not the API envelope: this host has no API, and a visitor's browser reads it.
     const method = c.req.method
-    if (method === 'GET' || method === 'HEAD') return answerPage(c, site, host, url, config)
+    if (method === 'GET' || method === 'HEAD') {
+      return applyPageCsp(c, await answerPage(c, site, host, url, config), declared, url.origin)
+    }
     const form = site.declaration.forms?.find(f => f.path === url.pathname)
     if (method === 'POST' && form) return answerForm(c, site, host, form)
     return methodNotAllowed(c, form ? 'GET, HEAD, POST' : 'GET, HEAD')
