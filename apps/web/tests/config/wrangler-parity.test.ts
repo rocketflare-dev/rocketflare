@@ -373,9 +373,19 @@ describe('wrangler parity: plugin resources', () => {
       vars: fixture.vars.filter(v => !v.secret).map(v => ({ key: v.key, value: v.example ?? '' })),
     })
 
+  // The fixture declares no public sites, but the app's real tomls are widened if an installed
+  // plugin does, so the setting that follows from that is put back before they are judged.
+  const asFixtureSees = (text: string) => {
+    const doc = TOML.parse(text) as Toml
+    return {
+      ...doc,
+      assets: { ...(doc.assets as Toml), not_found_handling: 'single-page-application' },
+    }
+  }
+
   const docs = (prodKv: string, stagingKv: string) => ({
-    production: TOML.parse(provisionedText(prodRaw, 'production', prodKv)),
-    staging: TOML.parse(provisionedText(stagingRaw, 'staging', stagingKv)),
+    production: asFixtureSees(provisionedText(prodRaw, 'production', prodKv)),
+    staging: asFixtureSees(provisionedText(stagingRaw, 'staging', stagingKv)),
   })
 
   // Empty documents, deliberately, rather than the repo’s tomls: these assertions are about what
