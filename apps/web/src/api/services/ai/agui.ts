@@ -13,7 +13,7 @@
  * answers an EMPTY frame for it rather than failing — which no client can decode. So
  * {@link createAguiEncoder} drops an event the negotiated transport cannot carry, listed in
  * {@link PROTO_UNSUPPORTED_EVENTS} and pinned by a round-trip in `tests/config/agui-contract.test.ts`.
- * `@ag-ui/proto@1.0.3` carries every event the kit emits, so the list is empty.
+ * The pinned `@ag-ui/proto` carries every event the kit emits, so the list is empty.
  */
 
 import { EventEncoder } from '@ag-ui/encoder'
