@@ -105,7 +105,9 @@ import {
   pluginDeclarations,
   pluginMigrationBlocks,
   pluginResourceList,
+  pluginTomlVars,
   readPluginResources,
+  siteHostsFromToml,
 } from './provision/plugin-resources'
 import { redact } from './provision/redact'
 import { emailFromFor, ResendClient, resendRecordsToDns, zoneCandidates } from './provision/resend'
@@ -869,7 +871,7 @@ function installedPluginResources(): PluginResources[] {
  */
 function applyPluginDeclarations(app: string, plugins: PluginResources[]): void {
   if (plugins.length === 0) return
-  const { crons, apiPrefixes, vars } = pluginDeclarations(plugins)
+  const { crons, apiPrefixes } = pluginDeclarations(plugins)
   for (const env of ENV_NAMES) {
     const changed = patchTomlFile(tomlFor(env), {
       bindings: pluginBindingBlocks(app, plugins, env),
@@ -879,8 +881,10 @@ function applyPluginDeclarations(app: string, plugins: PluginResources[]): void 
       migrations: pluginMigrationBlocks(plugins),
       crons,
       workerFirstPrefixes: apiPrefixes,
+      // `plugin add` already wrote this; here for a toml reset or a release that adopted it later.
+      workerFirstAll: plugins.some(p => p.publicSites),
       // A secret is a Worker secret (`provision secrets <env>`), never a [vars] key.
-      vars: vars.filter(v => !v.secret).map(v => ({ key: v.key, value: v.example ?? '' })),
+      vars: pluginTomlVars(plugins),
     })
     log(`${tomlBasename(env)}: plugin declarations ${changed ? 'written' : 'unchanged'}`)
   }
@@ -1019,11 +1023,19 @@ async function urlsPhase(flags: Flags): Promise<void> {
   const answers = await collectAnswers(flags)
   const urls: Record<EnvName, string> = { staging: '', production: '' }
   const zoneNote: Partial<Record<EnvName, string>> = {}
+  const plugins = installedPluginResources()
   for (const env of ENV_NAMES) {
     const host = answers.hosts[env]
     const text = fs.readFileSync(tomlFor(env), 'utf8')
+    const siteHosts = siteHostsFromToml(plugins, text)
     const workerName = readTomlString(text, 'name') ?? readAppName()
     if (host === WORKERS_DEV) {
+      // An active `routes` line turns wrangler's workers.dev default off, which would take the app
+      // down at the only address it has.
+      if (siteHosts.length > 0)
+        throw new ProvisionError(
+          `${tomlBasename(env)}: ${siteHosts.join(', ')} need routes, and the app is on workers.dev — give the app a custom host first (docs/DEPLOY.md § Zone, DNS and multiple hosts)`
+        )
       let sub = readCache().cloudflare?.workersSubdomain
       if (!sub) {
         sub = await cfClient().workersSubdomain(requireToken('CLOUDFLARE_ACCOUNT_ID'))
@@ -1039,9 +1051,15 @@ async function urlsPhase(flags: Flags): Promise<void> {
     } else {
       // The custom domain route is created by `wrangler deploy` in this zone — prove it exists now.
       const zone = await requireZone(cfClient(), host)
+      // Each site host may sit on a zone of its own, and it has to be in this account.
+      for (const siteHost of siteHosts) await requireZone(cfClient(), siteHost)
       urls[env] = `https://${host}`
-      patchTomlFile(tomlFor(env), { appUrl: urls[env], routeHost: host })
-      zoneNote[env] = ` routes=[${host}] zone=${zone.name}`
+      patchTomlFile(tomlFor(env), {
+        appUrl: urls[env],
+        routeHost: host,
+        siteRouteHosts: siteHosts,
+      })
+      zoneNote[env] = ` routes=[${[host, ...siteHosts].join(', ')}] zone=${zone.name}`
     }
     log(`${tomlBasename(env)}: APP_URL=${urls[env]}${zoneNote[env] ?? ''}`)
   }

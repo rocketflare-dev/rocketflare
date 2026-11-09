@@ -47,6 +47,20 @@ function hostApp(mounts: readonly PluginPublicMount[]): Hono<AppEnv> {
 const env = (kv?: MemoryKV) => ({ RATE_LIMIT_KV: kv }) as unknown as AppEnv['Bindings']
 const fromIp = (ip: string) => ({ headers: { 'cf-connecting-ip': ip } })
 
+describe('plugin upload paths', () => {
+  const app = createRouter()
+  app.onError(errorHandler)
+  app.use('/api/*', apiBodyLimit([], ['/api/orders/upload']))
+  app.route('/api/orders', echoRouter())
+  const big = { method: 'POST', body: 'x'.repeat(MAX_JSON_BODY_BYTES + 1) }
+
+  it('skips the JSON cap beneath a declared path only', async () => {
+    expect((await app.request('/api/orders/upload', big)).status).not.toBe(413)
+    expect((await app.request('/api/orders/uploads', big)).status).toBe(413)
+    expect((await app.request('/api/orders', big)).status).toBe(413)
+  })
+})
+
 describe('public mount rate limit', () => {
   const app = hostApp([
     ['/api/hooks/alpha', echoRouter()],

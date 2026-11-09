@@ -20,7 +20,8 @@ import {
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { classifyPluginFile } from '../../../../scripts/lib/plugin-lib.mjs'
+import { awaitsReprovision, classifyPluginFile } from '../../../../scripts/lib/plugin-lib.mjs'
+import { patchTomlFile } from '../../scripts/provision/patch-toml'
 
 const KIT_ROOT = path.resolve(__dirname, '../../../..')
 
@@ -42,13 +43,31 @@ beforeAll(() => {
 })
 afterAll(() => rmSync(root, { recursive: true, force: true }))
 
+/** The two tomls, the six barrels and the formatter config `add` runs over them. */
+const APP_FILES = [
+  'biome.json',
+  'apps/web/wrangler.toml',
+  'apps/web/wrangler.staging.toml',
+  'packages/shared/src/plugins/index.ts',
+  'apps/web/src/plugins/server.ts',
+  'apps/web/src/plugins/ui.ts',
+  'apps/web/src/plugins/schema.ts',
+  'apps/web/src/plugins/worker-exports.ts',
+  'apps/cli/src/plugins/index.ts',
+]
+
 /** A throwaway host: the real scripts, manifest and API ledger in a clean git repository. */
-function makeHost(name: string, edit?: (manifest: Record<string, unknown>) => void) {
+function makeHost(
+  name: string,
+  edit?: (manifest: Record<string, unknown>) => void,
+  files: string[] = []
+) {
   const host = path.join(root, name, 'host')
   mkdirSync(path.join(host, 'docs'), { recursive: true })
-  cpSync(path.join(KIT_ROOT, 'scripts'), path.join(host, 'scripts'), { recursive: true })
-  cpSync(path.join(KIT_ROOT, 'package.json'), path.join(host, 'package.json'))
-  cpSync(path.join(KIT_ROOT, 'docs/plugin-api.md'), path.join(host, 'docs/plugin-api.md'))
+  for (const file of ['scripts', 'package.json', 'docs/plugin-api.md', ...files]) {
+    mkdirSync(path.dirname(path.join(host, file)), { recursive: true })
+    cpSync(path.join(KIT_ROOT, file), path.join(host, file), { recursive: true })
+  }
   const manifest = JSON.parse(readFileSync(path.join(KIT_ROOT, '.rocketflare.json'), 'utf8'))
   manifest.surfaces = manifest.surfaces.filter((s: { kind?: string }) => s.kind !== 'plugin')
   edit?.(manifest)
@@ -372,5 +391,290 @@ describe('kit:upgrade keeps every release path inside the repository', () => {
     const { status } = run(host, 'upgrade.mjs', ['--apply', '--force'])
     expect(status).toBe(0)
     expect(readFileSync(path.join(host, 'added/file.txt'), 'utf8')).toBe('new\n')
+  })
+})
+
+describe('public-site routing across plugins', () => {
+  const TOMLS = ['apps/web/wrangler.toml', 'apps/web/wrangler.staging.toml']
+  const tomlsOf = (host: string) => TOMLS.map(f => readFileSync(path.join(host, f), 'utf8'))
+  const appHost = (name: string) =>
+    makeHost(
+      name,
+      manifest => {
+        manifest.app = { slug: 'acme', display: 'Acme', domain: 'acme.example' }
+      },
+      APP_FILES
+    )
+  const sitesPlugin = (name: string) =>
+    localPlugin(
+      name,
+      { id: 'sites', publicSites: { hostsVar: 'SITES_HOSTS' }, vars: [{ key: 'SITES_HOSTS' }] },
+      { 'apps/web/src/plugins/sites/index.ts': 'export {}\n' }
+    )
+  const hooksPlugin = (name: string) =>
+    localPlugin(
+      name,
+      { id: 'hooks', apiPrefixes: ['/hooks-webhook'] },
+      { 'apps/web/src/plugins/hooks/index.ts': 'export {}\n' }
+    )
+
+  it('removing the last public-sites plugin asks for a re-provision, and check fails until then', () => {
+    const host = appHost('reprovision')
+    for (const plugin of [sitesPlugin('reprovision-a'), hooksPlugin('reprovision-b')]) {
+      expect(run(host, 'plugin.mjs', ['add', plugin, '--apply', '--allow-dirty']).status).toBe(0)
+    }
+
+    const removed = run(host, 'plugin.mjs', ['remove', 'sites', '--apply', '--allow-dirty'])
+    expect(removed.status).toBe(0)
+    expect(removed.output).toContain('pnpm provision cloudflare')
+
+    const checked = run(host, 'plugin.mjs', ['check'])
+    expect(checked.status).toBe(1)
+    expect(checked.output).toContain('/hooks-webhook')
+
+    for (const toml of TOMLS) {
+      patchTomlFile(path.join(host, toml), { workerFirstPrefixes: ['/hooks-webhook'] })
+    }
+    expect(tomlsOf(host).some(awaitsReprovision)).toBe(false)
+    expect(run(host, 'plugin.mjs', ['check']).status).toBe(0)
+  })
+
+  it('removing the plugin whose prefixes were lost takes the mark with it', () => {
+    const host = appHost('mark-dropped')
+    for (const plugin of [sitesPlugin('mark-dropped-a'), hooksPlugin('mark-dropped-b')]) {
+      expect(run(host, 'plugin.mjs', ['add', plugin, '--apply', '--allow-dirty']).status).toBe(0)
+    }
+    expect(run(host, 'plugin.mjs', ['remove', 'sites', '--apply', '--allow-dirty']).status).toBe(0)
+    expect(tomlsOf(host).every(awaitsReprovision)).toBe(true)
+
+    expect(run(host, 'plugin.mjs', ['remove', 'hooks', '--apply', '--allow-dirty']).status).toBe(0)
+    expect(tomlsOf(host).some(awaitsReprovision)).toBe(false)
+  })
+
+  /** `sites` at 1.0.0 serving no public site, then at 2.0.0 with `second` merged in. */
+  const sitesReleases = (name: string, second: object) => {
+    const release = (extra: object) => ({
+      'rocketflare-plugin.json': JSON.stringify({
+        id: 'sites',
+        version: '1.0.0',
+        minKit: '0.1.0',
+        uses: {},
+        ...extra,
+      }),
+      'apps/web/src/plugins/sites/index.ts': 'export {}\n',
+    })
+    return bareRepository(name, [
+      ['1.0.0', release({})],
+      ['2.0.0', release({ version: '2.0.0', ...second })],
+    ]).url
+  }
+  const recordedVersion = (host: string) =>
+    JSON.parse(readFileSync(path.join(host, '.rocketflare.json'), 'utf8')).surfaces.find(
+      (s: { id: string }) => s.id === 'sites'
+    ).source.version
+
+  it('an upgrade that cannot route one toml writes neither, and stays on the old release', () => {
+    const host = appHost('upgrade-routing')
+    const url = sitesReleases('upgrade-routing', {
+      publicSites: { hostsVar: 'SITES_HOSTS' },
+      vars: [{ key: 'SITES_HOSTS' }],
+    })
+    expect(
+      run(host, 'plugin.mjs', ['add', `${url}@1.0.0`, '--apply', '--allow-dirty']).status
+    ).toBe(0)
+    const staging = path.join(host, 'apps/web/wrangler.staging.toml')
+    writeFileSync(
+      staging,
+      readFileSync(staging, 'utf8').replace(/^run_worker_first = \[/m, 'x = [')
+    )
+    const before = tomlsOf(host)
+
+    const upgraded = run(host, 'plugin.mjs', [
+      'upgrade',
+      'sites',
+      '--to',
+      '2.0.0',
+      '--apply',
+      '--allow-dirty',
+    ])
+    expect(upgraded.status).not.toBe(0)
+    expect(upgraded.output).toContain('run_worker_first')
+    expect(tomlsOf(host)).toEqual(before)
+    expect(recordedVersion(host)).toBe('1.0.0')
+  })
+
+  it('an upgrade that stops serving public sites asks for a re-provision, as remove does', () => {
+    const host = appHost('upgrade-drop')
+    const url = bareRepository('upgrade-drop', [
+      [
+        '1.0.0',
+        {
+          'rocketflare-plugin.json': JSON.stringify({
+            id: 'sites',
+            version: '1.0.0',
+            minKit: '0.1.0',
+            uses: {},
+            publicSites: { hostsVar: 'SITES_HOSTS' },
+            vars: [{ key: 'SITES_HOSTS' }],
+          }),
+          'apps/web/src/plugins/sites/index.ts': 'export {}\n',
+        },
+      ],
+      [
+        '2.0.0',
+        {
+          'rocketflare-plugin.json': JSON.stringify({
+            id: 'sites',
+            version: '2.0.0',
+            minKit: '0.1.0',
+            uses: {},
+          }),
+          'apps/web/src/plugins/sites/index.ts': 'export {}\n',
+        },
+      ],
+    ]).url
+    for (const plugin of [`${url}@1.0.0`, hooksPlugin('upgrade-drop-b')]) {
+      expect(run(host, 'plugin.mjs', ['add', plugin, '--apply', '--allow-dirty']).status).toBe(0)
+    }
+
+    const upgraded = run(host, 'plugin.mjs', [
+      'upgrade',
+      'sites',
+      '--to',
+      '2.0.0',
+      '--apply',
+      '--allow-dirty',
+    ])
+    expect(upgraded.output).toContain('pnpm provision cloudflare')
+    expect(run(host, 'plugin.mjs', ['check']).status).toBe(1)
+  })
+
+  it('an upgrade to a release with an unsafe appOwned path is refused before anything is written', () => {
+    const host = appHost('upgrade-appowned')
+    const url = sitesReleases('upgrade-appowned', { appOwned: ['..'] })
+    expect(
+      run(host, 'plugin.mjs', ['add', `${url}@1.0.0`, '--apply', '--allow-dirty']).status
+    ).toBe(0)
+    const anchor = path.join(host, 'apps/web/src/plugins/sites/plugin.json')
+    const before = readFileSync(anchor, 'utf8')
+
+    const upgraded = run(host, 'plugin.mjs', [
+      'upgrade',
+      'sites',
+      '--to',
+      '2.0.0',
+      '--apply',
+      '--allow-dirty',
+    ])
+    expect(upgraded.status).not.toBe(0)
+    expect(upgraded.output).toContain('appOwned')
+    expect(readFileSync(anchor, 'utf8')).toBe(before)
+    expect(recordedVersion(host)).toBe('1.0.0')
+  })
+
+  it('an upgrade to a release adding a second images binding is refused before anything is written', () => {
+    const host = appHost('upgrade-images')
+    const images = { type: 'images', binding: 'IMAGES' }
+    const pics = localPlugin(
+      'upgrade-images-pics',
+      { id: 'pics', bindings: [images] },
+      { 'apps/web/src/plugins/pics/index.ts': 'export {}\n' }
+    )
+    expect(run(host, 'plugin.mjs', ['add', pics, '--apply', '--allow-dirty']).status).toBe(0)
+    const url = sitesReleases('upgrade-images', { bindings: [images] })
+    expect(
+      run(host, 'plugin.mjs', ['add', `${url}@1.0.0`, '--apply', '--allow-dirty']).status
+    ).toBe(0)
+
+    const upgraded = run(host, 'plugin.mjs', [
+      'upgrade',
+      'sites',
+      '--to',
+      '2.0.0',
+      '--apply',
+      '--allow-dirty',
+    ])
+    expect(upgraded.status).not.toBe(0)
+    expect(upgraded.output).toContain("'pics' already has one")
+    expect(recordedVersion(host)).toBe('1.0.0')
+  })
+
+  it('remove reports an appOwned file replaced by a directory symlink, rather than crashing', () => {
+    const host = appHost('remove-symlink')
+    const app = 'apps/web/src/plugins/sites/app'
+    const { url } = bareRepository('remove-symlink', [
+      [
+        '1.0.0',
+        {
+          'rocketflare-plugin.json': JSON.stringify({
+            id: 'sites',
+            version: '1.0.0',
+            minKit: '0.1.0',
+            uses: {},
+            appOwned: [app],
+          }),
+          'apps/web/src/plugins/sites/index.ts': 'export {}\n',
+          [`${app}/page.txt`]: 'page\n',
+        },
+      ],
+    ])
+    expect(
+      run(host, 'plugin.mjs', ['add', `${url}@1.0.0`, '--apply', '--allow-dirty']).status
+    ).toBe(0)
+    const target = path.join(root, 'remove-symlink', 'target')
+    mkdirSync(target, { recursive: true })
+    rmSync(path.join(host, app, 'page.txt'))
+    symlinkSync(target, path.join(host, app, 'page.txt'))
+
+    const planned = run(host, 'plugin.mjs', ['remove', 'sites', '--allow-dirty'])
+    expect(planned.output).not.toContain('EISDIR')
+    expect(planned.status).toBe(0)
+    expect(planned.output).toMatch(new RegExp(`changed\\s+${app}/page\\.txt`))
+  })
+
+  it('remove lists an appOwned directory replaced by a symlink as one entry, not its target', () => {
+    const host = appHost('remove-root-symlink')
+    const app = 'apps/web/src/plugins/sites/app'
+    const { url } = bareRepository('remove-root-symlink', [
+      [
+        '1.0.0',
+        {
+          'rocketflare-plugin.json': JSON.stringify({
+            id: 'sites',
+            version: '1.0.0',
+            minKit: '0.1.0',
+            uses: {},
+            appOwned: [app],
+          }),
+          'apps/web/src/plugins/sites/index.ts': 'export {}\n',
+          [`${app}/page.txt`]: 'page\n',
+        },
+      ],
+    ])
+    expect(
+      run(host, 'plugin.mjs', ['add', `${url}@1.0.0`, '--apply', '--allow-dirty']).status
+    ).toBe(0)
+    const target = path.join(root, 'remove-root-symlink', 'target')
+    mkdirSync(target, { recursive: true })
+    writeFileSync(path.join(target, 'elsewhere.txt'), 'not the plugin\n')
+    rmSync(path.join(host, app), { recursive: true })
+    symlinkSync(target, path.join(host, app))
+
+    const planned = run(host, 'plugin.mjs', ['remove', 'sites', '--allow-dirty'])
+    expect(planned.status).toBe(0)
+    expect(planned.output).not.toContain('elsewhere.txt')
+    expect(planned.output).toMatch(new RegExp(`added\\s+${app}\\n`))
+  })
+
+  it('a prefix not yet provisioned is the next step of add, not a check failure', () => {
+    const host = appHost('unprovisioned')
+    const added = run(host, 'plugin.mjs', [
+      'add',
+      hooksPlugin('unprovisioned-b'),
+      '--apply',
+      '--allow-dirty',
+    ])
+    expect(added.status).toBe(0)
+    expect(run(host, 'plugin.mjs', ['check']).status).toBe(0)
   })
 })

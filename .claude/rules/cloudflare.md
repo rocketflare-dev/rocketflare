@@ -74,7 +74,10 @@ an `<object>`/`<iframe>` embed and an `<a download>` click are navigations too �
 missing from `run_worker_first` is silently served the app shell for exactly those requests. No test
 of the Hono app can see this (they never reach the asset router), so the list is derived from
 `API_PREFIXES` (`api/utils/routes/api-prefixes.ts`) and `wrangler-parity.test.ts` asserts both tomls
-equal it. Add a top-level route prefix → add it there. `apps/web/tests/config/wrangler-parity.test.ts` enforces
+equal it. Add a top-level route prefix → add it there. While a plugin declares `publicSites` the
+value is `["/*", "!/assets/*", "!/site-assets/*"]` and `not_found_handling` is `"none"` instead (a
+miss under either prefix is a 404, never the shell): the catch-all in `api/index.ts` fetches the
+shell for a navigation. `apps/web/tests/config/wrangler-parity.test.ts` enforces
 this; `REQUIRE_PROVISIONED=1` additionally forbids `<PLACEHOLDER>` values (CI sets it before deploy).
 
 ## Account-scoped names
@@ -214,7 +217,8 @@ is the thing to look at, not the absolute.**
 ## Plugins and the tomls (D31)
 
 **A plugin never edits a wrangler toml; `pnpm provision cloudflare <env>` does it for you, from the
-plugin's own `plugin.json`.** Four declarations, and the phase writes the first four rows into BOTH
+plugin's own `plugin.json`** (the one thing `pnpm plugin add` writes itself is the `publicSites`
+`run_worker_first` widening and `not_found_handling = "none"`, both kept and restored by `remove`, which marks a restored list lacking prefixes provisioned since `# rocketflare:reprovision` until `provision cloudflare` puts them back; `pnpm provision urls` writes its hosts' routes). Four declarations, and the phase writes the first four rows into BOTH
 tomls before it creates anything — the ordinary parity test compares binding names, `[vars]` keys,
 crons and `run_worker_first` across the two files on every `pnpm test`, so patching only one would
 leave the gate red until somebody remembered the other.
@@ -264,7 +268,7 @@ the check `tsc` cannot do — run it before pushing a new dependency.
 
 ## Local testing of the non-HTTP entry points
 
-`wrangler dev` (`pnpm web dev:api`, :3001) emulates KV, Queues, DO, R2 and Workflows locally and reads
+`wrangler dev` (`pnpm web dev:api`, :3001; always with `--infer-origin-from-routes=false`, or a toml with `routes` makes every local request look like its first route) emulates KV, Queues, DO, R2 and Workflows locally and reads
 the database from `.dev.vars` (`DATABASE_DRIVER=postgres` + `DATABASE_URL`, or `neon` +
 `NEON_LOCAL_PROXY` after `pnpm dev:db:up --neon`; a copy with a `[[hyperdrive]]` block also gets its
 `localConnectionString`). **Start and stop the stack through the scripts, never by

@@ -591,6 +591,7 @@ export const SUPPORTED_PLUGIN_BINDING_TYPES = Object.freeze([
   'r2',
   'workflow',
   'durable_object',
+  'images',
 ])
 
 /**
@@ -602,6 +603,13 @@ export const CREATED_PLUGIN_BINDING_TYPES = Object.freeze(['kv', 'queue', 'r2'])
 
 /** Types whose block names a CLASS exported from the Worker's entry module (the sixth barrel). */
 export const CLASS_PLUGIN_BINDING_TYPES = Object.freeze(['workflow', 'durable_object'])
+
+/**
+ * Types whose block is a binding name and nothing else: no account-scoped resource, no class, the
+ * same line in both tomls. `images` is here because the Images binding is a service the account
+ * already has. Its block is the single table `[images]`, not an array, so a Worker holds exactly one.
+ */
+export const BARE_PLUGIN_BINDING_TYPES = Object.freeze(['images'])
 
 /** Types carrying an account-scoped resource NAME, which must differ between the environments. */
 export const NAMED_PLUGIN_BINDING_TYPES = Object.freeze(['kv', 'queue', 'r2', 'workflow'])
@@ -617,7 +625,16 @@ export const DO_STORAGE_KINDS = Object.freeze(['sqlite', 'none'])
  * time with the whole installed set in view.
  */
 export function pluginPlatformProblems(manifest) {
+  return [...pluginBindingProblems(manifest), ...publicSitesProblems(manifest)]
+}
+
+function pluginBindingProblems(manifest) {
   const problems = []
+  if ((manifest.bindings ?? []).filter(b => b?.type === 'images').length > 1) {
+    problems.push(
+      'declares more than one images binding, and [images] is a single table in the toml'
+    )
+  }
   for (const b of manifest.bindings ?? []) {
     const who = b.binding ?? b.name ?? '?'
     if (!SUPPORTED_PLUGIN_BINDING_TYPES.includes(b.type)) {
@@ -652,8 +669,257 @@ export function pluginPlatformProblems(manifest) {
     if (NAMED_PLUGIN_BINDING_TYPES.includes(b.type) && !b.name) {
       problems.push(`binding ${who} declares no name (the account-scoped half of the resource)`)
     }
+    if (BARE_PLUGIN_BINDING_TYPES.includes(b.type) && b.name) {
+      problems.push(`binding ${who} declares name, which a ${b.type} binding does not have`)
+    }
   }
   return problems
+}
+
+/** The paths a manifest hands to the developer: `remove` and `upgrade` treat them as theirs. */
+export function pluginAppOwned(manifest) {
+  return Array.isArray(manifest?.appOwned)
+    ? manifest.appOwned.filter(p => typeof p === 'string')
+    : []
+}
+
+/** Is this host-relative file one of the developer's? */
+export const isAppOwnedPath = (file, owned) =>
+  owned.some(p => file === p || file.startsWith(`${p}/`))
+
+/** Everything wrong with a manifest's `appOwned`. Each entry is a path inside its `paths`. */
+export function appOwnedProblems(manifest) {
+  const declared = manifest.appOwned
+  if (declared === undefined) return []
+  if (!Array.isArray(declared) || declared.some(p => typeof p !== 'string')) {
+    return ['appOwned must be an array of paths']
+  }
+  const roots = surfaceDirectories({
+    paths: manifest.paths ?? pluginRoots(manifest.id).map(r => `${r}**`),
+  })
+  const anchor = manifest.anchor ?? `apps/web/src/plugins/${manifest.id}/plugin.json`
+  return declared.flatMap(p => {
+    if (p === '' || /[*?]|\/\/|\/$|^\/|(^|\/)\.\.?(\/|$)/.test(p)) {
+      return [`appOwned entry ${JSON.stringify(p)} must be a plain relative path, with no glob`]
+    }
+    if (!isAppOwnedPath(p, roots)) {
+      return [`appOwned entry ${JSON.stringify(p)} is outside the plugin's paths`]
+    }
+    return isAppOwnedPath(anchor, [p])
+      ? [`appOwned entry ${JSON.stringify(p)} covers the anchor ${anchor}`]
+      : []
+  })
+}
+
+/**
+ * Everything wrong with a manifest's `publicSites`. The hosts var has to be a declared, non-secret
+ * `vars[]` entry: that is what puts the key in both tomls, and provisioning reads each
+ * environment's hosts from that key.
+ */
+export function publicSitesProblems(manifest) {
+  const declared = manifest.publicSites
+  if (declared === undefined) return []
+  const hostsVar = declared?.hostsVar
+  if (typeof hostsVar !== 'string' || !/^[A-Z][A-Z0-9_]*$/.test(hostsVar)) {
+    return [`publicSites.hostsVar ${JSON.stringify(hostsVar)} must name a [vars] key (A_B_C)`]
+  }
+  const entry = (manifest.vars ?? []).find(v => (v?.key ?? v?.name ?? v) === hostsVar)
+  if (!entry) return [`publicSites.hostsVar ${hostsVar} is not declared in vars[]`]
+  if (entry.secret === true) return [`publicSites.hostsVar ${hostsVar} is marked secret`]
+  return []
+}
+
+/**
+ * `[images]` is one table, so a second plugin declaring it cannot be given its own binding, and
+ * renaming does not help. Refused at install rather than shared by name: sharing would leave the
+ * table's lifetime depending on which of two plugins is removed first.
+ */
+export function imagesBindingProblems(manifest, installedManifests = []) {
+  if (!(manifest.bindings ?? []).some(b => b?.type === 'images')) return []
+  return installedManifests
+    .filter(other => (other.bindings ?? []).some(b => b?.type === 'images'))
+    .map(
+      other =>
+        `declares an images binding and '${other.id}' already has one; [images] is a single ` +
+        'table in the toml, so only one installed plugin can declare it'
+    )
+}
+
+// ---------------------------------------------------------------- worker-first routing
+
+/**
+ * What `[assets] run_worker_first` holds while an installed plugin serves public sites: `/assets/*`
+ * is the admin bundle and `/site-assets/*` the bundle shipped to public sites.
+ */
+export const PUBLIC_SITES_WORKER_FIRST = Object.freeze(['/*', '!/assets/*', '!/site-assets/*'])
+
+/**
+ * `[assets] not_found_handling` while an installed plugin serves public sites. A miss under an
+ * excluded prefix never reaches the Worker, and `single-page-application` would answer it with the
+ * app's `index.html` on any host. An absent key is also `none`, wrangler's default.
+ */
+export const PUBLIC_SITES_NOT_FOUND_HANDLING = 'none'
+
+const NOT_FOUND_KEY = 'not_found_handling'
+const WORKER_FIRST_KEY = 'run_worker_first'
+const keptBegin = key => `# BEGIN original ${key} (\`pnpm plugin remove\` restores it)`
+const keptEnd = key => `# END original ${key}`
+
+/** Does this manifest serve public sites? Its presence is the whole switch. */
+export const declaresPublicSites = manifest => Boolean(manifest?.publicSites)
+
+/**
+ * The byte range of a top-level `key = [ … ]`, skipping strings and comments, or null. The regex
+ * patchers elsewhere stop at the first `]`; an array whose comments mention one needs this.
+ */
+export function tomlArrayExtent(text, key) {
+  const head = new RegExp(`^${key}\\s*=\\s*\\[`, 'm').exec(text)
+  if (!head) return null
+  let depth = 1
+  let i = head.index + head[0].length
+  while (i < text.length) {
+    const c = text[i]
+    if (c === '#') {
+      while (i < text.length && text[i] !== '\n') i++
+      continue
+    }
+    if (c === '"' || c === "'") {
+      i++
+      while (i < text.length && text[i] !== c) i += c === '"' && text[i] === '\\' ? 2 : 1
+    } else if (c === '[') depth++
+    else if (c === ']' && --depth === 0) return { start: head.index, end: i + 1 }
+    i++
+  }
+  return null
+}
+
+const workerFirstValues = text => {
+  const extent = tomlArrayExtent(text, 'run_worker_first')
+  if (!extent) return null
+  const body = text.slice(extent.start, extent.end).replace(/#[^\n]*/g, '')
+  return [...body.matchAll(/"([^"]*)"/g)].map(m => m[1])
+}
+
+/** Is `run_worker_first` already the public-sites value? */
+export function isWorkerFirstAll(text) {
+  const values = workerFirstValues(text)
+  return (
+    values !== null &&
+    values.length === PUBLIC_SITES_WORKER_FIRST.length &&
+    values.every((v, i) => v === PUBLIC_SITES_WORKER_FIRST[i])
+  )
+}
+
+/**
+ * The `run_worker_first` patterns `prefixes` need and `text` lacks: each prefix and everything
+ * beneath it. None under `/*`, which already sends every prefix to the Worker.
+ */
+export function missingWorkerFirstPatterns(text, prefixes) {
+  const values = workerFirstValues(text)
+  if (values === null || values.includes('/*')) return []
+  return workerFirstPatterns(prefixes).filter(p => !values.includes(p))
+}
+
+/** The `run_worker_first` patterns an API prefix needs: the prefix and everything beneath it. */
+export const workerFirstPatterns = prefixes => prefixes.flatMap(p => [p, `${p}/*`])
+
+/** The byte range of a top-level `key = value` line, or null. */
+function tomlLineExtent(text, key) {
+  const line = new RegExp(`^${key}\\s*=[^\\n]*`, 'm').exec(text)
+  return line ? { start: line.index, end: line.index + line[0].length } : null
+}
+
+/**
+ * Replace `extent` with `replacement`, keeping what was there verbatim in a marked comment. A value
+ * already kept stays kept: what is in the toml now is ours, and keeping it would lose the original.
+ */
+function replaceKeepingOriginal(text, extent, key, replacement) {
+  if (text.includes(`${keptBegin(key)}\n`)) {
+    return text.slice(0, extent.start) + replacement + text.slice(extent.end)
+  }
+  const kept = text
+    .slice(extent.start, extent.end)
+    .split('\n')
+    .map(l => (l === '' ? '#' : `# ${l}`))
+    .join('\n')
+  return `${text.slice(0, extent.start)}${keptBegin(key)}\n${kept}\n${keptEnd(key)}\n${replacement}${text.slice(extent.end)}`
+}
+
+/** Put a kept value back, byte for byte; a key with no marked comment is returned untouched. */
+function restoreOriginal(text, key, extent) {
+  const beginMarker = `${keptBegin(key)}\n`
+  const begin = text.indexOf(beginMarker)
+  const end = text.indexOf(`${keptEnd(key)}\n`, begin)
+  if (begin === -1 || end === -1 || !extent) return text
+  const original = text
+    .slice(begin + beginMarker.length, end - 1)
+    .split('\n')
+    .map(l => (l === '#' ? '' : l.slice(2)))
+    .join('\n')
+  return text.slice(0, begin) + original + text.slice(extent.end)
+}
+
+/**
+ * The toml half of serving public sites: every request but the two asset prefixes goes to the
+ * Worker, and a miss under those prefixes is a plain 404. Both previous values are kept verbatim in
+ * marked comments, because a copy's list carries its own prefixes and comments and no rule could
+ * rebuild those bytes on removal. Idempotent, and each key is handled alone, so a toml widened
+ * before one of them existed is brought up to date.
+ */
+export function applyWorkerFirstAll(text) {
+  let out = text
+  if (!isWorkerFirstAll(out)) {
+    const extent = tomlArrayExtent(out, WORKER_FIRST_KEY)
+    if (!extent) {
+      throw new Error(
+        'no `run_worker_first = [...]` array found under [assets], so public-site routing cannot be written'
+      )
+    }
+    const wide = `${WORKER_FIRST_KEY} = [${PUBLIC_SITES_WORKER_FIRST.map(p => `"${p}"`).join(', ')}]`
+    out = replaceKeepingOriginal(out, extent, WORKER_FIRST_KEY, wide)
+  }
+  const line = tomlLineExtent(out, NOT_FOUND_KEY)
+  const none = `${NOT_FOUND_KEY} = "${PUBLIC_SITES_NOT_FOUND_HANDLING}"`
+  if (line && out.slice(line.start, line.end).trim() !== none) {
+    out = replaceKeepingOriginal(out, line, NOT_FOUND_KEY, none)
+  }
+  return out
+}
+
+/** The exact inverse of `applyWorkerFirstAll`; a toml it did not mark is returned untouched. */
+export function revertWorkerFirstAll(text) {
+  const routing = restoreOriginal(text, WORKER_FIRST_KEY, tomlArrayExtent(text, WORKER_FIRST_KEY))
+  return restoreOriginal(routing, NOT_FOUND_KEY, tomlLineExtent(routing, NOT_FOUND_KEY))
+}
+
+const REPROVISION_TAG = '# rocketflare:reprovision'
+const REPROVISION_LINE = new RegExp(`^${REPROVISION_TAG}\\b[^\\n]*\\n`, 'm')
+
+/** Mark a restored `run_worker_first` as missing prefixes that provisioning puts back. */
+export function markReprovision(text) {
+  const head = new RegExp(`^${WORKER_FIRST_KEY}\\s*=`, 'm').exec(text)
+  if (!head || awaitsReprovision(text)) return text
+  const line = `${REPROVISION_TAG} — this list was restored without the API prefixes provisioned since: run \`pnpm provision cloudflare <env>\``
+  return `${text.slice(0, head.index)}${line}\n${text.slice(head.index)}`
+}
+
+/** Has a restore left this toml waiting for `provision cloudflare`? */
+export const awaitsReprovision = text => REPROVISION_LINE.test(text)
+
+/** The mark gone once nothing `prefixes` need is missing; otherwise `text` unchanged. */
+export const settleReprovision = (text, prefixes) =>
+  missingWorkerFirstPatterns(text, prefixes).length === 0
+    ? text.replace(REPROVISION_LINE, '')
+    : text
+
+/**
+ * `revertWorkerFirstAll`, marked for `provision cloudflare` when the restored list lacks patterns
+ * `prefixes` need — it predates every prefix provisioned while `/*` was in force.
+ */
+export function restoreWorkerFirst(text, prefixes) {
+  const restored = revertWorkerFirstAll(text)
+  const lost = missingWorkerFirstPatterns(restored, prefixes)
+  return { text: lost.length > 0 ? markReprovision(restored) : restored, lost }
 }
 
 /**
@@ -1029,6 +1295,15 @@ export function renderAddPlan(plan) {
     }
   }
 
+  if (declaresPublicSites(m)) {
+    lines.push(
+      '',
+      'Worker-first routing (applied for you in both tomls; `plugin remove` restores it)',
+      `  run_worker_first = ${JSON.stringify(PUBLIC_SITES_WORKER_FIRST)}`,
+      `  not_found_handling = "${PUBLIC_SITES_NOT_FOUND_HANDLING}"`
+    )
+  }
+
   const clashes = plan.clashes ?? []
   if (clashes.length > 0) {
     lines.push('', 'Dependency clashes (nothing is overwritten until you say so)')
@@ -1075,6 +1350,17 @@ const mkStep = (kind, id, title, command, expected, assertion) => ({
 })
 
 const GATE = 'pnpm gate'
+
+/** Provisioning again, for the `run_worker_first` patterns a restored list lost. */
+export const reprovisionStep = lost =>
+  mkStep(
+    'agent',
+    'reprovision',
+    `Put ${lost.join(', ')} back into run_worker_first`,
+    'pnpm provision cloudflare staging && pnpm provision cloudflare production',
+    `run_worker_first in both tomls carries ${lost.join(', ')}`,
+    'pnpm plugin check'
+  )
 
 /** The platform declarations one `pnpm provision cloudflare <env>` run will write, as phrases. */
 function platformSummary(m) {
@@ -1154,6 +1440,19 @@ export function planSteps(m, { fragments = [], clashes = [] } = {}) {
       )
     )
   }
+  if (declaresPublicSites(m)) {
+    const hostsVar = m.publicSites.hostsVar
+    steps.push(
+      mkStep(
+        'agent',
+        'site-routes',
+        `Give every host in ${hostsVar} a route, per environment`,
+        'pnpm provision urls',
+        `the app host and every ${hostsVar} host in that toml's routes; each host's zone in this account`,
+        'pnpm --filter @rocketflare/web test:config   # fails on a host with no route'
+      )
+    )
+  }
   for (const v of (m.vars ?? []).filter(v => v.secret)) {
     const key = varKey(v)
     // The KEY and the VALUE are two different kinds, and splitting them is the point: declaring
@@ -1189,7 +1488,7 @@ export function planSteps(m, { fragments = [], clashes = [] } = {}) {
  * migration that takes a Durable Object namespace and everything stored in it, and live Cloudflare
  * resources that may still hold somebody's data.
  */
-export function removeSteps(m, { archive = false, migrationTag = null } = {}) {
+export function removeSteps(m, { archive = false, migrationTag = null, lostPatterns = [] } = {}) {
   const steps = []
   const tables = m.schema?.tables ?? []
   if (tables.length > 0 && archive) {
@@ -1247,6 +1546,18 @@ export function removeSteps(m, { archive = false, migrationTag = null } = {}) {
       )
     )
   }
+  if (declaresPublicSites(m)) {
+    steps.push(
+      mkStep(
+        'human',
+        'site-routes',
+        `Remove the routes of the hosts in ${m.publicSites.hostsVar}`,
+        'delete those entries from `routes` in both tomls, then deploy',
+        'the app host is the only route left',
+        'a host still routed here answers with the app; whether it goes elsewhere is a decision'
+      )
+    )
+  }
   const deps = Object.entries(m.dependencies ?? {}).filter(
     ([, d]) => Object.keys(d ?? {}).length > 0
   )
@@ -1262,6 +1573,7 @@ export function removeSteps(m, { archive = false, migrationTag = null } = {}) {
       )
     )
   }
+  if (lostPatterns.length > 0) steps.push(reprovisionStep(lostPatterns))
   steps.push(
     mkStep('agent', 'gate', 'Run the gate', GATE, 'every step passes', 'the exit code is 0')
   )
@@ -1325,6 +1637,7 @@ export function addPlanJson(plan) {
       file,
       lines: edits.flatMap(e => e.lines),
     })),
+    workerFirstAll: declaresPublicSites(m),
     steps: planSteps(m, { fragments, clashes: plan.clashes ?? [] }),
     verify: plan.verify ?? null,
   }
@@ -1616,9 +1929,25 @@ export function pluginManifestProblems(manifest) {
         )
       }
     }
-    for (const problem of pluginPlatformProblems(m)) {
+    for (const problem of pluginBindingProblems(m)) {
       bad('bindings', problem, `supported types are ${SUPPORTED_PLUGIN_BINDING_TYPES.join(', ')}`)
     }
+  }
+
+  for (const problem of appOwnedProblems(m)) {
+    bad(
+      'appOwned',
+      problem,
+      'list paths inside "paths", e.g. "apps/web/src/plugins/<id>/app", and never the anchor'
+    )
+  }
+
+  for (const problem of publicSitesProblems(m)) {
+    bad(
+      'publicSites',
+      problem,
+      'set "publicSites" to { "hostsVar": "<KEY>" } and declare <KEY> in "vars"'
+    )
   }
 
   if (m.crons !== undefined && !Array.isArray(m.crons)) {

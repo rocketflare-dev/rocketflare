@@ -18,14 +18,27 @@ import fs from 'node:fs'
 import path from 'node:path'
 import TOML from '@iarna/toml'
 import { describe, expect, it } from 'vitest'
-import { WORKER_FIRST_PATTERNS } from '@/api/utils/routes/api-prefixes'
+import {
+  API_PREFIXES,
+  PUBLIC_SITES_WORKER_FIRST,
+  WORKER_FIRST_PATTERNS,
+  workerFirstPatterns,
+} from '@/api/utils/routes/api-prefixes'
 import { pluginSurfaces, readManifest } from '../../../../scripts/lib/manifest.mjs'
+import {
+  imagesBindingProblems,
+  publicSitesProblems,
+  PUBLIC_SITES_WORKER_FIRST as WRITTEN_WORKER_FIRST,
+} from '../../../../scripts/lib/plugin-lib.mjs'
 import { patchToml } from '../../scripts/provision/patch-toml'
 import {
   pluginBindingBlocks,
   pluginMigrationBlocks,
   pluginParityIssues,
+  pluginResourceList,
+  pluginTomlVars,
   readPluginResources,
+  siteHostsFromToml,
   validatePluginManifest,
 } from '../../scripts/provision/plugin-resources'
 
@@ -147,6 +160,10 @@ describe('wrangler parity: must match', () => {
     expect(get(staging, 'ai.binding')).toEqual(get(prod, 'ai.binding'))
   })
 
+  it('[images] binding (when present) is identical', () => {
+    expect(get(staging, 'images.binding')).toEqual(get(prod, 'images.binding'))
+  })
+
   it('[[migrations]] (Durable Object class migrations) are identical', () => {
     expect(staging.migrations).toEqual(prod.migrations)
   })
@@ -176,7 +193,10 @@ describe('wrangler parity: must match', () => {
       ['production', prod],
       ['staging', staging],
     ] as const) {
-      expect(get(config, 'assets.not_found_handling'), label).toBe('single-page-application')
+      // The other state is written, and restored, with `run_worker_first`.
+      expect(get(config, 'assets.not_found_handling'), label).toBe(
+        installed.some(p => p.publicSites) ? 'none' : 'single-page-application'
+      )
       // Equality, not a subset — but over the prefixes the KIT owns. WORKER_FIRST_PATTERNS is
       // built from the server barrel, so an installed plugin inflates it while the toml stays bare
       // until `provision cloudflare` writes them. Subtracting the plugin's
@@ -353,24 +373,35 @@ describe('wrangler parity: plugin resources', () => {
       vars: fixture.vars.filter(v => !v.secret).map(v => ({ key: v.key, value: v.example ?? '' })),
     })
 
+  // The fixture declares no public sites, but the app's real tomls are widened if an installed
+  // plugin does, so the setting that follows from that is put back before they are judged.
+  const asFixtureSees = (text: string) => {
+    const doc = TOML.parse(text) as Toml
+    return {
+      ...doc,
+      assets: { ...(doc.assets as Toml), not_found_handling: 'single-page-application' },
+    }
+  }
+
   const docs = (prodKv: string, stagingKv: string) => ({
-    production: TOML.parse(provisionedText(prodRaw, 'production', prodKv)),
-    staging: TOML.parse(provisionedText(stagingRaw, 'staging', stagingKv)),
+    production: asFixtureSees(provisionedText(prodRaw, 'production', prodKv)),
+    staging: asFixtureSees(provisionedText(stagingRaw, 'staging', stagingKv)),
   })
 
   // Empty documents, deliberately, rather than the repo’s tomls: these assertions are about what
   // the rule REPORTS, and they must not change meaning in a copy that has real plugins installed.
   const emptyDocs = { production: {}, staging: {} }
 
-  it('unpatched tomls fail every rule `plugin add` is answerable for, in both environments', () => {
-    // 5 bindings + 1 non-secret var + the Durable Object's migration tag, each in both files. The
-    // cron and the two run_worker_first patterns are deliberately NOT here: `plugin add` never
-    // writes a toml, so a plugin installed and not yet provisioned is a
-    // documented state the ordinary gate must pass. The migration tag IS here, with the blocks,
-    // because the same `provision cloudflare` call writes both and `wrangler deploy` refuses the
-    // whole script for a DO class with no migration creating it.
-    const issues = pluginParityIssues(app, [fixture], emptyDocs)
-    expect(issues).toHaveLength(14)
+  it('unpatched tomls pass the ordinary gate: installed and not yet provisioned is a valid state', () => {
+    expect(pluginParityIssues(app, [fixture], emptyDocs)).toEqual([])
+  })
+
+  it('under REQUIRE_PROVISIONED every declaration is demanded, in both environments', () => {
+    // 5 bindings + 1 non-secret var + the migration tag + 1 cron + 2 run_worker_first patterns, in
+    // both files. (The consumer check is not among them: a missing producer stops at one message
+    // per binding rather than piling a second on top of it.)
+    const issues = pluginParityIssues(app, [fixture], emptyDocs, { requireProvisioned: true })
+    expect(issues).toHaveLength(20)
     for (const env of ['production', 'staging'])
       for (const fragment of [
         '[[kv_namespaces]] has no binding "PARITY_FIXTURE_CACHE"',
@@ -380,27 +411,13 @@ describe('wrangler parity: plugin resources', () => {
         '[[durable_objects.bindings]] has no binding "PARITY_FIXTURE_HUB"',
         '[[migrations]] has no tag "plugin-parity-fixture-v1"',
         '[vars] is missing "PARITY_FIXTURE_MAX_ITEMS"',
-      ])
-        expect(issues).toContainEqual(expect.stringContaining(`${env}: ${fragment}`))
-    expect(issues.join('\n')).not.toContain('[triggers] crons')
-    expect(issues.join('\n')).not.toContain('run_worker_first')
-    // The secret var is NOT a [vars] key — it is a Worker secret (`provision secrets <env>`).
-    expect(issues.join('\n')).not.toContain('PARITY_FIXTURE_SECRET')
-  })
-
-  it('under REQUIRE_PROVISIONED the crons and prefixes are demanded too', () => {
-    // The deploy-time half: the 14 above, plus 1 cron and 2 run_worker_first patterns in both files.
-    // (The consumer check is not among them: a missing producer stops at one message per binding
-    // rather than piling a second on top of it.)
-    const issues = pluginParityIssues(app, [fixture], emptyDocs, { requireProvisioned: true })
-    expect(issues).toHaveLength(20)
-    for (const env of ['production', 'staging'])
-      for (const fragment of [
         '[triggers] crons is missing "7 3 * * *"',
         '[assets] run_worker_first is missing "/parity-fixture-hook"',
         '[assets] run_worker_first is missing "/parity-fixture-hook/*"',
       ])
         expect(issues).toContainEqual(expect.stringContaining(`${env}: ${fragment}`))
+    // The secret var is NOT a [vars] key — it is a Worker secret (`provision secrets <env>`).
+    expect(issues.join('\n')).not.toContain('PARITY_FIXTURE_SECRET')
   })
 
   it('patched tomls satisfy every rule, in both environments', () => {
@@ -479,6 +496,244 @@ describe('wrangler parity: plugin resources', () => {
     // agree about which prefixes the plugin owns.
     for (const plugin of installed)
       for (const prefix of plugin.apiPrefixes)
-        expect(WORKER_FIRST_PATTERNS, `${plugin.id} declares ${prefix}`).toContain(prefix)
+        expect(API_PREFIXES, `${plugin.id} declares ${prefix}`).toContain(prefix)
+  })
+})
+
+// ---- public sites -----------------------------------------------------------------------
+
+describe('wrangler parity: public sites', () => {
+  const app = 'parity'
+  const sites = validatePluginManifest(
+    {
+      id: 'parity-sites',
+      publicSites: { hostsVar: 'PARITY_HOSTS' },
+      vars: [{ key: 'PARITY_HOSTS', example: 'www.example.test=www' }],
+    },
+    'apps/web/src/plugins/parity-sites/plugin.json'
+  )
+  const wide = {
+    run_worker_first: ['/*', '!/assets/*', '!/site-assets/*'],
+    not_found_handling: 'none',
+  }
+  const narrow = { run_worker_first: ['/api', '/api/*'] }
+  const doc = (assets: Row, hosts: string, routes: string[] = []) => ({
+    assets,
+    vars: { PARITY_HOSTS: hosts },
+    routes: routes.map(pattern => ({ pattern, custom_domain: true })),
+  })
+
+  it('the worker-first value the Worker expects is the one the plugin tooling writes', () => {
+    expect([...PUBLIC_SITES_WORKER_FIRST]).toEqual([...WRITTEN_WORKER_FIRST])
+  })
+
+  it('no plugin with public sites: the list is the prefixes, as it always was', () => {
+    expect(workerFirstPatterns(['/api', '/auth'], false)).toEqual([
+      '/api',
+      '/api/*',
+      '/auth',
+      '/auth/*',
+    ])
+    expect(pluginParityIssues(app, [], { production: narrow, staging: narrow })).toEqual([])
+  })
+
+  it('a plugin with public sites: every request but /assets/* reaches the Worker', () => {
+    expect(workerFirstPatterns(['/api'], true)).toEqual(['/*', '!/assets/*', '!/site-assets/*'])
+    expect(
+      pluginParityIssues(app, [sites], {
+        production: doc(wide, ''),
+        staging: doc(wide, ''),
+      })
+    ).toEqual([])
+  })
+
+  it('this checkout: the tomls hold the value its installed plugins call for', () => {
+    const expected = installed.some(p => p.publicSites)
+      ? ['/*', '!/assets/*', '!/site-assets/*']
+      : WORKER_FIRST_PATTERNS.filter(pattern => !PLUGIN_WORKER_FIRST.has(pattern))
+    for (const config of [prod, staging]) {
+      const workerFirst = (get(config, 'assets.run_worker_first') ?? []) as string[]
+      expect(workerFirst.filter(pattern => !PLUGIN_WORKER_FIRST.has(pattern))).toEqual(expected)
+    }
+  })
+
+  it('a toml still on a prefix list fails, whether or not it is provisioned', () => {
+    const issues = pluginParityIssues(app, [sites], {
+      production: doc(narrow, ''),
+      staging: doc(wide, ''),
+    })
+    expect(issues).toHaveLength(1)
+    expect(issues[0]).toMatch(/^production: \[assets\] run_worker_first must be/)
+  })
+
+  it('a site toml left on the SPA fallback fails, because a missing asset would get the shell', () => {
+    const issues = pluginParityIssues(app, [sites], {
+      production: doc({ ...wide, not_found_handling: 'single-page-application' }, ''),
+      staging: doc(wide, ''),
+    })
+    expect(issues).toHaveLength(1)
+    expect(issues[0]).toMatch(/^production: \[assets\] not_found_handling must be "none"/)
+  })
+
+  it('no plugin with public sites: a toml still on none fails, and an absent key is the default', () => {
+    const issues = pluginParityIssues(app, [], {
+      production: { assets: { ...narrow, not_found_handling: 'none' } },
+      staging: { assets: { ...narrow, not_found_handling: 'single-page-application' } },
+    })
+    expect(issues).toHaveLength(1)
+    expect(issues[0]).toMatch(/^production: \[assets\] not_found_handling is "none"/)
+    expect(pluginParityIssues(app, [], { production: narrow, staging: narrow })).toEqual([])
+  })
+
+  it('a host in the hosts var with no route in that same toml fails the gate', () => {
+    const hosts = 'www.example.test=www,docs.example.test=docs'
+    const issues = pluginParityIssues(app, [sites], {
+      production: doc(wide, hosts, ['www.example.test']),
+      staging: doc(wide, 'www.staging.example.test', ['www.example.test']),
+    })
+    expect(issues).toEqual([
+      expect.stringContaining('production: "docs.example.test" in PARITY_HOSTS has no route'),
+      expect.stringContaining('staging: "www.staging.example.test" in PARITY_HOSTS has no route'),
+    ])
+  })
+
+  it('a host routed in its own toml passes, custom domain or zone pattern', () => {
+    const hosts = 'www.example.test=www,DOCS.example.test'
+    expect(
+      pluginParityIssues(app, [sites], {
+        production: doc(wide, hosts, ['www.example.test', 'docs.example.test/*']),
+        staging: doc(wide, '', []),
+      })
+    ).toEqual([])
+  })
+
+  it('an entry that is not a host is reported, not routed', () => {
+    const issues = pluginParityIssues(app, [sites], {
+      production: doc(wide, 'https://www.example.test', []),
+      staging: doc(wide, '', []),
+    })
+    expect(issues).toEqual([
+      expect.stringContaining('production: PARITY_HOSTS holds "https://www.example.test"'),
+    ])
+    expect(() => siteHostsFromToml([sites], 'PARITY_HOSTS = "*.example.test"\n')).toThrow(
+      /invalid host/
+    )
+  })
+
+  it('reads each environment from its own toml', () => {
+    expect(
+      siteHostsFromToml([sites], 'PARITY_HOSTS = "www.example.test=www, docs.example.test"\n')
+    ).toEqual(['www.example.test', 'docs.example.test'])
+    expect(siteHostsFromToml([sites], 'OTHER = "x"\n')).toEqual([])
+  })
+
+  it('a hosts var not yet in the tomls passes the gate and is demanded at deploy', () => {
+    const bare = { production: { assets: wide }, staging: { assets: wide } }
+    expect(pluginParityIssues(app, [sites], bare)).toEqual([])
+    expect(pluginParityIssues(app, [sites], bare, { requireProvisioned: true })).toEqual([
+      'production: [vars] is missing "PARITY_HOSTS" (plugin parity-sites)',
+      'staging: [vars] is missing "PARITY_HOSTS" (plugin parity-sites)',
+    ])
+  })
+
+  it('a hosts var is provisioned blank, so an example host never becomes a route', () => {
+    expect(pluginTomlVars([sites])).toEqual([{ key: 'PARITY_HOSTS', value: '' }])
+  })
+
+  it('refuses a hosts var that is undeclared, secret or badly named', () => {
+    expect(publicSitesProblems({ publicSites: { hostsVar: 'NOPE' }, vars: [] })).toEqual([
+      expect.stringContaining('not declared in vars[]'),
+    ])
+    expect(
+      publicSitesProblems({
+        publicSites: { hostsVar: 'S' },
+        vars: [{ key: 'S', secret: true }],
+      })
+    ).toEqual([expect.stringContaining('marked secret')])
+    expect(publicSitesProblems({ publicSites: { hostsVar: 'lower' } })).toEqual([
+      expect.stringContaining('must name a [vars] key'),
+    ])
+    expect(publicSitesProblems({})).toEqual([])
+  })
+})
+
+// ---- the images binding ------------------------------------------------------------------
+
+describe('wrangler parity: images binding', () => {
+  const app = 'parity'
+  const plugin = (id: string, binding: string) =>
+    validatePluginManifest(
+      { id, bindings: [{ type: 'images', binding }] },
+      `apps/web/src/plugins/${id}/plugin.json`
+    )
+  const a = plugin('imgs-a', 'IMAGES')
+  const text = patchToml('name = "x"\n', { bindings: pluginBindingBlocks(app, [a], 'production') })
+
+  it('is written as the single [images] table, identically in both files', () => {
+    const parsed = TOML.parse(text)
+    expect(parsed.images).toEqual({ binding: 'IMAGES' })
+    expect(pluginBindingBlocks(app, [a], 'staging')).toEqual(
+      pluginBindingBlocks(app, [a], 'production')
+    )
+  })
+
+  it('needs creating by nobody: cf-provision.sh is never handed one', () => {
+    expect(pluginResourceList(app, [a], 'production')).toEqual([])
+  })
+
+  it('a missing table waits for deploy, then is reported per environment', () => {
+    const empty = { production: {}, staging: {} }
+    expect(pluginParityIssues(app, [a], empty)).toEqual([])
+    expect(pluginParityIssues(app, [a], empty, { requireProvisioned: true })).toEqual([
+      'production: [images] has no binding "IMAGES" (plugin imgs-a)',
+      'staging: [images] has no binding "IMAGES" (plugin imgs-a)',
+    ])
+    const parsed = TOML.parse(text)
+    expect(
+      pluginParityIssues(
+        app,
+        [a],
+        { production: parsed, staging: parsed },
+        { requireProvisioned: true }
+      )
+    ).toEqual([])
+  })
+
+  it('takes no account-scoped name', () => {
+    expect(() =>
+      validatePluginManifest(
+        { id: 'x', bindings: [{ type: 'images', binding: 'I', name: 'n' }] },
+        'a'
+      )
+    ).toThrow(/has no account-scoped name/)
+  })
+
+  it('refuses two plugins, under any names: the table is single', () => {
+    expect(() => pluginResourceList(app, [a, plugin('imgs-b', 'OTHER')], 'production')).toThrow(
+      /both declare an images binding/
+    )
+    expect(
+      imagesBindingProblems({ bindings: [{ type: 'images' }] }, [
+        { id: 'imgs-a', bindings: [{ type: 'images' }] },
+      ])
+    ).toEqual([expect.stringContaining("'imgs-a' already has one")])
+    expect(
+      imagesBindingProblems({ bindings: [] }, [{ id: 'a', bindings: [{ type: 'images' }] }])
+    ).toEqual([])
+  })
+
+  it('refuses two images bindings in one manifest', () => {
+    expect(() =>
+      validatePluginManifest(
+        {
+          id: 'x',
+          bindings: [
+            { type: 'images', binding: 'A' },
+            { type: 'images', binding: 'B' },
+          ],
+        },
+        'a'
+      )
+    ).toThrow(/more than one images binding/)
   })
 })

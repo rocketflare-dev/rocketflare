@@ -19,8 +19,10 @@
  *   - **never copy a migration.** A snapshot describes a whole cumulative schema, so importing a
  *     foreign one teaches drizzle a current state that has never heard of the host's own tables.
  *     The host generates its own with `pnpm db:generate` once the schema barrel line exists.
- *   - **never write a resource id or edit a wrangler toml.** A binding a plugin declares is
- *     REPORTED; `pnpm provision cloudflare <env>` is what creates it.
+ *   - **never write a resource id, or edit a wrangler toml beyond worker-first routing.** A binding
+ *     a plugin declares is REPORTED; `pnpm provision cloudflare <env>` is what creates it. The one
+ *     toml edit is `run_worker_first` for a plugin declaring `publicSites`, which the parity test
+ *     demands before anything has been provisioned.
  *   - **never apply without being asked.** Every command prints its plan and stops; `--apply` is a
  *     second, deliberate run, which is the whole of decision 1's "installing a plugin is as
  *     trusting as merging a pull request".
@@ -32,9 +34,11 @@
 import { spawnSync } from 'node:child_process'
 import {
   existsSync,
+  lstatSync,
   mkdirSync,
   readdirSync,
   readFileSync,
+  readlinkSync,
   rmSync,
   statSync,
   writeFileSync,
@@ -57,7 +61,9 @@ import {
   addedByPlugins,
   addPlanJson,
   applyCoreEdits,
+  applyWorkerFirstAll,
   archiveSql,
+  awaitsReprovision,
   BARREL_KINDS,
   BARRELS,
   barrelLines,
@@ -66,17 +72,21 @@ import {
   classifyPluginFile,
   coreEditsByFile,
   declaresProperty,
+  declaresPublicSites,
   dependenciesToInstall,
   dependencyClashes,
   dependencyDelta,
   describeClash,
   floorOf,
   hasBarrelLine,
+  imagesBindingProblems,
+  isAppOwnedPath,
   isolationEvidence,
   isVendored,
   jsonKeyLine,
   manifestPathProblems,
   missingDependencies,
+  missingWorkerFirstPatterns,
   newlyAddedDependencies,
   nextAddedDependencies,
   nextPluginMigrationTag,
@@ -84,6 +94,7 @@ import {
   parsePluginRequirement,
   pinDeclaredRanges,
   pluginAnchor,
+  pluginAppOwned,
   pluginIdProblem,
   pluginManifestProblems,
   pluginPlatformProblems,
@@ -96,9 +107,12 @@ import {
   renderDiagnostic,
   renderList,
   renderSteps,
+  reprovisionStep,
   resolveSubdir,
+  restoreWorkerFirst,
   revertCoreEdits,
   SKILLS_ROOT,
+  settleReprovision,
   skillDirProblem,
   skillFileProblems,
   skillTarget,
@@ -178,6 +192,8 @@ export const USAGE = `usage: node scripts/plugin.mjs <command> [options]
   remove <id>             uninstall: delete its directories, its barrel lines and its surface
     --apply / --allow-dirty
     --archive             first write a --custom migration copying its tables into schema 'archive'
+    --force-app-owned     with --apply, also delete files under the plugin's appOwned paths that
+                          you changed or added; without it such a removal stops
 
   list                    the installed plugins, one line each
   check                   audit every installed plugin; one line per failure, exit 1 on any.
@@ -206,6 +222,7 @@ export function parseArgs(argv) {
     apply: false,
     local: false,
     archive: false,
+    forceAppOwned: false,
     fetch: true,
     allowDirty: false,
     json: false,
@@ -223,6 +240,7 @@ export function parseArgs(argv) {
     if (a === '--apply') args.apply = true
     else if (a === '--local') args.local = true
     else if (a === '--archive') args.archive = true
+    else if (a === '--force-app-owned') args.forceAppOwned = true
     else if (a === '--no-fetch') args.fetch = false
     else if (a === '--allow-dirty') args.allowDirty = true
     else if (a === '--json') args.json = true
@@ -288,6 +306,49 @@ function loadHost() {
     sidecarIds: (sidecar?.surfaces ?? []).map(s => s.id),
     presentSurfaces: manifest.surfaces.filter(s => existsSync(abs(s.anchor))).map(s => s.id),
   }
+}
+
+/** The parsed manifest of every installed plugin but `exceptId`; an unreadable one is skipped. */
+function installedManifests(host, exceptId) {
+  return host.plugins.flatMap(p => {
+    if (p.id === exceptId || !existsSync(abs(p.anchor))) return []
+    try {
+      return [JSON.parse(readFileSync(abs(p.anchor), 'utf8'))]
+    } catch {
+      return []
+    }
+  })
+}
+
+const wranglerTomls = () =>
+  ['apps/web/wrangler.toml', 'apps/web/wrangler.staging.toml'].filter(f => existsSync(abs(f)))
+
+/** Both tomls through `transform`, in memory: a throw leaves every toml as it was. */
+const transformWranglerTomls = transform =>
+  wranglerTomls().map(f => [f, transform(readFileSync(abs(f), 'utf8'))])
+
+/** `transformWranglerTomls`, or stop with nothing written. */
+function transformWranglerTomlsOrStop(transform) {
+  try {
+    return transformWranglerTomls(transform)
+  } catch (error) {
+    stop(1, `error: ${error.message} Nothing has been written.`)
+  }
+}
+
+/** Both tomls with public-site routing restored, and the patterns `prefixes` need that they lost. */
+function restoreWranglerTomls(prefixes) {
+  const lost = new Set()
+  const routed = transformWranglerTomls(text => {
+    const restored = restoreWorkerFirst(text, prefixes)
+    for (const pattern of restored.lost) lost.add(pattern)
+    return restored.text
+  })
+  return { routed, lost: [...lost] }
+}
+
+function writeWranglerTomls(routed) {
+  for (const [file, text] of routed) writeFileSync(abs(file), text)
 }
 
 /** A host workspace package's `package.json`, or null. Never throws: a caller is reporting. */
@@ -681,6 +742,7 @@ function cmdAdd(args, host) {
   // in `.rocketflare.json`, so no kit upgrade ever reconciles it. It WARNS rather than refusing (a
   // clash is often the intended change) and is surfaced as a HUMAN step, which is where the
   // taxonomy makes a decision unmissable.
+  problems.push(...imagesBindingProblems(m, installedManifests(host)))
   const clashes = dependencyClashes(m, {
     packageJsons: packageJsonsFor(m),
     installed: installedDependencyDeclarations(host),
@@ -722,6 +784,8 @@ function cmdAdd(args, host) {
   }
 
   // --- apply
+  // Computed before the first copy: a toml with no array to rewrite must stop an install whole.
+  const routed = declaresPublicSites(m) ? transformWranglerTomlsOrStop(applyWorkerFirstAll) : []
   let written = 0
   const targets = []
   for (const f of files) {
@@ -748,6 +812,7 @@ function cmdAdd(args, host) {
   for (const [file, edits] of coreEdits) {
     writeFileSync(abs(file), applyCoreEdits(readFileSync(abs(file), 'utf8'), edits))
   }
+  writeWranglerTomls(routed)
   // Said again at the moment it happens, not only in the plan: `pnpm add` is about to overwrite
   // the range, and stderr is what a log keeps.
   for (const c of clashes) warn(`warning: ${describeClash(c)}`)
@@ -775,6 +840,9 @@ function cmdAdd(args, host) {
     `✔ ${barrels.length} barrel line(s) written`,
     ...(coreEdits.size > 0
       ? [`✔ core edit(s) applied to ${[...coreEdits.keys()].join(', ')}`]
+      : []),
+    ...(routed.length > 0
+      ? ['✔ run_worker_first and not_found_handling set in both tomls for public sites']
       : []),
     ...(formatted ? [`✔ ${formatted}`] : []),
     `✔ surface '${m.id}' recorded in ${path.relative(REPO_ROOT, recordedIn)}`,
@@ -991,6 +1059,22 @@ function cmdUpgrade(args, host) {
       stop(1, `error: ${pluginManifestPath} at ${to} is not valid JSON — a bug in the plugin.`)
     }
   }
+  const others = installedManifests(host, id)
+  // Checked as `plugin check` checks the installed one, before a byte of the release is written.
+  const targetProblems = targetManifest
+    ? [
+        ...pluginManifestProblems(targetManifest).map(p => `${p.field}: ${p.problem}`),
+        ...imagesBindingProblems(targetManifest, others),
+      ]
+    : []
+  if (targetProblems.length > 0) {
+    stop(
+      1,
+      `error: ${pluginManifestPath} at ${to} cannot be installed — a bug in the plugin:`,
+      ...targetProblems.map(p => `  ${p}`),
+      'Nothing has been written.'
+    )
+  }
   const installedManifest = existsSync(abs(surface.anchor))
     ? JSON.parse(readFileSync(abs(surface.anchor), 'utf8'))
     : {}
@@ -1000,6 +1084,11 @@ function cmdUpgrade(args, host) {
   // below rather than refused as a stranger or left to rot.
   const targetSkills = pluginSkillDirs(targetManifest ?? installedManifest)
   const droppedSkills = pluginSkillDirs(installedManifest).filter(d => !targetSkills.includes(d))
+  // Both sides: a release that adds the field is already protected, and one that drops it has not
+  // made the developer's files the plugin's again.
+  const appOwned = [
+    ...new Set([...pluginAppOwned(installedManifest), ...pluginAppOwned(targetManifest)]),
+  ]
   const changes = collectChanges(m, from, to, { relative })
   const files = changes.map(c => ({
     ...c,
@@ -1036,7 +1125,12 @@ function cmdUpgrade(args, host) {
   const added = []
   const warnings = []
   const skillDeletes = []
+  const appOwnedLeft = []
   for (const f of files) {
+    if (f.target && isAppOwnedPath(f.target, appOwned)) {
+      appOwnedLeft.push(f.target)
+      continue
+    }
     // **A skill is REPLACED, never patched.** It is instructions for an agent that the plugin
     // owns outright — nobody is meant to edit it in place — so the release's bytes are the answer,
     // and a file the release deleted is deleted rather than "left in place" like code.
@@ -1147,6 +1241,7 @@ function cmdUpgrade(args, host) {
     to: { ref: to, commit: m.commitOf(to), version: toVersion },
     files,
     notes: noteFacts,
+    appOwnedLeft,
     warnings,
     dependencies: deps.changes,
     dependencyClashes: deps.clashes,
@@ -1173,6 +1268,13 @@ function cmdUpgrade(args, host) {
           say(`    ${key}: ${Array.isArray(v) ? v.join('; ') : v}`)
       }
     }
+  }
+  if (appOwnedLeft.length > 0) {
+    say(
+      '',
+      'Left alone (appOwned paths are yours; the release changed these upstream):',
+      ...appOwnedLeft.map(f => `  ${f}`)
+    )
   }
   say('', ...renderDependencyDelta(deps))
   // Two sources for one question: a release may raise its floor in a NOTE, or simply by changing
@@ -1219,6 +1321,21 @@ function cmdUpgrade(args, host) {
   if (!args.apply) {
     say('', 'Nothing written to your tree. Re-run with --apply.')
     return 0
+  }
+
+  // A release can start or stop serving public sites, and the tomls have to follow it. Computed
+  // before the first write: a toml with no array to rewrite must stop an upgrade whole.
+  let routed = []
+  let lostPatterns = []
+  if (targetManifest && declaresPublicSites(targetManifest)) {
+    routed = transformWranglerTomlsOrStop(applyWorkerFirstAll)
+  } else if (
+    targetManifest &&
+    declaresPublicSites(installedManifest) &&
+    !others.some(declaresPublicSites)
+  ) {
+    const prefixes = [...others, targetManifest].flatMap(o => o.apiPrefixes ?? [])
+    ;({ routed, lost: lostPatterns } = restoreWranglerTomls(prefixes))
   }
 
   for (const rel of added) writeInto(rel, readFileSync(path.join(workRoot, 'added', rel)))
@@ -1293,6 +1410,8 @@ function cmdUpgrade(args, host) {
     }
   }
 
+  writeWranglerTomls(routed)
+
   // After the files, so a failed `pnpm add` stops with the plugin's code in place and the surface
   // unstamped — and a re-run diffs from the same `from`, finding done what is done.
   changeDependencies(deps.install, deps.remove)
@@ -1303,13 +1422,17 @@ function cmdUpgrade(args, host) {
   out(
     '',
     `✔ ${added.length} added, ${patches.length - rejected} patched` +
-      (rejected > 0 ? `, ${rejected} with rejects (*.rej beside the file)` : ''),
+      (rejected > 0 ? `, ${rejected} with rejects (*.rej beside the file)` : '') +
+      (appOwnedLeft.length > 0 ? `, ${appOwnedLeft.length} appOwned left alone` : ''),
     ...(coreEditFiles.length > 0 ? [`✔ core edit(s) applied to ${coreEditFiles.join(', ')}`] : []),
     ...coreEditWarnings.map(w => `  warning: ${w}`),
     ...(installs + removals > 0
       ? [`✔ dependencies: ${installs} installed or re-ranged, ${removals} removed`]
       : []),
-    ...kept.map(c => `  kept ${c.pkg} ${c.name} — ${c.reason}`)
+    ...kept.map(c => `  kept ${c.pkg} ${c.name} — ${c.reason}`),
+    ...(lostPatterns.length > 0
+      ? renderSteps([reprovisionStep(lostPatterns)], 'Steps that remain')
+      : [])
   )
   const recordFile = host.sidecarIds.includes(id) ? host.sidecarPath : host.manifestPath
   const raw = JSON.parse(readFileSync(recordFile, 'utf8'))
@@ -1341,6 +1464,10 @@ function cmdUpgrade(args, host) {
     // `kit:upgrade` and `kit:release` all read the surface, so all three would keep agreeing with
     // a statement that is no longer true. Nothing ELSE on the entry is rewritten here.
     if (targetManifest) {
+      // The same copy `add` writes. `remove` and the next upgrade read this file, so a stale one
+      // would have them act on the manifest of the release before this.
+      writeInto(surface.anchor, materialise(m.showRaw(to, pluginManifestPath), host.names))
+      formatWritten([surface.anchor])
       entry.minKit = floorOf(targetManifest)
       entry.requires = {
         surfaces: targetManifest.requires?.surfaces ?? [],
@@ -1381,6 +1508,66 @@ function cmdUpgrade(args, host) {
 
 // ---------------------------------------------------------------- remove
 
+/** Every file on disk under a host-relative path. */
+function filesUnder(rel) {
+  if (!existsSync(abs(rel))) return []
+  if (!lstatSync(abs(rel)).isDirectory()) return [rel]
+  return readdirSync(abs(rel), { withFileTypes: true }).flatMap(e =>
+    e.isDirectory() ? filesUnder(`${rel}/${e.name}`) : [`${rel}/${e.name}`]
+  )
+}
+
+/** What `add` would have left on disk for these bytes: it runs biome over what it copies. */
+function formattedLikeAdd(rel, bytes) {
+  const r = spawnSync('pnpm', ['exec', 'biome', 'check', '--write', `--stdin-file-path=${rel}`], {
+    cwd: REPO_ROOT,
+    input: bytes,
+    stdio: ['pipe', 'pipe', 'ignore'],
+  })
+  return r.status === 0 && r.stdout?.length > 0 ? r.stdout : bytes
+}
+
+/**
+ * Files under a plugin's appOwned paths that a developer changed or added since the pinned commit.
+ * When the pinned commit cannot be read every file is reported `unverified`: a removal must not
+ * assume a file it could not compare is safe to delete.
+ */
+function changedAppOwnedFiles(manifest, surface, host, args) {
+  const owned = pluginAppOwned(manifest)
+  if (owned.length === 0) return []
+  const onDisk = owned.flatMap(filesUnder)
+  const source = surface.source ?? {}
+  const subdir = (source.subdir ?? '').replace(/^\/|\/$/g, '')
+  const inRepo = rel => (subdir === '' ? rel : `${subdir}/${rel}`)
+  let m = null
+  try {
+    m = source.commit
+      ? ensureMirror(source.repo, pluginMirrorDir(source.repo), {
+          fetch: args.fetch,
+          cwd: REPO_ROOT,
+          warn,
+        })
+      : null
+  } catch {
+    m = null
+  }
+  if (!m?.resolves(source.commit)) {
+    return onDisk.map(file => ({ path: file, reason: 'unverified' }))
+  }
+  const pinned = new Set(owned.flatMap(p => m.listFiles(source.commit, inRepo(p))))
+  return onDisk.flatMap(rel => {
+    if (!pinned.has(inRepo(rel))) return [{ path: rel, reason: 'added' }]
+    // A symlink is its target, as git stores it; reading through one to a directory throws.
+    const disk = lstatSync(abs(rel)).isSymbolicLink()
+      ? Buffer.from(readlinkSync(abs(rel)))
+      : readFileSync(abs(rel))
+    const pristine = Buffer.from(materialise(m.showRaw(source.commit, inRepo(rel)), host.names))
+    return disk.equals(pristine) || disk.equals(Buffer.from(formattedLikeAdd(rel, pristine)))
+      ? []
+      : [{ path: rel, reason: 'changed' }]
+  })
+}
+
 function cmdRemove(args, host) {
   const id = args.positional[0]
   if (!id) stop(2, 'error: remove needs a plugin id', '', USAGE)
@@ -1414,6 +1601,15 @@ function cmdRemove(args, host) {
     [...directories, ...coreEditsByFile(anchorManifest).keys()]
   )
   const tables = anchorManifest.schema?.tables ?? []
+  const appOwnedEdits = changedAppOwnedFiles(anchorManifest, surface, host, args)
+  // Another installed plugin still serving public sites still needs every request.
+  const remaining = installedManifests(host, id)
+  const restoreRouting = declaresPublicSites(anchorManifest) && !remaining.some(declaresPublicSites)
+  const remainingPrefixes = remaining.flatMap(m => m.apiPrefixes ?? [])
+  // Restoring marks a list that lost prefixes; a mark nothing is missing for any more goes.
+  const { routed, lost: lostPatterns } = restoreRouting
+    ? restoreWranglerTomls(remainingPrefixes)
+    : { routed: transformWranglerTomls(t => settleReprovision(t, remainingPrefixes)), lost: [] }
 
   const say = (...lines) => {
     if (!args.json) out(...lines)
@@ -1424,6 +1620,13 @@ function cmdRemove(args, host) {
     'Deletes',
     ...directories.map(d => `  ${d}`),
     ...(directories.length === 0 ? ['  (no directories — already gone)'] : []),
+    ...(appOwnedEdits.length > 0
+      ? [
+          '',
+          'Your files under appOwned paths (deleted only with --force-app-owned)',
+          ...appOwnedEdits.map(e => `  ${e.reason.padEnd(11)}${e.path}`),
+        ]
+      : []),
     '',
     'Barrel lines removed',
     ...barrels.map(k => `  ${BARRELS[k].file}  —  ${barrelLines(k, id).join('  +  ')}`),
@@ -1441,6 +1644,7 @@ function cmdRemove(args, host) {
     // Read from the toml rather than assumed: the tag is append-only, so the next one is the next
     // free number after every `plugin-<id>-v<n>` this Worker has already told Cloudflare about.
     migrationTag: nextPluginMigrationTag(tomlMigrationTags(), id),
+    lostPatterns,
   })
   if (args.json) {
     out(
@@ -1448,6 +1652,7 @@ function cmdRemove(args, host) {
         {
           plugin: { id, version: surface.source?.version ?? null },
           deletes: { directories, barrels: barrels.map(k => BARRELS[k].file), tables },
+          appOwned: appOwnedEdits,
           steps,
         },
         null,
@@ -1460,7 +1665,17 @@ function cmdRemove(args, host) {
 
   if (!args.apply) {
     say('', 'Nothing written. Re-run with --apply to remove it.')
+    if (appOwnedEdits.length > 0) say('That also needs --force-app-owned; see the list above.')
     return 0
+  }
+
+  if (appOwnedEdits.length > 0 && !args.forceAppOwned) {
+    warn(
+      '',
+      `error: ${appOwnedEdits.length} file(s) under ${id}'s appOwned paths are yours, and removing the plugin would delete them.`,
+      'Nothing written. Copy out what you want to keep, then re-run with --apply --force-app-owned.'
+    )
+    return 6
   }
 
   if (args.archive && tables.length > 0) writeArchiveMigration(id, tables)
@@ -1476,6 +1691,7 @@ function cmdRemove(args, host) {
     if (!existsSync(abs(file))) continue
     writeFileSync(abs(file), revertCoreEdits(readFileSync(abs(file), 'utf8'), edits))
   }
+  writeWranglerTomls(routed)
   const dropped = dropSurface(host, id)
   say(
     '',
@@ -1484,6 +1700,7 @@ function cmdRemove(args, host) {
     ...(removedEdits.size > 0
       ? [`✔ core edit(s) reverted in ${[...removedEdits.keys()].join(', ')}`]
       : []),
+    ...(restoreRouting ? ['✔ run_worker_first and not_found_handling restored in both tomls'] : []),
     `✔ surface dropped from ${dropped.map(f => path.basename(f)).join(', ') || '(nowhere — it was not recorded)'}`,
     ...renderSteps(steps, 'Steps that remain')
   )
@@ -1928,6 +2145,20 @@ function cmdCheck(args, host) {
         `'${clash.id.split('-')[0]}_*'), and two plugins cannot share a host with one name ` +
         "between them: a single DROP TABLE takes the other plugin's data",
     })
+  }
+  // A prefix `add` has not provisioned yet is the plan's next step; one a removal dropped is not.
+  for (const file of wranglerTomls()) {
+    const text = readFileSync(abs(file), 'utf8')
+    if (!awaitsReprovision(text)) continue
+    for (const { surface, manifest } of anchors) {
+      const missing = missingWorkerFirstPatterns(text, manifest.apiPrefixes ?? [])
+      if (missing.length === 0) continue
+      add('fail', `${manifest.id}:worker-first:${file}`, {
+        file,
+        problem: `run_worker_first lacks ${missing.join(', ')}, the API prefixes of ${surface.id}`,
+        fix: 'pnpm provision cloudflare <env> for the environment this toml deploys',
+      })
+    }
   }
   const failures = findings.filter(f => f.severity === 'fail')
   const warnings = findings.filter(f => f.severity === 'warn')

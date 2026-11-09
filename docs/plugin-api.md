@@ -327,7 +327,7 @@ The server surface: the context family, and the types a plugin must be able to n
     The SAME guard its nav item uses, so a link never points at a page its reader cannot open.
   - `tier?: PluginRouteTier`
     Default `shell` — inside `Layout`, signed in with a tenant.
-- `type PluginRouteTier = 'shell' \| 'noTenant' \| 'public'`
+- `type PluginRouteTier = 'shell' \| 'noTenant' \| 'public' \| 'fullscreen'`
 - `interface PluginSeedContext`
   Everything a plugin's `seedDemo` hook is given (`pnpm seed --demo`).
 - `interface PluginSignInInput`
@@ -351,6 +351,11 @@ The server surface: the context family, and the types a plugin must be able to n
   - `badRequest(message?: string, code?: string, details?: unknown): never`
   - `forbidden(message?: string, code?: string): never`
   - `unauthorized(message?: string): never`
+- `interface PublicSiteCsp`
+  Developer-declared additions to the strict public CSP. Inline script stays banned.
+- `interface PublicSiteFormPath`
+- `interface PublicSitesDeclaration`
+  A public website answered from the Worker on its own hostnames (`api/middleware/public-sites.ts`). The host owns the request's order: cache lookup, rate limit (misses only),…
 - `interface Realtime`
   Everything a service needs to nudge: how to defer, and the hub binding. Built by `withAuth`.
 - `function realtimeEvent( type: RealtimeEventType, tenantId: string, payload?: unknown ): RealtimeEvent`
@@ -409,6 +414,8 @@ The server surface: the context family, and the types a plugin must be able to n
   - `grantsFor(kind: string, resourceIds: readonly string[]): Promise<Map<string, GroupRef[]>>`
     Which groups each of these rows is shared with, in ONE query — so a badge strip on a list costs one extra round trip rather than one per row.
 - `function requireFeature(feature: FeatureName)`
+- `async function resolveOwnerTenant( db: Database, config: Pick<AppConfig, 'TENANCY_MODE'>, ownerSlug?: string ): Promise<Tenant \| null>`
+  The tenant that owns a public surface: the one tenant under `single`, the tenant named by `ownerSlug` under `multi`. Null when there is none, or when it is not `active`, so a…
 - `interface ResourceGrantRow`
   One row of `grantsForResources`, before it is grouped by resource.
 - `function rows<T = Record<string, unknown>>(result: unknown): T[]`
@@ -429,6 +436,8 @@ The server surface: the context family, and the types a plugin must be able to n
     Spread into the mount table of `api/index.ts`; the prefix is `/api/<id>` by convention.
   - `publicMounts?: readonly PluginPublicMount[]`
     Routes a third party calls with no session or key — an admin-consent callback, a webhook. Mounted BEFORE the authed mounts and without `authMiddleware`, under `/api/hooks/<id>`…
+  - `publicSites?: PublicSitesDeclaration`
+    Whole websites on hostnames of their own: on a claimed host this router answers every path and core is unreachable. Host claims are checked by `tests/config/plugins.test.ts`…
   - `loginMethods?: (cfg: AppConfig) => readonly PluginLoginMethodDeclaration[]`
     Sign-in methods for the login page, read per request by `GET /auth/methods` (so `cfg` may decide: a dev-only method, one per configured connection). Each button navigates to its…
   - `ssoPolicy?: SsoPolicy`
@@ -447,8 +456,12 @@ The server surface: the context family, and the types a plugin must be able to n
     Cron expression → tasks, merged into `SCHEDULED_TASKS` (tasks on a cron core already runs are appended after core's). A cron core does NOT run is declared in `plugin.json`…
   - `emailHandlers?: readonly EmailHandler[]`
     Inbound email (Cloudflare Email Routing → the Worker's `email` handler), merged into `EMAIL_HANDLERS` in `api/email.ts` and matched on the recipient's local part (`receipts` takes…
+  - `deploymentFeatures?: (config: AppConfig) => readonly string[]`
+    Feature keys this plugin's own CONFIG switches on for the deployment, unioned with `FEATURES_ENABLED`, so an `environmentGated` flag can follow a plugin's vars rather than need a…
   - `grants?: Partial<Record<EffectiveRole, RoleGrant>>`
     Per-role CASL rules, applied after the core matrix — additive, never a replacement.
+  - `uploadPaths?: readonly string[]`
+    Prefixes that skip the global 1 MB body cap, for a route taking a file. Each must be under `/api/<id>/` (`tests/config/plugins.test.ts`), and its route MUST mount its own…
   - `rlsExcludedTables?: readonly string[]`
     Plugin tables with no `tenant_id`, unioned into `RLS_EXCLUDED_TABLES` with a reason each.
   - `unscopedAllowlist?: Readonly<Record<string, string>>`
@@ -631,7 +644,7 @@ The only host module a plugin's `ui/index.ts` may import — it ships in the mai
     The SAME guard its nav item uses, so a link never points at a page its reader cannot open.
   - `tier?: PluginRouteTier`
     Default `shell` — inside `Layout`, signed in with a tenant.
-- `type PluginRouteTier = 'shell' \| 'noTenant' \| 'public'`
+- `type PluginRouteTier = 'shell' \| 'noTenant' \| 'public' \| 'fullscreen'`
 - `interface QuickLink`
 - `interface TabConfig`
 - `interface UiPlugin<S extends SharedPlugin = SharedPlugin>`
@@ -780,9 +793,14 @@ Components and hooks, for a lazy PAGE. Never for the UI entry.
     The SAME guard its nav item uses, so a link never points at a page its reader cannot open.
   - `tier?: PluginRouteTier`
     Default `shell` — inside `Layout`, signed in with a tenant.
-- `type PluginRouteTier = 'shell' \| 'noTenant' \| 'public'`
+- `type PluginRouteTier = 'shell' \| 'noTenant' \| 'public' \| 'fullscreen'`
 - `interface PluginSeedContext`
   Everything a plugin's `seedDemo` hook is given (`pnpm seed --demo`).
+- `interface PublicSiteCsp`
+  Developer-declared additions to the strict public CSP. Inline script stays banned.
+- `interface PublicSiteFormPath`
+- `interface PublicSitesDeclaration`
+  A public website answered from the Worker on its own hostnames (`api/middleware/public-sites.ts`). The host owns the request's order: cache lookup, rate limit (misses only),…
 - `interface ServerPlugin<S extends SharedPlugin = SharedPlugin>`
   - `shared: S`
   - `requires?: PluginRequires`
@@ -790,6 +808,8 @@ Components and hooks, for a lazy PAGE. Never for the UI entry.
     Spread into the mount table of `api/index.ts`; the prefix is `/api/<id>` by convention.
   - `publicMounts?: readonly PluginPublicMount[]`
     Routes a third party calls with no session or key — an admin-consent callback, a webhook. Mounted BEFORE the authed mounts and without `authMiddleware`, under `/api/hooks/<id>`…
+  - `publicSites?: PublicSitesDeclaration`
+    Whole websites on hostnames of their own: on a claimed host this router answers every path and core is unreachable. Host claims are checked by `tests/config/plugins.test.ts`…
   - `loginMethods?: (cfg: AppConfig) => readonly PluginLoginMethodDeclaration[]`
     Sign-in methods for the login page, read per request by `GET /auth/methods` (so `cfg` may decide: a dev-only method, one per configured connection). Each button navigates to its…
   - `ssoPolicy?: SsoPolicy`
@@ -808,8 +828,12 @@ Components and hooks, for a lazy PAGE. Never for the UI entry.
     Cron expression → tasks, merged into `SCHEDULED_TASKS` (tasks on a cron core already runs are appended after core's). A cron core does NOT run is declared in `plugin.json`…
   - `emailHandlers?: readonly EmailHandler[]`
     Inbound email (Cloudflare Email Routing → the Worker's `email` handler), merged into `EMAIL_HANDLERS` in `api/email.ts` and matched on the recipient's local part (`receipts` takes…
+  - `deploymentFeatures?: (config: AppConfig) => readonly string[]`
+    Feature keys this plugin's own CONFIG switches on for the deployment, unioned with `FEATURES_ENABLED`, so an `environmentGated` flag can follow a plugin's vars rather than need a…
   - `grants?: Partial<Record<EffectiveRole, RoleGrant>>`
     Per-role CASL rules, applied after the core matrix — additive, never a replacement.
+  - `uploadPaths?: readonly string[]`
+    Prefixes that skip the global 1 MB body cap, for a route taking a file. Each must be under `/api/<id>/` (`tests/config/plugins.test.ts`), and its route MUST mount its own…
   - `rlsExcludedTables?: readonly string[]`
     Plugin tables with no `tenant_id`, unioned into `RLS_EXCLUDED_TABLES` with a reason each.
   - `unscopedAllowlist?: Readonly<Record<string, string>>`
@@ -1267,7 +1291,7 @@ nothing in the comparison that can throw.
 @/plugins/api :: member :: PluginRoute.Component :: Component: LazyExoticComponent<ComponentType>
 @/plugins/api :: member :: PluginRoute.guard :: guard?: NavGuard
 @/plugins/api :: member :: PluginRoute.tier :: tier?: PluginRouteTier
-@/plugins/api :: type :: PluginRouteTier :: type PluginRouteTier = 'shell' | 'noTenant' | 'public'
+@/plugins/api :: type :: PluginRouteTier :: type PluginRouteTier = 'shell' | 'noTenant' | 'public' | 'fullscreen'
 @/plugins/api :: interface :: PluginSeedContext :: interface PluginSeedContext
 @/plugins/api :: interface :: PluginSignInInput :: interface PluginSignInInput
 @/plugins/api :: type :: PluginStructuredOptions :: type PluginStructuredOptions = Omit< CallStructuredToolOptions<T>, 'model' | 'maxTokens' > & { maxTokens?: number }
@@ -1282,6 +1306,9 @@ nothing in the comparison that can throw.
 @/plugins/api :: member :: PublicCtx.badRequest :: badRequest(message?: string, code?: string, details?: unknown): never
 @/plugins/api :: member :: PublicCtx.forbidden :: forbidden(message?: string, code?: string): never
 @/plugins/api :: member :: PublicCtx.unauthorized :: unauthorized(message?: string): never
+@/plugins/api :: interface :: PublicSiteCsp :: interface PublicSiteCsp
+@/plugins/api :: interface :: PublicSiteFormPath :: interface PublicSiteFormPath
+@/plugins/api :: interface :: PublicSitesDeclaration :: interface PublicSitesDeclaration
 @/plugins/api :: interface :: Realtime :: interface Realtime
 @/plugins/api :: function :: realtimeEvent :: function realtimeEvent( type: RealtimeEventType, tenantId: string, payload?: unknown ): RealtimeEvent
 @/plugins/api :: function :: recordActivity :: async function recordActivity(db: Database, input: ActivityInput): Promise<void>
@@ -1316,6 +1343,7 @@ nothing in the comparison that can throw.
 @/plugins/api :: member :: RequestVisibility.set :: set(kind: string, resourceId: string, input: SetResourceGroupsInput): Promise<string[]>
 @/plugins/api :: member :: RequestVisibility.grantsFor :: grantsFor(kind: string, resourceIds: readonly string[]): Promise<Map<string, GroupRef[]>>
 @/plugins/api :: function :: requireFeature :: function requireFeature(feature: FeatureName)
+@/plugins/api :: function :: resolveOwnerTenant :: async function resolveOwnerTenant( db: Database, config: Pick<AppConfig, 'TENANCY_MODE'>, ownerSlug?: string ): Promise<Tenant | null>
 @/plugins/api :: interface :: ResourceGrantRow :: interface ResourceGrantRow
 @/plugins/api :: function :: rows :: function rows<T = Record<string, unknown>>(result: unknown): T[]
 @/plugins/api :: interface :: ScheduledTask :: interface ScheduledTask
@@ -1330,6 +1358,7 @@ nothing in the comparison that can throw.
 @/plugins/api :: member :: ServerPlugin.requires :: requires?: PluginRequires
 @/plugins/api :: member :: ServerPlugin.mounts :: mounts?: readonly PluginMount[]
 @/plugins/api :: member :: ServerPlugin.publicMounts :: publicMounts?: readonly PluginPublicMount[]
+@/plugins/api :: member :: ServerPlugin.publicSites :: publicSites?: PublicSitesDeclaration
 @/plugins/api :: member :: ServerPlugin.loginMethods :: loginMethods?: (cfg: AppConfig) => readonly PluginLoginMethodDeclaration[]
 @/plugins/api :: member :: ServerPlugin.ssoPolicy :: ssoPolicy?: SsoPolicy
 @/plugins/api :: member :: ServerPlugin.apiPrefixes :: apiPrefixes?: readonly string[]
@@ -1339,7 +1368,9 @@ nothing in the comparison that can throw.
 @/plugins/api :: member :: ServerPlugin.agentTools :: agentTools?: (ctx: AgentToolContext) => Tool[] | Promise<Tool[]>
 @/plugins/api :: member :: ServerPlugin.scheduledTasks :: scheduledTasks?: Readonly<Record<string, ScheduledTask[]>>
 @/plugins/api :: member :: ServerPlugin.emailHandlers :: emailHandlers?: readonly EmailHandler[]
+@/plugins/api :: member :: ServerPlugin.deploymentFeatures :: deploymentFeatures?: (config: AppConfig) => readonly string[]
 @/plugins/api :: member :: ServerPlugin.grants :: grants?: Partial<Record<EffectiveRole, RoleGrant>>
+@/plugins/api :: member :: ServerPlugin.uploadPaths :: uploadPaths?: readonly string[]
 @/plugins/api :: member :: ServerPlugin.rlsExcludedTables :: rlsExcludedTables?: readonly string[]
 @/plugins/api :: member :: ServerPlugin.unscopedAllowlist :: unscopedAllowlist?: Readonly<Record<string, string>>
 @/plugins/api :: member :: ServerPlugin.visibilityResources :: visibilityResources?: readonly VisibilityResource[]
@@ -1447,7 +1478,7 @@ nothing in the comparison that can throw.
 @/plugins/api/ui-wiring :: member :: PluginRoute.Component :: Component: LazyExoticComponent<ComponentType>
 @/plugins/api/ui-wiring :: member :: PluginRoute.guard :: guard?: NavGuard
 @/plugins/api/ui-wiring :: member :: PluginRoute.tier :: tier?: PluginRouteTier
-@/plugins/api/ui-wiring :: type :: PluginRouteTier :: type PluginRouteTier = 'shell' | 'noTenant' | 'public'
+@/plugins/api/ui-wiring :: type :: PluginRouteTier :: type PluginRouteTier = 'shell' | 'noTenant' | 'public' | 'fullscreen'
 @/plugins/api/ui-wiring :: interface :: QuickLink :: interface QuickLink
 @/plugins/api/ui-wiring :: interface :: TabConfig :: interface TabConfig
 @/plugins/api/ui-wiring :: interface :: UiPlugin :: interface UiPlugin<S extends SharedPlugin = SharedPlugin>
@@ -1532,13 +1563,17 @@ nothing in the comparison that can throw.
 @/plugins/types :: member :: PluginRoute.Component :: Component: LazyExoticComponent<ComponentType>
 @/plugins/types :: member :: PluginRoute.guard :: guard?: NavGuard
 @/plugins/types :: member :: PluginRoute.tier :: tier?: PluginRouteTier
-@/plugins/types :: type :: PluginRouteTier :: type PluginRouteTier = 'shell' | 'noTenant' | 'public'
+@/plugins/types :: type :: PluginRouteTier :: type PluginRouteTier = 'shell' | 'noTenant' | 'public' | 'fullscreen'
 @/plugins/types :: interface :: PluginSeedContext :: interface PluginSeedContext
+@/plugins/types :: interface :: PublicSiteCsp :: interface PublicSiteCsp
+@/plugins/types :: interface :: PublicSiteFormPath :: interface PublicSiteFormPath
+@/plugins/types :: interface :: PublicSitesDeclaration :: interface PublicSitesDeclaration
 @/plugins/types :: interface :: ServerPlugin :: interface ServerPlugin<S extends SharedPlugin = SharedPlugin>
 @/plugins/types :: member :: ServerPlugin.shared :: shared: S
 @/plugins/types :: member :: ServerPlugin.requires :: requires?: PluginRequires
 @/plugins/types :: member :: ServerPlugin.mounts :: mounts?: readonly PluginMount[]
 @/plugins/types :: member :: ServerPlugin.publicMounts :: publicMounts?: readonly PluginPublicMount[]
+@/plugins/types :: member :: ServerPlugin.publicSites :: publicSites?: PublicSitesDeclaration
 @/plugins/types :: member :: ServerPlugin.loginMethods :: loginMethods?: (cfg: AppConfig) => readonly PluginLoginMethodDeclaration[]
 @/plugins/types :: member :: ServerPlugin.ssoPolicy :: ssoPolicy?: SsoPolicy
 @/plugins/types :: member :: ServerPlugin.apiPrefixes :: apiPrefixes?: readonly string[]
@@ -1548,7 +1583,9 @@ nothing in the comparison that can throw.
 @/plugins/types :: member :: ServerPlugin.agentTools :: agentTools?: (ctx: AgentToolContext) => Tool[] | Promise<Tool[]>
 @/plugins/types :: member :: ServerPlugin.scheduledTasks :: scheduledTasks?: Readonly<Record<string, ScheduledTask[]>>
 @/plugins/types :: member :: ServerPlugin.emailHandlers :: emailHandlers?: readonly EmailHandler[]
+@/plugins/types :: member :: ServerPlugin.deploymentFeatures :: deploymentFeatures?: (config: AppConfig) => readonly string[]
 @/plugins/types :: member :: ServerPlugin.grants :: grants?: Partial<Record<EffectiveRole, RoleGrant>>
+@/plugins/types :: member :: ServerPlugin.uploadPaths :: uploadPaths?: readonly string[]
 @/plugins/types :: member :: ServerPlugin.rlsExcludedTables :: rlsExcludedTables?: readonly string[]
 @/plugins/types :: member :: ServerPlugin.unscopedAllowlist :: unscopedAllowlist?: Readonly<Record<string, string>>
 @/plugins/types :: member :: ServerPlugin.visibilityResources :: visibilityResources?: readonly VisibilityResource[]

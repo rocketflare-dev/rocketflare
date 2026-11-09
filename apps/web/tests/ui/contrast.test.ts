@@ -11,10 +11,10 @@ import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 
-const css = readFileSync(path.resolve(__dirname, '../../src/ui/index.css'), 'utf8').replace(
-  /\/\*[\s\S]*?\*\//g,
-  ''
-)
+const css = ['../../src/shared/theme-tokens.css', '../../src/ui/index.css']
+  .map(file => readFileSync(path.resolve(__dirname, file), 'utf8'))
+  .join('\n')
+  .replace(/\/\*[\s\S]*?\*\//g, '')
 const THEMES = ['rocketflare-light', 'rocketflare-dark'] as const
 type Theme = (typeof THEMES)[number]
 

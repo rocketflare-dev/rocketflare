@@ -7,8 +7,8 @@
  *
  * Route tiers: public (`/login`, `/magic-link/sent`, `/magic-link/confirm`, `/invite/:token`);
  * signed-in-without-tenant (`/select-tenant`, `/pending`, `/no-access` — `ProtectedRoute
- * requireTenant={false}`); and the shell (`/*` — `ProtectedRoute`, `Layout` mounted ONCE, nested
- * routes swap beneath it).
+ * requireTenant={false}`); the shell (`/*` — `ProtectedRoute`, `Layout` mounted ONCE, nested
+ * routes swap beneath it); and a plugin's `fullscreen` routes (`ProtectedRoute`, no `Layout`).
  */
 import { QueryClientProvider } from '@tanstack/react-query'
 import { lazy, Suspense } from 'react'
@@ -100,6 +100,8 @@ function pluginRoutes(tier: PluginRouteTier) {
           element={
             tier === 'noTenant' ? (
               <NoTenantRoute>{guarded}</NoTenantRoute>
+            ) : tier === 'fullscreen' ? (
+              <FullscreenRoute>{guarded}</FullscreenRoute>
             ) : tier === 'public' ? (
               <Suspense fallback={<LoadingIndicator size="lg" centered />}>{guarded}</Suspense>
             ) : (
@@ -253,6 +255,18 @@ function NoTenantRoute({ children }: { children: React.ReactNode }) {
   )
 }
 
+/**
+ * Signed in with a tenant, as the shell requires, but outside `Layout`: the page owns the whole
+ * viewport. The guard sits inside `ProtectedRoute`, so it reads a loaded session.
+ */
+function FullscreenRoute({ children }: { children: React.ReactNode }) {
+  return (
+    <ProtectedRoute>
+      <Suspense fallback={<LoadingIndicator fullPage />}>{children}</Suspense>
+    </ProtectedRoute>
+  )
+}
+
 function AppRoutes() {
   return (
     <Routes>
@@ -317,6 +331,7 @@ function AppRoutes() {
       />
       {pluginRoutes('public')}
       {pluginRoutes('noTenant')}
+      {pluginRoutes('fullscreen')}
       <Route
         path="/*"
         element={

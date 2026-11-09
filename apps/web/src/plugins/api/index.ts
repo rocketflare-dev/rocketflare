@@ -95,6 +95,9 @@ export type {
   PluginMount,
   PluginPublicMount,
   PluginPublicMountOptions,
+  PublicSiteCsp,
+  PublicSiteFormPath,
+  PublicSitesDeclaration,
   RequestCtx,
   RequestVisibility,
 } from './http'
@@ -110,7 +113,7 @@ export type {
   PluginSignInInput,
   SsoRequirement,
 } from './identity'
-export { identityFor, provisionFor } from './identity'
+export { identityFor, provisionFor, resolveOwnerTenant } from './identity'
 export type {
   BackgroundMethods,
   CronCtx,

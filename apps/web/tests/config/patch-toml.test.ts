@@ -11,6 +11,12 @@ import path from 'node:path'
 import TOML from '@iarna/toml'
 import { describe, expect, it } from 'vitest'
 import {
+  applyWorkerFirstAll,
+  awaitsReprovision,
+  markReprovision,
+  revertWorkerFirstAll,
+} from '../../../../scripts/lib/plugin-lib.mjs'
+import {
   DEFAULT_LOCAL_CONNECTION_STRING,
   hasHyperdriveBlock,
   hyperdrivePlaceholder,
@@ -144,6 +150,118 @@ describe('patch-toml: vars and routes', () => {
     expect(patchToml(noted, { workersDevComment: 'served at workers.dev' })).toBe(noted)
     // The staging toml already declares workers_dev = true → untouched.
     expect(patchToml(stagingText, { workersDevComment: 'x' })).toBe(stagingText)
+  })
+})
+
+describe('patch-toml: multiple hosts', () => {
+  const app = 'app.example.test'
+  const routes = (text: string) => (TOML.parse(text) as any).routes.map((r: any) => r.pattern)
+
+  it('writes the app host and every site host, and a re-run changes nothing', () => {
+    const out = patchToml(prodText, {
+      routeHost: app,
+      siteRouteHosts: ['www.example.test', 'docs.other.test'],
+    })
+    expect(routes(out)).toEqual([app, 'www.example.test', 'docs.other.test'])
+    expect((TOML.parse(out) as any).routes.every((r: any) => r.custom_domain === true)).toBe(true)
+    expect(
+      patchToml(out, { routeHost: app, siteRouteHosts: ['www.example.test', 'docs.other.test'] })
+    ).toBe(out)
+  })
+
+  it('never drops a route on a re-run: one hosts list shorter, or the app host alone', () => {
+    const out = patchToml(prodText, { routeHost: app, siteRouteHosts: ['www.example.test'] })
+    expect(routes(patchToml(out, { routeHost: app, siteRouteHosts: [] }))).toEqual([
+      app,
+      'www.example.test',
+    ])
+    expect(routes(patchToml(out, { routeHost: app }))).toEqual([app, 'www.example.test'])
+  })
+
+  it('re-points the app host and keeps the site hosts', () => {
+    const out = patchToml(prodText, { routeHost: app, siteRouteHosts: ['www.example.test'] })
+    expect(
+      routes(
+        patchToml(out, { routeHost: 'new.example.test', siteRouteHosts: ['www.example.test'] })
+      )
+    ).toEqual(['new.example.test', 'www.example.test'])
+  })
+
+  it('puts the app host in front when the only route is a site host', () => {
+    const out = patchToml(prodText, { siteRouteHosts: ['www.example.test'] })
+    expect(
+      routes(patchToml(out, { routeHost: app, siteRouteHosts: ['www.example.test'] }))
+    ).toEqual([app, 'www.example.test'])
+  })
+
+  it('leaves a hand-written zone route as it was', () => {
+    const hand = prodText.replace(
+      /^# routes = .*$/m,
+      'routes = [{ pattern = "shop.example.test/*", zone_name = "example.test" }]'
+    )
+    const out = patchToml(hand, { siteRouteHosts: ['www.example.test'] })
+    expect((TOML.parse(out) as any).routes).toEqual([
+      { pattern: 'shop.example.test/*', zone_name: 'example.test' },
+      { pattern: 'www.example.test', custom_domain: true },
+    ])
+    expect(patchToml(hand, { siteRouteHosts: ['shop.example.test'] })).toBe(hand)
+  })
+
+  it('keeps the one-line shape for a single host, so an app with no sites is unchanged', () => {
+    const out = patchToml(prodText, { routeHost: app })
+    expect(out).toContain(`routes = [{ pattern = "${app}", custom_domain = true }]`)
+  })
+})
+
+describe('patch-toml: public-site routing', () => {
+  const wide = ['/*', '!/assets/*', '!/site-assets/*']
+
+  it.each([
+    ['production', shippedProd],
+    ['staging', shippedStaging],
+  ])('%s: widening and restoring returns the exact original bytes', (_env, text) => {
+    const out = applyWorkerFirstAll(text)
+    expect((TOML.parse(out) as any).assets.run_worker_first).toEqual(wide)
+    expect((TOML.parse(out) as any).assets.not_found_handling).toBe('none')
+    expect(applyWorkerFirstAll(out)).toBe(out)
+    expect(revertWorkerFirstAll(out)).toBe(text)
+  })
+
+  it('brings a toml widened by an earlier install up to date, without losing the original', () => {
+    const oneKey = applyWorkerFirstAll(shippedProd)
+      .replace('not_found_handling = "none"', 'not_found_handling = "single-page-application"')
+      .replace(/# BEGIN original not_found_handling[^\n]*\n[^\n]*\n# END[^\n]*\n/, '')
+      .replace('["/*", "!/assets/*", "!/site-assets/*"]', '["/*", "!/assets/*"]')
+    const out = applyWorkerFirstAll(oneKey)
+    expect((TOML.parse(out) as any).assets.run_worker_first).toEqual(wide)
+    expect((TOML.parse(out) as any).assets.not_found_handling).toBe('none')
+    expect(revertWorkerFirstAll(out)).toBe(shippedProd)
+  })
+
+  it('writes nothing for a toml with no not_found_handling, and restores nothing', () => {
+    const bare = shippedProd.replace(/^not_found_handling[^\n]*\n/m, '')
+    const out = applyWorkerFirstAll(bare)
+    expect((TOML.parse(out) as any).assets.not_found_handling).toBeUndefined()
+    expect(revertWorkerFirstAll(out)).toBe(bare)
+  })
+
+  it('restores a list a copy has extended, comments included', () => {
+    const extended = patchToml(shippedProd, { workerFirstPrefixes: ['/copy-hook'] })
+    expect(revertWorkerFirstAll(applyWorkerFirstAll(extended))).toBe(extended)
+  })
+
+  it('leaves a toml it never widened alone', () => {
+    expect(revertWorkerFirstAll(shippedProd)).toBe(shippedProd)
+  })
+
+  it('does not append a plugin prefix to the widened value', () => {
+    const out = patchToml(shippedProd, { workerFirstAll: true })
+    expect(patchToml(out, { workerFirstPrefixes: ['/late-hook'], workerFirstAll: true })).toBe(out)
+    expect((TOML.parse(out) as any).assets.run_worker_first).toEqual(wide)
+  })
+
+  it('refuses a toml with no array to rewrite', () => {
+    expect(() => applyWorkerFirstAll('name = "x"\n')).toThrow(/run_worker_first/)
   })
 })
 
@@ -413,6 +531,17 @@ describe('plugin crons, vars and run_worker_first', () => {
   it('throws when the array it was asked to append to does not exist', () => {
     expect(() => patchToml('name = "x"\n', { crons: ['0 0 * * *'] })).toThrowError(TomlPatchError)
   })
+
+  it('clears the mark `plugin remove` leaves once the prefixes are back, and only then', () => {
+    const marked = markReprovision(prodText)
+    expect(awaitsReprovision(marked)).toBe(true)
+    expect(awaitsReprovision(patchToml(marked, { crons: patch.crons }))).toBe(true)
+    const provisioned = patchToml(marked, { workerFirstPrefixes: patch.workerFirstPrefixes })
+    expect(awaitsReprovision(provisioned)).toBe(false)
+    expect((TOML.parse(provisioned) as any).assets.run_worker_first).toEqual(
+      doc.assets.run_worker_first
+    )
+  })
 })
 
 /**
@@ -420,6 +549,23 @@ describe('plugin crons, vars and run_worker_first', () => {
  * IS the registration and `wrangler deploy` does the rest — so what matters here is that the
  * blocks are spelled the way Cloudflare reads them, and that re-running provisioning is a no-op.
  */
+describe('plugin images binding', () => {
+  const images = { type: 'images' as const, binding: 'PLUGIN_IMAGES', pluginId: 'imgs' }
+
+  it('writes the single [images] table, idempotently', () => {
+    const out = patchToml(shippedProd, { bindings: [images] })
+    expect((TOML.parse(out) as any).images).toEqual({ binding: 'PLUGIN_IMAGES' })
+    expect(patchToml(out, { bindings: [images] })).toBe(out)
+  })
+
+  it('refuses a second name beside an existing [images] table', () => {
+    const out = patchToml(shippedProd, { bindings: [images] })
+    expect(() =>
+      patchToml(out, { bindings: [{ type: 'images', binding: 'OTHER_IMAGES' }] })
+    ).toThrow(/single table/)
+  })
+})
+
 describe('plugin workflow and Durable Object blocks', () => {
   const blocks = [
     {

@@ -74,6 +74,64 @@ export interface PluginPublicMountOptions {
  */
 export type PluginPublicMount = readonly [string, Hono<AppEnv>, PluginPublicMountOptions?]
 
+export interface PublicSiteFormPath {
+  /** Exact path, e.g. `/forms/contact`. POST only. */
+  path: string
+  /** Own body cap. At most `MAX_PUBLIC_MOUNT_BODY_BYTES`; default 64 KiB. */
+  bodyLimitBytes?: number
+  /** Per-IP window; own bucket. Default `PUBLIC_MOUNT_RATE_LIMIT`. */
+  rateLimit?: { max: number; windowSeconds: number }
+}
+
+/** Developer-declared additions to the strict public CSP. Inline script stays banned. */
+export interface PublicSiteCsp {
+  scriptSrc?: readonly string[]
+  frameSrc?: readonly string[]
+  imgSrc?: readonly string[]
+  connectSrc?: readonly string[]
+  formAction?: readonly string[]
+}
+
+/**
+ * A public website answered from the Worker on its own hostnames (`api/middleware/public-sites.ts`).
+ * The host owns the request's order: cache lookup, rate limit (misses only), router, cache put. It
+ * does NOT resolve a tenant, render anything or know what a page is: all of that is the router's.
+ */
+export interface PublicSitesDeclaration {
+  /**
+   * Hosts this plugin answers (lowercase, no port). `null` means DORMANT: the plugin's config is
+   * bad, so every host other than APP_URL's and loopback gets a plain, uncached 503.
+   */
+  hosts: (config: AppConfig) => readonly string[] | null
+  /**
+   * Answers everything on a matching host, so `/api/*`, `/auth/*` and `/ws` never reach core
+   * there. On a cacheable request it receives the URL WITHOUT its query string: what is stored is
+   * shared by every visitor to that path, so it must not depend on anything one of them sent.
+   */
+  router: Hono<AppEnv>
+  /** CSP additions for a host. Synchronous: it runs on cache hits too. */
+  csp?: (host: string, config: AppConfig) => PublicSiteCsp
+  forms?: readonly PublicSiteFormPath[]
+  /** Applied on cache MISSES only. Default `PUBLIC_MOUNT_RATE_LIMIT`. */
+  rateLimit?: { max: number; windowSeconds: number } | false
+  /** Omitted = no caching. `generation` must not touch Postgres; null = do not cache this request. */
+  cache?: {
+    generation: (env: AppBindings, config: AppConfig) => Promise<string | null>
+    /** A function receives the request's pathname, for a path that may live longer than a page. */
+    ttlSeconds: number | ((pathname: string) => number)
+    /**
+     * Stored separately for each value: a format negotiated from `Accept`, for example. Return
+     * `null` for no variant. Keep the set of values small and fixed, because each is its own entry.
+     */
+    variant?: (request: Request) => string | null
+    /**
+     * The request headers `variant` reads. A response whose `Vary` names anything else is not
+     * stored, nor is any `Vary` on a request with no variant; `Accept-Encoding` is always allowed.
+     */
+    variantHeaders?: readonly string[]
+  }
+}
+
 /** What `pnpm plugin check` verifies before an install, mirrored from the plugin's manifest. */
 export interface PluginRequires {
   /** A semver range over the kit version, e.g. `">=0.5.0 <1.0.0"`. */
@@ -109,6 +167,13 @@ export interface ServerPlugin<S extends SharedPlugin = SharedPlugin> {
    */
   publicMounts?: readonly PluginPublicMount[]
   /**
+   * Whole websites on hostnames of their own: on a claimed host this router answers every path and
+   * core is unreachable. Host claims are checked by `tests/config/plugins.test.ts`
+   * (`publicSiteIssues`); at runtime a bad claim is ignored and logged. The host caches, throttles
+   * and sets the public CSP (`api/middleware/public-sites.ts`).
+   */
+  publicSites?: PublicSitesDeclaration
+  /**
    * Sign-in methods for the login page, read per request by `GET /auth/methods` (so `cfg` may
    * decide: a dev-only method, one per configured connection). Each button navigates to its
    * `startPath`, which MUST be under this plugin's `/api/hooks/<id>/` (`tests/config/plugins.test.ts`;
@@ -134,7 +199,8 @@ export interface ServerPlugin<S extends SharedPlugin = SharedPlugin> {
   /**
    * Extra path prefixes the Worker owns, unioned into `API_PREFIXES` — so an unmatched path under
    * one is a JSON 404 rather than `index.html`. Adding one ALSO means adding it to
-   * `run_worker_first` in both tomls by hand; the parity test is what catches a forgotten one.
+   * `run_worker_first` in both tomls (`pnpm provision cloudflare` does it from `plugin.json`); the
+   * parity test is what catches a forgotten one.
    */
   apiPrefixes?: readonly string[]
   /**
@@ -172,8 +238,21 @@ export interface ServerPlugin<S extends SharedPlugin = SharedPlugin> {
    * is a Cloudflare dashboard (or API) step per zone; nothing here or in a toml declares it.
    */
   emailHandlers?: readonly EmailHandler[]
+  /**
+   * Feature keys this plugin's own CONFIG switches on for the deployment, unioned with
+   * `FEATURES_ENABLED`, so an `environmentGated` flag can follow a plugin's vars rather than need a
+   * second, drifting var of its own. Pure, and it must not read the database: it runs on every
+   * request's auth path. The flag's rollout state still decides per tenant.
+   */
+  deploymentFeatures?: (config: AppConfig) => readonly string[]
   /** Per-role CASL rules, applied after the core matrix — additive, never a replacement. */
   grants?: Partial<Record<EffectiveRole, RoleGrant>>
+  /**
+   * Prefixes that skip the global 1 MB body cap, for a route taking a file. Each must be under
+   * `/api/<id>/` (`tests/config/plugins.test.ts`), and its route MUST mount its own `bodyLimit`:
+   * nothing else caps it.
+   */
+  uploadPaths?: readonly string[]
   /** Plugin tables with no `tenant_id`, unioned into `RLS_EXCLUDED_TABLES` with a reason each. */
   rlsExcludedTables?: readonly string[]
   /**
@@ -233,7 +312,7 @@ export interface ServerPlugin<S extends SharedPlugin = SharedPlugin> {
   extensions?: Readonly<Record<string, readonly unknown[]>>
 }
 
-export type PluginRouteTier = 'shell' | 'noTenant' | 'public'
+export type PluginRouteTier = 'shell' | 'noTenant' | 'public' | 'fullscreen'
 
 export interface PluginRoute {
   /** A path under the tier's router — `/approvals`, `/approvals/:id`. */

@@ -62,10 +62,13 @@ import {
   pluginImportIssue,
   publicMountIssues,
   publicMountOptionIssues,
+  publicSiteClaims,
+  publicSiteIssues,
   queryKeyRootIssues,
   RESERVED_PLUGIN_IDS,
   staticImports,
   uiEntryIssues,
+  uploadPathIssues,
 } from '../helpers/plugins'
 import { createTestEnv } from '../mocks/bindings'
 
@@ -132,6 +135,105 @@ describe('public mounts', () => {
     ).toMatch(/exceeds/)
     expect(publicMountOptionIssues('orders', at, { bodyLimitBytes: 0 })).toHaveLength(1)
     expect(publicMountOptionIssues('orders', at, { bodyLimitBytes: 1.5 })).toHaveLength(1)
+  })
+})
+
+describe('public sites', () => {
+  const site = { id: 'sites', hosts: ['www.example.com'] }
+
+  it('accepts a well-formed claim, a dormant one and a local one', () => {
+    expect(
+      publicSiteIssues([
+        {
+          ...site,
+          forms: [{ path: '/forms/contact', bodyLimitBytes: 1024 }],
+          rateLimit: false,
+          csp: [{ scriptSrc: ['https://plausible.io'], formAction: ["'self'"] }],
+        },
+      ])
+    ).toEqual([])
+    expect(publicSiteIssues([{ id: 'sites', hosts: null }])).toEqual([])
+    expect(publicSiteIssues([{ id: 'sites', hosts: ['www.localhost'] }])).toEqual([])
+  })
+
+  it.each([
+    'WWW.example.com',
+    'www.example.com:8080',
+    'https://www.example.com',
+    'www.example.com/',
+    '*.example.com',
+    '',
+  ])('refuses the malformed host %j', host => {
+    expect(publicSiteIssues([{ id: 'sites', hosts: [host] }])[0]).toMatch(/must be lowercase/)
+  })
+
+  it('refuses a host claimed twice, or the app host', () => {
+    expect(publicSiteIssues([site, { id: 'other', hosts: ['www.example.com'] }])[0]).toMatch(
+      /already claimed by sites/
+    )
+    expect(publicSiteIssues([site], 'www.example.com')[0]).toMatch(/app's own host/)
+  })
+
+  it('refuses a form path that is not exact and absolute, or a limit over the max', () => {
+    for (const path of ['forms/contact', '//forms', '/forms?x=1', '/forms/:id', '/forms/*']) {
+      expect(publicSiteIssues([{ ...site, forms: [{ path }] }])[0]).toMatch(/exact absolute path/)
+    }
+    const tooBig = { path: '/forms/contact', bodyLimitBytes: MAX_PUBLIC_MOUNT_BODY_BYTES + 1 }
+    expect(publicSiteIssues([{ ...site, forms: [tooBig] }])[0]).toMatch(/bodyLimitBytes/)
+    expect(
+      publicSiteIssues([
+        { ...site, forms: [{ path: '/f', rateLimit: { max: 0, windowSeconds: 60 } }] },
+      ])
+    ).toHaveLength(1)
+    expect(publicSiteIssues([{ ...site, rateLimit: { max: 10, windowSeconds: 0 } }])).toHaveLength(
+      1
+    )
+  })
+
+  it.each([
+    "'unsafe-inline'",
+    "'UNSAFE-EVAL'",
+    "'unsafe-hashes'",
+    "'sha256-abc'",
+    "'nonce-abc'",
+    '*',
+    'https://*.example.com',
+    'data:',
+    'https://a.example; script-src *',
+    'https://a.example https://b.example',
+  ])('refuses the CSP source %j', source => {
+    expect(publicSiteIssues([{ ...site, csp: [{ scriptSrc: [source] }] }])[0]).toMatch(/forbidden/)
+  })
+
+  it.each([
+    "'self'",
+    'https:',
+    'www.example.com',
+    'https://www.example.com',
+    'https://www.example.com/',
+    'https://www.example.com/assets/',
+    'https://www.example.com/assets/main.js',
+    'https://WWW.example.com:8443/assets/',
+  ])('refuses the script source %j, which reaches the admin bundle', source => {
+    expect(publicSiteIssues([{ ...site, csp: [{ scriptSrc: [source] }] }])[0]).toMatch(
+      /admin bundle/
+    )
+  })
+
+  it.each([
+    'https://www.example.com/site-assets/',
+    'https://www.example.com/js/app.js',
+    'https://other.example.com/assets/',
+    'https://plausible.io',
+  ])('accepts the script source %j', source => {
+    expect(publicSiteIssues([{ ...site, csp: [{ scriptSrc: [source] }] }])).toEqual([])
+  })
+
+  it('checks every directive', () => {
+    expect(publicSiteIssues([{ ...site, csp: [{ frameSrc: ['*'] }] }])).toHaveLength(1)
+    expect(publicSiteIssues([{ ...site, csp: [{ imgSrc: ['data:'] }] }])).toHaveLength(1)
+    expect(publicSiteIssues([{ ...site, csp: [{ connectSrc: ['*'] }] }])).toHaveLength(1)
+    expect(publicSiteIssues([{ ...site, csp: [{ formAction: ['*'] }] }])).toHaveLength(1)
   })
 })
 
@@ -594,6 +696,16 @@ describe('installed plugins', () => {
     expect(issues).toEqual([])
   })
 
+  it('skips the body cap only beneath its own API prefix', () => {
+    expect(uploadPathIssues('orders', ['/api/orders/upload'])).toEqual([])
+    expect(uploadPathIssues('orders', ['/api/orders/'])).toHaveLength(1)
+    expect(uploadPathIssues('orders', ['/api/files'])).toHaveLength(1)
+    expect(uploadPathIssues('orders', ['/api/orders-x/upload'])).toHaveLength(1)
+    expect(serverPlugins.flatMap(p => uploadPathIssues(p.shared.id, p.uploadPaths ?? []))).toEqual(
+      []
+    )
+  })
+
   it('declares public-mount guards within the host ceilings', () => {
     const issues = serverPlugins.flatMap(p =>
       (p.publicMounts ?? []).flatMap(([prefix, , options]) =>
@@ -601,6 +713,13 @@ describe('installed plugins', () => {
       )
     )
     expect(issues).toEqual([])
+  })
+
+  it('claims only well-formed public site hosts, forms and CSP sources', () => {
+    const cfg = loadConfig(createTestEnv())
+    expect(
+      publicSiteIssues(publicSiteClaims(serverPlugins, cfg), new URL(cfg.APP_URL).hostname)
+    ).toEqual([])
   })
 
   it('claims each inbound email local part at most once', () => {
@@ -642,6 +761,14 @@ describe('installed plugins', () => {
       }
     }
     expect(issues).toEqual([])
+  })
+
+  it('keeps the feature resolver off the barrel, which reads plugins before createRouter exists', () => {
+    const file = 'apps/web/src/permissions/features.ts'
+    const specifiers = staticImports(readFileSync(path.join(REPO_ROOT, file), 'utf8')).map(
+      i => i.specifier
+    )
+    expect(specifiers).not.toContain('../plugins/server')
   })
 
   it('keeps every UI entry free of pages and heavy dependencies', () => {
