@@ -57,6 +57,8 @@ vi.mock('@/plugins/server', async importOriginal => {
   )
   router.get('/long', c => c.text('long'))
   router.get('/negotiated', c => c.text(`for ${c.req.header('accept')}`))
+  router.get('/moved', c => c.redirect('/about', 301))
+  router.get('/moved-with-query', c => c.redirect('/about?keep=1', 301))
   router.get('/gone', c => c.text('gone', 410))
   router.get('/cookie', c => c.text('cookie', 200, { 'Set-Cookie': 'a=1' }))
   router.get('/private', c => c.text('private', 200, { 'Cache-Control': 'private' }))
@@ -322,6 +324,16 @@ describe('the cache', () => {
     await request(`${SITE}/about`, {}, { env })
     const controls = [...cache.store.values()].map(r => r.headers.get('cache-control'))
     expect(controls).toEqual(['public, s-maxage=9000', 'public, s-maxage=300'])
+  })
+
+  it('keeps the query string on a redirect, which is never stored', async () => {
+    const env = createTestEnv()
+    const moved = await request(`${SITE}/moved?utm=1`, {}, { env })
+    expect(moved.status).toBe(301)
+    expect(moved.headers.get('location')).toBe('/about?utm=1')
+    expect(cache.store.size).toBe(0)
+    const own = await request(`${SITE}/moved-with-query?utm=1`, {}, { env })
+    expect(own.headers.get('location')).toBe('/about?keep=1')
   })
 
   it('moves to a new entry when the generation changes', async () => {

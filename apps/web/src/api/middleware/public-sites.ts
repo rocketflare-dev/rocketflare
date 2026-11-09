@@ -206,6 +206,19 @@ function fromCacheEntry(entry: Response, head: boolean): Response {
   return new Response(head ? null : entry.body, { status: entry.status, headers })
 }
 
+/**
+ * A cacheable request reaches the router without its query string, so a redirect it answers cannot
+ * have kept one. Put it back, or an old link loses its campaign parameters.
+ */
+function withOriginalQuery(response: Response, search: string): Response {
+  const location = response.headers.get('location')
+  if (!search || !location || response.status < 300 || response.status > 399) return response
+  if (location.includes('?')) return response
+  const redirected = new Response(response.body, response)
+  redirected.headers.set('location', `${location}${search}`)
+  return redirected
+}
+
 /** The declared variant as a key suffix. A pathname cannot contain `?`, so it cannot forge one. */
 function cacheVariantSuffix(declaration: PublicSitesDeclaration, request: Request): string {
   const variant = declaration.cache?.variant?.(request)
@@ -260,7 +273,9 @@ async function answerPage(
   await throttled(c, `site:${host}`, declaration.rateLimit ?? PUBLIC_MOUNT_RATE_LIMIT, async () => {
     response = await runRouter(c, site, request)
   })
-  const answered = response as Response
+  const answered = key
+    ? withOriginalQuery(response as Response, url.search)
+    : (response as Response)
 
   if (cache && key && declaration.cache && isStorable(answered)) {
     const { ttlSeconds } = declaration.cache
