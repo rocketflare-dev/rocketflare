@@ -24,7 +24,7 @@
  * the signed-in account) is not a sign-in and is not checked.
  */
 import { ERROR_CODES } from '@rocketflare/shared/errors'
-import { generateCodeVerifier, generateState } from 'arctic'
+import { randomNonce, randomPKCECodeVerifier, randomState } from 'openid-client'
 import { isIdpManaged, isOidcOnly, oauthRedirectUri } from '../../../config'
 import {
   clearFlowCookie,
@@ -115,15 +115,15 @@ oauthRouter.get('/:provider', async c => {
     linkUserId = auth.user.id
   }
 
-  const state = generateState()
-  const verifier = generateCodeVerifier()
-  const nonce = generateState()
+  const state = randomState()
+  const verifier = randomPKCECodeVerifier()
+  const nonce = randomNonce()
   const client = def.client(cfg, oauthRedirectUri(cfg, def.id))
   let url: URL
   try {
     url = await client.createAuthorizationURL(state, verifier, scopesOf(def, cfg), nonce)
   } catch (err) {
-    // OIDC discovery is the only thing here that can fail (issuer down, issuer mismatch).
+    // Discovery (OIDC, Microsoft) is the only thing here that can fail (issuer down, mismatch).
     c.get('logger').warn({ err, provider: def.id }, 'OAuth authorization URL failed')
     return loginErrorRedirect(c, 'oauth_failed')
   }
@@ -172,10 +172,14 @@ oauthRouter.get('/:provider/callback', async c => {
   >
   try {
     const client = def.client(cfg, oauthRedirectUri(cfg, def.id))
-    tokens = await client.validateAuthorizationCode(code, flow.verifier)
+    tokens = await client.validateAuthorizationCode(new URL(c.req.url).searchParams, {
+      state,
+      verifier: flow.verifier,
+      nonce: flow.nonce,
+    })
     profile = await def.fetchProfile(tokens, { cfg, nonce: flow.nonce })
   } catch (err) {
-    if (def.id === 'oidc' && isAccessDeniedAtTokenExchange(err)) {
+    if (def.id === 'oidc' && (await isAccessDeniedAtTokenExchange(err))) {
       logger.info({ provider: def.id }, 'OIDC issuer denied the token exchange: no access')
       return loginErrorRedirect(c, 'no_access')
     }

@@ -1,40 +1,13 @@
 // @vitest-isolate
-// Mocks the `arctic` module and the global fetch, so this file needs its own registry.
+// Spies on the global fetch (fake Google and Microsoft endpoints), so it needs its own registry.
 /**
  * Generic OAuth router: start sets the single `oauth_state` cookie and redirects to the
- * provider; the callback validates state, exchanges the code (stubbed arctic), fetches the profile
- * (stubbed fetch), links/creates the user under sign-up gating and sets the session cookie.
+ * provider; the callback validates state, exchanges the code (stubbed token endpoint), fetches the
+ * profile (stubbed fetch), links/creates the user under sign-up gating and sets the session cookie.
  */
 import { eq } from 'drizzle-orm'
+import { generateKeyPair, type JWTPayload, SignJWT } from 'jose'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-
-vi.mock('arctic', () => {
-  class FakeClient {
-    createAuthorizationURL(state: string, verifier: string, scopes: string[]) {
-      const url = new URL('https://provider.test/authorize')
-      url.searchParams.set('state', state)
-      url.searchParams.set('code_challenge', verifier.slice(0, 8))
-      url.searchParams.set('scope', scopes.join(' '))
-      return url
-    }
-    async validateAuthorizationCode(code: string) {
-      if (code === 'bad-code') throw new Error('invalid_grant')
-      return {
-        accessToken: () => `access-${code}`,
-        hasRefreshToken: () => true,
-        refreshToken: () => 'refresh-token',
-        accessTokenExpiresAt: () => new Date(Date.now() + 3600_000),
-      }
-    }
-  }
-  return {
-    Google: FakeClient,
-    MicrosoftEntraId: FakeClient,
-    generateState: () => `state-${Math.random().toString(36).slice(2)}`,
-    generateCodeVerifier: () => `verifier-${Math.random().toString(36).slice(2)}`,
-  }
-})
-
 import { OAUTH_STATE_COOKIE_NAME, SESSION_COOKIE_NAME } from '@/api/auth/cookies'
 import { decrypt } from '@/api/auth/oauth-encryption'
 import { oauthProviders, users } from '@/db/schema'
@@ -58,13 +31,76 @@ interface Profile {
   picture?: string
 }
 
+const GOOGLE_TOKEN_ENDPOINT = 'https://oauth2.googleapis.com/token'
+const ENTRA = 'https://login.microsoftonline.com'
+const ENTRA_DISCOVERY = {
+  issuer: `${ENTRA}/{tenantid}/v2.0`,
+  authorization_endpoint: `${ENTRA}/common/oauth2/v2.0/authorize`,
+  token_endpoint: `${ENTRA}/common/oauth2/v2.0/token`,
+  jwks_uri: `${ENTRA}/common/discovery/v2.0/keys`,
+  id_token_signing_alg_values_supported: ['RS256'],
+}
+
 let profile: Profile
+/** The token endpoint's answer to the next exchange; null = a normal token response. */
+let tokenFailure: (() => Response) | null
+/** Claims of the `id_token` the next token response carries; null = no `id_token`. */
+let idTokenClaims: JWTPayload | null
+let tokenRequests: Array<{ url: string; authorization: string | null; body: URLSearchParams }>
 const realFetch = globalThis.fetch
+const signingKey = await generateKeyPair('RS256')
+
+function entraIdToken(tenant: { iss: string; tid: string }): JWTPayload {
+  const now = Math.floor(Date.now() / 1000)
+  return {
+    ...tenant,
+    aud: createTestEnv().MICROSOFT_CLIENT_ID,
+    sub: `entra-${uniqueId()}`,
+    iat: now,
+    exp: now + 300,
+  }
+}
+
+function jsonResponse(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { 'Content-Type': 'application/json' },
+  })
+}
+
+async function tokenResponse(req: Request): Promise<Response> {
+  const body = new URLSearchParams(await req.text())
+  tokenRequests.push({ url: req.url, authorization: req.headers.get('authorization'), body })
+  const code = body.get('code') ?? ''
+  if (tokenFailure) return tokenFailure()
+  if (code === 'bad-code') return jsonResponse({ error: 'invalid_grant' }, 400)
+  const idToken = idTokenClaims
+    ? await new SignJWT(idTokenClaims)
+        .setProtectedHeader({ alg: 'RS256' })
+        .sign(signingKey.privateKey)
+    : undefined
+  return jsonResponse({
+    access_token: `access-${code}`,
+    token_type: 'Bearer',
+    expires_in: 3600,
+    refresh_token: 'refresh-token',
+    id_token: idToken,
+  })
+}
 
 beforeEach(() => {
+  tokenFailure = null
+  idTokenClaims = null
+  tokenRequests = []
   vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
-    const url =
-      typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
+    const req = new Request(input, init)
+    const url = req.url
+    if (url === GOOGLE_TOKEN_ENDPOINT || url === ENTRA_DISCOVERY.token_endpoint) {
+      return tokenResponse(req)
+    }
+    if (url === `${ENTRA}/common/v2.0/.well-known/openid-configuration`) {
+      return jsonResponse(ENTRA_DISCOVERY)
+    }
     if (url.startsWith('https://openidconnect.googleapis.com/')) {
       return new Response(JSON.stringify(profile), {
         headers: { 'Content-Type': 'application/json' },
@@ -132,7 +168,7 @@ describe('GET /auth/:provider', () => {
     const res = await request('/auth/google')
     expect(res.status).toBe(302)
     const target = location(res)
-    expect(target.hostname).toBe('provider.test')
+    expect(target.hostname).toBe('accounts.google.com')
     expect(target.searchParams.get('code_challenge')).toBeTruthy()
     const cookies = res.headers.getSetCookie()
     expect(cookies.filter(c => c.startsWith(`${OAUTH_STATE_COOKIE_NAME}=`))).toHaveLength(1)
@@ -287,6 +323,62 @@ describe('GET /auth/:provider/callback', () => {
       .from(oauthProviders)
       .where(eq(oauthProviders.providerUserId, profile.sub))
     expect(link).toMatchObject({ provider: 'microsoft', userId: user.id })
+  })
+
+  it("microsoft (common): an id_token from the person's own tenant is accepted", async () => {
+    const user = await createTestUser(db)
+    profile = { sub: `ms_${uniqueId()}`, email: user.email }
+    const tid = '9188040d-6c67-4c5b-b112-36a304b66dad'
+    idTokenClaims = entraIdToken({ iss: `${ENTRA}/${tid}/v2.0`, tid })
+    const res = await callback('microsoft', await start('microsoft'))
+    expect(location(res).pathname).toBe('/')
+    expect(cookieValue(res, SESSION_COOKIE_NAME)).toBeTruthy()
+  })
+
+  it.each([
+    ['google', GOOGLE_TOKEN_ENDPOINT],
+    ['microsoft', ENTRA_DISCOVERY.token_endpoint],
+  ])(
+    '%s: the code exchange authenticates with HTTP Basic, no secret in the body',
+    async (provider, endpoint) => {
+      const user = await createTestUser(db)
+      profile = { sub: `${provider}_${uniqueId()}`, email: user.email, email_verified: true }
+      await callback(provider, await start(provider))
+      const exchange = tokenRequests.find(r => r.url === endpoint)
+      expect(exchange?.authorization).toMatch(/^Basic /)
+      expect(exchange?.body.get('client_secret')).toBeNull()
+    }
+  )
+
+  it('microsoft: an id_token whose iss names a tenant other than its tid is refused', async () => {
+    const user = await createTestUser(db)
+    profile = { sub: `ms_${uniqueId()}`, email: user.email }
+    idTokenClaims = entraIdToken({
+      iss: `${ENTRA}/72f988bf-86f1-41af-91ab-2d7cd011db47/v2.0`,
+      tid: '9188040d-6c67-4c5b-b112-36a304b66dad',
+    })
+    const res = await callback('microsoft', await start('microsoft'))
+    expect(location(res).searchParams.get('error')).toBe('oauth_failed')
+    expect(cookieValue(res, SESSION_COOKIE_NAME) ?? '').toBe('')
+  })
+
+  it.each([
+    ['a 500', () => new Response('upstream down', { status: 500 })],
+    [
+      'a 400 with a non-JSON body',
+      () =>
+        new Response('<html>Bad Request</html>', {
+          status: 400,
+          headers: { 'Content-Type': 'text/html' },
+        }),
+    ],
+  ])('a token endpoint answering %s → oauth_failed, nobody signed in', async (_l, answer) => {
+    const user = await createTestUser(db)
+    profile = { sub: `g_${uniqueId()}`, email: user.email, email_verified: true }
+    tokenFailure = answer
+    const res = await callback('google', await start('google'))
+    expect(location(res).searchParams.get('error')).toBe('oauth_failed')
+    expect(cookieValue(res, SESSION_COOKIE_NAME) ?? '').toBe('')
   })
 
   it('link mode attaches the provider to the signed-in user; GET/DELETE /auth/providers manage it', async () => {

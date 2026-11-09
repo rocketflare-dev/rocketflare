@@ -1,9 +1,16 @@
 /**
- * Google: arctic `Google` with PKCE; profile from the OIDC userinfo endpoint, which
- * carries `email_verified`.
+ * Google: code + PKCE against its fixed endpoints (no discovery); profile from the OIDC userinfo
+ * endpoint, which carries `email_verified`.
  */
-import { Google } from 'arctic'
-import { fetchJson, type ProviderDefinition, toTokenSet } from './types'
+import { ClientSecretBasic, Configuration, type ServerMetadata } from 'openid-client'
+import { openidOAuthClient } from './openid'
+import { fetchJson, type ProviderDefinition } from './types'
+
+const GOOGLE: ServerMetadata = {
+  issuer: 'https://accounts.google.com',
+  authorization_endpoint: 'https://accounts.google.com/o/oauth2/v2/auth',
+  token_endpoint: 'https://oauth2.googleapis.com/token',
+}
 
 interface GoogleUserInfo {
   sub: string
@@ -19,17 +26,14 @@ export const googleProvider: ProviderDefinition = {
   scopes: ['openid', 'email', 'profile'],
   configured: cfg => Boolean(cfg.GOOGLE_CLIENT_ID && cfg.GOOGLE_CLIENT_SECRET),
   client(cfg, redirectUri) {
-    const google = new Google(
-      cfg.GOOGLE_CLIENT_ID ?? '',
-      cfg.GOOGLE_CLIENT_SECRET ?? '',
-      redirectUri
-    )
-    return {
-      createAuthorizationURL: (state, verifier, scopes) =>
-        google.createAuthorizationURL(state, verifier, scopes),
-      validateAuthorizationCode: async (code, verifier) =>
-        toTokenSet(await google.validateAuthorizationCode(code, verifier)),
-    }
+    const configuration = async () =>
+      new Configuration(
+        GOOGLE,
+        cfg.GOOGLE_CLIENT_ID ?? '',
+        undefined,
+        ClientSecretBasic(cfg.GOOGLE_CLIENT_SECRET ?? '')
+      )
+    return openidOAuthClient(configuration, redirectUri, { sendsNonce: false })
   },
   async fetchProfile(tokens) {
     const info = await fetchJson<GoogleUserInfo>(

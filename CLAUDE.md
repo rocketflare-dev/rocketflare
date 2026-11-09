@@ -34,7 +34,7 @@ Cloudflare Worker (`apps/web`), a CLI (`apps/cli`), private zod contracts
   (`neon`, HTTP + a WS pool for transactions — the kit's tomls) or `postgres.js` via Hyperdrive
   (`postgres`, any Postgres — a missing var, and local/`.dev.vars`); `openDatabase(env)`, 1 client/request;
   raw results only through `rows()`/`affected()`
-- **Auth**: arctic (Google, Microsoft, any OIDC issuer — jose-verified `id_token`, off by default) + magic link + dev-login; `__Host-session`; API keys; KV rate limit
+- **Auth**: openid-client (Google, Microsoft, any OIDC issuer — jose-verified `id_token`, off by default) + magic link + dev-login; `__Host-session`; API keys; KV rate limit
 - **Async / realtime**: Queues (`JOBS_QUEUE`), `NotificationsHub` DO `/ws`, R2 (`FILES`), cron, Workflows
 - **AI**: `services/ai/resolve` (`agent_models` → tenant `ai_configs` → platform key → Workers AI via
   `[ai]`, zero key → 503); Anthropic / OpenAI-compatible / Workers AI chat streamed as **AG-UI**
