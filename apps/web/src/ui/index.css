@@ -4,6 +4,8 @@
    to mention. Only the UI tree is scanned; `src/shared` carries no class names. */
 @import "tailwindcss" source(none);
 
+@import "../shared/theme-tokens.css";
+
 @plugin "daisyui";
 @plugin "@tailwindcss/typography";
 
@@ -53,89 +55,7 @@
    `-content` colour — one token, two jobs, which is how DaisyUI's `badge-*`/`alert-*` use it.
    ========================================================================== */
 
-@theme {
-  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue",
-    Arial, sans-serif;
-  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
-}
-
-/* ------------------------------------------------------------------ Light */
-@plugin "daisyui/theme" {
-  name: "rocketflare-light";
-  default: true;
-  color-scheme: light;
-
-  --color-primary: #2563eb; /* blue-600 — the one accent */
-  --color-primary-content: #ffffff;
-  /* Same tone as --text-secondary. DaisyUI generates a `text-secondary` UTILITY from this,
-     which sorts after `@layer components` and therefore wins over the `.text-secondary` class
-     below — so the two are made to agree rather than left to fight. */
-  --color-secondary: #3f3f46; /* zinc-700 */
-  --color-secondary-content: #ffffff;
-  --color-accent: #0f766e; /* teal-700 — automation / AI affordances */
-  --color-accent-content: #ffffff;
-  --color-neutral: #18181b; /* zinc-900 */
-  --color-neutral-content: #fafafa;
-
-  --color-base-100: #ffffff; /* card / panel surface */
-  --color-base-200: #ffffff; /* cards (bg-base-200) render white too */
-  --color-base-300: #d4d4d8; /* zinc-300 — borders / hover / lines */
-  --color-base-content: #18181b; /* zinc-900 */
-
-  --color-info: #0369a1; /* sky-700 */
-  --color-info-content: #ffffff;
-  --color-success: #15803d; /* green-700 */
-  --color-success-content: #ffffff;
-  --color-warning: #b45309; /* amber-700 */
-  --color-warning-content: #ffffff;
-  --color-error: #b91c1c; /* red-700 */
-  --color-error-content: #ffffff;
-
-  --radius-selector: 0.5rem;
-  --radius-field: 0.3125rem; /* controls: 5px */
-  --radius-box: 0.375rem; /* cards: 6px */
-  --border: 1px;
-  --depth: 0; /* flat — no faux-3D button/card depth */
-  --noise: 0;
-}
-
-/* ------------------------------------------------------------------- Dark */
-@plugin "daisyui/theme" {
-  name: "rocketflare-dark";
-  prefersdark: true;
-  color-scheme: dark;
-
-  --color-primary: #60a5fa; /* blue-400 */
-  --color-primary-content: #172554; /* blue-950 */
-  --color-secondary: #d4d4d8; /* zinc-300 — matches --text-secondary, see the light block */
-  --color-secondary-content: #18181b;
-  --color-accent: #5eead4; /* teal-300 */
-  --color-accent-content: #042f2e; /* teal-950 */
-  --color-neutral: #d4d4d8;
-  --color-neutral-content: #18181b;
-
-  --color-base-100: #27272a; /* zinc-800 — card / panel surface, lifted off the canvas */
-  --color-base-200: #27272a;
-  --color-base-300: #52525b; /* zinc-600 — borders / hover / lines */
-  --color-base-content: #fafafa;
-
-  /* Tone 300 of the SAME hue rows the light theme reads tone 700 from; `-content` is tone 950. */
-  --color-info: #7dd3fc; /* sky-300 */
-  --color-info-content: #082f49;
-  --color-success: #86efac; /* green-300 */
-  --color-success-content: #052e16;
-  --color-warning: #fcd34d; /* amber-300 */
-  --color-warning-content: #451a03;
-  --color-error: #fca5a5; /* red-300 */
-  --color-error-content: #450a0a;
-
-  --radius-selector: 0.5rem;
-  --radius-field: 0.3125rem;
-  --radius-box: 0.375rem;
-  --border: 1px;
-  --depth: 0;
-  --noise: 0;
-}
+/* The brand itself: `../shared/theme-tokens.css`, shared with the public-site stylesheets. */
 
 /* ------------------------------------------------ Semantic surface tokens */
 [data-theme="rocketflare-light"] {

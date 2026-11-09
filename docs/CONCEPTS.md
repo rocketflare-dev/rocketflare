@@ -498,7 +498,7 @@ re-uploads leave the old object; no listing endpoint, quotas or presigned URLs; 
 
 ## 7. UI shell
 
-- **Design tokens (D20)**: two DaisyUI themes in `ui/index.css`, where the brand hexes are the only
+- **Design tokens (D20)**: two DaisyUI themes in `shared/theme-tokens.css` (read by `ui/index.css` and by public-site stylesheets), where the brand hexes are the only
   hex values; `contrast.test.ts` gates them. Tailwind scanning is `source(none)` + explicit
   `@source` lines. A plugin's pages get the `../plugins/**/ui/**` line, and precompiled dependency
   CSS gets none.

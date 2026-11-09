@@ -63,7 +63,7 @@ blocks and **"Nothing written. Read the plan, then re-run with --apply to instal
   without reading anything else.
 - `Files (n)` — a count per root, plus `(not copied) migrations/` for any install fragment.
 - `Skills` — only when the plugin ships agent skills: each `.claude/skills/<dir>/` it installs.
-  Nothing to do for them; after the install, tell the person the skill exists and what it is for
+  If one is named `<id>-setup`, run it straight after the install. For the rest, tell the person the skill exists and what it is for
   (its `description`), because a skill nobody knows about is only found by accident.
 - `Barrel lines` — the exact line each of the six barrels gains (the sixth, `worker-exports.ts`,
   only when the plugin ships a Durable Object or Workflow class).

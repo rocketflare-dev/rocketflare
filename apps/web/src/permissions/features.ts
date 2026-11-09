@@ -35,6 +35,20 @@ export function hasFeature(features: readonly string[], name: FeatureName): bool
   return features.includes(name)
 }
 
+/**
+ * The keys this deployment ships: `FEATURES_ENABLED` plus what each plugin's own config switches
+ * on (`ServerPlugin.deploymentFeatures`).
+ *
+ * **The barrel is reached through a function-scope `import()`, and the static import is the trap.**
+ * `plugins/api` reaches this file before it has evaluated `./http` (through `./ai` and `./auth`), so
+ * a static import runs every plugin's routers while `createRouter` is still `undefined`. It shows
+ * only with a second plugin installed, which is why `tests/config/plugins.test.ts` pins it.
+ */
+export async function deploymentFeatures(cfg: AppConfig): Promise<readonly string[]> {
+  const { serverPlugins } = await import('../plugins/server')
+  return [...cfg.FEATURES_ENABLED, ...serverPlugins.flatMap(p => p.deploymentFeatures?.(cfg) ?? [])]
+}
+
 /** Who the flags are being resolved for. Either id may be absent (a session with no membership). */
 export interface FeatureSubjectContext {
   tenantId: string | null
@@ -48,11 +62,11 @@ export interface FeatureSubjectContext {
  *
  * Order is stable (`FEATURE_KEYS`) so tests can compare arrays.
  */
-export function resolveFeatures(
+export async function resolveFeatures(
   cfg: AppConfig,
   rows: readonly FeatureFlagEvaluation[],
   subject: FeatureSubjectContext
-): FeatureName[] {
+): Promise<FeatureName[]> {
   // No organisation, no answer. Every gated surface is tenant-scoped, so a session that has not
   // chosen one has nothing a feature could be on FOR — and this keeps "no membership means no
   // permissions" literally true, which `auth-session` asserts on the packed rules.
@@ -60,6 +74,6 @@ export function resolveFeatures(
   return evaluateFeatures(rows, {
     tenantId: subject.tenantId,
     userId: subject.userId,
-    environmentEnabled: cfg.FEATURES_ENABLED,
+    environmentEnabled: await deploymentFeatures(cfg),
   })
 }

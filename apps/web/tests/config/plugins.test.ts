@@ -763,6 +763,14 @@ describe('installed plugins', () => {
     expect(issues).toEqual([])
   })
 
+  it('keeps the feature resolver off the barrel, which reads plugins before createRouter exists', () => {
+    const file = 'apps/web/src/permissions/features.ts'
+    const specifiers = staticImports(readFileSync(path.join(REPO_ROOT, file), 'utf8')).map(
+      i => i.specifier
+    )
+    expect(specifiers).not.toContain('../plugins/server')
+  })
+
   it('keeps every UI entry free of pages and heavy dependencies', () => {
     const entries = tracked.filter(
       f => pluginIdOfPath(f) !== null && /\/(ui\.ts|ui\/index\.ts)$/.test(f)

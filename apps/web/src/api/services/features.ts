@@ -30,11 +30,11 @@ import { and, eq, sql } from 'drizzle-orm'
 import type { AppConfig } from '../../config'
 import type { Database } from '../../db/client'
 import { featureFlags, tenantFeatureOverrides, tenants } from '../../db/schema'
-import { resolveFeatures } from '../../permissions/features'
+import { deploymentFeatures, resolveFeatures } from '../../permissions/features'
 
 /** Is this key permitted in this deployment at all? */
-export function availableInEnvironment(cfg: AppConfig, key: FeatureName): boolean {
-  return !FEATURE_FLAGS[key].environmentGated || cfg.FEATURES_ENABLED.includes(key)
+export function availableInEnvironment(deployed: readonly string[], key: FeatureName): boolean {
+  return !FEATURE_FLAGS[key].environmentGated || deployed.includes(key)
 }
 
 /**
@@ -113,6 +113,7 @@ export async function listFeatureFlags(db: Database, cfg: AppConfig): Promise<Fe
     })
     .from(featureFlags)
   const byKey = new Map(saved.map(row => [row.key, row]))
+  const deployed = await deploymentFeatures(cfg)
 
   return FEATURE_KEYS.map(key => {
     const definition = FEATURE_FLAGS[key]
@@ -125,7 +126,7 @@ export async function listFeatureFlags(db: Database, cfg: AppConfig): Promise<Fe
       rolloutPercent: row?.rolloutPercent ?? 0,
       rolloutUnit: row?.rolloutUnit ?? definition.defaultRolloutUnit,
       environmentGated: definition.environmentGated,
-      availableInEnvironment: availableInEnvironment(cfg, key),
+      availableInEnvironment: availableInEnvironment(deployed, key),
       overrideCount: Number(row?.overrideCount ?? 0),
       updatedAt: row?.updatedAt ?? null,
     }

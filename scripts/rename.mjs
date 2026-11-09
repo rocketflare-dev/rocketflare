@@ -80,6 +80,7 @@ const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..
 const HASH_TS = 'apps/web/src/api/utils/core/hash.ts'
 const CLI_CONFIG_TS = 'apps/cli/src/config.ts'
 const INDEX_CSS = 'apps/web/src/ui/index.css'
+const THEME_TOKENS_CSS = 'apps/web/src/shared/theme-tokens.css'
 const INDEX_HTML = 'apps/web/src/ui/index.html'
 const MIGRATIONS_DIR = 'apps/web/migrations/'
 const DEV_VARS = 'apps/web/.dev.vars'
@@ -409,12 +410,22 @@ function main(argv) {
   )
   // (e) colour
   if (names.colour) {
-    const r = applyColour({ css: current(INDEX_CSS), html: current(INDEX_HTML) }, names.colour)
-    edits.set(INDEX_CSS, r.css)
+    // The brand tokens live in their own file; the same hex recurs in index.css's semantic tokens.
+    const SPLIT = '/*__rocketflare_css_split__*/'
+    const r = applyColour(
+      {
+        css: `${current(THEME_TOKENS_CSS)}${SPLIT}${current(INDEX_CSS)}`,
+        html: current(INDEX_HTML),
+      },
+      names.colour
+    )
+    const [tokensCss, indexCss] = r.css.split(SPLIT)
+    edits.set(THEME_TOKENS_CSS, tokensCss)
+    edits.set(INDEX_CSS, indexCss)
     edits.set(INDEX_HTML, r.html)
     report.push(
       [
-        `(e) Colour: light-theme primary ${r.from} → ${r.to} in ${INDEX_CSS} (${r.cssReplacements} occurrences: ` +
+        `(e) Colour: light-theme primary ${r.from} → ${r.to} in ${THEME_TOKENS_CSS} + ${INDEX_CSS} (${r.cssReplacements} occurrences: ` +
           '--color-primary, --surface-active, --focus-ring; plus --dc-primary-rgb)' +
           `${r.htmlReplaced ? ` and <meta name="theme-color"> in ${INDEX_HTML}` : ''}. Left for you:`,
         ...r.manual.map(m => `      - ${m}`),
@@ -423,7 +434,7 @@ function main(argv) {
     )
   } else {
     report.push(
-      `(e) Colour: unchanged (no --colour). The brand hexes live in the header block of ${INDEX_CSS}; ` +
+      `(e) Colour: unchanged (no --colour). The brand hexes live in ${THEME_TOKENS_CSS}; ` +
         'after any change run `pnpm web test:ui` (contrast gate).'
     )
   }

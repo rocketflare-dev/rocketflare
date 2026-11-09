@@ -84,7 +84,7 @@ export async function resolveCookieAuth(
     fireAndForget(c, () => touchTenantAccess(db, membership.tenantId), 'touch tenant access')
   }
 
-  const features = resolveFeatures(c.get('config'), resolved.flagRows, {
+  const features = await resolveFeatures(c.get('config'), resolved.flagRows, {
     tenantId: membership?.tenantId ?? null,
     userId: user.id,
   })
@@ -131,7 +131,7 @@ async function resolveBearerAuth(c: AppContext, plaintext: string): Promise<Auth
     listUserGroups(db, result.tenant.id, result.user.id),
     listFeatureFlagRows(db, result.tenant.id),
   ])
-  const features = resolveFeatures(c.get('config'), flagRows, {
+  const features = await resolveFeatures(c.get('config'), flagRows, {
     tenantId: result.tenant.id,
     userId: result.user.id,
   })

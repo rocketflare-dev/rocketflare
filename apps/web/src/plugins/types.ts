@@ -233,6 +233,13 @@ export interface ServerPlugin<S extends SharedPlugin = SharedPlugin> {
    * is a Cloudflare dashboard (or API) step per zone; nothing here or in a toml declares it.
    */
   emailHandlers?: readonly EmailHandler[]
+  /**
+   * Feature keys this plugin's own CONFIG switches on for the deployment, unioned with
+   * `FEATURES_ENABLED`, so an `environmentGated` flag can follow a plugin's vars rather than need a
+   * second, drifting var of its own. Pure, and it must not read the database: it runs on every
+   * request's auth path. The flag's rollout state still decides per tenant.
+   */
+  deploymentFeatures?: (config: AppConfig) => readonly string[]
   /** Per-role CASL rules, applied after the core matrix — additive, never a replacement. */
   grants?: Partial<Record<EffectiveRole, RoleGrant>>
   /**

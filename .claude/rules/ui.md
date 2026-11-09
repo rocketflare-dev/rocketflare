@@ -15,9 +15,10 @@ providers, identity flow: `apps/web/src/ui/CLAUDE.md`.
 
 ## Design tokens, not raw colours
 
-- Themes are two `@plugin "daisyui/theme"` blocks in `apps/web/src/ui/index.css`
-  (`rocketflare-light` default, `rocketflare-dark` prefersdark); its brand variables are the ONLY
-  place a hex appears (rebrand steps: its header comment). Use DaisyUI semantic classes
+- Themes are two `@plugin "daisyui/theme"` blocks in `apps/web/src/shared/theme-tokens.css`
+  (`rocketflare-light` default, `rocketflare-dark` prefersdark), imported by `ui/index.css` and by
+  any public-site stylesheet; its brand variables are the ONLY place a hex appears (rebrand steps:
+  the header comment in `ui/index.css`). Use DaisyUI semantic classes
   (`bg-base-200`, `badge-warning`) or the kit's tokens (`--surface-*`, `--border-*`, `--text-*`,
   `--tone-*`; `.surface-panel`, `.data-table`, `.status-badge`, `.text-muted`); **never
   `bg-blue-50`-style palette utilities**

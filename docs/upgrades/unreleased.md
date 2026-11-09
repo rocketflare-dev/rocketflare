@@ -21,6 +21,8 @@ Plugins can serve whole public hosts through a new `publicSites` seam, with a st
 - `pnpm plugin add` applies those two values and keeps the previous lines in marked comments; `pnpm plugin remove` restores them. `pnpm provision urls` writes the app host plus every host in the toml's hosts var and refuses site hosts while the app is on `workers.dev`.
 - The ordinary gate no longer requires a plugin's bindings, migration tag or non-secret vars before provisioning, matching crons and prefixes. `REQUIRE_PROVISIONED=1` still demands all of them, so a deploy is stopped as before.
 - `publicSites.cache` gains `variant` (one entry per value, such as a negotiated image format) and `ttlSeconds` may be a function of the pathname. `ServerPlugin.uploadPaths` lets a plugin's file routes skip the 1 MB body cap; each must mount its own limit.
+- The brand tokens and DaisyUI themes moved from `apps/web/src/ui/index.css` to `apps/web/src/shared/theme-tokens.css`, so a public-site stylesheet can share them without importing the admin UI. `theme-init.js` sets zod's global `jitless` config before any module runs, so its `new Function` probe no longer raises a CSP violation.
+- `ServerPlugin.deploymentFeatures` lets a plugin's config switch on an `environmentGated` flag. `resolveFeatures` is now async and `availableInEnvironment` takes the deployed list.
 - `images` is a sixth manifest binding type, declared only and written as the single `[images]` table; a second plugin declaring it is refused.
 - The UI shell's inline theme script moved to `apps/web/src/ui/public/assets/theme-init.js`, because the Worker's CSP refuses inline script once navigations reach the Worker.
 - `PluginRouteTier` gains `fullscreen`: outside `Layout`, with sign-in, a tenant and the route's `guard` still enforced.
@@ -45,6 +47,8 @@ Plugins can serve whole public hosts through a new `publicSites` seam, with a st
 9. In an app with no plugin declaring `publicSites`, leave `run_worker_first`, `not_found_handling` and `routes` unchanged in `apps/web/wrangler.toml` and `apps/web/wrangler.staging.toml`.
 10. In an app installing a plugin that declares `publicSites`, put the site's own scripts and styles under `/site-assets/` in the built UI, set the plugin's hosts var in both tomls, run `pnpm provision cloudflare <env>` for each environment, and follow the zone and DNS steps in `docs/DEPLOY.md`.
 11. Run `node scripts/plugin-api-doc.mjs` to regenerate `docs/plugin-api.md`.
+12. Add `deploymentFeatures?: (config) => readonly string[]` to `ServerPlugin` in `apps/web/src/plugins/types.ts`, then port `apps/web/src/permissions/features.ts`, `apps/web/src/api/services/features.ts` and the two `await`s in `apps/web/src/api/middleware/auth.ts`. Any call of your own to `resolveFeatures` must now `await` it.
+13. Move the `@theme` block and both `@plugin "daisyui/theme"` blocks from `apps/web/src/ui/index.css` into `apps/web/src/shared/theme-tokens.css`, and `@import "../shared/theme-tokens.css";` directly after the Tailwind import. Port the matching change in `tests/ui/contrast.test.ts`.
 
 ## Conflicts to expect
 
