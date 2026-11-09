@@ -6,6 +6,11 @@ copy of the kit forward without recreating anything its owner deleted.
 
 If you are running a copy: `pnpm kit:upgrade` tells you which of these you are missing.
 
+## 0.29.0 — 2026-11-09
+
+Sign-in moves to `openid-client`, three dependency advisories close, and a hardening round tightens roles, sign-in, API key scopes, AI tools and budgets, the plugin identity seam, CLI output and tooling; trace content capture defaults off.
+[Porting note](docs/upgrades/0.29.0.md).
+
 ## 0.28.0 — 2026-11-08
 
 The analytics plugin is opt-in: a fresh clone of the kit installs no plugin, and `/rf-plugin add analytics` adds dashboards, cubes and fact tables when an app wants them.
