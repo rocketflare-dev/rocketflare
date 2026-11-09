@@ -56,7 +56,16 @@ vi.mock('@/plugins/server', async importOriginal => {
     c.text('browser-cached', 200, { 'Cache-Control': 'max-age=60' })
   )
   router.get('/long', c => c.text('long'))
-  router.get('/negotiated', c => c.text(`for ${c.req.header('accept')}`))
+  router.get('/negotiated', c => c.text(`for ${c.req.header('accept')}`, 200, { Vary: 'Accept' }))
+  router.get('/credentials', c =>
+    c.text(
+      `${c.req.header('cookie') ?? 'no cookie'}, ${c.req.header('authorization') ?? 'no auth'}`
+    )
+  )
+  router.get('/vary-language', c => c.text('language', 200, { Vary: 'Accept-Language' }))
+  router.get('/vary-accept-no-variant', c => c.text('accept', 200, { Vary: 'Accept' }))
+  router.get('/vary-all', c => c.text('all', 200, { Vary: '*' }))
+  router.get('/vary-encoding', c => c.text('encoding', 200, { Vary: 'Accept-Encoding' }))
   router.get('/moved', c => c.redirect('/about', 301))
   router.get('/moved-with-query', c => c.redirect('/about?keep=1', 301))
   router.get('/gone', c => c.text('gone', 410))
@@ -89,6 +98,7 @@ vi.mock('@/plugins/server', async importOriginal => {
           new URL(request.url).pathname === '/negotiated'
             ? (request.headers.get('accept') ?? 'none')
             : null,
+        variantHeaders: ['Accept'],
       },
     } satisfies PublicSitesDeclaration,
   } as unknown as AnyServerPlugin
@@ -309,6 +319,40 @@ describe('the cache', () => {
     expect(await hit.text()).toBe('for image/avif')
     expect(state.routerCalls).toBe(2)
     expect(cache.store.size).toBe(2)
+  })
+
+  it("renders a cacheable page without the visitor's credentials", async () => {
+    const env = createTestEnv()
+    const signedIn = { headers: { cookie: 'session=first', authorization: 'Bearer first' } }
+    const first = await request(`${SITE}/credentials`, signedIn, { env })
+    expect(await first.text()).toBe('no cookie, no auth')
+    const second = await request(`${SITE}/credentials`, {}, { env })
+    expect(await second.text()).toBe('no cookie, no auth')
+    expect(state.routerCalls).toBe(1)
+  })
+
+  it('still shows the router the credentials when the page is not cached', async () => {
+    state.generation = null
+    const res = await request(`${SITE}/credentials`, { headers: { cookie: 'session=first' } })
+    expect(await res.text()).toBe('session=first, no auth')
+  })
+
+  it.each(['/vary-language', '/vary-accept-no-variant', '/vary-all'])(
+    'does not store %s, whose Vary the key does not separate',
+    async path => {
+      const env = createTestEnv()
+      await request(`${SITE}${path}`, {}, { env })
+      await request(`${SITE}${path}`, {}, { env })
+      expect(state.routerCalls).toBe(2)
+      expect(cache.store.size).toBe(0)
+    }
+  )
+
+  it('stores a response that varies only on Accept-Encoding', async () => {
+    const env = createTestEnv()
+    await request(`${SITE}/vary-encoding`, {}, { env })
+    await request(`${SITE}/vary-encoding`, {}, { env })
+    expect(state.routerCalls).toBe(1)
   })
 
   it('does not vary a path whose variant is null', async () => {

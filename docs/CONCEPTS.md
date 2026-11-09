@@ -1154,7 +1154,7 @@ as merging a PR. A plugin repo mirrors the host tree and ships **no migration, n
   path declared in `forms`; anything else is 405. The order is cache lookup, rate limit (misses
   only), router, cache put. The cache key is `<host>/<generation>/<path>`, without the query string.
   `cache` is optional, and its `generation` must not touch Postgres, so a hit costs no query; it
-  returns null to skip caching a request. Only a 200 with no `Set-Cookie` is stored, and HEAD is
+  returns null to skip caching a request. A cacheable request reaches the router without `Cookie` or `Authorization`, so a cached site is anonymous. Only a 200 with no `Set-Cookie`, and with no `Vary` beyond `Accept-Encoding` and the `cache.variantHeaders` of a request that has a variant, is stored, and HEAD is
   served from the GET entry. A form POST bypasses the cache and has its own body limit (default
   64 KiB, at most `MAX_PUBLIC_MOUNT_BODY_BYTES`) and rate-limit bucket. Two plugins claiming one
   host, or a claim on `APP_URL`'s host, fail the gate (`publicSiteIssues`); at runtime the claim is

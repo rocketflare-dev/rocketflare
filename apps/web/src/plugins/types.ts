@@ -124,6 +124,11 @@ export interface PublicSitesDeclaration {
      * `null` for no variant. Keep the set of values small and fixed, because each is its own entry.
      */
     variant?: (request: Request) => string | null
+    /**
+     * The request headers `variant` reads. A response whose `Vary` names anything else is not
+     * stored, nor is any `Vary` on a request with no variant; `Accept-Encoding` is always allowed.
+     */
+    variantHeaders?: readonly string[]
   }
 }
 

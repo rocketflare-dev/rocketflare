@@ -180,10 +180,31 @@ function edgeCache(): Cache | undefined {
     : (caches as unknown as { default: Cache }).default
 }
 
-function isStorable(response: Response): boolean {
+/** A stored page is served to everyone, so the render that fills the cache never sees these. */
+const CREDENTIAL_HEADERS = ['authorization', 'cookie', 'proxy-authorization']
+
+function withoutCredentials(headers: Headers): Headers {
+  const anonymous = new Headers(headers)
+  for (const name of CREDENTIAL_HEADERS) anonymous.delete(name)
+  return anonymous
+}
+
+/** Does the key separate everything `Vary` names? `Accept-Encoding` is the platform's to handle. */
+function varyIsCovered(response: Response, covered: readonly string[]): boolean {
+  const vary = response.headers.get('vary')
+  if (!vary) return true
+  const headers = new Set(covered.map(h => h.toLowerCase()))
+  return vary
+    .split(',')
+    .map(h => h.trim().toLowerCase())
+    .every(h => h === '' || h === 'accept-encoding' || headers.has(h))
+}
+
+function isStorable(response: Response, coveredVary: readonly string[]): boolean {
   return (
     response.status === 200 &&
     !response.headers.has('set-cookie') &&
+    varyIsCovered(response, coveredVary) &&
     !/\b(?:no-store|private)\b/i.test(response.headers.get('cache-control') ?? '')
   )
 }
@@ -248,11 +269,12 @@ async function answerPage(
   const logger = c.get('logger')
   const cache = edgeCache()
   const generation = cache ? await generationOf(c, site, config) : null
+  const variantSuffix = generation === null ? '' : cacheVariantSuffix(declaration, c.req.raw)
   const key =
     generation === null
       ? null
       : new Request(
-          `https://${host}/${encodeURIComponent(generation)}${url.pathname}${cacheVariantSuffix(declaration, c.req.raw)}`
+          `https://${host}/${encodeURIComponent(generation)}${url.pathname}${variantSuffix}`
         )
 
   if (cache && key) {
@@ -264,9 +286,13 @@ async function answerPage(
   }
 
   // What gets stored is served to everyone at this path, so it is rendered without the query
-  // string: otherwise `?preview=…` could put one visitor's page in front of all of them.
+  // string or the visitor's credentials: otherwise `?preview=…` or a session cookie could put one
+  // visitor's page in front of all of them.
   const request = key
-    ? new Request(`${url.origin}${url.pathname}`, { method: 'GET', headers: c.req.raw.headers })
+    ? new Request(`${url.origin}${url.pathname}`, {
+        method: 'GET',
+        headers: withoutCredentials(c.req.raw.headers),
+      })
     : c.req.raw
 
   let response: Response | undefined
@@ -277,7 +303,8 @@ async function answerPage(
     ? withOriginalQuery(response as Response, url.search)
     : (response as Response)
 
-  if (cache && key && declaration.cache && isStorable(answered)) {
+  const coveredVary = variantSuffix ? (declaration.cache?.variantHeaders ?? []) : []
+  if (cache && key && declaration.cache && isStorable(answered, coveredVary)) {
     const { ttlSeconds } = declaration.cache
     const ttl = typeof ttlSeconds === 'function' ? ttlSeconds(url.pathname) : ttlSeconds
     const entry = toCacheEntry(answered.clone(), ttl)
