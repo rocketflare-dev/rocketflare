@@ -30,7 +30,15 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import ts from 'typescript'
+import * as ts from 'typescript/ast'
+import {
+  API,
+  JsxEmit,
+  ModuleKind,
+  ModuleResolutionKind,
+  SymbolFlags,
+  TypeFormatFlags,
+} from 'typescript/sync'
 import { LEDGER_ENTRIES } from './lib/surface.mjs'
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
@@ -169,24 +177,35 @@ const CAPABILITIES = [
  * diff changes with the absolute path cannot be diff-checked in CI at all. The one place a type is
  * asked for is a `const` with no annotation, and the `import("…")` form is stripped there.
  */
-function buildProgram() {
+function buildProject() {
   const files = ENTRIES.map(e => path.join(REPO_ROOT, e.file))
   const globals = path.join(REPO_ROOT, 'apps/web/worker-configuration.d.ts')
-  return ts.createProgram([...files, ...(existsSync(globals) ? [globals] : [])], {
-    target: ts.ScriptTarget.ES2022,
-    module: ts.ModuleKind.ESNext,
-    moduleResolution: ts.ModuleResolutionKind.Bundler,
-    jsx: ts.JsxEmit.ReactJSX,
-    strict: true,
-    skipLibCheck: true,
-    esModuleInterop: true,
-    allowImportingTsExtensions: true,
-    resolveJsonModule: true,
-    noEmit: true,
-    baseUrl: path.join(REPO_ROOT, 'apps/web'),
-    paths: { '@/*': ['src/*'], '@testkit/*': ['tests/kit/*'] },
-    types: ['node'],
+  const web = path.join(REPO_ROOT, 'apps/web')
+  const snapshot = new API({ cwd: REPO_ROOT }).createSnapshot({
+    createPrograms: [
+      {
+        rootFiles: [...files, ...(existsSync(globals) ? [globals] : [])],
+        compilerOptions: {
+          target: ts.ScriptTarget.ES2022,
+          module: ModuleKind.ESNext,
+          moduleResolution: ModuleResolutionKind.Bundler,
+          jsx: JsxEmit.ReactJSX,
+          strict: true,
+          skipLibCheck: true,
+          esModuleInterop: true,
+          allowImportingTsExtensions: true,
+          resolveJsonModule: true,
+          noEmit: true,
+          paths: { '@/*': [`${web}/src/*`], '@testkit/*': [`${web}/tests/kit/*`] },
+          types: ['node'],
+        },
+      },
+    ],
   })
+  const [program] = snapshot.operation.createdPrograms
+  const project = snapshot.getProjects().find(p => p.program.id === program.id)
+  if (!project) throw new Error('the TypeScript snapshot has no project for the entries')
+  return project
 }
 
 /** The longest a printed type may be before it is cut. Deterministic, so the ledger is stable. */
@@ -245,7 +264,7 @@ function topLevelKeys(text) {
  * artefact that is diff-checked has to be a function of its source alone, and this is the one
  * input that quietly was not.
  */
-function assertResolvable(program) {
+function assertResolvable({ program }) {
   if (!existsSync(path.join(REPO_ROOT, 'node_modules'))) {
     throw new Error(
       'node_modules is missing — run `pnpm install` first, or every type reads as `any`'
@@ -253,10 +272,8 @@ function assertResolvable(program) {
   }
   const unresolved = new Set()
   for (const entry of ENTRIES) {
-    const source = program.getSourceFile(path.join(REPO_ROOT, entry.file))
-    if (!source) continue
-    for (const d of program.getSemanticDiagnostics(source)) {
-      if (d.code === 2307) unresolved.add(ts.flattenDiagnosticMessageText(d.messageText, ' '))
+    for (const d of program.getSemanticDiagnostics(path.join(REPO_ROOT, entry.file))) {
+      if (d.code === 2307) unresolved.add(d.text)
     }
   }
   if (unresolved.size > 0) {
@@ -292,9 +309,9 @@ function summarise(text) {
 }
 
 function docOf(checker, symbol, alias) {
-  const own = summarise(ts.displayPartsToString(symbol.getDocumentationComment(checker)))
+  const own = summarise(symbol.getDocumentationComment(checker))
   if (own) return own
-  return alias ? summarise(ts.displayPartsToString(alias.getDocumentationComment(checker))) : ''
+  return alias ? summarise(alias.getDocumentationComment(checker)) : ''
 }
 
 /** The kind word and the printed signature for one declaration. */
@@ -323,13 +340,13 @@ function describe(checker, symbol, declaration) {
     const name = d.name.getText()
     if (d.type) return { kind: 'const', signature: oneLine(`const ${name}: ${d.type.getText()}`) }
     const type = checker.getTypeOfSymbolAtLocation(symbol, d)
-    const printed = checker.typeToString(type, d, ts.TypeFormatFlags.NoTruncation)
+    const printed = checker.typeToString(type, d, TypeFormatFlags.NoTruncation)
     return {
       kind: 'const',
       signature: oneLine(`const ${name}: ${simplify(stripImportPaths(printed))}`),
     }
   }
-  return { kind: 'value', signature: symbol.getName() }
+  return { kind: 'value', signature: symbol.name }
 }
 
 /** The members of an expanded type, in declaration order — the order a reader met them in. */
@@ -339,18 +356,16 @@ function membersOf(checker, declaration) {
     .filter(m => m.name || ts.isCallSignatureDeclaration(m) || ts.isIndexSignatureDeclaration(m))
     .map(m => {
       const symbol = checker.getSymbolAtLocation(m.name ?? m)
-      const doc = symbol
-        ? summarise(ts.displayPartsToString(symbol.getDocumentationComment(checker)))
-        : ''
+      const doc = symbol ? summarise(symbol.getDocumentationComment(checker)) : ''
       return { name: m.name ? m.name.getText() : '()', signature: oneLine(m.getText()), doc }
     })
 }
 
 /** Every exported member of every entry, sorted by name so the document is stable. */
 function extract() {
-  const program = buildProgram()
-  assertResolvable(program)
-  const checker = program.getTypeChecker()
+  const project = buildProject()
+  assertResolvable(project)
+  const { checker, program } = project
   const out = []
   for (const entry of ENTRIES) {
     const source = program.getSourceFile(path.join(REPO_ROOT, entry.file))
@@ -359,12 +374,12 @@ function extract() {
     if (!moduleSymbol) throw new Error(`no module symbol: ${entry.file}`)
     const members = []
     for (const exported of checker.getExportsOfModule(moduleSymbol)) {
-      const alias = exported.flags & ts.SymbolFlags.Alias ? exported : null
+      const alias = exported.flags & SymbolFlags.Alias ? exported : null
       const symbol = alias ? checker.getAliasedSymbol(alias) : exported
-      const declaration = symbol.declarations?.[0]
+      const declaration = symbol.declarations[0]?.resolve(project)
       if (!declaration) continue
       const { kind, signature } = describe(checker, symbol, declaration)
-      const name = exported.getName()
+      const name = exported.name
       members.push({
         name,
         kind,

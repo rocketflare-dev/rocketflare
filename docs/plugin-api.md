@@ -133,7 +133,7 @@ The server surface: the context family, and the types a plugin must be able to n
 - `interface AgentInterruptAnswer`
   The answer. `status` is AG-UI's own `ResumeEntry` vocabulary and there is deliberately no `approved` boolean: two ways to say no is how a UI and a server end up disagreeing.
 - `interface AgentInterruptAsk`
-  What an agent asks a person through {@link AgentContext.interrupt}.
+  What an agent asks a person through AgentContext.interrupt.
 - `interface AgentTraceContext extends Omit<TraceParams, 'name'>`
 - `class AiNotConfiguredError extends ServiceUnavailableError`
   503 `ai_not_configured`: nothing resolves for the tenant (no config row, no platform key).
@@ -517,7 +517,7 @@ The server surface: the context family, and the types a plugin must be able to n
 - `interface Tool<Input = unknown>`
   A tool the model may call. `handler` runs it; a tool WITHOUT a handler is terminal (its input is the answer).
 - `interface ToolApproval`
-  An answered gate, as the loop consumes it — keyed by `toolCallId` in {@link RunToolLoopOptions.approvals}, built by the runtime from the resolved rows. The agent never assembles…
+  An answered gate, as the loop consumes it — keyed by `toolCallId` in RunToolLoopOptions.approvals, built by the runtime from the resolved rows. The agent never assembles this and…
 - `interface ToolCallParams`
 - `function toolCtx(ctx: AgentToolContext): ToolCtx`
   Adapt the runtime's tool context. The only place a plugin's tools name a core internal.
@@ -540,7 +540,7 @@ The server surface: the context family, and the types a plugin must be able to n
 - `function toolInputSchema(schema: ZodType): JsonSchema`
   JSON Schema (draft-07, `$schema` stripped) for a tool input.
 - `interface ToolLoopCheckpoint`
-  Everything a later attempt needs to carry on where this one stopped. Deliberately symmetric: what {@link RunToolLoopOptions.onCheckpoint} hands you is exactly what {@link…
+  Everything a later attempt needs to carry on where this one stopped. Deliberately symmetric: what RunToolLoopOptions.onCheckpoint hands you is exactly what…
 - `interface ToolLoopResult`
 - `function traceChatClient( client: ChatClient, trace: TraceHandle, meta: TraceClientMeta, tracer?: Tracer ): ChatClient`
   Wrap a client so each call emits a `chat <model>` child of `trace`. Unchanged when tracing is off.
@@ -870,7 +870,7 @@ What a plugin's CONTRACT module imports: the error envelope, pagination, `Shared
   The ONE error envelope every API response uses — from `app.onError`, `notFound`, the zValidator hook, and `ApiError` thrown in routes. The UI's `api-client.ts` parses this into…
 - `type DeclaredBy = Extract<P, Record<K, unknown>> extends infer Declaring ? Declaring extends Record<K, unknown> ? Declaring[K] : never : never`
   The value of an OPTIONAL `SharedPlugin` field across the whole barrel, skipping the plugins that do not declare it.
-- `const ERROR_CODES: { readonly validationFailed: "validation_failed"; readonly unauthorized: "unauthorized"; readonly sessionExpired: "session_expired"; readonly forbidden: "forbidden"; readonly notFound: "not_found"; readonly conflict: "conflict"; readonly rateLimited: "rate_limited"; readonly pendingApproval: "pendin… (truncated)`
+- `const ERROR_CODES: { readonly validationFailed: 'validation_failed'; readonly unauthorized: 'unauthorized'; readonly sessionExpired: 'session_expired'; readonly forbidden: 'forbidden'; readonly notFound: 'not_found'; readonly conflict: 'conflict'; readonly rateLimited: 'rate_limited'; readonly pendingApproval: 'pendin… (truncated)`
   Well-known `code` values shared by API and UI. Extend per app.
 - `type ErrorCode = (typeof ERROR_CODES)[keyof typeof ERROR_CODES]`
 - `interface FeatureDefinition`
@@ -1579,7 +1579,7 @@ nothing in the comparison that can throw.
 @rocketflare/shared/plugins/api :: type :: ApiErrorBody :: type ApiErrorBody = z.infer<typeof apiErrorSchema>
 @rocketflare/shared/plugins/api :: const :: apiErrorSchema :: const apiErrorSchema: z.ZodObject<{ error: z.ZodString; statusCode: z.ZodNumber; code: z.ZodOptional<z.ZodString>; details: z.ZodOptional<z.ZodUnknown>; }, z.core.$strip>
 @rocketflare/shared/plugins/api :: type :: DeclaredBy :: type DeclaredBy = Extract<P, Record<K, unknown>> extends infer Declaring ? Declaring extends Record<K, unknown> ? Declaring[K] : never : never
-@rocketflare/shared/plugins/api :: const :: ERROR_CODES :: const ERROR_CODES: { readonly validationFailed: "validation_failed"; readonly unauthorized: "unauthorized"; readonly sessionExpired: "session_expired"; readonly forbidden: "forbidden"; readonly notFound: "not_found"; readonly conflict: "conflict"; readonly rateLimited: "rate_limited"; readonly pendingApproval: "pendin… (truncated)
+@rocketflare/shared/plugins/api :: const :: ERROR_CODES :: const ERROR_CODES: { readonly validationFailed: 'validation_failed'; readonly unauthorized: 'unauthorized'; readonly sessionExpired: 'session_expired'; readonly forbidden: 'forbidden'; readonly notFound: 'not_found'; readonly conflict: 'conflict'; readonly rateLimited: 'rate_limited'; readonly pendingApproval: 'pendin… (truncated)
 @rocketflare/shared/plugins/api :: type :: ErrorCode :: type ErrorCode = (typeof ERROR_CODES)[keyof typeof ERROR_CODES]
 @rocketflare/shared/plugins/api :: interface :: FeatureDefinition :: interface FeatureDefinition
 @rocketflare/shared/plugins/api :: type :: FeatureFlagState :: type FeatureFlagState = z.infer<typeof featureFlagStateSchema>
