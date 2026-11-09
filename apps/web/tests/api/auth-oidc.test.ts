@@ -74,17 +74,19 @@ function oidcEnv(overrides: Record<string, unknown> = {}) {
 
 interface SigningKey {
   kid: string
+  alg: string
   privateKey: CryptoKey
   jwk: Record<string, unknown>
 }
 
-async function newKey(): Promise<SigningKey> {
-  const { privateKey, publicKey } = await generateKeyPair('RS256', { extractable: true })
+async function newKey(alg = 'RS256'): Promise<SigningKey> {
+  const { privateKey, publicKey } = await generateKeyPair(alg, { extractable: true })
   const kid = `kid-${uniqueId()}`
   return {
     kid,
+    alg,
     privateKey,
-    jwk: { ...(await exportJWK(publicKey)), kid, alg: 'RS256', use: 'sig' },
+    jwk: { ...(await exportJWK(publicKey)), kid, alg, use: 'sig' },
   }
 }
 
@@ -103,7 +105,7 @@ interface Issuer {
   omit: string[]
   userinfo: Record<string, unknown> | null
   /** When set, the token endpoint answers with this instead of tokens (an issuer refusing). */
-  tokenFailure: { status: number; body: unknown } | null
+  tokenFailure: { status: number; body: unknown; contentType?: string } | null
   jwksFetches: number
   discoveryFetches: number
   tokenRequests: Array<{ body: URLSearchParams; authorization: string | null }>
@@ -112,10 +114,10 @@ interface Issuer {
 let idp: Issuer
 const realFetch = globalThis.fetch
 
-function jsonResponse(body: unknown, status = 200) {
+function jsonResponse(body: unknown, status = 200, contentType = 'application/json') {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': contentType },
   })
 }
 
@@ -131,7 +133,7 @@ async function signIdToken(nonce: string | undefined): Promise<string> {
   }
   for (const key of idp.omit) delete claims[key]
   return new SignJWT(claims)
-    .setProtectedHeader({ alg: 'RS256', kid: idp.signer.kid })
+    .setProtectedHeader({ alg: idp.signer.alg, kid: idp.signer.kid })
     .sign(idp.signer.privateKey)
 }
 
@@ -176,7 +178,10 @@ beforeEach(async () => {
       const code = body.get('code') ?? ''
       // A real issuer redeems a code ONCE — the replay defence the router relies on.
       if (idp.usedCodes.has(code)) return jsonResponse({ error: 'invalid_grant' }, 400)
-      if (idp.tokenFailure) return jsonResponse(idp.tokenFailure.body, idp.tokenFailure.status)
+      if (idp.tokenFailure) {
+        const { body: failure, status, contentType } = idp.tokenFailure
+        return jsonResponse(failure, status, contentType)
+      }
       idp.usedCodes.add(code)
       return jsonResponse({
         access_token: `access-${code}`,
@@ -448,6 +453,18 @@ describe('GET /auth/oidc/callback', () => {
     expect(location(res).searchParams.get('error')).toBe('oauth_failed')
   })
 
+  it('an issuer that signs with ES256, and says so in discovery, signs in', async () => {
+    const user = await createTestUser(db)
+    const key = await newKey('ES256')
+    idp.published = [key]
+    idp.signer = key
+    idp.discovery.id_token_signing_alg_values_supported = ['ES256']
+    idp.claims = { sub: `sub_${uniqueId()}`, email: user.email, email_verified: true }
+    const res = await signIn(oidcEnv())
+    expect(location(res).pathname).toBe('/')
+    expect(await sessionUserId(res, oidcEnv())).toBe(user.id)
+  })
+
   it('key rotation: a new kid refetches the JWKS (after the cooldown) and succeeds', async () => {
     vi.useFakeTimers({ toFake: ['Date'] })
     const user = await createTestUser(db)
@@ -534,6 +551,18 @@ describe('GET /auth/oidc/callback', () => {
     const tokenRequest = idp.tokenRequests.at(-1)
     expect(tokenRequest?.authorization).toBeNull()
     expect(tokenRequest?.body.get('client_id')).toBe(CLIENT_ID)
+  })
+
+  it('the token request repeats the redirect_uri the authorization request sent', async () => {
+    const user = await createTestUser(db)
+    idp.claims = { sub: `sub_${uniqueId()}`, email: user.email, email_verified: true }
+    const env = oidcEnv()
+    const flow = await start(env)
+    const res = await callback(env, flow)
+    expect(await sessionUserId(res, env)).toBe(user.id)
+    const sent = flow.target.searchParams.get('redirect_uri')
+    expect(sent).toMatch(/\/auth\/oidc\/callback$/)
+    expect(idp.tokenRequests.at(-1)?.body.get('redirect_uri')).toBe(sent)
   })
 
   it('link mode attaches the issuer identity to the signed-in user', async () => {
@@ -999,10 +1028,15 @@ describe('OIDC_MANAGED_TENANCY', () => {
       'an AWS error body',
       { __type: 'UserLambdaValidationException', message: 'No grant for this app' },
     ],
+    [
+      'an AWS error body as application/x-amz-json-1.1',
+      { __type: 'UserLambdaValidationException', message: 'No grant for this app' },
+      'application/x-amz-json-1.1',
+    ],
   ])(
     'a 400 UserLambdaValidationException at the token exchange → no_access (%s)',
-    async (_l, body) => {
-      idp.tokenFailure = { status: 400, body }
+    async (_l, body, contentType?: string) => {
+      idp.tokenFailure = { status: 400, body, ...(contentType ? { contentType } : {}) }
       const res = await signIn(managedEnv())
       expect(location(res).pathname).toBe('/login')
       expect(location(res).searchParams.get('error')).toBe('no_access')

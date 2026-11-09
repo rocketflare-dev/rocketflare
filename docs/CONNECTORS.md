@@ -12,8 +12,8 @@ and not built.
 
 ## 1. Logging in is not connecting
 
-The kit already signs people in with Google and Microsoft through arctic (§2). Login asks for
-`openid email profile` (plus `User.Read` for Microsoft) on the `common` authority. It stores one
+The kit already signs people in with Google and Microsoft through `openid-client` (§2). Login asks
+for `openid email profile` (plus `User.Read` for Microsoft) on the `common` authority. It stores one
 `oauth_providers` row per **user**, never refreshes it, and reads nothing beyond who the person is.
 Nothing described here changes login.
 

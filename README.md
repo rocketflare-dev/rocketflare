@@ -94,7 +94,7 @@ you removed. [`CHANGELOG.md`](CHANGELOG.md) is what you would be catching up on.
 
 ### Authentication
 - **Magic link** (random single-use token, hashed at rest) — works with no email provider: the URL is logged locally.
-- **OAuth registry** — Google and Microsoft via arctic; adding a provider is one definition file. Account linking by verified email, tokens AES-GCM encrypted, PKCE state in one cookie.
+- **OAuth registry** — Google and Microsoft via `openid-client`; adding a provider is one definition file. Account linking by verified email, tokens AES-GCM encrypted, PKCE state in one cookie.
 - **Any OIDC issuer** (Okta, Entra ID, Keycloak, Auth0…) — off until `OIDC_ISSUER` is set: discovery, PKCE + nonce, `id_token` verified against the issuer's JWKS. `AUTH_OIDC_ONLY` makes it the only sign-in; logout follows the issuer's `end_session_endpoint`.
 - **Sessions as rows** — `__Host-session` cookie, 7-day sliding TTL, one LATERAL query per request.
 - **Tenant API keys** — hashed, scoped, expirable, revocable from Settings; the Bearer path shares the auth middleware and abilities with the UI.

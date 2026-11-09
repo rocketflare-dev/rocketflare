@@ -31,7 +31,14 @@ export interface OAuthTokenSet {
   idToken?: string | null
 }
 
-/** The subset of an arctic client the router needs — so tests can substitute a stub. */
+/** What the callback checks the code exchange against: the values bound to the flow cookie. */
+export interface CodeExchangeChecks {
+  state: string
+  verifier: string
+  nonce?: string
+}
+
+/** The client the router needs (`openid.ts`) — so tests can substitute a stub. */
 export interface OAuthClient {
   /** `nonce` is sent by providers that verify an `id_token` (OIDC); the others ignore it. */
   createAuthorizationURL(
@@ -40,7 +47,11 @@ export interface OAuthClient {
     scopes: string[],
     nonce?: string
   ): URL | Promise<URL>
-  validateAuthorizationCode(code: string, codeVerifier: string): Promise<OAuthTokenSet>
+  /** `callbackParams` is the callback's whole query: `code`, `state`, and `iss` where sent. */
+  validateAuthorizationCode(
+    callbackParams: URLSearchParams,
+    checks: CodeExchangeChecks
+  ): Promise<OAuthTokenSet>
 }
 
 /** What the callback knows beyond the tokens — the config, and the nonce bound to the flow. */
@@ -59,34 +70,6 @@ export interface ProviderDefinition {
   /** Scopes for THIS deployment when they are configurable (OIDC); else `scopes`. */
   scopesFor?(cfg: AppConfig): string[]
   fetchProfile(tokens: OAuthTokenSet, ctx: ProfileContext): Promise<OAuthProfile>
-}
-
-/** arctic's `OAuth2Tokens` → our plain token set (methods throw when a field is absent). */
-export function toTokenSet(tokens: {
-  accessToken(): string
-  hasRefreshToken(): boolean
-  refreshToken(): string
-  accessTokenExpiresAt(): Date
-  idToken?(): string
-}): OAuthTokenSet {
-  let expiresAt: Date | null = null
-  try {
-    expiresAt = tokens.accessTokenExpiresAt()
-  } catch {
-    expiresAt = null
-  }
-  let idToken: string | null = null
-  try {
-    idToken = tokens.idToken?.() ?? null
-  } catch {
-    idToken = null
-  }
-  return {
-    accessToken: tokens.accessToken(),
-    refreshToken: tokens.hasRefreshToken() ? tokens.refreshToken() : null,
-    expiresAt,
-    idToken,
-  }
 }
 
 export async function fetchJson<T>(url: string, accessToken: string, what: string): Promise<T> {

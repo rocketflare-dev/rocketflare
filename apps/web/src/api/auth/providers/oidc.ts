@@ -6,8 +6,8 @@
  * - **Discovery** is fetched from `<issuer>/.well-known/openid-configuration`, cached per isolate for
  *   `DISCOVERY_TTL_MS`, and refused unless its `issuer` equals `OIDC_ISSUER` exactly (OIDC
  *   Discovery §4.3 — the mix-up defence).
- * - **Authorization** is code + PKCE (S256) through arctic's `OAuth2Client`, plus a `nonce` the
- *   router binds to the flow cookie.
+ * - **Authorization** is code + PKCE (S256) through `openid-client` (`openid.ts`), plus a `nonce`
+ *   the router binds to the flow cookie.
  * - **Identity** is the `id_token`, verified with `jose.jwtVerify` against the issuer's JWKS
  *   (`iss`, `aud`, `exp`, `nonce`, `azp` when there are several audiences). The JWKS JSON is cached
  *   per isolate through jose's `jwksCache` hook — plain data, never an in-flight promise shared
@@ -22,21 +22,24 @@
  *   (`OIDC_MANAGED_TENANCY` reads the orgs claim from it in the callback — `services/idp-tenancy.ts`).
  */
 import {
-  CodeChallengeMethod,
-  OAuth2Client,
-  OAuth2RequestError,
-  UnexpectedErrorResponseBodyError,
-} from 'arctic'
-import {
   createRemoteJWKSet,
   type JWKSCacheInput,
   type JWTPayload,
   jwksCache,
   jwtVerify,
 } from 'jose'
+import {
+  ClientError,
+  ClientSecretBasic,
+  Configuration,
+  None,
+  ResponseBodyError,
+  type ServerMetadata,
+} from 'openid-client'
 import { z } from 'zod'
 import type { AppConfig } from '../../../config'
-import { fetchJson, type OAuthProfile, type ProviderDefinition, toTokenSet } from './types'
+import { openidOAuthClient } from './openid'
+import { fetchJson, type OAuthProfile, type ProviderDefinition } from './types'
 
 /** How long a discovery document is trusted before it is fetched again. */
 export const DISCOVERY_TTL_MS = 60 * 60 * 1000
@@ -50,6 +53,8 @@ const discoverySchema = z.object({
   jwks_uri: z.string().url(),
   userinfo_endpoint: z.string().url().optional(),
   end_session_endpoint: z.string().url().optional(),
+  id_token_signing_alg_values_supported: z.array(z.string()).optional(),
+  authorization_response_iss_parameter_supported: z.boolean().optional(),
 })
 export type OidcDiscovery = z.infer<typeof discoverySchema>
 
@@ -117,15 +122,15 @@ const PRE_TOKEN_DENIAL = /UserLambdaValidationException|PreTokenGeneration faile
  * Amazon Cognito answers `/oauth2/token` with HTTP 400 `UserLambdaValidationException` (and the
  * Lambda's message) when a Pre Token Generation Lambda throws: an identity service's way of saying
  * "this person may not use this app". The browser has already come back with a `code`, so this
- * is the only place the refusal is visible. arctic surfaces a 400 either as an `OAuth2RequestError`
- * (an OAuth `error` body) or an `UnexpectedErrorResponseBodyError` (an AWS-shaped body).
+ * is the only place the refusal is visible. `openid-client` surfaces a 400 as a `ResponseBodyError`
+ * (an OAuth `error` body) or a `ClientError` whose `cause` is the unread Response (any other body).
  */
-export function isAccessDeniedAtTokenExchange(err: unknown): boolean {
-  if (err instanceof OAuth2RequestError) {
-    return PRE_TOKEN_DENIAL.test(`${err.code} ${err.description ?? ''}`)
+export async function isAccessDeniedAtTokenExchange(err: unknown): Promise<boolean> {
+  if (err instanceof ResponseBodyError) {
+    return PRE_TOKEN_DENIAL.test(`${err.error} ${err.error_description ?? ''}`)
   }
-  if (err instanceof UnexpectedErrorResponseBodyError) {
-    return err.status === 400 && PRE_TOKEN_DENIAL.test(JSON.stringify(err.data ?? ''))
+  if (err instanceof ClientError && err.cause instanceof Response && err.cause.status === 400) {
+    return PRE_TOKEN_DENIAL.test(await err.cause.clone().text())
   }
   return false
 }
@@ -175,33 +180,22 @@ export const oidcProvider: ProviderDefinition = {
   scopesFor,
   configured: cfg => Boolean(cfg.OIDC_ISSUER && cfg.OIDC_CLIENT_ID),
   client(cfg, redirectUri) {
-    const client = new OAuth2Client(
-      cfg.OIDC_CLIENT_ID ?? '',
-      cfg.OIDC_CLIENT_SECRET ?? null,
-      redirectUri
-    )
-    return {
-      async createAuthorizationURL(state, verifier, scopes, nonce) {
-        const doc = await discoverOidc(cfg)
-        const url = client.createAuthorizationURLWithPKCE(
-          doc.authorization_endpoint,
-          state,
-          CodeChallengeMethod.S256,
-          verifier,
-          scopes
-        )
-        if (nonce) url.searchParams.set('nonce', nonce)
-        return url
-      },
-      async validateAuthorizationCode(code, verifier) {
-        const doc = await discoverOidc(cfg)
-        return toTokenSet(
-          await client.validateAuthorizationCode(doc.token_endpoint, code, verifier)
-        )
-      },
-    }
+    const configuration = async () => oidcConfiguration(cfg, await discoverOidc(cfg))
+    return openidOAuthClient(configuration, redirectUri, { sendsNonce: true })
   },
   fetchProfile: (tokens, { cfg, nonce }) => oidcProfile(cfg, tokens, nonce),
+}
+
+/** A confidential client authenticates with HTTP Basic; a public one sends `client_id` alone. */
+function oidcConfiguration(cfg: AppConfig, doc: OidcDiscovery): Configuration {
+  const secret = cfg.OIDC_CLIENT_SECRET
+  const server: ServerMetadata = doc
+  return new Configuration(
+    server,
+    cfg.OIDC_CLIENT_ID ?? '',
+    undefined,
+    secret ? ClientSecretBasic(secret) : None()
+  )
 }
 
 /** The profile from a verified `id_token`, topped up from `userinfo` when the token has no email. */

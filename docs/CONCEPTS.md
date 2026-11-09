@@ -104,8 +104,13 @@ are always `tenant`; no audit log beyond `activity_events`; no personal API keys
   token, so mail security scanners that fetch every link on delivery (Defender Safe Links,
   Mimecast) cannot. Dev-login exists and 404s in production.
 - **OAuth is a registry** (D11): one generic `/auth/:provider` router over `ProviderDefinition`s
-  (Google, Microsoft via arctic). Redirect URIs come from `APP_URL`, accounts link by verified email,
-  and tokens are AES-GCM encrypted under `OAUTH_ENCRYPTION_KEY`. The return path is `?returnUrl=`
+  (Google, Microsoft), each an `openid-client` code + PKCE flow (`providers/openid.ts`, HTTP Basic
+  client auth). Microsoft discovers the `common` authority, so an `id_token` naming the person's own
+  tenant is accepted and one naming another is refused; for Google and Microsoft an `id_token`'s
+  claims are checked but not its signature (identity comes from userinfo / Graph). A token
+  response must be `application/json`; an error body of any other type is `oauth_failed`.
+  Redirect URIs come from `APP_URL`, accounts link by verified email, and tokens are AES-GCM
+  encrypted under `OAUTH_ENCRYPTION_KEY`. The return path is `?returnUrl=`
   (`?redirectTo=` still accepted); the flow cookie carries state, PKCE verifier and a nonce.
 - **Any OIDC issuer** (`providers/oidc.ts`): set `OIDC_ISSUER` + `OIDC_CLIENT_ID` (+ optional
   `OIDC_CLIENT_SECRET`) and an `oidc` provider appears, labelled `OIDC_LABEL`. Endpoints come from
