@@ -35,7 +35,7 @@ export async function memberAbility(
     .where(and(eq(tenantUsers.tenantId, tenantId), eq(tenantUsers.userId, userId)))
     .limit(1)
   if (!row || row.blockedAt || row.status === 'suspended') return null
-  const features = resolveFeatures(cfg, await listFeatureFlagRows(db, tenantId), {
+  const features = await resolveFeatures(cfg, await listFeatureFlagRows(db, tenantId), {
     tenantId,
     userId,
   })
