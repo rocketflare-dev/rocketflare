@@ -129,6 +129,16 @@ export function tomlArrayExtent(text: string, key: string): { start: number; end
 export function isWorkerFirstAll(text: string): boolean
 export function applyWorkerFirstAll(text: string): string
 export function revertWorkerFirstAll(text: string): string
+export function missingWorkerFirstPatterns(text: string, prefixes: readonly string[]): string[]
+export function workerFirstPatterns(prefixes: readonly string[]): string[]
+export function markReprovision(text: string): string
+export function awaitsReprovision(text: string): boolean
+export function settleReprovision(text: string, prefixes: readonly string[]): string
+export function restoreWorkerFirst(
+  text: string,
+  prefixes: readonly string[]
+): { text: string; lost: string[] }
+export function reprovisionStep(lost: readonly string[]): PlanStep
 /** `plugin-<id>-v<n>` — append-only, host-owned, never renumbered. */
 export function pluginMigrationTag(pluginId: string, n?: number): string
 export function nextPluginMigrationTag(
@@ -287,7 +297,11 @@ export function planSteps(
 ): PlanStep[]
 export function removeSteps(
   manifest: PluginManifest,
-  options?: { archive?: boolean; migrationTag?: string | null }
+  options?: {
+    archive?: boolean
+    migrationTag?: string | null
+    lostPatterns?: readonly string[]
+  }
 ): PlanStep[]
 export function renderSteps(steps: readonly PlanStep[], heading?: string): string[]
 export function addPlanJson(plan: AddPlan): Record<string, unknown>

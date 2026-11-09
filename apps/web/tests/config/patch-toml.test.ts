@@ -10,7 +10,12 @@ import fs from 'node:fs'
 import path from 'node:path'
 import TOML from '@iarna/toml'
 import { describe, expect, it } from 'vitest'
-import { applyWorkerFirstAll, revertWorkerFirstAll } from '../../../../scripts/lib/plugin-lib.mjs'
+import {
+  applyWorkerFirstAll,
+  awaitsReprovision,
+  markReprovision,
+  revertWorkerFirstAll,
+} from '../../../../scripts/lib/plugin-lib.mjs'
 import {
   DEFAULT_LOCAL_CONNECTION_STRING,
   hasHyperdriveBlock,
@@ -525,6 +530,17 @@ describe('plugin crons, vars and run_worker_first', () => {
 
   it('throws when the array it was asked to append to does not exist', () => {
     expect(() => patchToml('name = "x"\n', { crons: ['0 0 * * *'] })).toThrowError(TomlPatchError)
+  })
+
+  it('clears the mark `plugin remove` leaves once the prefixes are back, and only then', () => {
+    const marked = markReprovision(prodText)
+    expect(awaitsReprovision(marked)).toBe(true)
+    expect(awaitsReprovision(patchToml(marked, { crons: patch.crons }))).toBe(true)
+    const provisioned = patchToml(marked, { workerFirstPrefixes: patch.workerFirstPrefixes })
+    expect(awaitsReprovision(provisioned)).toBe(false)
+    expect((TOML.parse(provisioned) as any).assets.run_worker_first).toEqual(
+      doc.assets.run_worker_first
+    )
   })
 })
 

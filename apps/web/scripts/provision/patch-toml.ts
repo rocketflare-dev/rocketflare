@@ -20,7 +20,9 @@ import { fileURLToPath } from 'node:url'
 import {
   applyWorkerFirstAll,
   isWorkerFirstAll,
+  settleReprovision,
   tomlArrayExtent,
+  workerFirstPatterns,
 } from '../../../../scripts/lib/plugin-lib.mjs'
 
 export type DatabaseDriver = 'neon' | 'postgres'
@@ -561,11 +563,9 @@ export function patchToml(text: string, patch: TomlPatch): string {
   // A prefix written after the toml widened is absent from the kept original; provisioning again
   // after a `plugin remove` adds it back.
   if (patch.workerFirstPrefixes?.length && !isWorkerFirstAll(out))
-    out = appendToArray(
-      out,
-      'run_worker_first',
-      patch.workerFirstPrefixes.flatMap(p => [p, `${p}/*`])
-    )
+    out = appendToArray(out, 'run_worker_first', workerFirstPatterns(patch.workerFirstPrefixes))
+  if (patch.workerFirstPrefixes !== undefined)
+    out = settleReprovision(out, patch.workerFirstPrefixes)
   if (patch.workerFirstAll) out = applyWorkerFirstAll(out)
   for (const v of patch.vars ?? []) out = appendVar(out, v.key, v.value)
   return out

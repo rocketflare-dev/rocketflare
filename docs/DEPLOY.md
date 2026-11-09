@@ -234,6 +234,11 @@ the SPA catch-all rather than straight from the asset router, only `/assets/*` (
 and `/site-assets/*` (the bundle shipped to public sites) skip the Worker, and a missing file under
 either is a plain 404.
 
+Those restored bytes predate every plugin prefix provisioned while `/*` was in force. When one is
+missing, `pnpm plugin remove` (or an `upgrade` whose release drops `publicSites`) marks the list
+`# rocketflare:reprovision` and prints a re-provision step, and `pnpm plugin check` fails until
+`pnpm provision cloudflare <env>` has put the prefixes back and cleared the mark.
+
 ## Crons
 
 `[triggers] crons` must be identical in both tomls (parity test); `apps/web/src/api/scheduled.ts`
