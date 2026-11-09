@@ -1,6 +1,6 @@
 /**
- * `GET /auth/cli`: loopback-only redirect_uri, login/select-tenant redirects, key minting +
- * hand-off in the redirect query.
+ * `GET /auth/cli`: loopback-only redirect_uri and the login/select-tenant redirects;
+ * `POST /auth/cli/confirm`: key minting and the hand-off URL.
  */
 import { eq } from 'drizzle-orm'
 import { describe, expect, inject, it } from 'vitest'
@@ -73,15 +73,31 @@ describe('GET /auth/cli', () => {
     expect(target.searchParams.get('returnUrl')).toContain('/auth/cli?redirect_uri=')
   })
 
-  it('mints a cli:<hostname> key with scopes [*] and redirects with key, tenant_id, tenant_name', async () => {
+  it('with a session and a tenant → 302 /cli/confirm, carrying the query along', async () => {
     const res = await request(
       `/auth/cli?redirect_uri=${encodeURIComponent(GOOD)}&hostname=My-Laptop.local`,
-      {
-        headers: sessionCookieHeader(seed.sessionToken),
-      }
+      { headers: sessionCookieHeader(seed.sessionToken) }
     )
     expect(res.status).toBe(302)
-    const target = new URL(res.headers.get('location') as string)
+    const target = new URL(res.headers.get('location') as string, 'http://localhost:3001')
+    expect(target.pathname).toBe('/cli/confirm')
+    expect(target.searchParams.get('redirect_uri')).toBe(GOOD)
+    expect(target.searchParams.get('hostname')).toBe('My-Laptop.local')
+  })
+})
+
+describe('POST /auth/cli/confirm', () => {
+  const confirm = (body: unknown) =>
+    request(
+      '/auth/cli/confirm',
+      { method: 'POST', headers: sessionCookieHeader(seed.sessionToken) },
+      { json: body }
+    )
+
+  it('mints a cli:<hostname> key with scopes [*] and answers the URL with key, tenant_id, tenant_name', async () => {
+    const res = await confirm({ redirectUri: GOOD, hostname: 'My-Laptop.local' })
+    expect(res.status).toBe(200)
+    const target = new URL((await json<{ redirectTo: string }>(res)).redirectTo)
     expect(`${target.origin}${target.pathname}`).toBe(GOOD)
     const key = target.searchParams.get('key') as string
     expect(key).toMatch(/^rocketflare_/)
@@ -106,13 +122,10 @@ describe('GET /auth/cli', () => {
   })
 
   it('defaults the key name to cli:cli without a hostname', async () => {
-    const res = await request(
-      `/auth/cli?redirect_uri=${encodeURIComponent('http://localhost:4242/callback')}`,
-      {
-        headers: sessionCookieHeader(seed.sessionToken),
-      }
-    )
-    const key = new URL(res.headers.get('location') as string).searchParams.get('key') as string
+    const res = await confirm({ redirectUri: 'http://localhost:4242/callback' })
+    const key = new URL((await json<{ redirectTo: string }>(res)).redirectTo).searchParams.get(
+      'key'
+    ) as string
     const [row] = await db
       .select()
       .from(apiKeys)

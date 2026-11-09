@@ -129,8 +129,8 @@ const coreConfigSchema = z.object({
    * are set (existing deployments migrate with no new secret), else `generic`.
    */
   OBSERVABILITY_PRESET: optionalEnum(['langfuse', 'phoenix', 'generic']),
-  /** `false` strips prompts, completions and tool I/O from the export AND from `ai_spans`. */
-  OBSERVABILITY_CAPTURE_CONTENT: optionalBoolean(true),
+  /** Off by default. `true` records prompts, completions and tool I/O in the export AND `ai_spans`. */
+  OBSERVABILITY_CAPTURE_CONTENT: optionalBoolean(false),
   /** Link-out template, `{traceId}` substituted — e.g. `https://cloud.langfuse.com/project/<id>/traces/{traceId}`. */
   OBSERVABILITY_TRACE_URL: optionalString,
   /** Days of `ai_spans` the nightly prune keeps. */
@@ -145,10 +145,17 @@ const coreConfigSchema = z.object({
    * mistaken batch, not to meter.
    */
   AGENT_MAX_ACTIVE_RUNS_PER_TENANT: optionalPositiveInt(50),
+  /** Organisations one person may own (403 `tenant_limit_reached` above it); global admins exempt. */
+  MAX_OWNED_TENANTS_PER_USER: optionalPositiveInt(10),
+  /** Invitation emails one person may queue per UTC day, across every tenant (429 above it). */
+  INVITATION_EMAILS_PER_USER_PER_DAY: optionalPositiveInt(500),
+  /** Invitation emails one tenant may queue per UTC day, whoever sends them (429 above it). */
+  INVITATION_EMAILS_PER_TENANT_PER_DAY: optionalPositiveInt(1000),
   /**
-   * What one run may spend — tokens (input + output, every call and decision) and USD (priced
-   * calls only). Unset = no cap. An agent's `meta.budget` overrides either. Checked before every
-   * metered call; a run over it fails with event code `agent_budget_exceeded`.
+   * What one run may spend — tokens (input, output and prompt-cache reads and writes, every call
+   * and decision) and USD. Unset = no cap. An agent's `meta.budget` overrides either. Checked before
+   * every metered call; a run over it fails with event code `agent_budget_exceeded`, and so does a
+   * chat call on a model with no known price while a cost cap applies.
    */
   AGENT_RUN_MAX_TOKENS: optionalCap('int'),
   AGENT_RUN_MAX_COST_USD: optionalCap('number'),

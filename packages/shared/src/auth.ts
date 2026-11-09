@@ -5,6 +5,7 @@
  */
 import { z } from 'zod'
 import { sessionAccessRequestSchema } from './access-requests'
+import { isSameOriginPath } from './paths'
 import { packedRulesSchema } from './permissions'
 import { membershipRoleSchema } from './tenants'
 
@@ -107,11 +108,34 @@ export type AuthMethods = z.infer<typeof authMethodsSchema>
 export const logoutResponseSchema = z.object({ endSessionUrl: z.string().url() })
 export type LogoutResponse = z.infer<typeof logoutResponseSchema>
 
+export { isSameOriginPath }
+
 /** A same-origin relative path (`/settings/members`), never a full URL — open-redirect guard. */
 export const redirectToSchema = z
   .string()
   .max(2048)
-  .regex(/^\/(?![/\\])/, 'Must be a relative path')
+  .refine(isSameOriginPath, 'Must be a relative path')
+
+/**
+ * `POST /auth/cli/confirm` — the signed-in person's "yes" on `/cli/confirm`. `redirectUri` is
+ * re-validated on the server; `hostname` names the key; `state` is the value the CLI generated,
+ * handed back in the loopback callback untouched so the CLI can match it to its own login.
+ */
+export const cliConfirmRequestSchema = z.object({
+  redirectUri: z.string().max(2048),
+  hostname: z.string().max(253).optional(),
+  state: z
+    .string()
+    .regex(/^[A-Za-z0-9_-]{16,256}$/)
+    .optional(),
+})
+export type CliConfirmRequest = z.infer<typeof cliConfirmRequestSchema>
+
+export const cliConfirmResponseSchema = z.object({
+  /** The loopback URL to send the browser to; it carries the new key in its query. */
+  redirectTo: z.string(),
+})
+export type CliConfirmResponse = z.infer<typeof cliConfirmResponseSchema>
 
 export const magicLinkRequestSchema = z.object({
   email: z.string().trim().toLowerCase().email(),

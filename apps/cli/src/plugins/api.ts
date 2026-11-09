@@ -36,9 +36,18 @@ export {
  * Output helpers. Human output is chalk tables on stdout, diagnostics go to stderr, and `--json`
  * switches the whole `Output` to JSON only — so a list command pipes into `jq` without a flag per
  * command. **Never print a full API key**: prefix and four characters, as `whoami` does.
+ * `renderTable` makes its cells inert for the terminal; a command printing free text of its own
+ * runs each server value through `neutralise`, and puts colour in a column's `style`.
  */
 export type { Column, Output } from '../utils/output'
-export { formatCell, formatDate, formatJson, formatPagination, renderTable } from '../utils/output'
+export {
+  formatCell,
+  formatDate,
+  formatJson,
+  formatPagination,
+  neutralise,
+  renderTable,
+} from '../utils/output'
 
 /** The plugin interface, and the `action()` wrapper a plugin registers with. */
 export type { ActionWrapper, AnyCliPlugin, CliPlugin } from './types'

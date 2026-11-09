@@ -5,17 +5,19 @@
  * admin `new_org` approval and the seed script. `getSingleTenant` is the `TENANCY_MODE=single`
  * anchor: the first tenant row.
  */
+import { ERROR_CODES } from '@rocketflare/shared/errors'
 import type { MembershipRole, MembershipSource } from '@rocketflare/shared/tenants'
 import { slugify } from '@rocketflare/shared/tenants'
-import { asc, eq, like } from 'drizzle-orm'
+import { and, asc, eq, like, sql } from 'drizzle-orm'
 import type { Database } from '../../../db/client'
-import { type Tenant, tenantSettings, tenants, tenantUsers } from '../../../db/schema'
+import { type Tenant, tenantSettings, tenants, tenantUsers, users } from '../../../db/schema'
 import { type AnyServerPlugin, serverPlugins } from '../../../plugins/server'
 import { recordActivity } from '../../services/activity'
 import type { AppBindings } from '../../types'
-import { ConflictError } from '../core/errors'
+import { ConflictError, ForbiddenError } from '../core/errors'
 import { randomToken } from '../core/ids'
 import type { Logger } from '../core/logger'
+import { asCount } from '../routes/pagination'
 
 /** `slugify(name)`, with `-2`, `-3`… appended while the slug is taken. */
 export async function uniqueSlug(db: Database, base: string, fallback = 'org'): Promise<string> {
@@ -58,6 +60,12 @@ export interface CreateTenantForUserInput {
    * repair path that already exists, so forgetting this is late, never wrong.
    */
   features?: readonly string[]
+  /**
+   * The ceiling on organisations `userId` may own; the new one is refused with 403
+   * `tenant_limit_reached` at it. Counted under a lock on the user row, so simultaneous creations
+   * cannot pass it. Omitted, there is no ceiling (sign-up, the admin paths, IdP-managed tenancy).
+   */
+  maxOwnedTenants?: number
 }
 
 export async function createTenantForUser(
@@ -71,6 +79,19 @@ export async function createTenantForUser(
   }
   const role = input.role ?? 'owner'
   const tenant = await db.transaction(async tx => {
+    if (input.maxOwnedTenants !== undefined) {
+      await tx.select({ id: users.id }).from(users).where(eq(users.id, input.userId)).for('update')
+      const [owned] = await tx
+        .select({ count: sql`count(*)` })
+        .from(tenantUsers)
+        .where(and(eq(tenantUsers.userId, input.userId), eq(tenantUsers.role, 'owner')))
+      if (asCount(owned?.count) >= input.maxOwnedTenants) {
+        throw new ForbiddenError(
+          'You have reached the limit of organisations you can own',
+          ERROR_CODES.tenantLimitReached
+        )
+      }
+    }
     const [tenant] = await tx
       .insert(tenants)
       .values({

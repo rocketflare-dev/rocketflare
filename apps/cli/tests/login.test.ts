@@ -25,6 +25,7 @@ function browser(params: Record<string, string>) {
     const redirect = new URL(url).searchParams.get('redirect_uri')
     if (!redirect) throw new Error('no redirect_uri')
     const target = new URL(redirect)
+    target.searchParams.set('state', new URL(url).searchParams.get('state') ?? '')
     for (const [k, v] of Object.entries(params)) target.searchParams.set(k, v)
     // Don't await inside open(): the real browser is asynchronous too.
     void fetch(target).then(r => r.text())
@@ -34,8 +35,8 @@ function browser(params: Record<string, string>) {
 
 describe('buildAuthUrl', () => {
   it('points at /auth/cli with an encoded redirect_uri', () => {
-    expect(buildAuthUrl(`${SERVER}/`, 'http://127.0.0.1:8765/callback')).toBe(
-      `${SERVER}/auth/cli?redirect_uri=http%3A%2F%2F127.0.0.1%3A8765%2Fcallback`
+    expect(buildAuthUrl(`${SERVER}/`, 'http://127.0.0.1:8765/callback', 'state123')).toBe(
+      `${SERVER}/auth/cli?redirect_uri=http%3A%2F%2F127.0.0.1%3A8765%2Fcallback&state=state123`
     )
   })
 })
@@ -48,7 +49,7 @@ describe('callback server', () => {
       expect(cb.port).toBeLessThanOrEqual(CALLBACK_PORT_END)
       expect(cb.url).toBe(`http://127.0.0.1:${cb.port}/callback`)
       const res = await fetch(
-        `${cb.url}?key=${TEST_KEY}&tenant_id=${TENANT_ID}&tenant_name=Acme%20%3Cco%3E`
+        `${cb.url}?key=${TEST_KEY}&tenant_id=${TENANT_ID}&tenant_name=Acme%20%3Cco%3E&state=${cb.state}`
       )
       expect(res.status).toBe(200)
       const html = await res.text()
@@ -84,7 +85,7 @@ describe('callback server', () => {
       expect(notFound.status).toBe(404)
       // A pooled keep-alive socket outlives close(); the next server on this port gets ECONNRESET.
       expect(notFound.headers.get('connection')).toBe('close')
-      const res = await fetch(`${cb.url}?key=${TEST_KEY}`)
+      const res = await fetch(`${cb.url}?key=${TEST_KEY}&state=${cb.state}`)
       expect(res.status).toBe(400)
       await expect(cb.result).rejects.toThrow(/missing required parameter\(s\): tenant_id/)
     } finally {
@@ -92,11 +93,31 @@ describe('callback server', () => {
     }
     const cb2 = await startCallbackServer(5_000)
     try {
-      const res = await fetch(`${cb2.url}?error=access_denied`)
+      const res = await fetch(`${cb2.url}?error=access_denied&state=${cb2.state}`)
       expect(res.status).toBe(400)
       await expect(cb2.result).rejects.toThrow(/Sign-in failed: access_denied/)
     } finally {
       cb2.close()
+    }
+  })
+
+  it('a callback without this login state is refused and does not end the login', async () => {
+    const cb = await startCallbackServer(5_000)
+    try {
+      for (const query of [
+        `key=${TEST_KEY}&tenant_id=${TENANT_ID}`,
+        `key=${TEST_KEY}&tenant_id=${TENANT_ID}&state=not-this-login`,
+        'error=access_denied',
+      ]) {
+        const res = await fetch(`${cb.url}?${query}`)
+        expect(res.status).toBe(400)
+      }
+      // The real callback still completes the login that was left waiting.
+      const ok = await fetch(`${cb.url}?key=${TEST_KEY}&tenant_id=${TENANT_ID}&state=${cb.state}`)
+      expect(ok.status).toBe(200)
+      await expect(cb.result).resolves.toMatchObject({ key: TEST_KEY, tenantId: TENANT_ID })
+    } finally {
+      cb.close()
     }
   })
 

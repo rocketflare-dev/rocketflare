@@ -200,7 +200,18 @@ describe('runToolLoop: answering a gate', () => {
   })
 
   const approval = (over: Partial<ToolApproval> = {}): Map<string, ToolApproval> =>
-    new Map([['c1', { interruptId: 'int-1', status: 'resolved', onReject: 'cancel_run', ...over }]])
+    new Map([
+      [
+        'c1',
+        {
+          interruptId: 'int-1',
+          status: 'resolved',
+          onReject: 'cancel_run',
+          approvedCall: { name: 'send_email', input: { to: 'a@b.c' } },
+          ...over,
+        },
+      ],
+    ])
 
   it('T1: answers the pending tool calls BEFORE taking a turn, so the model never sees an unanswered tool_use', async () => {
     const send = vi.fn(async () => 'sent')

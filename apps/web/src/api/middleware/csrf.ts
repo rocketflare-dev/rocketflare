@@ -6,7 +6,8 @@
  * Contract:
  * - safe methods (GET/HEAD/OPTIONS) pass
  * - `Authorization: Bearer` (API key) requests are exempt — not cookie-based
- * - requests WITHOUT the session cookie pass (nothing to forge)
+ * - requests WITHOUT the session cookie pass (no ambient credential) — the one login route that needs
+ *   this check without a cookie, `POST /auth/magic-link/verify`, calls `assertSameOriginRequest`
  * - with the cookie: `Sec-Fetch-Site` must be same-origin/same-site/none, and `Origin`
  *   (else `Referer`) must be an allowed origin; a missing Origin+Referer is allowed (non-browser)
  * Failures throw `ForbiddenError` with `code: 'csrf_failed'`.
@@ -15,7 +16,7 @@ import { ERROR_CODES } from '@rocketflare/shared/errors'
 import { getCookie } from 'hono/cookie'
 import { createMiddleware } from 'hono/factory'
 import { SESSION_COOKIE_NAME } from '../auth/cookies'
-import type { AppEnv } from '../types'
+import type { AppContext, AppEnv } from '../types'
 import { ForbiddenError } from '../utils/core/errors'
 import { allowedOrigins } from './cors'
 
@@ -25,7 +26,7 @@ export { SESSION_COOKIE_NAME }
 const SAME_SITE_FETCH_VALUES = new Set(['same-origin', 'same-site', 'none'])
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS'])
 
-function isAllowedOrigin(value: string, allowed: Set<string>): boolean {
+export function isAllowedOrigin(value: string, allowed: Set<string>): boolean {
   try {
     return allowed.has(new URL(value).origin)
   } catch {
@@ -33,11 +34,8 @@ function isAllowedOrigin(value: string, allowed: Set<string>): boolean {
   }
 }
 
-export const csrfProtection = createMiddleware<AppEnv>(async (c, next) => {
-  if (SAFE_METHODS.has(c.req.method.toUpperCase())) return next()
-  if (c.req.header('Authorization')?.startsWith('Bearer ')) return next()
-  if (!getCookie(c, SESSION_COOKIE_NAME)) return next()
-
+/** The Origin (else Referer) and Sec-Fetch-Site check; throws 403 `csrf_failed` when it fails. */
+export function assertSameOriginRequest(c: AppContext): void {
   const secFetchSite = c.req.header('Sec-Fetch-Site')?.toLowerCase()
   if (secFetchSite && !SAME_SITE_FETCH_VALUES.has(secFetchSite)) {
     throw new ForbiddenError('Cross-site request blocked', ERROR_CODES.csrf)
@@ -52,6 +50,12 @@ export const csrfProtection = createMiddleware<AppEnv>(async (c, next) => {
   if (!origin && referer && !isAllowedOrigin(referer, allowed)) {
     throw new ForbiddenError('Invalid request origin', ERROR_CODES.csrf)
   }
+}
 
+export const csrfProtection = createMiddleware<AppEnv>(async (c, next) => {
+  if (SAFE_METHODS.has(c.req.method.toUpperCase())) return next()
+  if (c.req.header('Authorization')?.startsWith('Bearer ')) return next()
+  if (!getCookie(c, SESSION_COOKIE_NAME)) return next()
+  assertSameOriginRequest(c)
   await next()
 })

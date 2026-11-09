@@ -44,6 +44,8 @@ export interface ResolvedChat {
   model: string
   /** `agent` = an `agent_models` assignment for `promptKey` decided the config and/or model. */
   source: 'tenant' | 'platform' | 'agent'
+  /** The deployment pays for this call: the platform key, or the Workers AI binding. */
+  billedToPlatform: boolean
   /** `cfg.AGENT_MAX_OUTPUT_TOKENS` — the per-call `max_tokens` consumers pass. */
   maxOutputTokens: number
   configId?: string
@@ -292,6 +294,7 @@ export async function resolveChat(
       provider: row.provider,
       model: override ?? row.model,
       source,
+      billedToPlatform: row.provider === 'workers_ai',
       maxOutputTokens: cfg.AGENT_MAX_OUTPUT_TOKENS,
       configId: row.id,
     }
@@ -303,6 +306,7 @@ export async function resolveChat(
       provider: platform.provider,
       model: override ?? platform.model,
       source: assignment ? 'agent' : 'platform',
+      billedToPlatform: true,
       maxOutputTokens: cfg.AGENT_MAX_OUTPUT_TOKENS,
     }
   }

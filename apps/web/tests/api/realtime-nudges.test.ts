@@ -97,6 +97,7 @@ describe('realtime nudges', () => {
       email,
       role: 'member',
       inviter: owner,
+      actor: { isGlobalAdmin: false, tenantUser: { role: 'owner' } },
     })
     const invitee = await createTestUser(db, { email })
     const cookie = sessionCookieHeader(await createTestSession(db, invitee.id))

@@ -38,6 +38,8 @@ export const ERROR_CODES = {
   ssoRequired: 'sso_required',
   tenancyModeSingle: 'tenancy_mode_single',
   csrf: 'csrf_failed',
+  /** 403: the API key is valid but its scopes do not allow this method. */
+  insufficientScope: 'insufficient_scope',
   /** 503: no chat/embeddings provider resolves for the tenant. */
   aiNotConfigured: 'ai_not_configured',
   /** 503: the `AGENT_RUN_WORKFLOW` binding is missing, so a run cannot be started. */
@@ -86,6 +88,8 @@ export const ERROR_CODES = {
    * the app may neither edit nor remove it. Change it at the issuer.
    */
   idpManaged: 'idp_managed',
+  /** 403: the caller already owns `MAX_OWNED_TENANTS_PER_USER` organisations. */
+  tenantLimitReached: 'tenant_limit_reached',
   /** 409: another tenant is already linked to that OIDC issuer org (`tenants.external_org_id`). */
   externalOrgTaken: 'external_org_taken',
   /**

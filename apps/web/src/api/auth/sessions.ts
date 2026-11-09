@@ -12,7 +12,7 @@ import type { GroupRef } from '@rocketflare/shared/groups'
 import type { MembershipRole, TenantStatus } from '@rocketflare/shared/tenants'
 import { and, eq, isNull, lt, or, sql } from 'drizzle-orm'
 import { type Database, rows } from '../../db/client'
-import { tenants, type User, userSessions, users } from '../../db/schema'
+import { tenants, tenantUsers, type User, userSessions, users } from '../../db/schema'
 import { hashToken } from '../utils/core/hash'
 import { randomToken } from '../utils/core/ids'
 import { SESSION_TTL_MS } from './cookies'
@@ -297,6 +297,15 @@ export async function updateSelectedTenant(
     .update(userSessions)
     .set({ selectedTenantId: tenantId })
     .where(eq(userSessions.id, sessionId))
+}
+
+/** Every tenant the user belongs to — the hubs that can hold one of their sockets. */
+export async function userTenantIds(db: Database, userId: string): Promise<string[]> {
+  const rows = await db
+    .select({ tenantId: tenantUsers.tenantId })
+    .from(tenantUsers)
+    .where(eq(tenantUsers.userId, userId))
+  return rows.map(r => r.tenantId)
 }
 
 export async function deleteSession(db: Database, sessionId: string): Promise<void> {

@@ -7,8 +7,8 @@
  * Append-only, no `updated_at`; pruned by the nightly cron past `OBSERVABILITY_SPAN_RETENTION_DAYS`.
  * `run_id`, `conversation_id` and `user_id` are plain uuids with NO foreign key: a span is a record
  * of what happened, and deleting a run or a thread must not rewrite its trace (the tenant FK is the
- * one cascade, because a deleted tenant's traces are its data). `content` is null when
- * `OBSERVABILITY_CAPTURE_CONTENT=false`; `attributes` never carries content.
+ * one cascade, because a deleted tenant's traces are its data). `content` is null unless
+ * `OBSERVABILITY_CAPTURE_CONTENT=true`; `attributes` never carries content.
  */
 import type { TraceSpanKind, TraceSpanStatus } from '@rocketflare/shared/ai/traces'
 import { relations } from 'drizzle-orm'

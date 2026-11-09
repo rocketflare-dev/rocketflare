@@ -52,6 +52,7 @@ import { formatJson } from './lib/json-format.mjs'
 import { MANIFEST_FILE, pluginSurfaces, readManifest } from './lib/manifest.mjs'
 import { unsupportedForKit } from './lib/plugin-lib.mjs'
 import { applyReplacements, deriveNames } from './lib/rename-lib.mjs'
+import { containedPath, repoPathProblem, writePathProblem } from './lib/repo-paths.mjs'
 import {
   absentSurfaces,
   classifyPath,
@@ -355,6 +356,23 @@ function main(argv) {
     if (owners.length > 0) f.touchesPluginRegistry = owners
   }
 
+  // Every path this release names, before anything is written — a plan run included, because its
+  // artifacts are written under the same paths. An added file also must not land through a symlink.
+  const unsafePaths = files.flatMap(f => {
+    const problem =
+      repoPathProblem(f.path) ?? (f.class === 'added' ? writePathProblem(REPO_ROOT, f.path) : null)
+    return problem ? [`  ${f.path} ${problem}`] : []
+  })
+  if (unsafePaths.length > 0) {
+    warn(
+      `error: ${unsafePaths.length} path(s) in this release cannot be written here:`,
+      ...unsafePaths,
+      '',
+      'Nothing has been written.'
+    )
+    return 1
+  }
+
   const byClass = {}
   for (const f of files) byClass[f.class] = (byClass[f.class] ?? 0) + 1
 
@@ -478,7 +496,7 @@ function main(argv) {
   let rejected = 0
   if (args.apply && !args.dryRun) {
     for (const rel of addedFiles) {
-      const abs = path.join(REPO_ROOT, rel)
+      const abs = containedPath(REPO_ROOT, rel)
       mkdirSync(path.dirname(abs), { recursive: true })
       writeFileSync(abs, readFileSync(path.join(workRoot, 'added', rel), 'utf8'))
     }

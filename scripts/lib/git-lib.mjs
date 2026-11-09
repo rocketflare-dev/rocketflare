@@ -14,6 +14,7 @@
 import { execFileSync, spawnSync } from 'node:child_process'
 import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
+import { containedPath } from './repo-paths.mjs'
 
 /** The `-z` field separator every `--name-status` / `--numstat` read below splits on. */
 const NUL = '\0'
@@ -267,7 +268,7 @@ const cmp = (a, b) => {
  */
 export function makeWriter(root) {
   const write = (rel, text) => {
-    const abs = path.join(root, rel)
+    const abs = containedPath(root, rel.split(path.sep).join('/'))
     mkdirSync(path.dirname(abs), { recursive: true })
     writeFileSync(abs, text)
     return abs

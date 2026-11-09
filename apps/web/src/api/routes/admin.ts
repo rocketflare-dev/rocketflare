@@ -144,8 +144,14 @@ adminRouter.delete('/tenants/:id', validate('json', deleteTenantRequestSchema), 
 })
 
 adminRouter.post('/tenants/:id/suspend', validate('json', suspendTenantRequestSchema), async c => {
-  const { db, user } = withAuth(c)
-  const row = await setTenantSuspended(db, uuidParam(c, 'id'), c.req.valid('json').suspended, user)
+  const { db, user, realtime } = withAuth(c)
+  const row = await setTenantSuspended(
+    db,
+    uuidParam(c, 'id'),
+    c.req.valid('json').suspended,
+    user,
+    realtime
+  )
   return c.json({ id: row.id, status: row.status })
 })
 
@@ -158,8 +164,8 @@ adminRouter.post('/tenants/:id/support/enter', async c => {
 })
 
 adminRouter.post('/tenants/:id/support/leave', async c => {
-  const { db, cfg, user, auth } = withAuth(c)
-  await leaveSupport(db, uuidParam(c, 'id'), user, auth.session.id)
+  const { db, cfg, user, auth, realtime } = withAuth(c)
+  await leaveSupport(db, uuidParam(c, 'id'), user, auth.session.id, realtime)
   const refreshed = await resolveCookieAuth(c)
   if (!refreshed) throw new UnauthorizedError()
   return c.json(await buildSessionResponse(db, cfg, refreshed))
@@ -183,21 +189,26 @@ adminRouter.post(
   '/users/:id/global-admin',
   validate('json', setGlobalAdminRequestSchema),
   async c => {
-    const { db, user } = withAuth(c)
+    const { db, user, realtime } = withAuth(c)
     const updated = await setGlobalAdmin(db, {
       userId: uuidParam(c, 'id'),
       isGlobalAdmin: c.req.valid('json').isGlobalAdmin,
       actor: user,
+      realtime,
     })
     return c.json({ id: updated.id, isGlobalAdmin: updated.isGlobalAdmin })
   }
 )
 
 adminRouter.post('/users/:id/block', validate('json', blockUserRequestSchema), async c => {
-  const { db, user } = withAuth(c)
+  const { db, user, realtime } = withAuth(c)
   const id = uuidParam(c, 'id')
   if (id === user.id) throw new ForbiddenError('You cannot block yourself')
-  const updated = await setUserBlocked(db, { userId: id, blocked: c.req.valid('json').blocked })
+  const updated = await setUserBlocked(db, {
+    userId: id,
+    blocked: c.req.valid('json').blocked,
+    realtime,
+  })
   return c.json({ id: updated.id, blockedAt: updated.blockedAt })
 })
 

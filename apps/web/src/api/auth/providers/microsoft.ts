@@ -1,7 +1,9 @@
 /**
  * Microsoft Entra ID: the `common` endpoint so personal and work/school accounts both sign in;
- * profile from Graph `/me`. Graph does not expose a verified flag, so `emailVerified` is left
- * undefined (Entra only issues `mail`/`userPrincipalName` it controls).
+ * profile from Graph `/me`. The address that matches, links and admits an account is
+ * `userPrincipalName`, whose domain Entra requires the directory to have verified; the separately
+ * editable `mail` attribute is not used. Graph exposes no verified flag, so `emailVerified` is
+ * left undefined.
  */
 import { ClientSecretBasic, type Configuration, discovery } from 'openid-client'
 import type { AppConfig } from '../../../config'
@@ -28,7 +30,6 @@ async function entraConfiguration(cfg: AppConfig): Promise<Configuration> {
 interface GraphUser {
   id: string
   displayName: string | null
-  mail: string | null
   userPrincipalName: string
 }
 
@@ -46,10 +47,9 @@ export const microsoftProvider: ProviderDefinition = {
       tokens.accessToken,
       'Microsoft profile'
     )
-    const email = me.mail ?? me.userPrincipalName
     return {
       providerUserId: me.id,
-      email,
+      email: me.userPrincipalName,
       emailVerified: undefined,
       name: me.displayName ?? null,
       avatarUrl: null,

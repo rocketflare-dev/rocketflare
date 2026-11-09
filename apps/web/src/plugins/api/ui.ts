@@ -6,7 +6,7 @@
  * page ships in its own chunk and only for the people who open it. `uiEntryIssues` in
  * `tests/helpers/plugins.ts` enforces the line.
  *
- * **Everything the core pages use is here on purpose.** All seventeen exports of
+ * **Everything the core pages use is here on purpose.** All the exports of
  * `components/shared` are re-exported rather than a chosen subset, because the failure mode of a
  * short list is a plugin rebuilding `PaginationControls` or `ConfirmModal` slightly differently —
  * which looks subtly wrong on a page next to a core one, and is the sort of thing nobody files a
@@ -43,7 +43,7 @@ export type {
   ToastType,
   VisibilityModalProps,
 } from '../../ui/components/shared'
-// The seventeen `components/shared` exports, whole.
+// The `components/shared` exports, whole.
 export {
   AccessBadge,
   AccessPicker,
@@ -57,6 +57,7 @@ export {
   FieldError,
   fieldErrorFor,
   LogoMark,
+  MarkdownImageLink,
   Modal,
   PageHeader,
   PaginationControls,

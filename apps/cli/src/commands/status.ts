@@ -3,6 +3,7 @@ import chalk from 'chalk'
 import { z } from 'zod'
 import { redactKey } from '../config'
 import { type CommandContext, publicClient } from '../context'
+import { neutralise } from '../utils/output'
 
 export const healthSchema = z
   .object({ status: z.string(), version: z.string().optional(), env: z.string().optional() })
@@ -24,11 +25,11 @@ export async function runStatus(ctx: CommandContext): Promise<void> {
     },
     () =>
       [
-        `${chalk.bold('Server:')}  ${ctx.config.serverUrl} ${chalk.dim(`(from ${ctx.config.serverUrlSource})`)}`,
-        `${chalk.bold('Health:')}  ${data.status === 'ok' ? chalk.green(data.status) : chalk.yellow(data.status)}${data.version ? ` · v${data.version}` : ''}${data.env ? ` · ${data.env}` : ''}`,
+        `${chalk.bold('Server:')}  ${neutralise(ctx.config.serverUrl)} ${chalk.dim(`(from ${ctx.config.serverUrlSource})`)}`,
+        `${chalk.bold('Health:')}  ${data.status === 'ok' ? chalk.green(data.status) : chalk.yellow(neutralise(data.status))}${data.version ? ` · v${neutralise(data.version)}` : ''}${data.env ? ` · ${neutralise(data.env)}` : ''}`,
         `${chalk.bold('Login:')}   ${
           loggedIn
-            ? `${chalk.green('signed in')}${ctx.config.user?.email ? ` as ${ctx.config.user.email}` : ''}${ctx.config.tenantName ? ` · ${ctx.config.tenantName}` : ''} ${chalk.dim(`(key ${redactKey(ctx.config.apiKey)} from ${ctx.config.apiKeySource})`)}`
+            ? `${chalk.green('signed in')}${ctx.config.user?.email ? ` as ${neutralise(ctx.config.user.email)}` : ''}${ctx.config.tenantName ? ` · ${neutralise(ctx.config.tenantName)}` : ''} ${chalk.dim(`(key ${redactKey(ctx.config.apiKey)} from ${ctx.config.apiKeySource})`)}`
             : `${chalk.yellow('not signed in')} ${chalk.dim(`— run \`${ctx.binName} login\``)}`
         }`,
       ].join('\n')

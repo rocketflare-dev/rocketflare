@@ -258,6 +258,39 @@ describe('sso policy', () => {
     expect(ssoAllows(open, 'core')).toBe(true)
   })
 
+  const onConnection = (domain: string, connectionId: string) => ({
+    shared: { id: 'acme' },
+    loginMethods: () => [sso],
+    ssoPolicy: async (_db: Database, email: string) =>
+      email.endsWith(`@${domain}`)
+        ? { required: true as const, methodId: 'sso', connectionId }
+        : null,
+  })
+
+  it('a claim that names a connection is satisfied only by a sign-in through that connection', async () => {
+    const decision = await evaluateSsoPolicy(
+      [onConnection('acme.test', 'conn-a')],
+      db,
+      cfg,
+      'j@acme.test'
+    )
+    expect(ssoAllows(decision, { pluginId: 'acme', connectionId: 'conn-a' })).toBe(true)
+    expect(ssoAllows(decision, { pluginId: 'acme', connectionId: 'conn-b' })).toBe(false)
+    expect(ssoAllows(decision, { pluginId: 'acme' })).toBe(false)
+  })
+
+  it('every address of the sign-in must be claimed by the connection signing in', async () => {
+    const plugins = [
+      onConnection('a.test', 'conn-a'),
+      { ...onConnection('b.test', 'conn-b'), shared: { id: 'acme' } },
+    ]
+    const both = await evaluateSsoPolicyForAll(plugins, db, cfg, ['j@a.test', 'j@b.test'], silent)
+    expect(ssoAllows(both, { pluginId: 'acme', connectionId: 'conn-a' })).toBe(false)
+    expect(ssoAllows(both, { pluginId: 'acme', connectionId: 'conn-b' })).toBe(false)
+    const one = await evaluateSsoPolicyForAll(plugins, db, cfg, ['j@a.test'], silent)
+    expect(ssoAllows(one, { pluginId: 'acme', connectionId: 'conn-a' })).toBe(true)
+  })
+
   it('a policy that throws fails closed for that email, attributed to the plugin that threw', async () => {
     const errors: unknown[] = []
     const decision = await evaluateSsoPolicy([throws], db, cfg, 'j@x.test', {

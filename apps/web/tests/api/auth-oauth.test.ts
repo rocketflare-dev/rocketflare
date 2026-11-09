@@ -217,7 +217,8 @@ describe('GET /auth/:provider/callback', () => {
       res.headers
         .getSetCookie()
         .some(
-          c => c.startsWith(`${OAUTH_STATE_COOKIE_NAME}=;`) || /oauth_state=.*Max-Age=0/.test(c)
+          c =>
+            c.startsWith(`${OAUTH_STATE_COOKIE_NAME}=;`) || /__Host-oauth_state=.*Max-Age=0/.test(c)
         )
     ).toBe(true)
     const session = await json<{ user: { id: string }; tenant: { id: string } }>(

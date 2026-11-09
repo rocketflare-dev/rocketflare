@@ -73,6 +73,7 @@ import {
   resolveEmbeddings,
 } from '../ai/resolve'
 import { addUsage, type ChatClient, ZERO_USAGE } from '../ai/types'
+import { requesterCan } from '../member-ability'
 import { type RegistryPromptKey, resolvePrompt } from '../prompts'
 import { type Decision, decideWithShapes, questionsHash, toDecision } from './decisions'
 import { withFanout } from './fanout'
@@ -323,7 +324,8 @@ async function replayInside(
   // The real tool list either way — a strict replay keeps the names and schemas an agent looks
   // up (`ctx.tools.find(...)`), and only the handlers become misses.
   const scope = await accessScopeForUser(db, tenantId, run.requestedByUserId)
-  const builtTools = await buildAgentTools({ db, cfg, env, scope })
+  const can = await requesterCan(db, cfg, tenantId, run.requestedByUserId)
+  const builtTools = await buildAgentTools({ db, cfg, env, scope, can })
   const tools: Tool[] = live
     ? builtTools
     : builtTools.map(tool => ({

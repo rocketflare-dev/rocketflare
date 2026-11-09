@@ -302,10 +302,10 @@ export async function ingestText(
   const external = externalKey(input)
   const previous = external ? await findExternal(db, input.tenantId, external) : undefined
   const row = external
-    ? await upsertExternal(db, { ...values, externalId: external.externalId })
+    ? await upsertExternal(db, { ...values, externalId: external.externalId }, input.groupIds)
     : (await db.insert(documents).values(values).returning())[0]
   if (!row) throw new Error('documents: insert returned no row')
-  await grantDocumentGroups(db, row, input.groupIds, { replace: previous !== undefined })
+  if (!external) await grantDocumentGroups(db, row, input.groupIds)
   // A re-sync of an item that USED to be a file and is now text leaves its old object behind.
   if (previous?.fileId && deps.storage)
     await dropStoredFile(db, deps.storage, input.tenantId, previous.fileId)
@@ -350,19 +350,29 @@ async function findExternal(
  */
 async function upsertExternal(
   db: Database,
-  values: typeof documents.$inferInsert & { externalId: string }
+  values: typeof documents.$inferInsert & { externalId: string },
+  groupIds: readonly string[] | undefined
 ): Promise<DocumentRow | undefined> {
   const { tenantId: _t, source: _s, externalId: _e, ...update } = values
-  const [row] = await db
-    .insert(documents)
-    .values(values)
-    .onConflictDoUpdate({
-      target: [documents.tenantId, documents.source, documents.externalId],
-      targetWhere: sql`${documents.externalId} is not null`,
-      set: { ...update, chunkCount: 0, embeddingModel: null, error: null },
-    })
-    .returning()
-  return row
+  // Text, grants and searchable copy change as one: a re-index that is pending or fails must not
+  // leave the replaced revision's chunks readable under the new row's visibility.
+  return db.transaction(async tx => {
+    const [row] = await tx
+      .insert(documents)
+      .values(values)
+      .onConflictDoUpdate({
+        target: [documents.tenantId, documents.source, documents.externalId],
+        targetWhere: sql`${documents.externalId} is not null`,
+        set: { ...update, chunkCount: 0, embeddingModel: null, error: null },
+      })
+      .returning()
+    if (!row) return undefined
+    await tx
+      .delete(chunks)
+      .where(and(eq(chunks.tenantId, row.tenantId), eq(chunks.documentId, row.id)))
+    await grantDocumentGroups(tx, row, groupIds, { replace: true })
+    return row
+  })
 }
 
 /** Best-effort removal of a replaced original — the new row no longer points at it. */
@@ -495,10 +505,10 @@ export async function ingestFile(
     const external = externalKey(input)
     previous = external ? await findExternal(db, input.tenantId, external) : undefined
     ;[row] = external
-      ? [await upsertExternal(db, { ...values, externalId: external.externalId })]
+      ? [await upsertExternal(db, { ...values, externalId: external.externalId }, input.groupIds)]
       : await db.insert(documents).values(values).returning()
     if (!row) throw new Error('documents: insert returned no row')
-    await grantDocumentGroups(db, row, input.groupIds, { replace: previous !== undefined })
+    if (!external) await grantDocumentGroups(db, row, input.groupIds)
   } catch (err) {
     await deleteStoredFile(db, deps.storage, stored).catch(() => {})
     throw err

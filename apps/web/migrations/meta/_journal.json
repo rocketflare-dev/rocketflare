@@ -155,6 +155,13 @@
       "when": 1794032010537,
       "tag": "0021_kit-idp-blocked-source",
       "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1794204972581,
+      "tag": "0022_kit-invitation-send-limits",
+      "breakpoints": true
     }
   ]
 }

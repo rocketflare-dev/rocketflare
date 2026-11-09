@@ -11,6 +11,9 @@
  * by id, degrades to a plain in-app `<Link>` while it loads or if the document has since been
  * deleted, and — being markdown-free itself — lives in the eager `components/shared` barrel.
  *
+ * An image renders as a link (`MarkdownImageLink`): this text comes from a model or a document, and
+ * an `<img>` would have the browser fetch whatever address it names as soon as the page is open.
+ *
  * Lives in `components/ai/` on purpose — NOT the `components/shared` barrel App.tsx imports
  * eagerly — so the markdown dependency ships only in the lazy chat / agents / documents chunks.
  */
@@ -18,7 +21,7 @@ import { memo } from 'react'
 import ReactMarkdown, { type Components } from 'react-markdown'
 import { Link } from 'react-router'
 import remarkGfm from 'remark-gfm'
-import { DocumentCard } from '@/ui/components/shared'
+import { DocumentCard, MarkdownImageLink } from '@/ui/components/shared'
 import { useDocumentCard } from '@/ui/hooks/useDocuments'
 
 /** `/documents/<uuid>` with an optional query — the shape `documentPath()` writes. */
@@ -48,6 +51,7 @@ function DocumentLink({ href, children }: { href: string; children: React.ReactN
 }
 
 const COMPONENTS: Components = {
+  img: MarkdownImageLink,
   a: ({ node: _node, href, children, ...props }) =>
     documentIdFromHref(href) ? (
       <DocumentLink href={href as string}>{children}</DocumentLink>

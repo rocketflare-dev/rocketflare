@@ -98,8 +98,14 @@ export const RLS_REVOKED_TABLES = [
  * excluded for a different reason and is NOT revoked: it is platform-level rollout state with no
  * tenant column at all, readable by the app role on every request. Its per-tenant companion,
  * `tenant_feature_overrides`, is policied like any other tenant table.
+ * `invitation_send_counters` has no tenant column either: its rows are daily counters keyed by a
+ * `user:` or `tenant:` scope (a person's count spans tenants), holding numbers and no tenant data.
  */
-export const RLS_EXCLUDED_TABLES = [...RLS_REVOKED_TABLES, 'feature_flags'] as const
+export const RLS_EXCLUDED_TABLES = [
+  ...RLS_REVOKED_TABLES,
+  'feature_flags',
+  'invitation_send_counters',
+] as const
 
 /**
  * An installed plugin declares ITS unpolicied tables through `ServerPlugin.rlsExcludedTables`,

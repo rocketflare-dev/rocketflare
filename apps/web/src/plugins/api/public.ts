@@ -31,6 +31,7 @@ import {
   UnauthorizedError,
 } from '../../api/utils/core/errors'
 import { makeDefer } from '../../api/utils/routes/route-helpers'
+import type { Actions, Subjects } from './auth'
 import { type BackgroundMethods, backgroundMethods } from './jobs'
 import type { PluginContext } from './types'
 
@@ -46,6 +47,26 @@ export interface PublicCtx extends PluginContext, BackgroundMethods {
   badRequest(message?: string, code?: string, details?: unknown): never
   forbidden(message?: string, code?: string): never
   unauthorized(message?: string): never
+}
+
+/**
+ * Does this person hold this grant in this tenant RIGHT NOW? For a public callback completing
+ * something a signed state started — an OAuth connection, a consent — where the state only proves
+ * who minted it, and when: the admin may have left or been demoted since. Call it right after
+ * `verifyState`, with the action and subject the start route guarded, and on `false` change nothing.
+ *
+ * `false` too for an unknown person, a blocked account or a suspended tenant.
+ */
+export async function memberCan(
+  ctx: PluginContext,
+  who: { tenantId: string; userId: string },
+  action: Actions,
+  subject: Subjects
+): Promise<boolean> {
+  // Function-scope import: `member-ability` builds abilities from the plugin barrel (see `http.ts`).
+  const { memberAbility } = await import('../../api/services/member-ability')
+  const ability = await memberAbility(ctx.db, ctx.config, who.tenantId, who.userId)
+  return ability?.can(action, subject) ?? false
 }
 
 /** Build a public handler's context. The only function here that reads the Hono context. */

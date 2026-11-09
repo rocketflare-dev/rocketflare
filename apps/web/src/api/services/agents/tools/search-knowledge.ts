@@ -28,6 +28,7 @@
  * what the runtime puts on `ctx.tools`.
  */
 import { KNOWLEDGE_TOOLS, SEARCH_MAX_LIMIT } from '@rocketflare/shared/ai/embeddings'
+import type { Actions, Subjects } from '@rocketflare/shared/permissions'
 import { z } from 'zod'
 import type { AppConfig } from '../../../../config'
 import type { Database } from '../../../../db/client'
@@ -130,6 +131,12 @@ export interface AgentToolContext {
    * ("system") gets tenant-visible documents only.
    */
   scope: AccessScope
+  /**
+   * The requester's CASL grant, from their current membership. A plugin gates a tool on it
+   * (`ctx.can('manage', SUBJECT)`); `scope.bypass` is row visibility and answers a different
+   * question. Absent, or a run with no requester: every check is `false`.
+   */
+  can?: (action: Actions, subject: Subjects) => boolean
   /**
    * Ceiling on one `get_document` window, in characters — the CALLER's budget, not the tool's.
    * Absent means the agent-run ceiling (`GET_DOCUMENT_MAX_CHARS`); the chat path passes far less,

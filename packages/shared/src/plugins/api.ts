@@ -40,6 +40,8 @@ export {
   paginationMetaSchema,
   paginationQuerySchema,
 } from '../pagination'
+/** The rule a return path must pass — the one `redirectToSchema` and the SPA use. */
+export { isSameOriginPath } from '../paths'
 export type { Actions, Subjects } from '../permissions'
 export type { RealtimeEvent, RealtimeEventType } from '../realtime'
 export type { MembershipRole } from '../tenants'

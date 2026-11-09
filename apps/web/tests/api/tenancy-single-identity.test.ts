@@ -168,6 +168,7 @@ async function provisionedMember(pluginId = 'scim') {
     subject: `scim|${email}`,
     email,
     emailVerified: true,
+    linkByEmail: true,
   })
   await provision(pluginId).setMembership({
     tenantId: single.id,
@@ -183,7 +184,12 @@ async function provisionedMember(pluginId = 'scim') {
 describe('single mode: identityFor().signIn', () => {
   it('with tenantId + role: a new person lands in THE tenant with that role, idp-managed', async () => {
     const email = newEmail()
-    const res = await signInVia('scim', { email, tenantId: single.id, role: 'admin' })
+    const res = await signInVia('scim', {
+      linkByEmail: 'true',
+      email,
+      tenantId: single.id,
+      role: 'admin',
+    })
     expect(location(res).pathname).toBe('/')
     const cookie = sessionCookieFrom(res)
     expect(cookie).toBeTruthy()
@@ -200,14 +206,14 @@ describe('single mode: identityFor().signIn', () => {
 
   it('without a role: admitted by SIGNUP_MODE — open auto-joins as member, invite_only refuses', async () => {
     const email = newEmail()
-    const res = await signInVia('scim', { email })
+    const res = await signInVia('scim', { linkByEmail: 'true', email })
     expect(location(res).pathname).toBe('/')
     const person = await db.query.users.findFirst({ where: eq(users.email, email) })
     expect(await membershipOf(person?.id ?? '')).toMatchObject({ role: 'member', source: 'manual' })
 
     const refused = await signInVia(
       'scim',
-      { email: newEmail() },
+      { linkByEmail: 'true', email: newEmail() },
       createTestEnv({ TENANCY_MODE: 'single', SIGNUP_MODE: 'invite_only' })
     )
     expect(location(refused).searchParams.get('error')).toBe('not_invited')
@@ -215,7 +221,12 @@ describe('single mode: identityFor().signIn', () => {
 
   it('any tenant but THE tenant is one that does not exist: no_access, nothing written', async () => {
     const email = newEmail()
-    const res = await signInVia('scim', { email, tenantId: other.id, role: 'admin' })
+    const res = await signInVia('scim', {
+      linkByEmail: 'true',
+      email,
+      tenantId: other.id,
+      role: 'admin',
+    })
     expect(location(res).searchParams.get('error')).toBe('no_access')
     expect(await db.query.users.findFirst({ where: eq(users.email, email) })).toBeUndefined()
   })
@@ -231,10 +242,20 @@ describe('single mode: identityFor().signIn', () => {
 
   it('SSO required: only the claiming plugin signs the domain in, into THE tenant', async () => {
     const email = newEmail('acme-sso.test')
-    const refused = await signInVia('scim', { email, tenantId: single.id, role: 'member' })
+    const refused = await signInVia('scim', {
+      linkByEmail: 'true',
+      email,
+      tenantId: single.id,
+      role: 'member',
+    })
     expect(location(refused).searchParams.get('error')).toBe('sso_required')
     expect(location(refused).searchParams.get('method')).toBe('acme:sso')
-    const own = await signInVia('acme', { email, tenantId: single.id, role: 'member' })
+    const own = await signInVia('acme', {
+      linkByEmail: 'true',
+      email,
+      tenantId: single.id,
+      role: 'member',
+    })
     expect(location(own).pathname).toBe('/')
     const person = await db.query.users.findFirst({ where: eq(users.email, email) })
     expect(await membershipOf(person?.id ?? '')).toMatchObject({ role: 'member', source: 'idp' })
@@ -332,7 +353,12 @@ describe('single mode: provisionFor', () => {
     })
     // A profile refresh is not a reactivation.
     expect(
-      await provision().upsertUser({ subject: `scim|${email}`, email, emailVerified: true })
+      await provision().upsertUser({
+        subject: `scim|${email}`,
+        email,
+        emailVerified: true,
+        linkByEmail: true,
+      })
     ).toMatchObject({ id: person.id, blocked: true })
     // Nor is a sign-in through the very plugin that blocked them.
     const own = await signInVia('scim', {
@@ -443,7 +469,12 @@ describe('multi mode, for contrast: deprovision never blocks', () => {
     const tenant = await createTestTenant(db)
     const email = newEmail()
     const scim = provision('scim', multiEnv)
-    const person = await scim.upsertUser({ subject: `scim|${email}`, email, emailVerified: true })
+    const person = await scim.upsertUser({
+      subject: `scim|${email}`,
+      email,
+      emailVerified: true,
+      linkByEmail: true,
+    })
     await scim.setMembership({ tenantId: tenant.id, userId: person.id, role: 'member' })
     const unpinned = await createTestSession(db, person.id, null)
     expect(await scim.deprovision({ tenantId: tenant.id, userId: person.id })).toEqual({

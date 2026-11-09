@@ -5,6 +5,7 @@
  * `window.location.assign` so tests can stub it (jsdom cannot navigate) and so full-page
  * transitions — OAuth, dev-login — are greppable.
  */
+import { isSameOriginPath } from '@rocketflare/shared/auth'
 import { useEffect } from 'react'
 import { type NavigateFunction, useLocation, useNavigate } from 'react-router'
 
@@ -46,10 +47,10 @@ export function currentPathname(): string {
   return currentPath().split('?')[0]
 }
 
-/** Only same-origin relative paths are honoured (open-redirect guard, mirrors `redirectToSchema`). */
+/** Only same-origin relative paths are honoured (the rule `redirectToSchema` applies on the server). */
 export function safeReturnUrl(value: string | null | undefined, fallback = '/'): string {
   if (!value) return fallback
-  return /^\/(?![/\\])/.test(value) ? value : fallback
+  return isSameOriginPath(value) ? value : fallback
 }
 
 export function loginUrl(returnUrl?: string): string {

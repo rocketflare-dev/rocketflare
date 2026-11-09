@@ -36,11 +36,11 @@ CHAT_HISTORY_MAX_CHARS = "24000"       # AI (D17): history a chat turn replays; 
 AGENT_INTERRUPT_TIMEOUT = "168 hours"   # Agents (#17): how long a run parked on a human waits (step.waitForEvent timeout)
 AGENT_MAX_ACTIVE_RUNS_PER_TENANT = "50"  # Agents (D39): runs one tenant may have queued/running/parked at once (429 above)
 # Agent budgets (D39) — unset = no cap; add to BOTH files to turn one on (docs/CONCEPTS.md §9):
-#   AGENT_RUN_MAX_TOKENS = "200000"       # per run, every call and decision (meta.budget overrides)
+#   AGENT_RUN_MAX_TOKENS = "200000"       # per run, every call and decision, cached tokens included (meta.budget overrides)
 #   AGENT_RUN_MAX_COST_USD = "1.00"       # per run, priced calls only (meta.budget overrides)
 #   AGENT_TENANT_DAILY_COST_USD = "50"    # per tenant per UTC day, checked at enqueue and per call
 FEATURES_ENABLED = ""                  # Feature flags (D30): keys this environment ships at all; blank = none (fail-closed)
-OBSERVABILITY_CAPTURE_CONTENT = "true"  # Tracing (D32): "false" strips prompts/completions/tool I/O from the export AND ai_spans
+OBSERVABILITY_CAPTURE_CONTENT = "false"  # Tracing (D32): "true" records prompts/completions/tool I/O in the export AND ai_spans
 OBSERVABILITY_SPAN_RETENTION_DAYS = "14"   # Tracing (D32): days of ai_spans the nightly prune keeps
 # Tracing backend (D32) — add these to BOTH files when you pick one (docs/DEPLOY.md § Tracing):
 #   OBSERVABILITY_PRESET = "langfuse"    # langfuse | phoenix | generic (unset + Langfuse keys = langfuse)

@@ -52,7 +52,7 @@ workspace root) or through the root scripts (`pnpm deploy[:staging]`, `pnpm prov
   `FEATURES_ENABLED = ""` (D30: keys this deployment ships at all; blank is fail-closed, and the key
   must ALSO be in `.dev.vars.example` — `wrangler dev` reads `[vars]` from `wrangler.toml`, so a
   feature shipped dark in production would otherwise be dark on every laptop),
-  `OBSERVABILITY_CAPTURE_CONTENT = "true"`, `OBSERVABILITY_SPAN_RETENTION_DAYS = "14"` (D32);
+  `OBSERVABILITY_CAPTURE_CONTENT = "false"`, `OBSERVABILITY_SPAN_RETENTION_DAYS = "14"` (D32);
   `OBSERVABILITY_PRESET`, `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_PROTOCOL`,
   `OBSERVABILITY_TRACE_URL`, `LANGFUSE_BASE_URL` and `LANGFUSE_TRACING_ENVIRONMENT` default in
   `config.ts` and are added to BOTH files only when used (the parity test compares `[vars]` keys;

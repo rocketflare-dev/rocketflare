@@ -254,8 +254,10 @@ export async function approvalsForRun(
   for (const row of rows) {
     if (!row.toolCallId) continue
     const payload = (row.payload ?? {}) as { note?: string; editedInput?: unknown }
+    const shown = row.spec.kind === 'approval' ? row.spec.tool : undefined
     approvals.set(row.toolCallId, {
       interruptId: row.id,
+      approvedCall: shown ? { name: shown.name, input: shown.input } : null,
       status: row.status === 'resolved' ? 'resolved' : 'cancelled',
       ...(payload.editedInput !== undefined ? { input: payload.editedInput } : {}),
       ...(payload.note ? { note: payload.note } : {}),

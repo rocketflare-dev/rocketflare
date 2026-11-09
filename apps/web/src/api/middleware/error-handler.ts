@@ -18,9 +18,10 @@ import {
   type InfrastructureFault,
   isApiError,
   mapInfrastructureError,
+  RateLimitedError,
   ValidationError,
 } from '../utils/core/errors'
-import { fallbackLogger } from './request-logger'
+import { fallbackLogger, requestLogPath } from './request-logger'
 
 /** One fixed, greppable line per fault — production has structured logs and nothing else. */
 const FAULT_MESSAGES: Record<InfrastructureFault, string> = {
@@ -52,7 +53,7 @@ export const errorHandler: ErrorHandler<AppEnv> = (err, c) => {
   const fault = classifyInfrastructureError(err)
   if (fault) {
     logger.error(
-      { event: fault, path: c.req.path, method: c.req.method, err },
+      { event: fault, path: requestLogPath(c.req.path), method: c.req.method, err },
       FAULT_MESSAGES[fault]
     )
   }
@@ -63,6 +64,9 @@ export const errorHandler: ErrorHandler<AppEnv> = (err, c) => {
   if (isApiError(mapped)) {
     if (mapped.statusCode >= 500) logger.error({ err, requestId }, mapped.name)
     else logger.debug({ err: mapped, requestId }, mapped.name)
+    if (mapped instanceof RateLimitedError && mapped.retryAfterSeconds) {
+      c.header('Retry-After', String(mapped.retryAfterSeconds))
+    }
     return c.json(mapped.toJSON(), mapped.statusCode as ContentfulStatusCode)
   }
 
@@ -74,7 +78,10 @@ export const errorHandler: ErrorHandler<AppEnv> = (err, c) => {
     return c.json(body, mapped.status as ContentfulStatusCode)
   }
 
-  logger.error({ err, requestId, path: c.req.path, method: c.req.method }, 'Unhandled error')
+  logger.error(
+    { err, requestId, path: requestLogPath(c.req.path), method: c.req.method },
+    'Unhandled error'
+  )
   const body: ApiErrorBody = {
     error: isDev && err instanceof Error ? err.message : 'Internal server error',
     statusCode: 500,

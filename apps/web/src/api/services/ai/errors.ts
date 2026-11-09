@@ -142,6 +142,8 @@ export function describeAiError(err: AiError): string {
     case 'unavailable':
       return 'The AI provider did not answer. Wait a moment and retry.'
     default:
-      return err.message || 'The AI provider call failed.'
+      return err.status
+        ? `The AI provider answered with an unexpected status (${err.status}).`
+        : 'The AI provider call failed.'
   }
 }

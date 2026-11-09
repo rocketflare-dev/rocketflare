@@ -33,7 +33,11 @@ export async function runFeedbackList(
   ctx.out.data(raw, () =>
     renderTable(data.items, [
       { header: 'When', value: f => formatDate(f.updatedAt) },
-      { header: 'Rating', value: f => (f.rating === 1 ? chalk.green('up') : chalk.red('down')) },
+      {
+        header: 'Rating',
+        value: f => (f.rating === 1 ? 'up' : 'down'),
+        style: (text, f) => (f.rating === 1 ? chalk.green(text) : chalk.red(text)),
+      },
       { header: 'Target', value: f => f.target },
       { header: 'Id', value: f => f.targetId },
       { header: 'Comment', value: f => (f.comment ? f.comment.slice(0, 60) : '') },

@@ -15,12 +15,13 @@
  *
  * A budget is checked BEFORE a call, so a run can overshoot by what its last call cost — and, under
  * `ctx.map`, by the calls already in flight. It is a brake, not an invoice. TypeSafe decisions are
- * unpriced, so they count toward the token budget only.
+ * unpriced, so they count toward the token budget only. A chat model the price table cannot cost
+ * is refused outright while a cost cap applies: its calls would add nothing to the sum the cap reads.
  */
 import type { AgentBudget } from '@rocketflare/shared/ai/agents'
 import type { TokenUsage } from '@rocketflare/shared/ai/chat'
 import type { AiProvider } from '@rocketflare/shared/ai/config'
-import { MICROCENTS_PER_USD } from '@rocketflare/shared/ai/pricing'
+import { MICROCENTS_PER_USD, priceFor } from '@rocketflare/shared/ai/pricing'
 import { ERROR_CODES } from '@rocketflare/shared/errors'
 import type { AppConfig } from '../../../config'
 import type { Database } from '../../../db/client'
@@ -36,7 +37,7 @@ export interface RunBudget {
   tenantDailyMicrocents?: number
 }
 
-export type BudgetLimit = 'run_tokens' | 'run_cost' | 'tenant_daily_cost'
+export type BudgetLimit = 'run_tokens' | 'run_cost' | 'tenant_daily_cost' | 'unpriced_model'
 
 /** A run reached a cap. A TYPE, so no message can reclassify it — and never retryable. */
 export class AgentBudgetExceededError extends Error {
@@ -72,6 +73,9 @@ const microcentsOf = (usd: number | undefined) =>
   usd === undefined ? undefined : Math.round(usd * MICROCENTS_PER_USD)
 
 function budgetMessage(limit: BudgetLimit, used: number, max: number): string {
+  if (limit === 'unpriced_model') {
+    return 'A cost cap applies and this model has no known price. Choose a model with a price.'
+  }
   if (limit === 'run_tokens') {
     return `The run reached its token budget (${used} of ${max} tokens)`
   }
@@ -115,6 +119,8 @@ export interface RunMeter {
   check(): Promise<void>
   /** One `ai_usage` row with the run id, awaited; a failed write is logged, never fatal. */
   record(call: MeteredCall): Promise<void>
+  /** Throws when a cost cap applies, the deployment pays, and this model has no price. */
+  assertPriced(provider: AiProvider, model: string): void
   /** What the run has spent, every attempt included. */
   spent(): RunSpend
 }
@@ -126,6 +132,8 @@ export interface RunMeterDeps {
   userId: string | null
   agentKey: string
   budget: RunBudget
+  /** A tenant's own key is its own spend, so an unpriced model is refused only when this is true. */
+  billedToPlatform: boolean
   logger: Logger
 }
 
@@ -134,7 +142,9 @@ export async function createRunMeter(deps: RunMeterDeps): Promise<RunMeter> {
   const spend = await runSpend(db, tenantId, runId)
   return {
     async check() {
-      const tokens = spend.inputTokens + spend.outputTokens
+      // Every token the provider processed: the four usage counters are disjoint.
+      const tokens =
+        spend.inputTokens + spend.outputTokens + spend.cacheReadTokens + spend.cacheWriteTokens
       if (budget.maxTokens !== undefined && tokens >= budget.maxTokens) {
         throw new AgentBudgetExceededError('run_tokens', tokens, budget.maxTokens)
       }
@@ -164,6 +174,8 @@ export async function createRunMeter(deps: RunMeterDeps): Promise<RunMeter> {
       spend.calls += 1
       spend.inputTokens += call.usage.inputTokens
       spend.outputTokens += call.usage.outputTokens
+      spend.cacheReadTokens += call.usage.cacheReadTokens ?? 0
+      spend.cacheWriteTokens += call.usage.cacheWriteTokens ?? 0
       try {
         const cost = await recordUsage(db, {
           tenantId,
@@ -179,6 +191,11 @@ export async function createRunMeter(deps: RunMeterDeps): Promise<RunMeter> {
         deps.logger.warn({ err, runId }, 'agent-run: usage write failed')
       }
     },
+    assertPriced(provider, model) {
+      const cap = budget.maxCostMicrocents ?? budget.tenantDailyMicrocents
+      if (!deps.billedToPlatform || cap === undefined || priceFor(provider, model)) return
+      throw new AgentBudgetExceededError('unpriced_model', 0, cap)
+    },
     spent: () => ({ ...spend }),
   }
 }
@@ -193,12 +210,14 @@ export function meterChatClient(client: ChatClient, meter: RunMeter): ChatClient
     provider: client.provider,
     countTokens: client.countTokens?.bind(client),
     async complete(params) {
+      meter.assertPriced(client.provider, params.model)
       await meter.check()
       const result = await client.complete(params)
       await meter.record({ provider: client.provider, model: result.model, usage: result.usage })
       return result
     },
     async *stream(params) {
+      meter.assertPriced(client.provider, params.model)
       await meter.check()
       for await (const delta of client.stream(params)) {
         if (delta.type === 'end') {

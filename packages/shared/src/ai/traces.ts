@@ -3,7 +3,7 @@
  * `GET /api/traces` (list) and `GET /api/traces/:id` (one trace's spans, parent-linked) and the
  * CLI's `rocketflare traces list|show`. A span is one unit of AI work — the agent/chat root, each
  * model call, each tool execution, retrieval and embeddings — with the GenAI attributes it was
- * exported with. `content` is null when the deployment sets `OBSERVABILITY_CAPTURE_CONTENT=false`.
+ * exported with. `content` is null unless the deployment sets `OBSERVABILITY_CAPTURE_CONTENT=true`.
  * Trace ids are OTLP hex (32 chars) so the same id opens the trace in the configured backend.
  */
 import { z } from 'zod'

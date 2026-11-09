@@ -34,7 +34,11 @@ export async function runAgentsList(ctx: CommandContext): Promise<void> {
     renderTable(data.items, [
       { header: 'Key', value: a => a.key },
       { header: 'Title', value: a => a.title },
-      { header: 'Batch', value: a => (a.exclusive ? chalk.dim('no — exclusive') : 'yes') },
+      {
+        header: 'Batch',
+        value: a => (a.exclusive ? 'no — exclusive' : 'yes'),
+        style: (text, a) => (a.exclusive ? chalk.dim(text) : text),
+      },
     ])
   )
 }
@@ -104,7 +108,8 @@ async function runBatch(
       { header: 'Run', value: r => r.item.run?.id ?? '' },
       {
         header: 'Status',
-        value: r => (r.item.error ? chalk.red(r.item.error.code) : (r.item.run?.status ?? '')),
+        value: r => r.item.error?.code ?? r.item.run?.status ?? '',
+        style: (text, r) => (r.item.error ? chalk.red(text) : text),
       },
       { header: 'Batch', value: r => r.batchId },
     ])
@@ -181,7 +186,8 @@ export async function runAgentRunsList(
       { header: 'Agent', value: r => r.agentKey },
       {
         header: 'Status',
-        value: r => (r.status === 'failed' ? chalk.red(r.status) : r.status),
+        value: r => r.status,
+        style: (text, r) => (r.status === 'failed' ? chalk.red(text) : text),
       },
       { header: 'Error', value: r => (r.error ? r.error.slice(0, 60) : '') },
     ])

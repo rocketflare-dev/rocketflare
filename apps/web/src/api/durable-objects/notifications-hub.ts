@@ -8,7 +8,9 @@
  * `X-Tenant-Id` / `X-User-Id` / `X-Session-Id` headers because the object is reachable solely via
  * the `NOTIFICATIONS_HUB` binding — the route did cookie → session → membership before forwarding.
  * Publishing is RPC (`broadcast`, `broadcastToUser`, `broadcastToUsers`, `connectionCount`), never
- * fetch dispatch; `services/realtime.ts` is the only caller.
+ * fetch dispatch; `services/realtime.ts` is the only caller. So is closing: `closeUser`,
+ * `closeSession` and `closeAll` end an admitted socket when the membership or session behind it
+ * is gone, with close code `SOCKET_REVOKED_CODE`.
  */
 
 import { DurableObject } from 'cloudflare:workers'
@@ -31,6 +33,9 @@ export const HUB_HEADERS = {
   userId: 'X-User-Id',
   sessionId: 'X-Session-Id',
 } as const
+
+/** The close code for a socket whose membership or session has ended. */
+export const SOCKET_REVOKED_CODE = 4001
 
 const PING = JSON.stringify({ type: 'ping' })
 const PONG = JSON.stringify({ type: 'pong' })
@@ -92,6 +97,34 @@ export class NotificationsHub extends DurableObject<AppBindings> {
 
   async connectionCount(): Promise<{ count: number }> {
     return { count: this.ctx.getWebSockets().length }
+  }
+
+  /** Every socket of one person in this tenant: their membership ended or they were blocked. */
+  async closeUser(userId: string): Promise<void> {
+    this.close(this.ctx.getWebSockets(`user:${userId}`))
+  }
+
+  /** The sockets one signed-out session opened. */
+  async closeSession(sessionId: string): Promise<void> {
+    const sockets = this.ctx
+      .getWebSockets()
+      .filter(ws => (ws.deserializeAttachment() as HubAttachment | null)?.sessionId === sessionId)
+    this.close(sockets)
+  }
+
+  /** Every socket in this tenant's hub: the tenant was suspended. */
+  async closeAll(): Promise<void> {
+    this.close(this.ctx.getWebSockets())
+  }
+
+  private close(sockets: WebSocket[]): void {
+    for (const ws of sockets) {
+      try {
+        ws.close(SOCKET_REVOKED_CODE, 'revoked')
+      } catch {
+        // already closed
+      }
+    }
   }
 
   private deliver(sockets: WebSocket[], event: RealtimeEvent): BroadcastResult {

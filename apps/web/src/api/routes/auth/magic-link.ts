@@ -17,14 +17,26 @@
  * same body, so the response says nothing about the address. `POST /verify` asks again after
  * consuming, so a link minted before the policy existed (or by `requestMagicLink` directly) is
  * refused with `sso_required` too.
+ *
+ * `AUTH_OIDC_ONLY`: the method is off. `POST /request` still answers 202 and mints nothing;
+ * `POST /verify` redirects to `/login?error=oidc_only` before touching the token.
+ *
+ * Per recipient: past `RECIPIENT_MAIL_MAX` sign-in mails to one address in the window, `POST
+ * /request` still answers 202 and neither mints a token nor sends anything.
+ *
+ * `POST /verify` signs in only from the app's own origin: it runs the same Origin / fetch-metadata
+ * check as the CSRF middleware, which skips a request with no session cookie.
  */
 import { magicLinkRequestSchema } from '@rocketflare/shared/auth'
-import type { AppConfig } from '../../../config'
+import { type AppConfig, isOidcOnly } from '../../../config'
 import type { Database } from '../../../db/client'
 import { consumeMagicLinkToken, issueMagicLinkToken } from '../../auth/magic-link'
 import { ssoAllows, ssoRequiredLoginPath } from '../../auth/sso-policy'
+import { assertSameOriginRequest } from '../../middleware/csrf'
+import { checkRateLimit, type RateLimitKv } from '../../middleware/rate-limit'
 import { admitUser } from '../../services/auth'
 import { magicLinkEmail, sendEmail, ssoRequiredEmail } from '../../services/email'
+import { hashToken } from '../../utils/core/hash'
 import type { Logger } from '../../utils/core/logger'
 import { createRouter } from '../../utils/routes/router'
 import { validate } from '../../utils/routes/validate'
@@ -86,9 +98,29 @@ export async function requestSignInEmail(
   return { kind: 'sso_required', loginUrl: loginUrl.toString() }
 }
 
+const RECIPIENT_MAIL_MAX = 5
+const RECIPIENT_MAIL_WINDOW_SECONDS = 15 * 60
+
+/** Whether this address has mail budget left; the bucket key holds a hash, never the address. */
+async function recipientMailAllowed(kv: RateLimitKv | undefined, email: string): Promise<boolean> {
+  if (!kv) return true
+  const bucket = await hashToken(email.toLowerCase())
+  const decision = await checkRateLimit(kv, `rl:auth-email:${bucket}`, {
+    max: RECIPIENT_MAIL_MAX,
+    windowSeconds: RECIPIENT_MAIL_WINDOW_SECONDS,
+  })
+  return decision.allowed
+}
+
 magicLinkRouter.post('/request', validate('json', magicLinkRequestSchema), async c => {
   const { email, redirectTo } = c.req.valid('json')
-  await requestSignInEmail(c.get('db'), c.get('config'), c.get('logger'), { email, redirectTo })
+  const cfg = c.get('config')
+  if (
+    !isOidcOnly(cfg) &&
+    (await recipientMailAllowed(c.env.RATE_LIMIT_KV as RateLimitKv | undefined, email))
+  ) {
+    await requestSignInEmail(c.get('db'), cfg, c.get('logger'), { email, redirectTo })
+  }
   return c.json({ ok: true }, 202)
 })
 
@@ -102,9 +134,11 @@ magicLinkRouter.get('/verify', c => {
 
 /** The confirm page's form (`application/x-www-form-urlencoded`): the only consuming request. */
 magicLinkRouter.post('/verify', async c => {
+  assertSameOriginRequest(c)
   const db = c.get('db')
   const cfg = c.get('config')
   const logger = c.get('logger')
+  if (isOidcOnly(cfg)) return loginErrorRedirect(c, 'oidc_only')
   const form = await c.req.parseBody()
   const token = typeof form.token === 'string' ? form.token : ''
   const consumed = await consumeMagicLinkToken(db, token)
@@ -119,7 +153,12 @@ magicLinkRouter.post('/verify', async c => {
     })
   }
 
-  const admitted = await admitUser(db, cfg, { email: consumed.email, verified: true }, logger)
+  const admitted = await admitUser(
+    db,
+    cfg,
+    { email: consumed.email, verified: true, proof: 'kit' },
+    logger
+  )
   if (!admitted.ok) return loginErrorRedirect(c, admitted.reason)
 
   await completeLogin(c, db, cfg, admitted.user)

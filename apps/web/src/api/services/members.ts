@@ -8,7 +8,7 @@
 import { ERROR_CODES } from '@rocketflare/shared/errors'
 import type { PaginationQuery } from '@rocketflare/shared/pagination'
 import type { Member, TenantRole } from '@rocketflare/shared/tenants'
-import { and, asc, eq, sql } from 'drizzle-orm'
+import { and, asc, eq, inArray, sql } from 'drizzle-orm'
 import type { Database } from '../../db/client'
 import { tenantUserSettings, tenantUsers, userSessions, users } from '../../db/schema'
 import { isOwnerLevel } from '../middleware/permissions'
@@ -17,7 +17,8 @@ import { ConflictError, ForbiddenError, NotFoundError } from '../utils/core/erro
 import { asCount, pageWindow } from '../utils/routes/pagination'
 import { recordActivity } from './activity'
 import { groupsForMembers } from './groups'
-import { nudge, type Realtime, realtimeEvent } from './realtime'
+import { revokeInvitationsIssuedBy } from './invitations'
+import { closeUserSockets, nudge, type Realtime, realtimeEvent } from './realtime'
 
 export async function listMembers(db: Database, tenantId: string, query: PaginationQuery) {
   const { limit, offset } = pageWindow(query)
@@ -126,6 +127,40 @@ export async function changeMemberRole(
   return updated ?? target
 }
 
+/**
+ * The global-admin role is gone, so every `support` row it minted goes with it, in the caller's
+ * transaction: membership, the sessions pinned there and the activity line the tenant sees. Keys
+ * minted under the row stop with it, because `validateApiKey` joins the membership.
+ */
+export async function endSupportMemberships(
+  tx: Database,
+  input: { userId: string; actorUserId: string }
+): Promise<string[]> {
+  const ended = await tx
+    .delete(tenantUsers)
+    .where(and(eq(tenantUsers.userId, input.userId), eq(tenantUsers.role, 'support')))
+    .returning({ tenantId: tenantUsers.tenantId })
+  if (ended.length === 0) return []
+  const tenantIds = ended.map(row => row.tenantId)
+  await tx
+    .update(userSessions)
+    .set({ selectedTenantId: null })
+    .where(
+      and(eq(userSessions.userId, input.userId), inArray(userSessions.selectedTenantId, tenantIds))
+    )
+  for (const tenantId of tenantIds) {
+    await revokeInvitationsIssuedBy(tx, { tenantId, userId: input.userId })
+    await recordActivity(tx, {
+      tenantId,
+      userId: input.actorUserId,
+      type: 'support.left',
+      subjectType: 'TenantMember',
+      subjectId: input.userId,
+    })
+  }
+  return tenantIds
+}
+
 export async function removeMember(
   db: Database,
   input: { tenantId: string; targetUserId: string; actor: AuthContext; realtime?: Realtime }
@@ -144,7 +179,7 @@ export async function removeMember(
       throw new ConflictError('An organisation must keep at least one owner', 'last_owner')
     }
   }
-  await db.transaction(async tx => {
+  const revokedInvitations = await db.transaction(async tx => {
     await tx
       .delete(tenantUsers)
       .where(
@@ -168,7 +203,12 @@ export async function removeMember(
           eq(userSessions.selectedTenantId, input.tenantId)
         )
       )
+    return revokeInvitationsIssuedBy(tx as unknown as Database, {
+      tenantId: input.tenantId,
+      userId: input.targetUserId,
+    })
   })
+  closeUserSockets(input.realtime, input.tenantId, input.targetUserId)
   await recordActivity(db, {
     tenantId: input.tenantId,
     userId: input.actor.user.id,
@@ -178,4 +218,7 @@ export async function removeMember(
     metadata: { role: target.role, self: input.actor.user.id === input.targetUserId },
   })
   nudge(input.realtime, realtimeEvent('member.changed', input.tenantId, { id: input.targetUserId }))
+  if (revokedInvitations.length > 0) {
+    nudge(input.realtime, realtimeEvent('invitation.changed', input.tenantId))
+  }
 }

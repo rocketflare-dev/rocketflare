@@ -39,6 +39,14 @@ vi.mock('@/api/routes/auth/sso', async () => {
           : null,
     },
     {
+      shared: { id: 'multi' },
+      loginMethods: () => [{ id: 'sso', label: 'Multi', startPath: '/api/hooks/multi/sso' }],
+      ssoPolicy: async (_db: unknown, email: string) =>
+        email.endsWith('@multi-sso.test')
+          ? { required: true as const, methodId: 'sso', connectionId: 'conn-a' }
+          : null,
+    },
+    {
       shared: { id: 'broken' },
       ssoPolicy: async (_db: unknown, email: string) => {
         if (email.endsWith('@broken-sso.test')) throw new Error('connections table unreachable')
@@ -211,13 +219,14 @@ function idpApp(pluginId: string) {
       email: c.req.query('email') ?? '',
       emailVerified: true,
       linkByEmail: true,
+      connectionId: c.req.query('connectionId'),
     })
   )
   return app
 }
 
-async function signInVia(pluginId: string, email: string) {
-  const params = new URLSearchParams({ email })
+async function signInVia(pluginId: string, email: string, connectionId?: string) {
+  const params = new URLSearchParams({ email, ...(connectionId ? { connectionId } : {}) })
   return request(`/sign-in?${params}`, {}, { app: idpApp(pluginId) })
 }
 
@@ -229,6 +238,18 @@ describe('a plugin’s identityFor().signIn', () => {
     expect(res.status).toBe(302)
     expect(location(res).pathname).toBe('/')
     expect(sessionCookieFrom(res)).toBeTruthy()
+  })
+
+  it('a claim naming a connection passes only through that connection', async () => {
+    const email = `sso_${uniqueId().toLowerCase()}@multi-sso.test`
+    await createTestUser(db, { email })
+    const other = await signInVia('multi', email, 'conn-b')
+    expect(location(other).searchParams.get('error')).toBe('sso_required')
+    const none = await signInVia('multi', email)
+    expect(location(none).searchParams.get('error')).toBe('sso_required')
+    const claiming = await signInVia('multi', email, 'conn-a')
+    expect(location(claiming).pathname).toBe('/')
+    expect(sessionCookieFrom(claiming)).toBeTruthy()
   })
 
   it('a DIFFERENT plugin’s sign-in for that address is refused, and links nothing', async () => {

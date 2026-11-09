@@ -1,8 +1,8 @@
 /**
  * ONE generic OAuth router over the provider registry: `GET /auth/:provider` starts,
  * `GET /auth/:provider/callback` finishes. State + PKCE verifier + OIDC nonce (+ the return path,
- * link mode) travel in a single `oauth_state` cookie that also names the provider, so a callback
- * for the wrong provider is rejected. The return path is `?returnUrl=` (what the UI sends;
+ * link mode) travel in a single `__Host-oauth_state` cookie that also names the provider, so a
+ * callback for the wrong provider is rejected. The return path is re-checked when the cookie is read. The return path is `?returnUrl=` (what the UI sends;
  * `?redirectTo=` is still accepted). Redirect URI is `oauthRedirectUri(cfg, provider)`.
  * `email_verified === false` is refused; an existing link wins, then email-based linking to an
  * existing user, else `admitUser`. Tokens are AES-GCM encrypted at rest — `OAUTH_ENCRYPTION_KEY`
@@ -43,6 +43,7 @@ import { platformFeatures } from '../../services/features'
 import { idpClaimsAdmit, readIdpClaims, reconcileIdpClaims } from '../../services/idp-tenancy'
 import type { AppContext } from '../../types'
 import { ConflictError, NotFoundError, UnauthorizedError } from '../../utils/core/errors'
+import { makeDefer } from '../../utils/routes/route-helpers'
 import { createRouter } from '../../utils/routes/router'
 import {
   completeLogin,
@@ -81,7 +82,7 @@ function decodeFlow(value: string | undefined): OAuthFlowState | null {
       state: parsed.state,
       verifier: parsed.verifier,
       nonce: parsed.nonce,
-      redirectTo: parsed.redirectTo ?? '/',
+      redirectTo: safeRedirectPath(parsed.redirectTo),
       linkUserId: parsed.linkUserId,
     }
   } catch {
@@ -130,7 +131,6 @@ oauthRouter.get('/:provider', async c => {
   const returnPath = c.req.query('returnUrl') ?? c.req.query('redirectTo')
   setFlowCookie(
     c,
-    cfg,
     OAUTH_STATE_COOKIE_NAME,
     encodeFlow({
       provider: def.id,
@@ -152,7 +152,7 @@ oauthRouter.get('/:provider/callback', async c => {
   if (refusedByOidcOnly(c, def)) return loginErrorRedirect(c, 'oidc_only')
 
   const flow = decodeFlow(readFlowCookie(c, OAUTH_STATE_COOKIE_NAME))
-  clearFlowCookie(c, cfg, OAUTH_STATE_COOKIE_NAME)
+  clearFlowCookie(c, OAUTH_STATE_COOKIE_NAME)
   const code = c.req.query('code')
   const state = c.req.query('state')
   if (c.req.query('error')) {
@@ -232,6 +232,7 @@ oauthRouter.get('/:provider/callback', async c => {
         verified: true,
         avatarUrl: profile.avatarUrl,
         admittedBy: claims && idpClaimsAdmit(claims) ? 'idp' : undefined,
+        proof: 'kit',
       },
       logger
     )
@@ -255,7 +256,8 @@ oauthRouter.get('/:provider/callback', async c => {
         user,
         claims,
         logger,
-        await platformFeatures(db, cfg)
+        await platformFeatures(db, cfg),
+        { defer: makeDefer(c), env: c.env }
       )
       user = reconciled.user
     } catch (err) {

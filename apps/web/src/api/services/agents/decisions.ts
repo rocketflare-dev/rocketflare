@@ -34,6 +34,7 @@ import { type AgentRunDecisionRow, agentRunDecisions } from '../../../db/schema'
 import { traceStep } from '../../observability/context'
 import { decisionAttributes } from '../../observability/genai-attributes'
 import { hashToken } from '../../utils/core/hash'
+import { stableStringify } from '../../utils/core/stable-stringify'
 import type { ResolvedDecisions } from '../ai/resolve'
 import type { RunMeter } from './budget'
 
@@ -376,17 +377,6 @@ export function toAgentRunDecision(row: AgentRunDecisionRow): AgentRunDecision {
  */
 export async function questionsHash(questions: DecisionRequest['questions']): Promise<string> {
   return (await hashToken(stableStringify(questions))).slice(0, 12)
-}
-
-function stableStringify(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`
-  if (value && typeof value === 'object') {
-    const entries = Object.entries(value as Record<string, unknown>)
-      .filter(([, v]) => v !== undefined)
-      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
-    return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${stableStringify(v)}`).join(',')}}`
-  }
-  return JSON.stringify(value)
 }
 
 export function toDecision(row: AgentRunDecisionRow, replayed: boolean): Decision {

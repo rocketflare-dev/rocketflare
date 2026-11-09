@@ -20,6 +20,7 @@ import { isIdpManaged } from '../../config'
 import { verifyStandardWebhook, webhookHeaders } from '../auth/standard-webhooks'
 import { applyIdentityEvent } from '../services/idp-tenancy'
 import { NotFoundError, UnauthorizedError, ValidationError } from '../utils/core/errors'
+import { makeDefer } from '../utils/routes/route-helpers'
 import { createRouter } from '../utils/routes/router'
 
 export const identityEventsRouter = createRouter()
@@ -57,7 +58,10 @@ identityEventsRouter.post('/events', async c => {
     throw new ValidationError(parsed.error.issues)
   }
 
-  const outcome = await applyIdentityEvent(c.get('db'), cfg, parsed.data)
+  const outcome = await applyIdentityEvent(c.get('db'), cfg, parsed.data, {
+    defer: makeDefer(c),
+    env: c.env,
+  })
   logger.info({ eventId: parsed.data.id, type: parsed.data.type, outcome }, 'identity event')
   return c.body(null, 204)
 })

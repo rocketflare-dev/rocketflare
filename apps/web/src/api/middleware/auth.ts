@@ -6,7 +6,8 @@
  *   - `__Host-session` cookie → `resolveSession` (one LATERAL query), sliding expiry via waitUntil
  * Builds `AuthContext` (`buildAbility({ role, isGlobalAdmin, features })`, the features resolved by
  * `permissions/features.ts` from `[vars]` plus the tenant's rollout rows) and `c.set('auth')`.
- * Errors are envelopes: 401 `unauthorized`; 403 `blocked` / `tenant_suspended`. A valid session
+ * Errors are envelopes: 401 `unauthorized`; 403 `blocked` / `tenant_suspended` /
+ * `insufficient_scope` (a Bearer key whose scopes do not allow the method). A valid session
  * with NO tenant passes with `tenantId: null` — `withAuthAndDb` turns that into 403 `no_tenant` /
  * `pending_approval`, while tenant-free routes (`withAuth`) keep working.
  *
@@ -116,6 +117,12 @@ async function resolveBearerAuth(c: AppContext, plaintext: string): Promise<Auth
   if (result.tenant.status === 'suspended') {
     throw new ForbiddenError('Organisation is suspended', ERROR_CODES.tenantSuspended)
   }
+  if (!apiKeyScopesAllow(result.key.scopes, c.req.method)) {
+    throw new ForbiddenError(
+      "This API key's scopes do not allow this request",
+      ERROR_CODES.insufficientScope
+    )
+  }
   fireAndForget(c, () => touchApiKeyUsage(db, result.key.id), 'touch API key usage')
   fireAndForget(c, () => touchTenantAccess(db, result.tenant.id), 'touch tenant access')
   // The cookie path gets both of these out of `resolveSession`'s one query; a Bearer request has no
@@ -147,6 +154,18 @@ async function resolveBearerAuth(c: AppContext, plaintext: string): Promise<Auth
     groups,
     accessRequestStatus: null,
   }
+}
+
+const READ_METHODS = new Set(['GET', 'HEAD', 'OPTIONS'])
+
+/**
+ * A key's scopes limit what it may do: reads need `read`, `write` or `*`; everything else needs
+ * `write` or `*`. Enforced here, once, for every Bearer request; the CASL check on the creator's
+ * role still applies on top of it.
+ */
+function apiKeyScopesAllow(scopes: string[], method: string): boolean {
+  if (scopes.includes('*') || scopes.includes('write')) return true
+  return READ_METHODS.has(method.toUpperCase()) && scopes.includes('read')
 }
 
 function bearerToken(c: AppContext): string | undefined {

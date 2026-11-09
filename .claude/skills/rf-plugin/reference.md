@@ -136,6 +136,10 @@ Field notes, in the order they bite:
   file is the sixth barrel's half, `plugin add` writes the barrel line, and `plugin check` fails if
   the file does not export every name declared here. Cloudflare resolves `class_name` against the
   named exports of `src/worker.ts` and nowhere else, which is the whole reason the barrel exists.
+- **Paths** stay contained, and `add`, `upgrade` and `remove` refuse otherwise before writing:
+  `anchor` and `paths` inside the plugin's own roots (and its `.claude/skills/<id>…` directories),
+  `coreEdits[].file` and `dependencies` keys as plain paths inside the repository, nothing under
+  `.git/` and nothing through a symlink. The add plan prints the anchor
 - **`coreEdits`** are `{ file, after, lines[] }` — lines a CORE file needs (the analytics plugin's
   `/cubejs-api` + `/mcp` dev-proxy lines and `@nivo/heatmap` alias in `apps/web/vite.config.ts`).
   `add` inserts `lines` after the first line containing `after`, at its indentation, idempotently;
@@ -339,10 +343,13 @@ The contract is in `apps/web/src/plugins/CLAUDE.md` (never write a session; prov
   id_token). The kit links the identity under provider `plugin:<id>` — the plugin namespaces
   `subject` itself, `<connection>|<nameId>` — admits, upserts an `idp` membership (`source =
   'idp'`, through `upsertIdpMembership` in `services/idp-tenancy.ts`, shared with the OIDC
-  reconcile), mints the session and answers the redirect, refusals included. An existing account
-  with the same email is attached only with `linkByEmail: true`, else `account_exists`.
+  reconcile), mints the session and answers the redirect, refusals included. A subject with no
+  link needs `linkByEmail: true` (proved domain) to attach to an existing account or create a new
+  one, else `account_exists` in both cases; a `BOOTSTRAP_ADMIN_EMAILS` address is refused always.
+  A suspended tenant named by `tenantId` answers `no_access`.
 - **`provisionFor(ctx, '<id>')`** is the cookie-free half for SCIM or a sync job: `findUser`,
-  `upsertUser`, `setMembership`, `removeMembership`, `deprovision`, `listMembers`.
+  `upsertUser`, `setMembership`, `removeMembership`, `deprovision`, `listMembers`. The
+  tenant-taking methods answer 403 `tenant_suspended` for a suspended tenant.
   `removeMembership` drops the `idp` row and unpins sessions. `deprovision` is a LEAVER (SCIM
   `active: false`): the same plus deleting the sessions pinned to that tenant — in `multi` never a
   block, never another tenant (their other tenants, sessions and keys survive).
@@ -359,11 +366,13 @@ The contract is in `apps/web/src/plugins/CLAUDE.md` (never write a session; prov
   the plugin's own `loginMethods` ids) for an address whose domain its connection proved it owns,
   else `null`. The kit then refuses that address a magic link, Google, Microsoft, OIDC, dev login
   and every other plugin's `signIn`, and routes the person to the method; the plugin's own `signIn`
-  passes. Asked once per sign-in attempt — keep it one indexed lookup. A throw fails CLOSED for that
-  email; `BOOTSTRAP_ADMIN_EMAILS` are exempt (break-glass).
+  passes. A plugin holding several tenants' connections names the claiming one with
+  `connectionId` and passes the same id to `signIn`; another connection is then refused like
+  another plugin. Asked once per sign-in attempt — keep it one indexed lookup. A throw fails CLOSED
+  for that email; `BOOTSTRAP_ADMIN_EMAILS` are exempt (break-glass).
 - **Host side, for a NEW sign-in path:** `ssoDecisionFor(db, cfg, emails, logger)`
   (`routes/auth/sso.ts`, the barrel bound into the pure `evaluateSsoPolicyForAll`), then
-  `ssoAllows(decision, 'core' | { pluginId })`; a refusal is `ssoRequiredRedirect(c, decision, {
+  `ssoAllows(decision, 'core' | { pluginId, connectionId? })`; a refusal is `ssoRequiredRedirect(c, decision, {
   returnUrl })`, or 403 `sso_required` + `details.method` for a JSON route. Pass every address the
   sign-in involves (asserted and account).
 

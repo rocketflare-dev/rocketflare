@@ -90,7 +90,7 @@ export interface MintApiKeyInput {
   expiresAt?: Date | null
 }
 
-/** The ONE way a key comes into existence — `POST /api/keys` and `GET /auth/cli` both use it. */
+/** The ONE way a key comes into existence — `POST /api/keys` and `POST /auth/cli/confirm` use it. */
 export async function mintApiKey(db: Database, input: MintApiKeyInput) {
   const generated = await generateApiKey()
   const [row] = await db

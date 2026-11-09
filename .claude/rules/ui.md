@@ -128,7 +128,9 @@ TanStack Query owns server state — never add a store for it. zustand owns only
 - `components/ai/` (`Markdown`, `ChatBubble`, `StatRows`) is NOT in the eager `components/shared`
   barrel. Import it by path ONLY from `pages/chat/**`, `pages/agents/**` and
   `pages/documents/DocumentViewPage.tsx`; nothing under `components/shared` may import a markdown
-  renderer (`tests/config/ui-bundle.test.ts` asserts both). Model output renders through `Markdown`
+  renderer (`tests/config/ui-bundle.test.ts` asserts both). `Markdown` shows images as links
+  (`MarkdownImageLink`, also for a plugin's own renderer): text from a model or document must not make the
+  browser fetch anything by itself. Model output renders through `Markdown`
   (`skipHtml`, links `noopener`), never `dangerouslySetInnerHTML`; user text verbatim
   (`whitespace-pre-wrap`)
 - Heavy dependencies stay in a lazy chunk, never reached from the shared barrel, `App.tsx`,
