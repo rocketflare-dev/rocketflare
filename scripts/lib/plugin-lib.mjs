@@ -810,6 +810,19 @@ export function isWorkerFirstAll(text) {
   )
 }
 
+/**
+ * The `run_worker_first` patterns `prefixes` need and `text` lacks: each prefix and everything
+ * beneath it. None under `/*`, which already sends every prefix to the Worker.
+ */
+export function missingWorkerFirstPatterns(text, prefixes) {
+  const values = workerFirstValues(text)
+  if (values === null || values.includes('/*')) return []
+  return workerFirstPatterns(prefixes).filter(p => !values.includes(p))
+}
+
+/** The `run_worker_first` patterns an API prefix needs: the prefix and everything beneath it. */
+export const workerFirstPatterns = prefixes => prefixes.flatMap(p => [p, `${p}/*`])
+
 /** The byte range of a top-level `key = value` line, or null. */
 function tomlLineExtent(text, key) {
   const line = new RegExp(`^${key}\\s*=[^\\n]*`, 'm').exec(text)
@@ -877,6 +890,36 @@ export function applyWorkerFirstAll(text) {
 export function revertWorkerFirstAll(text) {
   const routing = restoreOriginal(text, WORKER_FIRST_KEY, tomlArrayExtent(text, WORKER_FIRST_KEY))
   return restoreOriginal(routing, NOT_FOUND_KEY, tomlLineExtent(routing, NOT_FOUND_KEY))
+}
+
+const REPROVISION_TAG = '# rocketflare:reprovision'
+const REPROVISION_LINE = new RegExp(`^${REPROVISION_TAG}\\b[^\\n]*\\n`, 'm')
+
+/** Mark a restored `run_worker_first` as missing prefixes that provisioning puts back. */
+export function markReprovision(text) {
+  const head = new RegExp(`^${WORKER_FIRST_KEY}\\s*=`, 'm').exec(text)
+  if (!head || awaitsReprovision(text)) return text
+  const line = `${REPROVISION_TAG} — this list was restored without the API prefixes provisioned since: run \`pnpm provision cloudflare <env>\``
+  return `${text.slice(0, head.index)}${line}\n${text.slice(head.index)}`
+}
+
+/** Has a restore left this toml waiting for `provision cloudflare`? */
+export const awaitsReprovision = text => REPROVISION_LINE.test(text)
+
+/** The mark gone once nothing `prefixes` need is missing; otherwise `text` unchanged. */
+export const settleReprovision = (text, prefixes) =>
+  missingWorkerFirstPatterns(text, prefixes).length === 0
+    ? text.replace(REPROVISION_LINE, '')
+    : text
+
+/**
+ * `revertWorkerFirstAll`, marked for `provision cloudflare` when the restored list lacks patterns
+ * `prefixes` need — it predates every prefix provisioned while `/*` was in force.
+ */
+export function restoreWorkerFirst(text, prefixes) {
+  const restored = revertWorkerFirstAll(text)
+  const lost = missingWorkerFirstPatterns(restored, prefixes)
+  return { text: lost.length > 0 ? markReprovision(restored) : restored, lost }
 }
 
 /**
@@ -1308,6 +1351,17 @@ const mkStep = (kind, id, title, command, expected, assertion) => ({
 
 const GATE = 'pnpm gate'
 
+/** Provisioning again, for the `run_worker_first` patterns a restored list lost. */
+export const reprovisionStep = lost =>
+  mkStep(
+    'agent',
+    'reprovision',
+    `Put ${lost.join(', ')} back into run_worker_first`,
+    'pnpm provision cloudflare staging && pnpm provision cloudflare production',
+    `run_worker_first in both tomls carries ${lost.join(', ')}`,
+    'pnpm plugin check'
+  )
+
 /** The platform declarations one `pnpm provision cloudflare <env>` run will write, as phrases. */
 function platformSummary(m) {
   return [
@@ -1434,7 +1488,7 @@ export function planSteps(m, { fragments = [], clashes = [] } = {}) {
  * migration that takes a Durable Object namespace and everything stored in it, and live Cloudflare
  * resources that may still hold somebody's data.
  */
-export function removeSteps(m, { archive = false, migrationTag = null } = {}) {
+export function removeSteps(m, { archive = false, migrationTag = null, lostPatterns = [] } = {}) {
   const steps = []
   const tables = m.schema?.tables ?? []
   if (tables.length > 0 && archive) {
@@ -1519,6 +1573,7 @@ export function removeSteps(m, { archive = false, migrationTag = null } = {}) {
       )
     )
   }
+  if (lostPatterns.length > 0) steps.push(reprovisionStep(lostPatterns))
   steps.push(
     mkStep('agent', 'gate', 'Run the gate', GATE, 'every step passes', 'the exit code is 0')
   )

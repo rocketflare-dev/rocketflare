@@ -218,7 +218,7 @@ is the thing to look at, not the absolute.**
 
 **A plugin never edits a wrangler toml; `pnpm provision cloudflare <env>` does it for you, from the
 plugin's own `plugin.json`** (the one thing `pnpm plugin add` writes itself is the `publicSites`
-`run_worker_first` widening and `not_found_handling = "none"`, both kept and restored by `remove`; `pnpm provision urls` writes its hosts' routes). Four declarations, and the phase writes the first four rows into BOTH
+`run_worker_first` widening and `not_found_handling = "none"`, both kept and restored by `remove`, which marks a restored list lacking prefixes provisioned since `# rocketflare:reprovision` until `provision cloudflare` puts them back; `pnpm provision urls` writes its hosts' routes). Four declarations, and the phase writes the first four rows into BOTH
 tomls before it creates anything — the ordinary parity test compares binding names, `[vars]` keys,
 crons and `run_worker_first` across the two files on every `pnpm test`, so patching only one would
 leave the gate red until somebody remembered the other.

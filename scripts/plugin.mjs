@@ -34,9 +34,11 @@
 import { spawnSync } from 'node:child_process'
 import {
   existsSync,
+  lstatSync,
   mkdirSync,
   readdirSync,
   readFileSync,
+  readlinkSync,
   rmSync,
   statSync,
   writeFileSync,
@@ -61,6 +63,7 @@ import {
   applyCoreEdits,
   applyWorkerFirstAll,
   archiveSql,
+  awaitsReprovision,
   BARREL_KINDS,
   BARRELS,
   barrelLines,
@@ -83,6 +86,7 @@ import {
   jsonKeyLine,
   manifestPathProblems,
   missingDependencies,
+  missingWorkerFirstPatterns,
   newlyAddedDependencies,
   nextAddedDependencies,
   nextPluginMigrationTag,
@@ -103,10 +107,12 @@ import {
   renderDiagnostic,
   renderList,
   renderSteps,
+  reprovisionStep,
   resolveSubdir,
+  restoreWorkerFirst,
   revertCoreEdits,
-  revertWorkerFirstAll,
   SKILLS_ROOT,
+  settleReprovision,
   skillDirProblem,
   skillFileProblems,
   skillTarget,
@@ -317,8 +323,32 @@ function installedManifests(host, exceptId) {
 const wranglerTomls = () =>
   ['apps/web/wrangler.toml', 'apps/web/wrangler.staging.toml'].filter(f => existsSync(abs(f)))
 
-function rewriteWranglerTomls(transform) {
-  for (const f of wranglerTomls()) writeFileSync(abs(f), transform(readFileSync(abs(f), 'utf8')))
+/** Both tomls through `transform`, in memory: a throw leaves every toml as it was. */
+const transformWranglerTomls = transform =>
+  wranglerTomls().map(f => [f, transform(readFileSync(abs(f), 'utf8'))])
+
+/** `transformWranglerTomls`, or stop with nothing written. */
+function transformWranglerTomlsOrStop(transform) {
+  try {
+    return transformWranglerTomls(transform)
+  } catch (error) {
+    stop(1, `error: ${error.message} Nothing has been written.`)
+  }
+}
+
+/** Both tomls with public-site routing restored, and the patterns `prefixes` need that they lost. */
+function restoreWranglerTomls(prefixes) {
+  const lost = new Set()
+  const routed = transformWranglerTomls(text => {
+    const restored = restoreWorkerFirst(text, prefixes)
+    for (const pattern of restored.lost) lost.add(pattern)
+    return restored.text
+  })
+  return { routed, lost: [...lost] }
+}
+
+function writeWranglerTomls(routed) {
+  for (const [file, text] of routed) writeFileSync(abs(file), text)
 }
 
 /** A host workspace package's `package.json`, or null. Never throws: a caller is reporting. */
@@ -755,14 +785,7 @@ function cmdAdd(args, host) {
 
   // --- apply
   // Computed before the first copy: a toml with no array to rewrite must stop an install whole.
-  let routed = []
-  if (declaresPublicSites(m)) {
-    try {
-      routed = wranglerTomls().map(f => [f, applyWorkerFirstAll(readFileSync(abs(f), 'utf8'))])
-    } catch (error) {
-      stop(1, `error: ${error.message} Nothing has been written.`)
-    }
-  }
+  const routed = declaresPublicSites(m) ? transformWranglerTomlsOrStop(applyWorkerFirstAll) : []
   let written = 0
   const targets = []
   for (const f of files) {
@@ -789,7 +812,7 @@ function cmdAdd(args, host) {
   for (const [file, edits] of coreEdits) {
     writeFileSync(abs(file), applyCoreEdits(readFileSync(abs(file), 'utf8'), edits))
   }
-  for (const [file, text] of routed) writeFileSync(abs(file), text)
+  writeWranglerTomls(routed)
   // Said again at the moment it happens, not only in the plan: `pnpm add` is about to overwrite
   // the range, and stderr is what a log keeps.
   for (const c of clashes) warn(`warning: ${describeClash(c)}`)
@@ -1035,6 +1058,22 @@ function cmdUpgrade(args, host) {
     } catch {
       stop(1, `error: ${pluginManifestPath} at ${to} is not valid JSON — a bug in the plugin.`)
     }
+  }
+  const others = installedManifests(host, id)
+  // Checked as `plugin check` checks the installed one, before a byte of the release is written.
+  const targetProblems = targetManifest
+    ? [
+        ...pluginManifestProblems(targetManifest).map(p => `${p.field}: ${p.problem}`),
+        ...imagesBindingProblems(targetManifest, others),
+      ]
+    : []
+  if (targetProblems.length > 0) {
+    stop(
+      1,
+      `error: ${pluginManifestPath} at ${to} cannot be installed — a bug in the plugin:`,
+      ...targetProblems.map(p => `  ${p}`),
+      'Nothing has been written.'
+    )
   }
   const installedManifest = existsSync(abs(surface.anchor))
     ? JSON.parse(readFileSync(abs(surface.anchor), 'utf8'))
@@ -1284,6 +1323,21 @@ function cmdUpgrade(args, host) {
     return 0
   }
 
+  // A release can start or stop serving public sites, and the tomls have to follow it. Computed
+  // before the first write: a toml with no array to rewrite must stop an upgrade whole.
+  let routed = []
+  let lostPatterns = []
+  if (targetManifest && declaresPublicSites(targetManifest)) {
+    routed = transformWranglerTomlsOrStop(applyWorkerFirstAll)
+  } else if (
+    targetManifest &&
+    declaresPublicSites(installedManifest) &&
+    !others.some(declaresPublicSites)
+  ) {
+    const prefixes = [...others, targetManifest].flatMap(o => o.apiPrefixes ?? [])
+    ;({ routed, lost: lostPatterns } = restoreWranglerTomls(prefixes))
+  }
+
   for (const rel of added) writeInto(rel, readFileSync(path.join(workRoot, 'added', rel)))
   for (const rel of skillDeletes) rmSync(abs(rel), { force: true })
   // A skill the new release no longer declares goes as a WHOLE directory — the surface stops
@@ -1356,20 +1410,7 @@ function cmdUpgrade(args, host) {
     }
   }
 
-  // A release can start or stop serving public sites, and the tomls have to follow it.
-  if (targetManifest && declaresPublicSites(targetManifest)) {
-    try {
-      rewriteWranglerTomls(applyWorkerFirstAll)
-    } catch (err) {
-      coreEditWarnings.push(err instanceof Error ? err.message : String(err))
-    }
-  } else if (
-    targetManifest &&
-    declaresPublicSites(installedManifest) &&
-    !installedManifests(host, id).some(declaresPublicSites)
-  ) {
-    rewriteWranglerTomls(revertWorkerFirstAll)
-  }
+  writeWranglerTomls(routed)
 
   // After the files, so a failed `pnpm add` stops with the plugin's code in place and the surface
   // unstamped — and a re-run diffs from the same `from`, finding done what is done.
@@ -1388,7 +1429,10 @@ function cmdUpgrade(args, host) {
     ...(installs + removals > 0
       ? [`✔ dependencies: ${installs} installed or re-ranged, ${removals} removed`]
       : []),
-    ...kept.map(c => `  kept ${c.pkg} ${c.name} — ${c.reason}`)
+    ...kept.map(c => `  kept ${c.pkg} ${c.name} — ${c.reason}`),
+    ...(lostPatterns.length > 0
+      ? renderSteps([reprovisionStep(lostPatterns)], 'Steps that remain')
+      : [])
   )
   const recordFile = host.sidecarIds.includes(id) ? host.sidecarPath : host.manifestPath
   const raw = JSON.parse(readFileSync(recordFile, 'utf8'))
@@ -1467,7 +1511,7 @@ function cmdUpgrade(args, host) {
 /** Every file on disk under a host-relative path. */
 function filesUnder(rel) {
   if (!existsSync(abs(rel))) return []
-  if (!statSync(abs(rel)).isDirectory()) return [rel]
+  if (!lstatSync(abs(rel)).isDirectory()) return [rel]
   return readdirSync(abs(rel), { withFileTypes: true }).flatMap(e =>
     e.isDirectory() ? filesUnder(`${rel}/${e.name}`) : [`${rel}/${e.name}`]
   )
@@ -1513,7 +1557,10 @@ function changedAppOwnedFiles(manifest, surface, host, args) {
   const pinned = new Set(owned.flatMap(p => m.listFiles(source.commit, inRepo(p))))
   return onDisk.flatMap(rel => {
     if (!pinned.has(inRepo(rel))) return [{ path: rel, reason: 'added' }]
-    const disk = readFileSync(abs(rel))
+    // A symlink is its target, as git stores it; reading through one to a directory throws.
+    const disk = lstatSync(abs(rel)).isSymbolicLink()
+      ? Buffer.from(readlinkSync(abs(rel)))
+      : readFileSync(abs(rel))
     const pristine = Buffer.from(materialise(m.showRaw(source.commit, inRepo(rel)), host.names))
     return disk.equals(pristine) || disk.equals(Buffer.from(formattedLikeAdd(rel, pristine)))
       ? []
@@ -1555,6 +1602,14 @@ function cmdRemove(args, host) {
   )
   const tables = anchorManifest.schema?.tables ?? []
   const appOwnedEdits = changedAppOwnedFiles(anchorManifest, surface, host, args)
+  // Another installed plugin still serving public sites still needs every request.
+  const remaining = installedManifests(host, id)
+  const restoreRouting = declaresPublicSites(anchorManifest) && !remaining.some(declaresPublicSites)
+  const remainingPrefixes = remaining.flatMap(m => m.apiPrefixes ?? [])
+  // Restoring marks a list that lost prefixes; a mark nothing is missing for any more goes.
+  const { routed, lost: lostPatterns } = restoreRouting
+    ? restoreWranglerTomls(remainingPrefixes)
+    : { routed: transformWranglerTomls(t => settleReprovision(t, remainingPrefixes)), lost: [] }
 
   const say = (...lines) => {
     if (!args.json) out(...lines)
@@ -1589,6 +1644,7 @@ function cmdRemove(args, host) {
     // Read from the toml rather than assumed: the tag is append-only, so the next one is the next
     // free number after every `plugin-<id>-v<n>` this Worker has already told Cloudflare about.
     migrationTag: nextPluginMigrationTag(tomlMigrationTags(), id),
+    lostPatterns,
   })
   if (args.json) {
     out(
@@ -1635,10 +1691,7 @@ function cmdRemove(args, host) {
     if (!existsSync(abs(file))) continue
     writeFileSync(abs(file), revertCoreEdits(readFileSync(abs(file), 'utf8'), edits))
   }
-  // Another installed plugin still serving public sites still needs every request.
-  const restoreRouting =
-    declaresPublicSites(anchorManifest) && !installedManifests(host, id).some(declaresPublicSites)
-  if (restoreRouting) rewriteWranglerTomls(revertWorkerFirstAll)
+  writeWranglerTomls(routed)
   const dropped = dropSurface(host, id)
   say(
     '',
@@ -2092,6 +2145,20 @@ function cmdCheck(args, host) {
         `'${clash.id.split('-')[0]}_*'), and two plugins cannot share a host with one name ` +
         "between them: a single DROP TABLE takes the other plugin's data",
     })
+  }
+  // A prefix `add` has not provisioned yet is the plan's next step; one a removal dropped is not.
+  for (const file of wranglerTomls()) {
+    const text = readFileSync(abs(file), 'utf8')
+    if (!awaitsReprovision(text)) continue
+    for (const { surface, manifest } of anchors) {
+      const missing = missingWorkerFirstPatterns(text, manifest.apiPrefixes ?? [])
+      if (missing.length === 0) continue
+      add('fail', `${manifest.id}:worker-first:${file}`, {
+        file,
+        problem: `run_worker_first lacks ${missing.join(', ')}, the API prefixes of ${surface.id}`,
+        fix: 'pnpm provision cloudflare <env> for the environment this toml deploys',
+      })
+    }
   }
   const failures = findings.filter(f => f.severity === 'fail')
   const warnings = findings.filter(f => f.severity === 'warn')

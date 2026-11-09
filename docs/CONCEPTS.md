@@ -1110,7 +1110,8 @@ as merging a PR. A plugin repo mirrors the host tree and ships **no migration, n
   adds or re-ranges and removes what it drops only when a plugin brought it in — the surface's
   `addedDependencies` record, never range equality — no other plugin declares it and the host
   holds exactly the old range — a range a peer plugin cannot use is refused), worker exports, a tenant-isolation test for tenant
-  tables, `onTenantDeleted` for DOs, table collisions, declared skills. Each finding names file, line and exact edit.
+  tables, `onTenantDeleted` for DOs, table collisions, declared skills, and API prefixes missing from a
+  `run_worker_first` a restore marked. Each finding names file, line and exact edit.
   Structural checks read comment-free code. It runs where a finding can still be acted on: at the
   end of `plugin add|upgrade --apply` (exit 8 when the tree it wrote fails), in the plugin's own CI
   (`plugin-ci.yml`) and in `kit.yml` — not in an app's `pnpm gate`, because an undeclared import
@@ -1172,7 +1173,11 @@ as merging a PR. A plugin repo mirrors the host tree and ships **no migration, n
   "!/site-assets/*"]`, `not_found_handling = "none"` and one route per declared host beside the
   app's, in both tomls. A missing file under either asset prefix is a plain 404; the SPA catch-all
   serves `index.html` for a navigation only. Without such a plugin both stay as
-  they were. The `images` binding type is declared in the toml and has no resource to create.
+  they were. `plugin add` writes both values and keeps the previous lines in marked
+  comments. When `plugin remove`, or an `upgrade` whose release drops `publicSites`, puts those lines
+  back without API prefixes provisioned since, it marks the list `# rocketflare:reprovision` and prints
+  a re-provision step; `plugin check` fails while a marked list lacks a plugin's prefixes, and
+  `provision cloudflare` clears the mark. The `images` binding type is declared in the toml and has no resource to create.
 - **`appOwned` paths** (`"appOwned": ["apps/web/src/plugins/<id>/app"]`, inside `paths`): the developer's. `plugin upgrade` never touches them, and `plugin remove` lists a file changed or added since the pinned commit and needs `--force-app-owned` to delete it.
 - **`fullscreen` route tier**: a `UiPlugin` route with `tier: 'fullscreen'` renders outside
   `Layout`, for a page that needs the whole viewport. It still requires sign-in and a tenant, and

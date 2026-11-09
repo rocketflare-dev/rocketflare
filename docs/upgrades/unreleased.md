@@ -31,6 +31,10 @@ Plugins can serve whole public hosts through a new `publicSites` seam, with a st
 - A plugin declaring `publicSites` also sets `not_found_handling = "none"`, and the SPA catch-all fetches the shell on a 404 for a navigation only, so a missing `/assets/*`, `/site-assets/*` or root file is a 404.
 - `pnpm plugin upgrade` rewrites the anchor `plugin.json` from the target manifest, so a later `remove` acts on the release actually installed.
 - A manifest may declare `"appOwned"` paths: `upgrade` leaves them alone and `remove` requires `--force-app-owned` to delete files changed or added there.
+- `pnpm plugin add`, `upgrade` and `remove` compute both tomls before writing either; a toml with no `run_worker_first` array stops the command with nothing written.
+- `pnpm plugin upgrade` refuses a target release whose manifest fails `plugin check`'s manifest rules, or that adds a second `images` binding, before anything is written.
+- When `pnpm plugin remove`, or an `upgrade` whose release drops `publicSites`, restores a `run_worker_first` list lacking API prefixes provisioned since, it marks the list `# rocketflare:reprovision` and prints a re-provision step; `pnpm plugin check` fails while a marked list lacks a plugin's prefixes, and `pnpm provision cloudflare <env>` or removing that plugin clears the mark.
+- `pnpm plugin remove` treats a symlink under or at an `appOwned` path as one entry, compared by its target, instead of crashing with `EISDIR` or listing the files it points to.
 - A public site's scripts and styles load from `<request origin>/site-assets/` in its CSP, so a site page cannot load the admin bundle from `/assets/*`; a declared script source reaching `/assets/` on the same host is refused by `publicSiteIssues` and dropped at runtime.
 - `docs/CONCEPTS.md` §1 now says groups grant read only on kit resources and that a plugin may define its own grants; §16 describes the new seams.
 
@@ -43,7 +47,7 @@ Plugins can serve whole public hosts through a new `publicSites` seam, with a st
 5. Port `resolveOwnerTenant` into `apps/web/src/api/utils/db/tenant-helpers.ts` and export it from `@/plugins/api` through `apps/web/src/plugins/api/identity.ts`.
 6. Port the manifest validator and `pnpm provision` changes for the `publicSites` field and the `images` binding type.
 7. Add `--infer-origin-from-routes=false` to the `wrangler dev` command in `dev:api` in `apps/web/package.json` and to the `launch('api', 'wrangler', …)` arguments in `apps/web/scripts/dev-server.mjs`. Wrangler must be 4.156.0 or newer.
-8. Port the SPA catch-all in `apps/web/src/api/index.ts`, and the `appOwned` handling in `scripts/plugin.mjs` and `scripts/lib/plugin-lib.mjs`.
+8. Port the SPA catch-all in `apps/web/src/api/index.ts`, and the `appOwned` handling, the in-memory toml routing and the target-manifest check in `scripts/plugin.mjs` and `scripts/lib/plugin-lib.mjs`. Port `workerFirstPatterns`, `missingWorkerFirstPatterns`, `markReprovision`, `awaitsReprovision`, `settleReprovision`, `restoreWorkerFirst` and `reprovisionStep` in `scripts/lib/plugin-lib.mjs`, and the `settleReprovision` call in `apps/web/scripts/provision/patch-toml.ts`.
 9. In an app with no plugin declaring `publicSites`, leave `run_worker_first`, `not_found_handling` and `routes` unchanged in `apps/web/wrangler.toml` and `apps/web/wrangler.staging.toml`.
 10. In an app installing a plugin that declares `publicSites`, put the site's own scripts and styles under `/site-assets/` in the built UI, set the plugin's hosts var in both tomls, run `pnpm provision cloudflare <env>` for each environment, and follow the zone and DNS steps in `docs/DEPLOY.md`.
 11. Run `node scripts/plugin-api-doc.mjs` to regenerate `docs/plugin-api.md`.
