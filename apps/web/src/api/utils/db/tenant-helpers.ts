@@ -3,12 +3,14 @@
  * `createTenantForUser` is transactional (tenant + membership + settings row + activity) and is
  * called by `POST /api/tenants`, `onNoTenant` (open sign-up / single-tenant bootstrap), the
  * admin `new_org` approval and the seed script. `getSingleTenant` is the `TENANCY_MODE=single`
- * anchor: the first tenant row.
+ * anchor: the first tenant row. `resolveOwnerTenant` picks the tenant that owns content served
+ * without a signed-in member, in either tenancy mode.
  */
 import { ERROR_CODES } from '@rocketflare/shared/errors'
 import type { MembershipRole, MembershipSource } from '@rocketflare/shared/tenants'
 import { slugify } from '@rocketflare/shared/tenants'
 import { and, asc, eq, like, sql } from 'drizzle-orm'
+import type { AppConfig } from '../../../config'
 import type { Database } from '../../../db/client'
 import { type Tenant, tenantSettings, tenants, tenantUsers, users } from '../../../db/schema'
 import { type AnyServerPlugin, serverPlugins } from '../../../plugins/server'
@@ -183,5 +185,30 @@ export async function runTenantDeletedHooks(
 /** `TENANCY_MODE=single`: the one tenant everybody joins — the oldest row. */
 export async function getSingleTenant(db: Database): Promise<Tenant | null> {
   const [row] = await db.select().from(tenants).orderBy(asc(tenants.createdAt)).limit(1)
+  return row ?? null
+}
+
+/**
+ * The tenant that owns a public surface: the one tenant under `single`, the tenant named by
+ * `ownerSlug` under `multi`. Null when there is none, or when it is not `active`, so a suspended
+ * tenant's content stops being served in both modes.
+ */
+export async function resolveOwnerTenant(
+  db: Database,
+  config: Pick<AppConfig, 'TENANCY_MODE'>,
+  ownerSlug?: string
+): Promise<Tenant | null> {
+  const tenant = await findOwnerTenant(db, config, ownerSlug)
+  return tenant?.status === 'active' ? tenant : null
+}
+
+async function findOwnerTenant(
+  db: Database,
+  config: Pick<AppConfig, 'TENANCY_MODE'>,
+  ownerSlug?: string
+): Promise<Tenant | null> {
+  if (config.TENANCY_MODE === 'single') return getSingleTenant(db)
+  if (!ownerSlug) return null
+  const [row] = await db.select().from(tenants).where(eq(tenants.slug, ownerSlug)).limit(1)
   return row ?? null
 }

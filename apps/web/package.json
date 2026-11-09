@@ -13,7 +13,7 @@
     "dev": "node scripts/dev-server.mjs --start",
     "dev:stop": "node scripts/dev-server.mjs --stop",
     "dev:status": "node scripts/dev-server.mjs --status",
-    "dev:api": "mkdir -p dist/ui && node scripts/dev-db.mjs env -- wrangler dev --port ${DEV_API_PORT:-3001}",
+    "dev:api": "mkdir -p dist/ui && node scripts/dev-db.mjs env -- wrangler dev --port ${DEV_API_PORT:-3001} --infer-origin-from-routes=false",
     "dev:ui": "vite",
     "dev:tunnel": "node scripts/cfld.mjs -- node scripts/tunnel-dev.mjs",
     "cfld": "node scripts/cfld.mjs",

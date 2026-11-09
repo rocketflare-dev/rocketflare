@@ -4,7 +4,7 @@ previous: 0.29.0
 date: null
 breaking: false
 migrations: []
-areas: []
+areas: [api, ui, config, scripts, docs]
 touches_surfaces: []
 requires_surfaces: []
 manual: false
@@ -12,20 +12,50 @@ manual: false
 
 ## What changed
 
-_Nothing yet. Add an entry here in the same pull request as the change. This first paragraph is
-lifted VERBATIM into `CHANGELOG.md`, so make it ONE standalone summary sentence of ≤ 40 words —
-then one bullet per change, one line each, and no `###` sub-headings. Rationale belongs in
-`docs/CONCEPTS.md` and is linked, never restated; see `README.md` beside this file._
+Plugins can serve whole public hosts through a new `publicSites` seam, with a strict per-site CSP, multi-host provisioning, a `fullscreen` UI route tier and a tenant resolver; an app with no such plugin sees no routing change.
+
+- `ServerPlugin.publicSites` (`hosts`, `router`, `csp`, `forms`, `rateLimit`, `cache`) is served by `apps/web/src/api/middleware/public-sites.ts`, after `databaseMiddleware` and before every mount.
+- `apps/web/src/api/middleware/security-headers.ts` sends a strict public CSP on a site host; a site's declared sources extend it and inline script stays banned.
+- `publicSiteIssues` fails the gate on a duplicate host, a claim on `APP_URL`'s host or an unsafe declared CSP source.
+- The manifest field `"publicSites": { "hostsVar": "SITES_HOSTS" }` makes `pnpm provision` write `run_worker_first = ["/*", "!/assets/*", "!/site-assets/*"]`, `not_found_handling = "none"` and one route per declared host in both tomls.
+- `pnpm plugin add` applies those two values and keeps the previous lines in marked comments; `pnpm plugin remove` restores them. `pnpm provision urls` writes the app host plus every host in the toml's hosts var and refuses site hosts while the app is on `workers.dev`.
+- The ordinary gate no longer requires a plugin's bindings, migration tag or non-secret vars before provisioning, matching crons and prefixes. `REQUIRE_PROVISIONED=1` still demands all of them, so a deploy is stopped as before.
+- `images` is a sixth manifest binding type, declared only and written as the single `[images]` table; a second plugin declaring it is refused.
+- The UI shell's inline theme script moved to `apps/web/src/ui/public/assets/theme-init.js`, because the Worker's CSP refuses inline script once navigations reach the Worker.
+- `PluginRouteTier` gains `fullscreen`: outside `Layout`, with sign-in, a tenant and the route's `guard` still enforced.
+- `resolveOwnerTenant(db, config, ownerSlug?)` is exported from `@/plugins/api` and returns only an `active` tenant, under both tenancy modes.
+- `pnpm dev` and `pnpm dev:api` start `wrangler dev` with `--infer-origin-from-routes=false`, so a provisioned copy's local requests keep their real host instead of taking the toml's first route.
+- A plugin declaring `publicSites` also sets `not_found_handling = "none"`, and the SPA catch-all fetches the shell on a 404 for a navigation only, so a missing `/assets/*`, `/site-assets/*` or root file is a 404.
+- `pnpm plugin upgrade` rewrites the anchor `plugin.json` from the target manifest, so a later `remove` acts on the release actually installed.
+- A manifest may declare `"appOwned"` paths: `upgrade` leaves them alone and `remove` requires `--force-app-owned` to delete files changed or added there.
+- A public site's scripts and styles load from `<request origin>/site-assets/` in its CSP, so a site page cannot load the admin bundle from `/assets/*`; a declared script source reaching `/assets/` on the same host is refused by `publicSiteIssues` and dropped at runtime.
+- `docs/CONCEPTS.md` §1 now says groups grant read only on kit resources and that a plugin may define its own grants; §16 describes the new seams.
 
 ## How to apply
 
-_Numbered, imperative, each step self-contained — no "these", "them" or "the above" reaching
-outside its own step._
+1. Port `apps/web/src/api/middleware/public-sites.ts`, and call it in `apps/web/src/api/index.ts` after `databaseMiddleware` and before every mount.
+2. Port the public CSP branch of `apps/web/src/api/middleware/security-headers.ts`.
+3. Port the `publicSites` slot and its types in `apps/web/src/plugins/types.ts`, and their re-exports in `apps/web/src/plugins/api/index.ts`.
+4. Add `'fullscreen'` to `PluginRouteTier` in `apps/web/src/plugins/types.ts`, then port `FullscreenRoute` and the `pluginRoutes('fullscreen')` line in `apps/web/src/ui/App.tsx`.
+5. Port `resolveOwnerTenant` into `apps/web/src/api/utils/db/tenant-helpers.ts` and export it from `@/plugins/api` through `apps/web/src/plugins/api/identity.ts`.
+6. Port the manifest validator and `pnpm provision` changes for the `publicSites` field and the `images` binding type.
+7. Add `--infer-origin-from-routes=false` to the `wrangler dev` command in `dev:api` in `apps/web/package.json` and to the `launch('api', 'wrangler', …)` arguments in `apps/web/scripts/dev-server.mjs`. Wrangler must be 4.156.0 or newer.
+8. Port the SPA catch-all in `apps/web/src/api/index.ts`, and the `appOwned` handling in `scripts/plugin.mjs` and `scripts/lib/plugin-lib.mjs`.
+9. In an app with no plugin declaring `publicSites`, leave `run_worker_first`, `not_found_handling` and `routes` unchanged in `apps/web/wrangler.toml` and `apps/web/wrangler.staging.toml`.
+10. In an app installing a plugin that declares `publicSites`, put the site's own scripts and styles under `/site-assets/` in the built UI, set the plugin's hosts var in both tomls, run `pnpm provision cloudflare <env>` for each environment, and follow the zone and DNS steps in `docs/DEPLOY.md`.
+11. Run `node scripts/plugin-api-doc.mjs` to regenerate `docs/plugin-api.md`.
 
 ## Conflicts to expect
 
-_One line each: `path → what changed → what to do`. Or exactly `None.`_
+- `apps/web/src/ui/App.tsx` → one tier branch and one `pluginRoutes` line added → keep your own routes and add both.
+- `apps/web/src/api/index.ts` → one middleware added before the mounts → keep your own order and place it directly after `databaseMiddleware`.
+- `apps/web/src/api/middleware/security-headers.ts` → a branch for site hosts → keep your app CSP and add the branch ahead of it.
+- `docs/plugin-api.md` → generated → regenerate, never merge by hand.
 
 ## Verify
 
-_Numbered checkable commands and assertions only._
+1. `pnpm gate` passes.
+2. `node scripts/plugin-api-doc.mjs --check` exits 0.
+3. With no plugin declaring `publicSites`, `git diff apps/web/wrangler.toml apps/web/wrangler.staging.toml` shows no change to `run_worker_first` or `routes`.
+4. With a plugin serving `www.localhost` under `wrangler dev`, `curl -i http://www.localhost:3001/about` answers from the plugin with the public `Content-Security-Policy`, and `curl -i http://www.localhost:3001/api/me` answers 404.
+5. `curl -i http://localhost:3001/api/health` still answers from the app.

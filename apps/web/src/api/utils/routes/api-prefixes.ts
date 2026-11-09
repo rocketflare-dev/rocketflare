@@ -33,7 +33,23 @@ export function isApiPath(pathname: string): boolean {
 }
 
 /**
- * The same prefixes as wrangler asset-router patterns: each one exactly, and everything beneath it.
- * This is the value `[assets] run_worker_first` must hold in BOTH tomls.
+ * `run_worker_first` while an installed plugin serves public sites. The asset router ignores the
+ * host, so a prefix list would answer `/about` on a site host with the app's `index.html`; instead
+ * every request but the two hashed bundles (`/assets/*` for the admin UI, `/site-assets/*` for
+ * public sites) reaches the Worker, and app navigations go through the SPA catch-all. Must equal the copy in `scripts/lib/plugin-lib.mjs`, which writes it into both tomls
+ * (`wrangler-parity.test.ts` pins the two together).
  */
-export const WORKER_FIRST_PATTERNS: string[] = API_PREFIXES.flatMap(p => [p, `${p}/*`])
+export const PUBLIC_SITES_WORKER_FIRST: readonly string[] = ['/*', '!/assets/*', '!/site-assets/*']
+
+/** The value `[assets] run_worker_first` must hold in BOTH tomls for this set of prefixes. */
+export function workerFirstPatterns(
+  prefixes: readonly string[],
+  hasPublicSites: boolean
+): string[] {
+  return hasPublicSites ? [...PUBLIC_SITES_WORKER_FIRST] : prefixes.flatMap(p => [p, `${p}/*`])
+}
+
+export const WORKER_FIRST_PATTERNS: string[] = workerFirstPatterns(
+  API_PREFIXES,
+  serverPlugins.some(p => p.publicSites)
+)

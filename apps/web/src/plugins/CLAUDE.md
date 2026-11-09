@@ -97,6 +97,16 @@ the CLI command `<id>`; skills `<id>` / `<id>-<what>`; AG-UI CUSTOM events `<id>
   answers by `ctx.enqueue`. A callback completing a flow an admin started re-checks them with
   `memberCan(ctx, { tenantId, userId }, action, subject)` — membership, role, block and tenant
   status as of now — right after `verifyState`, because a signed state outlives a demotion. Rate-limit / body-cap overrides: `/rf-plugin` reference.
+- **`publicSites` answers whole hosts** for anonymous readers: its router takes everything on a
+  host from `hosts(config)`, so the app's `/api/*` and `/auth/*` do not exist there. Return `null`
+  from `hosts` on bad config (dormant, plain 503). `cache.generation` and `csp` run on cache hits,
+  so neither touches Postgres. Find the owner with `resolveOwnerTenant(db, config, slug)`, and branch
+  on `TENANCY_MODE` only there and in the config parser. Declare the hosts var in the manifest
+  (`"publicSites": { "hostsVar": "SITES_HOSTS" }`). Site scripts and styles load from
+  `/site-assets/` only: the admin bundle in `/assets/` is outside the public CSP.
+  `docs/CONCEPTS.md` §16 has the rules.
+- **`appOwned` manifest paths are the developer's**: `plugin upgrade` leaves them alone, and
+  `plugin remove` needs `--force-app-owned` to delete files changed or added there.
 - **It signs people in through `identityFor(c, '<id>').signIn(...)` and provisions through
   `provisionFor(ctx, '<id>')`, never by writing a session** — no `user_sessions` row, cookie,
   `admitUser` or `tenant_users` write of its own. Both trust the caller about the tenant — prove it
@@ -156,7 +166,8 @@ the CLI command `<id>`; skills `<id>` / `<id>-<what>`; AG-UI CUSTOM events `<id>
   `queryKeys` and `agents/forms` (`CORE_AGENT_FORMS` + each plugin's `agentForms`)  read
   `uiPlugins`.
 - **The UI entry ships in the MAIN bundle**, so it wires and nothing else. `routes` are per tier
-  (`shell`, `noTenant`, `public`) and every `Component` is `lazy(() => import('./pages/X'))` — every
+  (`shell`, `noTenant`, `public`, `fullscreen`: outside `Layout`, tenant and `guard` still enforced)
+  and every `Component` is `lazy(() => import('./pages/X'))` — every
   dynamic `import()` inside `lazy`. Runtime imports are limited to `react`,
   `@heroicons/react/24/outline`, `@rocketflare/shared/*`, `@/plugins/types`,
   `@/plugins/api/ui-wiring`, `@/ui/components/SideNav`, `@/ui/hooks/useNavGuard`,

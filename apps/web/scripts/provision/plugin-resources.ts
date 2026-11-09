@@ -6,10 +6,11 @@
  * file existed that meant a human editing both tomls by hand, which is exactly the class of job
  * that is forgotten in one of the two files and then behaves differently in staging.
  *
- * Four declarations, and the shapes are deliberately closed:
+ * Five declarations, and the shapes are deliberately closed:
  *
  *   "bindings":    [{ "type": "kv" | "queue" | "r2", "binding": "APPROVALS_CACHE",
  *                     "name": "cache", "consumer": true }]
+ *   "publicSites": { "hostsVar": "SITES_HOSTS" }
  *   "crons":       ["30 * * * *"]
  *   "apiPrefixes": ["/approvals-webhook"]
  *   "vars":        [{ "key": "APPROVALS_MAX_ITEMS", "example": "50", "secret": false }]
@@ -52,21 +53,31 @@ import path from 'node:path'
  * for a second database.
  */
 import {
+  BARE_PLUGIN_BINDING_TYPES,
   CLASS_PLUGIN_BINDING_TYPES,
   CREATED_PLUGIN_BINDING_TYPES,
   DO_STORAGE_KINDS,
   NAMED_PLUGIN_BINDING_TYPES,
+  PUBLIC_SITES_NOT_FOUND_HANDLING,
+  PUBLIC_SITES_WORKER_FIRST,
   pluginMigrationTag,
+  publicSitesProblems,
   SUPPORTED_PLUGIN_BINDING_TYPES,
 } from '../../../../scripts/lib/plugin-lib.mjs'
 import type { BindingBlock, MigrationBlock } from './patch-toml'
+import { readTomlString } from './patch-toml'
 
 /**
+ * `images` is the third kind: DECLARED only, like the class bindings, but with no class. The Images
+ * binding is a service the account already has, so there is nothing to create and the block is one
+ * `binding = "..."` line, identical in both files.
+ *
  * ONE list, owned by `scripts/lib/plugin-lib.mjs` so `pnpm plugin add` refuses an unsupported
  * type at INSTALL time and provisioning refuses the same one later; the `.d.mts` types it as the
  * literal tuple, which is what keeps `PluginBindingType` narrow here.
  */
 export {
+  BARE_PLUGIN_BINDING_TYPES,
   CLASS_PLUGIN_BINDING_TYPES,
   CREATED_PLUGIN_BINDING_TYPES,
   DO_STORAGE_KINDS,
@@ -82,6 +93,7 @@ const isCreated = (type: PluginBindingType): type is CreatedPluginBindingType =>
   (CREATED_PLUGIN_BINDING_TYPES as readonly string[]).includes(type)
 const isClassBinding = (type: PluginBindingType): boolean =>
   (CLASS_PLUGIN_BINDING_TYPES as readonly string[]).includes(type)
+// `BARE_PLUGIN_BINDING_TYPES` is the rest of the supported list; `images` is its one member.
 const isNamed = (type: PluginBindingType): boolean =>
   (NAMED_PLUGIN_BINDING_TYPES as readonly string[]).includes(type)
 
@@ -121,6 +133,8 @@ export interface PluginResources {
   crons: string[]
   apiPrefixes: string[]
   vars: PluginVar[]
+  /** Present when this plugin serves public sites; `hostsVar` is its `[vars]` key. */
+  publicSites?: { hostsVar: string }
 }
 
 /** One resource for `cf-provision.sh` to find-or-create. */
@@ -281,8 +295,14 @@ export function validatePluginManifest(raw: unknown, anchor: string): PluginReso
     if (seen.has(b.binding)) fail(id, `declares binding "${b.binding}" twice`)
     seen.add(b.binding)
   }
+  if (bindings.filter(b => b.type === 'images').length > 1)
+    fail(id, 'declares more than one images binding, and [images] is a single table')
   const rawVars = m.vars === undefined ? [] : m.vars
   if (!Array.isArray(rawVars)) fail(id, 'vars must be an array')
+  const sitesProblems = publicSitesProblems(
+    m as { publicSites?: { hostsVar?: unknown }; vars?: unknown[] }
+  )
+  if (sitesProblems.length > 0) fail(id, sitesProblems.join('; '))
   return {
     id,
     anchor,
@@ -290,6 +310,7 @@ export function validatePluginManifest(raw: unknown, anchor: string): PluginReso
     crons: strings(id, 'crons', m.crons),
     apiPrefixes: strings(id, 'apiPrefixes', m.apiPrefixes),
     vars: (rawVars as unknown[]).map(v => validateVar(id, v)),
+    ...(m.publicSites ? { publicSites: m.publicSites as { hostsVar: string } } : {}),
   }
 }
 
@@ -336,8 +357,17 @@ export function pluginResourceList(
 ): ResourceRecord[] {
   const byBinding = new Map<string, string>()
   const out: ResourceRecord[] = []
+  let imagesOwner: string | undefined
   for (const plugin of plugins) {
     for (const b of plugin.bindings) {
+      // Whatever the two call it: renaming cannot help when the toml has one [images] table.
+      if (b.type === 'images') {
+        if (imagesOwner)
+          throw new PluginResourceError(
+            `"${imagesOwner}" and "${plugin.id}" both declare an images binding — [images] is a single table, so only one installed plugin can`
+          )
+        imagesOwner = plugin.id
+      }
       const owner = byBinding.get(b.binding)
       if (owner)
         throw new PluginResourceError(
@@ -374,6 +404,48 @@ export function pluginDeclarations(plugins: PluginResources[]): {
     vars.push(v)
   }
   return { crons, apiPrefixes, vars }
+}
+
+/**
+ * The `[vars]` a plugin's install writes. A hosts var starts blank whatever its `example` says: an
+ * example host written into a toml would be a route to somebody else's domain.
+ */
+export function pluginTomlVars(plugins: PluginResources[]): Array<{ key: string; value: string }> {
+  const hostsVars = new Set(plugins.flatMap(p => p.publicSites?.hostsVar ?? []))
+  return pluginDeclarations(plugins)
+    .vars.filter(v => !v.secret)
+    .map(v => ({ key: v.key, value: hostsVars.has(v.key) ? '' : (v.example ?? '') }))
+}
+
+const SITE_HOST = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$/
+
+/** The hosts in one hosts var: comma-separated `host` or `host=anything`, lowercased. */
+export function parseHostsVar(value: string): { hosts: string[]; invalid: string[] } {
+  const entries = value
+    .split(',')
+    .map(entry => entry.split('=')[0].trim().toLowerCase())
+    .filter(entry => entry !== '')
+  return {
+    hosts: [...new Set(entries.filter(e => SITE_HOST.test(e)))],
+    invalid: entries.filter(e => !SITE_HOST.test(e)),
+  }
+}
+
+/**
+ * Every public-site host named in one toml's text, for `provision urls` to route. A host that could
+ * not be a route pattern is refused here rather than patched into the file.
+ */
+export function siteHostsFromToml(plugins: PluginResources[], text: string): string[] {
+  const hosts: string[] = []
+  for (const plugin of plugins) {
+    if (!plugin.publicSites) continue
+    const key = plugin.publicSites.hostsVar
+    const parsed = parseHostsVar(readTomlString(text, key) ?? '')
+    if (parsed.invalid.length > 0)
+      fail(plugin.id, `${key} holds invalid host(s): ${parsed.invalid.join(', ')}`)
+    hosts.push(...parsed.hosts)
+  }
+  return [...new Set(hosts)]
 }
 
 /**
@@ -443,7 +515,9 @@ function rows(doc: unknown, dotted: string): Array<Record<string, unknown>> {
       (acc, key) => (acc && typeof acc === 'object' ? (acc as TomlDoc)[key] : undefined),
       doc
     )
-  return Array.isArray(v) ? (v as Array<Record<string, unknown>>) : []
+  if (Array.isArray(v)) return v as Array<Record<string, unknown>>
+  // `[images]` is a table rather than an array of them: one row, when present.
+  return v && typeof v === 'object' ? [v as Record<string, unknown>] : []
 }
 
 function list(doc: unknown, dotted: string): string[] {
@@ -473,6 +547,7 @@ const SECTION_OF: Record<
   r2: { section: 'r2_buckets', idKey: 'binding', nameKey: 'bucket_name' },
   workflow: { section: 'workflows', idKey: 'binding', nameKey: 'name' },
   durable_object: { section: 'durable_objects.bindings', idKey: 'name', nameKey: null },
+  images: { section: 'images', idKey: 'binding', nameKey: null },
 }
 
 const IS_PLACEHOLDER = /^<[A-Z0-9_]+>$/
@@ -484,12 +559,12 @@ const IS_PLACEHOLDER = /^<[A-Z0-9_]+>$/
  * `[]` for any pair of documents, so the rule is only meaningful when exercised against a fixture,
  * which is precisely why it is a function and not an inline block of assertions.
  *
- * `requireProvisioned` is the `REQUIRE_PROVISIONED=1` half, and it now covers three things rather
- * than one: a KV id may be a `<PLACEHOLDER>`, and the crons and `run_worker_first` prefixes a
- * plugin declares may be absent, while the environment is unprovisioned. None of them may be at
- * deploy time.
+ * `requireProvisioned` is the `REQUIRE_PROVISIONED=1` half: a KV id may be a `<PLACEHOLDER>`, and
+ * the bindings, migration tag, non-secret vars, crons and `run_worker_first` prefixes a plugin
+ * declares may be absent, while the environment is unprovisioned. None of them may be at deploy
+ * time. Anything that IS written is still checked.
  *
- * Crons and prefixes are gated because `pnpm plugin add` deliberately does not touch a toml —
+ * These are gated because `pnpm plugin add` deliberately does not write them —
  * `pnpm provision cloudflare <env>` writes them. So a checkout that has installed a
  * plugin and not yet provisioned is a legitimate, documented state, and the ordinary gate must not
  * fail it. The kit's own CI is exactly that state: it installs every CI plugin and has
@@ -514,7 +589,11 @@ export function pluginParityIssues(
       for (const [env, doc] of envs) {
         const row = rows(doc, section).find(r => r[idKey] === b.binding)
         if (!row) {
-          issues.push(`${env}: [[${section}]] has no binding "${b.binding}" (plugin ${plugin.id})`)
+          // Written by `provision cloudflare`, so like a cron it can wait for deploy. A block that
+          // IS present is still checked below.
+          if (!opts.requireProvisioned) continue
+          const header = b.type === 'images' ? '[images]' : `[[${section}]]`
+          issues.push(`${env}: ${header} has no binding "${b.binding}" (plugin ${plugin.id})`)
           continue
         }
         // A class binding is only as good as the class it names, and the name has to be identical
@@ -557,7 +636,13 @@ export function pluginParityIssues(
       for (const [env, doc] of envs) {
         const entry = rows(doc, 'migrations').find(r => r.tag === tag)
         if (!entry) {
-          issues.push(`${env}: [[migrations]] has no tag "${tag}" (plugin ${plugin.id})`)
+          const blockWritten = doBindings.some(b =>
+            rows(doc, SECTION_OF[b.type].section).some(
+              r => r[SECTION_OF[b.type].idKey] === b.binding
+            )
+          )
+          if (opts.requireProvisioned || blockWritten)
+            issues.push(`${env}: [[migrations]] has no tag "${tag}" (plugin ${plugin.id})`)
           continue
         }
         const created = new Set(
@@ -578,22 +663,77 @@ export function pluginParityIssues(
         for (const [env, doc] of envs)
           if (!list(doc, 'triggers.crons').includes(cron))
             issues.push(`${env}: [triggers] crons is missing "${cron}" (plugin ${plugin.id})`)
+      // `/*` already sends the prefix to the Worker.
       for (const prefix of plugin.apiPrefixes)
         for (const [env, doc] of envs)
           for (const pattern of [prefix, `${prefix}/*`])
-            if (!list(doc, 'assets.run_worker_first').includes(pattern))
+            if (
+              !list(doc, 'assets.run_worker_first').includes('/*') &&
+              !list(doc, 'assets.run_worker_first').includes(pattern)
+            )
               issues.push(
                 `${env}: [assets] run_worker_first is missing "${pattern}" (plugin ${plugin.id})`
               )
     }
     for (const v of plugin.vars) {
       if (v.secret) continue
+      if (!opts.requireProvisioned) continue
       for (const [env, doc] of envs) {
         const vars = (doc as TomlDoc)?.vars
         if (!vars || typeof vars !== 'object' || !(v.key in (vars as TomlDoc)))
           issues.push(`${env}: [vars] is missing "${v.key}" (plugin ${plugin.id})`)
       }
     }
+    if (plugin.publicSites) {
+      for (const [env, doc] of envs) issues.push(...publicSiteIssues(plugin, env, doc))
+    }
+  }
+  // Absent is wrangler's default, `none`: only a value set to the other state is wrong.
+  if (!plugins.some(p => p.publicSites)) {
+    for (const [env, doc] of envs) {
+      const handling = notFoundHandling(doc)
+      if (handling !== undefined && handling !== 'single-page-application') {
+        issues.push(
+          `${env}: [assets] not_found_handling is ${JSON.stringify(handling)}, want "single-page-application" (no installed plugin declares publicSites)`
+        )
+      }
+    }
+  }
+  return issues
+}
+
+const notFoundHandling = (doc: unknown): unknown =>
+  ((doc as TomlDoc)?.assets as TomlDoc | undefined)?.not_found_handling
+
+/**
+ * Written by `plugin add` and `provision urls` respectively, and unconditional: a host with no
+ * route, or a toml still on a prefix list, is a site that does not work, provisioned or not.
+ */
+function publicSiteIssues(plugin: PluginResources, env: EnvName, doc: unknown): string[] {
+  const issues: string[] = []
+  const workerFirst = list(doc, 'assets.run_worker_first')
+  if (JSON.stringify(workerFirst) !== JSON.stringify(PUBLIC_SITES_WORKER_FIRST)) {
+    issues.push(
+      `${env}: [assets] run_worker_first must be ${JSON.stringify(PUBLIC_SITES_WORKER_FIRST)} (plugin ${plugin.id} declares publicSites); \`pnpm provision cloudflare ${env}\` writes it`
+    )
+  }
+  const handling = notFoundHandling(doc)
+  if (handling !== undefined && handling !== PUBLIC_SITES_NOT_FOUND_HANDLING) {
+    issues.push(
+      `${env}: [assets] not_found_handling must be "${PUBLIC_SITES_NOT_FOUND_HANDLING}" (plugin ${plugin.id} declares publicSites); \`pnpm provision cloudflare ${env}\` writes it`
+    )
+  }
+  const key = plugin.publicSites?.hostsVar as string
+  const raw = (doc as TomlDoc)?.vars && ((doc as TomlDoc).vars as TomlDoc)[key]
+  const { hosts, invalid } = parseHostsVar(typeof raw === 'string' ? raw : '')
+  for (const entry of invalid)
+    issues.push(`${env}: ${key} holds "${entry}", which is not a host (plugin ${plugin.id})`)
+  const routed = rows(doc, 'routes').map(r => String(r.pattern ?? '').toLowerCase())
+  for (const host of hosts) {
+    if (!routed.some(p => p === host || p.startsWith(`${host}/`)))
+      issues.push(
+        `${env}: "${host}" in ${key} has no route in that toml (plugin ${plugin.id}); \`pnpm provision urls\` writes it`
+      )
   }
   return issues
 }

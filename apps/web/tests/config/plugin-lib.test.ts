@@ -647,7 +647,7 @@ describe('platform declarations', () => {
     })
     expect(problems).toHaveLength(2)
     expect(problems[0]).toMatch(/binding B declares type 'd1'/)
-    expect(problems[1]).toMatch(/supported: kv, queue, r2, workflow, durable_object/)
+    expect(problems[1]).toMatch(/supported: kv, queue, r2, workflow, durable_object, images/)
   })
 
   /**

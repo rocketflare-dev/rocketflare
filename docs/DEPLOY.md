@@ -153,10 +153,11 @@ always — so its `plugin.json` DECLARES what the account has to provide and `pn
 cloudflare <env>` applies it. `scripts/provision/plugin-resources.ts` owns the naming rule
 (`<app>-<id>-<name>[-staging]` for a queue, bucket or Workflow, `<APP>_<ID>_<NAME>[_STAGING]` for a
 KV namespace, mirroring the kit's own `<APP>_RATE_LIMIT[_STAGING]`) and the refusal: a `type`
-outside `kv | queue | r2 | workflow | durable_object` names itself in the error rather than being
+outside `kv | queue | r2 | workflow | durable_object | images` names itself in the error rather than being
 skipped, because a binding quietly not created is a Worker that deploys and then 503s.
 
-**Two of those five are declared rather than created.** `workflow` and `durable_object` need no
+**Three binding types are declared rather than created.** `images` is a single `[images]` table that
+at most one installed plugin may declare. `workflow` and `durable_object` need no
 `wrangler … create`: the block in the toml is the whole registration, and `wrangler deploy` does
 the rest. They are writable at all only because of the sixth barrel (D31) — a `class_name` resolves
 against the named exports of `src/worker.ts`, so until `apps/web/src/plugins/worker-exports.ts`
@@ -187,6 +188,51 @@ the orchestrator around it — phases `tokens` (TTY only: hidden prompts → `ap
 `cloudflare <env>` (this script with `--apply`) · `migrate <env>` · `github <env>` · `urls` ·
 `deploy <env>` · `secrets <env>` · `all` — each idempotent, each ending in one `Verify:` line;
 `SETUP.md` Part 3 has the table.
+
+## Zone, DNS and multiple hosts
+
+`pnpm provision urls` writes one `routes` entry per host into each toml: the app host first, then
+every host in that toml's value of the variable a plugin's `publicSites.hostsVar` names (for the
+`sites` plugin, `SITES_HOSTS = "www.example.com=www,docs.example.com=docs"`). Each toml is read for
+its own environment, so staging's hosts need not be production's. Re-running it is a no-op, it never
+drops an entry, and a hand-written route stays as you wrote it. Editing the variable changes nothing
+on Cloudflare until you run `pnpm provision urls` and deploy.
+
+The gate holds this together: `wrangler-parity.test.ts` fails when a host in a toml's variable has
+no route in that same toml, so a host added by hand and never routed stops at `pnpm gate`.
+
+What each host needs on Cloudflare:
+
+- **A zone in the same account as the Worker.** The phase checks every host before it writes
+  anything and stops on one whose zone it cannot find. **A site host on a different zone from the
+  app's is fine, as long as that zone is also in this account**: `app.example.com` and
+  `www.another.example` can share a Worker when both `example.com` and `another.example` are zones
+  here. A host on a zone held in another Cloudflare account cannot be routed to this Worker. The
+  check finds zones through the API token, so it only proves the account if the token is scoped to
+  that one account.
+- **No conflicting DNS record.** Every entry is a custom domain (`custom_domain = true`), so
+  `wrangler deploy` creates the DNS record and certificate for the host itself. Delete an existing
+  CNAME at that host first; a deploy over one fails.
+- **An exact hostname.** Custom domains take no wildcard, so list each host. An apex host is
+  allowed; redirecting `example.com` to `www` is a Cloudflare redirect rule, not a route here.
+
+The API token needs Zone → DNS — Edit on every one of those zones (§ Cloudflare API token scopes),
+including a zone only a site host uses.
+
+A site host needs the app on a custom host of its own: an active `routes` line turns off wrangler's
+`workers.dev` default, so `provision urls` refuses site hosts while the app is on `workers.dev`.
+
+Removing a host from the variable does not remove its route. Until you delete the entry from
+`routes` and deploy, the host still reaches this Worker and is answered as the app.
+
+While an installed plugin declares `publicSites`, `[assets] run_worker_first` in both tomls is
+`["/*", "!/assets/*", "!/site-assets/*"]`, and `not_found_handling` is `"none"`: the asset router
+ignores the host, so anything narrower would answer `/about` on a site host with the app's
+`index.html`. `pnpm plugin add` writes both, keeping the previous lines in marked comments, and
+`pnpm plugin remove` puts those bytes back. Every app navigation then goes through the Worker and
+the SPA catch-all rather than straight from the asset router, only `/assets/*` (the admin bundle)
+and `/site-assets/*` (the bundle shipped to public sites) skip the Worker, and a missing file under
+either is a plain 404.
 
 ## Crons
 

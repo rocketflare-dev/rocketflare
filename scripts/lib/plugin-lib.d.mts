@@ -92,6 +92,7 @@ export const SUPPORTED_PLUGIN_BINDING_TYPES: readonly [
   'r2',
   'workflow',
   'durable_object',
+  'images',
 ]
 /** The subset an account must CREATE; `wrangler deploy` registers the other two from the toml. */
 export const CREATED_PLUGIN_BINDING_TYPES: readonly ['kv', 'queue', 'r2']
@@ -99,8 +100,35 @@ export const CREATED_PLUGIN_BINDING_TYPES: readonly ['kv', 'queue', 'r2']
 export const CLASS_PLUGIN_BINDING_TYPES: readonly ['workflow', 'durable_object']
 /** The types carrying an account-scoped resource name, which must differ between environments. */
 export const NAMED_PLUGIN_BINDING_TYPES: readonly ['kv', 'queue', 'r2', 'workflow']
+/** The types whose block is a binding name and nothing else, identical in both tomls. */
+export const BARE_PLUGIN_BINDING_TYPES: readonly ['images']
 export const DO_STORAGE_KINDS: readonly ['sqlite', 'none']
 export function pluginPlatformProblems(manifest: PluginManifest): string[]
+export function publicSitesProblems(manifest: {
+  publicSites?: { hostsVar?: unknown }
+  vars?: unknown[]
+}): string[]
+export function imagesBindingProblems(
+  manifest: { bindings?: Array<{ type?: string }> },
+  installedManifests?: ReadonlyArray<{ id?: string; bindings?: Array<{ type?: string }> }>
+): string[]
+
+/** `[assets] run_worker_first` while an installed plugin serves public sites. */
+export const PUBLIC_SITES_WORKER_FIRST: readonly ['/*', '!/assets/*', '!/site-assets/*']
+export const PUBLIC_SITES_NOT_FOUND_HANDLING: 'none'
+export function pluginAppOwned(manifest: { appOwned?: unknown } | null | undefined): string[]
+export function isAppOwnedPath(file: string, owned: readonly string[]): boolean
+export function appOwnedProblems(manifest: {
+  id?: string
+  anchor?: string
+  paths?: string[]
+  appOwned?: unknown
+}): string[]
+export function declaresPublicSites(manifest: { publicSites?: unknown } | null | undefined): boolean
+export function tomlArrayExtent(text: string, key: string): { start: number; end: number } | null
+export function isWorkerFirstAll(text: string): boolean
+export function applyWorkerFirstAll(text: string): string
+export function revertWorkerFirstAll(text: string): string
 /** `plugin-<id>-v<n>` — append-only, host-owned, never renumbered. */
 export function pluginMigrationTag(pluginId: string, n?: number): string
 export function nextPluginMigrationTag(

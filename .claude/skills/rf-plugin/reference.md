@@ -115,7 +115,7 @@ Field notes, in the order they bite:
 - **`dependencies`** are installed into the HOST's packages (`pnpm --dir apps/web add …`). A plugin
   ships no `package.json` of its own into a host.
 - **`bindings[]`** is `{ type, binding, name?, consumer?, className?, storage? }`, and `type` is one
-  of **five**: `kv`, `queue`, `r2`, `workflow`, `durable_object`. Anything else (`d1`, `vectorize`,
+  of **six**: `kv`, `queue`, `r2`, `workflow`, `durable_object`, `images` (the last declared only, one per app). Anything else (`d1`, `vectorize`,
   `hyperdrive`…) is refused at INSTALL, naming the type, rather than surfacing as a 503 after a
   deploy that silently skipped it. `binding` is what the code reads off `Cloudflare.Env` and is
   identical in both environments; `name` is the account-scoped half. Resource names come out as
@@ -175,6 +175,8 @@ declares** — so an install stays reversible by deleting a directory.
 | `meta` | `rocketflare-plugin.json`, `README.md`, `CHANGELOG.md`, `LICENSE`, `LICENSE.md`, `SECURITY.md` | read, not copied |
 | `repo-only` | `.github/`, `.git/`, `node_modules/`, `.claude/`, `scripts/` (its release shim), `package.json`, `pnpm-lock.yaml`, `biome.json`, `.gitignore` and the other root dotfiles | the plugin repository's own; never copied, never refused |
 | `refused` | anything else | the install stops. A plugin that edits `api/index.ts` on the way in is an install nobody can reverse |
+
+A manifest may list `"appOwned"` paths inside `paths`: `upgrade` leaves them alone, and `remove` lists files changed or added there and needs `--force-app-owned`.
 
 ## What `check` verifies
 

@@ -79,7 +79,8 @@ suites on vitest 4, §9 — never part of the gate).
   plus a junction table. **The column decides and the rows only grant**, so an empty grant list
   means "owner and admins only". It never falls back to "public". The predicate is SQL in
   `services/access.ts` (`accessScopeOf` → `visibleDocuments` / plugin predicates), **ANDed with the
-  tenant predicate, never substituted for it**. Admin-level roles bypass it. Groups grant READ only.
+  tenant predicate, never substituted for it**. Admin-level roles bypass it. On kit resources groups grant READ only; a plugin may define its own
+  grants over its own resources (`edit`, `publish`) and enforces them itself.
   Deleting a group that still grants something is 409 `group_in_use` (`?force=1` narrows).
   `access.changed` nudges the affected users.
 - **Tenants managed by the OIDC issuer (IdP-managed tenancy, `OIDC_MANAGED_TENANCY`, §2).**
@@ -1101,7 +1102,7 @@ as merging a PR. A plugin repo mirrors the host tree and ships **no migration, n
   (`--archive`), `list`, `check`, `export`. Every plan step is **declarative, agent (with its
   assertion) or human** — a printed instruction is not a mechanism. The host generates the
   migration (`db:generate --name plugin-<id>-<version>`). `pnpm provision cloudflare <env>` writes
-  a plugin's bindings (`kv|queue|r2|workflow|durable_object`), crons, prefixes and vars into BOTH
+  a plugin's bindings (`kv|queue|r2|workflow|durable_object|images`), crons, prefixes and vars into BOTH
   tomls. DO migration tags `plugin-<id>-vN` are append-only.
 - **`plugin check` is an exhaustive oracle**: manifest fields, `minKit`, ledger diff, barrel lines,
   `*.rej`, migration tag, host dependencies (present, at a range inside the declared one —
@@ -1142,6 +1143,45 @@ as merging a PR. A plugin repo mirrors the host tree and ships **no migration, n
   is neither refused nor unbounded. Both are the optional third tuple element,
   `[prefix, router, { rateLimit?, bodyLimitBytes? }]`; a path is throttled by the longest public
   prefix it falls under only.
+- **Public sites**: `ServerPlugin.publicSites` serves whole hosts from a plugin's router, for
+  anonymous readers. `hosts(config)` lists the hosts it answers (lowercase, no port); `null` means
+  the plugin's config is bad and it is **dormant**, so every host other than `APP_URL`'s and
+  loopback gets a plain, uncached 503. `api/middleware/public-sites.ts` runs after
+  `databaseMiddleware` and before every mount, and reads the host from the request URL (no
+  forwarded header is trusted). On a matching host the plugin's router answers everything, so
+  `/api/*`, `/auth/*` and `/ws` are never reached there. GET and HEAD are allowed, plus POST on a
+  path declared in `forms`; anything else is 405. The order is cache lookup, rate limit (misses
+  only), router, cache put. The cache key is `<host>/<generation>/<path>`, without the query string.
+  `cache` is optional, and its `generation` must not touch Postgres, so a hit costs no query; it
+  returns null to skip caching a request. Only a 200 with no `Set-Cookie` is stored, and HEAD is
+  served from the GET entry. A form POST bypasses the cache and has its own body limit (default
+  64 KiB, at most `MAX_PUBLIC_MOUNT_BODY_BYTES`) and rate-limit bucket. Two plugins claiming one
+  host, or a claim on `APP_URL`'s host, fail the gate (`publicSiteIssues`); at runtime the claim is
+  ignored and logged. A site host always gets the strict public CSP from
+  `api/middleware/security-headers.ts`, on hits and misses alike: no script, frame, connection or
+  form target unless `csp(host, config)` declares one, `style-src <request origin>/site-assets/`
+  (the same source joins `script-src` once a site declares any script, so a page cannot load the
+  admin bundle from `/assets/*`; `publicSiteIssues` refuses a declared script source reaching that
+  path, including `'self'`, and at runtime it is dropped) and
+  `frame-ancestors 'none'`. Inline script stays banned: a declared source containing
+  `'unsafe-inline'`, `'unsafe-eval'`, `*`, `data:` or `;` fails `publicSiteIssues` and is dropped at
+  runtime.
+- **The `publicSites` manifest field**: `"publicSites": { "hostsVar": "SITES_HOSTS" }` in
+  `rocketflare-plugin.json` names a var holding a comma-separated list of `host` or `host=anything`.
+  Its presence is what makes `pnpm provision` write `run_worker_first = ["/*", "!/assets/*",
+  "!/site-assets/*"]`, `not_found_handling = "none"` and one route per declared host beside the
+  app's, in both tomls. A missing file under either asset prefix is a plain 404; the SPA catch-all
+  serves `index.html` for a navigation only. Without such a plugin both stay as
+  they were. The `images` binding type is declared in the toml and has no resource to create.
+- **`appOwned` paths** (`"appOwned": ["apps/web/src/plugins/<id>/app"]`, inside `paths`): the developer's. `plugin upgrade` never touches them, and `plugin remove` lists a file changed or added since the pinned commit and needs `--force-app-owned` to delete it.
+- **`fullscreen` route tier**: a `UiPlugin` route with `tier: 'fullscreen'` renders outside
+  `Layout`, for a page that needs the whole viewport. It still requires sign-in and a tenant, and
+  its `guard` is honoured as on the shell tier. The other tiers are `shell` (the default),
+  `noTenant` and `public`.
+- **`resolveOwnerTenant(db, config, ownerSlug?)`** from `@/plugins/api` finds the tenant that owns a
+  public surface: `getSingleTenant` under `single`, by slug under `multi`. It returns null for a
+  missing slug under `multi`, an unknown slug, and any tenant whose `status` is not `active`. This
+  and the plugin's config parser are the only places a plugin should branch on `TENANCY_MODE`.
 - **Identity (the identity seam)**: a public handler that has proved a person signs them in with
   `identityFor(c, id).signIn(...)` — the kit links, admits, applies an `idp` membership and mints
   the session (§2) and the plugin returns the redirect it answers; it never touches
@@ -1264,7 +1304,7 @@ as merging a PR. A plugin repo mirrors the host tree and ships **no migration, n
 | 9 | Four published entries; deep imports fail in either direction |
 | 10 | Phase A shipped as four PRs, one release |
 | 11 | Uninstall drops tables by default, `--archive` on request |
-| 12 | Provisioning writes plugin bindings into both tomls (`kv`/`queue`/`r2` created; `workflow`/`durable_object` declared) |
+| 12 | Provisioning writes plugin bindings into both tomls (`kv`/`queue`/`r2` created; `workflow`/`durable_object`/`images` declared) |
 | 13 | Every manifest has a required `repo` |
 | 14 | The inbound surface is injected context (the `*Ctx` family), not imported symbols |
 | 15 | What cannot be injected is a declared entry (`@/db/schema/kit`, split UI kit, `@testkit/*`) |

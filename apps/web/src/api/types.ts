@@ -89,6 +89,8 @@ export interface AppVariables {
    * defence and a path allowlist would relax it for the `text/html` we deliberately download.
    */
   embeddable?: boolean
+  /** The public CSP of a site host, set by `middleware/public-sites.ts`; applied on hits and misses. */
+  publicSiteCsp?: string
 }
 
 export type AppEnv = { Bindings: AppBindings; Variables: AppVariables }

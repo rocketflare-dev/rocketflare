@@ -9,7 +9,20 @@
  */
 
 import { MAX_PUBLIC_MOUNT_BODY_BYTES } from '@/api/middleware/body-limit'
-import type { PluginPublicMountOptions } from '@/plugins/types'
+import { PUBLIC_SITE_HOST } from '@/api/middleware/public-sites'
+import {
+  isForbiddenCspSource,
+  reachesAdminBundle,
+  SITE_ASSETS_PATH,
+} from '@/api/middleware/security-headers'
+import type { AppConfig } from '@/config'
+import type {
+  AnyServerPlugin,
+  PluginPublicMountOptions,
+  PublicSiteCsp,
+  PublicSiteFormPath,
+  PublicSitesDeclaration,
+} from '@/plugins/types'
 import {
   DECLARED_ENTRIES,
   normaliseModulePath,
@@ -215,6 +228,90 @@ export function emailHandlerIssues(
       const prior = owner.get(local)
       if (prior) issues.push(`${id}: email local part '${local}' is already handled by ${prior}`)
       else owner.set(local, id)
+    }
+  }
+  return issues
+}
+
+/** One plugin's `publicSites`, evaluated against a config so the rule below stays pure. */
+export interface PublicSiteClaim {
+  id: string
+  /** `null` is the dormant answer: a config problem, not a malformed declaration. */
+  hosts: readonly string[] | null
+  forms?: readonly PublicSiteFormPath[]
+  rateLimit?: PublicSitesDeclaration['rateLimit']
+  /** What `csp(host, config)` returned, for each claimed host. */
+  csp?: readonly PublicSiteCsp[]
+}
+
+/** The claims of every installed plugin that declares `publicSites`. */
+export function publicSiteClaims(
+  plugins: readonly AnyServerPlugin[],
+  config: AppConfig
+): PublicSiteClaim[] {
+  return plugins.flatMap(plugin => {
+    const site = plugin.publicSites
+    if (!site) return []
+    const hosts = site.hosts(config)
+    const { csp } = site
+    return [
+      {
+        id: plugin.shared.id,
+        hosts,
+        forms: site.forms,
+        rateLimit: site.rateLimit,
+        csp: csp ? (hosts ?? []).map(host => csp(host, config)) : [],
+      },
+    ]
+  })
+}
+
+/**
+ * What a plugin's public hosts must obey. A host is lowercase DNS with no port, claimed by one
+ * plugin only and never the app's own. A form path is exact and absolute, with the same guards as
+ * a public mount. A CSP source may not reopen what the public policy closes (`isForbiddenCspSource`).
+ */
+export function publicSiteIssues(claims: readonly PublicSiteClaim[], appHost?: string): string[] {
+  const issues: string[] = []
+  const owner = new Map<string, string>()
+  for (const { id, hosts, forms, rateLimit, csp } of claims) {
+    for (const host of hosts ?? []) {
+      if (!PUBLIC_SITE_HOST.test(host)) {
+        issues.push(`${id}: public site host '${host}' must be lowercase with no scheme or port`)
+      }
+      if (host === appHost) issues.push(`${id}: public site host '${host}' is the app's own host`)
+      const prior = owner.get(host)
+      if (prior) issues.push(`${id}: public site host '${host}' is already claimed by ${prior}`)
+      else owner.set(host, id)
+    }
+    issues.push(...publicMountOptionIssues(id, 'publicSites', { rateLimit }))
+    for (const form of forms ?? []) {
+      if (!/^\/(?!\/)[^?#*:\s]*$/.test(form.path)) {
+        issues.push(`${id}: public site form path '${form.path}' must be an exact absolute path`)
+      }
+      issues.push(
+        ...publicMountOptionIssues(id, form.path, {
+          rateLimit: form.rateLimit,
+          bodyLimitBytes: form.bodyLimitBytes,
+        })
+      )
+    }
+    for (const [index, declared] of (csp ?? []).entries()) {
+      const host = hosts?.[index]
+      for (const source of declared.scriptSrc ?? []) {
+        if (host && !isForbiddenCspSource(source) && reachesAdminBundle(source, host)) {
+          issues.push(
+            `${id}: public site csp scriptSrc source '${source}' reaches ${host}/assets/, the admin bundle; site scripts load from ${SITE_ASSETS_PATH}`
+          )
+        }
+      }
+      for (const [directive, sources] of Object.entries(declared)) {
+        for (const source of (sources ?? []) as readonly string[]) {
+          if (isForbiddenCspSource(source)) {
+            issues.push(`${id}: public site csp ${directive} source '${source}' is forbidden`)
+          }
+        }
+      }
     }
   }
   return issues

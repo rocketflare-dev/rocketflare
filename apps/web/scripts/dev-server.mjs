@@ -426,7 +426,13 @@ async function start({ verbose }) {
   process.on('SIGTERM', () => void shutdown(0))
 
   phase()
-  launch('api', 'wrangler', ['dev', '--port', String(DEV_PORTS.api)])
+  // Without the flag, a toml with `routes` makes every local request look like its first route.
+  launch('api', 'wrangler', [
+    'dev',
+    '--port',
+    String(DEV_PORTS.api),
+    '--infer-origin-from-routes=false',
+  ])
   launch('ui', 'vite', [])
 }
 

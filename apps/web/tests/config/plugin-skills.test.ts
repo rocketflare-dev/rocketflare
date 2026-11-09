@@ -26,6 +26,7 @@ import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
   addPlanJson,
+  appOwnedProblems,
   BARRELS,
   buildPluginSurface,
   classifyPluginFile,
@@ -279,6 +280,8 @@ interface PluginFixture {
   skills?: string[]
   files?: Record<string, string>
   dependencies?: Record<string, Record<string, string>>
+  /** Merged into the manifest as written, for fields only some cases care about. */
+  manifest?: Record<string, unknown>
 }
 
 /** A plugin repository with nothing but skills — the smallest thing the slot applies to. */
@@ -305,6 +308,7 @@ function writePluginVersion(root: string, fixture: PluginFixture) {
       uses: {},
       skills,
       ...(fixture.dependencies ? { dependencies: fixture.dependencies } : {}),
+      ...fixture.manifest,
     },
     null,
     2
@@ -553,6 +557,170 @@ describe('pnpm plugin, with skills, end to end', () => {
       readFileSync(path.join(host, 'apps/web/src/plugins/orders/plugin.json'), 'utf8')
     )
     expect(anchor.version).toBe('1.1.0')
+  })
+
+  describe('the anchor after an upgrade', () => {
+    const toml =
+      'name = "x"\n[assets]\nnot_found_handling = "single-page-application"\nrun_worker_first = [\n  "/api/*",\n]\n'
+
+    it('is rewritten from the target manifest, so remove restores what the release changed', () => {
+      const host = makeHost()
+      for (const f of ['wrangler.toml', 'wrangler.staging.toml']) write(host, `apps/web/${f}`, toml)
+      git(host, ['add', '-A'])
+      git(host, ['commit', '-qm', 'tomls'])
+      const plugin = makePlugin({ skills: [], files: {} })
+      expect(run(host, ['add', plugin, '--local', '--apply', '--allow-dirty']).status).toBe(0)
+      git(host, ['add', '-A'])
+      git(host, ['commit', '-qm', 'installed'])
+
+      writePluginVersion(plugin, {
+        version: '1.1.0',
+        skills: [],
+        files: {},
+        manifest: {
+          publicSites: { hostsVar: 'ORDERS_HOSTS' },
+          vars: [{ key: 'ORDERS_HOSTS', example: 'www.example.test' }],
+        },
+      })
+      const up = run(host, ['upgrade', 'orders', '--to', '1.1.0', '--apply', '--allow-dirty'])
+      expect([0, 8], up.out).toContain(up.status)
+      const anchor = JSON.parse(
+        readFileSync(path.join(host, 'apps/web/src/plugins/orders/plugin.json'), 'utf8')
+      )
+      expect(anchor.publicSites).toEqual({ hostsVar: 'ORDERS_HOSTS' })
+      expect(readFileSync(path.join(host, 'apps/web/wrangler.toml'), 'utf8')).toContain(
+        'not_found_handling = "none"'
+      )
+
+      const gone = run(host, ['remove', 'orders', '--apply', '--allow-dirty'])
+      expect(gone.status, gone.out).toBe(0)
+      expect(readFileSync(path.join(host, 'apps/web/wrangler.toml'), 'utf8')).toBe(toml)
+      expect(readFileSync(path.join(host, 'apps/web/wrangler.staging.toml'), 'utf8')).toBe(toml)
+    })
+  })
+
+  describe('appOwned paths', () => {
+    const owned = 'apps/web/src/plugins/orders/app'
+    const manifest = { appOwned: [owned] }
+
+    /** A plugin at 1.0.0 with one owned file, one ordinary one, installed and committed. */
+    function installed() {
+      const host = makeHost()
+      const plugin = makePlugin({
+        skills: [],
+        manifest,
+        files: {
+          [`${owned}/page.ts`]: 'export const page = 1\n',
+          'apps/web/src/plugins/orders/server.ts': 'export const server = 1\n',
+        },
+      })
+      const added = run(host, ['add', plugin, '--local', '--apply', '--allow-dirty'])
+      expect(added.status, added.out).toBe(0)
+      git(host, ['add', '-A'])
+      git(host, ['commit', '-qm', 'installed'])
+      return { host, plugin }
+    }
+
+    it('upgrade leaves them alone: no patch, no .rej, no new upstream file', () => {
+      const { host, plugin } = installed()
+      write(host, `${owned}/page.ts`, 'export const page = "mine"\n')
+      git(host, ['add', '-A'])
+      git(host, ['commit', '-qm', 'edited'])
+
+      writePluginVersion(plugin, {
+        version: '1.1.0',
+        skills: [],
+        manifest,
+        files: {
+          [`${owned}/page.ts`]: 'export const page = 2\n',
+          [`${owned}/new.ts`]: 'export const fresh = true\n',
+          'apps/web/src/plugins/orders/server.ts': 'export const server = 2\n',
+        },
+      })
+      const plan = run(host, ['upgrade', 'orders', '--to', '1.1.0'])
+      expect(plan.out).toContain(`${owned}/page.ts`)
+      expect(plan.out).toContain('Left alone')
+
+      const up = run(host, ['upgrade', 'orders', '--to', '1.1.0', '--apply'])
+      expect(up.status, up.out).toBe(0)
+      expect(readFileSync(path.join(host, `${owned}/page.ts`), 'utf8')).toBe(
+        'export const page = "mine"\n'
+      )
+      expect(existsSync(path.join(host, `${owned}/page.ts.rej`))).toBe(false)
+      expect(existsSync(path.join(host, `${owned}/new.ts`))).toBe(false)
+      expect(readFileSync(path.join(host, 'apps/web/src/plugins/orders/server.ts'), 'utf8')).toBe(
+        'export const server = 2\n'
+      )
+    })
+
+    it('remove lists a changed or added file, refuses without the flag and deletes with it', () => {
+      const { host } = installed()
+      write(host, `${owned}/page.ts`, 'export const page = "mine"\n')
+      write(host, `${owned}/extra.ts`, 'export const extra = 1\n')
+      git(host, ['add', '-A'])
+      git(host, ['commit', '-qm', 'edited'])
+
+      const plan = run(host, ['remove', 'orders'])
+      expect(plan.status, plan.out).toBe(0)
+      expect(plan.out).toMatch(/changed\s+apps\/web\/src\/plugins\/orders\/app\/page\.ts/)
+      expect(plan.out).toMatch(/added\s+apps\/web\/src\/plugins\/orders\/app\/extra\.ts/)
+      expect(plan.out).toContain('--force-app-owned')
+
+      const refused = run(host, ['remove', 'orders', '--apply'])
+      expect(refused.status, refused.out).toBe(6)
+      expect(refused.out).toContain('--force-app-owned')
+      expect(readFileSync(path.join(host, `${owned}/page.ts`), 'utf8')).toContain('mine')
+
+      const forced = run(host, ['remove', 'orders', '--apply', '--force-app-owned'])
+      expect(forced.status, forced.out).toBe(0)
+      expect(existsSync(path.join(host, owned))).toBe(false)
+    })
+
+    it('an untouched owned tree is removed with no flag', () => {
+      const { host } = installed()
+      const plan = run(host, ['remove', 'orders'])
+      expect(plan.out).not.toContain('--force-app-owned')
+      const gone = run(host, ['remove', 'orders', '--apply'])
+      expect(gone.status, gone.out).toBe(0)
+      expect(existsSync(path.join(host, owned))).toBe(false)
+    })
+
+    it('a plugin without the field upgrades and removes as before', () => {
+      const host = makeHost()
+      const plugin = makePlugin({
+        skills: [],
+        files: { [`${owned}/page.ts`]: 'export const page = 1\n' },
+      })
+      expect(run(host, ['add', plugin, '--local', '--apply', '--allow-dirty']).status).toBe(0)
+      git(host, ['add', '-A'])
+      git(host, ['commit', '-qm', 'installed'])
+      writePluginVersion(plugin, {
+        version: '1.1.0',
+        skills: [],
+        files: { [`${owned}/new.ts`]: 'export const fresh = true\n' },
+      })
+      const up = run(host, ['upgrade', 'orders', '--to', '1.1.0', '--apply'])
+      expect(up.status, up.out).toBe(0)
+      expect(existsSync(path.join(host, `${owned}/new.ts`))).toBe(true)
+      write(host, `${owned}/new.ts`, 'export const fresh = false\n')
+      git(host, ['add', '-A'])
+      git(host, ['commit', '-qm', 'edited'])
+      const gone = run(host, ['remove', 'orders', '--apply'])
+      expect(gone.status, gone.out).toBe(0)
+      expect(existsSync(path.join(host, owned))).toBe(false)
+    })
+
+    it('are validated against the manifest', () => {
+      const base = { id: 'orders', paths: ['apps/web/src/plugins/orders/**'] }
+      expect(appOwnedProblems(base)).toEqual([])
+      expect(appOwnedProblems({ ...base, appOwned: [owned] })).toEqual([])
+      expect(appOwnedProblems({ ...base, appOwned: 'x' })[0]).toMatch(/array/)
+      expect(appOwnedProblems({ ...base, appOwned: ['apps/web/src/api'] })[0]).toMatch(/outside/)
+      expect(appOwnedProblems({ ...base, appOwned: [`${owned}/**`] })[0]).toMatch(/glob/)
+      expect(appOwnedProblems({ ...base, appOwned: ['apps/web/src/plugins/orders'] })[0]).toMatch(
+        /anchor/
+      )
+    })
   })
 
   it('exports a skill back to skills/<dir>/, never .claude/', () => {

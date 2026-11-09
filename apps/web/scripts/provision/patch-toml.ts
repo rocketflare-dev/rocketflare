@@ -17,6 +17,11 @@
  */
 import fs from 'node:fs'
 import { fileURLToPath } from 'node:url'
+import {
+  applyWorkerFirstAll,
+  isWorkerFirstAll,
+  tomlArrayExtent,
+} from '../../../../scripts/lib/plugin-lib.mjs'
 
 export type DatabaseDriver = 'neon' | 'postgres'
 
@@ -42,6 +47,8 @@ export interface TomlPatch {
   emailFrom?: string
   /** Un-comment `# routes = [{ pattern = "…", custom_domain = true }]` with this host. */
   routeHost?: string
+  /** Public-site hosts routed beside the app host (idempotent; an existing route is kept). */
+  siteRouteHosts?: string[]
   /** Insert a `workers_dev` note after `name = …` when the file has no `workers_dev` line. */
   workersDevComment?: string
   /** Plugin binding blocks: inserted if absent, updated in place if present. */
@@ -54,6 +61,8 @@ export interface TomlPatch {
   vars?: Array<{ key: string; value: string }>
   /** Route prefixes appended to `[assets] run_worker_first` as `p` and `p/*` (idempotent). */
   workerFirstPrefixes?: string[]
+  /** An installed plugin serves public sites: every request but `/assets/*` reaches the Worker. */
+  workerFirstAll?: boolean
   /** Overwrite a different existing id instead of throwing. */
   force?: boolean
 }
@@ -64,7 +73,7 @@ export interface TomlPatch {
  * that is what makes re-running `pnpm provision cloudflare <env>` a no-op.
  */
 export interface BindingBlock {
-  type: 'kv' | 'queue' | 'r2' | 'workflow' | 'durable_object'
+  type: 'kv' | 'queue' | 'r2' | 'workflow' | 'durable_object' | 'images'
   binding: string
   /**
    * queue → `queue = "…"`, r2 → `bucket_name = "…"`, workflow → `name = "…"` (all account-scoped).
@@ -146,16 +155,58 @@ function patchVar(text: string, key: string, value: string): string {
   return text.slice(0, m.index) + m[1] + value + m[3] + text.slice(m.index + m[0].length)
 }
 
-function patchRoutes(text: string, host: string): string {
-  const line = `routes = [{ pattern = "${host}", custom_domain = true }]`
-  // Already active with this host → no-op.
-  if (new RegExp(`^routes\\s*=\\s*\\[\\{\\s*pattern\\s*=\\s*"${escapeRe(host)}"`, 'm').test(text))
-    return text
-  // Active with another host → replace the line.
-  const active = /^routes\s*=\s*\[[^\n]*\]/m.exec(text)
-  if (active)
-    return text.slice(0, active.index) + line + text.slice(active.index + active[0].length)
-  // Commented template → un-comment and set the host.
+interface RouteEntry {
+  /** The entry's TOML source, kept as written so a hand-made route survives a rewrite. */
+  raw: string
+  /** The hostname the entry routes; a `zone_name` pattern's path is ignored. */
+  host: string
+}
+
+const customDomain = (host: string): RouteEntry => ({
+  raw: `{ pattern = "${host}", custom_domain = true }`,
+  host,
+})
+
+function readRoutes(text: string): { start: number; end: number; entries: RouteEntry[] } | null {
+  const extent = tomlArrayExtent(text, 'routes')
+  if (!extent) return null
+  const source = text.slice(extent.start, extent.end).replace(/#[^\n]*/g, '')
+  const entries = [...source.slice(source.indexOf('[') + 1).matchAll(/\{[^{}]*\}|"[^"]*"/g)].map(
+    ([raw]) => {
+      const pattern = raw.startsWith('{')
+        ? (/pattern\s*=\s*"([^"]*)"/.exec(raw)?.[1] ?? '')
+        : raw.slice(1, -1)
+      return { raw, host: pattern.split('/')[0].toLowerCase() }
+    }
+  )
+  return { ...extent, entries }
+}
+
+/**
+ * Write the app host and every site host, dropping none. A different app host re-points the first
+ * entry, unless that entry is a site host, in which case the app host goes in front of it.
+ */
+function patchRoutes(text: string, appHost: string | undefined, siteHosts: string[]): string {
+  const active = readRoutes(text)
+  const entries = [...(active?.entries ?? [])]
+  const has = (host: string) => entries.some(e => e.host === host)
+  if (appHost !== undefined && !has(appHost)) {
+    if (entries.length > 0 && !siteHosts.includes(entries[0].host))
+      entries[0] = customDomain(appHost)
+    else entries.unshift(customDomain(appHost))
+  }
+  for (const host of siteHosts) if (!has(host)) entries.push(customDomain(host))
+  const unchanged =
+    active !== null &&
+    entries.length === active.entries.length &&
+    entries.every((e, i) => e.raw === active.entries[i].raw)
+  if (unchanged || entries.length === 0) return text
+  const line =
+    entries.length === 1
+      ? `routes = [${entries[0].raw}]`
+      : `routes = [\n${entries.map(e => `  ${e.raw},`).join('\n')}\n]`
+  if (active) return text.slice(0, active.start) + line + text.slice(active.end)
+  // Commented template → un-comment and set the hosts.
   const commented = /^#\s*routes\s*=\s*\[[^\n]*\]/m.exec(text)
   if (!commented) throw new TomlPatchError('no `routes = [...]` line (active or commented) found')
   return text.slice(0, commented.index) + line + text.slice(commented.index + commented[0].length)
@@ -253,11 +304,23 @@ const SECTION: Record<
   r2: { header: '[[r2_buckets]]', idKey: 'binding', valueKey: 'bucket_name' },
   workflow: { header: '[[workflows]]', idKey: 'binding', valueKey: 'name' },
   durable_object: { header: '[[durable_objects.bindings]]', idKey: 'name', valueKey: null },
+  images: { header: '[images]', idKey: 'binding', valueKey: null },
 }
 
 function bindingComment(block: BindingBlock): string {
   const who = block.pluginId ? `plugin ${block.pluginId}` : 'plugin'
   return `# ${who}: declared in its plugin.json; inserted by \`pnpm provision cloudflare <env>\`.`
+}
+
+/** `[images]` is one table, so an existing block under another name cannot gain a second binding. */
+function refuseOtherImagesBinding(text: string, binding: string): void {
+  for (const r of blockRanges(text, '[images]')) {
+    const current = /^binding\s*=\s*"([^"]*)"/m.exec(text.slice(r.start, r.end))?.[1]
+    if (current && current !== binding)
+      throw new TomlPatchError(
+        `[images] already declares binding "${current}", and it is a single table: "${binding}" cannot be added beside it`
+      )
+  }
 }
 
 /**
@@ -275,6 +338,7 @@ function upsertBindingBlock(text: string, block: BindingBlock, force: boolean): 
         `binding "${block.binding}": className is required for a ${block.type}`
       )
   }
+  if (block.type === 'images') refuseOtherImagesBinding(text, block.binding)
   const value = block.type === 'kv' ? block.id : block.name
   if (section.valueKey !== null && value === undefined)
     throw new TomlPatchError(
@@ -486,18 +550,23 @@ export function patchToml(text: string, patch: TomlPatch): string {
   if (patch.kvId !== undefined) out = patchBindingKey(out, 'RATE_LIMIT_KV', 'id', patch.kvId, force)
   if (patch.appUrl !== undefined) out = patchVar(out, 'APP_URL', patch.appUrl)
   if (patch.emailFrom !== undefined) out = patchVar(out, 'EMAIL_FROM', patch.emailFrom)
-  if (patch.routeHost !== undefined) out = patchRoutes(out, patch.routeHost)
+  if (patch.routeHost !== undefined || patch.siteRouteHosts?.length)
+    out = patchRoutes(out, patch.routeHost, patch.siteRouteHosts ?? [])
   if (patch.workersDevComment !== undefined)
     out = patchWorkersDevComment(out, patch.workersDevComment)
   for (const block of patch.bindings ?? []) out = upsertBindingBlock(out, block, force)
   for (const block of patch.migrations ?? []) out = appendMigration(out, block)
   if (patch.crons?.length) out = appendToArray(out, 'crons', patch.crons)
-  if (patch.workerFirstPrefixes?.length)
+  // Already `/*`: the prefix reaches the Worker, and appending would break the two-entry value.
+  // A prefix written after the toml widened is absent from the kept original; provisioning again
+  // after a `plugin remove` adds it back.
+  if (patch.workerFirstPrefixes?.length && !isWorkerFirstAll(out))
     out = appendToArray(
       out,
       'run_worker_first',
       patch.workerFirstPrefixes.flatMap(p => [p, `${p}/*`])
     )
+  if (patch.workerFirstAll) out = applyWorkerFirstAll(out)
   for (const v of patch.vars ?? []) out = appendVar(out, v.key, v.value)
   return out
 }

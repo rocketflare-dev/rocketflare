@@ -15,6 +15,7 @@ import path from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
 import { pluginSurfaces, readManifest } from '../../../../scripts/lib/manifest.mjs'
 import {
+  BARE_PLUGIN_BINDING_TYPES,
   CLASS_PLUGIN_BINDING_TYPES,
   CREATED_PLUGIN_BINDING_TYPES,
   NAMED_PLUGIN_BINDING_TYPES,
@@ -59,10 +60,14 @@ describe('the supported set', () => {
    * A type in neither group — or in both — would be one provisioning writes and nobody creates, or
    * one `cf-provision.sh` is handed and rightly refuses.
    */
-  it('splits into created and class bindings, with nothing left over', () => {
-    expect([...CREATED_PLUGIN_BINDING_TYPES, ...CLASS_PLUGIN_BINDING_TYPES].sort()).toEqual(
-      [...SUPPORTED_PLUGIN_BINDING_TYPES].sort()
-    )
+  it('splits into created, class and bare bindings, with nothing left over', () => {
+    expect(
+      [
+        ...CREATED_PLUGIN_BINDING_TYPES,
+        ...CLASS_PLUGIN_BINDING_TYPES,
+        ...BARE_PLUGIN_BINDING_TYPES,
+      ].sort()
+    ).toEqual([...SUPPORTED_PLUGIN_BINDING_TYPES].sort())
     for (const type of CREATED_PLUGIN_BINDING_TYPES)
       expect(CLASS_PLUGIN_BINDING_TYPES).not.toContain(type)
     // Every created type also has an account-scoped name; a workflow has one WITHOUT being created,
@@ -128,7 +133,7 @@ describe('validation', () => {
     expect(() =>
       validatePluginBinding('approvals', { type: 'd1', binding: 'DB', name: 'main' })
     ).toThrowError(
-      /binding type "d1" is not provisioned by this kit \(supported: kv, queue, r2, workflow, durable_object\)/
+      /binding type "d1" is not provisioned by this kit \(supported: kv, queue, r2, workflow, durable_object, images\)/
     )
   })
 
