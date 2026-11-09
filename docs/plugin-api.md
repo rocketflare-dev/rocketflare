@@ -458,6 +458,8 @@ The server surface: the context family, and the types a plugin must be able to n
     Inbound email (Cloudflare Email Routing → the Worker's `email` handler), merged into `EMAIL_HANDLERS` in `api/email.ts` and matched on the recipient's local part (`receipts` takes…
   - `grants?: Partial<Record<EffectiveRole, RoleGrant>>`
     Per-role CASL rules, applied after the core matrix — additive, never a replacement.
+  - `uploadPaths?: readonly string[]`
+    Prefixes that skip the global 1 MB body cap, for a route taking a file. Each must be under `/api/<id>/` (`tests/config/plugins.test.ts`), and its route MUST mount its own…
   - `rlsExcludedTables?: readonly string[]`
     Plugin tables with no `tenant_id`, unioned into `RLS_EXCLUDED_TABLES` with a reason each.
   - `unscopedAllowlist?: Readonly<Record<string, string>>`
@@ -826,6 +828,8 @@ Components and hooks, for a lazy PAGE. Never for the UI entry.
     Inbound email (Cloudflare Email Routing → the Worker's `email` handler), merged into `EMAIL_HANDLERS` in `api/email.ts` and matched on the recipient's local part (`receipts` takes…
   - `grants?: Partial<Record<EffectiveRole, RoleGrant>>`
     Per-role CASL rules, applied after the core matrix — additive, never a replacement.
+  - `uploadPaths?: readonly string[]`
+    Prefixes that skip the global 1 MB body cap, for a route taking a file. Each must be under `/api/<id>/` (`tests/config/plugins.test.ts`), and its route MUST mount its own…
   - `rlsExcludedTables?: readonly string[]`
     Plugin tables with no `tenant_id`, unioned into `RLS_EXCLUDED_TABLES` with a reason each.
   - `unscopedAllowlist?: Readonly<Record<string, string>>`
@@ -1361,6 +1365,7 @@ nothing in the comparison that can throw.
 @/plugins/api :: member :: ServerPlugin.scheduledTasks :: scheduledTasks?: Readonly<Record<string, ScheduledTask[]>>
 @/plugins/api :: member :: ServerPlugin.emailHandlers :: emailHandlers?: readonly EmailHandler[]
 @/plugins/api :: member :: ServerPlugin.grants :: grants?: Partial<Record<EffectiveRole, RoleGrant>>
+@/plugins/api :: member :: ServerPlugin.uploadPaths :: uploadPaths?: readonly string[]
 @/plugins/api :: member :: ServerPlugin.rlsExcludedTables :: rlsExcludedTables?: readonly string[]
 @/plugins/api :: member :: ServerPlugin.unscopedAllowlist :: unscopedAllowlist?: Readonly<Record<string, string>>
 @/plugins/api :: member :: ServerPlugin.visibilityResources :: visibilityResources?: readonly VisibilityResource[]
@@ -1574,6 +1579,7 @@ nothing in the comparison that can throw.
 @/plugins/types :: member :: ServerPlugin.scheduledTasks :: scheduledTasks?: Readonly<Record<string, ScheduledTask[]>>
 @/plugins/types :: member :: ServerPlugin.emailHandlers :: emailHandlers?: readonly EmailHandler[]
 @/plugins/types :: member :: ServerPlugin.grants :: grants?: Partial<Record<EffectiveRole, RoleGrant>>
+@/plugins/types :: member :: ServerPlugin.uploadPaths :: uploadPaths?: readonly string[]
 @/plugins/types :: member :: ServerPlugin.rlsExcludedTables :: rlsExcludedTables?: readonly string[]
 @/plugins/types :: member :: ServerPlugin.unscopedAllowlist :: unscopedAllowlist?: Readonly<Record<string, string>>
 @/plugins/types :: member :: ServerPlugin.visibilityResources :: visibilityResources?: readonly VisibilityResource[]

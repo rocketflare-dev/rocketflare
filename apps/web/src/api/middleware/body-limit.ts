@@ -48,11 +48,14 @@ export interface BodyLimitOverride {
 }
 
 /**
- * The `/api/*` body cap (middleware step 5): the upload paths skip it (they mount their own on
- * the route), an override prefix gets its own cap — the longest matching prefix wins, clamped to
+ * The `/api/*` body cap (middleware step 5): the upload paths, core's and a plugin's
+ * `uploadPaths`, skip it (they mount their own on the route), an override prefix gets its own cap — the longest matching prefix wins, clamped to
  * `MAX_PUBLIC_MOUNT_BODY_BYTES` — and everything else gets `jsonBodyLimit`.
  */
-export function apiBodyLimit(overrides: readonly BodyLimitOverride[] = []): MiddlewareHandler {
+export function apiBodyLimit(
+  overrides: readonly BodyLimitOverride[] = [],
+  pluginUploadPaths: readonly string[] = []
+): MiddlewareHandler {
   const limits = [...overrides]
     .sort((a, b) => b.prefix.length - a.prefix.length)
     .map(o => ({
@@ -64,7 +67,7 @@ export function apiBodyLimit(overrides: readonly BodyLimitOverride[] = []): Midd
     }))
   return (c, next) => {
     const path = c.req.path
-    if (isUploadPath(path)) return next()
+    if (isUploadPath(path) || pluginUploadPaths.some(p => isUnderPrefix(path, p))) return next()
     const own = limits.find(l => isUnderPrefix(path, l.prefix))
     return (own?.limit ?? jsonBodyLimit)(c, next)
   }

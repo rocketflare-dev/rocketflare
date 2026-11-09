@@ -206,6 +206,12 @@ function fromCacheEntry(entry: Response, head: boolean): Response {
   return new Response(head ? null : entry.body, { status: entry.status, headers })
 }
 
+/** The declared variant as a key suffix. A pathname cannot contain `?`, so it cannot forge one. */
+function cacheVariantSuffix(declaration: PublicSitesDeclaration, request: Request): string {
+  const variant = declaration.cache?.variant?.(request)
+  return variant ? `?v=${encodeURIComponent(variant)}` : ''
+}
+
 async function generationOf(c: AppContext, site: Site, config: AppConfig): Promise<string | null> {
   const cache = site.declaration.cache
   if (!cache) return null
@@ -232,7 +238,9 @@ async function answerPage(
   const key =
     generation === null
       ? null
-      : new Request(`https://${host}/${encodeURIComponent(generation)}${url.pathname}`)
+      : new Request(
+          `https://${host}/${encodeURIComponent(generation)}${url.pathname}${cacheVariantSuffix(declaration, c.req.raw)}`
+        )
 
   if (cache && key) {
     const entry = await cache.match(key).catch((err: unknown) => {
@@ -255,7 +263,9 @@ async function answerPage(
   const answered = response as Response
 
   if (cache && key && declaration.cache && isStorable(answered)) {
-    const entry = toCacheEntry(answered.clone(), declaration.cache.ttlSeconds)
+    const { ttlSeconds } = declaration.cache
+    const ttl = typeof ttlSeconds === 'function' ? ttlSeconds(url.pathname) : ttlSeconds
+    const entry = toCacheEntry(answered.clone(), ttl)
     await deferOrAwait(c, () =>
       cache.put(key, entry).catch((err: unknown) => {
         logger.warn({ err, plugin: site.id }, 'public site cache put failed')

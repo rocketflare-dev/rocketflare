@@ -117,7 +117,13 @@ export interface PublicSitesDeclaration {
   /** Omitted = no caching. `generation` must not touch Postgres; null = do not cache this request. */
   cache?: {
     generation: (env: AppBindings, config: AppConfig) => Promise<string | null>
-    ttlSeconds: number
+    /** A function receives the request's pathname, for a path that may live longer than a page. */
+    ttlSeconds: number | ((pathname: string) => number)
+    /**
+     * Stored separately for each value: a format negotiated from `Accept`, for example. Return
+     * `null` for no variant. Keep the set of values small and fixed, because each is its own entry.
+     */
+    variant?: (request: Request) => string | null
   }
 }
 
@@ -229,6 +235,12 @@ export interface ServerPlugin<S extends SharedPlugin = SharedPlugin> {
   emailHandlers?: readonly EmailHandler[]
   /** Per-role CASL rules, applied after the core matrix — additive, never a replacement. */
   grants?: Partial<Record<EffectiveRole, RoleGrant>>
+  /**
+   * Prefixes that skip the global 1 MB body cap, for a route taking a file. Each must be under
+   * `/api/<id>/` (`tests/config/plugins.test.ts`), and its route MUST mount its own `bodyLimit`:
+   * nothing else caps it.
+   */
+  uploadPaths?: readonly string[]
   /** Plugin tables with no `tenant_id`, unioned into `RLS_EXCLUDED_TABLES` with a reason each. */
   rlsExcludedTables?: readonly string[]
   /**

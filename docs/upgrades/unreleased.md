@@ -20,6 +20,7 @@ Plugins can serve whole public hosts through a new `publicSites` seam, with a st
 - The manifest field `"publicSites": { "hostsVar": "SITES_HOSTS" }` makes `pnpm provision` write `run_worker_first = ["/*", "!/assets/*", "!/site-assets/*"]`, `not_found_handling = "none"` and one route per declared host in both tomls.
 - `pnpm plugin add` applies those two values and keeps the previous lines in marked comments; `pnpm plugin remove` restores them. `pnpm provision urls` writes the app host plus every host in the toml's hosts var and refuses site hosts while the app is on `workers.dev`.
 - The ordinary gate no longer requires a plugin's bindings, migration tag or non-secret vars before provisioning, matching crons and prefixes. `REQUIRE_PROVISIONED=1` still demands all of them, so a deploy is stopped as before.
+- `publicSites.cache` gains `variant` (one entry per value, such as a negotiated image format) and `ttlSeconds` may be a function of the pathname. `ServerPlugin.uploadPaths` lets a plugin's file routes skip the 1 MB body cap; each must mount its own limit.
 - `images` is a sixth manifest binding type, declared only and written as the single `[images]` table; a second plugin declaring it is refused.
 - The UI shell's inline theme script moved to `apps/web/src/ui/public/assets/theme-init.js`, because the Worker's CSP refuses inline script once navigations reach the Worker.
 - `PluginRouteTier` gains `fullscreen`: outside `Layout`, with sign-in, a tenant and the route's `guard` still enforced.

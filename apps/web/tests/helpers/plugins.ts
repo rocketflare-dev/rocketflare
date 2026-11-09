@@ -173,6 +173,14 @@ export function publicMountIssues(
   return issues
 }
 
+/** A prefix that skips the 1 MB cap: only a plugin's own routes, and never its whole mount. */
+export function uploadPathIssues(id: string, paths: readonly string[]): string[] {
+  const root = `/api/${id}/`
+  return paths
+    .filter(p => !p.startsWith(root) || p.length === root.length)
+    .map(p => `${id}: upload path '${p}' is outside ${root}`)
+}
+
 /**
  * The guards a public mount may declare (`PluginPublicMount`'s third element). `rateLimit` is
  * `false` or two positive integers — a zero `max` would refuse everything, and a fractional one

@@ -81,7 +81,13 @@ app.use('*', securityHeaders)
 // 5. Reject oversized bodies before any parsing or DB work. The upload routes mount their own
 //    (larger) limit, and a public mount's `bodyLimitBytes` replaces the 1 MB cap beneath its
 //    prefix — see middleware/body-limit.ts.
-app.use('/api/*', apiBodyLimit(publicBodyLimitOverrides(publicMounts)))
+app.use(
+  '/api/*',
+  apiBodyLimit(
+    publicBodyLimitOverrides(publicMounts),
+    serverPlugins.flatMap(p => p.uploadPaths ?? [])
+  )
+)
 // A plugin may own a prefix outside `/api` (a protocol endpoint); it gets the JSON cap too.
 for (const prefix of serverPlugins.flatMap(p => p.apiPrefixes ?? [])) {
   if (!isUnderPrefix(prefix, '/api')) app.use(`${prefix}/*`, jsonBodyLimit)

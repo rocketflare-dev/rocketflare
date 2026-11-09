@@ -55,6 +55,8 @@ vi.mock('@/plugins/server', async importOriginal => {
   router.get('/cacheable-header', c =>
     c.text('browser-cached', 200, { 'Cache-Control': 'max-age=60' })
   )
+  router.get('/long', c => c.text('long'))
+  router.get('/negotiated', c => c.text(`for ${c.req.header('accept')}`))
   router.get('/gone', c => c.text('gone', 410))
   router.get('/cookie', c => c.text('cookie', 200, { 'Set-Cookie': 'a=1' }))
   router.get('/private', c => c.text('private', 200, { 'Cache-Control': 'private' }))
@@ -80,7 +82,11 @@ vi.mock('@/plugins/server', async importOriginal => {
       },
       cache: {
         generation: async () => state.generation,
-        ttlSeconds: 300,
+        ttlSeconds: (path: string) => (path.startsWith('/long') ? 9000 : 300),
+        variant: (request: Request) =>
+          new URL(request.url).pathname === '/negotiated'
+            ? (request.headers.get('accept') ?? 'none')
+            : null,
       },
     } satisfies PublicSitesDeclaration,
   } as unknown as AnyServerPlugin
@@ -289,6 +295,33 @@ describe('the cache', () => {
     expect(state.routerCalls).toBe(1)
     expect(state.queries).toEqual([''])
     expect(cache.store.size).toBe(1)
+  })
+
+  it('stores one entry per declared variant, and the router still sees the header', async () => {
+    const env = createTestEnv()
+    const avif = { headers: { accept: 'image/avif' } }
+    const webp = { headers: { accept: 'image/webp' } }
+    await request(`${SITE}/negotiated`, avif, { env })
+    await request(`${SITE}/negotiated`, webp, { env })
+    const hit = await request(`${SITE}/negotiated`, avif, { env })
+    expect(await hit.text()).toBe('for image/avif')
+    expect(state.routerCalls).toBe(2)
+    expect(cache.store.size).toBe(2)
+  })
+
+  it('does not vary a path whose variant is null', async () => {
+    const env = createTestEnv()
+    await request(`${SITE}/about`, { headers: { accept: 'a' } }, { env })
+    await request(`${SITE}/about`, { headers: { accept: 'b' } }, { env })
+    expect(state.routerCalls).toBe(1)
+  })
+
+  it('takes the time to live from the pathname when it is a function', async () => {
+    const env = createTestEnv()
+    await request(`${SITE}/long`, {}, { env })
+    await request(`${SITE}/about`, {}, { env })
+    const controls = [...cache.store.values()].map(r => r.headers.get('cache-control'))
+    expect(controls).toEqual(['public, s-maxage=9000', 'public, s-maxage=300'])
   })
 
   it('moves to a new entry when the generation changes', async () => {

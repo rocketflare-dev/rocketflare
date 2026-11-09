@@ -68,6 +68,7 @@ import {
   RESERVED_PLUGIN_IDS,
   staticImports,
   uiEntryIssues,
+  uploadPathIssues,
 } from '../helpers/plugins'
 import { createTestEnv } from '../mocks/bindings'
 
@@ -693,6 +694,16 @@ describe('installed plugins', () => {
       )
     )
     expect(issues).toEqual([])
+  })
+
+  it('skips the body cap only beneath its own API prefix', () => {
+    expect(uploadPathIssues('orders', ['/api/orders/upload'])).toEqual([])
+    expect(uploadPathIssues('orders', ['/api/orders/'])).toHaveLength(1)
+    expect(uploadPathIssues('orders', ['/api/files'])).toHaveLength(1)
+    expect(uploadPathIssues('orders', ['/api/orders-x/upload'])).toHaveLength(1)
+    expect(serverPlugins.flatMap(p => uploadPathIssues(p.shared.id, p.uploadPaths ?? []))).toEqual(
+      []
+    )
   })
 
   it('declares public-mount guards within the host ceilings', () => {
