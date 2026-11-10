@@ -378,6 +378,12 @@ jobs:
         working-directory: kit
         run: |
           set -euo pipefail
+          # Prove the plugin in what an adopter runs: a copy has no `apps/web/tests/kit-only/` (the
+          # rename deletes it), and those tests check the kit repository itself (its shipped tomls,
+          # its version stamps, its release notes), which an installed plugin legitimately changes.
+          # `git rm`, not `rm`: the source scanners read `git ls-files`. Without the directory the
+          # vitest config and the test plan drop the `kit-only` project, as in a copy.
+          git rm -r -q --ignore-unmatch apps/web/tests/kit-only
           if node -e "process.exit(require('./package.json').scripts?.gate ? 0 : 1)"; then
             pnpm gate
           else
