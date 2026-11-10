@@ -27,6 +27,8 @@ export type { QuickLink } from '../../ui/pages/Home'
 
 export type {
   AnyUiPlugin,
+  PluginHeaderItem,
+  PluginHeaderPlacement,
   PluginNavGroup,
   PluginRoute,
   PluginRouteTier,

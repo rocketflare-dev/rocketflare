@@ -30,6 +30,8 @@
 export type {
   AnyServerPlugin,
   AnyUiPlugin,
+  PluginHeaderItem,
+  PluginHeaderPlacement,
   PluginNavGroup,
   PluginRequires,
   PluginRoute,

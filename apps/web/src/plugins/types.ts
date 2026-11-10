@@ -334,6 +334,35 @@ export interface PluginRoute {
   tier?: PluginRouteTier
 }
 
+/** Where in the top bar a plugin header item sits. */
+export type PluginHeaderPlacement = 'center' | 'end'
+
+/**
+ * One item in the app's top bar — a search box, a help button. Rendered by the shell inside
+ * `Layout` for every signed-in page with a tenant, behind `guard`, inside its OWN `Suspense`
+ * (fallback: nothing) and error boundary (fallback: nothing, logged), so a slow or crashing item
+ * never takes the header down with it.
+ *
+ * The host does NOT reserve space, de-duplicate or collapse items on a narrow screen: the header is
+ * one row at every width, so an item is a compact control (an icon button below `sm`, say) and
+ * anything big it opens — a palette, a drawer — is its own lazy chunk loaded on first use.
+ */
+export interface PluginHeaderItem {
+  /** Unique within the plugin; the React key is `<plugin id>:<id>`. */
+  id: string
+  /** `lazy(() => import('./ui/header/X'))` and nothing else, exactly like a route's `Component`. */
+  Component: LazyExoticComponent<ComponentType>
+  /** The same guard semantics as a nav item or route (`useNavGuard`); hidden when it fails. */
+  guard?: NavGuard
+  /** Ascending, default 0; ties break on plugin id, then item id — so the order never depends on install order. */
+  order?: number
+  /**
+   * Default `end`: the right-hand cluster, before the kit's own widgets (status, bell, user
+   * menu). `center`: the flexible middle of the bar, where a search box goes.
+   */
+  placement?: PluginHeaderPlacement
+}
+
 /** A nav group, placed relative to a named core group ("Organisation" by default). */
 export interface PluginNavGroup {
   label?: string
@@ -357,6 +386,11 @@ export interface UiPlugin<S extends SharedPlugin = SharedPlugin> {
    * The host does NOT de-duplicate or re-order: two plugins offering the same `to` show twice.
    */
   homeLinks?: readonly QuickLink[]
+  /**
+   * Top-bar items (`PluginHeaderItem`): merged across plugins, ordered by `order` then plugin id,
+   * rendered by `PluginHeaderSlot` in `Layout`'s `headerCenter` / `headerEnd`.
+   */
+  header?: readonly PluginHeaderItem[]
   /** Families merged into `queryKeys`; every root must start with `<id>:`. */
   queryKeys?: Readonly<Record<string, unknown>>
   /**
