@@ -1,10 +1,10 @@
 ---
 version: unreleased
-previous: 0.32.1
+previous: 0.32.2
 date: null
 breaking: false
 migrations: []
-areas: [ui]
+areas: []
 touches_surfaces: []
 requires_surfaces: []
 manual: false
@@ -12,18 +12,20 @@ manual: false
 
 ## What changed
 
-A kit UI test that failed on slow CI runners now waits for the page it navigates to, not for text the page it leaves also contains.
-
-- `apps/web/tests/ui/plugin-route-tiers.test.tsx` "returns to the saved state on leaving" waits for `/^shell/`: the editor fixture's "to shell" link matched `'shell'`, so the wait passed while the lazy shell page was still loading; it failed in a plugin repository's CI.
+_Nothing yet. Add an entry here in the same pull request as the change. This first paragraph is
+lifted VERBATIM into `CHANGELOG.md`, so make it ONE standalone summary sentence of ≤ 40 words —
+then one bullet per change, one line each, and no `###` sub-headings. Rationale belongs in
+`docs/CONCEPTS.md` and is linked, never restated; see `README.md` beside this file._
 
 ## How to apply
 
-1. In `apps/web/tests/ui/plugin-route-tiers.test.tsx`, change the wait after clicking "to shell" from `toHaveTextContent('shell')` to `toHaveTextContent(/^shell/)`.
+_Numbered, imperative, each step self-contained — no "these", "them" or "the above" reaching
+outside its own step._
 
 ## Conflicts to expect
 
-None.
+_One line each: `path → what changed → what to do`. Or exactly `None.`_
 
 ## Verify
 
-1. `pnpm web test:ui` passes.
+_Numbered checkable commands and assertions only._

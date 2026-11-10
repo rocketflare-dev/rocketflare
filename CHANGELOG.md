@@ -6,6 +6,11 @@ copy of the kit forward without recreating anything its owner deleted.
 
 If you are running a copy: `pnpm kit:upgrade` tells you which of these you are missing.
 
+## 0.32.2 — 2026-11-10
+
+A kit UI test that failed on slow CI runners now waits for the page it navigates to, not for text the page it leaves also contains.
+[Porting note](docs/upgrades/0.32.2.md).
+
 ## 0.32.1 — 2026-11-10
 
 Two plugin fixes: `EventPayloadOf` distributes over a union of event names, and a platform document, such as a guide page, no longer shows as a document card that linked to a page that could not open it.
