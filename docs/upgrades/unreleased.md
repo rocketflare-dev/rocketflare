@@ -12,9 +12,9 @@ manual: false
 
 ## What changed
 
-Plugins can serve whole public hosts through a new `publicSites` seam, with a strict per-site CSP, multi-host provisioning, a `fullscreen` UI route tier and a tenant resolver; an app with no such plugin sees no routing change.
+Plugins can serve whole public hosts through a new `publicSites` seam, with a strict per-site CSP, multi-host provisioning, a `workspace` UI route tier and a tenant resolver; an app with no such plugin sees no routing change.
 
-- `ServerPlugin.publicSites` (`hosts`, `router`, `csp`, `forms`, `rateLimit`, `cache`) is served by `apps/web/src/api/middleware/public-sites.ts`, after `databaseMiddleware` and before every mount.
+- `ServerPlugin.publicSites` (`hosts`, `router`, `csp`, `forms`, `cache`) is served by `apps/web/src/api/middleware/public-sites.ts`, after `databaseMiddleware` and before every mount.
 - `apps/web/src/api/middleware/security-headers.ts` sends a strict public CSP on a site host; a site's declared sources extend it and inline script stays banned.
 - `publicSiteIssues` fails the gate on a duplicate host, a claim on `APP_URL`'s host or an unsafe declared CSP source.
 - The manifest field `"publicSites": { "hostsVar": "SITES_HOSTS" }` makes `pnpm provision` write `run_worker_first = ["/*", "!/assets/*", "!/site-assets/*"]`, `not_found_handling = "none"` and one route per declared host in both tomls.
@@ -25,7 +25,8 @@ Plugins can serve whole public hosts through a new `publicSites` seam, with a st
 - `ServerPlugin.deploymentFeatures` lets a plugin's config switch on an `environmentGated` flag. `resolveFeatures` is now async and `availableInEnvironment` takes the deployed list.
 - `images` is a sixth manifest binding type, declared only and written as the single `[images]` table; a second plugin declaring it is refused.
 - The UI shell's inline theme script moved to `apps/web/src/ui/public/assets/theme-init.js`, because the Worker's CSP refuses inline script once navigations reach the Worker.
-- `PluginRouteTier` gains `fullscreen`: outside `Layout`, with sign-in, a tenant and the route's `guard` still enforced.
+- `PluginRouteTier` gains `workspace`: a plugin page inside `Layout`, in the shell's route table, with sign-in, a tenant and the route's `guard` enforced as on `shell`. On a workspace route from `lg` up, `SideNav` shows its icon rail whatever `sideNavCollapsed` says, without changing it, and hides the collapse toggle; `<main>` has no padding and the page fills the viewport under the header. `Layout` takes a `workspace` prop, and `App.tsx` computes it from the plugin routes.
+- `Breadcrumbs` is extracted from `PageHeader` and exported from `components/shared` and `@/plugins/api/ui`, for a surface with no page title (an editor toolbar).
 - `resolveOwnerTenant(db, config, ownerSlug?)` is exported from `@/plugins/api` and returns only an `active` tenant, under both tenancy modes.
 - `pnpm dev` and `pnpm dev:api` start `wrangler dev` with `--infer-origin-from-routes=false`, so a provisioned copy's local requests keep their real host instead of taking the toml's first route.
 - A plugin declaring `publicSites` also sets `not_found_handling = "none"`, and the SPA catch-all fetches the shell on a 404 for a navigation only, so a missing `/assets/*`, `/site-assets/*` or root file is a 404.
@@ -37,13 +38,17 @@ Plugins can serve whole public hosts through a new `publicSites` seam, with a st
 - `pnpm plugin remove` treats a symlink under or at an `appOwned` path as one entry, compared by its target, instead of crashing with `EISDIR` or listing the files it points to.
 - A public site's scripts and styles load from `<request origin>/site-assets/` in its CSP, so a site page cannot load the admin bundle from `/assets/*`; a declared script source reaching `/assets/` on the same host is refused by `publicSiteIssues` and dropped at runtime.
 - `docs/CONCEPTS.md` §1 now says groups grant read only on kit resources and that a plugin may define its own grants; §16 describes the new seams.
+- Requests for public-site pages are never rate limited; only a declared form POST is. `publicSites.rateLimit` no longer exists.
+- `Strict-Transport-Security` carries `includeSubDomains` only on the app's own host (`APP_URL`), so a public site on an apex domain does not pin its subdomains.
+- A public-site page can add CSP sources for itself by setting `PUBLIC_SITE_PAGE_CSP_HEADER` (JSON, `PublicSiteCsp`), exported from `@/plugins/api`. A `formAction` that is a path, such as `/submit`, is pinned to the request's origin.
+- The CLI's `ApiClient` gains `getBytes` and `postForm`, for download and multipart routes.
 
 ## How to apply
 
 1. Port `apps/web/src/api/middleware/public-sites.ts`, and call it in `apps/web/src/api/index.ts` after `databaseMiddleware` and before every mount.
 2. Port the public CSP branch of `apps/web/src/api/middleware/security-headers.ts`.
 3. Port the `publicSites` slot and its types in `apps/web/src/plugins/types.ts`, and their re-exports in `apps/web/src/plugins/api/index.ts`.
-4. Add `'fullscreen'` to `PluginRouteTier` in `apps/web/src/plugins/types.ts`, then port `FullscreenRoute` and the `pluginRoutes('fullscreen')` line in `apps/web/src/ui/App.tsx`.
+4. Add `'workspace'` to `PluginRouteTier` in `apps/web/src/plugins/types.ts`, then port `WorkspaceRoute`, `isWorkspacePath`, the `workspace` prop on `Layout` and the `pluginRoutes('workspace')` line inside `ShellRoutes` in `apps/web/src/ui/App.tsx`, the `workspace` prop in `apps/web/src/ui/components/Layout.tsx`, the `forceCollapsed` prop in `apps/web/src/ui/components/SideNav.tsx`, and `Breadcrumbs` in `apps/web/src/ui/components/shared/PageHeader.tsx` with its two exports.
 5. Port `resolveOwnerTenant` into `apps/web/src/api/utils/db/tenant-helpers.ts` and export it from `@/plugins/api` through `apps/web/src/plugins/api/identity.ts`.
 6. Port the manifest validator and `pnpm provision` changes for the `publicSites` field and the `images` binding type.
 7. Add `--infer-origin-from-routes=false` to the `wrangler dev` command in `dev:api` in `apps/web/package.json` and to the `launch('api', 'wrangler', …)` arguments in `apps/web/scripts/dev-server.mjs`. Wrangler must be 4.156.0 or newer.
@@ -53,10 +58,11 @@ Plugins can serve whole public hosts through a new `publicSites` seam, with a st
 11. Run `node scripts/plugin-api-doc.mjs` to regenerate `docs/plugin-api.md`.
 12. Add `deploymentFeatures?: (config) => readonly string[]` to `ServerPlugin` in `apps/web/src/plugins/types.ts`, then port `apps/web/src/permissions/features.ts`, `apps/web/src/api/services/features.ts` and the two `await`s in `apps/web/src/api/middleware/auth.ts`. Any call of your own to `resolveFeatures` must now `await` it.
 13. Move the `@theme` block and both `@plugin "daisyui/theme"` blocks from `apps/web/src/ui/index.css` into `apps/web/src/shared/theme-tokens.css`, and `@import "../shared/theme-tokens.css";` directly after the Tailwind import. Port the matching change in `tests/ui/contrast.test.ts`.
+14. Port `getBytes` and `postForm` into `apps/cli/src/api.ts` if a plugin you install uses them.
 
 ## Conflicts to expect
 
-- `apps/web/src/ui/App.tsx` → one tier branch and one `pluginRoutes` line added → keep your own routes and add both.
+- `apps/web/src/ui/App.tsx` → one tier branch, one `pluginRoutes` line inside `ShellRoutes` and `isWorkspacePath` added → keep your own routes and add them.
 - `apps/web/src/api/index.ts` → one middleware added before the mounts → keep your own order and place it directly after `databaseMiddleware`.
 - `apps/web/src/api/middleware/security-headers.ts` → a branch for site hosts → keep your app CSP and add the branch ahead of it.
 - `docs/plugin-api.md` → generated → regenerate, never merge by hand.

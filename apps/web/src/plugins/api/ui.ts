@@ -48,6 +48,7 @@ export {
   AccessBadge,
   AccessPicker,
   AlertModal,
+  Breadcrumbs,
   ConfirmModal,
   DocumentCard,
   DocumentLink,

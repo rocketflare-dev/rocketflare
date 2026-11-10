@@ -84,7 +84,7 @@ export function publicSiteCsp(origin: string, declared: PublicSiteCsp = {}): str
     `connect-src ${orNone(allowed(declared.connectSrc))}`,
     `frame-src ${orNone(allowed(declared.frameSrc))}`,
     "base-uri 'none'",
-    `form-action ${orNone(allowed(declared.formAction))}`,
+    `form-action ${orNone(allowed(declared.formAction).map(s => (s.startsWith('/') ? `${origin}${s}` : s)))}`,
     "frame-ancestors 'none'",
   ].join('; ')
 }
@@ -93,8 +93,14 @@ export const securityHeaders = createMiddleware<AppEnv>(async (c, next) => {
   await next()
   if (c.res.status === 101) return
   // HSTS is meaningless on http://localhost and would pin the browser if it ever saw https there.
-  if (c.get('config')?.APP_ENV !== 'development') {
-    c.header('Strict-Transport-Security', 'max-age=31536000; includeSubDomains')
+  const config = c.get('config')
+  if (config?.APP_ENV !== 'development') {
+    // Only the app's own host may speak for its subdomains: a public site can sit on someone's apex.
+    const isAppHost = config && new URL(c.req.url).hostname === new URL(config.APP_URL).hostname
+    c.header(
+      'Strict-Transport-Security',
+      isAppHost ? 'max-age=31536000; includeSubDomains' : 'max-age=31536000'
+    )
   }
   c.header('X-Content-Type-Options', 'nosniff')
   const embeddable = c.get('embeddable') === true

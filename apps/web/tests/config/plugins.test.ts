@@ -147,7 +147,6 @@ describe('public sites', () => {
         {
           ...site,
           forms: [{ path: '/forms/contact', bodyLimitBytes: 1024 }],
-          rateLimit: false,
           csp: [{ scriptSrc: ['https://plausible.io'], formAction: ["'self'"] }],
         },
       ])
@@ -185,9 +184,6 @@ describe('public sites', () => {
         { ...site, forms: [{ path: '/f', rateLimit: { max: 0, windowSeconds: 60 } }] },
       ])
     ).toHaveLength(1)
-    expect(publicSiteIssues([{ ...site, rateLimit: { max: 10, windowSeconds: 0 } }])).toHaveLength(
-      1
-    )
   })
 
   it.each([

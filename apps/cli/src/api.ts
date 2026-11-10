@@ -81,6 +81,14 @@ export interface ApiClient {
   get<T = unknown>(path: string, options?: RequestOptions<T>): Promise<T>
   post<T = unknown>(path: string, options?: RequestOptions<T>): Promise<T>
   del<T = unknown>(path: string, options?: RequestOptions<T>): Promise<T>
+  /** A file's bytes, for a download route that does not answer JSON. Errors are the usual `CliApiError`. */
+  getBytes(path: string): Promise<Uint8Array>
+  /** Multipart POST, for an upload route. The response is parsed like `request`. */
+  postForm<T = unknown>(
+    path: string,
+    form: FormData,
+    options?: Pick<RequestOptions<T>, 'schema'>
+  ): Promise<T>
 }
 
 export function buildUrl(serverUrl: string, path: string, query?: Record<string, QueryValue>) {
@@ -146,12 +154,66 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
     return { status: response.status, raw, data: parsed.data }
   }
 
+  async function sendRaw(method: 'GET' | 'POST', path: string, init: RequestInit) {
+    const url = buildUrl(serverUrl, path)
+    let response: Response
+    try {
+      response = await fetchImpl(url, { ...init, method, signal: AbortSignal.timeout(timeoutMs) })
+    } catch (cause) {
+      throw new CliApiError({
+        status: 0,
+        code: 'network_error',
+        message: `Could not reach ${serverUrl} (${describeCause(cause)})`,
+        hint: 'Is the server running? Check the URL with `--server` or `ROCKETFLARE_URL`.',
+        cause,
+      })
+    }
+    if (!response.ok) {
+      throw errorFromResponse(response.status, await readBody(response), method, path)
+    }
+    return response
+  }
+
   return {
     serverUrl,
     request,
+    getBytes: async path => {
+      const response = await sendRaw('GET', path, { headers: authHeaders(options, '*/*') })
+      return new Uint8Array(await response.arrayBuffer())
+    },
+    postForm: async <T>(
+      path: string,
+      form: FormData,
+      formOptions?: Pick<RequestOptions<T>, 'schema'>
+    ): Promise<T> => {
+      const response = await sendRaw('POST', path, {
+        headers: authHeaders(options, 'application/json'),
+        body: form,
+      })
+      const raw = await readBody(response)
+      if (!formOptions?.schema) return raw as T
+      const parsed = formOptions.schema.safeParse(raw)
+      if (!parsed.success) {
+        throw new CliApiError({
+          status: response.status,
+          code: 'invalid_response',
+          body: raw,
+          message: `Unexpected response from POST ${path}: ${parsed.error.issues[0]?.message ?? 'invalid'}`,
+        })
+      }
+      return parsed.data
+    },
     get: (path, o) => request('GET', path, o).then(r => r.data),
     post: (path, o) => request('POST', path, o).then(r => r.data),
     del: (path, o) => request('DELETE', path, o).then(r => r.data),
+  }
+}
+
+function authHeaders(options: ApiClientOptions, accept: string): Record<string, string> {
+  return {
+    Accept: accept,
+    'User-Agent': `${BIN_NAME}-cli/${VERSION}`,
+    ...(options.apiKey ? { Authorization: `Bearer ${options.apiKey}` } : {}),
   }
 }
 

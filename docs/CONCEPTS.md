@@ -1151,8 +1151,8 @@ as merging a PR. A plugin repo mirrors the host tree and ships **no migration, n
   `databaseMiddleware` and before every mount, and reads the host from the request URL (no
   forwarded header is trusted). On a matching host the plugin's router answers everything, so
   `/api/*`, `/auth/*` and `/ws` are never reached there. GET and HEAD are allowed, plus POST on a
-  path declared in `forms`; anything else is 405. The order is cache lookup, rate limit (misses
-  only), router, cache put. The cache key is `<host>/<generation>/<path>`, without the query string.
+  path declared in `forms`; anything else is 405. The order is cache lookup, router, cache put. Page
+  requests are never rate limited (a form POST is). The cache key is `<host>/<generation>/<path>`, without the query string.
   `cache` is optional, and its `generation` must not touch Postgres, so a hit costs no query; it
   returns null to skip caching a request. A cacheable request reaches the router without `Cookie` or `Authorization`, so a cached site is anonymous. Only a 200 with no `Set-Cookie`, and with no `Vary` beyond `Accept-Encoding` and the `cache.variantHeaders` of a request that has a variant, is stored, and HEAD is
   served from the GET entry. A form POST bypasses the cache and has its own body limit (default
@@ -1160,7 +1160,8 @@ as merging a PR. A plugin repo mirrors the host tree and ships **no migration, n
   host, or a claim on `APP_URL`'s host, fail the gate (`publicSiteIssues`); at runtime the claim is
   ignored and logged. A site host always gets the strict public CSP from
   `api/middleware/security-headers.ts`, on hits and misses alike: no script, frame, connection or
-  form target unless `csp(host, config)` declares one, `style-src <request origin>/site-assets/`
+  form target unless `csp(host, config)` declares one (a `formAction` path such as `/submit` is
+  pinned to the request's origin, so one route opens rather than the host), `style-src <request origin>/site-assets/`
   (the same source joins `script-src` once a site declares any script, so a page cannot load the
   admin bundle from `/assets/*`; `publicSiteIssues` refuses a declared script source reaching that
   path, including `'self'`, and at runtime it is dropped) and
@@ -1179,14 +1180,21 @@ as merging a PR. A plugin repo mirrors the host tree and ships **no migration, n
   a re-provision step; `plugin check` fails while a marked list lacks a plugin's prefixes, and
   `provision cloudflare` clears the mark. The `images` binding type is declared in the toml and has no resource to create.
 - **`appOwned` paths** (`"appOwned": ["apps/web/src/plugins/<id>/app"]`, inside `paths`): the developer's. `plugin upgrade` never touches them, and `plugin remove` lists a file changed or added since the pinned commit and needs `--force-app-owned` to delete it.
-- **`fullscreen` route tier**: a `UiPlugin` route with `tier: 'fullscreen'` renders outside
-  `Layout`, for a page that needs the whole viewport. It still requires sign-in and a tenant, and
-  its `guard` is honoured as on the shell tier. The other tiers are `shell` (the default),
-  `noTenant` and `public`.
+- **`workspace` route tier**: a `UiPlugin` route with `tier: 'workspace'` renders inside `Layout`,
+  in the shell's route table, for a page that needs the whole space under the app header (an
+  editor canvas). It requires sign-in and a tenant, and its `guard` is honoured, as on `shell`. On a
+  workspace route from `lg` up the sidebar collapses to its icon rail whatever the reader saved,
+  the saved preference is untouched and returns on leaving, and the collapse toggle is hidden;
+  below `lg` the drawer is unchanged. `<main>` has no padding and the page fills the viewport under
+  the 56 px header (`h-full` in a plugin page), scrolling only its own panes. The other tiers are
+  `shell` (the default), `noTenant` and `public`.
 - **`resolveOwnerTenant(db, config, ownerSlug?)`** from `@/plugins/api` finds the tenant that owns a
   public surface: `getSingleTenant` under `single`, by slug under `multi`. It returns null for a
   missing slug under `multi`, an unknown slug, and any tenant whose `status` is not `active`. This
   and the plugin's config parser are the only places a plugin should branch on `TENANCY_MODE`.
+  **Known gap:** under `multi` it matches a slug, and a slug can be renamed or reused, so a tenant
+  that renames or is deleted frees a public host for whoever registers that slug next. Bind by id
+  before tenants can own public sites themselves.
 - **Identity (the identity seam)**: a public handler that has proved a person signs them in with
   `identityFor(c, id).signIn(...)` — the kit links, admits, applies an `idp` membership and mints
   the session (§2) and the plugin returns the redirect it answers; it never touches

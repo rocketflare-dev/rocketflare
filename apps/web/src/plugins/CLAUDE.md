@@ -105,6 +105,8 @@ the CLI command `<id>`; skills `<id>` / `<id>-<what>`; AG-UI CUSTOM events `<id>
   (`"publicSites": { "hostsVar": "SITES_HOSTS" }`). Site scripts and styles load from
   `/site-assets/` only: the admin bundle in `/assets/` is outside the public CSP.
   `docs/CONCEPTS.md` §16 has the rules.
+  One page that embeds something adds its own sources with `PUBLIC_SITE_PAGE_CSP_HEADER` (JSON,
+  `PublicSiteCsp`); the middleware applies it on hits and misses and strips it.
 - **`appOwned` manifest paths are the developer's**: `plugin upgrade` leaves them alone, and
   `plugin remove` needs `--force-app-owned` to delete files changed or added there.
 - **It signs people in through `identityFor(c, '<id>').signIn(...)` and provisions through
@@ -166,7 +168,8 @@ the CLI command `<id>`; skills `<id>` / `<id>-<what>`; AG-UI CUSTOM events `<id>
   `queryKeys` and `agents/forms` (`CORE_AGENT_FORMS` + each plugin's `agentForms`)  read
   `uiPlugins`.
 - **The UI entry ships in the MAIN bundle**, so it wires and nothing else. `routes` are per tier
-  (`shell`, `noTenant`, `public`, `fullscreen`: outside `Layout`, tenant and `guard` still enforced)
+  (`shell`, `noTenant`, `public`, and `workspace`: inside `Layout`, tenant and `guard` still
+  enforced, icon-rail nav, no padding, the page fills the viewport under the header with `h-full`)
   and every `Component` is `lazy(() => import('./pages/X'))` — every
   dynamic `import()` inside `lazy`. Runtime imports are limited to `react`,
   `@heroicons/react/24/outline`, `@rocketflare/shared/*`, `@/plugins/types`,
