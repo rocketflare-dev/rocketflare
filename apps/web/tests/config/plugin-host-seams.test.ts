@@ -45,7 +45,42 @@ import {
 } from '../../../../scripts/lib/plugin-lib.mjs'
 
 const REPO_ROOT = path.resolve(__dirname, '../../../..')
-const KIT_SETTINGS = readFileSync(path.join(REPO_ROOT, '.claude/settings.json'), 'utf8')
+/**
+ * A FIXTURE in the kit's settings shape, never the checkout's own file: a checkout may carry a
+ * plugin's hooks already (that is what this suite installs), and a copy's file is its own.
+ */
+const KIT_SETTINGS = `${JSON.stringify(
+  {
+    $schema: 'https://json.schemastore.org/claude-code-settings.json',
+    hooks: {
+      PreToolUse: [
+        {
+          matcher: 'Bash',
+          hooks: [
+            {
+              type: 'command',
+              command: 'node "$CLAUDE_PROJECT_DIR/scripts/nudge.mjs"',
+              timeout: 10,
+            },
+          ],
+        },
+      ],
+      SessionStart: [
+        {
+          hooks: [
+            {
+              type: 'command',
+              command: 'node "$CLAUDE_PROJECT_DIR/scripts/check.mjs"',
+              timeout: 10,
+            },
+          ],
+        },
+      ],
+    },
+  },
+  null,
+  2
+)}\n`
 
 const cmd = (dir: string, script = 'stale.mjs', flags = '') =>
   `node "$CLAUDE_PROJECT_DIR/.claude/skills/${dir}/${script}"${flags}`
