@@ -6,6 +6,11 @@ copy of the kit forward without recreating anything its owner deleted.
 
 If you are running a copy: `pnpm kit:upgrade` tells you which of these you are missing.
 
+## 0.33.0 — 2026-11-10
+
+Plugin tools get `ToolCtx.requesterUrls`, the URLs a person typed themselves, and the UI offers "Create organisation" only when the server would allow it.
+[Porting note](docs/upgrades/0.33.0.md).
+
 ## 0.32.2 — 2026-11-10
 
 A kit UI test that failed on slow CI runners now waits for the page it navigates to, not for text the page it leaves also contains.
