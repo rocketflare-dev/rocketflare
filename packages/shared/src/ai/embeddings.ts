@@ -398,6 +398,8 @@ const searchToolResultShape = z.object({
       documentId: z.string().uuid(),
       title: z.string(),
       totalPassages: z.number().int().nonnegative().optional(),
+      /** A platform document (a plugin's user guide): no card, the documents page cannot open it. */
+      platform: z.literal(true).optional(),
     })
   ),
 })
@@ -473,6 +475,9 @@ export function documentCardsFromToolResult(toolName: string, result: unknown): 
     const search = searchToolResultShape.safeParse(parsed)
     if (!search.success) return []
     for (const doc of search.data.documents) {
+      // A platform document is shared by every workspace and lives outside the documents page,
+      // so a card would link to a 404. Its passages still reach the model through the result.
+      if (doc.platform) continue
       cards.push(
         cardFromTool({ id: doc.documentId, title: doc.title, passages: doc.totalPassages })
       )
