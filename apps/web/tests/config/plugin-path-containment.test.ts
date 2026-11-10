@@ -395,6 +395,7 @@ describe('kit:upgrade keeps every release path inside the repository', () => {
 })
 
 describe('public-site routing across plugins', () => {
+  // Fixture ids no real plugin uses, so a host that installs `sites` can still run this suite.
   const TOMLS = ['apps/web/wrangler.toml', 'apps/web/wrangler.staging.toml']
   const tomlsOf = (host: string) => TOMLS.map(f => readFileSync(path.join(host, f), 'utf8'))
   const appHost = (name: string) =>
@@ -408,14 +409,14 @@ describe('public-site routing across plugins', () => {
   const sitesPlugin = (name: string) =>
     localPlugin(
       name,
-      { id: 'sites', publicSites: { hostsVar: 'SITES_HOSTS' }, vars: [{ key: 'SITES_HOSTS' }] },
-      { 'apps/web/src/plugins/sites/index.ts': 'export {}\n' }
+      { id: 'fixture-sites', publicSites: { hostsVar: 'FIXTURE_SITES_HOSTS' }, vars: [{ key: 'FIXTURE_SITES_HOSTS' }] },
+      { 'apps/web/src/plugins/fixture-sites/index.ts': 'export {}\n' }
     )
   const hooksPlugin = (name: string) =>
     localPlugin(
       name,
-      { id: 'hooks', apiPrefixes: ['/hooks-webhook'] },
-      { 'apps/web/src/plugins/hooks/index.ts': 'export {}\n' }
+      { id: 'fixture-hooks', apiPrefixes: ['/hooks-webhook'] },
+      { 'apps/web/src/plugins/fixture-hooks/index.ts': 'export {}\n' }
     )
 
   it('removing the last public-sites plugin asks for a re-provision, and check fails until then', () => {
@@ -424,7 +425,7 @@ describe('public-site routing across plugins', () => {
       expect(run(host, 'plugin.mjs', ['add', plugin, '--apply', '--allow-dirty']).status).toBe(0)
     }
 
-    const removed = run(host, 'plugin.mjs', ['remove', 'sites', '--apply', '--allow-dirty'])
+    const removed = run(host, 'plugin.mjs', ['remove', 'fixture-sites', '--apply', '--allow-dirty'])
     expect(removed.status).toBe(0)
     expect(removed.output).toContain('pnpm provision cloudflare')
 
@@ -444,10 +445,10 @@ describe('public-site routing across plugins', () => {
     for (const plugin of [sitesPlugin('mark-dropped-a'), hooksPlugin('mark-dropped-b')]) {
       expect(run(host, 'plugin.mjs', ['add', plugin, '--apply', '--allow-dirty']).status).toBe(0)
     }
-    expect(run(host, 'plugin.mjs', ['remove', 'sites', '--apply', '--allow-dirty']).status).toBe(0)
+    expect(run(host, 'plugin.mjs', ['remove', 'fixture-sites', '--apply', '--allow-dirty']).status).toBe(0)
     expect(tomlsOf(host).every(awaitsReprovision)).toBe(true)
 
-    expect(run(host, 'plugin.mjs', ['remove', 'hooks', '--apply', '--allow-dirty']).status).toBe(0)
+    expect(run(host, 'plugin.mjs', ['remove', 'fixture-hooks', '--apply', '--allow-dirty']).status).toBe(0)
     expect(tomlsOf(host).some(awaitsReprovision)).toBe(false)
   })
 
@@ -455,13 +456,13 @@ describe('public-site routing across plugins', () => {
   const sitesReleases = (name: string, second: object) => {
     const release = (extra: object) => ({
       'rocketflare-plugin.json': JSON.stringify({
-        id: 'sites',
+        id: 'fixture-sites',
         version: '1.0.0',
         minKit: '0.1.0',
         uses: {},
         ...extra,
       }),
-      'apps/web/src/plugins/sites/index.ts': 'export {}\n',
+      'apps/web/src/plugins/fixture-sites/index.ts': 'export {}\n',
     })
     return bareRepository(name, [
       ['1.0.0', release({})],
@@ -470,14 +471,14 @@ describe('public-site routing across plugins', () => {
   }
   const recordedVersion = (host: string) =>
     JSON.parse(readFileSync(path.join(host, '.rocketflare.json'), 'utf8')).surfaces.find(
-      (s: { id: string }) => s.id === 'sites'
+      (s: { id: string }) => s.id === 'fixture-sites'
     ).source.version
 
   it('an upgrade that cannot route one toml writes neither, and stays on the old release', () => {
     const host = appHost('upgrade-routing')
     const url = sitesReleases('upgrade-routing', {
-      publicSites: { hostsVar: 'SITES_HOSTS' },
-      vars: [{ key: 'SITES_HOSTS' }],
+      publicSites: { hostsVar: 'FIXTURE_SITES_HOSTS' },
+      vars: [{ key: 'FIXTURE_SITES_HOSTS' }],
     })
     expect(
       run(host, 'plugin.mjs', ['add', `${url}@1.0.0`, '--apply', '--allow-dirty']).status
@@ -491,7 +492,7 @@ describe('public-site routing across plugins', () => {
 
     const upgraded = run(host, 'plugin.mjs', [
       'upgrade',
-      'sites',
+      'fixture-sites',
       '--to',
       '2.0.0',
       '--apply',
@@ -510,26 +511,26 @@ describe('public-site routing across plugins', () => {
         '1.0.0',
         {
           'rocketflare-plugin.json': JSON.stringify({
-            id: 'sites',
+            id: 'fixture-sites',
             version: '1.0.0',
             minKit: '0.1.0',
             uses: {},
-            publicSites: { hostsVar: 'SITES_HOSTS' },
-            vars: [{ key: 'SITES_HOSTS' }],
+            publicSites: { hostsVar: 'FIXTURE_SITES_HOSTS' },
+            vars: [{ key: 'FIXTURE_SITES_HOSTS' }],
           }),
-          'apps/web/src/plugins/sites/index.ts': 'export {}\n',
+          'apps/web/src/plugins/fixture-sites/index.ts': 'export {}\n',
         },
       ],
       [
         '2.0.0',
         {
           'rocketflare-plugin.json': JSON.stringify({
-            id: 'sites',
+            id: 'fixture-sites',
             version: '2.0.0',
             minKit: '0.1.0',
             uses: {},
           }),
-          'apps/web/src/plugins/sites/index.ts': 'export {}\n',
+          'apps/web/src/plugins/fixture-sites/index.ts': 'export {}\n',
         },
       ],
     ]).url
@@ -539,7 +540,7 @@ describe('public-site routing across plugins', () => {
 
     const upgraded = run(host, 'plugin.mjs', [
       'upgrade',
-      'sites',
+      'fixture-sites',
       '--to',
       '2.0.0',
       '--apply',
@@ -555,12 +556,12 @@ describe('public-site routing across plugins', () => {
     expect(
       run(host, 'plugin.mjs', ['add', `${url}@1.0.0`, '--apply', '--allow-dirty']).status
     ).toBe(0)
-    const anchor = path.join(host, 'apps/web/src/plugins/sites/plugin.json')
+    const anchor = path.join(host, 'apps/web/src/plugins/fixture-sites/plugin.json')
     const before = readFileSync(anchor, 'utf8')
 
     const upgraded = run(host, 'plugin.mjs', [
       'upgrade',
-      'sites',
+      'fixture-sites',
       '--to',
       '2.0.0',
       '--apply',
@@ -588,7 +589,7 @@ describe('public-site routing across plugins', () => {
 
     const upgraded = run(host, 'plugin.mjs', [
       'upgrade',
-      'sites',
+      'fixture-sites',
       '--to',
       '2.0.0',
       '--apply',
@@ -601,19 +602,19 @@ describe('public-site routing across plugins', () => {
 
   it('remove reports an appOwned file replaced by a directory symlink, rather than crashing', () => {
     const host = appHost('remove-symlink')
-    const app = 'apps/web/src/plugins/sites/app'
+    const app = 'apps/web/src/plugins/fixture-sites/app'
     const { url } = bareRepository('remove-symlink', [
       [
         '1.0.0',
         {
           'rocketflare-plugin.json': JSON.stringify({
-            id: 'sites',
+            id: 'fixture-sites',
             version: '1.0.0',
             minKit: '0.1.0',
             uses: {},
             appOwned: [app],
           }),
-          'apps/web/src/plugins/sites/index.ts': 'export {}\n',
+          'apps/web/src/plugins/fixture-sites/index.ts': 'export {}\n',
           [`${app}/page.txt`]: 'page\n',
         },
       ],
@@ -626,7 +627,7 @@ describe('public-site routing across plugins', () => {
     rmSync(path.join(host, app, 'page.txt'))
     symlinkSync(target, path.join(host, app, 'page.txt'))
 
-    const planned = run(host, 'plugin.mjs', ['remove', 'sites', '--allow-dirty'])
+    const planned = run(host, 'plugin.mjs', ['remove', 'fixture-sites', '--allow-dirty'])
     expect(planned.output).not.toContain('EISDIR')
     expect(planned.status).toBe(0)
     expect(planned.output).toMatch(new RegExp(`changed\\s+${app}/page\\.txt`))
@@ -634,19 +635,19 @@ describe('public-site routing across plugins', () => {
 
   it('remove lists an appOwned directory replaced by a symlink as one entry, not its target', () => {
     const host = appHost('remove-root-symlink')
-    const app = 'apps/web/src/plugins/sites/app'
+    const app = 'apps/web/src/plugins/fixture-sites/app'
     const { url } = bareRepository('remove-root-symlink', [
       [
         '1.0.0',
         {
           'rocketflare-plugin.json': JSON.stringify({
-            id: 'sites',
+            id: 'fixture-sites',
             version: '1.0.0',
             minKit: '0.1.0',
             uses: {},
             appOwned: [app],
           }),
-          'apps/web/src/plugins/sites/index.ts': 'export {}\n',
+          'apps/web/src/plugins/fixture-sites/index.ts': 'export {}\n',
           [`${app}/page.txt`]: 'page\n',
         },
       ],
@@ -660,7 +661,7 @@ describe('public-site routing across plugins', () => {
     rmSync(path.join(host, app), { recursive: true })
     symlinkSync(target, path.join(host, app))
 
-    const planned = run(host, 'plugin.mjs', ['remove', 'sites', '--allow-dirty'])
+    const planned = run(host, 'plugin.mjs', ['remove', 'fixture-sites', '--allow-dirty'])
     expect(planned.status).toBe(0)
     expect(planned.output).not.toContain('elsewhere.txt')
     expect(planned.output).toMatch(new RegExp(`added\\s+${app}\\n`))
