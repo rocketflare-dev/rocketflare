@@ -13,6 +13,11 @@
 import { and, eq, sql } from 'drizzle-orm'
 import { afterAll, describe, expect, it } from 'vitest'
 import { resolveSession } from '@/api/auth/sessions'
+import { fullAccessScope } from '@/api/services/access'
+import { ingestText } from '@/api/services/ai/ingest'
+import { ingestPlatformText, prunePlatformText } from '@/api/services/ai/platform-documents'
+import { searchKnowledgeChunks } from '@/api/services/ai/retrieval'
+import { loadConfig } from '@/config'
 import {
   affected,
   DATABASE_DRIVERS,
@@ -29,6 +34,7 @@ import { withTenantScope } from '@/db/tenant-scope'
 import { runMigrations } from '../../scripts/migrate'
 import { createTestSession, createTestTenantWithUser } from '../helpers/auth'
 import { setupTestDatabase, testDatabaseUrl } from '../helpers/db'
+import { createTestEnv } from '../mocks/bindings'
 
 const env: DatabaseEnv = {
   DATABASE_DRIVER: process.env.DATABASE_DRIVER,
@@ -221,6 +227,65 @@ describe(`database driver: ${driver}`, () => {
     const handle = openDatabase(env)
     await handle.close()
     await handle.close()
+  })
+
+  it('hybrid retrieval over tenant + platform documents answers the same (every query shape)', async () => {
+    const { db } = open()
+    const testEnv = createTestEnv()
+    const cfg = loadConfig(testEnv)
+    const { tenant, user } = await createTestTenantWithUser(fixtures)
+    const source = `example-feature:driver-${crypto.randomUUID().slice(0, 8)}`
+    const platform = await ingestPlatformText(db, cfg, testEnv, {
+      source,
+      externalId: 'members/invite',
+      title: 'Inviting a teammate',
+      text: 'Inviting a teammate: open Members and choose Invite.',
+    })
+    // Idempotent re-ingest: one read, no write.
+    expect(
+      (
+        await ingestPlatformText(db, cfg, testEnv, {
+          source,
+          externalId: 'members/invite',
+          title: 'Inviting a teammate',
+          text: 'Inviting a teammate: open Members and choose Invite.',
+        })
+      ).status
+    ).toBe('unchanged')
+    await ingestText(db, cfg, testEnv, {
+      tenantId: tenant.id,
+      userId: user.id,
+      title: 'Our onboarding',
+      text: 'Invite new hires on their first day.',
+    })
+    const scope = fullAccessScope(tenant.id)
+    const query = { query: 'invite teammate', limit: 5 }
+    const titles = (r: { hits: { title: string; platform: boolean }[] }) =>
+      r.hits.map(h => [h.title, h.platform]).sort()
+
+    // The tenant-only shape (no platform sources) — unchanged.
+    const tenantOnly = await searchKnowledgeChunks(db, cfg, testEnv, scope, query)
+    expect(titles(tenantOnly)).toEqual([['Our onboarding', false]])
+    // One shared dense leg over both corpora (same model), in a transaction.
+    const both = await searchKnowledgeChunks(db, cfg, testEnv, scope, {
+      ...query,
+      platformSources: [source],
+    })
+    expect(titles(both)).toEqual([
+      ['Inviting a teammate', true],
+      ['Our onboarding', false],
+    ])
+    expect(both.semantic).toBe('used')
+    // The platform corpus alone (its own dense leg), located at offset 0.
+    const platformOnly = await searchKnowledgeChunks(db, cfg, testEnv, scope, {
+      ...query,
+      sources: [],
+      platformSources: [source],
+    })
+    expect(platformOnly.hits.map(h => [h.documentId, h.charOffset])).toEqual([
+      [platform.documentId, 0],
+    ])
+    expect(await prunePlatformText(db, { source, keepExternalIds: [] })).toBe(1)
   })
 
   it('the migrator re-runs cleanly (already applied) over this driver', async () => {

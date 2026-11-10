@@ -68,6 +68,13 @@ export type {
   ToolLoopCheckpoint,
   ToolLoopResult,
 } from '../../api/services/ai/agent-loop'
+/**
+ * The retrieval primitives, for a plugin that searches a corpus of its own the way the kit
+ * searches `chunks`: `anyTermTsquery` (the lexical half's ANY-word tsquery), `candidatePoolSize`
+ * ("retrieve wide, fuse narrow") and `fuseByRank` (Reciprocal Rank Fusion, `k = 60`). Pure.
+ */
+export type { FusedItem } from '../../api/services/ai/retrieval'
+export { anyTermTsquery, candidatePoolSize, fuseByRank } from '../../api/services/ai/retrieval'
 /** A tool whose input schema failed to convert is a tool the model cannot see — fail loudly. */
 /** Ledger one model call (`ai_usage`). `feature` is `<plugin id>:<what>` or `agent:<key>`. */
 /** 503 `ai_not_configured` — throw it BEFORE any row is written or any stream opens. */

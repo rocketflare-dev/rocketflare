@@ -139,6 +139,8 @@ The server surface: the context family, and the types a plugin must be able to n
   503 `ai_not_configured`: nothing resolves for the tenant (no config row, no platform key).
 - `type AnyServerPlugin = ServerPlugin<SharedPlugin>`
   The element type of the barrels — a plugin whose shared half is not narrowed.
+- `function anyTermTsquery(query: string): string \| null`
+  The lexical half's query: every distinct word of the input, OR-ed (`a | b | c`), for `to_tsquery(SEARCH_TEXT_CONFIG, …)` to stem and stopword. ANY rather than ALL terms on purpose…
 - `type AnyUiPlugin = UiPlugin<SharedPlugin>`
 - `type AppRouter = Hono<AppEnv>`
 - `interface BackgroundMethods`
@@ -156,12 +158,16 @@ The server surface: the context family, and the types a plugin must be able to n
     R2 (the `FILES` bucket), or a 503 `storage_not_configured` — loud, because a silently absent bucket loses bytes. The same service `RequestCtx.storage()` returns. Write under…
   - `startAgentRun(input: StartAgentRunInput): Promise<StartedAgentRun>`
     Start an agent run for one organisation and return its id — `POST /api/agents/runs` from a job, through the same `enqueueRun`: input validation (400), the exclusive slot, the…
+- `function candidatePoolSize(limit: number): number`
+  "Retrieve wide, fuse narrow": how many candidates each signal contributes before fusion.
 - `function createRouter(): Hono<AppEnv>`
 - `function createStepRealtimeFor(env: HubEnv): StepRealtime`
 - `function cronCtx(ctx: TaskContext): CronCtx`
   Adapt the core `TaskContext`.
 - `interface CronCtx extends PluginContext, BackgroundMethods`
   One cron run. `waitUntil` exists here because a scheduled invocation genuinely has one.
+  - `readonly kind: 'cron'`
+    See `JobCtx.kind`.
   - `waitUntil(promise: Promise<unknown>): void`
 - `type Database = PgDatabase<PgQueryResultHKT, typeof schema>`
 - `interface DatabaseHandle`
@@ -199,6 +205,9 @@ The server surface: the context family, and the types a plugin must be able to n
   `Receipts+Proton@Example.com` → `receipts`. Lower-cased (local parts are case-insensitive in practice, and Email Routing matches them that way) and cut at the first `+`, which is…
 - `function emailSubaddress(address: string): string \| null`
   `receipts+proton@example.com` → `proton`; null when the address carries no tag.
+- `function fuseByRank<T>( dense: T[], lexical: T[], keyOf: (item: T) => string, k = RRF_K ): FusedItem<T>[]`
+  Reciprocal Rank Fusion of two ordered candidate lists (best first). Pure.
+- `interface FusedItem<T>`
 - `function hasFeature(auth: Pick<PluginAuth, 'features'>, name: string): boolean`
   `true` when this deployment ships the surface AND this organisation has it yet.
 - `interface HookCtx extends Pick<PluginContext, 'db'>`
@@ -216,6 +225,8 @@ The server surface: the context family, and the types a plugin must be able to n
   Index text. Small texts are indexed before this returns; larger ones return `queued`. No embeddings provider → 503 `ai_not_configured`, checked before anything is written.
 - `async function ingestDocumentFile( ctx: PluginContext, input: PluginIngestFileInput ): Promise<PluginIngestResult>`
   Store a file in R2 and index it — text-like types now, binary ones (PDF, Office…) through the `document.convert` job. Unsupported type → 415 `unsupported_media_type`; no `FILES`…
+- `async function ingestPlatformDocument( ctx: JobCtx \| CronCtx, input: PlatformDocumentInput ): Promise<PlatformDocumentResult>`
+  Write (or re-write) a PLATFORM document — one every tenant can read, describing the app itself. Only from a job or a cron task (`JobCtx | CronCtx`), on the owner connection,…
 - `function isAdminLevel(session: RoleView): boolean`
   May administer members / invitations / keys: owner, admin, support, or global admin.
 - `function isGlobalAdmin(session: RoleView): boolean`
@@ -228,6 +239,8 @@ The server surface: the context family, and the types a plugin must be able to n
   Adapt the core `JobContext`. The only place a plugin's job half names a core internal.
 - `interface JobCtx extends PluginContext, BackgroundMethods`
   One queue message. `job.payload` is already narrowed to the variant this handler was registered for — `ServerPlugin.jobHandlers` is checked against the job types the plugin's own…
+  - `readonly kind: 'job'`
+    Which background context this is. A brand as much as a field: the few methods that only a job or a cron task may call (`ingestPlatformDocument`) take `JobCtx | CronCtx`, and the…
 - `type JobEnvelope = z.infer<typeof jobEnvelopeSchema>`
 - `type JobHandler = ( job: Extract<JobEnvelope, { type: T }>, ctx: JobContext ) => Promise<void>`
 - `type JobInput = z.infer<typeof jobInputSchema>`
@@ -259,6 +272,10 @@ The server surface: the context family, and the types a plugin must be able to n
   The Postgres SQLSTATE (`23505`, `40001`…) of a driver error, wherever it hangs: both drivers put `code` on their own error (postgres.js, Neon's `NeonDbError`) and drizzle wraps…
 - `interface PickOptions<T>`
 - `interface PickResult<T>`
+- `interface PlatformDocumentInput`
+- `interface PlatformDocumentResult`
+- `class PlatformEmbeddingsError extends ServiceUnavailableError`
+  503 `platform_embeddings_not_configured`: no `EMBEDDINGS_API_KEY` and no `[ai]` binding.
 - `type PluginAgent = AgentDefinition<Input, Output>`
   A plugin's agent, as `ServerPlugin.agents` takes it.
 - `interface PluginAuth`
@@ -338,6 +355,8 @@ The server surface: the context family, and the types a plugin must be able to n
   `runToolLoop` minus what the runtime supplies.
 - `function provisionFor(ctx: PluginContext, pluginId: string): PluginProvision`
   The cookie-free half: usable from any `PluginContext` — a public handler, a job, a cron.
+- `async function prunePlatformDocuments( ctx: JobCtx \| CronCtx, input: { source: string; keepExternalIds: readonly string[] } ): Promise<number>`
+  Delete the platform documents of `source` whose `externalId` is not in `keepExternalIds` — what a sync calls after ingesting the current set. Answers the number deleted; an empty…
 - `const PUBLIC_MOUNT_ROOT: "/api/hooks"`
   The prefix every public mount lives under; the plugin's id is the next segment.
 - `const PUBLIC_SITE_PAGE_CSP_HEADER: "x-public-site-page-csp"`
@@ -425,6 +444,11 @@ The server surface: the context family, and the types a plugin must be able to n
 - `interface ScheduledTask`
 - `async function sealSecret(config: PluginConfig, plaintext: string): Promise<string>`
   Encrypt a credential for storage. The output is opaque base64; keep it in a `*_enc` column.
+- `async function searchKnowledge( ctx: Pick<PluginContext, 'db' \| 'config' \| 'env'> & { scope: AccessScope }, input: SearchKnowledgeInput ): Promise<SearchKnowledgeResult>`
+  The kit's hybrid knowledge search, for a plugin: the caller's tenant documents as its `AccessScope` may read them (narrowed by `sources`), plus — only when named — the platform…
+- `interface SearchKnowledgeHit`
+- `interface SearchKnowledgeInput`
+- `interface SearchKnowledgeResult`
 - `interface SeedCtx extends Pick<PluginContext, 'db'>`
   `pnpm seed --demo`, after the core block.
   - `tenantId: string`
@@ -454,6 +478,8 @@ The server surface: the context family, and the types a plugin must be able to n
     Prompt registry entries, one per key in `shared.promptKeys`.
   - `agentTools?: (ctx: AgentToolContext) => Tool[] \| Promise<Tool[]>`
     Tools added to every agent run, beside the three built-in knowledge tools. Bound to the run's access scope, so a plugin tool reads what its REQUESTER may read and nothing more.…
+  - `knowledgeSources?: (scope: AccessScope) => readonly string[] \| Promise<readonly string[]>`
+    PLATFORM knowledge sources (`<id>:<kind>`, written with `ingestPlatformDocument`) the kit's `search_knowledge` tool also searches for this reader — chat and every agent run.…
   - `scheduledTasks?: Readonly<Record<string, ScheduledTask[]>>`
     Cron expression → tasks, merged into `SCHEDULED_TASKS` (tasks on a cron core already runs are appended after core's). A cron core does NOT run is declared in `plugin.json`…
   - `emailHandlers?: readonly EmailHandler[]`
@@ -828,6 +854,8 @@ Components and hooks, for a lazy PAGE. Never for the UI entry.
     Prompt registry entries, one per key in `shared.promptKeys`.
   - `agentTools?: (ctx: AgentToolContext) => Tool[] \| Promise<Tool[]>`
     Tools added to every agent run, beside the three built-in knowledge tools. Bound to the run's access scope, so a plugin tool reads what its REQUESTER may read and nothing more.…
+  - `knowledgeSources?: (scope: AccessScope) => readonly string[] \| Promise<readonly string[]>`
+    PLATFORM knowledge sources (`<id>:<kind>`, written with `ingestPlatformDocument`) the kit's `search_knowledge` tool also searches for this reader — chat and every agent run.…
   - `scheduledTasks?: Readonly<Record<string, ScheduledTask[]>>`
     Cron expression → tasks, merged into `SCHEDULED_TASKS` (tasks on a cron core already runs are appended after core's). A cron core does NOT run is declared in `plugin.json`…
   - `emailHandlers?: readonly EmailHandler[]`
@@ -1180,6 +1208,7 @@ nothing in the comparison that can throw.
 @/plugins/api :: interface :: AgentTraceContext :: interface AgentTraceContext extends Omit<TraceParams, 'name'>
 @/plugins/api :: class :: AiNotConfiguredError :: class AiNotConfiguredError extends ServiceUnavailableError
 @/plugins/api :: type :: AnyServerPlugin :: type AnyServerPlugin = ServerPlugin<SharedPlugin>
+@/plugins/api :: function :: anyTermTsquery :: function anyTermTsquery(query: string): string | null
 @/plugins/api :: type :: AnyUiPlugin :: type AnyUiPlugin = UiPlugin<SharedPlugin>
 @/plugins/api :: type :: AppRouter :: type AppRouter = Hono<AppEnv>
 @/plugins/api :: interface :: BackgroundMethods :: interface BackgroundMethods
@@ -1190,10 +1219,12 @@ nothing in the comparison that can throw.
 @/plugins/api :: member :: BackgroundMethods.features :: features(tenantId: string): Promise<readonly string[]>
 @/plugins/api :: member :: BackgroundMethods.storage :: storage(): StorageService
 @/plugins/api :: member :: BackgroundMethods.startAgentRun :: startAgentRun(input: StartAgentRunInput): Promise<StartedAgentRun>
+@/plugins/api :: function :: candidatePoolSize :: function candidatePoolSize(limit: number): number
 @/plugins/api :: function :: createRouter :: function createRouter(): Hono<AppEnv>
 @/plugins/api :: function :: createStepRealtimeFor :: function createStepRealtimeFor(env: HubEnv): StepRealtime
 @/plugins/api :: function :: cronCtx :: function cronCtx(ctx: TaskContext): CronCtx
 @/plugins/api :: interface :: CronCtx :: interface CronCtx extends PluginContext, BackgroundMethods
+@/plugins/api :: member :: CronCtx.kind :: readonly kind: 'cron'
 @/plugins/api :: member :: CronCtx.waitUntil :: waitUntil(promise: Promise<unknown>): void
 @/plugins/api :: type :: Database :: type Database = PgDatabase<PgQueryResultHKT, typeof schema>
 @/plugins/api :: interface :: DatabaseHandle :: interface DatabaseHandle
@@ -1218,6 +1249,8 @@ nothing in the comparison that can throw.
 @/plugins/api :: interface :: EmailHandler :: interface EmailHandler
 @/plugins/api :: function :: emailLocalPart :: function emailLocalPart(address: string): string
 @/plugins/api :: function :: emailSubaddress :: function emailSubaddress(address: string): string | null
+@/plugins/api :: function :: fuseByRank :: function fuseByRank<T>( dense: T[], lexical: T[], keyOf: (item: T) => string, k = RRF_K ): FusedItem<T>[]
+@/plugins/api :: interface :: FusedItem :: interface FusedItem<T>
 @/plugins/api :: function :: hasFeature :: function hasFeature(auth: Pick<PluginAuth, 'features'>, name: string): boolean
 @/plugins/api :: interface :: HookCtx :: interface HookCtx extends Pick<PluginContext, 'db'>
 @/plugins/api :: member :: HookCtx.tenant :: tenant: Tenant
@@ -1228,12 +1261,14 @@ nothing in the comparison that can throw.
 @/plugins/api :: type :: IdpAppRole :: type IdpAppRole = z.infer<typeof idpAppRoleSchema>
 @/plugins/api :: function :: ingestDocument :: async function ingestDocument( ctx: PluginContext, input: PluginIngestTextInput ): Promise<PluginIngestResult>
 @/plugins/api :: function :: ingestDocumentFile :: async function ingestDocumentFile( ctx: PluginContext, input: PluginIngestFileInput ): Promise<PluginIngestResult>
+@/plugins/api :: function :: ingestPlatformDocument :: async function ingestPlatformDocument( ctx: JobCtx | CronCtx, input: PlatformDocumentInput ): Promise<PlatformDocumentResult>
 @/plugins/api :: function :: isAdminLevel :: function isAdminLevel(session: RoleView): boolean
 @/plugins/api :: function :: isGlobalAdmin :: function isGlobalAdmin(session: RoleView): boolean
 @/plugins/api :: function :: isOwnerLevel :: function isOwnerLevel(session: RoleView): boolean
 @/plugins/api :: function :: isUniqueViolation :: function isUniqueViolation(err: unknown): boolean
 @/plugins/api :: function :: jobCtx :: function jobCtx(ctx: JobContext): JobCtx
 @/plugins/api :: interface :: JobCtx :: interface JobCtx extends PluginContext, BackgroundMethods
+@/plugins/api :: member :: JobCtx.kind :: readonly kind: 'job'
 @/plugins/api :: type :: JobEnvelope :: type JobEnvelope = z.infer<typeof jobEnvelopeSchema>
 @/plugins/api :: type :: JobHandler :: type JobHandler = ( job: Extract<JobEnvelope, { type: T }>, ctx: JobContext ) => Promise<void>
 @/plugins/api :: type :: JobInput :: type JobInput = z.infer<typeof jobInputSchema>
@@ -1255,6 +1290,9 @@ nothing in the comparison that can throw.
 @/plugins/api :: function :: pgErrorCode :: function pgErrorCode(err: unknown): string | undefined
 @/plugins/api :: interface :: PickOptions :: interface PickOptions<T>
 @/plugins/api :: interface :: PickResult :: interface PickResult<T>
+@/plugins/api :: interface :: PlatformDocumentInput :: interface PlatformDocumentInput
+@/plugins/api :: interface :: PlatformDocumentResult :: interface PlatformDocumentResult
+@/plugins/api :: class :: PlatformEmbeddingsError :: class PlatformEmbeddingsError extends ServiceUnavailableError
 @/plugins/api :: type :: PluginAgent :: type PluginAgent = AgentDefinition<Input, Output>
 @/plugins/api :: interface :: PluginAuth :: interface PluginAuth
 @/plugins/api :: member :: PluginAuth.user :: user: User
@@ -1301,6 +1339,7 @@ nothing in the comparison that can throw.
 @/plugins/api :: type :: PluginStructuredOptions :: type PluginStructuredOptions = Omit< CallStructuredToolOptions<T>, 'model' | 'maxTokens' > & { maxTokens?: number }
 @/plugins/api :: type :: PluginToolLoopOptions :: type PluginToolLoopOptions = Omit< RunToolLoopOptions, 'model' | 'maxTokens' | 'approvals' | 'runApproved' > & { maxTokens?: number }
 @/plugins/api :: function :: provisionFor :: function provisionFor(ctx: PluginContext, pluginId: string): PluginProvision
+@/plugins/api :: function :: prunePlatformDocuments :: async function prunePlatformDocuments( ctx: JobCtx | CronCtx, input: { source: string; keepExternalIds: readonly string[] } ): Promise<number>
 @/plugins/api :: const :: PUBLIC_MOUNT_ROOT :: const PUBLIC_MOUNT_ROOT: "/api/hooks"
 @/plugins/api :: const :: PUBLIC_SITE_PAGE_CSP_HEADER :: const PUBLIC_SITE_PAGE_CSP_HEADER: "x-public-site-page-csp"
 @/plugins/api :: function :: publicCtx :: function publicCtx(c: AppContext): PublicCtx
@@ -1353,6 +1392,10 @@ nothing in the comparison that can throw.
 @/plugins/api :: function :: rows :: function rows<T = Record<string, unknown>>(result: unknown): T[]
 @/plugins/api :: interface :: ScheduledTask :: interface ScheduledTask
 @/plugins/api :: function :: sealSecret :: async function sealSecret(config: PluginConfig, plaintext: string): Promise<string>
+@/plugins/api :: function :: searchKnowledge :: async function searchKnowledge( ctx: Pick<PluginContext, 'db' | 'config' | 'env'> & { scope: AccessScope }, input: SearchKnowledgeInput ): Promise<SearchKnowledgeResult>
+@/plugins/api :: interface :: SearchKnowledgeHit :: interface SearchKnowledgeHit
+@/plugins/api :: interface :: SearchKnowledgeInput :: interface SearchKnowledgeInput
+@/plugins/api :: interface :: SearchKnowledgeResult :: interface SearchKnowledgeResult
 @/plugins/api :: interface :: SeedCtx :: interface SeedCtx extends Pick<PluginContext, 'db'>
 @/plugins/api :: member :: SeedCtx.tenantId :: tenantId: string
 @/plugins/api :: member :: SeedCtx.ownerId :: ownerId: string
@@ -1371,6 +1414,7 @@ nothing in the comparison that can throw.
 @/plugins/api :: member :: ServerPlugin.agents :: agents?: { [K in AgentKeyOf<S> & string]: AnyAgentDefinition }
 @/plugins/api :: member :: ServerPlugin.prompts :: prompts?: { [K in PromptKeyOf<S> & string]: PromptDefinition }
 @/plugins/api :: member :: ServerPlugin.agentTools :: agentTools?: (ctx: AgentToolContext) => Tool[] | Promise<Tool[]>
+@/plugins/api :: member :: ServerPlugin.knowledgeSources :: knowledgeSources?: (scope: AccessScope) => readonly string[] | Promise<readonly string[]>
 @/plugins/api :: member :: ServerPlugin.scheduledTasks :: scheduledTasks?: Readonly<Record<string, ScheduledTask[]>>
 @/plugins/api :: member :: ServerPlugin.emailHandlers :: emailHandlers?: readonly EmailHandler[]
 @/plugins/api :: member :: ServerPlugin.deploymentFeatures :: deploymentFeatures?: (config: AppConfig) => readonly string[]
@@ -1587,6 +1631,7 @@ nothing in the comparison that can throw.
 @/plugins/types :: member :: ServerPlugin.agents :: agents?: { [K in AgentKeyOf<S> & string]: AnyAgentDefinition }
 @/plugins/types :: member :: ServerPlugin.prompts :: prompts?: { [K in PromptKeyOf<S> & string]: PromptDefinition }
 @/plugins/types :: member :: ServerPlugin.agentTools :: agentTools?: (ctx: AgentToolContext) => Tool[] | Promise<Tool[]>
+@/plugins/types :: member :: ServerPlugin.knowledgeSources :: knowledgeSources?: (scope: AccessScope) => readonly string[] | Promise<readonly string[]>
 @/plugins/types :: member :: ServerPlugin.scheduledTasks :: scheduledTasks?: Readonly<Record<string, ScheduledTask[]>>
 @/plugins/types :: member :: ServerPlugin.emailHandlers :: emailHandlers?: readonly EmailHandler[]
 @/plugins/types :: member :: ServerPlugin.deploymentFeatures :: deploymentFeatures?: (config: AppConfig) => readonly string[]
