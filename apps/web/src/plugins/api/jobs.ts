@@ -85,10 +85,19 @@ export interface BackgroundMethods {
  * declared, so a declared variant with no handler is a type error in the plugin rather than a
  * dispatch failure in the host.
  */
-export interface JobCtx extends PluginContext, BackgroundMethods {}
+export interface JobCtx extends PluginContext, BackgroundMethods {
+  /**
+   * Which background context this is. A brand as much as a field: the few methods that only a
+   * job or a cron task may call (`ingestPlatformDocument`) take `JobCtx | CronCtx`, and the
+   * structurally identical `EmailCtx` / `PublicCtx` carry no `kind`, so passing one is a type error.
+   */
+  readonly kind: 'job'
+}
 
 /** One cron run. `waitUntil` exists here because a scheduled invocation genuinely has one. */
 export interface CronCtx extends PluginContext, BackgroundMethods {
+  /** See `JobCtx.kind`. */
+  readonly kind: 'cron'
   waitUntil(promise: Promise<unknown>): void
 }
 
@@ -114,6 +123,7 @@ export function backgroundMethods(ctx: PluginContext): BackgroundMethods {
 /** Adapt the core `JobContext`. The only place a plugin's job half names a core internal. */
 export function jobCtx(ctx: JobContext): JobCtx {
   return {
+    kind: 'job',
     db: ctx.db,
     config: ctx.config,
     logger: ctx.logger,
@@ -125,6 +135,7 @@ export function jobCtx(ctx: JobContext): JobCtx {
 /** Adapt the core `TaskContext`. */
 export function cronCtx(ctx: TaskContext): CronCtx {
   return {
+    kind: 'cron',
     db: ctx.db,
     config: ctx.config,
     logger: ctx.logger,

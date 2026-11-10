@@ -29,6 +29,7 @@ import type { EmailHandler } from '../api/email'
 import type { JobHandler } from '../api/queues/jobs'
 import type { ScheduledTask } from '../api/scheduled'
 import type { VisibilityResource } from '../api/services/access'
+import type { AccessScope } from '../api/services/access-sql'
 import type { AnyAgentDefinition } from '../api/services/agents/registry'
 import type { AgentToolContext } from '../api/services/agents/tools'
 import type { Tool } from '../api/services/ai/agent-loop'
@@ -223,6 +224,15 @@ export interface ServerPlugin<S extends SharedPlugin = SharedPlugin> {
    * logged and skipped, never fatal to the run.
    */
   agentTools?: (ctx: AgentToolContext) => Tool[] | Promise<Tool[]>
+  /**
+   * PLATFORM knowledge sources (`<id>:<kind>`, written with `ingestPlatformDocument`) the kit's
+   * `search_knowledge` tool also searches for this reader — chat and every agent run. Unioned
+   * across plugins and passed as `platformSources`; a source not namespaced `<id>:` is dropped
+   * with a warning, a throw is logged and contributes nothing. May be async and may depend on the
+   * scope (`[]` for a tenant without the plugin's feature). The host does NOT make platform
+   * documents readable through `get_document` or `list_documents` — those stay tenant-only.
+   */
+  knowledgeSources?: (scope: AccessScope) => readonly string[] | Promise<readonly string[]>
   /**
    * Cron expression → tasks, merged into `SCHEDULED_TASKS` (tasks on a cron core already runs
    * are appended after core's). A cron core does NOT run is declared in `plugin.json`

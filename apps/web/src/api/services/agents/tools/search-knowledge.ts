@@ -35,7 +35,7 @@ import type { Database } from '../../../../db/client'
 import type { AccessScope } from '../../access'
 import type { Tool } from '../../ai/agent-loop'
 import { AiNotConfiguredError } from '../../ai/errors'
-import { searchChunks } from '../../ai/retrieval'
+import { searchKnowledgeChunks } from '../../ai/retrieval'
 import type { AiEnv } from '../../ai/types'
 import { type KnowledgeBaseEntry, listKnowledgeDocuments } from './list-documents'
 
@@ -99,6 +99,12 @@ export interface SearchKnowledgeDocument {
   title: string
   /** Passages this document is split into, so `passage 3` reads as "3 of 12". */
   totalPassages: number
+  /**
+   * Set for a PLATFORM document (the app's own guide, shared by every workspace): it is not in
+   * this workspace's knowledge base, so `get_document` cannot open it — the passages are all of it
+   * the model can read.
+   */
+  platform?: true
   matchingPassages: number
   passages: SearchKnowledgePassage[]
 }
@@ -145,20 +151,34 @@ export interface AgentToolContext {
   maxDocumentChars?: number
 }
 
-export function searchKnowledgeTool(ctx: AgentToolContext): Tool<SearchKnowledgeInput> {
+export interface SearchKnowledgeToolOptions {
+  /**
+   * PLATFORM sources this reader's search also covers — the union of the installed plugins'
+   * `knowledgeSources(scope)`, computed by `buildAgentTools`. Absent or empty = the workspace's
+   * own documents only, exactly as before.
+   */
+  platformSources?: readonly string[]
+}
+
+export function searchKnowledgeTool(
+  ctx: AgentToolContext,
+  options: SearchKnowledgeToolOptions = {}
+): Tool<SearchKnowledgeInput> {
+  const platformSources = options.platformSources?.length ? options.platformSources : undefined
   return {
     name: SEARCH_KNOWLEDGE_TOOL,
     description:
       "Search this workspace's knowledge base — everything people uploaded or pasted — and get back the matching PASSAGES in full, grouped by the document they came from and located within it (`passage` n of `totalPassages`, and a `charOffset` you can hand to get_document to read around the match). Results are the CLOSEST passages, not a relevance filter: read them and discard any that do not answer the question, then search again with different wording. Use it before answering any question about the organisation's own material. Narrow to one document with `documentId`, read a whole document with `get_document`, or see what exists with `list_documents`. When nothing matches, the answer lists the documents that do exist so you can re-aim.",
     schema: searchKnowledgeInputSchema,
     async handler(input) {
-      let hits: Awaited<ReturnType<typeof searchChunks>>
+      let hits: Awaited<ReturnType<typeof searchKnowledgeChunks>>['hits']
       try {
-        hits = await searchChunks(ctx.db, ctx.cfg, ctx.env, ctx.scope, {
+        ;({ hits } = await searchKnowledgeChunks(ctx.db, ctx.cfg, ctx.env, ctx.scope, {
           query: input.query,
           limit: input.limit ?? SEARCH_KNOWLEDGE_DEFAULT_LIMIT,
           documentId: input.documentId,
-        })
+          ...(platformSources ? { platformSources } : {}),
+        }))
       } catch (err) {
         if (err instanceof AiNotConfiguredError) {
           return JSON.stringify({
@@ -188,6 +208,7 @@ export function searchKnowledgeTool(ctx: AgentToolContext): Tool<SearchKnowledge
           documentId: hit.documentId,
           title: hit.title,
           totalPassages: hit.documentPassages,
+          ...(hit.platform ? { platform: true as const } : {}),
           matchingPassages: 0,
           passages: [],
         }
@@ -215,6 +236,10 @@ export function searchKnowledgeTool(ctx: AgentToolContext): Tool<SearchKnowledge
       if (omitted > 0) {
         result.omitted = omitted
         result.hint = `${omitted} further passage(s) matched but did not fit this answer — ask a narrower question, or read a document from its passage's charOffset with get_document.`
+      }
+      if (!result.hint && [...byDocument.values()].some(d => d.platform)) {
+        result.hint =
+          'Documents marked platform are the app’s own guide, shared by every workspace — get_document cannot open them; quote the passages shown.'
       }
       const cut = [...byDocument.values()].flatMap(d => d.passages).some(p => p.truncated)
       if (cut && !result.hint) {

@@ -30,6 +30,17 @@ export function tenantRef(tenants: { id: AnyPgColumn }) {
 }
 
 /**
+ * `tenant_id uuid REFERENCES tenants(id) ON DELETE CASCADE` — NULLABLE. Only for the two tables
+ * that hold PLATFORM rows beside tenant rows (`documents`, `chunks`): a null tenant is a document
+ * that describes the app itself, readable by every tenant through `platformReadable()` and written
+ * only by the owner connection. Everything else uses `tenantRef()`; a nullable tenant on an
+ * ordinary domain table is a hole, not a feature.
+ */
+export function platformTenantRef(tenants: { id: AnyPgColumn }) {
+  return uuid('tenant_id').references(() => tenants.id, { onDelete: 'cascade' })
+}
+
+/**
  * The values of a resource's `visibility` column: `tenant` = every member of the
  * organisation, `groups` = only the groups granted in that resource's junction table (plus the
  * owner and admins). Here rather than beside one table because `documents` and `analytics_pages`

@@ -50,6 +50,7 @@ export type {
   AgentInterruptAnswer,
   AgentInterruptAsk,
   Decision,
+  FusedItem,
   PickOptions,
   PickResult,
   PluginAgent,
@@ -66,7 +67,10 @@ export type {
 export {
   AiNotConfiguredError,
   agentCtx,
+  anyTermTsquery,
+  candidatePoolSize,
   defineTool,
+  fuseByRank,
   recordUsage,
   toolCtx,
   toolInputSchema,
@@ -130,11 +134,24 @@ export type {
 } from './jobs'
 export { cronCtx, jobCtx } from './jobs'
 export type {
+  PlatformDocumentInput,
+  PlatformDocumentResult,
   PluginIngestFileInput,
   PluginIngestResult,
   PluginIngestTextInput,
+  SearchKnowledgeHit,
+  SearchKnowledgeInput,
+  SearchKnowledgeResult,
 } from './knowledge'
-export { deleteIngestedDocument, ingestDocument, ingestDocumentFile } from './knowledge'
+export {
+  deleteIngestedDocument,
+  ingestDocument,
+  ingestDocumentFile,
+  ingestPlatformDocument,
+  PlatformEmbeddingsError,
+  prunePlatformDocuments,
+  searchKnowledge,
+} from './knowledge'
 export type {
   AgentTraceContext,
   SpanKind,

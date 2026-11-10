@@ -100,5 +100,17 @@ Rules:
   predicate, never replaces it. `fullAccessScope(tenantId)` is for maintenance paths only. The dense
   half sets `hnsw.iterative_scan = relaxed_order` (`SET LOCAL`, in a transaction) WHEN a visibility
   predicate is in play — otherwise the index can exhaust its candidates and return nothing
+- **Platform documents** (`platform-documents.ts`): `tenant_id` NULL, readable by every tenant.
+  `ingestPlatformText` resolves `resolvePlatformEmbeddings(cfg, env)` (`EMBEDDINGS_API_KEY` →
+  `[ai]` → null; never a tenant's row) BEFORE anything else, so no embedder means
+  `PlatformEmbeddingsError` and nothing written. It embeds every chunk before its transaction
+  opens, so a provider failure leaves the old revision, and it is a no-op for the same title, text
+  and model. `prunePlatformText` deletes what a sync no longer has. Only `@/plugins/api` calls them
+  (Job/Cron contexts). `searchChunks(…, { sources?, platformSources?, signal? })` reaches them by
+  named source only, with a platform dense leg ranked by the PLATFORM query vector and limited to
+  documents embedded by that model. It shares one leg with the tenant corpus when both models
+  match, else uses one leg per model (`fuseDenseLegs`). `searchKnowledgeChunks` adds provenance and
+  `semantic`, and `lexicalFallback` turns a missing tenant embedder into keyword-only search.
+  Without the new params `searchChunks` answers exactly as before
 - `DELETE /api/ai/documents/:id` deletes the R2 original too (`deleteStoredFile`); `/api/files`
   refuses a `documents`-scope delete with 409 `owned_by_document`
