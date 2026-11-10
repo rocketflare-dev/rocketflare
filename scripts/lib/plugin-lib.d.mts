@@ -47,7 +47,7 @@ export function applyCoreEdits(text: string, edits: CoreEdit[]): string
 export function revertCoreEdits(text: string, edits: CoreEdit[]): string
 export function coreEditsByFile(manifest: { coreEdits?: CoreEdit[] }): Map<string, CoreEdit[]>
 
-export type FileRole = 'copy' | 'note' | 'fragment' | 'meta' | 'repo-only' | 'refused'
+export type FileRole = 'copy' | 'note' | 'fragment' | 'meta' | 'repo-only' | 'seed' | 'refused'
 export const FILE_ROLES: readonly FileRole[]
 export function pluginRoots(id: string): string[]
 export const PLUGIN_MANIFEST_FILE: string
@@ -58,12 +58,56 @@ export interface FileClassification {
   root?: string
   /** Set when the file belongs to a declared skill (`skills/<dir>/…` → `.claude/skills/<dir>/…`). */
   skill?: string
+  /** Set on a `seed`: the declared `hostFiles` path the file falls under. */
+  hostFile?: string
 }
 export function classifyPluginFile(
   relPath: string,
   id: string,
-  options?: { skills?: readonly string[] }
+  options?: { skills?: readonly string[]; hostFiles?: readonly HostFile[] }
 ): FileClassification
+
+/** `.claude/settings.json` — where a plugin's Claude Code hooks are merged. */
+export const CLAUDE_SETTINGS_FILE: string
+export const CLAUDE_HOOK_EVENTS: readonly string[]
+export const MAX_CLAUDE_HOOK_TIMEOUT: number
+/** One declared hook, flattened: `claudeHooks[event][]`. */
+export interface ClaudeHook {
+  event: string
+  matcher?: string
+  command: string
+  timeout?: number
+}
+export function parseClaudeHookCommand(command: unknown): { dir: string; script: string } | null
+export function claudeHookOwner(command: unknown, ids: readonly string[]): string | null
+export function pluginClaudeHooks(manifest: unknown): ClaudeHook[]
+export function claudeHookProblems(manifest: unknown): string[]
+export function ownedClaudeHooks(
+  settings: unknown,
+  id: string,
+  installedIds?: readonly string[]
+): ClaudeHook[]
+/** `text` null means "no file" — the input when absent, the output when nothing is left. */
+export function setClaudeHooks(
+  settingsText: string | null,
+  id: string,
+  hooks: readonly ClaudeHook[],
+  options?: { installedIds?: readonly string[] }
+): { text: string | null; added: ClaudeHook[]; removed: ClaudeHook[] }
+export function describeClaudeHook(hook: ClaudeHook): string
+
+/** One `hostFiles` entry: seeded at `path` from `from` (a file or a directory) in the plugin repo. */
+export interface HostFile {
+  path: string
+  from: string
+}
+export function hostFileRoots(id: string): string[]
+export function pluginHostFiles(manifest: unknown): HostFile[]
+export function hostFileProblems(manifest: unknown): string[]
+export function hostFileTarget(
+  relPath: string,
+  hostFiles: readonly HostFile[]
+): { target: string; entry: HostFile } | null
 
 /** `.claude/skills/` — where a plugin's declared skills land in a host. */
 export const SKILLS_ROOT: string
@@ -178,6 +222,10 @@ export interface PluginManifest {
   registries?: string[]
   /** Skill directories shipped at `skills/<dir>/`, each `<id>` or `<id>-*`; land in `.claude/skills/`. */
   skills?: string[]
+  /** Claude Code hooks merged into `.claude/settings.json`, each running a script in a declared skill. */
+  claudeHooks?: Record<string, Array<{ matcher?: string; command: string; timeout?: number }>>
+  /** Files seeded once into `docs/<id>/`, `apps/web/public/<id>/` or `apps/web/src/host/<id>/`. */
+  hostFiles?: HostFile[]
   requires?: PluginRequires
   dependencies?: Record<string, Record<string, string>>
   bindings?: Array<{
@@ -268,6 +316,10 @@ export interface AddPlan {
   barrels: BarrelKind[]
   /** Dependencies the host, or a peer plugin, already pins at another range. */
   clashes?: readonly DependencyClash[]
+  /** Each host file the install seeds (`seed`) or finds already there (`keep`). */
+  hostSeeds?: ReadonlyArray<{ target: string; state: 'seed' | 'keep' }>
+  /** Whether `.claude/settings.json` exists; false prints "which is created" beside the hooks. */
+  settingsExists?: boolean
   verify?: string | null
 }
 export function renderAddPlan(plan: AddPlan): string[]

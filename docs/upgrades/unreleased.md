@@ -42,6 +42,9 @@ Plugins can serve whole public hosts through a new `publicSites` seam, with a st
 - `Strict-Transport-Security` carries `includeSubDomains` only on the app's own host (`APP_URL`), so a public site on an apex domain does not pin its subdomains.
 - A public-site page can add CSP sources for itself by setting `PUBLIC_SITE_PAGE_CSP_HEADER` (JSON, `PublicSiteCsp`), exported from `@/plugins/api`. A `formAction` that is a path, such as `/submit`, is pinned to the request's origin.
 - The CLI's `ApiClient` gains `getBytes` and `postForm`, for download and multipart routes.
+- A plugin manifest may declare `"claudeHooks": { "<Event>": [{ "command", "matcher"?, "timeout"? }] }`. `pnpm plugin add` merges them into `.claude/settings.json` (creating it if absent), `upgrade` replaces them and `remove` takes out exactly them. A command may only be `node "$CLAUDE_PROJECT_DIR/.claude/skills/<dir>/<script>"` over a script in one of the plugin's declared skills, and the plugin's entries are found again by that skill directory. `plugin check` fails a declared hook missing from the file, an undeclared one in the plugin's namespace, and a missing script.
+- A plugin manifest may declare `"hostFiles": [{ "path", "from" }]`: a file or directory seeded into `docs/<id>/`, `apps/web/public/<id>/` or `apps/web/src/host/<id>/` only where absent. `upgrade` never touches them (it seeds only an entry the release adds), `remove` leaves them and lists them. The surface records them in a new `hostFiles` field, outside `paths`.
+- A plugin may import `@/host/<its own id>/…`; another id's host directory fails `tests/config/plugins.test.ts`.
 
 ## How to apply
 
@@ -59,6 +62,7 @@ Plugins can serve whole public hosts through a new `publicSites` seam, with a st
 12. Add `deploymentFeatures?: (config) => readonly string[]` to `ServerPlugin` in `apps/web/src/plugins/types.ts`, then port `apps/web/src/permissions/features.ts`, `apps/web/src/api/services/features.ts` and the two `await`s in `apps/web/src/api/middleware/auth.ts`. Any call of your own to `resolveFeatures` must now `await` it.
 13. Move the `@theme` block and both `@plugin "daisyui/theme"` blocks from `apps/web/src/ui/index.css` into `apps/web/src/shared/theme-tokens.css`, and `@import "../shared/theme-tokens.css";` directly after the Tailwind import. Port the matching change in `tests/ui/contrast.test.ts`.
 14. Port `getBytes` and `postForm` into `apps/cli/src/api.ts` if a plugin you install uses them.
+15. Port the `claudeHooks` and `hostFiles` handling in `scripts/plugin.mjs` and `scripts/lib/plugin-lib.mjs` (with `plugin-lib.d.mts` and the `hostFiles` field in `upgrade-lib.d.mts`), the `@/host/<id>` rule in `apps/web/tests/helpers/plugins.ts`, and `apps/web/tests/config/plugin-host-seams.test.ts`.
 
 ## Conflicts to expect
 
@@ -74,3 +78,4 @@ Plugins can serve whole public hosts through a new `publicSites` seam, with a st
 3. With no plugin declaring `publicSites`, `git diff apps/web/wrangler.toml apps/web/wrangler.staging.toml` shows no change to `run_worker_first` or `routes`.
 4. With a plugin serving `www.localhost` under `wrangler dev`, `curl -i http://www.localhost:3001/about` answers from the plugin with the public `Content-Security-Policy`, and `curl -i http://www.localhost:3001/api/me` answers 404.
 5. `curl -i http://localhost:3001/api/health` still answers from the app.
+6. `pnpm web test:config` passes, `tests/config/plugin-host-seams.test.ts` included.

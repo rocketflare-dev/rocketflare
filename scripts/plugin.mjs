@@ -68,8 +68,10 @@ import {
   BARRELS,
   barrelLines,
   buildPluginSurface,
+  CLAUDE_SETTINGS_FILE,
   checkRequirements,
   classifyPluginFile,
+  claudeHookProblems,
   coreEditsByFile,
   declaresProperty,
   declaresPublicSites,
@@ -77,8 +79,10 @@ import {
   dependencyClashes,
   dependencyDelta,
   describeClash,
+  describeClaudeHook,
   floorOf,
   hasBarrelLine,
+  hostFileProblems,
   imagesBindingProblems,
   isAppOwnedPath,
   isolationEvidence,
@@ -90,11 +94,15 @@ import {
   newlyAddedDependencies,
   nextAddedDependencies,
   nextPluginMigrationTag,
+  ownedClaudeHooks,
   PLUGIN_MANIFEST_FILE,
+  parseClaudeHookCommand,
   parsePluginRequirement,
   pinDeclaredRanges,
   pluginAnchor,
   pluginAppOwned,
+  pluginClaudeHooks,
+  pluginHostFiles,
   pluginIdProblem,
   pluginManifestProblems,
   pluginPlatformProblems,
@@ -112,6 +120,7 @@ import {
   restoreWorkerFirst,
   revertCoreEdits,
   SKILLS_ROOT,
+  setClaudeHooks,
   settleReprovision,
   skillDirProblem,
   skillFileProblems,
@@ -349,6 +358,67 @@ function restoreWranglerTomls(prefixes) {
 
 function writeWranglerTomls(routed) {
   for (const [file, text] of routed) writeFileSync(abs(file), text)
+}
+
+/** The host's `.claude/settings.json` as text, or null when it is absent. */
+const readClaudeSettings = () =>
+  existsSync(abs(CLAUDE_SETTINGS_FILE)) ? readFileSync(abs(CLAUDE_SETTINGS_FILE), 'utf8') : null
+
+/**
+ * `.claude/settings.json` with plugin `id`'s hooks set to `hooks`, computed in memory — or a stop
+ * with nothing written, when the file is not JSON. `changed` is false when the bytes are the same.
+ */
+function plannedClaudeSettings(host, id, hooks) {
+  const before = readClaudeSettings()
+  if (before === null && hooks.length === 0)
+    return { before, after: null, changed: false, added: [], removed: [] }
+  try {
+    const r = setClaudeHooks(before, id, hooks, { installedIds: host.plugins.map(p => p.id) })
+    return { before, after: r.text, changed: r.text !== before, added: r.added, removed: r.removed }
+  } catch (error) {
+    stop(
+      1,
+      `error: ${CLAUDE_SETTINGS_FILE} cannot be read as JSON (${error instanceof Error ? error.message : String(error)}).`,
+      'Fix its syntax first — the plugin merges its Claude Code hooks into it. Nothing has been written.'
+    )
+  }
+}
+
+/** Write (or, for `after === null`, delete) the settings file a plan computed. */
+function writeClaudeSettings(plan) {
+  if (!plan.changed) return
+  if (plan.after === null) rmSync(abs(CLAUDE_SETTINGS_FILE), { force: true })
+  else writeInto(CLAUDE_SETTINGS_FILE, plan.after)
+}
+
+/** The settings change, as plan lines. */
+const renderClaudeSettingsChange = (plan, heading) =>
+  plan.changed
+    ? [
+        '',
+        `${heading} (${CLAUDE_SETTINGS_FILE}${plan.before === null ? ', created' : plan.after === null ? ', deleted — nothing else was in it' : ''})`,
+        ...plan.removed.map(h => `  - ${describeClaudeHook(h)}`),
+        ...plan.added.map(h => `  + ${describeClaudeHook(h)}`),
+      ]
+    : []
+
+/**
+ * The hook problems `add` and `upgrade` refuse: the manifest's own, plus a command naming a script
+ * the release does not ship at `skills/<dir>/<script>`.
+ */
+function claudeHookScriptProblems(manifest, has) {
+  return pluginClaudeHooks(manifest).flatMap(h => {
+    const parsed = parseClaudeHookCommand(h.command)
+    if (!parsed) return []
+    const file = `skills/${parsed.dir}/${parsed.script}`
+    return has(file) ? [] : [`claudeHooks.${h.event} runs ${file}, which the plugin does not ship`]
+  })
+}
+
+/** Each host file a manifest seeds, with whether it is there already — what the plan prints. */
+function hostSeeds(files) {
+  const targets = [...new Set(files.filter(f => f.role === 'seed').map(f => f.target))]
+  return targets.map(target => ({ target, state: existsSync(abs(target)) ? 'keep' : 'seed' }))
 }
 
 /** A host workspace package's `package.json`, or null. Never throws: a caller is reporting. */
@@ -647,7 +717,31 @@ function cmdAdd(args, host) {
 
   // Every path, and the refusal that is the whole point of classifying them.
   const skills = pluginSkillDirs(m)
-  const files = source.files().map(p => ({ path: p, ...classifyPluginFile(p, m.id, { skills }) }))
+  const hostFiles = pluginHostFiles(m)
+  const files = source
+    .files()
+    .map(p => ({ path: p, ...classifyPluginFile(p, m.id, { skills, hostFiles }) }))
+  // Claude Code hooks run on the developer's machine, inside their coding agent, so the command is
+  // held to one shape — a script this plugin ships in a declared skill — and refused otherwise.
+  // Host files must land in the plugin's own namespaced host roots.
+  const seamProblems = [
+    ...claudeHookProblems(m),
+    ...claudeHookScriptProblems(m, rel => source.has(rel)),
+    ...hostFileProblems(m),
+    ...hostFiles
+      .filter(e => !files.some(f => f.role === 'seed' && f.hostFile === e.path))
+      .map(e => `hostFiles from ${JSON.stringify(e.from)} matches no file in the plugin`),
+  ]
+  if (seamProblems.length > 0) {
+    stop(
+      1,
+      `error: ${m.id} declares hooks or host files this kit cannot install:`,
+      ...seamProblems.map(p => `  ${p}`),
+      '',
+      'That is a bug in the plugin. Nothing has been written.'
+    )
+  }
+
   const refused = files.filter(f => f.role === 'refused')
   if (refused.length > 0) {
     stop(
@@ -657,7 +751,8 @@ function cmdAdd(args, host) {
       '',
       `A plugin owns ${pluginRoots(m.id).join(', ')} and nothing else — that is what makes an`,
       'install reversible by deleting a directory — plus the skills its manifest declares',
-      '(skills/<dir>/ → .claude/skills/<dir>/). This is a bug in the plugin, not in your tree.'
+      '(skills/<dir>/ → .claude/skills/<dir>/) and the host files it seeds ("hostFiles").',
+      'This is a bug in the plugin, not in your tree.'
     )
   }
 
@@ -699,9 +794,12 @@ function cmdAdd(args, host) {
     m.id,
     [m],
     [
-      ...files.filter(f => f.role === 'copy' || f.role === 'note').map(f => f.target),
+      ...files
+        .filter(f => f.role === 'copy' || f.role === 'note' || f.role === 'seed')
+        .map(f => f.target),
       anchorPath,
       ...manifestWriteTargets(m),
+      ...(pluginClaudeHooks(m).length > 0 ? [CLAUDE_SETTINGS_FILE] : []),
     ]
   )
 
@@ -754,6 +852,8 @@ function cmdAdd(args, host) {
   }
   const local = args.local || host.isKit
   const barrels = BARREL_KINDS.filter(k => files.some(f => f.path === BARRELS[k].half(m.id)))
+  const seeds = hostSeeds(files)
+  const settings = plannedClaudeSettings(host, m.id, pluginClaudeHooks(m))
   const plan = {
     manifest: m,
     source: { repo, subdir, ref: source.ref, commit: source.commit },
@@ -769,6 +869,8 @@ function cmdAdd(args, host) {
     files,
     byRoot,
     barrels,
+    hostSeeds: seeds,
+    settingsExists: settings.before !== null,
     verify: verifyText(source, m.version),
   }
   if (args.json) out(JSON.stringify(addPlanJson(plan), null, 2))
@@ -794,6 +896,15 @@ function cmdAdd(args, host) {
     targets.push(f.target)
     written += 1
   }
+  // Host files: only where nothing is there. A file the developer already has — from an earlier
+  // install, or their own — is theirs, and is never overwritten.
+  const seededTargets = []
+  for (const f of files) {
+    if (f.role !== 'seed' || existsSync(abs(f.target))) continue
+    writeInto(f.target, materialise(source.read(f.path), host.names))
+    seededTargets.push(f.target)
+  }
+  writeClaudeSettings(settings)
   // **The anchor is a COPY, not a second thing an author keeps in step.** It used to be a file the
   // plugin shipped alongside its release manifest, and the two drifted the moment a release stamped
   // one and not the other: every install of `analytics` 2.0.1 then failed the audit with "plugin.json
@@ -820,6 +931,7 @@ function cmdAdd(args, host) {
   const formatted = formatWritten([
     // Skills are markdown for an agent, not code Biome formats.
     ...targets.filter(t => !t.startsWith(SKILLS_ROOT)),
+    ...seededTargets,
     ...barrels.map(k => BARRELS[k].file),
     ...coreEdits.keys(),
   ])
@@ -840,6 +952,14 @@ function cmdAdd(args, host) {
     `✔ ${barrels.length} barrel line(s) written`,
     ...(coreEdits.size > 0
       ? [`✔ core edit(s) applied to ${[...coreEdits.keys()].join(', ')}`]
+      : []),
+    ...(seeds.length > 0
+      ? [
+          `✔ host files: ${seededTargets.length} seeded, ${seeds.filter(s => s.state === 'keep').length} kept (already there) — yours from now on`,
+        ]
+      : []),
+    ...(settings.changed
+      ? [`✔ ${settings.added.length} Claude Code hook(s) merged into ${CLAUDE_SETTINGS_FILE}`]
       : []),
     ...(routed.length > 0
       ? ['✔ run_worker_first and not_found_handling set in both tomls for public sites']
@@ -1089,10 +1209,21 @@ function cmdUpgrade(args, host) {
   const appOwned = [
     ...new Set([...pluginAppOwned(installedManifest), ...pluginAppOwned(targetManifest)]),
   ]
+  // Host files of BOTH sides are the developer's: a release changing one upstream is reported and
+  // never applied, and one a release stops declaring is not made the plugin's again.
+  const installedHostFiles = pluginHostFiles(installedManifest)
+  const targetHostFiles = pluginHostFiles(targetManifest ?? installedManifest)
+  const allHostFiles = [
+    ...targetHostFiles,
+    ...installedHostFiles.filter(e => !targetHostFiles.some(t => t.from === e.from)),
+  ]
   const changes = collectChanges(m, from, to, { relative })
   const files = changes.map(c => ({
     ...c,
-    ...classifyPluginFile(c.path, id, { skills: [...targetSkills, ...droppedSkills] }),
+    ...classifyPluginFile(c.path, id, {
+      skills: [...targetSkills, ...droppedSkills],
+      hostFiles: allHostFiles,
+    }),
   }))
   const refused = files.filter(f => f.role === 'refused')
   if (refused.length > 0) {
@@ -1102,6 +1233,41 @@ function cmdUpgrade(args, host) {
       ...refused.map(f => `  ${f.path}`)
     )
   }
+  // A host-file entry this release ADDS is seeded where nothing is there — the same rule `add`
+  // follows. One the installed release already declared is never written again, even if the
+  // developer deleted it: that deletion was theirs to make.
+  const newHostFiles = targetHostFiles.filter(e => !installedHostFiles.some(i => i.path === e.path))
+  const toFiles =
+    newHostFiles.length > 0
+      ? m.listFiles(to, subdir).map(p => (subdir === '' ? p : p.slice(subdir.length + 1)))
+      : []
+  const newSeeds = [
+    ...new Map(
+      toFiles.flatMap(p => {
+        const c = classifyPluginFile(p, id, { hostFiles: newHostFiles })
+        return c.role === 'seed' ? [[c.target, { path: p, target: c.target }]] : []
+      })
+    ).values(),
+  ].filter(s => !existsSync(abs(s.target)))
+  // The release's hooks replace the installed ones: computed now, so the plan can show the change
+  // and a settings file that is not JSON stops the upgrade before anything is written.
+  const settings = targetManifest
+    ? plannedClaudeSettings(host, id, pluginClaudeHooks(targetManifest))
+    : { changed: false, added: [], removed: [] }
+  const targetHookProblems = targetManifest
+    ? claudeHookScriptProblems(
+        targetManifest,
+        rel => m.tryShow(to, subdir === '' ? rel : `${subdir}/${rel}`).ok
+      )
+    : []
+  if (targetHookProblems.length > 0) {
+    stop(
+      1,
+      `error: ${pluginManifestPath} at ${to} cannot be installed — a bug in the plugin:`,
+      ...targetHookProblems.map(p => `  ${p}`),
+      'Nothing has been written.'
+    )
+  }
   refuseUnsafePaths(
     id,
     [targetManifest ?? {}, installedManifest, { anchor: surface.anchor, paths: surface.paths }],
@@ -1109,8 +1275,10 @@ function cmdUpgrade(args, host) {
       ...files
         .filter(f => (f.role === 'copy' || f.role === 'note') && f.change !== 'deleted')
         .map(f => f.target),
+      ...newSeeds.map(s => s.target),
       ...manifestWriteTargets(targetManifest ?? {}),
       ...manifestWriteTargets(installedManifest),
+      ...(settings.changed ? [CLAUDE_SETTINGS_FILE] : []),
     ]
   )
 
@@ -1126,7 +1294,12 @@ function cmdUpgrade(args, host) {
   const warnings = []
   const skillDeletes = []
   const appOwnedLeft = []
+  const hostFilesLeft = []
   for (const f of files) {
+    if (f.role === 'seed') {
+      hostFilesLeft.push(f.target)
+      continue
+    }
     if (f.target && isAppOwnedPath(f.target, appOwned)) {
       appOwnedLeft.push(f.target)
       continue
@@ -1242,6 +1415,8 @@ function cmdUpgrade(args, host) {
     files,
     notes: noteFacts,
     appOwnedLeft,
+    hostFiles: { left: hostFilesLeft, seeded: newSeeds.map(s => s.target) },
+    claudeHooks: { file: CLAUDE_SETTINGS_FILE, added: settings.added, removed: settings.removed },
     warnings,
     dependencies: deps.changes,
     dependencyClashes: deps.clashes,
@@ -1276,6 +1451,21 @@ function cmdUpgrade(args, host) {
       ...appOwnedLeft.map(f => `  ${f}`)
     )
   }
+  if (hostFilesLeft.length > 0) {
+    say(
+      '',
+      'Left alone (host files are yours; the release changed these upstream — compare by hand):',
+      ...hostFilesLeft.map(f => `  ${f}`)
+    )
+  }
+  if (newSeeds.length > 0) {
+    say(
+      '',
+      'Host files this release adds (seeded, then yours):',
+      ...newSeeds.map(s => `  ${s.target}`)
+    )
+  }
+  say(...renderClaudeSettingsChange(settings, 'Claude Code hooks replaced'))
   say('', ...renderDependencyDelta(deps))
   // Two sources for one question: a release may raise its floor in a NOTE, or simply by changing
   // the manifest — and the manifest's is the one that ends up recorded on the surface, so checking
@@ -1339,6 +1529,13 @@ function cmdUpgrade(args, host) {
   }
 
   for (const rel of added) writeInto(rel, readFileSync(path.join(workRoot, 'added', rel)))
+  for (const s of newSeeds) {
+    writeInto(
+      s.target,
+      materialise(m.showRaw(to, subdir === '' ? s.path : `${subdir}/${s.path}`), host.names)
+    )
+  }
+  writeClaudeSettings(settings)
   for (const rel of skillDeletes) rmSync(abs(rel), { force: true })
   // A skill the new release no longer declares goes as a WHOLE directory — the surface stops
   // naming it below, so anything left would be a file no surface claims.
@@ -1423,7 +1620,10 @@ function cmdUpgrade(args, host) {
     '',
     `✔ ${added.length} added, ${patches.length - rejected} patched` +
       (rejected > 0 ? `, ${rejected} with rejects (*.rej beside the file)` : '') +
-      (appOwnedLeft.length > 0 ? `, ${appOwnedLeft.length} appOwned left alone` : ''),
+      (appOwnedLeft.length > 0 ? `, ${appOwnedLeft.length} appOwned left alone` : '') +
+      (hostFilesLeft.length > 0 ? `, ${hostFilesLeft.length} host file(s) left alone` : '') +
+      (newSeeds.length > 0 ? `, ${newSeeds.length} host file(s) seeded` : ''),
+    ...(settings.changed ? [`✔ Claude Code hooks replaced in ${CLAUDE_SETTINGS_FILE}`] : []),
     ...(coreEditFiles.length > 0 ? [`✔ core edit(s) applied to ${coreEditFiles.join(', ')}`] : []),
     ...coreEditWarnings.map(w => `  warning: ${w}`),
     ...(installs + removals > 0
@@ -1481,6 +1681,11 @@ function cmdUpgrade(args, host) {
           ...targetSkills.map(d => `${skillTarget(d)}**`),
         ]),
       ]
+      // Every host file either release declared stays recorded: an entry a release drops is still
+      // the developer's file on disk, and nothing else would say whose it is.
+      const hostGlobs = allHostFiles.flatMap(e => [e.path, `${e.path}/**`])
+      if (hostGlobs.length > 0)
+        entry.hostFiles = [...new Set([...(entry.hostFiles ?? []), ...hostGlobs])]
     }
     writeManifestFile(recordFile, raw, { format: !host.sidecarIds.includes(id) })
     out(`✔ surface '${id}' stamped at ${toVersion ?? m.commitOf(to).slice(0, 12)}`)
@@ -1595,10 +1800,21 @@ function cmdRemove(args, host) {
   const anchorManifest = existsSync(abs(surface.anchor))
     ? JSON.parse(readFileSync(abs(surface.anchor), 'utf8'))
     : {}
+  // Exactly this plugin's hooks come out of the settings file, found by the skill directory their
+  // command names, so a hook the developer or another plugin added is never touched.
+  const settings = plannedClaudeSettings(host, id, [])
+  // Host files stay: they were seeded for the developer and are theirs. Listed, never deleted.
+  const hostFilesLeft = pluginHostFiles(anchorManifest)
+    .map(e => e.path)
+    .filter(p => existsSync(abs(p)))
   refuseUnsafePaths(
     id,
     [{ anchor: surface.anchor, paths: surface.paths, coreEdits: anchorManifest.coreEdits }],
-    [...directories, ...coreEditsByFile(anchorManifest).keys()]
+    [
+      ...directories,
+      ...coreEditsByFile(anchorManifest).keys(),
+      ...(settings.changed ? [CLAUDE_SETTINGS_FILE] : []),
+    ]
   )
   const tables = anchorManifest.schema?.tables ?? []
   const appOwnedEdits = changedAppOwnedFiles(anchorManifest, surface, host, args)
@@ -1631,6 +1847,15 @@ function cmdRemove(args, host) {
     'Barrel lines removed',
     ...barrels.map(k => `  ${BARRELS[k].file}  —  ${barrelLines(k, id).join('  +  ')}`),
     ...(barrels.length === 0 ? ['  (none)'] : []),
+    ...renderClaudeSettingsChange(settings, 'Claude Code hooks removed'),
+    ...(hostFilesLeft.length > 0
+      ? [
+          '',
+          'Left in place — host files the plugin seeded are yours; delete them by hand if you',
+          'no longer want them:',
+          ...hostFilesLeft.map(p => `  ${p}`),
+        ]
+      : []),
     '',
     `Surface '${id}' dropped from ${path.basename(host.sidecarIds.includes(id) ? host.sidecarPath : host.manifestPath)}`
   )
@@ -1652,6 +1877,8 @@ function cmdRemove(args, host) {
         {
           plugin: { id, version: surface.source?.version ?? null },
           deletes: { directories, barrels: barrels.map(k => BARRELS[k].file), tables },
+          claudeHooks: { file: CLAUDE_SETTINGS_FILE, removed: settings.removed },
+          hostFilesLeft,
           appOwned: appOwnedEdits,
           steps,
         },
@@ -1692,6 +1919,7 @@ function cmdRemove(args, host) {
     writeFileSync(abs(file), revertCoreEdits(readFileSync(abs(file), 'utf8'), edits))
   }
   writeWranglerTomls(routed)
+  writeClaudeSettings(settings)
   const dropped = dropSurface(host, id)
   say(
     '',
@@ -1701,6 +1929,12 @@ function cmdRemove(args, host) {
       ? [`✔ core edit(s) reverted in ${[...removedEdits.keys()].join(', ')}`]
       : []),
     ...(restoreRouting ? ['✔ run_worker_first and not_found_handling restored in both tomls'] : []),
+    ...(settings.changed
+      ? [`✔ ${settings.removed.length} Claude Code hook(s) removed from ${CLAUDE_SETTINGS_FILE}`]
+      : []),
+    ...(hostFilesLeft.length > 0
+      ? [`  left in place (yours): ${hostFilesLeft.join(', ')} — \`rm -r\` them if unwanted`]
+      : []),
     `✔ surface dropped from ${dropped.map(f => path.basename(f)).join(', ') || '(nowhere — it was not recorded)'}`,
     ...renderSteps(steps, 'Steps that remain')
   )
@@ -1807,6 +2041,18 @@ function cmdCheck(args, host) {
   // Every plugin's parsed manifest, kept for the checks that are about the COMBINATION rather than
   // about one plugin: two plugins cannot share a table name, and neither of them is wrong alone.
   const anchors = []
+  // The host's Claude Code settings, read once: every plugin's hooks are checked against it.
+  const settingsText = readClaudeSettings()
+  let claudeSettings = null
+  try {
+    claudeSettings = settingsText === null ? {} : JSON.parse(settingsText)
+  } catch (err) {
+    add('fail', 'claude-settings', {
+      file: CLAUDE_SETTINGS_FILE,
+      problem: `is not valid JSON (${err instanceof Error ? err.message : String(err)})`,
+      fix: 'fix the syntax — Claude Code ignores a settings file it cannot parse, hooks included',
+    })
+  }
   for (const s of host.plugins) {
     const id = s.id
     const vendored = isVendored(s.source, host.kitRepo)
@@ -1967,6 +2213,45 @@ function cmdCheck(args, host) {
         problem: `is in '${id}'s namespace and '${id}' does not declare it in "skills"`,
         fix: `add "${dir}" to "skills" in ${s.anchor} (and ship it at skills/${dir}/), or delete ${skillTarget(dir)}`,
       })
+    }
+
+    // **Claude Code hooks, both ways**, like skills. A declared hook missing from the settings file
+    // never runs; one the settings file attributes to this plugin that it does not declare is
+    // invisible to the next upgrade's replacement; one whose script is gone fails on every event.
+    if (claudeSettings) {
+      const declaredHooks = pluginClaudeHooks(anchor)
+      const key = h => JSON.stringify([h.event, h.matcher ?? null, h.command, h.timeout ?? null])
+      const present = ownedClaudeHooks(
+        claudeSettings,
+        id,
+        host.plugins.map(p => p.id)
+      )
+      for (const h of declaredHooks.filter(d => !present.some(p => key(p) === key(d)))) {
+        add('fail', `${id}:claude-hook:${h.event}`, {
+          file: CLAUDE_SETTINGS_FILE,
+          problem: `lacks the ${h.event} hook '${id}' declares (${h.command})`,
+          fix: `reinstall it with \`pnpm plugin upgrade ${id}\` (or \`plugin remove\` + \`add\`), or drop it from "claudeHooks" in ${s.anchor}`,
+        })
+      }
+      for (const h of present.filter(p => !declaredHooks.some(d => key(d) === key(p)))) {
+        add('fail', `${id}:claude-hook-undeclared:${h.event}`, {
+          file: CLAUDE_SETTINGS_FILE,
+          problem: `carries a ${h.event} hook running '${id}'s skill (${h.command}) that '${id}' does not declare`,
+          fix: `delete that hook from ${CLAUDE_SETTINGS_FILE}, or declare it in "claudeHooks" in ${s.anchor}`,
+        })
+      }
+      for (const h of declaredHooks) {
+        const parsed = parseClaudeHookCommand(h.command)
+        if (!parsed) continue
+        const script = `${skillTarget(parsed.dir)}${parsed.script}`
+        if (!existsSync(abs(script))) {
+          add('fail', `${id}:claude-hook-script:${h.event}`, {
+            file: script,
+            problem: `is missing, and '${id}'s ${h.event} hook runs it`,
+            fix: `reinstall it with \`pnpm plugin upgrade ${id}\`, or drop the hook from "claudeHooks"`,
+          })
+        }
+      }
     }
 
     // A DO or Workflow class reaches the Worker through the sixth barrel and nowhere else, so
