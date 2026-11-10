@@ -34,6 +34,7 @@
 import {
   type CreateExampleNoteRequest,
   createExampleNoteRequestSchema,
+  EXAMPLE_NOTE_CREATED_EVENT,
   EXAMPLE_NOTE_SUBJECT,
   EXAMPLE_PING_JOB,
   type ExampleNoteListQuery,
@@ -119,6 +120,13 @@ exampleFeatureRouter.post('/notes', validate('json', createExampleNoteRequestSch
   // The entity string IS this plugin's query-key family root, so everyone in the tenant re-queries
   // and the socket wiring costs no hook-side code.
   ctx.nudge(EXAMPLE_NOTES_ENTITY, row.id)
+  // A declared event (D42): recorded and fanned out to its subscribers (the audit handler, the
+  // note-stats agent's trigger) as queued jobs — never run here. Awaited, because the row is the
+  // durable half. The key names the NOTE, so a retried request emits once.
+  await ctx.emit(EXAMPLE_NOTE_CREATED_EVENT, {
+    payload: { noteId: row.id, title: row.title, ownerUserId: row.ownerUserId },
+    idempotencyKey: `note:${row.id}`,
+  })
   return c.json(row, 201)
 })
 

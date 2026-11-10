@@ -49,6 +49,9 @@ export type { MembershipRole } from '../tenants'
 export type {
   AgentKeyOf,
   DeclaredBy,
+  EventNameOf,
+  EventPayloadOf,
+  EventsOf,
   FeatureKeyOf,
   JobTypeOf,
   JobVariant,
@@ -56,4 +59,10 @@ export type {
   SharedPlugin,
   SubjectOf,
 } from './types'
-export { isPluginId, PLUGIN_ID_RE, pluginNamespace } from './types'
+export {
+  EVENT_NAME_RE,
+  eventNameProblem,
+  isPluginId,
+  PLUGIN_ID_RE,
+  pluginNamespace,
+} from './types'

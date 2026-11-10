@@ -27,6 +27,8 @@ import type { CoreJobType, JobOf, JobType } from '@rocketflare/shared/jobs'
 import type { Subjects } from '@rocketflare/shared/permissions'
 import {
   type AgentKeyOf,
+  type EventNameOf,
+  type EventPayloadOf,
   type FeatureKeyOf,
   isPluginId,
   type JobTypeOf,
@@ -46,6 +48,8 @@ import {
   ssoRequiredLoginPath,
 } from '@/api/auth/sso-policy'
 import { MAX_PUBLIC_MOUNT_BODY_BYTES } from '@/api/middleware/body-limit'
+import { AGENTS } from '@/api/services/agents/registry'
+import { APP_EVENT_HANDLERS } from '@/api/services/events/app-handlers'
 import { loadConfig } from '@/config'
 import type { Database } from '@/db/client'
 import { SERVER_PLUGINS, serverPlugins } from '@/plugins/server'
@@ -55,6 +59,7 @@ import {
   DECLARED_ENTRIES,
   deepImportIssue,
   emailHandlerIssues,
+  eventDeclarationIssues,
   headerItemIssues,
   isPluginEntry,
   isPluginFile,
@@ -247,6 +252,65 @@ describe('public sites', () => {
     expect(publicSiteIssues([{ ...site, csp: [{ imgSrc: ['data:'] }] }])).toHaveLength(1)
     expect(publicSiteIssues([{ ...site, csp: [{ connectSrc: ['*'] }] }])).toHaveLength(1)
     expect(publicSiteIssues([{ ...site, csp: [{ formAction: ['*'] }] }])).toHaveLength(1)
+  })
+})
+
+describe('plugin events (D42)', () => {
+  const declared = [
+    { id: 'sites', events: ['sites.form.submitted', 'sites.page.published'] },
+    { id: 'crm', events: ['crm.lead.created'] },
+  ]
+
+  it('accepts namespaced names, and subscriptions to them', () => {
+    expect(
+      eventDeclarationIssues({
+        declared,
+        handlers: [
+          { owner: 'crm', event: 'sites.form.submitted', name: 'make-lead' },
+          { owner: 'app', event: 'crm.lead.created', name: 'notify-sales' },
+        ],
+        agentEvents: [{ agentKey: 'crm.qualify', event: 'sites.form.submitted', kind: 'trigger' }],
+      })
+    ).toEqual([])
+  })
+
+  it('refuses a mis-prefixed, a kit. and a malformed name, and one declared twice', () => {
+    expect(
+      eventDeclarationIssues({
+        declared: [
+          ...declared,
+          { id: 'kit', events: ['kit.agent.started'] },
+          { id: 'crm', events: ['sites.form.submitted', 'crm.Lead', 'crm'] },
+        ],
+        handlers: [],
+        agentEvents: [],
+      })
+    ).toEqual([
+      "kit: event 'kit.agent.started' is in the core kit. namespace",
+      "crm: event 'sites.form.submitted' must start with 'crm.'",
+      "crm: event 'sites.form.submitted' is already declared by sites",
+      "crm: event 'crm.Lead' must be lower-case dot-separated segments after 'crm.'",
+      "crm: event 'crm' must start with 'crm.'",
+    ])
+  })
+
+  it('refuses a handler, trigger or binding on an undeclared event, and a bad or doubled name', () => {
+    expect(
+      eventDeclarationIssues({
+        declared,
+        handlers: [
+          { owner: 'crm', event: 'sites.form.sent', name: 'make-lead' },
+          { owner: 'crm', event: 'sites.form.submitted', name: 'make-lead' },
+          { owner: 'app', event: 'crm.lead.created', name: 'Notify Sales' },
+        ],
+        agentEvents: [{ agentKey: 'crm.qualify', event: 'crm.lead.made', kind: 'bindable' }],
+      })
+    ).toEqual([
+      "crm: handler 'make-lead' subscribes to undeclared event 'sites.form.sent'",
+      "crm: handler name 'make-lead' is used twice",
+      "app: handler name 'Notify Sales' must match ^[a-z][a-z0-9-]*$",
+      "agent crm.qualify: bindable names undeclared event 'crm.lead.made'",
+    ])
   })
 })
 
@@ -770,6 +834,45 @@ describe('installed plugins', () => {
     ])
   })
 
+  it('declares its events under its own id, once, and subscribes only to declared ones', () => {
+    const issues = eventDeclarationIssues({
+      declared: serverPlugins.map(p => ({
+        id: p.shared.id,
+        events: Object.keys(p.shared.events ?? {}),
+      })),
+      handlers: [
+        ...serverPlugins.flatMap(p =>
+          (p.eventHandlers ?? []).map(h => ({ owner: p.shared.id, event: h.event, name: h.name }))
+        ),
+        ...APP_EVENT_HANDLERS.map(h => ({ owner: 'app', event: h.event, name: h.name })),
+      ],
+      agentEvents: Object.values(AGENTS).flatMap(a => [
+        ...(a.triggers ?? []).map(t => ({
+          agentKey: a.meta.key,
+          event: t.event,
+          kind: 'trigger' as const,
+        })),
+        ...(a.bindable ?? []).map(b => ({
+          agentKey: a.meta.key,
+          event: b.event,
+          kind: 'bindable' as const,
+        })),
+      ]),
+    })
+    expect(issues).toEqual([])
+  })
+
+  it('lists in plugin.json "events" exactly the events its shared entry declares', () => {
+    for (const plugin of serverPlugins) {
+      const anchor = path.join(REPO_ROOT, `apps/web/src/plugins/${plugin.shared.id}/plugin.json`)
+      if (!existsSync(anchor)) continue
+      const manifest = JSON.parse(readFileSync(anchor, 'utf8')) as { events?: string[] }
+      expect([...(manifest.events ?? [])].sort(), plugin.shared.id).toEqual(
+        Object.keys(plugin.shared.events ?? {}).sort()
+      )
+    }
+  })
+
   it('namespaces every query-key root it declares', () => {
     const issues = uiPlugins.flatMap(p =>
       queryKeyRootIssues(p.shared.id, Object.keys(p.queryKeys ?? {}))
@@ -866,6 +969,7 @@ describe('the closed sets a plugin opens', () => {
       | 'document.convert'
       | 'chat.compact'
       | 'tenant.purge'
+      | 'event.deliver'
     >()
     // A plugin may only WIDEN the kit's set — the property the whole "variants are data" change
     // bought. Which types a particular plugin adds is that plugin's own test to make.
@@ -900,11 +1004,24 @@ describe('the closed sets a plugin opens', () => {
       jobs: [
         z.object({ type: z.literal('orders.sync'), payload: z.object({ tenantId: z.string() }) }),
       ],
+      events: {
+        'orders.order.placed': z.object({ orderId: z.string(), total: z.number() }),
+        'orders.order.shipped': z.object({ orderId: z.string() }),
+      },
     } as const satisfies SharedPlugin
 
     type Orders = typeof ordersShared
     expectTypeOf<JobTypeOf<Orders>>().toEqualTypeOf<'orders.sync'>()
     expectTypeOf<AgentKeyOf<Orders>>().toEqualTypeOf<'orders-triage'>()
     expectTypeOf<FeatureKeyOf<Orders>>().toEqualTypeOf<'orders-beta'>()
+    // D42: the names a plugin declares, and each one's payload — what types `ctx.emit` and a
+    // handler's `event.payload`, so an undeclared name or a wrong field is a compile error.
+    expectTypeOf<EventNameOf<Orders>>().toEqualTypeOf<
+      'orders.order.placed' | 'orders.order.shipped'
+    >()
+    expectTypeOf<EventPayloadOf<Orders, 'orders.order.placed'>>().toEqualTypeOf<{
+      orderId: string
+      total: number
+    }>()
   })
 })

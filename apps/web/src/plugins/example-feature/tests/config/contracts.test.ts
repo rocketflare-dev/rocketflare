@@ -18,6 +18,7 @@ import {
   EXAMPLE_FEATURE_FLAG,
   EXAMPLE_FEATURE_ID,
   EXAMPLE_NOTE_BODY_MAX,
+  EXAMPLE_NOTE_CREATED_EVENT,
   EXAMPLE_NOTE_SUBJECT,
   EXAMPLE_NOTE_TITLE_MAX,
   EXAMPLE_PING_JOB,
@@ -25,6 +26,7 @@ import {
   updateExampleNoteRequestSchema,
 } from '@rocketflare/shared/plugins/example-feature/index'
 import { describe, expect, expectTypeOf, it } from 'vitest'
+import type { EventName, EventPayload } from '@/plugins/api'
 import { exampleFeatureServer } from '../..'
 import { EXAMPLE_NOTES_ENTITY } from '../../shared'
 import { exampleFeatureUi } from '../../ui'
@@ -117,5 +119,20 @@ describe('what this plugin adds to the core closed sets', () => {
 
   it('unions its CASL subject in beside the core ones', () => {
     expectTypeOf<'ExampleNote'>().toMatchTypeOf<Subjects>()
+  })
+})
+
+describe('its event (D42)', () => {
+  it('is declared under its id, and reaches the host’s event types', () => {
+    expect(Object.keys(exampleFeatureShared.events)).toEqual([EXAMPLE_NOTE_CREATED_EVENT])
+    expect(EXAMPLE_NOTE_CREATED_EVENT.startsWith(`${EXAMPLE_FEATURE_ID}.`)).toBe(true)
+    // A name nobody declares is not an `EventName`, so `ctx.emit('typo', …)` is a compile error.
+    expectTypeOf<typeof EXAMPLE_NOTE_CREATED_EVENT>().toExtend<EventName>()
+    expectTypeOf<'example-feature.nope'>().not.toExtend<EventName>()
+    expectTypeOf<EventPayload<typeof EXAMPLE_NOTE_CREATED_EVENT>>().toEqualTypeOf<{
+      noteId: string
+      title: string
+      ownerUserId: string | null
+    }>()
   })
 })

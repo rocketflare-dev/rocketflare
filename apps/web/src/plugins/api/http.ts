@@ -34,6 +34,7 @@ import { can as canDo, guardPermission } from '../../api/middleware/permissions'
 import type { SetResourceGroupsInput } from '../../api/services/access'
 import type { AccessScope } from '../../api/services/access-sql'
 import { accessScopeOf } from '../../api/services/access-sql'
+import type { TenantEmit } from '../../api/services/events/types'
 import { enqueueJob, enqueueJobs } from '../../api/services/jobs'
 import type { Realtime } from '../../api/services/realtime'
 import type { StorageService } from '../../api/services/storage'
@@ -51,6 +52,7 @@ import { uuidParam, withAuthAndDb } from '../../api/utils/routes/route-helpers'
 import { createRouter } from '../../api/utils/routes/router'
 import { validate } from '../../api/utils/routes/validate'
 import { isAdminLevel, isGlobalAdmin, isOwnerLevel, type PluginAuth } from './auth'
+import { tenantEmitter } from './emit'
 import { durableObject, nudgeEntity } from './events'
 import { filesStorage } from './storage'
 import type { PluginContext } from './types'
@@ -190,6 +192,12 @@ export interface RequestCtx extends PluginContext, PluginAuth {
   nudge(entity: string, id?: string): void
   /** R2, or a 503 `storage_not_configured` — loud, because a silently absent bucket loses bytes. */
   storage(): StorageService
+  /**
+   * Emit a declared plugin event (D42) in THIS organisation: validated (400), recorded, one
+   * delivery queued per subscriber — awaited, because the row is the durable half and a 400 must
+   * reach the caller. The handlers run in jobs, never in the request.
+   */
+  emit: TenantEmit
   /** A per-tenant Durable Object stub. The plugin never spells the name; the prefix is structural. */
   durableObject<T extends Rpc.DurableObjectBranded | undefined = undefined>(
     namespace: DurableObjectNamespace<T>,
@@ -330,6 +338,10 @@ export function requestCtx(c: AppContext): RequestCtx {
     },
     nudge: (entity, id) => nudgeEntity(route.realtime, route.tenantId, entity, id),
     storage: () => filesStorage(c.env),
+    emit: tenantEmitter(
+      { db: route.db, config: route.cfg, logger: route.logger, env: c.env },
+      route.tenantId
+    ),
     durableObject: (namespace, key) => durableObject(namespace, route.tenantId, key),
 
     notFound: (message = 'Not found', code = ERROR_CODES.notFound) => {

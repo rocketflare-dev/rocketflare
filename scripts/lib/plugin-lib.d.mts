@@ -226,6 +226,8 @@ export interface PluginManifest {
   claudeHooks?: Record<string, Array<{ matcher?: string; command: string; timeout?: number }>>
   /** Files seeded once into `docs/<id>/`, `apps/web/public/<id>/` or `apps/web/src/host/<id>/`. */
   hostFiles?: HostFile[]
+  /** D42: the events its shared entry declares, each `<id>.<name>` (never `kit.`). */
+  events?: string[]
   requires?: PluginRequires
   dependencies?: Record<string, Record<string, string>>
   bindings?: Array<{
@@ -532,6 +534,12 @@ export interface TableClash {
   /** The other plugins declaring the same name, sorted. */
   others: string[]
 }
+export const EVENT_NAME_RE: RegExp
+export function eventNameProblem(pluginId: string, name: unknown): string | null
+export function eventClashes(
+  manifests?: readonly ({ id?: string; events?: unknown } | null | undefined)[]
+): { event: string; id: string; others: string[] }[]
+export function undeclaredManifestEvents(events?: readonly unknown[], sharedSource?: string): string[]
 export function tableClashes(
   manifests?: ReadonlyArray<PluginManifest | null | undefined>
 ): TableClash[]

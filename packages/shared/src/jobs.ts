@@ -88,6 +88,20 @@ export const tenantPurgePayloadSchema = z.object({
 })
 export type TenantPurgePayload = z.infer<typeof tenantPurgePayloadSchema>
 
+/**
+ * Deliver one recorded plugin event (D42) to ONE subscriber — a plugin's `eventHandlers` entry, the
+ * app's own, or an agent trigger. One message per subscriber, so a failing one retries alone.
+ * Ids only: the payload may hold personal data, so it stays in `plugin_events` and the handler
+ * reads it from there under the tenant predicate. `subscriber` is the registry's id for it
+ * (`handler:<plugin id>:<name>`, `app:<name>`, `trigger:<agent key>:<index>`).
+ */
+export const eventDeliverPayloadSchema = z.object({
+  tenantId: z.string().uuid(),
+  eventId: z.string().uuid(),
+  subscriber: z.string().min(1).max(300),
+})
+export type EventDeliverPayload = z.infer<typeof eventDeliverPayloadSchema>
+
 // ---- Envelope ------------------------------------------------------------------------------
 
 /**
@@ -101,6 +115,7 @@ export const CORE_JOB_VARIANTS = [
   z.object({ type: z.literal('document.convert'), payload: documentConvertPayloadSchema }),
   z.object({ type: z.literal('chat.compact'), payload: chatCompactPayloadSchema }),
   z.object({ type: z.literal('tenant.purge'), payload: tenantPurgePayloadSchema }),
+  z.object({ type: z.literal('event.deliver'), payload: eventDeliverPayloadSchema }),
 ] as const
 
 type PluginJobVariant = NonNullable<DeclaredBy<(typeof SHARED_PLUGINS)[number], 'jobs'>>[number]

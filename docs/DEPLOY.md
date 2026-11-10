@@ -246,7 +246,7 @@ missing, `pnpm plugin remove` (or an `upgrade` whose release drops `publicSites`
 
 | Expression | Task | What it does | Local trigger (`wrangler dev` never fires crons itself) |
 |---|---|---|---|
-| `0 4 * * *` | `pruneExpired`, `pruneAiSpans` | deletes expired sessions, consumed/expired magic links, invitations older than 30 days; then `ai_spans` older than `OBSERVABILITY_SPAN_RETENTION_DAYS` (14), one DELETE across every tenant (D32) | `curl "http://localhost:3001/cdn-cgi/local/scheduled?cron=0+4+*+*+*"` |
+| `0 4 * * *` | `pruneExpired`, `pruneAiSpans`, `pruneEvents` | deletes expired sessions, consumed/expired magic links, invitations older than 30 days; then `ai_spans` older than `OBSERVABILITY_SPAN_RETENTION_DAYS` (14), one DELETE across every tenant (D32); then `plugin_events` older than `EVENTS_RETENTION_DAYS` (7, optional var — the payloads may hold personal data, D42) | `curl "http://localhost:3001/cdn-cgi/local/scheduled?cron=0+4+*+*+*"` |
 | `15 * * * *` | `analytics.refreshFactTables` (the analytics PLUGIN, D31) | every registered fact table, per tenant, DELETE+INSERT in one transaction; per-tenant failures collected, logged as a warning, never abort the run. The expression is the plugin's `crons` declaration and the task is `ServerPlugin.scheduledTasks` — **a task under an expression no toml declares simply never runs** | `curl "http://localhost:3001/cdn-cgi/local/scheduled?cron=15+*+*+*+*"` — or, for one organisation, `rocketflare analytics refresh-facts` |
 
 Health of the fact tables: `GET /api/analytics/facts/status` (admin+; `stale` = newest source row

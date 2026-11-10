@@ -29,7 +29,7 @@ import {
   pgErrorCode,
   rows,
 } from '@/db/client'
-import { aiSpans, featureFlags } from '@/db/schema'
+import { aiSpans, featureFlags, pluginEvents } from '@/db/schema'
 import { withTenantScope } from '@/db/tenant-scope'
 import { runMigrations } from '../../scripts/migrate'
 import { createTestSession, createTestTenantWithUser } from '../helpers/auth'
@@ -149,6 +149,33 @@ describe(`database driver: ${driver}`, () => {
     ).toBe(2)
     expect(affected(await db.delete(aiSpans).where(eq(aiSpans.tenantId, tenant.id)))).toBe(2)
     expect(affected(await db.delete(aiSpans).where(eq(aiSpans.tenantId, tenant.id)))).toBe(0)
+  })
+
+  it('onConflictDoNothing().returning() on a PARTIAL unique index: a row, then none (plugin events)', async () => {
+    const { db } = open()
+    const { tenant } = await createTestTenantWithUser(fixtures)
+    const event = (idempotencyKey: string | null) => ({
+      tenantId: tenant.id,
+      name: 'driver-probe.thing.happened',
+      source: 'driver-probe',
+      payload: { n: 1, nested: { ok: true } },
+      idempotencyKey,
+    })
+    const [first] = await db
+      .insert(pluginEvents)
+      .values(event('k1'))
+      .onConflictDoNothing()
+      .returning()
+    expect(first?.payload).toEqual({ n: 1, nested: { ok: true } })
+    expect(first?.createdAt).toBeInstanceOf(Date)
+    expect(
+      await db.insert(pluginEvents).values(event('k1')).onConflictDoNothing().returning()
+    ).toEqual([])
+    // NULL keys are never equal: both keyless rows land.
+    expect(affected(await db.insert(pluginEvents).values([event(null), event(null)]))).toBe(2)
+    expect(
+      affected(await db.delete(pluginEvents).where(eq(pluginEvents.tenantId, tenant.id)))
+    ).toBe(3)
   })
 
   it('the query builder maps rows (timestamps as Date) the same under both', async () => {

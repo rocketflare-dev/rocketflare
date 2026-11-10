@@ -39,6 +39,12 @@ To turn it on, a global admin opens <http://localhost:3000/admin/feature-flags> 
 A new organisation gets one welcome note from the `onTenantCreated` hook. Members may read and
 create; editing and deleting other people's notes is admin-level (`ExampleNote` grants).
 
+Creating a note also EMITS `example-feature.note.created` (D42). Two subscribers get their own
+queued delivery: the handler writes an `example_note.created` row to the activity feed, and the
+`example-feature.note-stats` agent is triggered (not for a title starting "draft") — it shows on
+<http://localhost:3000/agents> with the event as who started it. `GET /api/agents/bindable?event=
+example-feature.note.created` lists it as bindable too.
+
 ## 3. The smoke job — producer → queue → consumer
 
 `pnpm cli example-feature ping` calls `POST /api/example-feature/ping`, which ENQUEUES

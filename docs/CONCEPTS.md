@@ -1342,6 +1342,36 @@ as merging a PR. A plugin repo mirrors the host tree and ships **no migration, n
   It is part of `feature-agents` and reaches the runtime by a function-scope import (the agent
   registry reads the plugin barrel). `@testkit/unit`'s `makeJobCtx` / `makeCronCtx` /
   `makeEmailCtx` record every call in `startedRuns` and take a `startAgentRun` replacement.
+- **Plugin events (D42)**: "something happened in a plugin" as a declared, durable, tenant-scoped
+  fact — the way an inbound email is something that happened outside. **Declare** in the shared
+  entry, `events: { '<id>.<thing>.<happened>': zodSchema }` (never `kit.`; listed in `plugin.json`
+  `"events"`; `plugins.test.ts` and `plugin check` refuse a mis-prefixed, colliding or undeclared
+  name), so `EventName` / `EventPayload<E>` are derived types. **Emit** with `ctx.emit(name,
+  { payload, idempotencyKey? })` on `RequestCtx`, `AgentCtx` and `EventCtx` (tenant-bound), or
+  `{ tenantId, payload, … }` on `JobCtx`, `CronCtx`, `PublicCtx` and `EmailCtx`: it validates the
+  payload (400), writes one `plugin_events` row (deduplicated per `(tenant, name, key)`; an emit
+  that recorded but never queued is re-queued by the same key), then queues ONE `event.deliver`
+  job per subscriber carrying ids only — it never runs a handler. The payload is kept
+  `EVENTS_RETENTION_DAYS` (7, the nightly `pruneEvents` task), purged with the tenant, re-read and
+  re-validated under the tenant predicate on delivery, and never logged. **Subscribe** with
+  `ServerPlugin.eventHandlers: [{ event, name, handle(event, ctx) }]` (adapt with `eventCtx(ctx)`:
+  tenant-bound `emit`, `enqueue`, `nudge`, `features()`, `storage()`, `startAgentRun`,
+  `startBoundAgent`) or, for a copy's own code, `APP_EVENT_HANDLERS` in
+  `apps/web/src/api/services/events/app-handlers.ts` (app-owned: `kit:upgrade` never ports it).
+  A throw retries that subscriber alone (the jobs backoff); a 4xx `ApiError` is logged and acked.
+  **Agent triggers**: `AgentDefinition.triggers: [eventTrigger(event, { where?, input })]` starts
+  a run per matching event through `enqueueRun` (input schema, exclusive slot, active-run cap,
+  daily budget), idempotent per (event, agent) via the run key `event:<eventId>`; the run records
+  `trigger_event` / `trigger_event_id`, the runs page and run page show the event, and the
+  `agent_run.requested` activity row says `via: 'event'`. **Bindable agents** (a no-code "On
+  submit, start" picker): an agent opts in with `bindable: [eventBinding(event, { input })]`;
+  `GET /api/agents/bindable?event=` (any member) and `listBindableAgents(event)` list them;
+  `EventCtx.startBoundAgent(key)` starts one for the DELIVERED event and re-checks the opt-in on
+  the server — an unknown key, a plain agent and a merely triggered one are all 403
+  `agent_not_bindable`, so a forged key starts nothing. `@testkit/integration`'s
+  `deliverEvents(env, db)` runs the queued deliveries through the real consumer. Worked example:
+  `example-feature` (`POST /notes` emits `example-feature.note.created`, `events/note-created.ts`
+  audits it, `agents/note-stats.ts` is triggered unless the title starts "draft", and bindable).
 - **Knowledge ingest (D34)**: `ingestDocument` / `ingestDocumentFile` / `deleteIngestedDocument`
   over the kit's ingest paths (§9). With an `externalId`, the same `(tenant, source, externalId)`
   UPDATES the row — text, owner, visibility, grants, chunks, the stored original — so a sync can
@@ -1428,6 +1458,24 @@ as merging a PR. A plugin repo mirrors the host tree and ships **no migration, n
 | 24 | Inbound email is a slot keyed by local part; the host dispatches and rejects, the plugin parses, authenticates and stores |
 | 25 | A background context starts an agent run through the route's own `enqueueRun`; idempotency is a derived run id, not a new column |
 | 26 | Plugin identity is `identityFor(c, id)` / `provisionFor(ctx, id)`, links under `plugin:<id>`, memberships through the core `idp` primitives; login buttons are declared, never rendered by the plugin |
+
+**D42 decisions** (plugin events and agent triggers):
+
+| # | Choice |
+|---|---|
+| 1 | Events are declared in the shared entry (zod), namespaced `<id>.`, never `kit.`; the registry is server-side, derived from the shared barrel |
+| 2 | Emit records then queues; one delivery job per subscriber, ids only; the payload lives in `plugin_events` for `EVENTS_RETENTION_DAYS` |
+| 3 | Emit on a tenant-bound context takes no `tenantId`; only the background contexts name it |
+| 4 | A trigger and a binding start through `enqueueRun` with the key `event:<eventId>` — at most one run per (event, agent) |
+| 5 | `triggeredBy` stays a person; the event is its own two columns on `agent_runs` |
+| 6 | A bound start is a method on the DELIVERED event's context, so neither the event nor its tenant can be forged, and the opt-in is re-checked there |
+| 7 | A subscriber's 4xx refusal is acked; anything else retries that subscriber only |
+
+**Plugin events known gaps (D42):** an app cannot DECLARE events of its own (it only subscribes,
+through `APP_EVENT_HANDLERS`); emit is not transactional with the caller's write (emit after the
+row is stored, with a key naming it); a binding has no `where`; there is no event log UI and no
+replay of a pruned event; subscribers run in queue order, with no ordering guarantee between
+events.
 
 **Known gaps:** no sandbox, review or signing; no rename migrations (expand/contract only); no
 cross-plugin FK tooling or `many()` onto core tables; `grants` is additive by convention only;

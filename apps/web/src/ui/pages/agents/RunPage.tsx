@@ -153,8 +153,9 @@ function RunWorkspace({ run, agent }: { run: AgentRunWithEvents; agent?: AgentIn
     return parsed?.success && entry?.artifacts ? entry.artifacts(parsed.data, run.id) : []
   }, [rows, run.artifacts, run.agentKey, run.output, run.id])
 
-  const requestedBy =
-    run.requestedByUserId === null
+  const requestedBy = run.triggerEvent
+    ? `the ${run.triggerEvent} event`
+    : run.requestedByUserId === null
       ? 'system'
       : run.requestedByUserId === user?.id
         ? 'you'

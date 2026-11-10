@@ -29,12 +29,17 @@
  * to it — but it is written `off`, which evaluates identically to no row at all for every tenant
  * that has no override. That is the whole of this file's global footprint.
  */
-import { EXAMPLE_FEATURE_FLAG } from '@rocketflare/shared/plugins/example-feature/index'
+import {
+  EXAMPLE_FEATURE_FLAG,
+  EXAMPLE_NOTE_CREATED_EVENT,
+  EXAMPLE_NOTE_STATS_AGENT,
+} from '@rocketflare/shared/plugins/example-feature/index'
 import {
   createTestEnv,
   createTestSession,
   createTestTenant,
   createTestUser,
+  deliverEvents,
   json,
   linkUserToTenant,
   request,
@@ -45,9 +50,11 @@ import {
 import { makeCronCtx, makeJobCtx, makeToolCtx } from '@testkit/unit'
 import { and, eq, inArray } from 'drizzle-orm'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { listBindableAgents } from '@/plugins/api'
 import { allTables } from '@/plugins/api/peers'
 import { onTenantCreated } from '../../api/hooks'
 import { exampleNotes } from '../../db/schema'
+import { EXAMPLE_NOTE_CREATED_ACTIVITY } from '../../events/note-created'
 import { exampleAgentTools, listExampleNotesTool } from '../../tools/list-example-notes'
 
 const db = setupTestDatabase()
@@ -380,5 +387,83 @@ describe('list_example_notes', () => {
     ) as { total: number; hint?: string }
     expect(empty.total).toBe(0)
     expect(empty.hint).toMatch(/No example notes/)
+  })
+})
+
+describe('its event (D42)', () => {
+  const post = (env: ReturnType<typeof createTestEnv>, title: string) =>
+    request(`${BASE}/notes`, { method: 'POST', headers: memberCookie }, { env, json: { title } })
+
+  it('a new note emits it once; the handler audits it and the trigger starts the agent', async () => {
+    const env = createTestEnv()
+    const res = await post(env, 'Quarterly plan for the team')
+    expect(res.status).toBe(201)
+    const note = await json<{ id: string }>(res)
+
+    const { pluginEvents, activityEvents, agentRuns } = allTables()
+    const [event] = await db
+      .select()
+      .from(pluginEvents)
+      .where(
+        and(eq(pluginEvents.tenantId, tenantId), eq(pluginEvents.idempotencyKey, `note:${note.id}`))
+      )
+    expect(event).toMatchObject({
+      name: EXAMPLE_NOTE_CREATED_EVENT,
+      payload: { noteId: note.id, title: 'Quarterly plan for the team', ownerUserId: memberId },
+    })
+
+    const deliveries = await deliverEvents(env, db)
+    expect(deliveries.map(d => [d.subscriber, d.outcome])).toEqual([
+      ['handler:example-feature:record-activity', 'ack'],
+      [`trigger:${EXAMPLE_NOTE_STATS_AGENT}:0`, 'ack'],
+    ])
+    const audit = await db
+      .select()
+      .from(activityEvents)
+      .where(
+        and(
+          eq(activityEvents.tenantId, tenantId),
+          eq(activityEvents.type, EXAMPLE_NOTE_CREATED_ACTIVITY),
+          eq(activityEvents.subjectId, note.id)
+        )
+      )
+    expect(audit).toHaveLength(1)
+    const runs = await db
+      .select()
+      .from(agentRuns)
+      .where(and(eq(agentRuns.tenantId, tenantId), eq(agentRuns.triggerEventId, event?.id ?? '')))
+    expect(runs).toMatchObject([
+      { agentKey: EXAMPLE_NOTE_STATS_AGENT, input: { noteId: note.id }, requestedByUserId: null },
+    ])
+  })
+
+  it('a draft starts no run, and the handler is idempotent on redelivery', async () => {
+    const env = createTestEnv()
+    const note = await json<{ id: string }>(await post(env, 'Draft: not yet'))
+    const queued = [...stubs(env).queue.messages]
+    await deliverEvents(env, db)
+    // Deliver the same messages again — at-least-once delivery.
+    stubs(env).queue.messages.push(...queued)
+    await deliverEvents(env, db)
+
+    const { activityEvents, agentRuns } = allTables()
+    const audit = await db
+      .select()
+      .from(activityEvents)
+      .where(and(eq(activityEvents.tenantId, tenantId), eq(activityEvents.subjectId, note.id)))
+    expect(audit.filter(a => a.type === EXAMPLE_NOTE_CREATED_ACTIVITY)).toHaveLength(1)
+    const runs = await db
+      .select()
+      .from(agentRuns)
+      .where(
+        and(eq(agentRuns.tenantId, tenantId), eq(agentRuns.agentKey, EXAMPLE_NOTE_STATS_AGENT))
+      )
+    expect(runs.filter(r => (r.input as { noteId: string }).noteId === note.id)).toEqual([])
+  })
+
+  it('offers its agent to a picker for the event', async () => {
+    expect((await listBindableAgents(EXAMPLE_NOTE_CREATED_EVENT)).map(a => a.key)).toContain(
+      EXAMPLE_NOTE_STATS_AGENT
+    )
   })
 })

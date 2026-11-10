@@ -20,6 +20,7 @@ import {
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
+import { EVENT_NAME_RE, eventNameProblem } from '@rocketflare/shared/plugins'
 import { describe, expect, it } from 'vitest'
 import {
   MANIFEST_FILE,
@@ -47,10 +48,13 @@ import {
   dependencyClashes,
   dependencyDelta,
   describeClash,
+  eventClashes,
   hasBarrelLine,
   isolationEvidence,
   isVendored,
   jsonKeyLine,
+  EVENT_NAME_RE as LIB_EVENT_NAME_RE,
+  eventNameProblem as libEventNameProblem,
   missingDependencies,
   newlyAddedDependencies,
   nextAddedDependencies,
@@ -79,6 +83,7 @@ import {
   surfaceDirectories,
   tableClashes,
   tupleEntries,
+  undeclaredManifestEvents,
   unsupportedForKit,
   withoutDependencies,
   workerExportNames,
@@ -1756,6 +1761,46 @@ describe('the audit', () => {
       return existsSync(anchor) ? JSON.parse(read(s.anchor)) : { id: s.id }
     })
     expect(tableClashes(installedManifests)).toEqual([])
+  })
+
+  /**
+   * D42: what `check` can say about events from manifests alone — the name rule, a name two
+   * plugins declare, and a listed name the shared entry never declares.
+   */
+  it('refuses a mis-prefixed, kit. or doubled event, a clash, and one the source never declares', () => {
+    expect(LIB_EVENT_NAME_RE.source).toBe(EVENT_NAME_RE.source)
+    for (const name of ['sites.form.submitted', 'kit.x', 'crm.form', 'sites.Form', 'sites']) {
+      expect(libEventNameProblem('sites', name) === null, name).toBe(
+        eventNameProblem('sites', name) === null
+      )
+    }
+    const problems = pluginManifestProblems({
+      ...JSON.parse(read(anchorFile)),
+      id: 'sites',
+      events: ['sites.form.submitted', 'kit.agent.started', 'crm.lead', 'sites.form.submitted'],
+    })
+      .filter(p => p.field === 'events')
+      .map(p => p.problem)
+    expect(problems).toEqual([
+      "declares 'kit.agent.started', which is in the core kit. namespace",
+      "declares 'crm.lead', which does not start with 'sites.'",
+      "declares event 'sites.form.submitted' twice",
+    ])
+    expect(
+      eventClashes([
+        { id: 'sites', events: ['sites.form.submitted'] },
+        { id: 'crm', events: ['sites.form.submitted', 'crm.lead.created'] },
+      ])
+    ).toEqual([
+      { event: 'sites.form.submitted', id: 'crm', others: ['sites'] },
+      { event: 'sites.form.submitted', id: 'sites', others: ['crm'] },
+    ])
+    expect(
+      undeclaredManifestEvents(
+        ['sites.form.submitted', 'sites.page.published'],
+        "// 'sites.page.published' is only a comment\nevents: { 'sites.form.submitted': schema }"
+      )
+    ).toEqual(['sites.page.published'])
   })
 
   it('reports the audit as DATA, with warnings kept out of the exit code', () => {

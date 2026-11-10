@@ -23,6 +23,7 @@ import { tenantFeatures } from '../../api/services/features'
 import { enqueueJob, enqueueJobs } from '../../api/services/jobs'
 import type { StorageService } from '../../api/services/storage'
 import { agentRunStarter, type StartAgentRunInput, type StartedAgentRun } from './agent-runs'
+import { type Emit, eventEmitter } from './emit'
 import { createStepRealtimeFor } from './realtime-step'
 import { filesStorage } from './storage'
 import type { PluginContext } from './types'
@@ -77,6 +78,12 @@ export interface BackgroundMethods {
    * no such method.
    */
   startAgentRun(input: StartAgentRunInput): Promise<StartedAgentRun>
+  /**
+   * Emit a declared plugin event (D42) for one organisation: validated against the declaration
+   * (400), recorded in `plugin_events`, one delivery queued per subscriber; never runs a handler.
+   * Pass an `idempotencyKey` naming the thing (`submission:<id>`) so a redelivered job emits once.
+   */
+  emit: Emit
 }
 
 /**
@@ -117,6 +124,7 @@ export function backgroundMethods(ctx: PluginContext): BackgroundMethods {
     features: tenantId => tenantFeatures(db, config, tenantId),
     storage: () => filesStorage(env),
     startAgentRun: agentRunStarter(ctx),
+    emit: eventEmitter(ctx),
   }
 }
 

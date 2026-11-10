@@ -110,6 +110,8 @@ The server surface: the context family, and the types a plugin must be able to n
     The built-in knowledge tools plus every installed plugin's, bound to this run's scope.
   - `storage(): StorageService`
     R2 (the `FILES` bucket), or a 503 `storage_not_configured` — the same service every other context's `storage()` returns. Read and write under `tenants/<ctx.tenantId>/<plugin…
+  - `emit: TenantEmit`
+    Emit a declared plugin event (D42) in the run's organisation. A side effect: wrap it in `once`, and derive its `idempotencyKey` from `runId`, so a retried step emits once.
   - `prompt(vars?: Record<string, string \| undefined>): Promise<string>`
     The system prompt for this agent's `promptKey`, with `appName`/`tenantName` filled in.
   - `step( key: string, label: string, status: 'running' \| 'done' \| 'error', detail?: string ): Promise<void>`
@@ -130,6 +132,10 @@ The server surface: the context family, and the types a plugin must be able to n
     The provider and model this run resolved to (per-agent `agent_models` assignment applied) — what `recordUsage` needs to ledger a `structured` call's `onUsage`. Read-only: the…
 - `interface AgentDecide`
   `ctx.decide` — callable, with the two shapes as properties.
+- `interface AgentEventBinding<E extends EventName = EventName, Input = unknown>`
+  An OPT-IN: the agent may be started by `event` when a subject NAMES it — a form block an editor pointed at it — never by the event alone. Listed by `GET…
+- `interface AgentEventTrigger<E extends EventName = EventName, Input = unknown>`
+  An AUTOMATIC agent start: every `event` (that `where` accepts) starts the agent with `input(payload)`, through `enqueueRun` — input validated against the agent's `inputSchema`,…
 - `interface AgentInterruptAnswer`
   The answer. `status` is AG-UI's own `ResumeEntry` vocabulary and there is deliberately no `approved` boolean: two ways to say no is how a UI and a server end up disagreeing.
 - `interface AgentInterruptAsk`
@@ -160,6 +166,9 @@ The server surface: the context family, and the types a plugin must be able to n
     R2 (the `FILES` bucket), or a 503 `storage_not_configured` — loud, because a silently absent bucket loses bytes. The same service `RequestCtx.storage()` returns. Write under…
   - `startAgentRun(input: StartAgentRunInput): Promise<StartedAgentRun>`
     Start an agent run for one organisation and return its id — `POST /api/agents/runs` from a job, through the same `enqueueRun`: input validation (400), the exclusive slot, the…
+  - `emit: Emit`
+    Emit a declared plugin event (D42) for one organisation: validated against the declaration (400), recorded in `plugin_events`, one delivery queued per subscriber; never runs a…
+- `type BindableAgent = z.infer<typeof bindableAgentSchema>`
 - `function candidatePoolSize(limit: number): number`
   "Retrieve wide, fuse narrow": how many candidates each signal contributes before fusion.
 - `async function chatModelAvailable( ctx: Pick<PluginContext, 'db' \| 'config' \| 'env'>, tenantId: string, promptKey: string ): Promise<boolean>`
@@ -183,6 +192,8 @@ The server surface: the context family, and the types a plugin must be able to n
   Declare a tool. A thin helper, and its only job is to be the thing a plugin imports instead of the `Tool` type from a core path — but it is also where the two rules in this file's…
 - `async function deleteIngestedDocument( ctx: PluginContext, input: { tenantId: string; source: string; externalId: string } ): Promise<boolean>`
   The item is gone upstream: delete its document, chunks, grants and stored original.
+- `interface DeliveredEvent<E extends EventName = EventName>`
+  One recorded event, as a subscriber receives it: re-read from `plugin_events`, re-validated.
 - `interface DetachedCtx extends PluginContext`
   What survives the handler: data and a database, no request.
   - `tenantId: string`
@@ -211,6 +222,44 @@ The server surface: the context family, and the types a plugin must be able to n
   `Receipts+Proton@Example.com` → `receipts`. Lower-cased (local parts are case-insensitive in practice, and Email Routing matches them that way) and cut at the first `+`, which is…
 - `function emailSubaddress(address: string): string \| null`
   `receipts+proton@example.com` → `proton`; null when the address carries no tag.
+- `type Emit = <E extends EventName>(event: E, input: EmitInput<E>) => Promise<EmittedEvent>`
+- `interface EmitInput<E extends EventName>`
+  The background `emit`: the tenant is named per call, as every background method takes it.
+- `interface EmittedEvent`
+  What `ctx.emit` answers.
+- `function eventBinding<E extends EventName, Input = unknown>( event: E, spec: Omit<AgentEventBinding<E, Input>, 'event'> ): AgentEventBinding<E, Input>`
+  Declare an OPT-IN: this agent may be started by `event` when a subject names it (an editor's "On submit, start" choice) — never by the event alone. Listed by…
+- `interface EventContext extends JobContext`
+  What an event handler is given: the job's context — its own DB client, config, logger, env — plus the event it is delivering. A plugin adapts it with `eventCtx(ctx)` from…
+- `function eventCtx(ctx: EventContext): EventCtx`
+  Adapt the host's `EventContext`. The only place a plugin's event half names a core internal.
+- `interface EventCtx extends PluginContext`
+  What an event handler works with, BOUND to the delivered event's tenant: nothing on it takes a tenant id, so a handler cannot reach another organisation through a method by…
+  - `readonly tenantId: string`
+    The event's organisation — the tenant predicate of every query the handler writes.
+  - `enqueue(input: JobInput, options?: { delaySeconds?: number }): Promise<JobEnvelope>`
+  - `enqueueMany(inputs: readonly JobInput[], options?: { delaySeconds?: number }): Promise<void>`
+  - `nudge(entity: string, id?: string): Promise<void>`
+    Nudge this organisation's open tabs. Awaited — there is no `waitUntil` in a job.
+  - `emit: TenantEmit`
+    Emit a follow-on event in the same organisation.
+  - `features(): Promise<readonly string[]>`
+    The organisation's feature keys — skip the work when your flag is off for it.
+  - `storage(): StorageService`
+    R2; write under `tenants/<ctx.tenantId>/<plugin id>/…`.
+  - `durableObject<T extends Rpc.DurableObjectBranded \| undefined = undefined>( namespace: DurableObjectNamespace<T>, key?: string ): DurableObjectStub<T>`
+  - `startAgentRun(input: Omit<StartAgentRunInput, 'tenantId'>): Promise<StartedAgentRun>`
+    `startAgentRun` in this organisation (the route's own gates; each refusal throws). Pass an `idempotencyKey` derived from `event.id`. For "this event starts that agent" prefer the…
+  - `startBoundAgent(agentKey: AgentKey \| string): Promise<StartedAgentRun>`
+    Start the agent a SUBJECT named for THIS event — the form block's "On submit, start" choice, read from the plugin's own stored, published configuration, never from the payload a…
+- `interface EventHandler<E extends EventName = EventName>`
+  One subscription: a `ServerPlugin.eventHandlers` entry or an `APP_EVENT_HANDLERS` one. Each gets its OWN queued delivery per event, so one handler's failure retries alone. Throw…
+- `type EventName = EventNameOf<InstalledShared>`
+  Every event name an installed plugin declares. `never` while none does.
+- `type EventPayload = EventPayloadOf<InstalledShared, E>`
+  The parsed payload of event `E`, as the declaring plugin's schema outputs it.
+- `function eventTrigger<E extends EventName, Input = unknown>( event: E, spec: Omit<AgentEventTrigger<E, Input>, 'event'> ): AgentEventTrigger<E, Input>`
+  Declare an AUTOMATIC start in an agent definition: `triggers: [eventTrigger('sites.form.submitted', { where: p => p.formName === 'contact', input: p => ({ text: p.fields.message…
 - `function fuseByRank<T>( dense: T[], lexical: T[], keyOf: (item: T) => string, k = RRF_K ): FusedItem<T>[]`
   Reciprocal Rank Fusion of two ordered candidate lists (best first). Pure.
 - `interface FusedItem<T>`
@@ -258,6 +307,8 @@ The server surface: the context family, and the types a plugin must be able to n
   Every job type this app knows, derived from the variants rather than kept beside them.
 - `async function listAgents(): Promise<readonly AgentSummary[]>`
   Every registered agent — the kit's and every installed plugin's — as `{ key, title, description }`, the same catalogue `GET /api/agents` serves. For a plugin that lists or…
+- `async function listBindableAgents(event: EventName \| string): Promise<BindableAgent[]>`
+  The agents that opt in (`bindable`) to being started by `event` — what an editor's agent picker lists. The same list for every tenant: agents are code. A browser reads it through…
 - `type Logger = pino.Logger`
 - `async function memberCan( ctx: PluginContext, who: { tenantId: string; userId: string }, action: Actions, subject: Subjects ): Promise<boolean>`
   Does this person hold this grant in this tenant RIGHT NOW? For a public callback completing something a signed state started — an OAuth connection, a consent — where the state…
@@ -428,6 +479,8 @@ The server surface: the context family, and the types a plugin must be able to n
     Tell this organisation's open tabs that a family of rows moved. `entity` IS the query-key family root, so declaring it once covers the socket wiring.
   - `storage(): StorageService`
     R2, or a 503 `storage_not_configured` — loud, because a silently absent bucket loses bytes.
+  - `emit: TenantEmit`
+    Emit a declared plugin event (D42) in THIS organisation: validated (400), recorded, one delivery queued per subscriber — awaited, because the row is the durable half and a 400…
   - `durableObject<T extends Rpc.DurableObjectBranded \| undefined = undefined>( namespace: DurableObjectNamespace<T>, key?: string ): DurableObjectStub<T>`
     A per-tenant Durable Object stub. The plugin never spells the name; the prefix is structural.
   - `notFound(message?: string, code?: string): never`
@@ -498,6 +551,8 @@ The server surface: the context family, and the types a plugin must be able to n
     Cron expression → tasks, merged into `SCHEDULED_TASKS` (tasks on a cron core already runs are appended after core's). A cron core does NOT run is declared in `plugin.json`…
   - `emailHandlers?: readonly EmailHandler[]`
     Inbound email (Cloudflare Email Routing → the Worker's `email` handler), merged into `EMAIL_HANDLERS` in `api/email.ts` and matched on the recipient's local part (`receipts` takes…
+  - `eventHandlers?: readonly EventHandler[]`
+    Subscriptions to plugin events (D42) — this plugin's own or any other installed plugin's, named by `event` and declared in some `SharedPlugin.events`. Each entry gets its OWN…
   - `deploymentFeatures?: (config: AppConfig) => readonly string[]`
     Feature keys this plugin's own CONFIG switches on for the deployment, unioned with `FEATURES_ENABLED`, so an `environmentGated` flag can follow a plugin's vars rather than need a…
   - `grants?: Partial<Record<EffectiveRole, RoleGrant>>`
@@ -581,6 +636,9 @@ The server surface: the context family, and the types a plugin must be able to n
   One prior turn of the plugin's own conversation, oldest first.
 - `type Subjects = CoreSubject \| PluginSubject \| FeatureSubject`
 - `type Tenant = typeof tenants.$inferSelect`
+- `type TenantEmit = <E extends EventName>( event: E, input: TenantEmitInput<E> ) => Promise<EmittedEvent>`
+- `type TenantEmitInput = Omit<EmitInput<E>, 'tenantId'>`
+  The same input where the context is already bound to one tenant (a request, a run, a handler).
 - `interface Tool<Input = unknown>`
   A tool the model may call. `handler` runs it; a tool WITHOUT a handler is terminal (its input is the answer).
 - `interface ToolApproval`
@@ -915,6 +973,8 @@ Components and hooks, for a lazy PAGE. Never for the UI entry.
     Cron expression → tasks, merged into `SCHEDULED_TASKS` (tasks on a cron core already runs are appended after core's). A cron core does NOT run is declared in `plugin.json`…
   - `emailHandlers?: readonly EmailHandler[]`
     Inbound email (Cloudflare Email Routing → the Worker's `email` handler), merged into `EMAIL_HANDLERS` in `api/email.ts` and matched on the recipient's local part (`receipts` takes…
+  - `eventHandlers?: readonly EventHandler[]`
+    Subscriptions to plugin events (D42) — this plugin's own or any other installed plugin's, named by `event` and declared in some `SharedPlugin.events`. Each entry gets its OWN…
   - `deploymentFeatures?: (config: AppConfig) => readonly string[]`
     Feature keys this plugin's own CONFIG switches on for the deployment, unioned with `FEATURES_ENABLED`, so an `environmentGated` flag can follow a plugin's vars rather than need a…
   - `grants?: Partial<Record<EffectiveRole, RoleGrant>>`
@@ -988,6 +1048,16 @@ What a plugin's CONTRACT module imports: the error envelope, pagination, `Shared
 - `const ERROR_CODES: { readonly validationFailed: "validation_failed"; readonly unauthorized: "unauthorized"; readonly sessionExpired: "session_expired"; readonly forbidden: "forbidden"; readonly notFound: "not_found"; readonly conflict: "conflict"; readonly rateLimited: "rate_limited"; readonly pendingApproval: "pendin… (truncated)`
   Well-known `code` values shared by API and UI. Extend per app.
 - `type ErrorCode = (typeof ERROR_CODES)[keyof typeof ERROR_CODES]`
+- `const EVENT_NAME_RE: RegExp`
+  One segment after the plugin id: lower-case, digits, `-` and `_`, dot-separated.
+- `type EventNameOf = Extract< EventsOf<S> extends infer R ? (R extends unknown ? keyof R : never) : never, string >`
+  The event names one plugin (or a union of plugins) declares.
+- `function eventNameProblem(pluginId: string, name: string): string \| null`
+  `null` when `name` is an event `pluginId` may declare, else the sentence saying why not: it must be `<pluginId>.<something>`, well formed, and never in the core `kit.` namespace.…
+- `type EventPayloadOf = EventsOf<S> extends infer R ? R extends Record<E, infer Schema> ? Schema extends ZodTypeAny ? TypeOf<Schema> : never : never : never`
+  The parsed payload of event `E`, from whichever plugin in `S` declares it.
+- `type EventsOf = NonNullable<DeclaredBy<S, 'events'>>`
+  The events one plugin declares — its `events` record. Distributive, so over a UNION of plugins it is a union of records; `EventNameOf` / `EventPayloadOf` read names and payloads…
 - `interface FeatureDefinition`
 - `type FeatureFlagState = z.infer<typeof featureFlagStateSchema>`
 - `type FeatureKeyOf = Extract< NonNullable<DeclaredBy<S, 'features'>> extends infer F ? F extends unknown ? keyof F : never : never, string >`
@@ -1045,6 +1115,8 @@ What a plugin's CONTRACT module imports: the error envelope, pagination, `Shared
     Extra `[vars]` / secrets, merged into the Worker's config schema (`apps/web/src/config.ts`). A zod raw shape rather than a whole object so the core schema stays one schema.
   - `readonly realtimeRoots?: readonly string[]`
     Query-key roots that `access.changed` should invalidate: a plugin whose rows carry `visibility` has to be re-fetched when somebody's group membership moves under them.
+  - `readonly events?: Readonly<Record<string, ZodTypeAny>>`
+    Events this plugin EMITS (D42), name → payload schema. Every name is `<id>.<name>` — this plugin's id, a dot, then lower-case segments (`sites.form.submitted`) — and never `kit.`.…
 - `type SubjectOf = NonNullable<DeclaredBy<S, 'subjects'>>[number]`
   The CASL subjects one plugin declares.
 - `type Subjects = CoreSubject \| PluginSubject \| FeatureSubject`
@@ -1139,9 +1211,11 @@ The harness: a real database, the real Hono app, real bindings-shaped stubs, the
 - `async function createTestUser(db: Database, overrides: Partial<NewUser> = {})`
 - `function customEvents(events: KitAguiEvent[]): { name: string; value: unknown }[]`
   The kit CUSTOM events of a run, `name` → `value`, in order.
+- `async function deliverEvents(env: TestEnv, db: Database): Promise<EventDelivery[]>`
 - `async function dispatchScheduled( cron: string, env: AppBindings, ctx: Pick<ExecutionContext, 'waitUntil'>, registry: Record<string, ScheduledTask[]> = SCHEDULED_TASKS ): Promise<TaskReport[]>`
   Runs every task registered for `cron` and returns a per-task report (used by tests).
 - `function errorResponse(status: number, error = 'Error', code?: string)`
+- `interface EventDelivery`
 - `const IDS: { user: string; otherUser: string; tenant: string; otherTenant: string; }`
 - `async function json<T = unknown>(res: Response): Promise<T>`
 - `function jsonResponse(body: unknown, status = 200)`
@@ -1282,6 +1356,7 @@ nothing in the comparison that can throw.
 @/plugins/api :: member :: AgentCtx.input :: input: Input
 @/plugins/api :: member :: AgentCtx.tools :: tools: Tool[]
 @/plugins/api :: member :: AgentCtx.storage :: storage(): StorageService
+@/plugins/api :: member :: AgentCtx.emit :: emit: TenantEmit
 @/plugins/api :: member :: AgentCtx.prompt :: prompt(vars?: Record<string, string | undefined>): Promise<string>
 @/plugins/api :: member :: AgentCtx.step :: step( key: string, label: string, status: 'running' | 'done' | 'error', detail?: string ): Promise<void>
 @/plugins/api :: member :: AgentCtx.checkCancelled :: checkCancelled(): Promise<void>
@@ -1292,6 +1367,8 @@ nothing in the comparison that can throw.
 @/plugins/api :: member :: AgentCtx.interrupt :: interrupt(ask: AgentInterruptAsk): Promise<AgentInterruptAnswer>
 @/plugins/api :: member :: AgentCtx.chatModel :: readonly chatModel: { readonly provider: AiProvider; readonly model: string }
 @/plugins/api :: interface :: AgentDecide :: interface AgentDecide
+@/plugins/api :: interface :: AgentEventBinding :: interface AgentEventBinding<E extends EventName = EventName, Input = unknown>
+@/plugins/api :: interface :: AgentEventTrigger :: interface AgentEventTrigger<E extends EventName = EventName, Input = unknown>
 @/plugins/api :: interface :: AgentInterruptAnswer :: interface AgentInterruptAnswer
 @/plugins/api :: interface :: AgentInterruptAsk :: interface AgentInterruptAsk
 @/plugins/api :: interface :: AgentSummary :: interface AgentSummary
@@ -1309,6 +1386,8 @@ nothing in the comparison that can throw.
 @/plugins/api :: member :: BackgroundMethods.features :: features(tenantId: string): Promise<readonly string[]>
 @/plugins/api :: member :: BackgroundMethods.storage :: storage(): StorageService
 @/plugins/api :: member :: BackgroundMethods.startAgentRun :: startAgentRun(input: StartAgentRunInput): Promise<StartedAgentRun>
+@/plugins/api :: member :: BackgroundMethods.emit :: emit: Emit
+@/plugins/api :: type :: BindableAgent :: type BindableAgent = z.infer<typeof bindableAgentSchema>
 @/plugins/api :: function :: candidatePoolSize :: function candidatePoolSize(limit: number): number
 @/plugins/api :: function :: chatModelAvailable :: async function chatModelAvailable( ctx: Pick<PluginContext, 'db' | 'config' | 'env'>, tenantId: string, promptKey: string ): Promise<boolean>
 @/plugins/api :: function :: createRouter :: function createRouter(): Hono<AppEnv>
@@ -1323,6 +1402,7 @@ nothing in the comparison that can throw.
 @/plugins/api :: interface :: Decision :: interface Decision
 @/plugins/api :: function :: defineTool :: function defineTool<Input>(tool: Tool<Input>): Tool<Input>
 @/plugins/api :: function :: deleteIngestedDocument :: async function deleteIngestedDocument( ctx: PluginContext, input: { tenantId: string; source: string; externalId: string } ): Promise<boolean>
+@/plugins/api :: interface :: DeliveredEvent :: interface DeliveredEvent<E extends EventName = EventName>
 @/plugins/api :: interface :: DetachedCtx :: interface DetachedCtx extends PluginContext
 @/plugins/api :: member :: DetachedCtx.tenantId :: tenantId: string
 @/plugins/api :: member :: DetachedCtx.userId :: userId: string
@@ -1341,6 +1421,27 @@ nothing in the comparison that can throw.
 @/plugins/api :: interface :: EmailHandler :: interface EmailHandler
 @/plugins/api :: function :: emailLocalPart :: function emailLocalPart(address: string): string
 @/plugins/api :: function :: emailSubaddress :: function emailSubaddress(address: string): string | null
+@/plugins/api :: type :: Emit :: type Emit = <E extends EventName>(event: E, input: EmitInput<E>) => Promise<EmittedEvent>
+@/plugins/api :: interface :: EmitInput :: interface EmitInput<E extends EventName>
+@/plugins/api :: interface :: EmittedEvent :: interface EmittedEvent
+@/plugins/api :: function :: eventBinding :: function eventBinding<E extends EventName, Input = unknown>( event: E, spec: Omit<AgentEventBinding<E, Input>, 'event'> ): AgentEventBinding<E, Input>
+@/plugins/api :: interface :: EventContext :: interface EventContext extends JobContext
+@/plugins/api :: function :: eventCtx :: function eventCtx(ctx: EventContext): EventCtx
+@/plugins/api :: interface :: EventCtx :: interface EventCtx extends PluginContext
+@/plugins/api :: member :: EventCtx.tenantId :: readonly tenantId: string
+@/plugins/api :: member :: EventCtx.enqueue :: enqueue(input: JobInput, options?: { delaySeconds?: number }): Promise<JobEnvelope>
+@/plugins/api :: member :: EventCtx.enqueueMany :: enqueueMany(inputs: readonly JobInput[], options?: { delaySeconds?: number }): Promise<void>
+@/plugins/api :: member :: EventCtx.nudge :: nudge(entity: string, id?: string): Promise<void>
+@/plugins/api :: member :: EventCtx.emit :: emit: TenantEmit
+@/plugins/api :: member :: EventCtx.features :: features(): Promise<readonly string[]>
+@/plugins/api :: member :: EventCtx.storage :: storage(): StorageService
+@/plugins/api :: member :: EventCtx.durableObject :: durableObject<T extends Rpc.DurableObjectBranded | undefined = undefined>( namespace: DurableObjectNamespace<T>, key?: string ): DurableObjectStub<T>
+@/plugins/api :: member :: EventCtx.startAgentRun :: startAgentRun(input: Omit<StartAgentRunInput, 'tenantId'>): Promise<StartedAgentRun>
+@/plugins/api :: member :: EventCtx.startBoundAgent :: startBoundAgent(agentKey: AgentKey | string): Promise<StartedAgentRun>
+@/plugins/api :: interface :: EventHandler :: interface EventHandler<E extends EventName = EventName>
+@/plugins/api :: type :: EventName :: type EventName = EventNameOf<InstalledShared>
+@/plugins/api :: type :: EventPayload :: type EventPayload = EventPayloadOf<InstalledShared, E>
+@/plugins/api :: function :: eventTrigger :: function eventTrigger<E extends EventName, Input = unknown>( event: E, spec: Omit<AgentEventTrigger<E, Input>, 'event'> ): AgentEventTrigger<E, Input>
 @/plugins/api :: function :: fuseByRank :: function fuseByRank<T>( dense: T[], lexical: T[], keyOf: (item: T) => string, k = RRF_K ): FusedItem<T>[]
 @/plugins/api :: interface :: FusedItem :: interface FusedItem<T>
 @/plugins/api :: function :: hasFeature :: function hasFeature(auth: Pick<PluginAuth, 'features'>, name: string): boolean
@@ -1368,6 +1469,7 @@ nothing in the comparison that can throw.
 @/plugins/api :: type :: JobOf :: type JobOf = Extract<JobEnvelope, { type: T }>
 @/plugins/api :: type :: JobType :: type JobType = JobEnvelope['type']
 @/plugins/api :: function :: listAgents :: async function listAgents(): Promise<readonly AgentSummary[]>
+@/plugins/api :: function :: listBindableAgents :: async function listBindableAgents(event: EventName | string): Promise<BindableAgent[]>
 @/plugins/api :: type :: Logger :: type Logger = pino.Logger
 @/plugins/api :: function :: memberCan :: async function memberCan( ctx: PluginContext, who: { tenantId: string; userId: string }, action: Actions, subject: Subjects ): Promise<boolean>
 @/plugins/api :: type :: MembershipRole :: type MembershipRole = z.infer<typeof membershipRoleSchema>
@@ -1469,6 +1571,7 @@ nothing in the comparison that can throw.
 @/plugins/api :: member :: RequestCtx.enqueueMany :: enqueueMany(inputs: readonly JobInput[], options?: { delaySeconds?: number }): Promise<void>
 @/plugins/api :: member :: RequestCtx.nudge :: nudge(entity: string, id?: string): void
 @/plugins/api :: member :: RequestCtx.storage :: storage(): StorageService
+@/plugins/api :: member :: RequestCtx.emit :: emit: TenantEmit
 @/plugins/api :: member :: RequestCtx.durableObject :: durableObject<T extends Rpc.DurableObjectBranded | undefined = undefined>( namespace: DurableObjectNamespace<T>, key?: string ): DurableObjectStub<T>
 @/plugins/api :: member :: RequestCtx.notFound :: notFound(message?: string, code?: string): never
 @/plugins/api :: member :: RequestCtx.badRequest :: badRequest(message?: string, code?: string, details?: unknown): never
@@ -1513,6 +1616,7 @@ nothing in the comparison that can throw.
 @/plugins/api :: member :: ServerPlugin.knowledgeSources :: knowledgeSources?: (scope: AccessScope) => readonly string[] | Promise<readonly string[]>
 @/plugins/api :: member :: ServerPlugin.scheduledTasks :: scheduledTasks?: Readonly<Record<string, ScheduledTask[]>>
 @/plugins/api :: member :: ServerPlugin.emailHandlers :: emailHandlers?: readonly EmailHandler[]
+@/plugins/api :: member :: ServerPlugin.eventHandlers :: eventHandlers?: readonly EventHandler[]
 @/plugins/api :: member :: ServerPlugin.deploymentFeatures :: deploymentFeatures?: (config: AppConfig) => readonly string[]
 @/plugins/api :: member :: ServerPlugin.grants :: grants?: Partial<Record<EffectiveRole, RoleGrant>>
 @/plugins/api :: member :: ServerPlugin.uploadPaths :: uploadPaths?: readonly string[]
@@ -1566,6 +1670,8 @@ nothing in the comparison that can throw.
 @/plugins/api :: interface :: StreamChatTurn :: interface StreamChatTurn
 @/plugins/api :: type :: Subjects :: type Subjects = CoreSubject | PluginSubject | FeatureSubject
 @/plugins/api :: type :: Tenant :: type Tenant = typeof tenants.$inferSelect
+@/plugins/api :: type :: TenantEmit :: type TenantEmit = <E extends EventName>( event: E, input: TenantEmitInput<E> ) => Promise<EmittedEvent>
+@/plugins/api :: type :: TenantEmitInput :: type TenantEmitInput = Omit<EmitInput<E>, 'tenantId'>
 @/plugins/api :: interface :: Tool :: interface Tool<Input = unknown>
 @/plugins/api :: interface :: ToolApproval :: interface ToolApproval
 @/plugins/api :: interface :: ToolCallParams :: interface ToolCallParams
@@ -1753,6 +1859,7 @@ nothing in the comparison that can throw.
 @/plugins/types :: member :: ServerPlugin.knowledgeSources :: knowledgeSources?: (scope: AccessScope) => readonly string[] | Promise<readonly string[]>
 @/plugins/types :: member :: ServerPlugin.scheduledTasks :: scheduledTasks?: Readonly<Record<string, ScheduledTask[]>>
 @/plugins/types :: member :: ServerPlugin.emailHandlers :: emailHandlers?: readonly EmailHandler[]
+@/plugins/types :: member :: ServerPlugin.eventHandlers :: eventHandlers?: readonly EventHandler[]
 @/plugins/types :: member :: ServerPlugin.deploymentFeatures :: deploymentFeatures?: (config: AppConfig) => readonly string[]
 @/plugins/types :: member :: ServerPlugin.grants :: grants?: Partial<Record<EffectiveRole, RoleGrant>>
 @/plugins/types :: member :: ServerPlugin.uploadPaths :: uploadPaths?: readonly string[]
@@ -1790,6 +1897,11 @@ nothing in the comparison that can throw.
 @rocketflare/shared/plugins/api :: type :: DeclaredBy :: type DeclaredBy = Extract<P, Record<K, unknown>> extends infer Declaring ? Declaring extends Record<K, unknown> ? Declaring[K] : never : never
 @rocketflare/shared/plugins/api :: const :: ERROR_CODES :: const ERROR_CODES: { readonly validationFailed: "validation_failed"; readonly unauthorized: "unauthorized"; readonly sessionExpired: "session_expired"; readonly forbidden: "forbidden"; readonly notFound: "not_found"; readonly conflict: "conflict"; readonly rateLimited: "rate_limited"; readonly pendingApproval: "pendin… (truncated)
 @rocketflare/shared/plugins/api :: type :: ErrorCode :: type ErrorCode = (typeof ERROR_CODES)[keyof typeof ERROR_CODES]
+@rocketflare/shared/plugins/api :: const :: EVENT_NAME_RE :: const EVENT_NAME_RE: RegExp
+@rocketflare/shared/plugins/api :: type :: EventNameOf :: type EventNameOf = Extract< EventsOf<S> extends infer R ? (R extends unknown ? keyof R : never) : never, string >
+@rocketflare/shared/plugins/api :: function :: eventNameProblem :: function eventNameProblem(pluginId: string, name: string): string | null
+@rocketflare/shared/plugins/api :: type :: EventPayloadOf :: type EventPayloadOf = EventsOf<S> extends infer R ? R extends Record<E, infer Schema> ? Schema extends ZodTypeAny ? TypeOf<Schema> : never : never : never
+@rocketflare/shared/plugins/api :: type :: EventsOf :: type EventsOf = NonNullable<DeclaredBy<S, 'events'>>
 @rocketflare/shared/plugins/api :: interface :: FeatureDefinition :: interface FeatureDefinition
 @rocketflare/shared/plugins/api :: type :: FeatureFlagState :: type FeatureFlagState = z.infer<typeof featureFlagStateSchema>
 @rocketflare/shared/plugins/api :: type :: FeatureKeyOf :: type FeatureKeyOf = Extract< NonNullable<DeclaredBy<S, 'features'>> extends infer F ? F extends unknown ? keyof F : never : never, string >
@@ -1826,6 +1938,7 @@ nothing in the comparison that can throw.
 @rocketflare/shared/plugins/api :: member :: SharedPlugin.features :: readonly features?: Readonly<Record<string, FeatureDefinition>>
 @rocketflare/shared/plugins/api :: member :: SharedPlugin.config :: readonly config?: ZodRawShape
 @rocketflare/shared/plugins/api :: member :: SharedPlugin.realtimeRoots :: readonly realtimeRoots?: readonly string[]
+@rocketflare/shared/plugins/api :: member :: SharedPlugin.events :: readonly events?: Readonly<Record<string, ZodTypeAny>>
 @rocketflare/shared/plugins/api :: type :: SubjectOf :: type SubjectOf = NonNullable<DeclaredBy<S, 'subjects'>>[number]
 @rocketflare/shared/plugins/api :: type :: Subjects :: type Subjects = CoreSubject | PluginSubject | FeatureSubject
 '../api' (apps/cli/src/plugins/api.ts) :: type :: ActionWrapper :: type ActionWrapper = ( handler: (ctx: CommandContext, command: Command) => Promise<void> ) => (...args: unknown[]) => Promise<void>
@@ -1877,8 +1990,10 @@ nothing in the comparison that can throw.
 @testkit/integration :: function :: createTestTenantWithUser :: async function createTestTenantWithUser( db: Database, role: MembershipRole = 'owner', userOverrides: Partial<NewUser> = {}, tenantOverrides: Partial<NewTenant> = {} )
 @testkit/integration :: function :: createTestUser :: async function createTestUser(db: Database, overrides: Partial<NewUser> = {})
 @testkit/integration :: function :: customEvents :: function customEvents(events: KitAguiEvent[]): { name: string; value: unknown }[]
+@testkit/integration :: function :: deliverEvents :: async function deliverEvents(env: TestEnv, db: Database): Promise<EventDelivery[]>
 @testkit/integration :: function :: dispatchScheduled :: async function dispatchScheduled( cron: string, env: AppBindings, ctx: Pick<ExecutionContext, 'waitUntil'>, registry: Record<string, ScheduledTask[]> = SCHEDULED_TASKS ): Promise<TaskReport[]>
 @testkit/integration :: function :: errorResponse :: function errorResponse(status: number, error = 'Error', code?: string)
+@testkit/integration :: interface :: EventDelivery :: interface EventDelivery
 @testkit/integration :: const :: IDS :: const IDS: { user: string; otherUser: string; tenant: string; otherTenant: string; }
 @testkit/integration :: function :: json :: async function json<T = unknown>(res: Response): Promise<T>
 @testkit/integration :: function :: jsonResponse :: function jsonResponse(body: unknown, status = 200)

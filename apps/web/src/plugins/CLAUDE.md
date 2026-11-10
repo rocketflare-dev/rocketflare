@@ -131,6 +131,14 @@ the CLI command `<id>`; skills `<id>` / `<id>-<what>`; AG-UI CUSTOM events `<id>
   turns a throw into a sender retry, never a bounce; the handler (`emailCtx`, no tenant — an
   address is not an organisation) parses MIME, checks the sender, resolves the tenant, stores and
   enqueues. Routing the address to the Worker is a per-zone Cloudflare step, in no toml.
+- **Events (D42) are declared, then emitted after the write.** Declare `events: { '<id>.x.y':
+  schema }` in the shared entry AND list the names in `plugin.json` `"events"`; `await ctx.emit(name,
+  { payload, idempotencyKey: '<thing>:<id>' })` once the row is stored (a request/run context is
+  tenant-bound; a background one takes `tenantId`). Keep the payload to ids and what subscribers
+  need, and never log it. Subscribe with `eventHandlers` (`eventCtx(ctx)`; idempotent on
+  `event.id` — delivery is at-least-once); start agents with `triggers` / `bindable` on the agent
+  (`eventTrigger` / `eventBinding`), and a picker's stored choice with `eventCtx(ctx).startBoundAgent`
+  — never an agent key from a visitor's payload. Worked example: `example-feature/events/`.
 - **`ctx.startAgentRun`** (`JobCtx`, `CronCtx`, `EmailCtx`, `PublicCtx`) starts a run from the
   background through the route's own gates; each refusal throws. **A job always passes an
   `idempotencyKey` naming the work** (`receipt:<documentId>`, never the message id). Never insert

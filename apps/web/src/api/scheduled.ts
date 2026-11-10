@@ -11,7 +11,7 @@
 import { lt, sql } from 'drizzle-orm'
 import { type AppConfig, loadConfig } from '../config'
 import { affected, type Database, openDatabase } from '../db/client'
-import { aiSpans, userSessions } from '../db/schema'
+import { aiSpans, pluginEvents, userSessions } from '../db/schema'
 import { serverPlugins } from '../plugins/server'
 import { pruneMagicLinkTokens } from './auth/magic-link'
 import { pruneInvitationSendCounters, pruneInvitations } from './services/invitations'
@@ -92,9 +92,31 @@ export const pruneAiSpans: ScheduledTask = {
   },
 }
 
+/**
+ * Drop `plugin_events` older than `EVENTS_RETENTION_DAYS` (D42). A payload may hold personal data —
+ * a form's fields — so the window is short (7 days) and this runs nightly; one DELETE across every
+ * tenant from the `(tenant_id, created_at)` index, for the reason `runPruneAiSpans` gives. A
+ * delivery still retrying past the cutoff (it cannot be: the backoff ends within the hour) finds no
+ * row and is acknowledged.
+ */
+export async function runPruneEvents(db: Database, retentionDays: number, now = new Date()) {
+  const cutoff = new Date(now.getTime() - retentionDays * 24 * 60 * 60 * 1000)
+  const events = affected(await db.delete(pluginEvents).where(lt(pluginEvents.createdAt, cutoff)))
+  return { events, cutoff: cutoff.toISOString() }
+}
+
+/** Nightly retention for recorded plugin events. */
+export const pruneEvents: ScheduledTask = {
+  name: 'pruneEvents',
+  async run({ db, config, logger }) {
+    const result = await runPruneEvents(db, config.EVENTS_RETENTION_DAYS)
+    logger.info(result, 'pruneEvents: removed expired plugin events')
+  },
+}
+
 /** Cron expression → tasks. Keep in sync with `[triggers] crons` in both wrangler tomls. */
 const CORE_SCHEDULED_TASKS: Record<string, ScheduledTask[]> = {
-  '0 4 * * *': [pruneExpired, pruneAiSpans],
+  '0 4 * * *': [pruneExpired, pruneAiSpans, pruneEvents],
 }
 
 /**
