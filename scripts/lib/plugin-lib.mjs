@@ -2359,6 +2359,24 @@ export function pluginManifestProblems(manifest) {
     }
   }
 
+  if (m.events !== undefined && !isStrArray(m.events)) {
+    bad('events', 'declares events as other than an array of strings', 'set "events" to []')
+  } else {
+    const seen = new Set()
+    for (const name of m.events ?? []) {
+      const problem = isStr(m.id) ? eventNameProblem(m.id, name) : null
+      if (problem) {
+        bad(
+          'events',
+          `declares ${problem}`,
+          `rename it '${m.id}.<name>' in "events" AND in the shared entry's \`events\``
+        )
+      }
+      if (seen.has(name)) bad('events', `declares event '${name}' twice`, 'list each event once')
+      seen.add(name)
+    }
+  }
+
   if (m.skills !== undefined && !isStrArray(m.skills)) {
     bad('skills', 'declares skills as other than an array of strings', 'set "skills" to []')
   } else {
@@ -2944,6 +2962,66 @@ export function withoutDependencies(source, names = []) {
   if (!changed) return source
   const indent = /^[ \t]+(?=")/m.exec(source)?.[0] ?? '  '
   return `${JSON.stringify(json, null, indent)}${source.endsWith('\n') ? '\n' : ''}`
+}
+
+// ---------------------------------------------------------------- events (D42)
+
+/** The rule `eventNameProblem` in `@rocketflare/shared/plugins` applies; kept in step by a test. */
+export const EVENT_NAME_RE = /^[a-z][a-z0-9-]*(\.[a-z0-9][a-z0-9_-]*)+$/
+
+/** `null` when `name` is an event `pluginId` may declare, else why not. Mirrors the shared rule. */
+export function eventNameProblem(pluginId, name) {
+  if (typeof name !== 'string' || name === '') return 'an empty event name'
+  if (name.startsWith('kit.')) return `'${name}', which is in the core kit. namespace`
+  if (!name.startsWith(`${pluginId}.`)) return `'${name}', which does not start with '${pluginId}.'`
+  if (!EVENT_NAME_RE.test(name)) {
+    return `'${name}', which is not lower-case dot-separated segments after '${pluginId}.'`
+  }
+  return null
+}
+
+/**
+ * Events two installed plugins both declare — impossible while every name carries its plugin's id,
+ * and checked anyway, because a manifest the name rule refused is still on disk: the second
+ * declaration would be silently ignored by the host (the first wins), so its emits would validate
+ * against the OTHER plugin's schema. One entry per plugin involved, like `tableClashes`.
+ */
+export function eventClashes(manifests = []) {
+  const holders = new Map()
+  for (const m of manifests) {
+    if (!m?.id) continue
+    for (const name of Array.isArray(m.events) ? m.events : []) {
+      if (typeof name !== 'string' || name.trim() === '') continue
+      const ids = holders.get(name) ?? []
+      if (!ids.includes(m.id)) ids.push(m.id)
+      holders.set(name, ids)
+    }
+  }
+  const out = []
+  for (const [event, ids] of [...holders].sort(([a], [b]) => a.localeCompare(b))) {
+    if (ids.length < 2) continue
+    for (const id of [...ids].sort()) {
+      out.push({ event, id, others: ids.filter(other => other !== id).sort() })
+    }
+  }
+  return out
+}
+
+/**
+ * The manifest's `events` that the plugin's shared entry never NAMES — read from comment-free
+ * source, as a quoted literal. A manifest is what `check` can read without evaluating TypeScript;
+ * this keeps it honest about the code. The other direction (an event the shared entry declares and
+ * the manifest omits) is `tests/config/plugins.test.ts`'s, which evaluates the barrel.
+ */
+export function undeclaredManifestEvents(events = [], sharedSource = '') {
+  const code = stripComments(sharedSource)
+  return events.filter(
+    name =>
+      typeof name === 'string' &&
+      !code.includes(`'${name}'`) &&
+      !code.includes(`"${name}"`) &&
+      !code.includes(`\`${name}\``)
+  )
 }
 
 /**

@@ -135,6 +135,11 @@ const coreConfigSchema = z.object({
   OBSERVABILITY_TRACE_URL: optionalString,
   /** Days of `ai_spans` the nightly prune keeps. */
   OBSERVABILITY_SPAN_RETENTION_DAYS: optionalPositiveInt(14),
+  /**
+   * Days of `plugin_events` the nightly prune keeps (D42). Short on purpose: a payload may hold
+   * personal data (a form's fields), and a delivery's retries end within the hour.
+   */
+  EVENTS_RETENTION_DAYS: optionalPositiveInt(7),
   /** Per-call `max_tokens` when a tenant config sets none; and the tool-loop turn cap. */
   AGENT_MAX_OUTPUT_TOKENS: optionalPositiveInt(16384),
   AGENT_MAX_TURNS: optionalPositiveInt(30),

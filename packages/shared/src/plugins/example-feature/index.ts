@@ -3,8 +3,8 @@
  *
  * It exists to be deleted, and to be read first. Between the three entries it exercises every slot
  * the seam has: a feature flag, a job type, a CASL subject and grants, a tenant-scoped table with
- * an RLS policy, a CRUD route, an agent tool, `onTenantCreated`, `seedDemo`, a lazy page with a nav
- * item, and two CLI commands. Delete it with `pnpm plugin remove example-feature` (or by hand: its
+ * an RLS policy, a CRUD route, an agent tool, a declared event with a handler and an agent it
+ * triggers, `onTenantCreated`, `seedDemo`, a lazy page with a nav item, and two CLI commands. Delete it with `pnpm plugin remove example-feature` (or by hand: its
  * three directories, the five barrel lines and its surface in `.rocketflare.json`) and the app is
  * bare again.
  *
@@ -40,6 +40,19 @@ export const EXAMPLE_PING_JOB = 'example-feature.ping'
 
 /** The CASL subject the plugin's rows are governed by. */
 export const EXAMPLE_NOTE_SUBJECT = 'ExampleNote'
+
+/**
+ * The event a new note emits (D42). `<id>.<name>`, declared below in `events` and listed in
+ * `plugin.json` `"events"`; the route emits it once per note (`idempotencyKey: note:<id>`), the
+ * plugin's own handler records it in the audit log, and `EXAMPLE_NOTE_STATS_AGENT` is triggered by
+ * it.
+ */
+export const EXAMPLE_NOTE_CREATED_EVENT = 'example-feature.note.created'
+
+/** The agent the event starts — and that an editor could also BIND to it (`bindable`). */
+export const EXAMPLE_NOTE_STATS_AGENT = 'example-feature.note-stats'
+/** Its prompt key: kebab-case, carrying the plugin's id. The agent calls no model. */
+export const EXAMPLE_NOTE_STATS_PROMPT = 'example-feature-note-stats'
 
 export const EXAMPLE_NOTE_TITLE_MAX = 200
 export const EXAMPLE_NOTE_BODY_MAX = 4_000
@@ -106,6 +119,27 @@ export const examplePingPayloadSchema = z.object({
 })
 export type ExamplePingPayload = z.infer<typeof examplePingPayloadSchema>
 
+/**
+ * The event's payload. IDS and the title only — not the body: an event payload is stored for the
+ * retention window and read by every subscriber, so it carries what they need and no more. A
+ * subscriber that wants the body reads the note under its own tenant predicate.
+ */
+export const exampleNoteCreatedPayloadSchema = z.object({
+  noteId: z.string().uuid(),
+  title: z.string().max(EXAMPLE_NOTE_TITLE_MAX),
+  ownerUserId: z.string().uuid().nullable(),
+})
+export type ExampleNoteCreatedPayload = z.infer<typeof exampleNoteCreatedPayloadSchema>
+
+/** The note-stats agent's input and output. */
+export const exampleNoteStatsInputSchema = z.object({ noteId: z.string().uuid() })
+export const exampleNoteStatsOutputSchema = z.object({
+  noteId: z.string().uuid(),
+  words: z.number().int().nonnegative(),
+  characters: z.number().int().nonnegative(),
+})
+export type ExampleNoteStatsOutput = z.infer<typeof exampleNoteStatsOutputSchema>
+
 // ---- The plugin ---------------------------------------------------------------------------------
 
 /**
@@ -118,6 +152,9 @@ export const exampleFeatureShared = {
   label: 'Example feature',
   version: '0.1.0',
   subjects: [EXAMPLE_NOTE_SUBJECT],
+  agentKeys: [EXAMPLE_NOTE_STATS_AGENT],
+  promptKeys: [EXAMPLE_NOTE_STATS_PROMPT],
+  events: { [EXAMPLE_NOTE_CREATED_EVENT]: exampleNoteCreatedPayloadSchema },
   jobs: [z.object({ type: z.literal(EXAMPLE_PING_JOB), payload: examplePingPayloadSchema })],
   features: {
     [EXAMPLE_FEATURE_FLAG]: {

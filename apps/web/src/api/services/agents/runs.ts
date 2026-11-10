@@ -127,6 +127,8 @@ export function toAgentRun(row: AgentRunRow): AgentRun {
     createdAt: row.createdAt,
     exclusive: row.concurrencyKey !== null,
     batchId: row.batchId,
+    triggerEvent: row.triggerEvent,
+    triggerEventId: row.triggerEventId,
   }
 }
 
@@ -198,6 +200,8 @@ export interface EnqueueRunInput {
    * so a redelivered message cannot start the same work twice.
    */
   idempotencyKey?: string
+  /** The plugin event that started the run (D42), stored as `trigger_event` / `trigger_event_id`. */
+  trigger?: { event: string; eventId: string }
 }
 
 export interface EnqueueRunResult {
@@ -344,6 +348,10 @@ export async function enqueueRun(
         concurrencyKey,
         input: parsed.data,
         requestedByUserId: input.userId,
+        ...(input.trigger && {
+          triggerEvent: input.trigger.event,
+          triggerEventId: input.trigger.eventId,
+        }),
       })
       .returning()
   } catch (err) {

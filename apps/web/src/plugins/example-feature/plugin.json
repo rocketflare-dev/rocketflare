@@ -8,19 +8,31 @@
   "minKit": "0.8.0",
   "uses": {
     "@/plugins/api": [
+      "agentCtx",
       "createRouter",
       "Database",
       "defineTool",
+      "DeliveredEvent",
+      "eventBinding",
+      "eventCtx",
+      "EventCtx",
+      "EventHandler",
+      "EventName",
+      "EventPayload",
+      "eventTrigger",
       "HookCtx",
       "identityFor",
       "jobCtx",
       "JobCtx",
       "JobHandler",
+      "listBindableAgents",
+      "PluginAgent",
       "PluginConfig",
       "provisionFor",
       "PUBLIC_MOUNT_ROOT",
       "publicCtx",
       "PublicCtx",
+      "recordActivity",
       "requestCtx",
       "RequestCtx",
       "requireFeature",
@@ -45,7 +57,14 @@
       "useAuth",
       "usePermissions"
     ],
-    "@/db/schema/kit": ["tenantIsolation", "tenantRef", "tenants", "timestamps", "users"],
+    "@/db/schema/kit": [
+      "activityEvents",
+      "tenantIsolation",
+      "tenantRef",
+      "tenants",
+      "timestamps",
+      "users"
+    ],
     "'../api' (apps/cli/src/plugins/api.ts)": [
       "CliPlugin",
       "CommandContext",
@@ -56,10 +75,13 @@
       "requireClient"
     ],
     "@testkit/integration": [
+      "bearerHeader",
+      "createTestApiKey",
       "createTestEnv",
       "createTestSession",
       "createTestTenant",
       "createTestUser",
+      "deliverEvents",
       "json",
       "linkUserToTenant",
       "makeSession",
@@ -105,6 +127,7 @@
   "vars": [],
   "workerExports": [],
   "skills": ["example-feature"],
+  "events": ["example-feature.note.created"],
   "schema": { "tables": ["example_notes"], "rlsExcluded": [] },
   "migrations": ["example_notes, tenant-scoped, RLS policy"]
 }

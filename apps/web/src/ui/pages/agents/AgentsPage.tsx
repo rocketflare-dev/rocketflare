@@ -142,7 +142,15 @@ function RunsTable({ titleOf }: { titleOf: (agentKey: string) => string }) {
   const rows = runs.data?.items ?? []
 
   const requestedBy = (run: AgentRun) =>
-    run.requestedByUserId === null ? (
+    run.triggerEvent ? (
+      // Started by a plugin event (D42): the event's name is who asked.
+      <span
+        className="font-mono text-xs text-muted"
+        title={`Started by the ${run.triggerEvent} event`}
+      >
+        {run.triggerEvent}
+      </span>
+    ) : run.requestedByUserId === null ? (
       <span className="text-muted">system</span>
     ) : run.requestedByUserId === user?.id ? (
       'You'

@@ -157,6 +157,26 @@ ones their slice touches, and say what enforces each, so the rule is a test and 
     client they built. `GET /api/agents/runs/:id` shows what a run cost.
   Then point them at `/rf-agent-replay` to prove a threshold change against yesterday's cases before
   it runs on today's.
+- **"Start an agent when X happens"** (D42) — a form is submitted, a note is created, a sync
+  finds a new record. Do not coach a job that calls `startAgentRun`, and never a route that starts
+  the run inline: X is a declared plugin EVENT and the agent subscribes to it. Ask one question
+  first — **does the event alone decide, or does a person choose the agent per subject?**
+  - **The event decides** → `triggers: [eventTrigger('<id>.<thing>.<happened>', { where?, input })]`
+    on the agent definition. `where` filters the payload, `input` builds the agent's input (its
+    `inputSchema` validates it; invalid input is logged and dropped, not retried). One run per
+    (event, agent), however often the delivery repeats; the run shows the event as who started it.
+  - **A person picks** ("On submit, start …" on a form block) → the agent opts in with
+    `bindable: [eventBinding(event, { input })]`; the editor's dropdown reads
+    `GET /api/agents/bindable?event=`; the subject's own `eventHandlers` entry reads the STORED
+    choice and calls `eventCtx(ctx).startBoundAgent(key)`, which re-checks the opt-in, so a forged
+    key starts nothing. Never take the agent key from the visitor's submission.
+  - **The emitter**: declare the event in the plugin's shared `events` (zod payload, `<id>.` names,
+    listed in `plugin.json` `"events"`), then `await ctx.emit(name, { payload, idempotencyKey:
+    '<thing>:<id>' })` after the row is stored. Keep the payload to ids and what subscribers need —
+    it is kept 7 days (`EVENTS_RETENTION_DAYS`) and may hold personal data; never log it.
+  - The app's own code subscribes in `apps/web/src/api/services/events/app-handlers.ts`. Worked
+    example: `example-feature` (`POST /notes` emits, `events/note-created.ts` handles,
+    `agents/note-stats.ts` is triggered). `docs/CONCEPTS.md` §16 "Plugin events".
 
 Four more when the answer to step 0 was "plugin", and every one of them is a test rather than
 advice:

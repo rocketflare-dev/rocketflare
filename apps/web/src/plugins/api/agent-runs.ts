@@ -25,9 +25,11 @@
  * here would close that cycle — `serverPlugins` read before the barrel has finished evaluating.
  */
 
-import type { AgentKey, AgentRunStatus } from '@rocketflare/shared/ai/agents'
+import type { AgentKey, AgentRunStatus, BindableAgent } from '@rocketflare/shared/ai/agents'
 import { ERROR_CODES } from '@rocketflare/shared/errors'
 import { recordActivity } from '../../api/services/activity'
+import type { EventName } from '../../api/services/events/registry'
+import type { AgentEventBinding, AgentEventTrigger } from '../../api/services/events/types'
 import { BadRequestError } from '../../api/utils/core/errors'
 import { createStepRealtimeFor } from './realtime-step'
 import type { PluginContext } from './types'
@@ -117,4 +119,42 @@ export function agentRunStarter({ db, config, env, logger }: PluginContext): Sta
     }
     return { runId: run.id, status: run.status, deduplicated }
   }
+}
+
+// ---- Agents started by plugin events (D42) -----------------------------------------------------
+
+/**
+ * Declare an AUTOMATIC start in an agent definition: `triggers: [eventTrigger('sites.form.submitted',
+ * { where: p => p.formName === 'contact', input: p => ({ text: p.fields.message }) })]`. Every
+ * matching event starts one run, idempotent per (event, agent), through the same gates as the
+ * route. Typed by the event's declared payload; the agent's `inputSchema` validates what `input`
+ * returns (an invalid one is logged and acknowledged — the delivery does not retry it).
+ */
+export function eventTrigger<E extends EventName, Input = unknown>(
+  event: E,
+  spec: Omit<AgentEventTrigger<E, Input>, 'event'>
+): AgentEventTrigger<E, Input> {
+  return { ...spec, event }
+}
+
+/**
+ * Declare an OPT-IN: this agent may be started by `event` when a subject names it (an editor's
+ * "On submit, start" choice) — never by the event alone. Listed by `listBindableAgents(event)` and
+ * `GET /api/agents/bindable?event=`; started by `EventCtx.startBoundAgent(key)`.
+ */
+export function eventBinding<E extends EventName, Input = unknown>(
+  event: E,
+  spec: Omit<AgentEventBinding<E, Input>, 'event'>
+): AgentEventBinding<E, Input> {
+  return { ...spec, event }
+}
+
+/**
+ * The agents that opt in (`bindable`) to being started by `event` — what an editor's agent picker
+ * lists. The same list for every tenant: agents are code. A browser reads it through
+ * `GET /api/agents/bindable?event=` (`read AgentRun`), which answers this.
+ */
+export async function listBindableAgents(event: EventName | string): Promise<BindableAgent[]> {
+  const { bindableAgents } = await import('../../api/services/agents/triggers')
+  return bindableAgents(event)
 }

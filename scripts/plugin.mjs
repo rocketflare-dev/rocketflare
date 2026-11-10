@@ -80,6 +80,7 @@ import {
   dependencyDelta,
   describeClash,
   describeClaudeHook,
+  eventClashes,
   floorOf,
   hasBarrelLine,
   hostFileProblems,
@@ -127,6 +128,7 @@ import {
   skillTarget,
   surfaceDirectories,
   tableClashes,
+  undeclaredManifestEvents,
   undeclaredSkillDirs,
   withoutDependencies,
   workerExportNames,
@@ -2430,6 +2432,39 @@ function cmdCheck(args, host) {
         `'${clash.id.split('-')[0]}_*'), and two plugins cannot share a host with one name ` +
         "between them: a single DROP TABLE takes the other plugin's data",
     })
+  }
+  // **Events (D42).** The name rule itself is a manifest problem (above); what needs every manifest
+  // in hand is a name two plugins declare, and what needs the source is a name the manifest lists
+  // and the shared entry never declares — the manifest is the only part `check` can read without
+  // evaluating TypeScript, so it must not drift from the code.
+  for (const clash of eventClashes(anchors.map(a => a.manifest))) {
+    const entry = anchors.find(a => a.manifest.id === clash.id)
+    if (!entry) continue
+    add('fail', `${clash.id}:event:${clash.event}`, {
+      file: entry.surface.anchor,
+      line: jsonKeyLine(entry.source, 'events'),
+      problem: `declares the event ${clash.event}, which ${clash.others.map(o => `'${o}'`).join(', ')} also declares`,
+      fix: `every event is '<plugin id>.<name>': rename it '${clash.id}.<name>' in "events" and in the shared entry`,
+    })
+  }
+  for (const { surface, source, manifest } of anchors) {
+    const events = Array.isArray(manifest.events) ? manifest.events : []
+    if (events.length === 0) continue
+    const sharedDir = `packages/shared/src/plugins/${manifest.id}`
+    const sharedSource = existsSync(abs(sharedDir))
+      ? walk(abs(sharedDir))
+          .filter(f => /\.ts$/.test(f))
+          .map(f => readFileSync(abs(`${sharedDir}/${f}`), 'utf8'))
+          .join('\n')
+      : ''
+    for (const name of undeclaredManifestEvents(events, sharedSource)) {
+      add('fail', `${manifest.id}:event-undeclared:${name}`, {
+        file: surface.anchor,
+        line: jsonKeyLine(source, 'events'),
+        problem: `lists the event ${name}, which ${sharedDir}/ never declares`,
+        fix: `add '${name}': <zod payload schema> to the shared entry's \`events\`, or drop it from "events"`,
+      })
+    }
   }
   // A prefix `add` has not provisioned yet is the plan's next step; one a removal dropped is not.
   for (const file of wranglerTomls()) {

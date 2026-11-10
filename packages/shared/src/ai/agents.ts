@@ -210,6 +210,13 @@ export const agentRunSchema = z.object({
   exclusive: z.boolean().default(true),
   /** The `POST /runs/batch` call that created this run; null for a single enqueue. */
   batchId: z.string().uuid().nullable().default(null),
+  /**
+   * The plugin event that started this run (D42) — an agent `trigger` or a `bindable` start — e.g.
+   * `sites.form.submitted`; null for a run a person or a job started. Defaulted for an older server.
+   */
+  triggerEvent: z.string().nullable().default(null),
+  /** That event's `plugin_events` id. The row is pruned after the retention window; this is not. */
+  triggerEventId: z.string().uuid().nullable().default(null),
 })
 export type AgentRun = z.infer<typeof agentRunSchema>
 
@@ -233,6 +240,27 @@ export const createAgentRunRequestSchema = z.object({
   input: z.unknown(),
 })
 export type CreateAgentRunRequest = z.infer<typeof createAgentRunRequestSchema>
+
+// ---- Bindable agents (D42) -------------------------------------------------------------------
+
+/**
+ * `GET /api/agents/bindable?event=` — the agents that opt in (`bindable`) to being started by one
+ * plugin event when a subject names them: the list behind a no-code "On submit, start" picker.
+ */
+export const bindableAgentListQuerySchema = z.object({
+  event: z.string().min(1).max(200),
+})
+export type BindableAgentListQuery = z.infer<typeof bindableAgentListQuerySchema>
+
+export const bindableAgentSchema = z.object({
+  key: agentKeySchema,
+  title: z.string(),
+  description: z.string(),
+})
+export type BindableAgent = z.infer<typeof bindableAgentSchema>
+
+export const bindableAgentListResponseSchema = z.object({ items: z.array(bindableAgentSchema) })
+export type BindableAgentListResponse = z.infer<typeof bindableAgentListResponseSchema>
 
 // ---- Batch enqueue -------------------------------------------------------------------------
 

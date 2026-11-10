@@ -43,7 +43,7 @@ const CORE_UNSCOPED_ALLOWLIST: Record<string, string> = {
   'src/api/services/invitations.ts':
     'pruneInvitations is the nightly cron: expired invitations are deleted across every tenant, which is the job',
   'src/api/scheduled.ts':
-    'runPruneAiSpans is the nightly trace-store retention: spans past the cutoff are deleted across every tenant in ONE statement, which Postgres answers from the (tenant_id, started_at) index — one DELETE per tenant cost a round trip each under neon',
+    'runPruneAiSpans is the nightly trace-store retention: spans past the cutoff are deleted across every tenant in ONE statement, which Postgres answers from the (tenant_id, started_at) index — one DELETE per tenant cost a round trip each under neon; runPruneEvents is the same for plugin_events past EVENTS_RETENTION_DAYS (D42), from its (tenant_id, created_at) index',
   'src/api/observability/span-store.ts':
     'insertSpans is an INSERT, never a read: every row carries the tenant_id of the trace that recorded it (a span without one is dropped by toSpanRow), and one flush may hold spans from more than one tenant',
 }

@@ -169,6 +169,13 @@
       "when": 1794288358005,
       "tag": "0023_kit-platform-knowledge",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1794295938234,
+      "tag": "0024_kit-plugin-events",
+      "breakpoints": true
     }
   ]
 }

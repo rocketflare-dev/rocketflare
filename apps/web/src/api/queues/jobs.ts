@@ -25,6 +25,7 @@ import { handleChatCompact } from './handlers/chat-compact'
 import { handleDocumentConvert } from './handlers/document-convert'
 import { handleDocumentIndex } from './handlers/document-index'
 import { handleEmailSend } from './handlers/email-send'
+import { handleEventDeliver } from './handlers/event-deliver'
 import { handleTenantPurge } from './handlers/tenant-purge'
 
 /** What every handler receives: the bindings, validated config, a job-scoped logger and a DB. */
@@ -67,6 +68,7 @@ const coreHandlers: { [T in CoreJobType]: JobHandler<T> } = {
   'document.convert': handleDocumentConvert,
   'chat.compact': handleChatCompact,
   'tenant.purge': handleTenantPurge,
+  'event.deliver': handleEventDeliver,
 }
 
 /**

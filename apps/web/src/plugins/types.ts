@@ -33,6 +33,7 @@ import type { AccessScope } from '../api/services/access-sql'
 import type { AnyAgentDefinition } from '../api/services/agents/registry'
 import type { AgentToolContext } from '../api/services/agents/tools'
 import type { Tool } from '../api/services/ai/agent-loop'
+import type { EventHandler } from '../api/services/events/types'
 import type { AppBindings, AppEnv } from '../api/types'
 import type { AppConfig } from '../config'
 import type { Database } from '../db/client'
@@ -251,6 +252,17 @@ export interface ServerPlugin<S extends SharedPlugin = SharedPlugin> {
    * is a Cloudflare dashboard (or API) step per zone; nothing here or in a toml declares it.
    */
   emailHandlers?: readonly EmailHandler[]
+  /**
+   * Subscriptions to plugin events (D42) — this plugin's own or any other installed plugin's,
+   * named by `event` and declared in some `SharedPlugin.events`. Each entry gets its OWN queued
+   * `event.deliver` job per event (`handler:<id>:<name>`), so one failing handler retries alone.
+   * The handler receives the event, re-read from `plugin_events` and re-validated, and the job's
+   * context; `eventCtx(ctx)` adapts it to a context BOUND to the event's tenant (`startAgentRun`,
+   * `startBoundAgent`, `storage`, `features`, `emit`, `enqueue`). The host does NOT dedupe a
+   * redelivery — be idempotent on `event.id` — and acknowledges a 4xx refusal rather than retrying
+   * it. `tests/config/plugins.test.ts` refuses an undeclared event and a duplicated `name`.
+   */
+  eventHandlers?: readonly EventHandler[]
   /**
    * Feature keys this plugin's own CONFIG switches on for the deployment, unioned with
    * `FEATURES_ENABLED`, so an `environmentGated` flag can follow a plugin's vars rather than need a

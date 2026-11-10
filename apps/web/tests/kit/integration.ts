@@ -100,6 +100,12 @@ export {
   type TaskReport,
 } from '@/api/scheduled'
 
+/**
+ * D42: run the `event.deliver` jobs an emit queued through the real consumer — each subscriber's
+ * own delivery — and report `{ subscriber, eventId, outcome }` for each. Other jobs stay queued.
+ */
+export { deliverEvents, type EventDelivery } from '../helpers/events'
+
 // ---- fixtures ----------------------------------------------------------------------------------
 
 /**

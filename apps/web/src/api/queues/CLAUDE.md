@@ -38,7 +38,11 @@ per environment. Work over ~30 s or with multiple steps is a Workflow, not a job
 
 - Queued: `email.send` (invitation create/bulk/resend, access-request decided — never the magic
   link, which stays inline), `activity.record`, `document.index`, `document.convert`,
-  `chat.compact`, `tenant.purge`
+  `chat.compact`, `tenant.purge`, `event.deliver`
+- `event.deliver` (D42) is ONE subscriber of one `plugin_events` row: `{ tenantId, eventId,
+  subscriber }`, never the payload. It re-reads the row under the tenant, re-validates, and calls
+  that subscriber only; a missing row (pruned, other tenant) or subscriber is acked, a 4xx
+  `ApiError` is acked, anything else throws and retries. Queued by `emitEvent`, never by hand
 - `tenant.purge` is the out-of-database half of deleting a tenant: the payload (id + slug) is all
   it will ever have — the row is gone. It runs every plugin's `onTenantDeleted` first (each
   try/caught) then `purgeTenantObjects` (pages `tenants/<id>/` with `listPage` + `deleteMany`). An

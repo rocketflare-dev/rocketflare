@@ -49,6 +49,7 @@ import type { ToolCtx } from '@/plugins/api/ai'
 import { toolCtx } from '@/plugins/api/ai'
 import type { EmailCtx } from '@/plugins/api/email'
 import { emailCtx } from '@/plugins/api/email'
+import { tenantEmitter } from '@/plugins/api/emit'
 import type { RequestCtx } from '@/plugins/api/http'
 import type {
   CronCtx,
@@ -272,6 +273,9 @@ export function makeRequestCtx(options: RequestCtxOptions): FakeRequestCtx {
       return createR2Storage(env.FILES)
     },
     durableObject: (namespace, key) => durableObject(namespace, options.tenantId, key),
+    // The REAL emitter over the real handle: a test of a route that emits proves the row and the
+    // queued deliveries (`stubs(env).queue.messages`), not a recording.
+    emit: tenantEmitter({ db, config, logger, env }, options.tenantId),
 
     notFound: (message = 'Not found', code?: string) => {
       throw new NotFoundError(message, code)

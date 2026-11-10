@@ -42,9 +42,11 @@ import type {
 import { callStructuredTool, runToolLoop, toolInputSchema } from '../../api/services/ai/agent-loop'
 import { AiNotConfiguredError } from '../../api/services/ai/errors'
 import { recordUsage } from '../../api/services/ai/usage'
+import type { TenantEmit } from '../../api/services/events/types'
 import { tenantFeatures } from '../../api/services/features'
 import type { StorageService } from '../../api/services/storage'
 import type { AbilityCheck } from './auth'
+import { tenantEmitter } from './emit'
 import { filesStorage } from './storage'
 import type { Database, PluginBindings, PluginConfig, PluginContext } from './types'
 
@@ -175,6 +177,11 @@ export interface AgentCtx<Input = unknown> {
    * write is a side effect, so it goes through `once` like any other.
    */
   storage(): StorageService
+  /**
+   * Emit a declared plugin event (D42) in the run's organisation. A side effect: wrap it in
+   * `once`, and derive its `idempotencyKey` from `runId`, so a retried step emits once.
+   */
+  emit: TenantEmit
   /** The system prompt for this agent's `promptKey`, with `appName`/`tenantName` filled in. */
   prompt(vars?: Record<string, string | undefined>): Promise<string>
   /** A durable timeline row. Never throws — progress must not be able to fail a run. */
@@ -262,6 +269,10 @@ export function agentCtx<Input>(ctx: AgentContext<Input>): AgentCtx<Input> {
     input: ctx.input,
     tools: ctx.tools,
     storage: () => filesStorage(ctx.env as PluginBindings),
+    emit: tenantEmitter(
+      { db: ctx.db, config: ctx.cfg, logger: ctx.logger, env: ctx.env as PluginBindings },
+      ctx.tenantId
+    ),
     prompt: vars => ctx.prompt(vars),
     step: (key, label, status, detail) => ctx.step(key, label, status, detail),
     checkCancelled: () => ctx.checkCancelled(),

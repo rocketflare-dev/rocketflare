@@ -91,6 +91,13 @@ export const agentRuns = pgTable(
     concurrencyKey: text('concurrency_key'),
     /** The `POST /runs/batch` call that created the row — `GET /runs?batchId=`. */
     batchId: uuid('batch_id'),
+    /**
+     * The plugin event that started the run (D42), by name and `plugin_events` id — NULL for a run
+     * a person or a job started. A plain uuid with NO foreign key: the event row is pruned after
+     * `EVENTS_RETENTION_DAYS`, and the run's record of what started it must outlive it.
+     */
+    triggerEvent: text('trigger_event'),
+    triggerEventId: uuid('trigger_event_id'),
     ...timestamps(),
   },
   table => [

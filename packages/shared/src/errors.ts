@@ -50,6 +50,10 @@ export const ERROR_CODES = {
   agentRunsLimit: 'agent_runs_limit',
   /** 400: `POST /api/agents/runs/batch` named an exclusive agent — one run at a time cannot batch. */
   agentExclusive: 'agent_exclusive',
+  /** 400: an event name no installed plugin declares (D42). */
+  eventUnknown: 'event_unknown',
+  /** 403: the agent does not opt in (`bindable`) to being started by this event (D42). */
+  agentNotBindable: 'agent_not_bindable',
   /** 429: the tenant's agent spend today has reached `AGENT_TENANT_DAILY_COST_USD`. */
   aiBudgetExceeded: 'ai_budget_exceeded',
   /** Event code, not a status: a run stopped because it reached its token or cost budget. */

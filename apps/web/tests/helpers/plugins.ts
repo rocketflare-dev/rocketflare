@@ -8,6 +8,7 @@
  * the default state.
  */
 
+import { eventNameProblem } from '@rocketflare/shared/plugins'
 import { MAX_PUBLIC_MOUNT_BODY_BYTES } from '@/api/middleware/body-limit'
 import { PUBLIC_SITE_HOST } from '@/api/middleware/public-sites'
 import {
@@ -259,6 +260,58 @@ export function emailHandlerIssues(
       const prior = owner.get(local)
       if (prior) issues.push(`${id}: email local part '${local}' is already handled by ${prior}`)
       else owner.set(local, id)
+    }
+  }
+  return issues
+}
+
+/** Everything the event rule reads (D42), gathered from the barrels so the rule stays pure. */
+export interface EventDeclarations {
+  /** Each plugin's declared names (`SharedPlugin.events` keys). */
+  declared: readonly { id: string; events: readonly string[] }[]
+  /** Each subscription: `owner` is a plugin id, or `app` for `APP_EVENT_HANDLERS`. */
+  handlers: readonly { owner: string; event: string; name: string }[]
+  /** Each agent's `triggers` and `bindable` entries. */
+  agentEvents: readonly { agentKey: string; event: string; kind: 'trigger' | 'bindable' }[]
+}
+
+const HANDLER_NAME_RE = /^[a-z][a-z0-9-]*$/
+
+/**
+ * **Declared, namespaced, once; subscribed only to what is declared** (D42). A name outside its
+ * plugin's `<id>.` or inside `kit.` is refused, and so is one two plugins declare — the host keeps
+ * the first, so the second plugin's emits would validate against the other's schema. A handler, a
+ * trigger or a binding naming an event nobody declares never fires: that is the "undeclared" case,
+ * and it is only visible here. Handler names are part of each delivery's id, so they are unique
+ * per owner and well formed.
+ */
+export function eventDeclarationIssues(d: EventDeclarations): string[] {
+  const issues: string[] = []
+  const owner = new Map<string, string>()
+  for (const { id, events } of d.declared) {
+    for (const name of events) {
+      const problem = eventNameProblem(id, name)
+      if (problem) issues.push(`${id}: event ${problem}`)
+      const prior = owner.get(name)
+      if (prior) issues.push(`${id}: event '${name}' is already declared by ${prior}`)
+      else owner.set(name, id)
+    }
+  }
+  const seen = new Set<string>()
+  for (const h of d.handlers) {
+    if (!owner.has(h.event)) {
+      issues.push(`${h.owner}: handler '${h.name}' subscribes to undeclared event '${h.event}'`)
+    }
+    if (!HANDLER_NAME_RE.test(h.name)) {
+      issues.push(`${h.owner}: handler name '${h.name}' must match ${HANDLER_NAME_RE.source}`)
+    }
+    const key = `${h.owner}:${h.name}`
+    if (seen.has(key)) issues.push(`${h.owner}: handler name '${h.name}' is used twice`)
+    seen.add(key)
+  }
+  for (const a of d.agentEvents) {
+    if (!owner.has(a.event)) {
+      issues.push(`agent ${a.agentKey}: ${a.kind} names undeclared event '${a.event}'`)
     }
   }
   return issues

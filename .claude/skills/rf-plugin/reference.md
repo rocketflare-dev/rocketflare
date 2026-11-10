@@ -409,6 +409,27 @@ The contract is in `apps/web/src/plugins/CLAUDE.md` (never write a session; prov
 Worked examples: `apps/web/src/plugins/example-feature/api/sso.ts` (dev-only) and `sso-policy.ts`;
 `tests/api/identity.test.ts` under that plugin drives `provisionFor`.
 
+## Events and agent triggers — "start an agent when X happens" (D42)
+
+A plugin that wants others to react to something it does DECLARES an event and emits it; it never
+calls another plugin, and never starts an agent it does not own by key from a request.
+
+- **Declare** in the shared entry, `events: { '<id>.<thing>.<happened>': zodSchema }`, and list the
+  same names in the manifest's `"events"` array. `check` fails a name outside `<id>.`, any `kit.`
+  name, one another installed plugin declares, and one the shared source never mentions.
+- **Emit** after the row is stored: `await ctx.emit(name, { payload, idempotencyKey: '<thing>:<id>' })`
+  from a route, run or tool, or with `tenantId` from a job, cron, email or public handler. The
+  payload is kept `EVENTS_RETENTION_DAYS` (7) and never logged: ids plus what subscribers need.
+- **Subscribe**: `eventHandlers: [{ event, name, handle: (e, ctx) => mine(e, eventCtx(ctx)) }]`,
+  idempotent on `e.id`. An agent subscribes itself with `triggers: [eventTrigger(event, { where?,
+  input })]` — no handler needed.
+- **A picker** ("On submit, start …"): the agent opts in with `bindable: [eventBinding(event,
+  { input })]`; the editor lists choices from `GET /api/agents/bindable?event=` (or
+  `listBindableAgents`); the emitting plugin's own handler reads the STORED choice and calls
+  `eventCtx(ctx).startBoundAgent(key)`, which re-checks the opt-in (403 `agent_not_bindable`).
+- **Test** with `deliverEvents(env, db)` from `@testkit/integration` after the emitting request.
+  Worked example: `apps/web/src/plugins/example-feature/events/` and `agents/note-stats.ts`.
+
 ## Two things nothing else will catch
 
 - **Migrations are the host's, always.** Each `meta/NNNN_snapshot.json` carries the whole cumulative

@@ -26,6 +26,8 @@ import {
   type AgentRun,
   type AgentRunWithEvents,
   agentRunListQuerySchema,
+  type BindableAgentListResponse,
+  bindableAgentListQuerySchema,
   type CreateAgentRunBatchResponse,
   createAgentRunBatchRequestSchema,
   createAgentRunRequestSchema,
@@ -73,9 +75,17 @@ import {
   toAgentRun,
   toAgentRunEvent,
 } from '../services/agents/runs'
+import { bindableAgents } from '../services/agents/triggers'
 import { runSpend } from '../services/ai/usage'
+import { isEventName } from '../services/events/registry'
 import type { AppContext, AuthContext } from '../types'
-import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from '../utils/core/errors'
+import {
+  BadRequestError,
+  ConflictError,
+  ForbiddenError,
+  NotFoundError,
+  ValidationError,
+} from '../utils/core/errors'
 import { pageWindow, paginated } from '../utils/routes/pagination'
 import { uuidParam, withAuthAndDb } from '../utils/routes/route-helpers'
 import { createRouter } from '../utils/routes/router'
@@ -154,6 +164,24 @@ agentsRouter.get('/', async c => {
   withAuthAndDb(c)
   guardPermission(c, 'read', 'AgentRun')
   return c.json({ items: listAgentInfo() })
+})
+
+// ---- GET /api/agents/bindable?event= ------------------------------------------------------------
+
+/**
+ * D42: the agents that opt in (`bindable`) to being started by one plugin event — the list behind
+ * an editor's "On submit, start" picker. Guarded like `GET /` (the registry is code, the same for
+ * every tenant). An undeclared event is a 400 `event_unknown`, so a typo in a plugin's UI is loud
+ * rather than an empty picker. Listing an agent here grants nothing: the start re-checks it.
+ */
+agentsRouter.get('/bindable', validate('query', bindableAgentListQuerySchema), async c => {
+  withAuthAndDb(c)
+  guardPermission(c, 'read', 'AgentRun')
+  const { event } = c.req.valid('query')
+  if (!isEventName(event)) {
+    throw new BadRequestError(`Unknown event: ${event}`, ERROR_CODES.eventUnknown, { event })
+  }
+  return c.json({ items: bindableAgents(event) } satisfies BindableAgentListResponse)
 })
 
 // ---- GET /api/agents/runs -------------------------------------------------------------------------

@@ -10,7 +10,8 @@
  * The exports below are grouped by the file they come from and sorted by the formatter, so read
  * them there: `./http` is a request, `./jobs` is background work, `./ai` is agents and tools,
  * `./chat` is a streamed chat turn a plugin route answers with,
- * `./access` is row visibility, `./events` is nudges and notifications, `./secrets` is a tenant's
+ * `./access` is row visibility, `./events` is nudges and notifications, `./emit` is declared plugin
+ * events (D42), `./secrets` is a tenant's
  * credentials at rest, `./identity` is signing a person in and provisioning their memberships.
  *
  * **Three things are deliberately NOT here.**
@@ -27,6 +28,7 @@
  *   barrel. They are at `@/db/schema/kit` — beside `rls.ts`, below the barrel.
  */
 
+export type { BindableAgent } from '@rocketflare/shared/ai/agents'
 export type {
   AnyServerPlugin,
   AnyUiPlugin,
@@ -47,6 +49,7 @@ export type {
   VisibilityResource,
 } from './access'
 export { sharedWithMyGroups } from './access'
+export { eventBinding, eventTrigger, listBindableAgents } from './agent-runs'
 export type {
   AgentCtx,
   AgentDecide,
@@ -100,6 +103,22 @@ export type { HookCtx, SeedCtx, Tenant } from './db'
 export { affected, isUniqueViolation, pgErrorCode, rows, transaction } from './db'
 export type { EmailContext, EmailCtx, EmailHandler } from './email'
 export { EMAIL_CATCH_ALL, emailCtx, emailLocalPart, emailSubaddress } from './email'
+export type {
+  AgentEventBinding,
+  AgentEventTrigger,
+  DeliveredEvent,
+  Emit,
+  EmitInput,
+  EmittedEvent,
+  EventContext,
+  EventCtx,
+  EventHandler,
+  EventName,
+  EventPayload,
+  TenantEmit,
+  TenantEmitInput,
+} from './emit'
+export { eventCtx } from './emit'
 export type { ActivityInput, NotifyInput, Realtime } from './events'
 export {
   durableObject,
