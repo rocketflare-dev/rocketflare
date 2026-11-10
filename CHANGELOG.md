@@ -6,6 +6,11 @@ copy of the kit forward without recreating anything its owner deleted.
 
 If you are running a copy: `pnpm kit:upgrade` tells you which of these you are missing.
 
+## 0.30.0 — 2026-11-10
+
+Plugins can serve whole public hosts through a new `publicSites` seam, with a strict per-site CSP, multi-host provisioning, a `workspace` UI route tier and a tenant resolver; an app with no such plugin sees no routing change.
+[Porting note](docs/upgrades/0.30.0.md).
+
 ## 0.29.0 — 2026-11-09
 
 Sign-in moves to `openid-client`, three dependency advisories close, and a hardening round tightens roles, sign-in, API key scopes, AI tools and budgets, the plugin identity seam, CLI output and tooling; trace content capture defaults off.
