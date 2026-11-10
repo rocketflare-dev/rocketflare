@@ -80,7 +80,7 @@ describe('workspace plugin routes', () => {
     localStorage.setItem('sideNavCollapsed', 'false')
     open('/fixture/editor', makeSession())
     await screen.findByTestId('plugin-page')
-    expect(sideNav()).toHaveClass('w-16')
+    await waitFor(() => expect(sideNav()).toHaveClass('w-16'))
     expect(collapseToggle()).not.toBeInTheDocument()
     expect(localStorage.getItem('sideNavCollapsed')).toBe('false')
   })
@@ -91,7 +91,8 @@ describe('workspace plugin routes', () => {
     await screen.findByTestId('plugin-page')
     await userEvent.click(screen.getByRole('link', { name: 'to shell' }))
     await waitFor(() => expect(screen.getByTestId('plugin-page')).toHaveTextContent('shell'))
-    expect(sideNav()).toHaveClass('w-56')
+    // The nav takes its width from the route one render after the page content changes.
+    await waitFor(() => expect(sideNav()).toHaveClass('w-56'))
     expect(collapseToggle()).toBeInTheDocument()
     expect(localStorage.getItem('sideNavCollapsed')).toBe('false')
   })

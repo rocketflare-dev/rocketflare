@@ -4,7 +4,7 @@ previous: 0.32.1
 date: null
 breaking: false
 migrations: []
-areas: []
+areas: [ui]
 touches_surfaces: []
 requires_surfaces: []
 manual: false
@@ -12,20 +12,18 @@ manual: false
 
 ## What changed
 
-_Nothing yet. Add an entry here in the same pull request as the change. This first paragraph is
-lifted VERBATIM into `CHANGELOG.md`, so make it ONE standalone summary sentence of ≤ 40 words —
-then one bullet per change, one line each, and no `###` sub-headings. Rationale belongs in
-`docs/CONCEPTS.md` and is linked, never restated; see `README.md` beside this file._
+A kit UI test that failed intermittently on slow CI runners now waits for the side nav to take its width after a route change.
+
+- `apps/web/tests/ui/plugin-route-tiers.test.tsx` waits for the side nav's `w-16` / `w-56` class, which lands one render after the page content; it failed in a plugin repository's CI.
 
 ## How to apply
 
-_Numbered, imperative, each step self-contained — no "these", "them" or "the above" reaching
-outside its own step._
+1. Copy `apps/web/tests/ui/plugin-route-tiers.test.tsx` from this release over yours, unless you changed it; if you did, wrap each `expect(sideNav()).toHaveClass(...)` that follows a navigation in `await waitFor(() => ...)`.
 
 ## Conflicts to expect
 
-_One line each: `path → what changed → what to do`. Or exactly `None.`_
+None.
 
 ## Verify
 
-_Numbered checkable commands and assertions only._
+1. `pnpm web test:ui` passes.
