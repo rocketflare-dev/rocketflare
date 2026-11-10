@@ -153,6 +153,25 @@ describe('documentCardsFromToolResult', () => {
     })
   })
 
+  it('makes no card for a platform document, which the documents page cannot open', () => {
+    const cards = documentCardsFromToolResult(
+      KNOWLEDGE_TOOLS.search,
+      JSON.stringify({
+        query: 'invite',
+        documents: [
+          {
+            documentId: OTHER,
+            title: 'Inviting people',
+            platform: true,
+            passages: [{ text: 'a' }],
+          },
+          { documentId: DOC, title: 'Onboarding', totalPassages: 2, passages: [{ text: 'b' }] },
+        ],
+      })
+    )
+    expect(cards.map(c => c.id)).toEqual([DOC])
+  })
+
   it('reads a list answer with its types, and a get_document window as the excerpt', () => {
     const [listed] = documentCardsFromToolResult(KNOWLEDGE_TOOLS.list, {
       documents: [
