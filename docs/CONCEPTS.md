@@ -717,7 +717,7 @@ Server: `api/services/{ai,agents}/**` (read their `CLAUDE.md`), `services/prompt
   with one dense leg per corpus fused by the same RRF, and the answer reports `semantic: 'used' |
   'unavailable'`. Every tenant document view (the list, viewer, `/search`, `get_document`,
   `list_documents`, delete) keeps `tenant_id = $t` and never shows one; `search_knowledge` includes
-  them for the sources `ServerPlugin.knowledgeSources` names, marked `platform`.
+  them for the sources `ServerPlugin.knowledgeSources` names, marked `platform`, and chat and agent runs show no document card for one (the documents page cannot open it).
 - **Usage**: one `ai_usage` row per call, costed at write time from the one price table
   (`shared/ai/pricing`; an unknown model gets `null` and is counted as unpriced). While a cost cap
   applies to a run the deployment pays for (the platform key or the Workers AI binding), a chat call
