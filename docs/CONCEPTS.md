@@ -696,6 +696,20 @@ Server: `api/services/{ai,agents}/**` (read their `CLAUDE.md`), `services/prompt
   replaced, chunks rebuilt (the old chunks go in the upsert's transaction, so a pending or failed
   re-index never serves the replaced text), a replaced original removed from R2 — so a connector's re-sync never
   duplicates. Plugins reach it through `ingestDocument` (§16).
+  **Platform documents**: a `documents` / `chunks` row with `tenant_id` NULL is knowledge about the
+  APP itself (a plugin's user guide), readable by EVERY tenant by design. RLS pairs
+  `tenantIsolation()` with a SELECT-only `platformReadable()` policy (`tenant_id IS NULL`), so a
+  scoped connection reads platform rows and can never insert, update or delete one; they are
+  written only on the owner connection by `ingestPlatformDocument` from a job or cron (§16). A CHECK
+  requires `source` + `externalId`, unique among platform rows. They are always embedded, by
+  `resolvePlatformEmbeddings(cfg, env)` (`EMBEDDINGS_API_KEY`, else Workers AI via `[ai]`, else
+  none, and then nothing is written), so every tenant's query meets vectors of one model.
+  `searchChunks` reaches them only when a caller names their sources (`platformSources`, never
+  from a request body). The query is embedded once per model when the tenant's embedder differs,
+  with one dense leg per corpus fused by the same RRF, and the answer reports `semantic: 'used' |
+  'unavailable'`. Every tenant document view (the list, viewer, `/search`, `get_document`,
+  `list_documents`, delete) keeps `tenant_id = $t` and never shows one; `search_knowledge` includes
+  them for the sources `ServerPlugin.knowledgeSources` names, marked `platform`.
 - **Usage**: one `ai_usage` row per call, costed at write time from the one price table
   (`shared/ai/pricing`; an unknown model gets `null` and is counted as unpriced). While a cost cap
   applies to a run the deployment pays for (the platform key or the Workers AI binding), a chat call
@@ -791,7 +805,10 @@ stream cursor; a cancelled run emits nothing rather than AG-UI 1.0's `RUN_FINISH
 outcome; no token-level streaming for runs (would need a per-run DO); char-based history budget
 not derived from the model; sliding window defeats prompt caching on long threads; `enqueueRun`
 does not pre-resolve the client; Workers AI forced tools on off-list models are best-effort; no
-rerank, no generated `tsvector`; HITL asks cannot be amended, have no
+rerank, no generated `tsvector`; platform documents cannot be opened with `get_document` (a
+search hit is all a model reads of one), are not re-embedded automatically when the platform
+embedder changes (the next `ingestPlatformDocument` re-indexes; until then they are found
+lexically), and have no admin view; HITL asks cannot be amended, have no
 reminders, and parks are bounded by instance retention (3 days Free / 30 Paid); runs nobody opens
 stay active-looking; no prompt versioning. Volume (D39): the active-run cap is counted, not locked,
 so a burst can overshoot it; a budget is checked BEFORE a call, so a run overshoots by its last
@@ -1282,6 +1299,18 @@ as merging a PR. A plugin repo mirrors the host tree and ships **no migration, n
   UPDATES the row — text, owner, visibility, grants, chunks, the stored original — so a sync can
   replay safely. Group ids are checked against the tenant first. This file belongs to the
   `feature-knowledge` surface; a plugin that ingests requires it.
+- **Platform knowledge**: `ingestPlatformDocument(ctx, { source, externalId, title, text })` /
+  `prunePlatformDocuments(ctx, { source, keepExternalIds })` write the tenant-less corpus (§9).
+  They take ONLY `JobCtx | CronCtx`, which now carry `kind: 'job' | 'cron'`, so the structurally
+  identical `EmailCtx` and `PublicCtx` are a type error, and they check at run time too. The
+  `source` must be `<installed plugin id>:<kind>` (never `kit:`). Ingest embeds synchronously with
+  the platform embedder, throws `PlatformEmbeddingsError` (503) with nothing written when there is
+  none, and returns `unchanged` for the same title and text. `searchKnowledge(ctx, { query, limit,
+  sources?, platformSources?, signal? })` → `{ hits, semantic }` works from any context with a
+  `scope` and falls back to keyword search. `ServerPlugin.knowledgeSources?(scope)` adds platform
+  sources to the kit's `search_knowledge` tool (unioned; an unnamespaced source is dropped, a throw
+  skipped). `fuseByRank` / `anyTermTsquery` / `candidatePoolSize` are exported for a plugin's own
+  corpus. **Never put tenant data in a platform document**: every organisation can read it.
 - **Skills**: a plugin ships agent skills at `skills/<dir>/` in its own tree and declares them in
   `"skills"`; `add` copies each to `.claude/skills/<dir>/` (the one place outside its roots a
   plugin may write) and records it on the surface, `upgrade` REPLACES it (never patches — an agent's

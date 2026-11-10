@@ -3,8 +3,9 @@ version: unreleased
 previous: 0.29.0
 date: null
 breaking: false
-migrations: []
-areas: [api, ui, config, scripts, docs]
+migrations:
+  - "documents.tenant_id and chunks.tenant_id nullable (platform documents), a CHECK and a partial unique index on documents, SELECT-only platform read policies on both"
+areas: [api, ui, config, scripts, docs, db]
 touches_surfaces: []
 requires_surfaces: []
 manual: false
@@ -42,6 +43,12 @@ Plugins can serve whole public hosts through a new `publicSites` seam, with a st
 - `Strict-Transport-Security` carries `includeSubDomains` only on the app's own host (`APP_URL`), so a public site on an apex domain does not pin its subdomains.
 - A public-site page can add CSP sources for itself by setting `PUBLIC_SITE_PAGE_CSP_HEADER` (JSON, `PublicSiteCsp`), exported from `@/plugins/api`. A `formAction` that is a path, such as `/submit`, is pinned to the request's origin.
 - The CLI's `ApiClient` gains `getBytes` and `postForm`, for download and multipart routes.
+- Platform documents: `documents` and `chunks` may hold rows with `tenant_id` NULL — knowledge about the app itself (a plugin's user guide), readable by every tenant through a SELECT-only `platformReadable()` policy and written only by the owner connection. A CHECK requires `source` and `externalId` on such a row; `documents_platform_source_external_uq` makes `(source, externalId)` unique among them.
+- `@/plugins/api` gains `ingestPlatformDocument(ctx, { source, externalId, title, text })` and `prunePlatformDocuments(ctx, { source, keepExternalIds })`, accepted only on a `JobCtx` or `CronCtx` and only for a source namespaced with an installed plugin's id. Ingest embeds synchronously with the new `resolvePlatformEmbeddings(cfg, env)` (`EMBEDDINGS_API_KEY`, else the `[ai]` binding), writes nothing and throws `PlatformEmbeddingsError` (503 `platform_embeddings_not_configured`) without one, and is a no-op for unchanged text.
+- `JobCtx` and `CronCtx` carry `kind: 'job'` / `kind: 'cron'`, set by `jobCtx()` / `cronCtx()`. A hand-built JobCtx or CronCtx in a test must add it.
+- `searchKnowledge(ctx, { query, limit, sources?, platformSources?, signal? })` on `@/plugins/api` returns `{ hits, semantic }` for any context carrying a scope, falling back to keyword search without an embedder. `fuseByRank`, `anyTermTsquery` and `candidatePoolSize` are exported from `@/plugins/api`.
+- `searchChunks` takes optional `sources` and `platformSources`. Platform chunks are ranked against a query vector from the platform embedder; when the tenant's model differs, the query is embedded once per model and each corpus gets its own dense leg before RRF. Without the new parameters, results are unchanged.
+- `ServerPlugin.knowledgeSources?(scope)` names platform sources that the kit's `search_knowledge` tool, used by chat and agents, also searches. Platform passages are marked `platform: true`. Document lists, the viewer, `/search`, `get_document` and `list_documents` stay tenant-only.
 
 ## How to apply
 
@@ -59,6 +66,10 @@ Plugins can serve whole public hosts through a new `publicSites` seam, with a st
 12. Add `deploymentFeatures?: (config) => readonly string[]` to `ServerPlugin` in `apps/web/src/plugins/types.ts`, then port `apps/web/src/permissions/features.ts`, `apps/web/src/api/services/features.ts` and the two `await`s in `apps/web/src/api/middleware/auth.ts`. Any call of your own to `resolveFeatures` must now `await` it.
 13. Move the `@theme` block and both `@plugin "daisyui/theme"` blocks from `apps/web/src/ui/index.css` into `apps/web/src/shared/theme-tokens.css`, and `@import "../shared/theme-tokens.css";` directly after the Tailwind import. Port the matching change in `tests/ui/contrast.test.ts`.
 14. Port `getBytes` and `postForm` into `apps/cli/src/api.ts` if a plugin you install uses them.
+15. Port platform documents: `platformTenantRef` in `apps/web/src/db/schema/_helpers.ts`, `platformReadable` in `apps/web/src/db/schema/rls.ts`, the nullable `tenantId`, the CHECK, the partial unique index and the policy in `apps/web/src/db/schema/documents.ts` and `chunks.ts`. Run `pnpm db:generate --name kit-platform-knowledge`, read the SQL and run `pnpm db:migrate`.
+16. Port `apps/web/src/api/services/ai/platform-documents.ts`, `resolvePlatformEmbeddings` in `resolve.ts`, and the new `searchChunks` / `searchKnowledgeChunks` / `fuseDenseLegs` in `retrieval.ts`. Port the `tenantId` parameters added to `grantDocumentGroups`, `indexOrEnqueue` and `upsertExternal` in `ingest.ts`, and `documentTenantId`. Code of your own reading `DocumentRow.tenantId` now gets `string | null`; use `documentTenantId(row)` where a tenant row is expected.
+17. Port `kind` on `JobCtx` / `CronCtx` in `apps/web/src/plugins/api/jobs.ts`, the platform functions and `searchKnowledge` in `knowledge.ts`, the re-exports in `ai.ts` and `index.ts`, `knowledgeSources` in `apps/web/src/plugins/types.ts`, and `pluginKnowledgeSources` plus the `platformSources` option in `apps/web/src/api/services/agents/tools/`.
+18. Update `rls-coverage.test.ts` to pass the platform read policies (`tests/api/rls-coverage.test.ts`).
 
 ## Conflicts to expect
 
@@ -71,6 +82,7 @@ Plugins can serve whole public hosts through a new `publicSites` seam, with a st
 
 1. `pnpm gate` passes.
 2. `node scripts/plugin-api-doc.mjs --check` exits 0.
-3. With no plugin declaring `publicSites`, `git diff apps/web/wrangler.toml apps/web/wrangler.staging.toml` shows no change to `run_worker_first` or `routes`.
-4. With a plugin serving `www.localhost` under `wrangler dev`, `curl -i http://www.localhost:3001/about` answers from the plugin with the public `Content-Security-Policy`, and `curl -i http://www.localhost:3001/api/me` answers 404.
-5. `curl -i http://localhost:3001/api/health` still answers from the app.
+3. `pnpm web test:api` runs `tests/api/platform-knowledge.test.ts` green: both tenants read a platform document, neither writes one, and no tenant document view lists it.
+4. With no plugin declaring `publicSites`, `git diff apps/web/wrangler.toml apps/web/wrangler.staging.toml` shows no change to `run_worker_first` or `routes`.
+5. With a plugin serving `www.localhost` under `wrangler dev`, `curl -i http://www.localhost:3001/about` answers from the plugin with the public `Content-Security-Policy`, and `curl -i http://www.localhost:3001/api/me` answers 404.
+6. `curl -i http://localhost:3001/api/health` still answers from the app.

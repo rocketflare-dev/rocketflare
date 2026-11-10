@@ -139,6 +139,13 @@ the CLI command `<id>`; skills `<id>` / `<id>-<what>`; AG-UI CUSTOM events `<id>
   for upstream deletes. Visibility defaults to the whole organisation — one person's data passes the
   owner's `userId` + `visibility: 'groups'` + `groupIds: []`. Declare `requires.surfaces:
   ["feature-knowledge"]`.
+- **Platform knowledge** (content about the APP, readable by every tenant): `ingestPlatformDocument`
+  / `prunePlatformDocuments` from a `JobCtx` / `CronCtx` only (`kind` brands them; an `EmailCtx`
+  is a type error), `source: '<your id>:<kind>'`, embedded synchronously by the platform embedder.
+  It throws `PlatformEmbeddingsError` with nothing written when there is none and returns
+  `unchanged` for the same text, so a cron can resync everything cheaply. Find it with
+  `searchKnowledge(ctx, { platformSources })`, or declare `knowledgeSources(scope)` so the kit's
+  `search_knowledge` tool covers it. **Never tenant data**: every organisation reads it.
 - **`jobHandlers`** keep the kit's handler contract (own DB client, await everything, throw to
   retry).
 - **`agentTools(ctx)`** is bound to the run's `AgentToolContext` (its `AccessScope`: read what the
