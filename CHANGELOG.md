@@ -6,6 +6,11 @@ copy of the kit forward without recreating anything its owner deleted.
 
 If you are running a copy: `pnpm kit:upgrade` tells you which of these you are missing.
 
+## 0.32.1 — 2026-11-10
+
+Two plugin fixes: `EventPayloadOf` distributes over a union of event names, and a platform document, such as a guide page, no longer shows as a document card that linked to a page that could not open it.
+[Porting note](docs/upgrades/0.32.1.md).
+
 ## 0.32.0 — 2026-11-10
 
 Plugins can declare and emit tenant-scoped events that queue one delivery per subscriber, and agents can be triggered by an event or offered as bindable to it.
