@@ -74,6 +74,9 @@ export function publicSiteCsp(origin: string, declared: PublicSiteCsp = {}): str
   const allowed = (sources: readonly string[] = []) =>
     sources.filter(source => !isForbiddenCspSource(source))
   const orNone = (sources: readonly string[]) => (sources.length > 0 ? sources.join(' ') : "'none'")
+  // A bare path is not a valid CSP source. Pinned here, it means exactly that path on this origin.
+  const pinned = (sources: readonly string[]) =>
+    sources.map(source => (source.startsWith('/') ? `${origin}${source}` : source))
   const scripts = allowed(declared.scriptSrc).filter(source => !reachesAdminBundle(source, host))
   return [
     "default-src 'none'",
@@ -81,10 +84,10 @@ export function publicSiteCsp(origin: string, declared: PublicSiteCsp = {}): str
     `style-src ${siteAssets}`,
     `img-src ${["'self'", ...allowed(declared.imgSrc)].join(' ')}`,
     "font-src 'self'",
-    `connect-src ${orNone(allowed(declared.connectSrc))}`,
+    `connect-src ${orNone(pinned(allowed(declared.connectSrc)))}`,
     `frame-src ${orNone(allowed(declared.frameSrc))}`,
     "base-uri 'none'",
-    `form-action ${orNone(allowed(declared.formAction).map(s => (s.startsWith('/') ? `${origin}${s}` : s)))}`,
+    `form-action ${orNone(pinned(allowed(declared.formAction)))}`,
     "frame-ancestors 'none'",
   ].join('; ')
 }

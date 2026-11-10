@@ -20,6 +20,9 @@ export interface ApiClientOptions {
 
 export type QueryValue = string | number | boolean | undefined | null
 
+/** The verbs a route can answer, so a plugin command can call a PUT or PATCH route too. */
+export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
+
 export interface RequestOptions<T> {
   schema?: z.ZodType<T>
   query?: Record<string, QueryValue>
@@ -74,7 +77,7 @@ function defaultHint(status: number): string | undefined {
 export interface ApiClient {
   readonly serverUrl: string
   request<T = unknown>(
-    method: 'GET' | 'POST' | 'DELETE',
+    method: HttpMethod,
     path: string,
     options?: RequestOptions<T>
   ): Promise<ApiResponse<T>>
@@ -105,7 +108,7 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
   const timeoutMs = options.timeoutMs ?? 30_000
 
   async function request<T>(
-    method: 'GET' | 'POST' | 'DELETE',
+    method: HttpMethod,
     path: string,
     reqOptions: RequestOptions<T> = {}
   ): Promise<ApiResponse<T>> {

@@ -42,6 +42,11 @@ Plugins can serve whole public hosts through a new `publicSites` seam, with a st
 - `Strict-Transport-Security` carries `includeSubDomains` only on the app's own host (`APP_URL`), so a public site on an apex domain does not pin its subdomains.
 - A public-site page can add CSP sources for itself by setting `PUBLIC_SITE_PAGE_CSP_HEADER` (JSON, `PublicSiteCsp`), exported from `@/plugins/api`. A `formAction` that is a path, such as `/submit`, is pinned to the request's origin.
 - The CLI's `ApiClient` gains `getBytes` and `postForm`, for download and multipart routes.
+- `PublicSitesDeclaration.csp` receives the request's `pathname` as a third argument, so one path can answer with fewer sources than the rest of the host; `PUBLIC_SITE_PAGE_CSP_HEADER` can only add.
+- A `connectSrc` entry that is a path, such as `/forms/submit`, is pinned to the request's origin, as a `formAction` path already was.
+- `chatModelAvailable(ctx, tenantId, promptKey)` is exported from `@/plugins/api`: it answers whether `resolveChat` would find a model, without building a client, so a plugin can say "no model" before it starts a run.
+- The Workers AI chat client reads GLM's own tool-call markup (`<tool_call>name<arg_key>k</arg_key><arg_value>v</arg_value></tool_call>`) when Workers AI passes it through unparsed, as a call's arguments or as the reply's text. Before, `@cf/zai-org/glm-4.7-flash` (the default model) sent about one forced call in eight this way, the arguments arrived as `{ _raw }` and `callStructuredTool` failed with "the model did not return valid input". `parseToolCallMarkup` is exported from `apps/web/src/api/services/ai/client.ts`.
+- The CLI's `ApiClient.request` accepts `PUT` and `PATCH` (the `HttpMethod` type in `apps/cli/src/api.ts`).
 
 ## How to apply
 
@@ -59,6 +64,11 @@ Plugins can serve whole public hosts through a new `publicSites` seam, with a st
 12. Add `deploymentFeatures?: (config) => readonly string[]` to `ServerPlugin` in `apps/web/src/plugins/types.ts`, then port `apps/web/src/permissions/features.ts`, `apps/web/src/api/services/features.ts` and the two `await`s in `apps/web/src/api/middleware/auth.ts`. Any call of your own to `resolveFeatures` must now `await` it.
 13. Move the `@theme` block and both `@plugin "daisyui/theme"` blocks from `apps/web/src/ui/index.css` into `apps/web/src/shared/theme-tokens.css`, and `@import "../shared/theme-tokens.css";` directly after the Tailwind import. Port the matching change in `tests/ui/contrast.test.ts`.
 14. Port `getBytes` and `postForm` into `apps/cli/src/api.ts` if a plugin you install uses them.
+15. Add `pathname: string` as the third parameter of `csp` in `PublicSitesDeclaration` (`apps/web/src/plugins/types.ts`), pass `url.pathname` through `declaredCsp` in `apps/web/src/api/middleware/public-sites.ts`, and pass `'/'` in `apps/web/tests/helpers/plugins.ts`. A plugin's own `csp(host, config)` keeps working unchanged.
+16. In `publicSiteCsp` in `apps/web/src/api/middleware/security-headers.ts`, pin a `connectSrc` entry starting with `/` to the request's origin with the same `pinned` helper as `formAction`.
+17. Export `chatModelAvailable` from `apps/web/src/plugins/api/ai.ts` and `apps/web/src/plugins/api/index.ts`, then run `node scripts/plugin-api-doc.mjs`.
+18. Port `parseToolCallMarkup`, `markupValue`, `parseWorkersAiArguments` and the markup branch at the top of `recoverForcedToolCall` in `apps/web/src/api/services/ai/client.ts`, and have `fromWorkersAiToolCalls` parse a string's arguments with `parseWorkersAiArguments`. Port the test "reads GLM's own tool-call markup…" in `apps/web/tests/api/ai-client.test.ts`.
+19. Add `export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'` to `apps/cli/src/api.ts` and use it for `method` in `ApiClient.request` and `createApiClient`'s `request`.
 
 ## Conflicts to expect
 

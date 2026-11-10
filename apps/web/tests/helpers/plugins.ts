@@ -246,7 +246,7 @@ export interface PublicSiteClaim {
   /** `null` is the dormant answer: a config problem, not a malformed declaration. */
   hosts: readonly string[] | null
   forms?: readonly PublicSiteFormPath[]
-  /** What `csp(host, config)` returned, for each claimed host. */
+  /** What `csp(host, config, '/')` returned, for each claimed host. */
   csp?: readonly PublicSiteCsp[]
 }
 
@@ -265,7 +265,7 @@ export function publicSiteClaims(
         id: plugin.shared.id,
         hosts,
         forms: site.forms,
-        csp: csp ? (hosts ?? []).map(host => csp(host, config)) : [],
+        csp: csp ? (hosts ?? []).map(host => csp(host, config, '/')) : [],
       },
     ]
   })

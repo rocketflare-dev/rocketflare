@@ -1332,6 +1332,49 @@ export class ToolCallAssembler {
 
 type ToolUseBlock = Extract<ContentBlock, { type: 'tool_use' }>
 
+/**
+ * GLM's own tool-call markup, which Workers AI sometimes passes through as the arguments STRING
+ * instead of parsing it: `<tool_call>name<arg_key>k</arg_key><arg_value>v</arg_value>…</tool_call>`.
+ * Measured on `@cf/zai-org/glm-4.7-flash` with `tool_choice` forced: about one call in eight with
+ * an array argument came back this way, and read as JSON it was `{ _raw }`, which no tool schema
+ * accepts. The chat template writes a string value as itself and anything else as JSON, so only a
+ * value that opens with `[` or `{` is parsed; everything else stays the string it was.
+ */
+export function parseToolCallMarkup(
+  text: string
+): { name: string | undefined; input: Record<string, unknown> } | undefined {
+  if (!text.includes('<arg_key>')) return undefined
+  const input: Record<string, unknown> = {}
+  const pairs = /<arg_key>([\s\S]*?)<\/arg_key>\s*<arg_value>([\s\S]*?)<\/arg_value>/g
+  for (const [, key, value] of text.matchAll(pairs)) {
+    const name = key?.trim()
+    if (!name || value === undefined) continue
+    input[name] = markupValue(value)
+  }
+  if (Object.keys(input).length === 0) return undefined
+  const name = text.match(/<tool_call>\s*([^<\s]+)/)?.[1]
+  return { name, input }
+}
+
+function markupValue(value: string): unknown {
+  const trimmed = value.trim()
+  if (trimmed.startsWith('[') || trimmed.startsWith('{')) {
+    try {
+      return JSON.parse(trimmed)
+    } catch {
+      // Not JSON after all: the string is the value.
+    }
+  }
+  return value
+}
+
+/** A Workers AI arguments string: JSON, or GLM's markup, or `{ _raw }` for neither. */
+function parseWorkersAiArguments(args: string): unknown {
+  const parsed = parseArguments(args)
+  if (!isRecord(parsed) || typeof parsed._raw !== 'string') return parsed
+  return parseToolCallMarkup(parsed._raw)?.input ?? parsed
+}
+
 function fromWorkersAiToolCalls(calls: WorkersAiToolCall[] | undefined): ToolUseBlock[] {
   const out: ToolUseBlock[] = []
   for (const call of calls ?? []) {
@@ -1342,7 +1385,7 @@ function fromWorkersAiToolCalls(calls: WorkersAiToolCall[] | undefined): ToolUse
       type: 'tool_use',
       id: call.id || crypto.randomUUID(),
       name,
-      input: typeof args === 'string' ? parseArguments(args) : (args ?? {}),
+      input: typeof args === 'string' ? parseWorkersAiArguments(args) : (args ?? {}),
     })
   }
   return out
@@ -1442,6 +1485,15 @@ export function recoverForcedToolCall(params: ChatParams, result: ChatResult): C
   const name = forcedToolName(params)
   if (!name || result.content.some(b => b.type === 'tool_use')) return result
   const text = textOf(result.content)
+  // GLM writing its own call markup as the reply's text, with no call parsed out of it.
+  const markup = parseToolCallMarkup(text)
+  if (markup && (markup.name === undefined || markup.name === name)) {
+    return {
+      ...result,
+      content: [{ type: 'tool_use', id: crypto.randomUUID(), name, input: markup.input }],
+      stopReason: 'tool_use',
+    }
+  }
   const object = extractJsonObject(text)
   if (!object) return result
   return {

@@ -66,6 +66,7 @@ export type {
 export {
   AiNotConfiguredError,
   agentCtx,
+  chatModelAvailable,
   defineTool,
   recordUsage,
   toolCtx,
