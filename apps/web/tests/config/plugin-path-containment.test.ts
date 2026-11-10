@@ -409,7 +409,11 @@ describe('public-site routing across plugins', () => {
   const sitesPlugin = (name: string) =>
     localPlugin(
       name,
-      { id: 'fixture-sites', publicSites: { hostsVar: 'FIXTURE_SITES_HOSTS' }, vars: [{ key: 'FIXTURE_SITES_HOSTS' }] },
+      {
+        id: 'fixture-sites',
+        publicSites: { hostsVar: 'FIXTURE_SITES_HOSTS' },
+        vars: [{ key: 'FIXTURE_SITES_HOSTS' }],
+      },
       { 'apps/web/src/plugins/fixture-sites/index.ts': 'export {}\n' }
     )
   const hooksPlugin = (name: string) =>
@@ -445,10 +449,14 @@ describe('public-site routing across plugins', () => {
     for (const plugin of [sitesPlugin('mark-dropped-a'), hooksPlugin('mark-dropped-b')]) {
       expect(run(host, 'plugin.mjs', ['add', plugin, '--apply', '--allow-dirty']).status).toBe(0)
     }
-    expect(run(host, 'plugin.mjs', ['remove', 'fixture-sites', '--apply', '--allow-dirty']).status).toBe(0)
+    expect(
+      run(host, 'plugin.mjs', ['remove', 'fixture-sites', '--apply', '--allow-dirty']).status
+    ).toBe(0)
     expect(tomlsOf(host).every(awaitsReprovision)).toBe(true)
 
-    expect(run(host, 'plugin.mjs', ['remove', 'fixture-hooks', '--apply', '--allow-dirty']).status).toBe(0)
+    expect(
+      run(host, 'plugin.mjs', ['remove', 'fixture-hooks', '--apply', '--allow-dirty']).status
+    ).toBe(0)
     expect(tomlsOf(host).some(awaitsReprovision)).toBe(false)
   })
 
