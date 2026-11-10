@@ -55,6 +55,7 @@ import {
   DECLARED_ENTRIES,
   deepImportIssue,
   emailHandlerIssues,
+  headerItemIssues,
   isPluginEntry,
   isPluginFile,
   PLUGIN_IMPORT_ENFORCEMENT,
@@ -94,6 +95,22 @@ describe('query-key roots', () => {
     expect(queryKeyRootIssues('orders', ['orders:list', 'orders:detail'])).toEqual([])
     expect(queryKeyRootIssues('orders', ['orders'])).toHaveLength(1)
     expect(queryKeyRootIssues('orders', ['documents'])).toHaveLength(1)
+  })
+})
+
+describe('header items', () => {
+  it('are unique per plugin, kebab-case, placed center or end, with a finite order', () => {
+    expect(
+      headerItemIssues('search', [
+        { id: 'trigger', placement: 'center', order: -1 },
+        { id: 'help' },
+      ])
+    ).toEqual([])
+    expect(headerItemIssues('search', [{ id: 'a' }, { id: 'a' }])).toHaveLength(1)
+    expect(headerItemIssues('search', [{ id: 'Bad id' }])).toHaveLength(1)
+    expect(headerItemIssues('search', [{ id: 'x', placement: 'start' }])).toHaveLength(1)
+    expect(headerItemIssues('search', [{ id: 'x', order: Number.NaN }])).toHaveLength(1)
+    expect(uiPlugins.flatMap(p => headerItemIssues(p.shared.id, p.header ?? []))).toEqual([])
   })
 })
 
@@ -585,6 +602,19 @@ describe('the plugin import rule', () => {
     expect(pluginImportIssue(ROUTE, 'react')).toBeNull()
     expect(pluginImportIssue(ROUTE, './service')).toBeNull()
     expect(pluginImportIssue(ROUTE, '../shared')).toBeNull()
+  })
+
+  it('lets a plugin import its OWN host files, @/host/<id>/…, and no other plugin’s', () => {
+    // `hostFiles` seeds `apps/web/src/host/<id>/` for the developer; the plugin reads it back.
+    expect(pluginImportIssue(ROUTE, '@/host/orders/content.generated')).toBeNull()
+    expect(
+      pluginImportIssue('apps/web/src/plugins/orders/ui/pages/Guide.tsx', '@/host/orders/a/b')
+    ).toBeNull()
+    expect(pluginImportIssue(ROUTE, '../../../host/orders/content.generated')).toBeNull()
+    expect(pluginImportIssue(ROUTE, '@/host/billing/content.generated', 3)).toBe(
+      "routes.ts:3 imports '@/host/billing/content.generated' — a plugin imports only its own host files, '@/host/orders/…'"
+    )
+    expect(pluginImportIssue(ROUTE, '@/host')).not.toBeNull()
   })
 
   it('says nothing about a core file — this guards ONE direction', () => {

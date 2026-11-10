@@ -84,11 +84,21 @@ export class ConversionNotConfiguredError extends Error {
   }
 }
 
+/**
+ * The tenant a document row belongs to. A PLATFORM row (`tenant_id` null) is never a tenant's
+ * document, so reaching one here is a missing `tenant_id = $t` predicate upstream — fail loudly
+ * rather than hand a platform document to a tenant view.
+ */
+export function documentTenantId(row: Pick<DocumentRow, 'id' | 'tenantId'>): string {
+  if (!row.tenantId) throw new Error(`documents: ${row.id} is a platform document, not a tenant's`)
+  return row.tenantId
+}
+
 /** `groups` comes from `grantsForResources` — the row alone cannot know it. */
 export function toDocument(row: DocumentRow, groups: GroupRef[] = []): Document {
   return {
     id: row.id,
-    tenantId: row.tenantId,
+    tenantId: documentTenantId(row),
     ownerUserId: row.ownerUserId,
     title: row.title,
     source: row.source,
@@ -207,6 +217,7 @@ export async function indexDocument(
  */
 async function grantDocumentGroups(
   db: Database,
+  tenantId: string,
   row: DocumentRow,
   groupIds: readonly string[] | undefined,
   options: { replace?: boolean } = {}
@@ -216,14 +227,14 @@ async function grantDocumentGroups(
   if (options.replace) {
     await db
       .delete(documentGroups)
-      .where(and(eq(documentGroups.tenantId, row.tenantId), eq(documentGroups.documentId, row.id)))
+      .where(and(eq(documentGroups.tenantId, tenantId), eq(documentGroups.documentId, row.id)))
   }
   if (row.visibility !== 'groups' || !groupIds || groupIds.length === 0) return
   await db
     .insert(documentGroups)
     .values(
       [...new Set(groupIds)].map(groupId => ({
-        tenantId: row.tenantId,
+        tenantId,
         documentId: row.id,
         groupId,
       }))
@@ -246,6 +257,7 @@ async function indexOrEnqueue(
   db: Database,
   cfg: AppConfig,
   env: AiEnv,
+  tenantId: string,
   row: DocumentRow,
   pieces: TextChunk[],
   embeddings: ResolvedEmbeddings,
@@ -254,19 +266,19 @@ async function indexOrEnqueue(
   if (pieces.length > INLINE_CHUNK_LIMIT) {
     await enqueueJob(deps.jobs, {
       type: 'document.index',
-      payload: { tenantId: row.tenantId, documentId: row.id },
+      payload: { tenantId, documentId: row.id },
     })
     return { document: row, mode: 'queued' }
   }
   try {
-    const document = await indexDocument(db, cfg, env, row.tenantId, row.id, {
+    const document = await indexDocument(db, cfg, env, tenantId, row.id, {
       chunks: pieces,
       embeddings,
     })
     return { document, mode: 'inline' }
   } catch {
     const failed = await db.query.documents.findFirst({
-      where: and(eq(documents.id, row.id), eq(documents.tenantId, row.tenantId)),
+      where: and(eq(documents.id, row.id), eq(documents.tenantId, tenantId)),
     })
     return { document: failed ?? row, mode: 'inline' }
   }
@@ -302,14 +314,19 @@ export async function ingestText(
   const external = externalKey(input)
   const previous = external ? await findExternal(db, input.tenantId, external) : undefined
   const row = external
-    ? await upsertExternal(db, { ...values, externalId: external.externalId }, input.groupIds)
+    ? await upsertExternal(
+        db,
+        input.tenantId,
+        { ...values, externalId: external.externalId },
+        input.groupIds
+      )
     : (await db.insert(documents).values(values).returning())[0]
   if (!row) throw new Error('documents: insert returned no row')
-  if (!external) await grantDocumentGroups(db, row, input.groupIds)
+  if (!external) await grantDocumentGroups(db, input.tenantId, row, input.groupIds)
   // A re-sync of an item that USED to be a file and is now text leaves its old object behind.
   if (previous?.fileId && deps.storage)
     await dropStoredFile(db, deps.storage, input.tenantId, previous.fileId)
-  return indexOrEnqueue(db, cfg, env, row, pieces, embeddings, deps)
+  return indexOrEnqueue(db, cfg, env, input.tenantId, row, pieces, embeddings, deps)
 }
 
 // ---- External ids ----------------------------------------------------------------------
@@ -350,6 +367,7 @@ async function findExternal(
  */
 async function upsertExternal(
   db: Database,
+  tenantId: string,
   values: typeof documents.$inferInsert & { externalId: string },
   groupIds: readonly string[] | undefined
 ): Promise<DocumentRow | undefined> {
@@ -367,10 +385,8 @@ async function upsertExternal(
       })
       .returning()
     if (!row) return undefined
-    await tx
-      .delete(chunks)
-      .where(and(eq(chunks.tenantId, row.tenantId), eq(chunks.documentId, row.id)))
-    await grantDocumentGroups(tx, row, groupIds, { replace: true })
+    await tx.delete(chunks).where(and(eq(chunks.tenantId, tenantId), eq(chunks.documentId, row.id)))
+    await grantDocumentGroups(tx, tenantId, row, groupIds, { replace: true })
     return row
   })
 }
@@ -505,10 +521,17 @@ export async function ingestFile(
     const external = externalKey(input)
     previous = external ? await findExternal(db, input.tenantId, external) : undefined
     ;[row] = external
-      ? [await upsertExternal(db, { ...values, externalId: external.externalId }, input.groupIds)]
+      ? [
+          await upsertExternal(
+            db,
+            input.tenantId,
+            { ...values, externalId: external.externalId },
+            input.groupIds
+          ),
+        ]
       : await db.insert(documents).values(values).returning()
     if (!row) throw new Error('documents: insert returned no row')
-    if (!external) await grantDocumentGroups(db, row, input.groupIds)
+    if (!external) await grantDocumentGroups(db, input.tenantId, row, input.groupIds)
   } catch (err) {
     await deleteStoredFile(db, deps.storage, stored).catch(() => {})
     throw err
@@ -531,7 +554,7 @@ export async function ingestFile(
     })
     return { document: failed ?? row, mode: 'inline' }
   }
-  return indexOrEnqueue(db, cfg, env, row, pieces, embeddings, deps)
+  return indexOrEnqueue(db, cfg, env, input.tenantId, row, pieces, embeddings, deps)
 }
 
 /**

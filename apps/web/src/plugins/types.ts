@@ -29,6 +29,7 @@ import type { EmailHandler } from '../api/email'
 import type { JobHandler } from '../api/queues/jobs'
 import type { ScheduledTask } from '../api/scheduled'
 import type { VisibilityResource } from '../api/services/access'
+import type { AccessScope } from '../api/services/access-sql'
 import type { AnyAgentDefinition } from '../api/services/agents/registry'
 import type { AgentToolContext } from '../api/services/agents/tools'
 import type { Tool } from '../api/services/ai/agent-loop'
@@ -225,6 +226,15 @@ export interface ServerPlugin<S extends SharedPlugin = SharedPlugin> {
    */
   agentTools?: (ctx: AgentToolContext) => Tool[] | Promise<Tool[]>
   /**
+   * PLATFORM knowledge sources (`<id>:<kind>`, written with `ingestPlatformDocument`) the kit's
+   * `search_knowledge` tool also searches for this reader — chat and every agent run. Unioned
+   * across plugins and passed as `platformSources`; a source not namespaced `<id>:` is dropped
+   * with a warning, a throw is logged and contributes nothing. May be async and may depend on the
+   * scope (`[]` for a tenant without the plugin's feature). The host does NOT make platform
+   * documents readable through `get_document` or `list_documents` — those stay tenant-only.
+   */
+  knowledgeSources?: (scope: AccessScope) => readonly string[] | Promise<readonly string[]>
+  /**
    * Cron expression → tasks, merged into `SCHEDULED_TASKS` (tasks on a cron core already runs
    * are appended after core's). A cron core does NOT run is declared in `plugin.json`
    * `crons`; `pnpm provision cloudflare <env>` writes it into both tomls' `[triggers]`, and the
@@ -335,6 +345,35 @@ export interface PluginRoute {
   tier?: PluginRouteTier
 }
 
+/** Where in the top bar a plugin header item sits. */
+export type PluginHeaderPlacement = 'center' | 'end'
+
+/**
+ * One item in the app's top bar — a search box, a help button. Rendered by the shell inside
+ * `Layout` for every signed-in page with a tenant, behind `guard`, inside its OWN `Suspense`
+ * (fallback: nothing) and error boundary (fallback: nothing, logged), so a slow or crashing item
+ * never takes the header down with it.
+ *
+ * The host does NOT reserve space, de-duplicate or collapse items on a narrow screen: the header is
+ * one row at every width, so an item is a compact control (an icon button below `sm`, say) and
+ * anything big it opens — a palette, a drawer — is its own lazy chunk loaded on first use.
+ */
+export interface PluginHeaderItem {
+  /** Unique within the plugin; the React key is `<plugin id>:<id>`. */
+  id: string
+  /** `lazy(() => import('./ui/header/X'))` and nothing else, exactly like a route's `Component`. */
+  Component: LazyExoticComponent<ComponentType>
+  /** The same guard semantics as a nav item or route (`useNavGuard`); hidden when it fails. */
+  guard?: NavGuard
+  /** Ascending, default 0; ties break on plugin id, then item id — so the order never depends on install order. */
+  order?: number
+  /**
+   * Default `end`: the right-hand cluster, before the kit's own widgets (status, bell, user
+   * menu). `center`: the flexible middle of the bar, where a search box goes.
+   */
+  placement?: PluginHeaderPlacement
+}
+
 /** A nav group, placed relative to a named core group ("Organisation" by default). */
 export interface PluginNavGroup {
   label?: string
@@ -358,6 +397,11 @@ export interface UiPlugin<S extends SharedPlugin = SharedPlugin> {
    * The host does NOT de-duplicate or re-order: two plugins offering the same `to` show twice.
    */
   homeLinks?: readonly QuickLink[]
+  /**
+   * Top-bar items (`PluginHeaderItem`): merged across plugins, ordered by `order` then plugin id,
+   * rendered by `PluginHeaderSlot` in `Layout`'s `headerCenter` / `headerEnd`.
+   */
+  header?: readonly PluginHeaderItem[]
   /** Families merged into `queryKeys`; every root must start with `<id>:`. */
   queryKeys?: Readonly<Record<string, unknown>>
   /**
@@ -365,6 +409,14 @@ export interface UiPlugin<S extends SharedPlugin = SharedPlugin> {
    * falls back to a form generated from the agent's own JSON Schema, then to a JSON textarea.
    */
   agentForms?: Readonly<Partial<Record<AgentKeyOf<S> & string, AgentForm>>>
+  /**
+   * Cross-plugin registries for the browser, the UI twin of `ServerPlugin.extensions`: another
+   * plugin reads every installed plugin's entries under a key with `uiExtensions(key)` (from
+   * `@/plugins/api/ui`) and narrows them with its own schema. Keys are the OWNING plugin's
+   * (`global-search.commands`), so a contributor names it without importing that plugin. This
+   * object ships in the main bundle: plain data only, never a component.
+   */
+  extensions?: Readonly<Record<string, readonly unknown[]>>
 }
 
 /** The element type of the barrels — a plugin whose shared half is not narrowed. */

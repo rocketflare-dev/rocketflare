@@ -14,10 +14,14 @@ export interface LayoutProps {
    * (hidden when `TENANCY_MODE=single`).
    */
   headerStart?: ReactNode
-  /** Middle of the top bar — a documented slot, deliberately empty by default. */
+  /**
+   * Middle of the top bar: the shell puts the `center` plugin header items here
+   * (`<PluginHeaderSlot placement="center" />`, a search box); empty without one.
+   */
   headerCenter?: ReactNode
   /**
-   * Right side of the top bar, before the theme toggle: `<NotificationsBell />`,
+   * Right side of the top bar, before the theme toggle: the `end` plugin header items, then
+   * `<NotificationsBell />`,
    * user dropdown (`<details>/<summary>` avatar → Profile / Settings / Sign out),
    * `<WebSocketStatus />`.
    */

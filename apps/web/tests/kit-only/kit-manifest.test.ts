@@ -156,7 +156,8 @@ describe('launch.kit.json in the kit (the Launch kit contract, D36)', () => {
 describe('coverage', () => {
   it('classifies every tracked file', () => {
     const all = [
-      ...manifest.surfaces.flatMap(s => s.paths),
+      // A plugin's seeded host files are the developer's, recorded beside its paths.
+      ...manifest.surfaces.flatMap(s => [...s.paths, ...(s.hostFiles ?? [])]),
       ...manifest.neverPort,
       ...kitOnlyGlobs(manifest),
       ...manifest.manual,

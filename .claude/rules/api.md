@@ -137,7 +137,10 @@ Response is returned, and there is no `defer` after it. **Never `streamSSE`.**
   `utils/routes/api-prefixes.ts` and `services/access.ts` read the plugin barrel at module scope; a
   cycle through one leaves one side `undefined` — a crash at import, not a compile error. So a
   registry a plugin's code imports back is a FUNCTION, not a const (`visibilityResources()`), and a
-  value a plugin needs moves to a leaf (`services/access-sql.ts`) and is re-exported
+  value a plugin needs moves to a leaf (`services/access-sql.ts`) and is re-exported. `@/plugins/api`
+  itself reaches the barrel only through the modules `tests/config/plugin-api-load-order.test.ts`
+  allows, after `http.ts` and `ai.ts` — or a second plugin evaluates mid-cycle and finds
+  `createRouter` undefined (why the pure RRF helpers live in `services/ai/fusion.ts`)
 
 ## Workers runtime
 

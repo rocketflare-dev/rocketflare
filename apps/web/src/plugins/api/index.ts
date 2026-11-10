@@ -9,6 +9,7 @@
  *
  * The exports below are grouped by the file they come from and sorted by the formatter, so read
  * them there: `./http` is a request, `./jobs` is background work, `./ai` is agents and tools,
+ * `./chat` is a streamed chat turn a plugin route answers with,
  * `./access` is row visibility, `./events` is nudges and notifications, `./secrets` is a tenant's
  * credentials at rest, `./identity` is signing a person in and provisioning their memberships.
  *
@@ -29,6 +30,8 @@
 export type {
   AnyServerPlugin,
   AnyUiPlugin,
+  PluginHeaderItem,
+  PluginHeaderPlacement,
   PluginNavGroup,
   PluginRequires,
   PluginRoute,
@@ -49,7 +52,9 @@ export type {
   AgentDecide,
   AgentInterruptAnswer,
   AgentInterruptAsk,
+  AgentSummary,
   Decision,
+  FusedItem,
   PickOptions,
   PickResult,
   PluginAgent,
@@ -66,14 +71,31 @@ export type {
 export {
   AiNotConfiguredError,
   agentCtx,
+  anyTermTsquery,
+  candidatePoolSize,
   chatModelAvailable,
   defineTool,
+  fuseByRank,
+  listAgents,
   recordUsage,
   toolCtx,
   toolInputSchema,
 } from './ai'
 export type { AbilityCheck, Actions, MembershipRole, PluginAuth, Subjects, User } from './auth'
 export { hasFeature, isAdminLevel, isGlobalAdmin, isOwnerLevel, requireFeature } from './auth'
+export type {
+  StreamChatEmit,
+  StreamChatOptions,
+  StreamChatResult,
+  StreamChatToolCtx,
+  StreamChatTurn,
+} from './chat'
+export {
+  customEventNameIssue,
+  InvalidCustomEventError,
+  streamChat,
+  usageFeatureIssue,
+} from './chat'
 export type { HookCtx, SeedCtx, Tenant } from './db'
 export { affected, isUniqueViolation, pgErrorCode, rows, transaction } from './db'
 export type { EmailContext, EmailCtx, EmailHandler } from './email'
@@ -131,11 +153,24 @@ export type {
 } from './jobs'
 export { cronCtx, jobCtx } from './jobs'
 export type {
+  PlatformDocumentInput,
+  PlatformDocumentResult,
   PluginIngestFileInput,
   PluginIngestResult,
   PluginIngestTextInput,
+  SearchKnowledgeHit,
+  SearchKnowledgeInput,
+  SearchKnowledgeResult,
 } from './knowledge'
-export { deleteIngestedDocument, ingestDocument, ingestDocumentFile } from './knowledge'
+export {
+  deleteIngestedDocument,
+  ingestDocument,
+  ingestDocumentFile,
+  ingestPlatformDocument,
+  PlatformEmbeddingsError,
+  prunePlatformDocuments,
+  searchKnowledge,
+} from './knowledge'
 export type {
   AgentTraceContext,
   SpanKind,

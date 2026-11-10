@@ -69,6 +69,13 @@ export type {
   ToolLoopCheckpoint,
   ToolLoopResult,
 } from '../../api/services/ai/agent-loop'
+/**
+ * The retrieval primitives, for a plugin that searches a corpus of its own the way the kit
+ * searches `chunks`: `anyTermTsquery` (the lexical half's ANY-word tsquery), `candidatePoolSize`
+ * ("retrieve wide, fuse narrow") and `fuseByRank` (Reciprocal Rank Fusion, `k = 60`). Pure.
+ */
+export type { FusedItem } from '../../api/services/ai/fusion'
+export { anyTermTsquery, candidatePoolSize, fuseByRank } from '../../api/services/ai/fusion'
 /** A tool whose input schema failed to convert is a tool the model cannot see — fail loudly. */
 /** Ledger one model call (`ai_usage`). `feature` is `<plugin id>:<what>` or `agent:<key>`. */
 /** 503 `ai_not_configured` — throw it BEFORE any row is written or any stream opens. */
@@ -297,3 +304,23 @@ export async function chatModelAvailable(
 
 /** A plugin's agent, as `ServerPlugin.agents` takes it. */
 export type PluginAgent<Input = unknown, Output = unknown> = AgentDefinition<Input, Output>
+
+/** One registered agent, as a catalogue lists it: no schemas, nothing tenant-specific. */
+export interface AgentSummary {
+  key: string
+  title: string
+  description: string
+}
+
+/**
+ * Every registered agent — the kit's and every installed plugin's — as `{ key, title, description }`,
+ * the same catalogue `GET /api/agents` serves. For a plugin that lists or searches agents (a
+ * command palette); the caller decides who may see it (`read AgentRun` is the kit's guard).
+ *
+ * Loaded at CALL time: the registry reads the server barrel, which must stay off `@/plugins/api`'s
+ * load path (`tests/config/plugin-api-load-order.test.ts`).
+ */
+export async function listAgents(): Promise<readonly AgentSummary[]> {
+  const { listAgentInfo } = await import('../../api/services/agents/registry')
+  return listAgentInfo().map(a => ({ key: a.key, title: a.title, description: a.description }))
+}

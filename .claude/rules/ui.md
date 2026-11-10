@@ -151,3 +151,7 @@ post-parse session whose `permissions` come from the real matrix via `packRules(
 
 A plugin's UI (`UiPlugin`, `src/plugins/<id>/ui/`; there is no `pages/ExampleFeature.tsx`) and
 its eager-entry import allowlist: `apps/web/src/plugins/CLAUDE.md`.
+
+A plugin's top-bar control is a `UiPlugin.header` item rendered by `PluginHeaderSlot`, never an
+edit to `Layout` or `App.tsx`: each item sits behind its own guard, `Suspense` and error boundary,
+so a header item that throws must render nothing rather than break the shell.

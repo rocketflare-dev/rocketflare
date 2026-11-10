@@ -10,10 +10,10 @@
  */
 import type { DocumentStatus } from '@rocketflare/shared/ai/embeddings'
 import { relations, sql } from 'drizzle-orm'
-import { index, integer, pgTable, text, uniqueIndex, uuid } from 'drizzle-orm/pg-core'
-import { RESOURCE_VISIBILITY_VALUES, tenantRef, timestamps } from './_helpers'
+import { check, index, integer, pgTable, text, uniqueIndex, uuid } from 'drizzle-orm/pg-core'
+import { platformTenantRef, RESOURCE_VISIBILITY_VALUES, timestamps } from './_helpers'
 import { files } from './files'
-import { tenantIsolation } from './rls'
+import { platformReadable, tenantIsolation } from './rls'
 import { tenants } from './tenants'
 import { users } from './users'
 
@@ -27,7 +27,13 @@ export const documents = pgTable(
   'documents',
   {
     id: uuid('id').primaryKey().defaultRandom(),
-    tenantId: tenantRef(tenants),
+    /**
+     * The owning organisation — or NULL for a PLATFORM document: content about the app itself
+     * (a plugin's user guide), readable by every tenant (`platformReadable`), written only by
+     * `ingestPlatformDocument` on the owner connection, always embedded, never listed among a
+     * tenant's documents. A platform row must carry `source` + `externalId` (the CHECK below).
+     */
+    tenantId: platformTenantRef(tenants),
     ownerUserId: uuid('owner_user_id').references(() => users.id, { onDelete: 'set null' }),
     title: text('title').notNull(),
     /** Origin marker: `upload`, `agent:summarize-text`, a URL … */
@@ -66,7 +72,17 @@ export const documents = pgTable(
     uniqueIndex('documents_tenant_source_external_uq')
       .on(table.tenantId, table.source, table.externalId)
       .where(sql`${table.externalId} is not null`),
+    // A platform document is identified by `(source, externalId)` alone — the index above treats
+    // NULL tenants as distinct, so it cannot dedupe them.
+    uniqueIndex('documents_platform_source_external_uq')
+      .on(table.source, table.externalId)
+      .where(sql`${table.tenantId} is null`),
+    check(
+      'documents_platform_needs_source',
+      sql`${table.tenantId} is not null or (${table.source} is not null and ${table.externalId} is not null)`
+    ),
     tenantIsolation('documents'),
+    platformReadable('documents'),
   ]
 )
 

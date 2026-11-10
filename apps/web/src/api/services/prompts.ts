@@ -199,6 +199,14 @@ export function isPromptKey(key: string): key is RegistryPromptKey {
   return Object.hasOwn(PROMPT_REGISTRY, key)
 }
 
+/**
+ * The id of the installed plugin whose `ServerPlugin.prompts` registers `key`, or null for a core
+ * prompt or an unknown key — the namespace `streamChat` holds a plugin's events and usage to.
+ */
+export function promptOwner(key: string): string | null {
+  return serverPlugins.find(p => Object.hasOwn(p.prompts ?? {}, key))?.shared.id ?? null
+}
+
 export function promptDefinition(key: RegistryPromptKey): PromptDefinition {
   return PROMPT_REGISTRY[key] as PromptDefinition
 }

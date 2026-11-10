@@ -41,6 +41,11 @@ export interface Surface {
    * none of its packages.
    */
   addedDependencies?: Record<string, string[]>
+  /**
+   * `kind: 'plugin'` only: globs over the host files it seeded (`hostFiles`). Not in `paths`,
+   * because `remove` deletes those and these are the developer's.
+   */
+  hostFiles?: string[]
   history?: HistoryEntry[]
 }
 export interface KitBlock {

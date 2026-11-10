@@ -356,6 +356,54 @@ export async function resolveEmbeddings(
   throw new AiNotConfiguredError('embeddings')
 }
 
+/** The platform embedder — never a tenant's row. */
+export interface ResolvedPlatformEmbeddings extends ResolvedEmbeddings {
+  source: 'platform'
+}
+
+/**
+ * The PLATFORM embeddings tier alone, never a tenant's row — for the tenant-less PLATFORM corpus
+ * (`documents.tenant_id` null: a plugin's user guide), whose vectors must come from ONE model
+ * whichever tenant writes or asks, or a query embedded by tenant A's provider is compared with
+ * passages embedded by another. Order: the operator's `EMBEDDINGS_API_KEY` (a deliberate choice)
+ * → the `AI` binding (Workers AI, zero key) → null. Null means platform documents can be neither
+ * written (`ingestPlatformDocument` refuses) nor searched semantically (`semantic: 'unavailable'`).
+ *
+ * The order is the reverse of `resolveEmbeddings`' platform fallback (binding first) on purpose:
+ * that one is a tenant's free floor, this one is an operator's corpus, and an operator who set a
+ * key meant it.
+ */
+export function resolvePlatformEmbeddings(
+  cfg: AppConfig,
+  env: AiEnv,
+  options: Pick<ResolveOptions, 'fetch'> = {}
+): ResolvedPlatformEmbeddings | null {
+  if (cfg.EMBEDDINGS_API_KEY) {
+    const model = DEFAULT_MODELS.openai
+    return {
+      client: createEmbeddingsClient({
+        provider: 'openai',
+        model,
+        apiKey: cfg.EMBEDDINGS_API_KEY,
+        fetch: options.fetch,
+      }),
+      provider: 'openai',
+      model,
+      source: 'platform',
+    }
+  }
+  if (env.AI) {
+    const model = DEFAULT_MODELS.workers_ai
+    return {
+      client: createEmbeddingsClient({ provider: 'workers_ai', model, ai: env.AI }),
+      provider: 'workers_ai',
+      model,
+      source: 'platform',
+    }
+  }
+  return null
+}
+
 /** What the three resolvers WOULD pick — no client is built, no credential decrypted, nothing thrown. */
 export async function readiness(
   db: Database,

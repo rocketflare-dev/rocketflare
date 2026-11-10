@@ -53,6 +53,25 @@ export {
   waitOnExecutionContext,
 } from '../mocks/bindings'
 
+// ---- a deterministic model --------------------------------------------------------------------
+
+/**
+ * `scriptPlatformChat(env, turns)` scripts the platform chat model (the `AI` binding's stub), so a
+ * plugin route that calls `streamChat` — or anything else that resolves chat — runs the REAL resolve
+ * seam, streaming loop and AG-UI encoder against a model that answers what the test says, with no
+ * `vi.mock` of a core module. `createTestEnv({ AI: undefined })` is the "no provider" case (503
+ * `ai_not_configured`). `aguiFrames(res)` parses the AG-UI body back into typed events;
+ * `aguiTypes` / `customEvents` are the sequence and the CUSTOM events of a run.
+ */
+export {
+  aguiFrames,
+  aguiTypes,
+  customEvents,
+  type PlatformChatCall,
+  type PlatformChatTurn,
+  scriptPlatformChat,
+} from '../helpers/ai'
+
 // ---- the cron dispatcher -----------------------------------------------------------------------
 
 /**

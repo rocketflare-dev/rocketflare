@@ -34,7 +34,8 @@ host ever names a plugin.
   `SeedCtx` in hooks, `DetachedCtx` for a callback that outlives the handler. Two things cannot be
   injected and are entries instead: `@/db/schema/kit` for a table file (imported by RELATIVE path —
   drizzle-kit bundles it and resolves no tsconfig alias) and the split UI kit.
-  `@testkit/{integration,unit}` is for its tests. `tests/helpers/plugins.ts` enforces it. **Annotate
+  `@testkit/{integration,unit}` is for its tests; `@/host/<id>/…` (its OWN id) for the host files it
+  seeded. `tests/helpers/plugins.ts` enforces it. **Annotate
   the context explicitly**: `ctx.notFound()` narrows (`never`) only on an explicitly typed target,
   so `const ctx = requestCtx(c)` leaves the row possibly undefined.
 - **Module-evaluation order is the one trap the type system cannot see.** `queues/jobs.ts`,
@@ -134,6 +135,14 @@ the CLI command `<id>`; skills `<id>` / `<id>-<what>`; AG-UI CUSTOM events `<id>
   background through the route's own gates; each refusal throws. **A job always passes an
   `idempotencyKey` naming the work** (`receipt:<documentId>`, never the message id). Never insert
   into `agent_runs` or call `AGENT_RUN_WORKFLOW`.
+- **A streamed answer is `return streamChat(c, { promptKey, feature, message, tools, … })`**
+  (`@/plugins/api`), never a hand-built stream: `promptKey` is one of YOUR `prompts` (its owner is
+  the namespace), `feature` is `<id>` / `<id>:x` / `<id>.x`, `tools` is a BUILDER called inside the
+  stream with a `StreamChatToolCtx` (the stream's `db` + `emit`), and every CUSTOM event goes
+  through `emit('<id>.x', value)` — another name, or `kit.`, ends the run with `RUN_ERROR`
+  `invalid_custom_event`. Validate the body and do anything else that can fail BEFORE calling it.
+  Test it with `scriptPlatformChat(env, turns)` from `@testkit/integration`, never a `vi.mock` of
+  the resolver.
 - **Storage is `ctx.storage()`** (keyed `tenants/<tenantId>/<id>/…`, so `tenant.purge` removes it),
   never `env.FILES` with a hand-built prefix.
 - **Knowledge goes through `ingestDocument` / `ingestDocumentFile`**, never a `documents` insert:
@@ -141,6 +150,13 @@ the CLI command `<id>`; skills `<id>` / `<id>-<what>`; AG-UI CUSTOM events `<id>
   for upstream deletes. Visibility defaults to the whole organisation — one person's data passes the
   owner's `userId` + `visibility: 'groups'` + `groupIds: []`. Declare `requires.surfaces:
   ["feature-knowledge"]`.
+- **Platform knowledge** (content about the APP, readable by every tenant): `ingestPlatformDocument`
+  / `prunePlatformDocuments` from a `JobCtx` / `CronCtx` only (`kind` brands them; an `EmailCtx`
+  is a type error), `source: '<your id>:<kind>'`, embedded synchronously by the platform embedder.
+  It throws `PlatformEmbeddingsError` with nothing written when there is none and returns
+  `unchanged` for the same text, so a cron can resync everything cheaply. Find it with
+  `searchKnowledge(ctx, { platformSources })`, or declare `knowledgeSources(scope)` so the kit's
+  `search_knowledge` tool covers it. **Never tenant data**: every organisation reads it.
 - **`jobHandlers`** keep the kit's handler contract (own DB client, await everything, throw to
   retry).
 - **`agentTools(ctx)`** is bound to the run's `AgentToolContext` (its `AccessScope`: read what the
@@ -166,9 +182,9 @@ the CLI command `<id>`; skills `<id>` / `<id>-<what>`; AG-UI CUSTOM events `<id>
 
 ## UI (`UiPlugin`, entry `src/plugins/<id>/ui/index.ts`)
 
-- **Nothing in the shell names a plugin** — `App.tsx`, `SideNav`, `SettingsLayout`, `Home.tsx`,
-  `queryKeys` and `agents/forms` (`CORE_AGENT_FORMS` + each plugin's `agentForms`)  read
-  `uiPlugins`.
+- **Nothing in the shell names a plugin** — `App.tsx` (routes and `PluginHeaderSlot`), `SideNav`,
+  `SettingsLayout`, `Home.tsx`, `queryKeys` and `agents/forms` (`CORE_AGENT_FORMS` + each plugin's
+  `agentForms`) read `uiPlugins`.
 - **The UI entry ships in the MAIN bundle**, so it wires and nothing else. `routes` are per tier
   (`shell`, `noTenant`, `public`, and `workspace`: inside `Layout`, tenant and `guard` still
   enforced, icon-rail nav, no padding, the page fills the viewport under the header with `h-full`)
@@ -184,6 +200,19 @@ the CLI command `<id>`; skills `<id>` / `<id>-<what>`; AG-UI CUSTOM events `<id>
 - **`nav` is a list of GROUPS** spliced by `composeNav(CORE_NAVIGATION, …)`: `before: '<label>'`
   inserts before that core group, no `before` lands above "Organisation", an unknown label appends;
   `filterNavConfig` applies the same guards. `settingsTabs(ctx)` append after the kit's.
+- **`header` items** (`{ id, Component: lazy(...), guard?, order?, placement?: 'center' | 'end' }`)
+  go in the top bar via `PluginHeaderSlot` — `center` for a search box, `end` (default) before the
+  kit's widgets; sorted by `order`, plugin id, item id; each in its own `Suspense` + error
+  boundary, so a throw renders nothing. Keep one compact at every width (an icon button below
+  `sm`); a palette or drawer it opens is its own lazy chunk. Guard it with the same const as the
+  route it serves.
+- **`useNavigationEntries()`** (`@/plugins/api/ui`, so from a lazy page or palette) lists every
+  destination the reader may open: composed nav, settings tabs (`pages/settings/tabs.ts` + plugins'
+  `settingsTabs`) and Home links, each through `useNavGuard`, first entry per path wins.
+- **`extensions`** on `UiPlugin` is the browser's cross-plugin registry (plain data — it ships in the
+  main bundle); the key's owner reads `uiExtensions(key)` from `@/plugins/api/ui` and narrows it.
+- **`listAgents()`** (`@/plugins/api`) is the agent catalogue (`{ key, title, description }`) for a
+  plugin that searches agents; guard it with `read AgentRun` yourself.
 - A route's guard, its nav item's and its `homeLinks` entry's are ONE const declared beside them
   (`EXAMPLE_FEATURE_GUARD`), so no link points at a page its reader cannot open. `homeLinks` go
   AHEAD of the core Home links, un-deduplicated.
@@ -204,6 +233,14 @@ the CLI command `<id>`; skills `<id>` / `<id>-<what>`; AG-UI CUSTOM events `<id>
 - **Agent skills live at `skills/<dir>/` in the plugin repo, declared in `"skills"`** — never under
   its own `.claude/`, which is never copied. Anything a person must SET UP or OPERATE deserves one
   (`/rf-plugin` §6; `.claude/skills/example-feature/`).
+- **Hooks for the host's coding agent are `"claudeHooks"`** (`{ "Stop": [{ "command", "timeout"? }] }`),
+  merged into `.claude/settings.json` by `plugin add`, replaced by `upgrade`, removed exactly by
+  `remove`. The command is only `node "$CLAUDE_PROJECT_DIR/.claude/skills/<dir>/<script>.mjs"`
+  (plain flags allowed) over a script a declared skill ships — never `pnpm`, `cd`, `&&`.
+- **Content the developer owns is `"hostFiles"`** (`[{ "path", "from" }]`): seeded once into
+  `docs/<id>/`, `apps/web/public/<id>/` or `apps/web/src/host/<id>/`, never touched by `upgrade`,
+  left by `remove`. Plugin code reads the last as `@/host/<id>/…` — its own id only. Never put
+  something the plugin must keep in step there: the developer may have edited or deleted it.
 - **A tenant-isolation test** under `src/plugins/<id>/tests/api/` for every tenant-scoped table — a
   second organisation that can neither list, read nor delete the first's rows. The host cannot write
   it; `plugin check` only proves it exists. Every tenant table calls `tenantIsolation()`. A plugin

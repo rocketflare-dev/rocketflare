@@ -13,8 +13,10 @@
  * a turn on a validation error the model often cannot diagnose. Coerce what is unambiguous; keep
  * the bounds.
  */
+import type { AnyServerPlugin } from '../../../../plugins/server'
 import { serverPlugins } from '../../../../plugins/server'
 import { loggerFor } from '../../../utils/core/logger'
+import type { AccessScope } from '../../access-sql'
 import type { Tool } from '../../ai/agent-loop'
 import { getDocumentTool } from './get-document'
 import { listDocumentsTool } from './list-documents'
@@ -37,6 +39,10 @@ export * from './search-knowledge'
  * skipped** — one broken plugin must not take chat or every agent run down with it.
  */
 export async function buildAgentTools(ctx: AgentToolContext): Promise<Tool[]> {
+  const log = loggerFor(ctx.cfg, {})
+  const platformSources = await pluginKnowledgeSources(serverPlugins, ctx.scope, (pluginId, err) =>
+    log.warn({ err, pluginId }, 'plugin knowledgeSources failed; its sources are left out')
+  )
   const contributed = await Promise.allSettled(
     serverPlugins.map(async p => (await p.agentTools?.(ctx)) ?? [])
   )
@@ -49,9 +55,42 @@ export async function buildAgentTools(ctx: AgentToolContext): Promise<Tool[]> {
     return []
   })
   return [
-    searchKnowledgeTool(ctx) as Tool,
+    searchKnowledgeTool(ctx, { platformSources }) as Tool,
     getDocumentTool(ctx) as Tool,
     listDocumentsTool(ctx) as Tool,
     ...pluginTools,
   ]
+}
+
+/** `<plugin id>:<kind>` — what a platform source must look like (and never the core `kit:`). */
+const PLATFORM_SOURCE = /^([a-z][a-z0-9-]*):\S/
+
+/**
+ * The PLATFORM sources the `search_knowledge` tool covers for this reader: the union, deduplicated
+ * and in plugin order, of every plugin's `knowledgeSources(scope)`. A builder that throws is
+ * reported through `onError` and contributes nothing; a source that is not `<id>:<kind>` (or is
+ * `kit:`) is reported and dropped — a plugin can widen the search only onto namespaced sources.
+ */
+export async function pluginKnowledgeSources(
+  plugins: readonly Pick<AnyServerPlugin, 'shared' | 'knowledgeSources'>[],
+  scope: AccessScope,
+  onError: (pluginId: string, err: unknown) => void
+): Promise<string[]> {
+  const answers = await Promise.allSettled(
+    plugins.map(async p => (await p.knowledgeSources?.(scope)) ?? [])
+  )
+  const out = new Set<string>()
+  answers.forEach((answer, i) => {
+    const pluginId = plugins[i]?.shared.id ?? 'unknown'
+    if (answer.status === 'rejected') {
+      onError(pluginId, answer.reason)
+      return
+    }
+    for (const source of answer.value) {
+      const ns = PLATFORM_SOURCE.exec(source)?.[1]
+      if (!ns || ns === 'kit') onError(pluginId, new Error(`not a namespaced source: "${source}"`))
+      else out.add(source)
+    }
+  })
+  return [...out]
 }

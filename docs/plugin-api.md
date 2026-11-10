@@ -134,11 +134,15 @@ The server surface: the context family, and the types a plugin must be able to n
   The answer. `status` is AG-UI's own `ResumeEntry` vocabulary and there is deliberately no `approved` boolean: two ways to say no is how a UI and a server end up disagreeing.
 - `interface AgentInterruptAsk`
   What an agent asks a person through {@link AgentContext.interrupt}.
+- `interface AgentSummary`
+  One registered agent, as a catalogue lists it: no schemas, nothing tenant-specific.
 - `interface AgentTraceContext extends Omit<TraceParams, 'name'>`
 - `class AiNotConfiguredError extends ServiceUnavailableError`
   503 `ai_not_configured`: nothing resolves for the tenant (no config row, no platform key).
 - `type AnyServerPlugin = ServerPlugin<SharedPlugin>`
   The element type of the barrels — a plugin whose shared half is not narrowed.
+- `function anyTermTsquery(query: string): string \| null`
+  The lexical half's query: every distinct word of the input, OR-ed (`a | b | c`), for `to_tsquery(SEARCH_TEXT_CONFIG, …)` to stem and stopword. ANY rather than ALL terms on purpose…
 - `type AnyUiPlugin = UiPlugin<SharedPlugin>`
 - `type AppRouter = Hono<AppEnv>`
 - `interface BackgroundMethods`
@@ -156,6 +160,8 @@ The server surface: the context family, and the types a plugin must be able to n
     R2 (the `FILES` bucket), or a 503 `storage_not_configured` — loud, because a silently absent bucket loses bytes. The same service `RequestCtx.storage()` returns. Write under…
   - `startAgentRun(input: StartAgentRunInput): Promise<StartedAgentRun>`
     Start an agent run for one organisation and return its id — `POST /api/agents/runs` from a job, through the same `enqueueRun`: input validation (400), the exclusive slot, the…
+- `function candidatePoolSize(limit: number): number`
+  "Retrieve wide, fuse narrow": how many candidates each signal contributes before fusion.
 - `async function chatModelAvailable( ctx: Pick<PluginContext, 'db' \| 'config' \| 'env'>, tenantId: string, promptKey: string ): Promise<boolean>`
   Would a chat model resolve for this prompt key and tenant? Answers the same question `resolveChat` will, without building a client, so a plugin's route or UI can say "no model" up…
 - `function createRouter(): Hono<AppEnv>`
@@ -164,7 +170,11 @@ The server surface: the context family, and the types a plugin must be able to n
   Adapt the core `TaskContext`.
 - `interface CronCtx extends PluginContext, BackgroundMethods`
   One cron run. `waitUntil` exists here because a scheduled invocation genuinely has one.
+  - `readonly kind: 'cron'`
+    See `JobCtx.kind`.
   - `waitUntil(promise: Promise<unknown>): void`
+- `function customEventNameIssue(pluginId: string, name: string): string \| null`
+  Why `name` is not a CUSTOM event `pluginId` may emit, or null when it may. Pure.
 - `type Database = PgDatabase<PgQueryResultHKT, typeof schema>`
 - `interface DatabaseHandle`
 - `interface Decision`
@@ -201,6 +211,9 @@ The server surface: the context family, and the types a plugin must be able to n
   `Receipts+Proton@Example.com` → `receipts`. Lower-cased (local parts are case-insensitive in practice, and Email Routing matches them that way) and cut at the first `+`, which is…
 - `function emailSubaddress(address: string): string \| null`
   `receipts+proton@example.com` → `proton`; null when the address carries no tag.
+- `function fuseByRank<T>( dense: T[], lexical: T[], keyOf: (item: T) => string, k = RRF_K ): FusedItem<T>[]`
+  Reciprocal Rank Fusion of two ordered candidate lists (best first). Pure.
+- `interface FusedItem<T>`
 - `function hasFeature(auth: Pick<PluginAuth, 'features'>, name: string): boolean`
   `true` when this deployment ships the surface AND this organisation has it yet.
 - `interface HookCtx extends Pick<PluginContext, 'db'>`
@@ -218,6 +231,10 @@ The server surface: the context family, and the types a plugin must be able to n
   Index text. Small texts are indexed before this returns; larger ones return `queued`. No embeddings provider → 503 `ai_not_configured`, checked before anything is written.
 - `async function ingestDocumentFile( ctx: PluginContext, input: PluginIngestFileInput ): Promise<PluginIngestResult>`
   Store a file in R2 and index it — text-like types now, binary ones (PDF, Office…) through the `document.convert` job. Unsupported type → 415 `unsupported_media_type`; no `FILES`…
+- `async function ingestPlatformDocument( ctx: JobCtx \| CronCtx, input: PlatformDocumentInput ): Promise<PlatformDocumentResult>`
+  Write (or re-write) a PLATFORM document — one every tenant can read, describing the app itself. Only from a job or a cron task (`JobCtx | CronCtx`), on the owner connection,…
+- `class InvalidCustomEventError extends Error`
+  A CUSTOM name a plugin may not emit. A TYPE, so the stream can say which code it was.
 - `function isAdminLevel(session: RoleView): boolean`
   May administer members / invitations / keys: owner, admin, support, or global admin.
 - `function isGlobalAdmin(session: RoleView): boolean`
@@ -230,6 +247,8 @@ The server surface: the context family, and the types a plugin must be able to n
   Adapt the core `JobContext`. The only place a plugin's job half names a core internal.
 - `interface JobCtx extends PluginContext, BackgroundMethods`
   One queue message. `job.payload` is already narrowed to the variant this handler was registered for — `ServerPlugin.jobHandlers` is checked against the job types the plugin's own…
+  - `readonly kind: 'job'`
+    Which background context this is. A brand as much as a field: the few methods that only a job or a cron task may call (`ingestPlatformDocument`) take `JobCtx | CronCtx`, and the…
 - `type JobEnvelope = z.infer<typeof jobEnvelopeSchema>`
 - `type JobHandler = ( job: Extract<JobEnvelope, { type: T }>, ctx: JobContext ) => Promise<void>`
 - `type JobInput = z.infer<typeof jobInputSchema>`
@@ -237,6 +256,8 @@ The server surface: the context family, and the types a plugin must be able to n
   The envelope narrowed to one `type` — what a handler receives.
 - `type JobType = JobEnvelope['type']`
   Every job type this app knows, derived from the variants rather than kept beside them.
+- `async function listAgents(): Promise<readonly AgentSummary[]>`
+  Every registered agent — the kit's and every installed plugin's — as `{ key, title, description }`, the same catalogue `GET /api/agents` serves. For a plugin that lists or…
 - `type Logger = pino.Logger`
 - `async function memberCan( ctx: PluginContext, who: { tenantId: string; userId: string }, action: Actions, subject: Subjects ): Promise<boolean>`
   Does this person hold this grant in this tenant RIGHT NOW? For a public callback completing something a signed state started — an OAuth connection, a consent — where the state…
@@ -261,6 +282,10 @@ The server surface: the context family, and the types a plugin must be able to n
   The Postgres SQLSTATE (`23505`, `40001`…) of a driver error, wherever it hangs: both drivers put `code` on their own error (postgres.js, Neon's `NeonDbError`) and drizzle wraps…
 - `interface PickOptions<T>`
 - `interface PickResult<T>`
+- `interface PlatformDocumentInput`
+- `interface PlatformDocumentResult`
+- `class PlatformEmbeddingsError extends ServiceUnavailableError`
+  503 `platform_embeddings_not_configured`: no `EMBEDDINGS_API_KEY` and no `[ai]` binding.
 - `type PluginAgent = AgentDefinition<Input, Output>`
   A plugin's agent, as `ServerPlugin.agents` takes it.
 - `interface PluginAuth`
@@ -290,6 +315,10 @@ The server surface: the context family, and the types a plugin must be able to n
     The Worker bindings. A plugin reads the ones its own `plugin.json` declares; reaching for a core binding directly is usually the sign that a method is missing from this surface.
 - `interface PluginDeprovisionResult`
   What `provision.deprovision` did in the tenant.
+- `interface PluginHeaderItem`
+  One item in the app's top bar — a search box, a help button. Rendered by the shell inside `Layout` for every signed-in page with a tenant, behind `guard`, inside its OWN…
+- `type PluginHeaderPlacement = 'center' \| 'end'`
+  Where in the top bar a plugin header item sits.
 - `interface PluginIdentity`
   `identityFor(c, pluginId)`: sign a person in, or provision them.
 - `interface PluginIdentityUser`
@@ -340,6 +369,8 @@ The server surface: the context family, and the types a plugin must be able to n
   `runToolLoop` minus what the runtime supplies.
 - `function provisionFor(ctx: PluginContext, pluginId: string): PluginProvision`
   The cookie-free half: usable from any `PluginContext` — a public handler, a job, a cron.
+- `async function prunePlatformDocuments( ctx: JobCtx \| CronCtx, input: { source: string; keepExternalIds: readonly string[] } ): Promise<number>`
+  Delete the platform documents of `source` whose `externalId` is not in `keepExternalIds` — what a sync calls after ingesting the current set. Answers the number deleted; an empty…
 - `const PUBLIC_MOUNT_ROOT: "/api/hooks"`
   The prefix every public mount lives under; the plugin's id is the next segment.
 - `const PUBLIC_SITE_PAGE_CSP_HEADER: "x-public-site-page-csp"`
@@ -427,6 +458,11 @@ The server surface: the context family, and the types a plugin must be able to n
 - `interface ScheduledTask`
 - `async function sealSecret(config: PluginConfig, plaintext: string): Promise<string>`
   Encrypt a credential for storage. The output is opaque base64; keep it in a `*_enc` column.
+- `async function searchKnowledge( ctx: Pick<PluginContext, 'db' \| 'config' \| 'env'> & { scope: AccessScope }, input: SearchKnowledgeInput ): Promise<SearchKnowledgeResult>`
+  The kit's hybrid knowledge search, for a plugin: the caller's tenant documents as its `AccessScope` may read them (narrowed by `sources`), plus — only when named — the platform…
+- `interface SearchKnowledgeHit`
+- `interface SearchKnowledgeInput`
+- `interface SearchKnowledgeResult`
 - `interface SeedCtx extends Pick<PluginContext, 'db'>`
   `pnpm seed --demo`, after the core block.
   - `tenantId: string`
@@ -456,6 +492,8 @@ The server surface: the context family, and the types a plugin must be able to n
     Prompt registry entries, one per key in `shared.promptKeys`.
   - `agentTools?: (ctx: AgentToolContext) => Tool[] \| Promise<Tool[]>`
     Tools added to every agent run, beside the three built-in knowledge tools. Bound to the run's access scope, so a plugin tool reads what its REQUESTER may read and nothing more.…
+  - `knowledgeSources?: (scope: AccessScope) => readonly string[] \| Promise<readonly string[]>`
+    PLATFORM knowledge sources (`<id>:<kind>`, written with `ingestPlatformDocument`) the kit's `search_knowledge` tool also searches for this reader — chat and every agent run.…
   - `scheduledTasks?: Readonly<Record<string, ScheduledTask[]>>`
     Cron expression → tasks, merged into `SCHEDULED_TASKS` (tasks on a cron core already runs are appended after core's). A cron core does NOT run is declared in `plugin.json`…
   - `emailHandlers?: readonly EmailHandler[]`
@@ -529,6 +567,18 @@ The server surface: the context family, and the types a plugin must be able to n
 - `interface StorageService`
 - `interface StoredObject extends StoredObjectMeta`
 - `interface StoredObjectMeta`
+- `async function streamChat(c: AppContext, options: StreamChatOptions): Promise<Response>`
+  Stream one chat turn for a plugin route, as AG-UI (SSE, or protobuf when the client's `Accept` negotiates it). Call it as the route's return value:
+- `type StreamChatEmit = (name: string, value: unknown) => Promise<void>`
+  Emit one CUSTOM event named `<plugin id>.<what>`. Any other name is refused.
+- `interface StreamChatOptions`
+- `interface StreamChatResult`
+  What the turn produced, handed to `onFinish` and returned in `RUN_FINISHED.result`.
+- `interface StreamChatToolCtx extends ToolCtx`
+  What a plugin's tool builder is handed: the usual `ToolCtx`, on the stream's client, plus `emit`.
+  - `emit: StreamChatEmit`
+- `interface StreamChatTurn`
+  One prior turn of the plugin's own conversation, oldest first.
 - `type Subjects = CoreSubject \| PluginSubject \| FeatureSubject`
 - `type Tenant = typeof tenants.$inferSelect`
 - `interface Tool<Input = unknown>`
@@ -577,10 +627,16 @@ The server surface: the context family, and the types a plugin must be able to n
     Extra `/settings?tab=` tabs, appended after the core tabs. `can` is the caller's ability.
   - `homeLinks?: readonly QuickLink[]`
     Quick links for the Home page, merged AHEAD of the core links. A feature somebody reaches from Home is one they were told about; a plugin that only adds a nav item is one they…
+  - `header?: readonly PluginHeaderItem[]`
+    Top-bar items (`PluginHeaderItem`): merged across plugins, ordered by `order` then plugin id, rendered by `PluginHeaderSlot` in `Layout`'s `headerCenter` / `headerEnd`.
   - `queryKeys?: Readonly<Record<string, unknown>>`
     Families merged into `queryKeys`; every root must start with `<id>:`.
   - `agentForms?: Readonly<Partial<Record<AgentKeyOf<S> & string, AgentForm>>>`
     `AGENT_FORMS` entries for the agents this plugin registers. Optional per agent: `formFor` falls back to a form generated from the agent's own JSON Schema, then to a JSON textarea.
+  - `extensions?: Readonly<Record<string, readonly unknown[]>>`
+    Cross-plugin registries for the browser, the UI twin of `ServerPlugin.extensions`: another plugin reads every installed plugin's entries under a key with `uiExtensions(key)` (from…
+- `function usageFeatureIssue(pluginId: string, feature: string): string \| null`
+  Why `feature` is not a usage label `pluginId` may record under, or null when it may. Pure.
 - `type User = typeof users.$inferSelect`
 - `function validate<T extends ZodSchema, Target extends keyof ValidationTargets>( target: Target, schema: T )`
 - `async function verifyState<T = Record<string, unknown>>( config: PluginConfig, purpose: string, token: string ): Promise<T \| null>`
@@ -633,6 +689,10 @@ The only host module a plugin's `ui/index.ts` may import — it ships in the mai
 - `type NavGuard = \| 'admin' \| 'globalAdmin' \| { action: string; subject: string } \| { feature: string } \| readonly NavGuard[]`
   Coarse role flags for routing (`AdminRoute` / `GlobalAdminRoute` semantics), a CASL `{ action, subject }` pair for per-page checks, a feature flag, or a list meaning AND. Strings,…
 - `interface NavItem`
+- `interface PluginHeaderItem`
+  One item in the app's top bar — a search box, a help button. Rendered by the shell inside `Layout` for every signed-in page with a tenant, behind `guard`, inside its OWN…
+- `type PluginHeaderPlacement = 'center' \| 'end'`
+  Where in the top bar a plugin header item sits.
 - `interface PluginNavGroup`
   A nav group, placed relative to a named core group ("Organisation" by default).
   - `label?: string`
@@ -659,10 +719,14 @@ The only host module a plugin's `ui/index.ts` may import — it ships in the mai
     Extra `/settings?tab=` tabs, appended after the core tabs. `can` is the caller's ability.
   - `homeLinks?: readonly QuickLink[]`
     Quick links for the Home page, merged AHEAD of the core links. A feature somebody reaches from Home is one they were told about; a plugin that only adds a nav item is one they…
+  - `header?: readonly PluginHeaderItem[]`
+    Top-bar items (`PluginHeaderItem`): merged across plugins, ordered by `order` then plugin id, rendered by `PluginHeaderSlot` in `Layout`'s `headerCenter` / `headerEnd`.
   - `queryKeys?: Readonly<Record<string, unknown>>`
     Families merged into `queryKeys`; every root must start with `<id>:`.
   - `agentForms?: Readonly<Partial<Record<AgentKeyOf<S> & string, AgentForm>>>`
     `AGENT_FORMS` entries for the agents this plugin registers. Optional per agent: `formFor` falls back to a form generated from the agent's own JSON Schema, then to a JSON textarea.
+  - `extensions?: Readonly<Record<string, readonly unknown[]>>`
+    Cross-plugin registries for the browser, the UI twin of `ServerPlugin.extensions`: another plugin reads every installed plugin's entries under a key with `uiExtensions(key)` (from…
 - `function useNavGuard(): (guard: NavGuard \| undefined) => boolean`
 
 ### `@/plugins/api/ui`
@@ -719,6 +783,10 @@ Components and hooks, for a lazy PAGE. Never for the UI entry.
 - `interface ModalProps`
 - `type NavGuard = \| 'admin' \| 'globalAdmin' \| { action: string; subject: string } \| { feature: string } \| readonly NavGuard[]`
   Coarse role flags for routing (`AdminRoute` / `GlobalAdminRoute` semantics), a CASL `{ action, subject }` pair for per-page checks, a feature flag, or a list meaning AND. Strings,…
+- `interface NavigationChecks`
+- `function navigationEntries( plugins: readonly AnyUiPlugin[], { canAccess, can }: NavigationChecks ): NavigationEntry[]`
+  The list, pure: the plugins and the checks are passed in, so it is unit-tested directly.
+- `interface NavigationEntry`
 - `function notifyUnauthorized(error: ApiError): void`
   Invoke the 401 handler. A stale session makes every in-flight query fail at once, so calls within the same tick are coalesced into ONE handler invocation. Called by `request()`…
 - `function PageHeader({ title, description, breadcrumbs, badge, actions, className = '', }: PageHeaderProps)`
@@ -751,6 +819,11 @@ Components and hooks, for a lazy PAGE. Never for the UI entry.
 - `function ToastContainer()`
   Bottom-right stack. Mount once.
 - `type ToastType = 'success' \| 'error' \| 'warning' \| 'info'`
+- `function uiExtensions(key: string): readonly unknown[]`
+- `function uiExtensionSources(key: string): readonly string[]`
+  Which plugins contributed under a key — for the error message when one of them does not parse.
+- `const UNLABELLED_NAV_GROUP: "Pages"`
+  The heading an unlabelled nav group gets in a list.
 - `function URLTabs({ tabs, defaultTab, param = 'tab', className = '', actions, }: URLTabsProps)`
   Tabs whose active state lives in `?tab=`, so deep links and back/forward work.
 - `function useAuth(): AuthContextValue`
@@ -760,6 +833,8 @@ Components and hooks, for a lazy PAGE. Never for the UI entry.
 - `function useGroupTypes(enabled = true)`
 - `function useMyGroups()`
   Every member may read their OWN groups — the profile list, and what the picker offers them.
+- `function useNavigationEntries(): NavigationEntry[]`
+  `navigationEntries` for the signed-in reader and the installed plugins.
 - `function usePermissions()`
 - `function useTenancyMode(): TenancyMode`
   `'single'` hides OrgSwitcher, /select-tenant and org create/delete.
@@ -776,6 +851,10 @@ Components and hooks, for a lazy PAGE. Never for the UI entry.
 - `type AnyServerPlugin = ServerPlugin<SharedPlugin>`
   The element type of the barrels — a plugin whose shared half is not narrowed.
 - `type AnyUiPlugin = UiPlugin<SharedPlugin>`
+- `interface PluginHeaderItem`
+  One item in the app's top bar — a search box, a help button. Rendered by the shell inside `Layout` for every signed-in page with a tenant, behind `guard`, inside its OWN…
+- `type PluginHeaderPlacement = 'center' \| 'end'`
+  Where in the top bar a plugin header item sits.
 - `type PluginMount = readonly [string, Hono<AppEnv>, MiddlewareHandler?]`
   One entry of the mount table in `api/index.ts`: prefix, router, optional gate.
 - `interface PluginNavGroup`
@@ -830,6 +909,8 @@ Components and hooks, for a lazy PAGE. Never for the UI entry.
     Prompt registry entries, one per key in `shared.promptKeys`.
   - `agentTools?: (ctx: AgentToolContext) => Tool[] \| Promise<Tool[]>`
     Tools added to every agent run, beside the three built-in knowledge tools. Bound to the run's access scope, so a plugin tool reads what its REQUESTER may read and nothing more.…
+  - `knowledgeSources?: (scope: AccessScope) => readonly string[] \| Promise<readonly string[]>`
+    PLATFORM knowledge sources (`<id>:<kind>`, written with `ingestPlatformDocument`) the kit's `search_knowledge` tool also searches for this reader — chat and every agent run.…
   - `scheduledTasks?: Readonly<Record<string, ScheduledTask[]>>`
     Cron expression → tasks, merged into `SCHEDULED_TASKS` (tasks on a cron core already runs are appended after core's). A cron core does NOT run is declared in `plugin.json`…
   - `emailHandlers?: readonly EmailHandler[]`
@@ -857,10 +938,14 @@ Components and hooks, for a lazy PAGE. Never for the UI entry.
     Extra `/settings?tab=` tabs, appended after the core tabs. `can` is the caller's ability.
   - `homeLinks?: readonly QuickLink[]`
     Quick links for the Home page, merged AHEAD of the core links. A feature somebody reaches from Home is one they were told about; a plugin that only adds a nav item is one they…
+  - `header?: readonly PluginHeaderItem[]`
+    Top-bar items (`PluginHeaderItem`): merged across plugins, ordered by `order` then plugin id, rendered by `PluginHeaderSlot` in `Layout`'s `headerCenter` / `headerEnd`.
   - `queryKeys?: Readonly<Record<string, unknown>>`
     Families merged into `queryKeys`; every root must start with `<id>:`.
   - `agentForms?: Readonly<Partial<Record<AgentKeyOf<S> & string, AgentForm>>>`
     `AGENT_FORMS` entries for the agents this plugin registers. Optional per agent: `formFor` falls back to a form generated from the agent's own JSON Schema, then to a JSON textarea.
+  - `extensions?: Readonly<Record<string, readonly unknown[]>>`
+    Cross-plugin registries for the browser, the UI twin of `ServerPlugin.extensions`: another plugin reads every installed plugin's entries under a key with `uiExtensions(key)` (from…
 
 ### `@/db/schema/kit`
 
@@ -1030,6 +1115,10 @@ The harness: a real database, the real Hono app, real bindings-shaped stubs, the
 
 > `@testkit/integration` — the host's test harness, as a DECLARED entry.
 
+- `async function aguiFrames(res: Response): Promise<KitAguiEvent[]>`
+  Parse an AG-UI SSE body into the typed events it carried. Spec AG-UI frames are `data:` only — a test that finds an `event:` line here should fail, so `sseEventFields` exists to…
+- `function aguiTypes(events: KitAguiEvent[]): string[]`
+  The event types of a run, in order — what a sequence assertion actually cares about.
 - `function bearerHeader(key: string): Record<string, string>`
 - `async function cleanDatabase(db: Database): Promise<void>`
   TRUNCATE every table in `public` (drizzle's bookkeeping lives in schema `drizzle`).
@@ -1048,6 +1137,8 @@ The harness: a real database, the real Hono app, real bindings-shaped stubs, the
 - `async function createTestTenantWithUser( db: Database, role: MembershipRole = 'owner', userOverrides: Partial<NewUser> = {}, tenantOverrides: Partial<NewTenant> = {} )`
   Tenant + one member in one call (default `owner`).
 - `async function createTestUser(db: Database, overrides: Partial<NewUser> = {})`
+- `function customEvents(events: KitAguiEvent[]): { name: string; value: unknown }[]`
+  The kit CUSTOM events of a run, `name` → `value`, in order.
 - `async function dispatchScheduled( cron: string, env: AppBindings, ctx: Pick<ExecutionContext, 'waitUntil'>, registry: Record<string, ScheduledTask[]> = SCHEDULED_TASKS ): Promise<TaskReport[]>`
   Runs every task registered for `cron` and returns a per-task report (used by tests).
 - `function errorResponse(status: number, error = 'Error', code?: string)`
@@ -1064,6 +1155,10 @@ The harness: a real database, the real Hono app, real bindings-shaped stubs, the
 - `const notFoundResponse: () => Response`
 - `function paged<T>(items: T[], pageSize = 25)`
   `{ items, pagination }` for a one-page list response.
+- `interface PlatformChatCall`
+  What the platform model was asked, one entry per chat call.
+- `interface PlatformChatTurn`
+  One model turn of {@link scriptPlatformChat}: what the platform model answers.
 - `interface RecordedMessage<T = unknown>`
 - `function renderWithProviders( ui: ReactElement, { route = '/', queryClient = createTestQueryClient(), session, ...options }: ProviderOptions = {} )`
 - `async function request( path: string, init: RequestInit = {}, options: RequestOptions = {} ): Promise<Response>`
@@ -1077,6 +1172,8 @@ The harness: a real database, the real Hono app, real bindings-shaped stubs, the
 - `const SCHEDULED_TASKS: Record<string, ScheduledTask[]>`
   Core tasks plus every installed plugin's. A plugin naming a cron core already runs APPENDS to it — each task is try/caught on its own, so a plugin's failure cannot stop core's…
 - `interface ScheduledTask`
+- `function scriptPlatformChat( env: { AI?: unknown }, script: PlatformChatTurn[] \| ((call: PlatformChatCall, index: number) => PlatformChatTurn) ): PlatformChatCall[]`
+  Script the PLATFORM chat model — the `AI` binding's stub — so a request resolves a real chat client through the real seam (`resolveChat` → `platformChat` → the Workers AI adapter)…
 - `const SESSION_COOKIE_NAME: "__Host-session"`
   The login cookie. `middleware/csrf.ts` re-exports this so the CSRF check names the same cookie.
 - `function sessionCookieHeader(token: string): Record<string, string>`
@@ -1138,6 +1235,24 @@ Builders for the context family, for tests that never touch data.
 - `interface ToolCtxOptions extends BaseOptions`
 - `interface WorkflowCtxOptions extends BaseOptions`
 
+## Your own host files, and what the manifest writes outside your roots
+
+- **`@/host/<id>/*`** — `apps/web/src/host/<id>/`, code the plugin seeded through `hostFiles`
+  and the developer owns since (a generated content module, say). A plugin may import its OWN
+  id's directory and no other (`tests/helpers/plugins.ts`); it resolves through the existing
+  `@/*` alias, so no tsconfig, Vite or wrangler change. Not ledgered: the kit provides none of it.
+- **`skills`** — `skills/<dir>/` → `.claude/skills/<dir>/`, `<dir>` being `<id>` or `<id>-*`.
+  Replaced on upgrade, deleted on remove.
+- **`claudeHooks`** — `{ "<Event>": [{ "command", "matcher"?, "timeout"? }] }`, merged into
+  `.claude/settings.json`. A command is only `node "$CLAUDE_PROJECT_DIR/.claude/skills/<dir>/<script>"`
+  (plus plain flags) over a script one of its declared skills ships; the skill directory is how the
+  plugin's entries are found again. Replaced on upgrade, removed exactly on remove.
+- **`hostFiles`** — `[{ "path", "from" }]`, a file or a directory seeded into `docs/<id>/`,
+  `apps/web/public/<id>/` or `apps/web/src/host/<id>/` only where absent. Never touched by
+  upgrade, left in place by remove.
+- **`coreEdits`** and **`appOwned`** — anchored lines in a core file, and paths inside the
+  plugin's own roots that the developer owns (`apps/web/src/plugins/CLAUDE.md`).
+
 ## Surface ledger
 
 The machine-readable half of this file: one line per member the kit provides,
@@ -1179,9 +1294,11 @@ nothing in the comparison that can throw.
 @/plugins/api :: interface :: AgentDecide :: interface AgentDecide
 @/plugins/api :: interface :: AgentInterruptAnswer :: interface AgentInterruptAnswer
 @/plugins/api :: interface :: AgentInterruptAsk :: interface AgentInterruptAsk
+@/plugins/api :: interface :: AgentSummary :: interface AgentSummary
 @/plugins/api :: interface :: AgentTraceContext :: interface AgentTraceContext extends Omit<TraceParams, 'name'>
 @/plugins/api :: class :: AiNotConfiguredError :: class AiNotConfiguredError extends ServiceUnavailableError
 @/plugins/api :: type :: AnyServerPlugin :: type AnyServerPlugin = ServerPlugin<SharedPlugin>
+@/plugins/api :: function :: anyTermTsquery :: function anyTermTsquery(query: string): string | null
 @/plugins/api :: type :: AnyUiPlugin :: type AnyUiPlugin = UiPlugin<SharedPlugin>
 @/plugins/api :: type :: AppRouter :: type AppRouter = Hono<AppEnv>
 @/plugins/api :: interface :: BackgroundMethods :: interface BackgroundMethods
@@ -1192,12 +1309,15 @@ nothing in the comparison that can throw.
 @/plugins/api :: member :: BackgroundMethods.features :: features(tenantId: string): Promise<readonly string[]>
 @/plugins/api :: member :: BackgroundMethods.storage :: storage(): StorageService
 @/plugins/api :: member :: BackgroundMethods.startAgentRun :: startAgentRun(input: StartAgentRunInput): Promise<StartedAgentRun>
+@/plugins/api :: function :: candidatePoolSize :: function candidatePoolSize(limit: number): number
 @/plugins/api :: function :: chatModelAvailable :: async function chatModelAvailable( ctx: Pick<PluginContext, 'db' | 'config' | 'env'>, tenantId: string, promptKey: string ): Promise<boolean>
 @/plugins/api :: function :: createRouter :: function createRouter(): Hono<AppEnv>
 @/plugins/api :: function :: createStepRealtimeFor :: function createStepRealtimeFor(env: HubEnv): StepRealtime
 @/plugins/api :: function :: cronCtx :: function cronCtx(ctx: TaskContext): CronCtx
 @/plugins/api :: interface :: CronCtx :: interface CronCtx extends PluginContext, BackgroundMethods
+@/plugins/api :: member :: CronCtx.kind :: readonly kind: 'cron'
 @/plugins/api :: member :: CronCtx.waitUntil :: waitUntil(promise: Promise<unknown>): void
+@/plugins/api :: function :: customEventNameIssue :: function customEventNameIssue(pluginId: string, name: string): string | null
 @/plugins/api :: type :: Database :: type Database = PgDatabase<PgQueryResultHKT, typeof schema>
 @/plugins/api :: interface :: DatabaseHandle :: interface DatabaseHandle
 @/plugins/api :: interface :: Decision :: interface Decision
@@ -1221,6 +1341,8 @@ nothing in the comparison that can throw.
 @/plugins/api :: interface :: EmailHandler :: interface EmailHandler
 @/plugins/api :: function :: emailLocalPart :: function emailLocalPart(address: string): string
 @/plugins/api :: function :: emailSubaddress :: function emailSubaddress(address: string): string | null
+@/plugins/api :: function :: fuseByRank :: function fuseByRank<T>( dense: T[], lexical: T[], keyOf: (item: T) => string, k = RRF_K ): FusedItem<T>[]
+@/plugins/api :: interface :: FusedItem :: interface FusedItem<T>
 @/plugins/api :: function :: hasFeature :: function hasFeature(auth: Pick<PluginAuth, 'features'>, name: string): boolean
 @/plugins/api :: interface :: HookCtx :: interface HookCtx extends Pick<PluginContext, 'db'>
 @/plugins/api :: member :: HookCtx.tenant :: tenant: Tenant
@@ -1231,17 +1353,21 @@ nothing in the comparison that can throw.
 @/plugins/api :: type :: IdpAppRole :: type IdpAppRole = z.infer<typeof idpAppRoleSchema>
 @/plugins/api :: function :: ingestDocument :: async function ingestDocument( ctx: PluginContext, input: PluginIngestTextInput ): Promise<PluginIngestResult>
 @/plugins/api :: function :: ingestDocumentFile :: async function ingestDocumentFile( ctx: PluginContext, input: PluginIngestFileInput ): Promise<PluginIngestResult>
+@/plugins/api :: function :: ingestPlatformDocument :: async function ingestPlatformDocument( ctx: JobCtx | CronCtx, input: PlatformDocumentInput ): Promise<PlatformDocumentResult>
+@/plugins/api :: class :: InvalidCustomEventError :: class InvalidCustomEventError extends Error
 @/plugins/api :: function :: isAdminLevel :: function isAdminLevel(session: RoleView): boolean
 @/plugins/api :: function :: isGlobalAdmin :: function isGlobalAdmin(session: RoleView): boolean
 @/plugins/api :: function :: isOwnerLevel :: function isOwnerLevel(session: RoleView): boolean
 @/plugins/api :: function :: isUniqueViolation :: function isUniqueViolation(err: unknown): boolean
 @/plugins/api :: function :: jobCtx :: function jobCtx(ctx: JobContext): JobCtx
 @/plugins/api :: interface :: JobCtx :: interface JobCtx extends PluginContext, BackgroundMethods
+@/plugins/api :: member :: JobCtx.kind :: readonly kind: 'job'
 @/plugins/api :: type :: JobEnvelope :: type JobEnvelope = z.infer<typeof jobEnvelopeSchema>
 @/plugins/api :: type :: JobHandler :: type JobHandler = ( job: Extract<JobEnvelope, { type: T }>, ctx: JobContext ) => Promise<void>
 @/plugins/api :: type :: JobInput :: type JobInput = z.infer<typeof jobInputSchema>
 @/plugins/api :: type :: JobOf :: type JobOf = Extract<JobEnvelope, { type: T }>
 @/plugins/api :: type :: JobType :: type JobType = JobEnvelope['type']
+@/plugins/api :: function :: listAgents :: async function listAgents(): Promise<readonly AgentSummary[]>
 @/plugins/api :: type :: Logger :: type Logger = pino.Logger
 @/plugins/api :: function :: memberCan :: async function memberCan( ctx: PluginContext, who: { tenantId: string; userId: string }, action: Actions, subject: Subjects ): Promise<boolean>
 @/plugins/api :: type :: MembershipRole :: type MembershipRole = z.infer<typeof membershipRoleSchema>
@@ -1258,6 +1384,9 @@ nothing in the comparison that can throw.
 @/plugins/api :: function :: pgErrorCode :: function pgErrorCode(err: unknown): string | undefined
 @/plugins/api :: interface :: PickOptions :: interface PickOptions<T>
 @/plugins/api :: interface :: PickResult :: interface PickResult<T>
+@/plugins/api :: interface :: PlatformDocumentInput :: interface PlatformDocumentInput
+@/plugins/api :: interface :: PlatformDocumentResult :: interface PlatformDocumentResult
+@/plugins/api :: class :: PlatformEmbeddingsError :: class PlatformEmbeddingsError extends ServiceUnavailableError
 @/plugins/api :: type :: PluginAgent :: type PluginAgent = AgentDefinition<Input, Output>
 @/plugins/api :: interface :: PluginAuth :: interface PluginAuth
 @/plugins/api :: member :: PluginAuth.user :: user: User
@@ -1276,6 +1405,8 @@ nothing in the comparison that can throw.
 @/plugins/api :: member :: PluginContext.logger :: logger: PluginLogger
 @/plugins/api :: member :: PluginContext.env :: env: PluginBindings
 @/plugins/api :: interface :: PluginDeprovisionResult :: interface PluginDeprovisionResult
+@/plugins/api :: interface :: PluginHeaderItem :: interface PluginHeaderItem
+@/plugins/api :: type :: PluginHeaderPlacement :: type PluginHeaderPlacement = 'center' | 'end'
 @/plugins/api :: interface :: PluginIdentity :: interface PluginIdentity
 @/plugins/api :: interface :: PluginIdentityUser :: interface PluginIdentityUser
 @/plugins/api :: interface :: PluginIngestFileInput :: interface PluginIngestFileInput extends IngestCommon
@@ -1304,6 +1435,7 @@ nothing in the comparison that can throw.
 @/plugins/api :: type :: PluginStructuredOptions :: type PluginStructuredOptions = Omit< CallStructuredToolOptions<T>, 'model' | 'maxTokens' > & { maxTokens?: number }
 @/plugins/api :: type :: PluginToolLoopOptions :: type PluginToolLoopOptions = Omit< RunToolLoopOptions, 'model' | 'maxTokens' | 'approvals' | 'runApproved' > & { maxTokens?: number }
 @/plugins/api :: function :: provisionFor :: function provisionFor(ctx: PluginContext, pluginId: string): PluginProvision
+@/plugins/api :: function :: prunePlatformDocuments :: async function prunePlatformDocuments( ctx: JobCtx | CronCtx, input: { source: string; keepExternalIds: readonly string[] } ): Promise<number>
 @/plugins/api :: const :: PUBLIC_MOUNT_ROOT :: const PUBLIC_MOUNT_ROOT: "/api/hooks"
 @/plugins/api :: const :: PUBLIC_SITE_PAGE_CSP_HEADER :: const PUBLIC_SITE_PAGE_CSP_HEADER: "x-public-site-page-csp"
 @/plugins/api :: function :: publicCtx :: function publicCtx(c: AppContext): PublicCtx
@@ -1356,6 +1488,10 @@ nothing in the comparison that can throw.
 @/plugins/api :: function :: rows :: function rows<T = Record<string, unknown>>(result: unknown): T[]
 @/plugins/api :: interface :: ScheduledTask :: interface ScheduledTask
 @/plugins/api :: function :: sealSecret :: async function sealSecret(config: PluginConfig, plaintext: string): Promise<string>
+@/plugins/api :: function :: searchKnowledge :: async function searchKnowledge( ctx: Pick<PluginContext, 'db' | 'config' | 'env'> & { scope: AccessScope }, input: SearchKnowledgeInput ): Promise<SearchKnowledgeResult>
+@/plugins/api :: interface :: SearchKnowledgeHit :: interface SearchKnowledgeHit
+@/plugins/api :: interface :: SearchKnowledgeInput :: interface SearchKnowledgeInput
+@/plugins/api :: interface :: SearchKnowledgeResult :: interface SearchKnowledgeResult
 @/plugins/api :: interface :: SeedCtx :: interface SeedCtx extends Pick<PluginContext, 'db'>
 @/plugins/api :: member :: SeedCtx.tenantId :: tenantId: string
 @/plugins/api :: member :: SeedCtx.ownerId :: ownerId: string
@@ -1374,6 +1510,7 @@ nothing in the comparison that can throw.
 @/plugins/api :: member :: ServerPlugin.agents :: agents?: { [K in AgentKeyOf<S> & string]: AnyAgentDefinition }
 @/plugins/api :: member :: ServerPlugin.prompts :: prompts?: { [K in PromptKeyOf<S> & string]: PromptDefinition }
 @/plugins/api :: member :: ServerPlugin.agentTools :: agentTools?: (ctx: AgentToolContext) => Tool[] | Promise<Tool[]>
+@/plugins/api :: member :: ServerPlugin.knowledgeSources :: knowledgeSources?: (scope: AccessScope) => readonly string[] | Promise<readonly string[]>
 @/plugins/api :: member :: ServerPlugin.scheduledTasks :: scheduledTasks?: Readonly<Record<string, ScheduledTask[]>>
 @/plugins/api :: member :: ServerPlugin.emailHandlers :: emailHandlers?: readonly EmailHandler[]
 @/plugins/api :: member :: ServerPlugin.deploymentFeatures :: deploymentFeatures?: (config: AppConfig) => readonly string[]
@@ -1420,6 +1557,13 @@ nothing in the comparison that can throw.
 @/plugins/api :: interface :: StorageService :: interface StorageService
 @/plugins/api :: interface :: StoredObject :: interface StoredObject extends StoredObjectMeta
 @/plugins/api :: interface :: StoredObjectMeta :: interface StoredObjectMeta
+@/plugins/api :: function :: streamChat :: async function streamChat(c: AppContext, options: StreamChatOptions): Promise<Response>
+@/plugins/api :: type :: StreamChatEmit :: type StreamChatEmit = (name: string, value: unknown) => Promise<void>
+@/plugins/api :: interface :: StreamChatOptions :: interface StreamChatOptions
+@/plugins/api :: interface :: StreamChatResult :: interface StreamChatResult
+@/plugins/api :: interface :: StreamChatToolCtx :: interface StreamChatToolCtx extends ToolCtx
+@/plugins/api :: member :: StreamChatToolCtx.emit :: emit: StreamChatEmit
+@/plugins/api :: interface :: StreamChatTurn :: interface StreamChatTurn
 @/plugins/api :: type :: Subjects :: type Subjects = CoreSubject | PluginSubject | FeatureSubject
 @/plugins/api :: type :: Tenant :: type Tenant = typeof tenants.$inferSelect
 @/plugins/api :: interface :: Tool :: interface Tool<Input = unknown>
@@ -1451,8 +1595,11 @@ nothing in the comparison that can throw.
 @/plugins/api :: member :: UiPlugin.nav :: nav?: readonly PluginNavGroup[]
 @/plugins/api :: member :: UiPlugin.settingsTabs :: settingsTabs?: (ctx: { can: (action: string, subject: string) => boolean }) => TabConfig[]
 @/plugins/api :: member :: UiPlugin.homeLinks :: homeLinks?: readonly QuickLink[]
+@/plugins/api :: member :: UiPlugin.header :: header?: readonly PluginHeaderItem[]
 @/plugins/api :: member :: UiPlugin.queryKeys :: queryKeys?: Readonly<Record<string, unknown>>
 @/plugins/api :: member :: UiPlugin.agentForms :: agentForms?: Readonly<Partial<Record<AgentKeyOf<S> & string, AgentForm>>>
+@/plugins/api :: member :: UiPlugin.extensions :: extensions?: Readonly<Record<string, readonly unknown[]>>
+@/plugins/api :: function :: usageFeatureIssue :: function usageFeatureIssue(pluginId: string, feature: string): string | null
 @/plugins/api :: type :: User :: type User = typeof users.$inferSelect
 @/plugins/api :: function :: validate :: function validate<T extends ZodSchema, Target extends keyof ValidationTargets>( target: Target, schema: T )
 @/plugins/api :: function :: verifyState :: async function verifyState<T = Record<string, unknown>>( config: PluginConfig, purpose: string, token: string ): Promise<T | null>
@@ -1477,6 +1624,8 @@ nothing in the comparison that can throw.
 @/plugins/api/ui-wiring :: interface :: NavGroup :: interface NavGroup
 @/plugins/api/ui-wiring :: type :: NavGuard :: type NavGuard = | 'admin' | 'globalAdmin' | { action: string; subject: string } | { feature: string } | readonly NavGuard[]
 @/plugins/api/ui-wiring :: interface :: NavItem :: interface NavItem
+@/plugins/api/ui-wiring :: interface :: PluginHeaderItem :: interface PluginHeaderItem
+@/plugins/api/ui-wiring :: type :: PluginHeaderPlacement :: type PluginHeaderPlacement = 'center' | 'end'
 @/plugins/api/ui-wiring :: interface :: PluginNavGroup :: interface PluginNavGroup
 @/plugins/api/ui-wiring :: member :: PluginNavGroup.label :: label?: string
 @/plugins/api/ui-wiring :: member :: PluginNavGroup.before :: before?: string
@@ -1495,8 +1644,10 @@ nothing in the comparison that can throw.
 @/plugins/api/ui-wiring :: member :: UiPlugin.nav :: nav?: readonly PluginNavGroup[]
 @/plugins/api/ui-wiring :: member :: UiPlugin.settingsTabs :: settingsTabs?: (ctx: { can: (action: string, subject: string) => boolean }) => TabConfig[]
 @/plugins/api/ui-wiring :: member :: UiPlugin.homeLinks :: homeLinks?: readonly QuickLink[]
+@/plugins/api/ui-wiring :: member :: UiPlugin.header :: header?: readonly PluginHeaderItem[]
 @/plugins/api/ui-wiring :: member :: UiPlugin.queryKeys :: queryKeys?: Readonly<Record<string, unknown>>
 @/plugins/api/ui-wiring :: member :: UiPlugin.agentForms :: agentForms?: Readonly<Partial<Record<AgentKeyOf<S> & string, AgentForm>>>
+@/plugins/api/ui-wiring :: member :: UiPlugin.extensions :: extensions?: Readonly<Record<string, readonly unknown[]>>
 @/plugins/api/ui-wiring :: function :: useNavGuard :: function useNavGuard(): (guard: NavGuard | undefined) => boolean
 @/plugins/api/ui :: function :: AccessBadge :: function AccessBadge({ visibility, groups, className = '', }: { visibility: ResourceVisibility groups: GroupRef[] className?: string })
 @/plugins/api/ui :: function :: AccessPicker :: function AccessPicker({ visibility, groupIds, available, onChange, tenantName, disabled = false, idPrefix = 'access', }: AccessPickerProps)
@@ -1528,6 +1679,9 @@ nothing in the comparison that can throw.
 @/plugins/api/ui :: function :: Modal :: function Modal({ open, onClose, title, children, actions, closeButton = true, className = '', }: ModalProps)
 @/plugins/api/ui :: interface :: ModalProps :: interface ModalProps
 @/plugins/api/ui :: type :: NavGuard :: type NavGuard = | 'admin' | 'globalAdmin' | { action: string; subject: string } | { feature: string } | readonly NavGuard[]
+@/plugins/api/ui :: interface :: NavigationChecks :: interface NavigationChecks
+@/plugins/api/ui :: function :: navigationEntries :: function navigationEntries( plugins: readonly AnyUiPlugin[], { canAccess, can }: NavigationChecks ): NavigationEntry[]
+@/plugins/api/ui :: interface :: NavigationEntry :: interface NavigationEntry
 @/plugins/api/ui :: function :: notifyUnauthorized :: function notifyUnauthorized(error: ApiError): void
 @/plugins/api/ui :: function :: PageHeader :: function PageHeader({ title, description, breadcrumbs, badge, actions, className = '', }: PageHeaderProps)
 @/plugins/api/ui :: function :: PaginationControls :: function PaginationControls({ pagination, onPageChange, isLoading = false, className = '', }: PaginationControlsProps)
@@ -1546,12 +1700,16 @@ nothing in the comparison that can throw.
 @/plugins/api/ui :: interface :: Toast :: interface Toast
 @/plugins/api/ui :: function :: ToastContainer :: function ToastContainer()
 @/plugins/api/ui :: type :: ToastType :: type ToastType = 'success' | 'error' | 'warning' | 'info'
+@/plugins/api/ui :: function :: uiExtensions :: function uiExtensions(key: string): readonly unknown[]
+@/plugins/api/ui :: function :: uiExtensionSources :: function uiExtensionSources(key: string): readonly string[]
+@/plugins/api/ui :: const :: UNLABELLED_NAV_GROUP :: const UNLABELLED_NAV_GROUP: "Pages"
 @/plugins/api/ui :: function :: URLTabs :: function URLTabs({ tabs, defaultTab, param = 'tab', className = '', actions, }: URLTabsProps)
 @/plugins/api/ui :: function :: useAuth :: function useAuth(): AuthContextValue
 @/plugins/api/ui :: function :: useFeature :: function useFeature(name: FeatureName): boolean
 @/plugins/api/ui :: function :: useGroups :: function useGroups(typeId?: string, enabled = true)
 @/plugins/api/ui :: function :: useGroupTypes :: function useGroupTypes(enabled = true)
 @/plugins/api/ui :: function :: useMyGroups :: function useMyGroups()
+@/plugins/api/ui :: function :: useNavigationEntries :: function useNavigationEntries(): NavigationEntry[]
 @/plugins/api/ui :: function :: usePermissions :: function usePermissions()
 @/plugins/api/ui :: function :: useTenancyMode :: function useTenancyMode(): TenancyMode
 @/plugins/api/ui :: const :: useToastStore :: const useToastStore: UseBoundStore<StoreApi<ToastStore>>
@@ -1559,6 +1717,8 @@ nothing in the comparison that can throw.
 @/plugins/api/ui :: interface :: VisibilityModalProps :: interface VisibilityModalProps
 @/plugins/types :: type :: AnyServerPlugin :: type AnyServerPlugin = ServerPlugin<SharedPlugin>
 @/plugins/types :: type :: AnyUiPlugin :: type AnyUiPlugin = UiPlugin<SharedPlugin>
+@/plugins/types :: interface :: PluginHeaderItem :: interface PluginHeaderItem
+@/plugins/types :: type :: PluginHeaderPlacement :: type PluginHeaderPlacement = 'center' | 'end'
 @/plugins/types :: type :: PluginMount :: type PluginMount = readonly [string, Hono<AppEnv>, MiddlewareHandler?]
 @/plugins/types :: interface :: PluginNavGroup :: interface PluginNavGroup
 @/plugins/types :: member :: PluginNavGroup.label :: label?: string
@@ -1590,6 +1750,7 @@ nothing in the comparison that can throw.
 @/plugins/types :: member :: ServerPlugin.agents :: agents?: { [K in AgentKeyOf<S> & string]: AnyAgentDefinition }
 @/plugins/types :: member :: ServerPlugin.prompts :: prompts?: { [K in PromptKeyOf<S> & string]: PromptDefinition }
 @/plugins/types :: member :: ServerPlugin.agentTools :: agentTools?: (ctx: AgentToolContext) => Tool[] | Promise<Tool[]>
+@/plugins/types :: member :: ServerPlugin.knowledgeSources :: knowledgeSources?: (scope: AccessScope) => readonly string[] | Promise<readonly string[]>
 @/plugins/types :: member :: ServerPlugin.scheduledTasks :: scheduledTasks?: Readonly<Record<string, ScheduledTask[]>>
 @/plugins/types :: member :: ServerPlugin.emailHandlers :: emailHandlers?: readonly EmailHandler[]
 @/plugins/types :: member :: ServerPlugin.deploymentFeatures :: deploymentFeatures?: (config: AppConfig) => readonly string[]
@@ -1606,8 +1767,10 @@ nothing in the comparison that can throw.
 @/plugins/types :: member :: UiPlugin.nav :: nav?: readonly PluginNavGroup[]
 @/plugins/types :: member :: UiPlugin.settingsTabs :: settingsTabs?: (ctx: { can: (action: string, subject: string) => boolean }) => TabConfig[]
 @/plugins/types :: member :: UiPlugin.homeLinks :: homeLinks?: readonly QuickLink[]
+@/plugins/types :: member :: UiPlugin.header :: header?: readonly PluginHeaderItem[]
 @/plugins/types :: member :: UiPlugin.queryKeys :: queryKeys?: Readonly<Record<string, unknown>>
 @/plugins/types :: member :: UiPlugin.agentForms :: agentForms?: Readonly<Partial<Record<AgentKeyOf<S> & string, AgentForm>>>
+@/plugins/types :: member :: UiPlugin.extensions :: extensions?: Readonly<Record<string, readonly unknown[]>>
 @/db/schema/kit :: const :: activityEvents :: const activityEvents: table "activity_events" { id, tenantId, userId, type, subjectType, subjectId, metadata, createdAt }
 @/db/schema/kit :: const :: groupMembers :: const groupMembers: table "group_members" { tenantId, groupId, userId, createdAt }
 @/db/schema/kit :: const :: groups :: const groups: table "groups" { createdAt, updatedAt, id, tenantId, groupTypeId, name, description }
@@ -1700,6 +1863,8 @@ nothing in the comparison that can throw.
 './types' (apps/cli/src/plugins/types.ts) :: interface :: CliPlugin :: interface CliPlugin<S extends SharedPlugin = SharedPlugin>
 './types' (apps/cli/src/plugins/types.ts) :: member :: CliPlugin.shared :: shared: S
 './types' (apps/cli/src/plugins/types.ts) :: member :: CliPlugin.register :: register(program: Command, action: ActionWrapper): void
+@testkit/integration :: function :: aguiFrames :: async function aguiFrames(res: Response): Promise<KitAguiEvent[]>
+@testkit/integration :: function :: aguiTypes :: function aguiTypes(events: KitAguiEvent[]): string[]
 @testkit/integration :: function :: bearerHeader :: function bearerHeader(key: string): Record<string, string>
 @testkit/integration :: function :: cleanDatabase :: async function cleanDatabase(db: Database): Promise<void>
 @testkit/integration :: function :: createExecutionContext :: function createExecutionContext(): TestExecutionContext
@@ -1711,6 +1876,7 @@ nothing in the comparison that can throw.
 @testkit/integration :: function :: createTestTenant :: async function createTestTenant(db: Database, overrides: Partial<NewTenant> = {})
 @testkit/integration :: function :: createTestTenantWithUser :: async function createTestTenantWithUser( db: Database, role: MembershipRole = 'owner', userOverrides: Partial<NewUser> = {}, tenantOverrides: Partial<NewTenant> = {} )
 @testkit/integration :: function :: createTestUser :: async function createTestUser(db: Database, overrides: Partial<NewUser> = {})
+@testkit/integration :: function :: customEvents :: function customEvents(events: KitAguiEvent[]): { name: string; value: unknown }[]
 @testkit/integration :: function :: dispatchScheduled :: async function dispatchScheduled( cron: string, env: AppBindings, ctx: Pick<ExecutionContext, 'waitUntil'>, registry: Record<string, ScheduledTask[]> = SCHEDULED_TASKS ): Promise<TaskReport[]>
 @testkit/integration :: function :: errorResponse :: function errorResponse(status: number, error = 'Error', code?: string)
 @testkit/integration :: const :: IDS :: const IDS: { user: string; otherUser: string; tenant: string; otherTenant: string; }
@@ -1722,6 +1888,8 @@ nothing in the comparison that can throw.
 @testkit/integration :: function :: makeUser :: function makeUser(overrides: Partial<User> = {}): User
 @testkit/integration :: const :: notFoundResponse :: const notFoundResponse: () => Response
 @testkit/integration :: function :: paged :: function paged<T>(items: T[], pageSize = 25)
+@testkit/integration :: interface :: PlatformChatCall :: interface PlatformChatCall
+@testkit/integration :: interface :: PlatformChatTurn :: interface PlatformChatTurn
 @testkit/integration :: interface :: RecordedMessage :: interface RecordedMessage<T = unknown>
 @testkit/integration :: function :: renderWithProviders :: function renderWithProviders( ui: ReactElement, { route = '/', queryClient = createTestQueryClient(), session, ...options }: ProviderOptions = {} )
 @testkit/integration :: function :: request :: async function request( path: string, init: RequestInit = {}, options: RequestOptions = {} ): Promise<Response>
@@ -1731,6 +1899,7 @@ nothing in the comparison that can throw.
 @testkit/integration :: function :: rulesFor :: function rulesFor( role: MembershipRole | null, isGlobalAdmin = false, features: string[] = [] )
 @testkit/integration :: const :: SCHEDULED_TASKS :: const SCHEDULED_TASKS: Record<string, ScheduledTask[]>
 @testkit/integration :: interface :: ScheduledTask :: interface ScheduledTask
+@testkit/integration :: function :: scriptPlatformChat :: function scriptPlatformChat( env: { AI?: unknown }, script: PlatformChatTurn[] | ((call: PlatformChatCall, index: number) => PlatformChatTurn) ): PlatformChatCall[]
 @testkit/integration :: const :: SESSION_COOKIE_NAME :: const SESSION_COOKIE_NAME: "__Host-session"
 @testkit/integration :: function :: sessionCookieHeader :: function sessionCookieHeader(token: string): Record<string, string>
 @testkit/integration :: function :: setupTestDatabase :: function setupTestDatabase(): Database

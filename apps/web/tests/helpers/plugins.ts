@@ -151,6 +151,30 @@ export function queryKeyRootIssues(id: string, roots: readonly string[]): string
 }
 
 /**
+ * A plugin's top-bar items (`UiPlugin.header`): each id a non-empty kebab-case word unique within
+ * the plugin (the React key is `<plugin id>:<id>`), a placement the shell renders, a finite order.
+ */
+export function headerItemIssues(
+  id: string,
+  items: readonly { id: string; placement?: string; order?: number }[]
+): string[] {
+  const issues: string[] = []
+  const seen = new Set<string>()
+  for (const item of items) {
+    if (!/^[a-z][a-z0-9-]*$/.test(item.id)) issues.push(`${id}: header item id '${item.id}'`)
+    if (seen.has(item.id)) issues.push(`${id}: header item '${item.id}' declared twice`)
+    seen.add(item.id)
+    if (item.placement !== undefined && item.placement !== 'center' && item.placement !== 'end') {
+      issues.push(`${id}: header item '${item.id}' placement '${item.placement}'`)
+    }
+    if (item.order !== undefined && !Number.isFinite(item.order)) {
+      issues.push(`${id}: header item '${item.id}' order must be a finite number`)
+    }
+  }
+  return issues
+}
+
+/**
  * Where a plugin may mount a route with NO auth. Only `/api/hooks/<its own id>` and beneath,
  * so the unauthenticated surface is one enumerable prefix per plugin; and no AUTHED mount may sit
  * under `/api/hooks` at all, so a reader can trust that everything there is public by design.
@@ -360,6 +384,15 @@ export function isPluginFile(repoPath: string): boolean {
   return pluginIdOfPath(repoPath) !== null
 }
 
+/** Where a plugin's seeded host code lives: `apps/web/src/host/<id>/`, imported as `@/host/<id>/…`. */
+export const HOST_FILES_DIR = 'apps/web/src/host/'
+
+/** The plugin id a resolved `apps/web/src/host/<id>/…` path belongs to, or null. */
+export function hostDirIdOf(repoPath: string): string | null {
+  if (!repoPath.startsWith(HOST_FILES_DIR)) return null
+  return repoPath.slice(HOST_FILES_DIR.length).split('/')[0] || ''
+}
+
 /**
  * One message when a plugin file imports the host from anywhere but a declared entry, else null.
  *
@@ -379,6 +412,15 @@ export function pluginImportIssue(
   // PUBLISHED entry of a plugin it requires is allowed, so every plugin path stops here.
   if (pluginIdOfPath(target) !== null) return null
   const normalised = normaliseModulePath(target)
+  // `@/host/<id>/…` is the developer's half of a plugin — files it seeded (`hostFiles`) and the
+  // developer owns since — so a plugin may import its OWN id's directory and nobody else's.
+  const hostId = hostDirIdOf(normalised)
+  if (hostId !== null) {
+    const own = pluginIdOfPath(importer)
+    if (hostId === own) return null
+    const where = `${importer.split('/').pop()}${line === undefined ? '' : `:${line}`}`
+    return `${where} imports '${specifier}' — a plugin imports only its own host files, '@/host/${own}/…'`
+  }
   if (DECLARED_ENTRIES.some(e => normalised === e || normalised.startsWith(`${e}/`))) return null
   if (!HOST_ROOTS.some(root => `${normalised}/`.startsWith(root) || normalised.startsWith(root))) {
     return null
