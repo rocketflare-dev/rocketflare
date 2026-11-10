@@ -1023,5 +1023,27 @@ describe('the closed sets a plugin opens', () => {
       orderId: string
       total: number
     }>()
+
+    // Two installed plugins with events: the host reads names and payloads across the UNION of
+    // their declarations, so one plugin's payload must not collapse to `never` beside another's.
+    const invoicesShared = {
+      id: 'invoices',
+      label: 'Invoices',
+      events: { 'invoices.invoice.paid': z.object({ invoiceId: z.string() }) },
+    } as const satisfies SharedPlugin
+    type Installed = Orders | typeof invoicesShared
+    expectTypeOf<EventNameOf<Installed>>().toEqualTypeOf<
+      'orders.order.placed' | 'orders.order.shipped' | 'invoices.invoice.paid'
+    >()
+    expectTypeOf<EventPayloadOf<Installed, 'invoices.invoice.paid'>>().toEqualTypeOf<{
+      invoiceId: string
+    }>()
+    expectTypeOf<EventPayloadOf<Installed, 'orders.order.shipped'>>().toEqualTypeOf<{
+      orderId: string
+    }>()
+    // A union of names (a handler list typed over every event) is the union of their payloads.
+    expectTypeOf<
+      EventPayloadOf<Installed, 'invoices.invoice.paid' | 'orders.order.shipped'>
+    >().toEqualTypeOf<{ invoiceId: string } | { orderId: string }>()
   })
 })

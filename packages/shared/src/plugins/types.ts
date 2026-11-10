@@ -181,15 +181,19 @@ export type EventNameOf<S extends SharedPlugin> = Extract<
   string
 >
 
-/** The parsed payload of event `E`, from whichever plugin in `S` declares it. */
-export type EventPayloadOf<S extends SharedPlugin, E extends string> =
-  EventsOf<S> extends infer R
+/**
+ * The parsed payload of event `E`, from whichever plugin in `S` declares it. A union of names gives
+ * the union of their payloads, so a handler list typed over every event still type-checks.
+ */
+export type EventPayloadOf<S extends SharedPlugin, E extends string> = E extends unknown
+  ? EventsOf<S> extends infer R
     ? R extends Record<E, infer Schema>
       ? Schema extends ZodTypeAny
         ? TypeOf<Schema>
         : never
       : never
     : never
+  : never
 
 /** The job types one plugin declares — what its `ServerPlugin.jobHandlers` must cover. */
 export type JobTypeOf<S extends SharedPlugin> = TypeOf<
