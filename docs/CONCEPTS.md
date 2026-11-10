@@ -580,6 +580,13 @@ Server: `api/services/{ai,agents}/**` (read their `CLAUDE.md`), `services/prompt
   `conversations.summary` by the `chat.compact` job (compare-and-set). Document cards come from
   `kit.document` events produced by a pure mapper, so nothing about a card is stored. The admin
   inspector (`/stats`) is derived per request.
+- **A plugin's chat turn**: `streamChat` (`plugins/api/chat.ts`, §16) streams a conversation the
+  PLUGIN owns — no `conversations` row, no compaction, only the plugin's tools — over the same
+  pieces as chat: `resolveChat` (its `promptKey` may carry an `agent_models` assignment),
+  `runStreamingChat`, `aguiTextSegmenter` + `aguiToolEvents` (the tool half, shared with
+  `chat-turn.ts`), `withAgentTrace`, and `recordUsage` under the plugin's `feature`. Its CUSTOM
+  events are `<plugin id>.…`, checked at emit time. Tests script the platform model with
+  `scriptPlatformChat` (the `AI` binding stub) rather than mocking the resolver.
 - **Agents (D7)**: `POST /api/agents/runs` enqueues (row → Workflow instance → 202); the exclusive
   index dedupes, per (tenant, agent, `agent_runs.concurrency_key`) — the SLOT a run holds: `''`
   for an exclusive agent (one per tenant), a caller's `enqueueRun({ concurrencyKey })` to narrow it
@@ -1123,6 +1130,19 @@ as merging a PR. A plugin repo mirrors the host tree and ships **no migration, n
   `ToolCtx.can(action, subject)` is the requester's CASL grant, read at build time from their
   current membership (false for a run with no requester): gate a tool that writes on your own
   subject's `manage`, not on `scope.bypass`, which is row visibility and true for `support` too.
+- **A streamed chat turn (`streamChat`)**: `streamChat(c, { promptKey, feature, message, history?,
+  system?, variables?, tools?, maxTurns?, signal?, threadId?, onFinish? })` from `@/plugins/api` is
+  a plugin route's whole answer — the kit's resolve seam, streaming tool loop, AG-UI encoder (SSE or
+  protobuf), GenAI trace and `recordUsage`, with none of chat's conversation rows. `promptKey` must
+  be one the plugin registered in `ServerPlugin.prompts` (`promptOwner`), and that plugin's id is
+  the namespace: `feature` is `<id>`, `<id>:…` or `<id>.…`, and `emit(name, value)` — on the tool
+  context and in `onFinish(result, { emit })` — sends a CUSTOM event only when it is `<id>.…`
+  (never `kit.`); any other name ends the run with `RUN_ERROR` `invalid_custom_event`. Tools are
+  the plugin's own, built inside the stream on its database client; gated tools are withheld.
+  Budgets are chat's: `AGENT_MAX_OUTPUT_TOKENS`, `maxTurns` clamped to `CHAT_MAX_TOOL_TURNS`,
+  history trimmed to `CHAT_HISTORY_MAX_CHARS` (`kit.notice history_truncated`), not counted against
+  `AGENT_TENANT_DAILY_COST_USD`. No provider is the JSON 503 before any frame. A plugin test drives
+  it with `scriptPlatformChat` from `@testkit/integration` (§9).
 - **Credentials**: a plugin stores a tenant's key with `sealSecret` / `openSecret` from
   `@/plugins/api`. That is the kit's AES-GCM under `OAUTH_ENCRYPTION_KEY`, with a 503 when the key
   is unset. Store the sealed value in a `*_enc` column and answer `hasCredential`.
@@ -1188,6 +1208,16 @@ as merging a PR. A plugin repo mirrors the host tree and ships **no migration, n
   below `lg` the drawer is unchanged. `<main>` has no padding and the page fills the viewport under
   the 56 px header (`h-full` in a plugin page), scrolling only its own panes. The other tiers are
   `shell` (the default), `noTenant` and `public`.
+- **Header items (`UiPlugin.header`)**: `{ id, Component, guard?, order?, placement? }[]` adds
+  controls to the top bar — `placement: 'center'` (a search box, in `Layout`'s `headerCenter`) or
+  `'end'` (the default, ahead of the kit's status, bell and user menu). `App.tsx` renders them with
+  `PluginHeaderSlot` for every shell and workspace page, ordered by `order`, then plugin id, then
+  item id; each behind its guard (the same `useNavGuard` semantics as nav and routes), inside its
+  own `Suspense` and error boundary, so a slow or throwing item renders nothing and the shell
+  stands. `Component` is `lazy(() => import(...))` like a page. The host reserves no width and
+  collapses nothing on a narrow screen: an item is a compact control and opens anything large as
+  its own lazy chunk. `headerItemIssues` (`plugins.test.ts`) refuses a duplicate id or an unknown
+  placement.
 - **`resolveOwnerTenant(db, config, ownerSlug?)`** from `@/plugins/api` finds the tenant that owns a
   public surface: `getSingleTenant` under `single`, by slug under `multi`. It returns null for a
   missing slug under `multi`, an unknown slug, and any tenant whose `status` is not `active`. This
@@ -1353,7 +1383,11 @@ replaced original behind in R2; a plugin skill edited in place is overwritten by
 description, not what it says — a stale command in a SKILL.md is caught only by reading it.
 `startAgentRun`'s `idempotencyKey` is forever per (tenant, agent, key) — there is no expiry, so a
 plugin that wants to re-run the same work later must vary the key; `RequestCtx` has no
-`startAgentRun` (a route calls `POST /api/agents/runs`, or enqueues a job that does).
+`startAgentRun` (a route calls `POST /api/agents/runs`, or enqueues a job that does). `streamChat` stores no turn (the plugin owns
+its history and sends it back), has no feedback thumbs (its STATE_SNAPSHOT says `feedback: false`),
+no summary of a trimmed history and no daily cost cap; a CUSTOM name a TOOL refuses still reaches
+the model as that tool's error result before the run ends. Header items get no overflow menu: on a
+narrow screen each plugin keeps its own control compact.
 
 ---
 

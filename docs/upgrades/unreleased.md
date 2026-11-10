@@ -42,6 +42,11 @@ Plugins can serve whole public hosts through a new `publicSites` seam, with a st
 - `Strict-Transport-Security` carries `includeSubDomains` only on the app's own host (`APP_URL`), so a public site on an apex domain does not pin its subdomains.
 - A public-site page can add CSP sources for itself by setting `PUBLIC_SITE_PAGE_CSP_HEADER` (JSON, `PublicSiteCsp`), exported from `@/plugins/api`. A `formAction` that is a path, such as `/submit`, is pinned to the request's origin.
 - The CLI's `ApiClient` gains `getBytes` and `postForm`, for download and multipart routes.
+- `streamChat(c, options)` from `@/plugins/api` streams one AG-UI chat turn for a plugin route: the plugin's registered prompt (`promptKey`), its own tools built on the stream's database client, the kit's resolve seam, streaming loop, encoder, tracing and `recordUsage` under the plugin's `feature` label. No chat provider is the JSON 503 `ai_not_configured` before any frame. `emit(name, value)` (in the tool context and in `onFinish`) sends a CUSTOM event, refused with `RUN_ERROR` `invalid_custom_event` unless it is named `<plugin id>.…`; `kit.` is never allowed.
+- The tool half of the AG-UI chat stream moved from `chat-turn.ts` into `aguiToolEvents` in `apps/web/src/api/services/ai/agui.ts`, shared by the kit's chat and `streamChat`; the kit's chat events are unchanged.
+- `promptOwner(key)` in `apps/web/src/api/services/prompts.ts` names the installed plugin that registered a prompt.
+- `UiPlugin.header` adds items to the top bar (`PluginHeaderItem`: `id`, a lazy `Component`, `guard`, `order`, `placement: 'center' | 'end'`). `App.tsx` renders them with `PluginHeaderSlot` in `Layout`'s `headerCenter` and ahead of the kit's `headerEnd` widgets, each behind its guard and inside its own `Suspense` and error boundary. `headerItemIssues` fails the gate on a duplicate id or an unknown placement.
+- `@testkit/integration` exports `scriptPlatformChat(env, turns)`, which scripts the `AI` binding stub's chat answers so a plugin test drives the real resolve seam with no `vi.mock`, plus `aguiFrames`, `aguiTypes` and `customEvents`.
 
 ## How to apply
 
@@ -59,6 +64,9 @@ Plugins can serve whole public hosts through a new `publicSites` seam, with a st
 12. Add `deploymentFeatures?: (config) => readonly string[]` to `ServerPlugin` in `apps/web/src/plugins/types.ts`, then port `apps/web/src/permissions/features.ts`, `apps/web/src/api/services/features.ts` and the two `await`s in `apps/web/src/api/middleware/auth.ts`. Any call of your own to `resolveFeatures` must now `await` it.
 13. Move the `@theme` block and both `@plugin "daisyui/theme"` blocks from `apps/web/src/ui/index.css` into `apps/web/src/shared/theme-tokens.css`, and `@import "../shared/theme-tokens.css";` directly after the Tailwind import. Port the matching change in `tests/ui/contrast.test.ts`.
 14. Port `getBytes` and `postForm` into `apps/cli/src/api.ts` if a plugin you install uses them.
+15. Port `apps/web/src/plugins/api/chat.ts` and its exports in `apps/web/src/plugins/api/index.ts`, `aguiToolEvents` in `apps/web/src/api/services/ai/agui.ts` (then replace the inline tool callbacks in `apps/web/src/api/services/ai/chat-turn.ts` with it, if you have not changed them), and `promptOwner` in `apps/web/src/api/services/prompts.ts`.
+16. Port `PluginHeaderItem`, `PluginHeaderPlacement` and `UiPlugin.header` in `apps/web/src/plugins/types.ts` with their re-exports in `apps/web/src/plugins/api/index.ts` and `apps/web/src/plugins/api/ui-wiring.ts`, add `apps/web/src/ui/components/PluginHeaderSlot.tsx`, and pass `<PluginHeaderSlot plugins={uiPlugins} placement="center" />` as `headerCenter` and `<PluginHeaderSlot plugins={uiPlugins} placement="end" />` first inside `headerEnd` in `ShellRoutes` in `apps/web/src/ui/App.tsx`. An app already using `headerCenter` keeps its own element and places the slot beside it.
+17. Port `scriptPlatformChat` into `apps/web/tests/helpers/ai.ts`, its re-exports in `apps/web/tests/kit/integration.ts`, and `headerItemIssues` into `apps/web/tests/helpers/plugins.ts` with its case in `apps/web/tests/config/plugins.test.ts`.
 
 ## Conflicts to expect
 
@@ -66,6 +74,7 @@ Plugins can serve whole public hosts through a new `publicSites` seam, with a st
 - `apps/web/src/api/index.ts` → one middleware added before the mounts → keep your own order and place it directly after `databaseMiddleware`.
 - `apps/web/src/api/middleware/security-headers.ts` → a branch for site hosts → keep your app CSP and add the branch ahead of it.
 - `docs/plugin-api.md` → generated → regenerate, never merge by hand.
+- `apps/web/src/ui/App.tsx` → `headerCenter` and the first child of `headerEnd` in `ShellRoutes` → keep your own header elements and add the two slots.
 
 ## Verify
 
@@ -74,3 +83,4 @@ Plugins can serve whole public hosts through a new `publicSites` seam, with a st
 3. With no plugin declaring `publicSites`, `git diff apps/web/wrangler.toml apps/web/wrangler.staging.toml` shows no change to `run_worker_first` or `routes`.
 4. With a plugin serving `www.localhost` under `wrangler dev`, `curl -i http://www.localhost:3001/about` answers from the plugin with the public `Content-Security-Policy`, and `curl -i http://www.localhost:3001/api/me` answers 404.
 5. `curl -i http://localhost:3001/api/health` still answers from the app.
+6. `pnpm web test:api` passes `tests/api/plugin-stream-chat.test.ts`, and `pnpm web test:ui` passes `tests/ui/plugin-header.test.tsx`.
