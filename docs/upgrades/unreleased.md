@@ -4,7 +4,7 @@ previous: 0.32.2
 date: null
 breaking: false
 migrations: []
-areas: []
+areas: [ci]
 touches_surfaces: []
 requires_surfaces: []
 manual: false
@@ -12,20 +12,19 @@ manual: false
 
 ## What changed
 
-_Nothing yet. Add an entry here in the same pull request as the change. This first paragraph is
-lifted VERBATIM into `CHANGELOG.md`, so make it ONE standalone summary sentence of ≤ 40 words —
-then one bullet per change, one line each, and no `###` sub-headings. Rationale belongs in
-`docs/CONCEPTS.md` and is linked, never restated; see `README.md` beside this file._
+Plugin CI now proves a plugin the way an adopter runs it, without the kit-only tests, so a plugin that serves public sites no longer fails the kit's shipped-toml check.
+
+- `.github/workflows/plugin-ci.yml`: the gate step runs `git rm -r -q --ignore-unmatch apps/web/tests/kit-only` first, as the rename does for every copy.
+- `apps/web/tests/kit-only/plugin-ci.test.ts` pins that step.
 
 ## How to apply
 
-_Numbered, imperative, each step self-contained — no "these", "them" or "the above" reaching
-outside its own step._
+1. Nothing to port in an app: `plugin-ci.yml` is called from plugin repositories at `@main`, and a copy has no `apps/web/tests/kit-only/`.
 
 ## Conflicts to expect
 
-_One line each: `path → what changed → what to do`. Or exactly `None.`_
+None.
 
 ## Verify
 
-_Numbered checkable commands and assertions only._
+1. A plugin repository's CI run shows no `kit-only` project in the kit's gate.

@@ -213,6 +213,10 @@ describe('the gate step (a floor kit may predate `pnpm gate`)', () => {
     }
   })
 
+  it('runs the gate as a copy would, without the kit-only tests', () => {
+    expect(gateStep()).toContain('git rm -r -q --ignore-unmatch apps/web/tests/kit-only')
+  })
+
   it("takes the database from the cloned kit's compose file, and audits the plugin either way", () => {
     expect(WORKFLOW).not.toMatch(/^\s+services:/m)
     expect(WORKFLOW).toContain('docker compose -f apps/web/docker-compose.test.yml')
