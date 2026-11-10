@@ -80,6 +80,9 @@ streaming, guards, bundle rules, tests) are `.claude/rules/ui.md`, loaded with t
   `useNavGuard` allows ONLY `'globalAdmin'` guards, `OrgSwitcher` reads "No organisation",
   `NotificationsBell` and the Profile / Notifications menu links render nothing, and
   `WebSocketProvider` never connects (it needs a tenant id).
+- "Create organisation" (`OrgSwitcher`, `/select-tenant`, its `?create=1` link) renders only when
+  `canCreateTenant` (from the session — `tenantCreationRefusal` server-side) is true: never under
+  IdP-managed tenancy or while an access request is pending or rejected.
 - Single-tenant mode (`useTenancyMode()`, D25) hides `OrgSwitcher`, `/select-tenant` (redirects
   home), org create/delete and the slug field, the `new_org` approve branch, and collapses
   `/admin/tenants` to the one detail.

@@ -3,6 +3,7 @@
  * from the auth context — never from the request.
  */
 
+import { ERROR_CODES } from '@rocketflare/shared/errors'
 import type {
   TenantSettings as TenantSettingsDto,
   UpdateTenantSettingsRequest,
@@ -13,11 +14,44 @@ import type {
   UserPreferences,
 } from '@rocketflare/shared/user-settings'
 import { and, eq } from 'drizzle-orm'
+import { type AppConfig, isIdpManaged } from '../../config'
 import type { Database } from '../../db/client'
 import { tenantSettings, tenants, tenantUserSettings } from '../../db/schema'
-import { ConflictError, NotFoundError } from '../utils/core/errors'
+import type { AuthContext } from '../types'
+import { ConflictError, ForbiddenError, NotFoundError } from '../utils/core/errors'
 import { enqueueJob, type JobsQueue, requireJobsQueue } from './jobs'
 import { nudge, type Realtime, realtimeEvent } from './realtime'
+
+/**
+ * Why this person may not create an organisation themselves, or null when they may. The ONE rule
+ * `POST /api/tenants` enforces and `GET /auth/session` reports as `canCreateTenant`, so the UI never
+ * offers a button the server refuses. Single mode is the route's own 404 (`requireMultiTenant`).
+ * Under IdP-managed tenancy the issuer decides which organisations exist; a person whose access
+ * request is pending or rejected waits for an admin. The owned-organisation ceiling is checked at
+ * creation, where the count is read under the lock.
+ */
+export function tenantCreationRefusal(
+  cfg: AppConfig,
+  auth: Pick<AuthContext, 'isGlobalAdmin' | 'tenantId' | 'accessRequestStatus'>
+): ConflictError | ForbiddenError | null {
+  if (isIdpManaged(cfg)) {
+    return new ConflictError(
+      'Organisations are managed by your identity provider.',
+      ERROR_CODES.idpManaged
+    )
+  }
+  if (
+    !auth.isGlobalAdmin &&
+    auth.tenantId === null &&
+    (auth.accessRequestStatus === 'pending' || auth.accessRequestStatus === 'rejected')
+  ) {
+    return new ForbiddenError(
+      'Your access request has not been approved',
+      ERROR_CODES.pendingApproval
+    )
+  }
+  return null
+}
 
 export function toTenantDto(row: typeof tenants.$inferSelect): TenantDto {
   return {

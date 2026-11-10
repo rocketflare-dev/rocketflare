@@ -23,6 +23,7 @@ import type { Logger } from '../utils/core/logger'
 import { createTenantForUser, getSingleTenant } from '../utils/db/tenant-helpers'
 import { recordActivity } from './activity'
 import { platformFeatures } from './features'
+import { tenantCreationRefusal } from './tenants'
 
 export interface AdmitInput {
   email: string
@@ -340,6 +341,7 @@ export async function buildSessionResponse(
     accessRequest,
     tenancyMode: cfg.TENANCY_MODE,
     signupMode: cfg.SIGNUP_MODE,
+    canCreateTenant: cfg.TENANCY_MODE === 'multi' && tenantCreationRefusal(cfg, auth) === null,
     version: cfg.RELEASE_VERSION,
   }
 }

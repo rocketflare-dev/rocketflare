@@ -1,6 +1,7 @@
 /**
  * Header organisation switcher. Hidden entirely in `single` mode; in `multi` mode it lists
- * every membership and offers "Create organisation". `<details>/<summary>` dropdown per ui.md.
+ * every membership and offers "Create organisation" when the session's `canCreateTenant` says
+ * the server would allow it (not under IdP-managed tenancy, not while access is pending). `<details>/<summary>` dropdown per ui.md.
  */
 import {
   BuildingOffice2Icon,
@@ -15,12 +16,12 @@ import { showToast } from '@/ui/lib/api-client'
 import { RoleBadge } from './RoleBadge'
 
 export function OrgSwitcher() {
-  const { tenant, tenants, tenancyMode, selectTenant } = useAuth()
+  const { tenant, tenants, tenancyMode, canCreateTenant, selectTenant } = useAuth()
   const navigate = useNavigate()
   const ref = useRef<HTMLDetailsElement>(null)
   const [switching, setSwitching] = useState<string | null>(null)
 
-  const canCreate = tenancyMode === 'multi'
+  const canCreate = tenancyMode === 'multi' && canCreateTenant
   if (tenancyMode === 'single') return null
   // A global admin on /admin with no membership: say so instead of rendering a switcher with nothing
   // to switch (the header slot would otherwise be blank).

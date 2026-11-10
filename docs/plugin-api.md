@@ -658,6 +658,8 @@ The server surface: the context family, and the types a plugin must be able to n
     Does the requester hold this CASL grant now? Offer a tool that writes only when they hold your subject's manage (`ctx.can('manage', MY_SUBJECT)`) — never decide that from…
   - `maxDocumentChars?: number`
     The CALLER's budget for one document window, in characters. An agent run's is far larger than a chat turn's.
+  - `requesterUrls: ReadonlySet<string>`
+    The http(s) URLs the person behind this call wrote themselves, normalised with `new URL()` and no fragment: the chat person's own messages, or an agent run's input when a person…
   - `storage(): StorageService`
     R2 (the `FILES` bucket), or a 503 `storage_not_configured` — the same service every other context's `storage()` returns. Read and write under `tenants/<ctx.tenantId>/<plugin…
   - `features(): Promise<readonly string[]>`
@@ -1684,6 +1686,7 @@ nothing in the comparison that can throw.
 @/plugins/api :: member :: ToolCtx.tenantId :: tenantId: string
 @/plugins/api :: member :: ToolCtx.can :: can: AbilityCheck
 @/plugins/api :: member :: ToolCtx.maxDocumentChars :: maxDocumentChars?: number
+@/plugins/api :: member :: ToolCtx.requesterUrls :: requesterUrls: ReadonlySet<string>
 @/plugins/api :: member :: ToolCtx.storage :: storage(): StorageService
 @/plugins/api :: member :: ToolCtx.features :: features(): Promise<readonly string[]>
 @/plugins/api :: function :: toolInputSchema :: function toolInputSchema(schema: ZodType): JsonSchema

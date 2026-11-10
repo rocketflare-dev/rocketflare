@@ -44,6 +44,8 @@ export interface AuthContextValue {
   isGlobalAdmin: boolean
   tenancyMode: TenancyMode
   signupMode: SignupMode
+  /** The server's `canCreateTenant`: whether to offer "Create organisation" at all */
+  canCreateTenant: boolean
   /** A non-401 failure of the session request (network, 5xx) — `ProtectedRoute` offers a retry */
   error: Error | null
   /** `POST /auth/select-tenant`; the returned session replaces the cache */
@@ -191,6 +193,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       isGlobalAdmin: session?.user.isGlobalAdmin ?? false,
       tenancyMode: session?.tenancyMode ?? 'multi',
       signupMode: session?.signupMode ?? 'invite_only',
+      canCreateTenant: session?.canCreateTenant ?? false,
       error: queryError ?? null,
       selectTenant,
       logout,

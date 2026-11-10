@@ -223,6 +223,7 @@ agentsRouter.post('/runs', validate('json', createAgentRunRequestSchema), async 
     agentKey,
     input,
     userId: user.id,
+    inputFromRequester: true,
     realtime,
   })
   if (deduplicated && !visible(auth, run)) {
@@ -271,6 +272,7 @@ agentsRouter.post('/runs/batch', validate('json', createAgentRunBatchRequestSche
     agentKey,
     inputs,
     userId: user.id,
+    inputFromRequester: true,
     realtime,
   })
   const created = items.filter(item => item.error === null).length

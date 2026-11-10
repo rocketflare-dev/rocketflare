@@ -82,6 +82,7 @@ import type { AgentContext, AgentEvent, AgentInterruptAnswer, AnyAgentDefinition
 import { AgentCancelledError, errorMessage } from './runs'
 import type { RuntimeEnv } from './runtime'
 import { buildAgentTools } from './tools'
+import { requesterUrlsForRun } from './tools/requester-urls'
 
 /** `strict`: the record or nothing. `live`: what the record cannot answer is asked for real. */
 export type ReplayMode = 'strict' | 'live'
@@ -325,7 +326,14 @@ async function replayInside(
   // up (`ctx.tools.find(...)`), and only the handlers become misses.
   const scope = await accessScopeForUser(db, tenantId, run.requestedByUserId)
   const can = await requesterCan(db, cfg, tenantId, run.requestedByUserId)
-  const builtTools = await buildAgentTools({ db, cfg, env, scope, can })
+  const builtTools = await buildAgentTools({
+    db,
+    cfg,
+    env,
+    scope,
+    can,
+    requesterUrls: requesterUrlsForRun(run, run.input),
+  })
   const tools: Tool[] = live
     ? builtTools
     : builtTools.map(tool => ({

@@ -97,7 +97,8 @@ suites on vitest 4, §9 — never part of the gate).
   org's first sign-in made (`DELETE /api/admin/tenants/:id`, the owner's delete with its slug
   confirmation), which frees the org for the link. Under managed tenancy the issuer decides which
   organisations exist, so `POST /api/tenants` and a slug change on `PATCH /api/tenant` answer 409
-  `idp_managed`, whoever asks; the slug-link path above is only reachable from a tenant that
+  `idp_managed`, whoever asks, and the session's `canCreateTenant` is false so the UI offers no
+  "Create organisation"; the slug-link path above is only reachable from a tenant that
   already had the slug, made by hand or before managed tenancy.
   `idp_synced_at` on both tables records when the issuer last spoke about the row, so a stale event
   is skipped. **A tenant created this way has no owner — decided:** managed tenancy never writes
@@ -1148,6 +1149,13 @@ as merging a PR. A plugin repo mirrors the host tree and ships **no migration, n
   `ToolCtx.can(action, subject)` is the requester's CASL grant, read at build time from their
   current membership (false for a run with no requester): gate a tool that writes on your own
   subject's `manage`, not on `scope.bypass`, which is row visibility and true for `support` too.
+  `ToolCtx.requesterUrls` is the frozen set of http(s) URLs the person wrote themselves
+  (`services/agents/tools/requester-urls.ts`): in chat, their own turns in the conversation; in an
+  agent run, the input when a person submitted it through `POST /api/agents/runs` or `/runs/batch`
+  (`agent_runs.input_from_requester`), recomputed on every attempt. A run a plugin or an event
+  started, and a `streamChat` turn, carry none. A tool that fetches the web reads a URL only when
+  it is in this set or its own search returned it, so text from a page, a document, an email or
+  the model cannot point it somewhere the person never asked for.
 - **A streamed chat turn (`streamChat`)**: `streamChat(c, { promptKey, feature, message, history?,
   system?, variables?, tools?, maxTurns?, signal?, threadId?, onFinish? })` from `@/plugins/api` is
   a plugin route's whole answer — the kit's resolve seam, streaming tool loop, AG-UI encoder (SSE or

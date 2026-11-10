@@ -86,6 +86,7 @@ import {
   saveCheckpoint,
 } from './runs'
 import { buildAgentTools } from './tools'
+import { requesterUrlsForRun } from './tools/requester-urls'
 
 /** `step.do('execute', { retries: { limit } })` — the runtime counts attempts against the same number. */
 export const EXECUTE_RETRIES = 2
@@ -352,6 +353,8 @@ export async function executeRun(
             env,
             scope: toolScope,
             can: await requesterCan(db, cfg, tenantId, run.requestedByUserId),
+            // Recomputed every attempt, so a resumed run keeps them. Only a person's own input.
+            requesterUrls: requesterUrlsForRun(run, input),
           }),
           checkpoint: {
             load: () => loadCheckpoint(db, tenantId, runId),

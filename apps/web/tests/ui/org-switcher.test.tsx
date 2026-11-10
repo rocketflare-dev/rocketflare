@@ -45,6 +45,19 @@ describe('OrgSwitcher', () => {
     )
   })
 
+  it('offers no "Create organisation" when the session says the server would refuse it', () => {
+    renderWithProviders(<OrgSwitcher />, {
+      session: makeSession({ canCreateTenant: false, tenants: [makeTenant(), beta] }),
+    })
+    expect(screen.getByLabelText('Organisation: Acme')).toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: /Create organisation/ })).not.toBeInTheDocument()
+  })
+
+  it('with one org and creation refused, there is nothing to switch to and it renders nothing', () => {
+    renderWithProviders(<OrgSwitcher />, { session: makeSession({ canCreateTenant: false }) })
+    expect(screen.queryByLabelText('Organisation: Acme')).not.toBeInTheDocument()
+  })
+
   it('lists memberships and switches via POST /auth/select-tenant, landing on /', async () => {
     const next = makeSession({ tenant: beta, tenants: [makeTenant(), beta] })
     const fetchMock = stubFetch({ 'POST /auth/select-tenant': next })
