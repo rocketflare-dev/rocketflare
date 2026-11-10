@@ -27,8 +27,10 @@ streaming, guards, bundle rules, tests) are `.claude/rules/ui.md`, loaded with t
   reset on pathname). Installed plugins' routes are mapped per tier inside the same `Suspense`; a `workspace`-tier route lives in the shell, and `Layout`'s `workspace` prop gives it the rail, no padding and the full height.
 - `index.css` — the design system (themes, semantic tokens, primitives, `@source` lines, safelist);
   rebrand instructions are its header comment.
-- `components/` — the shell: `Layout` (slots `headerStart` = `OrgSwitcher`, `headerEnd` =
-  `NotificationsBell` + `UserMenu`, `sidebarFooter`), `SideNav` (`CORE_NAVIGATION` composed with
+- `components/` — the shell: `Layout` (slots `headerStart` = `OrgSwitcher`, `headerCenter` =
+  the `center` plugin header items, `headerEnd` = the `end` plugin header items +
+  `NotificationsBell` + `UserMenu`, `sidebarFooter`; `PluginHeaderSlot` renders a placement's
+  `UiPlugin.header` items, each guarded and isolated), `SideNav` (`CORE_NAVIGATION` composed with
   plugin groups by `composeNav`, filtered by `filterNavConfig`), guards (`ProtectedRoute`,
   `RequireGuard`, `AdminRoute`, `GlobalAdminRoute`), `permissions/` (`AbilityProvider` unpacks
   `session.permissions`; `IfCan`/`IfCannot`), realtime (`WebSocketProvider`, `WebSocketStatus`,

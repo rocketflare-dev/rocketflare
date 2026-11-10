@@ -52,6 +52,11 @@ Plugins can serve whole public hosts through a new `publicSites` seam, with a st
 - A plugin manifest may declare `"claudeHooks": { "<Event>": [{ "command", "matcher"?, "timeout"? }] }`. `pnpm plugin add` merges them into `.claude/settings.json` (creating it if absent), `upgrade` replaces them and `remove` takes out exactly them. A command may only be `node "$CLAUDE_PROJECT_DIR/.claude/skills/<dir>/<script>"` over a script in one of the plugin's declared skills, and the plugin's entries are found again by that skill directory. `plugin check` fails a declared hook missing from the file, an undeclared one in the plugin's namespace, and a missing script.
 - A plugin manifest may declare `"hostFiles": [{ "path", "from" }]`: a file or directory seeded into `docs/<id>/`, `apps/web/public/<id>/` or `apps/web/src/host/<id>/` only where absent. `upgrade` never touches them (it seeds only an entry the release adds), `remove` leaves them and lists them. The surface records them in a new `hostFiles` field, outside `paths`.
 - A plugin may import `@/host/<its own id>/…`; another id's host directory fails `tests/config/plugins.test.ts`.
+- `streamChat(c, options)` from `@/plugins/api` streams one AG-UI chat turn for a plugin route: the plugin's registered prompt (`promptKey`), its own tools built on the stream's database client, the kit's resolve seam, streaming loop, encoder, tracing and `recordUsage` under the plugin's `feature` label. No chat provider is the JSON 503 `ai_not_configured` before any frame. `emit(name, value)` (in the tool context and in `onFinish`) sends a CUSTOM event, refused with `RUN_ERROR` `invalid_custom_event` unless it is named `<plugin id>.…`; `kit.` is never allowed.
+- The tool half of the AG-UI chat stream moved from `chat-turn.ts` into `aguiToolEvents` in `apps/web/src/api/services/ai/agui.ts`, shared by the kit's chat and `streamChat`; the kit's chat events are unchanged.
+- `promptOwner(key)` in `apps/web/src/api/services/prompts.ts` names the installed plugin that registered a prompt.
+- `UiPlugin.header` adds items to the top bar (`PluginHeaderItem`: `id`, a lazy `Component`, `guard`, `order`, `placement: 'center' | 'end'`). `App.tsx` renders them with `PluginHeaderSlot` in `Layout`'s `headerCenter` and ahead of the kit's `headerEnd` widgets, each behind its guard and inside its own `Suspense` and error boundary. `headerItemIssues` fails the gate on a duplicate id or an unknown placement.
+- `@testkit/integration` exports `scriptPlatformChat(env, turns)`, which scripts the `AI` binding stub's chat answers so a plugin test drives the real resolve seam with no `vi.mock`, plus `aguiFrames`, `aguiTypes` and `customEvents`.
 
 ## How to apply
 
@@ -74,6 +79,9 @@ Plugins can serve whole public hosts through a new `publicSites` seam, with a st
 17. Port `kind` on `JobCtx` / `CronCtx` in `apps/web/src/plugins/api/jobs.ts`, the platform functions and `searchKnowledge` in `knowledge.ts`, the re-exports in `ai.ts` and `index.ts`, `knowledgeSources` in `apps/web/src/plugins/types.ts`, and `pluginKnowledgeSources` plus the `platformSources` option in `apps/web/src/api/services/agents/tools/`.
 18. Update `rls-coverage.test.ts` to pass the platform read policies (`tests/api/rls-coverage.test.ts`).
 19. Port the `claudeHooks` and `hostFiles` handling in `scripts/plugin.mjs` and `scripts/lib/plugin-lib.mjs` (with `plugin-lib.d.mts` and the `hostFiles` field in `upgrade-lib.d.mts`), the `@/host/<id>` rule in `apps/web/tests/helpers/plugins.ts`, and `apps/web/tests/config/plugin-host-seams.test.ts`.
+20. Port `apps/web/src/plugins/api/chat.ts` and its exports in `apps/web/src/plugins/api/index.ts`, `aguiToolEvents` in `apps/web/src/api/services/ai/agui.ts` (then replace the inline tool callbacks in `apps/web/src/api/services/ai/chat-turn.ts` with it, if you have not changed them), and `promptOwner` in `apps/web/src/api/services/prompts.ts`.
+21. Port `PluginHeaderItem`, `PluginHeaderPlacement` and `UiPlugin.header` in `apps/web/src/plugins/types.ts` with their re-exports in `apps/web/src/plugins/api/index.ts` and `apps/web/src/plugins/api/ui-wiring.ts`, add `apps/web/src/ui/components/PluginHeaderSlot.tsx`, and pass `<PluginHeaderSlot plugins={uiPlugins} placement="center" />` as `headerCenter` and `<PluginHeaderSlot plugins={uiPlugins} placement="end" />` first inside `headerEnd` in `ShellRoutes` in `apps/web/src/ui/App.tsx`. An app already using `headerCenter` keeps its own element and places the slot beside it.
+22. Port `scriptPlatformChat` into `apps/web/tests/helpers/ai.ts`, its re-exports in `apps/web/tests/kit/integration.ts`, and `headerItemIssues` into `apps/web/tests/helpers/plugins.ts` with its case in `apps/web/tests/config/plugins.test.ts`.
 
 ## Conflicts to expect
 
@@ -81,6 +89,7 @@ Plugins can serve whole public hosts through a new `publicSites` seam, with a st
 - `apps/web/src/api/index.ts` → one middleware added before the mounts → keep your own order and place it directly after `databaseMiddleware`.
 - `apps/web/src/api/middleware/security-headers.ts` → a branch for site hosts → keep your app CSP and add the branch ahead of it.
 - `docs/plugin-api.md` → generated → regenerate, never merge by hand.
+- `apps/web/src/ui/App.tsx` → `headerCenter` and the first child of `headerEnd` in `ShellRoutes` → keep your own header elements and add the two slots.
 
 ## Verify
 
@@ -91,3 +100,4 @@ Plugins can serve whole public hosts through a new `publicSites` seam, with a st
 5. With a plugin serving `www.localhost` under `wrangler dev`, `curl -i http://www.localhost:3001/about` answers from the plugin with the public `Content-Security-Policy`, and `curl -i http://www.localhost:3001/api/me` answers 404.
 6. `curl -i http://localhost:3001/api/health` still answers from the app.
 7. `pnpm web test:config` passes, `tests/config/plugin-host-seams.test.ts` included.
+8. `pnpm web test:api` passes `tests/api/plugin-stream-chat.test.ts`, and `pnpm web test:ui` passes `tests/ui/plugin-header.test.tsx`.

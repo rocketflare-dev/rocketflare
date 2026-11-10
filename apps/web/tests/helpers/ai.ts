@@ -159,3 +159,68 @@ export function sseResponse(chunks: string[], init: ResponseInit = {}): Response
     ...init,
   })
 }
+
+/** One model turn of {@link scriptPlatformChat}: what the platform model answers. */
+export interface PlatformChatTurn {
+  text?: string
+  toolCalls?: Array<{ id?: string; name: string; input: unknown }>
+  usage?: { inputTokens: number; outputTokens: number }
+}
+
+/** What the platform model was asked, one entry per chat call. */
+export interface PlatformChatCall {
+  model: string
+  messages: unknown[]
+  tools: unknown[]
+}
+
+/**
+ * Script the PLATFORM chat model — the `AI` binding's stub — so a request resolves a real chat
+ * client through the real seam (`resolveChat` → `platformChat` → the Workers AI adapter) and no
+ * module needs `vi.mock`. The way a plugin's test drives `streamChat` (or anything else that
+ * resolves chat) with a deterministic model. Turns are answered in order and the last one repeats;
+ * embeddings calls keep the stub's deterministic vectors. Returns the recorded chat calls.
+ *
+ * Needs `env.AI` (the default `createTestEnv()` has it) and no `ANTHROPIC_API_KEY` (the platform
+ * prefers that key); a tenant `ai_configs` row would answer instead of the platform.
+ */
+export function scriptPlatformChat(
+  env: { AI?: unknown },
+  script: PlatformChatTurn[] | ((call: PlatformChatCall, index: number) => PlatformChatTurn)
+): PlatformChatCall[] {
+  const ai = env.AI as
+    | { respond: (model: string, inputs: Record<string, unknown>) => unknown }
+    | undefined
+  if (!ai) throw new Error('scriptPlatformChat: the env has no AI binding')
+  const calls: PlatformChatCall[] = []
+  const fallback = ai.respond.bind(ai)
+  ai.respond = (model, inputs) => {
+    if (!Array.isArray(inputs.messages)) return fallback(model, inputs)
+    const call: PlatformChatCall = {
+      model,
+      messages: inputs.messages,
+      tools: Array.isArray(inputs.tools) ? inputs.tools : [],
+    }
+    const index = calls.length
+    calls.push(call)
+    const turn =
+      typeof script === 'function'
+        ? script(call, index)
+        : (script[index] ?? script[script.length - 1] ?? {})
+    const usage = turn.usage ?? { inputTokens: 10, outputTokens: 5 }
+    return {
+      response: turn.text ?? '',
+      tool_calls: (turn.toolCalls ?? []).map((t, i) => ({
+        id: t.id ?? `call_${index}_${i}`,
+        name: t.name,
+        arguments: t.input,
+      })),
+      usage: {
+        prompt_tokens: usage.inputTokens,
+        completion_tokens: usage.outputTokens,
+        total_tokens: usage.inputTokens + usage.outputTokens,
+      },
+    }
+  }
+  return calls
+}

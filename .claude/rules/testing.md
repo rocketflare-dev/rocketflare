@@ -169,6 +169,10 @@ a fake `WebSocket` factory left set) is on you.
   rows. **Assert the step NAMES are distinct** — the platform replays a repeated name's recorded
   result, which reads as "the agent ignored my approval", and only `names` can catch it. Test the claim-row gate: `claimRun` on a settled row returns
   `null` and `claimStep` returns `false`; a cancel while `queued` never reaches `execute`
+- A route that resolves chat through the REAL seam (a plugin's `streamChat`): `scriptPlatformChat(env,
+  turns)` (`tests/helpers/ai.ts`, re-exported by `@testkit/integration`) scripts the `AI` binding
+  stub's chat answers — `{ text?, toolCalls?: [{ name, input }], usage? }` per turn — and returns
+  the recorded calls; `createTestEnv({ AI: undefined })` is the 503 (`plugin-stream-chat.test.ts`)
 - AI seam: `vi.mock('@/api/services/ai/resolve', async importOriginal => ({ ...(await importOriginal()),
   resolveChat: vi.fn(async () => ({ client: new FakeChatClient(script), provider, model, source,
   maxOutputTokens })) }))` in a `// @vitest-isolate` file (`chat.test.ts`, `agent-run-workflow.test.ts`).

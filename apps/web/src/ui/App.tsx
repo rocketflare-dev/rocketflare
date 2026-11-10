@@ -23,6 +23,7 @@ import { LoadingIndicator } from '@/ui/components/LoadingIndicator'
 import { NotificationsBell } from '@/ui/components/NotificationsBell'
 import { OrgSwitcher } from '@/ui/components/OrgSwitcher'
 import { PendingInvitationsBanner } from '@/ui/components/PendingInvitationsBanner'
+import { PluginHeaderSlot } from '@/ui/components/PluginHeaderSlot'
 import { ProtectedRoute } from '@/ui/components/ProtectedRoute'
 import { AbilityProvider } from '@/ui/components/permissions/AbilityContext'
 import { RequireGuard } from '@/ui/components/RequireGuard'
@@ -152,8 +153,10 @@ function ShellRoutes() {
     <Layout
       workspace={workspace}
       headerStart={<OrgSwitcher />}
+      headerCenter={<PluginHeaderSlot plugins={uiPlugins} placement="center" />}
       headerEnd={
         <>
+          <PluginHeaderSlot plugins={uiPlugins} placement="end" />
           <WebSocketStatus />
           <NotificationsBell />
           <UserMenu />

@@ -151,6 +151,30 @@ export function queryKeyRootIssues(id: string, roots: readonly string[]): string
 }
 
 /**
+ * A plugin's top-bar items (`UiPlugin.header`): each id a non-empty kebab-case word unique within
+ * the plugin (the React key is `<plugin id>:<id>`), a placement the shell renders, a finite order.
+ */
+export function headerItemIssues(
+  id: string,
+  items: readonly { id: string; placement?: string; order?: number }[]
+): string[] {
+  const issues: string[] = []
+  const seen = new Set<string>()
+  for (const item of items) {
+    if (!/^[a-z][a-z0-9-]*$/.test(item.id)) issues.push(`${id}: header item id '${item.id}'`)
+    if (seen.has(item.id)) issues.push(`${id}: header item '${item.id}' declared twice`)
+    seen.add(item.id)
+    if (item.placement !== undefined && item.placement !== 'center' && item.placement !== 'end') {
+      issues.push(`${id}: header item '${item.id}' placement '${item.placement}'`)
+    }
+    if (item.order !== undefined && !Number.isFinite(item.order)) {
+      issues.push(`${id}: header item '${item.id}' order must be a finite number`)
+    }
+  }
+  return issues
+}
+
+/**
  * Where a plugin may mount a route with NO auth. Only `/api/hooks/<its own id>` and beneath,
  * so the unauthenticated surface is one enumerable prefix per plugin; and no AUTHED mount may sit
  * under `/api/hooks` at all, so a reader can trust that everything there is public by design.

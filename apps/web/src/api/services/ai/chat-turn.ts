@@ -41,7 +41,6 @@ import {
   CHAT_MAX_TOOL_TURNS,
   CONVERSATION_TITLE_LENGTH,
 } from '@rocketflare/shared/ai/chat'
-import { documentCardsFromToolResult } from '@rocketflare/shared/ai/embeddings'
 import { and, desc, eq } from 'drizzle-orm'
 import { stream } from 'hono/streaming'
 import type { Database } from '../../../db/client'
@@ -56,7 +55,7 @@ import { buildAgentTools, CHAT_GET_DOCUMENT_MAX_CHARS } from '../agents/tools'
 import { enqueueJob } from '../jobs'
 import { resolvePrompt } from '../prompts'
 import { runStreamingChat, type Tool } from './agent-loop'
-import { aguiTextSegmenter, createAguiEncoder, kitCustom } from './agui'
+import { aguiTextSegmenter, aguiToolEvents, createAguiEncoder, kitCustom } from './agui'
 import { pendingCompaction, selectHistoryWindow, withSummary } from './chat-history'
 import { workersAiStreamsTools } from './client'
 import { AiError, describeAiError, normalizeAiError } from './errors'
@@ -119,7 +118,7 @@ export function streamChatTurn(c: AppContext, params: ChatTurnParams): Response 
     }
     const tools = await params.buildTools(sdb)
     const text = aguiTextSegmenter(emit, assistantMessageId)
-    const openToolCalls = new Set<string>()
+    const toolEvents = aguiToolEvents(emit, text)
 
     try {
       await emit({ type: AguiEventType.RUN_STARTED, threadId: conversation.id, runId })
@@ -190,43 +189,8 @@ export function streamChatTurn(c: AppContext, params: ChatTurnParams): Response 
             maxTurns: params.maxTurns,
             signal: abort.signal,
             onDelta: delta => text.delta(delta),
-            onToolStart: async call => {
-              // A turn's text ends where its tool calls begin: one text message per model turn.
-              await text.close()
-              openToolCalls.add(call.toolUseId)
-              await emit({
-                type: AguiEventType.TOOL_CALL_START,
-                toolCallId: call.toolUseId,
-                toolCallName: call.name,
-                parentMessageId: text.parentMessageId(),
-              })
-              // The provider adapters surface a tool input whole, so the args are one chunk.
-              await emit({
-                type: AguiEventType.TOOL_CALL_ARGS,
-                toolCallId: call.toolUseId,
-                delta: JSON.stringify(call.input ?? {}),
-              })
-              await emit({ type: AguiEventType.TOOL_CALL_END, toolCallId: call.toolUseId })
-              openToolCalls.delete(call.toolUseId)
-            },
-            onToolEnd: async call => {
-              // The tool's own JSON, unmodified: the AG-UI-native representation a third-party
-              // client renders. `ToolCallResultEvent` has no error flag (AG-UI 1.0).
-              await emit({
-                type: AguiEventType.TOOL_CALL_RESULT,
-                messageId: crypto.randomUUID(),
-                toolCallId: call.toolUseId,
-                content: call.result,
-                role: 'tool',
-              })
-              // …then the documents it named, as cards. A `kit.` CUSTOM event rather than
-              // "let the UI parse the result": that JSON is the knowledge tool's internal shape,
-              // retuned whenever its context budget changes, and a React component must not be
-              // coupled to it. The mapper is pure and never queries, so it cannot widen scope.
-              for (const card of documentCardsFromToolResult(call.name, call.result)) {
-                await emit(kitCustom(KIT_CUSTOM_EVENTS.document, { card }))
-              }
-            },
+            onToolStart: toolEvents.onToolStart,
+            onToolEnd: toolEvents.onToolEnd,
           })
         }
       )
@@ -298,9 +262,7 @@ export function streamChatTurn(c: AppContext, params: ChatTurnParams): Response 
       const aiError = err instanceof AiError ? err : normalizeAiError(err, resolved.provider)
       logger.warn({ err: aiError, conversationId: conversation.id }, 'chat: stream failed')
       try {
-        for (const toolCallId of openToolCalls) {
-          await emit({ type: AguiEventType.TOOL_CALL_END, toolCallId })
-        }
+        await toolEvents.closeOpen()
         await text.close()
         await emit({
           type: AguiEventType.RUN_ERROR,

@@ -55,6 +55,7 @@ import {
   DECLARED_ENTRIES,
   deepImportIssue,
   emailHandlerIssues,
+  headerItemIssues,
   isPluginEntry,
   isPluginFile,
   PLUGIN_IMPORT_ENFORCEMENT,
@@ -94,6 +95,22 @@ describe('query-key roots', () => {
     expect(queryKeyRootIssues('orders', ['orders:list', 'orders:detail'])).toEqual([])
     expect(queryKeyRootIssues('orders', ['orders'])).toHaveLength(1)
     expect(queryKeyRootIssues('orders', ['documents'])).toHaveLength(1)
+  })
+})
+
+describe('header items', () => {
+  it('are unique per plugin, kebab-case, placed center or end, with a finite order', () => {
+    expect(
+      headerItemIssues('search', [
+        { id: 'trigger', placement: 'center', order: -1 },
+        { id: 'help' },
+      ])
+    ).toEqual([])
+    expect(headerItemIssues('search', [{ id: 'a' }, { id: 'a' }])).toHaveLength(1)
+    expect(headerItemIssues('search', [{ id: 'Bad id' }])).toHaveLength(1)
+    expect(headerItemIssues('search', [{ id: 'x', placement: 'start' }])).toHaveLength(1)
+    expect(headerItemIssues('search', [{ id: 'x', order: Number.NaN }])).toHaveLength(1)
+    expect(uiPlugins.flatMap(p => headerItemIssues(p.shared.id, p.header ?? []))).toEqual([])
   })
 })
 

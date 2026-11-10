@@ -133,6 +133,14 @@ the CLI command `<id>`; skills `<id>` / `<id>-<what>`; AG-UI CUSTOM events `<id>
   background through the route's own gates; each refusal throws. **A job always passes an
   `idempotencyKey` naming the work** (`receipt:<documentId>`, never the message id). Never insert
   into `agent_runs` or call `AGENT_RUN_WORKFLOW`.
+- **A streamed answer is `return streamChat(c, { promptKey, feature, message, tools, … })`**
+  (`@/plugins/api`), never a hand-built stream: `promptKey` is one of YOUR `prompts` (its owner is
+  the namespace), `feature` is `<id>` / `<id>:x` / `<id>.x`, `tools` is a BUILDER called inside the
+  stream with a `StreamChatToolCtx` (the stream's `db` + `emit`), and every CUSTOM event goes
+  through `emit('<id>.x', value)` — another name, or `kit.`, ends the run with `RUN_ERROR`
+  `invalid_custom_event`. Validate the body and do anything else that can fail BEFORE calling it.
+  Test it with `scriptPlatformChat(env, turns)` from `@testkit/integration`, never a `vi.mock` of
+  the resolver.
 - **Storage is `ctx.storage()`** (keyed `tenants/<tenantId>/<id>/…`, so `tenant.purge` removes it),
   never `env.FILES` with a hand-built prefix.
 - **Knowledge goes through `ingestDocument` / `ingestDocumentFile`**, never a `documents` insert:
@@ -172,9 +180,9 @@ the CLI command `<id>`; skills `<id>` / `<id>-<what>`; AG-UI CUSTOM events `<id>
 
 ## UI (`UiPlugin`, entry `src/plugins/<id>/ui/index.ts`)
 
-- **Nothing in the shell names a plugin** — `App.tsx`, `SideNav`, `SettingsLayout`, `Home.tsx`,
-  `queryKeys` and `agents/forms` (`CORE_AGENT_FORMS` + each plugin's `agentForms`)  read
-  `uiPlugins`.
+- **Nothing in the shell names a plugin** — `App.tsx` (routes and `PluginHeaderSlot`), `SideNav`,
+  `SettingsLayout`, `Home.tsx`, `queryKeys` and `agents/forms` (`CORE_AGENT_FORMS` + each plugin's
+  `agentForms`) read `uiPlugins`.
 - **The UI entry ships in the MAIN bundle**, so it wires and nothing else. `routes` are per tier
   (`shell`, `noTenant`, `public`, and `workspace`: inside `Layout`, tenant and `guard` still
   enforced, icon-rail nav, no padding, the page fills the viewport under the header with `h-full`)
@@ -190,6 +198,12 @@ the CLI command `<id>`; skills `<id>` / `<id>-<what>`; AG-UI CUSTOM events `<id>
 - **`nav` is a list of GROUPS** spliced by `composeNav(CORE_NAVIGATION, …)`: `before: '<label>'`
   inserts before that core group, no `before` lands above "Organisation", an unknown label appends;
   `filterNavConfig` applies the same guards. `settingsTabs(ctx)` append after the kit's.
+- **`header` items** (`{ id, Component: lazy(...), guard?, order?, placement?: 'center' | 'end' }`)
+  go in the top bar via `PluginHeaderSlot` — `center` for a search box, `end` (default) before the
+  kit's widgets; sorted by `order`, plugin id, item id; each in its own `Suspense` + error
+  boundary, so a throw renders nothing. Keep one compact at every width (an icon button below
+  `sm`); a palette or drawer it opens is its own lazy chunk. Guard it with the same const as the
+  route it serves.
 - A route's guard, its nav item's and its `homeLinks` entry's are ONE const declared beside them
   (`EXAMPLE_FEATURE_GUARD`), so no link points at a page its reader cannot open. `homeLinks` go
   AHEAD of the core Home links, un-deduplicated.
