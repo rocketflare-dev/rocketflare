@@ -57,6 +57,7 @@ Plugins can serve whole public hosts through a new `publicSites` seam, with a st
 - `promptOwner(key)` in `apps/web/src/api/services/prompts.ts` names the installed plugin that registered a prompt.
 - `UiPlugin.header` adds items to the top bar (`PluginHeaderItem`: `id`, a lazy `Component`, `guard`, `order`, `placement: 'center' | 'end'`). `App.tsx` renders them with `PluginHeaderSlot` in `Layout`'s `headerCenter` and ahead of the kit's `headerEnd` widgets, each behind its guard and inside its own `Suspense` and error boundary. `headerItemIssues` fails the gate on a duplicate id or an unknown placement.
 - `@testkit/integration` exports `scriptPlatformChat(env, turns)`, which scripts the `AI` binding stub's chat answers so a plugin test drives the real resolve seam with no `vi.mock`, plus `aguiFrames`, `aguiTypes` and `customEvents`.
+- `fuseByRank`, `fuseDenseLegs`, `anyTermTsquery`, `candidatePoolSize`, `RRF_K` and `LEXICAL_MAX_TERMS` live in the leaf `apps/web/src/api/services/ai/fusion.ts` (still re-exported from `retrieval.ts`), and `searchKnowledge` loads `retrieval.ts` at call time, so `@/plugins/api` never reaches the plugin barrel ahead of `createRouter`; `tests/config/plugin-api-load-order.test.ts` holds that order.
 
 ## How to apply
 

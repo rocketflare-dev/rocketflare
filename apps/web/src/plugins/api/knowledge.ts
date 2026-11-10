@@ -46,7 +46,6 @@ import {
   PlatformEmbeddingsError,
   prunePlatformText,
 } from '../../api/services/ai/platform-documents'
-import { searchKnowledgeChunks } from '../../api/services/ai/retrieval'
 import { createR2Storage, type StorageService } from '../../api/services/storage'
 import { ApiError, BadRequestError, ServiceUnavailableError } from '../../api/utils/core/errors'
 import { groups } from '../../db/schema/groups'
@@ -350,6 +349,9 @@ export async function searchKnowledge(
 ): Promise<SearchKnowledgeResult> {
   for (const source of input.platformSources ?? []) sourceNamespace(source)
   const limit = Math.min(Math.max(Math.trunc(input.limit ?? 10), 1), SEARCH_MAX_LIMIT)
+  // Loaded at CALL time: `retrieval.ts` reaches the plugin barrel through `../access`, and a static
+  // import here would put the barrel on `@/plugins/api`'s load path (see `ai/fusion.ts`).
+  const { searchKnowledgeChunks } = await import('../../api/services/ai/retrieval')
   const { hits, semantic } = await searchKnowledgeChunks(
     ctx.db,
     ctx.config,

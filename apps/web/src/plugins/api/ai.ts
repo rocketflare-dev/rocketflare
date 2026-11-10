@@ -73,8 +73,8 @@ export type {
  * searches `chunks`: `anyTermTsquery` (the lexical half's ANY-word tsquery), `candidatePoolSize`
  * ("retrieve wide, fuse narrow") and `fuseByRank` (Reciprocal Rank Fusion, `k = 60`). Pure.
  */
-export type { FusedItem } from '../../api/services/ai/retrieval'
-export { anyTermTsquery, candidatePoolSize, fuseByRank } from '../../api/services/ai/retrieval'
+export type { FusedItem } from '../../api/services/ai/fusion'
+export { anyTermTsquery, candidatePoolSize, fuseByRank } from '../../api/services/ai/fusion'
 /** A tool whose input schema failed to convert is a tool the model cannot see — fail loudly. */
 /** Ledger one model call (`ai_usage`). `feature` is `<plugin id>:<what>` or `agent:<key>`. */
 /** 503 `ai_not_configured` — throw it BEFORE any row is written or any stream opens. */
