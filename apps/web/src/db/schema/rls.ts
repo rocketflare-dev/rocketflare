@@ -49,6 +49,28 @@ export function tenantIsolation(table: string, column = sql`tenant_id`) {
 }
 
 /**
+ * The PLATFORM read policy — a second permissive policy, `FOR SELECT` only, on a table whose
+ * `tenant_id` is nullable (`documents`, `chunks`): a row with NO tenant is the app describing
+ * itself (a user guide), and every tenant may read it. Permissive policies are OR-ed, so a scoped
+ * read sees its own tenant's rows plus the platform rows and nothing else.
+ *
+ * Writes are deliberately NOT widened. `tenantIsolation()` stays the only policy for INSERT,
+ * UPDATE and DELETE, and its `WITH CHECK` (`tenant_id = <guc>`) is NULL for a null tenant — so a
+ * scoped connection can neither create, alter nor delete a platform row. Platform rows are written
+ * by the owner connection only (`ingestPlatformDocument`, from a job or a cron task).
+ *
+ * Always paired with `tenantIsolation()` on the same table; `rls-coverage.test.ts` checks the pair.
+ */
+export function platformReadable(table: string) {
+  return pgPolicy(`${table}_platform_read`, {
+    as: 'permissive',
+    for: 'select',
+    to: APP_ROLE,
+    using: sql`tenant_id is null`,
+  })
+}
+
+/**
  * `users` has no `tenant_id` — a user is global and belongs to MANY tenants through
  * `tenant_users` — so it is scoped by MEMBERSHIP of the active tenant instead.
  *

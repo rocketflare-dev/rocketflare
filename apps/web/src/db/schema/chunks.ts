@@ -4,14 +4,15 @@
  * `vector(EMBEDDING_DIM)` (1024, matching `@cf/baai/bge-m3`); changing the dimension is a NEW
  * table, not an `ALTER`. Dense retrieval is cosine (`<=>`) over the HNSW index; the lexical half
  * is `to_tsvector('english', text)` computed at query time (a generated tsvector + GIN index is the
- * documented scaling path). Every query carries the tenant predicate first.
+ * documented scaling path). Every query carries the tenant predicate first — `tenant_id = $t`, or
+ * `tenant_id is null` for a PLATFORM document's chunks (read by every tenant, `platformReadable`).
  */
 import { EMBEDDING_DIM } from '@rocketflare/shared/ai/config'
 import { relations } from 'drizzle-orm'
 import { index, integer, pgTable, text, uniqueIndex, uuid, vector } from 'drizzle-orm/pg-core'
-import { tenantRef, timestamps } from './_helpers'
+import { platformTenantRef, timestamps } from './_helpers'
 import { documents } from './documents'
-import { tenantIsolation } from './rls'
+import { platformReadable, tenantIsolation } from './rls'
 import { tenants } from './tenants'
 
 export const chunks = pgTable(
@@ -21,7 +22,8 @@ export const chunks = pgTable(
     documentId: uuid('document_id')
       .notNull()
       .references(() => documents.id, { onDelete: 'cascade' }),
-    tenantId: tenantRef(tenants),
+    /** The document's tenant, copied; NULL exactly when the document is a platform one. */
+    tenantId: platformTenantRef(tenants),
     /** Position within the document, from 0. */
     seq: integer('seq').notNull(),
     text: text('text').notNull(),
@@ -36,6 +38,7 @@ export const chunks = pgTable(
     // Cosine ANN index for dense retrieval (pgvector HNSW).
     index('chunks_embedding_idx').using('hnsw', table.embedding.op('vector_cosine_ops')),
     tenantIsolation('chunks'),
+    platformReadable('chunks'),
   ]
 )
 
