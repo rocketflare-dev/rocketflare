@@ -53,8 +53,9 @@ Rules:
 - **Wrap, don't fork.** Tracing (`traceChatClient`) and usage (`tapUsage`) are client wrappers; a
   new cross-cutting concern is another wrapper, never a fork of the adapter.
 - **Streaming (`chat-turn.ts` is the ONE implementation; `routes/chat.ts` and `routes/agui.ts` wrap
-  it).** Resolve, authorise, validate and write anything that can fail as JSON BEFORE the stream
-  opens — after the first frame a failure can only be a `RUN_ERROR`. Transport is hono's
+  it; a plugin's conversation is `streamChat` in `plugins/api/chat.ts`, over the same pieces —
+  the tool events are `aguiToolEvents` in `agui.ts`, shared by both, so neither inlines them).**
+  Resolve, authorise, validate and write anything that can fail as JSON BEFORE the stream opens — after the first frame a failure can only be a `RUN_ERROR`. Transport is hono's
   `stream(c, cb)` + `createAguiEncoder(c.req.header('Accept'))` — **never `streamSSE`** (its
   `writeSSE` adds an `event:` line and pins the content type; AG-UI frames are `data:` only);
   `encodeBinary` covers SSE and protobuf. Inside, `streamDatabase(c)` for every write, closed in
