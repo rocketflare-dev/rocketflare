@@ -34,7 +34,8 @@ host ever names a plugin.
   `SeedCtx` in hooks, `DetachedCtx` for a callback that outlives the handler. Two things cannot be
   injected and are entries instead: `@/db/schema/kit` for a table file (imported by RELATIVE path —
   drizzle-kit bundles it and resolves no tsconfig alias) and the split UI kit.
-  `@testkit/{integration,unit}` is for its tests. `tests/helpers/plugins.ts` enforces it. **Annotate
+  `@testkit/{integration,unit}` is for its tests; `@/host/<id>/…` (its OWN id) for the host files it
+  seeded. `tests/helpers/plugins.ts` enforces it. **Annotate
   the context explicitly**: `ctx.notFound()` narrows (`never`) only on an explicitly typed target,
   so `const ctx = requestCtx(c)` leaves the row possibly undefined.
 - **Module-evaluation order is the one trap the type system cannot see.** `queues/jobs.ts`,
@@ -202,6 +203,14 @@ the CLI command `<id>`; skills `<id>` / `<id>-<what>`; AG-UI CUSTOM events `<id>
 - **Agent skills live at `skills/<dir>/` in the plugin repo, declared in `"skills"`** — never under
   its own `.claude/`, which is never copied. Anything a person must SET UP or OPERATE deserves one
   (`/rf-plugin` §6; `.claude/skills/example-feature/`).
+- **Hooks for the host's coding agent are `"claudeHooks"`** (`{ "Stop": [{ "command", "timeout"? }] }`),
+  merged into `.claude/settings.json` by `plugin add`, replaced by `upgrade`, removed exactly by
+  `remove`. The command is only `node "$CLAUDE_PROJECT_DIR/.claude/skills/<dir>/<script>.mjs"`
+  (plain flags allowed) over a script a declared skill ships — never `pnpm`, `cd`, `&&`.
+- **Content the developer owns is `"hostFiles"`** (`[{ "path", "from" }]`): seeded once into
+  `docs/<id>/`, `apps/web/public/<id>/` or `apps/web/src/host/<id>/`, never touched by `upgrade`,
+  left by `remove`. Plugin code reads the last as `@/host/<id>/…` — its own id only. Never put
+  something the plugin must keep in step there: the developer may have edited or deleted it.
 - **A tenant-isolation test** under `src/plugins/<id>/tests/api/` for every tenant-scoped table — a
   second organisation that can neither list, read nor delete the first's rows. The host cannot write
   it; `plugin check` only proves it exists. Every tenant table calls `tenantIsolation()`. A plugin

@@ -188,7 +188,7 @@ code-quality.md · cloudflare.md. Runbooks: `docs/DEPLOY.md` · `docs/RLS.md`
   prefixed from it — `example-feature` → `example_*`, and `plugin check` fails a collision — job
   types `<id>.x`, query-key roots `<id>:…`, `/api/<id>`, CUSTOM events `<id>.` — **never `kit.`**),
   reaches core only through the six barrels, its own four published entries and the DECLARED import
-  entries (`@/plugins/api`, `@/db/schema/kit`, `@testkit/*` — `docs/plugin-api.md`), and ships
+  entries (`@/plugins/api`, `@/db/schema/kit`, `@testkit/*`, its own `@/host/<id>/*` — `docs/plugin-api.md`), and ships
   no migration and no toml edit — the host generates the DDL; its bindings go in BOTH tomls
 - **Released history is never rewritten**: an adopted copy pins a kit commit in `.rocketflare.json`;
   a force-push to a released tag orphans every copy that came from it

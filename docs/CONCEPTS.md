@@ -1290,6 +1290,25 @@ as merging a PR. A plugin repo mirrors the host tree and ships **no migration, n
   directory is a refusal. `plugin check` fails a declared skill that is missing, misnamed or
   undescribed, and a directory in the plugin's namespace it does not declare. `.claude/` in a
   plugin repository stays that repository's own tooling. `example-feature` ships one.
+- **Claude Code hooks** (`claudeHooks`): `{ "<Event>": [{ command, matcher?, timeout? }] }`, merged
+  by `add` into the host's `.claude/settings.json` (created if absent) as one matcher group per hook
+  at the end of its event; `upgrade` replaces them and `remove` takes out exactly them, so a round
+  trip is byte-identical (and deletes a file `add` created). The command may only be
+  `node "$CLAUDE_PROJECT_DIR/.claude/skills/<dir>/<script>"` plus plain flags, over a script one of
+  its declared skills ships: a hook runs in the developer's coding agent, so it can run nothing the
+  plugin does not ship and `remove` does not delete. That skill directory is also what identifies
+  the plugin's entries (the longer id wins on a shared prefix). `plugin check` fails a declared hook
+  missing from the file, an undeclared one in the plugin's namespace and a missing script.
+  **Known gap:** `.claude/settings.json` is `manual` in `.rocketflare.json`, so a kit release
+  changing the kit's own hooks reaches a copy as a hand merge, as before.
+- **Host files** (`hostFiles`): `[{ path, from }]`, a file or directory the plugin SEEDS for the
+  developer under `docs/<id>/`, `apps/web/public/<id>/` or `apps/web/src/host/<id>/` (nowhere
+  else). `add` copies only what is absent; `upgrade` never touches one, and seeds only an entry the
+  release adds; `remove` leaves them and lists them. The surface records them in `hostFiles`,
+  outside `paths`, so the kit's file classification knows whose they are and `remove` deletes none.
+  A plugin imports its own `apps/web/src/host/<id>/` as `@/host/<id>/…` (the existing `@/*` alias),
+  and only its own id's (`tests/helpers/plugins.ts`). **Known gap:** `plugin export` does not write
+  host files back to `from` — they are the app's content, not the plugin's.
 - **Hooks** (`onTenantCreated`, `onTenantDeleted`, `seedDemo`) run post-commit, are idempotent,
   and are try/caught. DO state is purgeable only through instance names **derived** from the tenant
   id.
