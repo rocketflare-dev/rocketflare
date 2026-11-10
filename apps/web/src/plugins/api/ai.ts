@@ -287,3 +287,23 @@ export function agentCtx<Input>(ctx: AgentContext<Input>): AgentCtx<Input> {
 
 /** A plugin's agent, as `ServerPlugin.agents` takes it. */
 export type PluginAgent<Input = unknown, Output = unknown> = AgentDefinition<Input, Output>
+
+/** One registered agent, as a catalogue lists it: no schemas, nothing tenant-specific. */
+export interface AgentSummary {
+  key: string
+  title: string
+  description: string
+}
+
+/**
+ * Every registered agent — the kit's and every installed plugin's — as `{ key, title, description }`,
+ * the same catalogue `GET /api/agents` serves. For a plugin that lists or searches agents (a
+ * command palette); the caller decides who may see it (`read AgentRun` is the kit's guard).
+ *
+ * Loaded at CALL time: the registry reads the server barrel, which must stay off `@/plugins/api`'s
+ * load path (`tests/config/plugin-api-load-order.test.ts`).
+ */
+export async function listAgents(): Promise<readonly AgentSummary[]> {
+  const { listAgentInfo } = await import('../../api/services/agents/registry')
+  return listAgentInfo().map(a => ({ key: a.key, title: a.title, description: a.description }))
+}

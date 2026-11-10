@@ -408,6 +408,14 @@ export interface UiPlugin<S extends SharedPlugin = SharedPlugin> {
    * falls back to a form generated from the agent's own JSON Schema, then to a JSON textarea.
    */
   agentForms?: Readonly<Partial<Record<AgentKeyOf<S> & string, AgentForm>>>
+  /**
+   * Cross-plugin registries for the browser, the UI twin of `ServerPlugin.extensions`: another
+   * plugin reads every installed plugin's entries under a key with `uiExtensions(key)` (from
+   * `@/plugins/api/ui`) and narrows them with its own schema. Keys are the OWNING plugin's
+   * (`global-search.commands`), so a contributor names it without importing that plugin. This
+   * object ships in the main bundle: plain data only, never a component.
+   */
+  extensions?: Readonly<Record<string, readonly unknown[]>>
 }
 
 /** The element type of the barrels — a plugin whose shared half is not narrowed. */

@@ -204,6 +204,13 @@ the CLI command `<id>`; skills `<id>` / `<id>-<what>`; AG-UI CUSTOM events `<id>
   boundary, so a throw renders nothing. Keep one compact at every width (an icon button below
   `sm`); a palette or drawer it opens is its own lazy chunk. Guard it with the same const as the
   route it serves.
+- **`useNavigationEntries()`** (`@/plugins/api/ui`, so from a lazy page or palette) lists every
+  destination the reader may open: composed nav, settings tabs (`pages/settings/tabs.ts` + plugins'
+  `settingsTabs`) and Home links, each through `useNavGuard`, first entry per path wins.
+- **`extensions`** on `UiPlugin` is the browser's cross-plugin registry (plain data — it ships in the
+  main bundle); the key's owner reads `uiExtensions(key)` from `@/plugins/api/ui` and narrows it.
+- **`listAgents()`** (`@/plugins/api`) is the agent catalogue (`{ key, title, description }`) for a
+  plugin that searches agents; guard it with `read AgentRun` yourself.
 - A route's guard, its nav item's and its `homeLinks` entry's are ONE const declared beside them
   (`EXAMPLE_FEATURE_GUARD`), so no link points at a page its reader cannot open. `homeLinks` go
   AHEAD of the core Home links, un-deduplicated.

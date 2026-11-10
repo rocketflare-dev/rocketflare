@@ -27,7 +27,7 @@ export interface QuickLink {
   guard?: NavGuard
 }
 
-const CORE_QUICK_LINKS: QuickLink[] = [
+export const CORE_QUICK_LINKS: QuickLink[] = [
   {
     to: '/profile',
     label: 'Your account',

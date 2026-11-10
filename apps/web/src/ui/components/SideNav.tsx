@@ -49,7 +49,7 @@ export type NavConfig = (NavItem | NavGroup)[]
  * Notifications live in the header `UserMenu`; apps add their own groups above "Organisation",
  * and an installed plugin does the same through `UiPlugin.nav` — see `composeNav` below.
  */
-const CORE_NAVIGATION: NavConfig = [
+export const CORE_NAVIGATION: NavConfig = [
   {
     items: [
       { to: '/', label: 'Home', icon: HomeIcon },
@@ -99,7 +99,7 @@ const CORE_NAVIGATION: NavConfig = [
   },
 ]
 
-function isNavGroup(item: NavItem | NavGroup): item is NavGroup {
+export function isNavGroup(item: NavItem | NavGroup): item is NavGroup {
   return 'items' in item
 }
 

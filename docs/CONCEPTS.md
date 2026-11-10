@@ -1235,6 +1235,22 @@ as merging a PR. A plugin repo mirrors the host tree and ships **no migration, n
   collapses nothing on a narrow screen: an item is a compact control and opens anything large as
   its own lazy chunk. `headerItemIssues` (`plugins.test.ts`) refuses a duplicate id or an unknown
   placement.
+- **Destinations (`useNavigationEntries()`)**, from `@/plugins/api/ui`: every place the reader may
+  open as one flat list of `{ id, label, to, group, icon?, keywords?, source }` — the side nav as
+  `SideNav` composes it (`composeNav` over `CORE_NAVIGATION` and every plugin's `nav`), the
+  `/settings?tab=` tabs (the core list in `pages/settings/tabs.ts`, which `SettingsLayout` renders,
+  plus every plugin's `settingsTabs({ can })`, all behind the page's `admin`), and the Home quick
+  links (plugins' `homeLinks`, then the core ones). Each is filtered by `useNavGuard`, the first
+  entry for a path wins, and `source` is `kit` or the contributing plugin's id. It is what a
+  command palette searches; `navigationEntries(plugins, checks)` is the pure half.
+- **UI registries (`UiPlugin.extensions`)**: the browser twin of `ServerPlugin.extensions` — plain
+  data under a key the OWNING plugin names (`global-search.commands`), read with `uiExtensions(key)`
+  (and `uiExtensionSources(key)` for the error message) from `@/plugins/api/ui` and narrowed by
+  that owner's schema. It ships in the main bundle with the UI entry, so data only.
+- **`listAgents()`** from `@/plugins/api`: every registered agent (the kit's and each plugin's) as
+  `{ key, title, description }` — the catalogue `GET /api/agents` serves, for a plugin that lists
+  or searches agents. Loaded at call time, off the API's load path; the caller applies the guard
+  (`read AgentRun`).
 - **`resolveOwnerTenant(db, config, ownerSlug?)`** from `@/plugins/api` finds the tenant that owns a
   public surface: `getSingleTenant` under `single`, by slug under `multi`. It returns null for a
   missing slug under `multi`, an unknown slug, and any tenant whose `status` is not `active`. This

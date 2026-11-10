@@ -134,6 +134,8 @@ The server surface: the context family, and the types a plugin must be able to n
   The answer. `status` is AG-UI's own `ResumeEntry` vocabulary and there is deliberately no `approved` boolean: two ways to say no is how a UI and a server end up disagreeing.
 - `interface AgentInterruptAsk`
   What an agent asks a person through {@link AgentContext.interrupt}.
+- `interface AgentSummary`
+  One registered agent, as a catalogue lists it: no schemas, nothing tenant-specific.
 - `interface AgentTraceContext extends Omit<TraceParams, 'name'>`
 - `class AiNotConfiguredError extends ServiceUnavailableError`
   503 `ai_not_configured`: nothing resolves for the tenant (no config row, no platform key).
@@ -252,6 +254,8 @@ The server surface: the context family, and the types a plugin must be able to n
   The envelope narrowed to one `type` — what a handler receives.
 - `type JobType = JobEnvelope['type']`
   Every job type this app knows, derived from the variants rather than kept beside them.
+- `async function listAgents(): Promise<readonly AgentSummary[]>`
+  Every registered agent — the kit's and every installed plugin's — as `{ key, title, description }`, the same catalogue `GET /api/agents` serves. For a plugin that lists or…
 - `type Logger = pino.Logger`
 - `async function memberCan( ctx: PluginContext, who: { tenantId: string; userId: string }, action: Actions, subject: Subjects ): Promise<boolean>`
   Does this person hold this grant in this tenant RIGHT NOW? For a public callback completing something a signed state started — an OAuth connection, a consent — where the state…
@@ -627,6 +631,8 @@ The server surface: the context family, and the types a plugin must be able to n
     Families merged into `queryKeys`; every root must start with `<id>:`.
   - `agentForms?: Readonly<Partial<Record<AgentKeyOf<S> & string, AgentForm>>>`
     `AGENT_FORMS` entries for the agents this plugin registers. Optional per agent: `formFor` falls back to a form generated from the agent's own JSON Schema, then to a JSON textarea.
+  - `extensions?: Readonly<Record<string, readonly unknown[]>>`
+    Cross-plugin registries for the browser, the UI twin of `ServerPlugin.extensions`: another plugin reads every installed plugin's entries under a key with `uiExtensions(key)` (from…
 - `function usageFeatureIssue(pluginId: string, feature: string): string \| null`
   Why `feature` is not a usage label `pluginId` may record under, or null when it may. Pure.
 - `type User = typeof users.$inferSelect`
@@ -717,6 +723,8 @@ The only host module a plugin's `ui/index.ts` may import — it ships in the mai
     Families merged into `queryKeys`; every root must start with `<id>:`.
   - `agentForms?: Readonly<Partial<Record<AgentKeyOf<S> & string, AgentForm>>>`
     `AGENT_FORMS` entries for the agents this plugin registers. Optional per agent: `formFor` falls back to a form generated from the agent's own JSON Schema, then to a JSON textarea.
+  - `extensions?: Readonly<Record<string, readonly unknown[]>>`
+    Cross-plugin registries for the browser, the UI twin of `ServerPlugin.extensions`: another plugin reads every installed plugin's entries under a key with `uiExtensions(key)` (from…
 - `function useNavGuard(): (guard: NavGuard \| undefined) => boolean`
 
 ### `@/plugins/api/ui`
@@ -773,6 +781,10 @@ Components and hooks, for a lazy PAGE. Never for the UI entry.
 - `interface ModalProps`
 - `type NavGuard = \| 'admin' \| 'globalAdmin' \| { action: string; subject: string } \| { feature: string } \| readonly NavGuard[]`
   Coarse role flags for routing (`AdminRoute` / `GlobalAdminRoute` semantics), a CASL `{ action, subject }` pair for per-page checks, a feature flag, or a list meaning AND. Strings,…
+- `interface NavigationChecks`
+- `function navigationEntries( plugins: readonly AnyUiPlugin[], { canAccess, can }: NavigationChecks ): NavigationEntry[]`
+  The list, pure: the plugins and the checks are passed in, so it is unit-tested directly.
+- `interface NavigationEntry`
 - `function notifyUnauthorized(error: ApiError): void`
   Invoke the 401 handler. A stale session makes every in-flight query fail at once, so calls within the same tick are coalesced into ONE handler invocation. Called by `request()`…
 - `function PageHeader({ title, description, breadcrumbs, badge, actions, className = '', }: PageHeaderProps)`
@@ -805,6 +817,11 @@ Components and hooks, for a lazy PAGE. Never for the UI entry.
 - `function ToastContainer()`
   Bottom-right stack. Mount once.
 - `type ToastType = 'success' \| 'error' \| 'warning' \| 'info'`
+- `function uiExtensions(key: string): readonly unknown[]`
+- `function uiExtensionSources(key: string): readonly string[]`
+  Which plugins contributed under a key — for the error message when one of them does not parse.
+- `const UNLABELLED_NAV_GROUP: "Pages"`
+  The heading an unlabelled nav group gets in a list.
 - `function URLTabs({ tabs, defaultTab, param = 'tab', className = '', actions, }: URLTabsProps)`
   Tabs whose active state lives in `?tab=`, so deep links and back/forward work.
 - `function useAuth(): AuthContextValue`
@@ -814,6 +831,8 @@ Components and hooks, for a lazy PAGE. Never for the UI entry.
 - `function useGroupTypes(enabled = true)`
 - `function useMyGroups()`
   Every member may read their OWN groups — the profile list, and what the picker offers them.
+- `function useNavigationEntries(): NavigationEntry[]`
+  `navigationEntries` for the signed-in reader and the installed plugins.
 - `function usePermissions()`
 - `function useTenancyMode(): TenancyMode`
   `'single'` hides OrgSwitcher, /select-tenant and org create/delete.
@@ -923,6 +942,8 @@ Components and hooks, for a lazy PAGE. Never for the UI entry.
     Families merged into `queryKeys`; every root must start with `<id>:`.
   - `agentForms?: Readonly<Partial<Record<AgentKeyOf<S> & string, AgentForm>>>`
     `AGENT_FORMS` entries for the agents this plugin registers. Optional per agent: `formFor` falls back to a form generated from the agent's own JSON Schema, then to a JSON textarea.
+  - `extensions?: Readonly<Record<string, readonly unknown[]>>`
+    Cross-plugin registries for the browser, the UI twin of `ServerPlugin.extensions`: another plugin reads every installed plugin's entries under a key with `uiExtensions(key)` (from…
 
 ### `@/db/schema/kit`
 
@@ -1271,6 +1292,7 @@ nothing in the comparison that can throw.
 @/plugins/api :: interface :: AgentDecide :: interface AgentDecide
 @/plugins/api :: interface :: AgentInterruptAnswer :: interface AgentInterruptAnswer
 @/plugins/api :: interface :: AgentInterruptAsk :: interface AgentInterruptAsk
+@/plugins/api :: interface :: AgentSummary :: interface AgentSummary
 @/plugins/api :: interface :: AgentTraceContext :: interface AgentTraceContext extends Omit<TraceParams, 'name'>
 @/plugins/api :: class :: AiNotConfiguredError :: class AiNotConfiguredError extends ServiceUnavailableError
 @/plugins/api :: type :: AnyServerPlugin :: type AnyServerPlugin = ServerPlugin<SharedPlugin>
@@ -1342,6 +1364,7 @@ nothing in the comparison that can throw.
 @/plugins/api :: type :: JobInput :: type JobInput = z.infer<typeof jobInputSchema>
 @/plugins/api :: type :: JobOf :: type JobOf = Extract<JobEnvelope, { type: T }>
 @/plugins/api :: type :: JobType :: type JobType = JobEnvelope['type']
+@/plugins/api :: function :: listAgents :: async function listAgents(): Promise<readonly AgentSummary[]>
 @/plugins/api :: type :: Logger :: type Logger = pino.Logger
 @/plugins/api :: function :: memberCan :: async function memberCan( ctx: PluginContext, who: { tenantId: string; userId: string }, action: Actions, subject: Subjects ): Promise<boolean>
 @/plugins/api :: type :: MembershipRole :: type MembershipRole = z.infer<typeof membershipRoleSchema>
@@ -1572,6 +1595,7 @@ nothing in the comparison that can throw.
 @/plugins/api :: member :: UiPlugin.header :: header?: readonly PluginHeaderItem[]
 @/plugins/api :: member :: UiPlugin.queryKeys :: queryKeys?: Readonly<Record<string, unknown>>
 @/plugins/api :: member :: UiPlugin.agentForms :: agentForms?: Readonly<Partial<Record<AgentKeyOf<S> & string, AgentForm>>>
+@/plugins/api :: member :: UiPlugin.extensions :: extensions?: Readonly<Record<string, readonly unknown[]>>
 @/plugins/api :: function :: usageFeatureIssue :: function usageFeatureIssue(pluginId: string, feature: string): string | null
 @/plugins/api :: type :: User :: type User = typeof users.$inferSelect
 @/plugins/api :: function :: validate :: function validate<T extends ZodSchema, Target extends keyof ValidationTargets>( target: Target, schema: T )
@@ -1620,6 +1644,7 @@ nothing in the comparison that can throw.
 @/plugins/api/ui-wiring :: member :: UiPlugin.header :: header?: readonly PluginHeaderItem[]
 @/plugins/api/ui-wiring :: member :: UiPlugin.queryKeys :: queryKeys?: Readonly<Record<string, unknown>>
 @/plugins/api/ui-wiring :: member :: UiPlugin.agentForms :: agentForms?: Readonly<Partial<Record<AgentKeyOf<S> & string, AgentForm>>>
+@/plugins/api/ui-wiring :: member :: UiPlugin.extensions :: extensions?: Readonly<Record<string, readonly unknown[]>>
 @/plugins/api/ui-wiring :: function :: useNavGuard :: function useNavGuard(): (guard: NavGuard | undefined) => boolean
 @/plugins/api/ui :: function :: AccessBadge :: function AccessBadge({ visibility, groups, className = '', }: { visibility: ResourceVisibility groups: GroupRef[] className?: string })
 @/plugins/api/ui :: function :: AccessPicker :: function AccessPicker({ visibility, groupIds, available, onChange, tenantName, disabled = false, idPrefix = 'access', }: AccessPickerProps)
@@ -1651,6 +1676,9 @@ nothing in the comparison that can throw.
 @/plugins/api/ui :: function :: Modal :: function Modal({ open, onClose, title, children, actions, closeButton = true, className = '', }: ModalProps)
 @/plugins/api/ui :: interface :: ModalProps :: interface ModalProps
 @/plugins/api/ui :: type :: NavGuard :: type NavGuard = | 'admin' | 'globalAdmin' | { action: string; subject: string } | { feature: string } | readonly NavGuard[]
+@/plugins/api/ui :: interface :: NavigationChecks :: interface NavigationChecks
+@/plugins/api/ui :: function :: navigationEntries :: function navigationEntries( plugins: readonly AnyUiPlugin[], { canAccess, can }: NavigationChecks ): NavigationEntry[]
+@/plugins/api/ui :: interface :: NavigationEntry :: interface NavigationEntry
 @/plugins/api/ui :: function :: notifyUnauthorized :: function notifyUnauthorized(error: ApiError): void
 @/plugins/api/ui :: function :: PageHeader :: function PageHeader({ title, description, breadcrumbs, badge, actions, className = '', }: PageHeaderProps)
 @/plugins/api/ui :: function :: PaginationControls :: function PaginationControls({ pagination, onPageChange, isLoading = false, className = '', }: PaginationControlsProps)
@@ -1669,12 +1697,16 @@ nothing in the comparison that can throw.
 @/plugins/api/ui :: interface :: Toast :: interface Toast
 @/plugins/api/ui :: function :: ToastContainer :: function ToastContainer()
 @/plugins/api/ui :: type :: ToastType :: type ToastType = 'success' | 'error' | 'warning' | 'info'
+@/plugins/api/ui :: function :: uiExtensions :: function uiExtensions(key: string): readonly unknown[]
+@/plugins/api/ui :: function :: uiExtensionSources :: function uiExtensionSources(key: string): readonly string[]
+@/plugins/api/ui :: const :: UNLABELLED_NAV_GROUP :: const UNLABELLED_NAV_GROUP: "Pages"
 @/plugins/api/ui :: function :: URLTabs :: function URLTabs({ tabs, defaultTab, param = 'tab', className = '', actions, }: URLTabsProps)
 @/plugins/api/ui :: function :: useAuth :: function useAuth(): AuthContextValue
 @/plugins/api/ui :: function :: useFeature :: function useFeature(name: FeatureName): boolean
 @/plugins/api/ui :: function :: useGroups :: function useGroups(typeId?: string, enabled = true)
 @/plugins/api/ui :: function :: useGroupTypes :: function useGroupTypes(enabled = true)
 @/plugins/api/ui :: function :: useMyGroups :: function useMyGroups()
+@/plugins/api/ui :: function :: useNavigationEntries :: function useNavigationEntries(): NavigationEntry[]
 @/plugins/api/ui :: function :: usePermissions :: function usePermissions()
 @/plugins/api/ui :: function :: useTenancyMode :: function useTenancyMode(): TenancyMode
 @/plugins/api/ui :: const :: useToastStore :: const useToastStore: UseBoundStore<StoreApi<ToastStore>>
@@ -1735,6 +1767,7 @@ nothing in the comparison that can throw.
 @/plugins/types :: member :: UiPlugin.header :: header?: readonly PluginHeaderItem[]
 @/plugins/types :: member :: UiPlugin.queryKeys :: queryKeys?: Readonly<Record<string, unknown>>
 @/plugins/types :: member :: UiPlugin.agentForms :: agentForms?: Readonly<Partial<Record<AgentKeyOf<S> & string, AgentForm>>>
+@/plugins/types :: member :: UiPlugin.extensions :: extensions?: Readonly<Record<string, readonly unknown[]>>
 @/db/schema/kit :: const :: activityEvents :: const activityEvents: table "activity_events" { id, tenantId, userId, type, subjectType, subjectId, metadata, createdAt }
 @/db/schema/kit :: const :: groupMembers :: const groupMembers: table "group_members" { tenantId, groupId, userId, createdAt }
 @/db/schema/kit :: const :: groups :: const groups: table "groups" { createdAt, updatedAt, id, tenantId, groupTypeId, name, description }
