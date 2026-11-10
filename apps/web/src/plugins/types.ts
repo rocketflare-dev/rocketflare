@@ -113,9 +113,10 @@ export interface PublicSitesDeclaration {
   router: Hono<AppEnv>
   /**
    * CSP additions for a host. Synchronous: it runs on cache hits too. A single page that needs
-   * more sets `PUBLIC_SITE_PAGE_CSP_HEADER` on its own response instead.
+   * more sets `PUBLIC_SITE_PAGE_CSP_HEADER` on its own response instead; `pathname` is for a path
+   * that must get less than the rest of the host, which a per-page addition cannot do.
    */
-  csp?: (host: string, config: AppConfig) => PublicSiteCsp
+  csp?: (host: string, config: AppConfig, pathname: string) => PublicSiteCsp
   forms?: readonly PublicSiteFormPath[]
   /** Omitted = no caching. `generation` must not touch Postgres; null = do not cache this request. */
   cache?: {

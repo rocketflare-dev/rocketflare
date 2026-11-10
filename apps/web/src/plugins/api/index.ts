@@ -73,6 +73,7 @@ export {
   agentCtx,
   anyTermTsquery,
   candidatePoolSize,
+  chatModelAvailable,
   defineTool,
   fuseByRank,
   listAgents,

@@ -23,6 +23,7 @@
  */
 
 import type { AiProvider } from '@rocketflare/shared/ai/config'
+import type { PromptKey } from '@rocketflare/shared/ai/prompts'
 import type { AccessScope } from '../../api/services/access-sql'
 import type { AgentDecide } from '../../api/services/agents/decisions'
 import type {
@@ -45,7 +46,7 @@ import { tenantFeatures } from '../../api/services/features'
 import type { StorageService } from '../../api/services/storage'
 import type { AbilityCheck } from './auth'
 import { filesStorage } from './storage'
-import type { Database, PluginBindings, PluginConfig } from './types'
+import type { Database, PluginBindings, PluginConfig, PluginContext } from './types'
 
 export type {
   AgentDecide,
@@ -283,6 +284,22 @@ export function agentCtx<Input>(ctx: AgentContext<Input>): AgentCtx<Input> {
         maxTokens: options.maxTokens ?? ctx.chat.maxOutputTokens,
       }),
   }
+}
+
+/**
+ * Would a chat model resolve for this prompt key and tenant? Answers the same question
+ * `resolveChat` will, without building a client, so a plugin's route or UI can say "no model" up
+ * front instead of failing inside a run. A function-scope import, for the barrel cycle `./agent-runs`
+ * explains: `services/ai/resolve` reads the prompt registry, which reads the plugin barrel.
+ */
+export async function chatModelAvailable(
+  ctx: Pick<PluginContext, 'db' | 'config' | 'env'>,
+  tenantId: string,
+  promptKey: string
+): Promise<boolean> {
+  const { planChat, platformChat } = await import('../../api/services/ai/resolve')
+  const { config: row } = await planChat(ctx.db, tenantId, promptKey as PromptKey)
+  return row !== undefined || platformChat(ctx.config, ctx.env) !== null
 }
 
 /** A plugin's agent, as `ServerPlugin.agents` takes it. */

@@ -550,7 +550,8 @@ Server: `api/services/{ai,agents}/**` (read their `CLAUDE.md`), `services/prompt
 - **Providers**: `anthropic`, `anthropic_compatible`, `openai`, `openai_compatible`, `workers_ai`.
   There is no Vercel AI SDK and no Bedrock (a SigV4 adapter behind `ChatClient` is the extension).
   Workers AI quirks — two response shapes, per-model `tool_choice`/streaming lists, fragmentary tool
-  calls, schema-flattening retry — are in `services/ai/CLAUDE.md`. The floor model was chosen
+  calls, GLM's own `<tool_call>…<arg_key>` markup passed through unparsed, schema-flattening retry —
+  are in `services/ai/CLAUDE.md`. The floor model was chosen
   because it can run the *agents*. Defaults: `claude-haiku-5-5`, `gpt-6-luna`.
 - **The request body is per MODEL, not per provider** (`shared/src/ai/models.ts`). Claude 4.5 and
   earlier take a thinking budget. 4.6+ take `adaptive`. "Off" is `disabled`, Sonnet 5.5's
@@ -1197,8 +1198,9 @@ as merging a PR. A plugin repo mirrors the host tree and ships **no migration, n
   host, or a claim on `APP_URL`'s host, fail the gate (`publicSiteIssues`); at runtime the claim is
   ignored and logged. A site host always gets the strict public CSP from
   `api/middleware/security-headers.ts`, on hits and misses alike: no script, frame, connection or
-  form target unless `csp(host, config)` declares one (a `formAction` path such as `/submit` is
-  pinned to the request's origin, so one route opens rather than the host), `style-src <request origin>/site-assets/`
+  form target unless `csp(host, config, pathname)` declares one (`pathname` lets one path carry less
+  than the rest of the host; a `connectSrc` or `formAction` path such as `/submit` is pinned to the
+  request's origin, so one route opens rather than the host), `style-src <request origin>/site-assets/`
   (the same source joins `script-src` once a site declares any script, so a page cannot load the
   admin bundle from `/assets/*`; `publicSiteIssues` refuses a declared script source reaching that
   path, including `'self'`, and at runtime it is dropped) and
