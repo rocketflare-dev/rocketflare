@@ -80,7 +80,7 @@ describe('workspace plugin routes', () => {
     localStorage.setItem('sideNavCollapsed', 'false')
     open('/fixture/editor', makeSession())
     await screen.findByTestId('plugin-page')
-    await waitFor(() => expect(sideNav()).toHaveClass('w-16'))
+    expect(sideNav()).toHaveClass('w-16')
     expect(collapseToggle()).not.toBeInTheDocument()
     expect(localStorage.getItem('sideNavCollapsed')).toBe('false')
   })
@@ -90,9 +90,11 @@ describe('workspace plugin routes', () => {
     open('/fixture/editor', makeSession())
     await screen.findByTestId('plugin-page')
     await userEvent.click(screen.getByRole('link', { name: 'to shell' }))
-    await waitFor(() => expect(screen.getByTestId('plugin-page')).toHaveTextContent('shell'))
-    // The nav takes its width from the route one render after the page content changes.
-    await waitFor(() => expect(sideNav()).toHaveClass('w-56'))
+    // `/^shell/`, not `'shell'`: the editor page's own "to shell" link matches the bare word, so
+    // the wait passed while the lazy shell page was still loading and the editor (and its rail)
+    // was still on screen.
+    await waitFor(() => expect(screen.getByTestId('plugin-page')).toHaveTextContent(/^shell/))
+    expect(sideNav()).toHaveClass('w-56')
     expect(collapseToggle()).toBeInTheDocument()
     expect(localStorage.getItem('sideNavCollapsed')).toBe('false')
   })

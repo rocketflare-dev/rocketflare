@@ -12,13 +12,13 @@ manual: false
 
 ## What changed
 
-A kit UI test that failed intermittently on slow CI runners now waits for the side nav to take its width after a route change.
+A kit UI test that failed on slow CI runners now waits for the page it navigates to, not for text the page it leaves also contains.
 
-- `apps/web/tests/ui/plugin-route-tiers.test.tsx` waits for the side nav's `w-16` / `w-56` class, which lands one render after the page content; it failed in a plugin repository's CI.
+- `apps/web/tests/ui/plugin-route-tiers.test.tsx` "returns to the saved state on leaving" waits for `/^shell/`: the editor fixture's "to shell" link matched `'shell'`, so the wait passed while the lazy shell page was still loading; it failed in a plugin repository's CI.
 
 ## How to apply
 
-1. Copy `apps/web/tests/ui/plugin-route-tiers.test.tsx` from this release over yours, unless you changed it; if you did, wrap each `expect(sideNav()).toHaveClass(...)` that follows a navigation in `await waitFor(() => ...)`.
+1. In `apps/web/tests/ui/plugin-route-tiers.test.tsx`, change the wait after clicking "to shell" from `toHaveTextContent('shell')` to `toHaveTextContent(/^shell/)`.
 
 ## Conflicts to expect
 
