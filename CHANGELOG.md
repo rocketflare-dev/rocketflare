@@ -6,6 +6,11 @@ copy of the kit forward without recreating anything its owner deleted.
 
 If you are running a copy: `pnpm kit:upgrade` tells you which of these you are missing.
 
+## 0.32.0 — 2026-11-10
+
+Plugins can declare and emit tenant-scoped events that queue one delivery per subscriber, and agents can be triggered by an event or offered as bindable to it.
+[Porting note](docs/upgrades/0.32.0.md).
+
 ## 0.31.0 — 2026-11-10
 
 Plugins can ship tenant-less platform knowledge that is always embedded, stream a scoped chat, add header items and palette registries, install Claude Code hooks and seed developer-owned host files.
