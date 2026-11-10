@@ -360,6 +360,15 @@ export function isPluginFile(repoPath: string): boolean {
   return pluginIdOfPath(repoPath) !== null
 }
 
+/** Where a plugin's seeded host code lives: `apps/web/src/host/<id>/`, imported as `@/host/<id>/…`. */
+export const HOST_FILES_DIR = 'apps/web/src/host/'
+
+/** The plugin id a resolved `apps/web/src/host/<id>/…` path belongs to, or null. */
+export function hostDirIdOf(repoPath: string): string | null {
+  if (!repoPath.startsWith(HOST_FILES_DIR)) return null
+  return repoPath.slice(HOST_FILES_DIR.length).split('/')[0] || ''
+}
+
 /**
  * One message when a plugin file imports the host from anywhere but a declared entry, else null.
  *
@@ -379,6 +388,15 @@ export function pluginImportIssue(
   // PUBLISHED entry of a plugin it requires is allowed, so every plugin path stops here.
   if (pluginIdOfPath(target) !== null) return null
   const normalised = normaliseModulePath(target)
+  // `@/host/<id>/…` is the developer's half of a plugin — files it seeded (`hostFiles`) and the
+  // developer owns since — so a plugin may import its OWN id's directory and nobody else's.
+  const hostId = hostDirIdOf(normalised)
+  if (hostId !== null) {
+    const own = pluginIdOfPath(importer)
+    if (hostId === own) return null
+    const where = `${importer.split('/').pop()}${line === undefined ? '' : `:${line}`}`
+    return `${where} imports '${specifier}' — a plugin imports only its own host files, '@/host/${own}/…'`
+  }
   if (DECLARED_ENTRIES.some(e => normalised === e || normalised.startsWith(`${e}/`))) return null
   if (!HOST_ROOTS.some(root => `${normalised}/`.startsWith(root) || normalised.startsWith(root))) {
     return null

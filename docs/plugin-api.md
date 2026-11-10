@@ -1164,6 +1164,24 @@ Builders for the context family, for tests that never touch data.
 - `interface ToolCtxOptions extends BaseOptions`
 - `interface WorkflowCtxOptions extends BaseOptions`
 
+## Your own host files, and what the manifest writes outside your roots
+
+- **`@/host/<id>/*`** — `apps/web/src/host/<id>/`, code the plugin seeded through `hostFiles`
+  and the developer owns since (a generated content module, say). A plugin may import its OWN
+  id's directory and no other (`tests/helpers/plugins.ts`); it resolves through the existing
+  `@/*` alias, so no tsconfig, Vite or wrangler change. Not ledgered: the kit provides none of it.
+- **`skills`** — `skills/<dir>/` → `.claude/skills/<dir>/`, `<dir>` being `<id>` or `<id>-*`.
+  Replaced on upgrade, deleted on remove.
+- **`claudeHooks`** — `{ "<Event>": [{ "command", "matcher"?, "timeout"? }] }`, merged into
+  `.claude/settings.json`. A command is only `node "$CLAUDE_PROJECT_DIR/.claude/skills/<dir>/<script>"`
+  (plus plain flags) over a script one of its declared skills ships; the skill directory is how the
+  plugin's entries are found again. Replaced on upgrade, removed exactly on remove.
+- **`hostFiles`** — `[{ "path", "from" }]`, a file or a directory seeded into `docs/<id>/`,
+  `apps/web/public/<id>/` or `apps/web/src/host/<id>/` only where absent. Never touched by
+  upgrade, left in place by remove.
+- **`coreEdits`** and **`appOwned`** — anchored lines in a core file, and paths inside the
+  plugin's own roots that the developer owns (`apps/web/src/plugins/CLAUDE.md`).
+
 ## Surface ledger
 
 The machine-readable half of this file: one line per member the kit provides,

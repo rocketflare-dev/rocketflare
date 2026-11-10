@@ -65,6 +65,12 @@ blocks and **"Nothing written. Read the plan, then re-run with --apply to instal
 - `Skills` — only when the plugin ships agent skills: each `.claude/skills/<dir>/` it installs.
   If one is named `<id>-setup`, run it straight after the install. For the rest, tell the person the skill exists and what it is for
   (its `description`), because a skill nobody knows about is only found by accident.
+- `Claude Code hooks` — only when the plugin declares `claudeHooks`: each hook it merges into
+  `.claude/settings.json` (and whether that file is created). They run inside the person's coding
+  agent, so **show these lines verbatim** and say what each does before asking for the yes.
+- `Host files` — only when it declares `hostFiles`: each file `seeded` (absent, copied) or `kept`
+  (already there, untouched). Tell the person these are THEIRS from now on — upgrade never touches
+  them and remove leaves them.
 - `Barrel lines` — the exact line each of the six barrels gains (the sixth, `worker-exports.ts`,
   only when the plugin ships a Durable Object or Workflow class).
 - `Dependencies` — what will be installed into which package.
@@ -180,7 +186,9 @@ pnpm db:generate --name plugin-<id>-remove    # → DROP TABLE …; read it, the
 Ask about `--archive` **before** applying — after the drop it is not a choice any more. Orphaned
 tables are not a stable state — the `db:generate` above is part of the removal, not optional. The plan
 also prints what to deprovision as HUMAN steps: provisioning creates a plugin's Cloudflare resources but
-never deletes one, and `pnpm remove` on a dependency is printed rather than run.
+never deletes one, and `pnpm remove` on a dependency is printed rather than run. It removes the
+plugin's Claude Code hooks, and lists under **Left in place** the host files it seeded — relay that
+list; they are the person's to delete or keep.
 
 ## 6. Authoring a plugin
 
@@ -231,6 +239,10 @@ at `skills/<id>/SKILL.md` (or `skills/<id>-<what>/`) in the plugin repository �
 `"skills"`, and `add` installs it at `.claude/skills/<dir>/`. Companion files (`reference.md`, one
 file per provider) sit beside SKILL.md and travel with it. Never put it under the repository's own
 `.claude/`, which is never copied. `pnpm plugin export` writes installed skills back to `skills/`.
+A skill may also carry the script a **`claudeHooks`** entry runs (`node
+"$CLAUDE_PROJECT_DIR/.claude/skills/<dir>/<script>.mjs"` — the only command shape allowed), and
+content the developer should own goes in **`hostFiles`** (`docs/<id>/`, `apps/web/public/<id>/`,
+`apps/web/src/host/<id>/`, imported as `@/host/<id>/…`). `reference.md` has both.
 
 A plugin that builds on another (`requires.plugins: ["connectors"]`) is proved in CI by the kit's
 `plugin-ci.yml` with its requirements installed FIRST, resolved by id from the same repository — so

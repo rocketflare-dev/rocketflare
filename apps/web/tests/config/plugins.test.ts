@@ -587,6 +587,19 @@ describe('the plugin import rule', () => {
     expect(pluginImportIssue(ROUTE, '../shared')).toBeNull()
   })
 
+  it('lets a plugin import its OWN host files, @/host/<id>/…, and no other plugin’s', () => {
+    // `hostFiles` seeds `apps/web/src/host/<id>/` for the developer; the plugin reads it back.
+    expect(pluginImportIssue(ROUTE, '@/host/orders/content.generated')).toBeNull()
+    expect(
+      pluginImportIssue('apps/web/src/plugins/orders/ui/pages/Guide.tsx', '@/host/orders/a/b')
+    ).toBeNull()
+    expect(pluginImportIssue(ROUTE, '../../../host/orders/content.generated')).toBeNull()
+    expect(pluginImportIssue(ROUTE, '@/host/billing/content.generated', 3)).toBe(
+      "routes.ts:3 imports '@/host/billing/content.generated' — a plugin imports only its own host files, '@/host/orders/…'"
+    )
+    expect(pluginImportIssue(ROUTE, '@/host')).not.toBeNull()
+  })
+
   it('says nothing about a core file — this guards ONE direction', () => {
     // `deepImportIssue` owns core→plugin and plugin→plugin; this owns plugin→core.
     expect(pluginImportIssue('apps/web/src/api/index.ts', '@/api/services/jobs')).toBeNull()

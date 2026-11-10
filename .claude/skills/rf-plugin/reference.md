@@ -155,6 +155,29 @@ Field notes, in the order they bite:
   REPLACES a skill's files rather than patching them and deletes the ones a release dropped;
   `remove` deletes the directory. `.claude/` at the root of a plugin repository is still that
   repository's own tooling and is never copied — only `skills/` ships. `example-feature` ships one.
+- **`claudeHooks`** are Claude Code hooks for the HOST's coding agent (a Stop hook nudging it to
+  keep a guide in sync): `{ "<Event>": [{ "command", "matcher"?, "timeout"? }] }`, the event one
+  of Claude Code's (`PreToolUse`, `PostToolUse`, `Notification`, `UserPromptSubmit`, `Stop`,
+  `SubagentStop`, `PreCompact`, `SessionStart`, `SessionEnd`), `timeout` 1–600 seconds. The
+  command is held to ONE shape — `node "$CLAUDE_PROJECT_DIR/.claude/skills/<dir>/<script>.mjs"`
+  plus plain `--flags` — where `<dir>` is one of its declared `skills` and the release ships
+  `skills/<dir>/<script>`; anything else (`pnpm …`, `cd … &&`, a pipe) is refused by `add`,
+  `upgrade` and `check`. `add` merges each as its own matcher group at the end of its event in
+  `.claude/settings.json` (creating the file if absent), leaving every other hook in place; the
+  plan shows the change first. `upgrade` replaces this plugin's entries with the release's;
+  `remove` takes out exactly them — a round trip leaves the file byte-identical, and deletes it if
+  `add` created it. A plugin's entries are the hooks whose command runs one of `.claude/skills/<id>`
+  or `<id>-*` (the longer id wins when two share a prefix), so hand-editing one keeps it the
+  plugin's.
+- **`hostFiles`** are content the plugin SEEDS for the developer — a guide's markdown, a generated
+  module, images: `[{ "path", "from" }]`, `from` a file or directory in the plugin repository,
+  `path` under `docs/<id>/`, `apps/web/public/<id>/` or `apps/web/src/host/<id>/` and nowhere
+  else (no `..`, not `skills/`, not the manifest). `add` copies a file only where nothing is
+  (the plan says `seeded` or `kept`); `upgrade` never touches one — it reports what the release
+  changed upstream, and seeds only an entry the release ADDS, where absent; `remove` leaves them
+  all and lists them for you to delete by hand. The surface records them in `hostFiles`, outside
+  `paths`. Plugin code imports `apps/web/src/host/<id>/…` as **`@/host/<id>/…`** (its own id
+  only — `tests/config/plugins.test.ts`), through the existing `@/*` alias.
 - **`schema.tables`** drives the "generate a migration" step, the isolation-test check and the
   cross-plugin collision check below — so a table missing from it is a table nothing verifies;
   `schema.rlsExcluded` is the plugin's half of `RLS_EXCLUDED_TABLES`, with a reason, for a table
@@ -164,12 +187,14 @@ Field notes, in the order they bite:
 ## How `add` classifies each file of the source repo
 
 The rule it enforces: **a plugin writes only inside its own four roots — plus the skills it
-declares** — so an install stays reversible by deleting a directory.
+declares, its declared hooks in `.claude/settings.json` and the host files it seeds** — so an
+install stays reversible by deleting a directory (the seeded host files excepted: they are yours).
 
 | Role | Which paths | What happens |
 |---|---|---|
 | `copy` | `apps/web/src/plugins/<id>/`, `packages/shared/src/plugins/<id>/`, `apps/cli/src/plugins/<id>/`, `docs/plugins/<id>/` | copied and translated through the same `applyReplacements()` the rename used |
 | `copy` (skill) | `skills/<dir>/**` for a `<dir>` listed in `"skills"` | copied to `.claude/skills/<dir>/**`, translated like code; an UNdeclared `skills/<dir>` is `refused` |
+| `seed` | a `"hostFiles"` entry's `from` (a file, or everything beneath a directory) | copied to its `path` only where absent, translated; then the developer's — `upgrade` and `remove` never touch it |
 | `note` | `docs/upgrades/*` | copied to `docs/plugins/<id>/upgrades/` — the release chain `plugin upgrade` walks |
 | `fragment` | `migrations/**` | **never copied**; printed as a `pnpm db:generate --custom` step |
 | `meta` | `rocketflare-plugin.json`, `README.md`, `CHANGELOG.md`, `LICENSE`, `LICENSE.md`, `SECURITY.md` | read, not copied |
@@ -206,6 +231,9 @@ where the complaint is AT a place in a file, never fabricated. Per installed plu
   triggers), and no directory in the plugin's namespace (`<id>` or `<id>-*`) exists that it does
   NOT declare — `remove` would leave that one behind. When two installed ids share a prefix
   (`example`, `example-feature`), a directory belongs to the longer one;
+- **its Claude Code hooks, both ways**: each declared hook is in `.claude/settings.json` exactly
+  as declared, no hook there runs one of its skills without being declared, every script a hook
+  runs exists, and the file parses;
 - when it declares tables, **some migration tag names `plugin-<id>`** — otherwise the tables were
   never generated, which is the most common thing to have skipped;
 - **every declared dependency is really in the host `package.json`** — `plugin add --apply` runs

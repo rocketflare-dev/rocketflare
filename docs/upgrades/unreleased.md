@@ -49,6 +49,9 @@ Plugins can serve whole public hosts through a new `publicSites` seam, with a st
 - `searchKnowledge(ctx, { query, limit, sources?, platformSources?, signal? })` on `@/plugins/api` returns `{ hits, semantic }` for any context carrying a scope, falling back to keyword search without an embedder. `fuseByRank`, `anyTermTsquery` and `candidatePoolSize` are exported from `@/plugins/api`.
 - `searchChunks` takes optional `sources` and `platformSources`. Platform chunks are ranked against a query vector from the platform embedder; when the tenant's model differs, the query is embedded once per model and each corpus gets its own dense leg before RRF. Without the new parameters, results are unchanged.
 - `ServerPlugin.knowledgeSources?(scope)` names platform sources that the kit's `search_knowledge` tool, used by chat and agents, also searches. Platform passages are marked `platform: true`. Document lists, the viewer, `/search`, `get_document` and `list_documents` stay tenant-only.
+- A plugin manifest may declare `"claudeHooks": { "<Event>": [{ "command", "matcher"?, "timeout"? }] }`. `pnpm plugin add` merges them into `.claude/settings.json` (creating it if absent), `upgrade` replaces them and `remove` takes out exactly them. A command may only be `node "$CLAUDE_PROJECT_DIR/.claude/skills/<dir>/<script>"` over a script in one of the plugin's declared skills, and the plugin's entries are found again by that skill directory. `plugin check` fails a declared hook missing from the file, an undeclared one in the plugin's namespace, and a missing script.
+- A plugin manifest may declare `"hostFiles": [{ "path", "from" }]`: a file or directory seeded into `docs/<id>/`, `apps/web/public/<id>/` or `apps/web/src/host/<id>/` only where absent. `upgrade` never touches them (it seeds only an entry the release adds), `remove` leaves them and lists them. The surface records them in a new `hostFiles` field, outside `paths`.
+- A plugin may import `@/host/<its own id>/…`; another id's host directory fails `tests/config/plugins.test.ts`.
 
 ## How to apply
 
@@ -70,6 +73,7 @@ Plugins can serve whole public hosts through a new `publicSites` seam, with a st
 16. Port `apps/web/src/api/services/ai/platform-documents.ts`, `resolvePlatformEmbeddings` in `resolve.ts`, and the new `searchChunks` / `searchKnowledgeChunks` / `fuseDenseLegs` in `retrieval.ts`. Port the `tenantId` parameters added to `grantDocumentGroups`, `indexOrEnqueue` and `upsertExternal` in `ingest.ts`, and `documentTenantId`. Code of your own reading `DocumentRow.tenantId` now gets `string | null`; use `documentTenantId(row)` where a tenant row is expected.
 17. Port `kind` on `JobCtx` / `CronCtx` in `apps/web/src/plugins/api/jobs.ts`, the platform functions and `searchKnowledge` in `knowledge.ts`, the re-exports in `ai.ts` and `index.ts`, `knowledgeSources` in `apps/web/src/plugins/types.ts`, and `pluginKnowledgeSources` plus the `platformSources` option in `apps/web/src/api/services/agents/tools/`.
 18. Update `rls-coverage.test.ts` to pass the platform read policies (`tests/api/rls-coverage.test.ts`).
+19. Port the `claudeHooks` and `hostFiles` handling in `scripts/plugin.mjs` and `scripts/lib/plugin-lib.mjs` (with `plugin-lib.d.mts` and the `hostFiles` field in `upgrade-lib.d.mts`), the `@/host/<id>` rule in `apps/web/tests/helpers/plugins.ts`, and `apps/web/tests/config/plugin-host-seams.test.ts`.
 
 ## Conflicts to expect
 
@@ -86,3 +90,4 @@ Plugins can serve whole public hosts through a new `publicSites` seam, with a st
 4. With no plugin declaring `publicSites`, `git diff apps/web/wrangler.toml apps/web/wrangler.staging.toml` shows no change to `run_worker_first` or `routes`.
 5. With a plugin serving `www.localhost` under `wrangler dev`, `curl -i http://www.localhost:3001/about` answers from the plugin with the public `Content-Security-Policy`, and `curl -i http://www.localhost:3001/api/me` answers 404.
 6. `curl -i http://localhost:3001/api/health` still answers from the app.
+7. `pnpm web test:config` passes, `tests/config/plugin-host-seams.test.ts` included.
