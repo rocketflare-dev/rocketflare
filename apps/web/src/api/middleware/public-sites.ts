@@ -119,9 +119,15 @@ function resolveClaims(sites: readonly Site[], c: AppContext, config: AppConfig)
   return { hosts, dormant }
 }
 
-function declaredCsp(site: Site, c: AppContext, host: string, config: AppConfig): PublicSiteCsp {
+function declaredCsp(
+  site: Site,
+  c: AppContext,
+  host: string,
+  config: AppConfig,
+  pathname: string
+): PublicSiteCsp {
   try {
-    return site.declaration.csp?.(host, config) ?? {}
+    return site.declaration.csp?.(host, config, pathname) ?? {}
   } catch (err) {
     c.get('logger').error({ err, plugin: site.id, host }, 'public site csp() threw')
     return {}
@@ -381,7 +387,7 @@ export function publicSitesMiddleware(
       return next()
     }
 
-    const declared = declaredCsp(site, c, host, config)
+    const declared = declaredCsp(site, c, host, config, url.pathname)
     c.set('publicSiteCsp', publicSiteCsp(url.origin, declared))
 
     // Plain text, not the API envelope: this host has no API, and a visitor's browser reads it.

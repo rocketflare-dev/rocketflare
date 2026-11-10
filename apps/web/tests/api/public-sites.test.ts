@@ -51,6 +51,7 @@ vi.mock('@/plugins/server', async importOriginal => {
     await next()
   })
   router.get('/about', c => c.html('<h1>About</h1>'))
+  router.get('/bare/page', c => c.html('<h1>Bare</h1>'))
   router.get('/cacheable-header', c =>
     c.text('browser-cached', 200, { 'Cache-Control': 'max-age=60' })
   )
@@ -89,8 +90,11 @@ vi.mock('@/plugins/server', async importOriginal => {
     publicSites: {
       hosts: () => state.hosts,
       router,
-      csp: (host: string) =>
-        host === 'www.example.test' ? { scriptSrc: ['https://plausible.io'] } : {},
+      // A path can carry less than the rest of the host: `/bare/*` gets no declared source.
+      csp: (host: string, _config: unknown, pathname: string) =>
+        host === 'www.example.test' && !pathname.startsWith('/bare/')
+          ? { scriptSrc: ['https://plausible.io'] }
+          : {},
       forms: [
         { path: '/forms/contact', bodyLimitBytes: 16 },
         { path: '/forms/limited', rateLimit: { max: 1, windowSeconds: 60 } },
@@ -167,6 +171,14 @@ describe('a matching host', () => {
     expect(await res.text()).toBe('<h1>About</h1>')
     expect(res.headers.get('content-security-policy')).toBe(STRICT_WITH_SCRIPT)
     expect(res.headers.get('x-content-type-options')).toBe('nosniff')
+  })
+
+  it("gives the declared CSP the request's pathname", async () => {
+    const res = await request(`${SITE}/bare/page`)
+    expect(res.status).toBe(200)
+    const csp = res.headers.get('content-security-policy') ?? ''
+    expect(csp).toContain("script-src 'none';")
+    expect(csp).not.toContain('https://plausible.io')
   })
 
   it('never reaches core on /api/*, /auth/* or /ws', async () => {
@@ -452,6 +464,13 @@ describe('a page that adds to the CSP for itself', () => {
   it('pins a form-action path to the request origin', () => {
     const csp = publicSiteCsp('https://www.example.test', { formAction: ['/submit'] })
     expect(csp).toContain('form-action https://www.example.test/submit;')
+  })
+
+  it('pins a connect-src path to the request origin', () => {
+    const csp = publicSiteCsp('https://www.example.test', {
+      connectSrc: ['/forms/submit', 'https://api.example'],
+    })
+    expect(csp).toContain('connect-src https://www.example.test/forms/submit https://api.example;')
   })
 })
 

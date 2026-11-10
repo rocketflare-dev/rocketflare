@@ -100,7 +100,9 @@ the CLI command `<id>`; skills `<id>` / `<id>-<what>`; AG-UI CUSTOM events `<id>
 - **`publicSites` answers whole hosts** for anonymous readers: its router takes everything on a
   host from `hosts(config)`, so the app's `/api/*` and `/auth/*` do not exist there. Return `null`
   from `hosts` on bad config (dormant, plain 503). `cache.generation` and `csp` run on cache hits,
-  so neither touches Postgres. Find the owner with `resolveOwnerTenant(db, config, slug)`, and branch
+  so neither touches Postgres; `csp` also gets the pathname, for a path that must carry less than
+  the rest of the host (a page's own `PUBLIC_SITE_PAGE_CSP_HEADER` can only add). A `connectSrc` or
+  `formAction` entry that is a path is pinned to the request's origin. Find the owner with `resolveOwnerTenant(db, config, slug)`, and branch
   on `TENANCY_MODE` only there and in the config parser. Declare the hosts var in the manifest
   (`"publicSites": { "hostsVar": "SITES_HOSTS" }`). Site scripts and styles load from
   `/site-assets/` only: the admin bundle in `/assets/` is outside the public CSP.

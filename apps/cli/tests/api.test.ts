@@ -113,6 +113,16 @@ describe('createApiClient', () => {
     expect(res.raw).toEqual({ at: '2026-01-02T03:04:05.000Z' })
     expect(res.data.at).toBeInstanceOf(Date)
   })
+
+  it.each(['PUT', 'PATCH'] as const)('sends %s with a JSON body', async method => {
+    const { fetch, calls } = mockFetch({ '/api/thing': () => jsonResponse({ ok: true }) })
+    const client = createApiClient({ serverUrl: SERVER, fetch })
+    const res = await client.request(method, '/api/thing', { body: { name: 'a' } })
+    expect(res.data).toEqual({ ok: true })
+    expect(calls[0].init.method).toBe(method)
+    expect(calls[0].init.body).toBe('{"name":"a"}')
+    expect(new Headers(calls[0].init.headers).get('content-type')).toBe('application/json')
+  })
 })
 
 describe('raw transfers', () => {

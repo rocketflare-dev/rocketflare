@@ -17,6 +17,7 @@ import {
   extractJsonObject,
   type FetchLike,
   forcedToolInstruction,
+  parseToolCallMarkup,
   reconcileThinking,
   recoverForcedToolCall,
   ToolCallAssembler,
@@ -583,6 +584,79 @@ describe('Workers AI chat client', () => {
       .catch(e => e)
     expect((err as AiError).code).toBe('unavailable')
     expect((err as AiError).message).toMatch(/cancelled/)
+  })
+
+  it("reads GLM's own tool-call markup when Workers AI passes it through as the arguments", async () => {
+    const ai = new RecordingAi()
+    // Verbatim shape from a failed translation on @cf/zai-org/glm-4.7-flash, tool_choice forced:
+    // the call is there, but its arguments are the model's chat-template markup, not JSON.
+    const markup =
+      '<tool_call>submit_translation<arg_key>translations</arg_key><arg_value>["Conçu pour les ports", "HELLO"]</arg_value><arg_key>note</arg_key><arg_value>[not json</arg_value></tool_call>'
+    ai.respond = () => ({
+      choices: [
+        {
+          message: {
+            content: null,
+            tool_calls: [
+              {
+                id: 'c1',
+                type: 'function',
+                function: { name: 'submit_translation', arguments: markup },
+              },
+            ],
+          },
+          finish_reason: 'tool_calls',
+        },
+      ],
+    })
+    const client = createChatClient({ provider: 'workers_ai', ai })
+    const result = await client.complete({
+      model: '@cf/zai-org/glm-4.7-flash',
+      messages,
+      maxTokens: 64,
+      tools: [tool],
+      toolChoice: { type: 'tool', name: 'submit_translation' },
+    })
+    expect(result.content).toEqual([
+      {
+        type: 'tool_use',
+        id: 'c1',
+        name: 'submit_translation',
+        input: { translations: ['Conçu pour les ports', 'HELLO'], note: '[not json' },
+      },
+    ])
+    // The same markup written as the reply's text, with no call parsed out of it.
+    ai.respond = () => ({ choices: [{ message: { content: markup }, finish_reason: 'stop' }] })
+    const prose = await client.complete({
+      model: '@cf/zai-org/glm-4.7-flash',
+      messages,
+      maxTokens: 64,
+      tools: [tool],
+      toolChoice: { type: 'tool', name: 'submit_translation' },
+    })
+    expect(prose.content[0]).toMatchObject({
+      type: 'tool_use',
+      input: { translations: ['Conçu pour les ports', 'HELLO'] },
+    })
+    expect(parseToolCallMarkup('no markup here')).toBeUndefined()
+    // Arguments that are neither JSON nor markup stay `{ _raw }`, which no schema accepts.
+    ai.respond = () => ({
+      choices: [
+        {
+          message: {
+            tool_calls: [{ id: 'c2', function: { name: 'submit_translation', arguments: 'oops' } }],
+          },
+        },
+      ],
+    })
+    const bad = await client.complete({
+      model: '@cf/zai-org/glm-4.7-flash',
+      messages,
+      maxTokens: 64,
+      tools: [tool],
+      toolChoice: { type: 'tool', name: 'submit_translation' },
+    })
+    expect(bad.content[0]).toMatchObject({ input: { _raw: 'oops' } })
   })
 
   it('completes over env.AI.run with OpenAI-shaped messages/tools and no tool_choice; a forced tool is a system instruction', async () => {

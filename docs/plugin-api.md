@@ -156,6 +156,8 @@ The server surface: the context family, and the types a plugin must be able to n
     R2 (the `FILES` bucket), or a 503 `storage_not_configured` — loud, because a silently absent bucket loses bytes. The same service `RequestCtx.storage()` returns. Write under…
   - `startAgentRun(input: StartAgentRunInput): Promise<StartedAgentRun>`
     Start an agent run for one organisation and return its id — `POST /api/agents/runs` from a job, through the same `enqueueRun`: input validation (400), the exclusive slot, the…
+- `async function chatModelAvailable( ctx: Pick<PluginContext, 'db' \| 'config' \| 'env'>, tenantId: string, promptKey: string ): Promise<boolean>`
+  Would a chat model resolve for this prompt key and tenant? Answers the same question `resolveChat` will, without building a client, so a plugin's route or UI can say "no model" up…
 - `function createRouter(): Hono<AppEnv>`
 - `function createStepRealtimeFor(env: HubEnv): StepRealtime`
 - `function cronCtx(ctx: TaskContext): CronCtx`
@@ -1190,6 +1192,7 @@ nothing in the comparison that can throw.
 @/plugins/api :: member :: BackgroundMethods.features :: features(tenantId: string): Promise<readonly string[]>
 @/plugins/api :: member :: BackgroundMethods.storage :: storage(): StorageService
 @/plugins/api :: member :: BackgroundMethods.startAgentRun :: startAgentRun(input: StartAgentRunInput): Promise<StartedAgentRun>
+@/plugins/api :: function :: chatModelAvailable :: async function chatModelAvailable( ctx: Pick<PluginContext, 'db' | 'config' | 'env'>, tenantId: string, promptKey: string ): Promise<boolean>
 @/plugins/api :: function :: createRouter :: function createRouter(): Hono<AppEnv>
 @/plugins/api :: function :: createStepRealtimeFor :: function createStepRealtimeFor(env: HubEnv): StepRealtime
 @/plugins/api :: function :: cronCtx :: function cronCtx(ctx: TaskContext): CronCtx
