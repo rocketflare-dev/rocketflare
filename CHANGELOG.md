@@ -6,6 +6,11 @@ copy of the kit forward without recreating anything its owner deleted.
 
 If you are running a copy: `pnpm kit:upgrade` tells you which of these you are missing.
 
+## 0.31.0 — 2026-11-10
+
+Plugins can ship tenant-less platform knowledge that is always embedded, stream a scoped chat, add header items and palette registries, install Claude Code hooks and seed developer-owned host files.
+[Porting note](docs/upgrades/0.31.0.md).
+
 ## 0.30.0 — 2026-11-10
 
 Plugins can serve whole public hosts through a new `publicSites` seam, with a strict per-site CSP, multi-host provisioning, a `workspace` UI route tier and a tenant resolver; an app with no such plugin sees no routing change.
