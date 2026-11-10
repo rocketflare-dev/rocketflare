@@ -28,6 +28,7 @@ import type { PaginationQuery } from '@rocketflare/shared/pagination'
 import type { Actions, Subjects } from '@rocketflare/shared/permissions'
 import type { MembershipRole } from '@rocketflare/shared/tenants'
 import type { AgentToolContext } from '@/api/services/agents/tools'
+import { requesterUrlsFromTexts } from '@/api/services/agents/tools/requester-urls'
 import { createR2Storage } from '@/api/services/storage'
 import {
   BadRequestError,
@@ -490,6 +491,11 @@ export interface ToolCtxOptions extends BaseOptions {
   can?: AgentToolContext['can']
   /** The CALLER's budget for one document window — an agent run's is far larger than a chat turn's. */
   maxDocumentChars?: number
+  /**
+   * The URLs the requester wrote (`ToolCtx.requesterUrls`), as strings; each is normalised the
+   * way the kit normalises them. Omitted = none.
+   */
+  requesterUrls?: readonly string[]
 }
 
 /**
@@ -513,6 +519,9 @@ export function makeToolCtx(options: ToolCtxOptions): ToolCtx {
     },
     ...(options.can && { can: options.can }),
     ...(options.maxDocumentChars !== undefined && { maxDocumentChars: options.maxDocumentChars }),
+    ...(options.requesterUrls && {
+      requesterUrls: requesterUrlsFromTexts(options.requesterUrls),
+    }),
   }
   return toolCtx(agentToolContext)
 }

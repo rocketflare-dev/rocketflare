@@ -202,6 +202,11 @@ export interface EnqueueRunInput {
   idempotencyKey?: string
   /** The plugin event that started the run (D42), stored as `trigger_event` / `trigger_event_id`. */
   trigger?: { event: string; eventId: string }
+  /**
+   * The person named by `userId` typed `input` (the API routes only) — `input_from_requester`, which
+   * makes the URLs in it `ToolCtx.requesterUrls`. Never set from a plugin or an event.
+   */
+  inputFromRequester?: boolean
 }
 
 export interface EnqueueRunResult {
@@ -348,6 +353,7 @@ export async function enqueueRun(
         concurrencyKey,
         input: parsed.data,
         requestedByUserId: input.userId,
+        inputFromRequester: input.inputFromRequester === true && input.userId !== null,
         ...(input.trigger && {
           triggerEvent: input.trigger.event,
           triggerEventId: input.trigger.eventId,
@@ -437,6 +443,8 @@ export interface EnqueueBatchInput {
   inputs: unknown[]
   userId: string | null
   realtime?: Realtime
+  /** As `EnqueueRunInput.inputFromRequester`. */
+  inputFromRequester?: boolean
 }
 
 /** One input's fate — `row` whenever a row exists, `error` whenever it did not start. */
@@ -507,6 +515,7 @@ export async function enqueueRunBatch(
         status: 'queued' as const,
         input: v.data,
         requestedByUserId: input.userId,
+        inputFromRequester: input.inputFromRequester === true && input.userId !== null,
         batchId,
       }))
     )

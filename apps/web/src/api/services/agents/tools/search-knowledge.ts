@@ -149,6 +149,12 @@ export interface AgentToolContext {
    * because there a tool result shares one context window with the whole thread.
    */
   maxDocumentChars?: number
+  /**
+   * URLs the requester wrote (`./requester-urls.ts`): the chat person's own messages, or a run's
+   * input when a person submitted it. Absent = none — a tool that fetches the web then reads only
+   * URLs its own search returned.
+   */
+  requesterUrls?: ReadonlySet<string>
 }
 
 export interface SearchKnowledgeToolOptions {

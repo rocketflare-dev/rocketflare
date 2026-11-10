@@ -1,6 +1,7 @@
 /**
  * `/select-tenant` (multi mode only): pick which organisation to work in, or create a new one
- * (`createTenantRequestSchema`; slug derived with the shared `slugify`). Disabled in single mode.
+ * (`createTenantRequestSchema`; slug derived with the shared `slugify`) when the session's
+ * `canCreateTenant` allows it. Disabled in single mode.
  */
 
 import { BuildingOffice2Icon, ChevronRightIcon, PlusIcon } from '@heroicons/react/24/outline'
@@ -20,9 +21,9 @@ import { useCreateTenant } from '@/ui/hooks/useTenant'
 export default function SelectTenant() {
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
-  const { user, tenant, tenants, tenancyMode, selectTenant, logout } = useAuth()
+  const { user, tenant, tenants, tenancyMode, canCreateTenant, selectTenant, logout } = useAuth()
   const [switching, setSwitching] = useState<string | null>(null)
-  const [creating, setCreating] = useState(searchParams.get('create') === '1')
+  const [creating, setCreating] = useState(canCreateTenant && searchParams.get('create') === '1')
 
   if (tenancyMode === 'single') return <Navigate to="/" replace />
 
@@ -42,7 +43,7 @@ export default function SelectTenant() {
       width="lg"
       footer={user ? <SignedInAs email={user.email} onSignOut={() => logout()} /> : null}
     >
-      {creating ? (
+      {creating && canCreateTenant ? (
         <CreateOrgForm onCancel={tenants.length > 0 ? () => setCreating(false) : undefined} />
       ) : (
         <>
@@ -53,7 +54,11 @@ export default function SelectTenant() {
             <EmptyState
               icon={BuildingOffice2Icon}
               message="You don't belong to an organisation yet"
-              description="Create one to get started."
+              description={
+                canCreateTenant
+                  ? 'Create one to get started.'
+                  : 'Ask an administrator to add you to one.'
+              }
             />
           ) : (
             <ul className="space-y-2">
@@ -86,14 +91,16 @@ export default function SelectTenant() {
             </ul>
           )}
 
-          <button
-            type="button"
-            className="btn btn-outline btn-sm w-full mt-5 gap-2"
-            onClick={() => setCreating(true)}
-          >
-            <PlusIcon className="w-4 h-4" />
-            Create organisation
-          </button>
+          {canCreateTenant && (
+            <button
+              type="button"
+              className="btn btn-outline btn-sm w-full mt-5 gap-2"
+              onClick={() => setCreating(true)}
+            >
+              <PlusIcon className="w-4 h-4" />
+              Create organisation
+            </button>
+          )}
         </>
       )}
     </AuthCard>

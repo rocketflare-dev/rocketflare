@@ -187,3 +187,42 @@ describe('the ceiling on owned organisations', () => {
     expect((await create(cookie, env)).status).toBe(201)
   })
 })
+
+describe('the session says whether creating an organisation is allowed', () => {
+  const canCreate = async (
+    cookie: Record<string, string>,
+    env: ReturnType<typeof createTestEnv>
+  ) => {
+    const res = await request('/auth/session', { headers: cookie }, { env })
+    expect(res.status).toBe(200)
+    return (await json<{ canCreateTenant: boolean }>(res)).canCreateTenant
+  }
+
+  it('true for a member, false under IdP-managed tenancy', async () => {
+    const { user, tenant } = await createTestTenantWithUser(db, 'owner')
+    const cookie = sessionCookieHeader(await createTestSession(db, user.id, tenant.id))
+    expect(await canCreate(cookie, createTestEnv())).toBe(true)
+    expect(await canCreate(cookie, managedEnv())).toBe(false)
+  })
+
+  it('false while an access request is pending or rejected, true for a global admin', async () => {
+    for (const status of ['pending', 'rejected'] as const) {
+      const user = await createTestUser(db)
+      await db.insert(accessRequests).values({ email: user.email, userId: user.id, status })
+      const cookie = sessionCookieHeader(await createTestSession(db, user.id))
+      expect(await canCreate(cookie, createTestEnv({ SIGNUP_MODE: 'approval' }))).toBe(false)
+    }
+    const admin = await createTestGlobalAdmin(db)
+    await db
+      .insert(accessRequests)
+      .values({ email: admin.email, userId: admin.id, status: 'rejected' })
+    const adminCookie = sessionCookieHeader(await createTestSession(db, admin.id))
+    expect(await canCreate(adminCookie, createTestEnv())).toBe(true)
+  })
+
+  it('false in single-tenant mode', async () => {
+    const { user, tenant } = await createTestTenantWithUser(db, 'owner')
+    const cookie = sessionCookieHeader(await createTestSession(db, user.id, tenant.id))
+    expect(await canCreate(cookie, createTestEnv({ TENANCY_MODE: 'single' }))).toBe(false)
+  })
+})

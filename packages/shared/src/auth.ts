@@ -47,6 +47,12 @@ export const sessionResponseSchema = z.object({
   accessRequest: sessionAccessRequestSchema.nullable(),
   tenancyMode: tenancyModeSchema,
   signupMode: signupModeSchema,
+  /**
+   * Whether `POST /api/tenants` would let this person create an organisation: false in single mode,
+   * under IdP-managed tenancy, and while their access request is pending or rejected. The UI hides
+   * "Create organisation" when false; the route enforces the same rule.
+   */
+  canCreateTenant: z.boolean(),
   /** `RELEASE_VERSION` — lets the UI prompt for a reload after a deploy. */
   version: z.string(),
 })

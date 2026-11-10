@@ -6,15 +6,12 @@
  * which organisations exist, so self-service creation answers 409 `idp_managed`. A person's owned
  * organisations stop at `MAX_OWNED_TENANTS_PER_USER`.
  */
-import { ERROR_CODES } from '@rocketflare/shared/errors'
 import { createTenantRequestSchema } from '@rocketflare/shared/tenants'
-import { isIdpManaged } from '../../config'
 import { updateSelectedTenant } from '../auth/sessions'
 import { isApiKeySession } from '../middleware/auth'
 import { operationLock } from '../middleware/rate-limit'
 import { listTenantSummaries } from '../services/auth'
-import { toTenantDto } from '../services/tenants'
-import { ConflictError, ForbiddenError } from '../utils/core/errors'
+import { tenantCreationRefusal, toTenantDto } from '../services/tenants'
 import { createTenantForUser } from '../utils/db/tenant-helpers'
 import { requireMultiTenant, withAuth } from '../utils/routes/route-helpers'
 import { createRouter } from '../utils/routes/router'
@@ -30,22 +27,8 @@ tenantsRouter.get('/', async c => {
 tenantsRouter.post('/', validate('json', createTenantRequestSchema), async c => {
   const { db, cfg, user, auth } = withAuth(c)
   requireMultiTenant(cfg)
-  if (isIdpManaged(cfg)) {
-    throw new ConflictError(
-      'Organisations are managed by your identity provider.',
-      ERROR_CODES.idpManaged
-    )
-  }
-  if (
-    !auth.isGlobalAdmin &&
-    auth.tenantId === null &&
-    (auth.accessRequestStatus === 'pending' || auth.accessRequestStatus === 'rejected')
-  ) {
-    throw new ForbiddenError(
-      'Your access request has not been approved',
-      ERROR_CODES.pendingApproval
-    )
-  }
+  const refusal = tenantCreationRefusal(cfg, auth)
+  if (refusal) throw refusal
   const { name, slug } = c.req.valid('json')
   const tenant = await operationLock(c.env.RATE_LIMIT_KV, `tenant:create:${user.id}`, () =>
     createTenantForUser(db, {

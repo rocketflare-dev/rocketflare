@@ -1,0 +1,1 @@
+ALTER TABLE "agent_runs" ADD COLUMN "input_from_requester" boolean DEFAULT false NOT NULL;
