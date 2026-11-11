@@ -574,6 +574,16 @@ is made public.
 
 A vulnerability in the starter kit this app was built from (Rocketflare) can also be reported
 upstream: https://github.com/rocketflare-dev/rocketflare/security/advisories/new
+
+## Taking fixes from the kit
+
+The kit's security fixes arrive in its releases. Port them into this app with \`/rf-upgrade\`
+(or \`pnpm kit:upgrade\`).
+
+## Auditing this app
+
+\`/rf-security\` reviews this codebase against \`docs/THREAT-MODEL.md\`; how to run it, what it
+costs and how to read it are in \`docs/SECURITY-AUDIT.md\`.
 `
 }
 
