@@ -13,7 +13,7 @@ manual: false
 
 ## What changed
 
-Suspended organisations run no agents, plugins hear about suspensions, invitations need their issuer's current authority, and the owned-organisation ceiling covers promotions, invitations and a per-day creation limit; API keys act only within their organisation, and AI config saves decide on the row they overwrite.
+Suspended organisations run no agents, invitation authority and the ownership ceiling hold on every path, API keys stay inside their organisation, AI config saves lock their row, and ctx.decide's chat fallback is metered.
 
 - Suspension: `enqueueRun` / `enqueueRunBatch` refuse a non-active tenant with 403 `tenant_suspended` (route, plugin and event trigger alike); `executeRun` settles a run whose tenant is suspended `cancelled` before any model call; `isCancelRequested` reads the tenant's status, so an executing run stops at its next poll; `setTenantSuspended` cancels the tenant's `queued` and `awaiting_input` runs. See `docs/CONCEPTS.md` §1.
 - Plugin hook: `ServerPlugin.hooks.onTenantStatusChanged(db, tenantId, status, env)` runs for every installed plugin after a suspend or reactivate, best-effort (`runTenantStatusChangedHooks` in `utils/db/tenant-helpers.ts`). See `docs/CONCEPTS.md` §16.
@@ -21,6 +21,7 @@ Suspended organisations run no agents, plugins hear about suspensions, invitatio
 - Ownership ceiling: `MAX_OWNED_TENANTS_PER_USER` is checked (`assertMayOwnAnother`, under the user-row lock) on a promotion to owner and on accepting an owner invitation, and also bounds creations per person per UTC day through the new `tenant_creation_counters` table, which has no foreign key to `tenants`. See `docs/CONCEPTS.md` §1.
 - API keys: a key acts only within its organisation plus its creator's own profile — `GET /api/tenants` lists the key's organisation alone, and `POST /api/tenants`, `GET /api/invitations/pending` and `POST /api/access-requests` answer 403 `insufficient_scope` to a key (`withAccountAuth`). See `docs/CONCEPTS.md` §2.
 - AI config saves: `POST /api/ai/config` reads the row it overwrites `FOR UPDATE` inside its transaction and decides whether the stored key stays on that row, so a concurrent save never leaves a key beside an endpoint it was not saved with. See `docs/CONCEPTS.md` §9.
+- Decide metering: `ctx.decide`'s chat fallback runs through the run meter like `ctx.chat.client` — `assertPriced` and `check()` before each model call, one `ai_usage` row as each returns (a decide whose answer fails validation twice leaves both), priced on who pays for the `agent-decide` model; `createDecide` records once per ask only for TypeSafe. See `docs/CONCEPTS.md` §9.
 
 ## How to apply
 
@@ -41,10 +42,16 @@ Suspended organisations run no agents, plugins hear about suspensions, invitatio
 15. Use `withAccountAuth` in place of `withAuth` in `POST /api/tenants` (`routes/tenants.ts`, then drop its `isApiKeySession` guard around `updateSelectedTenant`), `GET /api/invitations/pending` (`routes/invitations.ts`) and `POST /api/access-requests` (`routes/access-requests.ts`); in `GET /api/tenants`, return only the summary whose `id` is `auth.tenantId` when `isApiKeySession(auth)`. Give any tenant-free route of an app's own that reads or changes the person's other organisations the same treatment.
 16. In `POST /api/ai/config` (`apps/web/src/api/routes/ai-config.ts`), move the read of the existing `(tenant, scope, label)` row inside the transaction as `tx.select().from(aiConfigs).where(…).for('update')`; when there is none, run `validateUpsert(body, undefined)` and `insert … onConflictDoNothing({ target: [tenantId, scope, label] }).returning()`, and when that returns no row (a concurrent first save) read the row `FOR UPDATE` again; for an existing row run `validateUpsert(body, existing)` and `update … where id` with `apiKeyEnc` set to the new key, left alone when `keepsStoredKey(existing, body)`, else `null`.
 17. Nothing to do in the driver seam for `FOR UPDATE`: `tests/driver/driver.test.ts` gains a case proving a row lock taken in `db.transaction` holds under both drivers.
+18. In `apps/web/src/api/services/agents/budget.ts`, give `RunMeter.assertPriced` a third optional `billedToPlatform` argument (default: the meter's own) and `meterChatClient` a third `options: { feature?: string; billedToPlatform?: boolean }` argument, passing `billedToPlatform` to `assertPriced` and `feature` to every `meter.record` call.
+19. In `resolveDecisions` (`apps/web/src/api/services/ai/resolve.ts`), change `wrapChat` to `(client, chat: { provider, billedToPlatform }) => ChatClient` and call it with the `agent-decide` chat resolution's `provider` and `billedToPlatform`.
+20. In `executeRun` (`apps/web/src/api/services/agents/runtime.ts`), make the `wrapChat` passed to `resolveDecisions` return `meterChatClient(traceChatClient(…), meter, { feature, billedToPlatform: chat.billedToPlatform })` with `feature` = `agent:<agent key>:decide`.
+21. In `createDecide` (`apps/web/src/api/services/agents/decisions.ts`), skip the `deps.meter.record(…)` after the ask when `method === 'llm_self_report'`, so a fallback call is not counted twice.
+22. An app's own code that calls `resolveDecisions` with `wrapChat` reads the second argument as an object now, not a provider.
 
 ## Conflicts to expect
 
 - `apps/web/src/api/services/admin.ts` → `setTenantSuspended` takes one input object → update an app's own callers to the new shape.
+- `apps/web/src/api/services/ai/resolve.ts` → `wrapChat`'s second argument is `{ provider, billedToPlatform }` → update an app's own `wrapChat` callbacks.
 
 ## Verify
 
@@ -56,3 +63,4 @@ Suspended organisations run no agents, plugins hear about suspensions, invitatio
 6. `pnpm db:migrate` applies `0026_kit-tenant-creation-counters.sql`.
 7. `tests/api/security/api-key-account-scope.test.ts` passes.
 8. `tests/api/security/ai-config-concurrent-saves.test.ts` passes.
+9. `tests/api/security/agent-run-budget-accounting.test.ts` passes, including "ctx.decide's chat fallback under the run meter".

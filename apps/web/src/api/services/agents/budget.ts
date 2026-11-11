@@ -119,8 +119,11 @@ export interface RunMeter {
   check(): Promise<void>
   /** One `ai_usage` row with the run id, awaited; a failed write is logged, never fatal. */
   record(call: MeteredCall): Promise<void>
-  /** Throws when a cost cap applies, the deployment pays, and this model has no price. */
-  assertPriced(provider: AiProvider, model: string): void
+  /**
+   * Throws when a cost cap applies, the deployment pays, and this model has no price. Who pays is
+   * the run's chat model unless `billedToPlatform` says otherwise (`ctx.decide`'s fallback model).
+   */
+  assertPriced(provider: AiProvider, model: string, billedToPlatform?: boolean): void
   /** What the run has spent, every attempt included. */
   spent(): RunSpend
 }
@@ -191,33 +194,51 @@ export async function createRunMeter(deps: RunMeterDeps): Promise<RunMeter> {
         deps.logger.warn({ err, runId }, 'agent-run: usage write failed')
       }
     },
-    assertPriced(provider, model) {
+    assertPriced(provider, model, billedToPlatform = deps.billedToPlatform) {
       const cap = budget.maxCostMicrocents ?? budget.tenantDailyMicrocents
-      if (!deps.billedToPlatform || cap === undefined || priceFor(provider, model)) return
+      if (!billedToPlatform || cap === undefined || priceFor(provider, model)) return
       throw new AgentBudgetExceededError('unpriced_model', 0, cap)
     },
     spent: () => ({ ...spend }),
   }
 }
 
+export interface MeterChatOptions {
+  /** The ledger's `feature`; default `agent:<key>`. */
+  feature?: string
+  /** Who pays for THIS client's model, when it is not the run's chat model. */
+  billedToPlatform?: boolean
+}
+
 /**
- * The run's chat client, metered: `check()` before every `complete`/`stream`, `record()` after it.
- * This is why an agent no longer writes its own ledger rows — every call through `ctx.chat.client`
- * is one row, turn by turn, including the turns of a tool loop that is later cancelled.
+ * A chat client of the run, metered: `check()` before every `complete`/`stream`, `record()` as
+ * each returns. This is why an agent no longer writes its own ledger rows — every call through
+ * `ctx.chat.client` (and through `ctx.decide`'s chat fallback) is one row, turn by turn, including
+ * the turns of a tool loop that is later cancelled and an answer that is then thrown away.
  */
-export function meterChatClient(client: ChatClient, meter: RunMeter): ChatClient {
+export function meterChatClient(
+  client: ChatClient,
+  meter: RunMeter,
+  options: MeterChatOptions = {}
+): ChatClient {
+  const { feature, billedToPlatform } = options
   return {
     provider: client.provider,
     countTokens: client.countTokens?.bind(client),
     async complete(params) {
-      meter.assertPriced(client.provider, params.model)
+      meter.assertPriced(client.provider, params.model, billedToPlatform)
       await meter.check()
       const result = await client.complete(params)
-      await meter.record({ provider: client.provider, model: result.model, usage: result.usage })
+      await meter.record({
+        provider: client.provider,
+        model: result.model,
+        usage: result.usage,
+        feature,
+      })
       return result
     },
     async *stream(params) {
-      meter.assertPriced(client.provider, params.model)
+      meter.assertPriced(client.provider, params.model, billedToPlatform)
       await meter.check()
       for await (const delta of client.stream(params)) {
         if (delta.type === 'end') {
@@ -225,6 +246,7 @@ export function meterChatClient(client: ChatClient, meter: RunMeter): ChatClient
             provider: client.provider,
             model: delta.result.model,
             usage: delta.result.usage,
+            feature,
           })
         }
         yield delta

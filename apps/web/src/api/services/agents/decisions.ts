@@ -112,8 +112,9 @@ export interface DecideDeps {
   /** Resolved on first use, not per attempt — an agent that never decides never resolves. */
   resolve: () => Promise<ResolvedDecisions>
   /**
-   * The run's meter: checked before every FRESH ask (a replayed answer costs nothing) and
-   * written after it — one `ai_usage` row, `agent:<key>:decide`, carrying the run id.
+   * The run's meter: checked before every FRESH ask (a replayed answer costs nothing). A TypeSafe
+   * ask is written after it — one `ai_usage` row, `agent:<key>:decide`, carrying the run id; the
+   * chat fallback's client is metered per call by `resolve` instead, so it is not counted twice.
    */
   meter: RunMeter
   /** Thin `decision` event into the run's log. */
@@ -193,12 +194,16 @@ export function createDecide(deps: DecideDeps): AgentDecide {
           questionsHash: hash,
           latencyMs,
         })
-        await deps.meter.record({
-          feature: `agent:${deps.agentKey}:decide`,
-          provider,
-          model: result.model,
-          usage: result.usage,
-        })
+        // The chat fallback's calls are metered one by one inside the client (`resolve` wraps
+        // it), failed answers included; only TypeSafe is recorded here, once per ask.
+        if (method !== 'llm_self_report') {
+          await deps.meter.record({
+            feature: `agent:${deps.agentKey}:decide`,
+            provider,
+            model: result.model,
+            usage: result.usage,
+          })
+        }
         // The event lists answers in the order the questions were ASKED: jsonb keeps object keys in
         // its own order (shortest first), so the row cannot be the source for it.
         await deps.emit(eventData(row, Object.keys(parsed.questions), result.answers))

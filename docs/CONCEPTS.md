@@ -756,6 +756,10 @@ Server: `api/services/{ai,agents}/**` (read their `CLAUDE.md`), `services/prompt
   applies to a run the deployment pays for (the platform key or the Workers AI binding), a chat call
   on an unpriced model is refused before it is made (run event `agent_budget_exceeded`), because its
   cost could never reach the cap. A tenant's own key is its own spend, so it is not refused.
+  `ctx.decide`'s chat fallback (no TypeSafe key anywhere, prompt key `agent-decide`) is metered the
+  same way, call by call: refused before the call on an unpriced model the deployment pays for —
+  judged on who pays for the `agent-decide` model, not the agent's own — and ledgered as each call
+  returns, so a decide whose answer fails validation twice still leaves both rows.
 - **Tracing (D32, supersedes D16's Langfuse ingestion client)**: `api/observability/`. Every AI call
   site talks to the `Tracer` seam; the recorder batches ended spans and flushes (in `waitUntil`, or
   awaited at the end of a stream, step or job) to two sinks: our own **OTLP/HTTP exporter**

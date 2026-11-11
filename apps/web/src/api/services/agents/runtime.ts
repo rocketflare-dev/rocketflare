@@ -425,8 +425,21 @@ export async function executeRun(
                   appName: cfg.APP_NAME,
                   tenantName: tenant?.name ?? '',
                 }),
-                wrapChat: (chatClient, provider) =>
-                  traceChatClient(chatClient, trace, { provider, name: 'decide' }, tracer),
+                // Metered like `ctx.chat.client`, but on who pays for the `agent-decide` model.
+                wrapChat: (chatClient, chat) =>
+                  meterChatClient(
+                    traceChatClient(
+                      chatClient,
+                      trace,
+                      { provider: chat.provider, name: 'decide' },
+                      tracer
+                    ),
+                    meter,
+                    {
+                      feature: `agent:${agent.meta.key}:decide`,
+                      billedToPlatform: chat.billedToPlatform,
+                    }
+                  ),
               }),
             emit: data => emit({ type: 'decision', data }),
             meter,
