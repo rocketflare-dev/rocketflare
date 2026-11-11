@@ -176,9 +176,12 @@ the CLI command `<id>`; skills `<id>` / `<id>-<what>`; AG-UI CUSTOM events `<id>
   a prefix assertion.
 - **`grants` are ADDITIVE over its OWN subjects** (declared in `SharedPlugin.subjects`), applied
   after the kit's matrix; never `cannot` — that would change what every role may do.
-- **`hooks.onTenantCreated` / `onTenantDeleted` / `seedDemo` are post-commit, idempotent,
+- **`hooks.onTenantCreated` / `onTenantDeleted` / `onTenantStatusChanged` / `seedDemo` are post-commit, idempotent,
   best-effort**, try/caught after the kit's own — nothing a tenant NEEDS may arrive only that way.
   `seedDemo` gets a namespaced `demoId`; fixed ids + `onConflictDoNothing`.
+- **`onTenantStatusChanged(db, tenantId, status, env)`** runs after a suspend / reactivate
+  (`setTenantSuspended`), each failure logged and swallowed — invalidate anything the plugin
+  serves or caches for the tenant outside the auth middleware (public pages, KV, edge caches).
 - **`onTenantDeleted` is for state the FK cascade cannot reach** (its tables are already gone): run
   from `tenant.purge` with the tenant id and `env`. **DO state is purgeable only because instance
   names are DERIVED** — declare a FINITE key set derived from the tenant id and loop it

@@ -36,7 +36,7 @@ import { deleteUserSessions, updateSelectedTenant, userTenantIds } from '../auth
 import type { AppBindings } from '../types'
 import { ConflictError, isUniqueViolation, NotFoundError } from '../utils/core/errors'
 import type { Logger } from '../utils/core/logger'
-import { createTenantForUser } from '../utils/db/tenant-helpers'
+import { createTenantForUser, runTenantStatusChangedHooks } from '../utils/db/tenant-helpers'
 import { asCount, pageWindow } from '../utils/routes/pagination'
 import { recordActivity } from './activity'
 import { requestCancel } from './agents/runs'
@@ -357,7 +357,8 @@ export interface SetTenantSuspendedInput {
 /**
  * Suspend or reactivate an organisation. Suspending also ends the runs that are not executing —
  * `queued` and `awaiting_input` settle `cancelled` — and a running one stops at its next cancel
- * poll, so a suspended organisation runs no agents.
+ * poll, so a suspended organisation runs no agents. Either way every plugin's
+ * `onTenantStatusChanged` runs last, best-effort.
  */
 export async function setTenantSuspended(db: Database, input: SetTenantSuspendedInput) {
   const { tenantId, suspended } = input
@@ -378,6 +379,7 @@ export async function setTenantSuspended(db: Database, input: SetTenantSuspended
     subjectType: 'Tenant',
     subjectId: tenantId,
   })
+  await runTenantStatusChangedHooks(db, tenantId, row.status, input.env, input.logger)
   return row
 }
 

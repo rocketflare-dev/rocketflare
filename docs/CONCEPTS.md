@@ -1434,9 +1434,13 @@ as merging a PR. A plugin repo mirrors the host tree and ships **no migration, n
   A plugin imports its own `apps/web/src/host/<id>/` as `@/host/<id>/…` (the existing `@/*` alias),
   and only its own id's (`tests/helpers/plugins.ts`). **Known gap:** `plugin export` does not write
   host files back to `from` — they are the app's content, not the plugin's.
-- **Hooks** (`onTenantCreated`, `onTenantDeleted`, `seedDemo`) run post-commit, are idempotent,
-  and are try/caught. DO state is purgeable only through instance names **derived** from the tenant
-  id.
+- **Hooks** (`onTenantCreated`, `onTenantDeleted`, `onTenantStatusChanged`, `seedDemo`) run
+  post-commit, are idempotent, and are try/caught. DO state is purgeable only through instance
+  names **derived** from the tenant id. `onTenantStatusChanged(db, tenantId, status, env)` runs
+  after a global admin suspends (`'suspended'`) or reactivates (`'active'`) a tenant, from
+  `setTenantSuspended` (`runTenantStatusChangedHooks`), each failure logged as a warning and
+  swallowed: it is how a plugin that caches or publishes a tenant's content outside the auth
+  middleware's reach (a public page, an edge cache) stops serving it.
 - **Traps measured, now rules**: registries a plugin composes into are FUNCTIONS, not consts
   (module-evaluation order); a value a plugin needs moves to a leaf module; browser-read registries
   are separate files from composing ones; plugins declare `relations()` for their own tables only

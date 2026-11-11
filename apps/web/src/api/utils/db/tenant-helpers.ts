@@ -182,6 +182,31 @@ export async function runTenantDeletedHooks(
   }
 }
 
+/**
+ * After a tenant's status changed (`setTenantSuspended`): every plugin's `onTenantStatusChanged`,
+ * each in its own try/catch, a failure logged and swallowed — the status change has committed and
+ * stands whatever a plugin does. `plugins` is injectable, as for `runTenantDeletedHooks`.
+ */
+export async function runTenantStatusChangedHooks(
+  db: Database,
+  tenantId: string,
+  status: 'active' | 'suspended',
+  env: AppBindings,
+  logger?: Pick<Logger, 'warn'>,
+  plugins: readonly AnyServerPlugin[] = serverPlugins
+): Promise<void> {
+  for (const plugin of plugins) {
+    try {
+      await plugin.hooks?.onTenantStatusChanged?.(db, tenantId, status, env)
+    } catch (err) {
+      logger?.warn(
+        { err, tenantId, status, plugin: plugin.shared.id },
+        'tenant status: plugin onTenantStatusChanged hook failed'
+      )
+    }
+  }
+}
+
 /** `TENANCY_MODE=single`: the one tenant everybody joins — the oldest row. */
 export async function getSingleTenant(db: Database): Promise<Tenant | null> {
   const [row] = await db.select().from(tenants).orderBy(asc(tenants.createdAt)).limit(1)

@@ -325,6 +325,21 @@ export interface ServerPlugin<S extends SharedPlugin = SharedPlugin> {
      * through it, never through a module-level global.
      */
     onTenantDeleted?: (db: Database, tenantId: string, env: AppBindings) => Promise<void>
+    /**
+     * A global admin suspended (`'suspended'`) or reactivated (`'active'`) a tenant. Run after the
+     * status update has committed, per plugin, each in its own try/catch — best-effort like the
+     * other two, with a failure logged as a warning and swallowed, so the admin's action stands.
+     *
+     * For a plugin that caches or serves the tenant's content where the auth middleware does not
+     * look — a public page, an edge cache, a KV copy — and must stop serving it, or start again.
+     * Idempotent: it may hear the same status twice.
+     */
+    onTenantStatusChanged?: (
+      db: Database,
+      tenantId: string,
+      status: 'active' | 'suspended',
+      env: AppBindings
+    ) => Promise<void>
     /** `pnpm seed --demo`, after the core block. Fixed ids + `onConflictDoNothing`. */
     seedDemo?: (db: Database, ctx: PluginSeedContext) => Promise<void>
   }
