@@ -5,7 +5,7 @@ date: null
 breaking: false
 migrations:
   - "new table tenant_creation_counters (user_id, day, created), no foreign key to tenants"
-areas: [api, db, plugins, docs]
+areas: [api, db, docs]
 touches_surfaces: []
 requires_surfaces: []
 manual: false
