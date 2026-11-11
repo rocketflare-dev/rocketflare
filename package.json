@@ -22,6 +22,7 @@
     "kit:release": "node scripts/release.mjs",
     "plugin": "node scripts/plugin.mjs",
     "preflight": "node scripts/bootstrap.mjs --check",
+    "security:sandbox": "node scripts/security-sandbox.mjs",
     "test:db:up": "pnpm --filter @rocketflare/web test:db:up",
     "test:db:down": "pnpm --filter @rocketflare/web test:db:down",
     "db:generate": "pnpm --filter @rocketflare/web db:generate",

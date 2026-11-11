@@ -1,0 +1,70 @@
+# The sandbox for security audits: `scripts/security-sandbox.mjs` is the only caller.
+#
+# The runner shares the database container's network namespace, and that container sits only on an
+# `internal` network, so the runner reaches Postgres on localhost:5433 (the address `.env.test`
+# already uses) and nothing else. Its own Postgres on tmpfs: the shared test database on the host's
+# :5433 is never touched. Only `/scratch` is writable and persistent. The environment is exactly
+# the list below; no host directory other than the two named mounts is visible.
+name: rocketflare-security
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg17
+    command: -p 5433 -c max_connections=300 -c fsync=off
+    environment:
+      POSTGRES_DB: rocketflare_test
+      POSTGRES_USER: test
+      POSTGRES_PASSWORD: test
+    tmpfs:
+      - /var/lib/postgresql/data
+    networks:
+      - audit
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -p 5433 -U test -d rocketflare_test"]
+      interval: 1s
+      timeout: 3s
+      retries: 30
+
+  runner:
+    image: rocketflare-security-sandbox
+    profiles: ["run"]
+    network_mode: service:postgres
+    depends_on:
+      postgres:
+        condition: service_healthy
+    read_only: true
+    user: node
+    working_dir: /src/apps/web
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 6g
+    cpus: 4
+    pids_limit: 1024
+    ulimits:
+      fsize: 1073741824
+      nofile: 8192
+    stop_grace_period: 2s
+    environment:
+      HOME: /scratch/home
+      TMPDIR: /tmp
+      CI: "true"
+      NPM_CONFIG_OFFLINE: "true"
+      XDG_CACHE_HOME: /scratch/cache
+      XDG_CONFIG_HOME: /scratch/config
+      XDG_DATA_HOME: /scratch/data
+      XDG_STATE_HOME: /scratch/state
+    tmpfs:
+      - /tmp:size=1g
+      - /src/node_modules/.vitest-cache:uid=1000,gid=1000
+      - /src/apps/web/node_modules/.vite:uid=1000,gid=1000
+      - /src/apps/web/node_modules/.vite-temp:uid=1000,gid=1000
+      - /src/apps/web/node_modules/.vitest:uid=1000,gid=1000
+    volumes:
+      - ${SECURITY_SCRATCH:?}:/scratch:rw
+      - ${SECURITY_POC:?}:/src/apps/web/tests/api/_poc:ro
+
+networks:
+  audit:
+    internal: true
