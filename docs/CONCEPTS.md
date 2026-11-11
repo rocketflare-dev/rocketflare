@@ -330,6 +330,12 @@ signed-in account is not checked, and the host trusts the plugin's word that it 
   limit → CORS → CSRF → DB → tracing → mounts). Auth is per mount. The ASSETS catch-all 404s every
   API prefix, so a missing route never returns `index.html`. Order and exceptions:
   `.claude/rules/api.md`.
+- **Body limits**: 1 MB on `/api/*`, `/auth/*` and a plugin's prefixes outside `/api`, before any
+  parsing (413 `payload_too_large`). Beneath an upload prefix (`/api/files`,
+  `/api/ai/documents/upload`, a plugin's `uploadPaths`) a JSON body keeps the 1 MB cap, and any
+  other body is capped at `MAX_UPLOAD_PATH_BODY_BYTES` (10 MB + 64 KB multipart overhead, the
+  largest file an upload route may take); each upload route mounts its own tighter cap and checks
+  the exact per-file size itself. A public mount's `bodyLimitBytes` replaces the cap (§16).
 - **Contracts (D13)**: zod schemas from `@rocketflare/shared` are used by the server, UI and CLI.
   There is no `hono/client` RPC. Errors are `{ error, statusCode, code?, details? }` everywhere,
   and success bodies are bare.

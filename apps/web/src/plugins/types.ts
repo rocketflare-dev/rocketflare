@@ -273,9 +273,10 @@ export interface ServerPlugin<S extends SharedPlugin = SharedPlugin> {
   /** Per-role CASL rules, applied after the core matrix — additive, never a replacement. */
   grants?: Partial<Record<EffectiveRole, RoleGrant>>
   /**
-   * Prefixes that skip the global 1 MB body cap, for a route taking a file. Each must be under
-   * `/api/<id>/` (`tests/config/plugins.test.ts`), and its route MUST mount its own `bodyLimit`:
-   * nothing else caps it.
+   * Prefixes where a NON-JSON body (a multipart file) gets the upload-path cap — 10 MB + 64 KB
+   * (`MAX_UPLOAD_PATH_BODY_BYTES`) — instead of the global 1 MB; a JSON body beneath one keeps the
+   * 1 MB cap. Each must be under `/api/<id>/` (`tests/config/plugins.test.ts`), and its route
+   * mounts its own `bodyLimit` at the file size it takes (at most 10 MB plus multipart overhead).
    */
   uploadPaths?: readonly string[]
   /** Plugin tables with no `tenant_id`, unioned into `RLS_EXCLUDED_TABLES` with a reason each. */

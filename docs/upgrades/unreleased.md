@@ -13,7 +13,7 @@ manual: false
 
 ## What changed
 
-Suspended organisations run no agents, invitation authority and the ownership ceiling hold on every path, API keys stay inside their organisation, AI config saves lock their row, decide's chat fallback is metered, and sign-in mail counts per mailbox.
+Suspended organisations run no agents, invitation and ownership rules hold on every path, API keys stay in their organisation, AI config saves lock their row, decide's fallback is metered, sign-in mail counts per mailbox, and upload paths keep a body cap.
 
 - Suspension: `enqueueRun` / `enqueueRunBatch` refuse a non-active tenant with 403 `tenant_suspended` (route, plugin and event trigger alike); `executeRun` settles a run whose tenant is suspended `cancelled` before any model call; `isCancelRequested` reads the tenant's status, so an executing run stops at its next poll; `setTenantSuspended` cancels the tenant's `queued` and `awaiting_input` runs. See `docs/CONCEPTS.md` §1.
 - Plugin hook: `ServerPlugin.hooks.onTenantStatusChanged(db, tenantId, status, env)` runs for every installed plugin after a suspend or reactivate, best-effort (`runTenantStatusChangedHooks` in `utils/db/tenant-helpers.ts`). See `docs/CONCEPTS.md` §16.
@@ -23,6 +23,7 @@ Suspended organisations run no agents, invitation authority and the ownership ce
 - AI config saves: `POST /api/ai/config` reads the row it overwrites `FOR UPDATE` inside its transaction and decides whether the stored key stays on that row, so a concurrent save never leaves a key beside an endpoint it was not saved with. See `docs/CONCEPTS.md` §9.
 - Decide metering: `ctx.decide`'s chat fallback runs through the run meter like `ctx.chat.client` — `assertPriced` and `check()` before each model call, one `ai_usage` row as each returns (a decide whose answer fails validation twice leaves both), priced on who pays for the `agent-decide` model; `createDecide` records once per ask only for TypeSafe. See `docs/CONCEPTS.md` §9.
 - Sign-in mail per recipient: the 5-per-15-minutes window is keyed on the canonical mailbox (`canonicalMailbox`: lower-cased, `+tag` dropped, dots dropped for `gmail.com` / `googlemail.com`), so tagged and dotted spellings of one mailbox share it; mail still goes to the address as typed. See `docs/CONCEPTS.md` §2.
+- Upload-path body cap: beneath `UPLOAD_PATHS` and a plugin's `uploadPaths`, a JSON body keeps the 1 MB cap and any other body is capped at `MAX_UPLOAD_PATH_BODY_BYTES` (10 MB + 64 KB) instead of skipping the cap; each upload route's own tighter cap still applies. See `docs/CONCEPTS.md` §3.
 
 ## How to apply
 
@@ -49,6 +50,9 @@ Suspended organisations run no agents, invitation authority and the ownership ce
 21. In `createDecide` (`apps/web/src/api/services/agents/decisions.ts`), skip the `deps.meter.record(…)` after the ask when `method === 'llm_self_report'`, so a fallback call is not counted twice.
 22. An app's own code that calls `resolveDecisions` with `wrapChat` reads the second argument as an object now, not a provider.
 23. Add `apps/web/src/api/utils/core/mailbox.ts` exporting `canonicalMailbox(email)` (trim and lower-case; drop everything from the first `+` in the local part unless the local part starts with it; for `gmail.com` or `googlemail.com` remove the local part's dots and write the domain as `gmail.com`), and in `recipientMailAllowed` (`apps/web/src/api/routes/auth/magic-link.ts`) hash `canonicalMailbox(email)` in place of `email.toLowerCase()`.
+24. In `apps/web/src/api/middleware/body-limit.ts`, move `MAX_PUBLIC_MOUNT_BODY_BYTES` above the limiters, add `MAX_UPLOAD_PATH_BODY_BYTES = Math.max(MAX_UPLOAD_BYTES, MAX_PUBLIC_MOUNT_BODY_BYTES) + MULTIPART_OVERHEAD_BYTES` with a `bodyLimit` at that size, and in `apiBodyLimit` replace the bare `return next()` for an upload path with `jsonBodyLimit` when the `Content-Type` is `application/json` or `application/*+json`, else the new upload-path limit.
+25. Check every upload route of an app's own under `UPLOAD_PATHS` or a plugin's `uploadPaths`: one taking a file larger than 10 MB now needs a larger `MAX_UPLOAD_PATH_BODY_BYTES`, and one reading a JSON body over 1 MB needs a path outside the upload prefix.
+26. Regenerate `docs/plugin-api.md` with `node scripts/plugin-api-doc.mjs` (the `ServerPlugin.uploadPaths` doc comment changed).
 
 ## Conflicts to expect
 
@@ -67,3 +71,4 @@ Suspended organisations run no agents, invitation authority and the ownership ce
 8. `tests/api/security/ai-config-concurrent-saves.test.ts` passes.
 9. `tests/api/security/agent-run-budget-accounting.test.ts` passes, including "ctx.decide's chat fallback under the run meter".
 10. `tests/api/security/sign-in-mail-per-recipient.test.ts` passes, including "one mailbox under many +tag spellings shares one window".
+11. `tests/api/security/upload-path-body-limit.test.ts` passes.
