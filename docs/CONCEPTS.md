@@ -170,7 +170,11 @@ the operator's record of what it spent is lost with the organisation.
   claims are checked but not its signature (identity comes from userinfo / Graph). A token
   response must be `application/json`; an error body of any other type is `oauth_failed`.
   Redirect URIs come from `APP_URL`, accounts link by verified email (Microsoft: the user
-  principal name, whose domain the directory must have verified, not `mail`), and tokens are AES-GCM
+  principal name, not `mail`, trusted only when its domain is among the signing-in directory's
+  verified domains from Graph `/organization` — a personal account, an unlisted domain or a failed
+  lookup is unverified), and an unverified address (`email_verified: false`) is refused with
+  `email_unverified` only where it would match or admit an account: an identity already linked
+  signs in, and link mode from a signed-in session links it. Tokens are AES-GCM
   encrypted under `OAUTH_ENCRYPTION_KEY`. The return path is `?returnUrl=`
   (`?redirectTo=` still accepted); the flow cookie carries state, PKCE verifier and a nonce.
 - **Any OIDC issuer** (`providers/oidc.ts`): set `OIDC_ISSUER` + `OIDC_CLIENT_ID` (+ optional
@@ -289,7 +293,9 @@ the operator's record of what it spent is lost with the organisation.
   and the CLI ignores a callback without it. Details: `.claude/rules/api.md`.
 
 **Known gaps:** no provider token refresh; the rate limit is approximate; no session management UI
-beyond "log out everywhere"; CLI keys differ from other keys only by name. OIDC: one issuer per
+beyond "log out everywhere"; a personal Microsoft account cannot sign up or be matched by address
+— it signs in only after being linked from account settings, and a directory's verified domains
+are read on each sign-in, never cached; CLI keys differ from other keys only by name. OIDC: one issuer per
 deployment; the `groups` claim is read into the profile but **not stored or mapped** to kit groups
 or roles; no `id_token_hint` on logout (id_tokens are not kept, so the issuer may ask to confirm);
 no back-channel or front-channel logout; `OIDC_TRUST_EMAIL=true` trusts every email the issuer

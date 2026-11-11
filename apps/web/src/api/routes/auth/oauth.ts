@@ -4,8 +4,10 @@
  * link mode) travel in a single `__Host-oauth_state` cookie that also names the provider, so a
  * callback for the wrong provider is rejected. The return path is re-checked when the cookie is read. The return path is `?returnUrl=` (what the UI sends;
  * `?redirectTo=` is still accepted). Redirect URI is `oauthRedirectUri(cfg, provider)`.
- * `email_verified === false` is refused; an existing link wins, then email-based linking to an
- * existing user, else `admitUser`. Tokens are AES-GCM encrypted at rest — `OAUTH_ENCRYPTION_KEY`
+ * An existing link wins (whatever the provider says of the address), then email-based linking to
+ * an existing user, else `admitUser` — both of which refuse `email_verified === false` with
+ * `email_unverified`; link mode attaches the identity to the signed-in account without trusting
+ * its address. Tokens are AES-GCM encrypted at rest — `OAUTH_ENCRYPTION_KEY`
  * is checked before the redirect. Unknown or unconfigured provider → 404 envelope; under
  * `AUTH_OIDC_ONLY` every provider but `oidc` → `/login?error=oidc_only`. A token exchange the
  * issuer refuses because its pre-token hook denied the person (Cognito's 400
@@ -186,9 +188,7 @@ oauthRouter.get('/:provider/callback', async c => {
     logger.warn({ err, provider: def.id }, 'OAuth code exchange or profile fetch failed')
     return loginErrorRedirect(c, 'oauth_failed')
   }
-  if (profile.emailVerified === false || !profile.email) {
-    return loginErrorRedirect(c, 'email_unverified')
-  }
+  if (!profile.email) return loginErrorRedirect(c, 'email_unverified')
   const email = profile.email.toLowerCase()
 
   // Link mode: attach to the signed-in user (must still be signed in).
@@ -211,6 +211,9 @@ oauthRouter.get('/:provider/callback', async c => {
     ? await db.query.users.findFirst({ where: (u, { eq }) => eq(u.id, link.userId) })
     : undefined
   if (user?.blockedAt) return loginErrorRedirect(c, 'blocked')
+  // Past here the address matches, links and admits: an unverified one is refused unless the
+  // identity is already linked (link mode, above, attaches one without trusting its address).
+  if (!user && profile.emailVerified === false) return loginErrorRedirect(c, 'email_unverified')
 
   // SSO required: before admitUser, so a refused person leaves no row and no access request.
   const sso = await ssoDecisionFor(db, cfg, [email, user?.email], logger)

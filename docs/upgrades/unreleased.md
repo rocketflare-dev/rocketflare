@@ -13,7 +13,7 @@ manual: false
 
 ## What changed
 
-Suspended organisations run no agents, invitation and ownership rules hold on every path, API keys stay in their organisation, AI config saves lock their row, decide's fallback is metered, sign-in mail counts per mailbox, and upload paths keep a body cap.
+Suspended organisations run no agents, invitation and ownership rules hold on every path, API keys stay in their organisation, AI config saves lock their row, decide is metered, sign-in mail counts per mailbox, uploads stay capped, and Microsoft proves addresses.
 
 - Suspension: `enqueueRun` / `enqueueRunBatch` refuse a non-active tenant with 403 `tenant_suspended` (route, plugin and event trigger alike); `executeRun` settles a run whose tenant is suspended `cancelled` before any model call; `isCancelRequested` reads the tenant's status, so an executing run stops at its next poll; `setTenantSuspended` cancels the tenant's `queued` and `awaiting_input` runs. See `docs/CONCEPTS.md` §1.
 - Plugin hook: `ServerPlugin.hooks.onTenantStatusChanged(db, tenantId, status, env)` runs for every installed plugin after a suspend or reactivate, best-effort (`runTenantStatusChangedHooks` in `utils/db/tenant-helpers.ts`). See `docs/CONCEPTS.md` §16.
@@ -24,6 +24,7 @@ Suspended organisations run no agents, invitation and ownership rules hold on ev
 - Decide metering: `ctx.decide`'s chat fallback runs through the run meter like `ctx.chat.client` — `assertPriced` and `check()` before each model call, one `ai_usage` row as each returns (a decide whose answer fails validation twice leaves both), priced on who pays for the `agent-decide` model; `createDecide` records once per ask only for TypeSafe. See `docs/CONCEPTS.md` §9.
 - Sign-in mail per recipient: the 5-per-15-minutes window is keyed on the canonical mailbox (`canonicalMailbox`: lower-cased, `+tag` dropped, dots dropped for `gmail.com` / `googlemail.com`), so tagged and dotted spellings of one mailbox share it; mail still goes to the address as typed. See `docs/CONCEPTS.md` §2.
 - Upload-path body cap: beneath `UPLOAD_PATHS` and a plugin's `uploadPaths`, a JSON body keeps the 1 MB cap and any other body is capped at `MAX_UPLOAD_PATH_BODY_BYTES` (10 MB + 64 KB) instead of skipping the cap; each upload route's own tighter cap still applies. See `docs/CONCEPTS.md` §3.
+- Microsoft address proof: the Microsoft provider sets `emailVerified` from Graph `/organization` (the UPN's domain among the directory's verified domains; a personal account, an unlisted domain or a failed lookup is `false`), and the OAuth callback refuses an unverified address only where it would match or admit an account — so for every provider, Google and OIDC included, an identity already linked now signs in even when the provider calls its address unverified. Personal Microsoft accounts sign in by linking from account settings first. See `docs/CONCEPTS.md` §2.
 
 ## How to apply
 
@@ -53,10 +54,14 @@ Suspended organisations run no agents, invitation and ownership rules hold on ev
 24. In `apps/web/src/api/middleware/body-limit.ts`, move `MAX_PUBLIC_MOUNT_BODY_BYTES` above the limiters, add `MAX_UPLOAD_PATH_BODY_BYTES = Math.max(MAX_UPLOAD_BYTES, MAX_PUBLIC_MOUNT_BODY_BYTES) + MULTIPART_OVERHEAD_BYTES` with a `bodyLimit` at that size, and in `apiBodyLimit` replace the bare `return next()` for an upload path with `jsonBodyLimit` when the `Content-Type` is `application/json` or `application/*+json`, else the new upload-path limit.
 25. Check every upload route of an app's own under `UPLOAD_PATHS` or a plugin's `uploadPaths`: one taking a file larger than 10 MB now needs a larger `MAX_UPLOAD_PATH_BODY_BYTES`, and one reading a JSON body over 1 MB needs a path outside the upload prefix.
 26. Regenerate `docs/plugin-api.md` with `node scripts/plugin-api-doc.mjs` (the `ServerPlugin.uploadPaths` doc comment changed).
+27. In `fetchProfile` of `apps/web/src/api/auth/providers/microsoft.ts`, set `emailVerified` to the result of a `principalDomainVerified(upn, accessToken, idToken)` helper: `false` when the id_token's `tid` (read with jose's `decodeJwt`) is the consumer tenant `9188040d-6c67-4c5b-b112-36a304b66dad`; otherwise `GET https://graph.microsoft.com/v1.0/organization?$select=verifiedDomains` with the access token and `true` only when a `verifiedDomains[].name` equals the UPN's domain case-insensitively; any fetch or parse error is `false`, never a throw.
+28. In the callback of `apps/web/src/api/routes/auth/oauth.ts`, keep only `!profile.email` → `email_unverified` before link mode, and add `if (!user && profile.emailVerified === false) return loginErrorRedirect(c, 'email_unverified')` right after the existing-link lookup and its `blocked` check, before `ssoDecisionFor`.
+29. Tell personal-Microsoft-account users of an app (SETUP.md 2.3) to sign in another way and link Microsoft from account settings once.
 
 ## Conflicts to expect
 
 - `apps/web/src/api/services/admin.ts` → `setTenantSuspended` takes one input object → update an app's own callers to the new shape.
+- `apps/web/src/api/routes/auth/oauth.ts` → the `emailVerified === false` refusal moved below the provider-link lookup → keep an app's own callback checks after it.
 - `apps/web/src/api/services/ai/resolve.ts` → `wrapChat`'s second argument is `{ provider, billedToPlatform }` → update an app's own `wrapChat` callbacks.
 
 ## Verify
@@ -72,3 +77,5 @@ Suspended organisations run no agents, invitation and ownership rules hold on ev
 9. `tests/api/security/agent-run-budget-accounting.test.ts` passes, including "ctx.decide's chat fallback under the run meter".
 10. `tests/api/security/sign-in-mail-per-recipient.test.ts` passes, including "one mailbox under many +tag spellings shares one window".
 11. `tests/api/security/upload-path-body-limit.test.ts` passes.
+12. `tests/api/security/microsoft-sign-in-email.test.ts` passes, including "a personal account the person linked from account settings signs in".
+13. `tests/api/auth-oauth.test.ts` passes, including "an identity already linked still signs in to its account".
