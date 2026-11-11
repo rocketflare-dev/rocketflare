@@ -1,8 +1,8 @@
 /**
  * `agent_runs` lifecycle service:
- *   enqueueRun  — validate input → (an active run already holds this run's exclusive SLOT — the
- *                 tenant for an `exclusive` agent, or the caller's `concurrencyKey`? return it,
- *                 `deduplicated`) → the tenant's active-run cap (429 `agent_runs_limit`) and daily
+ *   enqueueRun  — validate input → the tenant is active (403 `tenant_suspended`) → (an active
+ *                 run already holds this run's exclusive SLOT — the tenant for an `exclusive`
+ *                 agent, or the caller's `concurrencyKey`? return it, `deduplicated`) → the tenant's active-run cap (429 `agent_runs_limit`) and daily
  *                 spend (429 `ai_budget_exceeded`) → insert `queued` with the slot (the partial
  *                 unique index rejects a second active run in it → the existing one) →
  *                 `AGENT_RUN_WORKFLOW.create({ id: runId })` → store `instanceId`. No binding →
@@ -49,11 +49,13 @@ import {
   agentRunEffects,
   agentRunEvents,
   agentRuns,
+  tenants,
 } from '../../../db/schema'
 import { traceIdForRun } from '../../observability/trace-ids'
 import {
   ApiError,
   BadRequestError,
+  ForbiddenError,
   ServiceUnavailableError,
   ValidationError,
 } from '../../utils/core/errors'
@@ -279,6 +281,20 @@ export async function countActiveRuns(db: Database, tenantId: string): Promise<n
 }
 
 /**
+ * A suspended organisation starts no runs, whoever asks — a route, a plugin, an event trigger.
+ * 403 `tenant_suspended`, the refusal its members get at sign-in; a missing tenant reads the same.
+ */
+export async function assertTenantActive(db: Database, tenantId: string): Promise<void> {
+  const tenant = await db.query.tenants.findFirst({
+    columns: { status: true },
+    where: eq(tenants.id, tenantId),
+  })
+  if (tenant?.status !== 'active') {
+    throw new ForbiddenError('Organisation is suspended', ERROR_CODES.tenantSuspended)
+  }
+}
+
+/**
  * The two tenant-wide gates every enqueue passes: the active-run cap, counting the runs this
  * call would ADD, and the daily agent spend. Both are counted then inserted, not locked — a burst
  * of simultaneous requests can overshoot the cap by a few, which is fine for a brake.
@@ -316,6 +332,7 @@ export async function enqueueRun(
   const agent = getAgent(input.agentKey)
   const parsed = agent.meta.inputSchema.safeParse(input.input)
   if (!parsed.success) throw new ValidationError(parsed.error.issues, 'Invalid agent input')
+  await assertTenantActive(db, input.tenantId)
   const concurrencyKey = input.concurrencyKey ?? (agent.meta.exclusive ? '' : null)
   const runId = input.idempotencyKey
     ? await idempotentRunId(input.tenantId, input.agentKey, input.idempotencyKey)
@@ -501,6 +518,7 @@ export async function enqueueRunBatch(
     }
   })
   if (valid.length === 0) return { batchId, items }
+  await assertTenantActive(db, input.tenantId)
   await assertCapacity(db, cfg, input.tenantId, valid.length)
 
   const ids = valid.map(() => crypto.randomUUID())
@@ -885,17 +903,31 @@ export async function expireParkedRun(
   return settled
 }
 
-/** `true` when a cancel was requested for the run — the poll a run makes between turns. */
+/**
+ * `true` when a cancel was requested for the run, or its organisation is suspended — the poll a
+ * run makes between turns.
+ */
 export async function isCancelRequested(
   db: Database,
   tenantId: string,
   runId: string
 ): Promise<boolean> {
-  const row = await db.query.agentRuns.findFirst({
-    columns: { cancelRequestedAt: true, status: true },
-    where: and(eq(agentRuns.id, runId), eq(agentRuns.tenantId, tenantId)),
-  })
-  return !row || row.cancelRequestedAt !== null || row.status === 'cancelled'
+  const [row] = await db
+    .select({
+      cancelRequestedAt: agentRuns.cancelRequestedAt,
+      status: agentRuns.status,
+      tenantStatus: tenants.status,
+    })
+    .from(agentRuns)
+    .innerJoin(tenants, eq(tenants.id, agentRuns.tenantId))
+    .where(and(eq(agentRuns.id, runId), eq(agentRuns.tenantId, tenantId)))
+  // A run whose organisation was suspended mid-flight stops at its next check, as a cancel does.
+  return (
+    !row ||
+    row.cancelRequestedAt !== null ||
+    row.status === 'cancelled' ||
+    row.tenantStatus !== 'active'
+  )
 }
 
 /** `instance.not_found` and friends — a definite "nothing is running", not a lookup failure. */

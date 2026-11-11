@@ -4,7 +4,7 @@ previous: 0.33.0
 date: null
 breaking: false
 migrations: []
-areas: []
+areas: [api, docs]
 touches_surfaces: []
 requires_surfaces: []
 manual: false
@@ -12,20 +12,22 @@ manual: false
 
 ## What changed
 
-_Nothing yet. Add an entry here in the same pull request as the change. This first paragraph is
-lifted VERBATIM into `CHANGELOG.md`, so make it ONE standalone summary sentence of ≤ 40 words —
-then one bullet per change, one line each, and no `###` sub-headings. Rationale belongs in
-`docs/CONCEPTS.md` and is linked, never restated; see `README.md` beside this file._
+Suspended organisations run no agents.
+
+- Suspension: `enqueueRun` / `enqueueRunBatch` refuse a non-active tenant with 403 `tenant_suspended` (route, plugin and event trigger alike); `executeRun` settles a run whose tenant is suspended `cancelled` before any model call; `isCancelRequested` reads the tenant's status, so an executing run stops at its next poll; `setTenantSuspended` cancels the tenant's `queued` and `awaiting_input` runs. See `docs/CONCEPTS.md` §1.
 
 ## How to apply
 
-_Numbered, imperative, each step self-contained — no "these", "them" or "the above" reaching
-outside its own step._
+1. Add `assertTenantActive(db, tenantId)` to `apps/web/src/api/services/agents/runs.ts` (403 `ForbiddenError` with `ERROR_CODES.tenantSuspended` unless `tenants.status` is `active`) and call it in `enqueueRun` after input validation and in `enqueueRunBatch` before `assertCapacity`.
+2. In `apps/web/src/api/services/agents/runs.ts`, make `isCancelRequested` join `tenants` and also answer `true` when the tenant's status is not `active`.
+3. In `executeRun` (`apps/web/src/api/services/agents/runtime.ts`), read the tenant's `name` and `status` first; when the status is not `active`, `cancelRun`, `expireInterrupts`, emit `{ type: 'status', data: { status: 'cancelled', reason: 'tenant_suspended' } }` and return `cancelled` before `checkCancelled()` and `resolveChat`.
+4. Change `setTenantSuspended` in `apps/web/src/api/services/admin.ts` to take `(db, { tenantId, suspended, admin, env, logger, realtime })` and, when suspending, call `requestCancel(db, tenantId, runId, realtime, env)` for each `queued` / `awaiting_input` run of the tenant; pass `env: c.env` and `logger` from `POST /api/admin/tenants/:id/suspend` in `routes/admin.ts`.
 
 ## Conflicts to expect
 
-_One line each: `path → what changed → what to do`. Or exactly `None.`_
+- `apps/web/src/api/services/admin.ts` → `setTenantSuspended` takes one input object → update an app's own callers to the new shape.
 
 ## Verify
 
-_Numbered checkable commands and assertions only._
+1. `tests/api/security/agent-run-tenant-suspension.test.ts` passes.
+2. `tests/api/plugin-events.test.ts` passes, including "agent triggers and a suspended organisation".

@@ -314,6 +314,25 @@ describe('agent triggers', () => {
   })
 })
 
+describe('agent triggers and a suspended organisation', () => {
+  it('start no run: the refusal is acknowledged, not retried', async () => {
+    const env = createTestEnv()
+    const { tenant } = await createTestTenantWithUser(db)
+    await emit(env, tenant.id, payload({ text: 'Triage this.' }))
+    await db.update(tenants).set({ status: 'suspended' }).where(eq(tenants.id, tenant.id))
+    const messages = drain(env).filter(m => subscriberOf(m).startsWith('trigger:'))
+    expect(messages).toHaveLength(1)
+    const logger = await consume(env, messages)
+    expect(messages[0]?.ack).toHaveBeenCalled()
+    expect(messages[0]?.retry).not.toHaveBeenCalled()
+    expect(await runsOf(tenant.id)).toEqual([])
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ status: 403, code: ERROR_CODES.tenantSuspended }),
+      'event.deliver: the subscriber refused; acknowledging'
+    )
+  })
+})
+
 describe('bindable agents', () => {
   it('lists only the agents that opt in to the event — through the function and the route', async () => {
     expect(bindableAgents(THING_HAPPENED).map(a => a.key)).toEqual([BINDABLE_AGENT])

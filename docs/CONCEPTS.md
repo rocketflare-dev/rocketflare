@@ -70,6 +70,15 @@ suites on vitest 4, §9 — never part of the gate).
   (`INVITATION_EMAILS_PER_TENANT_PER_DAY`, 1000), an upsert per scope with a conditional update so
   simultaneous sends cannot pass it. A bulk invite stops at the limit and reports the rest as
   `failed` / `send_limit`; one that queued nothing is the 429 itself.
+- **A suspended tenant is closed to its members and runs no agents.** `POST
+  /api/admin/tenants/:id/suspend` sets `tenants.status`; every authenticating path (cookie, API
+  key, `/ws`, the identity seam's tenant-taking methods) then answers 403 `tenant_suspended`, and
+  the tenant's sockets close. `enqueueRun` / `enqueueRunBatch` refuse it the same way whoever asks
+  (a plugin, an event trigger — `event.deliver` acknowledges the 403 rather than retrying). The
+  suspension cancels the runs nothing is executing (`queued`, `awaiting_input`); a run already
+  executing stops at its next cancel poll, and one whose Workflow reaches `execute` afterwards
+  settles `cancelled` (status event `reason: 'tenant_suspended'`) before any model call.
+  Reactivating starts nothing again: the cancelled runs stay cancelled.
 - **Deleting a tenant has two halves.** The `tenantRef()` FK cascade removes everything in
   Postgres; the **`tenant.purge`** job (§5) removes the R2 prefix and runs each plugin's
   `onTenantDeleted`. The queue binding is checked *before* the `DELETE`.
@@ -654,7 +663,8 @@ Server: `api/services/{ai,agents}/**` (read their `CLAUDE.md`), `services/prompt
 - **Volume (D39)**: exclusivity is the `concurrency_key` slot above (PR #77), so a non-exclusive
   agent (`triage-research`) runs any number at once. Two tenant-wide gates sit on
   every enqueue: `AGENT_MAX_ACTIVE_RUNS_PER_TENANT` (default 50, 429 `agent_runs_limit` — a soft
-  cap, counted then inserted) and `AGENT_TENANT_DAILY_COST_USD` (429 `ai_budget_exceeded`).
+  cap, counted then inserted) and `AGENT_TENANT_DAILY_COST_USD` (429 `ai_budget_exceeded`),
+  after the tenant itself — a suspended one is 403 `tenant_suspended` (§1).
   `POST /api/agents/runs/batch` takes up to 100 inputs of one non-exclusive agent (400
   `agent_exclusive` otherwise), validates each, inserts them under one `batch_id` and makes ONE
   `createBatch()` call; that call is all or nothing, so on failure each instance is created alone

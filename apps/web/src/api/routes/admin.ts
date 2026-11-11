@@ -144,14 +144,15 @@ adminRouter.delete('/tenants/:id', validate('json', deleteTenantRequestSchema), 
 })
 
 adminRouter.post('/tenants/:id/suspend', validate('json', suspendTenantRequestSchema), async c => {
-  const { db, user, realtime } = withAuth(c)
-  const row = await setTenantSuspended(
-    db,
-    uuidParam(c, 'id'),
-    c.req.valid('json').suspended,
-    user,
-    realtime
-  )
+  const { db, user, logger, realtime } = withAuth(c)
+  const row = await setTenantSuspended(db, {
+    tenantId: uuidParam(c, 'id'),
+    suspended: c.req.valid('json').suspended,
+    admin: user,
+    env: c.env,
+    logger,
+    realtime,
+  })
   return c.json({ id: row.id, status: row.status })
 })
 
