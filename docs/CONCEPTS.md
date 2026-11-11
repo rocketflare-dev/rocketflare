@@ -62,7 +62,15 @@ suites on vitest 4, §9 — never part of the gate).
   bulk routes alike (403 before any row). A member removed from a tenant takes their pending
   invitations with them, in the removal's transaction, on the members route and on every path that
   ends an `idp` or a `support` membership for good; a global admin's stay, because their authority
-  is the platform flag (so leaving support revokes nothing). Accepting over an `idp` row leaves the
+  is the platform flag (so leaving support revokes nothing). A role change ends the target's
+  pending invitations the new role could not issue, in the same transaction (to `admin`: the
+  `owner` ones; to `member`: all). And an invitation is accepted only while its issuer could still
+  issue it: accept re-checks, inside its transaction, that the issuer exists, is not blocked and is
+  a global admin or a member of the tenant whose role could issue the invitation's (`owner` needs
+  an owner, `admin` / `member` an owner or an admin) — otherwise the row is marked revoked and
+  the answer is 410 `invitation_revoked`. That covers every path that withdraws authority without
+  revoking anything itself: a block, a lost global-admin flag, an issuer-managed role change.
+  Accepting over an `idp` row leaves the
   row as it is (the invitation is still marked accepted). Mail is bounded by Postgres: a resend
   inside `INVITATION_RESEND_COOLDOWN_SECONDS` (five minutes) answers 429 and keeps the link
   already sent, and `invitation_send_counters` caps the mail per UTC day per person across every

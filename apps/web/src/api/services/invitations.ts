@@ -12,10 +12,12 @@ import type {
   MembershipRole,
   TenantRole,
 } from '@rocketflare/shared/tenants'
-import { and, desc, eq, isNull, lte, sql } from 'drizzle-orm'
+import { and, desc, eq, inArray, isNull, lte, sql } from 'drizzle-orm'
 import type { AppConfig } from '../../config'
 import type { Database } from '../../db/client'
 import {
+  INVITATION_ROLES,
+  type InvitationRole,
   invitationSendCounters,
   type TeamInvitation,
   teamInvitations,
@@ -126,6 +128,21 @@ function assertMayIssueRole(actor: RoleView, role: string): void {
   if (role === 'owner' && !isOwnerLevel(actor)) {
     throw new ForbiddenError('Only an owner can invite an owner')
   }
+}
+
+/**
+ * Whether a member holding `issuerRole` could issue an invitation for `role` — the rule
+ * `assertMayIssueRole` and the invite routes apply: `owner` needs an owner, `admin` and `member`
+ * an owner or an admin. A global admin may issue any; that is checked separately.
+ */
+export function roleMayIssue(issuerRole: string | null | undefined, role: InvitationRole): boolean {
+  if (role === 'owner') return issuerRole === 'owner'
+  return issuerRole === 'owner' || issuerRole === 'admin'
+}
+
+/** The invitation roles a member holding `role` could no longer issue — what a demotion ends. */
+export function rolesNotIssuableBy(role: string): InvitationRole[] {
+  return INVITATION_ROLES.filter(r => !roleMayIssue(role, r))
 }
 
 /** Seconds until the next UTC day, when the send counters start again. */
@@ -419,13 +436,16 @@ export async function revokeInvitation(
 
 /**
  * A person whose membership has ended takes their pending invitations in this tenant with them, in
- * the caller's transaction. A global admin's stay: their authority is the platform flag, which the
- * membership never held. Returns the ids revoked, for the caller's nudge after commit.
+ * the caller's transaction; `roles` narrows it to the invitations of those roles (a demotion ends
+ * only what the new role could not issue). A global admin's stay: their authority is the platform
+ * flag, which the membership never held. Returns the ids revoked, for the caller's nudge after
+ * commit.
  */
 export async function revokeInvitationsIssuedBy(
   tx: Database,
-  input: { tenantId: string; userId: string }
+  input: { tenantId: string; userId: string; roles?: readonly InvitationRole[] }
 ): Promise<string[]> {
+  if (input.roles?.length === 0) return []
   const revoked = await tx
     .update(teamInvitations)
     .set({ revokedAt: new Date() })
@@ -433,6 +453,7 @@ export async function revokeInvitationsIssuedBy(
       and(
         eq(teamInvitations.tenantId, input.tenantId),
         eq(teamInvitations.invitedByUserId, input.userId),
+        input.roles ? inArray(teamInvitations.role, [...input.roles]) : undefined,
         isNull(teamInvitations.acceptedAt),
         isNull(teamInvitations.revokedAt),
         sql`NOT EXISTS (SELECT 1 FROM ${users} WHERE ${users.id} = ${input.userId} AND ${users.isGlobalAdmin})`
@@ -494,8 +515,31 @@ export async function getInvitationDetails(
 }
 
 /**
+ * The issuer exists, is not blocked, and is a global admin or a member of the invitation's tenant
+ * whose role could issue its role (`roleMayIssue`).
+ */
+async function issuerMayStillIssue(tx: Database, inv: TeamInvitation): Promise<boolean> {
+  const [issuer] = await tx
+    .select({
+      blockedAt: users.blockedAt,
+      isGlobalAdmin: users.isGlobalAdmin,
+      role: tenantUsers.role,
+    })
+    .from(users)
+    .leftJoin(
+      tenantUsers,
+      and(eq(tenantUsers.userId, users.id), eq(tenantUsers.tenantId, inv.tenantId))
+    )
+    .where(eq(users.id, inv.invitedByUserId))
+  if (!issuer || issuer.blockedAt !== null) return false
+  return issuer.isGlobalAdmin || roleMayIssue(issuer.role, inv.role)
+}
+
+/**
  * Accept: ONE transaction — membership upsert (never demoting), `acceptedAt`, session points at
- * the tenant. The signed-in user's email must match the invitation (403 `invitation_email_mismatch`).
+ * the tenant. The signed-in user's email must match the invitation (403 `invitation_email_mismatch`),
+ * and its issuer must still hold the authority to issue it (`issuerMayStillIssue`) — otherwise the
+ * invitation is marked revoked, committed, and the answer is 410 `invitation_revoked`.
  */
 export async function acceptInvitation(
   db: Database,
@@ -522,6 +566,15 @@ export async function acceptInvitation(
   }
 
   const result = await db.transaction(async tx => {
+    // The invitation is only as good as its issuer's authority NOW: a role change, a block or a
+    // lost global-admin flag since it was sent ends it here, and the row says so once committed.
+    if (!(await issuerMayStillIssue(tx as unknown as Database, inv))) {
+      await tx
+        .update(teamInvitations)
+        .set({ revokedAt: new Date() })
+        .where(and(eq(teamInvitations.id, inv.id), isNull(teamInvitations.revokedAt)))
+      return null
+    }
     const existing = await tx.query.tenantUsers.findFirst({
       where: and(eq(tenantUsers.tenantId, inv.tenantId), eq(tenantUsers.userId, input.user.id)),
     })
@@ -612,6 +665,7 @@ export async function acceptInvitation(
   // Two nudges, deliberately: the People page lists members AND pending invitations, and accept
   // changes both. Deferred, so they fire after the transaction has committed.
   nudge(input.realtime, realtimeEvent('invitation.changed', inv.tenantId, { id: inv.id }))
+  if (!result) throw new ApiError(410, 'This invitation is revoked', 'invitation_revoked')
   if (result.joined) {
     nudge(input.realtime, realtimeEvent('member.changed', inv.tenantId, { id: input.user.id }))
   }

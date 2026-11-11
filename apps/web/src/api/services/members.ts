@@ -17,7 +17,7 @@ import { ConflictError, ForbiddenError, NotFoundError } from '../utils/core/erro
 import { asCount, pageWindow } from '../utils/routes/pagination'
 import { recordActivity } from './activity'
 import { groupsForMembers } from './groups'
-import { revokeInvitationsIssuedBy } from './invitations'
+import { revokeInvitationsIssuedBy, rolesNotIssuableBy } from './invitations'
 import { closeUserSockets, nudge, type Realtime, realtimeEvent } from './realtime'
 
 export async function listMembers(db: Database, tenantId: string, query: PaginationQuery) {
@@ -108,13 +108,22 @@ export async function changeMemberRole(
     }
   }
   if (target.role === input.role) return target
-  const [updated] = await db
-    .update(tenantUsers)
-    .set({ role: input.role })
-    .where(
-      and(eq(tenantUsers.tenantId, input.tenantId), eq(tenantUsers.userId, input.targetUserId))
-    )
-    .returning()
+  const { updated, revokedInvitations } = await db.transaction(async tx => {
+    const [updated] = await tx
+      .update(tenantUsers)
+      .set({ role: input.role })
+      .where(
+        and(eq(tenantUsers.tenantId, input.tenantId), eq(tenantUsers.userId, input.targetUserId))
+      )
+      .returning()
+    // The target's pending invitations last only as far as the new role could issue them.
+    const revokedInvitations = await revokeInvitationsIssuedBy(tx as unknown as Database, {
+      tenantId: input.tenantId,
+      userId: input.targetUserId,
+      roles: rolesNotIssuableBy(input.role),
+    })
+    return { updated, revokedInvitations }
+  })
   await recordActivity(db, {
     tenantId: input.tenantId,
     userId: input.actor.user.id,
@@ -124,6 +133,9 @@ export async function changeMemberRole(
     metadata: { from: target.role, to: input.role },
   })
   nudge(input.realtime, realtimeEvent('member.changed', input.tenantId, { id: input.targetUserId }))
+  if (revokedInvitations.length > 0) {
+    nudge(input.realtime, realtimeEvent('invitation.changed', input.tenantId))
+  }
   return updated ?? target
 }
 

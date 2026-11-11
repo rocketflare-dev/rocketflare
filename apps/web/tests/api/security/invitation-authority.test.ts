@@ -6,7 +6,7 @@
 import { and, eq } from 'drizzle-orm'
 import { describe, expect, it } from 'vitest'
 import { reconcileIdpClaims } from '@/api/services/idp-tenancy'
-import { teamInvitations, tenantUsers } from '@/db/schema'
+import { teamInvitations, tenantUsers, users } from '@/db/schema'
 import {
   createTestGlobalAdmin,
   createTestSession,
@@ -264,5 +264,110 @@ describe('accepting an invitation over an issuer-managed membership', () => {
     const cookie = sessionCookieHeader(await createTestSession(db, invitee.id))
     expect((await accept(token, cookie)).status).toBe(200)
     expect(await membership(tenant.id, invitee.id)).toMatchObject({ role: 'admin' })
+  })
+})
+
+describe('an invitation carries only the authority its issuer still holds', () => {
+  const changeRole = (cookie: Record<string, string>, userId: string, role: string) =>
+    request(`/api/members/${userId}`, { method: 'PATCH', headers: cookie }, { json: { role } })
+
+  /** An owner `issuer` beside the tenant's first owner, with one pending invitation per role. */
+  async function ownerWithInvitations() {
+    const { tenant, ownerCookie } = await tenantWith('owner')
+    const issuer = await createTestUser(db)
+    await linkUserToTenant(db, issuer.id, tenant.id, 'owner')
+    const cookie = sessionCookieHeader(await createTestSession(db, issuer.id, tenant.id))
+    const env = createTestEnv()
+    const sent: Record<'owner' | 'admin' | 'member', string> = {
+      owner: newEmail(),
+      admin: newEmail(),
+      member: newEmail(),
+    }
+    for (const role of ['owner', 'admin', 'member'] as const) {
+      expect((await invite(cookie, { email: sent[role], role }, env)).status).toBe(201)
+    }
+    return { tenant, issuer, ownerCookie, env, sent }
+  }
+
+  async function revoked(tenantId: string, email: string) {
+    const [row] = await invitationsTo(tenantId, email)
+    return row?.revokedAt instanceof Date
+  }
+
+  it('an owner stepped down to admin keeps admin and member invitations; owner ones end', async () => {
+    const { tenant, issuer, ownerCookie, env, sent } = await ownerWithInvitations()
+    expect((await changeRole(ownerCookie, issuer.id, 'admin')).status).toBe(200)
+    expect(await revoked(tenant.id, sent.owner)).toBe(true)
+    expect(await revoked(tenant.id, sent.admin)).toBe(false)
+    expect(await revoked(tenant.id, sent.member)).toBe(false)
+
+    const { cookie } = await inviteeCookie(sent.admin)
+    expect((await accept(tokenSentTo(env, sent.admin), cookie)).status).toBe(200)
+    const { cookie: ownerInvitee } = await inviteeCookie(sent.owner)
+    const res = await accept(tokenSentTo(env, sent.owner), ownerInvitee)
+    expect(res.status).toBe(410)
+    expect((await json<{ code: string }>(res)).code).toBe('invitation_revoked')
+  })
+
+  it('an owner stepped down to member has every invitation end', async () => {
+    const { tenant, issuer, ownerCookie, sent } = await ownerWithInvitations()
+    expect((await changeRole(ownerCookie, issuer.id, 'member')).status).toBe(200)
+    for (const email of Object.values(sent)) expect(await revoked(tenant.id, email)).toBe(true)
+  })
+
+  it('a blocked issuer’s invitation is refused at accept, and the row is marked revoked', async () => {
+    const { tenant, actor, cookie } = await tenantWith('admin')
+    const env = createTestEnv()
+    const email = newEmail()
+    expect((await invite(cookie, { email, role: 'member' }, env)).status).toBe(201)
+    await db.update(users).set({ blockedAt: new Date() }).where(eq(users.id, actor.id))
+
+    const { invitee, cookie: signedIn } = await inviteeCookie(email)
+    const res = await accept(tokenSentTo(env, email), signedIn)
+    expect(res.status).toBe(410)
+    expect((await json<{ code: string }>(res)).code).toBe('invitation_revoked')
+    expect(await membership(tenant.id, invitee.id)).toBeUndefined()
+    expect(await revoked(tenant.id, email)).toBe(true)
+  })
+
+  it('a demoted global admin’s invitation is refused at accept, and the row is marked revoked', async () => {
+    const { tenant } = await tenantWith('owner')
+    const admin = await createTestGlobalAdmin(db)
+    await createTestGlobalAdmin(db) // the last global admin cannot be demoted
+    const adminCookie = sessionCookieHeader(await createTestSession(db, admin.id))
+    await request(`/api/admin/tenants/${tenant.id}/support/enter`, {
+      method: 'POST',
+      headers: adminCookie,
+    })
+    const env = createTestEnv()
+    const email = newEmail()
+    expect((await invite(adminCookie, { email, role: 'owner' }, env)).status).toBe(201)
+    await request(`/api/admin/tenants/${tenant.id}/support/leave`, {
+      method: 'POST',
+      headers: adminCookie,
+    })
+    await db.update(users).set({ isGlobalAdmin: false }).where(eq(users.id, admin.id))
+
+    const { invitee, cookie: signedIn } = await inviteeCookie(email)
+    const res = await accept(tokenSentTo(env, email), signedIn)
+    expect(res.status).toBe(410)
+    expect((await json<{ code: string }>(res)).code).toBe('invitation_revoked')
+    expect(await membership(tenant.id, invitee.id)).toBeUndefined()
+    expect(await revoked(tenant.id, email)).toBe(true)
+  })
+
+  it('an admin demoted to member after inviting: the invitation is refused even if it was missed', async () => {
+    const { tenant, actor, cookie } = await tenantWith('admin')
+    const env = createTestEnv()
+    const email = newEmail()
+    expect((await invite(cookie, { email, role: 'admin' }, env)).status).toBe(201)
+    // A role change made outside changeMemberRole (the issuer's own claims, say).
+    await db
+      .update(tenantUsers)
+      .set({ role: 'member' })
+      .where(and(eq(tenantUsers.tenantId, tenant.id), eq(tenantUsers.userId, actor.id)))
+    const { cookie: signedIn } = await inviteeCookie(email)
+    expect((await accept(tokenSentTo(env, email), signedIn)).status).toBe(410)
+    expect(await revoked(tenant.id, email)).toBe(true)
   })
 })
