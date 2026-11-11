@@ -1,7 +1,7 @@
 /**
  * `/api/invitations`: pending list (read), create / bulk / resend / revoke (`manage
  * Invitation`), plus the tenant-free `GET /pending` — invitations addressed to MY email across
- * tenants (the login-prologue banner). The public token routes live in `invite.ts`.
+ * tenants (the login-prologue banner; a session only — an API key gets 403 `insufficient_scope`). The public token routes live in `invite.ts`.
  */
 import { paginationQuerySchema } from '@rocketflare/shared/pagination'
 import { bulkInviteRequestSchema, inviteMemberRequestSchema } from '@rocketflare/shared/tenants'
@@ -16,7 +16,7 @@ import {
   revokeInvitation,
 } from '../services/invitations'
 import { paginated } from '../utils/routes/pagination'
-import { uuidParam, withAuth, withAuthAndDb } from '../utils/routes/route-helpers'
+import { uuidParam, withAccountAuth, withAuthAndDb } from '../utils/routes/route-helpers'
 import { createRouter } from '../utils/routes/router'
 import { validate } from '../utils/routes/validate'
 
@@ -24,7 +24,7 @@ export const invitationsRouter = createRouter()
 
 // Tenant-free, before `/:id` so "pending" is never parsed as an id.
 invitationsRouter.get('/pending', async c => {
-  const { db, user } = withAuth(c)
+  const { db, user } = withAccountAuth(c)
   return c.json({ items: await listPendingForEmail(db, user.email) })
 })
 

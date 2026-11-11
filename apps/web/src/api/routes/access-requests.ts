@@ -1,18 +1,19 @@
 /**
  * `POST /api/access-requests`: a signed-in user with no organisation asks to be let in.
  * Tenant-free; the email is always the session user's (the body's is ignored when signed in).
- * Creates or updates the ONE pending request for that address.
+ * Creates or updates the ONE pending request for that address. A session only: an API key acts
+ * within its organisation and gets 403 `insufficient_scope`.
  */
 import { createAccessRequestSchema } from '@rocketflare/shared/access-requests'
 import { ensureAccessRequest } from '../services/auth'
-import { withAuth } from '../utils/routes/route-helpers'
+import { withAccountAuth } from '../utils/routes/route-helpers'
 import { createRouter } from '../utils/routes/router'
 import { validate } from '../utils/routes/validate'
 
 export const accessRequestsRouter = createRouter()
 
 accessRequestsRouter.post('/', validate('json', createAccessRequestSchema), async c => {
-  const { db, user } = withAuth(c)
+  const { db, user } = withAccountAuth(c)
   const body = c.req.valid('json')
   const row = await ensureAccessRequest(db, {
     email: user.email,

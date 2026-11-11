@@ -149,7 +149,11 @@ the operator's record of what it spent is lost with the organisation.
   membership → groups → features in one query. The second strategy is a Bearer tenant API key
   (hashed, expiry, soft revoke), with scopes `authMiddleware` enforces on every request: `read`
   allows GET/HEAD/OPTIONS, `write` or `*` allows everything; anything else is 403
-  `insufficient_scope`. The CASL check on the creator's role still applies on top.
+  `insufficient_scope`. The CASL check on the creator's role still applies on top. A key acts only
+  within its organisation, plus its creator's own profile (`GET`/`PATCH /api/me`): `GET
+  /api/tenants` lists that one organisation, and the routes about the person's whole account —
+  `POST /api/tenants`, `GET /api/invitations/pending`, `POST /api/access-requests` — answer 403
+  `insufficient_scope` to a key (`withAccountAuth`).
 - **Magic link** is the zero-credential path: a 256-bit, 15-minute, single-use, SHA-256-hashed
   token. With no `RESEND_API_KEY` the URL is logged, except when `APP_ENV=production`, where it is
   never written to the logs. Past five sign-in mails to one address in 15 minutes the route still

@@ -13,12 +13,13 @@ manual: false
 
 ## What changed
 
-Suspended organisations run no agents, plugins hear about suspensions, invitations need their issuer's current authority, and the owned-organisation ceiling covers promotions, invitations and a per-day creation limit.
+Suspended organisations run no agents, plugins hear about suspensions, invitations need their issuer's current authority, and the owned-organisation ceiling covers promotions, invitations and a per-day creation limit; API keys act only within their organisation.
 
 - Suspension: `enqueueRun` / `enqueueRunBatch` refuse a non-active tenant with 403 `tenant_suspended` (route, plugin and event trigger alike); `executeRun` settles a run whose tenant is suspended `cancelled` before any model call; `isCancelRequested` reads the tenant's status, so an executing run stops at its next poll; `setTenantSuspended` cancels the tenant's `queued` and `awaiting_input` runs. See `docs/CONCEPTS.md` §1.
 - Plugin hook: `ServerPlugin.hooks.onTenantStatusChanged(db, tenantId, status, env)` runs for every installed plugin after a suspend or reactivate, best-effort (`runTenantStatusChangedHooks` in `utils/db/tenant-helpers.ts`). See `docs/CONCEPTS.md` §16.
 - Invitations: `acceptInvitation` re-checks the issuer inside its transaction (exists, not blocked, a global admin or a member whose role could issue the invitation's role) and otherwise marks the row revoked and answers 410 `invitation_revoked`; `changeMemberRole` revokes the target's pending invitations the new role could not issue. See `docs/CONCEPTS.md` §1.
 - Ownership ceiling: `MAX_OWNED_TENANTS_PER_USER` is checked (`assertMayOwnAnother`, under the user-row lock) on a promotion to owner and on accepting an owner invitation, and also bounds creations per person per UTC day through the new `tenant_creation_counters` table, which has no foreign key to `tenants`. See `docs/CONCEPTS.md` §1.
+- API keys: a key acts only within its organisation plus its creator's own profile — `GET /api/tenants` lists the key's organisation alone, and `POST /api/tenants`, `GET /api/invitations/pending` and `POST /api/access-requests` answer 403 `insufficient_scope` to a key (`withAccountAuth`). See `docs/CONCEPTS.md` §2.
 
 ## How to apply
 
@@ -35,6 +36,8 @@ Suspended organisations run no agents, plugins hear about suspensions, invitatio
 11. In `apps/web/src/api/utils/db/tenant-helpers.ts`, add `assertMayOwnAnother(tx, userId, max)` (lock the user row `FOR UPDATE`, exempt a global admin, 403 `tenant_limit_reached` at `max` owner rows), call it from `createTenantForUser` in place of the inline count, add a `chargeTenantCreation` upsert on `tenant_creation_counters` (conditional update `created < max`, no row back → the same 403) in the same transaction, and add `pruneTenantCreationCounters(db)` to `runPruneExpired` in `apps/web/src/api/scheduled.ts`.
 12. Add `maxOwnedTenants?: number` to `changeMemberRole` (`services/members.ts`, checked inside its transaction when the new role is `owner`) and to `acceptInvitation` (`services/invitations.ts`, checked inside its transaction when the person would become an owner), and pass `maxOwnedTenants: cfg.MAX_OWNED_TENANTS_PER_USER` from `PATCH /api/members/:userId` (`routes/members.ts`) and `POST /api/invite/:token/accept` (`routes/invite.ts`).
 13. Add `'src/api/utils/db/tenant-helpers.ts'` to `CORE_UNSCOPED_ALLOWLIST` in `apps/web/tests/config/unscoped-allowlist.test.ts`: `assertMayOwnAnother` counts one person's owner rows across every tenant.
+14. Add `withAccountAuth(c)` beside `withAuth` in `apps/web/src/api/utils/routes/route-helpers.ts`: it calls `withAuth(c)` and throws `ForbiddenError(…, ERROR_CODES.insufficientScope)` when `isApiKeySession(ctx.auth)` (from `middleware/auth.ts`).
+15. Use `withAccountAuth` in place of `withAuth` in `POST /api/tenants` (`routes/tenants.ts`, then drop its `isApiKeySession` guard around `updateSelectedTenant`), `GET /api/invitations/pending` (`routes/invitations.ts`) and `POST /api/access-requests` (`routes/access-requests.ts`); in `GET /api/tenants`, return only the summary whose `id` is `auth.tenantId` when `isApiKeySession(auth)`. Give any tenant-free route of an app's own that reads or changes the person's other organisations the same treatment.
 
 ## Conflicts to expect
 
@@ -48,3 +51,4 @@ Suspended organisations run no agents, plugins hear about suspensions, invitatio
 4. `tests/api/security/invitation-authority.test.ts` passes, including "an invitation carries only the authority its issuer still holds".
 5. `tests/api/security/tenant-creation.test.ts` passes, including "the ceiling holds wherever ownership is gained".
 6. `pnpm db:migrate` applies `0026_kit-tenant-creation-counters.sql`.
+7. `tests/api/security/api-key-account-scope.test.ts` passes.

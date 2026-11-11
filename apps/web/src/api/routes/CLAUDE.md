@@ -73,8 +73,10 @@ router.post('/', validate('json', createThingSchema), async c => {
 })
 ```
 
-`withAuth(c)` is the tenant-free variant (`tenantId: string | null`) for invite accept, pending
-invitations, access requests and `/api/admin/*`. Both also return `cfg`, `logger`, `realtime`
+`withAuth(c)` is the tenant-free variant (`tenantId: string | null`) for the caller's profile and
+`/api/admin/*`; `withAccountAuth(c)` is the same for a route about the person's whole account
+(create an organisation, pending invitations, access requests) and refuses an API key with 403
+`insufficient_scope` — a key acts only within its organisation. Both also return `cfg`, `logger`, `realtime`
 (`{ defer, env }` — hand it to a service that nudges) and `tracer` (the request's span
 recorder, or `noopTracer` when no sink exists, for `withAgentTrace` / `traceChatClient`). `requireMultiTenant(cfg)` → 404
 `tenancy_mode_single`. `uuidParam(c, 'id')` → 404 for a non-UUID `:id` (never a DB error).
