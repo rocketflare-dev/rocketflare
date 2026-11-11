@@ -4,28 +4,59 @@ previous: 0.34.0
 date: null
 breaking: false
 migrations: []
-areas: []
-touches_surfaces: []
+areas: [docs, config]
+touches_surfaces: [threat-model]
 requires_surfaces: []
 manual: false
 ---
 
 ## What changed
 
-_Nothing yet. Add an entry here in the same pull request as the change. This first paragraph is
-lifted VERBATIM into `CHANGELOG.md`, so make it ONE standalone summary sentence of ≤ 40 words —
-then one bullet per change, one line each, and no `###` sub-headings. Rationale belongs in
-`docs/CONCEPTS.md` and is linked, never restated; see `README.md` beside this file._
+A new `/rf-security` skill runs a multi-agent security audit of a copy against its own `docs/THREAT-MODEL.md`, with proofs in a Docker sandbox and findings kept outside the repository.
+
+- New `.claude/skills/rf-security/` — `SKILL.md`, the runner `tools/audit.mjs` (with `lib.mjs`, `prices.json`), the guard `tools/guard-hook.mjs`, and Cloudflare's security-audit skill vendored in `upstream/` with its MIT `LICENSE` and `VENDOR.md`.
+- New sandbox: `scripts/security-sandbox.mjs`, `apps/web/docker-compose.security.yml`, `apps/web/docker/Dockerfile.security-sandbox`, and the root script `pnpm security:sandbox`.
+- New `docs/THREAT-MODEL.md` (with a section for plugin authors) and `docs/SECURITY-AUDIT.md` (modes, cost, cadence, limits); `docs/CONCEPTS.md` §18 and a §13 bullet.
+- `docs/THREAT-MODEL.md` is a new `threat-model` surface and `manual`: a later upgrade shows the kit's diff to it and never applies it.
+- `audit.mjs public-report` renders a publishable report from a hand-curated file of fixed items only, refusing unknown fields.
+- `.claude/settings.json` registers the guard as a `PreToolUse` hook; it exits at once unless an audit is active.
+- Runner tests in `apps/web/tests/config/rf-security/`; `.claude/rules/testing.md` describes them.
+- Kit repository only: `pnpm kit:release` warns when the changes since the last tag touch auth, tenancy/RLS, the identity or plugin seams, or AI tool binding.
 
 ## How to apply
 
-_Numbered, imperative, each step self-contained — no "these", "them" or "the above" reaching
-outside its own step._
+1. Run `pnpm kit:upgrade --apply`: it adds the skill directory, the sandbox files, both new docs and the runner tests, translated into this app's names. Rationale: `docs/CONCEPTS.md` §18.
+2. Add this entry to `.claude/settings.json` (`manual` for the upgrade) as the FIRST item of `hooks.PreToolUse`, replacing `.rocketflare` with this app's config directory (`.<slug>`, the directory `~/.<slug>/config.json` lives in):
+
+   ```json
+   {
+     "matcher": "Bash|Write|Edit|MultiEdit|NotebookEdit|Read|Grep|Glob",
+     "hooks": [
+       {
+         "type": "command",
+         "command": "test -e \"$HOME/.rocketflare/security-runs/.active\" || exit 0; node \"$CLAUDE_PROJECT_DIR/.claude/skills/rf-security/tools/guard-hook.mjs\"",
+         "timeout": 10
+       }
+     ]
+   }
+   ```
+
+3. Add `"security:sandbox": "node scripts/security-sandbox.mjs"` to the `scripts` of the root `package.json` (`manual` for the upgrade).
+4. Add this surface to the `surfaces` list in `.rocketflare.json`, and `"docs/THREAT-MODEL.md"` to its `manual` list, so later upgrades leave this app's threat model to this app: `{ "id": "threat-model", "kind": "example", "label": "The threat model the security audit reads", "anchor": "docs/THREAT-MODEL.md", "paths": ["docs/THREAT-MODEL.md"], "registries": [] }`.
+5. Rewrite `docs/THREAT-MODEL.md` for this app: its actors, assets, deployment and installed plugins. The audit reads whatever the file says and refuses to start without one.
+6. Add `/rf-security` to the skill list and the "you may run yourself" line of root `CLAUDE.md`, marked as run only when asked, because it spends agent calls.
+7. Optionally take the "Taking fixes from the kit" and "Auditing this app" sections into this app's `SECURITY.md` (`neverPort`): the kit's `scripts/rename.mjs` `securityPolicy()` has the text.
 
 ## Conflicts to expect
 
-_One line each: `path → what changed → what to do`. Or exactly `None.`_
+- `CLAUDE.md` → the skill list and the "you may run yourself" line gained `/rf-security` → keep your own wording and add the entry.
+- `docs/CONCEPTS.md` → a new §18 and its row in the table of contents → append both after your own last section, renumbering if you added sections.
+- `.claude/rules/testing.md` → one new paragraph before "Tests run under Node" → take it as is.
 
 ## Verify
 
-_Numbered checkable commands and assertions only._
+1. `node .claude/skills/rf-security/tools/audit.mjs help` lists `public-report` among its commands.
+2. `pnpm --filter @rocketflare/web exec vitest run --project config tests/config/rf-security` passes.
+3. `grep -c guard-hook.mjs .claude/settings.json` prints `1`, and the hook's marker path names this app's config directory.
+4. `node -e 'const m=require("./.rocketflare.json"); process.exit(m.surfaces.some(s=>s.id==="threat-model") && m.manual.includes("docs/THREAT-MODEL.md") ? 0 : 1)'` exits 0.
+5. `pnpm gate` passes.

@@ -34,6 +34,9 @@
  * at the ref the kit pins, and the version being cut must be at or above the `minKit` floor that entry declares. `--skip-plugin-check` is the escape
  * hatch, and it says so loudly.
  *
+ * In the KIT it also WARNS, never fails, when the changes since the previous tag touch the paths
+ * a security audit should see first (`AUDIT_CADENCE_GLOBS`, `docs/SECURITY-AUDIT.md` "Cadence").
+ *
  * Exit 0 ok · 1 error · 2 usage.
  */
 import { execFileSync } from 'node:child_process'
@@ -48,6 +51,7 @@ import {
   changelogSection,
   defaultPluginProblems,
   isKitManifest,
+  matchesAny,
   noteLengthWarning,
   parseNote,
   prependChangelogSection,
@@ -140,6 +144,79 @@ export function releaseContext(root = SCRIPT_ROOT, { repoRoot = root } = {}) {
     }
   }
   return { kind: 'unknown' }
+}
+
+/**
+ * The paths where a change deserves a security audit before it ships (`docs/SECURITY-AUDIT.md`,
+ * "Cadence"): authentication, tenant scoping and row-level security, the identity and plugin
+ * seams, and how the model is handed tools. A release touching one prints a WARNING, never a
+ * failure, recommending a diff-scoped `standard` audit (`/rf-security standard <prev>..HEAD`).
+ */
+export const AUDIT_CADENCE_GLOBS = Object.freeze([
+  // Authentication: sessions, keys, magic links, OAuth/OIDC providers, the auth routes
+  'apps/web/src/api/auth/**',
+  'apps/web/src/api/routes/auth/**',
+  'apps/web/src/api/middleware/auth.ts',
+  'apps/web/src/api/middleware/csrf.ts',
+  'apps/web/src/api/middleware/permissions.ts',
+  'apps/web/src/api/middleware/public-mounts.ts',
+  'apps/web/src/api/services/auth.ts',
+  // Tenancy, roles and row-level security
+  'apps/web/src/permissions/**',
+  'packages/shared/src/permissions.ts',
+  'apps/web/src/api/services/access.ts',
+  'apps/web/src/api/services/access-sql.ts',
+  'apps/web/src/api/services/member-ability.ts',
+  'apps/web/src/api/services/idp-tenancy.ts',
+  'apps/web/src/db/tenant-scope.ts',
+  'apps/web/src/db/schema/rls.ts',
+  // The identity and plugin seams
+  'apps/web/src/plugins/api/identity*',
+  'apps/web/src/plugins/api/auth.ts',
+  'apps/web/src/plugins/api/access.ts',
+  'apps/web/src/plugins/api/secrets.ts',
+  'apps/web/src/plugins/api/types.ts',
+  'apps/web/src/plugins/types.ts',
+  'packages/shared/src/plugins/types.ts',
+  // AI tool binding and the agent loop
+  'apps/web/src/api/services/agents/tools/**',
+  'apps/web/src/api/services/agents/runtime.ts',
+  'apps/web/src/api/services/ai/agent-loop.ts',
+  'apps/web/src/api/services/ai/chat-turn.ts',
+])
+
+/** The changed paths a security audit should look at before the release, in input order. */
+export function auditCadencePaths(changed, globs = AUDIT_CADENCE_GLOBS) {
+  return (changed ?? []).filter(f => matchesAny(f, globs))
+}
+
+/** The warning `pnpm kit:release` prints for those paths, or [] when there are none. */
+export function auditCadenceWarning(paths, previous) {
+  if (paths.length === 0) return []
+  const shown = paths.slice(0, 8).map(p => `    ${p}`)
+  if (paths.length > shown.length) shown.push(`    … and ${paths.length - shown.length} more`)
+  return [
+    `⚠ WARNING: ${paths.length} change(s) since ${previous} touch auth, tenancy/RLS, the identity or`,
+    '  plugin seams, or AI tool binding:',
+    ...shown,
+    `  Run a diff-scoped standard audit first: /rf-security standard ${previous}..HEAD`,
+    '  (docs/SECURITY-AUDIT.md, "Cadence"). This is a reminder, not a gate.',
+  ]
+}
+
+/** Paths changed between `ref` and HEAD, or null when git cannot say (no such tag, no git). */
+function changedSince(ref, root) {
+  try {
+    return execFileSync('git', ['diff', '--name-only', `${ref}..HEAD`], {
+      cwd: root,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    })
+      .split('\n')
+      .filter(Boolean)
+  } catch {
+    return null
+  }
 }
 
 /** `git ls-remote` as a boolean: does `ref` exist on that remote? The offline-ish fallback. */
@@ -473,6 +550,12 @@ function main(argv) {
         .replace(/^previous: .*$/m, `previous: ${previous ?? 'null'}`)
         .replace(/^date: .*$/m, `date: ${date}`),
     })
+  }
+
+  // A reminder, not a gate: the audit costs model budget and needs Docker, so it is never forced.
+  if (ctx.kind === 'kit' && jobs[0]?.previous) {
+    const changed = changedSince(jobs[0].previous, repoRoot)
+    if (changed) warn(...auditCadenceWarning(auditCadencePaths(changed), jobs[0].previous))
   }
 
   const changelog = existsSync(abs(repoRoot, ctx.changelog))
