@@ -29,7 +29,7 @@ import {
   pgErrorCode,
   rows,
 } from '@/db/client'
-import { aiSpans, featureFlags, pluginEvents } from '@/db/schema'
+import { aiSpans, featureFlags, pluginEvents, tenants } from '@/db/schema'
 import { withTenantScope } from '@/db/tenant-scope'
 import { runMigrations } from '../../scripts/migrate'
 import { createTestSession, createTestTenantWithUser } from '../helpers/auth'
@@ -228,6 +228,40 @@ describe(`database driver: ${driver}`, () => {
     ).rejects.toThrow('roll back')
     const left = await db.select().from(aiSpans).where(eq(aiSpans.tenantId, tenant.id))
     expect(left).toEqual([])
+  })
+
+  it('select … for update in a transaction holds the row: a second one waits, then reads the commit', async () => {
+    const first = open().db
+    const second = open().db
+    const { tenant } = await createTestTenantWithUser(fixtures)
+    let waiting: Promise<string | undefined> | undefined
+    await first.transaction(async tx => {
+      await tx.select().from(tenants).where(eq(tenants.id, tenant.id)).for('update')
+      waiting = second.transaction(async tx2 => {
+        const [row] = await tx2
+          .select({ name: tenants.name })
+          .from(tenants)
+          .where(eq(tenants.id, tenant.id))
+          .for('update')
+        return row?.name
+      })
+      for (let i = 0; i < 300; i++) {
+        const blocked = rows<{ n: number }>(
+          await fixtures.execute(sql`
+            SELECT count(*)::int AS n FROM pg_stat_activity
+            WHERE datname = current_database() AND wait_event_type = 'Lock'
+              AND query ILIKE '%for update%'
+          `)
+        )[0]?.n
+        if (blocked) break
+        await new Promise(resolve => setTimeout(resolve, 10))
+      }
+      await tx
+        .update(tenants)
+        .set({ name: 'written under the lock' })
+        .where(eq(tenants.id, tenant.id))
+    })
+    expect(await waiting).toBe('written under the lock')
   })
 
   it('withTenantScope enforce: the scoped handle sees app.tenant_id', async () => {

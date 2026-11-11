@@ -13,13 +13,14 @@ manual: false
 
 ## What changed
 
-Suspended organisations run no agents, plugins hear about suspensions, invitations need their issuer's current authority, and the owned-organisation ceiling covers promotions, invitations and a per-day creation limit; API keys act only within their organisation.
+Suspended organisations run no agents, plugins hear about suspensions, invitations need their issuer's current authority, and the owned-organisation ceiling covers promotions, invitations and a per-day creation limit; API keys act only within their organisation, and AI config saves decide on the row they overwrite.
 
 - Suspension: `enqueueRun` / `enqueueRunBatch` refuse a non-active tenant with 403 `tenant_suspended` (route, plugin and event trigger alike); `executeRun` settles a run whose tenant is suspended `cancelled` before any model call; `isCancelRequested` reads the tenant's status, so an executing run stops at its next poll; `setTenantSuspended` cancels the tenant's `queued` and `awaiting_input` runs. See `docs/CONCEPTS.md` §1.
 - Plugin hook: `ServerPlugin.hooks.onTenantStatusChanged(db, tenantId, status, env)` runs for every installed plugin after a suspend or reactivate, best-effort (`runTenantStatusChangedHooks` in `utils/db/tenant-helpers.ts`). See `docs/CONCEPTS.md` §16.
 - Invitations: `acceptInvitation` re-checks the issuer inside its transaction (exists, not blocked, a global admin or a member whose role could issue the invitation's role) and otherwise marks the row revoked and answers 410 `invitation_revoked`; `changeMemberRole` revokes the target's pending invitations the new role could not issue. See `docs/CONCEPTS.md` §1.
 - Ownership ceiling: `MAX_OWNED_TENANTS_PER_USER` is checked (`assertMayOwnAnother`, under the user-row lock) on a promotion to owner and on accepting an owner invitation, and also bounds creations per person per UTC day through the new `tenant_creation_counters` table, which has no foreign key to `tenants`. See `docs/CONCEPTS.md` §1.
 - API keys: a key acts only within its organisation plus its creator's own profile — `GET /api/tenants` lists the key's organisation alone, and `POST /api/tenants`, `GET /api/invitations/pending` and `POST /api/access-requests` answer 403 `insufficient_scope` to a key (`withAccountAuth`). See `docs/CONCEPTS.md` §2.
+- AI config saves: `POST /api/ai/config` reads the row it overwrites `FOR UPDATE` inside its transaction and decides whether the stored key stays on that row, so a concurrent save never leaves a key beside an endpoint it was not saved with. See `docs/CONCEPTS.md` §9.
 
 ## How to apply
 
@@ -38,6 +39,8 @@ Suspended organisations run no agents, plugins hear about suspensions, invitatio
 13. Add `'src/api/utils/db/tenant-helpers.ts'` to `CORE_UNSCOPED_ALLOWLIST` in `apps/web/tests/config/unscoped-allowlist.test.ts`: `assertMayOwnAnother` counts one person's owner rows across every tenant.
 14. Add `withAccountAuth(c)` beside `withAuth` in `apps/web/src/api/utils/routes/route-helpers.ts`: it calls `withAuth(c)` and throws `ForbiddenError(…, ERROR_CODES.insufficientScope)` when `isApiKeySession(ctx.auth)` (from `middleware/auth.ts`).
 15. Use `withAccountAuth` in place of `withAuth` in `POST /api/tenants` (`routes/tenants.ts`, then drop its `isApiKeySession` guard around `updateSelectedTenant`), `GET /api/invitations/pending` (`routes/invitations.ts`) and `POST /api/access-requests` (`routes/access-requests.ts`); in `GET /api/tenants`, return only the summary whose `id` is `auth.tenantId` when `isApiKeySession(auth)`. Give any tenant-free route of an app's own that reads or changes the person's other organisations the same treatment.
+16. In `POST /api/ai/config` (`apps/web/src/api/routes/ai-config.ts`), move the read of the existing `(tenant, scope, label)` row inside the transaction as `tx.select().from(aiConfigs).where(…).for('update')`; when there is none, run `validateUpsert(body, undefined)` and `insert … onConflictDoNothing({ target: [tenantId, scope, label] }).returning()`, and when that returns no row (a concurrent first save) read the row `FOR UPDATE` again; for an existing row run `validateUpsert(body, existing)` and `update … where id` with `apiKeyEnc` set to the new key, left alone when `keepsStoredKey(existing, body)`, else `null`.
+17. Nothing to do in the driver seam for `FOR UPDATE`: `tests/driver/driver.test.ts` gains a case proving a row lock taken in `db.transaction` holds under both drivers.
 
 ## Conflicts to expect
 
@@ -52,3 +55,4 @@ Suspended organisations run no agents, plugins hear about suspensions, invitatio
 5. `tests/api/security/tenant-creation.test.ts` passes, including "the ceiling holds wherever ownership is gained".
 6. `pnpm db:migrate` applies `0026_kit-tenant-creation-counters.sql`.
 7. `tests/api/security/api-key-account-scope.test.ts` passes.
+8. `tests/api/security/ai-config-concurrent-saves.test.ts` passes.

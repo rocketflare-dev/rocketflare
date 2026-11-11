@@ -576,7 +576,8 @@ Server: `api/services/{ai,agents}/**` (read their `CLAUDE.md`), `services/prompt
   `EMBEDDINGS_API_KEY` → 503. Workers AI calls are **billed** to the account; removing `[ai]` from
   both tomls makes the kit zero-spend. Credentials never leave the server (`hasCredential`), and a
   stored key stays with the provider and normalised base URL it was entered for: changing either
-  needs the key again; every
+  needs the key again. A save decides that on the row it overwrites, read `FOR UPDATE` inside its
+  transaction, so of two concurrent saves the second decides on what the first wrote; every
   error is normalised to `AiError` with secrets redacted.
 - **Providers**: `anthropic`, `anthropic_compatible`, `openai`, `openai_compatible`, `workers_ai`.
   There is no Vercel AI SDK and no Bedrock (a SigV4 adapter behind `ChatClient` is the extension).
