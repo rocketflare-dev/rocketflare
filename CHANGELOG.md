@@ -6,6 +6,11 @@ copy of the kit forward without recreating anything its owner deleted.
 
 If you are running a copy: `pnpm kit:upgrade` tells you which of these you are missing.
 
+## 0.34.0 — 2026-11-11
+
+Suspended organisations run no agents, invitation and ownership rules hold on every path, API keys stay in their organisation, AI config saves lock their row, decide is metered, sign-in mail counts per mailbox, uploads stay capped, and Microsoft proves addresses.
+[Porting note](docs/upgrades/0.34.0.md).
+
 ## 0.33.0 — 2026-11-10
 
 Plugin tools get `ToolCtx.requesterUrls`, the URLs a person typed themselves, and the UI offers "Create organisation" only when the server would allow it.
