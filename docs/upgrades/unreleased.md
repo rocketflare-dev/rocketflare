@@ -13,7 +13,7 @@ manual: false
 
 ## What changed
 
-Suspended organisations run no agents, invitation authority and the ownership ceiling hold on every path, API keys stay inside their organisation, AI config saves lock their row, and ctx.decide's chat fallback is metered.
+Suspended organisations run no agents, invitation authority and the ownership ceiling hold on every path, API keys stay inside their organisation, AI config saves lock their row, decide's chat fallback is metered, and sign-in mail counts per mailbox.
 
 - Suspension: `enqueueRun` / `enqueueRunBatch` refuse a non-active tenant with 403 `tenant_suspended` (route, plugin and event trigger alike); `executeRun` settles a run whose tenant is suspended `cancelled` before any model call; `isCancelRequested` reads the tenant's status, so an executing run stops at its next poll; `setTenantSuspended` cancels the tenant's `queued` and `awaiting_input` runs. See `docs/CONCEPTS.md` §1.
 - Plugin hook: `ServerPlugin.hooks.onTenantStatusChanged(db, tenantId, status, env)` runs for every installed plugin after a suspend or reactivate, best-effort (`runTenantStatusChangedHooks` in `utils/db/tenant-helpers.ts`). See `docs/CONCEPTS.md` §16.
@@ -22,6 +22,7 @@ Suspended organisations run no agents, invitation authority and the ownership ce
 - API keys: a key acts only within its organisation plus its creator's own profile — `GET /api/tenants` lists the key's organisation alone, and `POST /api/tenants`, `GET /api/invitations/pending` and `POST /api/access-requests` answer 403 `insufficient_scope` to a key (`withAccountAuth`). See `docs/CONCEPTS.md` §2.
 - AI config saves: `POST /api/ai/config` reads the row it overwrites `FOR UPDATE` inside its transaction and decides whether the stored key stays on that row, so a concurrent save never leaves a key beside an endpoint it was not saved with. See `docs/CONCEPTS.md` §9.
 - Decide metering: `ctx.decide`'s chat fallback runs through the run meter like `ctx.chat.client` — `assertPriced` and `check()` before each model call, one `ai_usage` row as each returns (a decide whose answer fails validation twice leaves both), priced on who pays for the `agent-decide` model; `createDecide` records once per ask only for TypeSafe. See `docs/CONCEPTS.md` §9.
+- Sign-in mail per recipient: the 5-per-15-minutes window is keyed on the canonical mailbox (`canonicalMailbox`: lower-cased, `+tag` dropped, dots dropped for `gmail.com` / `googlemail.com`), so tagged and dotted spellings of one mailbox share it; mail still goes to the address as typed. See `docs/CONCEPTS.md` §2.
 
 ## How to apply
 
@@ -47,6 +48,7 @@ Suspended organisations run no agents, invitation authority and the ownership ce
 20. In `executeRun` (`apps/web/src/api/services/agents/runtime.ts`), make the `wrapChat` passed to `resolveDecisions` return `meterChatClient(traceChatClient(…), meter, { feature, billedToPlatform: chat.billedToPlatform })` with `feature` = `agent:<agent key>:decide`.
 21. In `createDecide` (`apps/web/src/api/services/agents/decisions.ts`), skip the `deps.meter.record(…)` after the ask when `method === 'llm_self_report'`, so a fallback call is not counted twice.
 22. An app's own code that calls `resolveDecisions` with `wrapChat` reads the second argument as an object now, not a provider.
+23. Add `apps/web/src/api/utils/core/mailbox.ts` exporting `canonicalMailbox(email)` (trim and lower-case; drop everything from the first `+` in the local part unless the local part starts with it; for `gmail.com` or `googlemail.com` remove the local part's dots and write the domain as `gmail.com`), and in `recipientMailAllowed` (`apps/web/src/api/routes/auth/magic-link.ts`) hash `canonicalMailbox(email)` in place of `email.toLowerCase()`.
 
 ## Conflicts to expect
 
@@ -64,3 +66,4 @@ Suspended organisations run no agents, invitation authority and the ownership ce
 7. `tests/api/security/api-key-account-scope.test.ts` passes.
 8. `tests/api/security/ai-config-concurrent-saves.test.ts` passes.
 9. `tests/api/security/agent-run-budget-accounting.test.ts` passes, including "ctx.decide's chat fallback under the run meter".
+10. `tests/api/security/sign-in-mail-per-recipient.test.ts` passes, including "one mailbox under many +tag spellings shares one window".

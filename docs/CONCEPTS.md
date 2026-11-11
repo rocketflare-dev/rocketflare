@@ -156,8 +156,10 @@ the operator's record of what it spent is lost with the organisation.
   `insufficient_scope` to a key (`withAccountAuth`).
 - **Magic link** is the zero-credential path: a 256-bit, 15-minute, single-use, SHA-256-hashed
   token. With no `RESEND_API_KEY` the URL is logged, except when `APP_ENV=production`, where it is
-  never written to the logs. Past five sign-in mails to one address in 15 minutes the route still
-  answers 202 but mints nothing and sends nothing (KV, keyed by a hash of the address). Opening the
+  never written to the logs. Past five sign-in mails to one mailbox in 15 minutes the route still
+  answers 202 but mints nothing and sends nothing (KV, keyed by a hash of the canonical mailbox —
+  lower-cased, a `+tag` dropped, and for `gmail.com` / `googlemail.com` the local part's dots
+  dropped, so `a+1@x` and `a+2@x` share one window; the mail still goes to the address as typed). Opening the
   link consumes nothing: `GET /verify` redirects to `/magic-link/confirm`, and only its "Sign in"
   button (`POST /verify`, same-origin only) spends the token, so mail security scanners that fetch
   every link on delivery (Defender Safe Links, Mimecast) cannot. Dev-login exists and 404s in production.
