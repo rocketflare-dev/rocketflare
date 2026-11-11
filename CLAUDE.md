@@ -10,8 +10,10 @@ Cloudflare Worker (`apps/web`), a CLI (`apps/cli`), private zod contracts
 > starts the server): show each `✔ n/10` line, stop on failure. By hand: `SETUP.md` Part 1.
 > **Fresh copy?** `/rf-adapt <slug>`, then `docs/ADAPTING.md`. `/rf-setup`, `/rf-adapt`, `/rf-preflight`, `/rf-how-do-i`,
 > `/rf-upgrade`, `/rf-traces`, `/rf-evals`, `/rf-agent-replay`, `/rf-agent-docs` and `/rf-plugin` you
-> may run yourself; **`/rf-provision` is user-invoked only** (it creates paid resources and prompts for
-> tokens on a TTY) — asked to deploy, tell the user to run `/rf-provision`.
+> may run yourself; **`/rf-security` only when asked** (a security audit spends agent calls, about
+> $35–200+; agree the mode and budget first, `docs/SECURITY-AUDIT.md`); **`/rf-provision` is
+> user-invoked only** (it creates paid resources and prompts for tokens on a TTY) — asked to deploy,
+> tell the user to run `/rf-provision`.
 > **Plugins** (D31, `docs/CONCEPTS.md` §16): a plugin is a git repository copied in, wired through six
 > barrels — `pnpm plugin add|upgrade|remove|list|check`, driven by `/rf-plugin`, which always shows the
 > plan before `--apply`. It imports the host only through the DECLARED entries (`docs/plugin-api.md`,
@@ -70,6 +72,7 @@ TEST_DATABASE_BRANCH=gate-… pnpm test  # a sandbox gate: no Docker, the whole 
 pnpm dev:db:up --neon|--postgres  # D35: local dev on either driver
 pnpm eval [suite] [--model x] [--compare] · pnpm eval:baseline · pnpm eval:view  # real-model evals (D33, docs/EVALS.md)
 pnpm web agent:replay <agent> --tenant <slug> [--candidate f] [--live]  # D38: today's agent code over past runs, read-only
+pnpm security:sandbox build|verify|test --run <dir>|down  # the /rf-security sandbox (Docker); the audit drives it
 pnpm lint · pnpm typecheck · pnpm build  # workspace-wide
 pnpm web <script>  # any apps/web script (test:api, db:check…)
 pnpm db:generate · pnpm db:studio · pnpm deploy[:staging] · pnpm provision all  # (or one phase: --help)
@@ -118,7 +121,8 @@ docs/upgrades/     one porting note per kit release (+ unreleased.md, kit repo o
                    rf-traces (debug a run from its span tree; pick a tracing backend, D32) ·
                    rf-evals (+ reference.md — author, run, compare, harvest, baseline, improve; D33) ·
                    rf-agent-replay (replay an agent's past runs with today's code, no model calls; D38) ·
-                   rf-agent-docs (+ check.mjs — audit and fix CLAUDE.md, rules and skills)
+                   rf-agent-docs (+ check.mjs — audit and fix CLAUDE.md, rules and skills) ·
+                   rf-security (+ tools/ runner and guard hook — audit against docs/THREAT-MODEL.md)
 ```
 
 **`packages/shared`.** Private, no build: `@rocketflare/shared/<module>` → `./src/<module>.ts` (incl. `ai/*`,
@@ -155,7 +159,7 @@ consulted only for a flag marked `environmentGated`; the rollout state itself li
 `IDENTITY_WEBHOOK_SECRET` for its identity events).
 
 Rules (auto-loaded by path): `.claude/rules/api.md` · database.md · ui.md · cli.md · testing.md ·
-code-quality.md · cloudflare.md. Runbooks: `docs/DEPLOY.md` · `docs/RLS.md`
+code-quality.md · cloudflare.md. Runbooks: `docs/DEPLOY.md` · `docs/RLS.md` · `docs/SECURITY-AUDIT.md`
 
 ## Non-Negotiables
 

@@ -17,6 +17,7 @@ setup in `SETUP.md`; Cloudflare topology in `docs/DEPLOY.md`; RLS in `docs/RLS.m
 | 7 | [UI shell](#7-ui-shell) | 15 | [Feature flags](#15-feature-flags) |
 | 8 | [Analytics](#8-analytics) | 16 | [Plugins](#16-plugins) |
 |  |  | 17 | [Connectors](#17-connectors) |
+|  |  | 18 | [Security testing](#18-security-testing) |
 
 **Layout (D26).** A pnpm workspace: `apps/web` (the Worker — Hono API + React UI, §§1–10),
 `apps/cli` (§11), `packages/shared` (zod contracts, §12), and `apps/evals` (developer-run eval
@@ -1061,6 +1062,11 @@ cycle). Detail: `packages/shared/CLAUDE.md`.
   (root `package.json` version changed → update rocketflare.dev after tagging). Both answer with
   `hookSpecificOutput.additionalContext`, because a `PreToolUse` hook's plain stdout reaches only
   the debug log.
+- **The security audit travels** (§18): `/rf-security`, its runner and the sandbox are `core`, so
+  a copy keeps them; the rename moves its runs root with the config directory
+  (`~/.<slug>/security-runs`) and the guard hook with it. `docs/THREAT-MODEL.md` is the copy's
+  own: the `threat-model` surface, and `manual` as well, so `kit:upgrade` shows the kit's diff to it
+  and never applies one, and never recreates it once deleted.
 - **Released history is never rewritten** — every copy pins a commit.
 
 **Known gaps:** a copy pinned before 0.10.1 has no update hook until it upgrades (and
@@ -1602,3 +1608,40 @@ no MCP client; directory sync does not provision kit users or groups (it only ma
 
 TypeSafe (Jev) is NOT a connector in this sense: it answers questions rather than syncing an
 organisation's data, so it is an AI provider in the `decisions` scope (§9, D37).
+
+## 18. Security testing
+
+**A security finding counts only when a test proves it, and stays outside the repository until its
+fix has released.** `/rf-security` (`.claude/skills/rf-security/`) is a multi-agent audit built on
+Cloudflare's vendored security-audit skill, run against `docs/THREAT-MODEL.md`. How to run it, what
+it costs and how to read it: `docs/SECURITY-AUDIT.md`.
+
+- **Modes**: `quick` (16 agent calls), `standard` (50; usually diff-scoped, `<ref>..<ref>`), `deep`
+  (90). An agent call costs about $2.00–2.50, so roughly $35, $110–150 and $200+. A coding agent
+  runs it only when asked, after agreeing the budget.
+- **Independence**: hunters work alone on narrow units and never see a suspect list; one fresh
+  verifier per candidate, on a different model from the hunters; a critic over the coverage
+  ledger; Phase 5 reviewers; a fresh verifier again after a material review. Confirmed means a
+  vitest proof that fails on untouched code.
+- **The runner** (`tools/audit.mjs`) does every mechanical step: run directories, budgets, briefs,
+  ledger updates through upstream's validators (a step that does not validate leaves
+  `*.next.json` and blocks the next), citations, reports and measured cost. Its tests are synthetic
+  fixtures in `apps/web/tests/config/rf-security/`.
+- **Isolation**: proofs run only in the sandbox (`pnpm security:sandbox`: an image from `git
+  archive`, its own Postgres on an internal network, a read-only root, no capabilities). While a
+  run is active the guard hook in `.claude/settings.json` refuses deletes, moves, credential reads
+  and writes outside the run directory for every agent, and a snapshot around each wave stops the
+  run if anything else changed.
+- **Privacy**: runs live in `~/.rocketflare/security-runs/<app>/run-N`. `audit.mjs public-report`
+  renders a publishable report from a hand-curated file of fixed items only, from an allowlist of
+  fields, and never reads a run's findings.
+- **Cadence**: a diff-scoped `standard` run before a release touching auth, tenancy/RLS, the
+  identity or plugin seams, or AI tool binding (the kit's `kit:release` warns, never fails,
+  `AUDIT_CADENCE_GLOBS` in `scripts/release.mjs`); a quarterly `deep` run. A fixed finding's proof
+  becomes a regression test in `apps/web/tests/api/security/`.
+
+**Known gaps:** no scheduled or CI audit; proofs run locally only, under Node rather than workerd,
+so runtime- and browser-specific behaviour needs a separate local check; it needs Docker and a
+model budget; one run finds about half of what is there, so a clean area proves nothing; the guard
+is a Claude Code hook, so it binds only agents run through Claude Code in this checkout; the
+public report is only as neutral as the lines a person writes for it.

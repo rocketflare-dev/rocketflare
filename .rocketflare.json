@@ -230,6 +230,14 @@
       "anchor": "apps/web/src/api/services/ai/deterministic-embedding.ts",
       "paths": ["apps/web/src/api/services/ai/deterministic-embedding.ts"],
       "registries": ["apps/web/scripts/seed.ts#seedDemo"]
+    },
+    {
+      "id": "threat-model",
+      "kind": "example",
+      "label": "The threat model the security audit reads (yours to rewrite; also manual, so an upgrade only shows the kit's diff)",
+      "anchor": "docs/THREAT-MODEL.md",
+      "paths": ["docs/THREAT-MODEL.md"],
+      "registries": []
     }
   ],
   "neverPort": [
@@ -279,7 +287,8 @@
     "packages/*/package.json",
     ".github/workflows/**",
     "apps/web/src/ui/components/shared/LogoMark.tsx",
-    "apps/web/src/api/services/events/app-handlers.ts"
+    "apps/web/src/api/services/events/app-handlers.ts",
+    "docs/THREAT-MODEL.md"
   ],
   "core": [
     "apps/web/src/**",

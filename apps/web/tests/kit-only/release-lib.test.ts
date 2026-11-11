@@ -11,6 +11,7 @@
  *
  * The `config` project: no database.
  */
+import { execFileSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -25,7 +26,13 @@ import {
   prependChangelogSection,
 } from '../../../../scripts/lib/upgrade-lib.mjs'
 import type { MirrorReader } from '../../../../scripts/release.d.mts'
-import { releaseContext, resolveDefaultPlugin } from '../../../../scripts/release.mjs'
+import {
+  AUDIT_CADENCE_GLOBS,
+  auditCadencePaths,
+  auditCadenceWarning,
+  releaseContext,
+  resolveDefaultPlugin,
+} from '../../../../scripts/release.mjs'
 
 const PLUGIN_MANIFEST = 'rocketflare-plugin.json'
 const REPO = 'https://example.test/rocketflare-plugin-orders.git'
@@ -358,5 +365,56 @@ describe('behaviourFiles scoped to a subdirectory', () => {
     expect(behaviourFiles(changed, { within: 'plugins/analytics' })).not.toContain(
       'plugins/analytics/docs/upgrades/unreleased.md'
     )
+  })
+})
+
+describe('the security audit cadence warning', () => {
+  it('picks out auth, tenancy, the identity and plugin seams and AI tool binding', () => {
+    const sensitive = [
+      'apps/web/src/api/auth/sessions.ts',
+      'apps/web/src/api/auth/providers/oidc.ts',
+      'apps/web/src/api/routes/auth/magic-link.ts',
+      'apps/web/src/api/middleware/auth.ts',
+      'apps/web/src/permissions/abilities.ts',
+      'apps/web/src/db/tenant-scope.ts',
+      'apps/web/src/db/schema/rls.ts',
+      'apps/web/src/plugins/api/identity.ts',
+      'apps/web/src/plugins/types.ts',
+      'apps/web/src/api/services/agents/tools/search-knowledge.ts',
+      'apps/web/src/api/services/ai/agent-loop.ts',
+    ]
+    const ordinary = [
+      'apps/web/src/ui/pages/chat/ChatPage.tsx',
+      'apps/web/src/api/routes/files.ts',
+      'apps/web/src/plugins/example-feature/server.ts',
+      'apps/web/src/plugins/api/email.ts',
+      'docs/CONCEPTS.md',
+      'apps/web/tests/api/auth.test.ts',
+    ]
+    expect(auditCadencePaths([...ordinary, ...sensitive])).toEqual(sensitive)
+    expect(auditCadencePaths([])).toEqual([])
+    expect(auditCadencePaths(null)).toEqual([])
+  })
+
+  it('every glob still matches a file in the kit, so a move cannot silently empty it', () => {
+    const tracked = execFileSync('git', ['ls-files'], {
+      cwd: join(__dirname, '../../../..'),
+      encoding: 'utf8',
+    })
+      .trim()
+      .split('\n')
+    for (const glob of AUDIT_CADENCE_GLOBS) {
+      expect(auditCadencePaths(tracked, [glob]).length, glob).toBeGreaterThan(0)
+    }
+  })
+
+  it('warns with the diff-scoped command, and says nothing when nothing matched', () => {
+    expect(auditCadenceWarning([], '1.0.0')).toEqual([])
+    const lines = auditCadenceWarning(['apps/web/src/api/auth/sessions.ts'], '1.0.0').join('\n')
+    expect(lines).toMatch(/^⚠ WARNING: 1 change/)
+    expect(lines).toContain('/rf-security standard 1.0.0..HEAD')
+    expect(lines).toContain('not a gate')
+    const many = Array.from({ length: 10 }, (_, i) => `apps/web/src/api/auth/f${i}.ts`)
+    expect(auditCadenceWarning(many, '1.0.0').join('\n')).toContain('… and 2 more')
   })
 })

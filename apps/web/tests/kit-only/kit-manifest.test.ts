@@ -147,6 +147,25 @@ describe('launch.kit.json in the kit (the Launch kit contract, D36)', () => {
   })
 })
 
+describe('the threat model (a surface the copy owns)', () => {
+  // A copy rewrites its own threat model for its own product, so a later kit release may show
+  // its diff but never patch it in, and never recreates one the copy deleted.
+  it('is shown as a manual diff while present', () => {
+    const c = classifyPath('docs/THREAT-MODEL.md', { manifest, existsLocally: true })
+    expect(c.class).toBe('manual')
+  })
+
+  it('is skipped once the copy deletes it', () => {
+    const absent = absentSurfaces(
+      manifest,
+      tracked.filter(f => f !== 'docs/THREAT-MODEL.md')
+    )
+    expect(absent).toEqual(['threat-model'])
+    const c = classifyPath('docs/THREAT-MODEL.md', { manifest, absent, change: 'modified' })
+    expect(c.class).toBe('skipped-surface-absent')
+  })
+})
+
 /**
  * The kit classifies every file it ships, so `kit:upgrade` knows what each one is in a copy. Add a
  * directory the manifest has never heard of and this fails until somebody says what it is. Kit-only:

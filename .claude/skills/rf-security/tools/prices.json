@@ -1,0 +1,21 @@
+{
+  "source": "https://platform.claude.com/docs/en/about-claude/pricing",
+  "checked": "2026-11-11",
+  "unit": "USD per million tokens, standard speed, global routing",
+  "us_inference_multiplier": 1.1,
+  "models": {
+    "claude-fable-5-2": { "input": 8, "cache_write_5m": 10, "cache_write_1h": 16, "cache_read": 0.2, "output": 40 },
+    "claude-fable-5-1": { "input": 10, "cache_write_5m": 12.5, "cache_write_1h": 20, "cache_read": 0.25, "output": 50 },
+    "claude-fable-5": { "input": 10, "cache_write_5m": 12.5, "cache_write_1h": 20, "cache_read": 1, "output": 50 },
+    "claude-opus-5-5": { "input": 4, "cache_write_5m": 5, "cache_write_1h": 8, "cache_read": 0.2, "output": 20 },
+    "claude-opus-5": { "input": 5, "cache_write_5m": 6.25, "cache_write_1h": 10, "cache_read": 0.5, "output": 25 },
+    "claude-sonnet-5-5": { "input": 2, "cache_write_5m": 2.5, "cache_write_1h": 4, "cache_read": 0.1, "output": 10 },
+    "claude-sonnet-5": { "input": 2, "cache_write_5m": 2.5, "cache_write_1h": 4, "cache_read": 0.2, "output": 10 },
+    "claude-haiku-5-5": { "input": 0.1, "cache_write_5m": 0.125, "cache_write_1h": 0.2, "cache_read": 0.01, "output": 0.5 }
+  },
+  "notes": [
+    "Haiku 5.5 prompts over 100,000 tokens cost 5x; this table uses the lower tier.",
+    "Fast mode is billed at a premium; calls with speed 'fast' are counted separately and priced at standard rates, so the estimate is low when any appear.",
+    "On a Claude subscription these are API-equivalent figures: usage counts against plan limits, it is not billed per token."
+  ]
+}

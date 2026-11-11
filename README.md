@@ -31,7 +31,9 @@ verification line per step. Then **`/rf-adapt <slug> "Your App"`** renames the k
 **`/rf-provision`** deploys it (you type that one yourself: it creates paid resources and prompts for
 vendor tokens). **`/rf-plugin`** installs a capability as a plugin — a git repository copied into your
 app, with the plan shown before anything is written. Later, when the kit has moved on,
-**`/rf-upgrade`**.
+**`/rf-upgrade`**. Before a release that touches auth, tenancy or AI tools, **`/rf-security`** audits
+the code against your threat model; it spends model budget, so it runs only when you ask
+([`docs/SECURITY-AUDIT.md`](docs/SECURITY-AUDIT.md)).
 
 **One command.** Read [`scripts/install.sh`](scripts/install.sh) first — it is short — then:
 
@@ -99,6 +101,7 @@ you removed. [`CHANGELOG.md`](CHANGELOG.md) is what you would be catching up on.
 - **Sessions as rows** — `__Host-session` cookie, 7-day sliding TTL, one LATERAL query per request.
 - **Tenant API keys** — hashed, scoped, expirable, revocable from Settings; the Bearer path shares the auth middleware and abilities with the UI.
 - **Hardening built in** — CSRF by origin allow-list, KV sliding-window rate limits on login routes, security headers, body limits, dev-login that 404s in production, `gitleaks` in CI.
+- **A security audit you can re-run** — `/rf-security` sends independent agents after the threat model in `docs/THREAT-MODEL.md`, checks every candidate on a second model, confirms only what a test proves, runs proofs in a locked-down Docker sandbox, and keeps findings outside the repository (`docs/SECURITY-AUDIT.md`).
 
 ### Background work and realtime
 - **Jobs queue** — one `JOBS_QUEUE` with typed envelopes (`email.send`, `activity.record`, `document.index`, …); invalid messages are acked (never loop), handler errors retry with capped backoff; a missing binding throws rather than running work inline.
@@ -184,8 +187,10 @@ there list every known gap.
 | [`docs/DEPLOY.md`](docs/DEPLOY.md) | Cloudflare topology, the two tomls, resources, release dance, rollback, bundle size |
 | [`docs/DEPLOYER.md`](docs/DEPLOYER.md) | you are building a service that deploys kit apps from CI (the versioned v1 protocol behind `DEPLOYER_URL`) |
 | [`docs/RLS.md`](docs/RLS.md) | tenant isolation posture and how to turn row-level security on |
+| [`docs/THREAT-MODEL.md`](docs/THREAT-MODEL.md) | what a security review should try to break, including what a plugin author must prove — yours to rewrite in a copy |
+| [`docs/SECURITY-AUDIT.md`](docs/SECURITY-AUDIT.md) | running `/rf-security`: modes, cost, the sandbox, reading the results, cadence |
 | `.claude/rules/*.md` | layer conventions (api, database, ui, cli, testing, code-quality, cloudflare) — auto-loaded by path |
-| `.claude/skills/` | the slash commands a coding agent drives: `/rf-setup` (first run), `/rf-preflight` (read-only diagnosis), `/rf-adapt` (rename + checklist), `/rf-how-do-i` (coaching for a new feature — asks, plans, writes `docs/features/<slug>.md`, never the code), `/rf-upgrade` (port later kit releases into your copy), `/rf-plugin` (install, upgrade, remove or audit a plugin), `/rf-traces` (debug a run or chat turn from its span tree; pick or switch a tracing backend), `/rf-evals` (write, run and interpret evals; compare models or prompts; turn thumbs-down into cases), `/rf-agent-replay` (replay an agent's past runs with the code you just changed — recorded answers, no model calls), `/rf-agent-docs` (audit the CLAUDE.md files, rules and skills for stale paths, oversized files and contradictions, then fix them) — an agent may run those when you ask in plain words — and `/rf-provision` (deploy to Cloudflare + Neon + Resend), which only you can start: it creates paid resources and prompts for tokens |
+| `.claude/skills/` | the slash commands a coding agent drives: `/rf-setup` (first run), `/rf-preflight` (read-only diagnosis), `/rf-adapt` (rename + checklist), `/rf-how-do-i` (coaching for a new feature — asks, plans, writes `docs/features/<slug>.md`, never the code), `/rf-upgrade` (port later kit releases into your copy), `/rf-plugin` (install, upgrade, remove or audit a plugin), `/rf-traces` (debug a run or chat turn from its span tree; pick or switch a tracing backend), `/rf-evals` (write, run and interpret evals; compare models or prompts; turn thumbs-down into cases), `/rf-agent-replay` (replay an agent's past runs with the code you just changed — recorded answers, no model calls), `/rf-agent-docs` (audit the CLAUDE.md files, rules and skills for stale paths, oversized files and contradictions, then fix them) — an agent may run those when you ask in plain words — `/rf-security` (a multi-agent security audit, whole codebase or a diff; it spends agent calls, so an agent runs it only when you ask and agrees the budget first), and `/rf-provision` (deploy to Cloudflare + Neon + Resend), which only you can start: it creates paid resources and prompts for tokens |
 
 ## Provenance
 

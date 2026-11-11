@@ -49,6 +49,13 @@ patcher's tests; `tests/kit-only/fixtures/kit-fixture.mjs` makes a whole kit, fr
 like Launch's `write_config`, for the kit-only conformance tests), and put the claim about THIS
 checkout in `kit-only`.
 
+**The security audit's runner** (`.claude/skills/rf-security/tools/`, `docs/SECURITY-AUDIT.md`) is
+tested in `config` by `tests/config/rf-security/`: child-process runs of `audit.mjs` and
+`guard-hook.mjs` over a synthetic run in the OS temp directory (`fixture.ts` plays the agents'
+part; `RF_SECURITY_RUNS` points the runs root there), never a real run's files. A confirmed audit
+finding, once fixed, lands as a permanent regression test in `tests/api/security/`, named for the
+behaviour rather than the attack.
+
 ## Tests run under Node, against the real Hono app
 
 - `app.request(req, env, ctx)` with `env = createTestEnv(overrides)` from `apps/web/tests/mocks/bindings.ts`:

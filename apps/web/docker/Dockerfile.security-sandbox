@@ -1,0 +1,20 @@
+# The image `pnpm security:sandbox` runs target code in. The build context is a `git archive` of one
+# ref, so untracked files (`.dev.vars`, drafts, dumps) cannot reach it. Dependencies are installed
+# here, online, because nothing can be fetched once the container is running.
+FROM node:26-bookworm-slim
+
+ARG PNPM_VERSION
+# git: `pnpm plugin add` clones plugin repositories, and the audit's host step installs plugins
+# with this image (online, before any target code runs offline).
+RUN apt-get update -qq && apt-get install -y -qq --no-install-recommends git ca-certificates \
+  && rm -rf /var/lib/apt/lists/*
+RUN npm install --global "pnpm@${PNPM_VERSION}"
+
+WORKDIR /src
+COPY . .
+RUN pnpm install --frozen-lockfile
+
+# The mount point for proof-of-concept tests, inside the `api` vitest project's directory.
+RUN mkdir -p apps/web/tests/api/_poc && chown -R node:node /src
+
+USER node
