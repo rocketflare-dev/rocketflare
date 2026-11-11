@@ -46,7 +46,13 @@ suites on vitest 4, §9 — never part of the gate).
   a person with no membership whose access request is pending or rejected (403
   `pending_approval`; a global admin is not held by one), and one person's owned organisations stop
   at `MAX_OWNED_TENANTS_PER_USER` (default 10, global admins exempt, 403 `tenant_limit_reached`),
-  counted under a lock on the user row so simultaneous creations cannot pass it.
+  counted under a lock on the user row so simultaneous grants cannot pass it. The ceiling holds
+  wherever ownership is gained: creating an organisation, a promotion to `owner` on the members
+  route, and accepting an `owner` invitation (refused, the invitation left pending). The same
+  number bounds the organisations one person may CREATE per UTC day through `POST /api/tenants`
+  (`tenant_creation_counters`, no foreign key to `tenants`, pruned nightly), so deleting an
+  organisation frees a place under the ceiling but not the day's creation: one account's daily
+  agent allowance is bounded by `AGENT_TENANT_DAILY_COST_USD` × the ceiling × 2 at most.
 - **Roles (D10).** `owner | admin | member` plus `support` (minted from `/admin`, visible to the
   customer); `users.isGlobalAdmin` is a platform flag. Default for a new subject: owner/admin/support
   `manage`, member `read` with route-scoped writes. "Own row" is always a route predicate — **CASL
@@ -130,6 +136,9 @@ suites on vitest 4, §9 — never part of the gate).
 **Known gaps:** no IdP group sync (SCIM/SAML claims); no group hierarchy or per-group roles;
 conversations, runs, prompts and non-Knowledge files have no visibility; agent-written documents
 are always `tenant`; no audit log beyond `activity_events`; no personal API keys (tenant keys only).
+`AGENT_TENANT_DAILY_COST_USD` is per organisation, not per person — the creation limit above is
+what bounds one account. A deleted organisation's `ai_usage` rows go with it (the FK cascade), so
+the operator's record of what it spent is lost with the organisation.
 
 ## 2. Auth
 

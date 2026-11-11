@@ -38,6 +38,7 @@ import {
 import { hashToken } from '../utils/core/hash'
 import { randomToken } from '../utils/core/ids'
 import type { Logger } from '../utils/core/logger'
+import { assertMayOwnAnother } from '../utils/db/tenant-helpers'
 import { asCount, pageWindow } from '../utils/routes/pagination'
 import { recordActivity } from './activity'
 import { invitationEmail } from './email'
@@ -543,7 +544,18 @@ async function issuerMayStillIssue(tx: Database, inv: TeamInvitation): Promise<b
  */
 export async function acceptInvitation(
   db: Database,
-  input: { token: string; user: User; sessionId: string | null; realtime?: Realtime }
+  input: {
+    token: string
+    user: User
+    sessionId: string | null
+    realtime?: Realtime
+    /**
+     * `MAX_OWNED_TENANTS_PER_USER`: an owner invitation that would make the person an owner is
+     * refused (403 `tenant_limit_reached`, the invitation left pending) when they already own
+     * that many. Omitted, no ceiling.
+     */
+    maxOwnedTenants?: number
+  }
 ): Promise<{
   tenantId: string
   tenantName: string
@@ -581,6 +593,10 @@ export async function acceptInvitation(
     let joined = false
     // An `idp` row follows the issuer; the invitation is accepted and the row stays as it is.
     const role = existing?.source === 'idp' ? existing.role : inv.role
+    const becomesOwner = role === 'owner' && existing?.role !== 'owner'
+    if (becomesOwner && input.maxOwnedTenants !== undefined) {
+      await assertMayOwnAnother(tx as unknown as Database, input.user.id, input.maxOwnedTenants)
+    }
     if (!existing) {
       await tx.insert(tenantUsers).values({
         tenantId: inv.tenantId,

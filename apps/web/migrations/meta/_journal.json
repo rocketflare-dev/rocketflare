@@ -183,6 +183,13 @@
       "when": 1794336958893,
       "tag": "0025_kit-agent-runs-input-from-requester",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1794381323243,
+      "tag": "0026_kit-tenant-creation-counters",
+      "breakpoints": true
     }
   ]
 }

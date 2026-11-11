@@ -3,8 +3,9 @@ version: unreleased
 previous: 0.33.0
 date: null
 breaking: false
-migrations: []
-areas: [api, plugins, docs]
+migrations:
+  - "new table tenant_creation_counters (user_id, day, created), no foreign key to tenants"
+areas: [api, db, plugins, docs]
 touches_surfaces: []
 requires_surfaces: []
 manual: false
@@ -12,11 +13,12 @@ manual: false
 
 ## What changed
 
-Suspended organisations run no agents, plugins hear about a suspension through `hooks.onTenantStatusChanged`, and an invitation is accepted only while its issuer could still issue it.
+Suspended organisations run no agents, plugins hear about suspensions, invitations need their issuer's current authority, and the owned-organisation ceiling covers promotions, invitations and a per-day creation limit.
 
 - Suspension: `enqueueRun` / `enqueueRunBatch` refuse a non-active tenant with 403 `tenant_suspended` (route, plugin and event trigger alike); `executeRun` settles a run whose tenant is suspended `cancelled` before any model call; `isCancelRequested` reads the tenant's status, so an executing run stops at its next poll; `setTenantSuspended` cancels the tenant's `queued` and `awaiting_input` runs. See `docs/CONCEPTS.md` §1.
 - Plugin hook: `ServerPlugin.hooks.onTenantStatusChanged(db, tenantId, status, env)` runs for every installed plugin after a suspend or reactivate, best-effort (`runTenantStatusChangedHooks` in `utils/db/tenant-helpers.ts`). See `docs/CONCEPTS.md` §16.
 - Invitations: `acceptInvitation` re-checks the issuer inside its transaction (exists, not blocked, a global admin or a member whose role could issue the invitation's role) and otherwise marks the row revoked and answers 410 `invitation_revoked`; `changeMemberRole` revokes the target's pending invitations the new role could not issue. See `docs/CONCEPTS.md` §1.
+- Ownership ceiling: `MAX_OWNED_TENANTS_PER_USER` is checked (`assertMayOwnAnother`, under the user-row lock) on a promotion to owner and on accepting an owner invitation, and also bounds creations per person per UTC day through the new `tenant_creation_counters` table, which has no foreign key to `tenants`. See `docs/CONCEPTS.md` §1.
 
 ## How to apply
 
@@ -29,6 +31,10 @@ Suspended organisations run no agents, plugins hear about a suspension through `
 7. In `apps/web/src/api/services/invitations.ts`, add `roleMayIssue(issuerRole, role)` (`owner` needs `owner`; `admin` / `member` need `owner` or `admin`) and `rolesNotIssuableBy(role)`, and give `revokeInvitationsIssuedBy` an optional `roles` filter (`inArray(teamInvitations.role, roles)`; an empty list revokes nothing).
 8. In `acceptInvitation`, first thing inside the transaction, select the issuer (`users` left-joined to its `tenant_users` row in `inv.tenantId`); unless it exists, `blockedAt` is null and it is a global admin or `roleMayIssue(role, inv.role)`, set `revokedAt` on the invitation and return `null` from the transaction, then after the transaction nudge `invitation.changed` and throw `ApiError(410, …, 'invitation_revoked')`.
 9. In `changeMemberRole` (`apps/web/src/api/services/members.ts`), run the role update and `revokeInvitationsIssuedBy(tx, { tenantId, userId: targetUserId, roles: rolesNotIssuableBy(newRole) })` in one transaction, and nudge `invitation.changed` when anything was revoked.
+10. Add `apps/web/src/db/schema/tenant-creation-counters.ts` (`tenant_creation_counters`: `user_id` uuid → `users` on delete cascade, `day` date default `(now() at time zone 'utc')::date`, `created` integer default 0, primary key `(user_id, day)`, NO foreign key to `tenants`), export it from `apps/web/src/db/schema/index.ts`, add `'tenant_creation_counters'` to `RLS_EXCLUDED_TABLES` in `apps/web/src/db/schema/rls.ts`, then run `pnpm db:generate` and `pnpm db:migrate`.
+11. In `apps/web/src/api/utils/db/tenant-helpers.ts`, add `assertMayOwnAnother(tx, userId, max)` (lock the user row `FOR UPDATE`, exempt a global admin, 403 `tenant_limit_reached` at `max` owner rows), call it from `createTenantForUser` in place of the inline count, add a `chargeTenantCreation` upsert on `tenant_creation_counters` (conditional update `created < max`, no row back → the same 403) in the same transaction, and add `pruneTenantCreationCounters(db)` to `runPruneExpired` in `apps/web/src/api/scheduled.ts`.
+12. Add `maxOwnedTenants?: number` to `changeMemberRole` (`services/members.ts`, checked inside its transaction when the new role is `owner`) and to `acceptInvitation` (`services/invitations.ts`, checked inside its transaction when the person would become an owner), and pass `maxOwnedTenants: cfg.MAX_OWNED_TENANTS_PER_USER` from `PATCH /api/members/:userId` (`routes/members.ts`) and `POST /api/invite/:token/accept` (`routes/invite.ts`).
+13. Add `'src/api/utils/db/tenant-helpers.ts'` to `CORE_UNSCOPED_ALLOWLIST` in `apps/web/tests/config/unscoped-allowlist.test.ts`: `assertMayOwnAnother` counts one person's owner rows across every tenant.
 
 ## Conflicts to expect
 
@@ -40,3 +46,5 @@ Suspended organisations run no agents, plugins hear about a suspension through `
 2. `tests/api/plugin-events.test.ts` passes, including "agent triggers and a suspended organisation".
 3. `tests/api/plugin-tenant-status-hook.test.ts` passes.
 4. `tests/api/security/invitation-authority.test.ts` passes, including "an invitation carries only the authority its issuer still holds".
+5. `tests/api/security/tenant-creation.test.ts` passes, including "the ceiling holds wherever ownership is gained".
+6. `pnpm db:migrate` applies `0026_kit-tenant-creation-counters.sql`.

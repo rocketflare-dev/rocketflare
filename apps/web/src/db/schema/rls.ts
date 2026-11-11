@@ -122,11 +122,14 @@ export const RLS_REVOKED_TABLES = [
  * `tenant_feature_overrides`, is policied like any other tenant table.
  * `invitation_send_counters` has no tenant column either: its rows are daily counters keyed by a
  * `user:` or `tenant:` scope (a person's count spans tenants), holding numbers and no tenant data.
+ * `tenant_creation_counters` is the same shape keyed by user: a count of organisations a person
+ * created per day, which must outlive the organisations themselves.
  */
 export const RLS_EXCLUDED_TABLES = [
   ...RLS_REVOKED_TABLES,
   'feature_flags',
   'invitation_send_counters',
+  'tenant_creation_counters',
 ] as const
 
 /**

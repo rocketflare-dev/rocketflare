@@ -14,6 +14,7 @@ import { tenantUserSettings, tenantUsers, userSessions, users } from '../../db/s
 import { isOwnerLevel } from '../middleware/permissions'
 import type { AuthContext } from '../types'
 import { ConflictError, ForbiddenError, NotFoundError } from '../utils/core/errors'
+import { assertMayOwnAnother } from '../utils/db/tenant-helpers'
 import { asCount, pageWindow } from '../utils/routes/pagination'
 import { recordActivity } from './activity'
 import { groupsForMembers } from './groups'
@@ -88,6 +89,11 @@ export async function changeMemberRole(
     role: TenantRole
     actor: AuthContext
     realtime?: Realtime
+    /**
+     * `MAX_OWNED_TENANTS_PER_USER`: a promotion to owner is refused (403 `tenant_limit_reached`)
+     * for a target who already owns that many. Omitted, no ceiling.
+     */
+    maxOwnedTenants?: number
   }
 ) {
   const target = await getMembership(db, input.tenantId, input.targetUserId)
@@ -109,6 +115,13 @@ export async function changeMemberRole(
   }
   if (target.role === input.role) return target
   const { updated, revokedInvitations } = await db.transaction(async tx => {
+    if (input.role === 'owner' && input.maxOwnedTenants !== undefined) {
+      await assertMayOwnAnother(
+        tx as unknown as Database,
+        input.targetUserId,
+        input.maxOwnedTenants
+      )
+    }
     const [updated] = await tx
       .update(tenantUsers)
       .set({ role: input.role })

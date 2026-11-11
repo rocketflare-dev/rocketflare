@@ -12,7 +12,14 @@ import { slugify } from '@rocketflare/shared/tenants'
 import { and, asc, eq, like, sql } from 'drizzle-orm'
 import type { AppConfig } from '../../../config'
 import type { Database } from '../../../db/client'
-import { type Tenant, tenantSettings, tenants, tenantUsers, users } from '../../../db/schema'
+import {
+  type Tenant,
+  tenantCreationCounters,
+  tenantSettings,
+  tenants,
+  tenantUsers,
+  users,
+} from '../../../db/schema'
 import { type AnyServerPlugin, serverPlugins } from '../../../plugins/server'
 import { recordActivity } from '../../services/activity'
 import type { AppBindings } from '../../types'
@@ -65,9 +72,65 @@ export interface CreateTenantForUserInput {
   /**
    * The ceiling on organisations `userId` may own; the new one is refused with 403
    * `tenant_limit_reached` at it. Counted under a lock on the user row, so simultaneous creations
-   * cannot pass it. Omitted, there is no ceiling (sign-up, the admin paths, IdP-managed tenancy).
+   * cannot pass it. The same number bounds the organisations `userId` may CREATE per UTC day
+   * (`tenant_creation_counters`), deleted ones included. Omitted, there is no ceiling and nothing
+   * is counted (sign-up, the admin paths, IdP-managed tenancy).
    */
   maxOwnedTenants?: number
+}
+
+function tenantLimitReached(): ForbiddenError {
+  return new ForbiddenError(
+    'You have reached the limit of organisations you can own',
+    ERROR_CODES.tenantLimitReached
+  )
+}
+
+/**
+ * 403 `tenant_limit_reached` when `userId` already owns `max` organisations — the check every path
+ * that GIVES someone ownership makes (creating one, a promotion to owner, accepting an owner
+ * invitation). Takes a lock on the user row, so simultaneous grants cannot pass the ceiling; call
+ * it inside the transaction that writes the owner row. A global admin is exempt.
+ */
+export async function assertMayOwnAnother(tx: Database, userId: string, max: number) {
+  const [user] = await tx
+    .select({ isGlobalAdmin: users.isGlobalAdmin })
+    .from(users)
+    .where(eq(users.id, userId))
+    .for('update')
+  if (!user || user.isGlobalAdmin) return
+  const [owned] = await tx
+    .select({ count: sql`count(*)` })
+    .from(tenantUsers)
+    .where(and(eq(tenantUsers.userId, userId), eq(tenantUsers.role, 'owner')))
+  if (asCount(owned?.count) >= max) throw tenantLimitReached()
+}
+
+/**
+ * Count one creation against today (UTC), or refuse it at `max` with the same 403. The counter has
+ * no foreign key to `tenants`, so deleting an organisation does not give the day's creation back:
+ * one person creates at most `max` organisations a day, however many they delete.
+ */
+async function chargeTenantCreation(tx: Database, userId: string, max: number) {
+  const [counted] = await tx
+    .insert(tenantCreationCounters)
+    .values({ userId, created: 1 })
+    .onConflictDoUpdate({
+      target: [tenantCreationCounters.userId, tenantCreationCounters.day],
+      set: { created: sql`${tenantCreationCounters.created} + 1` },
+      setWhere: sql`${tenantCreationCounters.created} < ${max}`,
+    })
+    .returning({ created: tenantCreationCounters.created })
+  if (!counted) throw tenantLimitReached()
+}
+
+/** Nightly prune: counters from before yesterday can no longer limit anything. */
+export async function pruneTenantCreationCounters(db: Database): Promise<number> {
+  const rows = await db
+    .delete(tenantCreationCounters)
+    .where(sql`${tenantCreationCounters.day} < (now() at time zone 'utc')::date - 1`)
+    .returning({ userId: tenantCreationCounters.userId })
+  return rows.length
 }
 
 export async function createTenantForUser(
@@ -82,17 +145,9 @@ export async function createTenantForUser(
   const role = input.role ?? 'owner'
   const tenant = await db.transaction(async tx => {
     if (input.maxOwnedTenants !== undefined) {
-      await tx.select({ id: users.id }).from(users).where(eq(users.id, input.userId)).for('update')
-      const [owned] = await tx
-        .select({ count: sql`count(*)` })
-        .from(tenantUsers)
-        .where(and(eq(tenantUsers.userId, input.userId), eq(tenantUsers.role, 'owner')))
-      if (asCount(owned?.count) >= input.maxOwnedTenants) {
-        throw new ForbiddenError(
-          'You have reached the limit of organisations you can own',
-          ERROR_CODES.tenantLimitReached
-        )
-      }
+      const txDb = tx as unknown as Database
+      await assertMayOwnAnother(txDb, input.userId, input.maxOwnedTenants)
+      await chargeTenantCreation(txDb, input.userId, input.maxOwnedTenants)
     }
     const [tenant] = await tx
       .insert(tenants)
