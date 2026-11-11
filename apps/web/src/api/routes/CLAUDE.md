@@ -36,7 +36,7 @@ Hono routers mounted in `src/api/index.ts`. Thin controllers: validate → autho
 - `createRouter()` from `utils/routes/router.ts` — never `new Hono()`. It gives `c.get('config' | 'db' | 'logger' | 'requestId')` types.
 - Request contracts are zod schemas in `packages/shared/src/` (`@rocketflare/shared/<module>`; UI and CLI import them too). Validate with `validate('json' | 'query' | 'param', schema)` from `utils/routes/validate.ts`; a bad input becomes the shared 400 envelope with `code: 'validation_failed'`.
 - Read config via `c.get('config')`, never `c.env`. Bindings are passed INTO services from the route, never read inside them: `c.env.JOBS_QUEUE` → `createInvitation(db, cfg, logger, jobs, …)`, `c.env.FILES` → `createR2Storage(...)`; `NOTIFICATIONS_HUB` only ever via the `realtime` that `withAuth` returns.
-- Body limits: the global 1 MB cap skips `UPLOAD_PATHS` (`/api/files`, `/api/ai/documents/upload`); each mounts `uploadBodyLimit` (`MAX_UPLOAD_BYTES + 64 KB`) on its `POST` and enforces the exact per-file cap (413 `payload_too_large`) and its type allowlist (415 `unsupported_media_type`) itself. A new upload route must do the same two things — the transport cap is not the per-file limit.
+- Body limits: beneath `UPLOAD_PATHS` (`/api/files`, `/api/ai/documents/upload`) the global cap is 1 MB for a JSON body and `MAX_UPLOAD_PATH_BODY_BYTES` (10 MB + 64 KB) for any other; each mounts `uploadBodyLimit` (`MAX_UPLOAD_BYTES + 64 KB`) on its `POST` and enforces the exact per-file cap (413 `payload_too_large`) and its type allowlist (415 `unsupported_media_type`) itself. A new upload route must do the same two things — the transport cap is not the per-file limit.
 - Throw typed errors from `utils/core/errors.ts` (`NotFoundError`, `ForbiddenError`, ...). Do not hand-roll `c.json({ error }, 4xx)`; `middleware/error-handler.ts` owns the envelope `{ error, statusCode, code?, details? }`.
 - Success bodies are bare domain objects (no envelope). Lists use `paginatedResponse(item)` from `@rocketflare/shared/pagination` → `{ items, pagination: { page, pageSize, total, totalPages } }`.
 - Auth is applied AT THE MOUNT in `index.ts` (`app.use('/api/x/*', authMiddleware); app.route('/api/x', xRouter)`), never inside a route file. Every tenant-scoped query carries `eq(table.tenantId, tenantId)` from the auth context — never from the body/query.
@@ -73,8 +73,10 @@ router.post('/', validate('json', createThingSchema), async c => {
 })
 ```
 
-`withAuth(c)` is the tenant-free variant (`tenantId: string | null`) for invite accept, pending
-invitations, access requests and `/api/admin/*`. Both also return `cfg`, `logger`, `realtime`
+`withAuth(c)` is the tenant-free variant (`tenantId: string | null`) for the caller's profile and
+`/api/admin/*`; `withAccountAuth(c)` is the same for a route about the person's whole account
+(create an organisation, pending invitations, access requests) and refuses an API key with 403
+`insufficient_scope` — a key acts only within its organisation. Both also return `cfg`, `logger`, `realtime`
 (`{ defer, env }` — hand it to a service that nudges) and `tracer` (the request's span
 recorder, or `noopTracer` when no sink exists, for `withAgentTrace` / `traceChatClient`). `requireMultiTenant(cfg)` → 404
 `tenancy_mode_single`. `uuidParam(c, 'id')` → 404 for a non-UUID `:id` (never a DB error).

@@ -284,6 +284,18 @@ export async function executeRun(
   }
 
   try {
+    const tenant = await db.query.tenants.findFirst({
+      columns: { name: true, status: true },
+      where: eq(tenants.id, tenantId),
+    })
+    // A run queued before its organisation was suspended settles cancelled here, before any
+    // model call — a suspended organisation runs no agents.
+    if (tenant?.status !== 'active') {
+      await cancelRun(db, tenantId, runId)
+      await expireInterrupts(db, tenantId, runId)
+      await emit({ type: 'status', data: { status: 'cancelled', reason: 'tenant_suspended' } })
+      return { runId, status: 'cancelled' }
+    }
     await checkCancelled()
     const input = agent.meta.inputSchema.parse(run.input)
     const resolved = await resolveChat(db, cfg, env, tenantId, { promptKey: agent.meta.promptKey })
@@ -292,10 +304,6 @@ export async function executeRun(
     // `ctx.approvals`. The agent never queries for them, so there is one set of approval rules.
     const approvals: ReadonlyMap<string, ToolApproval> = await approvalsForRun(db, tenantId, runId)
     const interruptExpiresAt = interruptExpiryFrom(cfg.AGENT_INTERRUPT_TIMEOUT)
-    const tenant = await db.query.tenants.findFirst({
-      columns: { name: true },
-      where: eq(tenants.id, tenantId),
-    })
     // Every model call and decision of this attempt goes through ONE meter, which starts from
     // what earlier attempts already spent — the budget is the run's, not the attempt's.
     const meter = await createRunMeter({
@@ -417,8 +425,21 @@ export async function executeRun(
                   appName: cfg.APP_NAME,
                   tenantName: tenant?.name ?? '',
                 }),
-                wrapChat: (chatClient, provider) =>
-                  traceChatClient(chatClient, trace, { provider, name: 'decide' }, tracer),
+                // Metered like `ctx.chat.client`, but on who pays for the `agent-decide` model.
+                wrapChat: (chatClient, chat) =>
+                  meterChatClient(
+                    traceChatClient(
+                      chatClient,
+                      trace,
+                      { provider: chat.provider, name: 'decide' },
+                      tracer
+                    ),
+                    meter,
+                    {
+                      feature: `agent:${agent.meta.key}:decide`,
+                      billedToPlatform: chat.billedToPlatform,
+                    }
+                  ),
               }),
             emit: data => emit({ type: 'decision', data }),
             meter,

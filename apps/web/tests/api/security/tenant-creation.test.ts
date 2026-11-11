@@ -18,7 +18,7 @@ import {
 } from '../../helpers/auth'
 import { setupTestDatabase } from '../../helpers/db'
 import { json, request } from '../../helpers/request'
-import { createTestEnv } from '../../mocks/bindings'
+import { createTestEnv, stubs } from '../../mocks/bindings'
 
 const db = setupTestDatabase()
 const slugId = () =>
@@ -185,6 +185,104 @@ describe('the ceiling on owned organisations', () => {
     const env = limited(1)
     expect((await create(cookie, env)).status).toBe(201)
     expect((await create(cookie, env)).status).toBe(201)
+  })
+})
+
+describe('the ceiling holds wherever ownership is gained', () => {
+  const limited = (max: number) =>
+    createTestEnv({ MAX_OWNED_TENANTS_PER_USER: String(max) } as never)
+  const refusedForLimit = async (res: Response) => {
+    expect(res.status).toBe(403)
+    expect((await json<{ code: string }>(res)).code).toBe('tenant_limit_reached')
+  }
+
+  /** `person` owns one organisation already and is an admin of `tenant`, whose owner is `owner`. */
+  async function ownerElsewhere() {
+    const { user: owner, tenant } = await createTestTenantWithUser(db, 'owner')
+    const ownerCookie = sessionCookieHeader(await createTestSession(db, owner.id, tenant.id))
+    const { user: person } = await createTestTenantWithUser(db, 'owner')
+    return { owner, tenant, ownerCookie, person }
+  }
+
+  it('a promotion to owner is refused for a person already at the ceiling', async () => {
+    const { tenant, ownerCookie, person } = await ownerElsewhere()
+    await linkUserToTenant(db, person.id, tenant.id, 'admin')
+    const res = await request(
+      `/api/members/${person.id}`,
+      { method: 'PATCH', headers: ownerCookie },
+      { env: limited(1), json: { role: 'owner' } }
+    )
+    await refusedForLimit(res)
+    expect(await ownedBy(person.id)).toHaveLength(1)
+  })
+
+  it('an owner invitation accepted by a person at the ceiling is refused', async () => {
+    const { tenant, ownerCookie, person } = await ownerElsewhere()
+    const env = limited(1)
+    const sent = await request(
+      '/api/invitations',
+      { method: 'POST', headers: ownerCookie },
+      { env, json: { email: person.email, role: 'owner' } }
+    )
+    expect(sent.status).toBe(201)
+    const message = stubs(env).queue.messages.find(
+      m => (m.body as { payload?: { to?: string } }).payload?.to === person.email.toLowerCase()
+    )
+    if (!message) throw new Error('no invitation email queued')
+    const link = (message.body as { payload: { link: string } }).payload.link
+    const token = new URL(link).pathname.split('/').pop() as string
+    const cookie = sessionCookieHeader(await createTestSession(db, person.id))
+    const res = await request(
+      `/api/invite/${token}/accept`,
+      { method: 'POST', headers: cookie },
+      { env }
+    )
+    await refusedForLimit(res)
+    expect(await ownedBy(person.id)).toHaveLength(1)
+    const [row] = await db
+      .select()
+      .from(tenantUsers)
+      .where(and(eq(tenantUsers.tenantId, tenant.id), eq(tenantUsers.userId, person.id)))
+    expect(row).toBeUndefined()
+  })
+
+  it('a person who owns nothing after stepping down may still create one', async () => {
+    const { person } = await ownerElsewhere()
+    const [own] = await ownedBy(person.id)
+    // A second owner, so the person may step down in their own organisation.
+    await linkUserToTenant(db, (await createTestUser(db)).id, own?.tenantId as string, 'owner')
+    const cookie = sessionCookieHeader(await createTestSession(db, person.id, own?.tenantId))
+    const stepped = await request(
+      `/api/members/${person.id}`,
+      { method: 'PATCH', headers: cookie },
+      { env: limited(1), json: { role: 'admin' } }
+    )
+    expect(stepped.status).toBe(200)
+    expect((await create(cookie, limited(1))).status).toBe(201)
+  })
+
+  it('a deleted organisation frees the ceiling but not the day: the second delete-then-create is refused', async () => {
+    const env = limited(1)
+    const { user, tenant } = await createTestTenantWithUser(db, 'owner')
+    const remove = async (tenantId: string, slug: string) => {
+      const cookie = sessionCookieHeader(await createTestSession(db, user.id, tenantId))
+      const res = await request(
+        '/api/tenant',
+        { method: 'DELETE', headers: cookie },
+        { env, json: { confirm: slug } }
+      )
+      expect(res.status).toBe(204)
+    }
+    const cookie = sessionCookieHeader(await createTestSession(db, user.id))
+
+    await remove(tenant.id, tenant.slug)
+    const created = await create(cookie, env)
+    expect(created.status).toBe(201)
+    const next = await json<{ id: string; slug: string }>(created)
+
+    await remove(next.id, next.slug)
+    await refusedForLimit(await create(cookie, env))
+    expect(await ownedBy(user.id)).toEqual([])
   })
 })
 

@@ -106,6 +106,10 @@ beforeEach(() => {
         headers: { 'Content-Type': 'application/json' },
       })
     }
+    if (url.startsWith('https://graph.microsoft.com/v1.0/organization')) {
+      const domain = profile.email.slice(profile.email.indexOf('@') + 1)
+      return jsonResponse({ value: [{ verifiedDomains: [{ name: domain }] }] })
+    }
     if (url.startsWith('https://graph.microsoft.com/')) {
       return new Response(
         JSON.stringify({
@@ -293,6 +297,20 @@ describe('GET /auth/:provider/callback', () => {
     ).toHaveLength(0)
   })
 
+  it('email_verified === false: an identity already linked still signs in to its account', async () => {
+    const user = await createTestUser(db)
+    profile = { sub: `sub_${uniqueId()}`, email: user.email, email_verified: true }
+    expect(location(await callback('google', await start())).pathname).toBe('/')
+    profile = { ...profile, email_verified: false }
+    const res = await callback('google', await start())
+    expect(location(res).pathname).toBe('/')
+    const token = cookieValue(res, SESSION_COOKIE_NAME) as string
+    const session = await json<{ user: { id: string } }>(
+      await request('/auth/session', { headers: sessionCookieHeader(token) })
+    )
+    expect(session.user.id).toBe(user.id)
+  })
+
   it('new user under invite_only → not_invited; under open → created with a workspace', async () => {
     profile = {
       sub: `sub_${uniqueId()}`,
@@ -314,7 +332,7 @@ describe('GET /auth/:provider/callback', () => {
     expect(session.tenant.role).toBe('owner')
   })
 
-  it('microsoft: profile from Graph, no verified flag → admitted', async () => {
+  it('microsoft: profile from Graph, UPN on a verified domain → linked by email', async () => {
     const user = await createTestUser(db)
     profile = { sub: `ms_${uniqueId()}`, email: user.email, name: 'MS User' }
     const res = await callback('microsoft', await start('microsoft'))
@@ -329,7 +347,7 @@ describe('GET /auth/:provider/callback', () => {
   it("microsoft (common): an id_token from the person's own tenant is accepted", async () => {
     const user = await createTestUser(db)
     profile = { sub: `ms_${uniqueId()}`, email: user.email }
-    const tid = '9188040d-6c67-4c5b-b112-36a304b66dad'
+    const tid = '72f988bf-86f1-41af-91ab-2d7cd011db47'
     idTokenClaims = entraIdToken({ iss: `${ENTRA}/${tid}/v2.0`, tid })
     const res = await callback('microsoft', await start('microsoft'))
     expect(location(res).pathname).toBe('/')

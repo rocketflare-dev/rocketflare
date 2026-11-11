@@ -2,8 +2,13 @@
  * The ONLY sanctioned way to read auth in a route.
  *   `const { db, tenantId, user } = withAuthAndDb(c)`  — tenant required: 403 `no_tenant` /
  *                                                        `pending_approval` when there is none
- *   `const { db, user } = withAuth(c)`                  — tenant-free (invite accept, pending
- *                                                        invitations, access requests, /admin)
+ *   `const { db, user } = withAuth(c)`                  — tenant-free (the caller's profile,
+ *                                                        /admin)
+ *   `const { db, user } = withAccountAuth(c)`           — tenant-free AND about the person's
+ *                                                        whole account (create an organisation,
+ *                                                        pending invitations, access requests):
+ *                                                        403 `insufficient_scope` for an API key,
+ *                                                        which acts only within its organisation
  * Never `c.get('auth' | 'db')` by hand in a route. `defer(fn)` runs a side effect through
  * `waitUntil` (awaited inline when there is no ExecutionContext — tests, Node tooling) and logs
  * instead of throwing, so an email or activity write can never fail the response. `realtime`
@@ -16,6 +21,7 @@ import type { PinoLogger } from 'hono-pino'
 import type { AppConfig } from '../../../config'
 import { type Database, type DatabaseHandle, openDatabase } from '../../../db/client'
 import type { User } from '../../../db/schema'
+import { isApiKeySession } from '../../auth/api-key-session'
 import { deferOrAwait } from '../../middleware/database'
 import { requireAuth } from '../../middleware/permissions'
 import { noopTracer, type Tracer } from '../../observability/tracer'
@@ -67,6 +73,22 @@ export function withAuth(c: AppContext): TenantFreeRouteContext {
     realtime: { defer, env: c.env },
     tracer: safeTracer(c),
   }
+}
+
+/**
+ * Tenant-free, and reaching past the current organisation into the person's account. An API key
+ * belongs to ONE organisation: it may act there and on its creator's own profile, never on the
+ * creator's other organisations, invitations or access requests — so a key is refused here.
+ */
+export function withAccountAuth(c: AppContext): TenantFreeRouteContext {
+  const ctx = withAuth(c)
+  if (isApiKeySession(ctx.auth)) {
+    throw new ForbiddenError(
+      'An API key acts only within its own organisation; sign in to do this',
+      ERROR_CODES.insufficientScope
+    )
+  }
+  return ctx
 }
 
 /** A router mounted without `tracerMiddleware` (tests of a bare router) still gets a tracer. */

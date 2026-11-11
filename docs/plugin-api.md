@@ -558,14 +558,14 @@ The server surface: the context family, and the types a plugin must be able to n
   - `grants?: Partial<Record<EffectiveRole, RoleGrant>>`
     Per-role CASL rules, applied after the core matrix — additive, never a replacement.
   - `uploadPaths?: readonly string[]`
-    Prefixes that skip the global 1 MB body cap, for a route taking a file. Each must be under `/api/<id>/` (`tests/config/plugins.test.ts`), and its route MUST mount its own…
+    Prefixes where a NON-JSON body (a multipart file) gets the upload-path cap — 10 MB + 64 KB (`MAX_UPLOAD_PATH_BODY_BYTES`) — instead of the global 1 MB; a JSON body beneath one…
   - `rlsExcludedTables?: readonly string[]`
     Plugin tables with no `tenant_id`, unioned into `RLS_EXCLUDED_TABLES` with a reason each.
   - `unscopedAllowlist?: Readonly<Record<string, string>>`
     Source files the cross-tenant allow-list scan may skip, keyed the way that test keys its own: a path relative to `apps/web/` (`src/plugins/<id>/…`) mapped to the REASON it is…
   - `visibilityResources?: readonly VisibilityResource[]`
     Rows of this plugin that a group may restrict. Read by `services/access.ts`.
-  - `hooks?: { onTenantCreated?: ( db: Database, tenant: Tenant, userId: string, features: readonly string[] ) => Promise<void> onTenantDeleted?: (db: Database, tenantId: string, env: AppBindings) => Promise<void> seedDemo?: (db: Database, ctx: PluginSeedContext) => Promise<void> }`
+  - `hooks?: { onTenantCreated?: ( db: Database, tenant: Tenant, userId: string, features: readonly string[] ) => Promise<void> onTenantDeleted?: (db: Database, tenantId: string, env: AppBindings) => Promise<void> onTenantStatusChanged?: ( db: Database, tenantId: string, status: 'active' \| 'suspended', env: AppBindings ) => Promise<void> seedDemo?: (db: Database, ctx: PluginSeedContext) => Promise<void> }`
   - `extensions?: Readonly<Record<string, readonly unknown[]>>`
     Cross-plugin registries: the analytics plugin reads `extensions.cubes` and friends from every installed plugin and narrows them with zod, failing loudly on anything it cannot…
 - `interface SetResourceGroupsInput`
@@ -982,14 +982,14 @@ Components and hooks, for a lazy PAGE. Never for the UI entry.
   - `grants?: Partial<Record<EffectiveRole, RoleGrant>>`
     Per-role CASL rules, applied after the core matrix — additive, never a replacement.
   - `uploadPaths?: readonly string[]`
-    Prefixes that skip the global 1 MB body cap, for a route taking a file. Each must be under `/api/<id>/` (`tests/config/plugins.test.ts`), and its route MUST mount its own…
+    Prefixes where a NON-JSON body (a multipart file) gets the upload-path cap — 10 MB + 64 KB (`MAX_UPLOAD_PATH_BODY_BYTES`) — instead of the global 1 MB; a JSON body beneath one…
   - `rlsExcludedTables?: readonly string[]`
     Plugin tables with no `tenant_id`, unioned into `RLS_EXCLUDED_TABLES` with a reason each.
   - `unscopedAllowlist?: Readonly<Record<string, string>>`
     Source files the cross-tenant allow-list scan may skip, keyed the way that test keys its own: a path relative to `apps/web/` (`src/plugins/<id>/…`) mapped to the REASON it is…
   - `visibilityResources?: readonly VisibilityResource[]`
     Rows of this plugin that a group may restrict. Read by `services/access.ts`.
-  - `hooks?: { onTenantCreated?: ( db: Database, tenant: Tenant, userId: string, features: readonly string[] ) => Promise<void> onTenantDeleted?: (db: Database, tenantId: string, env: AppBindings) => Promise<void> seedDemo?: (db: Database, ctx: PluginSeedContext) => Promise<void> }`
+  - `hooks?: { onTenantCreated?: ( db: Database, tenant: Tenant, userId: string, features: readonly string[] ) => Promise<void> onTenantDeleted?: (db: Database, tenantId: string, env: AppBindings) => Promise<void> onTenantStatusChanged?: ( db: Database, tenantId: string, status: 'active' \| 'suspended', env: AppBindings ) => Promise<void> seedDemo?: (db: Database, ctx: PluginSeedContext) => Promise<void> }`
   - `extensions?: Readonly<Record<string, readonly unknown[]>>`
     Cross-plugin registries: the analytics plugin reads `extensions.cubes` and friends from every installed plugin and narrows them with zod, failing loudly on anything it cannot…
 - `interface UiPlugin<S extends SharedPlugin = SharedPlugin>`
@@ -1625,7 +1625,7 @@ nothing in the comparison that can throw.
 @/plugins/api :: member :: ServerPlugin.rlsExcludedTables :: rlsExcludedTables?: readonly string[]
 @/plugins/api :: member :: ServerPlugin.unscopedAllowlist :: unscopedAllowlist?: Readonly<Record<string, string>>
 @/plugins/api :: member :: ServerPlugin.visibilityResources :: visibilityResources?: readonly VisibilityResource[]
-@/plugins/api :: member :: ServerPlugin.hooks :: hooks?: { onTenantCreated?: ( db: Database, tenant: Tenant, userId: string, features: readonly string[] ) => Promise<void> onTenantDeleted?: (db: Database, tenantId: string, env: AppBindings) => Promise<void> seedDemo?: (db: Database, ctx: PluginSeedContext) => Promise<void> }
+@/plugins/api :: member :: ServerPlugin.hooks :: hooks?: { onTenantCreated?: ( db: Database, tenant: Tenant, userId: string, features: readonly string[] ) => Promise<void> onTenantDeleted?: (db: Database, tenantId: string, env: AppBindings) => Promise<void> onTenantStatusChanged?: ( db: Database, tenantId: string, status: 'active' | 'suspended', env: AppBindings ) => Promise<void> seedDemo?: (db: Database, ctx: PluginSeedContext) => Promise<void> }
 @/plugins/api :: member :: ServerPlugin.extensions :: extensions?: Readonly<Record<string, readonly unknown[]>>
 @/plugins/api :: interface :: SetResourceGroupsInput :: interface SetResourceGroupsInput
 @/plugins/api :: function :: sharedWithMyGroups :: function sharedWithMyGroups( scope: AccessScope, junction: string, foreignKey: string, resourceId: SQL ): SQL
@@ -1869,7 +1869,7 @@ nothing in the comparison that can throw.
 @/plugins/types :: member :: ServerPlugin.rlsExcludedTables :: rlsExcludedTables?: readonly string[]
 @/plugins/types :: member :: ServerPlugin.unscopedAllowlist :: unscopedAllowlist?: Readonly<Record<string, string>>
 @/plugins/types :: member :: ServerPlugin.visibilityResources :: visibilityResources?: readonly VisibilityResource[]
-@/plugins/types :: member :: ServerPlugin.hooks :: hooks?: { onTenantCreated?: ( db: Database, tenant: Tenant, userId: string, features: readonly string[] ) => Promise<void> onTenantDeleted?: (db: Database, tenantId: string, env: AppBindings) => Promise<void> seedDemo?: (db: Database, ctx: PluginSeedContext) => Promise<void> }
+@/plugins/types :: member :: ServerPlugin.hooks :: hooks?: { onTenantCreated?: ( db: Database, tenant: Tenant, userId: string, features: readonly string[] ) => Promise<void> onTenantDeleted?: (db: Database, tenantId: string, env: AppBindings) => Promise<void> onTenantStatusChanged?: ( db: Database, tenantId: string, status: 'active' | 'suspended', env: AppBindings ) => Promise<void> seedDemo?: (db: Database, ctx: PluginSeedContext) => Promise<void> }
 @/plugins/types :: member :: ServerPlugin.extensions :: extensions?: Readonly<Record<string, readonly unknown[]>>
 @/plugins/types :: interface :: UiPlugin :: interface UiPlugin<S extends SharedPlugin = SharedPlugin>
 @/plugins/types :: member :: UiPlugin.shared :: shared: S

@@ -17,6 +17,7 @@ import { pruneMagicLinkTokens } from './auth/magic-link'
 import { pruneInvitationSendCounters, pruneInvitations } from './services/invitations'
 import type { AppBindings } from './types'
 import { type Logger, loggerFor } from './utils/core/logger'
+import { pruneTenantCreationCounters } from './utils/db/tenant-helpers'
 
 export interface TaskContext {
   env: AppBindings
@@ -40,7 +41,10 @@ export interface TaskReport {
   error?: unknown
 }
 
-/** Expired sessions, expired/consumed magic links, expired invitations older than 30 days. */
+/**
+ * Expired sessions, expired/consumed magic links, expired invitations older than 30 days, and the
+ * daily invitation-mail and organisation-creation counters from before yesterday.
+ */
 export async function runPruneExpired(db: Database) {
   const sessions = (
     await db
@@ -51,7 +55,8 @@ export async function runPruneExpired(db: Database) {
   const magicLinks = await pruneMagicLinkTokens(db)
   const invitations = await pruneInvitations(db)
   const invitationSendCounters = await pruneInvitationSendCounters(db)
-  return { sessions, magicLinks, invitations, invitationSendCounters }
+  const tenantCreationCounters = await pruneTenantCreationCounters(db)
+  return { sessions, magicLinks, invitations, invitationSendCounters, tenantCreationCounters }
 }
 
 /** Nightly prune of expired rows: counts are logged so the run is auditable. */

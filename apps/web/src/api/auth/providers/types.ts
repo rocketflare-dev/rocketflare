@@ -1,7 +1,8 @@
 /**
  * The provider contract: one generic `/auth/:provider` router drives every entry in the
  * registry, so adding GitHub or Slack is one file here, not a copied route. `emailVerified` is
- * part of the profile on purpose — the router refuses to link when it is explicitly `false`.
+ * part of the profile on purpose — the router refuses to link or admit by email when it is
+ * explicitly `false`.
  */
 import type { OAuthProviderName } from '@rocketflare/shared/auth'
 import type { AppConfig } from '../../../config'
@@ -10,7 +11,10 @@ export interface OAuthProfile {
   /** The provider's stable subject id (`sub`), never the email. */
   providerUserId: string
   email: string
-  /** `undefined` = the provider did not say; only an explicit `false` is refused. */
+  /**
+   * `undefined` = the provider did not say; only an explicit `false` is refused, and only where
+   * the address is trusted — matching or admitting an account; a linked identity still signs in.
+   */
   emailVerified?: boolean
   name: string | null
   avatarUrl: string | null

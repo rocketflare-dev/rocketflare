@@ -17,6 +17,7 @@
 import { ERROR_CODES } from '@rocketflare/shared/errors'
 import { createMiddleware } from 'hono/factory'
 import { buildAbility, resolveFeatures } from '../../permissions'
+import { API_KEY_SESSION_PREFIX, isApiKeySession } from '../auth/api-key-session'
 import { touchApiKeyUsage, validateApiKey } from '../auth/api-keys'
 import { readSessionToken } from '../auth/cookies'
 import {
@@ -32,11 +33,7 @@ import type { AppContext, AppEnv, AuthContext } from '../types'
 import { ForbiddenError, UnauthorizedError } from '../utils/core/errors'
 import { deferOrAwait } from './database'
 
-export const API_KEY_SESSION_PREFIX = 'api-key:'
-
-export function isApiKeySession(auth: Pick<AuthContext, 'session'>): boolean {
-  return auth.session.id.startsWith(API_KEY_SESSION_PREFIX)
-}
+export { API_KEY_SESSION_PREFIX, isApiKeySession }
 
 /** Fire-and-forget side effect: `waitUntil` when available, awaited inline otherwise; never throws. */
 export function fireAndForget(c: AppContext, work: () => Promise<unknown>, what: string): void {

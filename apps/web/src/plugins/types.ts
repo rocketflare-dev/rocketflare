@@ -273,9 +273,10 @@ export interface ServerPlugin<S extends SharedPlugin = SharedPlugin> {
   /** Per-role CASL rules, applied after the core matrix — additive, never a replacement. */
   grants?: Partial<Record<EffectiveRole, RoleGrant>>
   /**
-   * Prefixes that skip the global 1 MB body cap, for a route taking a file. Each must be under
-   * `/api/<id>/` (`tests/config/plugins.test.ts`), and its route MUST mount its own `bodyLimit`:
-   * nothing else caps it.
+   * Prefixes where a NON-JSON body (a multipart file) gets the upload-path cap — 10 MB + 64 KB
+   * (`MAX_UPLOAD_PATH_BODY_BYTES`) — instead of the global 1 MB; a JSON body beneath one keeps the
+   * 1 MB cap. Each must be under `/api/<id>/` (`tests/config/plugins.test.ts`), and its route
+   * mounts its own `bodyLimit` at the file size it takes (at most 10 MB plus multipart overhead).
    */
   uploadPaths?: readonly string[]
   /** Plugin tables with no `tenant_id`, unioned into `RLS_EXCLUDED_TABLES` with a reason each. */
@@ -325,6 +326,21 @@ export interface ServerPlugin<S extends SharedPlugin = SharedPlugin> {
      * through it, never through a module-level global.
      */
     onTenantDeleted?: (db: Database, tenantId: string, env: AppBindings) => Promise<void>
+    /**
+     * A global admin suspended (`'suspended'`) or reactivated (`'active'`) a tenant. Run after the
+     * status update has committed, per plugin, each in its own try/catch — best-effort like the
+     * other two, with a failure logged as a warning and swallowed, so the admin's action stands.
+     *
+     * For a plugin that caches or serves the tenant's content where the auth middleware does not
+     * look — a public page, an edge cache, a KV copy — and must stop serving it, or start again.
+     * Idempotent: it may hear the same status twice.
+     */
+    onTenantStatusChanged?: (
+      db: Database,
+      tenantId: string,
+      status: 'active' | 'suspended',
+      env: AppBindings
+    ) => Promise<void>
     /** `pnpm seed --demo`, after the core block. Fixed ids + `onConflictDoNothing`. */
     seedDemo?: (db: Database, ctx: PluginSeedContext) => Promise<void>
   }

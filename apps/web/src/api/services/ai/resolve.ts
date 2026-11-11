@@ -234,8 +234,15 @@ export async function resolveDecisions(
   tenantId: string,
   options: ResolveOptions & {
     fallbackSystem: SystemPrompt
-    /** Wraps the fallback's chat client — the runtime passes `traceChatClient` so its calls are spans. */
-    wrapChat?: (client: ChatClient, provider: AiProvider) => ChatClient
+    /**
+     * Wraps the fallback's chat client — the runtime traces and METERS it, so every call is a
+     * span and an `ai_usage` row. `chat` is the `agent-decide` resolution: whether THAT model is
+     * billed to the deployment, which need not match the agent's own chat model.
+     */
+    wrapChat?: (
+      client: ChatClient,
+      chat: { provider: AiProvider; billedToPlatform: boolean }
+    ) => ChatClient
   }
 ): Promise<ResolvedDecisions> {
   const row = await findDefaultConfig(db, tenantId, 'decisions')
@@ -264,7 +271,12 @@ export async function resolveDecisions(
   })
   return {
     client: createLlmDecisionClient({
-      chat: options.wrapChat ? options.wrapChat(chat.client, chat.provider) : chat.client,
+      chat: options.wrapChat
+        ? options.wrapChat(chat.client, {
+            provider: chat.provider,
+            billedToPlatform: chat.billedToPlatform,
+          })
+        : chat.client,
       system: options.fallbackSystem,
     }),
     provider: chat.provider,

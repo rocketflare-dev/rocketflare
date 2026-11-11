@@ -35,7 +35,7 @@ membersRouter.get('/', validate('query', paginationQuerySchema), async c => {
 })
 
 membersRouter.patch('/:userId', validate('json', updateMemberRoleRequestSchema), async c => {
-  const { db, tenantId, auth, realtime } = withAuthAndDb(c)
+  const { db, cfg, tenantId, auth, realtime } = withAuthAndDb(c)
   guardPermission(c, 'manage', 'TenantMember')
   const membership = await changeMemberRole(db, {
     tenantId,
@@ -43,6 +43,7 @@ membersRouter.patch('/:userId', validate('json', updateMemberRoleRequestSchema),
     role: c.req.valid('json').role,
     actor: auth,
     realtime,
+    maxOwnedTenants: cfg.MAX_OWNED_TENANTS_PER_USER,
   })
   return c.json({ userId: membership.userId, role: membership.role })
 })
