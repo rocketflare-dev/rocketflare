@@ -6,6 +6,11 @@ copy of the kit forward without recreating anything its owner deleted.
 
 If you are running a copy: `pnpm kit:upgrade` tells you which of these you are missing.
 
+## 0.35.0 — 2026-11-11
+
+A new `/rf-security` skill runs a multi-agent security audit of a copy against its own `docs/THREAT-MODEL.md`, with proofs in a Docker sandbox and findings kept outside the repository.
+[Porting note](docs/upgrades/0.35.0.md).
+
 ## 0.34.0 — 2026-11-11
 
 Suspended organisations run no agents, invitation and ownership rules hold on every path, API keys stay in their organisation, AI config saves lock their row, decide is metered, sign-in mail counts per mailbox, uploads stay capped, and Microsoft proves addresses.
