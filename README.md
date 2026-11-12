@@ -205,7 +205,8 @@ To the kit itself (an app made from it loses `CONTRIBUTING.md` and `CODE_OF_COND
 rename, and gets its own `SECURITY.md`): bug reports, feature requests and pull requests are
 welcome — see [`CONTRIBUTING.md`](CONTRIBUTING.md)
 (setup, the pre-commit gate, test shapes, PR guidelines), [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md)
-and [`SECURITY.md`](SECURITY.md) for reporting vulnerabilities privately.
+and [`SECURITY.md`](SECURITY.md) for reporting vulnerabilities privately. How the kit is
+audited, and every finding fixed so far, is at [rocketflare.dev/security](https://rocketflare.dev/security/).
 
 ## Licence
 

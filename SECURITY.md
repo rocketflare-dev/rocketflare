@@ -26,3 +26,7 @@ The kit ships the audit it is reviewed with: `/rf-security`, a multi-agent revie
 their fixes have released. Run it on your own copy too:
 [`docs/SECURITY-AUDIT.md`](docs/SECURITY-AUDIT.md) covers the modes, what each costs, and what a
 result does and does not prove.
+
+What the audits found, once fixed, is published with the release that fixed each finding:
+[rocketflare.dev/security](https://rocketflare.dev/security/) and its
+[track record](https://rocketflare.dev/security/track-record/).
