@@ -627,6 +627,45 @@ describe('pnpm plugin with claudeHooks and hostFiles, end to end', () => {
     expect(existsSync(path.join(host, 'apps/web/public/gdemo/logo.svg'))).toBe(true)
   })
 
+  it('upgrade with a reject stamps nothing; --continue finishes it once the reject is resolved', () => {
+    // The re-run the message used to advise could not work: the tree is dirty, and the patch no
+    // longer applies to the files it already patched. `--continue` stamps what the apply held back.
+    const thing = 'apps/web/src/plugins/gdemo/thing.ts'
+    const recordedVersion = () =>
+      JSON.parse(read(host, '.rocketflare.local.json')).surfaces.find(
+        (x: { id: string }) => x.id === 'gdemo'
+      ).source.version
+    const host = makeHost()
+    const plugin = makeGuide({ files: { ...GUIDE_FILES, [thing]: "export const x = 'one'\n" } })
+    expect(run(host, ['add', plugin, '--local', '--apply', '--allow-dirty']).status).toBe(0)
+    write(host, thing, "export const x = 'mine'\n")
+    git(host, ['add', '-A'])
+    git(host, ['commit', '-qm', 'installed and edited'])
+    writeGuide(plugin, {
+      version: '1.1.0',
+      files: { ...GUIDE_FILES, [thing]: "export const x = 'two'\n" },
+    })
+
+    const up = run(host, ['upgrade', 'gdemo', '--to', '1.1.0', '--apply'])
+    expect(up.status, up.out).toBe(4)
+    expect(up.out).toContain('pnpm plugin upgrade gdemo --to 1.1.0 --continue')
+    expect(existsSync(path.join(host, `${thing}.rej`))).toBe(true)
+    expect(recordedVersion()).toBe('1.0.0')
+
+    const early = run(host, ['upgrade', 'gdemo', '--to', '1.1.0', '--continue'])
+    expect(early.status, early.out).toBe(4)
+    expect(early.out).toContain(`${thing}.rej`)
+    expect(recordedVersion()).toBe('1.0.0')
+
+    write(host, thing, "export const x = 'mine, two'\n")
+    rmSync(path.join(host, `${thing}.rej`))
+    const done = run(host, ['upgrade', 'gdemo', '--to', '1.1.0', '--continue'])
+    expect(done.status, done.out).toBe(0)
+    expect(done.out).toContain("surface 'gdemo' stamped at 1.1.0")
+    expect(read(host, thing)).toBe("export const x = 'mine, two'\n")
+    expect(recordedVersion()).toBe('1.1.0')
+  })
+
   it('refuses a hook that runs anything else, or a script the plugin does not ship — nothing written', () => {
     const host = makeHost()
     const shell = run(host, [

@@ -301,12 +301,18 @@ interface GenerationMemo {
 /** Per isolate, per config (one per environment), per site. */
 const generationMemos = new WeakMap<AppConfig, Map<string, GenerationMemo>>()
 
-/** One boot per `wrangler dev` reload: locally, a code change must show without a publish. */
-const DEV_BOOT_ID = crypto.randomUUID()
+/**
+ * One boot per `wrangler dev` reload: locally, a code change must show without a publish. Made on
+ * first use: a deploy refuses a Worker that generates random values in global scope.
+ */
+let devBootId: string | undefined
 
 /** The deployment's id: new on every deploy, so a page stored by older code is never served. */
 function deploymentOf(config: AppConfig): string {
-  if (config.APP_ENV === 'development') return DEV_BOOT_ID
+  if (config.APP_ENV === 'development') {
+    devBootId ??= crypto.randomUUID()
+    return devBootId
+  }
   return config.DEPLOYMENT_ID ?? config.RELEASE_VERSION
 }
 

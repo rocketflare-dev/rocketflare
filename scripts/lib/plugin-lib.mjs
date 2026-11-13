@@ -333,6 +333,27 @@ export function applyCoreEdits(text, edits) {
   return next
 }
 
+/**
+ * The edits whose lines are PARTLY in the file already. `applyCoreEdits` inserts only the missing
+ * lines, which is right when the edit was applied before (idempotence) — but when some lines are
+ * there for another reason (a hand-written block, an older release's edit), the rest lands after
+ * the anchor and the file reads wrong: a vite proxy left with two `'^/'` keys, one from each. Said
+ * rather than guessed at, because only the person can tell which block they meant to keep.
+ */
+export function partialCoreEdits(text, edits) {
+  const present = new Set(text.split('\n').map(l => l.trim()))
+  return edits.flatMap(edit => {
+    const there = edit.lines.filter(l => present.has(l.trim())).length
+    return there > 0 && there < edit.lines.length
+      ? [
+          `core edit for ${edit.file}: ${there} of its ${edit.lines.length} lines were already in ` +
+            `the file, so only the rest went in after ${JSON.stringify(edit.after)} — check that ` +
+            'block reads as one, and delete any older copy of it',
+        ]
+      : []
+  })
+}
+
 /** The exact inverse of `applyCoreEdits`: a round trip returns the original bytes. */
 export function revertCoreEdits(text, edits) {
   let next = text

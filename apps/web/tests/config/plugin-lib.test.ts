@@ -61,6 +61,7 @@ import {
   nextPluginMigrationTag,
   PLUGIN_MANIFEST_FILE,
   parsePluginRequirement,
+  partialCoreEdits,
   pinDeclaredRanges,
   planSteps,
   pluginIdProblem,
@@ -362,6 +363,17 @@ describe('core edits a plugin declares', () => {
         { file: 'apps/web/vite.config.ts', after: 'noSuchAnchor', lines: ['x'] },
       ])
     ).toThrow(/apps\/web\/vite\.config\.ts.*noSuchAnchor/s)
+  })
+
+  it('says when an edit is partly there already, and is silent when it is all or nothing', () => {
+    // The shape that bit a copy: an earlier hand-written block shared the comment lines, so only
+    // the new entry went in and the file ended with two blocks and no word about it.
+    const partly = applyCoreEdits(VITE, [{ ...edits[0], lines: ["'/mcp': proxyTo(),"] }] as never)
+    const warnings = partialCoreEdits(partly, [edits[0]])
+    expect(warnings).toHaveLength(1)
+    expect(warnings[0]).toMatch(/vite\.config\.ts: 1 of its 2 lines were already in the file/)
+    expect(partialCoreEdits(VITE, edits)).toEqual([])
+    expect(partialCoreEdits(applyCoreEdits(VITE, edits), edits)).toEqual([])
   })
 
   it("groups a manifest's edits by the file they touch", () => {

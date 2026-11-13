@@ -937,6 +937,10 @@ tree against the checkout. The bundle is environment-neutral — every binding a
 the toml the deployer receives — and GitHub Releases stay the external record. No asset → today's
 build (`docs/DEPLOYER.md` → Build once).
 
+Cloudflare evaluates the bundle's top level when it is uploaded and refuses a random value, a
+timer or I/O there (error 10021); nothing local does, so `tests/config/global-scope.test.ts`
+loads the Worker with them made to throw.
+
 **Known gaps:** no release helper beyond `kit:release`; no per-PR previews; no CLI publishing;
 provisioning HTTP calls have not been run end-to-end against live accounts; no automated
 Workers-plan check. The kit ships no deployer, only the client and the contract; the job waits for
@@ -1045,7 +1049,9 @@ cycle). Detail: `packages/shared/CLAUDE.md`.
   surfaces and plugin-owned files, translates through the same `applyReplacements()` as the rename,
   then patches with `--reject` as a fallback. It **never** applies kit migrations (snapshots are
   cumulative), writes resource ids into tomls, applies deletions unasked, or ports the root
-  version. The version stamp is written last, only on a clean apply. Every release path is checked
+  version. The version stamp is written last, only on a clean apply — or by `--continue`, once
+  every `*.rej` an apply left is resolved and deleted; `pnpm plugin upgrade <id> --continue` is the
+  same finish for a plugin. Every release path is checked
   before anything is written, a plan run included: one that is not a plain path inside the
   repository (`scripts/lib/repo-paths.mjs`), is under `.git/`, or reaches an added file through a
   symlink stops the run.
