@@ -6,6 +6,11 @@ copy of the kit forward without recreating anything its owner deleted.
 
 If you are running a copy: `pnpm kit:upgrade` tells you which of these you are missing.
 
+## 0.36.0 — 2026-11-13
+
+Provisioning a copy with a public-site plugin now reaches a working production site unaided: zone routes instead of 403-prone custom domains, production-only runs, real deploys, and a public-site cache keyed on the deployment.
+[Porting note](docs/upgrades/0.36.0.md).
+
 ## 0.35.0 — 2026-11-11
 
 A new `/rf-security` skill runs a multi-agent security audit of a copy against its own `docs/THREAT-MODEL.md`, with proofs in a Docker sandbox and findings kept outside the repository.
