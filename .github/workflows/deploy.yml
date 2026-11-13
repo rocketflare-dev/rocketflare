@@ -302,7 +302,7 @@ jobs:
       # `[assets] directory = "./dist/ui"` live.
       - name: Deploy with wrangler (no deployer)
         if: vars.DEPLOYER_URL == ''
-        run: pnpm --filter @rocketflare/web exec wrangler deploy -c wrangler.staging.toml --var "RELEASE_VERSION:${{ steps.version.outputs.version }}"
+        run: pnpm --filter @rocketflare/web exec wrangler deploy -c wrangler.staging.toml --var "RELEASE_VERSION:${{ steps.version.outputs.version }}" --var "DEPLOYMENT_ID:${{ github.run_id }}-${{ github.run_attempt }}"
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -487,7 +487,7 @@ jobs:
 
       - name: Deploy with wrangler (no deployer)
         if: vars.DEPLOYER_URL == ''
-        run: pnpm --filter @rocketflare/web exec wrangler deploy --var "RELEASE_VERSION:${{ steps.version.outputs.version }}"
+        run: pnpm --filter @rocketflare/web exec wrangler deploy --var "RELEASE_VERSION:${{ steps.version.outputs.version }}" --var "DEPLOYMENT_ID:${{ github.run_id }}-${{ github.run_attempt }}"
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

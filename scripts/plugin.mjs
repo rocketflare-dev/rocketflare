@@ -19,10 +19,11 @@
  *   - **never copy a migration.** A snapshot describes a whole cumulative schema, so importing a
  *     foreign one teaches drizzle a current state that has never heard of the host's own tables.
  *     The host generates its own with `pnpm db:generate` once the schema barrel line exists.
- *   - **never write a resource id, or edit a wrangler toml beyond worker-first routing.** A binding
- *     a plugin declares is REPORTED; `pnpm provision cloudflare <env>` is what creates it. The one
- *     toml edit is `run_worker_first` for a plugin declaring `publicSites`, which the parity test
- *     demands before anything has been provisioned.
+ *   - **never write a resource id.** A binding a plugin declares gets its toml block with a
+ *     `<PLACEHOLDER>` id (`pnpm provision declarations`, run after an apply), so `pnpm dev` has it
+ *     at once; `pnpm provision cloudflare <env>` creates the resource and patches the id in. The
+ *     other toml edit is `run_worker_first` for a plugin declaring `publicSites`, which the parity
+ *     test demands before anything has been provisioned.
  *   - **never apply without being asked.** Every command prints its plan and stops; `--apply` is a
  *     second, deliberate run, which is the whole of decision 1's "installing a plugin is as
  *     trusting as merging a pull request".
@@ -968,11 +969,41 @@ function cmdAdd(args, host) {
       : []),
     ...(formatted ? [`✔ ${formatted}`] : []),
     `✔ surface '${m.id}' recorded in ${path.relative(REPO_ROOT, recordedIn)}`,
+    ...writeDeclarations(m),
     '',
     'Now work the steps above — the schema migration first; nothing else can run until the tables',
     'exist. Each AGENT step names the assertion that proves it; each HUMAN step is a decision.'
   )
   return auditAfterApply(args)
+}
+
+/**
+ * The plugin's toml declarations — binding blocks with placeholder ids, crons, vars — through the
+ * one writer provisioning uses (`pnpm provision declarations`), so a plugin's KV and R2 work under
+ * `pnpm dev` the moment it lands instead of 503ing until someone hand-writes a block. Best-effort:
+ * a host without the provisioning scripts (or a failure) is a note with the command to run.
+ */
+function writeDeclarations(m) {
+  const declares = ['bindings', 'crons', 'vars'].some(k => (m[k] ?? []).length > 0)
+  if (!declares) return []
+  if (!existsSync(abs('apps/web/scripts/provision.ts'))) return []
+  const r = spawnSync(
+    'pnpm',
+    ['--dir', 'apps/web', 'exec', 'tsx', 'scripts/provision.ts', 'declarations'],
+    {
+      cwd: REPO_ROOT,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    }
+  )
+  if (r.error || r.status !== 0) {
+    warn(
+      `note: the plugin's bindings, crons and vars are not in the tomls yet — run \`pnpm provision declarations\`.`
+    )
+    return []
+  }
+  return [
+    '✔ bindings (placeholder ids), crons and vars written to both tomls — `/rf-provision` fills the ids',
+  ]
 }
 
 /**
@@ -1691,6 +1722,7 @@ function cmdUpgrade(args, host) {
     }
     writeManifestFile(recordFile, raw, { format: !host.sidecarIds.includes(id) })
     out(`✔ surface '${id}' stamped at ${toVersion ?? m.commitOf(to).slice(0, 12)}`)
+    out(...writeDeclarations(targetManifest ?? {}))
   } else {
     if (recordChanged) writeManifestFile(recordFile, raw, { format: !host.sidecarIds.includes(id) })
     out('The surface is NOT stamped while rejects remain — resolve them and re-run.')

@@ -40,11 +40,24 @@ export async function createContext(options: ContextOptions = {}): Promise<Comma
   const env = options.env ?? process.env
   const store = options.store ?? createConfigStore({ env })
   const json = options.json ?? false
+  const config = await store.resolve({ serverUrl: options.server })
+  const log = options.log ?? createLogger({ debug: Boolean(env[ENV.debug]) })
+  if (config.envOverridesLogin) {
+    const names = [
+      config.apiKeySource === 'env' ? ENV.apiKey : null,
+      config.serverUrlSource === 'env' ? ENV.url : null,
+    ].filter(Boolean)
+    log.warn(
+      `${names.join(' and ')} from the environment override${names.length === 1 ? 's' : ''} your saved login` +
+        `${config.envOverridesLogin.savedServerUrl ? ` (${config.envOverridesLogin.savedServerUrl})` : ''}` +
+        ` — this command talks to ${config.serverUrl}. Unset ${names.length === 1 ? 'it' : 'them'} to use the login.`
+    )
+  }
   return {
     store,
-    config: await store.resolve({ serverUrl: options.server }),
+    config,
     json,
-    log: options.log ?? createLogger({ debug: Boolean(env[ENV.debug]) }),
+    log,
     out: options.out ?? createOutput({ json }),
     fetch: options.fetch ?? ((input, init) => fetch(input, init)),
     open: options.open ?? (async url => (await import('open')).default(url)),

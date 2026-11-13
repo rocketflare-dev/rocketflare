@@ -111,6 +111,33 @@ export class CloudflareClient {
     return 'created'
   }
 
+  /**
+   * A zone route needs a proxied record at its host so the request reaches Cloudflare at all; the
+   * Worker answers it, so the record's address is never used (`100::` is the documented
+   * "originless" placeholder). Any existing A / AAAA / CNAME at the host already does the job and is
+   * left alone — it may be a real origin someone relies on — unless it is not proxied, which is an
+   * error: the route would never see the request.
+   */
+  async ensureRouteRecord(zoneId: string, host: string): Promise<'exists' | 'created'> {
+    const existing = (await this.listRecords(zoneId, host)).filter(r =>
+      ['A', 'AAAA', 'CNAME'].includes(r.type)
+    )
+    if (existing.length > 0) {
+      const direct = existing.find(r => !r.proxied)
+      if (direct)
+        throw new ProvisionError(
+          `${host} has a DNS-only ${direct.type} record — a Worker route only sees proxied traffic; turn the proxy on for it (orange cloud) or delete it and re-run`
+        )
+      return 'exists'
+    }
+    await this.request(
+      'POST',
+      `/zones/${zoneId}/dns_records`,
+      withComment({ type: 'AAAA', name: host, content: '100::', ttl: 1, proxied: true })
+    )
+    return 'created'
+  }
+
   async workersSubdomain(accountId: string): Promise<string> {
     const r = await this.request<{ subdomain?: string }>(
       'GET',

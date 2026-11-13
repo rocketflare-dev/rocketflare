@@ -134,6 +134,14 @@ export interface PublicSitesDeclaration {
      * stored, nor is any `Vary` on a request with no variant; `Accept-Encoding` is always allowed.
      */
     variantHeaders?: readonly string[]
+    /**
+     * How long one isolate may reuse the last `generation` it read, in seconds; omitted or 0 = read
+     * it on every request. Past that age the memo is still served once more while a fresh read
+     * runs in the background (up to `GENERATION_STALE_FACTOR` times the age; older is awaited), so
+     * a publish shows within roughly this window. A function receives the config, for a window
+     * that only production uses.
+     */
+    generationMaxAgeSeconds?: number | ((config: AppConfig) => number)
   }
 }
 

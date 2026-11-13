@@ -47,8 +47,8 @@
     "clean:deep": "pnpm clean && rm -rf node_modules apps/*/node_modules packages/*/node_modules",
     "web": "pnpm --filter @rocketflare/web",
     "cli": "pnpm --filter @rocketflare/cli exec tsx src/cli.ts",
-    "deploy": "pnpm --filter @rocketflare/web deploy",
-    "deploy:staging": "pnpm --filter @rocketflare/web deploy:staging",
+    "deploy": "pnpm --filter @rocketflare/web run deploy",
+    "deploy:staging": "pnpm --filter @rocketflare/web run deploy:staging",
     "provision": "pnpm --filter @rocketflare/web provision"
   },
   "devDependencies": {

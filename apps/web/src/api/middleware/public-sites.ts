@@ -13,6 +13,12 @@
  *
  * Hits never touch Postgres: `databaseMiddleware` opens a handle per request but neither driver
  * connects until the first query, and `cache.generation` must not run one.
+ *
+ * The cache key is `host / deployment / generation / path`: the deployment (`DEPLOYMENT_ID`,
+ * which the deploy scripts set uniquely) means new rendering code is never hidden behind a page an older deploy stored, and the
+ * generation is the plugin's publish counter. A declaration may let an isolate reuse its last
+ * generation for a few seconds (`generationMaxAgeSeconds`), which takes the counter's read off
+ * the hot path.
  */
 import type { Hono, MiddlewareHandler } from 'hono'
 import { bodyLimit } from 'hono/body-limit'
@@ -283,7 +289,32 @@ function cacheVariantSuffix(declaration: PublicSitesDeclaration, request: Reques
   return variant ? `?v=${encodeURIComponent(variant)}` : ''
 }
 
-async function generationOf(c: AppContext, site: Site, config: AppConfig): Promise<string | null> {
+/** Past `generationMaxAgeSeconds`, a memo up to this many times older is served while it refreshes. */
+export const GENERATION_STALE_FACTOR = 30
+
+interface GenerationMemo {
+  value: string | null
+  at: number
+  refreshing: boolean
+}
+
+/** Per isolate, per config (one per environment), per site. */
+const generationMemos = new WeakMap<AppConfig, Map<string, GenerationMemo>>()
+
+/** One boot per `wrangler dev` reload: locally, a code change must show without a publish. */
+const DEV_BOOT_ID = crypto.randomUUID()
+
+/** The deployment's id: new on every deploy, so a page stored by older code is never served. */
+function deploymentOf(config: AppConfig): string {
+  if (config.APP_ENV === 'development') return DEV_BOOT_ID
+  return config.DEPLOYMENT_ID ?? config.RELEASE_VERSION
+}
+
+async function readGeneration(
+  c: AppContext,
+  site: Site,
+  config: AppConfig
+): Promise<string | null> {
   const cache = site.declaration.cache
   if (!cache) return null
   try {
@@ -292,6 +323,35 @@ async function generationOf(c: AppContext, site: Site, config: AppConfig): Promi
     c.get('logger').warn({ err, plugin: site.id }, 'public site generation failed; not caching')
     return null
   }
+}
+
+async function generationOf(c: AppContext, site: Site, config: AppConfig): Promise<string | null> {
+  const declared = site.declaration.cache?.generationMaxAgeSeconds
+  const maxAgeMs =
+    1000 * Math.max(0, (typeof declared === 'function' ? declared(config) : declared) ?? 0)
+  if (maxAgeMs === 0) return readGeneration(c, site, config)
+
+  let memos = generationMemos.get(config)
+  if (!memos) {
+    memos = new Map()
+    generationMemos.set(config, memos)
+  }
+  const memo = memos.get(site.id)
+  const age = memo ? Date.now() - memo.at : Number.POSITIVE_INFINITY
+  if (memo && age <= maxAgeMs) return memo.value
+  if (memo && age <= maxAgeMs * GENERATION_STALE_FACTOR) {
+    if (!memo.refreshing) {
+      memo.refreshing = true
+      await deferOrAwait(c, async () => {
+        const value = await readGeneration(c, site, config)
+        memos.set(site.id, { value, at: Date.now(), refreshing: false })
+      })
+    }
+    return memo.value
+  }
+  const value = await readGeneration(c, site, config)
+  memos.set(site.id, { value, at: Date.now(), refreshing: false })
+  return value
 }
 
 async function answerPage(
@@ -311,7 +371,7 @@ async function answerPage(
     generation === null
       ? null
       : new Request(
-          `https://${host}/${encodeURIComponent(generation)}${url.pathname}${variantSuffix}`
+          `https://${host}/${encodeURIComponent(deploymentOf(config))}/${encodeURIComponent(generation)}${url.pathname}${variantSuffix}`
         )
 
   if (cache && key) {

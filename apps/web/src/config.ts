@@ -89,6 +89,12 @@ const coreConfigSchema = z.object({
   APP_NAME: z.string().min(1).default('Rocketflare'),
   /** Overridden at deploy time by CI (`wrangler deploy --var RELEASE_VERSION:<tag>`). */
   RELEASE_VERSION: z.string().min(1).default('dev'),
+  /**
+   * Unique per deploy, passed by the deploy scripts and CI (`wrangler deploy --var
+   * DEPLOYMENT_ID:<id>`); undeclared in the tomls. A public site's page cache is keyed on it, so
+   * new code is never hidden behind a page an older deploy stored. Missing → `RELEASE_VERSION`.
+   */
+  DEPLOYMENT_ID: z.string().min(1).optional(),
   LOG_LEVEL: z.enum(LOG_LEVELS).default('info'),
   EMAIL_FROM: z.string().min(1).default('Rocketflare <noreply@example.com>'),
   /** Schema is identical in both modes; `single` disables the multi-org surface. */

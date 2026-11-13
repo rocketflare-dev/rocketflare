@@ -49,6 +49,12 @@ export interface ResolvedConfig {
   tenantId?: string
   tenantName?: string
   user?: CliConfig['user']
+  /**
+   * The environment's key or URL is used although `login` saved a different one — a stale export
+   * (a dev shell's env script, say) silently pointing every command somewhere else. The saved
+   * server, for the warning that names it.
+   */
+  envOverridesLogin?: { savedServerUrl?: string }
 }
 
 export interface ConfigStore {
@@ -131,11 +137,17 @@ export function createConfigStore(options: { dir?: string; env?: Env } = {}): Co
         : config.apiKey
           ? [config.apiKey, 'config']
           : [undefined, 'none']
+      const overridesLogin =
+        (apiKeySource === 'env' && config.apiKey !== undefined && config.apiKey !== envKey) ||
+        (serverUrlSource === 'env' &&
+          config.serverUrl !== undefined &&
+          config.serverUrl.replace(/\/+$/, '') !== serverUrl.replace(/\/+$/, ''))
       return {
         serverUrl: serverUrl.replace(/\/+$/, ''),
         serverUrlSource,
         apiKey,
         apiKeySource,
+        ...(overridesLogin ? { envOverridesLogin: { savedServerUrl: config.serverUrl } } : {}),
         tenantId: config.tenantId,
         tenantName: config.tenantName,
         user: config.user,

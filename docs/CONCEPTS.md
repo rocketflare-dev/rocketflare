@@ -1254,9 +1254,14 @@ as merging a PR. A plugin repo mirrors the host tree and ships **no migration, n
   forwarded header is trusted). On a matching host the plugin's router answers everything, so
   `/api/*`, `/auth/*` and `/ws` are never reached there. GET and HEAD are allowed, plus POST on a
   path declared in `forms`; anything else is 405. The order is cache lookup, router, cache put. Page
-  requests are never rate limited (a form POST is). The cache key is `<host>/<generation>/<path>`, without the query string.
-  `cache` is optional, and its `generation` must not touch Postgres, so a hit costs no query; it
-  returns null to skip caching a request. A cacheable request reaches the router without `Cookie` or `Authorization`, so a cached site is anonymous. Only a 200 with no `Set-Cookie`, and with no `Vary` beyond `Accept-Encoding` and the `cache.variantHeaders` of a request that has a variant, is stored, and HEAD is
+  requests are never rate limited (a form POST is). The cache key is `<host>/<deployment>/<generation>/<path>`, without the query string:
+  the deployment is `DEPLOYMENT_ID` (set uniquely by the deploy scripts and CI with `--var`,
+  else `RELEASE_VERSION`; under `wrangler dev`, one id per boot), so new rendering code is never hidden behind a page an older
+  deploy stored. `cache` is optional, and its `generation` must not touch Postgres, so a hit costs
+  no query; it returns null to skip caching a request. `generationMaxAgeSeconds` (default 0, a
+  number or a function of the config) lets one isolate reuse the last generation for that long and
+  then serve it once more while a fresh read runs in `waitUntil` (up to 30× the age; older is
+  awaited): the generation read leaves the hot path, and a publish shows within about that window. A cacheable request reaches the router without `Cookie` or `Authorization`, so a cached site is anonymous. Only a 200 with no `Set-Cookie`, and with no `Vary` beyond `Accept-Encoding` and the `cache.variantHeaders` of a request that has a variant, is stored, and HEAD is
   served from the GET entry. A form POST bypasses the cache and has its own body limit (default
   64 KiB, at most `MAX_PUBLIC_MOUNT_BODY_BYTES`) and rate-limit bucket. Two plugins claiming one
   host, or a claim on `APP_URL`'s host, fail the gate (`publicSiteIssues`); at runtime the claim is
