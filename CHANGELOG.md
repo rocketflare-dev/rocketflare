@@ -6,6 +6,11 @@ copy of the kit forward without recreating anything its owner deleted.
 
 If you are running a copy: `pnpm kit:upgrade` tells you which of these you are missing.
 
+## 0.36.1 — 2026-11-13
+
+0.36.0 copies could not deploy: the public-sites cache made a random id at module load, which Cloudflare refuses; it is now made on first use, a test loads the Worker to catch it, and upgrades finish cleanly after rejects.
+[Porting note](docs/upgrades/0.36.1.md).
+
 ## 0.36.0 — 2026-11-13
 
 Provisioning a copy with a public-site plugin now reaches a working production site unaided: zone routes instead of 403-prone custom domains, production-only runs, real deploys, and a public-site cache keyed on the deployment.
