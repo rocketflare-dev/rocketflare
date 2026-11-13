@@ -123,6 +123,31 @@ describe('resolve precedence', () => {
       serverUrlSource: 'flag',
     })
   })
+
+  it('flags an environment key or URL that overrides a different saved login', async () => {
+    const t = await tempStore()
+    cleanups.push(t.cleanup)
+    await t.store.save({ serverUrl: 'https://app.example.test', apiKey: 'config-key' })
+    const store = (env: Record<string, string>) => createConfigStore({ dir: t.store.dir, env })
+    expect(
+      (
+        await store({
+          ROCKETFLARE_URL: 'http://localhost:3001',
+          ROCKETFLARE_API_KEY: 'k',
+        }).resolve()
+      ).envOverridesLogin
+    ).toEqual({ savedServerUrl: 'https://app.example.test' })
+    // The same key and URL as the login, or no saved login at all: nothing to warn about.
+    expect(
+      (
+        await store({
+          ROCKETFLARE_URL: 'https://app.example.test/',
+          ROCKETFLARE_API_KEY: 'config-key',
+        }).resolve()
+      ).envOverridesLogin
+    ).toBeUndefined()
+    expect((await t.store.resolve()).envOverridesLogin).toBeUndefined()
+  })
 })
 
 describe('redaction', () => {

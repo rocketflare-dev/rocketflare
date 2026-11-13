@@ -51,6 +51,14 @@ export interface TomlPatch {
   routeHost?: string
   /** Public-site hosts routed beside the app host (idempotent; an existing route is kept). */
   siteRouteHosts?: string[]
+  /**
+   * host → its zone. Given, the app and site hosts are written as zone routes
+   * (`{ pattern = "host/*", zone_name }`, each needing a proxied DNS record) instead of custom
+   * domains, and a custom-domain entry this script wrote earlier is converted. One Worker on
+   * several custom domains of one zone answers a browser a bare 403 when it reuses one host's
+   * connection for another (docs/DEPLOY.md § Zone, DNS and multiple hosts).
+   */
+  routeZones?: Record<string, string>
   /** Insert a `workers_dev` note after `name = …` when the file has no `workers_dev` line. */
   workersDevComment?: string
   /** Plugin binding blocks: inserted if absent, updated in place if present. */
@@ -61,6 +69,8 @@ export interface TomlPatch {
   crons?: string[]
   /** `[vars]` keys appended when absent (idempotent; an existing key is left alone). */
   vars?: Array<{ key: string; value: string }>
+  /** `[vars]` keys SET to these values: appended when absent, overwritten when different. */
+  setVars?: Record<string, string>
   /** Route prefixes appended to `[assets] run_worker_first` as `p` and `p/*` (idempotent). */
   workerFirstPrefixes?: string[]
   /** An installed plugin serves public sites: every request but `/assets/*` reaches the Worker. */
@@ -140,6 +150,9 @@ function patchBindingKey(
   if (!m) throw new TomlPatchError(`no \`${key}\` line found under binding = "${binding}"`)
   const current = m[2]
   if (current === value) return text
+  // A placeholder never replaces a real value: `cloudflare <env>` re-declares every plugin binding
+  // in BOTH tomls on each run, and must keep the id the other environment's run already wrote.
+  if (PLACEHOLDER.test(value) && !PLACEHOLDER.test(current)) return text
   if (!PLACEHOLDER.test(current) && !force) {
     throw new TomlPatchError(
       `binding "${binding}" already has ${key} "${current}" (wanted "${value}"); pass --force to overwrite`
@@ -169,6 +182,11 @@ const customDomain = (host: string): RouteEntry => ({
   host,
 })
 
+const zoneRoute = (host: string, zone: string): RouteEntry => ({
+  raw: `{ pattern = "${host}/*", zone_name = "${zone}" }`,
+  host,
+})
+
 function readRoutes(text: string): { start: number; end: number; entries: RouteEntry[] } | null {
   const extent = tomlArrayExtent(text, 'routes')
   if (!extent) return null
@@ -188,16 +206,26 @@ function readRoutes(text: string): { start: number; end: number; entries: RouteE
  * Write the app host and every site host, dropping none. A different app host re-points the first
  * entry, unless that entry is a site host, in which case the app host goes in front of it.
  */
-function patchRoutes(text: string, appHost: string | undefined, siteHosts: string[]): string {
+function patchRoutes(
+  text: string,
+  appHost: string | undefined,
+  siteHosts: string[],
+  zones?: Record<string, string>
+): string {
   const active = readRoutes(text)
-  const entries = [...(active?.entries ?? [])]
+  const route = (host: string): RouteEntry =>
+    zones?.[host] ? zoneRoute(host, zones[host]) : customDomain(host)
+  // A custom domain this script wrote becomes a zone route once zones are given; a hand-written
+  // entry is never touched.
+  const entries = (active?.entries ?? []).map(e =>
+    zones?.[e.host] && e.raw === customDomain(e.host).raw ? route(e.host) : e
+  )
   const has = (host: string) => entries.some(e => e.host === host)
   if (appHost !== undefined && !has(appHost)) {
-    if (entries.length > 0 && !siteHosts.includes(entries[0].host))
-      entries[0] = customDomain(appHost)
-    else entries.unshift(customDomain(appHost))
+    if (entries.length > 0 && !siteHosts.includes(entries[0].host)) entries[0] = route(appHost)
+    else entries.unshift(route(appHost))
   }
-  for (const host of siteHosts) if (!has(host)) entries.push(customDomain(host))
+  for (const host of siteHosts) if (!has(host)) entries.push(route(host))
   const unchanged =
     active !== null &&
     entries.length === active.entries.length &&
@@ -553,7 +581,7 @@ export function patchToml(text: string, patch: TomlPatch): string {
   if (patch.appUrl !== undefined) out = patchVar(out, 'APP_URL', patch.appUrl)
   if (patch.emailFrom !== undefined) out = patchVar(out, 'EMAIL_FROM', patch.emailFrom)
   if (patch.routeHost !== undefined || patch.siteRouteHosts?.length)
-    out = patchRoutes(out, patch.routeHost, patch.siteRouteHosts ?? [])
+    out = patchRoutes(out, patch.routeHost, patch.siteRouteHosts ?? [], patch.routeZones)
   if (patch.workersDevComment !== undefined)
     out = patchWorkersDevComment(out, patch.workersDevComment)
   for (const block of patch.bindings ?? []) out = upsertBindingBlock(out, block, force)
@@ -568,6 +596,8 @@ export function patchToml(text: string, patch: TomlPatch): string {
     out = settleReprovision(out, patch.workerFirstPrefixes)
   if (patch.workerFirstAll) out = applyWorkerFirstAll(out)
   for (const v of patch.vars ?? []) out = appendVar(out, v.key, v.value)
+  for (const [key, value] of Object.entries(patch.setVars ?? {}))
+    out = patchVar(appendVar(out, key, value), key, value)
   return out
 }
 

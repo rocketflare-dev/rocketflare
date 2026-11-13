@@ -8,7 +8,8 @@ reference it points at.
 `wrangler.staging.toml`, `worker-configuration.d.ts`, `scripts/cf-provision.sh`, the parity test.
 `wrangler` is a devDependency of that package, so every wrangler command runs **in `apps/web`** —
 either `pnpm --filter @rocketflare/web exec wrangler …` from the root (shorthand `pnpm web exec wrangler …`)
-or the root scripts that delegate there (`pnpm deploy`, `pnpm deploy:staging`, `pnpm provision`,
+or the root scripts that delegate there (`pnpm run deploy`, `pnpm run deploy:staging` — `run`, because a bare `pnpm deploy` is pnpm's own
+command and deploys nothing — `pnpm provision`,
 `pnpm types`). `pnpm exec wrangler` at the workspace root does not resolve. Only `apps/web` is
 deployed. **The CLI (`apps/cli`) is not deployed**: CI builds it (`pnpm build` → `apps/cli/dist`) as
 a compile check, and it is distributed through the repo (`pnpm cli …`, or `pnpm --filter @rocketflare/cli
@@ -210,17 +211,33 @@ What each host needs on Cloudflare:
   here. A host on a zone held in another Cloudflare account cannot be routed to this Worker. The
   check finds zones through the API token, so it only proves the account if the token is scoped to
   that one account.
-- **No conflicting DNS record.** Every entry is a custom domain (`custom_domain = true`), so
-  `wrangler deploy` creates the DNS record and certificate for the host itself. Delete an existing
-  CNAME at that host first; a deploy over one fails.
-- **An exact hostname.** Custom domains take no wildcard, so list each host. An apex host is
-  allowed; redirecting `example.com` to `www` is a Cloudflare redirect rule, not a route here.
+- **The app alone is a custom domain; with site hosts, every host is a zone route.** An app with
+  no site hosts gets `{ pattern = "app.example.com", custom_domain = true }`, and `wrangler deploy`
+  creates its DNS record and certificate (delete an existing CNAME there first; a deploy over one
+  fails). Once a toml has site hosts, `provision urls` writes the app and every site host as
+  `{ pattern = "<host>/*", zone_name = "<zone>" }` instead, converts the custom-domain entries it
+  wrote earlier, and creates a proxied `AAAA 100::` record at each host that has no A, AAAA or
+  CNAME yet (an existing proxied one is kept; a DNS-only one is an error, since a route never sees
+  that traffic).
+  **Why not several custom domains:** one Worker on two custom domains of one zone shares one
+  certificate and address, so a browser reuses the connection it opened for one host to fetch the
+  other — and Cloudflare answers that request with a bare 403 before the Worker runs. No WAF event,
+  no Worker log, and an incognito window (a fresh connection) works, which makes it look like a
+  cookie or extension problem. `curl --connect-to` reproduces it. Zone routes over proxied records
+  have no such coupling.
+- **An exact hostname.** List each host. An apex host is allowed; redirecting `example.com` to
+  `www` is a Cloudflare redirect rule, not a route here.
 
 The API token needs Zone → DNS — Edit on every one of those zones (§ Cloudflare API token scopes),
 including a zone only a site host uses.
 
 A site host needs the app on a custom host of its own: an active `routes` line turns off wrangler's
 `workers.dev` default, so `provision urls` refuses site hosts while the app is on `workers.dev`.
+
+`pnpm provision urls` takes the hosts variable's value per environment from
+`--production-site-hosts` / `--staging-site-hosts` (the variable's own syntax, for the `sites`
+plugin `www.example.com=www`), else the toml, else a question on a terminal; an environment left
+empty is named in a warning, since its sites then answer nothing deployed.
 
 Removing a host from the variable does not remove its route. Until you delete the entry from
 `routes` and deploy, the host still reaches this Worker and is answered as the app.
@@ -647,7 +664,7 @@ Publishing the Release is the promotion gate (required reviewers are unavailable
 on the free plan; add them to the `production` environment if the plan allows). Production does not
 re-run the CI gate: it ships the tag staging validated. `RELEASE_VERSION` is a `[vars]` override at
 deploy time, surfaced by `/auth/session`, the nav footer and `rocketflare status`. Local
-`pnpm deploy[:staging]` (root → `apps/web`: `build:ui` + `wrangler deploy`) exist as escape hatches;
+`pnpm run deploy[:staging]` (root → `apps/web`: `build:ui` + `wrangler deploy`) exist as escape hatches;
 CI is the path. `wrangler deploy` always runs with `apps/web` as cwd so `[assets] directory =
 "./dist/ui"` resolves — never call it from the root.
 

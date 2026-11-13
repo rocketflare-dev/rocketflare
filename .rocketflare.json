@@ -261,6 +261,7 @@
   "$kitOnly": "What is true of the kit repository and of nothing made from it. The kit's OWN tests (its release notes and version chain, the release and rename machinery, the maintainer hooks, the plugin CI plugin repositories call from here, and this file's kit-state invariants — docs/CONCEPTS.md §13), the kit's OWN workflows (kit.yml, plugin-ci.yml, notify-plugins.yml), its maintainer scripts (the release cutter, the porting-note and release-site nudges, the default-plugins CI helper, the curl installer) and its project files (CONTRIBUTING.md, CODE_OF_CONDUCT.md). `scripts/rename.mjs` deletes every file under these globs when a copy is born, unwires their vitest project (`kit-only`), drops every package.json script and `.claude/settings.json` hook that names one; `pnpm kit:upgrade` never ports one (it also honours the TARGET kit's list); and `apps/web/tests/config/kit-manifest.test.ts` fails a copy that carries one. `apps/web/tests/kit-only/**` is also the built-in floor (`KIT_ONLY_PATHS` in scripts/lib/upgrade-lib.mjs) for a copy whose manifest predates this key.",
   "kitOnly": [
     "apps/web/tests/kit-only/**",
+    "docs/plans/**",
     ".github/workflows/kit.yml",
     ".github/workflows/plugin-ci.yml",
     ".github/workflows/notify-plugins.yml",

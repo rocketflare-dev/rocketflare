@@ -104,13 +104,15 @@ answers as flags (they are cached in `apps/web/.provision.json` after the first 
 
 | Question | Flag | Sensible default |
 |---|---|---|
-| Neon region (near your users) | `--region aws-us-east-1` | `aws-us-east-1` |
+| Neon region — **near the users**: every uncached request waits on it (a UK site on `aws-us-east-1` cost ~1.5 s a page) | `--region aws-eu-west-2` | none: ask. `aws-us-east-1`, `aws-us-west-2`, `aws-eu-west-2` London, `aws-eu-central-1` Frankfurt, `aws-ap-southeast-1` |
 | Sending domain (a subdomain of a zone in the Cloudflare account) | `--domain mail.example.com` | `mail.<apex of APP_URL>` |
 | Staging host, or `workers.dev` | `--staging-host staging.example.com` | `workers.dev` |
 | Production host, or `workers.dev` | `--production-host app.example.com` | `workers.dev` |
 | First admin email (`BOOTSTRAP_ADMIN_EMAILS`) | `--admin-email you@example.com` | `git config user.email` |
+| Staging at all? A production-only app skips its Worker, resources, GitHub Environment and deploy | `--envs production` | both |
+| Public site hosts, when a plugin serves sites (`pnpm plugin list` shows `publicSites`), per environment, in the hosts var's own form | `--production-site-hosts www.example.com=www` | none: ask; empty = the site answers nothing deployed |
 
-Then run the whole sequence (it takes 10–20 minutes; use a long Bash timeout):
+Then run the whole sequence (it takes 10–20 minutes; use a long Bash timeout; add `--envs production` for a production-only app):
 
 ```
 pnpm provision all $ARGUMENTS [--driver neon|postgres] --region … --domain … --staging-host … --production-host … --admin-email …
@@ -129,14 +131,14 @@ re-running `all` afterwards is safe.
 | Phase | It did | If it fails |
 |---|---|---|
 | `tokens` | (user's terminal only) prompts, verifies and writes `apps/web/.provision.env` | "needs a terminal" → the user runs it with the `!` prefix, not you |
-| `preflight` | tokens, tools, accounts, answers; every custom host and the sending domain resolved to a zone on the account, DNS readable | missing token → step 0; `gh` not logged in → the user runs `gh auth login` themselves; "not on this Cloudflare account" → step 0 (1), or `workers.dev` + `--skip-email`; "cannot read DNS records" → the token lacks `Zone: DNS — Edit` on that zone |
+| `preflight` | tokens, tools, accounts, answers; every custom host and the sending domain resolved to a zone on the account, DNS readable; each installed plugin's secret listed set/UNSET, an unset one appended blank to `apps/web/.provision.env` for the user to fill (e.g. the sites plugin's `SITES_TURNSTILE_SECRET` — its forms refuse posts in production without it) | missing token → step 0; `gh` not logged in → the user runs `gh auth login` themselves; "not on this Cloudflare account" → step 0 (1), or `workers.dev` + `--skip-email`; "cannot read DNS records" → the token lacks `Zone: DNS — Edit` on that zone |
 | `email create` | Resend domain + DNS records in your Cloudflare zone, `EMAIL_FROM` in both tomls | "no Cloudflare zone" → the apex domain must be in this Cloudflare account (or `--skip-email`) |
 | `neon` | project + `staging` branch, `SELECT 1` on both | region name wrong → `--region`; 412 password storage → it resets the password itself |
 | `cloudflare staging/production` | KV, Queue, R2 (+ Hyperdrive under `postgres`); ids patched into the toml; with `--driver`, `DATABASE_DRIVER` + the `[[hyperdrive]]` block rewritten in both tomls — **plus every installed plugin's declared bindings, crons, route prefixes and non-secret `[vars]`**, written into BOTH tomls (D31) | "Hyperdrive requires Workers Paid" → upgrade the plan at the printed URL; "already has id" → `--force` only if you know the old resource is gone; a plugin binding whose `type` is not `kv`/`queue`/`r2` is refused by name at install time, not here |
 | `migrate <env>` | migrations on that branch, count == journal | a schema error is a code problem — do not retry blindly |
 | `github <env>` | GitHub Environment + `DATABASE_URL`, `CLOUDFLARE_*` secrets | `gh` needs `repo` scope; the remote must be GitHub |
-| `urls` | `APP_URL` + `routes` (custom host) or `workers.dev` in both tomls; parity test | "no workers.dev subdomain" → pick one in the Cloudflare dashboard once |
-| `deploy <env>` | `pnpm deploy[:staging]` (under `neon` it puts the Worker's `DATABASE_URL` right after the first deploy), then `/api/health` and `/api/ready` | `/api/ready` 503 → the Worker cannot reach Neon: under `neon` re-run `secrets <env>` (the `DATABASE_URL` secret); under `postgres` Hyperdrive has the wrong host / SSL — re-run `cloudflare <env> --force` after checking |
+| `urls` | `APP_URL` + `routes` (custom host) or `workers.dev` in both tomls; the site hosts var; with site hosts, every host as a zone route plus its proxied `AAAA 100::` record (never several custom domains: a browser reusing one host's connection for another gets a bare 403 — `docs/DEPLOY.md` § Zone, DNS and multiple hosts); parity test | "no workers.dev subdomain" → pick one in the Cloudflare dashboard once |
+| `deploy <env>` | `pnpm run deploy[:staging]` (under `neon` it puts the Worker's `DATABASE_URL` right after the first deploy), then `/api/health` and `/api/ready` | `/api/ready` 503 → the Worker cannot reach Neon: under `neon` re-run `secrets <env>` (the `DATABASE_URL` secret); under `postgres` Hyperdrive has the wrong host / SSL — re-run `cloudflare <env> --force` after checking |
 | `secrets <env>` | `OAUTH_ENCRYPTION_KEY` (generated), `DATABASE_URL` under `neon` (the pooled Neon URI; `--rotate` re-puts it), + every optional secret in the environment or `apps/web/.provision.env` — **including every installed plugin's `vars` marked `secret`**, from the same two places | nothing to fix; unset ones are listed as skipped. A plugin secret that is skipped means the plugin 503s at runtime rather than reading a blank string as configured — add it to `apps/web/.provision.env` and re-run this phase |
 | `email verify <env>` | Resend verification (polls ≤ 10 min), mints a sending key into `RESEND_API_KEY` | "DNS still propagating" → wait and re-run `pnpm provision email verify <env>` later |
 

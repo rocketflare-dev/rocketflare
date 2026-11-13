@@ -13,6 +13,7 @@
     "init": "node scripts/rename.mjs {slug} {display} --domain {domain} --force --skip-install",
     "kitOnly": [
       "apps/web/tests/kit-only/**",
+      "docs/plans/**",
       ".github/workflows/kit.yml",
       ".github/workflows/plugin-ci.yml",
       ".github/workflows/notify-plugins.yml",

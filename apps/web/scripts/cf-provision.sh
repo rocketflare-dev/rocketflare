@@ -225,7 +225,17 @@ ensure_r2() {
   local name="$1"
   RESULT_ID=""
   if ! wr r2 bucket list 2>/dev/null | grep -qE "name: *${name}\$"; then
-    wr r2 bucket create "$name"
+    # The list can miss a bucket a moment-old partial run created (or one past its first page):
+    # "already exists" (code 10004) from create is that bucket, so find-or-create still holds.
+    local out
+    if ! out="$(wr r2 bucket create "$name" 2>&1)"; then
+      if printf '%s' "$out" | grep -qiE 'already exists|10004'; then
+        echo "r2          ${name}  exists (create said so)"
+        return
+      fi
+      printf '%s\n' "$out" >&2
+      exit 1
+    fi
   fi
   echo "r2          ${name}  (name-referenced; no id to paste)"
 }

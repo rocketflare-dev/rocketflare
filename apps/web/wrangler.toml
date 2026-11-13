@@ -74,7 +74,11 @@ mode = "smart"                          # run near the database (Neon region), n
 [observability.logs]
 enabled = true
 head_sampling_rate = 1
-invocation_logs = false
+# One log line per request (method, URL, status, Ray ID, duration), searchable in the dashboard's
+# Workers Logs: it is what tells "the Worker answered 403" from "Cloudflare did, before the
+# Worker". Each counts toward the plan's log events (Workers Paid includes 20M a month); lower
+# head_sampling_rate on a high-traffic app rather than turn these off.
+invocation_logs = true
 
 # React SPA served from Workers Static Assets, deployed atomically with the Worker. API
 # routes are matched by Hono first; the catch-all serves assets with SPA fallback.

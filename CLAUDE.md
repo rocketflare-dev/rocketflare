@@ -75,7 +75,7 @@ pnpm web agent:replay <agent> --tenant <slug> [--candidate f] [--live]  # D38: t
 pnpm security:sandbox build|verify|test --run <dir>|down  # the /rf-security sandbox (Docker); the audit drives it
 pnpm lint · pnpm typecheck · pnpm build  # workspace-wide
 pnpm web <script>  # any apps/web script (test:api, db:check…)
-pnpm db:generate · pnpm db:studio · pnpm deploy[:staging] · pnpm provision all  # (or one phase: --help)
+pnpm db:generate · pnpm db:studio · pnpm run deploy[:staging] · pnpm provision all  # (or one phase: --help)
 pnpm kit:upgrade [--to X.Y.Z] [--apply]  # port a later kit release into this app (the kit repo also has kit:release)
 ```
 

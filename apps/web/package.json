@@ -50,8 +50,8 @@
     "db:check": "dotenv -e .dev.vars -- tsx scripts/test-db-connection.ts",
     "seed": "dotenv -e .dev.vars -- tsx scripts/seed.ts",
     "agent:replay": "dotenv -e .dev.vars -- tsx scripts/agent-replay.ts",
-    "deploy": "pnpm build:ui && wrangler deploy",
-    "deploy:staging": "pnpm build:ui && wrangler deploy -c wrangler.staging.toml",
+    "deploy": "pnpm build:ui && wrangler deploy --var DEPLOYMENT_ID:$(date -u +%Y%m%d%H%M%S)",
+    "deploy:staging": "pnpm build:ui && wrangler deploy -c wrangler.staging.toml --var DEPLOYMENT_ID:$(date -u +%Y%m%d%H%M%S)",
     "provision": "tsx scripts/provision.ts",
     "provision:cloudflare": "bash scripts/cf-provision.sh"
   },

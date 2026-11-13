@@ -106,6 +106,16 @@ describe('patch-toml: ids', () => {
     expect((TOML.parse(forced) as any).hyperdrive[0].id).toBe(HD_PROD)
   })
 
+  it('keeps a real id when a binding is re-declared with its placeholder', () => {
+    // `cloudflare <env>` writes every plugin binding into BOTH tomls, placeholders and all: the
+    // second environment's run must not throw on (or erase) the id the first one wrote.
+    const once = patchToml(stagingText, { kvId: KV_STAGING })
+    const again = patchToml(once, {
+      bindings: [{ type: 'kv', binding: 'RATE_LIMIT_KV', id: '<KV_RATE_LIMIT_STAGING_ID>' }],
+    })
+    expect(again).toBe(once)
+  })
+
   it('throws when the binding block is missing', () => {
     expect(() => patchToml('name = "x"\n', { hyperdriveId: HD_PROD })).toThrow(/no `id` line/)
   })
@@ -150,6 +160,16 @@ describe('patch-toml: vars and routes', () => {
     expect(patchToml(noted, { workersDevComment: 'served at workers.dev' })).toBe(noted)
     // The staging toml already declares workers_dev = true → untouched.
     expect(patchToml(stagingText, { workersDevComment: 'x' })).toBe(stagingText)
+  })
+})
+
+describe('patch-toml: setVars', () => {
+  it('appends an absent var, overwrites a different one, and is idempotent', () => {
+    const added = patchToml(prodText, { setVars: { SITES_HOSTS: 'www.example.test=www' } })
+    expect((TOML.parse(added) as any).vars.SITES_HOSTS).toBe('www.example.test=www')
+    const changed = patchToml(added, { setVars: { SITES_HOSTS: 'shop.example.test=shop' } })
+    expect((TOML.parse(changed) as any).vars.SITES_HOSTS).toBe('shop.example.test=shop')
+    expect(patchToml(changed, { setVars: { SITES_HOSTS: 'shop.example.test=shop' } })).toBe(changed)
   })
 })
 
@@ -205,6 +225,39 @@ describe('patch-toml: multiple hosts', () => {
       { pattern: 'www.example.test', custom_domain: true },
     ])
     expect(patchToml(hand, { siteRouteHosts: ['shop.example.test'] })).toBe(hand)
+  })
+
+  it('writes zone routes when zones are given, converting the custom domains it wrote', () => {
+    const zones = { [app]: 'example.test', 'www.example.test': 'example.test' }
+    const before = patchToml(prodText, { routeHost: app, siteRouteHosts: ['www.example.test'] })
+    const out = patchToml(before, {
+      routeHost: app,
+      siteRouteHosts: ['www.example.test'],
+      routeZones: zones,
+    })
+    expect((TOML.parse(out) as any).routes).toEqual([
+      { pattern: `${app}/*`, zone_name: 'example.test' },
+      { pattern: 'www.example.test/*', zone_name: 'example.test' },
+    ])
+    expect(
+      patchToml(prodText, {
+        routeHost: app,
+        siteRouteHosts: ['www.example.test'],
+        routeZones: zones,
+      })
+    ).toBe(out)
+    expect(
+      patchToml(out, { routeHost: app, siteRouteHosts: ['www.example.test'], routeZones: zones })
+    ).toBe(out)
+  })
+
+  it('never converts a hand-written custom domain', () => {
+    const hand = prodText.replace(
+      /^# routes = .*$/m,
+      'routes = [{ pattern = "app.example.test", custom_domain = true, zone_name = "example.test" }]'
+    )
+    const out = patchToml(hand, { routeHost: app, routeZones: { [app]: 'example.test' } })
+    expect(out).toBe(hand)
   })
 
   it('keeps the one-line shape for a single host, so an app with no sites is unchanged', () => {

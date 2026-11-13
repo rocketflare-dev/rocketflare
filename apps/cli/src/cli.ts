@@ -27,6 +27,16 @@ import { cliPlugins } from './plugins'
 import { createLogger } from './utils/logger'
 import { formatJson } from './utils/output'
 
+// `pnpm cli …` runs this from apps/cli; a path the person typed (`--batch ./runs.jsonl`, a plugin's
+// bundle directory) means their own directory, which pnpm passes as INIT_CWD.
+if (process.env.npm_lifecycle_event === 'cli' && process.env.INIT_CWD) {
+  try {
+    process.chdir(process.env.INIT_CWD)
+  } catch {
+    // A directory that has gone away: stay where pnpm put us.
+  }
+}
+
 interface GlobalOptions {
   server?: string
   json?: boolean

@@ -18,6 +18,8 @@ import { createTestEnv } from '../mocks/bindings'
 const state = vi.hoisted(() => ({
   hosts: ['www.example.test'] as readonly string[] | null,
   generation: 'g1' as string | null,
+  generationReads: 0,
+  maxAgeSeconds: 0,
   routerCalls: 0,
   queries: [] as (string | undefined)[],
   dbTouches: 0,
@@ -100,7 +102,11 @@ vi.mock('@/plugins/server', async importOriginal => {
         { path: '/forms/limited', rateLimit: { max: 1, windowSeconds: 60 } },
       ],
       cache: {
-        generation: async () => state.generation,
+        generation: async () => {
+          state.generationReads++
+          return state.generation
+        },
+        generationMaxAgeSeconds: () => state.maxAgeSeconds,
         ttlSeconds: (path: string) => (path.startsWith('/long') ? 9000 : 300),
         variant: (request: Request) =>
           new URL(request.url).pathname === '/negotiated'
@@ -142,6 +148,8 @@ beforeEach(() => {
     routerCalls: 0,
     queries: [],
     dbTouches: 0,
+    generationReads: 0,
+    maxAgeSeconds: 0,
   })
 })
 
@@ -295,10 +303,12 @@ describe('the cache', () => {
     expect(state.dbTouches).toBeGreaterThan(0)
   })
 
-  it('stores under <host>/<generation>/<path> with the configured TTL', async () => {
+  it('stores under <host>/<deployment>/<generation>/<path> with the configured TTL', async () => {
     await request(`${SITE}/about`)
-    expect([...cache.store.keys()]).toEqual(['https://www.example.test/g1/about'])
-    const entry = cache.store.get('https://www.example.test/g1/about')
+    const keys = [...cache.store.keys()]
+    expect(keys).toHaveLength(1)
+    expect(keys[0]).toMatch(/^https:\/\/www\.example\.test\/[^/]+\/g1\/about$/)
+    const entry = cache.store.get(keys[0])
     expect(entry?.headers.get('cache-control')).toBe('public, s-maxage=300')
     expect(entry?.headers.get('content-security-policy')).toBeNull()
   })
@@ -402,6 +412,59 @@ describe('the cache', () => {
     await request(`${SITE}/about`, {}, { env })
     expect(state.routerCalls).toBe(2)
     expect(cache.store.size).toBe(2)
+  })
+
+  it('moves to a new entry when the deployment changes, so new code is never hidden', async () => {
+    const deployed = (id: string) => createTestEnv({ APP_ENV: 'staging', DEPLOYMENT_ID: id })
+    await request(`${SITE}/about`, {}, { env: deployed('v1') })
+    await request(`${SITE}/about`, {}, { env: deployed('v1') })
+    expect(state.routerCalls).toBe(1)
+    await request(`${SITE}/about`, {}, { env: deployed('v2') })
+    expect(state.routerCalls).toBe(2)
+    expect([...cache.store.keys()].map(k => k.split('/')[3])).toEqual(['v1', 'v2'])
+  })
+
+  describe('generationMaxAgeSeconds', () => {
+    afterEach(() => {
+      state.maxAgeSeconds = 0
+      vi.restoreAllMocks()
+    })
+
+    it('reads the generation on every request when omitted', async () => {
+      const env = createTestEnv()
+      await request(`${SITE}/about`, {}, { env })
+      await request(`${SITE}/about`, {}, { env })
+      expect(state.generationReads).toBe(2)
+    })
+
+    it('reuses a fresh one, serves a stale one while it refreshes, and awaits an old one', async () => {
+      state.maxAgeSeconds = 10
+      const now = vi.spyOn(Date, 'now').mockReturnValue(1_000_000)
+      const env = createTestEnv()
+      await request(`${SITE}/about`, {}, { env })
+      expect(state.generationReads).toBe(1)
+
+      // Fresh: no read, even though the counter moved.
+      state.generation = 'g2'
+      now.mockReturnValue(1_000_000 + 5_000)
+      await request(`${SITE}/about`, {}, { env })
+      expect(state.generationReads).toBe(1)
+      expect(state.routerCalls).toBe(1)
+
+      // Stale: the old entry is served once, and the read happens behind it.
+      now.mockReturnValue(1_000_000 + 20_000)
+      await request(`${SITE}/about`, {}, { env })
+      expect(state.generationReads).toBe(2)
+      expect(state.routerCalls).toBe(1)
+      await request(`${SITE}/about`, {}, { env })
+      expect(state.routerCalls).toBe(2)
+
+      // Older than the stale window: awaited.
+      state.generation = 'g3'
+      now.mockReturnValue(1_000_000 + 20_000 + 10_000 * 31)
+      await request(`${SITE}/about`, {}, { env })
+      expect(state.routerCalls).toBe(3)
+    })
   })
 
   it('answers HEAD with no body, from the GET entry and into it', async () => {
