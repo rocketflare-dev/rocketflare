@@ -170,7 +170,11 @@ the person before applying; a `remove` deletes a package from their `package.jso
 another installed plugin cannot use is **exit 6 with nothing written** — report the clash it names.
 
 Exit 4 means hunks rejected — **work remaining, not a failure**, and the script deliberately does
-not stamp the new version until the `*.rej` files are gone. A **vendored** plugin (its `source.repo`
+not stamp the new version until the `*.rej` files are gone: resolve each by hand, delete it, then
+`pnpm plugin upgrade <id> --to <version> --continue` (re-applies the idempotent parts — core edits,
+tomls, dependencies — and stamps; it never re-patches). An upgrade also formats every file it wrote,
+and warns when a core edit's lines were partly in the file already — check that block by eye. A
+**vendored** plugin (its `source.repo`
 is this kit's own repository with no subdirectory — `example-feature` is one) answers *"upgrade it
 with `pnpm kit:upgrade`"* and does nothing: the kit release that moves it forward is the one that
 moves it.

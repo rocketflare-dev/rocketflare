@@ -262,8 +262,13 @@ meaning loses a namespace and everything stored in it.
 
 Allowed and used: `Buffer`, `AsyncLocalStorage`, `node:crypto` hashing, `process.env` **inside
 dependencies only**. Banned in `apps/web/src/`: `pg`, `pg-boss`, `ws`, `node:fs`, `node:child_process`,
-`node:http`, `@hono/node-server`, `@opentelemetry/sdk-node`, any `setInterval` at module scope,
-`process.env` (read config via `loadConfig(env)`). `pnpm web build:api` (dry-run `wrangler deploy`) is
+`node:http`, `@hono/node-server`, `@opentelemetry/sdk-node`, `process.env` (read config via
+`loadConfig(env)`). **Nothing refused in global scope**: no `crypto.randomUUID()` /
+`getRandomValues()`, `setTimeout` / `setInterval` or `fetch` while a module loads — Cloudflare
+evaluates the top level at upload and fails the deploy (error 10021), while `wrangler dev` and the
+tests allow all of them. Make the value on first use (`let id; … id ??= crypto.randomUUID()`).
+`tests/config/global-scope.test.ts` loads `src/worker.ts`, every installed plugin included, with
+them made to throw. `pnpm web build:api` (dry-run `wrangler deploy`) is
 the check `tsc` cannot do — run it before pushing a new dependency.
 
 ## Local testing of the non-HTTP entry points

@@ -97,7 +97,10 @@ Exit 0 means everything landed. **Exit 4 means some hunks rejected** — that is
 a failure, and the script deliberately does NOT stamp the new version until it is finished. For each
 `*.rej` beside a file: read the reject, read the file, apply the intent by hand, delete the `.rej`.
 A reject means the adopter's copy has diverged there; their version usually wins on anything they
-changed on purpose.
+changed on purpose. When the last one is gone, **`pnpm kit:upgrade --to <version> --continue`**
+records the version, commit and history the apply held back (it refuses while a `*.rej` remains,
+and refuses a plan that no longer starts from what `.rocketflare.json` records). Never re-run
+`--apply` to finish: the tree is dirty, and the patch no longer applies to files it already patched.
 
 **Work each release note's `## How to apply`** (read it from `.upgrade/work/<version>/notes/`)
 **as a numbered list of self-contained steps**, top
@@ -142,7 +145,8 @@ pnpm plugin upgrade <id> --apply
 ```
 
 Three things carry over from this skill unchanged: **exit 4 means rejects remain**, and the script
-deliberately withholds the new version stamp until they are resolved; **a migration is never
+deliberately withholds the new version stamp until they are resolved — then
+`pnpm plugin upgrade <id> --to <version> --continue` finishes it; **a migration is never
 copied** — `pnpm db:generate --name plugin-<id>-<version>` writes yours; and **a vendored plugin**
 (one whose `source.repo` is the kit's own repository) answers *"upgrade it with `pnpm kit:upgrade`"*
 and does nothing, because the kit release you just applied is what moved it. Two things that are
@@ -180,5 +184,6 @@ after an upgrade are: **run it** (`pnpm dev`), **upgrade the plugins** (step 6, 
   against a kit version its author never tested it on.
 - **Never squash the releases into one commit.** The per-release commit is what makes the next
   upgrade legible.
-- Do not edit `.rocketflare.json` by hand. The script writes it, last, only when the apply is clean.
+- Do not edit `.rocketflare.json` by hand. The script writes it, last — on a clean apply, or on
+  `--continue` once the rejects are resolved.
 - `rm -rf .upgrade` is always safe — it is a cache.

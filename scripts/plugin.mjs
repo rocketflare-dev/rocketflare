@@ -100,6 +100,7 @@ import {
   PLUGIN_MANIFEST_FILE,
   parseClaudeHookCommand,
   parsePluginRequirement,
+  partialCoreEdits,
   pinDeclaredRanges,
   pluginAnchor,
   pluginAppOwned,
@@ -200,6 +201,8 @@ export const USAGE = `usage: node scripts/plugin.mjs <command> [options]
   upgrade <id>            port the plugin's own later releases in, exactly as \`pnpm kit:upgrade\`,
                           and move the host's dependencies to what the new release declares
     --to <ref> / --from <ref> / --apply / --no-fetch / --allow-dirty
+    --continue            after an --apply that left rejects: once every *.rej is resolved and
+                          deleted, finish it — re-apply the idempotent parts and stamp the surface
 
   remove <id>             uninstall: delete its directories, its barrel lines and its surface
     --apply / --allow-dirty
@@ -238,6 +241,7 @@ export function parseArgs(argv) {
     fetch: true,
     allowDirty: false,
     json: false,
+    continue: false,
   }
   const takesValue = { '--subdir': 'subdir', '--to': 'to', '--from': 'from' }
   for (let i = 0; i < argv.length; i++) {
@@ -255,6 +259,7 @@ export function parseArgs(argv) {
     else if (a === '--force-app-owned') args.forceAppOwned = true
     else if (a === '--no-fetch') args.fetch = false
     else if (a === '--allow-dirty') args.allowDirty = true
+    else if (a === '--continue') args.continue = true
     else if (a === '--json') args.json = true
     else if (a.startsWith('-')) return { error: `unknown option '${a}'` }
     else if (!args.command) args.command = a
@@ -924,7 +929,9 @@ function cmdAdd(args, host) {
   // `pnpm build` broken for anyone who did not read the plan, `plugin-ci.yml` included.
   const coreEdits = coreEditsByFile(m)
   for (const [file, edits] of coreEdits) {
-    writeFileSync(abs(file), applyCoreEdits(readFileSync(abs(file), 'utf8'), edits))
+    const before = readFileSync(abs(file), 'utf8')
+    for (const p of partialCoreEdits(before, edits)) warn(`warning: ${p}`)
+    writeFileSync(abs(file), applyCoreEdits(before, edits))
   }
   writeWranglerTomls(routed)
   // Said again at the moment it happens, not only in the plan: `pnpm add` is about to overwrite
@@ -1049,6 +1056,8 @@ function auditAfterApply(args) {
  * somebody's unrelated work in progress.
  */
 function formatWritten(paths) {
+  // No paths would be the whole repository — never what an install or upgrade means.
+  if (paths.length === 0) return null
   const r = spawnSync('pnpm', ['exec', 'biome', 'check', '--write', ...paths], {
     cwd: REPO_ROOT,
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -1163,7 +1172,11 @@ function cmdUpgrade(args, host) {
     )
     return 0
   }
-  if (args.apply) requireClean(host, args)
+  // `--continue` finishes an apply that left rejects, so the tree is dirty by definition. The plan
+  // is recomputed from the same recorded `from` (an unfinished apply never stamps), which is what
+  // makes it the same plan.
+  if (args.continue) args.apply = true
+  else if (args.apply) requireClean(host, args)
 
   const m = ensureMirror(source.repo, pluginMirrorDir(source.repo), {
     fetch: args.fetch,
@@ -1561,8 +1574,21 @@ function cmdUpgrade(args, host) {
     ;({ routed, lost: lostPatterns } = restoreWranglerTomls(prefixes))
   }
 
-  for (const rel of added) writeInto(rel, readFileSync(path.join(workRoot, 'added', rel)))
-  for (const s of newSeeds) {
+  // On `--continue` the files are already there, resolved by hand: patching them again would only
+  // reject again, and rewriting an added file would undo whatever was done to it since.
+  const pendingRejects = args.continue
+    ? patches.map(p => `${p.path}.rej`).filter(r => existsSync(abs(r)))
+    : []
+  if (pendingRejects.length > 0) {
+    stop(
+      4,
+      `error: ${pendingRejects.length} reject(s) remain — resolve each by hand and delete it:`,
+      ...pendingRejects.map(r => `  ${r}`)
+    )
+  }
+  if (!args.continue)
+    for (const rel of added) writeInto(rel, readFileSync(path.join(workRoot, 'added', rel)))
+  for (const s of args.continue ? [] : newSeeds) {
     writeInto(
       s.target,
       materialise(m.showRaw(to, subdir === '' ? s.path : `${subdir}/${s.path}`), host.names)
@@ -1574,7 +1600,8 @@ function cmdUpgrade(args, host) {
   // naming it below, so anything left would be a file no surface claims.
   for (const dir of droppedSkills) rmSync(abs(skillTarget(dir)), { recursive: true, force: true })
   let rejected = 0
-  if (patches.length > 0) {
+  const rejectedPaths = []
+  if (patches.length > 0 && !args.continue) {
     const combined = path.join(workRoot, 'apply.patch')
     const check = gitQuiet([
       '-c',
@@ -1599,7 +1626,10 @@ function cmdUpgrade(args, host) {
           '-p1',
           one,
         ])
-        if (!r.ok) rejected += 1
+        if (!r.ok) {
+          rejected += 1
+          rejectedPaths.push(p.path)
+        }
       }
     }
   }
@@ -1630,7 +1660,9 @@ function cmdUpgrade(args, host) {
         continue
       }
       try {
-        writeFileSync(abs(file), applyCoreEdits(readFileSync(abs(file), 'utf8'), edits))
+        const before = readFileSync(abs(file), 'utf8')
+        for (const p of partialCoreEdits(before, edits)) coreEditWarnings.push(p)
+        writeFileSync(abs(file), applyCoreEdits(before, edits))
         if (!coreEditFiles.includes(file)) coreEditFiles.push(file)
       } catch (err) {
         // A moved anchor must not abort an upgrade whose files are already on disk: report it and
@@ -1641,6 +1673,20 @@ function cmdUpgrade(args, host) {
   }
 
   writeWranglerTomls(routed)
+
+  // What this upgrade wrote, in the host's layout: translation lengthens names (an app slug longer
+  // than the kit's pushes a line past the column limit, or reorders imports), so an upgrade that
+  // skipped this failed the copy's `pnpm lint` on files nobody had touched. A file with a reject
+  // beside it is left as it is, so its hunks still line up with the `.rej`.
+  formatWritten(
+    [
+      ...new Set([
+        ...added,
+        ...patches.map(p => p.path).filter(p => !rejectedPaths.includes(p)),
+        ...coreEditFiles,
+      ]),
+    ].filter(p => !p.startsWith(SKILLS_ROOT) && existsSync(abs(p)))
+  )
 
   // After the files, so a failed `pnpm add` stops with the plugin's code in place and the surface
   // unstamped — and a re-run diffs from the same `from`, finding done what is done.
@@ -1725,7 +1771,10 @@ function cmdUpgrade(args, host) {
     out(...writeDeclarations(targetManifest ?? {}))
   } else {
     if (recordChanged) writeManifestFile(recordFile, raw, { format: !host.sidecarIds.includes(id) })
-    out('The surface is NOT stamped while rejects remain — resolve them and re-run.')
+    out(
+      'The surface is NOT stamped while rejects remain. Resolve each *.rej by hand, delete it, then',
+      `run \`pnpm plugin upgrade ${id}${args.to ? ` --to ${args.to}` : ''} --continue\`.`
+    )
   }
   const migrations = noteFacts.flatMap(n => n.migrations ?? [])
   if (migrations.length > 0) {

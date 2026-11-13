@@ -45,6 +45,7 @@ export interface CoreEdit {
 }
 export function applyCoreEdits(text: string, edits: CoreEdit[]): string
 export function revertCoreEdits(text: string, edits: CoreEdit[]): string
+export function partialCoreEdits(text: string, edits: CoreEdit[]): string[]
 export function coreEditsByFile(manifest: { coreEdits?: CoreEdit[] }): Map<string, CoreEdit[]>
 
 export type FileRole = 'copy' | 'note' | 'fragment' | 'meta' | 'repo-only' | 'seed' | 'refused'

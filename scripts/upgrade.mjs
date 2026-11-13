@@ -36,7 +36,7 @@
  * rejects (work remains, not a failure) · 5 `.rocketflare.json` missing · 6 an installed plugin
  * does not support the target kit version (`--force` to proceed). Zero dependencies, Node ≥ 24.
  */
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
@@ -84,7 +84,7 @@ const warn = (...lines) => {
 
 export const USAGE = `usage: node scripts/upgrade.mjs [--to <ref>] [--from <ref>] [--no-fetch]
                                 [--apply] [--apply-deletes] [--include-kit-tooling]
-                                [--adopt <ref>] [--dry-run] [--force] [--json]
+                                [--adopt <ref>] [--dry-run] [--force] [--json] [--continue]
 
   --to <ref>             kit tag or commit to move to (default: newest release tag in the mirror)
   --from <ref>           override the adopted ref (default: kit.commit, else the kit.version tag)
@@ -99,6 +99,8 @@ export const USAGE = `usage: node scripts/upgrade.mjs [--to <ref>] [--from <ref>
   --force                run on a dirty git tree, and past an installed plugin that does not
                          support the target kit version
   --json                 print the plan as JSON on stdout (what /rf-upgrade reads)
+  --continue             after an --apply that left rejects: once every *.rej is resolved and
+                         deleted, record the upgrade (version, commit, history) that apply held back
   -h, --help`
 
 export function parseArgs(argv) {
@@ -113,6 +115,7 @@ export function parseArgs(argv) {
     dryRun: false,
     force: false,
     json: false,
+    continue: false,
   }
   const takesValue = { '--to': 'to', '--from': 'from', '--adopt': 'adopt' }
   for (let i = 0; i < argv.length; i++) {
@@ -131,6 +134,7 @@ export function parseArgs(argv) {
     else if (a === '--dry-run') args.dryRun = true
     else if (a === '--force') args.force = true
     else if (a === '--json') args.json = true
+    else if (a === '--continue') args.continue = true
     else return { error: `unknown option '${a}'` }
   }
   return args
@@ -152,6 +156,75 @@ const { git, quiet: gitQuiet } = makeGit(REPO_ROOT)
 function writeManifest(manifest) {
   // In Biome's layout, so the copy's own `pnpm lint` passes on the stamped file (json-format.mjs).
   writeFileSync(path.join(REPO_ROOT, MANIFEST), formatJson(manifest))
+}
+
+/** What a finished upgrade records — the clean `--apply` and `--continue` write the same. */
+function stampUpgrade(manifest, plan) {
+  manifest.kit.version = plan.to.version ?? manifest.kit.version
+  manifest.kit.commit = plan.to.commit
+  manifest.history.push({
+    from: plan.from.commit,
+    to: plan.to.commit,
+    at: new Date().toISOString().slice(0, 10),
+  })
+  writeManifest(manifest)
+}
+
+/** Untracked `*.rej` files anywhere in the tree: an apply's rejects not yet resolved. */
+function pendingRejects() {
+  return git(['ls-files', '--others', '--exclude-standard'])
+    .split('\n')
+    .filter(f => f.endsWith('.rej'))
+}
+
+/**
+ * `--continue`: the apply that left rejects deliberately did not stamp, and re-running it cannot
+ * (the tree is dirty, and the patch no longer applies to files already patched). This records the
+ * plan that apply wrote, once the rejects are gone — and only if that plan started from the commit
+ * this copy still records, so a stale plan never stamps a version the tree does not have.
+ */
+function continueUpgrade(manifest, args) {
+  const workRoot = path.join(REPO_ROOT, WORK_DIR, 'work')
+  const candidates = args.to
+    ? [path.join(workRoot, args.to, 'plan.json')]
+    : (existsSync(workRoot) ? readdirSync(workRoot) : [])
+        .map(d => path.join(workRoot, d, 'plan.json'))
+        .filter(f => existsSync(f))
+        .sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs)
+  const planFile = candidates.find(f => existsSync(f))
+  if (!planFile) {
+    warn(
+      `error: no upgrade plan under ${WORK_DIR}/work${args.to ? ` for ${args.to}` : ''} to continue.`,
+      'Run `pnpm kit:upgrade --to <version> --apply` first.'
+    )
+    return 1
+  }
+  const plan = JSON.parse(readFileSync(planFile, 'utf8'))
+  const recorded = manifest.kit.commit
+  if (recorded !== plan.from.commit) {
+    warn(
+      `error: ${path.relative(REPO_ROOT, planFile)} upgrades from ${plan.from.commit.slice(0, 12)},`,
+      `but ${MANIFEST} records ${recorded ? recorded.slice(0, 12) : manifest.kit.version}: it is`,
+      'already stamped, or the plan is from another run. Nothing written.'
+    )
+    return 1
+  }
+  const rejects = pendingRejects()
+  if (rejects.length > 0) {
+    warn(
+      `error: ${rejects.length} reject(s) remain — resolve each by hand and delete it:`,
+      ...rejects.map(r => `  ${r}`)
+    )
+    return 4
+  }
+  stampUpgrade(manifest, plan)
+  out(
+    `✔ kit ${plan.to.version ?? plan.to.ref} recorded in ${MANIFEST} (${plan.to.commit.slice(0, 12)})`,
+    '',
+    'Verify (the gate):',
+    '  pnpm install && pnpm gate'
+  )
+  return 0
 }
 
 function main(argv) {
@@ -196,6 +269,9 @@ function main(argv) {
     )
     return 1
   }
+
+  // Before the clean-tree check: the tree a continue finishes is dirty by definition.
+  if (args.continue) return continueUpgrade(manifest, args)
 
   if (!args.dryRun && !args.force) {
     const dirty = dirtyTree(REPO_ROOT)
@@ -534,15 +610,12 @@ function main(argv) {
       `✔ 6/6 apply     ${addedFiles.length} added, ${patches.length - rejected} patched` +
         (rejected > 0 ? `, ${rejected} with rejects (*.rej beside the file)` : '')
     )
-    if (rejected === 0) {
-      manifest.kit.version = toVersion ?? manifest.kit.version
-      manifest.kit.commit = plan.to.commit
-      manifest.history.push({
-        from: plan.from.commit,
-        to: plan.to.commit,
-        at: new Date().toISOString().slice(0, 10),
-      })
-      writeManifest(manifest)
+    if (rejected === 0) stampUpgrade(manifest, plan)
+    else {
+      warn(
+        `note: ${MANIFEST} is not stamped while rejects remain. Resolve each *.rej by hand, delete`,
+        `it, then run \`pnpm kit:upgrade --to ${plan.to.ref} --continue\`.`
+      )
     }
   } else {
     out(`✔ 6/6 apply     not applied (re-run with --apply)`)
