@@ -105,8 +105,18 @@ describe('promote', () => {
       observedAt: new Date('2026-01-01T00:00:00Z'),
     })
 
+    // A registered type with a table: the staging card offers Promote, until it is promoted.
+    const cardOf = async (id: string) =>
+      entityCardSchema.parse(
+        await json(
+          await request(`/api/knowledge/entities/team/${id}`, { headers: adminCookie }, { env })
+        )
+      )
+    expect((await cardOf(staging.id)).entity.promotable).toBe(true)
+
     const res = await post(`/api/knowledge/entities/${staging.id}/promote`, { id: row.id })
     expect(res.status).toBe(200)
+    expect((await cardOf(staging.id)).entity.promotable).toBe(false)
     const body = entityActionResponseSchema.parse(await json(res))
     expect(body).toMatchObject({
       entity: { promotedTo: { type: 'team', id: row.id } },

@@ -266,10 +266,14 @@ Known gap in `docs/CONCEPTS.md` §9 for iteration 2.
 | The model sometimes reads proposed values from a proposal (2b) | occasional | Iteration 2 (prompt and eval) |
 | The false-alarm target (≤ 0.10) is unmet: Haiku 0.14, Sonnet 0.17, ±0.1 run to run (2b) | — | Recorded with the reason in CONCEPTS and the PR, per the exit rule |
 | A section's ambiguous candidates (`dropped.ambiguous`) may still create a staging entity with no facts (2b) | none measured | Iteration 2: resolve after the ambiguity check |
-| A person's `reject` / `prefer` is lost when the rejected fact's own document is re-extracted (its text changed) (2c-1) | none measured: the fixture is extracted once | Iteration 2: keep a decision keyed on (entity, key, value, document) and replay it after re-extraction |
+| A person's `reject` / `prefer` is lost when the rejected fact's own document is re-extracted (its text changed) (2c-1) | none measured: the fixture is extracted once | **Resolved in 2c-2**: decided facts stay in the table through the re-read, and a reading of the same entity, key and value reuses the row with its decision (no migration) |
 | `search_knowledge`'s facts block finds only entities with a staging row; a domain row that never had one is reached through `lookup_facts`' resolver only (2c-1) | none: the fixture registers no domain types | Iteration 2: run each type's resolver over the query's noun phrases |
-| A possible match whose every staging candidate is hidden from the reviewer is dropped from their list but still counted in `pagination.total` (2c-1) | none | Iteration 2, or 2c-2 if the UI shows the count |
-| Nothing nudges the UI when a review item is settled (2c-1) | — | **2c-2** (`entity.changed { entity: 'knowledge' }`) |
+| A possible match whose every staging candidate is hidden from the reviewer is dropped from their list but still counted in `pagination.total` (2c-1) | none | **Resolved in 2c-2** (the badge shows the count): `hasVisibleCandidateSql` in the list's WHERE |
+| Nothing nudges the UI when a review item is settled (2c-1) | — | **Resolved in 2c-2**: every review action and each extraction run that wrote facts nudges `entity.changed { entity: 'knowledge' }` after commit |
+| A decision carries over only when the re-read repeats the exact entity, key and value; a reworded value or a differently resolved entity comes back as a new open item (2c-2) | none measured | Iteration 2: match on the key's normalised value, and on a merged entity's survivor |
+| Promote asks for the domain row's id; there is no picker over the type's rows (2c-2) | none: the fixture registers no domain types | Iteration 2: a picker over the type's resolver |
+| The agent-run timeline shows no entity cards; only chat does (2c-2) | — | Iteration 2: emit `kit.entity` in the run projection beside `kit.document` |
+| The nudge carries no reviewer, so every member's badge refetches on any settle (2c-2) | — | Iteration 2, if the refetch shows up in load: `nudgeUsers` to the reviewers |
 
 ## Phase 3: docs and release
 

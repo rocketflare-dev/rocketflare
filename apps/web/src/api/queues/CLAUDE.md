@@ -58,7 +58,9 @@ per environment. Work over ~30 s or with multiple steps is a Workflow, not a job
   `ingestText` enqueues it over 50 chunks. `document.convert` is R2 → `env.AI.toMarkdown` → the same
   `indexDocument` (`../services/ai/CLAUDE.md`)
 - `knowledge.extract` (D43, `{ tenantId, documentId, contentHash? }`) reads typed facts from one
-  indexed document (`extractDocumentFacts`, `../services/knowledge/CLAUDE.md`). Only
+  indexed document (`extractDocumentFacts`, `../services/knowledge/CLAUDE.md`; a run that wrote
+  or removed facts nudges `entity.changed { entity: 'knowledge' }` through `collectingRealtime`,
+  flushed before the handler returns). Only
   `afterTextIndexed` (`services/ai/ingest.ts`) enqueues it — after an inline index, a
   `document.index` or a `document.convert` that changed the text — and only with the
   `knowledge-facts` flag on and an entity type registered; a producer whose text is unchanged sets

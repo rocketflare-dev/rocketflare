@@ -12,7 +12,12 @@
  *    re-enqueues itself for the next UTC day (`delaySeconds`, ≤ 12 h a hop) and does nothing else.
  * 2. **A fresh start.** The document's previous facts are deleted — a document's facts are a
  *    function of its current text — and the facts that disagreed only with them, or were superseded
- *    by them, go back to `accepted` / `unconfirmed` (`removeDocumentFacts`).
+ *    by them, go back to `accepted` / `unconfirmed` (`removeDocumentFacts`). **Except a person's
+ *    decisions**: a fact somebody confirmed or rejected stays, and a new reading of the same entity,
+ *    key and value takes its place IN the kept row (fresh citation, same decision — rejected stays
+ *    rejected, confirmed stays confirmed by the same person). A kept fact the new reading does not
+ *    repeat is deleted when the run ends, unless a section failed. Kept in the table, not in
+ *    memory, so a retried run still finds them.
  * 3. **Sections.** Its stored chunks, consecutive ones joined up to `SECTION_MAX_CHARS` (chunks
  *    already begin and end at headings, so a section does too) — `buildSections`.
  * 4. **One model call per section**: the `knowledge-extract` prompt, then the types with each one's
@@ -40,7 +45,7 @@ import {
   type SourceKind,
 } from '@rocketflare/shared/ai/knowledge-facts'
 import { KNOWLEDGE_USAGE_FEATURES } from '@rocketflare/shared/ai/usage'
-import { and, asc, eq, inArray, isNull, sql } from 'drizzle-orm'
+import { and, asc, eq, inArray, isNull, type SQL, sql } from 'drizzle-orm'
 import { z } from 'zod'
 import type { AppConfig } from '../../../config'
 import type { Database } from '../../../db/client'
@@ -71,11 +76,13 @@ import {
 import { tenantFeatures } from '../features'
 import { enqueueJob, type JobsQueue } from '../jobs'
 import { resolvePrompt } from '../prompts'
+import { nudge, type Realtime, realtimeEvent } from '../realtime'
 import { resolveDatePhrase } from './dates'
 import { type ResolveContext, type ResolvedEntity, resolveMention } from './entities'
 import { restoredStateSql } from './facts-sql'
 import { locateQuote } from './quotes'
 import { knowledgeEntityTypes } from './registry'
+import { recomputeKey } from './review'
 import { decideFactState, type HeldFact, type Validity } from './state'
 import type { EntityTypeRegistration } from './types'
 import { coerceFactValue, valueKey, valueText } from './values'
@@ -365,21 +372,26 @@ const uuidArray = (ids: readonly string[]) =>
   )}]::uuid[]`
 
 /**
- * Delete a document's facts and undo what they did to the rest: their ids leave every
- * `conflicts_with`, a fact left conflicting with nothing — or superseded by a fact that no longer
- * exists (the FK set it null) — returns to `accepted` (a person confirmed it, or it was read
- * confidently) or `unconfirmed`. A person's decisions on OTHER documents' facts (`rejected`, a
- * confirmation) are untouched.
+ * A fact a PERSON settled: confirmed (`confirmed_at` set — by `confirm` or as the chosen side of a
+ * `prefer`) or `rejected` (only a review writes it: `reject`, or the losing side of a `prefer`).
  */
-export async function removeDocumentFacts(
+const decidedSql = sql`(${knowledgeFacts.confirmedAt} is not null or ${knowledgeFacts.state} = 'rejected')`
+
+/**
+ * Delete facts and undo what they did to the rest: their ids leave every `conflicts_with`, a fact
+ * left conflicting with nothing — or superseded by a fact that no longer exists (the FK set it
+ * null) — returns to `accepted` (a person confirmed it, or it was read confidently) or
+ * `unconfirmed`. A person's decisions on OTHER facts (`rejected`, a confirmation) are untouched.
+ */
+async function removeFacts(
   db: Database,
   tenantId: string,
-  documentId: string
+  where: SQL | undefined
 ): Promise<number> {
   return db.transaction(async tx => {
     const removed = await tx
       .delete(knowledgeFacts)
-      .where(and(eq(knowledgeFacts.tenantId, tenantId), eq(knowledgeFacts.documentId, documentId)))
+      .where(and(eq(knowledgeFacts.tenantId, tenantId), where))
       .returning({ id: knowledgeFacts.id })
     if (removed.length === 0) return 0
     const ids = uuidArray(removed.map(r => r.id))
@@ -402,6 +414,107 @@ export async function removeDocumentFacts(
       )
     return removed.length
   })
+}
+
+/**
+ * Delete a document's facts (`removeFacts`). With `keepDecided`, the facts a person settled stay
+ * for the run to match against what it reads again (`extractDocumentFacts`, step 2) — and because
+ * they stay IN THE TABLE rather than in memory, a run that fails half-way and is retried still
+ * finds them.
+ */
+export async function removeDocumentFacts(
+  db: Database,
+  tenantId: string,
+  documentId: string,
+  options: { keepDecided?: boolean } = {}
+): Promise<number> {
+  return removeFacts(
+    db,
+    tenantId,
+    and(
+      eq(knowledgeFacts.documentId, documentId),
+      options.keepDecided ? sql`not ${decidedSql}` : undefined
+    )
+  )
+}
+
+/** A kept decided fact of this document, as the run matches it. */
+interface DecidedFact {
+  id: string
+  entityKind: 'domain' | 'staging'
+  entityType: string
+  entityId: string
+  key: string
+  valueKey: string
+  state: FactState
+  validFrom: Date | null
+  validTo: Date | null
+}
+
+async function decidedFactsOf(
+  db: Database,
+  tenantId: string,
+  documentId: string
+): Promise<DecidedFact[]> {
+  const rows = await db
+    .select({
+      id: knowledgeFacts.id,
+      entityKind: knowledgeFacts.entityKind,
+      entityType: knowledgeFacts.entityType,
+      entityId: knowledgeFacts.entityId,
+      key: knowledgeFacts.key,
+      value: knowledgeFacts.value,
+      state: knowledgeFacts.state,
+      validFrom: knowledgeFacts.validFrom,
+      validTo: knowledgeFacts.validTo,
+    })
+    .from(knowledgeFacts)
+    .where(
+      and(
+        eq(knowledgeFacts.tenantId, tenantId),
+        eq(knowledgeFacts.documentId, documentId),
+        decidedSql
+      )
+    )
+    .orderBy(asc(knowledgeFacts.createdAt))
+  return rows.map(({ value, ...r }) => ({
+    ...r,
+    state: r.state as FactState,
+    valueKey: valueKey(value),
+  }))
+}
+
+const sameTime = (a: Date | null, b: Date | null) =>
+  (a?.getTime() ?? null) === (b?.getTime() ?? null)
+
+/**
+ * The decided fact a new reading repeats — same entity, key and value — preferring one with the
+ * same validity; each decided fact is matched at most once.
+ */
+function matchDecided(
+  decided: readonly DecidedFact[],
+  used: ReadonlySet<string>,
+  fact: {
+    entityKind: string
+    entityType: string
+    entityId: string
+    key: string
+    valueKey: string
+  } & Validity
+): DecidedFact | undefined {
+  const same = decided.filter(
+    d =>
+      !used.has(d.id) &&
+      d.entityKind === fact.entityKind &&
+      d.entityType === fact.entityType &&
+      d.entityId === fact.entityId &&
+      d.key === fact.key &&
+      d.valueKey === fact.valueKey
+  )
+  return (
+    same.find(d => sameTime(d.validFrom, fact.validFrom) && sameTime(d.validTo, fact.validTo)) ??
+    same[0]
+  )
 }
 
 // ── The run ───────────────────────────────────────────────────────────────────────────────────
@@ -450,8 +563,13 @@ export interface ExtractionReport {
   dropped: Partial<Record<DropReason, number>>
   /** The facts written, in order. */
   factIds: string[]
-  /** Facts of this document removed before extracting again. */
+  /** Facts of this document removed: before extracting again, and decided ones not read again. */
   replaced: number
+  /**
+   * Facts a person had settled (confirmed, rejected) that this reading repeated — same entity, key
+   * and value — and that therefore kept their decision (their ids are in `factIds`).
+   */
+  decisionsKept: number
   /** The new staging entities, and how many of them carry a possible match. */
   entitiesCreated: number
   possibleMatches: number
@@ -473,6 +591,11 @@ export interface ExtractDeps {
    */
   types?: readonly EntityTypeRegistration[]
   now?: () => Date
+  /**
+   * Where the `entity.changed { entity: 'knowledge' }` nudge goes once the run has written (a job
+   * passes `collectingRealtime(env)` and awaits its flush). Omitted: no nudge.
+   */
+  realtime?: Realtime
 }
 
 export interface ExtractInput {
@@ -492,6 +615,7 @@ const emptyReport = (status: ExtractionReport['status'], reason?: ExtractionRepo
     dropped: {},
     factIds: [],
     replaced: 0,
+    decisionsKept: 0,
     entitiesCreated: 0,
     possibleMatches: 0,
     usage: { ...ZERO_USAGE },
@@ -526,6 +650,7 @@ export async function extractDocumentFacts(
       written: r.factIds.length,
       dropped: r.dropped,
       replaced: r.replaced,
+      decisionsKept: r.decisionsKept,
     },
   })
   if (activeSpan() || !deps.tracer) {
@@ -597,7 +722,23 @@ async function runExtraction(
 
   const report: ExtractionReport = emptyReport('extracted')
   report.model = chat.model
-  report.replaced = await removeDocumentFacts(db, tenantId, documentId)
+  report.replaced = await removeDocumentFacts(db, tenantId, documentId, { keepDecided: true })
+  const decided = await decidedFactsOf(db, tenantId, documentId)
+  const kept = new Set<string>()
+  /**
+   * The decided facts this reading did not repeat go now — unless a section failed, when the
+   * reading is incomplete and their absence is no evidence (they stay until the next run).
+   */
+  const finish = async () => {
+    const stale = decided.filter(d => !kept.has(d.id)).map(d => d.id)
+    if (stale.length > 0 && report.failedSections === 0) {
+      report.replaced += await removeFacts(db, tenantId, inArray(knowledgeFacts.id, stale))
+    }
+    if (report.replaced > 0 || report.factIds.length > 0) {
+      nudge(deps.realtime, realtimeEvent('entity.changed', tenantId, { entity: 'knowledge' }))
+    }
+    return report
+  }
 
   const rows = await db
     .select({
@@ -613,7 +754,7 @@ async function runExtraction(
     .orderBy(asc(chunks.seq))
   const sections = buildSections(doc.content, rows)
   report.sections = sections.length
-  if (sections.length === 0) return report
+  if (sections.length === 0) return finish()
 
   const tenant = await db.query.tenants.findFirst({
     columns: { name: true },
@@ -788,6 +929,38 @@ async function runExtraction(
       }
       written.add(dedupe)
       const chunk = chunkAt(section, located.start, located.end)
+      const source = {
+        chunkId: chunk?.id ?? null,
+        charStart: section.offset === null ? null : section.offset + located.start,
+        charEnd: section.offset === null ? null : section.offset + located.end,
+        quote: stripControlChars(section.text.slice(located.start, located.end)),
+        confidence: clamp01(candidate.confidence),
+      }
+      const prior = matchDecided(decided, kept, {
+        entityKind: entity.kind,
+        entityType: reg.type,
+        entityId: entity.id,
+        key,
+        valueKey: vKey,
+        ...validity,
+      })
+      if (prior) {
+        // A person already settled this exact fact: keep their decision, refresh its citation.
+        kept.add(prior.id)
+        await keepDecidedFact(db, tenantId, prior, {
+          ...source,
+          ...validity,
+          value,
+          valueText: valueText(value),
+          sourceKind,
+          observedAt: documentDate,
+          reviewerUserId,
+          visibility,
+        })
+        report.factIds.push(prior.id)
+        report.decisionsKept += 1
+        continue
+      }
       const id = await writeFact(db, {
         tenantId,
         entityKind: entity.kind,
@@ -798,12 +971,8 @@ async function runExtraction(
         valueText: valueText(value),
         valueKey: vKey,
         documentId,
-        chunkId: chunk?.id ?? null,
-        charStart: section.offset === null ? null : section.offset + located.start,
-        charEnd: section.offset === null ? null : section.offset + located.end,
-        quote: stripControlChars(section.text.slice(located.start, located.end)),
+        ...source,
         sourceKind,
-        confidence: clamp01(candidate.confidence),
         validFrom: validity.validFrom,
         validTo: validity.validTo,
         observedAt: documentDate,
@@ -821,10 +990,44 @@ async function runExtraction(
       candidates: report.candidates,
       written: report.factIds.length,
       dropped: report.dropped,
+      decisionsKept: report.decisionsKept,
     },
     'knowledge.extract: done'
   )
-  return report
+  return finish()
+}
+
+/**
+ * Refresh a kept decided fact from the new reading — its citation, confidence, document date and
+ * validity — without touching its decision (`state`, `confirmed_*`, `conflicts_with`). A
+ * confirmed fact whose validity moved has its key decided again (`recomputeKey`), since a window
+ * is what tells a change over time from a disagreement; a rejected one is history either way.
+ */
+async function keepDecidedFact(
+  db: Database,
+  tenantId: string,
+  prior: DecidedFact,
+  next: Omit<
+    FactToWrite,
+    'tenantId' | 'entityKind' | 'entityType' | 'entityId' | 'key' | 'valueKey' | 'documentId'
+  >
+): Promise<void> {
+  await db.transaction(async tx => {
+    await tx
+      .update(knowledgeFacts)
+      .set({ ...next, updatedAt: new Date() })
+      .where(and(eq(knowledgeFacts.tenantId, tenantId), eq(knowledgeFacts.id, prior.id)))
+    const moved =
+      !sameTime(prior.validFrom, next.validFrom) || !sameTime(prior.validTo, next.validTo)
+    if (moved && prior.state !== 'rejected') {
+      await recomputeKey(
+        tx,
+        tenantId,
+        { kind: prior.entityKind, type: prior.entityType, id: prior.entityId },
+        prior.key
+      )
+    }
+  })
 }
 
 const clamp01 = (n: number) => (Number.isFinite(n) ? Math.min(1, Math.max(0, n)) : 0)

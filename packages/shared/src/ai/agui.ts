@@ -50,6 +50,7 @@ import {
   agentRunInterruptSchema,
   agentSteeringNoteSchema,
 } from './interrupts'
+import { chatEntityCardSchema } from './knowledge-facts'
 
 export { EventType as AguiEventType }
 
@@ -127,6 +128,12 @@ export const KIT_CUSTOM_EVENTS = {
    */
   document: 'kit.document',
   /**
+   * A knowledge-facts entity a tool call in this run touched (`lookup_facts`, or
+   * `search_knowledge`'s `facts` block), as a card. Emitted after the `TOOL_CALL_RESULT` it was
+   * derived from, one event per entity — for the reason `kit.document` exists.
+   */
+  entity: 'kit.entity',
+  /**
    * An agent run asked a person something. This is the ONE new kit CUSTOM event the
    * HITL work needs, and it is not the *pending* ask — `RUN_FINISHED.outcome` carries those, in
    * the spec's own vocabulary, which is what lets a third-party client answer a run with zero
@@ -195,6 +202,9 @@ export const kitAgentRetrySchema = z.object({
 /** One document a tool call surfaced. The card is built from the tool's JSON, never a query. */
 export const kitDocumentSchema = z.object({ card: documentCardSchema })
 
+/** One knowledge-facts entity a tool call surfaced; built from the tool's JSON, never a query. */
+export const kitEntitySchema = z.object({ card: chatEntityCardSchema })
+
 export const kitNoticeSchema = z.object({
   code: kitNoticeCodeSchema,
   message: z.string().optional(),
@@ -219,6 +229,7 @@ export const kitCustomPayloadSchema = {
   [KIT_CUSTOM_EVENTS.agentRetry]: kitAgentRetrySchema,
   [KIT_CUSTOM_EVENTS.notice]: kitNoticeSchema,
   [KIT_CUSTOM_EVENTS.document]: kitDocumentSchema,
+  [KIT_CUSTOM_EVENTS.entity]: kitEntitySchema,
   [KIT_CUSTOM_EVENTS.agentInterrupt]: kitAgentInterruptSchema,
   [KIT_CUSTOM_EVENTS.agentInterruptResolved]: kitAgentInterruptResolvedSchema,
   [KIT_CUSTOM_EVENTS.agentSteering]: kitAgentSteeringSchema,

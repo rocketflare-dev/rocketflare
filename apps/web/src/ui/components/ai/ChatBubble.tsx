@@ -8,7 +8,9 @@
 import { CheckCircleIcon } from '@heroicons/react/24/outline'
 import type { TokenUsage } from '@rocketflare/shared/ai/chat'
 import type { DocumentCard as DocumentCardData } from '@rocketflare/shared/ai/embeddings'
+import type { ChatEntityCard } from '@rocketflare/shared/ai/knowledge-facts'
 import { memo, type ReactNode } from 'react'
+import { EntityFactsCard } from '@/ui/components/knowledge/EntityFactsCard'
 import { DocumentCard } from '@/ui/components/shared'
 import type { ToolStep } from '@/ui/hooks/useChat'
 import { Markdown } from './Markdown'
@@ -32,6 +34,12 @@ export interface ChatBubbleProps {
    * reloaded thread shows the same strip as the live one.
    */
   documents?: readonly DocumentCardData[]
+  /**
+   * Knowledge-facts entities the turn's tools touched (`lookup_facts`, the `search_knowledge`
+   * facts block) — from `CUSTOM kit.entity` while streaming, from `toolCalls` once persisted.
+   * The caller passes them only when the reader has the `knowledge-facts` feature.
+   */
+  entities?: readonly ChatEntityCard[]
   /** The stream ended on a `RUN_ERROR`. */
   error?: string
   /** Rendered in the footer after the usage line — the thumbs on a persisted answer. */
@@ -59,6 +67,7 @@ function ChatBubbleImpl({
   toolSteps,
   notice,
   documents,
+  entities,
   error,
   actions,
 }: ChatBubbleProps) {
@@ -107,6 +116,16 @@ function ChatBubbleImpl({
           <span role="status" aria-label="Assistant is replying" className="ml-1 align-baseline">
             <span className="loading loading-dots loading-xs" />
           </span>
+        )}
+        {entities && entities.length > 0 && (
+          <div className="mt-2 space-y-1.5" data-testid="chat-entity-cards">
+            {entities.map(card => (
+              <EntityFactsCard
+                key={`${card.entity.kind}:${card.entity.type}:${card.entity.id}`}
+                card={card}
+              />
+            ))}
+          </div>
         )}
         {documents && documents.length > 0 && (
           <div className="mt-2 space-y-1.5">

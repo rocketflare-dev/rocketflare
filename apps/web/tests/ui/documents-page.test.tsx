@@ -154,7 +154,9 @@ describe('Documents page', () => {
 
     const pdf = new File([new Uint8Array([1, 2, 3])], 'report.pdf', { type: 'application/pdf' })
     fireEvent.change(input, { target: { files: [pdf] } })
-    expect(screen.getByText('report.pdf')).toBeInTheDocument()
+    // Scoped to the form: the table's `report.pdf` row may already have rendered.
+    const form = document.getElementById('upload-form') as HTMLElement
+    expect(within(form).getByText('report.pdf')).toBeInTheDocument()
     fireEvent.change(screen.getByLabelText(/^Title/), { target: { value: 'Q3 report' } })
     fireEvent.click(screen.getByRole('button', { name: 'Upload document' }))
 

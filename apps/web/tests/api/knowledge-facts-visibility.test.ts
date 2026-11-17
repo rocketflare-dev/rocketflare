@@ -167,6 +167,32 @@ describe('the review list', () => {
   })
 })
 
+describe('a possible match whose every candidate is hidden', () => {
+  it('is neither listed nor counted for that reader; an admin sees it', async () => {
+    // Visible to the outsider (a fact from the open document), naming only the hidden entity.
+    const open = await seedDocument(db, { tenantId, title: 'Open note' })
+    const twin = await seedEntity(db, {
+      tenantId,
+      name: 'Copperfield Holdings',
+      reviewerUserId: outsider.userId,
+      possibleMatches: [
+        { kind: 'staging', id: secretEntityId, label: 'Project Larkspur', score: 0.6 },
+      ],
+    })
+    await seedFact(db, { tenantId, entityId: twin.id, documentId: open.id, value: 5 })
+    const mine = knowledgeReviewListSchema.parse(
+      await json(await get('/api/knowledge/review?pageSize=200', outsider))
+    )
+    expect(mine.items).toEqual([])
+    expect(mine.pagination.total).toBe(0)
+    const all = knowledgeReviewListSchema.parse(
+      await json(await get('/api/knowledge/review?kind=possibleMatch&pageSize=200', admin))
+    )
+    expect(all.items.map(i => (i.kind === 'possibleMatch' ? i.entity.id : ''))).toContain(twin.id)
+    expect(all.pagination.total).toBe(all.items.length)
+  })
+})
+
 describe('a review action on a hidden fact', () => {
   it('is the 404 an absent fact is — never a 403, even for its named reviewer', async () => {
     const res = await request(

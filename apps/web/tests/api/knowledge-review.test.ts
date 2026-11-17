@@ -4,7 +4,8 @@
  * (`tests/helpers/knowledge-facts.ts`) rather than extracted — extraction is
  * `knowledge-extract.test.ts`. Promote needs a registered type with a table, so it lives in the
  * isolated `knowledge-promote.test.ts`; what restricted documents do to all of this is
- * `knowledge-facts-visibility.test.ts`.
+ * `knowledge-facts-visibility.test.ts`. Every action nudges `entity.changed { entity: 'knowledge' }`
+ * after it commits; a refused one sends nothing.
  */
 import type {
   EntityActionResponse,
@@ -32,7 +33,7 @@ import {
 import { setupTestDatabase } from '../helpers/db'
 import { linkConflict, seedDocument, seedEntity, seedFact } from '../helpers/knowledge-facts'
 import { json, request } from '../helpers/request'
-import { createTestEnv } from '../mocks/bindings'
+import { createTestEnv, stubs } from '../mocks/bindings'
 
 const db = setupTestDatabase()
 const env = createTestEnv()
@@ -193,6 +194,12 @@ describe('GET /api/knowledge/review', () => {
     const match = list.items.find(i => i.kind === 'possibleMatch' && i.entity.id === possible)
     expect(match?.kind === 'possibleMatch' && match.candidates).toHaveLength(2)
     expect(list.pagination.total).toBe(list.items.length)
+    // A fact item names its entity, so the list can link to the entity page.
+    const item = list.items.find(i => i.kind === 'fact' && i.fact.id === open)
+    expect(item?.kind === 'fact' && item.entity).toMatchObject({
+      kind: 'staging',
+      name: 'Listing Bakery',
+    })
   })
 
   it('lists another member nothing of theirs', async () => {
@@ -400,7 +407,13 @@ describe('GET /api/knowledge/entities/:type/:id', () => {
     const res = await get(`/api/knowledge/entities/customer/${e.id}`, bystander)
     expect(res.status).toBe(200)
     const card: EntityCard = entityCardSchema.parse(await json(res))
-    expect(card.entity).toMatchObject({ kind: 'staging', name: 'Card Co', aliases: ['CC'] })
+    // `customer` is not registered in this file, so there is nothing to promote it to.
+    expect(card.entity).toMatchObject({
+      kind: 'staging',
+      name: 'Card Co',
+      aliases: ['CC'],
+      promotable: false,
+    })
     expect(card.facts).toHaveLength(2)
     expect(card.facts.find(f => f.id === a.id)?.source).toMatchObject({
       documentId: docId,
@@ -573,5 +586,72 @@ describe('merge and keep-separate', () => {
     })
     expect(row?.possibleMatches).toBeNull()
     expect(row?.mergedInto).toBeNull()
+  })
+})
+
+describe('the realtime nudge', () => {
+  const nudgesFor = (id: string) =>
+    stubs(env)
+      .hub.broadcasts.filter(b => b.tenantId === tenantId)
+      .filter(b => b.args[0] === 'broadcast')
+      .map(b => b.args[1] as { type: string; payload?: { entity?: string; id?: string } })
+      .filter(e => e.payload?.id === id)
+
+  it('a review action nudges entity.changed { entity: knowledge, id } tenant-wide', async () => {
+    const entity = await seedEntity(db, { tenantId, name: 'Nudge Bakery' })
+    const fact = await seedFact(db, {
+      tenantId,
+      entityId: entity.id,
+      documentId: docId,
+      value: 7,
+      state: 'unconfirmed',
+      confidence: 0.4,
+      reviewerUserId: reviewer.userId,
+    })
+    const res = await post(`/api/knowledge/facts/${fact.id}/review`, reviewer, {
+      action: 'confirm',
+    })
+    expect(res.status).toBe(200)
+    expect(nudgesFor(fact.id)).toEqual([
+      expect.objectContaining({
+        type: 'entity.changed',
+        payload: { entity: 'knowledge', id: fact.id },
+      }),
+    ])
+  })
+
+  it('merge and keep-separate nudge with the entity id; a refused action sends nothing', async () => {
+    const target = await seedEntity(db, { tenantId, name: 'Nudge Target' })
+    // A fact the reviewer can see, so the target is visible to them.
+    await seedFact(db, { tenantId, entityId: target.id, documentId: docId, value: 2 })
+    const merged = await seedEntity(db, {
+      tenantId,
+      name: 'Nudge Target Ltd',
+      reviewerUserId: reviewer.userId,
+      possibleMatches: [{ kind: 'staging', id: target.id, label: target.name, score: 0.5 }],
+    })
+    await seedFact(db, { tenantId, entityId: merged.id, documentId: docId, value: 1 })
+    const res = await post(`/api/knowledge/entities/${merged.id}/merge`, reviewer, {
+      into: { kind: 'staging', id: target.id },
+    })
+    expect(res.status).toBe(200)
+    expect(nudgesFor(merged.id)).toHaveLength(1)
+
+    const separate = await seedEntity(db, {
+      tenantId,
+      name: 'Nudge Apart',
+      reviewerUserId: reviewer.userId,
+      possibleMatches: [{ kind: 'staging', id: target.id, label: target.name, score: 0.5 }],
+    })
+    await seedFact(db, { tenantId, entityId: separate.id, documentId: docId, value: 1 })
+    // Somebody else's item first: a 403, and no nudge.
+    expect(
+      (await post(`/api/knowledge/entities/${separate.id}/keep-separate`, bystander)).status
+    ).toBe(403)
+    expect(nudgesFor(separate.id)).toEqual([])
+    expect(
+      (await post(`/api/knowledge/entities/${separate.id}/keep-separate`, reviewer)).status
+    ).toBe(200)
+    expect(nudgesFor(separate.id)).toHaveLength(1)
   })
 })

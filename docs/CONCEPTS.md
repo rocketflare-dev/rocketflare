@@ -825,8 +825,8 @@ Server: `api/services/{ai,agents}/**` (read their `CLAUDE.md`), `services/prompt
   'unavailable'`. Every tenant document view (the list, viewer, `/search`, `get_document`,
   `list_documents`, delete) keeps `tenant_id = $t` and never shows one; `search_knowledge` includes
   them for the sources `ServerPlugin.knowledgeSources` names, marked `platform`, and chat and agent runs show no document card for one (the documents page cannot open it).
-- **Knowledge facts (D43, in progress — schema, contracts, registry, extraction, the review API
-  and the chat tools exist; the UI does not yet)**: typed facts read from documents and attached to the app's
+- **Knowledge facts (D43, in progress — schema, contracts, registry, extraction, the review API,
+  the chat tools and the UI exist; docs and the release are still to come)**: typed facts read from documents and attached to the app's
   own rows, or to a staging entity until one exists (decisions: `docs/plans/knowledge-base-review.md`
   §10). **Contracts** (`shared/src/ai/knowledge-facts.ts`): an entity type declares `type`,
   `label` and `facts`, a zod object whose keys are snake_case fact keys and whose values are the
@@ -898,7 +898,18 @@ Server: `api/services/{ai,agents}/**` (read their `CLAUDE.md`), `services/prompt
   neither is written (`dropped.ambiguous`); different windows there are a change over time and both
   stay. A placeholder value (`<UNKNOWN>`, `N/A`, `TBD`) is no value.
   Nothing writes a domain column. Re-extracting a document first removes its facts and undoes the
-  conflicts they caused. **Cost**: every call is a `knowledge.extraction` row (name embeddings
+  conflicts they caused — **except a person's decisions**: a fact somebody confirmed
+  (`confirmed_at` set, by `confirm` or as the chosen side of a `prefer`) or rejected (only a review
+  writes `rejected`) stays in the table while the document is read again, and a new reading of the
+  same entity, key and value (the same validity preferred) takes its place IN that row — a fresh
+  citation, confidence and validity, the same decision: rejected stays rejected, confirmed stays
+  confirmed by the same person, a `prefer`'s loser stays rejected (a confirmed fact whose validity
+  moved has its key decided again, `recomputeKey`). A kept fact the new text no longer states is
+  deleted when the run ends, unless a section failed (an incomplete reading is no evidence), and
+  because the decisions wait in the table rather than in memory a retried run still finds them.
+  No decisions table, no migration. A run that wrote or removed facts nudges
+  `entity.changed { entity: 'knowledge' }` tenant-wide (the job sends it before it returns,
+  `collectingRealtime`). **Cost**: every call is a `knowledge.extraction` row (name embeddings
   `knowledge.embeddings`); `knowledgeExtractionAllowed` is checked before each document, and at the
   cap the job re-enqueues itself for the next UTC day. On the kit fixture (`pnpm eval facts`,
   42 documents, Haiku 5.5, 2026-11-17) one document is one call, about 5,300 input and 700 output
@@ -940,7 +951,31 @@ Server: `api/services/{ai,agents}/**` (read their `CLAUDE.md`), `services/prompt
   keys only one side held keep their states; 409 `entity_settled` on a second settle. They are a
   person's actions over HTTP, so no approval gate — `Tool.requiresApproval` is what an AGENT tool
   doing the same would need, and none is exposed. Each action writes an `activity_events` row
-  (`knowledge.fact.reviewed`, `knowledge.entity.merged|promoted|kept_separate`). **Chat tools**,
+  (`knowledge.fact.reviewed`, `knowledge.entity.merged|promoted|kept_separate`) and, after its
+  transaction commits, nudges `entity.changed { entity: 'knowledge', id }` tenant-wide (an id,
+  nothing else; `access.changed` also invalidates `['knowledge']`, since a fact is read through its
+  document). A fact review item names its entity (`entity { kind, type, id, name }`); the card
+  says whether the entity can be promoted (`promotable`) and who settles it (`reviewerUserId`); a
+  possible match is counted in `pagination.total` only when the reader can see a candidate.
+  **UI** (React; everything behind `KNOWLEDGE_FACTS_GUARD` = the flag AND `read KnowledgeFact`,
+  so a tenant without the flag neither sees nor fetches any of it): the **entity page**
+  `/knowledge/entities/:type/:id` (`entityPath`) — facts grouped by key, current first (value,
+  state, validity, the source document linked to the passage, the verbatim quote), superseded and
+  rejected as the key's history, both sides of a conflict together; a possible match with Merge /
+  Keep separate; Promote (a row id of the type) where `promotable`; a merged or promoted entity
+  says where it went. **Inline doubt** on every open fact, there and in the review list: "Is this
+  still right?" — Confirm and Not right, or Use this one and Not right on a conflicting fact —
+  shown only to the item's reviewer or a manager (anyone else reads one sentence). The **review
+  list** is a "To review" view of the Knowledge page (`/documents?view=review`), not a queue page:
+  open items, filterable by kind, "Only mine" for a manager, each linking to its entity, a
+  conflict shown once with every side (the API lists each side as an item). The
+  **badge** on the Knowledge nav item counts MY open items (`GET /review?mine=true&pageSize=1` →
+  total), fed by the nudge and never polled. In **chat**, a turn that used `lookup_facts` or the
+  `search_knowledge` facts block shows a compact card per entity (name, type, the facts the tool
+  returned with state badges, a link to its page): `CUSTOM kit.entity` while streaming, the same
+  pure mapper (`entityCardsFromToolCalls`) over the persisted `toolCalls` afterwards. No success
+  toasts anywhere: a settled item updates in place; a 409 is `alert-info` and a refetch.
+  **Chat tools**,
   only for a tenant with the flag (`buildAgentTools` reads `AgentToolContext.features` — chat
   passes `auth.features` — else the tenant's): `lookup_facts { entity?, type?, key?, asOf? }`
   (entities by name: staging trigram, the better of `similarity` and `word_similarity` ≥ 0.5, a
@@ -1064,13 +1099,14 @@ plugin API's `searchKnowledge` hit does not carry `rerankScore`, and the global-
 still carries its own copy of the client until it switches to the core seam in its own repo;
 knowledge metering: Workers AI embeddings and rerank tokens are character estimates, a rerank that
 timed out is recorded as billed, platform-document ingest (tenant-less) is unmetered, and
-platform documents are never extracted; knowledge facts: there is no UI yet (the review API and
-the chat tools exist); `search_knowledge`'s facts block finds only entities with a staging row
+platform documents are never extracted; knowledge facts: Promote asks for the domain row's id
+(there is no picker searching the type's rows); the agent-run timeline shows no entity cards (only
+chat does); `search_knowledge`'s facts block finds only entities with a staging row
 (a domain row that never had one is reached through `lookup_facts`' resolver, not by being named
-in a query); a person's `reject` / `prefer` is lost when the rejected fact's own document is
-re-extracted (its text changed, so its facts are rewritten) and the conflict comes back for
-review; a possible match whose every staging candidate is hidden from the reviewer is left out of
-their list while still counted in its total; nothing nudges the UI when an item is settled; the default
+in a query); a person's decision survives re-extraction only when the new reading repeats the
+fact's exact entity, key and value — a reworded value ("£285" re-read as "285.00" is the same;
+"per visit" for "per call-out" is not) or an entity resolved differently comes back as a new open
+item; a nudge carries no reviewer, so every member's badge refetches on any settle; the default
 resolver matches domain rows by trigram only (no embedding — a domain table carries none); two
 extractions of one tenant running at once can each miss the other's facts (no per-tenant
 serialisation), so a conflict between them goes unflagged until one is re-extracted; the

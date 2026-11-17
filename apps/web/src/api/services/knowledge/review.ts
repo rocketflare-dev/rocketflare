@@ -7,10 +7,11 @@
  * 403 — but only once the item is visible to them: a fact whose document they cannot see, or an
  * entity they may not see, is the 404 an absent one is.
  *
- * **What a person decides is final until a document changes.** `reject` and `prefer` write
- * `rejected`, which re-extraction of OTHER documents never undoes (`removeDocumentFacts` leaves a
- * person's decisions alone); re-extracting the rejected fact's own document replaces its facts,
- * because its text changed.
+ * **What a person decides survives re-extraction.** `reject` and `prefer` write `rejected`, and
+ * `confirm` / `prefer` set `confirmed_by` / `confirmed_at`. Re-extraction of OTHER documents never
+ * touches them (`removeDocumentFacts` deletes only the re-read document's facts); re-extracting
+ * the fact's OWN document keeps a decided fact and matches the new reading to it by entity, key
+ * and value (`extract.ts`, step 2) — only a fact the new text no longer states goes.
  *
  * **Only what the reviewer can see is touched by choice.** `prefer` rejects the conflicts the
  * reviewer can see; one from a document hidden from them stays linked, so the preferred fact
@@ -24,6 +25,10 @@
  * are person actions over HTTP, so there is no approval gate: `Tool.requiresApproval` is the gate
  * an AGENT tool would need, and none is exposed. Nothing here writes a domain column — promoting
  * records `promoted_type` / `promoted_id` on the staging row and re-points the facts.
+ *
+ * **Every action nudges** `entity.changed { entity: 'knowledge', id }` tenant-wide after its
+ * transaction commits (`realtime`, trailing), so the review badge, the list and an open entity
+ * page refetch. The payload is an id; what a reader then sees is what their own refetch returns.
  */
 import type {
   EntityActionResponse,
@@ -44,6 +49,7 @@ import {
   NotFoundError,
 } from '../../utils/core/errors'
 import type { AccessScope } from '../access'
+import { nudge, type Realtime, realtimeEvent } from '../realtime'
 import { normaliseName } from './entities'
 import {
   type EntityRef,
@@ -62,6 +68,11 @@ import { decideFactState, type HeldFact } from './state'
 import { valueKey } from './values'
 
 const ANSWERABLE: readonly FactState[] = ['accepted', 'unconfirmed', 'conflicting']
+
+/** The one nudge every action sends — `knowledge` is the UI's query-key root for all of it. */
+function nudgeKnowledge(realtime: Realtime | undefined, tenantId: string, id: string) {
+  nudge(realtime, realtimeEvent('entity.changed', tenantId, { entity: 'knowledge', id }))
+}
 
 function assertMayReview(reader: ReviewReader, reviewerUserId: string | null) {
   if (reader.canManage || reviewerUserId === reader.userId) return
@@ -135,7 +146,8 @@ export async function reviewFact(
   db: Database,
   reader: ReviewReader,
   factId: string,
-  action: FactReviewAction
+  action: FactReviewAction,
+  realtime?: Realtime
 ): Promise<FactReviewResponse> {
   const { scope } = reader
   const before = await readVisibleFact(db, scope, factId)
@@ -177,6 +189,7 @@ export async function reviewFact(
       .where(and(eq(knowledgeFacts.tenantId, scope.tenantId), eq(knowledgeFacts.id, factId)))
     return ids
   })
+  nudgeKnowledge(realtime, scope.tenantId, factId)
 
   const after = await selectFacts(db, scope, inArray(knowledgeFacts.id, [...touched]))
   const fact = after.find(f => f.row.id === factId)
@@ -391,7 +404,8 @@ export async function promoteEntity(
   db: Database,
   reader: ReviewReader,
   entityId: string,
-  domainId: string
+  domainId: string,
+  realtime?: Realtime
 ): Promise<EntityActionResponse> {
   const entity = await settleableEntity(db, reader, entityId)
   if (!knowledgeEntityType(entity.type)) {
@@ -403,7 +417,7 @@ export async function promoteEntity(
   if (!(await domainRowExists(db, reader.scope, entity, domainId))) throw targetNotFound()
   const tenantId = reader.scope.tenantId
   const to: EntityRef = { kind: 'domain', type: entity.type, id: domainId }
-  return db.transaction(async tx => {
+  const result = await db.transaction(async tx => {
     const [row] = await tx
       .update(knowledgeEntities)
       .set({
@@ -434,6 +448,8 @@ export async function promoteEntity(
     )
     return { entity: toKnowledgeEntity(row), into: to, movedFacts: moved, recomputedKeys }
   })
+  nudgeKnowledge(realtime, tenantId, entity.id)
+  return result
 }
 
 /**
@@ -446,9 +462,10 @@ export async function mergeEntity(
   db: Database,
   reader: ReviewReader,
   entityId: string,
-  into: EntityTarget
+  into: EntityTarget,
+  realtime?: Realtime
 ): Promise<EntityActionResponse> {
-  if (into.kind === 'domain') return promoteEntity(db, reader, entityId, into.id)
+  if (into.kind === 'domain') return promoteEntity(db, reader, entityId, into.id, realtime)
   const entity = await settleableEntity(db, reader, entityId)
   if (into.id === entity.id) {
     throw new BadRequestError(
@@ -463,7 +480,7 @@ export async function mergeEntity(
     target.promotedType && target.promotedId
       ? { kind: 'domain', type: target.promotedType, id: target.promotedId }
       : { kind: 'staging', type: target.type, id: target.id }
-  return db.transaction(async tx => {
+  const result = await db.transaction(async tx => {
     const [row] = await tx
       .update(knowledgeEntities)
       .set({ mergedInto: target.id, possibleMatches: null, updatedAt: new Date() })
@@ -502,13 +519,16 @@ export async function mergeEntity(
     )
     return { entity: toKnowledgeEntity(row), into: to, movedFacts: moved, recomputedKeys }
   })
+  nudgeKnowledge(realtime, tenantId, entity.id)
+  return result
 }
 
 /** `POST /api/knowledge/entities/:id/keep-separate` — "not the same": the possible match is closed. */
 export async function keepEntitySeparate(
   db: Database,
   reader: ReviewReader,
-  entityId: string
+  entityId: string,
+  realtime?: Realtime
 ): Promise<EntityActionResponse> {
   const entity = await settleableEntity(db, reader, entityId)
   const [row] = await db
@@ -522,5 +542,6 @@ export async function keepEntitySeparate(
     )
     .returning()
   if (!row) throw new NotFoundError('Entity not found')
+  nudgeKnowledge(realtime, reader.scope.tenantId, entity.id)
   return { entity: toKnowledgeEntity(row), into: null, movedFacts: 0, recomputedKeys: [] }
 }

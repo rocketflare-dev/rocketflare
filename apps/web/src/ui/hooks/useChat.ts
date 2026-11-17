@@ -25,6 +25,7 @@ import {
   type TokenUsage,
 } from '@rocketflare/shared/ai/chat'
 import type { DocumentCard } from '@rocketflare/shared/ai/embeddings'
+import { type ChatEntityCard, chatEntityCardKey } from '@rocketflare/shared/ai/knowledge-facts'
 import { paginatedResponse } from '@rocketflare/shared/pagination'
 import {
   keepPreviousData,
@@ -124,6 +125,8 @@ export interface StreamingTurn {
   notice?: KitNoticeCode
   /** Documents the turn's tool calls surfaced (`CUSTOM kit.document`), rendered as a card strip. */
   documents: DocumentCard[]
+  /** Knowledge-facts entities the turn's tools touched (`CUSTOM kit.entity`), one card each. */
+  entities: ChatEntityCard[]
   error?: { message: string; code: string }
 }
 
@@ -139,13 +142,20 @@ const TOOL_LABELS: Record<string, string> = {
   search_knowledge: 'Searching the knowledge base',
   get_document: 'Reading a document',
   list_documents: 'Listing documents',
+  lookup_facts: 'Looking up facts',
 }
 
 export function toolLabel(name: string): string {
   return TOOL_LABELS[name] ?? name
 }
 
-const IDLE_TURN: StreamingTurn = { status: 'idle', text: '', toolSteps: [], documents: [] }
+const IDLE_TURN: StreamingTurn = {
+  status: 'idle',
+  text: '',
+  toolSteps: [],
+  documents: [],
+  entities: [],
+}
 
 const OPTIMISTIC_PREFIX = 'optimistic-'
 
@@ -229,6 +239,16 @@ export function useSendMessage(conversationId: string | undefined) {
                     t.documents.some(d => d.id === document.card.id)
                       ? t
                       : { ...t, documents: [...t.documents, document.card] }
+                  )
+                }
+                const entity = parseKitCustom(KIT_CUSTOM_EVENTS.entity, event)
+                if (entity) {
+                  // One card per entity: the first tool call that named it supplies it.
+                  const key = chatEntityCardKey(entity.card)
+                  setTurn(t =>
+                    t.entities.some(e => chatEntityCardKey(e) === key)
+                      ? t
+                      : { ...t, entities: [...t.entities, entity.card] }
                   )
                 }
                 break

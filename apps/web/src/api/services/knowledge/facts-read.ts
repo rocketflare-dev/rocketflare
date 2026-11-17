@@ -49,6 +49,7 @@ import { NotFoundError } from '../../utils/core/errors'
 import { type AccessScope, visibleDocuments } from '../access'
 import { entityVisibleSql, restoredState, visibleConflictsSql } from './facts-sql'
 import { knowledgeEntityType } from './registry'
+import { resolverFor } from './resolve'
 import { ACCEPT_CONFIDENCE } from './state'
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -321,6 +322,8 @@ export async function getEntityCard(
             ? { type: staging.promotedType, id: staging.promotedId }
             : null,
         mergedInto: staging.mergedInto,
+        promotable: isPromotable(staging),
+        reviewerUserId: staging.reviewerUserId,
       },
       facts: facts.map(toFact),
     }
@@ -359,9 +362,28 @@ export async function getEntityCard(
       aliases,
       promotedTo: null,
       mergedInto: null,
+      promotable: false,
+      reviewerUserId: null,
     },
     facts: facts.map(toFact),
   }
+}
+
+/** Could `promoteEntity` find a row for it: unsettled, of a type with a table or a resolver. */
+function isPromotable(row: KnowledgeEntityRow): boolean {
+  if (row.mergedInto || row.promotedId) return false
+  const reg = knowledgeEntityType(row.type)
+  return Boolean(reg && (reg.table || resolverFor(reg)))
+}
+
+/**
+ * Does the outer possible-match entity have a candidate the reader may see — a domain row, or a
+ * staging entity visible to them? The inner `knowledge_entities` is UNALIASED, so it shadows the
+ * outer one inside the subquery and `entityVisibleSql` binds to the candidate (`facts-sql.ts`).
+ * Without it the item is dropped from the page but would still be counted in the total.
+ */
+function hasVisibleCandidateSql(scope: AccessScope): SQL {
+  return sql`exists (select 1 from jsonb_array_elements(${knowledgeEntities.possibleMatches}) as pm(c) where pm.c->>'kind' = 'domain' or exists (select 1 from ${knowledgeEntities} where ${knowledgeEntities.tenantId} = ${scope.tenantId} and ${knowledgeEntities.id}::text = pm.c->>'id' and ${entityVisibleSql(scope)}))`
 }
 
 // ── The review list ───────────────────────────────────────────────────────────────────────────
@@ -391,7 +413,7 @@ export interface ReviewReader {
  * - a FACT is open in the reader's view (`openForReader`) and its document is visible;
  * - a POSSIBLE MATCH is a staging entity with `possible_matches`, not merged or promoted, that
  *   the reader may see (`entityVisibleSql`); a staging candidate the reader may not see is left
- *   out of `candidates`, and an item left with none is dropped from the page.
+ *   out of `candidates`, and an item with none left is neither listed nor counted.
  */
 export async function listReviewItems(
   db: Database,
@@ -414,6 +436,7 @@ export async function listReviewItems(
     isNull(knowledgeEntities.mergedInto),
     isNull(knowledgeEntities.promotedId),
     entityVisibleSql(scope),
+    hasVisibleCandidateSql(scope),
     onlyMine ? eq(knowledgeEntities.reviewerUserId, reader.userId) : undefined,
     query.entityType ? eq(knowledgeEntities.type, query.entityType) : undefined,
     query.entityId ? sql`${knowledgeEntities.id}::text = ${query.entityId}` : undefined
@@ -482,6 +505,11 @@ export async function listReviewItems(
     ? await selectFacts(db, scope, inArray(knowledgeFacts.id, partnerIds))
     : []
   const factById = new Map(facts.map(f => [f.row.id, f]))
+  const names = await entityNames(
+    db,
+    scope.tenantId,
+    facts.map(f => ({ kind: f.row.entityKind, type: f.row.entityType, id: f.row.entityId }))
+  )
   const partnerById = new Map(partners.map(f => [f.row.id, f]))
 
   const entities = entityIds.length
@@ -509,9 +537,11 @@ export async function listReviewItems(
     if (p.kind === 'fact') {
       const f = factById.get(p.id)
       if (!f) continue
+      const ref: EntityRef = { kind: f.row.entityKind, type: f.row.entityType, id: f.row.entityId }
       items.push({
         kind: 'fact',
         fact: toFact(f),
+        entity: { ...ref, name: names.get(refKey(ref)) ?? ref.id },
         conflicts: f.visibleConflicts
           .map(id => partnerById.get(id))
           .filter((x): x is ReadFact => Boolean(x))

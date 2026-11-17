@@ -6,7 +6,8 @@
  * the unchanged upsert or a dedupe), the verifier, dates resolved against the document's date,
  * every row of the state table, validity → superseded, entity resolution (a registered resolver's
  * row, a staging entity, a possible match), tenant isolation, the daily cap's delayed re-enqueue,
- * and re-extraction replacing a document's facts. The pure halves are
+ * re-extraction replacing a document's facts while a person's decisions on them survive, and the
+ * `entity.changed { entity: 'knowledge' }` nudge a run sends. The pure halves are
  * `tests/config/knowledge-extraction.test.ts`.
  */
 
@@ -22,7 +23,10 @@ import { ingestText } from '@/api/services/ai/ingest'
 import { setTenantOverride } from '@/api/services/features'
 import { buildJobEnvelope } from '@/api/services/jobs'
 import { extractDocumentFacts, type FactCandidate } from '@/api/services/knowledge/extract'
+import type { ReviewReader } from '@/api/services/knowledge/facts-read'
+import { reviewFact } from '@/api/services/knowledge/review'
 import type { EntityTypeRegistration } from '@/api/services/knowledge/types'
+import { collectingRealtime } from '@/api/services/realtime'
 import { loadConfig } from '@/config'
 import { aiUsage, documents, knowledgeEntities, knowledgeFacts } from '@/db/schema'
 import { FakeChatClient } from '../helpers/ai'
@@ -636,5 +640,139 @@ describe('cost, retries and re-extraction', () => {
     const report = await extract(w, id)
     expect(report).toMatchObject({ status: 'extracted', failedSections: 1 })
     expect(state.client.calls).toHaveLength(2) // callStructuredTool's one retry
+  })
+})
+
+describe('a person’s decision survives re-extracting its own document', () => {
+  const reader = (w: { tenantId: string; userId: string }): ReviewReader => ({
+    scope: { tenantId: w.tenantId, userId: w.userId, groupIds: [], bypass: true },
+    userId: w.userId,
+    canManage: true,
+  })
+
+  it('a confirmed fact read again keeps its row, its confirmation and a fresh citation', async () => {
+    const w = await world()
+    const a = await addDoc(w, HVD, { date: '2026-02-03' })
+    model([{ key: 'monthly_fee_gbp', value: 285, confidence: 0.5, quote: 'Monthly Fee: £285' }])
+    await extract(w, a)
+    const [before] = await factsOf(w.tenantId, a)
+    expect(before?.state).toBe('unconfirmed')
+    await reviewFact(db, reader(w), before?.id ?? '', 'confirm')
+    const confirmedAt = (await factsOf(w.tenantId, a))[0]?.confirmedAt
+
+    model([{ key: 'monthly_fee_gbp', value: 285, confidence: 0.4, quote: '£285 per month' }])
+    const report = await extract(w, a)
+    expect(report).toMatchObject({ decisionsKept: 1, replaced: 0, factIds: [before?.id] })
+    const [after] = await factsOf(w.tenantId, a)
+    expect(after).toMatchObject({
+      id: before?.id,
+      state: 'accepted',
+      confirmedBy: w.userId,
+      quote: '£285 per month',
+      confidence: 0.4,
+    })
+    expect(confirmedAt).toBeInstanceOf(Date)
+    expect(after?.confirmedAt?.getTime()).toBe(confirmedAt?.getTime())
+  })
+
+  it('a prefer survives re-reading either side: the loser stays rejected, the winner confirmed', async () => {
+    const w = await world()
+    const a = await addDoc(w, HVD, { date: '2026-02-03' })
+    const fee285 = { key: 'monthly_fee_gbp', value: 285, quote: 'Monthly Fee: £285' }
+    model([fee285])
+    await extract(w, a)
+    const b = await addDoc(w, 'Harbour View Dental now pay £310 a month.', { date: '2026-06-10' })
+    const fee310 = { key: 'monthly_fee_gbp', value: 310, quote: 'now pay £310 a month' }
+    model([fee310])
+    await extract(w, b)
+    const [winner] = await factsOf(w.tenantId, b)
+    await reviewFact(db, reader(w), winner?.id ?? '', 'prefer')
+    expect((await factsOf(w.tenantId, a))[0]?.state).toBe('rejected')
+
+    // The loser's document again: without the carry-over it would come back `conflicting`.
+    model([fee285])
+    expect((await extract(w, a)).decisionsKept).toBe(1)
+    // …and the winner's: still confirmed, no new conflict with the rejected side.
+    model([fee310])
+    expect((await extract(w, b)).decisionsKept).toBe(1)
+    const [loser] = await factsOf(w.tenantId, a)
+    const [kept] = await factsOf(w.tenantId, b)
+    expect(loser).toMatchObject({ state: 'rejected', conflictsWith: [] })
+    expect(kept).toMatchObject({
+      id: winner?.id,
+      state: 'accepted',
+      confirmedBy: w.userId,
+      conflictsWith: [],
+    })
+  })
+
+  it('a decided fact the new text no longer states is deleted with the rest', async () => {
+    const w = await world()
+    const a = await addDoc(w, HVD, { date: '2026-02-03' })
+    model([{ key: 'monthly_fee_gbp', value: 285, confidence: 0.5, quote: 'Monthly Fee: £285' }])
+    await extract(w, a)
+    const [fact] = await factsOf(w.tenantId, a)
+    await reviewFact(db, reader(w), fact?.id ?? '', 'reject')
+    model([{ key: 'visit_day', value: 'Tuesday', quote: 'Routine visits take place on Tuesdays' }])
+    const report = await extract(w, a)
+    expect(report).toMatchObject({ decisionsKept: 0, replaced: 1 })
+    const facts = await factsOf(w.tenantId, a)
+    expect(facts.map(f => f.key)).toEqual(['visit_day'])
+  })
+
+  it('keeps a decided fact when a section failed: an incomplete reading is no evidence', async () => {
+    const w = await world()
+    const a = await addDoc(w, HVD, { date: '2026-02-03' })
+    model([{ key: 'monthly_fee_gbp', value: 285, confidence: 0.5, quote: 'Monthly Fee: £285' }])
+    await extract(w, a)
+    const [fact] = await factsOf(w.tenantId, a)
+    await reviewFact(db, reader(w), fact?.id ?? '', 'confirm')
+    state.client = new FakeChatClient([{ text: 'no tool call' }])
+    const report = await extract(w, a)
+    expect(report).toMatchObject({ failedSections: 1, replaced: 0, decisionsKept: 0 })
+    expect(await factsOf(w.tenantId, a)).toEqual([
+      expect.objectContaining({ id: fact?.id, state: 'accepted', confirmedBy: w.userId }),
+    ])
+  })
+})
+
+describe('the nudge', () => {
+  const knowledgeNudges = (tenantId: string) =>
+    stubs(env)
+      .hub.broadcasts.filter(b => b.tenantId === tenantId)
+      .map(b => b.args[1] as { type: string; payload?: unknown })
+
+  it('a run that wrote facts nudges entity.changed { entity: knowledge } once, after it is done', async () => {
+    const w = await world()
+    const a = await addDoc(w, HVD)
+    model([{ key: 'monthly_fee_gbp', value: 285, quote: 'Monthly Fee: £285' }])
+    const realtime = collectingRealtime(env)
+    await extract(w, a, { realtime })
+    await realtime.flush()
+    expect(knowledgeNudges(w.tenantId)).toEqual([
+      expect.objectContaining({ type: 'entity.changed', payload: { entity: 'knowledge' } }),
+    ])
+  })
+
+  it('a run that wrote and removed nothing sends none', async () => {
+    const w = await world()
+    const a = await addDoc(w, HVD)
+    model([])
+    const realtime = collectingRealtime(env)
+    await extract(w, a, { realtime })
+    await realtime.flush()
+    expect(knowledgeNudges(w.tenantId)).toEqual([])
+  })
+
+  it('the job handler sends it before it returns', async () => {
+    const w = await world()
+    const a = await addDoc(w, HVD)
+    model([{ key: 'monthly_fee_gbp', value: 285, quote: 'Monthly Fee: £285' }])
+    const job = buildJobEnvelope({
+      type: 'knowledge.extract',
+      payload: { tenantId: w.tenantId, documentId: a },
+    })
+    await handleKnowledgeExtract(job as never, { env, config: cfg, logger: fakeLogger(), db })
+    expect(knowledgeNudges(w.tenantId)).toHaveLength(1)
   })
 })

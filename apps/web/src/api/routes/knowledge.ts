@@ -12,6 +12,7 @@
  * Who: `read KnowledgeFact` to read, `update KnowledgeFact` to act — and acting on an item is its
  * reviewer's or a manager's (403 otherwise). What: a fact is read through its document's
  * visibility, so one you may not see is a 404, never a 403 (`services/knowledge/facts-read.ts`).
+ * Every action nudges `entity.changed { entity: 'knowledge', id }` after it commits.
  */
 import {
   entityCardParamSchema,
@@ -56,11 +57,11 @@ knowledgeRouter.get('/review', validate('query', knowledgeReviewQuerySchema), as
 })
 
 knowledgeRouter.post('/facts/:id/review', validate('json', factReviewRequestSchema), async c => {
-  const { db, tenantId, user, defer } = withAuthAndDb(c)
+  const { db, tenantId, user, defer, realtime } = withAuthAndDb(c)
   guardPermission(c, 'update', 'KnowledgeFact')
   const id = uuidParam(c, 'id')
   const { action } = c.req.valid('json')
-  const result = await reviewFact(db, readerOf(c), id, action)
+  const result = await reviewFact(db, readerOf(c), id, action, realtime)
   defer(() =>
     recordActivity(db, {
       tenantId,
@@ -82,11 +83,11 @@ knowledgeRouter.get('/entities/:type/:id', validate('param', entityCardParamSche
 })
 
 knowledgeRouter.post('/entities/:id/merge', validate('json', mergeEntityRequestSchema), async c => {
-  const { db, tenantId, user, defer } = withAuthAndDb(c)
+  const { db, tenantId, user, defer, realtime } = withAuthAndDb(c)
   guardPermission(c, 'update', 'KnowledgeFact')
   const id = uuidParam(c, 'id')
   const { into } = c.req.valid('json')
-  const result = await mergeEntity(db, readerOf(c), id, into)
+  const result = await mergeEntity(db, readerOf(c), id, into, realtime)
   defer(() =>
     recordActivity(db, {
       tenantId,
@@ -104,10 +105,10 @@ knowledgeRouter.post(
   '/entities/:id/promote',
   validate('json', promoteEntityRequestSchema),
   async c => {
-    const { db, tenantId, user, defer } = withAuthAndDb(c)
+    const { db, tenantId, user, defer, realtime } = withAuthAndDb(c)
     guardPermission(c, 'update', 'KnowledgeFact')
     const id = uuidParam(c, 'id')
-    const result = await promoteEntity(db, readerOf(c), id, c.req.valid('json').id)
+    const result = await promoteEntity(db, readerOf(c), id, c.req.valid('json').id, realtime)
     defer(() =>
       recordActivity(db, {
         tenantId,
@@ -123,10 +124,10 @@ knowledgeRouter.post(
 )
 
 knowledgeRouter.post('/entities/:id/keep-separate', async c => {
-  const { db, tenantId, user, defer } = withAuthAndDb(c)
+  const { db, tenantId, user, defer, realtime } = withAuthAndDb(c)
   guardPermission(c, 'update', 'KnowledgeFact')
   const id = uuidParam(c, 'id')
-  const result = await keepEntitySeparate(db, readerOf(c), id)
+  const result = await keepEntitySeparate(db, readerOf(c), id, realtime)
   defer(() =>
     recordActivity(db, {
       tenantId,

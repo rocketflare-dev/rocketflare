@@ -13,6 +13,7 @@
  */
 import { z } from 'zod'
 import { paginatedResponse, paginationQuerySchema } from '../pagination'
+import { KNOWLEDGE_TOOLS } from './embeddings'
 
 // ── Entity type declarations ──────────────────────────────────────────────────────────────────
 
@@ -290,10 +291,22 @@ export const entityCardSchema = z.object({
     /** Staging only: where it was promoted to, or the entity it was merged into. */
     promotedTo: entityRefSchema.nullable(),
     mergedInto: z.string().uuid().nullable(),
+    /**
+     * Staging only: `POST /entities/:id/promote` can succeed — the type is registered with a
+     * table or a resolver to find the row in, and the entity is not merged or promoted yet.
+     */
+    promotable: z.boolean(),
+    /** Staging only: who is asked to settle it (merge, promote, keep separate); else null. */
+    reviewerUserId: z.string().uuid().nullable(),
   }),
   facts: z.array(factSchema),
 })
 export type EntityCard = z.infer<typeof entityCardSchema>
+
+/** The ONE place the entity page's route is written: `/knowledge/entities/:type/:id`. */
+export function entityPath(type: string, id: string): string {
+  return `/knowledge/entities/${encodeURIComponent(type)}/${encodeURIComponent(id)}`
+}
 
 // ── Review ────────────────────────────────────────────────────────────────────────────────────
 
@@ -339,10 +352,21 @@ export const possibleMatchSchema = z.object({
 })
 export type PossibleMatch = z.infer<typeof possibleMatchSchema>
 
+/** Which entity an item is about, named for display — what `entityPath` links to. */
+export const reviewEntitySchema = z.object({
+  kind: entityKindSchema,
+  type: z.string(),
+  id: z.string(),
+  name: z.string(),
+})
+export type ReviewEntity = z.infer<typeof reviewEntitySchema>
+
 /** A fact waiting for a person: unconfirmed, or conflicting with the facts it names. */
 export const factReviewItemSchema = z.object({
   kind: z.literal('fact'),
   fact: factSchema,
+  /** The entity the fact is about (its staging name, or a domain row's label). */
+  entity: reviewEntitySchema,
   /** The other sides of a conflict, so the item can be settled in place. */
   conflicts: z.array(factSchema),
 })
@@ -461,3 +485,104 @@ export const lookupFactsResultSchema = z.object({
   omitted: z.number().int().positive().optional(),
 })
 export type LookupFactsResult = z.infer<typeof lookupFactsResultSchema>
+
+// ── Entity cards in a chat answer ─────────────────────────────────────────────────────────────
+
+/** Facts a chat card lists per entity at most; the entity page has the rest. */
+export const CHAT_ENTITY_CARD_MAX_FACTS = 6
+
+/**
+ * One entity a chat turn's knowledge tools touched (`lookup_facts`, or `search_knowledge`'s
+ * `facts` block), as the compact card under the answer: the entity, the facts the tool returned
+ * with their states, and a link to its page. Built from the tool's JSON by a pure mapper, never a
+ * query — so it can show only what the model was shown, which the reader could already see.
+ */
+export const chatEntityCardSchema = z.object({
+  entity: reviewEntitySchema,
+  /** `entityPath(type, id)`. */
+  href: z.string(),
+  facts: z
+    .array(
+      z.object({
+        factId: z.string().uuid(),
+        key: z.string(),
+        valueText: z.string(),
+        state: factStateSchema,
+        documentId: z.string().uuid(),
+        documentTitle: z.string(),
+      })
+    )
+    .max(CHAT_ENTITY_CARD_MAX_FACTS),
+  /** Facts the tool returned beyond the card's limit. */
+  moreFacts: z.number().int().nonnegative(),
+})
+export type ChatEntityCard = z.infer<typeof chatEntityCardSchema>
+
+/** Read loosely: only what a card needs, so a retune of the tool's JSON cannot break the UI. */
+const factGroupLoose = z.object({
+  entity: z.object({ kind: entityKindSchema, type: z.string(), id: z.string(), name: z.string() }),
+  facts: z.array(
+    z.object({
+      factId: z.string().uuid(),
+      key: z.string(),
+      valueText: z.string(),
+      state: factStateSchema,
+      documentId: z.string().uuid(),
+      documentTitle: z.string(),
+    })
+  ),
+})
+const lookupLoose = z.object({ entities: z.array(factGroupLoose) })
+const searchLoose = z.object({ facts: z.array(factGroupLoose) })
+
+/** The entity cards one tool call's answer implies — `[]` for any other tool or shape. */
+export function entityCardsFromToolResult(toolName: string, result: unknown): ChatEntityCard[] {
+  let parsed: unknown = result
+  if (typeof result === 'string') {
+    try {
+      parsed = JSON.parse(result)
+    } catch {
+      return []
+    }
+  }
+  let groups: z.infer<typeof factGroupLoose>[] = []
+  if (toolName === KNOWLEDGE_TOOLS.facts) {
+    const r = lookupLoose.safeParse(parsed)
+    if (r.success) groups = r.data.entities
+  } else if (toolName === KNOWLEDGE_TOOLS.search) {
+    const r = searchLoose.safeParse(parsed)
+    if (r.success) groups = r.data.facts
+  }
+  return groups
+    .filter(g => g.facts.length > 0)
+    .map(g => ({
+      entity: g.entity,
+      href: entityPath(g.entity.type, g.entity.id),
+      facts: g.facts.slice(0, CHAT_ENTITY_CARD_MAX_FACTS),
+      moreFacts: Math.max(0, g.facts.length - CHAT_ENTITY_CARD_MAX_FACTS),
+    }))
+}
+
+const cardKey = (c: ChatEntityCard) => `${c.entity.kind}:${c.entity.type}:${c.entity.id}`
+
+/**
+ * Every entity card a persisted assistant message's `toolCalls` imply, one per entity, in call
+ * order — the first call that named an entity supplies its card (the stream does the same).
+ */
+export function entityCardsFromToolCalls(
+  calls: readonly { name: string; result?: string }[] | null | undefined
+): ChatEntityCard[] {
+  const out: ChatEntityCard[] = []
+  const seen = new Set<string>()
+  for (const call of calls ?? []) {
+    for (const card of entityCardsFromToolResult(call.name, call.result)) {
+      if (seen.has(cardKey(card))) continue
+      seen.add(cardKey(card))
+      out.push(card)
+    }
+  }
+  return out
+}
+
+/** Stable identity of a card's entity, for de-duplicating cards across tool calls. */
+export const chatEntityCardKey = cardKey
