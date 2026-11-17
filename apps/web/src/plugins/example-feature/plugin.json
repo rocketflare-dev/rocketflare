@@ -8,11 +8,14 @@
   "minKit": "0.8.0",
   "uses": {
     "@/plugins/api": [
+      "AccessScope",
       "agentCtx",
       "createRouter",
       "Database",
+      "defaultEntityResolver",
       "defineTool",
       "DeliveredEvent",
+      "EntityTypeRegistration",
       "eventBinding",
       "eventCtx",
       "EventCtx",
@@ -95,6 +98,7 @@
       "uniqueId"
     ],
     "@testkit/unit": ["makeCronCtx", "makeJobCtx", "makeToolCtx"],
+    "@rocketflare/shared/ai/knowledge-facts": ["entityTypeSchema"],
     "@rocketflare/shared/features": ["FEATURE_FLAGS", "FEATURE_KEYS", "FeatureDefinition"],
     "@rocketflare/shared/jobs": ["CoreJobType", "JOB_TYPES", "jobInputSchema", "JobOf", "JobType"],
     "@rocketflare/shared/pagination": [

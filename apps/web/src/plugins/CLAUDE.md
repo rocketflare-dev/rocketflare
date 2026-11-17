@@ -165,6 +165,12 @@ the CLI command `<id>`; skills `<id>` / `<id>-<what>`; AG-UI CUSTOM events `<id>
   `unchanged` for the same text, so a cron can resync everything cheaply. Find it with
   `searchKnowledge(ctx, { platformSources })`, or declare `knowledgeSources(scope)` so the kit's
   `search_knowledge` tool covers it. **Never tenant data**: every organisation reads it.
+- **`knowledgeEntityTypes`** (D43) — a FIELD, not a barrel (still six): `EntityTypeRegistration`s
+  from `@/plugins/api`, `type` `<id>.<name>`, snake_case fact keys whose value schemas render as
+  JSON schema (`z.iso.date()`, never `z.date()`), and optionally one of YOUR tables with
+  `labelColumn` (the default trigram resolver) or your own `resolve` filtering by
+  `scope.access.tenantId`. `knowledgeEntityTypes()` throws on a bad one. Worked example:
+  `example-feature/knowledge/entity-types.ts`.
 - **`jobHandlers`** keep the kit's handler contract (own DB client, await everything, throw to
   retry).
 - **`agentTools(ctx)`** is bound to the run's `AgentToolContext` (its `AccessScope`: read what the

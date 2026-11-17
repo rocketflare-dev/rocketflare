@@ -6,6 +6,7 @@ breaking: false
 migrations:
   - "chunks: embedding_model (backfilled from documents), heading_path, table_header, page, char_start, char_end, generated search_vector + GIN index"
   - "documents: content_hash + (tenant_id, source, content_hash) index"
+  - "knowledge_entities + knowledge_facts (new tables, tenant-isolated) and the pg_trgm extension"
 areas: [evals, docs, db, api, shared, ui, config, scripts]
 touches_surfaces: []
 requires_surfaces: []
@@ -14,7 +15,7 @@ manual: true
 
 ## What changed
 
-The knowledge base becomes measurable and structure-aware: eval corpora and retrieval scorers, heading- and table-aware chunks, model-consistent dense search with re-embedding, content-hash dedupe, failed-document retry, a reranker seam and metered knowledge spend.
+The knowledge base becomes measurable and structure-aware: eval corpora and retrieval scorers, heading- and table-aware chunks, model-consistent dense search with re-embedding, content-hash dedupe, failed-document retry, a reranker seam, metered knowledge spend, and the knowledge-facts tables and entity-type registry.
 
 - Eval corpora: a directory under `apps/evals/datasets/` with `docs/*.md` and answer keys (`retrieval.jsonl`, `chat.jsonl`, `entities.jsonl`, `facts.jsonl`, `conflicts.jsonl`), ingested once with a real embedder (`docs/EVALS.md` § Corpora).
 - New suite `knowledge · retrieval` and judges `RecallAtK(k)`, `MRR()`, `ContextPrecision(k)`; `chatHarness({ corpus })` runs a corpus's `chat.jsonl` inside `chat · knowledge`.
@@ -40,6 +41,10 @@ The knowledge base becomes measurable and structure-aware: eval corpora and retr
 - Knowledge metering: document, re-embed and query embeddings and every rerank call write `ai_usage` rows `knowledge.embeddings` / `knowledge.rerank` (`KNOWLEDGE_USAGE_FEATURES`; `knowledge.extraction` is reserved), with the provider's token count or a character estimate; a ledger failure never fails an ingest or a search. `EmbeddingsClient.embedWithUsage` is new and optional. `bge-reranker-base` is priced.
 - `KNOWLEDGE_TENANT_DAILY_COST_USD` (optional `[vars]`, unset = no cap) and `knowledgeSpendToday` / `knowledgeExtractionAllowed` in `services/ai/usage.ts`: only extraction (phase 2) will pause at the cap; indexing and search never do.
 - `pnpm eval … --rerank none|fireworks` measures retrieval with a reranker; the summary prints the median rerank latency.
+- Knowledge facts (D43, `docs/CONCEPTS.md` §9): new contracts `@rocketflare/shared/ai/knowledge-facts` (entity type declaration, `FACT_STATES`, `SOURCE_TRUST` + `trustRank`, fact, entity card, review action, possible match, `factHitSchema`) and tables `knowledge_entities` (staging entities, trigram index on `name`) and `knowledge_facts` (`document_id` cascades, `chunk_id` set null). Nothing writes them yet.
+- `scripts/migrate.ts` creates `pg_trgm` beside `vector`; migration 0028 creates it too.
+- Entity type registry: `EntityTypeRegistration` and `defaultEntityResolver` (trigram over `labelColumn`/`aliasColumns`, tenant-filtered) in `@/plugins/api`; `APP_ENTITY_TYPES` in `apps/web/src/api/services/knowledge/entity-types.ts` (app-owned, empty); `knowledgeEntityTypes()` composes and validates (plugin types `<id>.<name>`, app types without a dot, snake_case keys, JSON-schema-renderable facts, no duplicates).
+- New plugin field `ServerPlugin.knowledgeEntityTypes` (a field, not a barrel); `example-feature` registers `example-feature.note` over `example_notes`.
 - Stored document text has CRLF normalised to LF; search hits (and `searchKnowledge` hits) gain `headingPath` and `page` (always null: `toMarkdown` emits no page markers).
 
 ## How to apply
@@ -57,6 +62,11 @@ The knowledge base becomes measurable and structure-aware: eval corpora and retr
 10. Add `RERANK_MIN_SCORE` and `KNOWLEDGE_TENANT_DAILY_COST_USD` to `apps/web/src/config.ts`. They are optional; if you want either on, add it to BOTH tomls' `[vars]`. A test or UI fixture that builds an `AiReadiness` needs `rerank`, and one that builds a `SearchHit` needs `rerankScore`. Code that counts every `ai_usage` row of a tenant now also sees `knowledge.*` rows.
 11. With `[ai]` bound, every search now makes one extra Workers AI call (bge-reranker-base over up to 50 passages). Pass `rerank: false` from a caller that must not pay for it. To measure a vendor reranker on your corpus, port `apps/evals/kit/providers.ts` (`useRerank`), `env.ts`, `fixtures.ts`, `retrieval.ts` and `scripts/{eval,lib}.mjs`, then run `pnpm eval retrieval --rerank fireworks`.
 
+12. Port the knowledge-facts foundation from the release: `packages/shared/src/ai/knowledge-facts.ts` (new, and its line in `packages/shared/src/ai/index.ts`), `apps/web/src/db/schema/knowledge-entities.ts` and `knowledge-facts.ts` (new, and their lines in `apps/web/src/db/schema/index.ts`), `apps/web/src/api/services/knowledge/` (`types.ts`, `resolve.ts`, `registry.ts`, `entity-types.ts`), the `knowledgeEntityTypes` field in `apps/web/src/plugins/types.ts`, the four re-exports at the top of `apps/web/src/plugins/api/index.ts`, the `pg_trgm` statement in `apps/web/scripts/migrate.ts`, and the tests `apps/web/tests/config/knowledge-entity-types.test.ts` and `apps/web/tests/api/knowledge-facts-schema.test.ts`.
+13. Run `pnpm db:generate --name knowledge-facts`, then edit the generated SQL BEFORE applying it: make its first statement `CREATE EXTENSION IF NOT EXISTS pg_trgm;--> statement-breakpoint`, so the `gin_trgm_ops` index can be built by any migrator. Then `pnpm db:migrate`. `pg_trgm` ships with Neon and with the `pgvector/pgvector:pg17` image; on another Postgres, install the contrib package first.
+14. Run `node scripts/plugin-api-doc.mjs` to regenerate `docs/plugin-api.md`.
+15. Optional: register your own entity types in `apps/web/src/api/services/knowledge/entity-types.ts` (the file's header shows one with a table and one without). If you still carry `example-feature`, take its `knowledge/entity-types.ts`, its `knowledgeEntityTypes` line in `index.ts`, its test `tests/api/knowledge-entity-type.test.ts` and its regenerated `plugin.json` `uses`.
+
 ## Conflicts to expect
 
 - `apps/evals/suites/chat/knowledge.eval.ts` → also runs every corpus's `chat.jsonl` → keep your own judges and add the corpus loop.
@@ -65,6 +75,7 @@ The knowledge base becomes measurable and structure-aware: eval corpora and retr
 - `apps/web/src/api/routes/ai-documents.ts` → `/ingest` and `/upload` answer `ingestDocumentResponseSchema` (`200` on a duplicate) → a client that asserts `201` on every ingest must accept `200`.
 
 - `apps/web/src/api/services/ai/retrieval.ts` → reranks after fusion and renumbers `rank` → a caller that read `rank` as the RRF position should read `score` (still the RRF score) instead.
+- `apps/web/src/api/services/knowledge/entity-types.ts` → app-owned (`manual` in `.rocketflare.json`) → add it once, then keep your own types.
 
 ## Verify
 
@@ -76,3 +87,4 @@ The knowledge base becomes measurable and structure-aware: eval corpora and retr
 6. As an admin, `GET /api/ai/documents/health` answers `200` with `staleEmbeddings`; `POST /api/ai/documents/reembed` answers `202`.
 7. `pnpm --filter @<scope>/web exec wrangler queues list` shows `<app>-jobs-dlq` (and `<app>-jobs-dlq-staging` on the staging account).
 8. `GET /api/ai/config/readiness` answers a `rerank` entry; a `POST /api/ai/documents/search` hit carries `rerankScore`, and `select feature, count(*) from ai_usage where feature like 'knowledge.%' group by 1` shows `knowledge.embeddings` rows after an ingest.
+9. `pnpm --filter @<scope>/web test:config` passes `knowledge-entity-types.test.ts`, and `psql "$DATABASE_URL" -c "select extname from pg_extension where extname = 'pg_trgm'"` answers one row after `pnpm db:migrate`.

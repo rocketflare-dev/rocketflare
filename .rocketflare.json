@@ -291,6 +291,7 @@
     ".github/workflows/**",
     "apps/web/src/ui/components/shared/LogoMark.tsx",
     "apps/web/src/api/services/events/app-handlers.ts",
+    "apps/web/src/api/services/knowledge/entity-types.ts",
     "docs/THREAT-MODEL.md"
   ],
   "core": [

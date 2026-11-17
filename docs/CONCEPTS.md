@@ -825,6 +825,42 @@ Server: `api/services/{ai,agents}/**` (read their `CLAUDE.md`), `services/prompt
   'unavailable'`. Every tenant document view (the list, viewer, `/search`, `get_document`,
   `list_documents`, delete) keeps `tenant_id = $t` and never shows one; `search_knowledge` includes
   them for the sources `ServerPlugin.knowledgeSources` names, marked `platform`, and chat and agent runs show no document card for one (the documents page cannot open it).
+- **Knowledge facts (D43, in progress — the schema, contracts and registry exist; extraction,
+  review, tools and UI do not yet)**: typed facts read from documents and attached to the app's
+  own rows, or to a staging entity until one exists (decisions: `docs/plans/knowledge-base-review.md`
+  §10). **Contracts** (`shared/src/ai/knowledge-facts.ts`): an entity type declares `type`,
+  `label` and `facts`, a zod object whose keys are snake_case fact keys and whose values are the
+  value schemas (`.describe()` steers extraction; the object must render through
+  `z.toJSONSchema`, so a date is `z.iso.date()`); `FACT_STATES` `accepted · unconfirmed ·
+  conflicting · superseded · rejected` (the middle two are open review items, used AND labelled —
+  review never blocks retrieval); `SOURCE_TRUST` `person > upload > agent > integration`
+  (`trustRank`), which only decides which side of a conflict an answer leads with — both are
+  kept and cited; the fact, entity-card, review-action, possible-match and `factHitSchema` shapes.
+  **Tables** (migration `0028`, which with `scripts/migrate.ts` creates `pg_trgm`):
+  `knowledge_entities` — staging entities (`type`, `name`, `aliases text[]`, `promoted_type` /
+  `promoted_id`, `merged_into`, an embedding of name + aliases, `possible_matches` jsonb = an open
+  "same as …?" item and its `reviewer_user_id`), a GIN trigram index on `name` and a
+  `(tenant_id, type, lower(name))` lookup; `knowledge_facts` — identity (`entity_kind`
+  `domain|staging`, `entity_type`, `entity_id` text, no FK), content (`key`, `value` jsonb,
+  `value_text`), source (`document_id` **cascade** — deleting a document removes its facts;
+  `chunk_id` **set null** — a re-index replaces chunks and the fact keeps its span and quote),
+  trust (`source_kind`, `confidence` 0..1), state (`state`, `superseded_by_id`, `conflicts_with
+  uuid[]`), time (`valid_from`/`valid_to`, `observed_at`, `confirmed_by`/`confirmed_at`) and access
+  (`reviewer_user_id`, `visibility` `tenant|groups`, `private` reserved and never written). A fact
+  has no grants of its own: it is read through its document's (`document_id` →
+  `visibleDocuments`). Deleting the last fact about a staging entity leaves the entity.
+  **Registry** (`api/services/knowledge/`): an `EntityTypeRegistration` (`types.ts`) is the
+  declaration plus an optional `table` (none = the type lives only as staging entities),
+  `idColumn` (default `id`), `labelColumn`, `aliasColumns` (`text` or `text[]`) — drizzle column
+  OBJECTS of that table, never strings — and an optional `resolve(name, { db, access, limit })`
+  returning `{ id, label, score }` candidates in the reader's tenant. Without one, a type with a
+  table gets `defaultEntityResolver`: trigram `similarity()` of the mention against label and
+  aliases, `tenant_id = access.tenantId`, at least `DEFAULT_RESOLVE_MIN_SCORE` (0.3). The app's
+  types are `APP_ENTITY_TYPES` in `entity-types.ts` (app-owned, `manual`; EMPTY in the kit — the
+  core registers no domain types), a plugin's are `ServerPlugin.knowledgeEntityTypes` (§16), and
+  `knowledgeEntityTypes()` composes them, throwing on a plugin type outside `<plugin id>.`, an app
+  type with a dot, a duplicate, a non-snake_case key, an unrenderable facts object, or a column
+  that is not its table's. The reference plugin registers `example-feature.note`.
 - **Usage**: one `ai_usage` row per call, costed at write time from the one price table
   (`shared/ai/pricing`; an unknown model gets `null` and is counted as unpriced). While a cost cap
   applies to a run the deployment pays for (the platform key or the Workers AI binding), a chat call
@@ -935,7 +971,10 @@ plugin API's `searchKnowledge` hit does not carry `rerankScore`, and the global-
 still carries its own copy of the client until it switches to the core seam in its own repo;
 knowledge metering: Workers AI embeddings and rerank tokens are character estimates, a rerank that
 timed out is recorded as billed, platform-document ingest (tenant-less) is unmetered, and the
-cap is enforced only once extraction exists; page numbers: `toMarkdown` emits no page markers, so `chunks.page` is always null;
+cap is enforced only once extraction exists; knowledge facts: nothing writes `knowledge_facts` or
+`knowledge_entities` yet (extraction, review, `lookup_facts` and the entity card are the next
+steps), and the default resolver matches domain rows by trigram only (no embedding — a domain
+table carries none); page numbers: `toMarkdown` emits no page markers, so `chunks.page` is always null;
 chunks written before 0.37.0 keep their old shape (no heading path or offsets) until re-indexed,
 and an unchanged upsert never re-indexes them (re-embed rebuilds only another model's chunks); a
 stale document is found by keyword only until its re-embed lands; two re-embed chains for the same
@@ -1543,6 +1582,14 @@ as merging a PR. A plugin repo mirrors the host tree and ships **no migration, n
   sources to the kit's `search_knowledge` tool (unioned; an unnamespaced source is dropped, a throw
   skipped). `fuseByRank` / `anyTermTsquery` / `candidatePoolSize` are exported for a plugin's own
   corpus. **Never put tenant data in a platform document**: every organisation can read it.
+- **Knowledge entity types** (D43, §9): `ServerPlugin.knowledgeEntityTypes` is a list of
+  `EntityTypeRegistration`s (`@/plugins/api`) whose rows extraction may attach facts to — a FIELD
+  on the plugin contract, not a barrel, so the seam is still six barrel lines. Each `type` is
+  `<plugin id>.<name>`; `table` is optional and, when given, one of the plugin's own tables with
+  `labelColumn` for the kit's trigram resolver (`defaultEntityResolver`, exported so a plugin's
+  own `resolve` can wrap it) or a `resolve` that filters by `scope.access.tenantId`.
+  `knowledgeEntityTypes()` composes the app's and every plugin's and throws on a bad one; the
+  config test runs it over the installed set. A fact is never written into a plugin's column.
 - **Skills**: a plugin ships agent skills at `skills/<dir>/` in its own tree and declares them in
   `"skills"`; `add` copies each to `.claude/skills/<dir>/` (the one place outside its roots a
   plugin may write) and records it on the surface, `upgrade` REPLACES it (never patches — an agent's

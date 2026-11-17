@@ -36,6 +36,7 @@ import { EXAMPLE_SSO_START_PATH } from './api/sso'
 import { EXAMPLE_SSO_METHOD_ID, exampleSsoPolicy } from './api/sso-policy'
 import { exampleNoteCreatedHandler } from './events/note-created'
 import { handleExamplePing } from './jobs/ping'
+import { exampleNoteEntityType } from './knowledge/entity-types'
 import { exampleAgentTools } from './tools/list-example-notes'
 
 export const exampleFeatureServer = {
@@ -97,6 +98,11 @@ export const exampleFeatureServer = {
    * is why a tool never takes a tenant id of its own. Only while the organisation has the flag.
    */
   agentTools: ctx => exampleAgentTools(toolCtx(ctx)),
+  /**
+   * **A knowledge entity type** (D43): facts extraction reads from documents may attach to a note,
+   * matched by title within the reader's tenant. Namespaced `<id>.` like everything else here.
+   */
+  knowledgeEntityTypes: [exampleNoteEntityType],
   /**
    * Additive only, and over this plugin's OWN subject. CASL can take a rule back only with
    * `cannot`, so a plugin that revoked a core grant would change what every role may do merely by
