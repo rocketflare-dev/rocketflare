@@ -253,6 +253,24 @@ Every table below calls `tenantIsolation()`.
 - These thresholds are first guesses. Adjust them after the first run, and record the reason in
   the PR.
 
+## Gaps found during the build
+
+Recorded as they turn up. Each one either folds into a later phase of this iteration or stays a
+Known gap in `docs/CONCEPTS.md` §9 for iteration 2.
+
+| Gap (found in) | Effect on the fixture | Where it goes |
+|---|---|---|
+| One service named two ways ("Car park and entrances gritting — annual plan" / "Winter gritting (annual plan)") stays two staging entities (2b) | most of Haiku's false alarms; both `grit-annual-price` conflicts missed | **2c**: the possible-match review item and `POST /entities/:id/merge` let a person join them. Automatic linking stays iteration 2 |
+| Partial person name as a value ("Marcus" vs "Marcus Bell") is a conflict (2b) | most of Sonnet's false alarms | **2c**: "Use this one" / "Not right" dismisses it. Matching a name to its fuller form stays iteration 2 |
+| Two wordings of one unit ("per call-out" / "per visit") conflict (2b) | one false alarm per run | **2c**, as above. Iteration 2: a key may declare an enum, or a synonym-tolerant comparison |
+| The model sometimes reads proposed values from a proposal (2b) | occasional | Iteration 2 (prompt and eval) |
+| The false-alarm target (≤ 0.10) is unmet: Haiku 0.14, Sonnet 0.17, ±0.1 run to run (2b) | — | Recorded with the reason in CONCEPTS and the PR, per the exit rule |
+| A section's ambiguous candidates (`dropped.ambiguous`) may still create a staging entity with no facts (2b) | none measured | Iteration 2: resolve after the ambiguity check |
+| A person's `reject` / `prefer` is lost when the rejected fact's own document is re-extracted (its text changed) (2c-1) | none measured: the fixture is extracted once | Iteration 2: keep a decision keyed on (entity, key, value, document) and replay it after re-extraction |
+| `search_knowledge`'s facts block finds only entities with a staging row; a domain row that never had one is reached through `lookup_facts`' resolver only (2c-1) | none: the fixture registers no domain types | Iteration 2: run each type's resolver over the query's noun phrases |
+| A possible match whose every staging candidate is hidden from the reviewer is dropped from their list but still counted in `pagination.total` (2c-1) | none | Iteration 2, or 2c-2 if the UI shows the count |
+| Nothing nudges the UI when a review item is settled (2c-1) | — | **2c-2** (`entity.changed { entity: 'knowledge' }`) |
+
 ## Phase 3: docs and release
 
 - **`docs/CONCEPTS.md` §9:**

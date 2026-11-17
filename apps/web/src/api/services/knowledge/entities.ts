@@ -25,7 +25,7 @@
  * Every query names `scope.tenantId`, so a mention can only ever resolve inside its own tenant.
  */
 import type { EntityKind, PossibleMatchCandidate } from '@rocketflare/shared/ai/knowledge-facts'
-import { and, eq, isNull, sql } from 'drizzle-orm'
+import { and, eq, inArray, isNull, sql } from 'drizzle-orm'
 import type { Database } from '../../../db/client'
 import { knowledgeEntities } from '../../../db/schema'
 import { fullAccessScope } from '../access'
@@ -285,3 +285,142 @@ export async function resolveMention(
 }
 
 const round = (n: number) => Math.round(n * 1000) / 1000
+
+// ── Finding entities for a READER (lookup_facts, search_knowledge) ───────────────────────────
+
+/** At or above it a staging entity's name (or alias) answers a lookup by name. */
+export const LOOKUP_MIN_SCORE = 0.5
+/** At or above it a staging entity's name (or alias) counts as MENTIONED in a free-text query. */
+export const MENTION_MIN_SCORE = 0.7
+
+export interface FoundEntity {
+  kind: EntityKind
+  type: string
+  id: string
+  name: string
+  score: number
+}
+
+function addFound(into: Map<string, FoundEntity>, found: FoundEntity) {
+  const key = `${found.kind}:${found.type}:${found.id}`
+  const existing = into.get(key)
+  if (!existing || found.score > existing.score) into.set(key, found)
+}
+
+/**
+ * Entities a reader names ("Brightside", "the Old Mill") — for `lookup_facts`. Staging entities
+ * by trigram over name and aliases, scored as the better of `similarity` and
+ * `word_similarity(query, name)` (so a short name matches the longer one it is part of); a
+ * PROMOTED one answers as the domain row it became; merged ones are skipped (their facts moved).
+ * Then each registered domain type's resolver. Best first, `limit` at most, every query in
+ * `tenantId`. Which of their facts the reader may see is the caller's predicate.
+ */
+export async function findEntitiesByName(
+  db: Database,
+  tenantId: string,
+  name: string,
+  options: {
+    types?: readonly string[]
+    registrations?: readonly EntityTypeRegistration[]
+    limit: number
+  }
+): Promise<FoundEntity[]> {
+  const query = name.trim()
+  if (!query || options.limit <= 0) return []
+  const found = new Map<string, FoundEntity>()
+  const score = sql<number>`greatest(similarity(${knowledgeEntities.name}, ${query}), word_similarity(${query}, ${knowledgeEntities.name}), coalesce((select max(greatest(similarity(a, ${query}), word_similarity(${query}, a))) from unnest(${knowledgeEntities.aliases}) as a), 0))`
+  const rows = await db
+    .select({
+      id: knowledgeEntities.id,
+      type: knowledgeEntities.type,
+      name: knowledgeEntities.name,
+      promotedType: knowledgeEntities.promotedType,
+      promotedId: knowledgeEntities.promotedId,
+      score: sql<number>`(${score})::float8`,
+    })
+    .from(knowledgeEntities)
+    .where(
+      and(
+        eq(knowledgeEntities.tenantId, tenantId),
+        isNull(knowledgeEntities.mergedInto),
+        options.types?.length ? inArray(knowledgeEntities.type, [...options.types]) : undefined,
+        sql`${score} >= ${LOOKUP_MIN_SCORE}`
+      )
+    )
+    .orderBy(sql`${score} desc`)
+    .limit(options.limit * 2)
+  for (const r of rows) {
+    const promoted = r.promotedType && r.promotedId
+    addFound(found, {
+      kind: promoted ? 'domain' : 'staging',
+      type: promoted ? (r.promotedType as string) : r.type,
+      id: promoted ? (r.promotedId as string) : r.id,
+      name: r.name,
+      score: Math.min(1, Number(r.score)),
+    })
+  }
+  for (const reg of options.registrations ?? []) {
+    if (options.types?.length && !options.types.includes(reg.type)) continue
+    const resolver = resolverFor(reg)
+    if (!resolver) continue
+    const candidates = await resolver(query, {
+      db,
+      access: fullAccessScope(tenantId),
+      limit: options.limit,
+    })
+    for (const c of candidates) {
+      if (c.score < REVIEW_THRESHOLD) continue
+      addFound(found, { kind: 'domain', type: reg.type, id: c.id, name: c.label, score: c.score })
+    }
+  }
+  return [...found.values()].sort((a, b) => b.score - a.score).slice(0, options.limit)
+}
+
+/**
+ * Staging entities a free-text query MENTIONS — for `search_knowledge`'s facts block: a name or
+ * alias that appears in the query (`word_similarity(name, query)` — the share of the NAME found
+ * in some stretch of the query — at or above `MENTION_MIN_SCORE`, which a whole name passes and a
+ * passing word of a long one does not). Promoted ones answer as their domain row.
+ */
+export async function entitiesMentionedIn(
+  db: Database,
+  tenantId: string,
+  query: string,
+  limit: number
+): Promise<FoundEntity[]> {
+  const text = query.trim()
+  if (!text || limit <= 0) return []
+  const score = sql<number>`greatest(word_similarity(${knowledgeEntities.name}, ${text}), coalesce((select max(word_similarity(a, ${text})) from unnest(${knowledgeEntities.aliases}) as a where length(a) >= 3), 0))`
+  const rows = await db
+    .select({
+      id: knowledgeEntities.id,
+      type: knowledgeEntities.type,
+      name: knowledgeEntities.name,
+      promotedType: knowledgeEntities.promotedType,
+      promotedId: knowledgeEntities.promotedId,
+      score: sql<number>`(${score})::float8`,
+    })
+    .from(knowledgeEntities)
+    .where(
+      and(
+        eq(knowledgeEntities.tenantId, tenantId),
+        isNull(knowledgeEntities.mergedInto),
+        sql`length(${knowledgeEntities.name}) >= 3`,
+        sql`${score} >= ${MENTION_MIN_SCORE}`
+      )
+    )
+    .orderBy(sql`${score} desc`)
+    .limit(limit)
+  const found = new Map<string, FoundEntity>()
+  for (const r of rows) {
+    const promoted = r.promotedType && r.promotedId
+    addFound(found, {
+      kind: promoted ? 'domain' : 'staging',
+      type: promoted ? (r.promotedType as string) : r.type,
+      id: promoted ? (r.promotedId as string) : r.id,
+      name: r.name,
+      score: Math.min(1, Number(r.score)),
+    })
+  }
+  return [...found.values()]
+}

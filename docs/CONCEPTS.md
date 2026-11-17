@@ -825,8 +825,8 @@ Server: `api/services/{ai,agents}/**` (read their `CLAUDE.md`), `services/prompt
   'unavailable'`. Every tenant document view (the list, viewer, `/search`, `get_document`,
   `list_documents`, delete) keeps `tenant_id = $t` and never shows one; `search_knowledge` includes
   them for the sources `ServerPlugin.knowledgeSources` names, marked `platform`, and chat and agent runs show no document card for one (the documents page cannot open it).
-- **Knowledge facts (D43, in progress — schema, contracts, registry and extraction exist; review,
-  `lookup_facts` and the UI do not yet)**: typed facts read from documents and attached to the app's
+- **Knowledge facts (D43, in progress — schema, contracts, registry, extraction, the review API
+  and the chat tools exist; the UI does not yet)**: typed facts read from documents and attached to the app's
   own rows, or to a staging entity until one exists (decisions: `docs/plans/knowledge-base-review.md`
   §10). **Contracts** (`shared/src/ai/knowledge-facts.ts`): an entity type declares `type`,
   `label` and `facts`, a zod object whose keys are snake_case fact keys and whose values are the
@@ -907,6 +907,53 @@ Server: `api/services/{ai,agents}/**` (read their `CLAUDE.md`), `services/prompt
   preferring the planted winner (`docs/EVALS.md`; run to run the false-alarm share moves by about
   ten points). Sonnet 5.5: 0.98 / 0.80 / 83 % / 17 %, at about 19× the cost — a stronger model does
   not lower it. The plan's 10 % target is not met; the remaining causes are in Known gaps.
+  **Reading facts** (`facts-read.ts`, `facts-sql.ts`): a fact is read through its document —
+  every query inner-joins `documents` and ANDs `visibleDocuments(scope)`, so a fact whose
+  document you cannot open does not exist for you (404, never 403), and neither does a staging
+  entity known only from such documents. A fact `conflicting` only with hidden facts reads, for
+  that reader, as the state it would return to without them (`accepted` / `unconfirmed`), and its
+  `conflicts_with` names only visible facts — a hidden document must not leak even "another source
+  disagrees". Admin-level readers see everything. **Review API** (`/api/knowledge`, behind
+  `requireFeature('knowledge-facts')` → 404 `feature_disabled` when off; CASL subject
+  `KnowledgeFact`: member `read` + `update`, admin+ `manage`): `GET /review` (open facts and
+  possible matches addressed to me — everyone's for `manage KnowledgeFact`, `?mine=true` narrows —
+  newest first, paginated over both kinds with one UNION; `?kind=`, `?entityType=`, `?entityId=`);
+  `POST /facts/:id/review { action }` — `confirm` (→ `accepted`, `confirmed_by/at`, trust
+  unchanged; 409 `fact_conflicting` on a conflict), `reject` (→ `rejected`, unlinked from every
+  conflict; a side left disagreeing with nothing, or superseded by it, returns to `accepted` — when
+  confirmed or confident — or `unconfirmed`), `prefer` (→ `accepted` and confirmed; every
+  conflict the reviewer can see becomes `rejected`, not `superseded`: superseded means "true for an
+  earlier window", which an `asOf` lookup answers with and re-extraction restores, while a person
+  choosing between two values for the same time has said the other was never right; a conflict
+  from a document hidden from the reviewer stays linked, so the fact stays `conflicting` for the
+  admins who see both); 409 `fact_not_reviewable` on `rejected` / `superseded`. Only the item's
+  reviewer or a manager acts (403). `GET /entities/:type/:id` — the entity card (staging by uuid,
+  or a domain row of a registered type: its label, the names of staging entities promoted to it as
+  aliases), every visible fact in every state. `POST /entities/:id/merge { into }` (a staging
+  target of the same type: names become its aliases, `merged_into` set, facts moved — to the row a
+  promoted target became; a domain `into` is a promote), `/promote { id }` (a row of the entity's
+  own registered type, found through its table's id column or its resolver in this tenant, 400
+  `entity_target_not_found` / `entity_type_not_promotable`; records `promoted_type` /
+  `promoted_id` and moves the facts onto the row — never a domain column), `/keep-separate`
+  (closes the possible match). Merge and promote re-decide, with `decideFactState` oldest first,
+  every key BOTH entities held answerable facts for (a confirmed fact counts as fully confident);
+  keys only one side held keep their states; 409 `entity_settled` on a second settle. They are a
+  person's actions over HTTP, so no approval gate — `Tool.requiresApproval` is what an AGENT tool
+  doing the same would need, and none is exposed. Each action writes an `activity_events` row
+  (`knowledge.fact.reviewed`, `knowledge.entity.merged|promoted|kept_separate`). **Chat tools**,
+  only for a tenant with the flag (`buildAgentTools` reads `AgentToolContext.features` — chat
+  passes `auth.features` — else the tenant's): `lookup_facts { entity?, type?, key?, asOf? }`
+  (entities by name: staging trigram, the better of `similarity` and `word_similarity` ≥ 0.5, a
+  promoted one as its row, then each registered type's resolver) and a `facts` block on
+  `search_knowledge` for the entities the query names (`word_similarity(name, query)` ≥ 0.7).
+  Both answer `factHitGroupSchema`s: facts grouped by entity, each with its state in the reader's
+  view, `preferred` (`preferredFact` over the visible sides), the document title and quote, and
+  validity; `rejected` never, `superseded` only when `asOf` falls in its window. The chat prompt
+  and both tool descriptions require stating uncertainty and citing every side of a conflict,
+  never picking one silently. On the fixture (`pnpm eval conflicts`, Haiku 5.5, 2026-11-17) 16–17
+  of the 18 conflicted entity/key questions pass the rubric "every value with its source, and the
+  disagreement said" (mean 0.89–0.94 over two runs); each failure was the judge refusing a real
+  corpus document the rubric did not list, not a side left out.
 - **Usage**: one `ai_usage` row per call, costed at write time from the one price table
   (`shared/ai/pricing`; an unknown model gets `null` and is counted as unpriced). While a cost cap
   applies to a run the deployment pays for (the platform key or the Workers AI binding), a chat call
@@ -1017,8 +1064,13 @@ plugin API's `searchKnowledge` hit does not carry `rerankScore`, and the global-
 still carries its own copy of the client until it switches to the core seam in its own repo;
 knowledge metering: Workers AI embeddings and rerank tokens are character estimates, a rerank that
 timed out is recorded as billed, platform-document ingest (tenant-less) is unmetered, and
-platform documents are never extracted; knowledge facts: review, `lookup_facts` and the entity
-card are the next steps, so facts are written but not yet read by chat or shown; the default
+platform documents are never extracted; knowledge facts: there is no UI yet (the review API and
+the chat tools exist); `search_knowledge`'s facts block finds only entities with a staging row
+(a domain row that never had one is reached through `lookup_facts`' resolver, not by being named
+in a query); a person's `reject` / `prefer` is lost when the rejected fact's own document is
+re-extracted (its text changed, so its facts are rewritten) and the conflict comes back for
+review; a possible match whose every staging candidate is hidden from the reviewer is left out of
+their list while still counted in its total; nothing nudges the UI when an item is settled; the default
 resolver matches domain rows by trigram only (no embedding — a domain table carries none); two
 extractions of one tenant running at once can each miss the other's facts (no per-tenant
 serialisation), so a conflict between them goes unflagged until one is re-extracted; the

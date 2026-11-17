@@ -40,11 +40,18 @@ vi.mock('@/plugins/server', () => {
 
 const env = createTestEnv()
 const cfg = loadConfig(env)
-// The built-in tools only close over `db`; building the list never queries.
+// The built-in tools only close over `db`; with `features` given, building the list never queries
+// (without it, `buildAgentTools` reads the tenant's flags for `lookup_facts`).
 const db = {} as Database
 
 async function toolNames(tenantId: string) {
-  const tools = await buildAgentTools({ db, cfg, env, scope: fullAccessScope(tenantId) })
+  const tools = await buildAgentTools({
+    db,
+    cfg,
+    env,
+    scope: fullAccessScope(tenantId),
+    features: [],
+  })
   return tools.map(t => t.name)
 }
 

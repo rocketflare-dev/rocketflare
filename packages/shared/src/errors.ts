@@ -101,6 +101,16 @@ export const ERROR_CODES = {
    * it may claim (no `linkByEmail`) — linking it would let one tenant's IdP take over that account.
    */
   accountExists: 'account_exists',
+  /** 409: `confirm` on a fact in conflict — settle it with `prefer` (use this one) or `reject`. */
+  factConflicting: 'fact_conflicting',
+  /** 409: the fact is `rejected` or `superseded` — history, nothing left to review. */
+  factNotReviewable: 'fact_not_reviewable',
+  /** 409: the staging entity was already merged or promoted, so it cannot be merged or promoted again. */
+  entitySettled: 'entity_settled',
+  /** 400: a merge or promote target that does not exist in this tenant (or is not of the same type). */
+  entityTargetNotFound: 'entity_target_not_found',
+  /** 400: promote on an entity type with no domain table or resolver — there is no row to promote to. */
+  entityTypeNotPromotable: 'entity_type_not_promotable',
 } as const
 
 export type ErrorCode = (typeof ERROR_CODES)[keyof typeof ERROR_CODES]

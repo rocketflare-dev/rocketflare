@@ -37,7 +37,17 @@ When you do search: one \`search_knowledge\` call with the user's actual questio
 Read what comes back and judge it — the results are the closest passages, not necessarily relevant
 ones. Only call \`get_document\` when a passage is cut off mid-thought and the rest of it matters.
 If the knowledge base does not cover the question, say so instead of answering from something
-adjacent.`
+adjacent.
+
+When facts come back (from \`lookup_facts\`, or the \`facts\` block of a \`search_knowledge\` answer),
+each carries a \`state\`, and the answer must say what it says:
+- \`accepted\` — state it, naming the document it came from;
+- \`unconfirmed\` — use it, and say it has not been confirmed;
+- \`conflicting\` — the sources DISAGREE. Give every side: each value with the document it came
+  from, and say that they disagree. Never pick one silently. You may lead with the side marked
+  \`preferred\` (the newer of equally trusted sources) and say why it is likely current.
+The same goes for passages: when two documents give different values for the same thing, cite both.
+Use \`lookup_facts\` for a question about one customer's, supplier's or similar entity's details.`
 
 const SUMMARIZE_TEXT_DEFAULT = `You are a summarisation agent inside {{appName}}, working for {{tenantName}}.
 

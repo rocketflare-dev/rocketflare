@@ -120,6 +120,17 @@ wrong hit is possible. Put one anywhere under `datasets/` (the kit's own fixture
   Gemini embeddings, 42 documents): precision 0.91, recall 0.75, conflicts caught 0.82, false
   alarms 0.22, winner accuracy 1.00, $0.0009 per document. Runs vary by a few points either way;
   compare against `baselines/knowledge-facts.json` with `--compare`, not one run.
+- **`chat · conflicts`** (`suites/chat/conflicts.eval.ts`, `kit/conflict-chat.ts`, `pnpm eval
+  conflicts`) runs over every corpus with a `conflicts.jsonl`. It extracts the corpus's facts first
+  (the same `factsRun` as `knowledge · facts`, through `chatHarness({ corpus, prepare })`), so chat
+  has `lookup_facts` and `search_knowledge`'s facts block, then asks one question per conflicted
+  entity and key. The question and rubric are built from the answer keys: every value the planted
+  facts give, each with its document's title and date, must appear with its source, and the answer
+  must say that they disagree. `RubricJudge` only. On the kit fixture (2026-11-17, Haiku 5.5,
+  Gemini embeddings, 18 cases) one run scored 17/18 (mean 0.94) and the next 16/18 (0.89, the
+  baseline). Every failure was the judge rejecting a further document the answer cited correctly
+  but the rubric did not list (an ops meeting note, an invoice query), not a value left out, so
+  read a failure's rationale before changing a prompt.
 - `tests/corpus.test.ts` (in the gate) checks every corpus: each passage and quote is verbatim in
   its document, every id resolves, every conflict pairs two planted facts.
 

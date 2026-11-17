@@ -8,8 +8,12 @@ and why: `docs/CONCEPTS.md` §9 "Knowledge facts"; decisions: `docs/plans/knowle
 | `types.ts` · `registry.ts` · `entity-types.ts` · `resolve.ts` | `EntityTypeRegistration`, `knowledgeEntityTypes()` (app + plugin types, validated), `APP_ENTITY_TYPES` (empty in the kit), `resolverFor` / `defaultEntityResolver` |
 | `enqueue.ts` | `enqueueKnowledgeExtraction` — flag + registered types, never throws (reached lazily from `ai/ingest.ts`) |
 | `extract.ts` | `extractDocumentFacts(db, cfg, env, input, deps)` — the `knowledge.extract` job body; `deps.types` overrides the registry (the eval) |
-| `entities.ts` | `resolveMention` — domain resolver → staging trigram → staging embedding → new staging entity; `chooseCandidate` and the thresholds |
+| `entities.ts` | `resolveMention` — domain resolver → staging trigram → staging embedding → new staging entity; `chooseCandidate` and the thresholds; `findEntitiesByName` / `entitiesMentionedIn` for the readers |
 | `state.ts` | `decideFactState` — the state table, pure |
+| `facts-sql.ts` | the SQL every reader shares: `restoredStateSql` / `restoredState` (what a fact returns to with no conflict), `visibleConflictsSql(scope)`, `entityVisibleSql(scope)` |
+| `facts-read.ts` | the reader's view: `selectFacts` (inner join `documents` + `visibleDocuments`), `readVisibleFact`, `getEntityCard`, `listReviewItems` |
+| `review.ts` | `reviewFact` (confirm / reject / prefer), `mergeEntity`, `promoteEntity`, `keepEntitySeparate`, `recomputeKey` |
+| `lookup.ts` | `lookupFacts` (the `lookup_facts` tool) and `factsForQuery` (`search_knowledge`'s facts block) |
 | `values.ts` · `dates.ts` · `quotes.ts` | value coercion against a key's schema · the date resolver · the verbatim-quote verifier — all pure |
 
 ## Rules
@@ -35,3 +39,12 @@ and why: `docs/CONCEPTS.md` §9 "Knowledge facts"; decisions: `docs/plans/knowle
   cap re-enqueues the job for the next UTC day rather than failing it
 - Preference between disagreeing facts is DERIVED (`isPreferredOver` / `preferredFact` in
   `@rocketflare/shared/ai/knowledge-facts`) — never a column
+- **A fact is read through its document.** Every read joins `documents` and ANDs
+  `visibleDocuments(scope)` — never read `knowledge_facts` alone for a person or a model. A hidden
+  fact is a 404 (never a 403), a fact conflicting only with hidden ones reads as its restored
+  state, and `conflicts_with` is filtered to visible ids (`visibleConflictsSql`). An action touches
+  only the facts its reviewer can see — except `reject`, which unlinks the rejected fact everywhere
+- **`prefer` rejects, it never supersedes**: superseded means true for an earlier window, and an
+  `asOf` lookup and re-extraction would bring it back
+- **Merge and promote re-decide shared keys** (`recomputeKey`, `decideFactState` replayed oldest
+  first, a confirmed fact at confidence 1) — never copy states across

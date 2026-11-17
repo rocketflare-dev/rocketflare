@@ -1,6 +1,6 @@
 /**
  * The built-in agent tools — what the runtime puts on `ctx.tools`, tenant-scoped to
- * the run. Three, and they answer the three questions an agent has about the knowledge base:
+ * the run. Three always, and they answer the three questions an agent has about the knowledge base:
  * `list_documents` — what is in it; `search_knowledge` — which passages match these words (whole
  * passages, grouped by document); `get_document` — the full text of one, by window. Each answers
  * in JSON, and each dead end (no match, unknown id, no embeddings provider) answers with an
@@ -18,13 +18,16 @@ import { serverPlugins } from '../../../../plugins/server'
 import { loggerFor } from '../../../utils/core/logger'
 import type { AccessScope } from '../../access-sql'
 import type { Tool } from '../../ai/agent-loop'
+import { tenantFeatures } from '../../features'
 import { getDocumentTool } from './get-document'
 import { listDocumentsTool } from './list-documents'
+import { lookupFactsTool } from './lookup-facts'
 import { type AgentToolContext, searchKnowledgeTool } from './search-knowledge'
 
 export * from './event-summary'
 export * from './get-document'
 export * from './list-documents'
+export * from './lookup-facts'
 export * from './search-knowledge'
 
 /**
@@ -54,10 +57,14 @@ export async function buildAgentTools(ctx: AgentToolContext): Promise<Tool[]> {
     )
     return []
   })
+  // Knowledge facts (D43) ride on the tenant's flag: `lookup_facts` and search's facts block.
+  const features = ctx.features ?? (await tenantFeatures(ctx.db, ctx.cfg, ctx.scope.tenantId))
+  const facts = features.includes('knowledge-facts')
   return [
-    searchKnowledgeTool(ctx, { platformSources }) as Tool,
+    searchKnowledgeTool(ctx, { platformSources, facts }) as Tool,
     getDocumentTool(ctx) as Tool,
     listDocumentsTool(ctx) as Tool,
+    ...(facts ? [lookupFactsTool(ctx) as Tool] : []),
     ...pluginTools,
   ]
 }

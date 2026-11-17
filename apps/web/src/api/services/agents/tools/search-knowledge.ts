@@ -28,6 +28,7 @@
  * what the runtime puts on `ctx.tools`.
  */
 import { KNOWLEDGE_TOOLS, SEARCH_MAX_LIMIT } from '@rocketflare/shared/ai/embeddings'
+import type { FactHitGroup } from '@rocketflare/shared/ai/knowledge-facts'
 import type { Actions, Subjects } from '@rocketflare/shared/permissions'
 import { z } from 'zod'
 import type { AppConfig } from '../../../../config'
@@ -37,6 +38,7 @@ import type { Tool } from '../../ai/agent-loop'
 import { AiNotConfiguredError } from '../../ai/errors'
 import { searchKnowledgeChunks } from '../../ai/retrieval'
 import type { AiEnv } from '../../ai/types'
+import { FACTS_NOTE, factsForQuery } from '../../knowledge/lookup'
 import { type KnowledgeBaseEntry, listKnowledgeDocuments } from './list-documents'
 
 export const SEARCH_KNOWLEDGE_TOOL = KNOWLEDGE_TOOLS.search
@@ -127,6 +129,13 @@ export interface SearchKnowledgeResult {
   hint?: string
   /** Only when nothing matched: what the knowledge base actually holds. */
   knowledgeBase?: KnowledgeBaseEntry[]
+  /**
+   * Knowledge facts (D43) about the entities the query names — present only for a tenant with
+   * the `knowledge-facts` flag and when the query mentions a known entity.
+   */
+  facts?: FactHitGroup[]
+  /** How to state `facts` — present with them. */
+  factsNote?: string
 }
 
 /** The slice of `AgentContext` the tools need — structural so tests pass `{ db, cfg, env, scope }`. */
@@ -159,6 +168,11 @@ export interface AgentToolContext {
    * URLs its own search returned.
    */
   requesterUrls?: ReadonlySet<string>
+  /**
+   * The reader's effective feature flags, when the caller already has them (chat: the request's
+   * `auth.features`). Absent: `buildAgentTools` reads the tenant's.
+   */
+  features?: readonly string[]
 }
 
 export interface SearchKnowledgeToolOptions {
@@ -168,6 +182,8 @@ export interface SearchKnowledgeToolOptions {
    * own documents only, exactly as before.
    */
   platformSources?: readonly string[]
+  /** Add the `facts` block (the tenant has the `knowledge-facts` flag). */
+  facts?: boolean
 }
 
 export function searchKnowledgeTool(
@@ -177,8 +193,7 @@ export function searchKnowledgeTool(
   const platformSources = options.platformSources?.length ? options.platformSources : undefined
   return {
     name: SEARCH_KNOWLEDGE_TOOL,
-    description:
-      "Search this workspace's knowledge base — everything people uploaded or pasted — and get back the matching PASSAGES in full, grouped by the document they came from and located within it (`passage` n of `totalPassages`, and a `charOffset` you can hand to get_document to read around the match). Results are the CLOSEST passages, not a relevance filter: read them and discard any that do not answer the question, then search again with different wording. Use it before answering any question about the organisation's own material. Narrow to one document with `documentId`, read a whole document with `get_document`, or see what exists with `list_documents`. When nothing matches, the answer lists the documents that do exist so you can re-aim.",
+    description: `Search this workspace's knowledge base — everything people uploaded or pasted — and get back the matching PASSAGES in full, grouped by the document they came from and located within it (\`passage\` n of \`totalPassages\`, and a \`charOffset\` you can hand to get_document to read around the match). Results are the CLOSEST passages, not a relevance filter: read them and discard any that do not answer the question, then search again with different wording. Use it before answering any question about the organisation's own material. Narrow to one document with \`documentId\`, read a whole document with \`get_document\`, or see what exists with \`list_documents\`. When nothing matches, the answer lists the documents that do exist so you can re-aim.${options.facts ? ' When the query names a known entity, the answer also carries `facts` about it, each with a `state`: when two facts are `conflicting`, or passages give different values, the sources disagree — say so and give each value with its document, never pick one silently.' : ''}`,
     schema: searchKnowledgeInputSchema,
     async handler(input) {
       let hits: Awaited<ReturnType<typeof searchKnowledgeChunks>>['hits']
@@ -258,7 +273,14 @@ export function searchKnowledgeTool(
         result.hint =
           'A passage was longer than the budget and was cut — read the rest with get_document at its charOffset.'
       }
-      if (passagesReturned === 0) {
+      if (options.facts) {
+        const facts = await factsForQuery(ctx.db, ctx.scope, input.query)
+        if (facts.length > 0) {
+          result.facts = facts
+          result.factsNote = FACTS_NOTE
+        }
+      }
+      if (passagesReturned === 0 && !result.facts) {
         const knowledgeBase = await listKnowledgeDocuments(ctx, { limit: EMPTY_RESULT_DOCUMENTS })
         result.knowledgeBase = knowledgeBase.documents
         result.hint =

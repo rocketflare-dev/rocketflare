@@ -12,6 +12,7 @@
  * (`docs/plans/knowledge-base-review.md` §10, decisions 3 and 5).
  */
 import { z } from 'zod'
+import { paginatedResponse, paginationQuerySchema } from '../pagination'
 
 // ── Entity type declarations ──────────────────────────────────────────────────────────────────
 
@@ -297,13 +298,34 @@ export type EntityCard = z.infer<typeof entityCardSchema>
 // ── Review ────────────────────────────────────────────────────────────────────────────────────
 
 /**
- * `POST /api/knowledge/facts/:id/review`. `confirm` = "this is right" (accepted, confirmed by
- * me), `reject` = "not right", `prefer` = "use this one" (accepted; the conflicting sides become
- * superseded by it).
+ * `POST /api/knowledge/facts/:id/review`.
+ *
+ * - `confirm` = "this is right": `accepted`, `confirmedBy`/`confirmedAt` = me; the source's trust
+ *   is unchanged. Not for a fact in conflict (409 `fact_conflicting`) — pick a side with `prefer`.
+ * - `reject` = "not right": `rejected`, unlinked from its conflicts; a fact it was the only
+ *   disagreement for goes back to `accepted` / `unconfirmed`.
+ * - `prefer` = "use this one": `accepted` and confirmed by me, and every fact it conflicted with
+ *   becomes `rejected` — NOT `superseded`, which means "true for an earlier window, replaced by a
+ *   later one": an `asOf` lookup would answer with a superseded fact and re-extraction would
+ *   restore one, whereas a person choosing between two values for the SAME time has said the
+ *   other was never right.
+ *
+ * Each acts only on what the reviewer can see: a conflicting fact from a document hidden from
+ * them is neither shown nor touched, so the fact keeps its link to it (and stays `conflicting`
+ * for the admins who can see both).
  */
 export const FACT_REVIEW_ACTIONS = ['confirm', 'reject', 'prefer'] as const
-export const factReviewRequestSchema = z.object({ action: z.enum(FACT_REVIEW_ACTIONS) })
+export const factReviewActionSchema = z.enum(FACT_REVIEW_ACTIONS)
+export type FactReviewAction = z.infer<typeof factReviewActionSchema>
+export const factReviewRequestSchema = z.object({ action: factReviewActionSchema })
 export type FactReviewRequest = z.infer<typeof factReviewRequestSchema>
+
+/** The reviewed fact as it now stands, and every other fact the action changed. */
+export const factReviewResponseSchema = z.object({
+  fact: factSchema,
+  affected: z.array(factSchema),
+})
+export type FactReviewResponse = z.infer<typeof factReviewResponseSchema>
 
 /**
  * A staging entity that might be an existing row: several candidates, or one just under the
@@ -332,6 +354,69 @@ export const knowledgeReviewItemSchema = z.discriminatedUnion('kind', [
 ])
 export type KnowledgeReviewItem = z.infer<typeof knowledgeReviewItemSchema>
 
+export const KNOWLEDGE_REVIEW_KINDS = ['fact', 'possibleMatch'] as const
+
+/**
+ * `GET /api/knowledge/review` — open items, newest first: mine, or everyone's for an admin
+ * (`mine=true` narrows an admin to their own). `entityType` / `entityId` narrow to one type or
+ * one entity (an entity card's "open items").
+ */
+export const knowledgeReviewQuerySchema = paginationQuerySchema.extend({
+  kind: z.enum(KNOWLEDGE_REVIEW_KINDS).optional(),
+  entityType: z.string().trim().min(1).max(120).optional(),
+  entityId: z.string().trim().min(1).max(200).optional(),
+  mine: z
+    .enum(['true', 'false'])
+    .transform(v => v === 'true')
+    .optional(),
+})
+export type KnowledgeReviewQuery = z.infer<typeof knowledgeReviewQuerySchema>
+
+export const knowledgeReviewListSchema = paginatedResponse(knowledgeReviewItemSchema)
+export type KnowledgeReviewList = z.infer<typeof knowledgeReviewListSchema>
+
+// ── Entity actions ────────────────────────────────────────────────────────────────────────────
+
+/** `GET /api/knowledge/entities/:type/:id` — a staging entity's uuid, or a domain row's id. */
+export const entityCardParamSchema = z.object({
+  type: z.string().trim().min(1).max(120),
+  id: z.string().trim().min(1).max(200),
+})
+
+/** Where a merge sends a staging entity: another staging entity, or a domain row (= promote). */
+export const entityTargetSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('staging'), id: z.string().uuid() }),
+  z.object({ kind: z.literal('domain'), id: z.string().trim().min(1).max(200) }),
+])
+export type EntityTarget = z.infer<typeof entityTargetSchema>
+
+/**
+ * `POST /api/knowledge/entities/:id/merge` — "these are the same": the staging entity's facts
+ * move to `into`, its names become aliases of a staging target, and it is marked `mergedInto`.
+ * A domain `into` is a promote.
+ */
+export const mergeEntityRequestSchema = z.object({ into: entityTargetSchema })
+export type MergeEntityRequest = z.infer<typeof mergeEntityRequestSchema>
+
+/**
+ * `POST /api/knowledge/entities/:id/promote` — "this is that row of ours": a row of the entity's
+ * own (registered) type, found by the type's table or resolver in this tenant. Records
+ * `promotedTo` and moves the facts onto the row; NEVER writes a domain column.
+ */
+export const promoteEntityRequestSchema = z.object({ id: z.string().trim().min(1).max(200) })
+export type PromoteEntityRequest = z.infer<typeof promoteEntityRequestSchema>
+
+/** What merge, promote and keep-separate answer: the staging entity as it now stands. */
+export const entityActionResponseSchema = z.object({
+  entity: knowledgeEntitySchema,
+  /** Where its facts went (merge / promote), else null. */
+  into: z.object({ kind: entityKindSchema, type: z.string(), id: z.string() }).nullable(),
+  movedFacts: z.number().int().nonnegative(),
+  /** Keys whose states were decided again because both entities held facts for them. */
+  recomputedKeys: z.array(z.string()),
+})
+export type EntityActionResponse = z.infer<typeof entityActionResponseSchema>
+
 // ── Tool results ──────────────────────────────────────────────────────────────────────────────
 
 /**
@@ -357,3 +442,22 @@ export const factHitSchema = z.object({
   observedAt: z.coerce.date(),
 })
 export type FactHit = z.infer<typeof factHitSchema>
+
+/** Facts about one entity, as `lookup_facts` and `search_knowledge`'s `facts` block group them. */
+export const factHitGroupSchema = z.object({
+  entity: z.object({ kind: entityKindSchema, type: z.string(), id: z.string(), name: z.string() }),
+  facts: z.array(factHitSchema),
+})
+export type FactHitGroup = z.infer<typeof factHitGroupSchema>
+
+/** What `lookup_facts` answers (JSON-encoded for the model). */
+export const lookupFactsResultSchema = z.object({
+  entities: z.array(factHitGroupSchema),
+  /** How to state what came back — always present with results. */
+  note: z.string().optional(),
+  /** What to do next — present when nothing matched or the answer was cut. */
+  hint: z.string().optional(),
+  /** Facts that matched but did not fit the answer. */
+  omitted: z.number().int().positive().optional(),
+})
+export type LookupFactsResult = z.infer<typeof lookupFactsResultSchema>

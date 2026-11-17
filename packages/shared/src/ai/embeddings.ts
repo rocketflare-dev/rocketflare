@@ -431,13 +431,15 @@ export function documentCardFromDocument(
 // ---- Document cards from a knowledge tool's answer ---------------------------------------
 
 /**
- * The three built-in knowledge tools, named ONCE. The server's tool modules and the chat UI's
+ * The built-in knowledge tools, named ONCE. The server's tool modules and the chat UI's
  * labels both read these, so a rename cannot leave one of them behind.
  */
 export const KNOWLEDGE_TOOLS = {
   search: 'search_knowledge',
   get: 'get_document',
   list: 'list_documents',
+  /** Knowledge facts (D43) — offered only to a tenant with the `knowledge-facts` flag. */
+  facts: 'lookup_facts',
 } as const
 
 /** Whitespace-collapsed head of a text, ellipsised. Pure; `null` in, `null` out. */
@@ -467,6 +469,15 @@ const searchToolResultShape = z.object({
     })
   ),
 })
+
+/** The facts a `lookup_facts` answer (or `search_knowledge`'s `facts` block) cited — their sources. */
+const factGroupsShape = z.array(
+  z.object({
+    facts: z.array(z.object({ documentId: z.string().uuid(), documentTitle: z.string() })),
+  })
+)
+const factsToolResultShape = z.object({ entities: factGroupsShape })
+const searchFactsShape = z.object({ facts: factGroupsShape })
 
 const listToolResultShape = z.object({
   documents: z.array(
@@ -545,6 +556,21 @@ export function documentCardsFromToolResult(toolName: string, result: unknown): 
       cards.push(
         cardFromTool({ id: doc.documentId, title: doc.title, passages: doc.totalPassages })
       )
+    }
+    // The facts block cites documents too — the source of each fact.
+    const facts = searchFactsShape.safeParse(parsed)
+    if (facts.success) {
+      for (const group of facts.data.facts) {
+        for (const f of group.facts)
+          cards.push(cardFromTool({ id: f.documentId, title: f.documentTitle }))
+      }
+    }
+  } else if (toolName === KNOWLEDGE_TOOLS.facts) {
+    const result = factsToolResultShape.safeParse(parsed)
+    if (!result.success) return []
+    for (const group of result.data.entities) {
+      for (const f of group.facts)
+        cards.push(cardFromTool({ id: f.documentId, title: f.documentTitle }))
     }
   } else if (toolName === KNOWLEDGE_TOOLS.list) {
     const list = listToolResultShape.safeParse(parsed)

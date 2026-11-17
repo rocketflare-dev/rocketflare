@@ -29,6 +29,11 @@ export interface ChatHarnessOptions {
    * delta the turn added to that tenant's ledger.
    */
   corpus?: Corpus
+  /**
+   * Runs (once per case, before the turn) — memoise inside it. The conflicts suite extracts the
+   * corpus's facts here, so chat answers with them.
+   */
+  prepare?: () => Promise<void>
 }
 
 export function chatHarness(options: ChatHarnessOptions = {}): Harness<EvalCase, string> {
@@ -39,6 +44,7 @@ export function chatHarness(options: ChatHarnessOptions = {}): Harness<EvalCase,
         throw new Error(`case ${evalCase.id}: a chat case's input is the user's message (a string)`)
       }
       const question = evalCase.input
+      await options.prepare?.()
       const world = options.corpus
         ? await corpusWorld(options.corpus, ['chat'])
         : await caseWorld(evalCase, ['chat'])

@@ -14,6 +14,7 @@ import { corsMiddleware } from './middleware/cors'
 import { csrfProtection } from './middleware/csrf'
 import { databaseMiddleware } from './middleware/database'
 import { errorHandler, notFoundBody, notFoundHandler } from './middleware/error-handler'
+import { requireFeature } from './middleware/feature'
 import { mountPublicRoutes, publicBodyLimitOverrides } from './middleware/public-mounts'
 import { publicSitesMiddleware } from './middleware/public-sites'
 import { authRateLimit } from './middleware/rate-limit'
@@ -42,6 +43,7 @@ import { identityEventsRouter } from './routes/identity-events'
 import { invitationsRouter } from './routes/invitations'
 import { inviteRouter } from './routes/invite'
 import { keysRouter } from './routes/keys'
+import { knowledgeRouter } from './routes/knowledge'
 import { meRouter } from './routes/me'
 import { membersRouter } from './routes/members'
 import { notificationsRouter } from './routes/notifications'
@@ -126,7 +128,8 @@ app.route('/ws', wsRouter)
 // A mount may carry a third element: a feature gate. `requireFeature('x')` 404s
 // `feature_disabled` on every route beneath the prefix, so a surface that ships dark is dark as a
 // WHOLE rather than route by route — declared once here, like auth, instead of remembered in each
-// handler. Core ships no gated mount; an app adds `['/api/thing', thingRouter, requireFeature('thing')]`.
+// handler. Core's one gated mount is `/api/knowledge` (`knowledge-facts`); an app adds
+// `['/api/thing', thingRouter, requireFeature('thing')]`.
 // Remember the other doors too: a surface with no nav entry (an analytics cube, a dashboard
 // template, a CLI command) leaks independently of this one.
 // A plugin's PUBLIC mounts — consent callbacks and webhooks a third party calls with no
@@ -153,6 +156,8 @@ const mounts: readonly (readonly [string, Hono<AppEnv>, MiddlewareHandler?])[] =
   ['/api/ai/usage', aiUsageRouter],
   ['/api/ai/agent-models', aiAgentModelsRouter],
   ['/api/ai/documents', aiDocumentsRouter],
+  // Knowledge facts review (D43): dark unless the tenant has the flag — a 404 `feature_disabled`.
+  ['/api/knowledge', knowledgeRouter, requireFeature('knowledge-facts')],
   ['/api/chat', chatRouter],
   // A protocol surface with its own auth story, mounted beside chat rather than under it: this
   // list is the enumerable auth surface.

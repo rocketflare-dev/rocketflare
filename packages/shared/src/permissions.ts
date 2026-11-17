@@ -51,6 +51,13 @@ export const CORE_SUBJECTS = [
    * candidates are found and each row points at another member's conversation.
    */
   'Feedback',
+  /**
+   * Knowledge facts and staging entities (D43). Every member may `read` and `update` — review is
+   * "own" by the ROUTE's predicate (the item's `reviewerUserId` is you), as AgentRun is; admin+
+   * `manage` settles anyone's. Which facts you may see at all is the source document's visibility,
+   * a SQL predicate — never this.
+   */
+  'KnowledgeFact',
 ] as const
 export type CoreSubject = (typeof CORE_SUBJECTS)[number]
 

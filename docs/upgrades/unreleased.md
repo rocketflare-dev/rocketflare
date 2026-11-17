@@ -54,6 +54,10 @@ The knowledge base becomes measurable and structure-aware: eval corpora, structu
 - At `KNOWLEDGE_TENANT_DAILY_COST_USD` the extraction job re-enqueues itself for the next UTC day (≤ 12 h a hop).
 - New eval suite `knowledge · facts` (`pnpm eval facts`, `apps/evals/kit/facts.ts`): extracts a corpus in date order through the job body and scores precision, recall, conflicts caught, false alarms and winner accuracy.
 - Eval corpora may carry `corpus.json` `{ "organisation" }` (the business the knowledge base belongs to); the eval kit's `normalizeName` now drops a trailing legal form (`Ltd`, `Limited`, `LLP`, `PLC`, `Co`, `Inc`).
+- Knowledge facts review API `/api/knowledge` (behind the `knowledge-facts` flag, 404 when off): `GET /review`, `POST /facts/:id/review { action: confirm|reject|prefer }`, `GET /entities/:type/:id`, `POST /entities/:id/merge|promote|keep-separate`; new CASL subject `KnowledgeFact` (member read + update, admin+ manage) and five error codes.
+- A fact inherits its document's visibility: hidden facts are a 404, and a conflict with a hidden fact is invisible to that reader. `prefer` rejects the other sides (never supersedes); merge and promote re-decide shared keys.
+- Chat and agent tools: `lookup_facts` and a `facts` block on `search_knowledge`, only for a tenant with the flag; `AgentToolContext.features` is new, and the chat prompt and both tool descriptions require citing every side of a conflict.
+- New eval suite `chat · conflicts` (`pnpm eval conflicts`): one chat turn per planted conflict, with facts extracted first; `chatHarness` takes `prepare`.
 - Stored document text has CRLF normalised to LF; search hits (and `searchKnowledge` hits) gain `headingPath` and `page` (always null: `toMarkdown` emits no page markers).
 
 ## How to apply
@@ -81,6 +85,12 @@ The knowledge base becomes measurable and structure-aware: eval corpora, structu
 18. Facts are only extracted once an entity type is registered in `apps/web/src/api/services/knowledge/entity-types.ts` (or by a plugin) AND the `knowledge-facts` flag is on for the tenant (Admin → Feature flags). Extraction calls the chat model on every changed document; set `KNOWLEDGE_TENANT_DAILY_COST_USD` in BOTH tomls' `[vars]` before enabling it widely.
 19. Optional: port `apps/evals/kit/facts.ts`, `apps/evals/suites/knowledge/facts.eval.ts`, `apps/evals/tests/facts.test.ts`, the `origin` line in `apps/evals/kit/fixtures.ts`, `readCorpusMeta` in `apps/evals/kit/corpus.ts` and `normalizeName` in `apps/evals/kit/scoring.ts`, then run `pnpm eval facts` over a corpus of your own with a `facts.jsonl`.
 
+20. Port the knowledge facts readers from the release: `apps/web/src/api/services/knowledge/` (`facts-sql.ts`, `facts-read.ts`, `review.ts`, `lookup.ts` — all new — and `findEntitiesByName` / `entitiesMentionedIn` in `entities.ts`, `restoredStateSql` in `extract.ts`, `CLAUDE.md`), `apps/web/src/api/routes/knowledge.ts` (new) and its mount entry `['/api/knowledge', knowledgeRouter, requireFeature('knowledge-facts')]` in `apps/web/src/api/index.ts`, `apps/web/src/api/services/agents/tools/lookup-facts.ts` (new) plus the `features` / `lookup_facts` changes in `tools/index.ts` and `tools/search-knowledge.ts`, `features: auth.features` in `apps/web/src/api/services/ai/chat-turn.ts`, and the facts paragraph of the `chat` prompt in `apps/web/src/api/services/prompts.ts`.
+21. Port the contracts from the release: the review, entity-action and `lookupFactsResultSchema` schemas in `packages/shared/src/ai/knowledge-facts.ts`, `KNOWLEDGE_TOOLS.facts` and the facts cards in `packages/shared/src/ai/embeddings.ts`, `'KnowledgeFact'` in `CORE_SUBJECTS` (`packages/shared/src/permissions.ts`), and the five codes in `packages/shared/src/errors.ts`.
+22. Add `'KnowledgeFact'` to `ADMIN_MANAGED` in `apps/web/src/permissions/abilities.ts` and give members `can('update', 'KnowledgeFact')`. If you changed the role matrix, add the `KnowledgeFact` row to `apps/web/tests/config/permissions.test.ts` with read + update for a member.
+23. Port the tests `apps/web/tests/helpers/knowledge-facts.ts`, `apps/web/tests/api/knowledge-review.test.ts`, `apps/web/tests/api/knowledge-facts-visibility.test.ts` and `apps/web/tests/api/knowledge-promote.test.ts`. An assertion of your own that pins the agent tool list exactly must allow `lookup_facts` for a tenant with the flag.
+24. Optional: port `apps/evals/kit/conflict-chat.ts`, `apps/evals/suites/chat/conflicts.eval.ts`, `apps/evals/tests/conflict-chat.test.ts` and the `prepare` option in `apps/evals/kit/chat-target.ts`, then run `pnpm eval conflicts` over a corpus with a `conflicts.jsonl`.
+
 ## Conflicts to expect
 
 - `apps/evals/suites/chat/knowledge.eval.ts` → also runs every corpus's `chat.jsonl` → keep your own judges and add the corpus loop.
@@ -90,6 +100,7 @@ The knowledge base becomes measurable and structure-aware: eval corpora, structu
 
 - `apps/web/src/api/services/ai/retrieval.ts` → reranks after fusion and renumbers `rank` → a caller that read `rank` as the RRF position should read `score` (still the RRF score) instead.
 - `packages/shared/src/features.ts` / `permissions.ts` → `CORE_FEATURE_FLAGS` / `CORE_FEATURES` are no longer empty → keep your own core flags beside `knowledge-facts`.
+- `apps/web/src/api/services/prompts.ts` → the `chat` prompt gains a facts and conflicts paragraph → keep your own prompt text and append the paragraph.
 - `apps/web/src/api/services/knowledge/entity-types.ts` → app-owned (`manual` in `.rocketflare.json`) → add it once, then keep your own types.
 
 ## Verify
@@ -105,3 +116,5 @@ The knowledge base becomes measurable and structure-aware: eval corpora, structu
 9. `pnpm --filter @<scope>/web test:config` passes `knowledge-entity-types.test.ts`, and `psql "$DATABASE_URL" -c "select extname from pg_extension where extname = 'pg_trgm'"` answers one row after `pnpm db:migrate`.
 10. `pnpm --filter @<scope>/web test:config` passes `knowledge-extraction.test.ts`, and `pnpm --filter @<scope>/web test:api` passes `knowledge-extract.test.ts`.
 11. With an entity type registered and the `knowledge-facts` flag on for a tenant, ingesting a document enqueues one `knowledge.extract` job; re-ingesting the same `externalId` with unchanged text enqueues none.
+12. With the `knowledge-facts` flag off, `GET /api/knowledge/review` answers `404` with `code: 'feature_disabled'`; with it on, `200` with `items` and `pagination`.
+13. `pnpm --filter @<scope>/web test:api` passes `knowledge-review.test.ts`, `knowledge-facts-visibility.test.ts` and `knowledge-promote.test.ts`.

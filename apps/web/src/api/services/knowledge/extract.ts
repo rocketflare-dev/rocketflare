@@ -73,9 +73,10 @@ import { enqueueJob, type JobsQueue } from '../jobs'
 import { resolvePrompt } from '../prompts'
 import { resolveDatePhrase } from './dates'
 import { type ResolveContext, type ResolvedEntity, resolveMention } from './entities'
+import { restoredStateSql } from './facts-sql'
 import { locateQuote } from './quotes'
 import { knowledgeEntityTypes } from './registry'
-import { ACCEPT_CONFIDENCE, decideFactState, type HeldFact, type Validity } from './state'
+import { decideFactState, type HeldFact, type Validity } from './state'
 import type { EntityTypeRegistration } from './types'
 import { coerceFactValue, valueKey, valueText } from './values'
 
@@ -363,14 +364,12 @@ const uuidArray = (ids: readonly string[]) =>
     sql`, `
   )}]::uuid[]`
 
-/** The state a fact returns to when what it disagreed with, or was replaced by, is gone. */
-const restoredState = sql`case when ${knowledgeFacts.confidence} >= ${ACCEPT_CONFIDENCE} then 'accepted' else 'unconfirmed' end`
-
 /**
  * Delete a document's facts and undo what they did to the rest: their ids leave every
  * `conflicts_with`, a fact left conflicting with nothing — or superseded by a fact that no longer
- * exists (the FK set it null) — returns to `accepted` / `unconfirmed`. A person's decisions
- * (`rejected`, a `prefer` that superseded it — `superseded_by_id` still set) are untouched.
+ * exists (the FK set it null) — returns to `accepted` (a person confirmed it, or it was read
+ * confidently) or `unconfirmed`. A person's decisions on OTHER documents' facts (`rejected`, a
+ * confirmation) are untouched.
  */
 export async function removeDocumentFacts(
   db: Database,
@@ -394,7 +393,7 @@ export async function removeDocumentFacts(
       )
     await tx
       .update(knowledgeFacts)
-      .set({ state: restoredState })
+      .set({ state: restoredStateSql })
       .where(
         and(
           eq(knowledgeFacts.tenantId, tenantId),

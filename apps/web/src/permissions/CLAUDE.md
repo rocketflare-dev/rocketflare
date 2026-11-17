@@ -23,6 +23,7 @@ vocabulary in `packages/shared/src/permissions.ts`). Built once per request by t
 | `FeatureFlag` (administering flags) | manage | – | – | – | – |
 | `Trace` | manage | read | read | read | – |
 | `Feedback` (thumbs on AI answers) | manage | create + read | create + read | create + read | create only (on an answer they can read — `services/feedback.ts` checks the target; reading ratings back is admin+) |
+| `KnowledgeFact` (D43: facts + staging entities) | manage | manage | manage | manage | read + update (own review items — `routes/knowledge.ts` checks `reviewerUserId === user.id` unless `manage KnowledgeFact`; which facts you may see at all is the source document's visibility, a SQL predicate) |
 
 - Actions: `manage` (wildcard) · `create` · `read` · `update` · `delete` · `access` (features only)
 - Roles come from `tenant_users.role`; `support` is minted only from `/admin`. `globalAdmin` is `users.isGlobalAdmin`
