@@ -7,6 +7,9 @@
  *   decisions:  tenant default `ai_configs(scope='decisions')` (TypeSafe) → platform
  *               `TYPESAFE_API_KEY` → the chat model on prompt key `agent-decide` (the
  *               uncalibrated `llm_self_report` fallback) → 503 from `resolveChat`
+ *   rerank:     tenant default `ai_configs(scope='rerank')` (a Cohere-style `/rerank` endpoint
+ *               as `openai_compatible`, or `workers_ai`) → `workers_ai` bge-reranker-base if
+ *               `env.AI` → null = no reranking (never a 503: search answers in fused order)
  * Credentials are decrypted here and nowhere else. `readiness()` mirrors both orders WITHOUT
  * building a client or throwing (the Home checklist must not turn a page load into a 503).
  * Feature code never queries `ai_configs`; the chat route, connection test and agents
@@ -23,7 +26,11 @@ import type {
   AiScope,
   AiScopeReadiness,
 } from '@rocketflare/shared/ai/config'
-import { DEFAULT_MODELS, WORKERS_AI_CHAT_MODEL } from '@rocketflare/shared/ai/config'
+import {
+  DEFAULT_MODELS,
+  WORKERS_AI_CHAT_MODEL,
+  WORKERS_AI_RERANK_MODEL,
+} from '@rocketflare/shared/ai/config'
 import type { DecisionMethod } from '@rocketflare/shared/ai/decisions'
 import type { PromptKey } from '@rocketflare/shared/ai/prompts'
 import { and, eq } from 'drizzle-orm'
@@ -36,6 +43,7 @@ import { createLlmDecisionClient } from './decisions/llm'
 import type { DecisionClient } from './decisions/types'
 import { createTypesafeClient } from './decisions/typesafe'
 import { AiNotConfiguredError } from './errors'
+import { createRerankClient, createWorkersAiRerankClient, type RerankClient } from './rerank'
 import type { AiEnv, ChatClient, EmbeddingsClient, SystemPrompt } from './types'
 
 export interface ResolvedChat {
@@ -66,6 +74,14 @@ export interface ResolvedDecisions {
   method: DecisionMethod
   /** `fallback` = no TypeSafe key anywhere, so the chat model answers (uncalibrated). */
   source: 'tenant' | 'platform' | 'fallback'
+  configId?: string
+}
+
+export interface ResolvedRerank {
+  client: RerankClient
+  provider: AiProvider
+  model: string
+  source: 'tenant' | 'platform'
   configId?: string
 }
 
@@ -207,6 +223,62 @@ export async function embeddingsClientFromRow(
     ai: env.AI,
     fetch: fetchImpl,
   })
+}
+
+/**
+ * Build a reranker from ONE config row — the connection test probes through it. `workers_ai` is
+ * the binding (no key); every other provider is a Cohere-style `POST {base}/rerank` behind the
+ * row's bearer key, its dialect read from the base URL's host.
+ */
+export async function rerankClientFromRow(
+  row: AiConfigRow,
+  cfg: AppConfig,
+  env: AiEnv,
+  fetchImpl?: FetchLike
+): Promise<RerankClient> {
+  if (row.provider === 'workers_ai') {
+    return createWorkersAiRerankClient({ ai: env.AI, model: row.model })
+  }
+  return createRerankClient({
+    baseUrl: row.baseUrl,
+    model: row.model,
+    apiKey: await credentialOf(row, cfg),
+    fetch: fetchImpl,
+  })
+}
+
+/**
+ * The reranker knowledge search uses, or null — no reranking, the fused order stands, exactly as
+ * before rerank existed. Never throws for "not configured": reranking is an improvement, never a
+ * requirement. Order: the tenant's default `rerank` row → Workers AI's bge-reranker-base when the
+ * `AI` binding exists → null.
+ */
+export async function resolveRerank(
+  db: Database,
+  cfg: AppConfig,
+  env: AiEnv,
+  tenantId: string,
+  options: Pick<ResolveOptions, 'fetch'> = {}
+): Promise<ResolvedRerank | null> {
+  const row = await findDefaultConfig(db, tenantId, 'rerank')
+  if (row) {
+    return {
+      client: await rerankClientFromRow(row, cfg, env, options.fetch),
+      provider: row.provider,
+      model: row.model,
+      source: 'tenant',
+      configId: row.id,
+    }
+  }
+  if (env.AI) {
+    return {
+      client: createWorkersAiRerankClient({ ai: env.AI }),
+      provider: 'workers_ai',
+      model: WORKERS_AI_RERANK_MODEL,
+      source: 'platform',
+    }
+  }
+  return null
 }
 
 /** Build a decisions client from ONE config row (TypeSafe) — the connection test probes through it. */
@@ -452,17 +524,18 @@ export async function resolveEmbeddingsModel(
   return embeddingsReadiness(row, cfg, env).model ?? null
 }
 
-/** What the three resolvers WOULD pick — no client is built, no credential decrypted, nothing thrown. */
+/** What the four resolvers WOULD pick — no client is built, no credential decrypted, nothing thrown. */
 export async function readiness(
   db: Database,
   cfg: AppConfig,
   env: AiEnv,
   tenantId: string
 ): Promise<AiReadiness> {
-  const [chatRow, embRow, decisionsRow] = await Promise.all([
+  const [chatRow, embRow, decisionsRow, rerankRow] = await Promise.all([
     findDefaultConfig(db, tenantId, 'chat'),
     findDefaultConfig(db, tenantId, 'embeddings'),
     findDefaultConfig(db, tenantId, 'decisions'),
+    findDefaultConfig(db, tenantId, 'rerank'),
   ])
   const none: AiScopeReadiness = { ready: false, source: 'none' }
   const platform = platformChat(cfg, env)
@@ -479,5 +552,10 @@ export async function readiness(
       : chat.ready
         ? { ready: true, source: 'fallback', provider: chat.provider, model: chat.model }
         : none
-  return { chat, embeddings, decisions }
+  const rerank: AiScopeReadiness = rerankRow
+    ? { ready: true, source: 'tenant', provider: rerankRow.provider, model: rerankRow.model }
+    : env.AI
+      ? { ready: true, source: 'platform', provider: 'workers_ai', model: WORKERS_AI_RERANK_MODEL }
+      : none
+  return { chat, embeddings, decisions, rerank }
 }

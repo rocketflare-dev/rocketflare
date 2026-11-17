@@ -8,6 +8,19 @@
 import { z } from 'zod'
 import { aiProviderSchema } from './config'
 
+/**
+ * The `ai_usage.feature` names the knowledge base writes: document and query embeddings, the
+ * reranker, and (phase 2) fact extraction. One `knowledge.` prefix so the Usage page groups them
+ * together and `knowledgeSpendToday` can sum exactly these three.
+ */
+export const KNOWLEDGE_USAGE_FEATURES = {
+  embeddings: 'knowledge.embeddings',
+  rerank: 'knowledge.rerank',
+  extraction: 'knowledge.extraction',
+} as const
+export type KnowledgeUsageFeature =
+  (typeof KNOWLEDGE_USAGE_FEATURES)[keyof typeof KNOWLEDGE_USAGE_FEATURES]
+
 export const aiUsageSchema = z.object({
   id: z.string().uuid(),
   tenantId: z.string().uuid(),

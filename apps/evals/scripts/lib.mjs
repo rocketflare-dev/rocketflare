@@ -43,6 +43,8 @@ export function extractCases(report) {
         rationales,
         usage: run?.usage ?? {},
         totalMs: num(run?.timings?.totalMs),
+        // Retrieval only: how long the reranker took on this query (null = it did not run).
+        rerankMs: num(run?.artifacts?.rerank?.latencyMs),
         promptKey: run?.artifacts?.promptKey ?? null,
         promptHash: run?.artifacts?.promptHash ?? null,
         model: run?.usage?.model ?? run?.session?.model ?? null,
@@ -55,7 +57,7 @@ export function extractCases(report) {
 
 /**
  * The header `pnpm eval` stamps on every run file, next to vitest's own keys.
- * @param {{ sha?: string, dirty?: boolean, createdAt: string, filters?: string[], model?: string | null, judgeModel?: string | null, provider?: string, judgeProvider?: string, cases: any[] }} opts
+ * @param {{ sha?: string, dirty?: boolean, createdAt: string, filters?: string[], model?: string | null, judgeModel?: string | null, provider?: string, judgeProvider?: string, rerank?: string, cases: any[] }} opts
  */
 export function runHeader({
   sha,
@@ -66,6 +68,7 @@ export function runHeader({
   judgeModel,
   provider,
   judgeProvider,
+  rerank,
   cases,
 }) {
   const promptHashes = {}
@@ -86,6 +89,7 @@ export function runHeader({
     model: model ?? null,
     modelsObserved: [...models].sort(),
     judgeProvider: judgeProvider ?? 'anthropic',
+    rerank: rerank ?? 'none',
     judgeModel: judgeModel ?? null,
     promptHashes,
   }
@@ -245,13 +249,27 @@ export function renderSummary(cases) {
   }
   const passed = scored.filter(c => c.status === 'passed').length
   const avg = scored.reduce((sum, c) => sum + (c.avgScore ?? 0), 0) / scored.length
+  const rerank = medianOf(scored.map(c => c.rerankMs))
   return [
     table(rows),
     '',
     `${passed}/${scored.length} passed · mean score ${avg.toFixed(2)} · ${tokens} tokens · ` +
       `${priced ? '' : '≥'}$${cost.toFixed(4)} · ${(ms / 1000).toFixed(1)}s of target time`,
+    ...(rerank ? [`rerank: median ${rerank.median} ms over ${rerank.count} queries`] : []),
   ].join('\n')
 }
+
+/** Median of the numbers in `values` (nulls ignored), or null when there are none. */
+export function medianOf(values) {
+  const xs = values.filter(v => typeof v === 'number').sort((a, b) => a - b)
+  if (xs.length === 0) return null
+  const mid = Math.floor(xs.length / 2)
+  const median = xs.length % 2 ? xs[mid] : Math.round((xs[mid - 1] + xs[mid]) / 2)
+  return { median, count: xs.length }
+}
+
+/** `--rerank` values: `none` (the default: the test `AI` stub has no real reranker) or a vendor. */
+export const EVAL_RERANKERS = ['none', 'fireworks']
 
 export function renderComparison({ regressions, improvements }, threshold) {
   const lines = []
@@ -266,7 +284,7 @@ export function renderComparison({ regressions, improvements }, threshold) {
   return lines.join('\n')
 }
 
-/** `run [filters] [--model x] [--judge-model y] [--compare [target]] [--threshold n] [--case ids] [--concurrency n]` */
+/** `run [filters] [--model x] [--judge-model y] [--rerank none|fireworks] [--compare [target]] [--threshold n] [--case ids] [--concurrency n]` */
 export function parseArgs(argv) {
   const out = { filters: [], compare: null, threshold: 0.1 }
   for (let i = 0; i < argv.length; i++) {
@@ -286,6 +304,12 @@ export function parseArgs(argv) {
         break
       case '--provider':
         out.provider = next()
+        break
+      case '--rerank':
+        out.rerank = next()
+        if (!EVAL_RERANKERS.includes(out.rerank)) {
+          throw new Error(`--rerank is one of ${EVAL_RERANKERS.join(', ')}`)
+        }
         break
       case '--judge-provider':
         out.judgeProvider = next()

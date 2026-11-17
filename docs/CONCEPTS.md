@@ -592,7 +592,9 @@ Server: `api/services/{ai,agents}/**` (read their `CLAUDE.md`), `services/prompt
   / `agent_models` and the only place credentials are decrypted. Chat order: per-agent assignment →
   tenant default → platform `ANTHROPIC_API_KEY` → **Workers AI `glm-4.7-flash` via `[ai]`** → 503
   `ai_not_configured`. Embeddings order: tenant → Workers AI `bge-m3` (1024-dim) →
-  `EMBEDDINGS_API_KEY` → 503. Workers AI calls are **billed** to the account; removing `[ai]` from
+  `EMBEDDINGS_API_KEY` → 503. Rerank order (`resolveRerank`, never a 503): tenant `rerank` row
+  (a Cohere-style `/rerank` as `openai_compatible`, or `workers_ai`) → Workers AI
+  `bge-reranker-base` via `[ai]` → none (search keeps its fused order). Workers AI calls are **billed** to the account; removing `[ai]` from
   both tomls makes the kit zero-spend. Credentials never leave the server (`hasCredential`), and a
   stored key stays with the provider and normalised base URL it was entered for: changing either
   needs the key again. A save decides that on the row it overwrites, read `FOR UPDATE` inside its
@@ -764,7 +766,23 @@ Server: `api/services/{ai,agents}/**` (read their `CLAUDE.md`), `services/prompt
   whose `embedding_model` is the query vector's model** (migration `0027` backfilled it from the
   document), so a document embedded by another model stays findable by keyword alone. A hit
   carries `headingPath`, `page` and `charOffset` (the stored `char_start`; `position()` of the text
-  for a chunk written before 0.37.0). **Content hash**: `documents.content_hash` is sha-256 of the
+  for a chunk written before 0.37.0). **Reranking** (`services/ai/rerank.ts`, the `RerankFn` seam
+  — `(query, documents) => scores` in [0, 1]): the top 50 fused candidates go to the resolved
+  reranker with their title and section in front, are reordered by its score (`rerankScore` on the
+  hit; `rank` is the final order, `score` stays the RRF score), filtered by `RERANK_MIN_SCORE` when
+  set (unset = off), then cut to `limit`. The Cohere-style client reads its request dialect
+  (Cohere, Voyage, Fireworks) from the base URL's host; Workers AI's logits are sigmoided onto the
+  same scale. No reranker, fewer than two candidates, `rerank: false` (internal callers only), a
+  failure or a 3 s timeout answer the fused order, and the `retrieval` span says which
+  (`rocketflare.rerank.*`) with a `rerank <model>` child. On the kit fixture a Fireworks
+  `qwen3-reranker-8b` lifts MRR from 0.66 to 0.84 and recall@5 from 0.87 to 1.00 at a median
+  821 ms per search (`docs/EVALS.md`). **Metering**: every embedding (index, re-embed, query) and
+  rerank call is an `ai_usage` row, `knowledge.embeddings` / `knowledge.rerank`
+  (`knowledge.extraction` is reserved for phase 2), with the provider's token count or a 4-chars
+  estimate; a ledger failure is logged and never fails an ingest or a search (the search route
+  writes it in `waitUntil`). `KNOWLEDGE_TENANT_DAILY_COST_USD` (unset = no cap) bounds the three
+  per UTC day through `knowledgeExtractionAllowed`, which only extraction consults: indexing and
+  search never pause. **Content hash**: `documents.content_hash` is sha-256 of the
   normalised text (CRLF → LF, trimmed). A plain ingest — or a text upload — whose hash matches a
   non-failed document of the same tenant and `source` answers THAT document (`200`,
   `deduplicated: true`, nothing stored), only when both are tenant-wide so a dedupe never reveals a
@@ -908,8 +926,16 @@ tool with an approval gate is available to agent runs only), no `STATE_DELTA`; p
 stream cursor; a cancelled run emits nothing rather than AG-UI 1.0's `RUN_FINISHED` `cancelled`
 outcome; no token-level streaming for runs (would need a per-run DO); char-based history budget
 not derived from the model; sliding window defeats prompt caching on long threads; `enqueueRun`
-does not pre-resolve the client; Workers AI forced tools on off-list models are best-effort; no
-rerank; page numbers: `toMarkdown` emits no page markers, so `chunks.page` is always null;
+does not pre-resolve the client; Workers AI forced tools on off-list models are best-effort;
+reranking: the Workers AI `bge-reranker-base` default is untested against the fixture (evals run
+in Node with no real `AI` binding) and its logits-vs-probabilities reading is a per-batch
+heuristic, every search with `[ai]` bound pays one extra Workers AI call, the Fireworks reranker
+adds ~0.8 s per search, `RERANK_MIN_SCORE`'s scale is per model so the kit ships it off, the
+plugin API's `searchKnowledge` hit does not carry `rerankScore`, and the global-search plugin
+still carries its own copy of the client until it switches to the core seam in its own repo;
+knowledge metering: Workers AI embeddings and rerank tokens are character estimates, a rerank that
+timed out is recorded as billed, platform-document ingest (tenant-less) is unmetered, and the
+cap is enforced only once extraction exists; page numbers: `toMarkdown` emits no page markers, so `chunks.page` is always null;
 chunks written before 0.37.0 keep their old shape (no heading path or offsets) until re-indexed,
 and an unchanged upsert never re-indexes them (re-embed rebuilds only another model's chunks); a
 stale document is found by keyword only until its re-embed lands; two re-embed chains for the same

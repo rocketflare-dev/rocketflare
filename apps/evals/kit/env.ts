@@ -13,13 +13,19 @@
  */
 import { loadConfig } from '@/config'
 import { createTestEnv, type TestEnv } from '../../web/tests/mocks/bindings'
-import { evalProvider } from './providers'
+import { evalProvider, evalReranker } from './providers'
 
 export const EVAL_MODEL = process.env.EVAL_MODEL || undefined
 export const EVAL_JUDGE_MODEL = process.env.EVAL_JUDGE_MODEL || undefined
 /** `--provider` / `--judge-provider`: `anthropic` (default, the platform key), `fireworks`, `gemini`. */
 export const EVAL_PROVIDER = evalProvider(process.env.EVAL_PROVIDER)
 export const EVAL_JUDGE_PROVIDER = evalProvider(process.env.EVAL_JUDGE_PROVIDER)
+/**
+ * `--rerank none|fireworks`: which reranker knowledge search uses. `none` (the default) searches
+ * with `rerank: false`, because the test `AI` stub answers reranks in fused order and would only
+ * add noise; `fireworks` writes a tenant `rerank` row (`useRerank`) on FIREWORKS_API_KEY.
+ */
+export const EVAL_RERANK = evalReranker(process.env.EVAL_RERANK)
 
 /** Why suites cannot run here, or null when both the target's and the judge's models resolve. */
 export function evalSkipReason(): string | null {

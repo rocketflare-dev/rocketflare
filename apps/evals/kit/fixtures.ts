@@ -19,8 +19,8 @@ import {
 import { setupTestDatabase } from '../../web/tests/helpers/db'
 import type { TestEnv } from '../../web/tests/mocks/bindings'
 import type { Corpus } from './corpus'
-import { EVAL_MODEL, EVAL_PROVIDER, evalConfig, evalWorkerEnv } from './env'
-import { useEmbeddings, useProvider } from './providers'
+import { EVAL_MODEL, EVAL_PROVIDER, EVAL_RERANK, evalConfig, evalWorkerEnv } from './env'
+import { useEmbeddings, useProvider, useRerank } from './providers'
 
 export const evalDb = () => setupTestDatabase()
 
@@ -100,7 +100,7 @@ const corpusWorlds = new Map<string, Promise<CorpusWorld>>()
 
 /**
  * Ingest `corpus` once per process (memoised by name) through the real `ingestText`, with a REAL
- * embedder (`useEmbeddings`), each document back-dated to its front-matter `date` so "when was this
+ * embedder (`useEmbeddings`) and the `--rerank` reranker (`useRerank`), each document back-dated to its front-matter `date` so "when was this
  * written" reads true. Every case then runs in this tenant: a corpus is too big to re-ingest per
  * case, and its cases only read it. A document that fails to index fails the world — a corpus with
  * a hole scores a regression that is not one.
@@ -116,6 +116,7 @@ export function corpusWorld(corpus: Corpus, promptKeys: readonly string[]): Prom
     const cookie = sessionCookieHeader(await createTestSession(db, user.id, tenant.id))
     await useProvider(db, cfg, tenant.id, EVAL_PROVIDER, EVAL_MODEL)
     await useEmbeddings(db, cfg, tenant.id)
+    await useRerank(db, cfg, tenant.id, EVAL_RERANK)
     if (EVAL_MODEL) {
       await db
         .insert(agentModels)

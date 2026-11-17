@@ -55,7 +55,7 @@ inline and framable are different properties, `filePath(id)`, `fileSchema`/`uplo
 `jobs.ts` also carries `document.index` (`{ tenantId, documentId }` — re-index a `documents` row) ·
 **`ai/`** (barrel `ai/index.ts`, deep imports `@rocketflare/shared/ai/<file>` equally valid):
 `config.ts` — `AI_PROVIDERS`/`aiProviderSchema` (append LAST: the DB column is a text enum; `typesafe`
-serves `decisions` only), `AI_SCOPES` (`chat | embeddings | decisions`), readiness `source`
+serves `decisions` only), `AI_SCOPES` (`chat | embeddings | decisions | rerank` — a rerank row is `openai_compatible` (a Cohere-style `/rerank`) or `workers_ai`; `WORKERS_AI_RERANK_MODEL`, `DEFAULT_RERANK_MODELS`, presets carry optional `scopes` and `presetsFor(provider, scope?)` filters on them), readiness `source`
 `tenant | platform | fallback | none` (`fallback` = decisions answered by the chat model),
 `thinkingSchema` + `THINKING_*` bounds, `aiConfigSchema` (sanitised row:
 `hasCredential`, never a key), `upsertAiConfigRequestSchema` (`apiKey` write-only), `testAiConfigRequest/ResponseSchema`,
@@ -126,7 +126,7 @@ the truth, the protocol shape is a projection of it — and the HITL pause/answe
 `aiConfigId`/`model`), `agentModelEntrySchema` (`effective.source: assignment | tenant | platform | none`) ·
 `embeddings.ts` — `documentSchema` (never the text or vectors), `INGEST_TEXT_MAX_CHARS`, `ingestTextRequestSchema`,
 `documentListQuerySchema`, `searchRequestSchema` (`SEARCH_MAX_LIMIT`), `searchHitSchema` (RRF `score`, `rank`,
-`denseRank`/`lexicalRank`), `searchResponseSchema`, and the read side: `documentContentSchema` + `documentContentQuerySchema`
+`denseRank`/`lexicalRank`, `rerankScore` 0–1 or null), `searchResponseSchema`, and the read side: `documentContentSchema` + `documentContentQuerySchema`
 (`DOCUMENT_WINDOW_CHARS` 20 000, `DOCUMENT_WINDOW_MAX_CHARS` 50 000) + `windowStart()` (snap an offset
 down to a window boundary so a deep link and the reader's paging share one cache entry),
 `documentPassageSchema`, `documentCardSchema` + `DOCUMENT_EXCERPT_CHARS` + `documentPath()` (the ONE
@@ -134,7 +134,7 @@ place the viewer route is written) + `documentCardFromDocument()`, and the pure
 `documentCardsFromToolResult()` / `documentCardsFromToolCalls()` + `KNOWLEDGE_TOOLS` +
 `documentExcerpt()` that the chat stream, the agent-run projection and the UI's persisted-message
 rendering all share · `usage.ts` — `aiUsageSchema`, `aiUsageSummarySchema`,
-`aiUsageSummaryQuerySchema` (`costMicrocents` nullable, `unpricedCalls`) · `pricing.ts` — `MODEL_PRICES`
+`aiUsageSummaryQuerySchema` (`costMicrocents` nullable, `unpricedCalls`), `KNOWLEDGE_USAGE_FEATURES` (the `knowledge.*` feature names) · `pricing.ts` — `MODEL_PRICES`
 (USD per million tokens, per provider, longest-prefix model match), `PRICES_UPDATED`, `priceFor`,
 `estimateCostMicrocents`; the ONE place to correct rates, unknown model → null, never a guess. `errors.ts` codes added: `ai_not_configured`,
 `agent_runs_not_configured`, `agent_run_active`; `permissions.ts` subjects added: `AiConfig`, `Prompt`,

@@ -14,7 +14,7 @@ manual: true
 
 ## What changed
 
-The knowledge base becomes measurable and structure-aware: eval corpora and retrieval scorers, heading- and table-aware chunks under a generated lexical index, model-consistent dense search with re-embedding, content-hash dedupe, and failed-document retry behind a dead-letter queue.
+The knowledge base becomes measurable and structure-aware: eval corpora and retrieval scorers, heading- and table-aware chunks, model-consistent dense search with re-embedding, content-hash dedupe, failed-document retry, a reranker seam and metered knowledge spend.
 
 - Eval corpora: a directory under `apps/evals/datasets/` with `docs/*.md` and answer keys (`retrieval.jsonl`, `chat.jsonl`, `entities.jsonl`, `facts.jsonl`, `conflicts.jsonl`), ingested once with a real embedder (`docs/EVALS.md` § Corpora).
 - New suite `knowledge · retrieval` and judges `RecallAtK(k)`, `MRR()`, `ContextPrecision(k)`; `chatHarness({ corpus })` runs a corpus's `chat.jsonl` inside `chat · knowledge`.
@@ -34,6 +34,12 @@ The knowledge base becomes measurable and structure-aware: eval corpora and retr
 - The jobs consumer dead-letters into `<app>-jobs-dlq` / `<app>-jobs-dlq-staging` (`dead_letter_queue`), created by `pnpm provision cloudflare`; no consumer is bound to it.
 - Inline indexing is an `ingest document` span (under the active span, else a root on the request tracer) with its embeddings batches as children; `IngestDeps.tracer` is new.
 - `indexDocument` takes `markFailedOnError: false`; `markDocumentFailed` and `resolveEmbeddingsModel` (the resolved model, no client) are exported.
+- Reranking (`services/ai/rerank.ts`, the `RerankFn` seam): search reranks the top 50 fused candidates, then cuts to `limit`; hits gain `rerankScore` (0–1, null when nothing reranked) and `rank` is the final order. `searchKnowledgeChunks` answers `rerank` (applied, model, latency or the skip reason) and takes `rerank: false` and `defer`.
+- New AI scope `rerank` (`AI_SCOPES`, `aiReadinessSchema.rerank`): a tenant row is `openai_compatible` (a Cohere-style `POST {base}/rerank`; dialect from the host — Cohere, Voyage, Fireworks presets) or `workers_ai`; with neither, Workers AI `@cf/baai/bge-reranker-base` when `[ai]` is bound, else no reranking. Settings → AI shows a Rerankers section and tests a row by reranking two documents.
+- `RERANK_MIN_SCORE` (optional `[vars]`, 0–1, unset = off) drops reranked hits below it.
+- Knowledge metering: document, re-embed and query embeddings and every rerank call write `ai_usage` rows `knowledge.embeddings` / `knowledge.rerank` (`KNOWLEDGE_USAGE_FEATURES`; `knowledge.extraction` is reserved), with the provider's token count or a character estimate; a ledger failure never fails an ingest or a search. `EmbeddingsClient.embedWithUsage` is new and optional. `bge-reranker-base` is priced.
+- `KNOWLEDGE_TENANT_DAILY_COST_USD` (optional `[vars]`, unset = no cap) and `knowledgeSpendToday` / `knowledgeExtractionAllowed` in `services/ai/usage.ts`: only extraction (phase 2) will pause at the cap; indexing and search never do.
+- `pnpm eval … --rerank none|fireworks` measures retrieval with a reranker; the summary prints the median rerank latency.
 - Stored document text has CRLF normalised to LF; search hits (and `searchKnowledge` hits) gain `headingPath` and `page` (always null: `toMarkdown` emits no page markers).
 
 ## How to apply
@@ -47,12 +53,18 @@ The knowledge base becomes measurable and structure-aware: eval corpora and retr
 7. Add the jobs dead-letter queue to BOTH tomls, named from your app's own queue names: in `apps/web/wrangler.toml`'s `[[queues.consumers]]` set `dead_letter_queue = "<app>-jobs-dlq"`, and in `apps/web/wrangler.staging.toml`'s set `dead_letter_queue = "<app>-jobs-dlq-staging"` (queue names are account-scoped, so staging's must differ). Bind NO consumer to it: the name shares the `<app>-jobs` prefix `queue.ts` dispatches on, so a consumer would reprocess every dead message.
 8. Create each environment's dead-letter queue before its next deploy: port the `DLQ_NAME` lines of `apps/web/scripts/cf-provision.sh` and run `pnpm provision cloudflare production` and `pnpm provision cloudflare staging`, or by hand `pnpm --filter @<scope>/web exec wrangler queues create <app>-jobs-dlq` and `… queues create <app>-jobs-dlq-staging`. A deploy whose `dead_letter_queue` does not exist fails.
 
+9. Port the reranker and metering from the release: `apps/web/src/api/services/ai/rerank.ts` (new), `resolveRerank` / `rerankClientFromRow` and the `rerank` readiness in `resolve.ts`, the rerank step and usage rows in `retrieval.ts`, the usage rows in `ingest.ts`'s `indexDocument`, `embedCounted` / `recordKnowledgeUsage` / `knowledgeSpendToday` / `knowledgeExtractionAllowed` in `usage.ts`, `embedWithUsage` in `types.ts` and `client.ts`, the rerank probe in `connection-test.ts`, the `rerank` scopes and `suggestedModels.rerank` in `providers.ts`, `rerankAttributes` / `rerankOutcomeAttributes` in `observability/genai-attributes.ts`, `'rerank'` in `AI_SCOPE_VALUES` (`db/schema/ai-configs.ts`, a text enum: no migration), the `defer` pass in `routes/ai-documents.ts`'s `/search`, and in `packages/shared/src/ai/` `config.ts` (`AI_SCOPES`, `aiReadinessSchema.rerank`, `WORKERS_AI_RERANK_MODEL`, `DEFAULT_RERANK_MODELS`, `ProviderPreset.scopes`, the rerank presets, `presetsFor(provider, scope?)`), `embeddings.ts` (`rerankScore`), `usage.ts` (`KNOWLEDGE_USAGE_FEATURES`) and `pricing.ts`. In the UI, `pages/settings/AI.tsx` and `AiConfigModal.tsx`.
+10. Add `RERANK_MIN_SCORE` and `KNOWLEDGE_TENANT_DAILY_COST_USD` to `apps/web/src/config.ts`. They are optional; if you want either on, add it to BOTH tomls' `[vars]`. A test or UI fixture that builds an `AiReadiness` needs `rerank`, and one that builds a `SearchHit` needs `rerankScore`. Code that counts every `ai_usage` row of a tenant now also sees `knowledge.*` rows.
+11. With `[ai]` bound, every search now makes one extra Workers AI call (bge-reranker-base over up to 50 passages). Pass `rerank: false` from a caller that must not pay for it. To measure a vendor reranker on your corpus, port `apps/evals/kit/providers.ts` (`useRerank`), `env.ts`, `fixtures.ts`, `retrieval.ts` and `scripts/{eval,lib}.mjs`, then run `pnpm eval retrieval --rerank fireworks`.
+
 ## Conflicts to expect
 
 - `apps/evals/suites/chat/knowledge.eval.ts` → also runs every corpus's `chat.jsonl` → keep your own judges and add the corpus loop.
 - `apps/web/src/api/services/ai/chunking.ts` → rewritten (exact slices, sections, tables; `TextChunk` gains `charStart`, `charEnd`, `headingPath`, `tableHeader`, `page`) → take the kit's file and re-apply a custom window size through `ChunkOptions`.
 - `apps/web/wrangler.toml` / `wrangler.staging.toml` → the commented `# dead_letter_queue` line becomes a real one → keep your own queue name with `-dlq` (and `-dlq-staging`) appended.
 - `apps/web/src/api/routes/ai-documents.ts` → `/ingest` and `/upload` answer `ingestDocumentResponseSchema` (`200` on a duplicate) → a client that asserts `201` on every ingest must accept `200`.
+
+- `apps/web/src/api/services/ai/retrieval.ts` → reranks after fusion and renumbers `rank` → a caller that read `rank` as the RRF position should read `score` (still the RRF score) instead.
 
 ## Verify
 
@@ -63,3 +75,4 @@ The knowledge base becomes measurable and structure-aware: eval corpora and retr
 5. `pnpm --filter @<scope>/web test:config` passes, including `chunking.test.ts`, `search-text-config.test.ts` and the dead-letter case in `wrangler-parity.test.ts`.
 6. As an admin, `GET /api/ai/documents/health` answers `200` with `staleEmbeddings`; `POST /api/ai/documents/reembed` answers `202`.
 7. `pnpm --filter @<scope>/web exec wrangler queues list` shows `<app>-jobs-dlq` (and `<app>-jobs-dlq-staging` on the staging account).
+8. `GET /api/ai/config/readiness` answers a `rerank` entry; a `POST /api/ai/documents/search` hit carries `rerankScore`, and `select feature, count(*) from ai_usage where feature like 'knowledge.%' group by 1` shows `knowledge.embeddings` rows after an ingest.

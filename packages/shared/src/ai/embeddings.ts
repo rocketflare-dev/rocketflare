@@ -139,11 +139,16 @@ export const searchHitSchema = z.object({
   charOffset: z.number().int().nonnegative().nullable(),
   /** Reciprocal-rank-fusion score — higher is better; NOT a cosine similarity. */
   score: z.number(),
-  /** 1-based position in the fused order. */
+  /** 1-based position in the answer — the reranked order when a reranker ran, else the fused one. */
   rank: z.number().int().positive(),
   /** Which signal(s) found it: 1-based rank in that list, or null. */
   denseRank: z.number().int().positive().nullable(),
   lexicalRank: z.number().int().positive().nullable(),
+  /**
+   * The reranker's relevance score in [0, 1] (every reranker is mapped onto that scale); null
+   * when no reranker ran — none configured, too few candidates, or it failed or timed out.
+   */
+  rerankScore: z.number().min(0).max(1).nullable(),
 })
 export type SearchHit = z.infer<typeof searchHitSchema>
 

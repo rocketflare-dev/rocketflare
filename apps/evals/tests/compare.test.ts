@@ -4,6 +4,7 @@ import {
   baselinesFrom,
   compareScores,
   extractCases,
+  medianOf,
   parseArgs,
   renderSummary,
   runHeader,
@@ -116,5 +117,18 @@ describe('parseArgs', () => {
     })
     expect(() => parseArgs(['--nope'])).toThrow('unknown flag --nope')
     expect(() => parseArgs(['--model'])).toThrow('--model needs a value')
+    expect(parseArgs(['retrieval', '--rerank', 'fireworks'])).toMatchObject({
+      filters: ['retrieval'],
+      rerank: 'fireworks',
+    })
+    expect(() => parseArgs(['--rerank', 'cohere'])).toThrow('--rerank is one of none, fireworks')
+  })
+})
+
+describe('medianOf', () => {
+  it('ignores nulls, rounds an even median, and is null for nothing', () => {
+    expect(medianOf([null, 300, 100, 200])).toEqual({ median: 200, count: 3 })
+    expect(medianOf([100, 201])).toEqual({ median: 151, count: 2 })
+    expect(medianOf([null])).toBeNull()
   })
 })

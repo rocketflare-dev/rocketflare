@@ -46,6 +46,7 @@ import type {
   ChatResult,
   ContentBlock,
   EmbeddingsClient,
+  EmbedResult,
   RequestDefaults,
   StopReason,
   WorkersAiBinding,
@@ -1671,23 +1672,34 @@ function createOpenAiEmbeddings(opts: EmbeddingsClientOptions): EmbeddingsClient
     )
   const apiKey = opts.apiKey
   const fetchImpl = opts.fetch ?? fetch
+  const embedWithUsage = async (texts: string[]): Promise<EmbedResult> => {
+    if (texts.length === 0) return { vectors: [], inputTokens: 0 }
+    try {
+      const res = await postJson(fetchImpl, `${base}/embeddings`, apiKey, {
+        model: opts.model,
+        input: texts,
+        dimensions: EMBEDDING_DIM,
+      })
+      const json = (await res.json()) as {
+        data: Array<{ index: number; embedding: number[] }>
+        usage?: { prompt_tokens?: unknown; total_tokens?: unknown }
+      }
+      const tokens = json.usage?.prompt_tokens ?? json.usage?.total_tokens
+      return {
+        vectors: json.data.sort((a, b) => a.index - b.index).map(d => d.embedding),
+        inputTokens: typeof tokens === 'number' && Number.isFinite(tokens) ? tokens : null,
+      }
+    } catch (err) {
+      throw normalizeAiError(err, provider)
+    }
+  }
   return {
     provider,
     model: opts.model,
     dimension: EMBEDDING_DIM,
+    embedWithUsage,
     async embed(texts) {
-      if (texts.length === 0) return []
-      try {
-        const res = await postJson(fetchImpl, `${base}/embeddings`, apiKey, {
-          model: opts.model,
-          input: texts,
-          dimensions: EMBEDDING_DIM,
-        })
-        const json = (await res.json()) as { data: Array<{ index: number; embedding: number[] }> }
-        return json.data.sort((a, b) => a.index - b.index).map(d => d.embedding)
-      } catch (err) {
-        throw normalizeAiError(err, provider)
-      }
+      return (await embedWithUsage(texts)).vectors
     },
   }
 }
@@ -1695,22 +1707,25 @@ function createOpenAiEmbeddings(opts: EmbeddingsClientOptions): EmbeddingsClient
 function createWorkersAiEmbeddings(opts: EmbeddingsClientOptions): EmbeddingsClient {
   const ai = opts.ai as WorkersAiBinding | undefined
   if (!ai) throw new AiError('unavailable', 'workers_ai', 'The AI binding is not configured')
+  const embed = async (texts: string[]): Promise<number[][]> => {
+    if (texts.length === 0) return []
+    try {
+      const out = (await ai.run(opts.model, { text: texts })) as { data?: number[][] }
+      const data = out?.data
+      if (!Array.isArray(data))
+        throw new AiError('unknown', 'workers_ai', 'Unexpected Workers AI response shape')
+      return data
+    } catch (err) {
+      throw normalizeAiError(err, 'workers_ai')
+    }
+  }
   return {
     provider: 'workers_ai',
     model: opts.model,
     dimension: EMBEDDING_DIM,
-    async embed(texts) {
-      if (texts.length === 0) return []
-      try {
-        const out = (await ai.run(opts.model, { text: texts })) as { data?: number[][] }
-        const data = out?.data
-        if (!Array.isArray(data))
-          throw new AiError('unknown', 'workers_ai', 'Unexpected Workers AI response shape')
-        return data
-      } catch (err) {
-        throw normalizeAiError(err, 'workers_ai')
-      }
-    },
+    embed,
+    // Workers AI reports no token count for embeddings: null, so the meter estimates.
+    embedWithUsage: async texts => ({ vectors: await embed(texts), inputTokens: null }),
   }
 }
 

@@ -172,7 +172,7 @@ only, `install.sh` and the release and maintainer-hook scripts, which the rename
 ## Not included (by design)
 
 Billing and subscriptions, Vectorize (vectors live in pgvector under the tenant predicate), OCR of
-images (document conversion covers PDF/Office/HTML, not pictures), reranking, prompt versioning,
+images (document conversion covers PDF/Office/HTML, not pictures), prompt versioning,
 reporting/export, and any product domain. Each is a documented extension point in `docs/CONCEPTS.md`; the subsystem sections
 there list every known gap.
 

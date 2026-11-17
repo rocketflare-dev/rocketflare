@@ -343,7 +343,14 @@ describe('GET /api/ai/config + DELETE', () => {
       defaultMaxOutputTokens: number
     }>(await request('/api/ai/config/providers', { headers: a.cookie }))
     expect(body.defaultMaxOutputTokens).toBe(16384)
-    expect(body.items.find(p => p.id === 'workers_ai')?.scopes).toEqual(['chat', 'embeddings'])
+    expect(body.items.find(p => p.id === 'workers_ai')?.scopes).toEqual([
+      'chat',
+      'embeddings',
+      'rerank',
+    ])
+    // A rerank row is a Cohere-style endpoint behind a bearer key: the OpenAI-compatible provider.
+    expect(body.items.find(p => p.id === 'openai_compatible')?.scopes).toContain('rerank')
+    expect(body.items.find(p => p.id === 'anthropic')?.scopes).not.toContain('rerank')
     expect(body.items.find(p => p.id === 'anthropic_compatible')?.presets.length).toBeGreaterThan(0)
   })
 })
@@ -359,6 +366,8 @@ describe('GET /api/ai/config/readiness', () => {
       chat: { ready: false, source: 'none' },
       embeddings: { ready: false, source: 'none' },
       decisions: { ready: false, source: 'none' },
+      // No binding and no row: no reranking — search keeps its fused order.
+      rerank: { ready: false, source: 'none' },
     })
 
     const platform = createTestEnv({
@@ -407,6 +416,12 @@ describe('GET /api/ai/config/readiness', () => {
       source: 'platform',
       provider: 'workers_ai',
       model: WORKERS_AI_CHAT_MODEL,
+    })
+    expect(r.rerank).toEqual({
+      ready: true,
+      source: 'platform',
+      provider: 'workers_ai',
+      model: '@cf/baai/bge-reranker-base',
     })
 
     await request(

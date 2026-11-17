@@ -1,6 +1,7 @@
 /**
- * Settings → AI: readiness for `chat`, `embeddings` and `decisions` (TypeSafe's Jev
- * behind `ctx.decide`; without one the chat model answers, uncalibrated) — what the resolver WOULD pick, with
+ * Settings → AI: readiness for `chat`, `embeddings`, `decisions` (TypeSafe's Jev
+ * behind `ctx.decide`; without one the chat model answers, uncalibrated) and `rerank` (optional —
+ * "Off" rather than a warning, because search works without one) — what the resolver WOULD pick, with
  * its source), then one table per scope — label, provider, model, default and credential badges,
  * and for `manage AiConfig` holders: set default, test, edit, delete. Members (`read`) see the
  * readiness and a read-only list. Credentials never reach the browser (`hasCredential` only).
@@ -52,17 +53,25 @@ const SCOPES: { scope: AiScope; title: string; description: string }[] = [
     description:
       'Answer the typed questions agents ask (ctx.decide) with calibrated probabilities. Without one, the chat model answers with its own, uncalibrated numbers.',
   },
+  {
+    scope: 'rerank',
+    title: 'Rerankers',
+    description:
+      'Reorder knowledge-search results by how well each passage answers the question. Workers AI needs no key; without one, search keeps its fused order.',
+  },
 ]
 
 const SCOPE_TITLE: Record<AiScope, string> = {
   chat: 'Chat',
   embeddings: 'Embeddings',
   decisions: 'Decisions',
+  rerank: 'Reranking',
 }
 const SCOPE_NOUN: Record<AiScope, string> = {
   chat: 'chat',
   embeddings: 'embedding',
   decisions: 'decision',
+  rerank: 'reranker',
 }
 
 type ModalTarget = { scope: AiScope; editing: AiConfig | null } | null
@@ -163,6 +172,9 @@ function ReadinessCard({
         <span className="text-sm font-medium">{title}</span>
         {readiness.ready ? (
           <span className="badge badge-success badge-sm">Ready</span>
+        ) : scope === 'rerank' ? (
+          // Optional: search works without one, so its absence is no warning.
+          <span className="badge badge-ghost badge-sm">Off</span>
         ) : (
           <span className="badge badge-warning badge-sm">Not configured</span>
         )}
@@ -190,6 +202,8 @@ function ReadinessCard({
           <PlusIcon className="w-3.5 h-3.5" />
           Set up {title.toLowerCase()}
         </button>
+      ) : scope === 'rerank' ? (
+        <p className="text-xs text-muted">Search keeps its fused order.</p>
       ) : (
         <p className="text-xs text-muted">Ask an administrator to add a provider.</p>
       )}
@@ -270,9 +284,11 @@ function ScopeSection({
           description={
             scope === 'decisions'
               ? 'The platform TypeSafe key answers if one is set; otherwise the chat model does.'
-              : canManage
-                ? 'The platform default answers until you add one.'
-                : 'The platform default answers, if one is set.'
+              : scope === 'rerank'
+                ? 'Workers AI bge-reranker-base reranks when the AI binding is on; otherwise search keeps its fused order.'
+                : canManage
+                  ? 'The platform default answers until you add one.'
+                  : 'The platform default answers, if one is set.'
           }
         />
       ) : (

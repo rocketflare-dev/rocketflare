@@ -324,10 +324,11 @@ aiDocumentsRouter.get('/', validate('query', documentListQuerySchema), async c =
 // ---- POST /api/ai/documents/search ----------------------------------------------------------------
 
 aiDocumentsRouter.post('/search', validate('json', searchRequestSchema), async c => {
-  const { db, cfg, auth } = withAuthAndDb(c)
+  const { db, cfg, auth, defer } = withAuthAndDb(c)
   guardPermission(c, 'read', 'Document')
   const request = c.req.valid('json')
-  const hits = await searchChunks(db, cfg, c.env, accessScopeOf(auth), request)
+  // The usage rows (query embedding, rerank) are written after the response, in `waitUntil`.
+  const hits = await searchChunks(db, cfg, c.env, accessScopeOf(auth), { ...request, defer })
   const body: SearchResponse = { query: request.query, hits }
   return c.json(body)
 })

@@ -321,11 +321,18 @@ export class RecordingAi {
   /**
    * Default answers: a chat call (`inputs.messages`) gets `{ response: 'ok', usage }` in the
    * non-streamed shape — override `respond` with an SSE `ReadableStream` to exercise streaming —
-   * and an embeddings call (`inputs.text`) gets deterministic 1024-dim vectors.
+   * an embeddings call (`inputs.text`) gets deterministic 1024-dim vectors, and a rerank call
+   * (`inputs.contexts`, `@cf/baai/bge-reranker-base`) scores the contexts in the order given —
+   * descending, inside [0, 1] — so the stub reranker never changes a search's order. A test that
+   * needs a real reordering overrides `respond`.
    */
   respond: (model: string, inputs: Record<string, unknown>) => unknown = (_model, inputs) => {
     if (Array.isArray(inputs.messages)) {
       return { response: 'ok', usage: { prompt_tokens: 3, completion_tokens: 1, total_tokens: 4 } }
+    }
+    if (Array.isArray(inputs.contexts)) {
+      const n = inputs.contexts.length
+      return { response: inputs.contexts.map((_, id) => ({ id, score: 1 - id / (n + 1) })) }
     }
     const text = inputs.text
     const texts = Array.isArray(text) ? text : [String(text ?? '')]

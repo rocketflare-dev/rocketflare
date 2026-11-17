@@ -35,6 +35,7 @@ import {
   INGEST_TEXT_MAX_CHARS,
   resolveDocumentUploadType,
 } from '@rocketflare/shared/ai/embeddings'
+import { KNOWLEDGE_USAGE_FEATURES } from '@rocketflare/shared/ai/usage'
 import type { GroupRef, ResourceVisibility } from '@rocketflare/shared/groups'
 import { and, asc, eq, isNull, ne, sql } from 'drizzle-orm'
 import type { AppConfig } from '../../../config'
@@ -62,6 +63,7 @@ import { ConversionFailedError, canConvert, convertToText, decodeText } from './
 import { normalizeAiError, redactSecrets } from './errors'
 import { type ResolvedEmbeddings, resolveEmbeddings } from './resolve'
 import type { AiEnv } from './types'
+import { embedCounted, recordKnowledgeUsage } from './usage'
 
 /** Documents with more chunks than this are indexed by the `document.index` job. */
 export const INLINE_CHUNK_LIMIT = 50
@@ -219,13 +221,23 @@ export async function indexDocument(
   })
   if (!row) throw new Error(`documents: ${documentId} not found in tenant`)
   const pieces = options.chunks ?? chunkText(row.content ?? '')
+  // Tokens the provider was sent, batch by batch — recorded as `knowledge.embeddings` whether the
+  // index then succeeds or not (a batch that answered was billed).
+  let embeddedTokens = 0
+  let embedder: ResolvedEmbeddings | undefined
   try {
     const hash = await contentHash(row.content ?? '')
     const embeddings = options.embeddings ?? (await resolveEmbeddings(db, cfg, env, tenantId))
+    embedder = embeddings
     const vectors = await embedInBatches(
       // One `embeddings <model>` span per batch, under the active span (an agent run, the
       // `document.index` job) — untraced where nothing is active.
-      texts => traceEmbed(embeddings, texts, () => embeddings.client.embed(texts)),
+      texts =>
+        traceEmbed(embeddings, texts, async () => {
+          const counted = await embedCounted(embeddings.client, texts)
+          embeddedTokens += counted.inputTokens
+          return counted.vectors
+        }),
       pieces.map(p => embeddingInput(p))
     )
     const [updated] = await db.transaction(async tx => {
@@ -268,6 +280,20 @@ export async function indexDocument(
   } catch (err) {
     if (options.markFailedOnError !== false) await markDocumentFailed(db, tenantId, documentId, err)
     throw err
+  } finally {
+    // Never fails the index: `recordKnowledgeUsage` logs and swallows a ledger failure.
+    if (embedder && embeddedTokens > 0) {
+      await recordKnowledgeUsage(db, [
+        {
+          tenantId,
+          userId: row.ownerUserId,
+          feature: KNOWLEDGE_USAGE_FEATURES.embeddings,
+          provider: embedder.provider,
+          model: embedder.model,
+          inputTokens: embeddedTokens,
+        },
+      ])
+    }
   }
 }
 

@@ -147,6 +147,8 @@ mints a tenant API key `cli:<host>` → `?key=&tenant_id=&tenant_name=`; stored 
 `MAX_OWNED_TENANTS_PER_USER` (10) · `INVITATION_EMAILS_PER_USER_PER_DAY` (500) ·
 `INVITATION_EMAILS_PER_TENANT_PER_DAY` (1000) (optional, undeclared = these defaults) · `AGENT_RUN_MAX_TOKENS` / `AGENT_RUN_MAX_COST_USD` /
 `AGENT_TENANT_DAILY_COST_USD` (D39 budgets, unset = no cap; `meta.budget` overrides per agent) ·
+`KNOWLEDGE_TENANT_DAILY_COST_USD` (unset = no cap; pauses fact extraction only, never indexing or search) ·
+`RERANK_MIN_SCORE` (drop reranked hits below it; unset = off) ·
 `CHAT_KNOWLEDGE_TOOLS` (`true|false` — chat may call the knowledge tools) ·
 `CHAT_HISTORY_MAX_CHARS` (history a turn replays; older turns are summarised by `chat.compact`) ·
 `FEATURES_ENABLED` (D30 — comma-separated feature keys this deployment ships at all; fail-closed,

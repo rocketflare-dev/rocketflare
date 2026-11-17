@@ -91,6 +91,18 @@ wrong hit is possible. Put one anywhere under `datasets/` (the kit's own fixture
   own `searchKnowledgeChunks` and grades the ranking: `Recall@5`, `Recall@10` and `MRR` in code,
   `ContextPrecision` by the judge over the top 5. No chat model runs, and no query fails the run —
   the summary prints each suite's mean row, which is what to read.
+- **`--rerank none|fireworks`** measures retrieval with and without a reranker. `none` (the default)
+  searches with `rerank: false`, because the test `AI` stub's reranker answers in fused order and
+  measures nothing. `fireworks` writes a tenant `rerank` row (the kit's `fireworks-rerank` preset,
+  `fireworks/qwen3-reranker-8b`, from `FIREWORKS_API_KEY`), so the run goes through
+  `resolveRerank`'s tenant tier; the summary adds the median rerank latency. Workers AI's
+  `bge-reranker-base` cannot be measured here: evals run in Node, with no real `AI` binding.
+  On the kit fixture (2026-11-17, Gemini embeddings, 60 queries): without a reranker R@5 0.87,
+  R@10 0.97, MRR 0.66, ContextPrecision 0.83; with Fireworks R@5 1.00, R@10 1.00, MRR 0.84,
+  ContextPrecision 0.93, at a median 821 ms per search (p90 1.2 s, max 1.9 s) for 50 candidates.
+  Every answer-key passage scored ≥ 0.18 on that reranker, so `RERANK_MIN_SCORE=0.15` keeps all
+  of them and drops about 73 % of the other hits; the scale is per model, so the kit leaves the
+  threshold off and an app sets it from its own run.
 - `tests/corpus.test.ts` (in the gate) checks every corpus: each passage and quote is verbatim in
   its document, every id resolves, every conflict pairs two planted facts.
 
@@ -125,6 +137,7 @@ pnpm eval agents --model claude-haiku-5-5 --judge-model claude-opus-5-5
 pnpm eval knowledge --provider gemini                      # gemini-2.5-flash as the target
 pnpm eval knowledge --provider fireworks --model accounts/fireworks/models/gpt-oss-120b
 pnpm eval knowledge --judge-provider gemini                # a non-Claude judge
+pnpm eval retrieval --rerank fireworks                     # retrieval with a reranker
 ```
 
 `--provider anthropic` (the default) is the resolver's platform tier. `fireworks` and `gemini`

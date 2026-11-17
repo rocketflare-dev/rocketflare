@@ -56,6 +56,7 @@ const hit = (rank: number, overrides: Record<string, unknown> = {}) => ({
   charOffset: (rank - 1) * 1000,
   denseRank: rank,
   lexicalRank: null,
+  rerankScore: null,
   ...overrides,
 })
 

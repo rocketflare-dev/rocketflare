@@ -13,20 +13,40 @@
  * offset is the stored `chunks.char_start` (exact: the chunk is that slice of the text); a row
  * written before 0.37.0 has none and falls back to `position()` of its text, approximate by
  * construction (first occurrence, Postgres characters against JS's UTF-16). The tenant predicate
- * is on EVERY query; `documentId` narrows further. No rerank in v1 (a `RerankFn` seam is the
- * documented extension).
+ * is on EVERY query; `documentId` narrows further.
+ *
+ * **Reranking** (`rerank.ts`): the top `RERANK_CANDIDATES` (50) fused candidates go to the reranker
+ * `resolveRerank` picks (the tenant's `rerank` row → Workers AI bge-reranker-base → none), are
+ * reordered by its score (`rerankScore`, 0–1), filtered by `RERANK_MIN_SCORE` when that is set,
+ * then cut to `limit`. No reranker, fewer than two candidates, `rerank: false`, a failure or a
+ * timeout all answer the fused order — the retrieval span says which.
+ *
+ * **Metering**: the query embedding(s) and the rerank call are `ai_usage` rows
+ * (`knowledge.embeddings`, `knowledge.rerank`), written alongside the passage lookup or through
+ * the caller's `defer`, never able to fail the search.
  */
 import type { SearchHit, SearchRequest } from '@rocketflare/shared/ai/embeddings'
+import { KNOWLEDGE_USAGE_FEATURES } from '@rocketflare/shared/ai/usage'
 import { and, eq, inArray, isNull, or, sql } from 'drizzle-orm'
 import type { AppConfig } from '../../../config'
 import type { Database } from '../../../db/client'
 import { chunks, documents } from '../../../db/schema'
 import { traceEmbed, traceStep } from '../../observability/context'
+import { rerankOutcomeAttributes } from '../../observability/genai-attributes'
 import { type AccessScope, visibleDocuments } from '../access'
+import { CHARS_PER_TOKEN } from './chunking'
 import { AiNotConfiguredError } from './errors'
-import { anyTermTsquery, candidatePoolSize, fuseDenseLegs } from './fusion'
-import { type ResolvedEmbeddings, resolveEmbeddings, resolvePlatformEmbeddings } from './resolve'
+import { anyTermTsquery, candidatePoolSize, type FusedItem, fuseDenseLegs } from './fusion'
+import { applyRerank, RERANK_CANDIDATES, type RerankOutcome } from './rerank'
+import {
+  type ResolvedEmbeddings,
+  type ResolvedRerank,
+  resolveEmbeddings,
+  resolvePlatformEmbeddings,
+  resolveRerank,
+} from './resolve'
 import type { AiEnv } from './types'
+import { embedCounted, type KnowledgeUsageInput, recordKnowledgeUsage } from './usage'
 
 export {
   anyTermTsquery,
@@ -96,6 +116,17 @@ export interface SearchChunksRequest extends SearchRequest {
   platformSources?: readonly string[]
   /** Checked between the embed and the queries; an aborted search throws its reason. */
   signal?: AbortSignal
+  /**
+   * `false` = answer in fused order without calling a reranker — for a caller that must not pay
+   * for one (a bulk or internal search). Absent = rerank when a reranker resolves. Never read
+   * from an HTTP body: `searchRequestSchema` has no such field.
+   */
+  rerank?: boolean
+  /**
+   * Where the usage write goes: a route passes its `defer` (`waitUntil`) so the response never
+   * waits on the ledger. Absent = written alongside the passage lookup and awaited with it.
+   */
+  defer?: (write: () => Promise<unknown>) => void
 }
 
 /** A hit, with where it came from. `platform` = a tenant-less platform document. */
@@ -112,6 +143,14 @@ export interface KnowledgeChunkSearch {
    * keyword alone (no embedder for it), so a paraphrase may have been missed.
    */
   semantic: 'used' | 'unavailable'
+  /** Whether a reranker ordered the hits, on which model, how long it took — or why not. */
+  rerank: SearchRerankOutcome
+}
+
+export interface SearchRerankOutcome
+  extends Pick<RerankOutcome, 'applied' | 'model' | 'reason' | 'latencyMs'> {
+  /** Reranked hits dropped by `RERANK_MIN_SCORE`. */
+  dropped?: number
 }
 
 /**
@@ -179,7 +218,10 @@ export function searchKnowledgeChunks(
         seq: h.seq,
         score: h.score,
       })),
-      attributes: { 'rocketflare.retrieval.hits': result.hits.length },
+      attributes: {
+        'rocketflare.retrieval.hits': result.hits.length,
+        ...rerankOutcomeAttributes(result.rerank),
+      },
     })
   )
 }
@@ -190,15 +232,101 @@ interface QueryVector {
   literal: string
 }
 
-/** Embed the query with one resolved embedder; null when it answered no vector. */
+/**
+ * Embed the query with one resolved embedder; null when it answered no vector. Pushes what the
+ * call cost onto `usage` (a `knowledge.embeddings` row once the search is done).
+ */
 async function embedQuery(
   embeddings: Pick<ResolvedEmbeddings, 'client' | 'model' | 'provider'>,
-  query: string
+  query: string,
+  usage: KnowledgeUsageInput[],
+  access: AccessScope
 ): Promise<QueryVector | null> {
-  const [vector] = await traceEmbed(embeddings, [query], () => embeddings.client.embed([query]))
+  const [vector] = await traceEmbed(embeddings, [query], async () => {
+    const counted = await embedCounted(embeddings.client, [query])
+    usage.push({
+      tenantId: access.tenantId,
+      userId: access.userId,
+      feature: KNOWLEDGE_USAGE_FEATURES.embeddings,
+      provider: embeddings.provider,
+      model: embeddings.model,
+      inputTokens: counted.inputTokens,
+    })
+    return counted.vectors
+  })
   return vector
     ? { model: embeddings.model, provider: embeddings.provider, literal: vectorLiteral(vector) }
     : null
+}
+
+/** What a reranker reads of a candidate: its title and section in front of the passage. */
+function rerankText(c: Candidate): string {
+  const where = c.headingPath ? `${c.title} › ${c.headingPath}` : c.title
+  return `${where}\n\n${c.text}`
+}
+
+/**
+ * Rerank the fused list's head (`applyRerank`, never throws), then apply `RERANK_MIN_SCORE`.
+ * Returns the new order, each item's reranker score, the outcome for the span, and pushes the
+ * reranker's usage (billed tokens, else a character estimate) when the call ran or timed out.
+ */
+async function rerankFused(
+  db: Database,
+  cfg: AppConfig,
+  env: AiEnv,
+  access: AccessScope,
+  request: SearchChunksRequest,
+  fused: FusedItem<Candidate>[],
+  usage: KnowledgeUsageInput[]
+): Promise<{
+  ordered: FusedItem<Candidate>[]
+  scores: Map<FusedItem<Candidate>, number>
+  outcome: SearchRerankOutcome
+}> {
+  const scores = new Map<FusedItem<Candidate>, number>()
+  if (request.rerank === false) {
+    return { ordered: fused, scores, outcome: { applied: false, reason: 'disabled' } }
+  }
+  if (fused.length < 2) {
+    return { ordered: fused, scores, outcome: { applied: false, reason: 'too_few' } }
+  }
+  let reranker: ResolvedRerank | null
+  try {
+    reranker = await resolveRerank(db, cfg, env, access.tenantId)
+  } catch {
+    // A row that cannot build a client (no key, a bad URL) must not cost the reader the search.
+    return { ordered: fused, scores, outcome: { applied: false, reason: 'error' } }
+  }
+  const { items, placements, outcome } = await applyRerank(
+    reranker?.client ?? null,
+    request.query,
+    fused,
+    f => rerankText(f.item),
+    { candidates: RERANK_CANDIDATES }
+  )
+  if (reranker && (outcome.applied || outcome.reason === 'timeout')) {
+    usage.push({
+      tenantId: access.tenantId,
+      userId: access.userId,
+      feature: KNOWLEDGE_USAGE_FEATURES.rerank,
+      provider: reranker.provider,
+      model: reranker.model,
+      inputTokens: outcome.inputTokens ?? Math.ceil((outcome.sentChars ?? 0) / CHARS_PER_TOKEN),
+    })
+  }
+  const summary: SearchRerankOutcome = {
+    applied: outcome.applied,
+    model: outcome.model,
+    reason: outcome.reason,
+    latencyMs: outcome.latencyMs,
+  }
+  if (!outcome.applied) return { ordered: items, scores, outcome: summary }
+  for (const [item, placement] of placements) scores.set(item, placement.score)
+  const min = cfg.RERANK_MIN_SCORE
+  if (min === undefined) return { ordered: items, scores, outcome: summary }
+  // A threshold is a relevance filter: only what the reranker scored at or above it survives.
+  const kept = items.filter(item => (scores.get(item) ?? -1) >= min)
+  return { ordered: kept, scores, outcome: { ...summary, dropped: items.length - kept.length } }
 }
 
 async function runSearch(
@@ -211,12 +339,15 @@ async function runSearch(
 ): Promise<KnowledgeChunkSearch> {
   const tenantId = access.tenantId
   const limit = request.limit ?? 10
+  // Every metered call this search makes; written once, at the end, never failing the search.
+  const usage: KnowledgeUsageInput[] = []
+  const notReranked: SearchRerankOutcome = { applied: false, reason: 'too_few' }
   const pool = candidatePoolSize(limit)
   const visible = visibleDocuments(access)
   const platformSources = [...new Set(request.platformSources ?? [])]
   const searchTenant = !request.sources || request.sources.length > 0
   const searchPlatform = platformSources.length > 0
-  if (!searchTenant && !searchPlatform) return { hits: [], semantic: 'used' }
+  if (!searchTenant && !searchPlatform) return { hits: [], semantic: 'used', rerank: notReranked }
   const scope = and(
     eq(chunks.tenantId, tenantId),
     visible,
@@ -243,9 +374,12 @@ async function runSearch(
       semantic = 'unavailable'
     }
     if (embeddings) {
-      tenantVector = await embedQuery(embeddings, request.query)
+      tenantVector = await embedQuery(embeddings, request.query, usage, access)
       // The pre-platform behaviour: an embedder that answers no vector is an empty search.
-      if (!tenantVector && !searchPlatform) return { hits: [], semantic }
+      if (!tenantVector && !searchPlatform) {
+        await writeUsage(db, request, usage)
+        return { hits: [], semantic, rerank: notReranked }
+      }
     }
   }
   // The platform query vector: the PLATFORM embedder, reusing the tenant vector when the model
@@ -260,7 +394,7 @@ async function runSearch(
       tenantVector.provider === platform.provider
     )
       platformVector = tenantVector
-    else platformVector = await embedQuery(platform, request.query)
+    else platformVector = await embedQuery(platform, request.query, usage, access)
     if (platform && !platformVector) semantic = 'unavailable'
   }
   request.signal?.throwIfAborted()
@@ -368,16 +502,23 @@ async function runSearch(
   ])
   request.signal?.throwIfAborted()
 
-  const fused = fuseDenseLegs<Candidate>(dense, lexical, c => c.id).slice(0, limit)
-  const located = await locateChunks(
-    db,
-    tenantId,
-    fused.map(f => f.item.id),
-    searchPlatform ? platformSources : []
-  )
+  const fusedAll = fuseDenseLegs<Candidate>(dense, lexical, c => c.id)
+  const reranked = await rerankFused(db, cfg, env, access, request, fusedAll, usage)
+  request.signal?.throwIfAborted()
+  const fused = reranked.ordered.slice(0, limit)
+  const [located] = await Promise.all([
+    locateChunks(
+      db,
+      tenantId,
+      fused.map(f => f.item.id),
+      searchPlatform ? platformSources : []
+    ),
+    writeUsage(db, request, usage),
+  ])
   return {
     semantic,
-    hits: fused.map(f => ({
+    rerank: reranked.outcome,
+    hits: fused.map((f, index) => ({
       chunkId: f.item.id,
       documentId: f.item.documentId,
       title: f.item.title,
@@ -388,14 +529,32 @@ async function runSearch(
       documentPassages: located.get(f.item.id)?.documentPassages ?? 0,
       charOffset: located.get(f.item.id)?.charOffset ?? null,
       score: f.score,
-      rank: f.rank,
+      // The answer's own order: the reranked one when a reranker ran, else the fused one.
+      rank: index + 1,
       denseRank: f.denseRank,
       lexicalRank: f.lexicalRank,
+      rerankScore: reranked.scores.get(f) ?? null,
       source: f.item.source,
       externalId: f.item.externalId,
       platform: f.item.tenantId === null,
     })),
   }
+}
+
+/**
+ * Record the search's metered calls: through the caller's `defer` when it gave one (the response
+ * does not wait), else awaited here — alongside the passage lookup, so it costs no extra round
+ * trip. `recordKnowledgeUsage` never throws.
+ */
+function writeUsage(
+  db: Database,
+  request: SearchChunksRequest,
+  usage: KnowledgeUsageInput[]
+): Promise<void> {
+  if (usage.length === 0) return Promise.resolve()
+  if (!request.defer) return recordKnowledgeUsage(db, usage)
+  request.defer(() => recordKnowledgeUsage(db, usage))
+  return Promise.resolve()
 }
 
 /**

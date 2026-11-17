@@ -15,6 +15,7 @@ import { withEvalScope } from '@/api/observability/context'
 import { accessScopeForUser } from '@/api/services/access'
 import { searchKnowledgeChunks } from '@/api/services/ai/retrieval'
 import type { Corpus, RetrievalCase } from './corpus'
+import { EVAL_RERANK } from './env'
 import { corpusWorld } from './fixtures'
 import {
   averagePrecision,
@@ -31,6 +32,7 @@ export interface RetrievalHit extends RankedPassage {
   title: string
   denseRank: number | null
   lexicalRank: number | null
+  rerankScore: number | null
 }
 
 export function retrievalHarness(corpus: Corpus): Harness<RetrievalCase, JsonValue> {
@@ -40,10 +42,12 @@ export function retrievalHarness(corpus: Corpus): Harness<RetrievalCase, JsonVal
       const world = await corpusWorld(corpus, [])
       const access = await accessScopeForUser(world.db, world.tenantId, world.userId)
       const started = Date.now()
-      const { hits, semantic } = await withEvalScope(() =>
+      const { hits, semantic, rerank } = await withEvalScope(() =>
         searchKnowledgeChunks(world.db, world.cfg, world.env, access, {
           query: input.query,
           limit: RETRIEVAL_LIMIT,
+          // `--rerank none` measures the fused order; the stub binding's reranker is no reranker.
+          rerank: EVAL_RERANK !== 'none',
         })
       )
       const ranked: RetrievalHit[] = hits.map(h => ({
@@ -52,13 +56,18 @@ export function retrievalHarness(corpus: Corpus): Harness<RetrievalCase, JsonVal
         text: h.text,
         denseRank: h.denseRank ?? null,
         lexicalRank: h.lexicalRank ?? null,
+        rerankScore: h.rerankScore ?? null,
       }))
       return {
         output: ranked as unknown as JsonValue,
         messages: [{ role: 'user', content: input.query }],
         timings: { totalMs: Date.now() - started },
         usage: {},
-        artifacts: { semantic, ranks: passageRanks(ranked, input.expected) },
+        artifacts: {
+          semantic,
+          rerank: { ...rerank } as unknown as JsonValue,
+          ranks: passageRanks(ranked, input.expected),
+        },
       }
     },
   })

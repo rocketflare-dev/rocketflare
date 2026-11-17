@@ -10,6 +10,7 @@
 | `--judge-model <id>` | Pin the JUDGE's model (`evals-judge` on the judge's tenant) |
 | `--provider anthropic\|fireworks\|gemini` | The target's provider: `anthropic` = the platform key (default); the others write an encrypted `ai_configs` row (Fireworks = the kit's `fireworks` preset, Gemini = `openai_compatible`) from `FIREWORKS_API_KEY` / `GEMINI_API_KEY` in `.dev.vars` |
 | `--judge-provider …` | The same for the judge |
+| `--rerank none\|fireworks` | Knowledge search's reranker (`EVAL_RERANK`): `none` (default) searches with `rerank: false`; `fireworks` writes a tenant `rerank` row (`fireworks/qwen3-reranker-8b`, `FIREWORKS_API_KEY`) and the summary prints the median rerank latency |
 | `--compare [baseline\|<run.json>]` | Diff against the committed baselines (default) or another run; exit 1 on a regression |
 | `--threshold 0.1` | The per-judge drop that counts as a regression |
 | `--concurrency 2` | Suite files run at once (`EVAL_CONCURRENCY`) — provider rate limits are the ceiling |

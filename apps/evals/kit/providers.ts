@@ -83,6 +83,64 @@ export async function useProvider(
 }
 
 /**
+ * The rerankers `--rerank` can name. `fireworks` is the kit's own `fireworks-rerank` preset
+ * (`openai_compatible`, a Cohere-style `POST {base}/rerank`), on `fireworks/qwen3-reranker-8b`.
+ */
+const fireworksRerank = PROVIDER_PRESETS.find(p => p.id === 'fireworks-rerank')
+
+export const EVAL_RERANKERS = {
+  none: null,
+  fireworks: {
+    keyEnv: 'FIREWORKS_API_KEY',
+    provider: 'openai_compatible',
+    baseUrl: fireworksRerank?.baseUrl ?? 'https://api.fireworks.ai/inference/v1',
+    model: fireworksRerank?.defaultModel ?? 'fireworks/qwen3-reranker-8b',
+  },
+} as const satisfies Record<
+  string,
+  { keyEnv: string; provider: AiProvider; baseUrl: string; model: string } | null
+>
+
+export type EvalRerankerName = keyof typeof EVAL_RERANKERS
+
+export function evalReranker(name: string | undefined): EvalRerankerName {
+  const key = (name || 'none') as EvalRerankerName
+  if (!(key in EVAL_RERANKERS)) {
+    throw new Error(
+      `unknown eval reranker "${name}" — one of ${Object.keys(EVAL_RERANKERS).join(', ')}`
+    )
+  }
+  return key
+}
+
+/**
+ * Give a tenant the reranker `--rerank` named: a default `rerank` `ai_configs` row, written the way
+ * Settings → AI writes one, so the eval exercises `resolveRerank`'s tenant tier. `none` writes
+ * nothing (the retrieval target then searches with `rerank: false`).
+ */
+export async function useRerank(
+  db: Database,
+  cfg: AppConfig,
+  tenantId: string,
+  name: EvalRerankerName
+): Promise<void> {
+  const reranker = EVAL_RERANKERS[name]
+  if (!reranker) return
+  const apiKey = process.env[reranker.keyEnv]
+  if (!apiKey) throw new Error(`${reranker.keyEnv} is not set (--rerank ${name})`)
+  await db.insert(aiConfigs).values({
+    tenantId,
+    scope: 'rerank',
+    provider: reranker.provider,
+    label: `eval · ${name} rerank`,
+    baseUrl: reranker.baseUrl,
+    model: reranker.model,
+    apiKeyEnc: await encrypt(apiKey, requireEncryptionKey(cfg)),
+    isDefault: true,
+  })
+}
+
+/**
  * Which REAL embedder a corpus is ingested with. Corpus suites refuse the test stub's deterministic
  * vectors — a ranking measured on them says nothing about the one production serves. Order:
  * `EMBEDDINGS_API_KEY` (the platform OpenAI tier, no row), then `GEMINI_API_KEY` as a tenant
