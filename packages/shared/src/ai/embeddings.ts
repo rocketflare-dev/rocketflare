@@ -49,6 +49,51 @@ export type IngestDocumentResponse = z.infer<typeof ingestDocumentResponseSchema
 /** Longest text `POST /api/ai/documents/ingest` accepts (characters; ~ the 1 MB JSON body cap). */
 export const INGEST_TEXT_MAX_CHARS = 500_000
 
+/**
+ * `GET /api/ai/documents/health` (admin+): the tenant's knowledge base at a glance. A document's
+ * embeddings are STALE when it is `indexed`, has stored text, and at least one of its chunks was
+ * embedded by a model other than `embeddingModel` (the one `resolveEmbeddings` picks today) — or by
+ * no recorded model. Such a document is still found lexically but is absent from dense search
+ * until `POST /reembed` (or the automatic re-embed after an embeddings-default change) rebuilds it.
+ * `embeddingModel` is null when no embedder resolves, and then nothing counts as stale.
+ */
+export const documentsHealthSchema = z.object({
+  documents: z.object({
+    total: z.number().int().nonnegative(),
+    pending: z.number().int().nonnegative(),
+    indexed: z.number().int().nonnegative(),
+    failed: z.number().int().nonnegative(),
+  }),
+  embeddingModel: z.string().nullable(),
+  /** Documents with at least one stale chunk — the unit `document.reembed` rebuilds. */
+  staleEmbeddings: z.number().int().nonnegative(),
+  /** The stale chunks themselves, across those documents. */
+  staleChunks: z.number().int().nonnegative(),
+})
+export type DocumentsHealth = z.infer<typeof documentsHealthSchema>
+
+/**
+ * `POST /api/ai/documents/reembed` (admin+) → `202`: how much is stale and whether a
+ * `document.reembed` job was enqueued (`false` when nothing is stale).
+ */
+export const reembedResponseSchema = z.object({
+  embeddingModel: z.string(),
+  staleEmbeddings: z.number().int().nonnegative(),
+  staleChunks: z.number().int().nonnegative(),
+  enqueued: z.boolean(),
+})
+export type ReembedResponse = z.infer<typeof reembedResponseSchema>
+
+/**
+ * `POST /api/ai/documents/:id/retry` (owner or admin+) → `202` with the document, now `pending`:
+ * an upload with no text yet goes back to `document.convert`, anything with text to
+ * `document.index`. A document that is not `failed` is a `409 document_not_failed`.
+ */
+export const retryDocumentResponseSchema = documentSchema.extend({
+  job: z.enum(['document.convert', 'document.index']),
+})
+export type RetryDocumentResponse = z.infer<typeof retryDocumentResponseSchema>
+
 export const ingestTextRequestSchema = z.object({
   title: z.string().trim().min(1).max(200),
   text: z.string().min(1).max(INGEST_TEXT_MAX_CHARS),

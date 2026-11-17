@@ -416,6 +416,42 @@ export function resolvePlatformEmbeddings(
   return null
 }
 
+/** What `resolveEmbeddings` would pick for a tenant whose default row is `row` — no client, no throw. */
+function embeddingsReadiness(
+  row: AiConfigRow | undefined,
+  cfg: AppConfig,
+  env: AiEnv
+): AiScopeReadiness {
+  if (row) return { ready: true, source: 'tenant', provider: row.provider, model: row.model }
+  if (env.AI) {
+    return {
+      ready: true,
+      source: 'platform',
+      provider: 'workers_ai',
+      model: DEFAULT_MODELS.workers_ai,
+    }
+  }
+  if (cfg.EMBEDDINGS_API_KEY) {
+    return { ready: true, source: 'platform', provider: 'openai', model: DEFAULT_MODELS.openai }
+  }
+  return { ready: false, source: 'none' }
+}
+
+/**
+ * The embeddings MODEL a tenant resolves to today, or null when none would — the same chain as
+ * `resolveEmbeddings`, without building a client or decrypting a key. What the stale-embeddings
+ * count compares chunks against, and what `routes/ai-config.ts` compares before and after a save.
+ */
+export async function resolveEmbeddingsModel(
+  db: Database,
+  cfg: AppConfig,
+  env: AiEnv,
+  tenantId: string
+): Promise<string | null> {
+  const row = await findDefaultConfig(db, tenantId, 'embeddings')
+  return embeddingsReadiness(row, cfg, env).model ?? null
+}
+
 /** What the three resolvers WOULD pick — no client is built, no credential decrypted, nothing thrown. */
 export async function readiness(
   db: Database,
@@ -435,18 +471,7 @@ export async function readiness(
     : platform
       ? { ready: true, source: 'platform', provider: platform.provider, model: platform.model }
       : none
-  const embeddings: AiScopeReadiness = embRow
-    ? { ready: true, source: 'tenant', provider: embRow.provider, model: embRow.model }
-    : env.AI
-      ? {
-          ready: true,
-          source: 'platform',
-          provider: 'workers_ai',
-          model: DEFAULT_MODELS.workers_ai,
-        }
-      : cfg.EMBEDDINGS_API_KEY
-        ? { ready: true, source: 'platform', provider: 'openai', model: DEFAULT_MODELS.openai }
-        : none
+  const embeddings = embeddingsReadiness(embRow, cfg, env)
   const decisions: AiScopeReadiness = decisionsRow
     ? { ready: true, source: 'tenant', provider: decisionsRow.provider, model: decisionsRow.model }
     : cfg.TYPESAFE_API_KEY

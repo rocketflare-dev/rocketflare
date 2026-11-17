@@ -9,12 +9,17 @@
  * `document.index` / `document.convert` job finishes them. Deleting someone else's document needs
  * `delete Document` (admin+) — own-document delete is the `ownerUserId` check here. Deleting a
  * document deletes its original. The raw text and the vectors never leave the server.
+ * Upkeep: `GET /health` and `POST /reembed` (admin+, `manage Document`) report and rebuild stale
+ * embeddings; `POST /:id/retry` (owner or `manage Document`) re-enqueues a failed document.
  */
 import {
+  type DocumentsHealth,
   documentContentQuerySchema,
   documentListQuerySchema,
   type IngestDocumentResponse,
   ingestTextRequestSchema,
+  type ReembedResponse,
+  type RetryDocumentResponse,
   resolveDocumentUploadType,
   type SearchResponse,
   searchRequestSchema,
@@ -40,12 +45,15 @@ import {
   readDocumentCard,
   readDocumentWindow,
 } from '../services/ai/document-content'
+import { AiNotConfiguredError } from '../services/ai/errors'
 import {
   ConversionNotConfiguredError,
   ingestFile,
   ingestText,
   toDocument,
 } from '../services/ai/ingest'
+import { documentsHealth, enqueueReembed, retryFailedDocument } from '../services/ai/reindex'
+import { resolveEmbeddingsModel } from '../services/ai/resolve'
 import { searchChunks } from '../services/ai/retrieval'
 import { nudge, realtimeEvent } from '../services/realtime'
 import { createR2Storage, deleteStoredFile, type StorageService } from '../services/storage'
@@ -108,7 +116,7 @@ function optionalStorage(c: AppContext): StorageService | null {
 // ---- POST /api/ai/documents/ingest ----------------------------------------------------------------
 
 aiDocumentsRouter.post('/ingest', validate('json', ingestTextRequestSchema), async c => {
-  const { db, tenantId, user, cfg, auth, defer } = withAuthAndDb(c)
+  const { db, tenantId, user, cfg, auth, defer, tracer } = withAuthAndDb(c)
   guardPermission(c, 'create', 'Document')
   const body = c.req.valid('json')
   const access = await resolveRequestedVisibility(db, accessScopeOf(auth), body)
@@ -125,7 +133,7 @@ aiDocumentsRouter.post('/ingest', validate('json', ingestTextRequestSchema), asy
       visibility: access.visibility,
       groupIds: access.groupIds,
     },
-    { jobs: c.env.JOBS_QUEUE }
+    { jobs: c.env.JOBS_QUEUE, tracer }
   )
   // A duplicate wrote nothing, so there is nothing to record: the document's own ingest was.
   if (!deduplicated) {
@@ -151,7 +159,7 @@ aiDocumentsRouter.post('/ingest', validate('json', ingestTextRequestSchema), asy
 // ---- POST /api/ai/documents/upload ----------------------------------------------------------------
 
 aiDocumentsRouter.post('/upload', uploadBodyLimit, async c => {
-  const { db, tenantId, user, cfg, auth, defer } = withAuthAndDb(c)
+  const { db, tenantId, user, cfg, auth, defer, tracer } = withAuthAndDb(c)
   guardPermission(c, 'create', 'Document')
   const storage = storageFor(c)
 
@@ -207,7 +215,7 @@ aiDocumentsRouter.post('/upload', uploadBodyLimit, async c => {
         visibility: access.visibility,
         groupIds: access.groupIds,
       },
-      { jobs: c.env.JOBS_QUEUE, storage }
+      { jobs: c.env.JOBS_QUEUE, storage, tracer }
     )
   } catch (err) {
     if (err instanceof ConversionNotConfiguredError) {
@@ -324,6 +332,51 @@ aiDocumentsRouter.post('/search', validate('json', searchRequestSchema), async c
   return c.json(body)
 })
 
+// ---- GET /api/ai/documents/health -----------------------------------------------------------------
+
+/** Documents by status, the embeddings model today and how much is stale against it (admin+). */
+aiDocumentsRouter.get('/health', async c => {
+  const { db, tenantId, cfg } = withAuthAndDb(c)
+  guardPermission(c, 'manage', 'Document')
+  const body: DocumentsHealth = await documentsHealth(db, cfg, c.env, tenantId)
+  return c.json(body)
+})
+
+// ---- POST /api/ai/documents/reembed ---------------------------------------------------------------
+
+/**
+ * Re-embed every stale document with today's model: a `document.reembed` chain (202). Nothing
+ * stale → 202 with `enqueued: false`. No embedder → 503 `ai_not_configured` before anything is
+ * enqueued; no `JOBS_QUEUE` → `JobsQueueNotConfiguredError`, as every other enqueue.
+ */
+aiDocumentsRouter.post('/reembed', async c => {
+  const { db, tenantId, user, cfg, defer } = withAuthAndDb(c)
+  guardPermission(c, 'manage', 'Document')
+  const model = await resolveEmbeddingsModel(db, cfg, c.env, tenantId)
+  if (!model) throw new AiNotConfiguredError('embeddings')
+  const health = await documentsHealth(db, cfg, c.env, tenantId)
+  const enqueued = health.staleEmbeddings > 0
+  if (enqueued) await enqueueReembed(c.env.JOBS_QUEUE, tenantId, model)
+  if (enqueued)
+    defer(() =>
+      recordActivity(db, {
+        tenantId,
+        userId: user.id,
+        type: 'document.reembed_requested',
+        subjectType: 'Document',
+        subjectId: null,
+        metadata: { model, staleEmbeddings: health.staleEmbeddings },
+      })
+    )
+  const body: ReembedResponse = {
+    embeddingModel: model,
+    staleEmbeddings: health.staleEmbeddings,
+    staleChunks: health.staleChunks,
+    enqueued,
+  }
+  return c.json(body, 202)
+})
+
 // ---- GET /api/ai/documents/:id --------------------------------------------------------------------
 
 aiDocumentsRouter.get('/:id', async c => {
@@ -421,6 +474,43 @@ aiDocumentsRouter.delete('/:id', async c => {
     })
   )
   return c.body(null, 204)
+})
+
+// ---- POST /api/ai/documents/:id/retry -------------------------------------------------------------
+
+/**
+ * Re-enqueue a `failed` document (owner or `manage Document`, the visibility rule): no text yet →
+ * `document.convert`, text → `document.index`; 202 with the row, now `pending`. Not failed → 409
+ * `document_not_failed`; hidden or absent → the shared 404.
+ */
+aiDocumentsRouter.post('/:id/retry', async c => {
+  const { db, tenantId, user, auth, defer } = withAuthAndDb(c)
+  guardPermission(c, 'read', 'Document')
+  const id = uuidParam(c, 'id')
+  const row = await findVisibleDocument(db, accessScopeOf(auth), id)
+  if (row.ownerUserId !== user.id && !can(c, 'manage', 'Document')) {
+    throw new ForbiddenError('You can only retry documents you added')
+  }
+  const notFailed = () =>
+    new ConflictError(`This document is ${row.status}, not failed`, 'document_not_failed')
+  if (row.status !== 'failed') throw notFailed()
+  const result = await retryFailedDocument(db, c.env.JOBS_QUEUE, row)
+  if (!result) throw notFailed()
+  defer(() =>
+    recordActivity(db, {
+      tenantId,
+      userId: user.id,
+      type: 'document.retried',
+      subjectType: 'Document',
+      subjectId: id,
+      metadata: { job: result.job },
+    })
+  )
+  const body: RetryDocumentResponse = {
+    ...toDocument(result.document, await groupsOf(db, tenantId, id)),
+    job: result.job,
+  }
+  return c.json(body, 202)
 })
 
 // ---- PUT /api/ai/documents/:id/visibility ----------------------------------------------------

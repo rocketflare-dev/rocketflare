@@ -135,7 +135,11 @@ crons = [
 ]
 
 # Background jobs (D7): one queue, one consumer; `src/api/queue.ts` dispatches on `batch.queue`.
-# Create: wrangler queues create rocketflare-jobs
+# Create: wrangler queues create rocketflare-jobs && wrangler queues create rocketflare-jobs-dlq
+# (`pnpm provision cloudflare` creates both). A message whose handler threw on every one of its
+# `max_retries` attempts lands in the dead-letter queue instead of vanishing. NO consumer is bound
+# to it, deliberately: its name shares the `rocketflare-jobs` prefix `queue.ts` dispatches on, so a
+# consumer would reprocess it. Inspect it from the dashboard (Queues → rocketflare-jobs-dlq → Messages).
 [[queues.producers]]
 binding = "JOBS_QUEUE"
 queue = "rocketflare-jobs"
@@ -146,7 +150,7 @@ max_batch_size = 10
 max_batch_timeout = 5
 max_retries = 3
 retry_delay = 60
-# dead_letter_queue = "rocketflare-jobs-dlq"
+dead_letter_queue = "rocketflare-jobs-dlq"
 
 # Realtime (D8): stateless WebSocket hub Durable Object, one instance per tenant
 # (`idFromName(tenantId)`), hibernation API. Implementing a DO in-script disables preview URLs.

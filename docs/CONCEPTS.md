@@ -499,7 +499,10 @@ work goes to `AGENT_RUN_WORKFLOW`, and cron only dispatches.
   switch. `type` is the version seam (`x.v2`). An invalid envelope is acked; a handler error retries
   with backoff up to `max_retries`. A missing binding throws. Consumers await everything and never
   use `waitUntil`. Queued today: `tenant.purge`, invitation and access-decision emails,
-  `document.index`/`document.convert`, `chat.compact`. The magic link stays inline.
+  `document.index`/`document.convert`/`document.reembed`, `chat.compact`. The magic link stays
+  inline. A message that fails all its `max_retries` lands in the dead-letter queue
+  (`<app>-jobs-dlq`, `-staging` on staging; no consumer bound, inspected from the dashboard) rather
+  than being deleted.
   Detail: `.claude/rules/api.md`.
 - **Workflow**: `AgentRunWorkflow` (§9). **Concurrency is a DB claim row, never a `Map`**:
   `ACTIVE_RUN_STATUSES` (exclusive index, includes parked runs) ⊃ `CLAIMABLE_RUN_STATUSES`
@@ -517,8 +520,9 @@ work goes to `AGENT_RUN_WORKFLOW`, and cron only dispatches.
   through `services/realtime.ts` inside `defer`, after commit.
 
 **Known gaps:** `/api/admin` paths do not nudge; `notification.read` is never emitted;
-`activity.record` has no producer; the DO 101 upgrade is untestable under Node; no dead-letter
-queue; no vitest-pool-workers smoke project.
+`activity.record` has no producer; the DO 101 upgrade is untestable under Node; nothing reads or
+replays the dead-letter queue (no consumer, no alert, no admin view); no vitest-pool-workers smoke
+project.
 
 ## 6. Email and storage
 
@@ -765,6 +769,21 @@ Server: `api/services/{ai,agents}/**` (read their `CLAUDE.md`), `services/prompt
   non-failed document of the same tenant and `source` answers THAT document (`200`,
   `deduplicated: true`, nothing stored), only when both are tenant-wide so a dedupe never reveals a
   restricted document.
+  **Upkeep** (`services/ai/reindex.ts`): a document is **stale** when it is `indexed`, has text, and
+  holds a chunk whose `embedding_model` is not (or is null against) the model `resolveEmbeddings`
+  picks for the tenant today; `GET /api/ai/documents/health` (admin+) counts documents by status
+  plus `staleEmbeddings` (documents) and `staleChunks`. The `document.reembed` job rebuilds them
+  through `indexDocument` in bounded batches (≤ 20 documents / 400 chunks per message,
+  re-enqueued while more remain), vectors first so a failure keeps the old chunks searchable; it
+  runs from `POST /api/ai/documents/reembed` (admin+, 202) and automatically after an
+  `ai_configs` save or delete that changes the resolved embeddings model (after the commit; without
+  `JOBS_QUEUE` the save still succeeds and the health count shows what is owed). The message names
+  its model, and one for a model the tenant no longer resolves is acked, so chains do not pile up;
+  there is no claim row. `POST /api/ai/documents/:id/retry` (owner or `manage Document`) puts a
+  `failed` document back on `document.convert` (no text) or `document.index` (202; `409
+  document_not_failed` otherwise), and the Documents page offers it as Retry. Inline indexing is
+  an `ingest document` span — under the active span, else a root on the request tracer — with
+  its embeddings batches nested.
   `document-content.ts` is the one text reader behind both
   the viewer and `get_document`. Agent tools resolve the requester's access at execute time.
   **External ids (D34)**: `documents.external_id` is unique per `(tenant_id, source)` (partial
@@ -892,8 +911,13 @@ not derived from the model; sliding window defeats prompt caching on long thread
 does not pre-resolve the client; Workers AI forced tools on off-list models are best-effort; no
 rerank; page numbers: `toMarkdown` emits no page markers, so `chunks.page` is always null;
 chunks written before 0.37.0 keep their old shape (no heading path or offsets) until re-indexed,
-and an unchanged upsert never re-indexes them; a document embedded by an older model is found by
-keyword only (no re-embed job yet); the plain-ingest dedupe is a read, not a constraint, so two
+and an unchanged upsert never re-indexes them (re-embed rebuilds only another model's chunks); a
+stale document is found by keyword only until its re-embed lands; two re-embed chains for the same
+model (a double `POST /reembed`) both run, wasting embeddings calls but not duplicating chunks; a
+document the provider keeps refusing transiently holds its tenant's re-embed until the message
+dead-letters (`POST /reembed` restarts it); no UI for the health count or the re-embed; Retry
+re-runs the same input, so a document that failed on content (too long, unconvertible) fails
+again; the plain-ingest dedupe is a read, not a constraint, so two
 concurrent identical ingests can both create a row; platform documents cannot be opened with `get_document` (a
 search hit is all a model reads of one), are not re-embedded automatically when the platform
 embedder changes (the next `ingestPlatformDocument` re-indexes; until then they are found

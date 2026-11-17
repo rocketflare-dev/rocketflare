@@ -83,7 +83,17 @@ Rules:
   `document.convert` (`convertAndIndexDocument`). `indexDocument` is shared with the handlers.
   Everything that can 503 (`resolveEmbeddings`, `canConvert`) runs BEFORE any write; the upload
   route maps `ConversionNotConfiguredError` → 503 `conversion_not_configured`;
-  `ConversionFailedError` is the permanent case
+  `ConversionFailedError` is the permanent case. Inline indexing is ONE `ingest document` span
+  (`IngestDeps.tracer` — the route's `withAuth` tracer; under the active span when one exists), so
+  its `traceEmbed` batches nest; the span's output is the outcome, never the row (it holds the text)
+- **Upkeep (`reindex.ts`)**: stale = an `indexed` document with text and a chunk whose
+  `embedding_model` is distinct from `resolveEmbeddingsModel` (the resolved model WITHOUT a
+  client or a decrypt — use it, never `resolveEmbeddings`, just to compare). `documentsHealth`,
+  `reembedBatch` (`indexDocument(…, { markFailedOnError: false })` — a failed re-embed must not
+  cost a document the lexical search it still has), `reembedAfterEmbeddingsChange` (called by
+  `routes/ai-config.ts` after the commit, never throws — the config write stands without a queue)
+  and `retryFailedDocument` (queue proved first, CAS `failed → pending`, reverted if the send
+  throws)
 - **Strip NULs before storing**: every stored text — `documents.content`, `chunks.text`, every
   `ai_spans` string — goes through `stripControlChars` / `stripControlCharsDeep`
   (`utils/core/text.ts`); Postgres refuses a NUL in `text` (22021) and `jsonb` (22P05), and

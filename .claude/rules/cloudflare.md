@@ -97,9 +97,11 @@ The one place a name leaks into code is the queue consumer: `batch.queue` is the
 **prefix** — `isJobsQueue()` / `JOBS_QUEUE_NAME_PREFIX` in `apps/web/src/api/services/jobs.ts` —
 and `ackAll()`s any queue it does not know. Renaming the queue = both tomls (`[[queues.producers]]`
 + `[[queues.consumers]]`) + that one constant (`tests/api/queue-dispatch.test.ts` pins both names).
-Prefix matching also means a `rocketflare-jobs-dlq` would be dispatched to the SAME consumer if you
-ever bound a consumer to it — a dead-letter queue you want to inspect rather than reprocess needs a
-name outside the prefix or its own branch in `queue.ts`.
+Prefix matching also means the jobs dead-letter queue (`rocketflare-jobs-dlq` /
+`rocketflare-jobs-dlq-staging`, `dead_letter_queue` on both consumers, created by `pnpm provision
+cloudflare`) would be dispatched to the SAME consumer if you ever bound a consumer to it — it is
+deliberately unconsumed (inspected from the dashboard); one you want to drain needs a name outside
+the prefix or its own branch in `queue.ts` (`wrangler-parity.test.ts` refuses a consumer on it).
 
 ## `[limits] cpu_ms` is per step
 

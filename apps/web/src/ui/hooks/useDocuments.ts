@@ -4,7 +4,7 @@
  * `document.index` job lands), file upload (`POST /upload`, multipart — text types index like
  * pasted text, PDF/Office/HTML return `pending` until the `document.convert` job lands), delete
  * (`DELETE /:id` — own rows for everyone, any row for `delete Document`; the uploaded original goes
- * too), and hybrid search (`POST /search`). Search is mutation-style: a query is an action
+ * too), retry of a failed row (`POST /:id/retry` — own rows, any row for `manage Document`), and hybrid search (`POST /search`). Search is mutation-style: a query is an action
  * the reader takes, its hits are shown once and never cached as server state. The raw text and
  * the vectors never reach the browser; only the sanitised `documents` row does.
  */
@@ -20,6 +20,8 @@ import {
   type IngestDocumentResponse,
   type IngestTextRequest,
   ingestDocumentResponseSchema,
+  type RetryDocumentResponse,
+  retryDocumentResponseSchema,
   type SearchRequest,
   type SearchResponse,
   searchResponseSchema,
@@ -211,6 +213,23 @@ export function useDeleteDocument() {
       queryClient.removeQueries({ queryKey: queryKeys.documents.detail(id) })
       return queryClient.invalidateQueries({ queryKey: queryKeys.documents.all })
     },
+  })
+}
+
+/**
+ * `POST /api/ai/documents/:id/retry` — a failed document back on the queue (202, now `pending`, so
+ * the list starts polling again). Errors toast; success does not — the row's badge is the answer.
+ */
+export function useRetryDocument() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) =>
+      api.post<RetryDocumentResponse>(
+        `/api/ai/documents/${encodeURIComponent(id)}/retry`,
+        undefined,
+        { schema: retryDocumentResponseSchema }
+      ),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.documents.all }),
   })
 }
 

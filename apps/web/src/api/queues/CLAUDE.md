@@ -38,7 +38,11 @@ per environment. Work over ~30 s or with multiple steps is a Workflow, not a job
 
 - Queued: `email.send` (invitation create/bulk/resend, access-request decided — never the magic
   link, which stays inline), `activity.record`, `document.index`, `document.convert`,
-  `chat.compact`, `tenant.purge`, `event.deliver`
+  `document.reembed`, `chat.compact`, `tenant.purge`, `event.deliver`
+- A message that throws on every one of `max_retries` goes to the dead-letter queue
+  (`dead_letter_queue` in both tomls: `<app>-jobs-dlq`, `-dlq-staging`). Nothing consumes it — a
+  consumer there would match `isJobsQueue` and reprocess it — so a handler must leave its rows in
+  a state a person can recover from (`failed` + Retry, a re-requestable job), never half-written
 - `event.deliver` (D42) is ONE subscriber of one `plugin_events` row: `{ tenantId, eventId,
   subscriber }`, never the payload. It re-reads the row under the tenant, re-validates, and calls
   that subscriber only; a missing row (pruned, other tenant) or subscriber is acked, a 4xx
@@ -53,3 +57,9 @@ per environment. Work over ~30 s or with multiple steps is a Workflow, not a job
 - `document.index` re-indexes a `documents` row from its stored `content` (`indexDocument`);
   `ingestText` enqueues it over 50 chunks. `document.convert` is R2 → `env.AI.toMarkdown` → the same
   `indexDocument` (`../services/ai/CLAUDE.md`)
+- `document.reembed` (`{ tenantId, model }`) is a self-continuing chain: ONE bounded batch of the
+  tenant's stale documents per message (`reembedBatch`, `services/ai/reindex.ts`), then the same
+  payload re-enqueued while any remain — the stale predicate is the cursor, so a retry resumes. A
+  message for a model the tenant no longer resolves is acked (the newer chain owns the work); a
+  transient provider error throws with the old chunks intact; a provider refusal of one document
+  marks it `failed` and the batch moves on

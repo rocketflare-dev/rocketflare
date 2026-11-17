@@ -36,6 +36,7 @@
 #   Hyperdrive config   <app>-<env>                 → [[hyperdrive]] id            (postgres only)
 #   KV namespace        <APP>_RATE_LIMIT[_STAGING]  → [[kv_namespaces]] id         (patched / printed)
 #   Queue               <app>-jobs[-staging]        → [[queues.*]] queue           (name-referenced)
+#   Queue (dead letter) <app>-jobs-dlq[-staging]    → [[queues.consumers]] dead_letter_queue (no binding)
 #   R2 bucket           <app>-files[-staging]       → [[r2_buckets]] bucket_name   (name-referenced)
 #
 # PLUGIN_RESOURCES appends to that list: a JSON array of
@@ -101,6 +102,7 @@ case "$DRIVER" in
 esac
 KV_NAME="${APP_UPPER}_RATE_LIMIT${KV_SUFFIX}"
 QUEUE_NAME="${APP}-jobs${SUFFIX}"
+DLQ_NAME="${APP}-jobs-dlq${SUFFIX}"
 BUCKET_NAME="${APP}-files${SUFFIX}"
 
 wr() { pnpm exec wrangler "$@"; }
@@ -132,6 +134,7 @@ echo
 RESOURCE_LIST="$(printf '%s\t%s\t%s\n' \
   kv         "$KV_NAME"         RATE_LIMIT_KV \
   queue      "$QUEUE_NAME"      JOBS_QUEUE \
+  queue      "$DLQ_NAME"        - \
   r2         "$BUCKET_NAME"     FILES)"
 if [ "$DRIVER" = "postgres" ]; then
   RESOURCE_LIST="$(printf '%s\t%s\t%s\n' hyperdrive "$HYPERDRIVE_NAME" HYPERDRIVE)
@@ -263,7 +266,8 @@ while IFS="$(printf '\t')" read -r RTYPE RNAME RBINDING; do
       fi ;;
     queue)
       ensure_queue "$RNAME"
-      [ "$RBINDING" = "JOBS_QUEUE" ] || \
+      # `-` = no binding (the jobs dead-letter queue is named by the consumer block, never bound).
+      [ "$RBINDING" = "JOBS_QUEUE" ] || [ "$RBINDING" = "-" ] || \
         PATCH_ARGS+=(--binding "{\"type\":\"queue\",\"binding\":\"${RBINDING}\",\"name\":\"${RNAME}\"}") ;;
     r2)
       ensure_r2 "$RNAME"
@@ -305,6 +309,7 @@ Then (from the workspace root):
   git diff apps/web/${TOML}                                    # review; ids are not secrets and are committed
 Name-referenced resources for this environment (already declared in ${TOML}):
   queue      = "${QUEUE_NAME}"
+  dead_letter_queue = "${DLQ_NAME}"   # [[queues.consumers]]; no consumer bound to it
   bucket     = "${BUCKET_NAME}"
   workflow   = "${APP}-agent-run${SUFFIX}"    # ACCOUNT-scoped: must differ from the other env; registered by wrangler deploy
 EOT

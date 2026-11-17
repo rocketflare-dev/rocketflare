@@ -12,6 +12,7 @@
 
 import {
   ArrowDownTrayIcon,
+  ArrowPathIcon,
   ArrowUpTrayIcon,
   BookOpenIcon,
   LockClosedIcon,
@@ -53,6 +54,7 @@ import {
   useDeleteDocument,
   useDocuments,
   useIngestText,
+  useRetryDocument,
   useUploadDocument,
   validateDocumentUpload,
 } from '@/ui/hooks/useDocuments'
@@ -409,6 +411,7 @@ function DocumentsTable() {
   const [status, setStatus] = useState<DocumentStatus | ''>('')
   const documents = useDocuments({ page, status })
   const remove = useDeleteDocument()
+  const retry = useRetryDocument()
   const [deleting, setDeleting] = useState<Document | null>(null)
   const [sharing, setSharing] = useState<Document | null>(null)
   const rows = documents.data?.items ?? []
@@ -503,6 +506,20 @@ function DocumentsTable() {
                     {formatDateTime(doc.createdAt)}
                   </td>
                   <td className="text-right whitespace-nowrap">
+                    {doc.status === 'failed' && canShare(doc) && (
+                      // Owner or `manage Document` — the route's rule, same as visibility.
+                      <button
+                        type="button"
+                        className="btn btn-ghost btn-xs"
+                        aria-label={`Retry ${doc.title}`}
+                        title="Index this document again"
+                        disabled={retry.isPending && retry.variables === doc.id}
+                        onClick={() => retry.mutate(doc.id)}
+                      >
+                        <ArrowPathIcon className="w-4 h-4" />
+                        Retry
+                      </button>
+                    )}
                     {canShare(doc) && (
                       <button
                         type="button"

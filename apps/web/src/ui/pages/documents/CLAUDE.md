@@ -19,6 +19,9 @@ All three are `guard read Document` and lazy. Hooks are `hooks/useDocuments.ts`,
 - The header states that everything indexed is also available to agents (`search_knowledge` /
   `get_document`). Delete shows only for own rows unless `delete Document` (admin+) — the route
   enforces.
+- Retry: a `failed` row carries a Retry button (owner or `manage Document`, the visibility rule)
+  → `useRetryDocument()` → `POST /:id/retry`, then the list is invalidated and polls the `pending`
+  row. Errors toast; **success toasts nothing** — the badge changing is the answer.
 - Visibility: both add forms carry an `AccessPicker`, each row a Visibility action (owner or
   `manage Document`) and an `AccessBadge`. `useShareableGroups()` here is the rule the picker is fed
   (every group for `manage Group`, `useMyGroups()` otherwise).

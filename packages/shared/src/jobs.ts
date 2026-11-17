@@ -57,6 +57,18 @@ export const documentConvertPayloadSchema = z.object({
 export type DocumentConvertPayload = z.infer<typeof documentConvertPayloadSchema>
 
 /**
+ * Re-embed ONE tenant's stale documents (chunks embedded by a model other than `model`), a bounded
+ * batch per message; the handler re-enqueues itself while more remain. `model` is the embedder the
+ * chain was started for: once the tenant resolves a different one, the message is acked and the
+ * chain enqueued for THAT model takes over, so two chains never fight over the same documents.
+ */
+export const documentReembedPayloadSchema = z.object({
+  tenantId: z.string().uuid(),
+  model: z.string().min(1).max(200),
+})
+export type DocumentReembedPayload = z.infer<typeof documentReembedPayloadSchema>
+
+/**
  * Fold a conversation's trimmed-off prefix into its rolling summary. The payload carries ids
  * only: the handler recomputes the window from the database, so a message enqueued two turns ago
  * still summarises the right thing.
@@ -113,6 +125,7 @@ export const CORE_JOB_VARIANTS = [
   z.object({ type: z.literal('activity.record'), payload: activityRecordPayloadSchema }),
   z.object({ type: z.literal('document.index'), payload: documentIndexPayloadSchema }),
   z.object({ type: z.literal('document.convert'), payload: documentConvertPayloadSchema }),
+  z.object({ type: z.literal('document.reembed'), payload: documentReembedPayloadSchema }),
   z.object({ type: z.literal('chat.compact'), payload: chatCompactPayloadSchema }),
   z.object({ type: z.literal('tenant.purge'), payload: tenantPurgePayloadSchema }),
   z.object({ type: z.literal('event.deliver'), payload: eventDeliverPayloadSchema }),

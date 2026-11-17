@@ -40,7 +40,9 @@ import { and, asc, eq, isNull, ne, sql } from 'drizzle-orm'
 import type { AppConfig } from '../../../config'
 import type { Database } from '../../../db/client'
 import { chunks, type DocumentRow, documentGroups, documents, files } from '../../../db/schema'
-import { traceEmbed } from '../../observability/context'
+import { activeSpan, traceEmbed, traceStep } from '../../observability/context'
+import type { Tracer } from '../../observability/tracer'
+import { withAgentTrace } from '../../observability/tracing'
 import { stripControlChars } from '../../utils/core/text'
 import { enqueueJob, type JobsQueue } from '../jobs'
 import {
@@ -93,6 +95,12 @@ export interface IngestDeps {
   jobs?: JobsQueue | null
   /** R2 — only to remove an original that an external-id re-ingest replaced. */
   storage?: StorageService | null
+  /**
+   * The request's tracer (`withAuth(c).tracer`). INLINE indexing is one `ingest document` span —
+   * under the active span when there is one (an agent run, a job), else a trace of its own on this
+   * tracer — so its embeddings batches nest under something. Absent and nothing active = untraced.
+   */
+  tracer?: Tracer
 }
 
 /** Thrown by `ingestFile` for a binary upload on a Worker whose `AI` binding cannot convert. */
@@ -170,7 +178,7 @@ export async function embedInBatches(
 }
 
 /** Record why a document could not be indexed (redacted, bounded). Never throws. */
-async function markFailed(
+export async function markDocumentFailed(
   db: Database,
   tenantId: string,
   documentId: string,
@@ -190,6 +198,9 @@ async function markFailed(
  * (Re)index one document from its stored `content`: chunk → embed → replace chunks → `indexed`.
  * Idempotent (existing chunks are deleted first). A provider failure marks the row `failed` and
  * RETHROWS so a queue consumer retries; the route path catches and reports the row instead.
+ * `markFailedOnError: false` (the re-embed job) leaves the row and its old chunks exactly as they
+ * were on a failure — every vector is computed before the replacing transaction opens, so a
+ * failed re-embed never costs a document the search it still had.
  */
 export async function indexDocument(
   db: Database,
@@ -197,7 +208,11 @@ export async function indexDocument(
   env: AiEnv,
   tenantId: string,
   documentId: string,
-  options: { chunks?: TextChunk[]; embeddings?: ResolvedEmbeddings } = {}
+  options: {
+    chunks?: TextChunk[]
+    embeddings?: ResolvedEmbeddings
+    markFailedOnError?: boolean
+  } = {}
 ): Promise<DocumentRow> {
   const row = await db.query.documents.findFirst({
     where: and(eq(documents.id, documentId), eq(documents.tenantId, tenantId)),
@@ -251,7 +266,7 @@ export async function indexDocument(
     if (!updated) throw new Error('documents: update returned no row')
     return updated
   } catch (err) {
-    await markFailed(db, tenantId, documentId, err)
+    if (options.markFailedOnError !== false) await markDocumentFailed(db, tenantId, documentId, err)
     throw err
   }
 }
@@ -322,10 +337,9 @@ async function indexOrEnqueue(
     return { document: row, mode: 'queued', deduplicated: false }
   }
   try {
-    const document = await indexDocument(db, cfg, env, tenantId, row.id, {
-      chunks: pieces,
-      embeddings,
-    })
+    const document = await traceInlineIndex(deps.tracer, tenantId, row, pieces.length, () =>
+      indexDocument(db, cfg, env, tenantId, row.id, { chunks: pieces, embeddings })
+    )
     return { document, mode: 'inline', deduplicated: false }
   } catch {
     const failed = await db.query.documents.findFirst({
@@ -333,6 +347,49 @@ async function indexOrEnqueue(
     })
     return { document: failed ?? row, mode: 'inline', deduplicated: false }
   }
+}
+
+/**
+ * The inline index as ONE span, so its `embeddings <model>` batches nest: a child of the active
+ * span when there is one (`traceStep` — an agent run's ingest tool, a job), else the root of a
+ * trace on the request's tracer (`withAgentTrace`). Untraced with neither.
+ */
+async function traceInlineIndex(
+  tracer: Tracer | undefined,
+  tenantId: string,
+  row: DocumentRow,
+  chunkCount: number,
+  fn: () => Promise<DocumentRow>
+): Promise<DocumentRow> {
+  const name = 'ingest document'
+  const input = { documentId: row.id, chunks: chunkCount }
+  // The span's output is the outcome, never the row — the row carries the document's text.
+  const outcome = (indexed: DocumentRow) => ({
+    status: indexed.status,
+    chunkCount: indexed.chunkCount,
+  })
+  if (activeSpan() || !tracer) {
+    return traceStep({ name, kind: 'span', input }, fn, indexed => ({ output: outcome(indexed) }))
+  }
+  let indexed: DocumentRow | undefined
+  await withAgentTrace(
+    'document.ingest',
+    {
+      tracer,
+      tenantId,
+      userId: row.ownerUserId ?? undefined,
+      kind: 'span',
+      spanName: name,
+      input,
+      metadata: { documentId: row.id },
+    },
+    async () => {
+      indexed = await fn()
+      return outcome(indexed)
+    }
+  )
+  if (!indexed) throw new Error('documents: inline index returned no row')
+  return indexed
 }
 
 /**
@@ -735,7 +792,7 @@ export async function ingestFile(
     return { document: row, mode: 'queued', deduplicated: false }
   }
   if ((text ?? '').length > INGEST_TEXT_MAX_CHARS) {
-    await markFailed(db, input.tenantId, row.id, tooLong((text ?? '').length))
+    await markDocumentFailed(db, input.tenantId, row.id, tooLong((text ?? '').length))
     const failed = await db.query.documents.findFirst({
       where: and(eq(documents.id, row.id), eq(documents.tenantId, input.tenantId)),
     })
@@ -793,7 +850,7 @@ export async function convertAndIndexDocument(
       .set({ content: text })
       .where(and(eq(documents.id, documentId), eq(documents.tenantId, tenantId)))
   } catch (err) {
-    await markFailed(db, tenantId, documentId, err)
+    await markDocumentFailed(db, tenantId, documentId, err)
     throw err
   }
   return indexDocument(db, cfg, env, tenantId, documentId)

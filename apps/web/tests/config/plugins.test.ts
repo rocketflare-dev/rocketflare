@@ -967,6 +967,7 @@ describe('the closed sets a plugin opens', () => {
       | 'activity.record'
       | 'document.index'
       | 'document.convert'
+      | 'document.reembed'
       | 'chat.compact'
       | 'tenant.purge'
       | 'event.deliver'
