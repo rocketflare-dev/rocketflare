@@ -50,6 +50,8 @@ AGENT_TENANT_DAILY_COST_USD=
 # KNOWLEDGE_TENANT_DAILY_COST_USD caps one tenant's embeddings + rerank + extraction spend per UTC
 # day; only extraction pauses at it, indexing and search never do.
 RERANK_MIN_SCORE=
+# RERANK_CANDIDATES (5–100, blank = 20): how many chunks go to the reranker — more is slower.
+RERANK_CANDIDATES=
 KNOWLEDGE_TENANT_DAILY_COST_USD=
 
 # --- Optional (feature-gated when absent) -----------------------------------------------

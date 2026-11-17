@@ -85,6 +85,9 @@ export async function useProvider(
 /**
  * The rerankers `--rerank` can name. `fireworks` is the kit's own `fireworks-rerank` preset
  * (`openai_compatible`, a Cohere-style `POST {base}/rerank`), on `fireworks/qwen3-reranker-8b`.
+ * `workers-ai` is a `workers_ai` row on `@cf/baai/bge-reranker-base`: the Worker's `AI` binding,
+ * which in an eval is Workers AI's REST API on CLOUDFLARE_ACCOUNT_ID / CLOUDFLARE_API_TOKEN
+ * (`workersAiRestBinding` in `env.ts`) — the stub's scores would measure nothing.
  */
 const fireworksRerank = PROVIDER_PRESETS.find(p => p.id === 'fireworks-rerank')
 
@@ -96,9 +99,15 @@ export const EVAL_RERANKERS = {
     baseUrl: fireworksRerank?.baseUrl ?? 'https://api.fireworks.ai/inference/v1',
     model: fireworksRerank?.defaultModel ?? 'fireworks/qwen3-reranker-8b',
   },
+  'workers-ai': {
+    keyEnv: null,
+    provider: 'workers_ai',
+    baseUrl: null,
+    model: '@cf/baai/bge-reranker-base',
+  },
 } as const satisfies Record<
   string,
-  { keyEnv: string; provider: AiProvider; baseUrl: string; model: string } | null
+  { keyEnv: string | null; provider: AiProvider; baseUrl: string | null; model: string } | null
 >
 
 export type EvalRerankerName = keyof typeof EVAL_RERANKERS
@@ -126,8 +135,9 @@ export async function useRerank(
 ): Promise<void> {
   const reranker = EVAL_RERANKERS[name]
   if (!reranker) return
-  const apiKey = process.env[reranker.keyEnv]
-  if (!apiKey) throw new Error(`${reranker.keyEnv} is not set (--rerank ${name})`)
+  const apiKey = reranker.keyEnv ? process.env[reranker.keyEnv] : null
+  if (reranker.keyEnv && !apiKey)
+    throw new Error(`${reranker.keyEnv} is not set (--rerank ${name})`)
   await db.insert(aiConfigs).values({
     tenantId,
     scope: 'rerank',
@@ -135,7 +145,7 @@ export async function useRerank(
     label: `eval · ${name} rerank`,
     baseUrl: reranker.baseUrl,
     model: reranker.model,
-    apiKeyEnc: await encrypt(apiKey, requireEncryptionKey(cfg)),
+    apiKeyEnc: apiKey ? await encrypt(apiKey, requireEncryptionKey(cfg)) : null,
     isDefault: true,
   })
 }

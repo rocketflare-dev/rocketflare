@@ -533,14 +533,15 @@ watch the row go `Indexing → Indexed` within the 5 s poll (the wrangler termin
 `document.convert: indexed`), search a phrase from it, and click the download icon to get the
 original back from R2. Without `[ai]` a binary upload answers 503 `conversion_not_configured`.
 
-**Reranking** (knowledge search reorders its top 50 fused candidates by relevance): with the `AI`
+**Reranking** (knowledge search reorders its top 20 fused candidates by relevance): with the `AI`
 binding it is on by default — Workers AI `@cf/baai/bge-reranker-base`, about $0.003 per million
 input tokens, one extra call per search. For a stronger reranker add one per tenant in Settings →
 AI → *Add reranker provider*: provider *OpenAI-compatible endpoint* with a preset (Fireworks
 `fireworks/qwen3-reranker-8b`, Cohere `rerank-v3.5`, Voyage `rerank-2.5-lite`) and the vendor's key;
 **Test connection** reranks two short documents. Without the binding or a row search keeps its
 fused order. `RERANK_MIN_SCORE=` (0–1, blank = off) drops reranked hits scored below it; its scale is
-per model, so set it from an eval run (`docs/EVALS.md`). Verify: `curl -b <cookie>
+per model, so set it from an eval run (`docs/EVALS.md`). `RERANK_CANDIDATES=` (5–100, blank = 20)
+is how many chunks go to the reranker: its latency grows with it. Verify: `curl -b <cookie>
 localhost:3001/api/ai/config/readiness` → `"rerank":{"ready":true,…}`, and a `POST
 /api/ai/documents/search` hit carries a `rerankScore`.
 

@@ -56,7 +56,42 @@ export function skipEvals(): boolean {
  * half of hybrid search — fine for the starter cases, noted in docs/EVALS.md.
  */
 export function evalWorkerEnv(): TestEnv {
-  return createTestEnv(process.env.EMBEDDINGS_API_KEY ? { AI: undefined } : {})
+  // `RERANK_CANDIDATES=20 pnpm eval retrieval --rerank …` — `createTestEnv` copies only the vars it
+  // names, so a tuning knob an eval compares has to be handed over here.
+  const tuning = process.env.RERANK_CANDIDATES
+    ? { RERANK_CANDIDATES: process.env.RERANK_CANDIDATES }
+    : {}
+  if (EVAL_RERANK === 'workers-ai') return createTestEnv({ ...tuning, AI: workersAiRestBinding() })
+  return createTestEnv({ ...tuning, ...(process.env.EMBEDDINGS_API_KEY ? { AI: undefined } : {}) })
+}
+
+/**
+ * `--rerank workers-ai`: an `AI` binding whose `run` is Workers AI's REST API — the same models,
+ * reached from Node. Needs CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN (a token with Workers
+ * AI access; `docs/EVALS.md`). Only `run` exists: the eval needs nothing else from the binding.
+ */
+export function workersAiRestBinding(): Ai {
+  const account = process.env.CLOUDFLARE_ACCOUNT_ID
+  const token = process.env.CLOUDFLARE_API_TOKEN
+  if (!account || !token) {
+    throw new Error('--rerank workers-ai needs CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN')
+  }
+  const run = async (model: string, inputs: unknown) => {
+    const res = await fetch(
+      `https://api.cloudflare.com/client/v4/accounts/${account}/ai/run/${model}`,
+      {
+        method: 'POST',
+        headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify(inputs),
+      }
+    )
+    const body = (await res.json()) as { success?: boolean; result?: unknown; errors?: unknown }
+    if (!res.ok || body.success === false) {
+      throw new Error(`Workers AI ${model}: ${res.status} ${JSON.stringify(body.errors ?? body)}`)
+    }
+    return body.result
+  }
+  return { run } as unknown as Ai
 }
 
 export function evalConfig(env: TestEnv = evalWorkerEnv()) {

@@ -15,7 +15,7 @@
  * construction (first occurrence, Postgres characters against JS's UTF-16). The tenant predicate
  * is on EVERY query; `documentId` narrows further.
  *
- * **Reranking** (`rerank.ts`): the top `RERANK_CANDIDATES` (50) fused candidates go to the reranker
+ * **Reranking** (`rerank.ts`): the top `RERANK_CANDIDATES` (config, default 20) fused candidates go to the reranker
  * `resolveRerank` picks (the tenant's `rerank` row → Workers AI bge-reranker-base → none), are
  * reordered by its score (`rerankScore`, 0–1), filtered by `RERANK_MIN_SCORE` when that is set,
  * then cut to `limit`. No reranker, fewer than two candidates, `rerank: false`, a failure or a
@@ -302,7 +302,7 @@ async function rerankFused(
     request.query,
     fused,
     f => rerankText(f.item),
-    { candidates: RERANK_CANDIDATES }
+    { candidates: cfg.RERANK_CANDIDATES ?? RERANK_CANDIDATES }
   )
   if (reranker && (outcome.applied || outcome.reason === 'timeout')) {
     usage.push({

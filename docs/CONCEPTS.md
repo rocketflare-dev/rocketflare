@@ -767,7 +767,7 @@ Server: `api/services/{ai,agents}/**` (read their `CLAUDE.md`), `services/prompt
   document), so a document embedded by another model stays findable by keyword alone. A hit
   carries `headingPath`, `page` and `charOffset` (the stored `char_start`; `position()` of the text
   for a chunk written before 0.37.0). **Reranking** (`services/ai/rerank.ts`, the `RerankFn` seam
-  — `(query, documents) => scores` in [0, 1]): the top 50 fused candidates go to the resolved
+  — `(query, documents) => scores` in [0, 1]): the top `RERANK_CANDIDATES` (default 20) fused candidates go to the resolved
   reranker with their title and section in front, are reordered by its score (`rerankScore` on the
   hit; `rank` is the final order, `score` stays the RRF score), filtered by `RERANK_MIN_SCORE` when
   set (unset = off), then cut to `limit`. The Cohere-style client reads its request dialect
@@ -1091,10 +1091,11 @@ stream cursor; a cancelled run emits nothing rather than AG-UI 1.0's `RUN_FINISH
 outcome; no token-level streaming for runs (would need a per-run DO); char-based history budget
 not derived from the model; sliding window defeats prompt caching on long threads; `enqueueRun`
 does not pre-resolve the client; Workers AI forced tools on off-list models are best-effort;
-reranking: the Workers AI `bge-reranker-base` default is untested against the fixture (evals run
-in Node with no real `AI` binding) and its logits-vs-probabilities reading is a per-batch
-heuristic, every search with `[ai]` bound pays one extra Workers AI call, the Fireworks reranker
-adds ~0.8 s per search, `RERANK_MIN_SCORE`'s scale is per model so the kit ships it off, the
+reranking: the Workers AI `bge-reranker-base` default is not yet measured against the fixture
+(`pnpm eval retrieval --rerank workers-ai` needs a Cloudflare API token) and its
+logits-vs-probabilities reading is a per-batch heuristic, every search with `[ai]` bound pays one
+extra Workers AI call, the Fireworks reranker adds ~0.5 s per search at 20 candidates (~0.8 s at
+50), `RERANK_MIN_SCORE`'s scale is per model so the kit ships it off, the
 plugin API's `searchKnowledge` hit does not carry `rerankScore`, and the global-search plugin
 still carries its own copy of the client until it switches to the core seam in its own repo;
 knowledge metering: Workers AI embeddings and rerank tokens are character estimates, a rerank that

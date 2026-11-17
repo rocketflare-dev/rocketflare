@@ -110,6 +110,36 @@ afterEach(() => {
 })
 
 describe('reranking', () => {
+  it('sends only the first RERANK_CANDIDATES fused hits to the reranker', async () => {
+    const e = env('railway', { RERANK_CANDIDATES: '5' })
+    const w = await world(e)
+    expect(w.cfg.RERANK_CANDIDATES).toBe(5)
+    // Enough extra documents that the fused list is longer than the setting.
+    for (let i = 0; i < 4; i++) {
+      await ingestText(
+        db,
+        w.cfg,
+        e,
+        {
+          tenantId: w.tenantId,
+          userId: w.userId,
+          title: `extra ${i}`,
+          text: `${DOCS.volcano} ${i}`,
+        },
+        { jobs: e.JOBS_QUEUE }
+      )
+    }
+    stubs(e).ai?.clear()
+    await searchKnowledgeChunks(db, w.cfg, e, fullAccessScope(w.tenantId), {
+      query: QUERY,
+      limit: 3,
+    })
+    const rerankRun = (stubs(e).ai?.runs ?? []).find(r => r.model === RERANK_MODEL)
+    expect(rerankRun?.inputs.contexts).toHaveLength(5)
+    // Unset, the default (20) is more than this world's seven chunks: every one is sent.
+    expect(loadConfig(createTestEnv()).RERANK_CANDIDATES).toBeUndefined()
+  })
+
   it('reorders the fused head by the reranker, scores each hit in [0, 1] and meters both calls', async () => {
     const e = env('railway')
     const w = await world(e)

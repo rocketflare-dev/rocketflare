@@ -120,7 +120,7 @@ Rules:
   `<=>` over the chunks whose `embeddingModel` is the query vector's (every leg, tenant and
   platform) + lexical over `chunks.search_vector` (generated, GIN) for ANY query word (`anyTermTsquery` — never `websearch_to_tsquery`, which ANDs
   filler words into zero hits) ranked by `ts_rank_cd`, RRF `k = 60`, then the top
-  `RERANK_CANDIDATES` (50) fused candidates through the reranker `resolveRerank` picks, filtered by
+  `RERANK_CANDIDATES` (config, default 20) fused candidates through the reranker `resolveRerank` picks, filtered by
   `RERANK_MIN_SCORE` when set, cut to `limit` (hits carry `rerankScore`, 0–1, or null). No reranker,
   < 2 candidates, `rerank: false`, a failure or a timeout = the fused order, and the retrieval span
   says which (`rocketflare.rerank.*`). **A document's TEXT only through `document-content.ts`** (`readDocumentWindow` /

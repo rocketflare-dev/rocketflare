@@ -185,6 +185,17 @@ const coreConfigSchema = z.object({
    * Drop a reranked search hit whose reranker score (0–1, every reranker on that scale) is below
    * this. Unset = off: the reranker reorders and nothing is dropped. No effect without a reranker.
    */
+  /**
+   * How many fused candidates go to the reranker (5–100; unset = 20). The reranker's latency grows
+   * with it — on the kit fixture, qwen3-reranker-8b took a median 810 ms for 50 chunks and 465 ms
+   * for 20, at the same recall — and a corpus whose answers sit deeper in the fused order may want
+   * more; set it from `RERANK_CANDIDATES=… pnpm eval retrieval --rerank …` (docs/EVALS.md).
+   */
+  RERANK_CANDIDATES: z.preprocess(
+    value =>
+      value === undefined || value === null || String(value).trim() === '' ? undefined : value,
+    z.coerce.number().int().min(5).max(100).optional()
+  ),
   RERANK_MIN_SCORE: z.preprocess(
     value =>
       value === undefined || value === null || String(value).trim() === '' ? undefined : value,

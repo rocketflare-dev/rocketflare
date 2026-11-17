@@ -37,7 +37,7 @@ import { withDeadline } from './client'
 import type { AiEnv } from './types'
 
 /** How many fused candidates a search hands the reranker. */
-export const RERANK_CANDIDATES = 50
+export const RERANK_CANDIDATES = 20
 /**
  * How long a search waits for the reranker before answering in fused order. A cross-encoder over
  * 50 passages is ~100 ms on Workers AI and a few hundred ms to ~1 s over HTTP (measured on the
