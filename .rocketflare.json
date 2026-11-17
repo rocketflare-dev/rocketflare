@@ -262,6 +262,7 @@
   "kitOnly": [
     "apps/web/tests/kit-only/**",
     "docs/plans/**",
+    "docs/research/**",
     ".github/workflows/kit.yml",
     ".github/workflows/plugin-ci.yml",
     ".github/workflows/notify-plugins.yml",
