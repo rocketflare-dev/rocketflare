@@ -36,7 +36,7 @@ Branch `feat/knowledge-facts`, one commit per phase, the gate green after each.
 | 2c-1: review API, `lookup_facts`, conflicts chat eval | `5431c6e` | done: chat · conflicts 16/18, no answer left a side out |
 | 2c-2: review UI, chat entity cards, decisions kept | `03076f2` | done |
 | local test in a dev instance | — | done 2026-11-17: Brightside loaded into a dev tenant; search latency fixed with `RERANK_CANDIDATES` (default 20) |
-| 3: docs and release | — | next: measure Workers AI rerank, the doc sweep below, `pnpm kit:release 0.37.0` |
+| 3: docs and release | — | doc sweep done (uncommitted, for review): CONCEPTS §9 gaps, SETUP flag + entity types, rules, ADAPTING row, rf-how-do-i entry, README, the unreleased note; then `pnpm kit:release 0.37.0` |
 
 Decided along the way: the `knowledge-facts` flag ships default OFF for 0.37.0; `pg_trgm` is in
 migration 0028 (and `scripts/migrate.ts`); `toMarkdown` emits no page markers, so `chunks.page`
@@ -297,7 +297,7 @@ Known gap in `docs/CONCEPTS.md` §9 for iteration 2.
 | The agent-run timeline shows no entity cards; only chat does (2c-2) | — | Iteration 2: emit `kit.entity` in the run projection beside `kit.document` |
 | The nudge carries no reviewer, so every member's badge refetches on any settle (2c-2) | — | Iteration 2, if the refetch shows up in load: `nudgeUsers` to the reviewers |
 | Chat search felt slow in local testing: 2.4 s for one `search_knowledge` call, 2.0 s of it the Fireworks rerank over 50 chunks (local test) | median rerank 810 ms at 50 candidates | **Resolved**: `RERANK_CANDIDATES` (default 20): median 465 ms with the same R@5, R@10 and MRR, because every answer passage was already in the fused top 20 |
-| Workers AI `bge-reranker-base`, the kit's default reranker, is unmeasured on the fixture (local test) | — | **Phase 3**: `pnpm eval retrieval --rerank workers-ai` with a Cloudflare API token; check recall and latency at 20 candidates and its 512-token input limit against chunk size |
+| Workers AI `bge-reranker-base`, the kit's default reranker, is unmeasured on the fixture (local test) | — | **Deferred to iteration 2** (decided 2026-11-17): `pnpm eval retrieval --rerank workers-ai` with a Cloudflare API token; check recall and latency at 20 candidates and its 512-token input limit against chunk size. Stays a CONCEPTS Known gap |
 
 ## Phase 3: docs and release
 

@@ -82,7 +82,7 @@ and "The plugin slot", one row per layer — read the row for the answer from st
 column.** The slots, in the table's own words, are `SharedPlugin.jobs` / `subjects` / `features` /
 `config` / `realtimeRoots` / `agentKeys`, `ServerPlugin.mounts` / `jobHandlers` / `agents` /
 `agentTools` / `scheduledTasks` / `grants` / `rlsExcludedTables` / `unscopedAllowlist` /
-`visibilityResources` / `hooks`, `UiPlugin.routes` / `nav` / `settingsTabs` / `queryKeys` /
+`visibilityResources` / `hooks` / `knowledgeEntityTypes`, `UiPlugin.routes` / `nav` / `settingsTabs` / `queryKeys` /
 `agentForms`, and `CliPlugin.register` — each reached through one of the four published entry files
 (`apps/web/src/plugins/<id>/index.ts`, `.../ui/index.ts`,
 `packages/shared/src/plugins/<id>/index.ts`, `apps/cli/src/plugins/<id>/index.ts`) and nothing else.
@@ -177,6 +177,33 @@ ones their slice touches, and say what enforces each, so the rule is a test and 
   - The app's own code subscribes in `apps/web/src/api/services/events/app-handlers.ts`. Worked
     example: `example-feature` (`POST /notes` emits, `events/note-created.ts` handles,
     `agents/note-stats.ts` is triggered). `docs/CONCEPTS.md` §16 "Plugin events".
+
+- **"The knowledge base should know facts about my customers / orders / suppliers"** (D43) — do
+  not coach a new extraction job, a prompt or a column the model fills in. **Register an entity
+  type** and the kit's `knowledge.extract` job does the rest: in the app, an entry in
+  `APP_ENTITY_TYPES` (`apps/web/src/api/services/knowledge/entity-types.ts` — its header comment is
+  the template); in a plugin, `ServerPlugin.knowledgeEntityTypes`, type `<id>.<name>` (copy
+  `apps/web/src/plugins/example-feature/knowledge/entity-types.ts`). Settle with them:
+  - **The type and its table.** `table` + `labelColumn` (+ `aliasColumns`) when the rows already
+    exist, so the default trigram resolver matches a mention to a row; no table when the thing
+    lives only in documents (facts sit on staging entities until a person promotes one). A
+    mention matched by a NUMBER or code, not a name, needs its own `resolve(name, scope)` — which
+    must filter by `scope.access.tenantId`.
+  - **The fact keys.** snake_case, a zod value schema each, and a `.describe()` that tells the
+    model what to read — that sentence IS the extraction prompt for the key. A date is
+    `z.iso.date()`, never `z.date()` (the schema must render as JSON schema). Fewer, sharper keys
+    extract better than a mirror of every column.
+  - **What it never does.** A fact never writes a domain column: confirming, merging and promoting
+    are a person's review actions. If they want the value applied to the row, that is their own
+    approval-gated action, not extraction.
+  - **Turning it on.** The `knowledge-facts` flag (default off, Admin → Feature flags) per tenant,
+    and `KNOWLEDGE_TENANT_DAILY_COST_USD` in both tomls first — extraction is one model call per
+    section of every changed document (`SETUP.md` §2.5 "Knowledge facts").
+  - **The test that enforces it.** `tests/config/knowledge-entity-types.test.ts` composes the
+    registry and fails a bad type; a type with a table needs the tenant case (the resolver never
+    finds another tenant's row — `example-feature`'s `tests/api/knowledge-entity-type.test.ts`).
+    For quality, `pnpm eval facts` over a corpus of their own documents with a `facts.jsonl` (hand
+    over to `rf-evals`).
 
 Four more when the answer to step 0 was "plugin", and every one of them is a test rather than
 advice:

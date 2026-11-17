@@ -49,6 +49,8 @@ AGENT_TENANT_DAILY_COST_USD=
 # below it — the scale is per reranker model, so set it from `pnpm eval retrieval --rerank …`.
 # KNOWLEDGE_TENANT_DAILY_COST_USD caps one tenant's embeddings + rerank + extraction spend per UTC
 # day; only extraction pauses at it, indexing and search never do.
+# Fact extraction itself is not a var: it is the `knowledge-facts` feature flag (default off,
+# Admin → Feature flags) plus a registered entity type — SETUP.md §2.5 "Knowledge facts".
 RERANK_MIN_SCORE=
 # RERANK_CANDIDATES (5–100, blank = 20): how many chunks go to the reranker — more is slower.
 RERANK_CANDIDATES=

@@ -156,7 +156,12 @@ the CLI command `<id>`; skills `<id>` / `<id>-<what>`; AG-UI CUSTOM events `<id>
 - **Knowledge goes through `ingestDocument` / `ingestDocumentFile`**, never a `documents` insert:
   `source: '<id>:<kind>'` + the upstream `externalId` so a re-sync upserts; `deleteIngestedDocument`
   for upstream deletes. Visibility defaults to the whole organisation — one person's data passes the
-  owner's `userId` + `visibility: 'groups'` + `groupIds: []`. Declare `requires.surfaces:
+  owner's `userId` + `visibility: 'groups'` + `groupIds: []`. Pass `reviewerUserId` (the person
+  who connected the source) so the facts extracted from it reach someone who can judge them —
+  without one they go to the document's owner (tenant admins see every review item either way); a
+  plugin's document is `origin: 'integration'`, the lowest fact trust. A plain ingest (no
+  `externalId`) whose text matches a tenant-wide document of the same `source` answers that
+  document with `deduplicated: true`. Declare `requires.surfaces:
   ["feature-knowledge"]`.
 - **Platform knowledge** (content about the APP, readable by every tenant): `ingestPlatformDocument`
   / `prunePlatformDocuments` from a `JobCtx` / `CronCtx` only (`kind` brands them; an `EmailCtx`

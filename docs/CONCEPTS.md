@@ -776,7 +776,8 @@ Server: `api/services/{ai,agents}/**` (read their `CLAUDE.md`), `services/prompt
   failure or a 3 s timeout answer the fused order, and the `retrieval` span says which
   (`rocketflare.rerank.*`) with a `rerank <model>` child. On the kit fixture a Fireworks
   `qwen3-reranker-8b` lifts MRR from 0.66 to 0.84 and recall@5 from 0.87 to 1.00 at a median
-  821 ms per search (`docs/EVALS.md`). **Metering**: every embedding (index, re-embed, query) and
+  465 ms per search over 20 candidates; 50 candidates scored the same at 810 ms, because every
+  answer passage was already in the fused top 20, hence the default (`docs/EVALS.md`). **Metering**: every embedding (index, re-embed, query) and
   rerank call is an `ai_usage` row, `knowledge.embeddings` / `knowledge.rerank`, and every fact
   extraction call a `knowledge.extraction` row, with the provider's token count or a 4-chars
   estimate; a ledger failure is logged and never fails an ingest or a search (the search route
@@ -825,10 +826,15 @@ Server: `api/services/{ai,agents}/**` (read their `CLAUDE.md`), `services/prompt
   'unavailable'`. Every tenant document view (the list, viewer, `/search`, `get_document`,
   `list_documents`, delete) keeps `tenant_id = $t` and never shows one; `search_knowledge` includes
   them for the sources `ServerPlugin.knowledgeSources` names, marked `platform`, and chat and agent runs show no document card for one (the documents page cannot open it).
-- **Knowledge facts (D43, in progress — schema, contracts, registry, extraction, the review API,
-  the chat tools and the UI exist; docs and the release are still to come)**: typed facts read from documents and attached to the app's
-  own rows, or to a staging entity until one exists (decisions: `docs/plans/knowledge-base-review.md`
-  §10). **Contracts** (`shared/src/ai/knowledge-facts.ts`): an entity type declares `type`,
+- **Knowledge facts (D43)**: typed facts read from documents and attached to the app's own rows,
+  or to a staging entity until one exists, each with its source span, trust, validity and state,
+  so people and agents are told when a fact is unconfirmed or contradicted. **Off by default**:
+  the core flag `knowledge-facts` (per tenant, Admin → Feature flags) AND at least one registered
+  entity type switch it on; without both nothing is extracted, `/api/knowledge` is a 404 and the
+  UI shows none of it. Why it is built this way: a fact never writes a domain column (a person
+  promotes or applies it), an uncertain match becomes a staging entity with a "same as …?" item
+  rather than an automatic link (attaching a fact to the wrong customer is the worst failure), and
+  review never blocks retrieval (an open fact is used and labelled). **Contracts** (`shared/src/ai/knowledge-facts.ts`): an entity type declares `type`,
   `label` and `facts`, a zod object whose keys are snake_case fact keys and whose values are the
   value schemas (`.describe()` steers extraction; the object must render through
   `z.toJSONSchema`, so a date is `z.iso.date()`); `FACT_STATES` `accepted · unconfirmed ·
@@ -917,7 +923,7 @@ Server: `api/services/{ai,agents}/**` (read their `CLAUDE.md`), `services/prompt
   0.71, 83 % of planted conflicts caught, 14 % of flags false alarms and every caught conflict
   preferring the planted winner (`docs/EVALS.md`; run to run the false-alarm share moves by about
   ten points). Sonnet 5.5: 0.98 / 0.80 / 83 % / 17 %, at about 19× the cost — a stronger model does
-  not lower it. The plan's 10 % target is not met; the remaining causes are in Known gaps.
+  not lower it. The 10 % false-alarm share aimed for is not met; the causes are in Known gaps.
   **Reading facts** (`facts-read.ts`, `facts-sql.ts`): a fact is read through its document —
   every query inner-joins `documents` and ANDs `visibleDocuments(scope)`, so a fact whose
   document you cannot open does not exist for you (404, never 403), and neither does a staging
@@ -1091,8 +1097,10 @@ stream cursor; a cancelled run emits nothing rather than AG-UI 1.0's `RUN_FINISH
 outcome; no token-level streaming for runs (would need a per-run DO); char-based history budget
 not derived from the model; sliding window defeats prompt caching on long threads; `enqueueRun`
 does not pre-resolve the client; Workers AI forced tools on off-list models are best-effort;
-reranking: the Workers AI `bge-reranker-base` default is not yet measured against the fixture
-(`pnpm eval retrieval --rerank workers-ai` needs a Cloudflare API token) and its
+lexical search is English-only (`SEARCH_TEXT_CONFIG` is one constant, not per tenant);
+reranking: the Workers AI `bge-reranker-base` default is not yet measured against the fixture —
+neither recall nor latency at 20 candidates, nor whether its 512-token input limit truncates an
+800-token chunk (`pnpm eval retrieval --rerank workers-ai` needs a Cloudflare API token) — and its
 logits-vs-probabilities reading is a per-batch heuristic, every search with `[ai]` bound pays one
 extra Workers AI call, the Fireworks reranker adds ~0.5 s per search at 20 candidates (~0.8 s at
 50), `RERANK_MIN_SCORE`'s scale is per model so the kit ships it off, the
@@ -1100,7 +1108,10 @@ plugin API's `searchKnowledge` hit does not carry `rerankScore`, and the global-
 still carries its own copy of the client until it switches to the core seam in its own repo;
 knowledge metering: Workers AI embeddings and rerank tokens are character estimates, a rerank that
 timed out is recorded as billed, platform-document ingest (tenant-less) is unmetered, and
-platform documents are never extracted; knowledge facts: Promote asks for the domain row's id
+platform documents are never extracted; knowledge facts: about one flag in seven is a false
+alarm on the fixture (14 % with Haiku, 17 % with Sonnet, ±10 points run to run; 10 % was the
+aim); a section's ambiguous candidates (`dropped.ambiguous`) can still leave a staging entity with
+no facts; Promote asks for the domain row's id
 (there is no picker searching the type's rows); the agent-run timeline shows no entity cards (only
 chat does); `search_knowledge`'s facts block finds only entities with a staging row
 (a domain row that never had one is reached through `lookup_facts`' resolver, not by being named
@@ -1235,7 +1246,8 @@ free-text lines and the logger drop terminal control characters, and colour is a
 Detail: `.claude/rules/cli.md`.
 
 **Known gaps:** no device-code flow; one profile at a time; `logout` does not revoke the key; no
-shell completion; not published.
+shell completion; not published; no knowledge commands (documents, search and fact review are
+the API and the UI only).
 
 ## 12. Shared package
 

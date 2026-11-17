@@ -1,7 +1,7 @@
 # Knowledge facts (D43)
 
 Typed facts read from documents, attached to the app's rows or to staging entities. How it works
-and why: `docs/CONCEPTS.md` §9 "Knowledge facts"; decisions: `docs/plans/knowledge-base-review.md` §10.
+and why: `docs/CONCEPTS.md` §9 "Knowledge facts".
 
 | File | What |
 |---|---|

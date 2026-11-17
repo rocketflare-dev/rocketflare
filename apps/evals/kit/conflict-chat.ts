@@ -3,7 +3,7 @@
  * `conflicts.jsonl`, asking the question a person would ask about that key, with a rubric that the
  * answer gives EVERY value the documents state for it, each with its source, and says they
  * disagree (or that one replaced the other) — never one value silently. The decision is
- * "review never blocks retrieval" (`docs/plans/knowledge-base-review.md` §10, decision 5): a
+ * "review never blocks retrieval" (`docs/CONCEPTS.md` §9, "Knowledge facts"): a
  * conflict is used, labelled, and both sides cited.
  *
  * Pure: the cases come from the answer keys alone (`facts.jsonl` for each side's value and

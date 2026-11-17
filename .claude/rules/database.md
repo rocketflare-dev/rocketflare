@@ -90,6 +90,14 @@ predicate**, not SQL injection — the app role can `set_config` itself.
   a GIN index; its `'english'` literal must equal `SEARCH_TEXT_CONFIG` (`retrieval.ts`), which
   `tests/config/search-text-config.test.ts` pins. `chunks.text` is an exact slice of
   `documents.content` at `[char_start, char_end)` — chunk through `chunkText`, never by hand
+- **Generated columns** (`chunks.search_vector`): declared with `.generatedAlwaysAs(sql…)`,
+  never written by the app. Adding one to an existing table rewrites the whole table under an
+  exclusive lock — above about 1M rows that migration needs a maintenance window
+- **Knowledge facts (D43)**: `knowledge_facts.entity_id` is text with **no FK** (it names a
+  staging entity or a row of any registered domain table), so nothing cascades from the entity;
+  `document_id` cascades and `chunk_id` is set null (a re-index keeps the fact's span and quote).
+  A fact has no grants of its own: every read joins `documents` under `visibleDocuments(scope)`.
+  `knowledge_entities.name` has a GIN `gin_trgm_ops` index (`pg_trgm`, above)
 - Query vectors are parameters: `vectorLiteral(v)` (`[0.1,0.2,…]`) interpolated through the drizzle
   `sql` tag and cast `::vector` — never string-concatenate a query; `embedding` values are inserted as
   `number[]` through drizzle

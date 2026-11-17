@@ -20,6 +20,7 @@ Keep the classes out of `api/index.ts` — it lets tests drive `app.request(req,
 - a model call, chat, a streaming route, ingest, retrieval → `src/api/services/ai/CLAUDE.md`
 - agent runs, tools, interrupts, decisions → `src/api/services/agents/CLAUDE.md`; the Workflow
   class → `src/api/workflows/CLAUDE.md`; a job type or consumer → `src/api/queues/CLAUDE.md`
+- knowledge facts, entity types, `/api/knowledge` → `src/api/services/knowledge/CLAUDE.md`
 - anything a plugin contributes, or the analytics plugin → `apps/web/src/plugins/CLAUDE.md`
 
 ## Middleware order (do not reorder casually — each step needs what the earlier ones set)

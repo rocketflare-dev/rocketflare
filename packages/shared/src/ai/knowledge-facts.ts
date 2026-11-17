@@ -9,7 +9,7 @@
  *
  * **A fact never decides by itself what it overrides.** Trust orders sources for the "which side
  * is preferred in an answer" question only; both sides of a conflict are always kept and cited
- * (`docs/plans/knowledge-base-review.md` §10, decisions 3 and 5).
+ * (`docs/CONCEPTS.md` §9, "Knowledge facts").
  */
 import { z } from 'zod'
 import { paginatedResponse, paginationQuerySchema } from '../pagination'
