@@ -809,7 +809,10 @@ Server: `api/services/{ai,agents}/**` (read their `CLAUDE.md`), `services/prompt
   `POST /api/chat/conversations/:id/messages` route (so `prepareChatTurn` decides prompt, history and
   tools, as in production); the agent target runs `enqueueRun` → `claimStep` → `executeRun` →
   `finishStep` inline. Each case gets a tenant of its own with its `context` documents ingested, so
-  retrieval can only find what the case put there. Everything a target does runs in
+  retrieval can only find what the case put there. A **corpus** (`datasets/**/<name>/docs/*.md`
+  plus answer keys — `docs/EVALS.md` § Corpora) is ingested once, with a REAL embedder only, into
+  a tenant its cases share; `knowledge · retrieval` grades the ranking (`Recall@k`, `MRR` in
+  code), and the kit's own fixture, `datasets/kit-only/brightside/`, is kit-only. Everything a target does runs in
   `withEvalScope` (`observability/context.ts`), which marks its traces `rocketflare.eval=true`.
   **The harness input IS the `EvalCase`** (`shared/ai/evals.ts`: input, messages, context,
   expected `{ output, rubric, tools, toolsMatch, contains }`, tags, source), so judges read each
@@ -817,7 +820,7 @@ Server: `api/services/{ai,agents}/**` (read their `CLAUDE.md`), `services/prompt
   for, because vitest-evals averages a `null` score as 0. Deterministic judges (`Contains`,
   `Matches`, `Schema`, `Trajectory` with agentevals' strict/unordered/subset/superset, `Budget`)
   come first; LLM judges (`Rubric`, `Faithfulness` against what retrieval actually returned,
-  `Reference` = vitest-evals' `FactualityJudge`) run through ONE judge harness that calls the kit's
+  `Reference` = vitest-evals' `FactualityJudge`; `ContextPrecision` for retrieval) run through ONE judge harness that calls the kit's
   resolver on the `evals-judge` prompt key — so `agent_models` can pin it, `--judge-model` overrides
   it, and every call is an `ai_usage` row under `evals.judge`. `--provider` / `--judge-provider
   fireworks|gemini` put the target or judge on a real encrypted tenant `ai_configs` row

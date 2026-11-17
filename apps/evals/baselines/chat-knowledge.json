@@ -1,8 +1,8 @@
 {
   "suite": "chat-knowledge",
-  "createdAt": "2026-09-26T05:11:40.208Z",
-  "sha": "2d41fc1",
-  "model": "claude-sonnet-4-5",
+  "createdAt": "2026-11-17T07:01:00.486Z",
+  "sha": "a8b999e",
+  "model": "claude-haiku-5-5",
   "judgeModel": null,
   "cases": {
     "refund-window": {
@@ -30,6 +30,93 @@
       }
     },
     "oncall-followup": {
+      "avgScore": 1,
+      "scores": {
+        "Trajectory": 1,
+        "Contains": 1,
+        "Faithfulness": 1,
+        "Rubric": 1
+      }
+    },
+    "stolen-laptop": {
+      "avgScore": 0,
+      "scores": {
+        "Trajectory": 0,
+        "Contains": 0,
+        "Faithfulness": 0,
+        "Rubric": 0
+      }
+    },
+    "bs-greeting": {
+      "avgScore": 1,
+      "scores": {
+        "Trajectory": 1,
+        "Rubric": 1
+      }
+    },
+    "bs-hdl-fee": {
+      "avgScore": 1,
+      "scores": {
+        "Trajectory": 1,
+        "Contains": 1,
+        "Faithfulness": 1,
+        "Rubric": 1
+      }
+    },
+    "bs-hvd-alias-renewal": {
+      "avgScore": 1,
+      "scores": {
+        "Trajectory": 1,
+        "Contains": 1,
+        "Faithfulness": 1,
+        "Rubric": 1
+      }
+    },
+    "bs-abp-terms": {
+      "avgScore": 0.5,
+      "scores": {
+        "Trajectory": 1,
+        "Contains": 0,
+        "Faithfulness": 1,
+        "Rubric": 0
+      }
+    },
+    "bs-gl-late": {
+      "avgScore": 1,
+      "scores": {
+        "Trajectory": 1,
+        "Contains": 1,
+        "Faithfulness": 1,
+        "Rubric": 1
+      }
+    },
+    "bs-plans-leaf": {
+      "avgScore": 1,
+      "scores": {
+        "Trajectory": 1,
+        "Contains": 1,
+        "Faithfulness": 1,
+        "Rubric": 1
+      }
+    },
+    "bs-grit-sites": {
+      "avgScore": 0.6666666666666666,
+      "scores": {
+        "Trajectory": 1,
+        "Faithfulness": 1,
+        "Rubric": 0
+      }
+    },
+    "bs-rlc-relative-date": {
+      "avgScore": 0.95,
+      "scores": {
+        "Trajectory": 1,
+        "Contains": 1,
+        "Faithfulness": 0.8,
+        "Rubric": 1
+      }
+    },
+    "bs-omh-fee-history": {
       "avgScore": 0.875,
       "scores": {
         "Trajectory": 1,
@@ -38,13 +125,145 @@
         "Rubric": 0.5
       }
     },
-    "stolen-laptop": {
-      "avgScore": 0.125,
+    "bs-hvd-fee-conflict": {
+      "avgScore": 0.625,
       "scores": {
-        "Trajectory": 0,
-        "Contains": 0,
-        "Faithfulness": 0,
+        "Trajectory": 1,
+        "Contains": 0.5,
+        "Faithfulness": 1,
+        "Rubric": 0
+      }
+    },
+    "bs-stw-gritting-conflict": {
+      "avgScore": 1,
+      "scores": {
+        "Trajectory": 1,
+        "Faithfulness": 1,
+        "Rubric": 1
+      }
+    },
+    "bs-gl-lead-conflict": {
+      "avgScore": 0.875,
+      "scores": {
+        "Trajectory": 1,
+        "Contains": 1,
+        "Faithfulness": 1,
         "Rubric": 0.5
+      }
+    },
+    "bs-krp-terms-conflict": {
+      "avgScore": 0.75,
+      "scores": {
+        "Trajectory": 1,
+        "Contains": 1,
+        "Faithfulness": 1,
+        "Rubric": 0
+      }
+    },
+    "bs-abp-contact-conflict": {
+      "avgScore": 0.875,
+      "scores": {
+        "Trajectory": 1,
+        "Contains": 1,
+        "Faithfulness": 1,
+        "Rubric": 0.5
+      }
+    },
+    "bs-nsg-min-conflict": {
+      "avgScore": 1,
+      "scores": {
+        "Trajectory": 1,
+        "Contains": 1,
+        "Faithfulness": 1,
+        "Rubric": 1
+      }
+    },
+    "bs-leaf-price-conflict": {
+      "avgScore": 1,
+      "scores": {
+        "Trajectory": 1,
+        "Contains": 1,
+        "Faithfulness": 1,
+        "Rubric": 1
+      }
+    },
+    "bs-grit-price-change": {
+      "avgScore": 1,
+      "scores": {
+        "Trajectory": 1,
+        "Contains": 1,
+        "Faithfulness": 1,
+        "Rubric": 1
+      }
+    },
+    "bs-tlc-proposal": {
+      "avgScore": 0.75,
+      "scores": {
+        "Trajectory": 1,
+        "Contains": 1,
+        "Faithfulness": 1,
+        "Rubric": 0
+      }
+    },
+    "bs-hvd-am": {
+      "avgScore": 0.5,
+      "scores": {
+        "Trajectory": 1,
+        "Contains": 0,
+        "Faithfulness": 1,
+        "Rubric": 0
+      }
+    },
+    "bs-ngv-phone": {
+      "avgScore": 1,
+      "scores": {
+        "Trajectory": 1,
+        "Contains": 1,
+        "Faithfulness": 1,
+        "Rubric": 1
+      }
+    },
+    "bs-multi-dental": {
+      "avgScore": 0.75,
+      "scores": {
+        "Trajectory": 1,
+        "Contains": 1,
+        "Faithfulness": 1,
+        "Rubric": 0
+      }
+    },
+    "bs-unknown-vat-number": {
+      "avgScore": 1,
+      "scores": {
+        "Trajectory": 1,
+        "Faithfulness": 1,
+        "Rubric": 1
+      }
+    },
+    "bs-unknown-new-customer": {
+      "avgScore": 1,
+      "scores": {
+        "Trajectory": 1,
+        "Faithfulness": 1,
+        "Rubric": 1
+      }
+    },
+    "bs-salt-backup": {
+      "avgScore": 1,
+      "scores": {
+        "Trajectory": 1,
+        "Contains": 1,
+        "Faithfulness": 1,
+        "Rubric": 1
+      }
+    },
+    "bs-multiturn-fenwick": {
+      "avgScore": 1,
+      "scores": {
+        "Trajectory": 1,
+        "Contains": 1,
+        "Faithfulness": 1,
+        "Rubric": 1
       }
     }
   }

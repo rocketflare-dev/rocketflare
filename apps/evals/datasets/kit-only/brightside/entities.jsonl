@@ -1,0 +1,23 @@
+{"entityType":"customer","name":"Harbour View Dental","aliases":["HVD","the dental practice on Quay St","Harbour View","Harbour View Dental Practice Ltd"]}
+{"entityType":"customer","name":"Harbourside Dental Lab","aliases":["Harbourside","Harbourside Dental Lab Ltd"]}
+{"entityType":"customer","name":"Ashcombe Business Park","aliases":["ABP","the park","Kestrel Way","Ashcombe Business Park Management Company Ltd"]}
+{"entityType":"customer","name":"St Wilfrid's Primary School","aliases":["St Wilfrid's","St Wilfrid's C of E Primary School","St Wilfrid's Primary"]}
+{"entityType":"customer","name":"The Old Mill Hotel","aliases":["the Old Mill","Old Mill Hotel"]}
+{"entityType":"customer","name":"Fenwick & Daughters Solicitors","aliases":["Fenwick & Daughters","Fenwick & Daughters LLP","Fenwick"]}
+{"entityType":"customer","name":"Riverside Lodge Care Home","aliases":["Riverside Lodge","Riverside"]}
+{"entityType":"customer","name":"Kingsgate Retail Park","aliases":["KRP","Kingsgate","the retail park","Kingsgate Estates"]}
+{"entityType":"customer","name":"Thornley Leisure Centre","aliases":["Thornley LC","Thornley"]}
+{"entityType":"customer","name":"Northgate Veterinary Surgery","aliases":["Northgate Vets","Northgate"]}
+{"entityType":"supplier","name":"Greenleaf Horticultural Supplies","aliases":["Greenleaf","Greenleaf Horticultural"]}
+{"entityType":"supplier","name":"Greenway Garden Wholesale","aliases":["Greenway"]}
+{"entityType":"supplier","name":"Northern Salt & Grit Co","aliases":["NSG","Northern Salt & Grit","Northern"]}
+{"entityType":"supplier","name":"Ashcombe Plant Hire","aliases":["APH","the hire company"]}
+{"entityType":"service","name":"Lawn mowing","aliases":["mowing","grass cutting"]}
+{"entityType":"service","name":"Hedge trimming","aliases":["hedge cut"]}
+{"entityType":"service","name":"Leaf clearance","aliases":["leaf visits","autumn leaves"]}
+{"entityType":"service","name":"Weed control","aliases":["weeding","weed spraying"]}
+{"entityType":"service","name":"Seasonal planting","aliases":["bedding","seasonal bedding"]}
+{"entityType":"service","name":"Winter gritting (annual plan)","aliases":["gritting annual plan","annual gritting plan","the gritting plan"]}
+{"entityType":"service","name":"Gritting call-out","aliases":["call-out","single call-out"]}
+{"entityType":"service","name":"Rock salt supply","aliases":["brown rock salt","salt"]}
+{"entityType":"service","name":"Tree survey","aliases":["tree inspection"]}

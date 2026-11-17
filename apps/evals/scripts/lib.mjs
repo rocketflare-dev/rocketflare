@@ -206,7 +206,14 @@ export function renderSummary(cases) {
   let cost = 0
   let priced = true
   let ms = 0
-  for (const c of scored) {
+  const mean = values => {
+    const xs = values.filter(v => typeof v === 'number')
+    return xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null
+  }
+  // A suite's mean row follows its last case: a measurement suite (retrieval's Recall@k, MRR) is
+  // read as its averages, never case by case.
+  const lastOfSuite = new Map(scored.map((c, i) => [c.suite, i]))
+  for (const [i, c] of scored.entries()) {
     const t = (c.usage.inputTokens ?? 0) + (c.usage.outputTokens ?? 0)
     tokens += t
     if (typeof c.usage.costUsd === 'number') cost += c.usage.costUsd
@@ -221,6 +228,20 @@ export function renderSummary(cases) {
       typeof c.usage.costUsd === 'number' ? `$${c.usage.costUsd.toFixed(4)}` : '—',
       c.totalMs ?? '—',
     ])
+    if (lastOfSuite.get(c.suite) === i) {
+      const mine = scored.filter(x => x.suite === c.suite)
+      if (mine.length > 1) {
+        rows.push([
+          c.suite,
+          `(mean of ${mine.length})`,
+          fmt(mean(mine.map(x => x.avgScore))),
+          ...judges.map(j => fmt(mean(mine.map(x => x.scores[j])))),
+          '',
+          '',
+          '',
+        ])
+      }
+    }
   }
   const passed = scored.filter(c => c.status === 'passed').length
   const avg = scored.reduce((sum, c) => sum + (c.avgScore ?? 0), 0) / scored.length

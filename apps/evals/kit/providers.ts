@@ -81,3 +81,39 @@ export async function useProvider(
     isDefault: true,
   })
 }
+
+/**
+ * Which REAL embedder a corpus is ingested with. Corpus suites refuse the test stub's deterministic
+ * vectors — a ranking measured on them says nothing about the one production serves. Order:
+ * `EMBEDDINGS_API_KEY` (the platform OpenAI tier, no row), then `GEMINI_API_KEY` as a tenant
+ * `openai_compatible` embeddings row on `gemini-embedding-001` at the kit's 1024 dimensions —
+ * the tenant tier, exactly as Settings → AI would write it. Null = no real embedder: corpus suites
+ * skip and say so.
+ */
+export function evalEmbeddings(): { name: string; keyEnv: string; row: boolean } | null {
+  if (process.env.EMBEDDINGS_API_KEY) {
+    return { name: 'openai text-embedding-3-small', keyEnv: 'EMBEDDINGS_API_KEY', row: false }
+  }
+  if (process.env.GEMINI_API_KEY) {
+    return { name: 'gemini-embedding-001', keyEnv: 'GEMINI_API_KEY', row: true }
+  }
+  return null
+}
+
+/** Give a tenant the real embedder `evalEmbeddings()` picked (a row only for the Gemini tier). */
+export async function useEmbeddings(db: Database, cfg: AppConfig, tenantId: string): Promise<void> {
+  const choice = evalEmbeddings()
+  if (!choice)
+    throw new Error('no real embeddings provider: set EMBEDDINGS_API_KEY or GEMINI_API_KEY')
+  if (!choice.row) return
+  await db.insert(aiConfigs).values({
+    tenantId,
+    scope: 'embeddings',
+    provider: 'openai_compatible',
+    label: 'eval · gemini embeddings',
+    baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai',
+    model: 'gemini-embedding-001',
+    apiKeyEnc: await encrypt(process.env.GEMINI_API_KEY as string, requireEncryptionKey(cfg)),
+    isDefault: true,
+  })
+}

@@ -60,6 +60,14 @@ suite threshold (0.7 by default).
 | `RubricJudge()` | LLM | `expected.rubric` + the material retrieved (else the case context) | pass 1 · partial 0.5 · fail 0 |
 | `FaithfulnessJudge()` | LLM | what retrieval RETURNED (`artifacts.retrieved`) | supported / (supported + unsupported); nothing retrieved → 0 |
 | `ReferenceJudge()` | LLM | `expected.output` | vitest-evals `FactualityJudge` (A 0.4 · B 0.6 · C 1 · D 0 · E 1) |
+| `RecallAtK(k)` | deterministic (retrieval) | the ranked hits + `retrieval.jsonl` passages | share of expected passages in the top k |
+| `MRR()` | deterministic (retrieval) | the same | 1 / rank of the first expected passage; none → 0 |
+| `ContextPrecision(k)` | LLM (retrieval) | the top k hits | the judge marks each relevant or not; average precision over the ranking |
+
+The fact scorers for corpus answer keys — `factExtractionScore` (precision and recall against
+`facts.jsonl`, matched on document, entity through its aliases, key and normalised value) and
+`conflictDetectionScore` (planted conflicts caught, flags that are false alarms) — are plain
+functions in `kit/scoring.ts`.
 
 LLM judges run through `judgeHarness`, which calls the kit's resolver on the `evals-judge` prompt
 key (so Settings → agent models, or `--judge-model`, picks the model). Every call is an `ai_usage`
@@ -72,8 +80,13 @@ The scorers are plain functions in `kit/scoring.ts`. An app's own judge is
 
 | | How it runs | Transcript |
 |---|---|---|
-| `chatHarness()` | `POST /api/chat/conversations` → seed `messages` → `POST …/messages` in-process (the real route, `prepareChatTurn` included) | answer text, tool calls from AG-UI, `retrieved` from `search_knowledge` results, usage from `ai_usage` |
+| `chatHarness({ corpus? })` | `POST /api/chat/conversations` → seed `messages` → `POST …/messages` in-process (the real route, `prepareChatTurn` included) | answer text, tool calls from AG-UI, `retrieved` from `search_knowledge` results, usage from `ai_usage` |
 | `agentHarness(key)` | `enqueueRun` → `claimStep` → `executeRun` (retried up to `EXECUTE_RETRIES`) → `finishStep` inline, no Workflow binding | output, `tool.start`/`tool.end` events, `retrieved` (600-char passage previews), run status |
+
+| `retrievalHarness(corpus)` | `searchKnowledgeChunks` as the corpus tenant's owner, `limit` 20 | the ranked hits (corpus doc id, text, dense and lexical rank) |
+
+With `corpus`, a chat case runs in the corpus's shared tenant (`corpusWorld`, ingested once per
+process), and its spend is the delta its turn added to that tenant's ledger.
 
 A run that parks on a person is settled `cancelled` by `finishStep` and scores as a miss.
 

@@ -67,6 +67,33 @@ describeCases('agent · triage-ticket', {
 - 5–10 cases per suite: happy paths, one the model should refuse or not know, one that should call
   **no** tool (`"tools": [], "toolsMatch": "strict"`), and one edge case.
 
+## Corpora: a whole business's documents
+
+A dataset case brings two or three documents of its own. A **corpus** is a directory of dozens,
+ingested once into one tenant and shared by every case that asks about it, so ranking matters and a
+wrong hit is possible. Put one anywhere under `datasets/` (the kit's own fixture is
+`datasets/kit-only/brightside/`, kit-only):
+
+```
+<name>/docs/<doc-id>.md   front matter (title, date, origin: upload|integration, source, kind) + markdown
+<name>/retrieval.jsonl    {"id","query","expected":[{"doc","passage"}],"tags"} — passage TEXT, never chunk ids
+<name>/chat.jsonl         EvalCase lines about the corpus (`context: []`), run by `chat · knowledge`
+<name>/entities.jsonl     {"entityType","name","aliases"}
+<name>/facts.jsonl        planted facts {"id","entityType","entity","key","value","doc","quote","validFrom","validTo"}
+<name>/conflicts.jsonl    planted contradictions {"id","entityType","entity","key","a","b","winner","why"}
+```
+
+- **Real embeddings only.** A corpus is ingested with `EMBEDDINGS_API_KEY` (the platform tier) or,
+  without it, `GEMINI_API_KEY` as a tenant embeddings row on `gemini-embedding-001` at 1024
+  dimensions. With neither, corpus suites skip: a ranking measured on the stub's deterministic
+  vectors says nothing about production.
+- **`knowledge · retrieval`** (`suites/knowledge/retrieval.eval.ts`) runs each query through the app's
+  own `searchKnowledgeChunks` and grades the ranking: `Recall@5`, `Recall@10` and `MRR` in code,
+  `ContextPrecision` by the judge over the top 5. No chat model runs, and no query fails the run —
+  the summary prints each suite's mean row, which is what to read.
+- `tests/corpus.test.ts` (in the gate) checks every corpus: each passage and quote is verbatim in
+  its document, every id resolves, every conflict pairs two planted facts.
+
 ## Pick judges
 
 Deterministic judges first: they're free, instant and never flaky. Use an LLM judge only for what a
@@ -82,6 +109,7 @@ string can't check.
 | criteria in plain language | `RubricJudge()` + `expected.rubric` |
 | every claim is grounded in what it retrieved | `FaithfulnessJudge()` |
 | it agrees with a reference answer | `ReferenceJudge()` + `expected.output` |
+| retrieval ranked the answer high (corpus suites) | `RecallAtK(k)`, `MRR()` (computed) · `ContextPrecision(k)` (judge) |
 
 The full catalogue, with scoring, is `.claude/skills/rf-evals/reference.md`. LLM judges run
 through the `evals-judge` prompt (Settings → Prompts), on whatever model Settings → Agent models
