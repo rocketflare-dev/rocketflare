@@ -461,6 +461,38 @@ describe('state against what is held', () => {
     expect(raj).toMatchObject({ state: 'accepted', conflictsWith: [] })
     expect(helen).toMatchObject({ state: 'superseded', supersededById: raj?.id })
   })
+  it('two values for one key over one window in one section are a misreading: neither is written', async () => {
+    const w = await world()
+    const id = await addDoc(
+      w,
+      'Harbour View Dental — | Monthly fee | £285 | Call-out | £85 |. Contact Helen until 10 July 2026, Raj from 13 July 2026.',
+      { date: '2026-06-01' }
+    )
+    model([
+      { key: 'monthly_fee_gbp', value: '£285', quote: '| Monthly fee | £285 |' },
+      { key: 'monthly_fee_gbp', value: '£85', quote: '| Call-out | £85 |' },
+      // Different windows in one section: a change over time, both kept.
+      {
+        key: 'primary_contact',
+        value: 'Helen',
+        validTo: '10 July 2026',
+        quote: 'Helen until 10 July 2026',
+      },
+      {
+        key: 'primary_contact',
+        value: 'Raj',
+        validFrom: '13 July 2026',
+        quote: 'Raj from 13 July 2026',
+      },
+    ])
+    const report = await extract(w, id)
+    expect(report.dropped).toEqual({ ambiguous: 2 })
+    const facts = await factsOf(w.tenantId, id)
+    expect(facts.map(f => `${f.key}=${f.valueText}`).sort()).toEqual([
+      'primary_contact=Helen',
+      'primary_contact=Raj',
+    ])
+  })
 })
 
 describe('entity resolution', () => {

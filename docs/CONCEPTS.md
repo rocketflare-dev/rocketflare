@@ -893,14 +893,20 @@ Server: `api/services/{ai,agents}/**` (read their `CLAUDE.md`), `services/prompt
   windows do not overlap it is a change over time instead — the earlier is `superseded` by the
   later. **Preference is derived, never stored** (`isPreferredOver` / `preferredFact` in shared):
   an answer leads with the newer side when its source is at least as trusted, else the older.
+  **A section never contradicts itself**: two values for one entity and key over the same
+  validity in ONE section are a misreading (a table's two price columns put on one entity) and
+  neither is written (`dropped.ambiguous`); different windows there are a change over time and both
+  stay. A placeholder value (`<UNKNOWN>`, `N/A`, `TBD`) is no value.
   Nothing writes a domain column. Re-extracting a document first removes its facts and undoes the
   conflicts they caused. **Cost**: every call is a `knowledge.extraction` row (name embeddings
   `knowledge.embeddings`); `knowledgeExtractionAllowed` is checked before each document, and at the
   cap the job re-enqueues itself for the next UTC day. On the kit fixture (`pnpm eval facts`,
   42 documents, Haiku 5.5, 2026-11-17) one document is one call, about 5,300 input and 700 output
-  tokens — **$0.0009 per document** from the eval's `ai_usage` rows — with precision 0.91, recall
-  0.75, 82 % of planted conflicts caught, 22 % of flags false alarms and every caught conflict
-  preferring the planted winner (`docs/EVALS.md`).
+  tokens — **$0.0009 per document** from the eval's `ai_usage` rows — with precision 0.93, recall
+  0.71, 83 % of planted conflicts caught, 14 % of flags false alarms and every caught conflict
+  preferring the planted winner (`docs/EVALS.md`; run to run the false-alarm share moves by about
+  ten points). Sonnet 5.5: 0.98 / 0.80 / 83 % / 17 %, at about 19× the cost — a stronger model does
+  not lower it. The plan's 10 % target is not met; the remaining causes are in Known gaps.
 - **Usage**: one `ai_usage` row per call, costed at write time from the one price table
   (`shared/ai/pricing`; an unknown model gets `null` and is counted as unpriced). While a cost cap
   applies to a run the deployment pays for (the platform key or the Workers AI binding), a chat call
@@ -1019,8 +1025,11 @@ serialisation), so a conflict between them goes unflagged until one is re-extrac
 staging trigram lookup scans the tenant's entities of that type (the GIN index serves `%`, not
 `similarity() >=`); one service named differently by two documents ("Car park and entrances
 gritting — annual plan" vs "Winter gritting (annual plan)") stays two staging entities, so their
-price change is never flagged (the fixture's two missed `grit-annual-price` conflicts); the model
-still reads proposed values from a proposal now and then (most of the fixture's false alarms); a
+price change is never flagged (the fixture's two missed `grit-annual-price` conflicts, and most of
+Haiku's false alarms); values compare exactly after normalisation, so a partial name ("Marcus" in
+meeting minutes against "Marcus Bell") and two wordings of one unit ("per call-out" / "per visit")
+are conflicts a person has to dismiss (most of Sonnet's); the model still reads proposed values
+from a proposal now and then; a
 year-less date more than 90 days before the document is read as next year; a validity window
 stated on one side only is a conflict, not a change over time; page numbers: `toMarkdown` emits no page markers, so `chunks.page` is always null;
 chunks written before 0.37.0 keep their old shape (no heading path or offsets) until re-indexed,

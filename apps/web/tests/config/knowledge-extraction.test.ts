@@ -120,6 +120,13 @@ describe('coerceFactValue', () => {
     })
   })
 
+  it('refuses a placeholder for "no value": the key is simply not stated', () => {
+    for (const v of ['<UNKNOWN>', 'unknown', 'N/A', 'n/a', '[TBD]', 'None', 'not stated']) {
+      expect(coerceFactValue(z.string(), v, doc), v).toEqual({ ok: false, reason: 'empty value' })
+    }
+    expect(coerceFactValue(z.string(), 'Unknown Ltd', doc)).toMatchObject({ ok: true })
+  })
+
   it('resolves a date value in code, against the document date', () => {
     expect(coerceFactValue(z.iso.date(), '31 January 2027', doc)).toEqual({
       ok: true,

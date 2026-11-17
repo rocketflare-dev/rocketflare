@@ -165,6 +165,13 @@ export type CoercedValue = { ok: true; value: unknown } | { ok: false; reason: s
  * `raw` as a valid value of `schema`, or why not. Tries the value as given first, then coerced.
  * An empty value (`null`, `''`, `[]`) is never a fact.
  */
+/**
+ * A model's way of saying "no value": `<UNKNOWN>`, `N/A`, `TBD`, `none`, `null`. Never a fact —
+ * a key the section does not state is simply not reported.
+ */
+const PLACEHOLDER =
+  /^[<[(]?\s*(unknown|n\/?a|tbd|tbc|none|null|not stated|not specified)\s*[>\])]?$/i
+
 export function coerceFactValue(
   schema: z.ZodType,
   given: unknown,
@@ -172,7 +179,9 @@ export function coerceFactValue(
 ): CoercedValue {
   const raw = typeof given === 'string' ? given.trim().replace(/\s+/g, ' ') : given
   if (raw === null || raw === undefined) return { ok: false, reason: 'empty value' }
-  if (typeof raw === 'string' && raw.trim() === '') return { ok: false, reason: 'empty value' }
+  if (typeof raw === 'string' && (raw.trim() === '' || PLACEHOLDER.test(raw))) {
+    return { ok: false, reason: 'empty value' }
+  }
   if (Array.isArray(raw) && raw.length === 0) return { ok: false, reason: 'empty value' }
   // A date is never taken as given unless it is already ISO: the model must not resolve dates.
   const direct = dateFormatOf(schema) ? undefined : schema.safeParse(raw)

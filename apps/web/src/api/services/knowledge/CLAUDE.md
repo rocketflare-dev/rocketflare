@@ -17,7 +17,9 @@ and why: `docs/CONCEPTS.md` §9 "Knowledge facts"; decisions: `docs/plans/knowle
 - **The model proposes, code decides.** The model returns candidates through ONE `submit_facts`
   tool call per section (`callStructuredTool`, prompt key `knowledge-extract`); everything after —
   the quote, the value, every date, the entity, the state — is decided here, in code, and a
-  candidate that fails any of it is DROPPED, never repaired by a guess
+  candidate that fails any of it is DROPPED, never repaired by a guess. A section's candidates are
+  checked TOGETHER before any is written: two values for one entity and key over the same window
+  are a misreading and both drop (`ambiguous`) — never "keep the first"
 - **Dates are resolved against the document's date** (`documents.created_at` — what an integration
   or the eval back-dates), never by the model: `resolveDatePhrase` answers an ISO day or `null`,
   and `null` drops the fact. UK numeric order, always. Unit tests in

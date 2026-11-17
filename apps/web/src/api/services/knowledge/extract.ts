@@ -75,7 +75,7 @@ import { resolveDatePhrase } from './dates'
 import { type ResolveContext, type ResolvedEntity, resolveMention } from './entities'
 import { locateQuote } from './quotes'
 import { knowledgeEntityTypes } from './registry'
-import { ACCEPT_CONFIDENCE, decideFactState, type HeldFact } from './state'
+import { ACCEPT_CONFIDENCE, decideFactState, type HeldFact, type Validity } from './state'
 import type { EntityTypeRegistration } from './types'
 import { coerceFactValue, valueKey, valueText } from './values'
 
@@ -414,6 +414,24 @@ export type DropReason =
   | 'bad_date'
   | 'quote_not_found'
   | 'duplicate'
+  /**
+   * One section gave one entity two different values for one key over the SAME validity — a
+   * document cannot disagree with itself in one place, so the reading is wrong (two columns of a
+   * table put on one entity), and neither value is written.
+   */
+  | 'ambiguous'
+
+/** A candidate that passed every check, waiting for the section's ambiguity check. */
+interface PreparedFact {
+  candidate: FactCandidate
+  reg: EntityTypeRegistration
+  entity: ResolvedEntity
+  key: string
+  value: unknown
+  vKey: string
+  validity: Validity
+  located: { start: number; end: number }
+}
 
 export interface ExtractionReport {
   status: 'extracted' | 'skipped' | 'paused'
@@ -697,6 +715,7 @@ async function runExtraction(
     }
     report.candidates += candidates.length
 
+    const prepared: PreparedFact[] = []
     for (const candidate of candidates) {
       const reg = typeByName.get(candidate.entityType.trim())
       if (!reg) {
@@ -737,8 +756,32 @@ async function runExtraction(
         report.entitiesCreated += 1
         if (entity.possibleMatch) report.possibleMatches += 1
       }
-      const key = candidate.key.trim()
-      const vKey = valueKey(coerced.value)
+      prepared.push({
+        candidate,
+        reg,
+        entity,
+        key: candidate.key.trim(),
+        value: coerced.value,
+        vKey: valueKey(coerced.value),
+        validity,
+        located,
+      })
+    }
+
+    // A section that gives one entity two values for one key over one window misread itself.
+    const valuesPerSlot = new Map<string, Set<string>>()
+    const slotOf = (p: PreparedFact) =>
+      `${p.entity.kind}:${p.entity.id}:${p.key}:${p.validity.validFrom?.getTime() ?? ''}:${p.validity.validTo?.getTime() ?? ''}`
+    for (const p of prepared) {
+      const slot = slotOf(p)
+      valuesPerSlot.set(slot, (valuesPerSlot.get(slot) ?? new Set()).add(p.vKey))
+    }
+
+    for (const { candidate, reg, entity, key, value, vKey, validity, located } of prepared) {
+      if ((valuesPerSlot.get(slotOf({ entity, key, validity } as PreparedFact))?.size ?? 0) > 1) {
+        drop('ambiguous')
+        continue
+      }
       const dedupe = `${entity.kind}:${entity.id}:${key}:${vKey}`
       if (written.has(dedupe)) {
         drop('duplicate')
@@ -752,8 +795,8 @@ async function runExtraction(
         entityType: reg.type,
         entityId: entity.id,
         key,
-        value: coerced.value,
-        valueText: valueText(coerced.value),
+        value,
+        valueText: valueText(value),
         valueKey: vKey,
         documentId,
         chunkId: chunk?.id ?? null,
