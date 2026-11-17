@@ -8,6 +8,7 @@
  * Layout, under `datasets/` at any depth (the kit's own lives in `datasets/kit-only/<name>/`):
  *
  * ```
+ * <name>/corpus.json        optional: { "organisation": the business the knowledge base belongs to }
  * <name>/docs/<doc-id>.md   front matter (title, date, origin, source, kind) + a markdown body
  * <name>/retrieval.jsonl    { id, query, expected: [{ doc, passage }], tags }
  * <name>/chat.jsonl         EvalCase lines whose documents are the corpus (`context: []`)
@@ -94,7 +95,14 @@ export interface Corpus {
   entities: CorpusEntity[]
   facts: PlantedFact[]
   conflicts: PlantedConflict[]
+  /**
+   * `corpus.json` `organisation`: the business whose knowledge base this is — the facts suite
+   * names the tenant after it, as a real tenant is named after its own business. Optional.
+   */
+  organisation?: string
 }
+
+const corpusMetaSchema = z.object({ organisation: z.string().min(1).optional() })
 
 /** `---\nkey: value\n---\n<body>` → meta + body. Values are plain scalars; nothing else is parsed. */
 export function parseFrontMatter(raw: string, where: string): { meta: unknown; body: string } {
@@ -179,7 +187,15 @@ export function loadCorpus(name: string, root = DATASETS_DIR): Corpus {
     entities: readJsonl(path.join(dir, 'entities.jsonl'), corpusEntitySchema),
     facts: readJsonl(path.join(dir, 'facts.jsonl'), plantedFactSchema),
     conflicts: readJsonl(path.join(dir, 'conflicts.jsonl'), plantedConflictSchema),
+    ...readCorpusMeta(path.join(dir, 'corpus.json')),
   }
+}
+
+function readCorpusMeta(file: string): { organisation?: string } {
+  if (!existsSync(file)) return {}
+  const parsed = corpusMetaSchema.safeParse(JSON.parse(readFileSync(file, 'utf8')))
+  if (!parsed.success) throw new Error(`${file}: ${parsed.error.issues[0]?.message ?? 'invalid'}`)
+  return parsed.data.organisation ? { organisation: parsed.data.organisation } : {}
 }
 
 /** Whitespace-collapsed and lower-cased: how a passage is compared with a chunk. */

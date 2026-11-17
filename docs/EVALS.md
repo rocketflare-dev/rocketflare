@@ -76,6 +76,7 @@ wrong hit is possible. Put one anywhere under `datasets/` (the kit's own fixture
 
 ```
 <name>/docs/<doc-id>.md   front matter (title, date, origin: upload|integration, source, kind) + markdown
+<name>/corpus.json        optional {"organisation"} — the business the knowledge base belongs to
 <name>/retrieval.jsonl    {"id","query","expected":[{"doc","passage"}],"tags"} — passage TEXT, never chunk ids
 <name>/chat.jsonl         EvalCase lines about the corpus (`context: []`), run by `chat · knowledge`
 <name>/entities.jsonl     {"entityType","name","aliases"}
@@ -103,6 +104,22 @@ wrong hit is possible. Put one anywhere under `datasets/` (the kit's own fixture
   Every answer-key passage scored ≥ 0.18 on that reranker, so `RERANK_MIN_SCORE=0.15` keeps all
   of them and drops about 73 % of the other hits; the scale is per model, so the kit leaves the
   threshold off and an app sets it from its own run.
+- **`knowledge · facts`** (`suites/knowledge/facts.eval.ts`, `kit/facts.ts`, `pnpm eval facts`) runs
+  over every corpus with a `facts.jsonl`. It registers the corpus's entity types itself
+  (`corpusEntityTypes` — staging-only, each key with a `.describe()`, never the app's registry),
+  turns the `knowledge-facts` flag on for the corpus tenant, names the tenant after `corpus.json`'s
+  `organisation`, and extracts every document OLDEST FIRST through the app's own job body
+  (`extractDocumentFacts`), so each document meets what the earlier ones left. Stored facts are
+  scored against the answer keys (an entity is scored under the first of its name and aliases the
+  key knows): one case per document and `facts-all` (`Precision`, `Recall`), and one `conflicts`
+  case — `ConflictsCaught`, `NoFalseAlarms` (1 − the false-alarm rate) and `WinnerAccuracy` (does
+  the side an answer leads with match the planted winner). A flag is a `conflicts_with` link, or a
+  supersession between two different documents (a change over time the key also calls a
+  conflict); a supersession inside one document is sequential validity, not a flag.
+  `judgeThreshold: null`: it measures, it never fails. On the kit fixture (2026-11-17, Haiku 5.5,
+  Gemini embeddings, 42 documents): precision 0.91, recall 0.75, conflicts caught 0.82, false
+  alarms 0.22, winner accuracy 1.00, $0.0009 per document. Runs vary by a few points either way;
+  compare against `baselines/knowledge-facts.json` with `--compare`, not one run.
 - `tests/corpus.test.ts` (in the gate) checks every corpus: each passage and quote is verbatim in
   its document, every id resolves, every conflict pairs two planted facts.
 

@@ -23,6 +23,14 @@ export const DOCUMENT_STATUS_VALUES = [
   'failed',
 ] as const satisfies readonly DocumentStatus[]
 
+/**
+ * How a document came in, for the trust of the facts read from it (D43): `upload` = a person put
+ * it in (an upload, pasted text, an agent's output — `source` `agent:<key>` tells those apart);
+ * `integration` = a plugin synced it through `ingestDocument`, which is weaker evidence.
+ */
+export const DOCUMENT_ORIGIN_VALUES = ['upload', 'integration'] as const
+export type DocumentOrigin = (typeof DOCUMENT_ORIGIN_VALUES)[number]
+
 export const documents = pgTable(
   'documents',
   {
@@ -71,6 +79,13 @@ export const documents = pgTable(
       .notNull()
       .default('tenant'),
     error: text('error'),
+    /** `integration` when a plugin ingested it (`ingestDocument`); `upload` otherwise. */
+    origin: text('origin', { enum: DOCUMENT_ORIGIN_VALUES }).notNull().default('upload'),
+    /**
+     * Who is asked about the doubtful facts read from it: for an integration, the person who
+     * connected it (the plugin names them); null = the owner, else the tenant's admins.
+     */
+    reviewerUserId: uuid('reviewer_user_id').references(() => users.id, { onDelete: 'set null' }),
     ...timestamps(),
   },
   table => [

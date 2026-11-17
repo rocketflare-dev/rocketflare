@@ -76,7 +76,7 @@ export const featureSubject = (feature: string): FeatureSubject => `Feature:${fe
  * then delete the line. Append-only in spirit; the metadata registry is keyed on this. A plugin
  * brings its own through `SharedPlugin.features`, which is where both halves arrive together.
  */
-export const CORE_FEATURES = [] as const satisfies readonly string[]
+export const CORE_FEATURES = ['knowledge-facts'] as const satisfies readonly string[]
 
 /** Distributive: `keyof (A | B)` is the keys A and B SHARE, which is never for two plugins' flags. */
 type KeysOfEach<T> = T extends unknown ? keyof T : never

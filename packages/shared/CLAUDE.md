@@ -18,11 +18,11 @@ response with the same schema. `pnpm web test:config` covers the pure parts.
 `permissions.ts` actions/subjects/`AppAbility`/packed rules (matrix lives in `apps/web/src/permissions/`) ·
 `api-keys.ts` · `tenant-settings.ts` · `user-settings.ts` · `notifications.ts` · `admin.ts` ·
 `activity.ts` · `errors.ts` envelope + codes · `pagination.ts` ·
-`features.ts` — the feature-flag registry (`CORE_FEATURE_FLAGS`, EMPTY — the demo
-flag is the `example-feature` PLUGIN — merged with each plugin's `SharedPlugin.features` into
-`FEATURE_FLAGS`, keyed on `FEATURES`/`FeatureName` from `permissions.ts`, where `CORE_FEATURES` is
-likewise empty; so `featureNameSchema` is a refined `z.string()` over the runtime list rather than a
-`z.enum`, which needs a non-empty tuple), `featureBucket` (**a wire format — changing it reshuffles every live
+`features.ts` — the feature-flag registry (`CORE_FEATURE_FLAGS` — one core flag,
+`knowledge-facts`, default OFF (D43); the demo flag is the `example-feature` PLUGIN — merged with
+each plugin's `SharedPlugin.features` into `FEATURE_FLAGS`, keyed on `FEATURES`/`FeatureName` from
+`permissions.ts`, where `CORE_FEATURES` lists the same keys; `featureNameSchema` stays a refined
+`z.string()` over the runtime list, because the plugin keys are only known at runtime), `featureBucket` (**a wire format — changing it reshuffles every live
 rollout**), `evaluateFlag`/`evaluateFeatures` (the one implementation of the environment-then-rollout
 precedence), and the admin contracts. A flag is CONFIGURATION, not a permission: nothing here
 touches CASL · `groups.ts` — `groupTypeSchema`/`groupSchema` (with `typeName` and `memberCount`)/`groupDetailSchema`,
@@ -133,7 +133,7 @@ down to a window boundary so a deep link and the reader's paging share one cache
 place the viewer route is written) + `documentCardFromDocument()`, and the pure
 `documentCardsFromToolResult()` / `documentCardsFromToolCalls()` + `KNOWLEDGE_TOOLS` +
 `documentExcerpt()` that the chat stream, the agent-run projection and the UI's persisted-message
-rendering all share · `knowledge-facts.ts` — knowledge facts (D43): `EntityTypeDeclaration` + `entityTypeSchema` (`type` `name` or `<plugin id>.name`, `facts` a zod object of snake_case keys that must render through `z.toJSONSchema` — `entityFactsJsonSchema()` is what the extraction prompt shows), `FACT_STATES` / `OPEN_REVIEW_FACT_STATES` / `ANSWERABLE_FACT_STATES`, `SOURCE_TRUST` (strongest first) + `trustRank`, `ENTITY_KINDS`, `FACT_VISIBILITY` (`private` reserved), `entityCandidateSchema`, `knowledgeEntitySchema`, `factSchema`, `entityCardSchema`, `factReviewRequestSchema`, `possibleMatchSchema` / `knowledgeReviewItemSchema`, `factHitSchema` · `usage.ts` — `aiUsageSchema`, `aiUsageSummarySchema`,
+rendering all share · `knowledge-facts.ts` — knowledge facts (D43): `EntityTypeDeclaration` + `entityTypeSchema` (`type` `name` or `<plugin id>.name`, `facts` a zod object of snake_case keys that must render through `z.toJSONSchema` — `entityFactsJsonSchema()` is what the extraction prompt shows), `FACT_STATES` / `OPEN_REVIEW_FACT_STATES` / `ANSWERABLE_FACT_STATES`, `SOURCE_TRUST` (strongest first) + `trustRank`, `isPreferredOver` / `preferredFact` (which side of a disagreement an answer leads with — derived from `observedAt` and trust, never stored), `ENTITY_KINDS`, `FACT_VISIBILITY` (`private` reserved), `entityCandidateSchema`, `knowledgeEntitySchema`, `factSchema`, `entityCardSchema`, `factReviewRequestSchema`, `possibleMatchSchema` / `knowledgeReviewItemSchema`, `factHitSchema` · `usage.ts` — `aiUsageSchema`, `aiUsageSummarySchema`,
 `aiUsageSummaryQuerySchema` (`costMicrocents` nullable, `unpricedCalls`), `KNOWLEDGE_USAGE_FEATURES` (the `knowledge.*` feature names) · `pricing.ts` — `MODEL_PRICES`
 (USD per million tokens, per provider, longest-prefix model match), `PRICES_UPDATED`, `priceFor`,
 `estimateCostMicrocents`; the ONE place to correct rates, unknown model → null, never a guess. `errors.ts` codes added: `ai_not_configured`,

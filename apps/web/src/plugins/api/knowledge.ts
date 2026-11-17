@@ -67,6 +67,12 @@ interface IngestCommon {
   visibility?: ResourceVisibility
   /** Only with `visibility: 'groups'`; each must be a group of `tenantId`. */
   groupIds?: readonly string[]
+  /**
+   * The person who connected the integration: they are asked about the doubtful knowledge facts
+   * read from what it syncs (D43). Omit and the document's owner (`userId`) is asked, else the
+   * tenant's admins. Facts from a plugin's sync always carry `integration` trust.
+   */
+  reviewerUserId?: string | null
 }
 
 export interface PluginIngestTextInput extends IngestCommon {
@@ -147,6 +153,8 @@ export async function ingestDocument(
       contentType: input.contentType,
       visibility: input.visibility,
       groupIds: input.groupIds,
+      origin: 'integration',
+      reviewerUserId: input.reviewerUserId ?? null,
     },
     { jobs: ctx.env.JOBS_QUEUE, storage: optionalStorage(ctx) }
   )
@@ -195,6 +203,8 @@ export async function ingestDocumentFile(
         externalId: input.externalId,
         visibility: input.visibility,
         groupIds: input.groupIds,
+        origin: 'integration',
+        reviewerUserId: input.reviewerUserId ?? null,
       },
       { jobs: ctx.env.JOBS_QUEUE, storage }
     )

@@ -13,7 +13,7 @@ import { documents } from '../../../db/schema'
 import { noopTracer } from '../../observability/tracer'
 import { withAgentTrace } from '../../observability/tracing'
 import { ConversionFailedError } from '../../services/ai/convert'
-import { convertAndIndexDocument } from '../../services/ai/ingest'
+import { afterTextIndexed, convertAndIndexDocument } from '../../services/ai/ingest'
 import { createR2Storage } from '../../services/storage'
 import type { JobContext } from '../jobs'
 
@@ -53,6 +53,8 @@ export async function handleDocumentConvert(
       { tenantId, documentId, chunkCount: indexed.chunkCount, model: indexed.embeddingModel },
       'document.convert: indexed'
     )
+    // Knowledge facts (D43): a converted upload is always new text. Never throws.
+    await afterTextIndexed(ctx.db, ctx.config, ctx.env.JOBS_QUEUE, indexed)
   } catch (err) {
     if (err instanceof ConversionFailedError) {
       ctx.logger.warn({ tenantId, documentId, reason: err.message }, 'document.convert: failed')

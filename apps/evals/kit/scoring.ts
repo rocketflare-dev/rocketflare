@@ -301,12 +301,17 @@ export interface FactClaim {
   doc: string
 }
 
-/** Lower-case, punctuation dropped, whitespace collapsed — `"Harbour View Dental, Ltd."` → `harbour view dental ltd`. */
+/**
+ * Lower-case, punctuation dropped, whitespace collapsed, a trailing legal form dropped —
+ * `"Harbour View Dental, Ltd."` → `harbour view dental`. A company's registered suffix (`Ltd`,
+ * `Limited`, `LLP`, `PLC`, `Co`, `Inc`) names the same organisation with or without it.
+ */
 export function normalizeName(name: string): string {
   return name
     .toLowerCase()
     .replace(/[^\p{L}\p{N}]+/gu, ' ')
     .trim()
+    .replace(/(?:\s+(?:ltd|limited|llp|plc|co|inc))+$/u, '')
 }
 
 /**

@@ -28,7 +28,7 @@
  * ability check hands platform staff a surface the deployment does not ship. See `permissions.ts`.
  */
 import { z } from 'zod'
-import { FEATURES, type FeatureName } from './permissions'
+import { type CORE_FEATURES, FEATURES, type FeatureName } from './permissions'
 import { sharedPlugins } from './plugins'
 
 /** Platform state of a flag. `off` and `rollout` at 0% are the same OUTCOME, not the same intent. */
@@ -45,10 +45,10 @@ export type FeatureRolloutUnit = z.infer<typeof featureRolloutUnitSchema>
  * A key the running deployment actually has.
  *
  * **Not `z.enum(FEATURES)`**, and not for style: `FEATURES` is `[...CORE_FEATURES, ...plugins]`,
- * `CORE_FEATURES` is empty (the demonstration flag ships as the `example-feature`
- * PLUGIN), and a `z.enum` needs a non-empty TUPLE — an array of strings is a type error there.
- * A refined `z.string()` is the same runtime check and the same output type, and it keeps
- * validating against whatever is installed rather than against what was compiled in.
+ * `CORE_FEATURES` may be empty in a copy that deletes its flags, and a `z.enum` needs a
+ * non-empty TUPLE — an array of strings is a type error there. A refined `z.string()` is the
+ * same runtime check and the same output type, and it keeps validating against whatever is
+ * installed rather than against what was compiled in.
  */
 export const featureNameSchema = z
   .string()
@@ -73,16 +73,32 @@ export interface FeatureDefinition {
 }
 
 /**
- * Every built-in flag — none, deliberately. Keys come from `CORE_FEATURES` in
- * `permissions.ts`, so a typo anywhere that gates on one is a type error rather than a route that
- * 404s for ever.
+ * Every built-in flag. Keys come from `CORE_FEATURES` in `permissions.ts`, so a typo anywhere
+ * that gates on one is a type error rather than a route that 404s for ever.
  *
  * The demonstration flag lives in the `example-feature` PLUGIN, which is where both
  * halves of a flag arrive together: the key, its metadata, the nav item it gates, the mount it
  * gates and the page behind it. An app that wants a flag of its own adds it here and to
  * `CORE_FEATURES` — or, better, ships the whole feature as a plugin.
  */
-export const CORE_FEATURE_FLAGS = {} satisfies Record<string, FeatureDefinition>
+export const CORE_FEATURE_FLAGS = {
+  /**
+   * Knowledge facts (D43): extracting typed facts from documents into the registered entity
+   * types. Opt-in — it spends a model call per document section — so OFF until an admin rolls it
+   * out or overrides it for a tenant. Nothing happens with it on until an entity type is
+   * registered.
+   */
+  'knowledge-facts': {
+    label: 'Knowledge facts',
+    description:
+      'Extract typed facts about the registered entity types (customers, suppliers, …) from ' +
+      'every new or changed document, with conflicts and doubtful facts flagged for review. ' +
+      'Costs one model call per document section, metered as knowledge.extraction.',
+    defaultState: 'off',
+    defaultRolloutUnit: 'tenant',
+    environmentGated: false,
+  },
+} satisfies Record<(typeof CORE_FEATURES)[number], FeatureDefinition>
 
 /**
  * Core flags plus every installed plugin's. `SharedPlugin.features` is typed against the

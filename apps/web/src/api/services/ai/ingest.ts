@@ -40,7 +40,14 @@ import type { GroupRef, ResourceVisibility } from '@rocketflare/shared/groups'
 import { and, asc, eq, isNull, ne, sql } from 'drizzle-orm'
 import type { AppConfig } from '../../../config'
 import type { Database } from '../../../db/client'
-import { chunks, type DocumentRow, documentGroups, documents, files } from '../../../db/schema'
+import {
+  chunks,
+  type DocumentOrigin,
+  type DocumentRow,
+  documentGroups,
+  documents,
+  files,
+} from '../../../db/schema'
 import { activeSpan, traceEmbed, traceStep } from '../../observability/context'
 import type { Tracer } from '../../observability/tracer'
 import { withAgentTrace } from '../../observability/tracing'
@@ -90,6 +97,13 @@ export interface IngestTextInput {
    * message or file. Requires `source`.
    */
   externalId?: string | null
+  /**
+   * `integration` when a plugin syncs it (`@/plugins/api` `ingestDocument` sets it): the facts read
+   * from it are weaker evidence (D43). Default `upload`.
+   */
+  origin?: DocumentOrigin
+  /** Who reviews the doubtful facts read from it — the person who connected the integration. */
+  reviewerUserId?: string | null
 }
 
 export interface IngestDeps {
@@ -353,12 +367,17 @@ async function indexOrEnqueue(
   row: DocumentRow,
   pieces: TextChunk[],
   embeddings: ResolvedEmbeddings,
-  deps: IngestDeps
+  deps: IngestDeps,
+  textChanged: boolean
 ): Promise<IngestResult> {
   if (pieces.length > INLINE_CHUNK_LIMIT) {
     await enqueueJob(deps.jobs, {
       type: 'document.index',
-      payload: { tenantId, documentId: row.id },
+      payload: {
+        tenantId,
+        documentId: row.id,
+        ...(textChanged ? {} : { skipExtraction: true }),
+      },
     })
     return { document: row, mode: 'queued', deduplicated: false }
   }
@@ -366,6 +385,7 @@ async function indexOrEnqueue(
     const document = await traceInlineIndex(deps.tracer, tenantId, row, pieces.length, () =>
       indexDocument(db, cfg, env, tenantId, row.id, { chunks: pieces, embeddings })
     )
+    if (textChanged) await afterTextIndexed(db, cfg, deps.jobs, document)
     return { document, mode: 'inline', deduplicated: false }
   } catch {
     const failed = await db.query.documents.findFirst({
@@ -373,6 +393,27 @@ async function indexOrEnqueue(
     })
     return { document: failed ?? row, mode: 'inline', deduplicated: false }
   }
+}
+
+/**
+ * Enqueue knowledge-fact extraction (D43) for a document whose TEXT just changed and indexed —
+ * never after a re-embed, an unchanged upsert or a dedupe. The module is loaded at call time so
+ * this file, which `@/plugins/api` reaches, gets no static path to the plugin barrel; it never
+ * throws (`services/knowledge/enqueue.ts`).
+ */
+export async function afterTextIndexed(
+  db: Database,
+  cfg: AppConfig,
+  jobs: JobsQueue | null | undefined,
+  document: Pick<DocumentRow, 'id' | 'tenantId' | 'status' | 'contentHash'>
+): Promise<void> {
+  if (document.status !== 'indexed' || !document.tenantId) return
+  const { enqueueKnowledgeExtraction } = await import('../knowledge/enqueue')
+  await enqueueKnowledgeExtraction(db, cfg, jobs, {
+    tenantId: document.tenantId,
+    documentId: document.id,
+    contentHash: document.contentHash,
+  })
 }
 
 /**
@@ -483,7 +524,8 @@ async function touchUnchanged(
   db: Database,
   tenantId: string,
   previous: DocumentRow,
-  values: Pick<DocumentRow, 'title' | 'ownerUserId' | 'visibility' | 'contentType'>,
+  values: Pick<DocumentRow, 'title' | 'ownerUserId' | 'visibility' | 'contentType'> &
+    Partial<Pick<DocumentRow, 'reviewerUserId'>>,
   groupIds: readonly string[] | undefined
 ): Promise<DocumentRow> {
   return db.transaction(async tx => {
@@ -495,6 +537,7 @@ async function touchUnchanged(
         ownerUserId: values.ownerUserId,
         visibility: values.visibility,
         contentType: values.contentType,
+        ...(values.reviewerUserId !== undefined ? { reviewerUserId: values.reviewerUserId } : {}),
       })
       .where(and(eq(documents.id, previous.id), eq(documents.tenantId, tenantId)))
       .returning()
@@ -531,6 +574,8 @@ export async function ingestText(
     fileId: null,
     status: 'pending' as const,
     visibility: input.visibility ?? 'tenant',
+    origin: input.origin ?? 'upload',
+    reviewerUserId: input.reviewerUserId ?? null,
   }
   const external = externalKey(input)
   const previous = external ? await findExternal(db, input.tenantId, external) : undefined
@@ -567,7 +612,9 @@ export async function ingestText(
   // A re-sync of an item that USED to be a file and is now text leaves its old object behind.
   if (previous?.fileId && deps.storage)
     await dropStoredFile(db, deps.storage, input.tenantId, previous.fileId)
-  return indexOrEnqueue(db, cfg, env, input.tenantId, row, pieces, embeddings, deps)
+  // Same text, re-indexed only because its chunks are another model's: no new facts to read.
+  const textChanged = previous?.contentHash !== hash
+  return indexOrEnqueue(db, cfg, env, input.tenantId, row, pieces, embeddings, deps, textChanged)
 }
 
 // ---- External ids ----------------------------------------------------------------------
@@ -689,6 +736,9 @@ export interface IngestFileInput {
   groupIds?: readonly string[]
   /** As `IngestTextInput`; the replaced original is removed from storage. */
   externalId?: string | null
+  /** As `IngestTextInput` (D43). */
+  origin?: DocumentOrigin
+  reviewerUserId?: string | null
 }
 
 export interface IngestFileDeps extends IngestDeps {
@@ -751,6 +801,7 @@ export async function ingestFile(
             ownerUserId: input.userId,
             visibility,
             contentType: input.type.contentType,
+            reviewerUserId: input.reviewerUserId ?? null,
           },
           input.groupIds
         )
@@ -787,6 +838,8 @@ export async function ingestFile(
       fileId: stored.id,
       status: 'pending' as const,
       visibility: input.visibility ?? 'tenant',
+      origin: input.origin ?? 'upload',
+      reviewerUserId: input.reviewerUserId ?? null,
     }
     const external = externalKey(input)
     previous = external ? await findExternal(db, input.tenantId, external) : undefined
@@ -824,7 +877,17 @@ export async function ingestFile(
     })
     return { document: failed ?? row, mode: 'inline', deduplicated: false }
   }
-  return indexOrEnqueue(db, cfg, env, input.tenantId, row, pieces, embeddings, deps)
+  return indexOrEnqueue(
+    db,
+    cfg,
+    env,
+    input.tenantId,
+    row,
+    pieces,
+    embeddings,
+    deps,
+    previous?.contentHash !== hash
+  )
 }
 
 /**

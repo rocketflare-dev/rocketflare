@@ -89,7 +89,13 @@ Rules:
   route maps `ConversionNotConfiguredError` → 503 `conversion_not_configured`;
   `ConversionFailedError` is the permanent case. Inline indexing is ONE `ingest document` span
   (`IngestDeps.tracer` — the route's `withAuth` tracer; under the active span when one exists), so
-  its `traceEmbed` batches nest; the span's output is the outcome, never the row (it holds the text)
+  its `traceEmbed` batches nest; the span's output is the outcome, never the row (it holds the text).
+  A document records its `origin` (`upload`; `integration` from `@/plugins/api` `ingestDocument`)
+  and an optional `reviewer_user_id` — the trust and the reviewer of the facts read from it (D43).
+  `afterTextIndexed` is the one place `knowledge.extract` is enqueued, and only when the text
+  changed (never on `unchanged` or a dedupe); it reaches `../knowledge/enqueue` through a LAZY
+  import, because `@/plugins/api` loads this file and the knowledge registry reads the plugin
+  barrel (`tests/config/plugin-api-load-order.test.ts`)
 - **Upkeep (`reindex.ts`)**: stale = an `indexed` document with text and a chunk whose
   `embedding_model` is distinct from `resolveEmbeddingsModel` (the resolved model WITHOUT a
   client or a decrypt — use it, never `resolveEmbeddings`, just to compare). `documentsHealth`,

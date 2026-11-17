@@ -777,8 +777,8 @@ Server: `api/services/{ai,agents}/**` (read their `CLAUDE.md`), `services/prompt
   (`rocketflare.rerank.*`) with a `rerank <model>` child. On the kit fixture a Fireworks
   `qwen3-reranker-8b` lifts MRR from 0.66 to 0.84 and recall@5 from 0.87 to 1.00 at a median
   821 ms per search (`docs/EVALS.md`). **Metering**: every embedding (index, re-embed, query) and
-  rerank call is an `ai_usage` row, `knowledge.embeddings` / `knowledge.rerank`
-  (`knowledge.extraction` is reserved for phase 2), with the provider's token count or a 4-chars
+  rerank call is an `ai_usage` row, `knowledge.embeddings` / `knowledge.rerank`, and every fact
+  extraction call a `knowledge.extraction` row, with the provider's token count or a 4-chars
   estimate; a ledger failure is logged and never fails an ingest or a search (the search route
   writes it in `waitUntil`). `KNOWLEDGE_TENANT_DAILY_COST_USD` (unset = no cap) bounds the three
   per UTC day through `knowledgeExtractionAllowed`, which only extraction consults: indexing and
@@ -825,8 +825,8 @@ Server: `api/services/{ai,agents}/**` (read their `CLAUDE.md`), `services/prompt
   'unavailable'`. Every tenant document view (the list, viewer, `/search`, `get_document`,
   `list_documents`, delete) keeps `tenant_id = $t` and never shows one; `search_knowledge` includes
   them for the sources `ServerPlugin.knowledgeSources` names, marked `platform`, and chat and agent runs show no document card for one (the documents page cannot open it).
-- **Knowledge facts (D43, in progress — the schema, contracts and registry exist; extraction,
-  review, tools and UI do not yet)**: typed facts read from documents and attached to the app's
+- **Knowledge facts (D43, in progress — schema, contracts, registry and extraction exist; review,
+  `lookup_facts` and the UI do not yet)**: typed facts read from documents and attached to the app's
   own rows, or to a staging entity until one exists (decisions: `docs/plans/knowledge-base-review.md`
   §10). **Contracts** (`shared/src/ai/knowledge-facts.ts`): an entity type declares `type`,
   `label` and `facts`, a zod object whose keys are snake_case fact keys and whose values are the
@@ -861,6 +861,46 @@ Server: `api/services/{ai,agents}/**` (read their `CLAUDE.md`), `services/prompt
   `knowledgeEntityTypes()` composes them, throwing on a plugin type outside `<plugin id>.`, an app
   type with a dot, a duplicate, a non-snake_case key, an unrenderable facts object, or a column
   that is not its table's. The reference plugin registers `example-feature.note`.
+  **Extraction** (`api/services/knowledge/extract.ts`, the `knowledge.extract` job): behind the core
+  flag `knowledge-facts` (default OFF, per tenant) and only once a type is registered — both checked
+  when `afterTextIndexed` enqueues it (only for a text that CHANGED: never the unchanged upsert or a
+  dedupe) and again in the job. A document is read in heading-bounded sections rebuilt from its
+  stored chunks (≤ 12,000 characters, one chunk never split); each section is ONE forced
+  `submit_facts` call (`callStructuredTool`) carrying the types with each key's JSON schema and
+  `.describe()`, the document's title and date, the known entities the section names (with their
+  accepted facts) and the other known names. **Model**: `resolveChat` under prompt key
+  `knowledge-extract`, so Settings → agent models can point it at a cheaper model — not TypeSafe's
+  Jev (D37), whose typed questions answer one choice, score or yes/no, not a list of facts with
+  quotes. **The model proposes, code decides**: a candidate survives only if its quote occurs
+  verbatim (whitespace, quote marks and emphasis forgiven) in the section — stored as `chunk_id`,
+  absolute `char_start`/`char_end` and the quote — its value parses against the key's schema
+  (`values.ts`: "£1,140" → 1140, "yes" → true, a case-blind enum), and every date resolves in CODE
+  against `documents.created_at` (`dates.ts`: ISO, UK numeric day-first, "next Monday", "the first
+  of next month", "start of next quarter", "until 10 July"…); anything unreadable drops the fact.
+  **Trust** (`source_kind`): `integration` for a plugin's `ingestDocument` (`documents.origin`),
+  `agent` for an `agent:` source, else `upload`; the reviewer is the ingest's `reviewerUserId`
+  (`documents.reviewer_user_id`), else the document's owner, else none. **Resolution**
+  (`entities.ts`): the type's resolver (domain rows), then staging entities by trigram over name and
+  aliases (`LINK_THRESHOLD` 0.6 links one clear candidate; 0.45–0.6, or a tie, is a possible match
+  on a NEW staging entity with a reviewer), then — only when nothing linked — the name's embedding
+  (cosine ≥ 0.9 adds a review candidate, never a link), else a new staging entity. The thresholds
+  come from the fixture: "Harbour View Dental" / "…Practice Ltd" 0.61, "Riverside Lodge" / "…Care
+  Home" 0.62 must link; "Harbourside Dental Lab" / "Harbour View Dental" 0.48 and "Northgate Vets" /
+  "…Veterinary Surgery" 0.43 must not. **State** (`state.ts`) against the answerable facts held
+  for that entity and key: none → `accepted`, or `unconfirmed` below 0.7 confidence; the same value
+  → `accepted`, and a held `unconfirmed` one is confirmed; a different value → both `conflicting`,
+  linked both ways (`conflicts_with`); when both sides carry an explicit validity window and the
+  windows do not overlap it is a change over time instead — the earlier is `superseded` by the
+  later. **Preference is derived, never stored** (`isPreferredOver` / `preferredFact` in shared):
+  an answer leads with the newer side when its source is at least as trusted, else the older.
+  Nothing writes a domain column. Re-extracting a document first removes its facts and undoes the
+  conflicts they caused. **Cost**: every call is a `knowledge.extraction` row (name embeddings
+  `knowledge.embeddings`); `knowledgeExtractionAllowed` is checked before each document, and at the
+  cap the job re-enqueues itself for the next UTC day. On the kit fixture (`pnpm eval facts`,
+  42 documents, Haiku 5.5, 2026-11-17) one document is one call, about 5,300 input and 700 output
+  tokens — **$0.0009 per document** from the eval's `ai_usage` rows — with precision 0.91, recall
+  0.75, 82 % of planted conflicts caught, 22 % of flags false alarms and every caught conflict
+  preferring the planted winner (`docs/EVALS.md`).
 - **Usage**: one `ai_usage` row per call, costed at write time from the one price table
   (`shared/ai/pricing`; an unknown model gets `null` and is counted as unpriced). While a cost cap
   applies to a run the deployment pays for (the platform key or the Workers AI binding), a chat call
@@ -970,11 +1010,19 @@ adds ~0.8 s per search, `RERANK_MIN_SCORE`'s scale is per model so the kit ships
 plugin API's `searchKnowledge` hit does not carry `rerankScore`, and the global-search plugin
 still carries its own copy of the client until it switches to the core seam in its own repo;
 knowledge metering: Workers AI embeddings and rerank tokens are character estimates, a rerank that
-timed out is recorded as billed, platform-document ingest (tenant-less) is unmetered, and the
-cap is enforced only once extraction exists; knowledge facts: nothing writes `knowledge_facts` or
-`knowledge_entities` yet (extraction, review, `lookup_facts` and the entity card are the next
-steps), and the default resolver matches domain rows by trigram only (no embedding — a domain
-table carries none); page numbers: `toMarkdown` emits no page markers, so `chunks.page` is always null;
+timed out is recorded as billed, platform-document ingest (tenant-less) is unmetered, and
+platform documents are never extracted; knowledge facts: review, `lookup_facts` and the entity
+card are the next steps, so facts are written but not yet read by chat or shown; the default
+resolver matches domain rows by trigram only (no embedding — a domain table carries none); two
+extractions of one tenant running at once can each miss the other's facts (no per-tenant
+serialisation), so a conflict between them goes unflagged until one is re-extracted; the
+staging trigram lookup scans the tenant's entities of that type (the GIN index serves `%`, not
+`similarity() >=`); one service named differently by two documents ("Car park and entrances
+gritting — annual plan" vs "Winter gritting (annual plan)") stays two staging entities, so their
+price change is never flagged (the fixture's two missed `grit-annual-price` conflicts); the model
+still reads proposed values from a proposal now and then (most of the fixture's false alarms); a
+year-less date more than 90 days before the document is read as next year; a validity window
+stated on one side only is a conflict, not a change over time; page numbers: `toMarkdown` emits no page markers, so `chunks.page` is always null;
 chunks written before 0.37.0 keep their old shape (no heading path or offsets) until re-indexed,
 and an unchanged upsert never re-indexes them (re-embed rebuilds only another model's chunks); a
 stale document is found by keyword only until its re-embed lands; two re-embed chains for the same
@@ -1568,7 +1616,9 @@ as merging a PR. A plugin repo mirrors the host tree and ships **no migration, n
 - **Knowledge ingest (D34)**: `ingestDocument` / `ingestDocumentFile` / `deleteIngestedDocument`
   over the kit's ingest paths (§9). With an `externalId`, the same `(tenant, source, externalId)`
   UPDATES the row — text, owner, visibility, grants, chunks, the stored original — so a sync can
-  replay safely. Group ids are checked against the tenant first. This file belongs to the
+  replay safely. Group ids are checked against the tenant first. A plugin's document is
+  `origin: 'integration'` — the weakest trust for the facts read from it (D43) — and an optional
+  `reviewerUserId` (the person who connected the source) reviews those facts. This file belongs to the
   `feature-knowledge` surface; a plugin that ingests requires it.
 - **Platform knowledge**: `ingestPlatformDocument(ctx, { source, externalId, title, text })` /
   `prunePlatformDocuments(ctx, { source, keepExternalIds })` write the tenant-less corpus (§9).

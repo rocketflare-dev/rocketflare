@@ -7,6 +7,7 @@ migrations:
   - "chunks: embedding_model (backfilled from documents), heading_path, table_header, page, char_start, char_end, generated search_vector + GIN index"
   - "documents: content_hash + (tenant_id, source, content_hash) index"
   - "knowledge_entities + knowledge_facts (new tables, tenant-isolated) and the pg_trgm extension"
+  - "documents: origin (upload|integration, default upload) + reviewer_user_id (FK users, set null)"
 areas: [evals, docs, db, api, shared, ui, config, scripts]
 touches_surfaces: []
 requires_surfaces: []
@@ -15,7 +16,7 @@ manual: true
 
 ## What changed
 
-The knowledge base becomes measurable and structure-aware: eval corpora and retrieval scorers, heading- and table-aware chunks, model-consistent dense search with re-embedding, content-hash dedupe, failed-document retry, a reranker seam, metered knowledge spend, and the knowledge-facts tables and entity-type registry.
+The knowledge base becomes measurable and structure-aware: eval corpora, structured chunks, model-consistent search with re-embedding, dedupe, retry, a reranker seam, metered spend, and typed knowledge facts extracted from documents behind a `knowledge-facts` flag.
 
 - Eval corpora: a directory under `apps/evals/datasets/` with `docs/*.md` and answer keys (`retrieval.jsonl`, `chat.jsonl`, `entities.jsonl`, `facts.jsonl`, `conflicts.jsonl`), ingested once with a real embedder (`docs/EVALS.md` § Corpora).
 - New suite `knowledge · retrieval` and judges `RecallAtK(k)`, `MRR()`, `ContextPrecision(k)`; `chatHarness({ corpus })` runs a corpus's `chat.jsonl` inside `chat · knowledge`.
@@ -38,13 +39,21 @@ The knowledge base becomes measurable and structure-aware: eval corpora and retr
 - Reranking (`services/ai/rerank.ts`, the `RerankFn` seam): search reranks the top 50 fused candidates, then cuts to `limit`; hits gain `rerankScore` (0–1, null when nothing reranked) and `rank` is the final order. `searchKnowledgeChunks` answers `rerank` (applied, model, latency or the skip reason) and takes `rerank: false` and `defer`.
 - New AI scope `rerank` (`AI_SCOPES`, `aiReadinessSchema.rerank`): a tenant row is `openai_compatible` (a Cohere-style `POST {base}/rerank`; dialect from the host — Cohere, Voyage, Fireworks presets) or `workers_ai`; with neither, Workers AI `@cf/baai/bge-reranker-base` when `[ai]` is bound, else no reranking. Settings → AI shows a Rerankers section and tests a row by reranking two documents.
 - `RERANK_MIN_SCORE` (optional `[vars]`, 0–1, unset = off) drops reranked hits below it.
-- Knowledge metering: document, re-embed and query embeddings and every rerank call write `ai_usage` rows `knowledge.embeddings` / `knowledge.rerank` (`KNOWLEDGE_USAGE_FEATURES`; `knowledge.extraction` is reserved), with the provider's token count or a character estimate; a ledger failure never fails an ingest or a search. `EmbeddingsClient.embedWithUsage` is new and optional. `bge-reranker-base` is priced.
-- `KNOWLEDGE_TENANT_DAILY_COST_USD` (optional `[vars]`, unset = no cap) and `knowledgeSpendToday` / `knowledgeExtractionAllowed` in `services/ai/usage.ts`: only extraction (phase 2) will pause at the cap; indexing and search never do.
+- Knowledge metering: document, re-embed and query embeddings and every rerank call write `ai_usage` rows `knowledge.embeddings` / `knowledge.rerank` (`KNOWLEDGE_USAGE_FEATURES`; extraction writes `knowledge.extraction`), with the provider's token count or a character estimate; a ledger failure never fails an ingest or a search. `EmbeddingsClient.embedWithUsage` is new and optional. `bge-reranker-base` is priced.
+- `KNOWLEDGE_TENANT_DAILY_COST_USD` (optional `[vars]`, unset = no cap) and `knowledgeSpendToday` / `knowledgeExtractionAllowed` in `services/ai/usage.ts`: only extraction pauses at the cap; indexing and search never do.
 - `pnpm eval … --rerank none|fireworks` measures retrieval with a reranker; the summary prints the median rerank latency.
 - Knowledge facts (D43, `docs/CONCEPTS.md` §9): new contracts `@rocketflare/shared/ai/knowledge-facts` (entity type declaration, `FACT_STATES`, `SOURCE_TRUST` + `trustRank`, fact, entity card, review action, possible match, `factHitSchema`) and tables `knowledge_entities` (staging entities, trigram index on `name`) and `knowledge_facts` (`document_id` cascades, `chunk_id` set null). Nothing writes them yet.
 - `scripts/migrate.ts` creates `pg_trgm` beside `vector`; migration 0028 creates it too.
 - Entity type registry: `EntityTypeRegistration` and `defaultEntityResolver` (trigram over `labelColumn`/`aliasColumns`, tenant-filtered) in `@/plugins/api`; `APP_ENTITY_TYPES` in `apps/web/src/api/services/knowledge/entity-types.ts` (app-owned, empty); `knowledgeEntityTypes()` composes and validates (plugin types `<id>.<name>`, app types without a dot, snake_case keys, JSON-schema-renderable facts, no duplicates).
 - New plugin field `ServerPlugin.knowledgeEntityTypes` (a field, not a barrel); `example-feature` registers `example-feature.note` over `example_notes`.
+- Fact extraction: new job `knowledge.extract` (`{ tenantId, documentId, contentHash? }`), enqueued by `afterTextIndexed` only when a document's text changed, the tenant has the new core flag `knowledge-facts` (default off) and an entity type is registered. One `submit_facts` call per heading-bounded section, prompt key `knowledge-extract` (assignable in Settings → agent models).
+- Each candidate survives only if its quote is verbatim in the chunk, its value parses against the key's zod schema, and every date resolves in code against the document's date; it is then resolved to a domain row, a staging entity (trigram ≥ 0.6, else a possible match from 0.45 or embedding cosine 0.9) or a new staging entity.
+- Fact state: `accepted` (or `unconfirmed` below 0.7 confidence), corroboration confirms, a different value marks both `conflicting`, disjoint explicit validity windows supersede the earlier one; nothing writes a domain column. Re-extraction replaces a document's facts.
+- `isPreferredOver` / `preferredFact` (shared): of disagreeing facts an answer leads with the newer one when it is at least as trusted, else the older — derived, never stored.
+- `documents.origin` (`upload` | `integration`) and `documents.reviewer_user_id`; `@/plugins/api` `ingestDocument` / `ingestDocumentFile` set `origin: 'integration'` and take an optional `reviewerUserId`. `document.index` gains `skipExtraction`.
+- At `KNOWLEDGE_TENANT_DAILY_COST_USD` the extraction job re-enqueues itself for the next UTC day (≤ 12 h a hop).
+- New eval suite `knowledge · facts` (`pnpm eval facts`, `apps/evals/kit/facts.ts`): extracts a corpus in date order through the job body and scores precision, recall, conflicts caught, false alarms and winner accuracy.
+- Eval corpora may carry `corpus.json` `{ "organisation" }` (the business the knowledge base belongs to); the eval kit's `normalizeName` now drops a trailing legal form (`Ltd`, `Limited`, `LLP`, `PLC`, `Co`, `Inc`).
 - Stored document text has CRLF normalised to LF; search hits (and `searchKnowledge` hits) gain `headingPath` and `page` (always null: `toMarkdown` emits no page markers).
 
 ## How to apply
@@ -67,6 +76,11 @@ The knowledge base becomes measurable and structure-aware: eval corpora and retr
 14. Run `node scripts/plugin-api-doc.mjs` to regenerate `docs/plugin-api.md`.
 15. Optional: register your own entity types in `apps/web/src/api/services/knowledge/entity-types.ts` (the file's header shows one with a table and one without). If you still carry `example-feature`, take its `knowledge/entity-types.ts`, its `knowledgeEntityTypes` line in `index.ts`, its test `tests/api/knowledge-entity-type.test.ts` and its regenerated `plugin.json` `uses`.
 
+16. Port the extraction from the release: `apps/web/src/api/services/knowledge/` (`enqueue.ts`, `extract.ts`, `entities.ts`, `state.ts`, `values.ts`, `dates.ts`, `quotes.ts`, `CLAUDE.md`), `apps/web/src/api/queues/handlers/knowledge-extract.ts` (new, plus its `coreHandlers` entry in `apps/web/src/api/queues/jobs.ts`), the `afterTextIndexed` calls in `apps/web/src/api/queues/handlers/document-index.ts` and `document-convert.ts`, `afterTextIndexed` and the `origin` / `reviewerUserId` inputs in `apps/web/src/api/services/ai/ingest.ts`, the `origin` / `reviewerUserId` columns in `apps/web/src/db/schema/documents.ts`, the `knowledge-extract` entry in `apps/web/src/api/services/prompts.ts`, `reviewerUserId` in `apps/web/src/plugins/api/knowledge.ts`, and in `packages/shared/src/` the `knowledge.extract` variant and `skipExtraction` in `jobs.ts`, `CORE_FEATURES` in `permissions.ts`, the `knowledge-facts` entry in `features.ts`'s `CORE_FEATURE_FLAGS`, and `isPreferredOver` / `preferredFact` in `ai/knowledge-facts.ts`. A type test pinning `CoreJobType` gains `'knowledge.extract'`; a test asserting the core feature list is empty must now expect `knowledge-facts`.
+17. Run `pnpm db:generate --name knowledge-document-origin`, then `pnpm db:migrate`. Existing documents become `origin = 'upload'`; documents a plugin synced before the upgrade keep that value until they are re-synced with changed text.
+18. Facts are only extracted once an entity type is registered in `apps/web/src/api/services/knowledge/entity-types.ts` (or by a plugin) AND the `knowledge-facts` flag is on for the tenant (Admin → Feature flags). Extraction calls the chat model on every changed document; set `KNOWLEDGE_TENANT_DAILY_COST_USD` in BOTH tomls' `[vars]` before enabling it widely.
+19. Optional: port `apps/evals/kit/facts.ts`, `apps/evals/suites/knowledge/facts.eval.ts`, `apps/evals/tests/facts.test.ts`, the `origin` line in `apps/evals/kit/fixtures.ts`, `readCorpusMeta` in `apps/evals/kit/corpus.ts` and `normalizeName` in `apps/evals/kit/scoring.ts`, then run `pnpm eval facts` over a corpus of your own with a `facts.jsonl`.
+
 ## Conflicts to expect
 
 - `apps/evals/suites/chat/knowledge.eval.ts` → also runs every corpus's `chat.jsonl` → keep your own judges and add the corpus loop.
@@ -75,6 +89,7 @@ The knowledge base becomes measurable and structure-aware: eval corpora and retr
 - `apps/web/src/api/routes/ai-documents.ts` → `/ingest` and `/upload` answer `ingestDocumentResponseSchema` (`200` on a duplicate) → a client that asserts `201` on every ingest must accept `200`.
 
 - `apps/web/src/api/services/ai/retrieval.ts` → reranks after fusion and renumbers `rank` → a caller that read `rank` as the RRF position should read `score` (still the RRF score) instead.
+- `packages/shared/src/features.ts` / `permissions.ts` → `CORE_FEATURE_FLAGS` / `CORE_FEATURES` are no longer empty → keep your own core flags beside `knowledge-facts`.
 - `apps/web/src/api/services/knowledge/entity-types.ts` → app-owned (`manual` in `.rocketflare.json`) → add it once, then keep your own types.
 
 ## Verify
@@ -88,3 +103,5 @@ The knowledge base becomes measurable and structure-aware: eval corpora and retr
 7. `pnpm --filter @<scope>/web exec wrangler queues list` shows `<app>-jobs-dlq` (and `<app>-jobs-dlq-staging` on the staging account).
 8. `GET /api/ai/config/readiness` answers a `rerank` entry; a `POST /api/ai/documents/search` hit carries `rerankScore`, and `select feature, count(*) from ai_usage where feature like 'knowledge.%' group by 1` shows `knowledge.embeddings` rows after an ingest.
 9. `pnpm --filter @<scope>/web test:config` passes `knowledge-entity-types.test.ts`, and `psql "$DATABASE_URL" -c "select extname from pg_extension where extname = 'pg_trgm'"` answers one row after `pnpm db:migrate`.
+10. `pnpm --filter @<scope>/web test:config` passes `knowledge-extraction.test.ts`, and `pnpm --filter @<scope>/web test:api` passes `knowledge-extract.test.ts`.
+11. With an entity type registered and the `knowledge-facts` flag on for a tenant, ingesting a document enqueues one `knowledge.extract` job; re-ingesting the same `externalId` with unchanged text enqueues none.

@@ -99,7 +99,8 @@ export interface CorpusWorld extends CaseWorld {
 const corpusWorlds = new Map<string, Promise<CorpusWorld>>()
 
 /**
- * Ingest `corpus` once per process (memoised by name) through the real `ingestText`, with a REAL
+ * Ingest `corpus` once per process (memoised by name) through the real `ingestText` — an
+ * `origin: integration` document marked as a plugin's sync would be — with a REAL
  * embedder (`useEmbeddings`) and the `--rerank` reranker (`useRerank`), each document back-dated to its front-matter `date` so "when was this
  * written" reads true. Every case then runs in this tenant: a corpus is too big to re-ingest per
  * case, and its cases only read it. A document that fails to index fails the world — a corpus with
@@ -138,6 +139,9 @@ export function corpusWorld(corpus: Corpus, promptKeys: readonly string[]): Prom
           text: doc.text,
           source: doc.source,
           contentType: 'text/markdown',
+          // What `@/plugins/api` `ingestDocument` sets for a plugin's sync: the facts read from an
+          // `integration` document carry that (weaker) trust (D43).
+          origin: doc.origin,
         },
         { jobs: env.JOBS_QUEUE }
       )

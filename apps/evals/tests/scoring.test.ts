@@ -11,6 +11,7 @@ import {
   expectedToolNames,
   factExtractionScore,
   matchFacts,
+  normalizeName,
   outputText,
   passageCovered,
   passageRanks,
@@ -243,5 +244,15 @@ describe('fact scorers', () => {
     expect(s.caught).toBe(1)
     expect(s.falseAlarmRate).toBeCloseTo(2 / 3)
     expect(conflictDetectionScore([], []).score).toBe(1)
+  })
+})
+
+describe('normalizeName', () => {
+  it('drops case, punctuation and a trailing legal form', () => {
+    expect(normalizeName('Harbour View Dental, Ltd.')).toBe('harbour view dental')
+    expect(normalizeName('Kingsgate Estates Limited')).toBe('kingsgate estates')
+    expect(normalizeName('Northern Salt & Grit Co')).toBe('northern salt grit')
+    expect(normalizeName('Coleridge Inc Ltd')).toBe('coleridge')
+    expect(normalizeName('Colton')).toBe('colton')
   })
 })

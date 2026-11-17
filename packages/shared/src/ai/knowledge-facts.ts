@@ -144,6 +144,45 @@ export function trustRank(kind: SourceKind): number {
   return SOURCE_TRUST.length - SOURCE_TRUST.indexOf(kind)
 }
 
+/** What the preference rule reads about a fact: when its source was written, and how trusted. */
+export interface PreferenceInput {
+  observedAt: Date
+  sourceKind: SourceKind
+}
+
+/**
+ * Of two facts that disagree, does an answer lead with `a` rather than `b`? The NEWER one wins
+ * when its source is at least as trusted as the older one's; otherwise the older one does
+ * (decision 3 — a synced email does not overturn a signed contract by being later). Two facts
+ * observed at the same moment: the more trusted, then `a`.
+ *
+ * **Preference is derived, never stored.** It is a function of the two facts' `observedAt` and
+ * `sourceKind`, both immutable, so a stored flag could only drift from it. It orders an answer;
+ * both sides are always cited, and a person's "use this one" (`prefer`) supersedes the others
+ * instead of flipping a flag.
+ */
+export function isPreferredOver(a: PreferenceInput, b: PreferenceInput): boolean {
+  const ta = a.observedAt.getTime()
+  const tb = b.observedAt.getTime()
+  if (ta === tb) return trustRank(a.sourceKind) >= trustRank(b.sourceKind)
+  const [older, newer] = ta < tb ? [a, b] : [b, a]
+  const newerWins = trustRank(newer.sourceKind) >= trustRank(older.sourceKind)
+  return (newerWins ? newer : older) === a
+}
+
+/**
+ * The fact an answer leads with among several that disagree: walk them oldest first and move to
+ * each newer one `isPreferredOver` the current choice. Undefined for an empty list.
+ */
+export function preferredFact<T extends PreferenceInput>(facts: readonly T[]): T | undefined {
+  const ordered = [...facts].sort((a, b) => a.observedAt.getTime() - b.observedAt.getTime())
+  let chosen: T | undefined
+  for (const fact of ordered) {
+    if (!chosen || isPreferredOver(fact, chosen)) chosen = fact
+  }
+  return chosen
+}
+
 /** `domain` = the entity is an app/plugin row; `staging` = a `knowledge_entities` row. */
 export const ENTITY_KINDS = ['domain', 'staging'] as const
 export const entityKindSchema = z.enum(ENTITY_KINDS)
