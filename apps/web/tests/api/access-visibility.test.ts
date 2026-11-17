@@ -356,15 +356,20 @@ describe('retrieval recall under a restrictive scope', () => {
       .returning()
 
     // 60 documents nobody in this scope may read, all matching the query as strongly as possible.
-    for (let i = 0; i < 60; i++) {
-      await ingestText(db, cfg, env, {
-        tenantId: tenant.id,
-        userId: null,
-        title: `Hidden payroll ${i}`,
-        text: 'Payroll payroll payroll — the hidden corpus.',
-        visibility: 'groups',
-        groupIds: [group?.id ?? ''],
-      })
+    // Ingested ten at a time: one after another, this setup alone walked toward the 5 s limit.
+    for (let batch = 0; batch < 6; batch++) {
+      await Promise.all(
+        Array.from({ length: 10 }, (_, j) =>
+          ingestText(db, cfg, env, {
+            tenantId: tenant.id,
+            userId: null,
+            title: `Hidden payroll ${batch * 10 + j}`,
+            text: 'Payroll payroll payroll — the hidden corpus.',
+            visibility: 'groups',
+            groupIds: [group?.id ?? ''],
+          })
+        )
+      )
     }
     const { document } = await ingestText(db, cfg, env, {
       tenantId: tenant.id,
