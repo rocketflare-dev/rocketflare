@@ -83,8 +83,12 @@ predicate**, not SQL injection — the app role can `set_config` itself.
   matching the `<=>` operator `services/ai/retrieval.ts` orders by; the tenant predicate still comes
   first in every query and in every btree index. The `vector` extension is created by
   `apps/web/scripts/migrate.ts` (`CREATE EXTENSION IF NOT EXISTS vector`) before the migrations run,
-  not by a migration file. Lexical search is `to_tsvector('english', text)` at query time; a generated
-  `tsvector` column + GIN index is the scaling path (a migration, no code change in the query shape)
+  not by a migration file. Every chunk records its `embedding_model`, and each dense leg filters on
+  the query vector's model — a chunk row written without one is invisible to dense search. Lexical
+  search reads `chunks.search_vector`, a GENERATED tsvector (heading path + table header + text) with
+  a GIN index; its `'english'` literal must equal `SEARCH_TEXT_CONFIG` (`retrieval.ts`), which
+  `tests/config/search-text-config.test.ts` pins. `chunks.text` is an exact slice of
+  `documents.content` at `[char_start, char_end)` — chunk through `chunkText`, never by hand
 - Query vectors are parameters: `vectorLiteral(v)` (`[0.1,0.2,…]`) interpolated through the drizzle
   `sql` tag and cast `::vector` — never string-concatenate a query; `embedding` values are inserted as
   `number[]` through drizzle

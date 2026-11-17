@@ -157,9 +157,11 @@ function IngestForm() {
     ingest.mutate(parsed.data, {
       onSuccess: doc => {
         showToast(
-          doc.status === 'indexed'
-            ? `"${doc.title}" indexed (${doc.chunkCount} chunks)`
-            : `"${doc.title}" queued for indexing`,
+          doc.deduplicated
+            ? `"${doc.title}" is already in the knowledge base`
+            : doc.status === 'indexed'
+              ? `"${doc.title}" indexed (${doc.chunkCount} chunks)`
+              : `"${doc.title}" queued for indexing`,
           'success'
         )
         setTitle('')
@@ -294,11 +296,13 @@ function UploadForm() {
       {
         onSuccess: doc => {
           showToast(
-            doc.status === 'indexed'
-              ? `"${doc.title}" indexed (${doc.chunkCount} chunks)`
-              : doc.status === 'failed'
-                ? `"${doc.title}" could not be indexed`
-                : `"${doc.title}" queued for conversion and indexing`,
+            doc.deduplicated
+              ? `"${doc.title}" is already in the knowledge base`
+              : doc.status === 'indexed'
+                ? `"${doc.title}" indexed (${doc.chunkCount} chunks)`
+                : doc.status === 'failed'
+                  ? `"${doc.title}" could not be indexed`
+                  : `"${doc.title}" queued for conversion and indexing`,
             doc.status === 'failed' ? 'error' : 'success'
           )
           setFile(null)

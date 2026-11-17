@@ -690,8 +690,8 @@ Server: `api/services/{ai,agents}/**` (read their `CLAUDE.md`), `services/prompt
   knowledge base, prompts and model choice as they are TODAY, through the Worker's own resolver —
   the tenant's configs first, then the Workers AI binding, borrowed through wrangler's
   `getPlatformProxy` — and warns before starting when knowledge search would be degraded (no
-  provider, or a key where the Worker uses Workers AI: chunks do not record their model, so
-  resolving the SAME tier is the only guard). Each run replays in a READ ONLY
+  provider, or a key where the Worker uses Workers AI: the dense leg reads only chunks of the
+  query vector's model, so another tier quietly degrades to keyword search). Each run replays in a READ ONLY
   transaction and `ctx.db` refuses writes before they are sent (listed, not fatal). Per run: a
   verdict (`match` / `differs` / `incomplete`), the output diff by JSON path, and each decision's
   status; exit 1 unless every run matches. `--candidate <file>` replays another definition with the
@@ -742,16 +742,38 @@ Server: `api/services/{ai,agents}/**` (read their `CLAUDE.md`), `services/prompt
   uploads go to R2, then `AI.toMarkdown`, then the same indexer. Every text write strips NUL and
   the other C0 controls except tab / LF / CR (`stripControlChars`, `api/utils/core/text.ts`) —
   some PDFs convert with NULs, which Postgres refuses (22021); the span store does the same over
-  `ai_spans` (jsonb refuses `\u0000`, 22P05). Search is hybrid dense + lexical
-  (the lexical half matches ANY query word, ranked by `ts_rank_cd` — `anyTermTsquery` — so a
-  sentence's filler words cannot veto it) with RRF, scoped by `AccessScope` (§1).
+  `ai_spans` (jsonb refuses `\u0000`, 22P05); line endings are normalised to LF before the text
+  is stored. **Chunks are structure-aware** (`chunking.ts`, 800/100-token windows): each is an
+  exact slice of `documents.content` at `[char_start, char_end)` — the overlap comes from starting
+  the next window earlier, never from carried text — every chunk begins and ends at a markdown
+  heading: consecutive whole sections that fit a window share one chunk, only a longer section is
+  cut inside, and each chunk stores the headings its sections share as `heading_path`
+  (`Pricing › Annual plans`); on the Brightside corpus this keeps 54 chunks where one chunk per
+  section made 343 fragments, and recall@10 fell with them; a GFM table (how `toMarkdown`
+  renders a spreadsheet sheet) splits only between rows, and a chunk holding rows without the
+  header stores it as `table_header`. Heading path and table header are prefixed to the text that
+  is EMBEDDED and indexed, never to the stored chunk. `page` is always null (see gaps).
+  Search is hybrid dense + lexical (the lexical half matches ANY query word against
+  `chunks.search_vector` — a GENERATED tsvector over heading path + table header + text with a GIN
+  index, in `SEARCH_TEXT_CONFIG` — ranked by `ts_rank_cd`; `anyTermTsquery`, so a sentence's filler
+  words cannot veto it) with RRF, scoped by `AccessScope` (§1). **Each dense leg reads only chunks
+  whose `embedding_model` is the query vector's model** (migration `0027` backfilled it from the
+  document), so a document embedded by another model stays findable by keyword alone. A hit
+  carries `headingPath`, `page` and `charOffset` (the stored `char_start`; `position()` of the text
+  for a chunk written before 0.37.0). **Content hash**: `documents.content_hash` is sha-256 of the
+  normalised text (CRLF → LF, trimmed). A plain ingest — or a text upload — whose hash matches a
+  non-failed document of the same tenant and `source` answers THAT document (`200`,
+  `deduplicated: true`, nothing stored), only when both are tenant-wide so a dedupe never reveals a
+  restricted document.
   `document-content.ts` is the one text reader behind both
   the viewer and `get_document`. Agent tools resolve the requester's access at execute time.
   **External ids (D34)**: `documents.external_id` is unique per `(tenant_id, source)` (partial
   index, `0016`); an ingest carrying one is an upsert — one `ON CONFLICT` statement, grants
   replaced, chunks rebuilt (the old chunks go in the upsert's transaction, so a pending or failed
   re-index never serves the replaced text), a replaced original removed from R2 — so a connector's re-sync never
-  duplicates. Plugins reach it through `ingestDocument` (§16).
+  duplicates. An upsert whose hash matches an `indexed` row whose chunks are all of today's model
+  is `mode: 'unchanged'`: no chunking, no embedding, chunks kept; title, owner, visibility and
+  grants still follow the source. Plugins reach it through `ingestDocument` (§16).
   **Platform documents**: a `documents` / `chunks` row with `tenant_id` NULL is knowledge about the
   APP itself (a plugin's user guide), readable by EVERY tenant by design. RLS pairs
   `tenantIsolation()` with a SELECT-only `platformReadable()` policy (`tenant_id IS NULL`), so a
@@ -868,7 +890,11 @@ stream cursor; a cancelled run emits nothing rather than AG-UI 1.0's `RUN_FINISH
 outcome; no token-level streaming for runs (would need a per-run DO); char-based history budget
 not derived from the model; sliding window defeats prompt caching on long threads; `enqueueRun`
 does not pre-resolve the client; Workers AI forced tools on off-list models are best-effort; no
-rerank, no generated `tsvector`; platform documents cannot be opened with `get_document` (a
+rerank; page numbers: `toMarkdown` emits no page markers, so `chunks.page` is always null;
+chunks written before 0.37.0 keep their old shape (no heading path or offsets) until re-indexed,
+and an unchanged upsert never re-indexes them; a document embedded by an older model is found by
+keyword only (no re-embed job yet); the plain-ingest dedupe is a read, not a constraint, so two
+concurrent identical ingests can both create a row; platform documents cannot be opened with `get_document` (a
 search hit is all a model reads of one), are not re-embedded automatically when the platform
 embedder changes (the next `ingestPlatformDocument` re-indexes; until then they are found
 lexically), and have no admin view; HITL asks cannot be amended, have no

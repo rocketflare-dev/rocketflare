@@ -39,7 +39,7 @@ import { and, count, eq, gt, isNull, sql } from 'drizzle-orm'
 import { databaseUrlTarget } from '../../../scripts/lib/bootstrap-lib.mjs'
 import { devPorts } from '../../../scripts/lib/dev-ports.mjs'
 import { mintApiKey } from '../src/api/auth/api-keys'
-import { chunkText } from '../src/api/services/ai/chunking'
+import { chunkText, embeddingInput, headingPathLabel } from '../src/api/services/ai/chunking'
 import {
   DETERMINISTIC_EMBEDDING_MODEL,
   deterministicEmbedding,
@@ -1176,7 +1176,14 @@ async function seedDemo(
             seq: p.seq,
             text: p.text,
             tokenCount: p.tokenCount,
-            embedding: deterministicEmbedding(p.text),
+            embedding: deterministicEmbedding(embeddingInput(p)),
+            // The dense leg reads only chunks of the query vector's model.
+            embeddingModel: DETERMINISTIC_EMBEDDING_MODEL,
+            headingPath: headingPathLabel(p.headingPath),
+            tableHeader: p.tableHeader,
+            page: p.page,
+            charStart: p.charStart,
+            charEnd: p.charEnd,
             createdAt,
             updatedAt: createdAt,
           }))

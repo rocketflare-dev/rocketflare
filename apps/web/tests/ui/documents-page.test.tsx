@@ -89,7 +89,10 @@ describe('Documents page', () => {
     const fetchMock = mount({
       'POST /api/ai/documents/ingest': (init: RequestInit | undefined) => {
         const body = JSON.parse(String(init?.body)) as { title: string; text: string }
-        return jsonResponse(doc({ title: body.title, sizeBytes: body.text.length }), 201)
+        return jsonResponse(
+          { ...doc({ title: body.title, sizeBytes: body.text.length }), deduplicated: false },
+          201
+        )
       },
     })
     const form = document.getElementById('ingest-form') as HTMLFormElement
@@ -136,6 +139,7 @@ describe('Documents page', () => {
             fileId: FILE_ID,
             status: 'pending',
             chunkCount: 0,
+            deduplicated: false,
           }),
           201
         )

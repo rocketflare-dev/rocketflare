@@ -10,7 +10,6 @@
  */
 import {
   DOCUMENT_WINDOW_CHARS,
-  type Document,
   type DocumentCard,
   type DocumentContent,
   type DocumentStatus,
@@ -18,7 +17,9 @@ import {
   documentContentSchema,
   documentPassageSchema,
   documentSchema,
+  type IngestDocumentResponse,
   type IngestTextRequest,
+  ingestDocumentResponseSchema,
   type SearchRequest,
   type SearchResponse,
   searchResponseSchema,
@@ -165,7 +166,9 @@ export function useIngestText() {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: (body: IngestTextRequest) =>
-      api.post<Document>('/api/ai/documents/ingest', body, { schema: documentSchema }),
+      api.post<IngestDocumentResponse>('/api/ai/documents/ingest', body, {
+        schema: ingestDocumentResponseSchema,
+      }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.documents.all }),
   })
 }
@@ -188,7 +191,9 @@ export function useUploadDocument() {
       form.append('file', file, file.name)
       if (title) form.append('title', title)
       if (source) form.append('source', source)
-      return api.upload<Document>('/api/ai/documents/upload', form, { schema: documentSchema })
+      return api.upload<IngestDocumentResponse>('/api/ai/documents/upload', form, {
+        schema: ingestDocumentResponseSchema,
+      })
     },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.documents.all }),
   })

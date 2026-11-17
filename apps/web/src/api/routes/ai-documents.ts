@@ -4,7 +4,8 @@
  * GROUPS: every read path here ANDs `visibleDocuments(scope)` with the tenant predicate, and
  * a document the caller may not see answers **404**, the same body as one that does not exist. Two ways in, one path: `POST /ingest` (JSON text) and
  * `POST /upload` (multipart — the original goes to R2 as a `files` row, scope `documents`). Small
- * texts index inline (201 `indexed`); large texts and every binary upload return `pending` and a
+ * texts index inline (201 `indexed`); the same text again as a tenant-wide document of the same
+ * source answers the existing one (200, `deduplicated: true`); large texts and every binary upload return `pending` and a
  * `document.index` / `document.convert` job finishes them. Deleting someone else's document needs
  * `delete Document` (admin+) — own-document delete is the `ownerUserId` check here. Deleting a
  * document deletes its original. The raw text and the vectors never leave the server.
@@ -12,6 +13,7 @@
 import {
   documentContentQuerySchema,
   documentListQuerySchema,
+  type IngestDocumentResponse,
   ingestTextRequestSchema,
   resolveDocumentUploadType,
   type SearchResponse,
@@ -19,10 +21,10 @@ import {
   uploadDocumentFieldsSchema,
 } from '@rocketflare/shared/ai/embeddings'
 import { MAX_UPLOAD_BYTES } from '@rocketflare/shared/files'
-import { setVisibilityRequestSchema } from '@rocketflare/shared/groups'
+import { type GroupRef, setVisibilityRequestSchema } from '@rocketflare/shared/groups'
 import { paginationQuerySchema } from '@rocketflare/shared/pagination'
 import { and, count, desc, eq } from 'drizzle-orm'
-import { documents, files } from '../../db/schema'
+import { type DocumentRow, documents, files } from '../../db/schema'
 import { uploadBodyLimit } from '../middleware/body-limit'
 import { can, guardPermission } from '../middleware/permissions'
 import {
@@ -110,7 +112,7 @@ aiDocumentsRouter.post('/ingest', validate('json', ingestTextRequestSchema), asy
   guardPermission(c, 'create', 'Document')
   const body = c.req.valid('json')
   const access = await resolveRequestedVisibility(db, accessScopeOf(auth), body)
-  const { document, mode } = await ingestText(
+  const { document, mode, deduplicated } = await ingestText(
     db,
     cfg,
     c.env,
@@ -125,22 +127,25 @@ aiDocumentsRouter.post('/ingest', validate('json', ingestTextRequestSchema), asy
     },
     { jobs: c.env.JOBS_QUEUE }
   )
-  defer(() =>
-    recordActivity(db, {
-      tenantId,
-      userId: user.id,
-      type: 'document.ingested',
-      subjectType: 'Document',
-      subjectId: document.id,
-      metadata: {
-        mode,
-        status: document.status,
-        chunkCount: document.chunkCount,
-        visibility: document.visibility,
-      },
-    })
-  )
-  return c.json(toDocument(document, await groupsOf(db, tenantId, document.id)), 201)
+  // A duplicate wrote nothing, so there is nothing to record: the document's own ingest was.
+  if (!deduplicated) {
+    defer(() =>
+      recordActivity(db, {
+        tenantId,
+        userId: user.id,
+        type: 'document.ingested',
+        subjectType: 'Document',
+        subjectId: document.id,
+        metadata: {
+          mode,
+          status: document.status,
+          chunkCount: document.chunkCount,
+          visibility: document.visibility,
+        },
+      })
+    )
+  }
+  return ingestResponse(c, document, deduplicated, await groupsOf(db, tenantId, document.id))
 })
 
 // ---- POST /api/ai/documents/upload ----------------------------------------------------------------
@@ -213,27 +218,42 @@ aiDocumentsRouter.post('/upload', uploadBodyLimit, async c => {
     }
     throw err
   }
-  const { document, mode } = result
-  defer(() =>
-    recordActivity(db, {
-      tenantId,
-      userId: user.id,
-      type: 'document.ingested',
-      subjectType: 'Document',
-      subjectId: document.id,
-      metadata: {
-        mode,
-        status: document.status,
-        chunkCount: document.chunkCount,
-        contentType: document.contentType,
-        sizeBytes: document.sizeBytes,
-        fileId: document.fileId,
-        visibility: document.visibility,
-      },
-    })
-  )
-  return c.json(toDocument(document, await groupsOf(db, tenantId, document.id)), 201)
+  const { document, mode, deduplicated } = result
+  if (!deduplicated)
+    defer(() =>
+      recordActivity(db, {
+        tenantId,
+        userId: user.id,
+        type: 'document.ingested',
+        subjectType: 'Document',
+        subjectId: document.id,
+        metadata: {
+          mode,
+          status: document.status,
+          chunkCount: document.chunkCount,
+          contentType: document.contentType,
+          sizeBytes: document.sizeBytes,
+          fileId: document.fileId,
+          visibility: document.visibility,
+        },
+      })
+    )
+  return ingestResponse(c, document, deduplicated, await groupsOf(db, tenantId, document.id))
 })
+
+/**
+ * `201` with the new document, or `200` with the EXISTING one when the same text was already a
+ * tenant-wide document of the same source (`deduplicated: true`).
+ */
+function ingestResponse(
+  c: AppContext,
+  document: DocumentRow,
+  deduplicated: boolean,
+  groups: GroupRef[]
+) {
+  const body: IngestDocumentResponse = { ...toDocument(document, groups), deduplicated }
+  return c.json(body, deduplicated ? 200 : 201)
+}
 
 /** `groupIds` travels through multipart as a JSON array; anything unparseable is left to zod. */
 function jsonArrayField(form: FormData | null, name: string): unknown {

@@ -36,6 +36,16 @@ export const documentSchema = z.object({
 })
 export type Document = z.infer<typeof documentSchema>
 
+/**
+ * What `POST /ingest` and `POST /upload` answer: the document, and whether it is one that ALREADY
+ * existed. `deduplicated: true` (status `200`, not `201`) = the same text was already a
+ * tenant-wide document of the same source, and that document is returned instead of a second one.
+ */
+export const ingestDocumentResponseSchema = documentSchema.extend({
+  deduplicated: z.boolean(),
+})
+export type IngestDocumentResponse = z.infer<typeof ingestDocumentResponseSchema>
+
 /** Longest text `POST /api/ai/documents/ingest` accepts (characters; ~ the 1 MB JSON body cap). */
 export const INGEST_TEXT_MAX_CHARS = 500_000
 
@@ -73,6 +83,10 @@ export const searchHitSchema = z.object({
   seq: z.number().int().nonnegative(),
   /** How many passages the document has in total. */
   documentPassages: z.number().int().nonnegative(),
+  /** The markdown headings the passage sits under, joined with ` › `; null when none. */
+  headingPath: z.string().nullable(),
+  /** Page of the source document — null when unknown (today: always). */
+  page: z.number().int().positive().nullable(),
   /**
    * Character offset of the passage in the document's text — read around it with
    * `GET`/`get_document` at this offset. Null when it cannot be located (re-chunked since).

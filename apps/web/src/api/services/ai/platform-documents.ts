@@ -26,10 +26,9 @@ import type { Database } from '../../../db/client'
 import { chunks, documents } from '../../../db/schema'
 import { traceEmbed } from '../../observability/context'
 import { BadRequestError, ServiceUnavailableError } from '../../utils/core/errors'
-import { stripControlChars } from '../../utils/core/text'
-import { chunkText } from './chunking'
+import { chunkText, embeddingInput, headingPathLabel } from './chunking'
 import type { FetchLike } from './client'
-import { embedInBatches } from './ingest'
+import { contentHash, embedInBatches, normalizeDocumentText } from './ingest'
 import { resolvePlatformEmbeddings } from './resolve'
 import type { AiEnv } from './types'
 
@@ -68,7 +67,7 @@ export async function ingestPlatformText(
 ): Promise<PlatformDocumentResult> {
   const externalId = input.externalId.trim()
   const title = input.title.trim()
-  const text = stripControlChars(input.text)
+  const text = normalizeDocumentText(input.text)
   if (!externalId) throw new BadRequestError('externalId is required', 'invalid_external_id')
   if (!title) throw new BadRequestError('title is required', 'invalid_title')
   if (!text.trim()) throw new BadRequestError('text is empty', 'empty_document')
@@ -112,7 +111,7 @@ export async function ingestPlatformText(
   const pieces = chunkText(text)
   const vectors = await embedInBatches(
     texts => traceEmbed(embeddings, texts, () => embeddings.client.embed(texts)),
-    pieces.map(p => p.text)
+    pieces.map(p => embeddingInput(p))
   )
 
   const values = {
@@ -124,6 +123,7 @@ export async function ingestPlatformText(
     contentType: 'text/markdown',
     sizeBytes: new TextEncoder().encode(text).byteLength,
     content: text,
+    contentHash: await contentHash(text),
     fileId: null,
     chunkCount: pieces.length,
     embeddingModel: embeddings.model,
@@ -142,6 +142,7 @@ export async function ingestPlatformText(
           contentType: values.contentType,
           sizeBytes: values.sizeBytes,
           content: values.content,
+          contentHash: values.contentHash,
           chunkCount: values.chunkCount,
           embeddingModel: values.embeddingModel,
           status: values.status,
@@ -157,9 +158,15 @@ export async function ingestPlatformText(
           documentId: row.id,
           tenantId: null,
           seq: p.seq,
-          text: stripControlChars(p.text),
+          text: p.text,
           tokenCount: p.tokenCount,
           embedding: vectors[i] as number[],
+          embeddingModel: embeddings.model,
+          headingPath: headingPathLabel(p.headingPath),
+          tableHeader: p.tableHeader,
+          page: p.page,
+          charStart: p.charStart,
+          charEnd: p.charEnd,
         }))
       )
     }

@@ -87,6 +87,10 @@ export interface SearchKnowledgePassage {
   passage: number
   /** Character offset of this passage in the document — pass it to get_document to read around it. */
   charOffset: number | null
+  /** The headings the passage sits under (`Pricing › Annual plans`) — absent when none. */
+  section?: string
+  /** Page of the source document — absent when unknown. */
+  page?: number
   score: number
   text: string
   /** Set when the passage was longer than the per-passage budget — read the rest with get_document. */
@@ -223,6 +227,8 @@ export function searchKnowledgeTool(
           rank: hit.rank,
           passage: hit.seq + 1,
           charOffset: hit.charOffset,
+          ...(hit.headingPath ? { section: hit.headingPath } : {}),
+          ...(hit.page !== null ? { page: hit.page } : {}),
           score: Number(hit.score.toFixed(4)),
           text,
           ...(truncated ? { truncated: true as const } : {}),

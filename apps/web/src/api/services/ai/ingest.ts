@@ -12,12 +12,22 @@
  *   `document.convert` job runs `convertAndIndexDocument` (Workers AI `toMarkdown` → the same
  *   `indexDocument`).
  *
- * Indexing = `resolveEmbeddings` → embed in batches of `EMBED_BATCH_SIZE` → replace the document's
- * chunks → `indexed` (with `chunkCount`/`embeddingModel`) or `failed` with a redacted error. Both
+ * Indexing = `resolveEmbeddings` → embed in batches of `EMBED_BATCH_SIZE` (each chunk's
+ * `embeddingInput`: heading path + table header + text) → replace the document's chunks (each with
+ * its offsets, heading path and `embeddingModel`) → `indexed` (with `chunkCount`/`embeddingModel`/
+ * `contentHash`) or `failed` with a redacted error. Both
  * paths re-read the text from the row, never from a message. Everything that can 503 (no
  * embeddings provider, no converter for a binary type) is checked BEFORE any byte or row is
  * written — no orphans. A missing `JOBS_QUEUE` throws `JobsQueueNotConfiguredError` — never a
  * silent inline fallback.
+ *
+ * **Content hash.** Stored text is normalised (control characters stripped, CRLF → LF) and
+ * hashed (`contentHash`, sha-256 over the trimmed text). An external-id upsert whose hash, status
+ * and chunk model all still match is `unchanged`: no chunking, no embedding, no chunk delete —
+ * only the row's metadata and grants follow the source. A plain ingest (no external id) whose
+ * hash matches a document of the same tenant and source answers that document
+ * (`deduplicated: true`) — only between two TENANT-wide documents, so a dedupe can never hand
+ * back, or reveal, a document restricted to groups the caller may not be in.
  */
 import {
   type Document,
@@ -26,15 +36,26 @@ import {
   resolveDocumentUploadType,
 } from '@rocketflare/shared/ai/embeddings'
 import type { GroupRef, ResourceVisibility } from '@rocketflare/shared/groups'
-import { and, eq, sql } from 'drizzle-orm'
+import { and, asc, eq, isNull, ne, sql } from 'drizzle-orm'
 import type { AppConfig } from '../../../config'
 import type { Database } from '../../../db/client'
 import { chunks, type DocumentRow, documentGroups, documents, files } from '../../../db/schema'
 import { traceEmbed } from '../../observability/context'
 import { stripControlChars } from '../../utils/core/text'
 import { enqueueJob, type JobsQueue } from '../jobs'
-import { deleteStoredFile, type StorageService, storeUploadedFile } from '../storage'
-import { chunkText, type TextChunk } from './chunking'
+import {
+  deleteStoredFile,
+  type StorageService,
+  sanitizeFilename,
+  storeUploadedFile,
+} from '../storage'
+import {
+  chunkText,
+  embeddingInput,
+  headingPathLabel,
+  normalizeLineEndings,
+  type TextChunk,
+} from './chunking'
 import { ConversionFailedError, canConvert, convertToText, decodeText } from './convert'
 import { normalizeAiError, redactSecrets } from './errors'
 import { type ResolvedEmbeddings, resolveEmbeddings } from './resolve'
@@ -115,6 +136,22 @@ export function toDocument(row: DocumentRow, groups: GroupRef[] = []): Document 
   }
 }
 
+/**
+ * The text a document is stored as: control characters stripped (Postgres refuses a NUL), line
+ * endings normalised, so `documents.content` is exactly what was chunked and every chunk's
+ * `charStart`/`charEnd` indexes into it.
+ */
+export function normalizeDocumentText(text: string): string {
+  return normalizeLineEndings(stripControlChars(text))
+}
+
+/** sha-256 (lowercase hex) of the normalised text: CRLF → LF, then trimmed. Web Crypto only. */
+export async function contentHash(text: string): Promise<string> {
+  const bytes = new TextEncoder().encode(normalizeLineEndings(text).trim())
+  const digest = await crypto.subtle.digest('SHA-256', bytes)
+  return [...new Uint8Array(digest)].map(b => b.toString(16).padStart(2, '0')).join('')
+}
+
 /** Embed `texts` in batches so a large document never sends one oversized request. */
 export async function embedInBatches(
   embed: (texts: string[]) => Promise<number[][]>,
@@ -168,12 +205,13 @@ export async function indexDocument(
   if (!row) throw new Error(`documents: ${documentId} not found in tenant`)
   const pieces = options.chunks ?? chunkText(row.content ?? '')
   try {
+    const hash = await contentHash(row.content ?? '')
     const embeddings = options.embeddings ?? (await resolveEmbeddings(db, cfg, env, tenantId))
     const vectors = await embedInBatches(
       // One `embeddings <model>` span per batch, under the active span (an agent run, the
       // `document.index` job) — untraced where nothing is active.
       texts => traceEmbed(embeddings, texts, () => embeddings.client.embed(texts)),
-      pieces.map(p => p.text)
+      pieces.map(p => embeddingInput(p))
     )
     const [updated] = await db.transaction(async tx => {
       await tx
@@ -189,6 +227,12 @@ export async function indexDocument(
             text: stripControlChars(p.text),
             tokenCount: p.tokenCount,
             embedding: vectors[i] as number[],
+            embeddingModel: embeddings.model,
+            headingPath: headingPathLabel(p.headingPath),
+            tableHeader: p.tableHeader,
+            page: p.page,
+            charStart: p.charStart,
+            charEnd: p.charEnd,
           }))
         )
       }
@@ -198,6 +242,7 @@ export async function indexDocument(
           status: 'indexed',
           chunkCount: pieces.length,
           embeddingModel: embeddings.model,
+          contentHash: hash,
           error: null,
         })
         .where(and(eq(documents.id, documentId), eq(documents.tenantId, tenantId)))
@@ -244,8 +289,14 @@ async function grantDocumentGroups(
 
 export interface IngestResult {
   document: DocumentRow
-  /** `inline` = indexed in this call; `queued` = a `document.index` / `document.convert` job will. */
-  mode: 'inline' | 'queued'
+  /**
+   * `inline` = indexed in this call; `queued` = a `document.index` / `document.convert` job will;
+   * `unchanged` = the text was already indexed (an upsert with the same hash, or a dedupe) and
+   * nothing was chunked or embedded.
+   */
+  mode: 'inline' | 'queued' | 'unchanged'
+  /** A plain ingest answered an EXISTING document with the same text instead of creating one. */
+  deduplicated: boolean
 }
 
 /**
@@ -268,20 +319,106 @@ async function indexOrEnqueue(
       type: 'document.index',
       payload: { tenantId, documentId: row.id },
     })
-    return { document: row, mode: 'queued' }
+    return { document: row, mode: 'queued', deduplicated: false }
   }
   try {
     const document = await indexDocument(db, cfg, env, tenantId, row.id, {
       chunks: pieces,
       embeddings,
     })
-    return { document, mode: 'inline' }
+    return { document, mode: 'inline', deduplicated: false }
   } catch {
     const failed = await db.query.documents.findFirst({
       where: and(eq(documents.id, row.id), eq(documents.tenantId, tenantId)),
     })
-    return { document: failed ?? row, mode: 'inline' }
+    return { document: failed ?? row, mode: 'inline', deduplicated: false }
   }
+}
+
+/**
+ * A plain ingest's duplicate: a document of this tenant with the same `source` (null matches
+ * null) and hash that is not `failed`. Only between TENANT-wide documents — answering a restricted
+ * one would reveal a document the caller may not be able to read.
+ */
+async function findDuplicate(
+  db: Database,
+  tenantId: string,
+  source: string | null,
+  hash: string,
+  visibility: ResourceVisibility
+): Promise<DocumentRow | undefined> {
+  if (visibility !== 'tenant') return undefined
+  const [row] = await db
+    .select()
+    .from(documents)
+    .where(
+      and(
+        eq(documents.tenantId, tenantId),
+        source === null ? isNull(documents.source) : eq(documents.source, source),
+        eq(documents.contentHash, hash),
+        eq(documents.visibility, 'tenant'),
+        ne(documents.status, 'failed')
+      )
+    )
+    .orderBy(asc(documents.createdAt))
+    .limit(1)
+  return row
+}
+
+/**
+ * Is an external-id upsert a no-op for the TEXT? Same hash, `indexed`, and every chunk embedded by
+ * the model that would embed it now. (Phase 2's extraction will be skipped on this path too.)
+ */
+async function isUnchanged(
+  db: Database,
+  tenantId: string,
+  previous: DocumentRow | undefined,
+  hash: string,
+  model: string
+): Promise<boolean> {
+  if (!previous || previous.status !== 'indexed' || previous.contentHash !== hash) return false
+  const [stale] = await db
+    .select({ id: chunks.id })
+    .from(chunks)
+    .where(
+      and(
+        eq(chunks.tenantId, tenantId),
+        eq(chunks.documentId, previous.id),
+        sql`${chunks.embeddingModel} is distinct from ${model}`
+      )
+    )
+    .limit(1)
+  return !stale
+}
+
+/**
+ * The unchanged upsert: the text and chunks stay; the metadata the source owns (title, owner,
+ * visibility, its grants) still follows it — a source that stops sharing an item must not be
+ * ignored because the text did not change.
+ */
+async function touchUnchanged(
+  db: Database,
+  tenantId: string,
+  previous: DocumentRow,
+  values: Pick<DocumentRow, 'title' | 'ownerUserId' | 'visibility' | 'contentType'>,
+  groupIds: readonly string[] | undefined
+): Promise<DocumentRow> {
+  return db.transaction(async tx => {
+    const [row] = await tx
+      .update(documents)
+      // Named, not spread: a caller's wider `values` (content, status…) must never reach the row.
+      .set({
+        title: values.title,
+        ownerUserId: values.ownerUserId,
+        visibility: values.visibility,
+        contentType: values.contentType,
+      })
+      .where(and(eq(documents.id, previous.id), eq(documents.tenantId, tenantId)))
+      .returning()
+    const updated = row ?? previous
+    await grantDocumentGroups(tx, tenantId, updated, groupIds, { replace: true })
+    return updated
+  })
 }
 
 /**
@@ -296,9 +433,9 @@ export async function ingestText(
   input: IngestTextInput,
   deps: IngestDeps = {}
 ): Promise<IngestResult> {
-  const text = stripControlChars(input.text)
-  const pieces = chunkText(text)
+  const text = normalizeDocumentText(input.text)
   const embeddings = await resolveEmbeddings(db, cfg, env, input.tenantId)
+  const hash = await contentHash(text)
   const values = {
     tenantId: input.tenantId,
     ownerUserId: input.userId,
@@ -307,12 +444,33 @@ export async function ingestText(
     contentType: input.contentType ?? 'text/plain',
     sizeBytes: new TextEncoder().encode(text).byteLength,
     content: text,
+    contentHash: hash,
     fileId: null,
     status: 'pending' as const,
     visibility: input.visibility ?? 'tenant',
   }
   const external = externalKey(input)
   const previous = external ? await findExternal(db, input.tenantId, external) : undefined
+  // A re-sync of an item that USED to be a file takes the full path below, which sheds the file.
+  if (
+    previous &&
+    !previous.fileId &&
+    (await isUnchanged(db, input.tenantId, previous, hash, embeddings.model))
+  ) {
+    const document = await touchUnchanged(db, input.tenantId, previous, values, input.groupIds)
+    return { document, mode: 'unchanged', deduplicated: false }
+  }
+  if (!external) {
+    const duplicate = await findDuplicate(
+      db,
+      input.tenantId,
+      values.source,
+      hash,
+      values.visibility
+    )
+    if (duplicate) return { document: duplicate, mode: 'unchanged', deduplicated: true }
+  }
+  const pieces = chunkText(text)
   const row = external
     ? await upsertExternal(
         db,
@@ -472,7 +630,8 @@ function tooLong(chars: number): ConversionFailedError {
 
 /**
  * Store an uploaded file and index it. Order: resolve embeddings and check the converter (both can
- * 503 — nothing written yet) → object + `files` row → `documents` row (`pending`, `fileId`, the
+ * 503 — nothing written yet) → for a text-like type, decode and hash it and answer an unchanged
+ * upsert or a duplicate from the existing row (nothing stored) → object + `files` row → `documents` row (`pending`, `fileId`, the
  * original media type). Text-like types are decoded now and follow `ingestText`'s inline/queued
  * decision; binary types return `pending` and a `document.convert` job converts + indexes them.
  * The `files` row and object are rolled back if the `documents` row cannot be written.
@@ -487,6 +646,39 @@ export async function ingestFile(
   const embeddings = await resolveEmbeddings(db, cfg, env, input.tenantId)
   if (input.type.kind === 'convert' && !canConvert(env)) throw new ConversionNotConfiguredError()
 
+  // A text-like upload is decoded BEFORE anything is stored, so an unchanged re-sync or a
+  // duplicate answers the existing document without an R2 object or `files` row to clean up.
+  let text: string | null = null
+  let hash: string | null = null
+  if (input.type.kind === 'text') {
+    text = normalizeDocumentText(await decodeText(input.file))
+    hash = await contentHash(text)
+    const source = input.source?.trim() || sanitizeFilename(input.filename || 'file')
+    const visibility = input.visibility ?? 'tenant'
+    const external = externalKey(input)
+    if (external) {
+      const existing = await findExternal(db, input.tenantId, external)
+      if (existing && (await isUnchanged(db, input.tenantId, existing, hash, embeddings.model))) {
+        const document = await touchUnchanged(
+          db,
+          input.tenantId,
+          existing,
+          {
+            title: input.title?.trim() || titleFromFilename(input.filename),
+            ownerUserId: input.userId,
+            visibility,
+            contentType: input.type.contentType,
+          },
+          input.groupIds
+        )
+        return { document, mode: 'unchanged', deduplicated: false }
+      }
+    } else {
+      const duplicate = await findDuplicate(db, input.tenantId, source, hash, visibility)
+      if (duplicate) return { document: duplicate, mode: 'unchanged', deduplicated: true }
+    }
+  }
+
   const stored = await storeUploadedFile(db, deps.storage, {
     tenantId: input.tenantId,
     ownerUserId: input.userId,
@@ -495,13 +687,7 @@ export async function ingestFile(
     filename: input.filename,
     contentType: input.type.contentType,
   })
-
-  let text: string | null = null
-  let pieces: TextChunk[] = []
-  if (input.type.kind === 'text') {
-    text = stripControlChars(await decodeText(input.file))
-    pieces = chunkText(text)
-  }
+  const pieces: TextChunk[] = text !== null ? chunkText(text) : []
 
   let row: DocumentRow | undefined
   let previous: DocumentRow | undefined
@@ -514,6 +700,7 @@ export async function ingestFile(
       contentType: input.type.contentType,
       sizeBytes: input.file.size,
       content: text,
+      contentHash: hash,
       fileId: stored.id,
       status: 'pending' as const,
       visibility: input.visibility ?? 'tenant',
@@ -545,14 +732,14 @@ export async function ingestFile(
       type: 'document.convert',
       payload: { tenantId: input.tenantId, documentId: row.id },
     })
-    return { document: row, mode: 'queued' }
+    return { document: row, mode: 'queued', deduplicated: false }
   }
   if ((text ?? '').length > INGEST_TEXT_MAX_CHARS) {
     await markFailed(db, input.tenantId, row.id, tooLong((text ?? '').length))
     const failed = await db.query.documents.findFirst({
       where: and(eq(documents.id, row.id), eq(documents.tenantId, input.tenantId)),
     })
-    return { document: failed ?? row, mode: 'inline' }
+    return { document: failed ?? row, mode: 'inline', deduplicated: false }
   }
   return indexOrEnqueue(db, cfg, env, input.tenantId, row, pieces, embeddings, deps)
 }
@@ -596,8 +783,10 @@ export async function convertAndIndexDocument(
       blob,
       contentType: type.contentType,
     })
-    // Some PDFs convert with NULs in the text, which Postgres refuses (22021) — strip before the write.
-    const text = stripControlChars(converted.text)
+    // Some PDFs convert with NULs in the text, which Postgres refuses (22021) — strip before the
+    // write; line endings are normalised so the chunks' offsets index the stored text exactly.
+    // `indexDocument` sets `contentHash` (a binary upload is never deduplicated at ingest).
+    const text = normalizeDocumentText(converted.text)
     if (text.length > INGEST_TEXT_MAX_CHARS) throw tooLong(text.length)
     await db
       .update(documents)

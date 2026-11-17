@@ -9,7 +9,10 @@
  * - **`externalId` makes ingest idempotent.** The same `(tenantId, source, externalId)` again
  *   UPDATES the row — text, title, owner, visibility and grants — and re-indexes it, so a sync can
  *   replay a page of results without duplicating anything. Namespace `source` with the plugin id
- *   (`m365:mail`), because uniqueness is per source.
+ *   (`m365:mail`), because uniqueness is per source. When the text's hash is unchanged (and it is
+ *   indexed by today's model) only the metadata and grants move: `mode: 'unchanged'`, no
+ *   re-chunking and no embeddings call. Without an `externalId`, the same text again as a
+ *   tenant-wide document of the same source answers the existing one (`deduplicated: true`).
  * - **Group ids are checked against the tenant** before anything is written: a sync that maps an
  *   upstream group to the wrong organisation's group fails here rather than sharing a document
  *   across tenants.
@@ -87,10 +90,16 @@ export interface PluginIngestResult {
   documentId: string
   mode: IngestResult['mode']
   status: IngestResult['document']['status']
+  /**
+   * An ingest without `externalId` found the same text already indexed as a tenant-wide
+   * document of the same source, and `documentId` is THAT document (nothing was written).
+   * An `externalId` upsert whose text is unchanged answers `mode: 'unchanged'` instead.
+   */
+  deduplicated: boolean
 }
 
-function toResult({ document, mode }: IngestResult): PluginIngestResult {
-  return { documentId: document.id, mode, status: document.status }
+function toResult({ document, mode, deduplicated }: IngestResult): PluginIngestResult {
+  return { documentId: document.id, mode, status: document.status, deduplicated }
 }
 
 async function checkGroups(ctx: PluginContext, input: IngestCommon): Promise<void> {
@@ -322,6 +331,10 @@ export interface SearchKnowledgeHit {
   /** Passage n of its document, from 0. */
   seq: number
   charOffset: number | null
+  /** The headings the passage sits under, joined with ` › `; null when none. */
+  headingPath: string | null
+  /** Page of the source document; null when unknown. */
+  page: number | null
   /** RRF score — higher is better, not a similarity. */
   score: number
   denseRank: number | null
@@ -376,6 +389,8 @@ export async function searchKnowledge(
       text: h.text,
       seq: h.seq,
       charOffset: h.charOffset,
+      headingPath: h.headingPath,
+      page: h.page,
       score: h.score,
       denseRank: h.denseRank,
       lexicalRank: h.lexicalRank,

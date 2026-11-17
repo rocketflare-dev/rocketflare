@@ -72,7 +72,11 @@ Rules:
   bodies inside `withEvalScope` (marks traces `rocketflare.eval=true`). Nothing in the Worker
   enters that scope — never add a request flag for it. The judge is the `evals-judge` prompt; its
   spend is `ai_usage` feature `evals.judge`
-- **Ingest**: `chunking.ts` (paragraph-aware, ~800 tokens / 100 overlap, 4 chars per token);
+- **Ingest**: `chunking.ts` (~800 tokens / 100 overlap, 4 chars per token; every chunk an EXACT
+  slice `[charStart, charEnd)` of the stored text, every chunk begins and ends at a heading — whole sections that fit a window packed together, only a longer one cut inside — with the shared `headingPath`,
+  GFM tables split between rows with `tableHeader` on the later chunks; `embeddingInput` prefixes
+  path + header to what is EMBEDDED, never to the stored text; text is normalised —
+  `normalizeDocumentText`, control chars + CRLF — before it is stored or chunked);
   `ingest.ts` — `ingestText(db, cfg, env, input, { jobs })` and `ingestFile(db, cfg, env, input, {
   jobs, storage })` (original to R2 as a `files` row scope `documents`, `fileId` on the document).
   Text-like types index inline ≤ 50 chunks else a `document.index` job; PDF/Office/HTML enqueue
@@ -86,10 +90,15 @@ Rules:
   converted PDFs carry them
 - **An `externalId` makes ingest an upsert**: the same `(tenant, source, externalId)` updates the row
   in one `ON CONFLICT` (partial unique index), replaces its grants, rebuilds its chunks and drops a
-  replaced R2 original; `deleteExternalDocument` is the delete. Plugins reach both only through
+  replaced R2 original; `deleteExternalDocument` is the delete. **`contentHash`** (sha-256 of the
+  normalised, trimmed text, Web Crypto): an upsert with the same hash on an `indexed` row whose
+  chunks are all of today's model is `mode: 'unchanged'` (metadata + grants only; no chunk delete,
+  no embed); a plain ingest or text upload matching a tenant-wide, non-failed document of the same
+  tenant + source returns it (`deduplicated: true`, the route's `200`) and stores nothing. Plugins reach both only through
   `@/plugins/api` (`ingestDocument`, `deleteIngestedDocument`)
 - **Retrieval only through `searchChunks(db, cfg, env, scope, request)`** (`retrieval.ts`): dense
-  `<=>` + lexical over ANY query word (`anyTermTsquery` — never `websearch_to_tsquery`, which ANDs
+  `<=>` over the chunks whose `embeddingModel` is the query vector's (every leg, tenant and
+  platform) + lexical over `chunks.search_vector` (generated, GIN) for ANY query word (`anyTermTsquery` — never `websearch_to_tsquery`, which ANDs
   filler words into zero hits) ranked by `ts_rank_cd`, RRF `k = 60`; `RerankFn` is the documented,
   unbuilt seam. **A document's TEXT only through `document-content.ts`** (`readDocumentWindow` /
   `listDocumentPassages` / `readDocumentCard`), which `get_document` and `GET
@@ -109,7 +118,7 @@ Rules:
   and model. `prunePlatformText` deletes what a sync no longer has. Only `@/plugins/api` calls them
   (Job/Cron contexts). `searchChunks(…, { sources?, platformSources?, signal? })` reaches them by
   named source only, with a platform dense leg ranked by the PLATFORM query vector and limited to
-  documents embedded by that model. It shares one leg with the tenant corpus when both models
+  chunks embedded by that model. It shares one leg with the tenant corpus when both models
   match, else uses one leg per model (`fuseDenseLegs`). `searchKnowledgeChunks` adds provenance and
   `semantic`, and `lexicalFallback` turns a missing tenant embedder into keyword-only search.
   Without the new params `searchChunks` answers exactly as before

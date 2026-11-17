@@ -52,6 +52,13 @@ export const documents = pgTable(
     /** The uploaded original (`files` row, scope `documents`); null for pasted text. */
     fileId: uuid('file_id').references(() => files.id, { onDelete: 'set null' }),
     chunkCount: integer('chunk_count').notNull().default(0),
+    /**
+     * sha-256 (hex) of the normalised text (`contentHash` in `services/ai/ingest.ts`: CRLF → LF,
+     * trimmed). An upsert whose hash matches skips chunking and embedding; a plain ingest whose
+     * hash matches a document of the same tenant and source returns that one. Null until the text
+     * is known (an upload not yet converted) and on rows written before 0.37.0.
+     */
+    contentHash: text('content_hash'),
     /** Which embeddings model produced this document's vectors (warn before mixing). */
     embeddingModel: text('embedding_model'),
     status: text('status', { enum: DOCUMENT_STATUS_VALUES }).notNull().default('pending'),
@@ -69,6 +76,7 @@ export const documents = pgTable(
   table => [
     index('documents_tenant_created_idx').on(table.tenantId, table.createdAt.desc()),
     index('documents_tenant_owner_idx').on(table.tenantId, table.ownerUserId),
+    index('documents_tenant_source_hash_idx').on(table.tenantId, table.source, table.contentHash),
     uniqueIndex('documents_tenant_source_external_uq')
       .on(table.tenantId, table.source, table.externalId)
       .where(sql`${table.externalId} is not null`),
