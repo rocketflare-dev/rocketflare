@@ -6,6 +6,11 @@ copy of the kit forward without recreating anything its owner deleted.
 
 If you are running a copy: `pnpm kit:upgrade` tells you which of these you are missing.
 
+## 0.37.0 — 2026-11-18
+
+The knowledge base becomes measurable and structure-aware: eval corpora, structured chunks, model-consistent search with re-embedding, dedupe, retry, reranking, metered spend, and typed knowledge facts extracted from documents behind a `knowledge-facts` flag.
+[Porting note](docs/upgrades/0.37.0.md).
+
 ## 0.36.1 — 2026-11-13
 
 0.36.0 copies could not deploy: the public-sites cache made a random id at module load, which Cloudflare refuses; it is now made on first use, a test loads the Worker to catch it, and upgrades finish cleanly after rejects.
