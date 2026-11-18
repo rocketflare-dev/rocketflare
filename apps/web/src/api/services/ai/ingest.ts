@@ -500,7 +500,7 @@ async function isUnchanged(
   hash: string,
   model: string
 ): Promise<boolean> {
-  if (!previous || previous.status !== 'indexed' || previous.contentHash !== hash) return false
+  if (previous?.status !== 'indexed' || previous.contentHash !== hash) return false
   const [stale] = await db
     .select({ id: chunks.id })
     .from(chunks)

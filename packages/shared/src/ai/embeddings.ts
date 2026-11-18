@@ -687,7 +687,11 @@ export function documentCardsFromToolResult(toolName: string, result: unknown): 
     )
   }
   const seen = new Set<string>()
-  return cards.filter(c => (seen.has(c.id) ? false : (seen.add(c.id), true)))
+  return cards.filter(c => {
+    if (seen.has(c.id)) return false
+    seen.add(c.id)
+    return true
+  })
 }
 
 /** Every card a persisted assistant message's `toolCalls` imply, in call order. */

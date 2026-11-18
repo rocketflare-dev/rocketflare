@@ -25,7 +25,7 @@ if it changed — it is not a gate check, the compile against the fresh types is
 
 - Single quotes, `asNeeded` semicolons, 100 columns, 2-space indent, trailing commas `es5`
 - `import type` / `export type` are errors when violated; unused variables and imports are errors
-- `pnpm lint:fix` before manual fixes; `pnpm lint` (errors only) is the gate's `lint` step
+- `pnpm lint:fix` before manual fixes; `pnpm lint` (a warning fails it, as an error does) is the gate's `lint` step
 - `apps/*/tests/**` and `apps/*/scripts/**` may use `any`; `src/**` in any package may not without a
   `// biome-ignore` line that states why
 

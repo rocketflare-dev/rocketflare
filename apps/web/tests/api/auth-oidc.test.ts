@@ -49,9 +49,7 @@ vi.mock('@/api/routes/auth/sso', async () => {
     },
   ]
   return {
-    // biome-ignore lint/suspicious/noExplicitAny: the mock forwards the real signature untouched
     ssoDecisionFor: (db: any, cfg: any, emails: any, logger: any) =>
-      // biome-ignore lint/suspicious/noExplicitAny: fixtures are structurally ServerPlugins
       evaluateSsoPolicyForAll(fixtures as any, db, cfg, emails, logger),
   }
 })

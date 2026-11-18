@@ -22,7 +22,7 @@
     "dev:db:status": "node scripts/dev-db.mjs status",
     "types": "wrangler types --strict-vars=false --env-file .dev.vars.example",
     "typecheck": "pnpm types && tsc --noEmit",
-    "lint": "biome check . --diagnostic-level=error",
+    "lint": "biome check . --error-on-warnings",
     "lint:all": "biome check .",
     "lint:fix": "biome check --write .",
     "format": "biome format . --write",

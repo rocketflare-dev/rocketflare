@@ -42,7 +42,7 @@ export function globToRegExp(glob) {
           out += '(?:[^/]+/)*'
         } else out += '.*'
       } else out += '[^/]*'
-    } else if ('.+^${}()|[]\\?'.includes(c)) out += `\\${c}`
+    } else if (/[.+^${}()|[\]\\?]/.test(c)) out += `\\${c}`
     else out += c
   }
   return new RegExp(`^${out}$`)

@@ -328,7 +328,9 @@ describe('research-topic agent', () => {
     const usage = await db.query.aiUsage.findMany({
       where: and(eq(aiUsage.tenantId, tenant.id), isNotNull(aiUsage.agentRunId)),
     })
-    expect(usage.map(u => [u.inputTokens, u.outputTokens]).sort((a, b) => a[0]! - b[0]!)).toEqual([
+    expect(
+      usage.map(u => [u.inputTokens, u.outputTokens]).sort((a, b) => (a[0] ?? 0) - (b[0] ?? 0))
+    ).toEqual([
       [40, 10],
       [60, 20],
     ])
