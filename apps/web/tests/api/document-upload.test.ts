@@ -281,7 +281,8 @@ describe('POST /api/ai/documents/upload', () => {
     const otherCookie = sessionCookieHeader(await createTestSession(db, other.id, tenant.id))
 
     const mine = documentSchema.parse(await json(await upload(env, memberCookie, md())))
-    const theirs = documentSchema.parse(await json(await upload(env, otherCookie, md())))
+    // Another file name (= another source): the same bytes under one source would deduplicate.
+    const theirs = documentSchema.parse(await json(await upload(env, otherCookie, md('theirs.md'))))
     expect(
       (
         await request(

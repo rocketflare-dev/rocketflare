@@ -41,6 +41,7 @@ export const ADMIN_MANAGED: readonly Subjects[] = [
   'Prompt',
   'Document',
   'Group',
+  'KnowledgeFact',
 ]
 
 /** What every member may at least read. */
@@ -80,6 +81,7 @@ const grantAdmin: RoleGrant = can => {
  * | Group          | manage      | manage | manage | manage  | read (routes narrow a member's reads to their OWN groups) |
  * | Trace          | manage      | read   | read   | read    | –      (spans hold other people's prompts) |
  * | Feedback       | manage      | create+read | create+read | create+read | create (on answers they can read) |
+ * | KnowledgeFact  | manage      | manage | manage | manage  | read+update (own review items — the route's `reviewerUserId` check) |
  * | Feature:<f>    | access all  | by ctx | by ctx | access all | by ctx |
  */
 export const rolePermissions: Record<EffectiveRole, RoleGrant> = {
@@ -114,6 +116,9 @@ export const rolePermissions: Record<EffectiveRole, RoleGrant> = {
     // Anyone may rate an answer they can read (the service checks the target); reading the
     // ratings is admin+.
     can('create', 'Feedback')
+    // Anyone may settle a knowledge review item addressed to them (`reviewerUserId`, a route
+    // predicate); settling anyone's, and merging into another's entity, is `manage` (admin+).
+    can('update', 'KnowledgeFact')
   },
 }
 

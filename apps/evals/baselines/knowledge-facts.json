@@ -1,0 +1,318 @@
+{
+  "suite": "knowledge-facts",
+  "createdAt": "2026-11-17T10:05:25.204Z",
+  "sha": "1f2e17c",
+  "model": "claude-haiku-5-5",
+  "judgeModel": null,
+  "cases": {
+    "kit-only/brightside:abp-contract": {
+      "avgScore": 1,
+      "scores": {
+        "Precision": 1,
+        "Recall": 1
+      }
+    },
+    "kit-only/brightside:abp-crm-export-2025": {
+      "avgScore": 0.8571428571428572,
+      "scores": {
+        "Precision": 1,
+        "Recall": 0.7142857142857143
+      }
+    },
+    "kit-only/brightside:abp-email-thread-winter-2026": {
+      "avgScore": 0.4583333333333333,
+      "scores": {
+        "Precision": 0.6666666666666666,
+        "Recall": 0.25
+      }
+    },
+    "kit-only/brightside:bs-calendar-export-oct-2026": {
+      "avgScore": 0.75,
+      "scores": {
+        "Precision": 1,
+        "Recall": 0.5
+      }
+    },
+    "kit-only/brightside:bs-ops-meeting-2026-09": {
+      "avgScore": 0.7521367521367521,
+      "scores": {
+        "Precision": 0.8888888888888888,
+        "Recall": 0.6153846153846154
+      }
+    },
+    "kit-only/brightside:bs-service-catalogue-2026": {
+      "avgScore": 0.9444444444444444,
+      "scores": {
+        "Precision": 1,
+        "Recall": 0.8888888888888888
+      }
+    },
+    "kit-only/brightside:bs-winter-gritting-policy": {
+      "avgScore": 0.7333333333333334,
+      "scores": {
+        "Precision": 0.8,
+        "Recall": 0.6666666666666666
+      }
+    },
+    "kit-only/brightside:bs-winter-prices-2025": {
+      "avgScore": 0.39285714285714285,
+      "scores": {
+        "Precision": 0.5,
+        "Recall": 0.2857142857142857
+      }
+    },
+    "kit-only/brightside:bs-winter-prices-2026": {
+      "avgScore": 0.5,
+      "scores": {
+        "Precision": 0.6666666666666666,
+        "Recall": 0.3333333333333333
+      }
+    },
+    "kit-only/brightside:fenwick-contract": {
+      "avgScore": 0.9,
+      "scores": {
+        "Precision": 1,
+        "Recall": 0.8
+      }
+    },
+    "kit-only/brightside:fenwick-crm-export": {
+      "avgScore": 1,
+      "scores": {
+        "Precision": 1,
+        "Recall": 1
+      }
+    },
+    "kit-only/brightside:greenleaf-delivery-email": {
+      "avgScore": 0.75,
+      "scores": {
+        "Precision": 1,
+        "Recall": 0.5
+      }
+    },
+    "kit-only/brightside:greenleaf-supplier-terms": {
+      "avgScore": 1,
+      "scores": {
+        "Precision": 1,
+        "Recall": 1
+      }
+    },
+    "kit-only/brightside:greenway-supplier-terms": {
+      "avgScore": 1,
+      "scores": {
+        "Precision": 1,
+        "Recall": 1
+      }
+    },
+    "kit-only/brightside:harbourside-lab-call-note": {
+      "avgScore": 1,
+      "scores": {
+        "Precision": 1,
+        "Recall": 1
+      }
+    },
+    "kit-only/brightside:harbourside-lab-contract": {
+      "avgScore": 1,
+      "scores": {
+        "Precision": 1,
+        "Recall": 1
+      }
+    },
+    "kit-only/brightside:hvd-contract-2026": {
+      "avgScore": 1,
+      "scores": {
+        "Precision": 1,
+        "Recall": 1
+      }
+    },
+    "kit-only/brightside:hvd-fee-email-2026-06": {
+      "avgScore": 0.8333333333333333,
+      "scores": {
+        "Precision": 1,
+        "Recall": 0.6666666666666666
+      }
+    },
+    "kit-only/brightside:hvd-handover-memo": {
+      "avgScore": 0.7777777777777778,
+      "scores": {
+        "Precision": 1,
+        "Recall": 0.5555555555555556
+      }
+    },
+    "kit-only/brightside:hvd-onboarding-pack": {
+      "avgScore": 0.9090909090909092,
+      "scores": {
+        "Precision": 1,
+        "Recall": 0.8181818181818182
+      }
+    },
+    "kit-only/brightside:kingsgate-contract-summary": {
+      "avgScore": 0.85,
+      "scores": {
+        "Precision": 1,
+        "Recall": 0.7
+      }
+    },
+    "kit-only/brightside:kingsgate-email-terms-2025": {
+      "avgScore": 0.9,
+      "scores": {
+        "Precision": 0.8,
+        "Recall": 1
+      }
+    },
+    "kit-only/brightside:kingsgate-email-terms-2026": {
+      "avgScore": 0.6666666666666666,
+      "scores": {
+        "Precision": 1,
+        "Recall": 0.3333333333333333
+      }
+    },
+    "kit-only/brightside:leaf-clearance-price-email": {
+      "avgScore": 0.75,
+      "scores": {
+        "Precision": 1,
+        "Recall": 0.5
+      }
+    },
+    "kit-only/brightside:northgate-crm-export": {
+      "avgScore": 1,
+      "scores": {
+        "Precision": 1,
+        "Recall": 1
+      }
+    },
+    "kit-only/brightside:northgate-email-2026": {
+      "avgScore": 0.6,
+      "scores": {
+        "Precision": 1,
+        "Recall": 0.2
+      }
+    },
+    "kit-only/brightside:nsg-supplier-terms-2025": {
+      "avgScore": 0.9285714285714286,
+      "scores": {
+        "Precision": 0.8571428571428571,
+        "Recall": 1
+      }
+    },
+    "kit-only/brightside:nsg-supplier-terms-2026": {
+      "avgScore": 1,
+      "scores": {
+        "Precision": 1,
+        "Recall": 1
+      }
+    },
+    "kit-only/brightside:old-mill-contract-2025": {
+      "avgScore": 0.9,
+      "scores": {
+        "Precision": 0.9,
+        "Recall": 0.9
+      }
+    },
+    "kit-only/brightside:old-mill-fee-letter-2026": {
+      "avgScore": 0.625,
+      "scores": {
+        "Precision": 1,
+        "Recall": 0.25
+      }
+    },
+    "kit-only/brightside:old-mill-meeting-notes": {
+      "avgScore": 0.8333333333333333,
+      "scores": {
+        "Precision": 1,
+        "Recall": 0.6666666666666666
+      }
+    },
+    "kit-only/brightside:plant-hire-terms": {
+      "avgScore": 0,
+      "scores": {
+        "Precision": 0,
+        "Recall": 0
+      }
+    },
+    "kit-only/brightside:riverside-call-note": {
+      "avgScore": 0.8333333333333333,
+      "scores": {
+        "Precision": 1,
+        "Recall": 0.6666666666666666
+      }
+    },
+    "kit-only/brightside:riverside-crm-export": {
+      "avgScore": 1,
+      "scores": {
+        "Precision": 1,
+        "Recall": 1
+      }
+    },
+    "kit-only/brightside:riverside-invoice-query": {
+      "avgScore": 0.6666666666666666,
+      "scores": {
+        "Precision": 1,
+        "Recall": 0.3333333333333333
+      }
+    },
+    "kit-only/brightside:stwilfrids-contract": {
+      "avgScore": 0.9090909090909091,
+      "scores": {
+        "Precision": 0.9090909090909091,
+        "Recall": 0.9090909090909091
+      }
+    },
+    "kit-only/brightside:stwilfrids-gritting-email": {
+      "avgScore": 0.8,
+      "scores": {
+        "Precision": 1,
+        "Recall": 0.6
+      }
+    },
+    "kit-only/brightside:thornley-call-note-2026": {
+      "avgScore": 0.9,
+      "scores": {
+        "Precision": 1,
+        "Recall": 0.8
+      }
+    },
+    "kit-only/brightside:thornley-contract": {
+      "avgScore": 1,
+      "scores": {
+        "Precision": 1,
+        "Recall": 1
+      }
+    },
+    "kit-only/brightside:thornley-quote-premium": {
+      "avgScore": 0.6666666666666666,
+      "scores": {
+        "Precision": 1,
+        "Recall": 0.3333333333333333
+      }
+    },
+    "kit-only/brightside:bs-master-services-agreement": {
+      "avgScore": 1,
+      "scores": {
+        "Precision": 1,
+        "Recall": 1
+      }
+    },
+    "kit-only/brightside:bs-staff-handbook": {
+      "avgScore": 1,
+      "scores": {
+        "Precision": 1,
+        "Recall": 1
+      }
+    },
+    "kit-only/brightside:facts-all": {
+      "avgScore": 0.857636435021594,
+      "scores": {
+        "Precision": 0.9555555555555556,
+        "Recall": 0.7597173144876325
+      }
+    },
+    "kit-only/brightside:conflicts": {
+      "avgScore": 0.8965744400527008,
+      "scores": {
+        "ConflictsCaught": 0.8260869565217391,
+        "NoFalseAlarms": 0.8636363636363636,
+        "WinnerAccuracy": 1
+      }
+    }
+  }
+}

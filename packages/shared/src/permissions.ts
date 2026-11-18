@@ -51,6 +51,13 @@ export const CORE_SUBJECTS = [
    * candidates are found and each row points at another member's conversation.
    */
   'Feedback',
+  /**
+   * Knowledge facts and staging entities (D43). Every member may `read` and `update` — review is
+   * "own" by the ROUTE's predicate (the item's `reviewerUserId` is you), as AgentRun is; admin+
+   * `manage` settles anyone's. Which facts you may see at all is the source document's visibility,
+   * a SQL predicate — never this.
+   */
+  'KnowledgeFact',
 ] as const
 export type CoreSubject = (typeof CORE_SUBJECTS)[number]
 
@@ -76,7 +83,7 @@ export const featureSubject = (feature: string): FeatureSubject => `Feature:${fe
  * then delete the line. Append-only in spirit; the metadata registry is keyed on this. A plugin
  * brings its own through `SharedPlugin.features`, which is where both halves arrive together.
  */
-export const CORE_FEATURES = [] as const satisfies readonly string[]
+export const CORE_FEATURES = ['knowledge-facts'] as const satisfies readonly string[]
 
 /** Distributive: `keyof (A | B)` is the keys A and B SHARE, which is never for two plugins' flags. */
 type KeysOfEach<T> = T extends unknown ? keyof T : never

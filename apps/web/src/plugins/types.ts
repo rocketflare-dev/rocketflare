@@ -34,6 +34,7 @@ import type { AnyAgentDefinition } from '../api/services/agents/registry'
 import type { AgentToolContext } from '../api/services/agents/tools'
 import type { Tool } from '../api/services/ai/agent-loop'
 import type { EventHandler } from '../api/services/events/types'
+import type { EntityTypeRegistration } from '../api/services/knowledge/types'
 import type { AppBindings, AppEnv } from '../api/types'
 import type { AppConfig } from '../config'
 import type { Database } from '../db/client'
@@ -243,6 +244,17 @@ export interface ServerPlugin<S extends SharedPlugin = SharedPlugin> {
    * documents readable through `get_document` or `list_documents` — those stay tenant-only.
    */
   knowledgeSources?: (scope: AccessScope) => readonly string[] | Promise<readonly string[]>
+  /**
+   * Knowledge entity types (D43) whose rows extraction may attach facts to — composed with the
+   * app's own (`api/services/knowledge/entity-types.ts`) by `knowledgeEntityTypes()`. Each `type`
+   * is `<plugin id>.<name>`; fact keys are snake_case and every value schema renders as JSON
+   * schema; `table` (optional — without one the type lives only as staging entities) is one of
+   * THIS plugin's tables, with `labelColumn` for the default trigram resolver or a `resolve` of its
+   * own that filters by `scope.access.tenantId`. A bad registration throws at composition
+   * (`tests/config/knowledge-entity-types.test.ts` runs it over the installed set). The host does
+   * NOT write a fact into the plugin's columns: applying one is an approved action, never automatic.
+   */
+  knowledgeEntityTypes?: readonly EntityTypeRegistration[]
   /**
    * Cron expression → tasks, merged into `SCHEDULED_TASKS` (tasks on a cron core already runs
    * are appended after core's). A cron core does NOT run is declared in `plugin.json`

@@ -41,6 +41,7 @@ const SCOPE_LABEL: Record<AiScope, string> = {
   chat: 'chat',
   embeddings: 'embeddings',
   decisions: 'decisions',
+  rerank: 'reranker',
 }
 
 /** The select's escape hatch to free text. A sentinel, because '' is itself a legal model id. */
@@ -119,7 +120,8 @@ function AiConfigForm({
   const [verdict, setVerdict] = useState<TestAiConfigResponse | null>(null)
 
   const info = infoFor(offered, provider)
-  const presets = presetsFor(provider)
+  // By scope too: a rerank preset (Fireworks, Cohere, Voyage `/rerank`) is no chat endpoint.
+  const presets = presetsFor(provider, scope)
   const isChat = scope === 'chat'
   const providerSwitched = editing !== null && editing.provider !== provider
   const endpointChanged = editing !== null && !sameAiEndpoint(editing.baseUrl, baseUrl.trim())

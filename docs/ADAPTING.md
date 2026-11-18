@@ -193,6 +193,7 @@ first and lives in the shared package, so the API, the UI and the CLI parse one 
 | cron | `CORE_SCHEDULED_TASKS` (`api/scheduled.ts`) | `ServerPlugin.scheduledTasks` |
 | RLS exclusion / allow-list | `RLS_EXCLUDED_TABLES` / `CORE_UNSCOPED_ALLOWLIST` | `ServerPlugin.rlsExcludedTables` / `unscopedAllowlist` |
 | D29 visibility | `VISIBILITY_RESOURCES` (`services/access.ts`) | `ServerPlugin.visibilityResources` |
+| knowledge entity type (facts read from documents attach to its rows) | `APP_ENTITY_TYPES` (`api/services/knowledge/entity-types.ts`) | `ServerPlugin.knowledgeEntityTypes` (type `<id>.<name>`) |
 | new-tenant / demo data | `onTenantCreated` (`utils/db/tenant-helpers.ts`), `scripts/seed.ts` | `ServerPlugin.hooks.onTenantCreated` / `hooks.seedDemo` |
 | page + route | `App.tsx` (lazy) | `UiPlugin.routes` (always `lazy()`) |
 | nav item | `CORE_NAVIGATION` (`SideNav.tsx`) | `UiPlugin.nav` (a group placed `before` a core one) |

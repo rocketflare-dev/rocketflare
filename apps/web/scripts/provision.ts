@@ -424,7 +424,9 @@ async function preflight(flags: Flags): Promise<void> {
   const app = readAppName()
   const appUpper = toUpperName(app)
   writeCache({ appName: app })
-  log(`app: ${app} (${appUpper}_RATE_LIMIT, ${app}-jobs, ${app}-files, ${app}-agent-run)`)
+  log(
+    `app: ${app} (${appUpper}_RATE_LIMIT, ${app}-jobs, ${app}-jobs-dlq, ${app}-files, ${app}-agent-run)`
+  )
 
   const major = Number(process.versions.node.split('.')[0])
   if (major < 26)

@@ -27,6 +27,11 @@ streaming, guards, bundle rules, tests) are `.claude/rules/ui.md`, loaded with t
   reset on pathname). Installed plugins' routes are mapped per tier inside the same `Suspense`; a `workspace`-tier route lives in the shell, and `Layout`'s `workspace` prop gives it the rail, no padding and the full height.
 - `index.css` — the design system (themes, semantic tokens, primitives, `@source` lines, safelist);
   rebrand instructions are its header comment.
+- `components/knowledge/` — knowledge facts (D43): `FactParts` (`FactStateBadge`, `FactItem`,
+  `FactDoubt` — the inline "Is this still right?" —, `useCanSettle`), `PossibleMatch`,
+  `ReviewItem`, `EntityFactsCard` (the chat card). Markdown-free, NOT in the eager barrel: only
+  lazy pages (documents, knowledge, chat via `ChatBubble`) import them. Hooks: `useKnowledge.ts`,
+  all under `['knowledge']`, which the server nudges.
 - `components/` — the shell: `Layout` (slots `headerStart` = `OrgSwitcher`, `headerCenter` =
   the `center` plugin header items, `headerEnd` = the `end` plugin header items +
   `NotificationsBell` + `UserMenu`, `sidebarFooter`; `PluginHeaderSlot` renders a placement's
@@ -54,7 +59,8 @@ streaming, guards, bundle rules, tests) are `.claude/rules/ui.md`, loaded with t
 |---|---|---|
 | `/chat/:conversationId?` | `read Conversation` | lazy, carries the markdown chunk |
 | `/agents`, `/agents/runs/:runId` | `read AgentRun` | `RunPage` is its own lazy chunk |
-| `/documents`, `/documents/:id`, `/search` | `read Document` | the viewer has no nav entry |
+| `/documents`, `/documents/:id`, `/search` | `read Document` | the viewer has no nav entry; `/documents?view=review` is the knowledge-facts review list (behind `KNOWLEDGE_FACTS_GUARD`) |
+| `/knowledge/entities/:type/:id` | `KNOWLEDGE_FACTS_GUARD` (`knowledge-facts` flag AND `read KnowledgeFact`) | the entity page (`pages/knowledge/EntityPage.tsx`, lazy, no nav entry) |
 | `/settings?tab=…` | `guard="admin"` | tabs gate further — `pages/settings/CLAUDE.md` |
 | `/admin/*` | `globalAdmin` | reachable with no tenant |
 

@@ -144,7 +144,9 @@ describe('document.convert', () => {
     expect(msg.retry).not.toHaveBeenCalled()
     const row = await rowOf(doc.id)
     expect(row).toMatchObject({ status: 'indexed', error: null })
-    expect(row?.content).toContain('Invoice total 42\tEUR.\r\nPaid in full.')
+    // Line endings are normalised too, so the chunks' offsets index the stored text exactly.
+    expect(row?.content).toContain('Invoice total 42\tEUR.\nPaid in full.')
+    expect(row?.content).not.toContain('\r')
     // biome-ignore lint/suspicious/noControlCharactersInRegex: asserting they are gone
     expect(row?.content).not.toMatch(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/)
     const pieces = await db

@@ -51,9 +51,12 @@ const hit = (rank: number, overrides: Record<string, unknown> = {}) => ({
   rank,
   seq: rank - 1,
   documentPassages: 4,
+  headingPath: null,
+  page: null,
   charOffset: (rank - 1) * 1000,
   denseRank: rank,
   lexicalRank: null,
+  rerankScore: null,
   ...overrides,
 })
 

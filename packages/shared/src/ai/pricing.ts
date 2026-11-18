@@ -118,6 +118,9 @@ export const MODEL_PRICES: Partial<Record<AiProvider, Record<string, ModelPrice>
     '@cf/mistralai/mistral-small-3.1-24b-instruct': { input: 0.35, output: 0.56 },
     '@cf/baai/bge-m3': { input: 0.0118, output: 0 },
     '@cf/baai/bge-large-en-v1.5': { input: 0.204, output: 0 },
+    // The zero-key reranker (`wrangler ai models list`, checked 2026-11-17). Its input tokens are
+    // estimated from characters (Workers AI reports none), so its cost is an estimate too.
+    '@cf/baai/bge-reranker-base': { input: 0.00311, output: 0 },
   },
 }
 

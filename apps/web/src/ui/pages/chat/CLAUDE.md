@@ -20,6 +20,11 @@ the SSE transport rules are in `.claude/rules/ui.md` → Streaming.
 - Tool calls render as ONE row each (`ToolStep { id, label, done }`): `TOOL_CALL_START` opens it
   with a spinner and `TOOL_CALL_RESULT` completes it in place with a tick, matched by
   `toolCallId` — never a second "Done" line, never an index key. `toolLabel(name)` owns the wording.
+- **Entity cards** (D43): `CUSTOM kit.entity` (one per entity, first wins) collects into
+  `turn.entities` while streaming; a persisted message derives the same cards with
+  `entityCardsFromToolCalls(message.toolCalls)`. `ChatBubble` renders them (`EntityFactsCard`)
+  only when the page passes them — and it passes them only behind `KNOWLEDGE_FACTS_GUARD`, since
+  each links to the entity page, which 404s with the flag off.
 - A `CUSTOM kit.notice` renders as a quiet italic line above the reply (`NOTICE_TEXT` in `ChatPage`
   owns its wording) — information, never the error styling.
 

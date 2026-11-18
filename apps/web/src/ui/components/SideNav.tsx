@@ -71,12 +71,15 @@ export const CORE_NAVIGATION: NavConfig = [
         badgeKey: 'agentsAwaiting',
         badgeTone: 'warning',
       },
-      // The knowledge base is tenant-shared; every member may read and search
+      // The knowledge base is tenant-shared; every member may read and search. With knowledge
+      // facts on, the badge counts the facts and possible matches waiting on THIS person.
       {
         to: '/documents',
         label: 'Knowledge',
         icon: BookOpenIcon,
         guard: { action: 'read', subject: 'Document' },
+        badgeKey: 'knowledgeReview',
+        badgeTone: 'warning',
       },
       {
         to: '/search',

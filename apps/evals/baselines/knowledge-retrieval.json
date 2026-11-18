@@ -1,0 +1,549 @@
+{
+  "suite": "knowledge-retrieval",
+  "createdAt": "2026-11-17T07:01:00.486Z",
+  "sha": "a8b999e",
+  "model": "claude-haiku-5-5",
+  "judgeModel": null,
+  "cases": {
+    "hvd-renewal-date": {
+      "avgScore": 0.7291666666666667,
+      "scores": {
+        "Recall@5": 1,
+        "Recall@10": 1,
+        "MRR": 0.3333333333333333,
+        "ContextPrecision": 0.5833333333333333
+      }
+    },
+    "hvd-fee": {
+      "avgScore": 0.971875,
+      "scores": {
+        "Recall@5": 1,
+        "Recall@10": 1,
+        "MRR": 1,
+        "ContextPrecision": 0.8875
+      }
+    },
+    "hvd-contact": {
+      "avgScore": 0.8125,
+      "scores": {
+        "Recall@5": 1,
+        "Recall@10": 1,
+        "MRR": 0.25,
+        "ContextPrecision": 1
+      }
+    },
+    "hvd-account-manager-now": {
+      "avgScore": 0.625,
+      "scores": {
+        "Recall@5": 1,
+        "Recall@10": 1,
+        "MRR": 0.25,
+        "ContextPrecision": 0.25
+      }
+    },
+    "hvd-parking": {
+      "avgScore": 1,
+      "scores": {
+        "Recall@5": 1,
+        "Recall@10": 1,
+        "MRR": 1,
+        "ContextPrecision": 1
+      }
+    },
+    "hvd-surgery-noise": {
+      "avgScore": 1,
+      "scores": {
+        "Recall@5": 1,
+        "Recall@10": 1,
+        "MRR": 1,
+        "ContextPrecision": 1
+      }
+    },
+    "hvd-gully": {
+      "avgScore": 0.9375,
+      "scores": {
+        "Recall@5": 1,
+        "Recall@10": 1,
+        "MRR": 1,
+        "ContextPrecision": 0.75
+      }
+    },
+    "hdl-fee": {
+      "avgScore": 1,
+      "scores": {
+        "Recall@5": 1,
+        "Recall@10": 1,
+        "MRR": 1,
+        "ContextPrecision": 1
+      }
+    },
+    "hdl-vs-hvd": {
+      "avgScore": 0.9375,
+      "scores": {
+        "Recall@5": 1,
+        "Recall@10": 1,
+        "MRR": 1,
+        "ContextPrecision": 0.75
+      }
+    },
+    "hdl-gritting": {
+      "avgScore": 0.9388888888888889,
+      "scores": {
+        "Recall@5": 1,
+        "Recall@10": 1,
+        "MRR": 1,
+        "ContextPrecision": 0.7555555555555555
+      }
+    },
+    "hdl-wrong-invoice": {
+      "avgScore": 0.5291666666666667,
+      "scores": {
+        "Recall@5": 0,
+        "Recall@10": 1,
+        "MRR": 0.16666666666666666,
+        "ContextPrecision": 0.95
+      }
+    },
+    "abp-contact-now": {
+      "avgScore": 1,
+      "scores": {
+        "Recall@5": 1,
+        "Recall@10": 1,
+        "MRR": 1,
+        "ContextPrecision": 1
+      }
+    },
+    "abp-payment-terms": {
+      "avgScore": 0.48333333333333334,
+      "scores": {
+        "Recall@5": 0,
+        "Recall@10": 1,
+        "MRR": 0.1,
+        "ContextPrecision": 0.8333333333333333
+      }
+    },
+    "abp-snow": {
+      "avgScore": 0.8625,
+      "scores": {
+        "Recall@5": 1,
+        "Recall@10": 1,
+        "MRR": 0.5,
+        "ContextPrecision": 0.95
+      }
+    },
+    "abp-snow-cap": {
+      "avgScore": 1,
+      "scores": {
+        "Recall@5": 1,
+        "Recall@10": 1,
+        "MRR": 1,
+        "ContextPrecision": 1
+      }
+    },
+    "abp-ev-bays": {
+      "avgScore": 0.7250000000000001,
+      "scores": {
+        "Recall@5": 1,
+        "Recall@10": 1,
+        "MRR": 0.2,
+        "ContextPrecision": 0.7
+      }
+    },
+    "abp-bank-holiday": {
+      "avgScore": 0.4895833333333333,
+      "scores": {
+        "Recall@5": 0,
+        "Recall@10": 1,
+        "MRR": 0.125,
+        "ContextPrecision": 0.8333333333333333
+      }
+    },
+    "abp-fee": {
+      "avgScore": 1,
+      "scores": {
+        "Recall@5": 1,
+        "Recall@10": 1,
+        "MRR": 1,
+        "ContextPrecision": 1
+      }
+    },
+    "stw-gritting": {
+      "avgScore": 0.875,
+      "scores": {
+        "Recall@5": 1,
+        "Recall@10": 1,
+        "MRR": 0.5,
+        "ContextPrecision": 1
+      }
+    },
+    "stw-break-times": {
+      "avgScore": 1,
+      "scores": {
+        "Recall@5": 1,
+        "Recall@10": 1,
+        "MRR": 1,
+        "ContextPrecision": 1
+      }
+    },
+    "omh-fee-now": {
+      "avgScore": 0.875,
+      "scores": {
+        "Recall@5": 1,
+        "Recall@10": 1,
+        "MRR": 0.5,
+        "ContextPrecision": 1
+      }
+    },
+    "omh-old-fee": {
+      "avgScore": 0.875,
+      "scores": {
+        "Recall@5": 1,
+        "Recall@10": 1,
+        "MRR": 0.5,
+        "ContextPrecision": 1
+      }
+    },
+    "omh-renewal": {
+      "avgScore": 1,
+      "scores": {
+        "Recall@5": 1,
+        "Recall@10": 1,
+        "MRR": 1,
+        "ContextPrecision": 1
+      }
+    },
+    "omh-wedding-mowing": {
+      "avgScore": 0.9583333333333333,
+      "scores": {
+        "Recall@5": 1,
+        "Recall@10": 1,
+        "MRR": 1,
+        "ContextPrecision": 0.8333333333333333
+      }
+    },
+    "omh-willow": {
+      "avgScore": 0.8416666666666667,
+      "scores": {
+        "Recall@5": 1,
+        "Recall@10": 1,
+        "MRR": 0.5,
+        "ContextPrecision": 0.8666666666666667
+      }
+    },
+    "fen-terms": {
+      "avgScore": 0.7916666666666667,
+      "scores": {
+        "Recall@5": 1,
+        "Recall@10": 1,
+        "MRR": 0.3333333333333333,
+        "ContextPrecision": 0.8333333333333333
+      }
+    },
+    "rlc-visit-day": {
+      "avgScore": 0.53125,
+      "scores": {
+        "Recall@5": 0,
+        "Recall@10": 1,
+        "MRR": 0.125,
+        "ContextPrecision": 1
+      }
+    },
+    "rlc-why-moved": {
+      "avgScore": 0.34375,
+      "scores": {
+        "Recall@5": 0,
+        "Recall@10": 1,
+        "MRR": 0.125,
+        "ContextPrecision": 0.25
+      }
+    },
+    "rlc-quarterly": {
+      "avgScore": 0.75,
+      "scores": {
+        "Recall@5": 1,
+        "Recall@10": 1,
+        "MRR": 1,
+        "ContextPrecision": 0
+      }
+    },
+    "krp-terms": {
+      "avgScore": 0.75,
+      "scores": {
+        "Recall@5": 0.5,
+        "Recall@10": 1,
+        "MRR": 0.5,
+        "ContextPrecision": 1
+      }
+    },
+    "krp-po": {
+      "avgScore": 0.75,
+      "scores": {
+        "Recall@5": 1,
+        "Recall@10": 1,
+        "MRR": 0.25,
+        "ContextPrecision": 0.75
+      }
+    },
+    "krp-fee": {
+      "avgScore": 0.6666666666666667,
+      "scores": {
+        "Recall@5": 1,
+        "Recall@10": 1,
+        "MRR": 0.3333333333333333,
+        "ContextPrecision": 0.3333333333333333
+      }
+    },
+    "tlc-premium": {
+      "avgScore": 0.8541666666666666,
+      "scores": {
+        "Recall@5": 1,
+        "Recall@10": 1,
+        "MRR": 0.5,
+        "ContextPrecision": 0.9166666666666666
+      }
+    },
+    "tlc-proposed-price": {
+      "avgScore": 1,
+      "scores": {
+        "Recall@5": 1,
+        "Recall@10": 1,
+        "MRR": 1,
+        "ContextPrecision": 1
+      }
+    },
+    "tlc-renewal": {
+      "avgScore": 0.9513888888888888,
+      "scores": {
+        "Recall@5": 1,
+        "Recall@10": 1,
+        "MRR": 1,
+        "ContextPrecision": 0.8055555555555555
+      }
+    },
+    "ngv-phone": {
+      "avgScore": 0.8541666666666666,
+      "scores": {
+        "Recall@5": 1,
+        "Recall@10": 1,
+        "MRR": 0.5,
+        "ContextPrecision": 0.9166666666666666
+      }
+    },
+    "ngv-alley": {
+      "avgScore": 0.75,
+      "scores": {
+        "Recall@5": 1,
+        "Recall@10": 1,
+        "MRR": 0.5,
+        "ContextPrecision": 0.5
+      }
+    },
+    "gl-late-deliveries": {
+      "avgScore": 0.875,
+      "scores": {
+        "Recall@5": 1,
+        "Recall@10": 1,
+        "MRR": 0.5,
+        "ContextPrecision": 1
+      }
+    },
+    "gl-lead-time": {
+      "avgScore": 0.9388888888888889,
+      "scores": {
+        "Recall@5": 1,
+        "Recall@10": 1,
+        "MRR": 1,
+        "ContextPrecision": 0.7555555555555555
+      }
+    },
+    "gl-min-order": {
+      "avgScore": 0.9583333333333333,
+      "scores": {
+        "Recall@5": 1,
+        "Recall@10": 1,
+        "MRR": 1,
+        "ContextPrecision": 0.8333333333333333
+      }
+    },
+    "gw-min-order": {
+      "avgScore": 1,
+      "scores": {
+        "Recall@5": 1,
+        "Recall@10": 1,
+        "MRR": 1,
+        "ContextPrecision": 1
+      }
+    },
+    "gw-delivery-day": {
+      "avgScore": 0.9583333333333333,
+      "scores": {
+        "Recall@5": 1,
+        "Recall@10": 1,
+        "MRR": 1,
+        "ContextPrecision": 0.8333333333333333
+      }
+    },
+    "salt-backup": {
+      "avgScore": 0.875,
+      "scores": {
+        "Recall@5": 1,
+        "Recall@10": 1,
+        "MRR": 0.5,
+        "ContextPrecision": 1
+      }
+    },
+    "nsg-contact": {
+      "avgScore": 0.7847222222222222,
+      "scores": {
+        "Recall@5": 1,
+        "Recall@10": 1,
+        "MRR": 0.3333333333333333,
+        "ContextPrecision": 0.8055555555555555
+      }
+    },
+    "nsg-min": {
+      "avgScore": 0.8208333333333333,
+      "scores": {
+        "Recall@5": 1,
+        "Recall@10": 1,
+        "MRR": 0.3333333333333333,
+        "ContextPrecision": 0.95
+      }
+    },
+    "plant-hire-offhire": {
+      "avgScore": 0.9583333333333333,
+      "scores": {
+        "Recall@5": 1,
+        "Recall@10": 1,
+        "MRR": 1,
+        "ContextPrecision": 0.8333333333333333
+      }
+    },
+    "grit-annual-2026": {
+      "avgScore": 0.8263888888888888,
+      "scores": {
+        "Recall@5": 1,
+        "Recall@10": 1,
+        "MRR": 0.5,
+        "ContextPrecision": 0.8055555555555555
+      }
+    },
+    "grit-annual-2025": {
+      "avgScore": 0.5357142857142857,
+      "scores": {
+        "Recall@5": 0,
+        "Recall@10": 1,
+        "MRR": 0.14285714285714285,
+        "ContextPrecision": 1
+      }
+    },
+    "callout-price": {
+      "avgScore": 0.8138888888888889,
+      "scores": {
+        "Recall@5": 0.5,
+        "Recall@10": 1,
+        "MRR": 1,
+        "ContextPrecision": 0.7555555555555555
+      }
+    },
+    "plans-hedge": {
+      "avgScore": 1,
+      "scores": {
+        "Recall@5": 1,
+        "Recall@10": 1,
+        "MRR": 1,
+        "ContextPrecision": 1
+      }
+    },
+    "planting-price": {
+      "avgScore": 1,
+      "scores": {
+        "Recall@5": 1,
+        "Recall@10": 1,
+        "MRR": 1,
+        "ContextPrecision": 1
+      }
+    },
+    "tree-survey-price": {
+      "avgScore": 1,
+      "scores": {
+        "Recall@5": 1,
+        "Recall@10": 1,
+        "MRR": 1,
+        "ContextPrecision": 1
+      }
+    },
+    "leaf-price": {
+      "avgScore": 0.9513888888888888,
+      "scores": {
+        "Recall@5": 1,
+        "Recall@10": 1,
+        "MRR": 1,
+        "ContextPrecision": 0.8055555555555555
+      }
+    },
+    "missed-visits": {
+      "avgScore": 0.75,
+      "scores": {
+        "Recall@5": 1,
+        "Recall@10": 1,
+        "MRR": 0.5,
+        "ContextPrecision": 0.5
+      }
+    },
+    "grit-rule": {
+      "avgScore": 0.9513888888888888,
+      "scores": {
+        "Recall@5": 1,
+        "Recall@10": 1,
+        "MRR": 1,
+        "ContextPrecision": 0.8055555555555555
+      }
+    },
+    "grit-pond": {
+      "avgScore": 1,
+      "scores": {
+        "Recall@5": 1,
+        "Recall@10": 1,
+        "MRR": 1,
+        "ContextPrecision": 1
+      }
+    },
+    "standby-pay": {
+      "avgScore": 0.625,
+      "scores": {
+        "Recall@5": 1,
+        "Recall@10": 1,
+        "MRR": 0.25,
+        "ContextPrecision": 0.25
+      }
+    },
+    "expenses-limit": {
+      "avgScore": 0.925,
+      "scores": {
+        "Recall@5": 1,
+        "Recall@10": 1,
+        "MRR": 1,
+        "ContextPrecision": 0.7
+      }
+    },
+    "msa-default-terms": {
+      "avgScore": 0.7916666666666667,
+      "scores": {
+        "Recall@5": 1,
+        "Recall@10": 1,
+        "MRR": 0.3333333333333333,
+        "ContextPrecision": 0.8333333333333333
+      }
+    },
+    "msa-notice": {
+      "avgScore": 0.4107142857142857,
+      "scores": {
+        "Recall@5": 0,
+        "Recall@10": 1,
+        "MRR": 0.14285714285714285,
+        "ContextPrecision": 0.5
+      }
+    }
+  }
+}

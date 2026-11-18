@@ -18,11 +18,11 @@ response with the same schema. `pnpm web test:config` covers the pure parts.
 `permissions.ts` actions/subjects/`AppAbility`/packed rules (matrix lives in `apps/web/src/permissions/`) ·
 `api-keys.ts` · `tenant-settings.ts` · `user-settings.ts` · `notifications.ts` · `admin.ts` ·
 `activity.ts` · `errors.ts` envelope + codes · `pagination.ts` ·
-`features.ts` — the feature-flag registry (`CORE_FEATURE_FLAGS`, EMPTY — the demo
-flag is the `example-feature` PLUGIN — merged with each plugin's `SharedPlugin.features` into
-`FEATURE_FLAGS`, keyed on `FEATURES`/`FeatureName` from `permissions.ts`, where `CORE_FEATURES` is
-likewise empty; so `featureNameSchema` is a refined `z.string()` over the runtime list rather than a
-`z.enum`, which needs a non-empty tuple), `featureBucket` (**a wire format — changing it reshuffles every live
+`features.ts` — the feature-flag registry (`CORE_FEATURE_FLAGS` — one core flag,
+`knowledge-facts`, default OFF (D43); the demo flag is the `example-feature` PLUGIN — merged with
+each plugin's `SharedPlugin.features` into `FEATURE_FLAGS`, keyed on `FEATURES`/`FeatureName` from
+`permissions.ts`, where `CORE_FEATURES` lists the same keys; `featureNameSchema` stays a refined
+`z.string()` over the runtime list, because the plugin keys are only known at runtime), `featureBucket` (**a wire format — changing it reshuffles every live
 rollout**), `evaluateFlag`/`evaluateFeatures` (the one implementation of the environment-then-rollout
 precedence), and the admin contracts. A flag is CONFIGURATION, not a permission: nothing here
 touches CASL · `groups.ts` — `groupTypeSchema`/`groupSchema` (with `typeName` and `memberCount`)/`groupDetailSchema`,
@@ -55,7 +55,7 @@ inline and framable are different properties, `filePath(id)`, `fileSchema`/`uplo
 `jobs.ts` also carries `document.index` (`{ tenantId, documentId }` — re-index a `documents` row) ·
 **`ai/`** (barrel `ai/index.ts`, deep imports `@rocketflare/shared/ai/<file>` equally valid):
 `config.ts` — `AI_PROVIDERS`/`aiProviderSchema` (append LAST: the DB column is a text enum; `typesafe`
-serves `decisions` only), `AI_SCOPES` (`chat | embeddings | decisions`), readiness `source`
+serves `decisions` only), `AI_SCOPES` (`chat | embeddings | decisions | rerank` — a rerank row is `openai_compatible` (a Cohere-style `/rerank`) or `workers_ai`; `WORKERS_AI_RERANK_MODEL`, `DEFAULT_RERANK_MODELS`, presets carry optional `scopes` and `presetsFor(provider, scope?)` filters on them), readiness `source`
 `tenant | platform | fallback | none` (`fallback` = decisions answered by the chat model),
 `thinkingSchema` + `THINKING_*` bounds, `aiConfigSchema` (sanitised row:
 `hasCredential`, never a key), `upsertAiConfigRequestSchema` (`apiKey` write-only), `testAiConfigRequest/ResponseSchema`,
@@ -116,7 +116,8 @@ artifact is mutable, queried across runs and outlives the run; size caps live he
 `kitAguiEventSchema` (a discriminated union over exactly the events the server emits, never the full
 `@ag-ui/core` set), `KIT_AGUI_EVENT_TYPES`, `KIT_CUSTOM_EVENTS` + `kitCustomPayloadSchema` +
 `parseKitCustom` (the `kit.` CUSTOM namespace where every kit-specific semantic lives, including
-`kit.document` — a `documentCardSchema` for a document a knowledge tool surfaced),
+`kit.document` — a `documentCardSchema` for a document a knowledge tool surfaced — and
+`kit.entity`, a `chatEntityCardSchema` for a knowledge-facts entity one touched),
 `chatRunResultSchema` (`RUN_FINISHED.result` for a chat turn), `toAguiInterrupt(row)` (the row is
 the truth, the protocol shape is a projection of it — and the HITL pause/answer need NO new event:
 `RunFinishedEventSchema` already validates an `outcome` and `RunAgentInputSchema` already carries
@@ -126,15 +127,15 @@ the truth, the protocol shape is a projection of it — and the HITL pause/answe
 `aiConfigId`/`model`), `agentModelEntrySchema` (`effective.source: assignment | tenant | platform | none`) ·
 `embeddings.ts` — `documentSchema` (never the text or vectors), `INGEST_TEXT_MAX_CHARS`, `ingestTextRequestSchema`,
 `documentListQuerySchema`, `searchRequestSchema` (`SEARCH_MAX_LIMIT`), `searchHitSchema` (RRF `score`, `rank`,
-`denseRank`/`lexicalRank`), `searchResponseSchema`, and the read side: `documentContentSchema` + `documentContentQuerySchema`
+`denseRank`/`lexicalRank`, `rerankScore` 0–1 or null), `searchResponseSchema`, and the read side: `documentContentSchema` + `documentContentQuerySchema`
 (`DOCUMENT_WINDOW_CHARS` 20 000, `DOCUMENT_WINDOW_MAX_CHARS` 50 000) + `windowStart()` (snap an offset
 down to a window boundary so a deep link and the reader's paging share one cache entry),
 `documentPassageSchema`, `documentCardSchema` + `DOCUMENT_EXCERPT_CHARS` + `documentPath()` (the ONE
 place the viewer route is written) + `documentCardFromDocument()`, and the pure
 `documentCardsFromToolResult()` / `documentCardsFromToolCalls()` + `KNOWLEDGE_TOOLS` +
 `documentExcerpt()` that the chat stream, the agent-run projection and the UI's persisted-message
-rendering all share · `usage.ts` — `aiUsageSchema`, `aiUsageSummarySchema`,
-`aiUsageSummaryQuerySchema` (`costMicrocents` nullable, `unpricedCalls`) · `pricing.ts` — `MODEL_PRICES`
+rendering all share · `knowledge-facts.ts` — knowledge facts (D43): `EntityTypeDeclaration` + `entityTypeSchema` (`type` `name` or `<plugin id>.name`, `facts` a zod object of snake_case keys that must render through `z.toJSONSchema` — `entityFactsJsonSchema()` is what the extraction prompt shows), `FACT_STATES` / `OPEN_REVIEW_FACT_STATES` / `ANSWERABLE_FACT_STATES`, `SOURCE_TRUST` (strongest first) + `trustRank`, `isPreferredOver` / `preferredFact` (which side of a disagreement an answer leads with — derived from `observedAt` and trust, never stored), `ENTITY_KINDS`, `FACT_VISIBILITY` (`private` reserved), `entityCandidateSchema`, `knowledgeEntitySchema`, `factSchema`, `entityCardSchema`, `factReviewRequestSchema` / `factReviewActionSchema` / `factReviewResponseSchema`, `possibleMatchSchema` / `knowledgeReviewItemSchema`, `knowledgeReviewQuerySchema` / `knowledgeReviewListSchema`, `entityCardParamSchema`, `entityTargetSchema` (staging uuid or domain id) + `mergeEntityRequestSchema` / `promoteEntityRequestSchema` / `entityActionResponseSchema`, `factHitSchema` / `factHitGroupSchema` / `lookupFactsResultSchema` (the chat tools' answer), `entityPath(type, id)` (the ONE place the entity page's route is written), `reviewEntitySchema` (a fact review item's `entity`), `chatEntityCardSchema` + `entityCardsFromToolResult` / `entityCardsFromToolCalls` / `chatEntityCardKey` (the chat's entity card, read loosely from `lookup_facts` or `search_knowledge`'s `facts` block — the server emits it as `CUSTOM kit.entity`, the UI maps a persisted message's `toolCalls` with the same function; `CHAT_ENTITY_CARD_MAX_FACTS`); the entity card's `entity` also carries `promotable` and `reviewerUserId`; the CASL subject is `KnowledgeFact` (`permissions.ts`) and the codes `fact_conflicting`, `fact_not_reviewable`, `entity_settled`, `entity_target_not_found`, `entity_type_not_promotable` (`errors.ts`) · `usage.ts` — `aiUsageSchema`, `aiUsageSummarySchema`,
+`aiUsageSummaryQuerySchema` (`costMicrocents` nullable, `unpricedCalls`), `KNOWLEDGE_USAGE_FEATURES` (the `knowledge.*` feature names) · `pricing.ts` — `MODEL_PRICES`
 (USD per million tokens, per provider, longest-prefix model match), `PRICES_UPDATED`, `priceFor`,
 `estimateCostMicrocents`; the ONE place to correct rates, unknown model → null, never a guess. `errors.ts` codes added: `ai_not_configured`,
 `agent_runs_not_configured`, `agent_run_active`; `permissions.ts` subjects added: `AiConfig`, `Prompt`,

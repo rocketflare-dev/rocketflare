@@ -533,6 +533,44 @@ watch the row go `Indexing → Indexed` within the 5 s poll (the wrangler termin
 `document.convert: indexed`), search a phrase from it, and click the download icon to get the
 original back from R2. Without `[ai]` a binary upload answers 503 `conversion_not_configured`.
 
+**Reranking** (knowledge search reorders its top 20 fused candidates by relevance): with the `AI`
+binding it is on by default — Workers AI `@cf/baai/bge-reranker-base`, about $0.003 per million
+input tokens, one extra call per search. For a stronger reranker add one per tenant in Settings →
+AI → *Add reranker provider*: provider *OpenAI-compatible endpoint* with a preset (Fireworks
+`fireworks/qwen3-reranker-8b`, Cohere `rerank-v3.5`, Voyage `rerank-2.5-lite`) and the vendor's key;
+**Test connection** reranks two short documents. Without the binding or a row search keeps its
+fused order. `RERANK_MIN_SCORE=` (0–1, blank = off) drops reranked hits scored below it; its scale is
+per model, so set it from an eval run (`docs/EVALS.md`). `RERANK_CANDIDATES=` (5–100, blank = 20)
+is how many chunks go to the reranker: its latency grows with it. Verify: `curl -b <cookie>
+localhost:3001/api/ai/config/readiness` → `"rerank":{"ready":true,…}`, and a `POST
+/api/ai/documents/search` hit carries a `rerankScore`.
+
+**Knowledge spend**: every embedding, rerank and fact-extraction call is an `ai_usage` row
+(`knowledge.embeddings`, `knowledge.rerank`, `knowledge.extraction`), shown on Settings → Usage.
+`KNOWLEDGE_TENANT_DAILY_COST_USD=` (blank = no cap) caps what one tenant's knowledge work may spend
+per UTC day; only fact extraction pauses at it (it resumes the next UTC day), indexing and search
+never do. Deployed, put it in BOTH tomls' `[vars]`.
+
+**Knowledge facts** (D43, `docs/CONCEPTS.md` §9 — typed facts read from documents, with conflicts
+and doubtful facts sent to a person for review): off until two things are true.
+
+1. **An entity type is registered** — the kit registers none. Add one to `APP_ENTITY_TYPES` in
+   `apps/web/src/api/services/knowledge/entity-types.ts` (the file's header shows a type over one
+   of your tables and one with no table), or from a plugin through
+   `ServerPlugin.knowledgeEntityTypes`. `pnpm web test:config` runs `knowledge-entity-types.test.ts`,
+   which refuses a bad registration.
+2. **The `knowledge-facts` flag is on for the tenant** — default off. As a global admin, open
+   **Admin → Feature flags → Knowledge facts** and set it On (every tenant), to Rollout, or force it
+   on for one organisation (§2.8).
+
+Extraction then runs on every new or changed document: one call per heading-bounded section to the
+tenant's chat model, or to the model assigned to the `knowledge-extract` prompt in Settings → agent
+models; about $0.0009 a document on Haiku. Set `KNOWLEDGE_TENANT_DAILY_COST_USD` before turning it on
+widely. Documents indexed before the flag was on are not extracted until their text changes. Verify:
+`pnpm cli features list --json` shows `knowledge-facts` on; upload a document naming one of your
+entities, then open Knowledge → **To review** or ask chat about the entity — the answer cites the
+facts with their source.
+
 **Decisions** (`ctx.decide`, D37 — typed questions agents ask, e.g. the `triage-research` example's
 relevance screen): with nothing configured the chat model answers them with its own probabilities,
 recorded `llm_self_report` and shown as *self-reported* (uncalibrated). For calibrated answers from
@@ -660,10 +698,10 @@ and then deleted.
 
 ### 2.8 Feature flags `[ready]` (D30)
 
-Nothing to configure — flags work out of the box, and the kit itself ships none: the one inert demo
-flag (`example-feature`, a nav item, a page and a notes API) belongs to the reference PLUGIN of the
-same name (D31, `apps/web/src/plugins/example-feature/`), which is installed by default and safe to
-delete. As a global admin, open **Admin → Feature flags**: set it to On and the nav item appears; to
+Nothing to configure — flags work out of the box. The kit core ships one, `knowledge-facts`
+(default off; §2.5 "Knowledge facts"). The inert demo flag (`example-feature`, a nav item, a page
+and a notes API) belongs to the reference PLUGIN of the same name (D31,
+`apps/web/src/plugins/example-feature/`), which is installed by default and safe to delete. As a global admin, open **Admin → Feature flags**: set it to On and the nav item appears; to
 Rollout and the percentage decides deterministically; force it on or off for one organisation and
 that beats the percentage either way.
 

@@ -96,6 +96,18 @@ export interface EmbeddingsClient {
   /** Every vector `embed` returns has this many components (1024). */
   readonly dimension: number
   embed(texts: string[]): Promise<number[][]>
+  /**
+   * `embed` plus what the provider billed: `inputTokens` is the provider's own count when it
+   * reports one (OpenAI's `usage.prompt_tokens`), else null. Optional so a client — a test fake —
+   * can implement `embed` alone; the meter (`embedCounted`, `usage.ts`) estimates from the text
+   * whenever this is absent or answers null.
+   */
+  embedWithUsage?(texts: string[]): Promise<EmbedResult>
+}
+
+export interface EmbedResult {
+  vectors: number[][]
+  inputTokens: number | null
 }
 
 /** Per-tenant request-body defaults injected where the client is BUILT (never at call sites). */

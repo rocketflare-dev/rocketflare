@@ -46,6 +46,12 @@ export type ActivityRecordPayload = z.infer<typeof activityRecordPayloadSchema>
 export const documentIndexPayloadSchema = z.object({
   tenantId: z.string().uuid(),
   documentId: z.string().uuid(),
+  /**
+   * The text did not change (an upsert re-indexed only because its chunks were embedded by another
+   * model), so knowledge-fact extraction must not run again afterwards. Optional so a message
+   * enqueued before the field existed reads as absent — extract, the old behaviour plus D43.
+   */
+  skipExtraction: z.boolean().optional(),
 })
 export type DocumentIndexPayload = z.infer<typeof documentIndexPayloadSchema>
 
@@ -55,6 +61,31 @@ export const documentConvertPayloadSchema = z.object({
   documentId: z.string().uuid(),
 })
 export type DocumentConvertPayload = z.infer<typeof documentConvertPayloadSchema>
+
+/**
+ * Re-embed ONE tenant's stale documents (chunks embedded by a model other than `model`), a bounded
+ * batch per message; the handler re-enqueues itself while more remain. `model` is the embedder the
+ * chain was started for: once the tenant resolves a different one, the message is acked and the
+ * chain enqueued for THAT model takes over, so two chains never fight over the same documents.
+ */
+export const documentReembedPayloadSchema = z.object({
+  tenantId: z.string().uuid(),
+  model: z.string().min(1).max(200),
+})
+export type DocumentReembedPayload = z.infer<typeof documentReembedPayloadSchema>
+
+/**
+ * Extract knowledge facts (D43) from one indexed document. Enqueued after an index whose text
+ * changed, when the tenant has the `knowledge-facts` flag and an entity type is registered; the
+ * handler checks both again. `contentHash` is the text the enqueue saw: a document edited again
+ * since then is skipped — the newer index enqueues its own extraction.
+ */
+export const knowledgeExtractPayloadSchema = z.object({
+  tenantId: z.string().uuid(),
+  documentId: z.string().uuid(),
+  contentHash: z.string().min(1).max(128).optional(),
+})
+export type KnowledgeExtractPayload = z.infer<typeof knowledgeExtractPayloadSchema>
 
 /**
  * Fold a conversation's trimmed-off prefix into its rolling summary. The payload carries ids
@@ -113,9 +144,11 @@ export const CORE_JOB_VARIANTS = [
   z.object({ type: z.literal('activity.record'), payload: activityRecordPayloadSchema }),
   z.object({ type: z.literal('document.index'), payload: documentIndexPayloadSchema }),
   z.object({ type: z.literal('document.convert'), payload: documentConvertPayloadSchema }),
+  z.object({ type: z.literal('document.reembed'), payload: documentReembedPayloadSchema }),
   z.object({ type: z.literal('chat.compact'), payload: chatCompactPayloadSchema }),
   z.object({ type: z.literal('tenant.purge'), payload: tenantPurgePayloadSchema }),
   z.object({ type: z.literal('event.deliver'), payload: eventDeliverPayloadSchema }),
+  z.object({ type: z.literal('knowledge.extract'), payload: knowledgeExtractPayloadSchema }),
 ] as const
 
 type PluginJobVariant = NonNullable<DeclaredBy<(typeof SHARED_PLUGINS)[number], 'jobs'>>[number]

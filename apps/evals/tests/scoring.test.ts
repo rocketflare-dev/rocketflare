@@ -2,14 +2,25 @@
 import { describe, expect, it } from 'vitest'
 import { z } from 'zod'
 import {
+  averagePrecision,
   budgetScore,
+  conflictDetectionScore,
   containsScore,
   decisionScore,
+  entityIndex,
   expectedToolNames,
+  factExtractionScore,
+  matchFacts,
+  normalizeName,
   outputText,
+  passageCovered,
+  passageRanks,
+  recallAtK,
+  reciprocalRank,
   regexScore,
   schemaScore,
   trajectoryScore,
+  valuesMatch,
 } from '../kit/scoring'
 
 describe('trajectoryScore', () => {
@@ -120,5 +131,128 @@ describe('decisionScore', () => {
     const r = decisionScore(recorded, { screen: { item_0: 'yes' } })
     expect(r.score).toBe(0)
     expect(r.rationale).toContain('not asked')
+  })
+})
+
+describe('retrieval scorers', () => {
+  const hits = [
+    { doc: 'b', text: 'Something else entirely.' },
+    { doc: 'a', text: 'Intro.\n\nThe annual plan costs   £1,140 per site. More.' },
+    { doc: 'a', text: 'renews on 31 January' },
+  ]
+
+  it('finds a passage whitespace- and case-blind, or split across a chunk boundary', () => {
+    expect(passageCovered(hits[1].text, 'the annual plan costs £1,140 per site.')).toBe(true)
+    expect(
+      passageCovered(
+        '… and this agreement renews on 31',
+        'This agreement renews on 31 January 2027'
+      )
+    ).toBe(true)
+    expect(
+      passageCovered('January 2027. Next clause.', 'This agreement renews on 31 January 2027')
+    ).toBe(false)
+  })
+
+  it('ranks, recalls and reciprocates', () => {
+    const ranks = passageRanks(hits, [
+      { doc: 'a', passage: 'The annual plan costs £1,140 per site.' },
+      { doc: 'a', passage: 'not there' },
+      { doc: 'b', passage: 'The annual plan costs £1,140 per site.' },
+    ])
+    expect(ranks).toEqual([2, null, null])
+    expect(recallAtK(ranks, 1).score).toBe(0)
+    expect(recallAtK(ranks, 5).score).toBeCloseTo(1 / 3)
+    expect(reciprocalRank(ranks).score).toBe(0.5)
+    expect(reciprocalRank([null]).score).toBe(0)
+  })
+
+  it('scores average precision toward the top', () => {
+    expect(averagePrecision([true, false, true]).score).toBeCloseTo((1 + 2 / 3) / 2)
+    expect(averagePrecision([false, false]).score).toBe(0)
+    expect(averagePrecision([]).score).toBe(0)
+  })
+})
+
+describe('fact scorers', () => {
+  const index = entityIndex([
+    { entityType: 'customer', name: 'Harbour View Dental', aliases: ['HVD'] },
+  ])
+  const planted = [
+    {
+      id: 'f1',
+      entityType: 'customer',
+      entity: 'Harbour View Dental',
+      key: 'monthly_fee_gbp',
+      value: 95,
+      doc: 'd1',
+    },
+    {
+      id: 'f2',
+      entityType: 'customer',
+      entity: 'Harbour View Dental',
+      key: 'service_plan',
+      value: 'Premium',
+      doc: 'd1',
+    },
+    {
+      id: 'f3',
+      entityType: 'customer',
+      entity: 'Harbour View Dental',
+      key: 'monthly_fee_gbp',
+      value: 110,
+      doc: 'd2',
+    },
+  ]
+
+  it('normalises values', () => {
+    expect(valuesMatch(95, '£95.00')).toBe(true)
+    expect(valuesMatch('1,140', 1140)).toBe(true)
+    expect(valuesMatch(' premium ', 'Premium')).toBe(true)
+    expect(valuesMatch(['Standard', 'Premium'], ['premium', 'standard'])).toBe(true)
+    expect(valuesMatch(true, 'true')).toBe(false)
+    expect(valuesMatch('2027-01-31', '2027-01-31')).toBe(true)
+  })
+
+  it('matches through aliases, per document, each planted fact once', () => {
+    const extracted = [
+      { entityType: 'customer', entity: 'hvd', key: 'monthly_fee_gbp', value: '95', doc: 'd1' },
+      { entityType: 'customer', entity: 'HVD', key: 'monthly_fee_gbp', value: 95, doc: 'd1' },
+      {
+        entityType: 'customer',
+        entity: 'Harbour View Dental',
+        key: 'monthly_fee_gbp',
+        value: 110,
+        doc: 'd1',
+      },
+    ]
+    expect(matchFacts(extracted, planted, index)).toEqual(['f1', null, null])
+    const s = factExtractionScore(extracted, planted, index)
+    expect(s.precision).toBeCloseTo(1 / 3)
+    expect(s.recall).toBeCloseTo(1 / 3)
+  })
+
+  it('counts caught conflicts and false alarms', () => {
+    const s = conflictDetectionScore(
+      [
+        ['f3', 'f1'],
+        ['f1', 'f2'],
+      ],
+      [{ a: 'f1', b: 'f3' }],
+      1
+    )
+    expect(s.caught).toBe(1)
+    expect(s.falseAlarmRate).toBeCloseTo(2 / 3)
+    expect(conflictDetectionScore([], []).score).toBe(1)
+  })
+})
+
+describe('normalizeName', () => {
+  it('drops case, punctuation and a trailing legal form', () => {
+    expect(normalizeName('Harbour View Dental, Ltd.')).toBe('harbour view dental')
+    expect(normalizeName('Kingsgate Estates Limited')).toBe('kingsgate estates')
+    expect(normalizeName('Northern Salt & Grit Co')).toBe('northern salt grit')
+    expect(normalizeName('Coleridge Inc Ltd')).toBe('coleridge')
+    expect(normalizeName('Colton')).toBe('colton')
   })
 })

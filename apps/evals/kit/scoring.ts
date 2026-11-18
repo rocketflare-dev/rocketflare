@@ -204,3 +204,243 @@ function brierOf(answer: RecordedAnswer, want: string): number | null {
   for (const k of keys) sum += ((answer.probabilities[k] ?? 0) - (k === want ? 1 : 0)) ** 2
   return sum / 2
 }
+
+// ---- retrieval ----------------------------------------------------------------------------
+
+/** One retrieved passage as a retrieval scorer sees it: which corpus document, and its text. */
+export interface RankedPassage {
+  doc: string
+  text: string
+}
+
+export interface ExpectedPassage {
+  doc: string
+  passage: string
+}
+
+const squash = (text: string) => text.replace(/\s+/g, ' ').trim().toLowerCase()
+
+/**
+ * Does a retrieved chunk carry the expected passage? Verbatim (whitespace and case aside), or — for
+ * a passage the chunker cut in two — at least half of it on either side of the cut: the chunk ends
+ * with the passage's start, or begins with its end. Overlap normally makes the whole passage appear
+ * in one chunk; this is the fallback for a window that still split it.
+ */
+export function passageCovered(chunk: string, passage: string): boolean {
+  const c = squash(chunk)
+  const p = squash(passage)
+  if (!p) return false
+  if (c.includes(p)) return true
+  const half = Math.ceil(p.length / 2)
+  for (let n = p.length - 1; n >= half; n -= 1) {
+    if (c.endsWith(p.slice(0, n)) || c.startsWith(p.slice(p.length - n))) return true
+  }
+  return false
+}
+
+/** The 1-based rank of the first hit carrying each expected passage, or null when none does. */
+export function passageRanks(
+  hits: readonly RankedPassage[],
+  expected: readonly ExpectedPassage[]
+): (number | null)[] {
+  return expected.map(e => {
+    const i = hits.findIndex(h => h.doc === e.doc && passageCovered(h.text, e.passage))
+    return i === -1 ? null : i + 1
+  })
+}
+
+/** Share of the expected passages found in the top `k`. */
+export function recallAtK(ranks: readonly (number | null)[], k: number): Score {
+  if (ranks.length === 0) return { score: 1, rationale: 'nothing expected' }
+  const found = ranks.filter(r => r !== null && r <= k).length
+  const shown = ranks.map(r => (r === null ? '—' : `#${r}`)).join(', ')
+  return {
+    score: found / ranks.length,
+    rationale: `${found}/${ranks.length} expected passages in the top ${k} (ranks ${shown})`,
+  }
+}
+
+/** 1 / the rank of the first expected passage found; 0 when none was. */
+export function reciprocalRank(ranks: readonly (number | null)[]): Score {
+  const found = ranks.filter((r): r is number => r !== null)
+  if (found.length === 0) return { score: 0, rationale: 'no expected passage retrieved' }
+  const best = Math.min(...found)
+  return { score: 1 / best, rationale: `first expected passage at #${best}` }
+}
+
+/**
+ * Average precision over a judged ranking: the mean of precision@i at every relevant position.
+ * `relevant[i]` is the judge's verdict on hit i. Rewards putting the relevant passages FIRST, which
+ * is what a model reading the top of the list needs.
+ */
+export function averagePrecision(relevant: readonly boolean[]): Score {
+  let hits = 0
+  let sum = 0
+  relevant.forEach((r, i) => {
+    if (!r) return
+    hits += 1
+    sum += hits / (i + 1)
+  })
+  if (relevant.length === 0) return { score: 0, rationale: 'nothing was retrieved' }
+  return {
+    score: hits === 0 ? 0 : sum / hits,
+    rationale: `${hits}/${relevant.length} retrieved passages relevant (${relevant.map(r => (r ? '✓' : '·')).join('')})`,
+  }
+}
+
+// ---- facts --------------------------------------------------------------------------------
+
+/** A fact as an extractor reports it — or as the answer key plants it. */
+export interface FactClaim {
+  /** The answer key's id; an extracted fact has none until it is matched. */
+  id?: string
+  entityType: string
+  entity: string
+  key: string
+  value: unknown
+  doc: string
+}
+
+/**
+ * Lower-case, punctuation dropped, whitespace collapsed, a trailing legal form dropped —
+ * `"Harbour View Dental, Ltd."` → `harbour view dental`. A company's registered suffix (`Ltd`,
+ * `Limited`, `LLP`, `PLC`, `Co`, `Inc`) names the same organisation with or without it.
+ */
+export function normalizeName(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
+    .trim()
+    .replace(/(?:\s+(?:ltd|limited|llp|plc|co|inc))+$/u, '')
+}
+
+/**
+ * Values equal after normalisation: numbers within a penny, strings case- and whitespace-blind
+ * (a numeric string compares as its number, `£1,140` as 1140), arrays as sets, booleans and dates
+ * as themselves.
+ */
+export function valuesMatch(a: unknown, b: unknown): boolean {
+  const num = (v: unknown): number | null => {
+    if (typeof v === 'number') return v
+    if (typeof v !== 'string') return null
+    const cleaned = v.replace(/[£$€,\s]/g, '')
+    return /^-?\d+(\.\d+)?$/.test(cleaned) ? Number(cleaned) : null
+  }
+  if (Array.isArray(a) || Array.isArray(b)) {
+    if (!Array.isArray(a) || !Array.isArray(b)) return false
+    const left = new Set(a.map(v => squash(String(v))))
+    const right = new Set(b.map(v => squash(String(v))))
+    return left.size === right.size && [...left].every(v => right.has(v))
+  }
+  const na = num(a)
+  const nb = num(b)
+  if (na !== null && nb !== null) return Math.abs(na - nb) < 0.005
+  if (typeof a === 'boolean' || typeof b === 'boolean') return a === b
+  return squash(String(a ?? '')) === squash(String(b ?? ''))
+}
+
+/** name or alias (normalised) → the canonical entity name, per entity type. */
+export type EntityIndex = Map<string, string>
+
+export function entityIndex(
+  entities: readonly { entityType: string; name: string; aliases: readonly string[] }[]
+): EntityIndex {
+  const index: EntityIndex = new Map()
+  for (const e of entities) {
+    for (const n of [e.name, ...e.aliases]) {
+      index.set(`${e.entityType}:${normalizeName(n)}`, e.name)
+    }
+  }
+  return index
+}
+
+function canonical(index: EntityIndex, entityType: string, entity: string): string {
+  return index.get(`${entityType}:${normalizeName(entity)}`) ?? entity
+}
+
+/**
+ * Pair each extracted fact with at most one planted fact: same document, entity type, entity (via
+ * names and aliases), key and value. Returns planted id per extracted fact (null = unmatched).
+ */
+export function matchFacts(
+  extracted: readonly FactClaim[],
+  planted: readonly FactClaim[],
+  index: EntityIndex
+): (string | null)[] {
+  const used = new Set<string>()
+  return extracted.map(x => {
+    const name = canonical(index, x.entityType, x.entity)
+    const hit = planted.find(
+      p =>
+        p.id !== undefined &&
+        !used.has(p.id) &&
+        p.doc === x.doc &&
+        p.entityType === x.entityType &&
+        normalizeName(canonical(index, p.entityType, p.entity)) === normalizeName(name) &&
+        p.key === x.key &&
+        valuesMatch(p.value, x.value)
+    )
+    if (!hit?.id) return null
+    used.add(hit.id)
+    return hit.id
+  })
+}
+
+export interface ExtractionScore extends Score {
+  precision: number
+  recall: number
+  matched: number
+}
+
+/** Precision and recall of `extracted` against `planted`; the score is F1. */
+export function factExtractionScore(
+  extracted: readonly FactClaim[],
+  planted: readonly FactClaim[],
+  index: EntityIndex
+): ExtractionScore {
+  const matches = matchFacts(extracted, planted, index)
+  const matched = matches.filter(Boolean).length
+  const precision =
+    extracted.length === 0 ? (planted.length === 0 ? 1 : 0) : matched / extracted.length
+  const recall = planted.length === 0 ? 1 : matched / planted.length
+  const f1 = precision + recall === 0 ? 0 : (2 * precision * recall) / (precision + recall)
+  return {
+    score: f1,
+    precision,
+    recall,
+    matched,
+    rationale: `precision ${precision.toFixed(2)} (${matched}/${extracted.length}) · recall ${recall.toFixed(2)} (${matched}/${planted.length})`,
+  }
+}
+
+export interface ConflictScore extends Score {
+  caught: number
+  falseAlarmRate: number
+}
+
+const pairKey = (a: string, b: string) => [a, b].sort().join('|')
+
+/**
+ * Share of planted conflicts flagged, and share of flags that are false alarms. `flagged` holds
+ * pairs of PLANTED fact ids (an extracted conflict is mapped through `matchFacts` first; a flag on
+ * a fact that matched nothing has no id and counts as a false alarm via `unmatchedFlags`).
+ */
+export function conflictDetectionScore(
+  flagged: readonly [string, string][],
+  planted: readonly { a: string; b: string }[],
+  unmatchedFlags = 0
+): ConflictScore {
+  const want = new Set(planted.map(p => pairKey(p.a, p.b)))
+  const got = new Set(flagged.map(([a, b]) => pairKey(a, b)))
+  const caught = [...want].filter(k => got.has(k)).length
+  const falseAlarms = [...got].filter(k => !want.has(k)).length + unmatchedFlags
+  const flags = got.size + unmatchedFlags
+  const caughtShare = want.size === 0 ? 1 : caught / want.size
+  const falseAlarmRate = flags === 0 ? 0 : falseAlarms / flags
+  return {
+    score: caughtShare * (1 - falseAlarmRate),
+    caught: caughtShare,
+    falseAlarmRate,
+    rationale: `caught ${caught}/${want.size} planted conflicts · ${falseAlarms}/${flags} flags false alarms`,
+  }
+}

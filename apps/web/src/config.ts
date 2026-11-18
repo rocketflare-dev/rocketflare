@@ -176,6 +176,32 @@ const coreConfigSchema = z.object({
    */
   AGENT_TENANT_DAILY_COST_USD: optionalCap('number'),
   /**
+   * What one tenant's KNOWLEDGE work — document and query embeddings, reranking and (phase 2)
+   * fact extraction — may spend per UTC day, in USD. Unset = no cap. Only extraction pauses at it
+   * (`knowledgeExtractionAllowed`); indexing and search never do, because search must keep working.
+   */
+  KNOWLEDGE_TENANT_DAILY_COST_USD: optionalCap('number'),
+  /**
+   * Drop a reranked search hit whose reranker score (0–1, every reranker on that scale) is below
+   * this. Unset = off: the reranker reorders and nothing is dropped. No effect without a reranker.
+   */
+  /**
+   * How many fused candidates go to the reranker (5–100; unset = 20). The reranker's latency grows
+   * with it — on the kit fixture, qwen3-reranker-8b took a median 810 ms for 50 chunks and 465 ms
+   * for 20, at the same recall — and a corpus whose answers sit deeper in the fused order may want
+   * more; set it from `RERANK_CANDIDATES=… pnpm eval retrieval --rerank …` (docs/EVALS.md).
+   */
+  RERANK_CANDIDATES: z.preprocess(
+    value =>
+      value === undefined || value === null || String(value).trim() === '' ? undefined : value,
+    z.coerce.number().int().min(5).max(100).optional()
+  ),
+  RERANK_MIN_SCORE: z.preprocess(
+    value =>
+      value === undefined || value === null || String(value).trim() === '' ? undefined : value,
+    z.coerce.number().min(0).max(1).optional()
+  ),
+  /**
    * Give the chat box the knowledge tools (`search_knowledge`, `get_document`,
    * `list_documents`), so it answers from the workspace's own material. It costs more tokens per
    * turn and, on Workers AI — which has no tool-call event stream — the reply stops arriving token

@@ -15,12 +15,19 @@
  */
 import type { TokenUsage } from '@rocketflare/shared/ai/chat'
 import type { AiProvider } from '@rocketflare/shared/ai/config'
-import { estimateCostMicrocents } from '@rocketflare/shared/ai/pricing'
-import type { AiUsageRowSummary, AiUsageSummary } from '@rocketflare/shared/ai/usage'
-import { and, eq, gte, isNotNull, lt, sql } from 'drizzle-orm'
+import { estimateCostMicrocents, MICROCENTS_PER_USD } from '@rocketflare/shared/ai/pricing'
+import {
+  type AiUsageRowSummary,
+  type AiUsageSummary,
+  KNOWLEDGE_USAGE_FEATURES,
+  type KnowledgeUsageFeature,
+} from '@rocketflare/shared/ai/usage'
+import { and, eq, gte, inArray, isNotNull, lt, sql } from 'drizzle-orm'
+import type { AppConfig } from '../../../config'
 import type { Database } from '../../../db/client'
 import { aiUsage } from '../../../db/schema'
-import type { ChatClient, ChatResult } from './types'
+import { estimateTokens } from './chunking'
+import type { ChatClient, ChatResult, EmbeddingsClient } from './types'
 
 export interface UsageInput {
   tenantId: string
@@ -97,14 +104,130 @@ export async function tenantAgentSpendToday(
   tenantId: string,
   now: Date = new Date()
 ): Promise<number> {
-  const dayStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()))
   const [row] = await db
     .select({ cost: sql<number>`coalesce(sum(${aiUsage.costMicrocents}), 0)::bigint` })
     .from(aiUsage)
     .where(
-      and(eq(aiUsage.tenantId, tenantId), gte(aiUsage.at, dayStart), isNotNull(aiUsage.agentRunId))
+      and(
+        eq(aiUsage.tenantId, tenantId),
+        gte(aiUsage.at, utcDayStart(now)),
+        isNotNull(aiUsage.agentRunId)
+      )
     )
   return Number(row?.cost ?? 0)
+}
+
+// ---- Knowledge metering --------------------------------------------------------------------------
+
+/** Start of the UTC day `now` falls in. */
+const utcDayStart = (now: Date) =>
+  new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()))
+
+/**
+ * Embed `texts` and count what it cost: the provider's own token count when the client reports one
+ * (`embedWithUsage` → OpenAI's `usage.prompt_tokens`), else a character estimate
+ * (`estimateTokens`, 4 chars per token) — Workers AI and a test fake report nothing.
+ */
+export async function embedCounted(
+  client: EmbeddingsClient,
+  texts: string[]
+): Promise<{ vectors: number[][]; inputTokens: number; estimated: boolean }> {
+  if (client.embedWithUsage) {
+    const { vectors, inputTokens } = await client.embedWithUsage(texts)
+    if (inputTokens !== null) return { vectors, inputTokens, estimated: false }
+    return { vectors, inputTokens: estimateTexts(texts), estimated: true }
+  }
+  const vectors = await client.embed(texts)
+  return { vectors, inputTokens: estimateTexts(texts), estimated: true }
+}
+
+const estimateTexts = (texts: readonly string[]) =>
+  texts.reduce((n, text) => n + estimateTokens(text), 0)
+
+export interface KnowledgeUsageInput {
+  tenantId: string
+  userId?: string | null
+  feature: KnowledgeUsageFeature
+  provider: AiProvider
+  model: string
+  inputTokens: number
+}
+
+/**
+ * Record knowledge-base calls (`knowledge.embeddings` / `knowledge.rerank` /
+ * `knowledge.extraction`) — one `ai_usage` row each, input tokens only, priced from the shared
+ * table. NEVER throws: an ingest or a search must not fail because the ledger could not be
+ * written, so a failed insert is logged and swallowed. Rows with no tokens are skipped.
+ */
+export async function recordKnowledgeUsage(
+  db: Database,
+  rows: readonly KnowledgeUsageInput[]
+): Promise<void> {
+  for (const row of rows) {
+    if (row.inputTokens <= 0) continue
+    try {
+      await recordUsage(db, {
+        tenantId: row.tenantId,
+        userId: row.userId ?? null,
+        feature: row.feature,
+        provider: row.provider,
+        model: row.model,
+        usage: { inputTokens: Math.round(row.inputTokens), outputTokens: 0 },
+      })
+    } catch (err) {
+      console.warn(
+        JSON.stringify({
+          msg: 'knowledge usage not recorded',
+          feature: row.feature,
+          tenantId: row.tenantId,
+          error: err instanceof Error ? err.message.slice(0, 200) : String(err).slice(0, 200),
+        })
+      )
+    }
+  }
+}
+
+const KNOWLEDGE_FEATURE_NAMES = Object.values(KNOWLEDGE_USAGE_FEATURES)
+
+/**
+ * What a tenant's knowledge base has spent since the start of the UTC day `now` falls in, in
+ * microcents — the three `knowledge.*` features, priced rows only (an unpriced model never trips
+ * the cap). The `KNOWLEDGE_TENANT_DAILY_COST_USD` read.
+ */
+export async function knowledgeSpendToday(
+  db: Database,
+  tenantId: string,
+  now: Date = new Date()
+): Promise<number> {
+  const [row] = await db
+    .select({ cost: sql<number>`coalesce(sum(${aiUsage.costMicrocents}), 0)::bigint` })
+    .from(aiUsage)
+    .where(
+      and(
+        eq(aiUsage.tenantId, tenantId),
+        gte(aiUsage.at, utcDayStart(now)),
+        inArray(aiUsage.feature, KNOWLEDGE_FEATURE_NAMES)
+      )
+    )
+  return Number(row?.cost ?? 0)
+}
+
+/**
+ * May fact extraction (phase 2) spend on one more document today? True when no cap is set
+ * (`KNOWLEDGE_TENANT_DAILY_COST_USD` unset) or the tenant's knowledge spend today is under it.
+ * Extraction calls this before each document and, on false, waits for tomorrow. Indexing and
+ * search never call it: they count toward the cap but never pause on it.
+ */
+export async function knowledgeExtractionAllowed(
+  db: Database,
+  cfg: Pick<AppConfig, 'KNOWLEDGE_TENANT_DAILY_COST_USD'>,
+  tenantId: string,
+  now: Date = new Date()
+): Promise<boolean> {
+  const usd = cfg.KNOWLEDGE_TENANT_DAILY_COST_USD
+  if (usd === undefined) return true
+  const cap = Math.round(usd * MICROCENTS_PER_USD)
+  return (await knowledgeSpendToday(db, tenantId, now)) < cap
 }
 
 export type UsageTap = (usage: TokenUsage, result: ChatResult) => void | Promise<void>

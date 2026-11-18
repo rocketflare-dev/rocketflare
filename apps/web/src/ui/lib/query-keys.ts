@@ -140,6 +140,19 @@ const CORE_QUERY_KEYS = {
     passages: (id: string, filters: object = {}) => ['documents', 'passages', id, filters] as const,
     card: (id: string) => ['documents', 'card', id] as const,
   },
+  /**
+   * `/api/knowledge/*` — knowledge facts (D43): the review list, the "for me" count on the
+   * Knowledge nav item, and entity pages. ONE root on purpose: every review action and every
+   * extraction run nudges `entity.changed { entity: 'knowledge' }`, and `access.changed` names it
+   * too (a fact is read through its document), so all of it refreshes with no socket code here.
+   */
+  knowledge: {
+    all: ['knowledge'] as const,
+    review: (filters: object = {}) => ['knowledge', 'review', filters] as const,
+    /** `GET /review?mine=true&pageSize=1` → `pagination.total`. Never polled. */
+    reviewCount: ['knowledge', 'review-count'] as const,
+    entity: (type: string, id: string) => ['knowledge', 'entity', type, id] as const,
+  },
   /** `/api/chat/*` — MY conversations (the route filters by user) and their messages */
   chat: {
     all: ['chat'] as const,

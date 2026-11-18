@@ -117,6 +117,12 @@ behaviour rather than the attack.
   they drive the kit's tooling end to end through child processes, which slow with CPU load, not
   with a database link
 - Per-file `apps/web/tests/api-setup.ts` closes clients after each file (connection budget: forks × pools)
+  and installs the **network guard** (`tests/helpers/network-guard.ts`): an api test never reaches
+  the internet — a request to anything but loopback / `localhost` / `*.localtest.me` rejects AT ONCE
+  with `OutboundNetworkError` naming the URL. A test that needs a provider's answer runs a local
+  `node:http` server on 127.0.0.1 (`security/ai-config-stored-credential.test.ts`) or injects
+  `fetch`. A row on a vendor's DEFAULT endpoint is a real call: give it a local `baseUrl`. A test
+  that takes seconds is waiting on something — a timeout, a retry backoff, a lock — not slow
 - **Both drivers (D35), one seam.** `.env.test` sets `DATABASE_DRIVER=postgres`, so the narrow
   scripts and the suite run postgres.js; `pnpm test` then runs the `driver` project under `neon`
   through the proxy on :4433 (compose profile `neon`). App code does not branch on the driver, so

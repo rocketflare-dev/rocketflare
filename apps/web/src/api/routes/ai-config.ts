@@ -7,6 +7,9 @@
  * first row in a scope is always made default. `POST /test` spends money at a provider on demand,
  * so it is rate-limited per IP. `GET /readiness` is what the Home checklist reads. `manage AiConfig`
  * = admin+; members may `read` (the list shows what will answer them, not how to change it).
+ * A save or delete that changes which EMBEDDINGS model the tenant resolves enqueues a
+ * `document.reembed` once it has committed (`reembedAfterEmbeddingsChange`) — and still succeeds
+ * when it cannot: the stale count on `GET /api/ai/documents/health` and `POST …/reembed` remain.
  */
 import {
   type AiConfig,
@@ -27,7 +30,8 @@ import { rateLimit } from '../middleware/rate-limit'
 import { recordActivity } from '../services/activity'
 import { testConfig } from '../services/ai/connection-test'
 import { PROVIDERS, providerInfo, providerSupportsScope } from '../services/ai/providers'
-import { readiness } from '../services/ai/resolve'
+import { reembedAfterEmbeddingsChange } from '../services/ai/reindex'
+import { readiness, resolveEmbeddingsModel } from '../services/ai/resolve'
 import { BadRequestError, NotFoundError } from '../utils/core/errors'
 import { uuidParam, withAuthAndDb } from '../utils/routes/route-helpers'
 import { createRouter } from '../utils/routes/router'
@@ -194,9 +198,11 @@ aiConfigRouter.post(
 // ---- POST /api/ai/config (upsert) -----------------------------------------------------------------
 
 aiConfigRouter.post('/', validate('json', upsertAiConfigRequestSchema), async c => {
-  const { db, tenantId, user, cfg, defer } = withAuthAndDb(c)
+  const { db, tenantId, user, cfg, defer, logger } = withAuthAndDb(c)
   guardPermission(c, 'manage', 'AiConfig')
   const body = c.req.valid('json')
+  const embeddingsBefore =
+    body.scope === 'embeddings' ? await resolveEmbeddingsModel(db, cfg, c.env, tenantId) : null
   const apiKeyEnc = body.apiKey ? await encrypt(body.apiKey, requireEncryptionKey(cfg)) : undefined
   const fields = {
     tenantId,
@@ -249,6 +255,18 @@ aiConfigRouter.post('/', validate('json', upsertAiConfigRequestSchema), async c 
     }
     return { saved: row, existing }
   })
+  // After the commit: a re-embed job must never see the old default.
+  if (body.scope === 'embeddings') {
+    await reembedAfterEmbeddingsChange(
+      db,
+      cfg,
+      c.env,
+      logger,
+      c.env.JOBS_QUEUE,
+      tenantId,
+      embeddingsBefore
+    )
+  }
 
   defer(() =>
     recordActivity(db, {
@@ -271,14 +289,26 @@ aiConfigRouter.post('/', validate('json', upsertAiConfigRequestSchema), async c 
 // ---- DELETE /api/ai/config/:id --------------------------------------------------------------------
 
 aiConfigRouter.delete('/:id', async c => {
-  const { db, tenantId, user, defer } = withAuthAndDb(c)
+  const { db, tenantId, user, cfg, defer, logger } = withAuthAndDb(c)
   guardPermission(c, 'manage', 'AiConfig')
   const id = uuidParam(c, 'id')
+  const embeddingsBefore = await resolveEmbeddingsModel(db, cfg, c.env, tenantId)
   const [row] = await db
     .delete(aiConfigs)
     .where(and(eq(aiConfigs.id, id), eq(aiConfigs.tenantId, tenantId)))
     .returning()
   if (!row) throw new NotFoundError('AI config not found')
+  if (row.scope === 'embeddings') {
+    await reembedAfterEmbeddingsChange(
+      db,
+      cfg,
+      c.env,
+      logger,
+      c.env.JOBS_QUEUE,
+      tenantId,
+      embeddingsBefore
+    )
+  }
   defer(() =>
     recordActivity(db, {
       tenantId,

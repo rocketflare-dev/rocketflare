@@ -269,6 +269,34 @@ export function embeddingAttributes(params: {
   }
 }
 
+/** A reranker call (`rerank <model>`): the model and how many candidates it scored. */
+export function rerankAttributes(params: { model: string; candidates: number }): SpanAttributes {
+  return {
+    [ATTR.requestModel]: params.model,
+    [ATTR.oiModelName]: params.model,
+    'rocketflare.rerank.candidates': params.candidates,
+  }
+}
+
+/**
+ * What the retrieval span says about reranking: whether it ran, on which model, how long it took
+ * and — when it did not — why (`not_configured`, `disabled`, `too_few`, `timeout`, `error`).
+ */
+export function rerankOutcomeAttributes(outcome: {
+  applied: boolean
+  model?: string
+  reason?: string
+  latencyMs?: number
+  dropped?: number
+}): SpanAttributes {
+  const out: SpanAttributes = { 'rocketflare.rerank.applied': outcome.applied }
+  if (outcome.model) out['rocketflare.rerank.model'] = outcome.model
+  if (outcome.reason) out['rocketflare.rerank.skipped'] = outcome.reason
+  if (outcome.latencyMs !== undefined) out['rocketflare.rerank.latency_ms'] = outcome.latencyMs
+  if (outcome.dropped) out['rocketflare.rerank.below_min_score'] = outcome.dropped
+  return out
+}
+
 /** Status in the backends' own words — Langfuse reads a level, everyone reads the OTLP status. */
 export function errorAttributes(message: string | undefined, type?: string): SpanAttributes {
   return {

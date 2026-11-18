@@ -34,6 +34,7 @@ import { UserMenu } from '@/ui/components/UserMenu'
 import { WebSocketProvider } from '@/ui/components/WebSocketProvider'
 import { WebSocketStatus } from '@/ui/components/WebSocketStatus'
 import { AuthProvider, useAuth } from '@/ui/hooks/useAuth'
+import { KNOWLEDGE_FACTS_GUARD } from '@/ui/lib/feature-guards'
 import { NavigationBridge } from '@/ui/lib/navigation'
 import { queryClient } from '@/ui/lib/queryClient'
 import Home from '@/ui/pages/Home'
@@ -63,6 +64,8 @@ const DocumentsPage = lazy(() => import('@/ui/pages/documents/DocumentsPage'))
 const SearchPage = lazy(() => import('@/ui/pages/documents/SearchPage'))
 // The detail page — no SideNav entry; it is reached from the list, from Search and from a citation.
 const DocumentViewPage = lazy(() => import('@/ui/pages/documents/DocumentViewPage'))
+// Knowledge facts (D43): one entity and its facts, behind the flag.
+const EntityPage = lazy(() => import('@/ui/pages/knowledge/EntityPage'))
 const AdminLayout = lazy(() => import('@/ui/pages/admin/AdminLayout'))
 const AccessRequests = lazy(() => import('@/ui/pages/admin/AccessRequests'))
 const TenantList = lazy(() => import('@/ui/pages/admin/TenantList'))
@@ -215,6 +218,14 @@ function ShellRoutes() {
             element={
               <RequireGuard guard={{ action: 'read', subject: 'Document' }}>
                 <DocumentViewPage />
+              </RequireGuard>
+            }
+          />
+          <Route
+            path="/knowledge/entities/:type/:id"
+            element={
+              <RequireGuard guard={KNOWLEDGE_FACTS_GUARD}>
+                <EntityPage />
               </RequireGuard>
             }
           />

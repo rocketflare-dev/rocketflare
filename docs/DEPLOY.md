@@ -126,6 +126,7 @@ in both files (one local database).
 | Hyperdrive (`postgres` only) | `HYPERDRIVE` | `<app>-production` / `<app>-staging` | `pnpm --filter @rocketflare/web exec wrangler hyperdrive create <name> --connection-string="<direct neon url>"` → `id` |
 | KV | `RATE_LIMIT_KV` | `<APP>_RATE_LIMIT` / `<APP>_RATE_LIMIT_STAGING` | `pnpm --filter @rocketflare/web exec wrangler kv namespace create <name>` → `id` |
 | Queue (Phase 2) | `JOBS_QUEUE` | `<app>-jobs` / `<app>-jobs-staging` | `pnpm --filter @rocketflare/web exec wrangler queues create <name>` (name-referenced) |
+| Jobs dead-letter queue | — (no binding; `[[queues.consumers]] dead_letter_queue`) | `<app>-jobs-dlq` / `<app>-jobs-dlq-staging` | `pnpm --filter @rocketflare/web exec wrangler queues create <name>` — must exist before the deploy that names it. Receives a message whose handler threw on every one of `max_retries`; **no consumer is bound** (its name shares the `<app>-jobs` prefix `queue.ts` dispatches on, so one would reprocess it). Inspect it in the dashboard (Queues → the DLQ → Messages) or `… wrangler queues info <name>` |
 | R2 (Phase 2) | `FILES` | `<app>-files` / `<app>-files-staging` | `pnpm --filter @rocketflare/web exec wrangler r2 bucket create <name>` |
 | Durable Object (Phase 2) | `NOTIFICATIONS_HUB` | class `NotificationsHub` | declared in toml + `[[migrations]] tag = "v1", new_classes` — no create step |
 | Workflow (Phase 3, built) | `AGENT_RUN_WORKFLOW` | `<app>-agent-run` / `<app>-agent-run-staging` | `[[workflows]] name / binding / class_name = "AgentRunWorkflow"` — `wrangler deploy` registers it, no create step; **account-scoped name** |
@@ -140,7 +141,7 @@ in both files (one local database).
 `pnpm web provision:cloudflare <staging|production> [app] [--apply] [--force]` (the `apps/web`
 script → `scripts/cf-provision.sh`, which `cd`s to `apps/web` itself so it also works as
 `bash apps/web/scripts/cf-provision.sh …`) creates a RESOURCE LIST idempotently — the kit's own
-ones, KV, Queue and R2 (plus Hyperdrive when `DATABASE_DRIVER` — from the environment, else the
+ones, KV, the jobs Queue and its dead-letter queue, and R2 (plus Hyperdrive when `DATABASE_DRIVER` — from the environment, else the
 toml — is `postgres`), are the default list, each found by name and reused when it exists, and `PLUGIN_RESOURCES` (a JSON array of `{ type, name, binding }`, set by
 `pnpm provision cloudflare <env>` from the installed plugins' manifests) appends to it — and either
 prints the Hyperdrive/KV ids
@@ -321,7 +322,7 @@ in **both** files, and split a heavy phase into its own step to draw a fresh bud
 
 | Kind | Where | Examples |
 |---|---|---|
-| Non-secret config | `[vars]` in each toml (committed) | `APP_ENV`, `APP_URL`, `APP_NAME`, `RELEASE_VERSION`, `LOG_LEVEL`, `EMAIL_FROM`, `TENANCY_MODE`, `SIGNUP_MODE`, `TENANT_SCOPE_MODE`, `AGENT_MAX_OUTPUT_TOKENS` (16384), `AGENT_MAX_TURNS` (30), `CHAT_KNOWLEDGE_TOOLS` (`true`), `CHAT_HISTORY_MAX_CHARS` (24000), `AGENT_MAX_ACTIVE_RUNS_PER_TENANT` (50), the optional budgets `AGENT_RUN_MAX_TOKENS` / `AGENT_RUN_MAX_COST_USD` / `AGENT_TENANT_DAILY_COST_USD` (unset = no cap, D39), `AGENT_INTERRUPT_TIMEOUT`
+| Non-secret config | `[vars]` in each toml (committed) | `APP_ENV`, `APP_URL`, `APP_NAME`, `RELEASE_VERSION`, `LOG_LEVEL`, `EMAIL_FROM`, `TENANCY_MODE`, `SIGNUP_MODE`, `TENANT_SCOPE_MODE`, `AGENT_MAX_OUTPUT_TOKENS` (16384), `AGENT_MAX_TURNS` (30), `CHAT_KNOWLEDGE_TOOLS` (`true`), `CHAT_HISTORY_MAX_CHARS` (24000), `AGENT_MAX_ACTIVE_RUNS_PER_TENANT` (50), the optional budgets `AGENT_RUN_MAX_TOKENS` / `AGENT_RUN_MAX_COST_USD` / `AGENT_TENANT_DAILY_COST_USD` (unset = no cap, D39), the optional knowledge vars `RERANK_MIN_SCORE` (unset = off) / `RERANK_CANDIDATES` (unset = 20) / `KNOWLEDGE_TENANT_DAILY_COST_USD` (unset = no cap), `AGENT_INTERRUPT_TIMEOUT`
 (`168 hours` — how long an agent run parked on a human question waits before it expires; it is
 passed verbatim to `step.waitForEvent`, so it must be a duration the platform accepts, between
 1 second and 365 days. **Instance retention is the real bound, not this**: 30 days on Paid, 3 on
@@ -683,7 +684,9 @@ holding the custom domains. One token may serve both environments.
 - `pnpm --filter @rocketflare/web exec wrangler tail [-c wrangler.staging.toml] [--format pretty]` streams live logs;
   `--status error` filters.
 - `pnpm --filter @rocketflare/web exec wrangler deployments list`, `… wrangler workflows instances list <name>`,
-  `… wrangler queues info <name>` for the async parts.
+  `… wrangler queues info <name>` for the async parts — `<app>-jobs-dlq[-staging]` holds every job
+  that exhausted its retries (a failed `document.reembed` resumes when re-requested:
+  `POST /api/ai/documents/reembed`; a failed document is retried from the Documents page).
 - AI traces (D32): spans for every chat turn, agent run, tool call, retrieval, embeddings batch and
   AI job land in the tenant's `ai_spans` rows (read with `rocketflare traces list|show`) and, when a
   backend is configured, are exported as OTLP from `waitUntil`, never on the response path —

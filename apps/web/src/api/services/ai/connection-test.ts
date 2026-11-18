@@ -1,7 +1,8 @@
 /**
  * "Test connection": one minimal, deliberately cheap call against a provider — a 10-token
- * completion for chat, one embedding for embeddings, one yes/no question for decisions — resolved EXACTLY the way the runtime does
- * (`chatClientFromRow` / `embeddingsClientFromRow`), so a green test cannot mean something
+ * completion for chat, one embedding for embeddings, one yes/no question for decisions, two short
+ * documents for a reranker — resolved EXACTLY the way the runtime does
+ * (`chatClientFromRow` / `embeddingsClientFromRow` / `rerankClientFromRow`), so a green test cannot mean something
  * different from a green chat. Tests either a saved row (`configId`, tenant-scoped) or an inline
  * candidate the admin has not saved yet. Nothing credential-shaped leaves this module: the verdict
  * is built from the normalised `AiError`, never the upstream body.
@@ -17,7 +18,18 @@ import type { DecisionClient } from './decisions/types'
 import { createTypesafeClient } from './decisions/typesafe'
 import { AiError, describeAiError, normalizeAiError } from './errors'
 import { providerSupportsScope } from './providers'
-import { chatClientFromRow, decisionsClientFromRow, embeddingsClientFromRow } from './resolve'
+import {
+  createRerankClient,
+  createWorkersAiRerankClient,
+  type RerankClient,
+  RerankError,
+} from './rerank'
+import {
+  chatClientFromRow,
+  decisionsClientFromRow,
+  embeddingsClientFromRow,
+  rerankClientFromRow,
+} from './resolve'
 import type { AiEnv, ChatClient, EmbeddingsClient } from './types'
 
 /** A test that hangs is worse than one that fails — the admin is watching a spinner. */
@@ -31,6 +43,19 @@ interface Candidate {
   chat?: ChatClient
   embeddings?: EmbeddingsClient
   decisions?: DecisionClient
+  rerank?: RerankClient
+}
+
+/** The rerank probe: two short documents, one plainly closer — proves key, model and shape. */
+const RERANK_PROBE = {
+  query: 'What colour is the sky?',
+  documents: ['The sky is blue on a clear day.', 'Invoices are due within thirty days.'],
+}
+
+/** A `RerankError` in the `AiError` vocabulary, so the verdict reads like every other test's. */
+function rerankAiError(err: RerankError, provider: AiConfigRow['provider']): AiError {
+  const code = err.code === 'rate_limited' ? 'rate_limit' : err.code
+  return new AiError(code, provider, err.message, err.status)
 }
 
 /** The decisions probe: one cheap yes/no — enough to prove the key, the model id and the response shape. */
@@ -54,6 +79,14 @@ async function candidateFor(
       where: and(eq(aiConfigs.id, input.configId), eq(aiConfigs.tenantId, tenantId)),
     })
     if (!row) throw new NotFoundError('AI config not found')
+    if (row.scope === 'rerank') {
+      return {
+        scope: 'rerank',
+        provider: row.provider,
+        model: row.model,
+        rerank: await rerankClientFromRow(row, cfg, env, fetchImpl),
+      }
+    }
     if (row.scope === 'decisions') {
       return {
         scope: 'decisions',
@@ -87,6 +120,22 @@ async function candidateFor(
     apiKey: input.apiKey,
     baseUrl: input.baseUrl,
     fetch: fetchImpl,
+  }
+  if (input.scope === 'rerank') {
+    return {
+      scope: 'rerank',
+      provider: input.provider,
+      model: input.model,
+      rerank:
+        input.provider === 'workers_ai'
+          ? createWorkersAiRerankClient({ ai: env.AI, model: input.model })
+          : createRerankClient({
+              baseUrl: input.baseUrl,
+              model: input.model,
+              apiKey: input.apiKey,
+              fetch: fetchImpl,
+            }),
+    }
   }
   if (input.scope === 'decisions') {
     if (!input.apiKey) {
@@ -133,7 +182,11 @@ export async function testConfig(
   let candidate: Candidate
   try {
     candidate = await candidateFor(db, cfg, env, tenantId, input, options.fetch)
-  } catch (err) {
+  } catch (caught) {
+    const err =
+      caught instanceof RerankError
+        ? rerankAiError(caught, 'configId' in input ? 'openai_compatible' : input.provider)
+        : caught
     if (err instanceof AiError) {
       const provider = 'configId' in input ? err.provider : input.provider
       const model = 'configId' in input ? '' : input.model
@@ -166,6 +219,15 @@ export async function testConfig(
         model: candidate.model,
         signal: controller.signal,
       })
+    } else if (candidate.rerank) {
+      const { results } = await candidate.rerank.rerank(
+        RERANK_PROBE.query,
+        RERANK_PROBE.documents,
+        { signal: controller.signal }
+      )
+      if (results.length === 0) {
+        throw new AiError('invalid_request', candidate.provider, 'The reranker scored nothing')
+      }
     } else if (candidate.embeddings) {
       const [vector] = await candidate.embeddings.embed([PROBE_TEXT])
       if (!vector || vector.length !== candidate.embeddings.dimension) {
@@ -183,7 +245,10 @@ export async function testConfig(
       provider: candidate.provider,
     }
   } catch (err) {
-    const normalised = normalizeAiError(err, candidate.provider)
+    const normalised =
+      err instanceof RerankError
+        ? rerankAiError(err, candidate.provider)
+        : normalizeAiError(err, candidate.provider)
     return {
       ok: false,
       latencyMs: Date.now() - startedAt,

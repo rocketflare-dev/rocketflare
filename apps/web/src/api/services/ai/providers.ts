@@ -11,6 +11,7 @@ import {
   type ProviderPreset,
   presetsFor,
   WORKERS_AI_CHAT_MODEL,
+  WORKERS_AI_RERANK_MODEL,
 } from '@rocketflare/shared/ai/config'
 
 export interface ProviderInfo {
@@ -96,6 +97,7 @@ export const PROVIDERS: readonly ProviderInfo[] = [
       chat: ['claude-haiku-5-5', 'claude-sonnet-5-5', 'claude-opus-5-5', 'claude-fable-5-1'],
       embeddings: [],
       decisions: [],
+      rerank: [],
     },
   },
   {
@@ -117,6 +119,7 @@ export const PROVIDERS: readonly ProviderInfo[] = [
       ],
       embeddings: [],
       decisions: [],
+      rerank: [],
     },
   },
   {
@@ -136,24 +139,33 @@ export const PROVIDERS: readonly ProviderInfo[] = [
       chat: ['gpt-6-luna', 'gpt-5.6-luna', 'gpt-6.1-sol', 'gpt-6-astra'],
       embeddings: ['text-embedding-3-small', 'text-embedding-3-large'],
       decisions: [],
+      rerank: [],
     },
   },
   {
+    // Also the provider of a RERANK row: any Cohere-style `POST {base}/rerank` behind a bearer key
+    // (`rerank.ts` reads the request dialect — Cohere, Voyage, Fireworks — from the host).
     id: 'openai_compatible',
     name: 'OpenAI-compatible endpoint',
-    scopes: ['chat', 'embeddings'],
+    scopes: ['chat', 'embeddings', 'rerank'],
     needsApiKey: true,
     needsBaseUrl: true,
     supportsThinking: false,
     supportsServiceTier: false,
     defaultModel: DEFAULT_MODELS.openai_compatible,
     presets: presetsFor('openai_compatible'),
-    suggestedModels: { chat: [], embeddings: [], decisions: [] },
+    suggestedModels: {
+      chat: [],
+      embeddings: [],
+      decisions: [],
+      // A Cohere-style `/rerank` endpoint (`presetsFor(…, 'rerank')`: Fireworks, Cohere, Voyage).
+      rerank: ['fireworks/qwen3-reranker-8b', 'rerank-v3.5', 'rerank-2.5-lite'],
+    },
   },
   {
     id: 'workers_ai',
     name: 'Cloudflare Workers AI',
-    scopes: ['chat', 'embeddings'],
+    scopes: ['chat', 'embeddings', 'rerank'],
     needsApiKey: false,
     needsBaseUrl: false,
     supportsThinking: false,
@@ -168,6 +180,7 @@ export const PROVIDERS: readonly ProviderInfo[] = [
       chat: WORKERS_AI_TOOL_CHOICE_MODELS,
       embeddings: ['@cf/baai/bge-m3', '@cf/baai/bge-large-en-v1.5'],
       decisions: [],
+      rerank: [WORKERS_AI_RERANK_MODEL],
     },
   },
   {
@@ -182,7 +195,7 @@ export const PROVIDERS: readonly ProviderInfo[] = [
     supportsServiceTier: false,
     defaultModel: DEFAULT_MODELS.typesafe,
     presets: [],
-    suggestedModels: { chat: [], embeddings: [], decisions: ['jev-latest'] },
+    suggestedModels: { chat: [], embeddings: [], decisions: ['jev-latest'], rerank: [] },
   },
 ]
 

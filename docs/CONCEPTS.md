@@ -499,7 +499,10 @@ work goes to `AGENT_RUN_WORKFLOW`, and cron only dispatches.
   switch. `type` is the version seam (`x.v2`). An invalid envelope is acked; a handler error retries
   with backoff up to `max_retries`. A missing binding throws. Consumers await everything and never
   use `waitUntil`. Queued today: `tenant.purge`, invitation and access-decision emails,
-  `document.index`/`document.convert`, `chat.compact`. The magic link stays inline.
+  `document.index`/`document.convert`/`document.reembed`, `chat.compact`. The magic link stays
+  inline. A message that fails all its `max_retries` lands in the dead-letter queue
+  (`<app>-jobs-dlq`, `-staging` on staging; no consumer bound, inspected from the dashboard) rather
+  than being deleted.
   Detail: `.claude/rules/api.md`.
 - **Workflow**: `AgentRunWorkflow` (§9). **Concurrency is a DB claim row, never a `Map`**:
   `ACTIVE_RUN_STATUSES` (exclusive index, includes parked runs) ⊃ `CLAIMABLE_RUN_STATUSES`
@@ -517,8 +520,9 @@ work goes to `AGENT_RUN_WORKFLOW`, and cron only dispatches.
   through `services/realtime.ts` inside `defer`, after commit.
 
 **Known gaps:** `/api/admin` paths do not nudge; `notification.read` is never emitted;
-`activity.record` has no producer; the DO 101 upgrade is untestable under Node; no dead-letter
-queue; no vitest-pool-workers smoke project.
+`activity.record` has no producer; the DO 101 upgrade is untestable under Node; nothing reads or
+replays the dead-letter queue (no consumer, no alert, no admin view); no vitest-pool-workers smoke
+project.
 
 ## 6. Email and storage
 
@@ -588,7 +592,9 @@ Server: `api/services/{ai,agents}/**` (read their `CLAUDE.md`), `services/prompt
   / `agent_models` and the only place credentials are decrypted. Chat order: per-agent assignment →
   tenant default → platform `ANTHROPIC_API_KEY` → **Workers AI `glm-4.7-flash` via `[ai]`** → 503
   `ai_not_configured`. Embeddings order: tenant → Workers AI `bge-m3` (1024-dim) →
-  `EMBEDDINGS_API_KEY` → 503. Workers AI calls are **billed** to the account; removing `[ai]` from
+  `EMBEDDINGS_API_KEY` → 503. Rerank order (`resolveRerank`, never a 503): tenant `rerank` row
+  (a Cohere-style `/rerank` as `openai_compatible`, or `workers_ai`) → Workers AI
+  `bge-reranker-base` via `[ai]` → none (search keeps its fused order). Workers AI calls are **billed** to the account; removing `[ai]` from
   both tomls makes the kit zero-spend. Credentials never leave the server (`hasCredential`), and a
   stored key stays with the provider and normalised base URL it was entered for: changing either
   needs the key again. A save decides that on the row it overwrites, read `FOR UPDATE` inside its
@@ -690,8 +696,8 @@ Server: `api/services/{ai,agents}/**` (read their `CLAUDE.md`), `services/prompt
   knowledge base, prompts and model choice as they are TODAY, through the Worker's own resolver —
   the tenant's configs first, then the Workers AI binding, borrowed through wrangler's
   `getPlatformProxy` — and warns before starting when knowledge search would be degraded (no
-  provider, or a key where the Worker uses Workers AI: chunks do not record their model, so
-  resolving the SAME tier is the only guard). Each run replays in a READ ONLY
+  provider, or a key where the Worker uses Workers AI: the dense leg reads only chunks of the
+  query vector's model, so another tier quietly degrades to keyword search). Each run replays in a READ ONLY
   transaction and `ctx.db` refuses writes before they are sent (listed, not fatal). Per run: a
   verdict (`match` / `differs` / `incomplete`), the output diff by JSON path, and each decision's
   status; exit 1 unless every run matches. `--candidate <file>` replays another definition with the
@@ -742,16 +748,70 @@ Server: `api/services/{ai,agents}/**` (read their `CLAUDE.md`), `services/prompt
   uploads go to R2, then `AI.toMarkdown`, then the same indexer. Every text write strips NUL and
   the other C0 controls except tab / LF / CR (`stripControlChars`, `api/utils/core/text.ts`) —
   some PDFs convert with NULs, which Postgres refuses (22021); the span store does the same over
-  `ai_spans` (jsonb refuses `\u0000`, 22P05). Search is hybrid dense + lexical
-  (the lexical half matches ANY query word, ranked by `ts_rank_cd` — `anyTermTsquery` — so a
-  sentence's filler words cannot veto it) with RRF, scoped by `AccessScope` (§1).
+  `ai_spans` (jsonb refuses `\u0000`, 22P05); line endings are normalised to LF before the text
+  is stored. **Chunks are structure-aware** (`chunking.ts`, 800/100-token windows): each is an
+  exact slice of `documents.content` at `[char_start, char_end)` — the overlap comes from starting
+  the next window earlier, never from carried text — every chunk begins and ends at a markdown
+  heading: consecutive whole sections that fit a window share one chunk, only a longer section is
+  cut inside, and each chunk stores the headings its sections share as `heading_path`
+  (`Pricing › Annual plans`); on the Brightside corpus this keeps 54 chunks where one chunk per
+  section made 343 fragments, and recall@10 fell with them; a GFM table (how `toMarkdown`
+  renders a spreadsheet sheet) splits only between rows, and a chunk holding rows without the
+  header stores it as `table_header`. Heading path and table header are prefixed to the text that
+  is EMBEDDED and indexed, never to the stored chunk. `page` is always null (see gaps).
+  Search is hybrid dense + lexical (the lexical half matches ANY query word against
+  `chunks.search_vector` — a GENERATED tsvector over heading path + table header + text with a GIN
+  index, in `SEARCH_TEXT_CONFIG` — ranked by `ts_rank_cd`; `anyTermTsquery`, so a sentence's filler
+  words cannot veto it) with RRF, scoped by `AccessScope` (§1). **Each dense leg reads only chunks
+  whose `embedding_model` is the query vector's model** (migration `0027` backfilled it from the
+  document), so a document embedded by another model stays findable by keyword alone. A hit
+  carries `headingPath`, `page` and `charOffset` (the stored `char_start`; `position()` of the text
+  for a chunk written before 0.37.0). **Reranking** (`services/ai/rerank.ts`, the `RerankFn` seam
+  — `(query, documents) => scores` in [0, 1]): the top `RERANK_CANDIDATES` (default 20) fused candidates go to the resolved
+  reranker with their title and section in front, are reordered by its score (`rerankScore` on the
+  hit; `rank` is the final order, `score` stays the RRF score), filtered by `RERANK_MIN_SCORE` when
+  set (unset = off), then cut to `limit`. The Cohere-style client reads its request dialect
+  (Cohere, Voyage, Fireworks) from the base URL's host; Workers AI's logits are sigmoided onto the
+  same scale. No reranker, fewer than two candidates, `rerank: false` (internal callers only), a
+  failure or a 3 s timeout answer the fused order, and the `retrieval` span says which
+  (`rocketflare.rerank.*`) with a `rerank <model>` child. On the kit fixture a Fireworks
+  `qwen3-reranker-8b` lifts MRR from 0.66 to 0.84 and recall@5 from 0.87 to 1.00 at a median
+  465 ms per search over 20 candidates; 50 candidates scored the same at 810 ms, because every
+  answer passage was already in the fused top 20, hence the default (`docs/EVALS.md`). **Metering**: every embedding (index, re-embed, query) and
+  rerank call is an `ai_usage` row, `knowledge.embeddings` / `knowledge.rerank`, and every fact
+  extraction call a `knowledge.extraction` row, with the provider's token count or a 4-chars
+  estimate; a ledger failure is logged and never fails an ingest or a search (the search route
+  writes it in `waitUntil`). `KNOWLEDGE_TENANT_DAILY_COST_USD` (unset = no cap) bounds the three
+  per UTC day through `knowledgeExtractionAllowed`, which only extraction consults: indexing and
+  search never pause. **Content hash**: `documents.content_hash` is sha-256 of the
+  normalised text (CRLF → LF, trimmed). A plain ingest — or a text upload — whose hash matches a
+  non-failed document of the same tenant and `source` answers THAT document (`200`,
+  `deduplicated: true`, nothing stored), only when both are tenant-wide so a dedupe never reveals a
+  restricted document.
+  **Upkeep** (`services/ai/reindex.ts`): a document is **stale** when it is `indexed`, has text, and
+  holds a chunk whose `embedding_model` is not (or is null against) the model `resolveEmbeddings`
+  picks for the tenant today; `GET /api/ai/documents/health` (admin+) counts documents by status
+  plus `staleEmbeddings` (documents) and `staleChunks`. The `document.reembed` job rebuilds them
+  through `indexDocument` in bounded batches (≤ 20 documents / 400 chunks per message,
+  re-enqueued while more remain), vectors first so a failure keeps the old chunks searchable; it
+  runs from `POST /api/ai/documents/reembed` (admin+, 202) and automatically after an
+  `ai_configs` save or delete that changes the resolved embeddings model (after the commit; without
+  `JOBS_QUEUE` the save still succeeds and the health count shows what is owed). The message names
+  its model, and one for a model the tenant no longer resolves is acked, so chains do not pile up;
+  there is no claim row. `POST /api/ai/documents/:id/retry` (owner or `manage Document`) puts a
+  `failed` document back on `document.convert` (no text) or `document.index` (202; `409
+  document_not_failed` otherwise), and the Documents page offers it as Retry. Inline indexing is
+  an `ingest document` span — under the active span, else a root on the request tracer — with
+  its embeddings batches nested.
   `document-content.ts` is the one text reader behind both
   the viewer and `get_document`. Agent tools resolve the requester's access at execute time.
   **External ids (D34)**: `documents.external_id` is unique per `(tenant_id, source)` (partial
   index, `0016`); an ingest carrying one is an upsert — one `ON CONFLICT` statement, grants
   replaced, chunks rebuilt (the old chunks go in the upsert's transaction, so a pending or failed
   re-index never serves the replaced text), a replaced original removed from R2 — so a connector's re-sync never
-  duplicates. Plugins reach it through `ingestDocument` (§16).
+  duplicates. An upsert whose hash matches an `indexed` row whose chunks are all of today's model
+  is `mode: 'unchanged'`: no chunking, no embedding, chunks kept; title, owner, visibility and
+  grants still follow the source. Plugins reach it through `ingestDocument` (§16).
   **Platform documents**: a `documents` / `chunks` row with `tenant_id` NULL is knowledge about the
   APP itself (a plugin's user guide), readable by EVERY tenant by design. RLS pairs
   `tenantIsolation()` with a SELECT-only `platformReadable()` policy (`tenant_id IS NULL`), so a
@@ -766,6 +826,175 @@ Server: `api/services/{ai,agents}/**` (read their `CLAUDE.md`), `services/prompt
   'unavailable'`. Every tenant document view (the list, viewer, `/search`, `get_document`,
   `list_documents`, delete) keeps `tenant_id = $t` and never shows one; `search_knowledge` includes
   them for the sources `ServerPlugin.knowledgeSources` names, marked `platform`, and chat and agent runs show no document card for one (the documents page cannot open it).
+- **Knowledge facts (D43)**: typed facts read from documents and attached to the app's own rows,
+  or to a staging entity until one exists, each with its source span, trust, validity and state,
+  so people and agents are told when a fact is unconfirmed or contradicted. **Off by default**:
+  the core flag `knowledge-facts` (per tenant, Admin → Feature flags) AND at least one registered
+  entity type switch it on; without both nothing is extracted, `/api/knowledge` is a 404 and the
+  UI shows none of it. Why it is built this way: a fact never writes a domain column (a person
+  promotes or applies it), an uncertain match becomes a staging entity with a "same as …?" item
+  rather than an automatic link (attaching a fact to the wrong customer is the worst failure), and
+  review never blocks retrieval (an open fact is used and labelled). **Contracts** (`shared/src/ai/knowledge-facts.ts`): an entity type declares `type`,
+  `label` and `facts`, a zod object whose keys are snake_case fact keys and whose values are the
+  value schemas (`.describe()` steers extraction; the object must render through
+  `z.toJSONSchema`, so a date is `z.iso.date()`); `FACT_STATES` `accepted · unconfirmed ·
+  conflicting · superseded · rejected` (the middle two are open review items, used AND labelled —
+  review never blocks retrieval); `SOURCE_TRUST` `person > upload > agent > integration`
+  (`trustRank`), which only decides which side of a conflict an answer leads with — both are
+  kept and cited; the fact, entity-card, review-action, possible-match and `factHitSchema` shapes.
+  **Tables** (migration `0028`, which with `scripts/migrate.ts` creates `pg_trgm`):
+  `knowledge_entities` — staging entities (`type`, `name`, `aliases text[]`, `promoted_type` /
+  `promoted_id`, `merged_into`, an embedding of name + aliases, `possible_matches` jsonb = an open
+  "same as …?" item and its `reviewer_user_id`), a GIN trigram index on `name` and a
+  `(tenant_id, type, lower(name))` lookup; `knowledge_facts` — identity (`entity_kind`
+  `domain|staging`, `entity_type`, `entity_id` text, no FK), content (`key`, `value` jsonb,
+  `value_text`), source (`document_id` **cascade** — deleting a document removes its facts;
+  `chunk_id` **set null** — a re-index replaces chunks and the fact keeps its span and quote),
+  trust (`source_kind`, `confidence` 0..1), state (`state`, `superseded_by_id`, `conflicts_with
+  uuid[]`), time (`valid_from`/`valid_to`, `observed_at`, `confirmed_by`/`confirmed_at`) and access
+  (`reviewer_user_id`, `visibility` `tenant|groups`, `private` reserved and never written). A fact
+  has no grants of its own: it is read through its document's (`document_id` →
+  `visibleDocuments`). Deleting the last fact about a staging entity leaves the entity.
+  **Registry** (`api/services/knowledge/`): an `EntityTypeRegistration` (`types.ts`) is the
+  declaration plus an optional `table` (none = the type lives only as staging entities),
+  `idColumn` (default `id`), `labelColumn`, `aliasColumns` (`text` or `text[]`) — drizzle column
+  OBJECTS of that table, never strings — and an optional `resolve(name, { db, access, limit })`
+  returning `{ id, label, score }` candidates in the reader's tenant. Without one, a type with a
+  table gets `defaultEntityResolver`: trigram `similarity()` of the mention against label and
+  aliases, `tenant_id = access.tenantId`, at least `DEFAULT_RESOLVE_MIN_SCORE` (0.3). The app's
+  types are `APP_ENTITY_TYPES` in `entity-types.ts` (app-owned, `manual`; EMPTY in the kit — the
+  core registers no domain types), a plugin's are `ServerPlugin.knowledgeEntityTypes` (§16), and
+  `knowledgeEntityTypes()` composes them, throwing on a plugin type outside `<plugin id>.`, an app
+  type with a dot, a duplicate, a non-snake_case key, an unrenderable facts object, or a column
+  that is not its table's. The reference plugin registers `example-feature.note`.
+  **Extraction** (`api/services/knowledge/extract.ts`, the `knowledge.extract` job): behind the core
+  flag `knowledge-facts` (default OFF, per tenant) and only once a type is registered — both checked
+  when `afterTextIndexed` enqueues it (only for a text that CHANGED: never the unchanged upsert or a
+  dedupe) and again in the job. A document is read in heading-bounded sections rebuilt from its
+  stored chunks (≤ 12,000 characters, one chunk never split); each section is ONE forced
+  `submit_facts` call (`callStructuredTool`) carrying the types with each key's JSON schema and
+  `.describe()`, the document's title and date, the known entities the section names (with their
+  accepted facts) and the other known names. **Model**: `resolveChat` under prompt key
+  `knowledge-extract`, so Settings → agent models can point it at a cheaper model — not TypeSafe's
+  Jev (D37), whose typed questions answer one choice, score or yes/no, not a list of facts with
+  quotes. **The model proposes, code decides**: a candidate survives only if its quote occurs
+  verbatim (whitespace, quote marks and emphasis forgiven) in the section — stored as `chunk_id`,
+  absolute `char_start`/`char_end` and the quote — its value parses against the key's schema
+  (`values.ts`: "£1,140" → 1140, "yes" → true, a case-blind enum), and every date resolves in CODE
+  against `documents.created_at` (`dates.ts`: ISO, UK numeric day-first, "next Monday", "the first
+  of next month", "start of next quarter", "until 10 July"…); anything unreadable drops the fact.
+  **Trust** (`source_kind`): `integration` for a plugin's `ingestDocument` (`documents.origin`),
+  `agent` for an `agent:` source, else `upload`; the reviewer is the ingest's `reviewerUserId`
+  (`documents.reviewer_user_id`), else the document's owner, else none. **Resolution**
+  (`entities.ts`): the type's resolver (domain rows), then staging entities by trigram over name and
+  aliases (`LINK_THRESHOLD` 0.6 links one clear candidate; 0.45–0.6, or a tie, is a possible match
+  on a NEW staging entity with a reviewer), then — only when nothing linked — the name's embedding
+  (cosine ≥ 0.9 adds a review candidate, never a link), else a new staging entity. The thresholds
+  come from the fixture: "Harbour View Dental" / "…Practice Ltd" 0.61, "Riverside Lodge" / "…Care
+  Home" 0.62 must link; "Harbourside Dental Lab" / "Harbour View Dental" 0.48 and "Northgate Vets" /
+  "…Veterinary Surgery" 0.43 must not. **State** (`state.ts`) against the answerable facts held
+  for that entity and key: none → `accepted`, or `unconfirmed` below 0.7 confidence; the same value
+  → `accepted`, and a held `unconfirmed` one is confirmed; a different value → both `conflicting`,
+  linked both ways (`conflicts_with`); when both sides carry an explicit validity window and the
+  windows do not overlap it is a change over time instead — the earlier is `superseded` by the
+  later. **Preference is derived, never stored** (`isPreferredOver` / `preferredFact` in shared):
+  an answer leads with the newer side when its source is at least as trusted, else the older.
+  **A section never contradicts itself**: two values for one entity and key over the same
+  validity in ONE section are a misreading (a table's two price columns put on one entity) and
+  neither is written (`dropped.ambiguous`); different windows there are a change over time and both
+  stay. A placeholder value (`<UNKNOWN>`, `N/A`, `TBD`) is no value.
+  Nothing writes a domain column. Re-extracting a document first removes its facts and undoes the
+  conflicts they caused — **except a person's decisions**: a fact somebody confirmed
+  (`confirmed_at` set, by `confirm` or as the chosen side of a `prefer`) or rejected (only a review
+  writes `rejected`) stays in the table while the document is read again, and a new reading of the
+  same entity, key and value (the same validity preferred) takes its place IN that row — a fresh
+  citation, confidence and validity, the same decision: rejected stays rejected, confirmed stays
+  confirmed by the same person, a `prefer`'s loser stays rejected (a confirmed fact whose validity
+  moved has its key decided again, `recomputeKey`). A kept fact the new text no longer states is
+  deleted when the run ends, unless a section failed (an incomplete reading is no evidence), and
+  because the decisions wait in the table rather than in memory a retried run still finds them.
+  No decisions table, no migration. A run that wrote or removed facts nudges
+  `entity.changed { entity: 'knowledge' }` tenant-wide (the job sends it before it returns,
+  `collectingRealtime`). **Cost**: every call is a `knowledge.extraction` row (name embeddings
+  `knowledge.embeddings`); `knowledgeExtractionAllowed` is checked before each document, and at the
+  cap the job re-enqueues itself for the next UTC day. On the kit fixture (`pnpm eval facts`,
+  42 documents, Haiku 5.5, 2026-11-17) one document is one call, about 5,300 input and 700 output
+  tokens — **$0.0009 per document** from the eval's `ai_usage` rows — with precision 0.93, recall
+  0.71, 83 % of planted conflicts caught, 14 % of flags false alarms and every caught conflict
+  preferring the planted winner (`docs/EVALS.md`; run to run the false-alarm share moves by about
+  ten points). Sonnet 5.5: 0.98 / 0.80 / 83 % / 17 %, at about 19× the cost — a stronger model does
+  not lower it. The 10 % false-alarm share aimed for is not met; the causes are in Known gaps.
+  **Reading facts** (`facts-read.ts`, `facts-sql.ts`): a fact is read through its document —
+  every query inner-joins `documents` and ANDs `visibleDocuments(scope)`, so a fact whose
+  document you cannot open does not exist for you (404, never 403), and neither does a staging
+  entity known only from such documents. A fact `conflicting` only with hidden facts reads, for
+  that reader, as the state it would return to without them (`accepted` / `unconfirmed`), and its
+  `conflicts_with` names only visible facts — a hidden document must not leak even "another source
+  disagrees". Admin-level readers see everything. **Review API** (`/api/knowledge`, behind
+  `requireFeature('knowledge-facts')` → 404 `feature_disabled` when off; CASL subject
+  `KnowledgeFact`: member `read` + `update`, admin+ `manage`): `GET /review` (open facts and
+  possible matches addressed to me — everyone's for `manage KnowledgeFact`, `?mine=true` narrows —
+  newest first, paginated over both kinds with one UNION; `?kind=`, `?entityType=`, `?entityId=`);
+  `POST /facts/:id/review { action }` — `confirm` (→ `accepted`, `confirmed_by/at`, trust
+  unchanged; 409 `fact_conflicting` on a conflict), `reject` (→ `rejected`, unlinked from every
+  conflict; a side left disagreeing with nothing, or superseded by it, returns to `accepted` — when
+  confirmed or confident — or `unconfirmed`), `prefer` (→ `accepted` and confirmed; every
+  conflict the reviewer can see becomes `rejected`, not `superseded`: superseded means "true for an
+  earlier window", which an `asOf` lookup answers with and re-extraction restores, while a person
+  choosing between two values for the same time has said the other was never right; a conflict
+  from a document hidden from the reviewer stays linked, so the fact stays `conflicting` for the
+  admins who see both); 409 `fact_not_reviewable` on `rejected` / `superseded`. Only the item's
+  reviewer or a manager acts (403). `GET /entities/:type/:id` — the entity card (staging by uuid,
+  or a domain row of a registered type: its label, the names of staging entities promoted to it as
+  aliases), every visible fact in every state. `POST /entities/:id/merge { into }` (a staging
+  target of the same type: names become its aliases, `merged_into` set, facts moved — to the row a
+  promoted target became; a domain `into` is a promote), `/promote { id }` (a row of the entity's
+  own registered type, found through its table's id column or its resolver in this tenant, 400
+  `entity_target_not_found` / `entity_type_not_promotable`; records `promoted_type` /
+  `promoted_id` and moves the facts onto the row — never a domain column), `/keep-separate`
+  (closes the possible match). Merge and promote re-decide, with `decideFactState` oldest first,
+  every key BOTH entities held answerable facts for (a confirmed fact counts as fully confident);
+  keys only one side held keep their states; 409 `entity_settled` on a second settle. They are a
+  person's actions over HTTP, so no approval gate — `Tool.requiresApproval` is what an AGENT tool
+  doing the same would need, and none is exposed. Each action writes an `activity_events` row
+  (`knowledge.fact.reviewed`, `knowledge.entity.merged|promoted|kept_separate`) and, after its
+  transaction commits, nudges `entity.changed { entity: 'knowledge', id }` tenant-wide (an id,
+  nothing else; `access.changed` also invalidates `['knowledge']`, since a fact is read through its
+  document). A fact review item names its entity (`entity { kind, type, id, name }`); the card
+  says whether the entity can be promoted (`promotable`) and who settles it (`reviewerUserId`); a
+  possible match is counted in `pagination.total` only when the reader can see a candidate.
+  **UI** (React; everything behind `KNOWLEDGE_FACTS_GUARD` = the flag AND `read KnowledgeFact`,
+  so a tenant without the flag neither sees nor fetches any of it): the **entity page**
+  `/knowledge/entities/:type/:id` (`entityPath`) — facts grouped by key, current first (value,
+  state, validity, the source document linked to the passage, the verbatim quote), superseded and
+  rejected as the key's history, both sides of a conflict together; a possible match with Merge /
+  Keep separate; Promote (a row id of the type) where `promotable`; a merged or promoted entity
+  says where it went. **Inline doubt** on every open fact, there and in the review list: "Is this
+  still right?" — Confirm and Not right, or Use this one and Not right on a conflicting fact —
+  shown only to the item's reviewer or a manager (anyone else reads one sentence). The **review
+  list** is a "To review" view of the Knowledge page (`/documents?view=review`), not a queue page:
+  open items, filterable by kind, "Only mine" for a manager, each linking to its entity, a
+  conflict shown once with every side (the API lists each side as an item). The
+  **badge** on the Knowledge nav item counts MY open items (`GET /review?mine=true&pageSize=1` →
+  total), fed by the nudge and never polled. In **chat**, a turn that used `lookup_facts` or the
+  `search_knowledge` facts block shows a compact card per entity (name, type, the facts the tool
+  returned with state badges, a link to its page): `CUSTOM kit.entity` while streaming, the same
+  pure mapper (`entityCardsFromToolCalls`) over the persisted `toolCalls` afterwards. No success
+  toasts anywhere: a settled item updates in place; a 409 is `alert-info` and a refetch.
+  **Chat tools**,
+  only for a tenant with the flag (`buildAgentTools` reads `AgentToolContext.features` — chat
+  passes `auth.features` — else the tenant's): `lookup_facts { entity?, type?, key?, asOf? }`
+  (entities by name: staging trigram, the better of `similarity` and `word_similarity` ≥ 0.5, a
+  promoted one as its row, then each registered type's resolver) and a `facts` block on
+  `search_knowledge` for the entities the query names (`word_similarity(name, query)` ≥ 0.7).
+  Both answer `factHitGroupSchema`s: facts grouped by entity, each with its state in the reader's
+  view, `preferred` (`preferredFact` over the visible sides), the document title and quote, and
+  validity; `rejected` never, `superseded` only when `asOf` falls in its window. The chat prompt
+  and both tool descriptions require stating uncertainty and citing every side of a conflict,
+  never picking one silently. On the fixture (`pnpm eval conflicts`, Haiku 5.5, 2026-11-17) 16–17
+  of the 18 conflicted entity/key questions pass the rubric "every value with its source, and the
+  disagreement said" (mean 0.89–0.94 over two runs); each failure was the judge refusing a real
+  corpus document the rubric did not list, not a side left out.
 - **Usage**: one `ai_usage` row per call, costed at write time from the one price table
   (`shared/ai/pricing`; an unknown model gets `null` and is counted as unpriced). While a cost cap
   applies to a run the deployment pays for (the platform key or the Workers AI binding), a chat call
@@ -809,7 +1038,10 @@ Server: `api/services/{ai,agents}/**` (read their `CLAUDE.md`), `services/prompt
   `POST /api/chat/conversations/:id/messages` route (so `prepareChatTurn` decides prompt, history and
   tools, as in production); the agent target runs `enqueueRun` → `claimStep` → `executeRun` →
   `finishStep` inline. Each case gets a tenant of its own with its `context` documents ingested, so
-  retrieval can only find what the case put there. Everything a target does runs in
+  retrieval can only find what the case put there. A **corpus** (`datasets/**/<name>/docs/*.md`
+  plus answer keys — `docs/EVALS.md` § Corpora) is ingested once, with a REAL embedder only, into
+  a tenant its cases share; `knowledge · retrieval` grades the ranking (`Recall@k`, `MRR` in
+  code), and the kit's own fixture, `datasets/kit-only/brightside/`, is kit-only. Everything a target does runs in
   `withEvalScope` (`observability/context.ts`), which marks its traces `rocketflare.eval=true`.
   **The harness input IS the `EvalCase`** (`shared/ai/evals.ts`: input, messages, context,
   expected `{ output, rubric, tools, toolsMatch, contains }`, tags, source), so judges read each
@@ -817,7 +1049,7 @@ Server: `api/services/{ai,agents}/**` (read their `CLAUDE.md`), `services/prompt
   for, because vitest-evals averages a `null` score as 0. Deterministic judges (`Contains`,
   `Matches`, `Schema`, `Trajectory` with agentevals' strict/unordered/subset/superset, `Budget`)
   come first; LLM judges (`Rubric`, `Faithfulness` against what retrieval actually returned,
-  `Reference` = vitest-evals' `FactualityJudge`) run through ONE judge harness that calls the kit's
+  `Reference` = vitest-evals' `FactualityJudge`; `ContextPrecision` for retrieval) run through ONE judge harness that calls the kit's
   resolver on the `evals-judge` prompt key — so `agent_models` can pin it, `--judge-model` overrides
   it, and every call is an `ai_usage` row under `evals.judge`. `--provider` / `--judge-provider
   fireworks|gemini` put the target or judge on a real encrypted tenant `ai_configs` row
@@ -864,8 +1096,51 @@ tool with an approval gate is available to agent runs only), no `STATE_DELTA`; p
 stream cursor; a cancelled run emits nothing rather than AG-UI 1.0's `RUN_FINISHED` `cancelled`
 outcome; no token-level streaming for runs (would need a per-run DO); char-based history budget
 not derived from the model; sliding window defeats prompt caching on long threads; `enqueueRun`
-does not pre-resolve the client; Workers AI forced tools on off-list models are best-effort; no
-rerank, no generated `tsvector`; platform documents cannot be opened with `get_document` (a
+does not pre-resolve the client; Workers AI forced tools on off-list models are best-effort;
+lexical search is English-only (`SEARCH_TEXT_CONFIG` is one constant, not per tenant);
+reranking: the Workers AI `bge-reranker-base` default is not yet measured against the fixture —
+neither recall nor latency at 20 candidates, nor whether its 512-token input limit truncates an
+800-token chunk (`pnpm eval retrieval --rerank workers-ai` needs a Cloudflare API token) — and its
+logits-vs-probabilities reading is a per-batch heuristic, every search with `[ai]` bound pays one
+extra Workers AI call, the Fireworks reranker adds ~0.5 s per search at 20 candidates (~0.8 s at
+50), `RERANK_MIN_SCORE`'s scale is per model so the kit ships it off, the
+plugin API's `searchKnowledge` hit does not carry `rerankScore`, and the global-search plugin
+still carries its own copy of the client until it switches to the core seam in its own repo;
+knowledge metering: Workers AI embeddings and rerank tokens are character estimates, a rerank that
+timed out is recorded as billed, platform-document ingest (tenant-less) is unmetered, and
+platform documents are never extracted; knowledge facts: about one flag in seven is a false
+alarm on the fixture (14 % with Haiku, 17 % with Sonnet, ±10 points run to run; 10 % was the
+aim); a section's ambiguous candidates (`dropped.ambiguous`) can still leave a staging entity with
+no facts; Promote asks for the domain row's id
+(there is no picker searching the type's rows); the agent-run timeline shows no entity cards (only
+chat does); `search_knowledge`'s facts block finds only entities with a staging row
+(a domain row that never had one is reached through `lookup_facts`' resolver, not by being named
+in a query); a person's decision survives re-extraction only when the new reading repeats the
+fact's exact entity, key and value — a reworded value ("£285" re-read as "285.00" is the same;
+"per visit" for "per call-out" is not) or an entity resolved differently comes back as a new open
+item; a nudge carries no reviewer, so every member's badge refetches on any settle; the default
+resolver matches domain rows by trigram only (no embedding — a domain table carries none); two
+extractions of one tenant running at once can each miss the other's facts (no per-tenant
+serialisation), so a conflict between them goes unflagged until one is re-extracted; the
+staging trigram lookup scans the tenant's entities of that type (the GIN index serves `%`, not
+`similarity() >=`); one service named differently by two documents ("Car park and entrances
+gritting — annual plan" vs "Winter gritting (annual plan)") stays two staging entities, so their
+price change is never flagged (the fixture's two missed `grit-annual-price` conflicts, and most of
+Haiku's false alarms); values compare exactly after normalisation, so a partial name ("Marcus" in
+meeting minutes against "Marcus Bell") and two wordings of one unit ("per call-out" / "per visit")
+are conflicts a person has to dismiss (most of Sonnet's); the model still reads proposed values
+from a proposal now and then; a
+year-less date more than 90 days before the document is read as next year; a validity window
+stated on one side only is a conflict, not a change over time; page numbers: `toMarkdown` emits no page markers, so `chunks.page` is always null;
+chunks written before 0.37.0 keep their old shape (no heading path or offsets) until re-indexed,
+and an unchanged upsert never re-indexes them (re-embed rebuilds only another model's chunks); a
+stale document is found by keyword only until its re-embed lands; two re-embed chains for the same
+model (a double `POST /reembed`) both run, wasting embeddings calls but not duplicating chunks; a
+document the provider keeps refusing transiently holds its tenant's re-embed until the message
+dead-letters (`POST /reembed` restarts it); no UI for the health count or the re-embed; Retry
+re-runs the same input, so a document that failed on content (too long, unconvertible) fails
+again; the plain-ingest dedupe is a read, not a constraint, so two
+concurrent identical ingests can both create a row; platform documents cannot be opened with `get_document` (a
 search hit is all a model reads of one), are not re-embedded automatically when the platform
 embedder changes (the next `ingestPlatformDocument` re-indexes; until then they are found
 lexically), and have no admin view; HITL asks cannot be amended, have no
@@ -971,7 +1246,8 @@ free-text lines and the logger drop terminal control characters, and colour is a
 Detail: `.claude/rules/cli.md`.
 
 **Known gaps:** no device-code flow; one profile at a time; `logout` does not revoke the key; no
-shell completion; not published.
+shell completion; not published; no knowledge commands (documents, search and fact review are
+the API and the UI only).
 
 ## 12. Shared package
 
@@ -1450,7 +1726,9 @@ as merging a PR. A plugin repo mirrors the host tree and ships **no migration, n
 - **Knowledge ingest (D34)**: `ingestDocument` / `ingestDocumentFile` / `deleteIngestedDocument`
   over the kit's ingest paths (§9). With an `externalId`, the same `(tenant, source, externalId)`
   UPDATES the row — text, owner, visibility, grants, chunks, the stored original — so a sync can
-  replay safely. Group ids are checked against the tenant first. This file belongs to the
+  replay safely. Group ids are checked against the tenant first. A plugin's document is
+  `origin: 'integration'` — the weakest trust for the facts read from it (D43) — and an optional
+  `reviewerUserId` (the person who connected the source) reviews those facts. This file belongs to the
   `feature-knowledge` surface; a plugin that ingests requires it.
 - **Platform knowledge**: `ingestPlatformDocument(ctx, { source, externalId, title, text })` /
   `prunePlatformDocuments(ctx, { source, keepExternalIds })` write the tenant-less corpus (§9).
@@ -1464,6 +1742,14 @@ as merging a PR. A plugin repo mirrors the host tree and ships **no migration, n
   sources to the kit's `search_knowledge` tool (unioned; an unnamespaced source is dropped, a throw
   skipped). `fuseByRank` / `anyTermTsquery` / `candidatePoolSize` are exported for a plugin's own
   corpus. **Never put tenant data in a platform document**: every organisation can read it.
+- **Knowledge entity types** (D43, §9): `ServerPlugin.knowledgeEntityTypes` is a list of
+  `EntityTypeRegistration`s (`@/plugins/api`) whose rows extraction may attach facts to — a FIELD
+  on the plugin contract, not a barrel, so the seam is still six barrel lines. Each `type` is
+  `<plugin id>.<name>`; `table` is optional and, when given, one of the plugin's own tables with
+  `labelColumn` for the kit's trigram resolver (`defaultEntityResolver`, exported so a plugin's
+  own `resolve` can wrap it) or a `resolve` that filters by `scope.access.tenantId`.
+  `knowledgeEntityTypes()` composes the app's and every plugin's and throws on a bad one; the
+  config test runs it over the installed set. A fact is never written into a plugin's column.
 - **Skills**: a plugin ships agent skills at `skills/<dir>/` in its own tree and declares them in
   `"skills"`; `add` copies each to `.claude/skills/<dir>/` (the one place outside its roots a
   plugin may write) and records it on the surface, `upgrade` REPLACES it (never patches — an agent's

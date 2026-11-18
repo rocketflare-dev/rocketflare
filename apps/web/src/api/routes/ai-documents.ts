@@ -4,25 +4,32 @@
  * GROUPS: every read path here ANDs `visibleDocuments(scope)` with the tenant predicate, and
  * a document the caller may not see answers **404**, the same body as one that does not exist. Two ways in, one path: `POST /ingest` (JSON text) and
  * `POST /upload` (multipart — the original goes to R2 as a `files` row, scope `documents`). Small
- * texts index inline (201 `indexed`); large texts and every binary upload return `pending` and a
+ * texts index inline (201 `indexed`); the same text again as a tenant-wide document of the same
+ * source answers the existing one (200, `deduplicated: true`); large texts and every binary upload return `pending` and a
  * `document.index` / `document.convert` job finishes them. Deleting someone else's document needs
  * `delete Document` (admin+) — own-document delete is the `ownerUserId` check here. Deleting a
  * document deletes its original. The raw text and the vectors never leave the server.
+ * Upkeep: `GET /health` and `POST /reembed` (admin+, `manage Document`) report and rebuild stale
+ * embeddings; `POST /:id/retry` (owner or `manage Document`) re-enqueues a failed document.
  */
 import {
+  type DocumentsHealth,
   documentContentQuerySchema,
   documentListQuerySchema,
+  type IngestDocumentResponse,
   ingestTextRequestSchema,
+  type ReembedResponse,
+  type RetryDocumentResponse,
   resolveDocumentUploadType,
   type SearchResponse,
   searchRequestSchema,
   uploadDocumentFieldsSchema,
 } from '@rocketflare/shared/ai/embeddings'
 import { MAX_UPLOAD_BYTES } from '@rocketflare/shared/files'
-import { setVisibilityRequestSchema } from '@rocketflare/shared/groups'
+import { type GroupRef, setVisibilityRequestSchema } from '@rocketflare/shared/groups'
 import { paginationQuerySchema } from '@rocketflare/shared/pagination'
 import { and, count, desc, eq } from 'drizzle-orm'
-import { documents, files } from '../../db/schema'
+import { type DocumentRow, documents, files } from '../../db/schema'
 import { uploadBodyLimit } from '../middleware/body-limit'
 import { can, guardPermission } from '../middleware/permissions'
 import {
@@ -38,12 +45,15 @@ import {
   readDocumentCard,
   readDocumentWindow,
 } from '../services/ai/document-content'
+import { AiNotConfiguredError } from '../services/ai/errors'
 import {
   ConversionNotConfiguredError,
   ingestFile,
   ingestText,
   toDocument,
 } from '../services/ai/ingest'
+import { documentsHealth, enqueueReembed, retryFailedDocument } from '../services/ai/reindex'
+import { resolveEmbeddingsModel } from '../services/ai/resolve'
 import { searchChunks } from '../services/ai/retrieval'
 import { nudge, realtimeEvent } from '../services/realtime'
 import { createR2Storage, deleteStoredFile, type StorageService } from '../services/storage'
@@ -106,11 +116,11 @@ function optionalStorage(c: AppContext): StorageService | null {
 // ---- POST /api/ai/documents/ingest ----------------------------------------------------------------
 
 aiDocumentsRouter.post('/ingest', validate('json', ingestTextRequestSchema), async c => {
-  const { db, tenantId, user, cfg, auth, defer } = withAuthAndDb(c)
+  const { db, tenantId, user, cfg, auth, defer, tracer } = withAuthAndDb(c)
   guardPermission(c, 'create', 'Document')
   const body = c.req.valid('json')
   const access = await resolveRequestedVisibility(db, accessScopeOf(auth), body)
-  const { document, mode } = await ingestText(
+  const { document, mode, deduplicated } = await ingestText(
     db,
     cfg,
     c.env,
@@ -123,30 +133,33 @@ aiDocumentsRouter.post('/ingest', validate('json', ingestTextRequestSchema), asy
       visibility: access.visibility,
       groupIds: access.groupIds,
     },
-    { jobs: c.env.JOBS_QUEUE }
+    { jobs: c.env.JOBS_QUEUE, tracer }
   )
-  defer(() =>
-    recordActivity(db, {
-      tenantId,
-      userId: user.id,
-      type: 'document.ingested',
-      subjectType: 'Document',
-      subjectId: document.id,
-      metadata: {
-        mode,
-        status: document.status,
-        chunkCount: document.chunkCount,
-        visibility: document.visibility,
-      },
-    })
-  )
-  return c.json(toDocument(document, await groupsOf(db, tenantId, document.id)), 201)
+  // A duplicate wrote nothing, so there is nothing to record: the document's own ingest was.
+  if (!deduplicated) {
+    defer(() =>
+      recordActivity(db, {
+        tenantId,
+        userId: user.id,
+        type: 'document.ingested',
+        subjectType: 'Document',
+        subjectId: document.id,
+        metadata: {
+          mode,
+          status: document.status,
+          chunkCount: document.chunkCount,
+          visibility: document.visibility,
+        },
+      })
+    )
+  }
+  return ingestResponse(c, document, deduplicated, await groupsOf(db, tenantId, document.id))
 })
 
 // ---- POST /api/ai/documents/upload ----------------------------------------------------------------
 
 aiDocumentsRouter.post('/upload', uploadBodyLimit, async c => {
-  const { db, tenantId, user, cfg, auth, defer } = withAuthAndDb(c)
+  const { db, tenantId, user, cfg, auth, defer, tracer } = withAuthAndDb(c)
   guardPermission(c, 'create', 'Document')
   const storage = storageFor(c)
 
@@ -202,7 +215,7 @@ aiDocumentsRouter.post('/upload', uploadBodyLimit, async c => {
         visibility: access.visibility,
         groupIds: access.groupIds,
       },
-      { jobs: c.env.JOBS_QUEUE, storage }
+      { jobs: c.env.JOBS_QUEUE, storage, tracer }
     )
   } catch (err) {
     if (err instanceof ConversionNotConfiguredError) {
@@ -213,27 +226,42 @@ aiDocumentsRouter.post('/upload', uploadBodyLimit, async c => {
     }
     throw err
   }
-  const { document, mode } = result
-  defer(() =>
-    recordActivity(db, {
-      tenantId,
-      userId: user.id,
-      type: 'document.ingested',
-      subjectType: 'Document',
-      subjectId: document.id,
-      metadata: {
-        mode,
-        status: document.status,
-        chunkCount: document.chunkCount,
-        contentType: document.contentType,
-        sizeBytes: document.sizeBytes,
-        fileId: document.fileId,
-        visibility: document.visibility,
-      },
-    })
-  )
-  return c.json(toDocument(document, await groupsOf(db, tenantId, document.id)), 201)
+  const { document, mode, deduplicated } = result
+  if (!deduplicated)
+    defer(() =>
+      recordActivity(db, {
+        tenantId,
+        userId: user.id,
+        type: 'document.ingested',
+        subjectType: 'Document',
+        subjectId: document.id,
+        metadata: {
+          mode,
+          status: document.status,
+          chunkCount: document.chunkCount,
+          contentType: document.contentType,
+          sizeBytes: document.sizeBytes,
+          fileId: document.fileId,
+          visibility: document.visibility,
+        },
+      })
+    )
+  return ingestResponse(c, document, deduplicated, await groupsOf(db, tenantId, document.id))
 })
+
+/**
+ * `201` with the new document, or `200` with the EXISTING one when the same text was already a
+ * tenant-wide document of the same source (`deduplicated: true`).
+ */
+function ingestResponse(
+  c: AppContext,
+  document: DocumentRow,
+  deduplicated: boolean,
+  groups: GroupRef[]
+) {
+  const body: IngestDocumentResponse = { ...toDocument(document, groups), deduplicated }
+  return c.json(body, deduplicated ? 200 : 201)
+}
 
 /** `groupIds` travels through multipart as a JSON array; anything unparseable is left to zod. */
 function jsonArrayField(form: FormData | null, name: string): unknown {
@@ -296,12 +324,58 @@ aiDocumentsRouter.get('/', validate('query', documentListQuerySchema), async c =
 // ---- POST /api/ai/documents/search ----------------------------------------------------------------
 
 aiDocumentsRouter.post('/search', validate('json', searchRequestSchema), async c => {
-  const { db, cfg, auth } = withAuthAndDb(c)
+  const { db, cfg, auth, defer } = withAuthAndDb(c)
   guardPermission(c, 'read', 'Document')
   const request = c.req.valid('json')
-  const hits = await searchChunks(db, cfg, c.env, accessScopeOf(auth), request)
+  // The usage rows (query embedding, rerank) are written after the response, in `waitUntil`.
+  const hits = await searchChunks(db, cfg, c.env, accessScopeOf(auth), { ...request, defer })
   const body: SearchResponse = { query: request.query, hits }
   return c.json(body)
+})
+
+// ---- GET /api/ai/documents/health -----------------------------------------------------------------
+
+/** Documents by status, the embeddings model today and how much is stale against it (admin+). */
+aiDocumentsRouter.get('/health', async c => {
+  const { db, tenantId, cfg } = withAuthAndDb(c)
+  guardPermission(c, 'manage', 'Document')
+  const body: DocumentsHealth = await documentsHealth(db, cfg, c.env, tenantId)
+  return c.json(body)
+})
+
+// ---- POST /api/ai/documents/reembed ---------------------------------------------------------------
+
+/**
+ * Re-embed every stale document with today's model: a `document.reembed` chain (202). Nothing
+ * stale → 202 with `enqueued: false`. No embedder → 503 `ai_not_configured` before anything is
+ * enqueued; no `JOBS_QUEUE` → `JobsQueueNotConfiguredError`, as every other enqueue.
+ */
+aiDocumentsRouter.post('/reembed', async c => {
+  const { db, tenantId, user, cfg, defer } = withAuthAndDb(c)
+  guardPermission(c, 'manage', 'Document')
+  const model = await resolveEmbeddingsModel(db, cfg, c.env, tenantId)
+  if (!model) throw new AiNotConfiguredError('embeddings')
+  const health = await documentsHealth(db, cfg, c.env, tenantId)
+  const enqueued = health.staleEmbeddings > 0
+  if (enqueued) await enqueueReembed(c.env.JOBS_QUEUE, tenantId, model)
+  if (enqueued)
+    defer(() =>
+      recordActivity(db, {
+        tenantId,
+        userId: user.id,
+        type: 'document.reembed_requested',
+        subjectType: 'Document',
+        subjectId: null,
+        metadata: { model, staleEmbeddings: health.staleEmbeddings },
+      })
+    )
+  const body: ReembedResponse = {
+    embeddingModel: model,
+    staleEmbeddings: health.staleEmbeddings,
+    staleChunks: health.staleChunks,
+    enqueued,
+  }
+  return c.json(body, 202)
 })
 
 // ---- GET /api/ai/documents/:id --------------------------------------------------------------------
@@ -401,6 +475,43 @@ aiDocumentsRouter.delete('/:id', async c => {
     })
   )
   return c.body(null, 204)
+})
+
+// ---- POST /api/ai/documents/:id/retry -------------------------------------------------------------
+
+/**
+ * Re-enqueue a `failed` document (owner or `manage Document`, the visibility rule): no text yet →
+ * `document.convert`, text → `document.index`; 202 with the row, now `pending`. Not failed → 409
+ * `document_not_failed`; hidden or absent → the shared 404.
+ */
+aiDocumentsRouter.post('/:id/retry', async c => {
+  const { db, tenantId, user, auth, defer } = withAuthAndDb(c)
+  guardPermission(c, 'read', 'Document')
+  const id = uuidParam(c, 'id')
+  const row = await findVisibleDocument(db, accessScopeOf(auth), id)
+  if (row.ownerUserId !== user.id && !can(c, 'manage', 'Document')) {
+    throw new ForbiddenError('You can only retry documents you added')
+  }
+  const notFailed = () =>
+    new ConflictError(`This document is ${row.status}, not failed`, 'document_not_failed')
+  if (row.status !== 'failed') throw notFailed()
+  const result = await retryFailedDocument(db, c.env.JOBS_QUEUE, row)
+  if (!result) throw notFailed()
+  defer(() =>
+    recordActivity(db, {
+      tenantId,
+      userId: user.id,
+      type: 'document.retried',
+      subjectType: 'Document',
+      subjectId: id,
+      metadata: { job: result.job },
+    })
+  )
+  const body: RetryDocumentResponse = {
+    ...toDocument(result.document, await groupsOf(db, tenantId, id)),
+    job: result.job,
+  }
+  return c.json(body, 202)
 })
 
 // ---- PUT /api/ai/documents/:id/visibility ----------------------------------------------------

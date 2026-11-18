@@ -36,8 +36,63 @@ export const documentSchema = z.object({
 })
 export type Document = z.infer<typeof documentSchema>
 
+/**
+ * What `POST /ingest` and `POST /upload` answer: the document, and whether it is one that ALREADY
+ * existed. `deduplicated: true` (status `200`, not `201`) = the same text was already a
+ * tenant-wide document of the same source, and that document is returned instead of a second one.
+ */
+export const ingestDocumentResponseSchema = documentSchema.extend({
+  deduplicated: z.boolean(),
+})
+export type IngestDocumentResponse = z.infer<typeof ingestDocumentResponseSchema>
+
 /** Longest text `POST /api/ai/documents/ingest` accepts (characters; ~ the 1 MB JSON body cap). */
 export const INGEST_TEXT_MAX_CHARS = 500_000
+
+/**
+ * `GET /api/ai/documents/health` (admin+): the tenant's knowledge base at a glance. A document's
+ * embeddings are STALE when it is `indexed`, has stored text, and at least one of its chunks was
+ * embedded by a model other than `embeddingModel` (the one `resolveEmbeddings` picks today) — or by
+ * no recorded model. Such a document is still found lexically but is absent from dense search
+ * until `POST /reembed` (or the automatic re-embed after an embeddings-default change) rebuilds it.
+ * `embeddingModel` is null when no embedder resolves, and then nothing counts as stale.
+ */
+export const documentsHealthSchema = z.object({
+  documents: z.object({
+    total: z.number().int().nonnegative(),
+    pending: z.number().int().nonnegative(),
+    indexed: z.number().int().nonnegative(),
+    failed: z.number().int().nonnegative(),
+  }),
+  embeddingModel: z.string().nullable(),
+  /** Documents with at least one stale chunk — the unit `document.reembed` rebuilds. */
+  staleEmbeddings: z.number().int().nonnegative(),
+  /** The stale chunks themselves, across those documents. */
+  staleChunks: z.number().int().nonnegative(),
+})
+export type DocumentsHealth = z.infer<typeof documentsHealthSchema>
+
+/**
+ * `POST /api/ai/documents/reembed` (admin+) → `202`: how much is stale and whether a
+ * `document.reembed` job was enqueued (`false` when nothing is stale).
+ */
+export const reembedResponseSchema = z.object({
+  embeddingModel: z.string(),
+  staleEmbeddings: z.number().int().nonnegative(),
+  staleChunks: z.number().int().nonnegative(),
+  enqueued: z.boolean(),
+})
+export type ReembedResponse = z.infer<typeof reembedResponseSchema>
+
+/**
+ * `POST /api/ai/documents/:id/retry` (owner or admin+) → `202` with the document, now `pending`:
+ * an upload with no text yet goes back to `document.convert`, anything with text to
+ * `document.index`. A document that is not `failed` is a `409 document_not_failed`.
+ */
+export const retryDocumentResponseSchema = documentSchema.extend({
+  job: z.enum(['document.convert', 'document.index']),
+})
+export type RetryDocumentResponse = z.infer<typeof retryDocumentResponseSchema>
 
 export const ingestTextRequestSchema = z.object({
   title: z.string().trim().min(1).max(200),
@@ -73,6 +128,10 @@ export const searchHitSchema = z.object({
   seq: z.number().int().nonnegative(),
   /** How many passages the document has in total. */
   documentPassages: z.number().int().nonnegative(),
+  /** The markdown headings the passage sits under, joined with ` › `; null when none. */
+  headingPath: z.string().nullable(),
+  /** Page of the source document — null when unknown (today: always). */
+  page: z.number().int().positive().nullable(),
   /**
    * Character offset of the passage in the document's text — read around it with
    * `GET`/`get_document` at this offset. Null when it cannot be located (re-chunked since).
@@ -80,11 +139,16 @@ export const searchHitSchema = z.object({
   charOffset: z.number().int().nonnegative().nullable(),
   /** Reciprocal-rank-fusion score — higher is better; NOT a cosine similarity. */
   score: z.number(),
-  /** 1-based position in the fused order. */
+  /** 1-based position in the answer — the reranked order when a reranker ran, else the fused one. */
   rank: z.number().int().positive(),
   /** Which signal(s) found it: 1-based rank in that list, or null. */
   denseRank: z.number().int().positive().nullable(),
   lexicalRank: z.number().int().positive().nullable(),
+  /**
+   * The reranker's relevance score in [0, 1] (every reranker is mapped onto that scale); null
+   * when no reranker ran — none configured, too few candidates, or it failed or timed out.
+   */
+  rerankScore: z.number().min(0).max(1).nullable(),
 })
 export type SearchHit = z.infer<typeof searchHitSchema>
 
@@ -367,13 +431,15 @@ export function documentCardFromDocument(
 // ---- Document cards from a knowledge tool's answer ---------------------------------------
 
 /**
- * The three built-in knowledge tools, named ONCE. The server's tool modules and the chat UI's
+ * The built-in knowledge tools, named ONCE. The server's tool modules and the chat UI's
  * labels both read these, so a rename cannot leave one of them behind.
  */
 export const KNOWLEDGE_TOOLS = {
   search: 'search_knowledge',
   get: 'get_document',
   list: 'list_documents',
+  /** Knowledge facts (D43) — offered only to a tenant with the `knowledge-facts` flag. */
+  facts: 'lookup_facts',
 } as const
 
 /** Whitespace-collapsed head of a text, ellipsised. Pure; `null` in, `null` out. */
@@ -403,6 +469,15 @@ const searchToolResultShape = z.object({
     })
   ),
 })
+
+/** The facts a `lookup_facts` answer (or `search_knowledge`'s `facts` block) cited — their sources. */
+const factGroupsShape = z.array(
+  z.object({
+    facts: z.array(z.object({ documentId: z.string().uuid(), documentTitle: z.string() })),
+  })
+)
+const factsToolResultShape = z.object({ entities: factGroupsShape })
+const searchFactsShape = z.object({ facts: factGroupsShape })
 
 const listToolResultShape = z.object({
   documents: z.array(
@@ -481,6 +556,21 @@ export function documentCardsFromToolResult(toolName: string, result: unknown): 
       cards.push(
         cardFromTool({ id: doc.documentId, title: doc.title, passages: doc.totalPassages })
       )
+    }
+    // The facts block cites documents too — the source of each fact.
+    const facts = searchFactsShape.safeParse(parsed)
+    if (facts.success) {
+      for (const group of facts.data.facts) {
+        for (const f of group.facts)
+          cards.push(cardFromTool({ id: f.documentId, title: f.documentTitle }))
+      }
+    }
+  } else if (toolName === KNOWLEDGE_TOOLS.facts) {
+    const result = factsToolResultShape.safeParse(parsed)
+    if (!result.success) return []
+    for (const group of result.data.entities) {
+      for (const f of group.facts)
+        cards.push(cardFromTool({ id: f.documentId, title: f.documentTitle }))
     }
   } else if (toolName === KNOWLEDGE_TOOLS.list) {
     const list = listToolResultShape.safeParse(parsed)

@@ -12,7 +12,9 @@
  * `./chat` is a streamed chat turn a plugin route answers with,
  * `./access` is row visibility, `./events` is nudges and notifications, `./emit` is declared plugin
  * events (D42), `./secrets` is a tenant's
- * credentials at rest, `./identity` is signing a person in and provisioning their memberships.
+ * credentials at rest, `./identity` is signing a person in and provisioning their memberships;
+ * `EntityTypeRegistration` and `defaultEntityResolver` (knowledge facts, D43) come straight from
+ * the leaf `api/services/knowledge/{types,resolve}.ts`, which reach no barrel.
  *
  * **Three things are deliberately NOT here.**
  *
@@ -29,6 +31,15 @@
  */
 
 export type { BindableAgent } from '@rocketflare/shared/ai/agents'
+export {
+  DEFAULT_RESOLVE_MIN_SCORE,
+  defaultEntityResolver,
+} from '../../api/services/knowledge/resolve'
+export type {
+  EntityResolver,
+  EntityResolveScope,
+  EntityTypeRegistration,
+} from '../../api/services/knowledge/types'
 export type {
   AnyServerPlugin,
   AnyUiPlugin,

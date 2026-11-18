@@ -404,6 +404,8 @@ export async function prepareChatTurn(
             // reader could not open on the Knowledge page.
             scope,
             can: (action, subject) => auth.ability.can(action, subject),
+            // The request's own flags — `lookup_facts` rides on `knowledge-facts`.
+            features: auth.features,
             // An agent run may read 50 000 characters of a document because that is the job; a chat
             // turn may not, because the result sits in the same window as the history and every
             // turn after it. The prompt already discourages it — this is the limit.

@@ -12,6 +12,7 @@
 
 import {
   ArrowDownTrayIcon,
+  ArrowPathIcon,
   ArrowUpTrayIcon,
   BookOpenIcon,
   LockClosedIcon,
@@ -32,7 +33,7 @@ import {
 import { filePath, MAX_UPLOAD_BYTES } from '@rocketflare/shared/files'
 import type { ResourceVisibility } from '@rocketflare/shared/groups'
 import { type FormEvent, useRef, useState } from 'react'
-import { Link } from 'react-router'
+import { Link, useSearchParams } from 'react-router'
 import {
   AccessBadge,
   AccessPicker,
@@ -53,13 +54,18 @@ import {
   useDeleteDocument,
   useDocuments,
   useIngestText,
+  useRetryDocument,
   useUploadDocument,
   validateDocumentUpload,
 } from '@/ui/hooks/useDocuments'
 import { useGroups, useMyGroups, useSetDocumentVisibility } from '@/ui/hooks/useGroups'
+import { useMyReviewCount } from '@/ui/hooks/useKnowledge'
+import { useNavGuard } from '@/ui/hooks/useNavGuard'
 import { usePermissions } from '@/ui/hooks/usePermissions'
 import { showToast } from '@/ui/lib/api-client'
+import { KNOWLEDGE_FACTS_GUARD } from '@/ui/lib/feature-guards'
 import { formatDateTime } from '@/ui/lib/format'
+import { ReviewList } from './ReviewList'
 
 type Issue = { path: PropertyKey[]; message: string }
 
@@ -102,16 +108,79 @@ export default function DocumentsPage() {
       ),
     },
   ]
+  const canAccess = useNavGuard()
+  const facts = canAccess(KNOWLEDGE_FACTS_GUARD)
+  const [params, setParams] = useSearchParams()
+  const reviewing = facts && params.get('view') === 'review'
   return (
     <div className="max-w-6xl">
       <PageHeader
         title="Knowledge"
         description="Documents this workspace can search. Anything indexed here is searchable on the Search page and available to every agent through the search_knowledge and get_document tools."
       />
-      <div className="mb-6">
-        <DocumentsTable />
-      </div>
-      <URLTabs tabs={tabs} defaultTab="text" />
+      {facts && (
+        <ViewSwitch
+          reviewing={reviewing}
+          onChange={review =>
+            setParams(
+              p => {
+                const next = new URLSearchParams(p)
+                if (review) next.set('view', 'review')
+                else next.delete('view')
+                return next
+              },
+              { replace: true }
+            )
+          }
+        />
+      )}
+      {reviewing ? (
+        <ReviewList />
+      ) : (
+        <>
+          <div className="mb-6">
+            <DocumentsTable />
+          </div>
+          <URLTabs tabs={tabs} defaultTab="text" />
+        </>
+      )}
+    </div>
+  )
+}
+
+/**
+ * Documents | To review — only with knowledge facts on (D43). The count is MY open items, the
+ * same query as the nav badge, so the two never disagree.
+ */
+function ViewSwitch({
+  reviewing,
+  onChange,
+}: {
+  reviewing: boolean
+  onChange: (review: boolean) => void
+}) {
+  const count = useMyReviewCount().data ?? 0
+  return (
+    <div role="tablist" aria-label="Knowledge view" className="tabs tabs-border mb-4">
+      <button
+        type="button"
+        role="tab"
+        aria-selected={!reviewing}
+        className={`tab ${reviewing ? '' : 'tab-active'}`}
+        onClick={() => onChange(false)}
+      >
+        Documents
+      </button>
+      <button
+        type="button"
+        role="tab"
+        aria-selected={reviewing}
+        className={`tab gap-1.5 ${reviewing ? 'tab-active' : ''}`}
+        onClick={() => onChange(true)}
+      >
+        To review
+        {count > 0 && <span className="badge badge-warning badge-sm tabular-nums">{count}</span>}
+      </button>
     </div>
   )
 }
@@ -157,9 +226,11 @@ function IngestForm() {
     ingest.mutate(parsed.data, {
       onSuccess: doc => {
         showToast(
-          doc.status === 'indexed'
-            ? `"${doc.title}" indexed (${doc.chunkCount} chunks)`
-            : `"${doc.title}" queued for indexing`,
+          doc.deduplicated
+            ? `"${doc.title}" is already in the knowledge base`
+            : doc.status === 'indexed'
+              ? `"${doc.title}" indexed (${doc.chunkCount} chunks)`
+              : `"${doc.title}" queued for indexing`,
           'success'
         )
         setTitle('')
@@ -294,11 +365,13 @@ function UploadForm() {
       {
         onSuccess: doc => {
           showToast(
-            doc.status === 'indexed'
-              ? `"${doc.title}" indexed (${doc.chunkCount} chunks)`
-              : doc.status === 'failed'
-                ? `"${doc.title}" could not be indexed`
-                : `"${doc.title}" queued for conversion and indexing`,
+            doc.deduplicated
+              ? `"${doc.title}" is already in the knowledge base`
+              : doc.status === 'indexed'
+                ? `"${doc.title}" indexed (${doc.chunkCount} chunks)`
+                : doc.status === 'failed'
+                  ? `"${doc.title}" could not be indexed`
+                  : `"${doc.title}" queued for conversion and indexing`,
             doc.status === 'failed' ? 'error' : 'success'
           )
           setFile(null)
@@ -405,6 +478,7 @@ function DocumentsTable() {
   const [status, setStatus] = useState<DocumentStatus | ''>('')
   const documents = useDocuments({ page, status })
   const remove = useDeleteDocument()
+  const retry = useRetryDocument()
   const [deleting, setDeleting] = useState<Document | null>(null)
   const [sharing, setSharing] = useState<Document | null>(null)
   const rows = documents.data?.items ?? []
@@ -499,6 +573,20 @@ function DocumentsTable() {
                     {formatDateTime(doc.createdAt)}
                   </td>
                   <td className="text-right whitespace-nowrap">
+                    {doc.status === 'failed' && canShare(doc) && (
+                      // Owner or `manage Document` — the route's rule, same as visibility.
+                      <button
+                        type="button"
+                        className="btn btn-ghost btn-xs"
+                        aria-label={`Retry ${doc.title}`}
+                        title="Index this document again"
+                        disabled={retry.isPending && retry.variables === doc.id}
+                        onClick={() => retry.mutate(doc.id)}
+                      >
+                        <ArrowPathIcon className="w-4 h-4" />
+                        Retry
+                      </button>
+                    )}
                     {canShare(doc) && (
                       <button
                         type="button"

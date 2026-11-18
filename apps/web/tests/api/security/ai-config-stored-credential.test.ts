@@ -23,8 +23,24 @@ const db = setupTestDatabase()
 const received: string[] = []
 let server: Server
 let endpoint: string
+// Where a row that would otherwise use its vendor's DEFAULT endpoint lives instead, so `test()`
+// answers from this machine (a 401, never retried) rather than reaching api.anthropic.com — the
+// api suites have no network (`helpers/network-guard.ts`). Requests here are not recorded: only
+// what reaches the NEW endpoint matters.
+let origin: Server
+let originUrl: string
+const LOCAL_ORIGIN = 'local-origin'
 
 beforeAll(async () => {
+  origin = createServer((req, res) => {
+    req.resume()
+    req.on('end', () => {
+      res.writeHead(401, { 'content-type': 'application/json' })
+      res.end('{}')
+    })
+  })
+  await new Promise<void>(resolve => origin.listen(0, '127.0.0.1', resolve))
+  originUrl = `http://127.0.0.1:${(origin.address() as AddressInfo).port}/origin`
   server = createServer((req, res) => {
     received.push(`${req.headers.authorization ?? ''}|${req.headers['x-api-key'] ?? ''}`)
     req.resume()
@@ -39,11 +55,18 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await new Promise(resolve => server.close(resolve))
+  await new Promise(resolve => origin.close(resolve))
 })
 
 const KEY = 'test-stored-provider-key'
 
-async function savedRow(row: { provider: string; scope: string; baseUrl?: string; model: string }) {
+async function savedRow(given: {
+  provider: string
+  scope: string
+  baseUrl?: string
+  model: string
+}) {
+  const row = given.baseUrl === LOCAL_ORIGIN ? { ...given, baseUrl: originUrl } : given
   const env = createTestEnv()
   const { user: owner, tenant } = await createTestTenantWithUser(db, 'owner')
   const admin = await createTestUser(db)
@@ -85,7 +108,7 @@ const COMPATIBLE = {
 describe('re-saving an AI config without a key', () => {
   it.each([
     COMPATIBLE,
-    { provider: 'anthropic', scope: 'chat', model: 'claude-sonnet-4-5' },
+    { provider: 'anthropic', scope: 'chat', baseUrl: LOCAL_ORIGIN, model: 'claude-sonnet-4-5' },
     { provider: 'openai', scope: 'embeddings', model: 'text-embedding-3-small' },
     { provider: 'typesafe', scope: 'decisions', model: 'jev-latest' },
   ])('$provider/$scope: a new endpoint needs the key again', async row => {

@@ -3,7 +3,7 @@
  * list/detail/suspend; support enter/leave; users; the last global admin guard; block kills sessions.
  */
 import type { SessionResponse } from '@rocketflare/shared/auth'
-import { and, eq, ne } from 'drizzle-orm'
+import { and, eq, ne, sql } from 'drizzle-orm'
 import { describe, expect, it } from 'vitest'
 import { setGlobalAdmin } from '@/api/services/admin'
 import { ensureAccessRequest } from '@/api/services/auth'
@@ -338,8 +338,12 @@ describe('users', () => {
     )
     expect(await json(off)).toEqual({ id: target.id, isGlobalAdmin: false })
     // The shared test database has many admins; prove the guard inside a rolled-back transaction.
+    // Files run in parallel against the same table, so the transaction first takes a lock that
+    // holds other writers to `users` until it rolls back: otherwise a global admin another file
+    // creates between the UPDATE and the check makes "the last one" not the last one.
     await db
       .transaction(async tx => {
+        await tx.execute(sql`lock table users in share row exclusive mode`)
         await tx
           .update(users)
           .set({ isGlobalAdmin: false })

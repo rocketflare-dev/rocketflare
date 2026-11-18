@@ -4,13 +4,12 @@
  * `document.index` job lands), file upload (`POST /upload`, multipart — text types index like
  * pasted text, PDF/Office/HTML return `pending` until the `document.convert` job lands), delete
  * (`DELETE /:id` — own rows for everyone, any row for `delete Document`; the uploaded original goes
- * too), and hybrid search (`POST /search`). Search is mutation-style: a query is an action
+ * too), retry of a failed row (`POST /:id/retry` — own rows, any row for `manage Document`), and hybrid search (`POST /search`). Search is mutation-style: a query is an action
  * the reader takes, its hits are shown once and never cached as server state. The raw text and
  * the vectors never reach the browser; only the sanitised `documents` row does.
  */
 import {
   DOCUMENT_WINDOW_CHARS,
-  type Document,
   type DocumentCard,
   type DocumentContent,
   type DocumentStatus,
@@ -18,7 +17,11 @@ import {
   documentContentSchema,
   documentPassageSchema,
   documentSchema,
+  type IngestDocumentResponse,
   type IngestTextRequest,
+  ingestDocumentResponseSchema,
+  type RetryDocumentResponse,
+  retryDocumentResponseSchema,
   type SearchRequest,
   type SearchResponse,
   searchResponseSchema,
@@ -165,7 +168,9 @@ export function useIngestText() {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: (body: IngestTextRequest) =>
-      api.post<Document>('/api/ai/documents/ingest', body, { schema: documentSchema }),
+      api.post<IngestDocumentResponse>('/api/ai/documents/ingest', body, {
+        schema: ingestDocumentResponseSchema,
+      }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.documents.all }),
   })
 }
@@ -188,7 +193,9 @@ export function useUploadDocument() {
       form.append('file', file, file.name)
       if (title) form.append('title', title)
       if (source) form.append('source', source)
-      return api.upload<Document>('/api/ai/documents/upload', form, { schema: documentSchema })
+      return api.upload<IngestDocumentResponse>('/api/ai/documents/upload', form, {
+        schema: ingestDocumentResponseSchema,
+      })
     },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.documents.all }),
   })
@@ -206,6 +213,23 @@ export function useDeleteDocument() {
       queryClient.removeQueries({ queryKey: queryKeys.documents.detail(id) })
       return queryClient.invalidateQueries({ queryKey: queryKeys.documents.all })
     },
+  })
+}
+
+/**
+ * `POST /api/ai/documents/:id/retry` — a failed document back on the queue (202, now `pending`, so
+ * the list starts polling again). Errors toast; success does not — the row's badge is the answer.
+ */
+export function useRetryDocument() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) =>
+      api.post<RetryDocumentResponse>(
+        `/api/ai/documents/${encodeURIComponent(id)}/retry`,
+        undefined,
+        { schema: retryDocumentResponseSchema }
+      ),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.documents.all }),
   })
 }
 

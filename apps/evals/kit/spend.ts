@@ -39,3 +39,18 @@ export async function tenantSpend(
 export function promptHash(text: string): string {
   return createHash('sha256').update(text).digest('hex').slice(0, 12)
 }
+
+type Spent = Awaited<ReturnType<typeof tenantSpend>>
+
+/** `after` minus `before` — a case's spend in a tenant other cases share. `before` null = `after`. */
+export function spendSince(before: Spent | null, after: Spent): Spent {
+  if (!before) return after
+  const inputTokens = (after.inputTokens ?? 0) - (before.inputTokens ?? 0)
+  const outputTokens = (after.outputTokens ?? 0) - (before.outputTokens ?? 0)
+  return {
+    inputTokens,
+    outputTokens,
+    totalTokens: inputTokens + outputTokens,
+    ...(after.costUsd !== undefined ? { costUsd: after.costUsd - (before.costUsd ?? 0) } : {}),
+  }
+}

@@ -62,14 +62,20 @@ export async function runMigrations(
   // before the first migration that references the `vector` type. Idempotent, and valid on
   // both Neon (extension available per branch) and the pgvector/pgvector:pg17 compose image.
   // It lives here rather than in a hand-written 0000 SQL file so the migrations folder stays
-  // 100% drizzle-kit generated and works when it is still empty.
-  const createVector = 'CREATE EXTENSION IF NOT EXISTS vector'
+  // 100% drizzle-kit generated and works when it is still empty. `pg_trgm` (the trigram index
+  // on `knowledge_entities.name`, and entity resolution's `similarity()`) is created here for the
+  // same reason; migration 0028 also creates it, so a migrator that skips this script still works.
+  // One statement each: the Neon HTTP path runs a single statement per query.
+  const createExtensions = [
+    'CREATE EXTENSION IF NOT EXISTS vector',
+    'CREATE EXTENSION IF NOT EXISTS pg_trgm',
+  ]
 
   if (scriptDriver(env) === 'neon') {
     const sql = openScriptSql(url, env) // routes through NEON_LOCAL_PROXY when set
     const pool = createNeonPool(url, 1)
     try {
-      await sql.query(createVector)
+      for (const statement of createExtensions) await sql.query(statement)
       await migrateNeon(drizzleNeon(pool), { migrationsFolder })
       log('Migrations applied')
     } finally {
@@ -81,7 +87,7 @@ export async function runMigrations(
 
   const sql = postgres(url, { max: 1, onnotice: () => {} })
   try {
-    await sql.unsafe(createVector)
+    for (const statement of createExtensions) await sql.unsafe(statement)
     await migratePostgres(drizzlePostgres(sql), { migrationsFolder })
     log('Migrations applied')
   } finally {

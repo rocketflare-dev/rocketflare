@@ -134,6 +134,23 @@ const CUSTOM_SAMPLES: Record<string, unknown> = {
       href: '/documents/55555555-5555-4555-8555-555555555555',
     },
   },
+  [KIT_CUSTOM_EVENTS.entity]: {
+    card: {
+      entity: { kind: 'staging', type: 'customer', id: ARTIFACT, name: 'Harbour View Dental' },
+      href: `/knowledge/entities/customer/${ARTIFACT}`,
+      facts: [
+        {
+          factId: EVENT,
+          key: 'monthly_fee_gbp',
+          valueText: '285',
+          state: 'conflicting',
+          documentId: '55555555-5555-4555-8555-555555555555',
+          documentTitle: 'Contract',
+        },
+      ],
+      moreFacts: 0,
+    },
+  },
   [KIT_CUSTOM_EVENTS.agentInterrupt]: { interrupt: INTERRUPT_ROW },
   [KIT_CUSTOM_EVENTS.agentInterruptResolved]: {
     interruptId: INTERRUPT,

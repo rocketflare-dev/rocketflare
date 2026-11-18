@@ -156,7 +156,12 @@ the CLI command `<id>`; skills `<id>` / `<id>-<what>`; AG-UI CUSTOM events `<id>
 - **Knowledge goes through `ingestDocument` / `ingestDocumentFile`**, never a `documents` insert:
   `source: '<id>:<kind>'` + the upstream `externalId` so a re-sync upserts; `deleteIngestedDocument`
   for upstream deletes. Visibility defaults to the whole organisation — one person's data passes the
-  owner's `userId` + `visibility: 'groups'` + `groupIds: []`. Declare `requires.surfaces:
+  owner's `userId` + `visibility: 'groups'` + `groupIds: []`. Pass `reviewerUserId` (the person
+  who connected the source) so the facts extracted from it reach someone who can judge them —
+  without one they go to the document's owner (tenant admins see every review item either way); a
+  plugin's document is `origin: 'integration'`, the lowest fact trust. A plain ingest (no
+  `externalId`) whose text matches a tenant-wide document of the same `source` answers that
+  document with `deduplicated: true`. Declare `requires.surfaces:
   ["feature-knowledge"]`.
 - **Platform knowledge** (content about the APP, readable by every tenant): `ingestPlatformDocument`
   / `prunePlatformDocuments` from a `JobCtx` / `CronCtx` only (`kind` brands them; an `EmailCtx`
@@ -165,6 +170,12 @@ the CLI command `<id>`; skills `<id>` / `<id>-<what>`; AG-UI CUSTOM events `<id>
   `unchanged` for the same text, so a cron can resync everything cheaply. Find it with
   `searchKnowledge(ctx, { platformSources })`, or declare `knowledgeSources(scope)` so the kit's
   `search_knowledge` tool covers it. **Never tenant data**: every organisation reads it.
+- **`knowledgeEntityTypes`** (D43) — a FIELD, not a barrel (still six): `EntityTypeRegistration`s
+  from `@/plugins/api`, `type` `<id>.<name>`, snake_case fact keys whose value schemas render as
+  JSON schema (`z.iso.date()`, never `z.date()`), and optionally one of YOUR tables with
+  `labelColumn` (the default trigram resolver) or your own `resolve` filtering by
+  `scope.access.tenantId`. `knowledgeEntityTypes()` throws on a bad one. Worked example:
+  `example-feature/knowledge/entity-types.ts`.
 - **`jobHandlers`** keep the kit's handler contract (own DB client, await everything, throw to
   retry).
 - **`agentTools(ctx)`** is bound to the run's `AgentToolContext` (its `AccessScope`: read what the

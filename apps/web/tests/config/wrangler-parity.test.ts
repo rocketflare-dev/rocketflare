@@ -211,6 +211,27 @@ describe('wrangler parity: must match', () => {
     }
   })
 
+  it('the jobs consumer dead-letters into its own, unconsumed, per-environment queue', () => {
+    const dlqOf = (config: Toml) => {
+      const jobs = rows(config, 'queues.producers').find(r => r.binding === 'JOBS_QUEUE')?.queue
+      const consumer = rows(config, 'queues.consumers').find(r => r.queue === jobs)
+      return { jobs: String(jobs), dlq: consumer?.dead_letter_queue as string | undefined }
+    }
+    const p = dlqOf(prod)
+    const s = dlqOf(staging)
+    // Without one, a message that failed every retry is simply deleted — nothing records it.
+    expect(p.dlq).toBe(`${p.jobs}-dlq`)
+    // Account-scoped like the queue itself, and suffixed the same way.
+    expect(s.dlq).toBe(`${p.jobs}-dlq-staging`)
+    for (const [config, dlq] of [
+      [prod, p.dlq],
+      [staging, s.dlq],
+    ] as const) {
+      // It shares the jobs prefix `queue.ts` dispatches on: a consumer would REPROCESS it.
+      expect(names(config, 'queues.consumers', 'queue')).not.toContain(dlq)
+    }
+  })
+
   it('both files declare the baseline bindings', () => {
     expect(names(prod, 'kv_namespaces', 'binding')).toContain('RATE_LIMIT_KV')
     expect(get(prod, 'assets.binding')).toBe('ASSETS')

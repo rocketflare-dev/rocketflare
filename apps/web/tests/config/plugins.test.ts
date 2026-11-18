@@ -967,9 +967,11 @@ describe('the closed sets a plugin opens', () => {
       | 'activity.record'
       | 'document.index'
       | 'document.convert'
+      | 'document.reembed'
       | 'chat.compact'
       | 'tenant.purge'
       | 'event.deliver'
+      | 'knowledge.extract'
     >()
     // A plugin may only WIDEN the kit's set — the property the whole "variants are data" change
     // bought. Which types a particular plugin adds is that plugin's own test to make.

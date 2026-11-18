@@ -38,7 +38,11 @@ per environment. Work over ~30 s or with multiple steps is a Workflow, not a job
 
 - Queued: `email.send` (invitation create/bulk/resend, access-request decided — never the magic
   link, which stays inline), `activity.record`, `document.index`, `document.convert`,
-  `chat.compact`, `tenant.purge`, `event.deliver`
+  `document.reembed`, `chat.compact`, `tenant.purge`, `event.deliver`, `knowledge.extract`
+- A message that throws on every one of `max_retries` goes to the dead-letter queue
+  (`dead_letter_queue` in both tomls: `<app>-jobs-dlq`, `-dlq-staging`). Nothing consumes it — a
+  consumer there would match `isJobsQueue` and reprocess it — so a handler must leave its rows in
+  a state a person can recover from (`failed` + Retry, a re-requestable job), never half-written
 - `event.deliver` (D42) is ONE subscriber of one `plugin_events` row: `{ tenantId, eventId,
   subscriber }`, never the payload. It re-reads the row under the tenant, re-validates, and calls
   that subscriber only; a missing row (pruned, other tenant) or subscriber is acked, a 4xx
@@ -53,3 +57,20 @@ per environment. Work over ~30 s or with multiple steps is a Workflow, not a job
 - `document.index` re-indexes a `documents` row from its stored `content` (`indexDocument`);
   `ingestText` enqueues it over 50 chunks. `document.convert` is R2 → `env.AI.toMarkdown` → the same
   `indexDocument` (`../services/ai/CLAUDE.md`)
+- `knowledge.extract` (D43, `{ tenantId, documentId, contentHash? }`) reads typed facts from one
+  indexed document (`extractDocumentFacts`, `../services/knowledge/CLAUDE.md`; a run that wrote
+  or removed facts nudges `entity.changed { entity: 'knowledge' }` through `collectingRealtime`,
+  flushed before the handler returns). Only
+  `afterTextIndexed` (`services/ai/ingest.ts`) enqueues it — after an inline index, a
+  `document.index` or a `document.convert` that changed the text — and only with the
+  `knowledge-facts` flag on and an entity type registered; a producer whose text is unchanged sets
+  `document.index`'s `skipExtraction`. The job re-checks every gate, skips (acks) a document whose
+  hash moved on, and at the tenant's `KNOWLEDGE_TENANT_DAILY_COST_USD` cap re-enqueues ITSELF with a
+  delay to the next UTC day (≤ 12 h a hop) instead of throwing. Re-extraction replaces the
+  document's facts, so a redelivery is idempotent
+- `document.reembed` (`{ tenantId, model }`) is a self-continuing chain: ONE bounded batch of the
+  tenant's stale documents per message (`reembedBatch`, `services/ai/reindex.ts`), then the same
+  payload re-enqueued while any remain — the stale predicate is the cursor, so a retry resumes. A
+  message for a model the tenant no longer resolves is acked (the newer chain owns the work); a
+  transient provider error throws with the old chunks intact; a provider refusal of one document
+  marks it `failed` and the batch moves on

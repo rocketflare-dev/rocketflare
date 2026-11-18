@@ -250,6 +250,11 @@ function SearchHitRow({ hit, query }: { hit: SearchHit; query?: string }) {
         >
           passage {hit.seq + 1} of {hit.documentPassages}
         </Link>
+        {hit.headingPath && (
+          <span className="text-muted" title="The headings this passage sits under">
+            {hit.headingPath}
+          </span>
+        )}
         <span className="text-muted tabular-nums" title="Reciprocal-rank-fusion score">
           score {hit.score.toFixed(3)}
         </span>

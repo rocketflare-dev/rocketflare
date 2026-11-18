@@ -67,6 +67,78 @@ describeCases('agent · triage-ticket', {
 - 5–10 cases per suite: happy paths, one the model should refuse or not know, one that should call
   **no** tool (`"tools": [], "toolsMatch": "strict"`), and one edge case.
 
+## Corpora: a whole business's documents
+
+A dataset case brings two or three documents of its own. A **corpus** is a directory of dozens,
+ingested once into one tenant and shared by every case that asks about it, so ranking matters and a
+wrong hit is possible. Put one anywhere under `datasets/` (the kit's own fixture is
+`datasets/kit-only/brightside/`, kit-only):
+
+```
+<name>/docs/<doc-id>.md   front matter (title, date, origin: upload|integration, source, kind) + markdown
+<name>/corpus.json        optional {"organisation"} — the business the knowledge base belongs to
+<name>/retrieval.jsonl    {"id","query","expected":[{"doc","passage"}],"tags"} — passage TEXT, never chunk ids
+<name>/chat.jsonl         EvalCase lines about the corpus (`context: []`), run by `chat · knowledge`
+<name>/entities.jsonl     {"entityType","name","aliases"}
+<name>/facts.jsonl        planted facts {"id","entityType","entity","key","value","doc","quote","validFrom","validTo"}
+<name>/conflicts.jsonl    planted contradictions {"id","entityType","entity","key","a","b","winner","why"}
+```
+
+- **Real embeddings only.** A corpus is ingested with `EMBEDDINGS_API_KEY` (the platform tier) or,
+  without it, `GEMINI_API_KEY` as a tenant embeddings row on `gemini-embedding-001` at 1024
+  dimensions. With neither, corpus suites skip: a ranking measured on the stub's deterministic
+  vectors says nothing about production.
+- **`knowledge · retrieval`** (`suites/knowledge/retrieval.eval.ts`) runs each query through the app's
+  own `searchKnowledgeChunks` and grades the ranking: `Recall@5`, `Recall@10` and `MRR` in code,
+  `ContextPrecision` by the judge over the top 5. No chat model runs, and no query fails the run —
+  the summary prints each suite's mean row, which is what to read.
+- **`--rerank none|fireworks|workers-ai`** measures retrieval with and without a reranker. `none` (the default)
+  searches with `rerank: false`, because the test `AI` stub's reranker answers in fused order and
+  measures nothing. `fireworks` writes a tenant `rerank` row (the kit's `fireworks-rerank` preset,
+  `fireworks/qwen3-reranker-8b`, from `FIREWORKS_API_KEY`), so the run goes through
+  `resolveRerank`'s tenant tier; the summary adds the median rerank latency. `workers-ai` writes a
+  `workers_ai` row on `@cf/baai/bge-reranker-base` and gives the run an `AI` binding that calls
+  Workers AI's REST API, so it needs `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN` (a token
+  with Workers AI access) in the environment. `RERANK_CANDIDATES=n` in front of the command sets
+  how many fused chunks go to the reranker, as the deployed var does.
+  On the kit fixture (2026-11-17, Gemini embeddings, 60 queries): without a reranker R@5 0.87,
+  R@10 0.97, MRR 0.66, ContextPrecision 0.83; with Fireworks R@5 1.00, R@10 1.00, MRR 0.84,
+  ContextPrecision 0.93, at a median 810 ms per search for 50 candidates — and the same R@5, R@10
+  and MRR (ContextPrecision 0.91) at a median 465 ms for 20, which is why 20 is the default: every
+  answer passage was already in the fused top 20, and a reranker only reorders what it is given.
+  Every answer-key passage scored ≥ 0.18 on that reranker, so `RERANK_MIN_SCORE=0.15` keeps all
+  of them and drops about 73 % of the other hits; the scale is per model, so the kit leaves the
+  threshold off and an app sets it from its own run.
+- **`knowledge · facts`** (`suites/knowledge/facts.eval.ts`, `kit/facts.ts`, `pnpm eval facts`) runs
+  over every corpus with a `facts.jsonl`. It registers the corpus's entity types itself
+  (`corpusEntityTypes` — staging-only, each key with a `.describe()`, never the app's registry),
+  turns the `knowledge-facts` flag on for the corpus tenant, names the tenant after `corpus.json`'s
+  `organisation`, and extracts every document OLDEST FIRST through the app's own job body
+  (`extractDocumentFacts`), so each document meets what the earlier ones left. Stored facts are
+  scored against the answer keys (an entity is scored under the first of its name and aliases the
+  key knows): one case per document and `facts-all` (`Precision`, `Recall`), and one `conflicts`
+  case — `ConflictsCaught`, `NoFalseAlarms` (1 − the false-alarm rate) and `WinnerAccuracy` (does
+  the side an answer leads with match the planted winner). A flag is a `conflicts_with` link, or a
+  supersession between two different documents (a change over time the key also calls a
+  conflict); a supersession inside one document is sequential validity, not a flag.
+  `judgeThreshold: null`: it measures, it never fails. On the kit fixture (2026-11-17, Haiku 5.5,
+  Gemini embeddings, 42 documents): precision 0.91, recall 0.75, conflicts caught 0.82, false
+  alarms 0.22, winner accuracy 1.00, $0.0009 per document. Runs vary by a few points either way;
+  compare against `baselines/knowledge-facts.json` with `--compare`, not one run.
+- **`chat · conflicts`** (`suites/chat/conflicts.eval.ts`, `kit/conflict-chat.ts`, `pnpm eval
+  conflicts`) runs over every corpus with a `conflicts.jsonl`. It extracts the corpus's facts first
+  (the same `factsRun` as `knowledge · facts`, through `chatHarness({ corpus, prepare })`), so chat
+  has `lookup_facts` and `search_knowledge`'s facts block, then asks one question per conflicted
+  entity and key. The question and rubric are built from the answer keys: every value the planted
+  facts give, each with its document's title and date, must appear with its source, and the answer
+  must say that they disagree. `RubricJudge` only. On the kit fixture (2026-11-17, Haiku 5.5,
+  Gemini embeddings, 18 cases) one run scored 17/18 (mean 0.94) and the next 16/18 (0.89, the
+  baseline). Every failure was the judge rejecting a further document the answer cited correctly
+  but the rubric did not list (an ops meeting note, an invoice query), not a value left out, so
+  read a failure's rationale before changing a prompt.
+- `tests/corpus.test.ts` (in the gate) checks every corpus: each passage and quote is verbatim in
+  its document, every id resolves, every conflict pairs two planted facts.
+
 ## Pick judges
 
 Deterministic judges first: they're free, instant and never flaky. Use an LLM judge only for what a
@@ -82,6 +154,7 @@ string can't check.
 | criteria in plain language | `RubricJudge()` + `expected.rubric` |
 | every claim is grounded in what it retrieved | `FaithfulnessJudge()` |
 | it agrees with a reference answer | `ReferenceJudge()` + `expected.output` |
+| retrieval ranked the answer high (corpus suites) | `RecallAtK(k)`, `MRR()` (computed) · `ContextPrecision(k)` (judge) |
 
 The full catalogue, with scoring, is `.claude/skills/rf-evals/reference.md`. LLM judges run
 through the `evals-judge` prompt (Settings → Prompts), on whatever model Settings → Agent models
@@ -97,6 +170,7 @@ pnpm eval agents --model claude-haiku-5-5 --judge-model claude-opus-5-5
 pnpm eval knowledge --provider gemini                      # gemini-2.5-flash as the target
 pnpm eval knowledge --provider fireworks --model accounts/fireworks/models/gpt-oss-120b
 pnpm eval knowledge --judge-provider gemini                # a non-Claude judge
+pnpm eval retrieval --rerank fireworks                     # retrieval with a reranker
 ```
 
 `--provider anthropic` (the default) is the resolver's platform tier. `fireworks` and `gemini`

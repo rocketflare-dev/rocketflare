@@ -20,6 +20,28 @@ the lifecycle repairs the facts depend on.
 The whole iteration ships as **one kit minor release** (0.37.0), from one feature branch. Each
 phase below is its own commit, and the gate passes after every phase.
 
+## Progress
+
+Branch `feat/knowledge-facts`, one commit per phase, the gate green after each.
+
+| Phase | Commit | State |
+|---|---|---|
+| 0: measure | `0a59efe` | done: Brightside corpus, retrieval suite, baselines |
+| 1a: chunk structure, lexical index, content hash | `d5e8c14` | done (plus table-aware chunking, from the agentic-mapper review) |
+| 1b: re-embed, DLQ, retry, ingest span | `2301da8` | done |
+| 1c: rerank seam, metering, daily cap | `146d3eb` | done: R@10 1.00, MRR 0.84 with Fireworks (0.66 without) |
+| 2a: contracts, tables, entity-type registry | `99d2e1a` | done |
+| 2b: extraction job, facts eval | `1f2e17c`, `8c1e25b` | done: Haiku precision 0.93, recall 0.71, conflicts caught 0.83, false alarms 0.14 (target 0.10 unmet, see the gaps) |
+| — test fixes | `54cfa52` | the api suites block outbound network; three slow tests fixed at the cause |
+| 2c-1: review API, `lookup_facts`, conflicts chat eval | `5431c6e` | done: chat · conflicts 16/18, no answer left a side out |
+| 2c-2: review UI, chat entity cards, decisions kept | `03076f2` | done |
+| local test in a dev instance | — | done 2026-11-17: Brightside loaded into a dev tenant; search latency fixed with `RERANK_CANDIDATES` (default 20) |
+| 3: docs and release | — | doc sweep done (uncommitted, for review): CONCEPTS §9 gaps, SETUP flag + entity types, rules, ADAPTING row, rf-how-do-i entry, README, the unreleased note; then `pnpm kit:release 0.37.0` |
+
+Decided along the way: the `knowledge-facts` flag ships default OFF for 0.37.0; `pg_trgm` is in
+migration 0028 (and `scripts/migrate.ts`); `toMarkdown` emits no page markers, so `chunks.page`
+stays null.
+
 ## Phase 0: measure (kit-only)
 
 **The fixture.**
@@ -252,6 +274,30 @@ Every table below calls `tenantIsolation()`.
 - Chat answers about planted conflicts mention both sides, checked with a rubric judge.
 - These thresholds are first guesses. Adjust them after the first run, and record the reason in
   the PR.
+
+## Gaps found during the build
+
+Recorded as they turn up. Each one either folds into a later phase of this iteration or stays a
+Known gap in `docs/CONCEPTS.md` §9 for iteration 2.
+
+| Gap (found in) | Effect on the fixture | Where it goes |
+|---|---|---|
+| One service named two ways ("Car park and entrances gritting — annual plan" / "Winter gritting (annual plan)") stays two staging entities (2b) | most of Haiku's false alarms; both `grit-annual-price` conflicts missed | **2c**: the possible-match review item and `POST /entities/:id/merge` let a person join them. Automatic linking stays iteration 2 |
+| Partial person name as a value ("Marcus" vs "Marcus Bell") is a conflict (2b) | most of Sonnet's false alarms | **2c**: "Use this one" / "Not right" dismisses it. Matching a name to its fuller form stays iteration 2 |
+| Two wordings of one unit ("per call-out" / "per visit") conflict (2b) | one false alarm per run | **2c**, as above. Iteration 2: a key may declare an enum, or a synonym-tolerant comparison |
+| The model sometimes reads proposed values from a proposal (2b) | occasional | Iteration 2 (prompt and eval) |
+| The false-alarm target (≤ 0.10) is unmet: Haiku 0.14, Sonnet 0.17, ±0.1 run to run (2b) | — | Recorded with the reason in CONCEPTS and the PR, per the exit rule |
+| A section's ambiguous candidates (`dropped.ambiguous`) may still create a staging entity with no facts (2b) | none measured | Iteration 2: resolve after the ambiguity check |
+| A person's `reject` / `prefer` is lost when the rejected fact's own document is re-extracted (its text changed) (2c-1) | none measured: the fixture is extracted once | **Resolved in 2c-2**: decided facts stay in the table through the re-read, and a reading of the same entity, key and value reuses the row with its decision (no migration) |
+| `search_knowledge`'s facts block finds only entities with a staging row; a domain row that never had one is reached through `lookup_facts`' resolver only (2c-1) | none: the fixture registers no domain types | Iteration 2: run each type's resolver over the query's noun phrases |
+| A possible match whose every staging candidate is hidden from the reviewer is dropped from their list but still counted in `pagination.total` (2c-1) | none | **Resolved in 2c-2** (the badge shows the count): `hasVisibleCandidateSql` in the list's WHERE |
+| Nothing nudges the UI when a review item is settled (2c-1) | — | **Resolved in 2c-2**: every review action and each extraction run that wrote facts nudges `entity.changed { entity: 'knowledge' }` after commit |
+| A decision carries over only when the re-read repeats the exact entity, key and value; a reworded value or a differently resolved entity comes back as a new open item (2c-2) | none measured | Iteration 2: match on the key's normalised value, and on a merged entity's survivor |
+| Promote asks for the domain row's id; there is no picker over the type's rows (2c-2) | none: the fixture registers no domain types | Iteration 2: a picker over the type's resolver |
+| The agent-run timeline shows no entity cards; only chat does (2c-2) | — | Iteration 2: emit `kit.entity` in the run projection beside `kit.document` |
+| The nudge carries no reviewer, so every member's badge refetches on any settle (2c-2) | — | Iteration 2, if the refetch shows up in load: `nudgeUsers` to the reviewers |
+| Chat search felt slow in local testing: 2.4 s for one `search_knowledge` call, 2.0 s of it the Fireworks rerank over 50 chunks (local test) | median rerank 810 ms at 50 candidates | **Resolved**: `RERANK_CANDIDATES` (default 20): median 465 ms with the same R@5, R@10 and MRR, because every answer passage was already in the fused top 20 |
+| Workers AI `bge-reranker-base`, the kit's default reranker, is unmeasured on the fixture (local test) | — | **Deferred to iteration 2** (decided 2026-11-17): `pnpm eval retrieval --rerank workers-ai` with a Cloudflare API token; check recall and latency at 20 candidates and its 512-token input limit against chunk size. Stays a CONCEPTS Known gap |
 
 ## Phase 3: docs and release
 
