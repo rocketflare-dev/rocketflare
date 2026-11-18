@@ -59,7 +59,7 @@ streaming, guards, bundle rules, tests) are `.claude/rules/ui.md`, loaded with t
 |---|---|---|
 | `/chat/:conversationId?` | `read Conversation` | lazy, carries the markdown chunk |
 | `/agents`, `/agents/runs/:runId` | `read AgentRun` | `RunPage` is its own lazy chunk |
-| `/documents`, `/documents/:id`, `/search` | `read Document` | the viewer has no nav entry; `/documents?view=review` is the knowledge-facts review list (behind `KNOWLEDGE_FACTS_GUARD`) |
+| `/documents`, `/documents/:id`, `/search` | `read Document` | the viewer has no nav entry; `/documents?view=review` is the knowledge-facts review list and `?view=facts` the Facts browse view, `/documents/:id?tab=facts` a document's facts (all behind `KNOWLEDGE_FACTS_GUARD`) |
 | `/knowledge/entities/:type/:id` | `KNOWLEDGE_FACTS_GUARD` (`knowledge-facts` flag AND `read KnowledgeFact`) | the entity page (`pages/knowledge/EntityPage.tsx`, lazy, no nav entry) |
 | `/settings?tab=…` | `guard="admin"` | tabs gate further — `pages/settings/CLAUDE.md` |
 | `/admin/*` | `globalAdmin` | reachable with no tenant |

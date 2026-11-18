@@ -15,12 +15,15 @@ import {
   type DocumentStatus,
   documentCardSchema,
   documentContentSchema,
+  documentFacetsSchema,
   documentPassageSchema,
   documentSchema,
   type IngestDocumentResponse,
   type IngestTextRequest,
   ingestDocumentResponseSchema,
+  type ReembedResponse,
   type RetryDocumentResponse,
+  reembedResponseSchema,
   retryDocumentResponseSchema,
   type SearchRequest,
   type SearchResponse,
@@ -229,6 +232,44 @@ export function useRetryDocument() {
         undefined,
         { schema: retryDocumentResponseSchema }
       ),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.documents.all }),
+  })
+}
+
+/** How often the facets are re-read while a re-index the reader started is still running. */
+export const REEMBED_POLL_MS = 3000
+
+/**
+ * The pure polling decision for the facets: only while a re-index THIS page started is still owed
+ * (`reindexing`) and documents are still stale — never otherwise, and never once it reaches 0.
+ */
+export function facetsPollInterval(reindexing: boolean, stale: number | undefined): number | false {
+  return reindexing && (stale ?? 0) > 0 ? REEMBED_POLL_MS : false
+}
+
+/**
+ * `GET /api/ai/documents/facets` — the sources and types the Search filters offer, and how many
+ * visible documents are embedded by another model (`staleEmbeddings`).
+ */
+export function useDocumentFacets({ reindexing = false }: { reindexing?: boolean } = {}) {
+  return useQuery({
+    queryKey: queryKeys.documents.facets,
+    queryFn: () => api.get('/api/ai/documents/facets', { schema: documentFacetsSchema }),
+    refetchInterval: q => facetsPollInterval(reindexing, q.state.data?.staleEmbeddings),
+  })
+}
+
+/**
+ * `POST /api/ai/documents/reembed` (`manage Document`) → 202: re-embed every stale document with
+ * today's model. Errors toast; success toasts nothing — the notice counting down is the answer.
+ */
+export function useReembedDocuments() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: () =>
+      api.post<ReembedResponse>('/api/ai/documents/reembed', undefined, {
+        schema: reembedResponseSchema,
+      }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.documents.all }),
   })
 }

@@ -10,19 +10,26 @@
  * the stored state.
  *
  * Here: `selectFacts` (the one query), `toFact` / `viewState`, entity names (`entityNames`),
- * `getEntityCard`, and `listReviewItems` (`GET /api/knowledge/review`).
+ * `getEntityCard`, `listReviewItems` (`GET /api/knowledge/review`), and the browse reads —
+ * `readDocumentFacts` (a document's facts) and `listKnowledgeEntities` (the Facts view).
  */
 import {
+  type DocumentFactGroup,
+  type DocumentFactsResponse,
   type EntityCard,
   type EntityKind,
   type Fact,
   type FactState,
   type KnowledgeEntity,
+  type KnowledgeEntityList,
+  type KnowledgeEntityListQuery,
+  type KnowledgeEntitySummary,
   type KnowledgeReviewItem,
   type KnowledgeReviewQuery,
   OPEN_REVIEW_FACT_STATES,
   type PossibleMatchCandidate,
   parseValueRef,
+  SOURCE_KIND_LABELS,
 } from '@rocketflare/shared/ai/knowledge-facts'
 import {
   and,
@@ -49,7 +56,7 @@ import {
 import { NotFoundError } from '../../utils/core/errors'
 import { type AccessScope, visibleDocuments } from '../access'
 import { entityVisibleSql, restoredState, visibleConflictsSql } from './facts-sql'
-import { knowledgeEntityType } from './registry'
+import { knowledgeEntityType, knowledgeEntityTypes } from './registry'
 import { resolverFor } from './resolve'
 import { ACCEPT_CONFIDENCE } from './state'
 
@@ -586,4 +593,173 @@ export async function visibleStagingIds(
       )
     )
   return new Set(rows.map(r => r.id))
+}
+
+// ── Browsing ──────────────────────────────────────────────────────────────────────────────────
+
+/** The states a browse view counts: what is current, not the history. */
+const CURRENT_FACT_STATES = ['accepted', 'unconfirmed', 'conflicting'] as const
+
+const typeLabelOf = (type: string) => knowledgeEntityType(type)?.label ?? type
+
+/**
+ * `GET /api/knowledge/documents/:id/facts`: every fact read from one document, grouped by entity
+ * (by name), each group in the order the facts appear in the text. The document must be one the
+ * reader may see — else the 404 an absent one gets — and every fact goes through `selectFacts`,
+ * so its conflicts are narrowed to the visible ones like everywhere else.
+ */
+export async function readDocumentFacts(
+  db: Database,
+  scope: AccessScope,
+  documentId: string
+): Promise<DocumentFactsResponse> {
+  const [doc] = await db
+    .select({ id: documents.id })
+    .from(documents)
+    .where(
+      and(
+        eq(documents.tenantId, scope.tenantId),
+        eq(documents.id, documentId),
+        visibleDocuments(scope)
+      )
+    )
+  if (!doc) throw new NotFoundError('Document not found')
+  const facts = await selectFacts(db, scope, eq(knowledgeFacts.documentId, documentId), {
+    orderBy: [sql`${knowledgeFacts.charStart} asc nulls last`, asc(knowledgeFacts.createdAt)],
+  })
+  const refs = new Map<string, EntityRef>()
+  for (const f of facts) {
+    const ref: EntityRef = { kind: f.row.entityKind, type: f.row.entityType, id: f.row.entityId }
+    refs.set(refKey(ref), ref)
+  }
+  const names = await entityNames(db, scope.tenantId, [...refs.values()])
+  const groups = new Map<string, DocumentFactGroup>()
+  for (const f of facts) {
+    const ref: EntityRef = { kind: f.row.entityKind, type: f.row.entityType, id: f.row.entityId }
+    const key = refKey(ref)
+    const group = groups.get(key) ?? {
+      entity: { ...ref, name: names.get(key) ?? ref.id, typeLabel: typeLabelOf(ref.type) },
+      facts: [],
+    }
+    group.facts.push(toFact(f))
+    groups.set(key, group)
+  }
+  return {
+    documentId,
+    entityTypesRegistered: knowledgeEntityTypes().length,
+    groups: [...groups.values()].sort((a, b) => a.entity.name.localeCompare(b.entity.name)),
+  }
+}
+
+/** `%q%` for ILIKE, with the pattern characters of `q` itself escaped. */
+const containsPattern = (q: string) => `%${q.replace(/[\\%_]/g, '\\$&')}%`
+
+/**
+ * The outer fact's entity is named `q`: a staging entity's name or alias, or — for a domain row —
+ * those of a staging entity promoted to it. A domain row's own label (its table's column) is not
+ * searched: it lives in an app table this query cannot reach generically.
+ */
+function entityNamedSql(scope: AccessScope, q: string): SQL {
+  const pattern = containsPattern(q)
+  return sql`exists (select 1 from ${sql.raw('knowledge_entities ke')} where ke.tenant_id = ${scope.tenantId} and ((${knowledgeFacts.entityKind} = 'staging' and ke.id::text = ${knowledgeFacts.entityId}) or (${knowledgeFacts.entityKind} = 'domain' and ke.promoted_type = ${knowledgeFacts.entityType} and ke.promoted_id = ${knowledgeFacts.entityId})) and (ke.name ilike ${pattern} or exists (select 1 from unnest(ke.aliases) as al(a) where al.a ilike ${pattern})))`
+}
+
+/**
+ * `GET /api/knowledge/entities`: the entities the reader may see a current fact about, with how
+ * many such facts and how many need a look IN THE READER'S VIEW (`openForReader`) — one GROUP BY
+ * over `knowledge_facts` joined to visible documents, so a fact from a hidden document is never
+ * counted and an entity known only from hidden documents is never listed. Entities needing a look
+ * first, then the most recently observed. The facets count entities over every visible current
+ * fact, unfiltered, so a filter never hides its own alternatives.
+ */
+export async function listKnowledgeEntities(
+  db: Database,
+  scope: AccessScope,
+  query: KnowledgeEntityListQuery,
+  window: { limit: number; offset: number }
+): Promise<{
+  items: KnowledgeEntitySummary[]
+  total: number
+  facets: KnowledgeEntityList['facets']
+}> {
+  const current = and(
+    visibleFactsWhere(scope),
+    inArray(knowledgeFacts.state, [...CURRENT_FACT_STATES])
+  )
+  const where = and(
+    current,
+    query.type?.length ? inArray(knowledgeFacts.entityType, query.type) : undefined,
+    query.sourceKind?.length ? inArray(knowledgeFacts.sourceKind, query.sourceKind) : undefined,
+    query.q ? entityNamedSql(scope, query.q) : undefined
+  )
+  const open = sql<number>`(count(*) filter (where ${openForReader(scope)}))::int`
+  const last = sql`max(${knowledgeFacts.observedAt})`
+  const joinDocuments = and(
+    eq(documents.id, knowledgeFacts.documentId),
+    eq(documents.tenantId, scope.tenantId)
+  )
+  // A factory: drizzle builders are mutable, so the page's `.limit()` must not reach the count.
+  const grouped = () =>
+    db
+      .select({
+        kind: knowledgeFacts.entityKind,
+        type: knowledgeFacts.entityType,
+        id: knowledgeFacts.entityId,
+        facts: sql<number>`(count(*))::int`.mapWith(Number).as('facts'),
+        needsLook: open.mapWith(Number).as('needs_look'),
+        lastObservedAt: last.mapWith(knowledgeFacts.observedAt).as('last_observed_at'),
+      })
+      .from(knowledgeFacts)
+      .innerJoin(documents, joinDocuments)
+      // The tenant spelled out here too (it is also in `where`), so this closure reads as
+      // tenant-scoped on its own — what `tests/config/unscoped-allowlist.test.ts` checks.
+      .where(and(eq(knowledgeFacts.tenantId, scope.tenantId), where))
+      .groupBy(knowledgeFacts.entityKind, knowledgeFacts.entityType, knowledgeFacts.entityId)
+      .having(query.needsLook ? sql`${open} > 0` : undefined)
+  const distinctEntities = sql<number>`(count(distinct (${knowledgeFacts.entityKind}, ${knowledgeFacts.entityType}, ${knowledgeFacts.entityId})))::int`
+  const [page, [total], types, sourceKinds] = await Promise.all([
+    grouped()
+      .orderBy(desc(sql`${open} > 0`), desc(last), asc(knowledgeFacts.entityId))
+      .limit(window.limit)
+      .offset(window.offset),
+    db.select({ n: sql<number>`(count(*))::int`.mapWith(Number) }).from(grouped().as('g')),
+    db
+      .select({ value: knowledgeFacts.entityType, count: distinctEntities.mapWith(Number) })
+      .from(knowledgeFacts)
+      .innerJoin(documents, joinDocuments)
+      .where(current)
+      .groupBy(knowledgeFacts.entityType)
+      .orderBy(knowledgeFacts.entityType),
+    db
+      .select({ value: knowledgeFacts.sourceKind, count: distinctEntities.mapWith(Number) })
+      .from(knowledgeFacts)
+      .innerJoin(documents, joinDocuments)
+      .where(current)
+      .groupBy(knowledgeFacts.sourceKind)
+      .orderBy(knowledgeFacts.sourceKind),
+  ])
+  const refs: EntityRef[] = page.map(r => ({ kind: r.kind, type: r.type, id: r.id }))
+  const names = await entityNames(db, scope.tenantId, refs)
+  return {
+    items: page.map(r => {
+      const ref: EntityRef = { kind: r.kind, type: r.type, id: r.id }
+      return {
+        entity: { ...ref, name: names.get(refKey(ref)) ?? ref.id, typeLabel: typeLabelOf(r.type) },
+        facts: r.facts,
+        needsLook: r.needsLook,
+        lastObservedAt: r.lastObservedAt,
+      }
+    }),
+    total: total?.n ?? 0,
+    facets: {
+      types: types
+        .map(t => ({ value: t.value, label: typeLabelOf(t.value), count: t.count }))
+        .sort((a, b) => a.label.localeCompare(b.label)),
+      sourceKinds: sourceKinds.map(k => ({
+        value: k.value,
+        label: SOURCE_KIND_LABELS[k.value],
+        count: k.count,
+      })),
+    },
+  }
 }

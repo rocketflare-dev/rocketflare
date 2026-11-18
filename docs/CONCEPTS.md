@@ -766,7 +766,20 @@ Server: `api/services/{ai,agents}/**` (read their `CLAUDE.md`), `services/prompt
   whose `embedding_model` is the query vector's model** (migration `0027` backfilled it from the
   document), so a document embedded by another model stays findable by keyword alone. A hit
   carries `headingPath`, `page` and `charOffset` (the stored `char_start`; `position()` of the text
-  for a chunk written before 0.37.0). **Reranking** (`services/ai/rerank.ts`, the `RerankFn` seam
+  for a chunk written before 0.37.0). **Filters**: `POST /search` takes `filters`
+  (`searchFiltersSchema`: `sources`, `contentTypes`, `createdFrom` / `createdTo` as inclusive UTC
+  days) — one predicate over `documents` (`documentFilterPredicate`) ANDed with the tenant and
+  visibility predicates, so a filter only ever removes hits. `GET /api/ai/documents/facets` lists the
+  sources and content types (with counts) and the date span of the indexed documents the reader
+  may see, which is what the Search page's filter column offers; the page keeps every filter in the
+  URL (`?source=&type=&from=&to=&documentId=`). The facets also carry `staleEmbeddings` — the
+  reader's visible documents embedded by another model than today's, i.e. invisible to the dense
+  leg — and the page shows a notice with "Re-index now" (`POST /reembed`) for `manage Document`,
+  polling the facets until it reaches 0 (`/health` is admin-only, so the count comes from here).
+  The response's `lexical` is `no_terms` when Postgres leaves no lexeme after stopwording
+  (`numnode(to_tsquery(…)) = 0`, run beside the legs — `anyTermTsquery` keeps every word, so the
+  stopword decision is Postgres's), and an empty answer then says the word is too common rather
+  than "no matches". **Reranking** (`services/ai/rerank.ts`, the `RerankFn` seam
   — `(query, documents) => scores` in [0, 1]): the top `RERANK_CANDIDATES` (default 20) fused candidates go to the resolved
   reranker with their title and section in front, are reordered by its score (`rerankScore` on the
   hit; `rank` is the final order, `score` stays the RRF score), filtered by `RERANK_MIN_SCORE` when
@@ -958,6 +971,14 @@ Server: `api/services/{ai,agents}/**` (read their `CLAUDE.md`), `services/prompt
   `KnowledgeFact`: member `read` + `update`, admin+ `manage`): `GET /review` (open facts and
   possible matches addressed to me — everyone's for `manage KnowledgeFact`, `?mine=true` narrows —
   newest first, paginated over both kinds with one UNION; `?kind=`, `?entityType=`, `?entityId=`);
+  `GET /documents/:id/facts` (the facts read from one document, grouped by entity, every state;
+  404 for a document the reader cannot see; `entityTypesRegistered` says whether extraction has
+  anything to look for); `GET /entities` (the entities with CURRENT facts — accepted, unconfirmed,
+  conflicting — the reader can see, with `facts` / `needsLook` counted over visible facts only in
+  one GROUP BY, filters `type` / `sourceKind` / `needsLook` / `q` (staging names and aliases;
+  a domain row's own label is not searched), facets over every visible current fact, paginated);
+  `GET /mentioned?q=` (the facts about the entities a query names — `search_knowledge`'s facts
+  block, for the Search page — read through the same visibility);
   `POST /facts/:id/review { action }` — `confirm` (→ `accepted`, `confirmed_by/at`, trust
   unchanged; 409 `fact_conflicting` on a conflict), `reject` (→ `rejected`, unlinked from every
   conflict; a side left disagreeing with nothing, or superseded by it, returns to `accepted` — when
@@ -997,7 +1018,12 @@ Server: `api/services/{ai,agents}/**` (read their `CLAUDE.md`), `services/prompt
   shown only to the item's reviewer or a manager (anyone else reads one sentence). The **review
   list** is a "To review" view of the Knowledge page (`/documents?view=review`), not a queue page:
   open items, filterable by kind, "Only mine" for a manager, each linking to its entity, a
-  conflict shown once with every side (the API lists each side as an item). The
+  conflict shown once with every side (the API lists each side as an item). Beside it, a
+  **Facts** view (`/documents?view=facts`) BROWSES every entity with facts — name, type, fact
+  count, how many need a look, last seen; filters for type, "Needs a look" and source kind, a
+  name box, paging; each row opens the entity page — and the **document viewer** has a Facts tab
+  (`?tab=facts`): the document's facts by entity, each with its quote and "Show in document",
+  which opens `?tab=document&offset=&end=` and marks exactly that span in the Plain view. The
   **badge** on the Knowledge nav item counts MY open items (`GET /review?mine=true&pageSize=1` →
   total), fed by the nudge and never polled. In **chat**, a turn that used `lookup_facts` or the
   `search_knowledge` facts block shows a compact card per entity (name, type, the facts the tool

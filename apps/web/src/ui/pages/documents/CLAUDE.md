@@ -40,9 +40,24 @@ All three are `guard read Document` and lazy. Hooks are `hooks/useDocuments.ts`,
   so a disagreement appears once (the tab's count still counts facts). Settled items update in place on the
   `['knowledge']` refetch — no success toast.
 
+## Facts (`FactsBrowser.tsx`, `?view=facts`, D43)
+
+- A third tab of the same switch (behind `KNOWLEDGE_FACTS_GUARD`), a BROWSE view, not a queue: no
+  bulk action, and the To review badge is untouched. `useKnowledgeEntities` → `GET
+  /api/knowledge/entities`: name (→ `entityPath`), type, facts, needs a look, last seen; the
+  left column (type, "Needs a look", source kind — values from the response's `facets`) folds
+  behind a button below `lg`; a debounced `SearchInput` for names; `PaginationControls`.
+- Its URL params are prefixed (`ftype`, `fsource`, `needs`, `fq`, `fpage` — `FACTS_VIEW_PARAMS`)
+  and dropped when the view changes.
+
 ## Viewer (`DocumentViewPage.tsx`, no SideNav entry)
 
-- Tabs `?tab=document|details`. Dispatches on `fileId`, upload kind and status: a PDF embeds its
+- Tabs `?tab=document|details`, plus `facts` behind `KNOWLEDGE_FACTS_GUARD` (`DocumentFactsPanel`,
+  `useDocumentFacts` → `GET /api/knowledge/documents/:id/facts`): facts grouped by entity (name →
+  entity page), key, value, state, quote, the inline `FactDoubt`, and "Show in document" →
+  `documentPath(id, { tab: 'document', offset: charStart, end: charEnd })`. `?end=` makes the Plain
+  view mark exactly `offset`…`end` (and opens in Plain); the empty state says when no entity types
+  are registered. Dispatches on `fileId`, upload kind and status: a PDF embeds its
   original with `<object>` — **never try to detect failure, the CHILDREN are the fallback** — and
   the header always carries Download original and a Converted text toggle; everything else renders
   its text (markdown through `components/ai/Markdown`, plain types in a `<pre>`).
@@ -67,19 +82,39 @@ All three are `guard read Document` and lazy. Hooks are `hooks/useDocuments.ts`,
 
 ## Search (`SearchPage.tsx`, nav "Search")
 
-- `useSearch()` is mutation-style (hits are its `data`): `{ query, limit: 10, documentId? }` →
-  hits with `rank`, `passage n of m`, RRF `score`, `dense #n` / `lexical #n` badges and the
-  snippet, GROUPED under a `DocumentCard` header built client-side with `documentCardFromDocument`
-  from the `useDocuments({ pageSize: 100 })` list the page already fetches for its filter select —
-  no request per hit.
-- "passage n of m" is a `<Link>` to `documentPath(documentId, { offset: charOffset, chunk:
-  chunkId, q })`; "search only this document" is a separate funnel button on the card.
-- `?documentId=` preselects the filter; `?q=` prefills and runs the search on mount ONCE (a
-  `lastRun` ref stops StrictMode and the URL write repeating it); every submitted search sets `?q=`
-  with `replace`. An empty knowledge base shows an EmptyState linking to `/documents`.
+- The kit list layout (`max-w-6xl`): query box across the top, a filter column on the left
+  (`lg:grid-cols-[16rem_…]`; below `lg` folded behind a "Filters" button above the results), the
+  results beside it.
+- **The URL is the state**: `?q=`, `?documentId=`, `?source=` / `?type=` (repeatable, exact
+  `documents.source` / `content_type` values), `?from=` / `?to=` (UTC days, inclusive). Whatever
+  the URL means is parsed with `searchRequestSchema` and run once per distinct request (the
+  `lastRun` ref holds the serialised request); a submit writes `?q=` and a filter change its own
+  param, all with `replace`. An inverted date range is a `FieldError` in the column, never sent.
+- Filter values come from `useDocumentFacets()` (`GET /facets`, the reader's visible indexed
+  documents): sources labelled by `documentSourceLabel`, types grouped by `documentTypeLabel`
+  (one "Excel" option = both media types). A URL value the facets do not list still renders,
+  checked, so it can be cleared.
+- `useSearch()` is mutation-style (hits are its `data`), grouped by document under a dense
+  `DocumentCard` built client-side from the `useDocuments({ pageSize: 100 })` list (no request per
+  hit), with source, date added and an "Only this document" button in its footer. Each hit:
+  `passage n of m` (a `<Link>` to `documentPath(documentId, { offset, chunk, q })`), heading path,
+  dense/lexical/score diagnostics, the passage with query terms as `<mark>` nodes
+  (`lib/highlight.ts`), clamped to four lines past 360 characters with Show more.
+- With `KNOWLEDGE_FACTS_GUARD`, `useMentionedFacts(query)` (`GET /api/knowledge/mentioned`) puts
+  `EntityFactsCard`s above the results; without it nothing under `/api/knowledge` is requested.
+- Stale embeddings: `facets.staleEmbeddings > 0` shows an `alert-info` notice ("N documents were
+  indexed with a different model…"); `can('manage', 'Document')` gets "Re-index now"
+  (`useReembedDocuments` → `POST /reembed`), others a sentence. After it, the facets poll
+  (`facetsPollInterval`, pure) until the count is 0 and the notice goes — no success toast.
+- `lexical: 'no_terms'` with no hits → the empty state says the word is too common
+  (`tooCommonMessage`); the server decides, the UI holds no stopword list.
+- States: skeleton while searching, an EmptyState prompt before the first search, "No matches"
+  (with Clear filters when any are set), and after a failure — which toasts — a neutral Try again.
+  An empty knowledge base shows an EmptyState linking to `/documents`.
 
 ## Tests
 
 `tests/ui/`: `documents-page`, `search-page`, `document-view`, `document-card`,
-`knowledge-review` (the view switch, the list, the badge, the flag off), `knowledge-entity-page`; the pure helpers in
+`knowledge-review` (the view switch, the list, the badge, the flag off), `knowledge-entity-page`,
+`knowledge-browse` (the viewer's Facts tab, the span link, the Facts view and its URL); the pure helpers in
 `tests/config/document-helpers.test.ts`.

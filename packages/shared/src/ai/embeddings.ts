@@ -111,13 +111,80 @@ export type DocumentListQuery = z.infer<typeof documentListQuerySchema>
 
 export const SEARCH_MAX_LIMIT = 20
 
+/** Most values one search filter list (`sources`, `contentTypes`) takes. */
+export const SEARCH_FILTER_MAX_VALUES = 50
+
+const filterValues = z
+  .array(z.string().trim().min(1).max(200))
+  .min(1)
+  .max(SEARCH_FILTER_MAX_VALUES)
+  .optional()
+
+/**
+ * Narrowing a search by what the DOCUMENT is — every filter only ever removes hits from what the
+ * reader may already see; none widens it. `sources` / `contentTypes` match `documents.source` /
+ * `documents.content_type` exactly (any of the listed values); `createdFrom` / `createdTo` are
+ * UTC calendar days, both inclusive. The values worth offering are `GET /facets`.
+ */
+export const searchFiltersSchema = z
+  .object({
+    sources: filterValues,
+    contentTypes: filterValues,
+    createdFrom: z.iso.date().optional(),
+    createdTo: z.iso.date().optional(),
+  })
+  .refine(f => !f.createdFrom || !f.createdTo || f.createdFrom <= f.createdTo, {
+    message: 'The start date must be on or before the end date',
+    path: ['createdTo'],
+  })
+export type SearchFilters = z.infer<typeof searchFiltersSchema>
+
 export const searchRequestSchema = z.object({
   query: z.string().trim().min(1).max(2000),
   limit: z.number().int().min(1).max(SEARCH_MAX_LIMIT).default(10),
   /** Restrict to one document. */
   documentId: z.string().uuid().optional(),
+  /** Restrict by the documents' source, type and date added. */
+  filters: searchFiltersSchema.optional(),
 })
 export type SearchRequest = z.infer<typeof searchRequestSchema>
+
+/** One value of a facet and how many indexed documents the reader can see carry it. */
+export const documentFacetValueSchema = z.object({
+  value: z.string(),
+  count: z.number().int().nonnegative(),
+})
+export type DocumentFacetValue = z.infer<typeof documentFacetValueSchema>
+
+/**
+ * `GET /api/ai/documents/facets`: what the search filters can offer — the distinct `source` and
+ * `contentType` values among the INDEXED documents this reader may see, most common first, and
+ * the date range they span (null with no documents). A document with no source is not listed.
+ * `staleEmbeddings` is the reader-scoped counterpart of `/health`'s (which is admin-only).
+ */
+export const documentFacetsSchema = z.object({
+  total: z.number().int().nonnegative(),
+  sources: z.array(documentFacetValueSchema),
+  contentTypes: z.array(documentFacetValueSchema),
+  oldest: z.coerce.date().nullable(),
+  newest: z.coerce.date().nullable(),
+  /**
+   * Of those documents, how many hold chunks embedded by a model other than the one the tenant
+   * resolves today — found by keyword only until `POST /reembed` rebuilds them. 0 with no embedder.
+   */
+  staleEmbeddings: z.number().int().nonnegative(),
+})
+export type DocumentFacets = z.infer<typeof documentFacetsSchema>
+
+/**
+ * A `documents.source` as a person reads it: `upload` → "Uploaded or pasted", `agent:<key>` →
+ * "Agent · <key>", anything else as it is (a plugin's `m365:mail`, a URL).
+ */
+export function documentSourceLabel(source: string): string {
+  if (source === 'upload') return 'Uploaded or pasted'
+  if (source.startsWith('agent:')) return `Agent · ${source.slice('agent:'.length)}`
+  return source
+}
 
 export const searchHitSchema = z.object({
   chunkId: z.string().uuid(),
@@ -152,9 +219,18 @@ export const searchHitSchema = z.object({
 })
 export type SearchHit = z.infer<typeof searchHitSchema>
 
+/**
+ * Whether the keyword half of a search had anything to look for: `no_terms` = every word of the
+ * query is a stopword of the search's text configuration (or there was no word at all), so only
+ * meaning-based search could answer. Decided by Postgres, never by a word list in a client.
+ */
+export const searchLexicalSchema = z.enum(['used', 'no_terms'])
+export type SearchLexical = z.infer<typeof searchLexicalSchema>
+
 export const searchResponseSchema = z.object({
   query: z.string(),
   hits: z.array(searchHitSchema),
+  lexical: searchLexicalSchema,
 })
 export type SearchResponse = z.infer<typeof searchResponseSchema>
 
@@ -396,12 +472,22 @@ export type DocumentCard = z.infer<typeof documentCardSchema>
 /** The ONE place the viewer's route is written. Deep links carry the passage they came from. */
 export function documentPath(
   id: string,
-  options: { offset?: number | null; chunk?: string | null; q?: string | null; tab?: string } = {}
+  options: {
+    offset?: number | null
+    /** Where the linked span ENDS (a fact's quote): the viewer marks `offset`…`end` only. */
+    end?: number | null
+    chunk?: string | null
+    q?: string | null
+    tab?: string
+  } = {}
 ): string {
   const params = new URLSearchParams()
   if (options.tab) params.set('tab', options.tab)
   if (typeof options.offset === 'number' && options.offset >= 0) {
     params.set('offset', String(options.offset))
+    if (typeof options.end === 'number' && options.end > options.offset) {
+      params.set('end', String(options.end))
+    }
   }
   if (options.chunk) params.set('chunk', options.chunk)
   if (options.q) params.set('q', options.q)
