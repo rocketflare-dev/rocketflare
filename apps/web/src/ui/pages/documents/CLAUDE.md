@@ -67,16 +67,29 @@ All three are `guard read Document` and lazy. Hooks are `hooks/useDocuments.ts`,
 
 ## Search (`SearchPage.tsx`, nav "Search")
 
-- `useSearch()` is mutation-style (hits are its `data`): `{ query, limit: 10, documentId? }` →
-  hits with `rank`, `passage n of m`, RRF `score`, `dense #n` / `lexical #n` badges and the
-  snippet, GROUPED under a `DocumentCard` header built client-side with `documentCardFromDocument`
-  from the `useDocuments({ pageSize: 100 })` list the page already fetches for its filter select —
-  no request per hit.
-- "passage n of m" is a `<Link>` to `documentPath(documentId, { offset: charOffset, chunk:
-  chunkId, q })`; "search only this document" is a separate funnel button on the card.
-- `?documentId=` preselects the filter; `?q=` prefills and runs the search on mount ONCE (a
-  `lastRun` ref stops StrictMode and the URL write repeating it); every submitted search sets `?q=`
-  with `replace`. An empty knowledge base shows an EmptyState linking to `/documents`.
+- The kit list layout (`max-w-6xl`): query box across the top, a filter column on the left
+  (`lg:grid-cols-[16rem_…]`; below `lg` folded behind a "Filters" button above the results), the
+  results beside it.
+- **The URL is the state**: `?q=`, `?documentId=`, `?source=` / `?type=` (repeatable, exact
+  `documents.source` / `content_type` values), `?from=` / `?to=` (UTC days, inclusive). Whatever
+  the URL means is parsed with `searchRequestSchema` and run once per distinct request (the
+  `lastRun` ref holds the serialised request); a submit writes `?q=` and a filter change its own
+  param, all with `replace`. An inverted date range is a `FieldError` in the column, never sent.
+- Filter values come from `useDocumentFacets()` (`GET /facets`, the reader's visible indexed
+  documents): sources labelled by `documentSourceLabel`, types grouped by `documentTypeLabel`
+  (one "Excel" option = both media types). A URL value the facets do not list still renders,
+  checked, so it can be cleared.
+- `useSearch()` is mutation-style (hits are its `data`), grouped by document under a dense
+  `DocumentCard` built client-side from the `useDocuments({ pageSize: 100 })` list (no request per
+  hit), with source, date added and an "Only this document" button in its footer. Each hit:
+  `passage n of m` (a `<Link>` to `documentPath(documentId, { offset, chunk, q })`), heading path,
+  dense/lexical/score diagnostics, the passage with query terms as `<mark>` nodes
+  (`lib/highlight.ts`), clamped to four lines past 360 characters with Show more.
+- With `KNOWLEDGE_FACTS_GUARD`, `useMentionedFacts(query)` (`GET /api/knowledge/mentioned`) puts
+  `EntityFactsCard`s above the results; without it nothing under `/api/knowledge` is requested.
+- States: skeleton while searching, an EmptyState prompt before the first search, "No matches"
+  (with Clear filters when any are set), and after a failure — which toasts — a neutral Try again.
+  An empty knowledge base shows an EmptyState linking to `/documents`.
 
 ## Tests
 

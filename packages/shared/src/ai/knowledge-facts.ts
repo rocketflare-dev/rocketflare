@@ -474,6 +474,17 @@ export const factHitGroupSchema = z.object({
 })
 export type FactHitGroup = z.infer<typeof factHitGroupSchema>
 
+/**
+ * `GET /api/knowledge/mentioned?q=` — the Search page's facts block: the facts about the entities
+ * a query names (`search_knowledge`'s `facts` block, for a person), read through the documents'
+ * visibility like every fact read. `entities` is empty when the query names no known entity.
+ */
+export const mentionedFactsQuerySchema = z.object({ q: z.string().trim().min(1).max(2000) })
+export type MentionedFactsQuery = z.infer<typeof mentionedFactsQuerySchema>
+
+export const mentionedFactsResponseSchema = z.object({ entities: z.array(factHitGroupSchema) })
+export type MentionedFactsResponse = z.infer<typeof mentionedFactsResponseSchema>
+
 /** What `lookup_facts` answers (JSON-encoded for the model). */
 export const lookupFactsResultSchema = z.object({
   entities: z.array(factHitGroupSchema),
@@ -553,6 +564,13 @@ export function entityCardsFromToolResult(toolName: string, result: unknown): Ch
     const r = searchLoose.safeParse(parsed)
     if (r.success) groups = r.data.facts
   }
+  return entityCardsFromFactGroups(groups)
+}
+
+/** One card per entity with facts, capped at `CHAT_ENTITY_CARD_MAX_FACTS` (the rest: `moreFacts`). */
+export function entityCardsFromFactGroups(
+  groups: readonly z.infer<typeof factGroupLoose>[]
+): ChatEntityCard[] {
   return groups
     .filter(g => g.facts.length > 0)
     .map(g => ({

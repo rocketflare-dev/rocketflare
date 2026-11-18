@@ -766,7 +766,13 @@ Server: `api/services/{ai,agents}/**` (read their `CLAUDE.md`), `services/prompt
   whose `embedding_model` is the query vector's model** (migration `0027` backfilled it from the
   document), so a document embedded by another model stays findable by keyword alone. A hit
   carries `headingPath`, `page` and `charOffset` (the stored `char_start`; `position()` of the text
-  for a chunk written before 0.37.0). **Reranking** (`services/ai/rerank.ts`, the `RerankFn` seam
+  for a chunk written before 0.37.0). **Filters**: `POST /search` takes `filters`
+  (`searchFiltersSchema`: `sources`, `contentTypes`, `createdFrom` / `createdTo` as inclusive UTC
+  days) — one predicate over `documents` (`documentFilterPredicate`) ANDed with the tenant and
+  visibility predicates, so a filter only ever removes hits. `GET /api/ai/documents/facets` lists the
+  sources and content types (with counts) and the date span of the indexed documents the reader
+  may see, which is what the Search page's filter column offers; the page keeps every filter in the
+  URL (`?source=&type=&from=&to=&documentId=`). **Reranking** (`services/ai/rerank.ts`, the `RerankFn` seam
   — `(query, documents) => scores` in [0, 1]): the top `RERANK_CANDIDATES` (default 20) fused candidates go to the resolved
   reranker with their title and section in front, are reordered by its score (`rerankScore` on the
   hit; `rank` is the final order, `score` stays the RRF score), filtered by `RERANK_MIN_SCORE` when
@@ -935,6 +941,8 @@ Server: `api/services/{ai,agents}/**` (read their `CLAUDE.md`), `services/prompt
   `KnowledgeFact`: member `read` + `update`, admin+ `manage`): `GET /review` (open facts and
   possible matches addressed to me — everyone's for `manage KnowledgeFact`, `?mine=true` narrows —
   newest first, paginated over both kinds with one UNION; `?kind=`, `?entityType=`, `?entityId=`);
+  `GET /mentioned?q=` (the facts about the entities a query names — `search_knowledge`'s facts
+  block, for the Search page — read through the same visibility);
   `POST /facts/:id/review { action }` — `confirm` (→ `accepted`, `confirmed_by/at`, trust
   unchanged; 409 `fact_conflicting` on a conflict), `reject` (→ `rejected`, unlinked from every
   conflict; a side left disagreeing with nothing, or superseded by it, returns to `accepted` — when

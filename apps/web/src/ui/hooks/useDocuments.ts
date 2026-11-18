@@ -15,6 +15,7 @@ import {
   type DocumentStatus,
   documentCardSchema,
   documentContentSchema,
+  documentFacetsSchema,
   documentPassageSchema,
   documentSchema,
   type IngestDocumentResponse,
@@ -230,6 +231,14 @@ export function useRetryDocument() {
         { schema: retryDocumentResponseSchema }
       ),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.documents.all }),
+  })
+}
+
+/** `GET /api/ai/documents/facets` — the sources and types the Search filters offer. */
+export function useDocumentFacets() {
+  return useQuery({
+    queryKey: queryKeys.documents.facets,
+    queryFn: () => api.get('/api/ai/documents/facets', { schema: documentFacetsSchema }),
   })
 }
 

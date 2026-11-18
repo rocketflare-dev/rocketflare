@@ -23,6 +23,7 @@ import {
   factReviewResponseSchema,
   type KNOWLEDGE_REVIEW_KINDS,
   knowledgeReviewListSchema,
+  mentionedFactsResponseSchema,
 } from '@rocketflare/shared/ai/knowledge-facts'
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ApiError, api, showToast } from '@/ui/lib/api-client'
@@ -133,4 +134,19 @@ export function useKeepEntitySeparate() {
       showErrorToast: false,
     })
   )
+}
+
+/**
+ * The Search page's facts block: the facts about the entities a query names
+ * (`GET /api/knowledge/mentioned?q=`). Keyed on the query, so a repeated search is a cache hit.
+ */
+export function useMentionedFacts(q: string, enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.knowledge.mentioned(q),
+    queryFn: () =>
+      api.get(`/api/knowledge/mentioned${toSearchParams({ q })}`, {
+        schema: mentionedFactsResponseSchema,
+      }),
+    enabled: enabled && q.trim().length > 0,
+  })
 }

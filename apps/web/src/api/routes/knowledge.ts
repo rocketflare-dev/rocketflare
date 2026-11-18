@@ -7,6 +7,7 @@
  *   possible match): mine, or everyone's with `manage KnowledgeFact` (`?mine=true` narrows).
  * - `POST /facts/:id/review` `{ action: confirm | reject | prefer }`.
  * - `GET /entities/:type/:id` — the entity card.
+ * - `GET /mentioned?q=` — the facts about the entities a search query names (the Search page).
  * - `POST /entities/:id/merge` `{ into }` · `/promote` `{ id }` · `/keep-separate`.
  *
  * Who: `read KnowledgeFact` to read, `update KnowledgeFact` to act — and acting on an item is its
@@ -18,6 +19,8 @@ import {
   entityCardParamSchema,
   factReviewRequestSchema,
   knowledgeReviewQuerySchema,
+  type MentionedFactsResponse,
+  mentionedFactsQuerySchema,
   mergeEntityRequestSchema,
   promoteEntityRequestSchema,
 } from '@rocketflare/shared/ai/knowledge-facts'
@@ -25,6 +28,7 @@ import { can, guardPermission } from '../middleware/permissions'
 import { accessScopeOf } from '../services/access'
 import { recordActivity } from '../services/activity'
 import { getEntityCard, listReviewItems, type ReviewReader } from '../services/knowledge/facts-read'
+import { factsForQuery } from '../services/knowledge/lookup'
 import {
   keepEntitySeparate,
   mergeEntity,
@@ -73,6 +77,14 @@ knowledgeRouter.post('/facts/:id/review', validate('json', factReviewRequestSche
     })
   )
   return c.json(result)
+})
+
+knowledgeRouter.get('/mentioned', validate('query', mentionedFactsQuerySchema), async c => {
+  const { db, auth } = withAuthAndDb(c)
+  guardPermission(c, 'read', 'KnowledgeFact')
+  const { q } = c.req.valid('query')
+  const body: MentionedFactsResponse = { entities: await factsForQuery(db, accessScopeOf(auth), q) }
+  return c.json(body)
 })
 
 knowledgeRouter.get('/entities/:type/:id', validate('param', entityCardParamSchema), async c => {

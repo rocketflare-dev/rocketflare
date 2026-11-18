@@ -13,7 +13,8 @@
  * offset is the stored `chunks.char_start` (exact: the chunk is that slice of the text); a row
  * written before 0.37.0 has none and falls back to `position()` of its text, approximate by
  * construction (first occurrence, Postgres characters against JS's UTF-16). The tenant predicate
- * is on EVERY query; `documentId` narrows further.
+ * is on EVERY query; `documentId` and `filters` (source, content type, date added —
+ * `documentFilterPredicate`) narrow further, ANDed with it and with the visibility predicate.
  *
  * **Reranking** (`rerank.ts`): the top `RERANK_CANDIDATES` (config, default 20) fused candidates go to the reranker
  * `resolveRerank` picks (the tenant's `rerank` row → Workers AI bge-reranker-base → none), are
@@ -25,9 +26,9 @@
  * (`knowledge.embeddings`, `knowledge.rerank`), written alongside the passage lookup or through
  * the caller's `defer`, never able to fail the search.
  */
-import type { SearchHit, SearchRequest } from '@rocketflare/shared/ai/embeddings'
+import type { SearchFilters, SearchHit, SearchRequest } from '@rocketflare/shared/ai/embeddings'
 import { KNOWLEDGE_USAGE_FEATURES } from '@rocketflare/shared/ai/usage'
-import { and, eq, inArray, isNull, or, sql } from 'drizzle-orm'
+import { and, eq, gte, inArray, isNull, lt, or, type SQL, sql } from 'drizzle-orm'
 import type { AppConfig } from '../../../config'
 import type { Database } from '../../../db/client'
 import { chunks, documents } from '../../../db/schema'
@@ -206,6 +207,7 @@ export function searchKnowledgeChunks(
         query: request.query,
         limit: request.limit ?? 10,
         documentId: request.documentId,
+        ...(request.filters ? { filters: request.filters } : {}),
         ...(request.sources ? { sources: request.sources } : {}),
         ...(request.platformSources?.length ? { platformSources: request.platformSources } : {}),
       },
@@ -329,6 +331,33 @@ async function rerankFused(
   return { ordered: kept, scores, outcome: { ...summary, dropped: items.length - kept.length } }
 }
 
+/** One UTC day in milliseconds — `createdTo` is inclusive, so the bound is the next midnight. */
+const DAY_MS = 86_400_000
+
+/**
+ * The `filters` of a search as ONE predicate over `documents`, or undefined when there are none.
+ * It only ever narrows: the caller ANDs it with the tenant and visibility predicates, never in
+ * place of them. Exported for its test.
+ */
+export function documentFilterPredicate(filters: SearchFilters | undefined): SQL | undefined {
+  if (!filters) return undefined
+  return and(
+    filters.sources?.length ? inArray(documents.source, [...filters.sources]) : undefined,
+    filters.contentTypes?.length
+      ? inArray(documents.contentType, [...filters.contentTypes])
+      : undefined,
+    filters.createdFrom
+      ? gte(documents.createdAt, new Date(`${filters.createdFrom}T00:00:00.000Z`))
+      : undefined,
+    filters.createdTo
+      ? lt(
+          documents.createdAt,
+          new Date(new Date(`${filters.createdTo}T00:00:00.000Z`).getTime() + DAY_MS)
+        )
+      : undefined
+  )
+}
+
 async function runSearch(
   db: Database,
   cfg: AppConfig,
@@ -348,17 +377,20 @@ async function runSearch(
   const searchTenant = !request.sources || request.sources.length > 0
   const searchPlatform = platformSources.length > 0
   if (!searchTenant && !searchPlatform) return { hits: [], semantic: 'used', rerank: notReranked }
+  const narrowed = documentFilterPredicate(request.filters)
   const scope = and(
     eq(chunks.tenantId, tenantId),
     visible,
     request.documentId ? eq(chunks.documentId, request.documentId) : undefined,
-    request.sources ? inArray(documents.source, [...request.sources]) : undefined
+    request.sources ? inArray(documents.source, [...request.sources]) : undefined,
+    narrowed
   )
   const platformScope = searchPlatform
     ? and(
         isNull(chunks.tenantId),
         inArray(documents.source, platformSources),
-        request.documentId ? eq(chunks.documentId, request.documentId) : undefined
+        request.documentId ? eq(chunks.documentId, request.documentId) : undefined,
+        narrowed
       )
     : undefined
 
