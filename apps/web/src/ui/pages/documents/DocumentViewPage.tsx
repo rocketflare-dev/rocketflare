@@ -3,7 +3,9 @@
  * you only ever saw the edges of — Search could find a passage and never open the thing it came
  * from, and an uploaded PDF was a download link.
  *
- * Two tabs (`?tab=document|details`). The Document tab dispatches on `fileId`, the upload kind and
+ * Tabs `?tab=document|details`, plus `facts` with knowledge facts on (`DocumentFactsPanel`: the
+ * facts read from this document, grouped by entity; a fact's "Show in document" deep-links its
+ * quote with `?offset=&end=`, which marks exactly that span in the Plain view). The Document tab dispatches on `fileId`, the upload kind and
  * the status: a PDF is embedded with `<object>` (its CHILDREN are the fallback — there is no
  * reliable success event for `<object>`, so nothing here tries to detect failure), anything else
  * renders its text, and a document still being converted shows that and polls. The panel header
@@ -23,6 +25,7 @@ import {
   ArrowDownTrayIcon,
   ArrowLeftIcon,
   ArrowRightIcon,
+  CubeIcon,
   DocumentTextIcon,
   ListBulletIcon,
 } from '@heroicons/react/24/outline'
@@ -50,9 +53,12 @@ import {
   URLTabs,
 } from '@/ui/components/shared'
 import { useDocument, useDocumentContent, useDocumentPassages } from '@/ui/hooks/useDocuments'
+import { useNavGuard } from '@/ui/hooks/useNavGuard'
 import { ApiError } from '@/ui/lib/api-client'
+import { KNOWLEDGE_FACTS_GUARD } from '@/ui/lib/feature-guards'
 import { formatBytes, formatDateTime } from '@/ui/lib/format'
 import { highlightMatches } from '@/ui/lib/highlight'
+import { DocumentFactsPanel } from './DocumentFactsPanel'
 
 /** Content types whose converted text is markdown, so it renders rather than sits in a `<pre>`. */
 function rendersAsMarkdown(contentType: string): boolean {
@@ -71,6 +77,11 @@ export default function DocumentViewPage() {
   const q = params.get('q')
   const offset = Number(params.get('offset') ?? 0)
   const chunkId = params.get('chunk')
+  const endParam = Number(params.get('end') ?? Number.NaN)
+  // `?end=` only means something after `?offset=`: the span a fact's quote occupies.
+  const end = Number.isInteger(endParam) && endParam > offset ? endParam : null
+  const canAccess = useNavGuard()
+  const factsOn = canAccess(KNOWLEDGE_FACTS_GUARD)
 
   if (document.isLoading) {
     return (
@@ -103,8 +114,18 @@ export default function DocumentViewPage() {
       id: 'document',
       label: 'Document',
       icon: <DocumentTextIcon className="w-4 h-4" />,
-      content: <DocumentPanel doc={doc} offset={offset} q={q} chunkId={chunkId} />,
+      content: <DocumentPanel doc={doc} offset={offset} end={end} q={q} chunkId={chunkId} />,
     },
+    ...(factsOn
+      ? [
+          {
+            id: 'facts',
+            label: 'Facts',
+            icon: <CubeIcon className="w-4 h-4" />,
+            content: <DocumentFactsPanel documentId={doc.id} />,
+          },
+        ]
+      : []),
     {
       id: 'details',
       label: 'Details',
@@ -132,11 +153,13 @@ type DocumentRow = NonNullable<ReturnType<typeof useDocument>['data']>
 function DocumentPanel({
   doc,
   offset,
+  end,
   q,
   chunkId,
 }: {
   doc: DocumentRow
   offset: number
+  end: number | null
   q: string | null
   chunkId: string | null
 }) {
@@ -203,7 +226,7 @@ function DocumentPanel({
           )}
         </div>
       ) : (
-        <TextView doc={doc} offset={offset} q={q} chunkId={chunkId} />
+        <TextView doc={doc} offset={offset} end={end} q={q} chunkId={chunkId} />
       )}
     </SectionPanel>
   )
@@ -212,11 +235,13 @@ function DocumentPanel({
 function TextView({
   doc,
   offset,
+  end,
   q,
   chunkId,
 }: {
   doc: DocumentRow
   offset: number
+  end: number | null
   q: string | null
   chunkId: string | null
 }) {
@@ -268,7 +293,8 @@ function TextView({
       documentId={doc.id}
       markdown={rendersAsMarkdown(doc.contentType)}
       q={q}
-      highlightAt={target > 0 ? target : null}
+      highlightAt={target > 0 || end !== null ? target : null}
+      highlightEnd={end}
     />
   )
 }
@@ -279,19 +305,23 @@ function TextWindow({
   markdown,
   q,
   highlightAt,
+  highlightEnd,
 }: {
   window: DocumentContent
   documentId: string
   markdown: boolean
   q: string | null
   highlightAt: number | null
+  /** The end of a linked SPAN (a fact's quote): mark only `highlightAt`…`highlightEnd`. */
+  highlightEnd: number | null
 }) {
   // Markdown always renders AS markdown — that is what it is for, and a deep link that dumped the
   // raw source would be a worse answer than the one it came from. Highlighting is what gives way:
   // `<mark>` cannot be threaded through react-markdown's AST without rewriting the renderer, so the
   // Plain toggle is where a query's matches and a linked passage's anchor show, and the note below
   // says so instead of leaving somebody to wonder why their search term is not marked.
-  const [rendered, setRendered] = useState(markdown)
+  // A linked span (a fact's quote) is only visible in Plain, so such a link opens there.
+  const [rendered, setRendered] = useState(markdown && highlightEnd === null)
   const anchor = useRef<HTMLSpanElement>(null)
   useEffect(() => {
     anchor.current?.scrollIntoView({ block: 'center' })
@@ -302,6 +332,8 @@ function TextWindow({
   // Where the deep link's passage starts WITHIN this window (the window is snapped down to a
   // boundary, so the target is at or after its start).
   const anchorAt = highlightAt !== null ? highlightAt - window.offset : null
+  const anchorEnd =
+    highlightEnd !== null ? Math.min(window.text.length, highlightEnd - window.offset) : null
 
   return (
     <div className="p-4 space-y-3">
@@ -339,9 +371,10 @@ function TextWindow({
           {anchorAt !== null && anchorAt >= 0 && anchorAt < window.text.length ? (
             <>
               <PlainText text={window.text.slice(0, anchorAt)} q={q} />
-              <span ref={anchor} className="bg-warning/30 rounded-sm">
-                <PlainText text={window.text.slice(anchorAt)} q={q} />
+              <span ref={anchor} className="bg-warning/30 rounded-sm" data-testid="text-anchor">
+                <PlainText text={window.text.slice(anchorAt, anchorEnd ?? undefined)} q={q} />
               </span>
+              {anchorEnd !== null && <PlainText text={window.text.slice(anchorEnd)} q={q} />}
             </>
           ) : (
             <PlainText text={window.text} q={q} />

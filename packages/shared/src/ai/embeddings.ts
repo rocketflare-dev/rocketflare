@@ -472,12 +472,22 @@ export type DocumentCard = z.infer<typeof documentCardSchema>
 /** The ONE place the viewer's route is written. Deep links carry the passage they came from. */
 export function documentPath(
   id: string,
-  options: { offset?: number | null; chunk?: string | null; q?: string | null; tab?: string } = {}
+  options: {
+    offset?: number | null
+    /** Where the linked span ENDS (a fact's quote): the viewer marks `offset`…`end` only. */
+    end?: number | null
+    chunk?: string | null
+    q?: string | null
+    tab?: string
+  } = {}
 ): string {
   const params = new URLSearchParams()
   if (options.tab) params.set('tab', options.tab)
   if (typeof options.offset === 'number' && options.offset >= 0) {
     params.set('offset', String(options.offset))
+    if (typeof options.end === 'number' && options.end > options.offset) {
+      params.set('end', String(options.end))
+    }
   }
   if (options.chunk) params.set('chunk', options.chunk)
   if (options.q) params.set('q', options.q)

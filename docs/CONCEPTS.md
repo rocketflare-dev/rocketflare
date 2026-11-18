@@ -948,6 +948,12 @@ Server: `api/services/{ai,agents}/**` (read their `CLAUDE.md`), `services/prompt
   `KnowledgeFact`: member `read` + `update`, admin+ `manage`): `GET /review` (open facts and
   possible matches addressed to me — everyone's for `manage KnowledgeFact`, `?mine=true` narrows —
   newest first, paginated over both kinds with one UNION; `?kind=`, `?entityType=`, `?entityId=`);
+  `GET /documents/:id/facts` (the facts read from one document, grouped by entity, every state;
+  404 for a document the reader cannot see; `entityTypesRegistered` says whether extraction has
+  anything to look for); `GET /entities` (the entities with CURRENT facts — accepted, unconfirmed,
+  conflicting — the reader can see, with `facts` / `needsLook` counted over visible facts only in
+  one GROUP BY, filters `type` / `sourceKind` / `needsLook` / `q` (staging names and aliases;
+  a domain row's own label is not searched), facets over every visible current fact, paginated);
   `GET /mentioned?q=` (the facts about the entities a query names — `search_knowledge`'s facts
   block, for the Search page — read through the same visibility);
   `POST /facts/:id/review { action }` — `confirm` (→ `accepted`, `confirmed_by/at`, trust
@@ -989,7 +995,12 @@ Server: `api/services/{ai,agents}/**` (read their `CLAUDE.md`), `services/prompt
   shown only to the item's reviewer or a manager (anyone else reads one sentence). The **review
   list** is a "To review" view of the Knowledge page (`/documents?view=review`), not a queue page:
   open items, filterable by kind, "Only mine" for a manager, each linking to its entity, a
-  conflict shown once with every side (the API lists each side as an item). The
+  conflict shown once with every side (the API lists each side as an item). Beside it, a
+  **Facts** view (`/documents?view=facts`) BROWSES every entity with facts — name, type, fact
+  count, how many need a look, last seen; filters for type, "Needs a look" and source kind, a
+  name box, paging; each row opens the entity page — and the **document viewer** has a Facts tab
+  (`?tab=facts`): the document's facts by entity, each with its quote and "Show in document",
+  which opens `?tab=document&offset=&end=` and marks exactly that span in the Plain view. The
   **badge** on the Knowledge nav item counts MY open items (`GET /review?mine=true&pageSize=1` →
   total), fed by the nudge and never polled. In **chat**, a turn that used `lookup_facts` or the
   `search_knowledge` facts block shows a compact card per entity (name, type, the facts the tool

@@ -8,6 +8,8 @@
  * - `POST /facts/:id/review` `{ action: confirm | reject | prefer }`.
  * - `GET /entities/:type/:id` — the entity card.
  * - `GET /mentioned?q=` — the facts about the entities a search query names (the Search page).
+ * - `GET /documents/:id/facts` — the facts read from one document (the document viewer).
+ * - `GET /entities` — entities with current facts, counts and filters (the Knowledge Facts view).
  * - `POST /entities/:id/merge` `{ into }` · `/promote` `{ id }` · `/keep-separate`.
  *
  * Who: `read KnowledgeFact` to read, `update KnowledgeFact` to act — and acting on an item is its
@@ -18,6 +20,8 @@
 import {
   entityCardParamSchema,
   factReviewRequestSchema,
+  type KnowledgeEntityList,
+  knowledgeEntityListQuerySchema,
   knowledgeReviewQuerySchema,
   type MentionedFactsResponse,
   mentionedFactsQuerySchema,
@@ -27,7 +31,13 @@ import {
 import { can, guardPermission } from '../middleware/permissions'
 import { accessScopeOf } from '../services/access'
 import { recordActivity } from '../services/activity'
-import { getEntityCard, listReviewItems, type ReviewReader } from '../services/knowledge/facts-read'
+import {
+  getEntityCard,
+  listKnowledgeEntities,
+  listReviewItems,
+  type ReviewReader,
+  readDocumentFacts,
+} from '../services/knowledge/facts-read'
 import { factsForQuery } from '../services/knowledge/lookup'
 import {
   keepEntitySeparate,
@@ -36,7 +46,7 @@ import {
   reviewFact,
 } from '../services/knowledge/review'
 import type { AppContext } from '../types'
-import { paginated } from '../utils/routes/pagination'
+import { pageWindow, paginated } from '../utils/routes/pagination'
 import { uuidParam, withAuthAndDb } from '../utils/routes/route-helpers'
 import { createRouter } from '../utils/routes/router'
 import { validate } from '../utils/routes/validate'
@@ -84,6 +94,26 @@ knowledgeRouter.get('/mentioned', validate('query', mentionedFactsQuerySchema), 
   guardPermission(c, 'read', 'KnowledgeFact')
   const { q } = c.req.valid('query')
   const body: MentionedFactsResponse = { entities: await factsForQuery(db, accessScopeOf(auth), q) }
+  return c.json(body)
+})
+
+knowledgeRouter.get('/documents/:id/facts', async c => {
+  const { db, auth } = withAuthAndDb(c)
+  guardPermission(c, 'read', 'KnowledgeFact')
+  return c.json(await readDocumentFacts(db, accessScopeOf(auth), uuidParam(c, 'id')))
+})
+
+knowledgeRouter.get('/entities', validate('query', knowledgeEntityListQuerySchema), async c => {
+  const { db, auth } = withAuthAndDb(c)
+  guardPermission(c, 'read', 'KnowledgeFact')
+  const query = c.req.valid('query')
+  const { items, total, facets } = await listKnowledgeEntities(
+    db,
+    accessScopeOf(auth),
+    query,
+    pageWindow(query)
+  )
+  const body: KnowledgeEntityList = { ...paginated(items, total, query), facets }
   return c.json(body)
 })
 

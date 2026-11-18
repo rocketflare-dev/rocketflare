@@ -604,3 +604,93 @@ export function entityCardsFromToolCalls(
 
 /** Stable identity of a card's entity, for de-duplicating cards across tool calls. */
 export const chatEntityCardKey = cardKey
+
+// ── Browsing facts (the document's facts, the Knowledge page's Facts view) ───────────────────
+
+/** An entity as a browse view names it: the ref, its display name, and its type's label. */
+export const browseEntitySchema = reviewEntitySchema.extend({ typeLabel: z.string() })
+export type BrowseEntity = z.infer<typeof browseEntitySchema>
+
+/** The facts one document gave about one entity. */
+export const documentFactGroupSchema = z.object({
+  entity: browseEntitySchema,
+  /** Every state, as on the entity page — `rejected` and `superseded` included, labelled. */
+  facts: z.array(factSchema),
+})
+export type DocumentFactGroup = z.infer<typeof documentFactGroupSchema>
+
+/**
+ * `GET /api/knowledge/documents/:id/facts` — the facts read from one document the reader may see
+ * (404 otherwise, the same as an absent one), grouped by entity. `entityTypesRegistered` = 0 means
+ * extraction has nothing to look for, which is why a document can have none.
+ */
+export const documentFactsResponseSchema = z.object({
+  documentId: z.string().uuid(),
+  entityTypesRegistered: z.number().int().nonnegative(),
+  groups: z.array(documentFactGroupSchema),
+})
+export type DocumentFactsResponse = z.infer<typeof documentFactsResponseSchema>
+
+/** A comma-separated query value (`a,b`) → its de-duplicated, non-blank parts. */
+const splitCsv = (v: string) => [
+  ...new Set(
+    v
+      .split(',')
+      .map(s => s.trim())
+      .filter(Boolean)
+  ),
+]
+const csvString = z.string().trim().max(2000).transform(splitCsv)
+
+/**
+ * `GET /api/knowledge/entities` — every entity the reader may see a CURRENT fact about
+ * (`accepted`, `unconfirmed`, `conflicting`), with counts over those visible facts only.
+ * `type` / `sourceKind` (comma-separated) narrow which facts count; `needsLook=true` keeps only
+ * entities with a fact open in the reader's view; `q` matches a staging entity's name or aliases
+ * (a domain row is matched through the staging entities promoted to it).
+ */
+export const knowledgeEntityListQuerySchema = paginationQuerySchema.extend({
+  type: csvString.pipe(z.array(z.string().min(1).max(120)).max(50)).optional(),
+  sourceKind: csvString.pipe(z.array(sourceKindSchema).max(50)).optional(),
+  needsLook: z
+    .enum(['true', 'false'])
+    .transform(v => v === 'true')
+    .optional(),
+  q: z.string().trim().min(1).max(200).optional(),
+})
+export type KnowledgeEntityListQuery = z.infer<typeof knowledgeEntityListQuerySchema>
+
+export const knowledgeEntitySummarySchema = z.object({
+  entity: browseEntitySchema,
+  /** Current facts the reader may see (under the filters). */
+  facts: z.number().int().nonnegative(),
+  /** Of those, open in the reader's view — unconfirmed, or conflicting with a fact they can see. */
+  needsLook: z.number().int().nonnegative(),
+  /** The newest `observedAt` among them. */
+  lastObservedAt: z.coerce.date(),
+})
+export type KnowledgeEntitySummary = z.infer<typeof knowledgeEntitySummarySchema>
+
+/** How a fact's source kind reads in a filter. */
+export const SOURCE_KIND_LABELS: Record<SourceKind, string> = {
+  person: 'Added by a person',
+  upload: 'Uploaded documents',
+  agent: 'Agent output',
+  integration: 'Integrations',
+}
+
+/** One filter value and how many entities carry it (over every visible current fact, unfiltered). */
+export const knowledgeFacetValueSchema = z.object({
+  value: z.string(),
+  label: z.string(),
+  count: z.number().int().nonnegative(),
+})
+export type KnowledgeFacetValue = z.infer<typeof knowledgeFacetValueSchema>
+
+export const knowledgeEntityListSchema = paginatedResponse(knowledgeEntitySummarySchema).extend({
+  facets: z.object({
+    types: z.array(knowledgeFacetValueSchema),
+    sourceKinds: z.array(knowledgeFacetValueSchema),
+  }),
+})
+export type KnowledgeEntityList = z.infer<typeof knowledgeEntityListSchema>

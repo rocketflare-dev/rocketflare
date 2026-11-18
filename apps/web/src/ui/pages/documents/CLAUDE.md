@@ -40,9 +40,24 @@ All three are `guard read Document` and lazy. Hooks are `hooks/useDocuments.ts`,
   so a disagreement appears once (the tab's count still counts facts). Settled items update in place on the
   `['knowledge']` refetch — no success toast.
 
+## Facts (`FactsBrowser.tsx`, `?view=facts`, D43)
+
+- A third tab of the same switch (behind `KNOWLEDGE_FACTS_GUARD`), a BROWSE view, not a queue: no
+  bulk action, and the To review badge is untouched. `useKnowledgeEntities` → `GET
+  /api/knowledge/entities`: name (→ `entityPath`), type, facts, needs a look, last seen; the
+  left column (type, "Needs a look", source kind — values from the response's `facets`) folds
+  behind a button below `lg`; a debounced `SearchInput` for names; `PaginationControls`.
+- Its URL params are prefixed (`ftype`, `fsource`, `needs`, `fq`, `fpage` — `FACTS_VIEW_PARAMS`)
+  and dropped when the view changes.
+
 ## Viewer (`DocumentViewPage.tsx`, no SideNav entry)
 
-- Tabs `?tab=document|details`. Dispatches on `fileId`, upload kind and status: a PDF embeds its
+- Tabs `?tab=document|details`, plus `facts` behind `KNOWLEDGE_FACTS_GUARD` (`DocumentFactsPanel`,
+  `useDocumentFacts` → `GET /api/knowledge/documents/:id/facts`): facts grouped by entity (name →
+  entity page), key, value, state, quote, the inline `FactDoubt`, and "Show in document" →
+  `documentPath(id, { tab: 'document', offset: charStart, end: charEnd })`. `?end=` makes the Plain
+  view mark exactly `offset`…`end` (and opens in Plain); the empty state says when no entity types
+  are registered. Dispatches on `fileId`, upload kind and status: a PDF embeds its
   original with `<object>` — **never try to detect failure, the CHILDREN are the fallback** — and
   the header always carries Download original and a Converted text toggle; everything else renders
   its text (markdown through `components/ai/Markdown`, plain types in a `<pre>`).
@@ -100,5 +115,6 @@ All three are `guard read Document` and lazy. Hooks are `hooks/useDocuments.ts`,
 ## Tests
 
 `tests/ui/`: `documents-page`, `search-page`, `document-view`, `document-card`,
-`knowledge-review` (the view switch, the list, the badge, the flag off), `knowledge-entity-page`; the pure helpers in
+`knowledge-review` (the view switch, the list, the badge, the flag off), `knowledge-entity-page`,
+`knowledge-browse` (the viewer's Facts tab, the span link, the Facts view and its URL); the pure helpers in
 `tests/config/document-helpers.test.ts`.
