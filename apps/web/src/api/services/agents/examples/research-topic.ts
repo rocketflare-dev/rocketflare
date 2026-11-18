@@ -352,6 +352,8 @@ export const researchTopicAgent: AgentDefinition<ResearchTopicInput, ResearchTop
       // through a turn is served what already finished instead of paying for it again, and the
       // run stays strictly replayable after it settles (the checkpoint does not survive that).
       journal: ctx.journal,
+      // Reaches the model call in flight: a cancel no longer waits for the turn to finish.
+      signal: ctx.signal,
       // The loop takes no AbortSignal, so these two callbacks ARE the cancellation poll: once per
       // model turn, and once per tool result — a run doing slow tool work still stops promptly.
       onStep: async step => {

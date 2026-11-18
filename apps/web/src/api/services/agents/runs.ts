@@ -1004,6 +1004,35 @@ export async function reconcileRun(
   }
 }
 
+/**
+ * The sweeper's per-row repair (`sweepLostRuns`, every 10 minutes): the read path's settle, for a
+ * run NOBODY is reading. Without it a run whose instance died is only settled when someone opens
+ * it, and until then it holds its exclusive slot and counts toward the tenant's active cap.
+ *
+ * - `queued` with no instance (the `create()` after the row was lost): create it now — the id is
+ *   the run id, so this is idempotent against a late original.
+ * - `queued` / `running`: `reconcileRun`, which settles only what the RUNTIME says has ended.
+ * - `awaiting_input`: `expireParkedRun`, which settles only a park whose every ask has expired.
+ *
+ * Never settles a run the runtime still holds: a slow step is `running`, a park is `waiting`.
+ */
+export async function sweepRun(
+  db: Database,
+  env: AgentRunsEnv,
+  run: AgentRunRow,
+  options: { lastEventAt?: Date | null; realtime?: Realtime } = {}
+): Promise<{ run: AgentRunRow; action: 'none' | 'dispatched' | 'settled' }> {
+  if (run.status === 'queued' && !run.instanceId && env.AGENT_RUN_WORKFLOW) {
+    const row = await ensureInstance(db, env.AGENT_RUN_WORKFLOW, run, run.tenantId)
+    return { run: row, action: row.instanceId ? 'dispatched' : 'none' }
+  }
+  const reconciled = await reconcileRun(db, env, run, { lastEventAt: options.lastEventAt })
+  const settled = await expireParkedRun(db, reconciled, options.realtime)
+  if (settled.status === run.status) return { run: settled, action: 'none' }
+  nudgeRun(options.realtime, run.tenantId, run.id)
+  return { run: settled, action: 'settled' }
+}
+
 // ---- Events ---------------------------------------------------------------------------------------
 
 /** The realtime nudge every run mutation ends with. The client re-queries; the payload is an id. */

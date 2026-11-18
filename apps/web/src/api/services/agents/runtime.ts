@@ -34,6 +34,7 @@ import { and, asc, eq, sql } from 'drizzle-orm'
 import type { AppConfig } from '../../../config'
 import type { Database } from '../../../db/client'
 import { type AgentRunInterruptRow, agentRunEvents, tenants, tenantUsers } from '../../../db/schema'
+import { ATTR, rootAttributes } from '../../observability/genai-attributes'
 import { databaseSpanStore } from '../../observability/span-store'
 import { rootSpanIdForRun, traceIdForRun } from '../../observability/trace-ids'
 import { traceChatClient, tracerFor, withAgentTrace } from '../../observability/tracing'
@@ -56,6 +57,7 @@ import { type RegistryPromptKey, resolvePrompt } from '../prompts'
 import type { HubEnv, Realtime } from '../realtime'
 import { toAgentArtifact, upsertArtifact } from './artifacts'
 import { AgentBudgetExceededError, budgetFor, createRunMeter, meterChatClient } from './budget'
+import { abortableChatClient, watchCancel } from './cancel'
 import { createDecide } from './decisions'
 import { withFanout } from './fanout'
 import {
@@ -147,7 +149,9 @@ export async function claimStep(
   db: Database,
   env: RuntimeEnv,
   logger: Logger,
-  params: AgentRunParams
+  params: AgentRunParams,
+  /** Given by the workflow's claim step: the FIRST claim records the run's `run started` span. */
+  trace?: { cfg: AppConfig }
 ): Promise<boolean> {
   const row = await claimRun(db, params.tenantId, params.runId)
   if (!row) {
@@ -158,7 +162,56 @@ export async function claimStep(
   const emit = await createEmitter(db, params, realtime, logger)
   await emit({ type: 'status', data: { status: 'running', attempt: row.attempt } })
   await settle()
+  if (trace && row.attempt === 1) await recordRunStarted(db, trace.cfg, logger, row)
   return true
+}
+
+/**
+ * `gen_ai.conversation.id` for a run's spans: the run IS its thread (AG-UI's `threadId` is the run
+ * id). The attribute only — `rocketflare.conversation_id` and the `ai_spans` column stay a CHAT
+ * thread's, which is what `traces list --conversation` filters on.
+ */
+function runConversation(runId: string) {
+  return { [ATTR.conversationId]: runId }
+}
+
+/**
+ * The run's start, visible in the backend BEFORE it settles: a zero-length `run started` span,
+ * a child of the root id {@link recordRunRoot} records at the end, carrying the trace's name,
+ * tags and session so a backend lists the run at once. An OTLP span cannot be updated, so this
+ * is a span of its own (the "pending span" pattern) rather than an early copy of the root: a
+ * backend that keeps the first span it sees for an id would otherwise keep the unfinished one.
+ * Never throws.
+ */
+export async function recordRunStarted(
+  db: Database,
+  cfg: AppConfig,
+  logger: Logger,
+  run: { id: string; tenantId: string; agentKey: string; requestedByUserId: string | null }
+): Promise<void> {
+  try {
+    const tracer = tracerFor(cfg, { logger, store: databaseSpanStore(db) })
+    if (!tracer.enabled) return
+    const span = tracer.startTrace({
+      name: run.agentKey,
+      tenantId: run.tenantId,
+      userId: run.requestedByUserId ?? undefined,
+      runId: run.id,
+      traceId: traceIdForRun(run.id),
+      parentSpanId: rootSpanIdForRun(run.id),
+      spanName: 'run started',
+      kind: 'span',
+    })
+    span.setAttributes({
+      ...rootAttributes({ name: run.agentKey, tags: ['agent', run.agentKey] }),
+      ...runConversation(run.id),
+      [ATTR.runPending]: true,
+    })
+    span.end()
+    await tracer.flush()
+  } catch (err) {
+    logger.warn({ err, runId: run.id }, 'agent-run: could not record the run start')
+  }
 }
 
 /** A fault a retry can plausibly fix: the provider was unreachable/overloaded or the DB was down. */
@@ -268,7 +321,11 @@ export async function executeRun(
   logger: Logger,
   params: AgentRunParams,
   /** The Workflow round (`execute#N`) — names this step's span. */
-  options: { round?: number } = {}
+  options: {
+    round?: number
+    /** How often the attempt reads its row for a cancel; `CANCEL_POLL_MS` unless a test lowers it. */
+    cancelPollMs?: number
+  } = {}
 ): Promise<ExecuteOutcome> {
   const { tenantId, runId } = params
   const run = await getRun(db, tenantId, runId)
@@ -284,6 +341,11 @@ export async function executeRun(
   const checkCancelled = async () => {
     if (await isCancelRequested(db, tenantId, runId)) throw new AgentCancelledError()
   }
+  // The other half of cancel: a request reaches the model call IN FLIGHT, not just the next poll.
+  const cancel = watchCancel(() => isCancelRequested(db, tenantId, runId), {
+    logger,
+    intervalMs: options.cancelPollMs,
+  })
 
   try {
     const tenant = await db.query.tenants.findFirst({
@@ -338,10 +400,14 @@ export async function executeRun(
         kind: 'span',
       },
       async trace => {
+        trace.setAttributes(runConversation(runId))
         // Metered OUTSIDE the trace wrapper, so a call the budget refuses opens no span.
-        const client = meterChatClient(
-          traceChatClient(resolved.client, trace, { provider: resolved.provider }, tracer),
-          meter
+        const client = abortableChatClient(
+          meterChatClient(
+            traceChatClient(resolved.client, trace, { provider: resolved.provider }, tracer),
+            meter
+          ),
+          cancel.signal
         )
         const ctx = withFanout({
           db,
@@ -355,6 +421,7 @@ export async function executeRun(
           input,
           emit,
           checkCancelled,
+          signal: cancel.signal,
           chat: { client, model: resolved.model, maxOutputTokens: resolved.maxOutputTokens },
           // Built here, at EXECUTE time, from the run's requester — current membership, not
           // a snapshot taken when the run was enqueued. No requester ("system") reads tenant-wide
@@ -438,18 +505,21 @@ export async function executeRun(
                 }),
                 // Metered like `ctx.chat.client`, but on who pays for the `agent-decide` model.
                 wrapChat: (chatClient, chat) =>
-                  meterChatClient(
-                    traceChatClient(
-                      chatClient,
-                      trace,
-                      { provider: chat.provider, name: 'decide' },
-                      tracer
+                  abortableChatClient(
+                    meterChatClient(
+                      traceChatClient(
+                        chatClient,
+                        trace,
+                        { provider: chat.provider, name: 'decide' },
+                        tracer
+                      ),
+                      meter,
+                      {
+                        feature: `agent:${agent.meta.key}:decide`,
+                        billedToPlatform: chat.billedToPlatform,
+                      }
                     ),
-                    meter,
-                    {
-                      feature: `agent:${agent.meta.key}:decide`,
-                      billedToPlatform: chat.billedToPlatform,
-                    }
+                    cancel.signal
                   ),
               }),
             emit: data => emit({ type: 'decision', data }),
@@ -482,7 +552,9 @@ export async function executeRun(
     await emit({ type: 'status', data: { status } })
     return { runId, status }
   } catch (err) {
-    if (err instanceof AgentCancelledError) {
+    // An aborted attempt is a cancel whatever surfaced it — the race's own error, or a provider's
+    // abort error, which would otherwise read as a retryable `unavailable`.
+    if (err instanceof AgentCancelledError || cancel.signal.aborted) {
       await cancelRun(db, tenantId, runId)
       await expireInterrupts(db, tenantId, runId)
       await emit({ type: 'status', data: { status: 'cancelled' } })
@@ -618,6 +690,7 @@ export async function executeRun(
     await emit({ type: 'status', data: { status: 'failed' } })
     return { runId, status: 'failed', error: message }
   } finally {
+    cancel.stop()
     await settle()
     await tracer.flush()
   }
@@ -723,6 +796,7 @@ export async function recordRunRoot(
       spanId: rootSpanIdForRun(run.id),
       startTime: run.startedAt ?? run.createdAt,
     })
+    root.setAttributes(runConversation(run.id))
     root.end(
       run.status === 'failed'
         ? { error: run.error ?? 'The agent run failed' }

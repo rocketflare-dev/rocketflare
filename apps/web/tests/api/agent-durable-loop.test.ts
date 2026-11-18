@@ -10,16 +10,25 @@
  *     journal;
  *   - key safety: `ctx.once` twice under one key in one attempt fails the run with
  *     `agent_effect_key_conflict`; `{ inputs }` makes one record per input, served on a retry;
- *   - the nightly prune drops the journals of runs settled past the retention, nothing else.
+ *   - the nightly prune drops the journals of runs settled past the retention, nothing else;
+ *   - cancel reaches the model call IN FLIGHT: a request settles the run `cancelled` while the
+ *     call is still hanging, without waiting for it — and never as a retryable failure.
  */
 import { ERROR_CODES } from '@rocketflare/shared/errors'
 import { and, eq } from 'drizzle-orm'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
 import { runPruneAgentTurns } from '@/api/scheduled'
+import { abortableChatClient, watchCancel } from '@/api/services/agents/cancel'
 import { AGENTS, type AgentContext, type AnyAgentDefinition } from '@/api/services/agents/registry'
 import { replayRun } from '@/api/services/agents/replay'
-import { enqueueRun, getRun, listEvents } from '@/api/services/agents/runs'
+import {
+  AgentCancelledError,
+  enqueueRun,
+  getRun,
+  listEvents,
+  requestCancel,
+} from '@/api/services/agents/runs'
 import { claimStep, executeRun } from '@/api/services/agents/runtime'
 import { runToolLoop, type Tool } from '@/api/services/ai/agent-loop'
 import { AiError } from '@/api/services/ai/errors'
@@ -391,5 +400,67 @@ describe('runPruneAgentTurns', () => {
     expect(await left(parkedRun)).toBe(1)
     // The run itself is kept: only its transcript ages out.
     expect(await db.select().from(agentRuns).where(eq(agentRuns.id, old))).toHaveLength(1)
+  })
+})
+
+describe('cancel reaches the call in flight', () => {
+  it('a cancel requested mid-call settles the run cancelled without waiting for the call', async () => {
+    const env = createTestEnv()
+    let sawSignal: AbortSignal | undefined
+    // A provider that never answers and ignores its signal — Workers AI's `env.AI.run`.
+    state.client = {
+      provider: 'anthropic',
+      complete: params => {
+        sawSignal = params.signal
+        return new Promise(() => {})
+      },
+      // biome-ignore lint/correctness/useYield: never reached — this test only calls complete.
+      async *stream() {
+        throw new Error('unused')
+      },
+    }
+    installAgent(async ctx => {
+      await ctx.chat.client.complete({ model: ctx.chat.model, maxTokens: 64, messages: [] })
+      return 'never'
+    })
+    const params = await enqueueAndClaim(env)
+    const running = executeRun(db, loadConfig(env), env, fakeLogger(), params, {
+      cancelPollMs: 20,
+    })
+    await vi.waitFor(() => expect(sawSignal).toBeDefined())
+    await requestCancel(db, params.tenantId, params.runId)
+
+    const outcome = await running
+    expect(outcome.status).toBe('cancelled')
+    expect(sawSignal?.aborted).toBe(true)
+    expect((await getRun(db, params.tenantId, params.runId))?.status).toBe('cancelled')
+    const events = await listEvents(db, params.tenantId, params.runId)
+    expect(events.filter(e => e.type === 'error')).toEqual([])
+  })
+
+  it('abortableChatClient rejects at once on abort; watchCancel aborts when asked, once', async () => {
+    const controller = new AbortController()
+    const hanging = abortableChatClient(
+      {
+        provider: 'anthropic',
+        complete: () => new Promise(() => {}),
+        stream: async function* () {},
+      },
+      controller.signal
+    )
+    const call = hanging.complete({ model: 'm', maxTokens: 1, messages: [] })
+    controller.abort()
+    await expect(call).rejects.toBeInstanceOf(AgentCancelledError)
+    await expect(
+      hanging.complete({ model: 'm', maxTokens: 1, messages: [] })
+    ).rejects.toBeInstanceOf(AgentCancelledError)
+
+    let asks = 0
+    const watch = watchCancel(async () => ++asks >= 2, { intervalMs: 5 })
+    await vi.waitFor(() => expect(watch.signal.aborted).toBe(true))
+    const seen = asks
+    await new Promise(resolve => setTimeout(resolve, 25))
+    expect(asks).toBe(seen)
+    watch.stop()
   })
 })

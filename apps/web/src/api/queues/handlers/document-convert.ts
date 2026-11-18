@@ -37,14 +37,14 @@ export async function handleDocumentConvert(
   }
   const storage = createR2Storage(ctx.env.FILES)
   try {
-    // A `job document.convert` span, so each embeddings batch nests under something.
+    // A `invoke_workflow document.convert` span, so each embeddings batch nests under something.
     const indexed = await withAgentTrace(
       'document.convert',
       {
         tracer: ctx.tracer ?? noopTracer,
         tenantId,
         kind: 'job',
-        spanName: 'job document.convert',
+        spanName: 'invoke_workflow document.convert',
         metadata: { documentId },
       },
       () => convertAndIndexDocument(ctx.db, ctx.config, ctx.env, storage, tenantId, documentId)

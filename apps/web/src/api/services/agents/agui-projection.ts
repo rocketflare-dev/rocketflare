@@ -8,9 +8,11 @@
  *
  * Three deliberate choices:
  *
- * - **A settled `cancelled` run projects as `RUN_ERROR` with code `agent_run_cancelled`.** The
- *   streaming convention — "closed with no terminal event means cancelled" — cannot apply to a
- *   finite array, where the absence of a terminal event is how an ACTIVE run is represented.
+ * - **A settled `cancelled` run ends `RUN_FINISHED { outcome: { type: 'cancelled' } }`** — AG-UI
+ *   1.0's own outcome for "stopped before it completed, and did not fail". Not a `RUN_ERROR` (a
+ *   cancel is a status, never a fault) and not silence: the streaming convention "closed with no
+ *   terminal event means cancelled" cannot apply to a finite array, where the absence of a
+ *   terminal event is how an ACTIVE run is represented.
  * - **No `kit.usage`.** Every `ai_usage` row of a run carries its id, and `GET /runs/:id`
  *   returns the sum as `usage`; the projection stays a pure fold over `(run, events)` and does not
  *   read the ledger. A `kit.usage` CUSTOM event is the place to add it if an AG-UI client needs it.
@@ -316,6 +318,19 @@ export function createRunProjector(run: AgentRun): RunProjector {
       // Any other active run has no terminal event: the client keeps reading (or reconnects).
       if (isRunActive(current.status)) return []
 
+      if (current.status === 'cancelled') {
+        // A cancel — by a person, a declined approval, an expired ask, a suspended organisation —
+        // is a STATUS: `RUN_FINISHED` with AG-UI's `cancelled` outcome, never a `RUN_ERROR`.
+        return [
+          {
+            type: AguiEventType.RUN_FINISHED,
+            threadId: current.id,
+            runId: current.id,
+            outcome: { type: 'cancelled' },
+          },
+        ]
+      }
+
       if (current.status === 'succeeded') {
         return [
           {
@@ -329,11 +344,8 @@ export function createRunProjector(run: AgentRun): RunProjector {
       return [
         {
           type: AguiEventType.RUN_ERROR,
-          message:
-            current.status === 'cancelled'
-              ? 'The run was cancelled'
-              : (current.error ?? lastError ?? 'The run failed'),
-          code: current.status === 'cancelled' ? 'agent_run_cancelled' : 'agent_run_failed',
+          message: current.error ?? lastError ?? 'The run failed',
+          code: 'agent_run_failed',
         },
       ]
     },

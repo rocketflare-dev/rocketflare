@@ -9,12 +9,25 @@
  * - **Langfuse aliases** (`langfuse.*`) — trace name, session, user, tags, observation type and
  *   level. Langfuse maps most `gen_ai.*` itself; the aliases cover what it does not.
  *
+ * The GenAI names follow {@link GENAI_SEMCONV_VERSION}, pinned because the agent spans are still
+ * "Development" upstream and may be renamed: every export says which version it speaks
+ * (`schemaUrl`), and moving to a later one is a deliberate edit of this file, never a drift.
+ *
  * A semconv rename is an edit here and nowhere else. Content (prompts, completions, tool I/O) is
  * NOT written at record time: `contentAttributes` adds it at export time, and only when
  * `OBSERVABILITY_CAPTURE_CONTENT` allows it, so the recorded span never has to be scrubbed.
  */
 import type { TokenUsage } from '@rocketflare/shared/ai/chat'
 import type { SpanAttributes, SpanKind } from './tracer'
+
+/**
+ * The OpenTelemetry semantic-conventions release the names below are checked against — its GenAI
+ * agent spans (`invoke_agent`, `invoke_workflow`, `execute_tool`, `gen_ai.conversation.id`, the
+ * `*_ref` content references) as published in `open-telemetry/semantic-conventions-genai`.
+ */
+export const GENAI_SEMCONV_VERSION = '1.45.0'
+/** Sent as the OTLP scope's `schemaUrl`, so a backend knows which names it is reading. */
+export const GENAI_SEMCONV_SCHEMA_URL = `https://opentelemetry.io/schemas/${GENAI_SEMCONV_VERSION}`
 
 export const ATTR = {
   operationName: 'gen_ai.operation.name',
@@ -36,6 +49,9 @@ export const ATTR = {
   toolCallArguments: 'gen_ai.tool.call.arguments',
   toolCallResult: 'gen_ai.tool.call.result',
   conversationId: 'gen_ai.conversation.id',
+  /** Absolute URIs to content kept elsewhere — here, the app's own `GET /api/traces/:id`. */
+  inputMessagesRef: 'gen_ai.input.messages_ref',
+  outputMessagesRef: 'gen_ai.output.messages_ref',
 
   sessionId: 'session.id',
   userId: 'user.id',
@@ -44,6 +60,8 @@ export const ATTR = {
 
   tenantId: 'rocketflare.tenant_id',
   runId: 'rocketflare.run_id',
+  /** On the `run started` span: the run had not settled when this was exported. */
+  runPending: 'rocketflare.run.pending',
   rfConversationId: 'rocketflare.conversation_id',
   eval: 'rocketflare.eval',
   feedbackRating: 'rocketflare.feedback.rating',
@@ -83,14 +101,18 @@ export const ATTR = {
   lfTraceMetadataPrefix: 'langfuse.trace.metadata.',
 } as const
 
-/** `gen_ai.operation.name` per kind. `retrieval` is not (yet) in semconv; it is what Phoenix shows. */
+/**
+ * `gen_ai.operation.name` per kind. `retrieval` is not (yet) in semconv; it is what Phoenix shows.
+ * A job is `invoke_workflow`: the conventions' span for control flow the APPLICATION defines
+ * (`chat.compact`, `document.index`), where `invoke_agent` is the one a model drives.
+ */
 const OPERATION: Record<SpanKind, string | undefined> = {
   agent: 'invoke_agent',
   llm: 'chat',
   tool: 'execute_tool',
   retrieval: 'retrieval',
   embedding: 'embeddings',
-  job: undefined,
+  job: 'invoke_workflow',
   span: undefined,
 }
 
@@ -325,7 +347,12 @@ export function contentString(value: unknown): string {
 export function contentAttributes(
   kind: SpanKind,
   content: { input?: unknown; output?: unknown },
-  options: { root: boolean; langfuse: boolean }
+  options: {
+    root: boolean
+    langfuse: boolean
+    /** The span's URL in the app's own trace store, when the store holds its content too. */
+    ref?: string
+  }
 ): SpanAttributes {
   const input = content.input === undefined ? undefined : contentString(content.input)
   const output = content.output === undefined ? undefined : contentString(content.output)
@@ -338,6 +365,10 @@ export function contentAttributes(
   if (kind === 'llm') {
     attrs[ATTR.inputMessages] = input
     attrs[ATTR.outputMessages] = output
+    if (options.ref) {
+      attrs[ATTR.inputMessagesRef] = input === undefined ? undefined : options.ref
+      attrs[ATTR.outputMessagesRef] = output === undefined ? undefined : options.ref
+    }
   } else if (kind === 'tool') {
     attrs[ATTR.toolCallArguments] = input
     attrs[ATTR.toolCallResult] = output

@@ -16,14 +16,14 @@ export async function handleDocumentReembed(
   ctx: JobContext
 ): Promise<void> {
   const { tenantId, model } = job.payload
-  // A `job document.reembed` span, so each document's embeddings batches nest under something.
+  // A `invoke_workflow document.reembed` span, so each document's embeddings batches nest under something.
   const result = await withAgentTrace(
     'document.reembed',
     {
       tracer: ctx.tracer ?? noopTracer,
       tenantId,
       kind: 'job',
-      spanName: 'job document.reembed',
+      spanName: 'invoke_workflow document.reembed',
       metadata: { model },
     },
     () => reembedBatch(ctx.db, ctx.config, ctx.env, ctx.logger, tenantId, model)

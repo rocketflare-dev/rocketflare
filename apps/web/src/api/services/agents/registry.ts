@@ -117,6 +117,12 @@ export interface AgentContext<Input = unknown> {
   emit(event: AgentEvent): Promise<void>
   /** Throws `AgentCancelledError` when the run was asked to stop — call between model turns. */
   checkCancelled(): Promise<void>
+  /**
+   * Aborts the moment a cancel is requested (polled every few seconds while the attempt runs).
+   * Every call through `ctx.chat.client` already carries it; pass it to `runToolLoop` as `signal`
+   * and to your own `fetch`es, so a cancel reaches work in flight instead of waiting for it.
+   */
+  signal: AbortSignal
   /** The resolved (traced) client for `meta.promptKey` and the model/max_tokens to pass it. */
   chat: { client: ChatClient; model: string; maxOutputTokens: number }
   /**

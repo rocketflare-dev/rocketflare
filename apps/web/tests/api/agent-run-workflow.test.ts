@@ -273,6 +273,17 @@ describe('AgentRunWorkflow', () => {
       userId: user.id,
     })
     expect(step?.parentSpanId).toBe(root?.spanId)
+    // The first claim exported `run started` under the same root id, so a backend lists the run
+    // while it is still going; the root itself is recorded once, at the end.
+    const started = spans.find(s => s.name === 'run started')
+    expect(started?.parentSpanId).toBe(rootSpanIdForRun(run.id))
+    expect(started?.attributes).toMatchObject({
+      'rocketflare.run.pending': true,
+      'langfuse.trace.name': 'summarize-text',
+      'gen_ai.conversation.id': run.id,
+    })
+    expect(spans.filter(s => s.spanId === rootSpanIdForRun(run.id))).toHaveLength(1)
+    expect(root?.attributes).toMatchObject({ 'gen_ai.conversation.id': run.id })
     const generation = spans.find(s => s.kind === 'llm')
     expect(generation).toMatchObject({
       parentSpanId: step?.spanId,

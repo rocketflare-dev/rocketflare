@@ -449,6 +449,8 @@ async function replayInside(
       events.push(event)
     },
     checkCancelled: async () => {},
+    // A replay is never cancelled from outside.
+    signal: new AbortController().signal,
     chat: live?.chat ?? {
       client: missingChat(() => miss('chat', journal.pending() ?? 'chat')),
       model: 'replay',

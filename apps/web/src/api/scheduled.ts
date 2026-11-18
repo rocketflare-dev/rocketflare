@@ -8,12 +8,21 @@
  *   curl "http://localhost:3001/cdn-cgi/local/scheduled?cron=0+4+*+*+*"
  * (`wrangler dev --test-scheduled` additionally exposes the same thing at `/__scheduled`).
  */
-import { and, eq, exists, lt, sql } from 'drizzle-orm'
+import { ACTIVE_RUN_STATUSES } from '@rocketflare/shared/ai/agents'
+import { and, asc, eq, exists, inArray, lt, sql } from 'drizzle-orm'
 import { type AppConfig, loadConfig } from '../config'
 import { affected, type Database, openDatabase } from '../db/client'
-import { agentRuns, agentRunTurns, aiSpans, pluginEvents, userSessions } from '../db/schema'
+import {
+  agentRunEvents,
+  agentRuns,
+  agentRunTurns,
+  aiSpans,
+  pluginEvents,
+  userSessions,
+} from '../db/schema'
 import { serverPlugins } from '../plugins/server'
 import { pruneMagicLinkTokens } from './auth/magic-link'
+import { sweepRun } from './services/agents/runs'
 import { pruneInvitationSendCounters, pruneInvitations } from './services/invitations'
 import type { AppBindings } from './types'
 import { type Logger, loggerFor } from './utils/core/logger'
@@ -114,6 +123,59 @@ export async function runPruneAgentTurns(db: Database, retentionDays: number, no
   return { turns, cutoff: cutoff.toISOString() }
 }
 
+/** An active run whose row has not changed for this long is checked against the runtime. */
+export const SWEEP_STALE_MS = 10 * 60 * 1000
+/** Runs checked per sweep: each costs a Workflow `status()` subrequest. Oldest first. */
+export const SWEEP_BATCH = 100
+
+/**
+ * Find active runs nobody has touched for {@link SWEEP_STALE_MS} — across every tenant, which is why
+ * it lives here — and hand each to `sweepRun`, which settles only what the runtime says has
+ * ended. The newest event time goes with each row so a run that wrote an event recently is never
+ * probed. One failing row is logged and skipped: the next sweep tries it again.
+ */
+export async function runSweepLostRuns(
+  db: Database,
+  env: AppBindings,
+  logger: Logger,
+  now = new Date()
+) {
+  const stale = new Date(now.getTime() - SWEEP_STALE_MS)
+  const candidates = await db
+    .select({
+      run: agentRuns,
+      // Text, parsed below: a raw subquery's timestamp comes back as a string from both drivers.
+      lastEventAt: sql<
+        string | null
+      >`(SELECT max(${agentRunEvents.at})::text FROM ${agentRunEvents} WHERE ${agentRunEvents.runId} = ${agentRuns.id})`,
+    })
+    .from(agentRuns)
+    .where(and(inArray(agentRuns.status, [...ACTIVE_RUN_STATUSES]), lt(agentRuns.updatedAt, stale)))
+    .orderBy(asc(agentRuns.updatedAt))
+    .limit(SWEEP_BATCH)
+  const counts = { checked: candidates.length, dispatched: 0, settled: 0, failed: 0 }
+  for (const { run, lastEventAt } of candidates) {
+    try {
+      const at = lastEventAt ? new Date(lastEventAt) : null
+      const { action } = await sweepRun(db, env, run, { lastEventAt: at })
+      if (action !== 'none') counts[action]++
+    } catch (err) {
+      counts.failed++
+      logger.warn({ err, runId: run.id }, 'sweepLostRuns: could not check run')
+    }
+  }
+  return counts
+}
+
+/** Every ten minutes: settle agent runs whose Workflow instance ended without settling them. */
+export const sweepLostRuns: ScheduledTask = {
+  name: 'sweepLostRuns',
+  async run({ db, env, logger }) {
+    const result = await runSweepLostRuns(db, env, logger)
+    if (result.checked > 0) logger.info(result, 'sweepLostRuns: checked stale active runs')
+  },
+}
+
 /** Nightly retention for the tool-loop journal. */
 export const pruneAgentTurns: ScheduledTask = {
   name: 'pruneAgentTurns',
@@ -157,6 +219,7 @@ export const pruneEvents: ScheduledTask = {
 /** Cron expression → tasks. Keep in sync with `[triggers] crons` in both wrangler tomls. */
 const CORE_SCHEDULED_TASKS: Record<string, ScheduledTask[]> = {
   '0 4 * * *': [pruneExpired, pruneAiSpans, pruneEvents, pruneAgentTurns],
+  '*/10 * * * *': [sweepLostRuns],
 }
 
 /**

@@ -26,14 +26,14 @@ export async function handleDocumentIndex(
     ctx.logger.warn({ tenantId, documentId }, 'document.index: document no longer exists')
     return
   }
-  // A `job document.index` span, so each embeddings batch nests under something.
+  // A `invoke_workflow document.index` span, so each embeddings batch nests under something.
   const indexed = await withAgentTrace(
     'document.index',
     {
       tracer: ctx.tracer ?? noopTracer,
       tenantId,
       kind: 'job',
-      spanName: 'job document.index',
+      spanName: 'invoke_workflow document.index',
       metadata: { documentId },
     },
     () => indexDocument(ctx.db, ctx.config, ctx.env, tenantId, documentId)

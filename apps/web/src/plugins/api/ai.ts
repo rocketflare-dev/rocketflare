@@ -201,8 +201,13 @@ export interface AgentCtx<Input = unknown> {
     status: 'running' | 'done' | 'error',
     detail?: string
   ): Promise<void>
-  /** Throws when the run was asked to stop. Call it between model turns; the loop takes no signal. */
+  /** Throws when the run was asked to stop. Call it between model turns. */
   checkCancelled(): Promise<void>
+  /**
+   * Aborts when the run is asked to stop. `toolLoop` and `structured` already pass it; hand it to
+   * your own `fetch`es so a cancel reaches them in flight.
+   */
+  signal: AbortSignal
   /**
    * Run `fn` at most once per `key` across every attempt, replaying its recorded result after.
    *
@@ -292,6 +297,7 @@ export function agentCtx<Input>(ctx: AgentContext<Input>): AgentCtx<Input> {
     prompt: vars => ctx.prompt(vars),
     step: (key, label, status, detail) => ctx.step(key, label, status, detail),
     checkCancelled: () => ctx.checkCancelled(),
+    signal: ctx.signal,
     once: (key, fn, options) =>
       ctx.once(key, fn, options?.inputs !== undefined ? { inputs: options.inputs } : undefined),
     decide: ctx.decide,
@@ -305,12 +311,14 @@ export function agentCtx<Input>(ctx: AgentContext<Input>): AgentCtx<Input> {
         approvals: ctx.approvals,
         runApproved: ctx.once,
         journal: ctx.journal,
+        signal: options.signal ?? ctx.signal,
       }),
     structured: options =>
       callStructuredTool(ctx.chat.client, {
         ...options,
         model: ctx.chat.model,
         maxTokens: options.maxTokens ?? ctx.chat.maxOutputTokens,
+        signal: options.signal ?? ctx.signal,
       }),
   }
 }

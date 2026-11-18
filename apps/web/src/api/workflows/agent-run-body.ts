@@ -79,7 +79,7 @@ export async function runAgentRun(
   const logger = loggerFor(cfg, { handler: 'workflow', workflow: 'agent-run', ...params })
 
   const claimed = await step.do('claim', () =>
-    withStepDatabase(env, cfg, db => claimStep(db, env, logger, params))
+    withStepDatabase(env, cfg, db => claimStep(db, env, logger, params, { cfg }))
   )
   if (!claimed) return { runId: params.runId, status: 'skipped' }
 

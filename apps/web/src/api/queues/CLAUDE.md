@@ -24,7 +24,7 @@ per environment. Work over ~30 s or with multiple steps is a Workflow, not a job
 
 - `(job: JobOf<'x'>, ctx: { env, config, logger, db, tracer? })`. Each message gets its own DB
   client, closed in `finally` after the consumer awaits `tracer.flush()`. An AI handler brackets its
-  work in `withAgentTrace(..., { kind: 'job', spanName: 'job <type>' })`
+  work in `withAgentTrace(..., { kind: 'job', spanName: 'invoke_workflow <type>' })`
 - **Never `waitUntil` in a consumer — await everything.** A handler that throws is retried, one that
   returns is acked; handlers must be idempotent (delivery is at least once)
 - Poison: an envelope failing `jobEnvelopeSchema` is logged and **`ack()`ed** (retrying cannot make

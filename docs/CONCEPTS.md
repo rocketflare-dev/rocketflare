@@ -506,10 +506,15 @@ work goes to `AGENT_RUN_WORKFLOW`, and cron only dispatches.
   Detail: `.claude/rules/api.md`.
 - **Workflow**: `AgentRunWorkflow` (§9). **Concurrency is a DB claim row, never a `Map`**:
   `ACTIVE_RUN_STATUSES` (exclusive index, includes parked runs) ⊃ `CLAIMABLE_RUN_STATUSES`
-  (the claim). Keep those two lists separate. A lost instance is settled on read, and there is no
-  sweeper cron.
-- **Cron**: `scheduled.ts` looks up the task by expression. `0 4 * * *` prunes; plugins add their
-  own tasks, and each expression must appear in both tomls.
+  (the claim). Keep those two lists separate. A lost instance is settled on read, and by the
+  `sweepLostRuns` cron for a run nobody reads (below).
+- **Cron**: `scheduled.ts` looks up the task by expression. `0 4 * * *` prunes; `*/10 * * * *`
+  runs `sweepLostRuns` — up to 100 active runs untouched for 10 minutes, oldest first, each
+  through `sweepRun`: a `queued` row that never got its instance gets one, `queued`/`running`
+  goes through `reconcileRun` (settles only what the runtime says has ended), `awaiting_input`
+  through `expireParkedRun`. Without it a dead run nobody opens holds its exclusive slot and counts
+  toward the tenant cap forever. Plugins add their own tasks, and each expression must appear in
+  both tomls.
 - **Realtime (D8)**: `NotificationsHub` DO, one per tenant, stateless, using the hibernation API
   with RPC publish. `GET /ws` resolves the cookie itself, and refuses an `Origin` outside the same
   allowlist as CORS and CSRF. Removing a member, signing out, blocking a person, suspending a tenant
@@ -677,7 +682,20 @@ Server: `api/services/{ai,agents}/**` (read their `CLAUDE.md`), `services/prompt
   (`items[2]/tool-loop`), so it resumes from the record although scopes have no checkpoint; a
   plugin's `ctx.toolLoop` binds the journal for it. The journal outlives the settle (the
   checkpoint does not) for `AGENT_TRANSCRIPT_RETENTION_DAYS` (default 30, nightly
-  `pruneAgentTurns`), which is what makes a tool-loop run strictly replayable. **Keys**: tool
+  `pruneAgentTurns`), which is what makes a tool-loop run strictly replayable. **Cancel reaches
+  the call in flight**: each `execute` attempt polls its row every 3 s (`watchCancel`,
+  `services/agents/cancel.ts`) and aborts `ctx.signal` on a cancel; every call through
+  `ctx.chat.client` (and `decide`'s client) carries the signal and is RACED against it, so even a
+  provider that ignores it (Workers AI) stops being waited for, and an aborted attempt settles
+  `cancelled`, never as a retryable `unavailable`. Pass `ctx.signal` to `runToolLoop` and your own
+  `fetch`es; a plugin's `ctx.toolLoop` / `ctx.structured` pass it already. A settled cancel
+  projects as AG-UI's `RUN_FINISHED { outcome: { type: 'cancelled' } }`, not a `RUN_ERROR`.
+  **Tracing a run**: the first claim exports a zero-length `run started` span under the run's root
+  id (`rocketflare.run.pending`, the trace's name and tags), so a backend lists the run while it
+  is still going; the root `invoke_agent <key>` is still recorded once, at `finish` — an OTLP span
+  cannot be updated, and a backend that keeps the first copy of an id would keep the unfinished
+  one. Every span of a run carries `gen_ai.conversation.id` = the run id (AG-UI's `threadId`);
+  the `ai_spans.conversation_id` column stays a chat thread's. **Keys**: tool
   calls are keyed by the model's `toolCallId`, never an author key; a loop's own key is
   `RunToolLoopOptions.key` (default `tool-loop`); `ctx.once(label, fn, { inputs })` keys on the
   label plus a hash of `inputs` (`label#<12 hex>`), so `for (q of queries) ctx.once('search', fn,
@@ -1111,7 +1129,9 @@ Server: `api/services/{ai,agents}/**` (read their `CLAUDE.md`), `services/prompt
 
   **D32 decisions** (design grilling, 2026-09-25): our own OTLP exporter behind the existing seam —
   not Cloudflare's native tracing, not the Langfuse SDK · the backend is platform-wide only ·
-  content capture is on by default, with a flag to disable · agent context comes from the CLI
+  content capture was decided on by default but SHIPPED off (`OBSERVABILITY_CAPTURE_CONTENT`
+  defaults to `false` in `config.ts`: prompts are other people's data, so capture is opt-in) ·
+  agent context comes from the CLI
   reading our own Postgres, not a backend REST adapter.
 - **Evals (D33)**: `apps/evals`, its own workspace package because vitest-evals needs vitest 4 and
   the kit's suites are on vitest 5. `pnpm eval [suite] [--model x] [--judge-model y] [--compare]`
@@ -1176,8 +1196,8 @@ no document summary or thumbnail (the card is an excerpt; Workers cannot rasteri
 no images inside rendered Markdown (a model's or document's image is shown as a link,
 `MarkdownImageLink`); `charOffset` does not map to PDF pages; no frontend tools in chat and no human approval in chat (a
 tool with an approval gate is available to agent runs only), no `STATE_DELTA`; protobuf has no
-stream cursor; a cancelled run emits nothing rather than AG-UI 1.0's `RUN_FINISHED` `cancelled`
-outcome; no token-level streaming for runs (would need a per-run DO); char-based history budget
+stream cursor; a cancelled CHAT turn emits nothing rather than AG-UI 1.0's `RUN_FINISHED`
+`cancelled` outcome (the client closed the socket — agent runs do emit it); no token-level streaming for runs (would need a per-run DO); char-based history budget
 not derived from the model; sliding window defeats prompt caching on long threads; `enqueueRun`
 does not pre-resolve the client; Workers AI forced tools on off-list models are best-effort;
 lexical search is English-only (`SEARCH_TEXT_CONFIG` is one constant, not per tenant);
@@ -1253,14 +1273,24 @@ a key conflict is detected within one attempt, not between two attempts that rea
 code; a `ctx.once` without `inputs` is still the author's key; `callStructuredTool` and
 `ctx.chat.client` calls outside a loop are not journaled (wrap them in `once`). The run-engine seam
 covers the Workflow step only — jobs, realtime and storage are still Worker bindings, unlike
-Rocketpod's `Platform`. Replay (D38): a tool loop replays strictly only inside the journal's
+Rocketpod's `Platform`. Operability (D44 phase 2): cancel is polled (up to 3 s late, one indexed
+read per poll while an attempt runs), and a model call abandoned mid-flight may be billed by the
+provider with no `ai_usage` row; the sweeper checks 100 runs per 10 minutes, so a backlog of lost
+runs drains over several sweeps; Workflows' per-Workflow `concurrency.limit` (2026-11-10) is NOT
+set — it caps instances across ALL tenants and does not count `waiting` ones, so it cannot back
+the per-tenant active-run cap (counted, then inserted); it is a platform-wide cost/noisy-neighbour
+knob, set in BOTH tomls on every deploy if you want one (`docs/DEPLOY.md`). Replay (D38): a tool loop replays strictly only inside the journal's
 retention window — an older run's first turn is a `chat` miss, and `--live` is the fallback; steering
 notes are all handed over at the first call; a run that predates a `once` key misses it; no route
 or UI (a local script over a database URL), and `--live` holds one read-only transaction per run. The demo seed's
 vectors are deterministic, so dense search over seeded docs is noise. Tracing: no per-tenant
 backends (BYO keys via `sealSecret`), no native `tracing.enterSpan`, no metrics export, no
 Langfuse/Phoenix MCP; inline ingest from `POST /api/ai/documents/ingest` is untraced (no active
-span); the backend receives a run's root only at `finish`, so an in-flight run has no root there;
+span); the backend receives a run's root only at `finish` — before that it has the `run started`
+span and each finished `execute#N`, never a long step's spans before the step ends; the GenAI names
+are pinned to semconv `GENAI_SEMCONV_VERSION` (1.45.0, sent as `schemaUrl`) and the agent spans
+are still Development upstream; `gen_ai.*_ref` points at the app's own `GET /api/traces/:id`, only
+when content is captured (auth-gated, never a signed URL — and gone after the 14-day retention);
 exported content is capped at 32 000 chars per value. Evals: no in-app eval UI or dataset editor;
 the report UI has no side-by-side view (the diff is `eval:view`'s terminal table); no HTTP targets
 against a deployed instance, no red-teaming, no push to Langfuse datasets; a run that parks on a
