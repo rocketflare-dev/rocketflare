@@ -307,6 +307,11 @@ export async function resolveDecisions(
   options: ResolveOptions & {
     fallbackSystem: SystemPrompt
     /**
+     * The prompt key the chat fallback resolves its model on (`agent_models` pins apply) —
+     * `DECISIONS_FALLBACK_PROMPT_KEY` unless a caller has its own (knowledge facts: `knowledge-decide`).
+     */
+    fallbackPromptKey?: PromptKey
+    /**
      * Wraps the fallback's chat client — the runtime traces and METERS it, so every call is a
      * span and an `ai_usage` row. `chat` is the `agent-decide` resolution: whether THAT model is
      * billed to the deployment, which need not match the agent's own chat model.
@@ -338,7 +343,7 @@ export async function resolveDecisions(
     }
   }
   const chat = await resolveChat(db, cfg, env, tenantId, {
-    promptKey: DECISIONS_FALLBACK_PROMPT_KEY,
+    promptKey: options.fallbackPromptKey ?? DECISIONS_FALLBACK_PROMPT_KEY,
     fetch: options.fetch,
   })
   return {

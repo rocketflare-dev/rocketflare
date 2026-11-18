@@ -22,6 +22,7 @@ import {
   type KnowledgeReviewQuery,
   OPEN_REVIEW_FACT_STATES,
   type PossibleMatchCandidate,
+  parseValueRef,
 } from '@rocketflare/shared/ai/knowledge-facts'
 import {
   and,
@@ -119,6 +120,7 @@ export function toFact(fact: ReadFact): Fact {
     key: row.key,
     value: row.value,
     valueText: row.valueText,
+    valueEntity: parseValueRef(row.valueRef),
     source: {
       kind: row.sourceKind,
       documentId: row.documentId,

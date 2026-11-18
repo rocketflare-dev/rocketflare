@@ -231,6 +231,46 @@ describe('projectRunToAgui', () => {
     })
   })
 
+  it('projects a lookup_facts result into the same entity cards a live chat shows', () => {
+    const entity = { kind: 'staging', type: 'customer', id: 'e-1', name: 'Harbour View Dental' }
+    const out = projectRunToAgui(run(), [
+      event('tool.start', { name: 'lookup_facts', input: { entity: 'Harbour View' } }),
+      event('tool.end', {
+        name: 'lookup_facts',
+        isError: false,
+        result: {
+          entities: [
+            {
+              entity,
+              facts: [
+                {
+                  factId: '70000000-0000-4000-8000-000000000001',
+                  entity,
+                  key: 'monthly_fee_gbp',
+                  value: 285,
+                  valueText: '285',
+                  state: 'accepted',
+                  preferred: true,
+                  conflictsWith: [],
+                  sourceKind: 'upload',
+                  documentId: '55555555-5555-4555-8555-555555555555',
+                  documentTitle: 'Contract',
+                  quote: '£285 a month',
+                  validFrom: null,
+                  validTo: null,
+                  observedAt: '2026-01-01T00:00:00Z',
+                },
+              ],
+            },
+          ],
+        },
+      }),
+    ])
+    expect(customEvent(out, KIT_CUSTOM_EVENTS.entity)).toMatchObject({
+      card: { entity, facts: [{ key: 'monthly_fee_gbp', valueText: '285' }], moreFacts: 0 },
+    })
+  })
+
   it('emits no cards when a tool answer does not carry documents', () => {
     // A retuned tool must degrade to "no cards", never to a crash — the mapper `safeParse`s.
     const out = projectRunToAgui(run(), [

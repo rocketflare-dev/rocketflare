@@ -903,6 +903,24 @@ Server: `api/services/{ai,agents}/**` (read their `CLAUDE.md`), `services/prompt
   validity in ONE section are a misreading (a table's two price columns put on one entity) and
   neither is written (`dropped.ambiguous`); different windows there are a change over time and both
   stay. A placeholder value (`<UNKNOWN>`, `N/A`, `TBD`) is no value.
+  **Where text comparison would be guessing, a decision model is asked** (`judge.ts`, typed
+  `choice` questions through `resolveDecisions` — TypeSafe's Jev when configured, else the chat
+  model on its own prompt key `knowledge-decide`): *same entity?* — a mention that linked to
+  nothing but sits near known entities of its type (trigram ≥ `NEARBY_SCORE` 0.3 or cosine ≥ 0.75)
+  is shown beside them with the facts each side holds, and a confident pick links it, a confident
+  `new` creates it without a review item; *same value?* — a new value that differs from a held one
+  over an overlapping window is put with both passages: `same` ("per call-out" / "per visit")
+  corroborates, `more_specific` ("Marcus" / "Marcus Bell") is `compatible` and neither confirms
+  nor conflicts, `different` conflicts. Only an answer at `JUDGE_MIN_PROBABILITY` (0.8) acts;
+  unsure, failed or no model at all keeps the literal rule, so a weak model can leave a false
+  alarm but never hide a disagreement. Verdicts are stored once per entity, key and value pair
+  (`knowledge_value_judgements`, migration `0030`; moved on a merge or promote) and read by every
+  state decision — extraction, `recomputeKey`, and a person's decision carrying over a reworded
+  re-read. Metered as `knowledge.extraction`. No string rules about names, units or languages:
+  a closed set is a `z.enum` in the type (its `.describe()` says which wording means what), and a
+  key that names another entity is declared in `refs` (`{ account_manager: 'person' }`): its value
+  is resolved like any mention and stored as `value_ref` (`<kind>:<type>:<id>`), compared by the
+  entity rather than the text, and returned as `valueEntity` on a fact and `names` on a fact hit.
   Nothing writes a domain column. Re-extracting a document first removes its facts and undoes the
   conflicts they caused — **except a person's decisions**: a fact somebody confirmed
   (`confirmed_at` set, by `confirm` or as the chosen side of a `prefer`) or rejected (only a review
@@ -923,7 +941,12 @@ Server: `api/services/{ai,agents}/**` (read their `CLAUDE.md`), `services/prompt
   0.71, 83 % of planted conflicts caught, 14 % of flags false alarms and every caught conflict
   preferring the planted winner (`docs/EVALS.md`; run to run the false-alarm share moves by about
   ten points). Sonnet 5.5: 0.98 / 0.80 / 83 % / 17 %, at about 19× the cost — a stronger model does
-  not lower it. The 10 % false-alarm share aimed for is not met; the causes are in Known gaps.
+  not lower it. With the decision model, units as an enum and people as entities (2026-11-18,
+  Haiku 5.5 extracting and judging, five runs against two of 0.37.0): 85 % of planted conflicts
+  caught (was 83 %), 18 % of flags false alarms (was 25 % over the same two-run baseline), F1 0.84
+  (was 0.81). The 10 % aimed for is still not met: most of what remains is the extraction model
+  misreading a value (a visit day from a proposal, a wrong table column), which no comparison can
+  undo.
   **Reading facts** (`facts-read.ts`, `facts-sql.ts`): a fact is read through its document —
   every query inner-joins `documents` and ANDs `visibleDocuments(scope)`, so a fact whose
   document you cannot open does not exist for you (404, never 403), and neither does a staging
@@ -1103,33 +1126,30 @@ neither recall nor latency at 20 candidates, nor whether its 512-token input lim
 800-token chunk (`pnpm eval retrieval --rerank workers-ai` needs a Cloudflare API token) — and its
 logits-vs-probabilities reading is a per-batch heuristic, every search with `[ai]` bound pays one
 extra Workers AI call, the Fireworks reranker adds ~0.5 s per search at 20 candidates (~0.8 s at
-50), `RERANK_MIN_SCORE`'s scale is per model so the kit ships it off, the
-plugin API's `searchKnowledge` hit does not carry `rerankScore`, and the global-search plugin
-still carries its own copy of the client until it switches to the core seam in its own repo;
+50), `RERANK_MIN_SCORE`'s scale is per model so the kit ships it off, and the global-search plugin
+still carries its own copy of the client until it switches to the core seam (the plugin API's
+`searchKnowledge` now returns `rerankScore` and the `rerank` outcome) in its own repo;
 knowledge metering: Workers AI embeddings and rerank tokens are character estimates, a rerank that
 timed out is recorded as billed, platform-document ingest (tenant-less) is unmetered, and
-platform documents are never extracted; knowledge facts: about one flag in seven is a false
-alarm on the fixture (14 % with Haiku, 17 % with Sonnet, ±10 points run to run; 10 % was the
-aim); a section's ambiguous candidates (`dropped.ambiguous`) can still leave a staging entity with
-no facts; Promote asks for the domain row's id
-(there is no picker searching the type's rows); the agent-run timeline shows no entity cards (only
-chat does); `search_knowledge`'s facts block finds only entities with a staging row
+platform documents are never extracted; knowledge facts: about one flag in five is a false
+alarm on the fixture (18 % over five Haiku runs, 0–24 % run to run; 10 % was the aim), mostly
+misread values; Promote asks for the domain row's id
+(there is no picker searching the type's rows); `search_knowledge`'s facts block finds only entities with a staging row
 (a domain row that never had one is reached through `lookup_facts`' resolver, not by being named
-in a query); a person's decision survives re-extraction only when the new reading repeats the
-fact's exact entity, key and value — a reworded value ("£285" re-read as "285.00" is the same;
-"per visit" for "per call-out" is not) or an entity resolved differently comes back as a new open
-item; a nudge carries no reviewer, so every member's badge refetches on any settle; the default
+in a query); a person's decision survives re-extraction when the new reading repeats the fact's
+entity, key and value, or a value a decision model already judged the same — a pair never judged
+(the re-read document is the only one stating it) or an entity resolved differently comes back as
+a new open item; a nudge carries no reviewer, so every member's badge refetches on any settle; the default
 resolver matches domain rows by trigram only (no embedding — a domain table carries none); two
 extractions of one tenant running at once can each miss the other's facts (no per-tenant
 serialisation), so a conflict between them goes unflagged until one is re-extracted; the
 staging trigram lookup scans the tenant's entities of that type (the GIN index serves `%`, not
-`similarity() >=`); one service named differently by two documents ("Car park and entrances
-gritting — annual plan" vs "Winter gritting (annual plan)") stays two staging entities, so their
-price change is never flagged (the fixture's two missed `grit-annual-price` conflicts, and most of
-Haiku's false alarms); values compare exactly after normalisation, so a partial name ("Marcus" in
-meeting minutes against "Marcus Bell") and two wordings of one unit ("per call-out" / "per visit")
-are conflicts a person has to dismiss (most of Sonnet's); the model still reads proposed values
-from a proposal now and then; a
+`similarity() >=`); the decision model is asked about an entity only when trigram or embedding
+puts a known one nearby (`NEARBY_SCORE` 0.3, cosine 0.75), so two names sharing no words stay two
+entities; the value judge is asked only about pairs whose validity overlaps and never about a key
+that names an entity (`refs` compare by the entity resolved); with no model at all every
+judgement is skipped and the literal rule stands; the model still reads proposed values from a
+proposal now and then; a
 year-less date more than 90 days before the document is read as next year; a validity window
 stated on one side only is a conflict, not a change over time; page numbers: `toMarkdown` emits no page markers, so `chunks.page` is always null;
 chunks written before 0.37.0 keep their old shape (no heading path or offsets) until re-indexed,

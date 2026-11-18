@@ -32,8 +32,10 @@ import {
 import { loadConfig } from '@/config'
 import type { Database } from '@/db/client'
 import { aiConfigs, aiUsage } from '@/db/schema'
+import { searchKnowledge } from '@/plugins/api'
 import { createTestTenantWithUser } from '../helpers/auth'
 import { setupTestDatabase } from '../helpers/db'
+import { makeRequestCtx } from '../kit/unit'
 import { createTestEnv, stubs, type TestEnv } from '../mocks/bindings'
 
 const db = setupTestDatabase()
@@ -110,6 +112,30 @@ afterEach(() => {
 })
 
 describe('reranking', () => {
+  it("reaches a plugin: searchKnowledge's hits carry rerankScore and the result says who ordered them", async () => {
+    const e = env('railway')
+    const w = await world(e)
+    const ctx = makeRequestCtx({ db, env: e, tenantId: w.tenantId })
+    const ranked = await searchKnowledge(ctx, { query: QUERY, limit: 3 })
+    expect(ranked.rerank).toMatchObject({ applied: true, model: RERANK_MODEL })
+    expect(ranked.hits[0]?.title).toBe('railway')
+    for (const h of ranked.hits) {
+      expect(h.rerankScore).toBeGreaterThanOrEqual(0)
+      expect(h.rerankScore).toBeLessThanOrEqual(1)
+    }
+
+    const failing = env('fail')
+    const w2 = await world(failing)
+    const plain = await searchKnowledge(
+      makeRequestCtx({ db, env: failing, tenantId: w2.tenantId }),
+      {
+        query: QUERY,
+      }
+    )
+    expect(plain.rerank).toMatchObject({ applied: false, reason: 'error' })
+    expect(plain.hits.every(h => h.rerankScore === null)).toBe(true)
+  })
+
   it('sends only the first RERANK_CANDIDATES fused hits to the reranker', async () => {
     const e = env('railway', { RERANK_CANDIDATES: '5' })
     const w = await world(e)

@@ -1,7 +1,8 @@
 /**
  * What a tool call ANSWERED, rendered as the thing it is rather than as JSON.
  *
- * **Do not write parsers here.** `documentCardsFromToolResult(name, result)` already exists in
+ * **Do not write parsers here.** `documentCardsFromToolResult(name, result)` (and, for knowledge
+ * facts, `entityCardsFromToolResult` in `@rocketflare/shared/ai/knowledge-facts`) already exists in
  * `@rocketflare/shared/ai/embeddings`, is pure, is documented as serving the agent-run projection,
  * and is the same function the chat stream and the AG-UI projection use — four callers, one
  * implementation. It `safeParse`s, so a retuned knowledge tool degrades to "no cards" rather than
@@ -11,6 +12,8 @@
  * the DOM is a real hang, not a theoretical one.
  */
 import { documentCardsFromToolResult } from '@rocketflare/shared/ai/embeddings'
+import { entityCardsFromToolResult } from '@rocketflare/shared/ai/knowledge-facts'
+import { Link } from 'react-router'
 import { DocumentLink, documentLinkProps } from '@/ui/components/shared'
 
 /** Longest JSON blob rendered into a `<pre>`. Past it the reader gets the head and a byte count. */
@@ -39,15 +42,36 @@ export function truncate(text: string, max = TOOL_RESULT_MAX_CHARS): string {
  */
 export function ToolResultCards({ name, result }: { name: string; result: unknown }) {
   const cards = documentCardsFromToolResult(name, result)
-  if (cards.length === 0) return null
+  const entities = entityCardsFromToolResult(name, result)
+  if (cards.length === 0 && entities.length === 0) return null
   return (
-    <ul className="mt-1.5 space-y-0.5" aria-label="Documents this answer used">
-      {cards.map(card => (
-        <li key={card.id} className="min-w-0">
-          <DocumentLink {...documentLinkProps(card)} />
-        </li>
-      ))}
-    </ul>
+    <>
+      {cards.length > 0 && (
+        <ul className="mt-1.5 space-y-0.5" aria-label="Documents this answer used">
+          {cards.map(card => (
+            <li key={card.id} className="min-w-0">
+              <DocumentLink {...documentLinkProps(card)} />
+            </li>
+          ))}
+        </ul>
+      )}
+      {entities.length > 0 && (
+        <ul className="mt-1.5 space-y-0.5" aria-label="Facts this answer used">
+          {entities.map(card => (
+            <li key={card.entity.id} className="min-w-0 text-xs">
+              <Link to={card.href} className="link link-primary">
+                {card.entity.name}
+              </Link>
+              <span className="text-muted">
+                {' '}
+                · {card.facts.length + card.moreFacts} fact
+                {card.facts.length + card.moreFacts === 1 ? '' : 's'}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </>
   )
 }
 

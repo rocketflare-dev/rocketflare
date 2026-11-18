@@ -447,6 +447,18 @@ describe('summariseToolResult (the tool.end audit trail)', () => {
 
     expect(summariseToolResult('whatever', 'not json at all')).toBe('not json at all')
   })
+
+  it('keeps every lookup_facts entity and fact, however long — the run timeline cards read them', () => {
+    const entity = { kind: 'staging', type: 'customer', id: 'e-1', name: 'Acme' }
+    const facts = Array.from({ length: 20 }, (_, i) => ({ key: `k${i}`, quote: 'q'.repeat(2000) }))
+    const summary = summariseToolResult(
+      'lookup_facts',
+      JSON.stringify({ entities: [{ entity, facts }], note: 'n' })
+    ) as { entities: Array<{ entity: unknown; facts: Array<{ key: string; quote: string }> }> }
+    expect(summary.entities[0]?.entity).toEqual(entity)
+    expect(summary.entities[0]?.facts).toHaveLength(20)
+    expect(summary.entities[0]?.facts[0]?.quote).toHaveLength(EVENT_PREVIEW_CHARS + 1)
+  })
 })
 
 describe('list_documents tool', () => {

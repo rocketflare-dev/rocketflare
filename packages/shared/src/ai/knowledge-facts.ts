@@ -48,6 +48,24 @@ export interface EntityTypeDeclaration<F extends EntityFactsSchema = EntityFacts
   /** Shown to people: "Customer", "Order". */
   label: string
   facts: F
+  /**
+   * Keys whose value NAMES an entity of another registered type — `{ account_manager: 'person' }`.
+   * The value is still the name as the document writes it (the key's schema must be a string),
+   * but extraction resolves it to an entity of that type exactly as it resolves the fact's own
+   * entity (aliases, the domain resolver, the decision model), and two facts compare by the
+   * entity they name: "Marcus" and "Marcus Bell" agree once both resolve to one person, and two
+   * people with one first name do not.
+   */
+  refs?: Partial<Record<keyof F['shape'] & string, string>>
+}
+
+/** The entity type a key's value names (`EntityTypeDeclaration.refs`), or undefined. */
+export function factRefType(
+  decl: Pick<EntityTypeDeclaration, 'refs'>,
+  key: string
+): string | undefined {
+  const refs = decl.refs as Record<string, string | undefined> | undefined
+  return refs && Object.hasOwn(refs, key) ? refs[key] : undefined
 }
 
 /**
@@ -62,10 +80,35 @@ export const entityTypeSchema = z
     facts: z.custom<EntityFactsSchema>(v => v instanceof z.ZodObject, {
       message: 'facts must be a zod object',
     }),
+    refs: z.record(z.string(), entityTypeNameSchema).optional(),
   })
   .superRefine((decl, ctx) => {
     const keys = Object.keys(decl.facts.shape)
     if (keys.length === 0) ctx.addIssue({ code: 'custom', message: 'facts declares no key' })
+    for (const [key, target] of Object.entries(decl.refs ?? {})) {
+      const schema = Object.hasOwn(decl.facts.shape, key) ? decl.facts.shape[key] : undefined
+      if (!schema) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['refs', key],
+          message: 'refs names an undeclared key',
+        })
+        continue
+      }
+      let type: unknown
+      try {
+        type = (z.toJSONSchema(schema as z.ZodType) as { type?: unknown }).type
+      } catch {
+        type = undefined
+      }
+      if (type !== 'string') {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['refs', key],
+          message: `a key that names a ${target} must be a string (the name as written)`,
+        })
+      }
+    }
     for (const key of keys) {
       if (!FACT_KEY_RE.test(key)) {
         ctx.addIssue({
@@ -257,6 +300,14 @@ export const factSchema = z.object({
   value: z.unknown(),
   /** Normalised text for display and matching. */
   valueText: z.string(),
+  /**
+   * For a key that names an entity (`EntityTypeDeclaration.refs`): the entity the value resolved
+   * to — "Marcus" in the text, the person Marcus Bell here. Link it with `entityPath`.
+   */
+  valueEntity: z
+    .object({ kind: entityKindSchema, type: z.string(), id: z.string() })
+    .nullable()
+    .optional(),
   source: factSourceSchema,
   confidence: z.number().min(0).max(1),
   state: factStateSchema,
@@ -277,6 +328,15 @@ export const factSchema = z.object({
   updatedAt: z.coerce.date(),
 })
 export type Fact = z.infer<typeof factSchema>
+
+/** `knowledge_facts.value_ref` (`<kind>:<type>:<id>`) as `Fact.valueEntity`, or null. */
+export function parseValueRef(ref: string | null | undefined): Fact['valueEntity'] {
+  if (!ref) return null
+  const [kind, type, ...id] = ref.split(':')
+  const parsed = entityKindSchema.safeParse(kind)
+  if (!parsed.success || !type || id.length === 0) return null
+  return { kind: parsed.data, type, id: id.join(':') }
+}
 
 /** `GET /api/knowledge/entities/:type/:id` — the entity and every fact about it you may read. */
 export const entityCardSchema = z.object({
@@ -454,6 +514,10 @@ export const factHitSchema = z.object({
   key: z.string(),
   value: z.unknown(),
   valueText: z.string(),
+  /** A key that names an entity (`refs`): who or what the value resolved to, by its own name. */
+  names: z
+    .object({ kind: entityKindSchema, type: z.string(), id: z.string(), name: z.string() })
+    .optional(),
   state: factStateSchema,
   preferred: z.boolean(),
   conflictsWith: z.array(z.string().uuid()),

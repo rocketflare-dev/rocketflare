@@ -34,6 +34,7 @@ import {
   agentInterruptResolvedEventDataSchema,
   steeringNoteDataSchema,
 } from '@rocketflare/shared/ai/interrupts'
+import { entityCardsFromToolResult } from '@rocketflare/shared/ai/knowledge-facts'
 import { kitCustom } from '../ai/agui'
 
 /**
@@ -226,6 +227,10 @@ export function createRunProjector(run: AgentRun): RunProjector {
           // nothing about AG-UI.
           for (const card of documentCardsFromToolResult(name, data.result)) {
             out.push(kitCustom(KIT_CUSTOM_EVENTS.document, { card }))
+          }
+          // …and the knowledge-facts entities it touched, as the chat stream sends them.
+          for (const card of entityCardsFromToolResult(name, data.result)) {
+            out.push(kitCustom(KIT_CUSTOM_EVENTS.entity, { card }))
           }
           break
         }

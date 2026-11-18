@@ -24,11 +24,24 @@ import { setTenantOverride } from '@/api/services/features'
 import { buildJobEnvelope } from '@/api/services/jobs'
 import { extractDocumentFacts, type FactCandidate } from '@/api/services/knowledge/extract'
 import type { ReviewReader } from '@/api/services/knowledge/facts-read'
+import type {
+  EntityQuestion,
+  JudgeAnswer,
+  KnowledgeJudge,
+  ValueQuestion,
+} from '@/api/services/knowledge/judge'
 import { reviewFact } from '@/api/services/knowledge/review'
 import type { EntityTypeRegistration } from '@/api/services/knowledge/types'
+import { valueKey } from '@/api/services/knowledge/values'
 import { collectingRealtime } from '@/api/services/realtime'
 import { loadConfig } from '@/config'
-import { aiUsage, documents, knowledgeEntities, knowledgeFacts } from '@/db/schema'
+import {
+  aiUsage,
+  documents,
+  knowledgeEntities,
+  knowledgeFacts,
+  knowledgeValueJudgements,
+} from '@/db/schema'
 import { FakeChatClient } from '../helpers/ai'
 import { createTestTenantWithUser } from '../helpers/auth'
 import { setupTestDatabase } from '../helpers/db'
@@ -55,6 +68,10 @@ vi.mock('@/api/services/ai/resolve', async importOriginal => {
         billedToPlatform: false,
         maxOutputTokens: 4096,
       }
+    }),
+    // No decision engine unless a test passes its own judge: the literal rules decide.
+    resolveDecisions: vi.fn(async () => {
+      throw new AiNotConfiguredError('chat')
     }),
   }
 })
@@ -675,6 +692,39 @@ describe('a person’s decision survives re-extracting its own document', () => 
     expect(after?.confirmedAt?.getTime()).toBe(confirmedAt?.getTime())
   })
 
+  it('a confirmed value re-read in other words keeps its decision when the pair was judged the same', async () => {
+    const w = await world()
+    const a = await addDoc(w, `${HVD}\nMain contact: Marcus Bell.`, { date: '2026-02-03' })
+    model([{ key: 'primary_contact', value: 'Marcus Bell', quote: 'Main contact: Marcus Bell.' }])
+    await extract(w, a)
+    const [before] = await factsOf(w.tenantId, a)
+    await reviewFact(db, reader(w), before?.id ?? '', 'confirm')
+    // A decision model already said these two readings are one value.
+    const [x, y] = [valueKey('Marcus Bell'), valueKey('Mr M. Bell')].sort()
+    await db.insert(knowledgeValueJudgements).values({
+      tenantId: w.tenantId,
+      entityKind: before?.entityKind ?? 'staging',
+      entityType: before?.entityType ?? 'customer',
+      entityId: before?.entityId ?? '',
+      key: 'primary_contact',
+      valueA: x ?? '',
+      valueB: y ?? '',
+      verdict: 'same',
+      confidence: 0.95,
+      method: 'llm_self_report',
+      model: 'fake-judge',
+    })
+
+    model([{ key: 'primary_contact', value: 'Mr M. Bell', quote: 'Main contact: Marcus Bell.' }])
+    const report = await extract(w, a)
+    expect(report).toMatchObject({ decisionsKept: 1, factIds: [before?.id] })
+    expect((await factsOf(w.tenantId, a))[0]).toMatchObject({
+      id: before?.id,
+      confirmedBy: w.userId,
+      valueText: 'Mr M. Bell',
+    })
+  })
+
   it('a prefer survives re-reading either side: the loser stays rejected, the winner confirmed', async () => {
     const w = await world()
     const a = await addDoc(w, HVD, { date: '2026-02-03' })
@@ -774,5 +824,272 @@ describe('the nudge', () => {
     })
     await handleKnowledgeExtract(job as never, { env, config: cfg, logger: fakeLogger(), db })
     expect(knowledgeNudges(w.tenantId)).toHaveLength(1)
+  })
+})
+
+describe('the decision model: same value? same entity?', () => {
+  /** A judge that answers from scripts and records what it was asked. */
+  function scriptedJudge(script: {
+    values?: (q: ValueQuestion) => JudgeAnswer<'same' | 'compatible'>
+    entities?: (q: EntityQuestion) => JudgeAnswer<string>
+  }) {
+    const asked = { values: [] as ValueQuestion[], entities: [] as EntityQuestion[] }
+    const judge: KnowledgeJudge = {
+      engine: async () => ({ method: 'llm_self_report', model: 'fake-judge' }),
+      values: async qs => {
+        asked.values.push(...qs)
+        return qs.map(q => script.values?.(q) ?? null)
+      },
+      entities: async qs => {
+        asked.entities.push(...qs)
+        return qs.map(q => script.entities?.(q) ?? null)
+      },
+    }
+    return { judge, asked }
+  }
+  const verdict = <T>(answer: T) => ({
+    answer,
+    confidence: 0.95,
+    method: 'llm_self_report' as const,
+    model: 'fake-judge',
+  })
+
+  it('a pair judged the same corroborates instead of conflicting, and is never asked again', async () => {
+    const w = await world()
+    const a = await addDoc(w, `${HVD}\nMain contact: Marcus Bell.`, { date: '2026-02-03' })
+    model([{ key: 'primary_contact', value: 'Marcus Bell', quote: 'Main contact: Marcus Bell.' }])
+    await extract(w, a)
+    const b = await addDoc(w, 'Harbour View Dental: spoke to Marcus about the hedges.', {
+      date: '2026-03-01',
+    })
+    const { judge, asked } = scriptedJudge({ values: () => verdict('compatible') })
+    model([{ key: 'primary_contact', value: 'Marcus', quote: 'spoke to Marcus' }])
+    const report = await extract(w, b, { judge })
+    expect(asked.values).toHaveLength(1)
+    expect(asked.values[0]).toMatchObject({
+      key: 'primary_contact',
+      a: { value: 'Marcus Bell' },
+      b: { value: 'Marcus', quote: 'spoke to Marcus' },
+    })
+    expect(report.judged).toMatchObject({ valuePairs: 1, valuesAgreed: 1 })
+    const facts = await factsOf(w.tenantId)
+    expect(facts.map(f => f.state)).toEqual(['accepted', 'accepted'])
+    expect(facts.every(f => f.conflictsWith.length === 0)).toBe(true)
+    const stored = await db
+      .select()
+      .from(knowledgeValueJudgements)
+      .where(eq(knowledgeValueJudgements.tenantId, w.tenantId))
+    expect(stored).toHaveLength(1)
+    expect(stored[0]).toMatchObject({ verdict: 'compatible', method: 'llm_self_report' })
+
+    // Re-reading the document answers from the stored verdict.
+    model([{ key: 'primary_contact', value: 'Marcus', quote: 'spoke to Marcus' }])
+    await extract(w, b, { judge })
+    expect(asked.values).toHaveLength(1)
+    expect((await factsOf(w.tenantId)).every(f => f.state === 'accepted')).toBe(true)
+  })
+
+  it('an unsure answer keeps the conflict (stored as different); no engine stores nothing', async () => {
+    const w = await world()
+    const a = await addDoc(w, HVD, { date: '2026-02-03' })
+    model([{ key: 'monthly_fee_gbp', value: 285, quote: 'Monthly Fee: £285' }])
+    await extract(w, a)
+    const b = await addDoc(w, 'Harbour View Dental now pay £310 a month.', { date: '2026-06-10' })
+    model([{ key: 'monthly_fee_gbp', value: 310, quote: 'now pay £310 a month' }])
+    await extract(w, b) // the file's default: no engine at all
+    expect(
+      await db
+        .select()
+        .from(knowledgeValueJudgements)
+        .where(eq(knowledgeValueJudgements.tenantId, w.tenantId))
+    ).toHaveLength(0)
+    const { judge } = scriptedJudge({ values: () => null })
+    model([{ key: 'monthly_fee_gbp', value: 310, quote: 'now pay £310 a month' }])
+    await extract(w, b, { judge })
+    const facts = await factsOf(w.tenantId)
+    expect(facts.map(f => f.state)).toEqual(['conflicting', 'conflicting'])
+    const [stored] = await db
+      .select()
+      .from(knowledgeValueJudgements)
+      .where(eq(knowledgeValueJudgements.tenantId, w.tenantId))
+    expect(stored).toMatchObject({ verdict: 'different', confidence: 0 })
+  })
+
+  it('a mention the judge places on a nearby entity links to it — no new entity, no review item', async () => {
+    const w = await world()
+    const a = await addDoc(w, HVD)
+    model([{ key: 'visit_day', value: 'Tuesday', quote: 'Routine visits take place on Tuesdays.' }])
+    await extract(w, a)
+    const b = await addDoc(w, 'The Quay Street dental practice — £285 a month.')
+    const { judge, asked } = scriptedJudge({
+      entities: q => (q.candidates[0] ? verdict(q.candidates[0].id) : null),
+    })
+    model([
+      {
+        entityName: 'Harbour View practice',
+        key: 'monthly_fee_gbp',
+        value: 285,
+        quote: '£285 a month',
+      },
+    ])
+    const report = await extract(w, b, { judge })
+    expect(asked.entities).toHaveLength(1)
+    expect(asked.entities[0]?.candidates.map(c => c.name)).toContain('Harbour View Dental')
+    expect(asked.entities[0]?.candidates[0]?.facts).toContain('visit_day = Tuesday')
+    expect(report).toMatchObject({ entitiesCreated: 0, judged: { entitiesLinked: 1 } })
+    const entities = await db
+      .select()
+      .from(knowledgeEntities)
+      .where(eq(knowledgeEntities.tenantId, w.tenantId))
+    expect(entities).toHaveLength(1)
+    expect(entities[0]?.aliases).toContain('Harbour View practice')
+    expect(new Set((await factsOf(w.tenantId)).map(f => f.entityId))).toEqual(
+      new Set([entities[0]?.id])
+    )
+  })
+
+  it('a confident "new" creates the entity without the possible-match item', async () => {
+    const w = await world()
+    const a = await addDoc(w, HVD)
+    model([{ key: 'visit_day', value: 'Tuesday', quote: 'Routine visits take place on Tuesdays.' }])
+    await extract(w, a)
+    const b = await addDoc(w, 'Harbourside Dental Lab — visits on Thursdays.')
+    const { judge } = scriptedJudge({ entities: () => verdict('new') })
+    model([
+      {
+        entityName: 'Harbourside Dental Lab',
+        key: 'visit_day',
+        value: 'Thursday',
+        quote: 'visits on Thursdays',
+      },
+    ])
+    const report = await extract(w, b, { judge })
+    expect(report).toMatchObject({
+      entitiesCreated: 1,
+      possibleMatches: 0,
+      judged: { entitiesNew: 1 },
+    })
+    const twin = await db.query.knowledgeEntities.findFirst({
+      where: and(
+        eq(knowledgeEntities.tenantId, w.tenantId),
+        eq(knowledgeEntities.name, 'Harbourside Dental Lab')
+      ),
+    })
+    expect(twin?.possibleMatches).toBeNull()
+  })
+
+  it('an ambiguous section leaves no empty staging entity behind', async () => {
+    const w = await world()
+    const id = await addDoc(w, 'Brand New Ltd: £100 a month. Brand New Ltd: £200 a month.')
+    model([
+      { entityName: 'Brand New Ltd', key: 'monthly_fee_gbp', value: 100, quote: '£100 a month' },
+      { entityName: 'Brand New Ltd', key: 'monthly_fee_gbp', value: 200, quote: '£200 a month' },
+    ])
+    const report = await extract(w, id)
+    expect(report).toMatchObject({ dropped: { ambiguous: 2 }, entitiesCreated: 0 })
+    expect(
+      await db.select().from(knowledgeEntities).where(eq(knowledgeEntities.tenantId, w.tenantId))
+    ).toHaveLength(0)
+  })
+})
+
+describe('a key that names an entity (refs)', () => {
+  const person: EntityTypeRegistration = {
+    type: 'person',
+    label: 'Person',
+    facts: z.object({ role: z.string().describe('Their job title') }),
+  }
+  const client: EntityTypeRegistration = {
+    type: 'client',
+    label: 'Client',
+    facts: z.object({ account_manager: z.string().describe('Who manages the account') }),
+    refs: { account_manager: 'person' },
+  }
+  const am = (value: string, quote: string) => ({
+    entityType: 'client',
+    entityName: 'Quayside Bakery',
+    key: 'account_manager',
+    value,
+    quote,
+  })
+  const linkToFullName = (): KnowledgeJudge => ({
+    engine: async () => ({ method: 'llm_self_report', model: 'fake-judge' }),
+    values: async qs => qs.map(() => null),
+    entities: async qs =>
+      qs.map(q => {
+        const full = q.candidates.find(c => c.name === 'Marcus Bell')
+        return full
+          ? { answer: full.id, confidence: 0.9, method: 'llm_self_report', model: 'fake-judge' }
+          : null
+      }),
+  })
+
+  it('resolves the value to an entity, and two names for one person agree', async () => {
+    state.types = [person, client]
+    const w = await world()
+    const a = await addDoc(w, 'Quayside Bakery — account manager: Marcus Bell.', {
+      date: '2026-02-01',
+    })
+    model([am('Marcus Bell', 'account manager: Marcus Bell')])
+    await extract(w, a)
+    const b = await addDoc(w, 'Quayside Bakery: Marcus will look after the account.', {
+      date: '2026-03-01',
+    })
+    model([am('Marcus', 'Marcus will look after the account')])
+    const report = await extract(w, b, { judge: linkToFullName() })
+    expect(report.judged.entitiesLinked).toBe(1)
+
+    const people = await db
+      .select()
+      .from(knowledgeEntities)
+      .where(and(eq(knowledgeEntities.tenantId, w.tenantId), eq(knowledgeEntities.type, 'person')))
+    expect(people).toHaveLength(1)
+    expect(people[0]?.aliases).toContain('Marcus')
+    const facts = await factsOf(w.tenantId)
+    expect(facts.map(f => f.value).sort()).toEqual(['Marcus', 'Marcus Bell'])
+    expect(new Set(facts.map(f => f.valueRef))).toEqual(
+      new Set([`staging:person:${people[0]?.id}`])
+    )
+    expect(facts.every(f => f.state === 'accepted' && f.conflictsWith.length === 0)).toBe(true)
+
+    // A different person is a disagreement.
+    const c = await addDoc(w, 'Quayside Bakery — account manager: Sophie Tran.', {
+      date: '2026-04-01',
+    })
+    model([am('Sophie Tran', 'account manager: Sophie Tran')])
+    await extract(w, c, { judge: linkToFullName() })
+    const after = await factsOf(w.tenantId)
+    expect(after.find(f => f.value === 'Sophie Tran')?.state).toBe('conflicting')
+  })
+
+  it('without a decision model a short name stays its own (possible-match) person and conflicts', async () => {
+    state.types = [person, client]
+    const w = await world()
+    const a = await addDoc(w, 'Quayside Bakery — account manager: Marcus Bell.', {
+      date: '2026-02-01',
+    })
+    model([am('Marcus Bell', 'account manager: Marcus Bell')])
+    await extract(w, a)
+    const b = await addDoc(w, 'Quayside Bakery: Marcus will look after the account.', {
+      date: '2026-03-01',
+    })
+    model([am('Marcus', 'Marcus will look after the account')])
+    await extract(w, b)
+    const facts = await factsOf(w.tenantId)
+    expect(facts.map(f => f.state)).toEqual(['conflicting', 'conflicting'])
+  })
+
+  it('a ref to an unregistered type, or on a non-string key, does not compose', async () => {
+    const { entityTypeIssues } = await import('@/api/services/knowledge/registry')
+    expect(entityTypeIssues([{ owner: null, types: [client] }]).join('\n')).toMatch(
+      /names person, which is not registered/
+    )
+    const bad: EntityTypeRegistration = {
+      ...client,
+      facts: z.object({ account_manager: z.number() }),
+    }
+    expect(entityTypeIssues([{ owner: null, types: [person, bad] }]).join('\n')).toMatch(
+      /must be a string/
+    )
   })
 })

@@ -62,6 +62,16 @@ import { promptHash } from './spend'
 // ── The corpus's entity types ─────────────────────────────────────────────────────────────────
 
 const PLANS = ['Essential', 'Standard', 'Premium'] as const
+/** The price units Brightside charges by (README, "Answer keys"). */
+const UNITS = [
+  'per visit',
+  'per site',
+  'per site per year',
+  'per tonne',
+  'per bed per season',
+  'per hour',
+  'per month',
+] as const
 const WEEKDAYS = [
   'Monday',
   'Tuesday',
@@ -134,19 +144,34 @@ export function corpusEntityTypes(): EntityTypeRegistration[] {
       .describe(
         'The price in pounds of ONE unit of this service, as the price list or catalogue gives it'
       ),
+    // A closed list, the way a business's own price units are: two wordings of one unit ("per
+    // call-out", "per visit") are mapped to one member while the passage is in front of the model,
+    // rather than compared as strings afterwards.
     unit: z
-      .string()
+      .enum(UNITS)
       .describe(
-        'What the price is per, in the document\'s words: "per visit", "per tonne", "per site per year"'
+        'What the price is per. A call-out, a single visit or an attendance is "per visit"; a price for a site for the whole year or season is "per site per year"'
       ),
     included_in_plans: z
       .array(z.enum(PLANS))
       .describe('The service plans that include this service at no extra charge'),
   })
+  // People are entities too, so a contact or an account manager named two ways ("Marcus",
+  // "Marcus Bell") resolves to one person. The answer key plants no person facts: they are not
+  // scored (`SCORED_TYPES`).
+  const person: EntityFactsSchema = z.object({
+    job_title: z.string().describe("The person's job title or role, as the document gives it"),
+  })
   return [
-    { type: 'customer', label: 'Customer', facts: customer },
-    { type: 'supplier', label: 'Supplier', facts: supplier },
+    {
+      type: 'customer',
+      label: 'Customer',
+      facts: customer,
+      refs: { primary_contact: 'person', account_manager: 'person' },
+    },
+    { type: 'supplier', label: 'Supplier', facts: supplier, refs: { primary_contact: 'person' } },
     { type: 'service', label: 'Service (something the business sells)', facts: service },
+    { type: 'person', label: 'Person', facts: person },
   ]
 }
 
@@ -211,7 +236,7 @@ export function factsRun(corpus: Corpus): Promise<FactsRun> {
       model ??= report.model
       reports.set(doc.id, { ...report, ms: Date.now() - started })
     }
-    const rows = await world.db
+    const allRows = await world.db
       .select({
         id: knowledgeFacts.id,
         entityType: knowledgeFacts.entityType,
@@ -224,10 +249,17 @@ export function factsRun(corpus: Corpus): Promise<FactsRun> {
         supersededById: knowledgeFacts.supersededById,
         observedAt: knowledgeFacts.observedAt,
         sourceKind: knowledgeFacts.sourceKind,
+        valueRef: knowledgeFacts.valueRef,
       })
       .from(knowledgeFacts)
       .where(eq(knowledgeFacts.tenantId, world.tenantId))
-    const entityIds = [...new Set(rows.map(r => r.entityId))]
+    // Only the types the answer key covers are scored (the `person` type exists for `refs`).
+    const scored = new Set(corpus.entities.map(e => e.entityType))
+    const rows = allRows.filter(r => scored.has(r.entityType))
+    const refIds = [
+      ...new Set(rows.flatMap(r => (r.valueRef ? [r.valueRef.split(':').slice(2).join(':')] : []))),
+    ]
+    const entityIds = [...new Set([...rows.map(r => r.entityId), ...refIds])]
     const entities = entityIds.length
       ? await world.db
           .select({
@@ -254,6 +286,7 @@ export function factsRun(corpus: Corpus): Promise<FactsRun> {
         [e.name, ...e.aliases].find(n => index.has(`${e.type}:${normalizeName(n)}`)) ?? e.name,
       ])
     )
+    const namesOf = new Map(entities.map(e => [e.id, [e.name, ...e.aliases]]))
     const facts = rows.map(
       (r): StoredFact => ({
         factId: r.id,
@@ -261,6 +294,7 @@ export function factsRun(corpus: Corpus): Promise<FactsRun> {
         entity: nameOf.get(r.entityId) ?? r.entityId,
         key: r.key,
         value: r.value,
+        valueNames: r.valueRef ? namesOf.get(r.valueRef.split(':').slice(2).join(':')) : undefined,
         doc: world.docIdOf.get(r.documentId) ?? r.documentId,
         documentId: r.documentId,
         state: r.state,
