@@ -30,15 +30,20 @@ export { withStepDatabase } from './agent-run-body'
  * event that arrives before the wait, so `arrived` is never asked.
  */
 export function cloudflareStep(step: WorkflowStep): Step {
-  const doStep = step.do.bind(step) as unknown as (
-    name: string,
-    ...rest: [() => Promise<unknown>] | [WorkflowStepConfig, () => Promise<unknown>]
-  ) => Promise<unknown>
+  // Always called AS A METHOD of `step`: under `wrangler dev` (and in production) `step` is an RPC
+  // stub, whose members are remote-method proxies with no `bind` / `call` — `step.do.bind(step)`
+  // throws "The RPC receiver does not implement the method \"bind\"" on the first step.
+  const doStep = step as unknown as {
+    do(
+      name: string,
+      ...rest: [() => Promise<unknown>] | [WorkflowStepConfig, () => Promise<unknown>]
+    ): Promise<unknown>
+  }
   return {
     do: (<T>(name: string, ...rest: [() => Promise<T>] | [StepOptions, () => Promise<T>]) =>
       (rest.length === 1
-        ? doStep(name, rest[0])
-        : doStep(name, rest[0] as WorkflowStepConfig, rest[1])) as Promise<T>) as Step['do'],
+        ? doStep.do(name, rest[0])
+        : doStep.do(name, rest[0] as WorkflowStepConfig, rest[1])) as Promise<T>) as Step['do'],
     waitForEvent: (name, options) =>
       step.waitForEvent(name, {
         type: options.type,
