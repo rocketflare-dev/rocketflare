@@ -6,7 +6,7 @@
  */
 import { Command, InvalidArgumentError } from 'commander'
 import { runActivityList } from './commands/activity'
-import { runAgentRunsList, runAgentsList, runAgentsRun } from './commands/agents'
+import { runAgentRunsList, runAgentsInspect, runAgentsList, runAgentsRun } from './commands/agents'
 import { runConfigGet, runConfigPath, runConfigSet } from './commands/config'
 import { runEvalsPromote } from './commands/evals'
 import { runFeaturesList } from './commands/features'
@@ -184,9 +184,20 @@ agentRuns
   .option('--agent <key>', 'only this agent')
   .option('--status <status>', 'queued | running | awaiting_input | succeeded | failed | cancelled')
   .option('--batch <id>', 'only the runs one batch created')
+  .option('--parent <runId>', "one run's child runs (children are otherwise left out)")
+  .option('--since <date>', 'only runs created at or after this ISO date or time')
+  .option(
+    '--agent-version <n>',
+    'only runs recorded under this meta.version',
+    positiveInt('--agent-version')
+  )
   .option('--page <n>', 'page number', positiveInt('--page'))
   .option('--page-size <n>', 'items per page (max 200)', positiveInt('--page-size'))
   .action(action((ctx, cmd) => runAgentRunsList(ctx, cmd.opts())))
+agents
+  .command('inspect <runId>')
+  .description("a run's timeline: events, turns, effects, decisions, asks, children, spend")
+  .action(action((ctx, cmd) => runAgentsInspect(ctx, cmd.args[0] ?? '')))
 
 const traces = program
   .command('traces')

@@ -22,6 +22,7 @@
  * shape a plugin can get subtly wrong.
  */
 
+import type { AgentKey } from '@rocketflare/shared/ai/agents'
 import type { AiProvider } from '@rocketflare/shared/ai/config'
 import type { PromptKey } from '@rocketflare/shared/ai/prompts'
 import type { AccessScope } from '../../api/services/access-sql'
@@ -220,6 +221,12 @@ export interface AgentCtx<Input = unknown> {
    */
   once<T>(key: string, fn: () => Promise<T>, options?: { inputs?: unknown }): Promise<T>
   /**
+   * Start another agent (a kit one or a plugin's) as a CHILD run and resolve with its output.
+   * This run parks while the child runs and is woken when it settles; a failed or cancelled child
+   * throws. `key` must be stable across attempts. Its budget is what this run could still spend.
+   */
+  spawn<Output = unknown>(key: string, agentKey: AgentKey, input: unknown): Promise<Output>
+  /**
    * The agentic loop, with this run's client, model, ceiling, approval plumbing and journal
    * already bound: a retried attempt is served the turns and tool results it already recorded,
    * so it is never billed twice and never re-runs a finished tool. Mark a tool that writes
@@ -301,6 +308,7 @@ export function agentCtx<Input>(ctx: AgentContext<Input>): AgentCtx<Input> {
     once: (key, fn, options) =>
       ctx.once(key, fn, options?.inputs !== undefined ? { inputs: options.inputs } : undefined),
     decide: ctx.decide,
+    spawn: (key, agentKey, input) => ctx.spawn(key, agentKey, input),
     interrupt: ask => ctx.interrupt(ask),
     chatModel: { provider: ctx.chat.client.provider, model: ctx.chat.model },
     toolLoop: options =>

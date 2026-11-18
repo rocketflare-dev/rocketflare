@@ -705,6 +705,37 @@ Server: `api/services/{ai,agents}/**` (read their `CLAUDE.md`), `services/prompt
   it started on, so a run parked across a deploy would replay new code against old positions; data
   keys survive that. Why: the durable-agents review (`docs/research/durable-agents-review-2026-11.md`
   in the kit) — a mid-turn crash re-billed the turn and re-ran every tool that had finished.
+- **Versions, children, inspector (D44 phase 3)**: **version pinning** — every run records the
+  agent's `meta.version` (`agent_runs.agent_version`, default 1) and the Worker deployment it last
+  ran on (`worker_version_id`, from the `[version_metadata]` binding `CF_VERSION_METADATA`). An
+  attempt that finds a different `meta.version` applies `meta.onVersionChange`: `continue` (the
+  default — sound because every key is data-derived; a `status` event `reason: 'version_changed'`
+  says so), `fail` (code `agent_version_changed`), or `rerun` (cancel, then a NEW run of the same
+  input, idempotency key `rerun:<runId>` — the old run's record is the audit trail). `pinned: true`
+  forces `fail` and is the one place order-derived keys are allowed: a repeated `ctx.once` label
+  becomes `label@2`, `label@3` instead of a conflict. **Bump `meta.version` when a change moves or
+  renames a top-level `once`/`decide` key or changes what a decision is about**; the recordings
+  check (`apps/web/tests/agent-recordings/*.json`, written by `agent:replay --record <dir>`)
+  replays each committed run on every gate and fails with "bump `meta.version`" when such a change
+  arrives at the same version. **HITL**: `meta.hitl = { timeout, remindAfter, onTimeout }` — an
+  ask's deadline is `timeout` capped at `AGENT_INTERRUPT_TIMEOUT`; the `*/10` cron's
+  `sendReminders` reminds ONCE at `remindAfter`; `onTimeout: 'reject'` answers an expired ask as a
+  rejection by nobody (`cancelled`, note `Nobody answered before the deadline`) and wakes the run,
+  where the default `expire` cancels it. An ask may name `assignees: { userIds, groupIds }`
+  (visibility groups): they are the ones notified, see it in their inbox, may read the run and
+  answer — the requester then may not; an owner/admin always may. **Child runs**: `ctx.spawn(key,
+  agentKey, input)` starts another agent as its own run (`parent_run_id`, id from
+  `spawn:<parent>:<key>`, so a retried parent finds the same child), parks the parent with NO ask
+  while it runs, and the child's `finish` (or a cancel of it) wakes the parent, which gets the
+  output (recorded as effect `spawn:<key>`, what replay serves) or `ChildRunFailedError`. The
+  child's budget is what the parent could still spend (`agent_runs.budget`), and the parent's meter
+  counts every descendant's spend; a cancel cascades down; a parent that ends unsuccessfully
+  cancels its active children. Children are left out of `GET /runs` unless `?parentRunId=` and
+  carry `rocketflare.parent_run_id`/`parent_trace_id` on their spans. **Inspector**: `GET
+  /api/agents/runs/:id/timeline` (`@rocketflare/shared/ai/agent-timeline`) merges events, turns,
+  tool calls, effects, decisions, asks and children by time, with versions and spend vs budget —
+  `rocketflare agents inspect <runId>` and the run page's admin **Inspect** tab read it; `runs list`
+  gains `--parent`, `--since`, `--agent-version`. Why: the durable-agents review's phase 3 (#156).
 - **Human-in-the-loop (#17)**: `ctx.interrupt({ key, spec })` parks the run on
   `step.waitForEvent`. The key must be stable across attempts. Answering is a compare-and-set on the
   row, *then* a nudge to the instance (`not_found` → restart as `<runId>-rN`). There are four
@@ -1279,7 +1310,20 @@ provider with no `ai_usage` row; the sweeper checks 100 runs per 10 minutes, so 
 runs drains over several sweeps; Workflows' per-Workflow `concurrency.limit` (2026-11-10) is NOT
 set — it caps instances across ALL tenants and does not count `waiting` ones, so it cannot back
 the per-tenant active-run cap (counted, then inserted); it is a platform-wide cost/noisy-neighbour
-knob, set in BOTH tomls on every deploy if you want one (`docs/DEPLOY.md`). Replay (D38): a tool loop replays strictly only inside the journal's
+knob, set in BOTH tomls on every deploy if you want one (`docs/DEPLOY.md`). Phase 3 (D44): versions
+are detected, never prevented — Workflows still resumes a parked run on today's code, and
+`onVersionChange` only decides what happens next; the recordings check sees only the runs you
+commit (record from dev or seeded tenants — a recording holds the run's input and model turns), and
+its turn drift is not checked (a system prompt naming the tenant drifts by design); `rerun` is a new
+run, so a parent waiting on a child that reran sees the child `cancelled`; an `onTimeout: 'reject'`
+deadline is applied by the 10-minute sweeper, so it lands up to ~20 minutes late, and at the
+`AGENT_INTERRUPT_TIMEOUT` cap the Workflow's own wait ends first and cancels — keep `hitl.timeout`
+shorter; reminders are one per ask; assignees are checked against tenant membership at notify and
+answer time, not when the ask is raised; a child's budget share is fixed when it is spawned (two
+children spawned together may each get the whole remainder — the parent's meter, which counts both,
+is what stops the overspend, at the parent's next call); there is no fan-in primitive beyond
+`Promise.all` of spawns, no depth limit beyond the budget, and a child never steers its parent; the
+inspector is read-only and shows no transcript (the trace and replay do). Replay (D38): a tool loop replays strictly only inside the journal's
 retention window — an older run's first turn is a `chat` miss, and `--live` is the fallback; steering
 notes are all handed over at the first call; a run that predates a `once` key misses it; no route
 or UI (a local script over a database URL), and `--live` holds one read-only transaction per run. The demo seed's

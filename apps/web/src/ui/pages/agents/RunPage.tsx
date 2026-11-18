@@ -41,6 +41,7 @@ import { outputFor } from './outputs'
 import { RunStatusBadge } from './RunStatusBadge'
 import { ActionRequiredPanel } from './run/ActionRequiredPanel'
 import { RunArtifactsTab } from './run/output/RunArtifactsTab'
+import { RunInspectTab } from './run/output/RunInspectTab'
 import { RunOutputTab } from './run/output/RunOutputTab'
 import { RunUsageTab } from './run/output/RunUsageTab'
 import { RunErrorAlert } from './run/RunErrorAlert'
@@ -190,6 +191,10 @@ function RunWorkspace({ run, agent }: { run: AgentRunWithEvents; agent?: AgentIn
       label: 'Usage',
       content: <RunUsageTab run={run} stats={stats} requestedBy={requestedBy} />,
     },
+    // The operator's view: every record, versions, spend against the budget.
+    ...(isAdminLevel()
+      ? [{ id: 'inspect', label: 'Inspect', content: <RunInspectTab runId={run.id} /> }]
+      : []),
   ]
 
   return (

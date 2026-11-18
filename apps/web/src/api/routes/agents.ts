@@ -22,6 +22,7 @@
  * tenant-wide inbox. Members see, cancel and steer their OWN runs; admin+ (`isAdminLevel`) every
  * run in the tenant. Every query carries the tenant predicate from the auth context.
  */
+import type { AgentRunTimeline } from '@rocketflare/shared/ai/agent-timeline'
 import {
   type AgentRun,
   type AgentRunWithEvents,
@@ -43,13 +44,14 @@ import {
   resolveInterruptRequestSchema,
 } from '@rocketflare/shared/ai/interrupts'
 import { ERROR_CODES } from '@rocketflare/shared/errors'
-import { and, count, desc, eq, inArray } from 'drizzle-orm'
+import { and, count, desc, eq, gte, inArray, isNull, or } from 'drizzle-orm'
 import { type AgentRunRow, agentRunInterrupts, agentRuns } from '../../db/schema'
 import { guardPermission, isAdminLevel } from '../middleware/permissions'
 import { recordActivity } from '../services/activity'
 import { projectRunToAgui } from '../services/agents/agui-projection'
 import { listArtifacts, toAgentArtifact } from '../services/agents/artifacts'
 import { listDecisions } from '../services/agents/decisions'
+import { assignedToSql, canAnswerAsk, runAssignedTo } from '../services/agents/hitl'
 import {
   checkEditedToolInput,
   getInterrupt,
@@ -75,6 +77,7 @@ import {
   toAgentRun,
   toAgentRunEvent,
 } from '../services/agents/runs'
+import { runTimeline } from '../services/agents/timeline'
 import { bindableAgents } from '../services/agents/triggers'
 import { runSpend } from '../services/ai/usage'
 import { isEventName } from '../services/events/registry'
@@ -127,11 +130,18 @@ async function loadRun(c: AppContext, runId: string): Promise<AgentRunRow> {
   return settleOnRead(c, await requireRun(c, runId))
 }
 
-/** Tenant-scoped lookup plus the ownership check: another member's run is the same 404 as none. */
+/**
+ * Tenant-scoped lookup plus the ownership check: another member's run is the same 404 as none.
+ * READ access also reaches an assignee of one of the run's asks — they were asked to decide, and
+ * the run's timeline is what explains the question. Cancel and steer stay with {@link visible}.
+ */
 async function requireRun(c: AppContext, runId: string): Promise<AgentRunRow> {
-  const { db, tenantId, auth } = withAuthAndDb(c)
+  const { db, tenantId, auth, user } = withAuthAndDb(c)
   const row = await getRun(db, tenantId, runId)
-  if (!row || !visible(auth, row)) throw new NotFoundError('Agent run not found')
+  if (!row) throw new NotFoundError('Agent run not found')
+  if (!visible(auth, row) && !(await runAssignedTo(db, tenantId, row.id, user.id))) {
+    throw new NotFoundError('Agent run not found')
+  }
   return row
 }
 
@@ -155,7 +165,13 @@ async function settleOnRead(
   options?: { lastEventAt?: Date | null }
 ): Promise<AgentRunRow> {
   const { db, realtime } = withAuthAndDb(c)
-  return expireParkedRun(db, await reconcileRun(db, c.env, row, options), realtime)
+  return expireParkedRun(
+    db,
+    await reconcileRun(db, c.env, row, options),
+    realtime,
+    new Date(),
+    c.env
+  )
 }
 
 // ---- GET /api/agents ------------------------------------------------------------------------------
@@ -196,7 +212,14 @@ agentsRouter.get('/runs', validate('query', agentRunListQuerySchema), async c =>
     isAdminLevel(auth) ? undefined : eq(agentRuns.requestedByUserId, user.id),
     query.agentKey ? eq(agentRuns.agentKey, query.agentKey) : undefined,
     query.status ? eq(agentRuns.status, query.status) : undefined,
-    query.batchId ? eq(agentRuns.batchId, query.batchId) : undefined
+    query.batchId ? eq(agentRuns.batchId, query.batchId) : undefined,
+    // A child is reached through its parent: the list holds top-level runs unless asked for one
+    // run's children.
+    query.parentRunId
+      ? eq(agentRuns.parentRunId, query.parentRunId)
+      : isNull(agentRuns.parentRunId),
+    query.since ? gte(agentRuns.createdAt, query.since) : undefined,
+    query.agentVersion ? eq(agentRuns.agentVersion, query.agentVersion) : undefined
   )
   const [rows, [total]] = await Promise.all([
     db
@@ -337,6 +360,20 @@ agentsRouter.get('/runs/:id', async c => {
   return c.json(body)
 })
 
+// ---- GET /api/agents/runs/:id/timeline ------------------------------------------------------------
+
+/**
+ * The inspector: every record of the run merged by time, its versions, and its spend against its
+ * budget (`runTimeline`). Read-only — it does not settle a lost run, so it shows the row as it is.
+ */
+agentsRouter.get('/runs/:id/timeline', async c => {
+  const { db } = withAuthAndDb(c)
+  guardPermission(c, 'read', 'AgentRun')
+  const row = await requireRun(c, uuidParam(c, 'id'))
+  const body: AgentRunTimeline = await runTimeline(db, c.get('config'), row)
+  return c.json(body)
+})
+
 // ---- GET /api/agents/runs/:id/agui ----------------------------------------------------------------
 
 /**
@@ -466,12 +503,24 @@ agentsRouter.post(
     const interruptId = uuidParam(c, 'interruptId')
 
     const run = await getRun(db, tenantId, runId)
-    if (!run || !visible(auth, run)) throw new NotFoundError('Agent run not found')
-    if (!canAnswer(auth, run)) {
-      throw new ForbiddenError('Only an administrator may answer this agent')
-    }
-    const interrupt = await getInterrupt(db, tenantId, runId, interruptId)
+    const interrupt = run ? await getInterrupt(db, tenantId, runId, interruptId) : null
+    // An assignee of THIS ask may see the run though it is not theirs; anyone else needs the run.
+    const assigned = interrupt !== null && (await runAssignedTo(db, tenantId, runId, user.id))
+    if (!run || (!visible(auth, run) && !assigned)) throw new NotFoundError('Agent run not found')
     if (!interrupt) throw new NotFoundError('Interrupt not found')
+    const may = await canAnswerAsk(
+      db,
+      { id: user.id, isAdminLevel: isAdminLevel(auth) },
+      interrupt,
+      () => canAnswer(auth, run)
+    )
+    if (!may) {
+      throw new ForbiddenError(
+        interrupt.assigneeUserIds.length || interrupt.assigneeGroupIds.length
+          ? 'This question is assigned to somebody else'
+          : 'Only an administrator may answer this agent'
+      )
+    }
 
     const body = c.req.valid('json')
     const payload = validateAnswer(interrupt.spec, body.status, body.payload)
@@ -624,9 +673,13 @@ agentsRouter.get('/interrupts', validate('query', interruptInboxQuerySchema), as
   const where = and(
     eq(agentRunInterrupts.tenantId, tenantId),
     eq(agentRunInterrupts.status, query.status),
-    inArray(
-      agentRunInterrupts.runId,
-      db.select({ id: agentRuns.id }).from(agentRuns).where(runsWhere)
+    // The asks of runs the caller may see, and — for a member — every ask assigned to them.
+    or(
+      inArray(
+        agentRunInterrupts.runId,
+        db.select({ id: agentRuns.id }).from(agentRuns).where(runsWhere)
+      ),
+      isAdminLevel(auth) ? undefined : assignedToSql(tenantId, user.id)
     )
   )
   const [rows, [total]] = await Promise.all([
@@ -640,6 +693,29 @@ agentsRouter.get('/interrupts', validate('query', interruptInboxQuerySchema), as
       .offset(offset),
     db.select({ n: count() }).from(agentRunInterrupts).where(where),
   ])
+  // Which of these assigned asks are the caller's: one query, not one per row.
+  const assignedRows = rows.filter(
+    ({ interrupt }) => interrupt.assigneeUserIds.length || interrupt.assigneeGroupIds.length
+  )
+  const assignedIds = new Set(
+    assignedRows.length
+      ? (
+          await db
+            .select({ id: agentRunInterrupts.id })
+            .from(agentRunInterrupts)
+            .where(
+              and(
+                eq(agentRunInterrupts.tenantId, tenantId),
+                inArray(
+                  agentRunInterrupts.id,
+                  assignedRows.map(r => r.interrupt.id)
+                ),
+                assignedToSql(tenantId, user.id)
+              )
+            )
+        ).map(r => r.id)
+      : []
+  )
   const items: InterruptInboxItem[] = rows.map(({ interrupt, run }) => ({
     ...toAgentRunInterrupt(interrupt),
     run: {
@@ -649,7 +725,10 @@ agentsRouter.get('/interrupts', validate('query', interruptInboxQuerySchema), as
       requestedByUserId: run.requestedByUserId,
       createdAt: run.createdAt,
     },
-    canAnswer: canAnswer(auth, run),
+    canAnswer:
+      interrupt.assigneeUserIds.length || interrupt.assigneeGroupIds.length
+        ? isAdminLevel(auth) || assignedIds.has(interrupt.id)
+        : canAnswer(auth, run),
   }))
   return c.json(paginated(items, total?.n ?? 0, query))
 })

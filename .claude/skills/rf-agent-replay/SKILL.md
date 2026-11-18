@@ -22,6 +22,7 @@ pnpm web agent:replay <agentKey>                       # lists the tenants that 
 pnpm web agent:replay <agentKey> --tenant <slug> [--since 7d] [--limit 20] [--run <id>] [--json]
 pnpm web agent:replay <agentKey> --tenant <slug> --candidate path/to/variant.ts   # another definition
 pnpm web agent:replay <agentKey> --tenant <slug> --live                          # asks for what's missing
+pnpm web agent:replay <agentKey> --tenant <slug> --run <id> --record apps/web/tests/agent-recordings  # commit a recording
 ```
 
 - Run it **before** the change too. A baseline that already shows misses or diffs is not caused by
@@ -101,6 +102,17 @@ Replay the agent's recent runs BEFORE the edit, so the baseline's misses and dif
 blamed on you, then again after. Read `order drift` and `drift` lines as questions for the change:
 did you mean to move a step, or to change what a loop sees? A step moved in a run that is parked
 on a person right now is what that run meets when it resumes.
+
+## 4c. Recordings: the version check in the gate
+
+`--record <dir>` writes each selected run as `<dir>/<agent>-<runId>.json` (the run plus its
+decisions, effects, asks, steering and turns). Every file under `apps/web/tests/agent-recordings/`
+is replayed by `tests/api/agent-recordings.test.ts` on every gate: a change that moves, renames or
+drops a top-level `once`/`decide` key at the SAME `meta.version` fails with "bump `meta.version`".
+When it fails, tell the user which agent and key, and ask whether runs in flight should `continue`,
+`fail` or `rerun` across the change — then bump `meta.version` and set `onVersionChange`. Record
+only from a dev or seeded tenant: a recording holds the run's input and model turns. A recording
+whose agent is now at a newer version than it was recorded at is no longer checked; re-record it.
 
 ## 5. A candidate
 

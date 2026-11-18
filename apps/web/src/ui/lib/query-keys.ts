@@ -111,6 +111,8 @@ const CORE_QUERY_KEYS = {
     detail: (id: string) => ['agent-run', 'detail', id] as const,
     /** `GET /runs/:id?events=0` — the bare row, one indexed read, refreshed by the nudge. */
     row: (id: string) => ['agent-run', 'row', id] as const,
+    /** `GET /runs/:id/timeline` — the inspector; under `agent-run` so a run nudge refreshes it. */
+    timeline: (id: string) => ['agent-run', 'timeline', id] as const,
     /**
      * `GET /interrupts?status=pending&pageSize=1` — the "n waiting" SideNav badge.
      * Under `['agent-run']` so BOTH server nudges already cover it: a park writes an `interrupt`

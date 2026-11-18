@@ -22,7 +22,7 @@
  */
 import type { AgentInterruptSpec, JsonSchema } from '@rocketflare/shared/ai/interrupts'
 import { AGENT_INTERRUPT_KINDS, AGENT_INTERRUPT_STATUSES } from '@rocketflare/shared/ai/interrupts'
-import { relations } from 'drizzle-orm'
+import { relations, sql } from 'drizzle-orm'
 import { index, jsonb, pgTable, text, timestamp, uniqueIndex, uuid } from 'drizzle-orm/pg-core'
 import { tenantRef, timestamps } from './_helpers'
 import { agentRuns } from './agent-runs'
@@ -65,6 +65,17 @@ export const agentRunInterrupts = pgTable(
      */
     payload: jsonb('payload'),
     expiresAt: timestamp('expires_at', { withTimezone: true }),
+    /**
+     * Named assignees (`spec.assignees`), denormalised so the inbox can find "asks for me" in SQL:
+     * an assignee is told, sees the ask and may answer it — and so may an owner or admin, so an
+     * ask whose assignees all left is never stuck. Empty = the agent's `approvers` policy.
+     */
+    assigneeUserIds: uuid('assignee_user_ids').array().notNull().default(sql`'{}'::uuid[]`),
+    assigneeGroupIds: uuid('assignee_group_ids').array().notNull().default(sql`'{}'::uuid[]`),
+    /** When the sweeper reminds the assignees (`meta.hitl.remindAfter`); NULL = never. */
+    remindAt: timestamp('remind_at', { withTimezone: true }),
+    /** When the one reminder went out. */
+    remindedAt: timestamp('reminded_at', { withTimezone: true }),
     resolvedAt: timestamp('resolved_at', { withTimezone: true }),
     resolvedByUserId: uuid('resolved_by_user_id').references(() => users.id, {
       onDelete: 'set null',
@@ -80,6 +91,10 @@ export const agentRunInterrupts = pgTable(
       table.status,
       table.createdAt.desc()
     ),
+    // The reminder sweep: pending asks whose reminder is due and not yet sent.
+    index('agent_run_interrupts_remind_idx')
+      .on(table.remindAt)
+      .where(sql`${table.status} = 'pending' AND ${table.remindedAt} IS NULL`),
     // The run page: every ask this run made.
     index('agent_run_interrupts_tenant_run_idx').on(table.tenantId, table.runId),
     tenantIsolation('agent_run_interrupts'),

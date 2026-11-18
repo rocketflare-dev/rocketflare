@@ -40,13 +40,23 @@ export async function effectKey(label: string, inputs?: unknown): Promise<string
   return `${label}#${(await hashToken(canonical)).slice(0, 12)}`
 }
 
-/** One attempt's set of used keys: `claim(key)` throws on the second use. */
-export function attemptKeys(primitive: EffectKeyConflictError['primitive']) {
-  const used = new Set<string>()
+/**
+ * One attempt's set of used keys. `claim(key)` returns the key to record under and throws on the
+ * second use — unless `orderDerived` (a `pinned` agent), where the n-th use of a key is `key@n`:
+ * keys from ORDER, sound only because a pinned run never meets other code (`onVersionChange` is
+ * `fail`). The first use is the bare key either way, so pinning an agent moves no existing record.
+ */
+export function attemptKeys(
+  primitive: EffectKeyConflictError['primitive'],
+  options: { orderDerived?: boolean } = {}
+) {
+  const used = new Map<string, number>()
   return {
-    claim(key: string): void {
-      if (used.has(key)) throw new EffectKeyConflictError(primitive, key)
-      used.add(key)
+    claim(key: string): string {
+      const seen = used.get(key) ?? 0
+      if (seen > 0 && !options.orderDerived) throw new EffectKeyConflictError(primitive, key)
+      used.set(key, seen + 1)
+      return seen === 0 ? key : `${key}@${seen + 1}`
     },
   }
 }

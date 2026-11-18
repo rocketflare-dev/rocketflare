@@ -39,6 +39,7 @@ import { researchTopicAgent } from './examples/research-topic'
 import { summarizeTextAgent } from './examples/summarize-text'
 import { triageResearchAgent } from './examples/triage-research'
 import type { MapOptions } from './fanout'
+import type { AgentRunsEnv } from './runs'
 
 /** Emitted by the run into `agent_run_events` (and nudged to viewers). */
 export interface AgentEvent {
@@ -50,6 +51,10 @@ export interface AgentEvent {
 export interface AgentRunEnv {
   AI?: AiEnv['AI']
   JOBS_QUEUE?: JobsQueue | null
+  /** For `ctx.spawn` and a version `rerun`: a run starting another run. */
+  AGENT_RUN_WORKFLOW?: AgentRunsEnv['AGENT_RUN_WORKFLOW']
+  /** The Worker deployment the attempt runs on (`[version_metadata]`). */
+  CF_VERSION_METADATA?: { id: string }
 }
 
 /** What an agent asks a person through {@link AgentContext.interrupt}. */
@@ -166,6 +171,15 @@ export interface AgentContext<Input = unknown> {
    * because `fn` may have a side effect.
    */
   once<T>(key: string, fn: () => Promise<T>, options?: OnceOptions): Promise<T>
+  /**
+   * Start another agent as a CHILD run — its own instance and attempts, `parent_run_id` = this
+   * run — and resolve with its output. While it runs, this run parks (it costs nothing) and is
+   * woken when the child settles. `key` is yours and must be stable across attempts, like every
+   * key: it is what a retried or resumed run uses to find the same child. A child that failed or
+   * was cancelled throws `ChildRunFailedError` (catch it to carry on). Its budget is what this run
+   * could still spend; a cancel of this run cancels it. For a short sub-task, call inline instead.
+   */
+  spawn<Output = unknown>(key: string, agentKey: AgentKey, input: unknown): Promise<Output>
   /**
    * Ask a person, and suspend the run until they answer.
    *

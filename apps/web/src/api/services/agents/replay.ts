@@ -62,14 +62,18 @@ import type { AppConfig } from '../../../config'
 import { type Database, pgErrorCode } from '../../../db/client'
 import {
   type AgentRunDecisionRow,
+  type AgentRunEventRow,
   type AgentRunInterruptRow,
   type AgentRunRow,
+  type AgentRunTurnRow,
   agentRunDecisions,
   agentRunEffects,
   agentRunEvents,
   agentRunInterrupts,
   agentRuns,
+  agentRunTurns,
   tenants,
+  tenantUsers,
 } from '../../../db/schema'
 import { noopTracer } from '../../observability/tracer'
 import type { Logger } from '../../utils/core/logger'
@@ -101,7 +105,7 @@ import { AgentCancelledError, errorMessage } from './runs'
 import type { RuntimeEnv } from './runtime'
 import { buildAgentTools } from './tools'
 import { requesterUrlsForRun } from './tools/requester-urls'
-import { type LoopRows, loadRunTurns } from './turns'
+import { groupRunTurns, type LoopRows } from './turns'
 
 /** `strict`: the record or nothing. `live`: what the record cannot answer is asked for real. */
 export type ReplayMode = 'strict' | 'live'
@@ -216,6 +220,8 @@ export interface ReplayResult {
 export interface ReplayOptions {
   /** Default `strict`: never resolves a model, never calls one. */
   mode?: ReplayMode
+  /** Replay these rows (a recording's) instead of reading the run's from the database. */
+  rows?: RecordRows
   logger: Logger
 }
 
@@ -318,7 +324,7 @@ async function replayInside(
 ): Promise<ReplayResult> {
   const mode = options.mode ?? 'strict'
   const { tenantId, id: runId } = run
-  const record = await loadRecord(tx, tenantId, runId)
+  const record = recordOf(options.rows ?? (await loadRecordRows(tx, tenantId, runId)))
   const misses: ReplayResult['misses'] = []
   const writes: string[] = []
   const reran: string[] = []
@@ -328,7 +334,7 @@ async function replayInside(
   const turns: ReplayTurn[] = []
   /** Top-level keys in the order today's code asked them (`once:`/`decide:` prefixed). */
   const asked: string[] = []
-  const onceKeys = attemptKeys('once')
+  const onceKeys = attemptKeys('once', { orderDerived: agent.meta.pinned === true })
   let liveUsage: TokenUsage = ZERO_USAGE
   const db = refuseWrites(tx, writes)
 
@@ -461,8 +467,7 @@ async function replayInside(
     journal: journal.journal,
     once: async (label, fn, onceOptions) => {
       // The runtime's own key and its own guard: a key reused in one attempt fails here too.
-      const key = await effectKey(label, onceOptions?.inputs)
-      onceKeys.claim(key)
+      const key = onceKeys.claim(await effectKey(label, onceOptions?.inputs))
       if (onceOptions?.replay !== 'inner' && isTopLevel(key)) asked.push(`once:${key}`)
       const recorded = record.effects.get(key)
       // A `ctx.map` item: run it again, so what it asks is answered from the record and a
@@ -474,6 +479,14 @@ async function replayInside(
       }
       if (recorded) return recorded.result as never
       throw miss('once', key)
+    },
+    // A child run's recorded output (the `spawn:<key>` effect): replay never starts a child.
+    spawn: async (key, _agentKey, _input) => {
+      const effect = `spawn:${key}`
+      if (isTopLevel(key)) asked.push(`once:${effect}`)
+      const recorded = record.effects.get(effect)
+      if (recorded) return recorded.result as never
+      throw miss('once', effect)
     },
     approvals: await approvalsForRun(db, tenantId, runId),
     interrupt: async ask =>
@@ -666,7 +679,24 @@ interface RunRecord {
   steering: Awaited<ReturnType<AgentContext['steering']>>
 }
 
-async function loadRecord(db: Database, tenantId: string, runId: string): Promise<RunRecord> {
+/**
+ * Everything replay reads about one run, as rows — what `loadRecordRows` reads from the database,
+ * and what a recording file (`exportRunRecording`) carries, so the gate can replay a run with no
+ * database of the deployment's at hand.
+ */
+export interface RecordRows {
+  decisions: AgentRunDecisionRow[]
+  effects: { key: string; result: unknown; at: Date }[]
+  interrupts: AgentRunInterruptRow[]
+  steering: AgentRunEventRow[]
+  turns: AgentRunTurnRow[]
+}
+
+export async function loadRecordRows(
+  db: Database,
+  tenantId: string,
+  runId: string
+): Promise<RecordRows> {
   const [decisions, effects, interrupts, steering, turns] = await Promise.all([
     db
       .select()
@@ -691,8 +721,16 @@ async function loadRecord(db: Database, tenantId: string, runId: string): Promis
         )
       )
       .orderBy(asc(agentRunEvents.seq)),
-    loadRunTurns(db, tenantId, runId),
+    db
+      .select()
+      .from(agentRunTurns)
+      .where(and(eq(agentRunTurns.tenantId, tenantId), eq(agentRunTurns.runId, runId))),
   ])
+  return { decisions, effects, interrupts, steering, turns }
+}
+
+function recordOf(rows: RecordRows): RunRecord {
+  const { decisions, effects, interrupts, steering } = rows
   const order = [
     ...effects
       .filter(e => isTopLevel(e.key) && !INTERNAL_EFFECT_PREFIXES.some(p => e.key.startsWith(p)))
@@ -706,7 +744,7 @@ async function loadRecord(db: Database, tenantId: string, runId: string): Promis
   return {
     decisions: new Map(decisions.map(d => [d.key, d])),
     effects: new Map(effects.map(e => [e.key, { result: e.result }])),
-    turns,
+    turns: groupRunTurns(rows.turns),
     order,
     interrupts: new Map(interrupts.map(i => [i.key, i])),
     steering: steering.flatMap(row => {
@@ -714,6 +752,145 @@ async function loadRecord(db: Database, tenantId: string, runId: string): Promis
       return parsed.success ? [{ ...parsed.data, eventId: row.id, at: row.at }] : []
     }),
   }
+}
+
+// ---- recordings: a settled run as a file the gate replays ------------------------------------
+
+/** The file format version a recording is written in. */
+export const RECORDING_FORMAT = 1
+
+/**
+ * One settled run, everything replay needs, as JSON. What the gate's recorded-run check replays
+ * (`tests/api/agent-recordings.test.ts`) — a key-order change at an unchanged `meta.version` fails
+ * there with "bump `meta.version`". **It holds the run's input, output and answers**: record runs
+ * from development or a seeded staging tenant, never a customer's, and read the file before you
+ * commit it.
+ */
+export interface RunRecording {
+  format: typeof RECORDING_FORMAT
+  agentKey: string
+  agentVersion: number
+  recordedAt: string
+  run: {
+    status: AgentRunStatus
+    input: unknown
+    output: unknown
+    error: string | null
+    /**
+     * The requester's role then — the replay runs as a user of this role, because what the tools
+     * offer (and so every recorded request hash) depends on what the requester may do. Null for a
+     * run nobody requested.
+     */
+    requesterRole: string | null
+  }
+  rows: RecordRows
+}
+
+export async function exportRunRecording(db: Database, run: AgentRunRow): Promise<RunRecording> {
+  const membership = run.requestedByUserId
+    ? await db.query.tenantUsers.findFirst({
+        columns: { role: true },
+        where: and(
+          eq(tenantUsers.tenantId, run.tenantId),
+          eq(tenantUsers.userId, run.requestedByUserId)
+        ),
+      })
+    : undefined
+  return {
+    format: RECORDING_FORMAT,
+    agentKey: run.agentKey,
+    agentVersion: run.agentVersion,
+    recordedAt: new Date().toISOString(),
+    run: {
+      status: run.status,
+      input: run.input,
+      output: run.output ?? null,
+      error: run.error,
+      requesterRole: membership?.role ?? null,
+    },
+    rows: await loadRecordRows(db, run.tenantId, run.id),
+  }
+}
+
+/** A recording read back from JSON: its timestamps are strings again until revived here. */
+export function parseRunRecording(json: string): RunRecording {
+  const revived = JSON.parse(json, (key, value) =>
+    typeof value === 'string' && /(At|^at)$/.test(key) && ISO_INSTANT.test(value)
+      ? new Date(value)
+      : value
+  ) as RunRecording
+  if (revived.format !== RECORDING_FORMAT) {
+    throw new Error(`Recording format ${String(revived.format)} is not ${RECORDING_FORMAT}`)
+  }
+  return revived
+}
+
+const ISO_INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/
+
+/**
+ * The row a recording replays as: a fresh id inside `tenantId` (the test's own), the recorded
+ * status, input and output, requested by `userId` — a user of `run.requesterRole` there, so the
+ * tools offered are the ones the run was offered. Nothing of the recording tenant is read.
+ */
+export function recordingRunRow(
+  recording: RunRecording,
+  tenantId: string,
+  userId: string | null
+): AgentRunRow {
+  const now = new Date()
+  return {
+    id: crypto.randomUUID(),
+    tenantId,
+    agentKey: recording.agentKey as AgentRunRow['agentKey'],
+    status: recording.run.status,
+    input: recording.run.input,
+    output: recording.run.output,
+    error: recording.run.error,
+    requestedByUserId: userId,
+    instanceId: null,
+    attempt: 1,
+    startedAt: now,
+    finishedAt: now,
+    cancelRequestedAt: null,
+    checkpoint: null,
+    traceId: null,
+    concurrencyKey: null,
+    batchId: null,
+    triggerEvent: null,
+    triggerEventId: null,
+    inputFromRequester: false,
+    agentVersion: recording.agentVersion,
+    workerVersionId: null,
+    parentRunId: null,
+    budget: null,
+    createdAt: now,
+    updatedAt: now,
+  }
+}
+
+/**
+ * The gate's question about one recording: did today's code move the keys the run recorded,
+ * without bumping `meta.version`? `null` when it did not (or when the version was bumped — a
+ * recording of an older version is expected to drift). Output and turn changes are not a version
+ * matter: a prompt edit changes answers and needs no bump.
+ */
+export function versionBumpNeeded(
+  recording: RunRecording,
+  currentVersion: number,
+  result: ReplayResult
+): string | null {
+  if (recording.agentVersion !== currentVersion) return null
+  const keyMisses = result.misses.filter(m => m.kind !== 'chat' && m.kind !== 'tool')
+  const unused = result.decisions.filter(d => d.status === 'unused').map(d => `decide:${d.key}`)
+  if (!result.orderDrift && keyMisses.length === 0 && unused.length === 0) return null
+  const moved = [
+    ...(result.orderDrift
+      ? [`order ${result.orderDrift.recorded.join(',')} → ${result.orderDrift.replayed.join(',')}`]
+      : []),
+    ...keyMisses.map(m => `new ${m.kind} key "${m.key}"`),
+    ...unused.map(k => `no longer asked: ${k}`),
+  ]
+  return `${recording.agentKey}: the keys a run records moved (${moved.join('; ')}) but meta.version is still ${currentVersion} — bump \`meta.version\` so runs in flight meet onVersionChange`
 }
 
 /** The runtime's interrupt semantics over a recorded row (`runtime.ts` `ctx.interrupt`). */

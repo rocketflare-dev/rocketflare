@@ -41,6 +41,8 @@ export interface RequestInterruptInput {
   spec: AgentInterruptSpec
   toolCallId?: string | null
   expiresAt?: Date | null
+  /** When the sweeper reminds whoever can answer (`meta.hitl.remindAfter`); null = never. */
+  remindAt?: Date | null
 }
 
 export function toAgentRunInterrupt(row: AgentRunInterruptRow): AgentRunInterrupt {
@@ -105,6 +107,9 @@ export async function requestInterrupt(
       spec: input.spec,
       status: 'pending',
       expiresAt: input.expiresAt ?? null,
+      remindAt: input.remindAt ?? null,
+      assigneeUserIds: input.spec.assignees?.userIds ?? [],
+      assigneeGroupIds: input.spec.assignees?.groupIds ?? [],
     })
     .onConflictDoNothing({ target: [agentRunInterrupts.runId, agentRunInterrupts.key] })
     .returning()

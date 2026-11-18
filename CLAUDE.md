@@ -134,7 +134,7 @@ written justification, and `apps/web/tests/config/shared-imports.test.ts` enforc
 **`apps/cli`.** `login` opens `GET /auth/cli?redirect_uri=http://127.0.0.1:<port>/callback`; the server
 mints a tenant API key `cli:<host>` → `?key=&tenant_id=&tenant_name=`; stored `0600` in
 `~/.rocketflare/config.json` (`ROCKETFLARE_API_KEY`/`ROCKETFLARE_URL` for CI). Also `logout|whoami|status|config`,
-`members|keys|activity list --json`, `agents run <key> --input|--batch` (D39) (`.claude/rules/cli.md`)
+`members|keys|activity list --json`, `agents run <key> --input|--batch` (D39), `agents inspect <runId>` (the run timeline, D44) (`.claude/rules/cli.md`)
 
 ## Config model
 

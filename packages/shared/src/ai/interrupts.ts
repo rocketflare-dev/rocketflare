@@ -178,10 +178,22 @@ export const INTERRUPT_INPUT_MAX_CHARS = 10_000
 /** Longest note a person may attach to any answer. */
 export const INTERRUPT_NOTE_MAX_CHARS = 2_000
 
+/**
+ * Who an ask is FOR, by user and by visibility group: they are notified, see it in their inbox
+ * (and its run) and may answer it, as may an owner or admin. Absent, the agent's `approvers`
+ * policy decides as before.
+ */
+export const interruptAssigneesSchema = z.object({
+  userIds: z.array(z.string().uuid()).max(50).default([]),
+  groupIds: z.array(z.string().uuid()).max(20).default([]),
+})
+export type InterruptAssignees = z.infer<typeof interruptAssigneesSchema>
+
 const askBase = {
   /** Short heading for the panel; the question itself is `message`. */
   title: z.string().min(1).max(200).optional(),
   message: z.string().min(1).max(INTERRUPT_MESSAGE_MAX_CHARS),
+  assignees: interruptAssigneesSchema.optional(),
 }
 
 /** The tool an `approval` ask is gating, when it gates one. */

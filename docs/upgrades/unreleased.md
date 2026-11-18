@@ -5,7 +5,8 @@ date: null
 breaking: true
 migrations:
   - "agent_run_turns (new table, tenant-isolated): the tool loop's journal of model turns and tool results"
-areas: [db, api, shared, config, docs]
+  - "agent_runs gains agent_version, worker_version_id, parent_run_id (self-FK, cascade) and budget; agent_run_interrupts gains assignee_user_ids, assignee_group_ids, remind_at and reminded_at"
+areas: [db, api, shared, config, cli, ui, docs]
 touches_surfaces: [feature-agents]
 requires_surfaces: []
 manual: false
@@ -36,6 +37,30 @@ Agent runs survive crashes and cancels: the tool loop records each model turn an
 - Workflows' `concurrency.limit` was evaluated and is not set. It caps instances across all tenants and does not count parked ones, so it cannot back the per-tenant cap (`docs/DEPLOY.md`).
 - Why: `docs/CONCEPTS.md` §9 "Durable loop (D44)".
 
+Phase 3 adds version pinning, HITL deadlines, reminders and assignees, child runs, and a run inspector.
+
+- **Versions.** Each run records `agent_version` (the agent's `meta.version`, default 1) and `worker_version_id` (from a new `[version_metadata]` binding, `CF_VERSION_METADATA`). An attempt that finds a different `meta.version` applies `meta.onVersionChange`:
+  - `continue` is the default;
+  - `fail` fails the run with code `agent_version_changed`;
+  - `rerun` cancels the run and starts a new one with idempotency key `rerun:<id>`.
+  - `pinned: true` forces `fail` and allows order-derived `ctx.once` keys (`label@2`).
+- **Recordings check.** `agent:replay --record <dir>` writes runs as JSON. `tests/api/agent-recordings.test.ts` replays every file in `apps/web/tests/agent-recordings/` and fails with "bump `meta.version`" when a key-moving change arrives at the same version.
+- **HITL.** `meta.hitl = { timeout, remindAfter, onTimeout: 'expire' | 'reject' }` adds a per-agent deadline (capped at `AGENT_INTERRUPT_TIMEOUT`) and one reminder per ask, sent by `sendReminders` on `*/10`. `reject` answers an expired ask as a rejection and wakes the run.
+- **Assignees.** An ask may name `assignees: { userIds, groupIds }`. Assignees are the people notified, see the ask in their inbox, may read the run and may answer. Owners and admins always may answer too.
+- **Child runs.** `ctx.spawn(key, agentKey, input)` starts a child run (`parent_run_id`) and parks the parent with no ask until the child settles.
+  - The child gets the parent's remaining budget, and the parent's meter counts the children's spend.
+  - A cancel cascades to children.
+  - Children are left out of `GET /runs` unless `?parentRunId=` is given.
+  - New error code `agent_child_failed`. A plugin's `AgentCtx` gains `spawn`.
+- **Inspector.** `GET /api/agents/runs/:id/timeline` (`@rocketflare/shared/ai/agent-timeline`) backs `rocketflare agents inspect <runId>` and the run page's admin **Inspect** tab. `GET /runs` gains the `since` and `agentVersion` filters, and the CLI `runs list` gains `--parent`, `--since` and `--agent-version`.
+- **Breaking:**
+  - `runSpend` takes an optional fourth argument.
+  - `budgetFor` takes an optional third argument.
+  - `RunMeter` gains `budget`.
+  - `notifyApprovers` moved from `runtime.ts` to `hitl.ts` and now takes the ask row.
+  - `GET /api/agents/runs` no longer lists child runs by default.
+- Why: `docs/CONCEPTS.md` §9 "Versions, children, inspector (D44 phase 3)".
+
 ## How to apply
 
 1. Port the `agent_run_turns` table: copy `apps/web/src/db/schema/agent-run-turns.ts`, export it from `apps/web/src/db/schema/index.ts`, then run `pnpm db:generate` and `pnpm db:migrate`.
@@ -52,6 +77,25 @@ Agent runs survive crashes and cancels: the tool loop records each model turn an
 12. Add `sweepRun` to `services/agents/runs.ts`, and `runSweepLostRuns` / `sweepLostRuns` under `'*/10 * * * *'` to `scheduled.ts`. Add `"*/10 * * * *"` to `[triggers] crons` in BOTH tomls (and in `tests/config/fixtures/wrangler{,.staging}.toml` if you kept them).
 13. Apply the observability diff: `genai-attributes.ts` (`GENAI_SEMCONV_VERSION`, the `_ref` and `runPending` names, `job` → `invoke_workflow`), `otlp-fetch.ts` and `otlp-protobuf.ts` (`schemaUrl`, `contentRefBase`), and `tracing.ts`. Rename your own jobs' `spanName: 'job <type>'` to `'invoke_workflow <type>'`. Saved Langfuse or Phoenix filters on `job …` names need the new name.
 
+14. Phase 3: run `pnpm db:migrate` after porting `agent-runs.ts` and `agent-run-interrupts.ts` (or `pnpm db:generate` if you changed either table). Copy `services/agents/{versions,hitl,children,timeline}.ts` and `packages/shared/src/ai/agent-timeline.ts`. Apply the diff to:
+    - `runs.ts`;
+    - `runtime.ts`;
+    - `budget.ts`;
+    - `keys.ts`;
+    - `replay.ts`;
+    - `registry.ts`;
+    - `fanout.ts`;
+    - `interrupts.ts`;
+    - `services/ai/usage.ts`;
+    - `scheduled.ts` (`sendReminders`);
+    - `routes/agents.ts`;
+    - `plugins/api/ai.ts`;
+    - the shared `agents.ts`, `interrupts.ts` and `errors.ts`.
+15. Add `[version_metadata]` with `binding = "CF_VERSION_METADATA"` to BOTH tomls (and to the test fixtures, if you kept them). Then run `pnpm --filter @rocketflare/web exec wrangler types`.
+16. If one of your agents should not continue across a deploy, set `meta.version` and `onVersionChange`. To have the gate catch a key change that came without a version bump, record a run into `apps/web/tests/agent-recordings/` with `--record`.
+17. If your code lists runs through `GET /api/agents/runs` and expects children, pass `parentRunId`. If your own code called `notifyApprovers`, import it from `services/agents/hitl`.
+18. Port the CLI `agents inspect` (`apps/cli/src/commands/agents.ts` and `cli.ts`) and the UI Inspect tab (`RunInspectTab.tsx`, `useAgentRunTimeline`, and `queryKeys.agentRuns.timeline`).
+
 ## Conflicts to expect
 
 - `apps/web/src/api/workflows/agent-run.ts` → the body moved to `agent-run-body.ts` → take the kit's adapter, then re-apply your own step changes in `runAgentRun`.
@@ -61,6 +105,8 @@ Agent runs survive crashes and cancels: the tool loop records each model turn an
 - `apps/web/wrangler.toml` / `wrangler.staging.toml` `[triggers] crons` → one new line → keep your own crons, and add `"*/10 * * * *"` to both files.
 - `apps/web/src/api/services/agents/agui-projection.ts` → the `cancelled` arm → take the kit's.
 
+- `apps/web/src/api/services/agents/runtime.ts` → `notifyApprovers` moved out to `hitl.ts`, and new catch arms for child runs were added → take the kit's version, then re-apply your own changes.
+
 ## Verify
 
 1. `pnpm gate` passes.
@@ -69,3 +115,5 @@ Agent runs survive crashes and cancels: the tool loop records each model turn an
 4. `pnpm web agent:replay research-topic --tenant <slug>` reports that run as `match`, with `turns n/n served`.
 5. `pnpm web test:api -- tests/api/agent-sweeper.test.ts` passes. `curl "http://localhost:3001/cdn-cgi/local/scheduled?cron=*/10+*+*+*+*"` logs `sweepLostRuns` while `pnpm dev` is running.
 6. Start a `research-topic` run and cancel it while the model is answering: it settles `cancelled` within about 3 s, and `GET /api/agents/runs/<id>/agui` ends with `RUN_FINISHED` `outcome.type: "cancelled"`.
+7. `pnpm web test:api -- tests/api/agent-versions.test.ts tests/api/agent-hitl.test.ts tests/api/agent-children.test.ts tests/api/agent-recordings.test.ts` passes.
+8. `pnpm cli agents inspect <runId>` prints the run's version, spend and records.

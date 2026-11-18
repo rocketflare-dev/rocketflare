@@ -9,11 +9,12 @@
  * (`wrangler dev --test-scheduled` additionally exposes the same thing at `/__scheduled`).
  */
 import { ACTIVE_RUN_STATUSES } from '@rocketflare/shared/ai/agents'
-import { and, asc, eq, exists, inArray, lt, sql } from 'drizzle-orm'
+import { and, asc, eq, exists, inArray, isNull, lt, sql } from 'drizzle-orm'
 import { type AppConfig, loadConfig } from '../config'
 import { affected, type Database, openDatabase } from '../db/client'
 import {
   agentRunEvents,
+  agentRunInterrupts,
   agentRuns,
   agentRunTurns,
   aiSpans,
@@ -22,6 +23,8 @@ import {
 } from '../db/schema'
 import { serverPlugins } from '../plugins/server'
 import { pruneMagicLinkTokens } from './auth/magic-link'
+import { claimReminder, notifyApprovers } from './services/agents/hitl'
+import { getAgent, isAgentKey } from './services/agents/registry'
 import { sweepRun } from './services/agents/runs'
 import { pruneInvitationSendCounters, pruneInvitations } from './services/invitations'
 import type { AppBindings } from './types'
@@ -167,6 +170,62 @@ export async function runSweepLostRuns(
   return counts
 }
 
+/** Reminders sent per sweep. */
+export const REMIND_BATCH = 100
+
+/**
+ * Remind whoever can answer an ask that is still pending past its `remind_at`
+ * (`meta.hitl.remindAfter`) — ONCE: `claimReminder` is a compare-and-set on `reminded_at`. Across
+ * every tenant, which is why it lives here; each reminder then goes through the tenant-scoped
+ * `notifyApprovers`. An ask of an agent no longer registered is reminded under `requester`.
+ */
+export async function runSendReminders(db: Database, logger: Logger, now = new Date()) {
+  const due = await db
+    .select({ ask: agentRunInterrupts, run: agentRuns })
+    .from(agentRunInterrupts)
+    .innerJoin(agentRuns, eq(agentRuns.id, agentRunInterrupts.runId))
+    .where(
+      and(
+        eq(agentRunInterrupts.status, 'pending'),
+        isNull(agentRunInterrupts.remindedAt),
+        lt(agentRunInterrupts.remindAt, now)
+      )
+    )
+    .orderBy(asc(agentRunInterrupts.remindAt))
+    .limit(REMIND_BATCH)
+  let sent = 0
+  for (const { ask, run } of due) {
+    try {
+      if (!(await claimReminder(db, ask))) continue
+      const meta = isAgentKey(run.agentKey) ? getAgent(run.agentKey).meta : undefined
+      await notifyApprovers(
+        db,
+        run,
+        meta?.title ?? run.agentKey,
+        meta?.approvers ?? 'requester',
+        ask,
+        undefined,
+        {
+          reminder: true,
+        }
+      )
+      sent++
+    } catch (err) {
+      logger.warn({ err, interruptId: ask.id }, 'sendReminders: could not remind')
+    }
+  }
+  return { due: due.length, sent }
+}
+
+/** Every ten minutes: remind the people an agent is still waiting on. */
+export const sendReminders: ScheduledTask = {
+  name: 'sendReminders',
+  async run({ db, logger }) {
+    const result = await runSendReminders(db, logger)
+    if (result.due > 0) logger.info(result, 'sendReminders: reminded pending asks')
+  },
+}
+
 /** Every ten minutes: settle agent runs whose Workflow instance ended without settling them. */
 export const sweepLostRuns: ScheduledTask = {
   name: 'sweepLostRuns',
@@ -219,7 +278,7 @@ export const pruneEvents: ScheduledTask = {
 /** Cron expression → tasks. Keep in sync with `[triggers] crons` in both wrangler tomls. */
 const CORE_SCHEDULED_TASKS: Record<string, ScheduledTask[]> = {
   '0 4 * * *': [pruneExpired, pruneAiSpans, pruneEvents, pruneAgentTurns],
-  '*/10 * * * *': [sweepLostRuns],
+  '*/10 * * * *': [sweepLostRuns, sendReminders],
 }
 
 /**

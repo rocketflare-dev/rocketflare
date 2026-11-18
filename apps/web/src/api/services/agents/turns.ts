@@ -76,6 +76,11 @@ export async function loadRunTurns(
     .select()
     .from(agentRunTurns)
     .where(and(eq(agentRunTurns.tenantId, tenantId), eq(agentRunTurns.runId, runId)))
+  return groupRunTurns(rows)
+}
+
+/** A run's journal rows, by loop key — what `loadRunTurns` reads, from rows already in hand. */
+export function groupRunTurns(rows: readonly AgentRunTurnRow[]): Map<string, LoopRows> {
   const byLoop = new Map<string, AgentRunTurnRow[]>()
   for (const row of rows) byLoop.set(row.loopKey, [...(byLoop.get(row.loopKey) ?? []), row])
   return new Map([...byLoop].map(([key, loopRows]) => [key, loopRowsOf(loopRows)]))

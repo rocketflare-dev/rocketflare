@@ -61,6 +61,7 @@ function scoped<Input>(base: BaseAgentContext<Input>, prefix: string): BaseAgent
   return {
     ...base,
     once: (key, fn, options) => base.once(k(key), fn, options),
+    spawn: (key, agentKey, input) => base.spawn(k(key), agentKey, input),
     interrupt: ask => base.interrupt({ ...ask, key: k(ask.key) }),
     artifact: input => base.artifact({ ...input, key: k(input.key) }),
     decide: decideWithShapes((key, request) => base.decide(k(key), request)),

@@ -62,6 +62,8 @@ export const ERROR_CODES = {
   agentPolicyExhausted: 'agent_policy_exhausted',
   /** Two keyed calls of one agent run shared a key in one attempt (`ctx.once`, a tool loop). */
   agentEffectKeyConflict: 'agent_effect_key_conflict',
+  agentVersionChanged: 'agent_version_changed',
+  agentChildFailed: 'agent_child_failed',
   /** 404: `POST /api/agui/run` was given a `threadId` that exists but is not this user's. */
   aguiThreadNotFound: 'agui_thread_not_found',
   /** 400: the last message of a `RunAgentInput` was not a user turn. */

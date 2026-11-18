@@ -1,0 +1,126 @@
+{
+  "format": 1,
+  "agentKey": "research-topic",
+  "agentVersion": 1,
+  "recordedAt": "2026-11-18T09:25:35.314Z",
+  "run": {
+    "status": "succeeded",
+    "input": {
+      "topic": "Who reviews access requests?"
+    },
+    "output": {
+      "turns": 2,
+      "answer": "A global admin reviews them within two working days.",
+      "citations": [
+        {
+          "title": "Onboarding handbook",
+          "documentId": "d47e1ca3-3ea3-48b4-900c-e6d1f69fac4e"
+        }
+      ]
+    },
+    "error": null,
+    "requesterRole": "member"
+  },
+  "rows": {
+    "decisions": [],
+    "effects": [],
+    "interrupts": [],
+    "steering": [],
+    "turns": [
+      {
+        "id": "7ee72fbc-2bcb-44e8-b288-10c9cad43f38",
+        "tenantId": "394a7b02-1c36-4c08-9a4d-edea41c544ac",
+        "runId": "1c456fe0-6b26-4804-996a-659477d9dbfd",
+        "loopKey": "tool-loop",
+        "turn": 1,
+        "role": "model",
+        "toolCallId": null,
+        "toolName": null,
+        "status": "settled",
+        "content": {
+          "kind": "model",
+          "usage": {
+            "inputTokens": 40,
+            "outputTokens": 10
+          },
+          "content": [
+            {
+              "id": "toolu_0_0",
+              "name": "search_knowledge",
+              "type": "tool_use",
+              "input": {
+                "query": "access requests"
+              }
+            }
+          ],
+          "injected": [],
+          "stopReason": "tool_use"
+        },
+        "requestHash": "bd9209152e946309",
+        "systemHash": "e5de762fb2b9557b",
+        "createdAt": "2026-11-18T09:25:35.284Z",
+        "updatedAt": "2026-11-18T09:25:35.284Z"
+      },
+      {
+        "id": "21a7dba0-3c0c-4ff4-9f77-3f7b903a2773",
+        "tenantId": "394a7b02-1c36-4c08-9a4d-edea41c544ac",
+        "runId": "1c456fe0-6b26-4804-996a-659477d9dbfd",
+        "loopKey": "tool-loop",
+        "turn": 1,
+        "role": "tool",
+        "toolCallId": "toolu_0_0",
+        "toolName": "search_knowledge",
+        "status": "settled",
+        "content": {
+          "kind": "tool",
+          "text": "{\"query\":\"access requests\",\"documents\":[{\"documentId\":\"d47e1ca3-3ea3-48b4-900c-e6d1f69fac4e\",\"title\":\"Onboarding handbook\",\"totalPassages\":1,\"matchingPassages\":1,\"passages\":[{\"rank\":1,\"passage\":1,\"charOffset\":0,\"score\":0.0328,\"text\":\"Access requests are reviewed by a global admin within two working days.\"}]}],\"passagesReturned\":1,\"note\":\"These are the closest passages to the query, not a relevance filter — read them and ignore any that do not answer the question. If none do, search again with different wording before concluding the knowledge base does not cover it.\"}",
+          "isError": false
+        },
+        "requestHash": null,
+        "systemHash": null,
+        "createdAt": "2026-11-18T09:25:35.318Z",
+        "updatedAt": "2026-11-18T09:25:35.318Z"
+      },
+      {
+        "id": "2f5e36c5-2371-4221-bd3a-61fbcf16bb96",
+        "tenantId": "394a7b02-1c36-4c08-9a4d-edea41c544ac",
+        "runId": "1c456fe0-6b26-4804-996a-659477d9dbfd",
+        "loopKey": "tool-loop",
+        "turn": 2,
+        "role": "model",
+        "toolCallId": null,
+        "toolName": null,
+        "status": "settled",
+        "content": {
+          "kind": "model",
+          "usage": {
+            "inputTokens": 60,
+            "outputTokens": 20
+          },
+          "content": [
+            {
+              "id": "toolu_1_0",
+              "name": "submit_answer",
+              "type": "tool_use",
+              "input": {
+                "answer": "A global admin reviews them within two working days.",
+                "citations": [
+                  {
+                    "title": "Onboarding handbook",
+                    "documentId": "d47e1ca3-3ea3-48b4-900c-e6d1f69fac4e"
+                  }
+                ]
+              }
+            }
+          ],
+          "injected": [],
+          "stopReason": "tool_use"
+        },
+        "requestHash": "2295c2e49ba25081",
+        "systemHash": "e5de762fb2b9557b",
+        "createdAt": "2026-11-18T09:25:35.339Z",
+        "updatedAt": "2026-11-18T09:25:35.339Z"
+      }
+    ]
+  }
+}

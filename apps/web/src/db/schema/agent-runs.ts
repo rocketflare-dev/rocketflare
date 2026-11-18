@@ -16,6 +16,7 @@ import type { AgentKey, AgentRunStatus } from '@rocketflare/shared/ai/agents'
 import { ACTIVE_RUN_STATUSES } from '@rocketflare/shared/ai/agents'
 import { relations, sql } from 'drizzle-orm'
 import {
+  type AnyPgColumn,
   boolean,
   index,
   integer,
@@ -105,6 +106,25 @@ export const agentRuns = pgTable(
      * input may carry text from an email, a page or a webhook.
      */
     inputFromRequester: boolean('input_from_requester').notNull().default(false),
+    /**
+     * The agent's `meta.version` this run executes under — set at enqueue, moved forward when a
+     * resume finds a newer one and the agent's `onVersionChange` lets it continue.
+     */
+    agentVersion: integer('agent_version').notNull().default(1),
+    /** The Worker deployment (`[version_metadata]` id) the run last executed on; NULL without it. */
+    workerVersionId: text('worker_version_id'),
+    /**
+     * The run that spawned this one (`ctx.spawn`). A child is reached through its parent — it is
+     * left out of the runs list — and goes with it.
+     */
+    parentRunId: uuid('parent_run_id').references((): AnyPgColumn => agentRuns.id, {
+      onDelete: 'cascade',
+    }),
+    /**
+     * A per-run cap that overrides the agent's `meta.budget` where it is LOWER: a child's share of
+     * what its parent had left when it was spawned. NULL for every other run.
+     */
+    budget: jsonb('budget').$type<{ maxTokens?: number; maxCostUsd?: number }>(),
     ...timestamps(),
   },
   table => [
@@ -127,6 +147,9 @@ export const agentRuns = pgTable(
     index('agent_runs_tenant_batch_idx')
       .on(table.tenantId, table.batchId)
       .where(sql`${table.batchId} IS NOT NULL`),
+    index('agent_runs_tenant_parent_idx')
+      .on(table.tenantId, table.parentRunId)
+      .where(sql`${table.parentRunId} IS NOT NULL`),
     tenantIsolation('agent_runs'),
   ]
 )

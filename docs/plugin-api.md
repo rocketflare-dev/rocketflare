@@ -122,6 +122,8 @@ The server surface: the context family, and the types a plugin must be able to n
     Aborts when the run is asked to stop. `toolLoop` and `structured` already pass it; hand it to your own `fetch`es so a cancel reaches them in flight.
   - `once<T>(key: string, fn: () => Promise<T>, options?: { inputs?: unknown }): Promise<T>`
     Run `fn` at most once per `key` across every attempt, replaying its recorded result after.
+  - `spawn<Output = unknown>(key: string, agentKey: AgentKey, input: unknown): Promise<Output>`
+    Start another agent (a kit one or a plugin's) as a CHILD run and resolve with its output. This run parks while the child runs and is woken when it settles; a failed or cancelled…
   - `toolLoop(options: PluginToolLoopOptions): Promise<ToolLoopResult>`
     The agentic loop, with this run's client, model, ceiling, approval plumbing and journal already bound: a retried attempt is served the turns and tool results it already recorded,…
   - `structured<T>(options: PluginStructuredOptions<T>): Promise<T>`
@@ -1380,6 +1382,7 @@ nothing in the comparison that can throw.
 @/plugins/api :: member :: AgentCtx.checkCancelled :: checkCancelled(): Promise<void>
 @/plugins/api :: member :: AgentCtx.signal :: signal: AbortSignal
 @/plugins/api :: member :: AgentCtx.once :: once<T>(key: string, fn: () => Promise<T>, options?: { inputs?: unknown }): Promise<T>
+@/plugins/api :: member :: AgentCtx.spawn :: spawn<Output = unknown>(key: string, agentKey: AgentKey, input: unknown): Promise<Output>
 @/plugins/api :: member :: AgentCtx.toolLoop :: toolLoop(options: PluginToolLoopOptions): Promise<ToolLoopResult>
 @/plugins/api :: member :: AgentCtx.structured :: structured<T>(options: PluginStructuredOptions<T>): Promise<T>
 @/plugins/api :: member :: AgentCtx.decide :: decide: AgentDecide

@@ -38,6 +38,7 @@ import {
   ACTIVE_RUN_STATUSES,
   AGENT_RESUME_EVENT,
   CLAIMABLE_RUN_STATUSES,
+  isRunActive,
 } from '@rocketflare/shared/ai/agents'
 import { ERROR_CODES } from '@rocketflare/shared/errors'
 import { and, asc, count, eq, inArray, sql } from 'drizzle-orm'
@@ -45,6 +46,7 @@ import type { AppConfig } from '../../../config'
 import { type Database, isUniqueViolation, rows } from '../../../db/client'
 import {
   type AgentRunEventRow,
+  type AgentRunInterruptRow,
   type AgentRunRow,
   agentRunEffects,
   agentRunEvents,
@@ -62,8 +64,9 @@ import {
 import { parseToolLoopCheckpoint, type ToolLoopCheckpoint } from '../ai/agent-loop'
 import { nudge, type Realtime, realtimeEvent } from '../realtime'
 import { assertTenantDailyBudget } from './budget'
-import { expireInterrupts, listInterrupts } from './interrupts'
-import { getAgent } from './registry'
+import { TIMEOUT_REJECTION_NOTE } from './hitl'
+import { expireInterrupts, listInterrupts, resolveInterrupt } from './interrupts'
+import { getAgent, isAgentKey } from './registry'
 
 /** `{ runId, tenantId }` — everything else is re-read from the row (a retry must not trust a message). */
 export interface AgentRunParams {
@@ -111,6 +114,11 @@ export class AgentCancelledError extends Error {
   }
 }
 
+/** `meta.version`, `1` when the agent declares none. */
+export function agentVersionOf(meta: { version?: number }): number {
+  return meta.version ?? 1
+}
+
 export function toAgentRun(row: AgentRunRow): AgentRun {
   return {
     id: row.id,
@@ -131,6 +139,9 @@ export function toAgentRun(row: AgentRunRow): AgentRun {
     batchId: row.batchId,
     triggerEvent: row.triggerEvent,
     triggerEventId: row.triggerEventId,
+    agentVersion: row.agentVersion,
+    workerVersionId: row.workerVersionId,
+    parentRunId: row.parentRunId,
   }
 }
 
@@ -209,6 +220,13 @@ export interface EnqueueRunInput {
    * makes the URLs in it `ToolCtx.requesterUrls`. Never set from a plugin or an event.
    */
   inputFromRequester?: boolean
+  /**
+   * The run spawning this one (`ctx.spawn`). A child holds no exclusive slot — its parent is what
+   * the slot protects — and is left out of the runs list.
+   */
+  parentRunId?: string
+  /** A cap below the agent's own `meta.budget`: a child's share of its parent's remainder. */
+  budget?: { maxTokens?: number; maxCostUsd?: number }
 }
 
 export interface EnqueueRunResult {
@@ -333,7 +351,9 @@ export async function enqueueRun(
   const parsed = agent.meta.inputSchema.safeParse(input.input)
   if (!parsed.success) throw new ValidationError(parsed.error.issues, 'Invalid agent input')
   await assertTenantActive(db, input.tenantId)
-  const concurrencyKey = input.concurrencyKey ?? (agent.meta.exclusive ? '' : null)
+  const concurrencyKey = input.parentRunId
+    ? (input.concurrencyKey ?? null)
+    : (input.concurrencyKey ?? (agent.meta.exclusive ? '' : null))
   const runId = input.idempotencyKey
     ? await idempotentRunId(input.tenantId, input.agentKey, input.idempotencyKey)
     : crypto.randomUUID()
@@ -371,6 +391,9 @@ export async function enqueueRun(
         input: parsed.data,
         requestedByUserId: input.userId,
         inputFromRequester: input.inputFromRequester === true && input.userId !== null,
+        agentVersion: agentVersionOf(agent.meta),
+        parentRunId: input.parentRunId ?? null,
+        budget: input.budget ?? null,
         ...(input.trigger && {
           triggerEvent: input.trigger.event,
           triggerEventId: input.trigger.eventId,
@@ -534,6 +557,7 @@ export async function enqueueRunBatch(
         input: v.data,
         requestedByUserId: input.userId,
         inputFromRequester: input.inputFromRequester === true && input.userId !== null,
+        agentVersion: agentVersionOf(agent.meta),
         batchId,
       }))
     )
@@ -738,6 +762,29 @@ export async function requestCancel(
   realtime?: Realtime,
   env?: AgentRunsEnv
 ): Promise<AgentRunRow | null> {
+  const result = await requestCancelOne(db, tenantId, runId, realtime, env)
+  // A child cancelled before its instance ran ends no Workflow, so nothing else wakes its parent.
+  if (result?.parentRunId && !isRunActive(result.status) && env) {
+    await wakeParent(db, env, tenantId, result.parentRunId, realtime)
+  }
+  // A cancel cascades to the run's children (`ctx.spawn`), and through this same call to theirs.
+  const children = await db
+    .select({ id: agentRuns.id, status: agentRuns.status })
+    .from(agentRuns)
+    .where(and(eq(agentRuns.tenantId, tenantId), eq(agentRuns.parentRunId, runId)))
+  for (const child of children) {
+    if (isRunActive(child.status)) await requestCancel(db, tenantId, child.id, realtime, env)
+  }
+  return result
+}
+
+async function requestCancelOne(
+  db: Database,
+  tenantId: string,
+  runId: string,
+  realtime?: Realtime,
+  env?: AgentRunsEnv
+): Promise<AgentRunRow | null> {
   const row = await getRun(db, tenantId, runId)
   if (!row) return null
   // `queued` and `awaiting_input` are the two states where nothing is executing, so both settle
@@ -890,17 +937,94 @@ export async function expireParkedRun(
   db: Database,
   run: AgentRunRow,
   realtime?: Realtime,
-  now: Date = new Date()
+  now: Date = new Date(),
+  /** The Workflow binding, which `onTimeout: 'reject'` needs to wake the run it answered. */
+  env?: AgentRunsEnv
 ): Promise<AgentRunRow> {
   if (run.status !== 'awaiting_input') return run
   const pending = await listInterrupts(db, run.tenantId, run.id, 'pending')
   if (pending.length === 0) return run
   // One ask without a deadline, or one still in date, is a run that is legitimately waiting.
   if (pending.some(row => !row.expiresAt || row.expiresAt.getTime() > now.getTime())) return run
+  if (isAgentKey(run.agentKey) && getAgent(run.agentKey).meta.hitl?.onTimeout === 'reject' && env) {
+    return rejectExpiredAsks(db, env, run, pending, realtime)
+  }
   await expireInterrupts(db, run.tenantId, run.id)
   const settled = (await cancelRun(db, run.tenantId, run.id)) ?? run
   nudgeRun(realtime, run.tenantId, run.id)
   return settled
+}
+
+/**
+ * Wake a parent parked on its children when none is still active and it has no ask of its own
+ * pending — the same transition an answer makes (`resumeRun`, then the instance). Called by a
+ * child's settle and by the sweeper; safe to call twice (the second finds nothing parked).
+ */
+export async function wakeParent(
+  db: Database,
+  env: AgentRunsEnv,
+  tenantId: string,
+  parentRunId: string,
+  realtime?: Realtime
+): Promise<boolean> {
+  const parent = await getRun(db, tenantId, parentRunId)
+  if (parent?.status !== 'awaiting_input') return false
+  const children = await db
+    .select({ status: agentRuns.status })
+    .from(agentRuns)
+    .where(and(eq(agentRuns.tenantId, tenantId), eq(agentRuns.parentRunId, parentRunId)))
+  // A park with no children is not ours to end — it is waiting on a person, or on the window
+  // between an answer and its resume.
+  if (children.length === 0 || children.some(child => isRunActive(child.status))) return false
+  if ((await listInterrupts(db, tenantId, parentRunId, 'pending')).length > 0) return false
+  const resumed = await resumeRun(db, tenantId, parentRunId)
+  if (!resumed) return false
+  nudgeRun(realtime, tenantId, parentRunId)
+  await nudgeOrRestartInstance(db, env, resumed, { interruptId: null })
+  return true
+}
+
+/**
+ * `onTimeout: 'reject'`: every expired ask is answered as a rejection — `cancelled`, by nobody,
+ * with a note saying so — and the run is woken exactly as if a person had said no: an approval
+ * gate whose `onReject` is `tell_model` tells the model, any other ask cancels the run.
+ */
+async function rejectExpiredAsks(
+  db: Database,
+  env: AgentRunsEnv,
+  run: AgentRunRow,
+  asks: AgentRunInterruptRow[],
+  realtime?: Realtime
+): Promise<AgentRunRow> {
+  for (const ask of asks) {
+    const rejected = await resolveInterrupt(db, {
+      tenantId: run.tenantId,
+      runId: run.id,
+      interruptId: ask.id,
+      status: 'cancelled',
+      payload: { note: TIMEOUT_REJECTION_NOTE },
+      resolvedByUserId: null,
+    })
+    if (!rejected) continue
+    await appendEventAtomic(db, {
+      tenantId: run.tenantId,
+      runId: run.id,
+      type: 'interrupt.resolved',
+      data: {
+        interruptId: rejected.id,
+        key: rejected.key,
+        kind: rejected.kind,
+        status: rejected.status,
+        resolvedByUserId: null,
+        reason: 'timeout',
+      },
+      realtime,
+    })
+  }
+  const resumed = await resumeRun(db, run.tenantId, run.id)
+  if (!resumed) return (await getRun(db, run.tenantId, run.id)) ?? run
+  nudgeRun(realtime, run.tenantId, run.id)
+  return nudgeOrRestartInstance(db, env, resumed, { interruptId: asks[0]?.id ?? null })
 }
 
 /**
@@ -1027,7 +1151,7 @@ export async function sweepRun(
     return { run: row, action: row.instanceId ? 'dispatched' : 'none' }
   }
   const reconciled = await reconcileRun(db, env, run, { lastEventAt: options.lastEventAt })
-  const settled = await expireParkedRun(db, reconciled, options.realtime)
+  const settled = await expireParkedRun(db, reconciled, options.realtime, new Date(), env)
   if (settled.status === run.status) return { run: settled, action: 'none' }
   nudgeRun(options.realtime, run.tenantId, run.id)
   return { run: settled, action: 'settled' }

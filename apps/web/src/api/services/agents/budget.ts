@@ -85,12 +85,39 @@ function budgetMessage(limit: BudgetLimit, used: number, max: number): string {
     : `This organisation's agent spend today has reached its cap (${money})`
 }
 
-/** The deployment's caps, with the agent's own `meta.budget` taking precedence per axis. */
-export function budgetFor(cfg: AppConfig, agentBudget?: AgentBudget): RunBudget {
+/**
+ * The deployment's caps, with the agent's own `meta.budget` taking precedence per axis — and,
+ * for a child run, `runCap` (its share of what the parent had left) wherever it is LOWER: a
+ * child can never be handed more than its parent could still spend.
+ */
+export function budgetFor(
+  cfg: AppConfig,
+  agentBudget?: AgentBudget,
+  runCap?: AgentBudget | null
+): RunBudget {
+  const lower = (a: number | undefined, b: number | undefined) =>
+    a === undefined ? b : b === undefined ? a : Math.min(a, b)
   return {
-    maxTokens: agentBudget?.maxTokens ?? cfg.AGENT_RUN_MAX_TOKENS,
-    maxCostMicrocents: microcentsOf(agentBudget?.maxCostUsd ?? cfg.AGENT_RUN_MAX_COST_USD),
+    maxTokens: lower(agentBudget?.maxTokens ?? cfg.AGENT_RUN_MAX_TOKENS, runCap?.maxTokens),
+    maxCostMicrocents: microcentsOf(
+      lower(agentBudget?.maxCostUsd ?? cfg.AGENT_RUN_MAX_COST_USD, runCap?.maxCostUsd)
+    ),
     tenantDailyMicrocents: microcentsOf(cfg.AGENT_TENANT_DAILY_COST_USD),
+  }
+}
+
+/**
+ * What a run could still spend — the cap a child it spawns now is given. Undefined on an axis the
+ * run has no cap on (the child then has only its own `meta.budget`).
+ */
+export function remainingBudget(budget: RunBudget, spent: RunSpend): AgentBudget {
+  const tokens =
+    spent.inputTokens + spent.outputTokens + spent.cacheReadTokens + spent.cacheWriteTokens
+  return {
+    ...(budget.maxTokens !== undefined && { maxTokens: Math.max(0, budget.maxTokens - tokens) }),
+    ...(budget.maxCostMicrocents !== undefined && {
+      maxCostUsd: Math.max(0, budget.maxCostMicrocents - spent.costMicrocents) / MICROCENTS_PER_USD,
+    }),
   }
 }
 
@@ -124,8 +151,10 @@ export interface RunMeter {
    * the run's chat model unless `billedToPlatform` says otherwise (`ctx.decide`'s fallback model).
    */
   assertPriced(provider: AiProvider, model: string, billedToPlatform?: boolean): void
-  /** What the run has spent, every attempt included. */
+  /** What the run has spent, every attempt — and every run it spawned — included. */
   spent(): RunSpend
+  /** The run's caps, as `budgetFor` resolved them. */
+  budget: RunBudget
 }
 
 export interface RunMeterDeps {
@@ -142,7 +171,8 @@ export interface RunMeterDeps {
 
 export async function createRunMeter(deps: RunMeterDeps): Promise<RunMeter> {
   const { db, tenantId, runId, budget } = deps
-  const spend = await runSpend(db, tenantId, runId)
+  // The run's own calls AND its children's: a child's budget is carved from this one.
+  const spend = await runSpend(db, tenantId, runId, { descendants: true })
   return {
     async check() {
       // Every token the provider processed: the four usage counters are disjoint.
@@ -200,6 +230,7 @@ export async function createRunMeter(deps: RunMeterDeps): Promise<RunMeter> {
       throw new AgentBudgetExceededError('unpriced_model', 0, cap)
     },
     spent: () => ({ ...spend }),
+    budget,
   }
 }
 

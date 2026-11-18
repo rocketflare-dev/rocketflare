@@ -51,6 +51,9 @@ const run = (over: Partial<AgentRun> = {}): AgentRun => ({
   batchId: null,
   triggerEvent: null,
   triggerEventId: null,
+  agentVersion: 1,
+  workerVersionId: null,
+  parentRunId: null,
   ...over,
 })
 

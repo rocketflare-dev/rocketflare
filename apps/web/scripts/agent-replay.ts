@@ -13,17 +13,23 @@
  *   --candidate <file>   replay a module's default-exported agent instead of the registry's
  *                        (same `meta.key`) — how `rf-agent-tune` proves a compiled variant
  *   --db-url <url>       another database (default: DATABASE_URL from .dev.vars)
+ *   --record <dir>       ALSO write each run as a recording (`<dir>/<agent>-<runId>.json`) — what
+ *                        the gate replays to catch a key change without a `meta.version` bump
+ *                        (`tests/agent-recordings/`). A recording holds the run's input, output
+ *                        and answers: record from development or a seeded tenant, and read it
+ *                        before you commit it
  *
  * Read-only by construction: every run replays inside a READ ONLY transaction. Exit 0 when every
  * run matches, 1 when any differs or could not be replayed, 2 on a usage error.
  */
-import { readFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { AGENT_KEYS, type AgentKey } from '@rocketflare/shared/ai/agents'
 import { count, desc, eq, or } from 'drizzle-orm'
 import { type AnyAgentDefinition, getAgent, isAgentKey } from '../src/api/services/agents/registry'
 import {
+  exportRunRecording,
   listReplayableRuns,
   liveReplayWarnings,
   type ReplayMode,
@@ -38,6 +44,7 @@ import { agentRuns, tenants } from '../src/db/schema'
 
 const USAGE = `usage: pnpm web agent:replay <agentKey> --tenant <id|slug> [--since 7d] [--limit 20]
                              [--run <id>] [--live] [--candidate <file>] [--json] [--db-url <url>]
+                             [--record <dir>]
 agents: ${AGENT_KEYS.join(', ')}`
 
 function parseArgs(argv: string[]) {
@@ -237,6 +244,13 @@ async function main() {
       })
       results.push(result)
       if (!flags.json) console.log(line(result))
+      if (typeof flags.record === 'string') {
+        const dir = resolve(flags.record)
+        mkdirSync(dir, { recursive: true })
+        const file = resolve(dir, `${agentKey}-${run.id}.json`)
+        writeFileSync(file, `${JSON.stringify(await exportRunRecording(db, run), null, 2)}\n`)
+        if (!flags.json) console.log(`  recorded → ${file}`)
+      }
     }
 
     if (flags.json) console.log(JSON.stringify(results, null, 2))
