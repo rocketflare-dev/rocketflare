@@ -160,6 +160,7 @@ export type DocumentFacetValue = z.infer<typeof documentFacetValueSchema>
  * `GET /api/ai/documents/facets`: what the search filters can offer — the distinct `source` and
  * `contentType` values among the INDEXED documents this reader may see, most common first, and
  * the date range they span (null with no documents). A document with no source is not listed.
+ * `staleEmbeddings` is the reader-scoped counterpart of `/health`'s (which is admin-only).
  */
 export const documentFacetsSchema = z.object({
   total: z.number().int().nonnegative(),
@@ -167,6 +168,11 @@ export const documentFacetsSchema = z.object({
   contentTypes: z.array(documentFacetValueSchema),
   oldest: z.coerce.date().nullable(),
   newest: z.coerce.date().nullable(),
+  /**
+   * Of those documents, how many hold chunks embedded by a model other than the one the tenant
+   * resolves today — found by keyword only until `POST /reembed` rebuilds them. 0 with no embedder.
+   */
+  staleEmbeddings: z.number().int().nonnegative(),
 })
 export type DocumentFacets = z.infer<typeof documentFacetsSchema>
 
@@ -213,9 +219,18 @@ export const searchHitSchema = z.object({
 })
 export type SearchHit = z.infer<typeof searchHitSchema>
 
+/**
+ * Whether the keyword half of a search had anything to look for: `no_terms` = every word of the
+ * query is a stopword of the search's text configuration (or there was no word at all), so only
+ * meaning-based search could answer. Decided by Postgres, never by a word list in a client.
+ */
+export const searchLexicalSchema = z.enum(['used', 'no_terms'])
+export type SearchLexical = z.infer<typeof searchLexicalSchema>
+
 export const searchResponseSchema = z.object({
   query: z.string(),
   hits: z.array(searchHitSchema),
+  lexical: searchLexicalSchema,
 })
 export type SearchResponse = z.infer<typeof searchResponseSchema>
 

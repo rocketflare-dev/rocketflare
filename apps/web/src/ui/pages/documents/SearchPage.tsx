@@ -16,9 +16,18 @@
  * document select (no request per hit), with the document's source and date under it. With
  * `KNOWLEDGE_FACTS_GUARD` the facts about the entities the query names sit above the results
  * (`GET /api/knowledge/mentioned`). Hits are the search mutation's data, never cached as server
- * state; a failed search toasts (the mutation's default) and leaves a neutral "try again".
+ * state; a failed search toasts (the mutation's default) and leaves a neutral "try again". A
+ * search the server reports as `lexical: 'no_terms'` (only stopwords) that found nothing says the
+ * word is too common. When `/facets` counts visible documents embedded by another model, a notice
+ * says meaning-based search cannot find them yet, with "Re-index now" for `manage Document`.
  */
-import { CubeIcon, FunnelIcon, MagnifyingGlassIcon } from '@heroicons/react/24/outline'
+import {
+  ArrowPathIcon,
+  CubeIcon,
+  FunnelIcon,
+  InformationCircleIcon,
+  MagnifyingGlassIcon,
+} from '@heroicons/react/24/outline'
 import {
   type Document,
   type DocumentCard as DocumentCardData,
@@ -43,9 +52,15 @@ import {
   SectionPanel,
   SkeletonRows,
 } from '@/ui/components/shared'
-import { useDocumentFacets, useDocuments, useSearch } from '@/ui/hooks/useDocuments'
+import {
+  useDocumentFacets,
+  useDocuments,
+  useReembedDocuments,
+  useSearch,
+} from '@/ui/hooks/useDocuments'
 import { useMentionedFacts } from '@/ui/hooks/useKnowledge'
 import { useNavGuard } from '@/ui/hooks/useNavGuard'
+import { usePermissions } from '@/ui/hooks/usePermissions'
 import { KNOWLEDGE_FACTS_GUARD } from '@/ui/lib/feature-guards'
 import { formatDate } from '@/ui/lib/format'
 import { highlightMatches } from '@/ui/lib/highlight'
@@ -106,7 +121,9 @@ export default function SearchPage() {
   const search = useSearch()
   const { mutate: runSearch } = search
   const documents = useDocuments({ pageSize: 100 })
-  const facets = useDocumentFacets()
+  // Set once this reader starts a re-index; the facets poll until nothing is stale.
+  const [reindexing, setReindexing] = useState(false)
+  const facets = useDocumentFacets({ reindexing })
   const canAccess = useNavGuard()
   const [query, setQuery] = useState(state.query)
   const [issue, setIssue] = useState<string | undefined>()
@@ -190,6 +207,12 @@ export default function SearchPage() {
         </div>
         <FieldError message={issue} />
       </form>
+
+      <StaleEmbeddingsNotice
+        stale={facets.data?.staleEmbeddings ?? 0}
+        reindexing={reindexing}
+        onStarted={enqueued => setReindexing(enqueued)}
+      />
 
       {emptyBase ? (
         <EmptyState
@@ -503,9 +526,11 @@ function SearchResults({
           size="sm"
           message={`No matches for “${data.query}”`}
           description={
-            filtersSet > 0
-              ? 'The filters may be hiding them.'
-              : 'Try other words — search matches meaning as well as keywords.'
+            data.lexical === 'no_terms'
+              ? tooCommonMessage(data.query)
+              : filtersSet > 0
+                ? 'The filters may be hiding them.'
+                : 'Try other words — search matches meaning as well as keywords.'
           }
           action={
             filtersSet > 0 ? (
@@ -558,6 +583,64 @@ function SearchResults({
         )
       })}
     </section>
+  )
+}
+
+/**
+ * Why a search with only stopwords found nothing — the server said so (`lexical: 'no_terms'`), so
+ * there is no word list here. One word, or several, phrased to match.
+ */
+export function tooCommonMessage(query: string): string {
+  const words = query.trim().split(/\s+/).filter(Boolean)
+  return words.length === 1
+    ? `“${query.trim()}” is too common a word to search for on its own — try a more specific word.`
+    : `Every word in “${query.trim()}” is too common to search for on its own — try a more specific word.`
+}
+
+/**
+ * Documents embedded by another model than today's are invisible to meaning-based search until
+ * re-embedded. Anyone sees the count (`/facets`, their visible documents); a reader who may
+ * `manage Document` gets "Re-index now" (`POST /reembed`), and then the count falls as the facets
+ * poll. No success toast — the notice counting down, then going away, is the answer.
+ */
+function StaleEmbeddingsNotice({
+  stale,
+  reindexing,
+  onStarted,
+}: {
+  stale: number
+  reindexing: boolean
+  onStarted: (enqueued: boolean) => void
+}) {
+  const { can } = usePermissions()
+  const reembed = useReembedDocuments()
+  if (stale === 0) return null
+  const documents = stale === 1 ? '1 document was' : `${stale} documents were`
+  return (
+    <div role="status" className="alert alert-info alert-soft mb-4 text-sm">
+      <InformationCircleIcon className="w-5 h-5 shrink-0" aria-hidden="true" />
+      <span>
+        {documents} indexed with a different model, so meaning-based search can't find{' '}
+        {stale === 1 ? 'it' : 'them'} yet.
+        {reindexing
+          ? ' Re-indexing…'
+          : !can('manage', 'Document') && ' An admin can re-index them.'}
+      </span>
+      {can('manage', 'Document') && (
+        <button
+          type="button"
+          className="btn btn-sm gap-1.5"
+          disabled={reindexing || reembed.isPending}
+          onClick={() => reembed.mutate(undefined, { onSuccess: r => onStarted(r.enqueued) })}
+        >
+          <ArrowPathIcon
+            className={`w-4 h-4 ${reindexing || reembed.isPending ? 'animate-spin' : ''}`}
+            aria-hidden="true"
+          />
+          {reindexing ? 'Re-indexing' : 'Re-index now'}
+        </button>
+      )}
+    </div>
   )
 }
 

@@ -26,11 +26,16 @@
  * (`knowledge.embeddings`, `knowledge.rerank`), written alongside the passage lookup or through
  * the caller's `defer`, never able to fail the search.
  */
-import type { SearchFilters, SearchHit, SearchRequest } from '@rocketflare/shared/ai/embeddings'
+import type {
+  SearchFilters,
+  SearchHit,
+  SearchLexical,
+  SearchRequest,
+} from '@rocketflare/shared/ai/embeddings'
 import { KNOWLEDGE_USAGE_FEATURES } from '@rocketflare/shared/ai/usage'
 import { and, eq, gte, inArray, isNull, lt, or, type SQL, sql } from 'drizzle-orm'
 import type { AppConfig } from '../../../config'
-import type { Database } from '../../../db/client'
+import { type Database, rows } from '../../../db/client'
 import { chunks, documents } from '../../../db/schema'
 import { traceEmbed, traceStep } from '../../observability/context'
 import { rerankOutcomeAttributes } from '../../observability/genai-attributes'
@@ -144,6 +149,11 @@ export interface KnowledgeChunkSearch {
    * keyword alone (no embedder for it), so a paraphrase may have been missed.
    */
   semantic: 'used' | 'unavailable'
+  /**
+   * `no_terms` = the keyword leg had nothing to look for: every word of the query is a stopword
+   * of `SEARCH_TEXT_CONFIG` (Postgres decides, `numnode(to_tsquery(…)) = 0`), or there was no word.
+   */
+  lexical: SearchLexical
   /** Whether a reranker ordered the hits, on which model, how long it took — or why not. */
   rerank: SearchRerankOutcome
 }
@@ -331,6 +341,19 @@ async function rerankFused(
   return { ordered: kept, scores, outcome: { ...summary, dropped: items.length - kept.length } }
 }
 
+/**
+ * Whether `terms` (an `anyTermTsquery`) leaves anything to match once Postgres has stemmed and
+ * stopworded it — `and`, `because` are english stopwords, so a query of only those is empty. One
+ * tiny statement, run alongside the search legs; no terms at all costs nothing.
+ */
+async function lexicalHasTerms(db: Database, terms: string | null): Promise<boolean> {
+  if (!terms) return false
+  const [row] = rows<{ n: number }>(
+    await db.execute(sql`select numnode(to_tsquery(${SEARCH_TEXT_CONFIG}, ${terms}))::int as n`)
+  )
+  return Number(row?.n ?? 0) > 0
+}
+
 /** One UTC day in milliseconds — `createdTo` is inclusive, so the bound is the next midnight. */
 const DAY_MS = 86_400_000
 
@@ -376,7 +399,8 @@ async function runSearch(
   const platformSources = [...new Set(request.platformSources ?? [])]
   const searchTenant = !request.sources || request.sources.length > 0
   const searchPlatform = platformSources.length > 0
-  if (!searchTenant && !searchPlatform) return { hits: [], semantic: 'used', rerank: notReranked }
+  if (!searchTenant && !searchPlatform)
+    return { hits: [], semantic: 'used', lexical: 'used', rerank: notReranked }
   const narrowed = documentFilterPredicate(request.filters)
   const scope = and(
     eq(chunks.tenantId, tenantId),
@@ -410,7 +434,12 @@ async function runSearch(
       // The pre-platform behaviour: an embedder that answers no vector is an empty search.
       if (!tenantVector && !searchPlatform) {
         await writeUsage(db, request, usage)
-        return { hits: [], semantic, rerank: notReranked }
+        return {
+          hits: [],
+          semantic,
+          lexical: (await lexicalHasTerms(db, anyTermTsquery(request.query))) ? 'used' : 'no_terms',
+          rerank: notReranked,
+        }
       }
     }
   }
@@ -513,7 +542,8 @@ async function runSearch(
       ? or(and(eq(chunks.tenantId, tenantId), scope), platformScope)
       : platformScope
     : scope
-  const [lexical, ...dense] = await Promise.all([
+  const [hasTerms, lexical, ...dense] = await Promise.all([
+    lexicalHasTerms(db, terms),
     terms
       ? db
           .select(select)
@@ -549,6 +579,7 @@ async function runSearch(
   ])
   return {
     semantic,
+    lexical: hasTerms ? 'used' : 'no_terms',
     rerank: reranked.outcome,
     hits: fused.map((f, index) => ({
       chunkId: f.item.id,

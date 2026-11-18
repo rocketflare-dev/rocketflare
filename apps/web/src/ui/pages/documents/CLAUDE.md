@@ -87,6 +87,12 @@ All three are `guard read Document` and lazy. Hooks are `hooks/useDocuments.ts`,
   (`lib/highlight.ts`), clamped to four lines past 360 characters with Show more.
 - With `KNOWLEDGE_FACTS_GUARD`, `useMentionedFacts(query)` (`GET /api/knowledge/mentioned`) puts
   `EntityFactsCard`s above the results; without it nothing under `/api/knowledge` is requested.
+- Stale embeddings: `facets.staleEmbeddings > 0` shows an `alert-info` notice ("N documents were
+  indexed with a different model…"); `can('manage', 'Document')` gets "Re-index now"
+  (`useReembedDocuments` → `POST /reembed`), others a sentence. After it, the facets poll
+  (`facetsPollInterval`, pure) until the count is 0 and the notice goes — no success toast.
+- `lexical: 'no_terms'` with no hits → the empty state says the word is too common
+  (`tooCommonMessage`); the server decides, the UI holds no stopword list.
 - States: skeleton while searching, an EmptyState prompt before the first search, "No matches"
   (with Clear filters when any are set), and after a failure — which toasts — a neutral Try again.
   An empty knowledge base shows an EmptyState linking to `/documents`.

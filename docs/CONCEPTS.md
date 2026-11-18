@@ -772,7 +772,14 @@ Server: `api/services/{ai,agents}/**` (read their `CLAUDE.md`), `services/prompt
   visibility predicates, so a filter only ever removes hits. `GET /api/ai/documents/facets` lists the
   sources and content types (with counts) and the date span of the indexed documents the reader
   may see, which is what the Search page's filter column offers; the page keeps every filter in the
-  URL (`?source=&type=&from=&to=&documentId=`). **Reranking** (`services/ai/rerank.ts`, the `RerankFn` seam
+  URL (`?source=&type=&from=&to=&documentId=`). The facets also carry `staleEmbeddings` — the
+  reader's visible documents embedded by another model than today's, i.e. invisible to the dense
+  leg — and the page shows a notice with "Re-index now" (`POST /reembed`) for `manage Document`,
+  polling the facets until it reaches 0 (`/health` is admin-only, so the count comes from here).
+  The response's `lexical` is `no_terms` when Postgres leaves no lexeme after stopwording
+  (`numnode(to_tsquery(…)) = 0`, run beside the legs — `anyTermTsquery` keeps every word, so the
+  stopword decision is Postgres's), and an empty answer then says the word is too common rather
+  than "no matches". **Reranking** (`services/ai/rerank.ts`, the `RerankFn` seam
   — `(query, documents) => scores` in [0, 1]): the top `RERANK_CANDIDATES` (default 20) fused candidates go to the resolved
   reranker with their title and section in front, are reordered by its score (`rerankScore` on the
   hit; `rank` is the final order, `score` stays the RRF score), filtered by `RERANK_MIN_SCORE` when

@@ -223,3 +223,13 @@ describe('documentCardsFromToolResult', () => {
     expect(documentCardsFromToolCalls(null)).toEqual([])
   })
 })
+
+describe('facetsPollInterval', () => {
+  it('polls only while a re-index this page started still has stale documents', async () => {
+    const { facetsPollInterval, REEMBED_POLL_MS } = await import('@/ui/hooks/useDocuments')
+    expect(facetsPollInterval(true, 3)).toBe(REEMBED_POLL_MS)
+    expect(facetsPollInterval(true, 0)).toBe(false)
+    expect(facetsPollInterval(true, undefined)).toBe(false)
+    expect(facetsPollInterval(false, 3)).toBe(false)
+  })
+})

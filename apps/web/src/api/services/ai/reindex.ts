@@ -28,6 +28,7 @@ import type { AppConfig } from '../../../config'
 import type { Database } from '../../../db/client'
 import { chunks, type DocumentRow, documents } from '../../../db/schema'
 import type { Logger } from '../../utils/core/logger'
+import { type AccessScope, visibleDocuments } from '../access'
 import { enqueueJob, type JobsQueue, JobsQueueNotConfiguredError, requireJobsQueue } from '../jobs'
 import { normalizeAiError } from './errors'
 import { indexDocument, markDocumentFailed } from './ingest'
@@ -60,6 +61,22 @@ function staleDocument(db: Database, tenantId: string, model: string) {
         .where(and(staleChunk(tenantId, model), eq(chunks.documentId, documents.id)))
     )
   )
+}
+
+/**
+ * The stale documents THIS reader may see — the Search page's notice. Tenant AND visibility, like
+ * every read; an admin's scope bypasses visibility, so for them it equals `staleEmbeddings`.
+ */
+export async function countVisibleStaleDocuments(
+  db: Database,
+  scope: AccessScope,
+  model: string
+): Promise<number> {
+  const [row] = await db
+    .select({ n: count() })
+    .from(documents)
+    .where(and(staleDocument(db, scope.tenantId, model), visibleDocuments(scope)))
+  return row?.n ?? 0
 }
 
 export interface StaleCounts {

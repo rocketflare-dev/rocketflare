@@ -127,7 +127,7 @@ the truth, the protocol shape is a projection of it — and the HITL pause/answe
 `aiConfigId`/`model`), `agentModelEntrySchema` (`effective.source: assignment | tenant | platform | none`) ·
 `embeddings.ts` — `documentSchema` (never the text or vectors), `INGEST_TEXT_MAX_CHARS`, `ingestTextRequestSchema`,
 `documentListQuerySchema`, `searchRequestSchema` (`SEARCH_MAX_LIMIT`), `searchHitSchema` (RRF `score`, `rank`,
-`denseRank`/`lexicalRank`, `rerankScore` 0–1 or null), `searchResponseSchema`, and the read side: `documentContentSchema` + `documentContentQuerySchema`
+`denseRank`/`lexicalRank`, `rerankScore` 0–1 or null), `searchResponseSchema` (`lexical: 'used' | 'no_terms'` — the query had keywords left after Postgres stopwording, or not), `searchFiltersSchema`, `documentFacetsSchema` (incl. the reader-scoped `staleEmbeddings`), and the read side: `documentContentSchema` + `documentContentQuerySchema`
 (`DOCUMENT_WINDOW_CHARS` 20 000, `DOCUMENT_WINDOW_MAX_CHARS` 50 000) + `windowStart()` (snap an offset
 down to a window boundary so a deep link and the reader's paging share one cache entry),
 `documentPassageSchema`, `documentCardSchema` + `DOCUMENT_EXCERPT_CHARS` + `documentPath()` (the ONE

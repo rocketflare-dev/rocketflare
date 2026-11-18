@@ -6,7 +6,8 @@
  * see: a filter naming a restricted document's source finds nothing for someone outside its
  * group, the facets never list a value only an invisible (or another tenant's) document carries,
  * and the facts block reads facts through their documents' visibility. Validation: an inverted
- * date range and an empty list are 400s.
+ * date range and an empty list are 400s. Also: `lexical: 'no_terms'` when every query word is a
+ * Postgres stopword, and the facets' reader-scoped `staleEmbeddings`.
  */
 import { documentFacetsSchema, searchResponseSchema } from '@rocketflare/shared/ai/embeddings'
 import { mentionedFactsResponseSchema } from '@rocketflare/shared/ai/knowledge-facts'
@@ -15,7 +16,7 @@ import { beforeAll, describe, expect, it } from 'vitest'
 import { ingestText } from '@/api/services/ai/ingest'
 import { setTenantOverride } from '@/api/services/features'
 import { loadConfig } from '@/config'
-import { documents, groupMembers, groups, groupTypes } from '@/db/schema'
+import { chunks, documents, groupMembers, groups, groupTypes } from '@/db/schema'
 import {
   createTestSession,
   createTestTenant,
@@ -284,5 +285,40 @@ describe('GET /api/knowledge/mentioned', () => {
 
   it('400s an empty query', async () => {
     expect((await mentioned(outsider, '   ')).status).toBe(400)
+  })
+})
+
+describe('lexical report', () => {
+  const lexicalOf = async (query: string) => {
+    const res = await search(outsider, { query })
+    expect(res.status).toBe(200)
+    return searchResponseSchema.parse(await json(res)).lexical
+  }
+
+  it("is 'no_terms' when every word is a stopword, 'used' otherwise", async () => {
+    expect(await lexicalOf('and')).toBe('no_terms')
+    expect(await lexicalOf('because and')).toBe('no_terms')
+    expect(await lexicalOf('and pallets')).toBe('used')
+    expect(await lexicalOf('warehouse')).toBe('used')
+  })
+})
+
+describe('facets: staleEmbeddings', () => {
+  const staleFor = async (who: Reader) => {
+    const res = await request('/api/ai/documents/facets', { headers: who.cookie }, { env })
+    return documentFacetsSchema.parse(await json(res)).staleEmbeddings
+  }
+
+  it("counts the reader's visible documents embedded by another model", async () => {
+    expect(await staleFor(outsider)).toBe(0)
+    for (const key of ['a', 'secret']) {
+      await db
+        .update(chunks)
+        .set({ embeddingModel: 'seed:deterministic' })
+        .where(and(eq(chunks.tenantId, tenantId), eq(chunks.documentId, ids[key] as string)))
+    }
+    expect(await staleFor(outsider)).toBe(1)
+    expect(await staleFor(inGroup)).toBe(2)
+    expect(await staleFor(stranger)).toBe(0)
   })
 })

@@ -12,6 +12,7 @@ import SearchPage from '@/ui/pages/documents/SearchPage'
 import {
   IDS,
   makeSession,
+  makeTenant,
   paged,
   type RouteTable,
   renderWithProviders,
@@ -80,6 +81,7 @@ const FACETS = {
   ],
   oldest: now,
   newest: now,
+  staleEmbeddings: 0,
 }
 
 function mount(routes: RouteTable = {}, route = '/search', session = makeSession()) {
@@ -122,6 +124,7 @@ describe('Search page', () => {
         const { query } = JSON.parse(String(init?.body)) as { query: string }
         return {
           query,
+          lexical: 'used',
           hits: [
             hit(1, { lexicalRank: 2 }),
             hit(2, { denseRank: null, lexicalRank: 1, documentId: DOC_B, title: 'Release notes' }),
@@ -163,7 +166,7 @@ describe('Search page', () => {
 
   it('?q= prefills the box and runs the search on mount, once', async () => {
     const fetchMock = mount(
-      { 'POST /api/ai/documents/search': { query: 'pallets', hits: [hit(1)] } },
+      { 'POST /api/ai/documents/search': { query: 'pallets', hits: [hit(1)], lexical: 'used' } },
       '/search?q=pallets'
     )
     expect(screen.getByLabelText('Search query')).toHaveValue('pallets')
@@ -187,7 +190,7 @@ describe('Search page', () => {
 
   it('?q= with ?documentId= searches inside that document', async () => {
     const fetchMock = mount(
-      { 'POST /api/ai/documents/search': { query: 'x', hits: [] } },
+      { 'POST /api/ai/documents/search': { query: 'x', hits: [], lexical: 'used' } },
       `/search?documentId=${DOC_B}&q=x`
     )
     await waitFor(() =>
@@ -201,7 +204,7 @@ describe('Search page', () => {
 
   it('preselects the document filter from ?documentId and sends it', async () => {
     const fetchMock = mount(
-      { 'POST /api/ai/documents/search': { query: 'x', hits: [] } },
+      { 'POST /api/ai/documents/search': { query: 'x', hits: [], lexical: 'used' } },
       `/search?documentId=${DOC_B}`
     )
     await screen.findByRole('option', { name: 'Release notes' })
@@ -225,7 +228,7 @@ describe('Search page', () => {
   })
   it('offers the facets as filters, keeps them in the URL and re-runs the search with them', async () => {
     const fetchMock = mount(
-      { 'POST /api/ai/documents/search': { query: 'pallets', hits: [hit(1)] } },
+      { 'POST /api/ai/documents/search': { query: 'pallets', hits: [hit(1)], lexical: 'used' } },
       '/search?q=pallets'
     )
     const filters = await screen.findByRole('complementary', { name: 'Search filters' })
@@ -283,7 +286,7 @@ describe('Search page', () => {
 
   it('a URL filter value the facets do not list is still shown, checked, so it can be cleared', async () => {
     mount(
-      { 'POST /api/ai/documents/search': { query: 'x', hits: [] } },
+      { 'POST /api/ai/documents/search': { query: 'x', hits: [], lexical: 'used' } },
       '/search?q=x&source=m365%3Amail'
     )
     const filters = await screen.findByRole('complementary', { name: 'Search filters' })
@@ -295,7 +298,7 @@ describe('Search page', () => {
 
   it('an inverted date range is not sent and says why', async () => {
     const fetchMock = mount(
-      { 'POST /api/ai/documents/search': { query: 'x', hits: [] } },
+      { 'POST /api/ai/documents/search': { query: 'x', hits: [], lexical: 'used' } },
       '/search?q=x&from=2025-05-01&to=2025-01-01'
     )
     expect(
@@ -309,6 +312,7 @@ describe('Search page', () => {
       {
         'POST /api/ai/documents/search': {
           query: 'pallets',
+          lexical: 'used',
           hits: [hit(1, { text: 'Stack the pallets two high.' })],
         },
       },
@@ -351,7 +355,7 @@ describe('Search page', () => {
       ],
     }
     const routes = {
-      'POST /api/ai/documents/search': { query: 'acme', hits: [hit(1)] },
+      'POST /api/ai/documents/search': { query: 'acme', hits: [hit(1)], lexical: 'used' },
       '/api/knowledge/mentioned': mentioned,
     }
     const fetchMock = mount(
@@ -371,12 +375,72 @@ describe('Search page', () => {
 
   it('without the flag, no facts request is made', async () => {
     const fetchMock = mount(
-      { 'POST /api/ai/documents/search': { query: 'acme', hits: [hit(1)] } },
+      { 'POST /api/ai/documents/search': { query: 'acme', hits: [hit(1)], lexical: 'used' } },
       '/search?q=acme'
     )
     await screen.findByRole('region', { name: 'Search results' })
     expect(fetchMock.mock.calls.some(([input]) => String(input).includes('/api/knowledge'))).toBe(
       false
+    )
+  })
+
+  it('a search of only stopwords that found nothing says the word is too common', async () => {
+    mount(
+      { 'POST /api/ai/documents/search': { query: 'and', hits: [], lexical: 'no_terms' } },
+      '/search?q=and'
+    )
+    expect(
+      await screen.findByText(
+        '“and” is too common a word to search for on its own — try a more specific word.'
+      )
+    ).toBeInTheDocument()
+  })
+
+  it('stale embeddings: a member is told, with no button', async () => {
+    mount(
+      { '/api/ai/documents/facets': { ...FACETS, staleEmbeddings: 3 } },
+      '/search',
+      makeSession({ tenant: makeTenant({ role: 'member' }) })
+    )
+    expect(
+      await screen.findByText(/3 documents were indexed with a different model/)
+    ).toHaveTextContent('An admin can re-index them.')
+    expect(screen.queryByRole('button', { name: /Re-index/ })).not.toBeInTheDocument()
+  })
+
+  it('stale embeddings: an admin re-indexes, and the notice goes once nothing is stale', async () => {
+    let stale = 2
+    const fetchMock = mount(
+      {
+        '/api/ai/documents/facets': () => ({ ...FACETS, staleEmbeddings: stale }),
+        'POST /api/ai/documents/reembed': () => {
+          stale = 0
+          return new Response(
+            JSON.stringify({
+              embeddingModel: '@cf/baai/bge-m3',
+              staleEmbeddings: 2,
+              staleChunks: 9,
+              enqueued: true,
+            }),
+            { status: 202, headers: { 'Content-Type': 'application/json' } }
+          )
+        },
+      },
+      '/search',
+      makeSession({ tenant: makeTenant({ role: 'admin' }) })
+    )
+    fireEvent.click(await screen.findByRole('button', { name: 'Re-index now' }))
+    await waitFor(() =>
+      expect(
+        fetchMock.mock.calls.some(
+          ([input, init]) =>
+            String(input).includes('/api/ai/documents/reembed') && init?.method === 'POST'
+        )
+      ).toBe(true)
+    )
+    // The documents family is invalidated, the facets re-read, and the count reaching 0 ends it.
+    await waitFor(() =>
+      expect(screen.queryByText(/indexed with a different model/)).not.toBeInTheDocument()
     )
   })
 })
