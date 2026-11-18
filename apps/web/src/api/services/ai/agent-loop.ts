@@ -13,6 +13,7 @@ import { aiProviderSchema } from '@rocketflare/shared/ai/config'
 import type { AgentInterruptSpec, JsonSchema } from '@rocketflare/shared/ai/interrupts'
 import { type ZodType, z } from 'zod'
 import { traceToolCall } from '../../observability/context'
+import { hashToken } from '../../utils/core/hash'
 import { stableStringify } from '../../utils/core/stable-stringify'
 import { AiError } from './errors'
 import {
@@ -97,8 +98,26 @@ export interface Tool<Input = unknown> {
   description: string
   /** zod schema for the input — validated before `handler` runs and rendered to JSON Schema for the model. */
   schema: ZodType<Input>
-  /** Method syntax on purpose: bivariant params let a `Tool<{ q: string }>` sit in a `Tool[]`. */
-  handler?(input: Input): Promise<string>
+  /**
+   * Method syntax on purpose: bivariant params let a `Tool<{ q: string }>` sit in a `Tool[]`.
+   * `call` names the model's call — `idempotencyKey` is what a {@link Tool.durable} handler hands
+   * the system it writes to, so a re-run after a crash is recognised there as the same request.
+   */
+  handler?(input: Input, call?: ToolCallInfo): Promise<string>
+  /**
+   * The handler changes something outside the run — sends, writes, charges. A loop with a
+   * {@link RunToolLoopOptions.journal} records `started` before such a handler runs, and a retry
+   * that finds `started` with no result does NOT run it again: the call settles as an "unknown
+   * outcome" error the model sees, so it can check before repeating it. Leave it unset for a read
+   * (`search_knowledge`): an unrecorded read simply runs again.
+   */
+  sideEffects?: boolean
+  /**
+   * The handler is safe to run again with the same {@link ToolCallInfo.idempotencyKey} — the
+   * system it writes to deduplicates on it. A `sideEffects` tool marked `durable` is re-run after
+   * a crash instead of settling as an unknown outcome.
+   */
+  durable?: boolean
   /**
    * Gate this call on a person: the loop stops, asks, and runs the handler only on a
    * `resolved` answer. Enforced by {@link runToolLoop}, never by the handler — a handler that
@@ -126,6 +145,17 @@ export interface Tool<Input = unknown> {
   allowEdits?: boolean
   /** What a rejection does. Defaults to `INTERRUPT_REJECTION.approval` (`cancel_run`). */
   onReject?: 'cancel_run' | 'tell_model'
+}
+
+/** What a handler is told about the call it is answering. */
+export interface ToolCallInfo {
+  /** The model's id for this call; absent only when a handler is run outside a loop. */
+  toolCallId?: string
+  /**
+   * Stable across every attempt of the run — the same call re-run after a crash carries the same
+   * key. The model's call id today (the journal is what keeps it stable across a retry).
+   */
+  idempotencyKey?: string
 }
 
 /**
@@ -347,6 +377,8 @@ export interface ToolLoopStep {
   turn: number
   toolNames: string[]
   terminal: boolean
+  /** The turn came from the journal — an earlier attempt paid for it; nothing was billed now. */
+  served?: boolean
 }
 
 /**
@@ -414,22 +446,142 @@ export function parseToolLoopCheckpoint(value: unknown): ToolLoopCheckpoint | nu
     turns: parsed.data.turns,
     usage: parsed.data.usage,
     ...(parsed.data.activeMs !== undefined ? { activeMs: parsed.data.activeMs } : {}),
-    messages: parsed.data.messages.map(message => ({
-      role: message.role,
-      content:
-        typeof message.content === 'string'
-          ? message.content
-          : message.content.map(
-              (block): ContentBlock =>
-                block.type === 'tool_use'
-                  ? { type: 'tool_use', id: block.id, name: block.name, input: block.input }
-                  : block.type === 'reasoning'
-                    ? { type: 'reasoning', provider: block.provider, data: block.data }
-                    : block
-            ),
-    })),
+    messages: parsed.data.messages.map(toChatMessage),
   }
 }
+
+type ParsedMessage = z.infer<typeof checkpointSchema>['messages'][number]
+type ParsedBlock = z.infer<typeof contentBlockSchema>
+
+function toContentBlock(block: ParsedBlock): ContentBlock {
+  return block.type === 'tool_use'
+    ? { type: 'tool_use', id: block.id, name: block.name, input: block.input }
+    : block.type === 'reasoning'
+      ? { type: 'reasoning', provider: block.provider, data: block.data }
+      : block
+}
+
+function toChatMessage(message: ParsedMessage): ChatMessage {
+  return {
+    role: message.role,
+    content:
+      typeof message.content === 'string' ? message.content : message.content.map(toContentBlock),
+  }
+}
+
+// ---- The turn journal -------------------------------------------------------------------------
+
+/** One model turn as an earlier attempt recorded it. */
+export interface RecordedModelTurn {
+  content: ContentBlock[]
+  stopReason: StopReason
+  usage: TokenUsage
+  /** What `beforeTurn` folded in before the call — re-applied, never asked for again. */
+  injected: ChatMessage[]
+  /** {@link toolLoopRequestHash} of the transcript (and tool list) the turn answered. */
+  requestHash: string
+  /** {@link toolLoopSystemHash} of the system prompt it ran under. */
+  systemHash: string
+}
+
+/** One tool call as an earlier attempt recorded it. `started`: a side-effect handler began, no result. */
+export type RecordedToolCall =
+  | { status: 'settled'; text: string; isError: boolean }
+  | { status: 'started' }
+
+/**
+ * Where the loop records each model turn and tool result AS IT SETTLES, so a retried attempt is
+ * handed them instead of paying for a turn again or re-running a tool that already finished. The
+ * agent runtime keeps it in `agent_run_turns` (`services/agents/turns.ts`, `ctx.journal`); a
+ * replay answers from that table; this file knows neither.
+ */
+export interface ToolLoopJournal {
+  /**
+   * Open one loop's record. `key` names the loop within the run and must be stable across
+   * attempts; a second `open` of the same key in ONE attempt throws (`EffectKeyConflictError`), so
+   * two loops cannot silently share a record. Loads what is recorded under it.
+   */
+  open(key: string): Promise<ToolLoopRecord>
+}
+
+export interface ToolLoopRecord {
+  /**
+   * `true`: a served turn or result emits its `onEvent`s again (a replay rebuilding the timeline).
+   * `false`: it does not — the attempt that recorded it already emitted them (the runtime).
+   */
+  readonly reemitServed: boolean
+  modelTurn(turn: number): RecordedModelTurn | null
+  /**
+   * May this recorded turn answer the request the loop is about to send? The runtime's answer is
+   * "only if the transcript is the same" (`requestHash`); a strict replay serves a changed one and
+   * reports it as drift. Omitted = compare `requestHash`.
+   */
+  accept?(turn: number, recorded: RecordedModelTurn, current: TurnHashes): boolean
+  recordModelTurn(turn: number, record: RecordedModelTurn): Promise<void>
+  toolCall(toolCallId: string): RecordedToolCall | null
+  /** Written before a `sideEffects` handler runs. */
+  startToolCall(turn: number, toolCallId: string, name: string): Promise<void>
+  settleToolCall(
+    turn: number,
+    toolCallId: string,
+    name: string,
+    result: { text: string; isError: boolean }
+  ): Promise<void>
+  /** A handler that raised an interrupt did not finish: forget its `started` marker. */
+  forgetToolCall(toolCallId: string): Promise<void>
+}
+
+export interface TurnHashes {
+  requestHash: string
+  systemHash: string
+}
+
+/** The fingerprint of what one model turn answered: the transcript and the tools on offer. */
+export async function toolLoopRequestHash(
+  messages: ChatMessage[],
+  toolNames: readonly string[]
+): Promise<string> {
+  return (await hashToken(canonicalJson({ messages, tools: toolNames }))).slice(0, 16)
+}
+
+export async function toolLoopSystemHash(system: SystemPrompt): Promise<string> {
+  return (await hashToken(canonicalJson(system))).slice(0, 16)
+}
+
+const recordedModelTurnSchema = z.object({
+  content: z.array(contentBlockSchema),
+  stopReason: z.string(),
+  usage: tokenUsageSchema,
+  injected: checkpointSchema.shape.messages,
+})
+
+/**
+ * A stored model turn back into a {@link RecordedModelTurn}, or **null when it does not parse** —
+ * the same rule as {@link parseToolLoopCheckpoint}: a row an older build wrote costs one model
+ * call, never a failed run.
+ */
+export function parseRecordedModelTurn(
+  value: unknown,
+  hashes: { requestHash: string | null; systemHash: string | null }
+): RecordedModelTurn | null {
+  const parsed = recordedModelTurnSchema.safeParse(value)
+  if (!parsed.success || !hashes.requestHash) return null
+  return {
+    content: parsed.data.content.map(toContentBlock),
+    stopReason: parsed.data.stopReason as StopReason,
+    usage: parsed.data.usage,
+    injected: parsed.data.injected.map(toChatMessage),
+    requestHash: hashes.requestHash,
+    systemHash: hashes.systemHash ?? '',
+  }
+}
+
+/** The journal's turn number for a policy's forced final-answer call. */
+export const SALVAGE_TURN = 0
+
+/** What a `sideEffects` tool's call settles as when a retry cannot know whether it ran. */
+export const UNKNOWN_OUTCOME_RESULT =
+  'Unknown outcome: the run was interrupted while this call was running, so it may or may not have taken effect. Check whether it did before calling it again.'
 
 export interface RunToolLoopOptions {
   model: string
@@ -498,6 +650,20 @@ export interface RunToolLoopOptions {
    * too, so an answer to an old gate cannot slip a call past a rule that changed while it waited.
    */
   authorizeTool?: (call: ToolCallToAuthorize) => ToolAuthorization | Promise<ToolAuthorization>
+  /**
+   * Record every model turn and tool result as it settles, and serve them back on a retry — pass
+   * `ctx.journal`. With it a retried attempt never pays for a turn it already took and never
+   * re-runs a tool that already finished, even mid-turn; a {@link Tool.sideEffects} call that may
+   * have run settles as an unknown outcome instead of running twice. It also makes the loop
+   * replayable from the record (`agent:replay` strict). Without it, a retry resumes from the last
+   * checkpoint and redoes whatever came after.
+   */
+  journal?: ToolLoopJournal
+  /**
+   * This loop's name in the journal, stable across attempts. Default `'tool-loop'`; a run with
+   * two loops in one scope names them, or the second throws `EffectKeyConflictError`.
+   */
+  key?: string
 }
 
 /** What {@link RunToolLoopOptions.authorizeTool} is asked about. `input` is the model's, unparsed. */
@@ -592,10 +758,17 @@ function runHandler(
   input: unknown,
   toolUseId?: string
 ): Promise<{ text: string; isError: boolean }> {
-  return traceToolCall(name, toolUseId, input, () => executeHandler(tool, name, input))
+  return traceToolCall(name, toolUseId, input, () =>
+    executeHandler(tool, name, input, { toolCallId: toolUseId, idempotencyKey: toolUseId })
+  )
 }
 
-async function executeHandler(tool: Tool | undefined, name: string, input: unknown) {
+async function executeHandler(
+  tool: Tool | undefined,
+  name: string,
+  input: unknown,
+  call: ToolCallInfo
+) {
   if (!tool) return { text: `Unknown tool: ${name}`, isError: true }
   const parsed = tool.schema.safeParse(input)
   if (!parsed.success) {
@@ -607,7 +780,7 @@ async function executeHandler(tool: Tool | undefined, name: string, input: unkno
   if (!tool.handler)
     return { text: `${name} is a terminal tool and cannot be executed`, isError: true }
   try {
-    return { text: await tool.handler(parsed.data), isError: false }
+    return { text: await tool.handler(parsed.data, call), isError: false }
   } catch (err) {
     // The ONE thing that is not a tool failure. Raising an interrupt from inside a handler is the
     // natural place to ask ("which of these three customers did you mean?"), and swallowing it into
@@ -666,6 +839,11 @@ export async function runToolLoop(
   const maxTurns = policy?.maxTurns ? Math.min(ceiling, policy.maxTurns) : ceiling
   const byName = new Map(opts.tools.map(t => [t.name, t]))
   const definitions = opts.tools.map(toToolDefinition)
+  const toolNames = opts.tools.map(t => t.name)
+  // Opened before anything else: a second loop under the same key in this attempt throws here,
+  // before it could read — or overwrite — the first one's record.
+  const record = opts.journal ? await opts.journal.open(opts.key ?? 'tool-loop') : null
+  const systemHash = record ? await toolLoopSystemHash(opts.system) : ''
   // A resumed loop starts from the stored transcript, NOT the seed: replaying it would re-ask the
   // model everything the previous attempt already paid for.
   const messages: ChatMessage[] = [...(opts.resume?.messages ?? opts.messages)]
@@ -708,6 +886,40 @@ export async function runToolLoop(
       throw new ToolLoopExhaustedError(reason, turns)
     }
     await opts.onExhausted?.(reason)
+    const input = await salvage(terminal)
+    return {
+      ...unanswered,
+      terminalInput: input,
+      terminalTool: terminal.name,
+      stopReason: reason,
+      usage,
+      salvaged: true,
+    }
+  }
+
+  /**
+   * The ONE forced call to the terminal tool, journaled as turn 0 (real turns count from 1): a
+   * retry that dies after it, and a replay, get the recorded answer instead of a second call.
+   */
+  const salvage = async (terminal: Tool): Promise<unknown> => {
+    const hashes = record
+      ? { requestHash: await toolLoopRequestHash(messages, [terminal.name]), systemHash }
+      : null
+    const recorded = record?.modelTurn(SALVAGE_TURN) ?? null
+    if (record && hashes && recorded) {
+      const accepted = record.accept
+        ? record.accept(SALVAGE_TURN, recorded, hashes)
+        : recorded.requestHash === hashes.requestHash
+      const call = accepted
+        ? toolUsesOf(recorded.content).find(b => b.name === terminal.name)
+        : null
+      const parsed = call ? terminal.schema.safeParse(call.input) : null
+      if (parsed?.success) {
+        usage = addUsage(usage, recorded.usage)
+        return parsed.data
+      }
+    }
+    let spentHere = ZERO_USAGE
     const input = await callStructuredTool(client, {
       model: opts.model,
       maxTokens: opts.maxTokens ?? 4096,
@@ -718,17 +930,20 @@ export async function runToolLoop(
       cache: true,
       signal: opts.signal,
       onUsage: extra => {
+        spentHere = extra
         usage = addUsage(usage, extra)
       },
     })
-    return {
-      ...unanswered,
-      terminalInput: input,
-      terminalTool: terminal.name,
-      stopReason: reason,
-      usage,
-      salvaged: true,
+    if (record && hashes) {
+      await record.recordModelTurn(SALVAGE_TURN, {
+        content: [{ type: 'tool_use', id: `salvage:${terminal.name}`, name: terminal.name, input }],
+        stopReason: 'tool_use',
+        usage: spentHere,
+        injected: [],
+        ...hashes,
+      })
     }
+    return input
   }
 
   /**
@@ -830,9 +1045,40 @@ export async function runToolLoop(
     return canonicalJson(parsed.data) === canonicalJson(call.input)
   }
 
-  const executeSingleToolUse = async (
-    block: ToolUseBlock
-  ): Promise<{ text: string; isError: boolean }> => {
+  type ToolOutcome = { text: string; isError: boolean; served?: boolean }
+
+  /**
+   * One call through the journal: a settled record is the answer (nothing runs); a `started`
+   * record on a `sideEffects` tool that is not `durable` is an unknown outcome (nothing runs);
+   * otherwise the call runs — `started` first when it has side effects — and settles its record.
+   */
+  const executeSingleToolUse = async (block: ToolUseBlock, turn: number): Promise<ToolOutcome> => {
+    if (!record) return executeToolUse(block)
+    const tool = byName.get(block.name)
+    const recorded = record.toolCall(block.id)
+    if (recorded?.status === 'settled') {
+      return { text: recorded.text, isError: recorded.isError, served: true }
+    }
+    const risky = tool?.handler && tool.sideEffects
+    if (recorded?.status === 'started' && risky && !tool.durable) {
+      const unknown = { text: UNKNOWN_OUTCOME_RESULT, isError: true }
+      await record.settleToolCall(turn, block.id, block.name, unknown)
+      return unknown
+    }
+    if (risky && !recorded) await record.startToolCall(turn, block.id, block.name)
+    let outcome: ToolOutcome
+    try {
+      outcome = await executeToolUse(block)
+    } catch (err) {
+      // A handler that ASKED did not finish: the resumed attempt calls it again with the answer.
+      if (risky && err instanceof InterruptRequested) await record.forgetToolCall(block.id)
+      throw err
+    }
+    await record.settleToolCall(turn, block.id, block.name, outcome)
+    return outcome
+  }
+
+  const executeToolUse = async (block: ToolUseBlock): Promise<ToolOutcome> => {
     const tool = byName.get(block.name)
     const approval = opts.approvals?.get(block.id)
     if (approval?.status === 'cancelled') {
@@ -888,9 +1134,7 @@ export async function runToolLoop(
       ? policy.maxToolCalls - countToolResults(messages, byName).toolCalls
       : Number.POSITIVE_INFINITY
 
-    type TaskOutcome =
-      | { kind: 'result'; outcome: { text: string; isError: boolean } }
-      | { kind: 'error'; error: unknown }
+    type TaskOutcome = { kind: 'result'; outcome: ToolOutcome } | { kind: 'error'; error: unknown }
 
     const outcomes: (TaskOutcome | undefined)[] = new Array(toolUses.length)
     let nextIndex = 0
@@ -910,6 +1154,8 @@ export async function runToolLoop(
             const index = nextEmitIndex++
             const block = toolUses[index]
             const outcome = task.outcome
+            // Served from the journal: the attempt that recorded it already put it on the timeline.
+            if (outcome.served && !record?.reemitServed) continue
             try {
               await opts.onEvent?.({
                 kind: 'tool_result',
@@ -972,7 +1218,7 @@ export async function runToolLoop(
         budget -= 1
 
         try {
-          const outcome = await executeSingleToolUse(block)
+          const outcome = await executeSingleToolUse(block, turn)
           outcomes[index] = { kind: 'result', outcome }
           await flushEmits()
         } catch (err) {
@@ -1023,6 +1269,76 @@ export async function runToolLoop(
     return results
   }
 
+  /** Fold `beforeTurn`'s (or a recorded turn's) messages into the transcript. */
+  const inject = (into: ChatMessage[], injected: readonly ChatMessage[]) => {
+    for (const message of injected) {
+      if (message.role === 'user' && typeof message.content === 'string') {
+        appendUserText(into, message.content)
+      } else {
+        into.push(message)
+      }
+    }
+  }
+
+  /**
+   * One model turn: served from the journal when an earlier attempt recorded it against this
+   * same transcript, else asked for and recorded. A recorded turn's steering notes are re-applied
+   * rather than asked for again — `ctx.steering()` delivers each note once, and it was delivered
+   * to the attempt that recorded the turn. A transcript that changed underneath a record (an
+   * unrecorded tool re-ran and answered differently) asks the model and replaces the record.
+   */
+  const takeTurn = async (
+    turn: number
+  ): Promise<{ result: Awaited<ReturnType<ChatClient['complete']>>; served: boolean }> => {
+    const recorded = record?.modelTurn(turn) ?? null
+    if (record && recorded) {
+      const candidate = [...messages]
+      inject(candidate, recorded.injected)
+      const current = {
+        requestHash: await toolLoopRequestHash(candidate, toolNames),
+        systemHash,
+      }
+      const accepted = record.accept
+        ? record.accept(turn, recorded, current)
+        : recorded.requestHash === current.requestHash
+      if (accepted) {
+        messages.splice(0, messages.length, ...candidate)
+        return {
+          result: {
+            content: recorded.content,
+            stopReason: recorded.stopReason,
+            usage: recorded.usage,
+            model: opts.model,
+          },
+          served: true,
+        }
+      }
+    }
+    const injected = [...(recorded?.injected ?? []), ...((await opts.beforeTurn?.(turn)) ?? [])]
+    inject(messages, injected)
+    const result = await client.complete({
+      model: opts.model,
+      maxTokens: opts.maxTokens ?? 4096,
+      system: opts.system,
+      messages,
+      tools: definitions,
+      toolChoice: { type: 'auto' },
+      signal: opts.signal,
+    })
+    if (record) {
+      // The hash is over the transcript as SENT — with the folded-in notes, which the record keeps.
+      await record.recordModelTurn(turn, {
+        content: result.content,
+        stopReason: result.stopReason,
+        usage: result.usage,
+        injected,
+        requestHash: await toolLoopRequestHash(messages, toolNames),
+        systemHash,
+      })
+    }
+    return { result, served: false }
+  }
+
   // The resume path. A checkpoint whose last turn is an assistant message with unanswered
   // tool calls is what parking leaves behind, and it must be answered BEFORE the `while` body ever
   // calls the model again. A gate that is STILL open (a second round, or a partly answered turn)
@@ -1041,28 +1357,15 @@ export async function runToolLoop(
       throw new AiError('unavailable', client.provider, 'Agent run cancelled')
     const limit = spent()
     if (limit) return await exhaust(limit)
-    const injected = await opts.beforeTurn?.(turns + 1)
-    for (const message of injected ?? []) {
-      if (message.role === 'user' && typeof message.content === 'string') {
-        appendUserText(messages, message.content)
-      } else {
-        messages.push(message)
-      }
-    }
-    turns += 1
-    const result = await client.complete({
-      model: opts.model,
-      maxTokens: opts.maxTokens ?? 4096,
-      system: opts.system,
-      messages,
-      tools: definitions,
-      toolChoice: { type: 'auto' },
-      signal: opts.signal,
-    })
+    const turn = turns + 1
+    const { result, served } = await takeTurn(turn)
+    turns = turn
     usage = addUsage(usage, result.usage)
     const toolUses = toolUsesOf(result.content)
+    // A served turn's events were emitted by the attempt that paid for it.
+    const emits = !served || record?.reemitServed === true
 
-    if (opts.onEvent) {
+    if (opts.onEvent && emits) {
       for (const block of result.content) {
         if (block.type === 'text' && block.text.trim()) {
           await opts.onEvent({ kind: 'text', turn: turns, text: block.text })
@@ -1074,8 +1377,9 @@ export async function runToolLoop(
       turn: turns,
       toolNames: toolUses.map(b => b.name),
       terminal: Boolean(terminal),
+      ...(served ? { served: true } : {}),
     })
-    if (opts.onEvent) {
+    if (opts.onEvent && emits) {
       for (const block of toolUses) {
         await opts.onEvent({
           kind: 'tool_call',
@@ -1132,6 +1436,9 @@ export async function runToolLoop(
     const gates = collectGates(toolUses, denied)
     if (gates.length > 0) return await raise(gates)
 
+    // Checkpoint BEFORE the tools run: a retry that dies among them resumes on the pending path
+    // with this assistant turn, instead of asking the model for it again.
+    await checkpoint()
     messages.push({ role: 'user', content: await executeToolUses(toolUses, turns, denied) })
     await checkpoint()
   }

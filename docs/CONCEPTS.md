@@ -656,8 +656,37 @@ Server: `api/services/{ai,agents}/**` (read their `CLAUDE.md`), `services/prompt
   or public handler with `ctx.startAgentRun` (§16), the same `enqueueRun`. A plugin agent
   reaches `ctx.interrupt`, the resolved `chatModel` and `storage()` through `AgentCtx` (`@/plugins/api`). The Workflow runs `claim → execute#N → (resume#N | expire#N) → finish`, and
   **every step name carries its round**, because a repeated name replays the recorded result.
-  A retry resumes: `ctx.checkpoint` keeps the tool-loop transcript and `ctx.once(key, fn)` gives
-  once-per-run effects (a DB unique index; at-least-once with a recorded result).
+  That body is `runAgentRun` (`workflows/agent-run-body.ts`), written against the neutral `Step`
+  in `src/platform/types.ts` — the run-engine seam shared with Rocketpod, whose OpenWorkflow
+  adapter drives the same body; `AgentRunWorkflow` is the Cloudflare adapter. A retry resumes:
+  `ctx.checkpoint` keeps the tool-loop transcript and `ctx.once(key, fn)` gives once-per-run
+  effects (a DB unique index; at-least-once with a recorded result).
+- **Durable loop (D44)**: `runToolLoop({ journal: ctx.journal })` records every model turn and
+  every tool result in `agent_run_turns` AS IT SETTLES, and checkpoints the assistant turn BEFORE
+  its tools run. A retry — the 10-minute step timeout, an evicted isolate, a database blip — is
+  served what was recorded: a model turn asked about the same transcript (`request_hash`) is not
+  billed again, a tool call with a settled result (keyed by its `toolCallId`) is not run again,
+  even part-way through a turn, and steering notes folded into a recorded turn are re-applied
+  rather than re-asked. A transcript that changed underneath a record (an unrecorded read re-ran
+  and answered differently) asks the model and replaces the record. An unrecorded read simply
+  runs again; a tool marked `Tool.sideEffects` writes `started` first, and a retry that finds
+  `started` with no result settles it as an **unknown outcome** the model sees
+  (`UNKNOWN_OUTCOME_RESULT`) — unless the tool is also `durable`, which re-runs it with
+  `call.idempotencyKey` (the `toolCallId`) for the system it writes to. The policy's salvage call
+  is journaled too (turn 0). A loop inside a `ctx.scope`/`ctx.map` item has its own journal
+  (`items[2]/tool-loop`), so it resumes from the record although scopes have no checkpoint; a
+  plugin's `ctx.toolLoop` binds the journal for it. The journal outlives the settle (the
+  checkpoint does not) for `AGENT_TRANSCRIPT_RETENTION_DAYS` (default 30, nightly
+  `pruneAgentTurns`), which is what makes a tool-loop run strictly replayable. **Keys**: tool
+  calls are keyed by the model's `toolCallId`, never an author key; a loop's own key is
+  `RunToolLoopOptions.key` (default `tool-loop`); `ctx.once(label, fn, { inputs })` keys on the
+  label plus a hash of `inputs` (`label#<12 hex>`), so `for (q of queries) ctx.once('search', fn,
+  { inputs: q })` is one record per query; and any key used twice in ONE attempt — two `once`
+  calls, or two loops — throws `EffectKeyConflictError` (event code `agent_effect_key_conflict`,
+  never retried). Order-derived keys were rejected: Workflows cannot pin an instance to the code
+  it started on, so a run parked across a deploy would replay new code against old positions; data
+  keys survive that. Why: the durable-agents review (`docs/research/durable-agents-review-2026-11.md`
+  in the kit) — a mid-turn crash re-billed the turn and re-ran every tool that had finished.
 - **Human-in-the-loop (#17)**: `ctx.interrupt({ key, spec })` parks the run on
   `step.waitForEvent`. The key must be stable across attempts. Answering is a compare-and-set on the
   row, *then* a nudge to the instance (`not_found` → restart as `<runId>-rN`). There are four
@@ -690,7 +719,9 @@ Server: `api/services/{ai,agents}/**` (read their `CLAUDE.md`), `services/prompt
   the record: `decide` from `agent_run_decisions` (same questions about the same state → `served`;
   reworded → `drift`; same questions about a different state, because upstream code changed what the
   decision is about → `stale`), `once` from `agent_run_effects`, `interrupt` from
-  `agent_run_interrupts`; anything the record cannot answer is a MISS (`strict`, the default — no
+  `agent_run_interrupts`, a tool loop's turns and tool results from its journal (`agent_run_turns`,
+  D44 — same transcript and system prompt → `served`; changed → served and flagged `drift` in
+  strict, asked again in live); anything the record cannot answer is a MISS (`strict`, the default — no
   model call at all) or asked for real (`--live`, which also re-runs a `ctx.once(key, fn, { replay:
   'rerun' })` — a pure model call whose prompt may have changed). `--live` reads the tenant's
   knowledge base, prompts and model choice as they are TODAY, through the Worker's own resolver —
@@ -699,8 +730,11 @@ Server: `api/services/{ai,agents}/**` (read their `CLAUDE.md`), `services/prompt
   provider, or a key where the Worker uses Workers AI: the dense leg reads only chunks of the
   query vector's model, so another tier quietly degrades to keyword search). Each run replays in a READ ONLY
   transaction and `ctx.db` refuses writes before they are sent (listed, not fatal). Per run: a
-  verdict (`match` / `differs` / `incomplete`), the output diff by JSON path, and each decision's
-  status; exit 1 unless every run matches. `--candidate <file>` replays another definition with the
+  verdict (`match` / `differs` / `incomplete`), the output diff by JSON path, each decision's
+  status, each loop turn's (`turns`), and `orderDrift` when today's code asks its top-level `once`
+  / `decide` keys in a different order from the run (a moved step — what a run parked across that
+  deploy would feel); a drifted turn or a moved key makes the verdict `differs`; exit 1 unless
+  every run matches. `--candidate <file>` replays another definition with the
   same key — how a compiled variant is proven against the full agent's history. Local script only:
   no route, no UI. Why: D37 made the judgments recorded; replay makes the CODE around them testable.
 - **Volume (D39)**: exclusivity is the `concurrency_key` slot above (PR #77), so a non-exclusive
@@ -1197,20 +1231,30 @@ call and, under `ctx.map`, by the calls in flight; **chat has no spend cap**: th
 daily cap meter agent rows only, so a chat turn on a platform key is bounded by nothing but its turn
 and output-token limits; the daily cap is a UTC day and TypeSafe is unpriced, so decisions count
 toward tokens alone; `map`
-runs inside one step on one DB client (six in flight is the ceiling, and a tool loop inside a scope
-restarts on a retry — there is no per-scope checkpoint); a budget error raised inside a tool
+runs inside one step on one DB client (six in flight is the ceiling; a tool loop inside a scope
+has no checkpoint and resumes only through its journal, re-reading every recorded turn); a budget error raised inside a tool
 handler is reported to the model as a tool error rather than stopping the run; no batch UI, no
 per-batch cancel, and a batch's runs are not grouped on the runs page. Policy (D39): when a handler
 raises an interrupt under concurrent execution, in-flight sibling results are discarded and run again
-on resume (extending sequential behaviour where subsequent calls have not yet run); a salvage that
-succeeds and then loses its step is paid for again; `maxDurationSeconds` does not count time
+on resume unless the loop has a journal, which keeps the siblings that settled; without a journal a
+salvage that succeeds and then loses its step is paid for again; `maxDurationSeconds` does not count time
 between the last checkpoint and a crash; a policy reaches a loop only when the agent passes it
 (`runToolLoop` has no registry to read); `authorizeTool` is per loop, not a run- or tenant-wide
 rule. Decisions (D37): no
 zod-schema → questions compiler, the `llm_self_report` fallback is uncalibrated with no vote/logprob
 mode, TypeSafe calls are unpriced (no published rates), no per-agent decisions provider
-(`agent_models` is chat-only), and a `sift` over 100 items is the caller's to batch. Replay (D38): a tool loop's model
-turns are not recorded, so a `runToolLoop` agent (`research-topic`) replays only `--live`; steering
+(`agent_models` is chat-only), and a `sift` over 100 items is the caller's to batch. Durable loop
+(D44): only a loop given `journal` records anything (a hand-built `runToolLoop` without it behaves as
+before); a `started` marker is written before the handler, so a side-effect call that died before
+it sent anything still settles as an unknown outcome; an unrecorded read re-runs and may answer
+differently, which re-asks every later turn; a recorded tool result is trusted by `toolCallId`
+alone (provider ids are unique per response — an adapter that minted repeating ids would collide);
+a key conflict is detected within one attempt, not between two attempts that reached different
+code; a `ctx.once` without `inputs` is still the author's key; `callStructuredTool` and
+`ctx.chat.client` calls outside a loop are not journaled (wrap them in `once`). The run-engine seam
+covers the Workflow step only — jobs, realtime and storage are still Worker bindings, unlike
+Rocketpod's `Platform`. Replay (D38): a tool loop replays strictly only inside the journal's
+retention window — an older run's first turn is a `chat` miss, and `--live` is the fallback; steering
 notes are all handed over at the first call; a run that predates a `once` key misses it; no route
 or UI (a local script over a database URL), and `--live` holds one read-only transaction per run. The demo seed's
 vectors are deterministic, so dense search over seeded docs is noise. Tracing: no per-tenant

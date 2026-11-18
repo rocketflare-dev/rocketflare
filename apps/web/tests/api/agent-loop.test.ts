@@ -222,9 +222,11 @@ describe('runToolLoop', () => {
       })
     ).rejects.toThrow(/fell over/)
 
-    // One completed turn, one checkpoint: the seed, the assistant turn and the tool result.
-    expect(checkpoints).toHaveLength(1)
-    const resume = checkpoints[0] as ToolLoopCheckpoint
+    // Two checkpoints for the one completed turn: BEFORE its tools ran (the assistant turn with
+    // its call pending — what a crash among the tools resumes from) and after (with the result).
+    expect(checkpoints).toHaveLength(2)
+    expect(checkpoints[0]?.messages).toHaveLength(2)
+    const resume = checkpoints[1] as ToolLoopCheckpoint
     expect(resume.turns).toBe(1)
     expect(resume.usage).toEqual({ inputTokens: 10, outputTokens: 5 })
     expect(resume.messages).toHaveLength(3)

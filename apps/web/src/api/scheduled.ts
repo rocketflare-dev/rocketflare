@@ -8,10 +8,10 @@
  *   curl "http://localhost:3001/cdn-cgi/local/scheduled?cron=0+4+*+*+*"
  * (`wrangler dev --test-scheduled` additionally exposes the same thing at `/__scheduled`).
  */
-import { lt, sql } from 'drizzle-orm'
+import { and, eq, exists, lt, sql } from 'drizzle-orm'
 import { type AppConfig, loadConfig } from '../config'
 import { affected, type Database, openDatabase } from '../db/client'
-import { aiSpans, pluginEvents, userSessions } from '../db/schema'
+import { agentRuns, agentRunTurns, aiSpans, pluginEvents, userSessions } from '../db/schema'
 import { serverPlugins } from '../plugins/server'
 import { pruneMagicLinkTokens } from './auth/magic-link'
 import { pruneInvitationSendCounters, pruneInvitations } from './services/invitations'
@@ -88,6 +88,41 @@ export async function runPruneAiSpans(db: Database, retentionDays: number, now =
   return { spans, cutoff: cutoff.toISOString() }
 }
 
+/**
+ * Drop the tool-loop journal (`agent_run_turns`) of runs that settled more than
+ * `AGENT_TRANSCRIPT_RETENTION_DAYS` ago — after that a strict replay of the run reports a miss,
+ * which is the documented trade. ONE statement across every tenant, like the span prune: a row
+ * goes when it is itself older than the cutoff (the `(tenant_id, updated_at)` index) AND its run
+ * settled before it. An ACTIVE run's journal is never touched however old it is — `finished_at`
+ * stays NULL until the run settles, and a parked run resumes from it.
+ */
+export async function runPruneAgentTurns(db: Database, retentionDays: number, now = new Date()) {
+  const cutoff = new Date(now.getTime() - retentionDays * 24 * 60 * 60 * 1000)
+  const turns = affected(
+    await db.delete(agentRunTurns).where(
+      and(
+        lt(agentRunTurns.updatedAt, cutoff),
+        exists(
+          db
+            .select({ one: sql`1` })
+            .from(agentRuns)
+            .where(and(eq(agentRuns.id, agentRunTurns.runId), lt(agentRuns.finishedAt, cutoff)))
+        )
+      )
+    )
+  )
+  return { turns, cutoff: cutoff.toISOString() }
+}
+
+/** Nightly retention for the tool-loop journal. */
+export const pruneAgentTurns: ScheduledTask = {
+  name: 'pruneAgentTurns',
+  async run({ db, config, logger }) {
+    const result = await runPruneAgentTurns(db, config.AGENT_TRANSCRIPT_RETENTION_DAYS)
+    logger.info(result, 'pruneAgentTurns: removed expired tool-loop journals')
+  },
+}
+
 /** Nightly retention for the local trace store. */
 export const pruneAiSpans: ScheduledTask = {
   name: 'pruneAiSpans',
@@ -121,7 +156,7 @@ export const pruneEvents: ScheduledTask = {
 
 /** Cron expression → tasks. Keep in sync with `[triggers] crons` in both wrangler tomls. */
 const CORE_SCHEDULED_TASKS: Record<string, ScheduledTask[]> = {
-  '0 4 * * *': [pruneExpired, pruneAiSpans, pruneEvents],
+  '0 4 * * *': [pruneExpired, pruneAiSpans, pruneEvents, pruneAgentTurns],
 }
 
 /**

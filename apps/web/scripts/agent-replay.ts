@@ -133,12 +133,20 @@ function line(result: ReplayResult): string {
     .filter(d => d.status !== 'served')
     .map(d => `${d.key}:${d.status}${d.changed?.length ? `(${d.changed.length} changed)` : ''}`)
   const misses = result.misses.map(m => `${m.kind}:${m.key}`)
+  const moved = result.turns.filter(t => t.status !== 'served')
+  const turns = result.turns.length
+    ? `turns ${result.turns.length - moved.length}/${result.turns.length} served${
+        moved.length ? ` (${moved.map(t => `${t.loop}#${t.turn}:${t.status}`).join(' ')})` : ''
+      }`
+    : ''
   return [
     result.verdict.padEnd(10),
     result.runId.slice(0, 8),
     `${result.recordedStatus} → ${result.replayStatus}`.padEnd(24),
     `diff ${result.outputDiff.length}`.padEnd(8),
     decisions.length ? `decisions ${decisions.join(' ')}` : '',
+    turns,
+    result.orderDrift ? `order drift (${result.orderDrift.replayed.join(' → ')})` : '',
     misses.length ? `misses ${misses.join(' ')}` : '',
     result.writes.length ? `refused ${result.writes.length} write(s)` : '',
     result.error ? `— ${result.error}` : '',

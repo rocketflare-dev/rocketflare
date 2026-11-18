@@ -65,7 +65,10 @@ function scoped<Input>(base: BaseAgentContext<Input>, prefix: string): BaseAgent
     artifact: input => base.artifact({ ...input, key: k(input.key) }),
     decide: decideWithShapes((key, request) => base.decide(k(key), request)),
     step: (key, label, status, detail) => base.step(k(key), label, status, detail),
+    // No checkpoint in a scope — but a journal, so a tool loop inside one is served its recorded
+    // turns and results on a retry instead of starting again from the seed at full price.
     checkpoint: { load: async () => null, save: async () => {} },
+    journal: { open: key => base.journal.open(k(key)) },
   }
 }
 

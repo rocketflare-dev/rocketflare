@@ -208,12 +208,18 @@ export interface AgentCtx<Input = unknown> {
    *
    * **Anything with a side effect goes through here** — an ingest, a ledger write, an outbound
    * call — because a retry re-enters `run()` from the TOP, and so does a resume after a human
-   * answered. `key` is yours and must be stable across attempts. The result is stored as jsonb, so
-   * return ids and scalars, never rows.
+   * answered. `key` is yours and must be stable across attempts, and **the same key twice in one
+   * attempt throws** — a call that repeats with different arguments passes them as
+   * `options.inputs`, which become part of the key (`label#<hash>`). The result is stored as
+   * jsonb, so return ids and scalars, never rows.
    */
-  once<T>(key: string, fn: () => Promise<T>): Promise<T>
+  once<T>(key: string, fn: () => Promise<T>, options?: { inputs?: unknown }): Promise<T>
   /**
-   * The agentic loop, with this run's client, model, ceiling and approval plumbing already bound.
+   * The agentic loop, with this run's client, model, ceiling, approval plumbing and journal
+   * already bound: a retried attempt is served the turns and tool results it already recorded,
+   * so it is never billed twice and never re-runs a finished tool. Mark a tool that writes
+   * `sideEffects: true` (and `durable: true` if it passes `call.idempotencyKey` on); give a
+   * second loop in the same run its own `key`.
    */
   toolLoop(options: PluginToolLoopOptions): Promise<ToolLoopResult>
   /** One forced tool call, zod-validated, one retry with the issues fed back. */
@@ -249,7 +255,7 @@ export interface AgentCtx<Input = unknown> {
 /** `runToolLoop` minus what the runtime supplies. */
 export type PluginToolLoopOptions = Omit<
   RunToolLoopOptions,
-  'model' | 'maxTokens' | 'approvals' | 'runApproved'
+  'model' | 'maxTokens' | 'approvals' | 'runApproved' | 'journal'
 > & { maxTokens?: number }
 
 /** `callStructuredTool` minus what the runtime supplies. */
@@ -286,7 +292,8 @@ export function agentCtx<Input>(ctx: AgentContext<Input>): AgentCtx<Input> {
     prompt: vars => ctx.prompt(vars),
     step: (key, label, status, detail) => ctx.step(key, label, status, detail),
     checkCancelled: () => ctx.checkCancelled(),
-    once: (key, fn) => ctx.once(key, fn),
+    once: (key, fn, options) =>
+      ctx.once(key, fn, options?.inputs !== undefined ? { inputs: options.inputs } : undefined),
     decide: ctx.decide,
     interrupt: ask => ctx.interrupt(ask),
     chatModel: { provider: ctx.chat.client.provider, model: ctx.chat.model },
@@ -297,6 +304,7 @@ export function agentCtx<Input>(ctx: AgentContext<Input>): AgentCtx<Input> {
         maxTokens: options.maxTokens ?? ctx.chat.maxOutputTokens,
         approvals: ctx.approvals,
         runApproved: ctx.once,
+        journal: ctx.journal,
       }),
     structured: options =>
       callStructuredTool(ctx.chat.client, {

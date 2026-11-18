@@ -148,6 +148,7 @@ mints a tenant API key `cli:<host>` → `?key=&tenant_id=&tenant_name=`; stored 
 `INVITATION_EMAILS_PER_TENANT_PER_DAY` (1000) (optional, undeclared = these defaults) · `AGENT_RUN_MAX_TOKENS` / `AGENT_RUN_MAX_COST_USD` /
 `AGENT_TENANT_DAILY_COST_USD` (D39 budgets, unset = no cap; `meta.budget` overrides per agent) ·
 `KNOWLEDGE_TENANT_DAILY_COST_USD` (unset = no cap; pauses fact extraction only, never indexing or search) ·
+`AGENT_TRANSCRIPT_RETENTION_DAYS` (30 — days a settled run keeps its tool-loop journal, `agent_run_turns`) ·
 `RERANK_MIN_SCORE` (drop reranked hits below it; unset = off) · `RERANK_CANDIDATES` (chunks reranked, 20) ·
 `CHAT_KNOWLEDGE_TOOLS` (`true|false` — chat may call the knowledge tools) ·
 `CHAT_HISTORY_MAX_CHARS` (history a turn replays; older turns are summarised by `chat.compact`) ·

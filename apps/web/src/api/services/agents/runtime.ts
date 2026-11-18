@@ -64,6 +64,7 @@ import {
   interruptExpiryFrom,
   requestInterrupt,
 } from './interrupts'
+import { attemptKeys, EffectKeyConflictError, effectKey } from './keys'
 import type { AgentEvent, AgentRunEnv } from './registry'
 import { getAgent } from './registry'
 import {
@@ -87,6 +88,7 @@ import {
 } from './runs'
 import { buildAgentTools } from './tools'
 import { requesterUrlsForRun } from './tools/requester-urls'
+import { createTurnJournal } from './turns'
 
 /** `step.do('execute', { retries: { limit } })` — the runtime counts attempts against the same number. */
 export const EXECUTE_RETRIES = 2
@@ -304,6 +306,8 @@ export async function executeRun(
     // `ctx.approvals`. The agent never queries for them, so there is one set of approval rules.
     const approvals: ReadonlyMap<string, ToolApproval> = await approvalsForRun(db, tenantId, runId)
     const interruptExpiresAt = interruptExpiryFrom(cfg.AGENT_INTERRUPT_TIMEOUT)
+    // Keys are claimed per ATTEMPT: across attempts the same key is how a retry finds its work.
+    const onceKeys = attemptKeys('once')
     // Every model call and decision of this attempt goes through ONE meter, which starts from
     // what earlier attempts already spent — the budget is the run's, not the attempt's.
     const meter = await createRunMeter({
@@ -368,7 +372,14 @@ export async function executeRun(
             load: () => loadCheckpoint(db, tenantId, runId),
             save: cp => saveCheckpoint(db, tenantId, runId, cp),
           },
-          once: (key, fn) => runOnce(db, tenantId, runId, key, fn),
+          once: async (label, fn, onceOptions) => {
+            const key = await effectKey(label, onceOptions?.inputs)
+            // Before the record is read: a second call under this key in THIS attempt is a
+            // different call, and answering it from the first one's result is the silent bug.
+            onceKeys.claim(key)
+            return runOnce(db, tenantId, runId, key, fn)
+          },
+          journal: createTurnJournal(db, tenantId, runId),
           approvals,
           interrupt: async ask => {
             // Create-or-read on `(run_id, key)`: the SECOND time this line runs — a resumed or
@@ -552,6 +563,22 @@ export async function executeRun(
           willRetry: false,
           code: err.code,
           details: { limit: err.limit, used: err.used, max: err.max },
+        },
+      })
+      await emit({ type: 'status', data: { status: 'failed' } })
+      return { runId, status: 'failed', error: err.message }
+    }
+    if (err instanceof EffectKeyConflictError) {
+      // A bug in the agent, not a fault a retry fixes: say which key, and how to fix it.
+      await failRun(db, tenantId, runId, err.message)
+      await emit({
+        type: 'error',
+        data: {
+          message: err.message,
+          attempt: run.attempt,
+          willRetry: false,
+          code: err.code,
+          details: { primitive: err.primitive, key: err.key },
         },
       })
       await emit({ type: 'status', data: { status: 'failed' } })
