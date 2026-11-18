@@ -41,6 +41,7 @@ import {
   ANSWERABLE_FACT_STATES,
   entityFactsJsonSchema,
   type FactState,
+  factRefType,
   factValueSchema,
   type SourceKind,
 } from '@rocketflare/shared/ai/knowledge-facts'
@@ -78,14 +79,36 @@ import { enqueueJob, type JobsQueue } from '../jobs'
 import { resolvePrompt } from '../prompts'
 import { nudge, type Realtime, realtimeEvent } from '../realtime'
 import { resolveDatePhrase } from './dates'
-import { type ResolveContext, type ResolvedEntity, resolveMention } from './entities'
+import {
+  commitPlanned,
+  linkPlanned,
+  type Mention,
+  normaliseName,
+  type PlannedEntity,
+  planMention,
+  type ResolveContext,
+  type ResolvedEntity,
+} from './entities'
 import { restoredStateSql } from './facts-sql'
+import {
+  type EntityQuestion,
+  type KnowledgeJudge,
+  knowledgeJudgeFor,
+  type ValueQuestion,
+} from './judge'
+import { judgedPairId, loadJudged, storeJudgements } from './judgements'
 import { locateQuote } from './quotes'
 import { knowledgeEntityTypes } from './registry'
 import { recomputeKey } from './review'
-import { decideFactState, type HeldFact, type Validity } from './state'
+import {
+  decideFactState,
+  type HeldFact,
+  type JudgedPair,
+  type Validity,
+  windowOrder,
+} from './state'
 import type { EntityTypeRegistration } from './types'
-import { coerceFactValue, valueKey, valueText } from './values'
+import { coerceFactValue, factCompareKey, valueKey, valueRefOf, valueText } from './values'
 
 /** The feature flag that turns extraction on for a tenant (default OFF). */
 export const KNOWLEDGE_FACTS_FEATURE = 'knowledge-facts' as const
@@ -246,9 +269,12 @@ const WEEKDAY = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday
 /** Each key of a type as one line of JSON schema, its description included. */
 function renderType(reg: EntityTypeRegistration): string {
   const schema = entityFactsJsonSchema(reg) as { properties?: Record<string, unknown> }
-  const lines = Object.entries(schema.properties ?? {}).map(
-    ([key, prop]) => `- ${key}: ${JSON.stringify(prop)}`
-  )
+  const lines = Object.entries(schema.properties ?? {}).map(([key, prop]) => {
+    const names = factRefType(reg, key)
+    // A key that names an entity: its value is that entity's name, exactly as the section writes it.
+    const ref = names ? ` — names a ${names} entity: give the name as written` : ''
+    return `- ${key}: ${JSON.stringify(prop)}${ref}`
+  })
   return [`### ${reg.type} (${reg.label})`, ...lines].join('\n')
 }
 
@@ -464,6 +490,7 @@ async function decidedFactsOf(
       entityId: knowledgeFacts.entityId,
       key: knowledgeFacts.key,
       value: knowledgeFacts.value,
+      valueRef: knowledgeFacts.valueRef,
       state: knowledgeFacts.state,
       validFrom: knowledgeFacts.validFrom,
       validTo: knowledgeFacts.validTo,
@@ -477,10 +504,10 @@ async function decidedFactsOf(
       )
     )
     .orderBy(asc(knowledgeFacts.createdAt))
-  return rows.map(({ value, ...r }) => ({
+  return rows.map(({ value, valueRef, ...r }) => ({
     ...r,
     state: r.state as FactState,
-    valueKey: valueKey(value),
+    valueKey: factCompareKey({ value, valueRef }),
   }))
 }
 
@@ -500,7 +527,8 @@ function matchDecided(
     entityId: string
     key: string
     valueKey: string
-  } & Validity
+  } & Validity,
+  judged?: JudgedPair
 ): DecidedFact | undefined {
   const same = decided.filter(
     d =>
@@ -509,7 +537,7 @@ function matchDecided(
       d.entityType === fact.entityType &&
       d.entityId === fact.entityId &&
       d.key === fact.key &&
-      d.valueKey === fact.valueKey
+      (d.valueKey === fact.valueKey || judged?.(d.valueKey, fact.valueKey) === 'same')
   )
   return (
     same.find(d => sameTime(d.validFrom, fact.validFrom) && sameTime(d.validTo, fact.validTo)) ??
@@ -533,16 +561,40 @@ export type DropReason =
    */
   | 'ambiguous'
 
-/** A candidate that passed every check, waiting for the section's ambiguity check. */
-interface PreparedFact {
+/** A candidate that passed every check of its own, its entity not yet decided. */
+interface CheckedFact {
   candidate: FactCandidate
   reg: EntityTypeRegistration
-  entity: ResolvedEntity
+  /** `<type>:<normalised mention name>` — one per distinct mention of the section. */
+  mentionKey: string
   key: string
   value: unknown
   vKey: string
   validity: Validity
   located: { start: number; end: number }
+  /** A `refs` key: the mention its value is (`<ref type>:<normalised name>`). */
+  refMentionKey?: string
+  refType?: string
+}
+
+/** …and with its entity, once the section's ambiguity check has passed it. */
+interface PreparedFact extends CheckedFact {
+  entity: ResolvedEntity
+  /** The entity a `refs` key's value names, as `value_ref`. */
+  valueRef: string | null
+}
+
+/** A mention's entity inside one section: resolved, or a staging entity not yet written. */
+type SectionEntity = ResolvedEntity | { kind: 'staging'; id: string; pending: true }
+
+/** Remember an entity under every name of its mention, for the rest of the run. */
+function cacheEntity(
+  cache: Map<string, ResolvedEntity>,
+  type: string,
+  names: readonly string[],
+  entity: ResolvedEntity
+) {
+  for (const n of names) if (n.trim()) cache.set(`${type}:${normaliseName(n)}`, entity)
 }
 
 export interface ExtractionReport {
@@ -573,6 +625,11 @@ export interface ExtractionReport {
   /** The new staging entities, and how many of them carry a possible match. */
   entitiesCreated: number
   possibleMatches: number
+  /**
+   * What the decision model settled (`judge.ts`): mentions linked to a known entity, mentions it
+   * said were new (no possible-match item), value pairs asked, and pairs it said agree.
+   */
+  judged: { entitiesLinked: number; entitiesNew: number; valuePairs: number; valuesAgreed: number }
   usage: TokenUsage
   model?: string
   /** `paused`: the re-enqueue's delay. */
@@ -596,6 +653,8 @@ export interface ExtractDeps {
    * passes `collectingRealtime(env)` and awaits its flush). Omitted: no nudge.
    */
   realtime?: Realtime
+  /** Replace the decision model (`knowledgeJudgeFor`) — tests pass a scripted one. */
+  judge?: KnowledgeJudge
 }
 
 export interface ExtractInput {
@@ -618,6 +677,7 @@ const emptyReport = (status: ExtractionReport['status'], reason?: ExtractionRepo
     decisionsKept: 0,
     entitiesCreated: 0,
     possibleMatches: 0,
+    judged: { entitiesLinked: 0, entitiesNew: 0, valuePairs: 0, valuesAgreed: 0 },
     usage: { ...ZERO_USAGE },
   }) satisfies ExtractionReport
 
@@ -776,6 +836,9 @@ async function runExtraction(
     reviewerUserId,
     embedName: await nameEmbedder(db, cfg, env, tenantId, doc.ownerUserId),
   }
+  const judge =
+    deps.judge ??
+    knowledgeJudgeFor(db, cfg, env, tenantId, doc.ownerUserId, tenant?.name ?? '', deps.logger)
   const entityCache = new Map<string, ResolvedEntity>()
   const written = new Set<string>()
   const created = new Set<string>()
@@ -855,14 +918,17 @@ async function runExtraction(
     }
     report.candidates += candidates.length
 
-    const prepared: PreparedFact[] = []
+    // 1. Check every candidate — type, key, value, dates, quote — before any entity is touched.
+    const checked: CheckedFact[] = []
+    const mentionsByKey = new Map<string, { reg: EntityTypeRegistration; mention: Mention }>()
     for (const candidate of candidates) {
       const reg = typeByName.get(candidate.entityType.trim())
       if (!reg) {
         drop('unknown_type')
         continue
       }
-      const schema = factValueSchema(reg, candidate.key.trim())
+      const key = candidate.key.trim()
+      const schema = factValueSchema(reg, key)
       if (!schema) {
         drop('unknown_key')
         continue
@@ -885,43 +951,151 @@ async function runExtraction(
         drop('quote_not_found')
         continue
       }
-      const entity = await resolveMention(
-        resolveCtx,
-        reg,
-        { name: candidate.entityName, aliases: candidate.aliases ?? [] },
-        entityCache
-      )
-      if (entity.created && !created.has(entity.id)) {
-        created.add(entity.id)
-        report.entitiesCreated += 1
-        if (entity.possibleMatch) report.possibleMatches += 1
+      const mentionKey = `${reg.type}:${normaliseName(candidate.entityName)}`
+      const seen = mentionsByKey.get(mentionKey)
+      const aliases = candidate.aliases ?? []
+      if (seen) {
+        seen.mention = { ...seen.mention, aliases: [...seen.mention.aliases, ...aliases] }
+      } else {
+        mentionsByKey.set(mentionKey, { reg, mention: { name: candidate.entityName, aliases } })
       }
-      prepared.push({
+      // A key that names an entity (`refs`): its value is a mention of that type too.
+      const refType = factRefType(reg, key)
+      const refReg = refType ? typeByName.get(refType) : undefined
+      let refMentionKey: string | undefined
+      if (refReg && typeof coerced.value === 'string') {
+        refMentionKey = `${refReg.type}:${normaliseName(coerced.value)}`
+        if (!mentionsByKey.has(refMentionKey)) {
+          mentionsByKey.set(refMentionKey, {
+            reg: refReg,
+            mention: { name: coerced.value, aliases: [] },
+          })
+        }
+      }
+      checked.push({
         candidate,
         reg,
-        entity,
-        key: candidate.key.trim(),
+        mentionKey,
+        key,
         value: coerced.value,
         vKey: valueKey(coerced.value),
         validity,
         located,
+        refMentionKey,
+        refType: refMentionKey ? refReg?.type : undefined,
       })
     }
 
-    // A section that gives one entity two values for one key over one window misread itself.
-    const valuesPerSlot = new Map<string, Set<string>>()
-    const slotOf = (p: PreparedFact) =>
-      `${p.entity.kind}:${p.entity.id}:${p.key}:${p.validity.validFrom?.getTime() ?? ''}:${p.validity.validTo?.getTime() ?? ''}`
-    for (const p of prepared) {
-      const slot = slotOf(p)
-      valuesPerSlot.set(slot, (valuesPerSlot.get(slot) ?? new Set()).add(p.vKey))
-    }
-
-    for (const { candidate, reg, entity, key, value, vKey, validity, located } of prepared) {
-      if ((valuesPerSlot.get(slotOf({ entity, key, validity } as PreparedFact))?.size ?? 0) > 1) {
-        drop('ambiguous')
+    // 2. What each mention is: the run's cache, a link, or a staging entity still to be written.
+    const entityOf = new Map<string, SectionEntity>()
+    const planned = new Map<string, { plan: PlannedEntity; review: boolean }>()
+    for (const [mentionKey, { reg, mention }] of mentionsByKey) {
+      const cached = entityCache.get(mentionKey)
+      if (cached) {
+        entityOf.set(mentionKey, cached)
         continue
       }
+      const plan = await planMention(resolveCtx, reg, mention)
+      if ('link' in plan) {
+        entityOf.set(mentionKey, plan.link)
+        cacheEntity(entityCache, reg.type, [mention.name, ...mention.aliases], plan.link)
+      } else {
+        planned.set(mentionKey, { plan: plan.create, review: true })
+        entityOf.set(mentionKey, { kind: 'staging', id: `pending:${mentionKey}`, pending: true })
+      }
+    }
+
+    // 3. A planned entity with known ones nearby: ask whether it is one of them.
+    const ask = [...planned].filter(([, p]) => p.plan.nearby.length > 0)
+    if (ask.length > 0 && (await judge.engine())) {
+      const questions = await entityQuestions(db, tenantId, doc.title, ask, checked, section)
+      const answers = await judge.entities(questions.map(q => q.question))
+      for (const [i, answer] of answers.entries()) {
+        const q = questions[i]
+        if (!q || !answer) continue
+        const entry = planned.get(q.mentionKey)
+        if (!entry) continue
+        if (answer.answer === 'new') {
+          // Confidently none of them: a new entity, and no "is this the same as …?" to ask.
+          entry.review = false
+          report.judged.entitiesNew += 1
+          continue
+        }
+        const candidate = entry.plan.nearby.find(c => c.id === answer.answer)
+        if (!candidate) continue
+        const linked = await linkPlanned(resolveCtx, entry.plan, candidate)
+        planned.delete(q.mentionKey)
+        entityOf.set(q.mentionKey, linked)
+        cacheEntity(entityCache, entry.plan.type, entry.plan.names, linked)
+        report.judged.entitiesLinked += 1
+      }
+    }
+
+    // 4. A section that gives one entity two values for one key over one window misread itself.
+    const slotOf = (c: CheckedFact) => {
+      const e = entityOf.get(c.mentionKey) as SectionEntity
+      return `${e.kind}:${e.id}:${c.key}:${c.validity.validFrom?.getTime() ?? ''}:${c.validity.validTo?.getTime() ?? ''}`
+    }
+    /** What a fact compares by inside the section: its value, or the entity its value names. */
+    const sectionKeyOf = (c: CheckedFact) => {
+      if (!c.refMentionKey) return c.vKey
+      const named = entityOf.get(c.refMentionKey) as SectionEntity
+      return `e:${named.kind}:${named.id}`
+    }
+    const valuesPerSlot = new Map<string, Set<string>>()
+    for (const c of checked) {
+      const slot = slotOf(c)
+      valuesPerSlot.set(slot, (valuesPerSlot.get(slot) ?? new Set()).add(sectionKeyOf(c)))
+    }
+    const surviving = checked.filter(c => {
+      if ((valuesPerSlot.get(slotOf(c))?.size ?? 0) > 1) {
+        drop('ambiguous')
+        return false
+      }
+      return true
+    })
+
+    // 5. Write the planned entities that still have a fact — an ambiguous reading leaves none.
+    for (const mentionKey of surviving.flatMap(c => [c.mentionKey, c.refMentionKey ?? []].flat())) {
+      const current = entityOf.get(mentionKey) as SectionEntity
+      if (!('pending' in current)) continue
+      const entry = planned.get(mentionKey)
+      if (!entry) continue
+      const entity = await commitPlanned(resolveCtx, entry.plan, { review: entry.review })
+      planned.delete(mentionKey)
+      entityOf.set(mentionKey, entity)
+      cacheEntity(entityCache, entry.plan.type, entry.plan.names, entity)
+      created.add(entity.id)
+      report.entitiesCreated += 1
+      if (entity.possibleMatch) report.possibleMatches += 1
+    }
+
+    const prepared: PreparedFact[] = surviving.map(c => {
+      const named = c.refMentionKey ? (entityOf.get(c.refMentionKey) as ResolvedEntity) : undefined
+      const valueRef =
+        named && c.refType ? valueRefOf({ kind: named.kind, type: c.refType, id: named.id }) : null
+      return {
+        ...c,
+        entity: entityOf.get(c.mentionKey) as ResolvedEntity,
+        valueRef,
+        vKey: valueRef ? `e:${valueRef}` : c.vKey,
+      }
+    })
+
+    // 6. Where a fact would disagree with one already held, ask whether the two values agree.
+    await judgeValues(db, tenantId, judge, prepared, doc.title, section, report)
+
+    for (const {
+      candidate,
+      reg,
+      entity,
+      key,
+      value,
+      vKey,
+      valueRef,
+      validity,
+      located,
+    } of prepared) {
       const dedupe = `${entity.kind}:${entity.id}:${key}:${vKey}`
       if (written.has(dedupe)) {
         drop('duplicate')
@@ -936,14 +1110,33 @@ async function runExtraction(
         quote: stripControlChars(section.text.slice(located.start, located.end)),
         confidence: clamp01(candidate.confidence),
       }
-      const prior = matchDecided(decided, kept, {
+      const slot = {
         entityKind: entity.kind,
         entityType: reg.type,
         entityId: entity.id,
         key,
         valueKey: vKey,
         ...validity,
-      })
+      }
+      // The same value, or one a decision model judged the same ("per call-out" re-read as "per
+      // visit"): the person's decision carries over.
+      const prior =
+        matchDecided(decided, kept, slot) ??
+        (decided.some(d => d.key === key && d.entityId === entity.id && !kept.has(d.id))
+          ? matchDecided(
+              decided,
+              kept,
+              slot,
+              (
+                await loadJudged(
+                  db,
+                  tenantId,
+                  { kind: entity.kind, type: reg.type, id: entity.id },
+                  key
+                )
+              ).judged
+            )
+          : undefined)
       if (prior) {
         // A person already settled this exact fact: keep their decision, refresh its citation.
         kept.add(prior.id)
@@ -951,6 +1144,7 @@ async function runExtraction(
           ...source,
           ...validity,
           value,
+          valueRef,
           valueText: valueText(value),
           sourceKind,
           observedAt: documentDate,
@@ -968,6 +1162,7 @@ async function runExtraction(
         entityId: entity.id,
         key,
         value,
+        valueRef,
         valueText: valueText(value),
         valueKey: vKey,
         documentId,
@@ -995,6 +1190,207 @@ async function runExtraction(
     'knowledge.extract: done'
   )
   return finish()
+}
+
+// ── Asking the decision model ─────────────────────────────────────────────────────────────────
+
+/** Facts shown per entity when a judge compares one with a mention. */
+const JUDGE_FACTS_PER_ENTITY = 8
+
+const refKey = (kind: string, type: string, id: string) => `${kind}:${type}:${id}`
+
+/** `key = value` lines of the answerable facts held for each entity, a few each. */
+async function factLinesOf(
+  db: Database,
+  tenantId: string,
+  refs: readonly { kind: 'domain' | 'staging'; type: string; id: string }[]
+): Promise<Map<string, string[]>> {
+  const out = new Map<string, string[]>()
+  if (refs.length === 0) return out
+  const rows = await db
+    .select({
+      kind: knowledgeFacts.entityKind,
+      type: knowledgeFacts.entityType,
+      id: knowledgeFacts.entityId,
+      key: knowledgeFacts.key,
+      valueText: knowledgeFacts.valueText,
+    })
+    .from(knowledgeFacts)
+    .where(
+      and(
+        eq(knowledgeFacts.tenantId, tenantId),
+        inArray(knowledgeFacts.state, [...ANSWERABLE_FACT_STATES]),
+        inArray(
+          knowledgeFacts.entityId,
+          refs.map(r => r.id)
+        )
+      )
+    )
+    .orderBy(asc(knowledgeFacts.observedAt))
+  for (const r of rows) {
+    const k = refKey(r.kind, r.type, r.id)
+    const list = out.get(k) ?? []
+    const line = `${r.key} = ${r.valueText}`
+    if (!list.includes(line) && list.length < JUDGE_FACTS_PER_ENTITY) list.push(line)
+    out.set(k, list)
+  }
+  return out
+}
+
+/** The entity questions for a section's planned mentions that have known entities nearby. */
+async function entityQuestions(
+  db: Database,
+  tenantId: string,
+  documentTitle: string,
+  ask: readonly [string, { plan: PlannedEntity }][],
+  checked: readonly CheckedFact[],
+  section: Section
+): Promise<{ mentionKey: string; question: EntityQuestion }[]> {
+  const refs = ask.flatMap(([, { plan }]) =>
+    plan.nearby.map(c => ({ kind: c.kind, type: plan.type, id: c.id }))
+  )
+  const facts = await factLinesOf(db, tenantId, refs)
+  const stagingIds = refs.filter(r => r.kind === 'staging').map(r => r.id)
+  const aliasRows =
+    stagingIds.length === 0
+      ? []
+      : await db
+          .select({ id: knowledgeEntities.id, aliases: knowledgeEntities.aliases })
+          .from(knowledgeEntities)
+          .where(
+            and(eq(knowledgeEntities.tenantId, tenantId), inArray(knowledgeEntities.id, stagingIds))
+          )
+  const aliases = new Map(aliasRows.map(r => [r.id, r.aliases]))
+  return ask.map(([mentionKey, { plan }]) => {
+    const own = checked.filter(c => c.mentionKey === mentionKey)
+    const reg = own[0]?.reg
+    return {
+      mentionKey,
+      question: {
+        type: plan.type,
+        label: reg?.label ?? plan.type,
+        mention: {
+          names: plan.names,
+          facts: own.map(c => `${c.key} = ${valueText(c.value)}`),
+          quotes: [
+            ...new Set(own.map(c => section.text.slice(c.located.start, c.located.end))),
+          ].slice(0, 6),
+          document: documentTitle,
+        },
+        candidates: plan.nearby.map(c => ({
+          id: c.id,
+          name: c.label,
+          aliases: aliases.get(c.id) ?? [],
+          facts: facts.get(refKey(c.kind, plan.type, c.id)) ?? [],
+        })),
+      },
+    }
+  })
+}
+
+/** A key's `.describe()`, for the judge — what the value means. */
+function keyMeaning(reg: EntityTypeRegistration, key: string): string | undefined {
+  const schema = entityFactsJsonSchema(reg) as {
+    properties?: Record<string, { description?: string }>
+  }
+  return schema.properties?.[key]?.description
+}
+
+/**
+ * For each fact about to be written onto an entity that already holds facts for its key: the held
+ * values that DIFFER from it over an overlapping window and that no verdict covers yet are asked
+ * about (`judge.values`), and every answer is stored (`knowledge_value_judgements`) for
+ * `writeFact`'s `decideFactState` to read. No engine, or a failed call: nothing is stored, and the
+ * literal rule decides.
+ */
+async function judgeValues(
+  db: Database,
+  tenantId: string,
+  judge: KnowledgeJudge,
+  prepared: readonly PreparedFact[],
+  documentTitle: string,
+  section: Section,
+  report: ExtractionReport
+): Promise<void> {
+  const existing = prepared.filter(p => !p.entity.created)
+  if (existing.length === 0) return
+  interface Ask {
+    ref: { kind: 'domain' | 'staging'; type: string; id: string }
+    key: string
+    a: string
+    b: string
+    question: ValueQuestion
+  }
+  const asks: Ask[] = []
+  const queued = new Set<string>()
+  for (const p of existing) {
+    const ref = { kind: p.entity.kind, type: p.reg.type, id: p.entity.id }
+    const held = await db
+      .select({
+        value: knowledgeFacts.value,
+        valueRef: knowledgeFacts.valueRef,
+        valueText: knowledgeFacts.valueText,
+        quote: knowledgeFacts.quote,
+        validFrom: knowledgeFacts.validFrom,
+        validTo: knowledgeFacts.validTo,
+        title: documents.title,
+      })
+      .from(knowledgeFacts)
+      .innerJoin(documents, eq(documents.id, knowledgeFacts.documentId))
+      .where(
+        and(
+          eq(knowledgeFacts.tenantId, tenantId),
+          eq(knowledgeFacts.entityKind, ref.kind),
+          eq(knowledgeFacts.entityType, ref.type),
+          eq(knowledgeFacts.entityId, ref.id),
+          eq(knowledgeFacts.key, p.key),
+          inArray(knowledgeFacts.state, [...ANSWERABLE_FACT_STATES])
+        )
+      )
+    if (held.length === 0) continue
+    const { asked } = await loadJudged(db, tenantId, ref, p.key)
+    // Facts that name an entity compare by it; whether two named entities are one is the
+    // entity question, asked when the name was resolved.
+    if (p.valueRef) continue
+    for (const h of held) {
+      const hKey = factCompareKey(h)
+      if (hKey === p.vKey || h.valueRef) continue
+      if (windowOrder(h, p.validity) !== 0) continue
+      const id = `${refKey(ref.kind, ref.type, ref.id)}:${p.key}:${judgedPairId(hKey, p.vKey)}`
+      if (asked.has(judgedPairId(hKey, p.vKey)) || queued.has(id)) continue
+      queued.add(id)
+      asks.push({
+        ref,
+        key: p.key,
+        a: hKey,
+        b: p.vKey,
+        question: {
+          entity: { type: ref.type, label: p.reg.label, name: p.entity.name },
+          key: p.key,
+          meaning: keyMeaning(p.reg, p.key),
+          a: { value: h.valueText, quote: h.quote, document: h.title },
+          b: {
+            value: valueText(p.value),
+            quote: section.text.slice(p.located.start, p.located.end),
+            document: documentTitle,
+          },
+        },
+      })
+    }
+  }
+  if (asks.length === 0) return
+  const engine = await judge.engine()
+  if (!engine) return
+  const answers = await judge.values(asks.map(a => a.question))
+  for (const [i, answer] of answers.entries()) {
+    const a = asks[i]
+    if (!a || answer === undefined) continue
+    report.judged.valuePairs += 1
+    if (answer) report.judged.valuesAgreed += 1
+    await storeJudgements(db, tenantId, a.ref, a.key, [
+      { a: a.a, b: a.b, judgement: answer, method: engine.method, model: engine.model },
+    ])
+  }
 }
 
 /**
@@ -1119,6 +1515,7 @@ interface FactToWrite {
   entityId: string
   key: string
   value: unknown
+  valueRef: string | null
   valueText: string
   valueKey: string
   documentId: string
@@ -1143,6 +1540,7 @@ async function writeFact(db: Database, fact: FactToWrite): Promise<string> {
         id: knowledgeFacts.id,
         state: knowledgeFacts.state,
         value: knowledgeFacts.value,
+        valueRef: knowledgeFacts.valueRef,
         validFrom: knowledgeFacts.validFrom,
         validTo: knowledgeFacts.validTo,
       })
@@ -1160,10 +1558,16 @@ async function writeFact(db: Database, fact: FactToWrite): Promise<string> {
     const held: HeldFact[] = heldRows.map(r => ({
       id: r.id,
       state: r.state as FactState,
-      valueKey: valueKey(r.value),
+      valueKey: factCompareKey(r),
       validFrom: r.validFrom,
       validTo: r.validTo,
     }))
+    const { judged } = await loadJudged(
+      tx,
+      fact.tenantId,
+      { kind: fact.entityKind, type: fact.entityType, id: fact.entityId },
+      fact.key
+    )
     const decision = decideFactState(
       {
         valueKey: fact.valueKey,
@@ -1171,7 +1575,8 @@ async function writeFact(db: Database, fact: FactToWrite): Promise<string> {
         validFrom: fact.validFrom,
         validTo: fact.validTo,
       },
-      held
+      held,
+      judged
     )
     const { valueKey: _key, ...row } = fact
     const [inserted] = await tx

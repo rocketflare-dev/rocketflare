@@ -48,6 +48,24 @@ export interface EntityTypeDeclaration<F extends EntityFactsSchema = EntityFacts
   /** Shown to people: "Customer", "Order". */
   label: string
   facts: F
+  /**
+   * Keys whose value NAMES an entity of another registered type — `{ account_manager: 'person' }`.
+   * The value is still the name as the document writes it (the key's schema must be a string),
+   * but extraction resolves it to an entity of that type exactly as it resolves the fact's own
+   * entity (aliases, the domain resolver, the decision model), and two facts compare by the
+   * entity they name: "Marcus" and "Marcus Bell" agree once both resolve to one person, and two
+   * people with one first name do not.
+   */
+  refs?: Partial<Record<keyof F['shape'] & string, string>>
+}
+
+/** The entity type a key's value names (`EntityTypeDeclaration.refs`), or undefined. */
+export function factRefType(
+  decl: Pick<EntityTypeDeclaration, 'refs'>,
+  key: string
+): string | undefined {
+  const refs = decl.refs as Record<string, string | undefined> | undefined
+  return refs && Object.hasOwn(refs, key) ? refs[key] : undefined
 }
 
 /**
@@ -62,10 +80,35 @@ export const entityTypeSchema = z
     facts: z.custom<EntityFactsSchema>(v => v instanceof z.ZodObject, {
       message: 'facts must be a zod object',
     }),
+    refs: z.record(z.string(), entityTypeNameSchema).optional(),
   })
   .superRefine((decl, ctx) => {
     const keys = Object.keys(decl.facts.shape)
     if (keys.length === 0) ctx.addIssue({ code: 'custom', message: 'facts declares no key' })
+    for (const [key, target] of Object.entries(decl.refs ?? {})) {
+      const schema = Object.hasOwn(decl.facts.shape, key) ? decl.facts.shape[key] : undefined
+      if (!schema) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['refs', key],
+          message: 'refs names an undeclared key',
+        })
+        continue
+      }
+      let type: unknown
+      try {
+        type = (z.toJSONSchema(schema as z.ZodType) as { type?: unknown }).type
+      } catch {
+        type = undefined
+      }
+      if (type !== 'string') {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['refs', key],
+          message: `a key that names a ${target} must be a string (the name as written)`,
+        })
+      }
+    }
     for (const key of keys) {
       if (!FACT_KEY_RE.test(key)) {
         ctx.addIssue({
@@ -257,6 +300,14 @@ export const factSchema = z.object({
   value: z.unknown(),
   /** Normalised text for display and matching. */
   valueText: z.string(),
+  /**
+   * For a key that names an entity (`EntityTypeDeclaration.refs`): the entity the value resolved
+   * to — "Marcus" in the text, the person Marcus Bell here. Link it with `entityPath`.
+   */
+  valueEntity: z
+    .object({ kind: entityKindSchema, type: z.string(), id: z.string() })
+    .nullable()
+    .optional(),
   source: factSourceSchema,
   confidence: z.number().min(0).max(1),
   state: factStateSchema,
@@ -277,6 +328,15 @@ export const factSchema = z.object({
   updatedAt: z.coerce.date(),
 })
 export type Fact = z.infer<typeof factSchema>
+
+/** `knowledge_facts.value_ref` (`<kind>:<type>:<id>`) as `Fact.valueEntity`, or null. */
+export function parseValueRef(ref: string | null | undefined): Fact['valueEntity'] {
+  if (!ref) return null
+  const [kind, type, ...id] = ref.split(':')
+  const parsed = entityKindSchema.safeParse(kind)
+  if (!parsed.success || !type || id.length === 0) return null
+  return { kind: parsed.data, type, id: id.join(':') }
+}
 
 /** `GET /api/knowledge/entities/:type/:id` — the entity and every fact about it you may read. */
 export const entityCardSchema = z.object({
@@ -454,6 +514,10 @@ export const factHitSchema = z.object({
   key: z.string(),
   value: z.unknown(),
   valueText: z.string(),
+  /** A key that names an entity (`refs`): who or what the value resolved to, by its own name. */
+  names: z
+    .object({ kind: entityKindSchema, type: z.string(), id: z.string(), name: z.string() })
+    .optional(),
   state: factStateSchema,
   preferred: z.boolean(),
   conflictsWith: z.array(z.string().uuid()),
@@ -473,6 +537,17 @@ export const factHitGroupSchema = z.object({
   facts: z.array(factHitSchema),
 })
 export type FactHitGroup = z.infer<typeof factHitGroupSchema>
+
+/**
+ * `GET /api/knowledge/mentioned?q=` — the Search page's facts block: the facts about the entities
+ * a query names (`search_knowledge`'s `facts` block, for a person), read through the documents'
+ * visibility like every fact read. `entities` is empty when the query names no known entity.
+ */
+export const mentionedFactsQuerySchema = z.object({ q: z.string().trim().min(1).max(2000) })
+export type MentionedFactsQuery = z.infer<typeof mentionedFactsQuerySchema>
+
+export const mentionedFactsResponseSchema = z.object({ entities: z.array(factHitGroupSchema) })
+export type MentionedFactsResponse = z.infer<typeof mentionedFactsResponseSchema>
 
 /** What `lookup_facts` answers (JSON-encoded for the model). */
 export const lookupFactsResultSchema = z.object({
@@ -553,6 +628,13 @@ export function entityCardsFromToolResult(toolName: string, result: unknown): Ch
     const r = searchLoose.safeParse(parsed)
     if (r.success) groups = r.data.facts
   }
+  return entityCardsFromFactGroups(groups)
+}
+
+/** One card per entity with facts, capped at `CHAT_ENTITY_CARD_MAX_FACTS` (the rest: `moreFacts`). */
+export function entityCardsFromFactGroups(
+  groups: readonly z.infer<typeof factGroupLoose>[]
+): ChatEntityCard[] {
   return groups
     .filter(g => g.facts.length > 0)
     .map(g => ({
@@ -586,3 +668,93 @@ export function entityCardsFromToolCalls(
 
 /** Stable identity of a card's entity, for de-duplicating cards across tool calls. */
 export const chatEntityCardKey = cardKey
+
+// ── Browsing facts (the document's facts, the Knowledge page's Facts view) ───────────────────
+
+/** An entity as a browse view names it: the ref, its display name, and its type's label. */
+export const browseEntitySchema = reviewEntitySchema.extend({ typeLabel: z.string() })
+export type BrowseEntity = z.infer<typeof browseEntitySchema>
+
+/** The facts one document gave about one entity. */
+export const documentFactGroupSchema = z.object({
+  entity: browseEntitySchema,
+  /** Every state, as on the entity page — `rejected` and `superseded` included, labelled. */
+  facts: z.array(factSchema),
+})
+export type DocumentFactGroup = z.infer<typeof documentFactGroupSchema>
+
+/**
+ * `GET /api/knowledge/documents/:id/facts` — the facts read from one document the reader may see
+ * (404 otherwise, the same as an absent one), grouped by entity. `entityTypesRegistered` = 0 means
+ * extraction has nothing to look for, which is why a document can have none.
+ */
+export const documentFactsResponseSchema = z.object({
+  documentId: z.string().uuid(),
+  entityTypesRegistered: z.number().int().nonnegative(),
+  groups: z.array(documentFactGroupSchema),
+})
+export type DocumentFactsResponse = z.infer<typeof documentFactsResponseSchema>
+
+/** A comma-separated query value (`a,b`) → its de-duplicated, non-blank parts. */
+const splitCsv = (v: string) => [
+  ...new Set(
+    v
+      .split(',')
+      .map(s => s.trim())
+      .filter(Boolean)
+  ),
+]
+const csvString = z.string().trim().max(2000).transform(splitCsv)
+
+/**
+ * `GET /api/knowledge/entities` — every entity the reader may see a CURRENT fact about
+ * (`accepted`, `unconfirmed`, `conflicting`), with counts over those visible facts only.
+ * `type` / `sourceKind` (comma-separated) narrow which facts count; `needsLook=true` keeps only
+ * entities with a fact open in the reader's view; `q` matches a staging entity's name or aliases
+ * (a domain row is matched through the staging entities promoted to it).
+ */
+export const knowledgeEntityListQuerySchema = paginationQuerySchema.extend({
+  type: csvString.pipe(z.array(z.string().min(1).max(120)).max(50)).optional(),
+  sourceKind: csvString.pipe(z.array(sourceKindSchema).max(50)).optional(),
+  needsLook: z
+    .enum(['true', 'false'])
+    .transform(v => v === 'true')
+    .optional(),
+  q: z.string().trim().min(1).max(200).optional(),
+})
+export type KnowledgeEntityListQuery = z.infer<typeof knowledgeEntityListQuerySchema>
+
+export const knowledgeEntitySummarySchema = z.object({
+  entity: browseEntitySchema,
+  /** Current facts the reader may see (under the filters). */
+  facts: z.number().int().nonnegative(),
+  /** Of those, open in the reader's view — unconfirmed, or conflicting with a fact they can see. */
+  needsLook: z.number().int().nonnegative(),
+  /** The newest `observedAt` among them. */
+  lastObservedAt: z.coerce.date(),
+})
+export type KnowledgeEntitySummary = z.infer<typeof knowledgeEntitySummarySchema>
+
+/** How a fact's source kind reads in a filter. */
+export const SOURCE_KIND_LABELS: Record<SourceKind, string> = {
+  person: 'Added by a person',
+  upload: 'Uploaded documents',
+  agent: 'Agent output',
+  integration: 'Integrations',
+}
+
+/** One filter value and how many entities carry it (over every visible current fact, unfiltered). */
+export const knowledgeFacetValueSchema = z.object({
+  value: z.string(),
+  label: z.string(),
+  count: z.number().int().nonnegative(),
+})
+export type KnowledgeFacetValue = z.infer<typeof knowledgeFacetValueSchema>
+
+export const knowledgeEntityListSchema = paginatedResponse(knowledgeEntitySummarySchema).extend({
+  facets: z.object({
+    types: z.array(knowledgeFacetValueSchema),
+    sourceKinds: z.array(knowledgeFacetValueSchema),
+  }),
+})
+export type KnowledgeEntityList = z.infer<typeof knowledgeEntityListSchema>

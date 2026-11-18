@@ -15,6 +15,7 @@ import {
   type FactHit,
   type FactHitGroup,
   type LookupFactsResult,
+  parseValueRef,
   preferredFact,
 } from '@rocketflare/shared/ai/knowledge-facts'
 import { and, asc, eq, inArray, or, type SQL, sql } from 'drizzle-orm'
@@ -72,6 +73,16 @@ function refWhere(refs: readonly EntityRef[]): SQL | undefined {
   )
 }
 
+/** `{ names }` for a fact whose value names an entity, or nothing. */
+function namedBy(
+  valueRef: string | null,
+  names: ReadonlyMap<string, string>
+): Pick<FactHit, 'names'> {
+  const v = parseValueRef(valueRef)
+  if (!v) return {}
+  return { names: { ...v, name: names.get(refKey(v)) ?? v.id } }
+}
+
 /** Group read facts by entity (in first-seen order) as `factHitSchema`s. */
 async function toGroups(
   db: Database,
@@ -84,7 +95,13 @@ async function toGroups(
     const ref: EntityRef = { kind: f.row.entityKind, type: f.row.entityType, id: f.row.entityId }
     refs.set(refKey(ref), ref)
   }
-  const unnamed = [...refs.values()].filter(r => !known.has(refKey(r)))
+  // The entities `refs` keys name ("Marcus" → the person Marcus Bell), named the same way.
+  const named = new Map<string, EntityRef>()
+  for (const f of facts) {
+    const v = parseValueRef(f.row.valueRef)
+    if (v) named.set(refKey(v), v)
+  }
+  const unnamed = [...refs.values(), ...named.values()].filter(r => !known.has(refKey(r)))
   const names = new Map([...known, ...(await entityNames(db, scope.tenantId, unnamed))])
   const byId = new Map(facts.map(f => [f.row.id, f]))
   const groups = new Map<string, FactHitGroup>()
@@ -109,6 +126,7 @@ async function toGroups(
       key: f.row.key,
       value: f.row.value,
       valueText: f.row.valueText,
+      ...namedBy(f.row.valueRef, names),
       state,
       preferred,
       conflictsWith: f.visibleConflicts,

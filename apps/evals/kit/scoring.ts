@@ -299,6 +299,11 @@ export interface FactClaim {
   key: string
   value: unknown
   doc: string
+  /**
+   * For a fact whose key names an entity (`refs`): every name of the entity its value resolved to.
+   * The system knows "Marcus" is Marcus Bell once both resolve to one person, so either matches.
+   */
+  valueNames?: readonly string[]
 }
 
 /**
@@ -378,7 +383,7 @@ export function matchFacts(
         p.entityType === x.entityType &&
         normalizeName(canonical(index, p.entityType, p.entity)) === normalizeName(name) &&
         p.key === x.key &&
-        valuesMatch(p.value, x.value)
+        [x.value, ...(x.valueNames ?? [])].some(v => valuesMatch(p.value, v))
     )
     if (!hit?.id) return null
     used.add(hit.id)

@@ -14,6 +14,7 @@
  * - **Table.** A registration with a table names only that table's columns, the table has a
  *   `tenantId`, and the default resolver has a `labelColumn` (`registrationTableIssues`).
  * - **No duplicates** across the whole set.
+ * - **Refs resolve.** A key that names another type (`refs`) names a registered one.
  * A violation throws: a type that silently failed to register would extract nothing, unnoticed.
  */
 import { entityTypeSchema } from '@rocketflare/shared/ai/knowledge-facts'
@@ -56,6 +57,18 @@ export function entityTypeIssues(sources: readonly EntityTypeSource[]): string[]
         issues.push(`entity type ${reg.type} is registered by both ${first} and ${who}`)
       } else {
         seen.set(reg.type, who)
+      }
+    }
+  }
+  for (const { owner, types } of sources) {
+    const who = owner === null ? 'the app' : `plugin ${owner}`
+    for (const reg of types) {
+      for (const [key, target] of Object.entries(reg.refs ?? {})) {
+        if (target && !seen.has(target)) {
+          issues.push(
+            `${who}: entity type ${reg.type}: ${key} names ${target}, which is not registered`
+          )
+        }
       }
     }
   }

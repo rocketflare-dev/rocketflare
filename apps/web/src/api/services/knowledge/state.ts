@@ -15,6 +15,11 @@
  * when corroborated or confident, else `unconfirmed` — replacing an older value over time does not
  * by itself make a doubtful reading sure.
  *
+ * **A judged pair** (`knowledge_value_judgements`, asked by `judge.ts` when two values differ): a
+ * confident `same` counts as the same value (corroboration), a confident `compatible` — one value
+ * a more specific form of the other — as neither agreement nor disagreement. `judged` answers for a
+ * pair of `valueKey`s; without it, or for a pair it does not know, values compare literally.
+ *
  * Which side of a conflict an answer leads with is NOT decided here and never stored: it is
  * `preferredFact` (`@rocketflare/shared/ai/knowledge-facts`) over the facts' document dates and
  * trust — newer and at least as trusted wins, else the older.
@@ -68,9 +73,13 @@ export function windowOrder(a: Validity, b: Validity): -1 | 0 | 1 {
   return 0
 }
 
+/** A stored verdict for two `valueKey`s (order-free), or undefined: compare them literally. */
+export type JudgedPair = (a: string, b: string) => 'same' | 'compatible' | undefined
+
 export function decideFactState(
   candidate: CandidateFact,
-  held: readonly HeldFact[]
+  held: readonly HeldFact[],
+  judged?: JudgedPair
 ): StateDecision {
   const decision: StateDecision = {
     state: 'accepted',
@@ -81,7 +90,10 @@ export function decideFactState(
   }
   let corroborated = false
   for (const fact of held) {
-    if (fact.valueKey === candidate.valueKey) {
+    const verdict =
+      fact.valueKey === candidate.valueKey ? 'same' : judged?.(fact.valueKey, candidate.valueKey)
+    if (verdict === 'compatible') continue
+    if (verdict === 'same') {
       corroborated = true
       if (fact.state === 'unconfirmed') decision.confirms.push(fact.id)
       continue

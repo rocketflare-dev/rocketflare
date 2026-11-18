@@ -139,6 +139,8 @@ const CORE_QUERY_KEYS = {
     content: (id: string, offset: number) => ['documents', 'content', id, offset] as const,
     passages: (id: string, filters: object = {}) => ['documents', 'passages', id, filters] as const,
     card: (id: string) => ['documents', 'card', id] as const,
+    /** The Search page's filter values — what the reader can see, so the family invalidates it. */
+    facets: ['documents', 'facets'] as const,
   },
   /**
    * `/api/knowledge/*` — knowledge facts (D43): the review list, the "for me" count on the
@@ -152,6 +154,12 @@ const CORE_QUERY_KEYS = {
     /** `GET /review?mine=true&pageSize=1` → `pagination.total`. Never polled. */
     reviewCount: ['knowledge', 'review-count'] as const,
     entity: (type: string, id: string) => ['knowledge', 'entity', type, id] as const,
+    /** The facts about the entities a search query names (`GET /mentioned?q=`). */
+    mentioned: (q: string) => ['knowledge', 'mentioned', q] as const,
+    /** The facts read from one document (`GET /documents/:id/facts`). */
+    documentFacts: (documentId: string) => ['knowledge', 'document-facts', documentId] as const,
+    /** The Facts view's entity list (`GET /entities`). */
+    entities: (filters: object = {}) => ['knowledge', 'entities', filters] as const,
   },
   /** `/api/chat/*` — MY conversations (the route filters by user) and their messages */
   chat: {

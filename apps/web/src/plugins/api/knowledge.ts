@@ -349,6 +349,8 @@ export interface SearchKnowledgeHit {
   score: number
   denseRank: number | null
   lexicalRank: number | null
+  /** The reranker's relevance score (0–1, its scale per model) when one ordered the hits, else null. */
+  rerankScore: number | null
   /** A platform document (readable by every tenant), not one of this organisation's. */
   platform: boolean
 }
@@ -357,6 +359,12 @@ export interface SearchKnowledgeResult {
   hits: SearchKnowledgeHit[]
   /** `unavailable` = some corpus was searched by keyword only (no embedder for it). */
   semantic: 'used' | 'unavailable'
+  /**
+   * Whether a reranker ordered `hits` (then they are in its order), on which model — or why not
+   * (`not_configured`, `too_few`, `timeout`, `error`…). `dropped` = hits cut by
+   * `RERANK_MIN_SCORE`.
+   */
+  rerank: { applied: boolean; model?: string; reason?: string; dropped?: number }
 }
 
 /**
@@ -375,7 +383,7 @@ export async function searchKnowledge(
   // Loaded at CALL time: `retrieval.ts` reaches the plugin barrel through `../access`, and a static
   // import here would put the barrel on `@/plugins/api`'s load path (see `ai/fusion.ts`).
   const { searchKnowledgeChunks } = await import('../../api/services/ai/retrieval')
-  const { hits, semantic } = await searchKnowledgeChunks(
+  const { hits, semantic, rerank } = await searchKnowledgeChunks(
     ctx.db,
     ctx.config,
     ctx.env,
@@ -391,6 +399,12 @@ export async function searchKnowledge(
   )
   return {
     semantic,
+    rerank: {
+      applied: rerank.applied,
+      ...(rerank.model ? { model: rerank.model } : {}),
+      ...(rerank.reason ? { reason: rerank.reason } : {}),
+      ...(rerank.dropped !== undefined ? { dropped: rerank.dropped } : {}),
+    },
     hits: hits.map(h => ({
       documentId: h.documentId,
       source: h.source,
@@ -404,6 +418,7 @@ export async function searchKnowledge(
       score: h.score,
       denseRank: h.denseRank,
       lexicalRank: h.lexicalRank,
+      rerankScore: h.rerankScore ?? null,
       platform: h.platform,
     })),
   }

@@ -11,6 +11,7 @@
  * document id, passage number, offset, score — and trim only the bulky prose to a preview, marking
  * what was trimmed. The result is small enough for a row and complete enough to audit.
  */
+import { KNOWLEDGE_TOOLS } from '@rocketflare/shared/ai/embeddings'
 import { GET_DOCUMENT_TOOL } from './get-document'
 import { SEARCH_KNOWLEDGE_TOOL } from './search-knowledge'
 
@@ -96,6 +97,26 @@ export function summariseToolResult(name: string, resultText: string): unknown {
   if (name === GET_DOCUMENT_TOOL && typeof (parsed as DocumentShape).text === 'string') {
     const doc = parsed as DocumentShape
     return { ...doc, ...preview(doc.text ?? '') }
+  }
+
+  // lookup_facts: every entity and fact kept (the run timeline's entity cards read them), each
+  // quote previewed.
+  if (name === KNOWLEDGE_TOOLS.facts && Array.isArray(parsed.entities)) {
+    return {
+      ...parsed,
+      entities: (parsed.entities as unknown[]).map(group =>
+        isRecord(group) && Array.isArray(group.facts)
+          ? {
+              ...group,
+              facts: group.facts.map(fact =>
+                isRecord(fact) && typeof fact.quote === 'string'
+                  ? { ...fact, quote: preview(fact.quote).text }
+                  : fact
+              ),
+            }
+          : group
+      ),
+    }
   }
 
   // An unknown tool, or a dead-end answer (`{ error, hint }`): structure is already small.

@@ -120,6 +120,22 @@ seems to hope for. Spread probability when the state does not settle the questio
 option only when the state clearly does. Questions are independent: never let one answer influence
 another.`
 
+const KNOWLEDGE_DECIDE_DEFAULT = `You answer typed questions for {{tenantName}}'s knowledge base in {{appName}}. You do
+not write prose: you assign probabilities.
+
+The questions are about what documents say. Either two values that two passages give for one fact
+about one entity — do they say the same thing, is one a more specific form of the other, or do they
+disagree? — or a name a passage uses — is it one of the entities already known, or a new one?
+
+Judge by meaning, in whatever language the passages are written: two wordings of one unit, a
+person's first name and their full name, a number written in words and in digits say the same
+thing. Two different amounts, dates, people or places disagree, however alike they look. A thing
+with a similar name is NOT the same thing unless the passages make it so — two companies in one
+trade, two services of one business, two people who share a first name are different entities.
+
+Put probability on one option only when the passages clearly settle the question; spread it when
+they do not. Questions are independent: never let one answer influence another.`
+
 const TRIAGE_RESEARCH_DEFAULT = `You answer a question for {{tenantName}} from passages of their own knowledge base that
 have already been screened for relevance. Use only those passages. Attribute each claim to the
 document it came from, and when the passages do not answer the question, say exactly that rather
@@ -242,6 +258,14 @@ export const CORE_PROMPT_REGISTRY = {
       'Reads one section of a document and reports typed facts about the registered entity types (one forced `submit_facts` call per section, the `knowledge.extract` job). Needs the `knowledge-facts` flag. Point it at a cheaper model in Settings → agent models.',
     variables: ['appName', 'tenantName'],
     defaultText: KNOWLEDGE_EXTRACT_DEFAULT,
+  },
+  'knowledge-decide': {
+    key: 'knowledge-decide',
+    title: 'Knowledge facts: same or different?',
+    description:
+      'When no TypeSafe (Jev) provider is configured, a chat model answers the typed questions extraction asks before it flags a conflict or creates a new entity: do two values say the same thing, is this name a known entity? Answers are self-reported (`llm_self_report`) and only a confident "same" changes anything. Point it at a cheap model in Settings → agent models.',
+    variables: ['appName', 'tenantName'],
+    defaultText: KNOWLEDGE_DECIDE_DEFAULT,
   },
   'evals-judge': {
     key: 'evals-judge',

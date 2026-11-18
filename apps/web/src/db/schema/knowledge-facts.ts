@@ -12,6 +12,8 @@
  * - **Access.** A fact is read through its document: `visibility` mirrors the document's
  *   (`tenant | groups`) and the document's grants apply through `document_id` — there is no grants
  *   table for facts. `private` is reserved for a later memory plugin and never written yet.
+ * - **References.** A key that names another entity (an account manager is a person) keeps the
+ *   name as written in `value` and the entity it resolved to in `value_ref`; facts compare by it.
  * - **State.** `FACT_STATES`; `conflicts_with` names the other rows on the same entity and key
  *   that disagree. The open review items (`OPEN_REVIEW_FACT_STATES`) have a partial index on
  *   `(tenant_id, reviewer_user_id)`, its predicate rendered from that shared list.
@@ -59,6 +61,11 @@ export const knowledgeFacts = pgTable(
     value: jsonb('value').$type<unknown>().notNull(),
     /** Normalised, for display and matching. */
     valueText: text('value_text').notNull(),
+    /**
+     * For a key that names an entity (`EntityTypeDeclaration.refs`): that entity, as
+     * `<kind>:<type>:<id>` — what the fact is compared by (`factCompareKey`). Null otherwise.
+     */
+    valueRef: text('value_ref'),
     // source
     documentId: uuid('document_id')
       .notNull()

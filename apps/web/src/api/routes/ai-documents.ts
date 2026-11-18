@@ -9,10 +9,12 @@
  * `document.index` / `document.convert` job finishes them. Deleting someone else's document needs
  * `delete Document` (admin+) — own-document delete is the `ownerUserId` check here. Deleting a
  * document deletes its original. The raw text and the vectors never leave the server.
+ * `GET /facets` lists the sources and types the search filters can offer, over the same visible set.
  * Upkeep: `GET /health` and `POST /reembed` (admin+, `manage Document`) report and rebuild stale
  * embeddings; `POST /:id/retry` (owner or `manage Document`) re-enqueues a failed document.
  */
 import {
+  type DocumentFacets,
   type DocumentsHealth,
   documentContentQuerySchema,
   documentListQuerySchema,
@@ -28,7 +30,7 @@ import {
 import { MAX_UPLOAD_BYTES } from '@rocketflare/shared/files'
 import { type GroupRef, setVisibilityRequestSchema } from '@rocketflare/shared/groups'
 import { paginationQuerySchema } from '@rocketflare/shared/pagination'
-import { and, count, desc, eq } from 'drizzle-orm'
+import { and, count, desc, eq, isNotNull, max, min } from 'drizzle-orm'
 import { type DocumentRow, documents, files } from '../../db/schema'
 import { uploadBodyLimit } from '../middleware/body-limit'
 import { can, guardPermission } from '../middleware/permissions'
@@ -52,9 +54,14 @@ import {
   ingestText,
   toDocument,
 } from '../services/ai/ingest'
-import { documentsHealth, enqueueReembed, retryFailedDocument } from '../services/ai/reindex'
+import {
+  countVisibleStaleDocuments,
+  documentsHealth,
+  enqueueReembed,
+  retryFailedDocument,
+} from '../services/ai/reindex'
 import { resolveEmbeddingsModel } from '../services/ai/resolve'
-import { searchChunks } from '../services/ai/retrieval'
+import { searchKnowledgeChunks } from '../services/ai/retrieval'
 import { nudge, realtimeEvent } from '../services/realtime'
 import { createR2Storage, deleteStoredFile, type StorageService } from '../services/storage'
 import type { AppContext } from '../types'
@@ -328,8 +335,69 @@ aiDocumentsRouter.post('/search', validate('json', searchRequestSchema), async c
   guardPermission(c, 'read', 'Document')
   const request = c.req.valid('json')
   // The usage rows (query embedding, rerank) are written after the response, in `waitUntil`.
-  const hits = await searchChunks(db, cfg, c.env, accessScopeOf(auth), { ...request, defer })
-  const body: SearchResponse = { query: request.query, hits }
+  const { hits, lexical } = await searchKnowledgeChunks(db, cfg, c.env, accessScopeOf(auth), {
+    ...request,
+    defer,
+  })
+  // The provenance fields are for tools; the HTTP contract is `SearchHit`.
+  const body: SearchResponse = {
+    query: request.query,
+    hits: hits.map(({ source: _s, externalId: _e, platform: _p, ...hit }) => hit),
+    lexical,
+  }
+  return c.json(body)
+})
+
+// ---- GET /api/ai/documents/facets ----------------------------------------------------------------
+
+/**
+ * What the Search page's filters can offer: the distinct sources and content types of the indexed
+ * documents THIS reader may see (tenant AND `visibleDocuments`, like every read here), with
+ * counts, the range of their dates, and how many of them are embedded by another model than
+ * today's (`staleEmbeddings` — `/health` is admin-only, this is any reader's). Never lists a value
+ * only an invisible document carries.
+ */
+aiDocumentsRouter.get('/facets', async c => {
+  const { db, tenantId, auth, cfg } = withAuthAndDb(c)
+  guardPermission(c, 'read', 'Document')
+  const scope = accessScopeOf(auth)
+  const where = and(
+    eq(documents.tenantId, tenantId),
+    visibleDocuments(scope),
+    eq(documents.status, 'indexed')
+  )
+  const n = count()
+  const staleCount = async () => {
+    const model = await resolveEmbeddingsModel(db, cfg, c.env, tenantId)
+    return model ? countVisibleStaleDocuments(db, scope, model) : 0
+  }
+  const [sources, contentTypes, [span], staleEmbeddings] = await Promise.all([
+    db
+      .select({ value: documents.source, count: n })
+      .from(documents)
+      .where(and(where, isNotNull(documents.source)))
+      .groupBy(documents.source)
+      .orderBy(desc(n), documents.source),
+    db
+      .select({ value: documents.contentType, count: n })
+      .from(documents)
+      .where(where)
+      .groupBy(documents.contentType)
+      .orderBy(desc(n), documents.contentType),
+    db
+      .select({ total: n, oldest: min(documents.createdAt), newest: max(documents.createdAt) })
+      .from(documents)
+      .where(where),
+    staleCount(),
+  ])
+  const body: DocumentFacets = {
+    total: span?.total ?? 0,
+    sources: sources.flatMap(r => (r.value === null ? [] : [{ value: r.value, count: r.count }])),
+    contentTypes,
+    oldest: span?.oldest ?? null,
+    newest: span?.newest ?? null,
+    staleEmbeddings,
+  }
   return c.json(body)
 })
 

@@ -21,7 +21,8 @@
  *
  * **Merge and promote** move a staging entity's facts onto another entity, then decide again,
  * with `decideFactState`, every key BOTH held answerable facts for — the two may now agree
- * (corroboration) or disagree (a new conflict). Keys only one side held keep their states. These
+ * (corroboration) or disagree (a new conflict), reading the value verdicts a decision model gave
+ * either side (`knowledge_value_judgements`, moved along). Keys only one side held keep their states. These
  * are person actions over HTTP, so there is no approval gate: `Tool.requiresApproval` is the gate
  * an AGENT tool would need, and none is exposed. Nothing here writes a domain column — promoting
  * records `promoted_type` / `promoted_id` on the staging row and re-points the facts.
@@ -62,10 +63,11 @@ import {
   viewState,
 } from './facts-read'
 import { restoredStateSql } from './facts-sql'
+import { loadJudged, moveJudgements } from './judgements'
 import { knowledgeEntityType } from './registry'
 import { resolverFor } from './resolve'
 import { decideFactState, type HeldFact } from './state'
-import { valueKey } from './values'
+import { factCompareKey } from './values'
 
 const ANSWERABLE: readonly FactState[] = ['accepted', 'unconfirmed', 'conflicting']
 
@@ -235,17 +237,19 @@ export async function recomputeKey(
   }
   const next = new Map<string, Next>()
   const held: HeldFact[] = []
+  const { judged } = await loadJudged(tx, tenantId, ref, key)
   for (const f of facts) {
     const decision = decideFactState(
       {
-        valueKey: valueKey(f.value),
+        valueKey: factCompareKey(f),
         confidence: f.confirmedAt ? 1 : f.confidence,
         validFrom: f.validFrom,
         validTo: f.validTo,
       },
       held
         .filter(h => ANSWERABLE.includes(next.get(h.id)?.state ?? h.state))
-        .map(h => ({ ...h, state: next.get(h.id)?.state ?? h.state }))
+        .map(h => ({ ...h, state: next.get(h.id)?.state ?? h.state })),
+      judged
     )
     next.set(f.id, {
       state: decision.state,
@@ -274,7 +278,7 @@ export async function recomputeKey(
     held.push({
       id: f.id,
       state: decision.state,
-      valueKey: valueKey(f.value),
+      valueKey: factCompareKey(f),
       validFrom: f.validFrom,
       validTo: f.validTo,
     })
@@ -334,6 +338,7 @@ async function moveFacts(
       )
     )
     .returning({ id: knowledgeFacts.id })
+  await moveJudgements(tx, tenantId, from, to)
   const both = [...fromKeys].filter(k => toKeys.has(k)).sort()
   for (const key of both) await recomputeKey(tx, tenantId, to, key)
   return { moved: moved.length, recomputedKeys: both }

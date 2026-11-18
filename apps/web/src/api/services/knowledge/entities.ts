@@ -140,7 +140,8 @@ async function stagingCandidates(
 async function embeddingCandidates(
   ctx: ResolveContext,
   type: string,
-  embedding: { vector: number[]; model: string }
+  embedding: { vector: number[]; model: string },
+  minCosine = EMBED_REVIEW_COSINE
 ): Promise<Candidate[]> {
   const literal = vectorLiteral(embedding.vector)
   const cosine = sql<number>`(1 - (${knowledgeEntities.embedding} <=> ${literal}::vector))::float8`
@@ -159,12 +160,16 @@ async function embeddingCandidates(
     .orderBy(sql`${knowledgeEntities.embedding} <=> ${literal}::vector`)
     .limit(3)
   return rows
-    .filter(r => Number(r.cosine) >= EMBED_REVIEW_COSINE)
+    .filter(r => Number(r.cosine) >= minCosine)
     .map(r => ({
       kind: 'staging' as const,
       id: r.id,
       label: r.name,
-      score: Math.min(Number(r.cosine), LINK_THRESHOLD - 0.01),
+      // A review-band cosine sits in the band; a merely nearby one below it (a judge's pool).
+      score:
+        Number(r.cosine) >= EMBED_REVIEW_COSINE
+          ? Math.min(Number(r.cosine), LINK_THRESHOLD - 0.01)
+          : REVIEW_THRESHOLD - 0.01,
       exact: false,
     }))
 }
@@ -198,22 +203,86 @@ export function chooseCandidate(
   return { none: true }
 }
 
+/** At or above it a candidate is NEARBY: not enough to link or review, enough to ask about. */
+export const NEARBY_SCORE = 0.3
+/** A name embedding this close makes a candidate nearby. */
+export const EMBED_NEARBY_COSINE = 0.75
+/** Nearby candidates a judge is shown, best first. */
+const NEARBY_LIMIT = 5
+
+/** A candidate as extraction and the judge see it. */
+export type MentionCandidate = PossibleMatchCandidate
+
+/** A mention nothing links to yet: the staging entity it WOULD become. */
+export interface PlannedEntity {
+  type: string
+  /** The mention's names, the first the entity's name. */
+  names: string[]
+  embedding: { vector: number[]; model: string } | null
+  /** The possible-match review item it would carry, or null. */
+  review: MentionCandidate[] | null
+  /** Known entities close enough to ask a judge about (the review ones included), best first. */
+  nearby: MentionCandidate[]
+}
+
+export type MentionPlan = { link: ResolvedEntity } | { create: PlannedEntity }
+
+/** Staging candidates by trigram, kept from `NEARBY_SCORE` (the judge's pool, not a link). */
+async function nearbyStaging(
+  ctx: ResolveContext,
+  type: string,
+  names: readonly string[]
+): Promise<Candidate[]> {
+  const out: Candidate[] = []
+  for (const name of names) {
+    const score = sql<number>`greatest(similarity(${knowledgeEntities.name}, ${name}), word_similarity(${name}, ${knowledgeEntities.name}), word_similarity(${knowledgeEntities.name}, ${name}), coalesce((select max(greatest(similarity(a, ${name}), word_similarity(${name}, a))) from unnest(${knowledgeEntities.aliases}) as a), 0))`
+    const rows = await ctx.db
+      .select({
+        id: knowledgeEntities.id,
+        name: knowledgeEntities.name,
+        promotedType: knowledgeEntities.promotedType,
+        promotedId: knowledgeEntities.promotedId,
+        score: sql<number>`(${score})::float8`,
+      })
+      .from(knowledgeEntities)
+      .where(
+        and(
+          eq(knowledgeEntities.tenantId, ctx.tenantId),
+          eq(knowledgeEntities.type, type),
+          isNull(knowledgeEntities.mergedInto),
+          sql`${score} >= ${NEARBY_SCORE}`
+        )
+      )
+      .orderBy(sql`${score} desc`)
+      .limit(NEARBY_LIMIT)
+    for (const row of rows) {
+      const promoted = row.promotedType === type && row.promotedId
+      out.push({
+        kind: promoted ? 'domain' : 'staging',
+        id: promoted ? (row.promotedId as string) : row.id,
+        label: row.name,
+        // Never above the review band: nearness is a reason to ask, not to link.
+        score: Math.min(Number(row.score), REVIEW_THRESHOLD - 0.01),
+        exact: false,
+      })
+    }
+  }
+  return out
+}
+
 /**
- * Resolve one mention of a registered type to an entity, creating a staging entity when nothing
- * links. `cache` (per extraction run) answers a repeated mention without another lookup.
+ * Decide what one mention of a registered type is, WITHOUT writing a new entity: a link to an
+ * existing one (`resolveMention`'s rules — the mention's names are added to a linked staging
+ * entity's aliases), or the staging entity it would become (`create`), with its review item and
+ * the nearby candidates a judge may be asked about. `commitPlanned` writes a plan.
  */
-export async function resolveMention(
+export async function planMention(
   ctx: ResolveContext,
   reg: EntityTypeRegistration,
-  mention: Mention,
-  cache?: Map<string, ResolvedEntity>
-): Promise<ResolvedEntity> {
+  mention: Mention
+): Promise<MentionPlan> {
   const names = namesOf(mention)
   const primary = names[0] ?? mention.name.trim()
-  const cacheKey = `${reg.type}:${normaliseName(primary)}`
-  const cached = cache?.get(cacheKey)
-  if (cached) return cached
-
   const candidates = new Map<string, Candidate>()
   const resolver = resolverFor(reg)
   if (resolver) {
@@ -242,44 +311,111 @@ export async function resolveMention(
       choice = chooseCandidate([...candidates.values()])
     }
   }
-
-  let resolved: ResolvedEntity
   if ('link' in choice) {
     const { link } = choice
     if (link.kind === 'staging') await addAliases(ctx, link.id, names)
-    resolved = {
-      kind: link.kind,
-      id: link.id,
-      name: link.label,
-      created: false,
-      possibleMatch: false,
-    }
-  } else {
-    const review = 'review' in choice ? choice.review : null
-    const [row] = await ctx.db
-      .insert(knowledgeEntities)
-      .values({
-        tenantId: ctx.tenantId,
-        type: reg.type,
-        name: primary,
-        aliases: names.slice(1),
-        embedding: embedding?.vector ?? null,
-        embeddingModel: embedding?.model ?? null,
-        possibleMatches: review
-          ? review.map(({ exact: _exact, ...c }) => ({ ...c, score: round(c.score) }))
-          : null,
-        reviewerUserId: review ? ctx.reviewerUserId : null,
-      })
-      .returning({ id: knowledgeEntities.id, name: knowledgeEntities.name })
-    if (!row) throw new Error('knowledge_entities: insert returned no row')
-    resolved = {
-      kind: 'staging',
-      id: row.id,
-      name: row.name,
-      created: true,
-      possibleMatch: review !== null,
+    return {
+      link: {
+        kind: link.kind,
+        id: link.id,
+        name: link.label,
+        created: false,
+        possibleMatch: false,
+      },
     }
   }
+  const nearby = new Map(candidates)
+  for (const c of await nearbyStaging(ctx, reg.type, names)) merge(nearby, c)
+  if (embedding) {
+    for (const c of await embeddingCandidates(ctx, reg.type, embedding, EMBED_NEARBY_COSINE)) {
+      merge(nearby, c)
+    }
+  }
+  const strip = ({ exact: _exact, ...c }: Candidate): MentionCandidate => ({
+    ...c,
+    score: round(c.score),
+  })
+  return {
+    create: {
+      type: reg.type,
+      names: names.length > 0 ? names : [primary],
+      embedding,
+      review: 'review' in choice ? choice.review.map(strip) : null,
+      nearby: [...nearby.values()]
+        .filter(c => c.score >= NEARBY_SCORE)
+        .sort((a, b) => b.score - a.score)
+        .slice(0, NEARBY_LIMIT)
+        .map(strip),
+    },
+  }
+}
+
+/**
+ * Write a planned staging entity. `review: false` drops its possible-match item (a judge said,
+ * confidently, that it is none of them).
+ */
+export async function commitPlanned(
+  ctx: ResolveContext,
+  plan: PlannedEntity,
+  options: { review: boolean } = { review: true }
+): Promise<ResolvedEntity> {
+  const review = options.review ? plan.review : null
+  const [row] = await ctx.db
+    .insert(knowledgeEntities)
+    .values({
+      tenantId: ctx.tenantId,
+      type: plan.type,
+      name: plan.names[0] as string,
+      aliases: plan.names.slice(1),
+      embedding: plan.embedding?.vector ?? null,
+      embeddingModel: plan.embedding?.model ?? null,
+      possibleMatches: review,
+      reviewerUserId: review ? ctx.reviewerUserId : null,
+    })
+    .returning({ id: knowledgeEntities.id, name: knowledgeEntities.name })
+  if (!row) throw new Error('knowledge_entities: insert returned no row')
+  return {
+    kind: 'staging',
+    id: row.id,
+    name: row.name,
+    created: true,
+    possibleMatch: review !== null,
+  }
+}
+
+/** Link a mention to a candidate a judge chose: a staging one gains the mention's names. */
+export async function linkPlanned(
+  ctx: ResolveContext,
+  plan: PlannedEntity,
+  candidate: MentionCandidate
+): Promise<ResolvedEntity> {
+  if (candidate.kind === 'staging') await addAliases(ctx, candidate.id, plan.names)
+  return {
+    kind: candidate.kind,
+    id: candidate.id,
+    name: candidate.label,
+    created: false,
+    possibleMatch: false,
+  }
+}
+
+/**
+ * Resolve one mention of a registered type to an entity, creating a staging entity when nothing
+ * links (`planMention` then `commitPlanned`). `cache` (per extraction run) answers a repeated
+ * mention without another lookup.
+ */
+export async function resolveMention(
+  ctx: ResolveContext,
+  reg: EntityTypeRegistration,
+  mention: Mention,
+  cache?: Map<string, ResolvedEntity>
+): Promise<ResolvedEntity> {
+  const names = namesOf(mention)
+  const primary = names[0] ?? mention.name.trim()
+  const cached = cache?.get(`${reg.type}:${normaliseName(primary)}`)
+  if (cached) return cached
+  const plan = await planMention(ctx, reg, mention)
+  const resolved = 'link' in plan ? plan.link : await commitPlanned(ctx, plan.create)
   if (cache) for (const n of names) cache.set(`${reg.type}:${normaliseName(n)}`, resolved)
   return resolved
 }

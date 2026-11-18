@@ -225,3 +225,15 @@ export function valueKey(value: unknown): string {
   }
   return `j:${JSON.stringify(value)}`
 }
+
+/**
+ * What a stored fact is compared by: the entity it names (`value_ref`, a `refs` key — "Marcus"
+ * and "Marcus Bell" resolved to one person compare equal), else its `valueKey`.
+ */
+export function factCompareKey(fact: { value: unknown; valueRef?: string | null }): string {
+  return fact.valueRef ? `e:${fact.valueRef}` : valueKey(fact.value)
+}
+
+/** `value_ref` for an entity: `<kind>:<type>:<id>`. */
+export const valueRefOf = (entity: { kind: string; type: string; id: string }) =>
+  `${entity.kind}:${entity.type}:${entity.id}`

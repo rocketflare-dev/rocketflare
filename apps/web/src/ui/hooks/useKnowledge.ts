@@ -1,6 +1,7 @@
 /**
  * Knowledge facts (D43): the review list (`GET /api/knowledge/review`), the count of MY open
- * items for the Knowledge nav badge, an entity page (`GET /entities/:type/:id`), and the actions
+ * items for the Knowledge nav badge, an entity page (`GET /entities/:type/:id`), the browse reads
+ * (a document's facts, `GET /documents/:id/facts`; the Facts view, `GET /entities`), and the actions
  * that settle an item — `POST /facts/:id/review { confirm | reject | prefer }`, and
  * `POST /entities/:id/merge | promote | keep-separate`.
  *
@@ -14,6 +15,7 @@
  * without `knowledge-facts` never fires a request that would 404.
  */
 import {
+  documentFactsResponseSchema,
   type EntityActionResponse,
   type EntityTarget,
   entityActionResponseSchema,
@@ -22,7 +24,9 @@ import {
   type FactReviewResponse,
   factReviewResponseSchema,
   type KNOWLEDGE_REVIEW_KINDS,
+  knowledgeEntityListSchema,
   knowledgeReviewListSchema,
+  mentionedFactsResponseSchema,
 } from '@rocketflare/shared/ai/knowledge-facts'
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ApiError, api, showToast } from '@/ui/lib/api-client'
@@ -133,4 +137,68 @@ export function useKeepEntitySeparate() {
       showErrorToast: false,
     })
   )
+}
+
+/**
+ * The Search page's facts block: the facts about the entities a query names
+ * (`GET /api/knowledge/mentioned?q=`). Keyed on the query, so a repeated search is a cache hit.
+ */
+export function useMentionedFacts(q: string, enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.knowledge.mentioned(q),
+    queryFn: () =>
+      api.get(`/api/knowledge/mentioned${toSearchParams({ q })}`, {
+        schema: mentionedFactsResponseSchema,
+      }),
+    enabled: enabled && q.trim().length > 0,
+  })
+}
+
+/** `GET /api/knowledge/documents/:id/facts` — the document viewer's Facts tab. */
+export function useDocumentFacts(documentId: string | undefined, enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.knowledge.documentFacts(documentId ?? ''),
+    queryFn: () =>
+      api.get(`/api/knowledge/documents/${encodeURIComponent(documentId ?? '')}/facts`, {
+        schema: documentFactsResponseSchema,
+      }),
+    enabled: enabled && Boolean(documentId),
+  })
+}
+
+export interface EntityListFilters {
+  page?: number
+  pageSize?: number
+  /** Entity types, comma-joined on the wire. */
+  types?: string[]
+  /** Source kinds, comma-joined on the wire. */
+  sourceKinds?: string[]
+  needsLook?: boolean
+  q?: string
+}
+
+/** The wire form of the Facts view's filters — empty parts dropped, lists comma-joined. */
+export function entityListParams(filters: EntityListFilters): Record<string, string | number> {
+  return cleanFilters({
+    page: filters.page,
+    pageSize: filters.pageSize,
+    type: filters.types?.length ? filters.types.join(',') : undefined,
+    sourceKind: filters.sourceKinds?.length ? filters.sourceKinds.join(',') : undefined,
+    needsLook: filters.needsLook ? 'true' : undefined,
+    q: filters.q?.trim() || undefined,
+  }) as Record<string, string | number>
+}
+
+/** `GET /api/knowledge/entities` — the Knowledge page's Facts view (a browse list, not a queue). */
+export function useKnowledgeEntities(filters: EntityListFilters, enabled = true) {
+  const params = entityListParams(filters)
+  return useQuery({
+    queryKey: queryKeys.knowledge.entities(params),
+    queryFn: () =>
+      api.get(`/api/knowledge/entities${toSearchParams(params)}`, {
+        schema: knowledgeEntityListSchema,
+      }),
+    enabled,
+    placeholderData: keepPreviousData,
+  })
 }

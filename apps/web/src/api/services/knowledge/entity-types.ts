@@ -23,10 +23,15 @@
  *         facts: z.object({
  *           contact_name: z.string().describe('The main contact at the customer'),
  *           renewal_date: z.iso.date().describe('When the contract renews'),
+ *           // A closed set is an enum: its wordings are decided here, not compared as text.
+ *           billing: z.enum(['monthly', 'quarterly', 'annual']).describe('How often it is invoiced'),
  *         }),
+ *         // A key whose value NAMES another entity: resolved like any mention, compared by entity.
+ *         refs: { contact_name: 'person' },
  *       },
  *       // A type with NO table lives only as staging entities until somebody promotes one:
  *       { type: 'supplier', label: 'Supplier', facts: z.object({ lead_time_days: z.number() }) },
+ *       { type: 'person', label: 'Person', facts: z.object({ job_title: z.string() }) },
  *     ]
  *
  * Add `resolve: (name, scope) => …` when label similarity is the wrong match (an order NUMBER);

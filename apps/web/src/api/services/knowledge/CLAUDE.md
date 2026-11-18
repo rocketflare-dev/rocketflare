@@ -9,7 +9,9 @@ and why: `docs/CONCEPTS.md` §9 "Knowledge facts".
 | `enqueue.ts` | `enqueueKnowledgeExtraction` — flag + registered types, never throws (reached lazily from `ai/ingest.ts`) |
 | `extract.ts` | `extractDocumentFacts(db, cfg, env, input, deps)` — the `knowledge.extract` job body; `deps.types` overrides the registry (the eval) |
 | `entities.ts` | `resolveMention` — domain resolver → staging trigram → staging embedding → new staging entity; `chooseCandidate` and the thresholds; `findEntitiesByName` / `entitiesMentionedIn` for the readers |
-| `state.ts` | `decideFactState` — the state table, pure |
+| `state.ts` | `decideFactState` — the state table, pure; reads a `JudgedPair` |
+| `judge.ts` | `createKnowledgeJudge` / `knowledgeJudgeFor` — the decision-model questions (same entity? same value?) over `resolveDecisions`, prompt key `knowledge-decide` |
+| `judgements.ts` | `knowledge_value_judgements`: `loadJudged` (→ `JudgedPair`), `storeJudgements`, `moveJudgements` (merge / promote) |
 | `facts-sql.ts` | the SQL every reader shares: `restoredStateSql` / `restoredState` (what a fact returns to with no conflict), `visibleConflictsSql(scope)`, `entityVisibleSql(scope)` |
 | `facts-read.ts` | the reader's view: `selectFacts` (inner join `documents` + `visibleDocuments`), `readVisibleFact`, `getEntityCard`, `listReviewItems` |
 | `review.ts` | `reviewFact` (confirm / reject / prefer), `mergeEntity`, `promoteEntity`, `keepEntitySeparate` (each nudges after commit), `recomputeKey` |
@@ -24,6 +26,12 @@ and why: `docs/CONCEPTS.md` §9 "Knowledge facts".
   candidate that fails any of it is DROPPED, never repaired by a guess. A section's candidates are
   checked TOGETHER before any is written: two values for one entity and key over the same window
   are a misreading and both drop (`ambiguous`) — never "keep the first"
+- **No string rules for meaning.** Whether "per call-out" is "per visit", "Marcus" is "Marcus
+  Bell" or two service names are one service is a decision-model question (`judge.ts`), never a
+  normaliser, alias list or language rule here. Code acts only on a confident answer
+  (`JUDGE_MIN_PROBABILITY`); unsure, failed or absent keeps the literal rule. A closed set belongs
+  in the type as a `z.enum`, a key naming another entity in `refs` (stored as `value_ref`, compared
+  by `factCompareKey`, never judged as text)
 - **Dates are resolved against the document's date** (`documents.created_at` — what an integration
   or the eval back-dates), never by the model: `resolveDatePhrase` answers an ISO day or `null`,
   and `null` drops the fact. UK numeric order, always. Unit tests in
@@ -34,7 +42,7 @@ and why: `docs/CONCEPTS.md` §9 "Knowledge facts".
   them from the conflicts they caused) — so a redelivery or a re-index is idempotent
 - **…except a person's decisions.** `removeDocumentFacts(…, { keepDecided: true })` keeps every
   fact with `confirmed_at` set or state `rejected`; a new reading with the same entity, key and
-  value (`matchDecided`, same validity preferred) REUSES that row (`keepDecidedFact`: new citation,
+  value — or one stored as judged `same` (`matchDecided`, same validity preferred) — REUSES that row (`keepDecidedFact`: new citation,
   confidence, validity — never `state`, `confirmed_*` or `conflicts_with`). What the run did not
   re-read is deleted at the end unless a section failed. Never move this to memory: a retried run
   must still find the decisions (tests: `knowledge-extract.test.ts` "a person’s decision survives")
