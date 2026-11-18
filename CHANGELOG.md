@@ -6,6 +6,11 @@ copy of the kit forward without recreating anything its owner deleted.
 
 If you are running a copy: `pnpm kit:upgrade` tells you which of these you are missing.
 
+## 0.38.0 — 2026-11-18
+
+Knowledge is easier to explore and its facts more trustworthy: a filtered full-width Search page, facts on each document and in a Facts view, and a decision model judging whether two readings name one entity or value.
+[Porting note](docs/upgrades/0.38.0.md).
+
 ## 0.37.0 — 2026-11-18
 
 The knowledge base becomes measurable and structure-aware: eval corpora, structured chunks, model-consistent search with re-embedding, dedupe, retry, reranking, metered spend, and typed knowledge facts extracted from documents behind a `knowledge-facts` flag.
