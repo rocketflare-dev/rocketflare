@@ -6,6 +6,11 @@ copy of the kit forward without recreating anything its owner deleted.
 
 If you are running a copy: `pnpm kit:upgrade` tells you which of these you are missing.
 
+## 0.39.0 — 2026-11-19
+
+Agent runs survive crashes and cancels: the tool loop records each model turn and tool result, so a retry neither re-bills a turn nor re-runs a finished tool; a cancel reaches the call in flight; a cron settles lost runs.
+[Porting note](docs/upgrades/0.39.0.md).
+
 ## 0.38.0 — 2026-11-18
 
 Knowledge is easier to explore and its facts more trustworthy: a filtered full-width Search page, facts on each document and in a Facts view, and a decision model judging whether two readings name one entity or value.
