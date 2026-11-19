@@ -52,6 +52,34 @@ export function visibleConflictsSql(scope: AccessScope): SQL<string[]> {
 }
 
 /**
+ * Is the outer fact `superseded` only by a fact the reader may not see? Then, for that reader, it
+ * is the fact nothing replaced: it reads as its restored state (`restoredState`), with no
+ * `supersededById`, and it is answerable and current like any other — else a hidden document
+ * would leak "a later source you cannot see replaced this". Admin-level readers: never.
+ */
+export function supersededOutOfViewSql(scope: AccessScope): SQL {
+  if (scope.bypass) return sql`false`
+  return sql`(${knowledgeFacts.state} = 'superseded' and ${knowledgeFacts.supersededById} is not null and not exists (select 1 from ${sql.raw('knowledge_facts kf2')} inner join ${documents} on ${documents.id} = kf2.document_id where kf2.tenant_id = ${scope.tenantId} and kf2.id = ${knowledgeFacts.supersededById} and ${visibleDocumentIn(scope)}))`
+}
+
+/**
+ * The outer fact's state is one of `states` IN THE READER'S VIEW — stored so, or superseded out of
+ * their view (`supersededOutOfViewSql`) when `states` holds the state it then reads as.
+ */
+export function stateInViewSql(scope: AccessScope, states: readonly string[]): SQL {
+  const stored = sql`${knowledgeFacts.state} in (${sql.join(
+    states.map(s => sql`${s}`),
+    sql`, `
+  )})`
+  const restored = states.filter(s => s === 'accepted' || s === 'unconfirmed')
+  if (scope.bypass || restored.length === 0) return stored
+  return sql`(${stored} or (${supersededOutOfViewSql(scope)} and ${restoredStateSql} in (${sql.join(
+    restored.map(s => sql`${s}`),
+    sql`, `
+  )})))`
+}
+
+/**
  * Is the outer `knowledge_entities` row visible to the reader? Admin-level: always. Otherwise
  * when at least one fact the reader may see is about it — or about where it went (the staging
  * entity it was merged into, the domain row it was promoted to). A staging entity has no

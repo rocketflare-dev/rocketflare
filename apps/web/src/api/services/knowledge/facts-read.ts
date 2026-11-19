@@ -6,8 +6,9 @@
  * reader cannot open is, for them, a fact nobody disagrees with: it reads as the state it would
  * return to if those were gone (`restoredState` — `accepted` or `unconfirmed`), and its
  * `conflictsWith` names only visible facts. Otherwise a hidden document would leak one bit — "a
- * source you cannot see says otherwise". Admin-level readers see every fact, so their view IS
- * the stored state.
+ * source you cannot see says otherwise". A fact `superseded` by a fact from such a document reads
+ * the same way — its restored state, `supersededById` null — and is answerable and current for
+ * them (`stateInViewSql`). Admin-level readers see every fact, so their view IS the stored state.
  *
  * Here: `selectFacts` (the one query), `toFact` / `viewState`, entity names (`entityNames`),
  * `getEntityCard`, `listReviewItems` (`GET /api/knowledge/review`), and the browse reads —
@@ -55,7 +56,13 @@ import {
 } from '../../../db/schema'
 import { NotFoundError } from '../../utils/core/errors'
 import { type AccessScope, visibleDocuments } from '../access'
-import { entityVisibleSql, restoredState, visibleConflictsSql } from './facts-sql'
+import {
+  entityVisibleSql,
+  restoredState,
+  stateInViewSql,
+  supersededOutOfViewSql,
+  visibleConflictsSql,
+} from './facts-sql'
 import { knowledgeEntityType, knowledgeEntityTypes } from './registry'
 import { resolverFor } from './resolve'
 import { ACCEPT_CONFIDENCE } from './state'
@@ -67,6 +74,8 @@ export interface ReadFact {
   row: KnowledgeFactRow
   documentTitle: string
   visibleConflicts: string[]
+  /** Superseded only by a fact the reader may not see (`supersededOutOfViewSql`). */
+  supersededOutOfView: boolean
 }
 
 /** The tenant predicate AND the document's visibility — the base of every fact read. */
@@ -86,6 +95,7 @@ export async function selectFacts(
       row: getTableColumns(knowledgeFacts),
       documentTitle: documents.title,
       visibleConflicts: visibleConflictsSql(scope),
+      supersededOutOfView: sql<boolean>`${supersededOutOfViewSql(scope)}`,
     })
     .from(knowledgeFacts)
     .innerJoin(
@@ -101,6 +111,7 @@ export async function selectFacts(
     row: r.row as KnowledgeFactRow,
     documentTitle: r.documentTitle,
     visibleConflicts: parseIds(r.visibleConflicts),
+    supersededOutOfView: r.supersededOutOfView === true,
   }))
 }
 
@@ -113,6 +124,7 @@ function parseIds(value: unknown): string[] {
 export function viewState(fact: ReadFact): FactState {
   const { row } = fact
   if (row.state === 'conflicting' && fact.visibleConflicts.length === 0) return restoredState(row)
+  if (row.state === 'superseded' && fact.supersededOutOfView) return restoredState(row)
   return row.state
 }
 
@@ -139,7 +151,7 @@ export function toFact(fact: ReadFact): Fact {
     },
     confidence: row.confidence,
     state: viewState(fact),
-    supersededById: row.supersededById,
+    supersededById: fact.supersededOutOfView ? null : row.supersededById,
     conflictsWith: fact.visibleConflicts,
     validFrom: row.validFrom,
     validTo: row.validTo,
@@ -401,11 +413,12 @@ const OPEN_STATES = sql.raw(OPEN_REVIEW_FACT_STATES.map(s => `'${s}'`).join(', '
 
 /**
  * Is the outer fact an open item IN THE READER'S VIEW? Stored `unconfirmed` always is; stored
- * `conflicting` is when a conflict is visible, or when it would read `unconfirmed` without them.
+ * `conflicting` is when a conflict is visible, or when it would read `unconfirmed` without them;
+ * superseded out of their view is when it reads `unconfirmed`.
  */
 function openForReader(scope: AccessScope): SQL {
   if (scope.bypass) return sql`${knowledgeFacts.state} in (${OPEN_STATES})`
-  return sql`(${knowledgeFacts.state} = 'unconfirmed' or (${knowledgeFacts.state} = 'conflicting' and (json_array_length(${visibleConflictsSql(scope)}) > 0 or (${knowledgeFacts.confirmedAt} is null and ${knowledgeFacts.confidence} < ${ACCEPT_CONFIDENCE}))))`
+  return sql`(${stateInViewSql(scope, ['unconfirmed'])} or (${knowledgeFacts.state} = 'conflicting' and (json_array_length(${visibleConflictsSql(scope)}) > 0 or (${knowledgeFacts.confirmedAt} is null and ${knowledgeFacts.confidence} < ${ACCEPT_CONFIDENCE}))))`
 }
 
 export interface ReviewReader {
@@ -682,10 +695,7 @@ export async function listKnowledgeEntities(
   total: number
   facets: KnowledgeEntityList['facets']
 }> {
-  const current = and(
-    visibleFactsWhere(scope),
-    inArray(knowledgeFacts.state, [...CURRENT_FACT_STATES])
-  )
+  const current = and(visibleFactsWhere(scope), stateInViewSql(scope, CURRENT_FACT_STATES))
   const where = and(
     current,
     query.type?.length ? inArray(knowledgeFacts.entityType, query.type) : undefined,

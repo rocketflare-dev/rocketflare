@@ -977,7 +977,13 @@ Server: `api/services/{ai,agents}/**` (read their `CLAUDE.md`), `services/prompt
   stored chunks (≤ 12,000 characters, one chunk never split); each section is ONE forced
   `submit_facts` call (`callStructuredTool`) carrying the types with each key's JSON schema and
   `.describe()`, the document's title and date, the known entities the section names (with their
-  accepted facts) and the other known names. **Model**: `resolveChat` under prompt key
+  accepted facts) and the other known names. That material — and the facts a decision model is
+  shown below — is built only from TENANT-VISIBLE documents, whatever the visibility of the one
+  being read: everyone who may open the document may open those, so a value or a name from a
+  group-restricted document never reaches the prompt and cannot be copied into a document with a
+  wider audience (a group-restricted document's own earlier facts are not shown either; states
+  are still decided against every fact the tenant holds, and readers mask what they cannot see).
+  **Model**: `resolveChat` under prompt key
   `knowledge-extract`, so Settings → agent models can point it at a cheaper model — not TypeSafe's
   Jev (D37), whose typed questions answer one choice, score or yes/no, not a list of facts with
   quotes. **The model proposes, code decides**: a candidate survives only if its quote occurs
@@ -992,7 +998,10 @@ Server: `api/services/{ai,agents}/**` (read their `CLAUDE.md`), `services/prompt
   (`entities.ts`): the type's resolver (domain rows), then staging entities by trigram over name and
   aliases (`LINK_THRESHOLD` 0.6 links one clear candidate; 0.45–0.6, or a tie, is a possible match
   on a NEW staging entity with a reviewer), then — only when nothing linked — the name's embedding
-  (cosine ≥ 0.9 adds a review candidate, never a link), else a new staging entity. The thresholds
+  (cosine ≥ 0.9 adds a review candidate, never a link), else a new staging entity. Only a
+  tenant-visible document adds names to an entity (aliases of the one it links to, or of the one it
+  creates): an entity is shared by every document naming it and its aliases are shown and searched
+  wherever it is visible. The thresholds
   come from the fixture: "Harbour View Dental" / "…Practice Ltd" 0.61, "Riverside Lodge" / "…Care
   Home" 0.62 must link; "Harbourside Dental Lab" / "Harbour View Dental" 0.48 and "Northgate Vets" /
   "…Veterinary Surgery" 0.43 must not. **State** (`state.ts`) against the answerable facts held
@@ -1056,7 +1065,12 @@ Server: `api/services/{ai,agents}/**` (read their `CLAUDE.md`), `services/prompt
   entity known only from such documents. A fact `conflicting` only with hidden facts reads, for
   that reader, as the state it would return to without them (`accepted` / `unconfirmed`), and its
   `conflicts_with` names only visible facts — a hidden document must not leak even "another source
-  disagrees". Admin-level readers see everything. **Review API** (`/api/knowledge`, behind
+  disagrees". A fact `superseded` only by a hidden fact reads the same way — its restored state,
+  `superseded_by_id` null — and is answerable (`lookup_facts`), current (`GET /entities` counts)
+  and reviewable for that reader; a `confirm` by them records the confirmation and leaves the
+  stored supersession for the readers who can see it. `lookup_facts` and `search_knowledge` resolve
+  names through the reader's view too, so an entity known only from hidden documents answers like
+  a name nobody knows. Admin-level readers see everything. **Review API** (`/api/knowledge`, behind
   `requireFeature('knowledge-facts')` → 404 `feature_disabled` when off; CASL subject
   `KnowledgeFact`: member `read` + `update`, admin+ `manage`): `GET /review` (open facts and
   possible matches addressed to me — everyone's for `manage KnowledgeFact`, `?mine=true` narrows —
@@ -1251,7 +1265,10 @@ knowledge metering: Workers AI embeddings and rerank tokens are character estima
 timed out is recorded as billed, platform-document ingest (tenant-less) is unmetered, and
 platform documents are never extracted; knowledge facts: about one flag in five is a false
 alarm on the fixture (18 % over five Haiku runs, 0–24 % run to run; 10 % was the aim), mostly
-misread values; Promote asks for the domain row's id
+misread values; an entity's NAME is the first document's wording, so one created from a
+group-restricted document keeps that name once a tenant-visible document links to it, aliases
+stored by an earlier release stay on their entity, and entity resolution (not the prompt) still
+compares a mention with every staging entity of the tenant; Promote asks for the domain row's id
 (there is no picker searching the type's rows); `search_knowledge`'s facts block finds only entities with a staging row
 (a domain row that never had one is reached through `lookup_facts`' resolver, not by being named
 in a query); a person's decision survives re-extraction when the new reading repeats the fact's

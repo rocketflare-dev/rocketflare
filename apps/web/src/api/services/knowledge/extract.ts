@@ -22,7 +22,8 @@
  *    already begin and end at headings, so a section does too) — `buildSections`.
  * 4. **One model call per section**: the `knowledge-extract` prompt, then the types with each one's
  *    facts JSON schema, the document's title and date, the known entities the section mentions
- *    (names or aliases found in its text) with their accepted facts, and the section; ONE forced
+ *    (names or aliases found in its text) with their accepted facts — both from tenant-visible
+ *    documents only (`promptScope`) — and the section; ONE forced
  *    `submit_facts` call (`callStructuredTool`) on `resolveChat(…, { promptKey:
  *    'knowledge-extract' })`. Metered as `knowledge.extraction`.
  * 5. **Per candidate**: a registered type and key; the value through the key's schema
@@ -63,6 +64,7 @@ import type { Tracer } from '../../observability/tracer'
 import { traceChatClient, withAgentTrace } from '../../observability/tracing'
 import type { Logger } from '../../utils/core/logger'
 import { stripControlChars } from '../../utils/core/text'
+import { type AccessScope, visibleDocuments } from '../access'
 import { callStructuredTool, StructuredOutputError } from '../ai/agent-loop'
 import { AiNotConfiguredError } from '../ai/errors'
 import { type ResolvedChat, resolveChat, resolveEmbeddings } from '../ai/resolve'
@@ -89,7 +91,7 @@ import {
   type ResolveContext,
   type ResolvedEntity,
 } from './entities'
-import { restoredStateSql } from './facts-sql'
+import { entityVisibleSql, restoredStateSql } from './facts-sql'
 import {
   type EntityQuestion,
   type KnowledgeJudge,
@@ -294,6 +296,22 @@ function mentions(text: string, name: string): boolean {
   return new RegExp(`(^|[^\\p{L}\\p{N}])${escapeRe(n)}(?=$|[^\\p{L}\\p{N}])`, 'iu').test(text)
 }
 
+/**
+ * Whose view the material a model is SHOWN while it reads a document is built from: a reader who
+ * sees only tenant-visible documents. Everyone who may open the document being read may open
+ * those, so the known entities, their accepted facts and the held values a judge compares never
+ * carry a name or a value from a group-restricted document — which a model could otherwise copy
+ * into a document with a wider audience. Writing is unaffected: a fact's state is still decided
+ * against every fact the tenant holds, and the readers mask what they cannot see.
+ */
+function promptScope(tenantId: string): AccessScope {
+  return { tenantId, userId: null, groupIds: [], bypass: false }
+}
+
+/** `documents` joined to the outer `knowledge_facts` row, in the tenant. */
+const factDocument = (tenantId: string) =>
+  and(eq(documents.id, knowledgeFacts.documentId), eq(documents.tenantId, tenantId))
+
 async function knownEntities(
   db: Database,
   tenantId: string,
@@ -312,7 +330,8 @@ async function knownEntities(
       and(
         eq(knowledgeEntities.tenantId, tenantId),
         inArray(knowledgeEntities.type, [...types]),
-        isNull(knowledgeEntities.mergedInto)
+        isNull(knowledgeEntities.mergedInto),
+        entityVisibleSql(promptScope(tenantId))
       )
     )
     .orderBy(asc(knowledgeEntities.createdAt))
@@ -333,12 +352,14 @@ async function acceptedFactsOf(
       valueText: knowledgeFacts.valueText,
     })
     .from(knowledgeFacts)
+    .innerJoin(documents, factDocument(tenantId))
     .where(
       and(
         eq(knowledgeFacts.tenantId, tenantId),
         eq(knowledgeFacts.entityKind, 'staging'),
         inArray(knowledgeFacts.entityId, [...entityIds]),
-        eq(knowledgeFacts.state, 'accepted')
+        eq(knowledgeFacts.state, 'accepted'),
+        visibleDocuments(promptScope(tenantId))
       )
     )
     .orderBy(asc(knowledgeFacts.observedAt))
@@ -833,6 +854,7 @@ async function runExtraction(
   const resolveCtx: ResolveContext = {
     db,
     tenantId,
+    documentVisibility: visibility,
     reviewerUserId,
     embedName: await nameEmbedder(db, cfg, env, tenantId, doc.ownerUserId),
   }
@@ -1216,6 +1238,7 @@ async function factLinesOf(
       valueText: knowledgeFacts.valueText,
     })
     .from(knowledgeFacts)
+    .innerJoin(documents, factDocument(tenantId))
     .where(
       and(
         eq(knowledgeFacts.tenantId, tenantId),
@@ -1223,7 +1246,8 @@ async function factLinesOf(
         inArray(
           knowledgeFacts.entityId,
           refs.map(r => r.id)
-        )
+        ),
+        visibleDocuments(promptScope(tenantId))
       )
     )
     .orderBy(asc(knowledgeFacts.observedAt))
@@ -1336,7 +1360,7 @@ async function judgeValues(
         title: documents.title,
       })
       .from(knowledgeFacts)
-      .innerJoin(documents, eq(documents.id, knowledgeFacts.documentId))
+      .innerJoin(documents, factDocument(tenantId))
       .where(
         and(
           eq(knowledgeFacts.tenantId, tenantId),
@@ -1344,7 +1368,8 @@ async function judgeValues(
           eq(knowledgeFacts.entityType, ref.type),
           eq(knowledgeFacts.entityId, ref.id),
           eq(knowledgeFacts.key, p.key),
-          inArray(knowledgeFacts.state, [...ANSWERABLE_FACT_STATES])
+          inArray(knowledgeFacts.state, [...ANSWERABLE_FACT_STATES]),
+          visibleDocuments(promptScope(tenantId))
         )
       )
     if (held.length === 0) continue

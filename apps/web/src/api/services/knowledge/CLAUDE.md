@@ -8,11 +8,11 @@ and why: `docs/CONCEPTS.md` §9 "Knowledge facts".
 | `types.ts` · `registry.ts` · `entity-types.ts` · `resolve.ts` | `EntityTypeRegistration`, `knowledgeEntityTypes()` (app + plugin types, validated), `APP_ENTITY_TYPES` (empty in the kit), `resolverFor` / `defaultEntityResolver` |
 | `enqueue.ts` | `enqueueKnowledgeExtraction` — flag + registered types, never throws (reached lazily from `ai/ingest.ts`) |
 | `extract.ts` | `extractDocumentFacts(db, cfg, env, input, deps)` — the `knowledge.extract` job body; `deps.types` overrides the registry (the eval) |
-| `entities.ts` | `resolveMention` — domain resolver → staging trigram → staging embedding → new staging entity; `chooseCandidate` and the thresholds; `findEntitiesByName` / `entitiesMentionedIn` for the readers |
+| `entities.ts` | `resolveMention` — domain resolver → staging trigram → staging embedding → new staging entity; `chooseCandidate` and the thresholds; `findEntitiesByName` / `entitiesMentionedIn` for the readers (through the reader's scope) |
 | `state.ts` | `decideFactState` — the state table, pure; reads a `JudgedPair` |
 | `judge.ts` | `createKnowledgeJudge` / `knowledgeJudgeFor` — the decision-model questions (same entity? same value?) over `resolveDecisions`, prompt key `knowledge-decide` |
 | `judgements.ts` | `knowledge_value_judgements`: `loadJudged` (→ `JudgedPair`), `storeJudgements`, `moveJudgements` (merge / promote) |
-| `facts-sql.ts` | the SQL every reader shares: `restoredStateSql` / `restoredState` (what a fact returns to with no conflict), `visibleConflictsSql(scope)`, `entityVisibleSql(scope)` |
+| `facts-sql.ts` | the SQL every reader shares: `restoredStateSql` / `restoredState` (what a fact returns to with no conflict), `visibleConflictsSql(scope)`, `entityVisibleSql(scope)`, `supersededOutOfViewSql(scope)` / `stateInViewSql(scope, states)` (a fact superseded only by a hidden one) |
 | `facts-read.ts` | the reader's view: `selectFacts` (inner join `documents` + `visibleDocuments`), `readVisibleFact`, `getEntityCard`, `listReviewItems` |
 | `review.ts` | `reviewFact` (confirm / reject / prefer), `mergeEntity`, `promoteEntity`, `keepEntitySeparate` (each nudges after commit), `recomputeKey` |
 | `lookup.ts` | `lookupFacts` (the `lookup_facts` tool) and `factsForQuery` (`search_knowledge`'s facts block) |
@@ -57,10 +57,17 @@ and why: `docs/CONCEPTS.md` §9 "Knowledge facts".
   cap re-enqueues the job for the next UTC day rather than failing it
 - Preference between disagreeing facts is DERIVED (`isPreferredOver` / `preferredFact` in
   `@rocketflare/shared/ai/knowledge-facts`) — never a column
+- **What a model is shown is what every reader of the document may see.** The extraction prompt's
+  known entities and accepted facts, and the facts and held values a judge compares, come from
+  TENANT-VISIBLE documents only (`promptScope` in `extract.ts`), and only a tenant-visible document
+  adds aliases to an entity (`ResolveContext.documentVisibility`). States are still decided against
+  every fact the tenant holds; the readers mask the rest
 - **A fact is read through its document.** Every read joins `documents` and ANDs
   `visibleDocuments(scope)` — never read `knowledge_facts` alone for a person or a model. A hidden
   fact is a 404 (never a 403), a fact conflicting only with hidden ones reads as its restored
-  state, and `conflicts_with` is filtered to visible ids (`visibleConflictsSql`). An action touches
+  state, and `conflicts_with` is filtered to visible ids (`visibleConflictsSql`); a fact superseded
+  only by a hidden one reads as its restored state with no `supersededById`, and is answerable,
+  current and reviewable for that reader (`stateInViewSql` wherever SQL filters on state). An action touches
   only the facts its reviewer can see — except `reject`, which unlinks the rejected fact everywhere
 - **`prefer` rejects, it never supersedes**: superseded means true for an earlier window, and an
   `asOf` lookup and re-extraction would bring it back
