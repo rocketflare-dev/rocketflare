@@ -464,6 +464,28 @@ export async function revokeInvitationsIssuedBy(
   return revoked.map(row => row.id)
 }
 
+/**
+ * A blocked person's authority is gone everywhere, so every pending invitation they issued goes,
+ * in every tenant and whatever their platform flag, in the block's transaction. Unblocking
+ * restores none. Returns the revoked rows, for the caller's nudges after commit.
+ */
+export async function revokeEveryInvitationIssuedBy(
+  tx: Database,
+  userId: string
+): Promise<{ id: string; tenantId: string }[]> {
+  return tx
+    .update(teamInvitations)
+    .set({ revokedAt: new Date() })
+    .where(
+      and(
+        eq(teamInvitations.invitedByUserId, userId),
+        isNull(teamInvitations.acceptedAt),
+        isNull(teamInvitations.revokedAt)
+      )
+    )
+    .returning({ id: teamInvitations.id, tenantId: teamInvitations.tenantId })
+}
+
 async function revokeRow(db: Database, tenantId: string, id: string): Promise<Invitation> {
   const [row] = await db
     .update(teamInvitations)
@@ -516,9 +538,27 @@ export async function getInvitationDetails(
 }
 
 /**
- * The issuer exists, is not blocked, and is a global admin or a member of the invitation's tenant
- * whose role could issue its role (`roleMayIssue`).
+ * What decides whether an invitation's issuer still holds its authority: their user row and their
+ * membership, if any, in the invitation's tenant.
  */
+export interface IssuerStanding {
+  blockedAt: Date | null
+  isGlobalAdmin: boolean
+  /** Their role in the invitation's tenant; null without a membership there. */
+  role: string | null
+}
+
+/**
+ * THE rule an invitation is honoured by, wherever it is honoured — accept, and admission at
+ * sign-up (`hasPendingInvitation`): the issuer exists, is not blocked, and is a global admin or a
+ * member of the invitation's tenant whose role could issue its role (`roleMayIssue`).
+ */
+export function issuerMayIssue(issuer: IssuerStanding | undefined, role: InvitationRole): boolean {
+  if (!issuer || issuer.blockedAt !== null) return false
+  return issuer.isGlobalAdmin || roleMayIssue(issuer.role, role)
+}
+
+/** `issuerMayIssue` over the issuer's rows as they are now. */
 async function issuerMayStillIssue(tx: Database, inv: TeamInvitation): Promise<boolean> {
   const [issuer] = await tx
     .select({
@@ -532,8 +572,7 @@ async function issuerMayStillIssue(tx: Database, inv: TeamInvitation): Promise<b
       and(eq(tenantUsers.userId, users.id), eq(tenantUsers.tenantId, inv.tenantId))
     )
     .where(eq(users.id, inv.invitedByUserId))
-  if (!issuer || issuer.blockedAt !== null) return false
-  return issuer.isGlobalAdmin || roleMayIssue(issuer.role, inv.role)
+  return issuerMayIssue(issuer, inv.role)
 }
 
 /**

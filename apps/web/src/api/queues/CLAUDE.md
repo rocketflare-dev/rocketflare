@@ -30,6 +30,12 @@ per environment. Work over ~30 s or with multiple steps is a Workflow, not a job
 - Poison: an envelope failing `jobEnvelopeSchema` is logged and **`ack()`ed** (retrying cannot make
   it valid). Handler error → `retry({ delaySeconds: backoffSeconds(attempts) })`, 30 s doubling to a
   15 min cap; the toml's `max_retries = 3` ends it. Unknown queue → `ackAll()`
+- **A job naming a tenant runs only while it is `active`**: before dispatch the consumer reads
+  `tenants.status` for a payload `tenantId` (a UUID) and acks the message unrun otherwise —
+  suspended or deleted, kit and plugin jobs alike; `RUN_FOR_ANY_TENANT` (`tenant.purge`,
+  `activity.record`) is the exception list. `afterDropped` leaves a dropped `document.index` /
+  `document.convert`'s `pending` row `failed` for Retry. A test consuming such a job creates the
+  tenant first (`docs/CONCEPTS.md` §1)
 - A permanent failure is acked, a transient one thrown: `document.convert` acks
   `ConversionFailedError` (row `failed`) but THROWS on a missing `FILES` binding (the bytes exist
   and are unreachable); `tenant.purge` ACKS a missing `FILES` (no binding, no objects written)
