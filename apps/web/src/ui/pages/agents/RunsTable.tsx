@@ -18,6 +18,7 @@ import { useAgentRuns } from '@/ui/hooks/useAgents'
 import { useAuth } from '@/ui/hooks/useAuth'
 import { formatDateTime, runDuration } from '@/ui/lib/format'
 import { RunStatusBadge, STATUS_LABELS } from './RunStatusBadge'
+import { LINK_ROW, ROW_LINK } from './rowLink'
 
 /** The filter state, read from and written to the URL so every filtered view is linkable. */
 function useRunFilters() {
@@ -169,14 +170,14 @@ export function RunsTable({
             </thead>
             <tbody>
               {rows.map(run => (
-                <tr key={run.id}>
+                <tr key={run.id} className={LINK_ROW}>
                   <td>
                     <RunStatusBadge status={run.status} />
                   </td>
                   <td className="font-medium">
                     {/* A real link, so middle-click and open-in-new-tab work — half the point of
                         a run being a page. */}
-                    <Link to={`/agents/runs/${run.id}`} className="link link-hover">
+                    <Link to={`/agents/runs/${run.id}`} className={`link link-hover ${ROW_LINK}`}>
                       {fixedAgentKey ? (
                         <span className="font-mono text-xs">{run.id.slice(0, 8)}</span>
                       ) : (

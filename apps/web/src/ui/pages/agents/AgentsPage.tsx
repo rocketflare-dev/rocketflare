@@ -18,6 +18,7 @@ import { timeAgo } from '@/ui/lib/format'
 import { formatAvgDuration, formatTokens, formatUsd, runsSummary } from './agentMetrics'
 import { RunAgentModal } from './RunAgentModal'
 import { RunStatusBadge } from './RunStatusBadge'
+import { ABOVE_ROW, LINK_ROW, ROW_LINK } from './rowLink'
 
 export const STATS_DAYS = 30
 
@@ -133,11 +134,11 @@ function AgentRow({
 }) {
   const metric = (value: string) => (loading ? '…' : value)
   return (
-    <tr data-agent-key={agent.key}>
+    <tr data-agent-key={agent.key} className={LINK_ROW}>
       <td className="min-w-[18rem]">
         <div className="flex items-center gap-2 flex-wrap">
           {/* A real link: the agent's page is where its runs are. */}
-          <Link to={`/agents/${agent.key}`} className="font-medium link link-hover">
+          <Link to={`/agents/${agent.key}`} className={`font-medium link link-hover ${ROW_LINK}`}>
             {agent.title}
           </Link>
           <AgentBadges agent={agent} />
@@ -150,7 +151,7 @@ function AgentRow({
         {stats?.lastRun ? (
           <Link
             to={`/agents/runs/${stats.lastRun.id}`}
-            className="inline-flex items-center gap-2 link link-hover"
+            className={`inline-flex items-center gap-2 link link-hover ${ABOVE_ROW}`}
             aria-label={`Last run of ${agent.title}`}
           >
             <RunStatusBadge status={stats.lastRun.status} />
@@ -171,7 +172,7 @@ function AgentRow({
       <td className="text-right">
         <button
           type="button"
-          className="btn btn-primary btn-xs gap-1"
+          className={`btn btn-primary btn-xs gap-1 ${ABOVE_ROW}`}
           onClick={onRun}
           aria-label={`Run ${agent.title}`}
         >
