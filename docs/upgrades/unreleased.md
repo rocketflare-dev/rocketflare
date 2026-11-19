@@ -107,7 +107,7 @@ Lint (#162):
     - `routes/agents.ts`;
     - `plugins/api/ai.ts`;
     - the shared `agents.ts`, `interrupts.ts` and `errors.ts`.
-15. Add `[version_metadata]` with `binding = "CF_VERSION_METADATA"` to BOTH tomls (and to the test fixtures, if you kept them). Then run `pnpm --filter @rocketflare/web exec wrangler types`.
+15. Add `[version_metadata]` with `binding = "CF_VERSION_METADATA"` to BOTH tomls (and to the test fixtures, if you kept them). Then run `pnpm --filter @rocketflare/web exec wrangler types`. If Launch deploys your app, it must be a Launch release that lets `[version_metadata]` through. Earlier ones refuse the deploy, so add the binding only once your Launch has that release. In `scripts/lib/kit-manifest.mjs`, add `'version_metadata'` to `PROVISIONABLE_BINDING_KINDS`, or `node scripts/kit-check.mjs` fails the tomls.
 16. If one of your agents should not continue across a deploy, set `meta.version` and `onVersionChange`. To have the gate catch a key change that came without a version bump, record a run into `apps/web/tests/agent-recordings/` with `--record`.
 17. If your code lists runs through `GET /api/agents/runs` and expects children, pass `parentRunId`. If your own code called `notifyApprovers`, import it from `services/agents/hitl`.
 18. Copy `services/agents/stats.ts` and add the `/stats` route, plus `agentStats*Schema` in the shared `agents.ts`. Copy `pages/agents/{AgentPage,AllRunsPage,RunsTable,agentMetrics}.tsx` and the new `AgentsPage.tsx`, and add the `/agents/runs` and `/agents/:agentKey` routes to `App.tsx`. Point any link of yours at `/agents?awaiting=1` to `/agents/runs?awaiting=1` instead. If you customised `AgentsPage`, move the runs-table part of your change into `RunsTable.tsx`.

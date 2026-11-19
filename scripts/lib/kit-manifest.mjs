@@ -11,7 +11,11 @@
 export const KIT_MANIFEST_PATH = 'launch.kit.json'
 export const KIT_MANIFEST_SCHEMA_VERSION = 1
 
-/** The Cloudflare binding kinds Launch can provision (Launch's `deploy/binding-check.ts`). */
+/**
+ * The Cloudflare binding kinds Launch's deploy gateway lets through (Launch's
+ * `deploy/binding-check.ts`): what it provisions, plus `version_metadata` — the Worker's own version
+ * id, which reaches no resource and so needs nothing provisioned.
+ */
 export const PROVISIONABLE_BINDING_KINDS = [
   'kv_namespaces',
   'queues',
@@ -20,6 +24,7 @@ export const PROVISIONABLE_BINDING_KINDS = [
   'workflows',
   'ai',
   'assets',
+  'version_metadata',
 ]
 
 const KIT_ID = /^[a-z][a-z0-9-]{1,38}[a-z0-9]$/
