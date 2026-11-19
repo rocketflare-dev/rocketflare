@@ -490,7 +490,6 @@ describe('sso policy', () => {
 
   it('a malformed answer also fails closed; an undeclared method keeps the rule and drops the hint', async () => {
     const malformed = { shared: { id: 'odd' }, ssoPolicy: async () => ({ required: 'yes' }) }
-    // biome-ignore lint/suspicious/noExplicitAny: a plugin answering outside its type is the case
     const bad = await evaluateSsoPolicy([malformed as any], db, cfg, 'j@x.test', silent)
     expect(bad).toMatchObject({ required: true, method: null })
     const undeclared = await evaluateSsoPolicy(

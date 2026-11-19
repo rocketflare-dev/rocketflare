@@ -8,6 +8,9 @@ import { afterEach, expect } from 'vitest'
 // types follow the same rule in `jest-dom-vitest.d.ts`.
 expect.extend(jestDomMatchers)
 
+// jsdom has no layout, so it does not implement scrolling; `ScrollToTop` scrolls on navigation.
+window.scrollTo = () => {}
+
 afterEach(() => {
   cleanup()
   localStorage.clear()

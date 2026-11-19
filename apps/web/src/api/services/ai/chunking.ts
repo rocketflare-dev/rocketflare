@@ -382,7 +382,7 @@ export function chunkText(text: string, options: ChunkOptions = {}): TextChunk[]
         if (k === winRow && winRow < j) k = Math.min(j - 1, winRow + 1) // never repeat a whole window
         first = false
         idx = j
-        winRow = k < j ? k : j
+        winRow = Math.min(k, j)
         winStart = rows[winRow]?.[0] ?? table.end
       }
       if (rows.length === 0) emit(leadStart, table.end)

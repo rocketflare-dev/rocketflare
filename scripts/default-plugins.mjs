@@ -77,7 +77,7 @@ function main(argv) {
     // Tab-separated because a repository URL contains `/` and `:` and a ref may contain `.`; the
     // consuming `while IFS=$'\t' read` loop then needs no quoting rules of its own.
     for (const e of entries) {
-      process.stdout.write([e.id, e.repo, e.ref ?? '', e.subdir ?? ''].join('\t') + '\n')
+      process.stdout.write(`${[e.id, e.repo, e.ref ?? '', e.subdir ?? ''].join('\t')}\n`)
     }
     return 0
   }

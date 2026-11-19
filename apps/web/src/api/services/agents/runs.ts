@@ -865,7 +865,7 @@ async function sendResumeEvent(
  * already proves hyphens are, and 36 + 3 is comfortably inside the 64-character limit.
  */
 export function nextInstanceId(runId: string, current: string | null): string {
-  const match = current && current.startsWith(`${runId}-r`) ? /-r(\d+)$/.exec(current) : null
+  const match = current?.startsWith(`${runId}-r`) ? /-r(\d+)$/.exec(current) : null
   const round = match?.[1] ? Number(match[1]) + 1 : 1
   return `${runId}-r${round}`
 }

@@ -97,12 +97,12 @@ describe('unreleased.md', () => {
   it('exists, parses, and follows the newest release', () => {
     const parsed = parseNote(text)
     expect(parsed).not.toBeNull()
-    expect(parsed!.data.version).toBe('unreleased')
-    expect(parsed!.data.previous).toBe(releases[releases.length - 1])
+    expect(parsed?.data.version).toBe('unreleased')
+    expect(parsed?.data.previous).toBe(releases[releases.length - 1])
   })
 
   it('carries the same four headings a release note must have', () => {
-    for (const heading of NOTE_HEADINGS) expect(parseNote(text)!.body).toContain(heading)
+    for (const heading of NOTE_HEADINGS) expect(parseNote(text)?.body).toContain(heading)
   })
 
   it('is judged by the same function, with no version and no date to check', () => {

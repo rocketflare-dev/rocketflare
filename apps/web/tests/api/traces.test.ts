@@ -129,7 +129,7 @@ describe('/api/traces', () => {
         traceId = trace.traceId
         trace.toolCall({
           name: 'read_document',
-          input: { query: 'in\u0000voice', ['k\u0001ey']: ['a\u0007b'] },
+          input: { query: 'in\u0000voice', 'k\u0001ey': ['a\u0007b'] },
           output: 'Total:\u0000 42\tEUR\r\nPaid\u001F',
           startTime: new Date(),
           endTime: new Date(),

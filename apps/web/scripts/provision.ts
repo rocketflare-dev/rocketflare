@@ -1385,7 +1385,7 @@ function closeOut(flags: Flags, deployed: EnvName[]): void {
   console.log(`
 == close-out checklist ==
 1. Sign in: open ${urls[deployed[0]]}/login and request a magic link for ${cache.adminEmails ?? 'your admin email'}.
-   ${flags.skipEmail ? 'Email is skipped: copy the link from `pnpm web exec wrangler tail' + (deployed[0] === 'staging' ? ' -c wrangler.staging.toml' : '') + '`.' : 'It arrives from the verified Resend domain.'}
+   ${flags.skipEmail ? `Email is skipped: copy the link from \`pnpm web exec wrangler tail${deployed[0] === 'staging' ? ' -c wrangler.staging.toml' : ''}\`.` : 'It arrives from the verified Resend domain.'}
    With SIGNUP_MODE=invite_only the first login lands on /pending — you are the global admin: create the
    first organisation at ${urls[deployed[0]]}/admin.
 2. OAuth (optional): add these redirect URIs to each provider, then \`pnpm provision secrets <env>\` with

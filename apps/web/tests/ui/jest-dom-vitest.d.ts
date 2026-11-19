@@ -11,8 +11,6 @@
 import type { TestingLibraryMatchers } from '@testing-library/jest-dom/matchers'
 
 declare module 'vitest' {
-  // biome-ignore lint/suspicious/noExplicitAny: mirrors jest-dom's own vitest.d.ts
   interface Assertion<T = any> extends TestingLibraryMatchers<any, T> {}
-  // biome-ignore lint/suspicious/noExplicitAny: mirrors jest-dom's own vitest.d.ts
   interface AsymmetricMatchersContaining extends TestingLibraryMatchers<any, any> {}
 }
