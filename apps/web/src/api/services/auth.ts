@@ -23,6 +23,7 @@ import type { Logger } from '../utils/core/logger'
 import { createTenantForUser, getSingleTenant } from '../utils/db/tenant-helpers'
 import { recordActivity } from './activity'
 import { platformFeatures } from './features'
+import { issuerMayIssue } from './invitations'
 import { tenantCreationRefusal } from './tenants'
 
 export interface AdmitInput {
@@ -70,17 +71,43 @@ export async function findUserByEmail(db: Database, email: string): Promise<User
   return db.query.users.findFirst({ where: sql`lower(${users.email}) = ${email.toLowerCase()}` })
 }
 
+/**
+ * An open invitation to this address that would still be honoured: one query reads each pending
+ * row with its issuer's standing in that row's tenant, and `issuerMayIssue` — the rule accept
+ * applies — decides. An invitation whose issuer was blocked or lost the role that issued it is no
+ * invitation at all.
+ */
 export async function hasPendingInvitation(db: Database, email: string): Promise<boolean> {
-  const row = await db.query.teamInvitations.findFirst({
-    columns: { id: true },
-    where: and(
-      sql`lower(${teamInvitations.email}) = ${email.toLowerCase()}`,
-      isNull(teamInvitations.acceptedAt),
-      isNull(teamInvitations.revokedAt),
-      sql`${teamInvitations.expiresAt} > now()`
-    ),
-  })
-  return Boolean(row)
+  const rows = await db
+    .select({
+      role: teamInvitations.role,
+      blockedAt: users.blockedAt,
+      isGlobalAdmin: users.isGlobalAdmin,
+      issuerRole: tenantUsers.role,
+    })
+    .from(teamInvitations)
+    .innerJoin(users, eq(users.id, teamInvitations.invitedByUserId))
+    .leftJoin(
+      tenantUsers,
+      and(
+        eq(tenantUsers.userId, teamInvitations.invitedByUserId),
+        eq(tenantUsers.tenantId, teamInvitations.tenantId)
+      )
+    )
+    .where(
+      and(
+        sql`lower(${teamInvitations.email}) = ${email.toLowerCase()}`,
+        isNull(teamInvitations.acceptedAt),
+        isNull(teamInvitations.revokedAt),
+        sql`${teamInvitations.expiresAt} > now()`
+      )
+    )
+  return rows.some(row =>
+    issuerMayIssue(
+      { blockedAt: row.blockedAt, isGlobalAdmin: row.isGlobalAdmin, role: row.issuerRole },
+      row.role
+    )
+  )
 }
 
 export async function membershipCount(db: Database, userId: string): Promise<number> {

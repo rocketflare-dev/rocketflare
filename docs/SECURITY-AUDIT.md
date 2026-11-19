@@ -73,7 +73,8 @@ Everything a run writes stays in `~/.rocketflare/security-runs/<app>/run-N/`, ou
 repository: findings, proofs, ledgers, reports, agent prompts and scratch files. The repository
 is often public, and a finding published before its fix has released is a recipe against every
 deployment that has not taken the fix yet. Keep findings out of issues, PRs and commit messages too;
-a fix commit describes the behaviour, not the attack.
+a fix commit describes the behaviour, not the attack. Even after a fix has released, only counts
+are published, never the individual finding (see "Publishing a report").
 
 When a finding is fixed, its proof becomes a permanent regression test in
 `apps/web/tests/api/security/`, named for the behaviour.
@@ -123,17 +124,23 @@ model safeguard would not verify; the run says which.
 
 ## Publishing a report
 
-Nothing from a run directory is published. After the fixes have released, a person writes an
-entries file by hand (the runs, plus one neutral line per fixed finding with its severity,
-repository and fixing release) and renders it:
+Nothing from a run directory is published, and a public report carries **counts only**: how many
+issues each run confirmed, and how many of each severity, plus hardening changes, each release
+fixed. No individual finding or hardening change is ever described in public, even after its fix
+has released. After the fixes have released, a person writes an entries file of those counts by
+hand (the runs, and one entry per repository and fixing release) and renders it:
 
 ```bash
 node .claude/skills/rf-security/tools/audit.mjs public-report entries.json --out report.md
 ```
 
-It writes `report.md` and `report.json` from an allowlist of fields. It refuses the whole file on
-an item with no fixing release, a repository not on the file's own `repos` list, or any field it
-does not know, and it never reads `findings.json`. The format is in the skill's `SKILL.md`.
+It writes `report.md` and `report.json` from an allowlist of fields, with a fixed sentence saying
+individual issues are not published and "Please request the detailed report by emailing
+security@rocketflare.dev" (an optional `contact` field in the entries file replaces the address).
+It refuses the whole file on any field that could describe an issue (`line`, `title`,
+`description`…), any field it does not know, a count with no fixing release, a count that is not a
+whole number, or a repository not on the file's own `repos` list, and it never reads
+`findings.json`. The format is in the skill's `SKILL.md`.
 
 ## Limits
 

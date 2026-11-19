@@ -19,6 +19,12 @@
  * from EVERY conflict, hidden ones included: a fact disagreeing with a rejected one is incoherent,
  * and restoring it reveals nothing to the reviewer (`affected` lists only facts they can see).
  *
+ * **`prefer` never decides for somebody else.** Rejecting the other sides is settling them, so a
+ * reader without `manage KnowledgeFact` may prefer only when every visible conflict is an item
+ * they review and no other person confirmed; otherwise the whole action is a 403
+ * `fact_conflict_needs_admin` and nothing changes — the conflict stays open for an admin, and the
+ * reader can still `reject` their own side (`assertMaySettleConflicts`).
+ *
  * **Merge and promote** move a staging entity's facts onto another entity, then decide again,
  * with `decideFactState`, every key BOTH held answerable facts for — the two may now agree
  * (corroboration) or disagree (a new conflict), reading the value verdicts a decision model gave
@@ -82,6 +88,35 @@ function assertMayReview(reader: ReviewReader, reviewerUserId: string | null) {
 }
 
 // ── Facts ─────────────────────────────────────────────────────────────────────────────────────
+
+/**
+ * `prefer` rejects every visible conflict, so a reader who cannot manage may prefer only when
+ * each of them is an item they could settle directly AND no other person has confirmed it. One
+ * that fails is a 403 for the whole action (inside the transaction, so nothing is written): the
+ * conflict stays for an admin, and the reader may still `reject` their own side.
+ */
+async function assertMaySettleConflicts(tx: Database, reader: ReviewReader, ids: string[]) {
+  if (reader.canManage || ids.length === 0) return
+  const others = await tx
+    .select({
+      reviewerUserId: knowledgeFacts.reviewerUserId,
+      confirmedBy: knowledgeFacts.confirmedBy,
+      confirmedAt: knowledgeFacts.confirmedAt,
+    })
+    .from(knowledgeFacts)
+    .where(and(eq(knowledgeFacts.tenantId, reader.scope.tenantId), inArray(knowledgeFacts.id, ids)))
+  const blocked = others.some(
+    o =>
+      o.reviewerUserId !== reader.userId ||
+      (o.confirmedAt !== null && o.confirmedBy !== reader.userId)
+  )
+  if (blocked) {
+    throw new ForbiddenError(
+      'A fact this disagrees with is not yours to set aside, so an admin decides between them — you can still mark this one as not right',
+      ERROR_CODES.factConflictNeedsAdmin
+    )
+  }
+}
 
 /**
  * Reject one fact inside `tx`: `rejected`, unlinked from every conflict; a fact left conflicting
@@ -154,13 +189,15 @@ export async function reviewFact(
   const { scope } = reader
   const before = await readVisibleFact(db, scope, factId)
   assertMayReview(reader, before.row.reviewerUserId)
-  if (!ANSWERABLE.includes(before.row.state)) {
+  // In the reader's view: a fact superseded only by one they cannot see is reviewable for them.
+  const viewed = viewState(before)
+  if (!ANSWERABLE.includes(viewed)) {
     throw new ConflictError(
-      `This fact is ${before.row.state} — there is nothing left to review`,
+      `This fact is ${viewed} — there is nothing left to review`,
       ERROR_CODES.factNotReviewable
     )
   }
-  if (action === 'confirm' && viewState(before) === 'conflicting') {
+  if (action === 'confirm' && viewed === 'conflicting') {
     throw new ConflictError(
       'Another source disagrees with this fact: choose it with "prefer", or "reject" it',
       ERROR_CODES.factConflicting
@@ -174,16 +211,18 @@ export async function reviewFact(
       return ids
     }
     if (action === 'prefer') {
+      await assertMaySettleConflicts(tx, reader, before.visibleConflicts)
       for (const other of before.visibleConflicts) {
         for (const id of await rejectFact(tx, scope.tenantId, other)) ids.add(id)
       }
     }
     // confirm, or the chosen side of a prefer: confirmed by this person; still `conflicting` only
-    // while a conflict the reader could not see remains linked.
+    // while a conflict the reader could not see remains linked, and still `superseded` while the
+    // later fact they could not see stands.
     await tx
       .update(knowledgeFacts)
       .set({
-        state: sql`case when cardinality(${knowledgeFacts.conflictsWith}) > 0 then 'conflicting' else 'accepted' end`,
+        state: sql`case when ${knowledgeFacts.state} = 'superseded' and ${knowledgeFacts.supersededById} is not null then 'superseded' when cardinality(${knowledgeFacts.conflictsWith}) > 0 then 'conflicting' else 'accepted' end`,
         confirmedBy: reader.userId,
         confirmedAt: new Date(),
         updatedAt: new Date(),

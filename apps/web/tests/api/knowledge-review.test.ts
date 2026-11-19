@@ -315,8 +315,10 @@ describe('POST /api/knowledge/facts/:id/review', () => {
       value: 1,
       reviewerUserId: reviewer.userId,
     })
-    const b = await seedFact(db, { tenantId, entityId: e.id, documentId: docB, value: 2 })
-    const c = await seedFact(db, { tenantId, entityId: e.id, documentId: docB, value: 3 })
+    // The other sides are the reviewer's own items too: a member sets aside only those.
+    const theirs = { documentId: docB, reviewerUserId: reviewer.userId }
+    const b = await seedFact(db, { tenantId, entityId: e.id, ...theirs, value: 2 })
+    const c = await seedFact(db, { tenantId, entityId: e.id, ...theirs, value: 3 })
     await linkConflict(db, tenantId, a.id, b.id, c.id)
     const res = await post(`/api/knowledge/facts/${a.id}/review`, reviewer, { action: 'prefer' })
     expect(res.status).toBe(200)

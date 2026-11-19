@@ -177,7 +177,9 @@ the CLI command `<id>`; skills `<id>` / `<id>-<what>`; AG-UI CUSTOM events `<id>
   `scope.access.tenantId`. `knowledgeEntityTypes()` throws on a bad one. Worked example:
   `example-feature/knowledge/entity-types.ts`.
 - **`jobHandlers`** keep the kit's handler contract (own DB client, await everything, throw to
-  retry).
+  retry). A job whose payload carries a `tenantId` is acked unrun while that tenant is not
+  `active` (suspended or deleted), so work that must happen on suspension belongs in
+  `onTenantStatusChanged`, not in a job (`src/api/queues/CLAUDE.md`).
 - **`agentTools(ctx)`** is bound to the run's `AgentToolContext` (its `AccessScope`: read what the
   REQUESTER may read, never a `tenantId` it chose). A tool that writes is offered on
   `ToolCtx.can('manage', YOUR_SUBJECT)`, never on `scope.bypass`, which is row visibility. A tool

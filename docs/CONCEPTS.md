@@ -76,7 +76,12 @@ suites on vitest 4, §9 — never part of the gate).
   a global admin or a member of the tenant whose role could issue the invitation's (`owner` needs
   an owner, `admin` / `member` an owner or an admin) — otherwise the row is marked revoked and
   the answer is 410 `invitation_revoked`. That covers every path that withdraws authority without
-  revoking anything itself: a block, a lost global-admin flag, an issuer-managed role change.
+  revoking anything itself: an identity provider's block, a lost global-admin flag, an
+  issuer-managed role change. The same rule (`issuerMayIssue`, one function) decides admission: a
+  login counts as invited, under any `SIGNUP_MODE`, only for an open invitation whose issuer could
+  still issue it, so a stale invitation admits no account under `invite_only`. Blocking a person
+  from `/admin` revokes every pending invitation they issued, in every tenant and global admin or
+  not, in the block's transaction; unblocking restores none.
   Accepting over an `idp` row leaves the
   row as it is (the invitation is still marked accepted). Mail is bounded by Postgres: a resend
   inside `INVITATION_RESEND_COOLDOWN_SECONDS` (five minutes) answers 429 and keeps the link
@@ -93,7 +98,16 @@ suites on vitest 4, §9 — never part of the gate).
   suspension cancels the runs nothing is executing (`queued`, `awaiting_input`); a run already
   executing stops at its next cancel poll, and one whose Workflow reaches `execute` afterwards
   settles `cancelled` (status event `reason: 'tenant_suspended'`) before any model call.
-  Reactivating starts nothing again: the cancelled runs stay cancelled.
+  Reactivating starts nothing again: the cancelled runs stay cancelled. Its queued jobs do not run
+  either: the jobs consumer reads `tenants.status` (one primary-key read) for every job whose
+  payload names a tenant, and acks it unrun, with a log line, unless the tenant is `active` — a
+  re-embed chain, an index or conversion, fact extraction (its next-day re-enqueue included),
+  chat compaction, an email, an event delivery, a plugin's job. Dropped rather than deferred,
+  because each restarts from its own state after reactivation: a re-embed from the stale count,
+  a document from Retry (a dropped index or conversion leaves a `pending` document `failed`),
+  compaction on the next turn. Two always run: `tenant.purge` (the teardown of a tenant that no
+  longer exists) and `activity.record` (a record of what already happened). A deleted tenant's
+  jobs read as not active too.
 - **Deleting a tenant has two halves.** The `tenantRef()` FK cascade removes everything in
   Postgres; the **`tenant.purge`** job (§5) removes the R2 prefix and runs each plugin's
   `onTenantDeleted`. The queue binding is checked *before* the `DELETE`.
@@ -847,8 +861,13 @@ Server: `api/services/{ai,agents}/**` (read their `CLAUDE.md`), `services/prompt
   (`Pricing › Annual plans`); on the Brightside corpus this keeps 54 chunks where one chunk per
   section made 343 fragments, and recall@10 fell with them; a GFM table (how `toMarkdown`
   renders a spreadsheet sheet) splits only between rows, and a chunk holding rows without the
-  header stores it as `table_header`. Heading path and table header are prefixed to the text that
-  is EMBEDDED and indexed, never to the stored chunk. `page` is always null (see gaps).
+  header stores it as `table_header` — the whole header when it fits a quarter of the window,
+  else the header row's first columns and ` …`, so header plus rows always fit one window and a
+  wide header is never repeated whole on every chunk. Heading path and table header are prefixed
+  to the text that is EMBEDDED and indexed, never to the stored chunk, and that prefix is cut to
+  `EMBEDDING_CONTEXT_MAX_CHARS` (a heading title to `HEADING_TITLE_MAX_CHARS` in the path), so
+  stored and embedded text grow with the document. Headings and table delimiter rows are found
+  by a linear scan of each line, never a backtracking regex. `page` is always null (see gaps).
   Search is hybrid dense + lexical (the lexical half matches ANY query word against
   `chunks.search_vector` — a GENERATED tsvector over heading path + table header + text with a GIN
   index, in `SEARCH_TEXT_CONFIG` — ranked by `ts_rank_cd`; `anyTermTsquery`, so a sentence's filler
@@ -977,7 +996,13 @@ Server: `api/services/{ai,agents}/**` (read their `CLAUDE.md`), `services/prompt
   stored chunks (≤ 12,000 characters, one chunk never split); each section is ONE forced
   `submit_facts` call (`callStructuredTool`) carrying the types with each key's JSON schema and
   `.describe()`, the document's title and date, the known entities the section names (with their
-  accepted facts) and the other known names. **Model**: `resolveChat` under prompt key
+  accepted facts) and the other known names. That material — and the facts a decision model is
+  shown below — is built only from TENANT-VISIBLE documents, whatever the visibility of the one
+  being read: everyone who may open the document may open those, so a value or a name from a
+  group-restricted document never reaches the prompt and cannot be copied into a document with a
+  wider audience (a group-restricted document's own earlier facts are not shown either; states
+  are still decided against every fact the tenant holds, and readers mask what they cannot see).
+  **Model**: `resolveChat` under prompt key
   `knowledge-extract`, so Settings → agent models can point it at a cheaper model — not TypeSafe's
   Jev (D37), whose typed questions answer one choice, score or yes/no, not a list of facts with
   quotes. **The model proposes, code decides**: a candidate survives only if its quote occurs
@@ -992,7 +1017,10 @@ Server: `api/services/{ai,agents}/**` (read their `CLAUDE.md`), `services/prompt
   (`entities.ts`): the type's resolver (domain rows), then staging entities by trigram over name and
   aliases (`LINK_THRESHOLD` 0.6 links one clear candidate; 0.45–0.6, or a tie, is a possible match
   on a NEW staging entity with a reviewer), then — only when nothing linked — the name's embedding
-  (cosine ≥ 0.9 adds a review candidate, never a link), else a new staging entity. The thresholds
+  (cosine ≥ 0.9 adds a review candidate, never a link), else a new staging entity. Only a
+  tenant-visible document adds names to an entity (aliases of the one it links to, or of the one it
+  creates): an entity is shared by every document naming it and its aliases are shown and searched
+  wherever it is visible. The thresholds
   come from the fixture: "Harbour View Dental" / "…Practice Ltd" 0.61, "Riverside Lodge" / "…Care
   Home" 0.62 must link; "Harbourside Dental Lab" / "Harbour View Dental" 0.48 and "Northgate Vets" /
   "…Veterinary Surgery" 0.43 must not. **State** (`state.ts`) against the answerable facts held
@@ -1056,7 +1084,12 @@ Server: `api/services/{ai,agents}/**` (read their `CLAUDE.md`), `services/prompt
   entity known only from such documents. A fact `conflicting` only with hidden facts reads, for
   that reader, as the state it would return to without them (`accepted` / `unconfirmed`), and its
   `conflicts_with` names only visible facts — a hidden document must not leak even "another source
-  disagrees". Admin-level readers see everything. **Review API** (`/api/knowledge`, behind
+  disagrees". A fact `superseded` only by a hidden fact reads the same way — its restored state,
+  `superseded_by_id` null — and is answerable (`lookup_facts`), current (`GET /entities` counts)
+  and reviewable for that reader; a `confirm` by them records the confirmation and leaves the
+  stored supersession for the readers who can see it. `lookup_facts` and `search_knowledge` resolve
+  names through the reader's view too, so an entity known only from hidden documents answers like
+  a name nobody knows. Admin-level readers see everything. **Review API** (`/api/knowledge`, behind
   `requireFeature('knowledge-facts')` → 404 `feature_disabled` when off; CASL subject
   `KnowledgeFact`: member `read` + `update`, admin+ `manage`): `GET /review` (open facts and
   possible matches addressed to me — everyone's for `manage KnowledgeFact`, `?mine=true` narrows —
@@ -1078,7 +1111,11 @@ Server: `api/services/{ai,agents}/**` (read their `CLAUDE.md`), `services/prompt
   choosing between two values for the same time has said the other was never right; a conflict
   from a document hidden from the reviewer stays linked, so the fact stays `conflicting` for the
   admins who see both); 409 `fact_not_reviewable` on `rejected` / `superseded`. Only the item's
-  reviewer or a manager acts (403). `GET /entities/:type/:id` — the entity card (staging by uuid,
+  reviewer or a manager acts (403). Because `prefer` settles the other sides too, a member may
+  prefer only when every visible conflict is an item they review and no other person confirmed;
+  otherwise it is a 403 `fact_conflict_needs_admin` with nothing written (the UI shows the
+  message as an error), the conflict stays open for an admin, and the member can still `reject`
+  their own side. `GET /entities/:type/:id` — the entity card (staging by uuid,
   or a domain row of a registered type: its label, the names of staging entities promoted to it as
   aliases), every visible fact in every state. `POST /entities/:id/merge { into }` (a staging
   target of the same type: names become its aliases, `merged_into` set, facts moved — to the row a
@@ -1251,7 +1288,10 @@ knowledge metering: Workers AI embeddings and rerank tokens are character estima
 timed out is recorded as billed, platform-document ingest (tenant-less) is unmetered, and
 platform documents are never extracted; knowledge facts: about one flag in five is a false
 alarm on the fixture (18 % over five Haiku runs, 0–24 % run to run; 10 % was the aim), mostly
-misread values; Promote asks for the domain row's id
+misread values; an entity's NAME is the first document's wording, so one created from a
+group-restricted document keeps that name once a tenant-visible document links to it, aliases
+stored by an earlier release stay on their entity, and entity resolution (not the prompt) still
+compares a mention with every staging entity of the tenant; Promote asks for the domain row's id
 (there is no picker searching the type's rows); `search_knowledge`'s facts block finds only entities with a staging row
 (a domain row that never had one is reached through `lookup_facts`' resolver, not by being named
 in a query); a person's decision survives re-extraction when the new reading repeats the fact's
@@ -2100,9 +2140,10 @@ it costs and how to read it: `docs/SECURITY-AUDIT.md`.
   run is active the guard hook in `.claude/settings.json` refuses deletes, moves, credential reads
   and writes outside the run directory for every agent, and a snapshot around each wave stops the
   run if anything else changed.
-- **Privacy**: runs live in `~/.rocketflare/security-runs/<app>/run-N`. `audit.mjs public-report`
-  renders a publishable report from a hand-curated file of fixed items only, from an allowlist of
-  fields, and never reads a run's findings.
+- **Privacy**: runs live in `~/.rocketflare/security-runs/<app>/run-N`. A public report carries
+  counts only, never an individual issue: `audit.mjs public-report` renders it from a hand-curated
+  file of counts by run, release and severity (fixed issues only), refuses any field that could
+  describe an issue, and never reads a run's findings.
 - **Cadence**: a diff-scoped `standard` run before a release touching auth, tenancy/RLS, the
   identity or plugin seams, or AI tool binding (the kit's `kit:release` warns, never fails,
   `AUDIT_CADENCE_GLOBS` in `scripts/release.mjs`); a quarterly `deep` run. A fixed finding's proof
@@ -2112,4 +2153,4 @@ it costs and how to read it: `docs/SECURITY-AUDIT.md`.
 so runtime- and browser-specific behaviour needs a separate local check; it needs Docker and a
 model budget; one run finds about half of what is there, so a clean area proves nothing; the guard
 is a Claude Code hook, so it binds only agents run through Claude Code in this checkout; the
-public report is only as neutral as the lines a person writes for it.
+public report's counts are typed by hand, so nothing checks them against the runs.
