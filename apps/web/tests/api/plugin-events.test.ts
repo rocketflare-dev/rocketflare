@@ -326,9 +326,9 @@ describe('agent triggers and a suspended organisation', () => {
     expect(messages[0]?.ack).toHaveBeenCalled()
     expect(messages[0]?.retry).not.toHaveBeenCalled()
     expect(await runsOf(tenant.id)).toEqual([])
-    expect(logger.warn).toHaveBeenCalledWith(
-      expect.objectContaining({ status: 403, code: ERROR_CODES.tenantSuspended }),
-      'event.deliver: the subscriber refused; acknowledging'
+    // The consumer drops a suspended tenant's delivery before the subscriber is called.
+    expect(logger.info).toHaveBeenCalledWith(
+      'jobs: tenant not active, acknowledged without running'
     )
   })
 })

@@ -43,10 +43,17 @@ import { requestCancel } from './agents/runs'
 import { nameFromEmail } from './auth'
 import { accessRequestDecidedEmail } from './email'
 import { platformFeatures } from './features'
+import { revokeEveryInvitationIssuedBy } from './invitations'
 import { enqueueJob, type JobsQueue } from './jobs'
 import { endSupportMemberships } from './members'
 import { notify } from './notifications'
-import { closeTenantSockets, closeUserSockets, type Realtime } from './realtime'
+import {
+  closeTenantSockets,
+  closeUserSockets,
+  nudge,
+  type Realtime,
+  realtimeEvent,
+} from './realtime'
 
 type AdminLogger = Pick<Logger, 'info' | 'warn' | 'error'>
 
@@ -585,21 +592,33 @@ export async function setGlobalAdmin(
  * Blocking deletes every session — the account is out immediately, not at the next expiry. A block
  * set here is `manual`, so an identity provider's reactivation (`provisionFor().setMembership`)
  * never lifts it; it also turns an IdP's block into a manual one. Unblocking clears either.
+ * Blocking also revokes every pending invitation the person issued, in the same transaction;
+ * unblocking restores none.
  */
 export async function setUserBlocked(
   db: Database,
   input: { userId: string; blocked: boolean; realtime?: Realtime }
 ) {
-  const [updated] = await db
-    .update(users)
-    .set(
-      input.blocked
-        ? { blockedAt: new Date(), blockedSource: 'manual' }
-        : { blockedAt: null, blockedSource: null }
-    )
-    .where(eq(users.id, input.userId))
-    .returning()
-  if (!updated) throw new NotFoundError('User not found')
+  const { updated, revoked } = await db.transaction(async tx => {
+    const [row] = await tx
+      .update(users)
+      .set(
+        input.blocked
+          ? { blockedAt: new Date(), blockedSource: 'manual' }
+          : { blockedAt: null, blockedSource: null }
+      )
+      .where(eq(users.id, input.userId))
+      .returning()
+    if (!row) throw new NotFoundError('User not found')
+    // A blocked person issues nothing: their pending invitations end with the block.
+    const revoked = input.blocked
+      ? await revokeEveryInvitationIssuedBy(tx as unknown as Database, input.userId)
+      : []
+    return { updated: row, revoked }
+  })
+  for (const tenantId of new Set(revoked.map(r => r.tenantId))) {
+    nudge(input.realtime, realtimeEvent('invitation.changed', tenantId))
+  }
   if (input.blocked) {
     await deleteUserSessions(db, input.userId)
     closeUserSockets(input.realtime, await userTenantIds(db, input.userId), input.userId)

@@ -76,7 +76,12 @@ suites on vitest 4, §9 — never part of the gate).
   a global admin or a member of the tenant whose role could issue the invitation's (`owner` needs
   an owner, `admin` / `member` an owner or an admin) — otherwise the row is marked revoked and
   the answer is 410 `invitation_revoked`. That covers every path that withdraws authority without
-  revoking anything itself: a block, a lost global-admin flag, an issuer-managed role change.
+  revoking anything itself: an identity provider's block, a lost global-admin flag, an
+  issuer-managed role change. The same rule (`issuerMayIssue`, one function) decides admission: a
+  login counts as invited, under any `SIGNUP_MODE`, only for an open invitation whose issuer could
+  still issue it, so a stale invitation admits no account under `invite_only`. Blocking a person
+  from `/admin` revokes every pending invitation they issued, in every tenant and global admin or
+  not, in the block's transaction; unblocking restores none.
   Accepting over an `idp` row leaves the
   row as it is (the invitation is still marked accepted). Mail is bounded by Postgres: a resend
   inside `INVITATION_RESEND_COOLDOWN_SECONDS` (five minutes) answers 429 and keeps the link
@@ -93,7 +98,16 @@ suites on vitest 4, §9 — never part of the gate).
   suspension cancels the runs nothing is executing (`queued`, `awaiting_input`); a run already
   executing stops at its next cancel poll, and one whose Workflow reaches `execute` afterwards
   settles `cancelled` (status event `reason: 'tenant_suspended'`) before any model call.
-  Reactivating starts nothing again: the cancelled runs stay cancelled.
+  Reactivating starts nothing again: the cancelled runs stay cancelled. Its queued jobs do not run
+  either: the jobs consumer reads `tenants.status` (one primary-key read) for every job whose
+  payload names a tenant, and acks it unrun, with a log line, unless the tenant is `active` — a
+  re-embed chain, an index or conversion, fact extraction (its next-day re-enqueue included),
+  chat compaction, an email, an event delivery, a plugin's job. Dropped rather than deferred,
+  because each restarts from its own state after reactivation: a re-embed from the stale count,
+  a document from Retry (a dropped index or conversion leaves a `pending` document `failed`),
+  compaction on the next turn. Two always run: `tenant.purge` (the teardown of a tenant that no
+  longer exists) and `activity.record` (a record of what already happened). A deleted tenant's
+  jobs read as not active too.
 - **Deleting a tenant has two halves.** The `tenantRef()` FK cascade removes everything in
   Postgres; the **`tenant.purge`** job (§5) removes the R2 prefix and runs each plugin's
   `onTenantDeleted`. The queue binding is checked *before* the `DELETE`.
